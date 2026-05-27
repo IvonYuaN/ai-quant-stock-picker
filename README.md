@@ -71,11 +71,17 @@ python -m aqsp.cli screen --csv data/sample_ohlcv.csv --mode open --report repor
 
 每次 `aqsp run` 会先验证 `data/predictions.jsonl` 中已经到期的历史预测，再生成今天的新候选并追加到账本。验证指标包括：
 
+- `entry_price`: 信号日之后下一交易日开盘价成交，不使用信号日收盘价假装能买到。
 - `return_pct`: 买入参考价到验证日收盘价的收益。
+- `fee_bps/slippage_bps`: 默认计入交易成本和滑点。
+- `stop_loss/take_profit`: 验证窗口内触发止损/止盈则按触发价退出，否则按持有期最后收盘退出。
 - `win`: 收益是否大于 0。
-- `strategy_weights`: 至少 3 条历史样本后，按胜率和平均收益动态调节策略权重。
+- `excess_return_pct`: 相对基准的超额收益；学习优先按超额收益加权。
+- `strategy_weights`: 至少 3 条历史样本后，按胜率和平均超额收益动态调节策略权重。
 
 GitHub Actions 使用 cache 保存 `data/predictions.jsonl`，所以每天运行可以持续积累验证结果。
+
+这个协议避免“事后数据预测”：当天只产生信号，不把当天收盘当作可成交价；下一次运行才用后来真实出现的 K 线验证。
 
 ## 风险声明
 
