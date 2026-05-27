@@ -11,6 +11,7 @@ def to_dataframe(picks: list[PickResult]) -> pd.DataFrame:
     rows = []
     for pick in picks:
         row = asdict(pick)
+        row["strategies"] = ",".join(pick.strategies)
         row["reasons"] = "；".join(pick.reasons)
         row["risks"] = "；".join(pick.risks)
         row.update(pick.metrics)
@@ -34,6 +35,7 @@ def to_markdown(picks: list[PickResult], title: str = "AI 量化选股报告") -
                 f"- 评分: {pick.score} / {pick.rating}",
                 f"- 收盘/参考买点: {pick.close} / {pick.ideal_buy}",
                 f"- 策略入口: {pick.entry_type}",
+                f"- 命中策略: {', '.join(pick.strategies) or '无'}",
                 f"- 仓位建议: {pick.position}",
                 f"- 止损/止盈: {pick.stop_loss} / {pick.take_profit}",
                 f"- 理由: {'；'.join(pick.reasons) or '无'}",

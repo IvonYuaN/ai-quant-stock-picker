@@ -5,6 +5,7 @@ import math
 import pandas as pd
 
 from aqsp.indicators import enrich_indicators
+from aqsp.internet_strategies import evaluate_strategy_signals
 from aqsp.models import PickResult, ScreeningConfig
 
 
@@ -34,11 +35,12 @@ def score_symbol(symbol: str, frame: pd.DataFrame, config: ScreeningConfig) -> P
     reasons: list[str] = []
     risks: list[str] = []
     score = 0.0
+    strategy_ids: list[str] = []
 
     avg_amount = _num(row["amount_ma20"])
     if avg_amount < config.min_avg_amount:
         risks.append("20日均成交额不足，流动性过滤")
-        score -= 25
+        score -= 35
 
     ma5, ma10, ma20, ma60 = (_num(row[f"ma{x}"]) for x in (5, 10, 20, 60))
     bias20 = _num(row["bias20"])
@@ -120,6 +122,13 @@ def score_symbol(symbol: str, frame: pd.DataFrame, config: ScreeningConfig) -> P
             score -= 8
             risks.append("前一交易日振幅过大")
 
+    strategy_signals = evaluate_strategy_signals(df)
+    for signal in strategy_signals:
+        weight = config.strategy_weights.get(signal.strategy_id, 1.0)
+        score += signal.score * weight
+        strategy_ids.append(signal.strategy_id)
+        reasons.append(f"{signal.display_name}: {'/'.join(signal.reasons[:2])}")
+
     entry_type = _entry_type(row, prev, pullback_to_ma)
     stop_base = min(ma20, close - atr14 * 1.2) if atr14 > 0 else ma20
     stop_loss = max(stop_base * (1 - config.stop_loss_buffer), 0.01)
@@ -139,6 +148,7 @@ def score_symbol(symbol: str, frame: pd.DataFrame, config: ScreeningConfig) -> P
         stop_loss=round(stop_loss, 3),
         take_profit=round(take_profit, 3),
         position=position,
+        strategies=tuple(strategy_ids),
         reasons=tuple(reasons[:6]),
         risks=tuple(risks[:5]),
         metrics={

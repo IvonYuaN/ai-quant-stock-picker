@@ -23,6 +23,7 @@ jobs:
       AQSP_LIMIT: ${{ vars.AQSP_LIMIT || '10' }}
       AQSP_MIN_AVG_AMOUNT: ${{ vars.AQSP_MIN_AVG_AMOUNT || '50000000' }}
       AQSP_MAX_DATA_LAG_DAYS: ${{ vars.AQSP_MAX_DATA_LAG_DAYS || '3' }}
+      AQSP_LEDGER: data/predictions.jsonl
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
       TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
       WECHAT_WEBHOOK_URL: ${{ secrets.WECHAT_WEBHOOK_URL }}
@@ -41,6 +42,14 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[data]"
 
+      - name: Restore prediction ledger
+        uses: actions/cache/restore@v4
+        with:
+          path: data/predictions.jsonl
+          key: aqsp-ledger-${{ github.run_id }}
+          restore-keys: |
+            aqsp-ledger-
+
       - name: Run screen and notify
         run: |
           aqsp run \
@@ -49,9 +58,17 @@ jobs:
             --limit "${AQSP_LIMIT}" \
             --min-avg-amount "${AQSP_MIN_AVG_AMOUNT}" \
             --max-data-lag-days "${AQSP_MAX_DATA_LAG_DAYS}" \
+            --ledger "${AQSP_LEDGER}" \
             --report "reports/${AQSP_MODE}.md" \
             --output-csv "reports/${AQSP_MODE}.csv" \
             --notify
+
+      - name: Save prediction ledger
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: data/predictions.jsonl
+          key: aqsp-ledger-${{ github.run_id }}
 
       - uses: actions/upload-artifact@v4
         if: always()

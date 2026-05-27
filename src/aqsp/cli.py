@@ -6,6 +6,7 @@ from pathlib import Path
 from aqsp.config import load_runtime_config
 from aqsp.data import fetch_akshare, load_csv
 from aqsp.freshness import assert_fresh_data
+from aqsp.ledger import append_predictions, strategy_weights_from_ledger, validate_predictions
 from aqsp.models import ScreeningConfig
 from aqsp.notifier import notify_markdown
 from aqsp.report import to_dataframe, to_markdown
@@ -35,6 +36,9 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--max-data-lag-days", type=int, default=0)
     run.add_argument("--report", default="reports/latest.md")
     run.add_argument("--output-csv", default="reports/latest.csv")
+    run.add_argument("--ledger", default="data/predictions.jsonl")
+    run.add_argument("--horizon-days", type=int, default=1)
+    run.add_argument("--skip-validation", action="store_true")
     run.add_argument("--notify", action="store_true")
 
     args = parser.parse_args(argv)
@@ -84,11 +88,28 @@ def run_scheduled(args: argparse.Namespace) -> int:
 
     frames = load_csv(args.csv) if args.csv else fetch_akshare(symbols)
     latest = assert_fresh_data(frames, max_data_lag_days)
-    config = ScreeningConfig(mode=mode, min_avg_amount=min_avg_amount)
+    validation = None
+    if not args.skip_validation:
+        validation = validate_predictions(args.ledger, frames)
+    weights = strategy_weights_from_ledger(args.ledger)
+    config = ScreeningConfig(mode=mode, min_avg_amount=min_avg_amount, strategy_weights=weights)
     picks = screen_universe(frames, config)[:limit]
+    append_predictions(args.ledger, picks, horizon_days=args.horizon_days)
 
     table = to_dataframe(picks)
     markdown = to_markdown(picks, title=f"AI 量化选股报告({mode}, 数据日期 {latest.isoformat()})")
+    if validation is not None:
+        validation_text = "\n\n## 策略自检\n"
+        if validation.checked:
+            validation_text += f"- 本次验证历史预测: {validation.checked} 条\n"
+            validation_text += f"- 胜率: {(validation.wins / validation.checked * 100):.1f}%\n"
+        else:
+            validation_text += "- 本次暂无可验证历史预测\n"
+        if validation.checked:
+            validation_text += f"- 平均收益: {validation.avg_return_pct}%\n"
+        if weights:
+            validation_text += "- 当前策略权重: " + ", ".join(f"{k}={v}" for k, v in sorted(weights.items())) + "\n"
+        markdown += validation_text
     Path(args.report).parent.mkdir(parents=True, exist_ok=True)
     Path(args.report).write_text(markdown, encoding="utf-8")
     Path(args.output_csv).parent.mkdir(parents=True, exist_ok=True)
