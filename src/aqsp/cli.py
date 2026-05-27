@@ -6,7 +6,7 @@ from pathlib import Path
 from aqsp.config import load_runtime_config
 from aqsp.data import fetch_akshare, load_csv
 from aqsp.freshness import assert_fresh_data
-from aqsp.ledger import append_predictions, strategy_weights_from_ledger, validate_predictions
+from aqsp.ledger import ExecutionConfig, append_predictions, strategy_weights_from_ledger, validate_predictions
 from aqsp.models import ScreeningConfig
 from aqsp.notifier import notify_markdown
 from aqsp.report import to_dataframe, to_markdown
@@ -37,7 +37,10 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--report", default="reports/latest.md")
     run.add_argument("--output-csv", default="reports/latest.csv")
     run.add_argument("--ledger", default="data/predictions.jsonl")
-    run.add_argument("--horizon-days", type=int, default=1)
+    run.add_argument("--horizon-days", type=int, default=3)
+    run.add_argument("--fee-bps", type=float, default=8.0)
+    run.add_argument("--slippage-bps", type=float, default=5.0)
+    run.add_argument("--benchmark-symbol", default="000300")
     run.add_argument("--skip-validation", action="store_true")
     run.add_argument("--notify", action="store_true")
 
@@ -94,7 +97,13 @@ def run_scheduled(args: argparse.Namespace) -> int:
     weights = strategy_weights_from_ledger(args.ledger)
     config = ScreeningConfig(mode=mode, min_avg_amount=min_avg_amount, strategy_weights=weights)
     picks = screen_universe(frames, config)[:limit]
-    append_predictions(args.ledger, picks, horizon_days=args.horizon_days)
+    execution = ExecutionConfig(
+        horizon_days=args.horizon_days,
+        fee_bps=args.fee_bps,
+        slippage_bps=args.slippage_bps,
+        benchmark_symbol=args.benchmark_symbol,
+    )
+    append_predictions(args.ledger, picks, execution=execution)
 
     table = to_dataframe(picks)
     markdown = to_markdown(picks, title=f"AI 量化选股报告({mode}, 数据日期 {latest.isoformat()})")
@@ -107,6 +116,7 @@ def run_scheduled(args: argparse.Namespace) -> int:
             validation_text += "- 本次暂无可验证历史预测\n"
         if validation.checked:
             validation_text += f"- 平均收益: {validation.avg_return_pct}%\n"
+            validation_text += f"- 平均超额收益: {validation.avg_excess_pct}%\n"
         if weights:
             validation_text += "- 当前策略权重: " + ", ".join(f"{k}={v}" for k, v in sorted(weights.items())) + "\n"
         markdown += validation_text
