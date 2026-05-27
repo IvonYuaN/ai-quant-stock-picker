@@ -2,6 +2,8 @@
 
 一个独立 GitHub 项目：每天定时获取最新 A 股数据，筛选开盘/尾盘候选股，把“选了什么、依据是什么、风险是什么、参考买点/止损/止盈”发到 Telegram、企业微信、飞书或通用 Webhook。系统只负责筛选和通知，最终下单由人完成。
 
+策略来源不是 `daily_stock_analysis`。它只作为后续报告/通知增强参考；选股逻辑来自互联网常见开源量化策略形态：RPS 相对强度、放量突破、均线缩量回踩、碗口反弹、低波趋势，并通过每日预测账本滚动验证。
+
 ## 快速使用
 
 ```bash
@@ -64,6 +66,16 @@ python -m aqsp.cli screen --csv data/sample_ohlcv.csv --mode open --report repor
 4. Workflow 默认北京时间工作日 09:10 和 14:45 运行，也支持手动运行。
 
 数据新鲜度由 `aqsp.freshness.assert_fresh_data` 强制检查。超过允许滞后时任务直接失败，不发送陈旧选股。
+
+## 每日验证与自优化
+
+每次 `aqsp run` 会先验证 `data/predictions.jsonl` 中已经到期的历史预测，再生成今天的新候选并追加到账本。验证指标包括：
+
+- `return_pct`: 买入参考价到验证日收盘价的收益。
+- `win`: 收益是否大于 0。
+- `strategy_weights`: 至少 3 条历史样本后，按胜率和平均收益动态调节策略权重。
+
+GitHub Actions 使用 cache 保存 `data/predictions.jsonl`，所以每天运行可以持续积累验证结果。
 
 ## 风险声明
 

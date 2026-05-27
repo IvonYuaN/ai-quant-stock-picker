@@ -11,6 +11,7 @@ class ScreeningConfig:
     min_avg_amount: float = 50_000_000
     max_bias20: float = 18.0
     stop_loss_buffer: float = 0.03
+    strategy_weights: dict[str, float] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -26,6 +27,7 @@ class PickResult:
     stop_loss: float
     take_profit: float
     position: str
+    strategies: tuple[str, ...] = field(default_factory=tuple)
     reasons: tuple[str, ...] = field(default_factory=tuple)
     risks: tuple[str, ...] = field(default_factory=tuple)
     metrics: dict[str, Any] = field(default_factory=dict)
