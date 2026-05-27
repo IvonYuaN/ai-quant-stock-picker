@@ -1,0 +1,60 @@
+name: Scheduled Stock Screening
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "open or close"
+        required: false
+        default: "close"
+  schedule:
+    # 09:10 Beijing time, Monday-Friday.
+    - cron: "10 1 * * 1-5"
+    # 14:45 Beijing time, Monday-Friday.
+    - cron: "45 6 * * 1-5"
+
+jobs:
+  screen:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      AQSP_SYMBOLS: ${{ vars.AQSP_SYMBOLS }}
+      AQSP_MODE: ${{ github.event.inputs.mode || vars.AQSP_MODE || (github.event.schedule == '10 1 * * 1-5' && 'open' || 'close') }}
+      AQSP_LIMIT: ${{ vars.AQSP_LIMIT || '10' }}
+      AQSP_MIN_AVG_AMOUNT: ${{ vars.AQSP_MIN_AVG_AMOUNT || '50000000' }}
+      AQSP_MAX_DATA_LAG_DAYS: ${{ vars.AQSP_MAX_DATA_LAG_DAYS || '3' }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      WECHAT_WEBHOOK_URL: ${{ secrets.WECHAT_WEBHOOK_URL }}
+      FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
+      GENERIC_WEBHOOK_URL: ${{ secrets.GENERIC_WEBHOOK_URL }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[data]"
+
+      - name: Run screen and notify
+        run: |
+          aqsp run \
+            --mode "${AQSP_MODE}" \
+            --symbols "${AQSP_SYMBOLS}" \
+            --limit "${AQSP_LIMIT}" \
+            --min-avg-amount "${AQSP_MIN_AVG_AMOUNT}" \
+            --max-data-lag-days "${AQSP_MAX_DATA_LAG_DAYS}" \
+            --report "reports/${AQSP_MODE}.md" \
+            --output-csv "reports/${AQSP_MODE}.csv" \
+            --notify
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: stock-screen-${{ github.run_id }}
+          path: reports/
