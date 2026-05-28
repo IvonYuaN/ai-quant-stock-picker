@@ -4,6 +4,8 @@ from datetime import date
 
 import pandas as pd
 
+from aqsp.core.time import today_shanghai
+
 
 def latest_trade_date(frames: dict[str, pd.DataFrame]) -> date | None:
     dates: list[date] = []
@@ -21,7 +23,7 @@ def assert_fresh_data(frames: dict[str, pd.DataFrame], max_lag_days: int) -> dat
     if latest is None:
         raise RuntimeError("no valid market data loaded")
 
-    lag = (date.today() - latest).days
+    lag = (today_shanghai() - latest).days
     if lag > max_lag_days:
         raise RuntimeError(
             f"market data is stale: latest={latest.isoformat()}, lag={lag} days, max={max_lag_days}"

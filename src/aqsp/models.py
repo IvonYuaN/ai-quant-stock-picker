@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+
+from aqsp.core.types import PickResult  # noqa: F401
+
+
+__all__ = ["PickResult", "ScreeningConfig"]
 
 
 @dataclass(frozen=True)
@@ -12,22 +16,3 @@ class ScreeningConfig:
     max_bias20: float = 18.0
     stop_loss_buffer: float = 0.03
     strategy_weights: dict[str, float] = field(default_factory=dict)
-
-
-@dataclass(frozen=True)
-class PickResult:
-    symbol: str
-    name: str
-    date: str
-    close: float
-    score: float
-    rating: str
-    entry_type: str
-    ideal_buy: float
-    stop_loss: float
-    take_profit: float
-    position: str
-    strategies: tuple[str, ...] = field(default_factory=tuple)
-    reasons: tuple[str, ...] = field(default_factory=tuple)
-    risks: tuple[str, ...] = field(default_factory=tuple)
-    metrics: dict[str, Any] = field(default_factory=dict)
