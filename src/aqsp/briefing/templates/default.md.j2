@@ -1,0 +1,28 @@
+# AI 量化选股日报 - {{ date }}
+
+{% if circuit_breaker_triggered %}
+> ⚠️ **组合保护中**: {{ circuit_breaker_reason }}
+{% endif %}
+
+## 市场态势
+{{ regime_section }}
+
+## 候选证据链
+{% for pick in picks %}
+### {{ pick.symbol }} {{ pick.name }} (评分: {{ pick.score }})
+{% if pick.strategies %}
+- 命中策略: {{ pick.strategies | join(', ') }}
+{% endif %}
+{% for reason in pick.reasons %}
+- {{ reason }}
+{% endfor %}
+{% endfor %}
+
+## 题材热度
+{{ theme_section }}
+
+## 明日重点
+{{ next_day_section }}
+
+---
+> 仅供研究，不构成投资建议。
