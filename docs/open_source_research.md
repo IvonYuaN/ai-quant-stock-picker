@@ -42,6 +42,14 @@
 4. 海外市场：yfinance。
 5. 研究缓存：统一落本地 Parquet/SQLite，避免每次请求公网接口。
 
+当前可维护清单见：
+
+- `config/data_sources.yaml`: A股数据源候选与运行状态。
+- `config/strategy_sources.yaml`: 策略家族、理论假设、验证要求。
+- `scripts/collect_research_registry.py`: 输出本地 registry，供后续人工/自动搜集结果归档。
+- `scripts/collect_open_source_research.py`: GitHub 开源项目采集器，默认要求至少 100 个真实仓库。
+- `docs/open_source_quant_research.md`: 最近一次开源项目采集报告。
+
 ## 工程边界
 
 当前版本刻意保持小而硬：可测、可解释、可替换数据源。自动交易、账户、委托、实盘风控不放在本切片里，避免把“选股研究”与“交易执行”混成一个不可验证的黑箱。
