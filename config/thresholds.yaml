@@ -17,7 +17,7 @@ momentum:
     rsi: 0.3
 
 quality:
-  enabled: false
+  enabled: true
   min_roe: 0.1
   min_roa: 0.05
   max_debt_ratio: 0.6
@@ -31,7 +31,7 @@ quality:
     margin: 0.2
 
 value:
-  enabled: false
+  enabled: true
   max_pe: 30
   max_pb: 5
   min_dividend_yield: 0.02

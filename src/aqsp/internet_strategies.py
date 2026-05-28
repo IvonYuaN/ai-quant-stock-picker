@@ -50,7 +50,11 @@ def evaluate_strategy_signals(df: pd.DataFrame) -> list[StrategySignal]:
             )
         )
 
-    if close >= _num(prev["high_20"]) * 0.995 and volume_ratio >= 1.35 and _num(row["range_pos"]) >= 0.62:
+    if (
+        close >= _num(prev["high_20"]) * 0.995
+        and volume_ratio >= 1.35
+        and _num(row["range_pos"]) >= 0.62
+    ):
         signals.append(
             StrategySignal(
                 "volume_breakout",
@@ -60,7 +64,11 @@ def evaluate_strategy_signals(df: pd.DataFrame) -> list[StrategySignal]:
             )
         )
 
-    if ma5 * 0.985 <= close <= ma10 * 1.025 and volume_ratio <= 1.1 and ma5 > ma10 > ma20:
+    if (
+        ma5 * 0.985 <= close <= ma10 * 1.025
+        and volume_ratio <= 1.1
+        and ma5 > ma10 > ma20
+    ):
         signals.append(
             StrategySignal(
                 "ma_pullback",

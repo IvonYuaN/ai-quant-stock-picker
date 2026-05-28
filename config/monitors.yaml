@@ -1,0 +1,33 @@
+version: "1.0.0"
+monitors:
+  - name: "stale_data"
+    description: "数据滞后超过阈值"
+    enabled: true
+    check: "data_freshness"
+    params:
+      max_lag_days: 3
+    severity: "critical"
+    
+  - name: "circuit_breaker"
+    description: "组合熔断触发"
+    enabled: true
+    check: "circuit_breaker"
+    params: {}
+    severity: "critical"
+    
+  - name: "win_rate_drop"
+    description: "胜率异常下降"
+    enabled: true
+    check: "win_rate"
+    params:
+      min_win_rate: 0.3
+      min_samples: 10
+    severity: "warning"
+    
+  - name: "data_source_failure"
+    description: "数据源连续失败"
+    enabled: true
+    check: "source_health"
+    params:
+      max_consecutive_failures: 3
+    severity: "warning"
