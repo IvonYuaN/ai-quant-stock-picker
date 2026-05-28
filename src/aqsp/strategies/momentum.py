@@ -61,7 +61,7 @@ class MomentumStrategy(BaseStrategy):
         min_returns = self.thresholds.momentum.min_returns
         max_volatility = self.thresholds.momentum.max_volatility
 
-        return_score = min(total_return / min_returns, 1.0) if min_returns > 0 else 0.5
+        return_score = max(0.0, min(total_return / min_returns, 1.0)) if min_returns > 0 else 0.5
         vol_score = (
             max(1 - volatility / max_volatility, 0.0) if max_volatility > 0 else 0.5
         )
@@ -80,7 +80,7 @@ class MomentumStrategy(BaseStrategy):
         df["trend"] = (df["close"] - df["ma"]) / df["ma"]
 
         recent_trend = df["trend"].tail(5).mean()
-        return min(recent_trend / threshold, 1.0) if threshold > 0 else 0.5
+        return max(0.0, min(recent_trend / threshold, 1.0)) if threshold > 0 else 0.5
 
     def _calculate_rsi_score(self, df: pd.DataFrame) -> float:
         rsi = self._calculate_rsi(df["close"])
