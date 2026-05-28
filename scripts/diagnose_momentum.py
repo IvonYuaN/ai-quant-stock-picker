@@ -64,16 +64,7 @@ def diagnose_single_stock(df: pd.DataFrame, strategy: MomentumStrategy, symbol: 
         trend_score = 0.5
 
     rsi = strategy._calculate_rsi(df["close"])
-    overbought = thresholds.momentum.rsi_overbought
-    oversold = thresholds.momentum.rsi_oversold
-    if rsi is None:
-        rsi_score = 0.5
-    elif rsi >= overbought:
-        rsi_score = 0.1
-    elif rsi <= oversold:
-        rsi_score = 0.9
-    else:
-        rsi_score = (overbought - rsi) / (overbought - oversold)
+    rsi_score = strategy._calculate_rsi_score(df)
 
     w = thresholds.momentum.weights
     raw_score = momentum_score * w.momentum + trend_score * w.trend + rsi_score * w.rsi
