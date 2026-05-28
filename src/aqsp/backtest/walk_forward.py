@@ -27,6 +27,7 @@ class TradeResult:
     exit_price: float
     return_pct: float
     exit_reason: str
+    market_regime: str = "unknown"
     executable: bool = True
 
 
@@ -148,6 +149,16 @@ class WalkForwardTester:
         )
         pbo = self._calculate_pbo(periods)
 
+        regime_winrates_calc: dict[str, list[float]] = {}
+        for trade in all_trades:
+            if trade.executable:
+                regime_winrates_calc.setdefault(trade.market_regime, []).append(
+                    1.0 if trade.return_pct > 0 else 0.0
+                )
+        regime_winrate_dict: dict[str, float] = {}
+        for regime, wins in sorted(regime_winrates_calc.items()):
+            regime_winrate_dict[regime] = sum(wins) / len(wins)
+
         return WalkForwardResult(
             periods=periods,
             overall=overall,
@@ -155,6 +166,7 @@ class WalkForwardTester:
             parameter_std=self._calculate_parameter_std(periods),
             deflated_sharpe=dsr,
             pbo=pbo,
+            regime_winrates=regime_winrate_dict,
         )
 
     def _collect_all_dates(self, data: Dict[str, pd.DataFrame]) -> list[str]:
@@ -209,10 +221,18 @@ class WalkForwardTester:
                 prices = recent["close"].values
                 ret = (prices[-1] - prices[0]) / prices[0]
                 market_returns.append(ret)
+        market_regime = "unknown"
         if market_returns:
             avg_market_return = sum(market_returns) / len(market_returns)
-            if avg_market_return < -0.02:  # Skip if market down >2%
+            if avg_market_return < -0.02:
+                market_regime = "bear_filter"
                 return trades
+            elif avg_market_return < -0.005:
+                market_regime = "mild_bear"
+            elif avg_market_return < 0.005:
+                market_regime = "sideways"
+            else:
+                market_regime = "bull_trend" 
 
         selected = self.strategy.select_stocks(signal_data, n=self.top_n)
 
@@ -246,6 +266,7 @@ class WalkForwardTester:
                         exit_price=0.0,
                         return_pct=0.0,
                         exit_reason=reason,
+                        market_regime=market_regime,
                         executable=False,
                     )
                 )
@@ -274,6 +295,7 @@ class WalkForwardTester:
                     exit_price=round(exit_price, 4),
                     return_pct=round(ret, 4),
                     exit_reason=exit_reason,
+                    market_regime=market_regime,
                     executable=True,
                 )
             )
