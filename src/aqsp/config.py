@@ -14,7 +14,11 @@ class RuntimeConfig:
 
 
 def load_runtime_config() -> RuntimeConfig:
-    symbols = tuple(item.strip() for item in os.getenv("AQSP_SYMBOLS", "").split(",") if item.strip())
+    symbols = tuple(
+        item.strip()
+        for item in os.getenv("AQSP_SYMBOLS", "").split(",")
+        if item.strip()
+    )
     return RuntimeConfig(
         symbols=symbols,
         mode=os.getenv("AQSP_MODE", "close").strip() or "close",
