@@ -50,7 +50,9 @@ def normalize_ohlcv(raw: pd.DataFrame) -> pd.DataFrame:
         "代码": "symbol",
         "名称": "name",
     }
-    df = raw.rename(columns={k: v for k, v in aliases.items() if k in raw.columns}).copy()
+    df = raw.rename(
+        columns={k: v for k, v in aliases.items() if k in raw.columns}
+    ).copy()
     required = {"date", "open", "high", "low", "close", "volume"}
     missing = required - set(df.columns)
     if missing:
@@ -64,7 +66,9 @@ def normalize_ohlcv(raw: pd.DataFrame) -> pd.DataFrame:
     df["date"] = pd.to_datetime(df["date"]).dt.strftime("%Y-%m-%d")
     for col in ("open", "high", "low", "close", "volume", "amount"):
         df[col] = pd.to_numeric(df[col], errors="coerce")
-    df = df.dropna(subset=["open", "high", "low", "close", "volume"]).sort_values("date")
+    df = df.dropna(subset=["open", "high", "low", "close", "volume"]).sort_values(
+        "date"
+    )
     return df.reset_index(drop=True)
 
 
@@ -76,7 +80,9 @@ def rsi(close: pd.Series, period: int) -> pd.Series:
     avg_loss = loss.ewm(alpha=1 / period, adjust=False).mean()
     rs = avg_gain / avg_loss.replace(0, np.nan)
     value = 100 - 100 / (1 + rs)
-    return value.mask((avg_loss == 0) & (avg_gain > 0), 100).mask((avg_gain == 0) & (avg_loss > 0), 0)
+    return value.mask((avg_loss == 0) & (avg_gain > 0), 100).mask(
+        (avg_gain == 0) & (avg_loss > 0), 0
+    )
 
 
 def atr(high: pd.Series, low: pd.Series, close: pd.Series, period: int) -> pd.Series:

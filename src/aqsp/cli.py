@@ -622,20 +622,17 @@ def run_scheduled(args: argparse.Namespace) -> int:
         )
     picks = filtered_picks
 
-    try:
-        from aqsp.core.time import today_shanghai
-        from aqsp.universe.t1_filter import filter_t1_held
+    from aqsp.core.time import today_shanghai
+    from aqsp.universe.t1_filter import filter_t1_held
 
-        kept, removed = filter_t1_held(
-            candidates=[r.symbol for r in picks],
-            ledger_path=args.ledger,
-            today=today_shanghai(),
-        )
-        if removed:
-            print(f"T+1 过滤剔除 {len(removed)} 只（昨日已买）: {removed}")
-        picks = [r for r in picks if r.symbol in kept]
-    except Exception:
-        pass
+    kept, removed = filter_t1_held(
+        candidates=[r.symbol for r in picks],
+        ledger_path=args.ledger,
+        today=today_shanghai(),
+    )
+    if removed:
+        print(f"T+1 过滤剔除 {len(removed)} 只（昨日已买）: {removed}")
+    picks = [r for r in picks if r.symbol in kept]
 
     execution = ExecutionConfig(
         horizon_days=args.horizon_days,
@@ -783,7 +780,7 @@ def run_walkforward(args: argparse.Namespace) -> int:
         # 7 年 ~1700 交易日，count=2000 留余量；mootdx 实际上限可能 < 2000，
         # 拿不满会按实际返回。第一次跑后看 logs 确认覆盖了 args.start。
         frames = src.fetch_daily(
-            symbols, start_d, end_d, adjust="qfq", count=2000
+            symbols, start_d, end_d, adjust="", count=2000
         )
     elif args.source == "sina":
         from datetime import date as _date
@@ -792,7 +789,7 @@ def run_walkforward(args: argparse.Namespace) -> int:
         src = SinaSource()
         start_d = _date.fromisoformat(args.start)
         end_d = _date.fromisoformat(args.end)
-        frames = src.fetch_daily(symbols, start_d, end_d, adjust="qfq")
+        frames = src.fetch_daily(symbols, start_d, end_d, adjust="")
     else:
         frames = load_csv(args.source)
 
@@ -816,6 +813,17 @@ def run_walkforward(args: argparse.Namespace) -> int:
     print(f"有效标的: {len(filtered)} 只")
     if logger:
         logger.info("有效标的: %d 只", len(filtered))
+
+    # Fetch fundamental data (PE/PB) and merge into OHLCV
+    try:
+        from aqsp.data.sina_fundamental import SinaFundamentalSource
+
+        fund_src = SinaFundamentalSource()
+        fundamentals = fund_src.fetch_realtime_fundamentals(list(filtered.keys()))
+        filtered = fund_src.merge_fundamentals_into_ohlcv(filtered, fundamentals)
+        print(f"基本面数据: {len(fundamentals)} 只有 PE/PB")
+    except Exception as e:
+        print(f"⚠️  基本面数据获取失败: {e}，quality/value 因子将返回中性值")
 
     thresholds = load_thresholds()
     if args.min_score is not None:
