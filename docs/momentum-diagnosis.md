@@ -96,12 +96,45 @@ Top 10 的 RSI 全部在 17-32 区间（超卖区）。策略选的是"跌得多
 
 ## 修复建议
 
-### 方案 A：反转 RSI 逻辑（推荐）
+### 方案 A：反转 RSI 逻辑（已实施）
 
 ```python
-# 当前（反向）：
+# 修复前（反向）：
 return (overbought - rsi) / (overbought - oversold)
+# RSI=70 → 0.1, RSI=30 → 0.9
 
+# 修复后（正向）：
+return (rsi - oversold) / (overbought - oversold)
+# RSI=70 → 1.0, RSI=30 → 0.0
+```
+
+### 修复后 80 只标的 score 分布
+
+| 指标 | 修复前 | 修复后 |
+|------|--------|--------|
+| score 均值 | 0.3216 | 0.1192 |
+| score 最大值 | 0.6701 | 0.5811 |
+| 过 0.6 阈值 | 11/80 | 0/80 |
+| 过 0.5 阈值 | - | 3/80 |
+| 过 0.3 阈值 | 42/80 | 12/80 |
+
+**修复后分数整体下降**——因为超卖股不再被 RSI 奖励。这是正确的行为：策略不再选"跌多了该反弹"的股票。
+
+### 待验证
+
+Walkforward 因新浪 IP 封禁暂无法跑。用户解封后执行：
+```bash
+aqsp walkforward --source sina --start 2022-03-08 --end 2026-04-30 \
+  --train-days 120 --test-days 30 --purge-days 5 --min-score 0.1 \
+  --cache-path data/walkforward_cache_sina_rsi_fix \
+  --report docs/walkforward-rsi-fix-min01.md
+```
+
+### 其他待修复问题
+
+1. `return_score` 可为负数（`min(total_return/0.05, 1.0)` 当 total_return < 0），拖累 momentum_score
+2. `min_total_score=0.6` 阈值在单因子下仍过高
+3. quality/value 因子仍 disabled
 # 修复（正向）：
 return (rsi - oversold) / (overbought - oversold)
 ```
