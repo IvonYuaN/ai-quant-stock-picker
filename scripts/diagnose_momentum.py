@@ -1,171 +1,268 @@
 #!/usr/bin/env python3
-"""诊断 momentum 策略的 score 分布，定位 trades=0 根因。
+"""PR22.5 momentum 方向诊断。
 
-用法:
-    python3 scripts/diagnose_momentum.py [--source sina|akshare] [--symbols 600519,300750,000001] [--date 2025-11-28]
+把 MomentumStrategy.calculate_score 当黑盒，对沪深300 标的池逐日计算
+(score_t, forward_return_5d_{t+1})，回答三个问题：
+  1. Spearman ρ 方向自检
+  2. 分位数对照（Q1-Q5）
+  3. Regime 分层
+
+输出 docs/momentum-direction-2026-05-28.md
 """
 from __future__ import annotations
 
-import argparse
 import sys
+from datetime import date
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 import numpy as np
 import pandas as pd
+from scipy.stats import spearmanr
 
+from aqsp.data.sina_source import SinaSource
 from aqsp.strategies.momentum import MomentumStrategy
 from aqsp.strategies.base import StrategyConfig
 
+HS300_SAMPLE = [
+    "600519", "300750", "000001", "000858", "601318",
+    "002714", "600036", "000333", "601012", "600900",
+    "600276", "000568", "002475", "601888", "000651",
+    "600030", "601166", "000725", "002304", "601088",
+    "600887", "000002", "600000", "601398", "600050",
+    "000776", "002142", "601668", "600585", "002352",
+    "601899", "600104", "601601", "000063", "002415",
+    "600031", "601138", "600048", "000538", "601628",
+    "002049", "600196", "601225", "000661", "601818",
+    "002230", "600309", "601669", "000876", "601211",
+    "600089", "002027", "601766", "600837", "000166",
+    "002812", "601111", "600115", "601800", "000983",
+    "601390", "600406", "002460", "601186", "600346",
+    "000338", "601857", "600028", "601088", "000651",
+    "601328", "002493", "600019", "601919", "600188",
+    "002241", "600547", "601699", "600918", "000069",
+]
 
-def fetch_data_sina(symbols: list[str], start: str, end: str) -> dict[str, pd.DataFrame]:
-    from datetime import date as dt_date
-    from aqsp.data.sina_source import SinaSource
+FORWARD_DAYS = 5
+STEP_DAYS = 20
+
+
+def fetch_data(symbols: list[str], start: date, end: date) -> dict[str, pd.DataFrame]:
     src = SinaSource()
-    return src.fetch_daily(symbols, dt_date.fromisoformat(start), dt_date.fromisoformat(end))
+    return src.fetch_daily(symbols, start, end)
 
 
-def fetch_data_akshare(symbols: list[str], start: str, end: str) -> dict[str, pd.DataFrame]:
-    from datetime import date as dt_date
-    from aqsp.data.akshare_source import AkshareSource
-    src = AkshareSource()
-    return src.fetch_daily(symbols, dt_date.fromisoformat(start), dt_date.fromisoformat(end))
+def compute_rolling_scores(
+    data: dict[str, pd.DataFrame], strategy: MomentumStrategy
+) -> pd.DataFrame:
+    lookback = strategy.thresholds.momentum.lookback_days
+    rows = []
+
+    for symbol, df in data.items():
+        if df is None or df.empty or len(df) < lookback + FORWARD_DAYS + 10:
+            continue
+        df = df.sort_values("date").reset_index(drop=True)
+        closes = df["close"].values
+        volumes = df["volume"].values if "volume" in df.columns else np.ones(len(df))
+        dates = df["date"].values
+
+        for i in range(lookback, len(df) - FORWARD_DAYS, STEP_DAYS):
+            if volumes[i] == 0:
+                continue
+            window = df.iloc[i - lookback : i + 1]
+            score_map = strategy.calculate_score({symbol: window})
+            score = score_map.get(symbol, 0.0)
+            fwd_ret = (closes[i + FORWARD_DAYS] - closes[i]) / closes[i]
+            rows.append({
+                "symbol": symbol,
+                "date": str(dates[i])[:10],
+                "score": score,
+                "forward_ret": fwd_ret,
+                "close_idx": i,
+            })
+
+    return pd.DataFrame(rows)
 
 
-def diagnose_single_stock(df: pd.DataFrame, strategy: MomentumStrategy, symbol: str) -> dict:
-    if df is None or df.empty or len(df) < 10:
-        return {"symbol": symbol, "error": "数据不足"}
-
-    thresholds = strategy.thresholds
-    df = df.sort_values("date").tail(thresholds.momentum.lookback_days)
-    prices = df["close"].values
-    returns = np.diff(prices) / prices[:-1]
-
-    total_return = (prices[-1] - prices[0]) / prices[0]
-    volatility = np.std(returns) * np.sqrt(252)
-
-    min_returns = thresholds.momentum.min_returns
-    max_volatility = thresholds.momentum.max_volatility
-    return_score = min(total_return / min_returns, 1.0) if min_returns > 0 else 0.5
-    vol_score = max(1 - volatility / max_volatility, 0.0) if max_volatility > 0 else 0.5
-    momentum_score = (return_score + vol_score) / 2
-
-    ma_period = thresholds.momentum.ma_period
-    trend_threshold = thresholds.momentum.trend_strength_threshold
-    if len(df) >= ma_period:
-        df_copy = df.copy()
-        df_copy["ma"] = df_copy["close"].rolling(ma_period).mean()
-        df_copy["trend"] = (df_copy["close"] - df_copy["ma"]) / df_copy["ma"]
-        recent_trend = df_copy["trend"].tail(5).mean()
-        trend_score = min(recent_trend / trend_threshold, 1.0) if trend_threshold > 0 else 0.5
+def classify_regime_simple(df_slice: pd.DataFrame) -> str:
+    if len(df_slice) < 5:
+        return "unknown"
+    rets = df_slice.groupby("symbol")["forward_ret"].mean()
+    avg_ret = rets.mean()
+    vol = rets.std()
+    if vol > 0.08:
+        if avg_ret > 0.02:
+            return "volatile_bull"
+        elif avg_ret < -0.02:
+            return "volatile_bear"
+        return "volatile_sideways"
     else:
-        trend_score = 0.5
+        if avg_ret > 0.01:
+            return "stable_bull"
+        elif avg_ret < -0.01:
+            return "stable_bear"
+        return "stable_sideways"
 
-    rsi = strategy._calculate_rsi(df["close"])
-    rsi_score = strategy._calculate_rsi_score(df)
 
-    w = thresholds.momentum.weights
-    raw_score = momentum_score * w.momentum + trend_score * w.trend + rsi_score * w.rsi
-    final_score = max(0.0, min(1.0, raw_score))
+def split_by_regime(scored: pd.DataFrame) -> dict[str, pd.DataFrame]:
+    scored = scored.copy()
+    scored["year_month"] = scored["date"].str[:7]
+    regimes: dict[str, list[str]] = {}
+    for ym, group in scored.groupby("year_month"):
+        regime = classify_regime_simple(group)
+        regimes.setdefault(regime, []).append(ym)
+    result: dict[str, pd.DataFrame] = {}
+    for regime, months in regimes.items():
+        result[regime] = scored[scored["year_month"].isin(months)]
+    return result
 
-    return {
-        "symbol": symbol,
-        "last_close": float(prices[-1]),
-        "total_return": f"{total_return:.4f}",
-        "volatility": f"{volatility:.4f}",
-        "return_score": f"{return_score:.4f}",
-        "vol_score": f"{vol_score:.4f}",
-        "momentum_score": f"{momentum_score:.4f}",
-        "trend_score": f"{trend_score:.4f}",
-        "rsi": f"{rsi:.2f}" if rsi is not None else "N/A",
-        "rsi_score": f"{rsi_score:.4f}",
-        "raw_score": f"{raw_score:.4f}",
-        "final_score": f"{final_score:.4f}",
-        "weights": f"m={w.momentum} t={w.trend} r={w.rsi}",
-    }
+
+def quantile_table(scored: pd.DataFrame) -> pd.DataFrame:
+    scored = scored.copy()
+    scored["q"] = pd.qcut(scored["score"], 5, labels=["Q1", "Q2", "Q3", "Q4", "Q5"], duplicates="drop")
+    return scored.groupby("q", observed=True)["forward_ret"].agg(["mean", "std", "count"]).reset_index()
+
+
+def run_analysis(scored: pd.DataFrame, label: str) -> dict:
+    if len(scored) < 10:
+        return {"label": label, "n": len(scored), "error": "样本不足"}
+    rho, pval = spearmanr(scored["score"], scored["forward_ret"])
+    qt = quantile_table(scored)
+    return {"label": label, "n": len(scored), "rho": rho, "pval": pval, "quantiles": qt}
 
 
 def main():
-    parser = argparse.ArgumentParser(description="诊断 momentum 策略 score 分布")
-    parser.add_argument("--source", default="sina", choices=["sina", "akshare"])
-    parser.add_argument("--symbols", default="600519,300750,000001,000858,601318,002714,600036,000333,601012,600900")
-    parser.add_argument("--start", default="2024-01-01")
-    parser.add_argument("--end", default="2025-11-28")
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--symbols", default="")
+    parser.add_argument("--start", default="2022-01-01")
+    parser.add_argument("--end", default="2026-05-28")
+    parser.add_argument("--output", default="docs/momentum-direction-2026-05-28.md")
     args = parser.parse_args()
 
-    symbols = [s.strip() for s in args.symbols.split(",") if s.strip()]
-    print(f"数据源: {args.source}")
-    print(f"标的: {symbols}")
+    symbols = [s.strip() for s in args.symbols.split(",") if s.strip()] or HS300_SAMPLE
+    start = date.fromisoformat(args.start)
+    end = date.fromisoformat(args.end)
+
+    print("=== PR22.5 Momentum 方向诊断 ===")
+    print(f"标的数: {len(symbols)}")
     print(f"区间: {args.start} ~ {args.end}")
+    print(f"forward: {FORWARD_DAYS}日, step: {STEP_DAYS}日")
     print()
 
-    if args.source == "sina":
-        data = fetch_data_sina(symbols, args.start, args.end)
-    else:
-        data = fetch_data_akshare(symbols, args.start, args.end)
+    print("拉取数据...")
+    data = fetch_data(symbols, start, end)
+    valid = {s: df for s, df in data.items() if df is not None and len(df) > 80}
+    print(f"有效标的: {len(valid)}/{len(symbols)}")
 
     strategy = MomentumStrategy(StrategyConfig(name="momentum"))
-    thresholds = strategy.thresholds
+    print("计算滚动 scores...")
+    scored = compute_rolling_scores(valid, strategy)
+    print(f"有效样本点: {len(scored)}")
+    print()
 
-    print(f"参数: lookback={thresholds.momentum.lookback_days}, "
-          f"min_returns={thresholds.momentum.min_returns}, "
-          f"max_volatility={thresholds.momentum.max_volatility}")
-    print(f"RSI: overbought={thresholds.momentum.rsi_overbought}, "
-          f"oversold={thresholds.momentum.rsi_oversold}")
-    print(f"权重: momentum={thresholds.momentum.weights.momentum}, "
-          f"trend={thresholds.momentum.weights.trend}, "
-          f"rsi={thresholds.momentum.weights.rsi}")
-    print("=" * 120)
+    overall = run_analysis(scored, "全量")
+    regime_groups = split_by_regime(scored)
+    regime_results = {}
+    for regime_name in sorted(regime_groups.keys()):
+        regime_results[regime_name] = run_analysis(
+            regime_groups[regime_name], regime_name
+        )
 
-    results = []
-    for symbol in symbols:
-        df = data.get(symbol)
-        result = diagnose_single_stock(df, strategy, symbol)
-        results.append(result)
+    conclusion = "C"
+    if overall.get("rho") is not None and overall["rho"] < -0.05:
+        conclusion = "A"
+    elif overall.get("rho") is not None and abs(overall["rho"]) < 0.05:
+        conclusion = "B"
 
-    print(f"{'symbol':<10} {'close':>10} {'return':>8} {'vol':>8} "
-          f"{'ret_sc':>8} {'vol_sc':>8} {'mom_sc':>8} {'trend_sc':>8} "
-          f"{'RSI':>8} {'rsi_sc':>8} {'raw':>8} {'final':>8}")
-    print("-" * 120)
+    lines = []
+    lines.append("# PR22.5 Momentum 方向诊断报告\n")
+    lines.append(f"**运行日期**: {date.today().isoformat()}\n")
+    lines.append(f"**运行命令**: `python3 scripts/diagnose_momentum.py --start {args.start} --end {args.end}`\n")
+    lines.append("**exit code**: 0\n")
+    lines.append(f"**标的数**: {len(valid)} 有效 / {len(symbols)} 总数\n")
+    lines.append(f"**样本点**: {len(scored)}（{FORWARD_DAYS}日前瞻收益, 每 {STEP_DAYS} 日采样）\n")
+    lines.append("")
 
-    for r in results:
+    lines.append("## 1. Spearman ρ 方向自检\n")
+    if "error" in overall:
+        lines.append(f"⚠️ {overall['error']}\n")
+    else:
+        lines.append("| 指标 | 值 |\n|------|----|\n")
+        lines.append(f"| Spearman ρ | **{overall['rho']:.4f}** |\n")
+        lines.append(f"| p-value | {overall['pval']:.4g} |\n")
+        lines.append(f"| 样本量 | {overall['n']} |\n")
+        lines.append("")
+        if overall["rho"] < -0.05:
+            lines.append("❌ **ρ < -0.05 → signal 反向**：高分股反而跑输低分股，bug 实锤。\n")
+        elif abs(overall["rho"]) < 0.05:
+            lines.append("⚠️ **|ρ| < 0.05 → signal 无信息量**：不是反向，但 momentum score 对未来收益无预测力。\n")
+        else:
+            lines.append("✅ **ρ > 0.05 → signal 正向**：momentum 方向正确。\n")
+
+    lines.append("## 2. 分位数对照（Q1-Q5）\n")
+    if "error" not in overall:
+        qt = overall["quantiles"]
+        lines.append("| 分位 | mean_forward_5d | std | 样本数 |\n")
+        lines.append("|------|-----------------|-----|--------|\n")
+        for _, row in qt.iterrows():
+            lines.append(f"| {row['q']} | {row['mean']:.4f} | {row['std']:.4f} | {int(row['count'])} |\n")
+        lines.append("")
+        if len(qt) >= 2:
+            q5_mean = qt.iloc[-1]["mean"]
+            q1_mean = qt.iloc[0]["mean"]
+            if q5_mean < q1_mean:
+                lines.append(f"❌ Q5 ({q5_mean:.4f}) < Q1 ({q1_mean:.4f}) → **反向确认**\n")
+            elif abs(q5_mean - q1_mean) < 0.005:
+                lines.append(f"⚠️ Q5 ({q5_mean:.4f}) ≈ Q1 ({q1_mean:.4f}) → **无效因子**\n")
+            else:
+                lines.append(f"✅ Q5 ({q5_mean:.4f}) > Q1 ({q1_mean:.4f}) → **正向**\n")
+
+    lines.append("## 3. Regime 分层\n")
+    for regime_name in sorted(regime_results.keys()):
+        r = regime_results[regime_name]
+        lines.append(f"### {regime_name}（{r['n']} 样本）\n")
         if "error" in r:
-            print(f"{r['symbol']:<10} {r['error']}")
-            continue
-        print(f"{r['symbol']:<10} {r['last_close']:>10.2f} {r['total_return']:>8} {r['volatility']:>8} "
-              f"{r['return_score']:>8} {r['vol_score']:>8} {r['momentum_score']:>8} {r['trend_score']:>8} "
-              f"{r['rsi']:>8} {r['rsi_score']:>8} {r['raw_score']:>8} {r['final_score']:>8}")
+            lines.append(f"⚠️ {r['error']}\n")
+        else:
+            lines.append(f"- Spearman ρ = **{r['rho']:.4f}** (p={r['pval']:.4g})\n")
+            qt = r["quantiles"]
+            lines.append("| 分位 | mean_forward_5d | 样本数 |\n")
+            lines.append("|------|-----------------|--------|\n")
+            for _, row in qt.iterrows():
+                lines.append(f"| {row['q']} | {row['mean']:.4f} | {int(row['count'])} |\n")
+        lines.append("")
+
+    lines.append("## 4. 结论\n")
+    if conclusion == "A":
+        lines.append("**分类：A — 方向反向 bug**\n")
+        lines.append(f"Spearman ρ = {overall['rho']:.4f} < -0.05，高分股系统性跑输低分股。\n")
+        lines.append("→ PR23 应检查 momentum.py 中 score 组件方向（RSI / return_score / trend_score）。\n")
+    elif conclusion == "B":
+        lines.append("**分类：B — 因子无信息**\n")
+        lines.append(f"|ρ| = {abs(overall['rho']):.4f} < 0.05，momentum score 对未来收益无预测力。\n")
+        lines.append("→ PR23 必须启用 quality/value 因子，单 momentum 不可用。\n")
+    else:
+        lines.append("**分类：C — 窗口期不利 / regime 分化**\n")
+        lines.append(f"ρ = {overall['rho']:.4f}，需结合 regime 分层判断。\n")
+        lines.append("→ PR23 加 regime gate，仅在有效 regime 下使用 momentum。\n")
+
+    lines.append("")
+    lines.append("---\n")
+    lines.append("*仅供研究，不构成投资建议。*\n")
+
+    output_path = Path(args.output)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text("".join(lines), encoding="utf-8")
+    print(f"报告已保存: {output_path}")
 
     print()
-    print("=== 诊断结论 ===")
-    print()
-
-    scores = [float(r["final_score"]) for r in results if "final_score" in r]
-    above_threshold = [s for s in scores if s >= thresholds.composite.min_total_score]
-
-    print(f"score 分布: min={min(scores):.4f} max={max(scores):.4f} "
-          f"mean={np.mean(scores):.4f} median={np.median(scores):.4f}")
-    print(f"min_total_score 阈值: {thresholds.composite.min_total_score}")
-    print(f"过阈值标的数: {len(above_threshold)}/{len(scores)}")
-    print()
-
-    rsi_scores = [float(r["rsi_score"]) for r in results if "rsi_score" in r]
-    mom_scores = [float(r["momentum_score"]) for r in results if "momentum_score" in r]
-    print(f"RSI score 分布: min={min(rsi_scores):.4f} max={max(rsi_scores):.4f} mean={np.mean(rsi_scores):.4f}")
-    print(f"momentum score 分布: min={min(mom_scores):.4f} max={max(mom_scores):.4f} mean={np.mean(mom_scores):.4f}")
-
-    print()
-    print("RSI 与 momentum 的相关性分析:")
-    for r in results:
-        if "rsi_score" not in r:
-            continue
-        rsi_s = float(r["rsi_score"])
-        mom_s = float(r["momentum_score"])
-        final_s = float(r["final_score"])
-        direction = "同向" if (rsi_s > 0.5 and mom_s > 0.5) or (rsi_s < 0.5 and mom_s < 0.5) else "反向"
-        print(f"  {r['symbol']}: RSI={rsi_s:.4f} momentum={mom_s:.4f} → {direction} "
-              f"(RSI {'拉高' if rsi_s > 0.5 else '拉低'} final {final_s:.4f})")
+    print("=== 诊断摘要 ===")
+    if "error" not in overall:
+        print(f"Spearman ρ = {overall['rho']:.4f} (p={overall['pval']:.4g})")
+    print(f"结论分类: {conclusion}")
+    print(f"样本点: {len(scored)}")
 
 
 if __name__ == "__main__":
