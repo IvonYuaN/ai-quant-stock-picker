@@ -42,13 +42,13 @@ python -m aqsp.cli screen --csv data/sample_ohlcv.csv --mode open --report repor
 
 `mode=open` 更保守，只用最新完整日线，偏向“次日开盘观察池”；`mode=close` 允许使用最新交易日收盘形态，偏向“尾盘/收盘后备选池”。
 
-## 与 daily_stock_analysis 的关系
+## 研究来源
 
-本项目抽取 `daily_stock_analysis` 的数据源、策略问股、报告推送思路，但保持为轻量选股引擎。推荐后续集成路径：
+本项目不从 `daily_stock_analysis` 派生策略。选股策略来自公开开源项目、A股常见交易理论和后续 walk-forward 验证，进入运行前必须先写入 registry 并转成可测试的纯函数。
 
-1. 本项目产出候选池 CSV/Markdown。
-2. 把候选股票写入 `daily_stock_analysis` 的 `STOCK_LIST`。
-3. 交给 `daily_stock_analysis` 做新闻、公告、LLM 决策报告和推送。
+- 数据源清单：`config/data_sources.yaml`
+- 策略来源清单：`config/strategy_sources.yaml`
+- 本地 registry 输出：`python scripts/collect_research_registry.py`
 
 ## GitHub 定时通知
 

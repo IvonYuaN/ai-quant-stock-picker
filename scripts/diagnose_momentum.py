@@ -17,7 +17,6 @@ import pandas as pd
 
 from aqsp.strategies.momentum import MomentumStrategy
 from aqsp.strategies.base import StrategyConfig
-from aqsp.strategies.thresholds import load_thresholds
 
 
 def fetch_data_sina(symbols: list[str], start: str, end: str) -> dict[str, pd.DataFrame]:

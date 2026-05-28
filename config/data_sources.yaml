@@ -1,0 +1,141 @@
+version: "2026-05-28"
+notes: "A股数据源候选清单。runtime_ready 表示仓库已有 DataSource 实现或可直接配置使用。"
+
+sources:
+  - id: akshare
+    name: AKShare
+    category: market_data
+    markets: [a_share, hk, us, futures, macro]
+    access: python_package
+    cost: free
+    runtime_ready: true
+    strengths:
+      - A股日线、实时行情、指数、板块、资金、公告入口丰富
+      - 社区活跃，适合快速扩展数据面
+    risks:
+      - 上游网页接口变化会导致字段或接口失效
+      - 免费接口存在频率和稳定性限制
+    python_package: akshare
+    reference: "https://github.com/akfamily/akshare"
+
+  - id: sina
+    name: Sina Finance HQ
+    category: market_data
+    markets: [a_share]
+    access: http_api
+    cost: free
+    runtime_ready: true
+    strengths:
+      - 实时行情接口轻量，适合 AKShare 失败时兜底
+      - 无需密钥
+    risks:
+      - 需要 Referer；历史 K 线接口稳定性一般
+      - 字段协议非正式文档化
+    reference: "http://hq.sinajs.cn"
+
+  - id: eastmoney
+    name: Eastmoney Push2
+    category: market_data
+    markets: [a_share, index, sector]
+    access: http_api
+    cost: free
+    runtime_ready: true
+    strengths:
+      - A股行情、K线、资金流、板块数据覆盖广
+      - 网页端实际使用，延迟较低
+    risks:
+      - 参数和字段容易变动
+      - 需要做好字段校验和限频
+    reference: "https://push2.eastmoney.com"
+
+  - id: tencent
+    name: Tencent Finance
+    category: market_data
+    markets: [a_share]
+    access: http_api
+    cost: free
+    runtime_ready: true
+    strengths:
+      - 实时报价可作为第二兜底
+      - 包含涨跌停等部分盘口字段
+    risks:
+      - 历史数据接口非正式，兼容性需持续测试
+    reference: "http://qt.gtimg.cn"
+
+  - id: mootdx
+    name: mootdx / TDX
+    category: market_data
+    markets: [a_share]
+    access: python_package
+    cost: free
+    runtime_ready: true
+    strengths:
+      - 通达信行情生态，适合本地行情兜底
+      - 可补充日线、分时、盘口
+    risks:
+      - 依赖通达信服务器可用性
+      - 需要额外安装 mootdx
+    python_package: mootdx
+    reference: "https://github.com/mootdx/mootdx"
+
+  - id: baostock
+    name: Baostock
+    category: historical_data
+    markets: [a_share]
+    access: python_package
+    cost: free
+    runtime_ready: false
+    strengths:
+      - 免费 A 股历史行情和财务数据
+      - 适合离线回测补数
+    risks:
+      - 需要登录会话
+      - 实时能力弱，不适合作为盘中主源
+    python_package: baostock
+    reference: "http://baostock.com"
+
+  - id: tushare
+    name: Tushare Pro
+    category: historical_fundamental
+    markets: [a_share]
+    access: token_api
+    cost: freemium
+    runtime_ready: false
+    strengths:
+      - 财务、公告、资金、指数成分、交易日历较完整
+      - 适合 point-in-time 数据和研究库
+    risks:
+      - 需要 token 和积分权限
+      - GitHub Actions 需配置 secret
+    python_package: tushare
+    reference: "https://tushare.pro"
+
+  - id: qstock
+    name: qstock
+    category: market_data
+    markets: [a_share, hk, us]
+    access: python_package
+    cost: free
+    runtime_ready: false
+    strengths:
+      - 聚合式金融数据包，易用
+      - 可作为 AKShare 补充
+    risks:
+      - 项目维护和接口稳定性需验证
+    python_package: qstock
+    reference: "https://github.com/tkfy920/qstock"
+
+  - id: efinance
+    name: efinance
+    category: market_data
+    markets: [a_share, fund]
+    access: python_package
+    cost: free
+    runtime_ready: false
+    strengths:
+      - 东方财富数据封装，A股行情和资金流方便
+    risks:
+      - 依赖网页接口，字段变化风险
+    python_package: efinance
+    reference: "https://github.com/Micro-sheep/efinance"
+

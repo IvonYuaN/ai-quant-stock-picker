@@ -1,0 +1,103 @@
+version: "2026-05-28"
+notes: "策略与交易理论来源清单。进入实盘前必须转成纯函数策略并通过 walk-forward。"
+
+families:
+  - id: rps_relative_strength
+    name: RPS 相对强度
+    hypothesis: "A股短中期资金偏好强者恒强，横截面强势股在趋势市中有持续性。"
+    current_status: implemented_partial
+    signals:
+      - 20/60日收益横截面排名
+      - 接近阶段新高
+      - 均线多头
+    validation_required:
+      - 按月 walk-forward
+      - 按 regime 分层统计
+      - 扣除涨停不可成交样本
+    references:
+      - "InStock 综合选股和指标体系"
+      - "A-share-Quant-Selector 相对强弱类策略"
+
+  - id: volume_breakout
+    name: 放量突破
+    hypothesis: "平台突破伴随成交量扩张，表示增量资金进入；但高位假突破需要止损约束。"
+    current_status: implemented_partial
+    signals:
+      - 突破20日高点或平台上沿
+      - volume_ratio 高于阈值
+      - 收盘位于日内强势区间
+    validation_required:
+      - 次日开盘成交验证
+      - 长上影和涨停不可买过滤
+      - 不同行业/市值分层
+    references:
+      - "通达信/同花顺常见突破模型"
+      - "Sequoia-X 收盘扫描推送形态"
+
+  - id: ma_pullback
+    name: 均线缩量回踩
+    hypothesis: "趋势仍在时，缩量回踩均线代表抛压下降，次日确认后风险收益较追高更好。"
+    current_status: implemented_partial
+    signals:
+      - MA5 > MA10 > MA20
+      - 价格回踩 MA5/MA10 区间
+      - 回踩成交量低于均量
+    validation_required:
+      - 回踩后 T+1 开盘买入
+      - MA20 跌破止损
+      - 震荡市和趋势市分开统计
+    references:
+      - "A股趋势交易/均线低吸常见策略"
+
+  - id: bowl_rebound
+    name: 碗口反弹
+    hypothesis: "弱势下跌后动能衰竭且温和回升，可能形成低位修复，但需防止下跌中继。"
+    current_status: implemented_partial
+    signals:
+      - 从20日低点温和反弹
+      - MACD 柱改善
+      - RSI 未过热
+    validation_required:
+      - 熊市 regime 单独降权
+      - 跌破前低止损
+    references:
+      - "A-share-Quant-Selector BowlReboundStrategy"
+
+  - id: low_vol_trend
+    name: 低波趋势
+    hypothesis: "中期趋势向上且波动收敛的股票，回撤风险相对低，适合作为稳健观察池。"
+    current_status: implemented_partial
+    signals:
+      - MA20 > MA60
+      - bias20 不高
+      - 振幅和量比不过热
+    validation_required:
+      - 收益/回撤联合评价
+      - 与基准超额收益比较
+    references:
+      - "低波动动量/趋势跟随组合理论"
+
+  - id: northbound_flow
+    name: 北向资金因子
+    hypothesis: "北向资金持续流入可能改善大盘和核心资产风险偏好。"
+    current_status: data_factor_only
+    signals:
+      - 5日北向净流入 z-score
+      - 与指数 regime 联动
+    validation_required:
+      - 作为大盘过滤器而非个股直接买入信号
+    references:
+      - "沪深港通资金流研究"
+
+  - id: margin_trading
+    name: 融资融券情绪
+    hypothesis: "融资余额快速变化反映杠杆风险偏好，极端变化可作为风控因子。"
+    current_status: data_factor_only
+    signals:
+      - 个股/市场融资余额5日变化
+      - 极端分位降权
+    validation_required:
+      - 与波动率和回撤联动验证
+    references:
+      - "融资融券情绪因子研究"
+
