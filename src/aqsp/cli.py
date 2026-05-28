@@ -1,13 +1,19 @@
 from __future__ import annotations
 
 import argparse
+from datetime import date
 from pathlib import Path
 
 import pandas as pd
 
 from aqsp.config import load_runtime_config
+from aqsp.core.errors import DataError
 from aqsp.data import fetch_akshare, load_csv, fetch_with_source
 from aqsp.data.akshare_source import AkshareSource
+from aqsp.data.eastmoney_source import EastmoneySource
+from aqsp.data.multi_source import MultiSource
+from aqsp.data.sina_source import SinaSource
+from aqsp.data.tencent_source import TencentSource
 from aqsp.filters_lethal.pipeline import LethalFilterPipeline
 from aqsp.freshness import assert_fresh_data
 from aqsp.ledger import (
@@ -35,7 +41,10 @@ def main(argv: list[str] | None = None) -> int:
     screen.add_argument("--symbols", default="", help="comma separated A-share symbols")
     screen.add_argument("--csv", default="", help="local OHLCV csv path")
     screen.add_argument(
-        "--source", choices=["akshare"], default="akshare", help="data source"
+        "--source",
+        choices=["multi", "akshare", "sina", "eastmoney", "tencent"],
+        default="multi",
+        help="data source",
     )
     screen.add_argument("--limit", type=int, default=20)
     screen.add_argument("--min-avg-amount", type=float, default=50_000_000)
@@ -50,7 +59,10 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--symbols", default="")
     run.add_argument("--csv", default="")
     run.add_argument(
-        "--source", choices=["akshare"], default="akshare", help="data source"
+        "--source",
+        choices=["multi", "akshare", "sina", "eastmoney", "tencent"],
+        default="multi",
+        help="data source",
     )
     run.add_argument("--limit", type=int, default=0)
     run.add_argument("--min-avg-amount", type=float, default=0)
@@ -92,7 +104,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     wf.add_argument("--report", default="docs/walkforward-2026-05.md")
     wf.add_argument(
-        "--source", choices=["akshare", "mootdx", "sina"], default="akshare"
+        "--source",
+        choices=["multi", "akshare", "mootdx", "sina", "eastmoney", "tencent"],
+        default="multi",
     )
 
     monitor_cmd = sub.add_parser("monitor", help="run monitoring checks")
@@ -112,23 +126,64 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     args = parser.parse_args(argv)
-    if args.command == "screen":
-        return run_screen(args)
-    if args.command == "run":
-        return run_scheduled(args)
-    if args.command == "walkforward":
-        return run_walkforward(args)
-    if args.command == "briefing":
-        return run_briefing(args)
-    if args.command == "monitor":
-        return run_monitor(args)
+    try:
+        if args.command == "screen":
+            return run_screen(args)
+        if args.command == "run":
+            return run_scheduled(args)
+        if args.command == "walkforward":
+            return run_walkforward(args)
+        if args.command == "briefing":
+            return run_briefing(args)
+        if args.command == "monitor":
+            return run_monitor(args)
+    except DataError as exc:
+        print(f"数据错误: {exc}")
+        return 1
     return 1
 
 
 def _get_source(source_name: str):
+    if source_name == "multi":
+        return MultiSource(
+            AkshareSource(),
+            [SinaSource(), EastmoneySource(), TencentSource()],
+        )
     if source_name == "akshare":
         return AkshareSource()
+    if source_name == "sina":
+        return SinaSource()
+    if source_name == "eastmoney":
+        return EastmoneySource()
+    if source_name == "tencent":
+        return TencentSource()
     raise ValueError(f"Unknown data source: {source_name}")
+
+
+def _fetch_frames_for_cli(
+    source_name: str,
+    symbols: list[str],
+    *,
+    benchmark_symbol: str | None,
+    cache_path: str | None = None,
+    days: int = 260,
+) -> dict[str, pd.DataFrame]:
+    try:
+        if source_name == "akshare":
+            return fetch_akshare(
+                symbols,
+                days=days,
+                benchmark_symbol=benchmark_symbol,
+                cache_path=cache_path,
+            )
+        source = _get_source(source_name)
+        return fetch_with_source(
+            source, symbols, days=days, benchmark_symbol=benchmark_symbol
+        )
+    except DataError:
+        raise
+    except Exception as exc:
+        raise DataError(f"数据源 {source_name} 获取失败: {exc}") from exc
 
 
 def _count_independent_signal_days(ledger_path: str) -> int:
@@ -140,6 +195,13 @@ def _count_independent_signal_days(ledger_path: str) -> int:
         if row.get("status") in ("validated", "pending"):
             signal_dates.add(row.get("signal_date", ""))
     return len(signal_dates)
+
+
+def _walkforward_fetch_days(start: str, end: str) -> int:
+    start_d = date.fromisoformat(start)
+    end_d = date.fromisoformat(end)
+    span_days = max((end_d - start_d).days, 0)
+    return max(260, int(span_days * 1.8) + 90)
 
 
 def _get_hs300_symbols() -> list[str]:
@@ -475,6 +537,10 @@ def _regime_description(regime: str) -> str:
         "volatile_bear": "波动下跌：高波动+负趋势",
         "stable_sideways": "稳定盘整：低波动+无趋势",
         "volatile_sideways": "波动盘整：高波动+无趋势",
+        "bull_trend": "牛市趋势：20日均收益 > 0.5%",
+        "mild_bear": "温和熊市：20日均收益 -0.5% ~ -2%",
+        "sideways": "震荡市：20日均收益 -0.5% ~ 0.5%",
+        "bear_filter": "熊市过滤：20日均收益 < -2%",
     }
     return descriptions.get(regime, "未知 regime")
 
@@ -527,13 +593,11 @@ def run_screen(args: argparse.Namespace) -> int:
         symbols = [item.strip() for item in args.symbols.split(",") if item.strip()]
         if not symbols:
             raise SystemExit("--symbols or --csv is required")
-        if args.source == "akshare":
-            frames = fetch_akshare(symbols, benchmark_symbol=args.benchmark_symbol)
-        else:
-            source = _get_source(args.source)
-            frames = fetch_with_source(
-                source, symbols, benchmark_symbol=args.benchmark_symbol
-            )
+        frames = _fetch_frames_for_cli(
+            args.source,
+            symbols,
+            benchmark_symbol=args.benchmark_symbol,
+        )
 
     config = ScreeningConfig(mode=args.mode, min_avg_amount=args.min_avg_amount)
     picks = screen_universe(frames, config)[: args.limit]
@@ -567,12 +631,11 @@ def run_scheduled(args: argparse.Namespace) -> int:
 
     if args.csv:
         frames = load_csv(args.csv)
-    elif args.source == "akshare":
-        frames = fetch_akshare(symbols, benchmark_symbol=args.benchmark_symbol)
     else:
-        source = _get_source(args.source)
-        frames = fetch_with_source(
-            source, symbols, benchmark_symbol=args.benchmark_symbol
+        frames = _fetch_frames_for_cli(
+            args.source,
+            symbols,
+            benchmark_symbol=args.benchmark_symbol,
         )
 
     latest = assert_fresh_data(frames, max_data_lag_days)
@@ -726,7 +789,7 @@ def run_walkforward(args: argparse.Namespace) -> int:
     import sys
     from aqsp.backtest.walk_forward import WalkForwardTester
     from aqsp.core.time import now_shanghai, today_shanghai
-    from aqsp.data import fetch_akshare, load_csv
+    from aqsp.data import load_csv
     from aqsp.strategies.composite import CompositeStrategy
     from aqsp.strategies.thresholds import load_thresholds
 
@@ -766,9 +829,13 @@ def run_walkforward(args: argparse.Namespace) -> int:
     if logger:
         logger.info("获取 %d 只股票数据...", len(symbols))
 
-    if args.source == "akshare":
-        frames = fetch_akshare(
-            symbols, benchmark_symbol=None, cache_path=args.cache_path
+    if args.source in {"multi", "akshare", "eastmoney", "tencent"}:
+        frames = _fetch_frames_for_cli(
+            args.source,
+            symbols,
+            benchmark_symbol=None,
+            cache_path=args.cache_path or None,
+            days=_walkforward_fetch_days(args.start, args.end),
         )
     elif args.source == "mootdx":
         from datetime import date as _date
@@ -813,17 +880,6 @@ def run_walkforward(args: argparse.Namespace) -> int:
     print(f"有效标的: {len(filtered)} 只")
     if logger:
         logger.info("有效标的: %d 只", len(filtered))
-
-    # Fetch fundamental data (PE/PB) and merge into OHLCV
-    try:
-        from aqsp.data.sina_fundamental import SinaFundamentalSource
-
-        fund_src = SinaFundamentalSource()
-        fundamentals = fund_src.fetch_realtime_fundamentals(list(filtered.keys()))
-        filtered = fund_src.merge_fundamentals_into_ohlcv(filtered, fundamentals)
-        print(f"基本面数据: {len(fundamentals)} 只有 PE/PB")
-    except Exception as e:
-        print(f"⚠️  基本面数据获取失败: {e}，quality/value 因子将返回中性值")
 
     thresholds = load_thresholds()
     if args.min_score is not None:
