@@ -115,7 +115,10 @@ def main(argv: list[str] | None = None) -> int:
         "--horizon-days", type=int, default=None, help="持仓天数 (默认: 3)"
     )
     wf.add_argument(
-        "--pool", type=str, default=None, help="标的池: sh300, zz500, zz1000 (默认: sh300)"
+        "--pool", type=str, default=None, help="标的池: sh300, zz500, zz1000, all (默认: sh300)"
+    )
+    wf.add_argument(
+        "--tiered-stop", action="store_true", default=False, help="启用分级止损（3.1%硬止损+分级减仓）"
     )
 
     monitor_cmd = sub.add_parser("monitor", help="run monitoring checks")
@@ -825,7 +828,15 @@ def run_walkforward(args: argparse.Namespace) -> int:
 
     symbols = [s.strip() for s in args.symbols.split(",") if s.strip()]
     if not symbols:
-        if args.pool and args.pool != "sh300":
+        if args.pool == "all":
+            src = _get_source(args.source)
+            if hasattr(src, "get_available_symbols"):
+                symbols = src.get_available_symbols()
+                print(f"使用全市场标的池: {len(symbols)} 只")
+            else:
+                symbols = _get_hs300_symbols()
+                print(f"数据源不支持全市场查询，回退到沪深300: {len(symbols)} 只")
+        elif args.pool and args.pool != "sh300":
             from aqsp.universe.pool import UniversePool
 
             pool = UniversePool(source=_get_source(args.source))
@@ -961,6 +972,7 @@ def run_walkforward(args: argparse.Namespace) -> int:
         test_period_days=args.test_days,
         purge_days=args.purge_days,
         horizon_days=args.horizon_days or 3,
+        use_tiered_stop=getattr(args, "tiered_stop", False),
     )
 
     print("开始 walk-forward 回测...")
