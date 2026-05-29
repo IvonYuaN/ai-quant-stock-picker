@@ -1,0 +1,110 @@
+bash: no job control in this shell
+=== git status ===
+ M .env.example
+ M .github/workflows/dry-run.yml
+ M .github/workflows/scheduled-screen.yml
+ M .gitignore
+ M config/data_sources.yaml
+ M config/strategy_sources.yaml
+ M config/thresholds.yaml
+ M docs/open_source_research.md
+ M scripts/check_pr_evidence.sh
+ M scripts/collect_stock_data.py
+ M src/aqsp/backtest/walk_forward.py
+ M src/aqsp/data/akshare_source.py
+ M src/aqsp/data/mootdx_source.py
+ M src/aqsp/data/multi_source.py
+ M tests/test_backtest.py
+ M tests/test_cli_walkforward.py
+ M tests/test_data_multi.py
+?? "A\350\202\241\351\207\217\345\214\226\345\210\206\346\236\220\346\225\260\346\215\256/"
+?? config/research_queries.yaml
+?? data/open_source_research.jsonl
+?? docs/feasibility-assessment-2026-05-29.md
+?? docs/open_source_quant_research.md
+?? docs/research_absorption.json
+?? docs/research_absorption.md
+?? docs/research_pipeline.md
+?? docs/secret-and-upload-policy.md
+?? docs/source_level_absorption.md
+?? docs/walkforward-20d.md
+?? docs/walkforward-baostock-pit.md
+?? docs/walkforward-cached.md
+?? docs/walkforward-eastmoney.md
+?? docs/walkforward-final-check.md
+?? docs/walkforward-final.md
+?? docs/walkforward-mr-mom-20d.md
+?? docs/walkforward-mr.md
+?? docs/walkforward-regime-final.md
+?? docs/walkforward-regime-fixed.md
+?? docs/walkforward-regime-v2.md
+?? docs/walkforward-regime-v3.md
+?? docs/walkforward-sqlite-pit.md
+?? docs/walkforward-triple-tiered.md
+?? docs/walkforward-v5.md
+?? docs/walkforward-volume.md
+?? pr_evidence.txt
+?? scripts/absorb_research_findings.py
+?? scripts/check_no_secrets.py
+?? scripts/collect_open_source_research.py
+?? scripts/validate_research_registries.py
+?? tests/test_check_no_secrets.py
+?? tests/test_research_absorption.py
+?? tests/test_research_collector.py
+?? tests/test_research_registries.py
+
+=== git diff --stat HEAD~1 ===
+ .env.example                           |   5 +
+ .github/workflows/dry-run.yml          |  40 +-----
+ .github/workflows/scheduled-screen.yml |  22 +---
+ .gitignore                             |   2 +
+ config/data_sources.yaml               | 100 ++++++++++++++-
+ config/strategy_sources.yaml           | 129 +++++++++++++++++++-
+ config/thresholds.yaml                 |  13 +-
+ docs/open_source_research.md           |   6 +
+ scripts/check_pr_evidence.sh           |  44 ++++++-
+ scripts/collect_stock_data.py          |   5 +-
+ src/aqsp/backtest/walk_forward.py      | 215 ++++++++++++++++++++++++++++-----
+ src/aqsp/cli.py                        |  16 ++-
+ src/aqsp/data/akshare_source.py        |  33 +++--
+ src/aqsp/data/mootdx_source.py         |   3 +-
+ src/aqsp/data/multi_source.py          |   1 +
+ src/aqsp/strategies/composite.py       |  29 +++++
+ src/aqsp/strategies/thresholds.py      |   1 +
+ src/aqsp/strategies/triple_rise.py     | 108 +++++++++++++++++
+ tests/test_backtest.py                 | 133 ++++++++++++++++++++
+ tests/test_cli_walkforward.py          |  60 +++++++++
+ tests/test_data_multi.py               |   9 ++
+ tests/test_strategies.py               |   7 +-
+ tests/test_triple_rise.py              |  97 +++++++++++++++
+ 23 files changed, 958 insertions(+), 120 deletions(-)
+
+=== pytest tests/ -q ===
+        strategy = CompositeStrategy(config)
+    
+        detailed = strategy.calculate_detailed_scores({"600000": df, "600001": df})
+        assert "600000" in detailed
+        assert "momentum" in detailed["600000"]
+        assert "total" in detailed["600000"]
+>       assert "quality" in detailed["600000"]
+E       AssertionError: assert 'quality' in {'momentum': np.float64(0.7149153257979151), 'total': np.float64(0.4749576628989575), 'triple_rise': 0.23500000000000004, 'volume': np.float64(0.6083333333333333)}
+
+tests/test_strategies.py:246: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_strategies.py::test_load_thresholds - AssertionError: assert False is True
+ +  where False = QualityThresholds(enabled=False, min_roe=0.1, min_roa=0.05, max_debt_ratio=0.6, min_cash_flow=0.0, operating_margin_threshold=0.05, eps_growth_min=0.1, weights=QualityWeights(roe=0.3, roa=0.25, debt=0.25, margin=0.2)).enabled
+ +    where QualityThresholds(enabled=False, min_roe=0.1, min_roa=0.05, max_debt_ratio=0.6, min_cash_flow=0.0, operating_margin_threshold=0.05, eps_growth_min=0.1, weights=QualityWeights(roe=0.3, roa=0.25, debt=0.25, margin=0.2)) = Thresholds(version='1.0.0', effective_from='', last_walkforward_run='2026-05-28', description='策略阈值配置 — version 回退至 1....ier=1.5, price_ma_period=20, correlation_window=10, weights=VolumeWeights(surge=0.4, breakout=0.35, correlation=0.25))).quality
+FAILED tests/test_strategies.py::test_composite_strategy_momentum_only - AssertionError: assert False is True
+ +  where False = QualityThresholds(enabled=False, min_roe=0.1, min_roa=0.05, max_debt_ratio=0.6, min_cash_flow=0.0, operating_margin_threshold=0.05, eps_growth_min=0.1, weights=QualityWeights(roe=0.3, roa=0.25, debt=0.25, margin=0.2)).enabled
+ +    where QualityThresholds(enabled=False, min_roe=0.1, min_roa=0.05, max_debt_ratio=0.6, min_cash_flow=0.0, operating_margin_threshold=0.05, eps_growth_min=0.1, weights=QualityWeights(roe=0.3, roa=0.25, debt=0.25, margin=0.2)) = Thresholds(version='1.0.0', effective_from='', last_walkforward_run='2026-05-28', description='策略阈值配置 — version 回退至 1....ier=1.5, price_ma_period=20, correlation_window=10, weights=VolumeWeights(surge=0.4, breakout=0.35, correlation=0.25))).quality
+ +      where Thresholds(version='1.0.0', effective_from='', last_walkforward_run='2026-05-28', description='策略阈值配置 — version 回退至 1....ier=1.5, price_ma_period=20, correlation_window=10, weights=VolumeWeights(surge=0.4, breakout=0.35, correlation=0.25))) = <aqsp.strategies.composite.CompositeStrategy object at 0x129995190>.thresholds
+FAILED tests/test_strategies.py::test_composite_strategy_detailed_momentum_only - AssertionError: assert 'quality' in {'momentum': np.float64(0.7149153257979151), 'total': np.float64(0.4749576628989575), 'triple_rise': 0.23500000000000004, 'volume': np.float64(0.6083333333333333)}
+3 failed, 355 passed in 46.08s
+pytest_exit=1
+
+=== ruff check src/ tests/ ===
+All checks passed!
+ruff_exit=0
+
+=== generated at 2026-05-29T05:09:56Z ===
+overall_exit=1

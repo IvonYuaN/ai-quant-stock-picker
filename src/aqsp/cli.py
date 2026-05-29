@@ -987,17 +987,15 @@ def run_walkforward(args: argparse.Namespace) -> int:
             regime_counts[regime] = regime_counts.get(regime, 0) + 1
 
     tl_dr = []
-    if result.deflated_sharpe > 1.0 and result.pbo < 0.5:
-        tl_dr.append("✅ **策略通过 walk-forward 验证**: DSR > 1.0 且 PBO < 50%")
-    elif result.deflated_sharpe > 0.5:
-        tl_dr.append("⚠️ **策略表现一般**: DSR > 0.5 但未达到 1.0")
-    elif result.deflated_sharpe < 0:
-        tl_dr.append("❌ **DSR < 0**: 策略收益为负或严重过拟合，不建议实盘")
-    else:
-        tl_dr.append("❌ **策略未通过验证**: DSR < 0.5")
-
-    if result.pbo > 0.5:
-        tl_dr.append(f"⚠️ **PBO = {result.pbo:.2%} > 50%**: 过拟合风险高")
+    dsr_pass = result.deflated_sharpe > 1.0
+    pbo_pass = result.pbo < 0.5
+    both_pass = dsr_pass and pbo_pass
+    verdict = "PASS" if both_pass else "FAIL"
+    tl_dr.append(
+        f"**TL;DR**: {verdict} — DSR={result.deflated_sharpe:.4f}, "
+        f"PBO={result.pbo:.2%}, Sharpe={result.overall.sharpe_ratio:.2f}, "
+        f"TotalReturn={result.overall.total_return:.2%}"
+    )
 
     report_lines = [
         "# Walk-Forward 回测报告",
@@ -1005,6 +1003,11 @@ def run_walkforward(args: argparse.Namespace) -> int:
         "## TL;DR",
         "",
         *tl_dr,
+        "",
+        "## 双门判定",
+        "",
+        f"- DSR > 1.0：{'PASS' if dsr_pass else 'FAIL'}（实测 {result.deflated_sharpe:.4f}）",
+        f"- PBO < 0.5：{'PASS' if pbo_pass else 'FAIL'}（实测 {result.pbo:.2%}）",
         "",
         f"**运行日期**: {now_shanghai().strftime('%Y-%m-%d %H:%M')}",
         f"**回测区间**: {args.start} ~ {args.end}",
@@ -1076,17 +1079,18 @@ def run_walkforward(args: argparse.Namespace) -> int:
         ]
     )
 
-    if result.deflated_sharpe > 1.0 and result.pbo < 0.5:
+    if both_pass:
         report_lines.append(
-            "✅ **策略通过 walk-forward 验证**: DSR > 1.0 且 PBO < 50%,可以考虑实盘使用。"
-        )
-    elif result.deflated_sharpe > 0.5:
-        report_lines.append(
-            "⚠️ **策略表现一般**: DSR > 0.5 但未达到 1.0,建议进一步优化或增加样本。"
+            f"✅ **{verdict}**: DSR={result.deflated_sharpe:.4f} > 1.0 且 PBO={result.pbo:.2%} < 50%,可以考虑实盘使用。"
         )
     else:
+        reasons = []
+        if not dsr_pass:
+            reasons.append(f"DSR={result.deflated_sharpe:.4f} < 1.0")
+        if not pbo_pass:
+            reasons.append(f"PBO={result.pbo:.2%} > 50%")
         report_lines.append(
-            "❌ **策略未通过验证**: DSR < 0.5,策略可能无效或严重过拟合,不建议实盘使用。"
+            f"❌ **{verdict}**: {'，'.join(reasons)}，不建议实盘使用。"
         )
 
     report = "\n".join(report_lines)

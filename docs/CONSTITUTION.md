@@ -398,3 +398,8 @@ def _check_notification_gate(args, walkforward_result, ledger_path):
 
 5. **违反本条的 PR 视为未提交**：
    即使代码改动有效，证据缺失即驳回，重新走流程
+
+6. **Walkforward 报告格式强制**：
+   - 任何 walkforward 报告 TL;DR 第一行必须以 `PASS` 或 `FAIL` 开头，紧跟 DSR / PBO 数值；收益类指标放后面。
+   - commit message 引用回测结果时，DSR 与 PBO 必须与收益同行出现，不允许只截取收益。
+   - 失败的回测（FAIL）不计入"成绩"，只作研究记录，不允许在 README / 对外材料里引用。
