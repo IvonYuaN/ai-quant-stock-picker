@@ -13,7 +13,7 @@
 | 字段 | 值 |
 |------|-----|
 | 报告路径 | `docs/walkforward-sqlite-pit.md`, `docs/walkforward-baostock-pit.md`, `docs/walkforward-cached.md`, `docs/walkforward-eastmoney.md`, `docs/walkforward-volume.md`, `docs/walkforward-mr.md`, `docs/walkforward-mr-mom-20d.md` |
-| 数据源 | 7 份报告文件名暗示不同数据源/策略组合，但 TL;DR 显示 DSR/PBO 完全一致——疑似实际读同一数据库且策略配置相同。**待 #8 阶段查 commit/CLI 历史确认**，确认前暂合并为一条。 |
+| 数据源 | 7 份报告均由 commit `cfb859a` 生成，commit message 未记录 `--source` 参数，报告正文无数据源字段。7 份 TL;DR 数值完全一致（DSR=1.2156, PBO=75%, Sharpe=3.28, TotalReturn=859.13%），确认为同一配置重跑。**#8 阶段查无明确 CLI 参数证据**，但会话记录显示重跑时使用 `--source sqlite_db`。文件名（baostock-pit/cached/eastmoney 等）是历史残留标签，不代表实际数据源。 |
 | 策略组合 | momentum + triple_rise |
 | 关键参数 | horizon_days=3, no tiered stop |
 | DSR | 1.2156 |
