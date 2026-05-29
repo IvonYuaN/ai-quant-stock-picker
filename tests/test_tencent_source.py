@@ -126,6 +126,28 @@ def test_fetch_daily_returns_dict(tencent_source):
     assert isinstance(result, dict)
 
 
+def test_tencent_daily_request_does_not_use_qfq(monkeypatch, tencent_source):
+    captured = {}
+
+    class FakeResponse:
+        def json(self):
+            return {"data": {"600000": {"day": []}}}
+
+    def fake_get(url, params=None, **kwargs):
+        captured["params"] = params
+        return FakeResponse()
+
+    monkeypatch.setattr(tencent_source._session, "get", fake_get)
+
+    tencent_source._fetch_tencent_daily(
+        "600000",
+        start=date(2026, 5, 20),
+        end=date(2026, 5, 27),
+    )
+
+    assert "qfq" not in captured["params"]["param"]
+
+
 def test_fetch_intraday_returns_dict(tencent_source):
     result = tencent_source.fetch_intraday(
         symbols=["600000"],
