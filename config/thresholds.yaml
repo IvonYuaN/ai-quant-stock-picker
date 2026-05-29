@@ -1,10 +1,11 @@
 composite:
   min_total_score: 0.4
-  momentum_weight: 0.4
-  quality_weight: 0.3
-  value_weight: 0.3
+  momentum_weight: 0.3
+  quality_weight: 0.2
+  value_weight: 0.2
   volume_weight: 0.0
   mean_reversion_weight: 0.0
+  triple_rise_weight: 0.3
 description: 策略阈值配置 — version 回退至 1.0.0：先前 2.0.0 升号无 walk-forward 验证依据
 effective_from: ''
 execution:

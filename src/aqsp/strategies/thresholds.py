@@ -88,6 +88,7 @@ class CompositeThresholds:
     value_weight: float = 0.2
     volume_weight: float = 0.2
     mean_reversion_weight: float = 0.0
+    triple_rise_weight: float = 0.0
     min_total_score: float = 0.6
 
 

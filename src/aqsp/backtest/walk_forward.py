@@ -72,6 +72,7 @@ class WalkForwardTester:
         top_n: int = 10,
         stop_loss_pct: float = 0.05,
         take_profit_pct: float = 0.10,
+        use_tiered_stop: bool = False,
     ):
         self.strategy = strategy
         self.train_period_days = train_period_days
@@ -83,6 +84,7 @@ class WalkForwardTester:
         self.top_n = top_n
         self.stop_loss_pct = stop_loss_pct
         self.take_profit_pct = take_profit_pct
+        self.use_tiered_stop = use_tiered_stop
 
     def run(
         self,
@@ -278,9 +280,14 @@ class WalkForwardTester:
             take_profit = entry_price * (1 + self.take_profit_pct)
 
             horizon_df = test_df.iloc[: self.horizon_days]
-            exit_bar, exit_price, exit_reason = _resolve_exit(
-                horizon_df, stop_loss, take_profit, self.slippage_bps
-            )
+            if self.use_tiered_stop:
+                exit_bar, exit_price, exit_reason = _resolve_exit_tiered(
+                    horizon_df, entry_price, self.stop_loss_pct, self.slippage_bps
+                )
+            else:
+                exit_bar, exit_price, exit_reason = _resolve_exit(
+                    horizon_df, stop_loss, take_profit, self.slippage_bps
+                )
 
             fee_pct = self.fee_bps / 100
             ret = (exit_price - entry_price) / entry_price * 100 - fee_pct
@@ -461,6 +468,52 @@ def _resolve_exit(
             return bar, take_profit * (1 - slippage), "take_profit"
     last = window.iloc[-1]
     return last, float(last["close"]) * (1 - slippage), "hold_period_close"
+
+
+def _resolve_exit_tiered(
+    window: pd.DataFrame,
+    entry_price: float,
+    hard_stop_pct: float,
+    slippage_bps: float,
+) -> tuple[pd.Series, float, str]:
+    slippage = slippage_bps / 10000
+    hard_stop = entry_price * (1 - hard_stop_pct)
+    remaining_weight = 1.0
+    weighted_exit = 0.0
+    exit_bar = None
+
+    for _, bar in window.iterrows():
+        low = float(bar.get("low", bar["close"]))
+        close = float(bar["close"])
+        drop_pct = (entry_price - low) / entry_price
+
+        if drop_pct >= hard_stop_pct and remaining_weight > 0:
+            exit_price = hard_stop * (1 - slippage)
+            weighted_exit += remaining_weight * exit_price
+            return bar, weighted_exit, "hard_stop"
+
+        if drop_pct >= 0.02 and remaining_weight > 0.9:
+            reduce = 0.20
+            exit_price = entry_price * 0.98 * (1 - slippage)
+            weighted_exit += reduce * exit_price
+            remaining_weight -= reduce
+
+        elif drop_pct >= 0.0 and remaining_weight > 0.9:
+            reduce = 0.10
+            exit_price = entry_price * (1 - drop_pct) * (1 - slippage)
+            weighted_exit += reduce * exit_price
+            remaining_weight -= reduce
+
+        if remaining_weight <= 0:
+            return bar, weighted_exit, "tiered_exit"
+
+    if remaining_weight > 0:
+        last = window.iloc[-1]
+        close = float(last["close"]) * (1 - slippage)
+        weighted_exit += remaining_weight * close
+        return last, weighted_exit, "hold_period_close"
+
+    return exit_bar, weighted_exit, "tiered_exit"
 
 
 def _compute_backtest_metrics(
