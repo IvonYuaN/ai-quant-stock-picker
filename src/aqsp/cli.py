@@ -109,6 +109,12 @@ def main(argv: list[str] | None = None) -> int:
         choices=["multi", "akshare", "mootdx", "sina", "eastmoney", "tencent"],
         default="multi",
     )
+    wf.add_argument(
+        "--horizon-days", type=int, default=None, help="持仓天数 (默认: 3)"
+    )
+    wf.add_argument(
+        "--pool", type=str, default=None, help="标的池: sh300, zz500, zz1000 (默认: sh300)"
+    )
 
     monitor_cmd = sub.add_parser("monitor", help="run monitoring checks")
     monitor_cmd.add_argument("--config", default="config/monitors.yaml")
@@ -813,8 +819,18 @@ def run_walkforward(args: argparse.Namespace) -> int:
 
     symbols = [s.strip() for s in args.symbols.split(",") if s.strip()]
     if not symbols:
-        symbols = _get_hs300_symbols()
-        print(f"使用沪深300默认池: {len(symbols)} 只")
+        if args.pool and args.pool != "sh300":
+            from aqsp.universe.pool import UniversePool
+
+            pool = UniversePool(source=_get_source(args.source))
+            symbols = pool.get_symbols(args.pool)
+            pool_name = {"zz500": "中证500", "zz1000": "中证1000", "cyb": "创业板"}.get(
+                args.pool, args.pool
+            )
+            print(f"使用 {pool_name} 标的池: {len(symbols)} 只")
+        else:
+            symbols = _get_hs300_symbols()
+            print(f"使用沪深300默认池: {len(symbols)} 只")
     else:
         # 用户传入的也去重，保持顺序
         seen: set[str] = set()
@@ -907,6 +923,7 @@ def run_walkforward(args: argparse.Namespace) -> int:
         train_period_days=args.train_days,
         test_period_days=args.test_days,
         purge_days=args.purge_days,
+        horizon_days=args.horizon_days or 3,
     )
 
     print("开始 walk-forward 回测...")

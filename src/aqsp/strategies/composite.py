@@ -8,6 +8,7 @@ from aqsp.strategies.momentum import MomentumStrategy
 from aqsp.strategies.quality import QualityStrategy
 from aqsp.strategies.value import ValueStrategy
 from aqsp.strategies.volume import VolumeBreakoutStrategy
+from aqsp.strategies.mean_reversion import MeanReversionStrategy
 from aqsp.strategies.thresholds import Thresholds, load_thresholds
 
 
@@ -44,6 +45,13 @@ class CompositeStrategy(BaseStrategy):
             StrategyConfig(name="volume_breakout", enabled=self.thresholds.volume.enabled),
             thresholds=self.thresholds,
         )
+        self.mean_reversion_strategy = MeanReversionStrategy(
+            StrategyConfig(name="mean_reversion", enabled=self.thresholds.composite.mean_reversion_weight > 0),
+            thresholds=self.thresholds,
+        )
+
+    def _has_mr(self) -> bool:
+        return self.thresholds.composite.mean_reversion_weight > 0
 
     def calculate_score(self, data: Dict[str, pd.DataFrame]) -> Dict[str, float]:
         momentum_scores = self.momentum_strategy.calculate_score(data)
@@ -60,10 +68,15 @@ class CompositeStrategy(BaseStrategy):
         if self.thresholds.volume.enabled:
             volume_scores = self.volume_strategy.calculate_score(data)
 
+        mr_scores: Dict[str, float] = {}
+        if self._has_mr():
+            mr_scores = self.mean_reversion_strategy.calculate_score(data)
+
         all_symbols = set(momentum_scores.keys())
         all_symbols |= set(quality_scores.keys())
         all_symbols |= set(value_scores.keys())
         all_symbols |= set(volume_scores.keys())
+        all_symbols |= set(mr_scores.keys())
 
         weights = self.thresholds.composite
         final_scores = {}
@@ -90,6 +103,11 @@ class CompositeStrategy(BaseStrategy):
                 total += vol * weights.volume_weight
                 w_sum += weights.volume_weight
 
+            if self._has_mr():
+                mr = mr_scores.get(symbol, 0.5)
+                total += mr * weights.mean_reversion_weight
+                w_sum += weights.mean_reversion_weight
+
             final_scores[symbol] = total / w_sum if w_sum > 0 else 0.0
 
         return final_scores
@@ -111,10 +129,15 @@ class CompositeStrategy(BaseStrategy):
         if self.thresholds.volume.enabled:
             volume_scores = self.volume_strategy.calculate_score(data)
 
+        mr_scores: Dict[str, float] = {}
+        if self._has_mr():
+            mr_scores = self.mean_reversion_strategy.calculate_score(data)
+
         all_symbols = set(momentum_scores.keys())
         all_symbols |= set(quality_scores.keys())
         all_symbols |= set(value_scores.keys())
         all_symbols |= set(volume_scores.keys())
+        all_symbols |= set(mr_scores.keys())
 
         weights = self.thresholds.composite
         detailed = {}
@@ -141,6 +164,12 @@ class CompositeStrategy(BaseStrategy):
                 entry["volume"] = vol
                 total += vol * weights.volume_weight
                 w_sum += weights.volume_weight
+
+            if self._has_mr():
+                mr = mr_scores.get(symbol, 0.5)
+                entry["mean_reversion"] = mr
+                total += mr * weights.mean_reversion_weight
+                w_sum += weights.mean_reversion_weight
 
             entry["total"] = total / w_sum if w_sum > 0 else 0.0
             detailed[symbol] = entry

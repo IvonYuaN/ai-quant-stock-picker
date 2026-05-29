@@ -4,6 +4,7 @@ composite:
   quality_weight: 0.0
   value_weight: 0.0
   volume_weight: 0.4
+  mean_reversion_weight: 0.0
 description: 策略阈值配置 — version 回退至 1.0.0：先前 2.0.0 升号无 walk-forward 验证依据
 effective_from: ''
 execution:
@@ -86,4 +87,10 @@ volume:
     surge: 0.4
     breakout: 0.35
     correlation: 0.25
+mean_reversion:
+  enabled: true
+  lookback_days: 20
+  rsi_period: 14
+  oversold_threshold: 30
+  deviation_threshold: -0.05
 version: 1.0.0
