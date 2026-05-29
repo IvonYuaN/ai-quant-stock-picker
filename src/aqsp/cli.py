@@ -16,6 +16,7 @@ from aqsp.data.multi_source import MultiSource
 from aqsp.data.sina_source import SinaSource
 from aqsp.data.tencent_source import TencentSource
 from aqsp.data.baostock_source import BaostockSource
+from aqsp.data.sqlite_db_source import SqliteDbSource
 from aqsp.filters_lethal.pipeline import LethalFilterPipeline
 from aqsp.freshness import assert_fresh_data
 from aqsp.ledger import (
@@ -107,8 +108,8 @@ def main(argv: list[str] | None = None) -> int:
     wf.add_argument("--report", default="docs/walkforward-2026-05.md")
     wf.add_argument(
         "--source",
-        choices=["multi", "akshare", "mootdx", "sina", "eastmoney", "tencent", "baostock"],
-        default="baostock",
+        choices=["multi", "akshare", "mootdx", "sina", "eastmoney", "tencent", "baostock", "sqlite_db"],
+        default="sqlite_db",
     )
     wf.add_argument(
         "--horizon-days", type=int, default=None, help="持仓天数 (默认: 3)"
@@ -168,6 +169,8 @@ def _get_source(source_name: str):
         return TencentSource(cache=cache)
     if source_name == "baostock":
         return BaostockSource(cache=cache)
+    if source_name == "sqlite_db":
+        return SqliteDbSource(cache=cache)
     raise ValueError(f"Unknown data source: {source_name}")
 
 
@@ -885,6 +888,23 @@ def run_walkforward(args: argparse.Namespace) -> int:
         src = BaostockSource(cache=DataCache())
         start_d = _date.fromisoformat(args.start)
         end_d = _date.fromisoformat(args.end)
+        frames = src.fetch_daily(symbols, start_d, end_d, adjust="")
+        start_year = int(args.start[:4])
+        end_year = int(args.end[:4])
+        print(f"正在获取 {len(symbols)} 只股票 {start_year}-{end_year} 的 point-in-time 财务数据...")
+        fin_data = fetch_pit_financials(symbols, start_year, end_year, cache=DataCache())
+        frames = merge_pit_financials(frames, fin_data)
+        print(f"财务数据合并完成: {len(fin_data)} 只有财务数据")
+    elif args.source == "sqlite_db":
+        from datetime import date as _date
+        from aqsp.data.pit_financial import fetch_pit_financials, merge_pit_financials
+
+        src = SqliteDbSource(cache=DataCache())
+        start_d = _date.fromisoformat(args.start)
+        end_d = _date.fromisoformat(args.end)
+        available = src.get_available_symbols()
+        symbols = [s for s in symbols if s in available]
+        print(f"SQLite 数据库中可用标的: {len(symbols)} 只")
         frames = src.fetch_daily(symbols, start_d, end_d, adjust="")
         start_year = int(args.start[:4])
         end_year = int(args.end[:4])
