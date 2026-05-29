@@ -29,6 +29,24 @@ class ValueWeights:
 
 
 @dataclass(frozen=True)
+class VolumeWeights:
+    surge: float = 0.4
+    breakout: float = 0.35
+    correlation: float = 0.25
+
+
+@dataclass(frozen=True)
+class VolumeThresholds:
+    enabled: bool = True
+    lookback_days: int = 60
+    volume_ma_period: int = 20
+    surge_multiplier: float = 1.5
+    price_ma_period: int = 20
+    correlation_window: int = 10
+    weights: VolumeWeights = field(default_factory=VolumeWeights)
+
+
+@dataclass(frozen=True)
 class MomentumThresholds:
     lookback_days: int = 60
     min_returns: float = 0.05
@@ -65,9 +83,10 @@ class ValueThresholds:
 
 @dataclass(frozen=True)
 class CompositeThresholds:
-    momentum_weight: float = 0.5
-    quality_weight: float = 0.25
-    value_weight: float = 0.25
+    momentum_weight: float = 0.4
+    quality_weight: float = 0.2
+    value_weight: float = 0.2
+    volume_weight: float = 0.2
     min_total_score: float = 0.6
 
 
@@ -132,6 +151,7 @@ class Thresholds:
     filter: FilterThresholds = field(default_factory=FilterThresholds)
     execution: ExecutionThresholds = field(default_factory=ExecutionThresholds)
     regime: RegimeThresholds = field(default_factory=RegimeThresholds)
+    volume: VolumeThresholds = field(default_factory=VolumeThresholds)
 
 
 def _parse_momentum(data: dict) -> MomentumThresholds:
@@ -155,6 +175,14 @@ def _parse_value(data: dict) -> ValueThresholds:
     return ValueThresholds(
         **data,
         weights=ValueWeights(**weights_data) if weights_data else ValueWeights(),
+    )
+
+
+def _parse_volume(data: dict) -> VolumeThresholds:
+    weights_data = data.pop("weights", {})
+    return VolumeThresholds(
+        **data,
+        weights=VolumeWeights(**weights_data) if weights_data else VolumeWeights(),
     )
 
 
@@ -204,4 +232,5 @@ def load_thresholds(filepath: str = None) -> Thresholds:
         filter=FilterThresholds(**data.get("filter", {})),
         execution=ExecutionThresholds(**data.get("execution", {})),
         regime=_parse_regime(data.get("regime", {})),
+        volume=_parse_volume(data.get("volume", {})),
     )
