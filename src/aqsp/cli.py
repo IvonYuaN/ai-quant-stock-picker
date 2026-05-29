@@ -10,6 +10,7 @@ from aqsp.config import load_runtime_config
 from aqsp.core.errors import DataError
 from aqsp.data import fetch_akshare, load_csv, fetch_with_source
 from aqsp.data.akshare_source import AkshareSource
+from aqsp.data.cache import DataCache
 from aqsp.data.eastmoney_source import EastmoneySource
 from aqsp.data.multi_source import MultiSource
 from aqsp.data.sina_source import SinaSource
@@ -144,19 +145,20 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _get_source(source_name: str):
+    cache = DataCache()
     if source_name == "multi":
         return MultiSource(
-            AkshareSource(),
-            [SinaSource(), EastmoneySource(), TencentSource()],
+            AkshareSource(cache=cache),
+            [SinaSource(cache=cache), EastmoneySource(cache=cache), TencentSource(cache=cache)],
         )
     if source_name == "akshare":
-        return AkshareSource()
+        return AkshareSource(cache=cache)
     if source_name == "sina":
-        return SinaSource()
+        return SinaSource(cache=cache)
     if source_name == "eastmoney":
-        return EastmoneySource()
+        return EastmoneySource(cache=cache)
     if source_name == "tencent":
-        return TencentSource()
+        return TencentSource(cache=cache)
     raise ValueError(f"Unknown data source: {source_name}")
 
 
@@ -853,7 +855,7 @@ def run_walkforward(args: argparse.Namespace) -> int:
         from datetime import date as _date
         from aqsp.data.sina_source import SinaSource
 
-        src = SinaSource()
+        src = SinaSource(cache=DataCache())
         start_d = _date.fromisoformat(args.start)
         end_d = _date.fromisoformat(args.end)
         frames = src.fetch_daily(symbols, start_d, end_d, adjust="")
