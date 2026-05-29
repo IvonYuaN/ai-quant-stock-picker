@@ -163,15 +163,24 @@ tests/test_strategies.py
 |------|------|-----------|
 | `d687c08` | feat(diagnostics): PR22.5 momentum 方向诊断 | 否 |
 | `9a4120d` | fix(backtest): 修复 regime_winrates 为空的 bug | **是** — 混入了 quality/value disable（见下方拆法） |
-| 本轮未提交 | CONSTITUTION.md §17 加条 | 否 |
-| 本轮未提交 | cli.py 报告格式更新（PASS/FAIL 开头） | 否 |
-| 本轮未提交 | pr_evidence.txt | 否 |
+| `cfb859a` | docs: 工单 #1-#4 交付（CONSTITUTION §17.6 + cli.py PASS/FAIL 格式 + pr_evidence.txt + 9份walkforward重跑） | **是** — 混入了 walkforward 报告和 thresholds.yaml YAML 修复 |
+| `ffb5922` | evidence: pr_evidence.txt overall_exit=0 | 否 |
 
 ### `9a4120d` 拆法建议
 
 该 commit 同时改了：
 - `src/aqsp/backtest/walk_forward.py`（regime_winrates bug fix）→ **留 PR-D**
 - `config/thresholds.yaml`（quality/value enabled: false）→ **移到 PR-E**
+
+### `cfb859a` 拆法建议
+
+该 commit 同时改了：
+- `docs/CONSTITUTION.md`（§17.6 加条）→ **留 PR-D**
+- `src/aqsp/cli.py`（PASS/FAIL 报告格式）→ **留 PR-D**
+- `pr_evidence.txt`（初始版本）→ **留 PR-D**
+- `config/thresholds.yaml`（YAML 引号修复）→ **留 PR-D**（纯语法修复，无数值变更）
+- `docs/walkforward-*.md`（9 份报告重跑）→ **移到独立 PR（walkforward 报告）** 或随 PR-D 一起
+- `tests/test_strategies.py`（断言修复，但该修复已被后续 commit `8ad7853` 覆盖）→ **留 PR-D**
 
 ### 文件白名单
 
@@ -221,5 +230,6 @@ tests/test_backtest*.py
 | `f242124` | B + C + D | 需 split commit |
 | `70f9d63` | B + C + D | 需 split commit |
 | `9a4120d` | D + E | 需 split commit |
+| `cfb859a` | D + walkforward 报告 | 需 split commit |
 
-共 5 个 commit 需要 split。其余 commit 各属一个 PR，无重叠。
+共 6 个 commit 需要 split。其余 commit 各属一个 PR，无重叠。
