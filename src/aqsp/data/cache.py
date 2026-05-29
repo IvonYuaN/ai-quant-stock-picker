@@ -67,6 +67,23 @@ class DataCache:
                 )
                 """
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS financials (
+                    symbol TEXT NOT NULL,
+                    pubDate TEXT NOT NULL,
+                    statDate TEXT,
+                    roeAvg REAL,
+                    npMargin REAL,
+                    gpMargin REAL,
+                    epsTTM REAL,
+                    totalShare REAL,
+                    source TEXT,
+                    fetched_at TEXT,
+                    PRIMARY KEY (symbol, pubDate)
+                )
+                """
+            )
             conn.commit()
 
     def get_ohlcv(
@@ -219,6 +236,53 @@ class DataCache:
                         row["symbol"],
                         row["date"],
                         row["adj_factor"],
+                        row["source"],
+                        row["fetched_at"],
+                    ),
+                )
+            conn.commit()
+
+    def get_financial(
+        self,
+        symbol: str,
+        max_age_hours: int = 168,
+    ) -> Optional[pd.DataFrame]:
+        with sqlite3.connect(self.db_path) as conn:
+            df = pd.read_sql(
+                "SELECT * FROM financials WHERE symbol = ?",
+                conn,
+                params=(symbol,),
+            )
+        if df.empty:
+            return None
+        cutoff = (now_shanghai() - pd.Timedelta(hours=max_age_hours)).isoformat()
+        if df["fetched_at"].max() < cutoff:
+            return None
+        return df
+
+    def set_financial(self, symbol: str, df: pd.DataFrame, source: str = "unknown") -> None:
+        df = df.copy()
+        df["symbol"] = symbol
+        df["source"] = source
+        df["fetched_at"] = now_shanghai().isoformat()
+        with sqlite3.connect(self.db_path) as conn:
+            for _, row in df.iterrows():
+                conn.execute(
+                    """
+                    INSERT OR REPLACE INTO financials (
+                        symbol, pubDate, statDate, roeAvg, npMargin, gpMargin,
+                        epsTTM, totalShare, source, fetched_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        row["symbol"],
+                        str(row.get("pubDate", "")),
+                        str(row.get("statDate", "")),
+                        row.get("roeAvg"),
+                        row.get("npMargin"),
+                        row.get("gpMargin"),
+                        row.get("epsTTM"),
+                        row.get("totalShare"),
                         row["source"],
                         row["fetched_at"],
                     ),

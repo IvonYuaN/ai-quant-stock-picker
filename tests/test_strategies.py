@@ -20,10 +20,11 @@ def test_load_thresholds():
     assert thresholds.momentum.weights.momentum == 0.4
     assert thresholds.momentum.weights.trend == 0.3
     assert thresholds.momentum.weights.rsi == 0.3
-    assert thresholds.quality.enabled is False
-    assert thresholds.value.enabled is False
-    assert thresholds.composite.momentum_weight == 0.6
-    assert thresholds.composite.volume_weight == 0.4
+    assert thresholds.quality.enabled is True
+    assert thresholds.value.enabled is True
+    assert thresholds.composite.momentum_weight == 0.4
+    assert thresholds.composite.quality_weight == 0.3
+    assert thresholds.composite.value_weight == 0.3
     assert thresholds.volume.enabled is True
     assert thresholds.regime.volatility_high == 0.3
     assert thresholds.regime.min_sample_size == 20
@@ -211,8 +212,8 @@ def test_composite_strategy_momentum_only():
 
     assert strategy.id == "composite"
     assert strategy.hypothesis != ""
-    assert strategy.thresholds.quality.enabled is False
-    assert strategy.thresholds.value.enabled is False
+    assert strategy.thresholds.quality.enabled is True
+    assert strategy.thresholds.value.enabled is True
 
     scores = strategy.calculate_score({"600000": df})
     assert "600000" in scores
@@ -241,8 +242,8 @@ def test_composite_strategy_detailed_momentum_only():
     assert "600000" in detailed
     assert "momentum" in detailed["600000"]
     assert "total" in detailed["600000"]
-    assert "quality" not in detailed["600000"]
-    assert "value" not in detailed["600000"]
+    assert "quality" in detailed["600000"]
+    assert "value" in detailed["600000"]
 
 
 def test_composite_strategy_select_stocks():
