@@ -7,6 +7,7 @@ from aqsp.strategies.base import BaseStrategy, StrategyConfig
 from aqsp.strategies.momentum import MomentumStrategy
 from aqsp.strategies.quality import QualityStrategy
 from aqsp.strategies.value import ValueStrategy
+from aqsp.strategies.volume import VolumeBreakoutStrategy
 from aqsp.strategies.thresholds import Thresholds, load_thresholds
 
 
@@ -24,7 +25,7 @@ class CompositeStrategy(BaseStrategy):
             config,
             id="composite",
             version=self.thresholds.version,
-            hypothesis="多因子组合评分优于单因子，动量+质量+价值的加权综合能提高选股胜率",
+            hypothesis="多因子组合评分优于单因子，动量+成交量的加权综合能提高选股胜率",
         )
 
         self.momentum_strategy = MomentumStrategy(
@@ -39,6 +40,10 @@ class CompositeStrategy(BaseStrategy):
             StrategyConfig(name="value", enabled=self.thresholds.value.enabled),
             thresholds=self.thresholds,
         )
+        self.volume_strategy = VolumeBreakoutStrategy(
+            StrategyConfig(name="volume_breakout", enabled=self.thresholds.volume.enabled),
+            thresholds=self.thresholds,
+        )
 
     def calculate_score(self, data: Dict[str, pd.DataFrame]) -> Dict[str, float]:
         momentum_scores = self.momentum_strategy.calculate_score(data)
@@ -51,9 +56,14 @@ class CompositeStrategy(BaseStrategy):
         if self.thresholds.value.enabled:
             value_scores = self.value_strategy.calculate_score(data)
 
+        volume_scores: Dict[str, float] = {}
+        if self.thresholds.volume.enabled:
+            volume_scores = self.volume_strategy.calculate_score(data)
+
         all_symbols = set(momentum_scores.keys())
         all_symbols |= set(quality_scores.keys())
         all_symbols |= set(value_scores.keys())
+        all_symbols |= set(volume_scores.keys())
 
         weights = self.thresholds.composite
         final_scores = {}
@@ -75,6 +85,11 @@ class CompositeStrategy(BaseStrategy):
                 total += v * weights.value_weight
                 w_sum += weights.value_weight
 
+            if self.thresholds.volume.enabled:
+                vol = volume_scores.get(symbol, 0.5)
+                total += vol * weights.volume_weight
+                w_sum += weights.volume_weight
+
             final_scores[symbol] = total / w_sum if w_sum > 0 else 0.0
 
         return final_scores
@@ -92,9 +107,14 @@ class CompositeStrategy(BaseStrategy):
         if self.thresholds.value.enabled:
             value_scores = self.value_strategy.calculate_score(data)
 
+        volume_scores: Dict[str, float] = {}
+        if self.thresholds.volume.enabled:
+            volume_scores = self.volume_strategy.calculate_score(data)
+
         all_symbols = set(momentum_scores.keys())
         all_symbols |= set(quality_scores.keys())
         all_symbols |= set(value_scores.keys())
+        all_symbols |= set(volume_scores.keys())
 
         weights = self.thresholds.composite
         detailed = {}
@@ -115,6 +135,12 @@ class CompositeStrategy(BaseStrategy):
                 entry["value"] = v
                 total += v * weights.value_weight
                 w_sum += weights.value_weight
+
+            if self.thresholds.volume.enabled:
+                vol = volume_scores.get(symbol, 0.5)
+                entry["volume"] = vol
+                total += vol * weights.volume_weight
+                w_sum += weights.volume_weight
 
             entry["total"] = total / w_sum if w_sum > 0 else 0.0
             detailed[symbol] = entry

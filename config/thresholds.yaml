@@ -1,8 +1,9 @@
 composite:
   min_total_score: 0.4
-  momentum_weight: 0.5
-  quality_weight: 0.25
-  value_weight: 0.25
+  momentum_weight: 0.6
+  quality_weight: 0.0
+  value_weight: 0.0
+  volume_weight: 0.4
 description: 策略阈值配置 — version 回退至 1.0.0：先前 2.0.0 升号无 walk-forward 验证依据
 effective_from: ''
 execution:
@@ -74,4 +75,15 @@ value:
     dividend: 0.3
     pb: 0.3
     pe: 0.4
+volume:
+  enabled: true
+  lookback_days: 60
+  volume_ma_period: 20
+  surge_multiplier: 1.5
+  price_ma_period: 20
+  correlation_window: 10
+  weights:
+    surge: 0.4
+    breakout: 0.35
+    correlation: 0.25
 version: 1.0.0

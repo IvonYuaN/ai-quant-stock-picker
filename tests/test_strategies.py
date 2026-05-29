@@ -22,7 +22,9 @@ def test_load_thresholds():
     assert thresholds.momentum.weights.rsi == 0.3
     assert thresholds.quality.enabled is False
     assert thresholds.value.enabled is False
-    assert thresholds.composite.momentum_weight == 0.5
+    assert thresholds.composite.momentum_weight == 0.6
+    assert thresholds.composite.volume_weight == 0.4
+    assert thresholds.volume.enabled is True
     assert thresholds.regime.volatility_high == 0.3
     assert thresholds.regime.min_sample_size == 20
     assert thresholds.regime.cooldown_hours == 24
