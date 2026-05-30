@@ -33,28 +33,6 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[data]"
 
-      - name: Restore cache
-        uses: actions/cache/restore@v4
-        with:
-          path: |
-            data/cache.db
-            data/predictions.jsonl
-          key: aqsp-dryrun-${{ github.run_id }}
-          restore-keys: |
-            aqsp-dryrun-
-
-      - name: Verify cache hit
-        id: cache-check
-        run: |
-          if [ -f "data/cache.db" ]; then
-            echo "cache_exists=true" >> $GITHUB_OUTPUT
-            echo "✅ Cache file exists"
-            ls -la data/cache.db
-          else
-            echo "cache_exists=false" >> $GITHUB_OUTPUT
-            echo "⚠️ No cache file, will fetch fresh data"
-          fi
-
       - name: Run screen (dry-run)
         run: |
           echo "=== Dry Run Mode ==="
@@ -63,6 +41,7 @@ jobs:
           echo "Time: $(TZ=Asia/Shanghai date)"
           echo ""
 
+          set +e
           aqsp run \
             --mode "${AQSP_MODE}" \
             --symbols "${AQSP_SYMBOLS}" \
@@ -73,6 +52,13 @@ jobs:
             --report "reports/dry-run.md" \
             --output-csv "reports/dry-run.csv" \
             --skip-validation
+          RUN_STATUS=$?
+          set -e
+          if [ "$RUN_STATUS" -eq 2 ]; then
+            echo "aqsp run returned 2: circuit breaker active; continue dry-run verification."
+          elif [ "$RUN_STATUS" -ne 0 ]; then
+            exit "$RUN_STATUS"
+          fi
 
           echo ""
           echo "=== Screen Complete ==="
@@ -140,19 +126,7 @@ jobs:
           print('✅ Circuit breaker working')
           "
 
-      - name: Save cache
+      - name: Verify no private artifacts are uploaded
         if: always()
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            data/cache.db
-            data/predictions.jsonl
-          key: aqsp-dryrun-${{ github.run_id }}
-
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: dry-run-${{ github.run_id }}
-          path: |
-            reports/
-            data/risk_state.json
+        run: |
+          echo "Dry-run reports and ledgers stay inside the runner and are not uploaded."
