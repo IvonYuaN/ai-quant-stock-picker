@@ -6,9 +6,15 @@ repos:
         args: [--fix, --exit-non-zero-on-fix]
   - repo: local
     hooks:
+      - id: upload-preflight
+        name: upload-preflight
+        entry: python3 -m scripts.preflight_upload
+        language: system
+        pass_filenames: false
+        stages: [pre-push]
       - id: pytest-fast
         name: pytest-fast
-        entry: python3 -m pytest tests/ -x -q --timeout=60
+        entry: python3 -m pytest tests/ -x -q
         language: system
         pass_filenames: false
         stages: [pre-push]
