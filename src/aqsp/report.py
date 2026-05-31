@@ -4,7 +4,25 @@ from dataclasses import asdict
 
 import pandas as pd
 
+from aqsp.core.types import RunMetadata
 from aqsp.models import PickResult
+
+RESULT_COLUMNS = [
+    "symbol",
+    "name",
+    "date",
+    "close",
+    "score",
+    "rating",
+    "entry_type",
+    "ideal_buy",
+    "stop_loss",
+    "take_profit",
+    "position",
+    "strategies",
+    "reasons",
+    "risks",
+]
 
 
 def to_dataframe(picks: list[PickResult]) -> pd.DataFrame:
@@ -17,11 +35,19 @@ def to_dataframe(picks: list[PickResult]) -> pd.DataFrame:
         row.update(pick.metrics)
         del row["metrics"]
         rows.append(row)
+    if not rows:
+        return pd.DataFrame(columns=RESULT_COLUMNS)
     return pd.DataFrame(rows)
 
 
-def to_markdown(picks: list[PickResult], title: str = "AI 量化选股报告") -> str:
+def to_markdown(
+    picks: list[PickResult],
+    title: str = "AI 量化选股报告",
+    metadata: RunMetadata | None = None,
+) -> str:
     lines = [f"# {title}", ""]
+    if metadata is not None:
+        lines.extend(_metadata_lines(metadata))
     if not picks:
         lines.append("无符合条件的候选。")
         return "\n".join(lines)
@@ -45,3 +71,31 @@ def to_markdown(picks: list[PickResult], title: str = "AI 量化选股报告") -
         )
     lines.append("> 仅供研究，不构成投资建议。")
     return "\n".join(lines)
+
+
+def _metadata_lines(metadata: RunMetadata) -> list[str]:
+    actual = metadata.actual_source or "unknown"
+    source_text = (
+        actual
+        if metadata.requested_source == actual
+        else f"{metadata.requested_source} -> {actual}"
+    )
+    return [
+        "## 运行参数",
+        f"- 数据源: {source_text}",
+        (
+            "- 候选池: "
+            f"显式 {metadata.explicit_symbol_count} / "
+            f"解析 {metadata.resolved_symbol_count} / "
+            f"取数 {metadata.fetched_frame_count} / "
+            f"筛选前 {metadata.screened_count} / "
+            f"最终 {metadata.final_count}"
+        ),
+        f"- max_universe: {metadata.max_universe}",
+        f"- 价格边界: {metadata.min_price} - {metadata.max_price}",
+        f"- 20日均成交额下限: {metadata.min_avg_amount:.0f}",
+        f"- 在线观察因子: {'on' if metadata.online_factors_enabled else 'off'}",
+        f"- thresholds.version: {metadata.thresholds_version}",
+        f"- regime: {metadata.regime or 'unknown'}",
+        "",
+    ]

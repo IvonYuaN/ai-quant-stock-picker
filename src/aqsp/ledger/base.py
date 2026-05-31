@@ -8,7 +8,9 @@ from uuid import uuid4
 import pandas as pd
 
 from aqsp.core.time import now_shanghai
+from aqsp.core.types import RunMetadata
 from aqsp.models import PickResult
+from aqsp.ratings import is_tradable_rating
 
 
 @dataclass(frozen=True)
@@ -58,13 +60,18 @@ def append_predictions(
     regime: str = "",
     northbound_flow_5d_z: float = 0.0,
     margin_balance_change_5d: float = 0.0,
+    run_metadata: RunMetadata | None = None,
 ) -> None:
     execution = execution or ExecutionConfig()
     rows = read_ledger(path)
+    existing_keys = {_prediction_key(row) for row in rows}
     now = now_shanghai().isoformat(timespec="seconds")
     for pick in picks:
         strategies = list(pick.strategies)
         signal_day_group = pick.date
+        row_key = (pick.date, pick.symbol, thresholds_version, regime, "next_open")
+        if row_key in existing_keys:
+            continue
         rows.append(
             {
                 "id": uuid4().hex,
@@ -76,6 +83,9 @@ def append_predictions(
                 "intended_entry": "next_open",
                 "score": pick.score,
                 "rating": pick.rating,
+                "position": pick.position,
+                "entry_type": pick.entry_type,
+                "ideal_buy": pick.ideal_buy,
                 "strategies": strategies,
                 "reasons": list(pick.reasons),
                 "risks": list(pick.risks),
@@ -92,10 +102,41 @@ def append_predictions(
                 "signal_day_group": signal_day_group,
                 "northbound_flow_5d_z": northbound_flow_5d_z,
                 "margin_balance_change_5d": margin_balance_change_5d,
+                **_run_metadata_fields(run_metadata),
                 "status": "pending",
             }
         )
+        existing_keys.add(row_key)
     write_ledger(path, rows)
+
+
+def _run_metadata_fields(metadata: RunMetadata | None) -> dict[str, object]:
+    if metadata is None:
+        return {}
+    return {
+        "run_requested_source": metadata.requested_source,
+        "run_actual_source": metadata.actual_source,
+        "run_explicit_symbol_count": metadata.explicit_symbol_count,
+        "run_resolved_symbol_count": metadata.resolved_symbol_count,
+        "run_fetched_frame_count": metadata.fetched_frame_count,
+        "run_screened_count": metadata.screened_count,
+        "run_final_count": metadata.final_count,
+        "run_max_universe": metadata.max_universe,
+        "run_min_price": metadata.min_price,
+        "run_max_price": metadata.max_price,
+        "run_min_avg_amount": metadata.min_avg_amount,
+        "run_online_factors_enabled": metadata.online_factors_enabled,
+    }
+
+
+def _prediction_key(row: dict) -> tuple[str, str, str, str, str]:
+    return (
+        str(row.get("signal_date", "")),
+        str(row.get("symbol", "")),
+        str(row.get("thresholds_version", "")),
+        str(row.get("regime_at_signal", "")),
+        str(row.get("intended_entry", "next_open")),
+    )
 
 
 def _check_executable(
@@ -166,6 +207,9 @@ def validate_predictions(
 
     for row in rows:
         if row.get("status") != "pending":
+            continue
+        if not is_tradable_rating(row.get("rating")):
+            row["status"] = "watch_only"
             continue
         symbol = str(row.get("symbol", ""))
         frame = frames.get(symbol)
