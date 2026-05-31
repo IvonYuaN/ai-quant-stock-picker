@@ -11,6 +11,7 @@ from aqsp.data.sina_source import SinaSource
 from aqsp.data.eastmoney_source import EastmoneySource
 from aqsp.data.tencent_source import TencentSource
 from aqsp.data.mootdx_source import MootdxSource
+from aqsp.data.tdx_vipdoc_source import TdxVipdocSource
 from aqsp.data.multi_source import MultiSource
 from aqsp.data.cache import DataCache
 from aqsp.data.adjust import AdjustmentService
@@ -88,6 +89,7 @@ __all__ = [
     "EastmoneySource",
     "TencentSource",
     "MootdxSource",
+    "TdxVipdocSource",
     "MultiSource",
     "DataCache",
     "AdjustmentService",

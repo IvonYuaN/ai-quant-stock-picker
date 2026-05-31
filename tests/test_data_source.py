@@ -76,12 +76,36 @@ def test_validate_ohlcv_valid():
             "low": [9.5],
             "close": [10.2],
             "volume": [1000],
+            "amount": [10_200],
+            "suspended": [False],
+            "limit_up": [11.22],
+            "limit_down": [9.18],
         }
     )
     source = AkshareSource.__new__(AkshareSource)
     source.name = "test"
     result = source._validate_ohlcv(df, "600000")
     assert result is not None
+
+
+def test_validate_ohlcv_requires_architecture_schema():
+    df = pd.DataFrame(
+        {
+            "date": ["2026-05-27"],
+            "symbol": ["600000"],
+            "name": ["测试"],
+            "open": [10.0],
+            "high": [10.5],
+            "low": [9.5],
+            "close": [10.2],
+            "volume": [1000],
+        }
+    )
+    source = AkshareSource.__new__(AkshareSource)
+    source.name = "test"
+
+    with pytest.raises(DataError, match="amount"):
+        source._validate_ohlcv(df, "600000")
 
 
 def test_normalize_date():

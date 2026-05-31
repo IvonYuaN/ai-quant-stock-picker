@@ -12,6 +12,32 @@ if TYPE_CHECKING:
 
 OhlcvFrame = pd.DataFrame
 
+# Standard OHLCV schema required by docs/architecture.md §3.1.
+REQUIRED_OHLCV_COLUMNS = {
+    "date",
+    "symbol",
+    "name",
+    "open",
+    "high",
+    "low",
+    "close",
+    "volume",
+    "amount",
+    "suspended",
+    "limit_up",
+    "limit_down",
+}
+NUMERIC_OHLCV_COLUMNS = {
+    "open",
+    "high",
+    "low",
+    "close",
+    "volume",
+    "amount",
+    "limit_up",
+    "limit_down",
+}
+
 
 def get_limit_pct(symbol: str, name: str = "") -> float:
     if "*ST" in name or name.endswith("ST"):
@@ -86,19 +112,20 @@ class DataSource(ABC):
     ) -> dict[str, OhlcvFrame]: ...
 
     def _validate_ohlcv(self, df: pd.DataFrame, symbol: str) -> OhlcvFrame:
-        required_columns = {
-            "date",
-            "symbol",
-            "name",
-            "open",
-            "high",
-            "low",
-            "close",
-            "volume",
-        }
-        missing = required_columns - set(df.columns)
+        missing = REQUIRED_OHLCV_COLUMNS - set(df.columns)
         if missing:
-            raise DataError(f"OHLCV 数据缺少必要列: {symbol} 缺少 {missing}")
+            missing_text = ", ".join(sorted(missing))
+            raise DataError(f"OHLCV 数据缺少必要列: {symbol} 缺少 {missing_text}")
+        if df.empty:
+            raise DataError(f"OHLCV 数据为空: {symbol}")
+        invalid_dates = pd.to_datetime(df["date"], errors="coerce").isna()
+        if invalid_dates.any():
+            raise DataError(f"OHLCV 数据日期无效: {symbol}")
+        for col in NUMERIC_OHLCV_COLUMNS:
+            if pd.to_numeric(df[col], errors="coerce").isna().all():
+                raise DataError(f"OHLCV 数据列无有效数值: {symbol}.{col}")
+        if df["suspended"].isna().any():
+            raise DataError(f"OHLCV 数据 suspended 缺失: {symbol}")
         return df
 
     def _normalize_date(self, df: pd.DataFrame) -> pd.DataFrame:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+import os
 from datetime import date
 from pathlib import Path
 from typing import Literal
@@ -15,10 +16,14 @@ class SqliteDbSource(DataSource):
 
     def __init__(
         self,
-        db_path: str | Path = "A股量化分析数据/astocks_qfq.db",
+        db_path: str | Path | None = None,
         cache: DataCache | None = None,
     ) -> None:
-        self.db_path = Path(db_path)
+        self.db_path = Path(
+            db_path
+            or os.getenv("AQSP_SQLITE_DB_PATH")
+            or "A股量化分析数据/astocks_qfq.db"
+        )
         if not self.db_path.exists():
             raise FileNotFoundError(f"数据库不存在: {self.db_path}")
         self.cache = cache or DataCache()
@@ -30,14 +35,22 @@ class SqliteDbSource(DataSource):
         with sqlite3.connect(self.db_path) as conn:
             df = pd.read_sql("SELECT ts_code, name FROM stocks", conn)
         self._symbol_map = {}
+        self._name_map: dict[str, str] = {}
         for _, row in df.iterrows():
             ts_code = str(row["ts_code"]).strip()
+            name = str(row["name"]).strip().rstrip('\x00')
             if "." in ts_code:
                 symbol = ts_code.split(".")[0]
             else:
                 symbol = ts_code
             self._symbol_map[symbol] = ts_code
+            self._name_map[symbol] = name
         return self._symbol_map
+
+    def get_symbol_name(self, symbol: str) -> str:
+        if not hasattr(self, '_name_map') or self._name_map is None:
+            self._load_symbol_map()
+        return self._name_map.get(symbol, symbol)
 
     def _to_ts_code(self, symbol: str) -> str | None:
         sym_map = self._load_symbol_map()
@@ -61,6 +74,9 @@ class SqliteDbSource(DataSource):
             for symbol in symbols:
                 cached = self.cache.get_ohlcv(symbol, start, end)
                 if cached is not None and not cached.empty:
+                    if "name" not in cached.columns:
+                        cached = cached.copy()
+                        cached["name"] = self.get_symbol_name(symbol)
                     out[symbol] = cached
                     continue
 
