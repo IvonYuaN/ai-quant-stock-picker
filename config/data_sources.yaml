@@ -1,5 +1,36 @@
 version: "2026-05-28"
-notes: "A股数据源候选清单。runtime_ready 表示仓库已有 DataSource 实现或可直接配置使用。"
+default_policy: local_first
+freshness_gate:
+  stale_data: fail_closed
+  missing_schema: fail_closed
+  notify_on_failure: false
+required_ohlcv_columns:
+  - date
+  - symbol
+  - name
+  - open
+  - high
+  - low
+  - close
+  - volume
+  - amount
+  - suspended
+  - limit_up
+  - limit_down
+fallback_order:
+  daily_close:
+    - tdx_vipdoc
+    - eastmoney
+    - sina
+    - tencent
+    - akshare
+  online_first:
+    - eastmoney
+    - sina
+    - tencent
+    - akshare
+    - tdx_vipdoc
+notes: "A股数据源候选清单。默认 local_first：本地 tdx_vipdoc 可用则优先；本地 2G vipdoc 缺失或过期时惰性失败并进入在线源兜底。freshness/schema gate 失败时禁止推送。runtime_ready 表示仓库已有 DataSource 实现或可直接配置使用；research_status 表示开源研究吸收后的进入阶段。"
 
 sources:
   - id: akshare
@@ -9,6 +40,7 @@ sources:
     access: python_package
     cost: free
     runtime_ready: true
+    research_status: primary_runtime
     strengths:
       - A股日线、实时行情、指数、板块、资金、公告入口丰富
       - 社区活跃，适合快速扩展数据面
@@ -25,6 +57,7 @@ sources:
     access: http_api
     cost: free
     runtime_ready: true
+    research_status: fallback_runtime
     strengths:
       - 实时行情接口轻量，适合 AKShare 失败时兜底
       - 无需密钥
@@ -40,6 +73,7 @@ sources:
     access: http_api
     cost: free
     runtime_ready: true
+    research_status: fallback_runtime
     strengths:
       - A股行情、K线、资金流、板块数据覆盖广
       - 网页端实际使用，延迟较低
@@ -55,6 +89,7 @@ sources:
     access: http_api
     cost: free
     runtime_ready: true
+    research_status: fallback_runtime
     strengths:
       - 实时报价可作为第二兜底
       - 包含涨跌停等部分盘口字段
@@ -69,6 +104,7 @@ sources:
     access: python_package
     cost: free
     runtime_ready: true
+    research_status: fallback_runtime
     strengths:
       - 通达信行情生态，适合本地行情兜底
       - 可补充日线、分时、盘口
@@ -78,6 +114,28 @@ sources:
     python_package: mootdx
     reference: "https://github.com/mootdx/mootdx"
 
+  - id: tdx_vipdoc
+    name: TDX Official Vipdoc Daily Package
+    category: local_offline_daily
+    markets: [a_share]
+    access: official_zip_manual_or_http
+    cost: free
+    runtime_ready: true
+    research_status: primary_offline_history
+    strengths:
+      - 通达信官方沪深京日线完整包，本地读取，不依赖盘中网页接口
+      - 不复权原始日线，适合 ledger 验证和 walk-forward 历史价格底座
+      - 数据文件留在 private_data/tdx，不上传 GitHub
+    risks:
+      - 官方下载可能触发反爬，需要浏览器手动下载 zip
+      - 只提供日线历史，不提供实时盘口、财务、指数成分 point-in-time
+      - 需要定期重新下载或同步本地通达信客户端 vipdoc
+    adoption_gate:
+      - 使用 scripts/download_tdx_vipdoc.py 校验 ZIP 魔数并安全解压
+      - 运行时只读 AQSP_TDX_VIPDOC_PATH 或 private_data/tdx/vipdoc
+      - 禁止把 zip、vipdoc 或派生数据库提交到仓库
+    reference: "https://www.tdx.com.cn/article/vipdata.html"
+
   - id: baostock
     name: Baostock
     category: historical_data
@@ -85,12 +143,17 @@ sources:
     access: python_package
     cost: free
     runtime_ready: false
+    research_status: next_adapter
     strengths:
       - 免费 A 股历史行情和财务数据
       - 适合离线回测补数
     risks:
       - 需要登录会话
       - 实时能力弱，不适合作为盘中主源
+    adoption_gate:
+      - 实现历史日线和财务数据 adapter，失败必须抛 DataError
+      - 登录状态不得写入仓库，CI 只跑 mock/fixture
+      - 用不复权 OHLCV fixture 验证列 schema
     python_package: baostock
     reference: "http://baostock.com"
 
@@ -101,12 +164,17 @@ sources:
     access: token_api
     cost: freemium
     runtime_ready: false
+    research_status: next_adapter
     strengths:
       - 财务、公告、资金、指数成分、交易日历较完整
       - 适合 point-in-time 数据和研究库
     risks:
       - 需要 token 和积分权限
       - GitHub Actions 需配置 secret
+    adoption_gate:
+      - token 只读 TUSHARE_TOKEN 环境变量
+      - 先接交易日历、指数成分、财务发布日期，不直接替换实时行情
+      - 财务数据必须保留公告日/披露日，禁止事后数据进回测
     python_package: tushare
     reference: "https://tushare.pro"
 
@@ -117,11 +185,16 @@ sources:
     access: python_package
     cost: free
     runtime_ready: false
+    research_status: research_candidate
     strengths:
       - 聚合式金融数据包，易用
       - 可作为 AKShare 补充
     risks:
       - 项目维护和接口稳定性需验证
+    adoption_gate:
+      - 只吸收接口设计和字段映射，不让 qstock 成为主数据源
+      - 与 AKShare/Eastmoney 做同日行情一致性抽样
+      - 缺字段时显式 DataError，不静默降级
     python_package: qstock
     reference: "https://github.com/tkfy920/qstock"
 
@@ -132,10 +205,88 @@ sources:
     access: python_package
     cost: free
     runtime_ready: false
+    research_status: next_adapter
     strengths:
       - 东方财富数据封装，A股行情和资金流方便
     risks:
       - 依赖网页接口，字段变化风险
+    adoption_gate:
+      - 优先接资金流和东方财富补充字段
+      - 所有字段映射必须有 fixture 覆盖
+      - 上游字段变化时 freshness/data schema 检查必须失败
     python_package: efinance
     reference: "https://github.com/Micro-sheep/efinance"
 
+  - id: ashare_sina_tencent
+    name: Ashare-style Sina/Tencent Aggregation
+    category: market_data
+    markets: [a_share]
+    access: http_api
+    cost: free
+    runtime_ready: false
+    research_status: design_absorbed
+    absorbed_from:
+      - "mpquant/Ashare"
+      - "balabala-sean/stock-analysis"
+      - "Acclerate/stock-selector"
+    strengths:
+      - 开源项目反复采用新浪/腾讯双源实时行情，适合作为 AKShare 之外的轻量兜底
+      - 日线、分钟线、实时行情可统一进 DataSource，减少对单一网页包装库依赖
+    risks:
+      - 非官方接口，字段协议需要 fixture 锁定
+      - 不能提供完整财务、公告、指数成分等 point-in-time 数据
+      - Ashare 源码中腾讯日线示例默认请求 qfq，本项目只能吸收 fallback 结构，不能吸收复权口径
+    adoption_gate:
+      - 实现独立 DataSource adapter，不直接复制第三方项目代码
+      - 对 600519、300750、000001 做实时价、日线、分钟线三类 fixture 回归
+      - 与 akshare/eastmoney 收盘价差异超过 0.5% 时抛 DataInconsistencyError
+    reference: "https://github.com/mpquant/Ashare"
+
+  - id: adata_warehouse
+    name: adata-style Local A-share Warehouse
+    category: local_warehouse
+    markets: [a_share]
+    access: python_package
+    cost: free
+    runtime_ready: false
+    research_status: design_absorbed
+    absorbed_from:
+      - "1nchaos/adata"
+      - "LoveInShenZhen/stock_data"
+      - "FengYang/baostock_cache_system"
+    strengths:
+      - 多个项目都把“本地增量数据仓库”作为稳定研究基础，适合降低接口频率和限流风险
+      - 可承载日线、复权因子、指数成分、融资融券、北向、行业概念等低频数据
+    risks:
+      - 本地数据膨胀，需要明确缓存淘汰和 schema 版本
+      - 数据更新失败会制造“看似完整但其实过期”的风险
+      - Sequoia-X 源码使用后复权回填，本项目只能吸收增量仓库结构，不能吸收价格口径
+    adoption_gate:
+      - 只缓存原始不复权数据和 point-in-time 因子，不缓存前复权回测数据
+      - 每张表带 source、fetched_at、trade_date、schema_version
+      - freshness 检查失败时禁止发信号
+    reference: "https://github.com/1nchaos/adata"
+
+  - id: qmt_xtquant_market_data
+    name: MiniQMT / XtQuant Market Data
+    category: broker_terminal_data
+    markets: [a_share]
+    access: local_terminal_api
+    cost: account_required
+    runtime_ready: false
+    research_status: future_optional
+    absorbed_from:
+      - "CodeBang06/miniqmt-xtquant-Ashare"
+      - "pppppppw/quant-qmt"
+      - "lotey/lite-qmt-executor"
+    strengths:
+      - 实盘终端数据延迟和可成交状态更接近真实交易
+      - 可用于验证涨跌停、停牌、盘口状态，提升 not_executable 判定质量
+    risks:
+      - 依赖券商终端和本地登录状态
+      - 本项目红线是不自动下单，只能读行情/状态
+    adoption_gate:
+      - adapter 只能实现 fetch_realtime_quote/fetch_intraday，不允许提供 place_order
+      - 测试必须证明没有交易接口被导入或调用
+      - 仅作为本地可选数据源，不进 GitHub Actions 默认流程
+    reference: "https://github.com/CodeBang06/miniqmt-xtquant-Ashare"
