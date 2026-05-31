@@ -207,6 +207,201 @@ class TestCLICachePathParam:
         assert result == 0
 
 
+class TestCLIDataSources:
+    def test_run_defaults_to_auto_source(self, monkeypatch):
+        from aqsp.cli import main
+        import aqsp.cli as cli_mod
+
+        def mock_run_scheduled(args):
+            assert args.source == "auto"
+            return 0
+
+        monkeypatch.setattr(cli_mod, "run_scheduled", mock_run_scheduled)
+        assert main(["run", "--symbols", "600519"]) == 0
+
+    def test_screen_accepts_local_and_online_source_plans(self, monkeypatch):
+        from aqsp.cli import main
+        import aqsp.cli as cli_mod
+
+        seen = []
+
+        def mock_run_screen(args):
+            seen.append(args.source)
+            return 0
+
+        monkeypatch.setattr(cli_mod, "run_screen", mock_run_screen)
+        assert main(["screen", "--source", "local_first", "--symbols", "600519"]) == 0
+        assert main(["screen", "--source", "online_first", "--symbols", "600519"]) == 0
+        assert seen == ["local_first", "online_first"]
+
+    def test_run_accepts_tdx_vipdoc_source(self, monkeypatch):
+        from aqsp.cli import main
+        import aqsp.cli as cli_mod
+
+        def mock_run_scheduled(args):
+            assert args.source == "tdx_vipdoc"
+            return 0
+
+        monkeypatch.setattr(cli_mod, "run_scheduled", mock_run_scheduled)
+        assert main(["run", "--source", "tdx_vipdoc", "--symbols", "600519"]) == 0
+
+    def test_walkforward_rejects_unwired_tdx_vipdoc_source(self):
+        from aqsp.cli import main
+
+        try:
+            main(
+                [
+                    "walkforward",
+                    "--source",
+                    "tdx_vipdoc",
+                    "--symbols",
+                    "600519",
+                    "--start",
+                    "2024-01-01",
+                    "--end",
+                    "2024-06-30",
+                ]
+            )
+        except SystemExit as exc:
+            assert exc.code == 2
+        else:
+            raise AssertionError("expected argparse rejection")
+
+    def test_fetch_frames_wraps_unexpected_source_errors(self, monkeypatch):
+        import aqsp.cli as cli_mod
+        from aqsp.core.errors import DataError
+
+        def boom(*args, **kwargs):
+            raise RuntimeError("proxy died")
+
+        monkeypatch.setattr(cli_mod, "fetch_akshare", boom)
+
+        try:
+            cli_mod._fetch_frames_for_cli("akshare", ["600519"], benchmark_symbol=None)
+        except DataError as exc:
+            assert "proxy died" in str(exc)
+        else:
+            raise AssertionError("expected DataError")
+
+    def test_auto_source_plan_is_local_first_without_cross_tier_consistency(
+        self, monkeypatch
+    ):
+        import aqsp.cli as cli_mod
+
+        class DummySource:
+            def __init__(self, *args, **kwargs):
+                pass
+
+        monkeypatch.setattr(
+            cli_mod,
+            "TdxVipdocSource",
+            type("Tdx", (DummySource,), {"name": "tdx_vipdoc"}),
+        )
+        monkeypatch.setattr(
+            cli_mod,
+            "EastmoneySource",
+            type("Em", (DummySource,), {"name": "eastmoney"}),
+        )
+        monkeypatch.setattr(
+            cli_mod, "SinaSource", type("Sina", (DummySource,), {"name": "sina"})
+        )
+        monkeypatch.setattr(
+            cli_mod, "TencentSource", type("Ten", (DummySource,), {"name": "tencent"})
+        )
+        monkeypatch.setattr(
+            cli_mod, "AkshareSource", type("Ak", (DummySource,), {"name": "akshare"})
+        )
+
+        source = cli_mod._get_source("auto")
+
+        assert source.primary.name == "tdx_vipdoc"
+        assert isinstance(source.primary, cli_mod.SourceFactory)
+        assert [item.name for item in source.fallbacks] == [
+            "eastmoney",
+            "sina",
+            "tencent",
+            "akshare",
+        ]
+        assert source.validate_consistency is False
+
+    def test_auto_source_does_not_require_local_vipdoc_at_construction(
+        self, monkeypatch
+    ):
+        import aqsp.cli as cli_mod
+
+        def fail_if_called():
+            raise AssertionError("tdx source should be lazy")
+
+        monkeypatch.setattr(cli_mod, "TdxVipdocSource", fail_if_called)
+
+        source = cli_mod._get_source("auto")
+
+        assert source.primary.name == "tdx_vipdoc"
+
+    def test_main_returns_nonzero_for_data_error(self, monkeypatch, capsys):
+        from aqsp.cli import main
+        from aqsp.core.errors import DataError
+        import aqsp.cli as cli_mod
+
+        def mock_run_scheduled(args):
+            raise DataError("all sources failed")
+
+        monkeypatch.setattr(cli_mod, "run_scheduled", mock_run_scheduled)
+
+        assert main(["run", "--symbols", "600519"]) == 1
+        assert "all sources failed" in capsys.readouterr().out
+
+    def test_drop_benchmark_frame_keeps_benchmark_out_of_screening(self):
+        from aqsp.cli import _drop_benchmark_frame
+
+        frames = {
+            "000300": _make_sample_data(),
+            "600519": _make_sample_data(),
+        }
+
+        assert set(_drop_benchmark_frame(frames, "000300")) == {"600519"}
+
+    def test_resolve_run_symbols_uses_source_universe_when_no_symbols(
+        self, monkeypatch
+    ):
+        import aqsp.cli as cli_mod
+        from aqsp.cli import _resolve_run_symbols
+
+        class SourceWithUniverse:
+            name = "source_with_universe"
+
+            def get_available_symbols(self):
+                return ["600000", "000001"]
+
+        monkeypatch.setattr(cli_mod, "_get_source", lambda _name: SourceWithUniverse())
+
+        assert _resolve_run_symbols(
+            "auto",
+            "",
+            max_universe=800,
+            min_avg_amount=50_000_000,
+        ) == ["600000", "000001"]
+
+    def test_resolve_run_symbols_prefers_explicit_symbols(self, monkeypatch):
+        import aqsp.cli as cli_mod
+        from aqsp.cli import _resolve_run_symbols
+
+        def fail_if_called(_name):
+            raise AssertionError("source should not be constructed")
+
+        monkeypatch.setattr(cli_mod, "_get_source", fail_if_called)
+
+        assert _resolve_run_symbols(
+            "auto",
+            "600519, 300750",
+            max_universe=800,
+            min_avg_amount=50_000_000,
+        ) == [
+            "600519",
+            "300750",
+        ]
+
+
 class TestCLILogParam:
     def test_log_param_accepted(self, tmp_path, monkeypatch):
         from aqsp.cli import main

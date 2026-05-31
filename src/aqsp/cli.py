@@ -8,15 +8,18 @@ import pandas as pd
 
 from aqsp.config import load_runtime_config
 from aqsp.core.errors import DataError
+from aqsp.core.types import RunMetadata
 from aqsp.data import fetch_akshare, load_csv, fetch_with_source
 from aqsp.data.akshare_source import AkshareSource
 from aqsp.data.cache import DataCache
 from aqsp.data.eastmoney_source import EastmoneySource
-from aqsp.data.multi_source import MultiSource
+from aqsp.data.mootdx_source import MootdxSource
+from aqsp.data.multi_source import MultiSource, SourceFactory
 from aqsp.data.sina_source import SinaSource
 from aqsp.data.tencent_source import TencentSource
 from aqsp.data.baostock_source import BaostockSource
 from aqsp.data.sqlite_db_source import SqliteDbSource
+from aqsp.data.tdx_vipdoc_source import TdxVipdocSource
 from aqsp.filters_lethal.pipeline import LethalFilterPipeline
 from aqsp.freshness import assert_fresh_data
 from aqsp.ledger import (
@@ -34,6 +37,31 @@ from aqsp.strategy import screen_universe
 from aqsp.strategies.thresholds import load_thresholds
 from aqsp.universe import DEFAULT_SYMBOLS
 
+SOURCE_CHOICES = [
+    "auto",
+    "local_first",
+    "online_first",
+    "multi",
+    "akshare",
+    "sina",
+    "eastmoney",
+    "tencent",
+    "mootdx",
+    "baostock",
+    "sqlite_db",
+    "tdx_vipdoc",
+]
+WALKFORWARD_SOURCE_CHOICES = [
+    "multi",
+    "akshare",
+    "mootdx",
+    "sina",
+    "eastmoney",
+    "tencent",
+    "baostock",
+    "sqlite_db",
+]
+
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="aqsp")
@@ -45,8 +73,8 @@ def main(argv: list[str] | None = None) -> int:
     screen.add_argument("--csv", default="", help="local OHLCV csv path")
     screen.add_argument(
         "--source",
-        choices=["multi", "akshare", "sina", "eastmoney", "tencent"],
-        default="multi",
+        choices=SOURCE_CHOICES,
+        default="auto",
         help="data source",
     )
     screen.add_argument("--limit", type=int, default=20)
@@ -63,13 +91,15 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--csv", default="")
     run.add_argument(
         "--source",
-        choices=["multi", "akshare", "sina", "eastmoney", "tencent"],
-        default="multi",
+        choices=SOURCE_CHOICES,
+        default="auto",
         help="data source",
     )
     run.add_argument("--limit", type=int, default=0)
+    run.add_argument("--max-universe", type=int, default=0)
     run.add_argument("--min-avg-amount", type=float, default=0)
     run.add_argument("--max-data-lag-days", type=int, default=0)
+    run.add_argument("--enable-online-factors", action="store_true")
     run.add_argument("--report", default="reports/latest.md")
     run.add_argument("--output-csv", default="reports/latest.csv")
     run.add_argument("--ledger", default="data/predictions.jsonl")
@@ -108,7 +138,7 @@ def main(argv: list[str] | None = None) -> int:
     wf.add_argument("--report", default="docs/walkforward-2026-05.md")
     wf.add_argument(
         "--source",
-        choices=["multi", "akshare", "mootdx", "sina", "eastmoney", "tencent", "baostock", "sqlite_db"],
+        choices=WALKFORWARD_SOURCE_CHOICES,
         default="sqlite_db",
     )
     wf.add_argument(
@@ -157,10 +187,36 @@ def main(argv: list[str] | None = None) -> int:
 
 def _get_source(source_name: str):
     cache = DataCache()
+    if source_name in {"auto", "local_first"}:
+        return MultiSource(
+            SourceFactory("tdx_vipdoc", TdxVipdocSource),
+            [
+                EastmoneySource(cache=cache),
+                SinaSource(cache=cache),
+                TencentSource(cache=cache),
+                AkshareSource(cache=cache),
+            ],
+            validate_consistency=False,
+        )
+    if source_name == "online_first":
+        return MultiSource(
+            EastmoneySource(cache=cache),
+            [
+                SinaSource(cache=cache),
+                TencentSource(cache=cache),
+                AkshareSource(cache=cache),
+                SourceFactory("tdx_vipdoc", TdxVipdocSource),
+            ],
+            validate_consistency=False,
+        )
     if source_name == "multi":
         return MultiSource(
             AkshareSource(cache=cache),
-            [SinaSource(cache=cache), EastmoneySource(cache=cache), TencentSource(cache=cache)],
+            [
+                SinaSource(cache=cache),
+                EastmoneySource(cache=cache),
+                TencentSource(cache=cache),
+            ],
         )
     if source_name == "akshare":
         return AkshareSource(cache=cache)
@@ -170,10 +226,14 @@ def _get_source(source_name: str):
         return EastmoneySource(cache=cache)
     if source_name == "tencent":
         return TencentSource(cache=cache)
+    if source_name == "mootdx":
+        return MootdxSource(cache=cache)
     if source_name == "baostock":
         return BaostockSource(cache=cache)
     if source_name == "sqlite_db":
         return SqliteDbSource(cache=cache)
+    if source_name == "tdx_vipdoc":
+        return TdxVipdocSource()
     raise ValueError(f"Unknown data source: {source_name}")
 
 
@@ -185,22 +245,80 @@ def _fetch_frames_for_cli(
     cache_path: str | None = None,
     days: int = 260,
 ) -> dict[str, pd.DataFrame]:
+    frames, _actual_source = _fetch_frames_for_cli_with_metadata(
+        source_name,
+        symbols,
+        benchmark_symbol=benchmark_symbol,
+        cache_path=cache_path,
+        days=days,
+    )
+    return frames
+
+
+def _fetch_frames_for_cli_with_metadata(
+    source_name: str,
+    symbols: list[str],
+    *,
+    benchmark_symbol: str | None,
+    cache_path: str | None = None,
+    days: int = 260,
+) -> tuple[dict[str, pd.DataFrame], str]:
     try:
         if source_name == "akshare":
-            return fetch_akshare(
+            frames = fetch_akshare(
                 symbols,
                 days=days,
                 benchmark_symbol=benchmark_symbol,
                 cache_path=cache_path,
             )
+            return frames, "akshare"
         source = _get_source(source_name)
-        return fetch_with_source(
+        frames = fetch_with_source(
             source, symbols, days=days, benchmark_symbol=benchmark_symbol
         )
+        actual_source = str(getattr(source, "last_used_source", None) or source.name)
+        return frames, actual_source
     except DataError:
         raise
     except Exception as exc:
         raise DataError(f"数据源 {source_name} 获取失败: {exc}") from exc
+
+
+def _drop_benchmark_frame(
+    frames: dict[str, pd.DataFrame],
+    benchmark_symbol: str | None,
+) -> dict[str, pd.DataFrame]:
+    if not benchmark_symbol:
+        return frames
+    return {symbol: df for symbol, df in frames.items() if symbol != benchmark_symbol}
+
+
+def _resolve_run_symbols(
+    source_name: str,
+    explicit_symbols: str,
+    *,
+    max_universe: int,
+    min_avg_amount: float,
+) -> list[str]:
+    symbols = [item.strip() for item in explicit_symbols.split(",") if item.strip()]
+    if symbols:
+        return symbols
+    source = _get_source(source_name)
+    if hasattr(source, "get_liquid_symbols"):
+        try:
+            liquid_symbols = source.get_liquid_symbols(
+                limit=max_universe,
+                min_amount=min_avg_amount,
+            )
+        except DataError:
+            liquid_symbols = []
+        if liquid_symbols:
+            return liquid_symbols
+    if hasattr(source, "get_available_symbols"):
+        available = source.get_available_symbols()
+        if available:
+            return available[:max_universe] if max_universe > 0 else available
+    return list(DEFAULT_SYMBOLS)
 
 
 def _count_independent_signal_days(ledger_path: str) -> int:
@@ -616,8 +734,15 @@ def run_screen(args: argparse.Namespace) -> int:
             benchmark_symbol=args.benchmark_symbol,
         )
 
-    config = ScreeningConfig(mode=args.mode, min_avg_amount=args.min_avg_amount)
-    picks = screen_universe(frames, config)[: args.limit]
+    screen_frames = _drop_benchmark_frame(frames, args.benchmark_symbol)
+    thresholds = load_thresholds()
+    config = ScreeningConfig(
+        mode=args.mode,
+        min_avg_amount=args.min_avg_amount,
+        min_price=thresholds.filter.min_price,
+        max_price=thresholds.filter.max_price,
+    )
+    picks = screen_universe(screen_frames, config)[: args.limit]
     table = to_dataframe(picks)
     if table.empty:
         print("No candidates.")
@@ -639,17 +764,27 @@ def run_screen(args: argparse.Namespace) -> int:
 def run_scheduled(args: argparse.Namespace) -> int:
     env = load_runtime_config()
     mode = args.mode or env.mode
-    symbols = [
-        item.strip() for item in args.symbols.split(",") if item.strip()
-    ] or list(env.symbols or DEFAULT_SYMBOLS)
+    explicit_symbols = args.symbols or ",".join(env.symbols)
     limit = args.limit or env.limit
+    max_universe = args.max_universe or env.max_universe
     min_avg_amount = args.min_avg_amount or env.min_avg_amount
     max_data_lag_days = args.max_data_lag_days or env.max_data_lag_days
+    enable_online_factors = args.enable_online_factors or env.enable_online_factors
+    explicit_symbol_count = len(
+        [item.strip() for item in explicit_symbols.split(",") if item.strip()]
+    )
+    symbols = _resolve_run_symbols(
+        args.source,
+        explicit_symbols,
+        max_universe=max_universe,
+        min_avg_amount=min_avg_amount,
+    )
 
     if args.csv:
         frames = load_csv(args.csv)
+        actual_source = "csv"
     else:
-        frames = _fetch_frames_for_cli(
+        frames, actual_source = _fetch_frames_for_cli_with_metadata(
             args.source,
             symbols,
             benchmark_symbol=args.benchmark_symbol,
@@ -657,42 +792,27 @@ def run_scheduled(args: argparse.Namespace) -> int:
 
     latest = assert_fresh_data(frames, max_data_lag_days)
 
-    validation = None
-    if not args.skip_validation:
-        validation = validate_predictions(args.ledger, frames)
-
-    breaker = CircuitBreaker()
-    daily_pnl = 0.0
-    weekly_pnl = 0.0
-    monthly_pnl = 0.0
-    if validation and validation.checked:
-        daily_pnl = validation.avg_return_pct
-        weekly_pnl = validation.avg_return_pct * 5
-        monthly_pnl = validation.avg_return_pct * 20
-    status = breaker.check(
-        daily_pnl_pct=daily_pnl,
-        weekly_pnl_pct=weekly_pnl,
-        monthly_pnl_pct=monthly_pnl,
-    )
-    if status.triggered:
-        print(f"⚠️  熔断触发: {status.reason}")
-        print("   本期信号仅供参考，不建议新建仓位")
-        return 2
-
     weights = strategy_weights_from_ledger(args.ledger)
 
     cold_start_days = _count_independent_signal_days(args.ledger)
     is_cold_start = cold_start_days < 30
 
+    screen_frames = _drop_benchmark_frame(frames, args.benchmark_symbol)
+    thresholds = load_thresholds()
     config = ScreeningConfig(
-        mode=mode, min_avg_amount=min_avg_amount, strategy_weights=weights
+        mode=mode,
+        min_avg_amount=min_avg_amount,
+        min_price=thresholds.filter.min_price,
+        max_price=thresholds.filter.max_price,
+        strategy_weights=weights,
     )
-    picks = screen_universe(frames, config)[:limit]
+    screened_picks = screen_universe(screen_frames, config)
+    picks = screened_picks[:limit]
 
     lethal_pipeline = LethalFilterPipeline()
     filtered_picks = []
     for pick in picks:
-        df = frames.get(pick.symbol, pd.DataFrame())
+        df = screen_frames.get(pick.symbol, pd.DataFrame())
         passed, rejected_by = lethal_pipeline.run(pick.symbol, df)
         if passed:
             filtered_picks.append(pick)
@@ -720,7 +840,6 @@ def run_scheduled(args: argparse.Namespace) -> int:
         slippage_bps=args.slippage_bps,
         benchmark_symbol=args.benchmark_symbol,
     )
-    thresholds = load_thresholds()
     bench_frame = frames.get(args.benchmark_symbol) if args.benchmark_symbol else None
     if bench_frame is not None and not bench_frame.empty:
         regime = RegimeDetector().detect({args.benchmark_symbol: bench_frame}).name
@@ -729,23 +848,41 @@ def run_scheduled(args: argparse.Namespace) -> int:
 
     nb_z = 0.0
     margin_z = 0.0
-    try:
-        from aqsp.data.cn.northbound import (
-            compute_northbound_factor,
-            fetch_northbound_flow,
-        )
+    if enable_online_factors:
+        try:
+            from aqsp.data.cn.northbound import (
+                compute_northbound_factor,
+                fetch_northbound_flow,
+            )
 
-        nb_flow = fetch_northbound_flow()
-        nb_z = compute_northbound_factor(nb_flow) if not nb_flow.empty else 0.0
-    except Exception:
-        nb_z = 0.0
-    try:
-        from aqsp.data.cn.margin_trading import compute_margin_factor
+            nb_flow = fetch_northbound_flow()
+            nb_z = compute_northbound_factor(nb_flow) if not nb_flow.empty else 0.0
+        except Exception:
+            nb_z = 0.0
+        try:
+            from aqsp.data.cn.margin_trading import compute_margin_factor
 
-        top_symbol = picks[0].symbol if picks else ""
-        margin_z = compute_margin_factor(top_symbol) if top_symbol else 0.0
-    except Exception:
-        margin_z = 0.0
+            top_symbol = picks[0].symbol if picks else ""
+            margin_z = compute_margin_factor(top_symbol) if top_symbol else 0.0
+        except Exception:
+            margin_z = 0.0
+
+    run_metadata = RunMetadata(
+        requested_source=args.source,
+        actual_source=actual_source,
+        explicit_symbol_count=explicit_symbol_count,
+        resolved_symbol_count=len(symbols),
+        fetched_frame_count=len(frames),
+        screened_count=len(screened_picks),
+        final_count=len(picks),
+        min_price=thresholds.filter.min_price,
+        max_price=thresholds.filter.max_price,
+        min_avg_amount=min_avg_amount,
+        online_factors_enabled=enable_online_factors,
+        thresholds_version=thresholds.version,
+        regime=regime,
+        max_universe=max_universe,
+    )
 
     append_predictions(
         args.ledger,
@@ -755,12 +892,39 @@ def run_scheduled(args: argparse.Namespace) -> int:
         regime=regime,
         northbound_flow_5d_z=nb_z,
         margin_balance_change_5d=margin_z,
+        run_metadata=run_metadata,
+    )
+
+    validation = None
+    if not args.skip_validation:
+        validation = validate_predictions(args.ledger, frames)
+
+    breaker = CircuitBreaker()
+    daily_pnl = 0.0
+    weekly_pnl = 0.0
+    monthly_pnl = 0.0
+    if validation and validation.checked:
+        daily_pnl = validation.avg_return_pct
+        weekly_pnl = validation.avg_return_pct * 5
+        monthly_pnl = validation.avg_return_pct * 20
+    status = breaker.check(
+        daily_pnl_pct=daily_pnl,
+        weekly_pnl_pct=weekly_pnl,
+        monthly_pnl_pct=monthly_pnl,
     )
 
     table = to_dataframe(picks)
     markdown = to_markdown(
-        picks, title=f"AI 量化选股报告({mode}, 数据日期 {latest.isoformat()})"
+        picks,
+        title=f"AI 量化选股报告({mode}, 数据日期 {latest.isoformat()})",
+        metadata=run_metadata,
     )
+    if status.triggered:
+        markdown += (
+            "\n\n## 组合保护\n"
+            f"- ⚠️ 熔断触发: {status.reason}\n"
+            "- 本期信号仅供参考，不建议新建仓位\n"
+        )
     if validation is not None:
         validation_text = "\n\n## 策略自检\n"
         if is_cold_start:
@@ -798,7 +962,7 @@ def run_scheduled(args: argparse.Namespace) -> int:
         for result in results:
             status = "ok" if result.ok else "failed"
             print(f"notify {result.channel}: {status} ({result.detail})")
-    return 0
+    return 2 if status.triggered else 0
 
 
 def run_walkforward(args: argparse.Namespace) -> int:
