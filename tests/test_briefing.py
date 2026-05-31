@@ -126,6 +126,27 @@ class TestBriefingGenerator:
         next_sec = next(s for s in briefing.sections if s.title == "明日重点")
         assert next_sec.content.count("**") <= 10
 
+    def test_next_day_section_excludes_avoid_picks(self):
+        gen = BriefingGenerator()
+        briefing = gen.generate(
+            picks=[_make_pick(symbol="600519", rating="avoid")],
+            frames={},
+        )
+        next_sec = next(s for s in briefing.sections if s.title == "明日重点")
+        assert "无可执行重点标的" in next_sec.content
+        assert "600519" not in next_sec.content
+        assert "avoid" not in next_sec.content
+
+    def test_next_day_section_excludes_watch_picks(self):
+        gen = BriefingGenerator()
+        briefing = gen.generate(
+            picks=[_make_pick(symbol="600519", rating="watch")],
+            frames={},
+        )
+        next_sec = next(s for s in briefing.sections if s.title == "明日重点")
+        assert "无可执行重点标的" in next_sec.content
+        assert "600519" not in next_sec.content
+
     def test_render_template(self):
         gen = BriefingGenerator()
         picks = [_make_pick()]
@@ -133,6 +154,15 @@ class TestBriefingGenerator:
         rendered = gen.render_template(briefing, picks)
         assert "AI 量化选股日报" in rendered
         assert "600519" in rendered
+
+    def test_render_template_keeps_avoid_out_of_next_day_section(self):
+        gen = BriefingGenerator()
+        picks = [_make_pick(symbol="600519", rating="avoid")]
+        briefing = gen.generate(picks=picks, frames={})
+        rendered = gen.render_template(briefing, picks)
+        next_day = rendered.split("## 明日重点", maxsplit=1)[1]
+        assert "600519" not in next_day
+        assert "avoid" not in next_day
 
 
 class TestEnhanceBriefing:

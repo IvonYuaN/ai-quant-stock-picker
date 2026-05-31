@@ -9,6 +9,7 @@ from jinja2 import Environment, FileSystemLoader
 
 from aqsp.core.time import now_shanghai
 from aqsp.core.types import PickResult
+from aqsp.ratings import is_tradable_rating
 
 _TEMPLATE_DIR = Path(__file__).parent / "templates"
 
@@ -133,10 +134,11 @@ class BriefingGenerator:
         frames: dict[str, pd.DataFrame],
     ) -> BriefingSection:
         lines: list[str] = []
-        if not picks:
-            lines.append("无重点关注标的。")
+        tradable_picks = [p for p in picks if is_tradable_rating(p.rating)]
+        if not tradable_picks:
+            lines.append("无可执行重点标的；今日候选均为回避/观察，不进入虚拟买入。")
             return BriefingSection(title="明日重点", content="\n".join(lines))
-        for pick in picks[:5]:
+        for pick in tradable_picks[:5]:
             entry = pick.ideal_buy
             stop = pick.stop_loss
             tp = pick.take_profit
@@ -177,6 +179,7 @@ class BriefingGenerator:
                 "symbol": p.symbol,
                 "name": p.name,
                 "score": p.score,
+                "rating": p.rating,
                 "strategies": list(p.strategies),
                 "reasons": list(p.reasons),
             }

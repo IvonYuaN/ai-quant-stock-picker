@@ -10,6 +10,7 @@
 ## 候选证据链
 {% for pick in picks %}
 ### {{ pick.symbol }} {{ pick.name }} (评分: {{ pick.score }})
+- 评级: {{ pick.rating }}
 {% if pick.strategies %}
 - 命中策略: {{ pick.strategies | join(', ') }}
 {% endif %}
