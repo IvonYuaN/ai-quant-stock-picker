@@ -8,8 +8,7 @@
     <array>
         <string>/bin/bash</string>
         <string>--login</string>
-        <string>-c</string>
-        <string>$HOME/Documents/AI量化选股/scripts/daily_run.sh</string>
+        <string>/Users/ivon/.aqsp/aqsp_daily_run_wrapper.sh</string>
     </array>
     <key>StartCalendarInterval</key>
     <array>
