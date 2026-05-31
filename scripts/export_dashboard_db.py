@@ -13,6 +13,21 @@ import pandas as pd
 from pandas.errors import EmptyDataError
 
 from aqsp.core.time import now_shanghai
+from aqsp.report import RESULT_COLUMNS
+
+
+LEDGER_EXPORT_COLUMNS = [
+    "id",
+    "signal_date",
+    "symbol",
+    "name",
+    "score",
+    "rating",
+    "status",
+    "return_pct",
+    "thresholds_version",
+    "strategies",
+]
 
 
 def read_jsonl(path: Path) -> list[dict[str, Any]]:
@@ -25,6 +40,12 @@ def read_jsonl(path: Path) -> list[dict[str, Any]]:
     ]
 
 
+def _ensure_columns(df: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
+    if not df.empty or list(df.columns):
+        return df
+    return pd.DataFrame(columns=columns)
+
+
 def export_db(csv_path: Path, ledger_path: Path, db_path: Path) -> None:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     if csv_path.exists():
@@ -34,6 +55,7 @@ def export_db(csv_path: Path, ledger_path: Path, db_path: Path) -> None:
             candidates = pd.DataFrame()
     else:
         candidates = pd.DataFrame()
+    candidates = _ensure_columns(candidates, RESULT_COLUMNS)
     ledger = pd.DataFrame(read_jsonl(ledger_path))
     for col in ledger.columns:
         ledger[col] = ledger[col].map(
@@ -41,6 +63,7 @@ def export_db(csv_path: Path, ledger_path: Path, db_path: Path) -> None:
             if isinstance(value, (dict, list))
             else value
         )
+    ledger = _ensure_columns(ledger, LEDGER_EXPORT_COLUMNS)
     run_meta = pd.DataFrame(
         [
             {
