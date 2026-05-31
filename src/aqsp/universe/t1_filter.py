@@ -4,9 +4,11 @@ from datetime import date, timedelta
 from pathlib import Path
 import json
 
+from aqsp.ratings import is_tradable_rating
+
 
 def get_yesterday_buys(ledger_path: str | Path, today: date) -> set[str]:
-    """读 ledger，返回昨日所有有 buy 信号的 symbol。"""
+    """读 ledger，返回昨日可进入持仓观察的 symbol。"""
     path = Path(ledger_path)
     if not path.exists():
         return set()
@@ -22,6 +24,8 @@ def get_yesterday_buys(ledger_path: str | Path, today: date) -> set[str]:
             except json.JSONDecodeError:
                 continue
             if rec.get("signal_date") != yesterday_str:
+                continue
+            if not is_tradable_rating(rec.get("rating")):
                 continue
             sym = rec.get("symbol")
             if sym:
@@ -42,7 +46,7 @@ def filter_t1_held(
     ledger_path: str | Path,
     today: date,
 ) -> tuple[list[str], list[str]]:
-    """从 candidates 中剔除昨日有信号的 symbol。Returns (kept, removed)"""
+    """从 candidates 中剔除昨日可进入持仓观察的 symbol。Returns (kept, removed)"""
     held = get_yesterday_buys(ledger_path, today)
     kept = [s for s in candidates if s not in held]
     removed = [s for s in candidates if s in held]
