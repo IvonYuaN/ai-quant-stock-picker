@@ -46,6 +46,24 @@ class PickResult:
 
 
 @dataclass(frozen=True)
+class RunMetadata:
+    requested_source: str
+    actual_source: str
+    explicit_symbol_count: int
+    resolved_symbol_count: int
+    fetched_frame_count: int
+    screened_count: int
+    final_count: int
+    min_price: float
+    max_price: float
+    min_avg_amount: float
+    online_factors_enabled: bool
+    thresholds_version: str
+    regime: str = ""
+    max_universe: int = 0
+
+
+@dataclass(frozen=True)
 class SignalScore:
     strategy_id: str
     score: float

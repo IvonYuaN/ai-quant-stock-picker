@@ -35,6 +35,8 @@ def score_symbol(
     close = float(row["close"])
     if not math.isfinite(close) or close <= 0:
         return None
+    if close < config.min_price or close > config.max_price:
+        return None
 
     reasons: list[str] = []
     risks: list[str] = []

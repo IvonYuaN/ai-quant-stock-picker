@@ -4,6 +4,7 @@ import json
 
 import pandas as pd
 
+from aqsp.core.types import RunMetadata
 from aqsp.ledger import (
     ExecutionConfig,
     LearnerConfig,
@@ -66,6 +67,38 @@ def test_ledger_validates_pending_prediction(tmp_path) -> None:
     assert rows[0]["status"] == "validated"
     assert rows[0]["entry_price"] == 10.1
     assert rows[0]["return_pct"] == 3.9604
+
+
+def test_append_predictions_is_idempotent_for_same_signal_run(tmp_path) -> None:
+    ledger = tmp_path / "predictions.jsonl"
+    pick = PickResult(
+        symbol="600000",
+        name="测试",
+        date="2026-01-02",
+        close=10,
+        score=70,
+        rating="buy_candidate",
+        entry_type="volume_breakout",
+        ideal_buy=10,
+        stop_loss=9.5,
+        take_profit=11,
+        position="10%-30%",
+        strategies=("volume_breakout",),
+    )
+
+    for _ in range(2):
+        append_predictions(
+            ledger,
+            [pick],
+            execution=ExecutionConfig(horizon_days=1, fee_bps=0, slippage_bps=0),
+            thresholds_version="2026.05.29",
+            regime="stable_bull",
+        )
+
+    rows = read_ledger(ledger)
+    assert len(rows) == 1
+    assert rows[0]["symbol"] == "600000"
+    assert rows[0]["thresholds_version"] == "2026.05.29"
 
 
 def test_validation_uses_next_open_not_signal_close(tmp_path) -> None:
@@ -342,3 +375,104 @@ def test_validation_executes_when_open_below_limit_up(tmp_path) -> None:
     assert summary.checked == 1
     assert summary.skipped_not_executable == 0
     assert rows[0]["status"] == "validated"
+
+
+def test_validation_marks_watch_signal_as_watch_only(tmp_path) -> None:
+    ledger = tmp_path / "predictions.jsonl"
+    pick = PickResult(
+        symbol="600000",
+        name="测试",
+        date="2026-01-02",
+        close=10,
+        score=45,
+        rating="watch",
+        entry_type="relative_strength",
+        ideal_buy=10,
+        stop_loss=9,
+        take_profit=20,
+        position="watch",
+        strategies=("low_vol_trend",),
+    )
+    append_predictions(
+        ledger,
+        [pick],
+        execution=ExecutionConfig(horizon_days=1, fee_bps=0, slippage_bps=0),
+    )
+    summary = validate_predictions(
+        ledger,
+        {
+            "600000": pd.DataFrame(
+                [
+                    {
+                        "date": "2026-01-02",
+                        "open": 10,
+                        "high": 10,
+                        "low": 10,
+                        "close": 10,
+                    },
+                    {
+                        "date": "2026-01-03",
+                        "open": 10.5,
+                        "high": 11,
+                        "low": 10.4,
+                        "close": 10.8,
+                    },
+                ]
+            )
+        },
+    )
+
+    rows = read_ledger(ledger)
+    assert summary.checked == 0
+    assert summary.wins == 0
+    assert rows[0]["status"] == "watch_only"
+
+
+def test_append_predictions_writes_run_metadata_when_provided(tmp_path) -> None:
+    ledger = tmp_path / "predictions.jsonl"
+    pick = PickResult(
+        symbol="600900",
+        name="长江电力",
+        date="2026-05-29",
+        close=27.75,
+        score=72,
+        rating="strong_buy_candidate",
+        entry_type="relative_strength",
+        ideal_buy=27.75,
+        stop_loss=26.1,
+        take_profit=31.0,
+        position="30%-50%",
+        strategies=("rps_relative_strength",),
+    )
+    metadata = RunMetadata(
+        requested_source="auto",
+        actual_source="tdx_vipdoc",
+        explicit_symbol_count=0,
+        resolved_symbol_count=100,
+        fetched_frame_count=101,
+        screened_count=8,
+        final_count=1,
+        min_price=1.0,
+        max_price=1000.0,
+        min_avg_amount=50_000_000,
+        online_factors_enabled=False,
+        thresholds_version="1.0.0",
+        regime="stable_bull",
+        max_universe=100,
+    )
+
+    append_predictions(
+        ledger,
+        [pick],
+        thresholds_version="1.0.0",
+        regime="stable_bull",
+        run_metadata=metadata,
+    )
+
+    row = read_ledger(ledger)[0]
+    assert row["run_requested_source"] == "auto"
+    assert row["run_actual_source"] == "tdx_vipdoc"
+    assert row["run_resolved_symbol_count"] == 100
+    assert row["run_fetched_frame_count"] == 101
+    assert row["run_final_count"] == 1
+    assert row["run_online_factors_enabled"] is False
