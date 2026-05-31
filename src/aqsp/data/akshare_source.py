@@ -7,6 +7,7 @@ import pandas as pd
 from aqsp.data.source import DataSource, OhlcvFrame, apply_limit_suspended_adj
 from aqsp.data.cache import DataCache
 from aqsp.core.errors import DataError
+from aqsp.core.time import now_shanghai
 
 
 class AkshareSource(DataSource):
@@ -45,13 +46,16 @@ class AkshareSource(DataSource):
                 out[symbol] = cached
                 continue
 
-            df = self._ak.stock_zh_a_hist(
-                symbol=symbol,
-                period="daily",
-                start_date=start.strftime("%Y%m%d"),
-                end_date=end.strftime("%Y%m%d"),
-                adjust=adjust,
-            )
+            try:
+                df = self._ak.stock_zh_a_hist(
+                    symbol=symbol,
+                    period="daily",
+                    start_date=start.strftime("%Y%m%d"),
+                    end_date=end.strftime("%Y%m%d"),
+                    adjust=adjust,
+                )
+            except Exception as exc:
+                raise DataError(f"akshare 日线获取失败: {symbol} - {exc}") from exc
             if df.empty:
                 continue
             df = self._normalize_akshare_df(df, symbol)
@@ -80,11 +84,14 @@ class AkshareSource(DataSource):
     ) -> dict[str, OhlcvFrame]:
         out: dict[str, OhlcvFrame] = {}
         for symbol in symbols:
-            df = self._ak.stock_zh_a_minute(
-                symbol=symbol,
-                period=period,
-                adjust="",
-            )
+            try:
+                df = self._ak.stock_zh_a_minute(
+                    symbol=symbol,
+                    period=period,
+                    adjust="",
+                )
+            except Exception as exc:
+                raise DataError(f"akshare 分时获取失败: {symbol} - {exc}") from exc
             if df.empty:
                 continue
             df = self._normalize_intraday_df(df, symbol)
@@ -108,7 +115,7 @@ class AkshareSource(DataSource):
                         "ask1": float(row.iloc[0]["卖一价"]),
                         "volume": float(row.iloc[0]["成交量"]),
                         "amount": float(row.iloc[0]["成交额"]),
-                        "ts": pd.Timestamp.now(tz="Asia/Shanghai").isoformat(),
+                        "ts": now_shanghai().isoformat(),
                     }
         except Exception as e:
             raise DataError(f"获取实时行情失败: {e}") from e

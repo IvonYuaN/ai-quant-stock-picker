@@ -5,6 +5,7 @@ from typing import Literal
 import pandas as pd
 
 from aqsp.data.source import DataSource, OhlcvFrame, apply_limit_suspended_adj
+from aqsp.core.time import now_shanghai
 
 try:
     from mootdx.quotes import Quotes
@@ -149,7 +150,7 @@ class MootdxSource(DataSource):
                 "ask1": float(row.get("ask1", 0)),
                 "volume": float(row.get("vol", 0)),
                 "amount": float(row.get("amount", 0)),
-                "ts": pd.Timestamp.now(tz="Asia/Shanghai").isoformat(),
+                "ts": now_shanghai().isoformat(),
             }
         except Exception:
             return None

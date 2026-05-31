@@ -129,6 +129,23 @@ def test_realtime_service_get_bid_ask():
     assert bid_ask["600000"] == (10.4, 10.6)
 
 
+def test_realtime_service_get_volume_amount_returns_values():
+    quote_data = {
+        "600000": {
+            "price": 10.5,
+            "bid1": 10.4,
+            "ask1": 10.6,
+            "volume": 1000,
+            "amount": 10500,
+        }
+    }
+    source = MockSource(quote_data=quote_data)
+    service = RealtimeService(source)
+
+    volume_amount = service.get_volume_amount(["600000"])
+    assert volume_amount["600000"] == (1000, 10500)
+
+
 def test_realtime_service_caching():
     quote_data = {
         "600000": {

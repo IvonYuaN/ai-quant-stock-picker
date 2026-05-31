@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from datetime import date
+from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Literal
 import pandas as pd
 
@@ -8,12 +10,25 @@ from aqsp.data.source import DataSource, OhlcvFrame
 from aqsp.core.errors import DataError, DataInconsistencyError
 
 
+@dataclass(frozen=True)
+class SourceFactory:
+    name: str
+    build: Callable[[], DataSource]
+
+
 class MultiSource(DataSource):
     name: str = "multi"
 
-    def __init__(self, primary: DataSource, fallbacks: list[DataSource]) -> None:
+    def __init__(
+        self,
+        primary: DataSource | SourceFactory,
+        fallbacks: list[DataSource | SourceFactory],
+        *,
+        validate_consistency: bool = True,
+    ) -> None:
         self.primary = primary
         self.fallbacks = fallbacks
+        self.validate_consistency = validate_consistency
         self._last_used_source: str | None = None
 
     @property
@@ -62,6 +77,58 @@ class MultiSource(DataSource):
             "fetch_index",
         )
 
+    def get_available_symbols(self) -> list[str]:
+        exceptions = []
+        for source_ref in [self.primary] + self.fallbacks:
+            source_name = self._source_name(source_ref)
+            try:
+                source = self._materialize(source_ref)
+                method = getattr(source, "get_available_symbols", None)
+                if method is None:
+                    exceptions.append((source_name, "not supported"))
+                    continue
+                symbols = method()
+                if symbols:
+                    self._last_used_source = source_name
+                    return list(symbols)
+                exceptions.append((source_name, "empty result"))
+            except Exception as exc:
+                exceptions.append((source_name, exc))
+        raise DataError(
+            "所有数据源获取可用标的失败: "
+            + ", ".join(f"{name}: {str(exc)[:50]}" for name, exc in exceptions)
+        )
+
+    def get_liquid_symbols(self, *, limit: int, min_amount: float) -> list[str]:
+        exceptions = []
+        for source_ref in [self.primary] + self.fallbacks:
+            source_name = self._source_name(source_ref)
+            try:
+                source = self._materialize(source_ref)
+                method = getattr(source, "get_liquid_symbols", None)
+                if method is None:
+                    exceptions.append((source_name, "not supported"))
+                    continue
+                symbols = method(limit=limit, min_amount=min_amount)
+                if symbols:
+                    self._last_used_source = source_name
+                    return list(symbols)
+                exceptions.append((source_name, "empty result"))
+            except Exception as exc:
+                exceptions.append((source_name, exc))
+        raise DataError(
+            "所有数据源获取高流动性标的失败: "
+            + ", ".join(f"{name}: {str(exc)[:50]}" for name, exc in exceptions)
+        )
+
+    def _source_name(self, source: DataSource | SourceFactory) -> str:
+        return source.name
+
+    def _materialize(self, source: DataSource | SourceFactory) -> DataSource:
+        if isinstance(source, SourceFactory):
+            return source.build()
+        return source
+
     def _with_fallback(self, func, method_name: str):
         sources = [self.primary] + self.fallbacks
 
@@ -69,22 +136,27 @@ class MultiSource(DataSource):
         fallback_result = None
         exceptions = []
 
-        for source in sources:
+        for source_ref in sources:
+            source_name = self._source_name(source_ref)
             try:
+                source = self._materialize(source_ref)
                 result = func(source)
                 if not result:
+                    exceptions.append((source_name, "empty result"))
                     continue
                 if primary_result is None:
                     primary_result = result
-                    self._last_used_source = source.name
+                    self._last_used_source = source_name
+                    if not self.validate_consistency:
+                        return primary_result
                 elif fallback_result is None:
                     fallback_result = result
                     break
             except Exception as e:
-                exceptions.append((source.name, e))
+                exceptions.append((source_name, e))
 
         if primary_result is not None:
-            if fallback_result is not None:
+            if self.validate_consistency and fallback_result is not None:
                 self._validate_consistency(primary_result, fallback_result)
             return primary_result
 
@@ -118,7 +190,9 @@ class MultiSource(DataSource):
                     if diff_pct > 0.5:
                         raise DataInconsistencyError(
                             symbol,
-                            self.primary.name,
-                            self.fallbacks[0].name if self.fallbacks else "unknown",
+                            self._source_name(self.primary),
+                            self._source_name(self.fallbacks[0])
+                            if self.fallbacks
+                            else "unknown",
                             diff_pct,
                         )
