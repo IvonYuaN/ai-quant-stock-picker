@@ -55,6 +55,7 @@ class RealtimeService:
             volume = data.get("volume", 0.0)
             amount = data.get("amount", 0.0)
             result[symbol] = (volume, amount)
+        return result
 
     def is_realtime_available(self) -> bool:
         return is_market_open()

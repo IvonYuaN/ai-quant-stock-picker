@@ -108,10 +108,10 @@ class EastmoneySource(DataSource):
             try:
                 self._throttle()
                 market = "1" if symbol.startswith("6") else "0"
-                url = "https://push2.eastmoney.com/api/qt/stock/kline/get"
+                url = "https://push2his.eastmoney.com/api/qt/stock/kline/get"
                 params = {
                     "secid": f"{market}.{symbol}",
-                    "ut": "fa5fd1943c7b386f172d6893dbfba10b",
+                    "ut": "7eea3edcaed734bea9cbfc24409ed989",
                     "fields1": "f1,f2,f3,f4,f5,f6",
                     "fields2": "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61",
                     "klt": "101",
@@ -155,10 +155,10 @@ class EastmoneySource(DataSource):
                 self._throttle()
                 market = "1" if symbol.startswith("6") else "0"
                 klt_map = {"1": "1", "5": "5", "15": "15", "30": "30", "60": "60"}
-                url = "https://push2.eastmoney.com/api/qt/stock/kline/get"
+                url = "https://push2his.eastmoney.com/api/qt/stock/kline/get"
                 params = {
                     "secid": f"{market}.{symbol}",
-                    "ut": "fa5fd1943c7b386f172d6893dbfba10b",
+                    "ut": "7eea3edcaed734bea9cbfc24409ed989",
                     "fields1": "f1,f2,f3,f4,f5,f6",
                     "fields2": "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61",
                     "klt": klt_map.get(period, "5"),
@@ -229,10 +229,10 @@ class EastmoneySource(DataSource):
             try:
                 self._throttle()
                 market = "1" if code.startswith("000") else "0"
-                url = "https://push2.eastmoney.com/api/qt/stock/kline/get"
+                url = "https://push2his.eastmoney.com/api/qt/stock/kline/get"
                 params = {
                     "secid": f"{market}.{code}",
-                    "ut": "fa5fd1943c7b386f172d6893dbfba10b",
+                    "ut": "7eea3edcaed734bea9cbfc24409ed989",
                     "fields1": "f1,f2,f3,f4,f5,f6",
                     "fields2": "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61",
                     "klt": "101",
