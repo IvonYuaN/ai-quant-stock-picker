@@ -9,7 +9,9 @@ from aqsp.internet_strategies import evaluate_strategy_signals
 from aqsp.models import PickResult, ScreeningConfig
 
 
-def screen_universe(frames: dict[str, pd.DataFrame], config: ScreeningConfig) -> list[PickResult]:
+def screen_universe(
+    frames: dict[str, pd.DataFrame], config: ScreeningConfig
+) -> list[PickResult]:
     picks: list[PickResult] = []
     for symbol, frame in frames.items():
         try:
@@ -21,7 +23,9 @@ def screen_universe(frames: dict[str, pd.DataFrame], config: ScreeningConfig) ->
     return sorted(picks, key=lambda item: item.score, reverse=True)
 
 
-def score_symbol(symbol: str, frame: pd.DataFrame, config: ScreeningConfig) -> PickResult | None:
+def score_symbol(
+    symbol: str, frame: pd.DataFrame, config: ScreeningConfig
+) -> PickResult | None:
     df = enrich_indicators(frame)
     if len(df) < config.min_bars:
         return None
@@ -30,6 +34,8 @@ def score_symbol(symbol: str, frame: pd.DataFrame, config: ScreeningConfig) -> P
     prev = df.iloc[-2]
     close = float(row["close"])
     if not math.isfinite(close) or close <= 0:
+        return None
+    if close < config.min_price or close > config.max_price:
         return None
 
     reasons: list[str] = []
@@ -81,7 +87,11 @@ def score_symbol(symbol: str, frame: pd.DataFrame, config: ScreeningConfig) -> P
         score += 18
         reasons.append("接近或突破20日新高且量能确认")
 
-    pullback_to_ma = ma5 * 0.985 <= close <= ma10 * 1.025 and volume_ratio <= 1.1 and ma5 > ma10 > ma20
+    pullback_to_ma = (
+        ma5 * 0.985 <= close <= ma10 * 1.025
+        and volume_ratio <= 1.1
+        and ma5 > ma10 > ma20
+    )
     if pullback_to_ma:
         score += 16
         reasons.append("强趋势缩量回踩均线")
@@ -165,7 +175,10 @@ def score_symbol(symbol: str, frame: pd.DataFrame, config: ScreeningConfig) -> P
 def _entry_type(row: pd.Series, prev: pd.Series, pullback_to_ma: bool) -> str:
     if pullback_to_ma:
         return "trend_pullback"
-    if _num(row["close"]) >= _num(prev["high_20"]) * 0.995 and _num(row["volume_ratio"]) >= 1.35:
+    if (
+        _num(row["close"]) >= _num(prev["high_20"]) * 0.995
+        and _num(row["volume_ratio"]) >= 1.35
+    ):
         return "volume_breakout"
     if _num(row["rsi12"]) < 42 and _num(row["macd_hist"]) > _num(prev["macd_hist"]):
         return "reversal_watch"

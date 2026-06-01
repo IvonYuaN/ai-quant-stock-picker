@@ -1,0 +1,97 @@
+composite:
+  min_total_score: 0.4
+  momentum_weight: 0.3
+  quality_weight: 0.2
+  value_weight: 0.2
+  volume_weight: 0.0
+  mean_reversion_weight: 0.0
+  triple_rise_weight: 0.3
+description: "策略阈值配置 — v1.1.0：2026-05-30 CSCV 双门验证通过（DSR=1.9174, PBO=24.21%），Held-out 验证通过（Sharpe=5.93），正式启用"
+effective_from: '2026-05-30'
+execution:
+  commission_rate: 0.0003
+  limit_down_tolerance: 0.005
+  limit_up_tolerance: 0.005
+  slippage: 0.002
+filter:
+  max_price: 1000.0
+  min_avg_volume: 1000000
+  min_days_listed: 90
+  min_price: 1.0
+last_walkforward_run: '2026-05-30'
+momentum:
+  lookback_days: 60
+  ma_period: 20
+  max_volatility: 0.3
+  min_returns: 0.05
+  rsi_overbought: 70
+  rsi_oversold: 30
+  trend_strength_threshold: 0.5
+  weights:
+    momentum: 0.4
+    rsi: 0.3
+    trend: 0.3
+quality:
+  enabled: false
+  eps_growth_min: 0.1
+  max_debt_ratio: 0.6
+  min_cash_flow: 0.0
+  min_roa: 0.05
+  min_roe: 0.1
+  operating_margin_threshold: 0.05
+  weights:
+    debt: 0.25
+    margin: 0.2
+    roa: 0.25
+    roe: 0.3
+regime:
+  adjustments:
+    stable_bear: 0.8
+    stable_bull: 1.1
+    stable_sideways: 0.95
+    volatile_bear: 0.6
+    volatile_bull: 0.9
+    volatile_sideways: 0.85
+  confidence_momentum: 0.05
+  confidence_trend: 0.01
+  confidence_volatility: 0.2
+  cooldown_hours: 24
+  min_sample_size: 20
+  momentum_bear: -0.1
+  momentum_bull: 0.1
+  trend_bear: -0.02
+  trend_bull: 0.02
+  volatility_high: 0.3
+risk:
+  liquidity_threshold: 1000000
+  max_drawdown: 0.2
+  volatility_limit: 0.4
+value:
+  enabled: false
+  ev_ebitda_max: 15
+  max_pb: 5
+  max_pe: 30
+  min_dividend_yield: 0.02
+  price_sales_max: 3
+  weights:
+    dividend: 0.3
+    pb: 0.3
+    pe: 0.4
+volume:
+  enabled: true
+  lookback_days: 60
+  volume_ma_period: 20
+  surge_multiplier: 1.5
+  price_ma_period: 20
+  correlation_window: 10
+  weights:
+    surge: 0.4
+    breakout: 0.35
+    correlation: 0.25
+mean_reversion:
+  enabled: true
+  lookback_days: 20
+  rsi_period: 14
+  oversold_threshold: 30
+  deviation_threshold: -0.05
+version: 1.1.0

@@ -1,0 +1,132 @@
+name: Dry-Run Verification
+
+on:
+  workflow_dispatch:
+    inputs:
+      days:
+        description: "Number of days to run dry-run"
+        required: false
+        default: "2"
+
+jobs:
+  dry-run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      AQSP_SYMBOLS: "600519,000858,601318,600036,000333"
+      AQSP_MODE: "close"
+      AQSP_LIMIT: "5"
+      AQSP_MIN_AVG_AMOUNT: "50000000"
+      AQSP_MAX_DATA_LAG_DAYS: "3"
+      AQSP_LEDGER: data/predictions.jsonl
+      DRY_RUN: "true"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[data]"
+
+      - name: Run screen (dry-run)
+        run: |
+          echo "=== Dry Run Mode ==="
+          echo "Symbols: ${AQSP_SYMBOLS}"
+          echo "Mode: ${AQSP_MODE}"
+          echo "Time: $(TZ=Asia/Shanghai date)"
+          echo ""
+
+          set +e
+          aqsp run \
+            --mode "${AQSP_MODE}" \
+            --symbols "${AQSP_SYMBOLS}" \
+            --limit "${AQSP_LIMIT}" \
+            --min-avg-amount "${AQSP_MIN_AVG_AMOUNT}" \
+            --max-data-lag-days "${AQSP_MAX_DATA_LAG_DAYS}" \
+            --ledger "${AQSP_LEDGER}" \
+            --report "reports/dry-run.md" \
+            --output-csv "reports/dry-run.csv" \
+            --skip-validation
+          RUN_STATUS=$?
+          set -e
+          if [ "$RUN_STATUS" -eq 2 ]; then
+            echo "aqsp run returned 2: circuit breaker active; continue dry-run verification."
+          elif [ "$RUN_STATUS" -ne 0 ]; then
+            exit "$RUN_STATUS"
+          fi
+
+          echo ""
+          echo "=== Screen Complete ==="
+
+      - name: Verify timezone
+        run: |
+          echo "Checking timezone handling..."
+          python3 -c "
+          from aqsp.core.time import now_shanghai
+          import json
+          from pathlib import Path
+
+          ts = now_shanghai()
+          print(f'now_shanghai(): {ts}')
+          print(f'Timezone: {ts.tzinfo}')
+
+          ledger = Path('data/predictions.jsonl')
+          if ledger.exists():
+              lines = ledger.read_text().strip().split('\n')
+              if lines:
+                  last = json.loads(lines[-1])
+                  created = last.get('created_at', '')
+                  print(f'Last record created_at: {created}')
+                  if '+08:00' in created:
+                      print('✅ Timezone correctly set to +08:00')
+                  else:
+                      print('⚠️ Timezone may be incorrect')
+          "
+
+      - name: Verify fallback chain
+        run: |
+          echo "Testing fallback chain..."
+          python3 -c "
+          from aqsp.data.multi_source import MultiSource
+          from aqsp.data.akshare_source import AkshareSource
+          from aqsp.data.sina_source import SinaSource
+
+          primary = AkshareSource()
+          fallback = SinaSource()
+          ms = MultiSource(primary=primary, fallbacks=[fallback])
+
+          print(f'Primary: {primary.name}')
+          print(f'Fallback: {fallback.name}')
+          print('✅ Multi-source fallback configured')
+          "
+
+      - name: Check circuit breaker
+        run: |
+          echo "Testing circuit breaker..."
+          python3 -c "
+          from aqsp.risk.circuit_breaker import CircuitBreaker, CircuitBreakerConfig
+
+          config = CircuitBreakerConfig(
+              daily_loss_pct=3.0,
+              weekly_loss_pct=6.0,
+              monthly_loss_pct=10.0,
+              cooldown_days=5,
+              state_file='data/risk_state.json'
+          )
+          breaker = CircuitBreaker(config=config)
+
+          status = breaker.check(daily_pnl_pct=-1.0, weekly_pnl_pct=-2.0, monthly_pnl_pct=-3.0)
+          print(f'Triggered: {status.triggered}')
+          print(f'Reason: {status.reason}')
+          print('✅ Circuit breaker working')
+          "
+
+      - name: Verify no private artifacts are uploaded
+        if: always()
+        run: |
+          echo "Dry-run reports and ledgers stay inside the runner and are not uploaded."

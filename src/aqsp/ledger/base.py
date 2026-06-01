@@ -1,0 +1,355 @@
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass
+from pathlib import Path
+from uuid import uuid4
+
+import pandas as pd
+
+from aqsp.core.time import now_shanghai
+from aqsp.core.types import RunMetadata
+from aqsp.models import PickResult
+from aqsp.ratings import is_tradable_rating
+
+
+@dataclass(frozen=True)
+class ValidationSummary:
+    checked: int
+    wins: int
+    avg_return_pct: float
+    avg_excess_pct: float
+    skipped_not_executable: int = 0
+
+
+@dataclass(frozen=True)
+class ExecutionConfig:
+    horizon_days: int = 3
+    fee_bps: float = 8.0
+    slippage_bps: float = 5.0
+    benchmark_symbol: str = "000300"
+    limit_up_pct: float = 0.099
+    limit_down_pct: float = 0.099
+
+
+def read_ledger(path: str | Path) -> list[dict]:
+    ledger = Path(path)
+    if not ledger.exists():
+        return []
+    rows = []
+    for line in ledger.read_text(encoding="utf-8").splitlines():
+        if line.strip():
+            rows.append(json.loads(line))
+    return rows
+
+
+def write_ledger(path: str | Path, rows: list[dict]) -> None:
+    ledger = Path(path)
+    ledger.parent.mkdir(parents=True, exist_ok=True)
+    text = "\n".join(
+        json.dumps(row, ensure_ascii=False, sort_keys=True) for row in rows
+    )
+    ledger.write_text((text + "\n") if text else "", encoding="utf-8")
+
+
+def append_predictions(
+    path: str | Path,
+    picks: list[PickResult],
+    execution: ExecutionConfig | None = None,
+    thresholds_version: str = "",
+    regime: str = "",
+    northbound_flow_5d_z: float = 0.0,
+    margin_balance_change_5d: float = 0.0,
+    run_metadata: RunMetadata | None = None,
+) -> None:
+    execution = execution or ExecutionConfig()
+    rows = read_ledger(path)
+    existing_keys = {_prediction_key(row) for row in rows}
+    now = now_shanghai().isoformat(timespec="seconds")
+    for pick in picks:
+        strategies = list(pick.strategies)
+        signal_day_group = pick.date
+        row_key = (pick.date, pick.symbol, thresholds_version, regime, "next_open")
+        if row_key in existing_keys:
+            continue
+        rows.append(
+            {
+                "id": uuid4().hex,
+                "created_at": now,
+                "signal_date": pick.date,
+                "symbol": pick.symbol,
+                "name": pick.name,
+                "signal_close": pick.close,
+                "intended_entry": "next_open",
+                "score": pick.score,
+                "rating": pick.rating,
+                "position": pick.position,
+                "entry_type": pick.entry_type,
+                "ideal_buy": pick.ideal_buy,
+                "strategies": strategies,
+                "reasons": list(pick.reasons),
+                "risks": list(pick.risks),
+                "stop_loss": pick.stop_loss,
+                "take_profit": pick.take_profit,
+                "horizon_days": execution.horizon_days,
+                "fee_bps": execution.fee_bps,
+                "slippage_bps": execution.slippage_bps,
+                "benchmark_symbol": execution.benchmark_symbol,
+                "limit_up_pct": execution.limit_up_pct,
+                "limit_down_pct": execution.limit_down_pct,
+                "thresholds_version": thresholds_version,
+                "regime_at_signal": regime,
+                "signal_day_group": signal_day_group,
+                "northbound_flow_5d_z": northbound_flow_5d_z,
+                "margin_balance_change_5d": margin_balance_change_5d,
+                **_run_metadata_fields(run_metadata),
+                "status": "pending",
+            }
+        )
+        existing_keys.add(row_key)
+    write_ledger(path, rows)
+
+
+def _run_metadata_fields(metadata: RunMetadata | None) -> dict[str, object]:
+    if metadata is None:
+        return {}
+    return {
+        "run_requested_source": metadata.requested_source,
+        "run_actual_source": metadata.actual_source,
+        "run_source_freshness_tier": metadata.source_freshness_tier,
+        "run_source_coverage_tier": metadata.source_coverage_tier,
+        "run_source_local_status": metadata.source_local_status,
+        "run_source_health_label": metadata.source_health_label,
+        "run_source_health_message": metadata.source_health_message,
+        "run_fallback_used": metadata.fallback_used,
+        "run_explicit_symbol_count": metadata.explicit_symbol_count,
+        "run_resolved_symbol_count": metadata.resolved_symbol_count,
+        "run_fetched_frame_count": metadata.fetched_frame_count,
+        "run_screened_count": metadata.screened_count,
+        "run_final_count": metadata.final_count,
+        "run_max_universe": metadata.max_universe,
+        "run_min_price": metadata.min_price,
+        "run_max_price": metadata.max_price,
+        "run_min_avg_amount": metadata.min_avg_amount,
+        "run_online_factors_enabled": metadata.online_factors_enabled,
+        "run_data_latest_trade_date": metadata.data_latest_trade_date,
+        "run_data_lag_days": metadata.data_lag_days,
+    }
+
+
+def _prediction_key(row: dict) -> tuple[str, str, str, str, str]:
+    return (
+        str(row.get("signal_date", "")),
+        str(row.get("symbol", "")),
+        str(row.get("thresholds_version", "")),
+        str(row.get("regime_at_signal", "")),
+        str(row.get("intended_entry", "next_open")),
+    )
+
+
+def _check_executable(
+    entry_bar: pd.Series, prev_close: float, row: dict
+) -> tuple[bool, str]:
+    if prev_close is None or prev_close <= 0:
+        return True, ""
+    open_price = float(entry_bar.get("open") or 0)
+    if open_price <= 0:
+        return False, "no_open_price"
+
+    suspended_flag = entry_bar.get("suspended")
+    if suspended_flag is True or (
+        isinstance(suspended_flag, (int, float)) and suspended_flag
+    ):
+        return False, "suspended_or_no_trade"
+
+    volume = entry_bar.get("volume")
+    if volume is not None:
+        try:
+            if float(volume) <= 0:
+                return False, "suspended_or_no_trade"
+        except (TypeError, ValueError):
+            pass
+
+    high = float(entry_bar.get("high") or open_price)
+    low = float(entry_bar.get("low") or open_price)
+
+    bar_limit_up = entry_bar.get("limit_up")
+    bar_limit_down = entry_bar.get("limit_down")
+    try:
+        bar_limit_up = float(bar_limit_up) if bar_limit_up is not None else 0.0
+    except (TypeError, ValueError):
+        bar_limit_up = 0.0
+    try:
+        bar_limit_down = float(bar_limit_down) if bar_limit_down is not None else 0.0
+    except (TypeError, ValueError):
+        bar_limit_down = 0.0
+
+    if bar_limit_up > 0:
+        limit_up_price = bar_limit_up
+    else:
+        limit_up_pct = float(row.get("limit_up_pct") or 0.099)
+        limit_up_price = prev_close * (1 + limit_up_pct)
+
+    if bar_limit_down > 0:
+        limit_down_price = bar_limit_down
+    else:
+        limit_down_pct = float(row.get("limit_down_pct") or 0.099)
+        limit_down_price = prev_close * (1 - limit_down_pct)
+
+    if open_price >= limit_up_price * 0.999 and high <= open_price * 1.0001:
+        return False, "limit_up_at_open"
+    if open_price <= limit_down_price * 1.001 and low >= open_price * 0.9999:
+        return False, "limit_down_at_open"
+    return True, ""
+
+
+def validate_predictions(
+    path: str | Path, frames: dict[str, pd.DataFrame]
+) -> ValidationSummary:
+    rows = read_ledger(path)
+    checked = 0
+    wins = 0
+    skipped = 0
+    returns: list[float] = []
+    excess_returns: list[float] = []
+
+    for row in rows:
+        if row.get("status") != "pending":
+            continue
+        if not is_tradable_rating(row.get("rating")):
+            row["status"] = "watch_only"
+            continue
+        symbol = str(row.get("symbol", ""))
+        frame = frames.get(symbol)
+        if frame is None or frame.empty:
+            continue
+        frame = frame.sort_values("date").reset_index(drop=True)
+        signal_date = row.get("signal_date", row.get("pick_date", ""))
+        future = frame[frame["date"] > signal_date]
+        horizon = int(row.get("horizon_days") or 1)
+        if len(future) < horizon:
+            continue
+        entry_bar = future.iloc[0]
+
+        signal_rows = frame[frame["date"] <= signal_date]
+        prev_close = (
+            float(signal_rows.iloc[-1]["close"])
+            if not signal_rows.empty
+            else float(row.get("signal_close") or 0)
+        )
+        executable, reason = _check_executable(entry_bar, prev_close, row)
+        if not executable:
+            row["status"] = "not_executable"
+            row["entry_date"] = str(entry_bar["date"])
+            row["not_executable_reason"] = reason
+            skipped += 1
+            continue
+
+        eval_window = future.iloc[:horizon]
+        entry_price = float(entry_bar["open"]) * (
+            1 + float(row.get("slippage_bps") or 0) / 10000
+        )
+        fee_pct = float(row.get("fee_bps") or 0) / 100
+        exit_bar, exit_price, exit_reason = _resolve_exit(eval_window, row)
+        ret = (exit_price - entry_price) / entry_price * 100 - fee_pct
+        benchmark_ret = _benchmark_return(frames, row, entry_bar, exit_bar)
+        excess = ret - benchmark_ret if benchmark_ret is not None else 0.0
+        row["status"] = "validated"
+        row["entry_date"] = str(entry_bar["date"])
+        row["entry_price"] = round(entry_price, 4)
+        row["exit_date"] = str(exit_bar["date"])
+        row["exit_price"] = round(exit_price, 4)
+        row["exit_reason"] = exit_reason
+        row["return_pct"] = round(ret, 4)
+        row["benchmark_return_pct"] = (
+            round(benchmark_ret, 4) if benchmark_ret is not None else None
+        )
+        row["excess_return_pct"] = round(excess, 4)
+        row["win"] = ret > 0
+        checked += 1
+        wins += 1 if ret > 0 else 0
+        returns.append(ret)
+        excess_returns.append(excess)
+
+    write_ledger(path, rows)
+    avg = sum(returns) / len(returns) if returns else 0.0
+    avg_excess = sum(excess_returns) / len(excess_returns) if excess_returns else 0.0
+    return ValidationSummary(
+        checked=checked,
+        wins=wins,
+        avg_return_pct=round(avg, 4),
+        avg_excess_pct=round(avg_excess, 4),
+        skipped_not_executable=skipped,
+    )
+
+
+def strategy_weights_from_ledger(
+    path: str | Path,
+    min_independent_signal_days: int = 30,
+    weight_floor: float = 0.65,
+    weight_ceiling: float = 1.45,
+) -> dict[str, float]:
+    groups: dict[str, dict[str, list[float]]] = {}
+    for row in read_ledger(path):
+        if row.get("status") != "validated":
+            continue
+        ret = float(
+            row.get("excess_return_pct")
+            if row.get("excess_return_pct") is not None
+            else row.get("return_pct") or 0
+        )
+        signal_date = row.get("signal_date", "")
+        for strategy in row.get("strategies") or []:
+            groups.setdefault(strategy, {}).setdefault(signal_date, []).append(ret)
+
+    weights: dict[str, float] = {}
+    for strategy, date_groups in groups.items():
+        group_avgs = [sum(rets) / len(rets) for rets in date_groups.values()]
+        if len(group_avgs) < min_independent_signal_days:
+            continue
+        win_rate = sum(1 for r in group_avgs if r > 0) / len(group_avgs)
+        avg_ret = sum(group_avgs) / len(group_avgs)
+        weights[strategy] = round(
+            max(
+                weight_floor,
+                min(weight_ceiling, 1 + (win_rate - 0.5) * 0.7 + avg_ret / 20),
+            ),
+            3,
+        )
+    return weights
+
+
+def _resolve_exit(window: pd.DataFrame, row: dict) -> tuple[pd.Series, float, str]:
+    stop_loss = float(row.get("stop_loss") or 0)
+    take_profit = float(row.get("take_profit") or 0)
+    slippage = float(row.get("slippage_bps") or 0) / 10000
+    for _, bar in window.iterrows():
+        low = float(bar["low"]) if "low" in bar else float(bar["close"])
+        high = float(bar["high"]) if "high" in bar else float(bar["close"])
+        if stop_loss > 0 and low <= stop_loss:
+            return bar, stop_loss * (1 - slippage), "stop_loss"
+        if take_profit > 0 and high >= take_profit:
+            return bar, take_profit * (1 - slippage), "take_profit"
+    last = window.iloc[-1]
+    return last, float(last["close"]) * (1 - slippage), "horizon_close"
+
+
+def _benchmark_return(
+    frames: dict[str, pd.DataFrame],
+    row: dict,
+    entry_bar: pd.Series,
+    exit_bar: pd.Series,
+) -> float | None:
+    benchmark = frames.get(str(row.get("benchmark_symbol") or ""))
+    if benchmark is None or benchmark.empty:
+        return None
+    benchmark = benchmark.sort_values("date").reset_index(drop=True)
+    entry_rows = benchmark[benchmark["date"] >= entry_bar["date"]]
+    exit_rows = benchmark[benchmark["date"] <= exit_bar["date"]]
+    if entry_rows.empty or exit_rows.empty:
+        return None
+    entry = float(entry_rows.iloc[0]["open"])
+    exit_price = float(exit_rows.iloc[-1]["close"])
+    if entry <= 0:
+        return None
+    return (exit_price - entry) / entry * 100

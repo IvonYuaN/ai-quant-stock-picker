@@ -1,0 +1,236 @@
+version: "2026-05-28"
+notes: "策略与交易理论来源清单。进入实盘前必须转成纯函数策略并通过 walk-forward；absorbed_from 记录开源研究吸收来源。"
+
+families:
+  - id: rps_relative_strength
+    name: RPS 相对强度
+    hypothesis: "A股短中期资金偏好强者恒强，横截面强势股在趋势市中有持续性。"
+    current_status: implemented_partial
+    absorbed_from:
+      - "tkfy920/qstock"
+      - "sngyai/Sequoia-X"
+      - "Jesse-J-whu/stock-picker"
+    signals:
+      - 20/60日收益横截面排名
+      - 接近阶段新高
+      - 均线多头
+    validation_required:
+      - 按月 walk-forward
+      - 按 regime 分层统计
+      - 扣除涨停不可成交样本
+    references:
+      - "InStock 综合选股和指标体系"
+      - "A-share-Quant-Selector 相对强弱类策略"
+
+  - id: volume_breakout
+    name: 放量突破
+    hypothesis: "平台突破伴随成交量扩张，表示增量资金进入；但高位假突破需要止损约束。"
+    current_status: implemented_partial
+    absorbed_from:
+      - "sngyai/Sequoia-X"
+      - "ellie-mac/stocksage-alpha"
+      - "online0001/short-term-stock-picker"
+    signals:
+      - 突破20日高点或平台上沿
+      - volume_ratio 高于阈值
+      - 收盘位于日内强势区间
+    validation_required:
+      - 次日开盘成交验证
+      - 长上影和涨停不可买过滤
+      - 不同行业/市值分层
+    references:
+      - "通达信/同花顺常见突破模型"
+      - "Sequoia-X 收盘扫描推送形态"
+
+  - id: ma_pullback
+    name: 均线缩量回踩
+    hypothesis: "趋势仍在时，缩量回踩均线代表抛压下降，次日确认后风险收益较追高更好。"
+    current_status: implemented_partial
+    absorbed_from:
+      - "balabala-sean/stock-analysis"
+      - "qiujunbin01/quant"
+      - "PandOvo/quant-backtest-portfolio_akshare"
+    signals:
+      - MA5 > MA10 > MA20
+      - 价格回踩 MA5/MA10 区间
+      - 回踩成交量低于均量
+    validation_required:
+      - 回踩后 T+1 开盘买入
+      - MA20 跌破止损
+      - 震荡市和趋势市分开统计
+    references:
+      - "A股趋势交易/均线低吸常见策略"
+
+  - id: bowl_rebound
+    name: 碗口反弹
+    hypothesis: "弱势下跌后动能衰竭且温和回升，可能形成低位修复，但需防止下跌中继。"
+    current_status: implemented_partial
+    absorbed_from:
+      - "Dzy-HW-XD/a-share-quant-selector"
+    signals:
+      - 从20日低点温和反弹
+      - MACD 柱改善
+      - RSI 未过热
+    validation_required:
+      - 熊市 regime 单独降权
+      - 跌破前低止损
+    references:
+      - "A-share-Quant-Selector BowlReboundStrategy"
+
+  - id: low_vol_trend
+    name: 低波趋势
+    hypothesis: "中期趋势向上且波动收敛的股票，回撤风险相对低，适合作为稳健观察池。"
+    current_status: implemented_partial
+    absorbed_from:
+      - "PandOvo/quant-backtest-portfolio_akshare"
+      - "tkfy920/qstock"
+    signals:
+      - MA20 > MA60
+      - bias20 不高
+      - 振幅和量比不过热
+    validation_required:
+      - 收益/回撤联合评价
+      - 与基准超额收益比较
+    references:
+      - "低波动动量/趋势跟随组合理论"
+
+  - id: northbound_flow
+    name: 北向资金因子
+    hypothesis: "北向资金持续流入可能改善大盘和核心资产风险偏好。"
+    current_status: data_factor_only
+    absorbed_from:
+      - "yangguangyuan/Akshare-Sync"
+      - "qq979312057/Marcus-Daily"
+    signals:
+      - 5日北向净流入 z-score
+      - 与指数 regime 联动
+    validation_required:
+      - 作为大盘过滤器而非个股直接买入信号
+    references:
+      - "沪深港通资金流研究"
+
+  - id: margin_trading
+    name: 融资融券情绪
+    hypothesis: "融资余额快速变化反映杠杆风险偏好，极端变化可作为风控因子。"
+    current_status: data_factor_only
+    absorbed_from:
+      - "yangguangyuan/Akshare-Sync"
+      - "src/data/margin_history.csv"
+    signals:
+      - 个股/市场融资余额5日变化
+      - 极端分位降权
+    validation_required:
+      - 与波动率和回撤联动验证
+    references:
+      - "融资融券情绪因子研究"
+
+  - id: multi_factor_quality_value_momentum
+    name: 多因子质量/价值/动量
+    hypothesis: "A股横截面收益可能来自质量、估值、动量、流动性和波动率的组合暴露；单因子噪音大，组合因子需要按行业/市值中性化后验证。"
+    current_status: research_absorbed
+    absorbed_from:
+      - "1984tkr/multi-factor-stock-selection"
+      - "JunQHuang/Machine_Learning-Quant-Stock-Selection"
+      - "ZengXinmao/A_Share_MultiFactor_Selection"
+      - "Colin-Fin/quant-alpha-research"
+    signals:
+      - 质量：ROE、毛利率、负债率改善
+      - 价值：PE/PB/PS 分位，不直接跨行业比较
+      - 动量：20/60日相对强度
+      - 流动性：成交额、换手率，过滤流动性陷阱
+      - 风险：波动率、最大回撤、异常跳空
+    validation_required:
+      - 因子必须 point-in-time，对财报发布日期做滞后处理
+      - 横截面分层 IC/RankIC，按行业和市值分桶
+      - Purged walk-forward，不用普通 K 折
+      - 参数试验后用 DSR/PBO 折扣
+    runtime_gate:
+      - 先作为 report-only 因子，不参与总分
+      - 接入前必须在 research catalog 中有 strategy 或 backtest 证据，不能只凭 stars 或 README 宣称吸收
+      - 至少 6 个月纸面跟踪后才允许进入评分
+      - 所有因子缺失值必须显式标记，不允许静默填 0
+      - qstock 中不可见/会员限定策略不作为实现依据，只保留公开源码可见的 RPS/财务打分/强势池方向
+    references:
+      - "多因子选股类开源项目在研究库中高频出现"
+      - "López de Prado: Purged CV / DSR"
+
+  - id: market_regime_timing_filter
+    name: 大盘择时 / 市场状态过滤
+    hypothesis: "A股个股策略在趋势市和震荡/下跌市的胜率差异显著；大盘状态更适合作为仓位和候选阈值过滤器，而不是直接预测个股。"
+    current_status: research_absorbed
+    absorbed_from:
+      - "ling-0729/KHunter"
+      - "davidwang0116/Quant-QQQ-QLD-TQQQ-SMA200Timing-MixedPosition-Backtest"
+      - "qiujunbin01/quant"
+      - "ilovend/Tide-Watcher"
+    signals:
+      - 指数 MA20/MA60/MA200 趋势状态
+      - 指数 RSRS 或斜率 z-score
+      - 市场宽度：上涨家数、创新高/新低比例
+      - 成交额和波动率 regime
+    validation_required:
+      - 只用 t 日收盘前可见数据决定 t+1 状态
+      - 按策略族分别统计过滤前/过滤后 DSR
+      - 禁止看到组合亏损后临时切换 regime 阈值
+    runtime_gate:
+      - 先进入 regime detector v2，不直接生成买入信号
+      - 接入前必须确认使用 t 日可见指数/宽度数据，普通回测收益结论只作反例检查
+      - 连续 60 个独立信号日验证后才允许改变策略权重
+      - 外部项目若使用复权历史数据，只吸收 regime 形态，不吸收回测口径
+    references:
+      - "开源研究队列 timing 类候选"
+      - "architecture.md §8 自我校验"
+
+  - id: ai_factor_proposal_review
+    name: AI 因子候选生成与解释
+    hypothesis: "LLM/Agent 可以提高研究覆盖率和报告解释质量，但不能直接决定买卖；所有 AI 输出必须降级为候选假设或通知附件。"
+    current_status: research_absorbed
+    absorbed_from:
+      - "vnpy/vnpy"
+      - "LilianaMajamay/AlphaGPT_Tushare"
+      - "oficcejo/aiagents-stock"
+      - "cyecho-io/A-Daily-TradingAgents"
+      - "stlin256/AShare-AI-Stock-Picker"
+      - "junzjjj7-spec/AI_Alpha_Factor_Model"
+    signals:
+      - AI 生成候选因子名称、经济假设、字段需求
+      - AI 解释当日入选原因和风险摘要
+      - ML 模型只输出 report-only score，不覆盖 deterministic score
+    validation_required:
+      - AI 因子必须转成可复现 Python 纯函数
+      - 训练/验证严格按时间切分，不能随机拆分
+      - 特征漂移用 KS/PSI 监控，漂移触发停用而非自动调参
+    runtime_gate:
+      - LLM 不允许写入 PickResult.score
+      - 只有出现 LLM/GPT/DeepSeek/Agent/ML 明确证据的仓库才进入 AI 研究队列，Ashare/Daily/Ai(爱) 等子串不算证据
+      - ML/AI 候选至少 3 个月 shadow mode
+      - 所有 prompt、模型版本、输入字段写入报告元数据
+    references:
+      - "architecture.md: LLM 只能作为通知附件"
+      - "vnpy.alpha / Alpha158 / lab workflow 只作为研究沙箱，不直接进入 runtime"
+
+  - id: execution_risk_filter
+    name: 执行可行性与交易风险过滤
+    hypothesis: "真实交易收益首先受可成交性约束；涨跌停、停牌、流动性不足、极端盘口会让理论信号无法执行。"
+    current_status: research_absorbed
+    absorbed_from:
+      - "CodeBang06/miniqmt-xtquant-Ashare"
+      - "online0001/short-term-stock-picker"
+      - "lotey/lite-qmt-executor"
+      - "zillionare/zillionare"
+    signals:
+      - 次日开盘涨跌停/停牌
+      - 一字板、封单、盘口流动性不足
+      - 近 20 日成交额和滑点估计
+      - 高波动跳空风险
+    validation_required:
+      - not_executable 不进入胜率统计
+      - 回测用真实 next open，不用理想成交价
+      - 手续费、滑点、止损止盈都必须从配置注入
+    runtime_gate:
+      - 只增强 ledger/execution 和 risk，不接下单接口
+      - 接入前必须拆出可成交性字段、盘口状态或风控约束；泛“交易系统”描述不算执行风险证据
+      - QMT 类项目只允许吸收行情/状态读取思想
+      - 外部自动交易项目中的下单、撤单、跟单接口一律不得进入本仓库
+    references:
+      - "architecture.md §5.3 Execution 判定"

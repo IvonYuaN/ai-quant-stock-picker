@@ -1,0 +1,20 @@
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.6.9
+    hooks:
+      - id: ruff
+        args: [--fix, --exit-non-zero-on-fix]
+  - repo: local
+    hooks:
+      - id: upload-preflight
+        name: upload-preflight
+        entry: python3 -m scripts.preflight_upload
+        language: system
+        pass_filenames: false
+        stages: [pre-push]
+      - id: pytest-fast
+        name: pytest-fast
+        entry: python3 -m pytest tests/ -x -q
+        language: system
+        pass_filenames: false
+        stages: [pre-push]

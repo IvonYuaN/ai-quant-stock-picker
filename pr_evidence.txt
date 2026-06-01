@@ -1,0 +1,76 @@
+bash: no job control in this shell
+=== git status ===
+ M .env.example
+ M .github/workflows/dry-run.yml
+ M .github/workflows/scheduled-screen.yml
+ M .gitignore
+ M config/data_sources.yaml
+ M config/strategy_sources.yaml
+ M config/thresholds.yaml
+ M docs/open_source_research.md
+ M pr_evidence.txt
+ M scripts/check_pr_evidence.sh
+ M scripts/collect_stock_data.py
+ M src/aqsp/backtest/walk_forward.py
+ M src/aqsp/data/akshare_source.py
+ M src/aqsp/data/mootdx_source.py
+ M src/aqsp/data/multi_source.py
+ M tests/test_backtest.py
+ M tests/test_cli_walkforward.py
+ M tests/test_data_multi.py
+?? "A\350\202\241\351\207\217\345\214\226\345\210\206\346\236\220\346\225\260\346\215\256/"
+?? config/research_queries.yaml
+?? data/open_source_research.jsonl
+?? docs/feasibility-assessment-2026-05-29.md
+?? docs/open_source_quant_research.md
+?? docs/research_absorption.json
+?? docs/research_absorption.md
+?? docs/research_pipeline.md
+?? docs/secret-and-upload-policy.md
+?? docs/source_level_absorption.md
+?? scripts/absorb_research_findings.py
+?? scripts/check_no_secrets.py
+?? scripts/collect_open_source_research.py
+?? scripts/validate_research_registries.py
+?? tests/test_check_no_secrets.py
+?? tests/test_research_absorption.py
+?? tests/test_research_collector.py
+?? tests/test_research_registries.py
+
+=== git diff --stat HEAD~1 ===
+ .env.example                           |   5 ++
+ .github/workflows/dry-run.yml          |  40 +--------
+ .github/workflows/scheduled-screen.yml |  22 +----
+ .gitignore                             |   2 +
+ config/data_sources.yaml               | 100 ++++++++++++++++++++-
+ config/strategy_sources.yaml           | 129 +++++++++++++++++++++++++-
+ config/thresholds.yaml                 |   6 +-
+ docs/open_source_research.md           |   6 ++
+ pr_evidence.txt                        |  72 +--------------
+ scripts/check_pr_evidence.sh           |  44 +++++++--
+ scripts/collect_stock_data.py          |   5 +-
+ src/aqsp/backtest/walk_forward.py      | 160 +++++++++++++++++++++++++++------
+ src/aqsp/data/akshare_source.py        |  33 ++++---
+ src/aqsp/data/mootdx_source.py         |   3 +-
+ src/aqsp/data/multi_source.py          |   1 +
+ tests/test_backtest.py                 | 133 +++++++++++++++++++++++++++
+ tests/test_cli_walkforward.py          |  60 +++++++++++++
+ tests/test_data_multi.py               |   9 ++
+ tests/test_strategies.py               |  12 +--
+ 19 files changed, 654 insertions(+), 188 deletions(-)
+
+=== pytest tests/ -q ===
+........................................................................ [ 20%]
+........................................................................ [ 40%]
+........................................................................ [ 60%]
+........................................................................ [ 80%]
+......................................................................   [100%]
+358 passed in 50.95s
+pytest_exit=0
+
+=== ruff check src/ tests/ ===
+All checks passed!
+ruff_exit=0
+
+=== generated at 2026-05-29T05:25:25Z ===
+overall_exit=0

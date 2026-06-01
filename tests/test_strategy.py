@@ -49,3 +49,21 @@ def test_low_liquidity_penalty() -> None:
     picks = screen_universe(frames, ScreeningConfig(min_avg_amount=10**12))
     assert picks[0].score < 55
     assert any("流动性" in risk for risk in picks[0].risks)
+
+
+def test_screen_filters_price_outside_bounds() -> None:
+    frames = {
+        "HIGH": _frame("HIGH", 0.004, 1.5),
+        "OK": _frame("OK", 0.004, 1.5),
+    }
+    frames["HIGH"]["close"] = 1200.0
+    frames["HIGH"]["open"] = 1190.0
+    frames["HIGH"]["high"] = 1210.0
+    frames["HIGH"]["low"] = 1180.0
+
+    picks = screen_universe(
+        frames,
+        ScreeningConfig(min_avg_amount=1, min_price=1.0, max_price=1000.0),
+    )
+
+    assert {pick.symbol for pick in picks} == {"OK"}
