@@ -403,3 +403,71 @@ def _check_notification_gate(args, walkforward_result, ledger_path):
    - 任何 walkforward 报告 TL;DR 第一行必须以 `PASS` 或 `FAIL` 开头，紧跟 DSR / PBO 数值；收益类指标放后面。
    - commit message 引用回测结果时，DSR 与 PBO 必须与收益同行出现，不允许只截取收益。
    - 失败的回测（FAIL）不计入"成绩"，只作研究记录，不允许在 README / 对外材料里引用。
+
+7. **CSCV 方法论强制**：
+   - PBO 必须通过真 CSCV（Combinatorially Symmetric Cross-Validation）计算，参考 Bailey, López de Prado & Zhu (2014) §3.1 Algorithm 1。
+   - 禁止用 sequential fold 替代 CSCV；禁止 N=1 的伪 CSCV。
+   - 变体维度必须产生真正不同的选股结果（列间最大非对角相关 < 0.95），否则 Path C 触发，CSCV 结果无效。
+   - 有效变体维度：`lookback_days`、`horizon_days`、`top_n`、`momentum_weight`、`triple_rise_weight`。
+   - 无效变体维度：`min_total_score`（对 walkforward 选股无影响，已验证）。
+
+8. **CSCV 结果记录（2026-05-30 HS300 最终验证）**：
+   - **Walkforward 数据范围**：2018-01-01 ~ 2024-12-31（严格遵守 §1.3 #9，不含 held-out 区间）
+   - 数据源：sqlite_db（HS300，303 只标的）
+   - 变体数：11（baseline + 10 个多维度变体）
+   - T×N 矩阵：30 × 11，S=10，252 个组合
+   - **PBO = 24.21%**（PASS，< 50%）：过拟合风险可控
+   - **Baseline DSR = 1.9174**（PASS，> 1.0）：统计显著性通过
+   - **Baseline Sharpe = 3.51**，Return = 1048%，MaxDD = 41.20%
+   - 列间最大非对角相关：0.947（< 0.95，Path C 未触发）
+   - **双门终判（baseline）：PASS** ✅（DSR=1.9174 > 1.0, PBO=24.21% < 50%）
+   - 多个变体也通过 DSR > 1.0：WF-B01(1.56), WF-B02(3.79), WF-B04(1.39), WF-B08(1.80)
+   - DSR bug 修复记录：原代码用 `len(periods)` 作为 `n_trials`，应为变体数。修复后 DSR 从负转正。
+   - 完整报告：`outputs/cscv-grid-2026-05-30-hs300-v3.md`
+
+9. **Held-out 验证结果（2026-05-30）**：
+   - **数据范围**：2025-01-01 ~ 2026-04-30（严格 held-out，未参与 walkforward 训练/验证）
+   - **Baseline 参数**：lookback_days=60, horizon_days=3, top_n=10
+   - **Sharpe = 5.93**，Return = 70.13%，MaxDD = 9.63%
+   - **Win Rate = 66.67%**，Profit Factor = 2.86，Trades = 39
+   - **结论**：策略在真正未见过的数据上表现优异，验证了 walkforward 结论的可靠性
+   - 完整报告：`outputs/heldout-2025-01-to-2026-04.md`
+
+10. **分层更新规则（短线策略专用）**：
+    - **数据收集**：每天（自动），新增当日 K 线数据
+    - **Walkforward 验证**：每周（自动/手动），检查策略是否失效
+    - **CSCV 验证**：每月（手动/自动），验证过拟合风险
+    - **参数更新**：每季度（手动），调整策略参数
+
+    **分层机制**：
+    ```
+    每天：数据收集（低成本）
+      ↓
+    每周：walkforward 验证（中成本）
+      - 检查 Sharpe 是否下降 > 20%
+      - 如果下降，触发警报
+      ↓
+    每月：CSCV 网格验证（高成本）
+      - 验证 DSR > 1.0, PBO < 0.5
+      - 如果通过，更新 thresholds.yaml
+    ```
+
+    **Walkforward 窗口**：3.5 年（42 个月），平衡数据量与时效性
+    **Held-out 窗口**：3 个月，短线策略足够验证
+    **滚动机制**：删除最早月，加入最新月，保持窗口固定
+
+    **自动化脚本**：
+    - `outputs/layered_update.py`：分层更新主脚本
+    - `outputs/monthly_rolling_update.py`：月度滚动更新
+
+    **使用方式**：
+    ```bash
+    python outputs/layered_update.py daily     # 每天：数据收集
+    python outputs/layered_update.py weekly    # 每周：walkforward 验证
+    python outputs/layered_update.py monthly   # 每月：CSCV 验证
+    python outputs/layered_update.py all       # 全部运行
+    ```
+
+    **示例**：
+    - 2026-05-30：Walkforward 2022-10 ~ 2026-04，Held-out 2026-05 ~ 2026-07
+    - 2026-07-01：Walkforward 2022-12 ~ 2026-06，Held-out 2026-07 ~ 2026-09

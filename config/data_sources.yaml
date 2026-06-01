@@ -204,8 +204,8 @@ sources:
     markets: [a_share, fund]
     access: python_package
     cost: free
-    runtime_ready: false
-    research_status: next_adapter
+    runtime_ready: true
+    research_status: supplement_runtime
     strengths:
       - 东方财富数据封装，A股行情和资金流方便
     risks:

@@ -273,6 +273,11 @@ class MonitorChecker:
                         "consecutive_failures": failures,
                         "max_consecutive_failures": max_consecutive_failures,
                         "last_failure": health_data.get("last_failure"),
+                        "last_requested_source": health_data.get(
+                            "last_requested_source"
+                        ),
+                        "last_actual_source": health_data.get("last_actual_source"),
+                        "last_error": health_data.get("last_error"),
                     },
                 )
 
@@ -281,7 +286,11 @@ class MonitorChecker:
                 triggered=False,
                 severity="warning",
                 message=f"数据源健康，连续失败 {failures} 次",
-                details={"consecutive_failures": failures},
+                details={
+                    "consecutive_failures": failures,
+                    "last_requested_source": health_data.get("last_requested_source"),
+                    "last_actual_source": health_data.get("last_actual_source"),
+                },
             )
 
         except Exception as e:

@@ -19,6 +19,8 @@ data/*.db
 data/*.jsonl
 !data/open_source_research.jsonl
 data/risk_state.json
+data/walkforward_gate.json
+data/source_health.json
 data/archive/
 data/walkforward_cache*
 src/data/

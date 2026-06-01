@@ -6,6 +6,11 @@ from pathlib import Path
 
 import pandas as pd
 
+from aqsp.research.summary import (
+    ResearchFamilySummary,
+    ResearchPipelineSummary,
+    ResearchSummary,
+)
 from scripts.export_dashboard_db import export_db
 from scripts.render_dashboard import (
     latest_candidate_date,
@@ -50,6 +55,13 @@ def test_dashboard_renders_candidates_and_ledger_stats_when_inputs_exist(
                         "score": 71,
                         "status": "pending",
                         "thresholds_version": "1.0.0",
+                        "run_requested_source": "auto",
+                        "run_actual_source": "eastmoney",
+                        "run_source_freshness_tier": "realtime",
+                        "run_source_coverage_tier": "multi_dimensional",
+                        "run_source_health_label": "fallback",
+                        "run_source_health_message": "fallback 到 eastmoney；plan成功/失败 5/1，源成功/失败 5/0",
+                        "run_fallback_used": True,
                     },
                     ensure_ascii=False,
                 ),
@@ -110,6 +122,81 @@ def test_dashboard_renders_candidates_and_ledger_stats_when_inputs_exist(
     assert "虚拟持仓" in html
     assert "等待入场数据" in html
     assert "等待 2026-05-29 次日开盘" in html
+    assert "数据源状态" in html
+    assert "fallback" in html
+    assert "通知级别 warning" in html
+    assert "数据源 fallback" in html
+    assert "通知" in html
+    assert "auto → eastmoney" in html
+    assert "fallback 到 eastmoney" in html
+    assert "fallback 数据源生成" in html
+
+
+def test_dashboard_renders_research_absorption_panel() -> None:
+    summary = ResearchSummary(
+        generated_at="",
+        total_findings=113,
+        pipeline_summaries=(
+            ResearchPipelineSummary(
+                pipeline="data_source",
+                total=24,
+                p1=14,
+                top_repo="mpquant/Ashare",
+            ),
+            ResearchPipelineSummary(
+                pipeline="strategy",
+                total=22,
+                p1=10,
+                top_repo="sngyai/Sequoia-X",
+            ),
+        ),
+        absorbed_families=(
+            ResearchFamilySummary(
+                family_id="market_regime_timing_filter",
+                name="大盘择时 / 市场状态过滤",
+                status="research_absorbed",
+                runtime_stage="gated_runtime",
+                absorbed_from_count=4,
+                runtime_gate_count=4,
+            ),
+        ),
+        source_candidates=(),
+        next_actions=(),
+        prereq_items=(),
+        implemented_family_count=5,
+        report_only_family_count=0,
+        gated_family_count=1,
+    )
+
+    html = render_dashboard([], [], "研究面板", research_summary=summary)
+
+    assert "研究吸收" in html
+    assert "113 findings" in html
+    assert "mpquant/Ashare" in html
+    assert "大盘择时 / 市场状态过滤" in html
+    assert "门控中" in html
+
+
+def test_dashboard_warns_when_source_is_degraded() -> None:
+    rows = [
+        {
+            "signal_date": "2026-06-01",
+            "symbol": "600519",
+            "score": 71,
+            "status": "pending",
+            "thresholds_version": "1.0.0",
+            "run_requested_source": "eastmoney",
+            "run_actual_source": "eastmoney",
+            "run_source_health_label": "degraded",
+            "run_source_health_message": "eastmoney 最近失败偏多；源成功/失败 0/3",
+            "run_fallback_used": False,
+        }
+    ]
+
+    html = render_dashboard([], rows, "降级面板")
+
+    assert "数据源处于降级状态" in html
+    assert "不要把这次结果当成正常质量样本" in html
 
 
 def test_dashboard_warns_when_candidates_are_stale(tmp_path: Path) -> None:
@@ -152,6 +239,7 @@ def test_read_candidates_handles_empty_csv(tmp_path: Path) -> None:
 
 def test_export_dashboard_db_writes_candidates_ledger_and_meta(
     tmp_path: Path,
+    monkeypatch,
 ) -> None:
     csv_path = tmp_path / "latest.csv"
     ledger_path = tmp_path / "predictions.jsonl"
@@ -172,11 +260,40 @@ def test_export_dashboard_db_writes_candidates_ledger_and_meta(
                 "signal_date": "2026-05-29",
                 "symbol": "600519",
                 "strategies": ["ma_pullback"],
+                "run_requested_source": "auto",
+                "run_actual_source": "eastmoney",
+                "run_source_health_label": "healthy",
+                "run_source_health_message": "eastmoney 健康；源成功/失败 3/0",
+                "run_fallback_used": False,
             },
             ensure_ascii=False,
         )
         + "\n",
         encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "scripts.export_dashboard_db.load_research_summary",
+        lambda: ResearchSummary(
+            generated_at="",
+            total_findings=113,
+            pipeline_summaries=(),
+            absorbed_families=(
+                ResearchFamilySummary(
+                    family_id="x",
+                    name="执行可行性与交易风险过滤",
+                    status="research_absorbed",
+                    runtime_stage="gated_runtime",
+                    absorbed_from_count=4,
+                    runtime_gate_count=4,
+                ),
+            ),
+            source_candidates=(),
+            next_actions=(),
+            prereq_items=(),
+            implemented_family_count=5,
+            report_only_family_count=0,
+            gated_family_count=1,
+        ),
     )
 
     export_db(csv_path, ledger_path, db_path)
@@ -185,14 +302,62 @@ def test_export_dashboard_db_writes_candidates_ledger_and_meta(
         candidate_count = conn.execute("select count(*) from latest_candidates").fetchone()
         ledger_count = conn.execute("select count(*) from ledger").fetchone()
         meta = conn.execute(
-            "select candidate_count, ledger_count from run_meta"
+            "select candidate_count, ledger_count, requested_source, actual_source, source_health_label, notify_level, fallback_used, research_total_findings, research_absorbed_families, research_report_only_families, research_gated_families from run_meta"
         ).fetchone()
         strategies = conn.execute("select strategies from ledger").fetchone()
 
     assert candidate_count == (1,)
     assert ledger_count == (1,)
-    assert meta == (1, 1)
+    assert meta == (1, 1, "auto", "eastmoney", "healthy", "info", 0, 113, 1, 0, 1)
     assert strategies == ('["ma_pullback"]',)
+
+
+def test_export_dashboard_db_uses_latest_runtime_row_when_last_row_has_no_meta(
+    tmp_path: Path,
+) -> None:
+    csv_path = tmp_path / "latest.csv"
+    ledger_path = tmp_path / "predictions.jsonl"
+    db_path = tmp_path / "dashboard" / "aqsp.db"
+
+    pd.DataFrame([{"symbol": "600519", "name": "贵州茅台", "score": "71"}]).to_csv(
+        csv_path,
+        index=False,
+    )
+    ledger_path.write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "signal_date": "2026-05-29",
+                        "symbol": "600519",
+                        "run_requested_source": "auto",
+                        "run_actual_source": "sina",
+                        "run_source_health_label": "fallback",
+                    },
+                    ensure_ascii=False,
+                ),
+                json.dumps(
+                    {
+                        "signal_date": "2026-05-30",
+                        "symbol": "300750",
+                        "status": "validated",
+                    },
+                    ensure_ascii=False,
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    export_db(csv_path, ledger_path, db_path)
+
+    with sqlite3.connect(db_path) as conn:
+        meta = conn.execute(
+            "select requested_source, actual_source, notify_level from run_meta"
+        ).fetchone()
+
+    assert meta == ("auto", "sina", "warning")
 
 
 def test_export_dashboard_db_handles_empty_csv(tmp_path: Path) -> None:

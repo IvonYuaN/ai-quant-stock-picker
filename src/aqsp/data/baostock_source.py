@@ -137,7 +137,9 @@ class BaostockSource(DataSource):
                 for quarter in range(1, 5):
                     self._throttle()
                     try:
-                        rs = bs.query_profit_data(code=bs_code, year=year, quarter=quarter)
+                        rs = bs.query_profit_data(
+                            code=bs_code, year=year, quarter=quarter
+                        )
                         while (rs.error_code == "0") and rs.next():
                             row = rs.get_row_data()
                             if row:
@@ -259,7 +261,9 @@ class BaostockSource(DataSource):
         except Exception:
             return None
 
-    def _fetch_index_single(self, code: str, start: date, end: date) -> pd.DataFrame | None:
+    def _fetch_index_single(
+        self, code: str, start: date, end: date
+    ) -> pd.DataFrame | None:
         bs_code = f"sh.{code}" if code.startswith("000") else f"sz.{code}"
         for attempt in range(_MAX_RETRIES):
             try:

@@ -26,7 +26,8 @@ class SqliteDbSource(DataSource):
         )
         if not self.db_path.exists():
             raise FileNotFoundError(f"数据库不存在: {self.db_path}")
-        self.cache = cache or DataCache()
+        self._use_cache = cache is not None
+        self.cache = cache if cache is not None else DataCache()
         self._symbol_map: dict[str, str] | None = None
 
     def _load_symbol_map(self) -> dict[str, str]:
@@ -38,7 +39,7 @@ class SqliteDbSource(DataSource):
         self._name_map: dict[str, str] = {}
         for _, row in df.iterrows():
             ts_code = str(row["ts_code"]).strip()
-            name = str(row["name"]).strip().rstrip('\x00')
+            name = str(row["name"]).strip().rstrip("\x00")
             if "." in ts_code:
                 symbol = ts_code.split(".")[0]
             else:
@@ -48,7 +49,7 @@ class SqliteDbSource(DataSource):
         return self._symbol_map
 
     def get_symbol_name(self, symbol: str) -> str:
-        if not hasattr(self, '_name_map') or self._name_map is None:
+        if not hasattr(self, "_name_map") or self._name_map is None:
             self._load_symbol_map()
         return self._name_map.get(symbol, symbol)
 
@@ -72,7 +73,11 @@ class SqliteDbSource(DataSource):
 
         with sqlite3.connect(self.db_path) as conn:
             for symbol in symbols:
-                cached = self.cache.get_ohlcv(symbol, start, end)
+                cached = (
+                    self.cache.get_ohlcv(symbol, start, end)
+                    if self._use_cache
+                    else None
+                )
                 if cached is not None and not cached.empty:
                     if "name" not in cached.columns:
                         cached = cached.copy()
@@ -84,25 +89,41 @@ class SqliteDbSource(DataSource):
                 if ts_code is None:
                     continue
 
-                df = pd.read_sql(
-                    """
-                    SELECT trade_date, open, high, low, close_qfq as close, volume, amount
-                    FROM daily_qfq
-                    WHERE ts_code = ? AND trade_date >= ? AND trade_date <= ?
-                    ORDER BY trade_date
-                    """,
-                    conn,
-                    params=(ts_code, start_str, end_str),
-                )
+                if adjust == "":
+                    # 默认不复权
+                    df = pd.read_sql(
+                        """
+                        SELECT trade_date, open, high, low, close, volume, amount
+                        FROM daily_qfq
+                        WHERE ts_code = ? AND trade_date >= ? AND trade_date <= ?
+                        ORDER BY trade_date
+                        """,
+                        conn,
+                        params=(ts_code, start_str, end_str),
+                    )
+                else:
+                    # 前复权
+                    df = pd.read_sql(
+                        """
+                        SELECT trade_date, open_qfq as open, high_qfq as high, low_qfq as low, close_qfq as close, volume, amount
+                        FROM daily_qfq
+                        WHERE ts_code = ? AND trade_date >= ? AND trade_date <= ?
+                        ORDER BY trade_date
+                        """,
+                        conn,
+                        params=(ts_code, start_str, end_str),
+                    )
                 if df.empty:
                     continue
 
                 df["date"] = df["trade_date"].apply(
-                    lambda x: f"{x[:4]}-{x[4:6]}-{x[6:]}" if len(str(x)) == 8 else str(x)
+                    lambda x: (
+                        f"{x[:4]}-{x[4:6]}-{x[6:]}" if len(str(x)) == 8 else str(x)
+                    )
                 )
                 df = df.drop(columns=["trade_date"])
                 df["symbol"] = symbol
-                df["name"] = symbol
+                df["name"] = self.get_symbol_name(symbol)
 
                 for col in ["open", "high", "low", "close", "volume", "amount"]:
                     if col in df.columns:
@@ -112,8 +133,11 @@ class SqliteDbSource(DataSource):
                 if df.empty:
                     continue
 
-                df = apply_limit_suspended_adj(df, symbol, cache=self.cache)
-                self.cache.set_ohlcv(symbol, df, source="sqlite_db")
+                df = apply_limit_suspended_adj(
+                    df, symbol, cache=self.cache if self._use_cache else None
+                )
+                if self._use_cache:
+                    self.cache.set_ohlcv(symbol, df, source="sqlite_db")
                 out[symbol] = df
 
         return out
@@ -166,7 +190,9 @@ class SqliteDbSource(DataSource):
                     continue
 
                 df["date"] = df["trade_date"].apply(
-                    lambda x: f"{x[:4]}-{x[4:6]}-{x[6:]}" if len(str(x)) == 8 else str(x)
+                    lambda x: (
+                        f"{x[:4]}-{x[4:6]}-{x[6:]}" if len(str(x)) == 8 else str(x)
+                    )
                 )
                 df = df.drop(columns=["trade_date"])
                 for col in ["open", "high", "low", "close", "volume", "amount"]:

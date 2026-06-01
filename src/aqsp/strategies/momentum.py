@@ -61,7 +61,9 @@ class MomentumStrategy(BaseStrategy):
         min_returns = self.thresholds.momentum.min_returns
         max_volatility = self.thresholds.momentum.max_volatility
 
-        return_score = max(0.0, min(total_return / min_returns, 1.0)) if min_returns > 0 else 0.5
+        return_score = (
+            max(0.0, min(total_return / min_returns, 1.0)) if min_returns > 0 else 0.5
+        )
         vol_score = (
             max(1 - volatility / max_volatility, 0.0) if max_volatility > 0 else 0.5
         )

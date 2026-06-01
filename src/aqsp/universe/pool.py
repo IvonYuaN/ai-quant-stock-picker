@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+from datetime import date
 from typing import List, Tuple
 import json
 from pathlib import Path
+
+from aqsp.core.time import today_shanghai
+from aqsp.data.index_constituents import load_optional_index_constituents
 
 DEFAULT_POOLS = {
     "sh300": ("沪深300", ["000300"]),
@@ -47,6 +51,19 @@ class UniversePool:
     def list_default_pools() -> List[Tuple[str, str]]:
         return [(name, desc) for name, (desc, _) in DEFAULT_POOLS.items()]
 
+    def get_symbols(self, as_of: date | None = None) -> List[str]:
+        target_day = as_of or today_shanghai()
+        symbols: list[str] = []
+        for index_code in self.index_codes:
+            ts_index_code = _to_tushare_index_code(index_code)
+            symbols.extend(load_optional_index_constituents(ts_index_code, target_day))
+        deduped = list(dict.fromkeys(symbols))
+        if deduped:
+            return deduped
+        raise ValueError(
+            f"Pool {self.name} requires TUSHARE_TOKEN or explicit --symbols for point-in-time constituents"
+        )
+
 
 class StockUniverse:
     def __init__(self, symbols: List[str], names: List[str] = None):
@@ -86,3 +103,11 @@ class StockUniverse:
             if s in other:
                 common[s] = n
         return StockUniverse(list(common.keys()), list(common.values()))
+
+
+def _to_tushare_index_code(index_code: str) -> str:
+    if "." in index_code:
+        return index_code
+    if index_code.startswith("399"):
+        return f"{index_code}.SZ"
+    return f"{index_code}.SH"

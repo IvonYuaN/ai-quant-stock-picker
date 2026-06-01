@@ -1,0 +1,149 @@
+from __future__ import annotations
+
+from argparse import Namespace
+
+import pandas as pd
+
+from aqsp.core.types import PickResult
+
+
+def test_run_scheduled_notify_prepends_source_status_banner(monkeypatch, tmp_path) -> None:
+    import aqsp.cli as cli_mod
+
+    latest = "2026-06-01"
+    frames = {
+        "600519": pd.DataFrame(
+            [
+                {
+                    "date": latest,
+                    "symbol": "600519",
+                    "name": "贵州茅台",
+                    "open": 1500.0,
+                    "high": 1510.0,
+                    "low": 1490.0,
+                    "close": 1505.0,
+                    "volume": 1000,
+                    "amount": 150500000.0,
+                    "suspended": False,
+                    "limit_up": 1655.5,
+                    "limit_down": 1354.5,
+                }
+            ]
+        ),
+        "000300": pd.DataFrame(
+            [
+                {
+                    "date": latest,
+                    "symbol": "000300",
+                    "name": "沪深300",
+                    "open": 3500.0,
+                    "high": 3510.0,
+                    "low": 3490.0,
+                    "close": 3505.0,
+                    "volume": 1000,
+                    "amount": 350500000.0,
+                    "suspended": False,
+                    "limit_up": 0.0,
+                    "limit_down": 0.0,
+                }
+            ]
+        ),
+    }
+
+    # 直接 monkeypatch _check_notification_gate，让它总是返回双门通过
+    monkeypatch.setattr(cli_mod, "_check_notification_gate", lambda *, cold_start_days, gate_path=None: (True, []))
+
+    monkeypatch.setattr(
+        cli_mod,
+        "_fetch_frames_for_cli_with_metadata",
+        lambda *args, **kwargs: (frames, "eastmoney"),
+    )
+    monkeypatch.setattr(cli_mod, "_resolve_run_symbols", lambda *args, **kwargs: ["600519"])
+    monkeypatch.setattr(cli_mod, "strategy_weights_from_ledger", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(cli_mod, "_count_independent_signal_days", lambda *_args, **_kwargs: 35)  # 35 >= 30，冷启动通过
+    monkeypatch.setattr(
+        cli_mod,
+        "screen_universe",
+        lambda *_args, **_kwargs: [
+            PickResult(
+                symbol="600519",
+                name="贵州茅台",
+                date=latest,
+                close=1505.0,
+                score=71.0,
+                rating="buy_candidate",
+                entry_type="next_open",
+                ideal_buy=1505.0,
+                stop_loss=1450.0,
+                take_profit=1600.0,
+                position="10%-30%",
+                strategies=("ma_pullback",),
+                reasons=("趋势回踩",),
+                risks=("RSI偏热",),
+            )
+        ],
+    )
+
+    class DummyPipeline:
+        def run(self, *_args, **_kwargs):
+            return True, ""
+
+    monkeypatch.setattr(cli_mod, "LethalFilterPipeline", lambda: DummyPipeline())
+    monkeypatch.setattr("aqsp.universe.t1_filter.filter_t1_held", lambda candidates, **_kwargs: (candidates, []))
+    monkeypatch.setattr(
+        cli_mod,
+        "validate_predictions",
+        lambda *_args, **_kwargs: None,
+    )
+
+    class DummyBreaker:
+        def check(self, **_kwargs):
+            return type("Status", (), {"triggered": False, "reason": "正常"})()
+
+    monkeypatch.setattr(cli_mod, "CircuitBreaker", lambda: DummyBreaker())
+    monkeypatch.setattr(
+        cli_mod,
+        "describe_source_health",
+        lambda *_args, **_kwargs: (
+            "fallback",
+            "fallback 到 eastmoney；plan成功/失败 5/1，源成功/失败 5/0",
+            True,
+        ),
+    )
+    seen: list[str] = []
+    monkeypatch.setattr(
+        cli_mod,
+        "notify_markdown",
+        lambda markdown: seen.append(markdown) or [],
+    )
+
+    args = Namespace(
+        mode="close",
+        symbols="600519",
+        csv="",
+        source="auto",
+        limit=1,
+        max_universe=10,
+        min_avg_amount=50_000_000,
+        max_data_lag_days=3,
+        enable_online_factors=False,
+        report=str(tmp_path / "latest.md"),
+        output_csv=str(tmp_path / "latest.csv"),
+        ledger=str(tmp_path / "predictions.jsonl"),
+        horizon_days=3,
+        fee_bps=8.0,
+        slippage_bps=5.0,
+        benchmark_symbol="000300",
+        skip_validation=True,
+        notify=True,
+    )
+
+    exit_code = cli_mod.run_scheduled(args)
+
+    assert exit_code == 0
+    assert seen
+    assert seen[0].startswith("## 数据源状态")
+    assert "auto -> eastmoney" in seen[0]
+    assert "健康: **fallback**" in seen[0]
+
+

@@ -11,7 +11,8 @@ import math
 import re
 import urllib.request
 import warnings
-from datetime import datetime
+
+from aqsp.core.time import now_shanghai
 
 warnings.filterwarnings("ignore")
 
@@ -157,7 +158,7 @@ def main():
 
     result = {
         "ticker": ticker,
-        "collected_at": datetime.now().isoformat(),
+        "collected_at": now_shanghai().isoformat(),
     }
 
     result["quote"] = fetch_tencent_quote(ticker)

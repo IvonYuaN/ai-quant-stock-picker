@@ -7,8 +7,16 @@ import pandas as pd
 
 from aqsp.data.source import DataSource, OhlcvFrame
 from aqsp.data.akshare_source import AkshareSource
+from aqsp.data.efinance_source import EfinanceSource
 from aqsp.data.sina_source import SinaSource
 from aqsp.data.eastmoney_source import EastmoneySource
+from aqsp.data.tushare_pit import TusharePitClient
+from aqsp.data.pit_financial import (
+    PitEnrichmentResult,
+    enrich_ohlcv_with_pit_financials,
+    load_optional_disclosure_data,
+)
+from aqsp.data.index_constituents import load_optional_index_constituents
 from aqsp.data.tencent_source import TencentSource
 from aqsp.data.mootdx_source import MootdxSource
 from aqsp.data.tdx_vipdoc_source import TdxVipdocSource
@@ -17,6 +25,14 @@ from aqsp.data.cache import DataCache
 from aqsp.data.adjust import AdjustmentService
 from aqsp.data.intraday import IntradayService
 from aqsp.data.realtime import RealtimeService
+from aqsp.data.trading_calendar import (
+    TradingCalendarWindow,
+    load_optional_trade_calendar,
+    resolve_is_trading_day,
+    resolve_next_trading_day,
+    resolve_previous_trading_day,
+    trading_day_lag,
+)
 from aqsp.indicators import normalize_ohlcv
 
 
@@ -85,8 +101,14 @@ __all__ = [
     "DataSource",
     "OhlcvFrame",
     "AkshareSource",
+    "EfinanceSource",
     "SinaSource",
     "EastmoneySource",
+    "TusharePitClient",
+    "PitEnrichmentResult",
+    "enrich_ohlcv_with_pit_financials",
+    "load_optional_disclosure_data",
+    "load_optional_index_constituents",
     "TencentSource",
     "MootdxSource",
     "TdxVipdocSource",
@@ -95,6 +117,12 @@ __all__ = [
     "AdjustmentService",
     "IntradayService",
     "RealtimeService",
+    "TradingCalendarWindow",
+    "load_optional_trade_calendar",
+    "resolve_is_trading_day",
+    "resolve_next_trading_day",
+    "resolve_previous_trading_day",
+    "trading_day_lag",
     "load_csv",
     "fetch_akshare",
     "fetch_with_source",

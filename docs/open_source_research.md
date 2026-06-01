@@ -42,6 +42,40 @@
 4. 海外市场：yfinance。
 5. 研究缓存：统一落本地 Parquet/SQLite，避免每次请求公网接口。
 
+## 文章级补充线索（2026-06-01）
+
+以下 3 篇微信文章已经做过正文核查，结论不是“照抄”，而是只吸收能被本项目验证和约束的部分：
+
+### 1. GitHub好项目：《最新AI股票诊断平台开源！别再买入、进坑、等回本不断循环了！》
+
+- 可吸收：
+  - “纪律检查清单”产品形态，适合强化 briefing 中的 `满足 / 注意 / 不满足` 输出。
+  - 乖离率过热保护、趋势确认后再入场、新闻时效限制，适合映射到现有 risk / freshness gate。
+  - 截图识股、多渠道推送、定时运行，是产品层能力，不是策略证据。
+- 不吸收：
+  - “AI直接告诉你该干嘛”这类决策表述，不符合本项目“LLM 不参与打分”的边界。
+  - 文中胜率、市场判断、牛市叙事没有给出可复现实验口径，不能当阈值来源。
+
+### 2. 华泰证券：《AI涨乐Skills上线：给你的“龙虾”装上专业投资大脑》
+
+- 可吸收：
+  - “专业数据 + 技能化接口 + 自然语言调用”的封装思路，适合作为外部 benchmark，不直接替代本地选股引擎。
+  - 条件选股、行情检索、自选股管理这类能力划分，适合反向校验我们的 CLI / briefing / dashboard 信息组织。
+  - 如果你愿意长期保留它的 key，可把它接成 `report-only comparator`，用于比较“我们的候选”与“券商技能筛出的候选”差异。
+- 不吸收：
+  - 模拟交易、账户、下单、撤单接口不进入本仓库。
+  - 闭源技能输出不能直接作为策略依据，除非能拆出确定性规则并独立复验。
+
+### 3. 山风与路：《【GitHub开源】27.8k Star，这个国产量化框架把 AI 装进了量化交易系统，把 AI 模型变成策略》
+
+- 可吸收：
+  - `vnpy.alpha` 的研究流水线思路：特征工程 → 模型训练 → 信号生成 → 回测分析。
+  - `Alpha 158` 这类公开特征集可以作为因子候选池，但必须走 point-in-time 和 purged walk-forward。
+  - lab / notebook 工作流适合作为“研究沙箱”，不应污染 runtime 评分主链路。
+- 不吸收：
+  - 任何实盘交易、算法执行、接口接入能力都不进本仓库。
+  - 机器学习模型不能直接覆盖 deterministic score，只能先走 shadow mode / report-only。
+
 当前可维护清单见：
 
 - `config/data_sources.yaml`: A股数据源候选与运行状态。
@@ -49,6 +83,12 @@
 - `scripts/collect_research_registry.py`: 输出本地 registry，供后续人工/自动搜集结果归档。
 - `scripts/collect_open_source_research.py`: GitHub 开源项目采集器，默认要求至少 100 个真实仓库。
 - `docs/open_source_quant_research.md`: 最近一次开源项目采集报告。
+- `docs/secret-and-upload-policy.md`: token、本地数据和 GitHub 上传边界。
+- `docs/research_pipeline.md`: 开源项目如何进入数据源/策略/验证待办的研究流水线。
+- `scripts/absorb_research_findings.py`: 把公开仓库元数据吸收为 data/strategy/timing/risk/AI 五条队列。
+- `scripts/validate_research_registries.py`: 防止吸收结果退化成无假设、无验证门槛的链接列表。
+- `docs/research_absorption.md`: 当前吸收后的人工审阅队列。
+- `docs/source_level_absorption.md`: 已 clone 外部源码后的正向/负面吸收记录。
 
 ## 工程边界
 

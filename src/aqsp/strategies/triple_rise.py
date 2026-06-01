@@ -42,7 +42,11 @@ class TripleRiseStrategy(BaseStrategy):
         v_bottom_score = self._v_bottom(closes, lookback=20)
         volume_confirm_score = self._volume_confirmation(volumes, closes)
 
-        final = triple_rise_score * 0.40 + v_bottom_score * 0.35 + volume_confirm_score * 0.25
+        final = (
+            triple_rise_score * 0.40
+            + v_bottom_score * 0.35
+            + volume_confirm_score * 0.25
+        )
         return max(0.0, min(1.0, final))
 
     @staticmethod
@@ -51,9 +55,11 @@ class TripleRiseStrategy(BaseStrategy):
             return 0.0
         last4 = closes[-4:]
         if last4[1] > last4[0] and last4[2] > last4[1] and last4[3] > last4[2]:
-            avg_rise = ((last4[1] - last4[0]) / last4[0]
-                        + (last4[2] - last4[1]) / last4[1]
-                        + (last4[3] - last4[2]) / last4[2]) / 3
+            avg_rise = (
+                (last4[1] - last4[0]) / last4[0]
+                + (last4[2] - last4[1]) / last4[1]
+                + (last4[3] - last4[2]) / last4[2]
+            ) / 3
             if avg_rise > 0.03:
                 return 1.0
             elif avg_rise > 0.02:
@@ -93,7 +99,9 @@ class TripleRiseStrategy(BaseStrategy):
         if len(volumes) < 5 or len(closes) < 5:
             return 0.0
         recent_vol = np.mean(volumes[-3:])
-        avg_vol = np.mean(volumes[-20:]) if len(volumes) >= 20 else np.mean(volumes[:-3])
+        avg_vol = (
+            np.mean(volumes[-20:]) if len(volumes) >= 20 else np.mean(volumes[:-3])
+        )
         if avg_vol <= 0:
             return 0.0
         vol_ratio = recent_vol / avg_vol

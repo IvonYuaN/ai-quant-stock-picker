@@ -43,15 +43,23 @@ class CompositeStrategy(BaseStrategy):
             thresholds=self.thresholds,
         )
         self.volume_strategy = VolumeBreakoutStrategy(
-            StrategyConfig(name="volume_breakout", enabled=self.thresholds.volume.enabled),
+            StrategyConfig(
+                name="volume_breakout", enabled=self.thresholds.volume.enabled
+            ),
             thresholds=self.thresholds,
         )
         self.mean_reversion_strategy = MeanReversionStrategy(
-            StrategyConfig(name="mean_reversion", enabled=self.thresholds.composite.mean_reversion_weight > 0),
+            StrategyConfig(
+                name="mean_reversion",
+                enabled=self.thresholds.composite.mean_reversion_weight > 0,
+            ),
             thresholds=self.thresholds,
         )
         self.triple_rise_strategy = TripleRiseStrategy(
-            StrategyConfig(name="triple_rise", enabled=self.thresholds.composite.triple_rise_weight > 0),
+            StrategyConfig(
+                name="triple_rise",
+                enabled=self.thresholds.composite.triple_rise_weight > 0,
+            ),
             thresholds=self.thresholds,
         )
 

@@ -13,6 +13,8 @@ import pandas as pd
 from pandas.errors import EmptyDataError
 
 from aqsp.core.time import now_shanghai
+from aqsp.data.source_health import notification_level_for_health_label
+from aqsp.research.summary import load_research_summary
 from aqsp.report import RESULT_COLUMNS
 
 
@@ -46,6 +48,17 @@ def _ensure_columns(df: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
     return pd.DataFrame(columns=columns)
 
 
+def _latest_runtime_row(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    return next(
+        (
+            row
+            for row in reversed(rows)
+            if row.get("run_requested_source") or row.get("run_actual_source")
+        ),
+        rows[-1] if rows else {},
+    )
+
+
 def export_db(csv_path: Path, ledger_path: Path, db_path: Path) -> None:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     if csv_path.exists():
@@ -56,7 +69,8 @@ def export_db(csv_path: Path, ledger_path: Path, db_path: Path) -> None:
     else:
         candidates = pd.DataFrame()
     candidates = _ensure_columns(candidates, RESULT_COLUMNS)
-    ledger = pd.DataFrame(read_jsonl(ledger_path))
+    ledger_rows = read_jsonl(ledger_path)
+    ledger = pd.DataFrame(ledger_rows)
     for col in ledger.columns:
         ledger[col] = ledger[col].map(
             lambda value: json.dumps(value, ensure_ascii=False)
@@ -64,12 +78,49 @@ def export_db(csv_path: Path, ledger_path: Path, db_path: Path) -> None:
             else value
         )
     ledger = _ensure_columns(ledger, LEDGER_EXPORT_COLUMNS)
+    latest_row = _latest_runtime_row(ledger_rows)
+    research_summary = load_research_summary()
+    next_action = (
+        research_summary.next_actions[0]
+        if research_summary is not None and research_summary.next_actions
+        else None
+    )
     run_meta = pd.DataFrame(
         [
             {
                 "generated_at": now_shanghai().isoformat(timespec="seconds"),
                 "candidate_count": len(candidates),
                 "ledger_count": len(ledger),
+                "requested_source": latest_row.get("run_requested_source", ""),
+                "actual_source": latest_row.get("run_actual_source", ""),
+                "source_health_label": latest_row.get("run_source_health_label", ""),
+                "source_health_message": latest_row.get("run_source_health_message", ""),
+                "notify_level": notification_level_for_health_label(
+                    str(latest_row.get("run_source_health_label", "") or "")
+                ),
+                "fallback_used": latest_row.get("run_fallback_used", ""),
+                "research_total_findings": (
+                    research_summary.total_findings if research_summary is not None else 0
+                ),
+                "research_absorbed_families": (
+                    len(research_summary.absorbed_families)
+                    if research_summary is not None
+                    else 0
+                ),
+                "research_report_only_families": (
+                    research_summary.report_only_family_count
+                    if research_summary is not None
+                    else 0
+                ),
+                "research_gated_families": (
+                    research_summary.gated_family_count
+                    if research_summary is not None
+                    else 0
+                ),
+                "research_next_action_id": next_action.item_id if next_action is not None else "",
+                "research_next_action_kind": next_action.kind if next_action is not None else "",
+                "research_next_action_priority": next_action.priority if next_action is not None else "",
+                "research_next_action_blocker": next_action.blocker if next_action is not None else "",
             }
         ]
     )

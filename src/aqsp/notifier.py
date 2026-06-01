@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from typing import Any
 
 import requests
+
+from aqsp.data.source_health import notification_level_for_health_label
 
 
 @dataclass(frozen=True)
@@ -11,6 +14,32 @@ class NotifyResult:
     channel: str
     ok: bool
     detail: str
+
+
+def prepend_source_status_banner(
+    markdown: str,
+    source_status: dict[str, Any] | None = None,
+) -> str:
+    if not source_status:
+        return markdown
+    requested = str(source_status.get("requested_source", "") or "")
+    actual = str(source_status.get("actual_source", "") or "")
+    label = str(source_status.get("health_label", "") or "unknown")
+    message = str(source_status.get("health_message", "") or "暂无说明")
+    notify_level = notification_level_for_health_label(label)
+    route = actual or requested or "unknown"
+    if requested and actual and requested != actual:
+        route = f"{requested} -> {actual}"
+    banner = (
+        "## 数据源状态\n\n"
+        f"- 通知级别: **{notify_level}**\n"
+        f"- 健康: **{label}**\n"
+        f"- 路径: **{route}**\n"
+        f"- 说明: {message}\n"
+    )
+    if label in {"fallback", "degraded", "cold_start"}:
+        banner += "- 提示: 本次结果请降低信任度，优先人工复核。\n"
+    return f"{banner}\n{markdown}"
 
 
 def notify_markdown(markdown: str) -> list[NotifyResult]:

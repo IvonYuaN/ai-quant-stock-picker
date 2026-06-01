@@ -50,7 +50,7 @@ class MeanReversionStrategy(BaseStrategy):
     def _rsi_oversold(closes: np.ndarray, period: int = 14) -> float:
         if len(closes) < period + 1:
             return 0.0
-        deltas = np.diff(closes[-(period + 1):])
+        deltas = np.diff(closes[-(period + 1) :])
         gains = np.where(deltas > 0, deltas, 0.0)
         losses = np.where(deltas < 0, -deltas, 0.0)
         avg_gain = np.mean(gains)
@@ -89,11 +89,17 @@ class MeanReversionStrategy(BaseStrategy):
             return 0.0
 
     @staticmethod
-    def _volume_confirmation(volumes: np.ndarray, closes: np.ndarray, window: int) -> float:
+    def _volume_confirmation(
+        volumes: np.ndarray, closes: np.ndarray, window: int
+    ) -> float:
         if len(volumes) < window or len(closes) < window:
             return 0.0
         recent_vol = volumes[-1]
-        avg_vol = np.mean(volumes[-(window + 1):-1]) if len(volumes) > window else np.mean(volumes[:-1])
+        avg_vol = (
+            np.mean(volumes[-(window + 1) : -1])
+            if len(volumes) > window
+            else np.mean(volumes[:-1])
+        )
         if avg_vol <= 0:
             return 0.0
         vol_ratio = recent_vol / avg_vol

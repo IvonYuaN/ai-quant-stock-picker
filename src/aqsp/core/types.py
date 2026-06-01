@@ -49,6 +49,12 @@ class PickResult:
 class RunMetadata:
     requested_source: str
     actual_source: str
+    source_freshness_tier: str
+    source_coverage_tier: str
+    source_local_status: str
+    source_health_label: str
+    source_health_message: str
+    fallback_used: bool
     explicit_symbol_count: int
     resolved_symbol_count: int
     fetched_frame_count: int
@@ -59,6 +65,8 @@ class RunMetadata:
     min_avg_amount: float
     online_factors_enabled: bool
     thresholds_version: str
+    data_latest_trade_date: str = ""
+    data_lag_days: int = 0
     regime: str = ""
     max_universe: int = 0
 

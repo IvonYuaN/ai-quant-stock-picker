@@ -6,8 +6,8 @@ composite:
   volume_weight: 0.0
   mean_reversion_weight: 0.0
   triple_rise_weight: 0.3
-description: 策略阈值配置 — version 回退至 1.0.0：先前 2.0.0 升号无 walk-forward 验证依据
-effective_from: ''
+description: "策略阈值配置 — v1.1.0：2026-05-30 CSCV 双门验证通过（DSR=1.9174, PBO=24.21%），Held-out 验证通过（Sharpe=5.93），正式启用"
+effective_from: '2026-05-30'
 execution:
   commission_rate: 0.0003
   limit_down_tolerance: 0.005
@@ -18,7 +18,7 @@ filter:
   min_avg_volume: 1000000
   min_days_listed: 90
   min_price: 1.0
-last_walkforward_run: '2026-05-28'
+last_walkforward_run: '2026-05-30'
 momentum:
   lookback_days: 60
   ma_period: 20
@@ -32,7 +32,7 @@ momentum:
     rsi: 0.3
     trend: 0.3
 quality:
-  enabled: true
+  enabled: false
   eps_growth_min: 0.1
   max_debt_ratio: 0.6
   min_cash_flow: 0.0
@@ -67,7 +67,7 @@ risk:
   max_drawdown: 0.2
   volatility_limit: 0.4
 value:
-  enabled: true
+  enabled: false
   ev_ebitda_max: 15
   max_pb: 5
   max_pe: 30
@@ -94,4 +94,4 @@ mean_reversion:
   rsi_period: 14
   oversold_threshold: 30
   deviation_threshold: -0.05
-version: 1.0.0
+version: 1.1.0

@@ -74,13 +74,13 @@ class TestBriefingGenerator:
         briefing = gen.generate(picks=picks, frames={})
         assert isinstance(briefing, Briefing)
         assert briefing.date
-        assert len(briefing.sections) == 4
+        assert len(briefing.sections) == 6
 
     def test_generate_empty_picks(self):
         gen = BriefingGenerator()
         briefing = gen.generate(picks=[], frames={})
         assert isinstance(briefing, Briefing)
-        assert len(briefing.sections) == 4
+        assert len(briefing.sections) == 6
         md = briefing.to_markdown()
         assert "无候选标的" in md
 
@@ -98,6 +98,79 @@ class TestBriefingGenerator:
         briefing = gen.generate(picks=[], frames={}, circuit_breaker_status=cb)
         regime_sec = next(s for s in briefing.sections if s.title == "市场态势")
         assert "组合保护中" in regime_sec.content
+
+    def test_source_section_shows_runtime_health(self):
+        gen = BriefingGenerator()
+        briefing = gen.generate(
+            picks=[],
+            frames={},
+            source_status={
+                "requested_source": "auto",
+                "actual_source": "eastmoney",
+                "freshness_tier": "realtime",
+                "coverage_tier": "multi_dimensional",
+                "health_label": "fallback",
+                "health_message": "fallback 到 eastmoney；plan成功/失败 5/1，源成功/失败 5/0",
+                "fallback_used": True,
+            },
+        )
+        source_sec = next(s for s in briefing.sections if s.title == "数据源状态")
+        assert "auto -> eastmoney" in source_sec.content
+        assert "fresh=realtime / cover=multi_dimensional" in source_sec.content
+        assert "fallback" in source_sec.content
+        assert "降低信任度" in source_sec.content
+
+    def test_research_section_summarizes_absorbed_backlog(self):
+        from aqsp.research.summary import (
+            ResearchFamilySummary,
+            ResearchPipelineSummary,
+            ResearchSummary,
+        )
+
+        gen = BriefingGenerator()
+        briefing = gen.generate(
+            picks=[],
+            frames={},
+            research_summary=ResearchSummary(
+                generated_at="",
+                total_findings=113,
+                pipeline_summaries=(
+                    ResearchPipelineSummary(
+                        pipeline="data_source",
+                        total=24,
+                        p1=14,
+                        top_repo="mpquant/Ashare",
+                    ),
+                    ResearchPipelineSummary(
+                        pipeline="strategy",
+                        total=22,
+                        p1=10,
+                        top_repo="sngyai/Sequoia-X",
+                    ),
+                ),
+                absorbed_families=(
+                    ResearchFamilySummary(
+                        family_id="market_regime_timing_filter",
+                        name="大盘择时 / 市场状态过滤",
+                        status="research_absorbed",
+                        runtime_stage="gated_runtime",
+                        absorbed_from_count=4,
+                        runtime_gate_count=4,
+                    ),
+                ),
+                source_candidates=(),
+                next_actions=(),
+                prereq_items=(),
+                implemented_family_count=5,
+                report_only_family_count=0,
+                gated_family_count=1,
+            ),
+        )
+        research_sec = next(s for s in briefing.sections if s.title == "研究吸收")
+        assert "研究候选总数" in research_sec.content
+        assert "113" in research_sec.content
+        assert "mpquant/Ashare" in research_sec.content
+        assert "大盘择时 / 市场状态过滤(gated_runtime)" in research_sec.content
 
     def test_evidence_section_shows_strategies(self):
         gen = BriefingGenerator()
@@ -194,9 +267,30 @@ class TestSendBriefing:
         send_briefing(briefing, notifier=mock_notifier)
         mock_notifier.assert_called_once()
         assert "t" in mock_notifier.call_args[0][0]
+        assert "# AI 量化选股日报" in mock_notifier.call_args[0][0]
 
     @patch("aqsp.notifier.notify_markdown")
     def test_calls_default_notifier(self, mock_notify):
         briefing = Briefing(date="d", sections=[])
         send_briefing(briefing)
         mock_notify.assert_called_once()
+
+    def test_send_briefing_prepends_source_status_banner(self):
+        briefing = Briefing(
+            date="d", sections=[BriefingSection(title="t", content="c")]
+        )
+        mock_notifier = MagicMock()
+        send_briefing(
+            briefing,
+            notifier=mock_notifier,
+            source_status={
+                "requested_source": "auto",
+                "actual_source": "eastmoney",
+                "health_label": "fallback",
+                "health_message": "fallback 到 eastmoney；plan成功/失败 5/1，源成功/失败 5/0",
+            },
+        )
+        body = mock_notifier.call_args[0][0]
+        assert body.startswith("## 数据源状态")
+        assert "auto -> eastmoney" in body
+        assert "降低信任度" in body

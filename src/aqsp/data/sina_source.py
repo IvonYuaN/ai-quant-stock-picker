@@ -142,7 +142,13 @@ class SinaSource(DataSource):
                 self._throttle()
                 market = "sh" if symbol.startswith("6") else "sz"
                 url = "http://money.finance.sina.com.cn/quotes_service/api/json_v2.php/CN_MarketData.getKLineData"
-                scale_map = {"1": "60", "5": "300", "15": "900", "30": "1800", "60": "240"}
+                scale_map = {
+                    "1": "60",
+                    "5": "300",
+                    "15": "900",
+                    "30": "1800",
+                    "60": "240",
+                }
                 params = {
                     "symbol": f"{market}{symbol}",
                     "scale": scale_map.get(period, "300"),

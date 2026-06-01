@@ -18,7 +18,7 @@
 
 ### 路径 A：真 CSCV + 参数网格
 
-**描述**：在当前复合策略的权重空间上生成 N 个变体（如 momentum_weight × triple_rise_weight 的网格），每个变体跑一次 walkforward，构建 T×N 矩阵，再按 Bailey et al. (2017) Algorithm 1 §3.1 执行标准 CSCV。
+**描述**：在当前复合策略的权重空间上生成 N 个变体（如 momentum_weight × triple_rise_weight 的网格），每个变体跑一次 walkforward，构建 T×N 矩阵，再按 Bailey, López de Prado & Zhu (2014) §3.1 Algorithm 1 执行标准 CSCV。
 
 **可行性**：
 - 实现复杂度：**天级**（~2-4 小时开发 + 测试）
@@ -34,7 +34,7 @@
 - walkforward 本身的 stock selection 随权重变化，T×N 矩阵的列之间不是纯参数差异，还混入了选股差异
 - 需要决定 S 的取值（论文建议 S 为偶数，常用 S=10 或 S=16）
 
-**论文依据**：Bailey, López de Prado & Zhu (2014). "The Probability of Backtest Overfitting." Journal of Computational Finance, 20(4), 39-69. §3.1 Algorithm 1, 步骤 1-5。
+**论文依据**：Bailey, López de Prado & Zhu (2014). "The Probability of Backtest Overfitting." SSRN preprint；后正式刊于 Journal of Computational Finance, 20(4), 39-69 (2017)。本文档统一引用 2014 年初版年份，§3.1 Algorithm 1 步骤 1-5 在两版中一致。
 
 ---
 

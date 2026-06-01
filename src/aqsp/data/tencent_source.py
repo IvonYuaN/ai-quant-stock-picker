@@ -126,7 +126,9 @@ class TencentSource(DataSource):
                 params = {
                     "param": f"{symbol},day,{start.strftime('%Y-%m-%d')},{end.strftime('%Y-%m-%d')},640",
                 }
-                response = self._session.get(TENCENT_KLINE_URL, params=params, timeout=10)
+                response = self._session.get(
+                    TENCENT_KLINE_URL, params=params, timeout=10
+                )
                 data = response.json()
                 if not data.get("data"):
                     return None

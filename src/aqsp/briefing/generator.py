@@ -9,6 +9,7 @@ from jinja2 import Environment, FileSystemLoader
 
 from aqsp.core.time import now_shanghai
 from aqsp.core.types import PickResult
+from aqsp.research.summary import ResearchSummary
 from aqsp.ratings import is_tradable_rating
 
 _TEMPLATE_DIR = Path(__file__).parent / "templates"
@@ -61,10 +62,14 @@ class BriefingGenerator:
         regime: str = "",
         validation: object | None = None,
         circuit_breaker_status: object | None = None,
+        source_status: dict[str, str | bool] | None = None,
+        research_summary: ResearchSummary | None = None,
     ) -> Briefing:
         date_str = now_shanghai().strftime("%Y-%m-%d %H:%M")
         sections = [
             self._build_regime_section(regime, circuit_breaker_status),
+            self._build_source_section(source_status),
+            self._build_research_section(research_summary),
             self._build_evidence_section(picks),
             self._build_theme_section(picks),
             self._build_next_day_section(picks, frames),
@@ -86,6 +91,81 @@ class BriefingGenerator:
         desc = _REGIME_DESCRIPTIONS.get(regime, regime or "未知")
         lines.append(f"当前市场态势: **{desc}**")
         return BriefingSection(title="市场态势", content="\n".join(lines))
+
+    def _build_source_section(
+        self,
+        source_status: dict[str, str | bool] | None,
+    ) -> BriefingSection:
+        if not source_status:
+            return BriefingSection(
+                title="数据源状态",
+                content="暂无最近一次运行的数据源状态记录。",
+            )
+        requested = str(source_status.get("requested_source", "") or "")
+        actual = str(source_status.get("actual_source", "") or "")
+        freshness = str(source_status.get("freshness_tier", "") or "unknown")
+        coverage = str(source_status.get("coverage_tier", "") or "unknown")
+        label = str(source_status.get("health_label", "") or "unknown")
+        message = str(source_status.get("health_message", "") or "暂无说明")
+        fallback_used = bool(source_status.get("fallback_used", False))
+        route = actual or requested or "unknown"
+        if requested and actual and requested != actual:
+            route = f"{requested} -> {actual}"
+        lines = [
+            f"- 路径: **{route}**",
+            f"- 层级: fresh={freshness} / cover={coverage}",
+            f"- 健康: **{label}**",
+            f"- fallback: {'yes' if fallback_used else 'no'}",
+            f"- 说明: {message}",
+        ]
+        if label in {"fallback", "degraded", "cold_start"}:
+            lines.append("- 提示: 本次结果请降低信任度，优先人工复核。")
+        return BriefingSection(title="数据源状态", content="\n".join(lines))
+
+    def _build_research_section(
+        self,
+        research_summary: ResearchSummary | None,
+    ) -> BriefingSection:
+        if research_summary is None:
+            return BriefingSection(
+                title="研究吸收",
+                content="暂无研究吸收摘要；开源研究库还没有接入到本次日报。",
+            )
+        lines = [
+            f"- 研究候选总数: **{research_summary.total_findings}**",
+            f"- 已吸收但未直接入分策略族: **{len(research_summary.absorbed_families)}**",
+            f"- 已部分实现策略族: **{research_summary.implemented_family_count}**",
+            f"- report-only 研究族: **{research_summary.report_only_family_count}**",
+            f"- 运行门控研究族: **{research_summary.gated_family_count}**",
+        ]
+        top_pipelines = list(research_summary.pipeline_summaries[:3])
+        if top_pipelines:
+            for item in top_pipelines:
+                lines.append(
+                    f"- 研究管线 {item.pipeline}: P1={item.p1} / total={item.total} / top={item.top_repo or '-'}"
+                )
+        if research_summary.absorbed_families:
+            names = "、".join(
+                f"{item.name}({item.runtime_stage})"
+                for item in research_summary.absorbed_families[:4]
+            )
+            lines.append(f"- 已吸收主题: {names}")
+        if research_summary.next_actions:
+            next_item = research_summary.next_actions[0]
+            lines.append(
+                f"- 下一接入重点: {next_item.kind}/{next_item.item_id} [{next_item.priority}] - {next_item.blocker or '待补 gate'}"
+            )
+        prereq_item = next(
+            (item for item in research_summary.prereq_items if item.status != "ready"),
+            None,
+        )
+        if prereq_item is not None:
+            missing_env = "、".join(prereq_item.missing_env_vars) or "fixture"
+            lines.append(
+                f"- 当前前置缺口: {prereq_item.kind}/{prereq_item.item_id} - {prereq_item.status} ({missing_env})"
+            )
+        lines.append("- 原则: 研究内容只做候选和解释，不直接覆盖 runtime 打分。")
+        return BriefingSection(title="研究吸收", content="\n".join(lines))
 
     def _build_evidence_section(self, picks: list[PickResult]) -> BriefingSection:
         lines: list[str] = []
