@@ -1,8 +1,24 @@
-# AI 量化选股定时通知
+# AI 量化选股本地工作台
 
-一个独立 GitHub 项目：每天定时获取最新 A 股数据，筛选开盘/尾盘候选股，把“选了什么、依据是什么、风险是什么、参考买点/止损/止盈”发到 Telegram、企业微信、飞书或通用 Webhook。系统只负责筛选和通知，最终下单由人完成。
+本项目以**本地运行**为主，GitHub 只负责代码备份、版本同步和可选的远程定时任务。
+
+它的目标是：每天基于最新 A 股数据筛选开盘/尾盘候选股，把“选了什么、依据是什么、风险是什么、参考买点/止损/止盈”输出到本地报表、静态面板和通知渠道。系统只负责筛选和通知，最终下单由人完成。
 
 策略来源不是 `daily_stock_analysis`。它只作为后续报告/通知增强参考；选股逻辑来自互联网常见开源量化策略形态：RPS 相对强度、放量突破、均线缩量回踩、碗口反弹、低波趋势，并通过每日预测账本滚动验证。
+
+## 项目定位
+
+- 主运行环境：本地 Mac / 本地服务器
+- 主数据位置：本地私有数据目录、外部数据源、运行时缓存
+- GitHub 作用：备份代码、保存文档、可选跑 Actions
+- 不上传：本地大数据、账本、缓存、私钥、token、运行日志
+
+## 建议仓库说明
+
+如果你把它公开放在 GitHub，建议仓库名和简介写成这种风格：
+
+- 仓库名：`ai-quant-local-workbench`
+- 简介：`Local-first A-share quant screening workbench. GitHub is used for code backup and optional automation only.`
 
 ## 快速使用
 
@@ -86,9 +102,9 @@ python -m aqsp.cli pit --kind disclosure_dates --symbols 600519,300750 --start 2
 - `tests/README.md`: 测试分层说明，方便定位该跑哪一组回归
 - `scripts/README.md`: 脚本边界说明，避免把临时采集工具误接入主链路
 
-## GitHub 定时通知
+## GitHub 备份与可选定时通知
 
-1. 新建 GitHub 仓库并上传本项目。
+1. 新建 GitHub 仓库并上传本项目代码。
 2. 在 `Settings -> Secrets and variables -> Actions -> Variables` 配置：
    - `AQSP_SYMBOLS`: 股票池，如 `600519,300750,000001`
    - `AQSP_MODE`: `open` 或 `close`
@@ -101,12 +117,14 @@ python -m aqsp.cli pit --kind disclosure_dates --symbols 600519,300750 --start 2
    - 通用 Webhook: `GENERIC_WEBHOOK_URL`
 4. Workflow 默认北京时间工作日 09:10 和 14:45 运行，也支持手动运行。
 
+如果你主要在本地跑，这一节可以完全不启用；GitHub 只保留仓库备份也没问题。
+
 数据新鲜度由 `aqsp.freshness.assert_fresh_data` 强制检查。超过允许滞后时任务直接失败，不发送陈旧选股。
 若已配置 `TUSHARE_TOKEN`，运行时会优先用 Tushare 交易日历按真实交易日判断滞后和 T+1，长假期间不会把正常停市误判成数据过期。
 
 ## 私有前端和数据库
 
-推荐把代码放 GitHub,把每日结果放你自己的服务器:
+推荐把代码放 GitHub 备份，把每日结果留在你自己的机器或服务器:
 
 - GitHub Actions 定时跑 `aqsp run`。
 - `aqsp dashboard` / `scripts/render_dashboard.py` 生成 `dist/dashboard/index.html`。

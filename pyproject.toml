@@ -1,7 +1,7 @@
 [project]
 name = "ai-quant-stock-picker"
 version = "0.1.0"
-description = "A-share quantitative stock picker for open/close screening."
+description = "Local-first A-share quant screening workbench with optional GitHub automation."
 requires-python = ">=3.10"
 dependencies = [
     "pandas>=2.0",
