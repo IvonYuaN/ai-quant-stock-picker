@@ -1,6 +1,6 @@
 # Docs Index
 
-当前目录只保留长期有效、需要持续维护的文档。
+当前目录只保留长期有效、需要持续维护的文档；试验记录和过程文档统一下沉到 `archive/`。
 
 ## Active
 
@@ -20,5 +20,6 @@
 
 - `archive/experiments/`
 - `archive/process/`
+- `archive/README.md`
 
 这些归档文件保留追溯价值，但不再作为当前运行文档入口。
