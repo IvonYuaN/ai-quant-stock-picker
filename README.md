@@ -74,6 +74,7 @@ python -m aqsp.cli pit --kind disclosure_dates --symbols 600519,300750 --start 2
 
 本项目不从 `daily_stock_analysis` 派生策略。选股策略来自公开开源项目、A股常见交易理论和后续 walk-forward 验证，进入运行前必须先写入 registry 并转成可测试的纯函数。
 
+- 文档索引：`docs/README.md`
 - 数据源清单：`config/data_sources.yaml`
 - 策略来源清单：`config/strategy_sources.yaml`
 - 本地 registry 输出：`python scripts/collect_research_registry.py`
