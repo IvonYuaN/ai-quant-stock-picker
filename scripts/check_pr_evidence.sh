@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 在 PR 提交前运行：pytest + ruff + upload preflight，输出真实证据
-# 用法：bash scripts/check_pr_evidence.sh > pr_evidence.txt 2>&1
+# 用法：bash scripts/check_pr_evidence.sh > /tmp/aqsp_pr_evidence.txt 2>&1
 #
 # §17 要求 PR 证据是真实 exit code。原版用 `tail | echo $?` 取的是 tail 的
 # exit code（永远 0），等于自欺。本脚本：
