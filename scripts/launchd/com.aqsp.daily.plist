@@ -8,7 +8,7 @@
     <array>
         <string>/bin/bash</string>
         <string>--login</string>
-        <string>/Users/ivon/.aqsp/aqsp_daily_run_wrapper.sh</string>
+        <string>/ABSOLUTE/PATH/TO/.aqsp/aqsp_daily_run_wrapper.sh</string>
     </array>
     <key>StartCalendarInterval</key>
     <array>

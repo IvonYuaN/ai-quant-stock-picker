@@ -95,7 +95,7 @@
 | WF-L17 | `docs/walkforward-v2.md` | 111 | 100% | 旧 v2 |
 | WF-L18 | `docs/walkforward-v5.md` | 156 | 100% | 旧 v5 |
 
-旧格式 18 份的 PBO 异常分布（部分 100%、部分 75%、部分 0%）也反映了非 CSCV 实现的结构性问题，详见 [pbo-audit-2026-05-29.md](file:///Users/ivon/Documents/AI量化选股/docs/pbo-audit-2026-05-29.md)。
+旧格式 18 份的 PBO 异常分布（部分 100%、部分 75%、部分 0%）也反映了非 CSCV 实现的结构性问题，详见 [pbo-audit-2026-05-29.md](../process/pbo-audit-2026-05-29.md)。
 
 ### 去重结论
 

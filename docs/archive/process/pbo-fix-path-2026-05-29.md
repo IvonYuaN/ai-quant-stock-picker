@@ -8,7 +8,7 @@
 
 ## 问题定义
 
-当前 `_calculate_pbo` 不是 CSCV（详见 [pbo-audit-2026-05-29.md](file:///Users/ivon/Documents/AI量化选股/docs/pbo-audit-2026-05-29.md)）。核心矛盾：CSCV 要求 N 个策略配置构成 T×N 矩阵，但我们是单策略 walkforward，N=1。
+当前 `_calculate_pbo` 不是 CSCV（详见 [pbo-audit-2026-05-29.md](pbo-audit-2026-05-29.md)）。核心矛盾：CSCV 要求 N 个策略配置构成 T×N 矩阵，但我们是单策略 walkforward，N=1。
 
 §1.3 #12 双重门当前状态：DSR 侧 7/9 > 1.0（PASS），PBO 侧 9/9 = 75% > 50%（FAIL）。PBO 是唯一卡点。如果 PBO 实现有误，修复可能解锁门；如果修复后 PBO 仍然 > 50%，说明策略确实过拟合。
 

@@ -39,10 +39,10 @@ TUSHARE_TOKEN=...
 
 ## 私有大数据文件
 
-2G 级别本地行情库不要上传 GitHub。当前 `xtick.top` 数据库应作为私有外部数据源挂载:
+2G 级别本地行情库不要上传 GitHub。私有 SQLite 行情库应作为外部数据源挂载:
 
 ```bash
-export AQSP_SQLITE_DB_PATH="/Users/ivon/Documents/AI量化选股/A股量化分析数据/astocks_qfq.db"
+export AQSP_SQLITE_DB_PATH="/absolute/path/to/private-market-data/astocks_qfq.db"
 ```
 
 服务器部署时把数据库放到服务器本地磁盘,再在 systemd、cron 或 GitHub Actions SSH 目标环境中配置同名环境变量。
