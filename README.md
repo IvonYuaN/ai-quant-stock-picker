@@ -50,17 +50,19 @@ python -m aqsp.cli screen --csv data/sample_ohlcv.csv --mode close --limit 10
 python -m aqsp.cli screen --csv data/sample_ohlcv.csv --mode open --report reports/open.md
 ```
 
-生成本地前端面板：
+生成并打开本地前端面板（固定端口 `127.0.0.1:9876`）：
 
 ```bash
-aqsp dashboard \
-  --csv reports/latest.csv \
-  --ledger data/predictions.jsonl \
-  --output dist/dashboard/index.html
-python3 -m http.server 8000 -d dist/dashboard
+python3 scripts/open_dashboard.py
 ```
 
-页面会展示候选股、评分、策略依据、风险、参考买点/止损/止盈、ledger 统计和最近信号。`dist/` 已被忽略，不会上传 GitHub。
+只刷新页面文件、不启动服务：
+
+```bash
+python3 scripts/open_dashboard.py --render-only
+```
+
+页面会展示候选股、评分、策略依据、风险、参考买点/止损/止盈、ledger 统计和最近信号。默认地址固定为 `http://127.0.0.1:9876`，`dist/` 已被忽略，不会上传 GitHub。
 
 验证 Tushare PIT 接口：
 

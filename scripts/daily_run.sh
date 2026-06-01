@@ -32,15 +32,21 @@ export AQSP_MIN_AVG_AMOUNT="${AQSP_MIN_AVG_AMOUNT:-50000000}"
 export AQSP_ENABLE_ONLINE_FACTORS="${AQSP_ENABLE_ONLINE_FACTORS:-false}"
 export AQSP_MAX_DATA_LAG_DAYS="${AQSP_MAX_DATA_LAG_DAYS:-3}"
 export AQSP_LEDGER="${AQSP_LEDGER:-data/predictions.jsonl}"
+export AQSP_PAPER_LEDGER="${AQSP_PAPER_LEDGER:-data/paper_trades.jsonl}"
 export AQSP_REPORT="${AQSP_REPORT:-reports/latest.md}"
 export AQSP_OUTPUT_CSV="${AQSP_OUTPUT_CSV:-reports/latest.csv}"
 export AQSP_BRIEFING_REPORT="${AQSP_BRIEFING_REPORT:-reports/briefing-$DATE.md}"
 export AQSP_DIAGNOSIS="${AQSP_DIAGNOSIS:-reports/runtime-diagnosis.md}"
+export AQSP_DASHBOARD_HTML="${AQSP_DASHBOARD_HTML:-dist/dashboard/index.html}"
+export AQSP_DASHBOARD_DB="${AQSP_DASHBOARD_DB:-dist/dashboard/aqsp.db}"
 case "$AQSP_LEDGER" in /*) ;; *) export AQSP_LEDGER="$PROJECT_ROOT/$AQSP_LEDGER" ;; esac
+case "$AQSP_PAPER_LEDGER" in /*) ;; *) export AQSP_PAPER_LEDGER="$PROJECT_ROOT/$AQSP_PAPER_LEDGER" ;; esac
 case "$AQSP_REPORT" in /*) ;; *) export AQSP_REPORT="$PROJECT_ROOT/$AQSP_REPORT" ;; esac
 case "$AQSP_OUTPUT_CSV" in /*) ;; *) export AQSP_OUTPUT_CSV="$PROJECT_ROOT/$AQSP_OUTPUT_CSV" ;; esac
 case "$AQSP_BRIEFING_REPORT" in /*) ;; *) export AQSP_BRIEFING_REPORT="$PROJECT_ROOT/$AQSP_BRIEFING_REPORT" ;; esac
 case "$AQSP_DIAGNOSIS" in /*) ;; *) export AQSP_DIAGNOSIS="$PROJECT_ROOT/$AQSP_DIAGNOSIS" ;; esac
+case "$AQSP_DASHBOARD_HTML" in /*) ;; *) export AQSP_DASHBOARD_HTML="$PROJECT_ROOT/$AQSP_DASHBOARD_HTML" ;; esac
+case "$AQSP_DASHBOARD_DB" in /*) ;; *) export AQSP_DASHBOARD_DB="$PROJECT_ROOT/$AQSP_DASHBOARD_DB" ;; esac
 
 {
     echo "=== aqsp run @ $(date) ==="
@@ -95,6 +101,16 @@ case "$AQSP_DIAGNOSIS" in /*) ;; *) export AQSP_DIAGNOSIS="$PROJECT_ROOT/$AQSP_D
     echo ""
     echo "=== outputs ==="
     ls -lh "$AQSP_REPORT" "$AQSP_OUTPUT_CSV" "$AQSP_BRIEFING_REPORT" 2>/dev/null || true
+
+    echo ""
+    echo "=== dashboard refresh @ $(date) ==="
+    "$PYTHON_BIN" scripts/open_dashboard.py \
+        --csv "$AQSP_OUTPUT_CSV" \
+        --ledger "$AQSP_LEDGER" \
+        --paper-ledger "$AQSP_PAPER_LEDGER" \
+        --output "$AQSP_DASHBOARD_HTML" \
+        --db "$AQSP_DASHBOARD_DB" \
+        --render-only 2>&1
 
     echo ""
     echo "=== runtime diagnosis @ $(date) ==="

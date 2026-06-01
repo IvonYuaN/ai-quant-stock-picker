@@ -23,6 +23,28 @@ tail -50 logs/daily/run-$(date +%Y-%m-%d).log
 
 如果只是本地长期运行，这条链路已经够用，不需要依赖 GitHub。
 
+## 本地前端
+
+固定地址：
+
+```text
+http://127.0.0.1:9876
+```
+
+首次打开或手动重开：
+
+```bash
+python3 scripts/open_dashboard.py
+```
+
+只刷新静态页面和 SQLite 快照，不启动浏览器：
+
+```bash
+python3 scripts/open_dashboard.py --render-only
+```
+
+`daily_run.sh` 现在会在每日跑完后自动刷新 `dist/dashboard/index.html` 和 `dist/dashboard/aqsp.db`，因此页面内容会跟着更新。
+
 ## 卸载
 
 ```bash

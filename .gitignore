@@ -4,6 +4,7 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
+.playwright-mcp/
 .env
 .DS_Store
 /pr_evidence.txt

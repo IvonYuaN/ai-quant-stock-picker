@@ -53,6 +53,7 @@
 - `test_briefing.py`
 - `test_briefing_e2e.py`
 - `test_dashboard.py`
+- `test_open_dashboard.py`
 - `test_email_notifier.py`
 - `test_monitor.py`
 - `test_report.py`
