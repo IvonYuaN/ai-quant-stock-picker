@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from aqsp.briefing.generator import Briefing, BriefingSection
+from aqsp.briefing.generator import Briefing
 from aqsp.utils.llm_safe import llm_call_or_fallback
 
 
