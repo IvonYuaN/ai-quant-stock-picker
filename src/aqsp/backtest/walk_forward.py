@@ -17,6 +17,80 @@ except (
 from aqsp.strategies.composite import CompositeStrategy
 
 
+def _norm_cdf(x: float) -> float:
+    """Standard normal CDF. Uses scipy when available, else A&S 26.2.17."""
+    if _scipy_stats is not None:
+        return float(_scipy_stats.norm.cdf(x))
+    t = 1.0 / (1.0 + 0.2316419 * abs(x))
+    d = 0.39894228 * float(np.exp(-x * x / 2.0))
+    poly = t * (
+        0.319381530
+        + t * (-0.356563782 + t * (1.781477937 + t * (-1.821255978 + t * 1.330274429)))
+    )
+    cdf_abs = 1.0 - d * poly
+    return float(cdf_abs if x >= 0 else 1.0 - cdf_abs)
+
+
+def _norm_ppf(p: float) -> float:
+    """Inverse standard normal CDF. Uses scipy when available, else
+    Beasley-Springer-Moro / Acklam-style rational approximation."""
+    if _scipy_stats is not None:
+        return float(_scipy_stats.norm.ppf(p))
+    # Acklam (2003) approximation, abs error < 1.15e-9 for p in (0,1)
+    if p <= 0.0:
+        return -float("inf")
+    if p >= 1.0:
+        return float("inf")
+    a = [
+        -3.969683028665376e01,
+        2.209460984245205e02,
+        -2.759285104469687e02,
+        1.383577518672690e02,
+        -3.066479806614716e01,
+        2.506628277459239e00,
+    ]
+    b = [
+        -5.447609879822406e01,
+        1.615858368580409e02,
+        -1.556989798598866e02,
+        6.680131188771972e01,
+        -1.328068155288572e01,
+    ]
+    c = [
+        -7.784894002430293e-03,
+        -3.223964580411365e-01,
+        -2.400758277161838e00,
+        -2.549732539343734e00,
+        4.374664141464968e00,
+        2.938163982698783e00,
+    ]
+    d = [
+        7.784695709041462e-03,
+        3.224671290700398e-01,
+        2.445134137142996e00,
+        3.754408661907416e00,
+    ]
+    plow = 0.02425
+    phigh = 1.0 - plow
+    if p < plow:
+        q = float(np.sqrt(-2.0 * np.log(p)))
+        return (((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5]) / (
+            (((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1.0
+        )
+    if p <= phigh:
+        q = p - 0.5
+        r = q * q
+        return (
+            (((((a[0] * r + a[1]) * r + a[2]) * r + a[3]) * r + a[4]) * r + a[5])
+            * q
+            / (((((b[0] * r + b[1]) * r + b[2]) * r + b[3]) * r + b[4]) * r + 1.0)
+        )
+    q = float(np.sqrt(-2.0 * np.log(1.0 - p)))
+    return -(((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5]) / (
+        (((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1.0
+    )
+
+
 @dataclass(frozen=True)
 class TradeResult:
     symbol: str
@@ -73,6 +147,7 @@ class WalkForwardTester:
         stop_loss_pct: float = 0.05,
         take_profit_pct: float = 0.10,
         use_tiered_stop: bool = False,
+        n_variants: int = 1,
     ):
         self.strategy = strategy
         self.train_period_days = train_period_days
@@ -85,6 +160,7 @@ class WalkForwardTester:
         self.stop_loss_pct = stop_loss_pct
         self.take_profit_pct = take_profit_pct
         self.use_tiered_stop = use_tiered_stop
+        self.n_variants = n_variants
 
     def run(
         self,
@@ -145,7 +221,7 @@ class WalkForwardTester:
         overall = _compute_backtest_metrics(all_returns, "Overall", not_exec_count)
         robustness = self._calculate_robustness(periods)
 
-        n_trials = len(periods)
+        n_trials = self.n_variants
         dsr = self._calculate_deflated_sharpe(
             overall.sharpe_ratio, n_trials, len(all_returns)
         )
@@ -234,7 +310,7 @@ class WalkForwardTester:
             elif avg_market_return < 0.005:
                 market_regime = "sideways"
             else:
-                market_regime = "bull_trend" 
+                market_regime = "bull_trend"
 
         selected = self.strategy.select_stocks(signal_data, n=self.top_n)
 
@@ -329,70 +405,146 @@ class WalkForwardTester:
         return float(np.std(returns))
 
     @staticmethod
-    def _calculate_deflated_sharpe(sharpe: float, n_trials: int, n_obs: int) -> float:
+    def _calculate_deflated_sharpe(
+        sharpe: float,
+        n_trials: int,
+        n_obs: int,
+        skew: float = 0.0,
+        kurtosis: float = 3.0,
+        sharpe_is_annualized: bool = True,
+        periods_per_year: int = 252,
+    ) -> float:
+        """Deflated Sharpe Ratio (Bailey & López de Prado 2014, eq. 8).
+
+        Returns the **deflated test statistic** (z-score), not the
+        probability Φ(z). This matches CONSTITUTION §1.3 #12's gate
+        semantics (`DSR > 1.0`), which is only meaningful for an unbounded
+        z-statistic — Φ(z) is bounded in [0, 1].
+
+        Replaces the previous implementation `psr * (1 - log(2^n - 1)/n)`
+        which collapsed to ≈ 0.3069 for any `n_trials ≥ 10`, making the
+        gate mathematically unreachable.
+
+        Form (per-period units):
+
+            σ_SR   = √( (1 − γ_3·SR + (γ_4 − 1)/4·SR²) / (T − 1) )
+            SR*/σ  = (1 − γ_E)·Φ⁻¹(1 − 1/N) + γ_E·Φ⁻¹(1 − 1/(N·e))
+            z      = SR/σ_SR  −  SR*/σ
+
+        SR is converted to per-period units when `sharpe_is_annualized=True`.
+        Higher z = the observed Sharpe sits further above the deflated
+        benchmark; z > 1 corresponds roughly to a one-sided 84% confidence
+        that the strategy is real after deflating for `n_trials` selections.
+        """
         if n_trials <= 1 or n_obs <= 1:
-            return sharpe
+            return 0.0
 
-        e_skew = 0.0
-        e_kurt = 3.0
-
-        sr_std = np.sqrt(
-            (1 - e_skew * sharpe + (e_kurt - 1) / 4 * sharpe**2) / (n_obs - 1)
+        sr = (
+            float(sharpe) / float(np.sqrt(periods_per_year))
+            if sharpe_is_annualized
+            else float(sharpe)
         )
+        n = max(int(n_trials), 2)
+        t_obs = max(int(n_obs), 2)
 
-        if _scipy_stats is not None:
-            psr = _scipy_stats.norm.cdf(sharpe / sr_std)
-        else:
-            # Abramowitz & Stegun 26.2.17: pure-numpy normal CDF approximation
-            x = sharpe / sr_std
-            t = 1.0 / (1.0 + 0.2316419 * abs(x))
-            d = 0.39894228 * np.exp(-x * x / 2.0)
-            poly = t * (
-                0.319381530
-                + t
-                * (
-                    -0.356563782
-                    + t * (1.781477937 + t * (-1.821255978 + t * 1.330274429))
-                )
-            )
-            cdf_abs = 1.0 - d * poly
-            psr = float(cdf_abs if x >= 0 else 1.0 - cdf_abs)
+        # σ_SR — standard error of the Sharpe ratio estimator (per-period units)
+        sigma_sq = (1.0 - skew * sr + (kurtosis - 1.0) / 4.0 * sr * sr) / (t_obs - 1)
+        if sigma_sq <= 0.0:
+            sigma_sq = 1e-12
+        sigma_sr = float(np.sqrt(sigma_sq))
 
-        n_combinations = 2**n_trials - 1
-        dsr = psr * (1 - np.log(n_combinations) / n_trials)
-        return round(float(dsr), 4)
+        # Expected maximum of N iid SR estimates (in σ_SR units)
+        EULER = 0.5772156649015329
+        z1 = _norm_ppf(1.0 - 1.0 / n)
+        z2 = _norm_ppf(1.0 - 1.0 / (n * float(np.e)))
+        threshold_in_sigma = (1.0 - EULER) * z1 + EULER * z2
+
+        z_stat = sr / sigma_sr - threshold_in_sigma
+        return round(float(z_stat), 4)
 
     @staticmethod
     def _calculate_pbo(periods: list[BacktestResult]) -> float:
-        if len(periods) < 3:
+        pbo = WalkForwardTester.calculate_cscv_pbo_from_single(periods)
+        return pbo
+
+    @staticmethod
+    def calculate_cscv_pbo(
+        returns_matrix: np.ndarray, s: int = 10
+    ) -> tuple[float, dict]:
+        t, n = returns_matrix.shape
+        if n < 2:
+            raise ValueError("CSCV requires N >= 2 strategy configurations")
+        if t < s:
+            raise ValueError(f"returns_matrix rows ({t}) must be >= S ({s})")
+
+        block_size = t // s
+        if block_size < 2:
+            raise ValueError(
+                f"Block size ({block_size}) must be >= 2; reduce S or increase T"
+            )
+
+        trimmed = returns_matrix[: block_size * s]
+        blocks = trimmed.reshape(s, block_size, n)
+
+        from itertools import combinations
+
+        combos = list(combinations(range(s), s // 2))
+        n_combos = len(combos)
+
+        lambdas = []
+        for train_indices in combos:
+            test_indices = [i for i in range(s) if i not in train_indices]
+
+            train_matrix = np.concatenate([blocks[i] for i in train_indices], axis=0)
+            test_matrix = np.concatenate([blocks[i] for i in test_indices], axis=0)
+
+            train_sr = np.array(
+                [
+                    np.mean(train_matrix[:, j]) / (np.std(train_matrix[:, j]) + 1e-15)
+                    for j in range(n)
+                ]
+            )
+            test_sr = np.array(
+                [
+                    np.mean(test_matrix[:, j]) / (np.std(test_matrix[:, j]) + 1e-15)
+                    for j in range(n)
+                ]
+            )
+
+            n_star = int(np.argmax(train_sr))
+
+            ranks = np.argsort(np.argsort(test_sr))
+            omega = (ranks[n_star] + 1) / (n + 1)
+
+            omega = max(1e-10, min(1 - 1e-10, omega))
+            lam = np.log(omega / (1 - omega))
+            lambdas.append(float(lam))
+
+        lambdas_arr = np.array(lambdas)
+        pbo = float(np.mean(lambdas_arr <= 0))
+
+        details = {
+            "n_combos": n_combos,
+            "n_lambda_le_0": int(np.sum(lambdas_arr <= 0)),
+            "lambda_median": float(np.median(lambdas_arr)),
+            "lambda_mean": float(np.mean(lambdas_arr)),
+            "s": s,
+            "block_size": block_size,
+            "t_trimmed": block_size * s,
+            "n_variants": n,
+        }
+        return round(pbo, 4), details
+
+    @staticmethod
+    def calculate_cscv_pbo_from_single(
+        periods: list[BacktestResult], s: int = 10
+    ) -> float:
+        returns = np.array([[p.total_return] for p in periods])
+        try:
+            pbo, _ = WalkForwardTester.calculate_cscv_pbo(returns, s=s)
+            return pbo
+        except ValueError:
             return 0.0
-
-        returns = np.array([p.total_return for p in periods])
-        n = len(returns)
-
-        splits = max(2, n // 3)
-        is_rank = np.argsort(np.argsort(returns))
-
-        oos_returns = []
-        for i in range(0, n, splits):
-            test_idx = list(range(i, min(i + splits, n)))
-            train_idx = [j for j in range(n) if j not in test_idx]
-
-            if not train_idx or not test_idx:
-                continue
-
-            train_returns = returns[train_idx]
-
-            best_train_idx = np.argmax(train_returns)
-            best_train_rank = is_rank[best_train_idx]
-
-            test_rank = np.mean(is_rank[test_idx])
-            oos_returns.append(float(test_rank < best_train_rank))
-
-        if not oos_returns:
-            return 0.0
-
-        return round(float(np.mean(oos_returns)), 4)
 
     def print_report(self, result: WalkForwardResult) -> None:
         print("=" * 60)

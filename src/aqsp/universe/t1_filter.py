@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date
 from pathlib import Path
 import json
 
+from aqsp.data.trading_calendar import resolve_previous_trading_day
 from aqsp.ratings import is_tradable_rating
 
 
@@ -34,11 +35,8 @@ def get_yesterday_buys(ledger_path: str | Path, today: date) -> set[str]:
 
 
 def _previous_trading_day(d: date) -> date:
-    """简化版：跳过周末。"""
-    prev = d - timedelta(days=1)
-    while prev.weekday() >= 5:
-        prev -= timedelta(days=1)
-    return prev
+    """优先使用可选交易日历，缺失时退回本地简化逻辑。"""
+    return resolve_previous_trading_day(d)
 
 
 def filter_t1_held(

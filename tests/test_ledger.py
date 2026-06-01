@@ -447,6 +447,12 @@ def test_append_predictions_writes_run_metadata_when_provided(tmp_path) -> None:
     metadata = RunMetadata(
         requested_source="auto",
         actual_source="tdx_vipdoc",
+        source_freshness_tier="end_of_day",
+        source_coverage_tier="history_core",
+        source_local_status="present",
+        source_health_label="healthy",
+        source_health_message="tdx_vipdoc 健康；源成功/失败 3/0",
+        fallback_used=False,
         explicit_symbol_count=0,
         resolved_symbol_count=100,
         fetched_frame_count=101,
@@ -457,6 +463,8 @@ def test_append_predictions_writes_run_metadata_when_provided(tmp_path) -> None:
         min_avg_amount=50_000_000,
         online_factors_enabled=False,
         thresholds_version="1.0.0",
+        data_latest_trade_date="2026-05-29",
+        data_lag_days=0,
         regime="stable_bull",
         max_universe=100,
     )
@@ -472,7 +480,15 @@ def test_append_predictions_writes_run_metadata_when_provided(tmp_path) -> None:
     row = read_ledger(ledger)[0]
     assert row["run_requested_source"] == "auto"
     assert row["run_actual_source"] == "tdx_vipdoc"
+    assert row["run_source_freshness_tier"] == "end_of_day"
+    assert row["run_source_coverage_tier"] == "history_core"
+    assert row["run_source_local_status"] == "present"
+    assert row["run_source_health_label"] == "healthy"
+    assert row["run_source_health_message"] == "tdx_vipdoc 健康；源成功/失败 3/0"
+    assert row["run_fallback_used"] is False
     assert row["run_resolved_symbol_count"] == 100
     assert row["run_fetched_frame_count"] == 101
     assert row["run_final_count"] == 1
     assert row["run_online_factors_enabled"] is False
+    assert row["run_data_latest_trade_date"] == "2026-05-29"
+    assert row["run_data_lag_days"] == 0

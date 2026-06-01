@@ -84,6 +84,26 @@ def _metadata_lines(metadata: RunMetadata) -> list[str]:
         "## 运行参数",
         f"- 数据源: {source_text}",
         (
+            "- 数据层级: "
+            f"fresh={metadata.source_freshness_tier or 'unknown'} / "
+            f"cover={metadata.source_coverage_tier or 'unknown'} / "
+            f"local={metadata.source_local_status or 'unknown'}"
+        ),
+        (
+            "- 数据时效: "
+            f"latest={metadata.data_latest_trade_date or 'unknown'} / "
+            f"lag={metadata.data_lag_days}d"
+        ),
+        (
+            "- 数据健康: "
+            f"{metadata.source_health_label or 'unknown'}"
+            + (
+                f" / {metadata.source_health_message}"
+                if metadata.source_health_message
+                else ""
+            )
+        ),
+        (
             "- 候选池: "
             f"显式 {metadata.explicit_symbol_count} / "
             f"解析 {metadata.resolved_symbol_count} / "

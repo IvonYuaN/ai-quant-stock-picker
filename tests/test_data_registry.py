@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from aqsp.data.registry import list_registry_entries, local_data_status
+from aqsp.data.registry import list_registry_entries, local_data_status, sort_registry_entries
 
 
 def test_data_registry_contains_multiple_independent_source_tiers() -> None:
@@ -28,6 +28,7 @@ def test_data_registry_marks_future_sources_not_runtime_ready() -> None:
     entries = {entry.id: entry for entry in list_registry_entries()}
 
     assert entries["tdx_vipdoc"].runtime_ready is True
+    assert entries["efinance"].runtime_ready is True
     assert entries["tushare"].runtime_ready is False
     assert entries["xtquant_qmt"].requires_account is True
     assert entries["efinance"].supports_realtime is True
@@ -43,3 +44,11 @@ def test_sqlite_db_local_data_status_uses_env_path(
     entry = {item.id: item for item in list_registry_entries()}["sqlite_db"]
 
     assert local_data_status(entry) == "present"
+
+
+def test_data_registry_sort_prefers_runtime_ready_and_fresher_sources() -> None:
+    ordered = sort_registry_entries(ready_only=True)
+
+    assert ordered[0].id == "eastmoney"
+    assert ordered[-1].id in {"sqlite_db", "baostock", "tdx_vipdoc"}
+    assert all(entry.runtime_ready for entry in ordered)

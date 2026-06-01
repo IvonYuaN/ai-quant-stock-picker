@@ -24,6 +24,14 @@ def test_previous_trading_day_within_week():
     assert _previous_trading_day(wednesday) == date(2026, 5, 26)
 
 
+def test_previous_trading_day_uses_trade_calendar_when_holiday(monkeypatch):
+    monkeypatch.setattr(
+        "aqsp.universe.t1_filter.resolve_previous_trading_day",
+        lambda d: date(2026, 9, 30),
+    )
+    assert _previous_trading_day(date(2026, 10, 8)) == date(2026, 9, 30)
+
+
 def test_get_yesterday_buys_empty_ledger():
     """空文件返回空集合"""
     with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:

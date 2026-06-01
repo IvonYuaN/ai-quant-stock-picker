@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 
 import pandas as pd
 
 from aqsp.core.errors import FreshnessError
 from aqsp.core.time import today_shanghai
+from aqsp.data.trading_calendar import load_optional_trade_calendar, trading_day_lag
 from aqsp.data.source import REQUIRED_OHLCV_COLUMNS
 
 
@@ -56,7 +57,22 @@ def assert_fresh_data(frames: dict[str, pd.DataFrame], max_lag_days: int) -> dat
     if latest is None:
         _raise_freshness("ALL", "no valid market data loaded")
 
-    lag = (today_shanghai() - latest).days
+    today = today_shanghai()
+    symbol_latest_dates = [
+        pd.to_datetime(frame["date"], errors="coerce").dropna().max().date()
+        for frame in frames.values()
+        if not frame.empty and "date" in frame.columns
+    ]
+    calendar_df = (
+        load_optional_trade_calendar(
+            min(symbol_latest_dates) - timedelta(days=31),
+            today,
+        )
+        if symbol_latest_dates
+        else None
+    )
+
+    lag = trading_day_lag(latest, today, calendar_df=calendar_df)
     if lag > max_lag_days:
         stale_symbols = []
         for symbol, frame in frames.items():
@@ -67,7 +83,11 @@ def assert_fresh_data(frames: dict[str, pd.DataFrame], max_lag_days: int) -> dat
             )
             if pd.isna(symbol_latest):
                 continue
-            symbol_lag = (today_shanghai() - symbol_latest.date()).days
+            symbol_lag = trading_day_lag(
+                symbol_latest.date(),
+                today,
+                calendar_df=calendar_df,
+            )
             if symbol_lag > max_lag_days:
                 stale_symbols.append(f"{symbol}:{symbol_latest.date().isoformat()}")
         _raise_freshness(

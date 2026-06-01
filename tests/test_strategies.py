@@ -14,8 +14,8 @@ from aqsp.strategies.thresholds import load_thresholds
 
 def test_load_thresholds():
     thresholds = load_thresholds()
-    assert thresholds.version == "1.0.0"
-    assert thresholds.last_walkforward_run == "2026-05-28"
+    assert thresholds.version == "1.1.0"
+    assert thresholds.last_walkforward_run == "2026-05-30"
     assert thresholds.momentum.lookback_days == 60
     assert thresholds.momentum.weights.momentum == 0.4
     assert thresholds.momentum.weights.trend == 0.3
@@ -51,7 +51,7 @@ def test_momentum_strategy():
     strategy = MomentumStrategy(config)
 
     assert strategy.id == "momentum"
-    assert strategy.version == "1.0.0"
+    assert strategy.version == "1.1.0"
     assert strategy.hypothesis != ""
 
     scores = strategy.calculate_score({"600000": df})

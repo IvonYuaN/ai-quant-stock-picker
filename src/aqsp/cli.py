@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 from datetime import date
 from pathlib import Path
 
@@ -8,20 +9,37 @@ import pandas as pd
 
 from aqsp.config import load_runtime_config
 from aqsp.core.errors import DataError
+from aqsp.core.time import today_shanghai
 from aqsp.core.types import RunMetadata
+from aqsp.data.registry import (
+    local_data_status,
+    registry_entry_dict,
+    sort_registry_entries,
+)
+from aqsp.data.registry import get_registry_entry
+from aqsp.data.source_health import (
+    describe_source_health,
+    prioritize_source_ids,
+    read_source_health,
+    record_source_failure,
+    record_source_success,
+)
 from aqsp.data import fetch_akshare, load_csv, fetch_with_source
+from aqsp.data.index_constituents import load_optional_index_constituents
 from aqsp.data.akshare_source import AkshareSource
 from aqsp.data.cache import DataCache
 from aqsp.data.eastmoney_source import EastmoneySource
+from aqsp.data.efinance_source import EfinanceSource
 from aqsp.data.mootdx_source import MootdxSource
 from aqsp.data.multi_source import MultiSource, SourceFactory
 from aqsp.data.sina_source import SinaSource
 from aqsp.data.tencent_source import TencentSource
+from aqsp.data.tushare_pit import TusharePitClient
 from aqsp.data.baostock_source import BaostockSource
 from aqsp.data.sqlite_db_source import SqliteDbSource
 from aqsp.data.tdx_vipdoc_source import TdxVipdocSource
 from aqsp.filters_lethal.pipeline import LethalFilterPipeline
-from aqsp.freshness import assert_fresh_data
+from aqsp.freshness import assert_fresh_data, latest_trade_date
 from aqsp.ledger import (
     ExecutionConfig,
     append_predictions,
@@ -30,6 +48,8 @@ from aqsp.ledger import (
 )
 from aqsp.models import ScreeningConfig
 from aqsp.notifier import notify_markdown
+from aqsp.notifier import prepend_source_status_banner
+from aqsp.research.summary import load_research_summary
 from aqsp.regime.detector import RegimeDetector
 from aqsp.report import to_dataframe, to_markdown
 from aqsp.risk.circuit_breaker import CircuitBreaker
@@ -48,6 +68,7 @@ SOURCE_CHOICES = [
     "tencent",
     "mootdx",
     "baostock",
+    "efinance",
     "sqlite_db",
     "tdx_vipdoc",
 ]
@@ -61,6 +82,10 @@ WALKFORWARD_SOURCE_CHOICES = [
     "baostock",
     "sqlite_db",
 ]
+# 宪法 §1.3 #9：held-out 区间（2025-01~2026-04）绝对禁止用于训练
+HELDOUT_TRAIN_CUTOFF = "2024-12-31"
+# 宪法 §1.3 #12/#14：双门 gate 的 sidecar 文件
+WALKFORWARD_GATE_PATH = "data/walkforward_gate.json"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -82,6 +107,12 @@ def main(argv: list[str] | None = None) -> int:
     screen.add_argument("--report", default="", help="write markdown report")
     screen.add_argument("--output-csv", default="", help="write result csv")
     screen.add_argument("--benchmark-symbol", default="000300")
+    screen.add_argument(
+        "--pool",
+        type=str,
+        default="",
+        help="标的池: sh300, zz500, zz1000, cyb, zxb, all",
+    )
 
     run = sub.add_parser(
         "run", help="scheduled screen with freshness check and optional notification"
@@ -109,6 +140,12 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--benchmark-symbol", default="000300")
     run.add_argument("--skip-validation", action="store_true")
     run.add_argument("--notify", action="store_true")
+    run.add_argument(
+        "--pool",
+        type=str,
+        default="",
+        help="标的池: sh300, zz500, zz1000, cyb, zxb, all",
+    )
 
     wf = sub.add_parser("walkforward", help="run walk-forward backtest")
     wf.add_argument(
@@ -141,20 +178,36 @@ def main(argv: list[str] | None = None) -> int:
         choices=WALKFORWARD_SOURCE_CHOICES,
         default="sqlite_db",
     )
+    wf.add_argument("--horizon-days", type=int, default=None, help="持仓天数 (默认: 3)")
     wf.add_argument(
-        "--horizon-days", type=int, default=None, help="持仓天数 (默认: 3)"
+        "--pool",
+        type=str,
+        default=None,
+        help="标的池: sh300, zz500, zz1000, all (默认: sh300)",
     )
     wf.add_argument(
-        "--pool", type=str, default=None, help="标的池: sh300, zz500, zz1000, all (默认: sh300)"
+        "--tiered-stop",
+        action="store_true",
+        default=False,
+        help="启用分级止损（3.1%硬止损+分级减仓）",
     )
     wf.add_argument(
-        "--tiered-stop", action="store_true", default=False, help="启用分级止损（3.1%硬止损+分级减仓）"
+        "--allow-heldout",
+        action="store_true",
+        default=False,
+        help="（危险）显式允许 end 超过 2024-12-31，卷入 held-out 区间。仅用于 held-out 一次性验收，且必须在 walkforward 双门通过后。默认关闭——违反宪法 §1.3 #9 时拒绝运行。",
     )
 
     monitor_cmd = sub.add_parser("monitor", help="run monitoring checks")
     monitor_cmd.add_argument("--config", default="config/monitors.yaml")
     monitor_cmd.add_argument("--notify", action="store_true")
     monitor_cmd.add_argument("--dry-run", action="store_true")
+
+    sources_cmd = sub.add_parser(
+        "sources", help="show data source readiness and freshness tiers"
+    )
+    sources_cmd.add_argument("--ready-only", action="store_true")
+    sources_cmd.add_argument("--json", action="store_true")
 
     briefing_cmd = sub.add_parser("briefing", help="generate daily briefing")
     briefing_cmd.add_argument("--ledger", default="data/predictions.jsonl")
@@ -167,7 +220,31 @@ def main(argv: list[str] | None = None) -> int:
         help="生成 briefing 后通过邮件发送，配置从 AQSP_SMTP_* 环境变量读",
     )
 
+    research_cmd = sub.add_parser(
+        "research", help="show absorbed research runtime stages"
+    )
+    research_cmd.add_argument("--json", action="store_true")
+    research_cmd.add_argument("--next", action="store_true")
+    research_cmd.add_argument("--prereqs", action="store_true")
+
+    pit_cmd = sub.add_parser("pit", help="inspect point-in-time data endpoints")
+    pit_cmd.add_argument(
+        "--kind",
+        choices=["trade_calendar", "index_weights", "disclosure_dates"],
+        required=True,
+    )
+    pit_cmd.add_argument("--start", default=today_shanghai().isoformat())
+    pit_cmd.add_argument("--end", default=today_shanghai().isoformat())
+    pit_cmd.add_argument("--exchange", default="SSE")
+    pit_cmd.add_argument("--index-code", default="000300.SH")
+    pit_cmd.add_argument("--symbols", default="600519")
+    pit_cmd.add_argument("--json", action="store_true")
+
     args = parser.parse_args(argv)
+    # 宪法启动门：检查不变量，任一失败会直接 SystemExit
+    from aqsp._constitution_check import assert_constitution_invariants
+
+    assert_constitution_invariants()
     try:
         if args.command == "screen":
             return run_screen(args)
@@ -179,44 +256,267 @@ def main(argv: list[str] | None = None) -> int:
             return run_briefing(args)
         if args.command == "monitor":
             return run_monitor(args)
+        if args.command == "sources":
+            return run_sources(args)
+        if args.command == "research":
+            return run_research(args)
+        if args.command == "pit":
+            return run_pit(args)
     except DataError as exc:
         print(f"数据错误: {exc}")
         return 1
+    except ValueError as exc:
+        print(f"配置错误: {exc}")
+        return 1
     return 1
+
+
+def run_sources(args: argparse.Namespace) -> int:
+    entries = sort_registry_entries(ready_only=args.ready_only)
+    health = read_source_health()
+    source_health = health.get("sources", {})
+    if args.json:
+        payload = []
+        for entry in entries:
+            item = registry_entry_dict(entry)
+            item["local_status"] = local_data_status(entry)
+            stats = source_health.get(entry.id, {})
+            item["health_successes"] = int(stats.get("successes", 0))
+            item["health_failures"] = int(stats.get("failures", 0))
+            item["health_last_success"] = stats.get("last_success", "")
+            payload.append(item)
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 0
+
+    for entry in entries:
+        ready = "yes" if entry.runtime_ready else "no"
+        account = "yes" if entry.requires_account else "no"
+        stats = source_health.get(entry.id, {})
+        print(
+            f"- {entry.id}: ready={ready} local={local_data_status(entry)} "
+            f"fresh={entry.freshness_tier} cover={entry.coverage_tier} "
+            f"daily={'yes' if entry.supports_daily else 'no'} "
+            f"intraday={'yes' if entry.supports_intraday else 'no'} "
+            f"realtime={'yes' if entry.supports_realtime else 'no'} "
+            f"health={int(stats.get('successes', 0))}/{int(stats.get('failures', 0))} "
+            f"account={account}"
+        )
+        print(f"  uses: {', '.join(entry.default_for)}")
+        print(f"  setup: {entry.setup}")
+    return 0
+
+
+def run_research(args: argparse.Namespace) -> int:
+    summary = load_research_summary()
+    if summary is None:
+        print("research summary unavailable")
+        return 1
+    if args.json:
+        payload = {
+            "total_findings": summary.total_findings,
+            "implemented_family_count": summary.implemented_family_count,
+            "report_only_family_count": summary.report_only_family_count,
+            "gated_family_count": summary.gated_family_count,
+            "pipelines": [
+                {
+                    "pipeline": item.pipeline,
+                    "p1": item.p1,
+                    "total": item.total,
+                    "top_repo": item.top_repo,
+                }
+                for item in summary.pipeline_summaries
+            ],
+            "families": [
+                {
+                    "family_id": item.family_id,
+                    "name": item.name,
+                    "runtime_stage": item.runtime_stage,
+                    "absorbed_from_count": item.absorbed_from_count,
+                    "runtime_gate_count": item.runtime_gate_count,
+                }
+                for item in summary.absorbed_families
+            ],
+            "source_candidates": [
+                {
+                    "source_id": item.source_id,
+                    "name": item.name,
+                    "research_status": item.research_status,
+                    "adoption_gate_count": item.adoption_gate_count,
+                    "absorbed_from_count": item.absorbed_from_count,
+                }
+                for item in summary.source_candidates
+            ],
+            "next_actions": [
+                {
+                    "kind": item.kind,
+                    "item_id": item.item_id,
+                    "name": item.name,
+                    "stage": item.stage,
+                    "priority": item.priority,
+                    "blocker": item.blocker,
+                    "reference_hint": item.reference_hint,
+                }
+                for item in summary.next_actions
+            ],
+            "prereq_items": [
+                {
+                    "kind": item.kind,
+                    "item_id": item.item_id,
+                    "name": item.name,
+                    "status": item.status,
+                    "missing_env_vars": list(item.missing_env_vars),
+                    "fixture_hints": list(item.fixture_hints),
+                    "user_action": item.user_action,
+                    "code_action": item.code_action,
+                    "registry_runtime_ready": item.registry_runtime_ready,
+                }
+                for item in summary.prereq_items
+            ],
+        }
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 0
+
+    if args.next:
+        for item in summary.next_actions[:8]:
+            print(
+                f"- {item.priority} {item.kind} {item.item_id}: "
+                f"stage={item.stage} blocker={item.blocker or '-'} "
+                f"ref={item.reference_hint or '-'}"
+            )
+        return 0
+
+    if args.prereqs:
+        for item in summary.prereq_items:
+            missing_env = ",".join(item.missing_env_vars) or "-"
+            fixtures = ",".join(item.fixture_hints) or "-"
+            registry_ready = (
+                "-"
+                if item.registry_runtime_ready is None
+                else ("yes" if item.registry_runtime_ready else "no")
+            )
+            print(
+                f"- {item.kind} {item.item_id}: status={item.status} "
+                f"registry_ready={registry_ready} missing_env={missing_env}"
+            )
+            print(f"  user: {item.user_action or '-'}")
+            print(f"  code: {item.code_action or '-'}")
+            print(f"  fixtures: {fixtures}")
+        return 0
+
+    print(
+        f"- findings={summary.total_findings} implemented={summary.implemented_family_count} "
+        f"report_only={summary.report_only_family_count} gated={summary.gated_family_count}"
+    )
+    for item in summary.pipeline_summaries:
+        print(
+            f"- pipeline {item.pipeline}: p1={item.p1} total={item.total} top={item.top_repo or '-'}"
+        )
+    for item in summary.absorbed_families:
+        print(
+            f"- family {item.family_id}: stage={item.runtime_stage} "
+            f"absorbed_from={item.absorbed_from_count} runtime_gate={item.runtime_gate_count}"
+        )
+    for item in summary.source_candidates[:6]:
+        print(
+            f"- source {item.source_id}: status={item.research_status} "
+            f"adoption_gate={item.adoption_gate_count} absorbed_from={item.absorbed_from_count}"
+        )
+    if summary.next_actions:
+        print("- next actions:")
+        for item in summary.next_actions[:5]:
+            print(
+                f"  {item.priority} {item.kind} {item.item_id}: {item.blocker or '-'}"
+            )
+    if summary.prereq_items:
+        print("- prereqs:")
+        for item in summary.prereq_items[:4]:
+            missing_env = ",".join(item.missing_env_vars) or "-"
+            print(
+                f"  {item.kind} {item.item_id}: status={item.status} missing_env={missing_env}"
+            )
+    return 0
+
+
+def run_pit(args: argparse.Namespace) -> int:
+    client = TusharePitClient()
+    start = date.fromisoformat(args.start)
+    end = date.fromisoformat(args.end)
+    if args.kind == "trade_calendar":
+        df = client.fetch_trade_calendar(start, end, exchange=args.exchange)
+    elif args.kind == "index_weights":
+        df = client.fetch_index_weights(args.index_code, start, end)
+    else:
+        symbols = [item.strip() for item in args.symbols.split(",") if item.strip()]
+        df = client.fetch_disclosure_dates(symbols, start, end)
+
+    if args.json:
+        print(df.to_json(orient="records", force_ascii=False, indent=2))
+    else:
+        print(df.to_string(index=False))
+    return 0
+
+
+def _source_runtime_metadata(source_id: str) -> tuple[str, str, str]:
+    entry = get_registry_entry(source_id)
+    if entry is None:
+        return "unknown", "unknown", "unknown"
+    return (
+        entry.freshness_tier,
+        entry.coverage_tier,
+        local_data_status(entry),
+    )
+
+
+def _reorder_source_refs(source_refs: list[object]) -> list[object]:
+    order = prioritize_source_ids(
+        [str(getattr(item, "name", "")) for item in source_refs]
+    )
+    by_name = {str(getattr(item, "name", "")): item for item in source_refs}
+    return [by_name[name] for name in order if name in by_name]
 
 
 def _get_source(source_name: str):
     cache = DataCache()
     if source_name in {"auto", "local_first"}:
-        return MultiSource(
-            SourceFactory("tdx_vipdoc", TdxVipdocSource),
+        fallbacks = _reorder_source_refs(
             [
                 EastmoneySource(cache=cache),
                 SinaSource(cache=cache),
                 TencentSource(cache=cache),
                 AkshareSource(cache=cache),
-            ],
+            ]
+        )
+        return MultiSource(
+            SourceFactory("tdx_vipdoc", TdxVipdocSource),
+            fallbacks,
             validate_consistency=False,
         )
     if source_name == "online_first":
-        return MultiSource(
-            EastmoneySource(cache=cache),
+        online_sources = _reorder_source_refs(
             [
+                EastmoneySource(cache=cache),
                 SinaSource(cache=cache),
                 TencentSource(cache=cache),
                 AkshareSource(cache=cache),
-                SourceFactory("tdx_vipdoc", TdxVipdocSource),
-            ],
+            ]
+        )
+        return MultiSource(
+            online_sources[0],
+            online_sources[1:] + [SourceFactory("tdx_vipdoc", TdxVipdocSource)],
             validate_consistency=False,
         )
     if source_name == "multi":
-        return MultiSource(
-            AkshareSource(cache=cache),
+        sources = _reorder_source_refs(
             [
+                AkshareSource(cache=cache),
                 SinaSource(cache=cache),
                 EastmoneySource(cache=cache),
                 TencentSource(cache=cache),
-            ],
+            ]
+        )
+        return MultiSource(
+            sources[0],
+            sources[1:],
         )
     if source_name == "akshare":
         return AkshareSource(cache=cache)
@@ -230,6 +530,8 @@ def _get_source(source_name: str):
         return MootdxSource(cache=cache)
     if source_name == "baostock":
         return BaostockSource(cache=cache)
+    if source_name == "efinance":
+        return EfinanceSource(cache=cache)
     if source_name == "sqlite_db":
         return SqliteDbSource(cache=cache)
     if source_name == "tdx_vipdoc":
@@ -271,16 +573,20 @@ def _fetch_frames_for_cli_with_metadata(
                 benchmark_symbol=benchmark_symbol,
                 cache_path=cache_path,
             )
+            record_source_success(source_name, "akshare")
             return frames, "akshare"
         source = _get_source(source_name)
         frames = fetch_with_source(
             source, symbols, days=days, benchmark_symbol=benchmark_symbol
         )
         actual_source = str(getattr(source, "last_used_source", None) or source.name)
+        record_source_success(source_name, actual_source)
         return frames, actual_source
-    except DataError:
+    except DataError as exc:
+        record_source_failure(source_name, str(exc))
         raise
     except Exception as exc:
+        record_source_failure(source_name, str(exc))
         raise DataError(f"数据源 {source_name} 获取失败: {exc}") from exc
 
 
@@ -297,12 +603,20 @@ def _resolve_run_symbols(
     source_name: str,
     explicit_symbols: str,
     *,
+    pool_name: str = "",
+    as_of: date | None = None,
     max_universe: int,
     min_avg_amount: float,
 ) -> list[str]:
+    target_day = as_of or today_shanghai()
     symbols = [item.strip() for item in explicit_symbols.split(",") if item.strip()]
     if symbols:
         return symbols
+    if pool_name and pool_name != "all":
+        from aqsp.universe.pool import UniversePool
+
+        pool = UniversePool.from_default(pool_name)
+        return pool.get_symbols(as_of=target_day)
     source = _get_source(source_name)
     if hasattr(source, "get_liquid_symbols"):
         try:
@@ -339,13 +653,17 @@ def _walkforward_fetch_days(start: str, end: str) -> int:
     return max(260, int(span_days * 1.8) + 90)
 
 
-def _get_hs300_symbols() -> list[str]:
+def _get_hs300_symbols(as_of: date | None = None) -> list[str]:
     """沪深300成分股的近似快照（手工维护，去重后保序）。
 
-    真实成分股会随季度调整，正式 walk-forward 应从 akshare 拉
-    `index_stock_cons_csindex(symbol="000300")` 获取 point-in-time 成分。
-    这里只用于无 --symbols 传入时的便利默认值。
+    若本地已配置 `TUSHARE_TOKEN`，优先按 `as_of` 读取 000300.SH 成分；
+    否则回退到手工快照。
     """
+    target_day = as_of or today_shanghai()
+    live_symbols = load_optional_index_constituents("000300.SH", target_day)
+    if live_symbols:
+        return live_symbols
+
     raw = [
         "600519",
         "601318",
@@ -721,19 +1039,174 @@ def _update_thresholds_metadata(run_date: str) -> bool:
     return True
 
 
+def _assert_not_heldout(end: str, *, allow: bool, logger=None) -> None:
+    """宪法 §1.3 #9：end 不得越过 held-out 边界。
+
+    end > 2024-12-31 且未显式 --allow-heldout → fail loud（SystemExit）。
+    开了 --allow-heldout → 红字警告放行并留痕（一次性 held-out 验收专用）。
+
+    日期用 date.fromisoformat 解析后比较，而非字符串字典序——避免
+    "2024/12/31" 或带空格等非标准格式被误判。非法日期本身 fail loud。
+    """
+    from datetime import date
+
+    cutoff = date.fromisoformat(HELDOUT_TRAIN_CUTOFF)
+    try:
+        end_d = date.fromisoformat(end.strip())
+    except (ValueError, AttributeError) as exc:
+        raise SystemExit(
+            f"[宪法 §1.3 #9] --end={end!r} 不是合法 ISO 日期 (YYYY-MM-DD): {exc}"
+        ) from exc
+
+    if end_d <= cutoff:
+        return
+    msg = f"[宪法 §1.3 #9] --end={end} 越过 held-out 边界 {HELDOUT_TRAIN_CUTOFF}，会把 2025-01~2026-04 held-out 区间卷入训练。"
+    if not allow:
+        raise SystemExit(
+            msg
+            + "\n  这是绝对禁止条款。如确为 held-out 一次性验收，显式加 --allow-heldout（且必须在双门通过后）。"
+        )
+    warn = (
+        "⚠️  "
+        + msg
+        + "\n  已显式 --allow-heldout 放行。请确认这是双门通过后的一次性 held-out 验收，结果不得回灌训练。"
+    )
+    print(warn)
+    if logger:
+        logger.warning(warn)
+
+
+def _write_walkforward_gate(
+    *, dsr: float, pbo: float, run_date: str, start: str, end: str, n_periods: int
+) -> None:
+    """写双门 sidecar，供 run_scheduled 的 notify gate 读取。
+    独立 JSON，不污染 thresholds.yaml，不 bump version（§1.3 #12/#14）。
+    """
+    import json
+
+    payload = {
+        "run_date": run_date,
+        "deflated_sharpe": dsr,
+        "pbo": pbo,
+        "dsr_pass": dsr > 1.0,
+        "pbo_pass": pbo < 0.5,
+        "both_pass": (dsr > 1.0) and (pbo < 0.5),
+        "data_start": start,
+        "data_end": end,
+        "n_periods": n_periods,
+    }
+    p = Path(WALKFORWARD_GATE_PATH)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    print(f"✅ 双门 sidecar 已写入: {p}（both_pass={payload['both_pass']}）")
+
+
+def _check_notification_gate(
+    *, cold_start_days: int, gate_path: str = WALKFORWARD_GATE_PATH
+) -> tuple[bool, list[str]]:
+    """宪法 §1.3 #12/#14：返回 (是否放行, 未达原因列表)。
+
+    三个串联条件，缺一不可（#14 明确串联）：
+      1. 冷启动 >=30 个独立信号日
+      2. DSR >1.0
+      3. PBO <0.5
+    sidecar 缺失/解析失败/过期 → fail-closed（不放行）。
+    """
+    import json
+    from datetime import date
+
+    reasons: list[str] = []
+
+    if cold_start_days < 30:
+        reasons.append(f"冷启动未满: {cold_start_days}/30 个独立信号日")
+
+    p = Path(gate_path)
+    if not p.exists():
+        reasons.append(f"双门 sidecar 不存在（{gate_path}）—— 请先跑 walkforward")
+        return False, reasons
+
+    try:
+        gate = json.loads(p.read_text(encoding="utf-8"))
+    except Exception as exc:  # noqa: BLE001
+        reasons.append(f"双门 sidecar 解析失败: {exc}")
+        return False, reasons
+
+    # 过期检查（对齐 §17.10，留 35 天缓冲期）
+    try:
+        run_date = date.fromisoformat(gate["run_date"])
+        age = (today_shanghai() - run_date).days
+        if age > 35:
+            reasons.append(
+                f"双门结果过期: {age} 天前（上限 35 天）—— 请重新跑 walkforward"
+            )
+    except Exception as exc:  # noqa: BLE001
+        reasons.append(f"双门 sidecar run_date 异常: {exc}")
+        return False, reasons
+
+    if not gate.get("dsr_pass"):
+        reasons.append(f"DSR 未过门: {gate.get('deflated_sharpe')}（需 >1.0）")
+    if not gate.get("pbo_pass"):
+        reasons.append(f"PBO 未过门: {gate.get('pbo')}（需 <0.5）")
+
+    # 宪法 §1.3 #9：拒绝用 held-out 污染的回测结果解锁推送。
+    # 即使 DSR/PBO 都过门，若 sidecar 的 data_end 越过 held-out 边界，
+    # 说明这个成绩是用 held-out 数据（可能经 --allow-heldout）算出来的，
+    # 不得用于解锁实盘推送 —— fail-closed。
+    data_end = gate.get("data_end", "")
+    if data_end:
+        from datetime import date
+
+        try:
+            end_d = date.fromisoformat(str(data_end).strip())
+            cutoff_d = date.fromisoformat(HELDOUT_TRAIN_CUTOFF)
+            if end_d > cutoff_d:
+                reasons.append(
+                    f"双门成绩用了 held-out 数据（data_end={data_end} > "
+                    f"{HELDOUT_TRAIN_CUTOFF}）—— 不得用于解锁推送（§1.3 #9）"
+                )
+        except (ValueError, TypeError):
+            # sidecar 的 data_end 格式异常 —— 看不懂就拦（fail-closed）
+            reasons.append(
+                f"双门 sidecar 的 data_end 格式异常（{data_end!r}）—— fail-closed"
+            )
+
+    return len(reasons) == 0, reasons
+
+
 def run_screen(args: argparse.Namespace) -> int:
+    actual_source = "csv"
+    explicit_symbol_count = 0
+    symbols: list[str] = []
     if args.csv:
         frames = load_csv(args.csv)
     else:
         symbols = [item.strip() for item in args.symbols.split(",") if item.strip()]
         if not symbols:
-            raise SystemExit("--symbols or --csv is required")
-        frames = _fetch_frames_for_cli(
+            symbols = _resolve_run_symbols(
+                args.source,
+                "",
+                pool_name=getattr(args, "pool", ""),
+                as_of=today_shanghai(),
+                max_universe=0,
+                min_avg_amount=args.min_avg_amount,
+            )
+        else:
+            explicit_symbol_count = len(symbols)
+        frames, actual_source = _fetch_frames_for_cli_with_metadata(
             args.source,
             symbols,
             benchmark_symbol=args.benchmark_symbol,
         )
 
+    latest = latest_trade_date(frames)
+    data_lag_days = (today_shanghai() - latest).days if latest is not None else 0
+    freshness_tier, coverage_tier, source_local_status = _source_runtime_metadata(
+        actual_source
+    )
+    source_health_label, source_health_message, fallback_used = describe_source_health(
+        args.source,
+        actual_source,
+    )
     screen_frames = _drop_benchmark_frame(frames, args.benchmark_symbol)
     thresholds = load_thresholds()
     config = ScreeningConfig(
@@ -751,8 +1224,34 @@ def run_screen(args: argparse.Namespace) -> int:
 
     if args.report:
         Path(args.report).parent.mkdir(parents=True, exist_ok=True)
+        run_metadata = RunMetadata(
+            requested_source=args.source,
+            actual_source=actual_source,
+            source_freshness_tier=freshness_tier,
+            source_coverage_tier=coverage_tier,
+            source_local_status=source_local_status,
+            source_health_label=source_health_label,
+            source_health_message=source_health_message,
+            fallback_used=fallback_used,
+            explicit_symbol_count=explicit_symbol_count,
+            resolved_symbol_count=len(symbols) if symbols else len(screen_frames),
+            fetched_frame_count=len(frames),
+            screened_count=len(picks),
+            final_count=len(picks),
+            min_price=thresholds.filter.min_price,
+            max_price=thresholds.filter.max_price,
+            min_avg_amount=args.min_avg_amount,
+            online_factors_enabled=False,
+            thresholds_version=thresholds.version,
+            data_latest_trade_date=latest.isoformat() if latest is not None else "",
+            data_lag_days=data_lag_days,
+        )
         Path(args.report).write_text(
-            to_markdown(picks, title=f"AI 量化选股报告({args.mode})"),
+            to_markdown(
+                picks,
+                title=f"AI 量化选股报告({args.mode})",
+                metadata=run_metadata,
+            ),
             encoding="utf-8",
         )
     if args.output_csv:
@@ -776,6 +1275,8 @@ def run_scheduled(args: argparse.Namespace) -> int:
     symbols = _resolve_run_symbols(
         args.source,
         explicit_symbols,
+        pool_name=getattr(args, "pool", ""),
+        as_of=today_shanghai(),
         max_universe=max_universe,
         min_avg_amount=min_avg_amount,
     )
@@ -791,6 +1292,14 @@ def run_scheduled(args: argparse.Namespace) -> int:
         )
 
     latest = assert_fresh_data(frames, max_data_lag_days)
+    data_lag_days = (today_shanghai() - latest).days
+    freshness_tier, coverage_tier, source_local_status = _source_runtime_metadata(
+        actual_source
+    )
+    source_health_label, source_health_message, fallback_used = describe_source_health(
+        args.source,
+        actual_source,
+    )
 
     weights = strategy_weights_from_ledger(args.ledger)
 
@@ -822,7 +1331,6 @@ def run_scheduled(args: argparse.Namespace) -> int:
         )
     picks = filtered_picks
 
-    from aqsp.core.time import today_shanghai
     from aqsp.universe.t1_filter import filter_t1_held
 
     kept, removed = filter_t1_held(
@@ -870,6 +1378,12 @@ def run_scheduled(args: argparse.Namespace) -> int:
     run_metadata = RunMetadata(
         requested_source=args.source,
         actual_source=actual_source,
+        source_freshness_tier=freshness_tier,
+        source_coverage_tier=coverage_tier,
+        source_local_status=source_local_status,
+        source_health_label=source_health_label,
+        source_health_message=source_health_message,
+        fallback_used=fallback_used,
         explicit_symbol_count=explicit_symbol_count,
         resolved_symbol_count=len(symbols),
         fetched_frame_count=len(frames),
@@ -880,6 +1394,8 @@ def run_scheduled(args: argparse.Namespace) -> int:
         min_avg_amount=min_avg_amount,
         online_factors_enabled=enable_online_factors,
         thresholds_version=thresholds.version,
+        data_latest_trade_date=latest.isoformat(),
+        data_lag_days=data_lag_days,
         regime=regime,
         max_universe=max_universe,
     )
@@ -950,13 +1466,37 @@ def run_scheduled(args: argparse.Namespace) -> int:
             )
         markdown += validation_text
     Path(args.report).parent.mkdir(parents=True, exist_ok=True)
+    # 先检查双门 gate，决定是否放行 notify
+    gate_ok, gate_reasons = _check_notification_gate(cold_start_days=cold_start_days)
+    if args.notify and not gate_ok:
+        # 宪法 §1.3 #12/#14：门未达，--notify 自动失效
+        print("⛔ 双门未达，--notify 自动失效。原因：")
+        for r in gate_reasons:
+            print(f"   - {r}")
+        # 在 markdown 头部加警告（§1.3 #13）
+        markdown = (
+            "> ⚠️ **未通过 walk-forward 双门验证，仅供观察，请勿实盘使用**\n"
+            "> " + "；".join(gate_reasons) + "\n\n"
+        ) + markdown
+        args.notify = False
+    # 写报告（可能包含警告）
     Path(args.report).write_text(markdown, encoding="utf-8")
     Path(args.output_csv).parent.mkdir(parents=True, exist_ok=True)
     table.to_csv(args.output_csv, index=False)
     print(markdown)
 
     if args.notify:
-        results = notify_markdown(markdown)
+        results = notify_markdown(
+            prepend_source_status_banner(
+                markdown,
+                source_status={
+                    "requested_source": args.source,
+                    "actual_source": actual_source,
+                    "health_label": source_health_label,
+                    "health_message": source_health_message,
+                },
+            )
+        )
         if not results:
             print("No notification channel configured.")
         for result in results:
@@ -990,6 +1530,9 @@ def run_walkforward(args: argparse.Namespace) -> int:
     else:
         logger = None
 
+    # 宪法 §1.3 #9：held-out 护栏
+    _assert_not_heldout(args.end, allow=args.allow_heldout, logger=logger)
+
     symbols = [s.strip() for s in args.symbols.split(",") if s.strip()]
     if not symbols:
         if args.pool == "all":
@@ -998,19 +1541,19 @@ def run_walkforward(args: argparse.Namespace) -> int:
                 symbols = src.get_available_symbols()
                 print(f"使用全市场标的池: {len(symbols)} 只")
             else:
-                symbols = _get_hs300_symbols()
+                symbols = _get_hs300_symbols(date.fromisoformat(args.start))
                 print(f"数据源不支持全市场查询，回退到沪深300: {len(symbols)} 只")
         elif args.pool and args.pool != "sh300":
             from aqsp.universe.pool import UniversePool
 
-            pool = UniversePool(source=_get_source(args.source))
-            symbols = pool.get_symbols(args.pool)
+            pool = UniversePool.from_default(args.pool)
+            symbols = pool.get_symbols(as_of=date.fromisoformat(args.start))
             pool_name = {"zz500": "中证500", "zz1000": "中证1000", "cyb": "创业板"}.get(
                 args.pool, args.pool
             )
             print(f"使用 {pool_name} 标的池: {len(symbols)} 只")
         else:
-            symbols = _get_hs300_symbols()
+            symbols = _get_hs300_symbols(date.fromisoformat(args.start))
             print(f"使用沪深300默认池: {len(symbols)} 只")
     else:
         # 用户传入的也去重，保持顺序
@@ -1045,9 +1588,7 @@ def run_walkforward(args: argparse.Namespace) -> int:
         end_d = _date.fromisoformat(args.end)
         # 7 年 ~1700 交易日，count=2000 留余量；mootdx 实际上限可能 < 2000，
         # 拿不满会按实际返回。第一次跑后看 logs 确认覆盖了 args.start。
-        frames = src.fetch_daily(
-            symbols, start_d, end_d, adjust="", count=2000
-        )
+        frames = src.fetch_daily(symbols, start_d, end_d, adjust="", count=2000)
     elif args.source == "sina":
         from datetime import date as _date
         from aqsp.data.sina_source import SinaSource
@@ -1058,21 +1599,29 @@ def run_walkforward(args: argparse.Namespace) -> int:
         frames = src.fetch_daily(symbols, start_d, end_d, adjust="")
     elif args.source == "baostock":
         from datetime import date as _date
-        from aqsp.data.pit_financial import fetch_pit_financials, merge_pit_financials
+        from aqsp.data.pit_financial import enrich_ohlcv_with_pit_financials
 
         src = BaostockSource(cache=DataCache())
         start_d = _date.fromisoformat(args.start)
         end_d = _date.fromisoformat(args.end)
         frames = src.fetch_daily(symbols, start_d, end_d, adjust="")
-        start_year = int(args.start[:4])
-        end_year = int(args.end[:4])
-        print(f"正在获取 {len(symbols)} 只股票 {start_year}-{end_year} 的 point-in-time 财务数据...")
-        fin_data = fetch_pit_financials(symbols, start_year, end_year, cache=DataCache())
-        frames = merge_pit_financials(frames, fin_data)
-        print(f"财务数据合并完成: {len(fin_data)} 只有财务数据")
+        print(
+            f"正在获取 {len(symbols)} 只股票 {args.start} ~ {args.end} 的 point-in-time 财务数据..."
+        )
+        pit_result = enrich_ohlcv_with_pit_financials(
+            frames,
+            symbols,
+            start_d,
+            end_d,
+            cache=DataCache(),
+        )
+        frames = pit_result.frames
+        print(f"财务数据合并完成: {pit_result.financial_symbol_count} 只有财务数据")
+        if pit_result.disclosure_symbol_count:
+            print(f"Tushare 披露日覆盖完成: {pit_result.disclosure_symbol_count} 只")
     elif args.source == "sqlite_db":
         from datetime import date as _date
-        from aqsp.data.pit_financial import fetch_pit_financials, merge_pit_financials
+        from aqsp.data.pit_financial import enrich_ohlcv_with_pit_financials
 
         src = SqliteDbSource(cache=DataCache())
         start_d = _date.fromisoformat(args.start)
@@ -1081,12 +1630,20 @@ def run_walkforward(args: argparse.Namespace) -> int:
         symbols = [s for s in symbols if s in available]
         print(f"SQLite 数据库中可用标的: {len(symbols)} 只")
         frames = src.fetch_daily(symbols, start_d, end_d, adjust="")
-        start_year = int(args.start[:4])
-        end_year = int(args.end[:4])
-        print(f"正在获取 {len(symbols)} 只股票 {start_year}-{end_year} 的 point-in-time 财务数据...")
-        fin_data = fetch_pit_financials(symbols, start_year, end_year, cache=DataCache())
-        frames = merge_pit_financials(frames, fin_data)
-        print(f"财务数据合并完成: {len(fin_data)} 只有财务数据")
+        print(
+            f"正在获取 {len(symbols)} 只股票 {args.start} ~ {args.end} 的 point-in-time 财务数据..."
+        )
+        pit_result = enrich_ohlcv_with_pit_financials(
+            frames,
+            symbols,
+            start_d,
+            end_d,
+            cache=DataCache(),
+        )
+        frames = pit_result.frames
+        print(f"财务数据合并完成: {pit_result.financial_symbol_count} 只有财务数据")
+        if pit_result.disclosure_symbol_count:
+            print(f"Tushare 披露日覆盖完成: {pit_result.disclosure_symbol_count} 只")
     else:
         frames = load_csv(args.source)
 
@@ -1253,9 +1810,7 @@ def run_walkforward(args: argparse.Namespace) -> int:
             reasons.append(f"DSR={result.deflated_sharpe:.4f} < 1.0")
         if not pbo_pass:
             reasons.append(f"PBO={result.pbo:.2%} > 50%")
-        report_lines.append(
-            f"❌ **{verdict}**: {'，'.join(reasons)}，不建议实盘使用。"
-        )
+        report_lines.append(f"❌ **{verdict}**: {'，'.join(reasons)}，不建议实盘使用。")
 
     report = "\n".join(report_lines)
 
@@ -1263,6 +1818,16 @@ def run_walkforward(args: argparse.Namespace) -> int:
     Path(args.report).write_text(report, encoding="utf-8")
     print(report)
     print(f"\n报告已保存到: {args.report}")
+
+    # 写双门 sidecar（不依赖 args.update_yaml，始终写，供 notify gate 用）
+    _write_walkforward_gate(
+        dsr=result.deflated_sharpe,
+        pbo=result.pbo,
+        run_date=today_shanghai().isoformat(),
+        start=args.start,
+        end=args.end,
+        n_periods=len(result.periods),
+    )
 
     if args.update_yaml:
         ok = _update_thresholds_metadata(today_shanghai().isoformat())
@@ -1325,13 +1890,45 @@ def run_briefing(args: argparse.Namespace) -> int:
     for row in rows:
         if row.get("regime_at_signal"):
             regime_str = str(row["regime_at_signal"])
-            break
+    latest_source_row = next(
+        (
+            row
+            for row in reversed(rows)
+            if row.get("run_requested_source") or row.get("run_actual_source")
+        ),
+        None,
+    )
+
+    source_status = None
+    if latest_source_row is not None:
+        source_status = {
+            "requested_source": str(
+                latest_source_row.get("run_requested_source", "") or ""
+            ),
+            "actual_source": str(latest_source_row.get("run_actual_source", "") or ""),
+            "freshness_tier": str(
+                latest_source_row.get("run_source_freshness_tier", "") or ""
+            ),
+            "coverage_tier": str(
+                latest_source_row.get("run_source_coverage_tier", "") or ""
+            ),
+            "health_label": str(
+                latest_source_row.get("run_source_health_label", "") or ""
+            ),
+            "health_message": str(
+                latest_source_row.get("run_source_health_message", "") or ""
+            ),
+            "fallback_used": bool(latest_source_row.get("run_fallback_used", False)),
+        }
 
     generator = BriefingGenerator()
+    research_summary = load_research_summary()
     briefing = generator.generate(
         picks=picks,
         frames={},
         regime=regime_str,
+        source_status=source_status,
+        research_summary=research_summary,
     )
     briefing = enhance_briefing(briefing, enable_llm=args.enable_llm)
 
@@ -1340,7 +1937,7 @@ def run_briefing(args: argparse.Namespace) -> int:
     print(briefing.to_markdown())
 
     if args.notify:
-        send_briefing(briefing)
+        send_briefing(briefing, source_status=source_status)
 
     if getattr(args, "email", False):
         from aqsp.briefing.email_notifier import (
@@ -1350,9 +1947,7 @@ def run_briefing(args: argparse.Namespace) -> int:
 
         cfg = load_email_config_from_env()
         if cfg is None:
-            print(
-                "⚠️  --email 已开启但 AQSP_SMTP_* 环境变量不全，跳过邮件发送"
-            )
+            print("⚠️  --email 已开启但 AQSP_SMTP_* 环境变量不全，跳过邮件发送")
         else:
             from datetime import date as _date
 

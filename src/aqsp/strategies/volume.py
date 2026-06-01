@@ -39,9 +39,13 @@ class VolumeBreakoutStrategy(BaseStrategy):
         closes = df["close"].values
         volumes = df["volume"].values
 
-        vol_surge_score = self._volume_surge(volumes, cfg.volume_ma_period, cfg.surge_multiplier)
+        vol_surge_score = self._volume_surge(
+            volumes, cfg.volume_ma_period, cfg.surge_multiplier
+        )
         price_breakout_score = self._price_breakout(closes, cfg.price_ma_period)
-        vol_price_corr_score = self._volume_price_correlation(closes, volumes, cfg.correlation_window)
+        vol_price_corr_score = self._volume_price_correlation(
+            closes, volumes, cfg.correlation_window
+        )
 
         w = cfg.weights
         final = (
@@ -52,10 +56,12 @@ class VolumeBreakoutStrategy(BaseStrategy):
         return max(0.0, min(1.0, final))
 
     @staticmethod
-    def _volume_surge(volumes: np.ndarray, ma_period: int, surge_multiplier: float) -> float:
+    def _volume_surge(
+        volumes: np.ndarray, ma_period: int, surge_multiplier: float
+    ) -> float:
         if len(volumes) < ma_period + 1:
             return 0.0
-        vol_ma = np.mean(volumes[-(ma_period + 1):-1])
+        vol_ma = np.mean(volumes[-(ma_period + 1) : -1])
         if vol_ma <= 0:
             return 0.0
         current_vol = volumes[-1]
@@ -75,7 +81,7 @@ class VolumeBreakoutStrategy(BaseStrategy):
         if ma <= 0:
             return 0.0
         current = closes[-1]
-        high_20 = np.max(closes[-min(ma_period, len(closes)):])
+        high_20 = np.max(closes[-min(ma_period, len(closes)) :])
         if current >= high_20 and current > ma:
             return 1.0
         elif current > ma:
@@ -84,11 +90,13 @@ class VolumeBreakoutStrategy(BaseStrategy):
             return 0.0
 
     @staticmethod
-    def _volume_price_correlation(closes: np.ndarray, volumes: np.ndarray, window: int) -> float:
+    def _volume_price_correlation(
+        closes: np.ndarray, volumes: np.ndarray, window: int
+    ) -> float:
         if len(closes) < window + 1:
             return 0.0
-        price_changes = np.diff(closes[-(window + 1):])
-        vol_changes = volumes[-(window + 1):-1]
+        price_changes = np.diff(closes[-(window + 1) :])
+        vol_changes = volumes[-(window + 1) : -1]
         if len(price_changes) < 3:
             return 0.0
         mask = (vol_changes > 0) & np.isfinite(price_changes) & np.isfinite(vol_changes)

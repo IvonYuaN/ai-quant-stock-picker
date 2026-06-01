@@ -3,7 +3,7 @@
 # 由 macOS launchd 在工作日 16:00 触发（北京时间 16:00）
 set -e
 
-PROJECT_ROOT="$HOME/Documents/AI量化选股"
+PROJECT_ROOT="${AQSP_PROJECT_ROOT:-$HOME/Documents/AI量化选股}"
 cd "$PROJECT_ROOT"
 
 DATE=$(date +%Y-%m-%d)
@@ -66,12 +66,27 @@ case "$AQSP_DIAGNOSIS" in /*) ;; *) export AQSP_DIAGNOSIS="$PROJECT_ROOT/$AQSP_D
         exit "$RUN_STATUS"
     fi
 
+    AQSP_NOTIFY_LEVEL_RESOLVED="$("$PYTHON_BIN" scripts/resolve_notify_level.py --ledger "$AQSP_LEDGER" --field level 2>/dev/null || echo info)"
+    AQSP_NOTIFY_HEALTH_LABEL="$("$PYTHON_BIN" scripts/resolve_notify_level.py --ledger "$AQSP_LEDGER" --field label 2>/dev/null || echo unknown)"
+    AQSP_NOTIFY_SOURCE_ROUTE="$("$PYTHON_BIN" scripts/resolve_notify_level.py --ledger "$AQSP_LEDGER" --field route 2>/dev/null || echo unknown)"
+    export AQSP_NOTIFY_LEVEL_RESOLVED
+    export AQSP_NOTIFY_HEALTH_LABEL
+    export AQSP_NOTIFY_SOURCE_ROUTE
+    echo "notify_level=$AQSP_NOTIFY_LEVEL_RESOLVED source_health=$AQSP_NOTIFY_HEALTH_LABEL route=$AQSP_NOTIFY_SOURCE_ROUTE"
+
     echo ""
     echo "=== aqsp briefing @ $(date) ==="
-    "$PYTHON_BIN" -m aqsp briefing \
-        --ledger "$AQSP_LEDGER" \
-        --output "$AQSP_BRIEFING_REPORT" \
-        --notify 2>&1
+    if [ "$AQSP_NOTIFY_LEVEL_RESOLVED" = "critical" ]; then
+        echo "critical notify level detected; generate briefing and diagnosis, suppress normal push notification."
+        "$PYTHON_BIN" -m aqsp briefing \
+            --ledger "$AQSP_LEDGER" \
+            --output "$AQSP_BRIEFING_REPORT" 2>&1
+    else
+        "$PYTHON_BIN" -m aqsp briefing \
+            --ledger "$AQSP_LEDGER" \
+            --output "$AQSP_BRIEFING_REPORT" \
+            --notify 2>&1
+    fi
 
     echo ""
     echo "=== ledger 当前行数 ==="

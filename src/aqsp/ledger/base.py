@@ -116,6 +116,12 @@ def _run_metadata_fields(metadata: RunMetadata | None) -> dict[str, object]:
     return {
         "run_requested_source": metadata.requested_source,
         "run_actual_source": metadata.actual_source,
+        "run_source_freshness_tier": metadata.source_freshness_tier,
+        "run_source_coverage_tier": metadata.source_coverage_tier,
+        "run_source_local_status": metadata.source_local_status,
+        "run_source_health_label": metadata.source_health_label,
+        "run_source_health_message": metadata.source_health_message,
+        "run_fallback_used": metadata.fallback_used,
         "run_explicit_symbol_count": metadata.explicit_symbol_count,
         "run_resolved_symbol_count": metadata.resolved_symbol_count,
         "run_fetched_frame_count": metadata.fetched_frame_count,
@@ -126,6 +132,8 @@ def _run_metadata_fields(metadata: RunMetadata | None) -> dict[str, object]:
         "run_max_price": metadata.max_price,
         "run_min_avg_amount": metadata.min_avg_amount,
         "run_online_factors_enabled": metadata.online_factors_enabled,
+        "run_data_latest_trade_date": metadata.data_latest_trade_date,
+        "run_data_lag_days": metadata.data_lag_days,
     }
 
 

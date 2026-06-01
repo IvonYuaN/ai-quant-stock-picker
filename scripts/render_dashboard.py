@@ -14,6 +14,8 @@ import pandas as pd
 from pandas.errors import EmptyDataError
 
 from aqsp.core.time import now_shanghai
+from aqsp.data.source_health import notification_level_for_health_label
+from aqsp.research.summary import ResearchSummary, load_research_summary
 
 
 @dataclass(frozen=True)
@@ -26,6 +28,14 @@ class LedgerStats:
     avg_return_pct: float | None
     latest_signal_date: str
     thresholds_version: str
+    requested_source: str
+    actual_source: str
+    source_freshness_tier: str
+    source_coverage_tier: str
+    source_health_label: str
+    source_health_message: str
+    notify_level: str
+    fallback_used: bool
 
 
 @dataclass(frozen=True)
@@ -62,6 +72,14 @@ def read_paper_rows(path: Path) -> list[dict[str, Any]]:
 
 
 def summarize_ledger(rows: list[dict[str, Any]]) -> LedgerStats:
+    latest_row = next(
+        (
+            row
+            for row in reversed(rows)
+            if row.get("run_requested_source") or row.get("run_actual_source")
+        ),
+        rows[-1] if rows else {},
+    )
     validated_rows = [r for r in rows if r.get("status") == "validated"]
     executable_validated = [
         r for r in validated_rows if r.get("status") != "not_executable"
@@ -83,6 +101,16 @@ def summarize_ledger(rows: list[dict[str, Any]]) -> LedgerStats:
         avg_return_pct=avg_return,
         latest_signal_date=str(rows[-1].get("signal_date", "")) if rows else "",
         thresholds_version=str(rows[-1].get("thresholds_version", "")) if rows else "",
+        requested_source=str(latest_row.get("run_requested_source", "")),
+        actual_source=str(latest_row.get("run_actual_source", "")),
+        source_freshness_tier=str(latest_row.get("run_source_freshness_tier", "")),
+        source_coverage_tier=str(latest_row.get("run_source_coverage_tier", "")),
+        source_health_label=str(latest_row.get("run_source_health_label", "")),
+        source_health_message=str(latest_row.get("run_source_health_message", "")),
+        notify_level=notification_level_for_health_label(
+            str(latest_row.get("run_source_health_label", "") or "")
+        ),
+        fallback_used=bool(latest_row.get("run_fallback_used", False)),
     )
 
 
@@ -224,11 +252,133 @@ def _paper_rows(rows: list[dict[str, Any]]) -> str:
     return "\n".join(out)
 
 
+def _source_runtime_panel(stats: LedgerStats) -> str:
+    if not stats.requested_source and not stats.actual_source:
+        return """
+        <section class="panel source-panel">
+          <h2>数据源状态</h2>
+          <p class="muted">暂无最近一次运行的源状态记录。</p>
+        </section>
+        """
+
+    source_route = stats.actual_source or stats.requested_source or "unknown"
+    if stats.requested_source and stats.actual_source and stats.requested_source != stats.actual_source:
+        source_route = f"{stats.requested_source} → {stats.actual_source}"
+    label = html.escape(stats.source_health_label or "unknown")
+    tone = {
+        "healthy": "healthy",
+        "fallback": "fallback",
+        "degraded": "degraded",
+        "cold_start": "cold",
+    }.get(stats.source_health_label, "neutral")
+    message = html.escape(stats.source_health_message or "暂无说明")
+    freshness = html.escape(stats.source_freshness_tier or "unknown")
+    coverage = html.escape(stats.source_coverage_tier or "unknown")
+    fallback_text = "yes" if stats.fallback_used else "no"
+    return f"""
+    <section class="panel source-panel">
+      <div class="source-head">
+        <div>
+          <h2>数据源状态</h2>
+          <p class="muted">最近一次运行的数据路径与健康判断。</p>
+        </div>
+        <span class="state-pill {tone}">{label}</span>
+      </div>
+      <dl class="source-grid">
+        <dt>路径</dt><dd>{html.escape(source_route)}</dd>
+        <dt>通知</dt><dd>{html.escape(stats.notify_level or "info")}</dd>
+        <dt>fresh</dt><dd>{freshness}</dd>
+        <dt>cover</dt><dd>{coverage}</dd>
+        <dt>fallback</dt><dd>{fallback_text}</dd>
+      </dl>
+      <p class="source-message">{message}</p>
+    </section>
+    """
+
+
+def _source_warning(stats: LedgerStats) -> tuple[str, str] | None:
+    if stats.source_health_label == "fallback":
+        return (
+            "warning fallback-warning",
+            "本次候选由 fallback 数据源生成，主源未直接命中。下单前请人工复核报价、成交额和板块状态。",
+        )
+    if stats.source_health_label == "degraded":
+        return (
+            "warning degraded-warning",
+            "本次数据源处于降级状态，最近失败偏多。不要把这次结果当成正常质量样本。",
+        )
+    if stats.source_health_label == "cold_start":
+        return (
+            "warning cold-warning",
+            "本次数据源仍处于冷启动观察期，缺少足够健康历史。建议只做参考，不要重仓。",
+        )
+    return None
+
+
+def _research_panel(summary: ResearchSummary | None) -> str:
+    if summary is None:
+        return """
+        <section class="panel source-panel">
+          <h2>研究吸收</h2>
+          <p class="muted">暂无研究吸收摘要。</p>
+        </section>
+        """
+    pipeline_lines = []
+    for item in summary.pipeline_summaries[:4]:
+        pipeline_lines.append(
+            "<tr>"
+            f"<td>{html.escape(item.pipeline)}</td>"
+            f"<td>{item.p1}</td>"
+            f"<td>{item.total}</td>"
+            f"<td>{html.escape(item.top_repo or '-')}</td>"
+            "</tr>"
+        )
+    action_lines = []
+    for item in summary.next_actions[:5]:
+        action_lines.append(
+            "<tr>"
+            f"<td>{html.escape(item.priority)}</td>"
+            f"<td>{html.escape(item.kind)}</td>"
+            f"<td>{html.escape(item.item_id)}</td>"
+            f"<td>{html.escape(item.blocker or '-')}</td>"
+            "</tr>"
+        )
+    family_names = "、".join(item.name for item in summary.absorbed_families[:4]) or "暂无"
+    return f"""
+    <section class="panel source-panel">
+      <div class="source-head">
+        <div>
+          <h2>研究吸收</h2>
+          <p class="muted">开源研究队列对当前系统的吸收状态。</p>
+        </div>
+        <span class="state-pill neutral">{summary.total_findings} findings</span>
+      </div>
+      <dl class="source-grid">
+        <dt>候选</dt><dd>{summary.total_findings}</dd>
+        <dt>已吸收</dt><dd>{len(summary.absorbed_families)}</dd>
+        <dt>已实现</dt><dd>{summary.implemented_family_count}</dd>
+        <dt>report-only</dt><dd>{summary.report_only_family_count}</dd>
+        <dt>门控中</dt><dd>{summary.gated_family_count}</dd>
+        <dt>主题</dt><dd>{html.escape(family_names)}</dd>
+      </dl>
+      <table>
+        <thead><tr><th>研究管线</th><th>P1</th><th>Total</th><th>Top Repo</th></tr></thead>
+        <tbody>{''.join(pipeline_lines) or "<tr><td colspan='4'>暂无研究管线摘要</td></tr>"}</tbody>
+      </table>
+      <table>
+        <thead><tr><th>优先级</th><th>类型</th><th>对象</th><th>第一道 gate</th></tr></thead>
+        <tbody>{''.join(action_lines) or "<tr><td colspan='4'>暂无接入动作</td></tr>"}</tbody>
+      </table>
+    </section>
+    """
+
+
 def render_dashboard(
     candidates: list[dict[str, str]],
     rows: list[dict[str, Any]],
     title: str,
     paper_rows: list[dict[str, Any]] | None = None,
+    research_summary: ResearchSummary | None = None,
 ) -> str:
     stats = summarize_ledger(rows)
     paper = summarize_paper(paper_rows or [])
@@ -239,14 +389,31 @@ def render_dashboard(
     latest_date = html.escape(stats.latest_signal_date or "暂无")
     display_date = html.escape(candidate_date or "暂无")
     thresholds_version = html.escape(stats.thresholds_version or "未知")
-    warning = ""
+    notify_level = html.escape(stats.notify_level or "info")
+    source_health_label = html.escape(stats.source_health_label or "unknown")
+    warnings: list[tuple[str, str]] = []
     if not candidates:
-        warning = "暂无真实候选输出。请先成功运行 aqsp run 或提供最新 CSV。"
-    elif candidate_date and candidate_date != today:
-        warning = (
-            f"当前候选数据日期为 {html.escape(candidate_date)}, "
-            f"不是今天 {html.escape(today)}。不要按这个页面下单。"
+        warnings.append(
+            (
+                "warning",
+                "暂无真实候选输出。请先成功运行 aqsp run 或提供最新 CSV。",
+            )
         )
+    elif candidate_date and candidate_date != today:
+        warnings.append(
+            (
+                "warning",
+                f"当前候选数据日期为 {html.escape(candidate_date)}, "
+                f"不是今天 {html.escape(today)}。不要按这个页面下单。",
+            )
+        )
+    source_warning = _source_warning(stats)
+    if source_warning is not None:
+        warnings.append(source_warning)
+    warning_html = "\n".join(
+        f"<section class='{css_class}'>{message}</section>"
+        for css_class, message in warnings
+    )
     return f"""<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -282,6 +449,9 @@ def render_dashboard(
     .meta {{ display: flex; gap: 10px; flex-wrap: wrap; margin-top: 22px; }}
     .pill {{ border: 1px solid var(--line); border-radius: 999px; padding: 8px 12px; background: rgba(255,255,255,.42); color: var(--muted); }}
     .warning {{ margin: 0 clamp(20px, 6vw, 80px) 22px; padding: 14px 18px; border: 1px solid rgba(184,107,29,.32); background: var(--warn); border-radius: 18px; color: #7a4a12; }}
+    .fallback-warning {{ background: #ffe5c2; border-color: rgba(184,107,29,.46); color: #80480f; }}
+    .degraded-warning {{ background: #ffd8d1; border-color: rgba(180,72,54,.42); color: #8f3426; }}
+    .cold-warning {{ background: #ece7db; border-color: rgba(22,32,24,.20); color: #535f54; }}
     .stats, .grid {{ display: grid; gap: 16px; padding: 0 clamp(20px, 6vw, 80px) 24px; }}
     .stats {{ grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }}
     .stat, .card, .panel {{
@@ -309,6 +479,20 @@ def render_dashboard(
     .pos {{ color: var(--green); font-weight: 700; }}
     .neg {{ color: var(--red); font-weight: 700; }}
     .panel {{ margin: 0 clamp(20px, 6vw, 80px) 56px; padding: 22px; overflow-x: auto; }}
+    .panel h2 {{ margin-top: 0; }}
+    .muted {{ color: var(--muted); }}
+    .source-panel {{ margin-bottom: 24px; overflow: hidden; }}
+    .source-head {{ display: flex; justify-content: space-between; gap: 18px; align-items: center; margin-bottom: 16px; }}
+    .source-grid {{ display: grid; grid-template-columns: 72px 1fr 72px 1fr; gap: 10px 14px; margin: 0 0 14px; }}
+    .source-grid dt {{ color: var(--muted); }}
+    .source-grid dd {{ margin: 0; }}
+    .state-pill {{ border-radius: 999px; padding: 8px 14px; font-weight: 700; border: 1px solid var(--line); }}
+    .state-pill.healthy {{ background: rgba(31,122,77,.12); color: var(--green); }}
+    .state-pill.fallback {{ background: rgba(184,107,29,.14); color: #8b5716; }}
+    .state-pill.degraded {{ background: rgba(180,72,54,.14); color: var(--red); }}
+    .state-pill.cold {{ background: rgba(22,32,24,.08); color: var(--muted); }}
+    .state-pill.neutral {{ background: rgba(22,32,24,.06); color: var(--ink); }}
+    .source-message {{ margin: 0; line-height: 1.65; }}
     table {{ width: 100%; border-collapse: collapse; }}
     th, td {{ padding: 12px; border-bottom: 1px solid var(--line); text-align: left; }}
     .empty {{ margin: 0 clamp(20px, 6vw, 80px); padding: 24px; border: 1px dashed var(--line); border-radius: 20px; }}
@@ -323,9 +507,11 @@ def render_dashboard(
       <span class="pill">候选数据日 {display_date}</span>
       <span class="pill">阈值版本 {thresholds_version}</span>
       <span class="pill">候选数 {len(candidates)}</span>
+      <span class="pill">通知级别 {notify_level}</span>
+      <span class="pill">数据源 {source_health_label}</span>
     </div>
   </header>
-  {"<section class='warning'>" + warning + "</section>" if warning else ""}
+  {warning_html}
   <section class="stats">
     <div class="stat"><b>{stats.total}</b><span>ledger 总记录</span></div>
     <div class="stat"><b>{stats.pending}</b><span>待验证信号</span></div>
@@ -339,6 +525,8 @@ def render_dashboard(
     <div class="stat"><b>{paper.pending_entry}</b><span>等待入场数据</span></div>
     <div class="stat"><b>{_fmt_num(paper.avg_return_pct)}</b><span>虚拟平均收益 pct</span></div>
   </section>
+  {_source_runtime_panel(stats)}
+  {_research_panel(research_summary)}
   <main class="grid">
     {_candidate_cards(candidates)}
   </main>
@@ -377,6 +565,7 @@ def main() -> int:
         read_ledger_rows(Path(args.ledger)),
         args.title,
         read_paper_rows(Path(args.paper_ledger)),
+        load_research_summary(),
     )
     output.write_text(html_text, encoding="utf-8")
     print(f"dashboard={output}")

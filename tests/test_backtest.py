@@ -10,6 +10,8 @@ from aqsp.backtest.walk_forward import (
     WalkForwardTester,
     _check_executable,
     _compute_backtest_metrics,
+    _norm_cdf,
+    _norm_ppf,
     _resolve_exit,
 )
 
@@ -607,3 +609,134 @@ class TestStopLossAndTakeProfit:
         if result.overall.trades > 0:
             for period in result.periods:
                 assert period.total_return <= 0.12
+
+
+class TestNormalHelpers:
+    """Sanity checks on the in-house Φ / Φ⁻¹ helpers used by DSR."""
+
+    def test_norm_cdf_at_zero(self) -> None:
+        assert _norm_cdf(0.0) == pytest.approx(0.5, abs=1e-3)
+
+    def test_norm_cdf_at_1_96(self) -> None:
+        assert _norm_cdf(1.96) == pytest.approx(0.975, abs=1e-3)
+
+    def test_norm_cdf_symmetry(self) -> None:
+        for x in (0.5, 1.0, 2.0):
+            assert _norm_cdf(x) + _norm_cdf(-x) == pytest.approx(1.0, abs=1e-3)
+
+    def test_norm_ppf_inverse(self) -> None:
+        for p in (0.025, 0.25, 0.5, 0.84, 0.975):
+            x = _norm_ppf(p)
+            assert _norm_cdf(x) == pytest.approx(p, abs=1e-3)
+
+
+class TestDeflatedSharpe:
+    """Regression suite for the rewritten DSR (López de Prado standard form).
+
+    The previous implementation
+        ``dsr = psr * (1 - log(2^n - 1) / n)``
+    bounded DSR at ≈ 0.3069 for any ``n_trials ≥ 10``, making the
+    CONSTITUTION §1.3 #12 gate (``DSR > 1.0``) mathematically unreachable.
+    The new form returns the deflated z-statistic (unbounded), so:
+      • a strong strategy can clear 1.0;
+      • a weak / over-mined strategy lands ≤ 0;
+      • inflating ``n_trials`` strictly lowers DSR for the same Sharpe.
+    """
+
+    def test_high_sharpe_few_trials_clears_gate(self) -> None:
+        """Real strategy: ann. SR=3, only 2 alternatives mined → DSR > 1.0."""
+        dsr = WalkForwardTester._calculate_deflated_sharpe(
+            sharpe=3.0, n_trials=2, n_obs=252
+        )
+        assert dsr > 1.0, f"expected DSR > 1.0, got {dsr}"
+
+    def test_borderline_sharpe_many_trials_fails_gate(self) -> None:
+        """Modest SR=1.5 ann. with 50 trials → deflated below 0."""
+        dsr = WalkForwardTester._calculate_deflated_sharpe(
+            sharpe=1.5, n_trials=50, n_obs=252
+        )
+        assert dsr < 1.0
+        assert dsr < 0.5  # falls well below the 1.0 gate
+
+    def test_low_sharpe_many_trials_strongly_negative(self) -> None:
+        """SR=0.5 ann. + 200 trials must be deflated to a clearly negative z."""
+        dsr = WalkForwardTester._calculate_deflated_sharpe(
+            sharpe=0.5, n_trials=200, n_obs=100
+        )
+        assert dsr < 0.0
+
+    def test_more_trials_lowers_dsr_monotonically(self) -> None:
+        """Holding SR / T fixed, increasing n_trials must not increase DSR."""
+        sharpe, t = 2.0, 252
+        d_few = WalkForwardTester._calculate_deflated_sharpe(
+            sharpe=sharpe, n_trials=5, n_obs=t
+        )
+        d_many = WalkForwardTester._calculate_deflated_sharpe(
+            sharpe=sharpe, n_trials=200, n_obs=t
+        )
+        assert d_few > d_many
+
+    def test_higher_sharpe_raises_dsr_monotonically(self) -> None:
+        """Holding n_trials / T fixed, raising SR must not lower DSR."""
+        n, t = 10, 252
+        d_low = WalkForwardTester._calculate_deflated_sharpe(
+            sharpe=1.0, n_trials=n, n_obs=t
+        )
+        d_high = WalkForwardTester._calculate_deflated_sharpe(
+            sharpe=3.0, n_trials=n, n_obs=t
+        )
+        assert d_high > d_low
+
+    def test_gate_is_reachable_upper_bound(self) -> None:
+        """Critical: under realistic inputs the formula MUST be able to
+        return values ≥ 1.0. If this ever fails again, the §1.3 #12 gate is
+        dead and we are back to the 0.3069 ceiling bug."""
+        dsr = WalkForwardTester._calculate_deflated_sharpe(
+            sharpe=4.0, n_trials=3, n_obs=500
+        )
+        assert dsr >= 1.0
+
+    def test_n_trials_one_returns_zero(self) -> None:
+        assert (
+            WalkForwardTester._calculate_deflated_sharpe(
+                sharpe=2.0, n_trials=1, n_obs=252
+            )
+            == 0.0
+        )
+
+    def test_n_obs_one_returns_zero(self) -> None:
+        assert (
+            WalkForwardTester._calculate_deflated_sharpe(
+                sharpe=2.0, n_trials=10, n_obs=1
+            )
+            == 0.0
+        )
+
+    def test_zero_sharpe_below_gate(self) -> None:
+        """SR=0 must always fail the gate, regardless of trials/obs."""
+        dsr = WalkForwardTester._calculate_deflated_sharpe(
+            sharpe=0.0, n_trials=10, n_obs=252
+        )
+        assert dsr < 1.0
+
+    def test_per_period_sharpe_input(self) -> None:
+        """sharpe_is_annualized=False: SR is already per-period.
+        Equivalent to passing the same SR × √252 with the default flag."""
+        d_per = WalkForwardTester._calculate_deflated_sharpe(
+            sharpe=0.2, n_trials=5, n_obs=252, sharpe_is_annualized=False
+        )
+        d_ann = WalkForwardTester._calculate_deflated_sharpe(
+            sharpe=0.2 * np.sqrt(252), n_trials=5, n_obs=252
+        )
+        assert d_per == pytest.approx(d_ann, abs=1e-3)
+
+    def test_non_normal_kurtosis_lowers_dsr(self) -> None:
+        """Fat tails (γ_4 > 3) inflate σ_SR, which must lower DSR."""
+        n, t, sr = 10, 252, 2.0
+        d_normal = WalkForwardTester._calculate_deflated_sharpe(
+            sharpe=sr, n_trials=n, n_obs=t, kurtosis=3.0
+        )
+        d_fat_tail = WalkForwardTester._calculate_deflated_sharpe(
+            sharpe=sr, n_trials=n, n_obs=t, kurtosis=10.0
+        )
+        assert d_fat_tail < d_normal

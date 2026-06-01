@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from datetime import date
+
 import pandas as pd
+import pytest
 
 from aqsp.universe.pool import UniversePool, StockUniverse
 from aqsp.universe.filters import (
@@ -27,6 +30,30 @@ def test_universe_pool_list_default():
     pool_names = [p[0] for p in pools]
     assert "sh300" in pool_names
     assert "zz500" in pool_names
+
+
+def test_universe_pool_get_symbols_uses_optional_index_constituents(monkeypatch):
+    pool = UniversePool.from_default("zz500")
+    monkeypatch.setattr(
+        "aqsp.universe.pool.load_optional_index_constituents",
+        lambda index_code, as_of: ["000001", "600519"]
+        if index_code == "000905.SH"
+        else [],
+    )
+
+    symbols = pool.get_symbols(as_of=date(2026, 6, 1))
+    assert symbols == ["000001", "600519"]
+
+
+def test_universe_pool_get_symbols_raises_when_constituents_unavailable(monkeypatch):
+    pool = UniversePool.from_default("cyb")
+    monkeypatch.setattr(
+        "aqsp.universe.pool.load_optional_index_constituents",
+        lambda index_code, as_of: [],
+    )
+
+    with pytest.raises(ValueError, match="TUSHARE_TOKEN"):
+        pool.get_symbols(as_of=date(2026, 6, 1))
 
 
 def test_stock_universe_basic():

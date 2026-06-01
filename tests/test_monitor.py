@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import patch, MagicMock, mock_open
+from unittest.mock import patch, MagicMock
 
 import pytest
 import yaml
@@ -156,13 +156,13 @@ class TestMonitorChecker:
 
         health_data = {"consecutive_failures": 4, "last_failure": "2026-05-27"}
 
-        with patch("builtins.open", mock_open(read_data=json.dumps(health_data))):
-            with patch("pathlib.Path.exists", return_value=True):
+        with patch("pathlib.Path.exists", return_value=True):
+            with patch("pathlib.Path.read_text", return_value=json.dumps(health_data)):
                 result = checker._check_source_health({"max_consecutive_failures": 3})
 
-                assert result.name == "data_source_failure"
-                assert result.triggered is True
-                assert result.severity == "warning"
+            assert result.name == "data_source_failure"
+            assert result.triggered is True
+            assert result.severity == "warning"
 
 
 class TestNotifier:

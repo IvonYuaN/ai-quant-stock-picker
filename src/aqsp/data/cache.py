@@ -260,7 +260,9 @@ class DataCache:
             return None
         return df
 
-    def set_financial(self, symbol: str, df: pd.DataFrame, source: str = "unknown") -> None:
+    def set_financial(
+        self, symbol: str, df: pd.DataFrame, source: str = "unknown"
+    ) -> None:
         df = df.copy()
         df["symbol"] = symbol
         df["source"] = source

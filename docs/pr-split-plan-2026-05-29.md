@@ -180,7 +180,17 @@ tests/test_strategies.py
 - `pr_evidence.txt`（初始版本）→ **留 PR-D**
 - `config/thresholds.yaml`（YAML 引号修复）→ **留 PR-D**（纯语法修复，无数值变更）
 - `docs/walkforward-*.md`（9 份报告重跑）→ **移到独立 PR（walkforward 报告）** 或随 PR-D 一起
-- `tests/test_strategies.py`（断言修复，但该修复已被后续 commit `8ad7853` 覆盖）→ **留 PR-D**
+- `tests/test_strategies.py`（断言修复，但该修复已被后续 commit `8ad7853` 覆盖）→ **见下方 squash 建议**
+
+#### ⚠️ `cfb859a` × `8ad7853` 测试断言 squash 建议
+
+`cfb859a` 中对 `tests/test_strategies.py` 的断言修复已被 `8ad7853` 完全覆盖。如果按当前拆法把 `cfb859a` 的测试改动留在 PR-D，会出现"先改一遍、后又改一遍"的丑历史。
+
+**建议处理（择一）**：
+1. **squash 路线**：在 PR-D 准备阶段，将 `cfb859a` 中 `tests/test_strategies.py` 的改动 squash 进 `8ad7853`，让 PR-D 历史中只有一次断言变更。这是更干净的方案。
+2. **保留路线**：如时间紧，保留两次改动，但 PR-D 描述里需主动声明"`cfb859a` 的测试改动已被 `8ad7853` 覆盖，仅作历史记录"。
+
+推荐路线 1。该 squash 不涉及 commit 语义改变（断言最终值一致），符合"PR 拆分计划只出计划，不动 git"的边界——这只是建议，实施时由仓主决定。
 
 ### 文件白名单
 

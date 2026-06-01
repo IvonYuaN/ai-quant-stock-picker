@@ -10,8 +10,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from aqsp.data.source_health import notification_level_for_health_label
 from aqsp.data.registry import list_registry_entries, local_data_status
 from aqsp.data.tdx_vipdoc_source import TDX_DAY_RECORD_SIZE
+from aqsp.research.summary import load_research_summary
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -64,6 +66,26 @@ def _file_status(path: Path) -> str:
     return f"present ({path.stat().st_size} bytes)"
 
 
+def _source_health_summary() -> dict[str, Any]:
+    path = _runtime_path("AQSP_SOURCE_HEALTH", "data/source_health.json")
+    if not path.exists():
+        return {"path": str(path), "present": False}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {"path": str(path), "present": True, "invalid_json": True}
+    return {
+        "path": str(path),
+        "present": True,
+        "consecutive_failures": payload.get("consecutive_failures", 0),
+        "last_requested_source": payload.get("last_requested_source", ""),
+        "last_actual_source": payload.get("last_actual_source", ""),
+        "last_success": payload.get("last_success", ""),
+        "last_failure": payload.get("last_failure", ""),
+        "fallback_used": payload.get("fallback_used", False),
+    }
+
+
 def _large_return_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     flagged: list[dict[str, Any]] = []
     for row in rows:
@@ -81,6 +103,26 @@ def _large_return_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             }
         )
     return flagged
+
+
+def _latest_run_source_runtime(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    latest = next(
+        (
+            row
+            for row in reversed(rows)
+            if row.get("run_requested_source") or row.get("run_actual_source")
+        ),
+        {},
+    )
+    label = str(latest.get("run_source_health_label", "") or "")
+    return {
+        "requested_source": str(latest.get("run_requested_source", "") or ""),
+        "actual_source": str(latest.get("run_actual_source", "") or ""),
+        "health_label": label or "unknown",
+        "health_message": str(latest.get("run_source_health_message", "") or ""),
+        "fallback_used": bool(latest.get("run_fallback_used", False)),
+        "notify_level": notification_level_for_health_label(label),
+    }
 
 
 def _tdx_vipdoc_summary(base: Path | None = None) -> dict[str, Any]:
@@ -160,8 +202,65 @@ def main() -> int:
             f"- symbols_with_records: {tdx['symbols_with_records']}",
             f"- latest: {tdx['latest'] or '-'}",
             "",
+            "## Source Health",
         ]
     )
+    source_health = _source_health_summary()
+    report.extend(
+        [
+            f"- path: {source_health['path']}",
+            f"- present: {source_health.get('present', False)}",
+            f"- consecutive_failures: {source_health.get('consecutive_failures', '-')}",
+            f"- last_requested_source: {source_health.get('last_requested_source', '-') or '-'}",
+            f"- last_actual_source: {source_health.get('last_actual_source', '-') or '-'}",
+            f"- last_success: {source_health.get('last_success', '-') or '-'}",
+            f"- last_failure: {source_health.get('last_failure', '-') or '-'}",
+            f"- fallback_used: {source_health.get('fallback_used', '-')}",
+            "",
+            "## Notification Level",
+        ]
+    )
+    runtime_source = _latest_run_source_runtime(ledger_rows)
+    source_route = runtime_source["actual_source"] or runtime_source["requested_source"] or "-"
+    if runtime_source["requested_source"] and runtime_source["actual_source"] and runtime_source["requested_source"] != runtime_source["actual_source"]:
+        source_route = f"{runtime_source['requested_source']} -> {runtime_source['actual_source']}"
+    report.extend(
+        [
+            f"- notify_level: {runtime_source['notify_level']}",
+            f"- source_health_label: {runtime_source['health_label']}",
+            f"- source_route: {source_route}",
+            f"- fallback_used: {runtime_source['fallback_used']}",
+            f"- source_message: {runtime_source['health_message'] or '-'}",
+            "",
+            "## Research Runtime",
+        ]
+    )
+    research_summary = load_research_summary()
+    if research_summary is None:
+        report.append("- summary: unavailable")
+        report.append("")
+    else:
+        report.extend(
+            [
+                f"- total_findings: {research_summary.total_findings}",
+                f"- implemented_families: {research_summary.implemented_family_count}",
+                f"- report_only_families: {research_summary.report_only_family_count}",
+                f"- gated_families: {research_summary.gated_family_count}",
+                f"- source_candidates: {len(research_summary.source_candidates)}",
+                "- next_actions:",
+                "",
+            ]
+        )
+        for item in research_summary.next_actions[:3]:
+            report.append(
+                f"- {item.priority} {item.kind} {item.item_id}: {item.blocker or '-'}"
+            )
+        for item in research_summary.prereq_items[:3]:
+            missing_env = ",".join(item.missing_env_vars) or "-"
+            report.append(
+                f"- prereq {item.kind} {item.item_id}: status={item.status} missing_env={missing_env}"
+            )
+        report.append("")
     report.extend(
         [
         "## Data Quality Flags",

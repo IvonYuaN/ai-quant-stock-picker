@@ -1,13 +1,24 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+from datetime import date
 from typing import Dict
 import pandas as pd
 import numpy as np
 import baostock as bs
 
+from aqsp.core.errors import DataError
 from aqsp.data.cache import DataCache
+from aqsp.data.tushare_pit import TusharePitClient, overlay_disclosure_dates
 
 _REQUEST_DELAY = 0.05
+
+
+@dataclass(frozen=True)
+class PitEnrichmentResult:
+    frames: Dict[str, pd.DataFrame]
+    financial_symbol_count: int
+    disclosure_symbol_count: int
 
 
 def fetch_pit_financials(
@@ -38,6 +49,7 @@ def fetch_pit_financials(
 def merge_pit_financials(
     ohlcv_data: Dict[str, pd.DataFrame],
     financial_data: Dict[str, pd.DataFrame],
+    disclosure_data: dict[str, pd.DataFrame] | None = None,
 ) -> Dict[str, pd.DataFrame]:
     out: dict[str, pd.DataFrame] = {}
     for symbol, ohlcv in ohlcv_data.items():
@@ -49,23 +61,33 @@ def merge_pit_financials(
             continue
 
         fin = financial_data[symbol].copy()
+        if (
+            disclosure_data
+            and symbol in disclosure_data
+            and not disclosure_data[symbol].empty
+        ):
+            fin = overlay_disclosure_dates(fin, disclosure_data[symbol])
         ohlcv = ohlcv.copy()
         ohlcv["date"] = pd.to_datetime(ohlcv["date"])
         fin["pubDate"] = pd.to_datetime(fin["pubDate"])
 
-        fin_sorted = fin.sort_values("pubDate").drop_duplicates(subset=["pubDate"], keep="last")
+        fin_sorted = fin.sort_values("pubDate").drop_duplicates(
+            subset=["pubDate"], keep="last"
+        )
 
         merged = pd.merge_asof(
             ohlcv.sort_values("date"),
-            fin_sorted[["pubDate", "roeAvg", "gpMargin", "epsTTM", "totalShare"]].rename(
-                columns={"pubDate": "date"}
-            ),
+            fin_sorted[
+                ["pubDate", "roeAvg", "gpMargin", "epsTTM", "totalShare"]
+            ].rename(columns={"pubDate": "date"}),
             on="date",
             direction="backward",
         )
 
         merged["roe"] = pd.to_numeric(merged.get("roeAvg"), errors="coerce")
-        merged["operating_margin"] = pd.to_numeric(merged.get("gpMargin"), errors="coerce")
+        merged["operating_margin"] = pd.to_numeric(
+            merged.get("gpMargin"), errors="coerce"
+        )
         eps = pd.to_numeric(merged.get("epsTTM"), errors="coerce")
         close = pd.to_numeric(merged["close"], errors="coerce")
 
@@ -92,6 +114,54 @@ def merge_pit_financials(
         out[symbol] = merged
 
     return out
+
+
+def load_optional_disclosure_data(
+    symbols: list[str],
+    start: date,
+    end: date,
+    client: TusharePitClient | None = None,
+) -> dict[str, pd.DataFrame]:
+    try:
+        pit_client = client or TusharePitClient()
+    except (RuntimeError, ValueError):
+        return {}
+    try:
+        disclosure_df = pit_client.fetch_disclosure_dates(symbols, start, end)
+    except DataError:
+        return {}
+    if disclosure_df.empty or "symbol" not in disclosure_df.columns:
+        return {}
+    return {
+        str(symbol): part.reset_index(drop=True)
+        for symbol, part in disclosure_df.groupby("symbol")
+    }
+
+
+def enrich_ohlcv_with_pit_financials(
+    ohlcv_data: Dict[str, pd.DataFrame],
+    symbols: list[str],
+    start: date,
+    end: date,
+    cache: DataCache | None = None,
+) -> PitEnrichmentResult:
+    financial_data = fetch_pit_financials(
+        symbols,
+        start.year,
+        end.year,
+        cache=cache,
+    )
+    disclosure_data = load_optional_disclosure_data(symbols, start, end)
+    merged = merge_pit_financials(
+        ohlcv_data,
+        financial_data,
+        disclosure_data=disclosure_data,
+    )
+    return PitEnrichmentResult(
+        frames=merged,
+        financial_symbol_count=len(financial_data),
+        disclosure_symbol_count=len(disclosure_data),
+    )
 
 
 def _fetch_all_quarters(symbol: str, start_year: int, end_year: int) -> list[dict]:

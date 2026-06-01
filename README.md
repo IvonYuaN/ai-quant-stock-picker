@@ -9,14 +9,18 @@
 ```bash
 pip install -e ".[dev]"
 python -m aqsp.cli screen --symbols 600519,300750 --mode close --limit 20
+python -m aqsp.cli screen --pool zz500 --mode close --limit 20
 ```
 
-定时任务同款命令：
+定时任务同款命令。本地有 TDX `private_data/tdx` 时，`AQSP_SYMBOLS` 留空会先按最新成交额从全市场预筛 `AQSP_MAX_UNIVERSE` 只，再进入策略评分；显式传 `--symbols` 则只跑指定小池。默认 100 只是为了本地每日定时稳定，手动研究可提高到 300/800/1500：
 
 ```bash
 pip install -e ".[data]"
-aqsp run --mode close --symbols 600519,300750,000001 --notify
+aqsp run --mode close --source auto --max-universe 100 --notify
+aqsp run --mode close --pool sh300 --notify
 ```
+
+北向资金、融资融券属于附加观察因子，默认不联网抓取，避免本地定时被外部接口拖慢；需要时加 `--enable-online-factors` 或设置 `AQSP_ENABLE_ONLINE_FACTORS=true`。
 
 使用本地 CSV：
 
@@ -29,6 +33,30 @@ python -m aqsp.cli screen --csv data/sample_ohlcv.csv --mode close --limit 10
 ```bash
 python -m aqsp.cli screen --csv data/sample_ohlcv.csv --mode open --report reports/open.md
 ```
+
+生成本地前端面板：
+
+```bash
+aqsp dashboard \
+  --csv reports/latest.csv \
+  --ledger data/predictions.jsonl \
+  --output dist/dashboard/index.html
+python3 -m http.server 8000 -d dist/dashboard
+```
+
+页面会展示候选股、评分、策略依据、风险、参考买点/止损/止盈、ledger 统计和最近信号。`dist/` 已被忽略，不会上传 GitHub。
+
+验证 Tushare PIT 接口：
+
+```bash
+export TUSHARE_TOKEN='...'
+python -m aqsp.cli pit --kind trade_calendar --start 2026-06-01 --end 2026-06-10 --json
+python -m aqsp.cli pit --kind index_weights --index-code 000300.SH --start 2026-06-01 --end 2026-06-10
+python -m aqsp.cli pit --kind disclosure_dates --symbols 600519,300750 --start 2026-04-01 --end 2026-06-30
+```
+
+若使用 `walkforward --source baostock` 或 `walkforward --source sqlite_db`，并且本地已配置 `TUSHARE_TOKEN`，系统会自动用披露日覆盖 Baostock 财报公告时点，避免把晚披露财报提前泄漏进回测。
+若 `walkforward` 未显式传 `--symbols`，默认沪深300股票池也会优先按回测开始日读取可选 Tushare 指数成分；没有 `TUSHARE_TOKEN` 时才退回仓库内置快照。
 
 ## 策略框架
 
@@ -66,6 +94,26 @@ python -m aqsp.cli screen --csv data/sample_ohlcv.csv --mode open --report repor
 4. Workflow 默认北京时间工作日 09:10 和 14:45 运行，也支持手动运行。
 
 数据新鲜度由 `aqsp.freshness.assert_fresh_data` 强制检查。超过允许滞后时任务直接失败，不发送陈旧选股。
+若已配置 `TUSHARE_TOKEN`，运行时会优先用 Tushare 交易日历按真实交易日判断滞后和 T+1，长假期间不会把正常停市误判成数据过期。
+
+## 私有前端和数据库
+
+推荐把代码放 GitHub,把每日结果放你自己的服务器:
+
+- GitHub Actions 定时跑 `aqsp run`。
+- `aqsp dashboard` / `scripts/render_dashboard.py` 生成 `dist/dashboard/index.html`。
+- `scripts/export_dashboard_db.py` 生成 `dist/dashboard/aqsp.db`。
+- `scripts/deploy_dashboard.sh` 通过 SSH/rsync 发布到服务器。
+
+开启方式见 `docs/server-dashboard-deployment.md`。敏感信息只放 GitHub Actions Secrets,不要放仓库文件:
+
+- `AQSP_DEPLOY_HOST`
+- `AQSP_DEPLOY_PORT`
+- `AQSP_DEPLOY_USER`
+- `AQSP_DEPLOY_PATH`
+- `AQSP_DEPLOY_SSH_KEY`
+
+是否部署由 GitHub Variable `AQSP_DEPLOY_DASHBOARD=true` 控制。默认不发布前端,也不上传 ledger/report/cache。
 
 ## 每日验证与自优化
 
@@ -79,7 +127,7 @@ python -m aqsp.cli screen --csv data/sample_ohlcv.csv --mode open --report repor
 - `excess_return_pct`: 相对基准的超额收益；学习优先按超额收益加权。
 - `strategy_weights`: 至少 3 条历史样本后，按胜率和平均超额收益动态调节策略权重。
 
-GitHub Actions 使用 cache 保存 `data/predictions.jsonl`，所以每天运行可以持续积累验证结果。
+GitHub Actions 当前不上传 `data/predictions.jsonl`。如果需要跨运行保留验证账本,优先部署到私有服务器或对象存储,不要把 ledger 提交到 GitHub。
 
 这个协议避免“事后数据预测”：当天只产生信号，不把当天收盘当作可成交价；下一次运行才用后来真实出现的 K 线验证。
 

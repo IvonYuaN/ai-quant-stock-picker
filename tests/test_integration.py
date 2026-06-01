@@ -8,8 +8,21 @@ from unittest.mock import patch
 import pandas as pd
 import pytest
 
+from aqsp.core.time import get_previous_trading_day, is_trading_day, today_shanghai
 from aqsp.freshness import assert_fresh_data
 from aqsp.risk.circuit_breaker import CircuitBreaker, CircuitBreakerConfig
+
+
+def _latest_expected_market_date() -> date:
+    today = today_shanghai()
+    return today if is_trading_day(today) else get_previous_trading_day(today)
+
+
+def _n_trade_days_ago(base: date, n: int) -> date:
+    current = base
+    for _ in range(n):
+        current = get_previous_trading_day(current)
+    return current
 
 
 class TestFreshnessIntegration:
@@ -23,18 +36,24 @@ class TestFreshnessIntegration:
                 "low": 99.0,
                 "close": 100.5,
                 "volume": 1_000_000,
+                "amount": 100_000_000,
+                "symbol": "600519",
+                "name": "贵州茅台",
+                "suspended": False,
+                "limit_up": 110.0,
+                "limit_down": 90.0,
             }
         )
         return {"600519": df}
 
     def test_fresh_data_passes(self):
-        today = date.today().isoformat()
-        frames = self._make_frames(today)
+        latest = _latest_expected_market_date().isoformat()
+        frames = self._make_frames(latest)
         result = assert_fresh_data(frames, max_lag_days=3)
-        assert result.isoformat() == today
+        assert result.isoformat() == latest
 
     def test_stale_data_raises(self):
-        stale_date = (date.today() - timedelta(days=7)).isoformat()
+        stale_date = _n_trade_days_ago(_latest_expected_market_date(), 4).isoformat()
         frames = self._make_frames(stale_date)
         with pytest.raises(RuntimeError, match="stale"):
             assert_fresh_data(frames, max_lag_days=3)
@@ -49,13 +68,13 @@ class TestFreshnessIntegration:
             assert_fresh_data(frames, max_lag_days=3)
 
     def test_boundary_lag_2_days_passes(self):
-        boundary_date = (date.today() - timedelta(days=2)).isoformat()
+        boundary_date = _n_trade_days_ago(_latest_expected_market_date(), 2).isoformat()
         frames = self._make_frames(boundary_date)
         result = assert_fresh_data(frames, max_lag_days=3)
         assert result.isoformat() == boundary_date
 
     def test_boundary_lag_4_days_fails(self):
-        stale_date = (date.today() - timedelta(days=4)).isoformat()
+        stale_date = _n_trade_days_ago(_latest_expected_market_date(), 4).isoformat()
         frames = self._make_frames(stale_date)
         with pytest.raises(RuntimeError, match="stale"):
             assert_fresh_data(frames, max_lag_days=3)
@@ -89,6 +108,8 @@ class TestCircuitBreakerIntegration:
         assert status.triggered
         assert status.level == "daily"
         assert "单日" in status.reason
+        assert "-3.50%" in status.reason
+        assert "-350.00%" not in status.reason
 
     def test_weekly_loss_triggers(self, tmp_path):
         config = self._make_config(tmp_path)
@@ -168,6 +189,9 @@ class TestCLIIntegration:
                 "close": 100.5,
                 "volume": 1_000_000,
                 "amount": 100_000_000,
+                "suspended": False,
+                "limit_up": 110.0,
+                "limit_down": 90.0,
             }
         )
         csv_path = tmp_path / "stale_data.csv"
@@ -178,17 +202,18 @@ class TestCLIIntegration:
         from aqsp.cli import main
 
         csv_path = self._make_stale_csv(tmp_path, days_old=7)
-        with pytest.raises(RuntimeError, match="stale"):
-            main(
-                [
-                    "run",
-                    "--csv",
-                    str(csv_path),
-                    "--max-data-lag-days",
-                    "3",
-                    "--skip-validation",
-                ]
-            )
+        result = main(
+            [
+                "run",
+                "--csv",
+                str(csv_path),
+                "--max-data-lag-days",
+                "3",
+                "--skip-validation",
+            ]
+        )
+
+        assert result == 1
 
     def test_circuit_breaker_exits_code_2(self, tmp_path):
         from aqsp.cli import main
