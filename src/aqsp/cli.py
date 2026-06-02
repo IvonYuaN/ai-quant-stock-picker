@@ -2287,7 +2287,8 @@ def run_walkforward(args: argparse.Namespace) -> int:
         from datetime import date as _date
         from aqsp.data.pit_financial import enrich_ohlcv_with_pit_financials
 
-        src = SqliteDbSource(cache=DataCache())
+        # walkforward 直接读本地历史库，避免被短周期 runtime cache 截断区间。
+        src = SqliteDbSource(cache=None)
         start_d = _date.fromisoformat(args.start)
         end_d = _date.fromisoformat(args.end)
         available = src.get_available_symbols()

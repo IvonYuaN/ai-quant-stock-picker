@@ -12,6 +12,21 @@ from aqsp.data.cache import DataCache
 from aqsp.data.tushare_pit import TusharePitClient, overlay_disclosure_dates
 
 _REQUEST_DELAY = 0.05
+_BS_LOGGED_IN = False
+
+
+def _ensure_baostock_login() -> bool:
+    global _BS_LOGGED_IN
+    if _BS_LOGGED_IN:
+        return True
+    try:
+        result = bs.login()
+    except Exception:
+        return False
+    if getattr(result, "error_code", "0") != "0":
+        return False
+    _BS_LOGGED_IN = True
+    return True
 
 
 @dataclass(frozen=True)
@@ -27,6 +42,8 @@ def fetch_pit_financials(
     end_year: int,
     cache: DataCache | None = None,
 ) -> Dict[str, pd.DataFrame]:
+    if not _ensure_baostock_login():
+        return {}
     out: dict[str, pd.DataFrame] = {}
     for symbol in symbols:
         if cache:

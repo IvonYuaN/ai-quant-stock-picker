@@ -5,6 +5,7 @@ from datetime import date
 import pandas as pd
 
 from aqsp.data.pit_financial import (
+    fetch_pit_financials,
     enrich_ohlcv_with_pit_financials,
     load_optional_disclosure_data,
     merge_pit_financials,
@@ -194,3 +195,16 @@ def test_enrich_ohlcv_with_pit_financials_when_disclosure_available(
     assert result.disclosure_symbol_count == 1
     assert pd.isna(result.frames["600519"]["roe"].iloc[0])
     assert result.frames["600519"]["roe"].iloc[1] == 0.2
+
+
+def test_fetch_pit_financials_returns_empty_when_baostock_login_fails(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        "aqsp.data.pit_financial._ensure_baostock_login",
+        lambda: False,
+    )
+
+    result = fetch_pit_financials(["600519"], 2024, 2024)
+
+    assert result == {}
