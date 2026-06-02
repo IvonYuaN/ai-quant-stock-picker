@@ -8,7 +8,11 @@ from typing import Any
 
 import pandas as pd
 
-from aqsp.config import load_runtime_config, online_fallback_allowed
+from aqsp.config import (
+    load_debate_runtime_config,
+    load_runtime_config,
+    online_fallback_allowed,
+)
 from aqsp.core.errors import DataError
 from aqsp.core.time import now_shanghai, today_shanghai
 from aqsp.core.types import RunMetadata
@@ -57,7 +61,11 @@ from aqsp.risk.circuit_breaker import CircuitBreaker
 from aqsp.strategy import screen_universe
 from aqsp.strategies.thresholds import load_thresholds
 from aqsp.universe import DEFAULT_SYMBOLS
-from aqsp.briefing.debate import AShareDebateCoordinator, DebateResult
+from aqsp.briefing.debate import (
+    AShareDebateCoordinator,
+    DebateResult,
+    parse_agent_roles,
+)
 from aqsp.models import PickResult
 
 
@@ -1817,15 +1825,20 @@ def run_scheduled(args: argparse.Namespace) -> int:
     DEBATE_MIN_DISAGREEMENT = 0.3
     DEBATE_MIN_ADJUSTMENT_PCT = 0.02
 
-    if getattr(args, "enable_debate", False) and picks:
+    debate_runtime = load_debate_runtime_config()
+    debate_enabled = getattr(args, "enable_debate", False) or debate_runtime.enabled
+
+    if debate_enabled and picks:
         print("📢 启动多Agent辩论分析...")
 
         coordinator = AShareDebateCoordinator(
-            enable_llm=False,
-            max_rounds=2,
+            enable_llm=debate_runtime.enable_llm,
+            max_rounds=debate_runtime.max_rounds,
             thresholds_version=thresholds.version,
             regime=regime or "unknown",
             data_source="multi" if args.source == "multi" else str(args.source),
+            language=debate_runtime.language,
+            roles=parse_agent_roles(debate_runtime.roles),
         )
         debate_file.parent.mkdir(parents=True, exist_ok=True)
 

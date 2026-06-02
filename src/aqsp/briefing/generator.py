@@ -12,10 +12,12 @@ from aqsp.core.time import now_shanghai
 from aqsp.core.types import PickResult
 from aqsp.research.summary import ResearchSummary
 from aqsp.ratings import is_tradable_rating
+from aqsp.config import load_debate_runtime_config
 from aqsp.briefing.debate import (
     AShareDebateCoordinator,
     DebateResult,
     format_debate_result,
+    parse_agent_roles,
 )
 
 _TEMPLATE_DIR = Path(__file__).parent / "templates"
@@ -227,9 +229,13 @@ class Briefing:
 
 class BriefingGenerator:
     def __init__(self, enable_debate: bool = False):
-        self.enable_debate = enable_debate
+        debate_runtime = load_debate_runtime_config()
+        self.enable_debate = enable_debate or debate_runtime.enabled
         self.debate_coordinator = AShareDebateCoordinator(
-            enable_llm=False, max_rounds=2
+            enable_llm=debate_runtime.enable_llm,
+            max_rounds=debate_runtime.max_rounds,
+            language=debate_runtime.language,
+            roles=parse_agent_roles(debate_runtime.roles),
         )
 
     def generate(

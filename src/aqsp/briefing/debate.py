@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Literal
+from typing import Iterable, Literal
 from uuid import uuid4
 
 import pandas as pd
@@ -24,6 +24,61 @@ class AgentRole(Enum):
     MARGIN_TRADING = "margin_trading"  # 融资融券：关注杠杆资金动向
     NORTHBOUND = "northbound"  # 北向资金：关注外资动向
     RETAIL_MOOD = "retail_mood"  # 散户情绪：关注市场情绪指标
+
+
+DEFAULT_AGENT_ROLE_ORDER: tuple[AgentRole, ...] = (
+    AgentRole.BULL,
+    AgentRole.BEAR,
+    AgentRole.RISK_CONTROL,
+    AgentRole.SECTOR_LEADER,
+    AgentRole.POLICY_SENSITIVE,
+    AgentRole.MARGIN_TRADING,
+    AgentRole.NORTHBOUND,
+    AgentRole.RETAIL_MOOD,
+)
+
+_ROLE_DESCRIPTIONS_ZH: dict[AgentRole, str] = {
+    AgentRole.BULL: "技术面多头，关注量价配合和趋势延续",
+    AgentRole.BEAR: "基本面空头，关注估值和业绩压力",
+    AgentRole.RISK_CONTROL: "风险控制专家，关注涨跌停、ST、退市风险",
+    AgentRole.SECTOR_LEADER: "板块轮动专家，关注行业热点切换",
+    AgentRole.POLICY_SENSITIVE: "政策分析师，关注监管和产业政策",
+    AgentRole.MARGIN_TRADING: "融资融券专家，关注杠杆资金动向",
+    AgentRole.NORTHBOUND: "北向资金专家，关注外资配置",
+    AgentRole.RETAIL_MOOD: "散户情绪专家，关注市场情绪指标",
+}
+
+_ROLE_DESCRIPTIONS_EN: dict[AgentRole, str] = {
+    AgentRole.BULL: "Bull case focused on price-volume trend continuation",
+    AgentRole.BEAR: "Bear case focused on valuation and earnings pressure",
+    AgentRole.RISK_CONTROL: "Risk control focused on halt, ST and delisting risk",
+    AgentRole.SECTOR_LEADER: "Sector rotation focused on industry leadership changes",
+    AgentRole.POLICY_SENSITIVE: "Policy watcher focused on regulation and industry policy",
+    AgentRole.MARGIN_TRADING: "Leverage watcher focused on margin funding behavior",
+    AgentRole.NORTHBOUND: "Northbound flow watcher focused on foreign capital",
+    AgentRole.RETAIL_MOOD: "Retail mood watcher focused on sentiment extremes",
+}
+
+
+def parse_agent_roles(role_names: Iterable[str]) -> tuple[AgentRole, ...]:
+    parsed: list[AgentRole] = []
+    for raw_name in role_names:
+        name = str(raw_name).strip().lower()
+        if not name:
+            continue
+        try:
+            role = AgentRole(name)
+        except ValueError:
+            continue
+        if role not in parsed:
+            parsed.append(role)
+    return tuple(parsed) or DEFAULT_AGENT_ROLE_ORDER
+
+
+def agent_role_description(role: AgentRole, language: str = "zh-CN") -> str:
+    if language.lower().startswith("en"):
+        return _ROLE_DESCRIPTIONS_EN.get(role, role.value)
+    return _ROLE_DESCRIPTIONS_ZH.get(role, role.value)
 
 
 @dataclass
@@ -155,24 +210,20 @@ class DebateResult:
 class AShareDebateAgent:
     """A股市场辩论 Agent 基类"""
 
-    def __init__(self, role: AgentRole, enable_llm: bool = False):
+    def __init__(
+        self,
+        role: AgentRole,
+        enable_llm: bool = False,
+        language: str = "zh-CN",
+    ):
         self.role = role
         self.agent_id = f"{role.value}_{uuid4().hex[:8]}"
         self.enable_llm = enable_llm
+        self.language = language
 
     def get_role_description(self) -> str:
         """获取角色描述"""
-        descriptions = {
-            AgentRole.BULL: "技术面多头，关注量价配合和趋势延续",
-            AgentRole.BEAR: "基本面空头，关注估值和业绩压力",
-            AgentRole.RISK_CONTROL: "风险控制专家，关注涨跌停、ST、退市风险",
-            AgentRole.SECTOR_LEADER: "板块轮动专家，关注行业热点切换",
-            AgentRole.POLICY_SENSITIVE: "政策分析师，关注监管和产业政策",
-            AgentRole.MARGIN_TRADING: "融资融券专家，关注杠杆资金动向",
-            AgentRole.NORTHBOUND: "北向资金专家，关注外资配置",
-            AgentRole.RETAIL_MOOD: "散户情绪专家，关注市场情绪指标",
-        }
-        return descriptions.get(self.role, "")
+        return agent_role_description(self.role, self.language)
 
     def generate_initial_opinion(
         self,
@@ -491,12 +542,16 @@ class AShareDebateCoordinator:
         thresholds_version: str = "",
         regime: str = "",
         data_source: str = "",
+        language: str = "zh-CN",
+        roles: tuple[AgentRole, ...] | None = None,
     ):
         self.enable_llm = enable_llm
         self.max_rounds = max_rounds
         self.thresholds_version = thresholds_version
         self.regime = regime
         self.data_source = data_source
+        self.language = language
+        self.roles = roles or DEFAULT_AGENT_ROLE_ORDER
         self.agents = self._create_agents()
 
         from aqsp.briefing.debate_tracker import DebatePerformanceTracker
@@ -506,14 +561,12 @@ class AShareDebateCoordinator:
     def _create_agents(self) -> list[AShareDebateAgent]:
         """创建所有辩论 Agent"""
         return [
-            AShareDebateAgent(AgentRole.BULL, self.enable_llm),
-            AShareDebateAgent(AgentRole.BEAR, self.enable_llm),
-            AShareDebateAgent(AgentRole.RISK_CONTROL, self.enable_llm),
-            AShareDebateAgent(AgentRole.SECTOR_LEADER, self.enable_llm),
-            AShareDebateAgent(AgentRole.POLICY_SENSITIVE, self.enable_llm),
-            AShareDebateAgent(AgentRole.MARGIN_TRADING, self.enable_llm),
-            AShareDebateAgent(AgentRole.NORTHBOUND, self.enable_llm),
-            AShareDebateAgent(AgentRole.RETAIL_MOOD, self.enable_llm),
+            AShareDebateAgent(
+                role,
+                enable_llm=self.enable_llm,
+                language=self.language,
+            )
+            for role in self.roles
         ]
 
     def run_debate(

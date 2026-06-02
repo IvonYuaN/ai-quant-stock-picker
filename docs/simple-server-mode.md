@@ -71,8 +71,22 @@ AQSP_DEPLOY_DASHBOARD=false
 TUSHARE_TOKEN=
 TELEGRAM_BOT_TOKEN=
 TELEGRAM_CHAT_ID=
+SERVERCHAN_SENDKEY=
 GLM_API_KEY=
+
+AQSP_ENABLE_DEBATE=false
+AQSP_DEBATE_ENABLE_LLM=false
+AQSP_DEBATE_MAX_ROUNDS=2
+AQSP_DEBATE_LANGUAGE=zh-CN
+AQSP_DEBATE_ROLES=bull,bear,risk_control,sector_leader,policy_sensitive,northbound
 ```
+
+补充说明：
+
+- `GLM_API_KEY` 用于智谱；`LLM_PROVIDER=glm` 时默认走它。
+- `SERVERCHAN_SENDKEY` 配好后，`notify` 和监控告警都可以直接推送到微信。
+- `AQSP_ENABLE_DEBATE=false` 表示默认不跑多 agent 讨论；要开就改成 `true`。
+- `AQSP_DEBATE_LANGUAGE=zh-CN` 现在是运行时配置，不再写死在代码里。
 
 ## 自动更新脚本
 
@@ -94,10 +108,18 @@ bash /opt/aqsp/scripts/server_sync_and_run.sh
 
 推荐拆成两条任务：
 
-1. 盘中轻量刷新，工作日北京时间 `09:40-11:25`、`13:10-14:55` 每 10 分钟执行一次。
-2. 收盘完整跑批，工作日北京时间 `18:00` 执行。
+1. 盘中推荐，工作日北京时间 `09:40-11:25`、`13:10-14:55` 每 10 分钟执行一次。
+2. 收盘复盘，工作日北京时间 `18:00` 执行一次。
+
+这里的含义是：
+
+- `intraday_refresh.sh` 负责你白天看的“推荐”。
+- `server_sync_and_run.sh` 默认跑 `daily_pipeline.sh`，里面已经包含收盘复盘、虚拟盘同步、Dashboard 刷新。
 
 ```bash
+# 北京时间 09:40-11:59 每 10 分钟跑一次盘中推荐
+# 北京时间 13:00-14:59 每 10 分钟跑一次盘中推荐
+# 北京时间 18:00 跑一次完整收盘复盘
 ( crontab -l 2>/dev/null | grep -vE 'intraday_refresh\\.sh|server_sync_and_run\\.sh'; \
   echo '*/10 9-11 * * 1-5 AQSP_RUNNER_SCRIPT=scripts/intraday_refresh.sh /bin/bash /opt/aqsp/scripts/server_sync_and_run.sh >> /opt/aqsp/logs/cron.log 2>&1'; \
   echo '*/10 13-14 * * 1-5 AQSP_RUNNER_SCRIPT=scripts/intraday_refresh.sh /bin/bash /opt/aqsp/scripts/server_sync_and_run.sh >> /opt/aqsp/logs/cron.log 2>&1'; \

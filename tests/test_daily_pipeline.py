@@ -52,6 +52,36 @@ def test_build_config_prefers_env_source_when_cli_source_missing(monkeypatch) ->
     assert config.source == "eastmoney"
 
 
+def test_build_config_enables_debate_from_env(monkeypatch) -> None:
+    daily_pipeline = _load_daily_pipeline_module()
+    monkeypatch.setenv("AQSP_ENABLE_DEBATE", "true")
+
+    args = argparse.Namespace(
+        project_root="",
+        source="",
+        mode="",
+        limit=0,
+        max_universe=0,
+        min_avg_amount=0,
+        max_data_lag_days=0,
+        enable_online_factors=False,
+        ledger="",
+        report="",
+        csv="",
+        briefing="",
+        dashboard_html="",
+        dashboard_db="",
+        paper_ledger="",
+        notify=False,
+        dry_run=False,
+        enable_debate=False,
+    )
+
+    config = daily_pipeline._build_config(args)
+
+    assert config.enable_debate is True
+
+
 def test_morning_breakout_uses_sh300_pool(monkeypatch) -> None:
     daily_pipeline = _load_daily_pipeline_module()
     captured: list[str] = []
@@ -281,7 +311,9 @@ def test_sync_paper_trades_writes_report(monkeypatch, tmp_path: Path) -> None:
     )
     monkeypatch.setattr(
         "aqsp.data.fetch_with_source",
-        lambda _source, _symbols, days=60: {"600519": pd.DataFrame([{"date": "2026-06-02"}])},
+        lambda _source, _symbols, days=60: {
+            "600519": pd.DataFrame([{"date": "2026-06-02"}])
+        },
     )
     monkeypatch.setattr(
         "aqsp.ledger.base.read_ledger",
@@ -335,4 +367,6 @@ def test_sync_paper_trades_writes_report(monkeypatch, tmp_path: Path) -> None:
 
     assert result["opened"] == 1
     assert result["open_positions"] == 1
-    assert (tmp_path / "reports" / "paper.md").read_text(encoding="utf-8") == "opened=1, rows=1"
+    assert (tmp_path / "reports" / "paper.md").read_text(
+        encoding="utf-8"
+    ) == "opened=1, rows=1"

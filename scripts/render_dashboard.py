@@ -241,7 +241,7 @@ def _candidate_cards(
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/>
                 </svg>
-                查看辩论详情 {f'<span class="debate-age">({debate_age})</span>' if debate_age else ""}
+                Agent讨论 {f'<span class="debate-age">({debate_age})</span>' if debate_age else ""}
             </button>"""
             if has_debate
             else """<button class="debate-btn no-debate" disabled aria-label="暂无辩论数据">
@@ -250,7 +250,7 @@ def _candidate_cards(
                     <line x1="12" y1="8" x2="12" y2="12"/>
                     <line x1="12" y1="16" x2="12.01" y2="16"/>
                 </svg>
-                暂无辩论数据
+                暂无 Agent 讨论
             </button>"""
         )
         adjustment_badge = ""
@@ -353,48 +353,47 @@ def _debate_modals(debate_map: dict[str, dict[str, Any]]) -> str:
             else ""
         )
 
-        rounds_html = ""
-        for round_data in debate.get("rounds", []):
-            round_num = round_data.get("round_num", 0)
-            summary = html.escape(round_data.get("summary", ""))
-            opinions_html = ""
-            for opinion in round_data.get("opinions", []):
-                role = opinion.get("role", "")
-                role_name = {
-                    "bull": "技术多头",
-                    "bear": "基本面空头",
-                    "risk_control": "风险控制",
-                    "sector_leader": "板块轮动",
-                    "policy_sensitive": "政策分析",
-                    "margin_trading": "融资融券",
-                    "northbound": "北向资金",
-                    "retail_mood": "散户情绪",
-                }.get(role, role)
-                stance = opinion.get("stance", "neutral")
-                stance_icon = {"bullish": "🐂", "bearish": "🐻", "neutral": "➡️"}.get(
-                    stance, ""
-                )
-                confidence = opinion.get("confidence", 0) * 100
-                arguments = opinion.get("arguments", [])
-                arguments_html = "".join(
-                    f"<li>{html.escape(a)}</li>" for a in arguments[:3]
-                )
-                counterarguments = opinion.get("counterarguments", [])
-                counterarguments_html = "".join(
-                    f"<li>{html.escape(a)}</li>" for a in counterarguments[:2]
-                )
-                risk_factors = opinion.get("risk_factors", [])
-                risk_factors_html = "".join(
-                    f"<li class='risk-item'>⚠️ {html.escape(a)}</li>"
-                    for a in risk_factors[:2]
-                )
-                opportunity_factors = opinion.get("opportunity_factors", [])
-                opportunity_factors_html = "".join(
-                    f"<li class='opp-item'>✅ {html.escape(a)}</li>"
-                    for a in opportunity_factors[:2]
-                )
+        latest_round = debate.get("rounds", [])[-1] if debate.get("rounds") else {}
+        round_num = latest_round.get("round_num", 0)
+        summary = html.escape(latest_round.get("summary", ""))
+        opinions_html = ""
+        for opinion in latest_round.get("opinions", []):
+            role = opinion.get("role", "")
+            role_name = {
+                "bull": "技术多头",
+                "bear": "基本面空头",
+                "risk_control": "风险控制",
+                "sector_leader": "板块轮动",
+                "policy_sensitive": "政策分析",
+                "margin_trading": "融资融券",
+                "northbound": "北向资金",
+                "retail_mood": "散户情绪",
+            }.get(role, role)
+            stance = opinion.get("stance", "neutral")
+            stance_icon = {"bullish": "🐂", "bearish": "🐻", "neutral": "➡️"}.get(
+                stance, ""
+            )
+            confidence = opinion.get("confidence", 0) * 100
+            arguments = opinion.get("arguments", [])
+            arguments_html = "".join(
+                f"<li>{html.escape(a)}</li>" for a in arguments[:2]
+            )
+            counterarguments = opinion.get("counterarguments", [])
+            counterarguments_html = "".join(
+                f"<li>{html.escape(a)}</li>" for a in counterarguments[:1]
+            )
+            risk_factors = opinion.get("risk_factors", [])
+            risk_factors_html = "".join(
+                f"<li class='risk-item'>⚠️ {html.escape(a)}</li>"
+                for a in risk_factors[:1]
+            )
+            opportunity_factors = opinion.get("opportunity_factors", [])
+            opportunity_factors_html = "".join(
+                f"<li class='opp-item'>✅ {html.escape(a)}</li>"
+                for a in opportunity_factors[:1]
+            )
 
-                opinions_html += f"""
+            opinions_html += f"""
                 <div class="opinion-card {stance}">
                     <div class="opinion-header">
                         <span class="agent-role">{role_name}</span>
@@ -412,14 +411,13 @@ def _debate_modals(debate_map: dict[str, dict[str, Any]]) -> str:
                     </div>
                 </div>
                 """
-
-            rounds_html += f"""
-            <div class="debate-round">
-                <h4>第 {round_num} 轮</h4>
-                {f"<p class='round-summary'>{summary}</p>" if summary else ""}
-                <div class="opinions-grid">{opinions_html}</div>
-            </div>
-            """
+        rounds_html = f"""
+        <div class="debate-round">
+            <h4>最终一轮观点</h4>
+            <p class='round-summary'>首页仅保留最终一轮，避免重复内容堆叠。{f"第 {round_num} 轮摘要：{summary}" if summary else ""}</p>
+            <div class="opinions-grid">{opinions_html or "<p class='muted'>暂无最终观点明细。</p>"}</div>
+        </div>
+        """
 
         risk_warnings = debate.get("risk_warnings", [])
         risk_warnings_html = (
@@ -472,7 +470,7 @@ def _debate_modals(debate_map: dict[str, dict[str, Any]]) -> str:
             <div class="debate-modal-content" role="document">
                 <div class="debate-modal-header">
                     <div>
-                        <h2 id="debate-title-{symbol}">🤖 多Agent辩论分析</h2>
+                        <h2 id="debate-title-{symbol}">多Agent讨论摘要</h2>
                         <p class="debate-subtitle">{symbol} {name}</p>
                     </div>
                     <div class="header-badges">
@@ -549,6 +547,39 @@ def _paper_rows(rows: list[dict[str, Any]]) -> str:
             "</tr>"
         )
     return "\n".join(out)
+
+
+def _fold_panel(
+    title: str,
+    subtitle: str,
+    body_html: str,
+    *,
+    badge: str = "",
+    open_by_default: bool = False,
+) -> str:
+    open_attr = " open" if open_by_default else ""
+    badge_html = (
+        f"<span class='state-pill neutral'>{html.escape(badge)}</span>" if badge else ""
+    )
+    return f"""
+    <section class="panel source-panel compact-panel">
+      <details class="panel-fold"{open_attr}>
+        <summary class="fold-summary">
+          <div>
+            <h2>{html.escape(title)}</h2>
+            <p class="muted">{html.escape(subtitle)}</p>
+          </div>
+          <div class="fold-meta">
+            {badge_html}
+            <span class="fold-caret" aria-hidden="true">展开</span>
+          </div>
+        </summary>
+        <div class="fold-body">
+          {body_html}
+        </div>
+      </details>
+    </section>
+    """
 
 
 def _source_runtime_panel(stats: LedgerStats) -> str:
@@ -890,12 +921,11 @@ def render_source_health_panel(path: str | Path | None = None) -> str:
     actual = health.get("last_actual_source", "")
 
     if not updated_at and not health.get("sources") and not health.get("plans"):
-        return """
-        <section class="panel source-panel">
-          <h2>数据源健康</h2>
-          <p class="muted">暂无数据源健康记录。</p>
-        </section>
-        """
+        return _fold_panel(
+            "数据源健康明细",
+            "累计成功率、失败次数和 fallback 路由历史。",
+            "<p class='muted'>暂无数据源健康记录。</p>",
+        )
 
     label, message, _ = describe_source_health(requested, actual, path=path)
     tone = {
@@ -955,13 +985,8 @@ def render_source_health_panel(path: str | Path | None = None) -> str:
 
     fallback_text = "是" if fallback_used else "否"
 
-    return f"""
-    <section class="panel source-panel">
+    body_html = f"""
       <div class="source-head">
-        <div>
-          <h2>数据源健康</h2>
-          <p class="muted">所有数据源的累计成功/失败统计与健康评估。</p>
-        </div>
         <span class="state-pill {tone}">{html.escape(label)}</span>
       </div>
       <dl class="source-grid">
@@ -981,18 +1006,22 @@ def render_source_health_panel(path: str | Path | None = None) -> str:
         <thead><tr><th>计划</th><th>成功</th><th>失败</th><th>fallback成功</th><th>最后成功</th><th>最后错误</th></tr></thead>
         <tbody>{"".join(plan_rows) or "<tr><td colspan='6'>暂无路由计划记录</td></tr>"}</tbody>
       </table>
-    </section>
     """
+    return _fold_panel(
+        "数据源健康明细",
+        "累计成功率、失败次数和 fallback 路由历史。",
+        body_html,
+        badge=label,
+    )
 
 
 def _research_panel(summary: ResearchSummary | None) -> str:
     if summary is None:
-        return """
-        <section class="panel source-panel">
-          <h2>研究吸收</h2>
-          <p class="muted">暂无研究吸收摘要。</p>
-        </section>
-        """
+        return _fold_panel(
+            "研究吸收",
+            "开源研究队列与当前系统吸收状态。",
+            "<p class='muted'>暂无研究吸收摘要。</p>",
+        )
     pipeline_lines = []
     for item in summary.pipeline_summaries[:4]:
         pipeline_lines.append(
@@ -1016,13 +1045,8 @@ def _research_panel(summary: ResearchSummary | None) -> str:
     family_names = (
         "、".join(item.name for item in summary.absorbed_families[:4]) or "暂无"
     )
-    return f"""
-    <section class="panel source-panel">
+    body_html = f"""
       <div class="source-head">
-        <div>
-          <h2>研究吸收</h2>
-          <p class="muted">开源研究队列对当前系统的吸收状态。</p>
-        </div>
         <span class="state-pill neutral">{summary.total_findings} findings</span>
       </div>
       <dl class="source-grid">
@@ -1041,8 +1065,13 @@ def _research_panel(summary: ResearchSummary | None) -> str:
         <thead><tr><th>优先级</th><th>类型</th><th>对象</th><th>第一道 gate</th></tr></thead>
         <tbody>{"".join(action_lines) or "<tr><td colspan='4'>暂无接入动作</td></tr>"}</tbody>
       </table>
-    </section>
     """
+    return _fold_panel(
+        "研究吸收",
+        "开源研究队列与当前系统吸收状态。",
+        body_html,
+        badge=f"{summary.total_findings} findings",
+    )
 
 
 def _load_kline_data(
@@ -1176,18 +1205,15 @@ def render_strategy_performance_panel(
         }
 
     if not chart_data:
-        return """
-        <section class="panel source-panel">
-          <h2>策略胜率分析</h2>
-          <p class="muted">暂无已验证信号数据，无法生成策略胜率图表。</p>
-        </section>
-        """
+        return _fold_panel(
+            "策略胜率分析",
+            "已验证信号的历史胜率、滚动胜率和平均收益。",
+            "<p class='muted'>暂无已验证信号数据，无法生成策略胜率图表。</p>",
+        )
 
     chart_json = json.dumps(chart_data, ensure_ascii=False)
 
-    return f"""
-    <section class="panel source-panel" style="margin: 0 clamp(20px, 6vw, 80px) 24px;">
-      <h2>策略胜率分析</h2>
+    body_html = f"""
       <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:20px;">
         <div class="stat" style="flex:1;min-width:140px;"><b>{total_picks}</b><span>已验证总信号</span></div>
         <div class="stat" style="flex:1;min-width:140px;"><b>{overall_win_rate:.1%}</b><span>整体胜率</span></div>
@@ -1198,7 +1224,15 @@ def render_strategy_performance_panel(
         <div id="chart-rolling-win" style="height:320px;"></div>
         <div id="chart-avg-return" style="height:320px;"></div>
       </div>
-    </section>
+    """
+    return (
+        _fold_panel(
+            "策略胜率分析",
+            "已验证信号的历史胜率、滚动胜率和平均收益。",
+            body_html,
+            badge=f"{len(chart_data)} strategies",
+        )
+        + f"""
     <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
     <script>
       (function() {{
@@ -1266,32 +1300,40 @@ def render_strategy_performance_panel(
       }})();
     </script>
     """
+    )
 
 
 def render_morning_evening_panel(
     ledger_path: str,
 ) -> str:
     rows = read_ledger_rows(Path(ledger_path))
-    
+
     morning_signals = []
     evening_signals = []
-    
+
     for row in rows:
         strategy = row.get("strategies", "")
         if isinstance(strategy, str):
-            if "morning_breakout" in strategy or "morning-breakout" in strategy or "早盘" in strategy:
+            if (
+                "morning_breakout" in strategy
+                or "morning-breakout" in strategy
+                or "早盘" in strategy
+            ):
                 morning_signals.append(row)
-            elif "closing_premium" in strategy or "closing-premium" in strategy or "尾盘" in strategy:
+            elif (
+                "closing_premium" in strategy
+                or "closing-premium" in strategy
+                or "尾盘" in strategy
+            ):
                 evening_signals.append(row)
-    
+
     if not morning_signals and not evening_signals:
-        return """
-        <section class="panel source-panel">
-          <h2>早盘/尾盘策略</h2>
-          <p class="muted">暂无早盘或尾盘策略的信号数据。</p>
-        </section>
-        """
-    
+        return _fold_panel(
+            "早盘/尾盘策略",
+            "盘中轻量策略与尾盘策略的单独跟踪。",
+            "<p class='muted'>暂无早盘或尾盘策略的信号数据。</p>",
+        )
+
     def _format_signal_list(signals, label, color):
         if not signals:
             return f"""
@@ -1300,7 +1342,7 @@ def render_morning_evening_panel(
               <p class="muted">暂无该类策略的信号数据</p>
             </div>
             """
-        
+
         recent = signals[-10:]
         html = f"""
         <div style="flex:1;min-width:300px;">
@@ -1328,13 +1370,22 @@ def render_morning_evening_panel(
         </div>
         """
         return html
-    
+
     def _stats(signals):
         validated = [s for s in signals if s.get("status") == "validated"]
         wins = sum(1 for s in validated if s.get("win"))
         total = len(validated)
         win_rate = wins / total if total > 0 else 0
-        avg_return = sum(_safe_float(s.get("return_pct")) for s in validated if s.get("return_pct")) / len(validated) if validated else 0
+        avg_return = (
+            sum(
+                _safe_float(s.get("return_pct"))
+                for s in validated
+                if s.get("return_pct")
+            )
+            / len(validated)
+            if validated
+            else 0
+        )
         return f"""
         <div style="display:flex;gap:16px;margin-bottom:16px;flex-wrap:wrap;">
           <div class="stat" style="padding:14px 16px;border-radius:16px;"><b>{len(signals)}</b><span>总信号</span></div>
@@ -1343,16 +1394,8 @@ def render_morning_evening_panel(
           <div class="stat" style="padding:14px 16px;border-radius:16px;"><b>{_fmt_num(avg_return)}</b><span>平均收益</span></div>
         </div>
         """
-    
-    return f"""
-    <section class="panel source-panel">
-      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:18px;margin-bottom:16px;">
-        <div>
-          <h2 style="margin:0;">早盘/尾盘策略</h2>
-          <p class="muted" style="margin:4px 0 0;">专门针对早盘打板和尾盘溢价策略的信号分析</p>
-        </div>
-        <span class="state-pill neutral">双策略并行</span>
-      </div>
+
+    body_html = f"""
       <div style="display:flex;gap:16px;flex-wrap:wrap;">
         {_stats(morning_signals)}
       </div>
@@ -1360,8 +1403,13 @@ def render_morning_evening_panel(
         {_format_signal_list(morning_signals, "早盘打板", "var(--amber)")}
         {_format_signal_list(evening_signals, "尾盘溢价", "var(--green)")}
       </div>
-    </section>
     """
+    return _fold_panel(
+        "早盘/尾盘策略",
+        "盘中轻量策略与尾盘策略的单独跟踪。",
+        body_html,
+        badge="双策略并行",
+    )
 
 
 def render_kline_panel(
@@ -1369,12 +1417,11 @@ def render_kline_panel(
 ) -> str:
     rows = read_ledger_rows(Path(ledger_path))
     if not rows:
-        return """
-        <section class="panel source-panel">
-          <h2>K线图</h2>
-          <p class="muted">暂无信号数据，无法生成K线图。</p>
-        </section>
-        """
+        return _fold_panel(
+            "K线图",
+            "最新候选的价格、均线和成交量快照。",
+            "<p class='muted'>暂无信号数据，无法生成K线图。</p>",
+        )
 
     latest_date = ""
     for row in reversed(rows):
@@ -1383,12 +1430,11 @@ def render_kline_panel(
             latest_date = d
             break
     if not latest_date:
-        return """
-        <section class="panel source-panel">
-          <h2>K线图</h2>
-          <p class="muted">暂无有效信号日期。</p>
-        </section>
-        """
+        return _fold_panel(
+            "K线图",
+            "最新候选的价格、均线和成交量快照。",
+            "<p class='muted'>暂无有效信号日期。</p>",
+        )
 
     latest_rows = sorted(
         [r for r in rows if str(r.get("signal_date", "")) == latest_date],
@@ -1397,12 +1443,11 @@ def render_kline_panel(
     )[:max_stocks]
 
     if not latest_rows:
-        return """
-        <section class="panel source-panel">
-          <h2>K线图</h2>
-          <p class="muted">最新信号日无候选股数据。</p>
-        </section>
-        """
+        return _fold_panel(
+            "K线图",
+            "最新候选的价格、均线和成交量快照。",
+            "<p class='muted'>最新信号日无候选股数据。</p>",
+        )
 
     cache_path = Path("data/cache.db")
     stocks: list[dict[str, Any]] = []
@@ -1432,12 +1477,11 @@ def render_kline_panel(
         )
 
     if not stocks:
-        return """
-        <section class="panel source-panel">
-          <h2>K线图</h2>
-          <p class="muted">无法加载K线数据。</p>
-        </section>
-        """
+        return _fold_panel(
+            "K线图",
+            "最新候选的价格、均线和成交量快照。",
+            "<p class='muted'>无法加载K线数据。</p>",
+        )
 
     stocks_json = json.dumps(stocks, ensure_ascii=False)
 
@@ -1459,13 +1503,12 @@ def render_kline_panel(
             f'<div class="kline-chart" id="kline-{i}" style="height:520px;display:{disp};">'
             f'<div id="kline-main-{i}" style="height:380px;"></div>'
             f'<div id="kline-vol-{i}" style="height:140px;border-top:1px solid var(--line);"></div>'
-            f'</div>'
+            f"</div>"
         )
 
-    return f"""
-    <section class="panel source-panel" style="margin: 0 clamp(20px, 6vw, 80px) 24px;">
+    body_html = f"""
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
-        <h2 style="margin:0;">K线图 — 信号日 {html.escape(latest_date)}</h2>
+        <h3 style="margin:0;">信号日 {html.escape(latest_date)}</h3>
         <div id="kline-legend" style="display:flex;gap:16px;font-size:13px;color:var(--muted);">
           <span><span style="display:inline-block;width:20px;height:3px;background:#3b82f6;vertical-align:middle;margin-right:4px;"></span>MA5</span>
           <span><span style="display:inline-block;width:20px;height:3px;background:#b86b1d;vertical-align:middle;margin-right:4px;"></span>MA10</span>
@@ -1476,7 +1519,15 @@ def render_kline_panel(
         {"".join(tab_buttons)}
       </div>
       {"".join(chart_divs)}
-    </section>
+    """
+    return (
+        _fold_panel(
+            "K线图",
+            "最新候选的价格、均线和成交量快照。",
+            body_html,
+            badge=f"{len(stocks)} symbols",
+        )
+        + f"""
     <script src="https://unpkg.com/lightweight-charts@4/dist/lightweight-charts.standalone.production.js"></script>
     <script>
       (function() {{
@@ -1725,6 +1776,7 @@ def render_kline_panel(
       }})();
     </script>
     """
+    )
 
 
 def render_dashboard(
@@ -1990,6 +2042,36 @@ def render_dashboard(
     .panel h2 {{ margin-top: 0; }}
     .muted {{ color: var(--muted); }}
     .source-panel {{ margin-bottom: 24px; overflow: hidden; }}
+    .compact-panel {{ padding: 0; }}
+    .panel-fold {{ border-radius: 28px; }}
+    .panel-fold[open] .fold-caret {{ transform: rotate(180deg); }}
+    .fold-summary {{
+      list-style: none;
+      display: flex;
+      justify-content: space-between;
+      gap: 18px;
+      align-items: center;
+      padding: 22px;
+      cursor: pointer;
+    }}
+    .fold-summary::-webkit-details-marker {{ display: none; }}
+    .fold-summary h2 {{ margin: 0; }}
+    .fold-summary p {{ margin: 6px 0 0; }}
+    .fold-meta {{
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-shrink: 0;
+    }}
+    .fold-caret {{
+      color: var(--muted);
+      font-size: 13px;
+      transition: transform .2s ease;
+    }}
+    .fold-body {{
+      padding: 0 22px 22px;
+      border-top: 1px solid var(--line);
+    }}
     .source-head {{ display: flex; justify-content: space-between; gap: 18px; align-items: center; margin-bottom: 16px; }}
     .source-grid {{ display: grid; grid-template-columns: 72px 1fr 72px 1fr; gap: 10px 14px; margin: 0 0 14px; }}
     .source-grid dt {{ color: var(--muted); }}
@@ -2693,7 +2775,9 @@ def render_all_panels(
 
     result = base_html.replace("<!-- PANEL_STRATEGY_PERF -->\n", strategy_panel + "\n")
     result = result.replace("<!-- PANEL_KLINE -->\n", kline_panel + "\n")
-    result = result.replace("<!-- PANEL_MORNING_EVENING -->\n", morning_evening_panel + "\n")
+    result = result.replace(
+        "<!-- PANEL_MORNING_EVENING -->\n", morning_evening_panel + "\n"
+    )
     return result
 
 

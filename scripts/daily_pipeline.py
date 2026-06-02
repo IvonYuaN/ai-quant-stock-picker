@@ -479,7 +479,9 @@ def _step_sync_paper_trades(
         "open_positions": summary.open_positions,
         "pending_entry": summary.pending_entry,
         "not_executable": summary.not_executable,
-        "report_size": paper_report_path.stat().st_size if paper_report_path.exists() else 0,
+        "report_size": paper_report_path.stat().st_size
+        if paper_report_path.exists()
+        else 0,
     }
 
 
@@ -723,7 +725,7 @@ def _build_config(args: argparse.Namespace) -> PipelineConfig:
         paper_ledger=args.paper_ledger or "data/paper_trades.jsonl",
         notify=args.notify,
         dry_run=args.dry_run,
-        enable_debate=args.enable_debate,
+        enable_debate=args.enable_debate or env.enable_debate,
     )
 
 
