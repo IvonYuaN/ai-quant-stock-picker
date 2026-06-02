@@ -1,0 +1,17 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_server_monitor_script_runs_monitor_with_notify() -> None:
+    script = (PROJECT_ROOT / "scripts" / "server_monitor.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'source "${PROJECT_ROOT}/.env"' in script
+    assert 'PYTHON_BIN="${VENV_DIR}/bin/python3"' in script
+    assert '-m aqsp monitor --config "${MONITOR_CONFIG}" --notify' in script
+    assert 'logs/monitor' in script

@@ -124,6 +124,19 @@ bash /opt/aqsp/scripts/server_status.sh
 bash /opt/aqsp/scripts/init_server_runtime.sh
 ```
 
+异常监控与告警：
+
+```bash
+bash /opt/aqsp/scripts/server_monitor.sh
+```
+
+建议每 15 分钟执行一次：
+
+```bash
+( crontab -l 2>/dev/null | grep -v 'server_monitor\.sh' ; \
+  echo '*/15 * * * 1-5 /bin/bash /opt/aqsp/scripts/server_monitor.sh >> /opt/aqsp/logs/cron.log 2>&1' ) | crontab -
+```
+
 ## 本地如何看 8080
 
 推荐继续用 SSH 隧道：
