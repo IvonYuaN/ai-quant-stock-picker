@@ -214,3 +214,51 @@ def test_closing_premium_uses_explicit_symbols(monkeypatch) -> None:
         "--top",
         "5",
     ]
+
+
+def test_run_pipeline_excludes_intraday_sub_strategies(monkeypatch) -> None:
+    daily_pipeline = _load_daily_pipeline_module()
+    executed: list[str] = []
+
+    def fake_run_step(name: str, fn, logger, dry_run: bool = False):
+        executed.append(name)
+        return daily_pipeline.StepResult(name, True, 0.0)
+
+    monkeypatch.setattr(daily_pipeline, "_run_step", fake_run_step)
+    monkeypatch.setattr(daily_pipeline, "_is_trade_day", lambda _d: True)
+
+    config = daily_pipeline.PipelineConfig(
+        project_root=Path.cwd(),
+        source="eastmoney",
+        mode="close",
+        limit=10,
+        max_universe=50,
+        min_avg_amount=50_000_000,
+        max_data_lag_days=3,
+        enable_online_factors=False,
+        allow_online_fallback=True,
+        ledger_path="data/predictions.jsonl",
+        report_path="reports/latest.md",
+        csv_path="reports/latest.csv",
+        briefing_path="reports/briefing.md",
+        dashboard_html="dist/dashboard/index.html",
+        dashboard_db="dist/dashboard/aqsp.db",
+        paper_ledger="data/paper_trades.jsonl",
+        notify=False,
+        dry_run=False,
+        enable_debate=False,
+    )
+
+    result = daily_pipeline.run_pipeline(config)
+
+    assert result.overall_success is True
+    assert executed == [
+        "数据更新",
+        "策略运行",
+        "收盘复盘",
+        "预测验证",
+        "自适应学习",
+        "报告生成",
+        "Dashboard刷新",
+        "数据清理",
+    ]

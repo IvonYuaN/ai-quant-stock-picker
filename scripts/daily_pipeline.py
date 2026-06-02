@@ -588,8 +588,6 @@ def run_pipeline(config: PipelineConfig) -> PipelineResult:
     pipeline_steps: list[tuple[str, Any]] = [
         ("数据更新", lambda: _step_update_data(config, logger)),
         ("策略运行", lambda: _step_run_strategy(config, logger)),
-        ("早盘打板", lambda: _step_morning_breakout(config, logger)),
-        ("尾盘溢价", lambda: _step_closing_premium(config, logger)),
         ("收盘复盘", lambda: _step_closing_review(config, logger)),
         ("预测验证", lambda: _step_validate_predictions(config, logger)),
         ("自适应学习", lambda: _step_adaptive_learning(config, logger)),
