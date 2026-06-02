@@ -5,6 +5,7 @@ import pytest
 from aqsp.utils.llm_safe import (
     choose_siliconflow_model,
     get_siliconflow_free_models,
+    _model_env_for_provider,
 )
 
 
@@ -49,3 +50,12 @@ def test_choose_siliconflow_model_prefers_provider_specific_env_when_present(
 
     assert choice.model == "THUDM/glm-4-9b-chat"
     assert choice.source == "env"
+
+
+def test_model_env_for_provider_prefers_agnes_model_over_global(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("LLM_MODEL", "global-fallback-model")
+    monkeypatch.setenv("AGNES_MODEL", "agnes-2.0-flash")
+
+    assert _model_env_for_provider("agnes") == "agnes-2.0-flash"

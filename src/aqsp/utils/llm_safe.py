@@ -3,6 +3,7 @@
 支持多种免费/低价模型 API：
 - 智谱GLM-4.7-Flash (推荐首选)
 - 通义千问 qwen-turbo (新用户500万tokens免费180天)
+- Agnes AI agnes-2.0-flash (OpenAI 兼容接口)
 - 硅基流动 (注册送14元，部分模型永久免费)
 - DeepSeek (不免费，2元/百万tokens，效果最好)
 - OpenAI 兼容 / Anthropic / 自定义端点
@@ -190,7 +191,7 @@ def llm_call_or_fallback(
     """可降级 LLM 调用。任何失败都返回 fallback，绝不抛异常给上游。
 
     环境变量配置优先级：
-    1. LLM_PROVIDER (deepseek/qwen/glm/siliconflow/openai/anthropic/custom)
+    1. LLM_PROVIDER (deepseek/qwen/glm/agnes/siliconflow/openai/anthropic/custom)
     2. 对应提供商的 API_KEY
     3. LLM_BASE_URL (可选，自定义端点)
     4. LLM_MODEL (可选，指定模型名)
@@ -270,13 +271,22 @@ def _make_client() -> object:
     支持的 provider:
     - glm (默认，智谱GLM-4.7-Flash)
     - qwen (阿里云通义千问，新用户500万tokens)
+    - agnes (Agnes AI，OpenAI 兼容接口)
     - siliconflow (硅基流动，注册送14元)
     - deepseek (不免费，2元/百万tokens)
     - openai / anthropic / custom
     """
     provider = os.getenv("LLM_PROVIDER", "glm").lower()
 
-    if provider in ["deepseek", "qwen", "glm", "siliconflow", "custom", "openai"]:
+    if provider in [
+        "deepseek",
+        "qwen",
+        "glm",
+        "agnes",
+        "siliconflow",
+        "custom",
+        "openai",
+    ]:
         # 使用 OpenAI SDK 兼容的所有服务
         import openai
 
@@ -291,6 +301,8 @@ def _make_client() -> object:
             base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
         elif provider == "glm" and not base_url:
             base_url = "https://open.bigmodel.cn/api/paas/v4/"
+        elif provider == "agnes" and not base_url:
+            base_url = "https://apihub.agnes-ai.com/v1"
         elif provider == "siliconflow" and not base_url:
             base_url = "https://api.siliconflow.cn/v1"
         elif provider == "custom" and not base_url:
@@ -324,6 +336,7 @@ def _invoke(
             model = _model_env_for_provider(provider) or {
                 "glm": "glm-4.7-flash",
                 "qwen": "qwen-turbo",
+                "agnes": "agnes-2.0-flash",
                 "deepseek": "deepseek-chat",
                 "openai": "gpt-4o-mini",
                 "anthropic": "claude-3-5-haiku-20241022",
