@@ -34,6 +34,13 @@ def _resolve_decision_label(pick: PickResult) -> str:
     return "仅观察"
 
 
+def _display_name(pick: PickResult) -> str:
+    name = pick.name.strip()
+    if not name or name == pick.symbol:
+        return pick.symbol
+    return f"{pick.symbol} {name}"
+
+
 def _format_final_decision_board(
     picks: list[PickResult],
     decision_map: dict[str, Any],
@@ -47,7 +54,7 @@ def _format_final_decision_board(
         label = _resolve_decision_label(pick)
         reason = "；".join(pick.reasons[:2]) if pick.reasons else "无"
         lines.append(
-            f"- Top {idx}: {pick.symbol} {pick.name} | {label} | 评分 {pick.score} | PM {action}"
+            f"- Top {idx}: {_display_name(pick)} | {label} | 评分 {pick.score} | PM {action}"
         )
         lines.append(f"  参考: {reason}")
     lines.append("")
@@ -137,7 +144,7 @@ def to_markdown(
     lines.extend(_format_final_decision_board(picks, decision_map))
 
     for idx, pick in enumerate(picks, 1):
-        display = f"{pick.symbol} {pick.name}".strip()
+        display = _display_name(pick)
         lines.extend(
             [
                 f"## {idx}. {display}",

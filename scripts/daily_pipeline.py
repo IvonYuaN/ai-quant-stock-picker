@@ -588,8 +588,8 @@ def _step_auto_evolution(
 
     exit_code = main(argv)
     if exit_code != 0:
-        logger.warning("  自进化执行失败或无数据，exit_code=%s", exit_code)
-        return {"exit_code": exit_code, "evolved": False}
+        logger.info("  自进化本轮未产出结果，exit_code=%s", exit_code)
+        return {"exit_code": exit_code, "evolved": False, "skipped": True}
 
     payload: dict[str, Any] = {}
     if output_path.exists():

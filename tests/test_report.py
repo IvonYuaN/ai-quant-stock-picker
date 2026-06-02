@@ -151,3 +151,25 @@ def test_report_renders_final_decision_board_first() -> None:
     assert "## 最终决策看板" in markdown
     assert "- Top 1: 600900 长江电力 | 观察候选 | 评分 76 | PM promote" in markdown
     assert markdown.index("## 最终决策看板") < markdown.index("## 1. 600900 长江电力")
+
+
+def test_report_avoids_repeating_symbol_as_name() -> None:
+    pick = PickResult(
+        symbol="600900",
+        name="600900",
+        date="2026-05-29",
+        close=27.75,
+        score=76,
+        rating="buy_candidate",
+        entry_type="relative_strength",
+        ideal_buy=27.75,
+        stop_loss=26.1,
+        take_profit=31.0,
+        position="30%-50%",
+        reasons=("趋势保持",),
+    )
+
+    markdown = to_markdown([pick])
+
+    assert "## 1. 600900\n" in markdown
+    assert "600900 600900" not in markdown

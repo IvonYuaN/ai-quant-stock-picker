@@ -210,8 +210,9 @@ class TestBriefingGenerator:
             frames={},
         )
         next_sec = next(s for s in briefing.sections if s.title == "明日重点")
-        assert "无可执行重点标的" in next_sec.content
-        assert "600519" not in next_sec.content
+        assert "暂无可执行重点标的" in next_sec.content
+        assert "候选观察池" in next_sec.content
+        assert "600519" in next_sec.content
         assert "avoid" not in next_sec.content
 
     def test_next_day_section_excludes_watch_picks(self):
@@ -221,8 +222,9 @@ class TestBriefingGenerator:
             frames={},
         )
         next_sec = next(s for s in briefing.sections if s.title == "明日重点")
-        assert "无可执行重点标的" in next_sec.content
-        assert "600519" not in next_sec.content
+        assert "暂无可执行重点标的" in next_sec.content
+        assert "候选观察池" in next_sec.content
+        assert "600519" in next_sec.content
 
     def test_render_template(self):
         gen = BriefingGenerator()
@@ -238,7 +240,8 @@ class TestBriefingGenerator:
         briefing = gen.generate(picks=picks, frames={})
         rendered = gen.render_template(briefing, picks)
         next_day = rendered.split("## 明日重点", maxsplit=1)[1]
-        assert "600519" not in next_day
+        assert "候选观察池" in next_day
+        assert "600519" in next_day
         assert "avoid" not in next_day
 
 
@@ -416,7 +419,17 @@ class TestGenerateSmartSummary:
         picks = [_make_pick(symbol="600519", name="贵州茅台", rating="avoid")]
         briefing = gen.generate(picks=picks, frames={})
         summary = briefing.generate_smart_summary()
-        assert "可执行标的" not in summary
+        assert "暂无可执行标的" in summary
+
+    def test_next_day_section_mentions_watchlist_when_no_tradable_pick(self):
+        gen = BriefingGenerator()
+        briefing = gen.generate(
+            picks=[_make_pick(symbol="600519", name="贵州茅台", rating="watch")],
+            frames={},
+        )
+        next_sec = next(s for s in briefing.sections if s.title == "明日重点")
+        assert "候选观察池" in next_sec.content
+        assert "600519 贵州茅台" in next_sec.content
 
     def test_debate_results_lower_adjustment(self):
         from aqsp.briefing.debate import DebateResult

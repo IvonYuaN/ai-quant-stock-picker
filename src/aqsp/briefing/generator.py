@@ -287,6 +287,8 @@ class Briefing:
             parts.append(f"筛出{candidate_count}只候选")
         if actionable_count > 0:
             parts.append(f"{actionable_count}只可执行")
+        elif candidate_count > 0:
+            parts.append("暂无可执行标的")
         if risk_count > 0:
             parts.append(f"{risk_count}条风险提示")
         if not parts:
@@ -444,7 +446,8 @@ class BriefingGenerator:
             lines.append("今日无候选标的。")
             return BriefingSection(title="候选证据链", content="\n".join(lines))
         for pick in picks:
-            lines.append(f"### {pick.symbol} {pick.name} (评分: {pick.score})")
+            display = pick.symbol if not pick.name or pick.name == pick.symbol else f"{pick.symbol} {pick.name}"
+            lines.append(f"### {display} (评分: {pick.score})")
             if pick.strategies:
                 lines.append(f"- 命中策略: {', '.join(pick.strategies)}")
             for reason in pick.reasons:
@@ -487,14 +490,24 @@ class BriefingGenerator:
         lines: list[str] = []
         tradable_picks = [p for p in picks if is_tradable_rating(p.rating)]
         if not tradable_picks:
-            lines.append("无可执行重点标的；今日候选均为回避/观察，不进入虚拟买入。")
+            if picks:
+                names = "、".join(
+                    p.symbol if not p.name or p.name == p.symbol else f"{p.symbol} {p.name}"
+                    for p in picks[:3]
+                )
+                lines.append(
+                    f"暂无可执行重点标的；候选观察池: {names}。今日候选均为回避/观察，不进入虚拟买入。"
+                )
+            else:
+                lines.append("无可执行重点标的；今日无候选，不进入虚拟买入。")
             return BriefingSection(title="明日重点", content="\n".join(lines))
         for pick in tradable_picks[:5]:
             entry = pick.ideal_buy
             stop = pick.stop_loss
             tp = pick.take_profit
+            display = pick.symbol if not pick.name or pick.name == pick.symbol else f"{pick.symbol} {pick.name}"
             lines.append(
-                f"- **{pick.symbol} {pick.name}**: "
+                f"- **{display}**: "
                 f"参考买点 {entry} / 止损 {stop} / 止盈 {tp} / 仓位 {pick.position}"
             )
         lines.append("")
