@@ -112,6 +112,12 @@ bash /opt/aqsp/scripts/server_sync_and_run.sh
 crontab -l
 ```
 
+服务器状态总览：
+
+```bash
+bash /opt/aqsp/scripts/server_status.sh
+```
+
 ## 本地如何看 8080
 
 推荐继续用 SSH 隧道：
