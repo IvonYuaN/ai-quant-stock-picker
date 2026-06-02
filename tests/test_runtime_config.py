@@ -8,6 +8,7 @@ def test_load_runtime_config_reads_debate_flag(monkeypatch) -> None:
     monkeypatch.setenv("AQSP_NOTIFY", "true")
     monkeypatch.setenv("AQSP_ENABLE_AUTO_EVOLUTION", "true")
     monkeypatch.setenv("AQSP_WALKFORWARD_SYMBOLS", "000915,000921")
+    monkeypatch.setenv("AQSP_RESEARCH_ENGINE", "akquant")
 
     config = load_runtime_config()
 
@@ -15,6 +16,7 @@ def test_load_runtime_config_reads_debate_flag(monkeypatch) -> None:
     assert config.notify is True
     assert config.enable_auto_evolution is True
     assert config.walkforward_symbols == ("000915", "000921")
+    assert config.research_engine == "akquant"
 
 
 def test_load_debate_runtime_config_reads_language_roles_and_llm(monkeypatch) -> None:

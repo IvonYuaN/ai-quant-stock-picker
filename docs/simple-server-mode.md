@@ -46,6 +46,7 @@ AQSP_ALLOW_ONLINE_FALLBACK=true
 
 AQSP_SYMBOLS=600519,300750,000001,601318,600036
 AQSP_WALKFORWARD_SYMBOLS=000915,000921,000923,000930,000932,000937,000938,000950,000951,000958
+AQSP_RESEARCH_ENGINE=auto
 AQSP_MODE=close
 AQSP_LIMIT=10
 AQSP_MAX_UNIVERSE=50
@@ -88,6 +89,7 @@ AQSP_ENABLE_AUTO_EVOLUTION=false
 - `GLM_API_KEY` 用于智谱；`LLM_PROVIDER=glm` 时默认走 `GLM-4.7-Flash`。
 - `AQSP_NOTIFY=true` 后，日终 `daily_pipeline.sh` 会自动带 `--notify`。
 - `AQSP_SYMBOLS` 给实盘/日报链路用；`AQSP_WALKFORWARD_SYMBOLS` 单独给 walk-forward，用历史库里覆盖完整的票，别混用。
+- `AQSP_RESEARCH_ENGINE` 现在支持 `auto / builtin / akquant`。当前 `akquant` 先作为长期接入基座的 compat 路线，CLI 和配置合同已经固定，后续可以在不改上层调用的前提下替换成原生桥接。
 - `AKShare` 适合做研究补充和字段补数，不建议当短线高频主源；现在运行时会把它放在在线混合源靠后位置，并对全市场实时快照做最小间隔与失败冷却。
 - 选股推荐通知仍受 walk-forward 双门 gate 保护；收盘复盘、监控告警、策略自进化通知不依赖这道 gate。
 - `AQSP_ENABLE_DEBATE=false` 表示默认不跑多 agent 讨论；要开就改成 `true`。

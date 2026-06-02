@@ -289,12 +289,20 @@ def create_walkforward_evaluator(
     end: str,
     train_days: int = 120,
     test_days: int = 30,
+    engine: str = "auto",
 ) -> Callable[[dict[str, float]], float]:
-    from aqsp.backtest.walk_forward import WalkForwardTester
+    from aqsp.research_engine import WalkForwardEngineConfig, resolve_walkforward_engine
     from aqsp.strategies.composite import CompositeStrategy
     from aqsp.strategies.thresholds import load_thresholds
 
     base_thresholds = load_thresholds()
+    walk_engine, _ = resolve_walkforward_engine(engine)
+    engine_cfg = WalkForwardEngineConfig(
+        train_days=train_days,
+        test_days=test_days,
+        purge_days=5,
+        horizon_days=3,
+    )
 
     def evaluate(params: dict[str, float]) -> float:
         from dataclasses import replace
@@ -318,13 +326,6 @@ def create_walkforward_evaluator(
             thresholds = replace(thresholds, scoring=new_scoring)
 
         strategy = CompositeStrategy(thresholds=thresholds)
-        tester = WalkForwardTester(
-            strategy=strategy,
-            train_period_days=train_days,
-            test_period_days=test_days,
-            purge_days=5,
-            horizon_days=3,
-        )
 
         filtered: dict[str, pd.DataFrame] = {}
         for sym in symbols:
@@ -339,7 +340,13 @@ def create_walkforward_evaluator(
         if len(filtered) < 5:
             return -float("inf")
 
-        result = tester.run(filtered, start_date=start, end_date=end)
+        result = walk_engine.run(
+            strategy,
+            filtered,
+            start_date=start,
+            end_date=end,
+            config=engine_cfg,
+        )
         return result.overall.sharpe_ratio
 
     return evaluate

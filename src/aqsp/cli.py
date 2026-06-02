@@ -58,6 +58,7 @@ from aqsp.models import ScreeningConfig
 from aqsp.notifier import notify_markdown
 from aqsp.notifier import prepend_source_status_banner
 from aqsp.research.summary import load_research_summary
+from aqsp.research_engine import ENGINE_CHOICES, WalkForwardEngineConfig, resolve_walkforward_engine
 from aqsp.regime.detector import RegimeDetector
 from aqsp.report import to_dataframe, to_markdown
 from aqsp.risk.circuit_breaker import CircuitBreaker
@@ -241,6 +242,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     wf.add_argument("--report", default="docs/walkforward-2026-05.md")
     wf.add_argument(
+        "--engine",
+        choices=ENGINE_CHOICES,
+        default="",
+        help="研究引擎: auto, builtin, akquant",
+    )
+    wf.add_argument(
         "--source",
         choices=WALKFORWARD_SOURCE_CHOICES,
         default="sqlite_db",
@@ -348,6 +355,12 @@ def main(argv: list[str] | None = None) -> int:
         "--source",
         choices=WALKFORWARD_SOURCE_CHOICES,
         default="sqlite_db",
+    )
+    optimize_cmd.add_argument(
+        "--engine",
+        choices=ENGINE_CHOICES,
+        default="",
+        help="研究引擎: auto, builtin, akquant",
     )
     optimize_cmd.add_argument("--output", default="data/optimization_result.json")
     optimize_cmd.add_argument(
@@ -2218,7 +2231,6 @@ def run_dashboard(args: argparse.Namespace) -> int:
 def run_walkforward(args: argparse.Namespace) -> int:
     import logging
     import sys
-    from aqsp.backtest.walk_forward import WalkForwardTester
     from aqsp.core.time import now_shanghai, today_shanghai
     from aqsp.data import load_csv
     from aqsp.strategies.composite import CompositeStrategy
@@ -2404,21 +2416,38 @@ def run_walkforward(args: argparse.Namespace) -> int:
         print(f"⚠️  使用 --min-score={args.min_score} 覆盖 thresholds.yaml 默认值")
 
     strategy = CompositeStrategy(thresholds=thresholds)
-
-    tester = WalkForwardTester(
-        strategy=strategy,
-        train_period_days=args.train_days,
-        test_period_days=args.test_days,
+    runtime_cfg = load_runtime_config()
+    requested_engine = (args.engine or runtime_cfg.research_engine or "auto").strip()
+    engine, resolution = resolve_walkforward_engine(requested_engine)
+    engine_cfg = WalkForwardEngineConfig(
+        train_days=args.train_days,
+        test_days=args.test_days,
         purge_days=args.purge_days,
         horizon_days=args.horizon_days or 3,
         use_tiered_stop=getattr(args, "tiered_stop", False),
     )
 
     print("开始 walk-forward 回测...")
+    print(
+        f"研究引擎: requested={resolution.requested} resolved={resolution.resolved} "
+        f"mode={resolution.mode}"
+    )
+    print(f"引擎说明: {resolution.message}")
     if logger:
-        logger.info("Walk-forward 回测开始...")
+        logger.info(
+            "Walk-forward 回测开始... engine requested=%s resolved=%s mode=%s",
+            resolution.requested,
+            resolution.resolved,
+            resolution.mode,
+        )
 
-    result = tester.run(filtered, start_date=args.start, end_date=args.end)
+    result = engine.run(
+        strategy,
+        filtered,
+        start_date=args.start,
+        end_date=args.end,
+        config=engine_cfg,
+    )
 
     regime_counts: dict[str, int] = {}
     if hasattr(result, "regime_winrates") and result.regime_winrates:
@@ -2454,6 +2483,7 @@ def run_walkforward(args: argparse.Namespace) -> int:
         f"**训练窗口**: {args.train_days} 天",
         f"**测试窗口**: {args.test_days} 天",
         f"**Purge Gap**: {args.purge_days} 天",
+        f"**研究引擎**: {resolution.resolved} ({resolution.mode})",
         "",
         "## 整体指标",
         "",
@@ -2758,6 +2788,7 @@ def run_optimize(args: argparse.Namespace) -> int:
         frames=frames,
         start=args.start,
         end=args.end,
+        engine=args.engine or load_runtime_config().research_engine,
     )
 
     print(f"开始 {args.method} 参数优化，trials={args.trials}...")

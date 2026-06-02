@@ -216,6 +216,30 @@ class TestCLIMinScoreParam:
         thresholds = load_thresholds()
         assert thresholds.composite.min_total_score > 0
 
+    def test_walkforward_parser_reads_engine(self, monkeypatch):
+        from aqsp.cli import main
+        import aqsp.cli as cli_mod
+
+        def mock_run_walkforward(args):
+            assert args.engine == "akquant"
+            return 0
+
+        monkeypatch.setattr(cli_mod, "run_walkforward", mock_run_walkforward)
+        result = main(
+            [
+                "walkforward",
+                "--engine",
+                "akquant",
+                "--symbols",
+                "600519",
+                "--start",
+                "2024-01-01",
+                "--end",
+                "2024-06-30",
+            ]
+        )
+        assert result == 0
+
 
 class TestCLICachePathParam:
     def test_cache_path_param_accepted(self, monkeypatch):
