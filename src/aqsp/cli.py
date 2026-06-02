@@ -2164,11 +2164,11 @@ def run_scheduled(args: argparse.Namespace) -> int:
         markdown += validation_text
 
     anomaly_text = format_anomaly_alerts(anomaly_alerts)
-    if anomaly_text:
+    if critical_alerts or warning_alerts:
         markdown += "\n\n" + anomaly_text
 
     freshness_text = format_freshness_report(freshness_reports)
-    if freshness_text:
+    if stale_reports:
         markdown += "\n\n" + freshness_text
 
     if diff is not None and (diff.new_picks or diff.removed_picks or diff.rank_changes):
@@ -2181,12 +2181,11 @@ def run_scheduled(args: argparse.Namespace) -> int:
 
         markdown += "\n\n## 板块集中度\n" + format_concentration(concentration)
 
-    if correlation_result is not None and correlation_result.matrix:
+    if correlation_result is not None and correlation_result.high_corr_pairs:
         from aqsp.portfolio.correlation import format_correlation
 
         markdown += "\n\n## 候选股相关性\n" + format_correlation(correlation_result)
-        if correlation_result.high_corr_pairs:
-            markdown += "\n\n> ⚠️ 存在高相关性配对，分散化不足，建议关注组合风险\n"
+        markdown += "\n\n> ⚠️ 存在高相关性配对，分散化不足，建议关注组合风险\n"
 
     try:
         from aqsp.ledger.base import ledger_rows_to_frame, read_ledger
@@ -2196,7 +2195,7 @@ def run_scheduled(args: argparse.Namespace) -> int:
         decay_alerts = decay_detector.detect(
             ledger_rows_to_frame(read_ledger(args.ledger))
         )
-        if decay_alerts:
+        if decay_alerts and not is_cold_start:
             markdown += "\n\n" + format_decay_alerts(decay_alerts)
             print(format_decay_alerts(decay_alerts))
     except Exception:

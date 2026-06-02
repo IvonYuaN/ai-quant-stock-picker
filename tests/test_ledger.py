@@ -16,6 +16,7 @@ from aqsp.ledger import (
     strategy_weights_from_ledger,
     validate_predictions,
 )
+from aqsp.ledger.learner import format_decay_alerts
 from aqsp.models import PickResult
 
 
@@ -296,6 +297,30 @@ def test_decay_detector_accepts_naive_signal_dates() -> None:
     alerts = StrategyDecayDetector(lookback_days=30).detect(df)
 
     assert isinstance(alerts, list)
+
+
+def test_decay_detector_formats_lookback_days_when_alert_triggered() -> None:
+    df = pd.DataFrame(
+        [
+            {
+                "status": "validated",
+                "signal_date": "2026-06-01",
+                "return_pct": -3.0,
+                "strategies": ["volume_breakout"],
+            },
+            {
+                "status": "validated",
+                "signal_date": "2026-06-02",
+                "return_pct": -2.0,
+                "strategies": ["volume_breakout"],
+            },
+        ]
+    )
+
+    alerts = StrategyDecayDetector(lookback_days=30).detect(df)
+    text = format_decay_alerts(alerts)
+
+    assert "近30天胜率" in text
 
 
 def test_validation_marks_limit_up_at_open_not_executable(tmp_path) -> None:

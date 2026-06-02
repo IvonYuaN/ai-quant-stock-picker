@@ -118,3 +118,36 @@ def test_report_hides_noop_portfolio_manager_decision() -> None:
     )
 
     assert "### Portfolio Manager" not in markdown
+
+
+def test_report_renders_final_decision_board_first() -> None:
+    pick = PickResult(
+        symbol="600900",
+        name="长江电力",
+        date="2026-05-29",
+        close=27.75,
+        score=76,
+        rating="buy_candidate",
+        entry_type="relative_strength",
+        ideal_buy=27.75,
+        stop_loss=26.1,
+        take_profit=31.0,
+        position="30%-50%",
+        reasons=("趋势保持", "量价配合"),
+    )
+
+    markdown = to_markdown(
+        [pick],
+        portfolio_decisions=[
+            PortfolioDecision(
+                symbol="600900",
+                action="promote",
+                score_delta=4.0,
+                reasons=("多Agent辩论支持上调优先级",),
+            )
+        ],
+    )
+
+    assert "## 最终决策看板" in markdown
+    assert "- Top 1: 600900 长江电力 | 观察候选 | 评分 76 | PM promote" in markdown
+    assert markdown.index("## 最终决策看板") < markdown.index("## 1. 600900 长江电力")

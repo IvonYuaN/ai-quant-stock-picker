@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import pandas as pd
 import sys
 import traceback
 from dataclasses import dataclass, field
@@ -112,7 +113,7 @@ def _run_step(
 
         result = fn()
         elapsed = time.monotonic() - start
-        logger.info("✓ 完成: %s (%.1fs)", name, elapsed)
+        logger.info("✓ 完成步骤: %s (%.1fs)", name, elapsed)
         if isinstance(result, dict):
             return StepResult(
                 name=name, success=True, duration_seconds=elapsed, details=result
@@ -518,15 +519,35 @@ def _step_adaptive_learning(
         return {"skipped": True}
 
     ledger_df = ledger_rows_to_frame(rows)
+    independent_signal_days = 0
+    if not ledger_df.empty and "signal_date" in ledger_df.columns:
+        signal_dates = pd.to_datetime(
+            ledger_df["signal_date"], errors="coerce"
+        ).dropna()
+        independent_signal_days = signal_dates.dt.date.nunique()
+
     learner = PerformanceLearner()
     weights = learner.compute_weights(ledger_df)
 
-    result: dict[str, Any] = {"weights_updated": bool(weights)}
+    result: dict[str, Any] = {
+        "weights_updated": bool(weights),
+        "independent_signal_days": independent_signal_days,
+    }
     if weights:
         logger.info("  学习到的策略权重调整:")
         for k, v in sorted(weights.items()):
             logger.info("    %s: %.3f", k, v)
         result["weights"] = {k: round(v, 3) for k, v in weights.items()}
+
+    if independent_signal_days < learner.config.min_independent_signal_days:
+        logger.info(
+            "  冷启动未满: %d/%d 个独立信号日，跳过策略衰减告警",
+            independent_signal_days,
+            learner.config.min_independent_signal_days,
+        )
+        result["decay_alerts"] = 0
+        result["cold_start_skip"] = True
+        return result
 
     decay_detector = StrategyDecayDetector()
     decay_alerts = decay_detector.detect(ledger_df)

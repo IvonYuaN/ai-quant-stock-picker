@@ -26,6 +26,34 @@ RESULT_COLUMNS = [
 ]
 
 
+def _resolve_decision_label(pick: PickResult) -> str:
+    if pick.rating == "strong_buy_candidate":
+        return "重点关注"
+    if pick.rating == "buy_candidate":
+        return "观察候选"
+    return "仅观察"
+
+
+def _format_final_decision_board(
+    picks: list[PickResult],
+    decision_map: dict[str, Any],
+) -> list[str]:
+    if not picks:
+        return []
+    lines = ["## 最终决策看板", ""]
+    for idx, pick in enumerate(picks[:3], 1):
+        decision = decision_map.get(pick.symbol)
+        action = getattr(decision, "action", "keep") if decision is not None else "keep"
+        label = _resolve_decision_label(pick)
+        reason = "；".join(pick.reasons[:2]) if pick.reasons else "无"
+        lines.append(
+            f"- Top {idx}: {pick.symbol} {pick.name} | {label} | 评分 {pick.score} | PM {action}"
+        )
+        lines.append(f"  参考: {reason}")
+    lines.append("")
+    return lines
+
+
 def _format_portfolio_decision(decision: Any) -> str:
     action = getattr(decision, "action", "keep")
     delta = getattr(decision, "score_delta", 0.0)
@@ -106,6 +134,7 @@ def to_markdown(
         if portfolio_decisions
         else {}
     )
+    lines.extend(_format_final_decision_board(picks, decision_map))
 
     for idx, pick in enumerate(picks, 1):
         display = f"{pick.symbol} {pick.name}".strip()

@@ -324,6 +324,7 @@ class PerformanceLearner:
 @dataclass(frozen=True)
 class StrategyDecayAlert:
     strategy_name: str
+    lookback_days: int
     decay_days: int
     recent_win_rate: float
     recent_avg_return: float
@@ -385,6 +386,7 @@ class StrategyDecayDetector:
                 alerts.append(
                     StrategyDecayAlert(
                         strategy_name=strategy,
+                        lookback_days=self.lookback_days,
                         decay_days=decay_days,
                         recent_win_rate=round(win_rate, 4),
                         recent_avg_return=round(avg_return, 6),
@@ -422,7 +424,7 @@ def format_decay_alerts(alerts: list[StrategyDecayAlert]) -> str:
         )
         lines.append(
             f"- {emoji} **{alert.strategy_name}**: "
-            f"近{alert.lookback_days if hasattr(alert, 'lookback_days') else ''}天胜率 {alert.recent_win_rate:.1%}, "
+            f"近{alert.lookback_days}天胜率 {alert.recent_win_rate:.1%}, "
             f"均收益 {alert.recent_avg_return:+.2%}, "
             f"连续{alert.decay_days}天亏损"
         )

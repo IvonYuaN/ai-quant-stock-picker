@@ -192,6 +192,9 @@ def test_adaptive_learning_converts_rows_to_dataframe(
     monkeypatch.setattr("aqsp.ledger.base.read_ledger", lambda _path: rows)
 
     class FakeLearner:
+        def __init__(self):
+            self.config = type("Cfg", (), {"min_independent_signal_days": 14})()
+
         def compute_weights(self, ledger_df: pd.DataFrame) -> dict[str, float]:
             assert isinstance(ledger_df, pd.DataFrame)
             return {"volume_breakout": 1.1}
@@ -235,6 +238,81 @@ def test_adaptive_learning_converts_rows_to_dataframe(
     assert result["weights_updated"] is True
     assert result["weights"] == {"volume_breakout": 1.1}
     assert result["decay_alerts"] == 0
+    assert result["cold_start_skip"] is True
+
+
+def test_adaptive_learning_skips_decay_alerts_during_cold_start(
+    monkeypatch, tmp_path: Path, caplog
+) -> None:
+    daily_pipeline = _load_daily_pipeline_module()
+    ledger_path = tmp_path / "predictions.jsonl"
+    ledger_path.write_text("placeholder\n", encoding="utf-8")
+
+    rows = [
+        {
+            "status": "validated",
+            "signal_date": "2026-06-01",
+            "return_pct": -1.2,
+            "strategies": ["volume_breakout"],
+        },
+        {
+            "status": "validated",
+            "signal_date": "2026-06-02",
+            "return_pct": -0.8,
+            "strategies": ["volume_breakout"],
+        },
+    ]
+
+    monkeypatch.setattr("aqsp.ledger.base.read_ledger", lambda _path: rows)
+
+    class FakeLearner:
+        def __init__(self):
+            self.config = type("Cfg", (), {"min_independent_signal_days": 14})()
+
+        def compute_weights(self, ledger_df: pd.DataFrame) -> dict[str, float]:
+            return {"volume_breakout": 1.0}
+
+    class FakeDecayDetector:
+        def detect(self, ledger_df: pd.DataFrame) -> list[object]:
+            raise AssertionError("decay detector should be skipped during cold start")
+
+    monkeypatch.setattr("aqsp.ledger.learner.PerformanceLearner", FakeLearner)
+    monkeypatch.setattr("aqsp.ledger.learner.StrategyDecayDetector", FakeDecayDetector)
+
+    config = daily_pipeline.PipelineConfig(
+        project_root=tmp_path,
+        source="eastmoney",
+        mode="close",
+        limit=10,
+        max_universe=50,
+        min_avg_amount=50_000_000,
+        max_data_lag_days=3,
+        enable_online_factors=False,
+        allow_online_fallback=True,
+        ledger_path=ledger_path.name,
+        report_path="reports/latest.md",
+        csv_path="reports/latest.csv",
+        briefing_path="reports/briefing.md",
+        paper_report_path="reports/paper.md",
+        dashboard_html="dist/dashboard/index.html",
+        dashboard_db="dist/dashboard/aqsp.db",
+        paper_ledger="data/paper_trades.jsonl",
+        closing_review_path="reports/closing_review.md",
+        notify=False,
+        notify_mode="summary",
+        dry_run=False,
+        enable_debate=False,
+        enable_auto_evolution=False,
+    )
+
+    with caplog.at_level(logging.INFO):
+        result = daily_pipeline._step_adaptive_learning(
+            config, logging.getLogger("test")
+        )
+
+    assert result["decay_alerts"] == 0
+    assert result["cold_start_skip"] is True
+    assert "冷启动未满" in caplog.text
 
 
 def test_auto_evolution_step_reads_output_when_success(
@@ -400,6 +478,17 @@ def test_send_pipeline_digest_sends_summary_notification(
     assert "总体状态: 成功" in sent["content"]
     assert "数据源状态" in sent["content"]
     assert "复盘报告: reports/closing_review.md" in sent["content"]
+
+
+def test_run_step_logs_stable_completion_label(caplog) -> None:
+    daily_pipeline = _load_daily_pipeline_module()
+    logger = logging.getLogger("test.pipeline")
+
+    with caplog.at_level(logging.INFO, logger="test.pipeline"):
+        result = daily_pipeline._run_step("策略运行", lambda: {"ok": True}, logger)
+
+    assert result.success is True
+    assert "✓ 完成步骤: 策略运行" in caplog.text
 
 
 def test_closing_premium_uses_explicit_symbols(monkeypatch) -> None:
