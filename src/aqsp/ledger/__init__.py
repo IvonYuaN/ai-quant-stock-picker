@@ -3,6 +3,7 @@ from __future__ import annotations
 from aqsp.ledger.base import (
     ExecutionConfig,
     ValidationSummary,
+    ledger_rows_to_frame,
     read_ledger,
     write_ledger,
     append_predictions,
@@ -19,6 +20,7 @@ from aqsp.ledger.learner import (
 __all__ = [
     "ExecutionConfig",
     "ValidationSummary",
+    "ledger_rows_to_frame",
     "read_ledger",
     "write_ledger",
     "append_predictions",

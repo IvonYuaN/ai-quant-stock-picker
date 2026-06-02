@@ -111,6 +111,16 @@ class DataCache:
             return None
 
         df = df.sort_values("date").reset_index(drop=True)
+        if "symbol" not in df.columns:
+            df["symbol"] = symbol
+        if "name" not in df.columns:
+            df["name"] = symbol
+        if "suspended" in df.columns:
+            df["suspended"] = df["suspended"].fillna(0).astype(bool)
+        if "limit_up" in df.columns:
+            df["limit_up"] = df["limit_up"].fillna(0.0)
+        if "limit_down" in df.columns:
+            df["limit_down"] = df["limit_down"].fillna(0.0)
         return df
 
     def set_ohlcv(self, symbol: str, df: pd.DataFrame, source: str = "unknown") -> None:
@@ -172,6 +182,11 @@ class DataCache:
             return None
 
         df = df.sort_values("date").reset_index(drop=True)
+        df["symbol"] = code
+        df["name"] = code
+        df["suspended"] = False
+        df["limit_up"] = 0.0
+        df["limit_down"] = 0.0
         return df
 
     def set_index(self, code: str, df: pd.DataFrame, source: str = "unknown") -> None:

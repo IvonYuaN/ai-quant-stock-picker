@@ -10,6 +10,7 @@ from aqsp.ledger import (
     LearnerConfig,
     PerformanceLearner,
     append_predictions,
+    ledger_rows_to_frame,
     read_ledger,
     strategy_weights_from_ledger,
     validate_predictions,
@@ -99,6 +100,15 @@ def test_append_predictions_is_idempotent_for_same_signal_run(tmp_path) -> None:
     assert len(rows) == 1
     assert rows[0]["symbol"] == "600000"
     assert rows[0]["thresholds_version"] == "2026.05.29"
+
+
+def test_ledger_rows_to_frame_returns_dataframe_when_rows_exist() -> None:
+    rows = [{"symbol": "600000", "signal_date": "2026-01-02", "status": "pending"}]
+
+    df = ledger_rows_to_frame(rows)
+
+    assert list(df["symbol"]) == ["600000"]
+    assert list(df["status"]) == ["pending"]
 
 
 def test_validation_uses_next_open_not_signal_close(tmp_path) -> None:

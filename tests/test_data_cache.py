@@ -38,6 +38,38 @@ def test_cache_set_and_get_ohlcv(tmp_path):
     assert result is not None
     assert len(result) == 2
     assert result["close"].iloc[0] == 10.2
+    assert result["symbol"].iloc[0] == "600000"
+    assert result["name"].iloc[0] == "600000"
+
+
+def test_cache_get_index_restores_required_columns(tmp_path):
+    cache = DataCache(db_path=tmp_path / "test_cache.db")
+    df = pd.DataFrame(
+        {
+            "date": ["2026-05-27", "2026-05-28"],
+            "open": [4000.0, 4010.0],
+            "high": [4010.0, 4020.0],
+            "low": [3990.0, 4000.0],
+            "close": [4005.0, 4015.0],
+            "volume": [1000000, 1200000],
+            "amount": [10000000, 12000000],
+            "symbol": ["000300", "000300"],
+            "name": ["000300", "000300"],
+            "suspended": [False, False],
+            "limit_up": [0.0, 0.0],
+            "limit_down": [0.0, 0.0],
+        }
+    )
+    cache.set_index("000300", df, source="test")
+
+    result = cache.get_index("000300", date(2026, 5, 27), date(2026, 5, 28))
+
+    assert result is not None
+    assert result["symbol"].iloc[0] == "000300"
+    assert result["name"].iloc[0] == "000300"
+    assert bool(result["suspended"].iloc[0]) is False
+    assert result["limit_up"].iloc[0] == 0.0
+    assert result["limit_down"].iloc[0] == 0.0
 
 
 def test_cache_get_empty_when_not_cached(tmp_path):

@@ -1565,11 +1565,11 @@ def run_scheduled(args: argparse.Namespace) -> int:
     weights = strategy_weights_from_ledger(args.ledger)
 
     try:
-        from aqsp.ledger.base import read_ledger
+        from aqsp.ledger.base import ledger_rows_to_frame, read_ledger
         from aqsp.ledger.learner import PerformanceLearner
 
         learner = PerformanceLearner()
-        ledger_df = read_ledger(args.ledger)
+        ledger_df = ledger_rows_to_frame(read_ledger(args.ledger))
         learner_weights = learner.compute_weights(ledger_df)
         if learner_weights:
             for k, v in learner_weights.items():
@@ -2068,11 +2068,13 @@ def run_scheduled(args: argparse.Namespace) -> int:
             markdown += "\n\n> ⚠️ 存在高相关性配对，分散化不足，建议关注组合风险\n"
 
     try:
-        from aqsp.ledger.base import read_ledger
+        from aqsp.ledger.base import ledger_rows_to_frame, read_ledger
         from aqsp.ledger.learner import StrategyDecayDetector, format_decay_alerts
 
         decay_detector = StrategyDecayDetector()
-        decay_alerts = decay_detector.detect(read_ledger(args.ledger))
+        decay_alerts = decay_detector.detect(
+            ledger_rows_to_frame(read_ledger(args.ledger))
+        )
         if decay_alerts:
             markdown += "\n\n" + format_decay_alerts(decay_alerts)
             print(format_decay_alerts(decay_alerts))

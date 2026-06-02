@@ -81,6 +81,7 @@ def _setup_logging(verbose: bool, log_dir: Path) -> logging.Logger:
 
 def _is_trade_day(d: date) -> bool:
     from aqsp.core.time import is_trading_day
+
     return is_trading_day(d)
 
 
@@ -98,25 +99,39 @@ def _run_step(
         if dry_run:
             logger.info("  [dry-run] 跳过实际执行")
             elapsed = time.monotonic() - start
-            return StepResult(name=name, success=True, duration_seconds=elapsed, message="dry-run 跳过")
+            return StepResult(
+                name=name,
+                success=True,
+                duration_seconds=elapsed,
+                message="dry-run 跳过",
+            )
 
         result = fn()
         elapsed = time.monotonic() - start
         logger.info("✓ 完成: %s (%.1fs)", name, elapsed)
         if isinstance(result, dict):
-            return StepResult(name=name, success=True, duration_seconds=elapsed, details=result)
+            return StepResult(
+                name=name, success=True, duration_seconds=elapsed, details=result
+            )
         return StepResult(name=name, success=True, duration_seconds=elapsed)
 
     except (DataError, FreshnessError) as exc:
         elapsed = time.monotonic() - start
         logger.error("✗ 数据错误: %s - %s", name, exc)
-        return StepResult(name=name, success=False, duration_seconds=elapsed, message=f"数据错误: {exc}")
+        return StepResult(
+            name=name,
+            success=False,
+            duration_seconds=elapsed,
+            message=f"数据错误: {exc}",
+        )
 
     except Exception as exc:
         elapsed = time.monotonic() - start
         logger.error("✗ 失败: %s - %s", name, exc)
         logger.debug(traceback.format_exc())
-        return StepResult(name=name, success=False, duration_seconds=elapsed, message=str(exc))
+        return StepResult(
+            name=name, success=False, duration_seconds=elapsed, message=str(exc)
+        )
 
 
 def _step_update_data(config: PipelineConfig, logger: logging.Logger) -> dict[str, Any]:
@@ -134,8 +149,12 @@ def _step_update_data(config: PipelineConfig, logger: logging.Logger) -> dict[st
     if config.source in ("auto", "local_first", "multi"):
         if config.allow_online_fallback:
             cache = DataCache()
-            sources = [EastmoneySource(cache=cache), SinaSource(cache=cache),
-                       TencentSource(cache=cache), AkshareSource(cache=cache)]
+            sources = [
+                EastmoneySource(cache=cache),
+                SinaSource(cache=cache),
+                TencentSource(cache=cache),
+                AkshareSource(cache=cache),
+            ]
             source = MultiSource(
                 SourceFactory("tdx_vipdoc", TdxVipdocSource),
                 sources,
@@ -145,6 +164,7 @@ def _step_update_data(config: PipelineConfig, logger: logging.Logger) -> dict[st
             source = TdxVipdocSource()
     else:
         from aqsp.cli import _get_source
+
         source = _get_source(config.source)
 
     symbols = _resolve_symbols(config, logger)
@@ -167,6 +187,7 @@ def _resolve_symbols(config: PipelineConfig, logger: logging.Logger) -> list[str
     symbols_str = ""
     try:
         from aqsp.config import load_runtime_config
+
         env = load_runtime_config()
         symbols_str = ",".join(env.symbols)
     except Exception:
@@ -177,7 +198,11 @@ def _resolve_symbols(config: PipelineConfig, logger: logging.Logger) -> list[str
 
     try:
         from aqsp.cli import _get_source
-        if not config.allow_online_fallback and config.source in {"auto", "local_first"}:
+
+        if not config.allow_online_fallback and config.source in {
+            "auto",
+            "local_first",
+        }:
             from aqsp.data.tdx_vipdoc_source import TdxVipdocSource
 
             source = TdxVipdocSource()
@@ -194,27 +219,40 @@ def _resolve_symbols(config: PipelineConfig, logger: logging.Logger) -> list[str
         if hasattr(source, "get_available_symbols"):
             available = source.get_available_symbols()
             if available:
-                return available[:config.max_universe]
+                return available[: config.max_universe]
     except Exception as exc:
         logger.warning("  自动选取标的失败, 使用默认池: %s", exc)
 
     return list(DEFAULT_SYMBOLS)
 
 
-def _step_run_strategy(config: PipelineConfig, logger: logging.Logger) -> dict[str, Any]:
+def _step_run_strategy(
+    config: PipelineConfig, logger: logging.Logger
+) -> dict[str, Any]:
     logger.info("  执行选股策略 (mode=%s, limit=%d)", config.mode, config.limit)
 
     argv = [
         "run",
-        "--source", config.source,
-        "--mode", config.mode,
-        "--limit", str(config.limit),
-        "--max-universe", str(config.max_universe),
-        "--min-avg-amount", str(config.min_avg_amount),
-        "--max-data-lag-days", str(config.max_data_lag_days),
-        "--ledger", config.ledger_path,
-        "--report", config.report_path,
-        "--output-csv", config.csv_path,
+        "--source",
+        config.source,
+        "--mode",
+        config.mode,
+        "--limit",
+        str(config.limit),
+        "--max-universe",
+        str(config.max_universe),
+        "--min-avg-amount",
+        str(config.min_avg_amount),
+        "--max-data-lag-days",
+        str(config.max_data_lag_days),
+        "--benchmark-symbol",
+        "",
+        "--ledger",
+        config.ledger_path,
+        "--report",
+        config.report_path,
+        "--output-csv",
+        config.csv_path,
     ]
     if config.notify:
         argv.append("--notify")
@@ -224,6 +262,7 @@ def _step_run_strategy(config: PipelineConfig, logger: logging.Logger) -> dict[s
         argv.append("--enable-online-factors")
 
     from aqsp.cli import main
+
     exit_code = main(argv)
 
     if exit_code == 2:
@@ -239,43 +278,57 @@ def _step_run_strategy(config: PipelineConfig, logger: logging.Logger) -> dict[s
     return {"exit_code": 0, "report_size": report_size}
 
 
-def _step_morning_breakout(config: PipelineConfig, logger: logging.Logger) -> dict[str, Any]:
+def _step_morning_breakout(
+    config: PipelineConfig, logger: logging.Logger
+) -> dict[str, Any]:
     logger.info("  执行早盘打板策略")
 
     argv = [
         "morning-breakout",
-        "--source", config.source,
-        "--pool", "hs300",
-        "--top", "5",
+        "--source",
+        config.source,
+        "--pool",
+        "sh300",
+        "--top",
+        "5",
     ]
     if config.notify:
         argv.append("--notify")
 
     from aqsp.cli import main
+
     exit_code = main(argv)
 
     return {"exit_code": exit_code}
 
 
-def _step_closing_premium(config: PipelineConfig, logger: logging.Logger) -> dict[str, Any]:
+def _step_closing_premium(
+    config: PipelineConfig, logger: logging.Logger
+) -> dict[str, Any]:
     logger.info("  执行尾盘溢价策略")
 
     argv = [
         "closing-premium",
-        "--source", config.source,
-        "--pool", "hs300",
-        "--top", "5",
+        "--source",
+        config.source,
+        "--pool",
+        "sh300",
+        "--top",
+        "5",
     ]
     if config.notify:
         argv.append("--notify")
 
     from aqsp.cli import main
+
     exit_code = main(argv)
 
     return {"exit_code": exit_code}
 
 
-def _step_closing_review(config: PipelineConfig, logger: logging.Logger) -> dict[str, Any]:
+def _step_closing_review(
+    config: PipelineConfig, logger: logging.Logger
+) -> dict[str, Any]:
     logger.info("  执行收盘复盘")
 
     argv = [
@@ -285,12 +338,15 @@ def _step_closing_review(config: PipelineConfig, logger: logging.Logger) -> dict
         argv.append("--notify")
 
     from aqsp.cli import main
+
     exit_code = main(argv)
 
     return {"exit_code": exit_code}
 
 
-def _step_validate_predictions(config: PipelineConfig, logger: logging.Logger) -> dict[str, Any]:
+def _step_validate_predictions(
+    config: PipelineConfig, logger: logging.Logger
+) -> dict[str, Any]:
     logger.info("  验证历史预测结果")
 
     ledger_path = config.project_root / config.ledger_path
@@ -331,8 +387,12 @@ def _step_validate_predictions(config: PipelineConfig, logger: logging.Logger) -
             cache = DataCache()
             source = MultiSource(
                 SourceFactory("tdx_vipdoc", TdxVipdocSource),
-                [EastmoneySource(cache=cache), SinaSource(cache=cache),
-                 TencentSource(cache=cache), AkshareSource(cache=cache)],
+                [
+                    EastmoneySource(cache=cache),
+                    SinaSource(cache=cache),
+                    TencentSource(cache=cache),
+                    AkshareSource(cache=cache),
+                ],
                 validate_consistency=False,
             )
         else:
@@ -354,15 +414,20 @@ def _step_validate_predictions(config: PipelineConfig, logger: logging.Logger) -
     if validation.checked > 0:
         win_rate = validation.wins / validation.checked * 100
         logger.info("  验证完成: %d 条, 胜率 %.1f%%", validation.checked, win_rate)
-        logger.info("  平均收益: %.2f%%, 平均超额: %.2f%%",
-                     validation.avg_return_pct, validation.avg_excess_pct)
+        logger.info(
+            "  平均收益: %.2f%%, 平均超额: %.2f%%",
+            validation.avg_return_pct,
+            validation.avg_excess_pct,
+        )
     else:
         logger.info("  暂无可验证的历史预测")
 
     return result
 
 
-def _step_adaptive_learning(config: PipelineConfig, logger: logging.Logger) -> dict[str, Any]:
+def _step_adaptive_learning(
+    config: PipelineConfig, logger: logging.Logger
+) -> dict[str, Any]:
     logger.info("  自适应学习: 分析历史表现调整策略权重")
 
     ledger_path = config.project_root / config.ledger_path
@@ -370,16 +435,21 @@ def _step_adaptive_learning(config: PipelineConfig, logger: logging.Logger) -> d
         logger.info("  Ledger 不存在, 跳过学习")
         return {"skipped": True}
 
-    from aqsp.ledger.base import read_ledger
-    from aqsp.ledger.learner import PerformanceLearner, StrategyDecayDetector, format_decay_alerts
+    from aqsp.ledger.base import ledger_rows_to_frame, read_ledger
+    from aqsp.ledger.learner import (
+        PerformanceLearner,
+        StrategyDecayDetector,
+        format_decay_alerts,
+    )
 
     rows = read_ledger(str(ledger_path))
     if not rows:
         logger.info("  Ledger 为空, 跳过学习")
         return {"skipped": True}
 
+    ledger_df = ledger_rows_to_frame(rows)
     learner = PerformanceLearner()
-    weights = learner.compute_weights(rows)
+    weights = learner.compute_weights(ledger_df)
 
     result: dict[str, Any] = {"weights_updated": bool(weights)}
     if weights:
@@ -389,7 +459,7 @@ def _step_adaptive_learning(config: PipelineConfig, logger: logging.Logger) -> d
         result["weights"] = {k: round(v, 3) for k, v in weights.items()}
 
     decay_detector = StrategyDecayDetector()
-    decay_alerts = decay_detector.detect(rows)
+    decay_alerts = decay_detector.detect(ledger_df)
     if decay_alerts:
         logger.warning("  检测到策略衰减:")
         alert_text = format_decay_alerts(decay_alerts)
@@ -403,18 +473,23 @@ def _step_adaptive_learning(config: PipelineConfig, logger: logging.Logger) -> d
     return result
 
 
-def _step_generate_report(config: PipelineConfig, logger: logging.Logger) -> dict[str, Any]:
+def _step_generate_report(
+    config: PipelineConfig, logger: logging.Logger
+) -> dict[str, Any]:
     logger.info("  生成每日简报")
 
     argv_briefing = [
         "briefing",
-        "--ledger", config.ledger_path,
-        "--output", config.briefing_path,
+        "--ledger",
+        config.ledger_path,
+        "--output",
+        config.briefing_path,
     ]
     if config.notify:
         argv_briefing.append("--notify")
 
     from aqsp.cli import main
+
     exit_code = main(argv_briefing)
 
     briefing_path = config.project_root / config.briefing_path
@@ -425,7 +500,9 @@ def _step_generate_report(config: PipelineConfig, logger: logging.Logger) -> dic
     return {"exit_code": exit_code, "briefing_size": briefing_size}
 
 
-def _step_refresh_dashboard(config: PipelineConfig, logger: logging.Logger) -> dict[str, Any]:
+def _step_refresh_dashboard(
+    config: PipelineConfig, logger: logging.Logger
+) -> dict[str, Any]:
     logger.info("  刷新 Dashboard")
 
     try:
@@ -472,6 +549,7 @@ def _step_cleanup(config: PipelineConfig, logger: logging.Logger) -> dict[str, A
     log_dir = config.project_root / "logs" / "daily"
     if log_dir.exists():
         import time
+
         cutoff = time.time() - 30 * 86400
         removed_logs = 0
         for log_file in log_dir.glob("*.log"):
@@ -526,7 +604,9 @@ def run_pipeline(config: PipelineConfig) -> PipelineResult:
     duration = (finished - started).total_seconds()
     success_count = sum(1 for s in steps if s.success)
     total_count = len(steps)
-    overall_success = all(s.success for s in steps if s.name in ("数据更新", "策略运行"))
+    overall_success = all(
+        s.success for s in steps if s.name in ("数据更新", "策略运行")
+    )
 
     summary_lines = [
         f"跑批完成: {success_count}/{total_count} 步骤成功",
@@ -534,8 +614,10 @@ def run_pipeline(config: PipelineConfig) -> PipelineResult:
     ]
     for s in steps:
         status = "✓" if s.success else "✗"
-        summary_lines.append(f"  {status} {s.name}: {s.duration_seconds:.1f}s"
-                             + (f" - {s.message}" if s.message else ""))
+        summary_lines.append(
+            f"  {status} {s.name}: {s.duration_seconds:.1f}s"
+            + (f" - {s.message}" if s.message else "")
+        )
 
     summary = "\n".join(summary_lines)
     logger.info(summary)
@@ -552,15 +634,21 @@ def run_pipeline(config: PipelineConfig) -> PipelineResult:
 
 
 def _build_config(args: argparse.Namespace) -> PipelineConfig:
+    import os
+
     from aqsp.config import load_runtime_config
 
     env = load_runtime_config()
 
-    project_root = Path(args.project_root) if args.project_root else Path(__file__).resolve().parents[1]
+    project_root = (
+        Path(args.project_root)
+        if args.project_root
+        else Path(__file__).resolve().parents[1]
+    )
 
     return PipelineConfig(
         project_root=project_root,
-        source=args.source or "auto",
+        source=args.source or os.getenv("AQSP_SOURCE", "auto").strip() or "auto",
         mode=args.mode or env.mode,
         limit=args.limit or env.limit,
         max_universe=args.max_universe or env.max_universe,
@@ -605,7 +693,9 @@ def _write_result_file(result: PipelineResult, project_root: Path) -> None:
         ],
     }
 
-    result_file.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    result_file.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -617,14 +707,22 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--dry-run", action="store_true", help="试运行, 不实际执行策略")
     parser.add_argument("--verbose", action="store_true", help="详细日志输出")
     parser.add_argument("--notify", action="store_true", help="发送通知")
-    parser.add_argument("--enable-debate", action="store_true", help="启用多Agent辩论分析")
-    parser.add_argument("--enable-online-factors", action="store_true", help="启用在线因子")
+    parser.add_argument(
+        "--enable-debate", action="store_true", help="启用多Agent辩论分析"
+    )
+    parser.add_argument(
+        "--enable-online-factors", action="store_true", help="启用在线因子"
+    )
     parser.add_argument("--source", default="", help="数据源")
     parser.add_argument("--mode", default="", help="选股模式 (open/close)")
     parser.add_argument("--limit", type=int, default=0, help="候选数量")
     parser.add_argument("--max-universe", type=int, default=0, help="最大标的池")
-    parser.add_argument("--min-avg-amount", type=float, default=0, help="最低日均成交额")
-    parser.add_argument("--max-data-lag-days", type=int, default=0, help="最大数据延迟天数")
+    parser.add_argument(
+        "--min-avg-amount", type=float, default=0, help="最低日均成交额"
+    )
+    parser.add_argument(
+        "--max-data-lag-days", type=int, default=0, help="最大数据延迟天数"
+    )
     parser.add_argument("--ledger", default="", help="Ledger 文件路径")
     parser.add_argument("--report", default="", help="报告输出路径")
     parser.add_argument("--csv", default="", help="CSV 输出路径")

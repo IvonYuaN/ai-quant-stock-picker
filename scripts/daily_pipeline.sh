@@ -83,6 +83,7 @@ START_TIME=$(date +%s)
 set +e
 "${PYTHON_BIN}" "${PIPELINE_SCRIPT}" \
     --project-root "${PROJECT_ROOT}" \
+    --source "${AQSP_SOURCE:-auto}" \
     "$@" 2>&1 | tee -a "$RESULT_LOG"
 PIPELINE_EXIT_CODE=${PIPELINE_EXIT_CODE:-$?}
 set -e

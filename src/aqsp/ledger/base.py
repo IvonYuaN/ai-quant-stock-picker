@@ -43,6 +43,12 @@ def read_ledger(path: str | Path) -> list[dict]:
     return rows
 
 
+def ledger_rows_to_frame(rows: list[dict]) -> pd.DataFrame:
+    if not rows:
+        return pd.DataFrame()
+    return pd.DataFrame(rows)
+
+
 def write_ledger(path: str | Path, rows: list[dict]) -> None:
     ledger = Path(path)
     ledger.parent.mkdir(parents=True, exist_ok=True)
