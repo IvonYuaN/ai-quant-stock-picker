@@ -29,6 +29,7 @@ class PipelineConfig:
     report_path: str
     csv_path: str
     briefing_path: str
+    paper_report_path: str
     dashboard_html: str
     dashboard_db: str
     paper_ledger: str
@@ -136,7 +137,27 @@ def _run_step(
 
 def _step_update_data(config: PipelineConfig, logger: logging.Logger) -> dict[str, Any]:
     from aqsp.data import fetch_with_source
+
+    logger.info("  拉取最新行情数据 (source=%s)", config.source)
+
+    source = _build_data_source(config)
+    symbols = _resolve_symbols(config, logger)
+    frames = fetch_with_source(source, symbols, days=260)
+
+    fresh_count = sum(1 for df in frames.values() if df is not None and not df.empty)
+    logger.info("  获取到 %d 只标的数据", fresh_count)
+
     from aqsp.data.cache import DataCache
+
+    cache = DataCache()
+    cleared = cache.clear_expired(max_age_hours=168)
+    if cleared > 0:
+        logger.info("  清理过期缓存: %d 条", cleared)
+
+    return {"symbol_count": fresh_count, "cache_cleared": cleared}
+
+
+def _build_data_source(config: PipelineConfig) -> Any:
     from aqsp.data.multi_source import MultiSource, SourceFactory
     from aqsp.data.eastmoney_source import EastmoneySource
     from aqsp.data.sina_source import SinaSource
@@ -144,10 +165,10 @@ def _step_update_data(config: PipelineConfig, logger: logging.Logger) -> dict[st
     from aqsp.data.akshare_source import AkshareSource
     from aqsp.data.tdx_vipdoc_source import TdxVipdocSource
 
-    logger.info("  拉取最新行情数据 (source=%s)", config.source)
-
     if config.source in ("auto", "local_first", "multi"):
         if config.allow_online_fallback:
+            from aqsp.data.cache import DataCache
+
             cache = DataCache()
             sources = [
                 EastmoneySource(cache=cache),
@@ -166,19 +187,7 @@ def _step_update_data(config: PipelineConfig, logger: logging.Logger) -> dict[st
         from aqsp.cli import _get_source
 
         source = _get_source(config.source)
-
-    symbols = _resolve_symbols(config, logger)
-    frames = fetch_with_source(source, symbols, days=260)
-
-    fresh_count = sum(1 for df in frames.values() if df is not None and not df.empty)
-    logger.info("  获取到 %d 只标的数据", fresh_count)
-
-    cache = DataCache()
-    cleared = cache.clear_expired(max_age_hours=168)
-    if cleared > 0:
-        logger.info("  清理过期缓存: %d 条", cleared)
-
-    return {"symbol_count": fresh_count, "cache_cleared": cleared}
+    return source
 
 
 def _resolve_symbols(config: PipelineConfig, logger: logging.Logger) -> list[str]:
@@ -369,13 +378,6 @@ def _step_validate_predictions(
         return {"checked": 0, "skipped": True}
 
     from aqsp.data import fetch_with_source
-    from aqsp.data.cache import DataCache
-    from aqsp.data.multi_source import MultiSource, SourceFactory
-    from aqsp.data.eastmoney_source import EastmoneySource
-    from aqsp.data.sina_source import SinaSource
-    from aqsp.data.tencent_source import TencentSource
-    from aqsp.data.akshare_source import AkshareSource
-    from aqsp.data.tdx_vipdoc_source import TdxVipdocSource
 
     symbols_in_ledger: list[str] = []
     seen: set[str] = set()
@@ -389,20 +391,7 @@ def _step_validate_predictions(
         return {"checked": 0}
 
     try:
-        if config.allow_online_fallback:
-            cache = DataCache()
-            source = MultiSource(
-                SourceFactory("tdx_vipdoc", TdxVipdocSource),
-                [
-                    EastmoneySource(cache=cache),
-                    SinaSource(cache=cache),
-                    TencentSource(cache=cache),
-                    AkshareSource(cache=cache),
-                ],
-                validate_consistency=False,
-            )
-        else:
-            source = TdxVipdocSource()
+        source = _build_data_source(config)
         frames = fetch_with_source(source, symbols_in_ledger, days=60)
     except Exception as exc:
         logger.warning("  验证数据获取失败: %s", exc)
@@ -429,6 +418,69 @@ def _step_validate_predictions(
         logger.info("  暂无可验证的历史预测")
 
     return result
+
+
+def _step_sync_paper_trades(
+    config: PipelineConfig, logger: logging.Logger
+) -> dict[str, Any]:
+    logger.info("  同步虚拟盘持仓")
+
+    ledger_path = config.project_root / config.ledger_path
+    paper_ledger_path = config.project_root / config.paper_ledger
+    paper_report_path = config.project_root / config.paper_report_path
+    if not ledger_path.exists():
+        logger.info("  Ledger 文件不存在, 跳过虚拟盘同步")
+        return {"skipped": True}
+
+    from aqsp.data import fetch_with_source
+    from aqsp.ledger.base import read_ledger
+    from aqsp.paper import read_paper_trades, render_paper_report, sync_paper_trades
+
+    signal_rows = read_ledger(str(ledger_path))
+    if not signal_rows:
+        logger.info("  Ledger 为空, 跳过虚拟盘同步")
+        return {"skipped": True}
+
+    symbols: list[str] = []
+    seen: set[str] = set()
+    for row in signal_rows + read_paper_trades(paper_ledger_path):
+        symbol = str(row.get("symbol", "")).strip()
+        if symbol and symbol not in seen:
+            seen.add(symbol)
+            symbols.append(symbol)
+
+    if not symbols:
+        logger.info("  无可同步标的, 跳过虚拟盘同步")
+        return {"skipped": True}
+
+    source = _build_data_source(config)
+    frames = fetch_with_source(source, symbols, days=60)
+    summary = sync_paper_trades(
+        signal_ledger=ledger_path,
+        paper_ledger=paper_ledger_path,
+        frames=frames,
+    )
+    paper_rows = read_paper_trades(paper_ledger_path)
+    report = render_paper_report(summary=summary, trades=paper_rows)
+    paper_report_path.parent.mkdir(parents=True, exist_ok=True)
+    paper_report_path.write_text(report, encoding="utf-8")
+
+    logger.info(
+        "  虚拟盘同步完成: opened=%d closed=%d open_positions=%d pending=%d",
+        summary.opened,
+        summary.closed,
+        summary.open_positions,
+        summary.pending_entry,
+    )
+
+    return {
+        "opened": summary.opened,
+        "closed": summary.closed,
+        "open_positions": summary.open_positions,
+        "pending_entry": summary.pending_entry,
+        "not_executable": summary.not_executable,
+        "report_size": paper_report_path.stat().st_size if paper_report_path.exists() else 0,
+    }
 
 
 def _step_adaptive_learning(
@@ -590,6 +642,7 @@ def run_pipeline(config: PipelineConfig) -> PipelineResult:
         ("策略运行", lambda: _step_run_strategy(config, logger)),
         ("收盘复盘", lambda: _step_closing_review(config, logger)),
         ("预测验证", lambda: _step_validate_predictions(config, logger)),
+        ("虚拟盘同步", lambda: _step_sync_paper_trades(config, logger)),
         ("自适应学习", lambda: _step_adaptive_learning(config, logger)),
         ("报告生成", lambda: _step_generate_report(config, logger)),
         ("Dashboard刷新", lambda: _step_refresh_dashboard(config, logger)),
@@ -664,6 +717,7 @@ def _build_config(args: argparse.Namespace) -> PipelineConfig:
         report_path=args.report or "reports/latest.md",
         csv_path=args.csv or "reports/latest.csv",
         briefing_path=args.briefing or "reports/briefing.md",
+        paper_report_path="reports/paper.md",
         dashboard_html=args.dashboard_html or "dist/dashboard/index.html",
         dashboard_db=args.dashboard_db or "dist/dashboard/aqsp.db",
         paper_ledger=args.paper_ledger or "data/paper_trades.jsonl",

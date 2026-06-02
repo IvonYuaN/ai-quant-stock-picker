@@ -81,6 +81,7 @@ def test_morning_breakout_uses_sh300_pool(monkeypatch) -> None:
         report_path="reports/latest.md",
         csv_path="reports/latest.csv",
         briefing_path="reports/briefing.md",
+        paper_report_path="reports/paper.md",
         dashboard_html="dist/dashboard/index.html",
         dashboard_db="dist/dashboard/aqsp.db",
         paper_ledger="data/paper_trades.jsonl",
@@ -149,6 +150,7 @@ def test_adaptive_learning_converts_rows_to_dataframe(
         report_path="reports/latest.md",
         csv_path="reports/latest.csv",
         briefing_path="reports/briefing.md",
+        paper_report_path="reports/paper.md",
         dashboard_html="dist/dashboard/index.html",
         dashboard_db="dist/dashboard/aqsp.db",
         paper_ledger="data/paper_trades.jsonl",
@@ -193,6 +195,7 @@ def test_closing_premium_uses_explicit_symbols(monkeypatch) -> None:
         report_path="reports/latest.md",
         csv_path="reports/latest.csv",
         briefing_path="reports/briefing.md",
+        paper_report_path="reports/paper.md",
         dashboard_html="dist/dashboard/index.html",
         dashboard_db="dist/dashboard/aqsp.db",
         paper_ledger="data/paper_trades.jsonl",
@@ -241,6 +244,7 @@ def test_run_pipeline_excludes_intraday_sub_strategies(monkeypatch) -> None:
         report_path="reports/latest.md",
         csv_path="reports/latest.csv",
         briefing_path="reports/briefing.md",
+        paper_report_path="reports/paper.md",
         dashboard_html="dist/dashboard/index.html",
         dashboard_db="dist/dashboard/aqsp.db",
         paper_ledger="data/paper_trades.jsonl",
@@ -257,8 +261,78 @@ def test_run_pipeline_excludes_intraday_sub_strategies(monkeypatch) -> None:
         "策略运行",
         "收盘复盘",
         "预测验证",
+        "虚拟盘同步",
         "自适应学习",
         "报告生成",
         "Dashboard刷新",
         "数据清理",
     ]
+
+
+def test_sync_paper_trades_writes_report(monkeypatch, tmp_path: Path) -> None:
+    daily_pipeline = _load_daily_pipeline_module()
+    ledger_path = tmp_path / "predictions.jsonl"
+    ledger_path.write_text('{"symbol":"600519","status":"pending"}\n', encoding="utf-8")
+
+    monkeypatch.setattr(
+        daily_pipeline,
+        "_build_data_source",
+        lambda _config: object(),
+    )
+    monkeypatch.setattr(
+        "aqsp.data.fetch_with_source",
+        lambda _source, _symbols, days=60: {"600519": pd.DataFrame([{"date": "2026-06-02"}])},
+    )
+    monkeypatch.setattr(
+        "aqsp.ledger.base.read_ledger",
+        lambda _path: [{"symbol": "600519", "status": "pending"}],
+    )
+    monkeypatch.setattr(
+        "aqsp.paper.read_paper_trades",
+        lambda _path: [{"symbol": "600519", "status": "open"}],
+    )
+
+    class FakeSummary:
+        opened = 1
+        closed = 0
+        open_positions = 1
+        pending_entry = 0
+        not_executable = 0
+
+    monkeypatch.setattr(
+        "aqsp.paper.sync_paper_trades",
+        lambda **_kwargs: FakeSummary(),
+    )
+    monkeypatch.setattr(
+        "aqsp.paper.render_paper_report",
+        lambda summary, trades: f"opened={summary.opened}, rows={len(trades)}",
+    )
+
+    config = daily_pipeline.PipelineConfig(
+        project_root=tmp_path,
+        source="eastmoney",
+        mode="close",
+        limit=10,
+        max_universe=50,
+        min_avg_amount=50_000_000,
+        max_data_lag_days=3,
+        enable_online_factors=False,
+        allow_online_fallback=True,
+        ledger_path=ledger_path.name,
+        report_path="reports/latest.md",
+        csv_path="reports/latest.csv",
+        briefing_path="reports/briefing.md",
+        paper_report_path="reports/paper.md",
+        dashboard_html="dist/dashboard/index.html",
+        dashboard_db="dist/dashboard/aqsp.db",
+        paper_ledger="data/paper_trades.jsonl",
+        notify=False,
+        dry_run=False,
+        enable_debate=False,
+    )
+
+    result = daily_pipeline._step_sync_paper_trades(config, logging.getLogger("test"))
+
+    assert result["opened"] == 1
+    assert result["open_positions"] == 1
+    assert (tmp_path / "reports" / "paper.md").read_text(encoding="utf-8") == "opened=1, rows=1"
