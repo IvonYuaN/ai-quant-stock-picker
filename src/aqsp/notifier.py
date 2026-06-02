@@ -46,8 +46,8 @@ def notify_markdown(markdown: str) -> list[NotifyResult]:
     results: list[NotifyResult] = []
     for sender in (
         _send_telegram,
-        _send_wechat,
         _send_serverchan,
+        _send_wechat,
         _send_feishu,
         _send_dingtalk,
         _send_bark,
@@ -77,24 +77,24 @@ def _send_telegram(markdown: str) -> NotifyResult | None:
     return _post("telegram", url, json=payload)
 
 
-def _send_serverchan(markdown: str) -> NotifyResult | None:
-    sendkey = os.getenv("SERVERCHAN_SENDKEY", "").strip()
-    if not sendkey:
-        return None
-    url = f"https://sctapi.ftqq.com/{sendkey}.send"
-    payload = {
-        "title": "量化选股通知",
-        "desp": markdown[:4000],
-    }
-    return _post("serverchan", url, data=payload)
-
-
 def _send_wechat(markdown: str) -> NotifyResult | None:
     url = os.getenv("WECHAT_WEBHOOK_URL", "").strip()
     if not url:
         return None
     payload = {"msgtype": "markdown", "markdown": {"content": markdown[:3800]}}
     return _post("wechat", url, json=payload)
+
+
+def _send_serverchan(markdown: str) -> NotifyResult | None:
+    sendkey = os.getenv("SERVERCHAN_SENDKEY", "").strip()
+    if not sendkey:
+        return None
+    url = f"https://sctapi.ftqq.com/{sendkey}.send"
+    payload = {
+        "title": "AQSP 通知",
+        "desp": markdown[:12000],
+    }
+    return _post("serverchan", url, data=payload)
 
 
 def _send_feishu(markdown: str) -> NotifyResult | None:

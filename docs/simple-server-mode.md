@@ -73,6 +73,7 @@ AQSP_DEPLOY_DASHBOARD=false
 TUSHARE_TOKEN=
 TELEGRAM_BOT_TOKEN=
 TELEGRAM_CHAT_ID=
+SERVERCHAN_SENDKEY=
 GLM_API_KEY=
 
 AQSP_NOTIFY=false
@@ -88,6 +89,7 @@ AQSP_ENABLE_AUTO_EVOLUTION=false
 补充说明：
 
 - `GLM_API_KEY` 用于智谱；`LLM_PROVIDER=glm` 时默认走 `GLM-4.7-Flash`。
+- `SERVERCHAN_SENDKEY` 配好后，收盘总览、监控告警、复盘摘要都可以直接推到 Server酱。
 - `AQSP_NOTIFY=true` 后，日终 `daily_pipeline.sh` 会自动带 `--notify`。
 - `AQSP_NOTIFY_MODE=summary` 时，收盘链路默认只发 1 条“收盘总览”；如果你想恢复每个步骤各发各的，改成 `fanout`。
 - `AQSP_SYMBOLS` 给实盘/日报链路用；`AQSP_WALKFORWARD_SYMBOLS` 单独给 walk-forward，用历史库里覆盖完整的票，别混用。

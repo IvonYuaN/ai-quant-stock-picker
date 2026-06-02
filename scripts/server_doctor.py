@@ -176,6 +176,7 @@ def _notify_checks() -> list[DoctorCheck]:
             os.getenv("TELEGRAM_BOT_TOKEN", "").strip(),
             os.getenv("TELEGRAM_CHAT_ID", "").strip(),
         ),
+        "serverchan": (os.getenv("SERVERCHAN_SENDKEY", "").strip(),),
         "wechat": (os.getenv("WECHAT_WEBHOOK_URL", "").strip(),),
         "feishu": (os.getenv("FEISHU_WEBHOOK_URL", "").strip(),),
         "dingtalk": (os.getenv("DINGTALK_WEBHOOK_URL", "").strip(),),

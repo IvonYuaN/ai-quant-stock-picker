@@ -90,3 +90,13 @@ def test_server_doctor_artifact_check_uses_runtime_paths(tmp_path, monkeypatch) 
 
     assert "env" in names
     assert "sqlite_db" in names
+
+
+def test_server_doctor_reports_serverchan_notify_channel(monkeypatch) -> None:
+    monkeypatch.setenv("SERVERCHAN_SENDKEY", "sctp_test_key")
+
+    checks = server_doctor._notify_checks()
+    by_name = {item.name: item for item in checks}
+
+    assert by_name["notify:serverchan"].status == "configured"
+    assert by_name["notify:serverchan"].detail == "serverchan"
