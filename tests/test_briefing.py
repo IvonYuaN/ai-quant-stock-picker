@@ -290,6 +290,32 @@ class TestDebateAgent:
         assert opinion.arguments
         assert opinion.risk_factors
 
+    def test_llm_enhancement_uses_role_specific_provider_and_model(self):
+        agent = AShareDebateAgent(
+            role=AgentRole.NORTHBOUND,
+            enable_llm=True,
+            language="zh-CN",
+            llm_provider="agnes",
+            llm_model="agnes-2.0-flash",
+        )
+        df = pd.DataFrame({"close": [10 + i for i in range(30)]})
+
+        with patch.dict(os.environ, {"LLM_PROVIDER": "glm"}, clear=False):
+            with patch(
+                "aqsp.briefing.debate.llm_call_or_fallback",
+                return_value=LlmResult(
+                    text='{"arguments":["北向偏好延续"],"risk_factors":[],"opportunity_factors":["外资增配可能持续"]}',
+                    degraded=False,
+                    model="agnes-2.0-flash",
+                ),
+            ) as mock_llm:
+                opinion = agent.generate_initial_opinion(_make_pick(score=66), df)
+                assert os.getenv("LLM_PROVIDER") == "glm"
+
+        assert opinion.arguments == ["北向偏好延续"]
+        assert os.getenv("LLM_PROVIDER") != "agnes"
+        assert mock_llm.call_args.kwargs["model"] == "agnes-2.0-flash"
+
 
 class TestEnhanceBriefing:
     def test_noop_when_disabled(self):

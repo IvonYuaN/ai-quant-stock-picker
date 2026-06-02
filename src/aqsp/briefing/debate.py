@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from dataclasses import dataclass, field
 from typing import Literal
 from uuid import uuid4
 
 import pandas as pd
 
+from aqsp.config import DebateRoleRuntime
 from aqsp.briefing.agent_roles import (
     AgentRole,
     DEFAULT_AGENT_ROLE_ORDER,
@@ -162,11 +164,15 @@ class AShareDebateAgent:
         role: AgentRole,
         enable_llm: bool = False,
         language: str = "zh-CN",
+        llm_provider: str = "",
+        llm_model: str = "",
     ):
         self.role = role
         self.agent_id = f"{role.value}_{uuid4().hex[:8]}"
         self.enable_llm = enable_llm
         self.language = language
+        self.llm_provider = llm_provider.strip().lower()
+        self.llm_model = llm_model.strip()
 
     def get_role_description(self) -> str:
         """获取角色描述"""
@@ -208,12 +214,22 @@ class AShareDebateAgent:
             "risk_factors": opinion.risk_factors[:2],
             "opportunity_factors": opinion.opportunity_factors[:2],
         }
-        result = llm_call_or_fallback(
-            prompt=self._build_initial_prompt(pick, opinion),
-            fallback=json.dumps(fallback_payload, ensure_ascii=False),
-            enable_llm=self.enable_llm,
-            caller=f"debate-initial-{self.role.value}",
-        )
+        old_provider = os.getenv("LLM_PROVIDER")
+        try:
+            if self.llm_provider:
+                os.environ["LLM_PROVIDER"] = self.llm_provider
+            result = llm_call_or_fallback(
+                prompt=self._build_initial_prompt(pick, opinion),
+                fallback=json.dumps(fallback_payload, ensure_ascii=False),
+                enable_llm=self.enable_llm,
+                model=self.llm_model or None,
+                caller=f"debate-initial-{self.role.value}",
+            )
+        finally:
+            if old_provider is None:
+                os.environ.pop("LLM_PROVIDER", None)
+            else:
+                os.environ["LLM_PROVIDER"] = old_provider
         payload = self._parse_llm_payload(result.text, fallback_payload)
         return AgentOpinion(
             agent_id=opinion.agent_id,
@@ -610,6 +626,7 @@ class AShareDebateCoordinator:
         data_source: str = "",
         language: str = "zh-CN",
         roles: tuple[AgentRole, ...] | None = None,
+        role_runtime: tuple[DebateRoleRuntime, ...] | None = None,
     ):
         self.enable_llm = enable_llm
         self.max_rounds = max_rounds
@@ -618,6 +635,9 @@ class AShareDebateCoordinator:
         self.data_source = data_source
         self.language = language
         self.roles = roles or DEFAULT_AGENT_ROLE_ORDER
+        self.role_runtime = {
+            item.role: item for item in (role_runtime or ())
+        }
         self.agents = self._create_agents()
 
         from aqsp.briefing.debate_tracker import DebatePerformanceTracker
@@ -626,14 +646,21 @@ class AShareDebateCoordinator:
 
     def _create_agents(self) -> list[AShareDebateAgent]:
         """创建所有辩论 Agent"""
-        return [
-            AShareDebateAgent(
-                role,
-                enable_llm=self.enable_llm,
-                language=self.language,
+        agents: list[AShareDebateAgent] = []
+        for role in self.roles:
+            runtime = self.role_runtime.get(role.value)
+            agents.append(
+                AShareDebateAgent(
+                    role,
+                    enable_llm=(
+                        self.enable_llm if runtime is None else runtime.enable_llm
+                    ),
+                    language=self.language,
+                    llm_provider="" if runtime is None else runtime.provider,
+                    llm_model="" if runtime is None else runtime.model,
+                )
             )
-            for role in self.roles
-        ]
+        return agents
 
     def run_debate(
         self,

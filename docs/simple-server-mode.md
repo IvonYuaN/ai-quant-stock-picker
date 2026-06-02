@@ -83,6 +83,9 @@ AQSP_DEBATE_ENABLE_LLM=false
 AQSP_DEBATE_MAX_ROUNDS=2
 AQSP_DEBATE_LANGUAGE=zh-CN
 AQSP_DEBATE_ROLES=bull,bear,risk_control,sector_leader,policy_sensitive,northbound
+AQSP_DEBATE_ROLE_LLM=
+AQSP_DEBATE_ROLE_PROVIDERS=
+AQSP_DEBATE_ROLE_MODELS=
 AQSP_ENABLE_AUTO_EVOLUTION=false
 ```
 
@@ -99,6 +102,7 @@ AQSP_ENABLE_AUTO_EVOLUTION=false
 - `AQSP_ENABLE_DEBATE=false` 表示默认不跑多 agent 讨论；要开就改成 `true`。
 - `AQSP_DEBATE_LANGUAGE=zh-CN` 现在是运行时配置，不再写死在代码里。
 - `AQSP_DEBATE_ROLES` 现在走统一角色注册表，前端展示和后端角色身份共用同一套中文名、英文名、emoji、描述，不会再出现页面和运行时不一致。
+- 现在支持角色级运行配置：`AQSP_DEBATE_ROLE_LLM`、`AQSP_DEBATE_ROLE_PROVIDERS`、`AQSP_DEBATE_ROLE_MODELS`。比如可以让 `bull` 走 Agnes、`risk_control` 关闭 LLM、`northbound` 走 GLM。
 - 当前多 agent 讨论主链路是多角色规则引擎，LLM 主要用于摘要增强，不会直接改写核心选股分数。
 - `AQSP_ENABLE_AUTO_EVOLUTION=true` 后，收盘链路会额外执行一次策略自进化检查。
 - `LLM_PROVIDER=agnes` 时会直接走 Agnes AI 官方 OpenAI 兼容端点，默认模型 `agnes-2.0-flash`。

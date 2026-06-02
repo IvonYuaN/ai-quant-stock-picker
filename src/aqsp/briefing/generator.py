@@ -236,6 +236,7 @@ class BriefingGenerator:
             max_rounds=debate_runtime.max_rounds,
             language=debate_runtime.language,
             roles=parse_agent_roles(debate_runtime.roles),
+            role_runtime=debate_runtime.role_runtime,
         )
 
     def generate(

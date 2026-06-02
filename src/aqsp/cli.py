@@ -1928,6 +1928,7 @@ def run_scheduled(args: argparse.Namespace) -> int:
             data_source="multi" if args.source == "multi" else str(args.source),
             language=debate_runtime.language,
             roles=parse_agent_roles(debate_runtime.roles),
+            role_runtime=debate_runtime.role_runtime,
         )
         debate_file.parent.mkdir(parents=True, exist_ok=True)
 

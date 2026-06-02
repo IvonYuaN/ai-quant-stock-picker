@@ -27,6 +27,12 @@ def test_load_debate_runtime_config_reads_language_roles_and_llm(monkeypatch) ->
     monkeypatch.setenv("AQSP_DEBATE_MAX_ROUNDS", "3")
     monkeypatch.setenv("AQSP_DEBATE_LANGUAGE", "en-US")
     monkeypatch.setenv("AQSP_DEBATE_ROLES", "bull,risk_control,northbound")
+    monkeypatch.setenv("AQSP_DEBATE_ROLE_LLM", "bull:true,risk_control:false")
+    monkeypatch.setenv("AQSP_DEBATE_ROLE_PROVIDERS", "bull:agnes,northbound:glm")
+    monkeypatch.setenv(
+        "AQSP_DEBATE_ROLE_MODELS",
+        "bull:agnes-2.0-flash,northbound:glm-4.7-flash",
+    )
 
     config = load_debate_runtime_config()
 
@@ -35,3 +41,8 @@ def test_load_debate_runtime_config_reads_language_roles_and_llm(monkeypatch) ->
     assert config.max_rounds == 3
     assert config.language == "en-US"
     assert config.roles == ("bull", "risk_control", "northbound")
+    assert config.role_runtime[0].role == "bull"
+    assert config.role_runtime[0].enable_llm is True
+    assert config.role_runtime[0].provider == "agnes"
+    assert config.role_runtime[1].enable_llm is False
+    assert config.role_runtime[2].model == "glm-4.7-flash"

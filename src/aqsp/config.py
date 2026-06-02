@@ -33,10 +33,33 @@ class DebateRuntimeConfig:
     max_rounds: int
     language: str
     roles: tuple[str, ...]
+    role_runtime: tuple["DebateRoleRuntime", ...]
+
+
+@dataclass(frozen=True)
+class DebateRoleRuntime:
+    role: str
+    enable_llm: bool
+    provider: str
+    model: str
 
 
 def online_fallback_allowed() -> bool:
     return _env_flag("AQSP_ALLOW_ONLINE_FALLBACK", "true")
+
+
+def _parse_role_mapping(raw: str) -> dict[str, str]:
+    mapping: dict[str, str] = {}
+    for item in raw.split(","):
+        text = item.strip()
+        if not text or ":" not in text:
+            continue
+        key, value = text.split(":", 1)
+        role = key.strip().lower()
+        mapped = value.strip()
+        if role and mapped:
+            mapping[role] = mapped
+    return mapping
 
 
 def load_runtime_config() -> RuntimeConfig:
@@ -81,10 +104,31 @@ def load_debate_runtime_config() -> DebateRuntimeConfig:
         ).split(",")
         if item.strip()
     )
+    global_enable_llm = _env_flag("AQSP_DEBATE_ENABLE_LLM")
+    role_enable_map = _parse_role_mapping(os.getenv("AQSP_DEBATE_ROLE_LLM", ""))
+    role_provider_map = _parse_role_mapping(
+        os.getenv("AQSP_DEBATE_ROLE_PROVIDERS", "")
+    )
+    role_model_map = _parse_role_mapping(os.getenv("AQSP_DEBATE_ROLE_MODELS", ""))
+    role_runtime = tuple(
+        DebateRoleRuntime(
+            role=role,
+            enable_llm=(
+                global_enable_llm
+                if role not in role_enable_map
+                else role_enable_map[role].strip().lower()
+                in {"1", "true", "yes", "on"}
+            ),
+            provider=role_provider_map.get(role, "").strip().lower(),
+            model=role_model_map.get(role, "").strip(),
+        )
+        for role in roles
+    )
     return DebateRuntimeConfig(
         enabled=_env_flag("AQSP_ENABLE_DEBATE"),
-        enable_llm=_env_flag("AQSP_DEBATE_ENABLE_LLM"),
+        enable_llm=global_enable_llm,
         max_rounds=max(1, int(os.getenv("AQSP_DEBATE_MAX_ROUNDS", "2"))),
         language=os.getenv("AQSP_DEBATE_LANGUAGE", "zh-CN").strip() or "zh-CN",
         roles=roles,
+        role_runtime=role_runtime,
     )
