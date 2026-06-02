@@ -160,7 +160,7 @@ def test_run_scheduled_notify_prepends_source_status_banner(
     assert seen
     assert seen[0].startswith("## 数据源状态")
     assert "auto -> eastmoney" in seen[0]
-    assert "健康: **fallback**" in seen[0]
+    assert "- 健康: fallback" in seen[0]
 
 
 def test_run_scheduled_report_omits_low_signal_control_sections(

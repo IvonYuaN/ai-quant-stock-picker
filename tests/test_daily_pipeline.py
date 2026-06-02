@@ -478,6 +478,7 @@ def test_send_pipeline_digest_sends_summary_notification(
     assert "总体状态: 成功" in sent["content"]
     assert "数据源状态" in sent["content"]
     assert "复盘报告: reports/closing_review.md" in sent["content"]
+    assert "# 收盘总览" not in sent["content"]
 
 
 def test_run_step_logs_stable_completion_label(caplog) -> None:

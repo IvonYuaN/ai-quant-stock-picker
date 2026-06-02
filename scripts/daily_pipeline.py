@@ -865,8 +865,6 @@ def _build_pipeline_digest(
         risk_lines.append("- 总流程未全绿，先排查失败步骤再继续自动化。")
 
     lines = [
-        "# 收盘总览",
-        "",
         "## 核心结论",
         *core_lines,
         "",

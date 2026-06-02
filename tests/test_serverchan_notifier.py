@@ -29,3 +29,22 @@ def test_notify_markdown_sends_serverchan_when_sendkey_present(monkeypatch):
     assert result[0].ok is True
     mock_post.assert_called_once()
     assert "sctapi.ftqq.com/test_sendkey.send" in mock_post.call_args.args[0]
+
+
+def test_prepend_source_status_banner_drops_duplicate_top_title():
+    from aqsp.notifier import prepend_source_status_banner
+
+    content = "# 收盘总览\n\n## 核心结论\n- 总体状态: 成功"
+    merged = prepend_source_status_banner(
+        content,
+        {
+            "requested_source": "auto",
+            "actual_source": "eastmoney",
+            "health_label": "healthy",
+            "health_message": "eastmoney 健康",
+        },
+    )
+
+    assert merged.count("# 收盘总览") == 0
+    assert "## 数据源状态" in merged
+    assert "## 核心结论" in merged
