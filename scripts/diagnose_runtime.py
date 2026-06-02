@@ -27,6 +27,7 @@ class RuntimePaths:
     dashboard: Path
     latest_report: Path
     latest_csv: Path
+    sqlite_db: Path
 
 
 def _runtime_path(env_name: str, default: str) -> Path:
@@ -43,6 +44,7 @@ def _runtime_paths() -> RuntimePaths:
         dashboard=_runtime_path("AQSP_DASHBOARD", "dist/dashboard/index.html"),
         latest_report=_runtime_path("AQSP_REPORT", "reports/latest.md"),
         latest_csv=_runtime_path("AQSP_OUTPUT_CSV", "reports/latest.csv"),
+        sqlite_db=_runtime_path("AQSP_SQLITE_DB_PATH", "data/astocks_qfq.db"),
     )
 
 
@@ -187,6 +189,7 @@ def main() -> int:
         f"- dashboard: {_file_status(paths.dashboard)}",
         f"- latest_report: {_file_status(paths.latest_report)}",
         f"- latest_csv: {_file_status(paths.latest_csv)}",
+        f"- sqlite_db: {_file_status(paths.sqlite_db)} path={paths.sqlite_db}",
         "",
         "## Data Sources",
         *_ready_source_lines(),

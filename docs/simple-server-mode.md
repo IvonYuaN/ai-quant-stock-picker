@@ -118,6 +118,12 @@ crontab -l
 bash /opt/aqsp/scripts/server_status.sh
 ```
 
+首次补齐运行态空文件：
+
+```bash
+bash /opt/aqsp/scripts/init_server_runtime.sh
+```
+
 ## 本地如何看 8080
 
 推荐继续用 SSH 隧道：
