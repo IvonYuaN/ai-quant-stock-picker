@@ -2,13 +2,14 @@
 # 简单服务器模式：
 # 1. 从 GitHub 快进同步代码
 # 2. 保留服务器本地 .env / 数据库 / 产物
-# 3. 运行每日跑批
+# 3. 运行指定任务脚本（默认每日跑批）
 
 set -euo pipefail
 
 PROJECT_ROOT="${AQSP_PROJECT_ROOT:-/opt/aqsp}"
 BRANCH="${AQSP_GIT_BRANCH:-main}"
 REMOTE="${AQSP_GIT_REMOTE:-origin}"
+RUNNER_SCRIPT="${AQSP_RUNNER_SCRIPT:-scripts/daily_pipeline.sh}"
 LOG_DIR="${PROJECT_ROOT}/logs/deploy"
 RUN_LOG="${LOG_DIR}/sync-$(date +%Y-%m-%d).log"
 
@@ -20,6 +21,12 @@ log() {
 if [ ! -d "${PROJECT_ROOT}/.git" ]; then
     echo "Git repo not found: ${PROJECT_ROOT}" >&2
     exit 1
+fi
+
+if [[ "${RUNNER_SCRIPT}" = /* ]]; then
+    RUNNER_PATH="${RUNNER_SCRIPT}"
+else
+    RUNNER_PATH="${PROJECT_ROOT}/${RUNNER_SCRIPT}"
 fi
 
 cd "$PROJECT_ROOT"
@@ -46,6 +53,11 @@ else
     log "代码已是最新，无需更新"
 fi
 
-log "开始运行跑批"
-bash "${PROJECT_ROOT}/scripts/daily_pipeline.sh" 2>&1 | tee -a "$RUN_LOG"
+if [ ! -f "${RUNNER_PATH}" ]; then
+    log "运行脚本不存在: ${RUNNER_PATH}"
+    exit 1
+fi
+
+log "开始运行任务: ${RUNNER_PATH}"
+bash "${RUNNER_PATH}" 2>&1 | tee -a "$RUN_LOG"
 log "同步与跑批完成"

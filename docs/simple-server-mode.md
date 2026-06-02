@@ -14,7 +14,7 @@ Mac 本地开发
 -> push 到 GitHub
 -> 云服务器定时执行 scripts/server_sync_and_run.sh
 -> 先 git pull --ff-only
--> 再跑 scripts/daily_pipeline.sh
+-> 再跑指定 runner（盘中轻量刷新 / 收盘完整跑批）
 -> 产出 dist/dashboard/
 -> 本地通过 8080 查看
 ```
@@ -60,6 +60,12 @@ AQSP_OUTPUT_CSV=reports/latest.csv
 AQSP_DASHBOARD_HTML=dist/dashboard/index.html
 AQSP_DASHBOARD_DB=dist/dashboard/aqsp.db
 
+AQSP_INTRADAY_LEDGER=data/intraday_predictions.jsonl
+AQSP_INTRADAY_REPORT=reports/intraday_latest.md
+AQSP_INTRADAY_OUTPUT_CSV=reports/intraday_latest.csv
+AQSP_INTRADAY_DASHBOARD_HTML=dist/dashboard/index.html
+AQSP_INTRADAY_DASHBOARD_DB=dist/dashboard/aqsp.db
+
 AQSP_DEPLOY_DASHBOARD=false
 
 TUSHARE_TOKEN=
@@ -80,17 +86,25 @@ bash /opt/aqsp/scripts/server_sync_and_run.sh
 
 1. 检查服务器代码目录是否干净
 2. `git pull --ff-only origin main`
-3. 运行 `scripts/daily_pipeline.sh`
+3. 运行 `AQSP_RUNNER_SCRIPT` 指定的脚本，默认 `scripts/daily_pipeline.sh`
 
 如果服务器上存在受 Git 管理的本地改动，它会直接停下，不会乱覆盖。
 
 ## 定时任务
 
-推荐只保留一个主任务，工作日北京时间 18:00 执行：
+推荐拆成两条任务：
+
+1. 盘中轻量刷新，工作日北京时间 `09:40-11:25`、`13:10-14:55` 每 10 分钟执行一次。
+2. 收盘完整跑批，工作日北京时间 `18:00` 执行。
 
 ```bash
-( crontab -l 2>/dev/null; echo '0 18 * * 1-5 /bin/bash /opt/aqsp/scripts/server_sync_and_run.sh >> /opt/aqsp/logs/cron.log 2>&1' ) | crontab -
+( crontab -l 2>/dev/null | grep -vE 'intraday_refresh\\.sh|server_sync_and_run\\.sh'; \
+  echo '*/10 9-11 * * 1-5 AQSP_RUNNER_SCRIPT=scripts/intraday_refresh.sh /bin/bash /opt/aqsp/scripts/server_sync_and_run.sh >> /opt/aqsp/logs/cron.log 2>&1'; \
+  echo '*/10 13-14 * * 1-5 AQSP_RUNNER_SCRIPT=scripts/intraday_refresh.sh /bin/bash /opt/aqsp/scripts/server_sync_and_run.sh >> /opt/aqsp/logs/cron.log 2>&1'; \
+  echo '0 18 * * 1-5 /bin/bash /opt/aqsp/scripts/server_sync_and_run.sh >> /opt/aqsp/logs/cron.log 2>&1' ) | crontab -
 ```
+
+`scripts/intraday_refresh.sh` 默认只在交易时段内工作，并且写入单独的盘中 ledger，不污染正式收盘 ledger。
 
 查看：
 
