@@ -282,11 +282,14 @@ def _step_morning_breakout(
     config: PipelineConfig, logger: logging.Logger
 ) -> dict[str, Any]:
     logger.info("  执行早盘打板策略")
+    symbols = _resolve_symbols(config, logger)
 
     argv = [
         "morning-breakout",
         "--source",
         config.source,
+        "--symbols",
+        ",".join(symbols),
         "--pool",
         "sh300",
         "--top",
@@ -306,11 +309,14 @@ def _step_closing_premium(
     config: PipelineConfig, logger: logging.Logger
 ) -> dict[str, Any]:
     logger.info("  执行尾盘溢价策略")
+    symbols = _resolve_symbols(config, logger)
 
     argv = [
         "closing-premium",
         "--source",
         config.source,
+        "--symbols",
+        ",".join(symbols),
         "--pool",
         "sh300",
         "--top",

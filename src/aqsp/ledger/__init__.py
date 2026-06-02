@@ -15,6 +15,7 @@ from aqsp.ledger.learner import (
     PerformanceLearner,
     LearningResult,
     StrategyPerformance,
+    StrategyDecayDetector,
 )
 
 __all__ = [
@@ -30,4 +31,5 @@ __all__ = [
     "PerformanceLearner",
     "LearningResult",
     "StrategyPerformance",
+    "StrategyDecayDetector",
 ]

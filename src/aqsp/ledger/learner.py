@@ -9,7 +9,7 @@ from typing import Literal
 import numpy as np
 import pandas as pd
 
-from aqsp.core.time import now_shanghai
+from aqsp.core.time import now_shanghai, today_shanghai
 
 
 @dataclass(frozen=True)
@@ -355,10 +355,10 @@ class StrategyDecayDetector:
         if df.empty:
             return []
 
-        df["signal_date"] = pd.to_datetime(df["signal_date"], errors="coerce")
+        df["signal_date"] = pd.to_datetime(df["signal_date"], errors="coerce").dt.date
         df = df.dropna(subset=["signal_date"])
 
-        cutoff = now_shanghai() - timedelta(days=self.lookback_days)
+        cutoff = today_shanghai() - timedelta(days=self.lookback_days)
         recent = df[df["signal_date"] >= cutoff]
         if recent.empty:
             return []

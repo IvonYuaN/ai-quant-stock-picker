@@ -61,6 +61,11 @@ def test_morning_breakout_uses_sh300_pool(monkeypatch) -> None:
         return 0
 
     monkeypatch.setattr("aqsp.cli.main", fake_main)
+    monkeypatch.setattr(
+        daily_pipeline,
+        "_resolve_symbols",
+        lambda _config, _logger: ["600519", "300750"],
+    )
 
     config = daily_pipeline.PipelineConfig(
         project_root=Path.cwd(),
@@ -90,6 +95,8 @@ def test_morning_breakout_uses_sh300_pool(monkeypatch) -> None:
         "morning-breakout",
         "--source",
         "eastmoney",
+        "--symbols",
+        "600519,300750",
         "--pool",
         "sh300",
         "--top",
@@ -155,3 +162,55 @@ def test_adaptive_learning_converts_rows_to_dataframe(
     assert result["weights_updated"] is True
     assert result["weights"] == {"volume_breakout": 1.1}
     assert result["decay_alerts"] == 0
+
+
+def test_closing_premium_uses_explicit_symbols(monkeypatch) -> None:
+    daily_pipeline = _load_daily_pipeline_module()
+    captured: list[str] = []
+
+    def fake_main(argv: list[str]) -> int:
+        captured[:] = argv
+        return 0
+
+    monkeypatch.setattr("aqsp.cli.main", fake_main)
+    monkeypatch.setattr(
+        daily_pipeline,
+        "_resolve_symbols",
+        lambda _config, _logger: ["000001", "601318"],
+    )
+
+    config = daily_pipeline.PipelineConfig(
+        project_root=Path.cwd(),
+        source="eastmoney",
+        mode="close",
+        limit=10,
+        max_universe=50,
+        min_avg_amount=50_000_000,
+        max_data_lag_days=3,
+        enable_online_factors=False,
+        allow_online_fallback=True,
+        ledger_path="data/predictions.jsonl",
+        report_path="reports/latest.md",
+        csv_path="reports/latest.csv",
+        briefing_path="reports/briefing.md",
+        dashboard_html="dist/dashboard/index.html",
+        dashboard_db="dist/dashboard/aqsp.db",
+        paper_ledger="data/paper_trades.jsonl",
+        notify=False,
+        dry_run=False,
+        enable_debate=False,
+    )
+
+    daily_pipeline._step_closing_premium(config, logging.getLogger("test"))
+
+    assert captured == [
+        "closing-premium",
+        "--source",
+        "eastmoney",
+        "--symbols",
+        "000001,601318",
+        "--pool",
+        "sh300",
+        "--top",
+        "5",
+    ]

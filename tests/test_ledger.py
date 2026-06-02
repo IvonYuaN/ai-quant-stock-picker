@@ -9,6 +9,7 @@ from aqsp.ledger import (
     ExecutionConfig,
     LearnerConfig,
     PerformanceLearner,
+    StrategyDecayDetector,
     append_predictions,
     ledger_rows_to_frame,
     read_ledger,
@@ -277,6 +278,24 @@ def test_learner_writes_weight_history(tmp_path) -> None:
     assert record["strategy"] == "volume_breakout"
     assert "old_weight" in record
     assert "new_weight" in record
+
+
+def test_decay_detector_accepts_naive_signal_dates() -> None:
+    df = pd.DataFrame(
+        [
+            {
+                "status": "validated",
+                "signal_date": signal_date,
+                "return_pct": -3.0,
+                "strategies": ["volume_breakout"],
+            }
+            for signal_date in ("2026-06-01", "2026-06-02")
+        ]
+    )
+
+    alerts = StrategyDecayDetector(lookback_days=30).detect(df)
+
+    assert isinstance(alerts, list)
 
 
 def test_validation_marks_limit_up_at_open_not_executable(tmp_path) -> None:

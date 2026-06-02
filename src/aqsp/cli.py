@@ -377,6 +377,7 @@ def main(argv: list[str] | None = None) -> int:
         "morning-breakout", help="run morning breakout strategy"
     )
     morning_cmd.add_argument("--source", choices=SOURCE_CHOICES, default="auto")
+    morning_cmd.add_argument("--symbols", default="")
     morning_cmd.add_argument("--pool", default="hs300")
     morning_cmd.add_argument("--top", type=int, default=5)
     morning_cmd.add_argument("--notify", action="store_true")
@@ -386,6 +387,7 @@ def main(argv: list[str] | None = None) -> int:
 
     closing_cmd = sub.add_parser("closing-premium", help="run closing premium strategy")
     closing_cmd.add_argument("--source", choices=SOURCE_CHOICES, default="auto")
+    closing_cmd.add_argument("--symbols", default="")
     closing_cmd.add_argument("--pool", default="hs300")
     closing_cmd.add_argument("--top", type=int, default=5)
     closing_cmd.add_argument("--notify", action="store_true")
@@ -3054,13 +3056,17 @@ def run_morning_breakout(args: argparse.Namespace) -> int:
     print("🔥 运行早盘打板策略...")
     strategy = MorningBreakoutStrategy()
 
-    symbols = _resolve_run_symbols(
-        args.source,
-        "",
-        pool_name=args.pool,
-        max_universe=300,
-        min_avg_amount=10_000_000,
-    )
+    symbols = [s.strip() for s in args.symbols.split(",") if s.strip()]
+    if symbols:
+        symbols = list(dict.fromkeys(symbols))
+    else:
+        symbols = _resolve_run_symbols(
+            args.source,
+            "",
+            pool_name=args.pool,
+            max_universe=300,
+            min_avg_amount=10_000_000,
+        )
     if not symbols:
         print("无法解析股票池")
         return 1
@@ -3175,13 +3181,17 @@ def run_closing_premium(args: argparse.Namespace) -> int:
     print("📈 运行尾盘溢价策略...")
     strategy = ClosingPremiumStrategy()
 
-    symbols = _resolve_run_symbols(
-        args.source,
-        "",
-        pool_name=args.pool,
-        max_universe=300,
-        min_avg_amount=10_000_000,
-    )
+    symbols = [s.strip() for s in args.symbols.split(",") if s.strip()]
+    if symbols:
+        symbols = list(dict.fromkeys(symbols))
+    else:
+        symbols = _resolve_run_symbols(
+            args.source,
+            "",
+            pool_name=args.pool,
+            max_universe=300,
+            min_avg_amount=10_000_000,
+        )
     if not symbols:
         print("无法解析股票池")
         return 1
