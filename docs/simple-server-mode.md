@@ -45,6 +45,7 @@ AQSP_SQLITE_DB_PATH=/opt/market-data/astocks_qfq.db
 AQSP_ALLOW_ONLINE_FALLBACK=true
 
 AQSP_SYMBOLS=600519,300750,000001,601318,600036
+AQSP_WALKFORWARD_SYMBOLS=000915,000921,000923,000930,000932,000937,000938,000950,000951,000958
 AQSP_MODE=close
 AQSP_LIMIT=10
 AQSP_MAX_UNIVERSE=50
@@ -71,7 +72,6 @@ AQSP_DEPLOY_DASHBOARD=false
 TUSHARE_TOKEN=
 TELEGRAM_BOT_TOKEN=
 TELEGRAM_CHAT_ID=
-SERVERCHAN_SENDKEY=
 GLM_API_KEY=
 
 AQSP_NOTIFY=false
@@ -86,8 +86,8 @@ AQSP_ENABLE_AUTO_EVOLUTION=false
 补充说明：
 
 - `GLM_API_KEY` 用于智谱；`LLM_PROVIDER=glm` 时默认走 `GLM-4.7-Flash`。
-- `SERVERCHAN_SENDKEY` 配好后，`notify` 和监控告警都可以直接推送到微信。
 - `AQSP_NOTIFY=true` 后，日终 `daily_pipeline.sh` 会自动带 `--notify`。
+- `AQSP_SYMBOLS` 给实盘/日报链路用；`AQSP_WALKFORWARD_SYMBOLS` 单独给 walk-forward，用历史库里覆盖完整的票，别混用。
 - 选股推荐通知仍受 walk-forward 双门 gate 保护；收盘复盘、监控告警、策略自进化通知不依赖这道 gate。
 - `AQSP_ENABLE_DEBATE=false` 表示默认不跑多 agent 讨论；要开就改成 `true`。
 - `AQSP_DEBATE_LANGUAGE=zh-CN` 现在是运行时配置，不再写死在代码里。

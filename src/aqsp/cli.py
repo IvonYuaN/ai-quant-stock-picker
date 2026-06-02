@@ -2197,7 +2197,10 @@ def run_walkforward(args: argparse.Namespace) -> int:
     # 宪法 §1.3 #9：held-out 护栏
     _assert_not_heldout(args.end, allow=args.allow_heldout, logger=logger)
 
-    symbols = [s.strip() for s in args.symbols.split(",") if s.strip()]
+    explicit_symbols = args.symbols.strip()
+    if not explicit_symbols:
+        explicit_symbols = os.getenv("AQSP_WALKFORWARD_SYMBOLS", "").strip()
+    symbols = [s.strip() for s in explicit_symbols.split(",") if s.strip()]
     if not symbols:
         if args.pool == "all":
             src = _get_source(args.source)

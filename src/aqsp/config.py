@@ -11,6 +11,7 @@ def _env_flag(name: str, default: str = "false") -> bool:
 @dataclass(frozen=True)
 class RuntimeConfig:
     symbols: tuple[str, ...]
+    walkforward_symbols: tuple[str, ...]
     mode: str
     limit: int
     max_universe: int
@@ -42,8 +43,14 @@ def load_runtime_config() -> RuntimeConfig:
         for item in os.getenv("AQSP_SYMBOLS", "").split(",")
         if item.strip()
     )
+    walkforward_symbols = tuple(
+        item.strip()
+        for item in os.getenv("AQSP_WALKFORWARD_SYMBOLS", "").split(",")
+        if item.strip()
+    )
     return RuntimeConfig(
         symbols=symbols,
+        walkforward_symbols=walkforward_symbols,
         mode=os.getenv("AQSP_MODE", "close").strip() or "close",
         limit=int(os.getenv("AQSP_LIMIT", "10")),
         max_universe=int(os.getenv("AQSP_MAX_UNIVERSE", "100")),

@@ -957,6 +957,101 @@ class TestCLIPoolSelection:
         assert seen["cache"] is None
         assert report_path.exists()
 
+    def test_walkforward_uses_env_symbols_when_cli_symbols_missing(
+        self, monkeypatch, tmp_path
+    ):
+        from aqsp.cli import main
+
+        seen: dict[str, object] = {}
+
+        class DummySqliteDbSource:
+            def __init__(self, cache=None) -> None:
+                pass
+
+            def get_available_symbols(self):
+                return ["000915", "000921"]
+
+            def fetch_daily(self, symbols, start, end, adjust=""):
+                seen["symbols"] = list(symbols)
+                dates = pd.date_range(start="2024-01-01", periods=140, freq="B")
+                frame = pd.DataFrame(
+                    {
+                        "date": dates.strftime("%Y-%m-%d"),
+                        "symbol": "000915",
+                        "name": "华特达因",
+                        "open": 10.0,
+                        "high": 10.2,
+                        "low": 9.8,
+                        "close": 10.1,
+                        "volume": 1_000_000,
+                        "amount": 100_000_000,
+                        "suspended": False,
+                        "limit_up": 11.0,
+                        "limit_down": 9.0,
+                    }
+                )
+                return {
+                    "000915": frame.copy(),
+                    "000921": frame.assign(symbol="000921", name="海信家电"),
+                }
+
+        class DummyTester:
+            def __init__(self, **kwargs) -> None:
+                pass
+
+            def run(self, filtered, start_date=None, end_date=None):
+                return SimpleNamespace(
+                    overall=SimpleNamespace(
+                        total_return=0.1,
+                        annual_return=0.12,
+                        max_drawdown=0.03,
+                        sharpe_ratio=1.2,
+                        win_rate=0.55,
+                        profit_factor=1.3,
+                        trades=10,
+                        not_executable=0,
+                    ),
+                    deflated_sharpe=1.1,
+                    pbo=0.2,
+                    robustness_score=0.8,
+                    parameter_std=0.1,
+                    regime_winrates={},
+                    periods=[],
+                )
+
+        monkeypatch.setenv("AQSP_WALKFORWARD_SYMBOLS", "000915,000921")
+        monkeypatch.setattr("aqsp.cli.SqliteDbSource", DummySqliteDbSource)
+        monkeypatch.setattr(
+            "aqsp.data.pit_financial.enrich_ohlcv_with_pit_financials",
+            lambda frames, symbols, start, end, cache=None: SimpleNamespace(
+                frames=frames, financial_symbol_count=0, disclosure_symbol_count=0
+            ),
+        )
+        monkeypatch.setattr("aqsp.backtest.walk_forward.WalkForwardTester", DummyTester)
+        monkeypatch.setattr(
+            "aqsp.strategies.composite.CompositeStrategy",
+            lambda thresholds=None: object(),
+        )
+
+        report_path = tmp_path / "walkforward-env-symbols.md"
+        result = main(
+            [
+                "walkforward",
+                "--source",
+                "sqlite_db",
+                "--start",
+                "2024-01-01",
+                "--end",
+                "2024-06-30",
+                "--report",
+                str(report_path),
+            ]
+        )
+
+        assert result == 0
+        assert seen["symbols"] == ["000915", "000921"]
+        assert report_path.exists()
+
     def test_screen_pool_uses_universe_pool_symbols(self, monkeypatch):
         from aqsp.cli import main
 
