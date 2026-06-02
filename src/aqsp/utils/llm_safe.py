@@ -73,6 +73,15 @@ def _env_flag(name: str, default: str = "false") -> bool:
     return os.getenv(name, default).strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _model_env_for_provider(provider: str) -> str:
+    provider_key = provider.strip().upper()
+    for env_name in (f"{provider_key}_MODEL", "LLM_MODEL"):
+        value = os.getenv(env_name, "").strip()
+        if value:
+            return value
+    return ""
+
+
 def get_siliconflow_free_models() -> tuple[str, ...]:
     return tuple(sorted(_SILICONFLOW_FREE_MODELS))
 
@@ -122,7 +131,7 @@ def choose_siliconflow_model(
     *,
     free_only: bool | None = None,
 ) -> SiliconFlowModelChoice:
-    model = (preferred_model or os.getenv("LLM_MODEL", "")).strip()
+    model = (preferred_model or _model_env_for_provider("siliconflow")).strip()
     free_only = (
         _env_flag("SILICONFLOW_FREE_ONLY", "true") if free_only is None else free_only
     )
@@ -312,13 +321,13 @@ def _invoke(
         if provider == "siliconflow":
             model = choose_siliconflow_model().model
         else:
-            model = {
+            model = _model_env_for_provider(provider) or {
                 "glm": "glm-4.7-flash",
                 "qwen": "qwen-turbo",
                 "deepseek": "deepseek-chat",
                 "openai": "gpt-4o-mini",
                 "anthropic": "claude-3-5-haiku-20241022",
-                "custom": os.getenv("LLM_MODEL", "gpt-4o-mini"),
+                "custom": "gpt-4o-mini",
             }.get(provider, "glm-4.7-flash")
 
     if provider == "anthropic":

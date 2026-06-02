@@ -377,7 +377,7 @@ def main(argv: list[str] | None = None) -> int:
         "multi-factor", help="run multi-factor rotation strategy"
     )
     multi_factor_cmd.add_argument("--source", choices=SOURCE_CHOICES, default="auto")
-    multi_factor_cmd.add_argument("--pool", default="hs300")
+    multi_factor_cmd.add_argument("--pool", default="sh300")
     multi_factor_cmd.add_argument("--top", type=int, default=10)
     multi_factor_cmd.add_argument("--output", default="")
     multi_factor_cmd.add_argument("--report", default="")
@@ -387,7 +387,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     morning_cmd.add_argument("--source", choices=SOURCE_CHOICES, default="auto")
     morning_cmd.add_argument("--symbols", default="")
-    morning_cmd.add_argument("--pool", default="hs300")
+    morning_cmd.add_argument("--pool", default="sh300")
     morning_cmd.add_argument("--top", type=int, default=5)
     morning_cmd.add_argument("--notify", action="store_true")
     morning_cmd.add_argument("--output", default="")
@@ -397,7 +397,7 @@ def main(argv: list[str] | None = None) -> int:
     closing_cmd = sub.add_parser("closing-premium", help="run closing premium strategy")
     closing_cmd.add_argument("--source", choices=SOURCE_CHOICES, default="auto")
     closing_cmd.add_argument("--symbols", default="")
-    closing_cmd.add_argument("--pool", default="hs300")
+    closing_cmd.add_argument("--pool", default="sh300")
     closing_cmd.add_argument("--top", type=int, default=5)
     closing_cmd.add_argument("--notify", action="store_true")
     closing_cmd.add_argument("--output", default="")
@@ -2876,7 +2876,7 @@ def run_mine_factors(args: argparse.Namespace) -> int:
     miner = AutoFactorMiner(min_ic=args.min_ic, min_ir=args.min_ir)
 
     symbols = _resolve_run_symbols(
-        args.source, "", pool_name="hs300", max_universe=300, min_avg_amount=10_000_000
+        args.source, "", pool_name="sh300", max_universe=300, min_avg_amount=10_000_000
     )
     if not symbols:
         print("无法解析股票池")
@@ -2940,7 +2940,7 @@ def run_evolve(args: argparse.Namespace) -> int:
 
     print("分析当前策略表现...")
     symbols = _resolve_run_symbols(
-        args.source, "", pool_name="hs300", max_universe=300, min_avg_amount=10_000_000
+        args.source, "", pool_name="sh300", max_universe=300, min_avg_amount=10_000_000
     )
     if not symbols:
         print("无法解析股票池")

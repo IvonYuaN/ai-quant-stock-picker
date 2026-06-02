@@ -36,3 +36,16 @@ def test_choose_siliconflow_model_accepts_known_free_model_from_env(
 
     assert choice.model == "THUDM/glm-4-9b-chat"
     assert choice.source == "env"
+
+
+def test_choose_siliconflow_model_prefers_provider_specific_env_when_present(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("LLM_MODEL", "Qwen/Qwen2-1.5B-Instruct")
+    monkeypatch.setenv("SILICONFLOW_MODEL", "THUDM/glm-4-9b-chat")
+    monkeypatch.setenv("SILICONFLOW_FREE_ONLY", "true")
+
+    choice = choose_siliconflow_model()
+
+    assert choice.model == "THUDM/glm-4-9b-chat"
+    assert choice.source == "env"
