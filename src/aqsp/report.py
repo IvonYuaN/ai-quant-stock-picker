@@ -118,7 +118,7 @@ def to_markdown(
                 f"- 策略入口: {pick.entry_type}",
                 f"- 命中策略: {', '.join(pick.strategies) or '无'}",
                 f"- 仓位建议: {pick.position}",
-                f"- 止损/止盈: {pick.stop_loss} / {pick.take_profit}",
+                f"- 止损/止盈位: {pick.stop_loss} / {pick.take_profit}",
                 f"- 理由: {'；'.join(pick.reasons) or '无'}",
                 f"- 风险: {'；'.join(pick.risks) or '无'}",
                 "",

@@ -207,12 +207,28 @@ class ClosingReviewer:
             "relative_strength": "相对强度",
             "multi_factor_rotation": "多因子轮动",
         }
+        entry_type_map = {
+            "volume_breakout": "放量突破",
+            "trend_pullback": "均线回踩",
+            "reversal_watch": "反转观察",
+            "relative_strength": "相对强度",
+            "watch": "观察池",
+            "close": "收盘候选",
+            "open": "盘前候选",
+            "next_open": "次日开盘",
+        }
 
         base_label = ""
         if strategy_ids:
             base_label = strategy_map.get(
                 strategy_ids[0], strategy_ids[0].replace("_", " ")
             )
+        if not base_label:
+            entry_type = str(pred.get("entry_type", "")).strip()
+            if entry_type:
+                base_label = entry_type_map.get(
+                    entry_type, entry_type.replace("_", " ")
+                )
 
         sub_strategy = str(pred.get("sub_strategy", "")).strip()
         if base_label and sub_strategy:

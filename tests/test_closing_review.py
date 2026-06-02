@@ -237,6 +237,39 @@ class TestReviewToday:
         assert "尾盘溢价·量价突破" in review.strategy_breakdown
         assert any("打板成功率偏低" in item for item in review.key_lessons)
 
+    def test_uses_entry_type_when_strategies_missing(self, tmp_path):
+        ledger = tmp_path / "predictions.jsonl"
+        _write_predictions(
+            str(ledger),
+            [
+                {
+                    "symbol": "600000",
+                    "name": "A",
+                    "entry_type": "relative_strength",
+                    "signal_date": "2025-06-01",
+                    "entry_price": 10.0,
+                    "current_price": 10.1,
+                    "return_pct": 1.0,
+                    "holding_days": 1,
+                },
+                {
+                    "symbol": "600001",
+                    "name": "B",
+                    "entry_type": "reversal_watch",
+                    "signal_date": "2025-06-01",
+                    "entry_price": 20.0,
+                    "current_price": 19.0,
+                    "return_pct": -5.0,
+                    "holding_days": 2,
+                },
+            ],
+        )
+        reviewer = ClosingReviewer(ledger_path=str(ledger))
+        review = reviewer.review_today("2025-06-01")
+
+        assert "相对强度" in review.strategy_breakdown
+        assert "反转观察" in review.strategy_breakdown
+
 
 class TestGenerateWeeklySummary:
     def test_returns_weekly_summary(self, tmp_path):
