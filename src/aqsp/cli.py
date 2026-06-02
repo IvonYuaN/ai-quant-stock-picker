@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
@@ -2874,9 +2875,14 @@ def run_mine_factors(args: argparse.Namespace) -> int:
 
     print("开始自动因子挖掘...")
     miner = AutoFactorMiner(min_ic=args.min_ic, min_ir=args.min_ir)
+    explicit_symbols = os.getenv("AQSP_SYMBOLS", "").strip()
 
     symbols = _resolve_run_symbols(
-        args.source, "", pool_name="sh300", max_universe=300, min_avg_amount=10_000_000
+        args.source,
+        explicit_symbols,
+        pool_name="sh300",
+        max_universe=300,
+        min_avg_amount=10_000_000,
     )
     if not symbols:
         print("无法解析股票池")
@@ -2939,8 +2945,13 @@ def run_evolve(args: argparse.Namespace) -> int:
         return 0
 
     print("分析当前策略表现...")
+    explicit_symbols = os.getenv("AQSP_SYMBOLS", "").strip()
     symbols = _resolve_run_symbols(
-        args.source, "", pool_name="sh300", max_universe=300, min_avg_amount=10_000_000
+        args.source,
+        explicit_symbols,
+        pool_name="sh300",
+        max_universe=300,
+        min_avg_amount=10_000_000,
     )
     if not symbols:
         print("无法解析股票池")
