@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from aqsp.core.types import RunMetadata
 from aqsp.models import PickResult
+from aqsp.portfolio.manager import PortfolioDecision
 from aqsp.report import to_markdown
 
 
@@ -55,3 +56,35 @@ def test_report_renders_run_metadata_when_provided() -> None:
     assert "- 数据健康: healthy / tdx_vipdoc 健康；源成功/失败 3/0" in markdown
     assert "显式 0 / 解析 100 / 取数 101 / 筛选前 8 / 最终 1" in markdown
     assert "- thresholds.version: 1.0.0" in markdown
+
+
+def test_report_renders_portfolio_manager_decision_when_provided() -> None:
+    pick = PickResult(
+        symbol="600900",
+        name="长江电力",
+        date="2026-05-29",
+        close=27.75,
+        score=72,
+        rating="buy_candidate",
+        entry_type="relative_strength",
+        ideal_buy=27.75,
+        stop_loss=26.1,
+        take_profit=31.0,
+        position="30%-50%",
+    )
+
+    markdown = to_markdown(
+        [pick],
+        portfolio_decisions=[
+            PortfolioDecision(
+                symbol="600900",
+                action="promote",
+                score_delta=4.0,
+                reasons=("多Agent辩论支持上调优先级",),
+            )
+        ],
+    )
+
+    assert "### Portfolio Manager" in markdown
+    assert "- 最终动作: promote" in markdown
+    assert "- 分数调整: +4.0" in markdown

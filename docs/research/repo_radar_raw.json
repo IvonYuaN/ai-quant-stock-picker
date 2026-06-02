@@ -1,0 +1,2370 @@
+[
+  {
+    "description": "Financial data platform for analysts, quants and AI agents.",
+    "fullName": "OpenBB-finance/OpenBB",
+    "language": "Python",
+    "stargazersCount": 68412,
+    "updatedAt": "2026-06-02T13:13:45Z",
+    "url": "https://github.com/OpenBB-finance/OpenBB"
+  },
+  {
+    "description": "An AI Hedge Fund Team",
+    "fullName": "virattt/ai-hedge-fund",
+    "language": "Python",
+    "stargazersCount": 59692,
+    "updatedAt": "2026-06-02T14:20:51Z",
+    "url": "https://github.com/virattt/ai-hedge-fund"
+  },
+  {
+    "description": "Free, open source crypto trading bot",
+    "fullName": "freqtrade/freqtrade",
+    "language": "Python",
+    "stargazersCount": 51065,
+    "updatedAt": "2026-06-02T14:06:12Z",
+    "url": "https://github.com/freqtrade/freqtrade"
+  },
+  {
+    "description": "Qlib is an AI-oriented Quant investment platform that aims to use AI tech to empower Quant Research, from exploring ideas to implementing productions. Qlib supports diverse ML modeling paradigms, including supervised learning, market dynamics modeling, and RL, and is now equipped with https://github.com/microsoft/RD-Agent to automate R&D process.",
+    "fullName": "microsoft/qlib",
+    "language": "Python",
+    "stargazersCount": 43945,
+    "updatedAt": "2026-06-02T14:08:31Z",
+    "url": "https://github.com/microsoft/qlib"
+  },
+  {
+    "description": "基于Python的开源量化交易平台开发框架",
+    "fullName": "vnpy/vnpy",
+    "language": "Python",
+    "stargazersCount": 41238,
+    "updatedAt": "2026-06-02T13:25:53Z",
+    "url": "https://github.com/vnpy/vnpy"
+  },
+  {
+    "description": "LLM驱动的 A/H/美股智能分析：多数据源行情 + 实时新闻 + LLM决策仪表盘 + 多渠道推送，零成本定时运行，纯白嫖. LLM-powered stock analysis system for A/H/US markets.",
+    "fullName": "ZhuLinsen/daily_stock_analysis",
+    "language": "Python",
+    "stargazersCount": 39893,
+    "updatedAt": "2026-06-02T14:04:23Z",
+    "url": "https://github.com/ZhuLinsen/daily_stock_analysis"
+  },
+  {
+    "description": "A curated list of insanely awesome libraries, packages and resources for Quants (Quantitative Finance)",
+    "fullName": "wilsonfreitas/awesome-quant",
+    "language": "HTML",
+    "stargazersCount": 26549,
+    "updatedAt": "2026-06-02T13:14:01Z",
+    "url": "https://github.com/wilsonfreitas/awesome-quant"
+  },
+  {
+    "description": "FinceptTerminal is a modern finance application offering advanced market analytics, investment research, and economic data tools, designed for interactive exploration and data-driven decision-making in a user-friendly environment.",
+    "fullName": "Fincept-Corporation/FinceptTerminal",
+    "language": "C++",
+    "stargazersCount": 25032,
+    "updatedAt": "2026-06-02T14:13:05Z",
+    "url": "https://github.com/Fincept-Corporation/FinceptTerminal"
+  },
+  {
+    "description": "Python Backtesting library for trading strategies",
+    "fullName": "mementum/backtrader",
+    "language": "Python",
+    "stargazersCount": 21795,
+    "updatedAt": "2026-06-02T13:27:44Z",
+    "url": "https://github.com/mementum/backtrader"
+  },
+  {
+    "description": "AKShare is an elegant and simple financial data interface library for Python, built for human beings! 开源财经数据接口库",
+    "fullName": "akfamily/akshare",
+    "language": "Python",
+    "stargazersCount": 19977,
+    "updatedAt": "2026-06-02T13:21:17Z",
+    "url": "https://github.com/akfamily/akshare"
+  },
+  {
+    "description": "Zipline, a Pythonic Algorithmic Trading Library",
+    "fullName": "quantopian/zipline",
+    "language": "Python",
+    "stargazersCount": 19837,
+    "updatedAt": "2026-06-02T13:06:20Z",
+    "url": "https://github.com/quantopian/zipline"
+  },
+  {
+    "description": "Lean Algorithmic Trading Engine by QuantConnect (Python, C#)",
+    "fullName": "QuantConnect/Lean",
+    "language": "C#",
+    "stargazersCount": 19640,
+    "updatedAt": "2026-06-02T14:21:24Z",
+    "url": "https://github.com/QuantConnect/Lean"
+  },
+  {
+    "description": "Open source software that helps you create and deploy high-frequency crypto trading bots",
+    "fullName": "hummingbot/hummingbot",
+    "language": "Python",
+    "stargazersCount": 18763,
+    "updatedAt": "2026-06-02T14:18:41Z",
+    "url": "https://github.com/hummingbot/hummingbot"
+  },
+  {
+    "description": "[🔥updating ...] AI 自动量化交易机器人(完全本地部署) AI-powered Quantitative Investment Research Platform. 📃 online docs: https://ufund-me.github.io/Qbot   ✨ :news: qbot-mini: https://github.com/Charmve/iQuant",
+    "fullName": "UFund-Me/Qbot",
+    "language": "Jupyter Notebook",
+    "stargazersCount": 17523,
+    "updatedAt": "2026-06-02T11:02:19Z",
+    "url": "https://github.com/UFund-Me/Qbot"
+  },
+  {
+    "description": "阿布量化交易系统(股票，期权，期货，比特币，机器学习) 基于python的开源量化交易，量化投资架构",
+    "fullName": "bbfamily/abu",
+    "language": "Python",
+    "stargazersCount": 17349,
+    "updatedAt": "2026-06-02T14:08:31Z",
+    "url": "https://github.com/bbfamily/abu"
+  },
+  {
+    "description": "FinRL®:  Financial Reinforcement Learning. 🔥",
+    "fullName": "AI4Finance-Foundation/FinRL",
+    "language": "Jupyter Notebook",
+    "stargazersCount": 15314,
+    "updatedAt": "2026-06-02T11:09:19Z",
+    "url": "https://github.com/AI4Finance-Foundation/FinRL"
+  },
+  {
+    "description": "TuShare is a utility for crawling historical data of China stocks",
+    "fullName": "waditu/tushare",
+    "language": "Python",
+    "stargazersCount": 15074,
+    "updatedAt": "2026-06-02T13:50:49Z",
+    "url": "https://github.com/waditu/tushare"
+  },
+  {
+    "description": "OpenStock is an open-source alternative to expensive market platforms. Track real-time prices, set personalized alerts, and explore detailed company insights — built openly, for everyone, forever free.",
+    "fullName": "Open-Dev-Society/OpenStock",
+    "language": "TypeScript",
+    "stargazersCount": 12923,
+    "updatedAt": "2026-06-02T14:12:01Z",
+    "url": "https://github.com/Open-Dev-Society/OpenStock"
+  },
+  {
+    "description": "stock股票.获取股票数据,计算股票指标,筹码分布,识别股票形态,综合选股,选股策略,股票验证回测,股票自动交易,支持PC及移动设备。",
+    "fullName": "myhhub/stock",
+    "language": "Python",
+    "stargazersCount": 12830,
+    "updatedAt": "2026-06-02T11:58:59Z",
+    "url": "https://github.com/myhhub/stock"
+  },
+  {
+    "description": "Python wrapper for TA-Lib (http://ta-lib.org/).",
+    "fullName": "TA-Lib/ta-lib-python",
+    "language": "Cython",
+    "stargazersCount": 12008,
+    "updatedAt": "2026-06-02T06:58:06Z",
+    "url": "https://github.com/TA-Lib/ta-lib-python"
+  },
+  {
+    "description": "ValueCell is a community-driven, multi-agent platform for financial applications.",
+    "fullName": "ValueCell-ai/valuecell",
+    "language": "Python",
+    "stargazersCount": 10770,
+    "updatedAt": "2026-06-02T13:17:26Z",
+    "url": "https://github.com/ValueCell-ai/valuecell"
+  },
+  {
+    "description": "Algorithmic trading and quantitative trading open source platform to develop trading robots (stock markets, forex, crypto, bitcoins, and options).",
+    "fullName": "StockSharp/StockSharp",
+    "language": "C#",
+    "stargazersCount": 10032,
+    "updatedAt": "2026-06-02T13:14:29Z",
+    "url": "https://github.com/StockSharp/StockSharp"
+  },
+  {
+    "description": "Python quantitative trading strategies including VIX Calculator, Pattern Recognition, Commodity Trading Advisor, Monte Carlo, Options Straddle, Shooting Star, London Breakout, Heikin-Ashi, Pair Trading, RSI, Bollinger Bands, Parabolic SAR, Dual Thrust, Awesome, MACD",
+    "fullName": "je-suis-tm/quant-trading",
+    "language": "Python",
+    "stargazersCount": 9982,
+    "updatedAt": "2026-06-02T13:06:24Z",
+    "url": "https://github.com/je-suis-tm/quant-trading"
+  },
+  {
+    "description": "\"Vibe-Trading: Your Personal Trading Agent\"",
+    "fullName": "HKUDS/Vibe-Trading",
+    "language": "Python",
+    "stargazersCount": 9476,
+    "updatedAt": "2026-06-02T14:21:35Z",
+    "url": "https://github.com/HKUDS/Vibe-Trading"
+  },
+  {
+    "description": "Gathers machine learning and deep learning models for Stock forecasting including trading bots and simulations",
+    "fullName": "huseinzol05/Stock-Prediction-Models",
+    "language": "Jupyter Notebook",
+    "stargazersCount": 9369,
+    "updatedAt": "2026-06-02T12:45:20Z",
+    "url": "https://github.com/huseinzol05/Stock-Prediction-Models"
+  },
+  {
+    "description": "A curated list of practical financial machine learning tools and applications.",
+    "fullName": "firmai/financial-machine-learning",
+    "language": "Python",
+    "stargazersCount": 8578,
+    "updatedAt": "2026-06-02T13:14:41Z",
+    "url": "https://github.com/firmai/financial-machine-learning"
+  },
+  {
+    "description": "🔎 📈 🐍 💰  Backtest trading strategies in Python.",
+    "fullName": "kernc/backtesting.py",
+    "language": "Python",
+    "stargazersCount": 8457,
+    "updatedAt": "2026-06-02T13:59:03Z",
+    "url": "https://github.com/kernc/backtesting.py"
+  },
+  {
+    "description": "A curated list of awesome libraries, packages, strategies, books, blogs, tutorials for systematic trading.",
+    "fullName": "paperswithbacktest/awesome-systematic-trading",
+    "language": "Python",
+    "stargazersCount": 8291,
+    "updatedAt": "2026-06-02T13:14:48Z",
+    "url": "https://github.com/paperswithbacktest/awesome-systematic-trading"
+  },
+  {
+    "description": "An advanced crypto trading bot written in Python",
+    "fullName": "jesse-ai/jesse",
+    "language": "JavaScript",
+    "stargazersCount": 7970,
+    "updatedAt": "2026-06-02T13:35:24Z",
+    "url": "https://github.com/jesse-ai/jesse"
+  },
+  {
+    "description": "This is a database of 300.000+ symbols containing Equities, ETFs, Funds, Indices, Currencies, Cryptocurrencies and Money Markets.",
+    "fullName": "JerBouma/FinanceDatabase",
+    "language": "Python",
+    "stargazersCount": 7761,
+    "updatedAt": "2026-06-02T14:18:49Z",
+    "url": "https://github.com/JerBouma/FinanceDatabase"
+  },
+  {
+    "description": "The backtesting engine that gives you an unfair advantage. Run thousands of trading ideas before others finish one.",
+    "fullName": "polakowo/vectorbt",
+    "language": "Python",
+    "stargazersCount": 7749,
+    "updatedAt": "2026-06-02T13:31:55Z",
+    "url": "https://github.com/polakowo/vectorbt"
+  },
+  {
+    "description": "The QuantLib C++ library",
+    "fullName": "lballabio/QuantLib",
+    "language": "C++",
+    "stargazersCount": 7201,
+    "updatedAt": "2026-06-02T14:04:40Z",
+    "url": "https://github.com/lballabio/QuantLib"
+  },
+  {
+    "description": "Portfolio analytics for quants, written in Python",
+    "fullName": "ranaroussi/quantstats",
+    "language": "Python",
+    "stargazersCount": 7200,
+    "updatedAt": "2026-06-02T10:18:06Z",
+    "url": "https://github.com/ranaroussi/quantstats"
+  },
+  {
+    "description": "AI quantitative trading platform for crypto, stocks, and forex with backtesting, live trading, market data, and multi-agent research.vibe-trading ,trading-agents,ai-trader,ai-trading",
+    "fullName": "brokermr810/QuantDinger",
+    "language": "Python",
+    "stargazersCount": 7135,
+    "updatedAt": "2026-06-02T14:04:25Z",
+    "url": "https://github.com/brokermr810/QuantDinger"
+  },
+  {
+    "description": "Collection of notebooks about quantitative finance, with interactive python code.",
+    "fullName": "cantaro86/Financial-Models-Numerical-Methods",
+    "language": "Jupyter Notebook",
+    "stargazersCount": 6802,
+    "updatedAt": "2026-06-02T10:33:47Z",
+    "url": "https://github.com/cantaro86/Financial-Models-Numerical-Methods"
+  },
+  {
+    "description": "A extendable, replaceable Python algorithmic backtest && trading framework supporting multiple securities",
+    "fullName": "ricequant/rqalpha",
+    "language": "Python",
+    "stargazersCount": 6437,
+    "updatedAt": "2026-06-02T11:35:30Z",
+    "url": "https://github.com/ricequant/rqalpha"
+  },
+  {
+    "description": "Track stocks, crypto, and derivatives prices and positions in real time from your terminal",
+    "fullName": "achannarasappa/ticker",
+    "language": "Go",
+    "stargazersCount": 6091,
+    "updatedAt": "2026-06-01T00:29:21Z",
+    "url": "https://github.com/achannarasappa/ticker"
+  },
+  {
+    "description": "🔬 A curated list of awesome LLMs & deep learning strategies & tools in financial market.",
+    "fullName": "georgezouq/awesome-ai-in-finance",
+    "language": "",
+    "stargazersCount": 6010,
+    "updatedAt": "2026-06-02T13:16:13Z",
+    "url": "https://github.com/georgezouq/awesome-ai-in-finance"
+  },
+  {
+    "description": "Financial portfolio optimisation in python, including classical efficient frontier, Black-Litterman, Hierarchical Risk Parity",
+    "fullName": "PyPortfolio/PyPortfolioOpt",
+    "language": "Jupyter Notebook",
+    "stargazersCount": 5758,
+    "updatedAt": "2026-06-02T05:20:37Z",
+    "url": "https://github.com/PyPortfolio/PyPortfolioOpt"
+  },
+  {
+    "description": "Github.com/CryptoSignal - Trading & Technical Analysis Bot - 4,100+ stars, 1,100+ forks",
+    "fullName": "CryptoSignal/Crypto-Signal",
+    "language": "Python",
+    "stargazersCount": 5567,
+    "updatedAt": "2026-06-02T09:51:27Z",
+    "url": "https://github.com/CryptoSignal/Crypto-Signal"
+  },
+  {
+    "description": "Free, open-source crypto trading bot, automated bitcoin / cryptocurrency trading software, algorithmic trading bots. Visually design your crypto trading bot, leveraging an integrated charting system, data-mining, backtesting, paper trading, and multi-server crypto bot deployments.",
+    "fullName": "Superalgos/Superalgos",
+    "language": "JavaScript",
+    "stargazersCount": 5498,
+    "updatedAt": "2026-06-02T13:16:29Z",
+    "url": "https://github.com/Superalgos/Superalgos"
+  },
+  {
+    "description": "MlFinLab helps portfolio managers and traders who want to leverage the power of machine learning by providing reproducible, interpretable, and easy to use tools. ",
+    "fullName": "hudson-and-thames/mlfinlab",
+    "language": "Python",
+    "stargazersCount": 4788,
+    "updatedAt": "2026-06-02T13:27:03Z",
+    "url": "https://github.com/hudson-and-thames/mlfinlab"
+  },
+  {
+    "description": "Python Algorithmic Trading Library",
+    "fullName": "gbeced/pyalgotrade",
+    "language": "Python",
+    "stargazersCount": 4655,
+    "updatedAt": "2026-06-02T11:52:53Z",
+    "url": "https://github.com/gbeced/pyalgotrade"
+  },
+  {
+    "description": "Performance analysis of predictive (alpha) stock factors",
+    "fullName": "quantopian/alphalens",
+    "language": "Jupyter Notebook",
+    "stargazersCount": 4292,
+    "updatedAt": "2026-06-02T14:11:37Z",
+    "url": "https://github.com/quantopian/alphalens"
+  },
+  {
+    "description": "Portfolio Optimization in Python",
+    "fullName": "dcajasn/Riskfolio-Lib",
+    "language": "C++",
+    "stargazersCount": 4243,
+    "updatedAt": "2026-06-02T13:30:30Z",
+    "url": "https://github.com/dcajasn/Riskfolio-Lib"
+  },
+  {
+    "description": "A curated list of insanely awesome libraries, packages and resources for systematic trading. Crypto, Stock, Futures, Options, CFDs, FX, and more | 量化交易 | 量化投资",
+    "fullName": "wangzhe3224/awesome-systematic-trading",
+    "language": "HTML",
+    "stargazersCount": 4201,
+    "updatedAt": "2026-06-02T13:25:55Z",
+    "url": "https://github.com/wangzhe3224/awesome-systematic-trading"
+  },
+  {
+    "description": "modular quant framework.",
+    "fullName": "zvtvz/zvt",
+    "language": "Python",
+    "stargazersCount": 4155,
+    "updatedAt": "2026-06-02T01:50:12Z",
+    "url": "https://github.com/zvtvz/zvt"
+  },
+  {
+    "description": "Free, open source, a high frequency trading and market making backtesting and trading bot, which accounts for limit orders, queue positions, and latencies, utilizing full tick data for trades and order books(Level-2 and Level-3), with real-world crypto trading examples for Binance and Bybit",
+    "fullName": "nkaz001/hftbacktest",
+    "language": "Rust",
+    "stargazersCount": 4140,
+    "updatedAt": "2026-06-02T14:18:02Z",
+    "url": "https://github.com/nkaz001/hftbacktest"
+  },
+  {
+    "description": "150+ quantitative finance Python programs to help you gather, manipulate, and analyze stock market data",
+    "fullName": "shashankvemuri/Finance",
+    "language": "Python",
+    "stargazersCount": 3902,
+    "updatedAt": "2026-06-02T13:34:55Z",
+    "url": "https://github.com/shashankvemuri/Finance"
+  },
+  {
+    "description": "Python library for backtesting trading strategies & analyzing financial markets (formerly pythalesians)",
+    "fullName": "cuemacro/finmarketpy",
+    "language": "Python",
+    "stargazersCount": 3770,
+    "updatedAt": "2026-06-01T12:22:56Z",
+    "url": "https://github.com/cuemacro/finmarketpy"
+  },
+  {
+    "description": "📈 Get real-time stocks from TradingView",
+    "fullName": "Mathieu2301/TradingView-API",
+    "language": "JavaScript",
+    "stargazersCount": 3499,
+    "updatedAt": "2026-06-02T13:59:04Z",
+    "url": "https://github.com/Mathieu2301/TradingView-API"
+  },
+  {
+    "description": "Source code for Algorithmic Trading with Python (2020) by Chris Conlan",
+    "fullName": "chrisconlan/algorithmic-trading-with-python",
+    "language": "Python",
+    "stargazersCount": 3399,
+    "updatedAt": "2026-05-30T18:14:24Z",
+    "url": "https://github.com/chrisconlan/algorithmic-trading-with-python"
+  },
+  {
+    "description": "Algorithmic Trading in Python with Machine Learning",
+    "fullName": "edtechre/pybroker",
+    "language": "Python",
+    "stargazersCount": 3336,
+    "updatedAt": "2026-06-02T07:30:49Z",
+    "url": "https://github.com/edtechre/pybroker"
+  },
+  {
+    "description": "Statistical and Algorithmic Investing Strategies for Everyone",
+    "fullName": "tradytics/eiten",
+    "language": "Python",
+    "stargazersCount": 3232,
+    "updatedAt": "2026-06-01T12:02:21Z",
+    "url": "https://github.com/tradytics/eiten"
+  },
+  {
+    "description": "Hikyuu Quant Framework 基于C++/Python的超高速开源量化交易研究框架，同时可基于策略部件进行资产重用，快速累积策略资产。",
+    "fullName": "fasiondog/hikyuu",
+    "language": "C++",
+    "stargazersCount": 3203,
+    "updatedAt": "2026-06-02T10:42:12Z",
+    "url": "https://github.com/fasiondog/hikyuu"
+  },
+  {
+    "description": "Real-time crypto & stock screening, advanced technical indicators, Bollinger Bands intelligence, candlestick patterns + native Claude Desktop integration. Multi-exchange (Binance, KuCoin, Bybit+). Open-source AI trading infrastructure.",
+    "fullName": "atilaahmettaner/tradingview-mcp",
+    "language": "Python",
+    "stargazersCount": 2960,
+    "updatedAt": "2026-06-02T14:14:24Z",
+    "url": "https://github.com/atilaahmettaner/tradingview-mcp"
+  },
+  {
+    "description": "A high-frequency trading model using Interactive Brokers API with pairs and mean-reversion in Python",
+    "fullName": "jamesmawm/High-Frequency-Trading-Model-with-IB",
+    "language": "Python",
+    "stargazersCount": 2870,
+    "updatedAt": "2026-05-29T19:15:37Z",
+    "url": "https://github.com/jamesmawm/High-Frequency-Trading-Model-with-IB"
+  },
+  {
+    "description": "The repository for freeCodeCamp's YouTube course, Algorithmic Trading in Python",
+    "fullName": "nickmccullum/algorithmic-trading-python",
+    "language": "Jupyter Notebook",
+    "stargazersCount": 2840,
+    "updatedAt": "2026-06-02T07:04:15Z",
+    "url": "https://github.com/nickmccullum/algorithmic-trading-python"
+  },
+  {
+    "description": "TradeMaster is an open-source platform for quantitative trading empowered by reinforcement learning :fire: :zap: :rainbow:",
+    "fullName": "TradeMaster-NTU/TradeMaster",
+    "language": "Jupyter Notebook",
+    "stargazersCount": 2758,
+    "updatedAt": "2026-06-02T09:13:43Z",
+    "url": "https://github.com/TradeMaster-NTU/TradeMaster"
+  },
+  {
+    "description": "A comprehensive quantitative trading system with AI-powered analysis, real-time data processing, and advanced risk management",
+    "fullName": "0xemmkty/QuantMuse",
+    "language": "Python",
+    "stargazersCount": 2607,
+    "updatedAt": "2026-06-02T08:58:39Z",
+    "url": "https://github.com/0xemmkty/QuantMuse"
+  },
+  {
+    "description": "An Algorithmic Trading Library for Crypto-Assets in Python",
+    "fullName": "scrtlabs/catalyst",
+    "language": "Python",
+    "stargazersCount": 2564,
+    "updatedAt": "2026-05-24T06:07:50Z",
+    "url": "https://github.com/scrtlabs/catalyst"
+  },
+  {
+    "description": "Ultra-fast matching engine written in Java based on LMAX Disruptor, Eclipse Collections, Real Logic Agrona, OpenHFT, LZ4 Java, and Adaptive Radix Trees.",
+    "fullName": "exchange-core/exchange-core",
+    "language": "Java",
+    "stargazersCount": 2540,
+    "updatedAt": "2026-06-01T22:12:33Z",
+    "url": "https://github.com/exchange-core/exchange-core"
+  },
+  {
+    "description": "Stock market analyzer and predictor using Elasticsearch, Twitter, News headlines and Python natural language processing and sentiment analysis",
+    "fullName": "shirosaidev/stocksight",
+    "language": "Python",
+    "stargazersCount": 2492,
+    "updatedAt": "2026-06-01T19:47:32Z",
+    "url": "https://github.com/shirosaidev/stocksight"
+  },
+  {
+    "description": "A javascript technical indicators written in typescript with pattern recognition right in the browser",
+    "fullName": "anandanand84/technicalindicators",
+    "language": "JavaScript",
+    "stargazersCount": 2437,
+    "updatedAt": "2026-05-30T18:52:49Z",
+    "url": "https://github.com/anandanand84/technicalindicators"
+  },
+  {
+    "description": " 💸💸 Curated list of investment & finance related resources ",
+    "fullName": "mr-karan/awesome-investing",
+    "language": "",
+    "stargazersCount": 2404,
+    "updatedAt": "2026-06-01T21:28:56Z",
+    "url": "https://github.com/mr-karan/awesome-investing"
+  },
+  {
+    "description": ":boar: :bear: Deep Learning based Python Library for Stock Market Prediction and Modelling",
+    "fullName": "achillesrasquinha/bulbea",
+    "language": "Python",
+    "stargazersCount": 2284,
+    "updatedAt": "2026-06-01T00:48:19Z",
+    "url": "https://github.com/achillesrasquinha/bulbea"
+  },
+  {
+    "description": "QTPyLib, Pythonic Algorithmic Trading ",
+    "fullName": "ranaroussi/qtpylib",
+    "language": "Python",
+    "stargazersCount": 2260,
+    "updatedAt": "2026-05-28T21:56:32Z",
+    "url": "https://github.com/ranaroussi/qtpylib"
+  },
+  {
+    "description": "Stock market tracker for hackers.",
+    "fullName": "mop-tracker/mop",
+    "language": "Go",
+    "stargazersCount": 2188,
+    "updatedAt": "2026-06-02T07:53:55Z",
+    "url": "https://github.com/mop-tracker/mop"
+  },
+  {
+    "description": "BackTrader中文教程笔记（by：量化投资与机器学习），系统性介绍Bactrader的特性、策略构建、数据结构、回测交易等，彻底掌握量化神器的使用方法。章节：介绍篇、数据篇、指标篇、交易篇、策略篇、可视化篇……（持续更新中）",
+    "fullName": "jrothschild33/learn_backtrader",
+    "language": "Python",
+    "stargazersCount": 2165,
+    "updatedAt": "2026-06-02T04:53:07Z",
+    "url": "https://github.com/jrothschild33/learn_backtrader"
+  },
+  {
+    "description": "Open-source Rust framework for building event-driven live-trading & backtesting systems",
+    "fullName": "barter-rs/barter-rs",
+    "language": "Rust",
+    "stargazersCount": 2157,
+    "updatedAt": "2026-06-01T03:18:03Z",
+    "url": "https://github.com/barter-rs/barter-rs"
+  },
+  {
+    "description": "The Operator Splitting QP Solver",
+    "fullName": "osqp/osqp",
+    "language": "C",
+    "stargazersCount": 2140,
+    "updatedAt": "2026-05-31T11:20:04Z",
+    "url": "https://github.com/osqp/osqp"
+  },
+  {
+    "description": "This is a library to use with Robinhood Financial App. It currently supports trading crypto-currencies, options, and stocks. In addition, it can be used to get real time ticker information, assess the performance of your portfolio, and can also get tax documents, total dividends paid, and more. More info at",
+    "fullName": "jmfernandes/robin_stocks",
+    "language": "Python",
+    "stargazersCount": 2080,
+    "updatedAt": "2026-06-02T11:18:42Z",
+    "url": "https://github.com/jmfernandes/robin_stocks"
+  },
+  {
+    "description": "Python Crypto Bot (PyCryptoBot)",
+    "fullName": "whittlem/pycryptobot",
+    "language": "Python",
+    "stargazersCount": 2055,
+    "updatedAt": "2026-06-02T09:51:28Z",
+    "url": "https://github.com/whittlem/pycryptobot"
+  },
+  {
+    "description": "Python library for portfolio optimization built on top of scikit-learn",
+    "fullName": "skfolio/skfolio",
+    "language": "Python",
+    "stargazersCount": 2010,
+    "updatedAt": "2026-06-01T04:43:37Z",
+    "url": "https://github.com/skfolio/skfolio"
+  },
+  {
+    "description": "Trading and Backtesting environment for training reinforcement learning agent or simple rule base algo.",
+    "fullName": "Yvictor/TradingGym",
+    "language": "Python",
+    "stargazersCount": 1877,
+    "updatedAt": "2026-05-31T02:19:16Z",
+    "url": "https://github.com/Yvictor/TradingGym"
+  },
+  {
+    "description": "fastquant — Backtest and optimize your ML trading strategies with only 3 lines of code!",
+    "fullName": "enzoampil/fastquant",
+    "language": "Jupyter Notebook",
+    "stargazersCount": 1749,
+    "updatedAt": "2026-05-31T02:22:28Z",
+    "url": "https://github.com/enzoampil/fastquant"
+  },
+  {
+    "description": "Machine Learning in Asset Management (by @firmai)",
+    "fullName": "firmai/machine-learning-asset-management",
+    "language": "Jupyter Notebook",
+    "stargazersCount": 1740,
+    "updatedAt": "2026-05-31T19:57:35Z",
+    "url": "https://github.com/firmai/machine-learning-asset-management"
+  },
+  {
+    "description": "Python AutoML for Trading Systems and Sports Betting",
+    "fullName": "ScottfreeLLC/AlphaPy",
+    "language": "Python",
+    "stargazersCount": 1727,
+    "updatedAt": "2026-06-01T16:38:15Z",
+    "url": "https://github.com/ScottfreeLLC/AlphaPy"
+  },
+  {
+    "description": "Discover our Python package designed for algorithmic trading. It brings ICT's smart money concepts to Python, offering a range of indicators for your algorithmic trading strategies.",
+    "fullName": "joshyattridge/smart-money-concepts",
+    "language": "Python",
+    "stargazersCount": 1699,
+    "updatedAt": "2026-06-02T12:40:41Z",
+    "url": "https://github.com/joshyattridge/smart-money-concepts"
+  },
+  {
+    "description": "Backtestable AI trading agents and Python algorithmic trading strategies for stocks, options, crypto, futures, forex, SEC filings, FRED macro data, and real brokers.",
+    "fullName": "Lumiwealth/lumibot",
+    "language": "Python",
+    "stargazersCount": 1633,
+    "updatedAt": "2026-06-02T02:08:02Z",
+    "url": "https://github.com/Lumiwealth/lumibot"
+  },
+  {
+    "description": "AKQuant is a high-performance quantitative research and trading framework built on Rust and Python! 开源量化回测框架",
+    "fullName": "akfamily/akquant",
+    "language": "Python",
+    "stargazersCount": 1388,
+    "updatedAt": "2026-06-02T12:44:52Z",
+    "url": "https://github.com/akfamily/akquant"
+  },
+  {
+    "description": "Agentic AI Hedge Fund OS (AIMM)",
+    "fullName": "olaxbt/ai-market-maker",
+    "language": "TypeScript",
+    "stargazersCount": 1370,
+    "updatedAt": "2026-06-02T14:21:44Z",
+    "url": "https://github.com/olaxbt/ai-market-maker"
+  },
+  {
+    "description": "A nimble options research and backtesting library for Python",
+    "fullName": "goldspanlabs/optopsy",
+    "language": "Python",
+    "stargazersCount": 1369,
+    "updatedAt": "2026-06-02T09:06:36Z",
+    "url": "https://github.com/goldspanlabs/optopsy"
+  },
+  {
+    "description": "Educational notebooks on quantitative finance, algorithmic trading, financial modelling and investment strategy",
+    "fullName": "LongOnly/Quantitative-Notebooks",
+    "language": "Jupyter Notebook",
+    "stargazersCount": 1360,
+    "updatedAt": "2026-05-29T01:51:01Z",
+    "url": "https://github.com/LongOnly/Quantitative-Notebooks"
+  },
+  {
+    "description": "A Python-based development platform for automated trading systems - from backtesting to optimisation to livetrading. ",
+    "fullName": "kieran-mackle/AutoTrader",
+    "language": "Python",
+    "stargazersCount": 1262,
+    "updatedAt": "2026-05-30T20:21:56Z",
+    "url": "https://github.com/kieran-mackle/AutoTrader"
+  },
+  {
+    "description": "Framework for quantitative trading. Complete framework for development, backtesting, and deploying automated trading algorithms and trading bots.",
+    "fullName": "coding-kitties/investing-algorithm-framework",
+    "language": "Python",
+    "stargazersCount": 1237,
+    "updatedAt": "2026-06-02T09:17:50Z",
+    "url": "https://github.com/coding-kitties/investing-algorithm-framework"
+  },
+  {
+    "description": "Portfolio optimization and back-testing.",
+    "fullName": "cvxgrp/cvxportfolio",
+    "language": "Python",
+    "stargazersCount": 1219,
+    "updatedAt": "2026-05-31T15:54:14Z",
+    "url": "https://github.com/cvxgrp/cvxportfolio"
+  },
+  {
+    "description": "Portfolio optimization with deep learning.",
+    "fullName": "jankrepl/deepdow",
+    "language": "Python",
+    "stargazersCount": 1140,
+    "updatedAt": "2026-06-02T10:50:43Z",
+    "url": "https://github.com/jankrepl/deepdow"
+  },
+  {
+    "description": "51bitquant Python数字货币量化交易视频 CCXT框架 爬取交易所数据 比特币量化交易 交易机器人51bitquant tradingbot cryptocurrency quantitative trading btc trading",
+    "fullName": "51bitquant/bitquant",
+    "language": "Python",
+    "stargazersCount": 1139,
+    "updatedAt": "2026-05-31T04:49:17Z",
+    "url": "https://github.com/51bitquant/bitquant"
+  },
+  {
+    "description": "Python for Algorithmic Trading Cookbook, published by Packt",
+    "fullName": "PacktPublishing/Python-for-Algorithmic-Trading-Cookbook",
+    "language": "Jupyter Notebook",
+    "stargazersCount": 1139,
+    "updatedAt": "2026-05-31T11:01:14Z",
+    "url": "https://github.com/PacktPublishing/Python-for-Algorithmic-Trading-Cookbook"
+  },
+  {
+    "description": "Research in investment finance with Python Notebooks",
+    "fullName": "Hvass-Labs/FinanceOps",
+    "language": "Jupyter Notebook",
+    "stargazersCount": 1113,
+    "updatedAt": "2026-05-20T15:57:19Z",
+    "url": "https://github.com/Hvass-Labs/FinanceOps"
+  },
+  {
+    "description": "An Open Source Portfolio Backtesting Engine for Everyone | 面向所有人的开源投资组合回测引擎",
+    "fullName": "santoshlite/EigenLedger",
+    "language": "Python",
+    "stargazersCount": 1060,
+    "updatedAt": "2026-06-01T16:55:28Z",
+    "url": "https://github.com/santoshlite/EigenLedger"
+  },
+  {
+    "description": "HyperView is a terminal-first TradingView strategy lab for downloading market data, backtesting Python strategies with Pine-like behavior, and optimizing SL/TP parameters.",
+    "fullName": "TreborNamor/TradingView-Machine-Learning-GUI",
+    "language": "Python",
+    "stargazersCount": 950,
+    "updatedAt": "2026-06-02T06:59:08Z",
+    "url": "https://github.com/TreborNamor/TradingView-Machine-Learning-GUI"
+  },
+  {
+    "description": "Howtrader: A crypto quant framework for developing, backtesting, and executing your own trading strategies. Seamlessly integrates with TradingView and other third-party signals. Simply send a post request to automate trading and order placement. Supports Binance and Okex exchanges.",
+    "fullName": "51bitquant/howtrader",
+    "language": "Python",
+    "stargazersCount": 919,
+    "updatedAt": "2026-06-02T05:22:27Z",
+    "url": "https://github.com/51bitquant/howtrader"
+  },
+  {
+    "description": "Framework for algorithmic trading",
+    "fullName": "amor71/LiuAlgoTrader",
+    "language": "Python",
+    "stargazersCount": 900,
+    "updatedAt": "2026-05-28T21:59:57Z",
+    "url": "https://github.com/amor71/LiuAlgoTrader"
+  },
+  {
+    "description": "Trading bot with support for realtime trading, backtesting, custom strategies and much more.",
+    "fullName": "idanya/algo-trader",
+    "language": "Python",
+    "stargazersCount": 868,
+    "updatedAt": "2026-05-27T16:22:25Z",
+    "url": "https://github.com/idanya/algo-trader"
+  },
+  {
+    "description": "Quant Examples Based on Backtrader.",
+    "fullName": "Ckend/pythondict-quant",
+    "language": "Python",
+    "stargazersCount": 861,
+    "updatedAt": "2026-05-27T00:39:27Z",
+    "url": "https://github.com/Ckend/pythondict-quant"
+  },
+  {
+    "description": "Jupyter Notebooks and code for the book Python for Algorithmic Trading (O'Reilly) by Yves Hilpisch.",
+    "fullName": "yhilpisch/py4at",
+    "language": "Jupyter Notebook",
+    "stargazersCount": 836,
+    "updatedAt": "2026-06-01T11:55:06Z",
+    "url": "https://github.com/yhilpisch/py4at"
+  },
+  {
+    "description": "Asynchronous, event-driven algorithmic trading in Python and C++",
+    "fullName": "AsyncAlgoTrading/aat",
+    "language": "C++",
+    "stargazersCount": 813,
+    "updatedAt": "2026-05-31T02:16:45Z",
+    "url": "https://github.com/AsyncAlgoTrading/aat"
+  },
+  {
+    "description": "Python-based framework for backtesting trading strategies & analyzing financial markets [GUI :neckbeard:]",
+    "fullName": "constverum/Quantdom",
+    "language": "Python",
+    "stargazersCount": 766,
+    "updatedAt": "2026-05-28T21:57:04Z",
+    "url": "https://github.com/constverum/Quantdom"
+  },
+  {
+    "description": "Backtest and live trading in Python",
+    "fullName": "letianzj/quanttrader",
+    "language": "HTML",
+    "stargazersCount": 729,
+    "updatedAt": "2026-05-31T20:00:39Z",
+    "url": "https://github.com/letianzj/quanttrader"
+  },
+  {
+    "description": "This project involves using a combination of statistics along with financial thoery to demonstrate a popular trading strategy used in equity markets: Pairs Trading.",
+    "fullName": "KidQuant/Pairs-Trading-With-Python",
+    "language": "Jupyter Notebook",
+    "stargazersCount": 714,
+    "updatedAt": "2026-06-01T14:42:40Z",
+    "url": "https://github.com/KidQuant/Pairs-Trading-With-Python"
+  },
+  {
+    "description": "Alpaca Trading API integrated with backtrader ",
+    "fullName": "alpacahq/alpaca-backtrader-api",
+    "language": "Python",
+    "stargazersCount": 692,
+    "updatedAt": "2026-06-02T12:58:23Z",
+    "url": "https://github.com/alpacahq/alpaca-backtrader-api"
+  },
+  {
+    "description": "A Python-based stock screener to find stocks with potential breakout probability from NSE India.",
+    "fullName": "pranjal-joshi/Screeni-py",
+    "language": "Python",
+    "stargazersCount": 686,
+    "updatedAt": "2026-06-01T16:26:40Z",
+    "url": "https://github.com/pranjal-joshi/Screeni-py"
+  },
+  {
+    "description": "A Multi-Agent Trading System Based on Internal Contest Mechanism",
+    "fullName": "FinStep-AI/ContestTrade",
+    "language": "Python",
+    "stargazersCount": 647,
+    "updatedAt": "2026-05-30T06:30:49Z",
+    "url": "https://github.com/FinStep-AI/ContestTrade"
+  },
+  {
+    "description": "Python Algorithmic Trading Cookbook, published by Packt",
+    "fullName": "PacktPublishing/Python-Algorithmic-Trading-Cookbook",
+    "language": "Jupyter Notebook",
+    "stargazersCount": 591,
+    "updatedAt": "2026-05-31T18:16:03Z",
+    "url": "https://github.com/PacktPublishing/Python-Algorithmic-Trading-Cookbook"
+  },
+  {
+    "description": "AI-Hedge-Fund for Crypto 🚀  AI-powered hedge fund for cryptocurrency trading, leveraging LLM agents for intelligent decision-making.",
+    "fullName": "51bitquant/ai-hedge-fund-crypto",
+    "language": "Python",
+    "stargazersCount": 588,
+    "updatedAt": "2026-06-01T03:52:45Z",
+    "url": "https://github.com/51bitquant/ai-hedge-fund-crypto"
+  },
+  {
+    "description": "",
+    "fullName": "QuantWorld2022/backtrader",
+    "language": "Jupyter Notebook",
+    "stargazersCount": 582,
+    "updatedAt": "2026-05-25T12:56:29Z",
+    "url": "https://github.com/QuantWorld2022/backtrader"
+  },
+  {
+    "description": "Quantitative Investment Strategies (QIS) package implements Python analytics for visualisation of financial data, performance reporting, analysis of quantitative strategies.",
+    "fullName": "ArturSepp/QuantInvestStrats",
+    "language": "Python",
+    "stargazersCount": 569,
+    "updatedAt": "2026-06-01T04:48:58Z",
+    "url": "https://github.com/ArturSepp/QuantInvestStrats"
+  },
+  {
+    "description": "Helps you with managing your investments",
+    "fullName": "KonishchevDmitry/investments",
+    "language": "Rust",
+    "stargazersCount": 551,
+    "updatedAt": "2026-05-30T03:52:47Z",
+    "url": "https://github.com/KonishchevDmitry/investments"
+  },
+  {
+    "description": "A Light Event-Driven Algorithmic Trading Engine",
+    "fullName": "josephchenhk/qtrader",
+    "language": "Python",
+    "stargazersCount": 549,
+    "updatedAt": "2026-05-13T02:18:37Z",
+    "url": "https://github.com/josephchenhk/qtrader"
+  },
+  {
+    "description": "alpha101, alpha191, alphalens, backtrader, 量化研究",
+    "fullName": "popbo/alphas",
+    "language": "Jupyter Notebook",
+    "stargazersCount": 537,
+    "updatedAt": "2026-06-02T02:54:20Z",
+    "url": "https://github.com/popbo/alphas"
+  },
+  {
+    "description": "Easy to use backtrader UI ",
+    "fullName": "Skinok/backtrader-pyqt-ui",
+    "language": "Python",
+    "stargazersCount": 517,
+    "updatedAt": "2026-05-23T00:18:48Z",
+    "url": "https://github.com/Skinok/backtrader-pyqt-ui"
+  },
+  {
+    "description": "The Open-Source Backtesting Engine/ Trading Simulator by Bertram Enterprises.",
+    "fullName": "fbertram/TuringTrader",
+    "language": "C#",
+    "stargazersCount": 510,
+    "updatedAt": "2026-05-31T17:41:59Z",
+    "url": "https://github.com/fbertram/TuringTrader"
+  },
+  {
+    "description": "Plotting addon for backtrader to support Bokeh (and maybe more)",
+    "fullName": "verybadsoldier/backtrader_plotting",
+    "language": "Python",
+    "stargazersCount": 502,
+    "updatedAt": "2026-04-11T09:13:54Z",
+    "url": "https://github.com/verybadsoldier/backtrader_plotting"
+  },
+  {
+    "description": "⚡ Open Source Algorithmic Trading Bot for Python.",
+    "fullName": "tudorelu/pyjuque",
+    "language": "Python",
+    "stargazersCount": 457,
+    "updatedAt": "2026-05-14T20:41:15Z",
+    "url": "https://github.com/tudorelu/pyjuque"
+  },
+  {
+    "description": "Python project for real-time financial data collection, analyzing && backtesting trading strategies",
+    "fullName": "panpanpandas/ultrafinance",
+    "language": "Python",
+    "stargazersCount": 437,
+    "updatedAt": "2026-05-31T01:04:20Z",
+    "url": "https://github.com/panpanpandas/ultrafinance"
+  },
+  {
+    "description": "Applied an ARIMA-LSTM hybrid model to predict future price correlation coefficients of two assets",
+    "fullName": "imhgchoi/ARIMA-LSTM-hybrid-corrcoef-predict",
+    "language": "Jupyter Notebook",
+    "stargazersCount": 433,
+    "updatedAt": "2026-05-26T06:44:58Z",
+    "url": "https://github.com/imhgchoi/ARIMA-LSTM-hybrid-corrcoef-predict"
+  },
+  {
+    "description": "A toolkit for building AI-automated trading strategies on Kalshi prediction markets.",
+    "fullName": "ryanfrigo/kalshi-ai-trading-bot",
+    "language": "Python",
+    "stargazersCount": 424,
+    "updatedAt": "2026-06-02T12:43:23Z",
+    "url": "https://github.com/ryanfrigo/kalshi-ai-trading-bot"
+  },
+  {
+    "description": "A production-grade algorithmic trading bot for Polymarket's 15-minute BTC price prediction markets. Built with a 7-phase architecture combining multiple signal sources, professional risk management, and self-learning capabilities.",
+    "fullName": "aulekator/Polymarket-BTC-15-Minute-Trading-Bot",
+    "language": "Python",
+    "stargazersCount": 415,
+    "updatedAt": "2026-06-02T13:25:22Z",
+    "url": "https://github.com/aulekator/Polymarket-BTC-15-Minute-Trading-Bot"
+  },
+  {
+    "description": "Binance trading gateway for VeighNa Evo",
+    "fullName": "veighna-global/vnpy_binance",
+    "language": "Python",
+    "stargazersCount": 414,
+    "updatedAt": "2026-05-19T12:17:10Z",
+    "url": "https://github.com/veighna-global/vnpy_binance"
+  },
+  {
+    "description": "Python library for algorithmic trading cryptocurrencies across multiple exchanges",
+    "fullName": "AsyncAlgoTrading/algo-coin",
+    "language": "TypeScript",
+    "stargazersCount": 406,
+    "updatedAt": "2026-05-26T09:30:53Z",
+    "url": "https://github.com/AsyncAlgoTrading/algo-coin"
+  },
+  {
+    "description": "📈This repo contains detailed notes and multiple projects implemented in Python related to AI and Finance. Follow the blog here: https://purvasingh.medium.com",
+    "fullName": "purvasingh96/AI-for-Trading",
+    "language": "Jupyter Notebook",
+    "stargazersCount": 405,
+    "updatedAt": "2026-06-01T16:39:21Z",
+    "url": "https://github.com/purvasingh96/AI-for-Trading"
+  },
+  {
+    "description": "cuFOLIO is a GPU-accelerated portfolio optimization toolkit for building, backtesting, and scaling modern investment workflows with NVIDIA cuOpt and CUDA-X Data Science.",
+    "fullName": "NVIDIA-AI-Blueprints/cuFOLIO",
+    "language": "Jupyter Notebook",
+    "stargazersCount": 388,
+    "updatedAt": "2026-06-02T13:37:31Z",
+    "url": "https://github.com/NVIDIA-AI-Blueprints/cuFOLIO"
+  },
+  {
+    "description": "The core module for using VeighNa (vnpy) quant trading platform on the crypto market.",
+    "fullName": "veighna-global/vnpy_evo",
+    "language": "Python",
+    "stargazersCount": 379,
+    "updatedAt": "2026-05-13T05:45:19Z",
+    "url": "https://github.com/veighna-global/vnpy_evo"
+  },
+  {
+    "description": "Qlib-Server is the data server system for Qlib. It enable Qlib to run in online mode. Under online mode, the data will be deployed as a shared data service. The data and their cache will be shared by all the clients. The data retrieval performance is expected to be improved due to a higher rate of cache hits. It will consume less disk space, too.",
+    "fullName": "microsoft/qlib-server",
+    "language": "Python",
+    "stargazersCount": 376,
+    "updatedAt": "2026-06-02T11:32:04Z",
+    "url": "https://github.com/microsoft/qlib-server"
+  },
+  {
+    "description": "qlib助手, 每日自动预测a股 👇",
+    "fullName": "touhoufan2024/qlibAssistant",
+    "language": "Python",
+    "stargazersCount": 375,
+    "updatedAt": "2026-06-02T11:31:59Z",
+    "url": "https://github.com/touhoufan2024/qlibAssistant"
+  },
+  {
+    "description": "An open source library for portfolio optimisation",
+    "fullName": "VivekPa/OptimalPortfolio",
+    "language": "Python",
+    "stargazersCount": 370,
+    "updatedAt": "2026-05-27T20:27:57Z",
+    "url": "https://github.com/VivekPa/OptimalPortfolio"
+  },
+  {
+    "description": "一个基于vnpy，支持多账户，多策略，实盘交易，数据分析，分布式在线回测，风险管理，多交易节点的量化交易系统；支持CTP期货，股票，期权，数字货币等金融产品",
+    "fullName": "sphinx-quant/sphinx-quant",
+    "language": "Python",
+    "stargazersCount": 360,
+    "updatedAt": "2026-05-26T07:20:18Z",
+    "url": "https://github.com/sphinx-quant/sphinx-quant"
+  },
+  {
+    "description": "A Python-based stock screener for NSE, India. PKScreener is an advanced free stock screener to find potential breakout stocks from NSE and show its possible breakout values. It also helps to find the stocks which are consolidating and may breakout, or the particular chart patterns that you're looking specifically to make your decisions.",
+    "fullName": "pkjmesra/PKScreener",
+    "language": "Python",
+    "stargazersCount": 352,
+    "updatedAt": "2026-06-02T09:23:29Z",
+    "url": "https://github.com/pkjmesra/PKScreener"
+  },
+  {
+    "description": "Build a Stock Screener using FastAPI (Python)",
+    "fullName": "hackingthemarkets/stockscreener",
+    "language": "Python",
+    "stargazersCount": 327,
+    "updatedAt": "2026-05-24T21:24:46Z",
+    "url": "https://github.com/hackingthemarkets/stockscreener"
+  },
+  {
+    "description": "National Stock Exchange (NSE), India based Stock screener program. Supports Live Data, Swing / Momentum Trading, Intraday Trading, Connect to online brokers as Zerodha Kite, Risk Management, Emotion Control, Screening, Strategies, Backtesting, Automatic Stock Downloading after closing, live free day trading data and much more",
+    "fullName": "deshwalmahesh/NSE-Stock-Scanner",
+    "language": "Jupyter Notebook",
+    "stargazersCount": 317,
+    "updatedAt": "2026-05-26T01:56:58Z",
+    "url": "https://github.com/deshwalmahesh/NSE-Stock-Scanner"
+  },
+  {
+    "description": "Financial Portfolio Optimization Routines in Python",
+    "fullName": "czielinski/portfolioopt",
+    "language": "Python",
+    "stargazersCount": 313,
+    "updatedAt": "2026-04-02T22:27:07Z",
+    "url": "https://github.com/czielinski/portfolioopt"
+  },
+  {
+    "description": "QuantMind 开源版 是一款面向个人量化研究者的本地化金融量化交易平台，基于微软 Qlib 量化框架构建，提供从模型训练，回测，推理，实盘交易的完整研究闭环。 平台深度集成 LightGBM 等主流机器学习模型，支持 146 维量化因子训练与推理，用户可快速构建 Alpha 策略并在历史数据上验证效果。核心功能涵盖智能策略生成、模型训练、回测中心、QuantBot 助手及多模型管理，全部功能无使用限制。 开源版采用本地单机部署，通过 docker compose 一键启动，无需依赖云服务，数据与模型完全本地化，保障研究隐私。适合个人开发者、学术研究者及小团队进行量化策略原型验证与二次开发，是进入金融量化领域的理想起点。",
+    "fullName": "qusong0627/QuantMind",
+    "language": "Python",
+    "stargazersCount": 305,
+    "updatedAt": "2026-06-02T10:23:52Z",
+    "url": "https://github.com/qusong0627/QuantMind"
+  },
+  {
+    "description": "Python Backtesting library for OnePiece in trading.",
+    "fullName": "Chandlercjy/OnePy",
+    "language": "Python",
+    "stargazersCount": 301,
+    "updatedAt": "2026-05-22T23:44:53Z",
+    "url": "https://github.com/Chandlercjy/OnePy"
+  },
+  {
+    "description": "Quant is a python-based system for stock trading strategy backtesting",
+    "fullName": "maihde/quant",
+    "language": "Python",
+    "stargazersCount": 301,
+    "updatedAt": "2026-05-28T22:08:30Z",
+    "url": "https://github.com/maihde/quant"
+  },
+  {
+    "description": "Entropy Pooling views and stress testing combined with Conditional Value-at-Risk (CVaR) portfolio optimization in Python.",
+    "fullName": "fortitudo-tech/fortitudo.tech",
+    "language": "Python",
+    "stargazersCount": 298,
+    "updatedAt": "2026-05-27T12:54:59Z",
+    "url": "https://github.com/fortitudo-tech/fortitudo.tech"
+  },
+  {
+    "description": "Python Backtrader - Metaquotes MQL5 - API",
+    "fullName": "khramkov/Backtrader-MQL5-API",
+    "language": "Python",
+    "stargazersCount": 297,
+    "updatedAt": "2026-05-30T09:31:31Z",
+    "url": "https://github.com/khramkov/Backtrader-MQL5-API"
+  },
+  {
+    "description": "Official Python Package for Algorithmic Trading APIs powered by AlgoBulls",
+    "fullName": "algobulls/pyalgotrading",
+    "language": "Jupyter Notebook",
+    "stargazersCount": 296,
+    "updatedAt": "2026-05-05T22:12:59Z",
+    "url": "https://github.com/algobulls/pyalgotrading"
+  },
+  {
+    "description": "量化资源和教程请访问 ke.quantide.cn 和公众号🫶Quantide",
+    "fullName": "zillionare/zillionare",
+    "language": "Python",
+    "stargazersCount": 295,
+    "updatedAt": "2026-06-02T10:46:13Z",
+    "url": "https://github.com/zillionare/zillionare"
+  },
+  {
+    "description": ":money_with_wings: A example of bot using Backtrader to trade Bitcoins in Binance Exchange.",
+    "fullName": "rodrigo-brito/backtrader-binance-bot",
+    "language": "Python",
+    "stargazersCount": 276,
+    "updatedAt": "2026-04-11T02:06:07Z",
+    "url": "https://github.com/rodrigo-brito/backtrader-binance-bot"
+  },
+  {
+    "description": "量化投资",
+    "fullName": "Miya-Su/Quantitative-Trading",
+    "language": "Jupyter Notebook",
+    "stargazersCount": 270,
+    "updatedAt": "2026-05-22T21:06:14Z",
+    "url": "https://github.com/Miya-Su/Quantitative-Trading"
+  },
+  {
+    "description": "algorithmic trading curated list quant finance trading bots backtesting technical analysis crypto open-source freqtrade hummingbot fintech Python TypeScript resources MCP quantopian-style rankings",
+    "fullName": "PlaceNL2026/best-of-algorithmic-trading",
+    "language": "TypeScript",
+    "stargazersCount": 269,
+    "updatedAt": "2026-06-02T13:41:47Z",
+    "url": "https://github.com/PlaceNL2026/best-of-algorithmic-trading"
+  },
+  {
+    "description": "Stock Backtrader Web App 是一个基于 Python 的项目，旨在简化股票回测和分析的过程。通过集成四个强大的库——Streamlit、AkShare、Backtrader 和 Pyecharts，本应用为用户提供了一个综合性的工具集，支持股票数据获取、回测模拟和结果可视化，且所有功能都在一个直观的 Web 界面内完成。",
+    "fullName": "chenwr727/stock-backtrader-web-app",
+    "language": "Python",
+    "stargazersCount": 254,
+    "updatedAt": "2026-05-27T16:50:54Z",
+    "url": "https://github.com/chenwr727/stock-backtrader-web-app"
+  },
+  {
+    "description": "Python-based quant trading research project for short-term reversal option setups, universe selection, staged-entry backtesting, and live paper trading.",
+    "fullName": "randomwalkhan/Short-Term-Reversal-Strategy",
+    "language": "Jupyter Notebook",
+    "stargazersCount": 241,
+    "updatedAt": "2026-06-02T14:12:02Z",
+    "url": "https://github.com/randomwalkhan/Short-Term-Reversal-Strategy"
+  },
+  {
+    "description": "qmt、okx、joinquant、ML、AI、Qlib Quant Strategy 量化策略",
+    "fullName": "JizhiXiang/Quant-Strategy",
+    "language": "Jupyter Notebook",
+    "stargazersCount": 235,
+    "updatedAt": "2026-06-02T10:38:45Z",
+    "url": "https://github.com/JizhiXiang/Quant-Strategy"
+  },
+  {
+    "description": "Binance API integration with Backtrader. Run strategies for Backtest and Live Trading. Get historical price data for Bitcoin, Ethereum and all coins from Binance. EASY create your strategies.",
+    "fullName": "WISEPLAT/backtrader_binance",
+    "language": "Python",
+    "stargazersCount": 227,
+    "updatedAt": "2026-05-04T03:08:51Z",
+    "url": "https://github.com/WISEPLAT/backtrader_binance"
+  },
+  {
+    "description": "K线数据获取-量化回测-数据分析-策略选股（A股、港股、美股）",
+    "fullName": "zhaoxusun/stock-quant",
+    "language": "Python",
+    "stargazersCount": 198,
+    "updatedAt": "2026-06-01T19:41:05Z",
+    "url": "https://github.com/zhaoxusun/stock-quant"
+  },
+  {
+    "description": "KHunter 是一套开箱即用的A股量化交易系统，集数据管理、策略选股、择时交易、风险控制、回测验证于一体，为个人投资者提供从数据到交易的全流程量化解决方案。",
+    "fullName": "ling-0729/KHunter",
+    "language": "Python",
+    "stargazersCount": 188,
+    "updatedAt": "2026-06-02T11:40:19Z",
+    "url": "https://github.com/ling-0729/KHunter"
+  },
+  {
+    "description": "Macrosynergy Quant Research",
+    "fullName": "macrosynergy/macrosynergy",
+    "language": "Python",
+    "stargazersCount": 181,
+    "updatedAt": "2026-06-02T13:16:06Z",
+    "url": "https://github.com/macrosynergy/macrosynergy"
+  },
+  {
+    "description": "Basic template for managing Backtrader backtests. ",
+    "fullName": "neilsmurphy/backtrader_template",
+    "language": "Python",
+    "stargazersCount": 181,
+    "updatedAt": "2026-05-23T00:18:58Z",
+    "url": "https://github.com/neilsmurphy/backtrader_template"
+  },
+  {
+    "description": "Backtrader Front End",
+    "fullName": "OmegaTrading/OmegaUI",
+    "language": "Python",
+    "stargazersCount": 176,
+    "updatedAt": "2026-02-27T09:28:25Z",
+    "url": "https://github.com/OmegaTrading/OmegaUI"
+  },
+  {
+    "description": "Backtrader QMT Store",
+    "fullName": "zsrl/bt-qmt-store",
+    "language": "Python",
+    "stargazersCount": 173,
+    "updatedAt": "2026-05-22T07:30:19Z",
+    "url": "https://github.com/zsrl/bt-qmt-store"
+  },
+  {
+    "description": "python trading and backtest platform",
+    "fullName": "harvey1673/pyktrader",
+    "language": "Python",
+    "stargazersCount": 172,
+    "updatedAt": "2026-01-31T15:35:14Z",
+    "url": "https://github.com/harvey1673/pyktrader"
+  },
+  {
+    "description": "OKX trading gateway for VeighNa Evo",
+    "fullName": "veighna-global/vnpy_okx",
+    "language": "Python",
+    "stargazersCount": 170,
+    "updatedAt": "2026-06-02T04:51:46Z",
+    "url": "https://github.com/veighna-global/vnpy_okx"
+  },
+  {
+    "description": "Live Quant Trading Framework for Robinhood, using IEX Trading and AlphaVantage for Free Prices.",
+    "fullName": "codesociety/friartuck",
+    "language": "Python",
+    "stargazersCount": 153,
+    "updatedAt": "2026-03-21T09:48:36Z",
+    "url": "https://github.com/codesociety/friartuck"
+  },
+  {
+    "description": "Jupyter Notebook examples on how to use the ArbitrageLab - pairs trading - python library.",
+    "fullName": "hudson-and-thames/arbitrage_research",
+    "language": "Jupyter Notebook",
+    "stargazersCount": 152,
+    "updatedAt": "2026-05-30T07:58:52Z",
+    "url": "https://github.com/hudson-and-thames/arbitrage_research"
+  },
+  {
+    "description": "Agentic coding skills for backtesting trading strategies using VectorBT. Supports Indian, US, and Crypto markets    with realistic transaction cost modeling, TA-Lib indicators, QuantStats tearsheets, and 12 ready-made strategy      templates.",
+    "fullName": "marketcalls/vectorbt-backtesting-skills",
+    "language": "Python",
+    "stargazersCount": 149,
+    "updatedAt": "2026-06-02T07:57:24Z",
+    "url": "https://github.com/marketcalls/vectorbt-backtesting-skills"
+  },
+  {
+    "description": "Binance API integration with Backtrader.",
+    "fullName": "lindomar-oliveira/backtrader-binance",
+    "language": "Python",
+    "stargazersCount": 144,
+    "updatedAt": "2026-04-11T02:06:13Z",
+    "url": "https://github.com/lindomar-oliveira/backtrader-binance"
+  },
+  {
+    "description": "These are the code snippets used in the Backtrader for backtesting guide on the AlgoTrading101 website",
+    "fullName": "PythonForForex/Backtrader-for-backtesting",
+    "language": "HTML",
+    "stargazersCount": 141,
+    "updatedAt": "2026-03-04T17:30:31Z",
+    "url": "https://github.com/PythonForForex/Backtrader-for-backtesting"
+  },
+  {
+    "description": "Picking stocks through various screening methods. Focus on Northern Europe.",
+    "fullName": "lseffer/stock_screener",
+    "language": "Python",
+    "stargazersCount": 140,
+    "updatedAt": "2026-05-30T15:53:11Z",
+    "url": "https://github.com/lseffer/stock_screener"
+  },
+  {
+    "description": "教你用Python进阶量化交易-专栏",
+    "fullName": "yuanxiao1/Python-Quantitative-Trading",
+    "language": "Python",
+    "stargazersCount": 137,
+    "updatedAt": "2026-04-22T17:30:02Z",
+    "url": "https://github.com/yuanxiao1/Python-Quantitative-Trading"
+  },
+  {
+    "description": "Atreyu's integration of IB Native API with backtrader",
+    "fullName": "atreyuxtrading/atreyu-backtrader-api",
+    "language": "Python",
+    "stargazersCount": 127,
+    "updatedAt": "2026-04-10T00:39:26Z",
+    "url": "https://github.com/atreyuxtrading/atreyu-backtrader-api"
+  },
+  {
+    "description": "BackTrader多因子回测框架 （Multi-factors backtesting framework for BackTrader）",
+    "fullName": "Quant132/BackTrader_Multifactors",
+    "language": "Jupyter Notebook",
+    "stargazersCount": 126,
+    "updatedAt": "2026-04-25T16:09:39Z",
+    "url": "https://github.com/Quant132/BackTrader_Multifactors"
+  },
+  {
+    "description": "Pairs Trading with Machine Learning on Distributed Python Platform",
+    "fullName": "wangy8989/Pairs-Trading-with-Machine-Learning",
+    "language": "Python",
+    "stargazersCount": 125,
+    "updatedAt": "2026-05-25T06:55:38Z",
+    "url": "https://github.com/wangy8989/Pairs-Trading-with-Machine-Learning"
+  },
+  {
+    "description": "The first real-world AI hedge fund framework in crypto, fully open source!",
+    "fullName": "AI-Brokers/AIBrokers",
+    "language": "Python",
+    "stargazersCount": 124,
+    "updatedAt": "2026-05-18T03:03:34Z",
+    "url": "https://github.com/AI-Brokers/AIBrokers"
+  },
+  {
+    "description": "AI-native A-share stock screening engine with full-market discovery, LLM ranking, risk-aware scoring, and auditable evaluation. AI选股",
+    "fullName": "ZhuLinsen/alphasift",
+    "language": "Python",
+    "stargazersCount": 116,
+    "updatedAt": "2026-06-02T08:40:53Z",
+    "url": "https://github.com/ZhuLinsen/alphasift"
+  },
+  {
+    "description": "Backtesting toolbox for trading strategies - DEPRECATED",
+    "fullName": "Auquan/auquan-toolbox-python",
+    "language": "Python",
+    "stargazersCount": 110,
+    "updatedAt": "2025-12-09T13:18:10Z",
+    "url": "https://github.com/Auquan/auquan-toolbox-python"
+  },
+  {
+    "description": "Autonomous quantitative trading research platform that transforms stock lists into fully backtested strategies using AI agents, real market data, and mathematical formulations, all without requiring any coding.",
+    "fullName": "OnePunchMonk/AgentQuant",
+    "language": "Python",
+    "stargazersCount": 108,
+    "updatedAt": "2026-06-01T06:08:29Z",
+    "url": "https://github.com/OnePunchMonk/AgentQuant"
+  },
+  {
+    "description": "Backtest manager in VSCode Extension",
+    "fullName": "woung717/backtest-manager-vscode",
+    "language": "TypeScript",
+    "stargazersCount": 108,
+    "updatedAt": "2026-05-11T18:59:38Z",
+    "url": "https://github.com/woung717/backtest-manager-vscode"
+  },
+  {
+    "description": "A python application, that demonstrates optimizing a portfolio using machine learning.",
+    "fullName": "areed1192/portfolio-optimization",
+    "language": "Python",
+    "stargazersCount": 107,
+    "updatedAt": "2026-04-13T12:47:43Z",
+    "url": "https://github.com/areed1192/portfolio-optimization"
+  },
+  {
+    "description": "Implementation of Deep Thinking Trading System",
+    "fullName": "FareedKhan-dev/multi-agent-trading-system",
+    "language": "Jupyter Notebook",
+    "stargazersCount": 106,
+    "updatedAt": "2026-05-27T12:51:39Z",
+    "url": "https://github.com/FareedKhan-dev/multi-agent-trading-system"
+  },
+  {
+    "description": "Collection of notebooks and scripts related to financial engineering, quant-research and algo-trading.",
+    "fullName": "adamd1985/quant_research",
+    "language": "Jupyter Notebook",
+    "stargazersCount": 104,
+    "updatedAt": "2026-05-15T20:54:12Z",
+    "url": "https://github.com/adamd1985/quant_research"
+  },
+  {
+    "description": "High Frequency Pairs Trading Based on Statistical Arbitrage (Python) :moneybag:",
+    "fullName": "sapphire921/HFT-Pairs-Trading",
+    "language": "Jupyter Notebook",
+    "stargazersCount": 103,
+    "updatedAt": "2026-05-30T05:33:02Z",
+    "url": "https://github.com/sapphire921/HFT-Pairs-Trading"
+  },
+  {
+    "description": "Quadratic Programming based Python Package for Portfolio Optimization",
+    "fullName": "jialuechen/deepfolio",
+    "language": "Python",
+    "stargazersCount": 101,
+    "updatedAt": "2026-05-06T03:02:48Z",
+    "url": "https://github.com/jialuechen/deepfolio"
+  },
+  {
+    "description": "Original source code for Quantitative Trading Strategies Using Python",
+    "fullName": "Apress/Quantitative-Trading-Strategies-Using-Python",
+    "language": "Jupyter Notebook",
+    "stargazersCount": 99,
+    "updatedAt": "2026-05-23T16:48:39Z",
+    "url": "https://github.com/Apress/Quantitative-Trading-Strategies-Using-Python"
+  },
+  {
+    "description": "Rewriting the code in \"Machine Learning for Factor Investing\" in Python",
+    "fullName": "viniesposito/py-mlfactor",
+    "language": "Jupyter Notebook",
+    "stargazersCount": 95,
+    "updatedAt": "2026-05-30T16:50:14Z",
+    "url": "https://github.com/viniesposito/py-mlfactor"
+  },
+  {
+    "description": "atmquant由公众号“堂主的ATMQuant\"开发，是基于vnpy框架的AI量化交易平台，专注于AI量化投资、指标信号可视化与策略研发和回测，有完整教学和实战案例，适合量化交易初学者、金融从业者、程序员、投资爱好者",
+    "fullName": "seasonstar/atmquant",
+    "language": "Python",
+    "stargazersCount": 94,
+    "updatedAt": "2026-05-22T03:43:59Z",
+    "url": "https://github.com/seasonstar/atmquant"
+  },
+  {
+    "description": "Python for Portfolio Optimization: The Ascent! First working lessons to ascend the hilly terrain of Portfolio Optimization in seven strides (Lessons), beginning with the fundamentals (Lesson 1) and climbing slope after slope (Lessons 2-6),  to reach the first peak of constrained  portfolio optimization models (Lesson 7), amongst a range of peaks waiting beyond!",
+    "fullName": "PaiViji/PythonFinance-PortfolioOptimization",
+    "language": "Jupyter Notebook",
+    "stargazersCount": 90,
+    "updatedAt": "2026-05-21T12:55:15Z",
+    "url": "https://github.com/PaiViji/PythonFinance-PortfolioOptimization"
+  },
+  {
+    "description": "Implementation of \"Advances in Financial Machine Learning\" quant trading strategies in python (building upon Freqtrade / FreqAI open source project)",
+    "fullName": "markdregan/FreqAI-Marcos-Lopez-De-Prado",
+    "language": "Python",
+    "stargazersCount": 88,
+    "updatedAt": "2026-04-23T05:49:29Z",
+    "url": "https://github.com/markdregan/FreqAI-Marcos-Lopez-De-Prado"
+  },
+  {
+    "description": "This repository enables traders/investors to spot undervalued stocks automatically in the market efficiently to help them maximise their profits.",
+    "fullName": "devfinwiz/Stock_Screeners_Raw",
+    "language": "Python",
+    "stargazersCount": 85,
+    "updatedAt": "2026-04-26T23:30:32Z",
+    "url": "https://github.com/devfinwiz/Stock_Screeners_Raw"
+  },
+  {
+    "description": "cnvar.cn及个人微信公众号【QuantInvest】里面提及的编程代码, 对股票各种研究和折腾分析A股市场的各种现象和投资机会，涉及编程、股票模型、分析研究、杂谈等，代码是python，以jupyter notebook展示。",
+    "fullName": "chinobing/QuantInvest",
+    "language": "Jupyter Notebook",
+    "stargazersCount": 82,
+    "updatedAt": "2026-04-18T14:22:07Z",
+    "url": "https://github.com/chinobing/QuantInvest"
+  },
+  {
+    "description": "基于Django驱动的开源量化交易平台，功能模块有股票信息、交易策略、风险控制、消息通知、回测、交流社区、财经新闻",
+    "fullName": "liaogx/quant",
+    "language": "JavaScript",
+    "stargazersCount": 81,
+    "updatedAt": "2026-05-14T11:40:27Z",
+    "url": "https://github.com/liaogx/quant"
+  },
+  {
+    "description": "Markowitz portfolio optimization on synthetic and real stocks",
+    "fullName": "chaitjo/markowitz-portfolio-optimization",
+    "language": "Python",
+    "stargazersCount": 80,
+    "updatedAt": "2026-05-22T16:54:26Z",
+    "url": "https://github.com/chaitjo/markowitz-portfolio-optimization"
+  },
+  {
+    "description": "Here I go through the processing of prototyping a mean reversion trading strategy using statistical concepts, then test it in backtrader.",
+    "fullName": "orangepineapple/mean_reversion_strategies",
+    "language": "Jupyter Notebook",
+    "stargazersCount": 80,
+    "updatedAt": "2026-05-07T20:02:43Z",
+    "url": "https://github.com/orangepineapple/mean_reversion_strategies"
+  },
+  {
+    "description": "A python stock screener that calculates market breadth  and selects US stocks on a daily basis",
+    "fullName": "jeffreyrdcs/stock-vcpscreener",
+    "language": "Python",
+    "stargazersCount": 79,
+    "updatedAt": "2026-05-15T11:31:26Z",
+    "url": "https://github.com/jeffreyrdcs/stock-vcpscreener"
+  },
+  {
+    "description": "Technical Indicators implemented in Python only using Numpy-Pandas as Magic  - Very Very Fast! Very tiny!  Stock Market Financial Technical Analysis Python library .  Quant Trading automation or cryptocoin exchange ",
+    "fullName": "mpquant/Python-Financial-Technical-Indicators-Pandas",
+    "language": "Python",
+    "stargazersCount": 78,
+    "updatedAt": "2026-04-18T12:13:39Z",
+    "url": "https://github.com/mpquant/Python-Financial-Technical-Indicators-Pandas"
+  },
+  {
+    "description": "A Hedge Fund of AI Agents that work together to gather stock data, analyse it, and execute buy and sell orders based on the results",
+    "fullName": "chase-9234/ai-hedge-fund",
+    "language": "TypeScript",
+    "stargazersCount": 74,
+    "updatedAt": "2026-05-23T23:31:23Z",
+    "url": "https://github.com/chase-9234/ai-hedge-fund"
+  },
+  {
+    "description": "Suite of advanced automated trading bots and risk management tools to empower Day Traders and enable them to stick to their Trade Plans.",
+    "fullName": "hadialaddin/crypto-genie",
+    "language": "HTML",
+    "stargazersCount": 74,
+    "updatedAt": "2026-05-15T21:15:48Z",
+    "url": "https://github.com/hadialaddin/crypto-genie"
+  },
+  {
+    "description": "A Collection of public tutorials published in the qubitquants.pro blog",
+    "fullName": "QubitQuants/vectorbt_pro_tutorials",
+    "language": "Jupyter Notebook",
+    "stargazersCount": 74,
+    "updatedAt": "2026-05-26T13:31:28Z",
+    "url": "https://github.com/QubitQuants/vectorbt_pro_tutorials"
+  },
+  {
+    "description": "Predicting stock prices from Yahoo stock screener using scikit-learn and sending the predicitons via smtplib to a phone number. ",
+    "fullName": "Lucas-Kohorst/Python-Stock",
+    "language": "Python",
+    "stargazersCount": 69,
+    "updatedAt": "2025-07-31T07:51:29Z",
+    "url": "https://github.com/Lucas-Kohorst/Python-Stock"
+  },
+  {
+    "description": "Standardized interface for Chinese financial market data, built on AKShare with unified data formats and simplified APIs",
+    "fullName": "zwldarren/akshare-one",
+    "language": "Python",
+    "stargazersCount": 68,
+    "updatedAt": "2026-05-26T18:03:55Z",
+    "url": "https://github.com/zwldarren/akshare-one"
+  },
+  {
+    "description": "backtrader documentation",
+    "fullName": "backtrader/backtrader-docs",
+    "language": "",
+    "stargazersCount": 66,
+    "updatedAt": "2026-01-24T02:28:09Z",
+    "url": "https://github.com/backtrader/backtrader-docs"
+  },
+  {
+    "description": "A Black-Scholes-based options backtesting simulator",
+    "fullName": "m12t/bsm-time-machine",
+    "language": "Jupyter Notebook",
+    "stargazersCount": 66,
+    "updatedAt": "2026-04-21T22:09:54Z",
+    "url": "https://github.com/m12t/bsm-time-machine"
+  },
+  {
+    "description": "Mean Variance (Markowitz) Portfolio Optimization and Beyond",
+    "fullName": "johnsoong216/pymarkowitz",
+    "language": "Python",
+    "stargazersCount": 65,
+    "updatedAt": "2026-02-03T09:57:06Z",
+    "url": "https://github.com/johnsoong216/pymarkowitz"
+  },
+  {
+    "description": "trading strategy is a fixed plan to go long or short in markets,  there are two common trading strategies: the momentum strategy and the reversion strategy. Firstly, the momentum strategy is also called divergence or trend trading. When you follow this strategy, you do so because you believe the movement of a quantity will continue in its current direction. Stated differently, you believe that stocks have momentum or upward or downward trends, that you can detect and exploit. Some examples of this strategy are the moving average crossover, the dual moving average crossover, and turtle trading:  The moving average crossover is when the price of an asset moves from one side of a moving average to the other. This crossover represents a change in momentum and can be used as a point of making the decision to enter or exit the market. You’ll see an example of this strategy, which is the “hello world” of quantitative trading later on in this tutorial. The dual moving average crossover occurs when a short-term average crosses a long-term average. This signal is used to identify that momentum is shifting in the direction of the short-term average. A buy signal is generated when the short-term average crosses the long-term average and rises above it, while a sell signal is triggered by a short-term average crossing long-term average and falling below it. Turtle trading is a popular trend following strategy that was initially taught by Richard Dennis. The basic strategy is to buy futures on a 20-day high and sell on a 20-day low.  Secondly, the reversion strategy, which is also known as convergence or cycle trading. This strategy departs from the belief that the movement of a quantity will eventually reverse. This might seem a little bit abstract, but will not be so anymore when you take the example. Take a look at the mean reversion strategy, where you actually believe that stocks return to their mean and that you can exploit when it deviates from that mean.  That already sounds a whole lot more practical, right?  Another example of this strategy, besides the mean reversion strategy, is the pairs trading mean-reversion, which is similar to the mean reversion strategy. Whereas the mean reversion strategy basically stated that stocks return to their mean, the pairs trading strategy extends this and states that if two stocks can be identified that have a relatively high correlation, the change in the difference in price between the two stocks can be used to signal trading events if one of the two moves out of correlation with the other. That means that if the correlation between two stocks has decreased, the stock with the higher price can be considered to be in a short position. It should be sold because the higher-priced stock will return to the mean. The lower-priced stock, on the other hand, will be in a long position because the price will rise as the correlation will return to normal.  Besides these two most frequent strategies, there are also other ones that you might come across once in a while, such as the forecasting strategy, which attempts to predict the direction or value of a stock, in this case, in subsequent future time periods based on certain historical factors. There’s also the High-Frequency Trading (HFT) strategy, which exploits the sub-millisecond market microstructure.  That’s all music for the future for now; Let’s focus on developing your first trading strategy for now!  A Simple Trading Strategy As you read above, you’ll start with the “hello world” of quantitative trading: the moving average crossover. The strategy that you’ll be developing is simple: you create two separate Simple Moving Averages (SMA) of a time series with differing lookback periods, let’s say, 40 days and 100 days. If the short moving average exceeds the long moving average then you go long, if the long moving average exceeds the short moving average then you exit.  Remember that when you go long, you think that the stock price will go up and will sell at a higher price in the future (= buy signal); When you go short, you sell your stock, expecting that you can buy it back at a lower price and realize a profit (= sell signal).  This simple strategy might seem quite complex when you’re just starting out, but let’s take this step by step:  First define your two different lookback periods: a short window and a long window. You set up two variables and assign one integer per variable. Make sure that the integer that you assign to the short window is shorter than the integer that you assign to the long window variable! Next, make an empty signals DataFrame, but do make sure to copy the index of your aapl data so that you can start calculating the daily buy or sell signal for your aapl data. Create a column in your empty signals DataFrame that is named signal and initialize it by setting the value for all rows in this column to 0.0. After the preparatory work, it’s time to create the set of short and long simple moving averages over the respective long and short time windows. Make use of the rolling() function to start your rolling window calculations: within the function, specify the window and the min_period, and set the center argument. In practice, this will result in a rolling() function to which you have passed either short_window or long_window, 1 as the minimum number of observations in the window that are required to have a value, and False, so that the labels are not set at the center of the window. Next, don’t forget to also chain the mean() function so that you calculate the rolling mean. After you have calculated the mean average of the short and long windows, you should create a signal when the short moving average crosses the long moving average, but only for the period greater than the shortest moving average window. In Python, this will result in a condition: signals['short_mavg'][short_window:] > signals['long_mavg'][short_window:]. Note that you add the [short_window:] to comply with the condition “only for the period greater than the shortest moving average window”. When the condition is true, the initialized value 0.0 in the signal column will be overwritten with 1.0. A “signal” is created! If the condition is false, the original value of 0.0 will be kept and no signal is generated. You use the NumPy where() function to set up this condition. Much the same like you read just now, the variable to which you assign this result is signals['signal'][short_window], because you only want to create signals for the period greater than the shortest moving average window! Lastly, you take the difference of the signals in order to generate actual trading orders. In other words, in this column of your signals DataFrame, you’ll be able to distinguish between long and short positions, whether you’re buying or selling stock.",
+    "fullName": "bideeen/Building-A-Trading-Strategy-With-Python",
+    "language": "Jupyter Notebook",
+    "stargazersCount": 64,
+    "updatedAt": "2026-05-05T08:06:26Z",
+    "url": "https://github.com/bideeen/Building-A-Trading-Strategy-With-Python"
+  },
+  {
+    "description": "Python library for Random Matrix Theory, cleaning schemes for correlation matrices, and portfolio optimization",
+    "fullName": "GGiecold/pyRMT",
+    "language": "Python",
+    "stargazersCount": 63,
+    "updatedAt": "2026-05-10T05:02:00Z",
+    "url": "https://github.com/GGiecold/pyRMT"
+  },
+  {
+    "description": "开源量化交易平台 | 兼容 akshare/tushare 调用风格 | 回测引擎 · 因子模型 · 实盘交易 · 可视化仪表盘",
+    "fullName": "jiuhuang-asset/jh_quant",
+    "language": "Python",
+    "stargazersCount": 62,
+    "updatedAt": "2026-05-28T13:38:22Z",
+    "url": "https://github.com/jiuhuang-asset/jh_quant"
+  },
+  {
+    "description": "A handy tool for screening stocks based on certain criteria from several markets around the world. The list can then be delivered to your email address (one-off or regularly via crontab). ",
+    "fullName": "terzim/StockScreener",
+    "language": "Python",
+    "stargazersCount": 62,
+    "updatedAt": "2026-03-20T16:16:07Z",
+    "url": "https://github.com/terzim/StockScreener"
+  },
+  {
+    "description": "Python implementation of Antonacci's GEM (\"Global Equities Momentum\") strategy",
+    "fullName": "alexjansenhome/GEM",
+    "language": "Python",
+    "stargazersCount": 60,
+    "updatedAt": "2026-02-13T12:01:34Z",
+    "url": "https://github.com/alexjansenhome/GEM"
+  },
+  {
+    "description": "如果把幾位股神做成AI 開一家投資公司會如何？世界級分析師一起分析個股",
+    "fullName": "tbdavid2019/ai-hedge-fund-API",
+    "language": "Python",
+    "stargazersCount": 59,
+    "updatedAt": "2026-05-24T10:08:19Z",
+    "url": "https://github.com/tbdavid2019/ai-hedge-fund-API"
+  },
+  {
+    "description": "Novice's attempt for Stock Prices Prediction & Portfolio Optimization using Machine Learning with Python & Scikit Learn",
+    "fullName": "vishwajeetv/stock_prediction",
+    "language": "Python",
+    "stargazersCount": 57,
+    "updatedAt": "2026-05-14T14:39:48Z",
+    "url": "https://github.com/vishwajeetv/stock_prediction"
+  },
+  {
+    "description": "Stock portfolio optimizer in Python based on least correlated moving sharpe / sortino ratios.",
+    "fullName": "melvinmt/sharpefolio",
+    "language": "Python",
+    "stargazersCount": 55,
+    "updatedAt": "2025-11-11T16:31:39Z",
+    "url": "https://github.com/melvinmt/sharpefolio"
+  },
+  {
+    "description": "Different quantitative trading models research",
+    "fullName": "dmarienko/QuantTradingResearch",
+    "language": "Jupyter Notebook",
+    "stargazersCount": 54,
+    "updatedAt": "2026-04-08T16:48:41Z",
+    "url": "https://github.com/dmarienko/QuantTradingResearch"
+  },
+  {
+    "description": "Professional real-time trading strategy monitor for MetaTrader 5 with advanced GUI and comprehensive risk management",
+    "fullName": "ilahuerta-IA/mt5_live_trading_bot",
+    "language": "Python",
+    "stargazersCount": 54,
+    "updatedAt": "2026-06-01T09:16:26Z",
+    "url": "https://github.com/ilahuerta-IA/mt5_live_trading_bot"
+  },
+  {
+    "description": "All of the code from my video \"Vectorbt for beginners - Full Python Course\"",
+    "fullName": "ChadThackray/vectorbt-for-beginners-2022",
+    "language": "Python",
+    "stargazersCount": 52,
+    "updatedAt": "2026-05-31T18:13:54Z",
+    "url": "https://github.com/ChadThackray/vectorbt-for-beginners-2022"
+  },
+  {
+    "description": "",
+    "fullName": "quant-science/vectorbt_backtesting",
+    "language": "Python",
+    "stargazersCount": 50,
+    "updatedAt": "2026-05-14T15:09:45Z",
+    "url": "https://github.com/quant-science/vectorbt_backtesting"
+  },
+  {
+    "description": "Pairs trading strategy example based on Catalyst",
+    "fullName": "lamres/pairs_trading_cryptocurrencies_strategy_catalyst",
+    "language": "Jupyter Notebook",
+    "stargazersCount": 49,
+    "updatedAt": "2025-12-09T13:29:25Z",
+    "url": "https://github.com/lamres/pairs_trading_cryptocurrencies_strategy_catalyst"
+  },
+  {
+    "description": "Pair-Trading bot developed with Python and Interactive Brokers Trader Workstation (TWS) API",
+    "fullName": "ozdemirozcelik/pairs-ibkr",
+    "language": "Python",
+    "stargazersCount": 48,
+    "updatedAt": "2026-03-04T03:55:45Z",
+    "url": "https://github.com/ozdemirozcelik/pairs-ibkr"
+  },
+  {
+    "description": "基于 Streamlit + Python 的 A 股国家队持仓透视系统。这是一个由 Gemini 协助完成的项目，commit 记录了我们从零构建、Debug、到最终上线，同甘共苦并肩作战的开发岁月。 🚀",
+    "fullName": "kitaki-Ciallo/nt_project",
+    "language": "Python",
+    "stargazersCount": 46,
+    "updatedAt": "2026-06-02T02:39:05Z",
+    "url": "https://github.com/kitaki-Ciallo/nt_project"
+  },
+  {
+    "description": "Portfolio Optimization in Python",
+    "fullName": "wellecks/port_opt",
+    "language": "Python",
+    "stargazersCount": 46,
+    "updatedAt": "2024-05-16T19:55:22Z",
+    "url": "https://github.com/wellecks/port_opt"
+  },
+  {
+    "description": "A Dashboard for multi-time frame simulation analysis for a portfolio of instruments",
+    "fullName": "diliprk/vectorbt_pro_dashboard",
+    "language": "CSS",
+    "stargazersCount": 44,
+    "updatedAt": "2026-02-21T23:22:12Z",
+    "url": "https://github.com/diliprk/vectorbt_pro_dashboard"
+  },
+  {
+    "description": "stock-pairs-trading is a python library for backtest with stock pairs trading using kalman filter on Python 3.8 and above.",
+    "fullName": "10mohi6/stock-pairs-trading-python",
+    "language": "Python",
+    "stargazersCount": 40,
+    "updatedAt": "2026-03-05T03:40:12Z",
+    "url": "https://github.com/10mohi6/stock-pairs-trading-python"
+  },
+  {
+    "description": "Python Jupyter Notebooks for Financial Portfolio Optimization ",
+    "fullName": "blckswmngbrd/PyPortfolioOptimizationNotebooks",
+    "language": "Jupyter Notebook",
+    "stargazersCount": 40,
+    "updatedAt": "2026-04-26T16:42:14Z",
+    "url": "https://github.com/blckswmngbrd/PyPortfolioOptimizationNotebooks"
+  },
+  {
+    "description": "VectorBT Backtesting",
+    "fullName": "AlgoTrading101/VectorBT-AlgoTrading101",
+    "language": "Jupyter Notebook",
+    "stargazersCount": 39,
+    "updatedAt": "2026-05-12T03:01:31Z",
+    "url": "https://github.com/AlgoTrading101/VectorBT-AlgoTrading101"
+  },
+  {
+    "description": "A simple python script to parse the trades from a TradingView strategy and determine the approprite leverage to use according to the Kelly Risk Management System",
+    "fullName": "CoryKrol/TradingViewStrategyParser",
+    "language": "Python",
+    "stargazersCount": 37,
+    "updatedAt": "2025-05-12T16:09:28Z",
+    "url": "https://github.com/CoryKrol/TradingViewStrategyParser"
+  },
+  {
+    "description": "Solve portfolio optimization problems using NSGA2 algorithm",
+    "fullName": "JiaruiFeng/Portfolio-Optimization-Using-NSGA2-with-Python",
+    "language": "Python",
+    "stargazersCount": 37,
+    "updatedAt": "2025-10-27T02:26:46Z",
+    "url": "https://github.com/JiaruiFeng/Portfolio-Optimization-Using-NSGA2-with-Python"
+  },
+  {
+    "description": "An automated stock screening system which isolates top companies based on time-tested growth criteria.",
+    "fullName": "starboi-63/growth-stock-screener",
+    "language": "Python",
+    "stargazersCount": 37,
+    "updatedAt": "2026-05-19T09:16:30Z",
+    "url": "https://github.com/starboi-63/growth-stock-screener"
+  },
+  {
+    "description": "Python-based Quotex trading bot using Selenium for login/trade automation, optional Demo mode toggle, and advanced strategy logic (RSI, MACD, Bollinger Bands). Includes end-to-end tests, robust risk management, and easy configuration—ideal for both real and demo trading.",
+    "fullName": "carlosrod723/Quotex-Trading-Bot",
+    "language": "Python",
+    "stargazersCount": 36,
+    "updatedAt": "2026-05-31T17:03:08Z",
+    "url": "https://github.com/carlosrod723/Quotex-Trading-Bot"
+  },
+  {
+    "description": "Usage of policy gradient reinforcement learning to solve portfolio optimization problems (Tactical Asset Allocation).  ",
+    "fullName": "SvenBecker/TAA-PG",
+    "language": "Python",
+    "stargazersCount": 35,
+    "updatedAt": "2026-03-21T18:35:19Z",
+    "url": "https://github.com/SvenBecker/TAA-PG"
+  },
+  {
+    "description": "Paper-first SPY options validation platform with broker-backed scorecards, hard risk gates, paired-trade accounting, and live dashboards.",
+    "fullName": "IgorGanapolsky/trading",
+    "language": "Python",
+    "stargazersCount": 34,
+    "updatedAt": "2026-06-02T03:24:53Z",
+    "url": "https://github.com/IgorGanapolsky/trading"
+  },
+  {
+    "description": "golang version of vn.py",
+    "fullName": "pseudocodes/vngo",
+    "language": "Go",
+    "stargazersCount": 33,
+    "updatedAt": "2026-05-23T10:48:50Z",
+    "url": "https://github.com/pseudocodes/vngo"
+  },
+  {
+    "description": "LMT (LayeredMemoryTrader) is a multi-agent trading system using LLMs with human-style short/mid/long memory debates.",
+    "fullName": "gael55x/LayeredMemoryTrader",
+    "language": "Python",
+    "stargazersCount": 32,
+    "updatedAt": "2026-05-14T07:30:14Z",
+    "url": "https://github.com/gael55x/LayeredMemoryTrader"
+  },
+  {
+    "description": "A library for portfolio optimization algorithms with python interface.",
+    "fullName": "alpha-miner/portfolio-optimizer",
+    "language": "Python",
+    "stargazersCount": 31,
+    "updatedAt": "2025-11-25T11:19:42Z",
+    "url": "https://github.com/alpha-miner/portfolio-optimizer"
+  },
+  {
+    "description": "多Agent量化交易与投资决策系统 | 6-Agent并行+辩论+风控 | Python/Java/Go三语言实现 | 配套面试八股文+STAR法+简历模板 | 从零到面试全攻略",
+    "fullName": "bcefghj/multi-agent-trading-system",
+    "language": "Python",
+    "stargazersCount": 31,
+    "updatedAt": "2026-05-31T07:33:35Z",
+    "url": "https://github.com/bcefghj/multi-agent-trading-system"
+  },
+  {
+    "description": "Integrating ESG scores into asset allocation and portfolio optimization through a GUI application.",
+    "fullName": "LucS12/ESG-Score-Integration",
+    "language": "Jupyter Notebook",
+    "stargazersCount": 30,
+    "updatedAt": "2026-02-19T15:46:00Z",
+    "url": "https://github.com/LucS12/ESG-Score-Integration"
+  },
+  {
+    "description": "portfolio-backtest is a python library for backtest portfolio asset allocation on Python 3.7 and above.",
+    "fullName": "10mohi6/portfolio-backtest-python",
+    "language": "Python",
+    "stargazersCount": 29,
+    "updatedAt": "2026-04-05T22:58:03Z",
+    "url": "https://github.com/10mohi6/portfolio-backtest-python"
+  },
+  {
+    "description": "Powerful Stock Screener App written in python using Streamlit",
+    "fullName": "TheAIQuant/StockScreener_Streamlit",
+    "language": "Python",
+    "stargazersCount": 29,
+    "updatedAt": "2026-05-08T16:29:27Z",
+    "url": "https://github.com/TheAIQuant/StockScreener_Streamlit"
+  },
+  {
+    "description": "Pairs Trading in Python",
+    "fullName": "AJeanis/Pairs-Trading",
+    "language": "Python",
+    "stargazersCount": 28,
+    "updatedAt": "2026-03-11T00:27:36Z",
+    "url": "https://github.com/AJeanis/Pairs-Trading"
+  },
+  {
+    "description": "Bybit trading gateway for VeighNa Evo",
+    "fullName": "veighna-global/vnpy_bybit",
+    "language": "Python",
+    "stargazersCount": 28,
+    "updatedAt": "2026-04-30T14:07:30Z",
+    "url": "https://github.com/veighna-global/vnpy_bybit"
+  },
+  {
+    "description": "MT5 trading gateway for VeighNa Evo",
+    "fullName": "veighna-global/vnpy_mt5",
+    "language": "MQL5",
+    "stargazersCount": 28,
+    "updatedAt": "2026-04-10T06:37:33Z",
+    "url": "https://github.com/veighna-global/vnpy_mt5"
+  },
+  {
+    "description": "Multi-agent trading, swarm intelligence, and GitHub automation plugins for Claude Code. 19 production-grade plugins built from 68+ specialized agents.",
+    "fullName": "jmanhype/claude-code-plugin-marketplace",
+    "language": "Python",
+    "stargazersCount": 27,
+    "updatedAt": "2026-06-02T03:09:29Z",
+    "url": "https://github.com/jmanhype/claude-code-plugin-marketplace"
+  },
+  {
+    "description": "Archimedes 1 is a bot based sentient based trader, heavily influenced on forked existing bots, with a few enhancements here or there, this was completed to understand how the bots worked to roll the forward in our own manner to our own complete ai based trading system (Archimedes 2:0)   This bot watches [followed accounts] tweets and waits for them to mention any publicly traded companies. When they do, sentiment analysis is used determine whether the opinions are positive or negative toward those companies. The bot then automatically executes trades on the relevant stocks according to the expected market reaction.   The code is written in Python and is meant to run on a Google Compute Engine instance. It uses the Twitter Streaming APIs (however new version) to get notified whenever tweets within remit are of interest. The entity detection and sentiment analysis is done using Google's Cloud Natural Language API and the Wikidata Query Service provides the company data. The TradeKing (ALLY) API does the stock trading (changed to ALLY).  The main module defines a callback where incoming tweets are handled and starts streaming user's feed:  def twitter_callback(tweet):     companies = analysis.find_companies(tweet)     if companies:         trading.make_trades(companies)         twitter.tweet(companies, tweet)  if __name__ == \"__main__\":     twitter.start_streaming(twitter_callback) The core algorithms are implemented in the analysis and trading modules. The former finds mentions of companies in the text of the tweet, figures out what their ticker symbol is, and assigns a sentiment score to them. The latter chooses a trading strategy, which is either buy now and sell at close or sell short now and buy to cover at close. The twitter module deals with streaming and tweeting out the summary.  Follow these steps to run the code yourself:  1. Create VM instance  Check out the quickstart to create a Cloud Platform project and a Linux VM instance with Compute Engine, then SSH into it for the steps below. The predefined machine type g1-small (1 vCPU, 1.7 GB memory) seems to work well.  2. Set up auth  The authentication keys for the different APIs are read from shell environment variables. Each service has different steps to obtain them.  Twitter  Log in to your Twitter account and create a new application. Under the Keys and Access Tokens tab for your app you'll find the Consumer Key and Consumer Secret. Export both to environment variables:  export TWITTER_CONSUMER_KEY=\"<YOUR_CONSUMER_KEY>\" export TWITTER_CONSUMER_SECRET=\"<YOUR_CONSUMER_SECRET>\" If you want the tweets to come from the same account that owns the application, simply use the Access Token and Access Token Secret on the same page. If you want to tweet from a different account, follow the steps to obtain an access token. Then export both to environment variables:  export TWITTER_ACCESS_TOKEN=\"<YOUR_ACCESS_TOKEN>\" export TWITTER_ACCESS_TOKEN_SECRET=\"<YOUR_ACCESS_TOKEN_SECRET>\" Google  Follow the Google Application Default Credentials instructions to create, download, and export a service account key.  export GOOGLE_APPLICATION_CREDENTIALS=\"/path/to/credentials-file.json\" You also need to enable the Cloud Natural Language API for your Google Cloud Platform project.  TradeKing (ALLY)  Log in to your TradeKing (ALLY account and create a new application. Behind the Details button for your application you'll find the Consumer Key, Consumer Secret, OAuth (Access) Token, and Oauth (Access) Token Secret. Export them all to environment variables:  export TRADEKING_CONSUMER_KEY=\"<YOUR_CONSUMER_KEY>\" export TRADEKING_CONSUMER_SECRET=\"<YOUR_CONSUMER_SECRET>\" export TRADEKING_ACCESS_TOKEN=\"<YOUR_ACCESS_TOKEN>\" export TRADEKING_ACCESS_TOKEN_SECRET=\"<YOUR_ACCESS_TOKEN_SECRET>\" Also export your TradeKing (ALLY) account number, which you'll find under My Accounts:  export TRADEKING_ACCOUNT_NUMBER=\"<YOUR_ACCOUNT_NUMBER>\" 3. Install dependencies  There are a few library dependencies, which you can install using pip:  $ pip install -r requirements.txt 4. Run the tests  Verify that everything is working as intended by running the tests with pytest using this command:  $ export USE_REAL_MONEY=NO && pytest *.py --verbose 5. Run the benchmark  The benchmark report shows how the current implementation of the analysis and trading algorithms would have performed against historical data. You can run it again to benchmark any changes you may have made:  $ ./benchmark.py > benchmark.md 6. Start the bot  Enable real orders that use your money:  $ export USE_REAL_MONEY=YES Have the code start running in the background with this command:  $ nohup ./main.py &  License   Archimedes (edits under Invacio) Max Braun Frame under Max Braun, licence under Apache V2 License.  Licensed under the Apache License, Version 2.0 (the \"License\"); you may not use this file except in compliance with the License. You may obtain a copy of the License at  http://www.apache.org/licenses/LICENSE-2.0 Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an \"AS IS\" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the specific language governing permissions and limitations under the License.",
+    "fullName": "ginking/archimedes-1",
+    "language": "Python",
+    "stargazersCount": 26,
+    "updatedAt": "2026-04-17T15:59:58Z",
+    "url": "https://github.com/ginking/archimedes-1"
+  },
+  {
+    "description": "Craft complex trading strategies with remarkably simple Python. Access 300+ indicators, multi-symbol/timeframe support, spot/futures trading, partial fills, and risk management tools. Focus on logic, not boilerplate.",
+    "fullName": "laurindoisaac/crypto-trader-bot-with-AI-algo",
+    "language": "Python",
+    "stargazersCount": 26,
+    "updatedAt": "2026-05-15T21:24:27Z",
+    "url": "https://github.com/laurindoisaac/crypto-trader-bot-with-AI-algo"
+  },
+  {
+    "description": "'Portfolio Analysis, methods for portfolio optimization'",
+    "fullName": "anuragagrawaal/pyPortfolioAnalysis",
+    "language": "Python",
+    "stargazersCount": 25,
+    "updatedAt": "2026-04-14T06:37:07Z",
+    "url": "https://github.com/anuragagrawaal/pyPortfolioAnalysis"
+  },
+  {
+    "description": "AI-native hedge fund using multi-agent LLM system with real market data and paper trading.",
+    "fullName": "DanisHack/ai-hedge-fund",
+    "language": "Python",
+    "stargazersCount": 25,
+    "updatedAt": "2026-05-22T09:08:06Z",
+    "url": "https://github.com/DanisHack/ai-hedge-fund"
+  },
+  {
+    "description": "",
+    "fullName": "aconstandinou/pairs-trading-equities",
+    "language": "Python",
+    "stargazersCount": 24,
+    "updatedAt": "2026-04-10T20:44:23Z",
+    "url": "https://github.com/aconstandinou/pairs-trading-equities"
+  },
+  {
+    "description": "Collection of personal tools used for strategies analysis and algorithmic trading on Binance exchange.",
+    "fullName": "philipzabicki/binance-algotrading",
+    "language": "Python",
+    "stargazersCount": 24,
+    "updatedAt": "2026-04-18T09:19:06Z",
+    "url": "https://github.com/philipzabicki/binance-algotrading"
+  },
+  {
+    "description": "TradeWhisperer is a sophisticated cryptocurrency trading bot that leverages advanced Reinforcement Learning techniques, specifically the Proximal Policy Optimization (PPO) algorithm, to navigate the complex world of crypto markets. Built with a focus on adaptability and risk management, this bot combines technical analysis with machine learning.",
+    "fullName": "Solrikk/CriptoWhisper",
+    "language": "Python",
+    "stargazersCount": 24,
+    "updatedAt": "2026-05-30T19:58:10Z",
+    "url": "https://github.com/Solrikk/CriptoWhisper"
+  },
+  {
+    "description": "Building a time series momentum strategy for Oanda by following this guide: https://www.oreilly.com/learning/algorithmic-trading-in-less-than-100-lines-of-python-code",
+    "fullName": "benjaminchodroff/oandamomentum",
+    "language": "Jupyter Notebook",
+    "stargazersCount": 23,
+    "updatedAt": "2024-11-13T10:35:22Z",
+    "url": "https://github.com/benjaminchodroff/oandamomentum"
+  },
+  {
+    "description": "Python Algorithmic Trading code for using zerodha kite to place AMO orders based on Chartink scanner ",
+    "fullName": "bogadib/chartink_kite_amo_mean_reversion",
+    "language": "",
+    "stargazersCount": 23,
+    "updatedAt": "2026-05-24T18:27:20Z",
+    "url": "https://github.com/bogadib/chartink_kite_amo_mean_reversion"
+  },
+  {
+    "description": "",
+    "fullName": "eervin123/tradingview-to-vectorbt",
+    "language": "Jupyter Notebook",
+    "stargazersCount": 23,
+    "updatedAt": "2025-11-25T02:05:30Z",
+    "url": "https://github.com/eervin123/tradingview-to-vectorbt"
+  },
+  {
+    "description": "Full Stack Stock Screener for fundamental and technical analysis",
+    "fullName": "lit26/Stock_Screener",
+    "language": "JavaScript",
+    "stargazersCount": 23,
+    "updatedAt": "2025-10-04T17:52:25Z",
+    "url": "https://github.com/lit26/Stock_Screener"
+  },
+  {
+    "description": "Simple VectorBT Streamlit Backtesting App",
+    "fullName": "marketcalls/VectorBT-Streamlit",
+    "language": "Python",
+    "stargazersCount": 23,
+    "updatedAt": "2026-04-06T06:50:03Z",
+    "url": "https://github.com/marketcalls/VectorBT-Streamlit"
+  },
+  {
+    "description": "A strategy tester for MetaTrader5 in Python language",
+    "fullName": "MegaJoctan/StrategyTester5",
+    "language": "Python",
+    "stargazersCount": 23,
+    "updatedAt": "2026-06-01T02:53:12Z",
+    "url": "https://github.com/MegaJoctan/StrategyTester5"
+  },
+  {
+    "description": "Python code samples using ta lib for trading strategies",
+    "fullName": "shaktisd/talibpython",
+    "language": "Python",
+    "stargazersCount": 23,
+    "updatedAt": "2026-02-13T00:26:52Z",
+    "url": "https://github.com/shaktisd/talibpython"
+  },
+  {
+    "description": "The strategy module for using VeighNa (vnpy) quant trading platform on the crypto market.",
+    "fullName": "veighna-global/vnpy_novastrategy",
+    "language": "Python",
+    "stargazersCount": 23,
+    "updatedAt": "2026-03-21T14:59:37Z",
+    "url": "https://github.com/veighna-global/vnpy_novastrategy"
+  },
+  {
+    "description": "",
+    "fullName": "wangqinl/virattt-ai-hedge-fund",
+    "language": "",
+    "stargazersCount": 23,
+    "updatedAt": "2026-05-28T06:20:53Z",
+    "url": "https://github.com/wangqinl/virattt-ai-hedge-fund"
+  },
+  {
+    "description": "RaptorBT is a high-performance backtesting engine written in Rust with Python bindings via PyO3. It serves as a drop-in replacement for VectorBT, providing significant performance improvements while maintaining full metric parity.",
+    "fullName": "alphabench/raptorbt",
+    "language": "Rust",
+    "stargazersCount": 22,
+    "updatedAt": "2026-06-02T02:55:55Z",
+    "url": "https://github.com/alphabench/raptorbt"
+  },
+  {
+    "description": "QuantGPT is an AI-powered document search for VectorBT PRO.",
+    "fullName": "BaileySimrell/QuantGPT-v2",
+    "language": "Jupyter Notebook",
+    "stargazersCount": 22,
+    "updatedAt": "2026-04-19T11:38:09Z",
+    "url": "https://github.com/BaileySimrell/QuantGPT-v2"
+  },
+  {
+    "description": "A pairs trade is a market neutral trading strategy enabling traders to profit from virtually any market conditions. This strategy is categorized as a statistical arbitrage and convergence trading strategy.",
+    "fullName": "kanupriyaanand/Pairs_Trading_Quant",
+    "language": "Python",
+    "stargazersCount": 22,
+    "updatedAt": "2026-04-08T16:50:57Z",
+    "url": "https://github.com/kanupriyaanand/Pairs_Trading_Quant"
+  },
+  {
+    "description": "Backtesting an RSI Trading Algorithm with Quantopian Zipline and Pyfolio Python Libraries",
+    "fullName": "aspromatis/Backtesting-RSI-Algo",
+    "language": "Python",
+    "stargazersCount": 21,
+    "updatedAt": "2026-04-12T21:46:17Z",
+    "url": "https://github.com/aspromatis/Backtesting-RSI-Algo"
+  },
+  {
+    "description": "A stock screener that detect consolidation based on Bollinger Bands and Keltner channels",
+    "fullName": "TRetraint/Consolidation_Screener",
+    "language": "Python",
+    "stargazersCount": 21,
+    "updatedAt": "2025-12-12T09:35:55Z",
+    "url": "https://github.com/TRetraint/Consolidation_Screener"
+  },
+  {
+    "description": "Algorithmic Trading Model Development for BTC/USDT Crypto Market. Crafting models that outperform benchmarks, balancing returns and risk management in the dynamic BTC/USDT market.",
+    "fullName": "A-SOLO/BTC_USDT_Trading_Model",
+    "language": "Jupyter Notebook",
+    "stargazersCount": 20,
+    "updatedAt": "2026-06-01T20:49:19Z",
+    "url": "https://github.com/A-SOLO/BTC_USDT_Trading_Model"
+  },
+  {
+    "description": "An AI-driven multi-agent trading platform for options trading and stock trends analysis. This project leverages advanced machine learning, real-time market data, and a modular multi-agent framework.",
+    "fullName": "renee-jia/alpha-agent",
+    "language": "Python",
+    "stargazersCount": 20,
+    "updatedAt": "2026-04-28T03:34:11Z",
+    "url": "https://github.com/renee-jia/alpha-agent"
+  },
+  {
+    "description": "Multi-agent trading desk on Next.js — Alpaca paper trading, NDJSON pipeline, OpenAI-ready mocks",
+    "fullName": "Rezzecup/AlpacaTradingAgent",
+    "language": "TypeScript",
+    "stargazersCount": 20,
+    "updatedAt": "2026-05-22T16:11:45Z",
+    "url": "https://github.com/Rezzecup/AlpacaTradingAgent"
+  },
+  {
+    "description": "Production multi-agent trading platform with rigorous walk-forward validation. TSMOM momentum (1.097 Sharpe) + GEX regime filtering. Interactive CLI, autonomous trade lifecycle, daily scheduler. Alpaca integration. Built on Microsoft AutoGen. Research-driven approach with statistical validation. Educational - not financial advice.",
+    "fullName": "iAmGiG/AutoTrader-AgentEdge",
+    "language": "Python",
+    "stargazersCount": 18,
+    "updatedAt": "2026-05-20T16:44:49Z",
+    "url": "https://github.com/iAmGiG/AutoTrader-AgentEdge"
+  },
+  {
+    "description": "A professional, modular forex trading bot with advanced risk management, multiple strategies, portfolio mode, and comprehensive backtesting capabilities.",
+    "fullName": "VoxHash/ForexSmartBot",
+    "language": "Python",
+    "stargazersCount": 18,
+    "updatedAt": "2026-05-30T05:45:37Z",
+    "url": "https://github.com/VoxHash/ForexSmartBot"
+  },
+  {
+    "description": "R-DEV Trading AI is an advanced automated trading bot integrated with MetaTrader 5. It combines technical, fundamental, and sentiment analysis, uses deep learning and ML for signal generation, updates in real time, and applies advanced risk management for intelligent trade execution.",
+    "fullName": "fortunatoman/Trading-AI-Bot",
+    "language": "Python",
+    "stargazersCount": 17,
+    "updatedAt": "2026-04-06T01:59:38Z",
+    "url": "https://github.com/fortunatoman/Trading-AI-Bot"
+  },
+  {
+    "description": "A basic trading bot in Python using Mean Reversion",
+    "fullName": "ryankemmer/MeanReversionTradingBot",
+    "language": "Python",
+    "stargazersCount": 17,
+    "updatedAt": "2026-05-15T11:25:01Z",
+    "url": "https://github.com/ryankemmer/MeanReversionTradingBot"
+  },
+  {
+    "description": "AI-powered multi-agent trading analysis system for A-share market. AI多Agent协同的A股交易分析",
+    "fullName": "DLWangSan/a-stock-trading",
+    "language": "Python",
+    "stargazersCount": 16,
+    "updatedAt": "2026-05-10T02:22:59Z",
+    "url": "https://github.com/DLWangSan/a-stock-trading"
+  },
+  {
+    "description": "Mock pairs trading strategy and backtesting with Kalman iltering and pair selection using clustering and cointegration.",
+    "fullName": "ozencgungor/Pairs_Trading_Kalman",
+    "language": "HTML",
+    "stargazersCount": 15,
+    "updatedAt": "2026-05-13T04:59:02Z",
+    "url": "https://github.com/ozencgungor/Pairs_Trading_Kalman"
+  },
+  {
+    "description": "🤖💹 algorithmic trading strategy built backtested using backtrader and python, optimizing risk-adjusted returns with a bollinger mean-reversion strategy ",
+    "fullName": "yungalyx/NoisyBoyAlgotrader",
+    "language": "Python",
+    "stargazersCount": 15,
+    "updatedAt": "2026-05-05T08:07:03Z",
+    "url": "https://github.com/yungalyx/NoisyBoyAlgotrader"
+  },
+  {
+    "description": "Python Scripts for Backtesting SPX Put Strategies Using Black-Scholes Proxies",
+    "fullName": "auto-d1dact/spx_options_backtesting",
+    "language": "HTML",
+    "stargazersCount": 14,
+    "updatedAt": "2026-03-21T09:05:18Z",
+    "url": "https://github.com/auto-d1dact/spx_options_backtesting"
+  },
+  {
+    "description": "Pairs trading backtesting enviroment built with Python.",
+    "fullName": "BSIC/Pairs-Trading-Backtesting",
+    "language": "Jupyter Notebook",
+    "stargazersCount": 14,
+    "updatedAt": "2024-11-09T15:44:44Z",
+    "url": "https://github.com/BSIC/Pairs-Trading-Backtesting"
+  },
+  {
+    "description": "Python implementation of the pairs trading strategy in Gatev, Goetzmann and Rouwenhorst (2006). I am not the author of that study; this is an independent replication.",
+    "fullName": "rubetron/Pairs_trading",
+    "language": "Jupyter Notebook",
+    "stargazersCount": 14,
+    "updatedAt": "2026-05-25T06:55:41Z",
+    "url": "https://github.com/rubetron/Pairs_trading"
+  },
+  {
+    "description": "Reading notes and Python implementation for book \"Machine Learning for Factor Investing\" by Silkdust",
+    "fullName": "Silkdust/mlfactor-python",
+    "language": "Jupyter Notebook",
+    "stargazersCount": 14,
+    "updatedAt": "2026-03-22T04:42:05Z",
+    "url": "https://github.com/Silkdust/mlfactor-python"
+  },
+  {
+    "description": "A simple implementation of a pairs trading strategy",
+    "fullName": "alfranz/python-pairs-trading",
+    "language": "Python",
+    "stargazersCount": 13,
+    "updatedAt": "2024-10-07T16:28:42Z",
+    "url": "https://github.com/alfranz/python-pairs-trading"
+  },
+  {
+    "description": "Claude Code skill for BaoStock — free A-share market data API with 23 endpoints, 9 documented pitfalls, and pandas 2.0+ compatibility fixes",
+    "fullName": "atompilot/baostock-skill",
+    "language": "",
+    "stargazersCount": 13,
+    "updatedAt": "2026-05-28T14:23:17Z",
+    "url": "https://github.com/atompilot/baostock-skill"
+  },
+  {
+    "description": "Open-source autonomous trading platform with multi-agent architecture, intelligent data aggregation, and risk management.",
+    "fullName": "heyhaigh/trading-buddy",
+    "language": "Python",
+    "stargazersCount": 13,
+    "updatedAt": "2026-04-04T13:38:08Z",
+    "url": "https://github.com/heyhaigh/trading-buddy"
+  },
+  {
+    "description": "Multi-strategy algorithmic trading platform designed for institutional-grade automated execution across futures, equities, and options markets. Built with Python and Flask, this system provides real-time market analysis, multi-broker integration, and comprehensive risk management capabilities.",
+    "fullName": "pixelwhiz/tasty-schwab-trader-BE",
+    "language": "Python",
+    "stargazersCount": 13,
+    "updatedAt": "2026-05-26T01:57:46Z",
+    "url": "https://github.com/pixelwhiz/tasty-schwab-trader-BE"
+  },
+  {
+    "description": "Time-Series Momentum Strategies",
+    "fullName": "alipbcs/TSMOM",
+    "language": "Python",
+    "stargazersCount": 12,
+    "updatedAt": "2025-03-30T23:03:43Z",
+    "url": "https://github.com/alipbcs/TSMOM"
+  },
+  {
+    "description": "Template for quantum research projects using Q#, Python, and LaTeX",
+    "fullName": "cgranade/quantum-research-template",
+    "language": "TeX",
+    "stargazersCount": 12,
+    "updatedAt": "2025-07-07T17:10:37Z",
+    "url": "https://github.com/cgranade/quantum-research-template"
+  },
+  {
+    "description": "An emerging asset class, the recent surge of popularity in crypto markets has made cryptocurrencies an essential part of investment portfolios for retail and institutional investors. As prices for cryptocurrencies continue to break previous highs, the race is on for investors to develop a trading strategy that can take advantage of the high volatility and fluctuation that exists in the crypto markets. The pairs trading strategy is an example of a market-neutral strategy that attempts to take advantage of the mean reversion principle to eliminate inefficiencies between two highly correlated assets. In a market that is riddled with inefficiencies, the pairs trading strategy might be a highly effective and lucrative trading stagey for investors in crypto markets.",
+    "fullName": "eshan-kaul/PairsTrading-Crypto",
+    "language": "Jupyter Notebook",
+    "stargazersCount": 12,
+    "updatedAt": "2025-10-09T23:32:28Z",
+    "url": "https://github.com/eshan-kaul/PairsTrading-Crypto"
+  },
+  {
+    "description": "Hybrid Wasserstein + HMM Market Regime Detection",
+    "fullName": "kratu/wess_hmm",
+    "language": "Python",
+    "stargazersCount": 12,
+    "updatedAt": "2026-05-04T13:39:50Z",
+    "url": "https://github.com/kratu/wess_hmm"
+  },
+  {
+    "description": "This Python bot automates trading on Polymarket by comparing interest rate probabilities from the bond market and Polymarket. It detects trading opportunities using mean reversion and Z-scores, scrapes data, adjusts thresholds dynamically, and executes trades via the ClobClient API. For research use only.",
+    "fullName": "leocolab/Interest-Rate-Arbitrage-Trader",
+    "language": "Python",
+    "stargazersCount": 12,
+    "updatedAt": "2026-04-04T18:18:24Z",
+    "url": "https://github.com/leocolab/Interest-Rate-Arbitrage-Trader"
+  },
+  {
+    "description": "🚀 AI-powered multi-agent trading analysis system with Streamlit UI. Features technical indicators, pattern recognition, trend analysis, and LLM-driven decision synthesis using Groq API. Built with Python, OpenBB, and matplotlib for comprehensive market insights.",
+    "fullName": "rlancaster243/Quant_Agent",
+    "language": "Python",
+    "stargazersCount": 12,
+    "updatedAt": "2026-04-25T14:22:35Z",
+    "url": "https://github.com/rlancaster243/Quant_Agent"
+  },
+  {
+    "description": "Python code for a quantitative momentum investment strategy that selects high-momentum stocks from the S&P 500 index and calculates recommended trades for an equal-weight portfolio. Implements an alternative strategy based on the 80-20 principle.",
+    "fullName": "ayush0801/Quantitaive-Momentum-Strategy",
+    "language": "Jupyter Notebook",
+    "stargazersCount": 11,
+    "updatedAt": "2026-04-01T16:35:50Z",
+    "url": "https://github.com/ayush0801/Quantitaive-Momentum-Strategy"
+  },
+  {
+    "description": "Open-source Taiwan futures algorithmic trading system. Python + Shioaji. 3 strategies, risk management, backtesting, real-time dashboard.",
+    "fullName": "ppcvote/ultra-trader",
+    "language": "Python",
+    "stargazersCount": 11,
+    "updatedAt": "2026-06-02T11:35:17Z",
+    "url": "https://github.com/ppcvote/ultra-trader"
+  },
+  {
+    "description": "Machine Learning for Factor Investing in Python",
+    "fullName": "ronnieqt/mlfactor-py",
+    "language": "Jupyter Notebook",
+    "stargazersCount": 11,
+    "updatedAt": "2026-06-02T08:43:03Z",
+    "url": "https://github.com/ronnieqt/mlfactor-py"
+  },
+  {
+    "description": "This code gives a broad introduction to 4 different Algorithmic Trading Strategies: Momentum, Mean Reversion, Moving Averages and Machine Learning.",
+    "fullName": "TimBstn/Python-for-Algorithmic-Trading-From-Idea-to-Cloud-Deployment",
+    "language": "Jupyter Notebook",
+    "stargazersCount": 11,
+    "updatedAt": "2026-05-05T08:07:45Z",
+    "url": "https://github.com/TimBstn/Python-for-Algorithmic-Trading-From-Idea-to-Cloud-Deployment"
+  },
+  {
+    "description": "Local-first GenAI trading workstation with live cTrader data, paper execution, deterministic risk controls, local LLM support via Ollama, and agent-inspired trading and strategy research workflows.",
+    "fullName": "maghdam/GenAI-MultiAgent-TradingSystem",
+    "language": "Python",
+    "stargazersCount": 10,
+    "updatedAt": "2026-05-27T17:55:46Z",
+    "url": "https://github.com/maghdam/GenAI-MultiAgent-TradingSystem"
+  },
+  {
+    "description": "Multi-agent trading backtest framework (Rigid): Sentiment, Fundamental, and Valuation agents feed a Reasoning Agent that makes trading decisions; a Portfolio Manager handles allocation. Uses manually curated news data and historical prices to evaluate LLM performance in financial analysis.",
+    "fullName": "1carlito/LLM-Stock-Manager",
+    "language": "Python",
+    "stargazersCount": 8,
+    "updatedAt": "2026-04-23T09:51:07Z",
+    "url": "https://github.com/1carlito/LLM-Stock-Manager"
+  },
+  {
+    "description": "A quantitative trading framework that leverages daily OHLCV stock data and a Hidden Markov Model (HMM) to dynamically identify market regimes and generate momentum-based trading signals.",
+    "fullName": "Abdullah-BA/RegimeSwitchingMomentumStrategy",
+    "language": "Python",
+    "stargazersCount": 8,
+    "updatedAt": "2026-05-10T15:38:08Z",
+    "url": "https://github.com/Abdullah-BA/RegimeSwitchingMomentumStrategy"
+  },
+  {
+    "description": "High-performance stock data caching service based on AKShare data source, providing intelligent caching, RESTful API, and professional frontend interface.  🚀 Cloud Deployment Ready! Now provides complete cloud deployment solutions, including local development environment and Streamlit Cloud deployment version.",
+    "fullName": "franksunye/quantdb",
+    "language": "Python",
+    "stargazersCount": 8,
+    "updatedAt": "2026-05-16T07:37:49Z",
+    "url": "https://github.com/franksunye/quantdb"
+  },
+  {
+    "description": "AstraQuant Platform 是一款面向单人本地实战的量化交易桌面应用，集行情获取、策略研发、回测评估、实盘/模拟交易、AI 助手、代理池到 PyInstaller 打包于一体。系统内置多股票并行策略、T+1 风控、半自动提醒、国产大模型接入、自动安装 AkShare/TuShare 等，开源以 MIT（个人/学习）+ Dual License（商业授权）形式供投资者与开发者自由拓展。",
+    "fullName": "lilizero123/AstraQuant-Platform",
+    "language": "HTML",
+    "stargazersCount": 8,
+    "updatedAt": "2026-05-31T16:26:11Z",
+    "url": "https://github.com/lilizero123/AstraQuant-Platform"
+  },
+  {
+    "description": "基于 Python 与 AkShare 的量化回测框架，支持双均线交叉、动量轮动与低波动因子策略。实现自动获取 A 股行情、回测与可视化（净值曲线、回撤、超额收益、持仓权重、月度收益热力图等）",
+    "fullName": "PandOvo/quant-backtest-portfolio_akshare",
+    "language": "Python",
+    "stargazersCount": 8,
+    "updatedAt": "2026-06-02T05:37:32Z",
+    "url": "https://github.com/PandOvo/quant-backtest-portfolio_akshare"
+  },
+  {
+    "description": "A multi-agent trading system for Indian stocks where AI agents analyze market, news, social sentiment, and fundamentals. Agents debate and challenge each other to generate explainable, data-driven trading strategies for stocks on NSE and BSE.",
+    "fullName": "conceptworksx/Artha-Analytics",
+    "language": "Python",
+    "stargazersCount": 7,
+    "updatedAt": "2026-06-02T10:11:12Z",
+    "url": "https://github.com/conceptworksx/Artha-Analytics"
+  },
+  {
+    "description": "Lightweight multi-agent trading analysis framework with A-share, HK, and US market support",
+    "fullName": "cy-Yin/TradingAgents-CN-lite",
+    "language": "Python",
+    "stargazersCount": 7,
+    "updatedAt": "2026-05-31T08:00:18Z",
+    "url": "https://github.com/cy-Yin/TradingAgents-CN-lite"
+  },
+  {
+    "description": "📊 轻量级A股量化投资工具包 | ETF轮动·均线策略·组合优化·每日信号 | 开箱即用",
+    "fullName": "lancelin111/ezquant",
+    "language": "Python",
+    "stargazersCount": 7,
+    "updatedAt": "2026-05-28T22:33:56Z",
+    "url": "https://github.com/lancelin111/ezquant"
+  },
+  {
+    "description": "Multi-agent trading analysis as a Claude Code slash command — no external LLM API cost",
+    "fullName": "lucemia/trading-agents-plugin",
+    "language": "Python",
+    "stargazersCount": 7,
+    "updatedAt": "2026-05-21T15:17:39Z",
+    "url": "https://github.com/lucemia/trading-agents-plugin"
+  },
+  {
+    "description": "机构级 A股量化系统 - Hermes 多智能体 + Barra 中性化 + Level2 微结构 + 15 个圈内 tricks 完整实现",
+    "fullName": "wangpage/quant-ashare",
+    "language": "Python",
+    "stargazersCount": 7,
+    "updatedAt": "2026-05-19T05:39:43Z",
+    "url": "https://github.com/wangpage/quant-ashare"
+  },
+  {
+    "description": "Open-source student equity-research toolkit: Python CLI + Streamlit bot to generate 1-page memos and T−1→T+3 event studies (educational only).",
+    "fullName": "bsin-researcher/memo-maker",
+    "language": "Python",
+    "stargazersCount": 6,
+    "updatedAt": "2025-09-22T03:03:58Z",
+    "url": "https://github.com/bsin-researcher/memo-maker"
+  },
+  {
+    "description": "基于 Flask + 东方财富/腾讯 HTTPS 接口（主）+ 新浪/akshare（备），扫描沪深300成分股（过滤创业板/科创板，约 250 只），提供实时行情监控、7 维市场情绪评分、多策略智能选股与 Web 可视化看板。A-stock quant selector",
+    "fullName": "Acclerate/stock-selector",
+    "language": "Python",
+    "stargazersCount": 5,
+    "updatedAt": "2026-05-26T02:03:19Z",
+    "url": "https://github.com/Acclerate/stock-selector"
+  },
+  {
+    "description": "A full-stack A-share quantitative trading system based on the \"N-Rebound\" strategy. Features include automated data collection, Transformer-based AI pattern recognition, real-time monitoring radar, and a Streamlit visualization dashboard. ",
+    "fullName": "konodiodaaaaa1/N-Rebound",
+    "language": "Python",
+    "stargazersCount": 4,
+    "updatedAt": "2026-01-26T12:43:17Z",
+    "url": "https://github.com/konodiodaaaaa1/N-Rebound"
+  },
+  {
+    "description": "A股个股量化分析 Skill - 双引擎四层融合模型，一句话触发，3分钟输出专业级投资分析报告 | A-Share stock quant analysis Skill with dual-engine four-layer fusion model",
+    "fullName": "laozdao/astock-quant-analyzer",
+    "language": "Python",
+    "stargazersCount": 4,
+    "updatedAt": "2026-05-27T01:59:56Z",
+    "url": "https://github.com/laozdao/astock-quant-analyzer"
+  }
+]

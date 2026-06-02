@@ -2104,6 +2104,20 @@ def run_scheduled(args: argparse.Namespace) -> int:
 
             logging.getLogger(__name__).debug(f"自动反馈跳过: {e}")
 
+    portfolio_decisions = None
+    if picks:
+        from aqsp.portfolio.manager import apply_portfolio_manager
+
+        bundle = apply_portfolio_manager(
+            picks,
+            concentration=concentration,
+            correlation_result=correlation_result,
+        )
+        picks = bundle.picks
+        portfolio_decisions = list(bundle.decisions)
+        if portfolio_decisions:
+            print("📦 Portfolio Manager 裁决完成")
+
     breaker = CircuitBreaker()
     daily_pnl, weekly_pnl, monthly_pnl = _compute_real_pnl(args.ledger)
     status = breaker.check(
@@ -2118,6 +2132,7 @@ def run_scheduled(args: argparse.Namespace) -> int:
         title=f"AI 量化选股报告({mode}, 数据日期 {latest.isoformat()})",
         metadata=run_metadata,
         debate_results=debate_results if debate_results else None,
+        portfolio_decisions=portfolio_decisions,
     )
     if status.triggered:
         markdown += (

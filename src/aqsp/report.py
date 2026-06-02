@@ -26,6 +26,20 @@ RESULT_COLUMNS = [
 ]
 
 
+def _format_portfolio_decision(decision: Any) -> str:
+    action = getattr(decision, "action", "keep")
+    delta = getattr(decision, "score_delta", 0.0)
+    reasons = getattr(decision, "reasons", ())
+    lines = [
+        "### Portfolio Manager",
+        f"- 最终动作: {action}",
+        f"- 分数调整: {delta:+.1f}",
+    ]
+    if reasons:
+        lines.append("- 决策依据: " + "；".join(str(item) for item in reasons))
+    return "\n".join(lines)
+
+
 def _format_debate_result(result: Any) -> str:
     lines = []
     lines.append("### 多Agent辩论")
@@ -71,6 +85,7 @@ def to_markdown(
     title: str = "AI 量化选股报告",
     metadata: RunMetadata | None = None,
     debate_results: list[Any] | None = None,
+    portfolio_decisions: list[Any] | None = None,
 ) -> str:
     lines = [f"# {title}", ""]
     if metadata is not None:
@@ -80,6 +95,11 @@ def to_markdown(
         return "\n".join(lines)
 
     debate_map = {r.symbol: r for r in debate_results} if debate_results else {}
+    decision_map = (
+        {item.symbol: item for item in portfolio_decisions}
+        if portfolio_decisions
+        else {}
+    )
 
     for idx, pick in enumerate(picks, 1):
         display = f"{pick.symbol} {pick.name}".strip()
@@ -100,6 +120,9 @@ def to_markdown(
         )
         if pick.symbol in debate_map:
             lines.append(_format_debate_result(debate_map[pick.symbol]))
+            lines.append("")
+        if pick.symbol in decision_map:
+            lines.append(_format_portfolio_decision(decision_map[pick.symbol]))
             lines.append("")
 
     lines.append("> 仅供研究，不构成投资建议。")
