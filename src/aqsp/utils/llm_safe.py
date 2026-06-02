@@ -21,12 +21,21 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 # 默认护栏
 _DEFAULT_TIMEOUT_S = 30.0
 _DEFAULT_COST_CAP_USD = 0.05
 _LLM_CALLS_LOG = Path("data/llm_calls.jsonl")
+_SILICONFLOW_MODELS_CACHE = Path("data/siliconflow_models.json")
+_SILICONFLOW_FREE_MODELS = {
+    "Qwen/Qwen2.5-7B-Instruct",
+    "Qwen/Qwen2-7B-Instruct",
+    "Qwen/Qwen2-1.5B-Instruct",
+    "THUDM/glm-4-9b-chat",
+    "internlm/internlm2_5-7b-chat",
+    "mistralai/Mistral-7B-Instruct-v0.2",
+}
 
 
 @dataclass(frozen=True)
@@ -41,6 +50,13 @@ class LlmResult:
     est_cost_usd: float = 0.0
 
 
+@dataclass(frozen=True)
+class SiliconFlowModelChoice:
+    model: str
+    source: str
+    free_only: bool
+
+
 def _append_log(record: dict) -> None:
     """记录到 data/llm_calls.jsonl（§3.2 要求的可观测性）。
     记录本身失败也不能冒泡——监控不能反过来弄崩主链路。
@@ -51,6 +67,104 @@ def _append_log(record: dict) -> None:
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
     except Exception:
         pass
+
+
+def _env_flag(name: str, default: str = "false") -> bool:
+    return os.getenv(name, default).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def get_siliconflow_free_models() -> tuple[str, ...]:
+    return tuple(sorted(_SILICONFLOW_FREE_MODELS))
+
+
+def _save_siliconflow_models(payload: dict[str, Any]) -> None:
+    try:
+        _SILICONFLOW_MODELS_CACHE.parent.mkdir(parents=True, exist_ok=True)
+        _SILICONFLOW_MODELS_CACHE.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+    except Exception:
+        pass
+
+
+def _load_siliconflow_models_cache() -> dict[str, Any]:
+    if not _SILICONFLOW_MODELS_CACHE.exists():
+        return {}
+    try:
+        return json.loads(_SILICONFLOW_MODELS_CACHE.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def refresh_siliconflow_models(
+    *, timeout_s: float = _DEFAULT_TIMEOUT_S
+) -> dict[str, Any]:
+    import requests
+
+    api_key = os.getenv("SILICONFLOW_API_KEY", "").strip()
+    if not api_key:
+        raise ValueError("SILICONFLOW_API_KEY 未配置")
+
+    response = requests.get(
+        "https://api.siliconflow.cn/v1/models",
+        headers={"Authorization": f"Bearer {api_key}"},
+        timeout=timeout_s,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    _save_siliconflow_models(payload)
+    return payload
+
+
+def choose_siliconflow_model(
+    preferred_model: str | None = None,
+    *,
+    free_only: bool | None = None,
+) -> SiliconFlowModelChoice:
+    model = (preferred_model or os.getenv("LLM_MODEL", "")).strip()
+    free_only = (
+        _env_flag("SILICONFLOW_FREE_ONLY", "true") if free_only is None else free_only
+    )
+
+    if model:
+        if free_only and model not in _SILICONFLOW_FREE_MODELS:
+            raise ValueError(f"SiliconFlow free-only 模式拒绝收费或未知模型: {model}")
+        if model.startswith("Pro/"):
+            raise ValueError(f"SiliconFlow free-only 模式拒绝 Pro 模型: {model}")
+        return SiliconFlowModelChoice(model=model, source="env", free_only=free_only)
+
+    cache = _load_siliconflow_models_cache()
+    cached_names = {
+        item.get("id", "")
+        for item in cache.get("data", [])
+        if isinstance(item, dict) and item.get("id")
+    }
+
+    candidates = [
+        "Qwen/Qwen2.5-7B-Instruct",
+        "THUDM/glm-4-9b-chat",
+        "internlm/internlm2_5-7b-chat",
+        "mistralai/Mistral-7B-Instruct-v0.2",
+        "Qwen/Qwen2-7B-Instruct",
+        "Qwen/Qwen2-1.5B-Instruct",
+    ]
+    for candidate in candidates:
+        if not free_only:
+            return SiliconFlowModelChoice(
+                model=candidate, source="default_priority", free_only=free_only
+            )
+        if candidate in _SILICONFLOW_FREE_MODELS and (
+            not cached_names or candidate in cached_names
+        ):
+            source = "cache_priority" if cached_names else "built_in_priority"
+            return SiliconFlowModelChoice(
+                model=candidate,
+                source=source,
+                free_only=free_only,
+            )
+
+    raise ValueError("未找到可用的 SiliconFlow 免费模型")
 
 
 def llm_call_or_fallback(
@@ -195,15 +309,17 @@ def _invoke(
     provider = os.getenv("LLM_PROVIDER", "glm").lower()
 
     if not model:
-        model = {
-            "glm": "glm-4.7-flash",
-            "qwen": "qwen-turbo",
-            "siliconflow": "Qwen/Qwen2.5-7B-Instruct",
-            "deepseek": "deepseek-chat",
-            "openai": "gpt-4o-mini",
-            "anthropic": "claude-3-5-haiku-20241022",
-            "custom": os.getenv("LLM_MODEL", "gpt-4o-mini"),
-        }.get(provider, "glm-4.7-flash")
+        if provider == "siliconflow":
+            model = choose_siliconflow_model().model
+        else:
+            model = {
+                "glm": "glm-4.7-flash",
+                "qwen": "qwen-turbo",
+                "deepseek": "deepseek-chat",
+                "openai": "gpt-4o-mini",
+                "anthropic": "claude-3-5-haiku-20241022",
+                "custom": os.getenv("LLM_MODEL", "gpt-4o-mini"),
+            }.get(provider, "glm-4.7-flash")
 
     if provider == "anthropic":
         resp = client.messages.create(
