@@ -62,6 +62,11 @@ def notify_markdown(markdown: str) -> list[NotifyResult]:
     return results
 
 
+def send_notification(title: str, content: str) -> list[NotifyResult]:
+    markdown = f"# {title}\n\n{content}".strip()
+    return notify_markdown(markdown)
+
+
 def _send_telegram(markdown: str) -> NotifyResult | None:
     token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
     chat_id = os.getenv("TELEGRAM_CHAT_ID", "").strip()

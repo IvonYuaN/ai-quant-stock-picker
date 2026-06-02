@@ -3,6 +3,20 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 
+def test_send_notification_delegates_to_markdown(monkeypatch):
+    from aqsp.notifier import NotifyResult, send_notification
+
+    with patch(
+        "aqsp.notifier.notify_markdown",
+        return_value=[NotifyResult("serverchan", True, "HTTP 200")],
+    ) as mock_notify:
+        result = send_notification("收盘复盘", "今日无可执行标的")
+
+    assert result[0].channel == "serverchan"
+    mock_notify.assert_called_once()
+    assert "# 收盘复盘" in mock_notify.call_args[0][0]
+
+
 def test_send_serverchan_returns_none_when_no_key(monkeypatch):
     monkeypatch.delenv("SERVERCHAN_SENDKEY", raising=False)
     from aqsp.notifier import _send_serverchan

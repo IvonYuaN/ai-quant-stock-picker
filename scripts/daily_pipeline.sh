@@ -80,11 +80,16 @@ log "=========================================="
 START_TIME=$(date +%s)
 
 # 运行 Python 跑批脚本
+PIPELINE_ARGS=( "$@" )
+if [ "${AQSP_NOTIFY:-false}" = "true" ] || [ "${AQSP_NOTIFY:-false}" = "1" ]; then
+    PIPELINE_ARGS+=( "--notify" )
+fi
+
 set +e
 "${PYTHON_BIN}" "${PIPELINE_SCRIPT}" \
     --project-root "${PROJECT_ROOT}" \
     --source "${AQSP_SOURCE:-auto}" \
-    "$@" 2>&1 | tee -a "$RESULT_LOG"
+    "${PIPELINE_ARGS[@]}" 2>&1 | tee -a "$RESULT_LOG"
 PIPELINE_EXIT_CODE=${PIPELINE_EXIT_CODE:-$?}
 set -e
 

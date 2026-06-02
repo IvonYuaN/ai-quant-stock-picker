@@ -74,19 +74,23 @@ TELEGRAM_CHAT_ID=
 SERVERCHAN_SENDKEY=
 GLM_API_KEY=
 
+AQSP_NOTIFY=false
 AQSP_ENABLE_DEBATE=false
 AQSP_DEBATE_ENABLE_LLM=false
 AQSP_DEBATE_MAX_ROUNDS=2
 AQSP_DEBATE_LANGUAGE=zh-CN
 AQSP_DEBATE_ROLES=bull,bear,risk_control,sector_leader,policy_sensitive,northbound
+AQSP_ENABLE_AUTO_EVOLUTION=false
 ```
 
 补充说明：
 
-- `GLM_API_KEY` 用于智谱；`LLM_PROVIDER=glm` 时默认走它。
+- `GLM_API_KEY` 用于智谱；`LLM_PROVIDER=glm` 时默认走 `GLM-4.7-Flash`。
 - `SERVERCHAN_SENDKEY` 配好后，`notify` 和监控告警都可以直接推送到微信。
+- `AQSP_NOTIFY=true` 后，日终 `daily_pipeline.sh` 会自动带 `--notify`。
 - `AQSP_ENABLE_DEBATE=false` 表示默认不跑多 agent 讨论；要开就改成 `true`。
 - `AQSP_DEBATE_LANGUAGE=zh-CN` 现在是运行时配置，不再写死在代码里。
+- `AQSP_ENABLE_AUTO_EVOLUTION=true` 后，收盘链路会额外执行一次策略自进化检查。
 
 ## 自动更新脚本
 

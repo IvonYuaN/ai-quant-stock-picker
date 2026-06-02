@@ -1,7 +1,7 @@
 """LLM 可降级调用契约 — CONSTITUTION §3.2 / §1.3 #16 落地。
 
 支持多种免费/低价模型 API：
-- 智谱GLM-4-Flash (永久免费，不限量，推荐首选)
+- 智谱GLM-4.7-Flash (推荐首选)
 - 通义千问 qwen-turbo (新用户500万tokens免费180天)
 - 硅基流动 (注册送14元，部分模型永久免费)
 - DeepSeek (不免费，2元/百万tokens，效果最好)
@@ -145,7 +145,7 @@ def _make_client() -> object:
     """根据环境变量创建合适的客户端。
 
     支持的 provider:
-    - glm (默认，智谱GLM-4-Flash永久免费不限量)
+    - glm (默认，智谱GLM-4.7-Flash)
     - qwen (阿里云通义千问，新用户500万tokens)
     - siliconflow (硅基流动，注册送14元)
     - deepseek (不免费，2元/百万tokens)
@@ -157,7 +157,9 @@ def _make_client() -> object:
         # 使用 OpenAI SDK 兼容的所有服务
         import openai
 
-        api_key = os.getenv(f"{provider.upper()}_API_KEY") or os.getenv("OPENAI_API_KEY")
+        api_key = os.getenv(f"{provider.upper()}_API_KEY") or os.getenv(
+            "OPENAI_API_KEY"
+        )
         base_url = os.getenv("LLM_BASE_URL")
 
         if provider == "deepseek" and not base_url:
@@ -180,6 +182,7 @@ def _make_client() -> object:
         )
     elif provider == "anthropic":
         import anthropic
+
         return anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
     raise ValueError(f"不支持的 LLM provider: {provider}")
@@ -193,14 +196,14 @@ def _invoke(
 
     if not model:
         model = {
-            "glm": "glm-4-flash",
+            "glm": "glm-4.7-flash",
             "qwen": "qwen-turbo",
             "siliconflow": "Qwen/Qwen2.5-7B-Instruct",
             "deepseek": "deepseek-chat",
             "openai": "gpt-4o-mini",
             "anthropic": "claude-3-5-haiku-20241022",
             "custom": os.getenv("LLM_MODEL", "gpt-4o-mini"),
-        }.get(provider, "glm-4-flash")
+        }.get(provider, "glm-4.7-flash")
 
     if provider == "anthropic":
         resp = client.messages.create(

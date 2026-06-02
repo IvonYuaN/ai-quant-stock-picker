@@ -36,6 +36,7 @@ class PipelineConfig:
     notify: bool
     dry_run: bool
     enable_debate: bool
+    enable_auto_evolution: bool
 
 
 @dataclass
@@ -533,6 +534,79 @@ def _step_adaptive_learning(
     return result
 
 
+def _step_auto_evolution(
+    config: PipelineConfig, logger: logging.Logger
+) -> dict[str, Any]:
+    logger.info("  执行策略自进化")
+
+    if not config.enable_auto_evolution:
+        logger.info("  自进化已禁用，跳过")
+        return {"skipped": True, "reason": "disabled"}
+
+    output_path = config.project_root / "data" / "evolution_result.json"
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    argv = [
+        "evolve",
+        "--source",
+        config.source,
+        "--output",
+        str(output_path),
+    ]
+
+    from aqsp.cli import main
+
+    exit_code = main(argv)
+    if exit_code != 0:
+        logger.warning("  自进化执行失败或无数据，exit_code=%s", exit_code)
+        return {"exit_code": exit_code, "evolved": False}
+
+    payload: dict[str, Any] = {}
+    if output_path.exists():
+        try:
+            payload = json.loads(output_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            payload = {}
+
+    strategy_name = str(payload.get("strategy_name", "") or "")
+    confidence = float(payload.get("confidence", 0) or 0)
+    improvement = float(payload.get("performance_improvement", 0) or 0)
+    reason = str(payload.get("reason", "") or "当前无需进化")
+
+    if strategy_name:
+        logger.info(
+            "  自进化结果: strategy=%s improvement=%.2f%% confidence=%.2f%%",
+            strategy_name,
+            improvement * 100,
+            confidence * 100,
+        )
+        if config.notify:
+            from aqsp.notifier import send_notification
+
+            send_notification(
+                "策略自进化",
+                "\n".join(
+                    [
+                        f"- 策略: {strategy_name}",
+                        f"- 性能提升: {improvement:.2%}",
+                        f"- 置信度: {confidence:.2%}",
+                        f"- 结论: {reason}",
+                    ]
+                ),
+            )
+    else:
+        logger.info("  自进化结果: %s", reason)
+
+    return {
+        "exit_code": exit_code,
+        "evolved": bool(strategy_name),
+        "strategy_name": strategy_name,
+        "confidence": confidence,
+        "performance_improvement": improvement,
+        "reason": reason,
+    }
+
+
 def _step_generate_report(
     config: PipelineConfig, logger: logging.Logger
 ) -> dict[str, Any]:
@@ -646,6 +720,7 @@ def run_pipeline(config: PipelineConfig) -> PipelineResult:
         ("预测验证", lambda: _step_validate_predictions(config, logger)),
         ("虚拟盘同步", lambda: _step_sync_paper_trades(config, logger)),
         ("自适应学习", lambda: _step_adaptive_learning(config, logger)),
+        ("策略自进化", lambda: _step_auto_evolution(config, logger)),
         ("报告生成", lambda: _step_generate_report(config, logger)),
         ("Dashboard刷新", lambda: _step_refresh_dashboard(config, logger)),
         ("数据清理", lambda: _step_cleanup(config, logger)),
@@ -723,9 +798,10 @@ def _build_config(args: argparse.Namespace) -> PipelineConfig:
         dashboard_html=args.dashboard_html or "dist/dashboard/index.html",
         dashboard_db=args.dashboard_db or "dist/dashboard/aqsp.db",
         paper_ledger=args.paper_ledger or "data/paper_trades.jsonl",
-        notify=args.notify,
+        notify=args.notify or env.notify,
         dry_run=args.dry_run,
         enable_debate=args.enable_debate or env.enable_debate,
+        enable_auto_evolution=env.enable_auto_evolution,
     )
 
 

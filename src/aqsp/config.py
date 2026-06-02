@@ -19,6 +19,8 @@ class RuntimeConfig:
     enable_online_factors: bool
     allow_online_fallback: bool
     enable_debate: bool
+    notify: bool
+    enable_auto_evolution: bool
 
 
 @dataclass(frozen=True)
@@ -50,6 +52,8 @@ def load_runtime_config() -> RuntimeConfig:
         enable_online_factors=_env_flag("AQSP_ENABLE_ONLINE_FACTORS"),
         allow_online_fallback=online_fallback_allowed(),
         enable_debate=_env_flag("AQSP_ENABLE_DEBATE"),
+        notify=_env_flag("AQSP_NOTIFY"),
+        enable_auto_evolution=_env_flag("AQSP_ENABLE_AUTO_EVOLUTION"),
     )
 
 

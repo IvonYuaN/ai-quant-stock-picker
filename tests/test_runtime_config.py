@@ -5,10 +5,14 @@ from aqsp.config import load_debate_runtime_config, load_runtime_config
 
 def test_load_runtime_config_reads_debate_flag(monkeypatch) -> None:
     monkeypatch.setenv("AQSP_ENABLE_DEBATE", "true")
+    monkeypatch.setenv("AQSP_NOTIFY", "true")
+    monkeypatch.setenv("AQSP_ENABLE_AUTO_EVOLUTION", "true")
 
     config = load_runtime_config()
 
     assert config.enable_debate is True
+    assert config.notify is True
+    assert config.enable_auto_evolution is True
 
 
 def test_load_debate_runtime_config_reads_language_roles_and_llm(monkeypatch) -> None:
