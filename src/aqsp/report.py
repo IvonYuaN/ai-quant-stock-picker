@@ -30,6 +30,12 @@ def _format_portfolio_decision(decision: Any) -> str:
     action = getattr(decision, "action", "keep")
     delta = getattr(decision, "score_delta", 0.0)
     reasons = getattr(decision, "reasons", ())
+    if (
+        action == "keep"
+        and abs(delta) < 1e-9
+        and (not reasons or tuple(reasons) == ("保持原排序",))
+    ):
+        return ""
     lines = [
         "### Portfolio Manager",
         f"- 最终动作: {action}",
@@ -122,8 +128,10 @@ def to_markdown(
             lines.append(_format_debate_result(debate_map[pick.symbol]))
             lines.append("")
         if pick.symbol in decision_map:
-            lines.append(_format_portfolio_decision(decision_map[pick.symbol]))
-            lines.append("")
+            decision_text = _format_portfolio_decision(decision_map[pick.symbol])
+            if decision_text:
+                lines.append(decision_text)
+                lines.append("")
 
     lines.append("> 仅供研究，不构成投资建议。")
     return "\n".join(lines)

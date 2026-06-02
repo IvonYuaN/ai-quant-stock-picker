@@ -159,7 +159,7 @@ class ClosingReviewer:
         """复盘单条预测"""
         symbol = pred.get("symbol", "")
         name = pred.get("name", "")
-        strategy_type = pred.get("strategy_type", "未知")
+        strategy_type = self._resolve_strategy_type(pred)
         signal_date = pred.get("signal_date", "")
         entry_price = pred.get("entry_price", 0)
 
@@ -184,6 +184,52 @@ class ClosingReviewer:
             exit_reason=exit_reason,
             lessons=lessons,
         )
+
+    def _resolve_strategy_type(self, pred: dict) -> str:
+        explicit = str(pred.get("strategy_type", "")).strip()
+        if explicit:
+            return explicit
+
+        strategy_ids = pred.get("strategies") or []
+        if isinstance(strategy_ids, str):
+            strategy_ids = [strategy_ids]
+        strategy_ids = [str(item).strip() for item in strategy_ids if str(item).strip()]
+
+        strategy_map = {
+            "morning_breakout": "早盘打板",
+            "closing_premium": "尾盘溢价",
+            "volume_breakout": "放量突破",
+            "ma_pullback": "均线回踩",
+            "bowl_rebound": "碗口反弹",
+            "low_vol_trend": "低波趋势",
+            "rps_momentum": "RPS动量",
+            "rps_relative_strength": "RPS强势",
+            "relative_strength": "相对强度",
+            "multi_factor_rotation": "多因子轮动",
+        }
+
+        base_label = ""
+        if strategy_ids:
+            base_label = strategy_map.get(
+                strategy_ids[0], strategy_ids[0].replace("_", " ")
+            )
+
+        sub_strategy = str(pred.get("sub_strategy", "")).strip()
+        if base_label and sub_strategy:
+            if sub_strategy in {
+                "涨停打板",
+                "弱转强",
+                "放量突破",
+                "底部反转",
+                "量价突破",
+            }:
+                return f"{base_label}·{sub_strategy}"
+            return base_label
+        if base_label:
+            return base_label
+        if sub_strategy:
+            return sub_strategy
+        return "未知"
 
     def _determine_exit_reason(self, return_pct: float) -> str:
         """确定退出原因"""
@@ -210,10 +256,10 @@ class ClosingReviewer:
             else:
                 lessons.append("小亏：正常波动，保持纪律")
 
-        strategy_type = pred.get("strategy_type", "")
-        if strategy_type == "早盘打板" and not is_win:
+        strategy_type = self._resolve_strategy_type(pred)
+        if strategy_type.startswith("早盘打板") and not is_win:
             lessons.append("打板失败：需关注市场整体环境")
-        elif strategy_type == "尾盘溢价" and not is_win:
+        elif strategy_type.startswith("尾盘溢价") and not is_win:
             lessons.append("溢价失败：需检查量价配合")
 
         return tuple(lessons)
@@ -268,7 +314,9 @@ class ClosingReviewer:
         if big_losses:
             lessons.append("存在大亏交易，需严格执行止损")
 
-        breakout_reviews = [r for r in reviews if r.strategy_type == "早盘打板"]
+        breakout_reviews = [
+            r for r in reviews if r.strategy_type.startswith("早盘打板")
+        ]
         if breakout_reviews:
             breakout_win_rate = len([r for r in breakout_reviews if r.is_win]) / len(
                 breakout_reviews

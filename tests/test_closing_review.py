@@ -201,6 +201,42 @@ class TestReviewToday:
         assert review.strategy_breakdown["尾盘溢价"]["total"] == 1
         assert review.strategy_breakdown["尾盘溢价"]["wins"] == 1
 
+    def test_uses_strategy_and_sub_strategy_when_strategy_type_missing(self, tmp_path):
+        ledger = tmp_path / "predictions.jsonl"
+        _write_predictions(
+            str(ledger),
+            [
+                {
+                    "symbol": "600000",
+                    "name": "A",
+                    "strategies": ["morning_breakout"],
+                    "sub_strategy": "涨停打板",
+                    "signal_date": "2025-06-01",
+                    "entry_price": 10.0,
+                    "current_price": 9.5,
+                    "return_pct": -5.0,
+                    "holding_days": 1,
+                },
+                {
+                    "symbol": "600001",
+                    "name": "B",
+                    "strategies": ["closing_premium"],
+                    "sub_strategy": "量价突破",
+                    "signal_date": "2025-06-01",
+                    "entry_price": 20.0,
+                    "current_price": 21.0,
+                    "return_pct": 5.0,
+                    "holding_days": 2,
+                },
+            ],
+        )
+        reviewer = ClosingReviewer(ledger_path=str(ledger))
+        review = reviewer.review_today("2025-06-01")
+
+        assert "早盘打板·涨停打板" in review.strategy_breakdown
+        assert "尾盘溢价·量价突破" in review.strategy_breakdown
+        assert any("打板成功率偏低" in item for item in review.key_lessons)
+
 
 class TestGenerateWeeklySummary:
     def test_returns_weekly_summary(self, tmp_path):

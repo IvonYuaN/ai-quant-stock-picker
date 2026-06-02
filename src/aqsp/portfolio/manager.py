@@ -43,34 +43,43 @@ def apply_portfolio_manager(
     for pick in picks:
         delta = 0.0
         reasons: list[str] = []
+        negative_adjustment = False
+        positive_adjustment = False
 
         if pick.recommended_adjustment == "lower":
             delta -= max(abs(pick.score - pick.adjusted_score), 2.0)
             reasons.append("多Agent辩论偏谨慎，降低优先级")
+            negative_adjustment = True
         elif pick.recommended_adjustment == "raise":
             delta += max(abs(pick.adjusted_score - pick.score), 2.0)
             reasons.append("多Agent辩论支持上调优先级")
+            positive_adjustment = True
 
         if concentrated_sector and get_sector(pick.symbol) == concentrated_sector:
             delta -= 4.0
             reasons.append(f"板块集中度过高，压低{concentrated_sector}暴露")
+            negative_adjustment = True
 
         if pick.symbol in high_corr_symbols:
             delta -= 3.0
             reasons.append("与前序候选高相关，降低组合拥挤风险")
+            negative_adjustment = True
 
         final_score = pick.score + delta
         final_rating = pick.rating
         final_position = pick.position
         action = "keep"
 
-        if final_score < 20 or delta <= -6:
+        if negative_adjustment:
+            action = "downgrade"
+        elif positive_adjustment and delta > 0:
+            action = "promote"
+
+        if negative_adjustment and (final_score < 20 or delta <= -6):
             final_rating = "avoid"
             final_position = "watch"
-            action = "downgrade"
-        elif delta >= 3 and pick.rating == "buy_candidate":
+        elif positive_adjustment and delta >= 3 and pick.rating == "buy_candidate":
             final_rating = "strong_buy_candidate"
-            action = "promote"
 
         updated.append(
             PickResult(

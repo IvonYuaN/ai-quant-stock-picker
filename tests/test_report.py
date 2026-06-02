@@ -88,3 +88,33 @@ def test_report_renders_portfolio_manager_decision_when_provided() -> None:
     assert "### Portfolio Manager" in markdown
     assert "- 最终动作: promote" in markdown
     assert "- 分数调整: +4.0" in markdown
+
+
+def test_report_hides_noop_portfolio_manager_decision() -> None:
+    pick = PickResult(
+        symbol="600900",
+        name="长江电力",
+        date="2026-05-29",
+        close=27.75,
+        score=72,
+        rating="buy_candidate",
+        entry_type="relative_strength",
+        ideal_buy=27.75,
+        stop_loss=26.1,
+        take_profit=31.0,
+        position="30%-50%",
+    )
+
+    markdown = to_markdown(
+        [pick],
+        portfolio_decisions=[
+            PortfolioDecision(
+                symbol="600900",
+                action="keep",
+                score_delta=0.0,
+                reasons=("保持原排序",),
+            )
+        ],
+    )
+
+    assert "### Portfolio Manager" not in markdown

@@ -6,7 +6,9 @@ from aqsp.portfolio.manager import apply_portfolio_manager
 from aqsp.portfolio.sector_check import ConcentrationResult, SectorConcentration
 
 
-def _pick(symbol: str, score: float, *, recommended_adjustment: str = "keep") -> PickResult:
+def _pick(
+    symbol: str, score: float, *, recommended_adjustment: str = "keep"
+) -> PickResult:
     return PickResult(
         symbol=symbol,
         name=symbol,
@@ -45,7 +47,10 @@ def test_apply_portfolio_manager_downgrades_when_debate_and_correlation_stack() 
         ),
     )
     correlation = CorrelationResult(
-        matrix={"600036": {"600036": 1.0, "000001": 0.82}, "000001": {"600036": 0.82, "000001": 1.0}},
+        matrix={
+            "600036": {"600036": 1.0, "000001": 0.82},
+            "000001": {"600036": 0.82, "000001": 1.0},
+        },
         high_corr_pairs=[("000001", "600036", 0.82)],
         avg_correlation=0.82,
     )
@@ -71,3 +76,14 @@ def test_apply_portfolio_manager_promotes_when_debate_supports_buy_candidate() -
 
     assert bundle.picks[0].rating == "strong_buy_candidate"
     assert bundle.decisions[0].action == "promote"
+
+
+def test_apply_portfolio_manager_keeps_action_when_no_incremental_override() -> None:
+    picks = [_pick("300750", 18, recommended_adjustment="keep")]
+
+    bundle = apply_portfolio_manager(picks)
+
+    assert bundle.picks[0].score == 18
+    assert bundle.picks[0].rating == "buy_candidate"
+    assert bundle.decisions[0].action == "keep"
+    assert bundle.decisions[0].reasons == ("保持原排序",)
