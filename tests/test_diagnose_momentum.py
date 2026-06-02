@@ -16,14 +16,16 @@ def _make_ohlcv(n: int, trend: float = 0.0, seed: int = 42) -> pd.DataFrame:
     dates = pd.date_range("2023-01-01", periods=n, freq="B")
     close = 10.0 + np.arange(n) * trend + rng.randn(n) * 0.3
     close = np.maximum(close, 1.0)
-    return pd.DataFrame({
-        "date": dates.strftime("%Y-%m-%d"),
-        "close": close,
-        "open": close * 0.99,
-        "high": close * 1.01,
-        "low": close * 0.98,
-        "volume": rng.randint(100000, 1000000, n).astype(float),
-    })
+    return pd.DataFrame(
+        {
+            "date": dates.strftime("%Y-%m-%d"),
+            "close": close,
+            "open": close * 0.99,
+            "high": close * 1.01,
+            "low": close * 0.98,
+            "volume": rng.randint(100000, 1000000, n).astype(float),
+        }
+    )
 
 
 def test_spearman_sign_flip():
@@ -50,6 +52,7 @@ def test_quantile_bucket_monotonic():
 
 def test_handles_suspended_stock():
     from unittest.mock import MagicMock
+
     strategy = MagicMock()
     strategy.thresholds.momentum.lookback_days = 60
 

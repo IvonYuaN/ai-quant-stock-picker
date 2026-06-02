@@ -130,6 +130,13 @@ class SqliteDbSource(DataSource):
                         df[col] = pd.to_numeric(df[col], errors="coerce")
 
                 df = df.dropna(subset=["close"])
+
+                # 估算缺失的 amount：用 (high + low + close) / 3 作为均价
+                if "amount" in df.columns:
+                    mask = df["amount"].isna() | (df["amount"] <= 0)
+                    if mask.any():
+                        avg_price = (df["high"] + df["low"] + df["close"]) / 3
+                        df.loc[mask, "amount"] = df.loc[mask, "volume"] * avg_price
                 if df.empty:
                     continue
 

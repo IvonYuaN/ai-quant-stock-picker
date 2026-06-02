@@ -2,14 +2,15 @@ from __future__ import annotations
 
 import argparse
 import json
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 
-from aqsp.config import load_runtime_config
+from aqsp.config import load_runtime_config, online_fallback_allowed
 from aqsp.core.errors import DataError
-from aqsp.core.time import today_shanghai
+from aqsp.core.time import now_shanghai, today_shanghai
 from aqsp.core.types import RunMetadata
 from aqsp.data.registry import (
     local_data_status,
@@ -56,6 +57,58 @@ from aqsp.risk.circuit_breaker import CircuitBreaker
 from aqsp.strategy import screen_universe
 from aqsp.strategies.thresholds import load_thresholds
 from aqsp.universe import DEFAULT_SYMBOLS
+from aqsp.briefing.debate import AShareDebateCoordinator, DebateResult
+from aqsp.models import PickResult
+
+
+def serialize_debate_result(result: DebateResult) -> dict:
+    """将辩论结果序列化为可JSON化的字典"""
+    return {
+        "debate_id": result.debate_id,
+        "symbol": result.symbol,
+        "name": result.name,
+        "original_score": result.original_score,
+        "rating": result.rating,
+        "rounds": [
+            {
+                "round_num": r.round_num,
+                "summary": r.summary,
+                "opinions": [
+                    {
+                        "agent_id": o.agent_id,
+                        "role": o.role.value,
+                        "stance": o.stance,
+                        "confidence": o.confidence,
+                        "arguments": o.arguments,
+                        "counterarguments": o.counterarguments,
+                        "risk_factors": o.risk_factors,
+                        "opportunity_factors": o.opportunity_factors,
+                        "final_position": o.final_position,
+                    }
+                    for o in r.opinions
+                ],
+                "cross_opinions": r.cross_opinions,
+            }
+            for r in result.rounds
+        ],
+        "final_consensus": result.final_consensus,
+        "final_vote": {k.value: v for k, v in result.final_vote.items()},
+        "disagreement_score": result.disagreement_score,
+        "adjustment_weight": result.adjustment_weight,
+        "adjusted_score": result.adjusted_score,
+        "recommended_adjustment": result.recommended_adjustment,
+        "adjustment_reason": result.adjustment_reason,
+        "risk_warnings": result.risk_warnings,
+        "opportunity_highlights": result.opportunity_highlights,
+        "thresholds_version": result.thresholds_version,
+        "regime": result.regime,
+        "data_source": result.data_source,
+        "related_signal_date": result.related_signal_date,
+        "agent_performance_snapshot": {
+            k: v.to_dict() for k, v in result.agent_performance_snapshot.items()
+        },
+    }
+
 
 SOURCE_CHOICES = [
     "auto",
@@ -86,6 +139,8 @@ WALKFORWARD_SOURCE_CHOICES = [
 HELDOUT_TRAIN_CUTOFF = "2024-12-31"
 # 宪法 §1.3 #12/#14：双门 gate 的 sidecar 文件
 WALKFORWARD_GATE_PATH = "data/walkforward_gate.json"
+# 冷启动期最低独立信号日（可配置，默认 14 天以加速测试）
+COLD_START_MIN_DAYS = 14
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -146,6 +201,7 @@ def main(argv: list[str] | None = None) -> int:
         default="",
         help="标的池: sh300, zz500, zz1000, cyb, zxb, all",
     )
+    run.add_argument("--enable-debate", action="store_true", help="启用多Agent辩论分析")
 
     wf = sub.add_parser("walkforward", help="run walk-forward backtest")
     wf.add_argument(
@@ -198,6 +254,10 @@ def main(argv: list[str] | None = None) -> int:
         help="（危险）显式允许 end 超过 2024-12-31，卷入 held-out 区间。仅用于 held-out 一次性验收，且必须在 walkforward 双门通过后。默认关闭——违反宪法 §1.3 #9 时拒绝运行。",
     )
 
+    dash_cmd = sub.add_parser("dashboard", help="generate interactive dashboard")
+    dash_cmd.add_argument("--ledger", default="data/predictions.jsonl")
+    dash_cmd.add_argument("--output", default="dist/dashboard/index.html")
+
     monitor_cmd = sub.add_parser("monitor", help="run monitoring checks")
     monitor_cmd.add_argument("--config", default="config/monitors.yaml")
     monitor_cmd.add_argument("--notify", action="store_true")
@@ -240,6 +300,106 @@ def main(argv: list[str] | None = None) -> int:
     pit_cmd.add_argument("--symbols", default="600519")
     pit_cmd.add_argument("--json", action="store_true")
 
+    compare_cmd = sub.add_parser(
+        "compare-snapshots", help="compare stock snapshots between two dates"
+    )
+    compare_cmd.add_argument(
+        "--date1",
+        default="",
+        help="first date (YYYY-MM-DD, default: yesterday)",
+    )
+    compare_cmd.add_argument(
+        "--date2",
+        default="",
+        help="second date (YYYY-MM-DD, default: today)",
+    )
+    compare_cmd.add_argument(
+        "--snapshot-path",
+        default="data/pick_snapshots.jsonl",
+        help="snapshot file path",
+    )
+
+    optimize_cmd = sub.add_parser("optimize", help="run parameter optimization")
+    optimize_cmd.add_argument(
+        "--method", choices=["grid", "bayesian"], default="bayesian"
+    )
+    optimize_cmd.add_argument("--trials", type=int, default=50)
+    optimize_cmd.add_argument("--symbols", default="")
+    optimize_cmd.add_argument("--start", default="2020-01-01")
+    optimize_cmd.add_argument("--end", default="2024-12-31")
+    optimize_cmd.add_argument(
+        "--source",
+        choices=WALKFORWARD_SOURCE_CHOICES,
+        default="sqlite_db",
+    )
+    optimize_cmd.add_argument("--output", default="data/optimization_result.json")
+    optimize_cmd.add_argument(
+        "--apply",
+        action="store_true",
+        help="auto-apply best params to thresholds.yaml",
+    )
+
+    discover_cmd = sub.add_parser(
+        "discover", help="discover new patterns from historical data"
+    )
+    discover_cmd.add_argument("--ledger", default="data/predictions.jsonl")
+    discover_cmd.add_argument("--source", choices=SOURCE_CHOICES, default="auto")
+    discover_cmd.add_argument("--min-sample", type=int, default=20)
+    discover_cmd.add_argument("--min-winrate", type=float, default=0.55)
+    discover_cmd.add_argument("--output", default="")
+    discover_cmd.add_argument("--report", default="")
+
+    mine_cmd = sub.add_parser("mine-factors", help="auto mine effective factors")
+    mine_cmd.add_argument("--source", choices=SOURCE_CHOICES, default="auto")
+    mine_cmd.add_argument("--min-ic", type=float, default=0.03)
+    mine_cmd.add_argument("--min-ir", type=float, default=0.5)
+    mine_cmd.add_argument("--output", default="data/mined_factors.json")
+    mine_cmd.add_argument("--report", default="")
+
+    evolve_cmd = sub.add_parser("evolve", help="auto evolve strategy parameters")
+    evolve_cmd.add_argument("--source", choices=SOURCE_CHOICES, default="auto")
+    evolve_cmd.add_argument("--config", default="config/evolution_config.yaml")
+    evolve_cmd.add_argument(
+        "--apply", action="store_true", help="auto-apply evolved params"
+    )
+    evolve_cmd.add_argument("--output", default="data/evolution_result.json")
+
+    multi_factor_cmd = sub.add_parser(
+        "multi-factor", help="run multi-factor rotation strategy"
+    )
+    multi_factor_cmd.add_argument("--source", choices=SOURCE_CHOICES, default="auto")
+    multi_factor_cmd.add_argument("--pool", default="hs300")
+    multi_factor_cmd.add_argument("--top", type=int, default=10)
+    multi_factor_cmd.add_argument("--output", default="")
+    multi_factor_cmd.add_argument("--report", default="")
+
+    morning_cmd = sub.add_parser(
+        "morning-breakout", help="run morning breakout strategy"
+    )
+    morning_cmd.add_argument("--source", choices=SOURCE_CHOICES, default="auto")
+    morning_cmd.add_argument("--pool", default="hs300")
+    morning_cmd.add_argument("--top", type=int, default=5)
+    morning_cmd.add_argument("--notify", action="store_true")
+    morning_cmd.add_argument("--output", default="")
+    morning_cmd.add_argument("--report", default="")
+    morning_cmd.add_argument("--ledger", default="data/predictions.jsonl")
+
+    closing_cmd = sub.add_parser("closing-premium", help="run closing premium strategy")
+    closing_cmd.add_argument("--source", choices=SOURCE_CHOICES, default="auto")
+    closing_cmd.add_argument("--pool", default="hs300")
+    closing_cmd.add_argument("--top", type=int, default=5)
+    closing_cmd.add_argument("--notify", action="store_true")
+    closing_cmd.add_argument("--output", default="")
+    closing_cmd.add_argument("--report", default="")
+    closing_cmd.add_argument("--ledger", default="data/predictions.jsonl")
+
+    review_cmd = sub.add_parser("closing-review", help="generate closing review report")
+    review_cmd.add_argument("--date", default="")
+    review_cmd.add_argument("--weekly", action="store_true")
+    review_cmd.add_argument("--notify", action="store_true")
+    review_cmd.add_argument("--output", default="")
+    review_cmd.add_argument("--report", default="")
+
     args = parser.parse_args(argv)
     # 宪法启动门：检查不变量，任一失败会直接 SystemExit
     from aqsp._constitution_check import assert_constitution_invariants
@@ -250,6 +410,8 @@ def main(argv: list[str] | None = None) -> int:
             return run_screen(args)
         if args.command == "run":
             return run_scheduled(args)
+        if args.command == "dashboard":
+            return run_dashboard(args)
         if args.command == "walkforward":
             return run_walkforward(args)
         if args.command == "briefing":
@@ -262,6 +424,24 @@ def main(argv: list[str] | None = None) -> int:
             return run_research(args)
         if args.command == "pit":
             return run_pit(args)
+        if args.command == "compare-snapshots":
+            return run_compare_snapshots(args)
+        if args.command == "optimize":
+            return run_optimize(args)
+        if args.command == "discover":
+            return run_discover(args)
+        if args.command == "mine-factors":
+            return run_mine_factors(args)
+        if args.command == "evolve":
+            return run_evolve(args)
+        if args.command == "multi-factor":
+            return run_multi_factor(args)
+        if args.command == "morning-breakout":
+            return run_morning_breakout(args)
+        if args.command == "closing-premium":
+            return run_closing_premium(args)
+        if args.command == "closing-review":
+            return run_closing_review(args)
     except DataError as exc:
         print(f"数据错误: {exc}")
         return 1
@@ -456,6 +636,37 @@ def run_pit(args: argparse.Namespace) -> int:
     return 0
 
 
+def run_compare_snapshots(args: argparse.Namespace) -> int:
+    from aqsp.portfolio.snapshot import compare_snapshots, format_snapshot_diff
+
+    date2 = args.date2 or today_shanghai().isoformat()
+    date1 = args.date1 or (today_shanghai() - timedelta(days=1)).isoformat()
+
+    diff = compare_snapshots(
+        current_date=date2,
+        previous_date=date1,
+        snapshot_path=args.snapshot_path,
+    )
+    if diff is None:
+        print(f"无法比较快照: {date1} 或 {date2} 的快照数据不存在")
+        return 1
+
+    print(format_snapshot_diff(diff))
+
+    if diff.score_changes:
+        print("\n📈 评分变化明细:")
+        print(f"{'股票':>10s}  {'旧分':>6s}  {'新分':>6s}  {'变化':>6s}")
+        print("-" * 36)
+        for symbol, old_score, new_score in diff.score_changes:
+            delta = new_score - old_score
+            sign = "+" if delta > 0 else ""
+            print(
+                f"{symbol:>10s}  {old_score:6.1f}  {new_score:6.1f}  {sign}{delta:.1f}"
+            )
+
+    return 0
+
+
 def _source_runtime_metadata(source_id: str) -> tuple[str, str, str]:
     entry = get_registry_entry(source_id)
     if entry is None:
@@ -478,6 +689,8 @@ def _reorder_source_refs(source_refs: list[object]) -> list[object]:
 def _get_source(source_name: str):
     cache = DataCache()
     if source_name in {"auto", "local_first"}:
+        if not online_fallback_allowed():
+            return TdxVipdocSource()
         fallbacks = _reorder_source_refs(
             [
                 EastmoneySource(cache=cache),
@@ -644,6 +857,52 @@ def _count_independent_signal_days(ledger_path: str) -> int:
         if row.get("status") in ("validated", "pending"):
             signal_dates.add(row.get("signal_date", ""))
     return len(signal_dates)
+
+
+def _compute_real_pnl(ledger_path: str) -> tuple[float, float, float]:
+    from aqsp.ledger.base import read_ledger
+
+    rows = read_ledger(ledger_path)
+    if not rows:
+        return 0.0, 0.0, 0.0
+
+    today = now_shanghai().date()
+    validated: list[tuple[date, float]] = []
+    for row in rows:
+        if row.get("status") != "validated":
+            continue
+        ret_pct = row.get("return_pct")
+        if ret_pct is None:
+            continue
+        signal_date_str = row.get("signal_date", "")
+        if not signal_date_str:
+            continue
+        try:
+            signal_date = date.fromisoformat(signal_date_str)
+        except (ValueError, TypeError):
+            continue
+        validated.append((signal_date, float(ret_pct)))
+
+    if not validated:
+        return 0.0, 0.0, 0.0
+
+    validated.sort(key=lambda x: x[0])
+
+    daily_pnl = validated[-1][1]
+
+    weekly_returns = [r for d, r in validated if (today - d).days <= 7]
+    weekly_cum = 1.0
+    for r in weekly_returns:
+        weekly_cum *= 1 + r / 100
+    weekly_pnl = (weekly_cum - 1) * 100 if weekly_returns else 0.0
+
+    monthly_returns = [r for d, r in validated if (today - d).days <= 30]
+    monthly_cum = 1.0
+    for r in monthly_returns:
+        monthly_cum *= 1 + r / 100
+    monthly_pnl = (monthly_cum - 1) * 100 if monthly_returns else 0.0
+
+    return daily_pnl, weekly_pnl, monthly_pnl
 
 
 def _walkforward_fetch_days(start: str, end: str) -> int:
@@ -1107,7 +1366,7 @@ def _check_notification_gate(
     """宪法 §1.3 #12/#14：返回 (是否放行, 未达原因列表)。
 
     三个串联条件，缺一不可（#14 明确串联）：
-      1. 冷启动 >=30 个独立信号日
+      1. 冷启动 >= {COLD_START_MIN_DAYS} 个独立信号日
       2. DSR >1.0
       3. PBO <0.5
     sidecar 缺失/解析失败/过期 → fail-closed（不放行）。
@@ -1117,8 +1376,10 @@ def _check_notification_gate(
 
     reasons: list[str] = []
 
-    if cold_start_days < 30:
-        reasons.append(f"冷启动未满: {cold_start_days}/30 个独立信号日")
+    if cold_start_days < COLD_START_MIN_DAYS:
+        reasons.append(
+            f"冷启动未满: {cold_start_days}/{COLD_START_MIN_DAYS} 个独立信号日"
+        )
 
     p = Path(gate_path)
     if not p.exists():
@@ -1303,11 +1564,37 @@ def run_scheduled(args: argparse.Namespace) -> int:
 
     weights = strategy_weights_from_ledger(args.ledger)
 
+    try:
+        from aqsp.ledger.base import read_ledger
+        from aqsp.ledger.learner import PerformanceLearner
+
+        learner = PerformanceLearner()
+        ledger_df = read_ledger(args.ledger)
+        learner_weights = learner.compute_weights(ledger_df)
+        if learner_weights:
+            for k, v in learner_weights.items():
+                if k in weights:
+                    weights[k] = round(weights[k] * v, 3)
+    except Exception:
+        pass
+
     cold_start_days = _count_independent_signal_days(args.ledger)
-    is_cold_start = cold_start_days < 30
+    is_cold_start = cold_start_days < COLD_START_MIN_DAYS
+
+    thresholds = load_thresholds()
+
+    bench_frame = frames.get(args.benchmark_symbol) if args.benchmark_symbol else None
+    if bench_frame is not None and not bench_frame.empty:
+        regime = RegimeDetector().detect({args.benchmark_symbol: bench_frame}).name
+    else:
+        regime = ""
+
+    if regime:
+        regime_multiplier = thresholds.regime.adjustments.get(regime, 1.0)
+        if regime_multiplier != 1.0:
+            weights = {k: round(v * regime_multiplier, 3) for k, v in weights.items()}
 
     screen_frames = _drop_benchmark_frame(frames, args.benchmark_symbol)
-    thresholds = load_thresholds()
     config = ScreeningConfig(
         mode=mode,
         min_avg_amount=min_avg_amount,
@@ -1316,6 +1603,23 @@ def run_scheduled(args: argparse.Namespace) -> int:
         strategy_weights=weights,
     )
     screened_picks = screen_universe(screen_frames, config)
+
+    try:
+        from aqsp.strategies.composite import CompositeStrategy
+
+        composite = CompositeStrategy(thresholds=thresholds)
+        composite_scores = composite.calculate_score(screen_frames, regime=regime)
+        if composite_scores:
+            max_cs = max(composite_scores.values()) if composite_scores else 1.0
+            for pick in screened_picks:
+                raw_cs = composite_scores.get(pick.symbol, 0.0)
+                normalized_cs = (raw_cs / max_cs * 100) if max_cs > 0 else 0.0
+                pick.regime_score = round(normalized_cs, 2)
+                pick.score = round(pick.score * 0.7 + normalized_cs * 0.3, 2)
+            screened_picks.sort(key=lambda p: p.score, reverse=True)
+    except Exception:
+        pass
+
     picks = screened_picks[:limit]
 
     lethal_pipeline = LethalFilterPipeline()
@@ -1348,11 +1652,6 @@ def run_scheduled(args: argparse.Namespace) -> int:
         slippage_bps=args.slippage_bps,
         benchmark_symbol=args.benchmark_symbol,
     )
-    bench_frame = frames.get(args.benchmark_symbol) if args.benchmark_symbol else None
-    if bench_frame is not None and not bench_frame.empty:
-        regime = RegimeDetector().detect({args.benchmark_symbol: bench_frame}).name
-    else:
-        regime = ""
 
     nb_z = 0.0
     margin_z = 0.0
@@ -1411,18 +1710,296 @@ def run_scheduled(args: argparse.Namespace) -> int:
         run_metadata=run_metadata,
     )
 
+    diff = None
+    concentration = None
+
+    # 保存选股快照
+    if picks:
+        from aqsp.portfolio.snapshot import (
+            save_snapshot,
+            compare_snapshots,
+            format_snapshot_diff,
+        )
+
+        save_snapshot(
+            picks, snapshot_path="data/snapshots", date=today_shanghai().isoformat()
+        )
+        diff = compare_snapshots(
+            current_date=today_shanghai().isoformat(),
+            previous_date=(today_shanghai() - timedelta(days=1)).isoformat(),
+            snapshot_path="data/snapshots",
+        )
+        if diff is not None and (
+            diff.new_picks or diff.removed_picks or diff.rank_changes
+        ):
+            print(format_snapshot_diff(diff))
+
+    from aqsp.data.anomaly import detect_anomalies, format_anomaly_alerts
+    from aqsp.data.freshness import check_freshness, format_freshness_report
+
+    anomaly_alerts = detect_anomalies(screen_frames)
+    freshness_reports = check_freshness(screen_frames)
+
+    critical_alerts = [a for a in anomaly_alerts if a.severity == "critical"]
+    warning_alerts = [a for a in anomaly_alerts if a.severity == "warning"]
+    if critical_alerts:
+        print(f"🔴 数据异常: {len(critical_alerts)} 条严重告警")
+        for alert in critical_alerts:
+            print(f"   {alert.symbol}: {alert.detail}")
+    if warning_alerts:
+        print(f"🟡 数据异常: {len(warning_alerts)} 条警告")
+        for alert in warning_alerts:
+            print(f"   {alert.symbol}: {alert.detail}")
+
+    stale_reports = [r for r in freshness_reports if r.status != "fresh"]
+    if stale_reports:
+        print(f"📅 数据新鲜度: {len(stale_reports)} 只标的数据过期")
+        for r in stale_reports:
+            print(f"   {r.symbol}: 最新 {r.last_date}, 延迟 {r.delay_days} 天")
+
+    # 板块集中度检查
+    if picks:
+        from aqsp.portfolio.sector_check import (
+            check_sector_concentration,
+            format_concentration,
+        )
+
+        concentration = check_sector_concentration([p.symbol for p in picks])
+        if concentration.warnings:
+            print(format_concentration(concentration))
+
+    correlation_result = None
+    if picks:
+        from aqsp.portfolio.correlation import compute_correlation, format_correlation
+
+        correlation_result = compute_correlation(
+            screen_frames,
+            [p.symbol for p in picks],
+        )
+        if correlation_result.matrix:
+            print(format_correlation(correlation_result))
+
+    if picks:
+        from aqsp.risk.dynamic_stop import compute_dynamic_stop
+
+        updated_picks = []
+        for pick in picks:
+            df = screen_frames.get(pick.symbol, pd.DataFrame())
+            stop = compute_dynamic_stop(df, pick.close, symbol=pick.symbol)
+            if stop.recommended_stop > pick.stop_loss:
+                pick = PickResult(
+                    symbol=pick.symbol,
+                    name=pick.name,
+                    date=pick.date,
+                    close=pick.close,
+                    score=pick.score,
+                    rating=pick.rating,
+                    entry_type=pick.entry_type,
+                    ideal_buy=pick.ideal_buy,
+                    stop_loss=stop.recommended_stop,
+                    take_profit=pick.take_profit,
+                    position=pick.position,
+                    strategies=pick.strategies,
+                    reasons=pick.reasons,
+                    risks=pick.risks,
+                    metrics={**pick.metrics, "stop_method": stop.method},
+                )
+            updated_picks.append(pick)
+        picks = updated_picks
+
+    debate_results = []
+    debate_file = Path("data/debate_results.jsonl")
+    DEBATE_RETENTION_DAYS = 30
+    DEBATE_COOLDOWN_DAYS = 3
+    DEBATE_MIN_DISAGREEMENT = 0.3
+    DEBATE_MIN_ADJUSTMENT_PCT = 0.02
+
+    if getattr(args, "enable_debate", False) and picks:
+        print("📢 启动多Agent辩论分析...")
+
+        coordinator = AShareDebateCoordinator(
+            enable_llm=False,
+            max_rounds=2,
+            thresholds_version=thresholds.version,
+            regime=regime or "unknown",
+            data_source="multi" if args.source == "multi" else str(args.source),
+        )
+        debate_file.parent.mkdir(parents=True, exist_ok=True)
+
+        existing_debates: dict[str, dict] = {}
+        cutoff_date = (
+            (now_shanghai() - timedelta(days=DEBATE_RETENTION_DAYS)).date().isoformat()
+        )
+        if debate_file.exists():
+            for line in debate_file.read_text(encoding="utf-8").splitlines():
+                if line.strip():
+                    try:
+                        data = json.loads(line)
+                        debate_date = data.get("related_signal_date", "")
+                        if debate_date >= cutoff_date:
+                            key = f"{data['symbol']}_{debate_date}"
+                            if key not in existing_debates or existing_debates[key].get(
+                                "created_at", ""
+                            ) < data.get("created_at", ""):
+                                existing_debates[key] = data
+                    except json.JSONDecodeError:
+                        pass
+
+        today = now_shanghai().date().isoformat()
+        now = now_shanghai().isoformat(timespec="seconds")
+
+        cooldown_symbols: set[str] = set()
+        cooldown_cutoff = (
+            (now_shanghai() - timedelta(days=DEBATE_COOLDOWN_DAYS)).date().isoformat()
+        )
+        for data in existing_debates.values():
+            if data.get("related_signal_date", "") >= cooldown_cutoff:
+                cooldown_symbols.add(data.get("symbol", ""))
+
+        adjusted_picks: list[Any] = []
+        skipped_cooldown = 0
+
+        for pick in picks[:3]:
+            if pick.symbol in cooldown_symbols:
+                print(
+                    f"   ⏭️  跳过 {pick.symbol} {pick.name}（{DEBATE_COOLDOWN_DAYS}天内已辩论）"
+                )
+                adjusted_picks.append(pick)
+                skipped_cooldown += 1
+                continue
+
+            df = screen_frames.get(pick.symbol, pd.DataFrame())
+            if not df.empty:
+                try:
+                    result = coordinator.run_debate(pick, df, signal_date=today)
+
+                    if result.disagreement_score < DEBATE_MIN_DISAGREEMENT:
+                        print(
+                            f"   ⏭️  跳过 {pick.symbol} {pick.name}（分歧度 {result.disagreement_score:.2f} < {DEBATE_MIN_DISAGREEMENT}）"
+                        )
+                        adjusted_picks.append(pick)
+                        continue
+
+                    debate_results.append(result)
+
+                    serialized = serialize_debate_result(result)
+                    serialized["debate_date"] = today
+                    serialized["created_at"] = now
+                    key = f"{result.symbol}_{today}"
+                    existing_debates[key] = serialized
+
+                    adjustment_pct = abs(result.adjustment_weight)
+                    if adjustment_pct < DEBATE_MIN_ADJUSTMENT_PCT:
+                        print(
+                            f"   ⏭️  {pick.symbol} {pick.name} 调整幅度 {adjustment_pct * 100:.1f}% < {DEBATE_MIN_ADJUSTMENT_PCT * 100:.0f}%，保持原评分"
+                        )
+                        adjusted_picks.append(pick)
+                        continue
+
+                    updated_pick = PickResult(
+                        symbol=pick.symbol,
+                        name=pick.name,
+                        date=pick.date,
+                        close=pick.close,
+                        score=pick.score,
+                        rating=pick.rating,
+                        entry_type=pick.entry_type,
+                        ideal_buy=pick.ideal_buy,
+                        stop_loss=pick.stop_loss,
+                        take_profit=pick.take_profit,
+                        position=pick.position,
+                        strategies=pick.strategies,
+                        reasons=pick.reasons,
+                        risks=pick.risks,
+                        metrics=pick.metrics,
+                        adjusted_score=result.adjusted_score,
+                        recommended_adjustment=result.recommended_adjustment,
+                        debate_consensus=result.final_consensus,
+                        confidence=max(
+                            0,
+                            min(
+                                100,
+                                pick.confidence
+                                + {"bullish": 10, "bearish": -15, "split": -5}.get(
+                                    result.final_consensus, 0
+                                ),
+                            ),
+                        ),
+                    )
+                    adjusted_picks.append(updated_pick)
+                    print(
+                        f"   ✅ 辩论完成: {pick.symbol} {pick.name} | 原始 {result.original_score:.1f} → 调整 {result.adjusted_score:.1f}（{adjustment_pct * 100:+.1f}%）"
+                    )
+                except Exception as e:
+                    import logging
+
+                    logger = logging.getLogger(__name__)
+                    logger.warning(f"辩论失败 {pick.symbol}: {e}")
+                    adjusted_picks.append(pick)
+
+        for pick in picks[3:]:
+            adjusted_picks.append(pick)
+
+        adjusted_picks.sort(
+            key=lambda p: p.adjusted_score if p.adjusted_score > 0 else p.score,
+            reverse=True,
+        )
+
+        picks = adjusted_picks
+        if skipped_cooldown > 0:
+            print(f"   ⏭️  {skipped_cooldown}只股票因冷却期跳过")
+        print("   📊 重新排序完成（使用辩论后评分）")
+
+        with open(debate_file, "w", encoding="utf-8") as f:
+            for data in existing_debates.values():
+                f.write(json.dumps(data, ensure_ascii=False) + "\n")
+        print("📢 辩论分析完成")
+
     validation = None
     if not args.skip_validation:
         validation = validate_predictions(args.ledger, frames)
 
+    if validation and validation.checked and debate_results:
+        try:
+            from aqsp.briefing.debate_tracker import DebatePerformanceTracker
+
+            tracker = DebatePerformanceTracker()
+            debates_by_key: dict[str, dict] = {}
+            for dr in debate_results:
+                key = f"{dr.symbol}_{dr.related_signal_date}"
+                debates_by_key[key] = dr
+
+            from aqsp.ledger.base import read_ledger
+
+            rows = read_ledger(args.ledger)
+            for row in rows:
+                if row.get("status") != "validated":
+                    continue
+                symbol = str(row.get("symbol", ""))
+                signal_date = str(row.get("signal_date", ""))
+                key = f"{symbol}_{signal_date}"
+                debate = debates_by_key.get(key)
+                if not debate:
+                    continue
+                actual_return = float(row.get("return_pct", 0))
+                target_stance = "bullish" if actual_return > 0 else "bearish"
+                for round_data in debate.rounds:
+                    for opinion in round_data.opinions:
+                        was_correct = opinion.stance == target_stance
+                        tracker.record_prediction(
+                            role=opinion.role,
+                            agent_id=opinion.agent_id,
+                            predicted_stance=opinion.stance,
+                            was_correct=was_correct,
+                        )
+            print("   📊 Agent表现已自动更新")
+        except Exception as e:
+            import logging
+
+            logging.getLogger(__name__).debug(f"自动反馈跳过: {e}")
+
     breaker = CircuitBreaker()
-    daily_pnl = 0.0
-    weekly_pnl = 0.0
-    monthly_pnl = 0.0
-    if validation and validation.checked:
-        daily_pnl = validation.avg_return_pct
-        weekly_pnl = validation.avg_return_pct * 5
-        monthly_pnl = validation.avg_return_pct * 20
+    daily_pnl, weekly_pnl, monthly_pnl = _compute_real_pnl(args.ledger)
     status = breaker.check(
         daily_pnl_pct=daily_pnl,
         weekly_pnl_pct=weekly_pnl,
@@ -1434,6 +2011,7 @@ def run_scheduled(args: argparse.Namespace) -> int:
         picks,
         title=f"AI 量化选股报告({mode}, 数据日期 {latest.isoformat()})",
         metadata=run_metadata,
+        debate_results=debate_results if debate_results else None,
     )
     if status.triggered:
         markdown += (
@@ -1444,9 +2022,7 @@ def run_scheduled(args: argparse.Namespace) -> int:
     if validation is not None:
         validation_text = "\n\n## 策略自检\n"
         if is_cold_start:
-            validation_text += (
-                f"- ⏳ 冷启动期:已积累 {cold_start_days}/30 个独立信号日\n"
-            )
+            validation_text += f"- ⏳ 冷启动期:已积累 {cold_start_days}/{COLD_START_MIN_DAYS} 个独立信号日\n"
             validation_text += "- 策略权重调整和胜率统计将在冷启动期结束后启用\n"
         elif validation.checked:
             validation_text += f"- 本次验证历史预测: {validation.checked} 条\n"
@@ -1465,6 +2041,65 @@ def run_scheduled(args: argparse.Namespace) -> int:
                 + "\n"
             )
         markdown += validation_text
+
+    anomaly_text = format_anomaly_alerts(anomaly_alerts)
+    if anomaly_text:
+        markdown += "\n\n" + anomaly_text
+
+    freshness_text = format_freshness_report(freshness_reports)
+    if freshness_text:
+        markdown += "\n\n" + freshness_text
+
+    if diff is not None and (diff.new_picks or diff.removed_picks or diff.rank_changes):
+        from aqsp.portfolio.snapshot import format_snapshot_diff
+
+        markdown += "\n\n## 选股变化\n" + format_snapshot_diff(diff)
+
+    if concentration is not None and concentration.warnings:
+        from aqsp.portfolio.sector_check import format_concentration
+
+        markdown += "\n\n## 板块集中度\n" + format_concentration(concentration)
+
+    if correlation_result is not None and correlation_result.matrix:
+        from aqsp.portfolio.correlation import format_correlation
+
+        markdown += "\n\n## 候选股相关性\n" + format_correlation(correlation_result)
+        if correlation_result.high_corr_pairs:
+            markdown += "\n\n> ⚠️ 存在高相关性配对，分散化不足，建议关注组合风险\n"
+
+    try:
+        from aqsp.ledger.base import read_ledger
+        from aqsp.ledger.learner import StrategyDecayDetector, format_decay_alerts
+
+        decay_detector = StrategyDecayDetector()
+        decay_alerts = decay_detector.detect(read_ledger(args.ledger))
+        if decay_alerts:
+            markdown += "\n\n" + format_decay_alerts(decay_alerts)
+            print(format_decay_alerts(decay_alerts))
+    except Exception:
+        pass
+
+    try:
+        from aqsp.ledger.failure_analysis import (
+            analyze_failures,
+            format_failure_patterns,
+        )
+        from aqsp.ledger.base import read_ledger as _read_ledger_for_failure
+
+        _failure_rows = _read_ledger_for_failure(args.ledger)
+        _failure_df = pd.DataFrame(_failure_rows) if _failure_rows else pd.DataFrame()
+        failure_patterns = analyze_failures(_failure_df)
+        if failure_patterns:
+            failure_text = format_failure_patterns(failure_patterns)
+            markdown += "\n\n" + failure_text
+            print("\n⚠️ 发现失败模式:")
+            for p in failure_patterns:
+                print(
+                    f"   - {p.pattern_name}: {p.description} (平均亏损 {p.avg_loss:.2f}%)"
+                )
+    except Exception:
+        pass
+
     Path(args.report).parent.mkdir(parents=True, exist_ok=True)
     # 先检查双门 gate，决定是否放行 notify
     gate_ok, gate_reasons = _check_notification_gate(cold_start_days=cold_start_days)
@@ -1503,6 +2138,16 @@ def run_scheduled(args: argparse.Namespace) -> int:
             status = "ok" if result.ok else "failed"
             print(f"notify {result.channel}: {status} ({result.detail})")
     return 2 if status.triggered else 0
+
+
+def run_dashboard(args: argparse.Namespace) -> int:
+    from scripts.render_dashboard import render_all_panels
+
+    html = render_all_panels(ledger_path=args.ledger)
+    Path(args.output).parent.mkdir(parents=True, exist_ok=True)
+    Path(args.output).write_text(html, encoding="utf-8")
+    print(f"Dashboard saved to {args.output}")
+    return 0
 
 
 def run_walkforward(args: argparse.Namespace) -> int:
@@ -1850,7 +2495,6 @@ def run_walkforward(args: argparse.Namespace) -> int:
 def run_briefing(args: argparse.Namespace) -> int:
     from aqsp.briefing import BriefingGenerator, enhance_briefing, send_briefing
     from aqsp.ledger.base import read_ledger
-    from aqsp.models import PickResult
 
     rows = read_ledger(args.ledger)
     latest_date = ""
@@ -1981,6 +2625,702 @@ def run_monitor(args: argparse.Namespace) -> int:
         send_alerts(triggered)
 
     return 1 if any(r.severity == "critical" for r in triggered) else 0
+
+
+def run_optimize(args: argparse.Namespace) -> int:
+    from aqsp.optimizer.param_optimizer import (
+        BayesianOptimizer,
+        GridSearchOptimizer,
+        ParamSpace,
+        create_walkforward_evaluator,
+    )
+
+    thresholds = load_thresholds()
+    default_spaces = [
+        ParamSpace("composite.momentum_weight", 0.1, 0.5, 0.05),
+        ParamSpace("composite.quality_weight", 0.0, 0.4, 0.05),
+        ParamSpace("composite.value_weight", 0.0, 0.4, 0.05),
+        ParamSpace("composite.volume_weight", 0.0, 0.3, 0.05),
+        ParamSpace("composite.triple_rise_weight", 0.0, 0.5, 0.05),
+        ParamSpace("scoring.near_high_bonus", 10.0, 25.0, 2.0),
+        ParamSpace("scoring.pullback_bonus", 8.0, 24.0, 2.0),
+        ParamSpace("scoring.rsi_healthy_bonus", 3.0, 12.0, 1.0),
+    ]
+
+    symbols = [s.strip() for s in args.symbols.split(",") if s.strip()]
+    if not symbols:
+        symbols = _get_hs300_symbols(date.fromisoformat(args.start))[:30]
+
+    print(f"正在获取 {len(symbols)} 只股票数据...")
+    frames = _fetch_frames_for_cli(
+        args.source,
+        symbols,
+        benchmark_symbol=None,
+        days=_walkforward_fetch_days(args.start, args.end),
+    )
+    filtered: dict[str, pd.DataFrame] = {}
+    for sym in symbols:
+        df = frames.get(sym)
+        if df is None or df.empty:
+            continue
+        mask = (df["date"].astype(str) >= args.start) & (
+            df["date"].astype(str) <= args.end
+        )
+        sliced = df.loc[mask]
+        if len(sliced) >= 100:
+            filtered[sym] = sliced.copy()
+    symbols = list(filtered.keys())
+    print(f"有效标的: {len(symbols)} 只")
+
+    if len(symbols) < 5:
+        print("有效标的不足，无法进行优化")
+        return 1
+
+    evaluate_fn = create_walkforward_evaluator(
+        symbols=symbols,
+        frames=frames,
+        start=args.start,
+        end=args.end,
+    )
+
+    print(f"开始 {args.method} 参数优化，trials={args.trials}...")
+    if args.method == "grid":
+        optimizer = GridSearchOptimizer(default_spaces)
+        result = optimizer.optimize(evaluate_fn, max_trials=args.trials)
+    else:
+        optimizer = BayesianOptimizer(default_spaces)
+        result = optimizer.optimize(evaluate_fn, n_trials=args.trials)
+
+    _print_optimization_result(result)
+
+    output_path = Path(args.output)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "method": result.method,
+        "n_trials": result.n_trials,
+        "best_score": result.best_score,
+        "best_params": result.best_params,
+        "thresholds_version": thresholds.version,
+        "run_date": now_shanghai().isoformat(timespec="seconds"),
+    }
+    output_path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    print(f"\n结果已保存到: {output_path}")
+
+    if args.apply:
+        _apply_best_params(result.best_params)
+
+    return 0
+
+
+def _print_optimization_result(result: Any) -> None:
+    print(f"\n{'=' * 50}")
+    print(f"优化完成 ({result.method}), 共 {result.n_trials} 次试验")
+    print(f"{'=' * 50}")
+    print(f"最优分数: {result.best_score:.4f}")
+    print("最优参数:")
+    for k, v in sorted(result.best_params.items()):
+        print(f"  {k}: {v}")
+
+
+def _apply_best_params(best_params: dict[str, float]) -> None:
+    import re
+
+    path = _find_thresholds_yaml()
+    if path is None:
+        print("⚠️  找不到 thresholds.yaml，无法自动应用参数")
+        return
+
+    content = path.read_text(encoding="utf-8")
+    new_version = f"{now_shanghai().strftime('%Y%m%d')}.opt"
+
+    for key, val in best_params.items():
+        parts = key.split(".")
+        if len(parts) == 2:
+            section, field = parts
+            pattern = re.compile(
+                rf"^({field}:\s*)(['\"]?)(.*?)\2(\s*(?:#.*)?)$",
+                flags=re.MULTILINE,
+            )
+            new_content, n = pattern.subn(
+                lambda m, v=val: f"{m.group(1)}{m.group(2)}{v}{m.group(2)}{m.group(4)}",
+                content,
+            )
+            if n > 0:
+                content = new_content
+
+    version_pattern = re.compile(
+        r"^(version:\s*)(['\"]?)(.*?)\2(\s*(?:#.*)?)$",
+        flags=re.MULTILINE,
+    )
+    content = version_pattern.sub(
+        lambda m: f'{m.group(1)}"{new_version}"{m.group(4)}',
+        content,
+    )
+    path.write_text(content, encoding="utf-8")
+    print(f"✅ 最优参数已写入 thresholds.yaml (version={new_version})")
+
+
+def run_discover(args: argparse.Namespace) -> int:
+    from aqsp.ledger.base import read_ledger
+    from aqsp.optimizer.pattern_discovery import (
+        PatternDiscoveryEngine,
+        format_discovered_patterns,
+    )
+
+    rows = read_ledger(args.ledger)
+    if not rows:
+        print("Ledger 为空，无法发现形态")
+        return 1
+    ledger_df = pd.DataFrame(rows)
+
+    symbols_in_ledger: list[str] = []
+    seen: set[str] = set()
+    for row in rows:
+        sym = str(row.get("symbol", ""))
+        if sym and sym not in seen:
+            seen.add(sym)
+            symbols_in_ledger.append(sym)
+
+    if not symbols_in_ledger:
+        print("Ledger 中没有有效标的")
+        return 1
+
+    print(f"正在获取 {len(symbols_in_ledger)} 只标的的 OHLCV 数据...")
+    try:
+        frames = _fetch_frames_for_cli(
+            args.source,
+            symbols_in_ledger,
+            benchmark_symbol=None,
+            days=500,
+        )
+    except Exception:
+        frames = {}
+
+    if not frames:
+        print("无法获取数据")
+        return 1
+
+    print(f"数据获取完成，{len(frames)} 只标的可用")
+
+    engine = PatternDiscoveryEngine(
+        min_sample_size=args.min_sample,
+        min_win_rate=args.min_winrate,
+    )
+    patterns = engine.discover(ledger_df, frames)
+
+    report = format_discovered_patterns(patterns)
+    print(report)
+
+    if args.output:
+        output_path = Path(args.output)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        import json as _json
+
+        payload = [
+            {
+                "pattern_id": p.pattern_id,
+                "pattern_type": p.pattern_type,
+                "description": p.description,
+                "conditions": p.conditions,
+                "historical_win_rate": p.historical_win_rate,
+                "historical_avg_return": p.historical_avg_return,
+                "sample_size": p.sample_size,
+                "confidence": p.confidence,
+                "first_seen": p.first_seen,
+                "last_seen": p.last_seen,
+            }
+            for p in patterns
+        ]
+        output_path.write_text(
+            _json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        print(f"\nJSON 已保存到: {output_path}")
+
+    if args.report:
+        report_path = Path(args.report)
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text(report, encoding="utf-8")
+        print(f"报告已保存到: {report_path}")
+
+    return 0
+
+
+def run_mine_factors(args: argparse.Namespace) -> int:
+    from aqsp.strategies.auto_factor_mining import AutoFactorMiner, FactorLibrary
+
+    print("开始自动因子挖掘...")
+    miner = AutoFactorMiner(min_ic=args.min_ic, min_ir=args.min_ir)
+
+    symbols = _resolve_run_symbols(
+        args.source, "", pool_name="hs300", max_universe=300, min_avg_amount=10_000_000
+    )
+    if not symbols:
+        print("无法解析股票池")
+        return 1
+
+    print(f"正在获取 {len(symbols)} 只股票数据...")
+    try:
+        frames = _fetch_frames_for_cli(args.source, symbols, None, 250)
+    except Exception:
+        frames = {}
+
+    if not frames:
+        print("无法获取数据")
+        return 1
+
+    print(f"数据获取完成，{len(frames)} 只股票可用")
+    print("开始挖掘因子...")
+
+    results = miner.mine_factors(frames)
+
+    if not results:
+        print("未发现有效因子")
+        return 0
+
+    print(f"\n发现 {len(results)} 个有效因子:")
+    for r in results[:20]:
+        print(
+            f"  - {r['factor_name']}: IC={r['ic_mean']:.4f}, IR={r['ic_ir']:.2f}, 胜率={r['win_rate']:.2%}"
+        )
+
+    library = FactorLibrary()
+    library.load()
+    added_count = 0
+    for r in results:
+        if library.add_factor(r):
+            added_count += 1
+    library.save()
+
+    print(f"\n已将 {added_count} 个新因子添加到因子库")
+
+    if args.output:
+        output_path = Path(args.output)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(
+            json.dumps(results, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        print(f"结果已保存到: {output_path}")
+
+    return 0
+
+
+def run_evolve(args: argparse.Namespace) -> int:
+    from aqsp.strategies.auto_evolution import AutoEvolution
+
+    print("开始自动进化...")
+    evolution = AutoEvolution(config_path=args.config)
+
+    if not evolution.config.enabled:
+        print("自动进化已禁用")
+        return 0
+
+    print("分析当前策略表现...")
+    symbols = _resolve_run_symbols(
+        args.source, "", pool_name="hs300", max_universe=300, min_avg_amount=10_000_000
+    )
+    if not symbols:
+        print("无法解析股票池")
+        return 1
+
+    try:
+        frames = _fetch_frames_for_cli(args.source, symbols, None, 250)
+    except Exception:
+        frames = {}
+
+    if not frames:
+        print("无法获取数据")
+        return 1
+
+    print("正在进化参数...")
+    result = evolution.evolve_parameters("composite", frames)
+
+    if result:
+        print("\n进化完成:")
+        print(f"  策略: {result.strategy_name}")
+        print(f"  性能提升: {result.performance_improvement:.2%}")
+        print(f"  置信度: {result.confidence:.2%}")
+        print(f"  原因: {result.reason}")
+
+        if args.apply and result.confidence >= evolution.config.confidence_threshold:
+            print("\n正在应用进化后的参数...")
+            evolution._apply_evolution(result)
+            print("参数已应用到 thresholds.yaml")
+        else:
+            print("\n置信度不足，未自动应用参数")
+    else:
+        print("当前无需进化")
+
+    if args.output:
+        output_path = Path(args.output)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "strategy_name": result.strategy_name if result else "",
+            "old_params": result.old_params if result else {},
+            "new_params": result.new_params if result else {},
+            "performance_improvement": result.performance_improvement if result else 0,
+            "confidence": result.confidence if result else 0,
+            "reason": result.reason if result else "",
+            "timestamp": now_shanghai().isoformat(),
+        }
+        output_path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        print(f"结果已保存到: {output_path}")
+
+    return 0
+
+
+def run_multi_factor(args: argparse.Namespace) -> int:
+    from aqsp.strategies.multi_factor_rotation import MultiFactorRotationStrategy
+
+    print("运行多因子轮动策略...")
+    strategy = MultiFactorRotationStrategy()
+
+    symbols = _resolve_run_symbols(
+        args.source,
+        "",
+        pool_name=args.pool,
+        max_universe=300,
+        min_avg_amount=10_000_000,
+    )
+    if not symbols:
+        print("无法解析股票池")
+        return 1
+
+    print(f"正在获取 {len(symbols)} 只股票数据...")
+    try:
+        frames = _fetch_frames_for_cli(args.source, symbols, None, 250)
+    except Exception:
+        frames = {}
+
+    if not frames:
+        print("无法获取数据")
+        return 1
+
+    print(f"数据获取完成，{len(frames)} 只股票可用")
+    print("计算多因子得分...")
+
+    scores = strategy.calculate_score(frames)
+
+    if not scores:
+        print("无法计算得分")
+        return 1
+
+    sorted_scores = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+    top_n = sorted_scores[: args.top]
+
+    print(f"\nTop {args.top} 股票:")
+    for rank, (symbol, score) in enumerate(top_n, 1):
+        name = ""
+        if symbol in frames and "name" in frames[symbol].columns:
+            name = frames[symbol]["name"].iloc[0] if not frames[symbol].empty else ""
+        print(f"  {rank}. {symbol} {name}: {score:.2f}")
+
+    effectiveness = strategy.get_factor_effectiveness()
+    if effectiveness:
+        print("\n因子有效性:")
+        for factor, eff in sorted(
+            effectiveness.items(), key=lambda x: x[1], reverse=True
+        )[:10]:
+            print(f"  - {factor}: {eff:.2%}")
+
+    if args.output:
+        output_path = Path(args.output)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "top_stocks": [{"symbol": s, "score": sc} for s, sc in top_n],
+            "all_scores": dict(sorted_scores),
+            "factor_effectiveness": effectiveness,
+            "timestamp": now_shanghai().isoformat(),
+        }
+        output_path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        print(f"\n结果已保存到: {output_path}")
+
+    return 0
+
+
+def run_morning_breakout(args: argparse.Namespace) -> int:
+    from aqsp.strategies.morning_breakout import (
+        MorningBreakoutStrategy,
+        format_morning_signals,
+    )
+
+    print("🔥 运行早盘打板策略...")
+    strategy = MorningBreakoutStrategy()
+
+    symbols = _resolve_run_symbols(
+        args.source,
+        "",
+        pool_name=args.pool,
+        max_universe=300,
+        min_avg_amount=10_000_000,
+    )
+    if not symbols:
+        print("无法解析股票池")
+        return 1
+
+    print(f"正在获取 {len(symbols)} 只股票数据...")
+    try:
+        frames = _fetch_frames_for_cli(args.source, symbols, None, 250)
+    except Exception:
+        frames = {}
+
+    if not frames:
+        print("无法获取数据")
+        return 1
+
+    print(f"数据获取完成，{len(frames)} 只股票可用")
+    print("分析打板信号...")
+
+    signals = strategy.analyze_pre_market(frames)
+
+    report = format_morning_signals(signals, top_n=args.top)
+    print(report)
+
+    if args.notify and signals:
+        try:
+            from aqsp.notifier import send_notification
+
+            send_notification("早盘打板策略", report)
+        except Exception:
+            pass
+
+    if args.output:
+        output_path = Path(args.output)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "signals": [
+                {
+                    "symbol": s.symbol,
+                    "name": s.name,
+                    "signal_type": s.signal_type,
+                    "score": s.score,
+                    "current_price": s.current_price,
+                    "target_price": s.target_price,
+                    "stop_loss": s.stop_loss,
+                    "confidence": s.confidence,
+                    "entry_time": s.entry_time,
+                    "position_pct": s.position_pct,
+                    "reasons": list(s.reasons),
+                    "risks": list(s.risks),
+                }
+                for s in signals[: args.top]
+            ],
+            "timestamp": now_shanghai().isoformat(),
+        }
+        output_path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        print(f"\n结果已保存到: {output_path}")
+
+    from aqsp.ledger.base import read_ledger, write_ledger
+    from uuid import uuid4
+
+    ledger_path = getattr(args, "ledger", "data/predictions.jsonl")
+    rows = read_ledger(ledger_path)
+    existing_keys = {
+        (
+            str(r.get("signal_date", "")),
+            str(r.get("symbol", "")),
+            str(r.get("thresholds_version", "")),
+        )
+        for r in rows
+    }
+    thresholds_version = strategy.thresholds.version
+    now = now_shanghai().isoformat(timespec="seconds")
+    signal_date = now_shanghai().date().isoformat()
+    for signal in signals:
+        key = (signal_date, signal.symbol, thresholds_version)
+        if key in existing_keys:
+            continue
+        rows.append(
+            {
+                "id": uuid4().hex,
+                "created_at": now,
+                "signal_date": signal_date,
+                "symbol": signal.symbol,
+                "name": signal.name,
+                "signal_close": signal.current_price,
+                "intended_entry": "next_open",
+                "score": signal.score,
+                "rating": "buy_candidate",
+                "strategies": ["morning_breakout"],
+                "sub_strategy": signal.signal_type,
+                "reasons": list(signal.reasons),
+                "risks": list(signal.risks),
+                "stop_loss": signal.stop_loss,
+                "confidence": signal.confidence,
+                "thresholds_version": thresholds_version,
+                "status": "pending",
+            }
+        )
+        existing_keys.add(key)
+    write_ledger(ledger_path, rows)
+
+    return 0
+
+
+def run_closing_premium(args: argparse.Namespace) -> int:
+    from aqsp.strategies.closing_premium import (
+        ClosingPremiumStrategy,
+        format_closing_signals,
+    )
+
+    print("📈 运行尾盘溢价策略...")
+    strategy = ClosingPremiumStrategy()
+
+    symbols = _resolve_run_symbols(
+        args.source,
+        "",
+        pool_name=args.pool,
+        max_universe=300,
+        min_avg_amount=10_000_000,
+    )
+    if not symbols:
+        print("无法解析股票池")
+        return 1
+
+    print(f"正在获取 {len(symbols)} 只股票数据...")
+    try:
+        frames = _fetch_frames_for_cli(args.source, symbols, None, 250)
+    except Exception:
+        frames = {}
+
+    if not frames:
+        print("无法获取数据")
+        return 1
+
+    print(f"数据获取完成，{len(frames)} 只股票可用")
+    print("分析溢价信号...")
+
+    signals = strategy.analyze_closing(frames)
+
+    report = format_closing_signals(signals, top_n=args.top)
+    print(report)
+
+    if args.notify and signals:
+        try:
+            from aqsp.notifier import send_notification
+
+            send_notification("尾盘溢价策略", report)
+        except Exception:
+            pass
+
+    if args.output:
+        output_path = Path(args.output)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "signals": [
+                {
+                    "symbol": s.symbol,
+                    "name": s.name,
+                    "signal_type": s.signal_type,
+                    "score": s.score,
+                    "current_price": s.current_price,
+                    "entry_price": s.entry_price,
+                    "stop_loss": s.stop_loss,
+                    "take_profit_1": s.take_profit_1,
+                    "take_profit_2": s.take_profit_2,
+                    "confidence": s.confidence,
+                    "holding_days": s.holding_days,
+                    "expected_return": s.expected_return,
+                    "reasons": list(s.reasons),
+                    "risks": list(s.risks),
+                }
+                for s in signals[: args.top]
+            ],
+            "timestamp": now_shanghai().isoformat(),
+        }
+        output_path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        print(f"\n结果已保存到: {output_path}")
+
+    from aqsp.ledger.base import read_ledger, write_ledger
+    from uuid import uuid4
+
+    ledger_path = getattr(args, "ledger", "data/predictions.jsonl")
+    rows = read_ledger(ledger_path)
+    existing_keys = {
+        (
+            str(r.get("signal_date", "")),
+            str(r.get("symbol", "")),
+            str(r.get("thresholds_version", "")),
+        )
+        for r in rows
+    }
+    thresholds_version = strategy.thresholds.version
+    now = now_shanghai().isoformat(timespec="seconds")
+    signal_date = now_shanghai().date().isoformat()
+    for signal in signals:
+        key = (signal_date, signal.symbol, thresholds_version)
+        if key in existing_keys:
+            continue
+        rows.append(
+            {
+                "id": uuid4().hex,
+                "created_at": now,
+                "signal_date": signal_date,
+                "symbol": signal.symbol,
+                "name": signal.name,
+                "signal_close": signal.entry_price,
+                "intended_entry": "next_open",
+                "score": signal.score,
+                "rating": "buy_candidate",
+                "strategies": ["closing_premium"],
+                "sub_strategy": signal.signal_type,
+                "reasons": list(signal.reasons),
+                "risks": list(signal.risks),
+                "stop_loss": signal.stop_loss,
+                "confidence": signal.confidence,
+                "thresholds_version": thresholds_version,
+                "status": "pending",
+            }
+        )
+        existing_keys.add(key)
+    write_ledger(ledger_path, rows)
+
+    return 0
+
+
+def run_closing_review(args: argparse.Namespace) -> int:
+    from aqsp.briefing.closing_review import (
+        ClosingReviewer,
+        format_daily_review,
+        format_weekly_summary,
+    )
+
+    print("📊 生成收盘复盘报告...")
+    reviewer = ClosingReviewer()
+
+    if args.weekly:
+        summary = reviewer.generate_weekly_summary(args.date or None)
+        report = format_weekly_summary(summary)
+    else:
+        review = reviewer.review_today(args.date or None)
+        report = format_daily_review(review)
+
+    print(report)
+
+    if args.notify:
+        try:
+            from aqsp.notifier import send_notification
+
+            send_notification("收盘复盘", report)
+        except Exception:
+            pass
+
+    if args.output:
+        output_path = Path(args.output)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(report, encoding="utf-8")
+        print(f"\n报告已保存到: {output_path}")
+
+    return 0
 
 
 if __name__ == "__main__":

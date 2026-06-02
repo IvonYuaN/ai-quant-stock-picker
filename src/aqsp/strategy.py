@@ -7,15 +7,18 @@ import pandas as pd
 from aqsp.indicators import enrich_indicators
 from aqsp.internet_strategies import evaluate_strategy_signals
 from aqsp.models import PickResult, ScreeningConfig
+from aqsp.strategies.thresholds import ScoringThresholds, load_thresholds
 
 
 def screen_universe(
     frames: dict[str, pd.DataFrame], config: ScreeningConfig
 ) -> list[PickResult]:
+    thresholds = load_thresholds()
+    scoring = thresholds.scoring
     picks: list[PickResult] = []
     for symbol, frame in frames.items():
         try:
-            result = score_symbol(symbol, frame, config)
+            result = score_symbol(symbol, frame, config, scoring)
         except (ValueError, IndexError, KeyError, TypeError):
             continue
         if result is not None:
@@ -24,7 +27,10 @@ def screen_universe(
 
 
 def score_symbol(
-    symbol: str, frame: pd.DataFrame, config: ScreeningConfig
+    symbol: str,
+    frame: pd.DataFrame,
+    config: ScreeningConfig,
+    scoring: ScoringThresholds,
 ) -> PickResult | None:
     df = enrich_indicators(frame)
     if len(df) < config.min_bars:
@@ -59,77 +65,86 @@ def score_symbol(
     prev_macd_hist = _num(prev["macd_hist"])
 
     if ma5 > ma10 > ma20 > ma60:
-        score += 24
+        score += scoring.ma_full_bull
         reasons.append("MA5/10/20/60 多头排列")
     elif ma5 > ma10 > ma20:
-        score += 16
+        score += scoring.ma_short_bull
         reasons.append("短中期均线多头")
     elif close < ma20:
-        score -= 18
+        score += scoring.ma_below_ma20
         risks.append("收盘价低于 MA20")
 
-    ma20_slope = (ma20 / _num(df.iloc[-6]["ma20"]) - 1) * 100
-    if ma20_slope > 1.0:
-        score += 10
+    ma20_slope = (ma20 / _num(df.iloc[-scoring.ma20_slope_lookback]["ma20"]) - 1) * 100
+    if ma20_slope > scoring.ma20_slope_up_threshold:
+        score += scoring.ma20_slope_up
         reasons.append("MA20 斜率向上")
-    elif ma20_slope < -1.5:
-        score -= 10
+    elif ma20_slope < scoring.ma20_slope_down_threshold:
+        score += scoring.ma20_slope_down
         risks.append("MA20 仍在下行")
 
-    if ret20 > 12:
-        score += 14
+    if ret20 > scoring.ret20_strong_threshold:
+        score += scoring.ret20_strong
         reasons.append("20日相对强势")
-    elif ret20 < -8:
-        score -= 12
+    elif ret20 < scoring.ret20_weak_threshold:
+        score += scoring.ret20_weak
         risks.append("20日弱势")
 
-    if close >= _num(prev["high_20"]) * 0.995 and volume_ratio >= 1.35:
-        score += 18
+    if (
+        close >= _num(prev["high_20"]) * scoring.near_high_threshold
+        and volume_ratio >= scoring.near_high_volume
+    ):
+        score += scoring.near_high_bonus
         reasons.append("接近或突破20日新高且量能确认")
 
     pullback_to_ma = (
-        ma5 * 0.985 <= close <= ma10 * 1.025
-        and volume_ratio <= 1.1
+        ma5 * scoring.pullback_ma5_lower <= close <= ma10 * scoring.pullback_ma10_upper
+        and volume_ratio <= scoring.pullback_volume_max
         and ma5 > ma10 > ma20
     )
     if pullback_to_ma:
-        score += 16
+        score += scoring.pullback_bonus
         reasons.append("强趋势缩量回踩均线")
 
     if macd_hist > 0 and macd_hist > prev_macd_hist:
-        score += 8
+        score += scoring.macd_improve
         reasons.append("MACD 动能改善")
     elif macd_hist < 0 and macd_hist < prev_macd_hist:
-        score -= 8
+        score += scoring.macd_weaken
         risks.append("MACD 动能走弱")
 
-    if 45 <= rsi12 <= 72:
-        score += 7
+    if scoring.rsi_healthy_low <= rsi12 <= scoring.rsi_healthy_high:
+        score += scoring.rsi_healthy_bonus
         reasons.append("RSI 位于健康强势区间")
-    elif rsi12 > 82:
-        score -= 12
+    elif rsi12 > scoring.rsi_overbought:
+        score += scoring.rsi_overbought_penalty
         risks.append("RSI 过热")
 
     if bias20 > config.max_bias20:
-        score -= 18
+        score += scoring.bias_high_penalty
         risks.append("MA20 乖离过高，追高风险")
-    elif 0 <= bias20 <= 8:
-        score += 8
+    elif 0 <= bias20 <= scoring.bias_healthy_max:
+        score += scoring.bias_healthy_bonus
         reasons.append("价格相对 MA20 位置不拥挤")
 
     if config.mode == "close":
-        if _num(row["range_pos"]) >= 0.68:
-            score += 6
+        if _num(row["range_pos"]) >= scoring.range_strong_threshold:
+            score += scoring.range_strong_bonus
             reasons.append("尾盘收在日内偏强区域")
-        if _num(row["upper_shadow_pct"]) > 4 and volume_ratio > 1.5:
-            score -= 14
+        if (
+            _num(row["upper_shadow_pct"]) > scoring.upper_shadow_threshold
+            and volume_ratio > scoring.upper_shadow_volume
+        ):
+            score += scoring.upper_shadow_penalty
             risks.append("尾盘放量长上影")
     else:
-        if abs(bias20) <= 10 and volume_ratio < 2.5:
-            score += 5
+        if (
+            abs(bias20) <= scoring.open_calm_bias
+            and volume_ratio < scoring.open_calm_volume
+        ):
+            score += scoring.open_calm_bonus
             reasons.append("开盘候选未明显过热")
-        if _num(row["amplitude_pct"]) > 9:
-            score -= 8
+        if _num(row["amplitude_pct"]) > scoring.amplitude_threshold:
+            score += scoring.amplitude_penalty
             risks.append("前一交易日振幅过大")
 
     strategy_signals = evaluate_strategy_signals(df)
@@ -139,12 +154,14 @@ def score_symbol(
         strategy_ids.append(signal.strategy_id)
         reasons.append(f"{signal.display_name}: {'/'.join(signal.reasons[:2])}")
 
-    entry_type = _entry_type(row, prev, pullback_to_ma)
-    stop_base = min(ma20, close - atr14 * 1.2) if atr14 > 0 else ma20
+    entry_type = _entry_type(row, prev, pullback_to_ma, scoring)
+    stop_base = (
+        min(ma20, close - atr14 * scoring.stop_atr_multiplier) if atr14 > 0 else ma20
+    )
     stop_loss = max(stop_base * (1 - config.stop_loss_buffer), 0.01)
-    take_profit = close + max(close - stop_loss, atr14) * 1.8
-    position = _position(score, risks)
-    rating = _rating(score)
+    take_profit = close + max(close - stop_loss, atr14) * scoring.take_profit_multiplier
+    position = _position(score, risks, scoring)
+    rating = _rating(score, scoring)
 
     return PickResult(
         symbol=str(row.get("symbol") or symbol),
@@ -169,15 +186,48 @@ def score_symbol(
             "rsi12": round(rsi12, 2),
             "avg_amount_20": round(avg_amount, 2),
         },
+        confidence=_compute_confidence(
+            len(strategy_ids), score, len(risks), volume_ratio, scoring
+        ),
     )
 
 
-def _entry_type(row: pd.Series, prev: pd.Series, pullback_to_ma: bool) -> str:
+def _compute_confidence(
+    strategy_count: int,
+    score: float,
+    risk_count: int,
+    volume_ratio: float,
+    scoring: ScoringThresholds,
+) -> float:
+    conf = 0.0
+    conf += min(
+        strategy_count * scoring.confidence_strategy_weight,
+        scoring.confidence_max_strategies,
+    )
+    if score >= scoring.confidence_high_score:
+        conf += scoring.confidence_high_bonus
+    elif score >= scoring.confidence_mid_score:
+        conf += scoring.confidence_mid_bonus
+    elif score >= scoring.confidence_low_score:
+        conf += scoring.confidence_low_bonus
+    conf += max(
+        0, scoring.confidence_risk_base - risk_count * scoring.confidence_risk_penalty
+    )
+    if scoring.confidence_volume_low <= volume_ratio <= scoring.confidence_volume_high:
+        conf += scoring.confidence_volume_bonus
+    elif volume_ratio > scoring.confidence_volume_high:
+        conf += scoring.confidence_volume_high_bonus
+    return round(min(conf, 100), 1)
+
+
+def _entry_type(
+    row: pd.Series, prev: pd.Series, pullback_to_ma: bool, scoring: ScoringThresholds
+) -> str:
     if pullback_to_ma:
         return "trend_pullback"
     if (
-        _num(row["close"]) >= _num(prev["high_20"]) * 0.995
-        and _num(row["volume_ratio"]) >= 1.35
+        _num(row["close"]) >= _num(prev["high_20"]) * scoring.near_high_threshold
+        and _num(row["volume_ratio"]) >= scoring.near_high_volume
     ):
         return "volume_breakout"
     if _num(row["rsi12"]) < 42 and _num(row["macd_hist"]) > _num(prev["macd_hist"]):
@@ -185,20 +235,23 @@ def _entry_type(row: pd.Series, prev: pd.Series, pullback_to_ma: bool) -> str:
     return "relative_strength"
 
 
-def _position(score: float, risks: list[str]) -> str:
-    if score >= 68 and len(risks) <= 1:
+def _position(score: float, risks: list[str], scoring: ScoringThresholds) -> str:
+    if (
+        score >= scoring.position_strong_score
+        and len(risks) <= scoring.position_strong_risks
+    ):
         return "30%-50%"
-    if score >= 52:
+    if score >= scoring.position_mid_score:
         return "10%-30%"
     return "watch"
 
 
-def _rating(score: float) -> str:
-    if score >= 70:
+def _rating(score: float, scoring: ScoringThresholds) -> str:
+    if score >= scoring.rating_strong:
         return "strong_buy_candidate"
-    if score >= 55:
+    if score >= scoring.rating_buy:
         return "buy_candidate"
-    if score >= 40:
+    if score >= scoring.rating_watch:
         return "watch"
     return "avoid"
 

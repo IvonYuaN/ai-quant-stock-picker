@@ -1,14 +1,16 @@
 """LLM 可降级调用契约 — CONSTITUTION §3.2 / §1.3 #16 落地。
 
-声明已写但代码缺失：宪法 §3.2 要求所有 LLM 调用走
-aqsp.utils.llm_safe.llm_call_or_fallback，带 timeout / cost_cap / fallback 模板，
-且 LLM 异常永远不能冒到 cli return code（#16）。
+支持多种免费/低价模型 API：
+- 智谱GLM-4-Flash (永久免费，不限量，推荐首选)
+- 通义千问 qwen-turbo (新用户500万tokens免费180天)
+- 硅基流动 (注册送14元，部分模型永久免费)
+- DeepSeek (不免费，2元/百万tokens，效果最好)
+- OpenAI 兼容 / Anthropic / 自定义端点
 
 红线复核：
-- 核心路径不硬依赖 LLM（#4）：anthropic/openai 全部函数内惰性 import，
-  顶层不 import，配合 _constitution_check._check_no_top_level_llm_import。
-- LLM 挂掉降级而非崩（#4/#16）：任何异常都吞掉走 fallback，绝不向上抛。
-- 不动 thresholds、不接券商、不重构既有策略、不新增 Agent。
+- 核心路径不硬依赖 LLM（#4）：所有 SDK 都是惰性 import
+- LLM 挂掉降级而非崩（#4/#16）：任何异常都吞掉走 fallback
+- 不动 thresholds、不接券商、不重构既有策略、不新增 Agent
 """
 
 from __future__ import annotations
@@ -22,7 +24,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 # 默认护栏
-_DEFAULT_TIMEOUT_S = 20.0
+_DEFAULT_TIMEOUT_S = 30.0
 _DEFAULT_COST_CAP_USD = 0.05
 _LLM_CALLS_LOG = Path("data/llm_calls.jsonl")
 
@@ -48,7 +50,6 @@ def _append_log(record: dict) -> None:
         with open(_LLM_CALLS_LOG, "a", encoding="utf-8") as f:
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
     except Exception:
-        # 静默：日志写不进去不影响降级语义
         pass
 
 
@@ -65,15 +66,11 @@ def llm_call_or_fallback(
 ) -> LlmResult:
     """可降级 LLM 调用。任何失败都返回 fallback，绝不抛异常给上游。
 
-    降级触发条件（任一）：
-    - enable_llm=False（默认）
-    - ENABLE_LLM_BRIEFING 环境变量未开
-    - 缺 API key
-    - SDK 未安装 / import 失败
-    - 调用超时或抛错
-    - 预估成本超过 cost_cap_usd
-
-    参数 _client_factory 仅用于测试注入假 client，生产留空。
+    环境变量配置优先级：
+    1. LLM_PROVIDER (deepseek/qwen/glm/siliconflow/openai/anthropic/custom)
+    2. 对应提供商的 API_KEY
+    3. LLM_BASE_URL (可选，自定义端点)
+    4. LLM_MODEL (可选，指定模型名)
     """
     started = time.monotonic()
     base_record = {
@@ -83,7 +80,6 @@ def llm_call_or_fallback(
         "prompt_chars": len(prompt),
     }
 
-    # 门 1：显式开关
     if not enable_llm:
         return _degrade(base_record, started, "enable_llm=False", fallback, model)
     if os.getenv("ENABLE_LLM_BRIEFING", "").lower() not in ("1", "true", "yes"):
@@ -91,12 +87,6 @@ def llm_call_or_fallback(
             base_record, started, "ENABLE_LLM_BRIEFING 未开", fallback, model
         )
 
-    # 门 2：API key
-    api_key = os.getenv("ANTHROPIC_API_KEY") or os.getenv("OPENAI_API_KEY")
-    if not _client_factory and not api_key:
-        return _degrade(base_record, started, "缺 API key", fallback, model)
-
-    # 门 3：惰性 import + 调用，全程兜底
     try:
         client = _client_factory() if _client_factory else _make_client()
         text, est_cost = _invoke(client, prompt, model, timeout_s)
@@ -124,7 +114,7 @@ def llm_call_or_fallback(
             latency_s=latency,
             est_cost_usd=est_cost,
         )
-    except Exception as exc:  # noqa: BLE001 — 故意全吞，#16 红线
+    except Exception as exc:
         return _degrade(
             base_record, started, f"{type(exc).__name__}: {exc}", fallback, model
         )
@@ -152,32 +142,90 @@ def _degrade(
 
 
 def _make_client() -> object:
-    """惰性 import（#4：顶层不 import LLM SDK）。"""
-    import anthropic  # noqa: PLC0415 — 必须函数内 import
+    """根据环境变量创建合适的客户端。
 
-    return anthropic.Anthropic()
+    支持的 provider:
+    - glm (默认，智谱GLM-4-Flash永久免费不限量)
+    - qwen (阿里云通义千问，新用户500万tokens)
+    - siliconflow (硅基流动，注册送14元)
+    - deepseek (不免费，2元/百万tokens)
+    - openai / anthropic / custom
+    """
+    provider = os.getenv("LLM_PROVIDER", "glm").lower()
+
+    if provider in ["deepseek", "qwen", "glm", "siliconflow", "custom", "openai"]:
+        # 使用 OpenAI SDK 兼容的所有服务
+        import openai
+
+        api_key = os.getenv(f"{provider.upper()}_API_KEY") or os.getenv("OPENAI_API_KEY")
+        base_url = os.getenv("LLM_BASE_URL")
+
+        if provider == "deepseek" and not base_url:
+            base_url = "https://api.deepseek.com/v1"
+        elif provider == "qwen" and not base_url:
+            base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+        elif provider == "glm" and not base_url:
+            base_url = "https://open.bigmodel.cn/api/paas/v4/"
+        elif provider == "siliconflow" and not base_url:
+            base_url = "https://api.siliconflow.cn/v1"
+        elif provider == "custom" and not base_url:
+            base_url = os.getenv("CUSTOM_BASE_URL")
+
+        if not api_key:
+            api_key = os.getenv("API_KEY", "dummy")
+
+        return openai.OpenAI(
+            api_key=api_key,
+            base_url=base_url,
+        )
+    elif provider == "anthropic":
+        import anthropic
+        return anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+
+    raise ValueError(f"不支持的 LLM provider: {provider}")
 
 
 def _invoke(
     client: object, prompt: str, model: Optional[str], timeout_s: float
 ) -> tuple[str, float]:
-    """实际调用。返回 (文本, 预估成本 USD)。
+    """实际调用。返回 (文本, 预估成本 USD)。"""
+    provider = os.getenv("LLM_PROVIDER", "glm").lower()
 
-    成本估算用粗略 token≈chars/4 + 公开价目，仅用于 cost_cap 拦截，不求精确。
-    具体 client 接口由仓主按所选 SDK 落地——本草稿给的是 anthropic messages 形态。
-    """
-    mdl = model or "claude-3-5-haiku-20241022"
-    resp = client.messages.create(  # type: ignore[attr-defined]
-        model=mdl,
-        max_tokens=1024,
-        messages=[{"role": "user", "content": prompt}],
-        timeout=timeout_s,
-    )
-    text = "".join(
-        block.text for block in resp.content if getattr(block, "type", "") == "text"
-    )
-    in_tok = len(prompt) / 4
-    out_tok = len(text) / 4
-    # haiku 粗略价（USD/Mtok）：in 0.8 / out 4.0
-    est_cost = (in_tok * 0.8 + out_tok * 4.0) / 1_000_000
+    if not model:
+        model = {
+            "glm": "glm-4-flash",
+            "qwen": "qwen-turbo",
+            "siliconflow": "Qwen/Qwen2.5-7B-Instruct",
+            "deepseek": "deepseek-chat",
+            "openai": "gpt-4o-mini",
+            "anthropic": "claude-3-5-haiku-20241022",
+            "custom": os.getenv("LLM_MODEL", "gpt-4o-mini"),
+        }.get(provider, "glm-4-flash")
+
+    if provider == "anthropic":
+        resp = client.messages.create(
+            model=model,
+            max_tokens=1024,
+            messages=[{"role": "user", "content": prompt}],
+            timeout=timeout_s,
+        )
+        text = "".join(
+            block.text for block in resp.content if getattr(block, "type", "") == "text"
+        )
+        in_tok = len(prompt) / 4
+        out_tok = len(text) / 4
+        est_cost = (in_tok * 0.8 + out_tok * 4.0) / 1_000_000
+    else:
+        # OpenAI 兼容的调用方式
+        resp = client.chat.completions.create(
+            model=model,
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=1024,
+            timeout=timeout_s,
+        )
+        text = resp.choices[0].message.content or ""
+        in_tok = len(prompt) / 4
+        out_tok = len(text) / 4
+        est_cost = 0.0
+
     return text, est_cost

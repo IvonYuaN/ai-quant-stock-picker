@@ -36,9 +36,9 @@ def test_universe_pool_get_symbols_uses_optional_index_constituents(monkeypatch)
     pool = UniversePool.from_default("zz500")
     monkeypatch.setattr(
         "aqsp.universe.pool.load_optional_index_constituents",
-        lambda index_code, as_of: ["000001", "600519"]
-        if index_code == "000905.SH"
-        else [],
+        lambda index_code, as_of: (
+            ["000001", "600519"] if index_code == "000905.SH" else []
+        ),
     )
 
     symbols = pool.get_symbols(as_of=date(2026, 6, 1))

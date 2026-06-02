@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+from typing import Any
 
 import pandas as pd
 
@@ -25,6 +26,31 @@ RESULT_COLUMNS = [
 ]
 
 
+def _format_debate_result(result: Any) -> str:
+    lines = []
+    lines.append("### 多Agent辩论")
+    lines.append(f"- 最终共识: {result.final_consensus}")
+    lines.append(f"- 建议调整: {result.recommended_adjustment}")
+    lines.append(f"- 辩论轮次: {len(result.rounds)}")
+
+    bull_count = sum(1 for v in result.final_vote.values() if v == "bullish")
+    bear_count = sum(1 for v in result.final_vote.values() if v == "bearish")
+    if bull_count or bear_count:
+        lines.append(f"- 投票结果: 看多 {bull_count} 票 / 看空 {bear_count} 票")
+
+    if result.risk_warnings:
+        lines.append("#### 风险提示")
+        for risk in result.risk_warnings:
+            lines.append(f"- ⚠️ {risk}")
+
+    if result.opportunity_highlights:
+        lines.append("#### 机会亮点")
+        for opp in result.opportunity_highlights:
+            lines.append(f"- ✅ {opp}")
+
+    return "\n".join(lines)
+
+
 def to_dataframe(picks: list[PickResult]) -> pd.DataFrame:
     rows = []
     for pick in picks:
@@ -44,6 +70,7 @@ def to_markdown(
     picks: list[PickResult],
     title: str = "AI 量化选股报告",
     metadata: RunMetadata | None = None,
+    debate_results: list[Any] | None = None,
 ) -> str:
     lines = [f"# {title}", ""]
     if metadata is not None:
@@ -51,6 +78,8 @@ def to_markdown(
     if not picks:
         lines.append("无符合条件的候选。")
         return "\n".join(lines)
+
+    debate_map = {r.symbol: r for r in debate_results} if debate_results else {}
 
     for idx, pick in enumerate(picks, 1):
         display = f"{pick.symbol} {pick.name}".strip()
@@ -69,6 +98,10 @@ def to_markdown(
                 "",
             ]
         )
+        if pick.symbol in debate_map:
+            lines.append(_format_debate_result(debate_map[pick.symbol]))
+            lines.append("")
+
     lines.append("> 仅供研究，不构成投资建议。")
     return "\n".join(lines)
 

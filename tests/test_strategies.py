@@ -9,6 +9,11 @@ from aqsp.strategies.momentum import MomentumStrategy
 from aqsp.strategies.quality import QualityStrategy
 from aqsp.strategies.value import ValueStrategy
 from aqsp.strategies.composite import CompositeStrategy
+from aqsp.strategies.closing_premium import (
+    ClosingPremiumStrategy,
+    PremiumSignal,
+    format_closing_signals,
+)
 from aqsp.strategies.thresholds import load_thresholds
 
 
@@ -312,3 +317,205 @@ def test_base_strategy_select_top():
     assert len(top) == 2
     assert "C" in top
     assert "A" in top
+
+
+def test_closing_premium_strategy_init():
+    config = StrategyConfig(name="closing_premium")
+    strategy = ClosingPremiumStrategy(config)
+
+    assert strategy.id == "closing_premium"
+    assert strategy.name == "closing_premium"
+    assert strategy.version == "1.1.0"
+    assert strategy.hypothesis == "尾盘异动股票往往有资金介入，次日有溢价空间"
+    assert "stable_bull" in strategy.regime_required
+    assert "stable_sideways" in strategy.regime_required
+    assert "volatile_bull" in strategy.regime_required
+
+
+def test_closing_premium_strategy_with_thresholds():
+    thresholds = load_thresholds()
+    config = StrategyConfig(name="closing_premium")
+    strategy = ClosingPremiumStrategy(config, thresholds=thresholds)
+
+    assert strategy.cfg.enabled is True
+    assert strategy.cfg.min_change_pct == 2.0
+    assert strategy.cfg.max_change_pct == 7.0
+    assert strategy.cfg.min_score == 65.0
+
+
+def test_closing_premium_calculate_score_empty_data():
+    config = StrategyConfig(name="closing_premium")
+    strategy = ClosingPremiumStrategy(config)
+
+    scores = strategy.calculate_score({"600000": pd.DataFrame()})
+    assert scores["600000"] == 0.0
+
+
+def test_closing_premium_calculate_score_insufficient_data():
+    config = StrategyConfig(name="closing_premium")
+    strategy = ClosingPremiumStrategy(config)
+
+    df = pd.DataFrame(
+        {
+            "date": ["2026-01-01"],
+            "close": [10.0],
+            "open": [9.8],
+            "high": [10.2],
+            "low": [9.7],
+            "volume": [100000],
+        }
+    )
+    scores = strategy.calculate_score({"600000": df})
+    assert scores["600000"] == 0.0
+
+
+def test_closing_premium_calculate_score_normal_data():
+    config = StrategyConfig(name="closing_premium")
+    strategy = ClosingPremiumStrategy(config)
+
+    dates = pd.date_range("2026-01-01", periods=30, freq="D")
+    prices = np.linspace(10, 12, 30)
+    df = pd.DataFrame(
+        {
+            "date": dates.strftime("%Y-%m-%d"),
+            "close": prices,
+            "open": prices * 0.99,
+            "high": prices * 1.01,
+            "low": prices * 0.98,
+            "volume": np.random.randint(50000, 200000, 30),
+        }
+    )
+    scores = strategy.calculate_score({"600000": df})
+    assert "600000" in scores
+    assert 0 <= scores["600000"] <= 1
+
+
+def test_closing_premium_analyze_closing_returns_signals():
+    config = StrategyConfig(name="closing_premium")
+    strategy = ClosingPremiumStrategy(config)
+
+    dates = pd.date_range("2026-01-01", periods=30, freq="D")
+    base_price = 10.0
+    prices = [base_price]
+    for i in range(1, 30):
+        if i >= 25:
+            prices.append(prices[-1] * 1.04)
+        else:
+            prices.append(prices[-1] * 1.01)
+
+    df = pd.DataFrame(
+        {
+            "date": dates.strftime("%Y-%m-%d"),
+            "close": prices,
+            "open": [p * 0.98 for p in prices],
+            "high": [p * 1.02 for p in prices],
+            "low": [p * 0.97 for p in prices],
+            "volume": [100000 + i * 10000 for i in range(30)],
+            "name": ["测试股票"] * 30,
+        }
+    )
+    signals = strategy.analyze_closing({"600000": df})
+    assert isinstance(signals, list)
+
+
+def test_closing_premium_premium_signal_dataclass():
+    signal = PremiumSignal(
+        symbol="600000",
+        name="测试股票",
+        signal_type="尾盘拉升",
+        score=75.0,
+        current_price=10.5,
+        entry_price=10.3,
+        stop_loss=9.8,
+        take_profit_1=11.0,
+        take_profit_2=11.5,
+        reasons=("涨幅适中", "量价齐升"),
+        risks=("高开风险",),
+        confidence=0.75,
+        holding_days=2,
+        expected_return=6.8,
+    )
+
+    assert signal.symbol == "600000"
+    assert signal.name == "测试股票"
+    assert signal.score == 75.0
+    assert signal.confidence == 0.75
+    assert signal.holding_days == 2
+    assert len(signal.reasons) == 2
+    assert len(signal.risks) == 1
+
+
+def test_format_closing_signals_empty():
+    result = format_closing_signals([])
+    assert "未发现符合条件的股票" in result
+
+
+def test_format_closing_signals_with_signals():
+    signals = [
+        PremiumSignal(
+            symbol="600000",
+            name="测试股票A",
+            signal_type="尾盘拉升",
+            score=80.0,
+            current_price=10.5,
+            entry_price=10.3,
+            stop_loss=9.8,
+            take_profit_1=11.0,
+            take_profit_2=11.5,
+            reasons=("涨幅适中",),
+            risks=(),
+            confidence=0.8,
+            holding_days=2,
+            expected_return=6.8,
+        ),
+        PremiumSignal(
+            symbol="600001",
+            name="测试股票B",
+            signal_type="量价突破",
+            score=75.0,
+            current_price=15.2,
+            entry_price=15.0,
+            stop_loss=14.2,
+            take_profit_1=16.0,
+            take_profit_2=16.5,
+            reasons=("量价齐升", "MACD金叉"),
+            risks=("涨幅较大",),
+            confidence=0.7,
+            holding_days=3,
+            expected_return=6.7,
+        ),
+    ]
+
+    result = format_closing_signals(signals, top_n=2)
+    assert "尾盘溢价策略推荐" in result
+    assert "600000" in result
+    assert "600001" in result
+    assert "测试股票A" in result
+    assert "测试股票B" in result
+    assert "操作建议" in result
+
+
+def test_closing_premium_evaluate_regime_filter():
+    config = StrategyConfig(name="closing_premium")
+    strategy = ClosingPremiumStrategy(config)
+
+    dates = pd.date_range("2026-01-01", periods=30, freq="D")
+    prices = np.linspace(10, 12, 30)
+    df = pd.DataFrame(
+        {
+            "date": dates.strftime("%Y-%m-%d"),
+            "close": prices,
+            "open": prices * 0.99,
+            "high": prices * 1.01,
+            "low": prices * 0.98,
+            "volume": [100000] * 30,
+        }
+    )
+
+    signal = strategy.evaluate(df, "volatile_bear")
+    assert signal.fired is False
+    assert signal.score == 0.0
+
+    signal = strategy.evaluate(df, "stable_bull")
+    assert isinstance(signal.fired, bool)
+    assert isinstance(signal.score, float)

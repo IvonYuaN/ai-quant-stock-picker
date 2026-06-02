@@ -1,0 +1,103 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+import numpy as np
+import pandas as pd
+
+
+@dataclass(frozen=True)
+class CorrelationResult:
+    matrix: dict[str, dict[str, float]]
+    high_corr_pairs: list[tuple[str, str, float]]
+    avg_correlation: float
+
+
+def compute_correlation(
+    frames: dict[str, pd.DataFrame],
+    symbols: list[str],
+    window: int = 20,
+) -> CorrelationResult:
+    available = [s for s in symbols if s in frames and len(frames[s]) >= 2]
+    if len(available) < 2:
+        return CorrelationResult(
+            matrix={},
+            high_corr_pairs=[],
+            avg_correlation=0.0,
+        )
+
+    returns_dict: dict[str, pd.Series] = {}
+    for sym in available:
+        df = frames[sym]
+        if "close" not in df.columns:
+            continue
+        tail = df["close"].tail(window + 1)
+        ret = tail.pct_change().dropna()
+        if len(ret) >= 2:
+            returns_dict[sym] = ret.reset_index(drop=True)
+
+    valid_symbols = sorted(returns_dict.keys())
+    if len(valid_symbols) < 2:
+        return CorrelationResult(
+            matrix={},
+            high_corr_pairs=[],
+            avg_correlation=0.0,
+        )
+
+    returns_df = pd.DataFrame(returns_dict)
+    corr_df = returns_df.corr()
+
+    matrix: dict[str, dict[str, float]] = {}
+    for s1 in valid_symbols:
+        matrix[s1] = {}
+        for s2 in valid_symbols:
+            val = corr_df.loc[s1, s2]
+            matrix[s1][s2] = round(float(val), 4) if not np.isnan(val) else 0.0
+
+    high_corr_pairs: list[tuple[str, str, float]] = []
+    off_diag_values: list[float] = []
+    for i, s1 in enumerate(valid_symbols):
+        for j, s2 in enumerate(valid_symbols):
+            if j <= i:
+                continue
+            val = matrix[s1][s2]
+            off_diag_values.append(val)
+            if val > 0.7:
+                if s1 < s2:
+                    high_corr_pairs.append((s1, s2, val))
+                else:
+                    high_corr_pairs.append((s2, s1, val))
+
+    high_corr_pairs.sort(key=lambda x: x[2], reverse=True)
+
+    avg_corr = float(np.mean(off_diag_values)) if off_diag_values else 0.0
+
+    return CorrelationResult(
+        matrix=matrix,
+        high_corr_pairs=high_corr_pairs,
+        avg_correlation=round(avg_corr, 4),
+    )
+
+
+def format_correlation(result: CorrelationResult) -> str:
+    lines = ["📈 候选股相关性分析"]
+    lines.append(f"   平均相关系数: {result.avg_correlation:.2f}")
+
+    if result.high_corr_pairs:
+        lines.append("")
+        lines.append("   ⚠️ 高相关性配对（> 0.7，分散化风险）:")
+        for s1, s2, corr in result.high_corr_pairs:
+            lines.append(f"      {s1} ↔ {s2}: {corr:.2f}")
+    else:
+        lines.append("   ✅ 无高相关性配对，分散化良好")
+
+    if result.matrix:
+        syms = sorted(result.matrix.keys())
+        lines.append("")
+        header = "         " + "  ".join(f"{s:>8s}" for s in syms)
+        lines.append(header)
+        for s1 in syms:
+            row_vals = "  ".join(f"{result.matrix[s1][s2]:8.2f}" for s2 in syms)
+            lines.append(f"   {s1:>6s}  {row_vals}")
+
+    return "\n".join(lines)

@@ -1,0 +1,156 @@
+version: "1.0"
+effective_from: "2026-06-01"
+last_walkforward_run: ""
+notes: "多因子轮动策略配置，基于A股市场经验设定初始权重"
+
+factors:
+  momentum:
+    rsi_14:
+      enabled: true
+      weight: 0.15
+      lookback: 14
+      description: "14日RSI指标，衡量价格动量"
+    roc_20:
+      enabled: true
+      weight: 0.10
+      lookback: 20
+      description: "20日价格变化率"
+    macd_signal:
+      enabled: true
+      weight: 0.12
+      lookback: 26
+      description: "MACD信号强度"
+    ma_cross:
+      enabled: true
+      weight: 0.08
+      lookback: 20
+      description: "均线交叉信号"
+
+  value:
+    pe_ratio:
+      enabled: true
+      weight: 0.12
+      description: "市盈率，越低越好"
+    pb_ratio:
+      enabled: true
+      weight: 0.08
+      description: "市净率，越低越好"
+    dividend_yield:
+      enabled: true
+      weight: 0.10
+      description: "股息率，越高越好"
+    ev_ebitda:
+      enabled: false
+      weight: 0.05
+      description: "企业价值/EBITDA"
+
+  quality:
+    roe:
+      enabled: true
+      weight: 0.10
+      description: "净资产收益率，衡量盈利能力"
+    gross_margin:
+      enabled: true
+      weight: 0.08
+      description: "毛利率"
+    debt_ratio:
+      enabled: true
+      weight: 0.07
+      description: "资产负债率，越低越好"
+    cash_flow_ratio:
+      enabled: false
+      weight: 0.05
+      description: "经营现金流/净利润"
+
+  volatility:
+    atr_14:
+      enabled: true
+      weight: 0.08
+      description: "14日ATR，衡量价格波动"
+    beta_60:
+      enabled: true
+      weight: 0.05
+      description: "60日Beta，衡量系统性风险"
+    volatility_20:
+      enabled: true
+      weight: 0.07
+      description: "20日收益率标准差"
+
+  liquidity:
+    turnover_rate:
+      enabled: true
+      weight: 0.06
+      description: "换手率，衡量流动性"
+    volume_ratio:
+      enabled: true
+      weight: 0.04
+      description: "成交量比率"
+    amihud_illiquidity:
+      enabled: false
+      weight: 0.03
+      description: "Amihud非流动性指标"
+
+regime_adjustments:
+  stable_bull:
+    momentum: 1.2
+    value: 0.8
+    quality: 1.0
+    volatility: 0.9
+    liquidity: 1.0
+    description: "稳定牛市，动量因子增强"
+
+  volatile_bull:
+    momentum: 1.1
+    value: 0.9
+    quality: 0.9
+    volatility: 1.1
+    liquidity: 1.1
+    description: "波动牛市，关注波动和流动性"
+
+  stable_bear:
+    momentum: 0.8
+    value: 1.2
+    quality: 1.1
+    volatility: 1.0
+    liquidity: 0.9
+    description: "稳定熊市，价值和质量因子增强"
+
+  volatile_bear:
+    momentum: 0.7
+    value: 1.1
+    quality: 1.2
+    volatility: 1.2
+    liquidity: 0.8
+    description: "波动熊市，质量因子最重要"
+
+  stable_sideways:
+    momentum: 0.9
+    value: 1.1
+    quality: 1.1
+    volatility: 1.0
+    liquidity: 1.0
+    description: "稳定震荡，价值和质量略增强"
+
+  volatile_sideways:
+    momentum: 0.8
+    value: 1.0
+    quality: 1.0
+    volatility: 1.1
+    liquidity: 1.1
+    description: "波动震荡，关注波动和流动性"
+
+factor_monitor:
+  lookback_days: 60
+  min_ic_threshold: 0.02
+  min_ir_threshold: 0.5
+  max_turnover: 0.5
+  min_win_rate: 0.45
+  disable_threshold: 0.02
+  cooldown_days: 30
+  min_sample_size: 30
+
+scoring:
+  min_total_score: 0.6
+  top_n: 10
+  weight_floor: 0.65
+  weight_ceiling: 1.45

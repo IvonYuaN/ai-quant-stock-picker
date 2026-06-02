@@ -44,7 +44,18 @@ def prepend_source_status_banner(
 
 def notify_markdown(markdown: str) -> list[NotifyResult]:
     results: list[NotifyResult] = []
-    for sender in (_send_telegram, _send_wechat, _send_feishu, _send_generic_webhook):
+    for sender in (
+        _send_telegram,
+        _send_wechat,
+        _send_serverchan,
+        _send_feishu,
+        _send_dingtalk,
+        _send_bark,
+        _send_pushplus,
+        _send_discord,
+        _send_slack,
+        _send_generic_webhook,
+    ):
         result = sender(markdown)
         if result is not None:
             results.append(result)
@@ -61,6 +72,18 @@ def _send_telegram(markdown: str) -> NotifyResult | None:
     return _post("telegram", url, json=payload)
 
 
+def _send_serverchan(markdown: str) -> NotifyResult | None:
+    sendkey = os.getenv("SERVERCHAN_SENDKEY", "").strip()
+    if not sendkey:
+        return None
+    url = f"https://sctapi.ftqq.com/{sendkey}.send"
+    payload = {
+        "title": "量化选股通知",
+        "desp": markdown[:4000],
+    }
+    return _post("serverchan", url, data=payload)
+
+
 def _send_wechat(markdown: str) -> NotifyResult | None:
     url = os.getenv("WECHAT_WEBHOOK_URL", "").strip()
     if not url:
@@ -75,6 +98,96 @@ def _send_feishu(markdown: str) -> NotifyResult | None:
         return None
     payload = {"msg_type": "text", "content": {"text": markdown[:3800]}}
     return _post("feishu", url, json=payload)
+
+
+def _send_dingtalk(markdown: str) -> NotifyResult | None:
+    url = os.getenv("DINGTALK_WEBHOOK_URL", "").strip()
+    secret = os.getenv("DINGTALK_SECRET", "").strip()
+    if not url:
+        return None
+    payload = {
+        "msgtype": "markdown",
+        "markdown": {"title": "量化选股", "text": markdown[:3800]},
+    }
+    if secret:
+        import time
+        import hmac
+        import hashlib
+        import base64
+
+        timestamp = str(round(time.time() * 1000))
+        secret_enc = secret.encode("utf-8")
+        string_to_sign = f"{timestamp}\n{secret}"
+        string_to_sign_enc = string_to_sign.encode("utf-8")
+        hmac_code = hmac.new(
+            secret_enc, string_to_sign_enc, digestmod=hashlib.sha256
+        ).digest()
+        sign = base64.b64encode(hmac_code).decode("utf-8")
+        url = f"{url}&timestamp={timestamp}&sign={sign}"
+    return _post("dingtalk", url, json=payload)
+
+
+def _send_bark(markdown: str) -> NotifyResult | None:
+    url = os.getenv("BARK_URL", "").strip()
+    if not url:
+        return None
+    if not url.endswith("/"):
+        url += "/"
+    title = "量化选股通知"
+    url = f"{url}{title}/{markdown[:500]}"
+    return _post("bark", url)
+
+
+def _send_pushplus(markdown: str) -> NotifyResult | None:
+    token = os.getenv("PUSHPLUS_TOKEN", "").strip()
+    if not token:
+        return None
+    url = "https://www.pushplus.plus/send"
+    payload = {
+        "token": token,
+        "title": "量化选股通知",
+        "content": markdown[:4000],
+        "template": "markdown",
+    }
+    return _post("pushplus", url, json=payload)
+
+
+def _send_discord(markdown: str) -> NotifyResult | None:
+    url = os.getenv("DISCORD_WEBHOOK_URL", "").strip()
+    if not url:
+        return None
+    payload = {"content": markdown[:2000]}
+    return _post("discord", url, json=payload)
+
+
+def _send_slack(markdown: str) -> NotifyResult | None:
+    url = os.getenv("SLACK_WEBHOOK_URL", "").strip()
+    if not url:
+        return None
+    payload = {"text": markdown[:4000]}
+    return _post("slack", url, json=payload)
+
+
+def _build_smart_summary_card(title: str, summary_markdown: str) -> dict[str, Any]:
+    return {
+        "msg_type": "interactive",
+        "card": {
+            "header": {
+                "title": {"tag": "plain_text", "content": title},
+                "template": "turquoise",
+            },
+            "elements": [
+                {"tag": "markdown", "content": summary_markdown[:3800]},
+            ],
+        },
+    }
+
+
+def notify_feishu_card(card: dict[str, Any]) -> NotifyResult | None:
+    url = os.getenv("FEISHU_WEBHOOK_URL", "").strip()
+    if not url:
+        return None
+    return _post("feishu", url, json=card)
 
 
 def _send_generic_webhook(markdown: str) -> NotifyResult | None:

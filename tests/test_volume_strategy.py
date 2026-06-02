@@ -24,16 +24,18 @@ def _make_df(n: int = 60, base_price: float = 10.0, base_vol: float = 1e6):
     prices = np.maximum(prices, 1.0)
     volumes = base_vol + rng.normal(0, base_vol * 0.2, n)
     volumes = np.maximum(volumes, 1000)
-    return pd.DataFrame({
-        "date": dates.strftime("%Y-%m-%d"),
-        "open": prices,
-        "high": prices * 1.02,
-        "low": prices * 0.98,
-        "close": prices,
-        "volume": volumes,
-        "symbol": "TEST",
-        "name": "TEST",
-    })
+    return pd.DataFrame(
+        {
+            "date": dates.strftime("%Y-%m-%d"),
+            "open": prices,
+            "high": prices * 1.02,
+            "low": prices * 0.98,
+            "close": prices,
+            "volume": volumes,
+            "symbol": "TEST",
+            "name": "TEST",
+        }
+    )
 
 
 def test_volume_surge_high_volume(strategy):

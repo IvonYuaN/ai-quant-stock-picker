@@ -139,7 +139,9 @@ invalid json line
 def test_filter_t1_held_no_ledger():
     """ledger 文件不存在时返回所有 candidates"""
     candidates = ["600519", "000858"]
-    kept, removed = filter_t1_held(candidates, "/tmp/nonexistent.jsonl", date(2026, 5, 27))
+    kept, removed = filter_t1_held(
+        candidates, "/tmp/nonexistent.jsonl", date(2026, 5, 27)
+    )
     assert kept == candidates
     assert removed == []
 

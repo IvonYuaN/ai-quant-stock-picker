@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Dict, List
 import pandas as pd
 
@@ -11,6 +12,71 @@ from aqsp.strategies.volume import VolumeBreakoutStrategy
 from aqsp.strategies.mean_reversion import MeanReversionStrategy
 from aqsp.strategies.triple_rise import TripleRiseStrategy
 from aqsp.strategies.thresholds import Thresholds, load_thresholds
+
+
+@dataclass(frozen=True)
+class RegimeWeights:
+    """市场状态对应的策略权重调整"""
+
+    momentum: float = 1.0
+    quality: float = 1.0
+    value: float = 1.0
+    volume: float = 1.0
+    mean_reversion: float = 1.0
+    triple_rise: float = 1.0
+
+
+# 不同市场状态下的策略权重调整系数
+REGIME_WEIGHT_MAP: dict[str, RegimeWeights] = {
+    "stable_bull": RegimeWeights(
+        momentum=1.2,
+        quality=0.9,
+        value=0.8,
+        volume=1.1,
+        mean_reversion=0.7,
+        triple_rise=1.1,
+    ),
+    "volatile_bull": RegimeWeights(
+        momentum=1.1,
+        quality=0.8,
+        value=0.9,
+        volume=1.2,
+        mean_reversion=0.8,
+        triple_rise=1.0,
+    ),
+    "stable_bear": RegimeWeights(
+        momentum=0.7,
+        quality=1.3,
+        value=1.2,
+        volume=0.8,
+        mean_reversion=1.3,
+        triple_rise=0.8,
+    ),
+    "volatile_bear": RegimeWeights(
+        momentum=0.6,
+        quality=1.2,
+        value=1.1,
+        volume=0.9,
+        mean_reversion=1.4,
+        triple_rise=0.7,
+    ),
+    "stable_sideways": RegimeWeights(
+        momentum=0.9,
+        quality=1.1,
+        value=1.1,
+        volume=1.0,
+        mean_reversion=1.1,
+        triple_rise=0.9,
+    ),
+    "volatile_sideways": RegimeWeights(
+        momentum=0.8,
+        quality=1.0,
+        value=1.0,
+        volume=1.1,
+        mean_reversion=1.2,
+        triple_rise=0.8,
+    ),
+}
 
 
 class CompositeStrategy(BaseStrategy):
@@ -69,7 +135,25 @@ class CompositeStrategy(BaseStrategy):
     def _has_tr(self) -> bool:
         return self.thresholds.composite.triple_rise_weight > 0
 
-    def calculate_score(self, data: Dict[str, pd.DataFrame]) -> Dict[str, float]:
+    def get_regime_adjusted_weights(
+        self, regime: str
+    ) -> tuple[float, float, float, float, float, float]:
+        """根据市场状态调整策略权重"""
+        base = self.thresholds.composite
+        adjustment = REGIME_WEIGHT_MAP.get(regime, RegimeWeights())
+
+        return (
+            base.momentum_weight * adjustment.momentum,
+            base.quality_weight * adjustment.quality,
+            base.value_weight * adjustment.value,
+            base.volume_weight * adjustment.volume,
+            base.mean_reversion_weight * adjustment.mean_reversion,
+            base.triple_rise_weight * adjustment.triple_rise,
+        )
+
+    def calculate_score(
+        self, data: Dict[str, pd.DataFrame], regime: str = "unknown"
+    ) -> Dict[str, float]:
         momentum_scores = self.momentum_strategy.calculate_score(data)
 
         quality_scores: Dict[str, float] = {}
@@ -99,47 +183,49 @@ class CompositeStrategy(BaseStrategy):
         all_symbols |= set(mr_scores.keys())
         all_symbols |= set(tr_scores.keys())
 
-        weights = self.thresholds.composite
+        # 使用市场状态调整后的权重
+        mw, qw, vw, volw, mrw, trw = self.get_regime_adjusted_weights(regime)
+
         final_scores = {}
         for symbol in all_symbols:
             total = 0.0
             w_sum = 0.0
 
             m = momentum_scores.get(symbol, 0.5)
-            total += m * weights.momentum_weight
-            w_sum += weights.momentum_weight
+            total += m * mw
+            w_sum += mw
 
             if self.thresholds.quality.enabled:
                 q = quality_scores.get(symbol, 0.5)
-                total += q * weights.quality_weight
-                w_sum += weights.quality_weight
+                total += q * qw
+                w_sum += qw
 
             if self.thresholds.value.enabled:
                 v = value_scores.get(symbol, 0.5)
-                total += v * weights.value_weight
-                w_sum += weights.value_weight
+                total += v * vw
+                w_sum += vw
 
             if self.thresholds.volume.enabled:
                 vol = volume_scores.get(symbol, 0.5)
-                total += vol * weights.volume_weight
-                w_sum += weights.volume_weight
+                total += vol * volw
+                w_sum += volw
 
             if self._has_mr():
                 mr = mr_scores.get(symbol, 0.5)
-                total += mr * weights.mean_reversion_weight
-                w_sum += weights.mean_reversion_weight
+                total += mr * mrw
+                w_sum += mrw
 
             if self._has_tr():
                 tr = tr_scores.get(symbol, 0.5)
-                total += tr * weights.triple_rise_weight
-                w_sum += weights.triple_rise_weight
+                total += tr * trw
+                w_sum += trw
 
             final_scores[symbol] = total / w_sum if w_sum > 0 else 0.0
 
         return final_scores
 
     def calculate_detailed_scores(
-        self, data: Dict[str, pd.DataFrame]
+        self, data: Dict[str, pd.DataFrame], regime: str = "unknown"
     ) -> Dict[str, Dict[str, float]]:
         momentum_scores = self.momentum_strategy.calculate_score(data)
 
@@ -170,43 +256,45 @@ class CompositeStrategy(BaseStrategy):
         all_symbols |= set(mr_scores.keys())
         all_symbols |= set(tr_scores.keys())
 
-        weights = self.thresholds.composite
+        # 使用市场状态调整后的权重
+        mw, qw, vw, volw, mrw, trw = self.get_regime_adjusted_weights(regime)
+
         detailed = {}
         for symbol in all_symbols:
             m = momentum_scores.get(symbol, 0.5)
             entry: Dict[str, float] = {"momentum": m}
-            total = m * weights.momentum_weight
-            w_sum = weights.momentum_weight
+            total = m * mw
+            w_sum = mw
 
             if self.thresholds.quality.enabled:
                 q = quality_scores.get(symbol, 0.5)
                 entry["quality"] = q
-                total += q * weights.quality_weight
-                w_sum += weights.quality_weight
+                total += q * qw
+                w_sum += qw
 
             if self.thresholds.value.enabled:
                 v = value_scores.get(symbol, 0.5)
                 entry["value"] = v
-                total += v * weights.value_weight
-                w_sum += weights.value_weight
+                total += v * vw
+                w_sum += vw
 
             if self.thresholds.volume.enabled:
                 vol = volume_scores.get(symbol, 0.5)
                 entry["volume"] = vol
-                total += vol * weights.volume_weight
-                w_sum += weights.volume_weight
+                total += vol * volw
+                w_sum += volw
 
             if self._has_mr():
                 mr = mr_scores.get(symbol, 0.5)
                 entry["mean_reversion"] = mr
-                total += mr * weights.mean_reversion_weight
-                w_sum += weights.mean_reversion_weight
+                total += mr * mrw
+                w_sum += mrw
 
             if self._has_tr():
                 tr = tr_scores.get(symbol, 0.5)
                 entry["triple_rise"] = tr
-                total += tr * weights.triple_rise_weight
-                w_sum += weights.triple_rise_weight
+                total += tr * trw
+                w_sum += trw
 
             entry["total"] = total / w_sum if w_sum > 0 else 0.0
             detailed[symbol] = entry

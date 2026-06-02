@@ -30,7 +30,9 @@ def test_preflight_allows_research_registry() -> None:
     assert check_upload_candidates(["data/open_source_research.jsonl"]) == []
 
 
-def test_git_lines_runs_from_repo_root_when_called_elsewhere(monkeypatch, tmp_path) -> None:
+def test_git_lines_runs_from_repo_root_when_called_elsewhere(
+    monkeypatch, tmp_path
+) -> None:
     monkeypatch.chdir(tmp_path)
 
     files = _git_lines(["ls-files", "pyproject.toml"])

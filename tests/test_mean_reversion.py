@@ -24,16 +24,18 @@ def _make_df(n: int = 30, base_price: float = 10.0, trend: float = 0.0):
     prices = np.maximum(prices, 1.0)
     volumes = 1e6 + rng.normal(0, 2e5, n)
     volumes = np.maximum(volumes, 1000)
-    return pd.DataFrame({
-        "date": dates.strftime("%Y-%m-%d"),
-        "open": prices,
-        "high": prices * 1.02,
-        "low": prices * 0.98,
-        "close": prices,
-        "volume": volumes,
-        "symbol": "TEST",
-        "name": "TEST",
-    })
+    return pd.DataFrame(
+        {
+            "date": dates.strftime("%Y-%m-%d"),
+            "open": prices,
+            "high": prices * 1.02,
+            "low": prices * 0.98,
+            "close": prices,
+            "volume": volumes,
+            "symbol": "TEST",
+            "name": "TEST",
+        }
+    )
 
 
 def test_rsi_oversold_extreme():

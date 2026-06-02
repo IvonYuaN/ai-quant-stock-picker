@@ -19,7 +19,9 @@ class EnhancedBriefing:
         return self.original.to_markdown()
 
 
-def enhance_briefing(briefing: Briefing, enable_llm: bool = False) -> Briefing | EnhancedBriefing:
+def enhance_briefing(
+    briefing: Briefing, enable_llm: bool = False
+) -> Briefing | EnhancedBriefing:
     """使用 llm_call_or_fallback 来增强 briefing。
     根据宪法 §3.2/#16，任何异常都会吞掉并降级，绝不冒泡。
     """

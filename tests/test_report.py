@@ -48,7 +48,9 @@ def test_report_renders_run_metadata_when_provided() -> None:
 
     assert "## 运行参数" in markdown
     assert "- 数据源: auto -> tdx_vipdoc" in markdown
-    assert "- 数据层级: fresh=end_of_day / cover=history_core / local=present" in markdown
+    assert (
+        "- 数据层级: fresh=end_of_day / cover=history_core / local=present" in markdown
+    )
     assert "- 数据时效: latest=2026-05-29 / lag=0d" in markdown
     assert "- 数据健康: healthy / tdx_vipdoc 健康；源成功/失败 3/0" in markdown
     assert "显式 0 / 解析 100 / 取数 101 / 筛选前 8 / 最终 1" in markdown

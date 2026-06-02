@@ -9,6 +9,7 @@ from aqsp.cli import _assert_not_heldout, HELDOUT_TRAIN_CUTOFF
 
 # ---- 边界内：放行 ----
 
+
 def test_within_train_passes():
     """end 正好等于边界 → 放行（不抛）。"""
     _assert_not_heldout("2024-12-31", allow=False)
@@ -19,6 +20,7 @@ def test_before_cutoff_passes():
 
 
 # ---- 越界：默认拦截 ----
+
 
 def test_heldout_blocked_by_default():
     """end 越过边界且未开 --allow-heldout → SystemExit。"""
@@ -35,6 +37,7 @@ def test_boundary_just_past_blocks():
 
 # ---- 越界 + allow：放行并告警 ----
 
+
 def test_heldout_allowed_with_flag(capsys):
     """显式 --allow-heldout → 放行（不抛），但打印告警。"""
     _assert_not_heldout("2026-04-30", allow=True)
@@ -43,6 +46,7 @@ def test_heldout_allowed_with_flag(capsys):
 
 
 # ---- 加固：日期解析边缘情况 ----
+
 
 def test_whitespace_date_passes():
     """带空格的合法日期 → strip 后正常放行。

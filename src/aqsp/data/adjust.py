@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from datetime import date
+from typing import Literal
 import pandas as pd
 
 from aqsp.data.cache import DataCache
@@ -10,6 +11,13 @@ logger = logging.getLogger(__name__)
 
 
 class AdjustmentService:
+    """
+    符合 docs/architecture.md §3.1 约定的复权服务：
+    - 不复权原始数据用于 ledger/回测
+    - 前复权用于技术指标计算
+    - point-in-time 复权因子管理
+    """
+
     def __init__(self, cache: DataCache | None = None):
         self.cache = cache or DataCache()
 
@@ -22,6 +30,9 @@ class AdjustmentService:
         return pd.DataFrame(factors)
 
     def apply_qfq(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        前复权：用最新价格向前回溯，用于技术指标计算（仅用于指标生成，不用于 ledger/回测）
+        """
         df = df.copy().sort_values("date").reset_index(drop=True)
         if "adj_factor" not in df.columns:
             symbols = df["symbol"].unique()
@@ -42,6 +53,9 @@ class AdjustmentService:
         return df
 
     def apply_hfq(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        后复权：保持上市价不变，向后累积因子，用于长期收益计算
+        """
         df = df.copy().sort_values("date").reset_index(drop=True)
         if "adj_factor" not in df.columns:
             symbols = df["symbol"].unique()
@@ -76,6 +90,9 @@ class AdjustmentService:
                 ]
                 if not df.empty:
                     self.cache.set_adj_factors(symbol, df, source="akshare")
+                    logger.info(
+                        "复权因子缓存成功: symbol=%s, count=%d", symbol, len(df)
+                    )
         except Exception:
             logger.warning(
                 "获取复权因子失败: symbol=%s, start=%s, end=%s",
@@ -91,3 +108,33 @@ class AdjustmentService:
         min_date = pd.to_datetime(min(dates)).date()
         max_date = pd.to_datetime(max(dates)).date()
         self.fetch_and_cache_factors(symbol, min_date, max_date)
+
+    def get_adjusted_df(
+        self, df_raw: pd.DataFrame, adjust: Literal["", "qfq", "hfq"]
+    ) -> pd.DataFrame:
+        """
+        获取指定复权方式的数据，符合架构约定：
+        - adjust="" : 原始不复权（默认，用于 ledger/回测）
+        - adjust="qfq": 前复权（用于指标计算）
+        - adjust="hfq": 后复权（用于收益计算）
+        """
+        df = df_raw.copy()
+        if adjust == "":
+            return df  # 原始数据不修改
+
+        # 确保有复权因子
+        if "adj_factor" not in df.columns:
+            symbols = df["symbol"].unique()
+            if len(symbols) == 1:
+                self.ensure_factors_cached(symbols[0], list(df["date"]))
+                factors = self.get_point_in_time_factors(symbols[0], list(df["date"]))
+                df = df.merge(factors, on="date", how="left")
+            else:
+                df["adj_factor"] = 1.0
+
+        if adjust == "qfq":
+            return self.apply_qfq(df)
+        elif adjust == "hfq":
+            return self.apply_hfq(df)
+
+        return df

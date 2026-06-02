@@ -299,7 +299,9 @@ def test_export_dashboard_db_writes_candidates_ledger_and_meta(
     export_db(csv_path, ledger_path, db_path)
 
     with sqlite3.connect(db_path) as conn:
-        candidate_count = conn.execute("select count(*) from latest_candidates").fetchone()
+        candidate_count = conn.execute(
+            "select count(*) from latest_candidates"
+        ).fetchone()
         ledger_count = conn.execute("select count(*) from ledger").fetchone()
         meta = conn.execute(
             "select candidate_count, ledger_count, requested_source, actual_source, source_health_label, notify_level, fallback_used, research_total_findings, research_absorbed_families, research_report_only_families, research_gated_families from run_meta"

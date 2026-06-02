@@ -173,7 +173,17 @@ class TestCLIMinScoreParam:
             return 0
 
         monkeypatch.setattr(cli_mod, "run_walkforward", mock_run_walkforward)
-        result = main(["walkforward", "--symbols", "600519", "--start", "2024-01-01", "--end", "2024-06-30"])
+        result = main(
+            [
+                "walkforward",
+                "--symbols",
+                "600519",
+                "--start",
+                "2024-01-01",
+                "--end",
+                "2024-06-30",
+            ]
+        )
         assert result == 0
 
     def test_min_score_zero_accepts_all(self, monkeypatch):
@@ -185,7 +195,19 @@ class TestCLIMinScoreParam:
             return 0
 
         monkeypatch.setattr(cli_mod, "run_walkforward", mock_run_walkforward)
-        result = main(["walkforward", "--min-score", "0", "--symbols", "600519", "--start", "2024-01-01", "--end", "2024-06-30"])
+        result = main(
+            [
+                "walkforward",
+                "--min-score",
+                "0",
+                "--symbols",
+                "600519",
+                "--start",
+                "2024-01-01",
+                "--end",
+                "2024-06-30",
+            ]
+        )
         assert result == 0
 
     def test_min_score_overrides_yaml(self, tmp_path):
@@ -205,7 +227,19 @@ class TestCLICachePathParam:
             return 0
 
         monkeypatch.setattr(cli_mod, "run_walkforward", mock_run_walkforward)
-        result = main(["walkforward", "--cache-path", "/tmp/test_cache.db", "--symbols", "600519", "--start", "2024-01-01", "--end", "2024-06-30"])
+        result = main(
+            [
+                "walkforward",
+                "--cache-path",
+                "/tmp/test_cache.db",
+                "--symbols",
+                "600519",
+                "--start",
+                "2024-01-01",
+                "--end",
+                "2024-06-30",
+            ]
+        )
         assert result == 0
 
 
@@ -442,7 +476,9 @@ class TestCLIDataSources:
         )
         assert actual == "akshare"
         assert "600519" in frames
-        assert '"last_actual_source": "akshare"' in health_path.read_text(encoding="utf-8")
+        assert '"last_actual_source": "akshare"' in health_path.read_text(
+            encoding="utf-8"
+        )
 
         def fail(*args, **kwargs):
             raise DataError("upstream failed")
@@ -503,6 +539,25 @@ class TestCLIDataSources:
             "akshare",
         ]
         assert source.validate_consistency is False
+
+    def test_auto_source_plan_becomes_local_only_when_online_fallback_disabled(
+        self, monkeypatch
+    ):
+        import aqsp.cli as cli_mod
+
+        monkeypatch.setenv("AQSP_ALLOW_ONLINE_FALLBACK", "false")
+
+        class DummyTdx:
+            name = "tdx_vipdoc"
+
+            def __init__(self, *args, **kwargs):
+                pass
+
+        monkeypatch.setattr(cli_mod, "TdxVipdocSource", DummyTdx)
+
+        source = cli_mod._get_source("auto")
+
+        assert source.name == "tdx_vipdoc"
 
     def test_auto_source_plan_reorders_online_fallbacks_by_health(
         self,
@@ -650,7 +705,19 @@ class TestCLILogParam:
             return 0
 
         monkeypatch.setattr(cli_mod, "run_walkforward", mock_run_walkforward)
-        result = main(["walkforward", "--log", str(log_file), "--symbols", "600519", "--start", "2024-01-01", "--end", "2024-06-30"])
+        result = main(
+            [
+                "walkforward",
+                "--log",
+                str(log_file),
+                "--symbols",
+                "600519",
+                "--start",
+                "2024-01-01",
+                "--end",
+                "2024-06-30",
+            ]
+        )
         assert result == 0
 
 
@@ -664,7 +731,18 @@ class TestCLIUpdateYamlParam:
             return 0
 
         monkeypatch.setattr(cli_mod, "run_walkforward", mock_run_walkforward)
-        result = main(["walkforward", "--update-yaml", "--symbols", "600519", "--start", "2024-01-01", "--end", "2024-06-30"])
+        result = main(
+            [
+                "walkforward",
+                "--update-yaml",
+                "--symbols",
+                "600519",
+                "--start",
+                "2024-01-01",
+                "--end",
+                "2024-06-30",
+            ]
+        )
         assert result == 0
 
 
@@ -696,6 +774,7 @@ class TestCLIHs300Symbols:
 class TestCLIPoolSelection:
     def test_walkforward_pool_uses_universe_pool_symbols(self, monkeypatch, tmp_path):
         from aqsp.cli import main
+
         seen: dict[str, object] = {}
 
         class DummyPool:
@@ -728,7 +807,9 @@ class TestCLIPoolSelection:
                     periods=[],
                 )
 
-        def mock_fetch_frames(source_name, symbols, benchmark_symbol=None, cache_path=None, days=0):
+        def mock_fetch_frames(
+            source_name, symbols, benchmark_symbol=None, cache_path=None, days=0
+        ):
             seen["symbols"] = list(symbols)
             dates = pd.date_range(start="2024-01-01", periods=140, freq="B")
             frame = pd.DataFrame(
@@ -747,7 +828,10 @@ class TestCLIPoolSelection:
                     "limit_down": 9.0,
                 }
             )
-            return {"000001": frame.copy(), "600519": frame.assign(symbol="600519", name="贵州茅台")}
+            return {
+                "000001": frame.copy(),
+                "600519": frame.assign(symbol="600519", name="贵州茅台"),
+            }
 
         monkeypatch.setattr(
             "aqsp.universe.pool.UniversePool.from_default",
@@ -792,7 +876,9 @@ class TestCLIPoolSelection:
                 seen["pool_as_of"] = as_of.isoformat()
                 return ["000001", "600519"]
 
-        def mock_fetch_frames(source_name, symbols, benchmark_symbol=None, cache_path=None, days=0):
+        def mock_fetch_frames(
+            source_name, symbols, benchmark_symbol=None, cache_path=None, days=0
+        ):
             seen["symbols"] = list(symbols)
             latest = "2026-06-01"
             frame = pd.DataFrame(

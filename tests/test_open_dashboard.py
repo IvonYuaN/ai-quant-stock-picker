@@ -26,7 +26,9 @@ def test_render_dashboard_bundle_writes_html_and_db(tmp_path: Path) -> None:
         index=False,
     )
     ledger_path.write_text(
-        json.dumps({"signal_date": "2026-05-29", "symbol": "600519"}, ensure_ascii=False)
+        json.dumps(
+            {"signal_date": "2026-05-29", "symbol": "600519"}, ensure_ascii=False
+        )
         + "\n",
         encoding="utf-8",
     )
@@ -46,7 +48,9 @@ def test_render_dashboard_bundle_writes_html_and_db(tmp_path: Path) -> None:
     assert "固定端口面板" in output_path.read_text(encoding="utf-8")
 
 
-def test_ensure_dashboard_server_reuses_existing_server(monkeypatch, tmp_path: Path) -> None:
+def test_ensure_dashboard_server_reuses_existing_server(
+    monkeypatch, tmp_path: Path
+) -> None:
     monkeypatch.setattr("scripts.open_dashboard._url_reachable", lambda _url: True)
 
     started, pid = ensure_dashboard_server(

@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import re
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import pandas as pd
@@ -11,6 +12,11 @@ from aqsp.core.time import now_shanghai
 from aqsp.core.types import PickResult
 from aqsp.research.summary import ResearchSummary
 from aqsp.ratings import is_tradable_rating
+from aqsp.briefing.debate import (
+    AShareDebateCoordinator,
+    DebateResult,
+    format_debate_result,
+)
 
 _TEMPLATE_DIR = Path(__file__).parent / "templates"
 
@@ -42,6 +48,7 @@ class BriefingSection:
 class Briefing:
     date: str
     sections: list[BriefingSection]
+    debate_results: list[DebateResult] = field(default_factory=list)
 
     def to_markdown(self) -> str:
         lines = [f"# AI 量化选股日报 - {self.date}", ""]
@@ -50,11 +57,181 @@ class Briefing:
             lines.append("")
             lines.append(section.content)
             lines.append("")
+
+        # 添加辩论结果
+        if self.debate_results:
+            lines.append("## 多Agent辩论")
+            lines.append("")
+            lines.append("对重点候选标的进行了多Agent辩论分析：")
+            lines.append("")
+            for result in self.debate_results[:3]:
+                lines.append(format_debate_result(result))
+                lines.append("---")
+                lines.append("")
+
         lines.append("> 仅供研究，不构成投资建议。")
         return "\n".join(lines)
 
+    def _get_section(self, title: str) -> str:
+        for section in self.sections:
+            if section.title == title:
+                return section.content
+        return ""
+
+    def _extract_actionable_picks(self) -> list[str]:
+        next_day = self._get_section("明日重点")
+        if not next_day or "无可执行" in next_day:
+            return []
+        return re.findall(r"\*\*(\d{6}\s+\S+)\*\*", next_day)
+
+    def _extract_candidate_count(self) -> int:
+        evidence = self._get_section("候选证据链")
+        if not evidence:
+            return 0
+        return len(re.findall(r"###\s+\d{6}", evidence))
+
+    def _extract_top_scores(self) -> list[str]:
+        evidence = self._get_section("候选证据链")
+        if not evidence:
+            return []
+        return re.findall(r"###\s+(\d{6}\s+\S+)\s+\(评分[:：]\s*([\d.]+)\)", evidence)
+
+    def generate_smart_summary(self) -> str:
+        points: list[str] = []
+
+        risk_points = self._extract_risk_points()
+        points.extend(risk_points[:2])
+
+        debate_points = self._extract_debate_points()
+        points.extend(debate_points[:1])
+
+        top_scores = self._extract_top_scores()
+        if top_scores:
+            names = "、".join(f"{s[0]}({s[1]}分)" for s in top_scores[:3])
+            points.append(f"📊 候选标的: {names}")
+
+        actionable = self._extract_actionable_picks()
+        if actionable:
+            names = "、".join(actionable[:3])
+            points.append(f"🎯 可执行标的: {names}")
+
+        source_points = self._extract_source_health_points()
+        if source_points:
+            points.append(source_points[0])
+
+        regime_points = self._extract_regime_points()
+        points.extend(regime_points[:1])
+
+        points = points[:5]
+
+        one_liner = self._build_one_liner(
+            candidate_count=self._extract_candidate_count(),
+            actionable_count=len(actionable),
+            risk_count=len(risk_points),
+        )
+
+        lines = [f"**{one_liner}**", ""]
+        for point in points:
+            lines.append(point)
+        lines.append("")
+        return "\n".join(lines)
+
+    def _extract_risk_points(self) -> list[str]:
+        points: list[str] = []
+        regime = self._get_section("市场态势")
+        if regime and "组合保护中" in regime:
+            reason_match = re.search(r"组合保护中\*\*[:：]?\s*(.+)", regime)
+            reason = reason_match.group(1).strip() if reason_match else "组合保护生效中"
+            points.append(f"⚠️ 组合保护已触发: {reason}，建议暂停新开仓")
+        evidence = self._get_section("候选证据链")
+        if evidence:
+            risk_matches = re.findall(r"- 风险[:：]\s*(.+)", evidence)
+            for risk in risk_matches[:2]:
+                clean = risk.strip().rstrip("；").strip()
+                if clean:
+                    points.append(f"⚠️ 风险提示: {clean}")
+        return points
+
+    def _extract_debate_points(self) -> list[str]:
+        if not self.debate_results:
+            return []
+        points: list[str] = []
+        for result in self.debate_results[:2]:
+            if result.recommended_adjustment == "lower":
+                points.append(
+                    f"🤖 辩论共识: {result.name}({result.symbol}) "
+                    f"建议下调评分至{result.adjusted_score:.1f}"
+                )
+            elif result.recommended_adjustment == "raise":
+                points.append(
+                    f"🤖 辩论共识: {result.name}({result.symbol}) "
+                    f"建议上调评分至{result.adjusted_score:.1f}"
+                )
+            elif result.disagreement_score > 0.5:
+                points.append(
+                    f"🤖 辩论分歧较大: {result.name}({result.symbol}) "
+                    f"多空分歧度{result.disagreement_score:.0%}"
+                )
+        return points
+
+    def _extract_source_health_points(self) -> list[str]:
+        source = self._get_section("数据源状态")
+        if not source:
+            return []
+        if "降低信任度" in source:
+            route_match = re.search(r"路径[:：]\s*\*\*(.+?)\*\*", source)
+            route = route_match.group(1) if route_match else "未知"
+            return [f"📉 数据源降级: {route}，结果请降低信任度"]
+        return []
+
+    def _extract_regime_points(self) -> list[str]:
+        regime = self._get_section("市场态势")
+        if not regime:
+            return []
+        match = re.search(r"市场态势[:：]\s*\*\*(.+?)\*\*", regime)
+        if not match:
+            return []
+        desc = match.group(1)
+        if "熊" in desc or "下跌" in desc:
+            return [f"📉 市场态势: {desc}，注意控制仓位"]
+        if "盘整" in desc:
+            return [f"📊 市场态势: {desc}，关注突破方向"]
+        return [f"📈 市场态势: {desc}"]
+
+    def _build_one_liner(
+        self,
+        candidate_count: int,
+        actionable_count: int,
+        risk_count: int,
+    ) -> str:
+        regime = self._get_section("市场态势")
+        regime_desc = ""
+        if regime:
+            match = re.search(r"市场态势[:：]\s*\*\*(.+?)\*\*", regime)
+            if match:
+                regime_desc = match.group(1).split("：")[0].split(":")[0].strip()
+
+        parts: list[str] = []
+        if regime_desc:
+            parts.append(regime_desc)
+        if candidate_count > 0:
+            parts.append(f"筛出{candidate_count}只候选")
+        if actionable_count > 0:
+            parts.append(f"{actionable_count}只可执行")
+        if risk_count > 0:
+            parts.append(f"{risk_count}条风险提示")
+        if not parts:
+            return "今日无候选标的，保持观望"
+        return "，".join(parts) + "。"
+
 
 class BriefingGenerator:
+    def __init__(self, enable_debate: bool = False):
+        self.enable_debate = enable_debate
+        self.debate_coordinator = AShareDebateCoordinator(
+            enable_llm=False, max_rounds=2
+        )
+
     def generate(
         self,
         picks: list[PickResult],
@@ -74,7 +251,27 @@ class BriefingGenerator:
             self._build_theme_section(picks),
             self._build_next_day_section(picks, frames),
         ]
-        return Briefing(date=date_str, sections=sections)
+
+        debate_results = []
+        if self.enable_debate and picks:
+            # 对评分最高的前3只股票进行辩论
+            for pick in picks[:3]:
+                df = frames.get(pick.symbol, pd.DataFrame())
+                if not df.empty:
+                    try:
+                        result = self.debate_coordinator.run_debate(pick, df)
+                        debate_results.append(result)
+                    except Exception as e:
+                        import logging
+
+                        logger = logging.getLogger(__name__)
+                        logger.warning(f"辩论失败 {pick.symbol}: {e}")
+
+        return Briefing(
+            date=date_str,
+            sections=sections,
+            debate_results=debate_results,
+        )
 
     def _build_regime_section(
         self,

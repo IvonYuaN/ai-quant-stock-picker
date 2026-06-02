@@ -140,6 +140,142 @@ class RegimeThresholds:
 
 
 @dataclass(frozen=True)
+class ScoringThresholds:
+    liquidity_penalty: float = -35
+    ma_full_bull: float = 24
+    ma_short_bull: float = 16
+    ma_below_ma20: float = -18
+    ma20_slope_up: float = 10
+    ma20_slope_down: float = -10
+    ret20_strong: float = 14
+    ret20_strong_threshold: float = 12
+    ret20_weak: float = -12
+    ret20_weak_threshold: float = -8
+    near_high_bonus: float = 18
+    near_high_threshold: float = 0.995
+    near_high_volume: float = 1.35
+    pullback_bonus: float = 16
+    pullback_ma5_lower: float = 0.985
+    pullback_ma10_upper: float = 1.025
+    pullback_volume_max: float = 1.1
+    macd_improve: float = 8
+    macd_weaken: float = -8
+    rsi_healthy_low: float = 45
+    rsi_healthy_high: float = 72
+    rsi_healthy_bonus: float = 7
+    rsi_overbought: float = 82
+    rsi_overbought_penalty: float = -12
+    bias_high_penalty: float = -18
+    bias_healthy_bonus: float = 8
+    bias_healthy_max: float = 8
+    range_strong_threshold: float = 0.68
+    range_strong_bonus: float = 6
+    upper_shadow_penalty: float = -14
+    upper_shadow_threshold: float = 4
+    upper_shadow_volume: float = 1.5
+    open_calm_bonus: float = 5
+    open_calm_bias: float = 10
+    open_calm_volume: float = 2.5
+    amplitude_penalty: float = -8
+    amplitude_threshold: float = 9
+    confidence_strategy_weight: float = 12
+    confidence_max_strategies: float = 48
+    confidence_high_score: float = 60
+    confidence_high_bonus: float = 25
+    confidence_mid_score: float = 40
+    confidence_mid_bonus: float = 15
+    confidence_low_score: float = 20
+    confidence_low_bonus: float = 8
+    confidence_risk_base: float = 15
+    confidence_risk_penalty: float = 5
+    confidence_volume_low: float = 1.0
+    confidence_volume_high: float = 2.5
+    confidence_volume_bonus: float = 12
+    confidence_volume_high_bonus: float = 4
+    rating_strong: float = 70
+    rating_buy: float = 55
+    rating_watch: float = 40
+    position_strong_score: float = 68
+    position_strong_risks: float = 1
+    position_mid_score: float = 52
+    stop_atr_multiplier: float = 1.2
+    take_profit_multiplier: float = 1.8
+    ma20_slope_lookback: float = 6
+    ma20_slope_up_threshold: float = 1.0
+    ma20_slope_down_threshold: float = -1.5
+
+
+@dataclass(frozen=True)
+class MorningBreakoutWeights:
+    change_pct: float = 0.30
+    volume: float = 0.25
+    technical: float = 0.20
+    fund_flow: float = 0.15
+    market: float = 0.10
+
+
+@dataclass(frozen=True)
+class MorningBreakoutThresholds:
+    enabled: bool = True
+    min_change_pct: float = 5.0
+    near_limit_pct: float = 9.5
+    strong_pct: float = 7.0
+    volume_ratio_strong: float = 3.0
+    volume_ratio_medium: float = 2.0
+    min_score: float = 60.0
+    atr_period: int = 14
+    atr_stop_multiplier: float = 2.0
+    default_stop_pct: float = 0.05
+    next_day_limit_pct: float = 0.10
+    position_high_score: float = 80.0
+    position_high_confidence: float = 0.7
+    position_high_pct: float = 0.3
+    position_mid_score: float = 60.0
+    position_mid_confidence: float = 0.5
+    position_mid_pct: float = 0.2
+    position_low_pct: float = 0.1
+    weights: MorningBreakoutWeights = field(default_factory=MorningBreakoutWeights)
+
+
+@dataclass(frozen=True)
+class ClosingPremiumWeights:
+    change_pct: float = 0.20
+    volume_price: float = 0.25
+    closing_trend: float = 0.20
+    technical: float = 0.20
+    support_resistance: float = 0.15
+
+
+@dataclass(frozen=True)
+class ClosingPremiumThresholds:
+    enabled: bool = True
+    min_change_pct: float = 2.0
+    max_change_pct: float = 7.0
+    optimal_change_min: float = 3.0
+    optimal_change_max: float = 5.0
+    min_score: float = 65.0
+    volume_ratio_strong: float = 1.5
+    volume_ratio_moderate: float = 1.2
+    closing_volume_ratio: float = 1.3
+    closing_change_threshold: float = 1.0
+    ma_periods: tuple[int, ...] = (5, 10, 20)
+    atr_period: int = 14
+    atr_stop_multiplier: float = 2.0
+    atr_tp1_multiplier: float = 2.0
+    atr_tp2_multiplier: float = 3.0
+    default_stop_pct: float = 0.05
+    support_threshold: float = 5.0
+    resistance_threshold: float = 5.0
+    high_open_check_days: int = 5
+    high_open_count_threshold: int = 3
+    volume_shrink_ratio: float = 0.7
+    volume_shrink_days: int = 3
+    lookback_days: int = 30
+    min_data_points: int = 10
+    weights: ClosingPremiumWeights = field(default_factory=ClosingPremiumWeights)
+
+
+@dataclass(frozen=True)
 class Thresholds:
     version: str = "2.0.0"
     effective_from: str = ""
@@ -154,6 +290,13 @@ class Thresholds:
     execution: ExecutionThresholds = field(default_factory=ExecutionThresholds)
     regime: RegimeThresholds = field(default_factory=RegimeThresholds)
     volume: VolumeThresholds = field(default_factory=VolumeThresholds)
+    scoring: ScoringThresholds = field(default_factory=ScoringThresholds)
+    morning_breakout: MorningBreakoutThresholds = field(
+        default_factory=MorningBreakoutThresholds
+    )
+    closing_premium: ClosingPremiumThresholds = field(
+        default_factory=ClosingPremiumThresholds
+    )
 
 
 def _parse_momentum(data: dict) -> MomentumThresholds:
@@ -185,6 +328,30 @@ def _parse_volume(data: dict) -> VolumeThresholds:
     return VolumeThresholds(
         **data,
         weights=VolumeWeights(**weights_data) if weights_data else VolumeWeights(),
+    )
+
+
+def _parse_morning_breakout(data: dict) -> MorningBreakoutThresholds:
+    weights_data = data.pop("weights", {})
+    return MorningBreakoutThresholds(
+        **data,
+        weights=MorningBreakoutWeights(**weights_data)
+        if weights_data
+        else MorningBreakoutWeights(),
+    )
+
+
+def _parse_closing_premium(data: dict) -> ClosingPremiumThresholds:
+    weights_data = data.pop("weights", {})
+    ma_periods = data.pop("ma_periods", (5, 10, 20))
+    if isinstance(ma_periods, list):
+        ma_periods = tuple(ma_periods)
+    return ClosingPremiumThresholds(
+        **data,
+        ma_periods=ma_periods,
+        weights=ClosingPremiumWeights(**weights_data)
+        if weights_data
+        else ClosingPremiumWeights(),
     )
 
 
@@ -235,4 +402,7 @@ def load_thresholds(filepath: str = None) -> Thresholds:
         execution=ExecutionThresholds(**data.get("execution", {})),
         regime=_parse_regime(data.get("regime", {})),
         volume=_parse_volume(data.get("volume", {})),
+        scoring=ScoringThresholds(**data.get("scoring", {})),
+        morning_breakout=_parse_morning_breakout(data.get("morning_breakout", {})),
+        closing_premium=_parse_closing_premium(data.get("closing_premium", {})),
     )

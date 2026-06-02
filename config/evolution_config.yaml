@@ -1,0 +1,109 @@
+version: "1.0.0"
+effective_from: "2026-06-02"
+description: "动态参数自进化配置 — 基于市场状态自动优化策略参数"
+
+evolution:
+  enabled: true
+  check_interval_days: 7  # 每7天检查一次参数进化
+  min_samples: 30  # 最少30个样本才进行进化
+  max_evolution_per_cycle: 3  # 每次最多进化3个参数
+  confidence_threshold: 0.7  # 置信度阈值
+  performance_threshold: 0.05  # 性能提升阈值
+
+  param_spaces:
+    momentum:
+      rsi_period: [5, 30]
+      rsi_oversold: [20, 40]
+      rsi_overbought: [60, 80]
+      lookback_days: [30, 120]
+      min_returns: [0.02, 0.1]
+      max_volatility: [0.2, 0.5]
+      trend_strength_threshold: [0.3, 0.8]
+
+    volume:
+      volume_ratio_threshold: [1.2, 3.0]
+      volume_ma_period: [5, 30]
+      surge_multiplier: [1.2, 2.5]
+      lookback_days: [30, 90]
+
+    scoring:
+      near_high_threshold: [0.98, 1.0]
+      near_high_volume: [1.2, 2.0]
+      pullback_ma5_lower: [0.97, 0.995]
+      pullback_ma10_upper: [1.01, 1.04]
+      pullback_volume_max: [1.0, 1.3]
+      rsi_healthy_low: [40, 55]
+      rsi_healthy_high: [65, 80]
+
+    composite:
+      momentum_weight: [0.1, 0.6]
+      quality_weight: [0.0, 0.4]
+      value_weight: [0.0, 0.4]
+      volume_weight: [0.0, 0.4]
+      triple_rise_weight: [0.0, 0.5]
+      min_total_score: [0.3, 0.7]
+
+  regime_adaptation:
+    enabled: true
+    adaptation_speed: 0.1  # 参数调整速度
+    blend_factor: 0.3  # 参数混合因子
+    confidence_threshold: 0.7  # 置信度阈值
+
+    regime_params:
+      stable_bull:
+        momentum_weight_boost: 1.2
+        volume_weight_boost: 1.1
+        rsi_oversold_adjust: -5
+        rsi_overbought_adjust: 5
+      volatile_bull:
+        momentum_weight_boost: 1.1
+        volume_weight_boost: 1.2
+        rsi_oversold_adjust: -3
+        rsi_overbought_adjust: 3
+      stable_bear:
+        momentum_weight_boost: 0.8
+        volume_weight_boost: 0.9
+        rsi_oversold_adjust: 5
+        rsi_overbought_adjust: -5
+      volatile_bear:
+        momentum_weight_boost: 0.7
+        volume_weight_boost: 0.8
+        rsi_oversold_adjust: 8
+        rsi_overbought_adjust: -8
+      stable_sideways:
+        momentum_weight_boost: 0.95
+        volume_weight_boost: 1.0
+        rsi_oversold_adjust: 0
+        rsi_overbought_adjust: 0
+      volatile_sideways:
+        momentum_weight_boost: 0.9
+        volume_weight_boost: 1.05
+        rsi_oversold_adjust: 2
+        rsi_overbought_adjust: -2
+
+  rollback:
+    enabled: true
+    max_versions: 10  # 最多保留10个版本
+    auto_rollback_on_failure: true  # 失败时自动回滚
+    performance_drop_threshold: -0.1  # 性能下降阈值
+    rollback_cooldown_days: 14  # 回滚冷却期
+
+  monitoring:
+    enabled: true
+    alert_on_evolution: true  # 进化时发送告警
+    alert_on_rollback: true  # 回滚时发送告警
+    performance_tracking_days: 30  # 性能跟踪天数
+
+  optimization:
+    method: "bayesian"  # 优化方法: grid, random, bayesian
+    n_trials: 30  # 优化试验次数
+    n_initial: 10  # 初始随机采样次数
+    objective: "sharpe_ratio"  # 优化目标
+    forward_days: 5  # 前向验证天数
+
+  walk_forward:
+    enabled: true
+    train_days: 120  # 训练期天数
+    test_days: 30  # 测试期天数
+    purge_days: 5  # 清洗期天数
+    min_train_samples: 50  # 最小训练样本数

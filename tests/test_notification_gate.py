@@ -28,11 +28,13 @@ def _write_gate(tmp_path, **overrides):
 
 # ---- 正常放行 ----
 
+
 def test_all_three_gates_pass(tmp_path, monkeypatch):
     """冷启动够 + DSR/PBO 过 + 数据窗口干净 → 放行。"""
     # 固定 today 避免过期检查把测试跑挂
     import aqsp.cli as cli_mod
     from datetime import date
+
     monkeypatch.setattr(cli_mod, "today_shanghai", lambda: date(2026, 6, 5))
     ok, reasons = _check_notification_gate(
         cold_start_days=30, gate_path=_write_gate(tmp_path)
@@ -43,9 +45,11 @@ def test_all_three_gates_pass(tmp_path, monkeypatch):
 
 # ---- 三门各自拦截 ----
 
+
 def test_cold_start_blocks(tmp_path, monkeypatch):
     import aqsp.cli as cli_mod
     from datetime import date
+
     monkeypatch.setattr(cli_mod, "today_shanghai", lambda: date(2026, 6, 5))
     ok, reasons = _check_notification_gate(
         cold_start_days=10, gate_path=_write_gate(tmp_path)
@@ -57,6 +61,7 @@ def test_cold_start_blocks(tmp_path, monkeypatch):
 def test_dsr_fail_blocks(tmp_path, monkeypatch):
     import aqsp.cli as cli_mod
     from datetime import date
+
     monkeypatch.setattr(cli_mod, "today_shanghai", lambda: date(2026, 6, 5))
     ok, reasons = _check_notification_gate(
         cold_start_days=30,
@@ -69,6 +74,7 @@ def test_dsr_fail_blocks(tmp_path, monkeypatch):
 def test_pbo_fail_blocks(tmp_path, monkeypatch):
     import aqsp.cli as cli_mod
     from datetime import date
+
     monkeypatch.setattr(cli_mod, "today_shanghai", lambda: date(2026, 6, 5))
     ok, reasons = _check_notification_gate(
         cold_start_days=30,
@@ -79,6 +85,7 @@ def test_pbo_fail_blocks(tmp_path, monkeypatch):
 
 
 # ---- fail-closed：sidecar 缺失/解析失败/过期 ----
+
 
 def test_missing_sidecar_fail_closed(tmp_path):
     ok, reasons = _check_notification_gate(
@@ -91,9 +98,7 @@ def test_missing_sidecar_fail_closed(tmp_path):
 def test_corrupt_sidecar_fail_closed(tmp_path):
     p = tmp_path / "bad.json"
     p.write_text("{not valid json", encoding="utf-8")
-    ok, reasons = _check_notification_gate(
-        cold_start_days=30, gate_path=str(p)
-    )
+    ok, reasons = _check_notification_gate(cold_start_days=30, gate_path=str(p))
     assert ok is False
     assert any("解析失败" in r for r in reasons)
 
@@ -102,6 +107,7 @@ def test_stale_sidecar_blocks(tmp_path, monkeypatch):
     """run_date 超过 35 天 → 过期拦截。"""
     import aqsp.cli as cli_mod
     from datetime import date
+
     monkeypatch.setattr(cli_mod, "today_shanghai", lambda: date(2026, 6, 5))
     ok, reasons = _check_notification_gate(
         cold_start_days=30,
@@ -113,12 +119,14 @@ def test_stale_sidecar_blocks(tmp_path, monkeypatch):
 
 # ---- 核心：held-out 污染拦截（本轮修复的 bug）----
 
+
 def test_heldout_poisoned_grade_blocked(tmp_path, monkeypatch):
     """DSR/PBO 都过门，但 data_end 越过 held-out 边界（说明成绩用了 held-out
     数据，可能经 --allow-heldout 跑出）→ 必须拦截，不得解锁推送。
     这是摊2/摊4 接缝盲区的回归测试。"""
     import aqsp.cli as cli_mod
     from datetime import date
+
     monkeypatch.setattr(cli_mod, "today_shanghai", lambda: date(2026, 6, 5))
     ok, reasons = _check_notification_gate(
         cold_start_days=30,
@@ -138,6 +146,7 @@ def test_dataend_exactly_cutoff_passes(tmp_path, monkeypatch):
     """data_end 正好等于边界 2024-12-31 → 不算越界，放行。"""
     import aqsp.cli as cli_mod
     from datetime import date
+
     monkeypatch.setattr(cli_mod, "today_shanghai", lambda: date(2026, 6, 5))
     ok, reasons = _check_notification_gate(
         cold_start_days=30,
@@ -151,6 +160,7 @@ def test_dataend_malformed_fail_closed(tmp_path, monkeypatch):
     """sidecar 的 data_end 格式异常 → fail-closed（看不懂就拦）。"""
     import aqsp.cli as cli_mod
     from datetime import date
+
     monkeypatch.setattr(cli_mod, "today_shanghai", lambda: date(2026, 6, 5))
     ok, reasons = _check_notification_gate(
         cold_start_days=30,

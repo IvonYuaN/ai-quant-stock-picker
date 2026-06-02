@@ -14,7 +14,7 @@ from aqsp.core.time import now_shanghai
 
 @dataclass(frozen=True)
 class LearnerConfig:
-    min_independent_signal_days: int = 30
+    min_independent_signal_days: int = 14
     rolling_window_days: int = 90
     weight_floor: float = 0.65
     weight_ceiling: float = 1.45
@@ -319,3 +319,112 @@ class PerformanceLearner:
         }
         with open(self.weight_history_path, "a", encoding="utf-8") as f:
             f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+
+@dataclass(frozen=True)
+class StrategyDecayAlert:
+    strategy_name: str
+    decay_days: int
+    recent_win_rate: float
+    recent_avg_return: float
+    severity: str
+    recommendation: str
+
+
+class StrategyDecayDetector:
+    def __init__(
+        self,
+        lookback_days: int = 7,
+        min_win_rate: float = 0.4,
+        min_avg_return: float = -0.02,
+    ):
+        self.lookback_days = lookback_days
+        self.min_win_rate = min_win_rate
+        self.min_avg_return = min_avg_return
+
+    def detect(self, ledger_df: pd.DataFrame) -> list[StrategyDecayAlert]:
+        if ledger_df.empty:
+            return []
+
+        df = ledger_df[ledger_df["status"] != "not_executable"].copy()
+        if df.empty:
+            return []
+
+        df = _prepare_returns(df)
+        df = _explode_strategies(df)
+        if df.empty:
+            return []
+
+        df["signal_date"] = pd.to_datetime(df["signal_date"], errors="coerce")
+        df = df.dropna(subset=["signal_date"])
+
+        cutoff = now_shanghai() - timedelta(days=self.lookback_days)
+        recent = df[df["signal_date"] >= cutoff]
+        if recent.empty:
+            return []
+
+        alerts: list[StrategyDecayAlert] = []
+        for strategy in recent["strategy"].unique():
+            strat_data = recent[recent["strategy"] == strategy]
+            returns = strat_data["return_decimal"]
+            win_rate = float((returns > 0).mean())
+            avg_return = float(returns.mean())
+
+            if win_rate < self.min_win_rate or avg_return < self.min_avg_return:
+                decay_days = self._count_decay_days(df, strategy)
+                if win_rate < 0.3 or avg_return < -0.05:
+                    severity = "critical"
+                    recommendation = f"建议将 {strategy} 权重降至最低"
+                elif win_rate < self.min_win_rate:
+                    severity = "warning"
+                    recommendation = f"建议降低 {strategy} 权重"
+                else:
+                    severity = "info"
+                    recommendation = f"关注 {strategy} 表现"
+
+                alerts.append(
+                    StrategyDecayAlert(
+                        strategy_name=strategy,
+                        decay_days=decay_days,
+                        recent_win_rate=round(win_rate, 4),
+                        recent_avg_return=round(avg_return, 6),
+                        severity=severity,
+                        recommendation=recommendation,
+                    )
+                )
+
+        return alerts
+
+    def _count_decay_days(self, df: pd.DataFrame, strategy: str) -> int:
+        strat_data = df[df["strategy"] == strategy].sort_values(
+            "signal_date", ascending=False
+        )
+        decay_days = 0
+        for _, row in strat_data.iterrows():
+            if row["return_decimal"] <= 0:
+                decay_days += 1
+            else:
+                break
+        return decay_days
+
+
+def format_decay_alerts(alerts: list[StrategyDecayAlert]) -> str:
+    if not alerts:
+        return ""
+    lines = ["## 策略衰减告警", ""]
+    for alert in alerts:
+        emoji = (
+            "🔴"
+            if alert.severity == "critical"
+            else "🟡"
+            if alert.severity == "warning"
+            else "🔵"
+        )
+        lines.append(
+            f"- {emoji} **{alert.strategy_name}**: "
+            f"近{alert.lookback_days if hasattr(alert, 'lookback_days') else ''}天胜率 {alert.recent_win_rate:.1%}, "
+            f"均收益 {alert.recent_avg_return:+.2%}, "
+            f"连续{alert.decay_days}天亏损"
+        )
+        lines.append(f"  - {alert.recommendation}")
+    return "\n".join(lines)

@@ -43,6 +43,12 @@ class PickResult:
     reasons: tuple[str, ...] = field(default_factory=tuple)
     risks: tuple[str, ...] = field(default_factory=tuple)
     metrics: dict[str, Any] = field(default_factory=dict)
+    # 辩论相关
+    adjusted_score: float = 0.0
+    recommended_adjustment: Literal["raise", "lower", "keep"] = "keep"
+    debate_consensus: str = ""
+    confidence: float = 0.0
+    regime_score: float = 0.0
 
 
 @dataclass(frozen=True)

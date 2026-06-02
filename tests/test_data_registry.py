@@ -1,6 +1,10 @@
 from __future__ import annotations
 
-from aqsp.data.registry import list_registry_entries, local_data_status, sort_registry_entries
+from aqsp.data.registry import (
+    list_registry_entries,
+    local_data_status,
+    sort_registry_entries,
+)
 
 
 def test_data_registry_contains_multiple_independent_source_tiers() -> None:

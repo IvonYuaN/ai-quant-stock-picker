@@ -3,7 +3,11 @@ from __future__ import annotations
 import struct
 from datetime import date
 
-from aqsp.research.summary import ResearchActionItem, ResearchPrereqItem, ResearchSummary
+from aqsp.research.summary import (
+    ResearchActionItem,
+    ResearchPrereqItem,
+    ResearchSummary,
+)
 from aqsp.data.tdx_vipdoc_source import TDX_DAY_RECORD
 from scripts.diagnose_runtime import (
     PROJECT_ROOT,
@@ -83,7 +87,9 @@ def test_latest_run_source_runtime_derives_notify_level() -> None:
     assert result["fallback_used"] is True
 
 
-def test_diagnose_runtime_main_reports_research_runtime(tmp_path, monkeypatch, capsys) -> None:
+def test_diagnose_runtime_main_reports_research_runtime(
+    tmp_path, monkeypatch, capsys
+) -> None:
     from scripts import diagnose_runtime
 
     ledger = tmp_path / "predictions.jsonl"
@@ -139,4 +145,7 @@ def test_diagnose_runtime_main_reports_research_runtime(tmp_path, monkeypatch, c
     assert "- report_only_families: 1" in output
     assert "- gated_families: 2" in output
     assert "- P1 data_source tushare: token only from env" in output
-    assert "- prereq data_source tushare: status=needs_env missing_env=TUSHARE_TOKEN" in output
+    assert (
+        "- prereq data_source tushare: status=needs_env missing_env=TUSHARE_TOKEN"
+        in output
+    )

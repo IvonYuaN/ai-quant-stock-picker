@@ -14,11 +14,13 @@ private_data/
 reports/*.csv
 reports/*.md
 reports/*.txt
+reports/*.html
 !reports/.gitkeep
 logs/
 outputs/
 data/*.db
 data/*.jsonl
+data/snapshots
 !data/open_source_research.jsonl
 data/risk_state.json
 data/walkforward_gate.json

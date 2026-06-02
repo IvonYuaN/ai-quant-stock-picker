@@ -11,14 +11,15 @@ from aqsp.core.errors import DataError
 from aqsp.data.tdx_vipdoc_source import TdxVipdocSource
 
 
-
-
-def _write_custom_day_file(path: Path, records: list[tuple[int, int, float, int]]) -> None:
+def _write_custom_day_file(
+    path: Path, records: list[tuple[int, int, float, int]]
+) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = []
     for trade_date, close, amount, volume in records:
         payload.append((trade_date, close, close, close, close, amount, volume, 0))
     path.write_bytes(b"".join(struct.pack("<IIIIIfII", *record) for record in payload))
+
 
 def _write_day_file(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)

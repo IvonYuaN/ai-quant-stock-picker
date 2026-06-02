@@ -294,3 +294,231 @@ class TestSendBriefing:
         assert body.startswith("## 数据源状态")
         assert "auto -> eastmoney" in body
         assert "降低信任度" in body
+
+
+class TestGenerateSmartSummary:
+    def test_empty_briefing(self):
+        briefing = Briefing(date="2026-05-27 10:00", sections=[])
+        summary = briefing.generate_smart_summary()
+        assert "今日无候选标的，保持观望" in summary
+
+    def test_one_liner_with_candidates_and_regime(self):
+        gen = BriefingGenerator()
+        picks = [_make_pick(symbol="600519", name="贵州茅台", score=8.5)]
+        briefing = gen.generate(picks=picks, frames={}, regime="stable_bull")
+        summary = briefing.generate_smart_summary()
+        assert "稳定上涨" in summary
+        assert "筛出1只候选" in summary
+
+    def test_risk_alerts_prioritized_first(self):
+        gen = BriefingGenerator()
+        cb = MagicMock()
+        cb.triggered = True
+        cb.reason = "组合保护冷却期中"
+        picks = [_make_pick()]
+        briefing = gen.generate(
+            picks=picks, frames={}, regime="stable_bull", circuit_breaker_status=cb
+        )
+        summary = briefing.generate_smart_summary()
+        lines = [line for line in summary.split("\n") if line.startswith("⚠️")]
+        assert len(lines) >= 1
+        assert "组合保护" in lines[0]
+
+    def test_actionable_picks_included(self):
+        gen = BriefingGenerator()
+        picks = [_make_pick(symbol="600519", name="贵州茅台", rating="buy_candidate")]
+        briefing = gen.generate(picks=picks, frames={})
+        summary = briefing.generate_smart_summary()
+        assert "可执行标的" in summary
+        assert "600519" in summary
+
+    def test_no_actionable_picks_excluded(self):
+        gen = BriefingGenerator()
+        picks = [_make_pick(symbol="600519", name="贵州茅台", rating="avoid")]
+        briefing = gen.generate(picks=picks, frames={})
+        summary = briefing.generate_smart_summary()
+        assert "可执行标的" not in summary
+
+    def test_debate_results_lower_adjustment(self):
+        from aqsp.briefing.debate import DebateResult
+
+        briefing = Briefing(
+            date="2026-05-27 10:00",
+            sections=[],
+            debate_results=[
+                DebateResult(
+                    debate_id="test",
+                    symbol="600519",
+                    name="贵州茅台",
+                    original_score=8.5,
+                    rating="buy_candidate",
+                    recommended_adjustment="lower",
+                    adjusted_score=6.8,
+                    disagreement_score=0.3,
+                ),
+            ],
+        )
+        summary = briefing.generate_smart_summary()
+        assert "辩论共识" in summary
+        assert "下调" in summary
+        assert "6.8" in summary
+
+    def test_debate_results_high_disagreement(self):
+        from aqsp.briefing.debate import DebateResult
+
+        briefing = Briefing(
+            date="2026-05-27 10:00",
+            sections=[],
+            debate_results=[
+                DebateResult(
+                    debate_id="test",
+                    symbol="600519",
+                    name="贵州茅台",
+                    original_score=8.5,
+                    rating="buy_candidate",
+                    recommended_adjustment="keep",
+                    adjusted_score=8.5,
+                    disagreement_score=0.7,
+                ),
+            ],
+        )
+        summary = briefing.generate_smart_summary()
+        assert "辩论分歧" in summary
+        assert "70%" in summary
+
+    def test_degraded_source_health(self):
+        gen = BriefingGenerator()
+        briefing = gen.generate(
+            picks=[_make_pick()],
+            frames={},
+            source_status={
+                "requested_source": "auto",
+                "actual_source": "eastmoney",
+                "freshness_tier": "realtime",
+                "coverage_tier": "multi_dimensional",
+                "health_label": "fallback",
+                "health_message": "fallback 到 eastmoney",
+                "fallback_used": True,
+            },
+        )
+        summary = briefing.generate_smart_summary()
+        assert "数据源降级" in summary
+        assert "降低信任度" in summary
+
+    def test_bearish_regime_warning(self):
+        gen = BriefingGenerator()
+        picks = [_make_pick()]
+        briefing = gen.generate(picks=picks, frames={}, regime="stable_bear")
+        summary = briefing.generate_smart_summary()
+        assert "注意控制仓位" in summary
+
+    def test_sideways_regime_info(self):
+        gen = BriefingGenerator()
+        picks = [_make_pick()]
+        briefing = gen.generate(picks=picks, frames={}, regime="volatile_sideways")
+        summary = briefing.generate_smart_summary()
+        assert "关注突破方向" in summary
+
+    def test_max_five_points(self):
+        gen = BriefingGenerator()
+        cb = MagicMock()
+        cb.triggered = True
+        cb.reason = "test"
+        picks = [
+            _make_pick(symbol=f"sym{i:03d}", rating="buy_candidate") for i in range(10)
+        ]
+        briefing = gen.generate(
+            picks=picks,
+            frames={},
+            regime="stable_bear",
+            circuit_breaker_status=cb,
+            source_status={
+                "requested_source": "auto",
+                "actual_source": "eastmoney",
+                "health_label": "fallback",
+                "health_message": "test",
+                "fallback_used": True,
+            },
+        )
+        summary = briefing.generate_smart_summary()
+        bullet_lines = [
+            line
+            for line in summary.split("\n")
+            if line.startswith(("⚠️", "🤖", "📊", "🎯", "📉", "📈"))
+        ]
+        assert len(bullet_lines) <= 5
+
+    def test_risk_from_evidence_section(self):
+        briefing = Briefing(
+            date="2026-05-27 10:00",
+            sections=[
+                BriefingSection(
+                    title="候选证据链",
+                    content="### 600519 贵州茅台 (评分: 8.5)\n- 风险: 高位震荡风险\n",
+                ),
+                BriefingSection(
+                    title="明日重点",
+                    content="- **600519 贵州茅台**: 参考买点 1490 / 止损 1450",
+                ),
+                BriefingSection(
+                    title="市场态势",
+                    content="当前市场态势: **稳定上涨：低波动 + 正趋势**",
+                ),
+            ],
+        )
+        summary = briefing.generate_smart_summary()
+        assert "风险提示" in summary
+        assert "高位震荡风险" in summary
+
+
+class TestBuildSmartSummaryCard:
+    def test_card_structure(self):
+        from aqsp.notifier import _build_smart_summary_card
+
+        card = _build_smart_summary_card("测试标题", "**内容**")
+        assert card["msg_type"] == "interactive"
+        assert card["card"]["header"]["title"]["content"] == "测试标题"
+        assert card["card"]["header"]["template"] == "turquoise"
+        assert card["card"]["elements"][0]["tag"] == "markdown"
+        assert card["card"]["elements"][0]["content"] == "**内容**"
+
+    def test_card_truncates_long_content(self):
+        from aqsp.notifier import _build_smart_summary_card
+
+        long_content = "x" * 5000
+        card = _build_smart_summary_card("title", long_content)
+        assert len(card["card"]["elements"][0]["content"]) == 3800
+
+
+class TestSendSmartSummaryCard:
+    @patch("aqsp.briefing.notifier.notify_feishu_card")
+    def test_sends_card(self, mock_send):
+        from aqsp.briefing.notifier import send_smart_summary_card
+
+        gen = BriefingGenerator()
+        picks = [_make_pick()]
+        briefing = gen.generate(picks=picks, frames={})
+        send_smart_summary_card(briefing)
+        mock_send.assert_called_once()
+        card = mock_send.call_args[0][0]
+        assert card["msg_type"] == "interactive"
+        assert "选股快报" in card["card"]["header"]["title"]["content"]
+
+    @patch("aqsp.briefing.notifier.notify_feishu_card")
+    def test_skips_empty_summary(self, mock_send):
+        from aqsp.briefing.notifier import send_smart_summary_card
+
+        briefing = Briefing(date="2026-05-27 10:00", sections=[])
+        with patch.object(Briefing, "generate_smart_summary", return_value="   "):
+            send_smart_summary_card(briefing)
+        mock_send.assert_not_called()
+
+    @patch("aqsp.briefing.notifier.send_smart_summary_card")
+    @patch("aqsp.notifier.notify_markdown")
+    def test_send_briefing_calls_smart_summary_first(self, mock_notify, mock_card):
+        briefing = Briefing(
+            date="d", sections=[BriefingSection(title="t", content="c")]
+        )
+        send_briefing(briefing)
+        mock_card.assert_called_once_with(briefing)
+        mock_notify.assert_called_once()

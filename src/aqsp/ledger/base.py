@@ -285,7 +285,7 @@ def validate_predictions(
 
 def strategy_weights_from_ledger(
     path: str | Path,
-    min_independent_signal_days: int = 30,
+    min_independent_signal_days: int = 14,
     weight_floor: float = 0.65,
     weight_ceiling: float = 1.45,
 ) -> dict[str, float]:

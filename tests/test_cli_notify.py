@@ -7,7 +7,9 @@ import pandas as pd
 from aqsp.core.types import PickResult
 
 
-def test_run_scheduled_notify_prepends_source_status_banner(monkeypatch, tmp_path) -> None:
+def test_run_scheduled_notify_prepends_source_status_banner(
+    monkeypatch, tmp_path
+) -> None:
     import aqsp.cli as cli_mod
 
     latest = "2026-06-01"
@@ -51,16 +53,26 @@ def test_run_scheduled_notify_prepends_source_status_banner(monkeypatch, tmp_pat
     }
 
     # 直接 monkeypatch _check_notification_gate，让它总是返回双门通过
-    monkeypatch.setattr(cli_mod, "_check_notification_gate", lambda *, cold_start_days, gate_path=None: (True, []))
+    monkeypatch.setattr(
+        cli_mod,
+        "_check_notification_gate",
+        lambda *, cold_start_days, gate_path=None: (True, []),
+    )
 
     monkeypatch.setattr(
         cli_mod,
         "_fetch_frames_for_cli_with_metadata",
         lambda *args, **kwargs: (frames, "eastmoney"),
     )
-    monkeypatch.setattr(cli_mod, "_resolve_run_symbols", lambda *args, **kwargs: ["600519"])
-    monkeypatch.setattr(cli_mod, "strategy_weights_from_ledger", lambda *_args, **_kwargs: {})
-    monkeypatch.setattr(cli_mod, "_count_independent_signal_days", lambda *_args, **_kwargs: 35)  # 35 >= 30，冷启动通过
+    monkeypatch.setattr(
+        cli_mod, "_resolve_run_symbols", lambda *args, **kwargs: ["600519"]
+    )
+    monkeypatch.setattr(
+        cli_mod, "strategy_weights_from_ledger", lambda *_args, **_kwargs: {}
+    )
+    monkeypatch.setattr(
+        cli_mod, "_count_independent_signal_days", lambda *_args, **_kwargs: 35
+    )  # 35 >= 30，冷启动通过
     monkeypatch.setattr(
         cli_mod,
         "screen_universe",
@@ -89,7 +101,10 @@ def test_run_scheduled_notify_prepends_source_status_banner(monkeypatch, tmp_pat
             return True, ""
 
     monkeypatch.setattr(cli_mod, "LethalFilterPipeline", lambda: DummyPipeline())
-    monkeypatch.setattr("aqsp.universe.t1_filter.filter_t1_held", lambda candidates, **_kwargs: (candidates, []))
+    monkeypatch.setattr(
+        "aqsp.universe.t1_filter.filter_t1_held",
+        lambda candidates, **_kwargs: (candidates, []),
+    )
     monkeypatch.setattr(
         cli_mod,
         "validate_predictions",
@@ -145,5 +160,3 @@ def test_run_scheduled_notify_prepends_source_status_banner(monkeypatch, tmp_pat
     assert seen[0].startswith("## 数据源状态")
     assert "auto -> eastmoney" in seen[0]
     assert "健康: **fallback**" in seen[0]
-
-

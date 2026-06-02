@@ -35,7 +35,10 @@ def test_secret_scan_ignores_source_code_env_reads() -> None:
 def test_secret_scan_allows_github_actions_secret_references() -> None:
     text = "TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}"
 
-    assert find_non_empty_secret_assignments(Path(".github/workflows/monitor.yml"), text) == []
+    assert (
+        find_non_empty_secret_assignments(Path(".github/workflows/monitor.yml"), text)
+        == []
+    )
 
 
 def test_secret_scan_skips_private_and_runtime_paths_when_collecting_files(

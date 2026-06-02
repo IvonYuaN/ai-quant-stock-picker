@@ -1,0 +1,136 @@
+{
+  "version": "1.0",
+  "last_updated": "2026-06-01T00:00:00+08:00",
+  "factors": [
+    {
+      "name": "momentum_20d",
+      "category": "momentum",
+      "description": "20日动量因子",
+      "formula": "(close - close_20d_ago) / close_20d_ago",
+      "lookback_period": 20,
+      "is_active": true,
+      "performance": {
+        "ic_mean": 0.05,
+        "ic_ir": 1.2,
+        "win_rate": 0.55
+      }
+    },
+    {
+      "name": "reversal_5d",
+      "category": "mean_reversion",
+      "description": "5日反转因子",
+      "formula": "-(close - close_5d_ago) / close_5d_ago",
+      "lookback_period": 5,
+      "is_active": true,
+      "performance": {
+        "ic_mean": 0.03,
+        "ic_ir": 0.8,
+        "win_rate": 0.52
+      }
+    },
+    {
+      "name": "volume_ratio_5d",
+      "category": "volume",
+      "description": "5日量比因子",
+      "formula": "volume / volume_ma5",
+      "lookback_period": 5,
+      "is_active": true,
+      "performance": {
+        "ic_mean": 0.04,
+        "ic_ir": 1.0,
+        "win_rate": 0.54
+      }
+    },
+    {
+      "name": "volatility_20d",
+      "category": "volatility",
+      "description": "20日波动率因子",
+      "formula": "std(returns, 20)",
+      "lookback_period": 20,
+      "is_active": true,
+      "performance": {
+        "ic_mean": -0.03,
+        "ic_ir": 0.7,
+        "win_rate": 0.51
+      }
+    },
+    {
+      "name": "rsi_14",
+      "category": "momentum",
+      "description": "14日RSI因子",
+      "formula": "rsi(close, 14)",
+      "lookback_period": 14,
+      "is_active": true,
+      "performance": {
+        "ic_mean": 0.02,
+        "ic_ir": 0.6,
+        "win_rate": 0.50
+      }
+    },
+    {
+      "name": "ma_bias_20",
+      "category": "mean_reversion",
+      "description": "20日均线偏离度因子",
+      "formula": "(close - ma20) / ma20",
+      "lookback_period": 20,
+      "is_active": true,
+      "performance": {
+        "ic_mean": -0.04,
+        "ic_ir": 0.9,
+        "win_rate": 0.53
+      }
+    },
+    {
+      "name": "turnover_rate_5d",
+      "category": "volume",
+      "description": "5日换手率因子",
+      "formula": "sum(volume, 5) / total_shares",
+      "lookback_period": 5,
+      "is_active": true,
+      "performance": {
+        "ic_mean": 0.03,
+        "ic_ir": 0.7,
+        "win_rate": 0.51
+      }
+    },
+    {
+      "name": "price_range_20d",
+      "category": "volatility",
+      "description": "20日价格振幅因子",
+      "formula": "(high_20 - low_20) / close",
+      "lookback_period": 20,
+      "is_active": true,
+      "performance": {
+        "ic_mean": 0.02,
+        "ic_ir": 0.5,
+        "win_rate": 0.50
+      }
+    },
+    {
+      "name": "macd_hist",
+      "category": "momentum",
+      "description": "MACD柱状图因子",
+      "formula": "(ema12 - ema26 - signal) * 2",
+      "lookback_period": 26,
+      "is_active": true,
+      "performance": {
+        "ic_mean": 0.04,
+        "ic_ir": 1.1,
+        "win_rate": 0.54
+      }
+    },
+    {
+      "name": "atr_ratio_14",
+      "category": "volatility",
+      "description": "14日ATR比率因子",
+      "formula": "atr14 / close",
+      "lookback_period": 14,
+      "is_active": true,
+      "performance": {
+        "ic_mean": -0.02,
+        "ic_ir": 0.6,
+        "win_rate": 0.50
+      }
+    }
+  ]
+}

@@ -13,6 +13,16 @@ class RuntimeConfig:
     min_avg_amount: float
     max_data_lag_days: int
     enable_online_factors: bool
+    allow_online_fallback: bool
+
+
+def online_fallback_allowed() -> bool:
+    return os.getenv("AQSP_ALLOW_ONLINE_FALLBACK", "true").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
 
 
 def load_runtime_config() -> RuntimeConfig:
@@ -32,4 +42,5 @@ def load_runtime_config() -> RuntimeConfig:
         .strip()
         .lower()
         in {"1", "true", "yes", "on"},
+        allow_online_fallback=online_fallback_allowed(),
     )
