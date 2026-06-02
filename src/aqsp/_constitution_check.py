@@ -8,6 +8,7 @@ assert_constitution_invariants()，但 src/aqsp/_constitution_check.py 此前不
 from __future__ import annotations
 
 import sys
+import ast
 from pathlib import Path
 
 
@@ -66,19 +67,33 @@ _FORBIDDEN_TOP_LEVEL_LLM = ("anthropic", "openai")
 
 
 def _check_no_top_level_llm_import() -> None:
-    """#4：LLM 是增强不是必需。检查这些 SDK 是否已在 import 期被加载到
-    sys.modules——若 aqsp 包导入链顶层硬 import 了它们，进程一启动就会出现在
-    sys.modules，说明核心路径硬依赖 LLM，违反 #4。
+    """#4：LLM 是增强不是必需。
 
-    放行：如果 SDK 只在函数内部惰性 import（llm_call_or_fallback 内部），
-    启动时 sys.modules 不会有它们，本检查通过。
+    这里不再依赖 `sys.modules`，避免被外部运行环境或其他启动器污染。
+    直接静态扫描 aqsp 源码，禁止在模块顶层 `import openai/anthropic`。
+    函数体内惰性 import 允许通过。
     """
-    leaked = [m for m in _FORBIDDEN_TOP_LEVEL_LLM if m in sys.modules]
-    if leaked:
+    project_root = Path(__file__).resolve().parent.parent
+    violations: list[str] = []
+    for path in project_root.rglob("*.py"):
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        except (SyntaxError, OSError, UnicodeDecodeError):
+            continue
+        for node in tree.body:
+            if isinstance(node, ast.Import):
+                names = [alias.name.split(".", 1)[0] for alias in node.names]
+            elif isinstance(node, ast.ImportFrom):
+                names = [str(node.module or "").split(".", 1)[0]]
+            else:
+                continue
+            hit = [name for name in names if name in _FORBIDDEN_TOP_LEVEL_LLM]
+            if hit:
+                violations.append(f"{path.relative_to(project_root.parent)}:{','.join(hit)}")
+    if violations:
         raise ConstitutionViolation(
             "§1.3 #4",
-            f"LLM SDK 在启动时已被顶层 import: {leaked}。"
-            f"必须改为函数内惰性 import（见 §3.2 llm_call_or_fallback）。",
+            "检测到顶层 LLM import: " + "; ".join(violations[:8]),
         )
 
 

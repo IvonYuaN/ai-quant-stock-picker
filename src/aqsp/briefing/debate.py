@@ -683,14 +683,14 @@ class AShareDebateCoordinator:
             related_signal_date=signal_date or now_shanghai().date().isoformat(),
         )
 
-        final_round = self._run_debate_rounds(result, pick, df)
+        final_opinions = self._run_debate_rounds(result, pick, df)
 
-        self._synthesize_result(result, final_round)
+        self._synthesize_result(result, final_opinions)
 
         agent_ids = {agent.role: agent.agent_id for agent in self.agents}
         self._calculate_adjustment(result, agent_ids)
 
-        for opinion in final_round.opinions:
+        for opinion in final_opinions:
             result.agent_performance_snapshot[opinion.role.value] = (
                 self.tracker.get_agent_metrics(opinion.role, opinion.agent_id)
             )
