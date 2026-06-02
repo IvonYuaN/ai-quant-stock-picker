@@ -99,32 +99,12 @@ class Briefing:
         return re.findall(r"###\s+(\d{6}\s+\S+)\s+\(评分[:：]\s*([\d.]+)\)", evidence)
 
     def generate_smart_summary(self) -> str:
-        points: list[str] = []
-
         risk_points = self._extract_risk_points()
-        points.extend(risk_points[:2])
-
         debate_points = self._extract_debate_points()
-        points.extend(debate_points[:1])
-
         top_scores = self._extract_top_scores()
-        if top_scores:
-            names = "、".join(f"{s[0]}({s[1]}分)" for s in top_scores[:3])
-            points.append(f"📊 候选标的: {names}")
-
         actionable = self._extract_actionable_picks()
-        if actionable:
-            names = "、".join(actionable[:3])
-            points.append(f"🎯 可执行标的: {names}")
-
         source_points = self._extract_source_health_points()
-        if source_points:
-            points.append(source_points[0])
-
         regime_points = self._extract_regime_points()
-        points.extend(regime_points[:1])
-
-        points = points[:5]
 
         one_liner = self._build_one_liner(
             candidate_count=self._extract_candidate_count(),
@@ -133,10 +113,97 @@ class Briefing:
         )
 
         lines = [f"**{one_liner}**", ""]
-        for point in points:
-            lines.append(point)
+
+        lines.extend(self._format_summary_block("核心结论", self._build_core_items()))
+        lines.extend(
+            self._format_summary_block(
+                "数据透视",
+                self._build_data_items(top_scores, source_points, regime_points),
+            )
+        )
+        lines.extend(
+            self._format_summary_block(
+                "作战计划",
+                self._build_action_items(actionable, top_scores, debate_points),
+            )
+        )
+        lines.extend(
+            self._format_summary_block(
+                "风险提示",
+                self._build_risk_items(risk_points, debate_points, source_points),
+            )
+        )
         lines.append("")
         return "\n".join(lines)
+
+    def _format_summary_block(self, title: str, items: list[str]) -> list[str]:
+        if not items:
+            return [f"### {title}", "- 无", ""]
+        return [f"### {title}", *items, ""]
+
+    @staticmethod
+    def _strip_leading_markers(text: str) -> str:
+        return text.lstrip("📉📊📈🤖⚠️ ").strip()
+
+    def _build_core_items(self) -> list[str]:
+        items: list[str] = []
+        if self.debate_results:
+            items.append(
+                f"- 多Agent辩论: 已分析 {len(self.debate_results[:3])} 只重点候选"
+            )
+        else:
+            items.append("- 多Agent辩论: 今日无重点标的或处于冷却期")
+        return items
+
+    def _build_data_items(
+        self,
+        top_scores: list[str],
+        source_points: list[str],
+        regime_points: list[str],
+    ) -> list[str]:
+        items: list[str] = []
+        if top_scores:
+            names = "、".join(f"{s[0]}({s[1]}分)" for s in top_scores[:3])
+            items.append(f"- 候选标的: {names}")
+        if source_points:
+            items.append(f"- 数据源: {self._strip_leading_markers(source_points[0])}")
+        if regime_points:
+            items.append(f"- 市场态势: {self._strip_leading_markers(regime_points[0])}")
+        return items
+
+    def _build_action_items(
+        self,
+        actionable: list[str],
+        top_scores: list[str],
+        debate_points: list[str],
+    ) -> list[str]:
+        items: list[str] = []
+        if actionable:
+            names = "、".join(actionable[:3])
+            items.append(f"- 可执行标的: {names}")
+        if debate_points:
+            items.append(f"- 辩论结论: {self._strip_leading_markers(debate_points[0])}")
+        if top_scores:
+            items.append(f"- 首选观察: {top_scores[0][0]}({top_scores[0][1]}分)")
+        return items
+
+    def _build_risk_items(
+        self,
+        risk_points: list[str],
+        debate_points: list[str],
+        source_points: list[str],
+    ) -> list[str]:
+        items: list[str] = []
+        if risk_points:
+            for point in risk_points[:2]:
+                items.append(point)
+        if len(debate_points) > 1:
+            items.append(f"- 辩论分歧: {self._strip_leading_markers(debate_points[1])}")
+        if source_points:
+            items.append(
+                f"- 数据源提示: {self._strip_leading_markers(source_points[0])}"
+            )
+        return items
 
     def _extract_risk_points(self) -> list[str]:
         points: list[str] = []

@@ -810,26 +810,62 @@ def _build_pipeline_digest(
     result: PipelineResult,
 ) -> str:
     status = "成功" if result.overall_success else "有失败"
-    lines = [
+    step_total = len(result.steps)
+    step_success = sum(1 for step in result.steps if step.success)
+    failed_steps = [step for step in result.steps if not step.success]
+
+    core_lines = [
         f"- 总体状态: {status}",
-        f"- 开始时间: {result.started_at}",
+        f"- 步骤通过: {step_success}/{step_total}",
         f"- 总耗时: {result.duration_seconds:.1f}s",
     ]
-    for step in result.steps:
-        badge = "OK" if step.success else "FAIL"
-        line = f"- {badge} {step.name}: {step.duration_seconds:.1f}s"
-        if step.message:
-            line += f" ({step.message})"
-        lines.append(line)
+    if failed_steps:
+        core_lines.append(
+            "- 失败步骤: " + "、".join(step.name for step in failed_steps[:3])
+        )
 
-    lines.extend(
-        [
-            "",
-            f"- 复盘报告: {config.closing_review_path}",
-            f"- 每日简报: {config.briefing_path}",
-            f"- Dashboard: {config.dashboard_html}",
-        ]
-    )
+    data_lines = [
+        f"- 开始时间: {result.started_at}",
+        f"- 复盘报告: {config.closing_review_path}",
+        f"- 每日简报: {config.briefing_path}",
+        f"- Dashboard: {config.dashboard_html}",
+    ]
+
+    plan_lines = [
+        "- 先看最新选股报告，确认主链候选和 PM 裁决是否一致。",
+        "- 再看收盘复盘，核对策略分类与历史表现。",
+        "- 若有步骤失败，优先处理失败步骤对应的输入源或配置。",
+    ]
+
+    risk_lines = [
+        "- 若出现数据源降级或步骤失败，本次结果只适合观察，不适合直接放大仓位。",
+    ]
+    if not result.overall_success:
+        risk_lines.append("- 总流程未全绿，先排查失败步骤再继续自动化。")
+
+    lines = [
+        "# 收盘总览",
+        "",
+        "## 核心结论",
+        *core_lines,
+        "",
+        "## 数据透视",
+        *data_lines,
+        "",
+        "## 作战计划",
+        *plan_lines,
+        "",
+        "## 风险提示",
+        *risk_lines,
+    ]
+    if result.steps:
+        lines.extend(["", "## 步骤回放"])
+        for step in result.steps:
+            badge = "OK" if step.success else "FAIL"
+            line = f"- {badge} {step.name}: {step.duration_seconds:.1f}s"
+            if step.message:
+                line += f" ({step.message})"
+            lines.append(line)
     return "\n".join(lines)
 
 

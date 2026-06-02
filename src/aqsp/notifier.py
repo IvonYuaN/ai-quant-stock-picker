@@ -30,15 +30,21 @@ def prepend_source_status_banner(
     route = actual or requested or "unknown"
     if requested and actual and requested != actual:
         route = f"{requested} -> {actual}"
-    banner = (
-        "## 数据源状态\n\n"
-        f"- 通知级别: **{notify_level}**\n"
-        f"- 健康: **{label}**\n"
-        f"- 路径: **{route}**\n"
-        f"- 说明: {message}\n"
+    banner = "\n".join(
+        [
+            "## 数据源状态",
+            "",
+            "### 核心结论",
+            f"- 通知级别: **{notify_level}**",
+            f"- 健康: **{label}**",
+            "",
+            "### 数据透视",
+            f"- 路径: **{route}**",
+            f"- 说明: {message}",
+        ]
     )
     if label in {"fallback", "degraded", "cold_start"}:
-        banner += "- 提示: 本次结果请降低信任度，优先人工复核。\n"
+        banner += "\n- 提示: 本次结果请降低信任度，优先人工复核。"
     return f"{banner}\n{markdown}"
 
 
