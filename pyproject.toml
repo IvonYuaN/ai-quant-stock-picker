@@ -15,6 +15,7 @@ dependencies = [
 [project.optional-dependencies]
 data = [
     "akshare>=1.16",
+    "baostock>=0.9.1",
     "efinance",
     "tushare",
 ]
