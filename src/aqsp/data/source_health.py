@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -166,6 +167,48 @@ def notification_level_for_health_label(label: str) -> str:
     return "info"
 
 
+@dataclass(frozen=True)
+class SourceAuthState:
+    source_id: str
+    status: str
+    message: str
+    checked_at: str
+
+
+def record_source_auth(
+    source_id: str,
+    status: str,
+    message: str,
+    *,
+    path: str | Path | None = None,
+) -> None:
+    health = read_source_health(path)
+    auth = health.setdefault("auth", {})
+    auth[source_id] = {
+        "status": status,
+        "message": message,
+        "checked_at": now_shanghai().isoformat(timespec="seconds"),
+    }
+    _write_source_health(health, path)
+
+
+def read_source_auth(
+    source_id: str,
+    *,
+    path: str | Path | None = None,
+) -> SourceAuthState | None:
+    health = read_source_health(path)
+    raw = health.get("auth", {}).get(source_id)
+    if not isinstance(raw, dict):
+        return None
+    return SourceAuthState(
+        source_id=source_id,
+        status=str(raw.get("status", "") or ""),
+        message=str(raw.get("message", "") or ""),
+        checked_at=str(raw.get("checked_at", "") or ""),
+    )
+
+
 def _empty_health() -> dict[str, Any]:
     return {
         "updated_at": "",
@@ -178,6 +221,7 @@ def _empty_health() -> dict[str, Any]:
         "fallback_used": False,
         "plans": {},
         "sources": {},
+        "auth": {},
     }
 
 

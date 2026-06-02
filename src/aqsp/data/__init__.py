@@ -13,6 +13,7 @@ from aqsp.data.eastmoney_source import EastmoneySource
 from aqsp.data.tushare_pit import TusharePitClient
 from aqsp.data.pit_financial import (
     PitEnrichmentResult,
+    PitSourceStatus,
     enrich_ohlcv_with_pit_financials,
     load_optional_disclosure_data,
 )
@@ -106,6 +107,7 @@ __all__ = [
     "EastmoneySource",
     "TusharePitClient",
     "PitEnrichmentResult",
+    "PitSourceStatus",
     "enrich_ohlcv_with_pit_financials",
     "load_optional_disclosure_data",
     "load_optional_index_constituents",

@@ -85,7 +85,25 @@ def _source_health_summary() -> dict[str, Any]:
         "last_success": payload.get("last_success", ""),
         "last_failure": payload.get("last_failure", ""),
         "fallback_used": payload.get("fallback_used", False),
+        "auth": payload.get("auth", {}),
     }
+
+
+def _auth_health_lines(source_health: dict[str, Any]) -> list[str]:
+    auth = source_health.get("auth", {})
+    if not isinstance(auth, dict) or not auth:
+        return ["- none"]
+    lines: list[str] = []
+    for source_id, raw in sorted(auth.items()):
+        if not isinstance(raw, dict):
+            continue
+        status = str(raw.get("status", "") or "unknown")
+        checked_at = str(raw.get("checked_at", "") or "-")
+        message = str(raw.get("message", "") or "-")
+        lines.append(
+            f"- {source_id}: status={status} checked_at={checked_at} message={message}"
+        )
+    return lines or ["- none"]
 
 
 def _large_return_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -219,6 +237,9 @@ def main() -> int:
             f"- last_success: {source_health.get('last_success', '-') or '-'}",
             f"- last_failure: {source_health.get('last_failure', '-') or '-'}",
             f"- fallback_used: {source_health.get('fallback_used', '-')}",
+            "",
+            "## Source Auth",
+            *_auth_health_lines(source_health),
             "",
             "## Notification Level",
         ]

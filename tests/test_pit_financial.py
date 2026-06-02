@@ -176,12 +176,34 @@ def test_enrich_ohlcv_with_pit_financials_when_disclosure_available(
     }
 
     monkeypatch.setattr(
-        "aqsp.data.pit_financial.fetch_pit_financials",
-        lambda symbols, start_year, end_year, cache=None: financials,
+        "aqsp.data.pit_financial._fetch_pit_financials_with_status",
+        lambda symbols, start_year, end_year, cache=None: (
+            financials,
+            type(
+                "Status",
+                (),
+                {
+                    "source_id": "baostock",
+                    "status": "ok",
+                    "message": "baostock 财务数据可用，覆盖 1 只标的。",
+                },
+            )(),
+        ),
     )
     monkeypatch.setattr(
-        "aqsp.data.pit_financial.load_optional_disclosure_data",
-        lambda symbols, start, end: disclosures,
+        "aqsp.data.pit_financial._load_optional_disclosure_data_with_status",
+        lambda symbols, start, end, client=None: (
+            disclosures,
+            type(
+                "Status",
+                (),
+                {
+                    "source_id": "tushare",
+                    "status": "ok",
+                    "message": "Tushare 披露日可用，覆盖 1 只标的。",
+                },
+            )(),
+        ),
     )
 
     result = enrich_ohlcv_with_pit_financials(
@@ -193,6 +215,10 @@ def test_enrich_ohlcv_with_pit_financials_when_disclosure_available(
 
     assert result.financial_symbol_count == 1
     assert result.disclosure_symbol_count == 1
+    assert [item.source_id for item in result.source_statuses] == [
+        "baostock",
+        "tushare",
+    ]
     assert pd.isna(result.frames["600519"]["roe"].iloc[0])
     assert result.frames["600519"]["roe"].iloc[1] == 0.2
 
@@ -208,3 +234,50 @@ def test_fetch_pit_financials_returns_empty_when_baostock_login_fails(
     result = fetch_pit_financials(["600519"], 2024, 2024)
 
     assert result == {}
+
+
+def test_enrich_ohlcv_with_pit_financials_records_login_failure_status(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        "aqsp.data.pit_financial._fetch_pit_financials_with_status",
+        lambda symbols, start_year, end_year, cache=None: (
+            {},
+            type(
+                "Status",
+                (),
+                {
+                    "source_id": "baostock",
+                    "status": "login_failed",
+                    "message": "baostock 未登录成功，财务补充已跳过。",
+                },
+            )(),
+        ),
+    )
+    monkeypatch.setattr(
+        "aqsp.data.pit_financial._load_optional_disclosure_data_with_status",
+        lambda symbols, start, end, client=None: (
+            {},
+            type(
+                "Status",
+                (),
+                {
+                    "source_id": "tushare",
+                    "status": "missing_env",
+                    "message": "TUSHARE_TOKEN is required for tushare PIT data",
+                },
+            )(),
+        ),
+    )
+
+    result = enrich_ohlcv_with_pit_financials(
+        {},
+        ["600519"],
+        date(2026, 4, 1),
+        date(2026, 6, 30),
+    )
+
+    assert [item.status for item in result.source_statuses] == [
+        "login_failed",
+        "missing_env",
+    ]

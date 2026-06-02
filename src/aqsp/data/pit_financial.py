@@ -9,6 +9,7 @@ import baostock as bs
 
 from aqsp.core.errors import DataError
 from aqsp.data.cache import DataCache
+from aqsp.data.source_health import record_source_auth
 from aqsp.data.tushare_pit import TusharePitClient, overlay_disclosure_dates
 
 _REQUEST_DELAY = 0.05
@@ -18,14 +19,23 @@ _BS_LOGGED_IN = False
 def _ensure_baostock_login() -> bool:
     global _BS_LOGGED_IN
     if _BS_LOGGED_IN:
+        record_source_auth("baostock", "ok", "baostock 登录成功，复用已有会话。")
         return True
     try:
         result = bs.login()
-    except Exception:
+    except Exception as exc:
+        record_source_auth("baostock", "login_failed", f"baostock 登录异常: {exc}")
         return False
     if getattr(result, "error_code", "0") != "0":
+        message = str(getattr(result, "error_msg", "") or "").strip()
+        record_source_auth(
+            "baostock",
+            "login_failed",
+            f"baostock 登录失败: {message or 'unknown error'}",
+        )
         return False
     _BS_LOGGED_IN = True
+    record_source_auth("baostock", "ok", "baostock 登录成功。")
     return True
 
 
@@ -34,6 +44,14 @@ class PitEnrichmentResult:
     frames: Dict[str, pd.DataFrame]
     financial_symbol_count: int
     disclosure_symbol_count: int
+    source_statuses: tuple["PitSourceStatus", ...] = ()
+
+
+@dataclass(frozen=True)
+class PitSourceStatus:
+    source_id: str
+    status: str
+    message: str
 
 
 def fetch_pit_financials(
@@ -42,8 +60,30 @@ def fetch_pit_financials(
     end_year: int,
     cache: DataCache | None = None,
 ) -> Dict[str, pd.DataFrame]:
+    data, _ = _fetch_pit_financials_with_status(
+        symbols,
+        start_year,
+        end_year,
+        cache=cache,
+    )
+    return data
+
+
+def _fetch_pit_financials_with_status(
+    symbols: list[str],
+    start_year: int,
+    end_year: int,
+    cache: DataCache | None = None,
+) -> tuple[Dict[str, pd.DataFrame], PitSourceStatus]:
     if not _ensure_baostock_login():
-        return {}
+        return (
+            {},
+            PitSourceStatus(
+                source_id="baostock",
+                status="login_failed",
+                message="baostock 未登录成功，财务补充已跳过。",
+            ),
+        )
     out: dict[str, pd.DataFrame] = {}
     for symbol in symbols:
         if cache:
@@ -60,7 +100,14 @@ def fetch_pit_financials(
             if cache:
                 cache.set_financial(symbol, df, source="baostock")
             out[symbol] = df
-    return out
+    return (
+        out,
+        PitSourceStatus(
+            source_id="baostock",
+            status="ok",
+            message=f"baostock 财务数据可用，覆盖 {len(out)} 只标的。",
+        ),
+    )
 
 
 def merge_pit_financials(
@@ -139,20 +186,77 @@ def load_optional_disclosure_data(
     end: date,
     client: TusharePitClient | None = None,
 ) -> dict[str, pd.DataFrame]:
+    data, _ = _load_optional_disclosure_data_with_status(symbols, start, end, client)
+    return data
+
+
+def _load_optional_disclosure_data_with_status(
+    symbols: list[str],
+    start: date,
+    end: date,
+    client: TusharePitClient | None = None,
+) -> tuple[dict[str, pd.DataFrame], PitSourceStatus]:
     try:
         pit_client = client or TusharePitClient()
-    except (RuntimeError, ValueError):
-        return {}
+    except RuntimeError as exc:
+        record_source_auth("tushare", "missing_package", str(exc))
+        return (
+            {},
+            PitSourceStatus(
+                source_id="tushare",
+                status="missing_package",
+                message=str(exc),
+            ),
+        )
+    except ValueError as exc:
+        record_source_auth("tushare", "missing_env", str(exc))
+        return (
+            {},
+            PitSourceStatus(
+                source_id="tushare",
+                status="missing_env",
+                message=str(exc),
+            ),
+        )
     try:
         disclosure_df = pit_client.fetch_disclosure_dates(symbols, start, end)
-    except DataError:
-        return {}
+    except DataError as exc:
+        record_source_auth("tushare", "request_failed", str(exc))
+        return (
+            {},
+            PitSourceStatus(
+                source_id="tushare",
+                status="request_failed",
+                message=str(exc),
+            ),
+        )
     if disclosure_df.empty or "symbol" not in disclosure_df.columns:
-        return {}
-    return {
+        record_source_auth("tushare", "empty", "Tushare 披露日为空。")
+        return (
+            {},
+            PitSourceStatus(
+                source_id="tushare",
+                status="empty",
+                message="Tushare 披露日为空。",
+            ),
+        )
+    grouped = {
         str(symbol): part.reset_index(drop=True)
         for symbol, part in disclosure_df.groupby("symbol")
     }
+    record_source_auth(
+        "tushare",
+        "ok",
+        f"Tushare 披露日可用，覆盖 {len(grouped)} 只标的。",
+    )
+    return (
+        grouped,
+        PitSourceStatus(
+            source_id="tushare",
+            status="ok",
+            message=f"Tushare 披露日可用，覆盖 {len(grouped)} 只标的。",
+        ),
+    )
 
 
 def enrich_ohlcv_with_pit_financials(
@@ -162,13 +266,17 @@ def enrich_ohlcv_with_pit_financials(
     end: date,
     cache: DataCache | None = None,
 ) -> PitEnrichmentResult:
-    financial_data = fetch_pit_financials(
+    financial_data, financial_status = _fetch_pit_financials_with_status(
         symbols,
         start.year,
         end.year,
         cache=cache,
     )
-    disclosure_data = load_optional_disclosure_data(symbols, start, end)
+    disclosure_data, disclosure_status = _load_optional_disclosure_data_with_status(
+        symbols,
+        start,
+        end,
+    )
     merged = merge_pit_financials(
         ohlcv_data,
         financial_data,
@@ -178,6 +286,7 @@ def enrich_ohlcv_with_pit_financials(
         frames=merged,
         financial_symbol_count=len(financial_data),
         disclosure_symbol_count=len(disclosure_data),
+        source_statuses=(financial_status, disclosure_status),
     )
 
 

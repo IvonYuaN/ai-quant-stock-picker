@@ -12,7 +12,7 @@ from datetime import date, timedelta
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from aqsp.ledger.base import read_ledger, write_ledger
+from aqsp.ledger.base import read_ledger, write_ledger  # noqa: E402
 
 
 def main():

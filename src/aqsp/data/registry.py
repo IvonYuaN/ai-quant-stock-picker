@@ -256,6 +256,17 @@ COVERAGE_TIER_PRIORITY = {
     "history_core": 0,
 }
 
+_WORKLOAD_FIT_LABELS = {
+    "primary": "主链路",
+    "fallback": "兜底",
+    "candidate": "可用但需验数",
+    "supplement": "补充层",
+    "fallback_only": "仅兜底历史",
+    "future_primary": "未来主链路",
+    "avoid": "不适合",
+    "unknown": "未知",
+}
+
 
 def list_registry_entries() -> tuple[DataSourceRegistryEntry, ...]:
     return DATA_SOURCE_REGISTRY
@@ -291,6 +302,10 @@ def sort_registry_entries(
 
 def registry_entry_dict(entry: DataSourceRegistryEntry) -> dict[str, object]:
     return asdict(entry)
+
+
+def workload_fit_label(value: str) -> str:
+    return _WORKLOAD_FIT_LABELS.get(value, value)
 
 
 def local_data_status(entry: DataSourceRegistryEntry) -> str:

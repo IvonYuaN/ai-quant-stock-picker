@@ -87,6 +87,26 @@ def test_latest_run_source_runtime_derives_notify_level() -> None:
     assert result["fallback_used"] is True
 
 
+def test_diagnose_runtime_auth_health_lines_include_recorded_sources() -> None:
+    from scripts.diagnose_runtime import _auth_health_lines
+
+    lines = _auth_health_lines(
+        {
+            "auth": {
+                "baostock": {
+                    "status": "login_failed",
+                    "checked_at": "2026-06-02T17:30:00+08:00",
+                    "message": "baostock 登录失败",
+                }
+            }
+        }
+    )
+
+    assert lines == [
+        "- baostock: status=login_failed checked_at=2026-06-02T17:30:00+08:00 message=baostock 登录失败"
+    ]
+
+
 def test_diagnose_runtime_main_reports_research_runtime(
     tmp_path, monkeypatch, capsys
 ) -> None:

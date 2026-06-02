@@ -21,8 +21,10 @@ from aqsp.data.registry import (
     local_data_status,
     registry_entry_dict,
     sort_registry_entries,
+    workload_fit_label,
 )
 from aqsp.data.registry import get_registry_entry
+from aqsp.data.source_readiness import inspect_source_readiness
 from aqsp.data.source_health import (
     describe_source_health,
     prioritize_source_ids,
@@ -278,6 +280,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     sources_cmd.add_argument("--ready-only", action="store_true")
     sources_cmd.add_argument("--json", action="store_true")
+    sources_cmd.add_argument(
+        "--probe-auth",
+        action="store_true",
+        help="主动探测 baostock/tushare 登录或 token 可用性",
+    )
 
     briefing_cmd = sub.add_parser("briefing", help="generate daily briefing")
     briefing_cmd.add_argument("--ledger", default="data/predictions.jsonl")
@@ -473,9 +480,16 @@ def run_sources(args: argparse.Namespace) -> int:
             item = registry_entry_dict(entry)
             item["local_status"] = local_data_status(entry)
             stats = source_health.get(entry.id, {})
+            readiness = inspect_source_readiness(entry, probe_auth=args.probe_auth)
             item["health_successes"] = int(stats.get("successes", 0))
             item["health_failures"] = int(stats.get("failures", 0))
             item["health_last_success"] = stats.get("last_success", "")
+            item["auth_kind"] = readiness.auth_kind
+            item["auth_status"] = readiness.auth_status
+            item["auth_message"] = readiness.auth_message
+            item["auth_checked_at"] = readiness.auth_checked_at
+            item["active_probe"] = readiness.active_probe
+            item["workload_fit"] = readiness.workload_fit
             payload.append(item)
         print(json.dumps(payload, ensure_ascii=False, indent=2))
         return 0
@@ -484,6 +498,11 @@ def run_sources(args: argparse.Namespace) -> int:
         ready = "yes" if entry.runtime_ready else "no"
         account = "yes" if entry.requires_account else "no"
         stats = source_health.get(entry.id, {})
+        readiness = inspect_source_readiness(entry, probe_auth=args.probe_auth)
+        profiles = ", ".join(
+            f"{name}={workload_fit_label(value)}"
+            for name, value in readiness.workload_fit.items()
+        )
         print(
             f"- {entry.id}: ready={ready} local={local_data_status(entry)} "
             f"fresh={entry.freshness_tier} cover={entry.coverage_tier} "
@@ -491,8 +510,17 @@ def run_sources(args: argparse.Namespace) -> int:
             f"intraday={'yes' if entry.supports_intraday else 'no'} "
             f"realtime={'yes' if entry.supports_realtime else 'no'} "
             f"health={int(stats.get('successes', 0))}/{int(stats.get('failures', 0))} "
-            f"account={account}"
+            f"account={account} auth={readiness.auth_status}"
         )
+        print(
+            f"  profiles: {profiles} | auth_kind={readiness.auth_kind}"
+            + (
+                f" | checked_at={readiness.auth_checked_at}"
+                if readiness.auth_checked_at
+                else ""
+            )
+        )
+        print(f"  auth: {readiness.auth_message}")
         print(f"  uses: {', '.join(entry.default_for)}")
         print(f"  setup: {entry.setup}")
     return 0
@@ -690,12 +718,27 @@ def _source_runtime_metadata(source_id: str) -> tuple[str, str, str]:
     )
 
 
-def _reorder_source_refs(source_refs: list[object]) -> list[object]:
+def _reorder_source_refs(
+    source_refs: list[object],
+    *,
+    pinned_last: tuple[str, ...] = (),
+) -> list[object]:
     order = prioritize_source_ids(
         [str(getattr(item, "name", "")) for item in source_refs]
     )
     by_name = {str(getattr(item, "name", "")): item for item in source_refs}
-    return [by_name[name] for name in order if name in by_name]
+    prioritized = [by_name[name] for name in order if name in by_name]
+    if not pinned_last:
+        return prioritized
+    keep: list[object] = []
+    tail: list[object] = []
+    pinned = set(pinned_last)
+    for item in prioritized:
+        if str(getattr(item, "name", "")) in pinned:
+            tail.append(item)
+        else:
+            keep.append(item)
+    return keep + tail
 
 
 def _get_source(source_name: str):
@@ -709,7 +752,8 @@ def _get_source(source_name: str):
                 SinaSource(cache=cache),
                 TencentSource(cache=cache),
                 AkshareSource(cache=cache),
-            ]
+            ],
+            pinned_last=("akshare",),
         )
         return MultiSource(
             SourceFactory("tdx_vipdoc", TdxVipdocSource),
@@ -723,7 +767,8 @@ def _get_source(source_name: str):
                 SinaSource(cache=cache),
                 TencentSource(cache=cache),
                 AkshareSource(cache=cache),
-            ]
+            ],
+            pinned_last=("akshare",),
         )
         return MultiSource(
             online_sources[0],
@@ -737,7 +782,8 @@ def _get_source(source_name: str):
                 SinaSource(cache=cache),
                 EastmoneySource(cache=cache),
                 TencentSource(cache=cache),
-            ]
+            ],
+            pinned_last=("akshare",),
         )
         return MultiSource(
             sources[0],
@@ -2286,6 +2332,8 @@ def run_walkforward(args: argparse.Namespace) -> int:
         print(f"财务数据合并完成: {pit_result.financial_symbol_count} 只有财务数据")
         if pit_result.disclosure_symbol_count:
             print(f"Tushare 披露日覆盖完成: {pit_result.disclosure_symbol_count} 只")
+        for status in getattr(pit_result, "source_statuses", ()):
+            print(f"PIT源 {status.source_id}: {status.status} - {status.message}")
     elif args.source == "sqlite_db":
         from datetime import date as _date
         from aqsp.data.pit_financial import enrich_ohlcv_with_pit_financials
@@ -2312,6 +2360,8 @@ def run_walkforward(args: argparse.Namespace) -> int:
         print(f"财务数据合并完成: {pit_result.financial_symbol_count} 只有财务数据")
         if pit_result.disclosure_symbol_count:
             print(f"Tushare 披露日覆盖完成: {pit_result.disclosure_symbol_count} 只")
+        for status in getattr(pit_result, "source_statuses", ()):
+            print(f"PIT源 {status.source_id}: {status.status} - {status.message}")
     else:
         frames = load_csv(args.source)
 

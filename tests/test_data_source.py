@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 import pandas as pd
 
@@ -124,3 +126,70 @@ def test_normalize_symbol():
     result = source._normalize_symbol(df, "600000")
     assert "symbol" in result.columns
     assert result["symbol"].dtype.name in ("object", "string", "str")
+
+
+def test_akshare_realtime_snapshot_reuses_cache_within_interval(monkeypatch):
+    calls = {"count": 0}
+
+    def fake_spot():
+        calls["count"] += 1
+        return pd.DataFrame(
+            [
+                {
+                    "代码": "600000",
+                    "最新价": 10.0,
+                    "买一价": 9.9,
+                    "卖一价": 10.1,
+                    "成交量": 1000,
+                    "成交额": 10000,
+                }
+            ]
+        )
+
+    source = AkshareSource.__new__(AkshareSource)
+    source._ak = SimpleNamespace(stock_zh_a_spot_em=fake_spot)
+    source.cache = None
+    source._realtime_min_interval_sec = 30.0
+    source._realtime_failure_cooldown_sec = 180.0
+    source._last_realtime_fetch_ts = 0.0
+    source._realtime_cooldown_until = 0.0
+    source._cached_realtime_snapshot = None
+    source._cached_realtime_snapshot_ts = 0.0
+    source.name = "akshare"
+    clock = {"value": 100.0}
+    monkeypatch.setattr("aqsp.data.akshare_source.time.monotonic", lambda: clock["value"])
+
+    first = source.fetch_realtime_quote(["600000"])
+    second = source.fetch_realtime_quote(["600000"])
+
+    assert first["600000"]["price"] == 10.0
+    assert second["600000"]["price"] == 10.0
+    assert calls["count"] == 1
+
+
+def test_akshare_realtime_snapshot_enters_cooldown_after_failure(monkeypatch):
+    calls = {"count": 0}
+
+    def boom():
+        calls["count"] += 1
+        raise RuntimeError("429")
+
+    source = AkshareSource.__new__(AkshareSource)
+    source._ak = SimpleNamespace(stock_zh_a_spot_em=boom)
+    source.cache = None
+    source._realtime_min_interval_sec = 30.0
+    source._realtime_failure_cooldown_sec = 180.0
+    source._last_realtime_fetch_ts = 0.0
+    source._realtime_cooldown_until = 0.0
+    source._cached_realtime_snapshot = None
+    source._cached_realtime_snapshot_ts = 0.0
+    source.name = "akshare"
+    clock = {"value": 200.0}
+    monkeypatch.setattr("aqsp.data.akshare_source.time.monotonic", lambda: clock["value"])
+
+    with pytest.raises(DataError, match="进入冷却 180s"):
+        source.fetch_realtime_quote(["600000"])
+    with pytest.raises(DataError, match="冷却中"):
+        source.fetch_realtime_quote(["600000"])
+
+    assert calls["count"] == 1

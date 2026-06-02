@@ -12,8 +12,8 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 
-from aqsp.data.adjust import AdjustmentService
-from aqsp.data.sqlite_db_source import SqliteDbSource
+from aqsp.data.adjust import AdjustmentService  # noqa: E402
+from aqsp.data.sqlite_db_source import SqliteDbSource  # noqa: E402
 
 
 def main():

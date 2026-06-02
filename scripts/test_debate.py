@@ -8,14 +8,11 @@ from datetime import date
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-import pandas as pd
-import numpy as np
+import pandas as pd  # noqa: E402
+import numpy as np  # noqa: E402
 
-from aqsp.briefing.debate import (
-    AShareDebateCoordinator,
-    format_debate_result,
-)
-from aqsp.core.types import PickResult
+from aqsp.briefing.debate import AShareDebateCoordinator, format_debate_result  # noqa: E402
+from aqsp.core.types import PickResult  # noqa: E402
 
 
 def create_mock_pick(

@@ -611,9 +611,43 @@ class TestCLIDataSources:
         assert [item.name for item in source.fallbacks] == [
             "tencent",
             "eastmoney",
-            "akshare",
             "sina",
+            "akshare",
         ]
+
+    def test_online_source_plan_keeps_akshare_as_last_supplement(
+        self, monkeypatch
+    ):
+        import aqsp.cli as cli_mod
+
+        class DummySource:
+            def __init__(self, *args, **kwargs):
+                pass
+
+        monkeypatch.setattr(
+            cli_mod,
+            "EastmoneySource",
+            type("Em", (DummySource,), {"name": "eastmoney"}),
+        )
+        monkeypatch.setattr(
+            cli_mod, "SinaSource", type("Sina", (DummySource,), {"name": "sina"})
+        )
+        monkeypatch.setattr(
+            cli_mod, "TencentSource", type("Ten", (DummySource,), {"name": "tencent"})
+        )
+        monkeypatch.setattr(
+            cli_mod, "AkshareSource", type("Ak", (DummySource,), {"name": "akshare"})
+        )
+        monkeypatch.setattr(
+            cli_mod,
+            "prioritize_source_ids",
+            lambda source_ids, path=None: ["akshare", "tencent", "eastmoney", "sina"],
+        )
+
+        source = cli_mod._get_source("online_first")
+
+        ordered = [source.primary.name] + [item.name for item in source.fallbacks[:-1]]
+        assert ordered == ["tencent", "eastmoney", "sina", "akshare"]
 
     def test_auto_source_does_not_require_local_vipdoc_at_construction(
         self, monkeypatch

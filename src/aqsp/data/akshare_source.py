@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import time
 from datetime import date
 from typing import Literal
 import pandas as pd
@@ -23,6 +25,16 @@ class AkshareSource(DataSource):
                 "akshare is not installed; run: pip install -e '.[data]'"
             ) from exc
         self.cache = cache or DataCache()
+        self._realtime_min_interval_sec = float(
+            os.getenv("AQSP_AKSHARE_REALTIME_MIN_INTERVAL_SEC", "30")
+        )
+        self._realtime_failure_cooldown_sec = float(
+            os.getenv("AQSP_AKSHARE_FAILURE_COOLDOWN_SEC", "180")
+        )
+        self._last_realtime_fetch_ts = 0.0
+        self._realtime_cooldown_until = 0.0
+        self._cached_realtime_snapshot: pd.DataFrame | None = None
+        self._cached_realtime_snapshot_ts = 0.0
 
     def fetch_daily(
         self,
@@ -103,11 +115,11 @@ class AkshareSource(DataSource):
         symbols: list[str],
     ) -> dict[str, dict]:
         quotes = {}
+        snapshot = self._realtime_snapshot()
         try:
-            df = self._ak.stock_zh_a_spot_em()
-            df["代码"] = df["代码"].astype(str)
+            snapshot["代码"] = snapshot["代码"].astype(str)
             for symbol in symbols:
-                row = df[df["代码"] == symbol]
+                row = snapshot[snapshot["代码"] == symbol]
                 if not row.empty:
                     quotes[symbol] = {
                         "price": float(row.iloc[0]["最新价"]),
@@ -120,6 +132,34 @@ class AkshareSource(DataSource):
         except Exception as e:
             raise DataError(f"获取实时行情失败: {e}") from e
         return quotes
+
+    def _realtime_snapshot(self) -> pd.DataFrame:
+        now_ts = time.monotonic()
+        if self._realtime_cooldown_until > now_ts:
+            remain = int(self._realtime_cooldown_until - now_ts)
+            raise DataError(
+                f"akshare 实时快照冷却中，约 {remain}s 后重试；避免高频请求导致限流"
+            )
+        if (
+            self._cached_realtime_snapshot is not None
+            and now_ts - self._cached_realtime_snapshot_ts
+            < self._realtime_min_interval_sec
+        ):
+            return self._cached_realtime_snapshot.copy()
+        try:
+            df = self._ak.stock_zh_a_spot_em()
+        except Exception as exc:
+            self._realtime_cooldown_until = (
+                now_ts + self._realtime_failure_cooldown_sec
+            )
+            raise DataError(
+                f"akshare 全市场实时快照失败，进入冷却 {int(self._realtime_failure_cooldown_sec)}s: {exc}"
+            ) from exc
+        self._last_realtime_fetch_ts = now_ts
+        self._realtime_cooldown_until = 0.0
+        self._cached_realtime_snapshot = df.copy()
+        self._cached_realtime_snapshot_ts = now_ts
+        return df.copy()
 
     def fetch_index(
         self,
