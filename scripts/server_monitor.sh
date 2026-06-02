@@ -12,6 +12,7 @@ PYTHON_BIN="${VENV_DIR}/bin/python3"
 LOG_DIR="${PROJECT_ROOT}/logs/monitor"
 RESULT_LOG="${LOG_DIR}/monitor-$(date +%Y-%m-%d).log"
 MONITOR_CONFIG="${AQSP_MONITOR_CONFIG:-config/monitors.yaml}"
+NOTIFY_WARNINGS="${AQSP_MONITOR_NOTIFY_WARNINGS:-false}"
 
 log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$RESULT_LOG"
@@ -42,8 +43,16 @@ log "项目目录: ${PROJECT_ROOT}"
 log "配置文件: ${MONITOR_CONFIG}"
 log "=========================================="
 
+MONITOR_ARGS=( -m aqsp monitor --config "${MONITOR_CONFIG}" --notify )
+case "${NOTIFY_WARNINGS,,}" in
+    1|true|yes|on) ;;
+    *)
+        MONITOR_ARGS+=( --notify-critical-only )
+        ;;
+esac
+
 set +e
-"${PYTHON_BIN}" -m aqsp monitor --config "${MONITOR_CONFIG}" --notify "$@" 2>&1 | tee -a "$RESULT_LOG"
+"${PYTHON_BIN}" "${MONITOR_ARGS[@]}" "$@" 2>&1 | tee -a "$RESULT_LOG"
 MONITOR_EXIT_CODE=$?
 set -e
 

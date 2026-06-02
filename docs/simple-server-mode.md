@@ -130,6 +130,12 @@ bash /opt/aqsp/scripts/init_server_runtime.sh
 bash /opt/aqsp/scripts/server_monitor.sh
 ```
 
+默认只推送 `critical` 级别告警；如果要连 `warning` 也推送：
+
+```bash
+echo 'AQSP_MONITOR_NOTIFY_WARNINGS=true' >> /opt/aqsp/.env
+```
+
 建议每 15 分钟执行一次：
 
 ```bash

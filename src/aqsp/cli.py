@@ -261,6 +261,7 @@ def main(argv: list[str] | None = None) -> int:
     monitor_cmd = sub.add_parser("monitor", help="run monitoring checks")
     monitor_cmd.add_argument("--config", default="config/monitors.yaml")
     monitor_cmd.add_argument("--notify", action="store_true")
+    monitor_cmd.add_argument("--notify-critical-only", action="store_true")
     monitor_cmd.add_argument("--dry-run", action="store_true")
 
     sources_cmd = sub.add_parser(
@@ -2626,7 +2627,11 @@ def run_monitor(args: argparse.Namespace) -> int:
     print(alert_msg)
 
     if args.notify and not args.dry_run:
-        send_alerts(triggered)
+        notify_targets = triggered
+        if args.notify_critical_only:
+            notify_targets = [r for r in triggered if r.severity == "critical"]
+        if notify_targets:
+            send_alerts(notify_targets)
 
     return 1 if any(r.severity == "critical" for r in triggered) else 0
 
