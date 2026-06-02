@@ -76,6 +76,7 @@ TELEGRAM_CHAT_ID=
 GLM_API_KEY=
 
 AQSP_NOTIFY=false
+AQSP_NOTIFY_MODE=summary
 AQSP_ENABLE_DEBATE=false
 AQSP_DEBATE_ENABLE_LLM=false
 AQSP_DEBATE_MAX_ROUNDS=2
@@ -88,12 +89,14 @@ AQSP_ENABLE_AUTO_EVOLUTION=false
 
 - `GLM_API_KEY` 用于智谱；`LLM_PROVIDER=glm` 时默认走 `GLM-4.7-Flash`。
 - `AQSP_NOTIFY=true` 后，日终 `daily_pipeline.sh` 会自动带 `--notify`。
+- `AQSP_NOTIFY_MODE=summary` 时，收盘链路默认只发 1 条“收盘总览”；如果你想恢复每个步骤各发各的，改成 `fanout`。
 - `AQSP_SYMBOLS` 给实盘/日报链路用；`AQSP_WALKFORWARD_SYMBOLS` 单独给 walk-forward，用历史库里覆盖完整的票，别混用。
-- `AQSP_RESEARCH_ENGINE` 现在支持 `auto / builtin / akquant`。当前 `akquant` 先作为长期接入基座的 compat 路线，CLI 和配置合同已经固定，后续可以在不改上层调用的前提下替换成原生桥接。
+- `AQSP_RESEARCH_ENGINE` 现在支持 `auto / builtin / akquant`。当前 `akquant` 已接入原生单窗口执行：AQSP 负责滚动窗口编排、选股和报告，AKQuant 负责窗口内回测撮合；如果服务器没装 `akquant`，仍可按 compat 逻辑自动回退到 builtin。
 - `AKShare` 适合做研究补充和字段补数，不建议当短线高频主源；现在运行时会把它放在在线混合源靠后位置，并对全市场实时快照做最小间隔与失败冷却。
 - 选股推荐通知仍受 walk-forward 双门 gate 保护；收盘复盘、监控告警、策略自进化通知不依赖这道 gate。
 - `AQSP_ENABLE_DEBATE=false` 表示默认不跑多 agent 讨论；要开就改成 `true`。
 - `AQSP_DEBATE_LANGUAGE=zh-CN` 现在是运行时配置，不再写死在代码里。
+- `AQSP_DEBATE_ROLES` 现在走统一角色注册表，前端展示和后端角色身份共用同一套中文名、英文名、emoji、描述，不会再出现页面和运行时不一致。
 - 当前多 agent 讨论主链路是多角色规则引擎，LLM 主要用于摘要增强，不会直接改写核心选股分数。
 - `AQSP_ENABLE_AUTO_EVOLUTION=true` 后，收盘链路会额外执行一次策略自进化检查。
 - `LLM_PROVIDER=agnes` 时会直接走 Agnes AI 官方 OpenAI 兼容端点，默认模型 `agnes-2.0-flash`。
@@ -128,14 +131,24 @@ bash /opt/aqsp/scripts/server_sync_and_run.sh
 - `intraday_refresh.sh` 负责你白天看的“推荐”。
 - `server_sync_and_run.sh` 默认跑 `daily_pipeline.sh`，里面已经包含收盘复盘、虚拟盘同步、Dashboard 刷新。
 
+直接执行：
+
 ```bash
-# 北京时间 09:40-11:59 每 10 分钟跑一次盘中推荐
-# 北京时间 13:00-14:59 每 10 分钟跑一次盘中推荐
-# 北京时间 18:00 跑一次完整收盘复盘
-( crontab -l 2>/dev/null | grep -vE 'intraday_refresh\\.sh|server_sync_and_run\\.sh'; \
-  echo '*/10 9-11 * * 1-5 AQSP_RUNNER_SCRIPT=scripts/intraday_refresh.sh /bin/bash /opt/aqsp/scripts/server_sync_and_run.sh >> /opt/aqsp/logs/cron.log 2>&1'; \
-  echo '*/10 13-14 * * 1-5 AQSP_RUNNER_SCRIPT=scripts/intraday_refresh.sh /bin/bash /opt/aqsp/scripts/server_sync_and_run.sh >> /opt/aqsp/logs/cron.log 2>&1'; \
-  echo '0 18 * * 1-5 /bin/bash /opt/aqsp/scripts/server_sync_and_run.sh >> /opt/aqsp/logs/cron.log 2>&1' ) | crontab -
+bash /opt/aqsp/scripts/install_server_cron.sh
+```
+
+这条脚本会自动安装并去重这 4 类任务：
+
+- 北京时间 `09:40-11:59` 每 10 分钟跑一次盘中推荐
+- 北京时间 `13:00-14:59` 每 10 分钟跑一次盘中推荐
+- 北京时间 `18:00` 跑一次完整收盘复盘
+- 北京时间每 `15` 分钟跑一次服务器监控
+
+如果你想暂时关闭某一类任务，可以带环境变量：
+
+```bash
+AQSP_ENABLE_INTRADAY_CRON=false bash /opt/aqsp/scripts/install_server_cron.sh
+AQSP_ENABLE_MONITOR_CRON=false bash /opt/aqsp/scripts/install_server_cron.sh
 ```
 
 `scripts/intraday_refresh.sh` 默认只在交易时段内工作，并且写入单独的盘中 ledger，不污染正式收盘 ledger。
@@ -151,6 +164,25 @@ crontab -l
 ```bash
 bash /opt/aqsp/scripts/server_status.sh
 ```
+
+服务器联通自检：
+
+```bash
+cd /opt/aqsp && .venv/bin/python3 scripts/server_doctor.py
+```
+
+如果你要主动探测数据源登录和 LLM 联通：
+
+```bash
+cd /opt/aqsp && .venv/bin/python3 scripts/server_doctor.py --probe-auth --probe-llm
+```
+
+这个 doctor 会一次性检查：
+
+- `.env`、虚拟环境、数据库、Dashboard、报告文件是否存在
+- `baostock` / `tushare` 鉴权状态
+- `GLM` / `Agnes` 等已配置 LLM 是否只是“已配置”还是“真实可连”
+- 通知通道是否已配置
 
 首次补齐运行态空文件：
 
@@ -170,12 +202,7 @@ bash /opt/aqsp/scripts/server_monitor.sh
 echo 'AQSP_MONITOR_NOTIFY_WARNINGS=true' >> /opt/aqsp/.env
 ```
 
-建议每 15 分钟执行一次：
-
-```bash
-( crontab -l 2>/dev/null | grep -v 'server_monitor\.sh' ; \
-  echo '*/15 * * * 1-5 /bin/bash /opt/aqsp/scripts/server_monitor.sh >> /opt/aqsp/logs/cron.log 2>&1' ) | crontab -
-```
+如果你已经执行了 `install_server_cron.sh`，监控 cron 也会一并装好，不用单独再配。
 
 ## 本地如何看 8080
 
@@ -213,3 +240,15 @@ http://127.0.0.1:8080
 2. `git push origin main`
 3. 服务器自动更新并跑
 4. 本地打开 `8080` 看结果
+
+## GitHub Actions 降噪
+
+仓库里的 CI 现在做了两层降噪：
+
+- 只有 `src/`、`scripts/`、`tests/`、`pyproject.toml`、CI 自己变更时才会触发主 CI
+- 同一分支连续 push 时，旧的 workflow 会自动取消，避免邮箱被重复失败刷屏
+
+这意味着：
+
+- 改文档、改本地笔记、改非关键文件，不会再无意义触发主 CI
+- 连续修 bug 并反复 push，只看最后一次结果就够了

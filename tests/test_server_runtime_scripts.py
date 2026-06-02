@@ -27,3 +27,17 @@ def test_intraday_refresh_script_uses_isolated_outputs() -> None:
     assert "--skip-validation" in script
     assert '--benchmark-symbol ""' in script
     assert "--render-only" in script
+
+
+def test_install_server_cron_script_installs_standard_jobs() -> None:
+    script = (PROJECT_ROOT / "scripts" / "install_server_cron.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert "AQSP_ENABLE_INTRADAY_CRON" in script
+    assert "AQSP_ENABLE_DAILY_CRON" in script
+    assert "AQSP_ENABLE_MONITOR_CRON" in script
+    assert "*/10 9-11 * * 1-5" in script
+    assert "*/10 13-14 * * 1-5" in script
+    assert "0 18 * * 1-5" in script
+    assert "*/15 * * * 1-5" in script

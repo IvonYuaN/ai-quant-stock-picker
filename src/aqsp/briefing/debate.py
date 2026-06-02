@@ -1,84 +1,31 @@
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass, field
-from enum import Enum
-from typing import Iterable, Literal
+from typing import Literal
 from uuid import uuid4
 
 import pandas as pd
 
+from aqsp.briefing.agent_roles import (
+    AgentRole,
+    DEFAULT_AGENT_ROLE_ORDER,
+    agent_role_challenge_style,
+    agent_role_description,
+    agent_role_emoji,
+    agent_role_focus,
+    agent_role_label,
+    parse_agent_roles as _parse_agent_roles,
+)
 from aqsp.core.types import PickResult
+from aqsp.utils.llm_safe import llm_call_or_fallback
 
 logger = logging.getLogger(__name__)
 
 
-class AgentRole(Enum):
-    """A股市场辩论 Agent 的角色类型"""
-
-    BULL = "bull"  # 多头：强调技术面和资金推动
-    BEAR = "bear"  # 空头：强调风险和基本面压力
-    RISK_CONTROL = "risk_control"  # 风控：涨跌停、ST、退市风险
-    SECTOR_LEADER = "sector_leader"  # 板块轮动：关注行业热点切换
-    POLICY_SENSITIVE = "policy_sensitive"  # 政策敏感：关注监管动向
-    MARGIN_TRADING = "margin_trading"  # 融资融券：关注杠杆资金动向
-    NORTHBOUND = "northbound"  # 北向资金：关注外资动向
-    RETAIL_MOOD = "retail_mood"  # 散户情绪：关注市场情绪指标
-
-
-DEFAULT_AGENT_ROLE_ORDER: tuple[AgentRole, ...] = (
-    AgentRole.BULL,
-    AgentRole.BEAR,
-    AgentRole.RISK_CONTROL,
-    AgentRole.SECTOR_LEADER,
-    AgentRole.POLICY_SENSITIVE,
-    AgentRole.MARGIN_TRADING,
-    AgentRole.NORTHBOUND,
-    AgentRole.RETAIL_MOOD,
-)
-
-_ROLE_DESCRIPTIONS_ZH: dict[AgentRole, str] = {
-    AgentRole.BULL: "技术面多头，关注量价配合和趋势延续",
-    AgentRole.BEAR: "基本面空头，关注估值和业绩压力",
-    AgentRole.RISK_CONTROL: "风险控制专家，关注涨跌停、ST、退市风险",
-    AgentRole.SECTOR_LEADER: "板块轮动专家，关注行业热点切换",
-    AgentRole.POLICY_SENSITIVE: "政策分析师，关注监管和产业政策",
-    AgentRole.MARGIN_TRADING: "融资融券专家，关注杠杆资金动向",
-    AgentRole.NORTHBOUND: "北向资金专家，关注外资配置",
-    AgentRole.RETAIL_MOOD: "散户情绪专家，关注市场情绪指标",
-}
-
-_ROLE_DESCRIPTIONS_EN: dict[AgentRole, str] = {
-    AgentRole.BULL: "Bull case focused on price-volume trend continuation",
-    AgentRole.BEAR: "Bear case focused on valuation and earnings pressure",
-    AgentRole.RISK_CONTROL: "Risk control focused on halt, ST and delisting risk",
-    AgentRole.SECTOR_LEADER: "Sector rotation focused on industry leadership changes",
-    AgentRole.POLICY_SENSITIVE: "Policy watcher focused on regulation and industry policy",
-    AgentRole.MARGIN_TRADING: "Leverage watcher focused on margin funding behavior",
-    AgentRole.NORTHBOUND: "Northbound flow watcher focused on foreign capital",
-    AgentRole.RETAIL_MOOD: "Retail mood watcher focused on sentiment extremes",
-}
-
-
-def parse_agent_roles(role_names: Iterable[str]) -> tuple[AgentRole, ...]:
-    parsed: list[AgentRole] = []
-    for raw_name in role_names:
-        name = str(raw_name).strip().lower()
-        if not name:
-            continue
-        try:
-            role = AgentRole(name)
-        except ValueError:
-            continue
-        if role not in parsed:
-            parsed.append(role)
-    return tuple(parsed) or DEFAULT_AGENT_ROLE_ORDER
-
-
-def agent_role_description(role: AgentRole, language: str = "zh-CN") -> str:
-    if language.lower().startswith("en"):
-        return _ROLE_DESCRIPTIONS_EN.get(role, role.value)
-    return _ROLE_DESCRIPTIONS_ZH.get(role, role.value)
+def parse_agent_roles(role_names: list[str] | tuple[str, ...]) -> tuple[AgentRole, ...]:
+    return _parse_agent_roles(role_names)
 
 
 @dataclass
@@ -237,7 +184,7 @@ class AShareDebateAgent:
         risk_factors = self._identify_risk_factors(pick, df)
         opportunity_factors = self._identify_opportunity_factors(pick, df)
 
-        return AgentOpinion(
+        opinion = AgentOpinion(
             agent_id=self.agent_id,
             role=self.role,
             stance=stance,
@@ -246,6 +193,125 @@ class AShareDebateAgent:
             risk_factors=risk_factors,
             opportunity_factors=opportunity_factors,
         )
+        return self._maybe_enhance_initial_opinion(opinion, pick)
+
+    def _maybe_enhance_initial_opinion(
+        self,
+        opinion: AgentOpinion,
+        pick: PickResult,
+    ) -> AgentOpinion:
+        if not self.enable_llm:
+            return opinion
+
+        fallback_payload = {
+            "arguments": opinion.arguments[:2],
+            "risk_factors": opinion.risk_factors[:2],
+            "opportunity_factors": opinion.opportunity_factors[:2],
+        }
+        result = llm_call_or_fallback(
+            prompt=self._build_initial_prompt(pick, opinion),
+            fallback=json.dumps(fallback_payload, ensure_ascii=False),
+            enable_llm=self.enable_llm,
+            caller=f"debate-initial-{self.role.value}",
+        )
+        payload = self._parse_llm_payload(result.text, fallback_payload)
+        return AgentOpinion(
+            agent_id=opinion.agent_id,
+            role=opinion.role,
+            stance=opinion.stance,
+            confidence=opinion.confidence,
+            arguments=self._normalize_points(
+                payload.get("arguments"), opinion.arguments
+            ),
+            counterarguments=opinion.counterarguments.copy(),
+            risk_factors=self._normalize_points(
+                payload.get("risk_factors"),
+                opinion.risk_factors,
+            ),
+            opportunity_factors=self._normalize_points(
+                payload.get("opportunity_factors"),
+                opinion.opportunity_factors,
+            ),
+            final_position=opinion.final_position,
+        )
+
+    def _build_initial_prompt(self, pick: PickResult, opinion: AgentOpinion) -> str:
+        return f"""
+你是 A 股多 Agent 辩论系统中的一个固定角色。
+
+角色: {agent_role_label(self.role, self.language)}
+角色描述: {agent_role_description(self.role, self.language)}
+观察焦点: {agent_role_focus(self.role, self.language)}
+反驳风格: {agent_role_challenge_style(self.role, self.language)}
+
+硬约束:
+1. 不允许改变立场，只能围绕既定立场补充更有辨识度的论点。
+2. 不允许输出泛泛而谈的话。
+3. 不允许捏造不存在的数据。
+4. 只输出 JSON，对应字段最多 2/2/2 条短句。
+
+标的:
+- symbol: {pick.symbol}
+- name: {pick.name}
+- score: {pick.score}
+- rating: {pick.rating}
+- stance: {opinion.stance}
+- reasons: {"；".join(pick.reasons) or "无"}
+- risks: {"；".join(pick.risks) or "无"}
+- strategies: {",".join(pick.strategies) or "无"}
+
+已有基础观点:
+- arguments: {"；".join(opinion.arguments) or "无"}
+- risk_factors: {"；".join(opinion.risk_factors) or "无"}
+- opportunity_factors: {"；".join(opinion.opportunity_factors) or "无"}
+
+输出格式:
+{{
+  "arguments": ["..."],
+  "risk_factors": ["..."],
+  "opportunity_factors": ["..."]
+}}
+""".strip()
+
+    @staticmethod
+    def _parse_llm_payload(
+        text: str,
+        fallback_payload: dict[str, list[str]],
+    ) -> dict[str, list[str]]:
+        try:
+            payload = json.loads(text)
+        except json.JSONDecodeError:
+            return fallback_payload
+        if not isinstance(payload, dict):
+            return fallback_payload
+        return {
+            "arguments": payload.get("arguments", fallback_payload["arguments"]),
+            "risk_factors": payload.get(
+                "risk_factors", fallback_payload["risk_factors"]
+            ),
+            "opportunity_factors": payload.get(
+                "opportunity_factors",
+                fallback_payload["opportunity_factors"],
+            ),
+        }
+
+    @staticmethod
+    def _normalize_points(
+        values: object,
+        fallback: list[str],
+        *,
+        limit: int = 2,
+    ) -> list[str]:
+        if not isinstance(values, list):
+            values = fallback
+        cleaned: list[str] = []
+        for raw in values:
+            text = str(raw).strip()
+            if text and text not in cleaned:
+                cleaned.append(text)
+            if len(cleaned) >= limit:
+                break
+        return cleaned or fallback[:limit]
 
     def _determine_stance(
         self,
@@ -711,28 +777,6 @@ class AShareDebateCoordinator:
 
 def format_debate_result(result: DebateResult) -> str:
     """格式化辩论结果为可读文本"""
-    role_emojis = {
-        AgentRole.BULL: "🐂",
-        AgentRole.BEAR: "🐻",
-        AgentRole.RISK_CONTROL: "🛡️",
-        AgentRole.SECTOR_LEADER: "🔄",
-        AgentRole.POLICY_SENSITIVE: "📜",
-        AgentRole.MARGIN_TRADING: "💰",
-        AgentRole.NORTHBOUND: "🌊",
-        AgentRole.RETAIL_MOOD: "👥",
-    }
-
-    role_names = {
-        AgentRole.BULL: "技术多头",
-        AgentRole.BEAR: "基本面空头",
-        AgentRole.RISK_CONTROL: "风险控制",
-        AgentRole.SECTOR_LEADER: "板块轮动",
-        AgentRole.POLICY_SENSITIVE: "政策分析",
-        AgentRole.MARGIN_TRADING: "融资融券",
-        AgentRole.NORTHBOUND: "北向资金",
-        AgentRole.RETAIL_MOOD: "散户情绪",
-    }
-
     lines = [
         f"# 多Agent辩论 - {result.symbol} {result.name}",
         "",
@@ -760,8 +804,8 @@ def format_debate_result(result: DebateResult) -> str:
     # 各 Agent 观点
     lines.append("## 各Agent观点")
     for opinion in result.final_vote.keys():
-        emoji = role_emojis.get(opinion, "")
-        name = role_names.get(opinion, opinion.value)
+        emoji = agent_role_emoji(opinion)
+        name = agent_role_label(opinion, language="zh-CN")
         stance = result.final_vote[opinion]
         stance_emoji = {"bullish": "🐂", "bearish": "🐻", "neutral": "⚖️"}.get(
             stance, ""

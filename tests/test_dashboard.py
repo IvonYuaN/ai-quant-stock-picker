@@ -199,6 +199,70 @@ def test_dashboard_warns_when_source_is_degraded() -> None:
     assert "不要把这次结果当成正常质量样本" in html
 
 
+def test_dashboard_renders_debate_modal_with_shared_role_registry() -> None:
+    candidates = [
+        {
+            "symbol": "600519",
+            "name": "贵州茅台",
+            "date": "2026-06-02",
+            "score": "71",
+            "rating": "buy_candidate",
+        }
+    ]
+    debate_map = {
+        "600519": {
+            "symbol": "600519",
+            "name": "贵州茅台",
+            "debate_date": "2026-06-02",
+            "final_consensus": "多头略占优，维持观察",
+            "recommended_adjustment": "keep",
+            "original_score": 71.0,
+            "adjusted_score": 71.0,
+            "adjustment_weight": 0.0,
+            "disagreement_score": 0.25,
+            "final_vote": {
+                "bull": "bullish",
+                "risk_control": "neutral",
+            },
+            "rounds": [
+                {
+                    "round_num": 2,
+                    "summary": "技术面维持强势，但风险端要求控制追高。",
+                    "opinions": [
+                        {
+                            "role": "bull",
+                            "stance": "bullish",
+                            "confidence": 0.82,
+                            "arguments": ["量价仍在主升段"],
+                            "counterarguments": ["短线涨幅较大"],
+                            "risk_factors": ["追高回撤风险"],
+                            "opportunity_factors": ["趋势延续概率较高"],
+                        },
+                        {
+                            "role": "risk_control",
+                            "stance": "neutral",
+                            "confidence": 0.73,
+                            "arguments": ["需要确认次日成交质量"],
+                            "counterarguments": [],
+                            "risk_factors": ["高位波动放大"],
+                            "opportunity_factors": [],
+                        },
+                    ],
+                }
+            ],
+        }
+    }
+
+    html = render_dashboard(candidates, [], "辩论面板", debate_map=debate_map)
+
+    assert "多Agent讨论摘要" in html
+    assert "🐂 技术多头" in html
+    assert "🛡️ 风险控制" in html
+    assert "仅保留最终一轮" in html
+    assert "趋势延续概率较高" in html
+    assert "高位波动放大" in html
+
+
 def test_dashboard_warns_when_candidates_are_stale(tmp_path: Path) -> None:
     csv_path = tmp_path / "latest.csv"
     pd.DataFrame(

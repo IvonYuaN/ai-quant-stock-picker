@@ -6,6 +6,7 @@ import json
 from datetime import timedelta
 from pathlib import Path
 
+from aqsp.briefing.agent_roles import agent_role_emoji, agent_role_label
 from aqsp.briefing.debate_tracker import DebatePerformanceTracker
 from aqsp.core.time import now_shanghai
 
@@ -34,7 +35,7 @@ def render_agent_dashboard(
     tracker = DebatePerformanceTracker(performance_path)
     leaderboard = tracker.get_leaderboard()
     debates = _load_debates(Path(debate_path))
-    
+
     # 统计辩论历史
     total_debates = len(debates)
     recent_debates = 0
@@ -42,15 +43,15 @@ def render_agent_dashboard(
     for d in debates:
         if d.get("related_signal_date", "") >= cutoff:
             recent_debates += 1
-    
-    
+
     leaderboard_html = ""
     for idx, entry in enumerate(leaderboard, 1):
         accuracy_pct = entry["accuracy"] * 100
         weight = entry["weight"]
         predictions = entry["total_predictions"]
-        role_name = entry["role_name"]
-        
+        role_name = agent_role_label(entry["role"], language="zh-CN")
+        role_emoji = agent_role_emoji(entry["role"])
+
         # 权重颜色
         if weight > 0.15:
             weight_class = "weight-high"
@@ -58,7 +59,7 @@ def render_agent_dashboard(
             weight_class = "weight-normal"
         else:
             weight_class = "weight-low"
-        
+
         # 准确率颜色
         if accuracy_pct >= 60:
             acc_class = "acc-high"
@@ -66,13 +67,13 @@ def render_agent_dashboard(
             acc_class = "acc-medium"
         else:
             acc_class = "acc-low"
-        
+
         leaderboard_html += f"""
         <div class="leader-card">
             <div class="leader-rank">#{idx}</div>
             <div class="leader-info">
                 <h4>{role_name}</h4>
-                <p class="role-id">{entry['role']}</p>
+                <p class="role-id">{role_emoji} {entry["role"]}</p>
             </div>
             <div class="leader-metrics">
                 <div class="metric">
@@ -90,7 +91,7 @@ def render_agent_dashboard(
             </div>
         </div>
         """
-    
+
     # 最近辩论记录
     recent_debates_html = ""
     for d in reversed(debates[-10:]):
@@ -99,10 +100,14 @@ def render_agent_dashboard(
         original = d.get("original_score", 0)
         adjusted = d.get("adjusted_score", original)
         adj = d.get("recommended_adjustment", "keep")
-        adj_text = {"raise": "建议上调", "lower": "建议下调", "keep": "维持原评级"}.get(adj, adj)
-        adj_class = {"raise": "bull", "lower": "bear", "keep": "neutral"}.get(adj, "neutral")
+        adj_text = {"raise": "建议上调", "lower": "建议下调", "keep": "维持原评级"}.get(
+            adj, adj
+        )
+        adj_class = {"raise": "bull", "lower": "bear", "keep": "neutral"}.get(
+            adj, "neutral"
+        )
         date = d.get("related_signal_date", "")
-        
+
         recent_debates_html += f"""
         <div class="recent-debate">
             <div class="debate-header">
@@ -118,7 +123,7 @@ def render_agent_dashboard(
             <span class="adj-badge {adj_class}">{adj_text}</span>
         </div>
         """
-    
+
     html = f"""<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -405,7 +410,7 @@ def render_agent_dashboard(
 </body>
 </html>
 """
-    
+
     # 保存文件
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     Path(output_path).write_text(html, encoding="utf-8")

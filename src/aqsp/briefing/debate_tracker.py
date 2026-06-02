@@ -7,7 +7,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from aqsp.briefing.debate import AgentPerformanceMetrics, AgentRole
+from aqsp.briefing.agent_roles import AgentRole, agent_role_label
+from aqsp.briefing.debate import AgentPerformanceMetrics
 from aqsp.core.time import now_shanghai
 
 
@@ -300,14 +301,4 @@ class DebatePerformanceTracker:
 
     def _get_role_name(self, role: AgentRole) -> str:
         """获取角色中文名"""
-        names = {
-            AgentRole.BULL: "技术多头",
-            AgentRole.BEAR: "基本面空头",
-            AgentRole.RISK_CONTROL: "风险控制",
-            AgentRole.SECTOR_LEADER: "板块轮动",
-            AgentRole.POLICY_SENSITIVE: "政策分析",
-            AgentRole.MARGIN_TRADING: "融资融券",
-            AgentRole.NORTHBOUND: "北向资金",
-            AgentRole.RETAIL_MOOD: "散户情绪",
-        }
-        return names.get(role, role.value)
+        return agent_role_label(role, language="zh-CN")

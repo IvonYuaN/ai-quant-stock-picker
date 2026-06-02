@@ -8,6 +8,13 @@ on:
         required: false
         default: "2"
 
+concurrency:
+  group: dry-run-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
 jobs:
   dry-run:
     runs-on: ubuntu-latest

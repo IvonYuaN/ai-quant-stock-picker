@@ -13,6 +13,13 @@ on:
     # 15:30 Beijing time (UTC 07:30), Mon-Fri. 收盘后候选池(close):用当天日 K
     - cron: "30 7 * * 1-5"
 
+concurrency:
+  group: scheduled-screen-${{ github.workflow }}-${{ github.event.schedule || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
 jobs:
   screen:
     runs-on: ubuntu-latest

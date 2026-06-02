@@ -52,6 +52,13 @@ else
     echo "diagnose_runtime unavailable"
 fi
 
+print_section "DOCTOR"
+if [ -f "${PROJECT_ROOT}/.venv/bin/python3" ] && [ -f "${PROJECT_ROOT}/src/aqsp/cli.py" ]; then
+    ( cd "${PROJECT_ROOT}" && "${PROJECT_ROOT}/.venv/bin/python3" -m aqsp doctor ) || true
+else
+    echo "aqsp doctor unavailable"
+fi
+
 print_section "DEPLOY LOG"
 tail -n 40 "${PROJECT_ROOT}/logs/deploy/sync-$(date +%Y-%m-%d).log" 2>/dev/null || true
 

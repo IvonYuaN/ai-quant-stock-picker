@@ -4,6 +4,7 @@ import os
 from unittest.mock import MagicMock, patch
 
 import pytest
+import pandas as pd
 
 from aqsp.briefing import (
     Briefing,
@@ -12,7 +13,10 @@ from aqsp.briefing import (
     enhance_briefing,
     send_briefing,
 )
+from aqsp.briefing.agent_roles import AgentRole
+from aqsp.briefing.debate import AShareDebateAgent
 from aqsp.core.types import PickResult
+from aqsp.utils.llm_safe import LlmResult
 
 
 def _make_pick(**overrides) -> PickResult:
@@ -236,6 +240,55 @@ class TestBriefingGenerator:
         next_day = rendered.split("## 明日重点", maxsplit=1)[1]
         assert "600519" not in next_day
         assert "avoid" not in next_day
+
+
+class TestDebateAgent:
+    def test_llm_enhancement_keeps_stance_but_rewrites_role_specific_points(self):
+        agent = AShareDebateAgent(
+            role=AgentRole.BULL,
+            enable_llm=True,
+            language="zh-CN",
+        )
+        df = pd.DataFrame({"close": [10 + i for i in range(30)]})
+
+        with patch(
+            "aqsp.briefing.debate.llm_call_or_fallback",
+            return_value=LlmResult(
+                text="""
+                {
+                  "arguments": ["趋势主升结构仍在扩张", "放量后承接仍然健康"],
+                  "risk_factors": ["高位分歧后波动会放大"],
+                  "opportunity_factors": ["强趋势延续时容易走加速段"]
+                }
+                """,
+                degraded=False,
+            ),
+        ) as mock_llm:
+            opinion = agent.generate_initial_opinion(_make_pick(score=72), df)
+
+        assert mock_llm.called is True
+        assert opinion.stance == "bullish"
+        assert opinion.arguments[0] == "趋势主升结构仍在扩张"
+        assert opinion.risk_factors == ["高位分歧后波动会放大"]
+        assert opinion.opportunity_factors == ["强趋势延续时容易走加速段"]
+
+    def test_llm_enhancement_falls_back_when_payload_is_invalid(self):
+        agent = AShareDebateAgent(
+            role=AgentRole.RISK_CONTROL,
+            enable_llm=True,
+            language="zh-CN",
+        )
+        df = pd.DataFrame({"close": [10 + i for i in range(30)]})
+
+        with patch(
+            "aqsp.briefing.debate.llm_call_or_fallback",
+            return_value=LlmResult(text="not-json", degraded=True),
+        ):
+            opinion = agent.generate_initial_opinion(_make_pick(score=68), df)
+
+        assert opinion.stance in {"neutral", "bearish"}
+        assert opinion.arguments
+        assert opinion.risk_factors
 
 
 class TestEnhanceBriefing:

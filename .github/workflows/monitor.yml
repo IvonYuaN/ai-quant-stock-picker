@@ -4,6 +4,13 @@ on:
     - cron: '*/30 * * * *'  # 北京时间每30分钟
   workflow_dispatch:
 
+concurrency:
+  group: monitor-${{ github.workflow }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
 jobs:
   monitor:
     runs-on: ubuntu-latest

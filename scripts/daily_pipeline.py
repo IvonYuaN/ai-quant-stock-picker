@@ -33,7 +33,9 @@ class PipelineConfig:
     dashboard_html: str
     dashboard_db: str
     paper_ledger: str
+    closing_review_path: str
     notify: bool
+    notify_mode: str
     dry_run: bool
     enable_debate: bool
     enable_auto_evolution: bool
@@ -264,7 +266,7 @@ def _step_run_strategy(
         "--output-csv",
         config.csv_path,
     ]
-    if config.notify:
+    if _notify_fanout_enabled(config):
         argv.append("--notify")
     if config.enable_debate:
         argv.append("--enable-debate")
@@ -305,7 +307,7 @@ def _step_morning_breakout(
         "--top",
         "5",
     ]
-    if config.notify:
+    if _notify_fanout_enabled(config):
         argv.append("--notify")
 
     from aqsp.cli import main
@@ -332,7 +334,7 @@ def _step_closing_premium(
         "--top",
         "5",
     ]
-    if config.notify:
+    if _notify_fanout_enabled(config):
         argv.append("--notify")
 
     from aqsp.cli import main
@@ -349,15 +351,22 @@ def _step_closing_review(
 
     argv = [
         "closing-review",
+        "--output",
+        config.closing_review_path,
     ]
-    if config.notify:
+    if _notify_fanout_enabled(config):
         argv.append("--notify")
 
     from aqsp.cli import main
 
     exit_code = main(argv)
 
-    return {"exit_code": exit_code}
+    review_path = config.project_root / config.closing_review_path
+    return {
+        "exit_code": exit_code,
+        "report_path": config.closing_review_path,
+        "report_size": review_path.stat().st_size if review_path.exists() else 0,
+    }
 
 
 def _step_validate_predictions(
@@ -580,7 +589,7 @@ def _step_auto_evolution(
             improvement * 100,
             confidence * 100,
         )
-        if config.notify:
+        if _notify_fanout_enabled(config):
             from aqsp.notifier import send_notification
 
             send_notification(
@@ -619,7 +628,7 @@ def _step_generate_report(
         "--output",
         config.briefing_path,
     ]
-    if config.notify:
+    if _notify_fanout_enabled(config):
         argv_briefing.append("--notify")
 
     from aqsp.cli import main
@@ -767,6 +776,86 @@ def run_pipeline(config: PipelineConfig) -> PipelineResult:
     )
 
 
+def _notify_fanout_enabled(config: PipelineConfig) -> bool:
+    return config.notify and config.notify_mode == "fanout"
+
+
+def _latest_source_status_from_ledger(ledger_path: Path) -> dict[str, Any] | None:
+    if not ledger_path.exists():
+        return None
+    latest: dict[str, Any] | None = None
+    for line in ledger_path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if row.get("run_requested_source") or row.get("run_actual_source"):
+            latest = row
+    if latest is None:
+        return None
+    return {
+        "requested_source": str(latest.get("run_requested_source", "") or ""),
+        "actual_source": str(latest.get("run_actual_source", "") or ""),
+        "health_label": str(latest.get("run_source_health_label", "") or "unknown"),
+        "health_message": str(
+            latest.get("run_source_health_message", "") or "暂无说明"
+        ),
+    }
+
+
+def _build_pipeline_digest(
+    config: PipelineConfig,
+    result: PipelineResult,
+) -> str:
+    status = "成功" if result.overall_success else "有失败"
+    lines = [
+        f"- 总体状态: {status}",
+        f"- 开始时间: {result.started_at}",
+        f"- 总耗时: {result.duration_seconds:.1f}s",
+    ]
+    for step in result.steps:
+        badge = "OK" if step.success else "FAIL"
+        line = f"- {badge} {step.name}: {step.duration_seconds:.1f}s"
+        if step.message:
+            line += f" ({step.message})"
+        lines.append(line)
+
+    lines.extend(
+        [
+            "",
+            f"- 复盘报告: {config.closing_review_path}",
+            f"- 每日简报: {config.briefing_path}",
+            f"- Dashboard: {config.dashboard_html}",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def _send_pipeline_digest(
+    config: PipelineConfig,
+    result: PipelineResult,
+    logger: logging.Logger,
+) -> None:
+    if not config.notify or config.notify_mode != "summary" or config.dry_run:
+        return
+
+    try:
+        from aqsp.notifier import prepend_source_status_banner, send_notification
+
+        digest = _build_pipeline_digest(config, result)
+        source_status = _latest_source_status_from_ledger(
+            config.project_root / config.ledger_path
+        )
+        if source_status:
+            digest = prepend_source_status_banner(digest, source_status)
+        send_notification("收盘总览", digest)
+        logger.info("已发送收盘汇总通知 (mode=summary)")
+    except Exception as exc:
+        logger.warning("收盘汇总通知发送失败(非致命): %s", exc)
+
+
 def _build_config(args: argparse.Namespace) -> PipelineConfig:
     import os
 
@@ -798,7 +887,9 @@ def _build_config(args: argparse.Namespace) -> PipelineConfig:
         dashboard_html=args.dashboard_html or "dist/dashboard/index.html",
         dashboard_db=args.dashboard_db or "dist/dashboard/aqsp.db",
         paper_ledger=args.paper_ledger or "data/paper_trades.jsonl",
+        closing_review_path="reports/closing_review.md",
         notify=args.notify or env.notify,
+        notify_mode=env.notify_mode,
         dry_run=args.dry_run,
         enable_debate=args.enable_debate or env.enable_debate,
         enable_auto_evolution=env.enable_auto_evolution,
@@ -878,6 +969,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         result = run_pipeline(config)
         _write_result_file(result, config.project_root)
+        _send_pipeline_digest(config, result, logger)
 
         if result.overall_success:
             logger.info("跑批成功完成")

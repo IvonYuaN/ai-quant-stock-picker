@@ -15,6 +15,7 @@ from typing import Any
 import pandas as pd
 from pandas.errors import EmptyDataError
 
+from aqsp.briefing.agent_roles import agent_role_emoji, agent_role_label
 from aqsp.core.time import now_shanghai
 from aqsp.data.source_health import (
     describe_source_health,
@@ -198,6 +199,27 @@ def _fmt_return(value: Any) -> str:
     return f"<span class='{cls}'>{number:.2f}</span>"
 
 
+def _debate_age_label(debate_date: str) -> str:
+    if not debate_date:
+        return ""
+    try:
+        debate_dt = datetime.strptime(debate_date, "%Y-%m-%d").date()
+    except ValueError:
+        return ""
+    days_diff = (now_shanghai().date() - debate_dt).days
+    if days_diff <= 0:
+        return "今日"
+    if days_diff == 1:
+        return "昨日"
+    return f"{days_diff}天前"
+
+
+def _role_display_name(role: str) -> str:
+    emoji = agent_role_emoji(role)
+    label = agent_role_label(role, language="zh-CN")
+    return f"{emoji} {label}".strip()
+
+
 def _candidate_cards(
     candidates: list[dict[str, str]], debate_map: dict[str, dict[str, Any]]
 ) -> str:
@@ -216,25 +238,9 @@ def _candidate_cards(
         has_debate = debate is not None
 
         # 数据关联性检查：辩论时间是否在合理范围内
-        debate_date = ""
-        debate_age = ""
-        if has_debate:
-            debate_date = debate.get("debate_date", "")
-            if debate_date:
-                try:
-                    from datetime import datetime
-
-                    debate_dt = datetime.strptime(debate_date, "%Y-%m-%d")
-                    today = datetime.now().date()
-                    days_diff = (today - debate_dt.date()).days
-                    if days_diff == 0:
-                        debate_age = "今日"
-                    elif days_diff == 1:
-                        debate_age = "昨日"
-                    else:
-                        debate_age = f"{days_diff}天前"
-                except ValueError:
-                    debate_age = ""
+        debate_age = (
+            _debate_age_label(str(debate.get("debate_date", ""))) if has_debate else ""
+        )
 
         debate_btn = (
             f"""<button class="debate-btn" onclick="showDebate('{symbol}')" aria-label="查看辩论详情">
@@ -295,7 +301,7 @@ def _candidate_cards(
                         <small>/ {rating}</small>
                         {adjustment_badge}
                     </div>
-                    {f"<div class='score-compare'>原始 {original_score} → 调整后 {adj_score} {score_diff}</div>" if has_debate else ""}
+                    {f"<div class='score-compare'>原始 {original_score} · 调整 {adj_score} {score_diff}</div>" if has_debate else ""}
                 </div>
                 <button class="expand-btn" onclick="toggleCard(this)" aria-label="展开详情" aria-expanded="false">
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -359,39 +365,37 @@ def _debate_modals(debate_map: dict[str, dict[str, Any]]) -> str:
         opinions_html = ""
         for opinion in latest_round.get("opinions", []):
             role = opinion.get("role", "")
-            role_name = {
-                "bull": "技术多头",
-                "bear": "基本面空头",
-                "risk_control": "风险控制",
-                "sector_leader": "板块轮动",
-                "policy_sensitive": "政策分析",
-                "margin_trading": "融资融券",
-                "northbound": "北向资金",
-                "retail_mood": "散户情绪",
-            }.get(role, role)
+            role_name = html.escape(_role_display_name(str(role)))
             stance = opinion.get("stance", "neutral")
-            stance_icon = {"bullish": "🐂", "bearish": "🐻", "neutral": "➡️"}.get(
+            stance_icon = {"bullish": "🐂", "bearish": "🐻", "neutral": "⚖️"}.get(
                 stance, ""
             )
             confidence = opinion.get("confidence", 0) * 100
             arguments = opinion.get("arguments", [])
-            arguments_html = "".join(
-                f"<li>{html.escape(a)}</li>" for a in arguments[:2]
-            )
             counterarguments = opinion.get("counterarguments", [])
-            counterarguments_html = "".join(
-                f"<li>{html.escape(a)}</li>" for a in counterarguments[:1]
-            )
             risk_factors = opinion.get("risk_factors", [])
-            risk_factors_html = "".join(
-                f"<li class='risk-item'>⚠️ {html.escape(a)}</li>"
-                for a in risk_factors[:1]
-            )
             opportunity_factors = opinion.get("opportunity_factors", [])
-            opportunity_factors_html = "".join(
-                f"<li class='opp-item'>✅ {html.escape(a)}</li>"
-                for a in opportunity_factors[:1]
-            )
+            bullets: list[str] = []
+            for argument in arguments[:2]:
+                bullets.append(
+                    f"<li><span class='point-label'>论点</span>{html.escape(argument)}</li>"
+                )
+            for opportunity in opportunity_factors[:1]:
+                bullets.append(
+                    "<li class='opp-item'><span class='point-label'>机会</span>"
+                    f"✅ {html.escape(opportunity)}</li>"
+                )
+            for risk in risk_factors[:1]:
+                bullets.append(
+                    "<li class='risk-item'><span class='point-label'>风险</span>"
+                    f"⚠️ {html.escape(risk)}</li>"
+                )
+            for counterargument in counterarguments[:1]:
+                bullets.append(
+                    "<li><span class='point-label'>反驳</span>"
+                    f"{html.escape(counterargument)}</li>"
+                )
+            bullet_html = "".join(bullets)
 
             opinions_html += f"""
                 <div class="opinion-card {stance}">
@@ -404,17 +408,14 @@ def _debate_modals(debate_map: dict[str, dict[str, Any]]) -> str:
                         <span class="confidence-text">{confidence:.0f}%</span>
                     </div>
                     <div class="opinion-body">
-                        {"<div class='arg-section'><h5>论点</h5><ul>" + arguments_html + "</ul></div>" if arguments else ""}
-                        {"<div class='arg-section'><h5>反驳</h5><ul>" + counterarguments_html + "</ul></div>" if counterarguments else ""}
-                        {"<div class='arg-section'><h5>风险</h5><ul>" + risk_factors_html + "</ul></div>" if risk_factors else ""}
-                        {"<div class='arg-section'><h5>机会</h5><ul>" + opportunity_factors_html + "</ul></div>" if opportunity_factors else ""}
+                        {"<ul class='opinion-points'>" + bullet_html + "</ul>" if bullet_html else "<p class='muted'>暂无观点细节。</p>"}
                     </div>
                 </div>
                 """
         rounds_html = f"""
         <div class="debate-round">
             <h4>最终一轮观点</h4>
-            <p class='round-summary'>首页仅保留最终一轮，避免重复内容堆叠。{f"第 {round_num} 轮摘要：{summary}" if summary else ""}</p>
+            <p class='round-summary'>仅保留最终一轮，避免重复堆叠。{f"第 {round_num} 轮摘要：{summary}" if summary else ""}</p>
             <div class="opinions-grid">{opinions_html or "<p class='muted'>暂无最终观点明细。</p>"}</div>
         </div>
         """
@@ -2427,27 +2428,22 @@ def render_dashboard(
     .opinion-body {{
       padding: 12px 14px;
     }}
-    .arg-section {{
-      margin-bottom: 10px;
-    }}
-    .arg-section:last-child {{
-      margin-bottom: 0;
-    }}
-    .arg-section h5 {{
-      margin: 0 0 6px;
-      font-size: 12px;
-      color: var(--muted);
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-    }}
-    .arg-section ul {{
+    .opinion-points {{
       margin: 0;
       padding-left: 18px;
     }}
-    .arg-section li {{
+    .opinion-points li {{
       margin-bottom: 4px;
       line-height: 1.5;
       font-size: 14px;
+    }}
+    .point-label {{
+      display: inline-block;
+      min-width: 32px;
+      margin-right: 6px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
     }}
     .risk-item {{ color: var(--red); }}
     .opp-item {{ color: var(--green); }}

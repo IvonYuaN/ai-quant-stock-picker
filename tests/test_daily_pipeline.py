@@ -42,6 +42,7 @@ def test_build_config_prefers_env_source_when_cli_source_missing(monkeypatch) ->
         dashboard_html="",
         dashboard_db="",
         paper_ledger="",
+        closing_review="",
         notify=False,
         dry_run=False,
         enable_debate=False,
@@ -72,6 +73,7 @@ def test_build_config_enables_debate_from_env(monkeypatch) -> None:
         dashboard_html="",
         dashboard_db="",
         paper_ledger="",
+        closing_review="",
         notify=False,
         dry_run=False,
         enable_debate=False,
@@ -103,6 +105,7 @@ def test_build_config_enables_notify_and_auto_evolution_from_env(monkeypatch) ->
         dashboard_html="",
         dashboard_db="",
         paper_ledger="",
+        closing_review="",
         notify=False,
         dry_run=False,
         enable_debate=False,
@@ -147,7 +150,9 @@ def test_morning_breakout_uses_sh300_pool(monkeypatch) -> None:
         dashboard_html="dist/dashboard/index.html",
         dashboard_db="dist/dashboard/aqsp.db",
         paper_ledger="data/paper_trades.jsonl",
+        closing_review_path="reports/closing_review.md",
         notify=False,
+        notify_mode="summary",
         dry_run=False,
         enable_debate=False,
         enable_auto_evolution=False,
@@ -217,7 +222,9 @@ def test_adaptive_learning_converts_rows_to_dataframe(
         dashboard_html="dist/dashboard/index.html",
         dashboard_db="dist/dashboard/aqsp.db",
         paper_ledger="data/paper_trades.jsonl",
+        closing_review_path="reports/closing_review.md",
         notify=False,
+        notify_mode="summary",
         dry_run=False,
         enable_debate=False,
         enable_auto_evolution=False,
@@ -264,7 +271,9 @@ def test_auto_evolution_step_reads_output_when_success(
         dashboard_html="dist/dashboard/index.html",
         dashboard_db="dist/dashboard/aqsp.db",
         paper_ledger="data/paper_trades.jsonl",
+        closing_review_path="reports/closing_review.md",
         notify=False,
+        notify_mode="summary",
         dry_run=False,
         enable_debate=False,
         enable_auto_evolution=True,
@@ -275,6 +284,122 @@ def test_auto_evolution_step_reads_output_when_success(
     assert result["evolved"] is True
     assert result["strategy_name"] == "composite"
     assert result["confidence"] == 0.82
+
+
+def test_closing_review_step_writes_output_and_skips_fanout_notify_in_summary_mode(
+    monkeypatch, tmp_path: Path
+) -> None:
+    daily_pipeline = _load_daily_pipeline_module()
+    captured: list[str] = []
+
+    def fake_main(argv: list[str]) -> int:
+        captured[:] = argv
+        report_path = tmp_path / "reports" / "closing_review.md"
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text("# 收盘复盘\n", encoding="utf-8")
+        return 0
+
+    monkeypatch.setattr("aqsp.cli.main", fake_main)
+
+    config = daily_pipeline.PipelineConfig(
+        project_root=tmp_path,
+        source="eastmoney",
+        mode="close",
+        limit=10,
+        max_universe=50,
+        min_avg_amount=50_000_000,
+        max_data_lag_days=3,
+        enable_online_factors=False,
+        allow_online_fallback=True,
+        ledger_path="data/predictions.jsonl",
+        report_path="reports/latest.md",
+        csv_path="reports/latest.csv",
+        briefing_path="reports/briefing.md",
+        paper_report_path="reports/paper.md",
+        dashboard_html="dist/dashboard/index.html",
+        dashboard_db="dist/dashboard/aqsp.db",
+        paper_ledger="data/paper_trades.jsonl",
+        closing_review_path="reports/closing_review.md",
+        notify=True,
+        notify_mode="summary",
+        dry_run=False,
+        enable_debate=False,
+        enable_auto_evolution=False,
+    )
+
+    result = daily_pipeline._step_closing_review(config, logging.getLogger("test"))
+
+    assert captured == [
+        "closing-review",
+        "--output",
+        "reports/closing_review.md",
+    ]
+    assert result["report_path"] == "reports/closing_review.md"
+
+
+def test_send_pipeline_digest_sends_summary_notification(
+    monkeypatch, tmp_path: Path
+) -> None:
+    daily_pipeline = _load_daily_pipeline_module()
+
+    ledger_path = tmp_path / "data" / "predictions.jsonl"
+    ledger_path.parent.mkdir(parents=True, exist_ok=True)
+    ledger_path.write_text(
+        '{"run_requested_source":"auto","run_actual_source":"eastmoney","run_source_health_label":"fallback","run_source_health_message":"fallback 到 eastmoney"}\n',
+        encoding="utf-8",
+    )
+
+    sent: dict[str, str] = {}
+
+    monkeypatch.setattr(
+        "aqsp.notifier.send_notification",
+        lambda title, content: sent.update({"title": title, "content": content}) or [],
+    )
+
+    config = daily_pipeline.PipelineConfig(
+        project_root=tmp_path,
+        source="eastmoney",
+        mode="close",
+        limit=10,
+        max_universe=50,
+        min_avg_amount=50_000_000,
+        max_data_lag_days=3,
+        enable_online_factors=False,
+        allow_online_fallback=True,
+        ledger_path="data/predictions.jsonl",
+        report_path="reports/latest.md",
+        csv_path="reports/latest.csv",
+        briefing_path="reports/briefing.md",
+        paper_report_path="reports/paper.md",
+        dashboard_html="dist/dashboard/index.html",
+        dashboard_db="dist/dashboard/aqsp.db",
+        paper_ledger="data/paper_trades.jsonl",
+        closing_review_path="reports/closing_review.md",
+        notify=True,
+        notify_mode="summary",
+        dry_run=False,
+        enable_debate=False,
+        enable_auto_evolution=False,
+    )
+
+    result = daily_pipeline.PipelineResult(
+        started_at="2026-06-02T18:00:00+08:00",
+        finished_at="2026-06-02T18:00:30+08:00",
+        duration_seconds=30.0,
+        steps=[
+            daily_pipeline.StepResult("数据更新", True, 1.0),
+            daily_pipeline.StepResult("策略运行", True, 2.0),
+        ],
+        overall_success=True,
+        summary="ok",
+    )
+
+    daily_pipeline._send_pipeline_digest(config, result, logging.getLogger("test"))
+
+    assert sent["title"] == "收盘总览"
+    assert "总体状态: 成功" in sent["content"]
+    assert "数据源状态" in sent["content"]
+    assert "复盘报告: reports/closing_review.md" in sent["content"]
 
 
 def test_closing_premium_uses_explicit_symbols(monkeypatch) -> None:
@@ -310,7 +435,9 @@ def test_closing_premium_uses_explicit_symbols(monkeypatch) -> None:
         dashboard_html="dist/dashboard/index.html",
         dashboard_db="dist/dashboard/aqsp.db",
         paper_ledger="data/paper_trades.jsonl",
+        closing_review_path="reports/closing_review.md",
         notify=False,
+        notify_mode="summary",
         dry_run=False,
         enable_debate=False,
         enable_auto_evolution=False,
@@ -360,7 +487,9 @@ def test_run_pipeline_excludes_intraday_sub_strategies(monkeypatch) -> None:
         dashboard_html="dist/dashboard/index.html",
         dashboard_db="dist/dashboard/aqsp.db",
         paper_ledger="data/paper_trades.jsonl",
+        closing_review_path="reports/closing_review.md",
         notify=False,
+        notify_mode="summary",
         dry_run=False,
         enable_debate=False,
         enable_auto_evolution=False,
@@ -442,7 +571,9 @@ def test_sync_paper_trades_writes_report(monkeypatch, tmp_path: Path) -> None:
         dashboard_html="dist/dashboard/index.html",
         dashboard_db="dist/dashboard/aqsp.db",
         paper_ledger="data/paper_trades.jsonl",
+        closing_review_path="reports/closing_review.md",
         notify=False,
+        notify_mode="summary",
         dry_run=False,
         enable_debate=False,
         enable_auto_evolution=False,

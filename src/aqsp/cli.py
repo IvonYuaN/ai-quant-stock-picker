@@ -58,7 +58,11 @@ from aqsp.models import ScreeningConfig
 from aqsp.notifier import notify_markdown
 from aqsp.notifier import prepend_source_status_banner
 from aqsp.research.summary import load_research_summary
-from aqsp.research_engine import ENGINE_CHOICES, WalkForwardEngineConfig, resolve_walkforward_engine
+from aqsp.research_engine import (
+    ENGINE_CHOICES,
+    WalkForwardEngineConfig,
+    resolve_walkforward_engine,
+)
 from aqsp.regime.detector import RegimeDetector
 from aqsp.report import to_dataframe, to_markdown
 from aqsp.risk.circuit_breaker import CircuitBreaker
@@ -282,6 +286,18 @@ def main(argv: list[str] | None = None) -> int:
     monitor_cmd.add_argument("--notify-critical-only", action="store_true")
     monitor_cmd.add_argument("--dry-run", action="store_true")
 
+    doctor_cmd = sub.add_parser("doctor", help="diagnose server/runtime readiness")
+    doctor_cmd.add_argument(
+        "--probe-auth",
+        action="store_true",
+        help="主动探测 baostock / tushare 登录或 token 可用性",
+    )
+    doctor_cmd.add_argument(
+        "--probe-llm",
+        action="store_true",
+        help="主动探测已配置的 LLM provider 联通性",
+    )
+
     sources_cmd = sub.add_parser(
         "sources", help="show data source readiness and freshness tiers"
     )
@@ -450,6 +466,8 @@ def main(argv: list[str] | None = None) -> int:
             return run_briefing(args)
         if args.command == "monitor":
             return run_monitor(args)
+        if args.command == "doctor":
+            return run_doctor(args)
         if args.command == "sources":
             return run_sources(args)
         if args.command == "research":
@@ -537,6 +555,17 @@ def run_sources(args: argparse.Namespace) -> int:
         print(f"  uses: {', '.join(entry.default_for)}")
         print(f"  setup: {entry.setup}")
     return 0
+
+
+def run_doctor(args: argparse.Namespace) -> int:
+    from scripts.server_doctor import main as doctor_main
+
+    argv: list[str] = []
+    if args.probe_auth:
+        argv.append("--probe-auth")
+    if args.probe_llm:
+        argv.append("--probe-llm")
+    return doctor_main(argv)
 
 
 def run_research(args: argparse.Namespace) -> int:

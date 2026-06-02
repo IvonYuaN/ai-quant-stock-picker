@@ -6,6 +6,7 @@ from aqsp.config import load_debate_runtime_config, load_runtime_config
 def test_load_runtime_config_reads_debate_flag(monkeypatch) -> None:
     monkeypatch.setenv("AQSP_ENABLE_DEBATE", "true")
     monkeypatch.setenv("AQSP_NOTIFY", "true")
+    monkeypatch.setenv("AQSP_NOTIFY_MODE", "fanout")
     monkeypatch.setenv("AQSP_ENABLE_AUTO_EVOLUTION", "true")
     monkeypatch.setenv("AQSP_WALKFORWARD_SYMBOLS", "000915,000921")
     monkeypatch.setenv("AQSP_RESEARCH_ENGINE", "akquant")
@@ -14,6 +15,7 @@ def test_load_runtime_config_reads_debate_flag(monkeypatch) -> None:
 
     assert config.enable_debate is True
     assert config.notify is True
+    assert config.notify_mode == "fanout"
     assert config.enable_auto_evolution is True
     assert config.walkforward_symbols == ("000915", "000921")
     assert config.research_engine == "akquant"

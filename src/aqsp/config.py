@@ -22,6 +22,7 @@ class RuntimeConfig:
     allow_online_fallback: bool
     enable_debate: bool
     notify: bool
+    notify_mode: str
     enable_auto_evolution: bool
 
 
@@ -63,16 +64,20 @@ def load_runtime_config() -> RuntimeConfig:
         allow_online_fallback=online_fallback_allowed(),
         enable_debate=_env_flag("AQSP_ENABLE_DEBATE"),
         notify=_env_flag("AQSP_NOTIFY"),
+        notify_mode=os.getenv("AQSP_NOTIFY_MODE", "summary").strip().lower()
+        or "summary",
         enable_auto_evolution=_env_flag("AQSP_ENABLE_AUTO_EVOLUTION"),
     )
 
 
 def load_debate_runtime_config() -> DebateRuntimeConfig:
+    from aqsp.briefing.agent_roles import DEFAULT_RUNTIME_AGENT_ROLE_NAMES
+
     roles = tuple(
         item.strip().lower()
         for item in os.getenv(
             "AQSP_DEBATE_ROLES",
-            "bull,bear,risk_control,sector_leader,policy_sensitive,northbound",
+            ",".join(DEFAULT_RUNTIME_AGENT_ROLE_NAMES),
         ).split(",")
         if item.strip()
     )
