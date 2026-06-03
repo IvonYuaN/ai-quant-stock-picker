@@ -22,14 +22,6 @@ from aqsp.briefing.debate import (
     parse_agent_roles,
 )
 from aqsp.ratings import is_tradable_rating, portfolio_action_label
-from aqsp.briefing.schema import (
-    BriefingData,
-    Pick,
-    RegimeInfo,
-    SourceStatus,
-    ThemeHeat,
-)
-from aqsp.briefing.renderer import MarkdownRenderer
 
 _TEMPLATE_DIR = Path(__file__).parent / "templates"
 

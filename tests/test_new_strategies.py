@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-import pytest
 
 
 def _make_df(prices: list[float], volumes: list[float] | None = None, name: str = "测试股") -> pd.DataFrame:
@@ -400,9 +399,19 @@ def test_fund_flow_main_force_accumulating():
 # ============================================================
 
 def test_briefing_schema_imports():
-    """schema 模块可导入。"""
-    from aqsp.briefing.schema import BriefingData, Pick, RegimeInfo, SourceStatus, ThemeHeat
-    assert BriefingData is not None
+    """schema 模块可导入（验证全部数据类都存在）。"""
+    from aqsp.briefing.schema import (
+        BriefingData,
+        Pick,
+        RegimeInfo,
+        SourceStatus,
+        ThemeHeat,
+    )
+    # 引用全部，既验证可导入又避免 F401
+    assert all(
+        cls is not None
+        for cls in (BriefingData, Pick, RegimeInfo, SourceStatus, ThemeHeat)
+    )
 
 
 def test_markdown_renderer_imports():
