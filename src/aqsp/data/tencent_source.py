@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import time
 from datetime import date
 from typing import Literal
@@ -9,6 +10,8 @@ import requests
 from aqsp.data.source import DataSource, OhlcvFrame, apply_limit_suspended_adj
 from aqsp.data.cache import DataCache
 from aqsp.core.time import now_shanghai
+
+_logger = logging.getLogger("aqsp.data.tencent")
 
 TENCENT_SIMPLE_QUOTE_URL = "http://qt.gtimg.cn/q=s_{symbol}"
 TENCENT_FULL_QUOTE_URL = "http://qt.gtimg.cn/q={market}{symbol}"
@@ -152,9 +155,14 @@ class TencentSource(DataSource):
                             }
                         )
                 return pd.DataFrame(rows)
-            except Exception:
+            except Exception as exc:
                 if attempt < _MAX_RETRIES - 1:
                     time.sleep(_BACKOFF_BASE ** (attempt + 1))
+                else:
+                    _logger.warning(
+                        "tencent 日线获取失败 %s（重试%d次后放弃）: %s",
+                        symbol, _MAX_RETRIES, exc,
+                    )
         return None
 
     def _fetch_tencent_intraday(self, symbol: str, period: str) -> pd.DataFrame | None:
@@ -190,9 +198,14 @@ class TencentSource(DataSource):
                 df["symbol"] = symbol
                 df["name"] = symbol
                 return df
-            except Exception:
+            except Exception as exc:
                 if attempt < _MAX_RETRIES - 1:
                     time.sleep(_BACKOFF_BASE ** (attempt + 1))
+                else:
+                    _logger.warning(
+                        "tencent 分时获取失败 %s（重试%d次后放弃）: %s",
+                        symbol, _MAX_RETRIES, exc,
+                    )
         return None
 
     def _fetch_tencent_quote(self, symbol: str) -> dict | None:
@@ -231,9 +244,14 @@ class TencentSource(DataSource):
                     "limit_down": limit_down,
                     "ts": now_shanghai().isoformat(),
                 }
-            except Exception:
+            except Exception as exc:
                 if attempt < _MAX_RETRIES - 1:
                     time.sleep(_BACKOFF_BASE ** (attempt + 1))
+                else:
+                    _logger.warning(
+                        "tencent 实时报价获取失败 %s（重试%d次后放弃）: %s",
+                        symbol, _MAX_RETRIES, exc,
+                    )
         return None
 
     def _normalize_tencent_df(self, df: pd.DataFrame, symbol: str) -> pd.DataFrame:

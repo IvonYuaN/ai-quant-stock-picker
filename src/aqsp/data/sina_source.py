@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import time
 from datetime import date
 from typing import Literal
@@ -13,6 +14,8 @@ from aqsp.core.time import now_shanghai
 _REQUEST_DELAY = 0.3
 _MAX_RETRIES = 3
 _BACKOFF_BASE = 2.0
+
+_logger = logging.getLogger("aqsp.data.sina")
 
 
 class SinaSource(DataSource):
@@ -131,9 +134,14 @@ class SinaSource(DataSource):
                     & (df["date"] <= end.strftime("%Y-%m-%d"))
                 ]
                 return df
-            except Exception:
+            except Exception as exc:
                 if attempt < _MAX_RETRIES - 1:
                     time.sleep(_BACKOFF_BASE ** (attempt + 1))
+                else:
+                    _logger.warning(
+                        "sina 日线获取失败 %s（重试%d次后放弃）: %s",
+                        symbol, _MAX_RETRIES, exc,
+                    )
         return None
 
     def _fetch_sina_intraday(self, symbol: str, period: str) -> pd.DataFrame | None:
@@ -169,9 +177,14 @@ class SinaSource(DataSource):
                 df["symbol"] = symbol
                 df["name"] = symbol
                 return df
-            except Exception:
+            except Exception as exc:
                 if attempt < _MAX_RETRIES - 1:
                     time.sleep(_BACKOFF_BASE ** (attempt + 1))
+                else:
+                    _logger.warning(
+                        "sina 分时获取失败 %s（重试%d次后放弃）: %s",
+                        symbol, _MAX_RETRIES, exc,
+                    )
         return None
 
     def _fetch_sina_quote(self, symbol: str) -> dict | None:
@@ -193,9 +206,14 @@ class SinaSource(DataSource):
                     "amount": float(parts[9]),
                     "ts": now_shanghai().isoformat(),
                 }
-            except Exception:
+            except Exception as exc:
                 if attempt < _MAX_RETRIES - 1:
                     time.sleep(_BACKOFF_BASE ** (attempt + 1))
+                else:
+                    _logger.warning(
+                        "sina 实时报价获取失败 %s（重试%d次后放弃）: %s",
+                        symbol, _MAX_RETRIES, exc,
+                    )
         return None
 
     def _normalize_sina_df(self, df: pd.DataFrame, symbol: str) -> pd.DataFrame:
