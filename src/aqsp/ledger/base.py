@@ -70,56 +70,69 @@ def append_predictions(
 ) -> None:
     execution = execution or ExecutionConfig()
     rows = read_ledger(path)
-    existing_keys = {_prediction_key(row) for row in rows}
+    row_index_by_key = {_prediction_key(row): idx for idx, row in enumerate(rows)}
     now = now_shanghai().isoformat(timespec="seconds")
     for pick in picks:
         strategies = list(pick.strategies)
         signal_day_group = pick.date
         row_key = (pick.date, pick.symbol, thresholds_version, regime, "next_open")
-        if row_key in existing_keys:
+        prediction_fields = {
+            "signal_date": pick.date,
+            "symbol": pick.symbol,
+            "name": pick.name,
+            "signal_close": pick.close,
+            "intended_entry": "next_open",
+            "score": pick.score,
+            "rating": pick.rating,
+            "position": pick.position,
+            "portfolio_action": str(pick.metrics.get("portfolio_action", "")),
+            "entry_type": pick.entry_type,
+            "ideal_buy": pick.ideal_buy,
+            "strategies": strategies,
+            "reasons": list(pick.reasons),
+            "risks": list(pick.risks),
+            "stop_loss": pick.stop_loss,
+            "stop_method": str(pick.metrics.get("stop_method", "")),
+            "take_profit": pick.take_profit,
+            "adjusted_score": pick.adjusted_score,
+            "recommended_adjustment": pick.recommended_adjustment,
+            "debate_consensus": pick.debate_consensus,
+            "confidence": pick.confidence,
+            "regime_score": pick.regime_score,
+            "horizon_days": execution.horizon_days,
+            "fee_bps": execution.fee_bps,
+            "slippage_bps": execution.slippage_bps,
+            "benchmark_symbol": execution.benchmark_symbol,
+            "limit_up_pct": execution.limit_up_pct,
+            "limit_down_pct": execution.limit_down_pct,
+            "thresholds_version": thresholds_version,
+            "regime_at_signal": regime,
+            "signal_day_group": signal_day_group,
+            "northbound_flow_5d_z": northbound_flow_5d_z,
+            "margin_balance_change_5d": margin_balance_change_5d,
+            **_run_metadata_fields(run_metadata),
+        }
+
+        existing_idx = row_index_by_key.get(row_key)
+        if existing_idx is not None:
+            existing_row = rows[existing_idx]
+            preserved_status = str(existing_row.get("status", "") or "pending")
+            rows[existing_idx] = {
+                **existing_row,
+                **prediction_fields,
+                "status": preserved_status,
+            }
             continue
+
         rows.append(
             {
                 "id": uuid4().hex,
                 "created_at": now,
-                "signal_date": pick.date,
-                "symbol": pick.symbol,
-                "name": pick.name,
-                "signal_close": pick.close,
-                "intended_entry": "next_open",
-                "score": pick.score,
-                "rating": pick.rating,
-                "position": pick.position,
-                "portfolio_action": str(pick.metrics.get("portfolio_action", "")),
-                "entry_type": pick.entry_type,
-                "ideal_buy": pick.ideal_buy,
-                "strategies": strategies,
-                "reasons": list(pick.reasons),
-                "risks": list(pick.risks),
-                "stop_loss": pick.stop_loss,
-                "stop_method": str(pick.metrics.get("stop_method", "")),
-                "take_profit": pick.take_profit,
-                "adjusted_score": pick.adjusted_score,
-                "recommended_adjustment": pick.recommended_adjustment,
-                "debate_consensus": pick.debate_consensus,
-                "confidence": pick.confidence,
-                "regime_score": pick.regime_score,
-                "horizon_days": execution.horizon_days,
-                "fee_bps": execution.fee_bps,
-                "slippage_bps": execution.slippage_bps,
-                "benchmark_symbol": execution.benchmark_symbol,
-                "limit_up_pct": execution.limit_up_pct,
-                "limit_down_pct": execution.limit_down_pct,
-                "thresholds_version": thresholds_version,
-                "regime_at_signal": regime,
-                "signal_day_group": signal_day_group,
-                "northbound_flow_5d_z": northbound_flow_5d_z,
-                "margin_balance_change_5d": margin_balance_change_5d,
-                **_run_metadata_fields(run_metadata),
+                **prediction_fields,
                 "status": "pending",
             }
         )
-        existing_keys.add(row_key)
+        row_index_by_key[row_key] = len(rows) - 1
     write_ledger(path, rows)
 
 

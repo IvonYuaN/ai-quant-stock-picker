@@ -586,3 +586,62 @@ def test_append_predictions_persists_portfolio_and_debate_fields(tmp_path) -> No
     assert row["debate_consensus"] == "bullish"
     assert row["confidence"] == 83.0
     assert row["regime_score"] == 68.0
+
+
+def test_append_predictions_updates_existing_row_for_same_signal_key(tmp_path) -> None:
+    ledger = tmp_path / "predictions.jsonl"
+    original = PickResult(
+        symbol="600900",
+        name="长江电力",
+        date="2026-05-29",
+        close=27.75,
+        score=60,
+        rating="watch",
+        entry_type="relative_strength",
+        ideal_buy=27.75,
+        stop_loss=26.1,
+        take_profit=31.0,
+        position="watch",
+        metrics={"portfolio_action": "keep"},
+    )
+    updated = PickResult(
+        symbol="600900",
+        name="长江电力",
+        date="2026-05-29",
+        close=27.8,
+        score=72,
+        rating="strong_buy_candidate",
+        entry_type="relative_strength",
+        ideal_buy=27.8,
+        stop_loss=26.5,
+        take_profit=31.5,
+        position="30%-50%",
+        metrics={"portfolio_action": "promote"},
+        adjusted_score=75.5,
+        recommended_adjustment="raise",
+        debate_consensus="bullish",
+        confidence=83.0,
+        regime_score=68.0,
+    )
+
+    append_predictions(
+        ledger,
+        [original],
+        thresholds_version="1.0.0",
+        regime="stable_bull",
+    )
+    append_predictions(
+        ledger,
+        [updated],
+        thresholds_version="1.0.0",
+        regime="stable_bull",
+    )
+
+    rows = read_ledger(ledger)
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["score"] == 72
+    assert row["rating"] == "strong_buy_candidate"
+    assert row["portfolio_action"] == "promote"
+    assert row["status"] == "pending"
+    assert row["adjusted_score"] == 75.5
