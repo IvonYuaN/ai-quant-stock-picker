@@ -590,14 +590,14 @@ def format_daily_review(review: DailyReview) -> str:
     report.append("")
 
     if review.key_lessons:
-        report.append("💡 关键经验教训")
+        report.append("关键经验教训")
         report.append("-" * 40)
         for i, lesson in enumerate(review.key_lessons, 1):
             report.append(f"  {i}. {lesson}")
         report.append("")
 
     if review.improvement_suggestions:
-        report.append("🔧 改进建议")
+        report.append("改进建议")
         report.append("-" * 40)
         for i, suggestion in enumerate(review.improvement_suggestions, 1):
             report.append(f"  {i}. {suggestion}")

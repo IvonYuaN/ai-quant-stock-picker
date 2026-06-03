@@ -240,7 +240,9 @@ class Briefing:
             points.append(f"⚠️ 组合保护已触发: {reason}，建议暂停新开仓")
         evidence = self._get_section("候选证据链")
         if evidence:
-            risk_matches = re.findall(r"- 风险[:：]\s*(.+)", evidence)
+            risk_matches = re.findall(
+                r"(?:^|\n)-?\s*风险(?:提示)?[:：]\s*(.+)", evidence
+            )
             for risk in risk_matches[:2]:
                 clean = risk.strip().rstrip("；").strip()
                 if clean:
@@ -558,7 +560,7 @@ class BriefingGenerator:
             for reason in pick.reasons:
                 lines.append(f"- {reason}")
             if pick.risks:
-                lines.append(f"- 风险: {'；'.join(pick.risks)}")
+                lines.append(f"风险提示: {'；'.join(pick.risks)}")
             lines.append("")
         return BriefingSection(title="候选证据链", content="\n".join(lines))
 

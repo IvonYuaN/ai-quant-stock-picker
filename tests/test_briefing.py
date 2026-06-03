@@ -104,12 +104,17 @@ class TestBriefingGenerator:
         ]
         briefing = gen.generate(picks=picks, frames={})
         main_chain_sec = next(s for s in briefing.sections if s.title == "主链总览")
-        assert "首位候选: 300750 宁德时代 | 候选观察池 | 评分 16.0" in main_chain_sec.content
+        assert (
+            "首位候选: 300750 宁德时代 | 候选观察池 | 评分 16.0"
+            in main_chain_sec.content
+        )
 
     def test_main_chain_section_does_not_repeat_symbol_as_name(self):
         gen = BriefingGenerator()
         briefing = gen.generate(
-            picks=[_make_pick(symbol="600036", name="600036", score=-13.0, rating="watch")],
+            picks=[
+                _make_pick(symbol="600036", name="600036", score=-13.0, rating="watch")
+            ],
             frames={},
         )
         main_chain_sec = next(s for s in briefing.sections if s.title == "主链总览")
@@ -211,6 +216,8 @@ class TestBriefingGenerator:
         assert "600519" in evidence_sec.content
         assert "momentum" in evidence_sec.content
         assert "动量突破MA20" in evidence_sec.content
+        assert "风险提示: 高位震荡风险" in evidence_sec.content
+        assert "- 风险:" not in evidence_sec.content
 
     def test_theme_section_categorizes(self):
         gen = BriefingGenerator()
@@ -461,7 +468,9 @@ class TestGenerateSmartSummary:
         assert "候选观察池" in next_sec.content
         assert "600519 贵州茅台" in next_sec.content
 
-    def test_action_plan_mentions_watchlist_when_candidates_exist_but_not_tradable(self):
+    def test_action_plan_mentions_watchlist_when_candidates_exist_but_not_tradable(
+        self,
+    ):
         gen = BriefingGenerator()
         briefing = gen.generate(
             picks=[_make_pick(symbol="600519", name="贵州茅台", rating="watch")],
@@ -607,7 +616,7 @@ class TestGenerateSmartSummary:
             sections=[
                 BriefingSection(
                     title="候选证据链",
-                    content="### 600519 贵州茅台 (评分: 8.5)\n- 风险: 高位震荡风险\n",
+                    content="### 600519 贵州茅台 (评分: 8.5)\n风险提示: 高位震荡风险\n",
                 ),
                 BriefingSection(
                     title="明日重点",

@@ -216,4 +216,5 @@ def test_report_avoids_repeating_symbol_as_name() -> None:
     markdown = to_markdown([pick])
 
     assert "## 1. 600900\n" in markdown
+    assert "- 风险提示: 无" in markdown
     assert "600900 600900" not in markdown
