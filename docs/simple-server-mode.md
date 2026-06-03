@@ -170,7 +170,15 @@ bash scripts/install_coldstart_cron.sh
 含义：
 
 - `merge_server_ledgers.py`：把服务器本地 `data/ledger.jsonl` 合并进正式 `data/predictions.jsonl`，按 `(signal_date, symbol, thresholds_version, regime, intended_entry)` 去重，并自动补齐 `signal_day_group`。
-- `install_coldstart_cron.sh`：安装一个工作日北京时间 `17:30` 的冷启动任务，调用 `scripts/coldstart_daily.sh`，先执行 `A股量化分析数据/update_daily.py` 更新 sqlite 历史库，再运行 `aqsp.cli run --source sqlite_db` 追加 ledger。
+- `install_coldstart_cron.sh`：安装一个工作日北京时间 `17:30` 的冷启动任务，调用 `scripts/coldstart_daily.sh`，先执行 `update_daily.py` 更新 sqlite 历史库，再运行 `aqsp.cli run --source sqlite_db` 追加 ledger。
+
+`coldstart_daily.sh` 会按下面顺序寻找 `update_daily.py`：
+
+1. `AQSP_COLDSTART_UPDATE_SCRIPT`
+2. `AQSP_SQLITE_DB_PATH` 同目录下的 `update_daily.py`
+3. 仓库内 `A股量化分析数据/update_daily.py`
+
+所以像服务器这种 `AQSP_SQLITE_DB_PATH=/opt/market-data/astocks_qfq.db` 场景，会自动尝试 `/opt/market-data/update_daily.py`。
 
 如果服务器不是北京时间，可覆盖 cron 时间：
 

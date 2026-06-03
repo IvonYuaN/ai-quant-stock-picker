@@ -23,6 +23,16 @@ resolve_path() {
     esac
 }
 
+first_existing_path() {
+    for candidate in "$@"; do
+        if [ -n "$candidate" ] && [ -f "$candidate" ]; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    done
+    return 1
+}
+
 if [ -f "${PROJECT_ROOT}/.env" ]; then
     set -a
     source "${PROJECT_ROOT}/.env"
@@ -37,8 +47,20 @@ if [ ! -x "$PYTHON_BIN" ]; then
     PYTHON_BIN="$(command -v python3)"
 fi
 
-UPDATE_SCRIPT="$(resolve_path "${AQSP_COLDSTART_UPDATE_SCRIPT:-A股量化分析数据/update_daily.py}")"
 SQLITE_DB_PATH="$(resolve_path "${AQSP_COLDSTART_DB_PATH:-${AQSP_SQLITE_DB_PATH:-A股量化分析数据/astocks_qfq.db}}")"
+UPDATE_SCRIPT_HINT="${AQSP_COLDSTART_UPDATE_SCRIPT:-}"
+SQLITE_UPDATE_SCRIPT="$(dirname "$SQLITE_DB_PATH")/update_daily.py"
+REPO_UPDATE_SCRIPT="$(resolve_path "A股量化分析数据/update_daily.py")"
+UPDATE_SCRIPT="$(
+    first_existing_path \
+        "$UPDATE_SCRIPT_HINT" \
+        "$SQLITE_UPDATE_SCRIPT" \
+        "$REPO_UPDATE_SCRIPT" \
+        || true
+)"
+if [ -z "$UPDATE_SCRIPT" ]; then
+    UPDATE_SCRIPT="${UPDATE_SCRIPT_HINT:-$SQLITE_UPDATE_SCRIPT}"
+fi
 LEDGER_PATH="$(resolve_path "${AQSP_LEDGER:-data/predictions.jsonl}")"
 REPORT_PATH="$(resolve_path "${AQSP_COLDSTART_REPORT:-outputs/recommendations-${DATE}.md}")"
 CSV_PATH="$(resolve_path "${AQSP_COLDSTART_OUTPUT_CSV:-outputs/recommendations-${DATE}.csv}")"
@@ -60,6 +82,7 @@ fi
 
 if [ ! -f "$UPDATE_SCRIPT" ]; then
     log "[ERROR] update_daily.py 不存在: $UPDATE_SCRIPT"
+    log "[ERROR] 已尝试: ${UPDATE_SCRIPT_HINT:-<unset>} | ${SQLITE_UPDATE_SCRIPT} | ${REPO_UPDATE_SCRIPT}"
     exit 1
 fi
 

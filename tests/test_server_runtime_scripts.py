@@ -48,7 +48,9 @@ def test_coldstart_daily_script_updates_db_then_runs_cli() -> None:
         encoding="utf-8"
     )
 
-    assert "A股量化分析数据/update_daily.py" in script
+    assert 'dirname "$SQLITE_DB_PATH"' in script
+    assert 'A股量化分析数据/update_daily.py' in script
+    assert 'AQSP_COLDSTART_UPDATE_SCRIPT' in script
     assert "--source sqlite_db" in script
     assert '--benchmark-symbol ""' in script
     assert "冷启动:" in script
