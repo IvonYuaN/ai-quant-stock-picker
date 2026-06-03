@@ -96,6 +96,25 @@ class TestBriefingGenerator:
         assert "PM主裁决" in main_chain_sec.content
         assert "首位候选" in main_chain_sec.content
 
+    def test_main_chain_section_uses_score_sorted_lead_pick(self):
+        gen = BriefingGenerator()
+        picks = [
+            _make_pick(symbol="600036", name="招商银行", score=-13.0, rating="watch"),
+            _make_pick(symbol="300750", name="宁德时代", score=16.0, rating="watch"),
+        ]
+        briefing = gen.generate(picks=picks, frames={})
+        main_chain_sec = next(s for s in briefing.sections if s.title == "主链总览")
+        assert "首位候选: 300750 宁德时代 | 候选观察池 | 评分 16.0" in main_chain_sec.content
+
+    def test_main_chain_section_does_not_repeat_symbol_as_name(self):
+        gen = BriefingGenerator()
+        briefing = gen.generate(
+            picks=[_make_pick(symbol="600036", name="600036", score=-13.0, rating="watch")],
+            frames={},
+        )
+        main_chain_sec = next(s for s in briefing.sections if s.title == "主链总览")
+        assert "600036 600036" not in main_chain_sec.content
+
     def test_regime_section_with_regime(self):
         gen = BriefingGenerator()
         briefing = gen.generate(picks=[], frames={}, regime="stable_bull")

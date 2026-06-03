@@ -342,21 +342,22 @@ class BriefingGenerator:
         research_summary: ResearchSummary | None = None,
     ) -> Briefing:
         date_str = now_shanghai().strftime("%Y-%m-%d %H:%M")
-        portfolio_summary = self._build_portfolio_summary(picks)
+        ordered_picks = sorted(picks, key=lambda item: item.score, reverse=True)
+        portfolio_summary = self._build_portfolio_summary(ordered_picks)
         sections = [
-            self._build_main_chain_section(picks, portfolio_summary),
+            self._build_main_chain_section(ordered_picks, portfolio_summary),
             self._build_regime_section(regime, circuit_breaker_status),
             self._build_source_section(source_status),
             self._build_research_section(research_summary),
-            self._build_evidence_section(picks),
-            self._build_theme_section(picks),
-            self._build_next_day_section(picks, frames),
+            self._build_evidence_section(ordered_picks),
+            self._build_theme_section(ordered_picks),
+            self._build_next_day_section(ordered_picks, frames),
         ]
 
         debate_results = []
-        if self.enable_debate and picks:
+        if self.enable_debate and ordered_picks:
             # 对评分最高的前3只股票进行辩论
-            for pick in picks[:3]:
+            for pick in ordered_picks[:3]:
                 df = frames.get(pick.symbol, pd.DataFrame())
                 if not df.empty:
                     try:
@@ -426,13 +427,19 @@ class BriefingGenerator:
         keep = sum(
             1 for pick in picks if str(pick.metrics.get("portfolio_action", "")) == "keep"
         )
+
+        def _display_name(pick: PickResult) -> str:
+            if not pick.name or pick.name == pick.symbol:
+                return pick.symbol
+            return f"{pick.symbol} {pick.name}"
+
         focus = [
-            f"{pick.symbol} {pick.name}".strip()
+            _display_name(pick)
             for pick in picks
             if rating_label(pick.rating) in {"重点关注", "观察候选"}
         ][:3]
         watchlist = [
-            f"{pick.symbol} {pick.name}".strip()
+            _display_name(pick)
             for pick in picks
             if rating_label(pick.rating) in {"候选观察池", "仅观察"}
         ][:3]
