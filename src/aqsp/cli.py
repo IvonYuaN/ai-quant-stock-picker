@@ -1592,6 +1592,16 @@ def _check_notification_gate(
     if not gate.get("pbo_pass"):
         reasons.append(f"PBO 未过门: {gate.get('pbo')}（需 <0.5）")
 
+    # 宪法 §17.7：n_periods=0 意味着 sidecar 来自占位/测试/无效运行，
+    # 不可能算出有效 DSR/PBO。即使标了 both_pass=true 也不可信。
+    # fail-closed：0周期视为无效，不放行推送。
+    n_periods = gate.get("n_periods", 0)
+    if not n_periods or int(n_periods) <= 0:
+        reasons.append(
+            f"双门 sidecar 无有效回测周期（n_periods={n_periods}）"
+            "—— 疑似占位/测试数据，需真正跑 walkforward 后重写"
+        )
+
     # 宪法 §1.3 #9：拒绝用 held-out 污染的回测结果解锁推送。
     # 即使 DSR/PBO 都过门，若 sidecar 的 data_end 越过 held-out 边界，
     # 说明这个成绩是用 held-out 数据（可能经 --allow-heldout）算出来的，
