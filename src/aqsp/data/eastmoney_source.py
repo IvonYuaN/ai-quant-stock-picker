@@ -123,7 +123,8 @@ class EastmoneySource(DataSource):
                 data = response.json()
                 if not data.get("data"):
                     return None
-                klines = data["data"].get("klines", [])
+                payload = data["data"]
+                klines = payload.get("klines", [])
                 if not klines:
                     return None
                 rows = []
@@ -141,7 +142,9 @@ class EastmoneySource(DataSource):
                                 "amount": float(parts[9]),
                             }
                         )
-                return pd.DataFrame(rows)
+                frame = pd.DataFrame(rows)
+                frame["name"] = str(payload.get("name", "") or symbol)
+                return frame
             except Exception:
                 if attempt < _MAX_RETRIES - 1:
                     time.sleep(_BACKOFF_BASE ** (attempt + 1))
@@ -168,7 +171,8 @@ class EastmoneySource(DataSource):
                 data = response.json()
                 if not data.get("data"):
                     return None
-                klines = data["data"].get("klines", [])
+                payload = data["data"]
+                klines = payload.get("klines", [])
                 if not klines:
                     return None
                 rows = []
@@ -244,7 +248,8 @@ class EastmoneySource(DataSource):
                 data = response.json()
                 if not data.get("data"):
                     return None
-                klines = data["data"].get("klines", [])
+                payload = data["data"]
+                klines = payload.get("klines", [])
                 if not klines:
                     return None
                 rows = []
@@ -262,7 +267,9 @@ class EastmoneySource(DataSource):
                                 "amount": float(parts[9]),
                             }
                         )
-                return pd.DataFrame(rows)
+                frame = pd.DataFrame(rows)
+                frame["name"] = str(payload.get("name", "") or code)
+                return frame
             except Exception:
                 if attempt < _MAX_RETRIES - 1:
                     time.sleep(_BACKOFF_BASE ** (attempt + 1))
@@ -271,6 +278,9 @@ class EastmoneySource(DataSource):
     def _normalize_eastmoney_df(self, df: pd.DataFrame, symbol: str) -> pd.DataFrame:
         df = df.copy()
         df["symbol"] = symbol
-        df["name"] = symbol
+        if "name" not in df.columns:
+            df["name"] = symbol
+        else:
+            df["name"] = df["name"].astype(str).replace("", symbol)
         df = apply_limit_suspended_adj(df, symbol, cache=self.cache)
         return df

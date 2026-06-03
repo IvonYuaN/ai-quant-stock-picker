@@ -317,3 +317,61 @@ class TestCLIIntegration:
         assert result == 0
         assert "300750 宁德时代" in content
         assert "候选观察池" in content or "仅观察" in content
+
+    def test_briefing_recovers_name_from_older_ledger_rows_for_same_symbol(
+        self, tmp_path, monkeypatch
+    ):
+        from aqsp.cli import main
+
+        ledger = tmp_path / "predictions.jsonl"
+        ledger.write_text(
+            "\n".join(
+                [
+                    json.dumps(
+                        {
+                            "signal_date": "2026-06-01",
+                            "symbol": "300750",
+                            "name": "宁德时代",
+                            "signal_close": 420.0,
+                            "score": 8.0,
+                            "rating": "watch",
+                            "position": "watch",
+                            "portfolio_action": "keep",
+                            "entry_type": "relative_strength",
+                            "reasons": ["MACD 动能改善"],
+                            "risks": ["流动性过滤"],
+                            "status": "pending",
+                        },
+                        ensure_ascii=False,
+                    ),
+                    json.dumps(
+                        {
+                            "signal_date": "2026-06-02",
+                            "symbol": "300750",
+                            "name": "",
+                            "signal_close": 431.96,
+                            "score": 16.0,
+                            "rating": "watch",
+                            "position": "watch",
+                            "portfolio_action": "keep",
+                            "entry_type": "relative_strength",
+                            "reasons": ["MACD 动能改善"],
+                            "risks": ["流动性过滤"],
+                            "status": "watch_only",
+                        },
+                        ensure_ascii=False,
+                    ),
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        output = tmp_path / "briefing.md"
+        monkeypatch.setattr("aqsp.cli.load_research_summary", lambda: None)
+
+        result = main(["briefing", "--ledger", str(ledger), "--output", str(output)])
+
+        content = output.read_text(encoding="utf-8")
+        assert result == 0
+        assert "300750 宁德时代" in content
+        assert "300750 |" not in content

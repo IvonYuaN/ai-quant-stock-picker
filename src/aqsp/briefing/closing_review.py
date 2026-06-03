@@ -6,6 +6,7 @@ from datetime import timedelta
 from pathlib import Path
 
 from aqsp.core.time import now_shanghai
+from aqsp.presentation import format_symbol_name
 from aqsp.ratings import rating_label
 
 
@@ -182,7 +183,7 @@ class ClosingReviewer:
         for pred in predictions:
             symbol = str(pred.get("symbol", "")).strip()
             name = str(pred.get("name", "")).strip()
-            display = symbol if not name or name == symbol else f"{symbol} {name}"
+            display = format_symbol_name(symbol, name)
             label = rating_label(pred.get("rating", ""))
             if label in {"重点关注", "观察候选"}:
                 tradable.append(display)

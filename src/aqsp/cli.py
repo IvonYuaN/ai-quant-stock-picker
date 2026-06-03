@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+from dataclasses import replace
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
@@ -75,6 +76,7 @@ from aqsp.briefing.debate import (
     parse_agent_roles,
 )
 from aqsp.models import PickResult
+from aqsp.presentation import has_meaningful_name
 
 
 def serialize_debate_result(result: DebateResult) -> dict:
@@ -157,6 +159,71 @@ HELDOUT_TRAIN_CUTOFF = "2024-12-31"
 WALKFORWARD_GATE_PATH = "data/walkforward_gate.json"
 # 冷启动期最低独立信号日（可配置，默认 14 天以加速测试）
 COLD_START_MIN_DAYS = 14
+
+
+def _extract_meaningful_name_from_frame(frame: pd.DataFrame, symbol: str) -> str:
+    if frame.empty or "name" not in frame.columns:
+        return ""
+    names = (
+        frame["name"]
+        .dropna()
+        .astype(str)
+        .map(str.strip)
+        .loc[lambda series: (series != "") & (series != symbol)]
+    )
+    return str(names.iloc[-1]) if not names.empty else ""
+
+
+def _load_optional_symbol_name_map(symbols: list[str]) -> dict[str, str]:
+    if not symbols:
+        return {}
+    try:
+        source = SqliteDbSource()
+    except Exception:
+        return {}
+
+    name_map: dict[str, str] = {}
+    for symbol in symbols:
+        name = str(source.get_symbol_name(symbol)).strip()
+        if has_meaningful_name(symbol, name):
+            name_map[symbol] = name
+    return name_map
+
+
+def _enrich_pick_names(
+    picks: list[PickResult],
+    frames: dict[str, pd.DataFrame] | None = None,
+) -> list[PickResult]:
+    if not picks:
+        return picks
+
+    name_map: dict[str, str] = {}
+    if frames:
+        for symbol, frame in frames.items():
+            name = _extract_meaningful_name_from_frame(frame, symbol)
+            if name:
+                name_map[symbol] = name
+
+    missing_symbols = [
+        pick.symbol
+        for pick in picks
+        if not has_meaningful_name(pick.symbol, pick.name)
+        and pick.symbol not in name_map
+    ]
+    if missing_symbols:
+        name_map.update(_load_optional_symbol_name_map(missing_symbols))
+
+    enriched: list[PickResult] = []
+    for pick in picks:
+        if has_meaningful_name(pick.symbol, pick.name):
+            enriched.append(pick)
+            continue
+        resolved_name = name_map.get(pick.symbol, "").strip()
+        if not has_meaningful_name(pick.symbol, resolved_name):
+            enriched.append(pick)
+            continue
+        enriched.append(replace(pick, name=resolved_name))
+    return enriched
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1576,7 +1643,9 @@ def run_screen(args: argparse.Namespace) -> int:
         min_price=thresholds.filter.min_price,
         max_price=thresholds.filter.max_price,
     )
-    picks = screen_universe(screen_frames, config)[: args.limit]
+    picks = _enrich_pick_names(screen_universe(screen_frames, config), screen_frames)[
+        : args.limit
+    ]
     table = to_dataframe(picks)
     if table.empty:
         print("No candidates.")
@@ -1711,7 +1780,10 @@ def run_scheduled(args: argparse.Namespace) -> int:
         max_price=thresholds.filter.max_price,
         strategy_weights=weights,
     )
-    screened_picks = screen_universe(screen_frames, config)
+    screened_picks = _enrich_pick_names(
+        screen_universe(screen_frames, config),
+        screen_frames,
+    )
 
     try:
         from aqsp.strategies.composite import CompositeStrategy
@@ -2654,16 +2726,27 @@ def run_briefing(args: argparse.Namespace) -> int:
             latest_date = row.get("signal_date", "")
             break
 
+    symbol_name_map: dict[str, str] = {}
+    for row in rows:
+        symbol = str(row.get("symbol", "")).strip()
+        name = str(row.get("name", "")).strip()
+        if symbol and has_meaningful_name(symbol, name):
+            symbol_name_map[symbol] = name
+
     picks: list[PickResult] = []
     for row in rows:
         if row.get("signal_date") != latest_date:
             continue
         if row.get("status") not in ("pending", "validated", "watch_only"):
             continue
+        symbol = str(row.get("symbol", ""))
+        name = str(row.get("name", ""))
+        if not has_meaningful_name(symbol, name):
+            name = symbol_name_map.get(symbol, name)
         picks.append(
             PickResult(
-                symbol=str(row.get("symbol", "")),
-                name=str(row.get("name", "")),
+                symbol=symbol,
+                name=name,
                 date=str(row.get("signal_date", "")),
                 close=float(row.get("signal_close", 0)),
                 score=float(row.get("score", 0)),
@@ -2726,6 +2809,8 @@ def run_briefing(args: argparse.Namespace) -> int:
             ),
             "fallback_used": bool(latest_source_row.get("run_fallback_used", False)),
         }
+
+    picks = _enrich_pick_names(picks)
 
     generator = BriefingGenerator()
     research_summary = load_research_summary()

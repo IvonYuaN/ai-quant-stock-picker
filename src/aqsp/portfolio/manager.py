@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from aqsp.core.types import PickResult
+from aqsp.presentation import format_symbol_name
 from aqsp.portfolio.correlation import CorrelationResult
 from aqsp.portfolio.sector_check import ConcentrationResult, get_sector
 from aqsp.ratings import is_tradable_rating
@@ -44,7 +45,7 @@ class PortfolioDecisionBundle:
 
 
 def _display_name(pick: PickResult) -> str:
-    return pick.symbol if not pick.name or pick.name == pick.symbol else f"{pick.symbol} {pick.name}"
+    return format_symbol_name(pick.symbol, pick.name)
 
 
 def summarize_portfolio_decisions(
@@ -55,9 +56,7 @@ def summarize_portfolio_decisions(
     downgrade_count = sum(1 for item in decisions if item.action == "downgrade")
     keep_count = sum(1 for item in decisions if item.action == "keep")
     top_focus = tuple(
-        _display_name(pick)
-        for pick in picks
-        if pick.rating == "strong_buy_candidate"
+        _display_name(pick) for pick in picks if pick.rating == "strong_buy_candidate"
     )[:3]
     if not top_focus:
         top_focus = tuple(

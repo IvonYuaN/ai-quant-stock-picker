@@ -11,6 +11,7 @@ from jinja2 import Environment, FileSystemLoader
 from aqsp.core.time import now_shanghai
 from aqsp.core.types import PickResult
 from aqsp.portfolio.manager import PortfolioDecisionSummary
+from aqsp.presentation import format_symbol_name
 from aqsp.research.summary import ResearchSummary
 from aqsp.ratings import is_tradable_rating, portfolio_action_label, rating_label
 from aqsp.config import load_debate_runtime_config
@@ -205,7 +206,9 @@ class Briefing:
         if top_scores:
             items.append(f"- 首选观察: {top_scores[0][0]}({top_scores[0][1]}分)")
         elif self.portfolio_summary:
-            fallback = self.portfolio_summary.top_focus or self.portfolio_summary.watchlist
+            fallback = (
+                self.portfolio_summary.top_focus or self.portfolio_summary.watchlist
+            )
             if fallback:
                 items.append(f"- 首选观察: {fallback[0]}")
         return items
@@ -397,11 +400,7 @@ class BriefingGenerator:
             lines.append("- 候选观察池: " + "、".join(portfolio_summary.watchlist[:3]))
 
         lead_pick = picks[0]
-        lead_display = (
-            lead_pick.symbol
-            if not lead_pick.name or lead_pick.name == lead_pick.symbol
-            else f"{lead_pick.symbol} {lead_pick.name}"
-        )
+        lead_display = format_symbol_name(lead_pick.symbol, lead_pick.name)
         lines.append(
             f"- 首位候选: {lead_display} | {rating_label(lead_pick.rating)} | 评分 {lead_pick.score:.1f}"
         )
@@ -425,13 +424,13 @@ class BriefingGenerator:
             if str(pick.metrics.get("portfolio_action", "")) == "downgrade"
         )
         keep = sum(
-            1 for pick in picks if str(pick.metrics.get("portfolio_action", "")) == "keep"
+            1
+            for pick in picks
+            if str(pick.metrics.get("portfolio_action", "")) == "keep"
         )
 
         def _display_name(pick: PickResult) -> str:
-            if not pick.name or pick.name == pick.symbol:
-                return pick.symbol
-            return f"{pick.symbol} {pick.name}"
+            return format_symbol_name(pick.symbol, pick.name)
 
         focus = [
             _display_name(pick)
@@ -548,7 +547,7 @@ class BriefingGenerator:
             lines.append("今日无候选标的。")
             return BriefingSection(title="候选证据链", content="\n".join(lines))
         for pick in picks:
-            display = pick.symbol if not pick.name or pick.name == pick.symbol else f"{pick.symbol} {pick.name}"
+            display = format_symbol_name(pick.symbol, pick.name)
             pm_action = str(pick.metrics.get("portfolio_action", "") or "")
             pm_text = portfolio_action_label(pm_action) if pm_action else "未裁决"
             lines.append(
@@ -598,8 +597,7 @@ class BriefingGenerator:
         if not tradable_picks:
             if picks:
                 names = "、".join(
-                    p.symbol if not p.name or p.name == p.symbol else f"{p.symbol} {p.name}"
-                    for p in picks[:3]
+                    format_symbol_name(p.symbol, p.name) for p in picks[:3]
                 )
                 lines.append(
                     f"暂无可执行重点标的；候选观察池: {names}。今日先观察，不做放大仓位动作。"
@@ -611,7 +609,7 @@ class BriefingGenerator:
             entry = pick.ideal_buy
             stop = pick.stop_loss
             tp = pick.take_profit
-            display = pick.symbol if not pick.name or pick.name == pick.symbol else f"{pick.symbol} {pick.name}"
+            display = format_symbol_name(pick.symbol, pick.name)
             lines.append(
                 f"- **{display}**: "
                 f"参考买点 {entry} / 止损 {stop} / 止盈 {tp} / 仓位 {pick.position}"

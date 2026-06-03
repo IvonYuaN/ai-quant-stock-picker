@@ -7,6 +7,7 @@ import pandas as pd
 
 from aqsp.core.types import RunMetadata
 from aqsp.models import PickResult
+from aqsp.presentation import format_symbol_name
 from aqsp.ratings import portfolio_action_label, rating_label
 
 RESULT_COLUMNS = [
@@ -36,10 +37,7 @@ def _resolve_portfolio_action_label(action: str) -> str:
 
 
 def _display_name(pick: PickResult) -> str:
-    name = pick.name.strip()
-    if not name or name == pick.symbol:
-        return pick.symbol
-    return f"{pick.symbol} {name}"
+    return format_symbol_name(pick.symbol, pick.name)
 
 
 def _format_final_decision_board(
@@ -75,9 +73,7 @@ def _format_final_decision_board(
         )
         lines.append(f"  参考: {reason}")
         if pm_reasons and tuple(pm_reasons) != ("保持原排序",):
-            lines.append(
-                "  PM依据: " + "；".join(str(item) for item in pm_reasons[:2])
-            )
+            lines.append("  PM依据: " + "；".join(str(item) for item in pm_reasons[:2]))
     lines.append("")
     return lines
 
@@ -185,9 +181,10 @@ def to_markdown(
         if pick.symbol in debate_map:
             lines.append(_format_debate_result(debate_map[pick.symbol]))
             lines.append("")
-        if pick.symbol in decision_map and getattr(
-            decision_map[pick.symbol], "action", "keep"
-        ) == "promote":
+        if (
+            pick.symbol in decision_map
+            and getattr(decision_map[pick.symbol], "action", "keep") == "promote"
+        ):
             decision_text = _format_portfolio_decision(decision_map[pick.symbol])
             if decision_text:
                 lines.append(decision_text)

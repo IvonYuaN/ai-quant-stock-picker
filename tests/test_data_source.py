@@ -7,6 +7,7 @@ import pandas as pd
 
 from aqsp.data.source import DataSource
 from aqsp.data.akshare_source import AkshareSource
+from aqsp.data.eastmoney_source import EastmoneySource
 from aqsp.core.errors import DataError
 
 
@@ -51,6 +52,28 @@ def test_akshare_normalize_df():
     assert "volume" in normalized.columns
     assert normalized["date"].iloc[0] == "2026-05-27"
     assert normalized["symbol"].iloc[0] == "600000"
+
+
+def test_eastmoney_normalize_df_preserves_meaningful_name():
+    source = EastmoneySource.__new__(EastmoneySource)
+    source.cache = None
+    df = pd.DataFrame(
+        {
+            "date": ["2026-05-27", "2026-05-28"],
+            "open": [10.0, 10.1],
+            "close": [10.2, 10.3],
+            "high": [10.5, 10.6],
+            "low": [9.9, 10.0],
+            "volume": [1000, 2000],
+            "amount": [10000, 20000],
+            "name": ["宁德时代", "宁德时代"],
+        }
+    )
+
+    normalized = source._normalize_eastmoney_df(df, "300750")
+
+    assert normalized["symbol"].iloc[0] == "300750"
+    assert normalized["name"].iloc[0] == "宁德时代"
 
 
 def test_validate_ohlcv_missing_columns():
@@ -157,7 +180,9 @@ def test_akshare_realtime_snapshot_reuses_cache_within_interval(monkeypatch):
     source._cached_realtime_snapshot_ts = 0.0
     source.name = "akshare"
     clock = {"value": 100.0}
-    monkeypatch.setattr("aqsp.data.akshare_source.time.monotonic", lambda: clock["value"])
+    monkeypatch.setattr(
+        "aqsp.data.akshare_source.time.monotonic", lambda: clock["value"]
+    )
 
     first = source.fetch_realtime_quote(["600000"])
     second = source.fetch_realtime_quote(["600000"])
@@ -185,7 +210,9 @@ def test_akshare_realtime_snapshot_enters_cooldown_after_failure(monkeypatch):
     source._cached_realtime_snapshot_ts = 0.0
     source.name = "akshare"
     clock = {"value": 200.0}
-    monkeypatch.setattr("aqsp.data.akshare_source.time.monotonic", lambda: clock["value"])
+    monkeypatch.setattr(
+        "aqsp.data.akshare_source.time.monotonic", lambda: clock["value"]
+    )
 
     with pytest.raises(DataError, match="进入冷却 180s"):
         source.fetch_realtime_quote(["600000"])
