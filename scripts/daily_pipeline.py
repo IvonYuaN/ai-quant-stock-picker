@@ -846,6 +846,14 @@ def _latest_portfolio_summary(config: PipelineConfig) -> Any | None:
             return ""
         return str(value).strip()
 
+    def _symbol(value: Any) -> str:
+        text = _text(value)
+        if not text:
+            return ""
+        if "." in text:
+            text = text.split(".", 1)[0]
+        return text.zfill(6) if text.isdigit() else text
+
     def _num(value: Any) -> float:
         if value is None or pd.isna(value):
             return 0.0
@@ -860,7 +868,7 @@ def _latest_portfolio_summary(config: PipelineConfig) -> Any | None:
         action = _text(row.get("portfolio_action")) or "keep"
         picks.append(
             PickResult(
-                symbol=_text(row.get("symbol")),
+                symbol=_symbol(row.get("symbol")),
                 name=_text(row.get("name")),
                 date=_text(row.get("date")),
                 close=_num(row.get("close")),
@@ -879,13 +887,98 @@ def _latest_portfolio_summary(config: PipelineConfig) -> Any | None:
         )
         decisions.append(
             PortfolioDecision(
-                symbol=_text(row.get("symbol")),
+                symbol=_symbol(row.get("symbol")),
                 action=action,
                 score_delta=0.0,
                 reasons=("保持原排序",),
             )
         )
     return summarize_portfolio_decisions(picks, decisions)
+
+
+def _read_latest_candidates(config: PipelineConfig) -> list[dict[str, Any]]:
+    csv_path = config.project_root / config.csv_path
+    if not csv_path.exists():
+        return []
+    try:
+        df = pd.read_csv(csv_path)
+    except Exception:
+        return []
+    if df.empty:
+        return []
+
+    from aqsp.ratings import portfolio_action_label, rating_label
+
+    def _text(value: Any) -> str:
+        if value is None or pd.isna(value):
+            return ""
+        return str(value).strip()
+
+    def _symbol(value: Any) -> str:
+        text = _text(value)
+        if not text:
+            return ""
+        if "." in text:
+            text = text.split(".", 1)[0]
+        return text.zfill(6) if text.isdigit() else text
+
+    def _score(value: Any) -> float:
+        if value is None or pd.isna(value):
+            return 0.0
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return 0.0
+
+    def _split_points(value: Any, limit: int = 2) -> tuple[str, ...]:
+        text = _text(value)
+        if not text:
+            return ()
+        parts = [
+            part.strip()
+            for part in text.replace(";", "；").split("；")
+            if part.strip()
+        ]
+        return tuple(parts[:limit])
+
+    candidates: list[dict[str, Any]] = []
+    for row in df.to_dict(orient="records"):
+        symbol = _symbol(row.get("symbol"))
+        name = _text(row.get("name"))
+        display = symbol if not name or name == symbol else f"{symbol} {name}"
+        raw_rating = _text(row.get("rating"))
+        raw_action = _text(row.get("portfolio_action")) or "keep"
+        candidates.append(
+            {
+                "symbol": symbol,
+                "display": display,
+                "date": _text(row.get("date")),
+                "score": _score(row.get("score")),
+                "rating": raw_rating,
+                "rating_label": rating_label(raw_rating),
+                "action": raw_action,
+                "action_label": portfolio_action_label(raw_action),
+                "reasons": _split_points(row.get("reasons")),
+                "risks": _split_points(row.get("risks")),
+            }
+        )
+
+    candidates.sort(key=lambda item: item["score"], reverse=True)
+    return candidates
+
+
+def _dedupe_points(points: list[str], limit: int) -> list[str]:
+    seen: set[str] = set()
+    deduped: list[str] = []
+    for point in points:
+        clean = str(point).strip()
+        if not clean or clean in seen:
+            continue
+        seen.add(clean)
+        deduped.append(clean)
+        if len(deduped) >= limit:
+            break
+    return deduped
 
 
 def _build_pipeline_digest(
@@ -907,68 +1000,131 @@ def _build_pipeline_digest(
             "- 失败步骤: " + "、".join(step.name for step in failed_steps[:3])
         )
 
-    data_lines = [
-        f"- 开始时间: {result.started_at}",
-        f"- 复盘报告: {config.closing_review_path}",
-        f"- 每日简报: {config.briefing_path}",
-        f"- Dashboard: {config.dashboard_html}",
-    ]
-
     portfolio_summary = _latest_portfolio_summary(config)
+    candidates = _read_latest_candidates(config)
+    latest_signal_day = next(
+        (str(item.get("date", "")).strip() for item in candidates if item.get("date")),
+        "",
+    )
+
+    summary_target = ""
+    if portfolio_summary is not None and portfolio_summary.top_focus:
+        summary_target = "、".join(portfolio_summary.top_focus[:2])
+    elif portfolio_summary is not None and portfolio_summary.watchlist:
+        summary_target = "、".join(
+            str(item).split("(", 1)[0] for item in portfolio_summary.watchlist[:2]
+        )
+
+    if failed_steps:
+        conclusion = "流程未全绿，先排障，再看本次信号。"
+    elif portfolio_summary is not None and portfolio_summary.top_focus:
+        conclusion = f"今日主链聚焦 {summary_target}，其余候选继续分层跟踪。"
+    elif portfolio_summary is not None and portfolio_summary.watchlist:
+        conclusion = f"今日无可执行主链，先围绕 {summary_target} 做观察跟踪。"
+    else:
+        conclusion = "今日未形成明确主链，结果以观察为主。"
+
+    core_lines = [
+        f"- 结论: {conclusion}",
+        f"- PM主裁决: {portfolio_summary.headline if portfolio_summary is not None else '暂无可用候选输出'}",
+    ]
+    if latest_signal_day:
+        core_lines.append(f"- 信号日期: {latest_signal_day}")
+    if portfolio_summary is not None and portfolio_summary.top_focus:
+        core_lines.append("- 可执行主链: " + "、".join(portfolio_summary.top_focus))
+    elif portfolio_summary is not None and portfolio_summary.watchlist:
+        core_lines.append(
+            "- 观察主线: "
+            + "、".join(
+                str(item).split("(", 1)[0] for item in portfolio_summary.watchlist[:3]
+            )
+        )
+    core_lines.append(f"- 流程状态: {step_success}/{step_total} 成功 | {result.duration_seconds:.1f}s")
+    if failed_steps:
+        core_lines.append(
+            "- 异常步骤: " + "、".join(step.name for step in failed_steps[:3])
+        )
+
     main_chain_lines: list[str] = []
-    if portfolio_summary is not None:
-        main_chain_lines.append(f"- PM主裁决: {portfolio_summary.headline}")
+    if candidates:
+        for candidate in candidates[:3]:
+            main_chain_lines.append(
+                "- "
+                + f"{candidate['display']} | {candidate['rating_label']} | "
+                + f"PM {candidate['action_label']} | 评分 {candidate['score']:.1f}"
+            )
+            if candidate["reasons"]:
+                main_chain_lines.append(
+                    "  关注点: " + "；".join(candidate["reasons"][:2])
+                )
+        if portfolio_summary is not None and portfolio_summary.watchlist:
+            main_chain_lines.append(
+                "- 观察池: "
+                + "、".join(
+                    str(item).split("(", 1)[0] for item in portfolio_summary.watchlist[:5]
+                )
+            )
+    elif portfolio_summary is not None:
         if portfolio_summary.top_focus:
             main_chain_lines.append(
                 "- 可执行主链: " + "、".join(portfolio_summary.top_focus)
             )
-        else:
-            main_chain_lines.append("- 可执行主链: 暂无，今日不做放大仓位动作")
-        if portfolio_summary.watchlist:
+        elif portfolio_summary.watchlist:
             main_chain_lines.append(
                 "- 候选观察池: " + "、".join(portfolio_summary.watchlist)
             )
     else:
-        main_chain_lines.append("- PM主裁决: 暂无可用候选输出")
+        main_chain_lines.append("- 暂无可用候选输出")
 
     plan_lines = []
-    if portfolio_summary is not None and portfolio_summary.top_focus:
-        plan_lines.append("- 先核对可执行主链是否仍满足次日入场条件，再决定人工跟踪优先级。")
+    if failed_steps:
+        plan_lines.append("- 明日先修复失败步骤对应的数据源或运行配置，再复核本次输出。")
+    elif portfolio_summary is not None and portfolio_summary.top_focus:
+        plan_lines.append(
+            "- 明日先核对可执行主链是否延续量价确认，再决定人工跟踪优先级。"
+        )
     elif portfolio_summary is not None and portfolio_summary.watchlist:
-        plan_lines.append("- 今日以观察池复核为主，等待右侧确认，不直接放大仓位。")
+        plan_lines.append("- 明日以观察池复核为主，等待右侧确认，不直接放大仓位。")
     else:
-        plan_lines.append("- 今日无明确主链动作，优先确认数据源和策略运行是否完整。")
+        plan_lines.append("- 明日无明确主链动作，优先确认数据源和策略运行是否完整。")
     plan_lines.extend(
         [
             "- 对照收盘复盘，确认强弱分层、策略标签和 PM 裁决是否一致。",
-            "- 若有步骤失败，先修输入源或运行配置，再看结果页。",
+            "- 若观察池继续拥挤，只保留最强一到两只做人工跟踪。",
         ]
     )
 
-    risk_lines = [
-        "- 若出现数据源降级或步骤失败，本次结果只适合观察，不适合直接放大仓位。",
-    ]
+    risk_points: list[str] = []
+    if portfolio_summary is not None and not portfolio_summary.top_focus:
+        risk_points.append("当前没有进入可执行区的主链候选，仓位不宜放大。")
+    if portfolio_summary is not None and portfolio_summary.downgrade_count > 0:
+        risk_points.append(
+            f"PM 已将 {portfolio_summary.downgrade_count} 只候选降级，说明拥挤度或确定性仍不足。"
+        )
+    for candidate in candidates[:3]:
+        for risk in candidate["risks"][:1]:
+            risk_points.append(f"{candidate['display']}: {risk}")
     if not result.overall_success:
-        risk_lines.append("- 总流程未全绿，先排查失败步骤再继续自动化。")
+        risk_points.append("总流程未全绿，先排查失败步骤再继续自动化。")
+    risk_lines = [f"- {point}" for point in _dedupe_points(risk_points, limit=4)]
+    if not risk_lines:
+        risk_lines.append("- 当前流程正常，但结果仍只适合作为研究参考，不直接替代人工判断。")
 
     lines = [
         "## 核心结论",
         *core_lines,
         "",
-        "## 数据透视",
-        *data_lines,
-        "",
-        "## 主链摘要",
+        "## 主链候选",
         *main_chain_lines,
         "",
-        "## 作战计划",
-        *plan_lines,
-        "",
-        "## 风险提示",
+        "## 风险与分歧",
         *risk_lines,
+        "",
+        "## 明日动作",
+        *plan_lines,
     ]
     if result.steps:
-        lines.extend(["", "## 步骤回放"])
+        lines.extend(["", "## 运行侧写"])
         for step in result.steps:
             badge = "OK" if step.success else "FAIL"
             line = f"- {badge} {step.name}: {step.duration_seconds:.1f}s"

@@ -509,13 +509,15 @@ def test_send_pipeline_digest_sends_summary_notification(
     daily_pipeline._send_pipeline_digest(config, result, logging.getLogger("test"))
 
     assert sent["title"] == "收盘总览"
-    assert "总体状态: 成功" in sent["content"]
+    assert "结论:" in sent["content"]
     assert "数据源状态" in sent["content"]
-    assert "主链摘要" in sent["content"]
+    assert "主链候选" in sent["content"]
     assert "PM主裁决: 上调 1 / 降级 1 / 维持 0" in sent["content"]
-    assert "可执行主链: 600519 贵州茅台" in sent["content"]
-    assert "候选观察池: 300750 宁德时代(候选观察池)" in sent["content"]
-    assert "复盘报告: reports/closing_review.md" in sent["content"]
+    assert "600519 贵州茅台 | 重点关注 | PM 上调优先级 | 评分 71.0" in sent["content"]
+    assert "300750 宁德时代 | 候选观察池 | PM 降级观察 | 评分 64.0" in sent["content"]
+    assert "风险与分歧" in sent["content"]
+    assert "明日动作" in sent["content"]
+    assert "运行侧写" in sent["content"]
     assert "# 收盘总览" not in sent["content"]
 
 
