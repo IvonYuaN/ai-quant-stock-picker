@@ -79,15 +79,22 @@ class TestBriefingGenerator:
         briefing = gen.generate(picks=picks, frames={})
         assert isinstance(briefing, Briefing)
         assert briefing.date
-        assert len(briefing.sections) == 6
+        assert len(briefing.sections) == 7
 
     def test_generate_empty_picks(self):
         gen = BriefingGenerator()
         briefing = gen.generate(picks=[], frames={})
         assert isinstance(briefing, Briefing)
-        assert len(briefing.sections) == 6
+        assert len(briefing.sections) == 7
         md = briefing.to_markdown()
         assert "无候选标的" in md
+
+    def test_main_chain_section_is_present(self):
+        gen = BriefingGenerator()
+        briefing = gen.generate(picks=[_make_pick()], frames={})
+        main_chain_sec = next(s for s in briefing.sections if s.title == "主链总览")
+        assert "PM主裁决" in main_chain_sec.content
+        assert "首位候选" in main_chain_sec.content
 
     def test_regime_section_with_regime(self):
         gen = BriefingGenerator()

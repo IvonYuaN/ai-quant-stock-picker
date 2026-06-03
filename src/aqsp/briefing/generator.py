@@ -342,7 +342,9 @@ class BriefingGenerator:
         research_summary: ResearchSummary | None = None,
     ) -> Briefing:
         date_str = now_shanghai().strftime("%Y-%m-%d %H:%M")
+        portfolio_summary = self._build_portfolio_summary(picks)
         sections = [
+            self._build_main_chain_section(picks, portfolio_summary),
             self._build_regime_section(regime, circuit_breaker_status),
             self._build_source_section(source_status),
             self._build_research_section(research_summary),
@@ -370,8 +372,41 @@ class BriefingGenerator:
             date=date_str,
             sections=sections,
             debate_results=debate_results,
-            portfolio_summary=self._build_portfolio_summary(picks),
+            portfolio_summary=portfolio_summary,
         )
+
+    def _build_main_chain_section(
+        self,
+        picks: list[PickResult],
+        portfolio_summary: PortfolioDecisionSummary | None,
+    ) -> BriefingSection:
+        if not picks or portfolio_summary is None:
+            return BriefingSection(
+                title="主链总览",
+                content="今日无主链候选，保持观察。",
+            )
+
+        lines = [f"- PM主裁决: {portfolio_summary.headline}"]
+        signal_date = picks[0].date if picks and picks[0].date else ""
+        if signal_date:
+            lines.append(f"- 信号日期: {signal_date}")
+        if portfolio_summary.top_focus:
+            lines.append("- 可执行主链: " + "、".join(portfolio_summary.top_focus[:3]))
+        if portfolio_summary.watchlist:
+            lines.append("- 候选观察池: " + "、".join(portfolio_summary.watchlist[:3]))
+
+        lead_pick = picks[0]
+        lead_display = (
+            lead_pick.symbol
+            if not lead_pick.name or lead_pick.name == lead_pick.symbol
+            else f"{lead_pick.symbol} {lead_pick.name}"
+        )
+        lines.append(
+            f"- 首位候选: {lead_display} | {rating_label(lead_pick.rating)} | 评分 {lead_pick.score:.1f}"
+        )
+        if not portfolio_summary.top_focus:
+            lines.append("- 今日动作: 仅观察，不做放大仓位动作。")
+        return BriefingSection(title="主链总览", content="\n".join(lines))
 
     def _build_portfolio_summary(
         self, picks: list[PickResult]
@@ -593,10 +628,13 @@ class BriefingGenerator:
             getattr(circuit_breaker_status, "reason", "") if cb_triggered else ""
         )
         regime_section = ""
+        main_chain_section = ""
         theme_section = ""
         next_day_section = ""
         for section in briefing.sections:
-            if section.title == "市场态势":
+            if section.title == "主链总览":
+                main_chain_section = section.content
+            elif section.title == "市场态势":
                 regime_section = section.content
             elif section.title == "题材热度":
                 theme_section = section.content
@@ -617,6 +655,7 @@ class BriefingGenerator:
             date=briefing.date,
             circuit_breaker_triggered=cb_triggered,
             circuit_breaker_reason=cb_reason,
+            main_chain_section=main_chain_section,
             regime_section=regime_section,
             picks=pick_dicts,
             theme_section=theme_section,

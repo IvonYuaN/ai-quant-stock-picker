@@ -602,7 +602,11 @@ def format_daily_review(review: DailyReview) -> str:
             report.append(f"  {i}. {suggestion}")
         report.append("")
 
-    if review.win_rate >= 0.6:
+    if review.executed_signals == 0 and review.total_signals == 0:
+        report.append("📝 今日无新信号，继续等待下一轮主链机会。")
+    elif review.executed_signals == 0:
+        report.append("🧭 今日以观察为主，等待右侧确认后再行动。")
+    elif review.win_rate >= 0.6:
         report.append("🎉 今日表现优秀，继续保持！")
     elif review.win_rate >= 0.4:
         report.append("💪 今日表现一般，明日继续努力！")

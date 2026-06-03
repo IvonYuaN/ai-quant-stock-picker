@@ -432,6 +432,30 @@ class TestFormatDailyReview:
         assert "测试教训" in result
         assert "测试建议" in result
 
+    def test_uses_observation_tone_when_signals_exist_but_no_execution(self):
+        review = DailyReview(
+            date="2025-06-01",
+            total_signals=3,
+            executed_signals=0,
+            win_count=0,
+            loss_count=0,
+            win_rate=0.0,
+            total_return=0.0,
+            max_single_win=0.0,
+            max_single_loss=0.0,
+            avg_holding_days=1.0,
+            strategy_breakdown={},
+            market_environment="震荡市",
+            main_chain_summary=("候选观察池: 600519 贵州茅台",),
+            key_lessons=("今日无交易信号",),
+            improvement_suggestions=("继续观察市场",),
+        )
+
+        result = format_daily_review(review)
+
+        assert "🧭 今日以观察为主，等待右侧确认后再行动。" in result
+        assert "今日表现不佳" not in result
+
 
 class TestFormatWeeklySummary:
     def test_returns_string(self):

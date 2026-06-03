@@ -28,6 +28,9 @@ def _compose_briefing_notification_markdown(
     body_parts: list[str] = []
     if summary:
         body_parts.append("## 主链摘要\n\n" + summary)
+    main_chain = sections.get("主链总览", "")
+    if main_chain:
+        body_parts.append("## 主链总览\n\n" + main_chain)
     evidence = sections.get("候选证据链", "")
     if evidence and "今日无候选标的" not in evidence:
         body_parts.append("## 候选证据链\n\n" + evidence)
