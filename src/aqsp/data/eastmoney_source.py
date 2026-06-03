@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import time
 from datetime import date
 from typing import Literal
@@ -13,6 +14,8 @@ from aqsp.core.time import now_shanghai
 _REQUEST_DELAY = 0.3
 _MAX_RETRIES = 3
 _BACKOFF_BASE = 2.0
+
+_logger = logging.getLogger("aqsp.data.eastmoney")
 
 
 class EastmoneySource(DataSource):
@@ -145,9 +148,14 @@ class EastmoneySource(DataSource):
                 frame = pd.DataFrame(rows)
                 frame["name"] = str(payload.get("name", "") or symbol)
                 return frame
-            except Exception:
+            except Exception as exc:
                 if attempt < _MAX_RETRIES - 1:
                     time.sleep(_BACKOFF_BASE ** (attempt + 1))
+                else:
+                    _logger.warning(
+                        "eastmoney 日线获取失败 %s（重试%d次后放弃）: %s",
+                        symbol, _MAX_RETRIES, exc,
+                    )
         return None
 
     def _fetch_eastmoney_intraday(
@@ -193,9 +201,14 @@ class EastmoneySource(DataSource):
                 df["symbol"] = symbol
                 df["name"] = symbol
                 return df
-            except Exception:
+            except Exception as exc:
                 if attempt < _MAX_RETRIES - 1:
                     time.sleep(_BACKOFF_BASE ** (attempt + 1))
+                else:
+                    _logger.warning(
+                        "eastmoney 分时获取失败 %s（重试%d次后放弃）: %s",
+                        symbol, _MAX_RETRIES, exc,
+                    )
         return None
 
     def _fetch_eastmoney_quote(self, symbol: str) -> dict | None:
@@ -221,9 +234,14 @@ class EastmoneySource(DataSource):
                     "amount": float(d.get("f177", 0)),
                     "ts": now_shanghai().isoformat(),
                 }
-            except Exception:
+            except Exception as exc:
                 if attempt < _MAX_RETRIES - 1:
                     time.sleep(_BACKOFF_BASE ** (attempt + 1))
+                else:
+                    _logger.warning(
+                        "eastmoney 实时报价获取失败 %s（重试%d次后放弃）: %s",
+                        symbol, _MAX_RETRIES, exc,
+                    )
         return None
 
     def _fetch_eastmoney_index(
@@ -270,9 +288,14 @@ class EastmoneySource(DataSource):
                 frame = pd.DataFrame(rows)
                 frame["name"] = str(payload.get("name", "") or code)
                 return frame
-            except Exception:
+            except Exception as exc:
                 if attempt < _MAX_RETRIES - 1:
                     time.sleep(_BACKOFF_BASE ** (attempt + 1))
+                else:
+                    _logger.warning(
+                        "eastmoney 指数获取失败 %s（重试%d次后放弃）: %s",
+                        code, _MAX_RETRIES, exc,
+                    )
         return None
 
     def _normalize_eastmoney_df(self, df: pd.DataFrame, symbol: str) -> pd.DataFrame:

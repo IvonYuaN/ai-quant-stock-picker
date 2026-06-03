@@ -135,7 +135,11 @@ class DataSource(ABC):
                 df["date"] = df["日期"]
             elif "trade_date" in df.columns:
                 df["date"] = df["trade_date"]
-        df["date"] = pd.to_datetime(df["date"]).dt.strftime("%Y-%m-%d")
+        # 用 coerce 解析：脏日期变 NaT 而非裸 ValueError 崩溃。
+        # 数据源原始数据若含非法日期，保留 NaT 交给 _validate_ohlcv 的
+        # invalid_dates 检查 fail loud 报规范的 DataError（宪法：数据失效硬报错）。
+        parsed = pd.to_datetime(df["date"], errors="coerce")
+        df["date"] = parsed.dt.strftime("%Y-%m-%d").where(parsed.notna(), df["date"])
         return df
 
     def _normalize_symbol(self, df: pd.DataFrame, symbol: str) -> pd.DataFrame:
