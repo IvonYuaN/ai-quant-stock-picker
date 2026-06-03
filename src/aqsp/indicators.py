@@ -63,7 +63,11 @@ def normalize_ohlcv(raw: pd.DataFrame) -> pd.DataFrame:
         df["symbol"] = ""
     if "name" not in df.columns:
         df["name"] = ""
-    df["date"] = pd.to_datetime(df["date"]).dt.strftime("%Y-%m-%d")
+    # date 用 coerce：脏日期（非法格式）变 NaT，先丢弃 NaT 行再格式化，
+    # 避免单个脏日期让整个 normalize_ohlcv 崩溃（进而整只标的被静默跳过）。
+    df["date"] = pd.to_datetime(df["date"], errors="coerce")
+    df = df.dropna(subset=["date"])
+    df["date"] = df["date"].dt.strftime("%Y-%m-%d")
     for col in ("open", "high", "low", "close", "volume", "amount"):
         df[col] = pd.to_numeric(df[col], errors="coerce")
     df = df.dropna(subset=["open", "high", "low", "close", "volume"]).sort_values(
