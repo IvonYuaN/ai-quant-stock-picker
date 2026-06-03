@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -278,9 +279,9 @@ class AutoEvolution:
         self,
         strategy_name: str,
         data: Dict[str, pd.DataFrame],
-    ) -> Dict[str, float]:
+    ) -> EvolutionResult | None:
         if not self.config.enabled:
-            return {}
+            return None
 
         current_params = self._get_base_params(strategy_name)
         current_performance = self._evaluate_params(current_params, data, strategy_name)
@@ -299,7 +300,7 @@ class AutoEvolution:
 
         improvement = best_score - current_performance.get("sharpe_ratio", 0)
         if improvement > self.config.performance_threshold:
-            self._record_evolution(
+            result = self._record_evolution(
                 strategy_name,
                 current_params,
                 best_params,
@@ -307,9 +308,9 @@ class AutoEvolution:
                 "performance_improvement",
             )
             self._last_evolution_time = now_shanghai()
-            return best_params
+            return result
 
-        return current_params
+        return None
 
     def _generate_candidates(
         self,
@@ -365,7 +366,7 @@ class AutoEvolution:
         new_params: Dict[str, float],
         improvement: float,
         reason: str,
-    ) -> None:
+    ) -> EvolutionResult:
         result = EvolutionResult(
             strategy_name=strategy_name,
             old_params=old_params,
@@ -391,6 +392,30 @@ class AutoEvolution:
 
         with open(history_file, "a", encoding="utf-8") as f:
             f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        return result
+
+    def _apply_evolution(self, result: EvolutionResult) -> None:
+        if not result.new_params:
+            return
+
+        content = self.thresholds_path.read_text(encoding="utf-8")
+
+        for key, value in result.new_params.items():
+            pattern = re.compile(
+                rf"^(\s*{re.escape(key)}:\s*)(['\"]?)(.*?)\2(\s*(?:#.*)?)$",
+                flags=re.MULTILINE,
+            )
+            updated, count = pattern.subn(
+                lambda m, v=value: (
+                    f"{m.group(1)}{m.group(2)}{v}{m.group(2)}{m.group(4)}"
+                ),
+                content,
+            )
+            if count > 0:
+                content = updated
+
+        self.thresholds_path.write_text(content, encoding="utf-8")
+        self.thresholds = load_thresholds(str(self.thresholds_path))
 
     def save_evolution_history(self, output_path: str) -> None:
         output_file = Path(output_path)

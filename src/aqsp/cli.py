@@ -3034,7 +3034,12 @@ def run_mine_factors(args: argparse.Namespace) -> int:
 
     print(f"正在获取 {len(symbols)} 只股票数据...")
     try:
-        frames = _fetch_frames_for_cli(args.source, symbols, None, 250)
+        frames = _fetch_frames_for_cli(
+            args.source,
+            symbols,
+            benchmark_symbol=None,
+            days=250,
+        )
     except Exception:
         frames = {}
 
@@ -3102,7 +3107,12 @@ def run_evolve(args: argparse.Namespace) -> int:
         return 1
 
     try:
-        frames = _fetch_frames_for_cli(args.source, symbols, None, 250)
+        frames = _fetch_frames_for_cli(
+            args.source,
+            symbols,
+            benchmark_symbol=None,
+            days=250,
+        )
     except Exception:
         frames = {}
 
@@ -3168,7 +3178,12 @@ def run_multi_factor(args: argparse.Namespace) -> int:
 
     print(f"正在获取 {len(symbols)} 只股票数据...")
     try:
-        frames = _fetch_frames_for_cli(args.source, symbols, None, 250)
+        frames = _fetch_frames_for_cli(
+            args.source,
+            symbols,
+            benchmark_symbol=None,
+            days=250,
+        )
     except Exception:
         frames = {}
 
@@ -3246,7 +3261,12 @@ def run_morning_breakout(args: argparse.Namespace) -> int:
 
     print(f"正在获取 {len(symbols)} 只股票数据...")
     try:
-        frames = _fetch_frames_for_cli(args.source, symbols, None, 250)
+        frames = _fetch_frames_for_cli(
+            args.source,
+            symbols,
+            benchmark_symbol=None,
+            days=250,
+        )
     except Exception:
         frames = {}
 
@@ -3371,7 +3391,12 @@ def run_closing_premium(args: argparse.Namespace) -> int:
 
     print(f"正在获取 {len(symbols)} 只股票数据...")
     try:
-        frames = _fetch_frames_for_cli(args.source, symbols, None, 250)
+        frames = _fetch_frames_for_cli(
+            args.source,
+            symbols,
+            benchmark_symbol=None,
+            days=250,
+        )
     except Exception:
         frames = {}
 
