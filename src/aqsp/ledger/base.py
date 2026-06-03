@@ -226,13 +226,14 @@ def _check_executable(
         limit_up_price = bar_limit_up
     else:
         limit_up_pct = float(row.get("limit_up_pct") or 0.099)
-        limit_up_price = prev_close * (1 + limit_up_pct)
+        # 涨跌停价四舍五入到分（A股交易所规则），与 source.apply_limit_suspended_adj 口径一致
+        limit_up_price = round(prev_close * (1 + limit_up_pct), 2)
 
     if bar_limit_down > 0:
         limit_down_price = bar_limit_down
     else:
         limit_down_pct = float(row.get("limit_down_pct") or 0.099)
-        limit_down_price = prev_close * (1 - limit_down_pct)
+        limit_down_price = round(prev_close * (1 - limit_down_pct), 2)
 
     if open_price >= limit_up_price * 0.999 and high <= open_price * 1.0001:
         return False, "limit_up_at_open"

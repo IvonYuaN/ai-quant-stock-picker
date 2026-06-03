@@ -61,8 +61,10 @@ def apply_limit_suspended_adj(
     limit_pct = get_limit_pct(symbol, name)
 
     prev_close = df["close"].shift(1)
-    df["limit_up"] = prev_close * (1 + limit_pct)
-    df["limit_down"] = prev_close * (1 - limit_pct)
+    # A股涨跌停价 = 昨收 × (1±幅度)，四舍五入到 0.01 元（交易所实际规则）。
+    # 不舍入会导致用 11.033 这类非真实价位判定一字板/涨停，与实际可成交价错位。
+    df["limit_up"] = (prev_close * (1 + limit_pct)).round(2)
+    df["limit_down"] = (prev_close * (1 - limit_pct)).round(2)
 
     vol_zero = df["volume"] == 0 if "volume" in df.columns else False
     amt_zero = df["amount"] == 0 if "amount" in df.columns else False
