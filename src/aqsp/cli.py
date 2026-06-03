@@ -2236,6 +2236,40 @@ def run_scheduled(args: argparse.Namespace) -> int:
         portfolio_decisions=portfolio_decisions,
         portfolio_summary=portfolio_summary,
     )
+
+    # 执行摘要：3秒抓重点，插在报告标题后第一段
+    tradable = [p for p in picks if p.rating in ("strong_buy_candidate", "buy_candidate")]
+    summary_lines = [
+        "",
+        "---",
+        "## 📌 执行摘要",
+        "",
+    ]
+    if status.triggered:
+        summary_lines.append(f"🛡️ **组合保护已触发**: {status.reason}，暂停新开仓")
+    elif not tradable:
+        summary_lines.append("👀 **今日无可执行标的**，仅观察。等待更强信号。")
+    else:
+        top = tradable[0]
+        summary_lines.append(
+            f"🎯 **首选**: {top.symbol} {top.name} | 评分 {top.score:.0f} | "
+            f"买点 {top.ideal_buy} / 止损 {top.stop_loss} / 目标 {top.take_profit}"
+        )
+        if len(tradable) > 1:
+            others = "、".join(f"{p.symbol} {p.name}" for p in tradable[1:3])
+            summary_lines.append(f"📋 **其他候选**: {others}")
+
+    if is_cold_start:
+        summary_lines.append(f"⏳ 冷启动期: {cold_start_days}/{COLD_START_MIN_DAYS} 天（策略权重未调整，仅供观察）")
+
+    summary_lines.append("")
+    summary_lines.append("---")
+    summary_lines.append("")
+
+    # 把摘要插到标题行之后（第一个 \n\n 之后）
+    title_end = markdown.find("\n\n")
+    if title_end > 0:
+        markdown = markdown[:title_end] + "\n" + "\n".join(summary_lines) + markdown[title_end:]
     if status.triggered:
         markdown += (
             "\n\n## 组合保护\n"
@@ -2345,9 +2379,25 @@ def run_scheduled(args: argparse.Namespace) -> int:
     print(markdown)
 
     if args.notify:
+        # 通知只发精炼摘要+TOP3,不发整篇65KB文本墙
+        notify_lines = [f"📊 AI选股日报 {latest.isoformat()}"]
+        if status.triggered:
+            notify_lines.append(f"🛡️ 组合保护: {status.reason}")
+        elif not tradable:
+            notify_lines.append("👀 今日无可执行标的,仅观察")
+        else:
+            for i, p in enumerate(tradable[:3], 1):
+                notify_lines.append(
+                    f"{i}. {p.symbol} {p.name} | {p.score:.0f}分 | "
+                    f"买{p.ideal_buy}/损{p.stop_loss}/盈{p.take_profit}"
+                )
+        if is_cold_start:
+            notify_lines.append(f"⏳ 冷启动 {cold_start_days}/{COLD_START_MIN_DAYS}")
+        notify_lines.append(f"数据源: {actual_source} ({source_health_label})")
+        notify_text = "\n".join(notify_lines)
         results = notify_markdown(
             prepend_source_status_banner(
-                markdown,
+                notify_text,
                 source_status={
                     "requested_source": args.source,
                     "actual_source": actual_source,
