@@ -41,3 +41,24 @@ def test_install_server_cron_script_installs_standard_jobs() -> None:
     assert "*/10 13-14 * * 1-5" in script
     assert "0 18 * * 1-5" in script
     assert "*/15 * * * 1-5" in script
+
+
+def test_coldstart_daily_script_updates_db_then_runs_cli() -> None:
+    script = (PROJECT_ROOT / "scripts" / "coldstart_daily.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert "A股量化分析数据/update_daily.py" in script
+    assert "--source sqlite_db" in script
+    assert '--benchmark-symbol ""' in script
+    assert "冷启动:" in script
+
+
+def test_install_coldstart_cron_script_installs_single_daily_job() -> None:
+    script = (PROJECT_ROOT / "scripts" / "install_coldstart_cron.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert "AQSP_COLDSTART_CRON_SCHEDULE" in script
+    assert "30 17 * * 1-5" in script
+    assert "/scripts/coldstart_daily.sh" in script
