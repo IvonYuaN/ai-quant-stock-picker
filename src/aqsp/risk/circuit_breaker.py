@@ -89,28 +89,28 @@ class CircuitBreaker:
         if monthly_pnl_pct <= -self.config.monthly_loss_pct:
             return self._trigger(
                 "monthly",
-                monthly_pnl_pct,
                 f"月度组合亏损 {monthly_pnl_pct:.2f}% 触及 {self.config.monthly_loss_pct:.1f}% 止损线",
                 daily_pnl_pct,
                 weekly_pnl_pct,
+                monthly_pnl_pct,
             )
 
         if weekly_pnl_pct <= -self.config.weekly_loss_pct:
             return self._trigger(
                 "weekly",
-                weekly_pnl_pct,
                 f"周度组合亏损 {weekly_pnl_pct:.2f}% 触及 {self.config.weekly_loss_pct:.1f}% 止损线",
                 daily_pnl_pct,
                 weekly_pnl_pct,
+                monthly_pnl_pct,
             )
 
         if daily_pnl_pct <= -self.config.daily_loss_pct:
             return self._trigger(
                 "daily",
-                daily_pnl_pct,
                 f"单日组合亏损 {daily_pnl_pct:.2f}% 触及 {self.config.daily_loss_pct:.1f}% 止损线",
                 daily_pnl_pct,
                 weekly_pnl_pct,
+                monthly_pnl_pct,
             )
 
         return BreakerStatus(
@@ -125,10 +125,10 @@ class CircuitBreaker:
     def _trigger(
         self,
         level: str,
-        pnl_pct: float,
         reason: str,
         daily_pnl_pct: float,
         weekly_pnl_pct: float,
+        monthly_pnl_pct: float,
     ) -> BreakerStatus:
         today = now_shanghai().date()
         self._last_triggered_date = today
@@ -140,7 +140,7 @@ class CircuitBreaker:
             level=level,
             daily_pnl_pct=daily_pnl_pct,
             weekly_pnl_pct=weekly_pnl_pct,
-            monthly_pnl_pct=pnl_pct if level == "monthly" else 0.0,
+            monthly_pnl_pct=monthly_pnl_pct,
             cooldown_until=self._cooldown_until.isoformat(),
         )
 

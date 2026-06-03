@@ -1022,7 +1022,9 @@ def _count_independent_signal_days(ledger_path: str) -> int:
     signal_dates = set()
     for row in rows:
         if row.get("status") in ("validated", "pending"):
-            signal_dates.add(row.get("signal_date", ""))
+            sd = row.get("signal_date", "")
+            if sd:  # 过滤空 signal_date，避免虚增冷启动计数
+                signal_dates.add(sd)
     return len(signal_dates)
 
 
@@ -1055,7 +1057,14 @@ def _compute_real_pnl(ledger_path: str) -> tuple[float, float, float]:
 
     validated.sort(key=lambda x: x[0])
 
-    daily_pnl = validated[-1][1]
+    # daily_pnl：取「最近一个有 validated 记录的交易日」当天所有收益的累计，
+    # 而非数组最后一条单笔（最后一条的 signal_date 可能不是最近日，且会漏掉同日多笔）。
+    latest_signal_date = validated[-1][0]
+    same_day_returns = [r for d, r in validated if d == latest_signal_date]
+    daily_cum = 1.0
+    for r in same_day_returns:
+        daily_cum *= 1 + r / 100
+    daily_pnl = (daily_cum - 1) * 100
 
     weekly_returns = [r for d, r in validated if (today - d).days <= 7]
     weekly_cum = 1.0
@@ -1510,13 +1519,19 @@ def _write_walkforward_gate(
     """
     import json
 
+    # 宪法 §17.7：pbo==0.0 是单序列回测的占位值（无法做真 CSCV），
+    # 不能当作「零过拟合」通过门。pbo_pass 要求 0 < pbo < 0.5。
+    pbo_valid = pbo > 0.0
+    pbo_pass = pbo_valid and pbo < 0.5
+    dsr_pass = dsr > 1.0
     payload = {
         "run_date": run_date,
         "deflated_sharpe": dsr,
         "pbo": pbo,
-        "dsr_pass": dsr > 1.0,
-        "pbo_pass": pbo < 0.5,
-        "both_pass": (dsr > 1.0) and (pbo < 0.5),
+        "pbo_valid": pbo_valid,
+        "dsr_pass": dsr_pass,
+        "pbo_pass": pbo_pass,
+        "both_pass": dsr_pass and pbo_pass,
         "data_start": start,
         "data_end": end,
         "n_periods": n_periods,
@@ -2576,7 +2591,13 @@ def run_walkforward(args: argparse.Namespace) -> int:
 
     tl_dr = []
     dsr_pass = result.deflated_sharpe > 1.0
-    pbo_pass = result.pbo < 0.5
+    # 宪法 §17.7：PBO 必须经真 CSCV（N>=2 变体）计算。
+    # 单序列回测无法做 CSCV，calculate_cscv_pbo_from_single 会返回占位值 0.0。
+    # 真 CSCV 的 PBO 几乎不可能恰为 0.0（252 组合中通常有 λ<=0）。
+    # 因此 pbo==0.0 视为「未经有效 CSCV 验证」，不予通过门 —— 避免单策略
+    # 用占位 0.0 蒙混过双门。需要 grid（多变体）walkforward 才能得到有效 PBO。
+    pbo_is_valid = result.pbo > 0.0
+    pbo_pass = pbo_is_valid and result.pbo < 0.5
     both_pass = dsr_pass and pbo_pass
     verdict = "PASS" if both_pass else "FAIL"
     tl_dr.append(
@@ -2677,7 +2698,13 @@ def run_walkforward(args: argparse.Namespace) -> int:
         if not dsr_pass:
             reasons.append(f"DSR={result.deflated_sharpe:.4f} < 1.0")
         if not pbo_pass:
-            reasons.append(f"PBO={result.pbo:.2%} > 50%")
+            if not pbo_is_valid:
+                reasons.append(
+                    f"PBO={result.pbo:.2%}（占位值，未经有效 CSCV 验证——"
+                    "单策略回测无法做 CSCV，需用 grid 多变体网格，见宪法 §17.7）"
+                )
+            else:
+                reasons.append(f"PBO={result.pbo:.2%} > 50%")
         report_lines.append(f"❌ **{verdict}**: {'，'.join(reasons)}，不建议实盘使用。")
 
     report = "\n".join(report_lines)

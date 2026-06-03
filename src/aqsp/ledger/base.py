@@ -37,9 +37,21 @@ def read_ledger(path: str | Path) -> list[dict]:
     if not ledger.exists():
         return []
     rows = []
-    for line in ledger.read_text(encoding="utf-8").splitlines():
-        if line.strip():
+    for lineno, line in enumerate(
+        ledger.read_text(encoding="utf-8").splitlines(), start=1
+    ):
+        if not line.strip():
+            continue
+        try:
             rows.append(json.loads(line))
+        except json.JSONDecodeError as exc:
+            # 单行损坏（写入中断/磁盘满）不应让整个账本读取崩溃，
+            # 跳过坏行并警告，保住其余有效记录。
+            import logging
+
+            logging.getLogger("aqsp.ledger").warning(
+                "账本 %s 第 %d 行 JSON 损坏，已跳过: %s", ledger, lineno, exc
+            )
     return rows
 
 
