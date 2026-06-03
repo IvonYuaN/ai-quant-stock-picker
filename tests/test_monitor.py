@@ -105,6 +105,33 @@ class TestMonitorChecker:
             assert result.name == "stale_data"
             assert result.severity == "critical"
 
+    def test_check_data_freshness_skips_when_cache_missing_and_optional(
+        self, sample_config: Path
+    ) -> None:
+        checker = MonitorChecker(config_path=str(sample_config))
+
+        result = checker._check_data_freshness(
+            {"cache_path": "data/missing_cache.db", "max_lag_days": 3, "required": False}
+        )
+
+        assert result.name == "stale_data"
+        assert result.triggered is False
+        assert result.severity == "warning"
+        assert "跳过本地缓存新鲜度检查" in result.message
+
+    def test_check_data_freshness_fails_when_cache_missing_and_required(
+        self, sample_config: Path
+    ) -> None:
+        checker = MonitorChecker(config_path=str(sample_config))
+
+        result = checker._check_data_freshness(
+            {"cache_path": "data/missing_cache.db", "max_lag_days": 3, "required": True}
+        )
+
+        assert result.name == "stale_data"
+        assert result.triggered is True
+        assert result.severity == "critical"
+        assert "数据缓存文件不存在" in result.message
     def test_check_circuit_breaker(self, sample_config: Path) -> None:
         checker = MonitorChecker(config_path=str(sample_config))
 

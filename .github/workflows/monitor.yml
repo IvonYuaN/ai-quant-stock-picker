@@ -23,4 +23,4 @@ jobs:
         with:
           python-version: "3.11"
       - run: pip install -e ".[data]"
-      - run: aqsp monitor --notify
+      - run: aqsp monitor --notify --notify-critical-only

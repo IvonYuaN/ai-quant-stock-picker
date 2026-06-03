@@ -5,7 +5,9 @@ monitors:
     enabled: true
     check: "data_freshness"
     params:
+      cache_path: data/cache.db
       max_lag_days: 3
+      required: false
     severity: "critical"
     
   - name: "circuit_breaker"

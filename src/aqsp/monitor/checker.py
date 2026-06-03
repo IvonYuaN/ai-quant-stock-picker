@@ -94,15 +94,24 @@ class MonitorChecker:
 
     def _check_data_freshness(self, params: dict[str, Any]) -> MonitorResult:
         max_lag_days = params.get("max_lag_days", 3)
+        cache_path = Path(str(params.get("cache_path", "data/cache.db")))
+        required = bool(params.get("required", False))
 
-        cache_path = Path("data/cache.db")
         if not cache_path.exists():
+            if not required:
+                return MonitorResult(
+                    name="stale_data",
+                    triggered=False,
+                    severity="warning",
+                    message="数据缓存文件不存在，跳过本地缓存新鲜度检查",
+                    details={"cache_path": str(cache_path), "required": required},
+                )
             return MonitorResult(
                 name="stale_data",
                 triggered=True,
                 severity="critical",
                 message="数据缓存文件不存在",
-                details={"cache_path": str(cache_path)},
+                details={"cache_path": str(cache_path), "required": required},
             )
 
         try:
