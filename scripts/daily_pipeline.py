@@ -767,9 +767,7 @@ def run_pipeline(config: PipelineConfig) -> PipelineResult:
     duration = (finished - started).total_seconds()
     success_count = sum(1 for s in steps if s.success)
     total_count = len(steps)
-    overall_success = all(
-        s.success for s in steps if s.name in ("数据更新", "策略运行")
-    )
+    overall_success = all(s.success for s in steps)
 
     summary_lines = [
         f"跑批完成: {success_count}/{total_count} 步骤成功",

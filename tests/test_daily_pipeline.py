@@ -680,6 +680,54 @@ def test_run_pipeline_excludes_intraday_sub_strategies(monkeypatch) -> None:
     ]
 
 
+def test_run_pipeline_marks_overall_failure_when_later_step_fails(
+    monkeypatch,
+) -> None:
+    daily_pipeline = _load_daily_pipeline_module()
+
+    def fake_run_step(name: str, fn, logger, dry_run: bool = False):
+        return daily_pipeline.StepResult(
+            name,
+            name != "策略自进化",
+            0.0,
+            "" if name != "策略自进化" else "数据错误: 策略自进化失败, exit_code=1",
+        )
+
+    monkeypatch.setattr(daily_pipeline, "_run_step", fake_run_step)
+    monkeypatch.setattr(daily_pipeline, "_is_trade_day", lambda _d: True)
+
+    config = daily_pipeline.PipelineConfig(
+        project_root=Path.cwd(),
+        source="eastmoney",
+        mode="close",
+        limit=10,
+        max_universe=50,
+        min_avg_amount=50_000_000,
+        max_data_lag_days=3,
+        enable_online_factors=False,
+        allow_online_fallback=True,
+        ledger_path="data/predictions.jsonl",
+        report_path="reports/latest.md",
+        csv_path="reports/latest.csv",
+        briefing_path="reports/briefing.md",
+        paper_report_path="reports/paper.md",
+        dashboard_html="dist/dashboard/index.html",
+        dashboard_db="dist/dashboard/aqsp.db",
+        paper_ledger="data/paper_trades.jsonl",
+        closing_review_path="reports/closing_review.md",
+        notify=False,
+        notify_mode="summary",
+        dry_run=False,
+        enable_debate=False,
+        enable_auto_evolution=True,
+    )
+
+    result = daily_pipeline.run_pipeline(config)
+
+    assert result.overall_success is False
+    assert "✗ 策略自进化" in result.summary
+
+
 def test_sync_paper_trades_writes_report(monkeypatch, tmp_path: Path) -> None:
     daily_pipeline = _load_daily_pipeline_module()
     ledger_path = tmp_path / "predictions.jsonl"
