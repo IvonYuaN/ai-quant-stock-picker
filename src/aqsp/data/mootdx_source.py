@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import logging
 from datetime import date
 from typing import Literal
 import pandas as pd
 
 from aqsp.data.source import DataSource, OhlcvFrame, apply_limit_suspended_adj
 from aqsp.core.time import now_shanghai
+
+_logger = logging.getLogger("aqsp.data.mootdx")
 
 try:
     from mootdx.quotes import Quotes
@@ -112,7 +115,8 @@ class MootdxSource(DataSource):
             end_str = end.strftime("%Y-%m-%d")
             df = df[(df["date"] >= start_str) & (df["date"] <= end_str)]
             return df
-        except Exception:
+        except Exception as exc:
+            _logger.warning("mootdx 日线获取失败 %s: %s", symbol, exc)
             return None
 
     def _fetch_mootdx_intraday(self, symbol: str, period: str) -> pd.DataFrame | None:
@@ -135,7 +139,8 @@ class MootdxSource(DataSource):
             df["symbol"] = symbol
             df["name"] = symbol
             return df
-        except Exception:
+        except Exception as exc:
+            _logger.warning("mootdx 分时获取失败 %s: %s", symbol, exc)
             return None
 
     def _fetch_mootdx_quote(self, symbol: str) -> dict | None:
@@ -152,7 +157,8 @@ class MootdxSource(DataSource):
                 "amount": float(row.get("amount", 0)),
                 "ts": now_shanghai().isoformat(),
             }
-        except Exception:
+        except Exception as exc:
+            _logger.warning("mootdx 实时报价获取失败 %s: %s", symbol, exc)
             return None
 
     def _normalize_mootdx_df(self, df: pd.DataFrame, symbol: str) -> pd.DataFrame:

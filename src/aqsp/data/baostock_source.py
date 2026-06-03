@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import time
 from datetime import date
 from typing import Literal
@@ -12,6 +13,8 @@ from aqsp.core.time import now_shanghai
 
 _REQUEST_DELAY = 0.05
 _MAX_RETRIES = 3
+
+_logger = logging.getLogger("aqsp.data.baostock")
 
 
 class BaostockSource(DataSource):
@@ -144,7 +147,12 @@ class BaostockSource(DataSource):
                             row = rs.get_row_data()
                             if row:
                                 rows.append(dict(zip(rs.fields, row)))
-                    except Exception:
+                    except Exception as exc:
+                        # 单季度财务缺失属常见情况，用 debug 级避免刷屏
+                        _logger.debug(
+                            "baostock 财务 %s %dQ%d 获取失败: %s",
+                            bs_code, year, quarter, exc,
+                        )
                         continue
             if rows:
                 df = pd.DataFrame(rows)
@@ -199,9 +207,11 @@ class BaostockSource(DataSource):
                     df[col] = pd.to_numeric(df[col], errors="coerce")
                 df = df.dropna(subset=["close"])
                 return df
-            except Exception:
+            except Exception as exc:
                 if attempt < _MAX_RETRIES - 1:
                     time.sleep(1)
+                else:
+                    _logger.warning("baostock 日线获取失败（重试%d次后放弃）: %s", _MAX_RETRIES, exc)
         return None
 
     def _fetch_intraday_single(self, symbol: str, freq: str) -> pd.DataFrame | None:
@@ -228,7 +238,8 @@ class BaostockSource(DataSource):
             df["symbol"] = symbol
             df["name"] = symbol
             return df
-        except Exception:
+        except Exception as exc:
+            _logger.warning("baostock 分时获取失败 %s: %s", symbol, exc)
             return None
 
     def _fetch_quote_single(self, symbol: str) -> dict | None:
@@ -258,7 +269,8 @@ class BaostockSource(DataSource):
                 "amount": float(row[6]) if row[6] else 0.0,
                 "ts": now_shanghai().isoformat(),
             }
-        except Exception:
+        except Exception as exc:
+            _logger.warning("baostock 实时报价获取失败 %s: %s", symbol, exc)
             return None
 
     def _fetch_index_single(
@@ -286,9 +298,11 @@ class BaostockSource(DataSource):
                     df[col] = pd.to_numeric(df[col], errors="coerce")
                 df = df.dropna(subset=["close"])
                 return df
-            except Exception:
+            except Exception as exc:
                 if attempt < _MAX_RETRIES - 1:
                     time.sleep(1)
+                else:
+                    _logger.warning("baostock 指数日线获取失败（重试%d次后放弃）: %s", _MAX_RETRIES, exc)
         return None
 
     def _normalize_df(self, df: pd.DataFrame, symbol: str) -> pd.DataFrame:

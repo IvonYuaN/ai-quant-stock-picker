@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import time
 from datetime import date
@@ -10,6 +11,8 @@ from aqsp.data.source import DataSource, OhlcvFrame, apply_limit_suspended_adj
 from aqsp.data.cache import DataCache
 from aqsp.core.errors import DataError
 from aqsp.core.time import now_shanghai
+
+_logger = logging.getLogger("aqsp.data.akshare")
 
 
 class AkshareSource(DataSource):
@@ -205,7 +208,9 @@ class AkshareSource(DataSource):
         for fetch in candidates:
             try:
                 df = fetch()
-            except Exception:
+            except Exception as exc:
+                # 多候选接口轮询，单个失败属正常 fallback，用 debug 级
+                _logger.debug("akshare 候选接口失败，尝试下一个: %s", exc)
                 continue
             if df is None or df.empty:
                 continue
