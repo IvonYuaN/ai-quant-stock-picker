@@ -826,6 +826,68 @@ def _latest_source_status_from_ledger(ledger_path: Path) -> dict[str, Any] | Non
     }
 
 
+def _latest_portfolio_summary(config: PipelineConfig) -> Any | None:
+    csv_path = config.project_root / config.csv_path
+    if not csv_path.exists():
+        return None
+
+    try:
+        df = pd.read_csv(csv_path)
+    except Exception:
+        return None
+    if df.empty:
+        return None
+
+    from aqsp.core.types import PickResult
+    from aqsp.portfolio.manager import PortfolioDecision, summarize_portfolio_decisions
+
+    def _text(value: Any) -> str:
+        if value is None or pd.isna(value):
+            return ""
+        return str(value).strip()
+
+    def _num(value: Any) -> float:
+        if value is None or pd.isna(value):
+            return 0.0
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return 0.0
+
+    picks: list[PickResult] = []
+    decisions: list[PortfolioDecision] = []
+    for row in df.to_dict(orient="records"):
+        action = _text(row.get("portfolio_action")) or "keep"
+        picks.append(
+            PickResult(
+                symbol=_text(row.get("symbol")),
+                name=_text(row.get("name")),
+                date=_text(row.get("date")),
+                close=_num(row.get("close")),
+                score=_num(row.get("score")),
+                rating=_text(row.get("rating")),
+                entry_type=_text(row.get("entry_type")),
+                ideal_buy=_num(row.get("ideal_buy")),
+                stop_loss=_num(row.get("stop_loss")),
+                take_profit=_num(row.get("take_profit")),
+                position=_text(row.get("position")),
+                strategies=tuple(),
+                reasons=tuple(),
+                risks=tuple(),
+                metrics={"portfolio_action": action},
+            )
+        )
+        decisions.append(
+            PortfolioDecision(
+                symbol=_text(row.get("symbol")),
+                action=action,
+                score_delta=0.0,
+                reasons=("保持原排序",),
+            )
+        )
+    return summarize_portfolio_decisions(picks, decisions)
+
+
 def _build_pipeline_digest(
     config: PipelineConfig,
     result: PipelineResult,
@@ -852,11 +914,36 @@ def _build_pipeline_digest(
         f"- Dashboard: {config.dashboard_html}",
     ]
 
-    plan_lines = [
-        "- 先看最新选股报告，确认主链候选和 PM 裁决是否一致。",
-        "- 再看收盘复盘，核对策略分类与历史表现。",
-        "- 若有步骤失败，优先处理失败步骤对应的输入源或配置。",
-    ]
+    portfolio_summary = _latest_portfolio_summary(config)
+    main_chain_lines: list[str] = []
+    if portfolio_summary is not None:
+        main_chain_lines.append(f"- PM主裁决: {portfolio_summary.headline}")
+        if portfolio_summary.top_focus:
+            main_chain_lines.append(
+                "- 可执行主链: " + "、".join(portfolio_summary.top_focus)
+            )
+        else:
+            main_chain_lines.append("- 可执行主链: 暂无，今日不做放大仓位动作")
+        if portfolio_summary.watchlist:
+            main_chain_lines.append(
+                "- 候选观察池: " + "、".join(portfolio_summary.watchlist)
+            )
+    else:
+        main_chain_lines.append("- PM主裁决: 暂无可用候选输出")
+
+    plan_lines = []
+    if portfolio_summary is not None and portfolio_summary.top_focus:
+        plan_lines.append("- 先核对可执行主链是否仍满足次日入场条件，再决定人工跟踪优先级。")
+    elif portfolio_summary is not None and portfolio_summary.watchlist:
+        plan_lines.append("- 今日以观察池复核为主，等待右侧确认，不直接放大仓位。")
+    else:
+        plan_lines.append("- 今日无明确主链动作，优先确认数据源和策略运行是否完整。")
+    plan_lines.extend(
+        [
+            "- 对照收盘复盘，确认强弱分层、策略标签和 PM 裁决是否一致。",
+            "- 若有步骤失败，先修输入源或运行配置，再看结果页。",
+        ]
+    )
 
     risk_lines = [
         "- 若出现数据源降级或步骤失败，本次结果只适合观察，不适合直接放大仓位。",
@@ -870,6 +957,9 @@ def _build_pipeline_digest(
         "",
         "## 数据透视",
         *data_lines,
+        "",
+        "## 主链摘要",
+        *main_chain_lines,
         "",
         "## 作战计划",
         *plan_lines,

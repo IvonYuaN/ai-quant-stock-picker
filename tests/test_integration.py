@@ -251,3 +251,28 @@ class TestCLIIntegration:
                 ]
             )
             assert result == 2
+
+    def test_csv_run_does_not_resolve_online_symbols_when_local_file_is_provided(
+        self, tmp_path, monkeypatch
+    ):
+        from aqsp.cli import main
+
+        csv_path = self._make_stale_csv(tmp_path, days_old=1)
+
+        def _fail_if_called(*_args, **_kwargs):
+            raise AssertionError("should not resolve online symbols for --csv runs")
+
+        monkeypatch.setattr("aqsp.cli._resolve_run_symbols", _fail_if_called)
+
+        result = main(
+            [
+                "run",
+                "--csv",
+                str(csv_path),
+                "--max-data-lag-days",
+                "3",
+                "--skip-validation",
+            ]
+        )
+
+        assert result in {0, 1, 2}

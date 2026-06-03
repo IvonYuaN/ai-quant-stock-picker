@@ -130,6 +130,8 @@ def test_dashboard_renders_candidates_and_ledger_stats_when_inputs_exist(
     assert "auto → eastmoney" in html
     assert "fallback 到 eastmoney" in html
     assert "fallback 数据源生成" in html
+    assert "/ 观察候选" in html
+    assert "buy_candidate" not in html
 
 
 def test_dashboard_renders_research_absorption_panel() -> None:
@@ -261,6 +263,26 @@ def test_dashboard_renders_debate_modal_with_shared_role_registry() -> None:
     assert "仅保留最终一轮" in html
     assert "趋势延续概率较高" in html
     assert "高位波动放大" in html
+
+
+def test_dashboard_uses_clean_decision_labels_for_watch_candidates() -> None:
+    candidates = [
+        {
+            "symbol": "600519",
+            "name": "贵州茅台",
+            "date": "2026-06-02",
+            "score": "71",
+            "rating": "watch",
+            "reasons": "等待右侧确认",
+            "risks": "追高风险",
+        }
+    ]
+
+    html = render_dashboard(candidates, [], "观察面板")
+
+    assert "/ 候选观察池" in html
+    assert ">风险: 追高风险<" in html
+    assert "watch" not in html
 
 
 def test_dashboard_warns_when_candidates_are_stale(tmp_path: Path) -> None:

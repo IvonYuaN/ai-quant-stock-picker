@@ -67,6 +67,10 @@ def test_apply_portfolio_manager_downgrades_when_debate_and_correlation_stack() 
     assert by_symbol["600036"].rating == "avoid"
     assert decisions["600036"].action == "downgrade"
     assert any("多Agent辩论偏谨慎" in reason for reason in decisions["600036"].reasons)
+    assert bundle.summary.downgrade_count == 2
+    assert bundle.summary.promote_count == 0
+    assert bundle.summary.headline == "上调 0 / 降级 2 / 维持 0"
+    assert any("600036" in item for item in bundle.summary.watchlist)
 
 
 def test_apply_portfolio_manager_promotes_when_debate_supports_buy_candidate() -> None:
@@ -76,6 +80,8 @@ def test_apply_portfolio_manager_promotes_when_debate_supports_buy_candidate() -
 
     assert bundle.picks[0].rating == "strong_buy_candidate"
     assert bundle.decisions[0].action == "promote"
+    assert bundle.summary.promote_count == 1
+    assert bundle.summary.top_focus == ("300750",)
 
 
 def test_apply_portfolio_manager_keeps_action_when_no_incremental_override() -> None:
@@ -87,3 +93,5 @@ def test_apply_portfolio_manager_keeps_action_when_no_incremental_override() -> 
     assert bundle.picks[0].rating == "buy_candidate"
     assert bundle.decisions[0].action == "keep"
     assert bundle.decisions[0].reasons == ("保持原排序",)
+    assert bundle.summary.keep_count == 1
+    assert bundle.summary.top_focus == ("300750",)

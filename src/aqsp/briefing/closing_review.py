@@ -6,6 +6,7 @@ from datetime import timedelta
 from pathlib import Path
 
 from aqsp.core.time import now_shanghai
+from aqsp.ratings import rating_label
 
 
 @dataclass(frozen=True)
@@ -41,6 +42,7 @@ class DailyReview:
     avg_holding_days: float
     strategy_breakdown: dict[str, dict]
     market_environment: str
+    main_chain_summary: tuple[str, ...]
     key_lessons: tuple[str, ...]
     improvement_suggestions: tuple[str, ...]
 
@@ -112,6 +114,7 @@ class ClosingReviewer:
         strategy_breakdown = self._calculate_strategy_breakdown(reviews)
         market_environment = self._evaluate_market_environment(today)
         key_lessons = self._extract_key_lessons(reviews)
+        main_chain_summary = self._build_main_chain_summary(predictions)
         improvement_suggestions = self._generate_improvement_suggestions(
             reviews, win_rate
         )
@@ -129,9 +132,49 @@ class ClosingReviewer:
             avg_holding_days=avg_holding_days,
             strategy_breakdown=strategy_breakdown,
             market_environment=market_environment,
+            main_chain_summary=main_chain_summary,
             key_lessons=key_lessons,
             improvement_suggestions=improvement_suggestions,
         )
+
+    def _build_main_chain_summary(self, predictions: list[dict]) -> tuple[str, ...]:
+        if not predictions:
+            return ()
+
+        promoted = sum(
+            1
+            for pred in predictions
+            if str(pred.get("portfolio_action", "")).strip() == "promote"
+        )
+        downgraded = sum(
+            1
+            for pred in predictions
+            if str(pred.get("portfolio_action", "")).strip() == "downgrade"
+        )
+        kept = sum(
+            1
+            for pred in predictions
+            if str(pred.get("portfolio_action", "")).strip() == "keep"
+        )
+
+        tradable: list[str] = []
+        watchlist: list[str] = []
+        for pred in predictions:
+            symbol = str(pred.get("symbol", "")).strip()
+            name = str(pred.get("name", "")).strip()
+            display = symbol if not name or name == symbol else f"{symbol} {name}"
+            label = rating_label(pred.get("rating", ""))
+            if label in {"重点关注", "观察候选"}:
+                tradable.append(display)
+            else:
+                watchlist.append(display)
+
+        lines = [f"PM主裁决: 上调 {promoted} / 降级 {downgraded} / 维持 {kept}"]
+        if tradable:
+            lines.append("可执行主链: " + "、".join(tradable[:3]))
+        if watchlist:
+            lines.append("候选观察池: " + "、".join(watchlist[:5]))
+        return tuple(lines)
 
     def _load_predictions(self, date: str) -> list[dict]:
         """加载指定日期的预测记录"""
@@ -212,7 +255,7 @@ class ClosingReviewer:
             "trend_pullback": "均线回踩",
             "reversal_watch": "反转观察",
             "relative_strength": "相对强度",
-            "watch": "观察池",
+            "watch": "候选观察池",
             "close": "收盘候选",
             "open": "盘前候选",
             "next_open": "次日开盘",
@@ -229,6 +272,10 @@ class ClosingReviewer:
                 base_label = entry_type_map.get(
                     entry_type, entry_type.replace("_", " ")
                 )
+        if not base_label:
+            rating = str(pred.get("rating", "")).strip()
+            if rating:
+                base_label = rating_label(rating)
 
         sub_strategy = str(pred.get("sub_strategy", "")).strip()
         if base_label and sub_strategy:
@@ -377,6 +424,7 @@ class ClosingReviewer:
             avg_holding_days=0,
             strategy_breakdown={},
             market_environment="无数据",
+            main_chain_summary=(),
             key_lessons=("今日无交易信号",),
             improvement_suggestions=("继续观察市场",),
         )
@@ -484,6 +532,13 @@ def format_daily_review(review: DailyReview) -> str:
     report.append("=" * 60)
     report.append(f"📅 日期: {review.date}")
     report.append("")
+
+    if review.main_chain_summary:
+        report.append("🎯 主链总览")
+        report.append("-" * 40)
+        for item in review.main_chain_summary:
+            report.append(f"  {item}")
+        report.append("")
 
     report.append("📈 总体统计")
     report.append("-" * 40)

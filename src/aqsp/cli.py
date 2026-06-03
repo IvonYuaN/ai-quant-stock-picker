@@ -1633,19 +1633,28 @@ def run_scheduled(args: argparse.Namespace) -> int:
     explicit_symbol_count = len(
         [item.strip() for item in explicit_symbols.split(",") if item.strip()]
     )
-    symbols = _resolve_run_symbols(
-        args.source,
-        explicit_symbols,
-        pool_name=getattr(args, "pool", ""),
-        as_of=today_shanghai(),
-        max_universe=max_universe,
-        min_avg_amount=min_avg_amount,
+    breaker = CircuitBreaker()
+    daily_pnl, weekly_pnl, monthly_pnl = _compute_real_pnl(args.ledger)
+    status = breaker.check(
+        daily_pnl_pct=daily_pnl,
+        weekly_pnl_pct=weekly_pnl,
+        monthly_pnl_pct=monthly_pnl,
     )
+
+    symbols: list[str] = []
 
     if args.csv:
         frames = load_csv(args.csv)
         actual_source = "csv"
     else:
+        symbols = _resolve_run_symbols(
+            args.source,
+            explicit_symbols,
+            pool_name=getattr(args, "pool", ""),
+            as_of=today_shanghai(),
+            max_universe=max_universe,
+            min_avg_amount=min_avg_amount,
+        )
         frames, actual_source = _fetch_frames_for_cli_with_metadata(
             args.source,
             symbols,
@@ -1799,40 +1808,8 @@ def run_scheduled(args: argparse.Namespace) -> int:
         max_universe=max_universe,
     )
 
-    append_predictions(
-        args.ledger,
-        picks,
-        execution=execution,
-        thresholds_version=thresholds.version,
-        regime=regime,
-        northbound_flow_5d_z=nb_z,
-        margin_balance_change_5d=margin_z,
-        run_metadata=run_metadata,
-    )
-
     diff = None
     concentration = None
-
-    # 保存选股快照
-    if picks:
-        from aqsp.portfolio.snapshot import (
-            save_snapshot,
-            compare_snapshots,
-            format_snapshot_diff,
-        )
-
-        save_snapshot(
-            picks, snapshot_path="data/snapshots", date=today_shanghai().isoformat()
-        )
-        diff = compare_snapshots(
-            current_date=today_shanghai().isoformat(),
-            previous_date=(today_shanghai() - timedelta(days=1)).isoformat(),
-            snapshot_path="data/snapshots",
-        )
-        if diff is not None and (
-            diff.new_picks or diff.removed_picks or diff.rank_changes
-        ):
-            print(format_snapshot_diff(diff))
 
     from aqsp.data.anomaly import detect_anomalies, format_anomaly_alerts
     from aqsp.data.freshness import check_freshness, format_freshness_report
@@ -2105,6 +2082,7 @@ def run_scheduled(args: argparse.Namespace) -> int:
             logging.getLogger(__name__).debug(f"自动反馈跳过: {e}")
 
     portfolio_decisions = None
+    portfolio_summary = None
     if picks:
         from aqsp.portfolio.manager import apply_portfolio_manager
 
@@ -2115,16 +2093,41 @@ def run_scheduled(args: argparse.Namespace) -> int:
         )
         picks = bundle.picks
         portfolio_decisions = list(bundle.decisions)
+        portfolio_summary = bundle.summary
         if portfolio_decisions:
             print("📦 Portfolio Manager 裁决完成")
 
-    breaker = CircuitBreaker()
-    daily_pnl, weekly_pnl, monthly_pnl = _compute_real_pnl(args.ledger)
-    status = breaker.check(
-        daily_pnl_pct=daily_pnl,
-        weekly_pnl_pct=weekly_pnl,
-        monthly_pnl_pct=monthly_pnl,
+    append_predictions(
+        args.ledger,
+        picks,
+        execution=execution,
+        thresholds_version=thresholds.version,
+        regime=regime,
+        northbound_flow_5d_z=nb_z,
+        margin_balance_change_5d=margin_z,
+        run_metadata=run_metadata,
     )
+
+    # 保存选股快照：必须使用 PM 裁决后的最终候选，确保后续报告/briefing/仪表盘一致
+    if picks:
+        from aqsp.portfolio.snapshot import (
+            save_snapshot,
+            compare_snapshots,
+            format_snapshot_diff,
+        )
+
+        save_snapshot(
+            picks, snapshot_path="data/snapshots", date=today_shanghai().isoformat()
+        )
+        diff = compare_snapshots(
+            current_date=today_shanghai().isoformat(),
+            previous_date=(today_shanghai() - timedelta(days=1)).isoformat(),
+            snapshot_path="data/snapshots",
+        )
+        if diff is not None and (
+            diff.new_picks or diff.removed_picks or diff.rank_changes
+        ):
+            print(format_snapshot_diff(diff))
 
     table = to_dataframe(picks)
     markdown = to_markdown(
@@ -2133,6 +2136,7 @@ def run_scheduled(args: argparse.Namespace) -> int:
         metadata=run_metadata,
         debate_results=debate_results if debate_results else None,
         portfolio_decisions=portfolio_decisions,
+        portfolio_summary=portfolio_summary,
     )
     if status.triggered:
         markdown += (
@@ -2674,6 +2678,17 @@ def run_briefing(args: argparse.Namespace) -> int:
                 strategies=tuple(row.get("strategies", [])),
                 reasons=tuple(row.get("reasons", [])),
                 risks=tuple(row.get("risks", [])),
+                metrics={
+                    "portfolio_action": str(row.get("portfolio_action", "") or ""),
+                    "stop_method": str(row.get("stop_method", "") or ""),
+                },
+                adjusted_score=float(row.get("adjusted_score", 0) or 0),
+                recommended_adjustment=str(
+                    row.get("recommended_adjustment", "keep") or "keep"
+                ),
+                debate_consensus=str(row.get("debate_consensus", "") or ""),
+                confidence=float(row.get("confidence", 0) or 0),
+                regime_score=float(row.get("regime_score", 0) or 0),
             )
         )
 

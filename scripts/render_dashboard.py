@@ -22,6 +22,7 @@ from aqsp.data.source_health import (
     notification_level_for_health_label,
     read_source_health,
 )
+from aqsp.ratings import portfolio_action_label, rating_label
 from aqsp.research.summary import ResearchSummary, load_research_summary
 
 
@@ -220,6 +221,10 @@ def _role_display_name(role: str) -> str:
     return f"{emoji} {label}".strip()
 
 
+def _decision_label_from_rating(rating: str) -> str:
+    return rating_label(rating)
+
+
 def _candidate_cards(
     candidates: list[dict[str, str]], debate_map: dict[str, dict[str, Any]]
 ) -> str:
@@ -230,7 +235,14 @@ def _candidate_cards(
         symbol = html.escape(row.get("symbol", ""))
         name = html.escape(row.get("name", ""))
         score = _fmt_num(row.get("score"))
-        rating = html.escape(row.get("rating", ""))
+        rating = str(row.get("rating", "") or "")
+        decision_label = html.escape(_decision_label_from_rating(rating))
+        portfolio_action = str(row.get("portfolio_action", "") or "").strip()
+        portfolio_text = (
+            html.escape(portfolio_action_label(portfolio_action))
+            if portfolio_action
+            else ""
+        )
         strategies = html.escape(row.get("strategies", ""))
         reasons = html.escape(row.get("reasons", ""))
         risks = html.escape(row.get("risks", ""))
@@ -298,10 +310,11 @@ def _candidate_cards(
                     <h3>{symbol} <span>{name}</span></h3>
                     <div class="rating-row">
                         <span class="score">{adj_score if has_debate else score}</span>
-                        <small>/ {rating}</small>
+                        <small>/ {decision_label}</small>
+                        {f"<small>/ PM {portfolio_text}</small>" if portfolio_text and portfolio_action != "keep" else ""}
                         {adjustment_badge}
                     </div>
-                    {f"<div class='score-compare'>原始 {original_score} · 调整 {adj_score} {score_diff}</div>" if has_debate else ""}
+                    {f"<div class='score-compare'>原始 {original_score} · 调整 {adj_score} {score_diff}</div>" if has_debate and score_diff else ""}
                 </div>
                 <button class="expand-btn" onclick="toggleCard(this)" aria-label="展开详情" aria-expanded="false">
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -319,7 +332,7 @@ def _candidate_cards(
               </dl>
               <div class="card-footer">
                 <p class="reason">{reasons or "无"}</p>
-                <p class="risk">{risks or "无明显风险标签"}</p>
+                <p class="risk">风险: {risks or "无明显风险标签"}</p>
                 {debate_btn}
               </div>
             </article>

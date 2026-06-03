@@ -19,14 +19,28 @@ def send_smart_summary_card(briefing: Briefing) -> None:
     notify_feishu_card(card)
 
 
+def _compose_briefing_notification_markdown(
+    briefing: Briefing,
+    source_status: dict[str, str | bool] | None = None,
+) -> str:
+    summary = briefing.generate_smart_summary().strip()
+    body = briefing.to_markdown()
+    if summary:
+        body = f"## 主链摘要\n\n{summary}\n\n{body}"
+    return prepend_source_status_banner(
+        body,
+        source_status=source_status,
+    )
+
+
 def send_briefing(
     briefing: Briefing,
     notifier: Any = None,
     source_status: dict[str, str | bool] | None = None,
 ) -> None:
     send_smart_summary_card(briefing)
-    markdown = prepend_source_status_banner(
-        briefing.to_markdown(),
+    markdown = _compose_briefing_notification_markdown(
+        briefing,
         source_status=source_status,
     )
     if notifier is not None:

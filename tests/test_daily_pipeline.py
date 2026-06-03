@@ -426,6 +426,40 @@ def test_send_pipeline_digest_sends_summary_notification(
         '{"run_requested_source":"auto","run_actual_source":"eastmoney","run_source_health_label":"fallback","run_source_health_message":"fallback 到 eastmoney"}\n',
         encoding="utf-8",
     )
+    reports_dir = tmp_path / "reports"
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(
+        [
+            {
+                "symbol": "600519",
+                "name": "贵州茅台",
+                "date": "2026-06-02",
+                "close": 1498.0,
+                "score": 71.0,
+                "rating": "strong_buy_candidate",
+                "entry_type": "close",
+                "ideal_buy": 1495.0,
+                "stop_loss": 1450.0,
+                "take_profit": 1600.0,
+                "position": "10%-30%",
+                "portfolio_action": "promote",
+            },
+            {
+                "symbol": "300750",
+                "name": "宁德时代",
+                "date": "2026-06-02",
+                "close": 205.0,
+                "score": 64.0,
+                "rating": "watch",
+                "entry_type": "watch",
+                "ideal_buy": 0.0,
+                "stop_loss": 0.0,
+                "take_profit": 0.0,
+                "position": "watch",
+                "portfolio_action": "downgrade",
+            },
+        ]
+    ).to_csv(reports_dir / "latest.csv", index=False)
 
     sent: dict[str, str] = {}
 
@@ -477,6 +511,10 @@ def test_send_pipeline_digest_sends_summary_notification(
     assert sent["title"] == "收盘总览"
     assert "总体状态: 成功" in sent["content"]
     assert "数据源状态" in sent["content"]
+    assert "主链摘要" in sent["content"]
+    assert "PM主裁决: 上调 1 / 降级 1 / 维持 0" in sent["content"]
+    assert "可执行主链: 600519 贵州茅台" in sent["content"]
+    assert "候选观察池: 300750 宁德时代(候选观察池)" in sent["content"]
     assert "复盘报告: reports/closing_review.md" in sent["content"]
     assert "# 收盘总览" not in sent["content"]
 

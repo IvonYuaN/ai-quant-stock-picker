@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from aqsp.core.types import RunMetadata
 from aqsp.models import PickResult
-from aqsp.portfolio.manager import PortfolioDecision
+from aqsp.portfolio.manager import PortfolioDecision, PortfolioDecisionSummary
 from aqsp.report import to_markdown
 
 
@@ -86,7 +86,7 @@ def test_report_renders_portfolio_manager_decision_when_provided() -> None:
     )
 
     assert "### Portfolio Manager" in markdown
-    assert "- 最终动作: promote" in markdown
+    assert "- 最终动作: 上调优先级" in markdown
     assert "- 分数调整: +4.0" in markdown
 
 
@@ -146,11 +146,55 @@ def test_report_renders_final_decision_board_first() -> None:
                 reasons=("多Agent辩论支持上调优先级",),
             )
         ],
+        portfolio_summary=PortfolioDecisionSummary(
+            promote_count=1,
+            downgrade_count=0,
+            keep_count=0,
+            top_focus=("600900 长江电力",),
+            watchlist=(),
+        ),
     )
 
     assert "## 最终决策看板" in markdown
-    assert "- Top 1: 600900 长江电力 | 观察候选 | 评分 76 | PM promote" in markdown
+    assert "- PM主裁决: 上调 1 / 降级 0 / 维持 0" in markdown
+    assert "- 重点关注: 600900 长江电力" in markdown
+    assert "- Top 1: 600900 长江电力 | 观察候选 | 评分 76 | PM 上调优先级" in markdown
+    assert "PM依据: 多Agent辩论支持上调优先级" in markdown
     assert markdown.index("## 最终决策看板") < markdown.index("## 1. 600900 长江电力")
+
+
+def test_report_hides_non_promote_portfolio_section_below_pick_detail() -> None:
+    pick = PickResult(
+        symbol="600900",
+        name="长江电力",
+        date="2026-05-29",
+        close=27.75,
+        score=76,
+        rating="watch",
+        entry_type="relative_strength",
+        ideal_buy=27.75,
+        stop_loss=26.1,
+        take_profit=31.0,
+        position="watch",
+        reasons=("趋势保持", "量价配合"),
+    )
+
+    markdown = to_markdown(
+        [pick],
+        portfolio_decisions=[
+            PortfolioDecision(
+                symbol="600900",
+                action="downgrade",
+                score_delta=-6.0,
+                reasons=("板块集中度过高，压低公用事业暴露",),
+            )
+        ],
+    )
+
+    assert "## 1. 600900 长江电力" in markdown
+    assert "- Top 1: 600900 长江电力 | 候选观察池 | 评分 76 | PM 降级观察" in markdown
+    detail_section = markdown.split("## 1. 600900 长江电力", maxsplit=1)[1]
+    assert "### Portfolio Manager" not in detail_section
 
 
 def test_report_avoids_repeating_symbol_as_name() -> None:

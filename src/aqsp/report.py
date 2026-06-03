@@ -7,6 +7,7 @@ import pandas as pd
 
 from aqsp.core.types import RunMetadata
 from aqsp.models import PickResult
+from aqsp.ratings import portfolio_action_label, rating_label
 
 RESULT_COLUMNS = [
     "symbol",
@@ -27,11 +28,11 @@ RESULT_COLUMNS = [
 
 
 def _resolve_decision_label(pick: PickResult) -> str:
-    if pick.rating == "strong_buy_candidate":
-        return "重点关注"
-    if pick.rating == "buy_candidate":
-        return "观察候选"
-    return "仅观察"
+    return rating_label(pick.rating)
+
+
+def _resolve_portfolio_action_label(action: str) -> str:
+    return portfolio_action_label(action)
 
 
 def _display_name(pick: PickResult) -> str:
@@ -44,19 +45,39 @@ def _display_name(pick: PickResult) -> str:
 def _format_final_decision_board(
     picks: list[PickResult],
     decision_map: dict[str, Any],
+    portfolio_summary: Any | None = None,
 ) -> list[str]:
     if not picks:
         return []
     lines = ["## 最终决策看板", ""]
+    if portfolio_summary is not None:
+        lines.append(f"- PM主裁决: {portfolio_summary.headline}")
+        if getattr(portfolio_summary, "top_focus", ()):
+            lines.append(
+                "- 重点关注: "
+                + "、".join(str(item) for item in portfolio_summary.top_focus)
+            )
+        if getattr(portfolio_summary, "watchlist", ()):
+            lines.append(
+                "- 观察池: "
+                + "、".join(str(item) for item in portfolio_summary.watchlist)
+            )
+        lines.append("")
     for idx, pick in enumerate(picks[:3], 1):
         decision = decision_map.get(pick.symbol)
         action = getattr(decision, "action", "keep") if decision is not None else "keep"
+        action_label = _resolve_portfolio_action_label(action)
+        pm_reasons = getattr(decision, "reasons", ()) if decision is not None else ()
         label = _resolve_decision_label(pick)
         reason = "；".join(pick.reasons[:2]) if pick.reasons else "无"
         lines.append(
-            f"- Top {idx}: {_display_name(pick)} | {label} | 评分 {pick.score} | PM {action}"
+            f"- Top {idx}: {_display_name(pick)} | {label} | 评分 {pick.score} | PM {action_label}"
         )
         lines.append(f"  参考: {reason}")
+        if pm_reasons and tuple(pm_reasons) != ("保持原排序",):
+            lines.append(
+                "  PM依据: " + "；".join(str(item) for item in pm_reasons[:2])
+            )
     lines.append("")
     return lines
 
@@ -73,7 +94,7 @@ def _format_portfolio_decision(decision: Any) -> str:
         return ""
     lines = [
         "### Portfolio Manager",
-        f"- 最终动作: {action}",
+        f"- 最终动作: {_resolve_portfolio_action_label(action)}",
         f"- 分数调整: {delta:+.1f}",
     ]
     if reasons:
@@ -127,6 +148,7 @@ def to_markdown(
     metadata: RunMetadata | None = None,
     debate_results: list[Any] | None = None,
     portfolio_decisions: list[Any] | None = None,
+    portfolio_summary: Any | None = None,
 ) -> str:
     lines = [f"# {title}", ""]
     if metadata is not None:
@@ -141,7 +163,7 @@ def to_markdown(
         if portfolio_decisions
         else {}
     )
-    lines.extend(_format_final_decision_board(picks, decision_map))
+    lines.extend(_format_final_decision_board(picks, decision_map, portfolio_summary))
 
     for idx, pick in enumerate(picks, 1):
         display = _display_name(pick)
@@ -149,7 +171,7 @@ def to_markdown(
             [
                 f"## {idx}. {display}",
                 f"- 日期: {pick.date}",
-                f"- 评分: {pick.score} / {pick.rating}",
+                f"- 决策: {_resolve_decision_label(pick)} | 评分 {pick.score}",
                 f"- 收盘/参考买点: {pick.close} / {pick.ideal_buy}",
                 f"- 策略入口: {pick.entry_type}",
                 f"- 命中策略: {', '.join(pick.strategies) or '无'}",
@@ -163,7 +185,9 @@ def to_markdown(
         if pick.symbol in debate_map:
             lines.append(_format_debate_result(debate_map[pick.symbol]))
             lines.append("")
-        if pick.symbol in decision_map:
+        if pick.symbol in decision_map and getattr(
+            decision_map[pick.symbol], "action", "keep"
+        ) == "promote":
             decision_text = _format_portfolio_decision(decision_map[pick.symbol])
             if decision_text:
                 lines.append(decision_text)

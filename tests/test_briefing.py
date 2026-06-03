@@ -16,6 +16,7 @@ from aqsp.briefing import (
 from aqsp.briefing.agent_roles import AgentRole
 from aqsp.briefing.debate import AShareDebateAgent
 from aqsp.core.types import PickResult
+from aqsp.portfolio.manager import PortfolioDecisionSummary
 from aqsp.utils.llm_safe import LlmResult
 
 
@@ -350,6 +351,7 @@ class TestSendBriefing:
         mock_notifier.assert_called_once()
         assert "t" in mock_notifier.call_args[0][0]
         assert "# AI 量化选股日报" in mock_notifier.call_args[0][0]
+        assert "## 主链摘要" in mock_notifier.call_args[0][0]
 
     @patch("aqsp.notifier.notify_markdown")
     def test_calls_default_notifier(self, mock_notify):
@@ -374,6 +376,7 @@ class TestSendBriefing:
         )
         body = mock_notifier.call_args[0][0]
         assert body.startswith("## 数据源状态")
+        assert "## 主链摘要" in body
         assert "auto -> eastmoney" in body
         assert "降低信任度" in body
 
@@ -419,7 +422,8 @@ class TestGenerateSmartSummary:
         picks = [_make_pick(symbol="600519", name="贵州茅台", rating="avoid")]
         briefing = gen.generate(picks=picks, frames={})
         summary = briefing.generate_smart_summary()
-        assert "暂无可执行标的" in summary
+        assert "有候选观察池，暂无可执行标的" in summary
+        assert "候选观察池" in summary
 
     def test_next_day_section_mentions_watchlist_when_no_tradable_pick(self):
         gen = BriefingGenerator()
@@ -430,6 +434,37 @@ class TestGenerateSmartSummary:
         next_sec = next(s for s in briefing.sections if s.title == "明日重点")
         assert "候选观察池" in next_sec.content
         assert "600519 贵州茅台" in next_sec.content
+
+    def test_action_plan_mentions_watchlist_when_candidates_exist_but_not_tradable(self):
+        gen = BriefingGenerator()
+        briefing = gen.generate(
+            picks=[_make_pick(symbol="600519", name="贵州茅台", rating="watch")],
+            frames={},
+        )
+
+        summary = briefing.generate_smart_summary()
+
+        assert "- 候选观察池: 600519 贵州茅台" in summary
+        assert "- 首选观察: 600519 贵州茅台" in summary
+
+    def test_core_items_render_structured_portfolio_summary(self):
+        briefing = Briefing(
+            date="2026-05-27 10:00",
+            sections=[],
+            portfolio_summary=PortfolioDecisionSummary(
+                promote_count=1,
+                downgrade_count=1,
+                keep_count=0,
+                top_focus=("600519 贵州茅台",),
+                watchlist=("300750 宁德时代(候选观察池)",),
+            ),
+        )
+
+        summary = briefing.generate_smart_summary()
+
+        assert "Portfolio Manager: 上调 1 / 降级 1 / 维持 0" in summary
+        assert "- 主链候选: 600519 贵州茅台" in summary
+        assert "- 候选观察池: 300750 宁德时代(候选观察池)" in summary
 
     def test_debate_results_lower_adjustment(self):
         from aqsp.briefing.debate import DebateResult

@@ -270,6 +270,28 @@ class TestReviewToday:
         assert "相对强度" in review.strategy_breakdown
         assert "反转观察" in review.strategy_breakdown
 
+    def test_uses_rating_label_when_strategy_and_entry_type_missing(self, tmp_path):
+        ledger = tmp_path / "predictions.jsonl"
+        _write_predictions(
+            str(ledger),
+            [
+                {
+                    "symbol": "600000",
+                    "name": "A",
+                    "rating": "watch",
+                    "signal_date": "2025-06-01",
+                    "entry_price": 10.0,
+                    "current_price": 10.1,
+                    "return_pct": 1.0,
+                    "holding_days": 1,
+                },
+            ],
+        )
+        reviewer = ClosingReviewer(ledger_path=str(ledger))
+        review = reviewer.review_today("2025-06-01")
+
+        assert "候选观察池" in review.strategy_breakdown
+
 
 class TestGenerateWeeklySummary:
     def test_returns_weekly_summary(self, tmp_path):
@@ -325,6 +347,7 @@ class TestFormatDailyReview:
             avg_holding_days=0,
             strategy_breakdown={},
             market_environment="无数据",
+            main_chain_summary=(),
             key_lessons=("今日无交易信号",),
             improvement_suggestions=("继续观察市场",),
         )
@@ -353,6 +376,11 @@ class TestFormatDailyReview:
                 },
             },
             market_environment="震荡市",
+            main_chain_summary=(
+                "PM主裁决: 上调 1 / 降级 1 / 维持 0",
+                "可执行主链: 600519 贵州茅台",
+                "候选观察池: 300750 宁德时代",
+            ),
             key_lessons=("测试教训",),
             improvement_suggestions=("测试建议",),
         )
@@ -360,6 +388,8 @@ class TestFormatDailyReview:
 
         assert "每日交易复盘" in result
         assert "2025-06-01" in result
+        assert "主链总览" in result
+        assert "PM主裁决: 上调 1 / 降级 1 / 维持 0" in result
         assert "总体统计" in result
         assert "策略分类统计" in result
         assert "市场环境" in result

@@ -10,8 +10,9 @@ from jinja2 import Environment, FileSystemLoader
 
 from aqsp.core.time import now_shanghai
 from aqsp.core.types import PickResult
+from aqsp.portfolio.manager import PortfolioDecisionSummary
 from aqsp.research.summary import ResearchSummary
-from aqsp.ratings import is_tradable_rating
+from aqsp.ratings import is_tradable_rating, portfolio_action_label, rating_label
 from aqsp.config import load_debate_runtime_config
 from aqsp.briefing.debate import (
     AShareDebateCoordinator,
@@ -51,6 +52,7 @@ class Briefing:
     date: str
     sections: list[BriefingSection]
     debate_results: list[DebateResult] = field(default_factory=list)
+    portfolio_summary: PortfolioDecisionSummary | None = None
 
     def to_markdown(self) -> str:
         lines = [f"# AI 量化选股日报 - {self.date}", ""]
@@ -147,6 +149,16 @@ class Briefing:
 
     def _build_core_items(self) -> list[str]:
         items: list[str] = []
+        if self.portfolio_summary:
+            items.append(f"- Portfolio Manager: {self.portfolio_summary.headline}")
+            if self.portfolio_summary.top_focus:
+                items.append(
+                    "- 主链候选: " + "、".join(self.portfolio_summary.top_focus)
+                )
+            if self.portfolio_summary.watchlist:
+                items.append(
+                    "- 候选观察池: " + "、".join(self.portfolio_summary.watchlist)
+                )
         if self.debate_results:
             items.append(
                 f"- 多Agent辩论: 已分析 {len(self.debate_results[:3])} 只重点候选"
@@ -181,10 +193,21 @@ class Briefing:
         if actionable:
             names = "、".join(actionable[:3])
             items.append(f"- 可执行标的: {names}")
+        elif top_scores:
+            names = "、".join(f"{s[0]}({s[1]}分)" for s in top_scores[:3])
+            items.append(f"- 候选观察池: {names}")
+        elif self.portfolio_summary and self.portfolio_summary.watchlist:
+            items.append(
+                "- 候选观察池: " + "、".join(self.portfolio_summary.watchlist[:3])
+            )
         if debate_points:
             items.append(f"- 辩论结论: {self._strip_leading_markers(debate_points[0])}")
         if top_scores:
             items.append(f"- 首选观察: {top_scores[0][0]}({top_scores[0][1]}分)")
+        elif self.portfolio_summary:
+            fallback = self.portfolio_summary.top_focus or self.portfolio_summary.watchlist
+            if fallback:
+                items.append(f"- 首选观察: {fallback[0]}")
         return items
 
     def _build_risk_items(
@@ -288,7 +311,7 @@ class Briefing:
         if actionable_count > 0:
             parts.append(f"{actionable_count}只可执行")
         elif candidate_count > 0:
-            parts.append("暂无可执行标的")
+            parts.append("有候选观察池，暂无可执行标的")
         if risk_count > 0:
             parts.append(f"{risk_count}条风险提示")
         if not parts:
@@ -347,6 +370,43 @@ class BriefingGenerator:
             date=date_str,
             sections=sections,
             debate_results=debate_results,
+            portfolio_summary=self._build_portfolio_summary(picks),
+        )
+
+    def _build_portfolio_summary(
+        self, picks: list[PickResult]
+    ) -> PortfolioDecisionSummary | None:
+        if not picks:
+            return None
+        promote = sum(
+            1
+            for pick in picks
+            if str(pick.metrics.get("portfolio_action", "")) == "promote"
+        )
+        downgrade = sum(
+            1
+            for pick in picks
+            if str(pick.metrics.get("portfolio_action", "")) == "downgrade"
+        )
+        keep = sum(
+            1 for pick in picks if str(pick.metrics.get("portfolio_action", "")) == "keep"
+        )
+        focus = [
+            f"{pick.symbol} {pick.name}".strip()
+            for pick in picks
+            if rating_label(pick.rating) in {"重点关注", "观察候选"}
+        ][:3]
+        watchlist = [
+            f"{pick.symbol} {pick.name}".strip()
+            for pick in picks
+            if rating_label(pick.rating) in {"候选观察池", "仅观察"}
+        ][:3]
+        return PortfolioDecisionSummary(
+            promote_count=promote,
+            downgrade_count=downgrade,
+            keep_count=keep,
+            top_focus=tuple(focus),
+            watchlist=tuple(watchlist),
         )
 
     def _build_regime_section(
@@ -447,7 +507,11 @@ class BriefingGenerator:
             return BriefingSection(title="候选证据链", content="\n".join(lines))
         for pick in picks:
             display = pick.symbol if not pick.name or pick.name == pick.symbol else f"{pick.symbol} {pick.name}"
-            lines.append(f"### {display} (评分: {pick.score})")
+            pm_action = str(pick.metrics.get("portfolio_action", "") or "")
+            pm_text = portfolio_action_label(pm_action) if pm_action else "未裁决"
+            lines.append(
+                f"### {display} (评分: {pick.score} / {rating_label(pick.rating)} / PM: {pm_text})"
+            )
             if pick.strategies:
                 lines.append(f"- 命中策略: {', '.join(pick.strategies)}")
             for reason in pick.reasons:

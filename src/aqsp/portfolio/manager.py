@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from aqsp.core.types import PickResult
 from aqsp.portfolio.correlation import CorrelationResult
 from aqsp.portfolio.sector_check import ConcentrationResult, get_sector
+from aqsp.ratings import is_tradable_rating, rating_label
 
 
 @dataclass(frozen=True)
@@ -16,9 +17,64 @@ class PortfolioDecision:
 
 
 @dataclass(frozen=True)
+class PortfolioDecisionSummary:
+    promote_count: int
+    downgrade_count: int
+    keep_count: int
+    top_focus: tuple[str, ...]
+    watchlist: tuple[str, ...]
+
+    @property
+    def headline(self) -> str:
+        return (
+            f"上调 {self.promote_count} / 降级 {self.downgrade_count} / "
+            f"维持 {self.keep_count}"
+        )
+
+    @property
+    def has_actionable_focus(self) -> bool:
+        return bool(self.top_focus)
+
+
+@dataclass(frozen=True)
 class PortfolioDecisionBundle:
     picks: list[PickResult]
     decisions: tuple[PortfolioDecision, ...]
+    summary: PortfolioDecisionSummary
+
+
+def _display_name(pick: PickResult) -> str:
+    return pick.symbol if not pick.name or pick.name == pick.symbol else f"{pick.symbol} {pick.name}"
+
+
+def summarize_portfolio_decisions(
+    picks: list[PickResult],
+    decisions: list[PortfolioDecision],
+) -> PortfolioDecisionSummary:
+    promote_count = sum(1 for item in decisions if item.action == "promote")
+    downgrade_count = sum(1 for item in decisions if item.action == "downgrade")
+    keep_count = sum(1 for item in decisions if item.action == "keep")
+    top_focus = tuple(
+        _display_name(pick)
+        for pick in picks
+        if pick.rating == "strong_buy_candidate"
+    )[:3]
+    if not top_focus:
+        top_focus = tuple(
+            _display_name(pick) for pick in picks if is_tradable_rating(pick.rating)
+        )[:3]
+    watchlist = tuple(
+        f"{_display_name(pick)}({rating_label(pick.rating)})"
+        for pick in picks
+        if pick.metrics.get("portfolio_action") == "downgrade" or pick.rating == "watch"
+    )[:5]
+    return PortfolioDecisionSummary(
+        promote_count=promote_count,
+        downgrade_count=downgrade_count,
+        keep_count=keep_count,
+        top_focus=top_focus,
+        watchlist=watchlist,
+    )
 
 
 def apply_portfolio_manager(
@@ -115,4 +171,8 @@ def apply_portfolio_manager(
         )
 
     updated.sort(key=lambda p: p.score, reverse=True)
-    return PortfolioDecisionBundle(picks=updated, decisions=tuple(decisions))
+    return PortfolioDecisionBundle(
+        picks=updated,
+        decisions=tuple(decisions),
+        summary=summarize_portfolio_decisions(updated, decisions),
+    )
