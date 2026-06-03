@@ -8,6 +8,7 @@
 - `CONSTITUTION.md`: 运行与验证约束
 - `daily-operation.md`: 日常操作说明
 - `email-setup.md`: 邮件通知配置
+- `model-handoff.md`: 给后续模型/agent 的项目接手说明、已实现内容、计划内容和 bug 记录
 - `momentum-diagnosis.md`: 动量诊断说明
 - `open_source_research.md`: 开源研究整理
 - `secret-and-upload-policy.md`: 上传与密钥策略
