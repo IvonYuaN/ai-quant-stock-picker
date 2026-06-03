@@ -101,9 +101,9 @@ log "更新脚本: ${UPDATE_SCRIPT}"
 log "历史库: ${SQLITE_DB_PATH}"
 log "=========================================="
 
-"${PYTHON_BIN}" "${UPDATE_SCRIPT}" "${SQLITE_DB_PATH}" 2>&1 | tee -a "$RUN_LOG"
+"${PYTHON_BIN}" -u "${UPDATE_SCRIPT}" "${SQLITE_DB_PATH}" 2>&1 | tee -a "$RUN_LOG"
 
-"${PYTHON_BIN}" -m aqsp.cli run \
+"${PYTHON_BIN}" -u -m aqsp.cli run \
     --source sqlite_db \
     --limit "$LIMIT" \
     --report "$REPORT_PATH" \
