@@ -88,7 +88,7 @@ class ClosingReviewer:
             每日复盘结果
         """
         if today is None:
-            today = now_shanghai().strftime("%Y-%m-%d")
+            today = self._latest_signal_date() or now_shanghai().strftime("%Y-%m-%d")
 
         predictions = self._load_predictions(today)
 
@@ -136,6 +136,26 @@ class ClosingReviewer:
             key_lessons=key_lessons,
             improvement_suggestions=improvement_suggestions,
         )
+
+    def _latest_signal_date(self) -> str:
+        ledger_path = Path(self.ledger_path)
+        if not ledger_path.exists():
+            return ""
+
+        latest = ""
+        with open(ledger_path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    row = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                signal_date = str(row.get("signal_date", "")).strip()
+                if signal_date and signal_date > latest:
+                    latest = signal_date
+        return latest
 
     def _build_main_chain_summary(self, predictions: list[dict]) -> tuple[str, ...]:
         if not predictions:

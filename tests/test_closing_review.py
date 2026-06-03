@@ -153,6 +153,39 @@ class TestReviewToday:
 
         assert review.total_signals == 1
 
+    def test_defaults_to_latest_signal_date_when_date_omitted(self, tmp_path):
+        ledger = tmp_path / "predictions.jsonl"
+        _write_predictions(
+            str(ledger),
+            [
+                {
+                    "symbol": "600000",
+                    "name": "A",
+                    "signal_date": "2025-06-01",
+                    "entry_price": 10.0,
+                    "current_price": 10.1,
+                    "return_pct": 1.0,
+                    "holding_days": 1,
+                },
+                {
+                    "symbol": "600001",
+                    "name": "B",
+                    "signal_date": "2025-06-03",
+                    "entry_price": 20.0,
+                    "current_price": 21.0,
+                    "return_pct": 5.0,
+                    "holding_days": 1,
+                },
+            ],
+        )
+        reviewer = ClosingReviewer(ledger_path=str(ledger))
+
+        review = reviewer.review_today()
+
+        assert review.date == "2025-06-03"
+        assert review.total_signals == 1
+        assert review.total_return == 5.0
+
     def test_strategy_breakdown(self, tmp_path):
         ledger = tmp_path / "predictions.jsonl"
         _write_predictions(

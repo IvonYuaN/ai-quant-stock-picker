@@ -2650,7 +2650,7 @@ def run_briefing(args: argparse.Namespace) -> int:
     rows = read_ledger(args.ledger)
     latest_date = ""
     for row in reversed(rows):
-        if row.get("status") in ("pending", "validated"):
+        if row.get("status") in ("pending", "validated", "watch_only"):
             latest_date = row.get("signal_date", "")
             break
 
@@ -2658,7 +2658,7 @@ def run_briefing(args: argparse.Namespace) -> int:
     for row in rows:
         if row.get("signal_date") != latest_date:
             continue
-        if row.get("status") not in ("pending", "validated"):
+        if row.get("status") not in ("pending", "validated", "watch_only"):
             continue
         picks.append(
             PickResult(
@@ -3480,7 +3480,7 @@ def run_closing_review(args: argparse.Namespace) -> int:
     )
 
     print("📊 生成收盘复盘报告...")
-    reviewer = ClosingReviewer()
+    reviewer = ClosingReviewer(ledger_path="data/predictions.jsonl")
 
     if args.weekly:
         summary = reviewer.generate_weekly_summary(args.date or None)
