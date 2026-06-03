@@ -157,8 +157,9 @@ WALKFORWARD_SOURCE_CHOICES = [
 HELDOUT_TRAIN_CUTOFF = "2024-12-31"
 # 宪法 §1.3 #12/#14：双门 gate 的 sidecar 文件
 WALKFORWARD_GATE_PATH = "data/walkforward_gate.json"
-# 冷启动期最低独立信号日（可配置，默认 14 天以加速测试）
-COLD_START_MIN_DAYS = 14
+# 冷启动期最低独立信号日。宪法 §1.3 #7/#14 明确要求 30 个独立信号日。
+# 可用环境变量 AQSP_COLD_START_MIN_DAYS 覆盖（仅供测试加速，生产须为 30）。
+COLD_START_MIN_DAYS = int(os.getenv("AQSP_COLD_START_MIN_DAYS", "30"))
 
 
 def _extract_meaningful_name_from_frame(frame: pd.DataFrame, symbol: str) -> str:
