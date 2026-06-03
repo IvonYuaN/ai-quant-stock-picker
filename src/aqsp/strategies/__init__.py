@@ -15,6 +15,32 @@ from aqsp.strategies.morning_breakout import (
     BreakoutSignal,
     format_morning_signals,
 )
+from aqsp.strategies.limit_up_ladder import (
+    LimitUpLadderStrategy,
+    LimitUpSignal,
+    format_limit_up_signals,
+)
+from aqsp.strategies.intraday_trade import (
+    IntradayTradeStrategy,
+    IntradaySignal,
+    format_intraday_signals,
+)
+from aqsp.strategies.sector_rotation import (
+    SectorRotationStrategy,
+    SectorSignal,
+    SectorMetrics,
+    format_sector_signals,
+)
+from aqsp.strategies.ma_breakout import (
+    MABreakoutStrategy,
+    MABreakoutSignal,
+    format_ma_breakout_signals,
+)
+from aqsp.strategies.event_driven import (
+    EventDrivenStrategy,
+    EventSignal,
+    format_event_signals,
+)
 from aqsp.strategies.thresholds import Thresholds, load_thresholds
 
 __all__ = [
@@ -30,6 +56,23 @@ __all__ = [
     "MorningBreakoutStrategy",
     "BreakoutSignal",
     "format_morning_signals",
+    # 短线核心策略（默认 enabled=false，需 walk-forward 双门验证后启用）
+    "LimitUpLadderStrategy",
+    "LimitUpSignal",
+    "format_limit_up_signals",
+    "IntradayTradeStrategy",
+    "IntradaySignal",
+    "format_intraday_signals",
+    "SectorRotationStrategy",
+    "SectorSignal",
+    "SectorMetrics",
+    "format_sector_signals",
+    "MABreakoutStrategy",
+    "MABreakoutSignal",
+    "format_ma_breakout_signals",
+    "EventDrivenStrategy",
+    "EventSignal",
+    "format_event_signals",
     "Thresholds",
     "load_thresholds",
 ]

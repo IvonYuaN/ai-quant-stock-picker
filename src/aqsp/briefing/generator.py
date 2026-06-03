@@ -13,7 +13,7 @@ from aqsp.core.types import PickResult
 from aqsp.portfolio.manager import PortfolioDecisionSummary
 from aqsp.presentation import format_symbol_name
 from aqsp.research.summary import ResearchSummary
-from aqsp.ratings import is_tradable_rating, portfolio_action_label, rating_label
+from aqsp.ratings import rating_label
 from aqsp.config import load_debate_runtime_config
 from aqsp.briefing.debate import (
     AShareDebateCoordinator,
@@ -21,6 +21,15 @@ from aqsp.briefing.debate import (
     format_debate_result,
     parse_agent_roles,
 )
+from aqsp.ratings import is_tradable_rating, portfolio_action_label
+from aqsp.briefing.schema import (
+    BriefingData,
+    Pick,
+    RegimeInfo,
+    SourceStatus,
+    ThemeHeat,
+)
+from aqsp.briefing.renderer import MarkdownRenderer
 
 _TEMPLATE_DIR = Path(__file__).parent / "templates"
 
