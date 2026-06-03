@@ -12,6 +12,8 @@ REMOTE="${AQSP_GIT_REMOTE:-origin}"
 RUNNER_SCRIPT="${AQSP_RUNNER_SCRIPT:-scripts/daily_pipeline.sh}"
 LOG_DIR="${PROJECT_ROOT}/logs/deploy"
 RUN_LOG="${LOG_DIR}/sync-$(date +%Y-%m-%d).log"
+LOCK_DIR="${PROJECT_ROOT}/.locks"
+LOCK_FILE="${LOCK_DIR}/server-runtime.lock"
 
 log() {
     mkdir -p "$LOG_DIR"
@@ -30,6 +32,13 @@ else
 fi
 
 cd "$PROJECT_ROOT"
+
+mkdir -p "$LOG_DIR" "$LOCK_DIR"
+if ! mkdir "$LOCK_FILE" 2>/dev/null; then
+    log "已有服务器主任务在运行，跳过本次同步与跑批"
+    exit 0
+fi
+trap 'rmdir "$LOCK_FILE"' EXIT
 
 log "开始同步代码: ${REMOTE}/${BRANCH}"
 

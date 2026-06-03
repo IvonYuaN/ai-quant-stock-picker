@@ -190,6 +190,12 @@ AQSP_COLDSTART_CRON_SCHEDULE="30 9 * * 1-5" bash /opt/aqsp/scripts/install_colds
 
 `scripts/intraday_refresh.sh` 默认只在交易时段内工作，并且写入单独的盘中 ledger，不污染正式收盘 ledger。
 
+长任务会自动互斥：
+
+- `server_sync_and_run.sh`、`coldstart_daily.sh` 共用同一把主锁，避免日终主链路和冷启动在同一窗口并发。
+- `server_monitor.sh` 使用独立锁，避免 15 分钟监控任务自己重入。
+- 如果上一轮还没跑完，新一轮会直接跳过并记日志，不会把队列打爆。
+
 查看：
 
 ```bash

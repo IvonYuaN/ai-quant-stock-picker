@@ -13,12 +13,21 @@ LOG_DIR="${PROJECT_ROOT}/logs/monitor"
 RESULT_LOG="${LOG_DIR}/monitor-$(date +%Y-%m-%d).log"
 MONITOR_CONFIG="${AQSP_MONITOR_CONFIG:-config/monitors.yaml}"
 NOTIFY_WARNINGS="${AQSP_MONITOR_NOTIFY_WARNINGS:-false}"
+LOCK_DIR="${PROJECT_ROOT}/.locks"
+LOCK_FILE="${LOCK_DIR}/server-monitor.lock"
 
 log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$RESULT_LOG"
 }
 
 mkdir -p "$LOG_DIR"
+mkdir -p "$LOCK_DIR"
+
+if ! mkdir "$LOCK_FILE" 2>/dev/null; then
+    log "已有监控任务在运行，跳过本次监控"
+    exit 0
+fi
+trap 'rmdir "$LOCK_FILE"' EXIT
 
 if [ ! -f "$PYTHON_BIN" ]; then
     log "[ERROR] Python 可执行文件不存在: $PYTHON_BIN"

@@ -43,6 +43,24 @@ def test_install_server_cron_script_installs_standard_jobs() -> None:
     assert "*/15 * * * 1-5" in script
 
 
+def test_server_sync_script_has_lock_guard() -> None:
+    script = (PROJECT_ROOT / "scripts" / "server_sync_and_run.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert "server-runtime.lock" in script
+    assert '已有服务器主任务在运行，跳过本次同步与跑批' in script
+
+
+def test_server_monitor_script_has_lock_guard() -> None:
+    script = (PROJECT_ROOT / "scripts" / "server_monitor.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert "server-monitor.lock" in script
+    assert '已有监控任务在运行，跳过本次监控' in script
+
+
 def test_coldstart_daily_script_updates_db_then_runs_cli() -> None:
     script = (PROJECT_ROOT / "scripts" / "coldstart_daily.sh").read_text(
         encoding="utf-8"
@@ -51,6 +69,7 @@ def test_coldstart_daily_script_updates_db_then_runs_cli() -> None:
     assert 'dirname "$SQLITE_DB_PATH"' in script
     assert 'A股量化分析数据/update_daily.py' in script
     assert 'AQSP_COLDSTART_UPDATE_SCRIPT' in script
+    assert 'server-runtime.lock' in script
     assert '"${PYTHON_BIN}" -u "${UPDATE_SCRIPT}" "${SQLITE_DB_PATH}"' in script
     assert '"${PYTHON_BIN}" -u -m aqsp.cli run' in script
     assert "--source sqlite_db" in script

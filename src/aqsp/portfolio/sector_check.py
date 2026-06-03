@@ -170,9 +170,20 @@ def check_sector_concentration(
     total = len(symbols)
     sector_counts = Counter({s: len(syms) for s, syms in sector_symbols.items()})
 
-    max_count = max(sector_counts.values())
-    max_ratio = max_count / total
-    max_sector = max(sector_counts, key=sector_counts.get)
+    # 排除"其他"板块（行业数据缺失的兜底标签）再算集中度。
+    # "其他"意味着"未知行业"，不能当作"同一行业"触发集中度告警，
+    # 否则行业数据缺失时全部票被误归"其他"→ 100%集中 → 无差别全降级（误杀）。
+    known_sector_counts = {s: c for s, c in sector_counts.items() if s != "其他"}
+
+    if known_sector_counts:
+        max_count = max(known_sector_counts.values())
+        max_ratio = max_count / total
+        max_sector = max(known_sector_counts, key=known_sector_counts.get)
+    else:
+        # 所有票都是"其他"（无行业数据），集中度不可判，不告警
+        max_count = 0
+        max_ratio = 0.0
+        max_sector = "其他"
 
     warnings = []
     if max_ratio > max_concentration:
@@ -181,6 +192,8 @@ def check_sector_concentration(
         )
 
     for sector, syms in sector_symbols.items():
+        if sector == "其他":
+            continue
         if len(syms) >= 3:
             warnings.append(f"⚠️ {sector}板块过多：{', '.join(syms)}")
 

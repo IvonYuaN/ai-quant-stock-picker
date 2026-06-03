@@ -10,6 +10,9 @@ PROJECT_ROOT="${AQSP_PROJECT_ROOT:-/opt/aqsp}"
 DATE="$(date +%Y-%m-%d)"
 LOG_DIR="${AQSP_COLDSTART_LOG_DIR:-${PROJECT_ROOT}/logs/coldstart}"
 RUN_LOG="${LOG_DIR}/coldstart-${DATE}.log"
+LOCK_DIR="${PROJECT_ROOT}/.locks"
+# 与 scripts/server_sync_and_run.sh 共用同一把锁，避免冷启动与日终主链路并发。
+LOCK_FILE="${LOCK_DIR}/server-runtime.lock"
 
 log() {
     mkdir -p "$LOG_DIR"
@@ -70,9 +73,16 @@ mkdir -p \
     "${PROJECT_ROOT}/data" \
     "${PROJECT_ROOT}/outputs" \
     "${PROJECT_ROOT}/logs" \
+    "$LOCK_DIR" \
     "$(dirname "$LEDGER_PATH")" \
     "$(dirname "$REPORT_PATH")" \
     "$(dirname "$CSV_PATH")"
+
+if ! mkdir "$LOCK_FILE" 2>/dev/null; then
+    log "已有服务器主任务在运行，跳过本次冷启动"
+    exit 0
+fi
+trap 'rmdir "$LOCK_FILE"' EXIT
 
 DOW="$(date +%u)"
 if [ "$DOW" -ge 6 ]; then
