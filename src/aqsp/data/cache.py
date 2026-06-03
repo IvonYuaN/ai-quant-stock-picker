@@ -110,6 +110,20 @@ class DataCache:
         if not stale.empty:
             return None
 
+        # 缓存完整性校验：仅当缓存覆盖了请求区间的两端才算命中。
+        # 否则（例如上次只缓存了区间的一半）会把残缺数据当完整返回，
+        # 导致回测/选股用缺段数据且无感知。
+        # 留 7 天容差吸收节假日/停牌（如春节长假），避免对边界非交易日误判。
+        TOLERANCE_DAYS = 7
+        cached_min = pd.to_datetime(df["date"].min())
+        cached_max = pd.to_datetime(df["date"].max())
+        req_start = pd.Timestamp(start)
+        req_end = pd.Timestamp(end)
+        if cached_min > req_start + pd.Timedelta(days=TOLERANCE_DAYS):
+            return None
+        if cached_max < req_end - pd.Timedelta(days=TOLERANCE_DAYS):
+            return None
+
         df = df.sort_values("date").reset_index(drop=True)
         if "symbol" not in df.columns:
             df["symbol"] = symbol
@@ -179,6 +193,16 @@ class DataCache:
         cutoff = (now_shanghai() - pd.Timedelta(hours=max_age_hours)).isoformat()
         stale = df[df["fetched_at"] < cutoff]
         if not stale.empty:
+            return None
+
+        # 缓存完整性校验（同 get_ohlcv）：缓存须覆盖请求区间两端，
+        # 否则残缺指数数据会被当完整返回。7 天容差吸收节假日/停牌。
+        TOLERANCE_DAYS = 7
+        cached_min = pd.to_datetime(df["date"].min())
+        cached_max = pd.to_datetime(df["date"].max())
+        if cached_min > pd.Timestamp(start) + pd.Timedelta(days=TOLERANCE_DAYS):
+            return None
+        if cached_max < pd.Timestamp(end) - pd.Timedelta(days=TOLERANCE_DAYS):
             return None
 
         df = df.sort_values("date").reset_index(drop=True)
