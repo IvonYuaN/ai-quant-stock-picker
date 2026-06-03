@@ -48,7 +48,12 @@ class LockupReleaseFilter(LethalFilter):
             )
 
         for _, row in symbol_rows.iterrows():
-            release_date = pd.Timestamp(row["release_date"]).date()
+            # 单行解禁日期脏数据（空/格式错/NaN）不应让整个排雷崩溃，
+            # 跳过坏行继续检查其余记录（T2 原则：错杀<漏放，但崩溃会导致漏放）。
+            try:
+                release_date = pd.Timestamp(row["release_date"]).date()
+            except (ValueError, TypeError, KeyError):
+                continue
             days_until = (release_date - today).days
             if 0 <= days_until <= self.lookback_days:
                 return FilterResult(

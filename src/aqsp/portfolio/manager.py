@@ -91,9 +91,17 @@ def apply_portfolio_manager(
 
     high_corr_symbols: set[str] = set()
     if correlation_result:
+        # 高相关对里降级「评分较低」的那只，保留较优的。
+        # 注意：correlation.high_corr_pairs 的 (left,right) 是按股票代码字典序排的，
+        # 与评分无关。若直接降 right 会变成「按代码大小降级」，可能误降高分票。
+        score_by_symbol = {p.symbol: p.score for p in picks}
         for left, right, corr in correlation_result.high_corr_pairs:
             if corr >= 0.7:
-                high_corr_symbols.add(right)
+                left_score = score_by_symbol.get(left, 0.0)
+                right_score = score_by_symbol.get(right, 0.0)
+                # 降级评分较低的一只（相等时降 right，保持确定性）
+                weaker = left if left_score < right_score else right
+                high_corr_symbols.add(weaker)
 
     for pick in picks:
         delta = 0.0

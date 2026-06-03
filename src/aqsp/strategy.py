@@ -74,7 +74,15 @@ def score_symbol(
         score += scoring.ma_below_ma20
         risks.append("收盘价低于 MA20")
 
-    ma20_slope = (ma20 / _num(df.iloc[-scoring.ma20_slope_lookback]["ma20"]) - 1) * 100
+    # ma20_slope_lookback 在 thresholds 里标注为 float，但用作 iloc 负索引必须是 int。
+    # 强制 int 转换，避免配置写成 6.0 或用 dataclass 默认值时 iloc[-6.0] 抛 TypeError
+    # （被外层 except 静默吞掉会导致整只标的被跳过、选股大面积失效）。
+    slope_lookback = int(scoring.ma20_slope_lookback)
+    if len(df) > slope_lookback:
+        ma20_ref = _num(df.iloc[-slope_lookback]["ma20"])
+        ma20_slope = (ma20 / ma20_ref - 1) * 100 if ma20_ref > 0 else 0.0
+    else:
+        ma20_slope = 0.0
     if ma20_slope > scoring.ma20_slope_up_threshold:
         score += scoring.ma20_slope_up
         reasons.append("MA20 斜率向上")
