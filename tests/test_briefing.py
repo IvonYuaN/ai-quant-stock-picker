@@ -350,8 +350,8 @@ class TestSendBriefing:
         send_briefing(briefing, notifier=mock_notifier)
         mock_notifier.assert_called_once()
         assert "t" in mock_notifier.call_args[0][0]
-        assert "# AI 量化选股日报" in mock_notifier.call_args[0][0]
         assert "## 主链摘要" in mock_notifier.call_args[0][0]
+        assert "# AI 量化选股日报" not in mock_notifier.call_args[0][0]
 
     @patch("aqsp.notifier.notify_markdown")
     def test_calls_default_notifier(self, mock_notify):
@@ -462,9 +462,9 @@ class TestGenerateSmartSummary:
 
         summary = briefing.generate_smart_summary()
 
-        assert "Portfolio Manager: 上调 1 / 降级 1 / 维持 0" in summary
+        assert "PM主裁决: 上调 1 / 降级 1 / 维持 0" in summary
         assert "- 主链候选: 600519 贵州茅台" in summary
-        assert "- 候选观察池: 300750 宁德时代(候选观察池)" in summary
+        assert "- 候选观察池: 300750 宁德时代" in summary
 
     def test_debate_results_lower_adjustment(self):
         from aqsp.briefing.debate import DebateResult

@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from aqsp.core.types import PickResult
 from aqsp.portfolio.correlation import CorrelationResult
 from aqsp.portfolio.sector_check import ConcentrationResult, get_sector
-from aqsp.ratings import is_tradable_rating, rating_label
+from aqsp.ratings import is_tradable_rating
 
 
 @dataclass(frozen=True)
@@ -64,7 +64,7 @@ def summarize_portfolio_decisions(
             _display_name(pick) for pick in picks if is_tradable_rating(pick.rating)
         )[:3]
     watchlist = tuple(
-        f"{_display_name(pick)}({rating_label(pick.rating)})"
+        _display_name(pick)
         for pick in picks
         if pick.metrics.get("portfolio_action") == "downgrade" or pick.rating == "watch"
     )[:5]

@@ -24,9 +24,17 @@ def _compose_briefing_notification_markdown(
     source_status: dict[str, str | bool] | None = None,
 ) -> str:
     summary = briefing.generate_smart_summary().strip()
-    body = briefing.to_markdown()
+    sections = {section.title: section.content.strip() for section in briefing.sections}
+    body_parts: list[str] = []
     if summary:
-        body = f"## 主链摘要\n\n{summary}\n\n{body}"
+        body_parts.append("## 主链摘要\n\n" + summary)
+    evidence = sections.get("候选证据链", "")
+    if evidence and "今日无候选标的" not in evidence:
+        body_parts.append("## 候选证据链\n\n" + evidence)
+    next_day = sections.get("明日重点", "")
+    if next_day:
+        body_parts.append("## 明日动作\n\n" + next_day)
+    body = "\n\n".join(part for part in body_parts if part).strip() or briefing.to_markdown()
     return prepend_source_status_banner(
         body,
         source_status=source_status,

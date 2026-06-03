@@ -1034,7 +1034,7 @@ def _research_panel(summary: ResearchSummary | None) -> str:
         return _fold_panel(
             "研究吸收",
             "开源研究队列与当前系统吸收状态。",
-            "<p class='muted'>暂无研究吸收摘要。</p>",
+            "<p class='muted'>研究吸收未更新，当前页面仅展示运行主链结果。</p>",
         )
     pipeline_lines = []
     for item in summary.pipeline_summaries[:4]:

@@ -150,7 +150,7 @@ class Briefing:
     def _build_core_items(self) -> list[str]:
         items: list[str] = []
         if self.portfolio_summary:
-            items.append(f"- Portfolio Manager: {self.portfolio_summary.headline}")
+            items.append(f"- PM主裁决: {self.portfolio_summary.headline}")
             if self.portfolio_summary.top_focus:
                 items.append(
                     "- 主链候选: " + "、".join(self.portfolio_summary.top_focus)
@@ -462,7 +462,7 @@ class BriefingGenerator:
         if research_summary is None:
             return BriefingSection(
                 title="研究吸收",
-                content="暂无研究吸收摘要；开源研究库还没有接入到本次日报。",
+                content="研究吸收未更新；本次日报仅基于当前运行主链。",
             )
         lines = [
             f"- 研究候选总数: **{research_summary.total_findings}**",
@@ -560,10 +560,10 @@ class BriefingGenerator:
                     for p in picks[:3]
                 )
                 lines.append(
-                    f"暂无可执行重点标的；候选观察池: {names}。今日候选均为回避/观察，不进入虚拟买入。"
+                    f"暂无可执行重点标的；候选观察池: {names}。今日先观察，不做放大仓位动作。"
                 )
             else:
-                lines.append("无可执行重点标的；今日无候选，不进入虚拟买入。")
+                lines.append("无可执行重点标的；今日无候选，继续等待下一轮信号。")
             return BriefingSection(title="明日重点", content="\n".join(lines))
         for pick in tradable_picks[:5]:
             entry = pick.ideal_buy
@@ -575,7 +575,7 @@ class BriefingGenerator:
                 f"参考买点 {entry} / 止损 {stop} / 止盈 {tp} / 仓位 {pick.position}"
             )
         lines.append("")
-        lines.append("> 注: 解禁/财报等事件数据待接入，此处为占位。")
+        lines.append("> 注: 事件型催化尚未纳入主链门控，需人工补充复核。")
         return BriefingSection(title="明日重点", content="\n".join(lines))
 
     def render_template(

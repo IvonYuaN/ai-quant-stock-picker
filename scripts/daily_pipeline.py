@@ -982,20 +982,9 @@ def _build_pipeline_digest(
     config: PipelineConfig,
     result: PipelineResult,
 ) -> str:
-    status = "成功" if result.overall_success else "有失败"
     step_total = len(result.steps)
     step_success = sum(1 for step in result.steps if step.success)
     failed_steps = [step for step in result.steps if not step.success]
-
-    core_lines = [
-        f"- 总体状态: {status}",
-        f"- 步骤通过: {step_success}/{step_total}",
-        f"- 总耗时: {result.duration_seconds:.1f}s",
-    ]
-    if failed_steps:
-        core_lines.append(
-            "- 失败步骤: " + "、".join(step.name for step in failed_steps[:3])
-        )
 
     portfolio_summary = _latest_portfolio_summary(config)
     candidates = _read_latest_candidates(config)
@@ -1036,7 +1025,9 @@ def _build_pipeline_digest(
                 str(item).split("(", 1)[0] for item in portfolio_summary.watchlist[:3]
             )
         )
-    core_lines.append(f"- 流程状态: {step_success}/{step_total} 成功 | {result.duration_seconds:.1f}s")
+    core_lines.append(
+        f"- 流程状态: {step_success}/{step_total} 成功 | {result.duration_seconds:.1f}s"
+    )
     if failed_steps:
         core_lines.append(
             "- 异常步骤: " + "、".join(step.name for step in failed_steps[:3])
@@ -1120,7 +1111,7 @@ def _build_pipeline_digest(
         "## 明日动作",
         *plan_lines,
     ]
-    if result.steps:
+    if result.steps and failed_steps:
         lines.extend(["", "## 运行侧写"])
         for step in result.steps:
             badge = "OK" if step.success else "FAIL"

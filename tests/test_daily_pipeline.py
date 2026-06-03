@@ -555,7 +555,7 @@ def test_send_pipeline_digest_sends_summary_notification(
     assert "300750 宁德时代 | 候选观察池 | PM 降级观察 | 评分 64.0" in sent["content"]
     assert "风险与分歧" in sent["content"]
     assert "明日动作" in sent["content"]
-    assert "运行侧写" in sent["content"]
+    assert "运行侧写" not in sent["content"]
     assert "# 收盘总览" not in sent["content"]
 
 
