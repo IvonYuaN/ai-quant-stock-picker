@@ -84,6 +84,10 @@ class RegimeDetector:
             "correlation": 0.0,
         }
 
+        # 注意：regime 基于「单一基准指数」判定（通常是沪深300）。
+        # 历史 bug：此处循环对多指数逐个赋值（非累加），导致只有遍历到的
+        # 最后一个指数生效、前面被静默覆盖。现改为只取第一个有效指数，
+        # 行为明确、不依赖 dict 遍历顺序。如需多指数合成需另设计聚合逻辑。
         for symbol, df in index_data.items():
             if df is None or df.empty:
                 continue
@@ -109,6 +113,9 @@ class RegimeDetector:
             volume = df["volume"].values
             avg_vol = np.mean(volume)
             features["volume_ratio"] = volume[-1] / avg_vol if avg_vol > 0 else 1.0
+
+            # 只用第一个有效指数判定 regime，避免被后续指数覆盖
+            break
 
         return features
 
