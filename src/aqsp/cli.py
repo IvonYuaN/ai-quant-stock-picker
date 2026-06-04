@@ -1678,6 +1678,34 @@ def _check_notification_gate(
     return len(reasons) == 0, reasons
 
 
+def _notification_gate_actions(reasons: list[str]) -> list[str]:
+    actions: list[str] = []
+    joined = " ".join(reasons)
+
+    if "冷启动未满" in joined:
+        actions.append(
+            f"继续按日运行主链，先把冷启动样本积累到 {COLD_START_MIN_DAYS} 个独立信号日。"
+        )
+    if (
+        "sidecar 不存在" in joined
+        or "n_periods=0" in joined
+        or "过期" in joined
+        or "解析失败" in joined
+    ):
+        actions.append(
+            "重跑双门回测以刷新 gate：`.venv/bin/python3 -m aqsp walkforward --source sqlite_db --end 2024-12-31`。"
+        )
+    if "DSR 未过门" in joined or "PBO 未过门" in joined:
+        actions.append("在双门过线前保留观察模式，不要开启自动通知或放大仓位。")
+    if "held-out" in joined:
+        actions.append("回测窗口退回到 2024-12-31 及以前，避免 held-out 成绩污染通知门禁。")
+
+    if not actions:
+        actions.append("先处理上述门禁原因，再重新执行 `aqsp run --notify`。")
+
+    return actions
+
+
 def run_screen(args: argparse.Namespace) -> int:
     actual_source = "csv"
     explicit_symbol_count = 0
@@ -2431,13 +2459,18 @@ def run_scheduled(args: argparse.Namespace) -> int:
     gate_ok, gate_reasons = _check_notification_gate(cold_start_days=cold_start_days)
     if args.notify and not gate_ok:
         # 宪法 §1.3 #12/#14：门未达，--notify 自动失效
+        next_actions = _notification_gate_actions(gate_reasons)
         print("⛔ 双门未达，--notify 自动失效。原因：")
         for r in gate_reasons:
             print(f"   - {r}")
+        print("📌 解锁通知建议：")
+        for action in next_actions:
+            print(f"   - {action}")
         # 在 markdown 头部加警告（§1.3 #13）
         markdown = (
             "> ⚠️ **未通过 walk-forward 双门验证，仅供观察，请勿实盘使用**\n"
-            "> " + "；".join(gate_reasons) + "\n\n"
+            "> " + "；".join(gate_reasons) + "\n"
+            "> 解锁建议：" + "；".join(next_actions) + "\n\n"
         ) + markdown
         args.notify = False
     # 写报告（可能包含警告）
