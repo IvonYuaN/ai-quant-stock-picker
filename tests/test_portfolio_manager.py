@@ -108,3 +108,35 @@ def test_apply_portfolio_manager_keeps_action_when_no_incremental_override() -> 
     assert bundle.summary.keep_count == 1
     assert bundle.summary.top_focus == ("300750",)
     assert bundle.summary.cash_reserve >= 0.15
+
+
+def test_apply_portfolio_manager_uses_runtime_sector_map_for_concentration() -> None:
+    picks = [
+        _pick("600036", 42),
+        _pick("000021", 40),
+    ]
+    concentration = ConcentrationResult(
+        total_candidates=2,
+        sector_count=1,
+        max_concentration=1.0,
+        warnings=("too concentrated",),
+        sectors=(
+            SectorConcentration(
+                sector="银行",
+                count=2,
+                total=2,
+                ratio=1.0,
+                symbols=("600036", "000021"),
+            ),
+        ),
+    )
+
+    bundle = apply_portfolio_manager(
+        picks,
+        concentration=concentration,
+        sector_map={"000021": "银行"},
+    )
+
+    decisions = {item.symbol: item for item in bundle.decisions}
+    assert decisions["000021"].action == "downgrade"
+    assert any("银行暴露" in reason for reason in decisions["000021"].reasons)

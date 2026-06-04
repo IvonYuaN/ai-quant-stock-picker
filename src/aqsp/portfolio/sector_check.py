@@ -134,14 +134,34 @@ _SECTOR_CACHE: dict[str, str] = {
 }
 
 
-def get_sector(symbol: str) -> str:
-    """获取股票板块（优先静态缓存）"""
+def _clean_sector_label(value: str) -> str:
+    label = str(value or "").strip()
+    if not label or label.lower() == "nan":
+        return ""
+    return label
+
+
+def get_sector(
+    symbol: str,
+    *,
+    sector_hint: str = "",
+    industry_hint: str = "",
+) -> str:
+    """获取股票板块，优先使用运行时行业信息。"""
+    sector = _clean_sector_label(sector_hint)
+    if sector:
+        return sector
+    industry = _clean_sector_label(industry_hint)
+    if industry:
+        return industry
     return _SECTOR_CACHE.get(symbol, "其他")
 
 
 def check_sector_concentration(
     symbols: list[str],
     max_concentration: float = 0.4,
+    sector_map: dict[str, str] | None = None,
+    industry_map: dict[str, str] | None = None,
 ) -> ConcentrationResult:
     """
     检查候选股板块集中度
@@ -163,8 +183,14 @@ def check_sector_concentration(
         )
 
     sector_symbols: dict[str, list[str]] = {}
+    sector_map = sector_map or {}
+    industry_map = industry_map or {}
     for sym in symbols:
-        sector = get_sector(sym)
+        sector = get_sector(
+            sym,
+            sector_hint=sector_map.get(sym, ""),
+            industry_hint=industry_map.get(sym, ""),
+        )
         sector_symbols.setdefault(sector, []).append(sym)
 
     total = len(symbols)

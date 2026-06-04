@@ -193,6 +193,8 @@ def score_symbol(
             "volume_ratio": round(volume_ratio, 2),
             "rsi12": round(rsi12, 2),
             "avg_amount_20": round(avg_amount, 2),
+            "sector": _text(row.get("sector")),
+            "industry": _text(row.get("industry")),
         },
         confidence=_compute_confidence(
             len(strategy_ids), score, len(risks), volume_ratio, scoring
@@ -272,3 +274,10 @@ def _num(value: object, default: float = 0.0) -> float:
     if not math.isfinite(number):
         return default
     return number
+
+
+def _text(value: object) -> str:
+    text = str(value or "").strip()
+    if not text or text.lower() == "nan":
+        return ""
+    return text

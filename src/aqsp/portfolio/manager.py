@@ -179,7 +179,11 @@ def apply_portfolio_manager(
     regime: str = "",
     concentration: ConcentrationResult | None = None,
     correlation_result: CorrelationResult | None = None,
+    sector_map: dict[str, str] | None = None,
+    industry_map: dict[str, str] | None = None,
 ) -> PortfolioDecisionBundle:
+    sector_map = sector_map or {}
+    industry_map = industry_map or {}
     decisions: list[PortfolioDecision] = []
     updated: list[PickResult] = []
 
@@ -216,7 +220,11 @@ def apply_portfolio_manager(
             reasons.append("多Agent辩论支持上调优先级")
             positive_adjustment = True
 
-        if concentrated_sector and get_sector(pick.symbol) == concentrated_sector:
+        if concentrated_sector and get_sector(
+            pick.symbol,
+            sector_hint=sector_map.get(pick.symbol, ""),
+            industry_hint=industry_map.get(pick.symbol, ""),
+        ) == concentrated_sector:
             delta -= 4.0
             reasons.append(f"板块集中度过高，压低{concentrated_sector}暴露")
             negative_adjustment = True

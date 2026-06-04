@@ -563,7 +563,12 @@ def test_append_predictions_persists_portfolio_and_debate_fields(tmp_path) -> No
         take_profit=31.0,
         position="30%-50%",
         strategies=("rps_relative_strength",),
-        metrics={"portfolio_action": "promote", "stop_method": "atr_trailing"},
+        metrics={
+            "portfolio_action": "promote",
+            "stop_method": "atr_trailing",
+            "sector": "公用事业",
+            "industry": "电力",
+        },
         adjusted_score=75.5,
         recommended_adjustment="raise",
         debate_consensus="bullish",
@@ -586,6 +591,8 @@ def test_append_predictions_persists_portfolio_and_debate_fields(tmp_path) -> No
     assert row["debate_consensus"] == "bullish"
     assert row["confidence"] == 83.0
     assert row["regime_score"] == 68.0
+    assert row["sector"] == "公用事业"
+    assert row["industry"] == "电力"
 
 
 def test_append_predictions_updates_existing_row_for_same_signal_key(tmp_path) -> None:

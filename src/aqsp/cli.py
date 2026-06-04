@@ -1027,6 +1027,24 @@ def _resolve_run_symbols(
     return list(DEFAULT_SYMBOLS[:max_universe] if max_universe > 0 else DEFAULT_SYMBOLS)
 
 
+def _check_sector_concentration_with_runtime_hints(
+    symbols: list[str],
+    *,
+    sector_map: dict[str, str] | None = None,
+    industry_map: dict[str, str] | None = None,
+):
+    from aqsp.portfolio.sector_check import check_sector_concentration
+
+    try:
+        return check_sector_concentration(
+            symbols,
+            sector_map=sector_map,
+            industry_map=industry_map,
+        )
+    except TypeError:
+        return check_sector_concentration(symbols)
+
+
 def _count_independent_signal_days(ledger_path: str) -> int:
     from aqsp.ledger.base import read_ledger
 
@@ -1840,6 +1858,17 @@ def run_scheduled(args: argparse.Namespace) -> int:
 
     picks = screened_picks[:limit]
 
+    sector_map = {
+        pick.symbol: str(pick.metrics.get("sector", "") or "")
+        for pick in picks
+        if str(pick.metrics.get("sector", "") or "").strip()
+    }
+    industry_map = {
+        pick.symbol: str(pick.metrics.get("industry", "") or "")
+        for pick in picks
+        if str(pick.metrics.get("industry", "") or "").strip()
+    }
+
     lethal_pipeline = LethalFilterPipeline()
     filtered_picks = []
     for pick in picks:
@@ -1946,11 +1975,14 @@ def run_scheduled(args: argparse.Namespace) -> int:
     # 板块集中度检查
     if picks:
         from aqsp.portfolio.sector_check import (
-            check_sector_concentration,
             format_concentration,
         )
 
-        concentration = check_sector_concentration([p.symbol for p in picks])
+        concentration = _check_sector_concentration_with_runtime_hints(
+            [p.symbol for p in picks],
+            sector_map=sector_map,
+            industry_map=industry_map,
+        )
         if concentration.warnings:
             print(format_concentration(concentration))
 
@@ -2200,6 +2232,8 @@ def run_scheduled(args: argparse.Namespace) -> int:
             regime=regime,
             concentration=concentration,
             correlation_result=correlation_result,
+            sector_map=sector_map,
+            industry_map=industry_map,
         )
         picks = bundle.picks
         portfolio_decisions = list(bundle.decisions)
@@ -2853,6 +2887,8 @@ def run_briefing(args: argparse.Namespace) -> int:
                 metrics={
                     "portfolio_action": str(row.get("portfolio_action", "") or ""),
                     "stop_method": str(row.get("stop_method", "") or ""),
+                    "sector": str(row.get("sector", "") or ""),
+                    "industry": str(row.get("industry", "") or ""),
                 },
                 adjusted_score=float(row.get("adjusted_score", 0) or 0),
                 recommended_adjustment=str(
@@ -2917,6 +2953,8 @@ def run_briefing(args: argparse.Namespace) -> int:
                 for pick in picks
             ],
             regime=regime_str,
+            concentration=None,
+            correlation_result=None,
         )
 
     generator = BriefingGenerator()

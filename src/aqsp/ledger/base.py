@@ -111,6 +111,8 @@ def append_predictions(
             "debate_consensus": pick.debate_consensus,
             "confidence": pick.confidence,
             "regime_score": pick.regime_score,
+            "sector": str(pick.metrics.get("sector", "") or ""),
+            "industry": str(pick.metrics.get("industry", "") or ""),
             "horizon_days": execution.horizon_days,
             "fee_bps": execution.fee_bps,
             "slippage_bps": execution.slippage_bps,
