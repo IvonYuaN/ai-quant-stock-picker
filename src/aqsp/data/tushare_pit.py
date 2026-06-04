@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import contextlib
+import io
 import os
 from dataclasses import dataclass
 from datetime import date
@@ -28,6 +30,25 @@ class TusharePitClient:
             ) from exc
         self._token = cfg.token
 
+    def _safe_pro_call(self, method_name: str, **kwargs: Any) -> pd.DataFrame:
+        method = getattr(self._pro, method_name)
+        stdout_buffer = io.StringIO()
+        stderr_buffer = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(stdout_buffer), contextlib.redirect_stderr(
+                stderr_buffer
+            ):
+                return method(**kwargs)
+        except Exception as exc:
+            captured = " ".join(
+                part.strip()
+                for part in (stdout_buffer.getvalue(), stderr_buffer.getvalue())
+                if part.strip()
+            )
+            if captured:
+                raise DataError(f"tushare 接口异常: {captured}") from exc
+            raise
+
     def fetch_trade_calendar(
         self,
         start: date,
@@ -35,7 +56,8 @@ class TusharePitClient:
         exchange: str = "SSE",
     ) -> pd.DataFrame:
         try:
-            df = self._pro.trade_cal(
+            df = self._safe_pro_call(
+                "trade_cal",
                 exchange=exchange,
                 start_date=start.strftime("%Y%m%d"),
                 end_date=end.strftime("%Y%m%d"),
@@ -53,7 +75,8 @@ class TusharePitClient:
         end: date,
     ) -> pd.DataFrame:
         try:
-            df = self._pro.index_weight(
+            df = self._safe_pro_call(
+                "index_weight",
                 index_code=index_code,
                 start_date=start.strftime("%Y%m%d"),
                 end_date=end.strftime("%Y%m%d"),
@@ -74,7 +97,8 @@ class TusharePitClient:
         for symbol in symbols:
             ts_code = symbol_to_ts_code(symbol)
             try:
-                df = self._pro.disclosure_date(
+                df = self._safe_pro_call(
+                    "disclosure_date",
                     ts_code=ts_code,
                     start_date=start.strftime("%Y%m%d"),
                     end_date=end.strftime("%Y%m%d"),
