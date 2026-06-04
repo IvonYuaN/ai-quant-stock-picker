@@ -280,7 +280,9 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     run = sub.add_parser(
-        "run", help="scheduled screen with freshness check and optional notification"
+        "run",
+        aliases=["run-scheduled"],
+        help="scheduled screen with freshness check and optional notification",
     )
     run.add_argument("--mode", choices=["open", "close"], default="")
     run.add_argument("--symbols", default="")
@@ -550,7 +552,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.command == "screen":
             return run_screen(args)
-        if args.command == "run":
+        if args.command in {"run", "run-scheduled"}:
             return run_scheduled(args)
         if args.command == "dashboard":
             return run_dashboard(args)
@@ -1678,13 +1680,25 @@ def _check_notification_gate(
     return len(reasons) == 0, reasons
 
 
-def _notification_gate_actions(reasons: list[str]) -> list[str]:
+def _notification_gate_actions(
+    reasons: list[str],
+    *,
+    cold_start_days: int,
+) -> list[str]:
     actions: list[str] = []
     joined = " ".join(reasons)
 
     if "冷启动未满" in joined:
+        remaining_days = max(COLD_START_MIN_DAYS - cold_start_days, 0)
         actions.append(
-            f"继续按日运行主链，先把冷启动样本积累到 {COLD_START_MIN_DAYS} 个独立信号日。"
+            "继续按日运行主链，先把冷启动样本积累到 "
+            f"{COLD_START_MIN_DAYS} 个独立信号日"
+            + (
+                f"（当前还差 {remaining_days} 天）"
+                if remaining_days > 0
+                else ""
+            )
+            + "。"
         )
     if (
         "sidecar 不存在" in joined
@@ -1704,6 +1718,23 @@ def _notification_gate_actions(reasons: list[str]) -> list[str]:
         actions.append("先处理上述门禁原因，再重新执行 `aqsp run --notify`。")
 
     return actions
+
+
+def _format_notification_gate_block(
+    gate_reasons: list[str],
+    next_actions: list[str],
+) -> str:
+    lines = [
+        "> ⚠️ **未通过 walk-forward 双门验证，仅供观察，请勿实盘使用**",
+        ">",
+        "> 未达原因：",
+    ]
+    lines.extend(f"> - {reason}" for reason in gate_reasons)
+    lines.append(">")
+    lines.append("> 解锁建议：")
+    lines.extend(f"> - {action}" for action in next_actions)
+    lines.append("")
+    return "\n".join(lines) + "\n"
 
 
 def run_screen(args: argparse.Namespace) -> int:
@@ -2459,7 +2490,10 @@ def run_scheduled(args: argparse.Namespace) -> int:
     gate_ok, gate_reasons = _check_notification_gate(cold_start_days=cold_start_days)
     if args.notify and not gate_ok:
         # 宪法 §1.3 #12/#14：门未达，--notify 自动失效
-        next_actions = _notification_gate_actions(gate_reasons)
+        next_actions = _notification_gate_actions(
+            gate_reasons,
+            cold_start_days=cold_start_days,
+        )
         print("⛔ 双门未达，--notify 自动失效。原因：")
         for r in gate_reasons:
             print(f"   - {r}")
@@ -2467,11 +2501,7 @@ def run_scheduled(args: argparse.Namespace) -> int:
         for action in next_actions:
             print(f"   - {action}")
         # 在 markdown 头部加警告（§1.3 #13）
-        markdown = (
-            "> ⚠️ **未通过 walk-forward 双门验证，仅供观察，请勿实盘使用**\n"
-            "> " + "；".join(gate_reasons) + "\n"
-            "> 解锁建议：" + "；".join(next_actions) + "\n\n"
-        ) + markdown
+        markdown = _format_notification_gate_block(gate_reasons, next_actions) + markdown
         args.notify = False
     # 写报告（可能包含警告）
     Path(args.report).write_text(markdown, encoding="utf-8")

@@ -824,3 +824,18 @@ def test_run_scheduled_gate_block_adds_actionable_unlock_guidance(
     assert exit_code == 0
     assert "解锁建议：" in report
     assert "aqsp walkforward --source sqlite_db --end 2024-12-31" in report
+    assert "当前还差 27 天" in report
+    assert "。；" not in report
+
+
+def test_main_accepts_run_scheduled_alias(monkeypatch) -> None:
+    from aqsp.cli import main
+    import aqsp.cli as cli_mod
+
+    def mock_run_scheduled(args):
+        assert args.command == "run-scheduled"
+        assert args.symbols == "600519"
+        return 0
+
+    monkeypatch.setattr(cli_mod, "run_scheduled", mock_run_scheduled)
+    assert main(["run-scheduled", "--symbols", "600519"]) == 0
