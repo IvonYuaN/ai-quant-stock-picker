@@ -157,6 +157,12 @@ class Briefing:
         items: list[str] = []
         if self.portfolio_summary:
             items.append(f"- PM主裁决: {self.portfolio_summary.headline}")
+            if self.portfolio_summary.regime_label:
+                items.append(f"- 当前市况: {self.portfolio_summary.regime_label}")
+            if self.portfolio_summary.strategy_mix_name:
+                items.append(
+                    f"- 策略配比: {self.portfolio_summary.strategy_mix_name}"
+                )
             if self.portfolio_summary.top_focus:
                 items.append(
                     "- 主链候选: " + "、".join(self.portfolio_summary.top_focus)
@@ -222,6 +228,10 @@ class Briefing:
                 for item in self.portfolio_summary.allocations[:2]
             )
             items.append(f"- 配仓执行: {top_alloc}")
+        if self.portfolio_summary and self.portfolio_summary.strategy_focus:
+            items.append(
+                "- 关注策略: " + "、".join(self.portfolio_summary.strategy_focus[:3])
+            )
         if debate_points:
             items.append(f"- 辩论结论: {self._strip_leading_markers(debate_points[0])}")
         if top_scores:
@@ -370,7 +380,10 @@ class BriefingGenerator:
     ) -> Briefing:
         date_str = now_shanghai().strftime("%Y-%m-%d %H:%M")
         ordered_picks = sorted(picks, key=lambda item: item.score, reverse=True)
-        summary = portfolio_summary or self._build_portfolio_summary(ordered_picks)
+        summary = portfolio_summary or self._build_portfolio_summary(
+            ordered_picks,
+            regime=regime,
+        )
         sections = [
             self._build_main_chain_section(ordered_picks, summary),
             self._build_regime_section(regime, circuit_breaker_status),
@@ -422,6 +435,24 @@ class BriefingGenerator:
             lines.append("- 可执行主链: " + "、".join(portfolio_summary.top_focus[:3]))
         if portfolio_summary.watchlist:
             lines.append("- 候选观察池: " + "、".join(portfolio_summary.watchlist[:3]))
+        if portfolio_summary.regime_label:
+            lines.append(f"- 当前市况: {portfolio_summary.regime_label}")
+        if portfolio_summary.strategy_mix_name:
+            lines.append(
+                f"- 策略主配比: {portfolio_summary.strategy_mix_name} | {portfolio_summary.strategy_mix_description}"
+            )
+        if portfolio_summary.strategy_focus:
+            lines.append(
+                "- 当前优先策略: " + "、".join(portfolio_summary.strategy_focus[:4])
+            )
+        if portfolio_summary.strategy_weights:
+            lines.append(
+                "- 策略权重建议: "
+                + "、".join(
+                    f"{strategy_id} {weight:.0%}"
+                    for strategy_id, weight in portfolio_summary.strategy_weights[:4]
+                )
+            )
         if portfolio_summary.allocations:
             lines.append("- 组合配置建议:")
             for item in portfolio_summary.allocations[:3]:
@@ -442,7 +473,10 @@ class BriefingGenerator:
         return BriefingSection(title="主链总览", content="\n".join(lines))
 
     def _build_portfolio_summary(
-        self, picks: list[PickResult]
+        self,
+        picks: list[PickResult],
+        *,
+        regime: str = "",
     ) -> PortfolioDecisionSummary | None:
         if not picks:
             return None
@@ -458,6 +492,7 @@ class BriefingGenerator:
         return summarize_portfolio_decisions(
             picks,
             decisions,
+            regime=regime,
         )
 
     def _build_regime_section(

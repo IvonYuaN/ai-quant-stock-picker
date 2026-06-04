@@ -1003,7 +1003,10 @@ def _resolve_run_symbols(
 
         pool = UniversePool.from_default(pool_name)
         return pool.get_symbols(as_of=target_day)
-    source = _get_source(source_name)
+    try:
+        source = _get_source(source_name)
+    except DataError:
+        return list(DEFAULT_SYMBOLS[:max_universe] if max_universe > 0 else DEFAULT_SYMBOLS)
     if hasattr(source, "get_liquid_symbols"):
         try:
             liquid_symbols = source.get_liquid_symbols(
@@ -1015,10 +1018,13 @@ def _resolve_run_symbols(
         if liquid_symbols:
             return liquid_symbols
     if hasattr(source, "get_available_symbols"):
-        available = source.get_available_symbols()
+        try:
+            available = source.get_available_symbols()
+        except DataError:
+            available = []
         if available:
             return available[:max_universe] if max_universe > 0 else available
-    return list(DEFAULT_SYMBOLS)
+    return list(DEFAULT_SYMBOLS[:max_universe] if max_universe > 0 else DEFAULT_SYMBOLS)
 
 
 def _count_independent_signal_days(ledger_path: str) -> int:
@@ -2191,6 +2197,7 @@ def run_scheduled(args: argparse.Namespace) -> int:
 
         bundle = apply_portfolio_manager(
             picks,
+            regime=regime,
             concentration=concentration,
             correlation_result=correlation_result,
         )
@@ -2909,6 +2916,7 @@ def run_briefing(args: argparse.Namespace) -> int:
                 )
                 for pick in picks
             ],
+            regime=regime_str,
         )
 
     generator = BriefingGenerator()

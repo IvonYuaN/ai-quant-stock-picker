@@ -193,9 +193,18 @@ def test_report_renders_allocation_guidance_when_summary_provided() -> None:
             allocations=(),
             cash_reserve=0.25,
             allocation_note="单票上限 20%；信号强度不足时提高现金留存",
+            regime_label="稳定上涨",
+            strategy_mix_name="进攻牛市",
+            strategy_mix_description="稳定上涨期，重仓动量+涨停板",
+            strategy_focus=("动量趋势", "涨停接力"),
+            strategy_weights=(("momentum", 0.3), ("limit_up_ladder", 0.3)),
         ),
     )
 
+    assert "- 当前市况: 稳定上涨" in markdown
+    assert "- 策略主配比: 进攻牛市 | 稳定上涨期，重仓动量+涨停板" in markdown
+    assert "- 优先策略: 动量趋势、涨停接力" in markdown
+    assert "- 策略权重建议: momentum 30%、limit_up_ladder 30%" in markdown
     assert "- 现金留存: 25%" in markdown
     assert "- 配置说明: 单票上限 20%；信号强度不足时提高现金留存" in markdown
 

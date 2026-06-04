@@ -11,6 +11,7 @@ from aqsp.portfolio.optimizer import (
 )
 from aqsp.portfolio.sector_check import ConcentrationResult, get_sector
 from aqsp.ratings import is_tradable_rating
+from aqsp.strategies.adaptive_evolution import StrategyMixAdaptor
 
 
 @dataclass(frozen=True)
@@ -31,6 +32,11 @@ class PortfolioDecisionSummary:
     allocations: tuple[PortfolioAllocation, ...]
     cash_reserve: float
     allocation_note: str
+    regime_label: str = ""
+    strategy_mix_name: str = ""
+    strategy_mix_description: str = ""
+    strategy_focus: tuple[str, ...] = ()
+    strategy_weights: tuple[tuple[str, float], ...] = ()
 
     @property
     def headline(self) -> str:
@@ -47,6 +53,10 @@ class PortfolioDecisionSummary:
     def has_allocations(self) -> bool:
         return bool(self.allocations)
 
+    @property
+    def has_strategy_mix(self) -> bool:
+        return bool(self.strategy_mix_name)
+
 
 @dataclass(frozen=True)
 class PortfolioDecisionBundle:
@@ -59,10 +69,61 @@ def _display_name(pick: PickResult) -> str:
     return format_symbol_name(pick.symbol, pick.name)
 
 
+_REGIME_LABELS = {
+    "stable_bull": "稳定上涨",
+    "volatile_bull": "波动上涨",
+    "stable_bear": "稳定下跌",
+    "volatile_bear": "波动下跌",
+    "stable_sideways": "稳定震荡",
+    "volatile_sideways": "波动震荡",
+}
+
+_STRATEGY_LABELS = {
+    "momentum": "动量趋势",
+    "limit_up_ladder": "涨停接力",
+    "morning_breakout": "早盘突破",
+    "sector_rotation": "板块轮动",
+    "triple_rise": "三连阳",
+    "intraday_trade": "日内快反",
+    "quality": "质量稳健",
+    "value": "价值低估",
+    "mean_reversion": "均值回归",
+}
+
+
+def _resolve_regime_label(regime: str) -> str:
+    return _REGIME_LABELS.get(regime, regime or "")
+
+
+def _resolve_strategy_label(strategy_id: str) -> str:
+    return _STRATEGY_LABELS.get(strategy_id, strategy_id)
+
+
+def _build_strategy_mix_summary(
+    regime: str,
+) -> tuple[str, str, str, tuple[str, ...], tuple[tuple[str, float], ...]]:
+    if not regime:
+        return "", "", "", (), ()
+    mix = StrategyMixAdaptor().select_mix(regime)
+    weights = tuple(
+        (strategy_id, float(weight))
+        for strategy_id, weight in mix.weights.items()
+    )
+    focus = tuple(_resolve_strategy_label(item) for item in mix.enabled_strategies)
+    return (
+        _resolve_regime_label(regime),
+        mix.name,
+        mix.description,
+        focus,
+        weights,
+    )
+
+
 def summarize_portfolio_decisions(
     picks: list[PickResult],
     decisions: list[PortfolioDecision],
     *,
+    regime: str = "",
     concentration: ConcentrationResult | None = None,
     correlation_result: CorrelationResult | None = None,
 ) -> PortfolioDecisionSummary:
@@ -88,6 +149,13 @@ def summarize_portfolio_decisions(
         concentration=concentration,
         correlation_result=correlation_result,
     )
+    (
+        regime_label,
+        strategy_mix_name,
+        strategy_mix_description,
+        strategy_focus,
+        strategy_weights,
+    ) = _build_strategy_mix_summary(regime)
     return PortfolioDecisionSummary(
         promote_count=promote_count,
         downgrade_count=downgrade_count,
@@ -97,12 +165,18 @@ def summarize_portfolio_decisions(
         allocations=optimization.allocations,
         cash_reserve=optimization.cash_reserve,
         allocation_note=optimization.note,
+        regime_label=regime_label,
+        strategy_mix_name=strategy_mix_name,
+        strategy_mix_description=strategy_mix_description,
+        strategy_focus=strategy_focus,
+        strategy_weights=strategy_weights,
     )
 
 
 def apply_portfolio_manager(
     picks: list[PickResult],
     *,
+    regime: str = "",
     concentration: ConcentrationResult | None = None,
     correlation_result: CorrelationResult | None = None,
 ) -> PortfolioDecisionBundle:
@@ -208,6 +282,7 @@ def apply_portfolio_manager(
         summary=summarize_portfolio_decisions(
             updated,
             decisions,
+            regime=regime,
             concentration=concentration,
             correlation_result=correlation_result,
         ),

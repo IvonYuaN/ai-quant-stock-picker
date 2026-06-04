@@ -82,6 +82,23 @@ def build_daily_run_notification(
         lines.append("- 主链状态: 今日无可执行标的，仅观察")
     if is_cold_start and cold_start_min_days > 0:
         lines.append(f"- 冷启动进度: {cold_start_days}/{cold_start_min_days}")
+    if portfolio_summary is not None and portfolio_summary.regime_label:
+        lines.append(f"- 当前市况: {portfolio_summary.regime_label}")
+    if portfolio_summary is not None and portfolio_summary.strategy_mix_name:
+        lines.append(
+            "- 策略主配比: "
+            f"{portfolio_summary.strategy_mix_name}"
+            + (
+                f" | {portfolio_summary.strategy_mix_description}"
+                if portfolio_summary.strategy_mix_description
+                else ""
+            )
+        )
+    if portfolio_summary is not None and portfolio_summary.strategy_focus:
+        lines.append(
+            "- 优先策略: "
+            + "、".join(portfolio_summary.strategy_focus[:3])
+        )
     if portfolio_summary is not None and portfolio_summary.allocations:
         top_alloc = "、".join(
             f"{item.symbol} {item.weight:.0%}"

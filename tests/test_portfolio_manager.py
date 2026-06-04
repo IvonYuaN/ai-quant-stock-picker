@@ -79,7 +79,7 @@ def test_apply_portfolio_manager_downgrades_when_debate_and_correlation_stack() 
 def test_apply_portfolio_manager_promotes_when_debate_supports_buy_candidate() -> None:
     picks = [_pick("300750", 66, recommended_adjustment="raise")]
 
-    bundle = apply_portfolio_manager(picks)
+    bundle = apply_portfolio_manager(picks, regime="stable_bull")
 
     assert bundle.picks[0].rating == "strong_buy_candidate"
     assert bundle.decisions[0].action == "promote"
@@ -87,6 +87,13 @@ def test_apply_portfolio_manager_promotes_when_debate_supports_buy_candidate() -
     assert bundle.summary.top_focus == ("300750",)
     assert bundle.summary.allocations[0].symbol == "300750"
     assert 0 < bundle.summary.allocations[0].weight <= 0.20
+    assert bundle.summary.regime_label == "稳定上涨"
+    assert bundle.summary.strategy_mix_name == "进攻牛市"
+    assert "动量趋势" in bundle.summary.strategy_focus
+    assert any(
+        strategy_id == "momentum" and weight > 0
+        for strategy_id, weight in bundle.summary.strategy_weights
+    )
 
 
 def test_apply_portfolio_manager_keeps_action_when_no_incremental_override() -> None:

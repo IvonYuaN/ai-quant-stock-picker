@@ -50,6 +50,29 @@ def _format_final_decision_board(
     lines = ["## 最终决策看板", ""]
     if portfolio_summary is not None:
         lines.append(f"- PM主裁决: {portfolio_summary.headline}")
+        if getattr(portfolio_summary, "regime_label", ""):
+            lines.append(f"- 当前市况: {portfolio_summary.regime_label}")
+        if getattr(portfolio_summary, "strategy_mix_name", ""):
+            lines.append(
+                "- 策略主配比: "
+                f"{portfolio_summary.strategy_mix_name} | "
+                f"{getattr(portfolio_summary, 'strategy_mix_description', '')}"
+            )
+        if getattr(portfolio_summary, "strategy_focus", ()):
+            lines.append(
+                "- 优先策略: "
+                + "、".join(str(item) for item in portfolio_summary.strategy_focus[:4])
+            )
+        if getattr(portfolio_summary, "strategy_weights", ()):
+            lines.append(
+                "- 策略权重建议: "
+                + "、".join(
+                    f"{strategy_id} {weight:.0%}"
+                    for strategy_id, weight in tuple(
+                        getattr(portfolio_summary, "strategy_weights", ())
+                    )[:4]
+                )
+            )
         if getattr(portfolio_summary, "top_focus", ()):
             lines.append(
                 "- 重点关注: "

@@ -495,12 +495,19 @@ class TestGenerateSmartSummary:
                 allocations=(),
                 cash_reserve=0.2,
                 allocation_note="单票上限 20%；信号强度不足时提高现金留存",
+                regime_label="稳定上涨",
+                strategy_mix_name="进攻牛市",
+                strategy_mix_description="稳定上涨期，重仓动量+涨停板",
+                strategy_focus=("动量趋势", "涨停接力"),
+                strategy_weights=(("momentum", 0.3), ("limit_up_ladder", 0.3)),
             ),
         )
 
         summary = briefing.generate_smart_summary()
 
         assert "PM主裁决: 上调 1 / 降级 1 / 维持 0" in summary
+        assert "- 当前市况: 稳定上涨" in summary
+        assert "- 策略配比: 进攻牛市" in summary
         assert "- 主链候选: 600519 贵州茅台" in summary
         assert "- 候选观察池: 300750 宁德时代" in summary
         assert "- 现金留存: 20%" in summary
@@ -518,6 +525,21 @@ class TestGenerateSmartSummary:
         assert "组合配置建议" in main_chain_sec.content
         assert "300750 宁德时代: 20%" in main_chain_sec.content
         assert "现金留存" in main_chain_sec.content
+
+    def test_main_chain_section_renders_strategy_mix_guidance(self):
+        gen = BriefingGenerator()
+        pick = _make_pick(
+            symbol="300750",
+            name="宁德时代",
+            score=72.0,
+            rating="strong_buy_candidate",
+        )
+        briefing = gen.generate(picks=[pick], frames={}, regime="stable_bull")
+        main_chain_sec = next(s for s in briefing.sections if s.title == "主链总览")
+        assert "当前市况: 稳定上涨" in main_chain_sec.content
+        assert "策略主配比: 进攻牛市" in main_chain_sec.content
+        assert "当前优先策略: 动量趋势、涨停接力" in main_chain_sec.content
+        assert "策略权重建议: momentum 30%、limit_up_ladder 30%" in main_chain_sec.content
 
     def test_debate_results_lower_adjustment(self):
         from aqsp.briefing.debate import DebateResult

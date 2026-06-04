@@ -757,6 +757,48 @@ class TestCLIDataSources:
             "300750",
         ]
 
+    def test_resolve_run_symbols_falls_back_to_default_when_source_build_fails(
+        self, monkeypatch
+    ):
+        from aqsp.cli import _resolve_run_symbols
+        from aqsp.core.errors import DataError
+
+        def fail_build(_name):
+            raise DataError("tdx vipdoc missing")
+
+        monkeypatch.setattr("aqsp.cli._get_source", fail_build)
+
+        assert _resolve_run_symbols(
+            "auto",
+            "",
+            max_universe=3,
+            min_avg_amount=50_000_000,
+        ) == ["600519", "300750", "000001"]
+
+    def test_resolve_run_symbols_falls_back_to_default_when_source_universe_errors(
+        self, monkeypatch
+    ):
+        from aqsp.cli import _resolve_run_symbols
+        from aqsp.core.errors import DataError
+
+        class SourceWithBrokenUniverse:
+            name = "broken"
+
+            def get_available_symbols(self):
+                raise DataError("all sources failed")
+
+        monkeypatch.setattr(
+            "aqsp.cli._get_source",
+            lambda _name: SourceWithBrokenUniverse(),
+        )
+
+        assert _resolve_run_symbols(
+            "auto",
+            "",
+            max_universe=2,
+            min_avg_amount=50_000_000,
+        ) == ["600519", "300750"]
+
 
 class TestCLILogParam:
     def test_log_param_accepted(self, tmp_path, monkeypatch):
