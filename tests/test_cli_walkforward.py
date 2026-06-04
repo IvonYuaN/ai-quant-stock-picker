@@ -529,6 +529,11 @@ class TestCLIDataSources:
         import aqsp.cli as cli_mod
 
         monkeypatch.delenv("AQSP_SOURCE_HEALTH", raising=False)
+        monkeypatch.setattr(
+            cli_mod,
+            "prioritize_source_ids",
+            lambda source_ids, path=None: list(source_ids),
+        )
 
         class DummySource:
             def __init__(self, *args, **kwargs):
