@@ -5,7 +5,7 @@ from datetime import date
 import pandas as pd
 
 from aqsp.core.errors import DataError
-from aqsp.data.tushare_pit import TusharePitClient
+from aqsp.data.tushare_pit import TusharePitClient, load_tushare_pit_config
 
 
 def test_fetch_disclosure_dates_suppresses_noisy_broken_pipe_output(
@@ -89,3 +89,16 @@ def test_fetch_trade_calendar_uses_safe_call_when_successful() -> None:
 
     assert list(df.columns) == ["exchange", "cal_date", "is_open", "pretrade_date"]
     assert df.iloc[0]["cal_date"] == "2024-01-02"
+
+
+def test_load_tushare_pit_config_reads_project_env_when_process_env_missing(
+    monkeypatch, tmp_path
+) -> None:
+    env_path = tmp_path / ".env"
+    env_path.write_text("TUSHARE_TOKEN=test-token\n", encoding="utf-8")
+    monkeypatch.delenv("TUSHARE_TOKEN", raising=False)
+    monkeypatch.setenv("AQSP_ENV_FILE", str(env_path))
+
+    cfg = load_tushare_pit_config()
+
+    assert cfg.token == "test-token"

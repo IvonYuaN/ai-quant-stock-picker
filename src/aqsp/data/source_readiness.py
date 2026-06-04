@@ -8,6 +8,7 @@ from typing import Literal
 from aqsp.core.time import today_shanghai
 from aqsp.data.registry import DataSourceRegistryEntry
 from aqsp.data.source_health import read_source_auth, record_source_auth
+from aqsp.utils.env import read_project_env_value
 
 WorkloadId = Literal["live_short", "walkforward", "pit"]
 
@@ -156,7 +157,9 @@ def inspect_source_readiness(
         )
 
     if entry.id == "tushare":
-        token = os.getenv("TUSHARE_TOKEN", "").strip()
+        token = os.getenv("TUSHARE_TOKEN", "").strip() or read_project_env_value(
+            "TUSHARE_TOKEN"
+        )
         if probe_auth:
             state = _probe_tushare()
             return SourceReadinessSnapshot(
@@ -246,7 +249,9 @@ def _probe_baostock():
 
 
 def _probe_tushare():
-    token = os.getenv("TUSHARE_TOKEN", "").strip()
+    token = os.getenv("TUSHARE_TOKEN", "").strip() or read_project_env_value(
+        "TUSHARE_TOKEN"
+    )
     if not token:
         record_source_auth("tushare", "missing_env", "缺少 TUSHARE_TOKEN。")
         return read_source_auth("tushare")

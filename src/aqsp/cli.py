@@ -75,6 +75,7 @@ from aqsp.risk.circuit_breaker import CircuitBreaker
 from aqsp.strategy import screen_universe
 from aqsp.strategies.thresholds import load_thresholds
 from aqsp.universe import DEFAULT_SYMBOLS
+from aqsp.utils.env import read_env_value
 from aqsp.briefing.debate import (
     AShareDebateCoordinator,
     DebateResult,
@@ -180,20 +181,6 @@ def _extract_meaningful_name_from_frame(frame: pd.DataFrame, symbol: str) -> str
     return str(names.iloc[-1]) if not names.empty else ""
 
 
-def _read_env_value(path: str | Path, key: str) -> str:
-    env_path = Path(path)
-    if not env_path.exists():
-        return ""
-    for raw_line in env_path.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        name, value = line.split("=", 1)
-        if name.strip() == key:
-            return value.strip().strip('"').strip("'")
-    return ""
-
-
 def _load_optional_symbol_name_map(symbols: list[str]) -> dict[str, str]:
     if not symbols:
         return {}
@@ -250,7 +237,7 @@ def _enrich_pick_names(
 def _resolve_sqlite_db_path() -> str | None:
     db_candidates = [
         os.getenv("AQSP_SQLITE_DB_PATH", "").strip(),
-        _read_env_value(".env", "AQSP_SQLITE_DB_PATH"),
+        read_env_value(".env", "AQSP_SQLITE_DB_PATH"),
         "/opt/market-data/astocks_qfq.db",
         "A股量化分析数据/astocks_qfq.db",
     ]
@@ -1043,7 +1030,9 @@ def _resolve_run_symbols(
     try:
         source = _get_source(source_name)
     except DataError:
-        return list(DEFAULT_SYMBOLS[:max_universe] if max_universe > 0 else DEFAULT_SYMBOLS)
+        return list(
+            DEFAULT_SYMBOLS[:max_universe] if max_universe > 0 else DEFAULT_SYMBOLS
+        )
     if hasattr(source, "get_liquid_symbols"):
         try:
             liquid_symbols = source.get_liquid_symbols(
@@ -1707,11 +1696,7 @@ def _notification_gate_actions(
         actions.append(
             "继续按日运行主链，先把冷启动样本积累到 "
             f"{COLD_START_MIN_DAYS} 个独立信号日"
-            + (
-                f"（当前还差 {remaining_days} 天）"
-                if remaining_days > 0
-                else ""
-            )
+            + (f"（当前还差 {remaining_days} 天）" if remaining_days > 0 else "")
             + "。"
         )
     if (
@@ -1726,7 +1711,9 @@ def _notification_gate_actions(
     if "DSR 未过门" in joined or "PBO 未过门" in joined:
         actions.append("在双门过线前保留观察模式，不要开启自动通知或放大仓位。")
     if "held-out" in joined:
-        actions.append("回测窗口退回到 2024-12-31 及以前，避免 held-out 成绩污染通知门禁。")
+        actions.append(
+            "回测窗口退回到 2024-12-31 及以前，避免 held-out 成绩污染通知门禁。"
+        )
 
     if not actions:
         actions.append("先处理上述门禁原因，再重新执行 `aqsp run --notify`。")
@@ -2379,7 +2366,9 @@ def run_scheduled(args: argparse.Namespace) -> int:
     )
 
     # 执行摘要：3秒抓重点，插在报告标题后第一段
-    tradable = [p for p in picks if p.rating in ("strong_buy_candidate", "buy_candidate")]
+    tradable = [
+        p for p in picks if p.rating in ("strong_buy_candidate", "buy_candidate")
+    ]
     summary_lines = [
         "",
         "---",
@@ -2401,7 +2390,9 @@ def run_scheduled(args: argparse.Namespace) -> int:
             summary_lines.append(f"📋 **其他候选**: {others}")
 
     if is_cold_start:
-        summary_lines.append(f"⏳ 冷启动期: {cold_start_days}/{COLD_START_MIN_DAYS} 天（策略权重未调整，仅供观察）")
+        summary_lines.append(
+            f"⏳ 冷启动期: {cold_start_days}/{COLD_START_MIN_DAYS} 天（策略权重未调整，仅供观察）"
+        )
 
     summary_lines.append("")
     summary_lines.append("---")
@@ -2410,7 +2401,12 @@ def run_scheduled(args: argparse.Namespace) -> int:
     # 把摘要插到标题行之后（第一个 \n\n 之后）
     title_end = markdown.find("\n\n")
     if title_end > 0:
-        markdown = markdown[:title_end] + "\n" + "\n".join(summary_lines) + markdown[title_end:]
+        markdown = (
+            markdown[:title_end]
+            + "\n"
+            + "\n".join(summary_lines)
+            + markdown[title_end:]
+        )
     if status.triggered:
         markdown += (
             "\n\n## 组合保护\n"
@@ -2515,7 +2511,9 @@ def run_scheduled(args: argparse.Namespace) -> int:
         for action in next_actions:
             print(f"   - {action}")
         # 在 markdown 头部加警告（§1.3 #13）
-        markdown = _format_notification_gate_block(gate_reasons, next_actions) + markdown
+        markdown = (
+            _format_notification_gate_block(gate_reasons, next_actions) + markdown
+        )
         args.notify = False
     # 写报告（可能包含警告）
     Path(args.report).write_text(markdown, encoding="utf-8")
@@ -3038,7 +3036,10 @@ def run_briefing(args: argparse.Namespace) -> int:
 
     portfolio_summary = None
     if picks:
-        from aqsp.portfolio.manager import PortfolioDecision, summarize_portfolio_decisions
+        from aqsp.portfolio.manager import (
+            PortfolioDecision,
+            summarize_portfolio_decisions,
+        )
 
         portfolio_summary = summarize_portfolio_decisions(
             picks,

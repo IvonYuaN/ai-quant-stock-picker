@@ -10,6 +10,7 @@ from typing import Any
 import pandas as pd
 
 from aqsp.core.errors import DataError
+from aqsp.utils.env import read_project_env_value
 
 
 @dataclass(frozen=True)
@@ -35,8 +36,9 @@ class TusharePitClient:
         stdout_buffer = io.StringIO()
         stderr_buffer = io.StringIO()
         try:
-            with contextlib.redirect_stdout(stdout_buffer), contextlib.redirect_stderr(
-                stderr_buffer
+            with (
+                contextlib.redirect_stdout(stdout_buffer),
+                contextlib.redirect_stderr(stderr_buffer),
             ):
                 return method(**kwargs)
         except Exception as exc:
@@ -197,7 +199,9 @@ class TusharePitClient:
 
 
 def load_tushare_pit_config() -> TusharePitConfig:
-    token = os.getenv("TUSHARE_TOKEN", "").strip()
+    token = os.getenv("TUSHARE_TOKEN", "").strip() or read_project_env_value(
+        "TUSHARE_TOKEN"
+    )
     if not token:
         raise ValueError("TUSHARE_TOKEN is required for tushare PIT data")
     return TusharePitConfig(token=token)

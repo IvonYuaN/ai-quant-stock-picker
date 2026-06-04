@@ -22,6 +22,7 @@ def test_workload_fit_for_source_marks_short_term_and_walkforward_differently() 
 
 def test_inspect_source_readiness_when_tushare_token_missing(monkeypatch) -> None:
     monkeypatch.delenv("TUSHARE_TOKEN", raising=False)
+    monkeypatch.delenv("AQSP_ENV_FILE", raising=False)
     entry = get_registry_entry("tushare")
     assert entry is not None
 
@@ -30,6 +31,22 @@ def test_inspect_source_readiness_when_tushare_token_missing(monkeypatch) -> Non
     assert snapshot.auth_kind == "env_token"
     assert snapshot.auth_status == "missing_env"
     assert "TUSHARE_TOKEN" in snapshot.auth_message
+
+
+def test_inspect_source_readiness_reads_tushare_token_from_project_env(
+    monkeypatch, tmp_path
+) -> None:
+    env_path = tmp_path / ".env"
+    env_path.write_text("TUSHARE_TOKEN=demo-token\n", encoding="utf-8")
+    monkeypatch.delenv("TUSHARE_TOKEN", raising=False)
+    monkeypatch.setenv("AQSP_ENV_FILE", str(env_path))
+    entry = get_registry_entry("tushare")
+    assert entry is not None
+
+    snapshot = inspect_source_readiness(entry, probe_auth=False)
+
+    assert snapshot.auth_status in {"configured", "ok", "auth_failed"}
+    assert snapshot.auth_status != "missing_env"
 
 
 def test_inspect_source_readiness_when_baostock_not_yet_checked() -> None:
