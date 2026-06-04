@@ -181,7 +181,7 @@ def inspect_source_readiness(
                 active_probe=False,
                 workload_fit=workload_fit_for_source(entry.id),
             )
-        if cached is not None:
+        if cached is not None and cached.status != "missing_env":
             return SourceReadinessSnapshot(
                 source_id=entry.id,
                 auth_kind=auth_kind,
