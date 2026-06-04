@@ -6,8 +6,8 @@ composite:
   volume_weight: 0.0
   mean_reversion_weight: 0.0
   triple_rise_weight: 0.3
-description: "策略阈值配置 — v1.1.0：2026-05-30 CSCV 双门验证通过（DSR=1.9174, PBO=24.21%），Held-out 验证通过（Sharpe=5.93），正式启用"
-effective_from: '2026-05-30'
+description: "策略阈值配置 — v1.1.1：在 v1.1.0 基础上接入 N 字反弹主链形态识别，待下一轮 walk-forward 统一复核"
+effective_from: '2026-06-04'
 execution:
   commission_rate: 0.0003
   limit_down_tolerance: 0.005
@@ -216,4 +216,14 @@ closing_premium:
     closing_trend: 0.20
     technical: 0.20
     support_resistance: 0.15
-version: 1.1.0
+n_rebound:
+  enabled: true
+  lookback_days: 30
+  max_days_since_limit_up: 12
+  limit_up_min_pct: 9.5
+  pullback_min_pct: 3.0
+  pullback_max_pct: 15.0
+  volume_shrink_ratio: 0.75
+  ma5_deviation_max_pct: 8.0
+  min_score: 14.0
+version: 1.1.1

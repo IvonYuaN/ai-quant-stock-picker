@@ -41,6 +41,11 @@ from aqsp.strategies.event_driven import (
     EventSignal,
     format_event_signals,
 )
+from aqsp.strategies.n_rebound import (
+    NReboundStrategy,
+    NReboundSignal,
+    detect_n_rebound_signal,
+)
 from aqsp.strategies.thresholds import Thresholds, load_thresholds
 
 __all__ = [
@@ -73,6 +78,9 @@ __all__ = [
     "EventDrivenStrategy",
     "EventSignal",
     "format_event_signals",
+    "NReboundStrategy",
+    "NReboundSignal",
+    "detect_n_rebound_signal",
     "Thresholds",
     "load_thresholds",
 ]

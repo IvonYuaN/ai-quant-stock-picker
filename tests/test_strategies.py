@@ -14,12 +14,13 @@ from aqsp.strategies.closing_premium import (
     PremiumSignal,
     format_closing_signals,
 )
+from aqsp.strategies.n_rebound import NReboundStrategy, detect_n_rebound_signal
 from aqsp.strategies.thresholds import load_thresholds
 
 
 def test_load_thresholds():
     thresholds = load_thresholds()
-    assert thresholds.version == "1.1.0"
+    assert thresholds.version == "1.1.1"
     assert thresholds.last_walkforward_run == "2026-05-30"
     assert thresholds.momentum.lookback_days == 60
     assert thresholds.momentum.weights.momentum == 0.4
@@ -35,6 +36,8 @@ def test_load_thresholds():
     assert thresholds.regime.volatility_high == 0.3
     assert thresholds.regime.min_sample_size == 20
     assert thresholds.regime.cooldown_hours == 24
+    assert thresholds.n_rebound.enabled is True
+    assert thresholds.n_rebound.lookback_days == 30
 
 
 def test_momentum_strategy():
@@ -56,7 +59,7 @@ def test_momentum_strategy():
     strategy = MomentumStrategy(config)
 
     assert strategy.id == "momentum"
-    assert strategy.version == "1.1.0"
+    assert strategy.version == "1.1.1"
     assert strategy.hypothesis != ""
 
     scores = strategy.calculate_score({"600000": df})
@@ -325,7 +328,7 @@ def test_closing_premium_strategy_init():
 
     assert strategy.id == "closing_premium"
     assert strategy.name == "closing_premium"
-    assert strategy.version == "1.1.0"
+    assert strategy.version == "1.1.1"
     assert strategy.hypothesis == "尾盘异动股票往往有资金介入，次日有溢价空间"
     assert "stable_bull" in strategy.regime_required
     assert "stable_sideways" in strategy.regime_required
@@ -518,4 +521,93 @@ def test_closing_premium_evaluate_regime_filter():
 
     signal = strategy.evaluate(df, "stable_bull")
     assert isinstance(signal.fired, bool)
-    assert isinstance(signal.score, float)
+
+
+def _make_n_rebound_df() -> pd.DataFrame:
+    base_closes = [9.7 + i * 0.015 for i in range(20)]
+    pattern_closes = [
+        10.0,
+        10.05,
+        10.08,
+        10.12,
+        10.18,
+        10.22,
+        10.28,
+        10.35,
+        10.42,
+        10.48,
+        10.55,
+        10.65,
+        11.72,
+        11.45,
+        11.34,
+        11.33,
+        11.34,
+        11.35,
+        11.35,
+        11.34,
+        11.34,
+        11.34,
+    ]
+    closes = base_closes + pattern_closes
+    base_volumes = [1_000_000] * len(base_closes)
+    pattern_volumes = [
+        1_000_000,
+        1_010_000,
+        1_000_000,
+        1_020_000,
+        1_030_000,
+        1_040_000,
+        1_050_000,
+        1_060_000,
+        1_050_000,
+        1_040_000,
+        1_020_000,
+        1_100_000,
+        2_400_000,
+        1_100_000,
+        980_000,
+        920_000,
+        900_000,
+        880_000,
+        850_000,
+        820_000,
+        800_000,
+        780_000,
+    ]
+    volumes = base_volumes + pattern_volumes
+    dates = pd.date_range("2026-01-01", periods=len(closes), freq="D")
+    df = pd.DataFrame(
+        {
+            "date": dates.strftime("%Y-%m-%d"),
+            "symbol": ["600000"] * len(closes),
+            "name": ["浦发银行"] * len(closes),
+            "open": [price * 0.99 for price in closes],
+            "high": [price * 1.01 for price in closes],
+            "low": [price * 0.985 for price in closes],
+            "close": closes,
+            "volume": volumes,
+            "amount": [price * volume * 100 for price, volume in zip(closes, volumes)],
+        }
+    )
+    df["ma5"] = df["close"].rolling(5).mean()
+    df["ma20"] = df["close"].rolling(20).mean()
+    return df
+
+
+def test_detect_n_rebound_signal() -> None:
+    thresholds = load_thresholds().n_rebound
+    signal = detect_n_rebound_signal(_make_n_rebound_df(), thresholds=thresholds)
+
+    assert signal is not None
+    assert signal.score >= thresholds.min_score
+    assert signal.days_since_limit_up <= thresholds.max_days_since_limit_up
+    assert signal.pullback_pct >= thresholds.pullback_min_pct
+    assert any("涨停后回调" in reason for reason in signal.reasons)
+
+
+def test_n_rebound_strategy_scores_detected_pattern() -> None:
+    strategy = NReboundStrategy()
+    scores = strategy.calculate_score({"600000": _make_n_rebound_df()})
+
+    assert 0.0 < scores["600000"] <= 1.0

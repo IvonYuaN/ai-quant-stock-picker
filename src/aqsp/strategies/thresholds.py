@@ -276,6 +276,19 @@ class ClosingPremiumThresholds:
 
 
 @dataclass(frozen=True)
+class NReboundThresholds:
+    enabled: bool = True
+    lookback_days: int = 30
+    max_days_since_limit_up: int = 12
+    limit_up_min_pct: float = 9.5
+    pullback_min_pct: float = 3.0
+    pullback_max_pct: float = 15.0
+    volume_shrink_ratio: float = 0.75
+    ma5_deviation_max_pct: float = 8.0
+    min_score: float = 14.0
+
+
+@dataclass(frozen=True)
 class Thresholds:
     version: str = "2.0.0"
     effective_from: str = ""
@@ -297,6 +310,7 @@ class Thresholds:
     closing_premium: ClosingPremiumThresholds = field(
         default_factory=ClosingPremiumThresholds
     )
+    n_rebound: NReboundThresholds = field(default_factory=NReboundThresholds)
 
 
 def _parse_momentum(data: dict) -> MomentumThresholds:
@@ -355,6 +369,10 @@ def _parse_closing_premium(data: dict) -> ClosingPremiumThresholds:
     )
 
 
+def _parse_n_rebound(data: dict) -> NReboundThresholds:
+    return NReboundThresholds(**data)
+
+
 _DEFAULT_REGIME_ADJUSTMENTS: Dict[str, float] = {
     "stable_bull": 1.1,
     "volatile_bull": 0.9,
@@ -405,4 +423,5 @@ def load_thresholds(filepath: str = None) -> Thresholds:
         scoring=ScoringThresholds(**data.get("scoring", {})),
         morning_breakout=_parse_morning_breakout(data.get("morning_breakout", {})),
         closing_premium=_parse_closing_premium(data.get("closing_premium", {})),
+        n_rebound=_parse_n_rebound(data.get("n_rebound", {})),
     )

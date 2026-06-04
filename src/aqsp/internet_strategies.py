@@ -4,6 +4,9 @@ from dataclasses import dataclass
 
 import pandas as pd
 
+from aqsp.strategies.n_rebound import detect_n_rebound_signal
+from aqsp.strategies.thresholds import load_thresholds
+
 
 @dataclass(frozen=True)
 class StrategySignal:
@@ -18,6 +21,7 @@ STRATEGY_SOURCES = {
     "volume_breakout": "放量突破：常见 A 股短线策略，借鉴开源选股项目的放量阳线/突破形态。",
     "ma_pullback": "均线缩量回踩：趋势延续低吸策略，来自通达信/技术分析开源策略常见模板。",
     "bowl_rebound": "碗口反弹：借鉴 A-share Quant Selector 的 BowlReboundStrategy 思路。",
+    "n_rebound": "N字反弹：涨停后缩量回调、结构未破坏、贴近MA5的 A 股短线形态。",
     "low_vol_trend": "低波趋势：趋势不弱且波动收敛，避免纯追高。",
 }
 
@@ -100,7 +104,24 @@ def evaluate_strategy_signals(df: pd.DataFrame) -> list[StrategySignal]:
             )
         )
 
+    n_rebound_signal = _evaluate_n_rebound(df)
+    if n_rebound_signal is not None:
+        signals.append(n_rebound_signal)
+
     return signals
+
+
+def _evaluate_n_rebound(df: pd.DataFrame) -> StrategySignal | None:
+    thresholds = load_thresholds().n_rebound
+    signal = detect_n_rebound_signal(df, thresholds=thresholds)
+    if signal is None:
+        return None
+    return StrategySignal(
+        "n_rebound",
+        "N字反弹",
+        signal.score,
+        signal.reasons,
+    )
 
 
 def _num(value: object, default: float = 0.0) -> float:

@@ -265,6 +265,7 @@ class ClosingReviewer:
             "volume_breakout": "放量突破",
             "ma_pullback": "均线回踩",
             "bowl_rebound": "碗口反弹",
+            "n_rebound": "N字反弹",
             "low_vol_trend": "低波趋势",
             "rps_momentum": "RPS动量",
             "rps_relative_strength": "RPS强势",
