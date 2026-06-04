@@ -197,13 +197,7 @@ def _read_env_value(path: str | Path, key: str) -> str:
 def _load_optional_symbol_name_map(symbols: list[str]) -> dict[str, str]:
     if not symbols:
         return {}
-    db_candidates = [
-        os.getenv("AQSP_SQLITE_DB_PATH", "").strip(),
-        _read_env_value(".env", "AQSP_SQLITE_DB_PATH"),
-        "/opt/market-data/astocks_qfq.db",
-        "A股量化分析数据/astocks_qfq.db",
-    ]
-    db_path = next((p for p in db_candidates if p and Path(str(p)).exists()), None)
+    db_path = _resolve_sqlite_db_path()
     try:
         source = SqliteDbSource(db_path=db_path) if db_path else SqliteDbSource()
     except Exception:
@@ -251,6 +245,26 @@ def _enrich_pick_names(
             continue
         enriched.append(replace(pick, name=resolved_name))
     return enriched
+
+
+def _resolve_sqlite_db_path() -> str | None:
+    db_candidates = [
+        os.getenv("AQSP_SQLITE_DB_PATH", "").strip(),
+        _read_env_value(".env", "AQSP_SQLITE_DB_PATH"),
+        "/opt/market-data/astocks_qfq.db",
+        "A股量化分析数据/astocks_qfq.db",
+    ]
+    return next((str(p) for p in db_candidates if p and Path(str(p)).exists()), None)
+
+
+def _build_sqlite_db_source(*, cache: DataCache | None) -> SqliteDbSource:
+    db_path = _resolve_sqlite_db_path()
+    if db_path:
+        try:
+            return SqliteDbSource(db_path=db_path, cache=cache)
+        except TypeError:
+            return SqliteDbSource(cache=cache)
+    return SqliteDbSource(cache=cache)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -2667,7 +2681,7 @@ def run_walkforward(args: argparse.Namespace) -> int:
         from aqsp.data.pit_financial import enrich_ohlcv_with_pit_financials
 
         # walkforward 直接读本地历史库，避免被短周期 runtime cache 截断区间。
-        src = SqliteDbSource(cache=None)
+        src = _build_sqlite_db_source(cache=None)
         start_d = _date.fromisoformat(args.start)
         end_d = _date.fromisoformat(args.end)
         available = src.get_available_symbols()

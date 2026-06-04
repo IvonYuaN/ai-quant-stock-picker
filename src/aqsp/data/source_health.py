@@ -135,7 +135,7 @@ def describe_source_health(
     if fallback_used:
         return (
             "fallback",
-            f"fallback 到 {actual_source}；plan成功/失败 {plan_successes}/{plan_failures}，源成功/失败 {source_successes}/{source_failures}",
+            f"fallback 到 {actual_source}；plan成功/失败 {plan_successes}/{plan_failures}；源成功/失败 {source_successes}/{source_failures}",
             True,
         )
     if source_failures >= 2 and source_successes == 0:

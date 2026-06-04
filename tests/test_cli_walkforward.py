@@ -1194,6 +1194,110 @@ class TestCLIPoolSelection:
         assert seen["symbols"] == ["000915", "000921"]
         assert report_path.exists()
 
+    def test_walkforward_sqlite_db_reads_db_path_from_dotenv(
+        self, monkeypatch, tmp_path
+    ):
+        from aqsp.cli import main
+
+        seen: dict[str, object] = {}
+        db_path = tmp_path / "market" / "astocks_qfq.db"
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        db_path.write_text("", encoding="utf-8")
+        (tmp_path / ".env").write_text(
+            f"AQSP_SQLITE_DB_PATH={db_path}\n",
+            encoding="utf-8",
+        )
+
+        class DummySqliteDbSource:
+            def __init__(self, db_path=None, cache=None) -> None:
+                seen["db_path"] = str(db_path) if db_path is not None else None
+                seen["cache"] = cache
+
+            def get_available_symbols(self):
+                return ["600519"]
+
+            def fetch_daily(self, symbols, start, end, adjust=""):
+                dates = pd.date_range(start="2024-01-01", periods=140, freq="B")
+                return {
+                    "600519": pd.DataFrame(
+                        {
+                            "date": dates.strftime("%Y-%m-%d"),
+                            "symbol": "600519",
+                            "name": "贵州茅台",
+                            "open": 100.0,
+                            "high": 101.0,
+                            "low": 99.0,
+                            "close": 100.5,
+                            "volume": 1_000_000,
+                            "amount": 100_000_000,
+                            "suspended": False,
+                            "limit_up": 110.0,
+                            "limit_down": 90.0,
+                        }
+                    )
+                }
+
+        class DummyTester:
+            def __init__(self, **kwargs) -> None:
+                pass
+
+            def run(self, filtered, start_date=None, end_date=None):
+                return SimpleNamespace(
+                    overall=SimpleNamespace(
+                        total_return=0.1,
+                        annual_return=0.12,
+                        max_drawdown=0.03,
+                        sharpe_ratio=1.2,
+                        win_rate=0.55,
+                        profit_factor=1.3,
+                        trades=10,
+                        not_executable=0,
+                    ),
+                    deflated_sharpe=1.1,
+                    pbo=0.2,
+                    robustness_score=0.8,
+                    parameter_std=0.1,
+                    regime_winrates={},
+                    periods=[],
+                )
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("AQSP_SQLITE_DB_PATH", raising=False)
+        monkeypatch.setattr("aqsp.cli.SqliteDbSource", DummySqliteDbSource)
+        monkeypatch.setattr(
+            "aqsp.data.pit_financial.enrich_ohlcv_with_pit_financials",
+            lambda frames, symbols, start, end, cache=None: SimpleNamespace(
+                frames=frames, financial_symbol_count=0, disclosure_symbol_count=0
+            ),
+        )
+        monkeypatch.setattr("aqsp.backtest.walk_forward.WalkForwardTester", DummyTester)
+        monkeypatch.setattr(
+            "aqsp.strategies.composite.CompositeStrategy",
+            lambda thresholds=None: object(),
+        )
+
+        report_path = tmp_path / "walkforward-dotenv-db.md"
+        result = main(
+            [
+                "walkforward",
+                "--source",
+                "sqlite_db",
+                "--symbols",
+                "600519",
+                "--start",
+                "2024-01-01",
+                "--end",
+                "2024-06-30",
+                "--report",
+                str(report_path),
+            ]
+        )
+
+        assert result == 0
+        assert seen["db_path"] == str(db_path)
+        assert seen["cache"] is None
+        assert report_path.exists()
+
     def test_screen_pool_uses_universe_pool_symbols(self, monkeypatch):
         from aqsp.cli import main
 
