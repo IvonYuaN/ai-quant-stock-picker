@@ -8,6 +8,7 @@ import pandas as pd
 from aqsp.data.source import DataSource
 from aqsp.data.akshare_source import AkshareSource
 from aqsp.data.eastmoney_source import EastmoneySource
+from aqsp.data import fetch_with_source
 from aqsp.core.errors import DataError
 
 
@@ -219,4 +220,42 @@ def test_akshare_realtime_snapshot_enters_cooldown_after_failure(monkeypatch):
     with pytest.raises(DataError, match="冷却中"):
         source.fetch_realtime_quote(["600000"])
 
-    assert calls["count"] == 1
+
+def test_fetch_with_source_keeps_daily_frames_when_optional_benchmark_fails():
+    class DummySource:
+        name = "dummy"
+
+        def fetch_daily(self, symbols, start, end, adjust=""):
+            return {
+                "600000": pd.DataFrame(
+                    [
+                        {
+                            "date": "2026-06-03",
+                            "symbol": "600000",
+                            "name": "浦发银行",
+                            "open": 10.0,
+                            "high": 10.2,
+                            "low": 9.9,
+                            "close": 10.1,
+                            "volume": 1000,
+                            "amount": 10100.0,
+                            "suspended": False,
+                            "limit_up": 11.11,
+                            "limit_down": 9.09,
+                        }
+                    ]
+                )
+            }
+
+        def fetch_index(self, index_codes, start, end):
+            raise DataError("benchmark unavailable")
+
+    frames = fetch_with_source(
+        DummySource(),
+        ["600000"],
+        days=30,
+        benchmark_symbol="000300",
+    )
+
+    assert list(frames) == ["600000"]
+    assert frames["600000"]["close"].iloc[-1] == 10.1

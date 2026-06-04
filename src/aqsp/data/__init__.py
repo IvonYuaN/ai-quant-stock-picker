@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -36,6 +37,28 @@ from aqsp.data.trading_calendar import (
 )
 from aqsp.indicators import normalize_ohlcv
 
+_logger = logging.getLogger(__name__)
+
+
+def _attach_optional_benchmark(
+    out: dict[str, pd.DataFrame],
+    source: DataSource,
+    *,
+    benchmark_symbol: str | None,
+    start: date,
+    end: date,
+    days: int,
+) -> None:
+    if not benchmark_symbol or benchmark_symbol in out:
+        return
+    try:
+        bench = source.fetch_index([benchmark_symbol], start, end)
+    except Exception as exc:
+        _logger.warning("optional benchmark fetch failed %s via %s: %s", benchmark_symbol, source.name, exc)
+        return
+    if benchmark_symbol in bench:
+        out[benchmark_symbol] = bench[benchmark_symbol].tail(days).reset_index(drop=True)
+
 
 def load_csv(path: str | Path) -> dict[str, pd.DataFrame]:
     df = normalize_ohlcv(pd.read_csv(path, dtype={"symbol": str, "代码": str}))
@@ -67,12 +90,14 @@ def fetch_akshare(
     out = source.fetch_daily(symbols, start, end, adjust)
     for symbol, df in out.items():
         out[symbol] = df.tail(days).reset_index(drop=True)
-    if benchmark_symbol and benchmark_symbol not in out:
-        bench = source.fetch_index([benchmark_symbol], start, end)
-        if benchmark_symbol in bench:
-            out[benchmark_symbol] = (
-                bench[benchmark_symbol].tail(days).reset_index(drop=True)
-            )
+    _attach_optional_benchmark(
+        out,
+        source,
+        benchmark_symbol=benchmark_symbol,
+        start=start,
+        end=end,
+        days=days,
+    )
     return out
 
 
@@ -89,12 +114,14 @@ def fetch_with_source(
     out = source.fetch_daily(symbols, start, end, adjust)
     for symbol, df in out.items():
         out[symbol] = df.tail(days).reset_index(drop=True)
-    if benchmark_symbol and benchmark_symbol not in out:
-        bench = source.fetch_index([benchmark_symbol], start, end)
-        if benchmark_symbol in bench:
-            out[benchmark_symbol] = (
-                bench[benchmark_symbol].tail(days).reset_index(drop=True)
-            )
+    _attach_optional_benchmark(
+        out,
+        source,
+        benchmark_symbol=benchmark_symbol,
+        start=start,
+        end=end,
+        days=days,
+    )
     return out
 
 
