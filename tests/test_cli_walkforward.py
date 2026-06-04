@@ -528,6 +528,8 @@ class TestCLIDataSources:
     ):
         import aqsp.cli as cli_mod
 
+        monkeypatch.delenv("AQSP_SOURCE_HEALTH", raising=False)
+
         class DummySource:
             def __init__(self, *args, **kwargs):
                 pass

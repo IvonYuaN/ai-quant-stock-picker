@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -15,7 +16,7 @@ def test_briefing_runs_without_llm():
         output_path = f.name
     try:
         result = subprocess.run(
-            ["python3", "-m", "aqsp", "briefing", "--output", output_path],
+            [sys.executable, "-m", "aqsp", "briefing", "--output", output_path],
             capture_output=True,
             text=True,
             timeout=60,
