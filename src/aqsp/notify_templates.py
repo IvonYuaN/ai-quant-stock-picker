@@ -8,6 +8,7 @@ from aqsp.briefing.generator import Briefing
 from aqsp.briefing.debate import DebateResult
 from aqsp.monitor.checker import MonitorResult
 from aqsp.models import PickResult
+from aqsp.portfolio.manager import PortfolioDecisionSummary
 from aqsp.notifier import prepend_source_status_banner
 from aqsp.presentation import format_symbol_name
 from aqsp.strategies.closing_premium import PremiumSignal, format_closing_signals
@@ -53,6 +54,7 @@ def build_daily_run_notification(
     *,
     run_date: str,
     tradable: Sequence[PickResult],
+    portfolio_summary: PortfolioDecisionSummary | None = None,
     actual_source: str,
     source_health_label: str,
     source_health_message: str,
@@ -80,6 +82,14 @@ def build_daily_run_notification(
         lines.append("- 主链状态: 今日无可执行标的，仅观察")
     if is_cold_start and cold_start_min_days > 0:
         lines.append(f"- 冷启动进度: {cold_start_days}/{cold_start_min_days}")
+    if portfolio_summary is not None and portfolio_summary.allocations:
+        top_alloc = "、".join(
+            f"{item.symbol} {item.weight:.0%}"
+            for item in portfolio_summary.allocations[:3]
+        )
+        lines.append(f"- 配仓建议: {top_alloc}")
+    if portfolio_summary is not None and portfolio_summary.cash_reserve > 0:
+        lines.append(f"- 现金留存: {portfolio_summary.cash_reserve:.0%}")
 
     lines.extend(["", "## Top 候选", ""])
     if tradable:

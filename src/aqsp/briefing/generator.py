@@ -10,7 +10,11 @@ from jinja2 import Environment, FileSystemLoader
 
 from aqsp.core.time import now_shanghai
 from aqsp.core.types import PickResult
-from aqsp.portfolio.manager import PortfolioDecisionSummary
+from aqsp.portfolio.manager import (
+    PortfolioDecision,
+    PortfolioDecisionSummary,
+    summarize_portfolio_decisions,
+)
 from aqsp.presentation import format_symbol_name
 from aqsp.research.summary import ResearchSummary
 from aqsp.ratings import rating_label
@@ -161,6 +165,16 @@ class Briefing:
                 items.append(
                     "- 候选观察池: " + "、".join(self.portfolio_summary.watchlist)
                 )
+            if self.portfolio_summary.allocations:
+                top_alloc = "、".join(
+                    f"{item.symbol} {item.name} {item.weight:.0%}"
+                    for item in self.portfolio_summary.allocations[:3]
+                )
+                items.append(f"- 配仓建议: {top_alloc}")
+            if self.portfolio_summary.cash_reserve > 0:
+                items.append(
+                    f"- 现金留存: {self.portfolio_summary.cash_reserve:.0%}"
+                )
         if self.debate_results:
             items.append(
                 f"- 多Agent辩论: 已分析 {len(self.debate_results[:3])} 只重点候选"
@@ -202,6 +216,12 @@ class Briefing:
             items.append(
                 "- 候选观察池: " + "、".join(self.portfolio_summary.watchlist[:3])
             )
+        if self.portfolio_summary and self.portfolio_summary.allocations:
+            top_alloc = "、".join(
+                f"{item.symbol} {item.weight:.0%}"
+                for item in self.portfolio_summary.allocations[:2]
+            )
+            items.append(f"- 配仓执行: {top_alloc}")
         if debate_points:
             items.append(f"- 辩论结论: {self._strip_leading_markers(debate_points[0])}")
         if top_scores:
@@ -346,12 +366,13 @@ class BriefingGenerator:
         circuit_breaker_status: object | None = None,
         source_status: dict[str, str | bool] | None = None,
         research_summary: ResearchSummary | None = None,
+        portfolio_summary: PortfolioDecisionSummary | None = None,
     ) -> Briefing:
         date_str = now_shanghai().strftime("%Y-%m-%d %H:%M")
         ordered_picks = sorted(picks, key=lambda item: item.score, reverse=True)
-        portfolio_summary = self._build_portfolio_summary(ordered_picks)
+        summary = portfolio_summary or self._build_portfolio_summary(ordered_picks)
         sections = [
-            self._build_main_chain_section(ordered_picks, portfolio_summary),
+            self._build_main_chain_section(ordered_picks, summary),
             self._build_regime_section(regime, circuit_breaker_status),
             self._build_source_section(source_status),
             self._build_research_section(research_summary),
@@ -379,7 +400,7 @@ class BriefingGenerator:
             date=date_str,
             sections=sections,
             debate_results=debate_results,
-            portfolio_summary=portfolio_summary,
+            portfolio_summary=summary,
         )
 
     def _build_main_chain_section(
@@ -401,6 +422,15 @@ class BriefingGenerator:
             lines.append("- 可执行主链: " + "、".join(portfolio_summary.top_focus[:3]))
         if portfolio_summary.watchlist:
             lines.append("- 候选观察池: " + "、".join(portfolio_summary.watchlist[:3]))
+        if portfolio_summary.allocations:
+            lines.append("- 组合配置建议:")
+            for item in portfolio_summary.allocations[:3]:
+                display = format_symbol_name(item.symbol, item.name)
+                lines.append(f"  - {display}: {item.weight:.0%}")
+            if portfolio_summary.cash_reserve > 0:
+                lines.append(f"  - 现金留存: {portfolio_summary.cash_reserve:.0%}")
+        if portfolio_summary.allocation_note:
+            lines.append(f"- 配置说明: {portfolio_summary.allocation_note}")
 
         lead_pick = picks[0]
         lead_display = format_symbol_name(lead_pick.symbol, lead_pick.name)
@@ -416,41 +446,18 @@ class BriefingGenerator:
     ) -> PortfolioDecisionSummary | None:
         if not picks:
             return None
-        promote = sum(
-            1
+        decisions = [
+            PortfolioDecision(
+                symbol=pick.symbol,
+                action=str(pick.metrics.get("portfolio_action", "keep") or "keep"),
+                score_delta=0.0,
+                reasons=("保持原排序",),
+            )
             for pick in picks
-            if str(pick.metrics.get("portfolio_action", "")) == "promote"
-        )
-        downgrade = sum(
-            1
-            for pick in picks
-            if str(pick.metrics.get("portfolio_action", "")) == "downgrade"
-        )
-        keep = sum(
-            1
-            for pick in picks
-            if str(pick.metrics.get("portfolio_action", "")) == "keep"
-        )
-
-        def _display_name(pick: PickResult) -> str:
-            return format_symbol_name(pick.symbol, pick.name)
-
-        focus = [
-            _display_name(pick)
-            for pick in picks
-            if rating_label(pick.rating) in {"重点关注", "观察候选"}
-        ][:3]
-        watchlist = [
-            _display_name(pick)
-            for pick in picks
-            if rating_label(pick.rating) in {"候选观察池", "仅观察"}
-        ][:3]
-        return PortfolioDecisionSummary(
-            promote_count=promote,
-            downgrade_count=downgrade,
-            keep_count=keep,
-            top_focus=tuple(focus),
-            watchlist=tuple(watchlist),
+        ]
+        return summarize_portfolio_decisions(
+            picks,
+            decisions,
         )
 
     def _build_regime_section(

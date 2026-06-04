@@ -5,6 +5,10 @@ from dataclasses import dataclass
 from aqsp.core.types import PickResult
 from aqsp.presentation import format_symbol_name
 from aqsp.portfolio.correlation import CorrelationResult
+from aqsp.portfolio.optimizer import (
+    PortfolioAllocation,
+    optimize_portfolio_allocations,
+)
 from aqsp.portfolio.sector_check import ConcentrationResult, get_sector
 from aqsp.ratings import is_tradable_rating
 
@@ -24,6 +28,9 @@ class PortfolioDecisionSummary:
     keep_count: int
     top_focus: tuple[str, ...]
     watchlist: tuple[str, ...]
+    allocations: tuple[PortfolioAllocation, ...]
+    cash_reserve: float
+    allocation_note: str
 
     @property
     def headline(self) -> str:
@@ -35,6 +42,10 @@ class PortfolioDecisionSummary:
     @property
     def has_actionable_focus(self) -> bool:
         return bool(self.top_focus)
+
+    @property
+    def has_allocations(self) -> bool:
+        return bool(self.allocations)
 
 
 @dataclass(frozen=True)
@@ -51,6 +62,9 @@ def _display_name(pick: PickResult) -> str:
 def summarize_portfolio_decisions(
     picks: list[PickResult],
     decisions: list[PortfolioDecision],
+    *,
+    concentration: ConcentrationResult | None = None,
+    correlation_result: CorrelationResult | None = None,
 ) -> PortfolioDecisionSummary:
     promote_count = sum(1 for item in decisions if item.action == "promote")
     downgrade_count = sum(1 for item in decisions if item.action == "downgrade")
@@ -67,12 +81,22 @@ def summarize_portfolio_decisions(
         for pick in picks
         if pick.metrics.get("portfolio_action") == "downgrade" or pick.rating == "watch"
     )[:5]
+    decision_by_symbol = {item.symbol: item for item in decisions}
+    optimization = optimize_portfolio_allocations(
+        picks,
+        decision_by_symbol,
+        concentration=concentration,
+        correlation_result=correlation_result,
+    )
     return PortfolioDecisionSummary(
         promote_count=promote_count,
         downgrade_count=downgrade_count,
         keep_count=keep_count,
         top_focus=top_focus,
         watchlist=watchlist,
+        allocations=optimization.allocations,
+        cash_reserve=optimization.cash_reserve,
+        allocation_note=optimization.note,
     )
 
 
@@ -181,5 +205,10 @@ def apply_portfolio_manager(
     return PortfolioDecisionBundle(
         picks=updated,
         decisions=tuple(decisions),
-        summary=summarize_portfolio_decisions(updated, decisions),
+        summary=summarize_portfolio_decisions(
+            updated,
+            decisions,
+            concentration=concentration,
+            correlation_result=correlation_result,
+        ),
     )

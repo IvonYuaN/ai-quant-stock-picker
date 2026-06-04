@@ -2388,6 +2388,7 @@ def run_scheduled(args: argparse.Namespace) -> int:
             build_daily_run_notification(
                 run_date=latest.isoformat(),
                 tradable=tradable,
+                portfolio_summary=portfolio_summary,
                 actual_source=actual_source,
                 source_health_label=source_health_label,
                 source_health_message=source_health_message,
@@ -2893,6 +2894,23 @@ def run_briefing(args: argparse.Namespace) -> int:
 
     picks = _enrich_pick_names(picks)
 
+    portfolio_summary = None
+    if picks:
+        from aqsp.portfolio.manager import PortfolioDecision, summarize_portfolio_decisions
+
+        portfolio_summary = summarize_portfolio_decisions(
+            picks,
+            [
+                PortfolioDecision(
+                    symbol=pick.symbol,
+                    action=str(pick.metrics.get("portfolio_action", "keep") or "keep"),
+                    score_delta=0.0,
+                    reasons=("保持原排序",),
+                )
+                for pick in picks
+            ],
+        )
+
     generator = BriefingGenerator()
     research_summary = load_research_summary()
     briefing = generator.generate(
@@ -2901,6 +2919,7 @@ def run_briefing(args: argparse.Namespace) -> int:
         regime=regime_str,
         source_status=source_status,
         research_summary=research_summary,
+        portfolio_summary=portfolio_summary,
     )
     briefing = enhance_briefing(briefing, enable_llm=args.enable_llm)
 

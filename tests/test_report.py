@@ -152,6 +152,9 @@ def test_report_renders_final_decision_board_first() -> None:
             keep_count=0,
             top_focus=("600900 长江电力",),
             watchlist=(),
+            allocations=(),
+            cash_reserve=0.0,
+            allocation_note="",
         ),
     )
 
@@ -161,6 +164,40 @@ def test_report_renders_final_decision_board_first() -> None:
     assert "- Top 1: 600900 长江电力 | 观察候选 | 评分 76 | PM 上调优先级" in markdown
     assert "PM依据: 多Agent辩论支持上调优先级" in markdown
     assert markdown.index("## 最终决策看板") < markdown.index("## 1. 600900 长江电力")
+
+
+def test_report_renders_allocation_guidance_when_summary_provided() -> None:
+    pick = PickResult(
+        symbol="600900",
+        name="长江电力",
+        date="2026-05-29",
+        close=27.75,
+        score=76,
+        rating="buy_candidate",
+        entry_type="relative_strength",
+        ideal_buy=27.75,
+        stop_loss=26.1,
+        take_profit=31.0,
+        position="30%-50%",
+        reasons=("趋势保持", "量价配合"),
+    )
+
+    markdown = to_markdown(
+        [pick],
+        portfolio_summary=PortfolioDecisionSummary(
+            promote_count=1,
+            downgrade_count=0,
+            keep_count=0,
+            top_focus=("600900 长江电力",),
+            watchlist=(),
+            allocations=(),
+            cash_reserve=0.25,
+            allocation_note="单票上限 20%；信号强度不足时提高现金留存",
+        ),
+    )
+
+    assert "- 现金留存: 25%" in markdown
+    assert "- 配置说明: 单票上限 20%；信号强度不足时提高现金留存" in markdown
 
 
 def test_report_hides_non_promote_portfolio_section_below_pick_detail() -> None:

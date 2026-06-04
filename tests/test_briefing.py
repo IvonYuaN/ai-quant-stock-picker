@@ -492,6 +492,9 @@ class TestGenerateSmartSummary:
                 keep_count=0,
                 top_focus=("600519 贵州茅台",),
                 watchlist=("300750 宁德时代(候选观察池)",),
+                allocations=(),
+                cash_reserve=0.2,
+                allocation_note="单票上限 20%；信号强度不足时提高现金留存",
             ),
         )
 
@@ -500,6 +503,21 @@ class TestGenerateSmartSummary:
         assert "PM主裁决: 上调 1 / 降级 1 / 维持 0" in summary
         assert "- 主链候选: 600519 贵州茅台" in summary
         assert "- 候选观察池: 300750 宁德时代" in summary
+        assert "- 现金留存: 20%" in summary
+
+    def test_main_chain_section_renders_allocation_guidance(self):
+        gen = BriefingGenerator()
+        pick = _make_pick(
+            symbol="300750",
+            name="宁德时代",
+            score=72.0,
+            rating="strong_buy_candidate",
+        )
+        briefing = gen.generate(picks=[pick], frames={})
+        main_chain_sec = next(s for s in briefing.sections if s.title == "主链总览")
+        assert "组合配置建议" in main_chain_sec.content
+        assert "300750 宁德时代: 20%" in main_chain_sec.content
+        assert "现金留存" in main_chain_sec.content
 
     def test_debate_results_lower_adjustment(self):
         from aqsp.briefing.debate import DebateResult

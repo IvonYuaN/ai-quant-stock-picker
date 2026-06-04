@@ -60,6 +60,17 @@ def _format_final_decision_board(
                 "- 观察池: "
                 + "、".join(str(item) for item in portfolio_summary.watchlist)
             )
+        if getattr(portfolio_summary, "allocations", ()):
+            lines.append("- 组合配置建议:")
+            for item in tuple(getattr(portfolio_summary, "allocations", ()))[:3]:
+                display = format_symbol_name(item.symbol, item.name)
+                lines.append(f"  - {display}: {item.weight:.0%}")
+        cash_reserve = float(getattr(portfolio_summary, "cash_reserve", 0.0) or 0.0)
+        if cash_reserve > 0:
+            lines.append(f"- 现金留存: {cash_reserve:.0%}")
+        allocation_note = str(getattr(portfolio_summary, "allocation_note", "") or "")
+        if allocation_note:
+            lines.append(f"- 配置说明: {allocation_note}")
         lines.append("")
     for idx, pick in enumerate(picks[:3], 1):
         decision = decision_map.get(pick.symbol)

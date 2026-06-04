@@ -4,11 +4,14 @@ from aqsp.briefing import Briefing, BriefingSection
 from aqsp.briefing.closing_review import DailyReview, WeeklySummary
 from aqsp.briefing.debate import DebateResult
 from aqsp.monitor.checker import MonitorResult
+from aqsp.portfolio.optimizer import PortfolioAllocation
+from aqsp.portfolio.manager import PortfolioDecisionSummary
 from aqsp.notify_templates import (
     build_briefing_notification,
     build_closing_premium_notification,
     build_closing_review_notification,
     build_monitor_notification,
+    build_daily_run_notification,
     build_morning_breakout_notification,
 )
 from aqsp.strategies.closing_premium import PremiumSignal
@@ -53,6 +56,36 @@ def test_build_briefing_notification_returns_full_markdown_when_full_mode() -> N
     markdown = build_briefing_notification(briefing, mode="full")
 
     assert "# AI 量化选股日报 - 2026-06-04" in markdown
+
+
+def test_build_daily_run_notification_includes_allocation_guidance() -> None:
+    markdown = build_daily_run_notification(
+        run_date="2026-06-04",
+        tradable=[],
+        portfolio_summary=PortfolioDecisionSummary(
+            promote_count=1,
+            downgrade_count=0,
+            keep_count=0,
+            top_focus=("300750 宁德时代",),
+            watchlist=(),
+            allocations=(
+                PortfolioAllocation(
+                    symbol="300750",
+                    name="宁德时代",
+                    weight=0.2,
+                    rationale=("主链评分 72.0",),
+                ),
+            ),
+            cash_reserve=0.8,
+            allocation_note="单票上限 20%；信号强度不足时提高现金留存",
+        ),
+        actual_source="eastmoney",
+        source_health_label="healthy",
+        source_health_message="eastmoney 健康",
+    )
+
+    assert "- 配仓建议: 300750 20%" in markdown
+    assert "- 现金留存: 80%" in markdown
 
 
 def test_build_monitor_notification_summary_mode_is_action_oriented() -> None:

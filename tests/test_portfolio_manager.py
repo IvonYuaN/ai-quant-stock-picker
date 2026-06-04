@@ -71,6 +71,9 @@ def test_apply_portfolio_manager_downgrades_when_debate_and_correlation_stack() 
     assert bundle.summary.promote_count == 0
     assert bundle.summary.headline == "上调 0 / 降级 2 / 维持 0"
     assert any("600036" in item for item in bundle.summary.watchlist)
+    assert bundle.summary.allocations == ()
+    assert bundle.summary.cash_reserve == 1.0
+    assert "保留现金" in bundle.summary.allocation_note
 
 
 def test_apply_portfolio_manager_promotes_when_debate_supports_buy_candidate() -> None:
@@ -82,6 +85,8 @@ def test_apply_portfolio_manager_promotes_when_debate_supports_buy_candidate() -
     assert bundle.decisions[0].action == "promote"
     assert bundle.summary.promote_count == 1
     assert bundle.summary.top_focus == ("300750",)
+    assert bundle.summary.allocations[0].symbol == "300750"
+    assert 0 < bundle.summary.allocations[0].weight <= 0.20
 
 
 def test_apply_portfolio_manager_keeps_action_when_no_incremental_override() -> None:
@@ -95,3 +100,4 @@ def test_apply_portfolio_manager_keeps_action_when_no_incremental_override() -> 
     assert bundle.decisions[0].reasons == ("保持原排序",)
     assert bundle.summary.keep_count == 1
     assert bundle.summary.top_focus == ("300750",)
+    assert bundle.summary.cash_reserve >= 0.15
