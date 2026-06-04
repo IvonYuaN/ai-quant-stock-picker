@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from argparse import Namespace
+import sqlite3
 
 import pandas as pd
 from unittest.mock import MagicMock
@@ -305,6 +306,29 @@ def test_run_scheduled_enriches_pick_name_from_symbol_map(
     assert exit_code == 0
     assert "300750 宁德时代" in report
     assert "300750 300750" not in report
+
+
+def test_optional_symbol_name_map_reads_project_env_without_export(
+    monkeypatch, tmp_path
+) -> None:
+    import aqsp.cli as cli_mod
+
+    db_path = tmp_path / "astocks_qfq.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("CREATE TABLE stocks (ts_code TEXT PRIMARY KEY, name TEXT)")
+        conn.execute(
+            "INSERT INTO stocks (ts_code, name) VALUES (?, ?)",
+            ("600036.SH", "招商银行"),
+        )
+    env_path = tmp_path / ".env"
+    env_path.write_text(f"AQSP_SQLITE_DB_PATH={db_path}\n", encoding="utf-8")
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("AQSP_SQLITE_DB_PATH", raising=False)
+
+    assert cli_mod._load_optional_symbol_name_map(["600036"]) == {
+        "600036": "招商银行"
+    }
 
 
 def test_run_scheduled_report_omits_low_signal_control_sections(

@@ -180,11 +180,32 @@ def _extract_meaningful_name_from_frame(frame: pd.DataFrame, symbol: str) -> str
     return str(names.iloc[-1]) if not names.empty else ""
 
 
+def _read_env_value(path: str | Path, key: str) -> str:
+    env_path = Path(path)
+    if not env_path.exists():
+        return ""
+    for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        name, value = line.split("=", 1)
+        if name.strip() == key:
+            return value.strip().strip('"').strip("'")
+    return ""
+
+
 def _load_optional_symbol_name_map(symbols: list[str]) -> dict[str, str]:
     if not symbols:
         return {}
+    db_candidates = [
+        os.getenv("AQSP_SQLITE_DB_PATH", "").strip(),
+        _read_env_value(".env", "AQSP_SQLITE_DB_PATH"),
+        "/opt/market-data/astocks_qfq.db",
+        "A股量化分析数据/astocks_qfq.db",
+    ]
+    db_path = next((p for p in db_candidates if p and Path(str(p)).exists()), None)
     try:
-        source = SqliteDbSource()
+        source = SqliteDbSource(db_path=db_path) if db_path else SqliteDbSource()
     except Exception:
         return {}
 
@@ -1051,10 +1072,11 @@ def _count_independent_signal_days(ledger_path: str) -> int:
     rows = read_ledger(ledger_path)
     signal_dates = set()
     for row in rows:
-        if row.get("status") in ("validated", "pending"):
-            sd = row.get("signal_date", "")
-            if sd:  # 过滤空 signal_date，避免虚增冷启动计数
-                signal_dates.add(sd)
+        sd = row.get("signal_date", "")
+        if not sd:
+            continue
+        if row.get("symbol") and row.get("thresholds_version"):
+            signal_dates.add(sd)
     return len(signal_dates)
 
 

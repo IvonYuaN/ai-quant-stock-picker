@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date
 from types import SimpleNamespace
+import json
 
 import pandas as pd
 
@@ -25,6 +26,40 @@ def _make_sample_data(n_days: int = 200) -> pd.DataFrame:
             "limit_down": 90.0,
         }
     )
+
+
+def test_cold_start_counts_observation_only_signal_days(tmp_path) -> None:
+    from aqsp.cli import _count_independent_signal_days
+
+    ledger = tmp_path / "predictions.jsonl"
+    rows = [
+        {
+            "signal_date": "2026-06-01",
+            "symbol": "600036",
+            "thresholds_version": "1.1.1",
+            "status": "watch_only",
+        },
+        {
+            "signal_date": "2026-06-02",
+            "symbol": "000001",
+            "thresholds_version": "1.1.1",
+            "status": "not_executable",
+        },
+        {
+            "signal_date": "2026-06-02",
+            "symbol": "601318",
+            "thresholds_version": "1.1.1",
+            "status": "pending",
+        },
+        {"signal_date": "", "symbol": "bad", "thresholds_version": "1.1.1"},
+        {"signal_date": "2026-06-03", "symbol": "legacy_without_thresholds"},
+    ]
+    ledger.write_text(
+        "\n".join(json.dumps(row, ensure_ascii=False) for row in rows) + "\n",
+        encoding="utf-8",
+    )
+
+    assert _count_independent_signal_days(str(ledger)) == 2
 
 
 class TestCompositeStrategyInit:

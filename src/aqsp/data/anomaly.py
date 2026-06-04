@@ -45,7 +45,7 @@ def _check_limit_moves(symbol: str, df: pd.DataFrame) -> list[AnomalyAlert]:
                 AnomalyAlert(
                     symbol=symbol,
                     anomaly_type="limit_move",
-                    severity="critical",
+                    severity="info",
                     detail=f"{board_label}涨跌停: {val:+.2%}",
                     value=round(float(val), 4),
                     threshold=threshold,
