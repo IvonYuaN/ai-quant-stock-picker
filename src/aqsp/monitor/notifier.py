@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from aqsp.config import load_runtime_config
 from aqsp.core.time import now_shanghai
+from aqsp.notify_templates import build_monitor_notification
 from aqsp.notifier import notify_markdown
 
 if TYPE_CHECKING:
@@ -57,5 +59,8 @@ def send_alerts(results: list[MonitorResult]) -> None:
     if not triggered:
         return
 
-    alert_msg = format_alert(triggered)
+    alert_msg = build_monitor_notification(
+        triggered,
+        mode=load_runtime_config().notify_mode,
+    )
     notify_markdown(alert_msg)

@@ -56,8 +56,13 @@ from aqsp.ledger import (
     validate_predictions,
 )
 from aqsp.models import ScreeningConfig
+from aqsp.notify_templates import (
+    build_daily_run_notification,
+    build_closing_premium_notification,
+    build_closing_review_notification,
+    build_morning_breakout_notification,
+)
 from aqsp.notifier import notify_markdown
-from aqsp.notifier import prepend_source_status_banner
 from aqsp.research.summary import load_research_summary
 from aqsp.research_engine import (
     ENGINE_CHOICES,
@@ -2379,31 +2384,19 @@ def run_scheduled(args: argparse.Namespace) -> int:
     print(markdown)
 
     if args.notify:
-        # 通知只发精炼摘要+TOP3,不发整篇65KB文本墙
-        notify_lines = [f"📊 AI选股日报 {latest.isoformat()}"]
-        if status.triggered:
-            notify_lines.append(f"🛡️ 组合保护: {status.reason}")
-        elif not tradable:
-            notify_lines.append("👀 今日无可执行标的,仅观察")
-        else:
-            for i, p in enumerate(tradable[:3], 1):
-                notify_lines.append(
-                    f"{i}. {p.symbol} {p.name} | {p.score:.0f}分 | "
-                    f"买{p.ideal_buy}/损{p.stop_loss}/盈{p.take_profit}"
-                )
-        if is_cold_start:
-            notify_lines.append(f"⏳ 冷启动 {cold_start_days}/{COLD_START_MIN_DAYS}")
-        notify_lines.append(f"数据源: {actual_source} ({source_health_label})")
-        notify_text = "\n".join(notify_lines)
         results = notify_markdown(
-            prepend_source_status_banner(
-                notify_text,
-                source_status={
-                    "requested_source": args.source,
-                    "actual_source": actual_source,
-                    "health_label": source_health_label,
-                    "health_message": source_health_message,
-                },
+            build_daily_run_notification(
+                run_date=latest.isoformat(),
+                tradable=tradable,
+                actual_source=actual_source,
+                source_health_label=source_health_label,
+                source_health_message=source_health_message,
+                requested_source=args.source,
+                cold_start_days=cold_start_days,
+                cold_start_min_days=COLD_START_MIN_DAYS,
+                is_cold_start=is_cold_start,
+                circuit_breaker_reason=status.reason if status.triggered else "",
+                mode=load_runtime_config().notify_mode,
             )
         )
         if not results:
@@ -3457,9 +3450,13 @@ def run_morning_breakout(args: argparse.Namespace) -> int:
 
     if args.notify and signals:
         try:
-            from aqsp.notifier import send_notification
-
-            send_notification("早盘打板策略", report)
+            notify_markdown(
+                build_morning_breakout_notification(
+                    signals,
+                    mode=load_runtime_config().notify_mode,
+                    top_n=args.top,
+                )
+            )
         except Exception:
             pass
 
@@ -3587,9 +3584,13 @@ def run_closing_premium(args: argparse.Namespace) -> int:
 
     if args.notify and signals:
         try:
-            from aqsp.notifier import send_notification
-
-            send_notification("尾盘溢价策略", report)
+            notify_markdown(
+                build_closing_premium_notification(
+                    signals,
+                    mode=load_runtime_config().notify_mode,
+                    top_n=args.top,
+                )
+            )
         except Exception:
             pass
 
@@ -3691,9 +3692,13 @@ def run_closing_review(args: argparse.Namespace) -> int:
 
     if args.notify:
         try:
-            from aqsp.notifier import send_notification
-
-            send_notification("收盘复盘", report)
+            notify_markdown(
+                build_closing_review_notification(
+                    review=review if not args.weekly else None,
+                    weekly_summary=summary if args.weekly else None,
+                    mode=load_runtime_config().notify_mode,
+                )
+            )
         except Exception:
             pass
 

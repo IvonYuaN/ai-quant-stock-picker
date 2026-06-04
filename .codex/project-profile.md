@@ -12,11 +12,11 @@ Python 3.10+，pandas/numpy/scipy，DataSource 抽象，多源行情，jsonl led
 
 Primary: Quant Trading Systems Engineer.
 
-Support: Data Reliability Engineer, Paper-Trading/Execution Engineer, Research Librarian, Code Reviewer.
+Support: Product/Notification Systems Engineer, Data Reliability Engineer, Paper-Trading/Execution Engineer, Code Reviewer.
 
 ## Current Goal
 
-打通一条本地日常主线：`daily_run.sh -> aqsp run -> ledger -> aqsp paper -> aqsp briefing -> aqsp dashboard -> notification/logs`。默认源计划为 `auto`，本地 TDX vipdoc 优先，东方财富/新浪/腾讯/AKShare 兜底；没有本地 2G 文件时也必须有明确 fallback 或显式失败原因。
+打通并收敛一条稳定的本地/服务器日常主线：`daily_run.sh -> aqsp run -> ledger -> aqsp paper -> aqsp briefing -> aqsp dashboard -> notification/logs`。当前重点是把主链、复盘、监控、早盘、尾盘通知统一到可复用模板层，并保留多 Agent 辩论摘要与数据源状态。
 
 ## Constraints
 
@@ -24,8 +24,9 @@ Support: Data Reliability Engineer, Paper-Trading/Execution Engineer, Research L
 
 ## Routing Cues
 
-数据源/新鲜度问题交给 Data Reliability lens；策略/开源吸收交给 Research Librarian lens；虚拟盘/ledger/可成交性交给 Paper-Trading lens；前端展示交给 Dashboard lens；合并前必须跑相关 pytest、ruff、脚本语法检查。
+数据源/新鲜度问题交给 Data Reliability lens；策略/开源吸收交给 Research Librarian lens；虚拟盘/ledger/可成交性交给 Paper-Trading lens；通知/报告/多 Agent 摘要交给 Product/Notification lens；前端展示交给 Dashboard lens；合并前必须跑相关 pytest、ruff、脚本语法检查。
 
 ## Squad History
 
 - 2026-05-29: Rerouted from prototype stock picker to local-first paper-trading system after user clarified the real objective and requested multi-agent execution.
+- 2026-06-04: Added unified notification-template substrate for daily run, briefing, monitor, morning breakout, closing premium, and closing review so future agent work lands on one reusable output layer.
