@@ -9,8 +9,6 @@ from aqsp.briefing.closing_review import (
     format_weekly_summary,
 )
 from aqsp.briefing.generator import Briefing, BriefingGenerator, BriefingSection
-from aqsp.briefing.llm import enhance_briefing
-from aqsp.briefing.notifier import send_briefing
 
 __all__ = [
     "Briefing",
@@ -25,3 +23,15 @@ __all__ = [
     "format_weekly_summary",
     "send_briefing",
 ]
+
+
+def __getattr__(name: str):
+    if name == "enhance_briefing":
+        from aqsp.briefing.llm import enhance_briefing
+
+        return enhance_briefing
+    if name == "send_briefing":
+        from aqsp.briefing.notifier import send_briefing
+
+        return send_briefing
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
