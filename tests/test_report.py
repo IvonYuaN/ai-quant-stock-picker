@@ -351,3 +351,28 @@ def test_report_avoids_repeating_symbol_as_name() -> None:
     assert "## 1. 600900\n" in markdown
     assert "- 风险提示: 无" in markdown
     assert "600900 600900" not in markdown
+
+
+def test_report_preserves_full_reason_text_without_truncating_chinese() -> None:
+    pick = PickResult(
+        symbol="600900",
+        name="长江电力",
+        date="2026-05-29",
+        close=27.75,
+        score=76,
+        rating="buy_candidate",
+        entry_type="relative_strength",
+        ideal_buy=27.75,
+        stop_loss=26.1,
+        take_profit=31.0,
+        position="30%-50%",
+        reasons=("MA5/10/20/60 多头排列", "强趋势缩量回踩均线"),
+        risks=(),
+    )
+
+    markdown = to_markdown([pick])
+
+    assert "参考: MA5/10/20/60 多头排列；强趋势缩量回踩均线" in markdown
+    assert "- 理由: MA5/10/20/60 多头排列；强趋势缩量回踩均线" in markdown
+    assert "- 由:" not in markdown
+    assert "强趋势缩量回踩均；" not in markdown

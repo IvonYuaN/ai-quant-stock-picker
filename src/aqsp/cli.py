@@ -47,6 +47,7 @@ from aqsp.data.tushare_pit import TusharePitClient
 from aqsp.data.baostock_source import BaostockSource
 from aqsp.data.sqlite_db_source import SqliteDbSource
 from aqsp.data.tdx_vipdoc_source import TdxVipdocSource
+from aqsp.data.trading_calendar import trading_day_lag
 from aqsp.filters_lethal.pipeline import LethalFilterPipeline
 from aqsp.freshness import assert_fresh_data, latest_trade_date
 from aqsp.ledger import (
@@ -846,12 +847,39 @@ def run_compare_snapshots(args: argparse.Namespace) -> int:
     return 0
 
 
-def _source_runtime_metadata(source_id: str) -> tuple[str, str, str]:
+def _runtime_data_lag_days(
+    latest: date | None,
+    *,
+    reference_day: date | None = None,
+) -> int:
+    if latest is None:
+        return 0
+    return trading_day_lag(latest, reference_day or today_shanghai())
+
+
+def _source_runtime_metadata(
+    source_id: str,
+    *,
+    latest_trade_day: date | None = None,
+    reference_day: date | None = None,
+) -> tuple[str, str, str]:
     entry = get_registry_entry(source_id)
     if entry is None:
         return "unknown", "unknown", "unknown"
+    freshness_tier = entry.freshness_tier
+    if latest_trade_day is not None:
+        lag_days = _runtime_data_lag_days(
+            latest_trade_day,
+            reference_day=reference_day,
+        )
+        if (
+            lag_days > 0
+            and freshness_tier
+            in {"terminal_realtime", "realtime", "delayed_realtime"}
+        ):
+            freshness_tier = "end_of_day"
     return (
-        entry.freshness_tier,
+        freshness_tier,
         entry.coverage_tier,
         local_data_status(entry),
     )
@@ -1764,9 +1792,10 @@ def run_screen(args: argparse.Namespace) -> int:
         )
 
     latest = latest_trade_date(frames)
-    data_lag_days = (today_shanghai() - latest).days if latest is not None else 0
+    data_lag_days = _runtime_data_lag_days(latest)
     freshness_tier, coverage_tier, source_local_status = _source_runtime_metadata(
-        actual_source
+        actual_source,
+        latest_trade_day=latest,
     )
     source_health_label, source_health_message, fallback_used = describe_source_health(
         args.source,
@@ -1868,9 +1897,10 @@ def run_scheduled(args: argparse.Namespace) -> int:
         )
 
     latest = assert_fresh_data(frames, max_data_lag_days)
-    data_lag_days = (today_shanghai() - latest).days
+    data_lag_days = _runtime_data_lag_days(latest)
     freshness_tier, coverage_tier, source_local_status = _source_runtime_metadata(
-        actual_source
+        actual_source,
+        latest_trade_day=latest,
     )
     source_health_label, source_health_message, fallback_used = describe_source_health(
         args.source,
