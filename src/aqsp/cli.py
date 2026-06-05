@@ -83,7 +83,7 @@ from aqsp.briefing.debate import (
     parse_agent_roles,
 )
 from aqsp.models import PickResult
-from aqsp.presentation import has_meaningful_name
+from aqsp.presentation import format_symbol_name, has_meaningful_name
 
 
 def serialize_debate_result(result: DebateResult) -> dict:
@@ -1101,6 +1101,47 @@ def _detect_runtime_regime(
     return "" if regime == "unknown" else regime
 
 
+def _augment_summary_with_t1_blockers(
+    summary: Any | None,
+    *,
+    removed_symbols: list[str],
+    removed_name_map: dict[str, str],
+) -> Any | None:
+    if summary is None or not removed_symbols:
+        return summary
+
+    removed_displays = tuple(
+        format_symbol_name(symbol, removed_name_map.get(symbol, ""))
+        for symbol in removed_symbols
+    )
+    hotspot = "T+1 持仓约束：昨日已买标的今日不纳入执行名单"
+    blockers = tuple(
+        f"{display}: T+1 持仓约束，昨日已买，今日仅保留观察"
+        for display in removed_displays
+    )
+    existing_watchlist = tuple(getattr(summary, "watchlist", ()) or ())
+    existing_hotspots = tuple(getattr(summary, "action_hotspots", ()) or ())
+    existing_blockers = tuple(getattr(summary, "execution_blockers", ()) or ())
+    merged_watchlist = tuple(
+        dict.fromkeys(existing_watchlist + removed_displays).keys()
+    )[:5]
+    merged_hotspots = tuple(dict.fromkeys(existing_hotspots + (hotspot,)).keys())[:3]
+    merged_blockers = tuple(dict.fromkeys(existing_blockers + blockers).keys())[:5]
+    note = str(getattr(summary, "allocation_note", "") or "")
+    t1_note = (
+        f"T+1 限制：昨日已买 {len(removed_symbols)} 只"
+        f"（{'、'.join(removed_symbols[:3])}）仅保留观察"
+    )
+    merged_note = f"{note}；{t1_note}" if note else t1_note
+    return replace(
+        summary,
+        watchlist=merged_watchlist,
+        action_hotspots=merged_hotspots,
+        execution_blockers=merged_blockers,
+        allocation_note=merged_note,
+    )
+
+
 def _resolve_run_symbols(
     source_name: str,
     explicit_symbols: str,
@@ -2059,6 +2100,7 @@ def run_scheduled(args: argparse.Namespace) -> int:
 
     from aqsp.universe.t1_filter import filter_t1_held
 
+    pick_name_map = {pick.symbol: pick.name for pick in picks}
     kept, removed = filter_t1_held(
         candidates=[r.symbol for r in picks],
         ledger_path=args.ledger,
@@ -2413,6 +2455,11 @@ def run_scheduled(args: argparse.Namespace) -> int:
         picks = bundle.picks
         portfolio_decisions = list(bundle.decisions)
         portfolio_summary = bundle.summary
+        portfolio_summary = _augment_summary_with_t1_blockers(
+            portfolio_summary,
+            removed_symbols=removed,
+            removed_name_map=pick_name_map,
+        )
         if portfolio_decisions:
             print("📦 Portfolio Manager 裁决完成")
 
