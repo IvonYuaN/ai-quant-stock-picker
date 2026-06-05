@@ -171,6 +171,11 @@ class Briefing:
                 items.append(
                     "- 候选观察池: " + "、".join(self.portfolio_summary.watchlist)
                 )
+            if self.portfolio_summary.action_hotspots:
+                items.append(
+                    "- 裁决热点: "
+                    + "；".join(self.portfolio_summary.action_hotspots[:2])
+                )
             if self.portfolio_summary.allocations:
                 top_alloc = "、".join(
                     f"{item.symbol} {item.name} {item.weight:.0%}"
@@ -248,6 +253,10 @@ class Briefing:
             items.append(f"- 辩论结论: {self._strip_leading_markers(debate_points[0])}")
         if self.portfolio_summary and self.portfolio_summary.allocation_note:
             items.append(f"- 执行约束: {self.portfolio_summary.allocation_note}")
+        if self.portfolio_summary and self.portfolio_summary.execution_blockers:
+            items.append(
+                "- 执行阻塞: " + "；".join(self.portfolio_summary.execution_blockers[:2])
+            )
         if top_scores:
             items.append(f"- 首选观察: {top_scores[0][0]}({top_scores[0][1]}分)")
         elif self.portfolio_summary:
@@ -449,6 +458,12 @@ class BriefingGenerator:
             lines.append("- 可执行主链: " + "、".join(portfolio_summary.top_focus[:3]))
         if portfolio_summary.watchlist:
             lines.append("- 候选观察池: " + "、".join(portfolio_summary.watchlist[:3]))
+        if portfolio_summary.action_hotspots:
+            lines.append("- 裁决热点: " + "；".join(portfolio_summary.action_hotspots[:3]))
+        if portfolio_summary.execution_blockers:
+            lines.append("- 执行阻塞:")
+            for item in portfolio_summary.execution_blockers[:3]:
+                lines.append(f"  - {item}")
         if portfolio_summary.regime_label:
             lines.append(f"- 当前市况: {portfolio_summary.regime_label}")
         if portfolio_summary.strategy_mix_name:

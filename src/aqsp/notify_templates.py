@@ -103,14 +103,28 @@ def build_daily_run_notification(
             "- 优先策略: "
             + "、".join(portfolio_summary.strategy_focus[:3])
         )
+    if portfolio_summary is not None and portfolio_summary.action_hotspots:
+        lines.append(
+            "- 裁决热点: "
+            + "；".join(portfolio_summary.action_hotspots[:2])
+        )
     if portfolio_summary is not None and portfolio_summary.allocations:
         top_alloc = "、".join(
             f"{item.symbol} {item.weight:.0%}"
             for item in portfolio_summary.allocations[:3]
         )
         lines.append(f"- 配仓建议: {top_alloc}")
+    elif portfolio_summary is not None and portfolio_summary.watchlist:
+        lines.append(
+            "- 观察池: " + "、".join(portfolio_summary.watchlist[:3])
+        )
     if portfolio_summary is not None and portfolio_summary.cash_reserve > 0:
         lines.append(f"- 现金留存: {portfolio_summary.cash_reserve:.0%}")
+    if portfolio_summary is not None and portfolio_summary.execution_blockers:
+        lines.append(
+            "- 执行阻塞: "
+            + "；".join(portfolio_summary.execution_blockers[:2])
+        )
     if debate_results:
         lead = debate_results[0]
         consensus = lead.final_consensus or lead.adjustment_reason or "暂无共识摘要"
@@ -360,20 +374,29 @@ def _format_debate_summary(results: Sequence[DebateResult]) -> str:
 def _format_allocation_execution(
     portfolio_summary: PortfolioDecisionSummary | None,
 ) -> str:
-    if portfolio_summary is None or not portfolio_summary.allocations:
+    if portfolio_summary is None:
         return ""
     lines: list[str] = []
-    for item in portfolio_summary.allocations[:3]:
-        display = format_symbol_name(item.symbol, item.name)
-        rationale = "；".join(item.rationale[:3])
-        line = f"- {display} {item.weight:.0%}"
-        if rationale:
-            line += f" | {rationale}"
-        lines.append(line)
+    if portfolio_summary.allocations:
+        for item in portfolio_summary.allocations[:3]:
+            display = format_symbol_name(item.symbol, item.name)
+            rationale = "；".join(item.rationale[:3])
+            line = f"- {display} {item.weight:.0%}"
+            if rationale:
+                line += f" | {rationale}"
+            lines.append(line)
+    elif portfolio_summary.watchlist:
+        lines.append("- 暂无可执行主仓，先盯观察池:")
+        for item in portfolio_summary.watchlist[:3]:
+            lines.append(f"  - {item}")
     if portfolio_summary.cash_reserve > 0:
         lines.append(f"- 现金留存 {portfolio_summary.cash_reserve:.0%}")
     if portfolio_summary.allocation_note:
         lines.append(f"- 执行约束: {portfolio_summary.allocation_note}")
+    if portfolio_summary.execution_blockers:
+        lines.append(
+            "- 当前阻塞: " + "；".join(portfolio_summary.execution_blockers[:2])
+        )
     return "\n".join(lines)
 
 
@@ -386,6 +409,11 @@ def _daily_action_line_one(
         return (
             f"1. 先看 {lead.symbol} {lead.name} 的开盘强弱与流动性，"
             f"若确认延续，再按 {lead.weight:.0%} 参考仓位执行。"
+        )
+    if portfolio_summary is not None and portfolio_summary.watchlist:
+        return (
+            "1. 本次先盯观察池里最强票的开盘承接，"
+            "只有阻塞条件解除后再考虑转入执行名单。"
         )
     if tradable:
         return "1. 优先核对首选标的的开盘强弱与流动性，再决定是否执行。"

@@ -167,6 +167,43 @@ def test_report_renders_final_decision_board_first() -> None:
     assert markdown.index("## 最终决策看板") < markdown.index("## 1. 600900 长江电力")
 
 
+def test_report_renders_action_hotspots_and_execution_blockers() -> None:
+    pick = PickResult(
+        symbol="600900",
+        name="长江电力",
+        date="2026-05-29",
+        close=27.75,
+        score=76,
+        rating="watch",
+        entry_type="relative_strength",
+        ideal_buy=27.75,
+        stop_loss=26.1,
+        take_profit=31.0,
+        position="watch",
+        reasons=("趋势保持", "量价配合"),
+    )
+
+    markdown = to_markdown(
+        [pick],
+        portfolio_summary=PortfolioDecisionSummary(
+            promote_count=0,
+            downgrade_count=1,
+            keep_count=0,
+            top_focus=(),
+            watchlist=("600900 长江电力",),
+            allocations=(),
+            cash_reserve=1.0,
+            allocation_note="单票上限 20%；今日不建议建立主仓",
+            action_hotspots=("板块集中度过高，压低公用事业暴露",),
+            execution_blockers=("600900 长江电力: 板块集中度过高，压低公用事业暴露",),
+        ),
+    )
+
+    assert "- 裁决热点: 板块集中度过高，压低公用事业暴露" in markdown
+    assert "- 执行阻塞:" in markdown
+    assert "600900 长江电力: 板块集中度过高，压低公用事业暴露" in markdown
+
+
 def test_report_renders_allocation_guidance_when_summary_provided() -> None:
     pick = PickResult(
         symbol="600900",
@@ -288,7 +325,9 @@ def test_report_hides_non_promote_portfolio_section_below_pick_detail() -> None:
     assert "## 1. 600900 长江电力" in markdown
     assert "- Top 1: 600900 长江电力 | 候选观察池 | 评分 76 | PM 降级观察" in markdown
     detail_section = markdown.split("## 1. 600900 长江电力", maxsplit=1)[1]
-    assert "### Portfolio Manager" not in detail_section
+    assert "### Portfolio Manager" in detail_section
+    assert "- 最终动作: 降级观察" in detail_section
+    assert "板块集中度过高，压低公用事业暴露" in detail_section
 
 
 def test_report_avoids_repeating_symbol_as_name() -> None:

@@ -71,6 +71,8 @@ def test_apply_portfolio_manager_downgrades_when_debate_and_correlation_stack() 
     assert bundle.summary.promote_count == 0
     assert bundle.summary.headline == "上调 0 / 降级 2 / 维持 0"
     assert any("600036" in item for item in bundle.summary.watchlist)
+    assert any("板块集中度过高" in item for item in bundle.summary.action_hotspots)
+    assert any("600036" in item for item in bundle.summary.execution_blockers)
     assert bundle.summary.allocations == ()
     assert bundle.summary.cash_reserve == 1.0
     assert "保留现金" in bundle.summary.allocation_note

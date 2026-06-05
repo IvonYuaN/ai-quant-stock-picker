@@ -113,6 +113,34 @@ def test_build_daily_run_notification_includes_allocation_guidance() -> None:
     assert "先看 300750 宁德时代 的开盘强弱与流动性" in markdown
 
 
+def test_build_daily_run_notification_surfaces_watchlist_blockers_when_no_allocations() -> None:
+    markdown = build_daily_run_notification(
+        run_date="2026-06-04",
+        tradable=[],
+        portfolio_summary=PortfolioDecisionSummary(
+            promote_count=0,
+            downgrade_count=2,
+            keep_count=1,
+            top_focus=(),
+            watchlist=("000021 深科技", "000338 潍柴动力"),
+            allocations=(),
+            cash_reserve=1.0,
+            allocation_note="单票上限 20%；今日不建议建立主仓",
+            action_hotspots=("板块集中度过高，压低科技暴露",),
+            execution_blockers=("000021 深科技: 板块集中度过高，压低科技暴露",),
+        ),
+        actual_source="eastmoney",
+        source_health_label="healthy",
+        source_health_message="eastmoney 健康",
+    )
+
+    assert "- 观察池: 000021 深科技、000338 潍柴动力" in markdown
+    assert "- 裁决热点: 板块集中度过高，压低科技暴露" in markdown
+    assert "- 执行阻塞: 000021 深科技: 板块集中度过高，压低科技暴露" in markdown
+    assert "暂无可执行主仓，先盯观察池" in markdown
+    assert "只有阻塞条件解除后再考虑转入执行名单" in markdown
+
+
 def test_build_monitor_notification_summary_mode_is_action_oriented() -> None:
     markdown = build_monitor_notification(
         [

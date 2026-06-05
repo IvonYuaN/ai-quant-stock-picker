@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass
 
 from aqsp.core.types import PickResult
@@ -37,6 +38,8 @@ class PortfolioDecisionSummary:
     strategy_mix_description: str = ""
     strategy_focus: tuple[str, ...] = ()
     strategy_weights: tuple[tuple[str, float], ...] = ()
+    action_hotspots: tuple[str, ...] = ()
+    execution_blockers: tuple[str, ...] = ()
 
     @property
     def headline(self) -> str:
@@ -119,6 +122,38 @@ def _build_strategy_mix_summary(
     )
 
 
+def _summarize_action_hotspots(
+    decisions: list[PortfolioDecision],
+) -> tuple[str, ...]:
+    counter: Counter[str] = Counter()
+    for decision in decisions:
+        for reason in decision.reasons:
+            if reason and reason != "保持原排序":
+                counter[reason] += 1
+    return tuple(reason for reason, _ in counter.most_common(3))
+
+
+def _build_execution_blockers(
+    picks: list[PickResult],
+    decision_by_symbol: dict[str, PortfolioDecision],
+) -> tuple[str, ...]:
+    blockers: list[str] = []
+    for pick in picks:
+        decision = decision_by_symbol.get(pick.symbol)
+        if decision is None or decision.action != "downgrade":
+            continue
+        reason = next(
+            (item for item in decision.reasons if item and item != "保持原排序"),
+            "",
+        )
+        if not reason:
+            continue
+        blockers.append(f"{_display_name(pick)}: {reason}")
+        if len(blockers) >= 3:
+            break
+    return tuple(blockers)
+
+
 def summarize_portfolio_decisions(
     picks: list[PickResult],
     decisions: list[PortfolioDecision],
@@ -162,6 +197,8 @@ def summarize_portfolio_decisions(
         keep_count=keep_count,
         top_focus=top_focus,
         watchlist=watchlist,
+        action_hotspots=_summarize_action_hotspots(decisions),
+        execution_blockers=_build_execution_blockers(picks, decision_by_symbol),
         allocations=optimization.allocations,
         cash_reserve=optimization.cash_reserve,
         allocation_note=optimization.note,

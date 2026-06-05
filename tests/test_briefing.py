@@ -500,6 +500,8 @@ class TestGenerateSmartSummary:
                 strategy_mix_description="稳定上涨期，重仓动量+涨停板",
                 strategy_focus=("动量趋势", "涨停接力"),
                 strategy_weights=(("momentum", 0.3), ("limit_up_ladder", 0.3)),
+                action_hotspots=("板块集中度过高，压低新能源暴露",),
+                execution_blockers=("300750 宁德时代: 板块集中度过高，压低新能源暴露",),
             ),
         )
 
@@ -510,7 +512,9 @@ class TestGenerateSmartSummary:
         assert "- 策略配比: 进攻牛市" in summary
         assert "- 主链候选: 600519 贵州茅台" in summary
         assert "- 候选观察池: 300750 宁德时代" in summary
+        assert "- 裁决热点: 板块集中度过高，压低新能源暴露" in summary
         assert "- 现金留存: 20%" in summary
+        assert "- 执行阻塞: 300750 宁德时代: 板块集中度过高，压低新能源暴露" in summary
 
     def test_main_chain_section_renders_allocation_guidance(self):
         gen = BriefingGenerator()

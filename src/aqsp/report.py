@@ -88,6 +88,15 @@ def _format_final_decision_board(
                 "- 观察池: "
                 + "、".join(str(item) for item in portfolio_summary.watchlist)
             )
+        if getattr(portfolio_summary, "action_hotspots", ()):
+            lines.append(
+                "- 裁决热点: "
+                + "；".join(str(item) for item in portfolio_summary.action_hotspots)
+            )
+        if getattr(portfolio_summary, "execution_blockers", ()):
+            lines.append("- 执行阻塞:")
+            for item in tuple(getattr(portfolio_summary, "execution_blockers", ()))[:3]:
+                lines.append(f"  - {item}")
         if getattr(portfolio_summary, "allocations", ()):
             lines.append("- 组合配置建议:")
             for item in tuple(getattr(portfolio_summary, "allocations", ()))[:3]:
@@ -236,10 +245,7 @@ def to_markdown(
         if pick.symbol in debate_map:
             lines.append(_format_debate_result(debate_map[pick.symbol]))
             lines.append("")
-        if (
-            pick.symbol in decision_map
-            and getattr(decision_map[pick.symbol], "action", "keep") == "promote"
-        ):
+        if pick.symbol in decision_map:
             decision_text = _format_portfolio_decision(decision_map[pick.symbol])
             if decision_text:
                 lines.append(decision_text)
