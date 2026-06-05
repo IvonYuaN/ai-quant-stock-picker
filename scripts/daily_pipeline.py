@@ -938,6 +938,10 @@ def _read_latest_candidates(config: PipelineConfig) -> list[dict[str, Any]]:
         ]
         return tuple(parts[:limit])
 
+    def _review_priority_label(value: Any) -> str:
+        labels = {"high": "高优先级", "medium": "中优先级", "low": "低优先级"}
+        return labels.get(_text(value), _text(value))
+
     candidates: list[dict[str, Any]] = []
     for row in df.to_dict(orient="records"):
         symbol = _symbol(row.get("symbol"))
@@ -957,6 +961,13 @@ def _read_latest_candidates(config: PipelineConfig) -> list[dict[str, Any]]:
                 "action_label": portfolio_action_label(raw_action),
                 "reasons": _split_points(row.get("reasons")),
                 "risks": _split_points(row.get("risks")),
+                "candidate_status": _text(row.get("candidate_status")),
+                "candidate_blocker": _text(row.get("candidate_blocker")),
+                "candidate_next_step": _text(row.get("candidate_next_step")),
+                "candidate_review_window": _text(row.get("candidate_review_window")),
+                "candidate_review_priority": _review_priority_label(
+                    row.get("candidate_review_priority")
+                ),
             }
         )
 
@@ -976,6 +987,27 @@ def _dedupe_points(points: list[str], limit: int) -> list[str]:
         if len(deduped) >= limit:
             break
     return deduped
+
+
+def _format_candidate_summary_line(candidate: dict[str, Any]) -> str:
+    parts = [
+        candidate["display"],
+        candidate["rating_label"],
+    ]
+    status = str(candidate.get("candidate_status", "") or "")
+    if status:
+        parts.append(status)
+    parts.append(f"PM {candidate['action_label']}")
+    parts.append(f"评分 {candidate['score']:.1f}")
+    return "- " + " | ".join(parts)
+
+
+def _format_candidate_review_meta(candidate: dict[str, Any]) -> str:
+    parts = [
+        str(candidate.get("candidate_review_priority", "") or ""),
+        str(candidate.get("candidate_review_window", "") or ""),
+    ]
+    return " / ".join(part for part in parts if part)
 
 
 def _build_pipeline_digest(
@@ -1010,6 +1042,12 @@ def _build_pipeline_digest(
     else:
         conclusion = "今日未形成明确主链，结果以观察为主。"
 
+    review_candidates = [
+        candidate
+        for candidate in candidates
+        if candidate.get("candidate_next_step") or candidate.get("candidate_blocker")
+    ]
+
     core_lines = [
         f"- 结论: {conclusion}",
         f"- PM主裁决: {portfolio_summary.headline if portfolio_summary is not None else '暂无可用候选输出'}",
@@ -1025,6 +1063,26 @@ def _build_pipeline_digest(
                 str(item).split("(", 1)[0] for item in portfolio_summary.watchlist[:3]
             )
         )
+    if portfolio_summary is not None and portfolio_summary.execution_blockers:
+        core_lines.append(
+            "- 执行阻塞: "
+            + "；".join(portfolio_summary.execution_blockers[:2])
+        )
+    elif review_candidates:
+        blockers = [
+            str(candidate.get("candidate_blocker", "") or "")
+            for candidate in review_candidates
+            if candidate.get("candidate_blocker")
+        ]
+        if blockers:
+            core_lines.append("- 执行阻塞: " + "；".join(blockers[:2]))
+    if review_candidates:
+        lead_review = review_candidates[0]
+        lead_meta = _format_candidate_review_meta(lead_review)
+        lead_line = f"- 首要复核: {lead_review['display']}"
+        if lead_meta:
+            lead_line += f" | {lead_meta}"
+        core_lines.append(lead_line)
     core_lines.append(
         f"- 流程状态: {step_success}/{step_total} 成功 | {result.duration_seconds:.1f}s"
     )
@@ -1036,15 +1094,22 @@ def _build_pipeline_digest(
     main_chain_lines: list[str] = []
     if candidates:
         for candidate in candidates[:3]:
-            main_chain_lines.append(
-                "- "
-                + f"{candidate['display']} | {candidate['rating_label']} | "
-                + f"PM {candidate['action_label']} | 评分 {candidate['score']:.1f}"
-            )
+            main_chain_lines.append(_format_candidate_summary_line(candidate))
             if candidate["reasons"]:
                 main_chain_lines.append(
                     "  关注点: " + "；".join(candidate["reasons"][:2])
                 )
+            if candidate.get("candidate_blocker"):
+                main_chain_lines.append(
+                    "  当前阻塞: " + str(candidate["candidate_blocker"])
+                )
+            if candidate.get("candidate_next_step"):
+                main_chain_lines.append(
+                    "  下一步: " + str(candidate["candidate_next_step"])
+                )
+            review_meta = _format_candidate_review_meta(candidate)
+            if review_meta:
+                main_chain_lines.append("  复核: " + review_meta)
         if portfolio_summary is not None and portfolio_summary.watchlist:
             main_chain_lines.append(
                 "- 观察池: "
@@ -1052,6 +1117,21 @@ def _build_pipeline_digest(
                     str(item).split("(", 1)[0] for item in portfolio_summary.watchlist[:5]
                 )
             )
+        if portfolio_summary is not None and portfolio_summary.top_focus:
+            main_chain_lines.append(
+                "- 执行顺序: 先看 "
+                + " → ".join(portfolio_summary.top_focus[:2])
+            )
+        elif review_candidates:
+            main_chain_lines.append("- 观察复核:")
+            for candidate in review_candidates[:2]:
+                review_line = "  - " + candidate["display"]
+                review_meta = _format_candidate_review_meta(candidate)
+                if review_meta:
+                    review_line += f" | {review_meta}"
+                if candidate.get("candidate_next_step"):
+                    review_line += f" | {candidate['candidate_next_step']}"
+                main_chain_lines.append(review_line)
     elif portfolio_summary is not None:
         if portfolio_summary.top_focus:
             main_chain_lines.append(
@@ -1068,13 +1148,42 @@ def _build_pipeline_digest(
     if failed_steps:
         plan_lines.append("- 明日先修复失败步骤对应的数据源或运行配置，再复核本次输出。")
     elif portfolio_summary is not None and portfolio_summary.top_focus:
-        plan_lines.append(
+        action_line = (
             "- 明日先核对可执行主链是否延续量价确认，再决定人工跟踪优先级。"
         )
+        if portfolio_summary.top_focus:
+            action_line = (
+                "- 明日先盯 "
+                + " → ".join(portfolio_summary.top_focus[:2])
+                + " 的开盘强弱与流动性，再决定人工跟踪优先级。"
+            )
+        plan_lines.append(action_line)
+        lead_review = review_candidates[0] if review_candidates else None
+        if lead_review is not None:
+            review_meta = _format_candidate_review_meta(lead_review)
+            line = f"- 观察复核: 先盯 {lead_review['display']}"
+            if lead_review.get("candidate_next_step"):
+                line += f"，{lead_review['candidate_next_step']}"
+            if review_meta:
+                line += f"（{review_meta}）"
+            line += "。"
+            plan_lines.append(line)
+    elif review_candidates:
+        lead_review = review_candidates[0]
+        review_meta = _format_candidate_review_meta(lead_review)
+        line = f"- 明日先盯 {lead_review['display']}"
+        if lead_review.get("candidate_next_step"):
+            line += f"，{lead_review['candidate_next_step']}"
+        if review_meta:
+            line += f"（{review_meta}）"
+        line += "。"
+        plan_lines.append(line)
     elif portfolio_summary is not None and portfolio_summary.watchlist:
         plan_lines.append("- 明日以观察池复核为主，等待右侧确认，不直接放大仓位。")
     else:
         plan_lines.append("- 明日无明确主链动作，优先确认数据源和策略运行是否完整。")
+    if portfolio_summary is not None and portfolio_summary.allocation_note:
+        plan_lines.append(f"- 执行约束: {portfolio_summary.allocation_note}。")
     plan_lines.extend(
         [
             "- 对照收盘复盘，确认强弱分层、策略标签和 PM 裁决是否一致。",
@@ -1089,6 +1198,11 @@ def _build_pipeline_digest(
         risk_points.append(
             f"PM 已将 {portfolio_summary.downgrade_count} 只候选降级，说明拥挤度或确定性仍不足。"
         )
+    if portfolio_summary is not None:
+        for blocker in portfolio_summary.execution_blockers[:2]:
+            risk_points.append(str(blocker))
+        for hotspot in portfolio_summary.action_hotspots[:2]:
+            risk_points.append(str(hotspot))
     for candidate in candidates[:3]:
         for risk in candidate["risks"][:1]:
             risk_points.append(f"{candidate['display']}: {risk}")
