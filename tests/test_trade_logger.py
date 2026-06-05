@@ -132,18 +132,24 @@ class TestTradeLoggerBasics:
         if temp_dir.exists():
             shutil.rmtree(temp_dir)
 
-        logger = TradeLogger(log_dir=str(temp_dir))
+        TradeLogger(log_dir=str(temp_dir))
         assert temp_dir.exists()
 
         # 清理
         shutil.rmtree(temp_dir)
 
-    def test_logger_raises_on_permission_error(self) -> None:
-        """测试没有权限时抛出异常。"""
-        # 尝试在系统根目录创建（应该没有权限）
-        invalid_path = "/root/invalid_aqsp_logs_test"
-        with pytest.raises(IOError):
-            TradeLogger(log_dir=invalid_path)
+    def test_logger_raises_on_permission_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """测试目录创建失败时抛出异常。"""
+
+        def _raise_permission_error(
+            self: Path, parents: bool = False, exist_ok: bool = False
+        ) -> None:
+            raise PermissionError("mocked permission denied")
+
+        monkeypatch.setattr(Path, "mkdir", _raise_permission_error)
+
+        with pytest.raises(IOError, match="Failed to create log directory"):
+            TradeLogger(log_dir="/any/path")
 
 
 class TestLogDecision:
@@ -294,7 +300,6 @@ class TestLogExecution:
         self, logger: TradeLogger
     ) -> None:
         """测试执行时间默认使用当前时间。"""
-        before = datetime.now()
         logger.log_execution(
             symbol="000021",
             action="BUY",
@@ -302,7 +307,6 @@ class TestLogExecution:
             price=23.50,
             cost=2350.00,
         )
-        after = datetime.now()
 
         today = date.today()
         log_file = logger.log_dir / f"{today.isoformat()}.jsonl"
@@ -401,7 +405,7 @@ class TestFileManagement:
         if temp_dir.exists():
             shutil.rmtree(temp_dir)
 
-        logger = TradeLogger(log_dir=str(temp_dir))
+        TradeLogger(log_dir=str(temp_dir))
         assert temp_dir.exists()
 
         shutil.rmtree(temp_dir)
