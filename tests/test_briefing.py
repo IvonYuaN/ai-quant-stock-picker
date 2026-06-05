@@ -524,7 +524,24 @@ class TestGenerateSmartSummary:
         main_chain_sec = next(s for s in briefing.sections if s.title == "主链总览")
         assert "组合配置建议" in main_chain_sec.content
         assert "300750 宁德时代: 20%" in main_chain_sec.content
+        assert "强信号优先分配" in main_chain_sec.content
         assert "现金留存" in main_chain_sec.content
+
+    def test_action_plan_renders_first_allocation_rationale(self):
+        gen = BriefingGenerator()
+        pick = _make_pick(
+            symbol="300750",
+            name="宁德时代",
+            score=72.0,
+            rating="strong_buy_candidate",
+        )
+        briefing = gen.generate(picks=[pick], frames={})
+
+        summary = briefing.generate_smart_summary()
+
+        assert "- 首仓理由: 300750 宁德时代 | 主链评分 72.0；强信号优先分配" in summary
+        assert "- 配仓执行: 300750 宁德时代 20% | 主链评分 72.0；强信号优先分配" in summary
+        assert "- 执行约束: 单票上限 20%" in summary
 
     def test_main_chain_section_renders_strategy_mix_guidance(self):
         gen = BriefingGenerator()

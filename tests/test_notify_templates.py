@@ -84,6 +84,18 @@ def test_build_daily_run_notification_includes_allocation_guidance() -> None:
             strategy_focus=("动量趋势", "涨停接力"),
             strategy_weights=(("momentum", 0.3), ("limit_up_ladder", 0.3)),
         ),
+        debate_results=(
+            DebateResult(
+                debate_id="d1",
+                symbol="300750",
+                name="宁德时代",
+                original_score=72.0,
+                rating="buy_candidate",
+                final_consensus="趋势强但仍需确认开盘承接",
+                disagreement_score=0.42,
+                recommended_adjustment="raise",
+            ),
+        ),
         actual_source="eastmoney",
         source_health_label="healthy",
         source_health_message="eastmoney 健康",
@@ -94,6 +106,11 @@ def test_build_daily_run_notification_includes_allocation_guidance() -> None:
     assert "- 优先策略: 动量趋势、涨停接力" in markdown
     assert "- 配仓建议: 300750 20%" in markdown
     assert "- 现金留存: 80%" in markdown
+    assert "## 配仓执行" in markdown
+    assert "300750 宁德时代 20% | 主链评分 72.0" in markdown
+    assert "## 多Agent辩论" in markdown
+    assert "趋势强但仍需确认开盘承接" in markdown
+    assert "先看 300750 宁德时代 的开盘强弱与流动性" in markdown
 
 
 def test_build_monitor_notification_summary_mode_is_action_oriented() -> None:

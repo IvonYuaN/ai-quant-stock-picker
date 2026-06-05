@@ -40,6 +40,11 @@ def _display_name(pick: PickResult) -> str:
     return format_symbol_name(pick.symbol, pick.name)
 
 
+def _format_allocation_rationale(item: Any) -> str:
+    rationale = tuple(getattr(item, "rationale", ()) or ())
+    return "；".join(str(part) for part in rationale[:3])
+
+
 def _format_final_decision_board(
     picks: list[PickResult],
     decision_map: dict[str, Any],
@@ -87,7 +92,18 @@ def _format_final_decision_board(
             lines.append("- 组合配置建议:")
             for item in tuple(getattr(portfolio_summary, "allocations", ()))[:3]:
                 display = format_symbol_name(item.symbol, item.name)
-                lines.append(f"  - {display}: {item.weight:.0%}")
+                rationale = _format_allocation_rationale(item)
+                line = f"  - {display}: {item.weight:.0%}"
+                if rationale:
+                    line += f" | {rationale}"
+                lines.append(line)
+            lead_allocations = tuple(getattr(portfolio_summary, "allocations", ()))[:2]
+            if lead_allocations:
+                order = " → ".join(
+                    format_symbol_name(item.symbol, item.name)
+                    for item in lead_allocations
+                )
+                lines.append(f"- 执行顺序: 先看 {order}")
         cash_reserve = float(getattr(portfolio_summary, "cash_reserve", 0.0) or 0.0)
         if cash_reserve > 0:
             lines.append(f"- 现金留存: {cash_reserve:.0%}")
@@ -137,6 +153,11 @@ def _format_debate_result(result: Any) -> str:
     lines.append("### 多Agent辩论")
     lines.append(f"- 最终共识: {result.final_consensus}")
     lines.append(f"- 建议调整: {result.recommended_adjustment}")
+    if float(getattr(result, "adjusted_score", 0.0) or 0.0) > 0:
+        lines.append(
+            f"- 评分变化: {result.original_score:.1f} → {result.adjusted_score:.1f}"
+        )
+    lines.append(f"- 分歧度: {result.disagreement_score:.0%}")
     lines.append(f"- 辩论轮次: {len(result.rounds)}")
 
     bull_count = sum(1 for v in result.final_vote.values() if v == "bullish")

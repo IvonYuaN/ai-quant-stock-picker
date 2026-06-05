@@ -2527,6 +2527,7 @@ def run_scheduled(args: argparse.Namespace) -> int:
                 run_date=latest.isoformat(),
                 tradable=tradable,
                 portfolio_summary=portfolio_summary,
+                debate_results=debate_results,
                 actual_source=actual_source,
                 source_health_label=source_health_label,
                 source_health_message=source_health_message,

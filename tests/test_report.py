@@ -3,6 +3,7 @@ from __future__ import annotations
 from aqsp.core.types import RunMetadata
 from aqsp.models import PickResult
 from aqsp.portfolio.manager import PortfolioDecision, PortfolioDecisionSummary
+from aqsp.portfolio.optimizer import PortfolioAllocation
 from aqsp.report import to_markdown
 
 
@@ -190,7 +191,14 @@ def test_report_renders_allocation_guidance_when_summary_provided() -> None:
             keep_count=0,
             top_focus=("600900 长江电力",),
             watchlist=(),
-            allocations=(),
+            allocations=(
+                PortfolioAllocation(
+                    symbol="600900",
+                    name="长江电力",
+                    weight=0.2,
+                    rationale=("主链评分 76.0", "PM 上调优先级"),
+                ),
+            ),
             cash_reserve=0.25,
             allocation_note="单票上限 20%；信号强度不足时提高现金留存",
             regime_label="稳定上涨",
@@ -205,8 +213,48 @@ def test_report_renders_allocation_guidance_when_summary_provided() -> None:
     assert "- 策略主配比: 进攻牛市 | 稳定上涨期，重仓动量+涨停板" in markdown
     assert "- 优先策略: 动量趋势、涨停接力" in markdown
     assert "- 策略权重建议: momentum 30%、limit_up_ladder 30%" in markdown
+    assert "长江电力: 20% | 主链评分 76.0；PM 上调优先级" in markdown
+    assert "- 执行顺序: 先看 600900 长江电力" in markdown
     assert "- 现金留存: 25%" in markdown
     assert "- 配置说明: 单票上限 20%；信号强度不足时提高现金留存" in markdown
+
+
+def test_report_renders_debate_score_change_when_available() -> None:
+    from aqsp.briefing.debate import DebateResult
+
+    pick = PickResult(
+        symbol="600900",
+        name="长江电力",
+        date="2026-05-29",
+        close=27.75,
+        score=76,
+        rating="buy_candidate",
+        entry_type="relative_strength",
+        ideal_buy=27.75,
+        stop_loss=26.1,
+        take_profit=31.0,
+        position="30%-50%",
+    )
+
+    markdown = to_markdown(
+        [pick],
+        debate_results=[
+            DebateResult(
+                debate_id="d1",
+                symbol="600900",
+                name="长江电力",
+                original_score=76.0,
+                adjusted_score=79.0,
+                rating="buy_candidate",
+                final_consensus="趋势延续，但仍需确认量能",
+                disagreement_score=0.35,
+                recommended_adjustment="raise",
+            )
+        ],
+    )
+
+    assert "- 评分变化: 76.0 → 79.0" in markdown
+    assert "- 分歧度: 35%" in markdown
 
 
 def test_report_hides_non_promote_portfolio_section_below_pick_detail() -> None:

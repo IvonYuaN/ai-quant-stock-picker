@@ -177,6 +177,10 @@ class Briefing:
                     for item in self.portfolio_summary.allocations[:3]
                 )
                 items.append(f"- 配仓建议: {top_alloc}")
+                first = self.portfolio_summary.allocations[0]
+                rationale = "；".join(first.rationale[:2])
+                if rationale:
+                    items.append(f"- 首仓理由: {first.symbol} {first.name} | {rationale}")
             if self.portfolio_summary.cash_reserve > 0:
                 items.append(
                     f"- 现金留存: {self.portfolio_summary.cash_reserve:.0%}"
@@ -223,17 +227,27 @@ class Briefing:
                 "- 候选观察池: " + "、".join(self.portfolio_summary.watchlist[:3])
             )
         if self.portfolio_summary and self.portfolio_summary.allocations:
-            top_alloc = "、".join(
-                f"{item.symbol} {item.weight:.0%}"
-                for item in self.portfolio_summary.allocations[:2]
+            top_alloc = self.portfolio_summary.allocations[0]
+            line = (
+                f"- 配仓执行: {top_alloc.symbol} {top_alloc.name} {top_alloc.weight:.0%}"
             )
-            items.append(f"- 配仓执行: {top_alloc}")
+            rationale = "；".join(top_alloc.rationale[:2])
+            if rationale:
+                line += f" | {rationale}"
+            items.append(line)
+            if len(self.portfolio_summary.allocations) > 1:
+                second = self.portfolio_summary.allocations[1]
+                items.append(
+                    f"- 第二顺位: {second.symbol} {second.name} {second.weight:.0%}"
+                )
         if self.portfolio_summary and self.portfolio_summary.strategy_focus:
             items.append(
                 "- 关注策略: " + "、".join(self.portfolio_summary.strategy_focus[:3])
             )
         if debate_points:
             items.append(f"- 辩论结论: {self._strip_leading_markers(debate_points[0])}")
+        if self.portfolio_summary and self.portfolio_summary.allocation_note:
+            items.append(f"- 执行约束: {self.portfolio_summary.allocation_note}")
         if top_scores:
             items.append(f"- 首选观察: {top_scores[0][0]}({top_scores[0][1]}分)")
         elif self.portfolio_summary:
@@ -384,17 +398,7 @@ class BriefingGenerator:
             ordered_picks,
             regime=regime,
         )
-        sections = [
-            self._build_main_chain_section(ordered_picks, summary),
-            self._build_regime_section(regime, circuit_breaker_status),
-            self._build_source_section(source_status),
-            self._build_research_section(research_summary),
-            self._build_evidence_section(ordered_picks),
-            self._build_theme_section(ordered_picks),
-            self._build_next_day_section(ordered_picks, frames),
-        ]
-
-        debate_results = []
+        debate_results: list[DebateResult] = []
         if self.enable_debate and ordered_picks:
             # 对评分最高的前3只股票进行辩论
             for pick in ordered_picks[:3]:
@@ -408,6 +412,15 @@ class BriefingGenerator:
 
                         logger = logging.getLogger(__name__)
                         logger.warning(f"辩论失败 {pick.symbol}: {e}")
+        sections = [
+            self._build_main_chain_section(ordered_picks, summary, debate_results),
+            self._build_regime_section(regime, circuit_breaker_status),
+            self._build_source_section(source_status),
+            self._build_research_section(research_summary),
+            self._build_evidence_section(ordered_picks),
+            self._build_theme_section(ordered_picks),
+            self._build_next_day_section(ordered_picks, frames),
+        ]
 
         return Briefing(
             date=date_str,
@@ -420,6 +433,7 @@ class BriefingGenerator:
         self,
         picks: list[PickResult],
         portfolio_summary: PortfolioDecisionSummary | None,
+        debate_results: list[DebateResult],
     ) -> BriefingSection:
         if not picks or portfolio_summary is None:
             return BriefingSection(
@@ -457,11 +471,29 @@ class BriefingGenerator:
             lines.append("- 组合配置建议:")
             for item in portfolio_summary.allocations[:3]:
                 display = format_symbol_name(item.symbol, item.name)
-                lines.append(f"  - {display}: {item.weight:.0%}")
+                rationale = "；".join(item.rationale[:3])
+                line = f"  - {display}: {item.weight:.0%}"
+                if rationale:
+                    line += f" | {rationale}"
+                lines.append(line)
             if portfolio_summary.cash_reserve > 0:
                 lines.append(f"  - 现金留存: {portfolio_summary.cash_reserve:.0%}")
         if portfolio_summary.allocation_note:
             lines.append(f"- 配置说明: {portfolio_summary.allocation_note}")
+        if debate_results:
+            lines.append("- 辩论速览:")
+            for result in debate_results[:2]:
+                display = format_symbol_name(result.symbol, result.name)
+                consensus = (
+                    result.final_consensus
+                    or result.adjustment_reason
+                    or "暂无共识摘要"
+                )
+                lines.append(
+                    "  - "
+                    f"{display}: {result.recommended_adjustment.upper()} / "
+                    f"分歧 {result.disagreement_score:.0%} / {consensus}"
+                )
 
         lead_pick = picks[0]
         lead_display = format_symbol_name(lead_pick.symbol, lead_pick.name)
