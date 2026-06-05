@@ -80,6 +80,30 @@ def test_cache_get_empty_when_not_cached(tmp_path):
     assert result is None
 
 
+def test_cache_rejects_implausible_amount_scale(tmp_path):
+    cache = DataCache(db_path=tmp_path / "test_cache.db")
+    df = pd.DataFrame(
+        {
+            "date": ["2026-06-04", "2026-06-05"],
+            "open": [27.5, 27.6],
+            "high": [27.8, 27.9],
+            "low": [27.4, 27.5],
+            "close": [27.7, 27.8],
+            "volume": [123456, 123000],
+            "amount": [0.27, 0.21],
+            "suspended": [0, 0],
+            "limit_up": [0.0, 0.0],
+            "limit_down": [0.0, 0.0],
+            "adj_factor": [1.0, 1.0],
+        }
+    )
+    cache.set_ohlcv("600900", df, source="eastmoney")
+
+    result = cache.get_ohlcv("600900", date(2026, 6, 4), date(2026, 6, 5))
+
+    assert result is None
+
+
 def test_cache_adj_factor(tmp_path):
     cache = DataCache(db_path=tmp_path / "test_cache.db")
     df = pd.DataFrame(

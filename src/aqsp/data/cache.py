@@ -9,6 +9,35 @@ import pandas as pd
 from aqsp.core.time import now_shanghai
 
 
+def _has_implausible_amount_scale(df: pd.DataFrame) -> bool:
+    """Detect obviously broken amount data (for example price-change mistaken as turnover).
+
+    Valid normalized data in this project usually has:
+    - amount ~= close * volume
+    - or amount ~= close * volume * 100 (volume reported in lots)
+    - or, for some sources, a smaller but still non-trivial scale.
+
+    The old eastmoney bug wrote `涨跌额` into `amount`, making the ratio collapse
+    to ~1e-7. Use a very small threshold so we only reject clearly impossible rows
+    and avoid harming legitimate alternative unit conventions.
+    """
+    required = {"amount", "volume", "close"}
+    if not required.issubset(df.columns):
+        return False
+    amount = pd.to_numeric(df["amount"], errors="coerce")
+    volume = pd.to_numeric(df["volume"], errors="coerce")
+    close = pd.to_numeric(df["close"], errors="coerce")
+    valid = (amount > 0) & (volume > 0) & (close > 0)
+    if not valid.any():
+        return False
+    baseline = volume[valid] * close[valid]
+    ratio = (amount[valid] / baseline).replace([float("inf"), float("-inf")], pd.NA)
+    ratio = ratio.dropna()
+    if ratio.empty:
+        return False
+    return float(ratio.median()) < 1e-5
+
+
 class DataCache:
     def __init__(self, db_path: str | Path = "data/cache.db"):
         self.db_path = Path(db_path)
@@ -123,6 +152,8 @@ class DataCache:
             return None
         if cached_max < req_end - pd.Timedelta(days=TOLERANCE_DAYS):
             return None
+        if _has_implausible_amount_scale(df):
+            return None
 
         df = df.sort_values("date").reset_index(drop=True)
         if "symbol" not in df.columns:
@@ -203,6 +234,8 @@ class DataCache:
         if cached_min > pd.Timestamp(start) + pd.Timedelta(days=TOLERANCE_DAYS):
             return None
         if cached_max < pd.Timestamp(end) - pd.Timedelta(days=TOLERANCE_DAYS):
+            return None
+        if _has_implausible_amount_scale(df):
             return None
 
         df = df.sort_values("date").reset_index(drop=True)
