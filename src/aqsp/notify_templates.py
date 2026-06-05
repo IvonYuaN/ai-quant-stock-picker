@@ -21,6 +21,19 @@ def _safe_mode(mode: str) -> NotifyMode:
     return "full" if mode == "full" else "summary"
 
 
+def _blocked_watchlist_status(
+    portfolio_summary: PortfolioDecisionSummary | None,
+) -> str:
+    if portfolio_summary is None:
+        return "今日无可执行标的，仅观察"
+    watchlist = tuple(portfolio_summary.watchlist[:2])
+    if watchlist:
+        return "今日无可执行标的，转入观察池：" + "、".join(watchlist)
+    if portfolio_summary.execution_blockers:
+        return "今日无可执行标的，受执行约束暂仅观察"
+    return "今日无可执行标的，仅观察"
+
+
 def build_briefing_notification(
     briefing: Briefing,
     source_status: dict[str, str | bool] | None = None,
@@ -83,7 +96,7 @@ def build_daily_run_notification(
         lines.append(f"- 首选标的: {_format_daily_pick(tradable[0])}")
     else:
         lines.append("- 可执行标的: 0")
-        lines.append("- 主链状态: 今日无可执行标的，仅观察")
+        lines.append("- 主链状态: " + _blocked_watchlist_status(portfolio_summary))
     if is_cold_start and cold_start_min_days > 0:
         lines.append(f"- 冷启动进度: {cold_start_days}/{cold_start_min_days}")
     if portfolio_summary is not None and portfolio_summary.regime_label:

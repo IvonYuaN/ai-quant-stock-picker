@@ -244,8 +244,9 @@ class TestBriefingGenerator:
             frames={},
         )
         next_sec = next(s for s in briefing.sections if s.title == "明日重点")
-        assert "暂无可执行重点标的" in next_sec.content
+        assert "当前暂无可执行重点标的" in next_sec.content
         assert "候选观察池" in next_sec.content
+        assert "待阻塞条件解除后再考虑转入执行名单" in next_sec.content
         assert "600519" in next_sec.content
         assert "avoid" not in next_sec.content
 
@@ -256,8 +257,9 @@ class TestBriefingGenerator:
             frames={},
         )
         next_sec = next(s for s in briefing.sections if s.title == "明日重点")
-        assert "暂无可执行重点标的" in next_sec.content
+        assert "当前暂无可执行重点标的" in next_sec.content
         assert "候选观察池" in next_sec.content
+        assert "待阻塞条件解除后再考虑转入执行名单" in next_sec.content
         assert "600519" in next_sec.content
 
     def test_render_template(self):
@@ -455,7 +457,7 @@ class TestGenerateSmartSummary:
         picks = [_make_pick(symbol="600519", name="贵州茅台", rating="avoid")]
         briefing = gen.generate(picks=picks, frames={})
         summary = briefing.generate_smart_summary()
-        assert "有候选观察池，暂无可执行标的" in summary
+        assert "有候选观察池，当前暂无可执行标的" in summary
         assert "候选观察池" in summary
 
     def test_next_day_section_mentions_watchlist_when_no_tradable_pick(self):

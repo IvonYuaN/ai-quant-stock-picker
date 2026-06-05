@@ -1142,6 +1142,26 @@ def _augment_summary_with_t1_blockers(
     )
 
 
+def _build_execution_summary_line(
+    tradable: list[PickResult],
+    portfolio_summary: Any | None,
+) -> str:
+    if tradable:
+        top = tradable[0]
+        return (
+            f"🎯 **首选**: {top.symbol} {top.name} | 评分 {top.score:.0f} | "
+            f"买点 {top.ideal_buy} / 止损 {top.stop_loss} / 目标 {top.take_profit}"
+        )
+    watchlist = tuple(getattr(portfolio_summary, "watchlist", ()) or ())
+    blockers = tuple(getattr(portfolio_summary, "execution_blockers", ()) or ())
+    if watchlist:
+        names = "、".join(watchlist[:2])
+        return f"👀 **今日无可执行标的**，转入观察池：{names}"
+    if blockers:
+        return "👀 **今日无可执行标的**，受执行约束影响，暂仅观察。"
+    return "👀 **今日无可执行标的**，仅观察。等待更强信号。"
+
+
 def _resolve_run_symbols(
     source_name: str,
     explicit_symbols: str,
@@ -2517,17 +2537,18 @@ def run_scheduled(args: argparse.Namespace) -> int:
     ]
     if status.triggered:
         summary_lines.append(f"🛡️ **组合保护已触发**: {status.reason}，暂停新开仓")
-    elif not tradable:
-        summary_lines.append("👀 **今日无可执行标的**，仅观察。等待更强信号。")
     else:
-        top = tradable[0]
-        summary_lines.append(
-            f"🎯 **首选**: {top.symbol} {top.name} | 评分 {top.score:.0f} | "
-            f"买点 {top.ideal_buy} / 止损 {top.stop_loss} / 目标 {top.take_profit}"
-        )
+        summary_lines.append(_build_execution_summary_line(tradable, portfolio_summary))
         if len(tradable) > 1:
             others = "、".join(f"{p.symbol} {p.name}" for p in tradable[1:3])
             summary_lines.append(f"📋 **其他候选**: {others}")
+        elif not tradable:
+            watchlist = tuple(getattr(portfolio_summary, "watchlist", ()) or ())
+            blockers = tuple(getattr(portfolio_summary, "execution_blockers", ()) or ())
+            if watchlist:
+                summary_lines.append(f"📋 **观察重点**: {'、'.join(watchlist[:3])}")
+            if blockers:
+                summary_lines.append(f"🚧 **主要阻塞**: {blockers[0]}")
 
     if is_cold_start:
         summary_lines.append(

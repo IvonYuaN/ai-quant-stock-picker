@@ -218,7 +218,7 @@ class MarkdownRenderer:
                     format_symbol_name(p.symbol, p.name) for p in data.picks[:3]
                 )
                 lines.append(
-                    f"暂无可执行重点标的；候选观察池: {names}。今日先观察，不做放大仓位动作。"
+                    f"当前暂无可执行重点标的；候选观察池: {names}。先观察最强票，待阻塞条件解除后再考虑转入执行名单。"
                 )
             else:
                 lines.append("无可执行重点标的；今日无候选，继续等待下一轮信号。")
@@ -355,7 +355,7 @@ class MarkdownRenderer:
         if data.actionable_count > 0:
             parts.append(f"{data.actionable_count}只可执行")
         elif data.candidate_count > 0:
-            parts.append("有候选观察池，暂无可执行标的")
+            parts.append("有候选观察池，当前暂无可执行标的")
 
         risk_count = len(data.risk_points)
         if risk_count > 0:

@@ -370,7 +370,7 @@ class Briefing:
         if actionable_count > 0:
             parts.append(f"{actionable_count}只可执行")
         elif candidate_count > 0:
-            parts.append("有候选观察池，暂无可执行标的")
+            parts.append("有候选观察池，当前暂无可执行标的")
         if risk_count > 0:
             parts.append(f"{risk_count}条风险提示")
         if not parts:
@@ -692,7 +692,7 @@ class BriefingGenerator:
                     format_symbol_name(p.symbol, p.name) for p in picks[:3]
                 )
                 lines.append(
-                    f"暂无可执行重点标的；候选观察池: {names}。今日先观察，不做放大仓位动作。"
+                    f"当前暂无可执行重点标的；候选观察池: {names}。先观察最强票，待阻塞条件解除后再考虑转入执行名单。"
                 )
             else:
                 lines.append("无可执行重点标的；今日无候选，继续等待下一轮信号。")

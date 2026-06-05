@@ -135,6 +135,7 @@ def test_build_daily_run_notification_surfaces_watchlist_blockers_when_no_alloca
     )
 
     assert "- 观察池: 000021 深科技、000338 潍柴动力" in markdown
+    assert "- 主链状态: 今日无可执行标的，转入观察池：000021 深科技、000338 潍柴动力" in markdown
     assert "- 裁决热点: 板块集中度过高，压低科技暴露" in markdown
     assert "- 执行阻塞: 000021 深科技: 板块集中度过高，压低科技暴露" in markdown
     assert "暂无可执行主仓，先盯观察池" in markdown
