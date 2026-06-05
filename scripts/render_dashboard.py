@@ -225,6 +225,11 @@ def _decision_label_from_rating(rating: str) -> str:
     return rating_label(rating)
 
 
+def _review_priority_label(priority: str) -> str:
+    labels = {"high": "高优先级", "medium": "中优先级", "low": "低优先级"}
+    return labels.get(priority, priority or "")
+
+
 def _candidate_cards(
     candidates: list[dict[str, str]], debate_map: dict[str, dict[str, Any]]
 ) -> str:
@@ -242,6 +247,20 @@ def _candidate_cards(
             html.escape(portfolio_action_label(portfolio_action))
             if portfolio_action
             else ""
+        )
+        candidate_status = html.escape(str(row.get("candidate_status", "") or ""))
+        candidate_blocker = html.escape(str(row.get("candidate_blocker", "") or ""))
+        candidate_next_step = html.escape(str(row.get("candidate_next_step", "") or ""))
+        candidate_review_window = html.escape(
+            str(row.get("candidate_review_window", "") or "")
+        )
+        candidate_review_priority = html.escape(
+            _review_priority_label(str(row.get("candidate_review_priority", "") or ""))
+        )
+        candidate_review_meta = " / ".join(
+            part
+            for part in (candidate_review_priority, candidate_review_window)
+            if part
         )
         strategies = html.escape(row.get("strategies", ""))
         reasons = html.escape(row.get("reasons", ""))
@@ -311,6 +330,7 @@ def _candidate_cards(
                     <div class="rating-row">
                         <span class="score">{adj_score if has_debate else score}</span>
                         <small>/ {decision_label}</small>
+                        {f"<small>/ {candidate_status}</small>" if candidate_status else ""}
                         {f"<small>/ PM {portfolio_text}</small>" if portfolio_text and portfolio_action != "keep" else ""}
                         {adjustment_badge}
                     </div>
@@ -333,6 +353,9 @@ def _candidate_cards(
               <div class="card-footer">
                 <p class="reason">{reasons or "无"}</p>
                 <p class="risk">风险: {risks or "无明显风险标签"}</p>
+                {f"<p class='card-note blocker'>阻塞: {candidate_blocker}</p>" if candidate_blocker else ""}
+                {f"<p class='card-note next-step'>下一步: {candidate_next_step}</p>" if candidate_next_step else ""}
+                {f"<p class='card-note review'>复核: {candidate_review_meta}</p>" if candidate_review_meta else ""}
                 {debate_btn}
               </div>
             </article>
@@ -2027,6 +2050,14 @@ def render_dashboard(
     }}
     .reason {{ line-height: 1.7; margin: 0 0 8px; }}
     .risk {{ color: #9b3f2f; margin: 0; font-size: 14px; }}
+    .card-note {{
+      margin: 8px 0 0;
+      font-size: 14px;
+      line-height: 1.6;
+      color: var(--ink);
+    }}
+    .card-note.blocker {{ color: var(--red); }}
+    .card-note.review {{ color: var(--amber); font-weight: 600; }}
     .debate-btn {{
       display: flex;
       align-items: center;

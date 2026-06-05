@@ -285,6 +285,48 @@ def test_dashboard_uses_clean_decision_labels_for_watch_candidates() -> None:
     assert "watch" not in html
 
 
+def test_dashboard_surfaces_watch_candidate_lifecycle_details() -> None:
+    candidates = [
+        {
+            "symbol": "688981",
+            "name": "中芯国际",
+            "date": "2026-06-05",
+            "score": "-9",
+            "rating": "watch",
+            "reasons": "MA20 斜率向上",
+            "risks": "收盘价低于 MA20",
+            "candidate_status": "新晋",
+            "candidate_next_step": "等待量价继续走强后，再评估是否转入执行名单",
+            "candidate_review_window": "盘中走强后",
+            "candidate_review_priority": "high",
+        },
+        {
+            "symbol": "000001",
+            "name": "平安银行",
+            "date": "2026-06-05",
+            "score": "-18",
+            "rating": "watch",
+            "reasons": "估值防守",
+            "risks": "缺少量能确认",
+            "candidate_status": "观察阻塞",
+            "candidate_blocker": "板块集中度过高，压低银行暴露",
+            "candidate_next_step": "等待板块暴露回落后，再重新评估执行顺位",
+            "candidate_review_window": "板块分化时",
+            "candidate_review_priority": "medium",
+        },
+    ]
+
+    html = render_dashboard(candidates, [], "主链观察面板")
+
+    assert "/ 候选观察池" in html
+    assert "新晋" in html
+    assert "下一步: 等待量价继续走强后，再评估是否转入执行名单" in html
+    assert "复核: 高优先级 / 盘中走强后" in html
+    assert "观察阻塞" in html
+    assert "阻塞: 板块集中度过高，压低银行暴露" in html
+    assert "复核: 中优先级 / 板块分化时" in html
+
+
 def test_dashboard_warns_when_candidates_are_stale(tmp_path: Path) -> None:
     csv_path = tmp_path / "latest.csv"
     pd.DataFrame(
