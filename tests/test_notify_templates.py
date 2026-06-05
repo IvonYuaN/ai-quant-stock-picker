@@ -165,6 +165,7 @@ def test_build_daily_run_notification_lists_watch_candidates_when_not_tradable()
                 strategies=(),
                 reasons=("MA20 斜率向上",),
                 risks=("收盘价低于 MA20",),
+                metrics={"candidate_status": "新晋"},
             ),
             PickResult(
                 symbol="000001",
@@ -181,6 +182,7 @@ def test_build_daily_run_notification_lists_watch_candidates_when_not_tradable()
                 strategies=(),
                 reasons=("估值防守",),
                 risks=("缺少量能确认",),
+                metrics={"candidate_status": "观察阻塞"},
             ),
         ),
         portfolio_summary=PortfolioDecisionSummary(
@@ -199,8 +201,39 @@ def test_build_daily_run_notification_lists_watch_candidates_when_not_tradable()
     )
 
     assert "## Top 候选" in markdown
-    assert "1. 688981 中芯国际 | -9分 | 观察 | MA20 斜率向上" in markdown
-    assert "2. 000001 平安银行 | -18分 | 观察 | 估值防守" in markdown
+    assert "1. 688981 中芯国际 | 新晋 | -9分 | 观察 | MA20 斜率向上" in markdown
+    assert "2. 000001 平安银行 | 观察阻塞 | -18分 | 观察 | 估值防守" in markdown
+
+
+def test_build_daily_run_notification_includes_candidate_status_for_tradable_pick() -> None:
+    markdown = build_daily_run_notification(
+        run_date="2026-06-05",
+        tradable=(
+            PickResult(
+                symbol="300750",
+                name="宁德时代",
+                date="2026-06-05",
+                close=220.5,
+                score=73.0,
+                rating="buy_candidate",
+                entry_type="relative_strength",
+                ideal_buy=220.5,
+                stop_loss=214.2,
+                take_profit=238.0,
+                position="10%-30%",
+                strategies=(),
+                reasons=("趋势延续",),
+                risks=("高开回落",),
+                metrics={"candidate_status": "延续上升"},
+            ),
+        ),
+        actual_source="eastmoney",
+        source_health_label="healthy",
+        source_health_message="eastmoney 健康",
+    )
+
+    assert "- 首选标的: 300750 宁德时代 | 延续上升 | 73分 | 买 220.5 / 损 214.2 / 盈 238" in markdown
+    assert "1. 300750 宁德时代 | 延续上升 | 73分 | 买 220.5 / 损 214.2 / 盈 238" in markdown
 
 
 def test_build_daily_run_notification_surfaces_snapshot_diff_highlights() -> None:

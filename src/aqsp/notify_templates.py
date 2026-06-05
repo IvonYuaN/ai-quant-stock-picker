@@ -510,13 +510,21 @@ def _format_premium_signal(signal: PremiumSignal) -> str:
 
 def _format_daily_pick(pick: PickResult) -> str:
     symbol_name = format_symbol_name(pick.symbol, pick.name)
-    return (
-        f"{symbol_name} | {pick.score:.0f}分 | "
-        f"买 {pick.ideal_buy:g} / 损 {pick.stop_loss:g} / 盈 {pick.take_profit:g}"
-    )
+    status = str(pick.metrics.get("candidate_status", "") or "")
+    parts = [symbol_name]
+    if status:
+        parts.append(status)
+    parts.append(f"{pick.score:.0f}分")
+    parts.append(f"买 {pick.ideal_buy:g} / 损 {pick.stop_loss:g} / 盈 {pick.take_profit:g}")
+    return " | ".join(parts)
 
 
 def _format_watch_pick(pick: PickResult) -> str:
     symbol_name = format_symbol_name(pick.symbol, pick.name)
+    status = str(pick.metrics.get("candidate_status", "") or "")
     lead_reason = pick.reasons[0] if pick.reasons else "等待更强确认"
-    return f"{symbol_name} | {pick.score:.0f}分 | 观察 | {lead_reason}"
+    parts = [symbol_name]
+    if status:
+        parts.append(status)
+    parts.extend((f"{pick.score:.0f}分", "观察", lead_reason))
+    return " | ".join(parts)

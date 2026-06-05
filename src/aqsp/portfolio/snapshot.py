@@ -250,3 +250,38 @@ def snapshot_diff_highlights(
             changes.append(f"{symbol} #{old_rank}→#{new_rank}{direction}")
         highlights.append(f"📈 **排名异动**: {'、'.join(changes)}")
     return tuple(highlights)
+
+
+def build_candidate_status_map(diff: SnapshotDiff | None) -> dict[str, str]:
+    """根据快照变化为当前候选生成状态标签。"""
+    if diff is None:
+        return {}
+
+    status_map: dict[str, str] = {}
+
+    for item in diff.new_picks:
+        status_map[item.symbol] = "新晋"
+
+    improved_symbols = {
+        symbol
+        for symbol, old_rank, new_rank in diff.rank_changes
+        if new_rank < old_rank
+    }
+    weakened_symbols = {
+        symbol
+        for symbol, old_rank, new_rank in diff.rank_changes
+        if new_rank > old_rank
+    }
+    improved_symbols.update(
+        symbol for symbol, old_score, new_score in diff.score_changes if new_score > old_score
+    )
+    weakened_symbols.update(
+        symbol for symbol, old_score, new_score in diff.score_changes if new_score < old_score
+    )
+
+    for symbol in improved_symbols:
+        status_map.setdefault(symbol, "延续上升")
+    for symbol in weakened_symbols:
+        status_map.setdefault(symbol, "延续下降")
+
+    return status_map

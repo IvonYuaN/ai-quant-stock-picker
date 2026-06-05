@@ -40,6 +40,10 @@ def _display_name(pick: PickResult) -> str:
     return format_symbol_name(pick.symbol, pick.name)
 
 
+def _candidate_status(pick: PickResult) -> str:
+    return str(pick.metrics.get("candidate_status", "") or "")
+
+
 def _format_allocation_rationale(item: Any) -> str:
     rationale = tuple(getattr(item, "rationale", ()) or ())
     return "；".join(str(part) for part in rationale[:3])
@@ -126,10 +130,13 @@ def _format_final_decision_board(
         action_label = _resolve_portfolio_action_label(action)
         pm_reasons = getattr(decision, "reasons", ()) if decision is not None else ()
         label = _resolve_decision_label(pick)
+        status = _candidate_status(pick)
         reason = "；".join(pick.reasons[:2]) if pick.reasons else "无"
-        lines.append(
-            f"- Top {idx}: {_display_name(pick)} | {label} | 评分 {pick.score} | PM {action_label}"
-        )
+        headline = f"- Top {idx}: {_display_name(pick)} | {label}"
+        if status:
+            headline += f" | {status}"
+        headline += f" | 评分 {pick.score} | PM {action_label}"
+        lines.append(headline)
         lines.append(f"  参考: {reason}")
         if pm_reasons and tuple(pm_reasons) != ("保持原排序",):
             lines.append("  PM依据: " + "；".join(str(item) for item in pm_reasons[:2]))
@@ -227,11 +234,15 @@ def to_markdown(
 
     for idx, pick in enumerate(picks, 1):
         display = _display_name(pick)
+        status = _candidate_status(pick)
+        decision_text = _resolve_decision_label(pick)
+        if status:
+            decision_text += f" | {status}"
         lines.extend(
             [
                 f"## {idx}. {display}",
                 f"- 日期: {pick.date}",
-                f"- 决策: {_resolve_decision_label(pick)} | 评分 {pick.score:.1f}",
+                f"- 决策: {decision_text} | 评分 {pick.score:.1f}",
                 f"- 收盘/参考买点: {pick.close} / {pick.ideal_buy}",
                 f"- 策略入口: {pick.entry_type}",
                 f"- 命中策略: {', '.join(pick.strategies) or '无'}",

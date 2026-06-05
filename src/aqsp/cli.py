@@ -1162,6 +1162,39 @@ def _build_execution_summary_line(
     return "👀 **今日无可执行标的**，仅观察。等待更强信号。"
 
 
+def _annotate_candidate_status(
+    picks: list[PickResult],
+    *,
+    diff: Any | None,
+    portfolio_summary: Any | None,
+) -> list[PickResult]:
+    if not picks:
+        return picks
+
+    from aqsp.portfolio.snapshot import build_candidate_status_map
+
+    status_map = build_candidate_status_map(diff)
+    blocker_symbols: set[str] = set()
+    if portfolio_summary is not None:
+        for item in tuple(getattr(portfolio_summary, "execution_blockers", ()) or ()):
+            symbol = str(item).split(":", 1)[0].split(" ", 1)[0].strip()
+            if symbol:
+                blocker_symbols.add(symbol)
+
+    enriched: list[PickResult] = []
+    for pick in picks:
+        status = status_map.get(pick.symbol, "")
+        if not status and pick.symbol in blocker_symbols:
+            status = "观察阻塞"
+        if not status:
+            enriched.append(pick)
+            continue
+        metrics = dict(pick.metrics)
+        metrics["candidate_status"] = status
+        enriched.append(replace(pick, metrics=metrics))
+    return enriched
+
+
 def _resolve_run_symbols(
     source_name: str,
     explicit_symbols: str,
@@ -2512,6 +2545,13 @@ def run_scheduled(args: argparse.Namespace) -> int:
         )
         if diff is not None and diff.has_changes:
             print(format_snapshot_diff(diff))
+
+    if picks:
+        picks = _annotate_candidate_status(
+            picks,
+            diff=diff,
+            portfolio_summary=portfolio_summary,
+        )
 
     table = to_dataframe(picks)
     markdown = to_markdown(

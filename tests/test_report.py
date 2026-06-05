@@ -135,6 +135,7 @@ def test_report_renders_final_decision_board_first() -> None:
         take_profit=31.0,
         position="30%-50%",
         reasons=("趋势保持", "量价配合"),
+        metrics={"candidate_status": "新晋"},
     )
 
     markdown = to_markdown(
@@ -162,8 +163,9 @@ def test_report_renders_final_decision_board_first() -> None:
     assert "## 最终决策看板" in markdown
     assert "- PM主裁决: 上调 1 / 降级 0 / 维持 0" in markdown
     assert "- 重点关注: 600900 长江电力" in markdown
-    assert "- Top 1: 600900 长江电力 | 观察候选 | 评分 76 | PM 上调优先级" in markdown
+    assert "- Top 1: 600900 长江电力 | 观察候选 | 新晋 | 评分 76 | PM 上调优先级" in markdown
     assert "PM依据: 多Agent辩论支持上调优先级" in markdown
+    assert "- 决策: 观察候选 | 新晋 | 评分 76.0" in markdown
     assert markdown.index("## 最终决策看板") < markdown.index("## 1. 600900 长江电力")
 
 
