@@ -77,6 +77,38 @@ def test_eastmoney_normalize_df_preserves_meaningful_name():
     assert normalized["name"].iloc[0] == "宁德时代"
 
 
+def test_eastmoney_fetch_daily_uses_turnover_amount_not_price_change(monkeypatch):
+    class DummyResponse:
+        def json(self):
+            return {
+                "data": {
+                    "name": "长江电力",
+                    "klines": [
+                        "2026-06-05,27.50,27.77,27.88,27.40,123456,987654321,1.75,0.98,0.27,0.56"
+                    ],
+                }
+            }
+
+    class DummySession:
+        def get(self, *_args, **_kwargs):
+            return DummyResponse()
+
+    source = EastmoneySource.__new__(EastmoneySource)
+    source._session = DummySession()
+    source.cache = None
+    source._last_request_ts = 0.0
+    monkeypatch.setattr(source, "_throttle", lambda: None)
+
+    df = source._fetch_eastmoney_daily(
+        "600900",
+        pd.Timestamp("2026-06-05").date(),
+        pd.Timestamp("2026-06-05").date(),
+    )
+
+    assert df is not None
+    assert df["amount"].iloc[0] == pytest.approx(987654321.0)
+
+
 def test_validate_ohlcv_missing_columns():
     df = pd.DataFrame(
         {

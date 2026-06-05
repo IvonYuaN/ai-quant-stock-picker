@@ -142,7 +142,11 @@ class EastmoneySource(DataSource):
                                 "high": float(parts[3]),
                                 "low": float(parts[4]),
                                 "volume": float(parts[5]),
-                                "amount": float(parts[9]),
+                                # Eastmoney 日线 kline:
+                                # 0日期 1开 2收 3高 4低 5成交量 6成交额 7振幅 8涨跌幅 9涨跌额 10换手率
+                                # 这里必须取 parts[6]，之前误取 parts[9]（涨跌额），
+                                # 会把大票真实成交额误判成几十/几百，触发流动性错杀。
+                                "amount": float(parts[6]),
                             }
                         )
                 frame = pd.DataFrame(rows)
@@ -282,7 +286,7 @@ class EastmoneySource(DataSource):
                                 "high": float(parts[3]),
                                 "low": float(parts[4]),
                                 "volume": float(parts[5]),
-                                "amount": float(parts[9]),
+                                "amount": float(parts[6]),
                             }
                         )
                 frame = pd.DataFrame(rows)

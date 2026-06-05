@@ -231,7 +231,7 @@ def to_markdown(
             [
                 f"## {idx}. {display}",
                 f"- 日期: {pick.date}",
-                f"- 决策: {_resolve_decision_label(pick)} | 评分 {pick.score}",
+                f"- 决策: {_resolve_decision_label(pick)} | 评分 {pick.score:.1f}",
                 f"- 收盘/参考买点: {pick.close} / {pick.ideal_buy}",
                 f"- 策略入口: {pick.entry_type}",
                 f"- 命中策略: {', '.join(pick.strategies) or '无'}",
