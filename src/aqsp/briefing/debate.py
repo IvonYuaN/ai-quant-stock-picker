@@ -723,14 +723,16 @@ class AShareDebateCoordinator:
             for agent in self.agents:
                 my_prev = next(
                     (op for op in prev_round.opinions if op.agent_id == agent.agent_id),
-                    None,
+                    None
                 )
-                if my_prev:
-                    updated = agent.respond_to_counterarguments(
-                        my_prev,
-                        prev_round.opinions,
-                    )
-                    current_opinions.append(updated)
+                if my_prev is None:
+                    _logger.error(f"辩论链路断裂: Agent {agent.agent_id} 缺失第 {round_num-1} 轮观点，无法继续辩论")
+                    raise ValueError(f"Agent {agent.agent_id} 的观点缺失，辩论中止")
+                updated = agent.respond_to_counterarguments(
+                    my_prev,
+                    prev_round.opinions,
+                )
+                current_opinions.append(updated)
 
             result.rounds.append(
                 DebateRound(

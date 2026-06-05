@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import logging
 
 import pandas as pd
 
@@ -8,6 +9,9 @@ from aqsp.indicators import enrich_indicators
 from aqsp.internet_strategies import evaluate_strategy_signals
 from aqsp.models import PickResult, ScreeningConfig
 from aqsp.strategies.thresholds import ScoringThresholds, load_thresholds
+from aqsp.data.filters import TradabilityFilter
+
+_logger = logging.getLogger(__name__)
 
 
 def screen_universe(
@@ -16,7 +20,35 @@ def screen_universe(
     thresholds = load_thresholds()
     scoring = thresholds.scoring
     picks: list[PickResult] = []
+    
+    tradability_filter = TradabilityFilter()
+    symbols = list(frames.keys())
+
+    names_map: dict[str, str] = {}
     for symbol, frame in frames.items():
+        if not frame.empty:
+            names_map[symbol] = str(frame.iloc[-1].get("name", ""))
+
+    try:
+        filtered_symbols = tradability_filter.filter_all(
+            symbols=symbols,
+            data=frames,
+            names=names_map,
+            min_avg_volume=tradability_filter.min_avg_volume_30d,
+            min_avg_amount=tradability_filter.min_daily_amount,
+        )
+        _logger.info(
+            "可交易性过滤: %s -> %s (过滤了 %s 只)",
+            len(symbols),
+            len(filtered_symbols),
+            len(symbols) - len(filtered_symbols),
+        )
+    except Exception as e:
+        _logger.warning(f"可交易性过滤器出错: {e}, 继续使用全部符号")
+        filtered_symbols = symbols
+    
+    for symbol in filtered_symbols:
+        frame = frames[symbol]
         try:
             result = score_symbol(symbol, frame, config, scoring)
         except (ValueError, IndexError, KeyError, TypeError):

@@ -45,7 +45,7 @@ def prepend_source_status_banner(
         ]
     )
     if label in {"fallback", "degraded", "cold_start"}:
-        banner += "\n- 提示: 本次结果请降低信任度，优先人工复核。"
+        banner += "\n- 提示: 数据源已降级，本次结果请降低信任度并优先人工复核。"
     return f"{banner}\n\n{body}".strip()
 
 

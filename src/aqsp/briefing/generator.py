@@ -106,6 +106,8 @@ class Briefing:
 
     def to_markdown(self) -> str:
         lines = [f"# AI 量化选股日报 - {self.date}", ""]
+        lines.append("**免责声明**: 本报告仅供研究参考，不构成投资建议。")
+        lines.append("")
         for section in self.sections:
             lines.append(f"## {section.title}")
             lines.append("")
@@ -116,14 +118,13 @@ class Briefing:
         if self.debate_results:
             lines.append("## 多Agent辩论")
             lines.append("")
-            lines.append("对重点候选标的进行了多Agent辩论分析：")
+            lines.append("多Agent辩论分析结果：")
             lines.append("")
             for result in self.debate_results[:3]:
                 lines.append(format_debate_result(result))
                 lines.append("---")
                 lines.append("")
 
-        lines.append("> 仅供研究，不构成投资建议。")
         return "\n".join(lines)
 
     def _get_section(self, title: str) -> str:
@@ -744,6 +745,7 @@ class BriefingGenerator:
         if not picks:
             lines.append("今日无候选标的。")
             return BriefingSection(title="候选证据链", content="\n".join(lines))
+
         for pick in picks:
             display = format_symbol_name(pick.symbol, pick.name)
             pm_action = str(pick.metrics.get("portfolio_action", "") or "")

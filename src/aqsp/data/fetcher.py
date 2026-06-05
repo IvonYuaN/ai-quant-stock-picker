@@ -14,6 +14,7 @@ import pandas as pd
 
 from aqsp.data.source import DataSource, OhlcvFrame, apply_limit_suspended_adj
 from aqsp.data.cache import DataCache
+from aqsp.data.validation import DataValidator
 from aqsp.core.errors import DataError
 
 _logger = logging.getLogger("aqsp.data.fetcher")
@@ -131,7 +132,26 @@ class MultiSourceFetcher:
         if not result:
             raise DataError(f"No data fetched for symbols: {symbols}")
 
-        return result
+        # 集成4: 验证获取的数据质量（DataValidator）
+        validator = DataValidator()
+        validated_result: dict[str, OhlcvFrame] = {}
+        for symbol, df in result.items():
+            try:
+                validation = validator.validate_ohlc(df, symbol=symbol)
+                if validation.is_valid:
+                    validated_result[symbol] = df
+                    if validation.warnings:
+                        _logger.warning(f"{symbol} 数据验证警告: {validation.warnings}")
+                else:
+                    _logger.error(f"{symbol} 数据验证失败: {validation.errors}")
+            except Exception as e:
+                _logger.error(f"{symbol} 数据验证异常: {e}")
+        
+        if not validated_result:
+            raise DataError(f"所有 {len(result)} 个符号的数据验证失败，拒绝返回脏数据")
+        
+        _logger.info(f"数据验证完成: {len(result)} -> {len(validated_result)} (通过验证 {len(validated_result)} 条)")
+        return validated_result
 
     def _fetch_from_tushare(
         self,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections import Counter
 from dataclasses import dataclass
 
@@ -13,6 +14,8 @@ from aqsp.portfolio.optimizer import (
 from aqsp.portfolio.sector_check import ConcentrationResult, get_sector
 from aqsp.ratings import is_tradable_rating
 from aqsp.strategies.adaptive_evolution import StrategyMixAdaptor
+
+_logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -306,6 +309,8 @@ def apply_portfolio_manager(
     industry_map = industry_map or {}
     decisions: list[PortfolioDecision] = []
     updated: list[PickResult] = []
+    # 当前主链没有持仓快照输入，止损/T+1 只能由上游显式过滤后再进入 PM。
+    # 在没有真实持仓上下文前，不在这里做假集成，避免输出看似已接管但实际未生效的裁决。
 
     concentrated_sector = ""
     if concentration and concentration.is_concentrated and concentration.sectors:
@@ -402,7 +407,6 @@ def apply_portfolio_manager(
                 reasons=tuple(reasons) if reasons else ("保持原排序",),
             )
         )
-
     updated.sort(key=lambda p: p.score, reverse=True)
     return PortfolioDecisionBundle(
         picks=updated,
