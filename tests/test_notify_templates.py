@@ -6,7 +6,7 @@ from aqsp.briefing.debate import DebateResult
 from aqsp.core.types import PickResult
 from aqsp.monitor.checker import MonitorResult
 from aqsp.portfolio.optimizer import PortfolioAllocation
-from aqsp.portfolio.manager import PortfolioDecisionSummary
+from aqsp.portfolio.manager import PortfolioDecisionSummary, WatchlistReviewItem
 from aqsp.portfolio.snapshot import PickSnapshot, SnapshotDiff
 from aqsp.notify_templates import (
     build_briefing_notification,
@@ -143,6 +143,55 @@ def test_build_daily_run_notification_surfaces_watchlist_blockers_when_no_alloca
     assert "- 执行阻塞: 000021 深科技: 板块集中度过高，压低科技暴露" in markdown
     assert "暂无可执行主仓，先盯观察池" in markdown
     assert "只有阻塞条件解除后再考虑转入执行名单" in markdown
+
+
+def test_build_daily_run_notification_surfaces_watch_reviews_as_checklist() -> None:
+    markdown = build_daily_run_notification(
+        run_date="2026-06-05",
+        tradable=[],
+        candidates=(),
+        portfolio_summary=PortfolioDecisionSummary(
+            promote_count=0,
+            downgrade_count=2,
+            keep_count=1,
+            top_focus=(),
+            watchlist=("688981 中芯国际", "000001 平安银行"),
+            allocations=(),
+            cash_reserve=1.0,
+            allocation_note="今日以观察为主",
+            watch_reviews=(
+                WatchlistReviewItem(
+                    symbol="688981",
+                    name="中芯国际",
+                    blocker="板块集中度过高",
+                    next_step="等待量价继续走强后，再评估是否转入执行名单",
+                    review_window="盘中走强后",
+                    priority="high",
+                ),
+                WatchlistReviewItem(
+                    symbol="000001",
+                    name="平安银行",
+                    blocker="高相关未解除",
+                    next_step="等待高相关标的分化后，再重新评估执行顺位",
+                    review_window="分化确认后",
+                    priority="medium",
+                ),
+            ),
+        ),
+        actual_source="eastmoney",
+        source_health_label="healthy",
+        source_health_message="eastmoney 健康",
+    )
+
+    assert "- 观察复核:" in markdown
+    assert (
+        "  - 688981 中芯国际 | 高优先级 / 盘中走强后 | 等待量价继续走强后，再评估是否转入执行名单"
+        in markdown
+    )
+    assert (
+        "1. 先盯 688981 中芯国际，等待量价继续走强后，再评估是否转入执行名单（高优先级 / 盘中走强后）。"
+        in markdown
+    )
 
 
 def test_build_daily_run_notification_lists_watch_candidates_when_not_tradable() -> None:

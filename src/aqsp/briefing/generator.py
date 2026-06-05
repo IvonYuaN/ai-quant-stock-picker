@@ -63,10 +63,14 @@ def _candidate_review_window_label(pick: PickResult) -> str:
     return str(pick.metrics.get("candidate_review_window", "") or "")
 
 
-def _candidate_review_priority_label(pick: PickResult) -> str:
-    value = str(pick.metrics.get("candidate_review_priority", "") or "")
+def _review_priority_label(value: str) -> str:
     labels = {"high": "高优先级", "medium": "中优先级", "low": "低优先级"}
     return labels.get(value, value)
+
+
+def _candidate_review_priority_label(pick: PickResult) -> str:
+    value = str(pick.metrics.get("candidate_review_priority", "") or "")
+    return _review_priority_label(value)
 
 
 def _format_pick_with_status(
@@ -538,6 +542,23 @@ class BriefingGenerator:
             lines.append("- 可执行主链: " + "、".join(portfolio_summary.top_focus[:3]))
         if portfolio_summary.watchlist:
             lines.append("- 候选观察池: " + "、".join(portfolio_summary.watchlist[:3]))
+        if portfolio_summary.watch_reviews:
+            lines.append("- 观察复核:")
+            for item in portfolio_summary.watch_reviews[:2]:
+                meta = " / ".join(
+                    part
+                    for part in (
+                        _review_priority_label(item.priority),
+                        item.review_window,
+                    )
+                    if part
+                )
+                line = f"  - {format_symbol_name(item.symbol, item.name)}"
+                if meta:
+                    line += f" | {meta}"
+                if item.next_step:
+                    line += f" | {item.next_step}"
+                lines.append(line)
         if portfolio_summary.action_hotspots:
             lines.append("- 裁决热点: " + "；".join(portfolio_summary.action_hotspots[:3]))
         if portfolio_summary.execution_blockers:

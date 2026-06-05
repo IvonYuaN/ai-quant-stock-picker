@@ -176,7 +176,7 @@ def build_daily_run_notification(
             "",
             "## 行动建议",
             "",
-            _daily_watch_action_line(candidates)
+            _daily_watch_action_line(candidates, portfolio_summary)
             or _daily_action_line_one(tradable, portfolio_summary),
         ]
     )
@@ -415,6 +415,23 @@ def _format_allocation_execution(
         lines.append("- 暂无可执行主仓，先盯观察池:")
         for item in portfolio_summary.watchlist[:3]:
             lines.append(f"  - {item}")
+    if portfolio_summary.watch_reviews:
+        lines.append("- 观察复核:")
+        for item in portfolio_summary.watch_reviews[:2]:
+            meta = " / ".join(
+                part
+                for part in (
+                    _review_priority_label(item.priority),
+                    item.review_window,
+                )
+                if part
+            )
+            line = f"  - {format_symbol_name(item.symbol, item.name)}"
+            if meta:
+                line += f" | {meta}"
+            if item.next_step:
+                line += f" | {item.next_step}"
+            lines.append(line)
     if portfolio_summary.cash_reserve > 0:
         lines.append(f"- 现金留存 {portfolio_summary.cash_reserve:.0%}")
     if portfolio_summary.allocation_note:
@@ -469,7 +486,26 @@ def _review_priority_label(priority: str) -> str:
     return labels.get(priority, priority or "")
 
 
-def _daily_watch_action_line(candidates: Sequence[PickResult]) -> str:
+def _daily_watch_action_line(
+    candidates: Sequence[PickResult],
+    portfolio_summary: PortfolioDecisionSummary | None = None,
+) -> str:
+    if portfolio_summary is not None and portfolio_summary.watch_reviews:
+        lead = portfolio_summary.watch_reviews[0]
+        review_meta = " / ".join(
+            part
+            for part in (
+                _review_priority_label(lead.priority),
+                lead.review_window,
+            )
+            if part
+        )
+        line = f"1. 先盯 {lead.symbol} {lead.name}"
+        if lead.next_step:
+            line += f"，{lead.next_step}"
+        if review_meta:
+            line += f"（{review_meta}）"
+        return line + "。"
     if not candidates:
         return ""
     lead = candidates[0]

@@ -16,7 +16,7 @@ from aqsp.briefing import (
 from aqsp.briefing.agent_roles import AgentRole
 from aqsp.briefing.debate import AShareDebateAgent
 from aqsp.core.types import PickResult
-from aqsp.portfolio.manager import PortfolioDecisionSummary
+from aqsp.portfolio.manager import PortfolioDecisionSummary, WatchlistReviewItem
 from aqsp.utils.llm_safe import LlmResult
 
 
@@ -125,6 +125,50 @@ class TestBriefingGenerator:
         )
         main_chain_sec = next(s for s in briefing.sections if s.title == "主链总览")
         assert "首位候选: 300750 宁德时代 | 候选观察池 | 新晋 | 评分 16.0" in main_chain_sec.content
+
+    def test_main_chain_section_includes_watch_review_checklist(self):
+        gen = BriefingGenerator()
+        briefing = gen.generate(
+            picks=[
+                _make_pick(symbol="688981", name="中芯国际", score=-9.0, rating="watch"),
+                _make_pick(symbol="000001", name="平安银行", score=-18.0, rating="watch"),
+            ],
+            frames={},
+            portfolio_summary=PortfolioDecisionSummary(
+                promote_count=0,
+                downgrade_count=2,
+                keep_count=0,
+                top_focus=(),
+                watchlist=("688981 中芯国际", "000001 平安银行"),
+                allocations=(),
+                cash_reserve=1.0,
+                allocation_note="今日以观察为主",
+                watch_reviews=(
+                    WatchlistReviewItem(
+                        symbol="688981",
+                        name="中芯国际",
+                        blocker="板块集中度过高",
+                        next_step="等待量价继续走强后，再评估是否转入执行名单",
+                        review_window="盘中走强后",
+                        priority="high",
+                    ),
+                    WatchlistReviewItem(
+                        symbol="000001",
+                        name="平安银行",
+                        blocker="高相关未解除",
+                        next_step="等待高相关标的分化后，再重新评估执行顺位",
+                        review_window="分化确认后",
+                        priority="medium",
+                    ),
+                ),
+            ),
+        )
+        main_chain_sec = next(s for s in briefing.sections if s.title == "主链总览")
+        assert "- 观察复核:" in main_chain_sec.content
+        assert (
+            "  - 688981 中芯国际 | 高优先级 / 盘中走强后 | 等待量价继续走强后，再评估是否转入执行名单"
+            in main_chain_sec.content
+        )
 
     def test_main_chain_section_does_not_repeat_symbol_as_name(self):
         gen = BriefingGenerator()
