@@ -6,6 +6,7 @@ from aqsp.briefing.debate import DebateResult
 from aqsp.monitor.checker import MonitorResult
 from aqsp.portfolio.optimizer import PortfolioAllocation
 from aqsp.portfolio.manager import PortfolioDecisionSummary
+from aqsp.portfolio.snapshot import PickSnapshot, SnapshotDiff
 from aqsp.notify_templates import (
     build_briefing_notification,
     build_closing_premium_notification,
@@ -140,6 +141,58 @@ def test_build_daily_run_notification_surfaces_watchlist_blockers_when_no_alloca
     assert "- 执行阻塞: 000021 深科技: 板块集中度过高，压低科技暴露" in markdown
     assert "暂无可执行主仓，先盯观察池" in markdown
     assert "只有阻塞条件解除后再考虑转入执行名单" in markdown
+
+
+def test_build_daily_run_notification_surfaces_snapshot_diff_highlights() -> None:
+    markdown = build_daily_run_notification(
+        run_date="2026-06-05",
+        tradable=[],
+        portfolio_summary=PortfolioDecisionSummary(
+            promote_count=0,
+            downgrade_count=1,
+            keep_count=1,
+            top_focus=(),
+            watchlist=("688981 中芯国际",),
+            allocations=(),
+            cash_reserve=1.0,
+            allocation_note="今日以观察为主",
+        ),
+        actual_source="eastmoney",
+        source_health_label="healthy",
+        source_health_message="eastmoney 健康",
+        snapshot_diff=SnapshotDiff(
+            date_current="2026-06-05",
+            date_previous="2026-06-04",
+            new_picks=(
+                PickSnapshot(
+                    symbol="688981",
+                    name="中芯国际",
+                    score=-9.0,
+                    rank=1,
+                    adjusted_score=-9.0,
+                    recommended_adjustment="keep",
+                ),
+            ),
+            removed_picks=(
+                PickSnapshot(
+                    symbol="600036",
+                    name="招商银行",
+                    score=24.0,
+                    rank=1,
+                    adjusted_score=24.0,
+                    recommended_adjustment="keep",
+                ),
+            ),
+            rank_changes=(("300750", 4, 5),),
+            score_changes=(),
+        ),
+    )
+
+    assert "- 候选变化: 新增 1 / 移出 1 / 排名异动 1" in markdown
+    assert "## 候选变化" in markdown
+    assert "🆕 **新晋候选**: 688981 中芯国际" in markdown
+    assert "❌ **移出候选**: 600036 招商银行" in markdown
+    assert "📈 **排名异动**: 300750 #4→#5↓" in markdown
 
 
 def test_build_monitor_notification_summary_mode_is_action_oriented() -> None:

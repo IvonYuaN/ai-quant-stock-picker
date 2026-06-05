@@ -9,6 +9,7 @@ from unittest.mock import MagicMock
 
 from aqsp.core.time import today_shanghai
 from aqsp.core.types import PickResult
+from aqsp.portfolio.snapshot import PickSnapshot, SnapshotDiff
 
 
 def test_run_scheduled_notify_prepends_source_status_banner(
@@ -1358,6 +1359,222 @@ def test_run_scheduled_surfaces_t1_blockers_in_report_and_notification(
     assert "T+1 限制：昨日已买 1 只（600519）仅保留观察" in report
     assert "观察池: 300750 宁德时代、600519 贵州茅台" in seen[0]
     assert "执行阻塞: 600519 贵州茅台: T+1 持仓约束，昨日已买，今日仅保留观察" in seen[0]
+
+
+def test_run_scheduled_surfaces_snapshot_lifecycle_in_summary_and_notification(
+    monkeypatch, tmp_path
+) -> None:
+    import aqsp.cli as cli_mod
+
+    latest = today_shanghai().isoformat()
+    frames = {
+        "688981": pd.DataFrame(
+            [
+                {
+                    "date": latest,
+                    "symbol": "688981",
+                    "name": "中芯国际",
+                    "open": 131.0,
+                    "high": 133.0,
+                    "low": 130.0,
+                    "close": 131.79,
+                    "volume": 1000,
+                    "amount": 131790000.0,
+                    "suspended": False,
+                    "limit_up": 0.0,
+                    "limit_down": 0.0,
+                }
+            ]
+        ),
+        "000300": pd.DataFrame(
+            [
+                {
+                    "date": latest,
+                    "symbol": "000300",
+                    "name": "沪深300",
+                    "open": 3500.0,
+                    "high": 3510.0,
+                    "low": 3490.0,
+                    "close": 3505.0,
+                    "volume": 1000,
+                    "amount": 350500000.0,
+                    "suspended": False,
+                    "limit_up": 0.0,
+                    "limit_down": 0.0,
+                }
+            ]
+        ),
+    }
+
+    monkeypatch.setattr(
+        cli_mod,
+        "_check_notification_gate",
+        lambda *, cold_start_days, gate_path=None: (True, []),
+    )
+    monkeypatch.setattr(
+        cli_mod,
+        "_fetch_frames_for_cli_with_metadata",
+        lambda *args, **kwargs: (frames, "eastmoney"),
+    )
+    monkeypatch.setattr(
+        cli_mod,
+        "_resolve_run_symbols",
+        lambda *args, **kwargs: ["688981"],
+    )
+    monkeypatch.setattr(
+        cli_mod, "strategy_weights_from_ledger", lambda *_args, **_kwargs: {}
+    )
+    monkeypatch.setattr(
+        cli_mod, "_count_independent_signal_days", lambda *_args, **_kwargs: 35
+    )
+    monkeypatch.setattr(
+        cli_mod,
+        "screen_universe",
+        lambda *_args, **_kwargs: [
+            PickResult(
+                symbol="688981",
+                name="中芯国际",
+                date=latest,
+                close=131.79,
+                score=-9.0,
+                rating="watch",
+                entry_type="relative_strength",
+                ideal_buy=131.79,
+                stop_loss=128.08,
+                take_profit=161.554,
+                position="watch",
+                strategies=(),
+                reasons=("MA20 斜率向上",),
+                risks=("收盘价低于 MA20",),
+            )
+        ],
+    )
+
+    class DummyPipeline:
+        def run(self, *_args, **_kwargs):
+            return True, ""
+
+    monkeypatch.setattr(cli_mod, "LethalFilterPipeline", lambda: DummyPipeline())
+    monkeypatch.setattr(
+        "aqsp.universe.t1_filter.filter_t1_held",
+        lambda candidates, **_kwargs: (candidates, []),
+    )
+    monkeypatch.setattr(cli_mod, "validate_predictions", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        "aqsp.data.anomaly.detect_anomalies",
+        lambda _frames: [],
+    )
+    monkeypatch.setattr(
+        "aqsp.data.freshness.check_freshness",
+        lambda _frames: [],
+    )
+    monkeypatch.setattr(
+        "aqsp.portfolio.sector_check.check_sector_concentration",
+        lambda _symbols: MagicMock(warnings=(), sectors=(), is_concentrated=False),
+    )
+    monkeypatch.setattr(
+        "aqsp.portfolio.correlation.compute_correlation",
+        lambda *_args, **_kwargs: MagicMock(
+            matrix={"688981": {"688981": 1.0}},
+            high_corr_pairs=[],
+            avg_correlation=0.0,
+        ),
+    )
+    monkeypatch.setattr(cli_mod, "append_predictions", lambda *args, **kwargs: None)
+    monkeypatch.setattr("aqsp.ledger.base.read_ledger", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(
+        "aqsp.ledger.base.ledger_rows_to_frame", lambda _rows: pd.DataFrame()
+    )
+    monkeypatch.setattr(
+        "aqsp.ledger.learner.StrategyDecayDetector.detect",
+        lambda self, _df: [],
+    )
+    monkeypatch.setattr(
+        "aqsp.portfolio.snapshot.save_snapshot",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "aqsp.portfolio.snapshot.compare_snapshots",
+        lambda *args, **kwargs: SnapshotDiff(
+            date_current=latest,
+            date_previous="2026-06-04",
+            new_picks=(
+                PickSnapshot(
+                    symbol="688981",
+                    name="中芯国际",
+                    score=-9.0,
+                    rank=1,
+                    adjusted_score=-9.0,
+                    recommended_adjustment="keep",
+                ),
+            ),
+            removed_picks=(
+                PickSnapshot(
+                    symbol="600036",
+                    name="招商银行",
+                    score=24.0,
+                    rank=1,
+                    adjusted_score=24.0,
+                    recommended_adjustment="keep",
+                ),
+            ),
+            rank_changes=(("300750", 4, 5),),
+            score_changes=(),
+        ),
+    )
+
+    class DummyBreaker:
+        def check(self, **_kwargs):
+            return type("Status", (), {"triggered": False, "reason": "正常"})()
+
+    monkeypatch.setattr(cli_mod, "CircuitBreaker", lambda: DummyBreaker())
+    monkeypatch.setattr(
+        cli_mod,
+        "describe_source_health",
+        lambda *_args, **_kwargs: ("healthy", "eastmoney 健康", False),
+    )
+
+    seen: list[str] = []
+    monkeypatch.setattr(
+        cli_mod,
+        "notify_markdown",
+        lambda markdown: seen.append(markdown) or [],
+    )
+
+    args = Namespace(
+        mode="close",
+        symbols="688981",
+        csv="",
+        source="auto",
+        limit=1,
+        max_universe=10,
+        min_avg_amount=50_000_000,
+        max_data_lag_days=3,
+        enable_online_factors=False,
+        report=str(tmp_path / "latest.md"),
+        output_csv=str(tmp_path / "latest.csv"),
+        ledger=str(tmp_path / "predictions.jsonl"),
+        horizon_days=3,
+        fee_bps=8.0,
+        slippage_bps=5.0,
+        benchmark_symbol="000300",
+        skip_validation=True,
+        notify=True,
+        enable_debate=False,
+        pool="",
+    )
+
+    exit_code = cli_mod.run_scheduled(args)
+    report = (tmp_path / "latest.md").read_text(encoding="utf-8")
+
+    assert exit_code == 0
+    assert seen
+    assert "🆕 **新晋候选**: 688981 中芯国际" in report
+    assert "❌ **移出候选**: 600036 招商银行" in report
+    assert "📈 **排名异动**: 300750 #4→#5↓" in report
+    assert "- 候选变化: 新增 1 / 移出 1 / 排名异动 1" in seen[0]
+    assert "## 候选变化" in seen[0]
+    assert "🆕 **新晋候选**: 688981 中芯国际" in seen[0]
 
 
 def test_main_accepts_run_scheduled_alias(monkeypatch) -> None:

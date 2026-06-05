@@ -2510,9 +2510,7 @@ def run_scheduled(args: argparse.Namespace) -> int:
             previous_date=(today_shanghai() - timedelta(days=1)).isoformat(),
             snapshot_path="data/snapshots",
         )
-        if diff is not None and (
-            diff.new_picks or diff.removed_picks or diff.rank_changes
-        ):
+        if diff is not None and diff.has_changes:
             print(format_snapshot_diff(diff))
 
     table = to_dataframe(picks)
@@ -2549,6 +2547,10 @@ def run_scheduled(args: argparse.Namespace) -> int:
                 summary_lines.append(f"📋 **观察重点**: {'、'.join(watchlist[:3])}")
             if blockers:
                 summary_lines.append(f"🚧 **主要阻塞**: {blockers[0]}")
+        if diff is not None and diff.has_changes:
+            from aqsp.portfolio.snapshot import snapshot_diff_highlights
+
+            summary_lines.extend(snapshot_diff_highlights(diff, max_items=2))
 
     if is_cold_start:
         summary_lines.append(
@@ -2605,7 +2607,7 @@ def run_scheduled(args: argparse.Namespace) -> int:
     if stale_reports:
         markdown += "\n\n" + freshness_text
 
-    if diff is not None and (diff.new_picks or diff.removed_picks or diff.rank_changes):
+    if diff is not None and diff.has_changes:
         from aqsp.portfolio.snapshot import format_snapshot_diff
 
         markdown += "\n\n## 选股变化\n" + format_snapshot_diff(diff)
@@ -2697,6 +2699,7 @@ def run_scheduled(args: argparse.Namespace) -> int:
                 cold_start_min_days=COLD_START_MIN_DAYS,
                 is_cold_start=is_cold_start,
                 circuit_breaker_reason=status.reason if status.triggered else "",
+                snapshot_diff=diff,
                 mode=load_runtime_config().notify_mode,
             )
         )

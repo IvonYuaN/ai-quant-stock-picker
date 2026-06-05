@@ -210,3 +210,43 @@ def format_snapshot_diff(diff: SnapshotDiff) -> str:
         lines.append("   无变化")
 
     return "\n".join(lines)
+
+
+def summarize_snapshot_diff(diff: SnapshotDiff) -> str:
+    """生成候选变化的单行摘要。"""
+    parts: list[str] = []
+    if diff.new_picks:
+        parts.append(f"新增 {len(diff.new_picks)}")
+    if diff.removed_picks:
+        parts.append(f"移出 {len(diff.removed_picks)}")
+    if diff.rank_changes:
+        parts.append(f"排名异动 {len(diff.rank_changes)}")
+    if diff.score_changes:
+        parts.append(f"评分变化 {len(diff.score_changes)}")
+    return " / ".join(parts) if parts else "无变化"
+
+
+def snapshot_diff_highlights(
+    diff: SnapshotDiff,
+    *,
+    max_items: int = 2,
+) -> tuple[str, ...]:
+    """生成候选变化的高亮摘要，适合通知/报告头部。"""
+    highlights: list[str] = []
+    if diff.new_picks:
+        names = "、".join(
+            f"{item.symbol} {item.name}" for item in diff.new_picks[:max_items]
+        )
+        highlights.append(f"🆕 **新晋候选**: {names}")
+    if diff.removed_picks:
+        names = "、".join(
+            f"{item.symbol} {item.name}" for item in diff.removed_picks[:max_items]
+        )
+        highlights.append(f"❌ **移出候选**: {names}")
+    if diff.rank_changes:
+        changes = []
+        for symbol, old_rank, new_rank in diff.rank_changes[:max_items]:
+            direction = "↑" if new_rank < old_rank else "↓"
+            changes.append(f"{symbol} #{old_rank}→#{new_rank}{direction}")
+        highlights.append(f"📈 **排名异动**: {'、'.join(changes)}")
+    return tuple(highlights)

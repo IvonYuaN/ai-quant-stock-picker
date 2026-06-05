@@ -9,6 +9,7 @@ from aqsp.briefing.debate import DebateResult
 from aqsp.monitor.checker import MonitorResult
 from aqsp.models import PickResult
 from aqsp.portfolio.manager import PortfolioDecisionSummary
+from aqsp.portfolio.snapshot import SnapshotDiff, snapshot_diff_highlights, summarize_snapshot_diff
 from aqsp.notifier import prepend_source_status_banner
 from aqsp.presentation import format_symbol_name
 from aqsp.strategies.closing_premium import PremiumSignal, format_closing_signals
@@ -80,6 +81,7 @@ def build_daily_run_notification(
     cold_start_min_days: int = 0,
     is_cold_start: bool = False,
     circuit_breaker_reason: str = "",
+    snapshot_diff: SnapshotDiff | None = None,
     mode: str = "summary",
 ) -> str:
     lines = [
@@ -138,6 +140,8 @@ def build_daily_run_notification(
             "- 执行阻塞: "
             + "；".join(portfolio_summary.execution_blockers[:2])
         )
+    if snapshot_diff is not None and snapshot_diff.has_changes:
+        lines.append(f"- 候选变化: {summarize_snapshot_diff(snapshot_diff)}")
     if debate_results:
         lead = debate_results[0]
         consensus = lead.final_consensus or lead.adjustment_reason or "暂无共识摘要"
@@ -158,6 +162,9 @@ def build_daily_run_notification(
     debate = _format_debate_summary(debate_results[:2])
     if debate:
         lines.extend(["", "## 多Agent辩论", "", debate])
+    if snapshot_diff is not None and snapshot_diff.has_changes:
+        lines.extend(["", "## 候选变化", ""])
+        lines.extend(snapshot_diff_highlights(snapshot_diff, max_items=3))
 
     lines.extend(
         [
