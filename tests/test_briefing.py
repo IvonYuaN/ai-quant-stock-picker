@@ -109,6 +109,23 @@ class TestBriefingGenerator:
             in main_chain_sec.content
         )
 
+    def test_main_chain_section_includes_candidate_status_label(self):
+        gen = BriefingGenerator()
+        briefing = gen.generate(
+            picks=[
+                _make_pick(
+                    symbol="300750",
+                    name="宁德时代",
+                    score=16.0,
+                    rating="watch",
+                    metrics={"candidate_status": "新晋"},
+                )
+            ],
+            frames={},
+        )
+        main_chain_sec = next(s for s in briefing.sections if s.title == "主链总览")
+        assert "首位候选: 300750 宁德时代 | 候选观察池 | 新晋 | 评分 16.0" in main_chain_sec.content
+
     def test_main_chain_section_does_not_repeat_symbol_as_name(self):
         gen = BriefingGenerator()
         briefing = gen.generate(
@@ -261,6 +278,22 @@ class TestBriefingGenerator:
         assert "候选观察池" in next_sec.content
         assert "待阻塞条件解除后再考虑转入执行名单" in next_sec.content
         assert "600519" in next_sec.content
+
+    def test_next_day_section_includes_candidate_status_for_watch_pick(self):
+        gen = BriefingGenerator()
+        briefing = gen.generate(
+            picks=[
+                _make_pick(
+                    symbol="600519",
+                    name="贵州茅台",
+                    rating="watch",
+                    metrics={"candidate_status": "观察阻塞"},
+                )
+            ],
+            frames={},
+        )
+        next_sec = next(s for s in briefing.sections if s.title == "明日重点")
+        assert "候选观察池: 600519 贵州茅台(观察阻塞)" in next_sec.content
 
     def test_render_template(self):
         gen = BriefingGenerator()
@@ -483,6 +516,44 @@ class TestGenerateSmartSummary:
 
         assert "- 候选观察池: 600519 贵州茅台" in summary
         assert "- 首选观察: 600519 贵州茅台" in summary
+
+    def test_action_plan_mentions_candidate_status_when_candidates_exist_but_not_tradable(
+        self,
+    ):
+        gen = BriefingGenerator()
+        briefing = gen.generate(
+            picks=[
+                _make_pick(
+                    symbol="600519",
+                    name="贵州茅台",
+                    rating="watch",
+                    metrics={"candidate_status": "新晋"},
+                )
+            ],
+            frames={},
+        )
+
+        summary = briefing.generate_smart_summary()
+
+        assert "- 候选观察池: 600519 贵州茅台(新晋)(8.5分)" in summary
+        assert "- 首选观察: 600519 贵州茅台(新晋)(8.5分)" in summary
+
+    def test_evidence_section_includes_candidate_status_label(self):
+        gen = BriefingGenerator()
+        briefing = gen.generate(
+            picks=[
+                _make_pick(
+                    symbol="300750",
+                    name="宁德时代",
+                    score=72.0,
+                    rating="buy_candidate",
+                    metrics={"candidate_status": "延续上升"},
+                )
+            ],
+            frames={},
+        )
+        evidence_sec = next(s for s in briefing.sections if s.title == "候选证据链")
+        assert "状态: 延续上升" in evidence_sec.content
 
     def test_core_items_render_structured_portfolio_summary(self):
         briefing = Briefing(

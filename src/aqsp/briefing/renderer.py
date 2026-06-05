@@ -11,6 +11,20 @@ from aqsp.presentation import format_symbol_name
 from aqsp.ratings import rating_label, portfolio_action_label
 
 
+def _candidate_status_label(pick) -> str:
+    return str(pick.metrics.get("candidate_status", "") or "")
+
+
+def _format_pick_with_status(pick, *, include_score: bool = False) -> str:
+    display = format_symbol_name(pick.symbol, pick.name)
+    status = _candidate_status_label(pick)
+    if status:
+        display = f"{display}({status})"
+    if include_score:
+        display = f"{display}({pick.score:.1f}分)"
+    return display
+
+
 class MarkdownRenderer:
     """将 BriefingData 渲染为 markdown 格式。"""
 
@@ -64,9 +78,12 @@ class MarkdownRenderer:
 
         lead = data.picks[0]
         lead_display = format_symbol_name(lead.symbol, lead.name)
-        lines.append(
-            f"- 首位候选: {lead_display} | {rating_label(lead.rating)} | 评分 {lead.score:.1f}"
-        )
+        lead_status = _candidate_status_label(lead)
+        lead_line = f"- 首位候选: {lead_display} | {rating_label(lead.rating)}"
+        if lead_status:
+            lead_line += f" | {lead_status}"
+        lead_line += f" | 评分 {lead.score:.1f}"
+        lines.append(lead_line)
 
         if not ps.top_focus:
             lines.append("- 今日动作: 仅观察，不做放大仓位动作。")
@@ -172,9 +189,12 @@ class MarkdownRenderer:
             display = format_symbol_name(pick.symbol, pick.name)
             pm_action = str(pick.metrics.get("portfolio_action", "") or "")
             pm_text = portfolio_action_label(pm_action) if pm_action else "未裁决"
-            lines.append(
-                f"### {display} (评分: {pick.score} / {rating_label(pick.rating)} / PM: {pm_text})"
-            )
+            candidate_status = _candidate_status_label(pick)
+            headline = f"### {display} (评分: {pick.score} / {rating_label(pick.rating)}"
+            if candidate_status:
+                headline += f" / 状态: {candidate_status}"
+            headline += f" / PM: {pm_text})"
+            lines.append(headline)
 
             if pick.strategies:
                 lines.append(f"- 命中策略: {', '.join(pick.strategies)}")
@@ -215,7 +235,7 @@ class MarkdownRenderer:
         if not tradable:
             if data.picks:
                 names = "、".join(
-                    format_symbol_name(p.symbol, p.name) for p in data.picks[:3]
+                    _format_pick_with_status(p) for p in data.picks[:3]
                 )
                 lines.append(
                     f"当前暂无可执行重点标的；候选观察池: {names}。先观察最强票，待阻塞条件解除后再考虑转入执行名单。"
@@ -227,7 +247,7 @@ class MarkdownRenderer:
             return lines
 
         for pick in tradable[:5]:
-            display = format_symbol_name(pick.symbol, pick.name)
+            display = _format_pick_with_status(pick)
             lines.append(
                 f"- **{display}**: "
                 f"参考买点 {pick.ideal_buy} / 止损 {pick.stop_loss} / 止盈 {pick.take_profit} / 仓位 {pick.position}"
@@ -285,7 +305,9 @@ class MarkdownRenderer:
 
         if data.picks:
             top = data.top_picks
-            names = "、".join(f"{format_symbol_name(p.symbol, p.name)}({p.score:.1f}分)" for p in top)
+            names = "、".join(
+                _format_pick_with_status(p, include_score=True) for p in top
+            )
             items.append(f"- 候选标的: {names}")
 
         source_summary = data.source_health_summary
@@ -306,7 +328,9 @@ class MarkdownRenderer:
             items.append(f"- 可执行标的: {names}")
         elif data.picks:
             top = data.top_picks
-            names = "、".join(f"{format_symbol_name(p.symbol, p.name)}({p.score:.1f}分)" for p in top)
+            names = "、".join(
+                _format_pick_with_status(p, include_score=True) for p in top
+            )
             items.append(f"- 候选观察池: {names}")
         elif data.portfolio_summary and data.portfolio_summary.watchlist:
             items.append("- 候选观察池: " + "、".join(data.portfolio_summary.watchlist[:3]))
@@ -317,7 +341,9 @@ class MarkdownRenderer:
 
         if data.picks:
             first = data.picks[0]
-            items.append(f"- 首选观察: {format_symbol_name(first.symbol, first.name)}({first.score:.1f}分)")
+            items.append(
+                f"- 首选观察: {_format_pick_with_status(first, include_score=True)}"
+            )
         elif data.portfolio_summary:
             fallback = data.portfolio_summary.top_focus or data.portfolio_summary.watchlist
             if fallback:

@@ -47,6 +47,24 @@ _REGIME_DESCRIPTIONS = {
 }
 
 
+def _candidate_status_label(pick: PickResult) -> str:
+    return str(pick.metrics.get("candidate_status", "") or "")
+
+
+def _format_pick_with_status(
+    pick: PickResult,
+    *,
+    include_score: bool = False,
+) -> str:
+    display = format_symbol_name(pick.symbol, pick.name)
+    status = _candidate_status_label(pick)
+    if status:
+        display = f"{display}({status})"
+    if include_score:
+        display = f"{display}({pick.score:.1f}分)"
+    return display
+
+
 @dataclass(frozen=True)
 class BriefingSection:
     title: str
@@ -57,6 +75,7 @@ class BriefingSection:
 class Briefing:
     date: str
     sections: list[BriefingSection]
+    picks: list[PickResult] = field(default_factory=list)
     debate_results: list[DebateResult] = field(default_factory=list)
     portfolio_summary: PortfolioDecisionSummary | None = None
 
@@ -95,12 +114,22 @@ class Briefing:
         return re.findall(r"\*\*(\d{6}\s+\S+)\*\*", next_day)
 
     def _extract_candidate_count(self) -> int:
+        if self.picks:
+            return len(self.picks)
         evidence = self._get_section("候选证据链")
         if not evidence:
             return 0
         return len(re.findall(r"###\s+\d{6}", evidence))
 
-    def _extract_top_scores(self) -> list[str]:
+    def _extract_top_scores(self) -> list[tuple[str, str]]:
+        if self.picks:
+            return [
+                (
+                    format_symbol_name(p.symbol, p.name),
+                    f"{p.score:.1f}",
+                )
+                for p in self.picks[:3]
+            ]
         evidence = self._get_section("候选证据链")
         if not evidence:
             return []
@@ -200,13 +229,19 @@ class Briefing:
 
     def _build_data_items(
         self,
-        top_scores: list[str],
+        top_scores: list[tuple[str, str]],
         source_points: list[str],
         regime_points: list[str],
     ) -> list[str]:
         items: list[str] = []
         if top_scores:
-            names = "、".join(f"{s[0]}({s[1]}分)" for s in top_scores[:3])
+            if self.picks:
+                names = "、".join(
+                    _format_pick_with_status(pick, include_score=True)
+                    for pick in self.picks[:3]
+                )
+            else:
+                names = "、".join(f"{s[0]}({s[1]}分)" for s in top_scores[:3])
             items.append(f"- 候选标的: {names}")
         if source_points:
             items.append(f"- 数据源: {self._strip_leading_markers(source_points[0])}")
@@ -217,13 +252,19 @@ class Briefing:
     def _build_action_items(
         self,
         actionable: list[str],
-        top_scores: list[str],
+        top_scores: list[tuple[str, str]],
         debate_points: list[str],
     ) -> list[str]:
         items: list[str] = []
         if actionable:
             names = "、".join(actionable[:3])
             items.append(f"- 可执行标的: {names}")
+        elif self.picks:
+            names = "、".join(
+                _format_pick_with_status(pick, include_score=True)
+                for pick in self.picks[:3]
+            )
+            items.append(f"- 候选观察池: {names}")
         elif top_scores:
             names = "、".join(f"{s[0]}({s[1]}分)" for s in top_scores[:3])
             items.append(f"- 候选观察池: {names}")
@@ -257,7 +298,11 @@ class Briefing:
             items.append(
                 "- 执行阻塞: " + "；".join(self.portfolio_summary.execution_blockers[:2])
             )
-        if top_scores:
+        if self.picks:
+            items.append(
+                f"- 首选观察: {_format_pick_with_status(self.picks[0], include_score=True)}"
+            )
+        elif top_scores:
             items.append(f"- 首选观察: {top_scores[0][0]}({top_scores[0][1]}分)")
         elif self.portfolio_summary:
             fallback = (
@@ -434,6 +479,7 @@ class BriefingGenerator:
         return Briefing(
             date=date_str,
             sections=sections,
+            picks=ordered_picks,
             debate_results=debate_results,
             portfolio_summary=summary,
         )
@@ -512,8 +558,15 @@ class BriefingGenerator:
 
         lead_pick = picks[0]
         lead_display = format_symbol_name(lead_pick.symbol, lead_pick.name)
+        lead_status = _candidate_status_label(lead_pick)
+        lead_line = (
+            f"- 首位候选: {lead_display} | {rating_label(lead_pick.rating)}"
+        )
+        if lead_status:
+            lead_line += f" | {lead_status}"
+        lead_line += f" | 评分 {lead_pick.score:.1f}"
         lines.append(
-            f"- 首位候选: {lead_display} | {rating_label(lead_pick.rating)} | 评分 {lead_pick.score:.1f}"
+            lead_line
         )
         if not portfolio_summary.top_focus:
             lines.append("- 今日动作: 仅观察，不做放大仓位动作。")
@@ -642,8 +695,15 @@ class BriefingGenerator:
             display = format_symbol_name(pick.symbol, pick.name)
             pm_action = str(pick.metrics.get("portfolio_action", "") or "")
             pm_text = portfolio_action_label(pm_action) if pm_action else "未裁决"
+            candidate_status = _candidate_status_label(pick)
+            headline = (
+                f"### {display} (评分: {pick.score} / {rating_label(pick.rating)}"
+            )
+            if candidate_status:
+                headline += f" / 状态: {candidate_status}"
+            headline += f" / PM: {pm_text})"
             lines.append(
-                f"### {display} (评分: {pick.score} / {rating_label(pick.rating)} / PM: {pm_text})"
+                headline
             )
             if pick.strategies:
                 lines.append(f"- 命中策略: {', '.join(pick.strategies)}")
@@ -689,7 +749,7 @@ class BriefingGenerator:
         if not tradable_picks:
             if picks:
                 names = "、".join(
-                    format_symbol_name(p.symbol, p.name) for p in picks[:3]
+                    _format_pick_with_status(p) for p in picks[:3]
                 )
                 lines.append(
                     f"当前暂无可执行重点标的；候选观察池: {names}。先观察最强票，待阻塞条件解除后再考虑转入执行名单。"
@@ -701,7 +761,7 @@ class BriefingGenerator:
             entry = pick.ideal_buy
             stop = pick.stop_loss
             tp = pick.take_profit
-            display = format_symbol_name(pick.symbol, pick.name)
+            display = _format_pick_with_status(pick)
             lines.append(
                 f"- **{display}**: "
                 f"参考买点 {entry} / 止损 {stop} / 止盈 {tp} / 仓位 {pick.position}"
