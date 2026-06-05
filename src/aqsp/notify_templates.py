@@ -11,7 +11,12 @@ from aqsp.models import PickResult
 from aqsp.portfolio.manager import PortfolioDecisionSummary
 from aqsp.portfolio.snapshot import SnapshotDiff, snapshot_diff_highlights, summarize_snapshot_diff
 from aqsp.notifier import prepend_source_status_banner
-from aqsp.presentation import format_symbol_name
+from aqsp.presentation import (
+    format_symbol_name,
+    format_watch_review_action,
+    format_watch_review_line,
+    review_priority_label,
+)
 from aqsp.strategies.closing_premium import PremiumSignal, format_closing_signals
 from aqsp.strategies.morning_breakout import BreakoutSignal, format_morning_signals
 
@@ -440,20 +445,15 @@ def _format_allocation_execution(
     if portfolio_summary.watch_reviews:
         lines.append("- 观察复核:")
         for item in portfolio_summary.watch_reviews[:2]:
-            meta = " / ".join(
-                part
-                for part in (
-                    _review_priority_label(item.priority),
-                    item.review_window,
+            lines.append(
+                "  - "
+                + format_watch_review_line(
+                    format_symbol_name(item.symbol, item.name),
+                    priority=item.priority,
+                    review_window=item.review_window,
+                    next_step=item.next_step,
                 )
-                if part
             )
-            line = f"  - {format_symbol_name(item.symbol, item.name)}"
-            if meta:
-                line += f" | {meta}"
-            if item.next_step:
-                line += f" | {item.next_step}"
-            lines.append(line)
     if portfolio_summary.cash_reserve > 0:
         lines.append(f"- 现金留存 {portfolio_summary.cash_reserve:.0%}")
     if portfolio_summary.allocation_note:
@@ -504,8 +504,7 @@ def _candidate_review_priority(pick: PickResult) -> str:
 
 
 def _review_priority_label(priority: str) -> str:
-    labels = {"high": "高优先级", "medium": "中优先级", "low": "低优先级"}
-    return labels.get(priority, priority or "")
+    return review_priority_label(priority)
 
 
 def _daily_watch_action_line(
@@ -514,20 +513,12 @@ def _daily_watch_action_line(
 ) -> str:
     if portfolio_summary is not None and portfolio_summary.watch_reviews:
         lead = portfolio_summary.watch_reviews[0]
-        review_meta = " / ".join(
-            part
-            for part in (
-                _review_priority_label(lead.priority),
-                lead.review_window,
-            )
-            if part
+        return "1. " + format_watch_review_action(
+            f"{lead.symbol} {lead.name}",
+            priority=lead.priority,
+            review_window=lead.review_window,
+            next_step=lead.next_step,
         )
-        line = f"1. 先盯 {lead.symbol} {lead.name}"
-        if lead.next_step:
-            line += f"，{lead.next_step}"
-        if review_meta:
-            line += f"（{review_meta}）"
-        return line + "。"
     if not candidates:
         return ""
     lead = candidates[0]
@@ -535,13 +526,12 @@ def _daily_watch_action_line(
     review_window = _candidate_review_window(lead)
     review_priority = _review_priority_label(_candidate_review_priority(lead))
     if next_step:
-        line = f"1. 先盯 {lead.symbol} {lead.name}，{next_step}"
-        review_meta = " / ".join(
-            part for part in (review_priority, review_window) if part
+        return "1. " + format_watch_review_action(
+            f"{lead.symbol} {lead.name}",
+            priority=review_priority,
+            review_window=review_window,
+            next_step=next_step,
         )
-        if review_meta:
-            line += f"（{review_meta}）"
-        return line + "。"
     return ""
 
 

@@ -22,6 +22,7 @@ from aqsp.data.source_health import (
     notification_level_for_health_label,
     read_source_health,
 )
+from aqsp.presentation import format_review_meta, format_watch_review_line, review_priority_label
 from aqsp.ratings import is_tradable_rating, portfolio_action_label, rating_label
 from aqsp.research.summary import ResearchSummary, load_research_summary
 
@@ -234,16 +235,14 @@ def _candidate_display_name(row: dict[str, Any]) -> str:
 
 
 def _review_priority_label(priority: str) -> str:
-    labels = {"high": "高优先级", "medium": "中优先级", "low": "低优先级"}
-    return labels.get(priority, priority or "")
+    return review_priority_label(priority)
 
 
 def _candidate_review_meta(row: dict[str, Any]) -> str:
-    priority = _review_priority_label(
-        str(row.get("candidate_review_priority", "") or "")
+    return format_review_meta(
+        str(row.get("candidate_review_priority", "") or ""),
+        str(row.get("candidate_review_window", "") or ""),
     )
-    review_window = str(row.get("candidate_review_window", "") or "")
-    return " / ".join(part for part in (priority, review_window) if part)
 
 
 def _lifecycle_overview_panel(candidates: list[dict[str, str]]) -> str:
@@ -268,12 +267,14 @@ def _lifecycle_overview_panel(candidates: list[dict[str, str]]) -> str:
         if blocker:
             blocked.append(f"{display}: {blocker}")
         if next_step or review_meta:
-            line = display
-            if review_meta:
-                line += f" | {review_meta}"
-            if next_step:
-                line += f" | {next_step}"
-            review_items.append(line)
+            review_items.append(
+                format_watch_review_line(
+                    display,
+                    priority=str(row.get("candidate_review_priority", "") or ""),
+                    review_window=str(row.get("candidate_review_window", "") or ""),
+                    next_step=next_step,
+                )
+            )
 
     if actionable:
         headline = "可执行主链"

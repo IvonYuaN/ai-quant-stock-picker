@@ -11,6 +11,12 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
+from aqsp.presentation import (
+    format_review_meta,
+    format_watch_review_action,
+    format_watch_review_line,
+    review_priority_label,
+)
 from aqsp.core.errors import DataError, FreshnessError
 from aqsp.core.time import now_shanghai, today_shanghai
 
@@ -939,8 +945,7 @@ def _read_latest_candidates(config: PipelineConfig) -> list[dict[str, Any]]:
         return tuple(parts[:limit])
 
     def _review_priority_label(value: Any) -> str:
-        labels = {"high": "高优先级", "medium": "中优先级", "low": "低优先级"}
-        return labels.get(_text(value), _text(value))
+        return review_priority_label(_text(value))
 
     candidates: list[dict[str, Any]] = []
     for row in df.to_dict(orient="records"):
@@ -1003,11 +1008,10 @@ def _format_candidate_summary_line(candidate: dict[str, Any]) -> str:
 
 
 def _format_candidate_review_meta(candidate: dict[str, Any]) -> str:
-    parts = [
+    return format_review_meta(
         str(candidate.get("candidate_review_priority", "") or ""),
         str(candidate.get("candidate_review_window", "") or ""),
-    ]
-    return " / ".join(part for part in parts if part)
+    )
 
 
 def _build_pipeline_digest(
@@ -1125,13 +1129,19 @@ def _build_pipeline_digest(
         elif review_candidates:
             main_chain_lines.append("- 观察复核:")
             for candidate in review_candidates[:2]:
-                review_line = "  - " + candidate["display"]
-                review_meta = _format_candidate_review_meta(candidate)
-                if review_meta:
-                    review_line += f" | {review_meta}"
-                if candidate.get("candidate_next_step"):
-                    review_line += f" | {candidate['candidate_next_step']}"
-                main_chain_lines.append(review_line)
+                main_chain_lines.append(
+                    "  - "
+                    + format_watch_review_line(
+                        candidate["display"],
+                        priority=str(
+                            candidate.get("candidate_review_priority", "") or ""
+                        ),
+                        review_window=str(
+                            candidate.get("candidate_review_window", "") or ""
+                        ),
+                        next_step=str(candidate.get("candidate_next_step", "") or ""),
+                    )
+                )
     elif portfolio_summary is not None:
         if portfolio_summary.top_focus:
             main_chain_lines.append(
@@ -1160,24 +1170,30 @@ def _build_pipeline_digest(
         plan_lines.append(action_line)
         lead_review = review_candidates[0] if review_candidates else None
         if lead_review is not None:
-            review_meta = _format_candidate_review_meta(lead_review)
-            line = f"- 观察复核: 先盯 {lead_review['display']}"
-            if lead_review.get("candidate_next_step"):
-                line += f"，{lead_review['candidate_next_step']}"
-            if review_meta:
-                line += f"（{review_meta}）"
-            line += "。"
-            plan_lines.append(line)
+            plan_lines.append(
+                "- 观察复核: "
+                + format_watch_review_action(
+                    lead_review["display"],
+                    priority=str(
+                        lead_review.get("candidate_review_priority", "") or ""
+                    ),
+                    review_window=str(
+                        lead_review.get("candidate_review_window", "") or ""
+                    ),
+                    next_step=str(lead_review.get("candidate_next_step", "") or ""),
+                )
+            )
     elif review_candidates:
         lead_review = review_candidates[0]
-        review_meta = _format_candidate_review_meta(lead_review)
-        line = f"- 明日先盯 {lead_review['display']}"
-        if lead_review.get("candidate_next_step"):
-            line += f"，{lead_review['candidate_next_step']}"
-        if review_meta:
-            line += f"（{review_meta}）"
-        line += "。"
-        plan_lines.append(line)
+        plan_lines.append(
+            "- 明日"
+            + format_watch_review_action(
+                lead_review["display"],
+                priority=str(lead_review.get("candidate_review_priority", "") or ""),
+                review_window=str(lead_review.get("candidate_review_window", "") or ""),
+                next_step=str(lead_review.get("candidate_next_step", "") or ""),
+            )
+        )
     elif portfolio_summary is not None and portfolio_summary.watchlist:
         plan_lines.append("- 明日以观察池复核为主，等待右侧确认，不直接放大仓位。")
     else:

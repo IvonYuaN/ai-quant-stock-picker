@@ -15,7 +15,11 @@ from aqsp.portfolio.manager import (
     PortfolioDecisionSummary,
     summarize_portfolio_decisions,
 )
-from aqsp.presentation import format_symbol_name
+from aqsp.presentation import (
+    format_symbol_name,
+    format_watch_review_line,
+    review_priority_label,
+)
 from aqsp.research.summary import ResearchSummary
 from aqsp.ratings import rating_label
 from aqsp.config import load_debate_runtime_config
@@ -64,8 +68,7 @@ def _candidate_review_window_label(pick: PickResult) -> str:
 
 
 def _review_priority_label(value: str) -> str:
-    labels = {"high": "高优先级", "medium": "中优先级", "low": "低优先级"}
-    return labels.get(value, value)
+    return review_priority_label(value)
 
 
 def _candidate_review_priority_label(pick: PickResult) -> str:
@@ -545,20 +548,15 @@ class BriefingGenerator:
         if portfolio_summary.watch_reviews:
             lines.append("- 观察复核:")
             for item in portfolio_summary.watch_reviews[:2]:
-                meta = " / ".join(
-                    part
-                    for part in (
-                        _review_priority_label(item.priority),
-                        item.review_window,
+                lines.append(
+                    "  - "
+                    + format_watch_review_line(
+                        format_symbol_name(item.symbol, item.name),
+                        priority=item.priority,
+                        review_window=item.review_window,
+                        next_step=item.next_step,
                     )
-                    if part
                 )
-                line = f"  - {format_symbol_name(item.symbol, item.name)}"
-                if meta:
-                    line += f" | {meta}"
-                if item.next_step:
-                    line += f" | {item.next_step}"
-                lines.append(line)
         if portfolio_summary.action_hotspots:
             lines.append("- 裁决热点: " + "；".join(portfolio_summary.action_hotspots[:3]))
         if portfolio_summary.execution_blockers:

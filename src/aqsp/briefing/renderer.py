@@ -7,7 +7,12 @@ from __future__ import annotations
 
 from aqsp.briefing.schema import BriefingData
 from aqsp.briefing.debate import format_debate_result
-from aqsp.presentation import format_symbol_name
+from aqsp.presentation import (
+    format_review_meta,
+    format_symbol_name,
+    format_watch_review_line,
+    review_priority_label,
+)
 from aqsp.ratings import rating_label, portfolio_action_label
 
 
@@ -33,8 +38,7 @@ def _candidate_review_priority_label(pick) -> str:
 
 
 def _review_priority_label(value: str) -> str:
-    labels = {"high": "高优先级", "medium": "中优先级", "low": "低优先级"}
-    return labels.get(value, value)
+    return review_priority_label(value)
 
 
 def _format_pick_with_status(pick, *, include_score: bool = False) -> str:
@@ -100,20 +104,15 @@ class MarkdownRenderer:
         if ps.watch_reviews:
             lines.append("- 观察复核:")
             for item in ps.watch_reviews[:2]:
-                meta = " / ".join(
-                    part
-                    for part in (
-                        _review_priority_label(item.priority),
-                        item.review_window,
+                lines.append(
+                    "  - "
+                    + format_watch_review_line(
+                        format_symbol_name(item.symbol, item.name),
+                        priority=item.priority,
+                        review_window=item.review_window,
+                        next_step=item.next_step,
                     )
-                    if part
                 )
-                line = f"  - {format_symbol_name(item.symbol, item.name)}"
-                if meta:
-                    line += f" | {meta}"
-                if item.next_step:
-                    line += f" | {item.next_step}"
-                lines.append(line)
 
         lead = data.picks[0]
         lead_display = format_symbol_name(lead.symbol, lead.name)
@@ -231,13 +230,9 @@ class MarkdownRenderer:
             candidate_status = _candidate_status_label(pick)
             blocker = _candidate_blocker_label(pick)
             next_step = _candidate_next_step_label(pick)
-            review_meta = " / ".join(
-                part
-                for part in (
-                    _candidate_review_priority_label(pick),
-                    _candidate_review_window_label(pick),
-                )
-                if part
+            review_meta = format_review_meta(
+                _candidate_review_priority_label(pick),
+                _candidate_review_window_label(pick),
             )
             headline = f"### {display} (评分: {pick.score} / {rating_label(pick.rating)}"
             if candidate_status:
@@ -293,13 +288,9 @@ class MarkdownRenderer:
                 names = "、".join(_format_pick_with_status(p) for p in data.picks[:3])
                 blocker = _candidate_blocker_label(lead)
                 next_step = _candidate_next_step_label(lead)
-                review_meta = " / ".join(
-                    part
-                    for part in (
-                        _candidate_review_priority_label(lead),
-                        _candidate_review_window_label(lead),
-                    )
-                    if part
+                review_meta = format_review_meta(
+                    _candidate_review_priority_label(lead),
+                    _candidate_review_window_label(lead),
                 )
                 line = (
                     f"当前暂无可执行重点标的；候选观察池: {names}。"
@@ -419,13 +410,9 @@ class MarkdownRenderer:
             next_step = _candidate_next_step_label(first)
             if next_step:
                 items.append(f"- 解锁关注: {first.symbol} {first.name} | {next_step}")
-            review_meta = " / ".join(
-                part
-                for part in (
-                    _candidate_review_priority_label(first),
-                    _candidate_review_window_label(first),
-                )
-                if part
+            review_meta = format_review_meta(
+                _candidate_review_priority_label(first),
+                _candidate_review_window_label(first),
             )
             if review_meta:
                 items.append(f"- 复核节奏: {first.symbol} {first.name} | {review_meta}")
