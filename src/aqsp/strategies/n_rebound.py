@@ -41,8 +41,8 @@ def detect_n_rebound_signal(
     current = recent.iloc[-1]
     candidates = recent.index[
         (recent["daily_ret_pct"] >= cfg.limit_up_min_pct)
-        & (recent.index < len(recent) - 1)
-    ]
+    ].to_numpy()
+    candidates = candidates[candidates < len(recent) - 1]
     if len(candidates) == 0:
         return None
 

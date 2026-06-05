@@ -3,6 +3,7 @@ from __future__ import annotations
 from aqsp.core.types import PickResult
 from aqsp.portfolio.correlation import CorrelationResult
 from aqsp.portfolio.manager import apply_portfolio_manager
+from aqsp.portfolio.optimizer import _cap_weights
 from aqsp.portfolio.sector_check import ConcentrationResult, SectorConcentration
 
 
@@ -185,3 +186,14 @@ def test_apply_portfolio_manager_builds_watch_reviews_with_priority_and_window()
     assert lead_review.priority == "medium"
     assert lead_review.review_window == "板块分化时"
     assert "等待板块暴露回落" in lead_review.next_step
+
+
+def test_cap_weights_respects_total_target_when_under_name_cap() -> None:
+    weights = _cap_weights(
+        {"300750": 1.2, "600900": 1.0, "000651": 0.8},
+        total_target=0.62,
+        max_single_weight=0.30,
+    )
+
+    assert round(sum(weights.values()), 6) == 0.62
+    assert all(weight <= 0.30 for weight in weights.values())

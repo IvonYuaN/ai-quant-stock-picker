@@ -25,6 +25,7 @@ from aqsp.data.tdx_vipdoc_source import TdxVipdocSource
 from aqsp.data.multi_source import MultiSource
 from aqsp.data.cache import DataCache
 from aqsp.data.adjust import AdjustmentService
+from aqsp.data.fetcher import MultiSourceFetcher, create_default_fetcher
 from aqsp.data.intraday import IntradayService
 from aqsp.data.realtime import RealtimeService
 from aqsp.data.trading_calendar import (
@@ -155,4 +156,6 @@ __all__ = [
     "load_csv",
     "fetch_akshare",
     "fetch_with_source",
+    "MultiSourceFetcher",
+    "create_default_fetcher",
 ]
