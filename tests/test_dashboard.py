@@ -379,6 +379,11 @@ def test_export_dashboard_db_writes_candidates_ledger_and_meta(
                 "symbol": "600519",
                 "name": "贵州茅台",
                 "score": "71",
+                "portfolio_action": "promote",
+                "candidate_status": "延续上升",
+                "candidate_next_step": "等待开盘承接确认后，再决定是否保留主仓",
+                "candidate_review_window": "开盘前后",
+                "candidate_review_priority": "high",
             }
         ]
     ).to_csv(csv_path, index=False)
@@ -435,11 +440,21 @@ def test_export_dashboard_db_writes_candidates_ledger_and_meta(
             "select candidate_count, ledger_count, requested_source, actual_source, source_health_label, notify_level, fallback_used, research_total_findings, research_absorbed_families, research_report_only_families, research_gated_families from run_meta"
         ).fetchone()
         strategies = conn.execute("select strategies from ledger").fetchone()
+        candidate_meta = conn.execute(
+            "select portfolio_action, candidate_status, candidate_next_step, candidate_review_window, candidate_review_priority from latest_candidates"
+        ).fetchone()
 
     assert candidate_count == (1,)
     assert ledger_count == (1,)
     assert meta == (1, 1, "auto", "eastmoney", "healthy", "info", 0, 113, 1, 0, 1)
     assert strategies == ('["ma_pullback"]',)
+    assert candidate_meta == (
+        "promote",
+        "延续上升",
+        "等待开盘承接确认后，再决定是否保留主仓",
+        "开盘前后",
+        "high",
+    )
 
 
 def test_export_dashboard_db_uses_latest_runtime_row_when_last_row_has_no_meta(
@@ -508,6 +523,18 @@ def test_export_dashboard_db_handles_empty_csv(tmp_path: Path) -> None:
         meta = conn.execute(
             "select candidate_count, ledger_count from run_meta"
         ).fetchone()
+        candidate_cols = {
+            row[1]
+            for row in conn.execute("pragma table_info(latest_candidates)").fetchall()
+        }
 
     assert {"latest_candidates", "ledger", "run_meta"} <= tables
     assert meta == (0, 0)
+    assert {
+        "portfolio_action",
+        "candidate_status",
+        "candidate_blocker",
+        "candidate_next_step",
+        "candidate_review_window",
+        "candidate_review_priority",
+    } <= candidate_cols

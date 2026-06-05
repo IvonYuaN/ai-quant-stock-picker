@@ -17,6 +17,15 @@ from aqsp.data.source_health import notification_level_for_health_label
 from aqsp.research.summary import load_research_summary
 from aqsp.report import RESULT_COLUMNS
 
+CANDIDATE_EXPORT_COLUMNS = RESULT_COLUMNS + [
+    "portfolio_action",
+    "candidate_status",
+    "candidate_blocker",
+    "candidate_next_step",
+    "candidate_review_window",
+    "candidate_review_priority",
+]
+
 
 LEDGER_EXPORT_COLUMNS = [
     "id",
@@ -48,6 +57,15 @@ def _ensure_columns(df: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
     return pd.DataFrame(columns=columns)
 
 
+def _normalize_columns(df: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
+    df = _ensure_columns(df, columns)
+    for column in columns:
+        if column not in df.columns:
+            df[column] = ""
+    ordered = list(columns) + [column for column in df.columns if column not in columns]
+    return df.loc[:, ordered]
+
+
 def _latest_runtime_row(rows: list[dict[str, Any]]) -> dict[str, Any]:
     return next(
         (
@@ -68,7 +86,7 @@ def export_db(csv_path: Path, ledger_path: Path, db_path: Path) -> None:
             candidates = pd.DataFrame()
     else:
         candidates = pd.DataFrame()
-    candidates = _ensure_columns(candidates, RESULT_COLUMNS)
+    candidates = _normalize_columns(candidates, CANDIDATE_EXPORT_COLUMNS)
     ledger_rows = read_jsonl(ledger_path)
     ledger = pd.DataFrame(ledger_rows)
     for col in ledger.columns:
@@ -77,7 +95,7 @@ def export_db(csv_path: Path, ledger_path: Path, db_path: Path) -> None:
             if isinstance(value, (dict, list))
             else value
         )
-    ledger = _ensure_columns(ledger, LEDGER_EXPORT_COLUMNS)
+    ledger = _normalize_columns(ledger, LEDGER_EXPORT_COLUMNS)
     latest_row = _latest_runtime_row(ledger_rows)
     research_summary = load_research_summary()
     next_action = (
