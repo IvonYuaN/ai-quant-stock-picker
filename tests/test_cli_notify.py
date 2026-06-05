@@ -6,6 +6,7 @@ import sqlite3
 import pandas as pd
 from unittest.mock import MagicMock
 
+from aqsp.core.time import today_shanghai
 from aqsp.core.types import PickResult
 
 
@@ -14,7 +15,7 @@ def test_run_scheduled_notify_prepends_source_status_banner(
 ) -> None:
     import aqsp.cli as cli_mod
 
-    latest = "2026-06-01"
+    latest = today_shanghai().isoformat()
     frames = {
         "600519": pd.DataFrame(
             [
@@ -169,7 +170,7 @@ def test_run_scheduled_enriches_pick_name_from_symbol_map(
 ) -> None:
     import aqsp.cli as cli_mod
 
-    latest = "2026-06-01"
+    latest = today_shanghai().isoformat()
     frames = {
         "300750": pd.DataFrame(
             [
@@ -336,7 +337,7 @@ def test_run_scheduled_report_omits_low_signal_control_sections(
 ) -> None:
     import aqsp.cli as cli_mod
 
-    latest = "2026-06-01"
+    latest = today_shanghai().isoformat()
     frames = {
         "600519": pd.DataFrame(
             [
@@ -513,7 +514,7 @@ def test_run_scheduled_notify_continues_when_benchmark_frame_missing(
 ) -> None:
     import aqsp.cli as cli_mod
 
-    latest = "2026-06-01"
+    latest = today_shanghai().isoformat()
     frames = {
         "600519": pd.DataFrame(
             [
@@ -674,7 +675,7 @@ def test_run_scheduled_gate_block_adds_actionable_unlock_guidance(
 ) -> None:
     import aqsp.cli as cli_mod
 
-    latest = "2026-06-01"
+    latest = today_shanghai().isoformat()
     frames = {
         "600519": pd.DataFrame(
             [

@@ -21,9 +21,13 @@ def test_workload_fit_for_source_marks_short_term_and_walkforward_differently() 
     }
 
 
-def test_inspect_source_readiness_when_tushare_token_missing(monkeypatch) -> None:
+def test_inspect_source_readiness_when_tushare_token_missing(
+    monkeypatch, tmp_path
+) -> None:
+    env_path = tmp_path / ".env"
+    env_path.write_text("", encoding="utf-8")
     monkeypatch.delenv("TUSHARE_TOKEN", raising=False)
-    monkeypatch.delenv("AQSP_ENV_FILE", raising=False)
+    monkeypatch.setenv("AQSP_ENV_FILE", str(env_path))
     entry = get_registry_entry("tushare")
     assert entry is not None
 
