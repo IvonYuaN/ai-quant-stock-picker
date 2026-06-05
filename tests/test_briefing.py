@@ -562,6 +562,30 @@ class TestGenerateSmartSummary:
         assert "- 候选观察池: 600519 贵州茅台(新晋)(8.5分)" in summary
         assert "- 首选观察: 600519 贵州茅台(新晋)(8.5分)" in summary
 
+    def test_action_plan_mentions_default_review_for_new_watch_pick(self):
+        gen = BriefingGenerator()
+        briefing = gen.generate(
+            picks=[
+                _make_pick(
+                    symbol="600519",
+                    name="贵州茅台",
+                    rating="watch",
+                    metrics={
+                        "candidate_status": "新晋",
+                        "candidate_next_step": "等待量价继续走强后，再评估是否转入执行名单",
+                        "candidate_review_window": "盘中走强后",
+                        "candidate_review_priority": "high",
+                    },
+                )
+            ],
+            frames={},
+        )
+
+        summary = briefing.generate_smart_summary()
+
+        assert "- 解锁关注: 600519 贵州茅台 | 等待量价继续走强后，再评估是否转入执行名单" in summary
+        assert "- 复核节奏: 600519 贵州茅台 | 高优先级 / 盘中走强后" in summary
+
     def test_action_plan_mentions_unlock_hint_when_watch_pick_is_blocked(self):
         gen = BriefingGenerator()
         briefing = gen.generate(

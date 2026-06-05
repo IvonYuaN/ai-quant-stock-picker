@@ -1195,6 +1195,28 @@ def _candidate_review_map(portfolio_summary: Any | None) -> dict[str, dict[str, 
     return reviews
 
 
+def _default_candidate_review(status: str) -> dict[str, str]:
+    if status == "新晋":
+        return {
+            "next_step": "等待量价继续走强后，再评估是否转入执行名单",
+            "review_window": "盘中走强后",
+            "priority": "high",
+        }
+    if status == "延续上升":
+        return {
+            "next_step": "优先复核趋势延续与承接强度，再决定是否提升执行顺位",
+            "review_window": "午前确认后",
+            "priority": "medium",
+        }
+    if status == "延续下降":
+        return {
+            "next_step": "若弱势延续则继续观察，等待重新企稳后再恢复关注",
+            "review_window": "尾盘前",
+            "priority": "low",
+        }
+    return {}
+
+
 def _annotate_candidate_status(
     picks: list[PickResult],
     *,
@@ -1217,6 +1239,8 @@ def _annotate_candidate_status(
         blocker_reason = str(review.get("blocker", "") or blocker_map.get(pick.symbol, ""))
         if not status and blocker_reason:
             status = "观察阻塞"
+        if not review and status:
+            review = _default_candidate_review(status)
         if not status and not blocker_reason:
             enriched.append(pick)
             continue
@@ -1225,8 +1249,11 @@ def _annotate_candidate_status(
             metrics["candidate_status"] = status
         if blocker_reason:
             metrics["candidate_blocker"] = blocker_reason
+        if review:
             metrics["candidate_next_step"] = str(review.get("next_step", "") or "")
-            metrics["candidate_review_window"] = str(review.get("review_window", "") or "")
+            metrics["candidate_review_window"] = str(
+                review.get("review_window", "") or ""
+            )
             metrics["candidate_review_priority"] = str(review.get("priority", "") or "")
         enriched.append(replace(pick, metrics=metrics))
     return enriched

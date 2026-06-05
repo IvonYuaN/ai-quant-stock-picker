@@ -253,6 +253,43 @@ def test_build_daily_run_notification_includes_candidate_status_for_tradable_pic
     assert "1. 300750 宁德时代 | 延续上升 | 73分 | 买 220.5 / 损 214.2 / 盈 238" in markdown
 
 
+def test_build_daily_run_notification_surfaces_default_review_for_new_watch_pick() -> None:
+    markdown = build_daily_run_notification(
+        run_date="2026-06-05",
+        tradable=[],
+        candidates=(
+            PickResult(
+                symbol="688981",
+                name="中芯国际",
+                date="2026-06-05",
+                close=131.79,
+                score=-9.0,
+                rating="watch",
+                entry_type="relative_strength",
+                ideal_buy=131.79,
+                stop_loss=128.08,
+                take_profit=161.554,
+                position="watch",
+                strategies=(),
+                reasons=("MA20 斜率向上",),
+                risks=("收盘价低于 MA20",),
+                metrics={
+                    "candidate_status": "新晋",
+                    "candidate_next_step": "等待量价继续走强后，再评估是否转入执行名单",
+                    "candidate_review_window": "盘中走强后",
+                    "candidate_review_priority": "high",
+                },
+            ),
+        ),
+        actual_source="eastmoney",
+        source_health_label="healthy",
+        source_health_message="eastmoney 健康",
+    )
+
+    assert "复核: 高优先级 / 盘中走强后" in markdown
+    assert "1. 先盯 688981 中芯国际，等待量价继续走强后，再评估是否转入执行名单（高优先级 / 盘中走强后）。" in markdown
+
+
 def test_build_daily_run_notification_surfaces_snapshot_diff_highlights() -> None:
     markdown = build_daily_run_notification(
         run_date="2026-06-05",
