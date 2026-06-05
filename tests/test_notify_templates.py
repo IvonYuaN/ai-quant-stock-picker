@@ -168,6 +168,8 @@ def test_build_daily_run_notification_lists_watch_candidates_when_not_tradable()
                 metrics={
                     "candidate_status": "新晋",
                     "candidate_next_step": "等待量价继续走强后，再评估是否转入执行名单",
+                    "candidate_review_window": "盘中走强后",
+                    "candidate_review_priority": "high",
                 },
             ),
             PickResult(
@@ -209,11 +211,15 @@ def test_build_daily_run_notification_lists_watch_candidates_when_not_tradable()
 
     assert "## Top 候选" in markdown
     assert "1. 688981 中芯国际 | 新晋 | -9分 | 观察 | MA20 斜率向上" in markdown
+    assert "复核: 高优先级 / 盘中走强后" in markdown
     assert (
         "2. 000001 平安银行 | 观察阻塞 | -18分 | 观察 | 估值防守 | 阻塞: 板块集中度过高，压低银行暴露"
         in markdown
     )
-    assert "1. 先盯 688981 中芯国际，等待量价继续走强后，再评估是否转入执行名单。" in markdown
+    assert (
+        "1. 先盯 688981 中芯国际，等待量价继续走强后，再评估是否转入执行名单（高优先级 / 盘中走强后）。"
+        in markdown
+    )
 
 
 def test_build_daily_run_notification_includes_candidate_status_for_tradable_pick() -> None:

@@ -24,6 +24,16 @@ class PortfolioDecision:
 
 
 @dataclass(frozen=True)
+class WatchlistReviewItem:
+    symbol: str
+    name: str
+    blocker: str
+    next_step: str
+    review_window: str
+    priority: str
+
+
+@dataclass(frozen=True)
 class PortfolioDecisionSummary:
     promote_count: int
     downgrade_count: int
@@ -40,6 +50,7 @@ class PortfolioDecisionSummary:
     strategy_weights: tuple[tuple[str, float], ...] = ()
     action_hotspots: tuple[str, ...] = ()
     execution_blockers: tuple[str, ...] = ()
+    watch_reviews: tuple[WatchlistReviewItem, ...] = ()
 
     @property
     def headline(self) -> str:
@@ -154,6 +165,77 @@ def _build_execution_blockers(
     return tuple(blockers)
 
 
+def _watchlist_review_details(reason: str) -> tuple[str, str, str]:
+    if "T+1" in reason:
+        return (
+            "明日解除 T+1 后，优先复核开盘承接与流动性",
+            "明日开盘前后",
+            "high",
+        )
+    if "板块集中度" in reason or "集中度" in reason:
+        return (
+            "等待板块暴露回落或出现更强领涨，再考虑转入执行名单",
+            "板块分化时",
+            "medium",
+        )
+    if "相关性" in reason or "高相关" in reason:
+        return (
+            "等待高相关标的分化后，再重新评估执行顺位",
+            "分化确认后",
+            "medium",
+        )
+    return (
+        "待阻塞条件解除后，再考虑转入执行名单",
+        "下一轮信号出现时",
+        "low",
+    )
+
+
+def _select_watch_review_reason(reasons: tuple[str, ...]) -> str:
+    actionable_keywords = ("T+1", "板块集中度", "集中度", "相关性", "高相关")
+    for keyword in actionable_keywords:
+        for reason in reasons:
+            if keyword in reason:
+                return reason
+    return next((item for item in reasons if item and item != "保持原排序"), "")
+
+
+def _build_watch_reviews(
+    picks: list[PickResult],
+    decision_by_symbol: dict[str, PortfolioDecision],
+) -> tuple[WatchlistReviewItem, ...]:
+    priority_order = {"high": 0, "medium": 1, "low": 2}
+    indexed: list[tuple[int, WatchlistReviewItem]] = []
+    for index, pick in enumerate(picks):
+        decision = decision_by_symbol.get(pick.symbol)
+        if decision is None or decision.action != "downgrade":
+            continue
+        reason = _select_watch_review_reason(tuple(decision.reasons))
+        if not reason:
+            continue
+        next_step, review_window, priority = _watchlist_review_details(reason)
+        indexed.append(
+            (
+                index,
+                WatchlistReviewItem(
+                    symbol=pick.symbol,
+                    name=pick.name,
+                    blocker=reason,
+                    next_step=next_step,
+                    review_window=review_window,
+                    priority=priority,
+                ),
+            )
+        )
+    indexed.sort(
+        key=lambda item: (
+            priority_order.get(item[1].priority, 99),
+            item[0],
+        )
+    )
+    return tuple(item for _, item in indexed[:3])
+
+
 def summarize_portfolio_decisions(
     picks: list[PickResult],
     decisions: list[PortfolioDecision],
@@ -199,6 +281,7 @@ def summarize_portfolio_decisions(
         watchlist=watchlist,
         action_hotspots=_summarize_action_hotspots(decisions),
         execution_blockers=_build_execution_blockers(picks, decision_by_symbol),
+        watch_reviews=_build_watch_reviews(picks, decision_by_symbol),
         allocations=optimization.allocations,
         cash_reserve=optimization.cash_reserve,
         allocation_note=optimization.note,

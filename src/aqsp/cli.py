@@ -1162,16 +1162,6 @@ def _build_execution_summary_line(
     return "👀 **今日无可执行标的**，仅观察。等待更强信号。"
 
 
-def _candidate_unlock_hint(reason: str) -> str:
-    if "T+1" in reason:
-        return "明日解除 T+1 后，优先复核开盘承接与流动性"
-    if "板块集中度" in reason or "集中度" in reason:
-        return "等待板块暴露回落或出现更强领涨，再考虑转入执行名单"
-    if "相关性" in reason or "高相关" in reason:
-        return "等待高相关标的分化后，再重新评估执行顺位"
-    return "待阻塞条件解除后，再考虑转入执行名单"
-
-
 def _candidate_blocker_map(portfolio_summary: Any | None) -> dict[str, str]:
     blockers: dict[str, str] = {}
     if portfolio_summary is None:
@@ -1188,6 +1178,23 @@ def _candidate_blocker_map(portfolio_summary: Any | None) -> dict[str, str]:
     return blockers
 
 
+def _candidate_review_map(portfolio_summary: Any | None) -> dict[str, dict[str, str]]:
+    reviews: dict[str, dict[str, str]] = {}
+    if portfolio_summary is None:
+        return reviews
+    for item in tuple(getattr(portfolio_summary, "watch_reviews", ()) or ()):
+        symbol = str(getattr(item, "symbol", "") or "").strip()
+        if not symbol:
+            continue
+        reviews[symbol] = {
+            "blocker": str(getattr(item, "blocker", "") or ""),
+            "next_step": str(getattr(item, "next_step", "") or ""),
+            "review_window": str(getattr(item, "review_window", "") or ""),
+            "priority": str(getattr(item, "priority", "") or ""),
+        }
+    return reviews
+
+
 def _annotate_candidate_status(
     picks: list[PickResult],
     *,
@@ -1201,11 +1208,13 @@ def _annotate_candidate_status(
 
     status_map = build_candidate_status_map(diff)
     blocker_map = _candidate_blocker_map(portfolio_summary)
+    review_map = _candidate_review_map(portfolio_summary)
 
     enriched: list[PickResult] = []
     for pick in picks:
         status = status_map.get(pick.symbol, "")
-        blocker_reason = blocker_map.get(pick.symbol, "")
+        review = review_map.get(pick.symbol, {})
+        blocker_reason = str(review.get("blocker", "") or blocker_map.get(pick.symbol, ""))
         if not status and blocker_reason:
             status = "观察阻塞"
         if not status and not blocker_reason:
@@ -1216,7 +1225,9 @@ def _annotate_candidate_status(
             metrics["candidate_status"] = status
         if blocker_reason:
             metrics["candidate_blocker"] = blocker_reason
-            metrics["candidate_next_step"] = _candidate_unlock_hint(blocker_reason)
+            metrics["candidate_next_step"] = str(review.get("next_step", "") or "")
+            metrics["candidate_review_window"] = str(review.get("review_window", "") or "")
+            metrics["candidate_review_priority"] = str(review.get("priority", "") or "")
         enriched.append(replace(pick, metrics=metrics))
     return enriched
 

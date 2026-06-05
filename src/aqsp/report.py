@@ -52,6 +52,19 @@ def _candidate_next_step(pick: PickResult) -> str:
     return str(pick.metrics.get("candidate_next_step", "") or "")
 
 
+def _candidate_review_window(pick: PickResult) -> str:
+    return str(pick.metrics.get("candidate_review_window", "") or "")
+
+
+def _candidate_review_priority(pick: PickResult) -> str:
+    return str(pick.metrics.get("candidate_review_priority", "") or "")
+
+
+def _review_priority_label(priority: str) -> str:
+    labels = {"high": "高优先级", "medium": "中优先级", "low": "低优先级"}
+    return labels.get(priority, priority or "")
+
+
 def _format_allocation_rationale(item: Any) -> str:
     rationale = tuple(getattr(item, "rationale", ()) or ())
     return "；".join(str(part) for part in rationale[:3])
@@ -109,6 +122,18 @@ def _format_final_decision_board(
             lines.append("- 执行阻塞:")
             for item in tuple(getattr(portfolio_summary, "execution_blockers", ()))[:3]:
                 lines.append(f"  - {item}")
+        if getattr(portfolio_summary, "watch_reviews", ()):
+            lines.append("- 观察复核:")
+            for item in tuple(getattr(portfolio_summary, "watch_reviews", ()))[:2]:
+                priority = _review_priority_label(str(getattr(item, "priority", "") or ""))
+                review_window = str(getattr(item, "review_window", "") or "")
+                line = f"  - {format_symbol_name(item.symbol, item.name)}"
+                meta = " / ".join(part for part in (priority, review_window) if part)
+                if meta:
+                    line += f" | {meta}"
+                if getattr(item, "next_step", ""):
+                    line += f" | {item.next_step}"
+                lines.append(line)
         if getattr(portfolio_summary, "allocations", ()):
             lines.append("- 组合配置建议:")
             for item in tuple(getattr(portfolio_summary, "allocations", ()))[:3]:
@@ -141,6 +166,8 @@ def _format_final_decision_board(
         status = _candidate_status(pick)
         blocker = _candidate_blocker(pick)
         next_step = _candidate_next_step(pick)
+        review_window = _candidate_review_window(pick)
+        review_priority = _review_priority_label(_candidate_review_priority(pick))
         reason = "；".join(pick.reasons[:2]) if pick.reasons else "无"
         headline = f"- Top {idx}: {_display_name(pick)} | {label}"
         if status:
@@ -152,6 +179,11 @@ def _format_final_decision_board(
             lines.append(f"  当前阻塞: {blocker}")
         if next_step:
             lines.append(f"  下一步: {next_step}")
+        if review_priority or review_window:
+            lines.append(
+                "  复核: "
+                + " / ".join(part for part in (review_priority, review_window) if part)
+            )
         if pm_reasons and tuple(pm_reasons) != ("保持原排序",):
             lines.append("  PM依据: " + "；".join(str(item) for item in pm_reasons[:2]))
     lines.append("")
@@ -251,6 +283,8 @@ def to_markdown(
         status = _candidate_status(pick)
         blocker = _candidate_blocker(pick)
         next_step = _candidate_next_step(pick)
+        review_window = _candidate_review_window(pick)
+        review_priority = _review_priority_label(_candidate_review_priority(pick))
         decision_text = _resolve_decision_label(pick)
         if status:
             decision_text += f" | {status}"
@@ -273,6 +307,12 @@ def to_markdown(
             lines.insert(len(lines) - 1, f"- 当前阻塞: {blocker}")
         if next_step:
             lines.insert(len(lines) - 1, f"- 下一步关注: {next_step}")
+        if review_priority or review_window:
+            lines.insert(
+                len(lines) - 1,
+                "- 复核优先级/时机: "
+                + " / ".join(part for part in (review_priority, review_window) if part),
+            )
         if pick.symbol in debate_map:
             lines.append(_format_debate_result(debate_map[pick.symbol]))
             lines.append("")

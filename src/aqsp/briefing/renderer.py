@@ -23,6 +23,20 @@ def _candidate_next_step_label(pick) -> str:
     return str(pick.metrics.get("candidate_next_step", "") or "")
 
 
+def _candidate_review_window_label(pick) -> str:
+    return str(pick.metrics.get("candidate_review_window", "") or "")
+
+
+def _candidate_review_priority_label(pick) -> str:
+    value = str(pick.metrics.get("candidate_review_priority", "") or "")
+    return _review_priority_label(value)
+
+
+def _review_priority_label(value: str) -> str:
+    labels = {"high": "高优先级", "medium": "中优先级", "low": "低优先级"}
+    return labels.get(value, value)
+
+
 def _format_pick_with_status(pick, *, include_score: bool = False) -> str:
     display = format_symbol_name(pick.symbol, pick.name)
     status = _candidate_status_label(pick)
@@ -83,6 +97,23 @@ class MarkdownRenderer:
 
         if ps.watchlist:
             lines.append("- 候选观察池: " + "、".join(ps.watchlist[:3]))
+        if ps.watch_reviews:
+            lines.append("- 观察复核:")
+            for item in ps.watch_reviews[:2]:
+                meta = " / ".join(
+                    part
+                    for part in (
+                        _review_priority_label(item.priority),
+                        item.review_window,
+                    )
+                    if part
+                )
+                line = f"  - {format_symbol_name(item.symbol, item.name)}"
+                if meta:
+                    line += f" | {meta}"
+                if item.next_step:
+                    line += f" | {item.next_step}"
+                lines.append(line)
 
         lead = data.picks[0]
         lead_display = format_symbol_name(lead.symbol, lead.name)
@@ -200,6 +231,14 @@ class MarkdownRenderer:
             candidate_status = _candidate_status_label(pick)
             blocker = _candidate_blocker_label(pick)
             next_step = _candidate_next_step_label(pick)
+            review_meta = " / ".join(
+                part
+                for part in (
+                    _candidate_review_priority_label(pick),
+                    _candidate_review_window_label(pick),
+                )
+                if part
+            )
             headline = f"### {display} (评分: {pick.score} / {rating_label(pick.rating)}"
             if candidate_status:
                 headline += f" / 状态: {candidate_status}"
@@ -215,6 +254,8 @@ class MarkdownRenderer:
                 lines.append(f"- 当前阻塞: {blocker}")
             if next_step:
                 lines.append(f"- 下一步关注: {next_step}")
+            if review_meta:
+                lines.append(f"- 复核优先级/时机: {review_meta}")
 
             if pick.risks:
                 lines.append(f"风险提示: {'；'.join(pick.risks)}")
@@ -252,6 +293,14 @@ class MarkdownRenderer:
                 names = "、".join(_format_pick_with_status(p) for p in data.picks[:3])
                 blocker = _candidate_blocker_label(lead)
                 next_step = _candidate_next_step_label(lead)
+                review_meta = " / ".join(
+                    part
+                    for part in (
+                        _candidate_review_priority_label(lead),
+                        _candidate_review_window_label(lead),
+                    )
+                    if part
+                )
                 line = (
                     f"当前暂无可执行重点标的；候选观察池: {names}。"
                     "先观察最强票，待阻塞条件解除后再考虑转入执行名单。"
@@ -260,6 +309,8 @@ class MarkdownRenderer:
                     line += f" 当前阻塞: {blocker}。"
                 if next_step:
                     line += f" 下一步关注: {next_step}。"
+                if review_meta:
+                    line += f" 复核节奏: {review_meta}。"
                 lines.append(line)
             else:
                 lines.append("无可执行重点标的；今日无候选，继续等待下一轮信号。")
@@ -368,6 +419,16 @@ class MarkdownRenderer:
             next_step = _candidate_next_step_label(first)
             if next_step:
                 items.append(f"- 解锁关注: {first.symbol} {first.name} | {next_step}")
+            review_meta = " / ".join(
+                part
+                for part in (
+                    _candidate_review_priority_label(first),
+                    _candidate_review_window_label(first),
+                )
+                if part
+            )
+            if review_meta:
+                items.append(f"- 复核节奏: {first.symbol} {first.name} | {review_meta}")
         elif data.portfolio_summary:
             fallback = data.portfolio_summary.top_focus or data.portfolio_summary.watchlist
             if fallback:

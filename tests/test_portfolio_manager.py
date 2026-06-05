@@ -142,3 +142,46 @@ def test_apply_portfolio_manager_uses_runtime_sector_map_for_concentration() -> 
     decisions = {item.symbol: item for item in bundle.decisions}
     assert decisions["000021"].action == "downgrade"
     assert any("银行暴露" in reason for reason in decisions["000021"].reasons)
+
+
+def test_apply_portfolio_manager_builds_watch_reviews_with_priority_and_window() -> None:
+    picks = [
+        _pick("600036", 42, recommended_adjustment="lower"),
+        _pick("000001", 38),
+    ]
+    concentration = ConcentrationResult(
+        total_candidates=2,
+        sector_count=1,
+        max_concentration=1.0,
+        warnings=("too concentrated",),
+        sectors=(
+            SectorConcentration(
+                sector="银行",
+                count=2,
+                total=2,
+                ratio=1.0,
+                symbols=("600036", "000001"),
+            ),
+        ),
+    )
+    correlation = CorrelationResult(
+        matrix={
+            "600036": {"600036": 1.0, "000001": 0.82},
+            "000001": {"600036": 0.82, "000001": 1.0},
+        },
+        high_corr_pairs=[("000001", "600036", 0.82)],
+        avg_correlation=0.82,
+    )
+
+    bundle = apply_portfolio_manager(
+        picks,
+        concentration=concentration,
+        correlation_result=correlation,
+    )
+
+    assert bundle.summary.watch_reviews
+    lead_review = bundle.summary.watch_reviews[0]
+    assert lead_review.symbol == "600036"
+    assert lead_review.priority == "medium"
+    assert lead_review.review_window == "板块分化时"
+    assert "等待板块暴露回落" in lead_review.next_step

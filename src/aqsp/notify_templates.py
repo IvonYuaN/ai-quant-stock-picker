@@ -456,15 +456,34 @@ def _candidate_next_step(pick: PickResult) -> str:
     return str(pick.metrics.get("candidate_next_step", "") or "")
 
 
+def _candidate_review_window(pick: PickResult) -> str:
+    return str(pick.metrics.get("candidate_review_window", "") or "")
+
+
+def _candidate_review_priority(pick: PickResult) -> str:
+    return str(pick.metrics.get("candidate_review_priority", "") or "")
+
+
+def _review_priority_label(priority: str) -> str:
+    labels = {"high": "高优先级", "medium": "中优先级", "low": "低优先级"}
+    return labels.get(priority, priority or "")
+
+
 def _daily_watch_action_line(candidates: Sequence[PickResult]) -> str:
     if not candidates:
         return ""
     lead = candidates[0]
     next_step = _candidate_next_step(lead)
+    review_window = _candidate_review_window(lead)
+    review_priority = _review_priority_label(_candidate_review_priority(lead))
     if next_step:
-        return (
-            f"1. 先盯 {lead.symbol} {lead.name}，{next_step}。"
+        line = f"1. 先盯 {lead.symbol} {lead.name}，{next_step}"
+        review_meta = " / ".join(
+            part for part in (review_priority, review_window) if part
         )
+        if review_meta:
+            line += f"（{review_meta}）"
+        return line + "。"
     return ""
 
 
@@ -553,4 +572,9 @@ def _format_watch_pick(pick: PickResult) -> str:
     blocker = _candidate_blocker(pick)
     if blocker:
         parts.append(f"阻塞: {blocker}")
+    review_window = _candidate_review_window(pick)
+    review_priority = _review_priority_label(_candidate_review_priority(pick))
+    review_meta = " / ".join(part for part in (review_priority, review_window) if part)
+    if review_meta:
+        parts.append(f"复核: {review_meta}")
     return " | ".join(parts)

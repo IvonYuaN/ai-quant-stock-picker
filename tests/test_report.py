@@ -398,6 +398,8 @@ def test_report_renders_candidate_blocker_and_next_step_when_present() -> None:
             "candidate_status": "观察阻塞",
             "candidate_blocker": "板块集中度过高，压低银行暴露",
             "candidate_next_step": "等待板块暴露回落后，再重新评估执行顺位",
+            "candidate_review_window": "板块分化时",
+            "candidate_review_priority": "medium",
         },
     )
 
@@ -406,3 +408,5 @@ def test_report_renders_candidate_blocker_and_next_step_when_present() -> None:
     assert "当前阻塞: 板块集中度过高，压低银行暴露" in markdown
     assert "下一步: 等待板块暴露回落后，再重新评估执行顺位" in markdown
     assert "- 下一步关注: 等待板块暴露回落后，再重新评估执行顺位" in markdown
+    assert "复核: 中优先级 / 板块分化时" in markdown
+    assert "- 复核优先级/时机: 中优先级 / 板块分化时" in markdown

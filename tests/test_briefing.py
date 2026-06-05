@@ -307,6 +307,8 @@ class TestBriefingGenerator:
                         "candidate_status": "观察阻塞",
                         "candidate_blocker": "T+1 未解除",
                         "candidate_next_step": "明日解除 T+1 后，优先复核开盘承接与流动性",
+                        "candidate_review_window": "明日开盘前后",
+                        "candidate_review_priority": "high",
                     },
                 )
             ],
@@ -315,6 +317,7 @@ class TestBriefingGenerator:
         next_sec = next(s for s in briefing.sections if s.title == "明日重点")
         assert "当前阻塞: T+1 未解除" in next_sec.content
         assert "下一步关注: 明日解除 T+1 后，优先复核开盘承接与流动性" in next_sec.content
+        assert "复核节奏: 高优先级 / 明日开盘前后" in next_sec.content
 
     def test_render_template(self):
         gen = BriefingGenerator()
@@ -571,6 +574,8 @@ class TestGenerateSmartSummary:
                         "candidate_status": "观察阻塞",
                         "candidate_blocker": "T+1 未解除",
                         "candidate_next_step": "明日解除 T+1 后，优先复核开盘承接与流动性",
+                        "candidate_review_window": "明日开盘前后",
+                        "candidate_review_priority": "high",
                     },
                 )
             ],
@@ -580,6 +585,7 @@ class TestGenerateSmartSummary:
         summary = briefing.generate_smart_summary()
 
         assert "- 解锁关注: 600519 贵州茅台 | 明日解除 T+1 后，优先复核开盘承接与流动性" in summary
+        assert "- 复核节奏: 600519 贵州茅台 | 高优先级 / 明日开盘前后" in summary
 
     def test_evidence_section_includes_candidate_status_label(self):
         gen = BriefingGenerator()
@@ -611,6 +617,8 @@ class TestGenerateSmartSummary:
                         "candidate_status": "观察阻塞",
                         "candidate_blocker": "板块集中度过高，压低新能源暴露",
                         "candidate_next_step": "等待板块暴露回落后，再重新评估执行顺位",
+                        "candidate_review_window": "板块分化时",
+                        "candidate_review_priority": "medium",
                     },
                 )
             ],
@@ -619,6 +627,7 @@ class TestGenerateSmartSummary:
         evidence_sec = next(s for s in briefing.sections if s.title == "候选证据链")
         assert "- 当前阻塞: 板块集中度过高，压低新能源暴露" in evidence_sec.content
         assert "- 下一步关注: 等待板块暴露回落后，再重新评估执行顺位" in evidence_sec.content
+        assert "- 复核优先级/时机: 中优先级 / 板块分化时" in evidence_sec.content
 
     def test_core_items_render_structured_portfolio_summary(self):
         briefing = Briefing(

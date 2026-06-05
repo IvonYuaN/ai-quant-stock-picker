@@ -59,6 +59,16 @@ def _candidate_next_step_label(pick: PickResult) -> str:
     return str(pick.metrics.get("candidate_next_step", "") or "")
 
 
+def _candidate_review_window_label(pick: PickResult) -> str:
+    return str(pick.metrics.get("candidate_review_window", "") or "")
+
+
+def _candidate_review_priority_label(pick: PickResult) -> str:
+    value = str(pick.metrics.get("candidate_review_priority", "") or "")
+    labels = {"high": "高优先级", "medium": "中优先级", "low": "低优先级"}
+    return labels.get(value, value)
+
+
 def _format_pick_with_status(
     pick: PickResult,
     *,
@@ -316,6 +326,16 @@ class Briefing:
                 items.append(
                     f"- 解锁关注: {lead_pick.symbol} {lead_pick.name} | {next_step}"
                 )
+            review_meta = " / ".join(
+                part
+                for part in (
+                    _candidate_review_priority_label(lead_pick),
+                    _candidate_review_window_label(lead_pick),
+                )
+                if part
+            )
+            if review_meta:
+                items.append(f"- 复核节奏: {lead_pick.symbol} {lead_pick.name} | {review_meta}")
         elif top_scores:
             items.append(f"- 首选观察: {top_scores[0][0]}({top_scores[0][1]}分)")
         elif self.portfolio_summary:
@@ -712,6 +732,14 @@ class BriefingGenerator:
             candidate_status = _candidate_status_label(pick)
             blocker = _candidate_blocker_label(pick)
             next_step = _candidate_next_step_label(pick)
+            review_meta = " / ".join(
+                part
+                for part in (
+                    _candidate_review_priority_label(pick),
+                    _candidate_review_window_label(pick),
+                )
+                if part
+            )
             headline = (
                 f"### {display} (评分: {pick.score} / {rating_label(pick.rating)}"
             )
@@ -729,6 +757,8 @@ class BriefingGenerator:
                 lines.append(f"- 当前阻塞: {blocker}")
             if next_step:
                 lines.append(f"- 下一步关注: {next_step}")
+            if review_meta:
+                lines.append(f"- 复核优先级/时机: {review_meta}")
             if pick.risks:
                 lines.append(f"风险提示: {'；'.join(pick.risks)}")
             lines.append("")
@@ -772,6 +802,14 @@ class BriefingGenerator:
                 names = "、".join(_format_pick_with_status(p) for p in picks[:3])
                 blocker = _candidate_blocker_label(lead_pick)
                 next_step = _candidate_next_step_label(lead_pick)
+                review_meta = " / ".join(
+                    part
+                    for part in (
+                        _candidate_review_priority_label(lead_pick),
+                        _candidate_review_window_label(lead_pick),
+                    )
+                    if part
+                )
                 line = (
                     f"当前暂无可执行重点标的；候选观察池: {names}。"
                     "先观察最强票，待阻塞条件解除后再考虑转入执行名单。"
@@ -780,6 +818,8 @@ class BriefingGenerator:
                     line += f" 当前阻塞: {blocker}。"
                 if next_step:
                     line += f" 下一步关注: {next_step}。"
+                if review_meta:
+                    line += f" 复核节奏: {review_meta}。"
                 lines.append(line)
             else:
                 lines.append("无可执行重点标的；今日无候选，继续等待下一轮信号。")
