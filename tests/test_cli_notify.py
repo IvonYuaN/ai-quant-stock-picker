@@ -830,6 +830,172 @@ def test_run_scheduled_gate_block_adds_actionable_unlock_guidance(
     assert "。；" not in report
 
 
+def test_run_scheduled_falls_back_to_synthetic_regime_when_benchmark_missing(
+    monkeypatch, tmp_path
+) -> None:
+    import aqsp.cli as cli_mod
+
+    dates = pd.date_range("2026-03-01", periods=80, freq="B")
+
+    def make_frame(symbol: str, start_close: float) -> pd.DataFrame:
+        closes = [start_close + idx * 0.8 for idx in range(len(dates))]
+        volumes = [100000000 + idx * 1000000 for idx in range(len(dates))]
+        return pd.DataFrame(
+            {
+                "date": dates.strftime("%Y-%m-%d"),
+                "symbol": symbol,
+                "name": symbol,
+                "open": closes,
+                "high": [value + 1.0 for value in closes],
+                "low": [value - 1.0 for value in closes],
+                "close": closes,
+                "volume": volumes,
+                "amount": [close * volume for close, volume in zip(closes, volumes)],
+                "suspended": False,
+                "limit_up": 0.0,
+                "limit_down": 0.0,
+            }
+        )
+
+    frames = {
+        "600519": make_frame("600519", 1500.0),
+        "300750": make_frame("300750", 200.0),
+    }
+
+    monkeypatch.setattr(
+        cli_mod,
+        "_check_notification_gate",
+        lambda *, cold_start_days, gate_path=None: (True, []),
+    )
+    monkeypatch.setattr(
+        cli_mod,
+        "_fetch_frames_for_cli_with_metadata",
+        lambda *args, **kwargs: (frames, "eastmoney"),
+    )
+    monkeypatch.setattr(
+        cli_mod, "_resolve_run_symbols", lambda *args, **kwargs: ["600519", "300750"]
+    )
+    monkeypatch.setattr(
+        cli_mod, "strategy_weights_from_ledger", lambda *_args, **_kwargs: {}
+    )
+    monkeypatch.setattr(
+        cli_mod, "_count_independent_signal_days", lambda *_args, **_kwargs: 35
+    )
+    monkeypatch.setattr(
+        cli_mod,
+        "screen_universe",
+        lambda *_args, **_kwargs: [
+            PickResult(
+                symbol="600519",
+                name="贵州茅台",
+                date=str(dates[-1].date()),
+                close=1563.2,
+                score=71.0,
+                rating="buy_candidate",
+                entry_type="next_open",
+                ideal_buy=1563.2,
+                stop_loss=1500.0,
+                take_profit=1620.0,
+                position="10%-30%",
+                strategies=("ma_pullback",),
+                reasons=("趋势回踩",),
+                risks=("RSI偏热",),
+            )
+        ],
+    )
+
+    class DummyPipeline:
+        def run(self, *_args, **_kwargs):
+            return True, ""
+
+    monkeypatch.setattr(cli_mod, "LethalFilterPipeline", lambda: DummyPipeline())
+    monkeypatch.setattr(
+        "aqsp.universe.t1_filter.filter_t1_held",
+        lambda candidates, **_kwargs: (candidates, []),
+    )
+    monkeypatch.setattr(cli_mod, "validate_predictions", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        "aqsp.data.anomaly.detect_anomalies",
+        lambda _frames: [],
+    )
+    monkeypatch.setattr(
+        "aqsp.data.freshness.check_freshness",
+        lambda _frames: [],
+    )
+    monkeypatch.setattr(
+        "aqsp.portfolio.sector_check.check_sector_concentration",
+        lambda _symbols: MagicMock(warnings=(), sectors=(), is_concentrated=False),
+    )
+    monkeypatch.setattr(
+        "aqsp.portfolio.correlation.compute_correlation",
+        lambda *_args, **_kwargs: MagicMock(
+            matrix={"600519": {"600519": 1.0}},
+            high_corr_pairs=[],
+            avg_correlation=0.0,
+        ),
+    )
+    monkeypatch.setattr(cli_mod, "append_predictions", lambda *args, **kwargs: None)
+    monkeypatch.setattr("aqsp.ledger.base.read_ledger", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(
+        "aqsp.ledger.base.ledger_rows_to_frame", lambda _rows: pd.DataFrame()
+    )
+    monkeypatch.setattr(
+        "aqsp.ledger.learner.StrategyDecayDetector.detect",
+        lambda self, _df: [],
+    )
+
+    class DummyBreaker:
+        def check(self, **_kwargs):
+            return type("Status", (), {"triggered": False, "reason": "正常"})()
+
+    monkeypatch.setattr(cli_mod, "CircuitBreaker", lambda: DummyBreaker())
+    monkeypatch.setattr(
+        cli_mod,
+        "describe_source_health",
+        lambda *_args, **_kwargs: ("warning", "benchmark unavailable", False),
+    )
+
+    seen: list[str] = []
+    monkeypatch.setattr(
+        cli_mod,
+        "notify_markdown",
+        lambda markdown: seen.append(markdown) or [],
+    )
+
+    args = Namespace(
+        mode="close",
+        symbols="600519,300750",
+        csv="",
+        source="auto",
+        limit=1,
+        max_universe=10,
+        min_avg_amount=50_000_000,
+        max_data_lag_days=3,
+        enable_online_factors=False,
+        report=str(tmp_path / "latest.md"),
+        output_csv=str(tmp_path / "latest.csv"),
+        ledger=str(tmp_path / "predictions.jsonl"),
+        horizon_days=3,
+        fee_bps=8.0,
+        slippage_bps=5.0,
+        benchmark_symbol="000300",
+        skip_validation=True,
+        notify=True,
+        enable_debate=False,
+        pool="",
+    )
+
+    exit_code = cli_mod.run_scheduled(args)
+    report = (tmp_path / "latest.md").read_text(encoding="utf-8")
+
+    assert exit_code == 0
+    assert seen
+    assert "当前市况" in report
+    assert "- regime: stable_bull" in report
+    assert "当前市况: 稳定上涨" in report
+    assert "benchmark unavailable" in report
+
+
 def test_run_scheduled_report_downgrades_realtime_tier_when_data_is_prior_trade_day(
     monkeypatch, tmp_path
 ) -> None:
