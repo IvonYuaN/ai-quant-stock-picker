@@ -71,6 +71,7 @@ def build_daily_run_notification(
     *,
     run_date: str,
     tradable: Sequence[PickResult],
+    candidates: Sequence[PickResult] = (),
     portfolio_summary: PortfolioDecisionSummary | None = None,
     debate_results: Sequence[DebateResult] = (),
     actual_source: str,
@@ -154,6 +155,10 @@ def build_daily_run_notification(
         top_n = 5 if _safe_mode(mode) == "full" else 3
         for index, pick in enumerate(tradable[:top_n], start=1):
             lines.append(f"{index}. {_format_daily_pick(pick)}")
+    elif candidates:
+        top_n = 5 if _safe_mode(mode) == "full" else 3
+        for index, pick in enumerate(candidates[:top_n], start=1):
+            lines.append(f"{index}. {_format_watch_pick(pick)}")
     else:
         lines.append("- 今日无可执行候选，等待下一轮主链信号。")
     allocation_execution = _format_allocation_execution(portfolio_summary)
@@ -509,3 +514,9 @@ def _format_daily_pick(pick: PickResult) -> str:
         f"{symbol_name} | {pick.score:.0f}分 | "
         f"买 {pick.ideal_buy:g} / 损 {pick.stop_loss:g} / 盈 {pick.take_profit:g}"
     )
+
+
+def _format_watch_pick(pick: PickResult) -> str:
+    symbol_name = format_symbol_name(pick.symbol, pick.name)
+    lead_reason = pick.reasons[0] if pick.reasons else "等待更强确认"
+    return f"{symbol_name} | {pick.score:.0f}分 | 观察 | {lead_reason}"

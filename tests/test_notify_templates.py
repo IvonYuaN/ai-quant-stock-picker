@@ -3,6 +3,7 @@ from __future__ import annotations
 from aqsp.briefing import Briefing, BriefingSection
 from aqsp.briefing.closing_review import DailyReview, WeeklySummary
 from aqsp.briefing.debate import DebateResult
+from aqsp.core.types import PickResult
 from aqsp.monitor.checker import MonitorResult
 from aqsp.portfolio.optimizer import PortfolioAllocation
 from aqsp.portfolio.manager import PortfolioDecisionSummary
@@ -118,6 +119,7 @@ def test_build_daily_run_notification_surfaces_watchlist_blockers_when_no_alloca
     markdown = build_daily_run_notification(
         run_date="2026-06-04",
         tradable=[],
+        candidates=(),
         portfolio_summary=PortfolioDecisionSummary(
             promote_count=0,
             downgrade_count=2,
@@ -143,10 +145,69 @@ def test_build_daily_run_notification_surfaces_watchlist_blockers_when_no_alloca
     assert "只有阻塞条件解除后再考虑转入执行名单" in markdown
 
 
+def test_build_daily_run_notification_lists_watch_candidates_when_not_tradable() -> None:
+    markdown = build_daily_run_notification(
+        run_date="2026-06-05",
+        tradable=[],
+        candidates=(
+            PickResult(
+                symbol="688981",
+                name="中芯国际",
+                date="2026-06-05",
+                close=131.79,
+                score=-9.0,
+                rating="watch",
+                entry_type="relative_strength",
+                ideal_buy=131.79,
+                stop_loss=128.08,
+                take_profit=161.554,
+                position="watch",
+                strategies=(),
+                reasons=("MA20 斜率向上",),
+                risks=("收盘价低于 MA20",),
+            ),
+            PickResult(
+                symbol="000001",
+                name="平安银行",
+                date="2026-06-05",
+                close=10.82,
+                score=-18.0,
+                rating="watch",
+                entry_type="relative_strength",
+                ideal_buy=10.82,
+                stop_loss=10.73,
+                take_profit=11.731,
+                position="watch",
+                strategies=(),
+                reasons=("估值防守",),
+                risks=("缺少量能确认",),
+            ),
+        ),
+        portfolio_summary=PortfolioDecisionSummary(
+            promote_count=0,
+            downgrade_count=1,
+            keep_count=1,
+            top_focus=(),
+            watchlist=("688981 中芯国际", "000001 平安银行"),
+            allocations=(),
+            cash_reserve=1.0,
+            allocation_note="今日以观察为主",
+        ),
+        actual_source="eastmoney",
+        source_health_label="healthy",
+        source_health_message="eastmoney 健康",
+    )
+
+    assert "## Top 候选" in markdown
+    assert "1. 688981 中芯国际 | -9分 | 观察 | MA20 斜率向上" in markdown
+    assert "2. 000001 平安银行 | -18分 | 观察 | 估值防守" in markdown
+
+
 def test_build_daily_run_notification_surfaces_snapshot_diff_highlights() -> None:
     markdown = build_daily_run_notification(
         run_date="2026-06-05",
         tradable=[],
+        candidates=(),
         portfolio_summary=PortfolioDecisionSummary(
             promote_count=0,
             downgrade_count=1,

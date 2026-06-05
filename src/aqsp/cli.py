@@ -2689,6 +2689,7 @@ def run_scheduled(args: argparse.Namespace) -> int:
             build_daily_run_notification(
                 run_date=latest.isoformat(),
                 tradable=tradable,
+                candidates=picks,
                 portfolio_summary=portfolio_summary,
                 debate_results=debate_results,
                 actual_source=actual_source,
