@@ -44,6 +44,14 @@ def _candidate_status(pick: PickResult) -> str:
     return str(pick.metrics.get("candidate_status", "") or "")
 
 
+def _candidate_blocker(pick: PickResult) -> str:
+    return str(pick.metrics.get("candidate_blocker", "") or "")
+
+
+def _candidate_next_step(pick: PickResult) -> str:
+    return str(pick.metrics.get("candidate_next_step", "") or "")
+
+
 def _format_allocation_rationale(item: Any) -> str:
     rationale = tuple(getattr(item, "rationale", ()) or ())
     return "；".join(str(part) for part in rationale[:3])
@@ -131,6 +139,8 @@ def _format_final_decision_board(
         pm_reasons = getattr(decision, "reasons", ()) if decision is not None else ()
         label = _resolve_decision_label(pick)
         status = _candidate_status(pick)
+        blocker = _candidate_blocker(pick)
+        next_step = _candidate_next_step(pick)
         reason = "；".join(pick.reasons[:2]) if pick.reasons else "无"
         headline = f"- Top {idx}: {_display_name(pick)} | {label}"
         if status:
@@ -138,6 +148,10 @@ def _format_final_decision_board(
         headline += f" | 评分 {pick.score} | PM {action_label}"
         lines.append(headline)
         lines.append(f"  参考: {reason}")
+        if blocker:
+            lines.append(f"  当前阻塞: {blocker}")
+        if next_step:
+            lines.append(f"  下一步: {next_step}")
         if pm_reasons and tuple(pm_reasons) != ("保持原排序",):
             lines.append("  PM依据: " + "；".join(str(item) for item in pm_reasons[:2]))
     lines.append("")
@@ -235,6 +249,8 @@ def to_markdown(
     for idx, pick in enumerate(picks, 1):
         display = _display_name(pick)
         status = _candidate_status(pick)
+        blocker = _candidate_blocker(pick)
+        next_step = _candidate_next_step(pick)
         decision_text = _resolve_decision_label(pick)
         if status:
             decision_text += f" | {status}"
@@ -253,6 +269,10 @@ def to_markdown(
                 "",
             ]
         )
+        if blocker:
+            lines.insert(len(lines) - 1, f"- 当前阻塞: {blocker}")
+        if next_step:
+            lines.insert(len(lines) - 1, f"- 下一步关注: {next_step}")
         if pick.symbol in debate_map:
             lines.append(_format_debate_result(debate_map[pick.symbol]))
             lines.append("")

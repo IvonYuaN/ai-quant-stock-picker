@@ -176,7 +176,8 @@ def build_daily_run_notification(
             "",
             "## 行动建议",
             "",
-            _daily_action_line_one(tradable, portfolio_summary),
+            _daily_watch_action_line(candidates)
+            or _daily_action_line_one(tradable, portfolio_summary),
         ]
     )
     if circuit_breaker_reason:
@@ -436,6 +437,8 @@ def _daily_action_line_one(
             f"若确认延续，再按 {lead.weight:.0%} 参考仓位执行。"
         )
     if portfolio_summary is not None and portfolio_summary.watchlist:
+        if tradable:
+            return "1. 优先核对首选标的的开盘强弱与流动性，再决定是否执行。"
         return (
             "1. 本次先盯观察池里最强票的开盘承接，"
             "只有阻塞条件解除后再考虑转入执行名单。"
@@ -443,6 +446,26 @@ def _daily_action_line_one(
     if tradable:
         return "1. 优先核对首选标的的开盘强弱与流动性，再决定是否执行。"
     return "1. 本次以观察为主，不建议为了凑单强行开仓。"
+
+
+def _candidate_blocker(pick: PickResult) -> str:
+    return str(pick.metrics.get("candidate_blocker", "") or "")
+
+
+def _candidate_next_step(pick: PickResult) -> str:
+    return str(pick.metrics.get("candidate_next_step", "") or "")
+
+
+def _daily_watch_action_line(candidates: Sequence[PickResult]) -> str:
+    if not candidates:
+        return ""
+    lead = candidates[0]
+    next_step = _candidate_next_step(lead)
+    if next_step:
+        return (
+            f"1. 先盯 {lead.symbol} {lead.name}，{next_step}。"
+        )
+    return ""
 
 
 def _daily_debate_action_line(result: DebateResult) -> str:
@@ -527,4 +550,7 @@ def _format_watch_pick(pick: PickResult) -> str:
     if status:
         parts.append(status)
     parts.extend((f"{pick.score:.0f}分", "观察", lead_reason))
+    blocker = _candidate_blocker(pick)
+    if blocker:
+        parts.append(f"阻塞: {blocker}")
     return " | ".join(parts)

@@ -15,6 +15,14 @@ def _candidate_status_label(pick) -> str:
     return str(pick.metrics.get("candidate_status", "") or "")
 
 
+def _candidate_blocker_label(pick) -> str:
+    return str(pick.metrics.get("candidate_blocker", "") or "")
+
+
+def _candidate_next_step_label(pick) -> str:
+    return str(pick.metrics.get("candidate_next_step", "") or "")
+
+
 def _format_pick_with_status(pick, *, include_score: bool = False) -> str:
     display = format_symbol_name(pick.symbol, pick.name)
     status = _candidate_status_label(pick)
@@ -190,6 +198,8 @@ class MarkdownRenderer:
             pm_action = str(pick.metrics.get("portfolio_action", "") or "")
             pm_text = portfolio_action_label(pm_action) if pm_action else "未裁决"
             candidate_status = _candidate_status_label(pick)
+            blocker = _candidate_blocker_label(pick)
+            next_step = _candidate_next_step_label(pick)
             headline = f"### {display} (评分: {pick.score} / {rating_label(pick.rating)}"
             if candidate_status:
                 headline += f" / 状态: {candidate_status}"
@@ -201,6 +211,10 @@ class MarkdownRenderer:
 
             for reason in pick.reasons:
                 lines.append(f"- {reason}")
+            if blocker:
+                lines.append(f"- 当前阻塞: {blocker}")
+            if next_step:
+                lines.append(f"- 下一步关注: {next_step}")
 
             if pick.risks:
                 lines.append(f"风险提示: {'；'.join(pick.risks)}")
@@ -234,12 +248,19 @@ class MarkdownRenderer:
         tradable = data.tradable_picks
         if not tradable:
             if data.picks:
-                names = "、".join(
-                    _format_pick_with_status(p) for p in data.picks[:3]
+                lead = data.picks[0]
+                names = "、".join(_format_pick_with_status(p) for p in data.picks[:3])
+                blocker = _candidate_blocker_label(lead)
+                next_step = _candidate_next_step_label(lead)
+                line = (
+                    f"当前暂无可执行重点标的；候选观察池: {names}。"
+                    "先观察最强票，待阻塞条件解除后再考虑转入执行名单。"
                 )
-                lines.append(
-                    f"当前暂无可执行重点标的；候选观察池: {names}。先观察最强票，待阻塞条件解除后再考虑转入执行名单。"
-                )
+                if blocker:
+                    line += f" 当前阻塞: {blocker}。"
+                if next_step:
+                    line += f" 下一步关注: {next_step}。"
+                lines.append(line)
             else:
                 lines.append("无可执行重点标的；今日无候选，继续等待下一轮信号。")
 
@@ -344,6 +365,9 @@ class MarkdownRenderer:
             items.append(
                 f"- 首选观察: {_format_pick_with_status(first, include_score=True)}"
             )
+            next_step = _candidate_next_step_label(first)
+            if next_step:
+                items.append(f"- 解锁关注: {first.symbol} {first.name} | {next_step}")
         elif data.portfolio_summary:
             fallback = data.portfolio_summary.top_focus or data.portfolio_summary.watchlist
             if fallback:

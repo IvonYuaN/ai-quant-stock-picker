@@ -295,6 +295,27 @@ class TestBriefingGenerator:
         next_sec = next(s for s in briefing.sections if s.title == "明日重点")
         assert "候选观察池: 600519 贵州茅台(观察阻塞)" in next_sec.content
 
+    def test_next_day_section_includes_blocker_and_next_step_for_watch_pick(self):
+        gen = BriefingGenerator()
+        briefing = gen.generate(
+            picks=[
+                _make_pick(
+                    symbol="600519",
+                    name="贵州茅台",
+                    rating="watch",
+                    metrics={
+                        "candidate_status": "观察阻塞",
+                        "candidate_blocker": "T+1 未解除",
+                        "candidate_next_step": "明日解除 T+1 后，优先复核开盘承接与流动性",
+                    },
+                )
+            ],
+            frames={},
+        )
+        next_sec = next(s for s in briefing.sections if s.title == "明日重点")
+        assert "当前阻塞: T+1 未解除" in next_sec.content
+        assert "下一步关注: 明日解除 T+1 后，优先复核开盘承接与流动性" in next_sec.content
+
     def test_render_template(self):
         gen = BriefingGenerator()
         picks = [_make_pick()]
@@ -538,6 +559,28 @@ class TestGenerateSmartSummary:
         assert "- 候选观察池: 600519 贵州茅台(新晋)(8.5分)" in summary
         assert "- 首选观察: 600519 贵州茅台(新晋)(8.5分)" in summary
 
+    def test_action_plan_mentions_unlock_hint_when_watch_pick_is_blocked(self):
+        gen = BriefingGenerator()
+        briefing = gen.generate(
+            picks=[
+                _make_pick(
+                    symbol="600519",
+                    name="贵州茅台",
+                    rating="watch",
+                    metrics={
+                        "candidate_status": "观察阻塞",
+                        "candidate_blocker": "T+1 未解除",
+                        "candidate_next_step": "明日解除 T+1 后，优先复核开盘承接与流动性",
+                    },
+                )
+            ],
+            frames={},
+        )
+
+        summary = briefing.generate_smart_summary()
+
+        assert "- 解锁关注: 600519 贵州茅台 | 明日解除 T+1 后，优先复核开盘承接与流动性" in summary
+
     def test_evidence_section_includes_candidate_status_label(self):
         gen = BriefingGenerator()
         briefing = gen.generate(
@@ -554,6 +597,28 @@ class TestGenerateSmartSummary:
         )
         evidence_sec = next(s for s in briefing.sections if s.title == "候选证据链")
         assert "状态: 延续上升" in evidence_sec.content
+
+    def test_evidence_section_includes_candidate_blocker_and_next_step(self):
+        gen = BriefingGenerator()
+        briefing = gen.generate(
+            picks=[
+                _make_pick(
+                    symbol="300750",
+                    name="宁德时代",
+                    score=72.0,
+                    rating="watch",
+                    metrics={
+                        "candidate_status": "观察阻塞",
+                        "candidate_blocker": "板块集中度过高，压低新能源暴露",
+                        "candidate_next_step": "等待板块暴露回落后，再重新评估执行顺位",
+                    },
+                )
+            ],
+            frames={},
+        )
+        evidence_sec = next(s for s in briefing.sections if s.title == "候选证据链")
+        assert "- 当前阻塞: 板块集中度过高，压低新能源暴露" in evidence_sec.content
+        assert "- 下一步关注: 等待板块暴露回落后，再重新评估执行顺位" in evidence_sec.content
 
     def test_core_items_render_structured_portfolio_summary(self):
         briefing = Briefing(

@@ -378,3 +378,31 @@ def test_report_preserves_full_reason_text_without_truncating_chinese() -> None:
     assert "- 理由: MA5/10/20/60 多头排列；强趋势缩量回踩均线" in markdown
     assert "- 由:" not in markdown
     assert "强趋势缩量回踩均；" not in markdown
+
+
+def test_report_renders_candidate_blocker_and_next_step_when_present() -> None:
+    pick = PickResult(
+        symbol="000001",
+        name="平安银行",
+        date="2026-06-05",
+        close=10.82,
+        score=58,
+        rating="watch",
+        entry_type="relative_strength",
+        ideal_buy=10.82,
+        stop_loss=10.73,
+        take_profit=11.73,
+        position="watch",
+        reasons=("估值防守", "等待量能确认"),
+        metrics={
+            "candidate_status": "观察阻塞",
+            "candidate_blocker": "板块集中度过高，压低银行暴露",
+            "candidate_next_step": "等待板块暴露回落后，再重新评估执行顺位",
+        },
+    )
+
+    markdown = to_markdown([pick])
+
+    assert "当前阻塞: 板块集中度过高，压低银行暴露" in markdown
+    assert "下一步: 等待板块暴露回落后，再重新评估执行顺位" in markdown
+    assert "- 下一步关注: 等待板块暴露回落后，再重新评估执行顺位" in markdown

@@ -1162,6 +1162,32 @@ def _build_execution_summary_line(
     return "👀 **今日无可执行标的**，仅观察。等待更强信号。"
 
 
+def _candidate_unlock_hint(reason: str) -> str:
+    if "T+1" in reason:
+        return "明日解除 T+1 后，优先复核开盘承接与流动性"
+    if "板块集中度" in reason or "集中度" in reason:
+        return "等待板块暴露回落或出现更强领涨，再考虑转入执行名单"
+    if "相关性" in reason or "高相关" in reason:
+        return "等待高相关标的分化后，再重新评估执行顺位"
+    return "待阻塞条件解除后，再考虑转入执行名单"
+
+
+def _candidate_blocker_map(portfolio_summary: Any | None) -> dict[str, str]:
+    blockers: dict[str, str] = {}
+    if portfolio_summary is None:
+        return blockers
+    for item in tuple(getattr(portfolio_summary, "execution_blockers", ()) or ()):
+        raw = str(item).strip()
+        if not raw or ":" not in raw:
+            continue
+        display, reason = raw.split(":", 1)
+        symbol = display.split(" ", 1)[0].strip()
+        clean_reason = reason.strip()
+        if symbol and clean_reason:
+            blockers[symbol] = clean_reason
+    return blockers
+
+
 def _annotate_candidate_status(
     picks: list[PickResult],
     *,
@@ -1174,23 +1200,23 @@ def _annotate_candidate_status(
     from aqsp.portfolio.snapshot import build_candidate_status_map
 
     status_map = build_candidate_status_map(diff)
-    blocker_symbols: set[str] = set()
-    if portfolio_summary is not None:
-        for item in tuple(getattr(portfolio_summary, "execution_blockers", ()) or ()):
-            symbol = str(item).split(":", 1)[0].split(" ", 1)[0].strip()
-            if symbol:
-                blocker_symbols.add(symbol)
+    blocker_map = _candidate_blocker_map(portfolio_summary)
 
     enriched: list[PickResult] = []
     for pick in picks:
         status = status_map.get(pick.symbol, "")
-        if not status and pick.symbol in blocker_symbols:
+        blocker_reason = blocker_map.get(pick.symbol, "")
+        if not status and blocker_reason:
             status = "观察阻塞"
-        if not status:
+        if not status and not blocker_reason:
             enriched.append(pick)
             continue
         metrics = dict(pick.metrics)
-        metrics["candidate_status"] = status
+        if status:
+            metrics["candidate_status"] = status
+        if blocker_reason:
+            metrics["candidate_blocker"] = blocker_reason
+            metrics["candidate_next_step"] = _candidate_unlock_hint(blocker_reason)
         enriched.append(replace(pick, metrics=metrics))
     return enriched
 

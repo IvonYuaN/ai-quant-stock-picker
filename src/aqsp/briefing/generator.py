@@ -51,6 +51,14 @@ def _candidate_status_label(pick: PickResult) -> str:
     return str(pick.metrics.get("candidate_status", "") or "")
 
 
+def _candidate_blocker_label(pick: PickResult) -> str:
+    return str(pick.metrics.get("candidate_blocker", "") or "")
+
+
+def _candidate_next_step_label(pick: PickResult) -> str:
+    return str(pick.metrics.get("candidate_next_step", "") or "")
+
+
 def _format_pick_with_status(
     pick: PickResult,
     *,
@@ -299,9 +307,15 @@ class Briefing:
                 "- 执行阻塞: " + "；".join(self.portfolio_summary.execution_blockers[:2])
             )
         if self.picks:
+            lead_pick = self.picks[0]
             items.append(
-                f"- 首选观察: {_format_pick_with_status(self.picks[0], include_score=True)}"
+                f"- 首选观察: {_format_pick_with_status(lead_pick, include_score=True)}"
             )
+            next_step = _candidate_next_step_label(lead_pick)
+            if next_step:
+                items.append(
+                    f"- 解锁关注: {lead_pick.symbol} {lead_pick.name} | {next_step}"
+                )
         elif top_scores:
             items.append(f"- 首选观察: {top_scores[0][0]}({top_scores[0][1]}分)")
         elif self.portfolio_summary:
@@ -696,6 +710,8 @@ class BriefingGenerator:
             pm_action = str(pick.metrics.get("portfolio_action", "") or "")
             pm_text = portfolio_action_label(pm_action) if pm_action else "未裁决"
             candidate_status = _candidate_status_label(pick)
+            blocker = _candidate_blocker_label(pick)
+            next_step = _candidate_next_step_label(pick)
             headline = (
                 f"### {display} (评分: {pick.score} / {rating_label(pick.rating)}"
             )
@@ -709,6 +725,10 @@ class BriefingGenerator:
                 lines.append(f"- 命中策略: {', '.join(pick.strategies)}")
             for reason in pick.reasons:
                 lines.append(f"- {reason}")
+            if blocker:
+                lines.append(f"- 当前阻塞: {blocker}")
+            if next_step:
+                lines.append(f"- 下一步关注: {next_step}")
             if pick.risks:
                 lines.append(f"风险提示: {'；'.join(pick.risks)}")
             lines.append("")
@@ -748,12 +768,19 @@ class BriefingGenerator:
         tradable_picks = [p for p in picks if is_tradable_rating(p.rating)]
         if not tradable_picks:
             if picks:
-                names = "、".join(
-                    _format_pick_with_status(p) for p in picks[:3]
+                lead_pick = picks[0]
+                names = "、".join(_format_pick_with_status(p) for p in picks[:3])
+                blocker = _candidate_blocker_label(lead_pick)
+                next_step = _candidate_next_step_label(lead_pick)
+                line = (
+                    f"当前暂无可执行重点标的；候选观察池: {names}。"
+                    "先观察最强票，待阻塞条件解除后再考虑转入执行名单。"
                 )
-                lines.append(
-                    f"当前暂无可执行重点标的；候选观察池: {names}。先观察最强票，待阻塞条件解除后再考虑转入执行名单。"
-                )
+                if blocker:
+                    line += f" 当前阻塞: {blocker}。"
+                if next_step:
+                    line += f" 下一步关注: {next_step}。"
+                lines.append(line)
             else:
                 lines.append("无可执行重点标的；今日无候选，继续等待下一轮信号。")
             return BriefingSection(title="明日重点", content="\n".join(lines))
