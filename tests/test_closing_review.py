@@ -325,6 +325,39 @@ class TestReviewToday:
 
         assert "候选观察池" in review.strategy_breakdown
 
+    def test_builds_main_chain_summary_with_blockers_and_review_items(self, tmp_path):
+        ledger = tmp_path / "predictions.jsonl"
+        _write_predictions(
+            str(ledger),
+            [
+                {
+                    "symbol": "688981",
+                    "name": "中芯国际",
+                    "rating": "watch",
+                    "portfolio_action": "downgrade",
+                    "signal_date": "2025-06-01",
+                    "entry_price": 10.0,
+                    "current_price": 10.0,
+                    "return_pct": 0.0,
+                    "holding_days": 1,
+                    "candidate_blocker": "板块集中度过高",
+                    "candidate_next_step": "等待量价继续走强后，再评估是否转入执行名单",
+                    "candidate_review_window": "盘中走强后",
+                    "candidate_review_priority": "high",
+                }
+            ],
+        )
+        reviewer = ClosingReviewer(ledger_path=str(ledger))
+
+        review = reviewer.review_today("2025-06-01")
+
+        assert "候选观察池: 688981 中芯国际" in review.main_chain_summary
+        assert "执行阻塞: 688981 中芯国际: 板块集中度过高" in review.main_chain_summary
+        assert (
+            "观察复核: 688981 中芯国际 | 高优先级 / 盘中走强后 | 等待量价继续走强后，再评估是否转入执行名单"
+            in review.main_chain_summary
+        )
+
 
 class TestGenerateWeeklySummary:
     def test_returns_weekly_summary(self, tmp_path):

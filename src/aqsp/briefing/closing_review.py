@@ -7,7 +7,7 @@ from pathlib import Path
 
 from aqsp.core.time import now_shanghai
 from aqsp.presentation import format_symbol_name
-from aqsp.ratings import rating_label
+from aqsp.ratings import is_tradable_rating, rating_label
 
 
 @dataclass(frozen=True)
@@ -158,6 +158,25 @@ class ClosingReviewer:
                     latest = signal_date
         return latest
 
+    def _candidate_status(self, pred: dict) -> str:
+        return str(pred.get("candidate_status", "") or "").strip()
+
+    def _candidate_blocker(self, pred: dict) -> str:
+        return str(pred.get("candidate_blocker", "") or "").strip()
+
+    def _candidate_next_step(self, pred: dict) -> str:
+        return str(pred.get("candidate_next_step", "") or "").strip()
+
+    def _candidate_review_window(self, pred: dict) -> str:
+        return str(pred.get("candidate_review_window", "") or "").strip()
+
+    def _candidate_review_priority(self, pred: dict) -> str:
+        return str(pred.get("candidate_review_priority", "") or "").strip()
+
+    def _review_priority_label(self, priority: str) -> str:
+        labels = {"high": "高优先级", "medium": "中优先级", "low": "低优先级"}
+        return labels.get(priority, priority or "")
+
     def _build_main_chain_summary(self, predictions: list[dict]) -> tuple[str, ...]:
         if not predictions:
             return ()
@@ -180,21 +199,46 @@ class ClosingReviewer:
 
         tradable: list[str] = []
         watchlist: list[str] = []
+        blockers: list[str] = []
+        review_items: list[str] = []
         for pred in predictions:
             symbol = str(pred.get("symbol", "")).strip()
             name = str(pred.get("name", "")).strip()
             display = format_symbol_name(symbol, name)
-            label = rating_label(pred.get("rating", ""))
-            if label in {"重点关注", "观察候选"}:
+            rating = str(pred.get("rating", "")).strip()
+            if is_tradable_rating(rating):
                 tradable.append(display)
             else:
                 watchlist.append(display)
+            blocker = self._candidate_blocker(pred)
+            next_step = self._candidate_next_step(pred)
+            review_meta = " / ".join(
+                part
+                for part in (
+                    self._review_priority_label(self._candidate_review_priority(pred)),
+                    self._candidate_review_window(pred),
+                )
+                if part
+            )
+            if blocker:
+                blockers.append(f"{display}: {blocker}")
+            if next_step or review_meta:
+                line = display
+                if review_meta:
+                    line += f" | {review_meta}"
+                if next_step:
+                    line += f" | {next_step}"
+                review_items.append(line)
 
         lines = [f"PM主裁决: 上调 {promoted} / 降级 {downgraded} / 维持 {kept}"]
         if tradable:
             lines.append("可执行主链: " + "、".join(tradable[:3]))
         if watchlist:
             lines.append("候选观察池: " + "、".join(watchlist[:5]))
+        if blockers:
+            lines.append("执行阻塞: " + "；".join(blockers[:2]))
+        for item in review_items[:2]:
+            lines.append("观察复核: " + item)
         return tuple(lines)
 
     def _load_predictions(self, date: str) -> list[dict]:

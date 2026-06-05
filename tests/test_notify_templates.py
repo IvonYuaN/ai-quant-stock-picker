@@ -479,7 +479,11 @@ def test_build_closing_review_notification_summary_mode_highlights_main_chain() 
             "早盘打板": {"total": 2, "wins": 1, "losses": 1, "total_return": 1.8, "win_rate": 0.5}
         },
         market_environment="震荡市",
-        main_chain_summary=("PM主裁决: 上调 1 / 降级 2 / 维持 1",),
+        main_chain_summary=(
+            "PM主裁决: 上调 1 / 降级 2 / 维持 1",
+            "执行阻塞: 688981 中芯国际: 板块集中度过高",
+            "观察复核: 688981 中芯国际 | 高优先级 / 盘中走强后 | 等待量价继续走强后，再评估是否转入执行名单",
+        ),
         key_lessons=("止损执行尚可，但入场分散度不足",),
         improvement_suggestions=("减少同类信号堆叠，优先保留最强票",),
     )
@@ -488,7 +492,10 @@ def test_build_closing_review_notification_summary_mode_highlights_main_chain() 
 
     assert "# 收盘复盘" in markdown
     assert "PM主裁决: 上调 1 / 降级 2 / 维持 1" in markdown
+    assert "执行阻塞: 688981 中芯国际: 板块集中度过高" in markdown
+    assert "观察复核: 688981 中芯国际 | 高优先级 / 盘中走强后" in markdown
     assert "减少同类信号堆叠" in markdown
+    assert "优先复核 688981 中芯国际 | 高优先级 / 盘中走强后" in markdown
 
 
 def test_build_closing_review_notification_weekly_mode_supports_summary() -> None:

@@ -336,10 +336,32 @@ def build_closing_review_notification(
     ]
     if review.main_chain_summary:
         lines.append(f"- 主链裁决: {review.main_chain_summary[0]}")
+        for item in review.main_chain_summary[1:4]:
+            lines.append(f"- {item}")
     if review.key_lessons:
         lines.append(f"- 关键复盘: {review.key_lessons[0]}")
     if review.improvement_suggestions:
         lines.extend(["", "## 明日动作", "", f"1. {review.improvement_suggestions[0]}"])
+        review_action = next(
+            (
+                item.split(": ", 1)[1]
+                for item in review.main_chain_summary
+                if item.startswith("观察复核: ")
+            ),
+            "",
+        )
+        blocker_action = next(
+            (
+                item.split(": ", 1)[1]
+                for item in review.main_chain_summary
+                if item.startswith("执行阻塞: ")
+            ),
+            "",
+        )
+        if review_action:
+            lines.append(f"2. 优先复核 {review_action}。")
+        elif blocker_action:
+            lines.append(f"2. 先处理 {blocker_action}。")
     if review.strategy_breakdown:
         lines.extend(["", "## 策略表现", ""])
         for strategy, stats in list(review.strategy_breakdown.items())[:3]:
