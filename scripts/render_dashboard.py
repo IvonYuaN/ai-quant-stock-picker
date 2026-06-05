@@ -22,7 +22,7 @@ from aqsp.data.source_health import (
     notification_level_for_health_label,
     read_source_health,
 )
-from aqsp.ratings import portfolio_action_label, rating_label
+from aqsp.ratings import is_tradable_rating, portfolio_action_label, rating_label
 from aqsp.research.summary import ResearchSummary, load_research_summary
 
 
@@ -225,9 +225,115 @@ def _decision_label_from_rating(rating: str) -> str:
     return rating_label(rating)
 
 
+def _candidate_display_name(row: dict[str, Any]) -> str:
+    symbol = str(row.get("symbol", "") or "")
+    name = str(row.get("name", "") or "")
+    if not name or name == symbol:
+        return symbol
+    return f"{symbol} {name}"
+
+
 def _review_priority_label(priority: str) -> str:
     labels = {"high": "高优先级", "medium": "中优先级", "low": "低优先级"}
     return labels.get(priority, priority or "")
+
+
+def _candidate_review_meta(row: dict[str, Any]) -> str:
+    priority = _review_priority_label(
+        str(row.get("candidate_review_priority", "") or "")
+    )
+    review_window = str(row.get("candidate_review_window", "") or "")
+    return " / ".join(part for part in (priority, review_window) if part)
+
+
+def _lifecycle_overview_panel(candidates: list[dict[str, str]]) -> str:
+    actionable: list[str] = []
+    watchlist: list[str] = []
+    blocked: list[str] = []
+    review_items: list[str] = []
+
+    for row in candidates:
+        display = _candidate_display_name(row)
+        rating = str(row.get("rating", "") or "")
+        action = str(row.get("portfolio_action", "") or "")
+        status = str(row.get("candidate_status", "") or "")
+        blocker = str(row.get("candidate_blocker", "") or "")
+        next_step = str(row.get("candidate_next_step", "") or "")
+        review_meta = _candidate_review_meta(row)
+
+        if action == "promote" or is_tradable_rating(rating):
+            actionable.append(display)
+        if rating == "watch" or action == "downgrade" or status:
+            watchlist.append(display)
+        if blocker:
+            blocked.append(f"{display}: {blocker}")
+        if next_step or review_meta:
+            line = display
+            if review_meta:
+                line += f" | {review_meta}"
+            if next_step:
+                line += f" | {next_step}"
+            review_items.append(line)
+
+    if actionable:
+        headline = "可执行主链"
+        headline_detail = "、".join(actionable[:3])
+    elif review_items:
+        headline = "观察复核"
+        headline_detail = review_items[0]
+    elif watchlist:
+        headline = "候选观察池"
+        headline_detail = "、".join(watchlist[:3])
+    else:
+        headline = "暂无主链"
+        headline_detail = "等待下一轮有效候选输出"
+
+    action_line = "明日无明确主链动作，先确认数据与候选是否完整。"
+    if actionable:
+        action_line = f"明日先盯 {' → '.join(actionable[:2])} 的开盘强弱与流动性。"
+    elif review_items:
+        action_line = f"明日先盯 {review_items[0]}。"
+    elif watchlist:
+        action_line = f"明日先围绕 {'、'.join(watchlist[:2])} 做观察复核，不放大仓位。"
+
+    summary_cards = [
+        ("主链动作", headline, headline_detail),
+        (
+            "候选分层",
+            f"可执行 {len(actionable)} / 观察 {len(watchlist)}",
+            "等待执行与观察候选已按当前主链输出分层。",
+        ),
+        (
+            "当前阻塞",
+            blocked[0] if blocked else "暂无明确阻塞",
+            "；".join(blocked[1:3]) if len(blocked) > 1 else "",
+        ),
+        (
+            "明日动作",
+            action_line,
+            review_items[1] if len(review_items) > 1 else "",
+        ),
+    ]
+
+    card_html = "".join(
+        f"""
+        <div class="lifecycle-card">
+          <div class="lifecycle-label">{html.escape(label)}</div>
+          <div class="lifecycle-value">{html.escape(value)}</div>
+          {f"<div class='lifecycle-detail'>{html.escape(detail)}</div>" if detail else ""}
+        </div>
+        """
+        for label, value, detail in summary_cards
+    )
+
+    return f"""
+    <section class="panel lifecycle-panel">
+      <h2>主链状态总览</h2>
+      <div class="lifecycle-grid">
+        {card_html}
+      </div>
+    </section>
+    """
 
 
 def _candidate_cards(
@@ -2143,6 +2249,45 @@ def render_dashboard(
       margin-bottom: 16px;
       font-size: 20px;
     }}
+    .lifecycle-panel {{
+      margin-bottom: 24px;
+      overflow: hidden;
+    }}
+    .lifecycle-panel h2 {{
+      margin-top: 0;
+      margin-bottom: 16px;
+      font-size: 20px;
+    }}
+    .lifecycle-grid {{
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 12px;
+    }}
+    .lifecycle-card {{
+      padding: 16px 18px;
+      border-radius: 18px;
+      border: 1px solid var(--line);
+      background: rgba(255,255,255,.45);
+      min-height: 120px;
+    }}
+    .lifecycle-label {{
+      font-size: 12px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: .5px;
+      margin-bottom: 8px;
+    }}
+    .lifecycle-value {{
+      font-size: 18px;
+      font-weight: 700;
+      line-height: 1.45;
+    }}
+    .lifecycle-detail {{
+      margin-top: 10px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.6;
+    }}
     .health-grid {{
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
@@ -2558,6 +2703,7 @@ def render_dashboard(
   </header>
   {warning_html}
   {health_panel_html}
+  {_lifecycle_overview_panel(candidates)}
   <!-- PANEL_STRATEGY_PERF -->
   <section class="stats">
     <div class="stat"><b>{stats.total}</b><span>ledger 总记录</span></div>

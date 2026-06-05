@@ -130,6 +130,9 @@ def test_dashboard_renders_candidates_and_ledger_stats_when_inputs_exist(
     assert "auto → eastmoney" in html
     assert "fallback 到 eastmoney" in html
     assert "fallback 数据源生成" in html
+    assert "主链状态总览" in html
+    assert "主链动作" in html
+    assert "候选分层" in html
     assert "/ 观察候选" in html
     assert "buy_candidate" not in html
 
@@ -318,6 +321,11 @@ def test_dashboard_surfaces_watch_candidate_lifecycle_details() -> None:
 
     html = render_dashboard(candidates, [], "主链观察面板")
 
+    assert "主链状态总览" in html
+    assert "观察复核" in html
+    assert "主链动作" in html
+    assert "当前阻塞" in html
+    assert "明日动作" in html
     assert "/ 候选观察池" in html
     assert "新晋" in html
     assert "下一步: 等待量价继续走强后，再评估是否转入执行名单" in html
