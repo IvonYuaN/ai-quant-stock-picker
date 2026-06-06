@@ -22,7 +22,7 @@ bash scripts/start_dashboard.sh
 streamlit run src/aqsp/web/dashboard.py --server.port 8501
 ```
 
-访问：
+本机访问：
 
 ```text
 http://localhost:8501
@@ -53,23 +53,57 @@ python -m aqsp run
 - `data/paper_trades.jsonl`
 - `reports/paper.md`
 
-## 安全部署
+## 推荐部署
 
-默认建议只在本机访问。
+现在有已备案域名时，推荐默认走：
 
-如果必须在服务器上打开：
+- `dashboard.yourdomain.com` 这类二级域名
+- Nginx / Caddy 反向代理
+- HTTPS
+- 统一登录或 Basic Auth
+
+Streamlit 建议只监听本机回环地址，再由反向代理对外提供服务：
 
 ```bash
 streamlit run src/aqsp/web/dashboard.py --server.address 127.0.0.1 --server.port 8501
 ```
 
-然后通过带鉴权的反向代理暴露，不要直接裸露到公网。
+然后把域名指向你的服务器，并在反向代理里转发到 `127.0.0.1:8501`。
 
 最低要求：
 
+- HTTPS
 - 反向代理 Basic Auth 或统一登录
-- 仅允许可信 IP
-- TLS
+- 仅允许可信 IP 或额外 WAF / CDN 访问控制
+
+Nginx 示例：
+
+```nginx
+server {
+    listen 80;
+    server_name dashboard.yourdomain.com;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    server_name dashboard.yourdomain.com;
+
+    ssl_certificate     /path/to/fullchain.pem;
+    ssl_certificate_key /path/to/privkey.pem;
+
+    auth_basic "AQSP Dashboard";
+    auth_basic_user_file /etc/nginx/.htpasswd;
+
+    location / {
+        proxy_pass http://127.0.0.1:8501;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
 
 不推荐直接使用下面这种方式对公网开放：
 

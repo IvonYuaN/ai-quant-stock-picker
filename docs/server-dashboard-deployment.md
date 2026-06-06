@@ -1,4 +1,12 @@
-# 私有服务器前端与数据库部署
+# 备案域名前端与数据库部署
+
+现在既然已经有 **备案域名**，默认推荐走标准公网部署：
+
+- 域名：如 `dashboard.yourdomain.com`
+- Web：Nginx / Caddy
+- 证书：Let's Encrypt / 宝塔证书
+- 鉴权：Basic Auth、统一登录、Cloudflare Access 三选一或叠加
+- 应用：Streamlit 只监听 `127.0.0.1:8501`
 
 推荐架构分两种:
 
@@ -13,7 +21,7 @@
 
 如果你现在是“本地能跑, 服务器也想配起来”, 推荐优先走第 2 种: 服务器独立跑。这样最稳, 不依赖本地机器在线。
 
-## 方案 A: 本地跑, 服务器只展示
+## 方案 A: 本地跑, 服务器展示
 
 ```text
 GitHub Actions 定时运行
@@ -82,26 +90,47 @@ sudo -u aqsp tee -a /home/aqsp/.ssh/authorized_keys < aqsp_deploy.pub
 sudo -u aqsp chmod 600 /home/aqsp/.ssh/authorized_keys
 ```
 
+推荐的公网结构：
+
+```text
+browser
+-> https://dashboard.yourdomain.com
+-> Nginx / Caddy
+-> 127.0.0.1:8501 (streamlit)
+```
+
 Nginx 示例:
 
 ```nginx
 server {
     listen 80;
-    server_name your-domain.example;
-    root /var/www/aqsp;
-    index index.html;
+    server_name dashboard.yourdomain.com;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    server_name dashboard.yourdomain.com;
+
+    ssl_certificate     /path/to/fullchain.pem;
+    ssl_certificate_key /path/to/privkey.pem;
+
+    auth_basic "AQSP Dashboard";
+    auth_basic_user_file /etc/nginx/.htpasswd;
 
     location / {
-        try_files $uri $uri/ =404;
-    }
-
-    location = /aqsp.db {
-        add_header Cache-Control "no-store";
+        proxy_pass http://127.0.0.1:8501;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
     }
 }
 ```
 
-如果不想公开访问,用 Nginx Basic Auth、VPN、Cloudflare Access 或仅内网访问。
+如果你托管的是静态 `dist/dashboard/` 而不是 Streamlit，也可以把 `root /var/www/aqsp` 继续保留给静态站点。
+
+不建议直接把 Streamlit 端口裸露到公网。
 
 ## 服务器 `.env` 最小示例
 
@@ -147,6 +176,16 @@ AQSP_DEPLOY_SSH_KEY_PATH=/home/aqsp/.ssh/aqsp_deploy
 - `AQSP_DEPLOY_DASHBOARD=false` 表示服务器本机生成完 `dist/dashboard/` 就结束。
 - `AQSP_DEPLOY_DASHBOARD=true` 表示这台服务器还会继续把 `dist/dashboard/` 推送到另一台机器。
 - `AQSP_ALLOW_ONLINE_FALLBACK=false` 表示 `auto/local_first` 只允许本地数据源，不再意外回退到公网接口。
+
+## Streamlit 服务启动建议
+
+公网部署时，Streamlit 建议只监听本机回环地址：
+
+```bash
+streamlit run src/aqsp/web/dashboard.py --server.address 127.0.0.1 --server.port 8501
+```
+
+然后让 Nginx / Caddy 对外提供域名访问。
 
 ## 本地预览
 
