@@ -231,6 +231,14 @@ def _render_task_workbench(snapshots: tuple[DashboardTaskSnapshot, ...]) -> None
                 """,
                 unsafe_allow_html=True,
             )
+            if st.button(
+                f"切换到{snapshot.task_label}",
+                key=f"task-switch-{snapshot.task_id}",
+                use_container_width=True,
+            ):
+                st.session_state["dashboard_task_id"] = snapshot.task_id
+                st.session_state["dashboard_selected_date"] = "最新"
+                st.rerun()
 
 
 def _render_paper_summary(summary: DashboardPaperSummary) -> None:
@@ -244,6 +252,11 @@ def _render_paper_summary(summary: DashboardPaperSummary) -> None:
 
     detail_col1, detail_col2 = st.columns(2)
     with detail_col1:
+        _render_line_block(
+            "今日动作摘要",
+            summary.action_summary_lines,
+            "当前暂无动作摘要。",
+        )
         _render_line_block(
             "持仓跟踪",
             summary.open_position_lines,
@@ -279,29 +292,38 @@ def _render_top_navigation(
         unsafe_allow_html=True,
     )
     task_ids = [option.task_id for option in options]
+    if st.session_state.get("dashboard_task_id") not in task_ids:
+        st.session_state["dashboard_task_id"] = task_ids[0]
     selected_task_id = st.radio(
         "任务导航",
         task_ids,
         horizontal=True,
         format_func=lambda task_id: _task_nav_label(task_id, snapshots),
+        key="dashboard_task_id",
     )
 
     available_dates = provider.task_dates(selected_task_id)
     recent_dates = list(available_dates[:7])
     date_choices = ["最新", *recent_dates]
+    if st.session_state.get("dashboard_selected_date") not in date_choices:
+        st.session_state["dashboard_selected_date"] = "最新"
 
     selected_date_label = st.radio(
         "快速回看",
         date_choices,
         horizontal=True,
+        key="dashboard_selected_date",
     )
     selected_date = "" if selected_date_label == "最新" else selected_date_label
 
     if len(available_dates) > 7:
+        st.session_state.setdefault("dashboard_selected_date_more", "最新")
+        if st.session_state["dashboard_selected_date_more"] not in ["最新", *available_dates]:
+            st.session_state["dashboard_selected_date_more"] = "最新"
         selected_date = st.selectbox(
             "更多日期",
             ["最新", *available_dates],
-            index=0,
+            key="dashboard_selected_date_more",
         )
         selected_date = "" if selected_date == "最新" else selected_date
 
@@ -442,8 +464,6 @@ def main() -> None:
         signal_date=selected_date,
     )
 
-    _render_context_banner(task_view)
-
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("信号总数", summary.signal_count)
     col2.metric("最新信号日", summary.latest_signal_date or "-")
@@ -460,6 +480,9 @@ def main() -> None:
     _render_task_workbench(task_snapshots)
 
     st.divider()
+    _render_context_banner(task_view)
+
+    st.divider()
     _render_paper_summary(paper_summary)
 
     decision_tab, review_tab, execution_tab, report_tab = st.tabs(
@@ -469,8 +492,15 @@ def main() -> None:
     with decision_tab:
         st.subheader("执行摘要")
         st.info(task_view.headline)
-        if task_view.summary_lines:
-            st.markdown("\n".join(f"- {line}" for line in task_view.summary_lines))
+        show_summary_lines = task_view.summary_lines
+        if task_view.task_id == "briefing":
+            show_summary_lines = tuple(
+                line
+                for line in task_view.summary_lines
+                if "任务:" not in line and "数据源:" not in line
+            )
+        if show_summary_lines:
+            st.markdown("\n".join(f"- {line}" for line in show_summary_lines))
 
         _render_summary_cards(task_view)
         _render_focus_block(task_view)

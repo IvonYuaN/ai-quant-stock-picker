@@ -67,6 +67,7 @@ class DashboardPaperSummary:
     closed_trades: int
     open_position_lines: tuple[str, ...]
     event_lines: tuple[str, ...]
+    action_summary_lines: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -245,6 +246,7 @@ class DashboardDataProvider:
         pending_rows = [row for row in rows if row.get("status") == "pending_entry"]
         blocked_rows = [row for row in rows if row.get("status") == "not_executable"]
         closed_rows = [row for row in rows if row.get("status") == "closed"]
+        execution_rows = self.get_recent_execution_logs(days=7)
 
         open_position_lines = tuple(
             (
@@ -271,6 +273,28 @@ class DashboardDataProvider:
                 f"收益 {latest_closed.get('return_pct', '-')}"
             )
 
+        action_summary_lines: list[str] = []
+        if execution_rows:
+            latest_execution = execution_rows[-1]
+            action_summary_lines.append(
+                f"最近执行: {self._display_name_for_symbol(latest_execution)} | "
+                f"{latest_execution.get('action', '-')} "
+                f"{latest_execution.get('shares', '-')}"
+                f" @ {latest_execution.get('price', '-')}"
+            )
+        if pending_rows:
+            action_summary_lines.append(
+                f"待执行队列 {len(pending_rows)} 笔，开盘优先检查 next open 是否可成交。"
+            )
+        if blocked_rows:
+            action_summary_lines.append(
+                f"阻塞队列 {len(blocked_rows)} 笔，先处理涨跌停/停牌导致的不可成交样本。"
+            )
+        if not action_summary_lines and open_rows:
+            action_summary_lines.append(
+                f"当前以持仓跟踪为主，共 {len(open_rows)} 笔 open position。"
+            )
+
         return DashboardPaperSummary(
             open_positions=len(open_rows),
             pending_entries=len(pending_rows),
@@ -278,6 +302,7 @@ class DashboardDataProvider:
             closed_trades=len(closed_rows),
             open_position_lines=open_position_lines,
             event_lines=tuple(event_lines),
+            action_summary_lines=tuple(action_summary_lines),
         )
 
     def default_task_id(self) -> str:
@@ -754,6 +779,23 @@ class DashboardDataProvider:
             str(row.get("symbol", "") or ""),
             str(row.get("name", "") or ""),
         )
+
+    def _display_name_for_symbol(self, row: dict[str, Any]) -> str:
+        display_name = self._symbol_name(row)
+        if " " in display_name:
+            return display_name
+
+        symbol = str(row.get("symbol", "") or "").strip()
+        if not symbol:
+            return display_name
+
+        for source_row in [*self.load_signal_rows(), *self.load_paper_rows()]:
+            if str(source_row.get("symbol", "") or "").strip() != symbol:
+                continue
+            resolved = self._symbol_name(source_row)
+            if resolved.strip():
+                return resolved
+        return display_name
 
     def _is_actionable(self, row: dict[str, Any]) -> bool:
         action = str(row.get("portfolio_action", "") or "").strip()

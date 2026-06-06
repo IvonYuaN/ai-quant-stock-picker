@@ -162,6 +162,9 @@ def test_dashboard_data_provider_reads_real_runtime_files(tmp_path: Path) -> Non
     assert any("待开仓 1 笔" in line for line in paper_summary.event_lines)
     assert any("不可成交 1 笔" in line for line in paper_summary.event_lines)
     assert any("最近平仓: 000858 五粮液" in line for line in paper_summary.event_lines)
+    assert any("最近执行: 600519 贵州茅台 | BUY 100 @ 1500.0" in line for line in paper_summary.action_summary_lines)
+    assert any("待执行队列 1 笔" in line for line in paper_summary.action_summary_lines)
+    assert any("阻塞队列 1 笔" in line for line in paper_summary.action_summary_lines)
 
 
 def test_dashboard_data_provider_builds_task_views_and_dedupes_latest_rows(
