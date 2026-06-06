@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
@@ -33,14 +34,26 @@ class DashboardDataProvider:
 
     def __init__(
         self,
-        ledger_path: str = "data/ledger.jsonl",
-        paper_ledger_path: str = "data/paper_trades.jsonl",
-        logs_path: str = "logs/trades",
+        ledger_path: str = "",
+        paper_ledger_path: str = "",
+        logs_path: str = "",
     ) -> None:
-        self.ledger_path = Path(ledger_path)
-        self.paper_ledger_path = Path(paper_ledger_path)
-        self.logs_path = Path(logs_path)
-        self.logger = TradeLogger(str(logs_path))
+        resolved_ledger = (
+            ledger_path.strip()
+            or os.getenv("AQSP_LEDGER", "").strip()
+            or "data/predictions.jsonl"
+        )
+        resolved_paper_ledger = (
+            paper_ledger_path.strip()
+            or os.getenv("AQSP_PAPER_LEDGER", "").strip()
+            or "data/paper_trades.jsonl"
+        )
+        resolved_logs = logs_path.strip() or "logs/trades"
+
+        self.ledger_path = Path(resolved_ledger)
+        self.paper_ledger_path = Path(resolved_paper_ledger)
+        self.logs_path = Path(resolved_logs)
+        self.logger = TradeLogger(str(self.logs_path))
 
     def load_signal_rows(self) -> list[dict]:
         try:
