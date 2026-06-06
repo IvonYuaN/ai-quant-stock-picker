@@ -317,82 +317,86 @@ def main() -> None:
     st.divider()
     _render_paper_summary(paper_summary)
 
-    st.divider()
-    st.subheader("执行摘要")
-    st.info(task_view.headline)
-    if task_view.summary_lines:
-        st.markdown("\n".join(f"- {line}" for line in task_view.summary_lines))
-
-    _render_summary_cards(task_view)
-    _render_focus_block(task_view)
-
-    rec_col, watch_col = st.columns(2)
-    with rec_col:
-        _render_line_block(
-            "今日推荐",
-            task_view.recommendation_lines,
-            "当前日期暂无可执行推荐。",
-        )
-    with watch_col:
-        _render_line_block(
-            "观察池",
-            task_view.watchlist_lines,
-            "当前日期暂无观察候选。",
-        )
-
-    blocker_col, review_col = st.columns(2)
-    with blocker_col:
-        _render_line_block(
-            "阻塞原因",
-            task_view.blocker_lines,
-            "当前日期暂无明显阻塞项。",
-        )
-    with review_col:
-        _render_line_block(
-            "复核动作",
-            task_view.review_lines,
-            "当前日期暂无额外复核动作。",
-        )
-
-    st.divider()
-    _render_candidate_cards(task_view.detail_cards)
-
-    _render_review_sections(
-        market_environment=task_view.market_environment,
-        strategy_breakdown_lines=task_view.strategy_breakdown_lines,
-        lesson_lines=task_view.lesson_lines,
-        improvement_lines=task_view.improvement_lines,
+    decision_tab, review_tab, execution_tab, report_tab = st.tabs(
+        ["决策首页", "候选复盘", "虚拟盘执行", "原始报告"]
     )
 
-    st.divider()
-    _render_source_status(task_view.source_status)
+    with decision_tab:
+        st.subheader("执行摘要")
+        st.info(task_view.headline)
+        if task_view.summary_lines:
+            st.markdown("\n".join(f"- {line}" for line in task_view.summary_lines))
 
-    st.divider()
-    _render_frame(
-        "任务明细",
-        provider.latest_signal_frame(
-            limit=30,
-            task_id=selected_task_id if selected_task_id != "briefing" else "main_chain",
-            signal_date=task_view.selected_date,
-        ),
-    )
+        _render_summary_cards(task_view)
+        _render_focus_block(task_view)
 
-    data_col, paper_col = st.columns(2)
-    with data_col:
-        _render_frame("当前虚拟持仓", provider.open_positions_frame())
-    with paper_col:
-        _render_frame(
-            "虚拟盘事件",
-            provider.paper_events_frame(limit=30, signal_date=task_view.selected_date),
-        )
+        rec_col, watch_col = st.columns(2)
+        with rec_col:
+            _render_line_block(
+                "今日推荐",
+                task_view.recommendation_lines,
+                "当前日期暂无可执行推荐。",
+            )
+        with watch_col:
+            _render_line_block(
+                "观察池",
+                task_view.watchlist_lines,
+                "当前日期暂无观察候选。",
+            )
 
-    st.divider()
-    _render_frame("最近执行日志", provider.recent_execution_frame(limit=30))
+        blocker_col, review_col = st.columns(2)
+        with blocker_col:
+            _render_line_block(
+                "阻塞原因",
+                task_view.blocker_lines,
+                "当前日期暂无明显阻塞项。",
+            )
+        with review_col:
+            _render_line_block(
+                "复核动作",
+                task_view.review_lines,
+                "当前日期暂无额外复核动作。",
+            )
 
-    if task_view.report_markdown.strip():
         st.divider()
-        with st.expander("查看原始报告/简报", expanded=False):
+        _render_source_status(task_view.source_status)
+
+    with review_tab:
+        _render_candidate_cards(task_view.detail_cards)
+        _render_review_sections(
+            market_environment=task_view.market_environment,
+            strategy_breakdown_lines=task_view.strategy_breakdown_lines,
+            lesson_lines=task_view.lesson_lines,
+            improvement_lines=task_view.improvement_lines,
+        )
+        st.divider()
+        _render_frame(
+            "任务明细",
+            provider.latest_signal_frame(
+                limit=30,
+                task_id=selected_task_id if selected_task_id != "briefing" else "main_chain",
+                signal_date=task_view.selected_date,
+            ),
+        )
+
+    with execution_tab:
+        data_col, paper_col = st.columns(2)
+        with data_col:
+            _render_frame("当前虚拟持仓", provider.open_positions_frame())
+        with paper_col:
+            _render_frame(
+                "虚拟盘事件",
+                provider.paper_events_frame(limit=30, signal_date=task_view.selected_date),
+            )
+
+        st.divider()
+        _render_frame("最近执行日志", provider.recent_execution_frame(limit=30))
+
+    with report_tab:
+        if task_view.report_markdown.strip():
             st.markdown(task_view.report_markdown)
+        else:
+            st.info("当前任务/日期暂无原始报告。")
 
 
 if __name__ == "__main__":
