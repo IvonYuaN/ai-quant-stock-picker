@@ -10,9 +10,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, date, timedelta
 from enum import Enum
-from typing import Optional
 
 import numpy as np
+
+from aqsp.core.time import now_shanghai
 
 
 class HealthStatus(Enum):
@@ -86,7 +87,7 @@ class StrategyHealthMonitor:
             return HealthStatus.UNHEALTHY
 
         # 筛选回溯期内的交易
-        cutoff_date = (datetime.now() - timedelta(days=lookback_days)).date()
+        cutoff_date = (now_shanghai() - timedelta(days=lookback_days)).date()
         filtered_trades = [
             t for t in recent_trades
             if t.exit_date >= cutoff_date
@@ -155,11 +156,11 @@ class StrategyHealthMonitor:
                 sharpe_ratio=0.0,
                 max_drawdown=0.0,
                 avg_return=0.0,
-                last_updated=datetime.now(),
+                last_updated=now_shanghai(),
             )
 
         # 筛选回溯期内的交易
-        cutoff_date = (datetime.now() - timedelta(days=lookback_days)).date()
+        cutoff_date = (now_shanghai() - timedelta(days=lookback_days)).date()
         filtered_trades = [
             t for t in recent_trades
             if t.exit_date >= cutoff_date
@@ -174,7 +175,7 @@ class StrategyHealthMonitor:
                 sharpe_ratio=0.0,
                 max_drawdown=0.0,
                 avg_return=0.0,
-                last_updated=datetime.now(),
+                last_updated=now_shanghai(),
             )
 
         total_trades = len(filtered_trades)
@@ -192,7 +193,7 @@ class StrategyHealthMonitor:
             sharpe_ratio=sharpe_ratio,
             max_drawdown=max_drawdown,
             avg_return=avg_return,
-            last_updated=datetime.now(),
+            last_updated=now_shanghai(),
         )
 
     def get_all_strategies_status(

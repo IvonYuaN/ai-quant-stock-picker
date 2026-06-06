@@ -9,10 +9,12 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Optional
+
+from aqsp.core.time import now_shanghai
 
 logger = logging.getLogger(__name__)
 
@@ -188,7 +190,7 @@ class TradeLogger:
             if price <= 0:
                 raise ValueError(f"Invalid price: {price}")
 
-            timestamp = timestamp or datetime.now()
+            timestamp = timestamp or now_shanghai()
             execution = TradeExecutionLog(
                 timestamp=timestamp,
                 symbol=symbol,

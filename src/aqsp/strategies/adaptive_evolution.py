@@ -23,7 +23,7 @@ from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
-from aqsp.core.time import today_shanghai
+from aqsp.core.time import now_shanghai, today_shanghai
 
 
 # ============================================================
@@ -482,10 +482,11 @@ class RollbackManager:
         baseline_win_rate: float,
     ) -> str:
         """保存配置快照。"""
-        snapshot_id = f"snap_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        timestamp = now_shanghai()
+        snapshot_id = f"snap_{timestamp.strftime('%Y%m%d_%H%M%S')}"
         snapshot = ConfigSnapshot(
             snapshot_id=snapshot_id,
-            timestamp=datetime.now(),
+            timestamp=timestamp,
             factor_weights=dict(factor_weights),
             strategy_mix=strategy_mix,
             description=description,

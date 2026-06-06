@@ -476,6 +476,26 @@ class TestEnhanceBriefing:
             result = enhance_briefing(briefing, enable_llm=True)
             assert result is briefing
 
+    def test_keep_original_briefing_when_llm_succeeds(self):
+        briefing = Briefing(
+            date="d",
+            sections=[BriefingSection(title="结论", content="原始事实内容")],
+        )
+        with patch.dict(os.environ, {"ENABLE_LLM_BRIEFING": "true"}):
+            with patch(
+                "aqsp.briefing.llm.llm_call_or_fallback",
+                return_value=LlmResult(
+                    text="被优化后的整篇内容",
+                    degraded=False,
+                    model="demo",
+                ),
+            ) as mock_llm:
+                result = enhance_briefing(briefing, enable_llm=True)
+
+        assert result is briefing
+        assert result.to_markdown() == briefing.to_markdown()
+        assert mock_llm.called is True
+
 
 class TestSendBriefing:
     def test_calls_notifier(self):

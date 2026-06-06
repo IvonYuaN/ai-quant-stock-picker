@@ -16,7 +16,7 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Dict
 
-from aqsp.core.time import today_shanghai
+from aqsp.core.time import now_shanghai, today_shanghai
 
 
 # ============================================================
@@ -591,7 +591,7 @@ class UnifiedRiskManager:
             final_action = "normal"
 
         return UnifiedRiskReport(
-            timestamp=datetime.now(),
+            timestamp=now_shanghai(),
             stock_checks=stock_checks,
             portfolio_check=portfolio_check,
             system_check=system_check,
