@@ -160,6 +160,53 @@ def _render_paper_summary(summary: DashboardPaperSummary) -> None:
         )
 
 
+def _task_nav_label(
+    task_id: str,
+    snapshots: tuple[DashboardTaskSnapshot, ...],
+) -> str:
+    snapshot_map = {snapshot.task_id: snapshot for snapshot in snapshots}
+    snapshot = snapshot_map.get(task_id)
+    if snapshot is None:
+        return task_id
+    return f"{snapshot.task_label} · {snapshot.status_label}"
+
+
+def _render_top_navigation(
+    *,
+    options: tuple,
+    snapshots: tuple[DashboardTaskSnapshot, ...],
+    provider: DashboardDataProvider,
+) -> tuple[str, str]:
+    task_ids = [option.task_id for option in options]
+    selected_task_id = st.radio(
+        "任务导航",
+        task_ids,
+        horizontal=True,
+        format_func=lambda task_id: _task_nav_label(task_id, snapshots),
+    )
+
+    available_dates = provider.task_dates(selected_task_id)
+    recent_dates = list(available_dates[:7])
+    date_choices = ["最新", *recent_dates]
+
+    selected_date_label = st.radio(
+        "快速回看",
+        date_choices,
+        horizontal=True,
+    )
+    selected_date = "" if selected_date_label == "最新" else selected_date_label
+
+    if len(available_dates) > 7:
+        selected_date = st.selectbox(
+            "更多日期",
+            ["最新", *available_dates],
+            index=0,
+        )
+        selected_date = "" if selected_date == "最新" else selected_date
+
+    return selected_task_id, selected_date
+
+
 def _render_candidate_cards(cards: tuple[DashboardCandidateCard, ...]) -> None:
     st.subheader("候选解读")
     if not cards:
@@ -266,30 +313,18 @@ def main() -> None:
     )
 
     options = provider.task_options()
-    task_labels = {option.label: option.task_id for option in options}
-
-    nav_col1, nav_col2, nav_col3 = st.columns([2.2, 2.2, 3.6])
-    selected_task_label = nav_col1.selectbox(
-        "任务导航",
-        list(task_labels.keys()),
-        index=0,
+    selected_task_id, selected_date = _render_top_navigation(
+        options=options,
+        snapshots=task_snapshots,
+        provider=provider,
     )
-    selected_task_id = task_labels[selected_task_label]
-
-    available_dates = provider.task_dates(selected_task_id)
-    selected_date = nav_col2.selectbox(
-        "回看日期",
-        list(available_dates) if available_dates else ["最新"],
-        index=0,
-    )
-    selected_date = "" if selected_date == "最新" else selected_date
 
     task_view = provider.build_task_view(
         selected_task_id,
         signal_date=selected_date,
     )
 
-    nav_col3.markdown(
+    st.markdown(
         "\n".join(
             [
                 f"**当前视图**: {task_view.task_label}",
