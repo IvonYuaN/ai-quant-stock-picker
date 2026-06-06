@@ -48,6 +48,28 @@ class DashboardTaskOption:
 
 
 @dataclass(frozen=True)
+class DashboardTaskSnapshot:
+    task_id: str
+    task_label: str
+    latest_date: str
+    status_label: str
+    headline: str
+    actionable_count: int
+    watch_count: int
+    blocked_count: int
+
+
+@dataclass(frozen=True)
+class DashboardPaperSummary:
+    open_positions: int
+    pending_entries: int
+    not_executable: int
+    closed_trades: int
+    open_position_lines: tuple[str, ...]
+    event_lines: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class DashboardTaskView:
     task_id: str
     task_label: str
@@ -180,6 +202,82 @@ class DashboardDataProvider:
         return tuple(
             DashboardTaskOption(task_id=task_id, label=label)
             for task_id, label in _TASK_LABELS.items()
+        )
+
+    def task_snapshots(self) -> tuple[DashboardTaskSnapshot, ...]:
+        snapshots: list[DashboardTaskSnapshot] = []
+        for task_id, label in _TASK_LABELS.items():
+            available_dates = self.task_dates(task_id)
+            latest_date = available_dates[0] if available_dates else ""
+            if latest_date:
+                view = self.build_task_view(task_id, signal_date=latest_date)
+                status_label = self._snapshot_status_label(task_id, view)
+                snapshots.append(
+                    DashboardTaskSnapshot(
+                        task_id=task_id,
+                        task_label=label,
+                        latest_date=latest_date,
+                        status_label=status_label,
+                        headline=view.headline,
+                        actionable_count=view.actionable_count,
+                        watch_count=view.watch_count,
+                        blocked_count=view.blocked_count,
+                    )
+                )
+                continue
+            snapshots.append(
+                DashboardTaskSnapshot(
+                    task_id=task_id,
+                    task_label=label,
+                    latest_date="",
+                    status_label="暂无结果",
+                    headline=f"{label}: 暂无真实落盘结果",
+                    actionable_count=0,
+                    watch_count=0,
+                    blocked_count=0,
+                )
+            )
+        return tuple(snapshots)
+
+    def paper_summary(self) -> DashboardPaperSummary:
+        rows = self.load_paper_rows()
+        open_rows = [row for row in rows if row.get("status") == "open"]
+        pending_rows = [row for row in rows if row.get("status") == "pending_entry"]
+        blocked_rows = [row for row in rows if row.get("status") == "not_executable"]
+        closed_rows = [row for row in rows if row.get("status") == "closed"]
+
+        open_position_lines = tuple(
+            (
+                f"{self._symbol_name(row)} | 入场 {row.get('entry_date', '-')}"
+                f" | 止损 {row.get('stop_loss', '-')}"
+                f" | 止盈 {row.get('take_profit', '-')}"
+            )
+            for row in open_rows[:5]
+        )
+
+        event_lines: list[str] = []
+        if pending_rows:
+            event_lines.append(f"待开仓 {len(pending_rows)} 笔，等待 next open 验证。")
+        if blocked_rows:
+            event_lines.append(
+                f"不可成交 {len(blocked_rows)} 笔，最新阻塞: "
+                f"{self._symbol_name(blocked_rows[-1])} | "
+                f"{blocked_rows[-1].get('not_executable_reason', '未知原因')}"
+            )
+        if closed_rows:
+            latest_closed = closed_rows[-1]
+            event_lines.append(
+                f"最近平仓: {self._symbol_name(latest_closed)} | "
+                f"收益 {latest_closed.get('return_pct', '-')}"
+            )
+
+        return DashboardPaperSummary(
+            open_positions=len(open_rows),
+            pending_entries=len(pending_rows),
+            not_executable=len(blocked_rows),
+            closed_trades=len(closed_rows),
+            open_position_lines=open_position_lines,
+            event_lines=tuple(event_lines),
         )
 
     def default_task_id(self) -> str:
@@ -893,6 +991,31 @@ class DashboardDataProvider:
             "lag_days": str(row.get("run_data_lag_days", "") or ""),
             "updated_at": now_shanghai().isoformat(timespec="seconds"),
         }
+
+    def _snapshot_status_label(
+        self,
+        task_id: str,
+        view: DashboardTaskView,
+    ) -> str:
+        if task_id == "briefing":
+            if view.next_day_focus_lines:
+                return "待跟踪"
+            if view.report_markdown.strip():
+                return "已产出"
+            return "暂无结果"
+        if task_id == "closing_review":
+            if view.report_markdown.strip():
+                return "已复盘"
+            return "暂无结果"
+        if view.actionable_count > 0:
+            return "有推荐"
+        if view.blocked_count > 0:
+            return "待解锁"
+        if view.watch_count > 0:
+            return "观察中"
+        if view.candidate_count > 0:
+            return "已产出"
+        return "暂无结果"
 
     def _extract_report_insights(self, markdown_text: str) -> DashboardReportInsights:
         if not markdown_text.strip():

@@ -5,7 +5,12 @@ from __future__ import annotations
 import streamlit as st
 
 from aqsp.core.time import now_shanghai
-from aqsp.web.data_provider import DashboardCandidateCard, DashboardDataProvider
+from aqsp.web.data_provider import (
+    DashboardCandidateCard,
+    DashboardDataProvider,
+    DashboardPaperSummary,
+    DashboardTaskSnapshot,
+)
 
 
 st.set_page_config(
@@ -107,6 +112,54 @@ def _render_focus_block(task_view) -> None:
         )
 
 
+def _render_task_workbench(snapshots: tuple[DashboardTaskSnapshot, ...]) -> None:
+    st.subheader("定时任务工作台")
+    if not snapshots:
+        st.info("当前暂无任务快照。")
+        return
+
+    columns = st.columns(len(snapshots))
+    for column, snapshot in zip(columns, snapshots):
+        with column:
+            st.markdown(
+                "\n".join(
+                    [
+                        f"### {snapshot.task_label}",
+                        f"- 日期: {snapshot.latest_date or '-'}",
+                        f"- 状态: {snapshot.status_label}",
+                        f"- 可执行: {snapshot.actionable_count}",
+                        f"- 观察: {snapshot.watch_count}",
+                        f"- 阻塞: {snapshot.blocked_count}",
+                        f"- 摘要: {snapshot.headline}",
+                    ]
+                )
+            )
+
+
+def _render_paper_summary(summary: DashboardPaperSummary) -> None:
+    st.subheader("虚拟盘状态")
+
+    metric_col1, metric_col2, metric_col3, metric_col4 = st.columns(4)
+    metric_col1.metric("持仓中", summary.open_positions)
+    metric_col2.metric("待开仓", summary.pending_entries)
+    metric_col3.metric("不可成交", summary.not_executable)
+    metric_col4.metric("已平仓", summary.closed_trades)
+
+    detail_col1, detail_col2 = st.columns(2)
+    with detail_col1:
+        _render_line_block(
+            "持仓跟踪",
+            summary.open_position_lines,
+            "当前暂无持仓。",
+        )
+    with detail_col2:
+        _render_line_block(
+            "关键事件",
+            summary.event_lines,
+            "当前暂无关键事件。",
+        )
+
+
 def _render_candidate_cards(cards: tuple[DashboardCandidateCard, ...]) -> None:
     st.subheader("候选解读")
     if not cards:
@@ -201,6 +254,8 @@ def _render_review_sections(
 def main() -> None:
     provider = get_provider()
     summary = provider.summarize()
+    task_snapshots = provider.task_snapshots()
+    paper_summary = provider.paper_summary()
     updated_at = now_shanghai().strftime("%Y-%m-%d %H:%M:%S %z")
 
     st.title("A股量化主链看板")
@@ -255,6 +310,12 @@ def main() -> None:
     col6.metric("可执行", task_view.actionable_count)
     col7.metric("观察池", task_view.watch_count)
     col8.metric("阻塞项", task_view.blocked_count)
+
+    st.divider()
+    _render_task_workbench(task_snapshots)
+
+    st.divider()
+    _render_paper_summary(paper_summary)
 
     st.divider()
     st.subheader("执行摘要")

@@ -10,7 +10,9 @@ def test_dashboard_data_provider_reads_real_runtime_files(tmp_path: Path) -> Non
     ledger_path = tmp_path / "ledger.jsonl"
     paper_path = tmp_path / "paper_trades.jsonl"
     logs_path = tmp_path / "logs"
+    reports_dir = tmp_path / "reports"
     logs_path.mkdir(parents=True)
+    reports_dir.mkdir(parents=True)
 
     ledger_rows = [
         {
@@ -114,6 +116,7 @@ def test_dashboard_data_provider_reads_real_runtime_files(tmp_path: Path) -> Non
         ledger_path=str(ledger_path),
         paper_ledger_path=str(paper_path),
         logs_path=str(logs_path),
+        reports_dir=str(reports_dir),
     )
 
     summary = provider.summarize()
@@ -143,6 +146,22 @@ def test_dashboard_data_provider_reads_real_runtime_files(tmp_path: Path) -> Non
     source_status = provider.latest_source_status()
     assert source_status["actual_source"] == "eastmoney"
     assert source_status["health_label"] == "fallback"
+
+    task_snapshots = provider.task_snapshots()
+    assert task_snapshots[0].task_id == "main_chain"
+    assert task_snapshots[0].status_label == "有推荐"
+    assert task_snapshots[-1].task_id == "briefing"
+    assert task_snapshots[-1].status_label == "暂无结果"
+
+    paper_summary = provider.paper_summary()
+    assert paper_summary.open_positions == 1
+    assert paper_summary.pending_entries == 1
+    assert paper_summary.not_executable == 1
+    assert paper_summary.closed_trades == 1
+    assert any("贵州茅台" in line for line in paper_summary.open_position_lines)
+    assert any("待开仓 1 笔" in line for line in paper_summary.event_lines)
+    assert any("不可成交 1 笔" in line for line in paper_summary.event_lines)
+    assert any("最近平仓: 000858 五粮液" in line for line in paper_summary.event_lines)
 
 
 def test_dashboard_data_provider_builds_task_views_and_dedupes_latest_rows(
@@ -329,6 +348,14 @@ def test_dashboard_data_provider_builds_task_views_and_dedupes_latest_rows(
     )
     assert list(latest_signals["代码"]) == ["600519", "000001"]
     assert latest_signals.iloc[0]["候选状态"] == "延续上升"
+
+    task_snapshots = provider.task_snapshots()
+    snapshot_map = {snapshot.task_id: snapshot for snapshot in task_snapshots}
+    assert snapshot_map["main_chain"].status_label == "有推荐"
+    assert snapshot_map["morning_breakout"].status_label == "有推荐"
+    assert snapshot_map["closing_premium"].status_label == "有推荐"
+    assert snapshot_map["briefing"].status_label == "待跟踪"
+    assert "无可执行标的" not in snapshot_map["briefing"].headline
 
 
 def test_dashboard_data_provider_surfaces_closing_review_sections(
