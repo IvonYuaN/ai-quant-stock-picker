@@ -63,6 +63,50 @@ def _render_line_block(title: str, lines: tuple[str, ...], empty_text: str) -> N
     st.markdown("\n".join(f"- {line}" for line in lines))
 
 
+def _render_summary_cards(task_view) -> None:
+    overview_col, market_col = st.columns(2)
+    with overview_col:
+        _render_line_block(
+            "报告摘要",
+            task_view.report_summary_lines,
+            "当前任务暂无结构化报告摘要。",
+        )
+    with market_col:
+        if task_view.market_environment:
+            st.subheader("市场态势")
+            st.success(task_view.market_environment)
+        else:
+            st.subheader("市场态势")
+            st.info("当前任务暂无结构化市场态势。")
+
+        if task_view.runtime_lines:
+            st.markdown("\n".join(f"- {line}" for line in task_view.runtime_lines))
+
+
+def _render_focus_block(task_view) -> None:
+    if (
+        not task_view.next_day_focus_lines
+        and not task_view.recommendation_lines
+        and not task_view.watchlist_lines
+    ):
+        return
+
+    st.divider()
+    focus_col, nav_col = st.columns(2)
+    with focus_col:
+        _render_line_block(
+            "明日重点",
+            task_view.next_day_focus_lines,
+            "当前任务暂无结构化明日重点。",
+        )
+    with nav_col:
+        _render_line_block(
+            "优先顺位",
+            task_view.ranking_lines,
+            "当前日期暂无优先顺位说明。",
+        )
+
+
 def _render_candidate_cards(cards: tuple[DashboardCandidateCard, ...]) -> None:
     st.subheader("候选解读")
     if not cards:
@@ -217,11 +261,9 @@ def main() -> None:
     st.info(task_view.headline)
     if task_view.summary_lines:
         st.markdown("\n".join(f"- {line}" for line in task_view.summary_lines))
-    _render_line_block(
-        "优先顺位",
-        task_view.ranking_lines,
-        "当前日期暂无优先顺位说明。",
-    )
+
+    _render_summary_cards(task_view)
+    _render_focus_block(task_view)
 
     rec_col, watch_col = st.columns(2)
     with rec_col:
@@ -274,14 +316,14 @@ def main() -> None:
         ),
     )
 
-    st.divider()
-    _render_frame("当前虚拟持仓", provider.open_positions_frame())
-
-    st.divider()
-    _render_frame(
-        "虚拟盘事件",
-        provider.paper_events_frame(limit=30, signal_date=task_view.selected_date),
-    )
+    data_col, paper_col = st.columns(2)
+    with data_col:
+        _render_frame("当前虚拟持仓", provider.open_positions_frame())
+    with paper_col:
+        _render_frame(
+            "虚拟盘事件",
+            provider.paper_events_frame(limit=30, signal_date=task_view.selected_date),
+        )
 
     st.divider()
     _render_frame("最近执行日志", provider.recent_execution_frame(limit=30))

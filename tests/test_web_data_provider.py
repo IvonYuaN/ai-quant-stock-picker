@@ -243,7 +243,29 @@ def test_dashboard_data_provider_builds_task_views_and_dedupes_latest_rows(
     )
     paper_path.write_text("", encoding="utf-8")
     (reports_dir / "briefing-2026-06-05.md").write_text(
-        "# AI 量化选股日报 - 2026-06-05\n\n## 明日重点\n\n- **600519 贵州茅台**\n",
+        (
+            "# AI 量化选股日报 - 2026-06-05\n\n"
+            "## 市场态势\n\n"
+            "当前市场态势: **震荡偏强：等待主线确认**\n\n"
+            "## 明日重点\n\n"
+            "- **600519 贵州茅台**: 观察量能是否延续\n"
+        ),
+        encoding="utf-8",
+    )
+    (reports_dir / "latest.md").write_text(
+        (
+            "# AI 量化选股报告(close, 数据日期 2026-06-05)\n\n"
+            "## 📌 执行摘要\n\n"
+            "今日主链 1 只可执行，另有 1 只转观察。\n"
+            "优先跟踪高分主链候选。\n\n"
+            "## 运行参数\n"
+            "- 数据源: auto -> eastmoney\n"
+            "- 数据时效: latest=2026-06-05 / lag=0d\n"
+            "- 数据健康: healthy / eastmoney 健康\n"
+            "- 候选池: 显式 2 / 解析 2 / 取数 2 / 筛选前 2 / 最终 2\n"
+            "- thresholds.version: 1.1.1\n"
+            "- regime: stable_uptrend\n"
+        ),
         encoding="utf-8",
     )
 
@@ -276,6 +298,12 @@ def test_dashboard_data_provider_builds_task_views_and_dedupes_latest_rows(
     assert main_view.detail_cards[0].risks == ("追高波动",)
     assert main_view.ranking_lines[0].startswith("首选: 600519 贵州茅台")
     assert any(line.startswith("阻塞观察: 000001 平安银行") for line in main_view.ranking_lines)
+    assert main_view.report_summary_lines == (
+        "今日主链 1 只可执行，另有 1 只转观察。",
+        "优先跟踪高分主链候选。",
+    )
+    assert main_view.runtime_lines[0] == "数据源: auto -> eastmoney"
+    assert main_view.runtime_lines[-1] == "regime: stable_uptrend"
 
     morning_view = provider.build_task_view("morning_breakout", signal_date="2026-06-05")
     assert morning_view.task_label == "早盘策略"
@@ -289,6 +317,10 @@ def test_dashboard_data_provider_builds_task_views_and_dedupes_latest_rows(
     briefing_view = provider.build_task_view("briefing", signal_date="2026-06-05")
     assert briefing_view.task_label == "简报回看"
     assert "明日重点" in briefing_view.report_markdown
+    assert briefing_view.market_environment == "震荡偏强：等待主线确认"
+    assert briefing_view.next_day_focus_lines == (
+        "**600519 贵州茅台**: 观察量能是否延续",
+    )
 
     latest_signals = provider.latest_signal_frame(
         limit=10,
@@ -361,3 +393,65 @@ def test_dashboard_data_provider_surfaces_closing_review_sections(
     assert any("尾盘溢价·量价突破" in item for item in review_view.strategy_breakdown_lines)
     assert any("打板成功率偏低" in item for item in review_view.lesson_lines)
     assert review_view.improvement_lines == ()
+
+
+def test_dashboard_data_provider_extracts_latest_report_when_main_chain_latest(
+    tmp_path: Path,
+) -> None:
+    ledger_path = tmp_path / "predictions.jsonl"
+    paper_path = tmp_path / "paper_trades.jsonl"
+    logs_path = tmp_path / "logs"
+    reports_dir = tmp_path / "reports"
+    logs_path.mkdir(parents=True)
+    reports_dir.mkdir(parents=True)
+
+    ledger_path.write_text(
+        json.dumps(
+            {
+                "signal_date": "2026-06-06",
+                "created_at": "2026-06-06T15:00:00+08:00",
+                "symbol": "600519",
+                "name": "贵州茅台",
+                "score": 80,
+                "rating": "buy_candidate",
+                "run_requested_source": "auto",
+                "run_actual_source": "csv",
+                "run_source_health_label": "fallback",
+                "run_source_health_message": "fallback 到 csv",
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    paper_path.write_text("", encoding="utf-8")
+    (reports_dir / "latest.md").write_text(
+        (
+            "# AI 量化选股报告(close, 数据日期 2026-06-06)\n\n"
+            "## 📌 执行摘要\n\n"
+            "今日无可执行标的，仅观察。\n\n"
+            "## 运行参数\n"
+            "- 数据源: auto -> csv\n"
+            "- 数据健康: fallback / fallback 到 csv\n"
+            "- thresholds.version: 1.1.1\n"
+            "- regime: stable_sideways\n"
+        ),
+        encoding="utf-8",
+    )
+
+    provider = DashboardDataProvider(
+        ledger_path=str(ledger_path),
+        paper_ledger_path=str(paper_path),
+        logs_path=str(logs_path),
+        reports_dir=str(reports_dir),
+    )
+
+    task_view = provider.build_task_view("main_chain", signal_date="2026-06-06")
+
+    assert task_view.report_summary_lines == ("今日无可执行标的，仅观察。",)
+    assert task_view.runtime_lines == (
+        "数据源: auto -> csv",
+        "数据健康: fallback / fallback 到 csv",
+        "thresholds.version: 1.1.1",
+        "regime: stable_sideways",
+    )

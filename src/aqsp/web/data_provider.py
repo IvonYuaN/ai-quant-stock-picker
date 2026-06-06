@@ -56,10 +56,13 @@ class DashboardTaskView:
     available_dates: tuple[str, ...]
     headline: str
     summary_lines: tuple[str, ...]
+    report_summary_lines: tuple[str, ...]
+    runtime_lines: tuple[str, ...]
     recommendation_lines: tuple[str, ...]
     watchlist_lines: tuple[str, ...]
     blocker_lines: tuple[str, ...]
     review_lines: tuple[str, ...]
+    next_day_focus_lines: tuple[str, ...]
     report_markdown: str
     source_status: dict[str, str]
     candidate_count: int
@@ -91,6 +94,14 @@ class DashboardCandidateCard:
     risks: tuple[str, ...]
     strategies: tuple[str, ...]
     data_source: str
+
+
+@dataclass(frozen=True)
+class DashboardReportInsights:
+    report_summary_lines: tuple[str, ...]
+    runtime_lines: tuple[str, ...]
+    market_environment: str
+    next_day_focus_lines: tuple[str, ...]
 
 
 class DashboardDataProvider:
@@ -344,6 +355,8 @@ class DashboardDataProvider:
         selected_date: str,
         available_dates: tuple[str, ...],
     ) -> DashboardTaskView:
+        report_markdown = self._report_markdown_for_signal_task(task_id, selected_date)
+        report_insights = self._extract_report_insights(report_markdown)
         rows = self._task_signal_rows(task_id)
         if selected_date:
             rows = [
@@ -387,11 +400,14 @@ class DashboardDataProvider:
             available_dates=available_dates,
             headline=headline,
             summary_lines=summary_lines,
+            report_summary_lines=report_insights.report_summary_lines,
+            runtime_lines=report_insights.runtime_lines,
             recommendation_lines=recommendation_lines,
             watchlist_lines=watchlist_lines,
             blocker_lines=blocker_lines,
             review_lines=review_lines,
-            report_markdown=self._report_markdown_for_signal_task(task_id, selected_date),
+            next_day_focus_lines=report_insights.next_day_focus_lines,
+            report_markdown=report_markdown,
             source_status=self.latest_source_status(task_id=task_id, signal_date=selected_date),
             candidate_count=len(deduped),
             actionable_count=len(actionable_rows),
@@ -399,7 +415,7 @@ class DashboardDataProvider:
             blocked_count=len(blocked_rows),
             detail_cards=self._build_detail_cards(deduped),
             ranking_lines=self._build_ranking_lines(deduped),
-            market_environment="",
+            market_environment=report_insights.market_environment,
             strategy_breakdown_lines=(),
             lesson_lines=(),
             improvement_lines=(),
@@ -412,6 +428,7 @@ class DashboardDataProvider:
         available_dates: tuple[str, ...],
     ) -> DashboardTaskView:
         report_markdown = self._read_briefing_markdown(selected_date)
+        report_insights = self._extract_report_insights(report_markdown)
         base_view = self._build_signal_task_view(
             task_id="main_chain",
             selected_date=selected_date,
@@ -425,10 +442,13 @@ class DashboardDataProvider:
             available_dates=available_dates,
             headline=f"{_TASK_LABELS['briefing']} {selected_date or ''}".strip(),
             summary_lines=base_view.summary_lines,
+            report_summary_lines=report_insights.report_summary_lines,
+            runtime_lines=report_insights.runtime_lines,
             recommendation_lines=base_view.recommendation_lines,
             watchlist_lines=base_view.watchlist_lines,
             blocker_lines=base_view.blocker_lines,
             review_lines=base_view.review_lines,
+            next_day_focus_lines=report_insights.next_day_focus_lines,
             report_markdown=report_markdown,
             source_status=base_view.source_status,
             candidate_count=base_view.candidate_count,
@@ -437,7 +457,7 @@ class DashboardDataProvider:
             blocked_count=base_view.blocked_count,
             detail_cards=base_view.detail_cards,
             ranking_lines=base_view.ranking_lines,
-            market_environment=base_view.market_environment,
+            market_environment=report_insights.market_environment,
             strategy_breakdown_lines=base_view.strategy_breakdown_lines,
             lesson_lines=base_view.lesson_lines,
             improvement_lines=base_view.improvement_lines,
@@ -488,10 +508,13 @@ class DashboardDataProvider:
                 f"胜率 {review.win_rate:.0%} / 总收益 {review.total_return:.2f}%",
                 *summary_lines,
             ),
+            report_summary_lines=(),
+            runtime_lines=(),
             recommendation_lines=recommendation_lines,
             watchlist_lines=watchlist_lines,
             blocker_lines=blocker_lines,
             review_lines=review_lines,
+            next_day_focus_lines=(),
             report_markdown=format_daily_review(review),
             source_status=self.latest_source_status(
                 task_id="main_chain",
@@ -870,6 +893,85 @@ class DashboardDataProvider:
             "lag_days": str(row.get("run_data_lag_days", "") or ""),
             "updated_at": now_shanghai().isoformat(timespec="seconds"),
         }
+
+    def _extract_report_insights(self, markdown_text: str) -> DashboardReportInsights:
+        if not markdown_text.strip():
+            return DashboardReportInsights(
+                report_summary_lines=(),
+                runtime_lines=(),
+                market_environment="",
+                next_day_focus_lines=(),
+            )
+        execution_lines = self._section_lines(markdown_text, "执行摘要", "📌 执行摘要")
+        runtime_lines = self._runtime_snapshot_lines(
+            self._section_lines(markdown_text, "运行参数")
+        )
+        market_environment = self._market_environment_line(markdown_text)
+        next_day_focus_lines = self._focus_lines(
+            self._section_lines(markdown_text, "明日重点")
+        )
+        return DashboardReportInsights(
+            report_summary_lines=execution_lines,
+            runtime_lines=runtime_lines,
+            market_environment=market_environment,
+            next_day_focus_lines=next_day_focus_lines,
+        )
+
+    def _section_lines(self, markdown_text: str, *headings: str) -> tuple[str, ...]:
+        target_headings = {
+            self._normalize_heading(heading) for heading in headings if heading.strip()
+        }
+        inside_section = False
+        collected: list[str] = []
+        for raw_line in markdown_text.splitlines():
+            stripped = raw_line.strip()
+            if stripped.startswith("## "):
+                normalized = self._normalize_heading(stripped[3:])
+                if inside_section:
+                    break
+                inside_section = normalized in target_headings
+                continue
+            if not inside_section or not stripped or stripped == "---":
+                continue
+            if stripped.startswith(">"):
+                continue
+            collected.append(self._strip_list_marker(stripped))
+        return tuple(line for line in collected if line)
+
+    def _normalize_heading(self, heading: str) -> str:
+        return heading.replace("📌", "").strip()
+
+    def _strip_list_marker(self, line: str) -> str:
+        for prefix in ("- ", "* "):
+            if line.startswith(prefix):
+                return line[len(prefix) :].strip()
+        return line.strip()
+
+    def _runtime_snapshot_lines(self, lines: tuple[str, ...]) -> tuple[str, ...]:
+        prefixes = (
+            "数据源:",
+            "数据时效:",
+            "数据健康:",
+            "候选池:",
+            "thresholds.version:",
+            "regime:",
+        )
+        selected = [
+            line for line in lines if any(line.startswith(prefix) for prefix in prefixes)
+        ]
+        return tuple(selected[:6])
+
+    def _market_environment_line(self, markdown_text: str) -> str:
+        lines = self._section_lines(markdown_text, "市场态势")
+        if not lines:
+            return ""
+        first_line = lines[0]
+        if "当前市场态势:" in first_line:
+            first_line = first_line.split("当前市场态势:", 1)[1].strip()
+        return first_line.replace("**", "").strip()
+
+    def _focus_lines(self, lines: tuple[str, ...]) -> tuple[str, ...]:
+        return tuple(line for line in lines[:5] if line)
 
     def _report_markdown_for_signal_task(self, task_id: str, signal_date: str) -> str:
         if task_id == "main_chain":
