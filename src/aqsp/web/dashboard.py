@@ -115,6 +115,45 @@ def _render_candidate_cards(cards: tuple[DashboardCandidateCard, ...]) -> None:
                 )
 
 
+def _render_review_sections(
+    *,
+    market_environment: str,
+    strategy_breakdown_lines: tuple[str, ...],
+    lesson_lines: tuple[str, ...],
+    improvement_lines: tuple[str, ...],
+) -> None:
+    if not any(
+        [market_environment, strategy_breakdown_lines, lesson_lines, improvement_lines]
+    ):
+        return
+
+    st.divider()
+    st.subheader("复盘总结")
+
+    top_left, top_right = st.columns(2)
+    with top_left:
+        st.markdown(
+            f"**市场环境**: {market_environment or '暂无'}"
+        )
+        _render_line_block(
+            "关键教训",
+            lesson_lines,
+            "当前复盘暂无关键教训。",
+        )
+    with top_right:
+        _render_line_block(
+            "改进建议",
+            improvement_lines,
+            "当前复盘暂无改进建议。",
+        )
+
+    _render_line_block(
+        "策略拆解",
+        strategy_breakdown_lines,
+        "当前复盘暂无策略拆解。",
+    )
+
+
 def main() -> None:
     provider = get_provider()
     summary = provider.summarize()
@@ -209,6 +248,13 @@ def main() -> None:
 
     st.divider()
     _render_candidate_cards(task_view.detail_cards)
+
+    _render_review_sections(
+        market_environment=task_view.market_environment,
+        strategy_breakdown_lines=task_view.strategy_breakdown_lines,
+        lesson_lines=task_view.lesson_lines,
+        improvement_lines=task_view.improvement_lines,
+    )
 
     st.divider()
     _render_source_status(task_view.source_status)

@@ -293,3 +293,67 @@ def test_dashboard_data_provider_builds_task_views_and_dedupes_latest_rows(
     )
     assert list(latest_signals["代码"]) == ["600519", "000001"]
     assert latest_signals.iloc[0]["候选状态"] == "延续上升"
+
+
+def test_dashboard_data_provider_surfaces_closing_review_sections(
+    tmp_path: Path,
+) -> None:
+    ledger_path = tmp_path / "predictions.jsonl"
+    paper_path = tmp_path / "paper_trades.jsonl"
+    logs_path = tmp_path / "logs"
+    reports_dir = tmp_path / "reports"
+    logs_path.mkdir(parents=True)
+    reports_dir.mkdir(parents=True)
+
+    ledger_rows = [
+        {
+            "symbol": "600000",
+            "name": "测试A",
+            "strategies": ["morning_breakout"],
+            "sub_strategy": "涨停打板",
+            "signal_date": "2025-06-01",
+            "entry_price": 10.0,
+            "current_price": 9.5,
+            "return_pct": -5.0,
+            "holding_days": 1,
+            "run_requested_source": "auto",
+            "run_actual_source": "eastmoney",
+            "run_source_health_label": "healthy",
+            "run_source_health_message": "eastmoney 健康",
+        },
+        {
+            "symbol": "600001",
+            "name": "测试B",
+            "strategies": ["closing_premium"],
+            "sub_strategy": "量价突破",
+            "signal_date": "2025-06-01",
+            "entry_price": 20.0,
+            "current_price": 21.0,
+            "return_pct": 5.0,
+            "holding_days": 2,
+            "run_requested_source": "auto",
+            "run_actual_source": "eastmoney",
+            "run_source_health_label": "healthy",
+            "run_source_health_message": "eastmoney 健康",
+        },
+    ]
+    ledger_path.write_text(
+        "\n".join(json.dumps(row, ensure_ascii=False) for row in ledger_rows) + "\n",
+        encoding="utf-8",
+    )
+    paper_path.write_text("", encoding="utf-8")
+
+    provider = DashboardDataProvider(
+        ledger_path=str(ledger_path),
+        paper_ledger_path=str(paper_path),
+        logs_path=str(logs_path),
+        reports_dir=str(reports_dir),
+    )
+
+    review_view = provider.build_task_view("closing_review", signal_date="2025-06-01")
+
+    assert review_view.market_environment == "震荡市"
+    assert any("早盘打板·涨停打板" in item for item in review_view.strategy_breakdown_lines)
+    assert any("尾盘溢价·量价突破" in item for item in review_view.strategy_breakdown_lines)
+    assert any("打板成功率偏低" in item for item in review_view.lesson_lines)
+    assert review_view.improvement_lines == ()

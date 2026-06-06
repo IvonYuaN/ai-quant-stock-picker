@@ -67,6 +67,10 @@ class DashboardTaskView:
     watch_count: int
     blocked_count: int
     detail_cards: tuple["DashboardCandidateCard", ...]
+    market_environment: str
+    strategy_breakdown_lines: tuple[str, ...]
+    lesson_lines: tuple[str, ...]
+    improvement_lines: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -391,6 +395,10 @@ class DashboardDataProvider:
             watch_count=len(watch_rows),
             blocked_count=len(blocked_rows),
             detail_cards=self._build_detail_cards(deduped),
+            market_environment="",
+            strategy_breakdown_lines=(),
+            lesson_lines=(),
+            improvement_lines=(),
         )
 
     def _build_briefing_view(
@@ -424,6 +432,10 @@ class DashboardDataProvider:
             watch_count=base_view.watch_count,
             blocked_count=base_view.blocked_count,
             detail_cards=base_view.detail_cards,
+            market_environment=base_view.market_environment,
+            strategy_breakdown_lines=base_view.strategy_breakdown_lines,
+            lesson_lines=base_view.lesson_lines,
+            improvement_lines=base_view.improvement_lines,
         )
 
     def _build_closing_review_view(
@@ -448,9 +460,15 @@ class DashboardDataProvider:
         review_lines = tuple(
             line for line in summary_lines if line.startswith("观察复核:")
         )
+        strategy_breakdown_lines = self._format_strategy_breakdown_lines(
+            review.strategy_breakdown
+        )
+        lesson_lines = tuple(review.key_lessons)
+        improvement_lines = tuple(review.improvement_suggestions)
         headline = (
             f"{_TASK_LABELS['closing_review']} {selected_date}: "
-            f"{review.executed_signals} 笔已验证，胜率 {review.win_rate:.0%}"
+            f"{review.executed_signals} 笔已验证，胜率 {review.win_rate:.0%}，"
+            f"总收益 {review.total_return:.2f}%"
         )
         return DashboardTaskView(
             task_id="closing_review",
@@ -459,10 +477,11 @@ class DashboardDataProvider:
             latest_date=available_dates[0] if available_dates else "",
             available_dates=available_dates,
             headline=headline,
-            summary_lines=summary_lines
-            or (
+            summary_lines=(
+                f"市场环境: {review.market_environment}",
                 f"总信号 {review.total_signals} / 已验证 {review.executed_signals}",
-                f"总收益 {review.total_return:.2f}%",
+                f"胜率 {review.win_rate:.0%} / 总收益 {review.total_return:.2f}%",
+                *summary_lines,
             ),
             recommendation_lines=recommendation_lines,
             watchlist_lines=watchlist_lines,
@@ -486,6 +505,10 @@ class DashboardDataProvider:
                     ]
                 )
             ),
+            market_environment=review.market_environment,
+            strategy_breakdown_lines=strategy_breakdown_lines,
+            lesson_lines=lesson_lines,
+            improvement_lines=improvement_lines,
         )
 
     def _task_signal_rows(self, task_id: str) -> list[dict[str, Any]]:
@@ -650,6 +673,27 @@ class DashboardDataProvider:
                 )
             )
         return tuple(cards)
+
+    def _format_strategy_breakdown_lines(
+        self,
+        strategy_breakdown: dict[str, dict[str, Any]],
+    ) -> tuple[str, ...]:
+        ordered = sorted(
+            strategy_breakdown.items(),
+            key=lambda item: (
+                float(item[1].get("total_return", 0.0) or 0.0),
+                int(item[1].get("total", 0) or 0),
+            ),
+            reverse=True,
+        )
+        return tuple(
+            (
+                f"{strategy} | {int(stats.get('total', 0) or 0)}笔"
+                f" / 胜率 {float(stats.get('win_rate', 0.0) or 0.0):.0%}"
+                f" / 收益 {float(stats.get('total_return', 0.0) or 0.0):.2f}%"
+            )
+            for strategy, stats in ordered
+        )
 
     def _recommendation_line(self, row: dict[str, Any]) -> str:
         line = (
