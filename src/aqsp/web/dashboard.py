@@ -20,6 +20,96 @@ st.set_page_config(
 )
 
 
+def _inject_dashboard_styles() -> None:
+    st.markdown(
+        """
+        <style>
+        .aqsp-banner {
+            padding: 1rem 1.1rem;
+            border-radius: 16px;
+            background: linear-gradient(135deg, #f8f4e8 0%, #eef3f8 100%);
+            border: 1px solid rgba(26, 71, 102, 0.14);
+            margin: 0.2rem 0 1rem 0;
+        }
+        .aqsp-banner-title {
+            font-size: 0.82rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: #6a7682;
+            margin-bottom: 0.35rem;
+        }
+        .aqsp-banner-main {
+            font-size: 1.08rem;
+            font-weight: 700;
+            color: #163247;
+            margin-bottom: 0.45rem;
+        }
+        .aqsp-banner-meta {
+            font-size: 0.92rem;
+            color: #3f5364;
+            line-height: 1.55;
+        }
+        .aqsp-task-card {
+            min-height: 188px;
+            padding: 0.95rem 1rem;
+            border-radius: 16px;
+            border: 1px solid rgba(26, 71, 102, 0.12);
+            background: #fbfbf9;
+            box-shadow: 0 10px 24px rgba(33, 46, 56, 0.05);
+        }
+        .aqsp-task-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 0.5rem;
+            margin-bottom: 0.6rem;
+        }
+        .aqsp-task-title {
+            font-size: 1rem;
+            font-weight: 700;
+            color: #163247;
+        }
+        .aqsp-task-date {
+            font-size: 0.82rem;
+            color: #6a7682;
+            margin-top: 0.18rem;
+        }
+        .aqsp-task-status {
+            display: inline-block;
+            padding: 0.18rem 0.52rem;
+            border-radius: 999px;
+            font-size: 0.78rem;
+            font-weight: 700;
+            color: #284b63;
+            background: #dcecf7;
+            white-space: nowrap;
+        }
+        .aqsp-task-metrics {
+            display: flex;
+            gap: 0.7rem;
+            margin-bottom: 0.6rem;
+            flex-wrap: wrap;
+        }
+        .aqsp-task-metric {
+            font-size: 0.82rem;
+            color: #4a5e6f;
+        }
+        .aqsp-task-summary {
+            font-size: 0.88rem;
+            color: #3b4a58;
+            line-height: 1.55;
+        }
+        .aqsp-nav-note {
+            font-size: 0.84rem;
+            color: #667785;
+            margin: -0.2rem 0 0.6rem 0;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 @st.cache_resource
 def get_provider() -> DashboardDataProvider:
     return DashboardDataProvider()
@@ -122,17 +212,24 @@ def _render_task_workbench(snapshots: tuple[DashboardTaskSnapshot, ...]) -> None
     for column, snapshot in zip(columns, snapshots):
         with column:
             st.markdown(
-                "\n".join(
-                    [
-                        f"### {snapshot.task_label}",
-                        f"- 日期: {snapshot.latest_date or '-'}",
-                        f"- 状态: {snapshot.status_label}",
-                        f"- 可执行: {snapshot.actionable_count}",
-                        f"- 观察: {snapshot.watch_count}",
-                        f"- 阻塞: {snapshot.blocked_count}",
-                        f"- 摘要: {snapshot.headline}",
-                    ]
-                )
+                f"""
+                <div class="aqsp-task-card">
+                  <div class="aqsp-task-header">
+                    <div>
+                      <div class="aqsp-task-title">{snapshot.task_label}</div>
+                      <div class="aqsp-task-date">最近日期: {snapshot.latest_date or "-"}</div>
+                    </div>
+                    <div class="aqsp-task-status">{snapshot.status_label}</div>
+                  </div>
+                  <div class="aqsp-task-metrics">
+                    <div class="aqsp-task-metric">可执行 {snapshot.actionable_count}</div>
+                    <div class="aqsp-task-metric">观察 {snapshot.watch_count}</div>
+                    <div class="aqsp-task-metric">阻塞 {snapshot.blocked_count}</div>
+                  </div>
+                  <div class="aqsp-task-summary">{snapshot.headline}</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
             )
 
 
@@ -177,6 +274,10 @@ def _render_top_navigation(
     snapshots: tuple[DashboardTaskSnapshot, ...],
     provider: DashboardDataProvider,
 ) -> tuple[str, str]:
+    st.markdown(
+        '<div class="aqsp-nav-note">先切任务，再切最近日期；超过 7 天的历史回看走“更多日期”。</div>',
+        unsafe_allow_html=True,
+    )
     task_ids = [option.task_id for option in options]
     selected_task_id = st.radio(
         "任务导航",
@@ -205,6 +306,22 @@ def _render_top_navigation(
         selected_date = "" if selected_date == "最新" else selected_date
 
     return selected_task_id, selected_date
+
+
+def _render_context_banner(task_view) -> None:
+    st.markdown(
+        f"""
+        <div class="aqsp-banner">
+          <div class="aqsp-banner-title">Current Workspace</div>
+          <div class="aqsp-banner-main">{task_view.task_label}</div>
+          <div class="aqsp-banner-meta">
+            日期: {task_view.selected_date or "最新"}<br/>
+            摘要: {task_view.headline}
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def _render_candidate_cards(cards: tuple[DashboardCandidateCard, ...]) -> None:
@@ -304,6 +421,7 @@ def main() -> None:
     task_snapshots = provider.task_snapshots()
     paper_summary = provider.paper_summary()
     updated_at = now_shanghai().strftime("%Y-%m-%d %H:%M:%S %z")
+    _inject_dashboard_styles()
 
     st.title("A股量化主链看板")
     st.caption(f"更新时间: {updated_at}")
@@ -324,15 +442,7 @@ def main() -> None:
         signal_date=selected_date,
     )
 
-    st.markdown(
-        "\n".join(
-            [
-                f"**当前视图**: {task_view.task_label}",
-                f"**日期**: {task_view.selected_date or '最新'}",
-                f"**摘要**: {task_view.headline}",
-            ]
-        )
-    )
+    _render_context_banner(task_view)
 
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("信号总数", summary.signal_count)
