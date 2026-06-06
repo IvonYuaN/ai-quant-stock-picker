@@ -1,4 +1,4 @@
-"""仪表盘数据工具 - 只读取已落盘的真实主链数据。"""
+"""仪表盘数据工具 - 基于真实落盘数据构建任务导航视图。"""
 
 from __future__ import annotations
 
@@ -7,15 +7,27 @@ import os
 from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 
 from aqsp.audit.trade_logger import TradeLogger
+from aqsp.briefing.closing_review import ClosingReviewer, format_daily_review
 from aqsp.core.time import now_shanghai, today_shanghai
 from aqsp.ledger.base import read_ledger
 from aqsp.paper import read_paper_trades
+from aqsp.presentation import format_review_meta, format_symbol_name
+from aqsp.ratings import is_tradable_rating, portfolio_action_label, rating_label
 
 logger = logging.getLogger(__name__)
+
+_TASK_LABELS = {
+    "main_chain": "主链推荐",
+    "morning_breakout": "早盘策略",
+    "closing_premium": "尾盘策略",
+    "closing_review": "收盘复盘",
+    "briefing": "简报回看",
+}
 
 
 @dataclass(frozen=True)
@@ -29,14 +41,42 @@ class DashboardSummary:
     execution_logs: int
 
 
+@dataclass(frozen=True)
+class DashboardTaskOption:
+    task_id: str
+    label: str
+
+
+@dataclass(frozen=True)
+class DashboardTaskView:
+    task_id: str
+    task_label: str
+    selected_date: str
+    latest_date: str
+    available_dates: tuple[str, ...]
+    headline: str
+    summary_lines: tuple[str, ...]
+    recommendation_lines: tuple[str, ...]
+    watchlist_lines: tuple[str, ...]
+    blocker_lines: tuple[str, ...]
+    review_lines: tuple[str, ...]
+    report_markdown: str
+    source_status: dict[str, str]
+    candidate_count: int
+    actionable_count: int
+    watch_count: int
+    blocked_count: int
+
+
 class DashboardDataProvider:
-    """仪表盘数据提供器，只读信号账本、虚拟盘和执行日志。"""
+    """仪表盘数据提供器，只读真实账本、报告和执行日志。"""
 
     def __init__(
         self,
         ledger_path: str = "",
         paper_ledger_path: str = "",
         logs_path: str = "",
+        reports_dir: str = "",
     ) -> None:
         resolved_ledger = (
             ledger_path.strip()
@@ -49,33 +89,43 @@ class DashboardDataProvider:
             or "data/paper_trades.jsonl"
         )
         resolved_logs = logs_path.strip() or "logs/trades"
+        resolved_reports = reports_dir.strip() or "reports"
 
         self.ledger_path = Path(resolved_ledger)
         self.paper_ledger_path = Path(resolved_paper_ledger)
         self.logs_path = Path(resolved_logs)
+        self.reports_dir = Path(resolved_reports)
         self.logger = TradeLogger(str(self.logs_path))
 
-    def load_signal_rows(self) -> list[dict]:
+    def load_signal_rows(self) -> list[dict[str, Any]]:
         try:
-            return read_ledger(self.ledger_path)
+            rows = read_ledger(self.ledger_path)
         except Exception as exc:
             logger.error("加载 signal ledger 失败: %s", exc)
             return []
+        normalized: list[dict[str, Any]] = []
+        for row in rows:
+            if isinstance(row, dict):
+                normalized.append(dict(row))
+        return normalized
 
-    def load_paper_rows(self) -> list[dict]:
+    def load_paper_rows(self) -> list[dict[str, Any]]:
         try:
-            return read_paper_trades(self.paper_ledger_path)
+            rows = read_paper_trades(self.paper_ledger_path)
         except Exception as exc:
             logger.error("加载 paper ledger 失败: %s", exc)
             return []
+        normalized: list[dict[str, Any]] = []
+        for row in rows:
+            if isinstance(row, dict):
+                normalized.append(dict(row))
+        return normalized
 
     def summarize(self) -> DashboardSummary:
         signal_rows = self.load_signal_rows()
         paper_rows = self.load_paper_rows()
         execution_logs = len(self.get_recent_execution_logs(days=7))
-        latest_signal_date = ""
-        if signal_rows:
-            latest_signal_date = max(str(row.get("signal_date", "") or "") for row in signal_rows)
+        latest_signal_date = self._max_signal_date(signal_rows)
         return DashboardSummary(
             signal_count=len(signal_rows),
             latest_signal_date=latest_signal_date,
@@ -90,45 +140,91 @@ class DashboardDataProvider:
             execution_logs=execution_logs,
         )
 
-    def latest_signal_frame(self, limit: int = 20) -> pd.DataFrame:
-        rows = self.load_signal_rows()
-        if not rows:
-            return pd.DataFrame()
-        latest_signal_date = max(str(row.get("signal_date", "") or "") for row in rows)
-        latest_rows = [
-            row for row in rows if str(row.get("signal_date", "") or "") == latest_signal_date
-        ]
-        latest_rows.sort(
-            key=lambda row: float(row.get("score") or 0.0),
-            reverse=True,
+    def task_options(self) -> tuple[DashboardTaskOption, ...]:
+        return tuple(
+            DashboardTaskOption(task_id=task_id, label=label)
+            for task_id, label in _TASK_LABELS.items()
         )
+
+    def default_task_id(self) -> str:
+        return "main_chain"
+
+    def task_dates(self, task_id: str) -> tuple[str, ...]:
+        if task_id == "briefing":
+            return self._briefing_dates()
+        if task_id == "closing_review":
+            return self._signal_dates(self.load_signal_rows())
+        return self._signal_dates(self._task_signal_rows(task_id))
+
+    def build_task_view(self, task_id: str, signal_date: str = "") -> DashboardTaskView:
+        normalized_task = task_id if task_id in _TASK_LABELS else self.default_task_id()
+        available_dates = self.task_dates(normalized_task)
+        selected_date = signal_date.strip() or (available_dates[0] if available_dates else "")
+
+        if normalized_task == "closing_review":
+            return self._build_closing_review_view(
+                selected_date=selected_date,
+                available_dates=available_dates,
+            )
+        if normalized_task == "briefing":
+            return self._build_briefing_view(
+                selected_date=selected_date,
+                available_dates=available_dates,
+            )
+        return self._build_signal_task_view(
+            task_id=normalized_task,
+            selected_date=selected_date,
+            available_dates=available_dates,
+        )
+
+    def latest_signal_frame(
+        self,
+        limit: int = 20,
+        *,
+        task_id: str = "main_chain",
+        signal_date: str = "",
+    ) -> pd.DataFrame:
+        rows = self._task_signal_rows(task_id)
+        if signal_date.strip():
+            rows = [
+                row
+                for row in rows
+                if str(row.get("signal_date", "") or "") == signal_date.strip()
+            ]
+        else:
+            latest_signal_date = self._max_signal_date(rows)
+            rows = [
+                row
+                for row in rows
+                if str(row.get("signal_date", "") or "") == latest_signal_date
+            ]
+        rows = self._dedupe_rows(rows)
+        rows.sort(key=self._sort_key, reverse=True)
         table = [
             {
                 "日期": row.get("signal_date", ""),
                 "代码": row.get("symbol", ""),
-                "名称": row.get("name", ""),
+                "名称": self._symbol_name(row),
                 "评分": row.get("score", ""),
-                "评级": row.get("rating", ""),
-                "状态": row.get("status", ""),
+                "主链动作": self._action_label(row),
+                "候选状态": self._candidate_status(row),
+                "阻塞原因": str(row.get("candidate_blocker", "") or ""),
+                "下一步": str(row.get("candidate_next_step", "") or ""),
                 "数据源": row.get("run_actual_source", ""),
                 "健康度": row.get("run_source_health_label", ""),
             }
-            for row in latest_rows[:limit]
+            for row in rows[:limit]
         ]
         return pd.DataFrame(table)
 
     def open_positions_frame(self) -> pd.DataFrame:
-        rows = [
-            row
-            for row in self.load_paper_rows()
-            if row.get("status") == "open"
-        ]
+        rows = [row for row in self.load_paper_rows() if row.get("status") == "open"]
         if not rows:
             return pd.DataFrame()
         table = [
             {
                 "代码": row.get("symbol", ""),
-                "名称": row.get("name", ""),
+                "名称": self._symbol_name(row),
                 "入场日": row.get("entry_date", ""),
                 "入场价": row.get("entry_price", ""),
                 "止损": row.get("stop_loss", ""),
@@ -139,14 +235,25 @@ class DashboardDataProvider:
         ]
         return pd.DataFrame(table)
 
-    def paper_events_frame(self, limit: int = 20) -> pd.DataFrame:
+    def paper_events_frame(
+        self,
+        limit: int = 20,
+        *,
+        signal_date: str = "",
+    ) -> pd.DataFrame:
         rows = self.load_paper_rows()
+        if signal_date.strip():
+            rows = [
+                row
+                for row in rows
+                if str(row.get("signal_date", "") or "") == signal_date.strip()
+            ]
         if not rows:
             return pd.DataFrame()
         table = [
             {
                 "代码": row.get("symbol", ""),
-                "名称": row.get("name", ""),
+                "名称": self._symbol_name(row),
                 "状态": row.get("status", ""),
                 "信号日": row.get("signal_date", ""),
                 "入场日": row.get("entry_date", ""),
@@ -158,7 +265,7 @@ class DashboardDataProvider:
         ]
         return pd.DataFrame(table[::-1])
 
-    def get_recent_execution_logs(self, days: int = 7) -> list[dict]:
+    def get_recent_execution_logs(self, days: int = 7) -> list[dict[str, Any]]:
         start_date = today_shanghai() - timedelta(days=days)
         try:
             rows = self.logger.query_logs(
@@ -168,7 +275,7 @@ class DashboardDataProvider:
         except Exception as exc:
             logger.error("加载执行日志失败: %s", exc)
             return []
-        return [row for row in rows if row.get("type") == "execution"]
+        return [dict(row) for row in rows if row.get("type") == "execution"]
 
     def recent_execution_frame(self, limit: int = 20) -> pd.DataFrame:
         rows = self.get_recent_execution_logs(days=7)
@@ -187,25 +294,389 @@ class DashboardDataProvider:
         ]
         return pd.DataFrame(table[::-1])
 
-    def latest_source_status(self) -> dict[str, str]:
-        rows = self.load_signal_rows()
+    def latest_source_status(
+        self,
+        *,
+        task_id: str = "main_chain",
+        signal_date: str = "",
+    ) -> dict[str, str]:
+        rows = self._task_signal_rows(task_id)
+        if signal_date.strip():
+            rows = [
+                row
+                for row in rows
+                if str(row.get("signal_date", "") or "") == signal_date.strip()
+            ]
         if not rows:
             return {}
-        latest_row = max(
-            rows,
-            key=lambda row: (
-                str(row.get("signal_date", "") or ""),
-                str(row.get("created_at", "") or ""),
-            ),
+        latest_row = max(rows, key=self._row_meta_key)
+        return self._source_status_from_row(latest_row)
+
+    def _build_signal_task_view(
+        self,
+        *,
+        task_id: str,
+        selected_date: str,
+        available_dates: tuple[str, ...],
+    ) -> DashboardTaskView:
+        rows = self._task_signal_rows(task_id)
+        if selected_date:
+            rows = [
+                row
+                for row in rows
+                if str(row.get("signal_date", "") or "") == selected_date
+            ]
+        deduped = self._dedupe_rows(rows)
+        actionable_rows = [row for row in deduped if self._is_actionable(row)]
+        blocked_rows = [row for row in deduped if self._is_blocked(row)]
+        watch_rows = [
+            row
+            for row in deduped
+            if row not in actionable_rows and (self._is_watch_candidate(row) or row in blocked_rows)
+        ]
+
+        headline = self._headline_for_signal_task(
+            task_id=task_id,
+            signal_date=selected_date,
+            actionable_rows=actionable_rows,
+            watch_rows=watch_rows,
         )
-        return {
-            "requested_source": str(latest_row.get("run_requested_source", "") or ""),
-            "actual_source": str(latest_row.get("run_actual_source", "") or ""),
-            "health_label": str(latest_row.get("run_source_health_label", "") or ""),
-            "health_message": str(latest_row.get("run_source_health_message", "") or ""),
-            "data_latest_trade_date": str(
-                latest_row.get("run_data_latest_trade_date", "") or ""
+        summary_lines = self._summary_lines_for_signal_task(
+            task_id=task_id,
+            rows=deduped,
+            actionable_rows=actionable_rows,
+            watch_rows=watch_rows,
+            blocked_rows=blocked_rows,
+        )
+        recommendation_lines = tuple(
+            self._recommendation_line(row) for row in actionable_rows[:5]
+        )
+        watchlist_lines = tuple(self._watch_line(row) for row in watch_rows[:5])
+        blocker_lines = tuple(self._blocker_line(row) for row in blocked_rows[:5])
+        review_lines = tuple(self._review_line(row) for row in deduped[:5] if self._review_line(row))
+        return DashboardTaskView(
+            task_id=task_id,
+            task_label=_TASK_LABELS[task_id],
+            selected_date=selected_date,
+            latest_date=available_dates[0] if available_dates else "",
+            available_dates=available_dates,
+            headline=headline,
+            summary_lines=summary_lines,
+            recommendation_lines=recommendation_lines,
+            watchlist_lines=watchlist_lines,
+            blocker_lines=blocker_lines,
+            review_lines=review_lines,
+            report_markdown=self._report_markdown_for_signal_task(task_id, selected_date),
+            source_status=self.latest_source_status(task_id=task_id, signal_date=selected_date),
+            candidate_count=len(deduped),
+            actionable_count=len(actionable_rows),
+            watch_count=len(watch_rows),
+            blocked_count=len(blocked_rows),
+        )
+
+    def _build_briefing_view(
+        self,
+        *,
+        selected_date: str,
+        available_dates: tuple[str, ...],
+    ) -> DashboardTaskView:
+        report_markdown = self._read_briefing_markdown(selected_date)
+        base_view = self._build_signal_task_view(
+            task_id="main_chain",
+            selected_date=selected_date,
+            available_dates=self.task_dates("main_chain"),
+        )
+        return DashboardTaskView(
+            task_id="briefing",
+            task_label=_TASK_LABELS["briefing"],
+            selected_date=selected_date,
+            latest_date=available_dates[0] if available_dates else "",
+            available_dates=available_dates,
+            headline=f"{_TASK_LABELS['briefing']} {selected_date or ''}".strip(),
+            summary_lines=base_view.summary_lines,
+            recommendation_lines=base_view.recommendation_lines,
+            watchlist_lines=base_view.watchlist_lines,
+            blocker_lines=base_view.blocker_lines,
+            review_lines=base_view.review_lines,
+            report_markdown=report_markdown,
+            source_status=base_view.source_status,
+            candidate_count=base_view.candidate_count,
+            actionable_count=base_view.actionable_count,
+            watch_count=base_view.watch_count,
+            blocked_count=base_view.blocked_count,
+        )
+
+    def _build_closing_review_view(
+        self,
+        *,
+        selected_date: str,
+        available_dates: tuple[str, ...],
+    ) -> DashboardTaskView:
+        review = ClosingReviewer(ledger_path=str(self.ledger_path)).review_today(
+            selected_date or None
+        )
+        summary_lines = tuple(review.main_chain_summary)
+        recommendation_lines = tuple(
+            line for line in summary_lines if line.startswith("可执行主链:")
+        )
+        watchlist_lines = tuple(
+            line for line in summary_lines if line.startswith("候选观察池:")
+        )
+        blocker_lines = tuple(
+            line for line in summary_lines if line.startswith("执行阻塞:")
+        )
+        review_lines = tuple(
+            line for line in summary_lines if line.startswith("观察复核:")
+        )
+        headline = (
+            f"{_TASK_LABELS['closing_review']} {selected_date}: "
+            f"{review.executed_signals} 笔已验证，胜率 {review.win_rate:.0%}"
+        )
+        return DashboardTaskView(
+            task_id="closing_review",
+            task_label=_TASK_LABELS["closing_review"],
+            selected_date=selected_date,
+            latest_date=available_dates[0] if available_dates else "",
+            available_dates=available_dates,
+            headline=headline,
+            summary_lines=summary_lines
+            or (
+                f"总信号 {review.total_signals} / 已验证 {review.executed_signals}",
+                f"总收益 {review.total_return:.2f}%",
             ),
-            "lag_days": str(latest_row.get("run_data_lag_days", "") or ""),
+            recommendation_lines=recommendation_lines,
+            watchlist_lines=watchlist_lines,
+            blocker_lines=blocker_lines,
+            review_lines=review_lines,
+            report_markdown=format_daily_review(review),
+            source_status=self.latest_source_status(
+                task_id="main_chain",
+                signal_date=selected_date,
+            ),
+            candidate_count=review.total_signals,
+            actionable_count=review.executed_signals,
+            watch_count=max(review.total_signals - review.executed_signals, 0),
+            blocked_count=len(blocker_lines),
+        )
+
+    def _task_signal_rows(self, task_id: str) -> list[dict[str, Any]]:
+        rows = self.load_signal_rows()
+        if task_id == "morning_breakout":
+            return [row for row in rows if self._row_task_id(row) == "morning_breakout"]
+        if task_id == "closing_premium":
+            return [row for row in rows if self._row_task_id(row) == "closing_premium"]
+        if task_id == "main_chain":
+            return [row for row in rows if self._row_task_id(row) == "main_chain"]
+        return rows
+
+    def _row_task_id(self, row: dict[str, Any]) -> str:
+        strategies = row.get("strategies") or []
+        if isinstance(strategies, str):
+            strategy_values = [strategies]
+        else:
+            strategy_values = [str(item) for item in strategies]
+        haystack = " ".join(strategy_values).lower()
+        if "morning_breakout" in haystack or "morning-breakout" in haystack:
+            return "morning_breakout"
+        if "closing_premium" in haystack or "closing-premium" in haystack:
+            return "closing_premium"
+        return "main_chain"
+
+    def _signal_dates(self, rows: list[dict[str, Any]]) -> tuple[str, ...]:
+        dates = {
+            str(row.get("signal_date", "") or "").strip()
+            for row in rows
+            if str(row.get("signal_date", "") or "").strip()
+        }
+        return tuple(sorted(dates, reverse=True))
+
+    def _briefing_dates(self) -> tuple[str, ...]:
+        if not self.reports_dir.exists():
+            return ()
+        dates = []
+        for path in self.reports_dir.glob("briefing-*.md"):
+            stem = path.stem
+            if stem.startswith("briefing-"):
+                dates.append(stem.removeprefix("briefing-"))
+        return tuple(sorted(set(dates), reverse=True))
+
+    def _max_signal_date(self, rows: list[dict[str, Any]]) -> str:
+        dates = self._signal_dates(rows)
+        return dates[0] if dates else ""
+
+    def _dedupe_rows(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        grouped: dict[tuple[str, str], dict[str, Any]] = {}
+        for row in rows:
+            key = (
+                str(row.get("signal_date", "") or ""),
+                str(row.get("symbol", "") or ""),
+            )
+            existing = grouped.get(key)
+            if existing is None:
+                grouped[key] = row
+                continue
+            if self._row_meta_key(row) > self._row_meta_key(existing):
+                grouped[key] = row
+                continue
+            if self._row_meta_key(row) == self._row_meta_key(existing):
+                if float(row.get("score") or 0.0) > float(existing.get("score") or 0.0):
+                    grouped[key] = row
+        return list(grouped.values())
+
+    def _row_meta_key(self, row: dict[str, Any]) -> tuple[str, str, float]:
+        return (
+            str(row.get("signal_date", "") or ""),
+            str(row.get("created_at", "") or ""),
+            float(row.get("score") or 0.0),
+        )
+
+    def _sort_key(self, row: dict[str, Any]) -> tuple[float, str]:
+        return (float(row.get("score") or 0.0), str(row.get("created_at", "") or ""))
+
+    def _action_label(self, row: dict[str, Any]) -> str:
+        action = str(row.get("portfolio_action", "") or "").strip()
+        if action:
+            return portfolio_action_label(action)
+        rating = str(row.get("rating", "") or "").strip()
+        return rating_label(rating)
+
+    def _candidate_status(self, row: dict[str, Any]) -> str:
+        explicit = str(row.get("candidate_status", "") or "").strip()
+        if explicit:
+            return explicit
+        return self._action_label(row)
+
+    def _symbol_name(self, row: dict[str, Any]) -> str:
+        return format_symbol_name(
+            str(row.get("symbol", "") or ""),
+            str(row.get("name", "") or ""),
+        )
+
+    def _is_actionable(self, row: dict[str, Any]) -> bool:
+        action = str(row.get("portfolio_action", "") or "").strip()
+        if action == "promote":
+            return True
+        if action == "downgrade":
+            return False
+        return is_tradable_rating(row.get("rating"))
+
+    def _is_watch_candidate(self, row: dict[str, Any]) -> bool:
+        rating = str(row.get("rating", "") or "").strip()
+        action = str(row.get("portfolio_action", "") or "").strip()
+        return rating in {"watch", "avoid"} or action in {"downgrade", "keep"}
+
+    def _is_blocked(self, row: dict[str, Any]) -> bool:
+        blocker = str(row.get("candidate_blocker", "") or "").strip()
+        status = str(row.get("candidate_status", "") or "").strip()
+        action = str(row.get("portfolio_action", "") or "").strip()
+        return bool(blocker or "阻塞" in status or action == "downgrade")
+
+    def _review_meta(self, row: dict[str, Any]) -> str:
+        return format_review_meta(
+            str(row.get("candidate_review_priority", "") or ""),
+            str(row.get("candidate_review_window", "") or ""),
+        )
+
+    def _recommendation_line(self, row: dict[str, Any]) -> str:
+        line = (
+            f"{self._symbol_name(row)} | {self._candidate_status(row)}"
+            f" | 评分 {float(row.get('score') or 0.0):.1f}"
+        )
+        next_step = str(row.get("candidate_next_step", "") or "").strip()
+        if next_step:
+            line += f" | {next_step}"
+        return line
+
+    def _watch_line(self, row: dict[str, Any]) -> str:
+        line = f"{self._symbol_name(row)} | {self._candidate_status(row)}"
+        meta = self._review_meta(row)
+        if meta:
+            line += f" | {meta}"
+        return line
+
+    def _blocker_line(self, row: dict[str, Any]) -> str:
+        blocker = str(row.get("candidate_blocker", "") or "").strip() or "等待条件解除"
+        return f"{self._symbol_name(row)} | {blocker}"
+
+    def _review_line(self, row: dict[str, Any]) -> str:
+        next_step = str(row.get("candidate_next_step", "") or "").strip()
+        meta = self._review_meta(row)
+        if not next_step and not meta:
+            return ""
+        line = self._symbol_name(row)
+        if meta:
+            line += f" | {meta}"
+        if next_step:
+            line += f" | {next_step}"
+        return line
+
+    def _headline_for_signal_task(
+        self,
+        *,
+        task_id: str,
+        signal_date: str,
+        actionable_rows: list[dict[str, Any]],
+        watch_rows: list[dict[str, Any]],
+    ) -> str:
+        label = _TASK_LABELS[task_id]
+        if actionable_rows:
+            names = "、".join(self._symbol_name(row) for row in actionable_rows[:3])
+            return f"{label} {signal_date}: 可执行 {len(actionable_rows)} 只，先看 {names}"
+        if watch_rows:
+            names = "、".join(self._symbol_name(row) for row in watch_rows[:3])
+            return f"{label} {signal_date}: 无可执行标的，转观察池 {names}"
+        return f"{label} {signal_date}: 暂无真实落盘结果"
+
+    def _summary_lines_for_signal_task(
+        self,
+        *,
+        task_id: str,
+        rows: list[dict[str, Any]],
+        actionable_rows: list[dict[str, Any]],
+        watch_rows: list[dict[str, Any]],
+        blocked_rows: list[dict[str, Any]],
+    ) -> tuple[str, ...]:
+        lines = [
+            f"任务: {_TASK_LABELS[task_id]} / 候选 {len(rows)} / 可执行 {len(actionable_rows)} / 观察 {len(watch_rows)}"
+        ]
+        if blocked_rows:
+            lines.append(f"阻塞 {len(blocked_rows)} 只，优先处理观察复核。")
+        source_status = self._source_status_from_row(max(rows, key=self._row_meta_key)) if rows else {}
+        if source_status:
+            lines.append(
+                f"数据源: {source_status.get('requested_source', '-')}"
+                f" -> {source_status.get('actual_source', '-')}"
+                f" / {source_status.get('health_label', '-')}"
+            )
+        return tuple(lines)
+
+    def _source_status_from_row(self, row: dict[str, Any]) -> dict[str, str]:
+        return {
+            "requested_source": str(row.get("run_requested_source", "") or ""),
+            "actual_source": str(row.get("run_actual_source", "") or ""),
+            "health_label": str(row.get("run_source_health_label", "") or ""),
+            "health_message": str(row.get("run_source_health_message", "") or ""),
+            "data_latest_trade_date": str(
+                row.get("run_data_latest_trade_date", "") or ""
+            ),
+            "lag_days": str(row.get("run_data_lag_days", "") or ""),
             "updated_at": now_shanghai().isoformat(timespec="seconds"),
         }
+
+    def _report_markdown_for_signal_task(self, task_id: str, signal_date: str) -> str:
+        if task_id == "main_chain":
+            latest_signal_date = self._max_signal_date(self._task_signal_rows(task_id))
+            if signal_date and signal_date != latest_signal_date:
+                return self._read_briefing_markdown(signal_date)
+            path = self.reports_dir / "latest.md"
+            if path.exists():
+                return path.read_text(encoding="utf-8")
+        return ""
+
+    def _read_briefing_markdown(self, signal_date: str) -> str:
+        if not signal_date:
+            return ""
+        path = self.reports_dir / f"briefing-{signal_date}.md"
+        if not path.exists():
+            return ""
+        return path.read_text(encoding="utf-8")
