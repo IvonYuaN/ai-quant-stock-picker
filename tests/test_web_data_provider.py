@@ -326,6 +326,9 @@ def test_dashboard_data_provider_builds_task_views_and_dedupes_latest_rows(
     )
     assert main_view.runtime_lines[0] == "数据源: auto -> eastmoney"
     assert main_view.runtime_lines[-1] == "regime: stable_uptrend"
+    assert main_view.agenda_lines[0].startswith("先看推荐: 600519 贵州茅台")
+    assert any(line.startswith("先解阻塞: 000001 平安银行") for line in main_view.agenda_lines)
+    assert any(line.startswith("安排复核: 600519 贵州茅台") for line in main_view.agenda_lines)
 
     morning_view = provider.build_task_view("morning_breakout", signal_date="2026-06-05")
     assert morning_view.task_label == "早盘策略"
@@ -343,6 +346,7 @@ def test_dashboard_data_provider_builds_task_views_and_dedupes_latest_rows(
     assert briefing_view.next_day_focus_lines == (
         "**600519 贵州茅台**: 观察量能是否延续",
     )
+    assert any(line.startswith("明日重点: **600519 贵州茅台**") for line in briefing_view.agenda_lines)
 
     latest_signals = provider.latest_signal_frame(
         limit=10,
@@ -423,6 +427,7 @@ def test_dashboard_data_provider_surfaces_closing_review_sections(
     assert any("尾盘溢价·量价突破" in item for item in review_view.strategy_breakdown_lines)
     assert any("打板成功率偏低" in item for item in review_view.lesson_lines)
     assert review_view.improvement_lines == ()
+    assert any(line.startswith("安排复核:") for line in review_view.agenda_lines)
 
 
 def test_dashboard_data_provider_extracts_latest_report_when_main_chain_latest(

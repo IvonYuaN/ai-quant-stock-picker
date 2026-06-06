@@ -81,6 +81,7 @@ class DashboardTaskView:
     summary_lines: tuple[str, ...]
     report_summary_lines: tuple[str, ...]
     runtime_lines: tuple[str, ...]
+    agenda_lines: tuple[str, ...]
     recommendation_lines: tuple[str, ...]
     watchlist_lines: tuple[str, ...]
     blocker_lines: tuple[str, ...]
@@ -515,6 +516,12 @@ class DashboardDataProvider:
         watchlist_lines = tuple(self._watch_line(row) for row in watch_rows[:5])
         blocker_lines = tuple(self._blocker_line(row) for row in blocked_rows[:5])
         review_lines = tuple(self._review_line(row) for row in deduped[:5] if self._review_line(row))
+        agenda_lines = self._build_agenda_lines(
+            recommendation_lines=recommendation_lines,
+            blocker_lines=blocker_lines,
+            review_lines=review_lines,
+            focus_lines=report_insights.next_day_focus_lines,
+        )
         return DashboardTaskView(
             task_id=task_id,
             task_label=_TASK_LABELS[task_id],
@@ -525,6 +532,7 @@ class DashboardDataProvider:
             summary_lines=summary_lines,
             report_summary_lines=report_insights.report_summary_lines,
             runtime_lines=report_insights.runtime_lines,
+            agenda_lines=agenda_lines,
             recommendation_lines=recommendation_lines,
             watchlist_lines=watchlist_lines,
             blocker_lines=blocker_lines,
@@ -567,6 +575,12 @@ class DashboardDataProvider:
             summary_lines=base_view.summary_lines,
             report_summary_lines=report_insights.report_summary_lines,
             runtime_lines=report_insights.runtime_lines,
+            agenda_lines=self._build_agenda_lines(
+                recommendation_lines=base_view.recommendation_lines,
+                blocker_lines=base_view.blocker_lines,
+                review_lines=base_view.review_lines,
+                focus_lines=report_insights.next_day_focus_lines,
+            ),
             recommendation_lines=base_view.recommendation_lines,
             watchlist_lines=base_view.watchlist_lines,
             blocker_lines=base_view.blocker_lines,
@@ -633,6 +647,12 @@ class DashboardDataProvider:
             ),
             report_summary_lines=(),
             runtime_lines=(),
+            agenda_lines=self._build_agenda_lines(
+                recommendation_lines=recommendation_lines,
+                blocker_lines=blocker_lines,
+                review_lines=tuple(improvement_lines) + review_lines + tuple(lesson_lines),
+                focus_lines=(),
+            ),
             recommendation_lines=recommendation_lines,
             watchlist_lines=watchlist_lines,
             blocker_lines=blocker_lines,
@@ -1020,6 +1040,25 @@ class DashboardDataProvider:
                 f" / {source_status.get('health_label', '-')}"
             )
         return tuple(lines)
+
+    def _build_agenda_lines(
+        self,
+        *,
+        recommendation_lines: tuple[str, ...],
+        blocker_lines: tuple[str, ...],
+        review_lines: tuple[str, ...],
+        focus_lines: tuple[str, ...],
+    ) -> tuple[str, ...]:
+        agenda: list[str] = []
+        if recommendation_lines:
+            agenda.append(f"先看推荐: {recommendation_lines[0]}")
+        if blocker_lines:
+            agenda.append(f"先解阻塞: {blocker_lines[0]}")
+        if review_lines:
+            agenda.append(f"安排复核: {review_lines[0]}")
+        if focus_lines:
+            agenda.append(f"明日重点: {focus_lines[0]}")
+        return tuple(agenda[:4])
 
     def _source_status_from_row(self, row: dict[str, Any]) -> dict[str, str]:
         return {

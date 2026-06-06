@@ -502,7 +502,15 @@ def main() -> None:
         if show_summary_lines:
             st.markdown("\n".join(f"- {line}" for line in show_summary_lines))
 
-        _render_summary_cards(task_view)
+        agenda_col, summary_col = st.columns(2)
+        with agenda_col:
+            _render_line_block(
+                "今日待办",
+                task_view.agenda_lines,
+                "当前暂无明确待办。",
+            )
+        with summary_col:
+            _render_summary_cards(task_view)
         _render_focus_block(task_view)
 
         rec_col, watch_col = st.columns(2)
