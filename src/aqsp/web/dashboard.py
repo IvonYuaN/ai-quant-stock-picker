@@ -5,7 +5,7 @@ from __future__ import annotations
 import streamlit as st
 
 from aqsp.core.time import now_shanghai
-from aqsp.web.data_provider import DashboardDataProvider
+from aqsp.web.data_provider import DashboardCandidateCard, DashboardDataProvider
 
 
 st.set_page_config(
@@ -61,6 +61,58 @@ def _render_line_block(title: str, lines: tuple[str, ...], empty_text: str) -> N
         st.info(empty_text)
         return
     st.markdown("\n".join(f"- {line}" for line in lines))
+
+
+def _render_candidate_cards(cards: tuple[DashboardCandidateCard, ...]) -> None:
+    st.subheader("候选解读")
+    if not cards:
+        st.info("当前任务/日期暂无候选解读。")
+        return
+
+    for index in range(0, len(cards), 2):
+        columns = st.columns(2)
+        for column, card in zip(columns, cards[index : index + 2]):
+            with column:
+                st.markdown(
+                    "\n".join(
+                        [
+                            f"### {card.display_name}",
+                            f"- 评分: `{card.score:.1f}`",
+                            f"- 主链动作: {card.action_label}",
+                            f"- 候选状态: {card.status_label}",
+                            (
+                                f"- 复核节奏: {card.review_meta}"
+                                if card.review_meta
+                                else "- 复核节奏: -"
+                            ),
+                            (
+                                f"- 下一步: {card.next_step}"
+                                if card.next_step
+                                else "- 下一步: -"
+                            ),
+                            (
+                                f"- 阻塞原因: {card.blocker}"
+                                if card.blocker
+                                else "- 阻塞原因: -"
+                            ),
+                            (
+                                "- 命中策略: " + "、".join(card.strategies)
+                                if card.strategies
+                                else "- 命中策略: -"
+                            ),
+                            (
+                                "- 推荐理由: " + "；".join(card.reasons[:3])
+                                if card.reasons
+                                else "- 推荐理由: -"
+                            ),
+                            (
+                                "- 风险提示: " + "；".join(card.risks[:3])
+                                if card.risks
+                                else "- 风险提示: -"
+                            ),
+                        ]
+                    )
+                )
 
 
 def main() -> None:
@@ -154,6 +206,9 @@ def main() -> None:
             task_view.review_lines,
             "当前日期暂无额外复核动作。",
         )
+
+    st.divider()
+    _render_candidate_cards(task_view.detail_cards)
 
     st.divider()
     _render_source_status(task_view.source_status)

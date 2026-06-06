@@ -175,6 +175,8 @@ def test_dashboard_data_provider_builds_task_views_and_dedupes_latest_rows(
             "run_data_latest_trade_date": "2026-06-05",
             "run_data_lag_days": 0,
             "strategies": ["volume_breakout"],
+            "reasons": ["量价齐升", "接近新高"],
+            "risks": ["追高波动"],
         },
         {
             "signal_date": "2026-06-05",
@@ -267,6 +269,9 @@ def test_dashboard_data_provider_builds_task_views_and_dedupes_latest_rows(
     assert "贵州茅台" in main_view.headline
     assert any("板块集中度过高" in item for item in main_view.blocker_lines)
     assert any("开盘前后" in item for item in main_view.review_lines)
+    assert main_view.detail_cards[0].display_name == "600519 贵州茅台"
+    assert main_view.detail_cards[0].reasons == ("量价齐升", "接近新高")
+    assert main_view.detail_cards[0].risks == ("追高波动",)
 
     morning_view = provider.build_task_view("morning_breakout", signal_date="2026-06-05")
     assert morning_view.task_label == "早盘策略"

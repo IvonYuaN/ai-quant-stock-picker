@@ -66,6 +66,24 @@ class DashboardTaskView:
     actionable_count: int
     watch_count: int
     blocked_count: int
+    detail_cards: tuple["DashboardCandidateCard", ...]
+
+
+@dataclass(frozen=True)
+class DashboardCandidateCard:
+    symbol: str
+    name: str
+    display_name: str
+    score: float
+    action_label: str
+    status_label: str
+    next_step: str
+    blocker: str
+    review_meta: str
+    reasons: tuple[str, ...]
+    risks: tuple[str, ...]
+    strategies: tuple[str, ...]
+    data_source: str
 
 
 class DashboardDataProvider:
@@ -372,6 +390,7 @@ class DashboardDataProvider:
             actionable_count=len(actionable_rows),
             watch_count=len(watch_rows),
             blocked_count=len(blocked_rows),
+            detail_cards=self._build_detail_cards(deduped),
         )
 
     def _build_briefing_view(
@@ -404,6 +423,7 @@ class DashboardDataProvider:
             actionable_count=base_view.actionable_count,
             watch_count=base_view.watch_count,
             blocked_count=base_view.blocked_count,
+            detail_cards=base_view.detail_cards,
         )
 
     def _build_closing_review_view(
@@ -457,6 +477,15 @@ class DashboardDataProvider:
             actionable_count=review.executed_signals,
             watch_count=max(review.total_signals - review.executed_signals, 0),
             blocked_count=len(blocker_lines),
+            detail_cards=self._build_detail_cards(
+                self._dedupe_rows(
+                    [
+                        row
+                        for row in self._task_signal_rows("main_chain")
+                        if str(row.get("signal_date", "") or "") == selected_date
+                    ]
+                )
+            ),
         )
 
     def _task_signal_rows(self, task_id: str) -> list[dict[str, Any]]:
@@ -576,6 +605,51 @@ class DashboardDataProvider:
             str(row.get("candidate_review_priority", "") or ""),
             str(row.get("candidate_review_window", "") or ""),
         )
+
+    def _as_text_tuple(self, value: Any) -> tuple[str, ...]:
+        if isinstance(value, str):
+            parts = [item.strip() for item in value.split("；")]
+            return tuple(item for item in parts if item)
+        if isinstance(value, (list, tuple)):
+            return tuple(str(item).strip() for item in value if str(item).strip())
+        return ()
+
+    def _build_detail_cards(
+        self,
+        rows: list[dict[str, Any]],
+        *,
+        limit: int = 6,
+    ) -> tuple[DashboardCandidateCard, ...]:
+        ordered = sorted(rows, key=self._sort_key, reverse=True)[:limit]
+        cards: list[DashboardCandidateCard] = []
+        for row in ordered:
+            strategies = row.get("strategies") or []
+            if isinstance(strategies, str):
+                strategies_tuple = tuple(
+                    item.strip() for item in strategies.split(",") if item.strip()
+                )
+            else:
+                strategies_tuple = tuple(
+                    str(item).strip() for item in strategies if str(item).strip()
+                )
+            cards.append(
+                DashboardCandidateCard(
+                    symbol=str(row.get("symbol", "") or ""),
+                    name=str(row.get("name", "") or ""),
+                    display_name=self._symbol_name(row),
+                    score=float(row.get("score") or 0.0),
+                    action_label=self._action_label(row),
+                    status_label=self._candidate_status(row),
+                    next_step=str(row.get("candidate_next_step", "") or "").strip(),
+                    blocker=str(row.get("candidate_blocker", "") or "").strip(),
+                    review_meta=self._review_meta(row),
+                    reasons=self._as_text_tuple(row.get("reasons")),
+                    risks=self._as_text_tuple(row.get("risks")),
+                    strategies=strategies_tuple,
+                    data_source=str(row.get("run_actual_source", "") or ""),
+                )
+            )
+        return tuple(cards)
 
     def _recommendation_line(self, row: dict[str, Any]) -> str:
         line = (
