@@ -67,6 +67,7 @@ class DashboardTaskView:
     watch_count: int
     blocked_count: int
     detail_cards: tuple["DashboardCandidateCard", ...]
+    ranking_lines: tuple[str, ...]
     market_environment: str
     strategy_breakdown_lines: tuple[str, ...]
     lesson_lines: tuple[str, ...]
@@ -78,9 +79,11 @@ class DashboardCandidateCard:
     symbol: str
     name: str
     display_name: str
+    rank_label: str
     score: float
     action_label: str
     status_label: str
+    decision_note: str
     next_step: str
     blocker: str
     review_meta: str
@@ -395,6 +398,7 @@ class DashboardDataProvider:
             watch_count=len(watch_rows),
             blocked_count=len(blocked_rows),
             detail_cards=self._build_detail_cards(deduped),
+            ranking_lines=self._build_ranking_lines(deduped),
             market_environment="",
             strategy_breakdown_lines=(),
             lesson_lines=(),
@@ -432,6 +436,7 @@ class DashboardDataProvider:
             watch_count=base_view.watch_count,
             blocked_count=base_view.blocked_count,
             detail_cards=base_view.detail_cards,
+            ranking_lines=base_view.ranking_lines,
             market_environment=base_view.market_environment,
             strategy_breakdown_lines=base_view.strategy_breakdown_lines,
             lesson_lines=base_view.lesson_lines,
@@ -497,6 +502,15 @@ class DashboardDataProvider:
             watch_count=max(review.total_signals - review.executed_signals, 0),
             blocked_count=len(blocker_lines),
             detail_cards=self._build_detail_cards(
+                self._dedupe_rows(
+                    [
+                        row
+                        for row in self._task_signal_rows("main_chain")
+                        if str(row.get("signal_date", "") or "") == selected_date
+                    ]
+                )
+            ),
+            ranking_lines=self._build_ranking_lines(
                 self._dedupe_rows(
                     [
                         row
@@ -585,6 +599,22 @@ class DashboardDataProvider:
     def _sort_key(self, row: dict[str, Any]) -> tuple[float, str]:
         return (float(row.get("score") or 0.0), str(row.get("created_at", "") or ""))
 
+    def _priority_bucket(self, row: dict[str, Any]) -> int:
+        action = str(row.get("portfolio_action", "") or "").strip()
+        rating = str(row.get("rating", "") or "").strip()
+        blocker = str(row.get("candidate_blocker", "") or "").strip()
+        if action == "promote":
+            return 0
+        if not blocker and is_tradable_rating(rating):
+            return 1
+        if action == "keep":
+            return 2
+        if action == "downgrade" or blocker:
+            return 3
+        if rating in {"watch", "avoid"}:
+            return 4
+        return 5
+
     def _action_label(self, row: dict[str, Any]) -> str:
         action = str(row.get("portfolio_action", "") or "").strip()
         if action:
@@ -643,9 +673,17 @@ class DashboardDataProvider:
         *,
         limit: int = 6,
     ) -> tuple[DashboardCandidateCard, ...]:
-        ordered = sorted(rows, key=self._sort_key, reverse=True)[:limit]
+        ordered = sorted(
+            rows,
+            key=lambda row: (
+                -self._priority_bucket(row),
+                float(row.get("score") or 0.0),
+                str(row.get("created_at", "") or ""),
+            ),
+            reverse=True,
+        )[:limit]
         cards: list[DashboardCandidateCard] = []
-        for row in ordered:
+        for index, row in enumerate(ordered, start=1):
             strategies = row.get("strategies") or []
             if isinstance(strategies, str):
                 strategies_tuple = tuple(
@@ -660,9 +698,11 @@ class DashboardDataProvider:
                     symbol=str(row.get("symbol", "") or ""),
                     name=str(row.get("name", "") or ""),
                     display_name=self._symbol_name(row),
+                    rank_label=self._rank_label(index, row),
                     score=float(row.get("score") or 0.0),
                     action_label=self._action_label(row),
                     status_label=self._candidate_status(row),
+                    decision_note=self._decision_note(row),
                     next_step=str(row.get("candidate_next_step", "") or "").strip(),
                     blocker=str(row.get("candidate_blocker", "") or "").strip(),
                     review_meta=self._review_meta(row),
@@ -673,6 +713,56 @@ class DashboardDataProvider:
                 )
             )
         return tuple(cards)
+
+    def _rank_label(self, index: int, row: dict[str, Any]) -> str:
+        if index == 1 and self._is_actionable(row):
+            return "首选"
+        if index == 2 and self._is_actionable(row):
+            return "次选"
+        if self._is_actionable(row):
+            return "备选"
+        if self._is_blocked(row):
+            return "阻塞观察"
+        return "观察"
+
+    def _decision_note(self, row: dict[str, Any]) -> str:
+        blocker = str(row.get("candidate_blocker", "") or "").strip()
+        next_step = str(row.get("candidate_next_step", "") or "").strip()
+        action = str(row.get("portfolio_action", "") or "").strip()
+        if blocker:
+            return blocker
+        if action == "promote":
+            return "PM 已上调优先级，进入优先跟踪序列"
+        if action == "keep":
+            return "维持顺位，等待更强确认"
+        if next_step:
+            return next_step
+        return "按当前顺位继续跟踪"
+
+    def _build_ranking_lines(
+        self,
+        rows: list[dict[str, Any]],
+        *,
+        limit: int = 3,
+    ) -> tuple[str, ...]:
+        ordered = sorted(
+            rows,
+            key=lambda row: (
+                -self._priority_bucket(row),
+                float(row.get("score") or 0.0),
+                str(row.get("created_at", "") or ""),
+            ),
+            reverse=True,
+        )[:limit]
+        lines: list[str] = []
+        for index, row in enumerate(ordered, start=1):
+            rank_label = self._rank_label(index, row)
+            lines.append(
+                f"{rank_label}: {self._symbol_name(row)} | {self._action_label(row)}"
+                f" | 评分 {float(row.get('score') or 0.0):.1f}"
+                f" | {self._decision_note(row)}"
+            )
+        return tuple(lines)
 
     def _format_strategy_breakdown_lines(
         self,

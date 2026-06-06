@@ -217,6 +217,11 @@ def main() -> None:
     st.info(task_view.headline)
     if task_view.summary_lines:
         st.markdown("\n".join(f"- {line}" for line in task_view.summary_lines))
+    _render_line_block(
+        "优先顺位",
+        task_view.ranking_lines,
+        "当前日期暂无优先顺位说明。",
+    )
 
     rec_col, watch_col = st.columns(2)
     with rec_col:

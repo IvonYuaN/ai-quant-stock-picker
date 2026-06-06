@@ -270,8 +270,12 @@ def test_dashboard_data_provider_builds_task_views_and_dedupes_latest_rows(
     assert any("板块集中度过高" in item for item in main_view.blocker_lines)
     assert any("开盘前后" in item for item in main_view.review_lines)
     assert main_view.detail_cards[0].display_name == "600519 贵州茅台"
+    assert main_view.detail_cards[0].rank_label == "首选"
+    assert "上调优先级" in main_view.detail_cards[0].decision_note
     assert main_view.detail_cards[0].reasons == ("量价齐升", "接近新高")
     assert main_view.detail_cards[0].risks == ("追高波动",)
+    assert main_view.ranking_lines[0].startswith("首选: 600519 贵州茅台")
+    assert any(line.startswith("阻塞观察: 000001 平安银行") for line in main_view.ranking_lines)
 
     morning_view = provider.build_task_view("morning_breakout", signal_date="2026-06-05")
     assert morning_view.task_label == "早盘策略"
