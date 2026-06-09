@@ -43,6 +43,28 @@ def test_install_server_cron_script_installs_standard_jobs() -> None:
     assert "*/15 * * * 1-5" in script
 
 
+def test_bt_task_script_exposes_panel_safe_actions() -> None:
+    script = (PROJECT_ROOT / "scripts" / "bt_task.sh").read_text(encoding="utf-8")
+
+    assert "宝塔面板计划任务统一入口" in script
+    assert "daily|intraday|coldstart|monitor|status" in script
+    assert "AQSP_RUNNER_SCRIPT=scripts/intraday_refresh.sh" in script
+    assert "scripts/server_sync_and_run.sh" in script
+    assert "scripts/coldstart_daily.sh" in script
+    assert "scripts/server_monitor.sh" in script
+    assert "scripts/server_status.sh" in script
+    assert "logs/bt" in script
+
+
+def test_server_status_surfaces_bt_task_logs() -> None:
+    script = (PROJECT_ROOT / "scripts" / "server_status.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'print_section "BT TASK LOG"' in script
+    assert "logs/bt/bt-${action}-$(date +%Y-%m-%d).log" in script
+
+
 def test_server_sync_script_has_lock_guard() -> None:
     script = (PROJECT_ROOT / "scripts" / "server_sync_and_run.sh").read_text(
         encoding="utf-8"

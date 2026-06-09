@@ -46,6 +46,12 @@ python -m aqsp.cli screen --symbols 600519,300750 --mode close --limit 20
 python -m aqsp.cli screen --pool zz500 --mode close --limit 20
 ```
 
+如果要启动研究工作台版 Streamlit dashboard，先补 Web 依赖：
+
+```bash
+pip install -e ".[web]"
+```
+
 定时任务同款命令。本地有 TDX `private_data/tdx` 时，`AQSP_SYMBOLS` 留空会先按最新成交额从全市场预筛 `AQSP_MAX_UNIVERSE` 只，再进入策略评分；显式传 `--symbols` 则只跑指定小池。默认 100 只是为了本地每日定时稳定，手动研究可提高到 300/800/1500：
 
 ```bash
@@ -205,5 +211,5 @@ python3 -m pytest -q
 服务器验证命令：
 
 ```bash
-cd /opt/aqsp && git pull --ff-only origin main && bash /opt/aqsp/scripts/server_sync_and_run.sh; code=$?; echo "PIPELINE_EXIT_CODE=$code"
+cd /opt/aqsp && /bin/bash scripts/bt_task.sh status && /bin/bash scripts/bt_task.sh daily; code=$?; echo "PIPELINE_EXIT_CODE=$code"
 ```

@@ -126,7 +126,55 @@ bash /opt/aqsp/scripts/server_sync_and_run.sh
 
 如果服务器上存在受 Git 管理的本地改动，它会直接停下，不会乱覆盖。
 
-## 定时任务
+## 宝塔面板计划任务（推荐）
+
+既然服务器已经用宝塔面板托管域名和看板，生产定时也建议统一放在 **宝塔面板 -> 计划任务**。这样任务、日志和运行状态都在服务器侧，不再依赖本机 Mac 的 launchd，也不会出现“本地有定时、服务器没动”的错觉。
+
+仓库提供了一个宝塔专用统一入口：
+
+```bash
+/bin/bash /opt/aqsp/scripts/bt_task.sh <daily|intraday|coldstart|monitor|status>
+```
+
+推荐在宝塔里建 4 个 Shell 脚本任务：
+
+| 任务 | 宝塔周期 | 命令 | 作用 |
+|---|---:|---|---|
+| 盘中刷新 | 工作日 `09:40-11:30`、`13:10-14:55` 每 10 分钟 | `/bin/bash /opt/aqsp/scripts/bt_task.sh intraday` | 生成盘中候选并刷新看板，不污染正式 ledger |
+| 收盘主链路 | 工作日 `18:00` | `/bin/bash /opt/aqsp/scripts/bt_task.sh daily` | 拉取最新代码、跑完整收盘复盘、纸面验证、简报、通知、看板刷新 |
+| 冷启动补样本 | 工作日 `17:30` | `/bin/bash /opt/aqsp/scripts/bt_task.sh coldstart` | 更新 sqlite 历史库并累计 `predictions.jsonl` 冷启动天数 |
+| 服务器监控 | 工作日每 `15` 分钟 | `/bin/bash /opt/aqsp/scripts/bt_task.sh monitor` | 检查数据、运行时和通知通道，异常才推送 |
+
+如果宝塔的“每 N 分钟”不能限制交易时段，也可以让它工作日每 10 分钟跑 `intraday`。`scripts/intraday_refresh.sh` 内部会自行判断当前是否在盘中，非交易时段只记录“跳过”，不会污染结果。
+
+手工验证：
+
+```bash
+cd /opt/aqsp
+/bin/bash scripts/bt_task.sh status
+/bin/bash scripts/bt_task.sh monitor
+/bin/bash scripts/bt_task.sh daily
+```
+
+查看日志：
+
+```bash
+tail -120 /opt/aqsp/logs/bt/bt-daily-$(date +%Y-%m-%d).log
+tail -120 /opt/aqsp/logs/daily/pipeline-$(date +%Y-%m-%d).log
+tail -120 /opt/aqsp/logs/monitor/monitor-$(date +%Y-%m-%d).log
+```
+
+通知要生效，服务器 `/opt/aqsp/.env` 至少需要：
+
+```bash
+AQSP_NOTIFY=true
+AQSP_NOTIFY_MODE=summary
+SERVERCHAN_SENDKEY=你的Server酱SendKey
+```
+
+注意：选股推荐通知仍受冷启动 + walk-forward 双门保护；收盘复盘、服务器监控和策略健康告警不依赖这道选股 gate。
+
+## crontab 定时任务（兼容）
 
 推荐拆成两条任务：
 
