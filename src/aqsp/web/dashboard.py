@@ -1560,7 +1560,7 @@ def _archive_conclusion_context(
     debate_summary: DashboardDebateSummary | None = None,
 ) -> tuple[str, tuple[str, ...]]:
     raw_archive_lines = tuple(
-        line
+        _safe_archive_line(line)
         for line in (
             *task_view.report_summary_lines[:2],
             (
@@ -1602,7 +1602,7 @@ def _archive_conclusion_context(
                     else ""
                 ),
                 (
-                    f"候选摘要: {selected_card.decision_note}"
+                    f"候选摘要: {_safe_current_research_line(selected_card.decision_note)}"
                     if selected_card.decision_note
                     and selected_card.decision_note
                     != _card_primary_blocker(selected_card)
@@ -1636,7 +1636,7 @@ def _archive_conclusion_context(
             for line in (
                 *_debate_primary_takeaways(debate_summary)[:2],
                 (
-                    f"当前重点: {selected_spotlight.blocker or selected_spotlight.next_step}"
+                    f"当前重点: {_safe_current_research_line(selected_spotlight.blocker or selected_spotlight.next_step)}"
                     if selected_spotlight.blocker or selected_spotlight.next_step
                     else ""
                 ),
@@ -1769,24 +1769,36 @@ def _is_missing_blocker_text(text: str) -> bool:
 def _card_emphasis(card: DashboardCandidateCard) -> str:
     blocker = _card_primary_blocker(card)
     if blocker:
-        return blocker
+        return _safe_current_research_line(blocker)
     if card.next_step:
-        return card.next_step
+        return _safe_current_research_line(card.next_step)
     if card.decision_note and card.decision_note != "按当前顺位继续跟踪":
-        return card.decision_note
+        return _safe_current_research_line(card.decision_note)
     if "阻塞" in card.rank_label:
         return "当前处于阻塞观察，先核对卡点条件。"
-    return card.decision_note or "继续跟踪"
+    return _safe_current_research_line(card.decision_note or "继续跟踪")
 
 
 def _card_next_action(card: DashboardCandidateCard) -> str:
     if card.next_step and not _is_missing_blocker_text(card.next_step):
-        return card.next_step
+        return _safe_current_research_line(card.next_step)
     if _card_primary_blocker(card) and "阻塞" in card.rank_label:
         return "先确认复核条件，卡点解除后再决定是否恢复推进。"
     if card.decision_note and not _is_missing_blocker_text(card.decision_note):
-        return card.decision_note
+        return _safe_current_research_line(card.decision_note)
     return "-"
+
+
+def _safe_current_research_line(line: str) -> str:
+    return _sanitize_day_replay_line(line)
+
+
+def _safe_archive_line(line: str) -> str:
+    return _neutral_archive_summary_line(line)
+
+
+def _safe_archive_lines(lines: tuple[str, ...]) -> tuple[str, ...]:
+    return tuple(_safe_archive_line(line) for line in lines if line)
 
 
 def _normalized_readiness_lines(
@@ -2049,18 +2061,18 @@ def _queue_item_meta(card: DashboardCandidateCard, emphasis: str) -> str:
     ]
     if card.decision_note and card.decision_note != emphasis:
         lines.append(
-            f'<div class="aqsp-queue-meta">说明: {escape(card.decision_note)}</div>'
+            f'<div class="aqsp-queue-meta">说明: {escape(_safe_current_research_line(card.decision_note))}</div>'
         )
     if card.reasons:
         lines.append(
             '<div class="aqsp-queue-meta">理由: '
-            + escape("；".join(card.reasons[:2]))
+            + escape(_safe_current_research_line("；".join(card.reasons[:2])))
             + "</div>"
         )
     if card.risks:
         lines.append(
             '<div class="aqsp-queue-meta">风险: '
-            + escape("；".join(card.risks[:2]))
+            + escape(_safe_current_research_line("；".join(card.risks[:2])))
             + "</div>"
         )
     return "".join(lines)
@@ -2679,7 +2691,7 @@ def _render_day_archive_summary(overview: DashboardDateOverview) -> None:
         <div class="aqsp-status-strip">
           <div class="aqsp-status-label">当日归档</div>
           <div class="aqsp-status-main">{escape(overview.signal_date)} 回看摘要</div>
-          <div class="aqsp-status-sub">{escape(overview.archive_summary)}</div>
+          <div class="aqsp-status-sub">{escape(_safe_archive_line(overview.archive_summary))}</div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -2711,9 +2723,11 @@ def _render_trading_cockpit(
                     else f"评分 {focus_card.score:.1f}"
                 ),
                 escape(
-                    focus_card.next_step
-                    or focus_card.decision_note
-                    or "当前无额外推进动作。"
+                    _safe_current_research_line(
+                        focus_card.next_step
+                        or focus_card.decision_note
+                        or "当前无额外推进动作。"
+                    )
                 ),
             ]
             if line
@@ -2748,8 +2762,14 @@ def _render_trading_cockpit(
         blocker_title = blocked_cards[0].display_name
         blocker_body = "<br/>".join(
             [
-                escape(_card_primary_blocker(blocked_cards[0]) or "存在待解除阻塞"),
-                escape(_card_next_action(blocked_cards[0])),
+                escape(
+                    _safe_current_research_line(
+                        _card_primary_blocker(blocked_cards[0]) or "存在待解除阻塞"
+                    )
+                ),
+                escape(
+                    _safe_current_research_line(_card_next_action(blocked_cards[0]))
+                ),
             ]
         )
     elif overview.blocker_headline:
@@ -3773,7 +3793,10 @@ def _home_brief_cards(
         (
             f"持有 {paper_summary.open_positions} / 待核对 {paper_summary.pending_entries} / 阻塞 {paper_summary.not_executable} / 关闭 {paper_summary.closed_trades}",
         ),
-        paper_summary.action_summary_lines[:2],
+        tuple(
+            _safe_current_research_line(line)
+            for line in paper_summary.action_summary_lines[:2]
+        ),
     )[:3]
 
     blocker_title = "阻塞较轻"
@@ -3783,7 +3806,7 @@ def _home_brief_cards(
         blocker_tone = "blocked"
         blocker_lines = _unique_lines(
             (
-                f"卡点: {_card_primary_blocker(blocked_focus) or _card_emphasis(blocked_focus)}",
+                f"卡点: {_safe_current_research_line(_card_primary_blocker(blocked_focus) or _card_emphasis(blocked_focus))}",
                 f"复核线索: {_card_next_action(blocked_focus)}",
                 (
                     f"复核: {blocked_focus.review_meta}"
@@ -4860,7 +4883,7 @@ def _focus_summary_lines(
                 ),
                 _review_meta_line("复核节奏", selected_card.review_meta),
                 (
-                    f"当前阻塞: {_card_primary_blocker(selected_card)}"
+                    f"当前阻塞: {_safe_current_research_line(_card_primary_blocker(selected_card))}"
                     if _card_primary_blocker(selected_card)
                     else ""
                 ),
@@ -4874,7 +4897,7 @@ def _focus_summary_lines(
                 f"来源任务: {'、'.join(selected_spotlight.task_labels)}",
                 f"研究状态: {_action_status_label(selected_spotlight.action_label, selected_spotlight.status_label)}",
                 (
-                    f"当前重点: {selected_spotlight.blocker or selected_spotlight.next_step}"
+                    f"当前重点: {_safe_current_research_line(selected_spotlight.blocker or selected_spotlight.next_step)}"
                     if selected_spotlight.blocker or selected_spotlight.next_step
                     else ""
                 ),
@@ -4925,7 +4948,7 @@ def _workspace_focus_lines(
             "验证动作: 等待下一次任务或纸面验证链路补充独立证据。"
             if is_debate_review
             else (
-                f"下一步: {review_card.next_step or review_card.decision_note}"
+                f"下一步: {_safe_current_research_line(review_card.next_step or review_card.decision_note)}"
                 if review_card.next_step or review_card.decision_note
                 else ""
             )
@@ -4940,7 +4963,7 @@ def _workspace_focus_lines(
                 [
                     _review_meta_line("复核节奏", review_card.review_meta),
                     (
-                        f"当前阻塞: {_card_primary_blocker(review_card)}"
+                        f"当前阻塞: {_safe_current_research_line(_card_primary_blocker(review_card))}"
                         if _card_primary_blocker(review_card)
                         else ""
                     ),
@@ -5906,7 +5929,7 @@ def _candidate_research_context_lines(
                     else "同日联动: 当前只在本任务中出现"
                 ),
                 (
-                    f"重点关注: {spotlight.blocker or spotlight.next_step}"
+                    f"重点复核: {_safe_current_research_line(spotlight.blocker or spotlight.next_step)}"
                     if spotlight is not None
                     and (spotlight.blocker or spotlight.next_step)
                     else ""
@@ -6028,7 +6051,7 @@ def _candidate_focus_spotlight_lines(
         f"跨任务结论: {_action_status_label(spotlight.action_label, spotlight.status_label)}",
     ]
     if focus_detail not in duplicate_hints:
-        lines.append(f"重点关注: {focus_detail}")
+        lines.append(f"重点复核: {_safe_current_research_line(focus_detail)}")
     if review_line := _review_meta_line("统一复核", spotlight.review_meta):
         lines.append(review_line)
     return tuple(_unique_lines(tuple(lines)))
@@ -6886,7 +6909,7 @@ def _candidate_next_step_lines(
     next_action = _card_next_action(selected_card)
     if blocker:
         lines = (
-            f"当前卡点: {blocker}",
+            f"当前卡点: {_safe_current_research_line(blocker)}",
             f"复核动作: {next_action}" if next_action != "-" else "",
             _review_meta_line("复核节奏", selected_card.review_meta),
         )
@@ -6950,9 +6973,9 @@ def _archive_next_action_lines(
     review_card: DashboardCandidateCard | None = None,
 ) -> tuple[str, ...]:
     raw_action_lines = _unique_lines(
-        task_view.agenda_lines[:2],
-        task_view.review_lines[:2],
-        task_view.unlock_lines[:2],
+        _safe_archive_lines(task_view.agenda_lines[:2]),
+        _safe_archive_lines(task_view.review_lines[:2]),
+        _safe_archive_lines(task_view.unlock_lines[:2]),
     )
     symbol_action_lines, _ = _partition_symbol_lines(raw_action_lines, selected_symbol)
     if symbol_action_lines:
@@ -6965,7 +6988,7 @@ def _archive_next_action_lines(
             line
             for line in (
                 (
-                    f"优先处理阻塞: {_card_primary_blocker(action_card)}"
+                    f"优先处理阻塞: {_safe_current_research_line(_card_primary_blocker(action_card))}"
                     if _card_primary_blocker(action_card)
                     else ""
                 ),
@@ -6977,9 +7000,13 @@ def _archive_next_action_lines(
     return tuple(
         line
         for line in (
-            (f"研究下一步: {action_card.next_step}" if action_card.next_step else ""),
             (
-                f"优先处理阻塞: {_card_primary_blocker(action_card)}"
+                f"研究下一步: {_safe_current_research_line(action_card.next_step)}"
+                if action_card.next_step
+                else ""
+            ),
+            (
+                f"优先处理阻塞: {_safe_current_research_line(_card_primary_blocker(action_card))}"
                 if _card_primary_blocker(action_card)
                 else ""
             ),
@@ -7230,14 +7257,16 @@ def _render_archive_workbench(
         _render_cockpit_card(
             kicker="归档结论",
             title=status,
-            lines=tuple(
-                line
-                for line in (
-                    *task_view.report_summary_lines[:2],
-                    *task_view.next_day_focus_lines[:2],
-                    *task_view.runtime_lines[:2],
+            lines=_safe_archive_lines(
+                tuple(
+                    line
+                    for line in (
+                        *task_view.report_summary_lines[:2],
+                        *task_view.next_day_focus_lines[:2],
+                        *task_view.runtime_lines[:2],
+                    )
+                    if line
                 )
-                if line
             )
             or ("当前归档没有结构化结论。",),
             tone="archive",

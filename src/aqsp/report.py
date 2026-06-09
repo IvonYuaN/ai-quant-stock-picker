@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+from html import escape
 from typing import Any
 
 import pandas as pd
@@ -51,7 +52,7 @@ def _resolve_portfolio_action_label(action: str) -> str:
 
 
 def _display_name(pick: PickResult) -> str:
-    return format_symbol_name(pick.symbol, pick.name)
+    return _safe_markdown_text(format_symbol_name(pick.symbol, pick.name))
 
 
 def _candidate_status(pick: PickResult) -> str:
@@ -84,13 +85,17 @@ def _format_allocation_rationale(item: Any) -> str:
 
 
 def _normalize_reason_text(reason: object) -> str:
-    text = str(reason).strip()
+    text = _safe_markdown_text(reason)
     if not text:
         return ""
     for marker in ("与前序候选高相关", "多Agent辩论偏谨慎", "多Agent辩论支持"):
         if marker in text and f"；{marker}" not in text and not text.startswith(marker):
             text = text.replace(marker, f"；{marker}", 1)
     return text
+
+
+def _safe_markdown_text(value: object) -> str:
+    return escape(normalize_research_tone(str(value).strip()), quote=False)
 
 
 def _format_reason_list(reasons: Any, *, limit: int | None = None) -> str:
@@ -114,19 +119,24 @@ def _format_final_decision_board(
         return []
     lines = ["## 最终决策看板", ""]
     if portfolio_summary is not None:
-        lines.append(f"- PM主裁决: {portfolio_summary.headline}")
+        lines.append(f"- PM主裁决: {_safe_markdown_text(portfolio_summary.headline)}")
         if getattr(portfolio_summary, "regime_label", ""):
-            lines.append(f"- 当前市况: {portfolio_summary.regime_label}")
+            lines.append(
+                f"- 当前市况: {_safe_markdown_text(portfolio_summary.regime_label)}"
+            )
         if getattr(portfolio_summary, "strategy_mix_name", ""):
             lines.append(
                 "- 策略主配比: "
-                f"{portfolio_summary.strategy_mix_name} | "
-                f"{getattr(portfolio_summary, 'strategy_mix_description', '')}"
+                f"{_safe_markdown_text(portfolio_summary.strategy_mix_name)} | "
+                f"{_safe_markdown_text(getattr(portfolio_summary, 'strategy_mix_description', ''))}"
             )
         if getattr(portfolio_summary, "strategy_focus", ()):
             lines.append(
                 "- 优先策略: "
-                + "、".join(str(item) for item in portfolio_summary.strategy_focus[:4])
+                + "、".join(
+                    _safe_markdown_text(item)
+                    for item in portfolio_summary.strategy_focus[:4]
+                )
             )
         if getattr(portfolio_summary, "strategy_weights", ()):
             lines.append(
@@ -140,28 +150,35 @@ def _format_final_decision_board(
             )
         if getattr(portfolio_summary, "top_focus", ()):
             focus_label = (
-                "重点关注"
+                "纸面重点复核"
                 if getattr(portfolio_summary, "allocations", ())
                 else "观察重点"
             )
             lines.append(
                 f"- {focus_label}: "
-                + "、".join(str(item) for item in portfolio_summary.top_focus)
+                + "、".join(
+                    _safe_markdown_text(item) for item in portfolio_summary.top_focus
+                )
             )
         if getattr(portfolio_summary, "watchlist", ()):
             lines.append(
                 "- 观察池: "
-                + "、".join(str(item) for item in portfolio_summary.watchlist)
+                + "、".join(
+                    _safe_markdown_text(item) for item in portfolio_summary.watchlist
+                )
             )
         if getattr(portfolio_summary, "action_hotspots", ()):
             lines.append(
                 "- 裁决热点: "
-                + "；".join(str(item) for item in portfolio_summary.action_hotspots)
+                + "；".join(
+                    _safe_markdown_text(item)
+                    for item in portfolio_summary.action_hotspots
+                )
             )
         if getattr(portfolio_summary, "execution_blockers", ()):
             lines.append("- 纸面阻塞:")
             for item in tuple(getattr(portfolio_summary, "execution_blockers", ()))[:3]:
-                lines.append(f"  - {normalize_research_tone(str(item))}")
+                lines.append(f"  - {_safe_markdown_text(item)}")
         if getattr(portfolio_summary, "watch_reviews", ()):
             lines.append("- 观察复核:")
             for item in tuple(getattr(portfolio_summary, "watch_reviews", ()))[:2]:
@@ -177,18 +194,20 @@ def _format_final_decision_board(
                     )
                 )
         if getattr(portfolio_summary, "allocations", ()):
-            lines.append("- 组合配置建议:")
+            lines.append("- 纸面组合参考:")
             for item in tuple(getattr(portfolio_summary, "allocations", ()))[:3]:
-                display = format_symbol_name(item.symbol, item.name)
+                display = _safe_markdown_text(
+                    format_symbol_name(item.symbol, item.name)
+                )
                 rationale = _format_allocation_rationale(item)
                 line = f"  - {display}: {item.weight:.0%}"
                 if rationale:
-                    line += f" | {rationale}"
+                    line += f" | {_safe_markdown_text(rationale)}"
                 lines.append(line)
             lead_allocations = tuple(getattr(portfolio_summary, "allocations", ()))[:2]
             if lead_allocations:
                 order = " → ".join(
-                    format_symbol_name(item.symbol, item.name)
+                    _safe_markdown_text(format_symbol_name(item.symbol, item.name))
                     for item in lead_allocations
                 )
                 lines.append(f"- 复核顺序: 先看 {order}")
@@ -197,7 +216,7 @@ def _format_final_decision_board(
             lines.append(f"- 现金留存: {cash_reserve:.0%}")
         allocation_note = str(getattr(portfolio_summary, "allocation_note", "") or "")
         if allocation_note:
-            lines.append(f"- 配置说明: {allocation_note}")
+            lines.append(f"- 配置说明: {_safe_markdown_text(allocation_note)}")
         lines.append("")
     for idx, pick in enumerate(picks[:3], 1):
         decision = decision_map.get(pick.symbol)
@@ -210,20 +229,23 @@ def _format_final_decision_board(
         next_step = _candidate_next_step(pick)
         review_window = _candidate_review_window(pick)
         review_priority = _review_priority_label(_candidate_review_priority(pick))
-        reason = "；".join(pick.reasons[:2]) if pick.reasons else "无"
-        headline = f"- Top {idx}: {_display_name(pick)} | {label}"
+        reason = _format_reason_list(pick.reasons[:2]) if pick.reasons else "无"
+        headline = f"- Top {idx}: {_safe_markdown_text(_display_name(pick))} | {label}"
         if status:
-            headline += f" | {status}"
+            headline += f" | {_safe_markdown_text(status)}"
         headline += f" | 评分 {pick.score} | PM {action_label}"
         lines.append(headline)
         lines.append(f"  参考: {reason}")
         if blocker:
-            lines.append(f"  当前阻塞: {blocker}")
+            lines.append(f"  当前阻塞: {_safe_markdown_text(blocker)}")
         if next_step:
-            lines.append(f"  下一步: {next_step}")
+            lines.append(f"  下一步: {_safe_markdown_text(next_step)}")
         if review_priority or review_window:
             lines.append(
-                "  复核: " + format_review_meta(review_priority, review_window)
+                "  复核: "
+                + _safe_markdown_text(
+                    format_review_meta(review_priority, review_window)
+                )
             )
         pm_reason_text = _format_reason_list(pm_reasons, limit=2)
         if pm_reason_text and pm_reason_text != "保持原排序":
@@ -244,12 +266,12 @@ def _format_portfolio_decision(decision: Any) -> str:
         return ""
     lines = [
         "### Portfolio Manager",
-        f"- 最终动作: {_resolve_portfolio_action_label(action)}",
+        f"- PM纸面裁决: {_resolve_portfolio_action_label(action)}",
         f"- 分数调整: {delta:+.1f}",
     ]
     if reasons:
         lines.append("- 决策依据: " + _format_reason_list(reasons))
-    return "\n".join(lines)
+    return normalize_research_tone("\n".join(lines))
 
 
 def _format_debate_result(result: Any) -> str:
@@ -336,20 +358,23 @@ def to_markdown(
                 f"## {idx}. {display}",
                 f"- 日期: {pick.date}",
                 f"- 决策: {decision_text} | 评分 {pick.score:.1f}",
-                f"- 收盘/参考买点: {pick.close} / {pick.ideal_buy}",
-                f"- 策略入口: {pick.entry_type}",
-                f"- 命中策略: {', '.join(pick.strategies) or '无'}",
-                f"- 仓位建议: {pick.position}",
-                f"- 止损/止盈位: {pick.stop_loss} / {pick.take_profit}",
-                f"- 理由: {'；'.join(pick.reasons) or '无'}",
-                f"- 风险提示: {'；'.join(pick.risks) or '无'}",
+                f"- 收盘/参考价: {pick.close} / {pick.ideal_buy}",
+                f"- 策略入口: {_safe_markdown_text(pick.entry_type)}",
+                f"- 命中策略: {_format_reason_list(pick.strategies) or '无'}",
+                f"- 纸面仓位参考: {pick.position}",
+                f"- 防守位/观察目标: {pick.stop_loss} / {pick.take_profit}",
+                f"- 理由: {_format_reason_list(pick.reasons) or '无'}",
+                f"- 风险提示: {_format_reason_list(pick.risks) or '无'}",
                 "",
             ]
         )
         if blocker:
-            lines.insert(len(lines) - 1, f"- 当前阻塞: {blocker}")
+            lines.insert(len(lines) - 1, f"- 当前阻塞: {_safe_markdown_text(blocker)}")
         if next_step:
-            lines.insert(len(lines) - 1, f"- 下一步关注: {next_step}")
+            lines.insert(
+                len(lines) - 1,
+                f"- 下一步关注: {_safe_markdown_text(next_step)}",
+            )
         if review_priority or review_window:
             lines.insert(
                 len(lines) - 1,

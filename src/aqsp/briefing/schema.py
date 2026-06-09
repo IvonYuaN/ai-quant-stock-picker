@@ -202,7 +202,7 @@ class BriefingData:
         """市场态势摘要。"""
         desc = self.regime_info.description
         if "熊" in desc or "下跌" in desc:
-            return f"📉 市场态势: {desc}，注意控制仓位"
+            return f"📉 市场态势: {desc}，控制纸面暴露"
         if "盘整" in desc:
             return f"📊 市场态势: {desc}，关注突破方向"
         return f"📈 市场态势: {desc}"

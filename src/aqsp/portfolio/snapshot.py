@@ -242,13 +242,13 @@ def snapshot_diff_highlights(
         names = "、".join(
             f"{item.symbol} {item.name}" for item in diff.removed_picks[:max_items]
         )
-        highlights.append(f"❌ **移出候选**: {names}")
+        highlights.append(f"归档移出记录: {names}")
     if diff.rank_changes:
         changes = []
         for symbol, old_rank, new_rank in diff.rank_changes[:max_items]:
             direction = "↑" if new_rank < old_rank else "↓"
             changes.append(f"{symbol} #{old_rank}→#{new_rank}{direction}")
-        highlights.append(f"📈 **排名异动**: {'、'.join(changes)}")
+        highlights.append(f"排名记录变化: {'、'.join(changes)}")
     return tuple(highlights)
 
 

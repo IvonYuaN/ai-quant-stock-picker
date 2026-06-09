@@ -87,8 +87,48 @@ def test_report_renders_portfolio_manager_decision_when_provided() -> None:
     )
 
     assert "### Portfolio Manager" in markdown
-    assert "- 最终动作: 上调优先级" in markdown
+    assert "- PM纸面裁决: 上调优先级" in markdown
     assert "- 分数调整: +4.0" in markdown
+    assert "最终动作" not in markdown
+
+
+def test_report_sanitizes_dynamic_markdown_fields() -> None:
+    pick = PickResult(
+        symbol="600519",
+        name="贵州茅台<script>",
+        date="2026-06-09",
+        close=1500,
+        score=82,
+        rating="strong_buy_candidate",
+        entry_type="执行开仓<script>",
+        ideal_buy=1490,
+        stop_loss=1450,
+        take_profit=1600,
+        position="half",
+        strategies=("执行名单",),
+        reasons=("立即买入后等待下单<script>alert(1)</script>",),
+        risks=("真实持仓暴露过高<img onerror=alert(1)>",),
+        metrics={
+            "candidate_blocker": "买入条件不足，下单阻塞",
+            "candidate_next_step": "执行开仓后看真实持仓",
+        },
+    )
+
+    markdown = to_markdown([pick])
+
+    for forbidden in (
+        "<script>",
+        "<img",
+        "onerror",
+        "立即买入",
+        "下单",
+        "执行开仓",
+        "真实持仓",
+    ):
+        assert forbidden not in markdown
+    assert "&lt;script&gt;" in markdown
+    assert "纸面记录阻塞" in markdown
+    assert "纸面持有" in markdown
 
 
 def test_report_renders_watch_position_for_downgraded_candidate() -> None:
@@ -122,8 +162,8 @@ def test_report_renders_watch_position_for_downgraded_candidate() -> None:
         ],
     )
 
-    assert "- 仓位建议: watch" in markdown
-    assert "仓位建议: 30%-50%" not in markdown
+    assert "- 纸面仓位参考: watch" in markdown
+    assert "仓位建议" not in markdown
 
 
 def test_report_hides_noop_portfolio_manager_decision() -> None:
@@ -334,7 +374,8 @@ def test_report_keeps_actionable_focus_label_when_allocations_exist() -> None:
         ),
     )
 
-    assert "- 重点关注: 600900 长江电力" in markdown
+    assert "- 纸面重点复核: 600900 长江电力" in markdown
+    assert "- 重点关注: 600900 长江电力" not in markdown
     assert "- 观察重点: 600900 长江电力" not in markdown
 
 
@@ -442,7 +483,7 @@ def test_report_hides_non_promote_portfolio_section_below_pick_detail() -> None:
     assert "- Top 1: 600900 长江电力 | 仅观察 | 评分 76 | PM 降级观察" in markdown
     detail_section = markdown.split("## 1. 600900 长江电力", maxsplit=1)[1]
     assert "### Portfolio Manager" in detail_section
-    assert "- 最终动作: 降级观察" in detail_section
+    assert "- PM纸面裁决: 降级观察" in detail_section
     assert "板块集中度过高，压低公用事业暴露" in detail_section
 
 

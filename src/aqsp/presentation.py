@@ -87,6 +87,8 @@ def normalize_research_tone(text: str) -> str:
         ("参考买点", "参考价"),
         ("买点", "观察参考"),
         ("买入", "纸面入场记录"),
+        ("onerror", "removed_attr"),
+        ("javascript:", "removed_url:"),
     )
     clean = str(text).strip()
     for old, new in replacements:

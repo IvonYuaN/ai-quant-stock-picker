@@ -5,8 +5,10 @@ from unittest.mock import MagicMock, patch
 from aqsp.briefing.email_notifier import (
     EmailConfig,
     load_email_config_from_env,
+    render_html_email,
     send_briefing_email,
 )
+from aqsp.briefing.schema import BriefingData, Pick, RegimeInfo, SourceStatus
 
 
 def test_load_email_config_from_env_returns_none_when_missing(monkeypatch):
@@ -84,3 +86,62 @@ def test_send_briefing_email_returns_false_on_exception(monkeypatch):
     ):
         ok = send_briefing_email(cfg, "subj", "body")
     assert ok is False
+
+
+def test_render_html_email_uses_research_language_and_escapes_dynamic_text() -> None:
+    data = BriefingData(
+        date="2026-06-09",
+        picks=(
+            Pick(
+                symbol="600519<script>",
+                name="贵州茅台<img src=x>",
+                score=82.0,
+                rating="buy_candidate",
+                strategies=("trend_pullback",),
+                reasons=("立即买入后等待下单<script>alert(1)</script>",),
+                risks=("真实持仓暴露过高<img src=x>",),
+                metrics={},
+                date="2026-06-09",
+                ideal_buy=1490.0,
+                stop_loss=1450.0,
+                take_profit=1600.0,
+                position="half",
+            ),
+        ),
+        regime_info=RegimeInfo(
+            regime="stable_bull",
+            description="稳定上涨，可执行主链回暖<script>",
+            circuit_breaker_triggered=False,
+            circuit_breaker_reason="",
+        ),
+        source_status=SourceStatus(
+            requested_source="auto<script>",
+            actual_source="eastmoney",
+            freshness_tier="end_of_day",
+            coverage_tier="history_core",
+            health_label="degraded",
+            health_message="fallback",
+            fallback_used=True,
+        ),
+        research_summary=None,
+        portfolio_summary=None,
+    )
+
+    html = render_html_email(data)
+
+    for forbidden in (
+        "强烈推荐",
+        "推荐依据",
+        "可执行",
+        "入场:",
+        "立即买入",
+        "下单",
+        "真实持仓",
+    ):
+        assert forbidden not in html
+    assert "纸面重点复核" in html
+    assert "研究依据" in html
+    assert "参考价" in html
+    assert "&lt;script&gt;" in html
+    assert "<script>" not in html
+    assert "<img src=x>" not in html

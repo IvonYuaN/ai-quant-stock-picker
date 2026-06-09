@@ -67,6 +67,7 @@ from aqsp.web.dashboard import (
     _line_mentions_symbol,
     _partition_symbol_lines,
     _phase_nav_label,
+    _queue_item_meta,
     _quick_bar_symbols,
     _research_task_id_for_review_card,
     _review_context_for_symbol,
@@ -1098,6 +1099,66 @@ def test_dashboard_focus_summary_lines_preserve_candidate_semantics_when_only_sp
     assert not any("主要从纸面记录回看" in line for line in lines)
 
 
+def test_dashboard_focus_summary_lines_neutralize_action_words_in_candidate_and_spotlight() -> (
+    None
+):
+    from aqsp.web.data_provider import (
+        DashboardCandidateCard,
+        DashboardCandidateSpotlight,
+    )
+
+    card = DashboardCandidateCard(
+        symbol="600519",
+        name="贵州茅台",
+        display_name="600519 贵州茅台",
+        rank_label="阻塞观察",
+        score=88.0,
+        action_label="上调优先级",
+        status_label="观察阻塞",
+        decision_note="立即买入后等待下单",
+        next_step="新开仓失败，等待下单",
+        blocker="买入条件不足，下单阻塞",
+        review_meta="高优先级 / 开盘前后",
+        reasons=(),
+        risks=(),
+        strategies=(),
+        data_source="eastmoney",
+    )
+    spotlight = DashboardCandidateSpotlight(
+        symbol="300750",
+        display_name="300750 宁德时代",
+        score=83.0,
+        action_label="降级观察",
+        status_label="观察阻塞",
+        blocker="立即买入条件不足",
+        next_step="等待下单",
+        review_meta="中优先级 / 午后回看",
+        task_labels=("早盘策略",),
+        reasons=(),
+        risks=(),
+    )
+    execution_focus = _DummyExecutionFocus()
+
+    rendered = "\n".join(
+        (
+            *_focus_summary_lines(
+                selected_card=card,
+                selected_spotlight=None,
+                execution_focus=execution_focus,
+            ),
+            *_focus_summary_lines(
+                selected_card=None,
+                selected_spotlight=spotlight,
+                execution_focus=execution_focus,
+            ),
+        )
+    )
+
+    for forbidden in ("立即买入", "下单", "新开仓", "买入条件"):
+        assert forbidden not in rendered
+    assert "纸面记录" in rendered
+
+
 def test_dashboard_symbol_option_label_uses_spotlight_context_when_card_is_missing() -> (
     None
 ):
@@ -2069,6 +2130,29 @@ def test_dashboard_archive_conclusion_context_prefers_existing_symbol_archive_li
     assert "候选摘要: 主链继续保留首选" not in lines
 
 
+def test_dashboard_archive_conclusion_context_neutralizes_raw_archive_action_words() -> (
+    None
+):
+    class _TaskView:
+        report_summary_lines = ("今日建议: 立即买入 600519",)
+        runtime_lines = ("真实持仓等待下单回写",)
+        next_day_focus_lines = ("纸面复核名单: 600519 等待下单",)
+        market_environment = ""
+
+    title, lines = _archive_conclusion_context(
+        task_view=_TaskView(),
+        selected_symbol="000001",
+        selected_card=None,
+        selected_spotlight=None,
+    )
+
+    rendered = "\n".join((title, *lines))
+    for forbidden in ("今日建议", "立即买入", "纸面复核名单", "下单", "真实持仓"):
+        assert forbidden not in rendered
+    assert "历史回看" in rendered
+    assert "历史复核名单" in rendered
+
+
 def test_dashboard_archive_symbol_order_uses_full_review_cards() -> None:
     from aqsp.web.data_provider import DashboardCandidateCard
 
@@ -2663,7 +2747,7 @@ def test_dashboard_candidate_focus_spotlight_lines_keeps_non_duplicate_metadata(
     assert lines == (
         "来源任务: 早盘策略、尾盘策略",
         "跨任务结论: 降级观察 / 观察阻塞",
-        "重点关注: 高位波动放大，先等待分歧收敛",
+        "重点复核: 高位波动放大，先等待分歧收敛",
         "统一复核: 中优先级 / 午后回看",
     )
 
@@ -4289,8 +4373,8 @@ def test_dashboard_home_brief_cards_summarize_day_without_trading_language() -> 
         open_position_lines=(),
         event_lines=(),
         action_summary_lines=(
-            "纸面入场待核对 1 笔，按下一交易日开盘价验证。",
-            "阻塞队列 1 笔，先核对不可成交原因。",
+            "BUY 100 @ 1500 后等待下单。",
+            "SELL 100 @ 1450 后等待真实持仓回写。",
         ),
     )
     research_summary = ResearchSummary(
@@ -4362,6 +4446,37 @@ def test_dashboard_home_brief_cards_summarize_day_without_trading_language() -> 
     assert "真实持仓" not in rendered_text
     assert "立即买入" not in rendered_text
     assert "下单" not in rendered_text
+    assert "BUY" not in rendered_text
+    assert "SELL" not in rendered_text
+
+
+def test_dashboard_queue_item_meta_neutralizes_decision_note_action_words() -> None:
+    from aqsp.web.data_provider import DashboardCandidateCard
+
+    card = DashboardCandidateCard(
+        symbol="600519",
+        name="贵州茅台",
+        display_name="600519 贵州茅台",
+        rank_label="首选",
+        score=88.0,
+        action_label="上调优先级",
+        status_label="延续上升",
+        decision_note="立即买入后等待下单",
+        next_step="",
+        blocker="",
+        review_meta="高优先级 / 开盘前后",
+        reasons=("执行名单进入后买入",),
+        risks=("真实持仓暴露过高",),
+        strategies=("volume_breakout",),
+        data_source="eastmoney",
+    )
+
+    html = _queue_item_meta(card, "等待量能确认")
+
+    for forbidden in ("立即买入", "下单", "执行名单", "买入", "真实持仓"):
+        assert forbidden not in html
+    assert "纸面记录" in html
+    assert "纸面持有" in html
 
 
 def test_dashboard_home_evidence_entry_lines_keep_first_screen_compact_and_safe() -> (
@@ -5664,6 +5779,35 @@ def test_dashboard_candidate_next_step_lines_do_not_treat_missing_blocker_as_act
     assert _candidate_next_step_lines(card) == (
         "待补证据: 阻塞原因未记录，需补充风险说明或复核条件",
     )
+
+
+def test_dashboard_candidate_next_step_lines_neutralize_blocker_action_words() -> None:
+    from aqsp.web.data_provider import DashboardCandidateCard
+
+    card = DashboardCandidateCard(
+        symbol="000338",
+        name="潍柴动力",
+        display_name="000338 潍柴动力",
+        rank_label="阻塞观察",
+        score=58.0,
+        action_label="降级观察",
+        status_label="降级观察",
+        decision_note="立即买入后等待下单",
+        next_step="新开仓失败后等待下单",
+        blocker="买入条件不足，下单阻塞",
+        review_meta="中优先级 / 收盘前",
+        reasons=(),
+        risks=(),
+        strategies=(),
+        data_source="eastmoney",
+    )
+
+    rendered = "\n".join(_candidate_next_step_lines(card))
+
+    for forbidden in ("立即买入", "下单", "新开仓", "买入条件"):
+        assert forbidden not in rendered
+    assert "当前卡点:" in rendered
+    assert "纸面记录阻塞" in rendered
 
 
 def test_dashboard_candidate_review_snapshot_uses_unlock_action_card_for_compact_blocked_state(

@@ -390,6 +390,42 @@ class TestBriefingGenerator:
         assert "600519" in next_day
         assert "avoid" not in next_day
 
+    def test_markdown_and_template_sanitize_dynamic_fields(self):
+        gen = BriefingGenerator()
+        picks = [
+            _make_pick(
+                symbol="600519",
+                name="贵州茅台<script>",
+                rating="strong_buy_candidate",
+                entry_type="执行开仓<script>",
+                reasons=("立即买入后等待下单<script>alert(1)</script>",),
+                risks=("真实持仓暴露过高<img onerror=alert(1)>",),
+                metrics={
+                    "candidate_blocker": "买入条件不足，下单阻塞",
+                    "candidate_next_step": "执行开仓后看真实持仓",
+                },
+            )
+        ]
+        briefing = gen.generate(picks=picks, frames={})
+
+        rendered = "\n".join(
+            (briefing.to_markdown(), gen.render_template(briefing, picks))
+        )
+
+        for forbidden in (
+            "<script>",
+            "<img",
+            "onerror",
+            "立即买入",
+            "下单",
+            "执行开仓",
+            "真实持仓",
+        ):
+            assert forbidden not in rendered
+        assert "&lt;script&gt;" in rendered
+        assert "纸面记录阻塞" in rendered
+        assert "纸面持有" in rendered
+
 
 class TestDebateAgent:
     def test_llm_enhancement_keeps_stance_but_rewrites_role_specific_points(self):
@@ -612,7 +648,7 @@ class TestGenerateSmartSummary:
         summary = briefing.generate_smart_summary()
 
         assert "- 候选观察池: 600519 贵州茅台" in summary
-        assert "- 首选观察: 600519 贵州茅台" in summary
+        assert "- 重点观察: 600519 贵州茅台" in summary
 
     def test_action_plan_mentions_candidate_status_when_candidates_exist_but_not_tradable(
         self,
@@ -633,7 +669,7 @@ class TestGenerateSmartSummary:
         summary = briefing.generate_smart_summary()
 
         assert "- 候选观察池: 600519 贵州茅台(新晋)(8.5分)" in summary
-        assert "- 首选观察: 600519 贵州茅台(新晋)(8.5分)" in summary
+        assert "- 重点观察: 600519 贵州茅台(新晋)(8.5分)" in summary
 
     def test_action_plan_mentions_default_review_for_new_watch_pick(self):
         gen = BriefingGenerator()
@@ -796,7 +832,10 @@ class TestGenerateSmartSummary:
 
         summary = briefing.generate_smart_summary()
 
-        assert "- 首仓理由: 300750 宁德时代 | 主链评分 72.0；强信号优先分配" in summary
+        assert (
+            "- 首个纸面参考理由: 300750 宁德时代 | 主链评分 72.0；强信号优先分配"
+            in summary
+        )
         assert (
             "- 纸面配仓参考: 300750 宁德时代 20% | 主链评分 72.0；强信号优先分配"
             in summary
@@ -891,7 +930,8 @@ class TestGenerateSmartSummary:
         picks = [_make_pick()]
         briefing = gen.generate(picks=picks, frames={}, regime="stable_bear")
         summary = briefing.generate_smart_summary()
-        assert "注意控制仓位" in summary
+        assert "控制纸面暴露" in summary
+        assert "注意控制仓位" not in summary
 
     def test_sideways_regime_info(self):
         gen = BriefingGenerator()

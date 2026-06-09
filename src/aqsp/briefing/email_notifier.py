@@ -10,9 +10,11 @@ import smtplib
 from dataclasses import dataclass
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from html import escape
 from pathlib import Path
 
 from aqsp.briefing.schema import BriefingData, Pick
+from aqsp.presentation import normalize_research_tone
 
 
 @dataclass
@@ -54,42 +56,48 @@ def _render_pick_card_html(pick: Pick, rank: int) -> str:
     # 根据评分定优先级颜色
     if pick.score >= 75:
         color = "#16a34a"  # green-600 强信号
-        badge = "🔥 强烈推荐"
+        badge = "🔥 纸面重点复核"
     elif pick.score >= 60:
-        color = "#0891b2"  # cyan-600 一般推荐
-        badge = "✅ 推荐"
+        color = "#0891b2"  # cyan-600 纸面观察
+        badge = "✅ 纸面观察"
     else:
         color = "#94a3b8"  # slate-400 观察
         badge = "👀 观察"
 
     reasons_html = "".join(
-        f'<li style="margin: 4px 0;">{r}</li>' for r in pick.reasons[:4]
+        f'<li style="margin: 4px 0;">{escape(normalize_research_tone(r))}</li>'
+        for r in pick.reasons[:4]
     )
     risks_html = ""
     if pick.risks:
+        risks_text = escape(
+            normalize_research_tone(", ".join(str(risk) for risk in pick.risks[:2]))
+        )
         risks_html = (
             '<div style="margin-top: 8px; padding: 6px 10px; background: #fef3c7; border-left: 3px solid #f59e0b; border-radius: 4px;">'
             "<strong style='color: #92400e;'>⚠️ 风险:</strong> "
-            f"{', '.join(pick.risks[:2])}"
+            f"{risks_text}"
             "</div>"
         )
+    display_name = escape(normalize_research_tone(f"{pick.symbol} {pick.name}".strip()))
+    safe_badge = escape(badge)
 
     return f"""
     <div style="margin: 12px 0; padding: 14px; border-radius: 8px; border: 1px solid #e5e7eb; background: #ffffff; box-shadow: 0 1px 2px rgba(0,0,0,0.05);">
       <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
         <div>
-          <span style="display: inline-block; padding: 2px 8px; background: {color}; color: white; border-radius: 4px; font-size: 11px; font-weight: bold;">#{rank} {badge}</span>
-          <strong style="margin-left: 8px; font-size: 16px;">{pick.symbol} {pick.name}</strong>
+          <span style="display: inline-block; padding: 2px 8px; background: {color}; color: white; border-radius: 4px; font-size: 11px; font-weight: bold;">#{rank} {safe_badge}</span>
+          <strong style="margin-left: 8px; font-size: 16px;">{display_name}</strong>
         </div>
         <div style="font-size: 18px; font-weight: bold; color: {color};">{pick.score:.1f}</div>
       </div>
       <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 8px 0; font-size: 13px; color: #475569;">
-        <div>💰 入场: <strong>{pick.ideal_buy:.2f}</strong></div>
-        <div>🛡️ 止损: <strong>{pick.stop_loss:.2f}</strong></div>
-        <div>🎯 目标: <strong>{pick.take_profit:.2f}</strong></div>
+        <div>💰 参考价: <strong>{pick.ideal_buy:.2f}</strong></div>
+        <div>🛡️ 防守位: <strong>{pick.stop_loss:.2f}</strong></div>
+        <div>🎯 观察目标: <strong>{pick.take_profit:.2f}</strong></div>
       </div>
       <div style="font-size: 13px; color: #334155;">
-        <strong>📊 推荐依据:</strong>
+        <strong>📊 研究依据:</strong>
         <ul style="margin: 4px 0; padding-left: 20px;">{reasons_html}</ul>
       </div>
       {risks_html}
@@ -109,7 +117,7 @@ def render_html_email(data: BriefingData) -> str:
         status_text = "🛡️ 组合保护中"
     elif tradable_count > 0:
         status_color = "#16a34a"
-        status_text = f"✅ {tradable_count} 只可执行"
+        status_text = f"✅ {tradable_count} 只纸面复核"
     else:
         status_color = "#64748b"
         status_text = "👀 仅观察"
@@ -120,9 +128,9 @@ def render_html_email(data: BriefingData) -> str:
       <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 12px;">
         <div>
           <h1 style="margin: 0; font-size: 20px;">📊 AI 量化选股日报</h1>
-          <p style="margin: 4px 0 0; font-size: 13px; opacity: 0.8;">{data.date}</p>
+          <p style="margin: 4px 0 0; font-size: 13px; opacity: 0.8;">{escape(data.date)}</p>
         </div>
-        <span style="background: {status_color}; padding: 6px 12px; border-radius: 6px; font-size: 12px; font-weight: bold;">{status_text}</span>
+        <span style="background: {status_color}; padding: 6px 12px; border-radius: 6px; font-size: 12px; font-weight: bold;">{escape(status_text)}</span>
       </div>
       <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 12px;">
         <div style="background: rgba(255,255,255,0.1); padding: 10px; border-radius: 6px; text-align: center;">
@@ -131,7 +139,7 @@ def render_html_email(data: BriefingData) -> str:
         </div>
         <div style="background: rgba(255,255,255,0.1); padding: 10px; border-radius: 6px; text-align: center;">
           <div style="font-size: 22px; font-weight: bold;">{tradable_count}</div>
-          <div style="font-size: 11px; opacity: 0.8;">可执行</div>
+          <div style="font-size: 11px; opacity: 0.8;">纸面复核</div>
         </div>
         <div style="background: rgba(255,255,255,0.1); padding: 10px; border-radius: 6px; text-align: center;">
           <div style="font-size: 22px; font-weight: bold;">{len(data.risk_points)}</div>
@@ -144,7 +152,7 @@ def render_html_email(data: BriefingData) -> str:
     # 市场态势
     regime_html = f"""
     <div style="margin: 12px 0; padding: 12px; background: #f1f5f9; border-radius: 8px; border-left: 4px solid #0ea5e9;">
-      <strong>🌐 市场态势:</strong> {data.regime_info.description}
+      <strong>🌐 市场态势:</strong> {escape(normalize_research_tone(data.regime_info.description))}
     </div>
     """
 
@@ -152,7 +160,8 @@ def render_html_email(data: BriefingData) -> str:
     risk_html = ""
     if data.risk_points:
         risks_list = "".join(
-            f'<li style="margin: 4px 0;">{r}</li>' for r in data.risk_points[:3]
+            f'<li style="margin: 4px 0;">{escape(normalize_research_tone(r))}</li>'
+            for r in data.risk_points[:3]
         )
         risk_html = f"""
         <div style="margin: 12px 0; padding: 12px; background: #fef2f2; border-radius: 8px; border-left: 4px solid #dc2626;">
@@ -164,20 +173,25 @@ def render_html_email(data: BriefingData) -> str:
     # TOP3 重点推荐
     top_picks = data.tradable_picks[:3] if data.tradable_picks else data.top_picks
     if top_picks:
-        picks_html = "<h2 style='font-size: 18px; margin: 16px 0 8px;'>🎯 TOP 3 重点推荐</h2>"
+        picks_html = (
+            "<h2 style='font-size: 18px; margin: 16px 0 8px;'>🎯 TOP 3 观察候选</h2>"
+        )
         for i, p in enumerate(top_picks, 1):
             picks_html += _render_pick_card_html(p, i)
     else:
         picks_html = """
         <div style="padding: 16px; background: #f1f5f9; border-radius: 8px; text-align: center; color: #64748b;">
-          今日无重点推荐，继续等待信号
+          今日无重点纸面复核对象，继续等待信号
         </div>
         """
 
     # 完整候选列表（折叠/简略版）
     if len(data.picks) > 3:
         more_picks = "".join(
-            f"<li style='margin: 4px 0;'><strong>{p.symbol} {p.name}</strong> - {p.score:.1f}分 - {', '.join(p.strategies)}</li>"
+            "<li style='margin: 4px 0;'>"
+            f"<strong>{escape(normalize_research_tone(f'{p.symbol} {p.name}'.strip()))}</strong>"
+            f" - {p.score:.1f}分 - {escape(normalize_research_tone(', '.join(p.strategies)))}"
+            "</li>"
             for p in data.picks[3:8]
         )
         more_html = f"""
@@ -194,7 +208,7 @@ def render_html_email(data: BriefingData) -> str:
     if data.source_status and data.source_status.is_degraded:
         source_html = f"""
         <div style="margin: 12px 0; padding: 10px; background: #fffbeb; border-radius: 6px; border-left: 3px solid #f59e0b; font-size: 13px;">
-          📉 <strong>数据源降级:</strong> {data.source_status.route} ({data.source_status.health_label})
+          📉 <strong>数据源降级:</strong> {escape(data.source_status.route)} ({escape(data.source_status.health_label)})
         </div>
         """
 
@@ -210,7 +224,7 @@ def render_html_email(data: BriefingData) -> str:
 <html>
 <head>
   <meta charset="utf-8">
-  <title>AI 量化选股日报 - {data.date}</title>
+  <title>AI 量化选股日报 - {escape(data.date)}</title>
 </head>
 <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 680px; margin: 0 auto; padding: 16px; background: #f8fafc; color: #1e293b; line-height: 1.6;">
   {header}

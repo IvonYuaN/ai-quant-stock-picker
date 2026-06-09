@@ -3,10 +3,11 @@ from __future__ import annotations
 import re
 from collections import Counter
 from dataclasses import dataclass, field
+from html import escape
 from pathlib import Path
 
 import pandas as pd
-from jinja2 import Environment, FileSystemLoader
+from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from aqsp.core.time import now_shanghai
 from aqsp.core.types import PickResult
@@ -18,6 +19,7 @@ from aqsp.portfolio.manager import (
 from aqsp.presentation import (
     format_symbol_name,
     format_watch_review_line,
+    normalize_research_tone,
     review_priority_label,
 )
 from aqsp.research.summary import ResearchSummary, research_findings_display
@@ -90,6 +92,10 @@ def _format_pick_with_status(
     return display
 
 
+def _safe_markdown_text(value: object) -> str:
+    return escape(normalize_research_tone(str(value).strip()), quote=False)
+
+
 @dataclass(frozen=True)
 class BriefingSection:
     title: str
@@ -105,13 +111,13 @@ class Briefing:
     portfolio_summary: PortfolioDecisionSummary | None = None
 
     def to_markdown(self) -> str:
-        lines = [f"# AI 量化选股日报 - {self.date}", ""]
+        lines = [f"# AI 量化选股日报 - {_safe_markdown_text(self.date)}", ""]
         lines.append("**免责声明**: 本报告仅供研究参考，不构成投资建议。")
         lines.append("")
         for section in self.sections:
-            lines.append(f"## {section.title}")
+            lines.append(f"## {_safe_markdown_text(section.title)}")
             lines.append("")
-            lines.append(section.content)
+            lines.append(_safe_markdown_text(section.content))
             lines.append("")
 
         # 添加辩论结果
@@ -121,7 +127,7 @@ class Briefing:
             lines.append("多Agent辩论分析结果：")
             lines.append("")
             for result in self.debate_results[:3]:
-                lines.append(format_debate_result(result))
+                lines.append(_safe_markdown_text(format_debate_result(result)))
                 lines.append("---")
                 lines.append("")
 
@@ -186,7 +192,7 @@ class Briefing:
         )
         lines.extend(
             self._format_summary_block(
-                "作战计划",
+                "复核顺序",
                 self._build_action_items(actionable, top_scores, debate_points),
             )
         )
@@ -197,12 +203,12 @@ class Briefing:
             )
         )
         lines.append("")
-        return "\n".join(lines)
+        return normalize_research_tone("\n".join(lines))
 
     def _format_summary_block(self, title: str, items: list[str]) -> list[str]:
         if not items:
             return [f"### {title}", "- 无", ""]
-        return [f"### {title}", *items, ""]
+        return [f"### {title}", *(_safe_markdown_text(item) for item in items), ""]
 
     @staticmethod
     def _strip_leading_markers(text: str) -> str:
@@ -239,7 +245,7 @@ class Briefing:
                 rationale = "；".join(first.rationale[:2])
                 if rationale:
                     items.append(
-                        f"- 首仓理由: {first.symbol} {first.name} | {rationale}"
+                        f"- 首个纸面参考理由: {first.symbol} {first.name} | {rationale}"
                     )
             if self.portfolio_summary.cash_reserve > 0:
                 items.append(f"- 现金留存: {self.portfolio_summary.cash_reserve:.0%}")
@@ -306,7 +312,7 @@ class Briefing:
             if len(self.portfolio_summary.allocations) > 1:
                 second = self.portfolio_summary.allocations[1]
                 items.append(
-                    f"- 第二顺位: {second.symbol} {second.name} {second.weight:.0%}"
+                    f"- 第二纸面复核顺位: {second.symbol} {second.name} {second.weight:.0%}"
                 )
         if self.portfolio_summary and self.portfolio_summary.strategy_focus:
             items.append(
@@ -324,7 +330,7 @@ class Briefing:
         if self.picks:
             lead_pick = self.picks[0]
             items.append(
-                f"- 首选观察: {_format_pick_with_status(lead_pick, include_score=True)}"
+                f"- 重点观察: {_format_pick_with_status(lead_pick, include_score=True)}"
             )
             next_step = _candidate_next_step_label(lead_pick)
             if next_step:
@@ -344,13 +350,13 @@ class Briefing:
                     f"- 复核节奏: {lead_pick.symbol} {lead_pick.name} | {review_meta}"
                 )
         elif top_scores:
-            items.append(f"- 首选观察: {top_scores[0][0]}({top_scores[0][1]}分)")
+            items.append(f"- 重点观察: {top_scores[0][0]}({top_scores[0][1]}分)")
         elif self.portfolio_summary:
             fallback = (
                 self.portfolio_summary.top_focus or self.portfolio_summary.watchlist
             )
             if fallback:
-                items.append(f"- 首选观察: {fallback[0]}")
+                items.append(f"- 重点观察: {fallback[0]}")
         return items
 
     def _build_risk_items(
@@ -430,7 +436,7 @@ class Briefing:
             return []
         desc = match.group(1)
         if "熊" in desc or "下跌" in desc:
-            return [f"📉 市场态势: {desc}，注意控制仓位"]
+            return [f"📉 市场态势: {desc}，控制纸面暴露"]
         if "盘整" in desc:
             return [f"📊 市场态势: {desc}，关注突破方向"]
         return [f"📈 市场态势: {desc}"]
@@ -859,13 +865,18 @@ class BriefingGenerator:
         picks: list[PickResult],
         circuit_breaker_status: object | None = None,
     ) -> str:
-        env = Environment(loader=FileSystemLoader(str(_TEMPLATE_DIR)))
+        env = Environment(
+            loader=FileSystemLoader(str(_TEMPLATE_DIR)),
+            autoescape=select_autoescape(default_for_string=True, default=True),
+        )
         template = env.get_template("default.md.j2")
         cb_triggered = circuit_breaker_status is not None and getattr(
             circuit_breaker_status, "triggered", False
         )
         cb_reason = (
-            getattr(circuit_breaker_status, "reason", "") if cb_triggered else ""
+            _safe_markdown_text(getattr(circuit_breaker_status, "reason", ""))
+            if cb_triggered
+            else ""
         )
         regime_section = ""
         main_chain_section = ""
@@ -883,21 +894,21 @@ class BriefingGenerator:
         pick_dicts = [
             {
                 "symbol": p.symbol,
-                "name": p.name,
+                "name": _safe_markdown_text(p.name),
                 "score": p.score,
-                "rating": p.rating,
-                "strategies": list(p.strategies),
-                "reasons": list(p.reasons),
+                "rating": _safe_markdown_text(p.rating),
+                "strategies": [_safe_markdown_text(item) for item in p.strategies],
+                "reasons": [_safe_markdown_text(item) for item in p.reasons],
             }
             for p in picks
         ]
         return template.render(
-            date=briefing.date,
+            date=_safe_markdown_text(briefing.date),
             circuit_breaker_triggered=cb_triggered,
             circuit_breaker_reason=cb_reason,
-            main_chain_section=main_chain_section,
-            regime_section=regime_section,
+            main_chain_section=_safe_markdown_text(main_chain_section),
+            regime_section=_safe_markdown_text(regime_section),
             picks=pick_dicts,
-            theme_section=theme_section,
-            next_day_section=next_day_section,
+            theme_section=_safe_markdown_text(theme_section),
+            next_day_section=_safe_markdown_text(next_day_section),
         )

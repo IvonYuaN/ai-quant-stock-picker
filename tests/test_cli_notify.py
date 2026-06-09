@@ -1121,6 +1121,7 @@ def test_run_scheduled_report_downgrades_realtime_tier_when_data_is_prior_trade_
     }
 
     monkeypatch.setattr(cli_mod, "today_shanghai", lambda: date(2026, 6, 5))
+    monkeypatch.setattr("aqsp.freshness.today_shanghai", lambda: date(2026, 6, 5))
     monkeypatch.setattr(
         cli_mod,
         "_check_notification_gate",
@@ -1650,8 +1651,8 @@ def test_run_scheduled_surfaces_snapshot_lifecycle_in_summary_and_notification(
     assert exit_code == 0
     assert seen
     assert "🆕 **新晋候选**: 688981 中芯国际" in report
-    assert "❌ **移出候选**: 600036 招商银行" in report
-    assert "📈 **排名异动**: 300750 #4→#5↓" in report
+    assert "归档移出记录: 600036 招商银行" in report
+    assert "排名记录变化: 300750 #4→#5↓" in report
     assert "- 候选变化: 新增 1 / 移出 1 / 排名异动 1" in seen[0]
     assert "## 候选变化" in seen[0]
     assert "🆕 **新晋候选**: 688981 中芯国际" in seen[0]

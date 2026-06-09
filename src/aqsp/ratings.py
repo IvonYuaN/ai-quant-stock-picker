@@ -2,7 +2,7 @@ from __future__ import annotations
 
 TRADABLE_RATINGS = frozenset({"buy_candidate", "strong_buy_candidate"})
 RATING_LABELS = {
-    "strong_buy_candidate": "重点关注",
+    "strong_buy_candidate": "纸面重点复核",
     "buy_candidate": "观察候选",
     "watch": "候选观察池",
     "avoid": "仅观察",

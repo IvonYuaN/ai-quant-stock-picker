@@ -514,8 +514,9 @@ def test_build_daily_run_notification_surfaces_snapshot_diff_highlights() -> Non
     assert "- 候选变化: 新增 1 / 移出 1 / 排名异动 1" in markdown
     assert "## 候选变化" in markdown
     assert "🆕 **新晋候选**: 688981 中芯国际" in markdown
-    assert "❌ **移出候选**: 600036 招商银行" in markdown
-    assert "📈 **排名异动**: 300750 #4→#5↓" in markdown
+    assert "归档移出记录: 600036 招商银行" in markdown
+    assert "排名记录变化: 300750 #4→#5↓" in markdown
+    assert "❌ **移出候选**" not in markdown
 
 
 def test_build_monitor_notification_summary_mode_is_action_oriented() -> None:
