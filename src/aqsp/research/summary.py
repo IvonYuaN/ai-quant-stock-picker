@@ -85,14 +85,10 @@ def load_research_summary(
     absorption_file = Path(absorption_path)
     strategy_sources_file = Path(strategy_sources_path)
     data_sources_file = Path(data_sources_path)
-    if (
-        not absorption_file.exists()
-        or not strategy_sources_file.exists()
-        or not data_sources_file.exists()
-    ):
+    if not strategy_sources_file.exists() or not data_sources_file.exists():
         return None
 
-    findings = _load_json(absorption_file)
+    findings = _load_json(absorption_file) if absorption_file.exists() else []
     strategy_config = _load_yaml(strategy_sources_file)
     data_config = _load_yaml(data_sources_file)
     if (

@@ -49,6 +49,7 @@ class _ResearchRadarCard:
     title: str
     metrics: tuple[tuple[str, str], ...]
     lines: tuple[str, ...]
+    prereq_lines: tuple[str, ...] = ()
 
 
 def _inject_dashboard_styles() -> None:
@@ -628,6 +629,18 @@ def _inject_dashboard_styles() -> None:
             line-height: 1.55;
             margin-top: 0.16rem;
         }
+        .aqsp-research-prereq {
+            position: relative;
+            margin-top: 0.56rem;
+            padding-top: 0.52rem;
+            border-top: 1px solid rgba(25, 92, 138, 0.12);
+        }
+        .aqsp-research-prereq-line {
+            font-size: 0.84rem;
+            color: #465b68;
+            line-height: 1.48;
+            margin-top: 0.14rem;
+        }
         </style>
         """,
         unsafe_allow_html=True,
@@ -1000,6 +1013,51 @@ def _research_action_label(kind: str) -> str:
     return "数据源" if kind == "data_source" else "策略"
 
 
+def _research_prereq_status_line(summary: ResearchSummary) -> str:
+    if not summary.prereq_items:
+        return "前置条件: 暂无登记项，先按研究 gate 审阅，不自动进入评分。"
+    needs_env = [item for item in summary.prereq_items if item.status == "needs_env"]
+    needs_fixture = [
+        item for item in summary.prereq_items if item.status == "needs_fixture"
+    ]
+    ready = [item for item in summary.prereq_items if item.status == "ready"]
+    parts: list[str] = []
+    if needs_env:
+        names = "、".join(
+            f"{item.name} 缺 {','.join(item.missing_env_vars)}"
+            for item in needs_env[:2]
+        )
+        parts.append(f"🔑 待配置: {names}")
+    if needs_fixture:
+        names = "、".join(item.name for item in needs_fixture[:2])
+        parts.append(f"🧪 待 fixture: {names}")
+    if ready:
+        names = "、".join(item.name for item in ready[:2])
+        parts.append(f"✅ 可推进: {names}")
+    return "前置条件: " + "；".join(parts or ["暂无阻塞记录"])
+
+
+def _research_prereq_action_line(summary: ResearchSummary) -> str:
+    first_item = next(
+        (
+            item
+            for item in summary.prereq_items
+            if item.status in {"needs_env", "needs_fixture"}
+        ),
+        None,
+    )
+    if first_item is None:
+        return "推进口径: 当前只允许做 report-only / shadow / fixture 验证，不直接改主链评分。"
+    action = (
+        first_item.user_action
+        if first_item.status == "needs_env"
+        else first_item.code_action
+    )
+    return (
+        f"推进口径: {first_item.name} | {action or '先补齐验证材料，再评估是否接入。'}"
+    )
+
+
 def _research_radar_card(summary: ResearchSummary | None) -> _ResearchRadarCard:
     if summary is None:
         return _ResearchRadarCard(
@@ -1060,6 +1118,12 @@ def _research_radar_card(summary: ResearchSummary | None) -> _ResearchRadarCard:
                 f"已吸收主题: {topic_names}",
                 pipeline_line,
                 action_line,
+            )
+        ),
+        prereq_lines=_unique_lines(
+            (
+                _research_prereq_status_line(summary),
+                _research_prereq_action_line(summary),
             )
         ),
     )
@@ -3055,6 +3119,16 @@ def _render_research_radar(summary: ResearchSummary | None) -> None:
     line_html = "".join(
         f'<div class="aqsp-research-line">{escape(line)}</div>' for line in card.lines
     )
+    prereq_html = (
+        '<div class="aqsp-research-prereq">'
+        + "".join(
+            f'<div class="aqsp-research-prereq-line">{escape(line)}</div>'
+            for line in card.prereq_lines
+        )
+        + "</div>"
+        if card.prereq_lines
+        else ""
+    )
     st.markdown(
         "\n".join(
             [
@@ -3063,6 +3137,7 @@ def _render_research_radar(summary: ResearchSummary | None) -> None:
                 f'<div class="aqsp-research-title">{escape(card.title)}</div>',
                 f'<div class="aqsp-research-metrics">{metric_html}</div>',
                 line_html,
+                prereq_html,
                 "</div>",
             ]
         ),

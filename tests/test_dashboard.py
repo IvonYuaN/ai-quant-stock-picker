@@ -10,6 +10,7 @@ from aqsp.research.summary import (
     ResearchActionItem,
     ResearchFamilySummary,
     ResearchPipelineSummary,
+    ResearchPrereqItem,
     ResearchSummary,
 )
 from aqsp.web.dashboard import (
@@ -343,6 +344,51 @@ def test_dashboard_research_radar_summarizes_absorption_without_scoring_claims()
     assert "缠论结构语境" in rendered
     assert "只进报告" in rendered
     assert "当前主链评分" not in rendered
+
+
+def test_dashboard_research_radar_surfaces_prereq_blockers() -> None:
+    summary = ResearchSummary(
+        generated_at="",
+        total_findings=0,
+        pipeline_summaries=(),
+        absorbed_families=(),
+        source_candidates=(),
+        next_actions=(),
+        prereq_items=(
+            ResearchPrereqItem(
+                kind="data_source",
+                item_id="tushare",
+                name="Tushare Pro",
+                status="needs_env",
+                missing_env_vars=("TUSHARE_TOKEN",),
+                fixture_hints=("tests/fixtures/tushare_trade_calendar.json",),
+                user_action="在本地 .env 配置 TUSHARE_TOKEN。",
+                code_action="补 PIT fixture。",
+                registry_runtime_ready=False,
+            ),
+            ResearchPrereqItem(
+                kind="strategy",
+                item_id="market_regime_timing_filter",
+                name="大盘择时 / 市场状态过滤",
+                status="needs_fixture",
+                missing_env_vars=(),
+                fixture_hints=("tests/fixtures/regime_index_breadth.csv",),
+                user_action="无需额外账号。",
+                code_action="先做 regime detector v2，只改变过滤标签。",
+                registry_runtime_ready=None,
+            ),
+        ),
+        implemented_family_count=5,
+        report_only_family_count=0,
+        gated_family_count=0,
+    )
+
+    card = _research_radar_card(summary)
+    prereq = "\n".join(card.prereq_lines)
+
+    assert "Tushare Pro 缺 TUSHARE_TOKEN" in prereq
+    assert "大盘择时 / 市场状态过滤" in prereq
+    assert "在本地 .env 配置 TUSHARE_TOKEN" in prereq
 
 
 def test_dashboard_research_radar_has_safe_empty_state_when_summary_missing() -> None:
