@@ -357,6 +357,41 @@ def _inject_dashboard_styles() -> None:
             color: #3b4a58;
             line-height: 1.5;
         }
+        .aqsp-replay-card {
+            position: relative;
+            overflow: hidden;
+            padding: 0.98rem 1.08rem;
+            border-radius: 18px;
+            border: 1px solid rgba(25, 92, 138, 0.16);
+            background:
+                radial-gradient(circle at 8% 12%, rgba(43, 138, 194, 0.16), transparent 25%),
+                radial-gradient(circle at 92% 20%, rgba(88, 150, 122, 0.12), transparent 24%),
+                linear-gradient(135deg, #fffdf4 0%, #f4f8fb 52%, #eef7f3 100%);
+            box-shadow: 0 14px 30px rgba(33, 46, 56, 0.07);
+            margin-bottom: 0.85rem;
+        }
+        .aqsp-replay-kicker {
+            position: relative;
+            font-size: 0.76rem;
+            text-transform: uppercase;
+            letter-spacing: 0.12em;
+            color: #5e7081;
+            margin-bottom: 0.42rem;
+        }
+        .aqsp-replay-title {
+            position: relative;
+            font-size: 1.05rem;
+            font-weight: 760;
+            color: #163247;
+            margin-bottom: 0.46rem;
+        }
+        .aqsp-replay-line {
+            position: relative;
+            font-size: 0.9rem;
+            color: #34495a;
+            line-height: 1.55;
+            margin-top: 0.16rem;
+        }
         .aqsp-ops-card {
             min-height: 174px;
             padding: 1rem 1.05rem;
@@ -2661,7 +2696,7 @@ def _command_center_brief_lines(
 
 
 def _neutral_archive_summary_line(line: str) -> str:
-    clean = re.sub(r"\*\*(.*?)\*\*", r"\1", line).strip()
+    clean = sanitize_archive_text(re.sub(r"\*\*(.*?)\*\*", r"\1", line).strip())
     replacements = (
         (r"^[🎯⭐]\s*首选\s*[:：]\s*", "历史首选记录: "),
         (r"^[❌🚫]\s*移出候选\s*[:：]\s*", "历史移出记录: "),
@@ -2673,6 +2708,161 @@ def _neutral_archive_summary_line(line: str) -> str:
     for pattern, replacement in replacements:
         clean = re.sub(pattern, replacement, clean)
     return clean
+
+
+_DAY_REPLAY_SAFE_KEYWORDS = (
+    "待核对",
+    "不可成交",
+    "阻塞",
+    "等待",
+    "纸面入场",
+    "纸面退出",
+    "纸面持有",
+    "纸面验证",
+)
+
+
+def _sanitize_day_replay_line(line: str) -> str:
+    clean = sanitize_archive_text(re.sub(r"\*\*(.*?)\*\*", r"\1", line).strip())
+    clean = re.sub(
+        r"\bBUY\b\s*[\d,.]*(?:\s*@\s*[\d,.]+)?",
+        "纸面入场记录已回写",
+        clean,
+        flags=re.IGNORECASE,
+    )
+    clean = re.sub(
+        r"\bSELL\b\s*[\d,.]*(?:\s*@\s*[\d,.]+)?",
+        "纸面退出记录已回写",
+        clean,
+        flags=re.IGNORECASE,
+    )
+    replacements = (
+        ("执行顺位", "复核顺位"),
+        ("执行顺序", "复核顺序"),
+        ("执行名单", "复核名单"),
+        ("执行", "复核"),
+        ("新开仓", "纸面新建观察"),
+        ("开仓", "纸面观察"),
+        ("下单", "纸面记录"),
+        ("买入", "纸面入场记录"),
+        ("卖出", "纸面退出记录"),
+    )
+    for source, replacement in replacements:
+        clean = clean.replace(source, replacement)
+    return clean
+
+
+def _day_replay_paper_detail(lines: tuple[str, ...]) -> str:
+    safe_lines = tuple(_sanitize_day_replay_line(line) for line in lines if line)
+    for line in safe_lines:
+        if any(keyword in line for keyword in _DAY_REPLAY_SAFE_KEYWORDS[:4]):
+            return line
+    for line in safe_lines:
+        if (
+            any(keyword in line for keyword in _DAY_REPLAY_SAFE_KEYWORDS)
+            and "回写" not in line
+        ):
+            return line
+    return safe_lines[0] if safe_lines else ""
+
+
+def _day_replay_next_step_line(
+    *,
+    task_view,
+    overview: DashboardDateOverview,
+    paper_summary: DashboardPaperSummary,
+) -> str:
+    if paper_summary.pending_entries or paper_summary.not_executable:
+        detail = _day_replay_paper_detail(paper_summary.action_summary_lines)
+        if not detail:
+            detail = (
+                f"待核对 {paper_summary.pending_entries} / "
+                f"阻塞 {paper_summary.not_executable}"
+            )
+        return f"🧪 下一步: 先核对纸面验证，{detail}"
+    if overview.blocked_total:
+        blocker = _sanitize_day_replay_line(
+            overview.blocker_headline or "回到候选复盘核对卡点。"
+        )
+        return (
+            "⚠️ 下一步: 先处理阻塞，"
+            f"{blocker}"
+        )
+    if task_view.next_day_focus_lines:
+        return (
+            "📚 归档回看: 原报告下一交易日重点，"
+            f"{_sanitize_day_replay_line(task_view.next_day_focus_lines[0])}"
+        )
+    if task_view.review_lines:
+        return f"🧭 下一步: {_sanitize_day_replay_line(task_view.review_lines[0])}"
+    return "🧭 下一步: 先看候选复盘，不为了凑单推进。"
+
+
+def _day_replay_digest_lines(
+    *,
+    task_view,
+    overview: DashboardDateOverview,
+    paper_summary: DashboardPaperSummary,
+    same_day_rows: tuple[DashboardSameDayTaskRow, ...],
+) -> tuple[str, ...]:
+    phase_text = " → ".join(row.phase_label for row in same_day_rows[:5])
+    if not phase_text:
+        phase_text = overview.workflow_summary.replace("当日流程:", "").strip()
+    if not phase_text:
+        phase_text = f"{task_view.task_label} 当前视角"
+
+    conclusion = _join_display_parts(
+        "📍 当日结论",
+        f"{overview.actionable_total} 待复核",
+        f"{overview.watch_total} 观察",
+        f"{overview.blocked_total} 阻塞",
+    )
+    workflow = _join_display_parts(
+        "🧩 任务回放",
+        phase_text,
+        f"当前停在 {task_view.task_label}",
+    )
+    next_step = _day_replay_next_step_line(
+        task_view=task_view,
+        overview=overview,
+        paper_summary=paper_summary,
+    )
+    archive = _join_display_parts(
+        "🗂 全日覆盖",
+        _report_archive_status(task_view),
+        sanitize_archive_text(overview.archive_summary),
+    )
+    return _unique_lines((conclusion, workflow, next_step, archive))
+
+
+def _render_day_replay_digest(
+    *,
+    task_view,
+    overview: DashboardDateOverview,
+    paper_summary: DashboardPaperSummary,
+    same_day_rows: tuple[DashboardSameDayTaskRow, ...],
+) -> None:
+    lines = _day_replay_digest_lines(
+        task_view=task_view,
+        overview=overview,
+        paper_summary=paper_summary,
+        same_day_rows=same_day_rows,
+    )
+    st.markdown(
+        "\n".join(
+            [
+                '<div class="aqsp-replay-card">',
+                '<div class="aqsp-replay-kicker">Day Replay</div>',
+                f'<div class="aqsp-replay-title">{escape(review_date_label(task_view))} 一眼回放</div>',
+                *[
+                    f'<div class="aqsp-replay-line">{escape(line)}</div>'
+                    for line in lines[:4]
+                ],
+                "</div>",
+            ]
+        ),
+        unsafe_allow_html=True,
+    )
 
 
 def _render_command_center(
@@ -6888,7 +7078,12 @@ def main() -> None:
         _render_task_workbench(task_snapshots, signal_date=review_date)
 
     if workspace == "决策首页":
-        _render_command_center(task_view, date_overview, task_view.summary_lines)
+        _render_day_replay_digest(
+            task_view=task_view,
+            overview=date_overview,
+            paper_summary=paper_summary,
+            same_day_rows=same_day_rows,
+        )
         _render_home_brief(
             task_view=task_view,
             overview=date_overview,
@@ -6897,13 +7092,15 @@ def main() -> None:
             spotlights=same_day_spotlights,
             debates=same_day_debates,
         )
-        _render_home_reading_order(
-            task_view=task_view,
-            overview=date_overview,
-            paper_summary=paper_summary,
-            spotlights=same_day_spotlights,
-            debates=same_day_debates,
-        )
+        with st.expander("展开推进细节", expanded=False):
+            _render_command_center(task_view, date_overview, task_view.summary_lines)
+            _render_home_reading_order(
+                task_view=task_view,
+                overview=date_overview,
+                paper_summary=paper_summary,
+                spotlights=same_day_spotlights,
+                debates=same_day_debates,
+            )
         _render_research_radar(research_summary)
         _render_home_task_board(
             rows=same_day_rows,

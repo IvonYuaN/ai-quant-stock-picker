@@ -18,6 +18,10 @@ ARCHIVE_ACTION_REPLACEMENTS: tuple[tuple[str, str], ...] = (
     ("首选标的", "纸面重点对象"),
     ("首选观察", "重点观察"),
     ("新开仓", "纸面新建观察"),
+    ("开仓", "纸面观察"),
+    ("平仓", "纸面退出记录"),
+    ("买入", "纸面入场记录"),
+    ("卖出", "纸面退出记录"),
     ("参考买点", "参考价"),
     ("买点", "参考价"),
     ("止盈", "观察目标"),
@@ -30,6 +34,18 @@ ARCHIVE_ACTION_REPLACEMENTS: tuple[tuple[str, str], ...] = (
 def sanitize_archive_text(text: str) -> str:
     """Neutralize archived action words without rewriting source files."""
     sanitized = text
+    sanitized = re.sub(
+        r"\bBUY\b\s*[\d,.]*(?:\s*@\s*[\d,.]+)?",
+        "纸面入场记录",
+        sanitized,
+        flags=re.IGNORECASE,
+    )
+    sanitized = re.sub(
+        r"\bSELL\b\s*[\d,.]*(?:\s*@\s*[\d,.]+)?",
+        "纸面退出记录",
+        sanitized,
+        flags=re.IGNORECASE,
+    )
     sanitized = re.sub(r"(?<![不无])可执行主链", "纸面主链复核", sanitized)
     sanitized = re.sub(r"(?<![不无])可执行标的", "纸面复核对象", sanitized)
     sanitized = re.sub(r"(?<![不无])可执行", "纸面复核", sanitized)

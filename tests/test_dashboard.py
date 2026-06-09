@@ -36,6 +36,8 @@ from aqsp.web.dashboard import (
     _candidate_linkage_context,
     _candidate_symbol_order,
     _command_center_brief_lines,
+    _day_replay_digest_lines,
+    _day_replay_next_step_line,
     _archive_debate_evidence_lines,
     _debate_evidence_composition_line,
     _debate_brief_cards,
@@ -2094,6 +2096,8 @@ def test_dashboard_sanitizes_raw_archive_action_words_without_rewriting_source()
         "- 配仓建议: 默认轻仓，仓位建议 10%。\n"
         "- 新开仓: 等待参考买点，止损 1420，止盈 1680\n"
         "- 执行名单: 禁止下单演示\n"
+        "- 纸面回写: 600519 | BUY 100 @ 1500 / SELL 100 @ 1520\n"
+        "- 买入计划后再卖出，开仓和平仓都只可回看\n"
     )
 
     sanitized = _sanitize_raw_report_markdown(raw_markdown)
@@ -2115,6 +2119,13 @@ def test_dashboard_sanitizes_raw_archive_action_words_without_rewriting_source()
         "执行顺序",
         "下单",
         "今日建议",
+        "BUY",
+        "SELL",
+        "买入计划",
+        "买入",
+        "卖出",
+        "开仓",
+        "平仓",
     ):
         assert forbidden not in sanitized
     assert "历史回看" in sanitized
@@ -3168,6 +3179,454 @@ def test_dashboard_top_navigation_context_falls_back_to_snapshot_when_same_day_m
         "队列: 已落盘 2 / 待跟踪 1 / 待补档 0",
         "焦点: 盘前简报提示关注成交额阈值",
     )
+
+
+def test_dashboard_day_replay_digest_compresses_same_day_flow_for_humans() -> None:
+    from aqsp.web.data_provider import (
+        DashboardDateOverview,
+        DashboardPaperSummary,
+        DashboardSameDayTaskRow,
+    )
+
+    class _TaskView:
+        task_label = "主链推荐"
+        selected_date = "2026-06-05"
+        latest_date = "2026-06-05"
+        next_day_focus_lines = ("历史回看: 先确认量能延续。",)
+        review_lines = ("安排复核: 600519 贵州茅台",)
+        report_markdown = "# archived"
+        report_summary_lines = ("历史报告摘要: 主线偏谨慎。",)
+        runtime_lines = ()
+
+    overview = DashboardDateOverview(
+        signal_date="2026-06-05",
+        task_count=3,
+        actionable_total=2,
+        watch_total=1,
+        blocked_total=0,
+        top_task_label="主链推荐",
+        top_headline="主链有 2 个待复核",
+        blocker_headline="",
+        focus_headline="600519 贵州茅台 | 复核量能",
+        workflow_summary="当日流程: 盘前主链 -> 早盘观察 -> 尾盘确认",
+        archive_summary="本日共覆盖 3 个阶段；主焦点在主链推荐；全链路无明显阻塞。",
+    )
+    rows = (
+        DashboardSameDayTaskRow(
+            signal_date="2026-06-05",
+            task_id="main_chain",
+            task_label="主链推荐",
+            phase_order=1,
+            phase_label="盘前主链",
+            phase_summary="先确认主推候选",
+            status_label="有推荐",
+            headline="主链有 2 个待复核",
+            candidate_count=2,
+            actionable_count=2,
+            watch_count=0,
+            blocked_count=0,
+        ),
+        DashboardSameDayTaskRow(
+            signal_date="2026-06-05",
+            task_id="closing_premium",
+            task_label="尾盘策略",
+            phase_order=3,
+            phase_label="尾盘确认",
+            phase_summary="确认隔夜价值",
+            status_label="观察中",
+            headline="尾盘继续观察",
+            candidate_count=1,
+            actionable_count=0,
+            watch_count=1,
+            blocked_count=0,
+        ),
+    )
+    paper_summary = DashboardPaperSummary(
+        signal_date="2026-06-05",
+        open_positions=0,
+        pending_entries=0,
+        not_executable=0,
+        closed_trades=0,
+        open_position_lines=(),
+        event_lines=(),
+        action_summary_lines=(),
+    )
+
+    lines = _day_replay_digest_lines(
+        task_view=_TaskView(),
+        overview=overview,
+        paper_summary=paper_summary,
+        same_day_rows=rows,
+    )
+
+    assert lines[0] == "📍 当日结论 | 2 待复核 | 1 观察 | 0 阻塞"
+    assert lines[1] == "🧩 任务回放 | 盘前主链 → 尾盘确认 | 当前停在 主链推荐"
+    assert lines[2] == "📚 归档回看: 原报告下一交易日重点，历史回看: 先确认量能延续。"
+    assert lines[3].startswith("🗂 全日覆盖 | 已归档")
+    assert len(lines) == 4
+
+
+def test_dashboard_day_replay_digest_prioritizes_paper_reality() -> None:
+    from aqsp.web.data_provider import DashboardDateOverview, DashboardPaperSummary
+
+    class _TaskView:
+        task_label = "主链推荐"
+        selected_date = "2026-06-05"
+        latest_date = "2026-06-05"
+        next_day_focus_lines = ("历史回看: 稍后看。",)
+        review_lines = ()
+        report_markdown = ""
+        report_summary_lines = ()
+        runtime_lines = ()
+
+    overview = DashboardDateOverview(
+        signal_date="2026-06-05",
+        task_count=2,
+        actionable_total=0,
+        watch_total=1,
+        blocked_total=1,
+        top_task_label="主链推荐",
+        top_headline="当前无主推",
+        blocker_headline="000338 潍柴动力 | 流动性不足",
+        focus_headline="000338 潍柴动力 | 流动性不足",
+        workflow_summary="当日流程: 盘前主链 -> 收盘复盘",
+        archive_summary="本日共覆盖 2 个阶段；主焦点在主链推荐；主要卡在主链推荐。",
+    )
+    paper_summary = DashboardPaperSummary(
+        signal_date="2026-06-05",
+        open_positions=0,
+        pending_entries=1,
+        not_executable=1,
+        closed_trades=0,
+        open_position_lines=(),
+        event_lines=(),
+        action_summary_lines=("600519 贵州茅台 | 等待纸面入场确认",),
+    )
+
+    assert _day_replay_next_step_line(
+        task_view=_TaskView(),
+        overview=overview,
+        paper_summary=paper_summary,
+    ) == "🧪 下一步: 先核对纸面验证，600519 贵州茅台 | 等待纸面入场确认"
+
+    lines = _day_replay_digest_lines(
+        task_view=_TaskView(),
+        overview=overview,
+        paper_summary=paper_summary,
+        same_day_rows=(),
+    )
+
+    assert lines[2] == "🧪 下一步: 先核对纸面验证，600519 贵州茅台 | 等待纸面入场确认"
+
+
+def test_dashboard_day_replay_digest_neutralizes_raw_paper_writeback() -> None:
+    from aqsp.web.data_provider import DashboardDateOverview, DashboardPaperSummary
+
+    class _TaskView:
+        task_label = "纸面验证"
+        selected_date = "2026-06-05"
+        latest_date = "2026-06-05"
+        next_day_focus_lines = ()
+        review_lines = ()
+        report_markdown = ""
+        report_summary_lines = ()
+        runtime_lines = ()
+
+    overview = DashboardDateOverview(
+        signal_date="2026-06-05",
+        task_count=1,
+        actionable_total=1,
+        watch_total=0,
+        blocked_total=0,
+        top_task_label="纸面验证",
+        top_headline="纸面事件待复核",
+        blocker_headline="",
+        focus_headline="600519 贵州茅台 | 纸面验证",
+        workflow_summary="当日流程: 纸面验证",
+        archive_summary="本日共覆盖 1 个阶段。",
+    )
+    paper_summary = DashboardPaperSummary(
+        signal_date="2026-06-05",
+        open_positions=0,
+        pending_entries=1,
+        not_executable=0,
+        closed_trades=0,
+        open_position_lines=(),
+        event_lines=(),
+        action_summary_lines=(
+            "最近纸面回写: 600519 贵州茅台 | BUY 100 @ 1500",
+            "纸面入场待核对 1 笔，等待下一交易日开盘价。",
+        ),
+    )
+
+    line = _day_replay_next_step_line(
+        task_view=_TaskView(),
+        overview=overview,
+        paper_summary=paper_summary,
+    )
+
+    assert line == "🧪 下一步: 先核对纸面验证，纸面入场待核对 1 笔，等待下一交易日开盘价。"
+    assert "BUY" not in line
+    assert "SELL" not in line
+    assert "下单" not in line
+
+
+def test_dashboard_day_replay_digest_neutralizes_archived_focus_words() -> None:
+    from aqsp.web.data_provider import DashboardDateOverview, DashboardPaperSummary
+
+    class _TaskView:
+        task_label = "归档回看"
+        selected_date = "2026-06-05"
+        latest_date = "2026-06-05"
+        next_day_focus_lines = ("今日建议: 立即买入/下单，按执行顺位新开仓",)
+        review_lines = ()
+        report_markdown = "# archived"
+        report_summary_lines = ("历史报告摘要: 主线偏谨慎。",)
+        runtime_lines = ()
+
+    overview = DashboardDateOverview(
+        signal_date="2026-06-05",
+        task_count=1,
+        actionable_total=0,
+        watch_total=1,
+        blocked_total=0,
+        top_task_label="归档回看",
+        top_headline="历史归档",
+        blocker_headline="",
+        focus_headline="",
+        workflow_summary="当日流程: 收盘复盘",
+        archive_summary="本日共覆盖 1 个阶段。",
+    )
+    paper_summary = DashboardPaperSummary(
+        signal_date="2026-06-05",
+        open_positions=0,
+        pending_entries=0,
+        not_executable=0,
+        closed_trades=0,
+        open_position_lines=(),
+        event_lines=(),
+        action_summary_lines=(),
+    )
+
+    line = _day_replay_next_step_line(
+        task_view=_TaskView(),
+        overview=overview,
+        paper_summary=paper_summary,
+    )
+
+    assert line.startswith("📚 归档回看:")
+    for forbidden in ("📚 下一步", "今日建议", "立即买入", "下单", "执行顺位", "新开仓"):
+        assert forbidden not in line
+
+
+def test_dashboard_day_replay_digest_neutralizes_archive_summary_words() -> None:
+    from aqsp.web.data_provider import DashboardDateOverview, DashboardPaperSummary
+
+    class _TaskView:
+        task_label = "归档回看"
+        selected_date = "2026-06-05"
+        latest_date = "2026-06-05"
+        next_day_focus_lines = ()
+        review_lines = ()
+        report_markdown = "# archived"
+        report_summary_lines = ()
+        runtime_lines = ()
+
+    overview = DashboardDateOverview(
+        signal_date="2026-06-05",
+        task_count=1,
+        actionable_total=0,
+        watch_total=1,
+        blocked_total=0,
+        top_task_label="归档回看",
+        top_headline="历史归档",
+        blocker_headline="",
+        focus_headline="",
+        workflow_summary="当日流程: 收盘复盘",
+        archive_summary="今日建议: 立即买入，执行名单等待下单。",
+    )
+    paper_summary = DashboardPaperSummary(
+        signal_date="2026-06-05",
+        open_positions=0,
+        pending_entries=0,
+        not_executable=0,
+        closed_trades=0,
+        open_position_lines=(),
+        event_lines=(),
+        action_summary_lines=(),
+    )
+
+    lines = _day_replay_digest_lines(
+        task_view=_TaskView(),
+        overview=overview,
+        paper_summary=paper_summary,
+        same_day_rows=(),
+    )
+
+    assert lines[3].startswith("🗂 全日覆盖 | 已归档")
+    for forbidden in ("今日建议", "立即买入", "执行名单", "下单"):
+        assert forbidden not in lines[3]
+
+
+def test_dashboard_day_replay_digest_prioritizes_blockers_before_archive() -> None:
+    from aqsp.web.data_provider import DashboardDateOverview, DashboardPaperSummary
+
+    class _TaskView:
+        task_label = "主链推荐"
+        selected_date = "2026-06-05"
+        latest_date = "2026-06-05"
+        next_day_focus_lines = ("历史回看: 先确认量能延续。",)
+        review_lines = ("安排复核: 600519 贵州茅台",)
+        report_markdown = "# archived"
+        report_summary_lines = ("历史报告摘要: 主线偏谨慎。",)
+        runtime_lines = ()
+
+    overview = DashboardDateOverview(
+        signal_date="2026-06-05",
+        task_count=2,
+        actionable_total=0,
+        watch_total=1,
+        blocked_total=1,
+        top_task_label="主链推荐",
+        top_headline="当前无主推",
+        blocker_headline="000338 潍柴动力 | 流动性不足",
+        focus_headline="000338 潍柴动力 | 流动性不足",
+        workflow_summary="当日流程: 盘前主链 -> 收盘复盘",
+        archive_summary="本日共覆盖 2 个阶段；主焦点在主链推荐；主要卡在主链推荐。",
+    )
+    paper_summary = DashboardPaperSummary(
+        signal_date="2026-06-05",
+        open_positions=0,
+        pending_entries=0,
+        not_executable=0,
+        closed_trades=0,
+        open_position_lines=(),
+        event_lines=(),
+        action_summary_lines=(),
+    )
+
+    assert _day_replay_next_step_line(
+        task_view=_TaskView(),
+        overview=overview,
+        paper_summary=paper_summary,
+    ) == "⚠️ 下一步: 先处理阻塞，000338 潍柴动力 | 流动性不足"
+
+
+def test_dashboard_day_replay_digest_neutralizes_review_action_words() -> None:
+    from aqsp.web.data_provider import DashboardDateOverview, DashboardPaperSummary
+
+    class _TaskView:
+        task_label = "主链推荐"
+        selected_date = "2026-06-05"
+        latest_date = "2026-06-05"
+        next_day_focus_lines = ()
+        review_lines = ("执行顺位: 新开仓/下单/买入 600519",)
+        report_markdown = ""
+        report_summary_lines = ()
+        runtime_lines = ()
+
+    overview = DashboardDateOverview(
+        signal_date="2026-06-05",
+        task_count=1,
+        actionable_total=1,
+        watch_total=0,
+        blocked_total=0,
+        top_task_label="主链推荐",
+        top_headline="待复核 1 个",
+        blocker_headline="",
+        focus_headline="600519 贵州茅台 | 待复核",
+        workflow_summary="当日流程: 主链推荐",
+        archive_summary="本日共覆盖 1 个阶段。",
+    )
+    paper_summary = DashboardPaperSummary(
+        signal_date="2026-06-05",
+        open_positions=0,
+        pending_entries=0,
+        not_executable=0,
+        closed_trades=0,
+        open_position_lines=(),
+        event_lines=(),
+        action_summary_lines=(),
+    )
+
+    line = _day_replay_next_step_line(
+        task_view=_TaskView(),
+        overview=overview,
+        paper_summary=paper_summary,
+    )
+
+    assert line == "🧭 下一步: 复核顺位: 纸面新建观察/纸面记录/纸面入场记录 600519"
+    assert "执行顺位" not in line
+    assert "新开仓" not in line
+    assert "下单" not in line
+    assert "买入" not in line
+
+
+def test_dashboard_day_replay_digest_falls_back_when_same_day_rows_are_empty() -> None:
+    from aqsp.web.data_provider import DashboardDateOverview, DashboardPaperSummary
+
+    class _TaskView:
+        task_label = "简报回看"
+        selected_date = "2026-06-05"
+        latest_date = "2026-06-05"
+        next_day_focus_lines = ()
+        review_lines = ()
+        report_markdown = ""
+        report_summary_lines = ()
+        runtime_lines = ()
+
+    paper_summary = DashboardPaperSummary(
+        signal_date="2026-06-05",
+        open_positions=0,
+        pending_entries=0,
+        not_executable=0,
+        closed_trades=0,
+        open_position_lines=(),
+        event_lines=(),
+        action_summary_lines=(),
+    )
+    overview = DashboardDateOverview(
+        signal_date="2026-06-05",
+        task_count=1,
+        actionable_total=0,
+        watch_total=0,
+        blocked_total=0,
+        top_task_label="简报回看",
+        top_headline="简报已落盘",
+        blocker_headline="",
+        focus_headline="",
+        workflow_summary="当日流程: 收盘复盘 -> 次日预案",
+        archive_summary="",
+    )
+
+    lines = _day_replay_digest_lines(
+        task_view=_TaskView(),
+        overview=overview,
+        paper_summary=paper_summary,
+        same_day_rows=(),
+    )
+    assert lines[1] == "🧩 任务回放 | 收盘复盘 -> 次日预案 | 当前停在 简报回看"
+
+    empty_overview = DashboardDateOverview(
+        signal_date="2026-06-05",
+        task_count=0,
+        actionable_total=0,
+        watch_total=0,
+        blocked_total=0,
+        top_task_label="",
+        top_headline="",
+        blocker_headline="",
+        focus_headline="",
+        workflow_summary="",
+        archive_summary="",
+    )
+    fallback_lines = _day_replay_digest_lines(
+        task_view=_TaskView(),
+        overview=empty_overview,
+        paper_summary=paper_summary,
+        same_day_rows=(),
+    )
+    assert fallback_lines[1] == "🧩 任务回放 | 简报回看 当前视角 | 当前停在 简报回看"
 
 
 def test_dashboard_workspace_context_brief_distinguishes_review_sources_and_execution_pressure() -> (
