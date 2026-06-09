@@ -197,8 +197,12 @@ def test_report_renders_final_decision_board_first() -> None:
 
     assert "## 最终决策看板" in markdown
     assert "- PM主裁决: 上调 1 / 降级 0 / 维持 0" in markdown
-    assert "- 重点关注: 600900 长江电力" in markdown
-    assert "- Top 1: 600900 长江电力 | 观察候选 | 新晋 | 评分 76 | PM 上调优先级" in markdown
+    assert "- 观察重点: 600900 长江电力" in markdown
+    assert "- 重点关注: 600900 长江电力" not in markdown
+    assert (
+        "- Top 1: 600900 长江电力 | 观察候选 | 新晋 | 评分 76 | PM 上调优先级"
+        in markdown
+    )
     assert "PM依据: 多Agent辩论支持上调优先级" in markdown
     assert "- 决策: 观察候选 | 新晋 | 评分 76.0" in markdown
     assert markdown.index("## 最终决策看板") < markdown.index("## 1. 600900 长江电力")
@@ -293,6 +297,81 @@ def test_report_renders_allocation_guidance_when_summary_provided() -> None:
     assert "- 配置说明: 单票上限 20%；信号强度不足时提高现金留存" in markdown
 
 
+def test_report_keeps_actionable_focus_label_when_allocations_exist() -> None:
+    pick = PickResult(
+        symbol="600900",
+        name="长江电力",
+        date="2026-05-29",
+        close=27.75,
+        score=76,
+        rating="strong_buy_candidate",
+        entry_type="relative_strength",
+        ideal_buy=27.75,
+        stop_loss=26.1,
+        take_profit=31.0,
+        position="30%-50%",
+        reasons=("趋势保持",),
+    )
+
+    markdown = to_markdown(
+        [pick],
+        portfolio_summary=PortfolioDecisionSummary(
+            promote_count=1,
+            downgrade_count=0,
+            keep_count=0,
+            top_focus=("600900 长江电力",),
+            watchlist=(),
+            allocations=(
+                PortfolioAllocation(
+                    symbol="600900",
+                    name="长江电力",
+                    weight=0.2,
+                    rationale=("主链评分 76.0",),
+                ),
+            ),
+            cash_reserve=0.8,
+            allocation_note="",
+        ),
+    )
+
+    assert "- 重点关注: 600900 长江电力" in markdown
+    assert "- 观察重点: 600900 长江电力" not in markdown
+
+
+def test_report_labels_no_allocation_focus_as_observation() -> None:
+    pick = PickResult(
+        symbol="000001",
+        name="平安银行",
+        date="2026-06-09",
+        close=11.07,
+        score=85,
+        rating="buy_candidate",
+        entry_type="trend_pullback",
+        ideal_buy=11.07,
+        stop_loss=10.74,
+        take_profit=12.01,
+        position="watch",
+        reasons=("短中期均线多头",),
+    )
+
+    markdown = to_markdown(
+        [pick],
+        portfolio_summary=PortfolioDecisionSummary(
+            promote_count=0,
+            downgrade_count=1,
+            keep_count=0,
+            top_focus=("000001 平安银行",),
+            watchlist=("000001 平安银行",),
+            allocations=(),
+            cash_reserve=1.0,
+            allocation_note="今日无可执行主链，建议保留现金等待下一轮信号。",
+        ),
+    )
+
+    assert "- 观察重点: 000001 平安银行" in markdown
+    assert "- 重点关注: 000001 平安银行" not in markdown
+
+
 def test_report_renders_debate_score_change_when_available() -> None:
     from aqsp.briefing.debate import DebateResult
 
@@ -360,11 +439,78 @@ def test_report_hides_non_promote_portfolio_section_below_pick_detail() -> None:
     )
 
     assert "## 1. 600900 长江电力" in markdown
-    assert "- Top 1: 600900 长江电力 | 候选观察池 | 评分 76 | PM 降级观察" in markdown
+    assert "- Top 1: 600900 长江电力 | 仅观察 | 评分 76 | PM 降级观察" in markdown
     detail_section = markdown.split("## 1. 600900 长江电力", maxsplit=1)[1]
     assert "### Portfolio Manager" in detail_section
     assert "- 最终动作: 降级观察" in detail_section
     assert "板块集中度过高，压低公用事业暴露" in detail_section
+
+
+def test_report_downgraded_pick_uses_observation_label_even_if_original_rating_buy() -> (
+    None
+):
+    pick = PickResult(
+        symbol="000001",
+        name="平安银行",
+        date="2026-06-09",
+        close=11.07,
+        score=85,
+        rating="buy_candidate",
+        entry_type="trend_pullback",
+        ideal_buy=11.07,
+        stop_loss=10.74,
+        take_profit=12.01,
+        position="watch",
+        metrics={"candidate_status": "延续上升"},
+    )
+
+    markdown = to_markdown(
+        [pick],
+        portfolio_decisions=[
+            PortfolioDecision(
+                symbol="000001",
+                action="downgrade",
+                score_delta=-4.0,
+                reasons=("板块集中度过高，压低银行暴露",),
+            )
+        ],
+    )
+
+    assert "- Top 1: 000001 平安银行 | 仅观察 | 延续上升" in markdown
+    assert "- 决策: 仅观察 | 延续上升 | 评分 85.0" in markdown
+    assert "重点关注 | 延续上升" not in markdown
+
+
+def test_report_formats_string_portfolio_reasons_with_separator() -> None:
+    pick = PickResult(
+        symbol="600036",
+        name="招商银行",
+        date="2026-06-09",
+        close=38.55,
+        score=56,
+        rating="avoid",
+        entry_type="trend_pullback",
+        ideal_buy=38.55,
+        stop_loss=37.55,
+        take_profit=42.04,
+        position="watch",
+    )
+
+    markdown = to_markdown(
+        [pick],
+        portfolio_decisions=[
+            PortfolioDecision(
+                symbol="600036",
+                action="downgrade",
+                score_delta=-7.0,
+                reasons=(
+                    "板块集中度过高，压低银行暴露与前序候选高相关，降低组合拥挤风险"
+                ),
+            )
+        ],
+    )
+
+    assert "板块集中度过高，压低银行暴露；与前序候选高相关" in markdown
 
 
 def test_report_avoids_repeating_symbol_as_name() -> None:

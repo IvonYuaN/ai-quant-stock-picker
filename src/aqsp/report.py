@@ -37,6 +37,14 @@ def _resolve_decision_label(pick: PickResult) -> str:
     return rating_label(pick.rating)
 
 
+def _resolve_display_decision_label(pick: PickResult, decision: Any | None) -> str:
+    if getattr(decision, "action", "") == "downgrade":
+        return rating_label("avoid")
+    if pick.metrics.get("portfolio_action") == "downgrade":
+        return rating_label("avoid")
+    return _resolve_decision_label(pick)
+
+
 def _resolve_portfolio_action_label(action: str) -> str:
     return portfolio_action_label(action)
 
@@ -74,6 +82,28 @@ def _format_allocation_rationale(item: Any) -> str:
     return "；".join(str(part) for part in rationale[:3])
 
 
+def _normalize_reason_text(reason: object) -> str:
+    text = str(reason).strip()
+    if not text:
+        return ""
+    for marker in ("与前序候选高相关", "多Agent辩论偏谨慎", "多Agent辩论支持"):
+        if marker in text and f"；{marker}" not in text and not text.startswith(marker):
+            text = text.replace(marker, f"；{marker}", 1)
+    return text
+
+
+def _format_reason_list(reasons: Any, *, limit: int | None = None) -> str:
+    if not reasons:
+        return ""
+    raw_items = (reasons,) if isinstance(reasons, str) else tuple(reasons)
+    items = tuple(
+        item for item in (_normalize_reason_text(item) for item in raw_items) if item
+    )
+    if limit is not None:
+        items = items[:limit]
+    return "；".join(items)
+
+
 def _format_final_decision_board(
     picks: list[PickResult],
     decision_map: dict[str, Any],
@@ -108,8 +138,13 @@ def _format_final_decision_board(
                 )
             )
         if getattr(portfolio_summary, "top_focus", ()):
+            focus_label = (
+                "重点关注"
+                if getattr(portfolio_summary, "allocations", ())
+                else "观察重点"
+            )
             lines.append(
-                "- 重点关注: "
+                f"- {focus_label}: "
                 + "、".join(str(item) for item in portfolio_summary.top_focus)
             )
         if getattr(portfolio_summary, "watchlist", ()):
@@ -166,7 +201,7 @@ def _format_final_decision_board(
         action = getattr(decision, "action", "keep") if decision is not None else "keep"
         action_label = _resolve_portfolio_action_label(action)
         pm_reasons = getattr(decision, "reasons", ()) if decision is not None else ()
-        label = _resolve_decision_label(pick)
+        label = _resolve_display_decision_label(pick, decision)
         status = _candidate_status(pick)
         blocker = _candidate_blocker(pick)
         next_step = _candidate_next_step(pick)
@@ -184,9 +219,12 @@ def _format_final_decision_board(
         if next_step:
             lines.append(f"  下一步: {next_step}")
         if review_priority or review_window:
-            lines.append("  复核: " + format_review_meta(review_priority, review_window))
-        if pm_reasons and tuple(pm_reasons) != ("保持原排序",):
-            lines.append("  PM依据: " + "；".join(str(item) for item in pm_reasons[:2]))
+            lines.append(
+                "  复核: " + format_review_meta(review_priority, review_window)
+            )
+        pm_reason_text = _format_reason_list(pm_reasons, limit=2)
+        if pm_reason_text and pm_reason_text != "保持原排序":
+            lines.append("  PM依据: " + pm_reason_text)
     lines.append("")
     return lines
 
@@ -207,7 +245,7 @@ def _format_portfolio_decision(decision: Any) -> str:
         f"- 分数调整: {delta:+.1f}",
     ]
     if reasons:
-        lines.append("- 决策依据: " + "；".join(str(item) for item in reasons))
+        lines.append("- 决策依据: " + _format_reason_list(reasons))
     return "\n".join(lines)
 
 
@@ -286,7 +324,8 @@ def to_markdown(
         next_step = _candidate_next_step(pick)
         review_window = _candidate_review_window(pick)
         review_priority = _review_priority_label(_candidate_review_priority(pick))
-        decision_text = _resolve_decision_label(pick)
+        decision = decision_map.get(pick.symbol)
+        decision_text = _resolve_display_decision_label(pick, decision)
         if status:
             decision_text += f" | {status}"
         lines.extend(
@@ -311,7 +350,8 @@ def to_markdown(
         if review_priority or review_window:
             lines.insert(
                 len(lines) - 1,
-                "- 复核优先级/时机: " + format_review_meta(review_priority, review_window),
+                "- 复核优先级/时机: "
+                + format_review_meta(review_priority, review_window),
             )
         if pick.symbol in debate_map:
             lines.append(_format_debate_result(debate_map[pick.symbol]))
