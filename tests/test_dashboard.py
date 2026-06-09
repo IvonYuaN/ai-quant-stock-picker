@@ -73,6 +73,7 @@ from aqsp.web.dashboard import (
     _resolve_task_for_date,
     _report_archive_status,
     _raw_report_boundary_lines,
+    _research_path_steps,
     _sanitize_raw_report_markdown,
     _resolve_workspace_symbol,
     _signal_evidence_context,
@@ -2816,7 +2817,7 @@ def test_dashboard_workspace_focus_helpers_use_review_fallback_for_debate_only_s
         execution_focus=execution_focus,
     )
     assert focus_lines[:2] == (
-        "动作 / 状态: 待独立验证 / 等待下一次任务确认",
+        "复核状态: 待独立验证 / 等待下一次任务确认",
         "辩论调整分（非选股评分）: 82.0",
     )
     assert focus_lines[2] == "验证动作: 等待下一次任务或纸面验证链路补充独立证据。"
@@ -3768,6 +3769,72 @@ def test_dashboard_workspace_context_brief_uses_blocked_review_language_when_car
     assert title == "阻塞卡点回看"
     assert lines == ("当前仍受研究阻塞影响。", "先核对卡点、复核条件和复核窗口。")
     assert tone == "blocked"
+
+
+def test_dashboard_research_path_steps_connect_review_paper_and_archive_safely() -> (
+    None
+):
+    from aqsp.web.data_provider import DashboardCandidateCard
+
+    class _TaskView:
+        report_markdown = "# archived"
+        report_summary_lines = ("今日建议: 立即买入 000338",)
+        next_day_focus_lines = ("执行名单: 000338 等待下单",)
+        runtime_lines = ()
+
+    card = DashboardCandidateCard(
+        symbol="000338",
+        name="潍柴动力",
+        display_name="000338 潍柴动力",
+        rank_label="阻塞观察",
+        score=58.0,
+        action_label="降级观察",
+        status_label="降级观察",
+        decision_note="20日均成交额不足，流动性过滤",
+        next_step="",
+        blocker="20日均成交额不足，流动性过滤",
+        review_meta="高优先级 / 午前复核",
+        reasons=(),
+        risks=(),
+        strategies=(),
+        data_source="eastmoney",
+    )
+    execution_focus = _DummyExecutionFocus(
+        execution_status="纸面阻塞待核对",
+        holding_status="尚未形成纸面持有",
+        readiness_lines=("研究已产出，但被流动性过滤拦住。",),
+        execution_lines=("纸面事件: 不可成交待核对",),
+    )
+
+    steps = _research_path_steps(
+        task_view=_TaskView(),
+        selected_symbol="000338",
+        review_card=card,
+        selected_card=card,
+        selected_spotlight=None,
+        debate_summary=None,
+        execution_focus=execution_focus,
+        event_count=1,
+        log_count=0,
+        open_position_count=0,
+        archive_status="已归档",
+    )
+
+    assert tuple(step.title for step in steps) == ("研究判断", "纸面现实", "归档落点")
+    assert steps[0].tone == "blocked"
+    assert steps[0].headline == "000338 潍柴动力 · 降级观察"
+    assert "排队层级: 阻塞观察 / 评分 58.0" in steps[0].lines
+    assert steps[1].headline == "事件 1 / 日志 0 / 纸面持有 0"
+    assert steps[1].lines[0] == "纸面事件: 不可成交待核对"
+    assert steps[2].headline == "已归档"
+    rendered_text = "\n".join(
+        line
+        for step in steps
+        for line in (step.headline, *step.lines)
+    )
+    for forbidden in ("今日建议", "立即买入", "执行名单", "下单", "真实持仓"):
+        assert forbidden not in rendered_text
+    assert "历史回看" in rendered_text
 
 
 def test_dashboard_workspace_reality_lines_stay_compact_without_execution_body_duplication() -> (
@@ -5469,7 +5536,9 @@ def test_dashboard_candidate_review_snapshot_uses_unlock_action_card_for_compact
     research_card = next(
         item for item in rendered_cards if item["kicker"] == "研究判断"
     )
-    action_card = next(item for item in rendered_cards if item["kicker"] == "推进计划")
+    action_card = next(
+        item for item in rendered_cards if item["kicker"] == "纸面复核线索"
+    )
 
     assert research_card["title"] == "阻塞待核对"
     assert not any(str(line).startswith("下一步:") for line in research_card["lines"])

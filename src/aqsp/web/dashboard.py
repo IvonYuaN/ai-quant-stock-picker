@@ -82,6 +82,15 @@ class _ArchiveBriefCard:
     tone: str = "archive"
 
 
+@dataclass(frozen=True)
+class _ResearchPathStep:
+    icon: str
+    title: str
+    headline: str
+    lines: tuple[str, ...]
+    tone: str = "archive"
+
+
 def _inject_dashboard_styles() -> None:
     st.markdown(
         """
@@ -415,6 +424,62 @@ def _inject_dashboard_styles() -> None:
             font-size: 0.8rem;
             color: #4a5e6f;
             line-height: 1.42;
+        }
+        .aqsp-research-path {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 0.68rem;
+            margin: 0.72rem 0 0.95rem;
+        }
+        .aqsp-path-step {
+            position: relative;
+            overflow: hidden;
+            min-height: 150px;
+            padding: 0.86rem 0.92rem;
+            border-radius: 18px;
+            border: 1px solid rgba(25, 92, 138, 0.14);
+            background: linear-gradient(145deg, #fffdf6 0%, #f5f8fb 100%);
+            box-shadow: 0 12px 26px rgba(33, 46, 56, 0.052);
+        }
+        .aqsp-path-step.focus {
+            border-color: rgba(57, 121, 92, 0.22);
+            background: linear-gradient(145deg, #fffdf6 0%, #eef8f2 100%);
+        }
+        .aqsp-path-step.pressure {
+            border-color: rgba(188, 129, 53, 0.24);
+            background: linear-gradient(145deg, #fff9ee 0%, #f7f8fb 100%);
+        }
+        .aqsp-path-step.blocked {
+            border-color: rgba(176, 90, 74, 0.24);
+            background: linear-gradient(145deg, #fff7f5 0%, #f7f8fb 100%);
+        }
+        .aqsp-path-kicker {
+            display: flex;
+            gap: 0.36rem;
+            align-items: center;
+            font-size: 0.76rem;
+            color: #657381;
+            margin-bottom: 0.42rem;
+        }
+        .aqsp-path-title {
+            font-size: 0.96rem;
+            font-weight: 760;
+            color: #17384f;
+            line-height: 1.32;
+            margin-bottom: 0.35rem;
+        }
+        .aqsp-path-headline {
+            font-size: 0.84rem;
+            font-weight: 650;
+            color: #284b63;
+            line-height: 1.38;
+            margin-bottom: 0.3rem;
+        }
+        .aqsp-path-line {
+            font-size: 0.8rem;
+            color: #4a5e6f;
+            line-height: 1.46;
+            margin-top: 0.14rem;
         }
         .aqsp-ops-card {
             min-height: 174px;
@@ -878,6 +943,7 @@ def _inject_dashboard_styles() -> None:
             .aqsp-archive-brief-grid,
             .aqsp-overview-strip,
             .aqsp-evidence-strip,
+            .aqsp-research-path,
             .aqsp-research-metrics {
                 grid-template-columns: repeat(2, minmax(0, 1fr));
             }
@@ -889,6 +955,7 @@ def _inject_dashboard_styles() -> None:
             .aqsp-overview-strip,
             .aqsp-research-metrics,
             .aqsp-evidence-strip,
+            .aqsp-research-path,
             .aqsp-compact-grid {
                 grid-template-columns: 1fr;
             }
@@ -4271,6 +4338,21 @@ def _render_execution_focus(
         open_position_count=len(scoped_open_positions.index),
         same_day_task_count=same_day_task_count,
     )
+    _render_research_path(
+        _research_path_steps(
+            task_view=task_view,
+            selected_symbol=selected_symbol,
+            review_card=review_card,
+            selected_card=selected_card,
+            selected_spotlight=selected_spotlight,
+            debate_summary=debate_summary,
+            execution_focus=execution_focus,
+            event_count=len(scoped_paper_events.index),
+            log_count=len(scoped_execution.index),
+            open_position_count=len(scoped_open_positions.index),
+            archive_status=_report_archive_status(task_view),
+        )
+    )
     nav_col1, nav_col2, nav_col3 = st.columns(3)
     with nav_col1:
         if st.button(
@@ -4781,9 +4863,9 @@ def _workspace_focus_lines(
     if review_card is not None:
         is_debate_review = review_card.rank_label == "辩论主结论"
         focus_action_line = (
-            "动作 / 状态: 待独立验证 / 等待下一次任务确认"
+            "复核状态: 待独立验证 / 等待下一次任务确认"
             if is_debate_review
-            else f"动作 / 状态: {_action_status_label(review_card.action_label, review_card.status_label)}"
+            else f"复核状态: {_action_status_label(review_card.action_label, review_card.status_label)}"
         )
         follow_up_line = (
             "验证动作: 等待下一次任务或纸面验证链路补充独立证据。"
@@ -4946,6 +5028,202 @@ def _workspace_context_brief(
         "研究判断回看",
         ("当前以研究候选卡为主。", "先看路径、复核节奏和入场条件。"),
         "archive",
+    )
+
+
+def _research_path_review_step(
+    *,
+    review_card: DashboardCandidateCard | None,
+    selected_card: DashboardCandidateCard | None,
+    selected_spotlight: DashboardCandidateSpotlight | None,
+    debate_summary: DashboardDebateSummary | None,
+) -> _ResearchPathStep:
+    if review_card is None:
+        return _ResearchPathStep(
+            icon="🧭",
+            title="研究判断",
+            headline="暂无候选上下文",
+            lines=("先看纸面记录和同日任务摘要。",),
+            tone="archive",
+        )
+    if debate_summary is not None and review_card.rank_label == "辩论主结论":
+        return _ResearchPathStep(
+            icon="🧠",
+            title="研究判断",
+            headline=f"{debate_summary.recommended_adjustment_label} / 分歧 {debate_summary.disagreement_score:.2f}",
+            lines=_unique_lines(
+                (
+                    f"共识: {debate_summary.consensus}"
+                    if debate_summary.consensus
+                    else ""
+                ),
+                (
+                    f"风险: {'；'.join(debate_summary.risk_warnings[:2])}"
+                    if debate_summary.risk_warnings
+                    else ""
+                ),
+                ("仅作辩论补齐，不替代确定性评分。",),
+            )[:2],
+            tone="pressure"
+            if debate_summary.disagreement_score >= 0.35
+            else "archive",
+        )
+    source = _review_source_label(review_card)
+    source_hint = (
+        f"同日联动: {'、'.join(selected_spotlight.task_labels)}"
+        if selected_spotlight is not None and selected_spotlight.task_labels
+        else source
+    )
+    return _ResearchPathStep(
+        icon="🧭",
+        title="研究判断",
+        headline=_join_display_parts(
+            review_card.display_name,
+            _action_status_label(review_card.action_label, review_card.status_label),
+            separator=" · ",
+        ),
+        lines=_unique_lines(
+            (_candidate_score_context_line(review_card),),
+            (source_hint,),
+            (
+                f"卡点: {_card_primary_blocker(review_card)}"
+                if _card_primary_blocker(review_card)
+                else ""
+            ),
+        )[:2],
+        tone="blocked" if _card_primary_blocker(review_card) else "focus",
+    )
+
+
+def _research_path_paper_step(
+    *,
+    event_count: int,
+    log_count: int,
+    open_position_count: int,
+    execution_focus,
+) -> _ResearchPathStep:
+    has_paper = bool(event_count or log_count or open_position_count)
+    headline = (
+        f"事件 {event_count} / 日志 {log_count} / 纸面持有 {open_position_count}"
+        if has_paper
+        else "尚未进入纸面验证链"
+    )
+    lines = _unique_lines(
+        tuple(line for line in execution_focus.execution_lines[:1] if line),
+        tuple(line for line in execution_focus.holding_lines[:1] if line),
+        tuple(line for line in execution_focus.readiness_lines[:1] if line),
+    )
+    if not lines:
+        lines = ("先按研究证据复核，不补生成纸面对象。",)
+    return _ResearchPathStep(
+        icon="🧪",
+        title="纸面现实",
+        headline=headline,
+        lines=lines[:2],
+        tone=_workspace_reality_tone(
+            execution_status=execution_focus.execution_status,
+            event_count=event_count,
+            log_count=log_count,
+            open_position_count=open_position_count,
+        ),
+    )
+
+
+def _research_path_archive_step(
+    *,
+    task_view,
+    review_card: DashboardCandidateCard | None,
+    selected_symbol: str,
+    archive_status: str = "",
+) -> _ResearchPathStep:
+    status = archive_status or _report_archive_status(task_view)
+    symbol_lines, global_lines = _partition_symbol_lines(
+        _unique_lines(
+            task_view.report_summary_lines[:2],
+            task_view.next_day_focus_lines[:2],
+            task_view.runtime_lines[:2],
+        ),
+        selected_symbol,
+    )
+    fallback_line = (
+        f"复核节奏: {review_card.review_meta}"
+        if review_card is not None and _has_review_meta(review_card.review_meta)
+        else ""
+    )
+    lines = _unique_lines(
+        tuple(sanitize_archive_text(line) for line in symbol_lines[:2]),
+        tuple(sanitize_archive_text(line) for line in global_lines[:1]),
+        (fallback_line,),
+    )
+    if not lines:
+        lines = ("归档尚未命中该标的，先保留研究与纸面证据链。",)
+    return _ResearchPathStep(
+        icon="🗂",
+        title="归档落点",
+        headline=status,
+        lines=lines[:2],
+        tone="archive",
+    )
+
+
+def _research_path_steps(
+    *,
+    task_view,
+    selected_symbol: str,
+    review_card: DashboardCandidateCard | None,
+    selected_card: DashboardCandidateCard | None,
+    selected_spotlight: DashboardCandidateSpotlight | None,
+    debate_summary: DashboardDebateSummary | None,
+    execution_focus,
+    event_count: int,
+    log_count: int,
+    open_position_count: int,
+    archive_status: str = "",
+) -> tuple[_ResearchPathStep, ...]:
+    return (
+        _research_path_review_step(
+            review_card=review_card,
+            selected_card=selected_card,
+            selected_spotlight=selected_spotlight,
+            debate_summary=debate_summary,
+        ),
+        _research_path_paper_step(
+            event_count=event_count,
+            log_count=log_count,
+            open_position_count=open_position_count,
+            execution_focus=execution_focus,
+        ),
+        _research_path_archive_step(
+            task_view=task_view,
+            review_card=review_card,
+            selected_symbol=selected_symbol,
+            archive_status=archive_status,
+        ),
+    )
+
+
+def _render_research_path(steps: tuple[_ResearchPathStep, ...]) -> None:
+    st.markdown(
+        "\n".join(
+            [
+                '<div class="aqsp-research-path">',
+                *[
+                    (
+                        f'<div class="aqsp-path-step {escape(step.tone)}">'
+                        f'<div class="aqsp-path-kicker"><span>{escape(step.icon)}</span><span>{escape(step.title)}</span></div>'
+                        f'<div class="aqsp-path-headline">{escape(step.headline)}</div>'
+                        + "".join(
+                            f'<div class="aqsp-path-line">{escape(line)}</div>'
+                            for line in step.lines[:2]
+                        )
+                        + "</div>"
+                    )
+                    for step in steps
+                ],
+                "</div>",
+            ]
+        ),
+        unsafe_allow_html=True,
     )
 
 
@@ -5434,7 +5712,7 @@ def _render_candidate_focus_summary(
             "\n".join(
                 line
                 for line in [
-                    f"- 动作 / 状态: {_action_status_label(card.action_label, card.status_label)}",
+                f"- 复核状态: {_action_status_label(card.action_label, card.status_label)}",
                     (
                         f"- {_review_meta_line('复核节奏', card.review_meta)}"
                         if _review_meta_line("复核节奏", card.review_meta)
@@ -6031,14 +6309,14 @@ def _render_candidate_review_snapshot(
             if line
         )
         _render_cockpit_card(
-            kicker="当前行动",
-            title="先做独立验证",
+            kicker="当前复核状态",
+            title="等待独立验证",
             lines=debate_action_lines,
             tone="blocked" if has_blocker else "archive",
         )
     elif compact_mode:
         _render_cockpit_card(
-            kicker="推进计划",
+            kicker="纸面复核线索",
             title=_candidate_action_plan_title(selected_card),
             lines=next_step_lines,
             tone="pressure" if has_blocker else "archive",
@@ -6054,8 +6332,11 @@ def _render_candidate_review_snapshot(
             )
         with linkage_col:
             _render_cockpit_card(
-                kicker="下一步",
-                title=_candidate_action_plan_title(selected_card, default="怎么推进"),
+                kicker="复核线索",
+                title=_candidate_action_plan_title(
+                    selected_card,
+                    default="如何回看证据",
+                ),
                 lines=next_step_lines,
                 tone="pressure" if has_blocker else "archive",
             )
@@ -6197,6 +6478,29 @@ def _render_candidate_deep_dive(
     task_frame = _filter_frame_by_symbol(task_frame, selected_symbol)
     if signal_task_id == (task_id if task_id != "briefing" else "main_chain"):
         task_frame = task_frame.iloc[0:0]
+    execution_focus = provider.execution_focus(
+        signal_date=signal_date,
+        symbol=selected_symbol,
+        task_id=task_id,
+    )
+    open_positions_frame = provider.open_positions_frame(signal_date=signal_date)
+    open_positions_frame = _filter_frame_by_symbol(open_positions_frame, selected_symbol)
+
+    _render_research_path(
+        _research_path_steps(
+            task_view=task_view,
+            selected_symbol=selected_symbol,
+            review_card=review_card,
+            selected_card=selected_card,
+            selected_spotlight=spotlight,
+            debate_summary=debate_summary,
+            execution_focus=execution_focus,
+            event_count=len(paper_frame.index),
+            log_count=len(execution_frame.index),
+            open_position_count=len(open_positions_frame.index),
+            archive_status=_report_archive_status(task_view),
+        )
+    )
 
     _render_candidate_review_snapshot(
         review_card,
@@ -6621,7 +6925,7 @@ def _archive_brief_cards(
         line
         for line in (
             (
-                "纸面现实: 当日有纸面事件或执行日志，优先核对真实落盘链。"
+            "纸面现实: 当日有纸面事件或执行日志，优先核对纸面记录链。"
                 if has_execution_activity
                 else ""
             ),
@@ -6769,7 +7073,7 @@ def _render_archive_focus_brief(
             )
         with action_col:
             _render_cockpit_card(
-                kicker="后续动作",
+                kicker="归档回看线索",
                 title=action_title,
                 lines=resolved_action_lines,
                 tone="pressure" if task_view.blocker_lines else "focus",
@@ -6786,7 +7090,7 @@ def _render_archive_focus_brief(
         )
     with action_col:
         _render_cockpit_card(
-            kicker="后续动作",
+            kicker="归档回看线索",
             title=action_title,
             lines=resolved_action_lines,
             tone="pressure" if task_view.blocker_lines else "focus",
@@ -6904,6 +7208,21 @@ def _render_archive_workbench(
         same_day_task_count=len(same_day_rows),
         archive_status=status,
         show_archive_metric=True,
+    )
+    _render_research_path(
+        _research_path_steps(
+            task_view=task_view,
+            selected_symbol=selected_symbol,
+            review_card=review_card,
+            selected_card=selected_card,
+            selected_spotlight=selected_spotlight,
+            debate_summary=debate_summary,
+            execution_focus=execution_focus,
+            event_count=len(scoped_paper_events.index),
+            log_count=len(scoped_execution.index),
+            open_position_count=len(scoped_open_positions.index),
+            archive_status=status,
+        )
     )
     _render_archive_focus_brief(
         task_view=task_view,
@@ -7289,7 +7608,7 @@ def main() -> None:
             provider=provider,
             task_view=task_view,
         )
-        with st.expander("执行总览", expanded=False):
+        with st.expander("纸面验证总览", expanded=False):
             _render_paper_summary(paper_summary)
             data_col, paper_col = st.columns(2)
             with data_col:
