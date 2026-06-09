@@ -1088,12 +1088,12 @@ def _render_frame(title: str, frame) -> None:
     if frame.empty:
         st.info("暂无数据。")
         return
-    st.dataframe(frame, use_container_width=True, hide_index=True)
+    st.dataframe(frame, width="stretch", hide_index=True)
 
 
 def _stretch_button(label: str, **kwargs) -> bool:
-    """Render full-width buttons on Streamlit versions before width= support."""
-    kwargs.setdefault("use_container_width", True)
+    """Render full-width buttons with the current Streamlit width API."""
+    kwargs.setdefault("width", "stretch")
     return bool(st.button(label, **kwargs))
 
 
