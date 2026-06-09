@@ -10,6 +10,7 @@ from unittest.mock import MagicMock
 from aqsp.core.time import today_shanghai
 from aqsp.core.types import PickResult
 from aqsp.portfolio.manager import PortfolioDecisionSummary
+from aqsp.portfolio.optimizer import PortfolioAllocation
 from aqsp.portfolio.snapshot import PickSnapshot, SnapshotDiff
 
 
@@ -45,6 +46,49 @@ def test_execution_summary_uses_observation_when_pm_has_no_allocations() -> None
     assert "今日无纸面复核对象" in line
     assert "观察池" in line
     assert "首选" not in line
+
+
+def test_execution_summary_uses_paper_review_when_pm_has_allocations() -> None:
+    import aqsp.cli as cli_mod
+
+    pick = PickResult(
+        symbol="600519",
+        name="贵州茅台",
+        date="2026-06-09",
+        close=1500.0,
+        score=88,
+        rating="buy_candidate",
+        entry_type="trend_pullback",
+        ideal_buy=1498.0,
+        stop_loss=1450.0,
+        take_profit=1600.0,
+        position="20%",
+    )
+    summary = PortfolioDecisionSummary(
+        promote_count=1,
+        downgrade_count=0,
+        keep_count=0,
+        top_focus=("600519 贵州茅台",),
+        watchlist=(),
+        allocations=(
+            PortfolioAllocation(
+                symbol="600519",
+                name="贵州茅台",
+                weight=0.2,
+                rationale=("主链评分 88",),
+            ),
+        ),
+        cash_reserve=0.8,
+        allocation_note="纸面仓位上限 20%",
+    )
+
+    line = cli_mod._build_execution_summary_line([pick], summary)
+
+    assert "优先纸面复核" in line
+    assert "观察参考" in line
+    assert "防守" in line
+    assert "首选" not in line
+    assert "买点" not in line
 
 
 def test_run_scheduled_notify_prepends_source_status_banner(
@@ -198,7 +242,7 @@ def test_run_scheduled_notify_prepends_source_status_banner(
     assert exit_code == 0
     assert seen
     assert seen[0].startswith("# AQSP 研究日报")
-    assert seen[0].index("## 核心结论") < seen[0].index("## 数据源状态")
+    assert seen[0].index("## 数据源状态") < seen[0].index("## 核心结论")
     assert "auto -> eastmoney" in seen[0]
     assert "- 健康: fallback" in seen[0]
 

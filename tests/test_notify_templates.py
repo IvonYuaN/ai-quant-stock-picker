@@ -98,6 +98,33 @@ def test_build_briefing_notification_returns_full_markdown_when_full_mode() -> N
     assert "# AI 量化选股日报 - 2026-06-04" in markdown
 
 
+def test_build_briefing_notification_sanitizes_research_wording_in_both_modes() -> None:
+    briefing = Briefing(
+        date="2026-06-04",
+        sections=[
+            BriefingSection(
+                title="主链总览",
+                content="立即买入 600519，加入执行名单，等待下单。",
+            ),
+            BriefingSection(title="明日重点", content="执行开仓后看真实持仓。"),
+        ],
+    )
+
+    summary_markdown = build_briefing_notification(briefing, mode="summary")
+    full_markdown = build_briefing_notification(briefing, mode="full")
+    combined = "\n".join((summary_markdown, full_markdown))
+
+    assert "纸面重点观察" in combined
+    assert "纸面复核名单" in combined
+    assert "纸面记录" in combined
+    assert "纸面持有" in combined
+    assert "立即买入" not in combined
+    assert "执行名单" not in combined
+    assert "执行开仓" not in combined
+    assert "真实持仓" not in combined
+    assert "下单" not in combined
+
+
 def test_build_daily_run_notification_includes_allocation_guidance() -> None:
     markdown = build_daily_run_notification(
         run_date="2026-06-04",
@@ -667,6 +694,45 @@ def test_build_closing_review_notification_summary_mode_highlights_main_chain() 
     assert "观察复核: 688981 中芯国际 | 高优先级 / 盘中走强后" in markdown
     assert "减少同类信号堆叠" in markdown
     assert "优先复核 688981 中芯国际 | 高优先级 / 盘中走强后" in markdown
+
+
+def test_build_closing_review_notification_sanitizes_full_and_summary_modes() -> None:
+    review = DailyReview(
+        date="2026-06-04",
+        total_signals=1,
+        executed_signals=1,
+        win_count=1,
+        loss_count=0,
+        win_rate=1.0,
+        total_return=2.0,
+        max_single_win=2.0,
+        max_single_loss=0.0,
+        avg_holding_days=1.0,
+        strategy_breakdown={},
+        market_environment="震荡市",
+        main_chain_summary=(
+            "执行阻塞: 600519 需要执行开仓后下单",
+            "观察复核: 600519 立即买入，查看真实持仓",
+        ),
+        key_lessons=("买入后表现较强",),
+        improvement_suggestions=("下周不再首选下单。",),
+    )
+
+    summary_markdown = build_closing_review_notification(review=review, mode="summary")
+    full_markdown = build_closing_review_notification(review=review, mode="full")
+    combined = "\n".join((summary_markdown, full_markdown))
+
+    assert "纸面阻塞" in combined
+    assert "纸面推进" in combined
+    assert "纸面记录" in combined
+    assert "纸面重点观察" in combined
+    assert "纸面入场记录后表现较强" in combined
+    assert "执行阻塞" not in combined
+    assert "执行开仓" not in combined
+    assert "立即买入" not in combined
+    assert "真实持仓" not in combined
+    assert "首选下单" not in combined
+    assert "下单" not in combined
 
 
 def test_build_closing_review_notification_weekly_mode_supports_summary() -> None:

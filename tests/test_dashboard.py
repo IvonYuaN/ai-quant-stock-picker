@@ -1671,10 +1671,10 @@ def test_dashboard_workspace_nav_items_keep_two_line_fast_switch_labels() -> Non
     items = _workspace_nav_items()
 
     assert tuple(item.code for item in items) == (
-        "DAY REPLAY",
-        "REVIEW",
-        "PAPER",
-        "ARCHIVE",
+        "首页",
+        "候选",
+        "纸面",
+        "归档",
     )
     assert tuple(item.name for item in items) == (
         "决策首页",
@@ -1722,7 +1722,7 @@ def test_dashboard_workspace_navigation_renders_code_buttons_and_separate_names(
     workspace = _render_workspace_navigation()
 
     assert workspace == "决策首页"
-    assert button_labels == ["DAY REPLAY", "REVIEW", "PAPER", "ARCHIVE"]
+    assert button_labels == ["首页", "候选", "纸面", "归档"]
     assert "决策首页" not in button_labels
     assert any(
         "aqsp-workspace-name" in block and "决策首页" in block
@@ -2238,7 +2238,7 @@ def test_dashboard_raw_report_markdown_is_wrapped_as_historical_evidence() -> No
 
     assert lines == (
         "历史原文: 主链推荐 / 2026-06-05",
-        "以下内容只用于回看当时研究语境，不是今日动作、不是下单指令。",
+        "以下内容只用于回看当时研究语境，不是今日动作、不是交易指令。",
         "原文中的行动词已在展示层中性化为纸面复核口径，原始文件未被改写。",
     )
 
@@ -3260,7 +3260,7 @@ def test_dashboard_phase_nav_label_includes_phase_task_and_status() -> None:
         blocked_count=2,
     )
 
-    assert _phase_nav_label(row) == "收盘复盘 · 收盘复盘 · 已复盘"
+    assert _phase_nav_label(row) == "收盘复盘 · 已复盘"
 
 
 def test_dashboard_top_navigation_context_prefers_same_day_phase_summary() -> None:
@@ -3845,7 +3845,7 @@ def test_dashboard_workspace_context_brief_distinguishes_review_sources_and_exec
         risks=(),
     )
 
-    assert _review_source_label(None) == "仅纸面记录"
+    assert _review_source_label(None) == "纸面记录"
     assert _review_source_label(card) == "研究候选卡"
 
     debate_card = card.__class__(
@@ -5056,7 +5056,7 @@ def test_dashboard_home_reading_order_surfaces_blocked_card_as_final_gate() -> N
         debates=(),
     )
 
-    assert lines[0] == "🧪 纸面侧较轻: 当前没有新的纸面入场或不可成交事件。"
+    assert lines[0] == "纸面验证: 暂无新的纸面入场或不可成交事件。"
     assert "🧭 再看候选路径 | 000338 潍柴动力" in lines[1]
     assert (
         lines[2] == "🔒 最后核对卡点 | 000338 潍柴动力 | 20日均成交额不足，流动性过滤"
@@ -6335,6 +6335,10 @@ def test_dashboard_home_execution_snapshot_context_prefers_compact_status_and_to
     assert holding_lines == ("600519 纸面持有中", "000858 纸面持有中")
     assert event_lines == ("600519 纸面入场待核对", "000858 纸面关闭")
     assert tone == "pressure"
+
+
+def test_dashboard_review_source_label_uses_plain_paper_record_wording() -> None:
+    assert _review_source_label(None) == "纸面记录"
 
 
 def test_dashboard_home_execution_snapshot_context_reframes_blocked_research_day() -> (

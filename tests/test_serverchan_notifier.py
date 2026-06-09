@@ -50,3 +50,22 @@ def test_prepend_source_status_banner_keeps_title_before_source_status():
     assert "## 数据源状态" in merged
     assert "## 核心结论" in merged
     assert merged.index("## 核心结论") < merged.index("## 数据源状态")
+
+
+def test_prepend_source_status_banner_moves_degraded_source_before_content():
+    from aqsp.notifier import prepend_source_status_banner
+
+    content = "# 收盘总览\n\n## 核心结论\n- 总体状态: 成功"
+    merged = prepend_source_status_banner(
+        content,
+        {
+            "requested_source": "auto",
+            "actual_source": "eastmoney",
+            "health_label": "fallback",
+            "health_message": "fallback 到 eastmoney",
+        },
+    )
+
+    assert merged.startswith("# 收盘总览")
+    assert merged.index("## 数据源状态") < merged.index("## 核心结论")
+    assert "降低信任度" in merged

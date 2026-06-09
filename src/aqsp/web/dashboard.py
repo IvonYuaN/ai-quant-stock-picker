@@ -1798,7 +1798,7 @@ def _normalized_readiness_lines(
     generic_line = "研究已产出，但尚未进入纸面入场或阻塞队列。"
     if not blocker:
         return readiness_lines
-    legacy_generic_line = "研究已产出，但尚未进入待开仓或阻塞队列。"
+    legacy_generic_line = "研究已产出，但尚未进入待纸面观察或阻塞队列。"
     normalized = tuple(
         line
         for line in readiness_lines
@@ -3637,7 +3637,7 @@ def _home_reading_order_lines(
             ),
         )
     else:
-        paper_line = "🧪 纸面侧较轻: 当前没有新的纸面入场或不可成交事件。"
+        paper_line = "纸面验证: 暂无新的纸面入场或不可成交事件。"
 
     if focus_card is not None:
         focus_line = _join_display_parts(
@@ -3967,7 +3967,7 @@ def _render_home_reading_order(
         "\n".join(
             [
                 '<div class="aqsp-reading-card">',
-                '<div class="aqsp-reading-title">Reading Order</div>',
+                '<div class="aqsp-reading-title">先看顺序</div>',
                 '<div class="aqsp-reading-main">今天先这样看</div>',
                 *[
                     f'<div class="aqsp-reading-line">{escape(line)}</div>'
@@ -4064,10 +4064,10 @@ def _set_dashboard_workspace(workspace: str) -> None:
 
 def _workspace_nav_items() -> tuple[_WorkspaceNavItem, ...]:
     return (
-        _WorkspaceNavItem("DAY REPLAY", "决策首页"),
-        _WorkspaceNavItem("REVIEW", "候选复盘"),
-        _WorkspaceNavItem("PAPER", "虚拟盘跟踪"),
-        _WorkspaceNavItem("ARCHIVE", "归档回看"),
+        _WorkspaceNavItem("首页", "决策首页"),
+        _WorkspaceNavItem("候选", "候选复盘"),
+        _WorkspaceNavItem("纸面", "虚拟盘跟踪"),
+        _WorkspaceNavItem("归档", "归档回看"),
     )
 
 
@@ -4565,7 +4565,9 @@ def _task_nav_label(
 
 
 def _phase_nav_label(row: DashboardSameDayTaskRow) -> str:
-    return f"{row.phase_label} · {row.task_label} · {row.status_label}"
+    parts = [row.phase_label, row.task_label, row.status_label]
+    deduped = tuple(dict.fromkeys(part for part in parts if part).keys())
+    return " · ".join(deduped)
 
 
 def _top_navigation_context(
@@ -5010,7 +5012,7 @@ def _workspace_reality_tone(
 
 def _review_source_label(review_card: DashboardCandidateCard | None) -> str:
     if review_card is None:
-        return "仅纸面记录"
+        return "纸面记录"
     if review_card.rank_label == "辩论主结论":
         return "辩论主结论"
     if review_card.rank_label == "同日联动":
@@ -5029,7 +5031,7 @@ def _workspace_context_brief(
 ) -> tuple[str, tuple[str, ...], str]:
     if review_card is None:
         return (
-            "仅纸面记录",
+            "纸面记录",
             ("当前没有研究或辩论上下文。", "先看纸面持有假设、纸面事件和日志。"),
             "archive",
         )
@@ -7491,7 +7493,7 @@ def _raw_report_boundary_lines(task_view) -> tuple[str, ...]:
     task_label = getattr(task_view, "task_label", "归档任务")
     return (
         f"历史原文: {task_label} / {selected_date}",
-        "以下内容只用于回看当时研究语境，不是今日动作、不是下单指令。",
+        "以下内容只用于回看当时研究语境，不是今日动作、不是交易指令。",
         "原文中的行动词已在展示层中性化为纸面复核口径，原始文件未被改写。",
     )
 
@@ -7537,7 +7539,7 @@ def main() -> None:
 
     st.title("AQSP 日期任务研究台")
     st.caption(f"更新时间: {updated_at}")
-    st.caption("非交易指令 / 不下单 / 只做纸面观察与复核。仅展示落盘结果。")
+    st.caption("非交易指令 / 不自动交易 / 只做纸面观察与复核。仅展示落盘结果。")
 
     options = provider.task_options()
     selected_task_id, selected_date = _render_top_navigation(

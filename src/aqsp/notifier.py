@@ -47,7 +47,11 @@ def prepend_source_status_banner(
         lines = body.splitlines()
         title = lines[0].strip()
         rest = "\n".join(lines[1:]).lstrip()
+        if label in {"fallback", "degraded", "cold_start"}:
+            return f"{title}\n\n{banner}\n\n{rest}".strip()
         return f"{title}\n\n{rest}\n\n{banner}".strip()
+    if label in {"fallback", "degraded", "cold_start"}:
+        return f"{banner}\n\n{body}".strip()
     return f"{body}\n\n{banner}".strip()
 
 

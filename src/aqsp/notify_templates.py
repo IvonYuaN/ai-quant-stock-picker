@@ -32,6 +32,22 @@ def _safe_mode(mode: str) -> NotifyMode:
     return "full" if mode == "full" else "summary"
 
 
+def _notification_research_tone(markdown: str) -> str:
+    """Final safety pass for notification text shown outside the dashboard."""
+    return normalize_research_tone(markdown)
+
+
+def _source_safe_notification(
+    markdown: str,
+    *,
+    source_status: dict[str, str | bool] | None = None,
+) -> str:
+    return prepend_source_status_banner(
+        _notification_research_tone(markdown),
+        source_status=source_status,
+    )
+
+
 def _blocked_watchlist_status(
     portfolio_summary: PortfolioDecisionSummary | None,
 ) -> str:
@@ -51,7 +67,7 @@ def build_briefing_notification(
     mode: str = "summary",
 ) -> str:
     if _safe_mode(mode) == "full":
-        return prepend_source_status_banner(
+        return _source_safe_notification(
             briefing.to_markdown(),
             source_status=source_status,
         )
@@ -80,7 +96,7 @@ def build_briefing_notification(
         "\n\n".join(part for part in body_parts if part).strip()
         or briefing.to_markdown()
     )
-    return prepend_source_status_banner(body, source_status=source_status)
+    return _source_safe_notification(body, source_status=source_status)
 
 
 def _format_research_radar(section: str) -> str:
@@ -240,7 +256,7 @@ def build_daily_run_notification(
     if debate_results:
         lines.append(f"3. {_daily_debate_action_line(debate_results[0])}")
 
-    return prepend_source_status_banner(
+    return _source_safe_notification(
         "\n".join(lines),
         source_status={
             "requested_source": requested_source,
@@ -634,14 +650,14 @@ def build_monitor_notification(
     if _safe_mode(mode) == "full":
         lines.extend(["", "## 详细告警", ""])
         lines.extend(_format_monitor_results(triggered or list(results)))
-        return "\n".join(lines)
+        return _notification_research_tone("\n".join(lines))
 
     if critical or warnings:
         lines.extend(["", "## 处理清单", ""])
         lines.extend(_monitor_actions(critical, warnings))
         lines.extend(["", "## 告警回放", ""])
         lines.extend(_format_monitor_results((critical + warnings)[:5]))
-    return "\n".join(lines)
+    return _notification_research_tone("\n".join(lines))
 
 
 def build_morning_breakout_notification(
@@ -650,15 +666,17 @@ def build_morning_breakout_notification(
     top_n: int = 3,
 ) -> str:
     if not signals:
-        return "\n".join(
-            [
-                "# 早盘打板策略",
-                "",
-                "## 核心结论",
-                "",
-                "- 总体状态: 今日未发现符合条件的早盘打板标的",
-                "- 复核清单: 保持观望，等待更强的量价共振信号",
-            ]
+        return _notification_research_tone(
+            "\n".join(
+                [
+                    "# 早盘打板策略",
+                    "",
+                    "## 核心结论",
+                    "",
+                    "- 总体状态: 今日未发现符合条件的早盘打板标的",
+                    "- 复核清单: 保持观望，等待更强的量价共振信号",
+                ]
+            )
         )
 
     lines = [
@@ -670,13 +688,27 @@ def build_morning_breakout_notification(
         f"- 纸面观察候选: {_format_breakout_signal(signals[0])}",
         "- 风险提示: 打板策略波动大，仅供纸面复核，必须先看承接与防守位",
         "",
-        "## Top 候选",
+        "## 候选简表",
         "",
+        "| 标的 | 分数 | 观察参考 | 风险 | 下一步 |",
+        "|---|---:|---|---|---|",
     ]
     display_n = max(top_n, 5) if _safe_mode(mode) == "full" else top_n
     for index, signal in enumerate(signals[:display_n], start=1):
-        lines.append(f"{index}. {_format_breakout_signal(signal)}")
-    return "\n".join(lines)
+        lines.append(_format_breakout_signal_table_row(signal, index=index))
+    lines.extend(
+        [
+            "",
+            "## 🔒 风险/阻塞",
+            "",
+            f"- {signals[0].risks[0] if signals[0].risks else '波动较大，先看承接与量能持续性。'}",
+            "",
+            "## ✅ 下一步",
+            "",
+            "1. 先看首个候选是否继续放量，若承接不足则只保留观察。",
+        ]
+    )
+    return _notification_research_tone("\n".join(lines))
 
 
 def build_closing_premium_notification(
@@ -685,15 +717,17 @@ def build_closing_premium_notification(
     top_n: int = 3,
 ) -> str:
     if not signals:
-        return "\n".join(
-            [
-                "# 尾盘溢价策略",
-                "",
-                "## 核心结论",
-                "",
-                "- 总体状态: 今日未发现符合条件的尾盘溢价标的",
-                "- 复核清单: 继续观察尾盘量价异动，避免勉强纳入纸面复核",
-            ]
+        return _notification_research_tone(
+            "\n".join(
+                [
+                    "# 尾盘溢价策略",
+                    "",
+                    "## 核心结论",
+                    "",
+                    "- 总体状态: 今日未发现符合条件的尾盘溢价标的",
+                    "- 复核清单: 继续观察尾盘量价异动，避免勉强纳入纸面复核",
+                ]
+            )
         )
 
     lines = [
@@ -705,13 +739,27 @@ def build_closing_premium_notification(
         f"- 纸面观察候选: {_format_premium_signal(signals[0])}",
         "- 复核清单: 优先跟踪量价突破型标的，次日开盘只做纸面延续确认",
         "",
-        "## Top 候选",
+        "## 候选简表",
         "",
+        "| 标的 | 分数 | 观察参考 | 风险 | 下一步 |",
+        "|---|---:|---|---|---|",
     ]
     display_n = max(top_n, 5) if _safe_mode(mode) == "full" else top_n
     for index, signal in enumerate(signals[:display_n], start=1):
-        lines.append(f"{index}. {_format_premium_signal(signal)}")
-    return "\n".join(lines)
+        lines.append(_format_premium_signal_table_row(signal, index=index))
+    lines.extend(
+        [
+            "",
+            "## 🔒 风险/阻塞",
+            "",
+            f"- {signals[0].risks[0] if signals[0].risks else '次日高开或量能衰减时仅保留观察。'}",
+            "",
+            "## ✅ 下一步",
+            "",
+            "1. 次日先看开盘延续和量能承接，弱于假设则不纳入纸面复核。",
+        ]
+    )
+    return _notification_research_tone("\n".join(lines))
 
 
 def build_closing_review_notification(
@@ -727,7 +775,7 @@ def build_closing_review_notification(
     if _safe_mode(mode) == "full":
         from aqsp.briefing.closing_review import format_daily_review
 
-        return format_daily_review(review)
+        return _notification_research_tone(format_daily_review(review))
 
     lines = [
         "# 收盘复盘",
@@ -773,7 +821,7 @@ def build_closing_review_notification(
                 f"- {strategy}: {stats['wins']}/{stats['total']} | "
                 f"胜率 {stats['win_rate']:.1%} | 收益 {stats['total_return']:.2f}%"
             )
-    return "\n".join(lines)
+    return _notification_research_tone("\n".join(lines))
 
 
 def _build_weekly_review_notification(
@@ -783,24 +831,26 @@ def _build_weekly_review_notification(
     if _safe_mode(mode) == "full":
         from aqsp.briefing.closing_review import format_weekly_summary
 
-        return format_weekly_summary(summary)
+        return _notification_research_tone(format_weekly_summary(summary))
 
-    return "\n".join(
-        [
-            "# 周度复盘",
-            "",
-            "## 核心结论",
-            "",
-            f"- 周期: {summary.week_start} ~ {summary.week_end}",
-            f"- 总收益/胜率: {summary.total_return:.2f}% / {summary.win_rate:.1%}",
-            f"- 夏普/回撤: {summary.sharpe_ratio:.2f} / {summary.max_drawdown:.2f}%",
-            f"- 最佳策略: {summary.best_strategy}",
-            f"- 最差策略: {summary.worst_strategy}",
-            "",
-            "## 下周复核",
-            "",
-            f"1. {summary.next_week_outlook}",
-        ]
+    return _notification_research_tone(
+        "\n".join(
+            [
+                "# 周度复盘",
+                "",
+                "## 核心结论",
+                "",
+                f"- 周期: {summary.week_start} ~ {summary.week_end}",
+                f"- 总收益/胜率: {summary.total_return:.2f}% / {summary.win_rate:.1%}",
+                f"- 夏普/回撤: {summary.sharpe_ratio:.2f} / {summary.max_drawdown:.2f}%",
+                f"- 最佳策略: {summary.best_strategy}",
+                f"- 最差策略: {summary.worst_strategy}",
+                "",
+                "## 下周复核",
+                "",
+                f"1. {summary.next_week_outlook}",
+            ]
+        )
     )
 
 
@@ -983,6 +1033,17 @@ def _format_breakout_signal(signal: BreakoutSignal) -> str:
     )
 
 
+def _format_breakout_signal_table_row(signal: BreakoutSignal, *, index: int) -> str:
+    symbol_name = format_symbol_name(signal.symbol, signal.name)
+    risk = signal.risks[0] if signal.risks else "波动较大"
+    next_step = signal.reasons[0] if signal.reasons else "等待量价共振延续"
+    reference = f"现价 {signal.current_price:.2f} / 目标 {signal.target_price:.2f} / 防守 {signal.stop_loss:.2f}"
+    return (
+        f"| {index}. {symbol_name} | {signal.score:.1f} | "
+        f"{reference} | {risk} | {next_step} |"
+    )
+
+
 def _format_premium_signal(signal: PremiumSignal) -> str:
     symbol_name = format_symbol_name(signal.symbol, signal.name)
     lead_reason = signal.reasons[0] if signal.reasons else signal.signal_type
@@ -990,6 +1051,17 @@ def _format_premium_signal(signal: PremiumSignal) -> str:
         f"{symbol_name} | {signal.signal_type} | {signal.score:.1f}分 | "
         f"参考价 {signal.entry_price:.2f} / 防守位 {signal.stop_loss:.2f} / "
         f"观察空间 {signal.expected_return:.2f}% | {lead_reason}"
+    )
+
+
+def _format_premium_signal_table_row(signal: PremiumSignal, *, index: int) -> str:
+    symbol_name = format_symbol_name(signal.symbol, signal.name)
+    risk = signal.risks[0] if signal.risks else "高开或量能衰减"
+    next_step = signal.reasons[0] if signal.reasons else "等待尾盘强势延续"
+    reference = f"参考 {signal.entry_price:.2f} / 防守 {signal.stop_loss:.2f} / 空间 {signal.expected_return:.2f}%"
+    return (
+        f"| {index}. {symbol_name} | {signal.score:.1f} | "
+        f"{reference} | {risk} | {next_step} |"
     )
 
 

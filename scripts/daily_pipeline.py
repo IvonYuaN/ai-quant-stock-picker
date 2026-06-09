@@ -120,6 +120,18 @@ def _run_step(
 
         result = fn()
         elapsed = time.monotonic() - start
+        if isinstance(result, dict):
+            exit_code = result.get("exit_code")
+            if isinstance(exit_code, int) and exit_code != 0:
+                message = str(result.get("error") or f"exit_code={exit_code}")
+                logger.error("✗ 失败: %s - %s", name, message)
+                return StepResult(
+                    name=name,
+                    success=False,
+                    duration_seconds=elapsed,
+                    message=message,
+                    details=result,
+                )
         logger.info("✓ 完成步骤: %s (%.1fs)", name, elapsed)
         if isinstance(result, dict):
             return StepResult(
@@ -772,6 +784,13 @@ def run_pipeline(config: PipelineConfig) -> PipelineResult:
         ("Dashboard刷新", lambda: _step_refresh_dashboard(config, logger)),
         ("数据清理", lambda: _step_cleanup(config, logger)),
     ]
+    if not _is_trade_day(today):
+        pipeline_steps = [
+            ("数据更新", lambda: _step_update_data(config, logger)),
+            ("报告生成", lambda: _step_generate_report(config, logger)),
+            ("Dashboard刷新", lambda: _step_refresh_dashboard(config, logger)),
+            ("数据清理", lambda: _step_cleanup(config, logger)),
+        ]
 
     for step_name, step_fn in pipeline_steps:
         result = _run_step(step_name, step_fn, logger, dry_run=config.dry_run)

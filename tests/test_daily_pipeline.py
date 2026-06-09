@@ -598,6 +598,23 @@ def test_run_step_logs_stable_completion_label(caplog) -> None:
     assert "✓ 完成步骤: 策略运行" in caplog.text
 
 
+def test_run_step_marks_non_zero_exit_code_as_failure(caplog) -> None:
+    daily_pipeline = _load_daily_pipeline_module()
+    logger = logging.getLogger("test.pipeline.exit")
+
+    with caplog.at_level(logging.ERROR, logger="test.pipeline.exit"):
+        result = daily_pipeline._run_step(
+            "收盘复盘",
+            lambda: {"exit_code": 2, "error": "参数错误"},
+            logger,
+        )
+
+    assert result.success is False
+    assert result.message == "参数错误"
+    assert result.details["exit_code"] == 2
+    assert "✗ 失败: 收盘复盘 - 参数错误" in caplog.text
+
+
 def test_closing_premium_uses_explicit_symbols(monkeypatch) -> None:
     daily_pipeline = _load_daily_pipeline_module()
     captured: list[str] = []
@@ -706,6 +723,52 @@ def test_run_pipeline_excludes_intraday_sub_strategies(monkeypatch) -> None:
         "Dashboard刷新",
         "数据清理",
     ]
+
+
+def test_run_pipeline_trims_writeback_steps_when_non_trade_day(monkeypatch) -> None:
+    daily_pipeline = _load_daily_pipeline_module()
+    executed: list[str] = []
+
+    def fake_run_step(name: str, fn, logger, dry_run: bool = False):
+        executed.append(name)
+        return daily_pipeline.StepResult(name, True, 0.0)
+
+    monkeypatch.setattr(daily_pipeline, "_run_step", fake_run_step)
+    monkeypatch.setattr(daily_pipeline, "_is_trade_day", lambda _d: False)
+
+    config = daily_pipeline.PipelineConfig(
+        project_root=Path.cwd(),
+        source="eastmoney",
+        mode="close",
+        limit=10,
+        max_universe=50,
+        min_avg_amount=50_000_000,
+        max_data_lag_days=3,
+        enable_online_factors=False,
+        allow_online_fallback=True,
+        ledger_path="data/predictions.jsonl",
+        report_path="reports/latest.md",
+        csv_path="reports/latest.csv",
+        briefing_path="reports/briefing.md",
+        paper_report_path="reports/paper.md",
+        dashboard_html="dist/dashboard/index.html",
+        dashboard_db="dist/dashboard/aqsp.db",
+        paper_ledger="data/paper_trades.jsonl",
+        closing_review_path="reports/closing_review.md",
+        notify=False,
+        notify_mode="summary",
+        dry_run=False,
+        enable_debate=False,
+        enable_auto_evolution=False,
+    )
+
+    result = daily_pipeline.run_pipeline(config)
+
+    assert result.overall_success is True
+    assert executed == ["数据更新", "报告生成", "Dashboard刷新", "数据清理"]
+    assert "策略运行" not in executed
+    assert "虚拟盘同步" not in executed
+    assert "收盘复盘" not in executed
 
 
 def test_run_pipeline_marks_overall_failure_when_later_step_fails(

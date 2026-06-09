@@ -1150,8 +1150,8 @@ def _build_execution_summary_line(
     if tradable and has_allocations:
         top = tradable[0]
         return (
-            f"🎯 **首选**: {top.symbol} {top.name} | 评分 {top.score:.0f} | "
-            f"买点 {top.ideal_buy} / 止损 {top.stop_loss} / 目标 {top.take_profit}"
+            f"🎯 **优先纸面复核**: {top.symbol} {top.name} | 评分 {top.score:.0f} | "
+            f"观察参考 {top.ideal_buy} / 防守 {top.stop_loss} / 目标 {top.take_profit}"
         )
     watchlist = tuple(getattr(portfolio_summary, "watchlist", ()) or ())
     blockers = tuple(getattr(portfolio_summary, "execution_blockers", ()) or ())
