@@ -20,12 +20,16 @@ from aqsp.strategies.closing_premium import PremiumSignal
 from aqsp.strategies.morning_breakout import BreakoutSignal
 
 
-def test_build_briefing_notification_includes_debate_summary_when_summary_mode() -> None:
+def test_build_briefing_notification_includes_debate_summary_when_summary_mode() -> (
+    None
+):
     briefing = Briefing(
         date="2026-06-04",
         sections=[
             BriefingSection(title="主链总览", content="PM主裁决: 维持观察"),
-            BriefingSection(title="明日重点", content="**000001 平安银行** 观察开盘强弱"),
+            BriefingSection(
+                title="明日重点", content="**000001 平安银行** 观察开盘强弱"
+            ),
         ],
         debate_results=[
             DebateResult(
@@ -47,6 +51,40 @@ def test_build_briefing_notification_includes_debate_summary_when_summary_mode()
     assert "## 多Agent辩论" in markdown
     assert "分歧度 45%" in markdown
     assert "# AI 量化选股日报" not in markdown
+
+
+def test_build_briefing_notification_includes_research_radar_when_summary_mode() -> (
+    None
+):
+    briefing = Briefing(
+        date="2026-06-04",
+        sections=[
+            BriefingSection(title="主链总览", content="PM主裁决: 维持观察"),
+            BriefingSection(
+                title="研究吸收",
+                content="\n".join(
+                    [
+                        "- 研究发现落盘: **未落盘（按配置吸收队列展示）**",
+                        "- 已吸收但未直接入分策略族: **4**",
+                        "- 已部分实现策略族: **5**",
+                        "- 下一接入重点: data_source/baostock [P1] - 补 fixture",
+                        "- 当前前置缺口: data_source/tushare - needs_env (TUSHARE_TOKEN)",
+                        "- 原则: 研究内容只做候选和解释，不直接覆盖 runtime 打分。",
+                    ]
+                ),
+            ),
+            BriefingSection(title="明日重点", content="观察开盘强弱"),
+        ],
+    )
+
+    markdown = build_briefing_notification(briefing, mode="summary")
+
+    assert "## 研究雷达" in markdown
+    assert "未落盘（按配置吸收队列展示）" in markdown
+    assert "已吸收但未直接入分策略族" in markdown
+    assert "data_source/baostock" in markdown
+    assert "TUSHARE_TOKEN" in markdown
+    assert "不直接覆盖 runtime 打分" in markdown
 
 
 def test_build_briefing_notification_returns_full_markdown_when_full_mode() -> None:
@@ -109,10 +147,7 @@ def test_build_daily_run_notification_includes_allocation_guidance() -> None:
     assert "- 配仓建议: 300750 20%" in markdown
     assert "- 现金留存: 80%" in markdown
     assert "## 🧭 阅读顺序" in markdown
-    assert (
-        "1. 🧪 先看纸面配仓复核：300750 宁德时代，核对开盘承接和流动性。"
-        in markdown
-    )
+    assert "1. 🧪 先看纸面配仓复核：300750 宁德时代，核对开盘承接和流动性。" in markdown
     assert "2. 🔍 再看候选简表：确认状态、分数、关键点是否一致。" in markdown
     assert "3. 🗣️ 最后看多 Agent 分歧：300750 宁德时代 分歧度 42%。" in markdown
     assert markdown.index("## 🧭 阅读顺序") < markdown.index("## 📋 候选简表")
@@ -123,7 +158,9 @@ def test_build_daily_run_notification_includes_allocation_guidance() -> None:
     assert "先看 300750 宁德时代 的开盘强弱与流动性" in markdown
 
 
-def test_build_daily_run_notification_surfaces_watchlist_blockers_when_no_allocations() -> None:
+def test_build_daily_run_notification_surfaces_watchlist_blockers_when_no_allocations() -> (
+    None
+):
     markdown = build_daily_run_notification(
         run_date="2026-06-04",
         tradable=[],
@@ -146,14 +183,16 @@ def test_build_daily_run_notification_surfaces_watchlist_blockers_when_no_alloca
     )
 
     assert "- 观察池: 000021 深科技、000338 潍柴动力" in markdown
-    assert "- 主链状态: 今日无可执行标的，转入观察池：000021 深科技、000338 潍柴动力" in markdown
+    assert (
+        "- 主链状态: 今日无可执行标的，转入观察池：000021 深科技、000338 潍柴动力"
+        in markdown
+    )
     assert "- 裁决热点: 板块集中度过高，压低科技暴露" in markdown
     assert "- 执行阻塞: 000021 深科技: 板块集中度过高，压低科技暴露" in markdown
     assert "## 🧭 阅读顺序" in markdown
     assert "1. ⏸️ 先看空档：今日无清晰候选，不为了凑单行动。" in markdown
     assert (
-        "2. 🔒 再看风险/阻塞：000021 深科技: 板块集中度过高，压低科技暴露"
-        in markdown
+        "2. 🔒 再看风险/阻塞：000021 深科技: 板块集中度过高，压低科技暴露" in markdown
     )
     assert "3. 📌 最后看约束：单票上限 20%；今日不建议建立主仓。" in markdown
     assert "暂无可执行主仓，先盯观察池" in markdown
@@ -209,7 +248,9 @@ def test_build_daily_run_notification_surfaces_watch_reviews_as_checklist() -> N
     )
 
 
-def test_build_daily_run_notification_lists_watch_candidates_when_not_tradable() -> None:
+def test_build_daily_run_notification_lists_watch_candidates_when_not_tradable() -> (
+    None
+):
     markdown = build_daily_run_notification(
         run_date="2026-06-05",
         tradable=[],
@@ -289,7 +330,9 @@ def test_build_daily_run_notification_lists_watch_candidates_when_not_tradable()
     )
 
 
-def test_build_daily_run_notification_includes_candidate_status_for_tradable_pick() -> None:
+def test_build_daily_run_notification_includes_candidate_status_for_tradable_pick() -> (
+    None
+):
     markdown = build_daily_run_notification(
         run_date="2026-06-05",
         tradable=(
@@ -316,11 +359,18 @@ def test_build_daily_run_notification_includes_candidate_status_for_tradable_pic
         source_health_message="eastmoney 健康",
     )
 
-    assert "- 首选标的: 300750 宁德时代 | 延续上升 | 73分 | 买 220.5 / 损 214.2 / 盈 238" in markdown
-    assert "| 1 | 300750 宁德时代 | 延续上升 | 73 | 🎯 纸面复核 | 趋势延续 |" in markdown
+    assert (
+        "- 首选标的: 300750 宁德时代 | 延续上升 | 73分 | 买 220.5 / 损 214.2 / 盈 238"
+        in markdown
+    )
+    assert (
+        "| 1 | 300750 宁德时代 | 延续上升 | 73 | 🎯 纸面复核 | 趋势延续 |" in markdown
+    )
 
 
-def test_build_daily_run_notification_surfaces_default_review_for_new_watch_pick() -> None:
+def test_build_daily_run_notification_surfaces_default_review_for_new_watch_pick() -> (
+    None
+):
     markdown = build_daily_run_notification(
         run_date="2026-06-05",
         tradable=[],
@@ -354,7 +404,10 @@ def test_build_daily_run_notification_surfaces_default_review_for_new_watch_pick
     )
 
     assert "复核 高优先级 / 盘中走强后" in markdown
-    assert "1. 先盯 688981 中芯国际，等待量价继续走强后，再评估是否转入执行名单（高优先级 / 盘中走强后）。" in markdown
+    assert (
+        "1. 先盯 688981 中芯国际，等待量价继续走强后，再评估是否转入执行名单（高优先级 / 盘中走强后）。"
+        in markdown
+    )
 
 
 def test_build_daily_run_notification_surfaces_snapshot_diff_highlights() -> None:
@@ -494,7 +547,13 @@ def test_build_closing_review_notification_summary_mode_highlights_main_chain() 
         max_single_loss=-1.2,
         avg_holding_days=1.5,
         strategy_breakdown={
-            "早盘打板": {"total": 2, "wins": 1, "losses": 1, "total_return": 1.8, "win_rate": 0.5}
+            "早盘打板": {
+                "total": 2,
+                "wins": 1,
+                "losses": 1,
+                "total_return": 1.8,
+                "win_rate": 0.5,
+            }
         },
         market_environment="震荡市",
         main_chain_summary=(

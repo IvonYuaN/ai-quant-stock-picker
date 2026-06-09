@@ -64,7 +64,7 @@ def test_ensure_dashboard_server_reuses_existing_server(
     assert pid is None
 
 
-def test_open_dashboard_uses_fixed_default_port_when_serving(
+def test_open_dashboard_uses_fixed_default_port_without_opening_browser_by_default(
     monkeypatch, tmp_path: Path
 ) -> None:
     output_path = tmp_path / "dist/dashboard/index.html"
@@ -96,4 +96,37 @@ def test_open_dashboard_uses_fixed_default_port_when_serving(
     assert result.url == "http://127.0.0.1:9876"
     assert result.server_started is True
     assert result.pid == 4321
+    assert calls == []
+
+
+def test_open_dashboard_opens_browser_only_when_explicitly_requested(
+    monkeypatch, tmp_path: Path
+) -> None:
+    output_path = tmp_path / "dist/dashboard/index.html"
+    db_path = tmp_path / "dist/dashboard/aqsp.db"
+    calls: list[str] = []
+
+    monkeypatch.setattr(
+        "scripts.open_dashboard.render_dashboard_bundle",
+        lambda **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        "scripts.open_dashboard.ensure_dashboard_server",
+        lambda **_kwargs: (True, 4321),
+    )
+    monkeypatch.setattr(
+        "scripts.open_dashboard.webbrowser.open",
+        lambda url: calls.append(url),
+    )
+
+    result = open_dashboard(
+        csv_path=tmp_path / "latest.csv",
+        ledger_path=tmp_path / "predictions.jsonl",
+        paper_ledger_path=tmp_path / "paper.jsonl",
+        output_path=output_path,
+        db_path=db_path,
+        open_browser=True,
+    )
+
+    assert result.url == "http://127.0.0.1:9876"
     assert calls == ["http://127.0.0.1:9876"]

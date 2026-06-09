@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Render and serve the local AQSP dashboard on a fixed port."""
+"""Render and serve the local AQSP dashboard without stealing focus."""
 # ruff: noqa: E402
 
 from __future__ import annotations
@@ -125,7 +125,7 @@ def open_dashboard(
     host: str = DEFAULT_HOST,
     port: int = DEFAULT_PORT,
     title: str = "AQSP 量化选股面板",
-    open_browser: bool = True,
+    open_browser: bool = False,
     render_only: bool = False,
     log_path: Path | None = None,
 ) -> DashboardLaunchResult:
@@ -172,7 +172,20 @@ def main() -> int:
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument("--log", default="logs/dashboard/server.log")
     parser.add_argument("--render-only", action="store_true")
-    parser.add_argument("--no-open-browser", action="store_true")
+    browser_group = parser.add_mutually_exclusive_group()
+    browser_group.add_argument(
+        "--open-browser",
+        dest="open_browser",
+        action="store_true",
+        help="Open the dashboard in the system browser. Disabled by default.",
+    )
+    browser_group.add_argument(
+        "--no-open-browser",
+        dest="open_browser",
+        action="store_false",
+        help="Do not open a foreground browser. This is the default.",
+    )
+    parser.set_defaults(open_browser=False)
     args = parser.parse_args()
 
     result = open_dashboard(
@@ -184,7 +197,7 @@ def main() -> int:
         host=args.host,
         port=args.port,
         title=args.title,
-        open_browser=not args.no_open_browser,
+        open_browser=args.open_browser,
         render_only=args.render_only,
         log_path=Path(args.log),
     )

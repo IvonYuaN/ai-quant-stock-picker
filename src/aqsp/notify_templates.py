@@ -9,7 +9,11 @@ from aqsp.briefing.debate import DebateResult
 from aqsp.monitor.checker import MonitorResult
 from aqsp.models import PickResult
 from aqsp.portfolio.manager import PortfolioDecisionSummary
-from aqsp.portfolio.snapshot import SnapshotDiff, snapshot_diff_highlights, summarize_snapshot_diff
+from aqsp.portfolio.snapshot import (
+    SnapshotDiff,
+    snapshot_diff_highlights,
+    summarize_snapshot_diff,
+)
 from aqsp.notifier import prepend_source_status_banner
 from aqsp.presentation import (
     format_symbol_name,
@@ -65,11 +69,38 @@ def build_briefing_notification(
     debate = _format_debate_summary(briefing.debate_results)
     if debate:
         body_parts.append("## 多Agent辩论\n\n" + debate)
+    research = _format_research_radar(sections.get("研究吸收", ""))
+    if research:
+        body_parts.append("## 研究雷达\n\n" + research)
     next_day = sections.get("明日重点", "")
     if next_day:
         body_parts.append("## 明日动作\n\n" + next_day)
-    body = "\n\n".join(part for part in body_parts if part).strip() or briefing.to_markdown()
+    body = (
+        "\n\n".join(part for part in body_parts if part).strip()
+        or briefing.to_markdown()
+    )
     return prepend_source_status_banner(body, source_status=source_status)
+
+
+def _format_research_radar(section: str) -> str:
+    lines = [
+        line.strip() for line in section.splitlines() if line.strip().startswith("- ")
+    ]
+    if not lines:
+        return ""
+    preferred_markers = (
+        "研究发现落盘",
+        "已吸收但未直接入分策略族",
+        "下一接入重点",
+        "当前前置缺口",
+        "原则",
+    )
+    selected: list[str] = []
+    for marker in preferred_markers:
+        match = next((line for line in lines if marker in line), "")
+        if match and match not in selected:
+            selected.append(match)
+    return "\n".join(selected[:5])
 
 
 def build_daily_run_notification(
@@ -127,15 +158,9 @@ def build_daily_run_notification(
             )
         )
     if portfolio_summary is not None and portfolio_summary.strategy_focus:
-        lines.append(
-            "- 优先策略: "
-            + "、".join(portfolio_summary.strategy_focus[:3])
-        )
+        lines.append("- 优先策略: " + "、".join(portfolio_summary.strategy_focus[:3]))
     if portfolio_summary is not None and portfolio_summary.action_hotspots:
-        lines.append(
-            "- 裁决热点: "
-            + "；".join(portfolio_summary.action_hotspots[:2])
-        )
+        lines.append("- 裁决热点: " + "；".join(portfolio_summary.action_hotspots[:2]))
     if portfolio_summary is not None and portfolio_summary.allocations:
         top_alloc = "、".join(
             f"{item.symbol} {item.weight:.0%}"
@@ -143,15 +168,12 @@ def build_daily_run_notification(
         )
         lines.append(f"- 配仓建议: {top_alloc}")
     elif portfolio_summary is not None and portfolio_summary.watchlist:
-        lines.append(
-            "- 观察池: " + "、".join(portfolio_summary.watchlist[:3])
-        )
+        lines.append("- 观察池: " + "、".join(portfolio_summary.watchlist[:3]))
     if portfolio_summary is not None and portfolio_summary.cash_reserve > 0:
         lines.append(f"- 现金留存: {portfolio_summary.cash_reserve:.0%}")
     if portfolio_summary is not None and portfolio_summary.execution_blockers:
         lines.append(
-            "- 执行阻塞: "
-            + "；".join(portfolio_summary.execution_blockers[:2])
+            "- 执行阻塞: " + "；".join(portfolio_summary.execution_blockers[:2])
         )
     if snapshot_diff is not None and snapshot_diff.has_changes:
         lines.append(f"- 候选变化: {summarize_snapshot_diff(snapshot_diff)}")
@@ -232,7 +254,9 @@ def _daily_lead_conclusion(
         return f"👀 今日无主仓对象，先盯观察池：{names}"
     if candidates:
         lead = candidates[0]
-        return f"👀 仅观察，先看 {format_symbol_name(lead.symbol, lead.name)} 的确认条件"
+        return (
+            f"👀 仅观察，先看 {format_symbol_name(lead.symbol, lead.name)} 的确认条件"
+        )
     return "⏸️ 今日没有足够清晰的候选，保持观察"
 
 
@@ -290,8 +314,7 @@ def _daily_reading_order_lines(
         lines.append(f"2. 🔒 再看风险/阻塞：{blocker_line}")
     elif portfolio_summary is not None and portfolio_summary.action_hotspots:
         lines.append(
-            "2. 🔍 再看裁决热点："
-            + "；".join(portfolio_summary.action_hotspots[:2])
+            "2. 🔍 再看裁决热点：" + "；".join(portfolio_summary.action_hotspots[:2])
         )
     else:
         lines.append("2. 🔍 再看候选简表：确认状态、分数、关键点是否一致。")
@@ -374,9 +397,8 @@ def _daily_candidate_table_row(
     else:
         status = status or "观察"
         action = "👀 观察"
-        key = (
-            _candidate_next_step(pick)
-            or (pick.reasons[0] if pick.reasons else "等待更强确认")
+        key = _candidate_next_step(pick) or (
+            pick.reasons[0] if pick.reasons else "等待更强确认"
         )
     review_window = _candidate_review_window(pick)
     review_priority = _review_priority_label(_candidate_review_priority(pick))
@@ -721,17 +743,11 @@ def _daily_watch_action_line(
 
 def _daily_debate_action_line(result: DebateResult) -> str:
     if result.recommended_adjustment == "lower":
-        return (
-            f"{result.symbol} {result.name} 的辩论偏谨慎，若开盘不及预期，优先降低仓位或延后执行"
-        )
+        return f"{result.symbol} {result.name} 的辩论偏谨慎，若开盘不及预期，优先降低仓位或延后执行"
     if result.recommended_adjustment == "raise":
-        return (
-            f"{result.symbol} {result.name} 获辩论加分，可作为优先确认对象，但仍需尊重开盘流动性"
-        )
+        return f"{result.symbol} {result.name} 获辩论加分，可作为优先确认对象，但仍需尊重开盘流动性"
     if result.disagreement_score >= 0.5:
-        return (
-            f"{result.symbol} {result.name} 多空分歧较大，除非开盘明显走强，否则以观察为主"
-        )
+        return f"{result.symbol} {result.name} 多空分歧较大，除非开盘明显走强，否则以观察为主"
     return f"{result.symbol} {result.name} 辩论分歧可控，可按主链节奏正常跟踪"
 
 
@@ -789,7 +805,9 @@ def _format_daily_pick(pick: PickResult) -> str:
     if status:
         parts.append(status)
     parts.append(f"{pick.score:.0f}分")
-    parts.append(f"买 {pick.ideal_buy:g} / 损 {pick.stop_loss:g} / 盈 {pick.take_profit:g}")
+    parts.append(
+        f"买 {pick.ideal_buy:g} / 损 {pick.stop_loss:g} / 盈 {pick.take_profit:g}"
+    )
     return " | ".join(parts)
 
 
