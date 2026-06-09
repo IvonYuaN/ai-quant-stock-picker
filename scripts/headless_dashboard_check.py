@@ -23,16 +23,11 @@ DEFAULT_FORBIDDEN_TEXT = (
     "数据滞后: - 天",
     "risks",
 )
-BROWSER_CANDIDATES = (
+DEDICATED_BROWSER_ENV = "AQSP_HEADLESS_BROWSER"
+DEFAULT_BROWSER_CANDIDATES = (
     "chromium",
     "chromium-browser",
-    "google-chrome",
-    "google-chrome-stable",
-    "microsoft-edge",
-    "brave-browser",
-    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
     "/Applications/Chromium.app/Contents/MacOS/Chromium",
-    "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
 )
 
 
@@ -68,13 +63,22 @@ def fetch_text(url: str, *, timeout_seconds: float) -> str:
         return response.read().decode("utf-8", errors="replace")
 
 
-def find_browser_executable() -> str | None:
-    for candidate in BROWSER_CANDIDATES:
-        if "/" in candidate:
-            if Path(candidate).exists():
-                return candidate
-            continue
-        resolved = shutil.which(candidate)
+def _resolve_executable(candidate: str) -> str | None:
+    if "/" in candidate:
+        return candidate if Path(candidate).exists() else None
+    return shutil.which(candidate)
+
+
+def find_browser_executable(
+    *,
+    explicit_browser: str | None = None,
+    candidates: tuple[str, ...] = DEFAULT_BROWSER_CANDIDATES,
+) -> str | None:
+    dedicated_browser = explicit_browser or os.getenv(DEDICATED_BROWSER_ENV, "")
+    if dedicated_browser:
+        return _resolve_executable(dedicated_browser)
+    for candidate in candidates:
+        resolved = _resolve_executable(candidate)
         if resolved:
             return resolved
     return None
@@ -96,10 +100,14 @@ def build_headless_browser_command(
         "--disable-gpu",
         "--disable-extensions",
         "--disable-background-networking",
+        "--disable-component-update",
         "--disable-default-apps",
+        "--disable-sync",
         "--mute-audio",
         "--no-first-run",
         "--no-default-browser-check",
+        "--password-store=basic",
+        "--use-mock-keychain",
         f"--user-data-dir={profile_dir}",
         "--remote-debugging-port=0",
         f"--window-size={window_size}",
@@ -176,6 +184,7 @@ def run_check(
     timeout_seconds: float,
     window_size: str,
     virtual_time_budget_ms: int,
+    browser_executable: str | None = None,
 ) -> DashboardCheckResult:
     errors: list[str] = []
     warnings: list[str] = []
@@ -188,12 +197,17 @@ def run_check(
         errors.append(f"health check failed: {exc}")
 
     if mode in {"auto", "browser"}:
-        browser = find_browser_executable()
+        browser = find_browser_executable(explicit_browser=browser_executable)
         if browser is None:
             if mode == "browser" or screenshot_path is not None:
-                errors.append("headless browser executable not found")
+                errors.append(
+                    "dedicated headless browser executable not found; install Chromium "
+                    f"or set {DEDICATED_BROWSER_ENV} to an isolated browser binary"
+                )
             else:
-                warnings.append("headless browser not found; using raw HTTP HTML")
+                warnings.append(
+                    "dedicated headless browser not found; using raw HTTP HTML"
+                )
         else:
             with tempfile.TemporaryDirectory(prefix="aqsp-headless-") as temp_dir:
                 try:
@@ -274,6 +288,14 @@ def main() -> int:
     parser.add_argument("--timeout", type=float, default=20.0)
     parser.add_argument("--window-size", default="1440,1100")
     parser.add_argument("--virtual-time-budget-ms", type=int, default=10000)
+    parser.add_argument(
+        "--browser",
+        default="",
+        help=(
+            "Dedicated headless browser executable. Defaults to "
+            f"${DEDICATED_BROWSER_ENV}, then Chromium only."
+        ),
+    )
     args = parser.parse_args()
 
     result = run_check(
@@ -286,6 +308,7 @@ def main() -> int:
         timeout_seconds=args.timeout,
         window_size=args.window_size,
         virtual_time_budget_ms=args.virtual_time_budget_ms,
+        browser_executable=args.browser or None,
     )
 
     print(f"status={'pass' if result.passed else 'fail'}")
