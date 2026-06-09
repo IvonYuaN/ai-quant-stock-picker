@@ -44,6 +44,7 @@ from aqsp.web.dashboard import (
     _home_action_rail_items,
     _home_execution_blocked_summary,
     _home_primary_focus_card,
+    _home_reading_order_lines,
     _has_review_meta,
     _holding_metric_label,
     _execution_path_context_lines,
@@ -3673,6 +3674,164 @@ def test_dashboard_home_action_rail_items_insert_debate_lane_when_same_day_debat
     assert items[2].tone == "pressure"
     assert items[2].lines[0] == "辩论结论: 建议维持评分 / 分歧 0.48"
     assert any("研究入口: 辩论主结论" == line for line in items[2].lines)
+
+
+def test_dashboard_home_reading_order_prioritizes_paper_events_before_candidates() -> (
+    None
+):
+    from aqsp.web.data_provider import DashboardCandidateCard, DashboardPaperSummary
+
+    class _TaskView:
+        detail_cards = (
+            DashboardCandidateCard(
+                symbol="600519",
+                name="贵州茅台",
+                display_name="600519 贵州茅台",
+                rank_label="首选",
+                score=88.0,
+                action_label="上调优先级",
+                status_label="延续上升",
+                decision_note="主链继续保留首选",
+                next_step="等待量能确认",
+                blocker="",
+                review_meta="高优先级 / 开盘前后",
+                reasons=(),
+                risks=(),
+                strategies=(),
+                data_source="eastmoney",
+            ),
+        )
+        headline = "主链候选已产出"
+        report_markdown = ""
+        report_summary_lines = ()
+        runtime_lines = ()
+        next_day_focus_lines = ()
+
+    class _Overview:
+        focus_headline = "主链候选已产出"
+        top_headline = "主链候选已产出"
+        archive_summary = ""
+
+    paper_summary = DashboardPaperSummary(
+        signal_date="2026-06-01",
+        open_positions=0,
+        pending_entries=1,
+        not_executable=0,
+        closed_trades=0,
+        open_position_lines=(),
+        event_lines=(),
+        action_summary_lines=("纸面入场待核对 1 笔，等待下一交易日开盘价。",),
+    )
+
+    lines = _home_reading_order_lines(
+        task_view=_TaskView(),
+        overview=_Overview(),
+        paper_summary=paper_summary,
+        spotlights=(),
+        debates=(),
+    )
+
+    assert lines[0].startswith("🧪 先看纸面验证")
+    assert "下一交易日开盘价" in lines[0]
+    assert "🧭 再看候选路径 | 600519 贵州茅台" in lines[1]
+    assert lines[2].startswith("📚 归档待补")
+
+
+def test_dashboard_home_reading_order_surfaces_blocked_card_as_final_gate() -> None:
+    from aqsp.web.data_provider import DashboardCandidateCard, DashboardPaperSummary
+
+    class _TaskView:
+        detail_cards = (
+            DashboardCandidateCard(
+                symbol="000338",
+                name="潍柴动力",
+                display_name="000338 潍柴动力",
+                rank_label="阻塞观察",
+                score=58.0,
+                action_label="降级观察",
+                status_label="观察阻塞",
+                decision_note="20日均成交额不足，流动性过滤",
+                next_step="",
+                blocker="20日均成交额不足，流动性过滤",
+                review_meta="",
+                reasons=(),
+                risks=("20日均成交额不足，流动性过滤",),
+                strategies=(),
+                data_source="eastmoney",
+            ),
+        )
+        headline = "当前候选被过滤"
+        report_markdown = ""
+        report_summary_lines = ()
+        runtime_lines = ()
+        next_day_focus_lines = ()
+
+    class _Overview:
+        focus_headline = "当前候选被过滤"
+        top_headline = "当前候选被过滤"
+        archive_summary = ""
+
+    paper_summary = DashboardPaperSummary(
+        signal_date="2026-06-01",
+        open_positions=0,
+        pending_entries=0,
+        not_executable=0,
+        closed_trades=0,
+        open_position_lines=(),
+        event_lines=(),
+        action_summary_lines=(),
+    )
+
+    lines = _home_reading_order_lines(
+        task_view=_TaskView(),
+        overview=_Overview(),
+        paper_summary=paper_summary,
+        spotlights=(),
+        debates=(),
+    )
+
+    assert lines[0] == "🧪 纸面侧较轻: 当前没有新的纸面入场或不可成交事件。"
+    assert "🧭 再看候选路径 | 000338 潍柴动力" in lines[1]
+    assert lines[2] == "🔒 最后核对卡点 | 000338 潍柴动力 | 20日均成交额不足，流动性过滤"
+
+
+def test_dashboard_home_reading_order_uses_archive_when_no_blockers() -> None:
+    from aqsp.web.data_provider import DashboardPaperSummary
+
+    class _TaskView:
+        detail_cards = ()
+        headline = "当前无显著候选"
+        report_markdown = "# 已归档"
+        report_summary_lines = ("历史报告摘要: 今日没有可推进候选。",)
+        runtime_lines = ()
+        next_day_focus_lines = ("明日继续观察量能恢复。",)
+
+    class _Overview:
+        focus_headline = ""
+        top_headline = "当前无显著候选"
+        archive_summary = "本日已归档。"
+
+    paper_summary = DashboardPaperSummary(
+        signal_date="2026-06-01",
+        open_positions=0,
+        pending_entries=0,
+        not_executable=0,
+        closed_trades=0,
+        open_position_lines=(),
+        event_lines=(),
+        action_summary_lines=(),
+    )
+
+    lines = _home_reading_order_lines(
+        task_view=_TaskView(),
+        overview=_Overview(),
+        paper_summary=paper_summary,
+        spotlights=(),
+        debates=(),
+    )
+
+    assert lines[1] == "🧭 再看研究路径 | 当前无显著候选"
+    assert lines[2] == "📚 最后回看归档 | 明日继续观察量能恢复。"
 
 
 def test_dashboard_home_focus_spotlights_filters_out_single_task_blocked_cards() -> (

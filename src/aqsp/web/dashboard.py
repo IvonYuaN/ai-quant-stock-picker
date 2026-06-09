@@ -528,6 +528,37 @@ def _inject_dashboard_styles() -> None:
             gap: 0.85rem;
             margin-bottom: 0.8rem;
         }
+        .aqsp-reading-card {
+            position: relative;
+            overflow: hidden;
+            padding: 1rem 1.1rem;
+            border-radius: 18px;
+            border: 1px solid rgba(25, 92, 138, 0.16);
+            background:
+                radial-gradient(circle at 12% 16%, rgba(40, 104, 143, 0.13), transparent 24%),
+                linear-gradient(135deg, #fffdf4 0%, #f4f8fb 48%, #edf6f2 100%);
+            box-shadow: 0 14px 30px rgba(33, 46, 56, 0.07);
+            margin-bottom: 0.85rem;
+        }
+        .aqsp-reading-title {
+            font-size: 0.78rem;
+            text-transform: uppercase;
+            letter-spacing: 0.12em;
+            color: #5e7081;
+            margin-bottom: 0.45rem;
+        }
+        .aqsp-reading-main {
+            font-size: 1.05rem;
+            font-weight: 700;
+            color: #163247;
+            margin-bottom: 0.52rem;
+        }
+        .aqsp-reading-line {
+            font-size: 0.9rem;
+            color: #34495a;
+            line-height: 1.58;
+            margin-top: 0.18rem;
+        }
         </style>
         """,
         unsafe_allow_html=True,
@@ -2713,6 +2744,124 @@ def _render_home_execution_snapshot(
             if summary.pending_entries or summary.not_executable
             else "archive",
         )
+
+
+def _home_reading_order_lines(
+    *,
+    task_view,
+    overview: DashboardDateOverview,
+    paper_summary: DashboardPaperSummary,
+    spotlights: tuple[DashboardCandidateSpotlight, ...],
+    debates: tuple[DashboardDebateSummary, ...],
+) -> tuple[str, ...]:
+    merged_cards = _home_action_cards(task_view, spotlights)
+    recommend_cards, watch_cards, blocked_cards = _classify_candidate_queues(
+        merged_cards
+    )
+    focus_card = _home_primary_focus_card(recommend_cards, watch_cards, blocked_cards)
+    blocked_focus = _home_blocked_focus_card(blocked_cards)
+
+    if paper_summary.pending_entries or paper_summary.not_executable:
+        paper_line = _join_display_parts(
+            "🧪 先看纸面验证",
+            (
+                paper_summary.action_summary_lines[0]
+                if paper_summary.action_summary_lines
+                else f"入场待核对 {paper_summary.pending_entries} / 不可成交 {paper_summary.not_executable}"
+            ),
+        )
+    elif paper_summary.open_positions:
+        paper_line = _join_display_parts(
+            "🧪 先看纸面持有",
+            (
+                paper_summary.action_summary_lines[0]
+                if paper_summary.action_summary_lines
+                else f"当前纸面持有 {paper_summary.open_positions} 笔，先核对退出条件。"
+            ),
+        )
+    else:
+        paper_line = "🧪 纸面侧较轻: 当前没有新的纸面入场或不可成交事件。"
+
+    if focus_card is not None:
+        focus_line = _join_display_parts(
+            "🧭 再看候选路径",
+            focus_card.display_name,
+            _action_status_label(focus_card.action_label, focus_card.status_label),
+            _card_emphasis(focus_card),
+        )
+    elif debates:
+        debate_focus = sorted(
+            debates,
+            key=lambda item: (item.disagreement_score, item.adjusted_score),
+            reverse=True,
+        )[0]
+        focus_line = _join_display_parts(
+            "🧭 再看分歧路径",
+            debate_focus.display_name,
+            f"{debate_focus.recommended_adjustment_label} / 分歧 {debate_focus.disagreement_score:.2f}",
+        )
+    else:
+        focus_line = _join_display_parts(
+            "🧭 再看研究路径",
+            overview.focus_headline
+            or overview.top_headline
+            or task_view.headline
+            or "当前没有显著候选，先看任务摘要。",
+        )
+
+    if blocked_focus is not None:
+        close_line = _join_display_parts(
+            "🔒 最后核对卡点",
+            blocked_focus.display_name,
+            _card_primary_blocker(blocked_focus) or _card_emphasis(blocked_focus),
+        )
+    elif _report_archive_status(task_view) != "无归档":
+        close_line = _join_display_parts(
+            "📚 最后回看归档",
+            task_view.next_day_focus_lines[0]
+            if task_view.next_day_focus_lines
+            else (
+                task_view.report_summary_lines[0]
+                if task_view.report_summary_lines
+                else overview.archive_summary
+            ),
+        )
+    else:
+        close_line = "📚 归档待补: 当前先按研究证据走，等收盘复盘补齐历史记录。"
+
+    return _unique_lines((paper_line, focus_line, close_line))
+
+
+def _render_home_reading_order(
+    *,
+    task_view,
+    overview: DashboardDateOverview,
+    paper_summary: DashboardPaperSummary,
+    spotlights: tuple[DashboardCandidateSpotlight, ...],
+    debates: tuple[DashboardDebateSummary, ...],
+) -> None:
+    lines = _home_reading_order_lines(
+        task_view=task_view,
+        overview=overview,
+        paper_summary=paper_summary,
+        spotlights=spotlights,
+        debates=debates,
+    )
+    st.markdown(
+        "\n".join(
+            [
+                '<div class="aqsp-reading-card">',
+                '<div class="aqsp-reading-title">Reading Order</div>',
+                '<div class="aqsp-reading-main">今天先这样看</div>',
+                *[
+                    f'<div class="aqsp-reading-line">{escape(line)}</div>'
+                    for line in lines
+                ],
+                "</div>",
+            ]
+        ),
+        unsafe_allow_html=True,
+    )
 
 
 def _render_home_task_board(
@@ -5839,6 +5988,13 @@ def main() -> None:
 
     if workspace == "决策首页":
         _render_command_center(task_view, date_overview, task_view.summary_lines)
+        _render_home_reading_order(
+            task_view=task_view,
+            overview=date_overview,
+            paper_summary=paper_summary,
+            spotlights=same_day_spotlights,
+            debates=same_day_debates,
+        )
         _render_home_task_board(
             rows=same_day_rows,
             current_task_id=task_view.task_id,
