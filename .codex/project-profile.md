@@ -22,6 +22,8 @@ Support: Product/Notification Systems Engineer, Data Reliability Engineer, Paper
 
 不自动下单；不上传 `private_data/`、本地数据库、API key；secrets 只走 `.env` 或 GitHub Secrets；回测/虚拟盘使用不复权价格和真实 next open；`avoid` 不进入虚拟买入；`not_executable` 不进入胜率；禁止裸 `datetime.now()`；LLM/AI 只作解释和候选研究，不覆盖确定性评分。
 
+遇到问题默认在项目内修复：代码、测试、脚本、文档、CI、可复现配置和展示文案优先。服务器系统配置、BT/Nginx/systemd/SSH/防火墙只读诊断，除非是安全、可用性或数据完整性级别的大问题，否则不直接修改，先交给仓主判断。
+
 ## Routing Cues
 
 数据源/新鲜度问题交给 Data Reliability lens；策略/开源吸收交给 Research Librarian lens；虚拟盘/ledger/可成交性交给 Paper-Trading lens；通知/报告/多 Agent 摘要交给 Product/Notification lens；前端展示交给 Dashboard lens；合并前必须跑相关 pytest、ruff、脚本语法检查。

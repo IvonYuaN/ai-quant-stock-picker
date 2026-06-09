@@ -6,6 +6,7 @@ import json
 
 import pandas as pd
 
+from aqsp.core.time import today_shanghai
 from aqsp.strategies.composite import CompositeStrategy
 from aqsp.strategies.thresholds import load_thresholds
 
@@ -1349,7 +1350,7 @@ class TestCLIPoolSelection:
         result = main(["screen", "--pool", "zz500"])
 
         assert result == 0
-        assert seen["pool_as_of"] == date.today().isoformat()
+        assert seen["pool_as_of"] == today_shanghai().isoformat()
         assert seen["symbols"] == ["000001", "600519"]
 
     def test_main_returns_config_error_when_pool_resolution_fails(self, monkeypatch):

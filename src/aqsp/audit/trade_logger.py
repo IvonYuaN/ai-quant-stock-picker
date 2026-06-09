@@ -383,7 +383,7 @@ class TradeLogger:
         Returns:
             int: 删除的文件数
         """
-        cutoff_date = date.today() - timedelta(days=days_to_keep)
+        cutoff_date = now_shanghai().date() - timedelta(days=days_to_keep)
         deleted_count = 0
 
         try:

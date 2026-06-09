@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+from aqsp.core.time import now_shanghai
 from aqsp.audit.trade_logger import (
     TradeDecisionLog,
     TradeExecutionLog,
@@ -308,7 +309,7 @@ class TestLogExecution:
             cost=2350.00,
         )
 
-        today = date.today()
+        today = now_shanghai().date()
         log_file = logger.log_dir / f"{today.isoformat()}.jsonl"
         assert log_file.exists()
 
@@ -516,12 +517,12 @@ class TestCleanupOldLogs:
     def test_cleanup_old_logs(self, logger: TradeLogger) -> None:
         """测试清理旧日志。"""
         # 创建旧日志文件
-        old_date = date.today() - timedelta(days=100)
+        old_date = now_shanghai().date() - timedelta(days=100)
         old_log_file = logger.log_dir / f"{old_date.isoformat()}.jsonl"
         old_log_file.write_text('{"test": "data"}\n')
 
         # 创建新日志文件
-        recent_date = date.today()
+        recent_date = now_shanghai().date()
         recent_log_file = logger.log_dir / f"{recent_date.isoformat()}.jsonl"
         recent_log_file.write_text('{"test": "data"}\n')
 
@@ -536,7 +537,7 @@ class TestCleanupOldLogs:
         """测试清理不删除最近的日志。"""
         # 创建多个日志文件
         for days_ago in [5, 15, 30, 60]:
-            file_date = date.today() - timedelta(days=days_ago)
+            file_date = now_shanghai().date() - timedelta(days=days_ago)
             log_file = logger.log_dir / f"{file_date.isoformat()}.jsonl"
             log_file.write_text('{"test": "data"}\n')
 
