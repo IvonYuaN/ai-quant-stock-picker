@@ -9,7 +9,42 @@ from unittest.mock import MagicMock
 
 from aqsp.core.time import today_shanghai
 from aqsp.core.types import PickResult
+from aqsp.portfolio.manager import PortfolioDecisionSummary
 from aqsp.portfolio.snapshot import PickSnapshot, SnapshotDiff
+
+
+def test_execution_summary_uses_observation_when_pm_has_no_allocations() -> None:
+    import aqsp.cli as cli_mod
+
+    pick = PickResult(
+        symbol="000001",
+        name="平安银行",
+        date="2026-06-09",
+        close=11.07,
+        score=85,
+        rating="buy_candidate",
+        entry_type="trend_pullback",
+        ideal_buy=11.07,
+        stop_loss=10.74,
+        take_profit=12.01,
+        position="watch",
+    )
+    summary = PortfolioDecisionSummary(
+        promote_count=0,
+        downgrade_count=1,
+        keep_count=0,
+        top_focus=("000001 平安银行",),
+        watchlist=("000001 平安银行",),
+        allocations=(),
+        cash_reserve=1.0,
+        allocation_note="今日无可执行主链，建议保留现金等待下一轮信号。",
+    )
+
+    line = cli_mod._build_execution_summary_line([pick], summary)
+
+    assert "今日无可执行标的" in line
+    assert "观察池" in line
+    assert "首选" not in line
 
 
 def test_run_scheduled_notify_prepends_source_status_banner(

@@ -1146,7 +1146,8 @@ def _build_execution_summary_line(
     tradable: list[PickResult],
     portfolio_summary: Any | None,
 ) -> str:
-    if tradable:
+    has_allocations = bool(getattr(portfolio_summary, "allocations", ()) or ())
+    if tradable and has_allocations:
         top = tradable[0]
         return (
             f"🎯 **首选**: {top.symbol} {top.name} | 评分 {top.score:.0f} | "
@@ -1157,6 +1158,12 @@ def _build_execution_summary_line(
     if watchlist:
         names = "、".join(watchlist[:2])
         return f"👀 **今日无可执行标的**，转入观察池：{names}"
+    if tradable:
+        top = tradable[0]
+        return (
+            f"👀 **首位观察**: {top.symbol} {top.name} | 评分 {top.score:.0f} | "
+            "等待 PM 阻塞解除"
+        )
     if blockers:
         return "👀 **今日无可执行标的**，受执行约束影响，暂仅观察。"
     return "👀 **今日无可执行标的**，仅观察。等待更强信号。"
@@ -2631,6 +2638,7 @@ def run_scheduled(args: argparse.Namespace) -> int:
     tradable = [
         p for p in picks if p.rating in ("strong_buy_candidate", "buy_candidate")
     ]
+    has_allocations = bool(getattr(portfolio_summary, "allocations", ()) or ())
     summary_lines = [
         "",
         "---",
@@ -2641,10 +2649,10 @@ def run_scheduled(args: argparse.Namespace) -> int:
         summary_lines.append(f"🛡️ **组合保护已触发**: {status.reason}，暂停新开仓")
     else:
         summary_lines.append(_build_execution_summary_line(tradable, portfolio_summary))
-        if len(tradable) > 1:
+        if has_allocations and len(tradable) > 1:
             others = "、".join(f"{p.symbol} {p.name}" for p in tradable[1:3])
             summary_lines.append(f"📋 **其他候选**: {others}")
-        elif not tradable:
+        elif not has_allocations:
             watchlist = tuple(getattr(portfolio_summary, "watchlist", ()) or ())
             blockers = tuple(getattr(portfolio_summary, "execution_blockers", ()) or ())
             if watchlist:

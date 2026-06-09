@@ -91,6 +91,41 @@ def test_report_renders_portfolio_manager_decision_when_provided() -> None:
     assert "- 分数调整: +4.0" in markdown
 
 
+def test_report_renders_watch_position_for_downgraded_candidate() -> None:
+    pick = PickResult(
+        symbol="000001",
+        name="平安银行",
+        date="2026-06-09",
+        close=11.07,
+        score=85,
+        rating="buy_candidate",
+        entry_type="trend_pullback",
+        ideal_buy=11.07,
+        stop_loss=10.74,
+        take_profit=12.01,
+        position="watch",
+        metrics={
+            "candidate_status": "延续上升",
+            "candidate_blocker": "板块集中度过高，压低银行暴露",
+        },
+    )
+
+    markdown = to_markdown(
+        [pick],
+        portfolio_decisions=[
+            PortfolioDecision(
+                symbol="000001",
+                action="downgrade",
+                score_delta=-4.0,
+                reasons=("板块集中度过高，压低银行暴露",),
+            )
+        ],
+    )
+
+    assert "- 仓位建议: watch" in markdown
+    assert "仓位建议: 30%-50%" not in markdown
+
+
 def test_report_hides_noop_portfolio_manager_decision() -> None:
     pick = PickResult(
         symbol="600900",

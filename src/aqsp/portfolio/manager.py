@@ -366,12 +366,12 @@ def apply_portfolio_manager(
 
         if negative_adjustment:
             action = "downgrade"
+            final_position = "watch"
         elif positive_adjustment and delta > 0:
             action = "promote"
 
         if negative_adjustment and (final_score < 20 or delta <= -6):
             final_rating = "avoid"
-            final_position = "watch"
         elif positive_adjustment and delta >= 3 and pick.rating == "buy_candidate":
             final_rating = "strong_buy_candidate"
 
