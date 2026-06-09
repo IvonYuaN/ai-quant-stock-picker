@@ -296,7 +296,7 @@ def validate_predictions(
         exit_bar, exit_price, exit_reason = _resolve_exit(eval_window, row)
         ret = (exit_price - entry_price) / entry_price * 100 - fee_pct
         benchmark_ret = _benchmark_return(frames, row, entry_bar, exit_bar)
-        excess = ret - benchmark_ret if benchmark_ret is not None else 0.0
+        excess = ret - benchmark_ret if benchmark_ret is not None else None
         row["status"] = "validated"
         row["entry_date"] = str(entry_bar["date"])
         row["entry_price"] = round(entry_price, 4)
@@ -307,12 +307,13 @@ def validate_predictions(
         row["benchmark_return_pct"] = (
             round(benchmark_ret, 4) if benchmark_ret is not None else None
         )
-        row["excess_return_pct"] = round(excess, 4)
+        row["excess_return_pct"] = round(excess, 4) if excess is not None else None
         row["win"] = ret > 0
         checked += 1
         wins += 1 if ret > 0 else 0
         returns.append(ret)
-        excess_returns.append(excess)
+        if excess is not None:
+            excess_returns.append(excess)
 
     write_ledger(path, rows)
     avg = sum(returns) / len(returns) if returns else 0.0
@@ -328,7 +329,7 @@ def validate_predictions(
 
 def strategy_weights_from_ledger(
     path: str | Path,
-    min_independent_signal_days: int = 14,
+    min_independent_signal_days: int = 30,
     weight_floor: float = 0.65,
     weight_ceiling: float = 1.45,
 ) -> dict[str, float]:

@@ -288,17 +288,17 @@ class AutoEvolution:
 
         candidates = self._generate_candidates(strategy_name, current_params)
         best_params = current_params
-        best_score = current_performance.get("sharpe_ratio", 0)
+        best_score = current_performance.get("research_score", 0)
 
         for candidate in candidates:
             score = self._evaluate_params(candidate, data, strategy_name).get(
-                "sharpe_ratio", 0
+                "research_score", 0
             )
             if score > best_score:
                 best_score = score
                 best_params = candidate
 
-        improvement = best_score - current_performance.get("sharpe_ratio", 0)
+        improvement = best_score - current_performance.get("research_score", 0)
         if improvement > self.config.performance_threshold:
             result = self._record_evolution(
                 strategy_name,
@@ -343,20 +343,22 @@ class AutoEvolution:
         strategy_name: str,
     ) -> Dict[str, float]:
         from aqsp.strategies.composite import CompositeStrategy
-        from aqsp.strategies.thresholds import load_thresholds
 
-        base_thresholds = load_thresholds()
-
-        strategy = CompositeStrategy(thresholds=base_thresholds)
+        # This is a proposal-only score from current deterministic rules. It is
+        # intentionally not labelled Sharpe because it does not validate forward
+        # returns or apply candidate params through a walk-forward engine.
+        strategy = CompositeStrategy(thresholds=self.thresholds)
         scores = strategy.calculate_score(data)
 
         if not scores:
-            return {"sharpe_ratio": 0.0, "win_rate": 0.0}
+            return {"research_score": 0.0, "score_hit_rate": 0.0}
 
         score_values = list(scores.values())
         return {
-            "sharpe_ratio": float(np.mean(score_values)),
-            "win_rate": float(np.mean([1 if s > 0.5 else 0 for s in score_values])),
+            "research_score": float(np.mean(score_values)),
+            "score_hit_rate": float(
+                np.mean([1 if s > 0.5 else 0 for s in score_values])
+            ),
         }
 
     def _record_evolution(

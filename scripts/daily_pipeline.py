@@ -7,7 +7,7 @@ import pandas as pd
 import sys
 import traceback
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -421,19 +421,39 @@ def _step_validate_predictions(
     from aqsp.data import fetch_with_source
 
     symbols_in_ledger: list[str] = []
-    seen: set[str] = set()
+    benchmark_symbols: list[str] = []
+    seen_symbols: set[str] = set()
+    seen_benchmarks: set[str] = set()
     for row in rows:
-        sym = str(row.get("symbol", ""))
-        if sym and sym not in seen:
-            seen.add(sym)
+        sym = str(row.get("symbol", "") or "")
+        if sym and sym not in seen_symbols:
+            seen_symbols.add(sym)
             symbols_in_ledger.append(sym)
+        benchmark = str(row.get("benchmark_symbol", "") or "")
+        if benchmark and benchmark not in seen_benchmarks:
+            seen_benchmarks.add(benchmark)
+            benchmark_symbols.append(benchmark)
 
-    if not symbols_in_ledger:
+    if not symbols_in_ledger and not benchmark_symbols:
         return {"checked": 0}
 
     try:
         source = _build_data_source(config)
-        frames = fetch_with_source(source, symbols_in_ledger, days=60)
+        primary_benchmark = benchmark_symbols[0] if benchmark_symbols else None
+        frames = fetch_with_source(
+            source,
+            symbols_in_ledger,
+            days=60,
+            benchmark_symbol=primary_benchmark,
+        )
+        missing_benchmarks = [
+            symbol for symbol in benchmark_symbols if symbol not in frames
+        ]
+        if missing_benchmarks:
+            end = today_shanghai()
+            start = end - timedelta(days=120)
+            index_frames = source.fetch_index(missing_benchmarks, start, end)
+            frames.update(index_frames)
     except Exception as exc:
         logger.warning("  验证数据获取失败: %s", exc)
         frames = {}
@@ -529,7 +549,7 @@ def _step_sync_paper_trades(
 def _step_adaptive_learning(
     config: PipelineConfig, logger: logging.Logger
 ) -> dict[str, Any]:
-    logger.info("  自适应学习: 分析历史表现调整策略权重")
+    logger.info("  自适应学习: 分析历史表现生成策略权重提案")
 
     ledger_path = config.project_root / config.ledger_path
     if not ledger_path.exists():
@@ -560,14 +580,15 @@ def _step_adaptive_learning(
     weights = learner.compute_weights(ledger_df)
 
     result: dict[str, Any] = {
-        "weights_updated": bool(weights),
+        "weights_proposed": bool(weights),
+        "weights_applied": False,
         "independent_signal_days": independent_signal_days,
     }
     if weights:
-        logger.info("  学习到的策略权重调整:")
+        logger.info("  学习到的策略权重提案（仅研究观察，未应用到正式筛选）:")
         for k, v in sorted(weights.items()):
             logger.info("    %s: %.3f", k, v)
-        result["weights"] = {k: round(v, 3) for k, v in weights.items()}
+        result["proposed_weights"] = {k: round(v, 3) for k, v in weights.items()}
 
     if independent_signal_days < learner.config.min_independent_signal_days:
         logger.info(

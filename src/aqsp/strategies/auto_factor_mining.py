@@ -471,6 +471,8 @@ class AutoFactorMiner:
                         "formula": factor.formula,
                         "lookback_period": factor.lookback_period,
                         "params": factor.params,
+                        "is_active": False,
+                        "status": "research_candidate",
                         "evaluation": {
                             "ic_mean": evaluation.ic_mean,
                             "ic_std": evaluation.ic_std,
@@ -514,7 +516,8 @@ class AutoFactorMiner:
                         "description": f"Auto-discovered {factor['category']} factor",
                         "formula": factor["formula"],
                         "lookback_period": factor["lookback_period"],
-                        "is_active": True,
+                        "is_active": False,
+                        "status": "research_candidate",
                         "performance": {
                             "ic_mean": factor["evaluation"]["ic_mean"],
                             "ic_ir": factor["evaluation"]["ic_ir"],
@@ -565,6 +568,8 @@ class FactorLibrary:
         if factor["name"] in existing_names:
             return False
 
+        factor = {**factor, "is_active": bool(factor.get("is_active", False))}
+        factor.setdefault("status", "research_candidate")
         self.factors.append(factor)
         return True
 
@@ -574,7 +579,7 @@ class FactorLibrary:
         return len(self.factors) < original_length
 
     def get_active_factors(self) -> list[dict[str, Any]]:
-        return [f for f in self.factors if f.get("is_active", True)]
+        return [f for f in self.factors if f.get("is_active") is True]
 
     def update_factor_performance(
         self, factor_name: str, performance: dict[str, float]

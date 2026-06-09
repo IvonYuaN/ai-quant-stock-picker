@@ -53,7 +53,7 @@ from aqsp.freshness import assert_fresh_data, latest_trade_date
 from aqsp.ledger import (
     ExecutionConfig,
     append_predictions,
-    strategy_weights_from_ledger,
+    strategy_weights_from_ledger,  # noqa: F401 - kept for legacy monkeypatches.
     validate_predictions,
 )
 from aqsp.models import ScreeningConfig
@@ -480,7 +480,7 @@ def main(argv: list[str] | None = None) -> int:
     optimize_cmd.add_argument(
         "--apply",
         action="store_true",
-        help="auto-apply best params to thresholds.yaml",
+        help="proposal-only; never writes thresholds.yaml automatically",
     )
 
     discover_cmd = sub.add_parser(
@@ -504,7 +504,9 @@ def main(argv: list[str] | None = None) -> int:
     evolve_cmd.add_argument("--source", choices=SOURCE_CHOICES, default="auto")
     evolve_cmd.add_argument("--config", default="config/evolution_config.yaml")
     evolve_cmd.add_argument(
-        "--apply", action="store_true", help="auto-apply evolved params"
+        "--apply",
+        action="store_true",
+        help="proposal-only; never writes thresholds.yaml automatically",
     )
     evolve_cmd.add_argument("--output", default="data/evolution_result.json")
 
@@ -2139,21 +2141,24 @@ def run_scheduled(args: argparse.Namespace) -> int:
         actual_source,
     )
 
-    weights = strategy_weights_from_ledger(args.ledger)
-
+    weight_proposals: dict[str, float] = {}
     try:
         from aqsp.ledger.base import ledger_rows_to_frame, read_ledger
         from aqsp.ledger.learner import PerformanceLearner
 
         learner = PerformanceLearner()
         ledger_df = ledger_rows_to_frame(read_ledger(args.ledger))
-        learner_weights = learner.compute_weights(ledger_df)
-        if learner_weights:
-            for k, v in learner_weights.items():
-                if k in weights:
-                    weights[k] = round(weights[k] * v, 3)
+        weight_proposals = learner.compute_weights(ledger_df)
     except Exception:
-        pass
+        weight_proposals = {}
+
+    # Runtime screening must not self-tune from recent ledger outcomes. Learning
+    # output remains a research proposal until an approved weight artifact exists.
+    if weight_proposals:
+        print(
+            f"学习权重提案: {len(weight_proposals)} 个策略，仅记录研究观察，未应用到本次筛选"
+        )
+    weights: dict[str, float] = {}
 
     cold_start_days = _count_independent_signal_days(args.ledger)
     is_cold_start = cold_start_days < COLD_START_MIN_DAYS
@@ -3428,6 +3433,8 @@ def run_optimize(args: argparse.Namespace) -> int:
         "best_score": result.best_score,
         "best_params": result.best_params,
         "thresholds_version": thresholds.version,
+        "status": "proposal_only",
+        "applied": False,
         "run_date": now_shanghai().isoformat(timespec="seconds"),
     }
     output_path.write_text(
@@ -3436,7 +3443,8 @@ def run_optimize(args: argparse.Namespace) -> int:
     print(f"\n结果已保存到: {output_path}")
 
     if args.apply:
-        _apply_best_params(result.best_params)
+        print("\n已生成参数优化提案，但不会自动写入 thresholds.yaml")
+        print("原因: 阈值变更必须经过 walk-forward 与人工审核后单独提交")
 
     return 0
 
@@ -3618,25 +3626,34 @@ def run_mine_factors(args: argparse.Namespace) -> int:
 
     print(f"\n发现 {len(results)} 个有效因子:")
     for r in results[:20]:
+        evaluation = r.get("evaluation", {})
+        factor_name = r.get("name") or r.get("factor_name") or "unknown"
+        ic_mean = float(evaluation.get("ic_mean", r.get("ic_mean", 0.0)))
+        ic_ir = float(evaluation.get("ic_ir", r.get("ic_ir", 0.0)))
+        sample_size = int(evaluation.get("sample_size", r.get("sample_size", 0)))
         print(
-            f"  - {r['factor_name']}: IC={r['ic_mean']:.4f}, IR={r['ic_ir']:.2f}, 胜率={r['win_rate']:.2%}"
+            f"  - {factor_name}: IC={ic_mean:.4f}, IR={ic_ir:.2f}, 样本={sample_size}, 状态=研究候选"
         )
 
+    inactive_results = [
+        {**r, "is_active": False, "status": "research_candidate"} for r in results
+    ]
     library = FactorLibrary()
     library.load()
     added_count = 0
-    for r in results:
+    for r in inactive_results:
         if library.add_factor(r):
             added_count += 1
     library.save()
 
-    print(f"\n已将 {added_count} 个新因子添加到因子库")
+    print(f"\n已将 {added_count} 个新因子添加到因子库（默认不启用，需人工复核）")
 
     if args.output:
         output_path = Path(args.output)
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(
-            json.dumps(results, ensure_ascii=False, indent=2), encoding="utf-8"
+            json.dumps(inactive_results, ensure_ascii=False, indent=2),
+            encoding="utf-8",
         )
         print(f"结果已保存到: {output_path}")
 
@@ -3690,10 +3707,11 @@ def run_evolve(args: argparse.Namespace) -> int:
         print(f"  置信度: {result.confidence:.2%}")
         print(f"  原因: {result.reason}")
 
-        if args.apply and result.confidence >= evolution.config.confidence_threshold:
-            print("\n正在应用进化后的参数...")
-            evolution._apply_evolution(result)
-            print("参数已应用到 thresholds.yaml")
+        if args.apply:
+            print("\n已生成参数进化提案，但不会自动写入 thresholds.yaml")
+            print("原因: 阈值变更必须经过 walk-forward 与人工审核后单独提交")
+        elif result.confidence >= evolution.config.confidence_threshold:
+            print("\n置信度达标，但仅输出研究提案，未自动应用参数")
         else:
             print("\n置信度不足，未自动应用参数")
     else:
@@ -3709,6 +3727,8 @@ def run_evolve(args: argparse.Namespace) -> int:
             "performance_improvement": result.performance_improvement if result else 0,
             "confidence": result.confidence if result else 0,
             "reason": result.reason if result else "",
+            "status": "proposal_only" if result else "no_change",
+            "applied": False,
             "timestamp": now_shanghai().isoformat(),
         }
         output_path.write_text(

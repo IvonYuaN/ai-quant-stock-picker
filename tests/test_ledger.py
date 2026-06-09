@@ -4,6 +4,7 @@ import json
 
 import pandas as pd
 
+from aqsp.core.time import now_shanghai
 from aqsp.core.types import RunMetadata
 from aqsp.ledger import (
     ExecutionConfig,
@@ -162,6 +163,61 @@ def test_validation_uses_next_open_not_signal_close(tmp_path) -> None:
     assert row["return_pct"] < -0.15
 
 
+def test_validation_leaves_excess_return_unknown_when_benchmark_missing(
+    tmp_path,
+) -> None:
+    ledger = tmp_path / "predictions.jsonl"
+    pick = PickResult(
+        symbol="600000",
+        name="测试",
+        date="2026-01-02",
+        close=10,
+        score=70,
+        rating="buy_candidate",
+        entry_type="volume_breakout",
+        ideal_buy=10,
+        stop_loss=0,
+        take_profit=0,
+        position="10%-30%",
+        strategies=("volume_breakout",),
+    )
+    append_predictions(
+        ledger,
+        [pick],
+        execution=ExecutionConfig(horizon_days=1, fee_bps=0, slippage_bps=0),
+    )
+
+    summary = validate_predictions(
+        ledger,
+        {
+            "600000": pd.DataFrame(
+                [
+                    {
+                        "date": "2026-01-02",
+                        "open": 10,
+                        "high": 10,
+                        "low": 10,
+                        "close": 10,
+                    },
+                    {
+                        "date": "2026-01-03",
+                        "open": 11,
+                        "high": 11.2,
+                        "low": 10.8,
+                        "close": 11,
+                    },
+                ]
+            )
+        },
+    )
+
+    row = read_ledger(ledger)[0]
+    assert summary.checked == 1
+    assert row["benchmark_return_pct"] is None
+    assert row["excess_return_pct"] is None
+    assert summary.avg_excess_pct == 0.0
+
+
 def _make_validated_entries(
     count: int, strategy: str, return_pct: float = 2.0
 ) -> list[str]:
@@ -196,6 +252,10 @@ def test_strategy_weights_rejects_insufficient_signal_days(tmp_path) -> None:
     ledger.write_text("\n".join(entries) + "\n", encoding="utf-8")
     weights = strategy_weights_from_ledger(ledger)
     assert "volume_breakout" not in weights
+
+
+def test_performance_learner_defaults_to_30_independent_signal_days() -> None:
+    assert LearnerConfig().min_independent_signal_days == 30
 
 
 def test_learner_filters_not_executable(tmp_path) -> None:
@@ -263,7 +323,7 @@ def test_learner_aggregates_per_signal_day(tmp_path) -> None:
     assert abs(perf.recent_performance.avg_return - 0.03) < 1e-4
 
 
-def test_learner_writes_weight_history(tmp_path) -> None:
+def test_learner_does_not_write_weight_history_by_default(tmp_path) -> None:
     entries = _make_validated_entries(30, "volume_breakout", return_pct=2.0)
     df = pd.DataFrame([json.loads(e) for e in entries])
     history_path = tmp_path / "weight_history.jsonl"
@@ -272,6 +332,18 @@ def test_learner_writes_weight_history(tmp_path) -> None:
         weight_history_path=history_path,
     )
     learner.learn_from_ledger(df)
+    assert not history_path.exists()
+
+
+def test_learner_writes_weight_history_when_explicitly_recording(tmp_path) -> None:
+    entries = _make_validated_entries(30, "volume_breakout", return_pct=2.0)
+    df = pd.DataFrame([json.loads(e) for e in entries])
+    history_path = tmp_path / "weight_history.jsonl"
+    learner = PerformanceLearner(
+        config=LearnerConfig(min_independent_signal_days=30),
+        weight_history_path=history_path,
+    )
+    learner.learn_from_ledger(df, record_history=True)
     assert history_path.exists()
     lines = history_path.read_text(encoding="utf-8").strip().splitlines()
     assert len(lines) >= 1
@@ -279,6 +351,39 @@ def test_learner_writes_weight_history(tmp_path) -> None:
     assert record["strategy"] == "volume_breakout"
     assert "old_weight" in record
     assert "new_weight" in record
+
+
+def test_learner_uses_weight_history_for_restart_cooldown(tmp_path) -> None:
+    entries = _make_validated_entries(30, "volume_breakout", return_pct=4.0)
+    df = pd.DataFrame([json.loads(e) for e in entries])
+    history_path = tmp_path / "weight_history.jsonl"
+    history_path.write_text(
+        json.dumps(
+            {
+                "timestamp": now_shanghai().isoformat(timespec="seconds"),
+                "strategy": "volume_breakout",
+                "old_weight": 1.0,
+                "new_weight": 0.8,
+                "reason": "learner_update",
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    learner = PerformanceLearner(
+        config=LearnerConfig(
+            min_independent_signal_days=30,
+            weight_change_cooldown_days=30,
+        ),
+        weight_history_path=history_path,
+    )
+    weights = learner.compute_weights(df)
+    lines = history_path.read_text(encoding="utf-8").strip().splitlines()
+
+    assert weights["volume_breakout"] == 0.8
+    assert len(lines) == 1
 
 
 def test_decay_detector_accepts_naive_signal_dates() -> None:

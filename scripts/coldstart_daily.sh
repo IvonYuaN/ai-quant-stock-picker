@@ -131,10 +131,12 @@ log "=========================================="
     --skip-validation \
     --benchmark-symbol "" 2>&1 | tee -a "$RUN_LOG"
 
-"${PYTHON_BIN}" - <<'PY' 2>&1 | tee -a "$RUN_LOG"
+LEDGER_PATH_FOR_PROGRESS="$LEDGER_PATH" "${PYTHON_BIN}" - <<'PY' 2>&1 | tee -a "$RUN_LOG"
+import os
+
 from aqsp.cli import COLD_START_MIN_DAYS, _count_independent_signal_days
 
-ledger = "data/predictions.jsonl"
+ledger = os.environ["LEDGER_PATH_FOR_PROGRESS"]
 print(f"冷启动: {_count_independent_signal_days(ledger)}/{COLD_START_MIN_DAYS}")
 PY
 

@@ -14,7 +14,7 @@ from aqsp.core.time import now_shanghai, today_shanghai
 
 @dataclass(frozen=True)
 class LearnerConfig:
-    min_independent_signal_days: int = 14
+    min_independent_signal_days: int = 30
     rolling_window_days: int = 90
     weight_floor: float = 0.65
     weight_ceiling: float = 1.45
@@ -123,9 +123,11 @@ class PerformanceLearner:
         self.config = config or LearnerConfig()
         self.weight_history_path = Path(weight_history_path)
         self._last_weight_change: dict[str, float] = {}
+        self._current_weights: dict[str, float] = {}
+        self._load_weight_history()
 
     def learn_from_ledger(
-        self, ledger_df: pd.DataFrame
+        self, ledger_df: pd.DataFrame, *, record_history: bool = False
     ) -> dict[str, StrategyPerformance]:
         if ledger_df.empty:
             return {}
@@ -173,10 +175,10 @@ class PerformanceLearner:
             rolling = self._compute_rolling(strat_data, strategy)
             weight = self._calculate_weight(recent)
 
-            old_weight = 1.0
+            old_weight = self._current_weights.get(strategy, 1.0)
             if not self._can_update_weight(strategy):
                 weight = old_weight
-            else:
+            elif record_history and weight != old_weight:
                 self._record_weight_change(
                     strategy, old_weight, weight, "learner_update"
                 )
@@ -198,8 +200,12 @@ class PerformanceLearner:
 
         return results
 
-    def compute_weights(self, ledger_df: pd.DataFrame) -> dict[str, float]:
-        performances = self.learn_from_ledger(ledger_df)
+    def compute_weights(
+        self, ledger_df: pd.DataFrame, *, record_history: bool = False
+    ) -> dict[str, float]:
+        performances = self.learn_from_ledger(
+            ledger_df, record_history=record_history
+        )
         return {
             name: perf.weights.get("base", 1.0) for name, perf in performances.items()
         }
@@ -303,11 +309,37 @@ class PerformanceLearner:
             now_shanghai().timestamp() - last_ts
         ) >= self.config.weight_change_cooldown_days * 86400
 
+    def _load_weight_history(self) -> None:
+        if not self.weight_history_path.exists():
+            return
+        try:
+            lines = self.weight_history_path.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            return
+        for line in lines:
+            if not line.strip():
+                continue
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            strategy = str(entry.get("strategy", "") or "").strip()
+            if not strategy:
+                continue
+            timestamp = pd.to_datetime(entry.get("timestamp"), errors="coerce")
+            if not pd.isna(timestamp):
+                self._last_weight_change[strategy] = timestamp.timestamp()
+            try:
+                self._current_weights[strategy] = float(entry.get("new_weight"))
+            except (TypeError, ValueError):
+                continue
+
     def _record_weight_change(
         self, strategy: str, old_weight: float, new_weight: float, reason: str
     ) -> None:
         now = now_shanghai()
         self._last_weight_change[strategy] = now.timestamp()
+        self._current_weights[strategy] = new_weight
 
         self.weight_history_path.parent.mkdir(parents=True, exist_ok=True)
         entry = {
