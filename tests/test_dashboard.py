@@ -44,6 +44,7 @@ from aqsp.web.dashboard import (
     _home_focus_action_targets,
     _home_spotlight_lines,
     _home_action_rail_items,
+    _home_brief_cards,
     _home_execution_blocked_summary,
     _home_primary_focus_card,
     _home_reading_order_lines,
@@ -3375,6 +3376,139 @@ def test_dashboard_home_workspace_hint_prioritizes_execution_then_archive_then_r
         "先复盘 000338 潍柴动力 的阻塞卡点“20日均成交额不足，流动性过滤”，再决定是否恢复推进。",
         "focus",
     )
+
+
+def test_dashboard_home_brief_cards_summarize_day_without_trading_language() -> None:
+    from aqsp.web.data_provider import DashboardCandidateCard, DashboardPaperSummary
+
+    class _TaskView:
+        task_id = "main_chain"
+        task_label = "主链推荐"
+        headline = "今日主链聚焦贵州茅台。"
+        detail_cards = (
+            DashboardCandidateCard(
+                symbol="600519",
+                name="贵州茅台",
+                display_name="600519 贵州茅台",
+                rank_label="首选",
+                score=88.0,
+                action_label="上调优先级",
+                status_label="延续上升",
+                decision_note="主链继续保留首选",
+                next_step="观察量能是否继续扩张，再决定是否维持主推",
+                blocker="",
+                review_meta="高优先级 / 开盘前后",
+                reasons=("量价齐升",),
+                risks=("追高波动",),
+                strategies=("volume_breakout",),
+                data_source="eastmoney",
+            ),
+            DashboardCandidateCard(
+                symbol="000338",
+                name="潍柴动力",
+                display_name="000338 潍柴动力",
+                rank_label="阻塞观察",
+                score=58.0,
+                action_label="降级观察",
+                status_label="降级观察",
+                decision_note="20日均成交额不足，流动性过滤",
+                next_step="",
+                blocker="20日均成交额不足，流动性过滤",
+                review_meta="中优先级 / 收盘前",
+                reasons=(),
+                risks=("流动性不足",),
+                strategies=(),
+                data_source="eastmoney",
+            ),
+        )
+
+    class _Overview:
+        signal_date = "2026-06-05"
+        focus_headline = "待复核 1，只看主链首选。"
+        top_headline = "主链有推荐。"
+        blocker_headline = "流动性阻塞待核对。"
+
+    paper_summary = DashboardPaperSummary(
+        signal_date="2026-06-05",
+        open_positions=0,
+        pending_entries=1,
+        not_executable=1,
+        closed_trades=0,
+        open_position_lines=(),
+        event_lines=(),
+        action_summary_lines=(
+            "纸面入场待核对 1 笔，按下一交易日开盘价验证。",
+            "阻塞队列 1 笔，先核对不可成交原因。",
+        ),
+    )
+    research_summary = ResearchSummary(
+        generated_at="",
+        total_findings=0,
+        pipeline_summaries=(
+            ResearchPipelineSummary(
+                pipeline="strategy",
+                total=22,
+                p1=10,
+                top_repo="sngyai/Sequoia-X",
+            ),
+        ),
+        absorbed_families=(
+            ResearchFamilySummary(
+                family_id="chan_theory",
+                name="缠论结构识别",
+                status="research_absorbed",
+                runtime_stage="report_only",
+                absorbed_from_count=3,
+                runtime_gate_count=2,
+            ),
+        ),
+        source_candidates=(),
+        next_actions=(
+            ResearchActionItem(
+                kind="strategy",
+                item_id="chan_theory",
+                name="缠论结构识别",
+                stage="report_only",
+                priority="P1",
+                blocker="先做 fixture 验证",
+                reference_hint="",
+            ),
+        ),
+        prereq_items=(),
+        implemented_family_count=5,
+        report_only_family_count=1,
+        gated_family_count=0,
+    )
+
+    cards = _home_brief_cards(
+        task_view=_TaskView(),
+        overview=_Overview(),
+        paper_summary=paper_summary,
+        research_summary=research_summary,
+        spotlights=(),
+        debates=(),
+    )
+
+    assert tuple(card.kicker for card in cards) == (
+        "01 先看什么",
+        "02 纸面现实",
+        "03 风险卡点",
+        "04 研究进化",
+    )
+    assert cards[0].title == "600519 贵州茅台"
+    assert "状态: 上调优先级 / 延续上升" in cards[0].lines
+    assert cards[1].title == "纸面事件待核对"
+    assert cards[1].tone == "pressure"
+    assert cards[2].title == "000338 潍柴动力"
+    assert cards[2].tone == "blocked"
+    assert cards[3].tone == "research"
+    assert any("研究吸收不会直接入分" in line for line in cards[3].lines)
+    rendered_text = "\n".join(
+        line for card in cards for line in (card.title, *card.lines)
+    )
+    assert "真实持仓" not in rendered_text
+    assert "立即买入" not in rendered_text
+    assert "下单" not in rendered_text
 
 
 def test_dashboard_home_action_rail_items_merge_same_day_spotlight_when_task_has_no_card() -> (

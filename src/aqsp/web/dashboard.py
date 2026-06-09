@@ -57,6 +57,14 @@ class _ResearchRadarCard:
     prereq_lines: tuple[str, ...] = ()
 
 
+@dataclass(frozen=True)
+class _HomeBriefCard:
+    kicker: str
+    title: str
+    lines: tuple[str, ...]
+    tone: str = "archive"
+
+
 def _inject_dashboard_styles() -> None:
     st.markdown(
         """
@@ -645,6 +653,71 @@ def _inject_dashboard_styles() -> None:
             color: #465b68;
             line-height: 1.48;
             margin-top: 0.14rem;
+        }
+        .aqsp-brief-grid {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 0.75rem;
+            margin: 0.15rem 0 0.9rem 0;
+        }
+        .aqsp-brief-card {
+            min-height: 166px;
+            padding: 0.92rem 0.98rem;
+            border-radius: 18px;
+            border: 1px solid rgba(26, 71, 102, 0.12);
+            background: linear-gradient(180deg, #fffdf7 0%, #f5f8fb 100%);
+            box-shadow: 0 12px 26px rgba(33, 46, 56, 0.055);
+        }
+        .aqsp-brief-card.focus {
+            border-color: rgba(57, 121, 92, 0.24);
+            background: linear-gradient(180deg, #fffdf4 0%, #f1fbf5 100%);
+        }
+        .aqsp-brief-card.pressure {
+            border-color: rgba(170, 124, 47, 0.24);
+            background: linear-gradient(180deg, #fffaf0 0%, #f8fafc 100%);
+        }
+        .aqsp-brief-card.blocked {
+            border-color: rgba(176, 90, 74, 0.24);
+            background: linear-gradient(180deg, #fff8f6 0%, #f7f8fb 100%);
+        }
+        .aqsp-brief-card.research {
+            border-color: rgba(41, 97, 132, 0.2);
+            background: linear-gradient(180deg, #fbfcf7 0%, #eff7f5 100%);
+        }
+        .aqsp-brief-kicker {
+            font-size: 0.74rem;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: #617282;
+            margin-bottom: 0.42rem;
+        }
+        .aqsp-brief-title {
+            font-size: 1rem;
+            font-weight: 760;
+            color: #163247;
+            margin-bottom: 0.45rem;
+            line-height: 1.35;
+        }
+        .aqsp-brief-line {
+            font-size: 0.84rem;
+            color: #34495a;
+            line-height: 1.5;
+            margin-top: 0.15rem;
+        }
+        @media (max-width: 980px) {
+            .aqsp-brief-grid,
+            .aqsp-overview-strip,
+            .aqsp-research-metrics {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+        }
+        @media (max-width: 620px) {
+            .aqsp-brief-grid,
+            .aqsp-overview-strip,
+            .aqsp-research-metrics,
+            .aqsp-compact-grid {
+                grid-template-columns: 1fr;
+            }
         }
         </style>
         """,
@@ -3081,6 +3154,193 @@ def _home_reading_order_lines(
         close_line = "📚 归档待补: 当前先按研究证据走，等收盘复盘补齐历史记录。"
 
     return _unique_lines((paper_line, focus_line, close_line))
+
+
+def _home_brief_cards(
+    *,
+    task_view,
+    overview: DashboardDateOverview,
+    paper_summary: DashboardPaperSummary,
+    research_summary: ResearchSummary | None,
+    spotlights: tuple[DashboardCandidateSpotlight, ...],
+    debates: tuple[DashboardDebateSummary, ...],
+) -> tuple[_HomeBriefCard, ...]:
+    merged_cards = _home_action_cards(task_view, spotlights)
+    recommend_cards, watch_cards, blocked_cards = _classify_candidate_queues(
+        merged_cards
+    )
+    focus_card = _home_primary_focus_card(recommend_cards, watch_cards, blocked_cards)
+    blocked_focus = _home_blocked_focus_card(blocked_cards)
+    radar = _research_radar_card(research_summary)
+
+    if focus_card is not None:
+        focus_title = focus_card.display_name
+        focus_lines = _unique_lines(
+            (
+                _join_display_parts(
+                    "状态",
+                    _action_status_label(
+                        focus_card.action_label,
+                        focus_card.status_label,
+                    ),
+                    separator=": ",
+                ),
+                (
+                    f"复核: {focus_card.review_meta}"
+                    if _has_review_meta(focus_card.review_meta)
+                    else ""
+                ),
+                f"下一步: {_card_next_action(focus_card)}",
+            )
+        )
+    elif debates:
+        debate_focus = sorted(
+            debates,
+            key=lambda item: (item.disagreement_score, item.adjusted_score),
+            reverse=True,
+        )[0]
+        focus_title = debate_focus.display_name
+        focus_lines = _unique_lines(
+            (
+                f"多 Agent: {debate_focus.recommended_adjustment_label} / 分歧 {debate_focus.disagreement_score:.2f}",
+                (
+                    f"共识: {debate_focus.consensus}"
+                    if debate_focus.consensus
+                    else "共识: 当前辩论只作解释，不替代评分。"
+                ),
+                (
+                    f"待核对: {debate_focus.risk_warnings[0]}"
+                    if debate_focus.risk_warnings
+                    else "待核对: 回到候选证据链。"
+                ),
+            )
+        )
+    else:
+        focus_title = "当前无显著主推候选"
+        focus_lines = _unique_lines(
+            (
+                overview.focus_headline or overview.top_headline or task_view.headline,
+                "动作: 先看观察池和任务摘要，不为了凑单推进。",
+            )
+        )
+
+    paper_title = "纸面侧较轻"
+    paper_tone = "archive"
+    if paper_summary.pending_entries or paper_summary.not_executable:
+        paper_title = "纸面事件待核对"
+        paper_tone = "pressure"
+    elif paper_summary.open_positions:
+        paper_title = "纸面持有跟踪中"
+        paper_tone = "focus"
+    elif paper_summary.closed_trades:
+        paper_title = "已有纸面回写"
+    paper_lines = _unique_lines(
+        (
+            f"持有 {paper_summary.open_positions} / 入场 {paper_summary.pending_entries} / 阻塞 {paper_summary.not_executable} / 关闭 {paper_summary.closed_trades}",
+        ),
+        paper_summary.action_summary_lines[:2],
+    )[:3]
+
+    blocker_title = "阻塞较轻"
+    blocker_tone = "archive"
+    if blocked_focus is not None:
+        blocker_title = blocked_focus.display_name
+        blocker_tone = "blocked"
+        blocker_lines = _unique_lines(
+            (
+                f"卡点: {_card_primary_blocker(blocked_focus) or _card_emphasis(blocked_focus)}",
+                f"动作: {_card_next_action(blocked_focus)}",
+                (
+                    f"复核: {blocked_focus.review_meta}"
+                    if _has_review_meta(blocked_focus.review_meta)
+                    else ""
+                ),
+            )
+        )
+    else:
+        blocker_lines = _unique_lines(
+            (
+                overview.blocker_headline,
+                "当前没有明显阻塞，先按焦点候选和纸面现实推进。",
+            )
+        )
+
+    research_title = radar.title
+    research_lines = _unique_lines(
+        radar.lines[:2],
+        radar.prereq_lines[:1],
+    )[:3]
+
+    return (
+        _HomeBriefCard(
+            kicker="01 先看什么",
+            title=focus_title,
+            lines=focus_lines[:3],
+            tone="focus" if focus_card is not None else "archive",
+        ),
+        _HomeBriefCard(
+            kicker="02 纸面现实",
+            title=paper_title,
+            lines=paper_lines or ("当前暂无纸面关键事件。",),
+            tone=paper_tone,
+        ),
+        _HomeBriefCard(
+            kicker="03 风险卡点",
+            title=blocker_title,
+            lines=blocker_lines[:3],
+            tone=blocker_tone,
+        ),
+        _HomeBriefCard(
+            kicker="04 研究进化",
+            title=research_title,
+            lines=research_lines,
+            tone="research",
+        ),
+    )
+
+
+def _render_home_brief(
+    *,
+    task_view,
+    overview: DashboardDateOverview,
+    paper_summary: DashboardPaperSummary,
+    research_summary: ResearchSummary | None,
+    spotlights: tuple[DashboardCandidateSpotlight, ...],
+    debates: tuple[DashboardDebateSummary, ...],
+) -> None:
+    cards = _home_brief_cards(
+        task_view=task_view,
+        overview=overview,
+        paper_summary=paper_summary,
+        research_summary=research_summary,
+        spotlights=spotlights,
+        debates=debates,
+    )
+    card_html = []
+    for card in cards:
+        line_html = "".join(
+            f'<div class="aqsp-brief-line">{escape(line)}</div>'
+            for line in card.lines[:3]
+        )
+        card_html.append(
+            f"""
+            <div class="aqsp-brief-card {escape(card.tone)}">
+              <div class="aqsp-brief-kicker">{escape(card.kicker)}</div>
+              <div class="aqsp-brief-title">{escape(card.title)}</div>
+              {line_html}
+            </div>
+            """
+        )
+    st.markdown(
+        "\n".join(
+            [
+                '<div class="aqsp-brief-grid">',
+                *card_html,
+                "</div>",
+            ]
+        ),
+        unsafe_allow_html=True,
+    )
 
 
 def _render_home_reading_order(
@@ -6278,6 +6538,14 @@ def main() -> None:
 
     if workspace == "决策首页":
         _render_command_center(task_view, date_overview, task_view.summary_lines)
+        _render_home_brief(
+            task_view=task_view,
+            overview=date_overview,
+            paper_summary=paper_summary,
+            research_summary=research_summary,
+            spotlights=same_day_spotlights,
+            debates=same_day_debates,
+        )
         _render_home_reading_order(
             task_view=task_view,
             overview=date_overview,
