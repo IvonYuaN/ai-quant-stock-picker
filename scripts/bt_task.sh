@@ -10,7 +10,7 @@
 set -euo pipefail
 
 PROJECT_ROOT="${AQSP_PROJECT_ROOT:-/opt/aqsp}"
-ACTION="${1:-daily}"
+ACTION="${1:-}"
 LOG_DIR="${PROJECT_ROOT}/logs/bt"
 RUN_LOG="${LOG_DIR}/bt-${ACTION}-$(date +%Y-%m-%d).log"
 BRANCH="${AQSP_GIT_BRANCH:-main}"
@@ -32,6 +32,11 @@ BT panel examples:
   /bin/bash /opt/aqsp/scripts/bt_task.sh monitor
 EOF
 }
+
+if [ -z "$ACTION" ]; then
+    usage >&2
+    exit 2
+fi
 
 sync_code_only() {
     cd "$PROJECT_ROOT"
@@ -78,6 +83,7 @@ export TZ="${TZ:-Asia/Shanghai}"
 
 case "$ACTION" in
     daily)
+        export AQSP_RUNNER_SCRIPT=scripts/daily_pipeline.sh
         run_script "${PROJECT_ROOT}/scripts/server_sync_and_run.sh"
         ;;
     intraday)

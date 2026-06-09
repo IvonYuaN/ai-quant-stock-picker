@@ -33,6 +33,7 @@ from aqsp.web.dashboard import (
     _candidate_next_step_lines,
     _candidate_action_plan_title,
     _candidate_empty_journey_message,
+    _render_candidate_evidence_drawers,
     _candidate_linkage_context,
     _candidate_symbol_order,
     _command_center_brief_lines,
@@ -94,6 +95,8 @@ from aqsp.web.dashboard import (
     _workspace_research_status,
     _workspace_handoff_payload,
     _workspace_nav_items,
+    _render_symbol_quick_bar,
+    _render_workspace_navigation,
     _workspace_widget_state,
     _workspace_jump_state,
     _review_to_archive_handoff_lines,
@@ -1678,6 +1681,139 @@ def test_dashboard_workspace_nav_items_keep_two_line_fast_switch_labels() -> Non
         "候选复盘",
         "虚拟盘跟踪",
         "归档回看",
+    )
+
+
+def test_dashboard_workspace_navigation_renders_code_buttons_and_separate_names(
+    monkeypatch,
+) -> None:
+    import aqsp.web.dashboard as dashboard
+
+    button_labels: list[str] = []
+    markdown_blocks: list[str] = []
+
+    class _StubColumn:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    class _StubSessionState(dict):
+        pass
+
+    session_state = _StubSessionState()
+
+    monkeypatch.setattr(dashboard.st, "session_state", session_state)
+    monkeypatch.setattr(
+        dashboard.st, "columns", lambda count: [_StubColumn() for _ in range(count)]
+    )
+    monkeypatch.setattr(
+        dashboard.st,
+        "button",
+        lambda label, *args, **kwargs: button_labels.append(label) and False,
+    )
+    monkeypatch.setattr(
+        dashboard.st,
+        "markdown",
+        lambda body, *args, **kwargs: markdown_blocks.append(str(body)),
+    )
+
+    workspace = _render_workspace_navigation()
+
+    assert workspace == "决策首页"
+    assert button_labels == ["DAY REPLAY", "REVIEW", "PAPER", "ARCHIVE"]
+    assert "决策首页" not in button_labels
+    assert any(
+        "aqsp-workspace-name" in block and "决策首页" in block
+        for block in markdown_blocks
+    )
+
+
+def test_dashboard_symbol_quick_bar_renders_code_buttons_and_name_rows(
+    monkeypatch,
+) -> None:
+    import aqsp.web.dashboard as dashboard
+    from aqsp.web.data_provider import DashboardCandidateCard
+
+    button_labels: list[str] = []
+    markdown_blocks: list[str] = []
+
+    class _StubColumn:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    cards = (
+        DashboardCandidateCard(
+            symbol="600519",
+            name="贵州茅台",
+            display_name="600519 贵州茅台",
+            rank_label="纸面重点",
+            score=82.0,
+            action_label="纸面复核",
+            status_label="延续上升",
+            decision_note="趋势延续",
+            next_step="等待量价确认",
+            blocker="",
+            review_meta="高优先级 / 开盘前后",
+            reasons=(),
+            risks=(),
+            strategies=(),
+            data_source="eastmoney",
+        ),
+        DashboardCandidateCard(
+            symbol="000338",
+            name="潍柴动力",
+            display_name="000338 潍柴动力",
+            rank_label="观察",
+            score=58.0,
+            action_label="观察",
+            status_label="观察",
+            decision_note="等待确认",
+            next_step="等待量能恢复",
+            blocker="",
+            review_meta="中优先级 / 收盘前",
+            reasons=(),
+            risks=(),
+            strategies=(),
+            data_source="eastmoney",
+        ),
+    )
+
+    monkeypatch.setattr(
+        dashboard.st, "columns", lambda count: [_StubColumn() for _ in range(count)]
+    )
+    monkeypatch.setattr(
+        dashboard.st,
+        "button",
+        lambda label, *args, **kwargs: button_labels.append(label) and False,
+    )
+    monkeypatch.setattr(
+        dashboard.st,
+        "markdown",
+        lambda body, *args, **kwargs: markdown_blocks.append(str(body)),
+    )
+
+    _render_symbol_quick_bar(
+        title="",
+        workspace="候选复盘",
+        symbol_order=["600519", "000338"],
+        selected_symbol="600519",
+        cards=cards,
+    )
+
+    assert button_labels == ["600519", "000338"]
+    assert "贵州茅台" not in button_labels
+    assert any(
+        "aqsp-quick-symbol-name active" in block and "贵州茅台" in block
+        for block in markdown_blocks
+    )
+    assert any(
+        "aqsp-quick-symbol-name" in block and "潍柴动力" in block
+        for block in markdown_blocks
     )
 
 
@@ -5928,6 +6064,108 @@ def test_dashboard_candidate_has_expanded_path_only_for_multistage_or_cross_task
         )
         is True
     )
+
+
+def test_dashboard_candidate_evidence_drawers_keep_journey_and_evidence_collapsed(
+    monkeypatch,
+) -> None:
+    import aqsp.web.dashboard as dashboard
+    from aqsp.web.data_provider import (
+        DashboardCandidateCard,
+        DashboardCandidateJourneyStep,
+    )
+
+    expanders: list[tuple[str, bool]] = []
+    rendered: list[str] = []
+
+    class _StubExpander:
+        def __init__(self, label: str, expanded: bool) -> None:
+            self.label = label
+            self.expanded = expanded
+
+        def __enter__(self):
+            expanders.append((self.label, self.expanded))
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    card = DashboardCandidateCard(
+        symbol="600519",
+        name="贵州茅台",
+        display_name="600519 贵州茅台",
+        rank_label="纸面重点",
+        score=82.0,
+        action_label="纸面复核",
+        status_label="延续上升",
+        decision_note="趋势延续",
+        next_step="等待量价确认",
+        blocker="",
+        review_meta="高优先级 / 开盘前后",
+        reasons=(),
+        risks=(),
+        strategies=(),
+        data_source="eastmoney",
+    )
+    journey_steps = (
+        DashboardCandidateJourneyStep(
+            task_id="main_chain",
+            task_label="主链推荐",
+            phase_label="盘前主链",
+            score=82.0,
+            action_label="纸面复核",
+            status_label="延续上升",
+            blocker="",
+            next_step="等待量价确认",
+            review_meta="高优先级 / 开盘前后",
+            reasons=(),
+            risks=(),
+        ),
+        DashboardCandidateJourneyStep(
+            task_id="closing_review",
+            task_label="收盘复盘",
+            phase_label="收盘复盘",
+            score=80.0,
+            action_label="维持纸面复核",
+            status_label="等待验证",
+            blocker="",
+            next_step="复核次日承接",
+            review_meta="收盘后",
+            reasons=(),
+            risks=(),
+        ),
+    )
+
+    monkeypatch.setattr(
+        dashboard.st,
+        "expander",
+        lambda label, expanded=False: _StubExpander(label, expanded),
+    )
+    monkeypatch.setattr(
+        dashboard,
+        "_render_candidate_journey",
+        lambda *args, **kwargs: rendered.append("journey"),
+    )
+    monkeypatch.setattr(
+        dashboard,
+        "_render_candidate_research_stream",
+        lambda **kwargs: rendered.append("evidence"),
+    )
+
+    _render_candidate_evidence_drawers(
+        review_card=card,
+        spotlight=None,
+        debate_summary=None,
+        journey_steps=journey_steps,
+        signal_frame=pd.DataFrame(),
+        task_frame=pd.DataFrame(),
+        paper_frame=pd.DataFrame(),
+        execution_frame=pd.DataFrame(),
+        evidence_title="同日研究证据",
+    )
+
+    assert expanders == [("当日候选路径", False), ("研究证据链", False)]
+    assert rendered == ["journey", "evidence"]
 
 
 def test_dashboard_candidate_has_expanded_path_stays_compact_for_single_stage_blocked_card() -> (

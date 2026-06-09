@@ -538,6 +538,34 @@ def test_build_morning_breakout_notification_lists_top_candidates() -> None:
     assert "默认轻仓" not in markdown
 
 
+def test_build_morning_breakout_notification_full_mode_keeps_research_wording() -> None:
+    signals = [
+        BreakoutSignal(
+            symbol="000001",
+            name="平安银行",
+            signal_type="强势打板",
+            score=78.0,
+            current_price=12.34,
+            target_price=13.2,
+            stop_loss=11.8,
+            reasons=("量价齐升",),
+            risks=("高波动",),
+            confidence=0.72,
+            entry_time="09:30 开盘瞬间",
+            position_pct=0.2,
+        )
+    ]
+
+    markdown = build_morning_breakout_notification(signals, mode="full", top_n=3)
+
+    assert "纸面观察候选" in markdown
+    assert "观察目标" in markdown
+    assert "策略推荐" not in markdown
+    assert "推荐 Top" not in markdown
+    assert "建议仓位" not in markdown
+    assert "入场时间" not in markdown
+
+
 def test_build_closing_premium_notification_lists_observation_space() -> None:
     signals = [
         PremiumSignal(
@@ -567,6 +595,37 @@ def test_build_closing_premium_notification_lists_observation_space() -> None:
     assert "首选标的" not in markdown
     assert "入场" not in markdown
     assert "预期 5.42%" not in markdown
+
+
+def test_build_closing_premium_notification_full_mode_keeps_research_wording() -> None:
+    signals = [
+        PremiumSignal(
+            symbol="600000",
+            name="浦发银行",
+            signal_type="量价突破",
+            score=81.0,
+            current_price=10.2,
+            entry_price=10.15,
+            stop_loss=9.8,
+            take_profit_1=10.7,
+            take_profit_2=11.1,
+            reasons=("尾盘资金流入",),
+            risks=("高开风险较大",),
+            confidence=0.75,
+            holding_days=2,
+            expected_return=5.42,
+        )
+    ]
+
+    markdown = build_closing_premium_notification(signals, mode="full", top_n=3)
+
+    assert "纸面观察候选" in markdown
+    assert "观察空间 5.42%" in markdown
+    assert "策略推荐" not in markdown
+    assert "推荐 Top" not in markdown
+    assert "建议入场" not in markdown
+    assert "操作建议" not in markdown
+    assert "尾盘入场" not in markdown
 
 
 def test_build_closing_review_notification_summary_mode_highlights_main_chain() -> None:

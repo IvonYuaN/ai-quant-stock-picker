@@ -11,7 +11,8 @@ def test_server_sync_script_supports_custom_runner() -> None:
         encoding="utf-8"
     )
 
-    assert 'AQSP_RUNNER_SCRIPT:-scripts/daily_pipeline.sh' in script
+    assert 'RUNNER_SCRIPT="${AQSP_RUNNER_SCRIPT:-}"' in script
+    assert "AQSP_RUNNER_SCRIPT is required" in script
     assert 'log "开始运行任务: ${RUNNER_PATH}"' in script
     assert 'bash "${RUNNER_PATH}"' in script
 
@@ -41,13 +42,19 @@ def test_install_server_cron_script_installs_standard_jobs() -> None:
     assert "*/10 13-14 * * 1-5" in script
     assert "0 18 * * 1-5" in script
     assert "*/15 * * * 1-5" in script
+    assert "bt_task.sh intraday" in script
+    assert "bt_task.sh daily" in script
+    assert "bt_task.sh monitor" in script
 
 
 def test_bt_task_script_exposes_panel_safe_actions() -> None:
     script = (PROJECT_ROOT / "scripts" / "bt_task.sh").read_text(encoding="utf-8")
 
     assert "宝塔面板计划任务统一入口" in script
+    assert 'ACTION="${1:-}"' in script
+    assert 'if [ -z "$ACTION" ]' in script
     assert "daily|intraday|coldstart|monitor|status" in script
+    assert "AQSP_RUNNER_SCRIPT=scripts/daily_pipeline.sh" in script
     assert "AQSP_RUNNER_SCRIPT=scripts/intraday_refresh.sh" in script
     assert "scripts/server_sync_and_run.sh" in script
     assert "scripts/coldstart_daily.sh" in script
@@ -57,9 +64,7 @@ def test_bt_task_script_exposes_panel_safe_actions() -> None:
 
 
 def test_server_status_surfaces_bt_task_logs() -> None:
-    script = (PROJECT_ROOT / "scripts" / "server_status.sh").read_text(
-        encoding="utf-8"
-    )
+    script = (PROJECT_ROOT / "scripts" / "server_status.sh").read_text(encoding="utf-8")
 
     assert 'print_section "BT TASK LOG"' in script
     assert "logs/bt/bt-${action}-$(date +%Y-%m-%d).log" in script
@@ -71,7 +76,7 @@ def test_server_sync_script_has_lock_guard() -> None:
     )
 
     assert "server-runtime.lock" in script
-    assert '已有服务器主任务在运行，跳过本次同步与跑批' in script
+    assert "已有服务器主任务在运行，跳过本次同步与跑批" in script
 
 
 def test_server_monitor_script_has_lock_guard() -> None:
@@ -80,7 +85,7 @@ def test_server_monitor_script_has_lock_guard() -> None:
     )
 
     assert "server-monitor.lock" in script
-    assert '已有监控任务在运行，跳过本次监控' in script
+    assert "已有监控任务在运行，跳过本次监控" in script
 
 
 def test_coldstart_daily_script_updates_db_then_runs_cli() -> None:
@@ -89,12 +94,12 @@ def test_coldstart_daily_script_updates_db_then_runs_cli() -> None:
     )
 
     assert 'dirname "$SQLITE_DB_PATH"' in script
-    assert 'A股量化分析数据/update_daily.py' in script
-    assert 'AQSP_COLDSTART_UPDATE_SCRIPT' in script
+    assert "A股量化分析数据/update_daily.py" in script
+    assert "AQSP_COLDSTART_UPDATE_SCRIPT" in script
     assert "AQSP_COLDSTART_ALLOW_INTRADAY" in script
     assert "收盘前，跳过冷启动" in script
     assert "bt_task.sh intraday" in script
-    assert 'server-runtime.lock' in script
+    assert "server-runtime.lock" in script
     assert '"${PYTHON_BIN}" -u "${UPDATE_SCRIPT}" "${SQLITE_DB_PATH}"' in script
     assert '"${PYTHON_BIN}" -u -m aqsp.cli run' in script
     assert "--source sqlite_db" in script

@@ -22,8 +22,8 @@ from aqsp.presentation import (
     normalize_research_tone,
     review_priority_label,
 )
-from aqsp.strategies.closing_premium import PremiumSignal, format_closing_signals
-from aqsp.strategies.morning_breakout import BreakoutSignal, format_morning_signals
+from aqsp.strategies.closing_premium import PremiumSignal
+from aqsp.strategies.morning_breakout import BreakoutSignal
 
 NotifyMode = Literal["summary", "full"]
 
@@ -649,9 +649,6 @@ def build_morning_breakout_notification(
     mode: str = "summary",
     top_n: int = 3,
 ) -> str:
-    if _safe_mode(mode) == "full":
-        return format_morning_signals(list(signals), top_n=max(top_n, 5))
-
     if not signals:
         return "\n".join(
             [
@@ -676,7 +673,8 @@ def build_morning_breakout_notification(
         "## Top 候选",
         "",
     ]
-    for index, signal in enumerate(signals[:top_n], start=1):
+    display_n = max(top_n, 5) if _safe_mode(mode) == "full" else top_n
+    for index, signal in enumerate(signals[:display_n], start=1):
         lines.append(f"{index}. {_format_breakout_signal(signal)}")
     return "\n".join(lines)
 
@@ -686,9 +684,6 @@ def build_closing_premium_notification(
     mode: str = "summary",
     top_n: int = 3,
 ) -> str:
-    if _safe_mode(mode) == "full":
-        return format_closing_signals(list(signals), top_n=max(top_n, 5))
-
     if not signals:
         return "\n".join(
             [
@@ -713,7 +708,8 @@ def build_closing_premium_notification(
         "## Top 候选",
         "",
     ]
-    for index, signal in enumerate(signals[:top_n], start=1):
+    display_n = max(top_n, 5) if _safe_mode(mode) == "full" else top_n
+    for index, signal in enumerate(signals[:display_n], start=1):
         lines.append(f"{index}. {_format_premium_signal(signal)}")
     return "\n".join(lines)
 

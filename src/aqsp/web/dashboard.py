@@ -1088,7 +1088,13 @@ def _render_frame(title: str, frame) -> None:
     if frame.empty:
         st.info("暂无数据。")
         return
-    st.dataframe(frame, width="stretch", hide_index=True)
+    st.dataframe(frame, use_container_width=True, hide_index=True)
+
+
+def _stretch_button(label: str, **kwargs) -> bool:
+    """Render full-width buttons on Streamlit versions before width= support."""
+    kwargs.setdefault("use_container_width", True)
+    return bool(st.button(label, **kwargs))
 
 
 def _render_line_block(title: str, lines: tuple[str, ...], empty_text: str) -> None:
@@ -2338,10 +2344,9 @@ def _render_home_action_rail(
                 lines=item.lines,
                 tone=item.tone,
             )
-            if item.card is not None and st.button(
+            if item.card is not None and _stretch_button(
                 item.button_label,
                 key=f"home-action-rail-{item.lane_id}-{item.card.symbol}",
-                width="stretch",
             ):
                 _queue_workspace_jump(item.target_workspace, item.card.symbol)
                 st.rerun()
@@ -2355,10 +2360,9 @@ def _render_home_action_rail(
                 lines=item.lines,
                 tone=item.tone,
             )
-            if item.card is not None and st.button(
+            if item.card is not None and _stretch_button(
                 item.button_label,
                 key=f"home-action-rail-{item.lane_id}-{item.card.symbol}",
-                width="stretch",
             ):
                 _queue_workspace_jump(item.target_workspace, item.card.symbol)
                 st.rerun()
@@ -2618,10 +2622,9 @@ def _render_daily_workflow(
                     """,
                     unsafe_allow_html=True,
                 )
-                if not is_active and st.button(
+                if not is_active and _stretch_button(
                     "打开阶段",
                     key=f"workflow-task-{row.task_id}-{row.signal_date}",
-                    width="stretch",
                 ):
                     _set_dashboard_selection(
                         task_id=row.task_id,
@@ -2657,10 +2660,9 @@ def _render_daily_workflow(
                         """,
                         unsafe_allow_html=True,
                     )
-                    if st.button(
+                    if _stretch_button(
                         "打开阶段",
                         key=f"workflow-extra-task-{row.task_id}-{row.signal_date}",
-                        width="stretch",
                     ):
                         _set_dashboard_selection(
                             task_id=row.task_id,
@@ -3158,10 +3160,9 @@ def _render_decision_flow(
                     _home_focus_action_targets(),
                 ):
                     with action_col:
-                        if st.button(
+                        if _stretch_button(
                             label,
                             key=f"home-{workspace}-{item.symbol}-{start}",
-                            width="stretch",
                         ):
                             _queue_workspace_jump(workspace, item.symbol)
                             st.rerun()
@@ -3259,10 +3260,9 @@ def _render_date_timeline_cards(
                     """,
                     unsafe_allow_html=True,
                 )
-                if st.button(
+                if _stretch_button(
                     "查看日期",
                     key=f"timeline-date-{row.signal_date}",
-                    width="stretch",
                 ):
                     _set_dashboard_selection(
                         task_id=_resolve_task_for_date(
@@ -3308,10 +3308,9 @@ def _render_same_day_task_matrix(
                     """,
                     unsafe_allow_html=True,
                 )
-                if not is_active and st.button(
+                if not is_active and _stretch_button(
                     f"查看{row.task_label}",
                     key=f"same-day-task-{row.task_id}-{row.signal_date}",
-                    width="stretch",
                 ):
                     _set_dashboard_selection(
                         task_id=row.task_id,
@@ -3371,10 +3370,9 @@ def _render_task_workbench(
                 """,
                 unsafe_allow_html=True,
             )
-            if st.button(
+            if _stretch_button(
                 "打开任务",
                 key=f"task-switch-{snapshot.task_id}",
-                width="stretch",
             ):
                 _set_dashboard_latest_task(
                     snapshot.task_id,
@@ -3412,10 +3410,9 @@ def _render_task_workbench(
                         """,
                         unsafe_allow_html=True,
                     )
-                    if st.button(
+                    if _stretch_button(
                         "打开任务",
                         key=f"task-switch-hidden-{snapshot.task_id}-{signal_date or 'latest'}",
-                        width="stretch",
                     ):
                         _set_dashboard_latest_task(
                             snapshot.task_id,
@@ -4248,10 +4245,9 @@ def _render_workspace_navigation() -> str:
     for column, item in zip(columns, nav_items):
         is_active = item.name == current_workspace
         with column:
-            if st.button(
+            if _stretch_button(
                 item.code,
                 key=f"workspace-nav-{item.name}",
-                width="stretch",
                 type="primary" if is_active else "secondary",
             ):
                 st.session_state[widget_key] = item.name
@@ -4282,10 +4278,9 @@ def _render_date_jump_bar(
         for column, signal_date in zip(columns, visible_dates):
             with column:
                 is_active = signal_date == selected_date
-                if st.button(
+                if _stretch_button(
                     signal_date,
                     key=f"date-jump-{signal_date}",
-                    width="stretch",
                     type="primary" if is_active else "secondary",
                 ):
                     _set_dashboard_selection(
@@ -4416,27 +4411,24 @@ def _render_execution_focus(
     )
     nav_col1, nav_col2, nav_col3 = st.columns(3)
     with nav_col1:
-        if st.button(
+        if _stretch_button(
             "复盘",
             key=f"execution-to-review-{selected_symbol}-{task_view.task_id}-{signal_date}",
-            width="stretch",
             disabled=review_card is None,
         ):
             _queue_workspace_jump("候选复盘", selected_symbol)
             st.rerun()
     with nav_col2:
-        if st.button(
+        if _stretch_button(
             "归档",
             key=f"execution-to-archive-{selected_symbol}-{task_view.task_id}-{signal_date}",
-            width="stretch",
         ):
             _queue_workspace_jump("归档回看", selected_symbol)
             st.rerun()
     with nav_col3:
-        if st.button(
+        if _stretch_button(
             "首页",
             key=f"execution-to-home-{selected_symbol}-{task_view.task_id}-{signal_date}",
-            width="stretch",
         ):
             _set_dashboard_workspace("决策首页")
             st.rerun()
@@ -4642,10 +4634,9 @@ def _render_same_day_phase_jump_bar(
     for column, row in zip(columns, rows):
         with column:
             is_active = row.task_id == current_task_id
-            if st.button(
+            if _stretch_button(
                 row.phase_label,
                 key=f"phase-jump-{row.task_id}-{signal_date}",
-                width="stretch",
                 type="primary" if is_active else "secondary",
             ):
                 _set_dashboard_selection(task_id=row.task_id, signal_date=signal_date)
@@ -5378,10 +5369,9 @@ def _render_symbol_quick_bar(
                 spotlights=spotlights,
                 debates=debates,
             )
-            if st.button(
+            if _stretch_button(
                 code_label,
                 key=f"{workspace}-quick-symbol-{symbol}",
-                width="stretch",
                 type="primary" if is_active else "secondary",
             ):
                 _queue_workspace_jump(workspace, symbol)
@@ -5390,6 +5380,44 @@ def _render_symbol_quick_bar(
                 f'<div class="aqsp-quick-symbol-name{" active" if is_active else ""}">{escape(name_label)}</div>',
                 unsafe_allow_html=True,
             )
+
+
+def _render_candidate_evidence_drawers(
+    *,
+    review_card: DashboardCandidateCard,
+    spotlight: DashboardCandidateSpotlight | None,
+    debate_summary: DashboardDebateSummary | None,
+    journey_steps: tuple[DashboardCandidateJourneyStep, ...],
+    signal_frame,
+    task_frame,
+    paper_frame,
+    execution_frame,
+    evidence_title: str,
+) -> None:
+    has_journey = _should_render_candidate_journey(
+        spotlight=spotlight,
+        debate_summary=debate_summary,
+        journey_steps=journey_steps,
+    ) and bool(journey_steps)
+    if has_journey:
+        with st.expander("当日候选路径", expanded=False):
+            _render_candidate_journey(
+                journey_steps,
+                review_card=review_card,
+                spotlight=spotlight,
+                debate_summary=debate_summary,
+            )
+    with st.expander("研究证据链", expanded=False):
+        _render_candidate_research_stream(
+            review_card=review_card,
+            spotlight=spotlight,
+            debate_summary=debate_summary,
+            signal_frame=signal_frame,
+            task_frame=task_frame,
+            paper_frame=paper_frame,
+            execution_frame=execution_frame,
+            evidence_title=evidence_title,
+        )
 
 
 def _resolve_workspace_symbol(
@@ -5538,10 +5566,9 @@ def _render_review_phase_bar(
     for column, row in zip(columns, phase_rows):
         with column:
             is_active = row.task_id == current_task_id
-            if st.button(
+            if _stretch_button(
                 row.phase_label,
                 key=f"review-phase-{selected_symbol}-{row.task_id}-{signal_date}",
-                width="stretch",
                 type="primary" if is_active else "secondary",
             ):
                 _set_dashboard_selection(
@@ -6058,7 +6085,6 @@ def _render_candidate_journey(
     if not journey_steps and debate_summary is not None:
         return
 
-    st.subheader("当日候选路径")
     if not journey_steps:
         st.info(
             _candidate_empty_journey_message(
@@ -6411,18 +6437,16 @@ def _render_candidate_review_snapshot(
 
     nav_col1, nav_col2, nav_col3 = st.columns(3)
     with nav_col1:
-        if st.button(
+        if _stretch_button(
             "虚拟盘",
             key=f"review-to-execution-{selected_card.symbol}",
-            width="stretch",
         ):
             _queue_workspace_jump("虚拟盘跟踪", selected_card.symbol)
             st.rerun()
     with nav_col2:
-        if st.button(
+        if _stretch_button(
             "归档",
             key=f"review-to-report-{selected_card.symbol}",
-            width="stretch",
         ):
             _queue_workspace_handoff(
                 target_workspace="归档回看",
@@ -6436,10 +6460,9 @@ def _render_candidate_review_snapshot(
             )
             st.rerun()
     with nav_col3:
-        if st.button(
+        if _stretch_button(
             "首页",
             key=f"review-to-home-{selected_card.symbol}",
-            width="stretch",
         ):
             _set_dashboard_workspace("决策首页")
             st.rerun()
@@ -6580,16 +6603,11 @@ def _render_candidate_deep_dive(
         paper_frame,
         execution_frame,
     )
-    _render_candidate_journey(
-        journey_steps,
+    _render_candidate_evidence_drawers(
         review_card=review_card,
         spotlight=spotlight,
         debate_summary=debate_summary,
-    )
-    _render_candidate_research_stream(
-        review_card=review_card,
-        spotlight=spotlight,
-        debate_summary=debate_summary,
+        journey_steps=journey_steps,
         signal_frame=signal_frame,
         task_frame=task_frame,
         paper_frame=paper_frame,
@@ -7318,18 +7336,16 @@ def _render_archive_workbench(
 
     nav_col1, nav_col2, nav_col3 = st.columns(3)
     with nav_col1:
-        if st.button(
+        if _stretch_button(
             "首页",
             key=f"archive-to-home-{task_view.task_id}-{review_date}",
-            width="stretch",
         ):
             _set_dashboard_workspace("决策首页")
             st.rerun()
     with nav_col2:
-        if st.button(
+        if _stretch_button(
             "复盘",
             key=f"archive-to-review-{selected_symbol}-{task_view.task_id}-{review_date}",
-            width="stretch",
             disabled=review_card is None,
         ):
             _queue_workspace_handoff(
@@ -7346,10 +7362,9 @@ def _render_archive_workbench(
             )
             st.rerun()
     with nav_col3:
-        if st.button(
+        if _stretch_button(
             "虚拟盘",
             key=f"archive-to-execution-{selected_symbol}-{task_view.task_id}-{review_date}",
-            width="stretch",
         ):
             _queue_workspace_jump("虚拟盘跟踪", selected_symbol)
             st.rerun()
@@ -7456,10 +7471,9 @@ def _render_report_archive_center(
                         ]
                     )
                 )
-                if row.task_id != current_task_id and st.button(
+                if row.task_id != current_task_id and _stretch_button(
                     "打开归档",
                     key=f"report-center-{row.task_id}-{review_date}",
-                    width="stretch",
                 ):
                     _set_dashboard_selection(
                         task_id=row.task_id,

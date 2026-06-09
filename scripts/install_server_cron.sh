@@ -17,23 +17,23 @@ mkdir -p "$(dirname "$CRON_LOG")"
 
 emit_jobs() {
     if [[ "${ENABLE_INTRADAY,,}" =~ ^(1|true|yes|on)$ ]]; then
-        echo '*/10 9-11 * * 1-5 AQSP_RUNNER_SCRIPT=scripts/intraday_refresh.sh /bin/bash '"${PROJECT_ROOT}"'/scripts/server_sync_and_run.sh >> '"${CRON_LOG}"' 2>&1'
-        echo '*/10 13-14 * * 1-5 AQSP_RUNNER_SCRIPT=scripts/intraday_refresh.sh /bin/bash '"${PROJECT_ROOT}"'/scripts/server_sync_and_run.sh >> '"${CRON_LOG}"' 2>&1'
+        echo '*/10 9-11 * * 1-5 /bin/bash '"${PROJECT_ROOT}"'/scripts/bt_task.sh intraday >> '"${CRON_LOG}"' 2>&1'
+        echo '*/10 13-14 * * 1-5 /bin/bash '"${PROJECT_ROOT}"'/scripts/bt_task.sh intraday >> '"${CRON_LOG}"' 2>&1'
     fi
 
     if [[ "${ENABLE_DAILY,,}" =~ ^(1|true|yes|on)$ ]]; then
-        echo '0 18 * * 1-5 /bin/bash '"${PROJECT_ROOT}"'/scripts/server_sync_and_run.sh >> '"${CRON_LOG}"' 2>&1'
+        echo '0 18 * * 1-5 /bin/bash '"${PROJECT_ROOT}"'/scripts/bt_task.sh daily >> '"${CRON_LOG}"' 2>&1'
     fi
 
     if [[ "${ENABLE_MONITOR,,}" =~ ^(1|true|yes|on)$ ]]; then
-        echo '*/15 * * * 1-5 /bin/bash '"${PROJECT_ROOT}"'/scripts/server_monitor.sh >> '"${CRON_LOG}"' 2>&1'
+        echo '*/15 * * * 1-5 /bin/bash '"${PROJECT_ROOT}"'/scripts/bt_task.sh monitor >> '"${CRON_LOG}"' 2>&1'
     fi
 }
 
 CURRENT_CRONTAB="$(crontab -l 2>/dev/null || true)"
 FILTERED_CRONTAB="$(
     printf '%s\n' "$CURRENT_CRONTAB" | grep -vE \
-        'AQSP_RUNNER_SCRIPT=scripts/intraday_refresh\.sh|/scripts/server_sync_and_run\.sh|/scripts/server_monitor\.sh' || true
+        'AQSP_RUNNER_SCRIPT=scripts/intraday_refresh\.sh|/scripts/server_sync_and_run\.sh|/scripts/server_monitor\.sh|/scripts/bt_task\.sh (daily|intraday|monitor)' || true
 )"
 
 {
