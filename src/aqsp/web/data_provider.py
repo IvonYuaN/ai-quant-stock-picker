@@ -20,6 +20,7 @@ from aqsp.ledger.base import read_ledger
 from aqsp.paper import read_paper_trades
 from aqsp.presentation import format_review_meta, format_symbol_name
 from aqsp.ratings import is_tradable_rating, portfolio_action_label, rating_label
+from aqsp.web.archive_safety import sanitize_archive_lines
 
 logger = logging.getLogger(__name__)
 
@@ -3226,13 +3227,15 @@ class DashboardDataProvider:
                 market_environment="",
                 next_day_focus_lines=(),
             )
-        execution_lines = self._section_lines(markdown_text, "执行摘要", "📌 执行摘要")
+        execution_lines = sanitize_archive_lines(
+            self._section_lines(markdown_text, "执行摘要", "📌 执行摘要")
+        )
         runtime_lines = self._runtime_snapshot_lines(
             self._section_lines(markdown_text, "运行参数")
         )
         market_environment = self._market_environment_line(markdown_text)
-        next_day_focus_lines = self._focus_lines(
-            self._section_lines(markdown_text, "明日重点")
+        next_day_focus_lines = sanitize_archive_lines(
+            self._focus_lines(self._section_lines(markdown_text, "明日重点"))
         )
         return DashboardReportInsights(
             report_summary_lines=execution_lines,

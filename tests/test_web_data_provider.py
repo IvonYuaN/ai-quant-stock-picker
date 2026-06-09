@@ -857,7 +857,7 @@ def test_dashboard_data_provider_builds_task_views_and_dedupes_latest_rows(
         line.startswith("阻塞观察: 000001 平安银行") for line in main_view.ranking_lines
     )
     assert main_view.report_summary_lines == (
-        "今日主链 1 只可执行，另有 1 只转观察。",
+        "今日主链 1 只纸面复核，另有 1 只转观察。",
         "优先跟踪高分主链候选。",
     )
     assert main_view.report_source.endswith("latest.md")
@@ -1364,6 +1364,78 @@ def test_dashboard_data_provider_extracts_latest_report_when_main_chain_latest(
         "thresholds.version: 1.1.1",
         "regime: stable_sideways",
     )
+
+
+def test_dashboard_data_provider_sanitizes_archive_summary_action_words(
+    tmp_path: Path,
+) -> None:
+    ledger_path = tmp_path / "predictions.jsonl"
+    paper_path = tmp_path / "paper_trades.jsonl"
+    logs_path = tmp_path / "logs"
+    reports_dir = tmp_path / "reports"
+    logs_path.mkdir(parents=True)
+    reports_dir.mkdir(parents=True)
+
+    ledger_path.write_text(
+        json.dumps(
+            {
+                "signal_date": "2026-06-05",
+                "created_at": "2026-06-05T15:00:00+08:00",
+                "symbol": "600519",
+                "name": "贵州茅台",
+                "score": 80,
+                "rating": "buy_candidate",
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    paper_path.write_text("", encoding="utf-8")
+    (reports_dir / "latest.md").write_text(
+        (
+            "# AI 量化选股报告(close, 数据日期 2026-06-05)\n\n"
+            "## 📌 执行摘要\n\n"
+            "- 今日建议: 可执行标的进入执行名单。\n"
+            "- 配仓建议: 参考买点 1500，止损 1420，止盈 1680。\n\n"
+            "## 明日重点\n\n"
+            "- 首选观察 600519，若放量则新开仓，禁止下单只是测试词。\n"
+        ),
+        encoding="utf-8",
+    )
+
+    provider = DashboardDataProvider(
+        ledger_path=str(ledger_path),
+        paper_ledger_path=str(paper_path),
+        logs_path=str(logs_path),
+        reports_dir=str(reports_dir),
+    )
+
+    task_view = provider.build_task_view("main_chain", signal_date="2026-06-05")
+    visible_lines = task_view.report_summary_lines + task_view.next_day_focus_lines
+    visible_text = "\n".join(visible_lines)
+
+    for forbidden in (
+        "今日建议",
+        "可执行标的",
+        "执行名单",
+        "配仓建议",
+        "参考买点",
+        "止损",
+        "止盈",
+        "新开仓",
+        "下单",
+    ):
+        assert forbidden not in visible_text
+    assert "历史回看" in visible_text
+    assert "纸面复核对象" in visible_text
+    assert "历史复核名单" in visible_text
+    assert "纸面配仓参考" in visible_text
+    assert "参考价" in visible_text
+    assert "防守位" in visible_text
+    assert "观察目标" in visible_text
+    assert "纸面新建观察" in visible_text
+    assert "纸面记录" in visible_text
 
 
 def test_dashboard_data_provider_skips_latest_report_when_date_mismatch(

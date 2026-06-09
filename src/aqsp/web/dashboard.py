@@ -15,6 +15,7 @@ from aqsp.research.summary import (
     research_findings_display,
     research_findings_metric,
 )
+from aqsp.web.archive_safety import sanitize_archive_text
 from aqsp.web.data_provider import (
     DashboardCandidateCard,
     DashboardCandidateJourneyStep,
@@ -6794,6 +6795,24 @@ def _render_report_archive_center(
                     st.rerun()
 
 
+def _raw_report_boundary_lines(task_view) -> tuple[str, ...]:
+    selected_date = (
+        getattr(task_view, "selected_date", "")
+        or getattr(task_view, "latest_date", "")
+        or "-"
+    )
+    task_label = getattr(task_view, "task_label", "归档任务")
+    return (
+        f"历史原文: {task_label} / {selected_date}",
+        "以下内容只用于回看当时研究语境，不是今日动作、不是下单指令。",
+        "原文中的行动词已在展示层中性化为纸面复核口径，原始文件未被改写。",
+    )
+
+
+def _sanitize_raw_report_markdown(markdown_text: str) -> str:
+    return sanitize_archive_text(markdown_text)
+
+
 def _render_raw_report(task_view) -> None:
     st.subheader("归档原文")
     source = getattr(task_view, "report_source", "")
@@ -6812,7 +6831,12 @@ def _render_raw_report(task_view) -> None:
             )
         )
     if task_view.report_markdown.strip():
-        st.markdown(task_view.report_markdown)
+        _render_line_block(
+            "原文边界",
+            _raw_report_boundary_lines(task_view),
+            "当前暂无原文边界信息。",
+        )
+        st.markdown(_sanitize_raw_report_markdown(task_view.report_markdown))
     else:
         st.info("当前任务/日期暂无归档原文。")
 

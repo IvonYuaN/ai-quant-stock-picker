@@ -69,6 +69,8 @@ from aqsp.web.dashboard import (
     _review_source_label,
     _resolve_task_for_date,
     _report_archive_status,
+    _raw_report_boundary_lines,
+    _sanitize_raw_report_markdown,
     _resolve_workspace_symbol,
     _signal_evidence_context,
     _should_render_candidate_journey,
@@ -2066,6 +2068,68 @@ def test_dashboard_archive_brief_cards_summarize_archive_without_action_hype() -
     assert "立即买入" not in rendered_text
     assert "下单" not in rendered_text
     assert "真实持仓" not in rendered_text
+
+
+def test_dashboard_raw_report_markdown_is_wrapped_as_historical_evidence() -> None:
+    class _TaskView:
+        task_label = "主链推荐"
+        selected_date = "2026-06-05"
+        latest_date = "2026-06-06"
+
+    lines = _raw_report_boundary_lines(_TaskView())
+
+    assert lines == (
+        "历史原文: 主链推荐 / 2026-06-05",
+        "以下内容只用于回看当时研究语境，不是今日动作、不是下单指令。",
+        "原文中的行动词已在展示层中性化为纸面复核口径，原始文件未被改写。",
+    )
+
+
+def test_dashboard_sanitizes_raw_archive_action_words_without_rewriting_source() -> None:
+    raw_markdown = (
+        "## 今日建议\n"
+        "- 可执行主链: 复核执行顺序\n"
+        "- 可执行标的: 600519\n"
+        "- 首选标的: 000858，首选观察。\n"
+        "- 配仓建议: 默认轻仓，仓位建议 10%。\n"
+        "- 新开仓: 等待参考买点，止损 1420，止盈 1680\n"
+        "- 执行名单: 禁止下单演示\n"
+    )
+
+    sanitized = _sanitize_raw_report_markdown(raw_markdown)
+
+    assert raw_markdown != sanitized
+    for forbidden in (
+        "可执行标的",
+        "可执行主链",
+        "首选标的",
+        "首选观察",
+        "配仓建议",
+        "仓位建议",
+        "新开仓",
+        "参考买点",
+        "买点",
+        "止损",
+        "止盈",
+        "执行名单",
+        "执行顺序",
+        "下单",
+        "今日建议",
+    ):
+        assert forbidden not in sanitized
+    assert "历史回看" in sanitized
+    assert "纸面主链复核" in sanitized
+    assert "纸面复核对象" in sanitized
+    assert "纸面重点对象" in sanitized
+    assert "重点观察" in sanitized
+    assert "纸面配仓参考" in sanitized
+    assert "纸面仓位参考" in sanitized
+    assert "纸面新建观察" in sanitized
+    assert "参考价" in sanitized
+    assert "防守位" in sanitized
+    assert "观察目标" in sanitized
+    assert "历史复核名单" in sanitized
+    assert "历史复核顺序" in sanitized
 
 
 def test_dashboard_archive_conclusion_title_distinguishes_research_from_report_archive_status() -> (
