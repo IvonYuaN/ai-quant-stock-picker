@@ -36,7 +36,13 @@ def optimize_portfolio_allocations(
     max_names: int = 5,
     max_single_weight: float = 0.20,
 ) -> PortfolioOptimizationResult:
-    tradable = [pick for pick in picks if is_tradable_rating(pick.rating)][:max_names]
+    tradable = [
+        pick
+        for pick in picks
+        if is_tradable_rating(pick.rating)
+        and getattr(decision_by_symbol.get(pick.symbol), "action", "keep")
+        != "downgrade"
+    ][:max_names]
     if not tradable:
         return PortfolioOptimizationResult(
             allocations=(),

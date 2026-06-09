@@ -99,6 +99,33 @@ def test_apply_portfolio_manager_promotes_when_debate_supports_buy_candidate() -
     )
 
 
+def test_apply_portfolio_manager_excludes_downgraded_tradable_from_allocations() -> None:
+    picks = [_pick("000001", 85)]
+    concentration = ConcentrationResult(
+        total_candidates=1,
+        sector_count=1,
+        max_concentration=1.0,
+        warnings=("too concentrated",),
+        sectors=(
+            SectorConcentration(
+                sector="银行",
+                count=1,
+                total=1,
+                ratio=1.0,
+                symbols=("000001",),
+            ),
+        ),
+    )
+
+    bundle = apply_portfolio_manager(picks, concentration=concentration)
+
+    assert bundle.picks[0].rating == "buy_candidate"
+    assert bundle.decisions[0].action == "downgrade"
+    assert bundle.summary.allocations == ()
+    assert bundle.summary.cash_reserve == 1.0
+    assert "无可执行主链" in bundle.summary.allocation_note
+
+
 def test_apply_portfolio_manager_keeps_action_when_no_incremental_override() -> None:
     picks = [_pick("300750", 18, recommended_adjustment="keep")]
 
