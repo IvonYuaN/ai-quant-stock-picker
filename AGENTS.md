@@ -82,6 +82,12 @@
 - 单 PR 变更 ≤ ~300 行(测试不计)。超出必须拆。
 - PR 描述必须包含:做了什么 / 为什么 / 风险 / 怎么验证。
 
+### 3.10 浏览器调试边界
+
+- 禁止使用用户前台 Chrome/浏览器、Codex Browser/Chrome 插件、已有 Playwright 会话或固定调试端口调试本项目。
+- UI 验证优先用 `curl`、日志和 `scripts/headless_dashboard_check.py`。
+- 必须截图时,只能启动独立无头 Chromium/Chrome,并使用临时 profile、`--remote-debugging-port=0` 和独立输出文件。
+
 ---
 
 ## 4. Claude 审查清单(每个 PR 必过)

@@ -25,7 +25,8 @@ curl -Ik https://lh.ifidy.cn/_stcore/health
 
 - 后台 SSH 读日志、跑测试、重启 `aqsp-dashboard`。
 - 本地用 `pytest`、`ruff`、`scripts/check_no_secrets.py` 验证。
-- 用隔离 Browser/Playwright 截图检查页面，不接管用户正在工作的 Chrome 前台窗口。
+- 用 `scripts/headless_dashboard_check.py` 做公网/本地 Dashboard 检查。
+- 需要视觉截图时，只能启动独立无头 Chromium/Chrome 进程，并且必须使用临时 `user-data-dir`、`--remote-debugging-port=0`、独立输出文件。
 
 禁止：
 
@@ -33,6 +34,8 @@ curl -Ik https://lh.ifidy.cn/_stcore/health
 - 在服务器上手改受 Git 管理代码再长期保留。
 - 为了调试把生产 `.env`、数据库、ledger、报告复制进 GitHub。
 - 把公网 Dashboard 上的历史归档文案渲染成“今日建议/首选/移出”等行动指令。
+- 使用 Codex Browser/Chrome 插件、用户正在操作的 Chrome/浏览器窗口、已有 Playwright 会话或固定调试端口做项目调试。
+- 为了截图或 DOM 检查打开前台标签页、复用用户浏览器 profile、占用其他项目的 headless browser 端口。
 
 ## 3. 部署闭环
 
@@ -43,7 +46,14 @@ curl -Ik https://lh.ifidy.cn/_stcore/health
 3. 跑 secret 扫描。
 4. commit + push。
 5. 服务器 `git fetch && git reset --hard <commit>`，重启服务或运行目标脚本。
-6. 用服务器日志和公网 health 验证。
+6. 用服务器日志、公网 health 和隔离无头检查验证。
+
+推荐验证命令：
+
+```bash
+python3 scripts/headless_dashboard_check.py --url https://lh.ifidy.cn
+python3 scripts/headless_dashboard_check.py --url https://lh.ifidy.cn --screenshot outputs/dashboard-check.png
+```
 
 服务器只接受 GitHub commit，不把服务器当开发机。若服务器出现受 Git 管理的脏改，先查明来源；除非用户明确要求，不直接覆盖用户改动。
 
