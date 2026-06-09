@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import sys
 import time
@@ -28,6 +29,7 @@ from aqsp.research.summary import load_research_summary  # noqa: E402
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 9876
+ALLOW_FOREGROUND_BROWSER_ENV = "AQSP_ALLOW_FOREGROUND_BROWSER"
 
 
 @dataclass(frozen=True)
@@ -37,6 +39,7 @@ class DashboardLaunchResult:
     db_path: Path
     server_started: bool
     pid: int | None
+    browser_opened: bool
 
 
 def render_dashboard_bundle(
@@ -70,6 +73,12 @@ def _url_reachable(url: str) -> bool:
             return 200 <= response.status < 500
     except Exception:
         return False
+
+
+def foreground_browser_allowed() -> bool:
+    """Require an explicit human opt-in before touching the foreground browser."""
+    value = os.getenv(ALLOW_FOREGROUND_BROWSER_ENV, "").strip().lower()
+    return value in {"1", "true", "yes", "y", "on"}
 
 
 def ensure_dashboard_server(
@@ -140,6 +149,7 @@ def open_dashboard(
 
     pid: int | None = None
     server_started = False
+    browser_opened = False
     url = _dashboard_url(host, port)
     if not render_only:
         server_started, pid = ensure_dashboard_server(
@@ -148,8 +158,9 @@ def open_dashboard(
             port=port,
             log_path=log_path or Path("logs/dashboard/server.log"),
         )
-        if open_browser:
+        if open_browser and foreground_browser_allowed():
             webbrowser.open(url)
+            browser_opened = True
 
     return DashboardLaunchResult(
         url=url,
@@ -157,6 +168,7 @@ def open_dashboard(
         db_path=db_path,
         server_started=server_started,
         pid=pid,
+        browser_opened=browser_opened,
     )
 
 
@@ -209,6 +221,12 @@ def main() -> int:
             print(f"server_pid={result.pid}")
         else:
             print("server_pid=reused")
+        print(f"browser_opened={'yes' if result.browser_opened else 'no'}")
+        if args.open_browser and not result.browser_opened:
+            print(
+                "browser_open_blocked="
+                f"set {ALLOW_FOREGROUND_BROWSER_ENV}=1 to open a foreground browser",
+            )
     return 0
 
 

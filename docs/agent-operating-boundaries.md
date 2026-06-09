@@ -26,7 +26,7 @@ curl -Ik https://lh.ifidy.cn/_stcore/health
 - 后台 SSH 读日志、跑测试、重启 `aqsp-dashboard`。
 - 本地用 `pytest`、`ruff`、`scripts/check_no_secrets.py` 验证。
 - 用 `scripts/headless_dashboard_check.py` 做公网/本地 Dashboard 检查。
-- `scripts/open_dashboard.py` 默认不得打开前台浏览器；只有用户明确要求或命令显式传 `--open-browser` 时才允许。
+- `scripts/open_dashboard.py` 默认不得打开前台浏览器；即使命令显式传 `--open-browser`，也必须同时设置 `AQSP_ALLOW_FOREGROUND_BROWSER=1` 才允许触碰系统前台浏览器。
 - 需要视觉截图时，只能启动独立无头 Chromium/Chrome 进程，并且必须使用临时 `user-data-dir`、`--remote-debugging-port=0`、独立输出文件。
 - 默认检查脚本只自动寻找 Chromium；如需专用 Chrome/其它浏览器，必须用 `AQSP_HEADLESS_BROWSER=/path/to/dedicated-browser` 或 `--browser` 显式指定隔离二进制。
 - AQSP 无头检查必须串行占用 AQSP 专属锁，默认 `/tmp/aqsp-headless-dashboard.lock`；同机多项目并行时用 `AQSP_HEADLESS_LOCK` 或 `--headless-lock` 指定本项目自己的锁文件。

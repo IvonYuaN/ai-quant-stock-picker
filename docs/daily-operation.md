@@ -31,10 +31,16 @@ tail -50 logs/daily/run-$(date +%Y-%m-%d).log
 http://127.0.0.1:9876
 ```
 
-首次打开或手动重开：
+只启动/复用本地静态服务，不打开前台浏览器：
 
 ```bash
 python3 scripts/open_dashboard.py
+```
+
+人工确实要打开系统浏览器时，必须显式授权：
+
+```bash
+AQSP_ALLOW_FOREGROUND_BROWSER=1 python3 scripts/open_dashboard.py --open-browser
 ```
 
 只刷新静态页面和 SQLite 快照，不启动浏览器：

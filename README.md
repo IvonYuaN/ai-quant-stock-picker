@@ -74,10 +74,16 @@ python -m aqsp.cli screen --csv data/sample_ohlcv.csv --mode close --limit 10
 python -m aqsp.cli screen --csv data/sample_ohlcv.csv --mode open --report reports/open.md
 ```
 
-生成并打开本地前端面板（固定端口 `127.0.0.1:9876`）：
+生成并启动/复用本地前端面板（固定端口 `127.0.0.1:9876`，默认不打开前台浏览器）：
 
 ```bash
 python3 scripts/open_dashboard.py
+```
+
+人工要打开系统浏览器时必须显式授权：
+
+```bash
+AQSP_ALLOW_FOREGROUND_BROWSER=1 python3 scripts/open_dashboard.py --open-browser
 ```
 
 只刷新页面文件、不启动服务：

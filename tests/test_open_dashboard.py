@@ -6,9 +6,11 @@ from pathlib import Path
 import pandas as pd
 
 from scripts.open_dashboard import (
+    ALLOW_FOREGROUND_BROWSER_ENV,
     DEFAULT_PORT,
     DashboardLaunchResult,
     ensure_dashboard_server,
+    foreground_browser_allowed,
     open_dashboard,
     render_dashboard_bundle,
 )
@@ -96,12 +98,14 @@ def test_open_dashboard_uses_fixed_default_port_without_opening_browser_by_defau
     assert result.url == "http://127.0.0.1:9876"
     assert result.server_started is True
     assert result.pid == 4321
+    assert result.browser_opened is False
     assert calls == []
 
 
-def test_open_dashboard_opens_browser_only_when_explicitly_requested(
+def test_open_dashboard_blocks_foreground_browser_without_env_opt_in(
     monkeypatch, tmp_path: Path
 ) -> None:
+    monkeypatch.delenv(ALLOW_FOREGROUND_BROWSER_ENV, raising=False)
     output_path = tmp_path / "dist/dashboard/index.html"
     db_path = tmp_path / "dist/dashboard/aqsp.db"
     calls: list[str] = []
@@ -129,4 +133,50 @@ def test_open_dashboard_opens_browser_only_when_explicitly_requested(
     )
 
     assert result.url == "http://127.0.0.1:9876"
+    assert result.browser_opened is False
+    assert calls == []
+
+
+def test_open_dashboard_opens_browser_only_with_explicit_env_opt_in(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv(ALLOW_FOREGROUND_BROWSER_ENV, "1")
+    output_path = tmp_path / "dist/dashboard/index.html"
+    db_path = tmp_path / "dist/dashboard/aqsp.db"
+    calls: list[str] = []
+
+    monkeypatch.setattr(
+        "scripts.open_dashboard.render_dashboard_bundle",
+        lambda **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        "scripts.open_dashboard.ensure_dashboard_server",
+        lambda **_kwargs: (True, 4321),
+    )
+    monkeypatch.setattr(
+        "scripts.open_dashboard.webbrowser.open",
+        lambda url: calls.append(url),
+    )
+
+    result = open_dashboard(
+        csv_path=tmp_path / "latest.csv",
+        ledger_path=tmp_path / "predictions.jsonl",
+        paper_ledger_path=tmp_path / "paper.jsonl",
+        output_path=output_path,
+        db_path=db_path,
+        open_browser=True,
+    )
+
+    assert result.url == "http://127.0.0.1:9876"
+    assert result.browser_opened is True
     assert calls == ["http://127.0.0.1:9876"]
+
+
+def test_foreground_browser_allowed_requires_explicit_env_opt_in(
+    monkeypatch,
+) -> None:
+    monkeypatch.delenv(ALLOW_FOREGROUND_BROWSER_ENV, raising=False)
+    assert foreground_browser_allowed() is False
+
+    monkeypatch.setenv(ALLOW_FOREGROUND_BROWSER_ENV, "true")
+    assert foreground_browser_allowed() is True
