@@ -447,7 +447,9 @@ def test_report_renders_debate_score_change_when_available() -> None:
         ],
     )
 
-    assert "- 评分变化: 76.0 → 79.0" in markdown
+    assert "- 辩论倾向: raise（附件观点，不覆盖 runtime 打分）" in markdown
+    assert "- 参考分歧: runtime 原始分 76.0；附件参考分 79.0" in markdown
+    assert "评分变化" not in markdown
     assert "- 分歧度: 35%" in markdown
 
 

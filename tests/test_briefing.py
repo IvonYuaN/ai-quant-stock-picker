@@ -882,6 +882,8 @@ class TestGenerateSmartSummary:
         assert "辩论共识" in summary
         assert "下调" in summary
         assert "6.8" in summary
+        assert "不覆盖runtime打分" in summary
+        assert "建议下调评分至" not in summary
 
     def test_debate_results_high_disagreement(self):
         from aqsp.briefing.debate import DebateResult

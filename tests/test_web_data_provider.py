@@ -344,9 +344,11 @@ def test_dashboard_data_provider_returns_debate_summary_for_symbol_and_day(
 
     assert summary is not None
     assert summary.debate_id == "debate-new"
-    assert summary.recommended_adjustment_label == "建议上调评分"
+    assert summary.recommended_adjustment_label == "辩论倾向上调"
     assert summary.consensus == "维持主推，但控制追高节奏"
-    assert summary.summary_lines[0] == "建议上调评分: 80.0 -> 82.0"
+    assert summary.summary_lines[0] == (
+        "辩论倾向上调: runtime原始分 80.0；附件参考分 82.0；不覆盖runtime打分"
+    )
     assert summary.agent_views[0].role_label in {"技术多头", "风控"}
     assert summary.risk_warnings == ("高位波动放大",)
 
@@ -607,6 +609,80 @@ def test_dashboard_data_provider_prefers_explicit_task_id_over_strategy_guess(
     )
 
 
+def test_dashboard_data_provider_keeps_intraday_rows_observation_only(
+    tmp_path: Path,
+) -> None:
+    ledger_path = tmp_path / "predictions.jsonl"
+    paper_path = tmp_path / "paper_trades.jsonl"
+    logs_path = tmp_path / "logs"
+    reports_dir = tmp_path / "reports"
+    logs_path.mkdir(parents=True)
+    reports_dir.mkdir(parents=True)
+    ledger_path.write_text(
+        "\n".join(
+            json.dumps(row, ensure_ascii=False)
+            for row in [
+                {
+                    "signal_date": "2026-06-09",
+                    "created_at": "2026-06-09T10:05:00+08:00",
+                    "symbol": "600519",
+                    "name": "贵州茅台",
+                    "score": 91,
+                    "rating": "strong_buy_candidate",
+                    "portfolio_action": "promote",
+                    "task_id": "intraday",
+                    "run_task_id": "intraday",
+                    "run_requested_source": "auto",
+                    "run_actual_source": "eastmoney",
+                    "run_source_health_label": "healthy",
+                    "run_source_health_message": "eastmoney 健康",
+                },
+                {
+                    "signal_date": "2026-06-09",
+                    "created_at": "2026-06-09T15:05:00+08:00",
+                    "symbol": "000001",
+                    "name": "平安银行",
+                    "score": 72,
+                    "rating": "buy_candidate",
+                    "strategies": ["volume_breakout"],
+                },
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    paper_path.write_text("", encoding="utf-8")
+    provider = DashboardDataProvider(
+        ledger_path=str(ledger_path),
+        paper_ledger_path=str(paper_path),
+        logs_path=str(logs_path),
+        reports_dir=str(reports_dir),
+    )
+
+    assert provider._row_task_id({"task_id": "intraday"}) == "intraday"
+
+    main_view = provider.build_task_view("main_chain", signal_date="2026-06-09")
+    intraday_view = provider.build_task_view("intraday", signal_date="2026-06-09")
+    same_day_map = {
+        row.task_id: row for row in provider.same_day_task_rows("2026-06-09")
+    }
+    timeline = provider.timeline_rows(limit=1)[0]
+
+    assert main_view.candidate_count == 1
+    assert main_view.detail_cards[0].symbol == "000001"
+    assert intraday_view.candidate_count == 1
+    assert intraday_view.actionable_count == 0
+    assert intraday_view.watch_count == 1
+    assert intraday_view.detail_cards[0].rank_label == "观察"
+    assert "未收盘快照" in intraday_view.headline
+    assert any("不进入正式主链待复核" in line for line in intraday_view.summary_lines)
+    assert same_day_map["intraday"].status_label == "观察中"
+    assert same_day_map["intraday"].actionable_count == 0
+    assert same_day_map["intraday"].watch_count == 1
+    assert timeline.actionable_total == 1
+    assert timeline.watch_total == 0
+
+
 def test_dashboard_data_provider_blocked_candidate_without_reason_surfaces_missing_evidence(
     tmp_path: Path,
 ) -> None:
@@ -832,6 +908,7 @@ def test_dashboard_data_provider_builds_task_views_and_dedupes_latest_rows(
 
     assert [item.task_id for item in provider.task_options()] == [
         "main_chain",
+        "intraday",
         "morning_breakout",
         "closing_premium",
         "closing_review",

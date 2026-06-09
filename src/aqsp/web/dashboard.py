@@ -98,6 +98,18 @@ class _WorkspaceNavItem:
     name: str
 
 
+@dataclass(frozen=True)
+class _TwoLineNavLabel:
+    code: str
+    name: str
+
+
+@dataclass(frozen=True)
+class _TaskDateResolution:
+    task_id: str
+    reason: str = ""
+
+
 def _inject_dashboard_styles() -> None:
     st.markdown(
         """
@@ -266,6 +278,46 @@ def _inject_dashboard_styles() -> None:
         .aqsp-workspace-card.active {
             color: #163247;
             font-weight: 700;
+        }
+        .aqsp-nav-code {
+            margin-top: 0.22rem;
+            text-align: center;
+            font-size: 0.76rem;
+            line-height: 1.15;
+            color: #4f6171;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .aqsp-nav-code.active {
+            color: #163247;
+            font-weight: 760;
+        }
+        .aqsp-nav-name {
+            margin-top: 0.12rem;
+            text-align: center;
+            font-size: 0.8rem;
+            line-height: 1.25;
+            color: #5f6f7d;
+            min-height: 1.1rem;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .aqsp-nav-name.active {
+            color: #163247;
+            font-weight: 700;
+        }
+        .aqsp-nav-reason {
+            margin-top: 0.08rem;
+            text-align: center;
+            font-size: 0.72rem;
+            line-height: 1.2;
+            color: #8a6947;
+            min-height: 0.95rem;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
         }
         .aqsp-workspace-name {
             margin-top: 0.12rem;
@@ -1095,6 +1147,23 @@ def _stretch_button(label: str, **kwargs) -> bool:
     """Render full-width buttons with the current Streamlit width API."""
     kwargs.setdefault("width", "stretch")
     return bool(st.button(label, **kwargs))
+
+
+def _render_two_line_nav_label(
+    label: _TwoLineNavLabel, *, active: bool, reason: str = ""
+) -> None:
+    active_class = " active" if active else ""
+    reason_html = (
+        f'<div class="aqsp-nav-reason">{escape(reason)}</div>' if reason else ""
+    )
+    st.markdown(
+        (
+            f'<div class="aqsp-nav-code{active_class}">{escape(label.code)}</div>'
+            f'<div class="aqsp-nav-name{active_class}">{escape(label.name)}</div>'
+            f"{reason_html}"
+        ),
+        unsafe_allow_html=True,
+    )
 
 
 def _render_line_block(title: str, lines: tuple[str, ...], empty_text: str) -> None:
@@ -3266,12 +3335,23 @@ def _render_date_timeline_cards(
         columns = st.columns(min(len(timeline_rows[start : start + 4]), 4))
         for column, row in zip(columns, timeline_rows[start : start + 4]):
             is_active = row.signal_date == selected_date
+            resolution = _resolve_task_for_date_with_reason(
+                provider=provider,
+                current_task_id=current_task_id,
+                signal_date=row.signal_date,
+            )
+            secondary_label = _date_jump_secondary_label(
+                provider,
+                current_task_id,
+                row.signal_date,
+                resolution=resolution,
+            )
             with column:
                 st.markdown(
                     f"""
                     <div class="aqsp-date-card {"active" if is_active else ""}">
                       <div class="aqsp-date-title">{row.signal_date}</div>
-                      <div class="aqsp-date-meta">覆盖任务: {"、".join(row.task_labels)}</div>
+                      <div class="aqsp-date-meta">{secondary_label}</div>
                       <div class="aqsp-date-summary">
                         待复核 {row.actionable_total} / 观察 {row.watch_total} / 阻塞 {row.blocked_total}<br/>
                         {row.headline}
@@ -3285,14 +3365,12 @@ def _render_date_timeline_cards(
                     key=f"timeline-date-{row.signal_date}",
                 ):
                     _set_dashboard_selection(
-                        task_id=_resolve_task_for_date(
-                            provider=provider,
-                            current_task_id=current_task_id,
-                            signal_date=row.signal_date,
-                        ),
+                        task_id=resolution.task_id,
                         signal_date=row.signal_date,
                     )
                     st.rerun()
+                if resolution.reason:
+                    st.caption(resolution.reason)
 
 
 def _render_same_day_task_matrix(
@@ -4275,13 +4353,9 @@ def _render_workspace_navigation() -> str:
             ):
                 st.session_state[widget_key] = item.name
                 st.rerun()
-            st.markdown(
-                (
-                    f'<div class="aqsp-workspace-card{" active" if is_active else ""}">'
-                    f'<div class="aqsp-workspace-name">{escape(item.name)}</div>'
-                    "</div>"
-                ),
-                unsafe_allow_html=True,
+            _render_two_line_nav_label(
+                _TwoLineNavLabel(code=item.code, name=item.name),
+                active=is_active,
             )
     return current_workspace
 
@@ -4301,27 +4375,33 @@ def _render_date_jump_bar(
         for column, signal_date in zip(columns, visible_dates):
             with column:
                 is_active = signal_date == selected_date
+                resolution = _resolve_task_for_date_with_reason(
+                    provider=provider,
+                    current_task_id=current_task_id,
+                    signal_date=signal_date,
+                )
                 if _stretch_button(
                     signal_date,
                     key=f"date-jump-{signal_date}",
                     type="primary" if is_active else "secondary",
                 ):
                     _set_dashboard_selection(
-                        task_id=_resolve_task_for_date(
-                            provider=provider,
-                            current_task_id=current_task_id,
-                            signal_date=signal_date,
-                        ),
+                        task_id=resolution.task_id,
                         signal_date=signal_date,
                     )
                     st.rerun()
-                st.markdown(
-                    (
-                        f'<div class="aqsp-nav-secondary{" active" if is_active else ""}">'
-                        f"{escape(_date_jump_secondary_label(provider, current_task_id, signal_date))}"
-                        "</div>"
+                _render_two_line_nav_label(
+                    _TwoLineNavLabel(
+                        code=signal_date,
+                        name=_date_jump_secondary_label(
+                            provider,
+                            current_task_id,
+                            signal_date,
+                            resolution=resolution,
+                        ),
                     ),
-                    unsafe_allow_html=True,
+                    active=is_active,
+                    reason=resolution.reason,
                 )
 
 
@@ -4588,9 +4668,11 @@ def _task_nav_label(
 
 
 def _phase_nav_label(row: DashboardSameDayTaskRow) -> str:
-    parts = [row.phase_label, row.task_label, row.status_label]
-    deduped = tuple(dict.fromkeys(part for part in parts if part).keys())
-    return " · ".join(deduped)
+    return row.phase_label or row.task_label or row.task_id
+
+
+def _phase_nav_name(row: DashboardSameDayTaskRow) -> str:
+    return row.task_label or row.phase_label or row.task_id
 
 
 def _top_navigation_context(
@@ -4666,9 +4748,12 @@ def _render_same_day_phase_jump_bar(
             ):
                 _set_dashboard_selection(task_id=row.task_id, signal_date=signal_date)
                 st.rerun()
-            st.markdown(
-                f'<div class="aqsp-nav-secondary{" active" if is_active else ""}">{escape(row.task_label)}</div>',
-                unsafe_allow_html=True,
+            _render_two_line_nav_label(
+                _TwoLineNavLabel(
+                    code=_phase_nav_label(row),
+                    name=_phase_nav_name(row),
+                ),
+                active=is_active,
             )
 
 
@@ -5602,9 +5687,12 @@ def _render_review_phase_bar(
                 )
                 _queue_workspace_jump("候选复盘", selected_symbol)
                 st.rerun()
-            st.markdown(
-                f'<div class="aqsp-nav-secondary{" active" if is_active else ""}">{escape(row.task_label)}</div>',
-                unsafe_allow_html=True,
+            _render_two_line_nav_label(
+                _TwoLineNavLabel(
+                    code=_phase_nav_label(row),
+                    name=_phase_nav_name(row),
+                ),
+                active=is_active,
             )
 
 
@@ -5770,21 +5858,74 @@ def _resolve_task_for_date(
     current_task_id: str,
     signal_date: str,
 ) -> str:
+    return _resolve_task_for_date_with_reason(
+        provider=provider,
+        current_task_id=current_task_id,
+        signal_date=signal_date,
+    ).task_id
+
+
+def _resolve_task_for_date_with_reason(
+    *,
+    provider: DashboardDataProvider,
+    current_task_id: str,
+    signal_date: str,
+) -> _TaskDateResolution:
     same_day_rows = provider.same_day_task_rows(signal_date)
     if any(row.task_id == current_task_id for row in same_day_rows):
-        return current_task_id
-    return provider.preferred_task_for_date(signal_date)
+        return _TaskDateResolution(task_id=current_task_id)
+    preferred_task_id = provider.preferred_task_for_date(signal_date)
+    current_label = _task_label_for_date(
+        provider=provider,
+        task_id=current_task_id,
+        signal_date=signal_date,
+        rows=same_day_rows,
+    )
+    preferred_label = _task_label_for_date(
+        provider=provider,
+        task_id=preferred_task_id,
+        signal_date=signal_date,
+        rows=same_day_rows,
+    )
+    return _TaskDateResolution(
+        task_id=preferred_task_id,
+        reason=f"该日无 {current_label}，已到 {preferred_label}",
+    )
+
+
+def _task_label_for_date(
+    *,
+    provider: DashboardDataProvider,
+    task_id: str,
+    signal_date: str,
+    rows: tuple[DashboardSameDayTaskRow, ...],
+) -> str:
+    row = next((item for item in rows if item.task_id == task_id), None)
+    if row is not None:
+        return getattr(row, "task_label", task_id)
+    task_snapshots = getattr(provider, "task_snapshots", None)
+    snapshots = task_snapshots(signal_date) if callable(task_snapshots) else ()
+    snapshot = next((item for item in snapshots if item.task_id == task_id), None)
+    if snapshot is not None:
+        return snapshot.task_label
+    return task_id
 
 
 def _date_jump_secondary_label(
     provider: DashboardDataProvider,
     current_task_id: str,
     signal_date: str,
+    *,
+    resolution: _TaskDateResolution | None = None,
 ) -> str:
-    target_task_id = _resolve_task_for_date(
-        provider=provider,
-        current_task_id=current_task_id,
-        signal_date=signal_date,
+    target_task_id = (
+        resolution.task_id
+        if resolution is not None
+        else _resolve_task_for_date(
+            provider=provider,
+            current_task_id=current_task_id,
+            signal_date=signal_date,
+        )
     )
     same_day_rows = provider.same_day_task_rows(signal_date)
     row = next((item for item in same_day_rows if item.task_id == target_task_id), None)
@@ -7482,6 +7623,14 @@ def _render_report_archive_center(
             view = provider.build_task_view(row.task_id, signal_date=review_date)
             status = _report_archive_status(view)
             with column:
+                summary_line = next(
+                    iter(_safe_archive_lines(view.report_summary_lines[:1])),
+                    "当前无结构化摘要",
+                )
+                focus_line = next(
+                    iter(_safe_archive_lines(view.next_day_focus_lines[:1])),
+                    "-",
+                )
                 st.markdown(
                     "\n".join(
                         [
@@ -7489,16 +7638,8 @@ def _render_report_archive_center(
                             f"- 阶段: {row.phase_label}",
                             f"- 归档状态: {status}",
                             f"- 回看结论: {view.headline}",
-                            (
-                                f"- 摘要: {view.report_summary_lines[0]}"
-                                if view.report_summary_lines
-                                else "- 摘要: 当前无结构化摘要"
-                            ),
-                            (
-                                f"- 明日重点: {view.next_day_focus_lines[0]}"
-                                if view.next_day_focus_lines
-                                else "- 明日重点: -"
-                            ),
+                            f"- 历史摘要: {summary_line}",
+                            f"- 历史下一日重点: {focus_line}",
                         ]
                     )
                 )

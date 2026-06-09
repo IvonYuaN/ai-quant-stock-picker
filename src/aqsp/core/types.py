@@ -75,6 +75,7 @@ class RunMetadata:
     data_lag_days: int = 0
     regime: str = ""
     max_universe: int = 0
+    task_id: str = ""
 
 
 @dataclass(frozen=True)

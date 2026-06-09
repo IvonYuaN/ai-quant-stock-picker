@@ -51,6 +51,7 @@ fi
 
 export PYTHONPATH="${PROJECT_ROOT}/src:${PROJECT_ROOT}:${PYTHONPATH:-}"
 export TZ="${TZ:-Asia/Shanghai}"
+export AQSP_RUN_TASK_ID="${AQSP_RUN_TASK_ID:-intraday}"
 
 DOW=$(date +%u)
 if [ "$DOW" -ge 6 ]; then
@@ -69,7 +70,7 @@ if [[ "${REQUIRE_MARKET_HOURS,,}" =~ ^(1|true|yes|on)$ ]]; then
 fi
 
 INTRADAY_SOURCE="${AQSP_INTRADAY_SOURCE:-${AQSP_SOURCE:-eastmoney}}"
-INTRADAY_MODE="${AQSP_INTRADAY_MODE:-${AQSP_MODE:-close}}"
+INTRADAY_MODE="${AQSP_INTRADAY_MODE:-open}"
 INTRADAY_LIMIT="${AQSP_INTRADAY_LIMIT:-${AQSP_LIMIT:-10}}"
 INTRADAY_MAX_UNIVERSE="${AQSP_INTRADAY_MAX_UNIVERSE:-${AQSP_MAX_UNIVERSE:-50}}"
 INTRADAY_MIN_AVG_AMOUNT="${AQSP_INTRADAY_MIN_AVG_AMOUNT:-${AQSP_MIN_AVG_AMOUNT:-50000000}}"
@@ -124,7 +125,7 @@ if [ "$RUN_EXIT_CODE" -ne 0 ] && [ "$RUN_EXIT_CODE" -ne 2 ]; then
 fi
 
 if [ "$RUN_EXIT_CODE" -eq 2 ]; then
-    log "盘中选股触发熔断，仅刷新展示，不建议新建仓位"
+    log "盘中选股触发熔断，仅刷新观察展示，不新增正式待复核"
 fi
 
 "${PYTHON_BIN}" "${PROJECT_ROOT}/scripts/open_dashboard.py" \

@@ -167,6 +167,8 @@ def _run_metadata_fields(metadata: RunMetadata | None) -> dict[str, object]:
         "run_fetched_frame_count": metadata.fetched_frame_count,
         "run_screened_count": metadata.screened_count,
         "run_final_count": metadata.final_count,
+        "task_id": metadata.task_id,
+        "run_task_id": metadata.task_id,
         "run_max_universe": metadata.max_universe,
         "run_min_price": metadata.min_price,
         "run_max_price": metadata.max_price,

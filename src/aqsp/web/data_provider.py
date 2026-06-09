@@ -30,6 +30,7 @@ logger = logging.getLogger(__name__)
 
 _TASK_LABELS = {
     "main_chain": "主链推荐",
+    "intraday": "盘中观察",
     "morning_breakout": "早盘策略",
     "closing_premium": "尾盘策略",
     "closing_review": "收盘复盘",
@@ -37,14 +38,17 @@ _TASK_LABELS = {
 }
 MISSING_BLOCKER_TEXT = "阻塞原因未记录，需补充风险说明或复核条件"
 _SIGNAL_TASK_IDS = ("main_chain", "morning_breakout", "closing_premium")
+_OBSERVATION_TASK_IDS = ("intraday",)
 _TASK_PHASE_META: dict[str, tuple[int, str, str]] = {
     "main_chain": (1, "盘前主链", "先确认当日主推候选与纸面复核优先级"),
-    "morning_breakout": (2, "早盘观察", "开盘后核对强势突破是否成立"),
-    "closing_premium": (3, "尾盘确认", "收盘前评估溢价承接与隔夜价值"),
-    "closing_review": (4, "收盘复盘", "核对执行结果与失效样本"),
-    "briefing": (5, "次日预案", "整理明日重点与待跟踪事项"),
+    "intraday": (2, "盘中观察", "未收盘快照，只作观察，不进入正式待复核"),
+    "morning_breakout": (3, "早盘观察", "开盘后核对强势突破是否成立"),
+    "closing_premium": (4, "尾盘确认", "收盘前评估溢价承接与隔夜价值"),
+    "closing_review": (5, "收盘复盘", "核对执行结果与失效样本"),
+    "briefing": (6, "次日预案", "整理明日重点与待跟踪事项"),
 }
 _TASK_METRIC_LABELS: dict[str, tuple[str, str, str]] = {
+    "intraday": ("正式待复核", "盘中观察", "盘中阻塞"),
     "closing_review": ("已验证", "待复盘", "复盘阻塞"),
     "briefing": ("已落盘", "待跟踪", "待补档"),
 }
@@ -74,9 +78,9 @@ _DEBATE_STANCE_LABELS = {
     "neutral": "中性",
 }
 _DEBATE_ADJUSTMENT_LABELS = {
-    "raise": "建议上调评分",
-    "lower": "建议下调评分",
-    "keep": "建议维持评分",
+    "raise": "辩论倾向上调",
+    "lower": "辩论倾向下调",
+    "keep": "辩论倾向维持",
 }
 
 
@@ -1586,9 +1590,13 @@ class DashboardDataProvider:
                 if str(row.get("signal_date", "") or "") == selected_date
             ]
         deduped = self._dedupe_rows(rows)
-        actionable_rows = [row for row in deduped if self._is_actionable(row)]
+        actionable_rows = [
+            row for row in deduped if self._is_actionable(row, task_id=task_id)
+        ]
         blocked_rows = [row for row in deduped if self._is_blocked(row)]
-        watch_rows = [row for row in deduped if self._is_watch_only(row)]
+        watch_rows = [
+            row for row in deduped if self._is_watch_only(row, task_id=task_id)
+        ]
 
         headline = self._headline_for_signal_task(
             task_id=task_id,
@@ -1660,7 +1668,7 @@ class DashboardDataProvider:
             actionable_count=len(actionable_rows),
             watch_count=len(watch_rows),
             blocked_count=len(blocked_rows),
-            detail_cards=self._build_detail_cards(deduped),
+            detail_cards=self._build_detail_cards(deduped, task_id=task_id),
             ranking_lines=self._build_ranking_lines(deduped),
             market_environment=report_insights.market_environment,
             strategy_breakdown_lines=(),
@@ -2045,6 +2053,8 @@ class DashboardDataProvider:
 
     def _task_signal_rows(self, task_id: str) -> list[dict[str, Any]]:
         rows = self.load_signal_rows()
+        if task_id == "intraday":
+            return [row for row in rows if self._row_task_id(row) == "intraday"]
         if task_id == "morning_breakout":
             return [row for row in rows if self._row_task_id(row) == "morning_breakout"]
         if task_id == "closing_premium":
@@ -2056,7 +2066,7 @@ class DashboardDataProvider:
     def _row_task_id(self, row: dict[str, Any]) -> str:
         for key in ("task_id", "run_task_id", "source_task_id"):
             explicit = str(row.get(key, "") or "").strip()
-            if explicit in _SIGNAL_TASK_IDS:
+            if explicit in (*_SIGNAL_TASK_IDS, *_OBSERVATION_TASK_IDS):
                 return explicit
         strategies = row.get("strategies") or []
         if isinstance(strategies, str):
@@ -2496,7 +2506,12 @@ class DashboardDataProvider:
                 return resolved
         return display_name
 
-    def _is_actionable(self, row: dict[str, Any]) -> bool:
+    def _is_intraday_row(self, row: dict[str, Any], task_id: str = "") -> bool:
+        return task_id == "intraday" or self._row_task_id(row) == "intraday"
+
+    def _is_actionable(self, row: dict[str, Any], task_id: str = "") -> bool:
+        if self._is_intraday_row(row, task_id=task_id):
+            return False
         if self._is_blocked(row):
             return False
         action = str(row.get("portfolio_action", "") or "").strip()
@@ -2506,16 +2521,18 @@ class DashboardDataProvider:
             return False
         return is_tradable_rating(row.get("rating"))
 
-    def _is_watch_candidate(self, row: dict[str, Any]) -> bool:
+    def _is_watch_candidate(self, row: dict[str, Any], task_id: str = "") -> bool:
+        if self._is_intraday_row(row, task_id=task_id):
+            return True
         rating = str(row.get("rating", "") or "").strip()
         action = str(row.get("portfolio_action", "") or "").strip()
         return rating in {"watch", "avoid"} or action in {"downgrade", "keep"}
 
-    def _is_watch_only(self, row: dict[str, Any]) -> bool:
+    def _is_watch_only(self, row: dict[str, Any], task_id: str = "") -> bool:
         return (
-            not self._is_actionable(row)
+            not self._is_actionable(row, task_id=task_id)
             and not self._is_blocked(row)
-            and self._is_watch_candidate(row)
+            and self._is_watch_candidate(row, task_id=task_id)
         )
 
     def _is_blocked(self, row: dict[str, Any]) -> bool:
@@ -2796,12 +2813,13 @@ class DashboardDataProvider:
             adjustment = recommended_adjustment or "unknown"
             lines.append(
                 f"{self._debate_adjustment_label(adjustment)}: "
-                f"{float(row.get('original_score') or 0.0):.1f} -> "
-                f"{float(row.get('adjusted_score') or row.get('original_score') or 0.0):.1f}"
+                f"runtime原始分 {float(row.get('original_score') or 0.0):.1f}；"
+                f"附件参考分 {float(row.get('adjusted_score') or row.get('original_score') or 0.0):.1f}；"
+                "不覆盖runtime打分"
             )
         elif recommended_adjustment:
             lines.append(
-                f"辩论建议: {self._debate_adjustment_label(recommended_adjustment)}"
+                f"辩论倾向: {self._debate_adjustment_label(recommended_adjustment)}；不覆盖runtime打分"
             )
         if bull_count + bear_count + neutral_count:
             lines.append(
@@ -2812,7 +2830,7 @@ class DashboardDataProvider:
         if consensus:
             lines.append(f"辩论共识: {consensus}")
         if adjustment_reason and adjustment_reason != consensus:
-            lines.append(f"调整依据: {adjustment_reason}")
+            lines.append(f"复核依据: {adjustment_reason}")
         if risk_warnings:
             lines.append(f"核心风险: {risk_warnings[0]}")
         if opportunity_highlights:
@@ -2839,6 +2857,7 @@ class DashboardDataProvider:
         rows: list[dict[str, Any]],
         *,
         limit: int | None = 6,
+        task_id: str = "",
     ) -> tuple[DashboardCandidateCard, ...]:
         ordered = sorted(
             rows,
@@ -2867,7 +2886,7 @@ class DashboardDataProvider:
                     symbol=str(row.get("symbol", "") or ""),
                     name=str(row.get("name", "") or ""),
                     display_name=self._symbol_name(row),
-                    rank_label=self._rank_label(index, row),
+                    rank_label=self._rank_label(index, row, task_id=task_id),
                     score=float(row.get("score") or 0.0),
                     action_label=self._action_label(row),
                     status_label=self._candidate_status(row),
@@ -2883,12 +2902,12 @@ class DashboardDataProvider:
             )
         return tuple(cards)
 
-    def _rank_label(self, index: int, row: dict[str, Any]) -> str:
-        if index == 1 and self._is_actionable(row):
+    def _rank_label(self, index: int, row: dict[str, Any], task_id: str = "") -> str:
+        if index == 1 and self._is_actionable(row, task_id=task_id):
             return "首选"
-        if index == 2 and self._is_actionable(row):
+        if index == 2 and self._is_actionable(row, task_id=task_id):
             return "次选"
-        if self._is_actionable(row):
+        if self._is_actionable(row, task_id=task_id):
             return "备选"
         if self._is_blocked(row):
             return "阻塞观察"
@@ -3061,6 +3080,20 @@ class DashboardDataProvider:
         blocked_rows: list[dict[str, Any]],
     ) -> str:
         label = _TASK_LABELS[task_id]
+        if task_id == "intraday":
+            if watch_rows:
+                names = "、".join(self._symbol_name(row) for row in watch_rows[:3])
+                return (
+                    f"{label} {signal_date}: 未收盘快照，观察 {len(watch_rows)} 只，"
+                    f"先看 {names}"
+                )
+            if blocked_rows:
+                names = "、".join(self._symbol_name(row) for row in blocked_rows[:3])
+                return (
+                    f"{label} {signal_date}: 未收盘快照，盘中阻塞 "
+                    f"{len(blocked_rows)} 只，先核对 {names}"
+                )
+            return f"{label} {signal_date}: 暂无盘中观察快照"
         if actionable_rows:
             names = "、".join(self._symbol_name(row) for row in actionable_rows[:3])
             return (
@@ -3083,9 +3116,12 @@ class DashboardDataProvider:
         watch_rows: list[dict[str, Any]],
         blocked_rows: list[dict[str, Any]],
     ) -> tuple[str, ...]:
+        action_label, watch_label, _ = self._task_metric_labels(task_id)
         lines = [
-            f"任务: {_TASK_LABELS[task_id]} / 候选 {len(rows)} / 待复核 {len(actionable_rows)} / 观察 {len(watch_rows)}"
+            f"任务: {_TASK_LABELS[task_id]} / 候选 {len(rows)} / {action_label} {len(actionable_rows)} / {watch_label} {len(watch_rows)}"
         ]
+        if task_id == "intraday":
+            lines.append("盘中快照未收盘，只作观察，不进入正式主链待复核。")
         if blocked_rows:
             lines.append(f"阻塞 {len(blocked_rows)} 只，优先核对卡点与复核条件。")
         source_status = (

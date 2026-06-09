@@ -278,10 +278,10 @@ def _format_debate_result(result: Any) -> str:
     lines = []
     lines.append("### 多Agent辩论")
     lines.append(f"- 最终共识: {result.final_consensus}")
-    lines.append(f"- 建议调整: {result.recommended_adjustment}")
+    lines.append(f"- 辩论倾向: {result.recommended_adjustment}（附件观点，不覆盖 runtime 打分）")
     if float(getattr(result, "adjusted_score", 0.0) or 0.0) > 0:
         lines.append(
-            f"- 评分变化: {result.original_score:.1f} → {result.adjusted_score:.1f}"
+            f"- 参考分歧: runtime 原始分 {result.original_score:.1f}；附件参考分 {result.adjusted_score:.1f}"
         )
     lines.append(f"- 分歧度: {result.disagreement_score:.0%}")
     lines.append(f"- 辩论轮次: {len(result.rounds)}")

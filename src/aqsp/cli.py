@@ -2072,6 +2072,7 @@ def run_screen(args: argparse.Namespace) -> int:
             thresholds_version=thresholds.version,
             data_latest_trade_date=latest.isoformat() if latest is not None else "",
             data_lag_days=data_lag_days,
+            task_id=str(os.environ.get("AQSP_RUN_TASK_ID", "") or "").strip(),
         )
         Path(args.report).write_text(
             to_markdown(
@@ -2287,6 +2288,7 @@ def run_scheduled(args: argparse.Namespace) -> int:
         data_lag_days=data_lag_days,
         regime=regime,
         max_universe=max_universe,
+        task_id=str(os.environ.get("AQSP_RUN_TASK_ID", "") or "").strip(),
     )
 
     diff = None
@@ -2373,7 +2375,6 @@ def run_scheduled(args: argparse.Namespace) -> int:
     DEBATE_RETENTION_DAYS = 30
     DEBATE_COOLDOWN_DAYS = 3
     DEBATE_MIN_DISAGREEMENT = 0.3
-    DEBATE_MIN_ADJUSTMENT_PCT = 0.02
 
     debate_runtime = load_debate_runtime_config()
     debate_enabled = getattr(args, "enable_debate", False) or debate_runtime.enabled
@@ -2423,7 +2424,6 @@ def run_scheduled(args: argparse.Namespace) -> int:
             if data.get("related_signal_date", "") >= cooldown_cutoff:
                 cooldown_symbols.add(data.get("symbol", ""))
 
-        adjusted_picks: list[Any] = []
         skipped_cooldown = 0
 
         for pick in picks[:3]:
@@ -2431,7 +2431,6 @@ def run_scheduled(args: argparse.Namespace) -> int:
                 print(
                     f"   ⏭️  跳过 {pick.symbol} {pick.name}（{DEBATE_COOLDOWN_DAYS}天内已辩论）"
                 )
-                adjusted_picks.append(pick)
                 skipped_cooldown += 1
                 continue
 
@@ -2444,7 +2443,6 @@ def run_scheduled(args: argparse.Namespace) -> int:
                         print(
                             f"   ⏭️  跳过 {pick.symbol} {pick.name}（分歧度 {result.disagreement_score:.2f} < {DEBATE_MIN_DISAGREEMENT}）"
                         )
-                        adjusted_picks.append(pick)
                         continue
 
                     debate_results.append(result)
@@ -2455,67 +2453,18 @@ def run_scheduled(args: argparse.Namespace) -> int:
                     key = f"{result.symbol}_{today}"
                     existing_debates[key] = serialized
 
-                    adjustment_pct = abs(result.adjustment_weight)
-                    if adjustment_pct < DEBATE_MIN_ADJUSTMENT_PCT:
-                        print(
-                            f"   ⏭️  {pick.symbol} {pick.name} 调整幅度 {adjustment_pct * 100:.1f}% < {DEBATE_MIN_ADJUSTMENT_PCT * 100:.0f}%，保持原评分"
-                        )
-                        adjusted_picks.append(pick)
-                        continue
-
-                    updated_pick = PickResult(
-                        symbol=pick.symbol,
-                        name=pick.name,
-                        date=pick.date,
-                        close=pick.close,
-                        score=pick.score,
-                        rating=pick.rating,
-                        entry_type=pick.entry_type,
-                        ideal_buy=pick.ideal_buy,
-                        stop_loss=pick.stop_loss,
-                        take_profit=pick.take_profit,
-                        position=pick.position,
-                        strategies=pick.strategies,
-                        reasons=pick.reasons,
-                        risks=pick.risks,
-                        metrics=pick.metrics,
-                        adjusted_score=result.adjusted_score,
-                        recommended_adjustment=result.recommended_adjustment,
-                        debate_consensus=result.final_consensus,
-                        confidence=max(
-                            0,
-                            min(
-                                100,
-                                pick.confidence
-                                + {"bullish": 10, "bearish": -15, "split": -5}.get(
-                                    result.final_consensus, 0
-                                ),
-                            ),
-                        ),
-                    )
-                    adjusted_picks.append(updated_pick)
                     print(
-                        f"   ✅ 辩论完成: {pick.symbol} {pick.name} | 原始 {result.original_score:.1f} → 调整 {result.adjusted_score:.1f}（{adjustment_pct * 100:+.1f}%）"
+                        f"   ✅ 辩论完成: {pick.symbol} {pick.name} | 结果已落附件，不覆盖runtime评分、排序、PM裁决或ledger score"
                     )
                 except Exception as e:
                     import logging
 
                     logger = logging.getLogger(__name__)
                     logger.warning(f"辩论失败 {pick.symbol}: {e}")
-                    adjusted_picks.append(pick)
 
-        for pick in picks[3:]:
-            adjusted_picks.append(pick)
-
-        adjusted_picks.sort(
-            key=lambda p: p.adjusted_score if p.adjusted_score > 0 else p.score,
-            reverse=True,
-        )
-
-        picks = adjusted_picks
         if skipped_cooldown > 0:
             print(f"   ⏭️  {skipped_cooldown}只股票因冷却期跳过")
-        print("   📊 重新排序完成（使用辩论后评分）")
+        print("   📎 辩论结果已落附件；runtime评分、排序、PM裁决和ledger score保持原样")
 
         with open(debate_file, "w", encoding="utf-8") as f:
             for data in existing_debates.values():

@@ -22,6 +22,8 @@ def test_intraday_refresh_script_uses_isolated_outputs() -> None:
         encoding="utf-8"
     )
 
+    assert 'export AQSP_RUN_TASK_ID="${AQSP_RUN_TASK_ID:-intraday}"' in script
+    assert 'INTRADAY_MODE="${AQSP_INTRADAY_MODE:-open}"' in script
     assert "data/intraday_predictions.jsonl" in script
     assert "reports/intraday_latest.md" in script
     assert "reports/intraday_latest.csv" in script

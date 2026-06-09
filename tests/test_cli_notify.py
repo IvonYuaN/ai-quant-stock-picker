@@ -9,6 +9,8 @@ from unittest.mock import MagicMock
 
 from aqsp.core.time import today_shanghai
 from aqsp.core.types import PickResult
+from aqsp.briefing.agent_roles import AgentRole
+from aqsp.briefing.debate import DebateResult
 from aqsp.portfolio.manager import PortfolioDecisionSummary
 from aqsp.portfolio.optimizer import PortfolioAllocation
 from aqsp.portfolio.snapshot import PickSnapshot, SnapshotDiff
@@ -410,6 +412,236 @@ def test_optional_symbol_name_map_reads_project_env_without_export(
     monkeypatch.delenv("AQSP_SQLITE_DB_PATH", raising=False)
 
     assert cli_mod._load_optional_symbol_name_map(["600036"]) == {"600036": "招商银行"}
+
+
+def test_run_scheduled_debate_does_not_change_runtime_scores_or_order(
+    monkeypatch, tmp_path
+) -> None:
+    import aqsp.cli as cli_mod
+
+    latest = today_shanghai().isoformat()
+    frames = {
+        symbol: pd.DataFrame(
+            [
+                {
+                    "date": latest,
+                    "symbol": symbol,
+                    "name": name,
+                    "open": close - 1,
+                    "high": close + 2,
+                    "low": close - 2,
+                    "close": close,
+                    "volume": 1000,
+                    "amount": close * 1000,
+                    "suspended": False,
+                    "limit_up": close * 1.1,
+                    "limit_down": close * 0.9,
+                }
+            ]
+        )
+        for symbol, name, close in (
+            ("600519", "贵州茅台", 1505.0),
+            ("300750", "宁德时代", 432.0),
+        )
+    }
+    original_picks = [
+        PickResult(
+            symbol="600519",
+            name="贵州茅台",
+            date=latest,
+            close=1505.0,
+            score=80.0,
+            rating="buy_candidate",
+            entry_type="next_open",
+            ideal_buy=1505.0,
+            stop_loss=1450.0,
+            take_profit=1600.0,
+            position="10%-30%",
+            strategies=("ma_pullback",),
+        ),
+        PickResult(
+            symbol="300750",
+            name="宁德时代",
+            date=latest,
+            close=432.0,
+            score=40.0,
+            rating="buy_candidate",
+            entry_type="next_open",
+            ideal_buy=432.0,
+            stop_loss=420.0,
+            take_profit=460.0,
+            position="watch",
+            strategies=("bowl_rebound",),
+        ),
+    ]
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        cli_mod, "_check_notification_gate", lambda **_kwargs: (True, [])
+    )
+    monkeypatch.setattr(
+        cli_mod,
+        "_fetch_frames_for_cli_with_metadata",
+        lambda *args, **kwargs: (frames, "eastmoney"),
+    )
+    monkeypatch.setattr(
+        cli_mod, "_resolve_run_symbols", lambda *args, **kwargs: ["600519", "300750"]
+    )
+    monkeypatch.setattr(
+        cli_mod, "strategy_weights_from_ledger", lambda *_args, **_kwargs: {}
+    )
+    monkeypatch.setattr(
+        cli_mod, "_count_independent_signal_days", lambda *_args, **_kwargs: 35
+    )
+    monkeypatch.setattr(
+        cli_mod,
+        "screen_universe",
+        lambda *_args, **_kwargs: list(original_picks),
+    )
+    monkeypatch.setattr(cli_mod, "_detect_runtime_regime", lambda *_args, **_kwargs: "")
+    monkeypatch.setattr(
+        cli_mod,
+        "_check_sector_concentration_with_runtime_hints",
+        lambda *_args, **_kwargs: MagicMock(warnings=()),
+    )
+    monkeypatch.setattr(
+        "aqsp.portfolio.correlation.compute_correlation",
+        lambda *_args, **_kwargs: MagicMock(matrix={}, high_corr_pairs=()),
+    )
+    monkeypatch.setattr(
+        "aqsp.data.anomaly.detect_anomalies",
+        lambda _frames: [],
+    )
+    monkeypatch.setattr(
+        "aqsp.data.freshness.check_freshness",
+        lambda _frames: [],
+    )
+    monkeypatch.setattr("aqsp.ledger.base.read_ledger", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(
+        "aqsp.ledger.base.ledger_rows_to_frame", lambda _rows: pd.DataFrame()
+    )
+    monkeypatch.setattr(
+        "aqsp.ledger.learner.StrategyDecayDetector.detect",
+        lambda self, _df: [],
+    )
+
+    class DummyPipeline:
+        def run(self, *_args, **_kwargs):
+            return True, ""
+
+    monkeypatch.setattr(cli_mod, "LethalFilterPipeline", lambda: DummyPipeline())
+    monkeypatch.setattr(
+        "aqsp.universe.t1_filter.filter_t1_held",
+        lambda candidates, **_kwargs: (candidates, []),
+    )
+    monkeypatch.setattr(cli_mod, "validate_predictions", lambda *_args, **_kwargs: None)
+
+    class DummyBreaker:
+        def check(self, **_kwargs):
+            return type("Status", (), {"triggered": False, "reason": "正常"})()
+
+    monkeypatch.setattr(cli_mod, "CircuitBreaker", lambda: DummyBreaker())
+    monkeypatch.setattr(
+        cli_mod,
+        "describe_source_health",
+        lambda *_args, **_kwargs: ("healthy", "eastmoney 健康", False),
+    )
+
+    class DummyDebateCoordinator:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def run_debate(self, pick, _df, *, signal_date: str):
+            adjusted_score = 95.0 if pick.symbol == "300750" else 10.0
+            return DebateResult(
+                debate_id=f"debate-{pick.symbol}",
+                symbol=pick.symbol,
+                name=pick.name,
+                original_score=pick.score,
+                rating=pick.rating,
+                thresholds_version="test",
+                related_signal_date=signal_date,
+                final_consensus="bullish",
+                final_vote={AgentRole.BULL: "bullish"},
+                disagreement_score=0.8,
+                adjustment_weight=0.7,
+                adjusted_score=adjusted_score,
+                recommended_adjustment="raise",
+                adjustment_reason="测试：低分票被建议上调",
+            )
+
+    monkeypatch.setattr(cli_mod, "AShareDebateCoordinator", DummyDebateCoordinator)
+
+    captured: list[PickResult] = []
+
+    def fake_append_predictions(_path, picks, **_kwargs):
+        captured.extend(picks)
+
+    monkeypatch.setattr(cli_mod, "append_predictions", fake_append_predictions)
+    monkeypatch.setattr(
+        "aqsp.portfolio.manager.apply_portfolio_manager",
+        lambda picks, **_kwargs: type(
+            "Bundle",
+            (),
+            {
+                "picks": list(picks),
+                "decisions": (),
+                "summary": PortfolioDecisionSummary(
+                    promote_count=0,
+                    downgrade_count=0,
+                    keep_count=len(picks),
+                    top_focus=(),
+                    watchlist=(),
+                    allocations=(),
+                    cash_reserve=1.0,
+                    allocation_note="测试",
+                ),
+            },
+        )(),
+    )
+    monkeypatch.setattr("aqsp.portfolio.snapshot.save_snapshot", lambda *a, **k: None)
+    monkeypatch.setattr(
+        "aqsp.portfolio.snapshot.compare_snapshots", lambda *a, **k: None
+    )
+
+    args = Namespace(
+        mode="close",
+        symbols="600519,300750",
+        csv="",
+        source="auto",
+        limit=2,
+        max_universe=10,
+        min_avg_amount=50_000_000,
+        max_data_lag_days=3,
+        enable_online_factors=False,
+        report=str(tmp_path / "latest.md"),
+        output_csv=str(tmp_path / "latest.csv"),
+        ledger=str(tmp_path / "predictions.jsonl"),
+        horizon_days=3,
+        fee_bps=8.0,
+        slippage_bps=5.0,
+        benchmark_symbol="000300",
+        skip_validation=True,
+        notify=False,
+        enable_debate=True,
+        pool="",
+    )
+
+    exit_code = cli_mod.run_scheduled(args)
+    debate_rows = [
+        line
+        for line in (tmp_path / "data" / "debate_results.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line.strip()
+    ]
+
+    assert exit_code == 0
+    assert [pick.symbol for pick in captured] == ["600519", "300750"]
+    assert [pick.score for pick in captured] == [80.0, 40.0]
+    assert [pick.adjusted_score for pick in captured] == [0.0, 0.0]
+    assert [pick.recommended_adjustment for pick in captured] == ["keep", "keep"]
+    assert len(debate_rows) == 2
 
 
 def test_run_scheduled_report_omits_low_signal_control_sections(

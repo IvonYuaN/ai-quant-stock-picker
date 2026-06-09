@@ -67,12 +67,14 @@ from aqsp.web.dashboard import (
     _line_mentions_symbol,
     _partition_symbol_lines,
     _phase_nav_label,
+    _phase_nav_name,
     _queue_item_meta,
     _quick_bar_symbols,
     _research_task_id_for_review_card,
     _review_context_for_symbol,
     _review_source_label,
     _resolve_task_for_date,
+    _resolve_task_for_date_with_reason,
     _report_archive_status,
     _raw_report_boundary_lines,
     _research_path_steps,
@@ -96,6 +98,9 @@ from aqsp.web.dashboard import (
     _workspace_research_status,
     _workspace_handoff_payload,
     _workspace_nav_items,
+    _render_two_line_nav_label,
+    _TwoLineNavLabel,
+    _render_report_archive_center,
     _render_symbol_quick_bar,
     _render_workspace_navigation,
     _workspace_widget_state,
@@ -1236,6 +1241,45 @@ def test_dashboard_resolve_task_for_date_falls_back_to_preferred_task_when_curre
     assert resolved == "main_chain"
 
 
+def test_dashboard_resolve_task_for_date_explains_fallback_when_current_task_missing() -> (
+    None
+):
+    class _Row:
+        def __init__(self, task_id: str, task_label: str) -> None:
+            self.task_id = task_id
+            self.task_label = task_label
+
+    class _Snapshot:
+        def __init__(self, task_id: str, task_label: str) -> None:
+            self.task_id = task_id
+            self.task_label = task_label
+
+    class _Provider:
+        def same_day_task_rows(self, signal_date: str):
+            assert signal_date == "2026-06-04"
+            return (
+                _Row("main_chain", "主链推荐"),
+                _Row("morning_breakout", "早盘策略"),
+            )
+
+        def preferred_task_for_date(self, signal_date: str) -> str:
+            assert signal_date == "2026-06-04"
+            return "main_chain"
+
+        def task_snapshots(self, signal_date: str):
+            assert signal_date == "2026-06-04"
+            return (_Snapshot("briefing", "简报回看"),)
+
+    resolved = _resolve_task_for_date_with_reason(
+        provider=_Provider(),
+        current_task_id="briefing",
+        signal_date="2026-06-04",
+    )
+
+    assert resolved.task_id == "main_chain"
+    assert resolved.reason == "该日无 简报回看，已到 主链推荐"
+
+
 def test_dashboard_signal_evidence_context_falls_back_to_main_chain_for_report_tasks() -> (
     None
 ):
@@ -1786,9 +1830,10 @@ def test_dashboard_workspace_navigation_renders_code_buttons_and_separate_names(
     assert button_labels == ["首页", "候选", "纸面", "归档"]
     assert "决策首页" not in button_labels
     assert any(
-        "aqsp-workspace-name" in block and "决策首页" in block
+        "aqsp-nav-name" in block and "决策首页" in block
         for block in markdown_blocks
     )
+    assert not any("切到" in block or "当前" in block for block in markdown_blocks)
 
 
 def test_dashboard_symbol_quick_bar_renders_code_buttons_and_name_rows(
@@ -3326,7 +3371,7 @@ def test_dashboard_review_phase_switch_rows_include_current_research_and_journey
     assert tuple(row.task_id for row in rows) == ("main_chain", "closing_review")
 
 
-def test_dashboard_phase_nav_label_includes_phase_task_and_status() -> None:
+def test_dashboard_phase_nav_label_keeps_quick_switch_two_line_text_compact() -> None:
     from aqsp.web.data_provider import DashboardSameDayTaskRow
 
     row = DashboardSameDayTaskRow(
@@ -3344,7 +3389,34 @@ def test_dashboard_phase_nav_label_includes_phase_task_and_status() -> None:
         blocked_count=2,
     )
 
-    assert _phase_nav_label(row) == "收盘复盘 · 已复盘"
+    assert _phase_nav_label(row) == "收盘复盘"
+    assert _phase_nav_name(row) == "收盘复盘"
+    assert "已复盘" not in _phase_nav_label(row)
+
+
+def test_dashboard_two_line_nav_label_renders_code_and_name_without_action_noise(
+    monkeypatch,
+) -> None:
+    rendered: list[str] = []
+
+    monkeypatch.setattr(
+        "aqsp.web.dashboard.st.markdown",
+        lambda html, unsafe_allow_html=False: rendered.append(html),
+    )
+
+    _render_two_line_nav_label(
+        _TwoLineNavLabel(code="盘前主链", name="主链推荐"),
+        active=True,
+    )
+
+    html = "".join(rendered)
+    assert "aqsp-nav-code active" in html
+    assert "aqsp-nav-name active" in html
+    assert "盘前主链" in html
+    assert "主链推荐" in html
+    assert "已复盘" not in html
+    assert "切到" not in html
+    assert "当前" not in html
 
 
 def test_dashboard_top_navigation_context_prefers_same_day_phase_summary() -> None:
@@ -6929,3 +7001,64 @@ def test_dashboard_report_archive_status_contract_distinguishes_full_report_summ
         == "有摘要"
     )
     assert _report_archive_status(_TaskView()) == "无归档"
+
+
+def test_dashboard_report_archive_center_sanitizes_historical_action_words(
+    monkeypatch,
+) -> None:
+    from aqsp.web.data_provider import DashboardSameDayTaskRow
+
+    class _TaskView:
+        task_id = "main_chain"
+        task_label = "主链推荐"
+        selected_date = "2026-06-05"
+        latest_date = "2026-06-05"
+        headline = "历史回看: 先复核流动性。"
+        report_markdown = "# archived"
+        report_summary_lines = ("今日建议: 立即买入 600519，等待下单",)
+        next_day_focus_lines = ("纸面复核名单: 600519 执行开仓",)
+        runtime_lines = ()
+
+    class _Provider:
+        def build_task_view(self, task_id: str, signal_date: str):
+            assert task_id == "main_chain"
+            assert signal_date == "2026-06-05"
+            return _TaskView()
+
+    row = DashboardSameDayTaskRow(
+        signal_date="2026-06-05",
+        task_id="main_chain",
+        task_label="主链推荐",
+        phase_order=1,
+        phase_label="盘前主链",
+        phase_summary="",
+        status_label="已归档",
+        headline="历史回看",
+        candidate_count=1,
+        actionable_count=0,
+        watch_count=1,
+        blocked_count=0,
+    )
+    rendered: list[str] = []
+
+    monkeypatch.setattr(
+        "aqsp.web.dashboard.st.markdown",
+        lambda text, unsafe_allow_html=False: rendered.append(str(text)),
+    )
+    monkeypatch.setattr(
+        "aqsp.web.dashboard.st.subheader",
+        lambda text: rendered.append(str(text)),
+    )
+
+    _render_report_archive_center(
+        provider=_Provider(),
+        review_date="2026-06-05",
+        same_day_rows=(row,),
+        current_task_id="main_chain",
+    )
+
+    text = "\n".join(rendered)
+    assert "历史摘要" in text
+    assert "历史下一日重点" in text
+    for forbidden in ("今日建议", "立即买入", "纸面复核名单", "下单", "执行开仓"):
+        assert forbidden not in text
