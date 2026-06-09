@@ -7,6 +7,7 @@ from pathlib import Path
 import pandas as pd
 
 from aqsp.research.summary import (
+    ResearchActionItem,
     ResearchFamilySummary,
     ResearchPipelineSummary,
     ResearchSummary,
@@ -45,6 +46,7 @@ from aqsp.web.dashboard import (
     _home_execution_blocked_summary,
     _home_primary_focus_card,
     _home_reading_order_lines,
+    _research_radar_card,
     _has_review_meta,
     _holding_metric_label,
     _execution_path_context_lines,
@@ -278,6 +280,79 @@ def test_dashboard_renders_research_absorption_panel() -> None:
     assert "mpquant/Ashare" in html
     assert "大盘择时 / 市场状态过滤" in html
     assert "门控中" in html
+
+
+def test_dashboard_research_radar_summarizes_absorption_without_scoring_claims() -> (
+    None
+):
+    summary = ResearchSummary(
+        generated_at="",
+        total_findings=113,
+        pipeline_summaries=(
+            ResearchPipelineSummary(
+                pipeline="strategy",
+                total=22,
+                p1=10,
+                top_repo="sngyai/Sequoia-X",
+            ),
+        ),
+        absorbed_families=(
+            ResearchFamilySummary(
+                family_id="market_regime_timing_filter",
+                name="大盘择时 / 市场状态过滤",
+                status="research_absorbed",
+                runtime_stage="gated_runtime",
+                absorbed_from_count=4,
+                runtime_gate_count=4,
+            ),
+            ResearchFamilySummary(
+                family_id="chan_theory_context",
+                name="缠论结构语境",
+                status="research_absorbed",
+                runtime_stage="report_only",
+                absorbed_from_count=2,
+                runtime_gate_count=3,
+            ),
+        ),
+        source_candidates=(),
+        next_actions=(
+            ResearchActionItem(
+                kind="strategy",
+                item_id="chan_theory_context",
+                name="缠论结构语境",
+                stage="report_only",
+                priority="P1",
+                blocker="只进报告，不直接入分",
+                reference_hint="chanlun-pro",
+            ),
+        ),
+        prereq_items=(),
+        implemented_family_count=5,
+        report_only_family_count=1,
+        gated_family_count=1,
+    )
+
+    card = _research_radar_card(summary)
+    rendered = "\n".join((card.title, *(line for line in card.lines)))
+
+    assert "研究候选 113" in card.title
+    assert ("已吸收", "2") in card.metrics
+    assert ("只进报告", "1") in card.metrics
+    assert ("门控中", "1") in card.metrics
+    assert "研究吸收不会直接入分" in rendered
+    assert "缠论结构语境" in rendered
+    assert "只进报告" in rendered
+    assert "当前主链评分" not in rendered
+
+
+def test_dashboard_research_radar_has_safe_empty_state_when_summary_missing() -> None:
+    card = _research_radar_card(None)
+    rendered = "\n".join((card.title, *(line for line in card.lines)))
+
+    assert card.title == "研究吸收未更新"
+    assert ("研究候选", "-") in card.metrics
+    assert "研究队列缺失不影响当前主链评分" in rendered
+    assert "report-only" in rendered
 
 
 def test_dashboard_warns_when_source_is_degraded() -> None:
@@ -3630,10 +3705,10 @@ def test_dashboard_execution_path_context_lines_reframe_generic_readiness_for_bl
         for line in lines
     )
     assert any(
-            "研究已产出，但当前被20日均成交额不足，流动性过滤拦住，暂不进入纸面入场验证链路。"
-            == line
-            for line in lines
-        )
+        "研究已产出，但当前被20日均成交额不足，流动性过滤拦住，暂不进入纸面入场验证链路。"
+        == line
+        for line in lines
+    )
     assert not any("当前阻塞: 20日均成交额不足，流动性过滤" == line for line in lines)
 
 
@@ -3836,7 +3911,9 @@ def test_dashboard_home_reading_order_surfaces_blocked_card_as_final_gate() -> N
 
     assert lines[0] == "🧪 纸面侧较轻: 当前没有新的纸面入场或不可成交事件。"
     assert "🧭 再看候选路径 | 000338 潍柴动力" in lines[1]
-    assert lines[2] == "🔒 最后核对卡点 | 000338 潍柴动力 | 20日均成交额不足，流动性过滤"
+    assert (
+        lines[2] == "🔒 最后核对卡点 | 000338 潍柴动力 | 20日均成交额不足，流动性过滤"
+    )
 
 
 def test_dashboard_home_reading_order_uses_archive_when_no_blockers() -> None:
@@ -4332,7 +4409,7 @@ def test_dashboard_candidate_next_step_lines_prioritize_blocker_as_action_plan()
     assert _candidate_action_plan_title(card) == "先核对卡点"
     assert _candidate_next_step_lines(card) == (
         "当前卡点: 20日均成交额不足，流动性过滤",
-            "复核动作: 等待量能恢复后再评估",
+        "复核动作: 等待量能恢复后再评估",
         "复核节奏: 中优先级 / 收盘前",
     )
 
@@ -4435,7 +4512,7 @@ def test_dashboard_candidate_review_snapshot_uses_unlock_action_card_for_compact
     assert action_card["title"] == "先核对卡点"
     assert action_card["lines"] == (
         "当前卡点: 20日均成交额不足，流动性过滤",
-            "复核动作: 等待量能恢复后再评估",
+        "复核动作: 等待量能恢复后再评估",
         "复核节奏: 中优先级 / 收盘前",
     )
     assert "当前仍处研究阻塞阶段，尚未进入执行动作" not in action_card["lines"]
@@ -4925,10 +5002,7 @@ def test_dashboard_home_execution_snapshot_context_prefers_compact_status_and_to
     )
 
     assert title == "纸面事件待处理"
-    assert (
-        status_lines[0]
-        == "纸面持有 1 / 入场待核对 1 / 不可成交 0 / 纸面关闭 2"
-    )
+    assert status_lines[0] == "纸面持有 1 / 入场待核对 1 / 不可成交 0 / 纸面关闭 2"
     assert status_lines[1] == "优先处理纸面入场与纸面退出。"
     assert holding_lines == ("600519 纸面持有中", "000858 纸面持有中")
     assert event_lines == ("600519 纸面入场待核对", "000858 纸面关闭")
@@ -5128,7 +5202,9 @@ def test_dashboard_candidate_research_context_lines_switch_to_execution_mode_whe
     assert title == "纸面侧已联动"
     assert execution_lines[0] == "虚拟盘事件 1 条"
     assert execution_lines[1] == "纸面日志 2 条"
-    assert execution_lines[2] == "当前已经进入纸面验证联动，可结合纸面记录核对研究结论。"
+    assert (
+        execution_lines[2] == "当前已经进入纸面验证联动，可结合纸面记录核对研究结论。"
+    )
     assert "同日联动: 当前只在本任务中出现" in context_lines
     assert "重点关注" not in context_lines
     assert tone == "pressure"

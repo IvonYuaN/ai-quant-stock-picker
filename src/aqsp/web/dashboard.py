@@ -9,6 +9,7 @@ from html import escape
 import streamlit as st
 
 from aqsp.core.time import now_shanghai
+from aqsp.research.summary import ResearchSummary, load_research_summary
 from aqsp.web.data_provider import (
     DashboardCandidateCard,
     DashboardCandidateJourneyStep,
@@ -41,6 +42,13 @@ class _HomeActionRailItem:
     summary: str
     lines: tuple[str, ...]
     visible: bool = True
+
+
+@dataclass(frozen=True)
+class _ResearchRadarCard:
+    title: str
+    metrics: tuple[tuple[str, str], ...]
+    lines: tuple[str, ...]
 
 
 def _inject_dashboard_styles() -> None:
@@ -559,6 +567,67 @@ def _inject_dashboard_styles() -> None:
             line-height: 1.58;
             margin-top: 0.18rem;
         }
+        .aqsp-research-radar {
+            position: relative;
+            overflow: hidden;
+            padding: 0.95rem 1.05rem;
+            border-radius: 18px;
+            border: 1px solid rgba(41, 97, 132, 0.15);
+            background:
+                radial-gradient(circle at 88% 18%, rgba(88, 150, 122, 0.13), transparent 23%),
+                linear-gradient(135deg, #fbfcf7 0%, #f2f7fa 56%, #f7f4ec 100%);
+            box-shadow: 0 12px 26px rgba(33, 46, 56, 0.055);
+            margin-bottom: 0.85rem;
+        }
+        .aqsp-research-radar::before {
+            content: "";
+            position: absolute;
+            top: 0.7rem;
+            right: 0.8rem;
+            width: 96px;
+            height: 96px;
+            border-radius: 50%;
+            border: 1px dashed rgba(31, 87, 120, 0.22);
+            opacity: 0.7;
+        }
+        .aqsp-research-kicker {
+            position: relative;
+            font-size: 0.76rem;
+            text-transform: uppercase;
+            letter-spacing: 0.11em;
+            color: #5d6e7c;
+            margin-bottom: 0.4rem;
+        }
+        .aqsp-research-title {
+            position: relative;
+            font-size: 1.02rem;
+            font-weight: 750;
+            color: #163247;
+            margin-bottom: 0.58rem;
+        }
+        .aqsp-research-metrics {
+            position: relative;
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 0.45rem;
+            margin-bottom: 0.62rem;
+        }
+        .aqsp-research-metric {
+            padding: 0.48rem 0.55rem;
+            border-radius: 12px;
+            background: rgba(255, 255, 255, 0.72);
+            border: 1px solid rgba(25, 92, 138, 0.10);
+            color: #284b63;
+            font-size: 0.8rem;
+            font-weight: 680;
+        }
+        .aqsp-research-line {
+            position: relative;
+            font-size: 0.87rem;
+            color: #34495a;
+            line-height: 1.55;
+            margin-top: 0.16rem;
+        }
         </style>
         """,
         unsafe_allow_html=True,
@@ -872,8 +941,8 @@ def _debate_overview_lines(
     elif debate_summary.adjustment_reason:
         review_line = f"待核对依据: {debate_summary.adjustment_reason}"
     elif debate_summary.opportunity_highlights:
-        review_line = (
-            "待验证机会: " + "；".join(debate_summary.opportunity_highlights[:2])
+        review_line = "待验证机会: " + "；".join(
+            debate_summary.opportunity_highlights[:2]
         )
     else:
         review_line = "待补证据: 当前辩论未给出明确风险或机会，先回候选证据链复核。"
@@ -904,6 +973,95 @@ def _debate_overview_lines(
             review_line,
         ),
         agent_lines,
+    )
+
+
+def _pipeline_label(pipeline: str) -> str:
+    return {
+        "data_source": "数据源",
+        "strategy": "策略",
+        "timing": "择时",
+        "execution_risk": "执行风控",
+        "ai_research": "AI 研究",
+    }.get(pipeline, pipeline or "未分类")
+
+
+def _research_stage_label(stage: str) -> str:
+    return {
+        "report_only": "只进报告",
+        "gated_runtime": "门控中",
+        "next_adapter": "待接数据源",
+        "research_candidate": "研究候选",
+        "future_optional": "远期可选",
+    }.get(stage, stage or "待评估")
+
+
+def _research_action_label(kind: str) -> str:
+    return "数据源" if kind == "data_source" else "策略"
+
+
+def _research_radar_card(summary: ResearchSummary | None) -> _ResearchRadarCard:
+    if summary is None:
+        return _ResearchRadarCard(
+            title="研究吸收未更新",
+            metrics=(
+                ("研究候选", "-"),
+                ("已吸收", "-"),
+                ("只进报告", "-"),
+                ("门控中", "-"),
+            ),
+            lines=(
+                "当前只展示已落盘主链结果；研究队列缺失不影响当前主链评分。",
+                "下一步: 先补齐研究吸收配置，再决定是否进入 report-only 或门控验证。",
+            ),
+        )
+
+    leading_pipeline = (
+        summary.pipeline_summaries[0] if summary.pipeline_summaries else None
+    )
+    leading_action = summary.next_actions[0] if summary.next_actions else None
+    topic_names = (
+        "、".join(item.name for item in summary.absorbed_families[:2]) or "暂无"
+    )
+    pipeline_line = (
+        (
+            f"热点管线: {_pipeline_label(leading_pipeline.pipeline)}"
+            f" P1 {leading_pipeline.p1}/{leading_pipeline.total}"
+            f" | 来源 {leading_pipeline.top_repo or '-'}"
+        )
+        if leading_pipeline is not None
+        else "热点管线: 暂无研究管线摘要。"
+    )
+    action_line = (
+        (
+            f"下一步: {leading_action.priority} "
+            f"{_research_action_label(leading_action.kind)}"
+            f"「{leading_action.name or leading_action.item_id}」"
+            f" | {_research_stage_label(leading_action.stage)}"
+            f" | gate: {leading_action.blocker or '待补验证口径'}"
+        )
+        if leading_action is not None
+        else "下一步: 暂无接入动作，先维持当前冻结主链。"
+    )
+    return _ResearchRadarCard(
+        title=(
+            f"研究候选 {summary.total_findings} 条，"
+            f"已吸收 {len(summary.absorbed_families)} 个策略族"
+        ),
+        metrics=(
+            ("研究候选", str(summary.total_findings)),
+            ("已吸收", str(len(summary.absorbed_families))),
+            ("只进报告", str(summary.report_only_family_count)),
+            ("门控中", str(summary.gated_family_count)),
+        ),
+        lines=_unique_lines(
+            (
+                "边界: 研究吸收不会直接入分；只有通过验证和门控后才可能影响运行链。",
+                f"已吸收主题: {topic_names}",
+                pipeline_line,
+                action_line,
+            )
+        ),
     )
 
 
@@ -2888,6 +3046,30 @@ def _render_home_reading_order(
     )
 
 
+def _render_research_radar(summary: ResearchSummary | None) -> None:
+    card = _research_radar_card(summary)
+    metric_html = "".join(
+        f'<div class="aqsp-research-metric">{escape(label)} {escape(value)}</div>'
+        for label, value in card.metrics
+    )
+    line_html = "".join(
+        f'<div class="aqsp-research-line">{escape(line)}</div>' for line in card.lines
+    )
+    st.markdown(
+        "\n".join(
+            [
+                '<div class="aqsp-research-radar">',
+                '<div class="aqsp-research-kicker">Research Radar</div>',
+                f'<div class="aqsp-research-title">{escape(card.title)}</div>',
+                f'<div class="aqsp-research-metrics">{metric_html}</div>',
+                line_html,
+                "</div>",
+            ]
+        ),
+        unsafe_allow_html=True,
+    )
+
+
 def _render_home_task_board(
     *,
     rows: tuple[DashboardSameDayTaskRow, ...],
@@ -3337,7 +3519,9 @@ def _render_execution_focus(
             lines=_unique_lines(
                 execution_focus.execution_lines[:2],
                 execution_focus.holding_lines[:2],
-                ("当前没有纸面入场、纸面日志或纸面持有记录，先按研究判断与复核条件推进。",),
+                (
+                    "当前没有纸面入场、纸面日志或纸面持有记录，先按研究判断与复核条件推进。",
+                ),
             ),
             tone="archive",
         )
@@ -4323,7 +4507,8 @@ def _render_workspace_focus_header(
         _render_cockpit_card(
             kicker=title,
             title=focus_title,
-            lines=focus_lines or ("当前还没有结构化候选结论，先按纸面记录与证据回看。",),
+            lines=focus_lines
+            or ("当前还没有结构化候选结论，先按纸面记录与证据回看。",),
             tone="focus" if review_card is not None else "archive",
         )
     with reality_col:
@@ -5994,6 +6179,7 @@ def main() -> None:
     date_overview = provider.date_overview(review_date)
     task_snapshots = provider.task_snapshots(review_date)
     paper_summary = provider.paper_summary(review_date)
+    research_summary = load_research_summary()
 
     _render_top_overview_strip(
         review_date=review_date,
@@ -6019,6 +6205,7 @@ def main() -> None:
             spotlights=same_day_spotlights,
             debates=same_day_debates,
         )
+        _render_research_radar(research_summary)
         _render_home_task_board(
             rows=same_day_rows,
             current_task_id=task_view.task_id,
