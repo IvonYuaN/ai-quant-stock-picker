@@ -392,6 +392,30 @@ def _inject_dashboard_styles() -> None:
             line-height: 1.55;
             margin-top: 0.16rem;
         }
+        .aqsp-evidence-strip {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 0.58rem;
+            margin: 0.7rem 0 0.85rem;
+        }
+        .aqsp-evidence-chip {
+            padding: 0.72rem 0.82rem;
+            border-radius: 15px;
+            border: 1px solid rgba(25, 92, 138, 0.13);
+            background: rgba(255, 253, 246, 0.78);
+            box-shadow: 0 10px 22px rgba(33, 46, 56, 0.045);
+        }
+        .aqsp-evidence-title {
+            font-size: 0.84rem;
+            font-weight: 740;
+            color: #17384f;
+            margin-bottom: 0.22rem;
+        }
+        .aqsp-evidence-line {
+            font-size: 0.8rem;
+            color: #4a5e6f;
+            line-height: 1.42;
+        }
         .aqsp-ops-card {
             min-height: 174px;
             padding: 1rem 1.05rem;
@@ -853,6 +877,7 @@ def _inject_dashboard_styles() -> None:
             .aqsp-debate-brief-grid,
             .aqsp-archive-brief-grid,
             .aqsp-overview-strip,
+            .aqsp-evidence-strip,
             .aqsp-research-metrics {
                 grid-template-columns: repeat(2, minmax(0, 1fr));
             }
@@ -863,6 +888,7 @@ def _inject_dashboard_styles() -> None:
             .aqsp-archive-brief-grid,
             .aqsp-overview-strip,
             .aqsp-research-metrics,
+            .aqsp-evidence-strip,
             .aqsp-compact-grid {
                 grid-template-columns: 1fr;
             }
@@ -2779,13 +2805,13 @@ def _day_replay_next_step_line(
                 f"待核对 {paper_summary.pending_entries} / "
                 f"阻塞 {paper_summary.not_executable}"
             )
-        return f"🧪 下一步: 先核对纸面验证，{detail}"
+        return f"🧪 复核提示: 纸面验证记录待核对，{detail}"
     if overview.blocked_total:
         blocker = _sanitize_day_replay_line(
             overview.blocker_headline or "回到候选复盘核对卡点。"
         )
         return (
-            "⚠️ 下一步: 先处理阻塞，"
+            "⚠️ 阻塞提示: 待核对卡点，"
             f"{blocker}"
         )
     if task_view.next_day_focus_lines:
@@ -2794,8 +2820,8 @@ def _day_replay_next_step_line(
             f"{_sanitize_day_replay_line(task_view.next_day_focus_lines[0])}"
         )
     if task_view.review_lines:
-        return f"🧭 下一步: {_sanitize_day_replay_line(task_view.review_lines[0])}"
-    return "🧭 下一步: 先看候选复盘，不为了凑单推进。"
+        return f"🧭 复核线索: {_sanitize_day_replay_line(task_view.review_lines[0])}"
+    return "🧭 候选复盘: 暂不形成纸面验证对象。"
 
 
 def _day_replay_digest_lines(
@@ -3597,7 +3623,7 @@ def _home_brief_cards(
                     if _has_review_meta(focus_card.review_meta)
                     else ""
                 ),
-                f"下一步: {_card_next_action(focus_card)}",
+                f"复核线索: {_card_next_action(focus_card)}",
             )
         )
     elif debates:
@@ -3627,7 +3653,7 @@ def _home_brief_cards(
         focus_lines = _unique_lines(
             (
                 overview.focus_headline or overview.top_headline or task_view.headline,
-                "动作: 先看观察池和任务摘要，不为了凑单推进。",
+                "阅读提示: 观察池和任务摘要优先，不补生成纸面对象。",
             )
         )
 
@@ -3656,7 +3682,7 @@ def _home_brief_cards(
         blocker_lines = _unique_lines(
             (
                 f"卡点: {_card_primary_blocker(blocked_focus) or _card_emphasis(blocked_focus)}",
-                f"动作: {_card_next_action(blocked_focus)}",
+                f"复核线索: {_card_next_action(blocked_focus)}",
                 (
                     f"复核: {blocked_focus.review_meta}"
                     if _has_review_meta(blocked_focus.review_meta)
@@ -3668,7 +3694,7 @@ def _home_brief_cards(
         blocker_lines = _unique_lines(
             (
                 overview.blocker_headline,
-                "当前没有明显阻塞，先按焦点候选和纸面现实推进。",
+                "当前没有明显阻塞，以焦点候选和纸面记录作回看线索。",
             )
         )
 
@@ -3743,6 +3769,76 @@ def _render_home_brief(
             [
                 '<div class="aqsp-brief-grid">',
                 *card_html,
+                "</div>",
+            ]
+        ),
+        unsafe_allow_html=True,
+    )
+
+
+def _home_evidence_entry_lines(
+    *,
+    task_view,
+    overview: DashboardDateOverview,
+    paper_summary: DashboardPaperSummary,
+    research_summary: ResearchSummary | None,
+) -> tuple[tuple[str, str], ...]:
+    paper_line = (
+        f"纸面: 持有 {paper_summary.open_positions} / "
+        f"待核对 {paper_summary.pending_entries} / 阻塞 {paper_summary.not_executable}"
+    )
+    candidate_line = _join_display_parts(
+        "候选",
+        f"{overview.actionable_total} 复核",
+        f"{overview.watch_total} 观察",
+        f"{overview.blocked_total} 阻塞",
+        separator=" · ",
+    )
+    research_line = (
+        research_findings_display(research_summary)
+        if research_summary is not None
+        else "研究: 当前暂无落盘摘要"
+    )
+    archive_line = _join_display_parts(
+        "归档",
+        _report_archive_status(task_view),
+        sanitize_archive_text(overview.archive_summary),
+        separator=" · ",
+    )
+    return (
+        ("🧪 纸面", paper_line),
+        ("🧭 候选", candidate_line),
+        ("🗂 归档", archive_line or research_line),
+    )
+
+
+def _render_home_evidence_entry(
+    *,
+    task_view,
+    overview: DashboardDateOverview,
+    paper_summary: DashboardPaperSummary,
+    research_summary: ResearchSummary | None,
+) -> None:
+    chips = _home_evidence_entry_lines(
+        task_view=task_view,
+        overview=overview,
+        paper_summary=paper_summary,
+        research_summary=research_summary,
+    )
+    st.markdown(
+        "\n".join(
+            [
+                '<div class="aqsp-evidence-strip">',
+                *[
+                    (
+                        '<div class="aqsp-evidence-chip">'
+                        f'<div class="aqsp-evidence-title">{escape(title)}</div>'
+                        f'<div class="aqsp-evidence-line">{escape(line)}</div>'
+                        "</div>"
+                    )
+                    for title, line in chips
+                    if line
+                ],
                 "</div>",
             ]
         ),
@@ -3828,7 +3924,7 @@ def _render_home_task_board(
     overview: DashboardDateOverview,
 ) -> None:
     st.subheader("当日任务板")
-    st.caption("先看阶段状态，再看动作优先级与纸面现实。")
+    st.caption("先看阶段状态，再看复核顺序与纸面现实。")
     _render_daily_workflow(
         rows,
         current_task_id,
@@ -3837,7 +3933,7 @@ def _render_home_task_board(
     )
     action_col, execution_col = st.columns((1.15, 0.85))
     with action_col:
-        st.markdown("**动作优先级**")
+        st.markdown("**复核顺序**")
         _render_home_action_rail(
             task_view,
             spotlights,
@@ -4052,37 +4148,35 @@ def _render_date_jump_bar(
 ) -> None:
     if not all_dates:
         return
-    st.markdown(
-        '<div class="aqsp-nav-section-title">日期</div>', unsafe_allow_html=True
-    )
-    visible_dates = all_dates[:7]
-    columns = st.columns(len(visible_dates))
-    for column, signal_date in zip(columns, visible_dates):
-        with column:
-            is_active = signal_date == selected_date
-            if st.button(
-                signal_date,
-                key=f"date-jump-{signal_date}",
-                width="stretch",
-                type="primary" if is_active else "secondary",
-            ):
-                _set_dashboard_selection(
-                    task_id=_resolve_task_for_date(
-                        provider=provider,
-                        current_task_id=current_task_id,
+    with st.expander("更多日期", expanded=False):
+        visible_dates = all_dates[:7]
+        columns = st.columns(len(visible_dates))
+        for column, signal_date in zip(columns, visible_dates):
+            with column:
+                is_active = signal_date == selected_date
+                if st.button(
+                    signal_date,
+                    key=f"date-jump-{signal_date}",
+                    width="stretch",
+                    type="primary" if is_active else "secondary",
+                ):
+                    _set_dashboard_selection(
+                        task_id=_resolve_task_for_date(
+                            provider=provider,
+                            current_task_id=current_task_id,
+                            signal_date=signal_date,
+                        ),
                         signal_date=signal_date,
+                    )
+                    st.rerun()
+                st.markdown(
+                    (
+                        f'<div class="aqsp-nav-secondary{" active" if is_active else ""}">'
+                        f"{escape(_date_jump_secondary_label(provider, current_task_id, signal_date))}"
+                        "</div>"
                     ),
-                    signal_date=signal_date,
+                    unsafe_allow_html=True,
                 )
-                st.rerun()
-            st.markdown(
-                (
-                    f'<div class="aqsp-nav-secondary{" active" if is_active else ""}">'
-                    f"{escape(_date_jump_secondary_label(provider, current_task_id, signal_date))}"
-                    "</div>"
-                ),
-                unsafe_allow_html=True,
-            )
 
 
 def _render_execution_focus(
@@ -7062,20 +7156,12 @@ def main() -> None:
     paper_summary = provider.paper_summary(review_date)
     research_summary = load_research_summary()
 
-    _render_top_overview_strip(
-        review_date=review_date,
-        date_overview=date_overview,
-        summary=summary,
-    )
-
     st.markdown('<div class="aqsp-workspace-shell">', unsafe_allow_html=True)
     st.markdown(
         '<div class="aqsp-workspace-label">工作台视角</div>', unsafe_allow_html=True
     )
     workspace = _render_workspace_navigation()
     st.markdown("</div>", unsafe_allow_html=True)
-    with st.expander("当日快照", expanded=False):
-        _render_task_workbench(task_snapshots, signal_date=review_date)
 
     if workspace == "决策首页":
         _render_day_replay_digest(
@@ -7084,13 +7170,11 @@ def main() -> None:
             paper_summary=paper_summary,
             same_day_rows=same_day_rows,
         )
-        _render_home_brief(
+        _render_home_evidence_entry(
             task_view=task_view,
             overview=date_overview,
             paper_summary=paper_summary,
             research_summary=research_summary,
-            spotlights=same_day_spotlights,
-            debates=same_day_debates,
         )
         with st.expander("展开推进细节", expanded=False):
             _render_command_center(task_view, date_overview, task_view.summary_lines)
@@ -7101,17 +7185,34 @@ def main() -> None:
                 spotlights=same_day_spotlights,
                 debates=same_day_debates,
             )
-        _render_research_radar(research_summary)
-        _render_home_task_board(
-            rows=same_day_rows,
-            current_task_id=task_view.task_id,
-            task_view=task_view,
-            spotlights=same_day_spotlights,
-            debates=same_day_debates,
-            paper_summary=paper_summary,
-            overview=date_overview,
-        )
-        _render_decision_flow(task_view, same_day_spotlights)
+        with st.expander("证据卡片", expanded=False):
+            _render_home_brief(
+                task_view=task_view,
+                overview=date_overview,
+                paper_summary=paper_summary,
+                research_summary=research_summary,
+                spotlights=same_day_spotlights,
+                debates=same_day_debates,
+            )
+            _render_research_radar(research_summary)
+        with st.expander("阶段任务板", expanded=False):
+            _render_home_task_board(
+                rows=same_day_rows,
+                current_task_id=task_view.task_id,
+                task_view=task_view,
+                spotlights=same_day_spotlights,
+                debates=same_day_debates,
+                paper_summary=paper_summary,
+                overview=date_overview,
+            )
+            _render_decision_flow(task_view, same_day_spotlights)
+        with st.expander("状态与快照", expanded=False):
+            _render_top_overview_strip(
+                review_date=review_date,
+                date_overview=date_overview,
+                summary=summary,
+            )
+            _render_task_workbench(task_snapshots, signal_date=review_date)
 
         with st.expander("日期时间线", expanded=False):
             _render_date_timeline_cards(

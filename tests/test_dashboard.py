@@ -49,6 +49,7 @@ from aqsp.web.dashboard import (
     _home_spotlight_lines,
     _home_action_rail_items,
     _home_brief_cards,
+    _home_evidence_entry_lines,
     _home_execution_blocked_summary,
     _home_primary_focus_card,
     _home_reading_order_lines,
@@ -3307,7 +3308,7 @@ def test_dashboard_day_replay_digest_prioritizes_paper_reality() -> None:
         task_view=_TaskView(),
         overview=overview,
         paper_summary=paper_summary,
-    ) == "🧪 下一步: 先核对纸面验证，600519 贵州茅台 | 等待纸面入场确认"
+    ) == "🧪 复核提示: 纸面验证记录待核对，600519 贵州茅台 | 等待纸面入场确认"
 
     lines = _day_replay_digest_lines(
         task_view=_TaskView(),
@@ -3316,7 +3317,7 @@ def test_dashboard_day_replay_digest_prioritizes_paper_reality() -> None:
         same_day_rows=(),
     )
 
-    assert lines[2] == "🧪 下一步: 先核对纸面验证，600519 贵州茅台 | 等待纸面入场确认"
+    assert lines[2] == "🧪 复核提示: 纸面验证记录待核对，600519 贵州茅台 | 等待纸面入场确认"
 
 
 def test_dashboard_day_replay_digest_neutralizes_raw_paper_writeback() -> None:
@@ -3365,7 +3366,7 @@ def test_dashboard_day_replay_digest_neutralizes_raw_paper_writeback() -> None:
         paper_summary=paper_summary,
     )
 
-    assert line == "🧪 下一步: 先核对纸面验证，纸面入场待核对 1 笔，等待下一交易日开盘价。"
+    assert line == "🧪 复核提示: 纸面验证记录待核对，纸面入场待核对 1 笔，等待下一交易日开盘价。"
     assert "BUY" not in line
     assert "SELL" not in line
     assert "下单" not in line
@@ -3509,7 +3510,7 @@ def test_dashboard_day_replay_digest_prioritizes_blockers_before_archive() -> No
         task_view=_TaskView(),
         overview=overview,
         paper_summary=paper_summary,
-    ) == "⚠️ 下一步: 先处理阻塞，000338 潍柴动力 | 流动性不足"
+    ) == "⚠️ 阻塞提示: 待核对卡点，000338 潍柴动力 | 流动性不足"
 
 
 def test_dashboard_day_replay_digest_neutralizes_review_action_words() -> None:
@@ -3555,7 +3556,7 @@ def test_dashboard_day_replay_digest_neutralizes_review_action_words() -> None:
         paper_summary=paper_summary,
     )
 
-    assert line == "🧭 下一步: 复核顺位: 纸面新建观察/纸面记录/纸面入场记录 600519"
+    assert line == "🧭 复核线索: 复核顺位: 纸面新建观察/纸面记录/纸面入场记录 600519"
     assert "执行顺位" not in line
     assert "新开仓" not in line
     assert "下单" not in line
@@ -4098,6 +4099,7 @@ def test_dashboard_home_brief_cards_summarize_day_without_trading_language() -> 
     )
     assert cards[0].title == "600519 贵州茅台"
     assert "状态: 上调优先级 / 延续上升" in cards[0].lines
+    assert any(line.startswith("复核线索:") for line in cards[0].lines)
     assert cards[1].title == "纸面事件待核对"
     assert cards[1].tone == "pressure"
     assert cards[2].title == "000338 潍柴动力"
@@ -4110,6 +4112,49 @@ def test_dashboard_home_brief_cards_summarize_day_without_trading_language() -> 
     assert "真实持仓" not in rendered_text
     assert "立即买入" not in rendered_text
     assert "下单" not in rendered_text
+
+
+def test_dashboard_home_evidence_entry_lines_keep_first_screen_compact_and_safe() -> None:
+    from aqsp.web.data_provider import DashboardPaperSummary
+
+    class _TaskView:
+        task_label = "主链推荐"
+        report_markdown = "# archived"
+        report_summary_lines = ()
+        runtime_lines = ()
+
+    class _Overview:
+        actionable_total = 1
+        watch_total = 2
+        blocked_total = 1
+        archive_summary = "今日建议: 立即买入，执行名单等待下单。"
+
+    paper_summary = DashboardPaperSummary(
+        signal_date="2026-06-05",
+        open_positions=1,
+        pending_entries=1,
+        not_executable=1,
+        closed_trades=0,
+        open_position_lines=(),
+        event_lines=(),
+        action_summary_lines=(),
+    )
+
+    lines = _home_evidence_entry_lines(
+        task_view=_TaskView(),
+        overview=_Overview(),
+        paper_summary=paper_summary,
+        research_summary=None,
+    )
+
+    assert lines == (
+        ("🧪 纸面", "纸面: 持有 1 / 待核对 1 / 阻塞 1"),
+        ("🧭 候选", "候选 · 1 复核 · 2 观察 · 1 阻塞"),
+        ("🗂 归档", "归档 · 已归档 · 历史回看: 历史记录: 纸面观察，历史复核名单等待纸面记录。"),
+    )
+    rendered_text = "\n".join(line for _, line in lines)
+    for forbidden in ("今日建议", "立即买入", "执行名单", "下单", "真实持仓"):
+        assert forbidden not in rendered_text
 
 
 def test_dashboard_home_action_rail_items_merge_same_day_spotlight_when_task_has_no_card() -> (
