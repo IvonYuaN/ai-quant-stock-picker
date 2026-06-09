@@ -3778,7 +3778,7 @@ def test_dashboard_research_path_steps_connect_review_paper_and_archive_safely()
 
     class _TaskView:
         report_markdown = "# archived"
-        report_summary_lines = ("今日建议: 立即买入 000338",)
+        report_summary_lines = ("今日建议: 立即买入 000338", "今日无可执行标的")
         next_day_focus_lines = ("执行名单: 000338 等待下单",)
         runtime_lines = ()
 
@@ -3832,7 +3832,14 @@ def test_dashboard_research_path_steps_connect_review_paper_and_archive_safely()
         for step in steps
         for line in (step.headline, *step.lines)
     )
-    for forbidden in ("今日建议", "立即买入", "执行名单", "下单", "真实持仓"):
+    for forbidden in (
+        "今日建议",
+        "立即买入",
+        "执行名单",
+        "下单",
+        "真实持仓",
+        "可执行标的",
+    ):
         assert forbidden not in rendered_text
     assert "历史回看" in rendered_text
 

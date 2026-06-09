@@ -5129,6 +5129,15 @@ def _research_path_paper_step(
     )
 
 
+def _sanitize_research_path_line(line: str) -> str:
+    clean = sanitize_archive_text(re.sub(r"\*\*(.*?)\*\*", r"\1", line).strip())
+    clean = clean.replace("无可执行标的", "无纸面复核对象")
+    clean = clean.replace("可执行标的", "纸面复核对象")
+    clean = clean.replace("可执行主链", "纸面主链复核")
+    clean = clean.replace("可执行", "纸面复核")
+    return clean
+
+
 def _research_path_archive_step(
     *,
     task_view,
@@ -5151,8 +5160,8 @@ def _research_path_archive_step(
         else ""
     )
     lines = _unique_lines(
-        tuple(sanitize_archive_text(line) for line in symbol_lines[:2]),
-        tuple(sanitize_archive_text(line) for line in global_lines[:1]),
+        tuple(_sanitize_research_path_line(line) for line in symbol_lines[:2]),
+        tuple(_sanitize_research_path_line(line) for line in global_lines[:1]),
         (fallback_line,),
     )
     if not lines:
