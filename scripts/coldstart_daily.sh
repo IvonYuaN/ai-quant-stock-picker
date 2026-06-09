@@ -90,6 +90,15 @@ if [ "$DOW" -ge 6 ]; then
     exit 0
 fi
 
+# 冷启动使用 sqlite 日线库补正式 predictions ledger。
+# 开盘中 baostock 可能已返回当天未收盘日线；默认必须等收盘后再跑。
+COLDSTART_ALLOW_INTRADAY="${AQSP_COLDSTART_ALLOW_INTRADAY:-false}"
+NOW_HM=$((10#$(date +%H%M)))
+if [[ ! "${COLDSTART_ALLOW_INTRADAY,,}" =~ ^(1|true|yes|on)$ ]] && [ "$NOW_HM" -lt 1530 ]; then
+    log "当前仍在收盘前，跳过冷启动；盘中请使用 bt_task.sh intraday"
+    exit 0
+fi
+
 if [ ! -f "$UPDATE_SCRIPT" ]; then
     log "[ERROR] update_daily.py 不存在: $UPDATE_SCRIPT"
     log "[ERROR] 已尝试: ${UPDATE_SCRIPT_HINT:-<unset>} | ${SQLITE_UPDATE_SCRIPT} | ${REPO_UPDATE_SCRIPT}"

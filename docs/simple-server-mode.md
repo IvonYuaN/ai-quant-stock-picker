@@ -142,10 +142,12 @@ bash /opt/aqsp/scripts/server_sync_and_run.sh
 |---|---:|---|---|
 | 盘中刷新 | 工作日 `09:40-11:30`、`13:10-14:55` 每 10 分钟 | `/bin/bash /opt/aqsp/scripts/bt_task.sh intraday` | 生成盘中候选并刷新看板，不污染正式 ledger |
 | 收盘主链路 | 工作日 `18:00` | `/bin/bash /opt/aqsp/scripts/bt_task.sh daily` | 拉取最新代码、跑完整收盘复盘、纸面验证、简报、通知、看板刷新 |
-| 冷启动补样本 | 工作日 `17:30` | `/bin/bash /opt/aqsp/scripts/bt_task.sh coldstart` | 更新 sqlite 历史库并累计 `predictions.jsonl` 冷启动天数 |
+| 冷启动补样本 | 工作日 `17:30` | `/bin/bash /opt/aqsp/scripts/bt_task.sh coldstart` | 收盘后更新 sqlite 历史库并累计 `predictions.jsonl` 冷启动天数 |
 | 服务器监控 | 工作日每 `15` 分钟 | `/bin/bash /opt/aqsp/scripts/bt_task.sh monitor` | 检查数据、运行时和通知通道，异常才推送 |
 
 如果宝塔的“每 N 分钟”不能限制交易时段，也可以让它工作日每 10 分钟跑 `intraday`。`scripts/intraday_refresh.sh` 内部会自行判断当前是否在盘中，非交易时段只记录“跳过”，不会污染结果。
+
+`coldstart` 默认要求北京时间 `15:30` 之后才执行，因为它会把 sqlite 日线库结果写入正式冷启动样本。开盘中需要看最新变化时，用 `intraday`；不要用 `coldstart` 代替盘中刷新。
 
 手工验证：
 

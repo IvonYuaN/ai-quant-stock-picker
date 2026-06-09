@@ -91,6 +91,9 @@ def test_coldstart_daily_script_updates_db_then_runs_cli() -> None:
     assert 'dirname "$SQLITE_DB_PATH"' in script
     assert 'A股量化分析数据/update_daily.py' in script
     assert 'AQSP_COLDSTART_UPDATE_SCRIPT' in script
+    assert "AQSP_COLDSTART_ALLOW_INTRADAY" in script
+    assert "收盘前，跳过冷启动" in script
+    assert "bt_task.sh intraday" in script
     assert 'server-runtime.lock' in script
     assert '"${PYTHON_BIN}" -u "${UPDATE_SCRIPT}" "${SQLITE_DB_PATH}"' in script
     assert '"${PYTHON_BIN}" -u -m aqsp.cli run' in script
