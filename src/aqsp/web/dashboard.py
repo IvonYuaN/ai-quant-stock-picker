@@ -862,6 +862,21 @@ def _debate_overview_lines(
 ) -> tuple[str, ...]:
     if debate_summary is None:
         return ()
+    vote_line = (
+        f"分歧来源: 看多 {debate_summary.bull_count}"
+        f" / 看空 {debate_summary.bear_count}"
+        f" / 中性 {debate_summary.neutral_count}"
+    )
+    if debate_summary.risk_warnings:
+        review_line = "待核对风险: " + "；".join(debate_summary.risk_warnings[:2])
+    elif debate_summary.adjustment_reason:
+        review_line = f"待核对依据: {debate_summary.adjustment_reason}"
+    elif debate_summary.opportunity_highlights:
+        review_line = (
+            "待验证机会: " + "；".join(debate_summary.opportunity_highlights[:2])
+        )
+    else:
+        review_line = "待补证据: 当前辩论未给出明确风险或机会，先回候选证据链复核。"
     agent_lines = tuple(
         line
         for line in (
@@ -878,7 +893,16 @@ def _debate_overview_lines(
         if line
     )
     return _unique_lines(
-        debate_summary.summary_lines[:4],
+        (
+            f"结论: {debate_summary.recommended_adjustment_label} / 分歧 {debate_summary.disagreement_score:.2f}",
+            (
+                f"共识: {debate_summary.consensus}"
+                if debate_summary.consensus
+                else "共识: 暂未形成明确一致结论"
+            ),
+            vote_line,
+            review_line,
+        ),
         agent_lines,
     )
 

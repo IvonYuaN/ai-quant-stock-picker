@@ -1191,9 +1191,53 @@ def test_dashboard_debate_overview_lines_show_summary_and_top_agent_views() -> N
 
     lines = _debate_overview_lines(debate)
 
-    assert lines[0] == "建议上调评分: 80.0 -> 82.0"
+    assert lines[0] == "结论: 建议上调评分 / 分歧 0.33"
+    assert lines[1] == "共识: 维持主推，但需要控制追高节奏"
+    assert lines[2] == "分歧来源: 看多 4 / 看空 2 / 中性 2"
+    assert lines[3] == "待核对风险: 高位波动放大"
     assert any("技术多头: 看多 / 置信 88%" in line for line in lines)
     assert any("风控: 中性 / 置信 72%" in line for line in lines)
+
+
+def test_dashboard_debate_overview_lines_surface_missing_evidence() -> None:
+    from aqsp.web.data_provider import DashboardDebateSummary
+
+    debate = DashboardDebateSummary(
+        signal_date="2026-06-05",
+        symbol="600036",
+        display_name="600036 招商银行",
+        debate_id="debate-missing-evidence",
+        rating="B",
+        original_score=68.0,
+        adjusted_score=68.0,
+        adjustment_weight=0.0,
+        recommended_adjustment="keep",
+        recommended_adjustment_label="建议维持评分",
+        disagreement_score=0.0,
+        consensus="",
+        adjustment_reason="",
+        bull_count=0,
+        bear_count=0,
+        neutral_count=0,
+        round_count=0,
+        regime="",
+        data_source="",
+        thresholds_version="",
+        summary_lines=(),
+        round_summaries=(),
+        risk_warnings=(),
+        opportunity_highlights=(),
+        agent_views=(),
+    )
+
+    lines = _debate_overview_lines(debate)
+
+    assert lines == (
+        "结论: 建议维持评分 / 分歧 0.00",
+        "共识: 暂未形成明确一致结论",
+        "分歧来源: 看多 0 / 看空 0 / 中性 0",
+        "待补证据: 当前辩论未给出明确风险或机会，先回候选证据链复核。",
+    )
 
 
 def test_dashboard_review_context_uses_debate_summary_when_card_and_spotlight_missing() -> (
