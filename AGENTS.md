@@ -87,6 +87,7 @@
 - 禁止使用用户前台 Chrome/浏览器、Codex Browser/Chrome 插件、已有 Playwright 会话或固定调试端口调试本项目。
 - UI 验证优先用 `curl`、日志和 `scripts/headless_dashboard_check.py`。
 - 必须截图时,只能启动独立无头 Chromium/Chrome,并使用临时 profile、`--remote-debugging-port=0` 和独立输出文件。
+- 同机有其它项目跑无头浏览器时,必须用 AQSP 专属临时 profile、随机调试端口和 AQSP 专属锁(`/tmp/aqsp-headless-dashboard.lock` 或 `AQSP_HEADLESS_LOCK`)。
 
 ---
 

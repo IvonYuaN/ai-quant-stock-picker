@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
+import fcntl
 import os
 import shutil
 import subprocess
@@ -12,6 +14,7 @@ import tempfile
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
+from collections.abc import Iterator
 from pathlib import Path
 from urllib.parse import urljoin
 
@@ -24,6 +27,10 @@ DEFAULT_FORBIDDEN_TEXT = (
     "risks",
 )
 DEDICATED_BROWSER_ENV = "AQSP_HEADLESS_BROWSER"
+HEADLESS_LOCK_ENV = "AQSP_HEADLESS_LOCK"
+DEFAULT_HEADLESS_LOCK_PATH = (
+    Path(tempfile.gettempdir()) / "aqsp-headless-dashboard.lock"
+)
 DEFAULT_BROWSER_CANDIDATES = (
     "chromium",
     "chromium-browser",
@@ -37,6 +44,7 @@ class DashboardCheckResult:
     health_url: str
     mode: str
     browser: str | None
+    headless_lock_path: Path | None
     checked_bytes: int
     screenshot_path: Path | None
     errors: tuple[str, ...]
@@ -67,6 +75,33 @@ def _resolve_executable(candidate: str) -> str | None:
     if "/" in candidate:
         return candidate if Path(candidate).exists() else None
     return shutil.which(candidate)
+
+
+def resolve_headless_lock_path(explicit_lock_path: Path | None = None) -> Path:
+    """Return an AQSP-only lock path for isolated browser checks."""
+    if explicit_lock_path is not None:
+        return explicit_lock_path
+    env_value = os.getenv(HEADLESS_LOCK_ENV, "").strip()
+    if env_value:
+        return Path(env_value)
+    return DEFAULT_HEADLESS_LOCK_PATH
+
+
+@contextlib.contextmanager
+def acquire_headless_browser_lock(lock_path: Path | None = None) -> Iterator[Path]:
+    """Serialize AQSP browser checks without sharing browser profiles or ports."""
+    resolved_lock_path = resolve_headless_lock_path(lock_path)
+    resolved_lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with resolved_lock_path.open("w", encoding="utf-8") as lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        lock_file.seek(0)
+        lock_file.truncate()
+        lock_file.write(f"pid={os.getpid()}\n")
+        lock_file.flush()
+        try:
+            yield resolved_lock_path
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
 
 def find_browser_executable(
@@ -131,6 +166,7 @@ def run_headless_browser(
     timeout_seconds: float,
     window_size: str,
     virtual_time_budget_ms: int,
+    lock_path: Path | None = None,
 ) -> str:
     command = build_headless_browser_command(
         browser=browser,
@@ -141,14 +177,15 @@ def run_headless_browser(
         window_size=window_size,
         virtual_time_budget_ms=virtual_time_budget_ms,
     )
-    result = subprocess.run(
-        command,
-        check=False,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        timeout=timeout_seconds,
-    )
+    with acquire_headless_browser_lock(lock_path):
+        result = subprocess.run(
+            command,
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=timeout_seconds,
+        )
     if result.returncode != 0:
         stderr = result.stderr.strip().splitlines()
         detail = stderr[-1] if stderr else f"exit={result.returncode}"
@@ -185,10 +222,12 @@ def run_check(
     window_size: str,
     virtual_time_budget_ms: int,
     browser_executable: str | None = None,
+    lock_path: Path | None = None,
 ) -> DashboardCheckResult:
     errors: list[str] = []
     warnings: list[str] = []
     browser: str | None = None
+    headless_lock_path: Path | None = None
     text = ""
 
     try:
@@ -209,6 +248,7 @@ def run_check(
                     "dedicated headless browser not found; using raw HTTP HTML"
                 )
         else:
+            headless_lock_path = resolve_headless_lock_path(lock_path)
             with tempfile.TemporaryDirectory(prefix="aqsp-headless-") as temp_dir:
                 try:
                     text = run_headless_browser(
@@ -219,6 +259,7 @@ def run_check(
                         timeout_seconds=timeout_seconds,
                         window_size=window_size,
                         virtual_time_budget_ms=virtual_time_budget_ms,
+                        lock_path=headless_lock_path,
                     )
                 except (OSError, RuntimeError, subprocess.TimeoutExpired) as exc:
                     if mode == "browser" or screenshot_path is not None:
@@ -246,6 +287,7 @@ def run_check(
         health_url=health_url,
         mode=actual_mode,
         browser=browser if actual_mode == "browser" else None,
+        headless_lock_path=headless_lock_path if actual_mode == "browser" else None,
         checked_bytes=len(text.encode("utf-8")),
         screenshot_path=screenshot_path,
         errors=tuple(errors),
@@ -289,6 +331,15 @@ def main() -> int:
     parser.add_argument("--window-size", default="1440,1100")
     parser.add_argument("--virtual-time-budget-ms", type=int, default=10000)
     parser.add_argument(
+        "--headless-lock",
+        type=Path,
+        default=None,
+        help=(
+            "AQSP-only lock path for serialized isolated headless checks. Defaults "
+            f"to ${HEADLESS_LOCK_ENV} or {DEFAULT_HEADLESS_LOCK_PATH}."
+        ),
+    )
+    parser.add_argument(
         "--browser",
         default="",
         help=(
@@ -309,6 +360,7 @@ def main() -> int:
         window_size=args.window_size,
         virtual_time_budget_ms=args.virtual_time_budget_ms,
         browser_executable=args.browser or None,
+        lock_path=args.headless_lock,
     )
 
     print(f"status={'pass' if result.passed else 'fail'}")
@@ -316,6 +368,7 @@ def main() -> int:
     print(f"health_url={result.health_url}")
     print(f"mode={result.mode}")
     print(f"browser={result.browser or '-'}")
+    print(f"headless_lock={result.headless_lock_path or '-'}")
     print(f"checked_bytes={result.checked_bytes}")
     if result.screenshot_path is not None:
         print(f"screenshot={result.screenshot_path}")

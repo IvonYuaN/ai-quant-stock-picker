@@ -43,6 +43,15 @@ python3 scripts/open_dashboard.py
 python3 scripts/open_dashboard.py --render-only
 ```
 
+Agent 调试时默认只能走后台检查，不抢前台浏览器：
+
+```bash
+python3 scripts/headless_dashboard_check.py --url https://lh.ifidy.cn --mode raw
+python3 scripts/headless_dashboard_check.py --url https://lh.ifidy.cn --screenshot outputs/dashboard-check.png --headless-lock /tmp/aqsp-headless-dashboard.lock
+```
+
+截图检查会使用临时 profile、随机 DevTools 端口和 AQSP 专属锁，不复用用户 Chrome，也不连接其它项目的无头浏览器。
+
 `daily_run.sh` 现在会在每日跑完后自动刷新 `dist/dashboard/index.html` 和 `dist/dashboard/aqsp.db`，因此页面内容会跟着更新。
 
 ## 卸载

@@ -7,6 +7,7 @@ from scripts.headless_dashboard_check import (
     build_headless_browser_command,
     check_text,
     find_browser_executable,
+    resolve_headless_lock_path,
 )
 
 
@@ -70,3 +71,15 @@ def test_headless_dashboard_check_allows_explicit_dedicated_browser(
     assert find_browser_executable(explicit_browser=str(browser_path)) == str(
         browser_path
     )
+
+
+def test_headless_dashboard_check_uses_aqsp_specific_lock_by_default() -> None:
+    lock_path = resolve_headless_lock_path()
+
+    assert lock_path.name == "aqsp-headless-dashboard.lock"
+
+
+def test_headless_dashboard_check_allows_isolated_project_lock(tmp_path: Path) -> None:
+    lock_path = tmp_path / "locks" / "visual-check.lock"
+
+    assert resolve_headless_lock_path(lock_path) == lock_path

@@ -29,6 +29,8 @@ curl -Ik https://lh.ifidy.cn/_stcore/health
 - `scripts/open_dashboard.py` 默认不得打开前台浏览器；只有用户明确要求或命令显式传 `--open-browser` 时才允许。
 - 需要视觉截图时，只能启动独立无头 Chromium/Chrome 进程，并且必须使用临时 `user-data-dir`、`--remote-debugging-port=0`、独立输出文件。
 - 默认检查脚本只自动寻找 Chromium；如需专用 Chrome/其它浏览器，必须用 `AQSP_HEADLESS_BROWSER=/path/to/dedicated-browser` 或 `--browser` 显式指定隔离二进制。
+- AQSP 无头检查必须串行占用 AQSP 专属锁，默认 `/tmp/aqsp-headless-dashboard.lock`；同机多项目并行时用 `AQSP_HEADLESS_LOCK` 或 `--headless-lock` 指定本项目自己的锁文件。
+- `scripts/headless_dashboard_check.py` 输出里的 `browser=-` 表示只做 raw/health 检查，没有启动浏览器；`headless_lock=...` 表示启动的是 AQSP 隔离无头进程，不是用户前台浏览器。
 
 禁止：
 
@@ -38,6 +40,7 @@ curl -Ik https://lh.ifidy.cn/_stcore/health
 - 把公网 Dashboard 上的历史归档文案渲染成“今日建议/首选/移出”等行动指令。
 - 使用 Codex Browser/Chrome 插件、用户正在操作的 Chrome/浏览器窗口、已有 Playwright 会话或固定调试端口做项目调试。
 - 为了截图或 DOM 检查打开前台标签页、复用用户浏览器 profile、占用其他项目的 headless browser 端口。
+- 连接别的项目已经启动的无头浏览器、复用其 `user-data-dir`、复用其 DevTools websocket 或指定固定 `--remote-debugging-port`。
 
 ## 3. 部署闭环
 
@@ -53,8 +56,8 @@ curl -Ik https://lh.ifidy.cn/_stcore/health
 推荐验证命令：
 
 ```bash
-python3 scripts/headless_dashboard_check.py --url https://lh.ifidy.cn
-python3 scripts/headless_dashboard_check.py --url https://lh.ifidy.cn --screenshot outputs/dashboard-check.png
+python3 scripts/headless_dashboard_check.py --url https://lh.ifidy.cn --mode raw
+python3 scripts/headless_dashboard_check.py --url https://lh.ifidy.cn --screenshot outputs/dashboard-check.png --headless-lock /tmp/aqsp-headless-dashboard.lock
 ```
 
 服务器只接受 GitHub commit，不把服务器当开发机。若服务器出现受 Git 管理的脏改，先查明来源；除非用户明确要求，不直接覆盖用户改动。
