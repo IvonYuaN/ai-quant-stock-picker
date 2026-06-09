@@ -18,7 +18,8 @@
 
 1. `docs/architecture.md`(项目宪法,边界 + 模块契约 + PR 顺序)
 2. `AGENTS.md`(本文件,编码约定)
-3. 当前 PR 涉及模块的 spec 段落
+3. `docs/agent-operating-boundaries.md`(本地/GitHub/服务器/公网职责 + 后台调试边界)
+4. 当前 PR 涉及模块的 spec 段落
 
 不读上面三份,不允许动代码。
 

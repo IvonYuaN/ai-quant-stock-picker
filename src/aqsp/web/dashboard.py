@@ -2061,13 +2061,34 @@ def _command_center_brief_lines(
     task_view,
     summary_lines: tuple[str, ...],
 ) -> tuple[str, ...]:
-    label = "归档结论" if _report_archive_status(task_view) != "无归档" else "研究摘要"
-    brief_lines = (
+    is_archived = _report_archive_status(task_view) != "无归档"
+    label = "历史报告摘要" if is_archived else "研究摘要"
+    source_lines = (
         task_view.report_summary_lines[:2]
-        if task_view.report_summary_lines
+        if is_archived and task_view.report_summary_lines
         else summary_lines[:2]
     )
+    brief_lines = (
+        tuple(_neutral_archive_summary_line(line) for line in source_lines)
+        if is_archived
+        else source_lines
+    )
     return tuple(f"{label}: {line}" for line in brief_lines if line)
+
+
+def _neutral_archive_summary_line(line: str) -> str:
+    clean = re.sub(r"\*\*(.*?)\*\*", r"\1", line).strip()
+    replacements = (
+        (r"^[🎯⭐]\s*首选\s*[:：]\s*", "历史首选记录: "),
+        (r"^[❌🚫]\s*移出候选\s*[:：]\s*", "历史移出记录: "),
+        (r"^🆕\s*新晋候选\s*[:：]\s*", "历史新晋记录: "),
+        (r"^📈\s*排名异动\s*[:：]\s*", "历史排名变化: "),
+        (r"^📊\s*评分变化\s*[:：]\s*", "历史评分变化: "),
+        (r"^✅\s*维持候选\s*[:：]\s*", "历史维持记录: "),
+    )
+    for pattern, replacement in replacements:
+        clean = re.sub(pattern, replacement, clean)
+    return clean
 
 
 def _render_command_center(

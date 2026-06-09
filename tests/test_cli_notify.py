@@ -1859,10 +1859,13 @@ def test_run_scheduled_annotates_candidate_status_in_report_and_notify(
 
     assert exit_code == 0
     assert seen
-    assert "688981 中芯国际 | 新晋 | -9分 | 观察 | MA20 斜率向上" in seen[0]
-    assert "复核: 高优先级 / 盘中走强后" in seen[0]
+    assert "## 📋 候选简表" in seen[0]
+    assert (
+        "| 1 | 688981 中芯国际 | 新晋 | -9 | 👀 观察 | 等待量价继续走强后，再评估是否转入执行名单；复核 高优先级 / 盘中走强后 |"
+        in seen[0]
+    )
     assert "先盯 688981 中芯国际，等待量价继续走强后，再评估是否转入执行名单（高优先级 / 盘中走强后）。" in seen[0]
-    assert "000001 平安银行 | -18分 | 观察 | 估值防守" in seen[0]
+    assert "| 2 | 000001 平安银行 | 观察 | -18 | 👀 观察 | 估值防守 |" in seen[0]
     assert "- Top 1: 688981 中芯国际 | 候选观察池 | 新晋 | 评分 -9.0 | PM 维持原排序" in report
     assert "- 决策: 候选观察池 | 新晋 | 评分 -9.0" in report
     assert "下一步: 等待量价继续走强后，再评估是否转入执行名单" in report

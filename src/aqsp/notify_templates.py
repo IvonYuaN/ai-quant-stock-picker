@@ -90,12 +90,19 @@ def build_daily_run_notification(
     snapshot_diff: SnapshotDiff | None = None,
     mode: str = "summary",
 ) -> str:
+    lead_conclusion = _daily_lead_conclusion(
+        tradable=tradable,
+        candidates=candidates,
+        portfolio_summary=portfolio_summary,
+        circuit_breaker_reason=circuit_breaker_reason,
+    )
     lines = [
-        "# AI选股日报",
+        "# AQSP 研究日报",
         "",
         "## 核心结论",
         "",
         f"- 数据日期: {run_date}",
+        f"- **一眼结论**: {lead_conclusion}",
     ]
     if circuit_breaker_reason:
         lines.append(f"- 组合保护: {circuit_breaker_reason}")
@@ -155,17 +162,8 @@ def build_daily_run_notification(
             f"- 重点辩论: {lead.symbol} {lead.name} | {lead.recommended_adjustment.upper()} | {consensus}"
         )
 
-    lines.extend(["", "## Top 候选", ""])
-    if tradable:
-        top_n = 5 if _safe_mode(mode) == "full" else 3
-        for index, pick in enumerate(tradable[:top_n], start=1):
-            lines.append(f"{index}. {_format_daily_pick(pick)}")
-    elif candidates:
-        top_n = 5 if _safe_mode(mode) == "full" else 3
-        for index, pick in enumerate(candidates[:top_n], start=1):
-            lines.append(f"{index}. {_format_watch_pick(pick)}")
-    else:
-        lines.append("- 今日无可执行候选，等待下一轮主链信号。")
+    lines.extend(["", "## 📋 候选简表", ""])
+    lines.extend(_daily_candidate_table(tradable, candidates, mode=mode))
     allocation_execution = _format_allocation_execution(portfolio_summary)
     if allocation_execution:
         lines.extend(["", "## 配仓执行", "", allocation_execution])
@@ -202,6 +200,88 @@ def build_daily_run_notification(
             "health_label": source_health_label,
             "health_message": source_health_message,
         },
+    )
+
+
+def _daily_lead_conclusion(
+    *,
+    tradable: Sequence[PickResult],
+    candidates: Sequence[PickResult],
+    portfolio_summary: PortfolioDecisionSummary | None,
+    circuit_breaker_reason: str,
+) -> str:
+    if circuit_breaker_reason:
+        return f"🛡️ 组合保护触发，先暂停新增纸面动作；原因：{circuit_breaker_reason}"
+    if tradable:
+        lead = tradable[0]
+        return f"🎯 有 {len(tradable)} 个纸面复核对象，先看 {format_symbol_name(lead.symbol, lead.name)}"
+    if portfolio_summary is not None and portfolio_summary.watchlist:
+        names = "、".join(portfolio_summary.watchlist[:2])
+        return f"👀 今日无主仓对象，先盯观察池：{names}"
+    if candidates:
+        lead = candidates[0]
+        return f"👀 仅观察，先看 {format_symbol_name(lead.symbol, lead.name)} 的确认条件"
+    return "⏸️ 今日没有足够清晰的候选，保持观察"
+
+
+def _table_cell(value: object) -> str:
+    text = str(value or "").strip()
+    return text.replace("|", "/") or "-"
+
+
+def _daily_candidate_table(
+    tradable: Sequence[PickResult],
+    candidates: Sequence[PickResult],
+    *,
+    mode: str,
+) -> list[str]:
+    rows: list[str] = [
+        "| # | 标的 | 状态 | 分数 | 处理 | 关键点 |",
+        "|---:|---|---|---:|---|---|",
+    ]
+    picks = tuple(tradable) if tradable else tuple(candidates)
+    if not picks:
+        rows.append("| - | - | - | - | 观察 | 今日无清晰候选 |")
+        return rows
+
+    top_n = 5 if _safe_mode(mode) == "full" else 3
+    for index, pick in enumerate(picks[:top_n], start=1):
+        rows.append(_daily_candidate_table_row(index, pick, tradable=bool(tradable)))
+    return rows
+
+
+def _daily_candidate_table_row(
+    index: int,
+    pick: PickResult,
+    *,
+    tradable: bool,
+) -> str:
+    symbol_name = format_symbol_name(pick.symbol, pick.name)
+    status = str(pick.metrics.get("candidate_status", "") or "")
+    blocker = _candidate_blocker(pick)
+    if blocker:
+        status = status or "观察阻塞"
+        action = "⛔ 等阻塞解除"
+        key = blocker
+    elif tradable:
+        status = status or "纸面复核"
+        action = "🎯 纸面复核"
+        key = pick.reasons[0] if pick.reasons else "先看开盘承接"
+    else:
+        status = status or "观察"
+        action = "👀 观察"
+        key = (
+            _candidate_next_step(pick)
+            or (pick.reasons[0] if pick.reasons else "等待更强确认")
+        )
+    review_window = _candidate_review_window(pick)
+    review_priority = _review_priority_label(_candidate_review_priority(pick))
+    review_meta = " / ".join(part for part in (review_priority, review_window) if part)
+    if review_meta:
+        key = f"{key}；复核 {review_meta}"
+    return (
+        f"| {index} | {_table_cell(symbol_name)} | {_table_cell(status)} | "
+        f"{pick.score:.0f} | {_table_cell(action)} | {_table_cell(key)} |"
     )
 
 

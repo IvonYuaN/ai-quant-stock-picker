@@ -258,11 +258,14 @@ def test_build_daily_run_notification_lists_watch_candidates_when_not_tradable()
         source_health_message="eastmoney 健康",
     )
 
-    assert "## Top 候选" in markdown
-    assert "1. 688981 中芯国际 | 新晋 | -9分 | 观察 | MA20 斜率向上" in markdown
-    assert "复核: 高优先级 / 盘中走强后" in markdown
+    assert "## 📋 候选简表" in markdown
+    assert "| # | 标的 | 状态 | 分数 | 处理 | 关键点 |" in markdown
     assert (
-        "2. 000001 平安银行 | 观察阻塞 | -18分 | 观察 | 估值防守 | 阻塞: 板块集中度过高，压低银行暴露"
+        "| 1 | 688981 中芯国际 | 新晋 | -9 | 👀 观察 | 等待量价继续走强后，再评估是否转入执行名单；复核 高优先级 / 盘中走强后 |"
+        in markdown
+    )
+    assert (
+        "| 2 | 000001 平安银行 | 观察阻塞 | -18 | ⛔ 等阻塞解除 | 板块集中度过高，压低银行暴露 |"
         in markdown
     )
     assert (
@@ -299,7 +302,7 @@ def test_build_daily_run_notification_includes_candidate_status_for_tradable_pic
     )
 
     assert "- 首选标的: 300750 宁德时代 | 延续上升 | 73分 | 买 220.5 / 损 214.2 / 盈 238" in markdown
-    assert "1. 300750 宁德时代 | 延续上升 | 73分 | 买 220.5 / 损 214.2 / 盈 238" in markdown
+    assert "| 1 | 300750 宁德时代 | 延续上升 | 73 | 🎯 纸面复核 | 趋势延续 |" in markdown
 
 
 def test_build_daily_run_notification_surfaces_default_review_for_new_watch_pick() -> None:
@@ -335,7 +338,7 @@ def test_build_daily_run_notification_surfaces_default_review_for_new_watch_pick
         source_health_message="eastmoney 健康",
     )
 
-    assert "复核: 高优先级 / 盘中走强后" in markdown
+    assert "复核 高优先级 / 盘中走强后" in markdown
     assert "1. 先盯 688981 中芯国际，等待量价继续走强后，再评估是否转入执行名单（高优先级 / 盘中走强后）。" in markdown
 
 

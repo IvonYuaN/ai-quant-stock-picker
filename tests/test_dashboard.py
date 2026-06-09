@@ -2999,7 +2999,29 @@ def test_dashboard_command_center_brief_lines_do_not_call_summaries_archive_when
     assert _command_center_brief_lines(
         task_view=_ArchivedTaskView(),
         summary_lines=("不应使用 fallback",),
-    ) == ("归档结论: 报告已归档。",)
+    ) == ("历史报告摘要: 报告已归档。",)
+
+
+def test_dashboard_command_center_neutralizes_archive_action_language() -> None:
+    class _ArchivedTaskView:
+        report_markdown = "# report"
+        report_summary_lines = (
+            "🎯 **首选**: 600036 招商银行，等待右侧确认",
+            "❌ **移出候选**: 000001 平安银行",
+        )
+        runtime_lines = ()
+        next_day_focus_lines = ()
+
+    lines = _command_center_brief_lines(
+        task_view=_ArchivedTaskView(),
+        summary_lines=("不应使用 fallback",),
+    )
+
+    assert lines == (
+        "历史报告摘要: 历史首选记录: 600036 招商银行，等待右侧确认",
+        "历史报告摘要: 历史移出记录: 000001 平安银行",
+    )
+    assert not any("🎯" in line or "❌" in line or "**" in line for line in lines)
 
 
 def test_dashboard_home_workspace_hint_prioritizes_execution_then_archive_then_review() -> (
