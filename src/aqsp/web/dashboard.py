@@ -91,6 +91,12 @@ class _ResearchPathStep:
     tone: str = "archive"
 
 
+@dataclass(frozen=True)
+class _WorkspaceNavItem:
+    code: str
+    name: str
+
+
 def _inject_dashboard_styles() -> None:
     st.markdown(
         """
@@ -247,6 +253,21 @@ def _inject_dashboard_styles() -> None:
             text-transform: uppercase;
             letter-spacing: 0.12em;
             color: #5e7081;
+        }
+        .aqsp-workspace-card {
+            margin-top: 0.25rem;
+            text-align: center;
+            font-size: 0.78rem;
+            line-height: 1.32;
+            color: #516272;
+            min-height: 2.4rem;
+        }
+        .aqsp-workspace-card.active {
+            color: #163247;
+            font-weight: 700;
+        }
+        .aqsp-workspace-name {
+            margin-top: 0.12rem;
         }
         .aqsp-nav-section-title {
             margin: 0.35rem 0 0.45rem 0;
@@ -4027,6 +4048,15 @@ def _set_dashboard_workspace(workspace: str) -> None:
     st.session_state["dashboard_pending_workspace"] = workspace
 
 
+def _workspace_nav_items() -> tuple[_WorkspaceNavItem, ...]:
+    return (
+        _WorkspaceNavItem("DAY REPLAY", "决策首页"),
+        _WorkspaceNavItem("REVIEW", "候选复盘"),
+        _WorkspaceNavItem("PAPER", "虚拟盘跟踪"),
+        _WorkspaceNavItem("ARCHIVE", "归档回看"),
+    )
+
+
 def _workspace_handoff_payload(
     *,
     target_workspace: str,
@@ -4183,7 +4213,8 @@ def _workspace_widget_state(
 
 
 def _render_workspace_navigation() -> str:
-    workspace_options = ["决策首页", "候选复盘", "虚拟盘跟踪", "归档回看"]
+    nav_items = _workspace_nav_items()
+    workspace_options = [item.name for item in nav_items]
     pending_workspace = st.session_state.pop("dashboard_pending_workspace", None)
     widget_key = "dashboard_workspace_widget"
     current_workspace = _workspace_widget_state(
@@ -4196,14 +4227,27 @@ def _render_workspace_navigation() -> str:
         '<div class="aqsp-nav-section-title">工作区</div>',
         unsafe_allow_html=True,
     )
-    workspace = st.radio(
-        "工作区",
-        workspace_options,
-        horizontal=True,
-        label_visibility="collapsed",
-        key=widget_key,
-    )
-    return workspace
+    columns = st.columns(len(nav_items))
+    for column, item in zip(columns, nav_items):
+        is_active = item.name == current_workspace
+        with column:
+            if st.button(
+                item.code,
+                key=f"workspace-nav-{item.name}",
+                width="stretch",
+                type="primary" if is_active else "secondary",
+            ):
+                st.session_state[widget_key] = item.name
+                st.rerun()
+            st.markdown(
+                (
+                    f'<div class="aqsp-workspace-card{" active" if is_active else ""}">'
+                    f'<div class="aqsp-workspace-name">{escape(item.name)}</div>'
+                    "</div>"
+                ),
+                unsafe_allow_html=True,
+            )
+    return current_workspace
 
 
 def _render_date_jump_bar(

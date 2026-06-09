@@ -93,6 +93,7 @@ from aqsp.web.dashboard import (
     _review_meta_line,
     _workspace_research_status,
     _workspace_handoff_payload,
+    _workspace_nav_items,
     _workspace_widget_state,
     _workspace_jump_state,
     _review_to_archive_handoff_lines,
@@ -1660,6 +1661,23 @@ def test_dashboard_workspace_widget_state_prefers_pending_without_radio_default_
             workspace_options=workspace_options,
         )
         == "决策首页"
+    )
+
+
+def test_dashboard_workspace_nav_items_keep_two_line_fast_switch_labels() -> None:
+    items = _workspace_nav_items()
+
+    assert tuple(item.code for item in items) == (
+        "DAY REPLAY",
+        "REVIEW",
+        "PAPER",
+        "ARCHIVE",
+    )
+    assert tuple(item.name for item in items) == (
+        "决策首页",
+        "候选复盘",
+        "虚拟盘跟踪",
+        "归档回看",
     )
 
 
