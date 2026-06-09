@@ -123,8 +123,7 @@ def _build_strategy_mix_summary(
         return "", "", "", (), ()
     mix = StrategyMixAdaptor().select_mix(regime)
     weights = tuple(
-        (strategy_id, float(weight))
-        for strategy_id, weight in mix.weights.items()
+        (strategy_id, float(weight)) for strategy_id, weight in mix.weights.items()
     )
     focus = tuple(_resolve_strategy_label(item) for item in mix.enabled_strategies)
     return (
@@ -177,18 +176,18 @@ def _watchlist_review_details(reason: str) -> tuple[str, str, str]:
         )
     if "板块集中度" in reason or "集中度" in reason:
         return (
-            "等待板块暴露回落或出现更强领涨，再考虑转入执行名单",
+            "等待板块暴露回落或出现更强领涨，再考虑转入纸面复核名单",
             "板块分化时",
             "medium",
         )
     if "相关性" in reason or "高相关" in reason:
         return (
-            "等待高相关标的分化后，再重新评估执行顺位",
+            "等待高相关标的分化后，再重新评估纸面复核优先级",
             "分化确认后",
             "medium",
         )
     return (
-        "待阻塞条件解除后，再考虑转入执行名单",
+        "待阻塞条件解除后，再考虑转入纸面复核名单",
         "下一轮信号出现时",
         "low",
     )
@@ -345,11 +344,15 @@ def apply_portfolio_manager(
             reasons.append("多Agent辩论支持上调优先级")
             positive_adjustment = True
 
-        if concentrated_sector and get_sector(
-            pick.symbol,
-            sector_hint=sector_map.get(pick.symbol, ""),
-            industry_hint=industry_map.get(pick.symbol, ""),
-        ) == concentrated_sector:
+        if (
+            concentrated_sector
+            and get_sector(
+                pick.symbol,
+                sector_hint=sector_map.get(pick.symbol, ""),
+                industry_hint=industry_map.get(pick.symbol, ""),
+            )
+            == concentrated_sector
+        ):
             delta -= 4.0
             reasons.append(f"板块集中度过高，压低{concentrated_sector}暴露")
             negative_adjustment = True

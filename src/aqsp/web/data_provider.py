@@ -18,9 +18,13 @@ from aqsp.briefing.closing_review import ClosingReviewer
 from aqsp.core.time import SHANGHAI_TZ, now_shanghai, today_shanghai, to_iso8601
 from aqsp.ledger.base import read_ledger
 from aqsp.paper import read_paper_trades
-from aqsp.presentation import format_review_meta, format_symbol_name
+from aqsp.presentation import (
+    format_review_meta,
+    format_symbol_name,
+    normalize_research_tone,
+)
 from aqsp.ratings import is_tradable_rating, portfolio_action_label, rating_label
-from aqsp.web.archive_safety import sanitize_archive_lines
+from aqsp.web.archive_safety import sanitize_research_lines
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +38,7 @@ _TASK_LABELS = {
 MISSING_BLOCKER_TEXT = "阻塞原因未记录，需补充风险说明或复核条件"
 _SIGNAL_TASK_IDS = ("main_chain", "morning_breakout", "closing_premium")
 _TASK_PHASE_META: dict[str, tuple[int, str, str]] = {
-    "main_chain": (1, "盘前主链", "先确认当日主推候选与执行顺位"),
+    "main_chain": (1, "盘前主链", "先确认当日主推候选与纸面复核优先级"),
     "morning_breakout": (2, "早盘观察", "开盘后核对强势突破是否成立"),
     "closing_premium": (3, "尾盘确认", "收盘前评估溢价承接与隔夜价值"),
     "closing_review": (4, "收盘复盘", "核对执行结果与失效样本"),
@@ -1157,9 +1161,7 @@ class DashboardDataProvider:
                         f"研究已产出，但当前被{blocker}拦住，暂不进入纸面入场验证链路。"
                     )
                 else:
-                    readiness_lines.append(
-                        "研究已产出，但尚未进入纸面入场或阻塞队列。"
-                    )
+                    readiness_lines.append("研究已产出，但尚未进入纸面入场或阻塞队列。")
             else:
                 readiness_lines.append("当前没有新的纸面入场或不可成交事件。")
 
@@ -1346,7 +1348,7 @@ class DashboardDataProvider:
                 "代码": row.get("symbol", ""),
                 "名称": self._symbol_name(row),
                 "评分": row.get("score", ""),
-                "主链动作": self._action_label(row),
+                "主链复核": self._action_label(row),
                 "候选状态": self._candidate_status(row),
                 "阻塞原因": self._candidate_blocker_text(row),
                 "下一步": str(row.get("candidate_next_step", "") or ""),
@@ -1740,13 +1742,17 @@ class DashboardDataProvider:
         )
         summary_lines = tuple(review.main_chain_summary)
         recommendation_lines = tuple(
-            line for line in summary_lines if line.startswith("可执行主链:")
+            normalize_research_tone(line)
+            for line in summary_lines
+            if line.startswith(("纸面复核主链:", "可执行主链:"))
         )
         watchlist_lines = tuple(
             line for line in summary_lines if line.startswith("候选观察池:")
         )
         blocker_lines = tuple(
-            line for line in summary_lines if line.startswith("执行阻塞:")
+            normalize_research_tone(line)
+            for line in summary_lines
+            if line.startswith(("纸面阻塞:", "执行阻塞:"))
         )
         review_lines = tuple(
             line for line in summary_lines if line.startswith("观察复核:")
@@ -2742,11 +2748,7 @@ class DashboardDataProvider:
             opinion_stance = str(
                 opinion.get("final_position") or opinion.get("stance") or ""
             ).strip()
-            stance = (
-                vote_stance
-                or opinion_stance
-                or "neutral"
-            )
+            stance = vote_stance or opinion_stance or "neutral"
             arguments = self._as_text_tuple(opinion.get("arguments"))
             risks = self._as_text_tuple(opinion.get("risk_factors"))
             opportunities = self._as_text_tuple(opinion.get("opportunity_factors"))
@@ -3227,14 +3229,14 @@ class DashboardDataProvider:
                 market_environment="",
                 next_day_focus_lines=(),
             )
-        execution_lines = sanitize_archive_lines(
+        execution_lines = sanitize_research_lines(
             self._section_lines(markdown_text, "执行摘要", "📌 执行摘要")
         )
         runtime_lines = self._runtime_snapshot_lines(
             self._section_lines(markdown_text, "运行参数")
         )
         market_environment = self._market_environment_line(markdown_text)
-        next_day_focus_lines = sanitize_archive_lines(
+        next_day_focus_lines = sanitize_research_lines(
             self._focus_lines(self._section_lines(markdown_text, "明日重点"))
         )
         return DashboardReportInsights(

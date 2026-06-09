@@ -872,11 +872,11 @@ def _source_runtime_metadata(
             latest_trade_day,
             reference_day=reference_day,
         )
-        if (
-            lag_days > 0
-            and freshness_tier
-            in {"terminal_realtime", "realtime", "delayed_realtime"}
-        ):
+        if lag_days > 0 and freshness_tier in {
+            "terminal_realtime",
+            "realtime",
+            "delayed_realtime",
+        }:
             freshness_tier = "end_of_day"
     return (
         freshness_tier,
@@ -1114,7 +1114,7 @@ def _augment_summary_with_t1_blockers(
         format_symbol_name(symbol, removed_name_map.get(symbol, ""))
         for symbol in removed_symbols
     )
-    hotspot = "T+1 持仓约束：昨日已买标的今日不纳入执行名单"
+    hotspot = "T+1 持仓约束：昨日已买标的今日不纳入纸面复核名单"
     blockers = tuple(
         f"{display}: T+1 持仓约束，昨日已买，今日仅保留观察"
         for display in removed_displays
@@ -1157,7 +1157,7 @@ def _build_execution_summary_line(
     blockers = tuple(getattr(portfolio_summary, "execution_blockers", ()) or ())
     if watchlist:
         names = "、".join(watchlist[:2])
-        return f"👀 **今日无可执行标的**，转入观察池：{names}"
+        return f"👀 **今日无纸面复核对象**，转入观察池：{names}"
     if tradable:
         top = tradable[0]
         return (
@@ -1165,8 +1165,8 @@ def _build_execution_summary_line(
             "等待 PM 阻塞解除"
         )
     if blockers:
-        return "👀 **今日无可执行标的**，受执行约束影响，暂仅观察。"
-    return "👀 **今日无可执行标的**，仅观察。等待更强信号。"
+        return "👀 **今日无纸面复核对象**，受纸面约束影响，暂仅观察。"
+    return "👀 **今日无纸面复核对象**，仅观察。等待更强信号。"
 
 
 def _candidate_blocker_map(portfolio_summary: Any | None) -> dict[str, str]:
@@ -1205,13 +1205,13 @@ def _candidate_review_map(portfolio_summary: Any | None) -> dict[str, dict[str, 
 def _default_candidate_review(status: str) -> dict[str, str]:
     if status == "新晋":
         return {
-            "next_step": "等待量价继续走强后，再评估是否转入执行名单",
+            "next_step": "等待量价继续走强后，再评估是否转入纸面复核名单",
             "review_window": "盘中走强后",
             "priority": "high",
         }
     if status == "延续上升":
         return {
-            "next_step": "优先复核趋势延续与承接强度，再决定是否提升执行顺位",
+            "next_step": "优先复核趋势延续与承接强度，再决定是否提升纸面复核优先级",
             "review_window": "午前确认后",
             "priority": "medium",
         }
@@ -1243,7 +1243,9 @@ def _annotate_candidate_status(
     for pick in picks:
         status = status_map.get(pick.symbol, "")
         review = review_map.get(pick.symbol, {})
-        blocker_reason = str(review.get("blocker", "") or blocker_map.get(pick.symbol, ""))
+        blocker_reason = str(
+            review.get("blocker", "") or blocker_map.get(pick.symbol, "")
+        )
         if not status and blocker_reason:
             status = "观察阻塞"
         if not review and status:
@@ -1966,7 +1968,7 @@ def _notification_gate_actions(
             "重跑双门回测以刷新 gate：`.venv/bin/python3 -m aqsp walkforward --source sqlite_db --end 2024-12-31`。"
         )
     if "DSR 未过门" in joined or "PBO 未过门" in joined:
-        actions.append("在双门过线前保留观察模式，不要开启自动通知或放大仓位。")
+        actions.append("在双门过线前保留观察模式，不要开启自动通知或放大纸面仓位。")
     if "held-out" in joined:
         actions.append(
             "回测窗口退回到 2024-12-31 及以前，避免 held-out 成绩污染通知门禁。"
@@ -2646,7 +2648,7 @@ def run_scheduled(args: argparse.Namespace) -> int:
         "",
     ]
     if status.triggered:
-        summary_lines.append(f"🛡️ **组合保护已触发**: {status.reason}，暂停新开仓")
+        summary_lines.append(f"🛡️ **组合保护已触发**: {status.reason}，暂停新增纸面复核")
     else:
         summary_lines.append(_build_execution_summary_line(tradable, portfolio_summary))
         if has_allocations and len(tradable) > 1:

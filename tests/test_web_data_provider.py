@@ -182,13 +182,11 @@ def test_dashboard_data_provider_reads_real_runtime_files(tmp_path: Path) -> Non
         for line in paper_summary.action_summary_lines
     )
     assert any(
-        "纸面入场待核对 1 笔" in line
-        for line in paper_summary.action_summary_lines
+        "纸面入场待核对 1 笔" in line for line in paper_summary.action_summary_lines
     )
     assert not any("next open" in line for line in paper_summary.action_summary_lines)
     assert any(
-        "下一交易日开盘价" in line
-        for line in paper_summary.action_summary_lines
+        "下一交易日开盘价" in line for line in paper_summary.action_summary_lines
     )
     assert any("阻塞队列 1 笔" in line for line in paper_summary.action_summary_lines)
 
@@ -211,9 +209,9 @@ def test_dashboard_data_provider_reads_real_runtime_files(tmp_path: Path) -> Non
     assert open_focus.execution_status == "尚未进入执行"
     assert open_focus.holding_status == "纸面持有未绑定本日"
     assert any(
-            "研究已产出，但尚未进入纸面入场或阻塞队列。" in line
-            for line in open_focus.readiness_lines
-        )
+        "研究已产出，但尚未进入纸面入场或阻塞队列。" in line
+        for line in open_focus.readiness_lines
+    )
     assert any("未绑定 2026-06-05 信号日" in line for line in open_focus.holding_lines)
 
     pending_focus = provider.execution_focus(
@@ -723,7 +721,7 @@ def test_dashboard_data_provider_builds_task_views_and_dedupes_latest_rows(
             "portfolio_action": "downgrade",
             "candidate_status": "观察阻塞",
             "candidate_blocker": "板块集中度过高，压低银行暴露",
-            "candidate_next_step": "等待板块暴露回落后，再重新评估执行顺位",
+            "candidate_next_step": "等待板块暴露回落后，再重新评估纸面复核优先级",
             "candidate_review_window": "板块分化时",
             "candidate_review_priority": "medium",
             "run_requested_source": "auto",
@@ -927,7 +925,7 @@ def test_dashboard_data_provider_builds_task_views_and_dedupes_latest_rows(
     assert snapshot_map["morning_breakout"].status_label == "有推荐"
     assert snapshot_map["closing_premium"].status_label == "有推荐"
     assert snapshot_map["briefing"].status_label == "待跟踪"
-    assert "无可执行标的" not in snapshot_map["briefing"].headline
+    assert "无纸面复核对象" not in snapshot_map["briefing"].headline
 
     history_rows = provider.task_history_rows("main_chain", limit=2)
     assert [row.signal_date for row in history_rows] == ["2026-06-05", "2026-06-04"]
@@ -1338,7 +1336,7 @@ def test_dashboard_data_provider_extracts_latest_report_when_main_chain_latest(
         (
             "# AI 量化选股报告(close, 数据日期 2026-06-06)\n\n"
             "## 📌 执行摘要\n\n"
-            "今日无可执行标的，仅观察。\n\n"
+            "今日无纸面复核对象，仅观察。\n\n"
             "## 运行参数\n"
             "- 数据源: auto -> csv\n"
             "- 数据健康: fallback / fallback 到 csv\n"
@@ -1357,7 +1355,7 @@ def test_dashboard_data_provider_extracts_latest_report_when_main_chain_latest(
 
     task_view = provider.build_task_view("main_chain", signal_date="2026-06-06")
 
-    assert task_view.report_summary_lines == ("今日无可执行标的，仅观察。",)
+    assert task_view.report_summary_lines == ("今日无纸面复核对象，仅观察。",)
     assert task_view.runtime_lines == (
         "数据源: auto -> csv",
         "数据健康: fallback / fallback 到 csv",
@@ -1396,7 +1394,7 @@ def test_dashboard_data_provider_sanitizes_archive_summary_action_words(
         (
             "# AI 量化选股报告(close, 数据日期 2026-06-05)\n\n"
             "## 📌 执行摘要\n\n"
-            "- 今日建议: 可执行标的进入执行名单。\n"
+            "- 今日建议: 纸面复核对象进入纸面复核名单。\n"
             "- 配仓建议: 参考买点 1500，止损 1420，止盈 1680。\n\n"
             "## 明日重点\n\n"
             "- 首选观察 600519，若放量则新开仓，禁止下单只是测试词。\n"
@@ -1427,9 +1425,9 @@ def test_dashboard_data_provider_sanitizes_archive_summary_action_words(
         "下单",
     ):
         assert forbidden not in visible_text
-    assert "历史回看" in visible_text
+    assert "研究回看" in visible_text
     assert "纸面复核对象" in visible_text
-    assert "历史复核名单" in visible_text
+    assert "纸面复核名单" in visible_text
     assert "纸面配仓参考" in visible_text
     assert "参考价" in visible_text
     assert "防守位" in visible_text
@@ -1869,7 +1867,7 @@ def test_dashboard_data_provider_ignores_report_when_body_date_mismatches_filena
         encoding="utf-8",
     )
     (reports_dir / "closing_review-2026-06-05.md").write_text(
-        "📊 每日交易复盘\n📅 日期: 2026-06-06\n",
+        "📊 每日纸面验证复盘\n📅 日期: 2026-06-06\n",
         encoding="utf-8",
     )
 
@@ -2214,10 +2212,10 @@ def test_dashboard_data_provider_derives_blocker_from_risks_for_downgraded_candi
         for line in view.unlock_lines
     )
     assert any(
-            "研究已产出，但当前被20日均成交额不足，流动性过滤拦住，暂不进入纸面入场验证链路。"
-            == line
-            for line in focus.readiness_lines
-        )
+        "研究已产出，但当前被20日均成交额不足，流动性过滤拦住，暂不进入纸面入场验证链路。"
+        == line
+        for line in focus.readiness_lines
+    )
 
 
 def test_dashboard_data_provider_candidate_research_context_prefers_matching_task_then_falls_back(

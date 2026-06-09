@@ -31,9 +31,6 @@ def prepend_source_status_banner(
     if requested and actual and requested != actual:
         route = f"{requested} -> {actual}"
     body = markdown.lstrip()
-    if body.startswith("# "):
-        lines = body.splitlines()
-        body = "\n".join(lines[1:]).lstrip()
     banner = "\n".join(
         [
             "## 数据源状态",
@@ -46,7 +43,12 @@ def prepend_source_status_banner(
     )
     if label in {"fallback", "degraded", "cold_start"}:
         banner += "\n- 提示: 数据源已降级，本次结果请降低信任度并优先人工复核。"
-    return f"{banner}\n\n{body}".strip()
+    if body.startswith("# "):
+        lines = body.splitlines()
+        title = lines[0].strip()
+        rest = "\n".join(lines[1:]).lstrip()
+        return f"{title}\n\n{rest}\n\n{banner}".strip()
+    return f"{body}\n\n{banner}".strip()
 
 
 def notify_markdown(markdown: str) -> list[NotifyResult]:

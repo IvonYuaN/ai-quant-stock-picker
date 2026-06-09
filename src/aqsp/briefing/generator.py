@@ -234,7 +234,7 @@ class Briefing:
                     f"{item.symbol} {item.name} {item.weight:.0%}"
                     for item in self.portfolio_summary.allocations[:3]
                 )
-                items.append(f"- 配仓建议: {top_alloc}")
+                items.append(f"- 纸面配仓参考: {top_alloc}")
                 first = self.portfolio_summary.allocations[0]
                 rationale = "；".join(first.rationale[:2])
                 if rationale:
@@ -282,7 +282,7 @@ class Briefing:
         items: list[str] = []
         if actionable:
             names = "、".join(actionable[:3])
-            items.append(f"- 可执行标的: {names}")
+            items.append(f"- 纸面复核对象: {names}")
         elif self.picks:
             names = "、".join(
                 _format_pick_with_status(pick, include_score=True)
@@ -298,7 +298,7 @@ class Briefing:
             )
         if self.portfolio_summary and self.portfolio_summary.allocations:
             top_alloc = self.portfolio_summary.allocations[0]
-            line = f"- 配仓执行: {top_alloc.symbol} {top_alloc.name} {top_alloc.weight:.0%}"
+            line = f"- 纸面配仓参考: {top_alloc.symbol} {top_alloc.name} {top_alloc.weight:.0%}"
             rationale = "；".join(top_alloc.rationale[:2])
             if rationale:
                 line += f" | {rationale}"
@@ -315,10 +315,10 @@ class Briefing:
         if debate_points:
             items.append(f"- 辩论结论: {self._strip_leading_markers(debate_points[0])}")
         if self.portfolio_summary and self.portfolio_summary.allocation_note:
-            items.append(f"- 执行约束: {self.portfolio_summary.allocation_note}")
+            items.append(f"- 纸面约束: {self.portfolio_summary.allocation_note}")
         if self.portfolio_summary and self.portfolio_summary.execution_blockers:
             items.append(
-                "- 执行阻塞: "
+                "- 纸面阻塞: "
                 + "；".join(self.portfolio_summary.execution_blockers[:2])
             )
         if self.picks:
@@ -377,7 +377,7 @@ class Briefing:
         if regime and "组合保护中" in regime:
             reason_match = re.search(r"组合保护中\*\*[:：]?\s*(.+)", regime)
             reason = reason_match.group(1).strip() if reason_match else "组合保护生效中"
-            points.append(f"⚠️ 组合保护已触发: {reason}，建议暂停新开仓")
+            points.append(f"⚠️ 组合保护已触发: {reason}，暂停新增纸面复核")
         evidence = self._get_section("候选证据链")
         if evidence:
             risk_matches = re.findall(
@@ -454,9 +454,9 @@ class Briefing:
         if candidate_count > 0:
             parts.append(f"筛出{candidate_count}只候选")
         if actionable_count > 0:
-            parts.append(f"{actionable_count}只可执行")
+            parts.append(f"{actionable_count}只纸面复核")
         elif candidate_count > 0:
-            parts.append("有候选观察池，当前暂无可执行标的")
+            parts.append("有候选观察池，当前暂无纸面复核对象")
         if risk_count > 0:
             parts.append(f"{risk_count}条风险提示")
         if not parts:
@@ -542,7 +542,9 @@ class BriefingGenerator:
         if signal_date:
             lines.append(f"- 信号日期: {signal_date}")
         if portfolio_summary.top_focus:
-            lines.append("- 可执行主链: " + "、".join(portfolio_summary.top_focus[:3]))
+            lines.append(
+                "- 纸面复核主链: " + "、".join(portfolio_summary.top_focus[:3])
+            )
         if portfolio_summary.watchlist:
             lines.append("- 候选观察池: " + "、".join(portfolio_summary.watchlist[:3]))
         if portfolio_summary.watch_reviews:
@@ -562,7 +564,7 @@ class BriefingGenerator:
                 "- 裁决热点: " + "；".join(portfolio_summary.action_hotspots[:3])
             )
         if portfolio_summary.execution_blockers:
-            lines.append("- 执行阻塞:")
+            lines.append("- 纸面阻塞:")
             for item in portfolio_summary.execution_blockers[:3]:
                 lines.append(f"  - {item}")
         if portfolio_summary.regime_label:
@@ -584,7 +586,7 @@ class BriefingGenerator:
                 )
             )
         if portfolio_summary.allocations:
-            lines.append("- 组合配置建议:")
+            lines.append("- 纸面组合配置参考:")
             for item in portfolio_summary.allocations[:3]:
                 display = format_symbol_name(item.symbol, item.name)
                 rationale = "；".join(item.rationale[:3])
@@ -618,7 +620,7 @@ class BriefingGenerator:
         lead_line += f" | 评分 {lead_pick.score:.1f}"
         lines.append(lead_line)
         if not portfolio_summary.top_focus:
-            lines.append("- 今日动作: 仅观察，不做放大仓位动作。")
+            lines.append("- 今日复核: 仅观察，不放大纸面仓位。")
         return BriefingSection(title="主链总览", content="\n".join(lines))
 
     def _build_portfolio_summary(
@@ -825,8 +827,8 @@ class BriefingGenerator:
                     if part
                 )
                 line = (
-                    f"当前暂无可执行重点标的；候选观察池: {names}。"
-                    "先观察最强票，待阻塞条件解除后再考虑转入执行名单。"
+                    f"当前暂无纸面复核重点标的；候选观察池: {names}。"
+                    "先观察最强票，待阻塞条件解除后再考虑转入纸面复核名单。"
                 )
                 if blocker:
                     line += f" 当前阻塞: {blocker}。"
@@ -836,7 +838,7 @@ class BriefingGenerator:
                     line += f" 复核节奏: {review_meta}。"
                 lines.append(line)
             else:
-                lines.append("无可执行重点标的；今日无候选，继续等待下一轮信号。")
+                lines.append("无纸面复核重点标的；今日无候选，继续等待下一轮信号。")
             return BriefingSection(title="明日重点", content="\n".join(lines))
         for pick in tradable_picks[:5]:
             entry = pick.ideal_buy
@@ -845,7 +847,7 @@ class BriefingGenerator:
             display = _format_pick_with_status(pick)
             lines.append(
                 f"- **{display}**: "
-                f"参考买点 {entry} / 止损 {stop} / 止盈 {tp} / 仓位 {pick.position}"
+                f"纸面参考价 {entry} / 防守位 {stop} / 观察目标 {tp} / 纸面仓位上限 {pick.position}"
             )
         lines.append("")
         lines.append("> 注: 事件型催化尚未纳入主链门控，需人工补充复核。")

@@ -13,7 +13,7 @@ from aqsp.ratings import is_tradable_rating, rating_label
 
 @dataclass(frozen=True)
 class TradeReview:
-    """交易复盘"""
+    """纸面验证复盘"""
 
     symbol: str
     name: str
@@ -100,7 +100,9 @@ class ClosingReviewer:
         predictions = self._load_predictions(today)
         paper_rows = self._load_paper_rows(signal_date=today)
         closed_rows = [row for row in paper_rows if row.get("status") == "closed"]
-        pending_rows = [row for row in paper_rows if row.get("status") == "pending_entry"]
+        pending_rows = [
+            row for row in paper_rows if row.get("status") == "pending_entry"
+        ]
         blocked_rows = [
             row for row in paper_rows if row.get("status") == "not_executable"
         ]
@@ -277,11 +279,11 @@ class ClosingReviewer:
 
         lines = [f"PM主裁决: 上调 {promoted} / 降级 {downgraded} / 维持 {kept}"]
         if tradable:
-            lines.append("可执行主链: " + "、".join(tradable[:3]))
+            lines.append("纸面复核主链: " + "、".join(tradable[:3]))
         if watchlist:
             lines.append("候选观察池: " + "、".join(watchlist[:5]))
         if blockers:
-            lines.append("执行阻塞: " + "；".join(blockers[:2]))
+            lines.append("纸面阻塞: " + "；".join(blockers[:2]))
         for item in review_items[:2]:
             lines.append("观察复核: " + item)
         return tuple(lines)
@@ -423,9 +425,7 @@ class ClosingReviewer:
         strategy_type = self._resolve_strategy_type(merged_row)
         signal_date = str(merged_row.get("signal_date", "") or "")
         entry_price = float(
-            merged_row.get("entry_price")
-            or matched_prediction.get("entry_price")
-            or 0
+            merged_row.get("entry_price") or matched_prediction.get("entry_price") or 0
         )
         exit_price = float(
             merged_row.get("exit_price")
@@ -557,14 +557,14 @@ class ClosingReviewer:
 
         if is_win:
             if return_pct > 5:
-                lessons.append("大赚：策略判断准确，可加大仓位")
+                lessons.append("纸面大赚：策略判断准确，可提高复核优先级")
             else:
-                lessons.append("小赚：符合预期，继续执行")
+                lessons.append("纸面小赚：符合预期，继续跟踪同类样本")
         else:
             if return_pct < -3:
-                lessons.append("大亏：需检查止损是否及时")
+                lessons.append("纸面大亏：需复核防守位规则是否及时")
             else:
-                lessons.append("小亏：正常波动，保持纪律")
+                lessons.append("纸面小亏：正常波动，保持复核纪律")
 
         strategy_type = self._resolve_strategy_type(pred)
         if strategy_type.startswith("早盘打板") and not is_win:
@@ -628,7 +628,7 @@ class ClosingReviewer:
             lessons.append("存在不可成交样本，已按阻塞处理，不计入胜率。")
 
         if pending_count > 0:
-            lessons.append("部分信号仍在等待入场或平仓，后续需继续复核。")
+            lessons.append("部分信号仍在等待纸面入场或纸面结束，后续需继续复核。")
 
         win_count = len([r for r in reviews if r.is_win])
         loss_count = len([r for r in reviews if not r.is_win and r.return_pct != 0])
@@ -638,7 +638,7 @@ class ClosingReviewer:
 
         big_losses = [r for r in reviews if r.return_pct < -3]
         if big_losses:
-            lessons.append("存在大亏交易，需严格执行止损")
+            lessons.append("存在大亏纸面样本，需严格复核防守位规则")
 
         breakout_reviews = [
             r for r in reviews if r.strategy_type.startswith("早盘打板")
@@ -670,16 +670,16 @@ class ClosingReviewer:
             suggestions.append("复核不可成交原因，确认是否属于流动性或涨停限制。")
 
         if reviews and win_rate < 0.5:
-            suggestions.append("胜率偏低，建议减少交易频率，提高选股标准")
+            suggestions.append("胜率偏低，建议减少纸面复核频率，提高选股标准")
 
         recent_reviews = sorted(reviews, key=lambda x: x.signal_date)[-5:]
         recent_losses = len([r for r in recent_reviews if not r.is_win])
         if recent_reviews and recent_losses >= 3:
-            suggestions.append("连续亏损，建议暂停交易，观察市场")
+            suggestions.append("连续亏损，建议暂停新增纸面验证，观察市场")
 
         big_losses = [r for r in reviews if r.return_pct < -5]
         if big_losses:
-            suggestions.append("存在大亏交易，建议降低单笔仓位")
+            suggestions.append("存在大亏纸面样本，建议降低单笔纸面仓位")
 
         return tuple(suggestions)
 
@@ -812,7 +812,7 @@ class ClosingReviewer:
 def format_daily_review(review: DailyReview) -> str:
     """格式化每日复盘为报告"""
     report = []
-    report.append("📊 每日交易复盘")
+    report.append("📊 每日纸面验证复盘")
     report.append("=" * 60)
     report.append(f"📅 日期: {review.date}")
     report.append("")
@@ -827,7 +827,7 @@ def format_daily_review(review: DailyReview) -> str:
     report.append("📈 总体统计")
     report.append("-" * 40)
     report.append(f"  总信号数: {review.total_signals}")
-    report.append(f"  执行交易: {review.executed_signals}")
+    report.append(f"  纸面验证数: {review.executed_signals}")
     report.append(f"  盈利笔数: {review.win_count}")
     report.append(f"  亏损笔数: {review.loss_count}")
     report.append(f"  胜率: {review.win_rate:.1%}")
@@ -842,7 +842,7 @@ def format_daily_review(review: DailyReview) -> str:
         report.append("-" * 40)
         for strategy, stats in review.strategy_breakdown.items():
             report.append(f"  【{strategy}】")
-            report.append(f"    交易次数: {stats['total']}")
+            report.append(f"    纸面样本数: {stats['total']}")
             report.append(f"    胜率: {stats['win_rate']:.1%}")
             report.append(f"    总收益: {stats['total_return']:.2f}%")
         report.append("")
@@ -883,14 +883,14 @@ def format_daily_review(review: DailyReview) -> str:
 def format_weekly_summary(summary: WeeklySummary) -> str:
     """格式化周度总结为报告"""
     report = []
-    report.append("📊 周度交易总结")
+    report.append("📊 周度纸面验证总结")
     report.append("=" * 60)
     report.append(f"📅 周期: {summary.week_start} 至 {summary.week_end}")
     report.append("")
 
     report.append("📈 周度统计")
     report.append("-" * 40)
-    report.append(f"  总交易次数: {summary.total_trades}")
+    report.append(f"  总纸面样本数: {summary.total_trades}")
     report.append(f"  胜率: {summary.win_rate:.1%}")
     report.append(f"  总收益: {summary.total_return:.2f}%")
     report.append(f"  夏普比率: {summary.sharpe_ratio:.2f}")

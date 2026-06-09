@@ -192,7 +192,7 @@ class FactorMonitor:
         report_lines.extend(
             [
                 "",
-                "## 建议操作",
+                "## 复核建议",
                 "",
             ]
         )

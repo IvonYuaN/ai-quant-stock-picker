@@ -365,9 +365,7 @@ def test_auto_evolution_step_reads_output_when_success(
     assert result["confidence"] == 0.82
 
 
-def test_auto_evolution_step_raises_when_cli_fails(
-    monkeypatch, tmp_path: Path
-) -> None:
+def test_auto_evolution_step_raises_when_cli_fails(monkeypatch, tmp_path: Path) -> None:
     daily_pipeline = _load_daily_pipeline_module()
 
     monkeypatch.setattr("aqsp.cli.main", lambda _argv: 1)
@@ -510,7 +508,7 @@ def test_send_pipeline_digest_sends_summary_notification(
                 "portfolio_action": "downgrade",
                 "candidate_status": "观察阻塞",
                 "candidate_blocker": "板块集中度过高，压低新能源暴露",
-                "candidate_next_step": "等待板块暴露回落后，再重新评估执行顺位",
+                "candidate_next_step": "等待板块暴露回落后，再重新评估纸面复核优先级",
                 "candidate_review_window": "板块分化时",
                 "candidate_review_priority": "medium",
             },
@@ -569,17 +567,26 @@ def test_send_pipeline_digest_sends_summary_notification(
     assert "数据源状态" in sent["content"]
     assert "主链候选" in sent["content"]
     assert "PM主裁决: 上调 1 / 降级 1 / 维持 0" in sent["content"]
-    assert "执行阻塞:" in sent["content"]
+    assert "纸面阻塞:" in sent["content"]
     assert "首要复核: 300750 宁德时代 | 中优先级 / 板块分化时" in sent["content"]
-    assert "600519 贵州茅台 | 重点关注 | 延续上升 | PM 上调优先级 | 评分 71.0" in sent["content"]
-    assert "300750 宁德时代 | 候选观察池 | 观察阻塞 | PM 降级观察 | 评分 64.0" in sent["content"]
+    assert (
+        "600519 贵州茅台 | 重点关注 | 延续上升 | PM 上调优先级 | 评分 71.0"
+        in sent["content"]
+    )
+    assert (
+        "300750 宁德时代 | 候选观察池 | 观察阻塞 | PM 降级观察 | 评分 64.0"
+        in sent["content"]
+    )
     assert "当前阻塞: 板块集中度过高，压低新能源暴露" in sent["content"]
-    assert "下一步: 等待板块暴露回落后，再重新评估执行顺位" in sent["content"]
+    assert "下一步: 等待板块暴露回落后，再重新评估纸面复核优先级" in sent["content"]
     assert "复核: 中优先级 / 板块分化时" in sent["content"]
     assert "观察复核:" in sent["content"]
     assert "风险与分歧" in sent["content"]
-    assert "明日动作" in sent["content"]
-    assert "观察复核: 先盯 300750 宁德时代，等待板块暴露回落后，再重新评估执行顺位（中优先级 / 板块分化时）。" in sent["content"]
+    assert "明日复核" in sent["content"]
+    assert (
+        "观察复核: 先盯 300750 宁德时代，等待板块暴露回落后，再重新评估纸面复核优先级（中优先级 / 板块分化时）。"
+        in sent["content"]
+    )
     assert "运行侧写" not in sent["content"]
     assert "# 收盘总览" not in sent["content"]
 

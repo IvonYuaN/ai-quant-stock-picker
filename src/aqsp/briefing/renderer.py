@@ -98,7 +98,7 @@ class MarkdownRenderer:
             lines.append(f"- 信号日期: {signal_date}")
 
         if ps.top_focus:
-            lines.append("- 可执行主链: " + "、".join(ps.top_focus[:3]))
+            lines.append("- 纸面复核主链: " + "、".join(ps.top_focus[:3]))
 
         if ps.watchlist:
             lines.append("- 候选观察池: " + "、".join(ps.watchlist[:3]))
@@ -125,7 +125,7 @@ class MarkdownRenderer:
         lines.append(lead_line)
 
         if not ps.top_focus:
-            lines.append("- 今日动作: 仅观察，不做放大仓位动作。")
+            lines.append("- 今日复核: 仅观察，不放大纸面仓位。")
 
         lines.append("")
         return lines
@@ -296,8 +296,8 @@ class MarkdownRenderer:
                     _candidate_review_window_label(lead),
                 )
                 line = (
-                    f"当前暂无可执行重点标的；候选观察池: {names}。"
-                    "先观察最强票，待阻塞条件解除后再考虑转入执行名单。"
+                    f"当前暂无纸面复核重点标的；候选观察池: {names}。"
+                    "先观察最强票，待阻塞条件解除后再考虑转入纸面复核名单。"
                 )
                 if blocker:
                     line += f" 当前阻塞: {blocker}。"
@@ -307,7 +307,7 @@ class MarkdownRenderer:
                     line += f" 复核节奏: {review_meta}。"
                 lines.append(line)
             else:
-                lines.append("无可执行重点标的；今日无候选，继续等待下一轮信号。")
+                lines.append("无纸面复核重点标的；今日无候选，继续等待下一轮信号。")
 
             lines.append("")
             return lines
@@ -316,7 +316,7 @@ class MarkdownRenderer:
             display = _format_pick_with_status(pick)
             lines.append(
                 f"- **{display}**: "
-                f"参考买点 {pick.ideal_buy} / 止损 {pick.stop_loss} / 止盈 {pick.take_profit} / 仓位 {pick.position}"
+                f"纸面参考价 {pick.ideal_buy} / 防守位 {pick.stop_loss} / 观察目标 {pick.take_profit} / 纸面仓位上限 {pick.position}"
             )
 
         lines.append("")
@@ -403,7 +403,7 @@ class MarkdownRenderer:
             names = "、".join(
                 format_symbol_name(p.symbol, p.name) for p in tradable[:3]
             )
-            items.append(f"- 可执行标的: {names}")
+            items.append(f"- 纸面复核对象: {names}")
         elif data.picks:
             top = data.top_picks
             names = "、".join(
@@ -470,9 +470,9 @@ class MarkdownRenderer:
             parts.append(f"筛出{data.candidate_count}只候选")
 
         if data.actionable_count > 0:
-            parts.append(f"{data.actionable_count}只可执行")
+            parts.append(f"{data.actionable_count}只纸面复核")
         elif data.candidate_count > 0:
-            parts.append("有候选观察池，当前暂无可执行标的")
+            parts.append("有候选观察池，当前暂无纸面复核对象")
 
         risk_count = len(data.risk_points)
         if risk_count > 0:

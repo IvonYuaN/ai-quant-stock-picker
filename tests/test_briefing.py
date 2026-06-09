@@ -155,7 +155,7 @@ class TestBriefingGenerator:
                         symbol="688981",
                         name="中芯国际",
                         blocker="板块集中度过高",
-                        next_step="等待量价继续走强后，再评估是否转入执行名单",
+                        next_step="等待量价继续走强后，再评估是否转入纸面复核名单",
                         review_window="盘中走强后",
                         priority="high",
                     ),
@@ -163,7 +163,7 @@ class TestBriefingGenerator:
                         symbol="000001",
                         name="平安银行",
                         blocker="高相关未解除",
-                        next_step="等待高相关标的分化后，再重新评估执行顺位",
+                        next_step="等待高相关标的分化后，再重新评估纸面复核优先级",
                         review_window="分化确认后",
                         priority="medium",
                     ),
@@ -173,7 +173,7 @@ class TestBriefingGenerator:
         main_chain_sec = next(s for s in briefing.sections if s.title == "主链总览")
         assert "- 观察复核:" in main_chain_sec.content
         assert (
-            "  - 688981 中芯国际 | 高优先级 / 盘中走强后 | 等待量价继续走强后，再评估是否转入执行名单"
+            "  - 688981 中芯国际 | 高优先级 / 盘中走强后 | 等待量价继续走强后，再评估是否转入纸面复核名单"
             in main_chain_sec.content
         )
 
@@ -312,9 +312,9 @@ class TestBriefingGenerator:
             frames={},
         )
         next_sec = next(s for s in briefing.sections if s.title == "明日重点")
-        assert "当前暂无可执行重点标的" in next_sec.content
+        assert "当前暂无纸面复核重点标的" in next_sec.content
         assert "候选观察池" in next_sec.content
-        assert "待阻塞条件解除后再考虑转入执行名单" in next_sec.content
+        assert "待阻塞条件解除后再考虑转入纸面复核名单" in next_sec.content
         assert "600519" in next_sec.content
         assert "avoid" not in next_sec.content
 
@@ -325,9 +325,9 @@ class TestBriefingGenerator:
             frames={},
         )
         next_sec = next(s for s in briefing.sections if s.title == "明日重点")
-        assert "当前暂无可执行重点标的" in next_sec.content
+        assert "当前暂无纸面复核重点标的" in next_sec.content
         assert "候选观察池" in next_sec.content
-        assert "待阻塞条件解除后再考虑转入执行名单" in next_sec.content
+        assert "待阻塞条件解除后再考虑转入纸面复核名单" in next_sec.content
         assert "600519" in next_sec.content
 
     def test_next_day_section_includes_candidate_status_for_watch_pick(self):
@@ -540,7 +540,7 @@ class TestSendBriefing:
             },
         )
         body = mock_notifier.call_args[0][0]
-        assert body.startswith("## 数据源状态")
+        assert body.index("## 主链摘要") < body.index("## 数据源状态")
         assert "## 主链摘要" in body
         assert "auto -> eastmoney" in body
         assert "降低信任度" in body
@@ -579,7 +579,7 @@ class TestGenerateSmartSummary:
         picks = [_make_pick(symbol="600519", name="贵州茅台", rating="buy_candidate")]
         briefing = gen.generate(picks=picks, frames={})
         summary = briefing.generate_smart_summary()
-        assert "可执行标的" in summary
+        assert "纸面复核对象" in summary
         assert "600519" in summary
 
     def test_no_actionable_picks_excluded(self):
@@ -587,7 +587,7 @@ class TestGenerateSmartSummary:
         picks = [_make_pick(symbol="600519", name="贵州茅台", rating="avoid")]
         briefing = gen.generate(picks=picks, frames={})
         summary = briefing.generate_smart_summary()
-        assert "有候选观察池，当前暂无可执行标的" in summary
+        assert "有候选观察池，当前暂无纸面复核对象" in summary
         assert "候选观察池" in summary
 
     def test_next_day_section_mentions_watchlist_when_no_tradable_pick(self):
@@ -645,7 +645,7 @@ class TestGenerateSmartSummary:
                     rating="watch",
                     metrics={
                         "candidate_status": "新晋",
-                        "candidate_next_step": "等待量价继续走强后，再评估是否转入执行名单",
+                        "candidate_next_step": "等待量价继续走强后，再评估是否转入纸面复核名单",
                         "candidate_review_window": "盘中走强后",
                         "candidate_review_priority": "high",
                     },
@@ -657,7 +657,7 @@ class TestGenerateSmartSummary:
         summary = briefing.generate_smart_summary()
 
         assert (
-            "- 解锁关注: 600519 贵州茅台 | 等待量价继续走强后，再评估是否转入执行名单"
+            "- 解锁关注: 600519 贵州茅台 | 等待量价继续走强后，再评估是否转入纸面复核名单"
             in summary
         )
         assert "- 复核节奏: 600519 贵州茅台 | 高优先级 / 盘中走强后" in summary
@@ -719,7 +719,7 @@ class TestGenerateSmartSummary:
                     metrics={
                         "candidate_status": "观察阻塞",
                         "candidate_blocker": "板块集中度过高，压低新能源暴露",
-                        "candidate_next_step": "等待板块暴露回落后，再重新评估执行顺位",
+                        "candidate_next_step": "等待板块暴露回落后，再重新评估纸面复核优先级",
                         "candidate_review_window": "板块分化时",
                         "candidate_review_priority": "medium",
                     },
@@ -730,7 +730,7 @@ class TestGenerateSmartSummary:
         evidence_sec = next(s for s in briefing.sections if s.title == "候选证据链")
         assert "- 当前阻塞: 板块集中度过高，压低新能源暴露" in evidence_sec.content
         assert (
-            "- 下一步关注: 等待板块暴露回落后，再重新评估执行顺位"
+            "- 下一步关注: 等待板块暴露回落后，再重新评估纸面复核优先级"
             in evidence_sec.content
         )
         assert "- 复核优先级/时机: 中优先级 / 板块分化时" in evidence_sec.content
@@ -767,7 +767,7 @@ class TestGenerateSmartSummary:
         assert "- 候选观察池: 300750 宁德时代" in summary
         assert "- 裁决热点: 板块集中度过高，压低新能源暴露" in summary
         assert "- 现金留存: 20%" in summary
-        assert "- 执行阻塞: 300750 宁德时代: 板块集中度过高，压低新能源暴露" in summary
+        assert "- 纸面阻塞: 300750 宁德时代: 板块集中度过高，压低新能源暴露" in summary
 
     def test_main_chain_section_renders_allocation_guidance(self):
         gen = BriefingGenerator()
@@ -779,7 +779,7 @@ class TestGenerateSmartSummary:
         )
         briefing = gen.generate(picks=[pick], frames={})
         main_chain_sec = next(s for s in briefing.sections if s.title == "主链总览")
-        assert "组合配置建议" in main_chain_sec.content
+        assert "纸面组合配置参考" in main_chain_sec.content
         assert "300750 宁德时代: 20%" in main_chain_sec.content
         assert "强信号优先分配" in main_chain_sec.content
         assert "现金留存" in main_chain_sec.content
@@ -798,9 +798,10 @@ class TestGenerateSmartSummary:
 
         assert "- 首仓理由: 300750 宁德时代 | 主链评分 72.0；强信号优先分配" in summary
         assert (
-            "- 配仓执行: 300750 宁德时代 20% | 主链评分 72.0；强信号优先分配" in summary
+            "- 纸面配仓参考: 300750 宁德时代 20% | 主链评分 72.0；强信号优先分配"
+            in summary
         )
-        assert "- 执行约束: 单票上限 20%" in summary
+        assert "- 纸面约束: 单票上限 20%" in summary
 
     def test_main_chain_section_renders_strategy_mix_guidance(self):
         gen = BriefingGenerator()

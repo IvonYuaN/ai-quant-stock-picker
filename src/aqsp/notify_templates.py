@@ -19,6 +19,7 @@ from aqsp.presentation import (
     format_symbol_name,
     format_watch_review_action,
     format_watch_review_line,
+    normalize_research_tone,
     review_priority_label,
 )
 from aqsp.strategies.closing_premium import PremiumSignal, format_closing_signals
@@ -74,7 +75,7 @@ def build_briefing_notification(
         body_parts.append("## 研究雷达\n\n" + research)
     next_day = sections.get("明日重点", "")
     if next_day:
-        body_parts.append("## 明日动作\n\n" + next_day)
+        body_parts.append("## 明日复核\n\n" + next_day)
     body = (
         "\n\n".join(part for part in body_parts if part).strip()
         or briefing.to_markdown()
@@ -173,7 +174,7 @@ def build_daily_run_notification(
         lines.append(f"- 现金留存: {portfolio_summary.cash_reserve:.0%}")
     if portfolio_summary is not None and portfolio_summary.execution_blockers:
         lines.append(
-            "- 执行阻塞: " + "；".join(portfolio_summary.execution_blockers[:2])
+            "- 纸面阻塞: " + "；".join(portfolio_summary.execution_blockers[:2])
         )
     if snapshot_diff is not None and snapshot_diff.has_changes:
         lines.append(f"- 候选变化: {summarize_snapshot_diff(snapshot_diff)}")
@@ -224,7 +225,7 @@ def build_daily_run_notification(
     lines.extend(
         [
             "",
-            "## 行动建议",
+            "## ✅ 复核清单",
             "",
             _daily_watch_action_line(candidates, portfolio_summary)
             or _daily_action_line_one(tradable, portfolio_summary),
@@ -233,7 +234,7 @@ def build_daily_run_notification(
     if circuit_breaker_reason:
         lines.append("2. 熔断保护中，暂停新增纸面复核，只保留复盘和观察。")
     elif is_cold_start:
-        lines.append("2. 冷启动未完成，结果仅供跟踪，不要放大仓位。")
+        lines.append("2. 冷启动未完成，结果仅供跟踪，不要放大纸面仓位。")
     elif portfolio_summary is not None and portfolio_summary.allocation_note:
         lines.append(f"2. {portfolio_summary.allocation_note}。")
     if debate_results:
@@ -317,7 +318,7 @@ def _daily_reading_order_lines(
             f"{format_symbol_name(lead.symbol, lead.name)}，等待确认条件。"
         )
     else:
-        lines.append("1. ⏸️ 先看空档：今日无清晰候选，不为了凑单行动。")
+        lines.append("1. ⏸️ 先看空档：今日无清晰候选，不为了凑数量推进。")
 
     blocker_line = _daily_primary_blocker_line(
         candidates=candidates,
@@ -636,7 +637,7 @@ def build_monitor_notification(
         return "\n".join(lines)
 
     if critical or warnings:
-        lines.extend(["", "## 行动建议", ""])
+        lines.extend(["", "## 处理清单", ""])
         lines.extend(_monitor_actions(critical, warnings))
         lines.extend(["", "## 告警回放", ""])
         lines.extend(_format_monitor_results((critical + warnings)[:5]))
@@ -659,7 +660,7 @@ def build_morning_breakout_notification(
                 "## 核心结论",
                 "",
                 "- 总体状态: 今日未发现符合条件的早盘打板标的",
-                "- 行动建议: 保持观望，等待更强的量价共振信号",
+                "- 复核清单: 保持观望，等待更强的量价共振信号",
             ]
         )
 
@@ -696,7 +697,7 @@ def build_closing_premium_notification(
                 "## 核心结论",
                 "",
                 "- 总体状态: 今日未发现符合条件的尾盘溢价标的",
-                "- 行动建议: 继续观察尾盘量价异动，避免勉强纳入纸面复核",
+                "- 复核清单: 继续观察尾盘量价异动，避免勉强纳入纸面复核",
             ]
         )
 
@@ -707,7 +708,7 @@ def build_closing_premium_notification(
         "",
         f"- 候选数量: {len(signals)}",
         f"- 纸面观察候选: {_format_premium_signal(signals[0])}",
-        "- 行动建议: 优先跟踪量价突破型标的，次日开盘只做强势延续",
+        "- 复核清单: 优先跟踪量价突破型标的，次日开盘只做纸面延续确认",
         "",
         "## Top 候选",
         "",
@@ -739,7 +740,7 @@ def build_closing_review_notification(
         "",
         f"- 日期: {review.date}",
         f"- 胜率/收益: {review.win_rate:.1%} / {review.total_return:.2f}%",
-        f"- 执行情况: {review.executed_signals}/{review.total_signals}",
+        f"- 纸面验证进度: {review.executed_signals}/{review.total_signals}",
     ]
     if review.main_chain_summary:
         lines.append(f"- 主链裁决: {review.main_chain_summary[0]}")
@@ -748,7 +749,7 @@ def build_closing_review_notification(
     if review.key_lessons:
         lines.append(f"- 关键复盘: {review.key_lessons[0]}")
     if review.improvement_suggestions:
-        lines.extend(["", "## 明日动作", "", f"1. {review.improvement_suggestions[0]}"])
+        lines.extend(["", "## 明日复核", "", f"1. {review.improvement_suggestions[0]}"])
         review_action = next(
             (
                 item.split(": ", 1)[1]
@@ -761,14 +762,14 @@ def build_closing_review_notification(
             (
                 item.split(": ", 1)[1]
                 for item in review.main_chain_summary
-                if item.startswith("执行阻塞: ")
+                if item.startswith(("纸面阻塞: ", "执行阻塞: "))
             ),
             "",
         )
         if review_action:
             lines.append(f"2. 优先复核 {review_action}。")
         elif blocker_action:
-            lines.append(f"2. 先处理 {blocker_action}。")
+            lines.append(f"2. 先核对 {blocker_action}。")
     if review.strategy_breakdown:
         lines.extend(["", "## 策略表现", ""])
         for strategy, stats in list(review.strategy_breakdown.items())[:3]:
@@ -800,7 +801,7 @@ def _build_weekly_review_notification(
             f"- 最佳策略: {summary.best_strategy}",
             f"- 最差策略: {summary.worst_strategy}",
             "",
-            "## 下周动作",
+            "## 下周复核",
             "",
             f"1. {summary.next_week_outlook}",
         ]
@@ -859,7 +860,7 @@ def _format_allocation_execution(
     if portfolio_summary.cash_reserve > 0:
         lines.append(f"- 现金留存 {portfolio_summary.cash_reserve:.0%}")
     if portfolio_summary.allocation_note:
-        lines.append(f"- 执行约束: {portfolio_summary.allocation_note}")
+        lines.append(f"- 纸面约束: {portfolio_summary.allocation_note}")
     if portfolio_summary.execution_blockers:
         lines.append(
             "- 当前阻塞: " + "；".join(portfolio_summary.execution_blockers[:2])
@@ -886,7 +887,7 @@ def _daily_action_line_one(
         )
     if tradable:
         return "1. 优先核对纸面重点的开盘强弱与流动性，再决定是否继续跟踪。"
-    return "1. 本次以观察为主，不建议为了凑单强行开仓。"
+    return "1. 本次以观察为主，不为了凑数量新建纸面观察。"
 
 
 def _candidate_blocker(pick: PickResult) -> str:
@@ -894,7 +895,9 @@ def _candidate_blocker(pick: PickResult) -> str:
 
 
 def _candidate_next_step(pick: PickResult) -> str:
-    return str(pick.metrics.get("candidate_next_step", "") or "")
+    return normalize_research_tone(
+        str(pick.metrics.get("candidate_next_step", "") or "")
+    )
 
 
 def _candidate_review_window(pick: PickResult) -> str:
@@ -969,7 +972,7 @@ def _monitor_actions(
     if warnings:
         return [
             f"1. 优先复核 `{warnings[0].name}` 的输入源或配置。",
-            "2. 本次结果可观察，但不要直接放大仓位。",
+            "2. 本次结果可观察，但不要直接放大纸面仓位。",
         ]
     return ["1. 当前无需动作。"]
 

@@ -16,6 +16,7 @@ from aqsp.research.summary import (
     research_findings_metric,
 )
 from aqsp.web.archive_safety import sanitize_archive_text
+from aqsp.web.archive_safety import sanitize_research_text
 from aqsp.web.data_provider import (
     DashboardCandidateCard,
     DashboardCandidateJourneyStep,
@@ -2850,7 +2851,7 @@ _DAY_REPLAY_SAFE_KEYWORDS = (
 
 
 def _sanitize_day_replay_line(line: str) -> str:
-    clean = sanitize_archive_text(re.sub(r"\*\*(.*?)\*\*", r"\1", line).strip())
+    clean = sanitize_research_text(re.sub(r"\*\*(.*?)\*\*", r"\1", line).strip())
     clean = re.sub(
         r"\bBUY\b\s*[\d,.]*(?:\s*@\s*[\d,.]+)?",
         "纸面入场记录已回写",
@@ -2864,6 +2865,7 @@ def _sanitize_day_replay_line(line: str) -> str:
         flags=re.IGNORECASE,
     )
     replacements = (
+        ("纸面复核优先级", "复核顺位"),
         ("执行顺位", "复核顺位"),
         ("执行顺序", "复核顺序"),
         ("执行名单", "复核名单"),
@@ -7557,22 +7559,22 @@ def main() -> None:
             paper_summary=paper_summary,
             same_day_rows=same_day_rows,
         )
-        _render_home_evidence_entry(
+        _render_home_reading_order(
             task_view=task_view,
             overview=date_overview,
             paper_summary=paper_summary,
-            research_summary=research_summary,
+            spotlights=same_day_spotlights,
+            debates=same_day_debates,
         )
         with st.expander("展开推进细节", expanded=False):
             _render_command_center(task_view, date_overview, task_view.summary_lines)
-            _render_home_reading_order(
+        with st.expander("证据卡片", expanded=False):
+            _render_home_evidence_entry(
                 task_view=task_view,
                 overview=date_overview,
                 paper_summary=paper_summary,
-                spotlights=same_day_spotlights,
-                debates=same_day_debates,
+                research_summary=research_summary,
             )
-        with st.expander("证据卡片", expanded=False):
             _render_home_brief(
                 task_view=task_view,
                 overview=date_overview,

@@ -225,7 +225,7 @@ def test_dashboard_renders_candidates_and_ledger_stats_when_inputs_exist(
     assert paper_stats.closed == 1
     assert paper_stats.pending_entry == 1
     assert "测试面板" in html
-    assert "非交易指令 / 不下单 / 只做纸面观察与复核" in html
+    assert "仅供研究复核 / 不连接券商 / 不触发真实委托" in html
     assert "600519" in html
     assert "贵州茅台" in html
     assert "阈值版本 1.0.0" in html
@@ -243,7 +243,7 @@ def test_dashboard_renders_candidates_and_ledger_stats_when_inputs_exist(
     assert "fallback 到 eastmoney" in html
     assert "fallback 数据源生成" in html
     assert "主链状态总览" in html
-    assert "主链动作" in html
+    assert "主链复核" in html
     assert "候选分层" in html
     assert "/ 观察候选" in html
     assert "参考价" in html
@@ -610,7 +610,7 @@ def test_dashboard_surfaces_watch_candidate_lifecycle_details() -> None:
             "risks": "缺少量能确认",
             "candidate_status": "观察阻塞",
             "candidate_blocker": "板块集中度过高，压低银行暴露",
-            "candidate_next_step": "等待板块暴露回落后，再重新评估执行顺位",
+            "candidate_next_step": "等待板块暴露回落后，再重新评估纸面复核优先级",
             "candidate_review_window": "板块分化时",
             "candidate_review_priority": "medium",
         },
@@ -620,9 +620,9 @@ def test_dashboard_surfaces_watch_candidate_lifecycle_details() -> None:
 
     assert "主链状态总览" in html
     assert "观察复核" in html
-    assert "主链动作" in html
+    assert "主链复核" in html
     assert "当前阻塞" in html
-    assert "明日动作" in html
+    assert "明日复核" in html
     assert "/ 候选观察池" in html
     assert "新晋" in html
     assert "下一步: 等待量价继续走强后，再评估是否转入纸面复核名单" in html
@@ -650,7 +650,7 @@ def test_dashboard_warns_when_candidates_are_stale(tmp_path: Path) -> None:
 
     assert latest_candidate_date(candidates) == "2025-05-20"
     assert "不是今天" in html
-    assert "不要按这个页面下单" in html
+    assert "不要把这个页面当作今日复核结论" in html
 
 
 def test_dashboard_handles_missing_inputs() -> None:
@@ -2112,12 +2112,12 @@ def test_dashboard_sanitizes_raw_archive_action_words_without_rewriting_source()
 ):
     raw_markdown = (
         "## 今日建议\n"
-        "- 可执行主链: 复核执行顺序\n"
-        "- 可执行标的: 600519\n"
+        "- 纸面复核主链: 复核执行顺序\n"
+        "- 纸面复核对象: 600519\n"
         "- 首选标的: 000858，首选观察。\n"
         "- 配仓建议: 默认轻仓，仓位建议 10%。\n"
         "- 新开仓: 等待参考买点，止损 1420，止盈 1680\n"
-        "- 执行名单: 禁止下单演示\n"
+        "- 纸面复核名单: 禁止下单演示\n"
         "- 纸面回写: 600519 | BUY 100 @ 1500 / SELL 100 @ 1520\n"
         "- 买入计划后再卖出，开仓和平仓都只可回看\n"
     )
@@ -2126,8 +2126,8 @@ def test_dashboard_sanitizes_raw_archive_action_words_without_rewriting_source()
 
     assert raw_markdown != sanitized
     for forbidden in (
-        "可执行标的",
-        "可执行主链",
+        "纸面复核对象",
+        "纸面复核主链",
         "首选标的",
         "首选观察",
         "配仓建议",
@@ -2137,7 +2137,7 @@ def test_dashboard_sanitizes_raw_archive_action_words_without_rewriting_source()
         "买点",
         "止损",
         "止盈",
-        "执行名单",
+        "纸面复核名单",
         "执行顺序",
         "下单",
         "今日建议",
@@ -2151,8 +2151,8 @@ def test_dashboard_sanitizes_raw_archive_action_words_without_rewriting_source()
     ):
         assert forbidden not in sanitized
     assert "历史回看" in sanitized
-    assert "纸面主链复核" in sanitized
-    assert "纸面复核对象" in sanitized
+    assert "历史主链复核" in sanitized
+    assert "历史复核对象" in sanitized
     assert "纸面重点对象" in sanitized
     assert "重点观察" in sanitized
     assert "纸面配仓参考" in sanitized
@@ -3137,7 +3137,7 @@ def test_dashboard_top_navigation_context_prefers_same_day_phase_summary() -> No
             task_label="主链推荐",
             phase_order=1,
             phase_label="盘前主链",
-            phase_summary="先确认主推候选与执行顺位",
+            phase_summary="先确认主推候选与纸面复核优先级",
             status_label="有推荐",
             headline="000338 潍柴动力 | 先看流动性阻塞",
             candidate_count=3,
@@ -3409,7 +3409,7 @@ def test_dashboard_day_replay_digest_neutralizes_archived_focus_words() -> None:
         task_label = "归档回看"
         selected_date = "2026-06-05"
         latest_date = "2026-06-05"
-        next_day_focus_lines = ("今日建议: 立即买入/下单，按执行顺位新开仓",)
+        next_day_focus_lines = ("今日建议: 立即买入/下单，按纸面复核优先级新开仓",)
         review_lines = ()
         report_markdown = "# archived"
         report_summary_lines = ("历史报告摘要: 主线偏谨慎。",)
@@ -3451,7 +3451,7 @@ def test_dashboard_day_replay_digest_neutralizes_archived_focus_words() -> None:
         "今日建议",
         "立即买入",
         "下单",
-        "执行顺位",
+        "纸面复核优先级",
         "新开仓",
     ):
         assert forbidden not in line
@@ -3481,7 +3481,7 @@ def test_dashboard_day_replay_digest_neutralizes_archive_summary_words() -> None
         blocker_headline="",
         focus_headline="",
         workflow_summary="当日流程: 收盘复盘",
-        archive_summary="今日建议: 立即买入，执行名单等待下单。",
+        archive_summary="今日建议: 立即买入，纸面复核名单等待下单。",
     )
     paper_summary = DashboardPaperSummary(
         signal_date="2026-06-05",
@@ -3502,7 +3502,7 @@ def test_dashboard_day_replay_digest_neutralizes_archive_summary_words() -> None
     )
 
     assert lines[3].startswith("🗂 全日覆盖 | 已归档")
-    for forbidden in ("今日建议", "立即买入", "执行名单", "下单"):
+    for forbidden in ("今日建议", "立即买入", "纸面复核名单", "下单"):
         assert forbidden not in lines[3]
 
 
@@ -3561,7 +3561,7 @@ def test_dashboard_day_replay_digest_neutralizes_review_action_words() -> None:
         selected_date = "2026-06-05"
         latest_date = "2026-06-05"
         next_day_focus_lines = ()
-        review_lines = ("执行顺位: 新开仓/下单/买入 600519",)
+        review_lines = ("纸面复核优先级: 新开仓/下单/买入 600519",)
         report_markdown = ""
         report_summary_lines = ()
         runtime_lines = ()
@@ -3597,7 +3597,7 @@ def test_dashboard_day_replay_digest_neutralizes_review_action_words() -> None:
     )
 
     assert line == "🧭 复核线索: 复核顺位: 纸面新建观察/纸面记录/纸面入场记录 600519"
-    assert "执行顺位" not in line
+    assert "纸面复核优先级" not in line
     assert "新开仓" not in line
     assert "下单" not in line
     assert "买入" not in line
@@ -3817,8 +3817,8 @@ def test_dashboard_research_path_steps_connect_review_paper_and_archive_safely()
 
     class _TaskView:
         report_markdown = "# archived"
-        report_summary_lines = ("今日建议: 立即买入 000338", "今日无可执行标的")
-        next_day_focus_lines = ("执行名单: 000338 等待下单",)
+        report_summary_lines = ("今日建议: 立即买入 000338", "今日无纸面复核对象")
+        next_day_focus_lines = ("纸面复核名单: 000338 等待下单",)
         runtime_lines = ()
 
     card = DashboardCandidateCard(
@@ -4243,7 +4243,7 @@ def test_dashboard_home_evidence_entry_lines_keep_first_screen_compact_and_safe(
         actionable_total = 1
         watch_total = 2
         blocked_total = 1
-        archive_summary = "今日建议: 立即买入，执行名单等待下单。"
+        archive_summary = "今日建议: 立即买入，纸面复核名单等待下单。"
 
     paper_summary = DashboardPaperSummary(
         signal_date="2026-06-05",
@@ -4272,7 +4272,7 @@ def test_dashboard_home_evidence_entry_lines_keep_first_screen_compact_and_safe(
         ),
     )
     rendered_text = "\n".join(line for _, line in lines)
-    for forbidden in ("今日建议", "立即买入", "执行名单", "下单", "真实持仓"):
+    for forbidden in ("今日建议", "立即买入", "纸面复核名单", "下单", "真实持仓"):
         assert forbidden not in rendered_text
 
 

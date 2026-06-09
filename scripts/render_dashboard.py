@@ -305,7 +305,7 @@ def _lifecycle_overview_panel(candidates: list[dict[str, str]]) -> str:
             )
 
     if actionable:
-        headline = "可执行主链"
+        headline = "纸面复核主链"
         headline_detail = "、".join(actionable[:3])
     elif review_items:
         headline = "观察复核"
@@ -317,20 +317,22 @@ def _lifecycle_overview_panel(candidates: list[dict[str, str]]) -> str:
         headline = "暂无主链"
         headline_detail = "等待下一轮有效候选输出"
 
-    action_line = "明日无明确主链动作，先确认数据与候选是否完整。"
+    action_line = "明日无明确主链复核，先确认数据与候选是否完整。"
     if actionable:
         action_line = f"明日先盯 {' → '.join(actionable[:2])} 的开盘强弱与流动性。"
     elif review_items:
         action_line = f"明日先盯 {review_items[0]}。"
     elif watchlist:
-        action_line = f"明日先围绕 {'、'.join(watchlist[:2])} 做观察复核，不放大仓位。"
+        action_line = (
+            f"明日先围绕 {'、'.join(watchlist[:2])} 做观察复核，不放大纸面仓位。"
+        )
 
     summary_cards = [
-        ("主链动作", headline, headline_detail),
+        ("主链复核", headline, headline_detail),
         (
             "候选分层",
-            f"可执行 {len(actionable)} / 观察 {len(watchlist)}",
-            "等待执行与观察候选已按当前主链输出分层。",
+            f"纸面复核 {len(actionable)} / 观察 {len(watchlist)}",
+            "纸面复核与观察候选已按当前主链输出分层。",
         ),
         (
             "当前阻塞",
@@ -338,7 +340,7 @@ def _lifecycle_overview_panel(candidates: list[dict[str, str]]) -> str:
             "；".join(blocked[1:3]) if len(blocked) > 1 else "",
         ),
         (
-            "明日动作",
+            "明日复核",
             action_line,
             review_items[1] if len(review_items) > 1 else "",
         ),
@@ -806,7 +808,7 @@ def _source_warning(stats: LedgerStats) -> tuple[str, str] | None:
     if stats.source_health_label == "fallback":
         return (
             "warning fallback-warning",
-            "本次候选由 fallback 数据源生成，主源未直接命中。下单前请人工复核报价、成交额和板块状态。",
+            "本次候选由 fallback 数据源生成，主源未直接命中。请先人工复核报价、成交额和板块状态。",
         )
     if stats.source_health_label == "degraded":
         return (
@@ -1991,7 +1993,7 @@ def render_dashboard(
             (
                 "warning",
                 f"当前候选数据日期为 {html.escape(candidate_date)}, "
-                f"不是今天 {html.escape(today)}。不要按这个页面下单。",
+                f"不是今天 {html.escape(today)}。不要把这个页面当作今日复核结论。",
             )
         )
     source_warning = _source_warning(stats)
@@ -2717,7 +2719,7 @@ def render_dashboard(
     <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;">
       <div>
         <h1>{safe_title}</h1>
-        <p class="sub">生成时间 {generated_at}。非交易指令 / 不下单 / 只做纸面观察与复核；下单仍由人决策。</p>
+        <p class="sub">生成时间 {generated_at}。仅供研究复核 / 不连接券商 / 不触发真实委托。</p>
         <div class="meta">
           <span class="pill">最新信号日 {latest_date}</span>
           <span class="pill">候选数据日 {display_date}</span>

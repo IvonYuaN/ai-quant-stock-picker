@@ -11,6 +11,7 @@ from aqsp.presentation import (
     format_review_meta,
     format_symbol_name,
     format_watch_review_line,
+    normalize_research_tone,
     review_priority_label,
 )
 from aqsp.ratings import portfolio_action_label, rating_label
@@ -158,9 +159,9 @@ def _format_final_decision_board(
                 + "；".join(str(item) for item in portfolio_summary.action_hotspots)
             )
         if getattr(portfolio_summary, "execution_blockers", ()):
-            lines.append("- 执行阻塞:")
+            lines.append("- 纸面阻塞:")
             for item in tuple(getattr(portfolio_summary, "execution_blockers", ()))[:3]:
-                lines.append(f"  - {item}")
+                lines.append(f"  - {normalize_research_tone(str(item))}")
         if getattr(portfolio_summary, "watch_reviews", ()):
             lines.append("- 观察复核:")
             for item in tuple(getattr(portfolio_summary, "watch_reviews", ()))[:2]:
@@ -170,7 +171,9 @@ def _format_final_decision_board(
                         format_symbol_name(item.symbol, item.name),
                         priority=str(getattr(item, "priority", "") or ""),
                         review_window=str(getattr(item, "review_window", "") or ""),
-                        next_step=str(getattr(item, "next_step", "") or ""),
+                        next_step=normalize_research_tone(
+                            str(getattr(item, "next_step", "") or "")
+                        ),
                     )
                 )
         if getattr(portfolio_summary, "allocations", ()):
@@ -188,7 +191,7 @@ def _format_final_decision_board(
                     format_symbol_name(item.symbol, item.name)
                     for item in lead_allocations
                 )
-                lines.append(f"- 执行顺序: 先看 {order}")
+                lines.append(f"- 复核顺序: 先看 {order}")
         cash_reserve = float(getattr(portfolio_summary, "cash_reserve", 0.0) or 0.0)
         if cash_reserve > 0:
             lines.append(f"- 现金留存: {cash_reserve:.0%}")

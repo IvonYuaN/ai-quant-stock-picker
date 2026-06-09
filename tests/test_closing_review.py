@@ -138,10 +138,10 @@ class TestReviewToday:
         assert "早盘打板·涨停打板" in review.strategy_breakdown
         assert "尾盘溢价·量价突破" in review.strategy_breakdown
         assert any("不可成交样本" in item for item in review.key_lessons)
-        assert any("等待入场或平仓" in item for item in review.key_lessons)
+        assert any("等待纸面入场或纸面结束" in item for item in review.key_lessons)
         assert any("不可成交原因" in item for item in review.improvement_suggestions)
         assert "候选观察池: 600000 测试A" in review.main_chain_summary
-        assert "执行阻塞: 600000 测试A: 板块集中度过高" in review.main_chain_summary
+        assert "纸面阻塞: 600000 测试A: 板块集中度过高" in review.main_chain_summary
 
     def test_review_counts_signals_when_only_pending_or_blocked_rows_exist(
         self, tmp_path
@@ -151,15 +151,35 @@ class TestReviewToday:
         _write_jsonl(
             ledger,
             [
-                {"id": "sig-a", "symbol": "600000", "name": "A", "signal_date": "2025-06-01"},
-                {"id": "sig-b", "symbol": "600001", "name": "B", "signal_date": "2025-06-01"},
+                {
+                    "id": "sig-a",
+                    "symbol": "600000",
+                    "name": "A",
+                    "signal_date": "2025-06-01",
+                },
+                {
+                    "id": "sig-b",
+                    "symbol": "600001",
+                    "name": "B",
+                    "signal_date": "2025-06-01",
+                },
             ],
         )
         _write_jsonl(
             paper,
             [
-                {"signal_id": "sig-a", "symbol": "600000", "signal_date": "2025-06-01", "status": "pending_entry"},
-                {"signal_id": "sig-b", "symbol": "600001", "signal_date": "2025-06-01", "status": "not_executable"},
+                {
+                    "signal_id": "sig-a",
+                    "symbol": "600000",
+                    "signal_date": "2025-06-01",
+                    "status": "pending_entry",
+                },
+                {
+                    "signal_id": "sig-b",
+                    "symbol": "600001",
+                    "signal_date": "2025-06-01",
+                    "status": "not_executable",
+                },
             ],
         )
 
@@ -318,19 +338,23 @@ class TestFormatReviewOutput:
             market_environment="震荡市",
             main_chain_summary=("PM主裁决: 上调 1 / 降级 0 / 维持 1",),
             key_lessons=("存在不可成交样本，已按阻塞处理，不计入胜率。",),
-            improvement_suggestions=("复核不可成交原因，确认是否属于流动性或涨停限制。",),
+            improvement_suggestions=(
+                "复核不可成交原因，确认是否属于流动性或涨停限制。",
+            ),
         )
 
         result = format_daily_review(review)
 
-        assert "每日交易复盘" in result
+        assert "每日纸面验证复盘" in result
         assert "主链总览" in result
         assert "总体统计" in result
         assert "策略分类统计" in result
         assert "关键经验教训" in result
         assert "改进建议" in result
 
-    def test_format_daily_review_uses_observation_tone_when_no_closed_trades(self) -> None:
+    def test_format_daily_review_uses_observation_tone_when_no_closed_trades(
+        self,
+    ) -> None:
         review = DailyReview(
             date="2025-06-01",
             total_signals=3,
@@ -371,6 +395,6 @@ class TestFormatReviewOutput:
         result = format_weekly_summary(summary)
 
         assert isinstance(result, str)
-        assert "周度交易总结" in result
+        assert "周度纸面验证总结" in result
         assert "早盘打板" in result
         assert "尾盘溢价" in result

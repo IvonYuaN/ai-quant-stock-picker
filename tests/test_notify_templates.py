@@ -203,7 +203,7 @@ def test_build_daily_run_notification_surfaces_watchlist_blockers_when_no_alloca
         in markdown
     )
     assert "- 裁决热点: 板块集中度过高，压低科技暴露" in markdown
-    assert "- 执行阻塞: 000021 深科技: 板块集中度过高，压低科技暴露" in markdown
+    assert "- 纸面阻塞: 000021 深科技: 板块集中度过高，压低科技暴露" in markdown
     assert "| 候选 | ⏸️ 暂无清晰候选 | 等待下一轮信号 |" in markdown
     assert "| 纸面现实 | 👀 观察池优先 | 000021 深科技、000338 潍柴动力 |" in markdown
     assert (
@@ -211,7 +211,7 @@ def test_build_daily_run_notification_surfaces_watchlist_blockers_when_no_alloca
         in markdown
     )
     assert "## 🧭 阅读顺序" in markdown
-    assert "1. ⏸️ 先看空档：今日无清晰候选，不为了凑单行动。" in markdown
+    assert "1. ⏸️ 先看空档：今日无清晰候选，不为了凑数量推进。" in markdown
     assert (
         "2. 🔒 再看风险/阻塞：000021 深科技: 板块集中度过高，压低科技暴露" in markdown
     )
@@ -248,7 +248,7 @@ def test_build_daily_run_notification_surfaces_watch_reviews_as_checklist() -> N
                     symbol="000001",
                     name="平安银行",
                     blocker="高相关未解除",
-                    next_step="等待高相关标的分化后，再重新评估执行顺位",
+                    next_step="等待高相关标的分化后，再重新评估纸面复核优先级",
                     review_window="分化确认后",
                     priority="medium",
                 ),
@@ -317,7 +317,7 @@ def test_build_daily_run_notification_lists_watch_candidates_when_not_tradable()
                 metrics={
                     "candidate_status": "观察阻塞",
                     "candidate_blocker": "板块集中度过高，压低银行暴露",
-                    "candidate_next_step": "等待板块暴露回落后，再重新评估执行顺位",
+                    "candidate_next_step": "等待板块暴露回落后，再重新评估纸面复核优先级",
                 },
             ),
         ),
@@ -506,7 +506,7 @@ def test_build_monitor_notification_summary_mode_is_action_oriented() -> None:
     )
 
     assert "## 核心结论" in markdown
-    assert "## 行动建议" in markdown
+    assert "## 处理清单" in markdown
     assert "stale_data" in markdown
 
 
@@ -593,7 +593,7 @@ def test_build_closing_review_notification_summary_mode_highlights_main_chain() 
         market_environment="震荡市",
         main_chain_summary=(
             "PM主裁决: 上调 1 / 降级 2 / 维持 1",
-            "执行阻塞: 688981 中芯国际: 板块集中度过高",
+            "纸面阻塞: 688981 中芯国际: 板块集中度过高",
             "观察复核: 688981 中芯国际 | 高优先级 / 盘中走强后 | 等待量价继续走强后，再评估是否转入纸面复核名单",
         ),
         key_lessons=("止损执行尚可，但入场分散度不足",),
@@ -604,7 +604,7 @@ def test_build_closing_review_notification_summary_mode_highlights_main_chain() 
 
     assert "# 收盘复盘" in markdown
     assert "PM主裁决: 上调 1 / 降级 2 / 维持 1" in markdown
-    assert "执行阻塞: 688981 中芯国际: 板块集中度过高" in markdown
+    assert "纸面阻塞: 688981 中芯国际: 板块集中度过高" in markdown
     assert "观察复核: 688981 中芯国际 | 高优先级 / 盘中走强后" in markdown
     assert "减少同类信号堆叠" in markdown
     assert "优先复核 688981 中芯国际 | 高优先级 / 盘中走强后" in markdown

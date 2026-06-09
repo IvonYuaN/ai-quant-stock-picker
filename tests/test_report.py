@@ -241,7 +241,7 @@ def test_report_renders_action_hotspots_and_execution_blockers() -> None:
     )
 
     assert "- 裁决热点: 板块集中度过高，压低公用事业暴露" in markdown
-    assert "- 执行阻塞:" in markdown
+    assert "- 纸面阻塞:" in markdown
     assert "600900 长江电力: 板块集中度过高，压低公用事业暴露" in markdown
 
 
@@ -292,7 +292,7 @@ def test_report_renders_allocation_guidance_when_summary_provided() -> None:
     assert "- 优先策略: 动量趋势、涨停接力" in markdown
     assert "- 策略权重建议: momentum 30%、limit_up_ladder 30%" in markdown
     assert "长江电力: 20% | 主链评分 76.0；PM 上调优先级" in markdown
-    assert "- 执行顺序: 先看 600900 长江电力" in markdown
+    assert "- 复核顺序: 先看 600900 长江电力" in markdown
     assert "- 现金留存: 25%" in markdown
     assert "- 配置说明: 单票上限 20%；信号强度不足时提高现金留存" in markdown
 
@@ -364,7 +364,7 @@ def test_report_labels_no_allocation_focus_as_observation() -> None:
             watchlist=("000001 平安银行",),
             allocations=(),
             cash_reserve=1.0,
-            allocation_note="今日无可执行主链，建议保留现金等待下一轮信号。",
+            allocation_note="今日无纸面复核主线，建议保留现金等待下一轮信号。",
         ),
     )
 
@@ -578,7 +578,7 @@ def test_report_renders_candidate_blocker_and_next_step_when_present() -> None:
         metrics={
             "candidate_status": "观察阻塞",
             "candidate_blocker": "板块集中度过高，压低银行暴露",
-            "candidate_next_step": "等待板块暴露回落后，再重新评估执行顺位",
+            "candidate_next_step": "等待板块暴露回落后，再重新评估纸面复核优先级",
             "candidate_review_window": "板块分化时",
             "candidate_review_priority": "medium",
         },
@@ -587,7 +587,7 @@ def test_report_renders_candidate_blocker_and_next_step_when_present() -> None:
     markdown = to_markdown([pick])
 
     assert "当前阻塞: 板块集中度过高，压低银行暴露" in markdown
-    assert "下一步: 等待板块暴露回落后，再重新评估执行顺位" in markdown
-    assert "- 下一步关注: 等待板块暴露回落后，再重新评估执行顺位" in markdown
+    assert "下一步: 等待板块暴露回落后，再重新评估纸面复核优先级" in markdown
+    assert "- 下一步关注: 等待板块暴露回落后，再重新评估纸面复核优先级" in markdown
     assert "复核: 中优先级 / 板块分化时" in markdown
     assert "- 复核优先级/时机: 中优先级 / 板块分化时" in markdown

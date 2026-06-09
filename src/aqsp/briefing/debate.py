@@ -635,9 +635,7 @@ class AShareDebateCoordinator:
         self.data_source = data_source
         self.language = language
         self.roles = roles or DEFAULT_AGENT_ROLE_ORDER
-        self.role_runtime = {
-            item.role: item for item in (role_runtime or ())
-        }
+        self.role_runtime = {item.role: item for item in (role_runtime or ())}
         self.agents = self._create_agents()
 
         from aqsp.briefing.debate_tracker import DebatePerformanceTracker
@@ -723,10 +721,12 @@ class AShareDebateCoordinator:
             for agent in self.agents:
                 my_prev = next(
                     (op for op in prev_round.opinions if op.agent_id == agent.agent_id),
-                    None
+                    None,
                 )
                 if my_prev is None:
-                    logger.error(f"辩论链路断裂: Agent {agent.agent_id} 缺失第 {round_num-1} 轮观点，无法继续辩论")
+                    logger.error(
+                        f"辩论链路断裂: Agent {agent.agent_id} 缺失第 {round_num - 1} 轮观点，无法继续辩论"
+                    )
                     raise ValueError(f"Agent {agent.agent_id} 的观点缺失，辩论中止")
                 updated = agent.respond_to_counterarguments(
                     my_prev,
@@ -811,7 +811,7 @@ def format_debate_result(result: DebateResult) -> str:
         "",
         f"- 原始评分: **{result.original_score}** ({result.rating})",
         f"- 最终共识: **{result.final_consensus}**",
-        f"- 建议操作: **{result.recommended_adjustment.upper()}**",
+        f"- 纸面复核口径: **{result.recommended_adjustment.upper()}**",
         "",
     ]
 

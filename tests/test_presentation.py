@@ -24,7 +24,7 @@ def test_format_watch_review_line_returns_unified_watch_review_text() -> None:
             review_window="盘中走强后",
             next_step="等待量价继续走强后，再评估是否转入执行名单",
         )
-        == "688981 中芯国际 | 高优先级 / 盘中走强后 | 等待量价继续走强后，再评估是否转入执行名单"
+        == "688981 中芯国际 | 高优先级 / 盘中走强后 | 等待量价继续走强后，再评估是否转入纸面复核名单"
     )
 
 
@@ -36,5 +36,5 @@ def test_format_watch_review_action_returns_unified_action_text() -> None:
             review_window="盘中走强后",
             next_step="等待量价继续走强后，再评估是否转入执行名单",
         )
-        == "先盯 688981 中芯国际，等待量价继续走强后，再评估是否转入执行名单（高优先级 / 盘中走强后）。"
+        == "先盯 688981 中芯国际，等待量价继续走强后，再评估是否转入纸面复核名单（高优先级 / 盘中走强后）。"
     )

@@ -78,7 +78,11 @@ class SourceStatus:
     def route(self) -> str:
         """数据源路径（可能包含降级）。"""
         actual = self.actual_source or self.requested_source or "unknown"
-        if self.requested_source and self.actual_source and self.requested_source != self.actual_source:
+        if (
+            self.requested_source
+            and self.actual_source
+            and self.requested_source != self.actual_source
+        ):
             return f"{self.requested_source} -> {self.actual_source}"
         return actual
 
@@ -118,6 +122,7 @@ class BriefingData:
     def tradable_picks(self) -> tuple[Pick, ...]:
         """可执行的选股（rating 为 tradable）。"""
         from aqsp.ratings import is_tradable_rating
+
         return tuple(p for p in self.picks if is_tradable_rating(p.rating))
 
     @property
@@ -127,7 +132,7 @@ class BriefingData:
 
     @property
     def actionable_count(self) -> int:
-        """可执行标的数量。"""
+        """纸面复核对象数量。"""
         return len(self.tradable_picks)
 
     @property
@@ -146,7 +151,7 @@ class BriefingData:
         points: list[str] = []
         if self.has_protection:
             reason = self.regime_info.circuit_breaker_reason or "组合保护生效中"
-            points.append(f"⚠️ 组合保护已触发: {reason}，建议暂停新开仓")
+            points.append(f"⚠️ 组合保护已触发: {reason}，暂停新增纸面复核")
 
         # 从 picks 中提取风险
         for pick in self.picks:

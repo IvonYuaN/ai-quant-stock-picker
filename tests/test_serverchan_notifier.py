@@ -31,7 +31,7 @@ def test_notify_markdown_sends_serverchan_when_sendkey_present(monkeypatch):
     assert "sctapi.ftqq.com/test_sendkey.send" in mock_post.call_args.args[0]
 
 
-def test_prepend_source_status_banner_drops_duplicate_top_title():
+def test_prepend_source_status_banner_keeps_title_before_source_status():
     from aqsp.notifier import prepend_source_status_banner
 
     content = "# 收盘总览\n\n## 核心结论\n- 总体状态: 成功"
@@ -45,6 +45,8 @@ def test_prepend_source_status_banner_drops_duplicate_top_title():
         },
     )
 
-    assert merged.count("# 收盘总览") == 0
+    assert merged.startswith("# 收盘总览")
+    assert merged.count("# 收盘总览") == 1
     assert "## 数据源状态" in merged
     assert "## 核心结论" in merged
+    assert merged.index("## 核心结论") < merged.index("## 数据源状态")

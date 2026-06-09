@@ -37,12 +37,12 @@ def test_execution_summary_uses_observation_when_pm_has_no_allocations() -> None
         watchlist=("000001 平安银行",),
         allocations=(),
         cash_reserve=1.0,
-        allocation_note="今日无可执行主链，建议保留现金等待下一轮信号。",
+        allocation_note="今日无纸面复核主线，建议保留现金等待下一轮信号。",
     )
 
     line = cli_mod._build_execution_summary_line([pick], summary)
 
-    assert "今日无可执行标的" in line
+    assert "今日无纸面复核对象" in line
     assert "观察池" in line
     assert "首选" not in line
 
@@ -197,7 +197,8 @@ def test_run_scheduled_notify_prepends_source_status_banner(
 
     assert exit_code == 0
     assert seen
-    assert seen[0].startswith("## 数据源状态")
+    assert seen[0].startswith("# AQSP 研究日报")
+    assert seen[0].index("## 核心结论") < seen[0].index("## 数据源状态")
     assert "auto -> eastmoney" in seen[0]
     assert "- 健康: fallback" in seen[0]
 
@@ -364,9 +365,7 @@ def test_optional_symbol_name_map_reads_project_env_without_export(
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("AQSP_SQLITE_DB_PATH", raising=False)
 
-    assert cli_mod._load_optional_symbol_name_map(["600036"]) == {
-        "600036": "招商银行"
-    }
+    assert cli_mod._load_optional_symbol_name_map(["600036"]) == {"600036": "招商银行"}
 
 
 def test_run_scheduled_report_omits_low_signal_control_sections(
@@ -1389,11 +1388,13 @@ def test_run_scheduled_surfaces_t1_blockers_in_report_and_notification(
 
     assert exit_code == 0
     assert seen
-    assert "T+1 持仓约束：昨日已买标的今日不纳入执行名单" in report
+    assert "T+1 持仓约束：昨日已买标的今日不纳入纸面复核名单" in report
     assert "贵州茅台: T+1 持仓约束，昨日已买，今日仅保留观察" in report
     assert "T+1 限制：昨日已买 1 只（600519）仅保留观察" in report
     assert "观察池: 300750 宁德时代、600519 贵州茅台" in seen[0]
-    assert "执行阻塞: 600519 贵州茅台: T+1 持仓约束，昨日已买，今日仅保留观察" in seen[0]
+    assert (
+        "纸面阻塞: 600519 贵州茅台: T+1 持仓约束，昨日已买，今日仅保留观察" in seen[0]
+    )
 
 
 def test_run_scheduled_surfaces_snapshot_lifecycle_in_summary_and_notification(
@@ -1861,12 +1862,18 @@ def test_run_scheduled_annotates_candidate_status_in_report_and_notify(
     assert seen
     assert "## 📋 候选简表" in seen[0]
     assert (
-        "| 1 | 688981 中芯国际 | 新晋 | -9 | 👀 观察 | 等待量价继续走强后，再评估是否转入执行名单；复核 高优先级 / 盘中走强后 |"
+        "| 1 | 688981 中芯国际 | 新晋 | -9 | 👀 观察 | 等待量价继续走强后，再评估是否转入纸面复核名单；复核 高优先级 / 盘中走强后 |"
         in seen[0]
     )
-    assert "先盯 688981 中芯国际，等待量价继续走强后，再评估是否转入执行名单（高优先级 / 盘中走强后）。" in seen[0]
+    assert (
+        "先盯 688981 中芯国际，等待量价继续走强后，再评估是否转入纸面复核名单（高优先级 / 盘中走强后）。"
+        in seen[0]
+    )
     assert "| 2 | 000001 平安银行 | 观察 | -18 | 👀 观察 | 估值防守 |" in seen[0]
-    assert "- Top 1: 688981 中芯国际 | 候选观察池 | 新晋 | 评分 -9.0 | PM 维持原排序" in report
+    assert (
+        "- Top 1: 688981 中芯国际 | 候选观察池 | 新晋 | 评分 -9.0 | PM 维持原排序"
+        in report
+    )
     assert "- 决策: 候选观察池 | 新晋 | 评分 -9.0" in report
-    assert "下一步: 等待量价继续走强后，再评估是否转入执行名单" in report
+    assert "下一步: 等待量价继续走强后，再评估是否转入纸面复核名单" in report
     assert "复核: 高优先级 / 盘中走强后" in report
