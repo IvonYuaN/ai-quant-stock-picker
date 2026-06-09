@@ -65,6 +65,14 @@ class _HomeBriefCard:
     tone: str = "archive"
 
 
+@dataclass(frozen=True)
+class _DebateBriefCard:
+    kicker: str
+    title: str
+    lines: tuple[str, ...]
+    tone: str = "archive"
+
+
 def _inject_dashboard_styles() -> None:
     st.markdown(
         """
@@ -704,8 +712,55 @@ def _inject_dashboard_styles() -> None:
             line-height: 1.5;
             margin-top: 0.15rem;
         }
+        .aqsp-debate-brief-grid {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 0.72rem;
+            margin: 0.2rem 0 0.85rem 0;
+        }
+        .aqsp-debate-brief-card {
+            min-height: 148px;
+            padding: 0.88rem 0.96rem;
+            border-radius: 17px;
+            border: 1px solid rgba(26, 71, 102, 0.12);
+            background: linear-gradient(180deg, #fbfcff 0%, #f4f8fb 100%);
+            box-shadow: 0 11px 24px rgba(33, 46, 56, 0.05);
+        }
+        .aqsp-debate-brief-card.pressure {
+            border-color: rgba(170, 124, 47, 0.24);
+            background: linear-gradient(180deg, #fffaf0 0%, #f8fafc 100%);
+        }
+        .aqsp-debate-brief-card.blocked {
+            border-color: rgba(176, 90, 74, 0.24);
+            background: linear-gradient(180deg, #fff8f6 0%, #f7f8fb 100%);
+        }
+        .aqsp-debate-brief-card.focus {
+            border-color: rgba(57, 121, 92, 0.23);
+            background: linear-gradient(180deg, #fffdf4 0%, #f1fbf5 100%);
+        }
+        .aqsp-debate-kicker {
+            font-size: 0.72rem;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: #617282;
+            margin-bottom: 0.38rem;
+        }
+        .aqsp-debate-title {
+            font-size: 0.96rem;
+            font-weight: 750;
+            color: #163247;
+            margin-bottom: 0.42rem;
+            line-height: 1.34;
+        }
+        .aqsp-debate-line {
+            font-size: 0.83rem;
+            color: #34495a;
+            line-height: 1.48;
+            margin-top: 0.14rem;
+        }
         @media (max-width: 980px) {
             .aqsp-brief-grid,
+            .aqsp-debate-brief-grid,
             .aqsp-overview-strip,
             .aqsp-research-metrics {
                 grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -713,6 +768,7 @@ def _inject_dashboard_styles() -> None:
         }
         @media (max-width: 620px) {
             .aqsp-brief-grid,
+            .aqsp-debate-brief-grid,
             .aqsp-overview-strip,
             .aqsp-research-metrics,
             .aqsp-compact-grid {
@@ -1616,6 +1672,110 @@ def _debate_vote_snapshot_lines(
         for view in debate_summary.agent_views[:2]
     )
     return _unique_lines(tuple(lines), top_agents)
+
+
+def _debate_brief_cards(
+    debate_summary: DashboardDebateSummary | None,
+) -> tuple[_DebateBriefCard, ...]:
+    if debate_summary is None:
+        return ()
+    tone = (
+        "blocked"
+        if debate_summary.recommended_adjustment == "lower"
+        else ("pressure" if debate_summary.disagreement_score >= 0.35 else "focus")
+    )
+    leading_views = tuple(
+        f"{view.role_label}: {view.stance_label} / 置信 {view.confidence:.0%}"
+        for view in sorted(
+            debate_summary.agent_views,
+            key=lambda item: item.confidence,
+            reverse=True,
+        )[:2]
+    )
+    review_lines = _unique_lines(
+        (
+            (
+                f"先核对风险: {'；'.join(debate_summary.risk_warnings[:2])}"
+                if debate_summary.risk_warnings
+                else ""
+            ),
+            (
+                f"可观察机会: {'；'.join(debate_summary.opportunity_highlights[:2])}"
+                if debate_summary.opportunity_highlights
+                else ""
+            ),
+            (
+                f"修正原因: {debate_summary.adjustment_reason}"
+                if debate_summary.adjustment_reason
+                else "修正原因: 当前未给出充分依据，回到候选证据链。"
+            ),
+        )
+    )
+    return (
+        _DebateBriefCard(
+            kicker="辩论结论",
+            title=f"{debate_summary.recommended_adjustment_label} / 分歧 {debate_summary.disagreement_score:.2f}",
+            lines=_unique_lines(
+                (
+                    (
+                        f"共识: {debate_summary.consensus}"
+                        if debate_summary.consensus
+                        else "共识: 当前未形成明确共识。"
+                    ),
+                    "边界: 这是解释层，不替代选股评分。",
+                )
+            ),
+            tone=tone,
+        ),
+        _DebateBriefCard(
+            kicker="票型结构",
+            title=(
+                f"看多 {debate_summary.bull_count}"
+                f" / 看空 {debate_summary.bear_count}"
+                f" / 中性 {debate_summary.neutral_count}"
+            ),
+            lines=leading_views
+            or (f"讨论轮次: {debate_summary.round_count}", "暂无 agent 明细。"),
+            tone="archive",
+        ),
+        _DebateBriefCard(
+            kicker="复核动作",
+            title="先回证据链核对",
+            lines=review_lines,
+            tone="pressure" if debate_summary.risk_warnings else "archive",
+        ),
+    )
+
+
+def _render_debate_brief(debate_summary: DashboardDebateSummary | None) -> None:
+    cards = _debate_brief_cards(debate_summary)
+    if not cards:
+        return
+    card_html = []
+    for card in cards:
+        line_html = "".join(
+            f'<div class="aqsp-debate-line">{escape(line)}</div>'
+            for line in card.lines[:3]
+        )
+        card_html.append(
+            f"""
+            <div class="aqsp-debate-brief-card {escape(card.tone)}">
+              <div class="aqsp-debate-kicker">{escape(card.kicker)}</div>
+              <div class="aqsp-debate-title">{escape(card.title)}</div>
+              {line_html}
+            </div>
+            """
+        )
+    st.markdown(
+        "\n".join(
+            [
+                '<div class="aqsp-debate-brief-grid">',
+                *card_html,
+                "</div>",
+            ]
+        ),
+        unsafe_allow_html=True,
+    )
 
 
 def _current_mode_label(task_view) -> str:
@@ -5425,6 +5585,8 @@ def _render_candidate_review_snapshot(
     )
     metric_col3.metric("虚拟盘事件", len(paper_frame.index))
     metric_col4.metric("纸面日志", len(execution_frame.index))
+
+    _render_debate_brief(debate_summary)
 
     summary_col, status_col = st.columns(2)
     with summary_col:

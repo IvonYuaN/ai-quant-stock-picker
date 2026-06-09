@@ -37,6 +37,7 @@ from aqsp.web.dashboard import (
     _command_center_brief_lines,
     _archive_debate_evidence_lines,
     _debate_evidence_composition_line,
+    _debate_brief_cards,
     _debate_overview_lines,
     _debate_vote_snapshot_lines,
     _card_emphasis,
@@ -4349,6 +4350,83 @@ def test_dashboard_debate_vote_snapshot_lines_show_vote_distribution_and_rounds(
     assert lines[1] == "讨论轮次: 2"
     assert "板块轮动: 看多 / 置信 91%" in lines[2]
     assert "基本面空头: 看空 / 置信 70%" in lines[3]
+
+
+def test_dashboard_debate_brief_cards_surface_human_summary_with_score_boundary() -> (
+    None
+):
+    from aqsp.web.data_provider import DashboardDebateAgentView, DashboardDebateSummary
+
+    debate = DashboardDebateSummary(
+        signal_date="2026-06-01",
+        symbol="600036",
+        display_name="600036 招商银行",
+        debate_id="debate-2",
+        rating="B",
+        original_score=68.0,
+        adjusted_score=68.0,
+        adjustment_weight=0.0,
+        recommended_adjustment="keep",
+        recommended_adjustment_label="建议维持评分",
+        disagreement_score=0.48,
+        consensus="观点分化，保持原评级",
+        adjustment_reason="多空分歧更大",
+        bull_count=3,
+        bear_count=2,
+        neutral_count=3,
+        round_count=2,
+        regime="震荡偏强",
+        data_source="multi",
+        thresholds_version="v1",
+        summary_lines=("建议维持评分: 68.0 -> 68.0",),
+        round_summaries=(),
+        risk_warnings=("分歧偏大",),
+        opportunity_highlights=("防御属性",),
+        agent_views=(
+            DashboardDebateAgentView(
+                role_id="sector_leader",
+                role_label="板块轮动",
+                stance="bullish",
+                stance_label="看多",
+                confidence=0.91,
+                key_argument="板块轮动认为当前价格位置合理",
+                key_risk="",
+                key_opportunity="",
+            ),
+            DashboardDebateAgentView(
+                role_id="bear",
+                role_label="基本面空头",
+                stance="bearish",
+                stance_label="看空",
+                confidence=0.70,
+                key_argument="基本面空头认为当前价格位置偏高",
+                key_risk="",
+                key_opportunity="",
+            ),
+        ),
+    )
+
+    cards = _debate_brief_cards(debate)
+
+    assert tuple(card.kicker for card in cards) == (
+        "辩论结论",
+        "票型结构",
+        "复核动作",
+    )
+    assert cards[0].title == "建议维持评分 / 分歧 0.48"
+    assert cards[0].tone == "pressure"
+    assert "边界: 这是解释层，不替代选股评分。" in cards[0].lines
+    assert cards[1].title == "看多 3 / 看空 2 / 中性 3"
+    assert "板块轮动: 看多 / 置信 91%" in cards[1].lines
+    assert cards[2].title == "先回证据链核对"
+    assert cards[2].tone == "pressure"
+    assert cards[2].lines[0] == "先核对风险: 分歧偏大"
+    rendered_text = "\n".join(
+        line for card in cards for line in (card.title, *card.lines)
+    )
+    assert "替代选股评分" in rendered_text
+    assert "立即买入" not in rendered_text
+    assert "下单" not in rendered_text
 
 
 def test_dashboard_debate_evidence_composition_line_shows_verifiable_inputs() -> None:
