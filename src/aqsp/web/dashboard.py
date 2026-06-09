@@ -73,6 +73,14 @@ class _DebateBriefCard:
     tone: str = "archive"
 
 
+@dataclass(frozen=True)
+class _ArchiveBriefCard:
+    kicker: str
+    title: str
+    lines: tuple[str, ...]
+    tone: str = "archive"
+
+
 def _inject_dashboard_styles() -> None:
     st.markdown(
         """
@@ -758,9 +766,56 @@ def _inject_dashboard_styles() -> None:
             line-height: 1.48;
             margin-top: 0.14rem;
         }
+        .aqsp-archive-brief-grid {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 0.72rem;
+            margin: 0.2rem 0 0.85rem 0;
+        }
+        .aqsp-archive-brief-card {
+            min-height: 150px;
+            padding: 0.88rem 0.96rem;
+            border-radius: 17px;
+            border: 1px solid rgba(26, 71, 102, 0.12);
+            background: linear-gradient(180deg, #fffdf7 0%, #f5f8fb 100%);
+            box-shadow: 0 11px 24px rgba(33, 46, 56, 0.05);
+        }
+        .aqsp-archive-brief-card.focus {
+            border-color: rgba(57, 121, 92, 0.22);
+            background: linear-gradient(180deg, #fffdf4 0%, #f1fbf5 100%);
+        }
+        .aqsp-archive-brief-card.pressure {
+            border-color: rgba(170, 124, 47, 0.24);
+            background: linear-gradient(180deg, #fffaf0 0%, #f8fafc 100%);
+        }
+        .aqsp-archive-brief-card.blocked {
+            border-color: rgba(176, 90, 74, 0.24);
+            background: linear-gradient(180deg, #fff8f6 0%, #f7f8fb 100%);
+        }
+        .aqsp-archive-kicker {
+            font-size: 0.72rem;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: #617282;
+            margin-bottom: 0.38rem;
+        }
+        .aqsp-archive-title {
+            font-size: 0.96rem;
+            font-weight: 750;
+            color: #163247;
+            margin-bottom: 0.42rem;
+            line-height: 1.34;
+        }
+        .aqsp-archive-line {
+            font-size: 0.83rem;
+            color: #34495a;
+            line-height: 1.48;
+            margin-top: 0.14rem;
+        }
         @media (max-width: 980px) {
             .aqsp-brief-grid,
             .aqsp-debate-brief-grid,
+            .aqsp-archive-brief-grid,
             .aqsp-overview-strip,
             .aqsp-research-metrics {
                 grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -769,6 +824,7 @@ def _inject_dashboard_styles() -> None:
         @media (max-width: 620px) {
             .aqsp-brief-grid,
             .aqsp-debate-brief-grid,
+            .aqsp-archive-brief-grid,
             .aqsp-overview-strip,
             .aqsp-research-metrics,
             .aqsp-compact-grid {
@@ -6265,6 +6321,103 @@ def _archive_followup_action_context(
     )
 
 
+def _archive_brief_cards(
+    *,
+    task_view,
+    archive_lines: tuple[str, ...],
+    conclusion_title: str,
+    action_title: str,
+    action_lines: tuple[str, ...],
+    debate_summary: DashboardDebateSummary | None,
+    has_execution_activity: bool,
+    has_holding_activity: bool,
+) -> tuple[_ArchiveBriefCard, ...]:
+    reality_lines = tuple(
+        line
+        for line in (
+            (
+                "纸面现实: 当日有纸面事件或执行日志，优先核对真实落盘链。"
+                if has_execution_activity
+                else ""
+            ),
+            (
+                "持有假设: 存在信号日绑定纸面持有，回看退出条件。"
+                if has_holding_activity
+                else ""
+            ),
+            (
+                "纸面现实: 当前没有绑定纸面事件，归档侧先看研究结论和复核动作。"
+                if not has_execution_activity and not has_holding_activity
+                else ""
+            ),
+        )
+        if line
+    )
+    debate_lines = _archive_debate_evidence_lines(debate_summary)[:3]
+    return (
+        _ArchiveBriefCard(
+            kicker="归档结论",
+            title=conclusion_title,
+            lines=archive_lines[:3]
+            or ("当前归档没有结构化结论，先回看原文和同日任务。",),
+            tone="archive",
+        ),
+        _ArchiveBriefCard(
+            kicker="复核动作",
+            title=action_title,
+            lines=action_lines,
+            tone="pressure" if getattr(task_view, "blocker_lines", ()) else "focus",
+        ),
+        _ArchiveBriefCard(
+            kicker="纸面现实",
+            title="有纸面联动"
+            if has_execution_activity or has_holding_activity
+            else "纸面侧较轻",
+            lines=reality_lines,
+            tone="pressure" if has_execution_activity else "archive",
+        ),
+        _ArchiveBriefCard(
+            kicker="辩论证据",
+            title=(
+                f"{debate_summary.recommended_adjustment_label} / 分歧 {debate_summary.disagreement_score:.2f}"
+                if debate_summary is not None
+                else "当日未触发"
+            ),
+            lines=debate_lines
+            or ("当前标的没有同日多 Agent 讨论归档，先按研究结论与纸面现实复盘。",),
+            tone="pressure" if debate_summary is not None else "archive",
+        ),
+    )
+
+
+def _render_archive_brief_cards(cards: tuple[_ArchiveBriefCard, ...]) -> None:
+    card_html = []
+    for card in cards:
+        line_html = "".join(
+            f'<div class="aqsp-archive-line">{escape(line)}</div>'
+            for line in card.lines[:3]
+        )
+        card_html.append(
+            f"""
+            <div class="aqsp-archive-brief-card {escape(card.tone)}">
+              <div class="aqsp-archive-kicker">{escape(card.kicker)}</div>
+              <div class="aqsp-archive-title">{escape(card.title)}</div>
+              {line_html}
+            </div>
+            """
+        )
+    st.markdown(
+        "\n".join(
+            [
+                '<div class="aqsp-archive-brief-grid">',
+                *card_html,
+                "</div>",
+            ]
+        ),
+        unsafe_allow_html=True,
+    )
+
+
 def _render_archive_focus_brief(
     *,
     task_view,
@@ -6301,6 +6454,18 @@ def _render_archive_focus_brief(
         selected_card=selected_card,
         selected_spotlight=selected_spotlight,
         debate_summary=debate_summary,
+    )
+    _render_archive_brief_cards(
+        _archive_brief_cards(
+            task_view=task_view,
+            archive_lines=archive_lines,
+            conclusion_title=conclusion_title,
+            action_title=action_title,
+            action_lines=resolved_action_lines,
+            debate_summary=debate_summary,
+            has_execution_activity=has_execution_activity,
+            has_holding_activity=has_holding_activity,
+        )
     )
     compact_mode = (
         debate_summary is None

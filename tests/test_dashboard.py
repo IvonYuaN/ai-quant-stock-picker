@@ -17,6 +17,7 @@ from aqsp.web.dashboard import (
     _action_status_label,
     _archive_conclusion_title,
     _archive_followup_action_context,
+    _archive_brief_cards,
     _archive_symbol_order,
     _archive_next_action_lines,
     _archive_conclusion_context,
@@ -1989,6 +1990,75 @@ def test_dashboard_archive_followup_action_context_does_not_relabel_research_as_
         "接下来做什么",
         ("600519 | 复核分歧是否收敛",),
     )
+
+
+def test_dashboard_archive_brief_cards_summarize_archive_without_action_hype() -> None:
+    from aqsp.web.data_provider import DashboardDebateSummary
+
+    class _TaskView:
+        blocker_lines = ("600036 招商银行 | 需确认分歧是否收敛",)
+        report_markdown = "# report"
+        report_summary_lines = ("报告已归档。",)
+        runtime_lines = ()
+        next_day_focus_lines = ()
+
+    debate = DashboardDebateSummary(
+        signal_date="2026-06-01",
+        symbol="600036",
+        display_name="600036 招商银行",
+        debate_id="debate-2",
+        rating="B",
+        original_score=68.0,
+        adjusted_score=68.0,
+        adjustment_weight=0.0,
+        recommended_adjustment="keep",
+        recommended_adjustment_label="建议维持评分",
+        disagreement_score=0.48,
+        consensus="观点分化，保持原评级",
+        adjustment_reason="多空分歧更大",
+        bull_count=3,
+        bear_count=2,
+        neutral_count=3,
+        round_count=2,
+        regime="震荡偏强",
+        data_source="multi",
+        thresholds_version="v1",
+        summary_lines=("建议维持评分: 68.0 -> 68.0",),
+        round_summaries=(),
+        risk_warnings=("分歧偏大",),
+        opportunity_highlights=("防御属性",),
+        agent_views=(),
+    )
+
+    cards = _archive_brief_cards(
+        task_view=_TaskView(),
+        archive_lines=("600036 招商银行 | 回看分歧是否收敛",),
+        conclusion_title="已归档",
+        action_title="接下来做什么",
+        action_lines=("600036 招商银行 | 复核分歧是否收敛",),
+        debate_summary=debate,
+        has_execution_activity=True,
+        has_holding_activity=False,
+    )
+
+    assert tuple(card.kicker for card in cards) == (
+        "归档结论",
+        "复核动作",
+        "纸面现实",
+        "辩论证据",
+    )
+    assert cards[0].title == "已归档"
+    assert cards[1].tone == "pressure"
+    assert cards[2].title == "有纸面联动"
+    assert cards[2].tone == "pressure"
+    assert cards[3].title == "建议维持评分 / 分歧 0.48"
+    assert any(line.startswith("投票分布: 看多 3") for line in cards[3].lines)
+    rendered_text = "\n".join(
+        line for card in cards for line in (card.title, *card.lines)
+    )
+    assert "立即买入" not in rendered_text
+    assert "下单" not in rendered_text
+    assert "真实持仓" not in rendered_text
 
 
 def test_dashboard_archive_conclusion_title_distinguishes_research_from_report_archive_status() -> (
