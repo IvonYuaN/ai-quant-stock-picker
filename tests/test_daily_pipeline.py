@@ -450,10 +450,6 @@ def test_closing_review_step_writes_output_and_skips_fanout_notify_in_summary_mo
 
     assert captured == [
         "closing-review",
-        "--ledger",
-        "data/predictions.jsonl",
-        "--paper-ledger",
-        "data/paper_trades.jsonl",
         "--date",
         "2026-06-08",
         "--output",

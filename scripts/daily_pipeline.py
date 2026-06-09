@@ -362,10 +362,6 @@ def _step_closing_review(
 
     argv = [
         "closing-review",
-        "--ledger",
-        config.ledger_path,
-        "--paper-ledger",
-        config.paper_ledger,
         "--date",
         report_date,
         "--output",
