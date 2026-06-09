@@ -14,7 +14,6 @@ from aqsp.risk.stop_loss import (
     Position,
     StopLossConfig,
     StopLossManager,
-    StopLossCheckResult,
 )
 
 
@@ -586,7 +585,7 @@ class TestConservativeBehavior:
         initial = 100000.0
         for portfolio_val in [100001.0, 110000.0, 150000.0]:
             result = manager.check_portfolio_stop(portfolio_val, initial)
-            assert result.triggered is False, f"盈利组合不应触发止损"
+            assert result.triggered is False, "盈利组合不应触发止损"
     
     def test_boundary_conservatism(self) -> None:
         """确保在边界处采取保守策略。"""

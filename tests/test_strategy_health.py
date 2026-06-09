@@ -6,13 +6,12 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 
 import pytest
 
 from aqsp.monitor.strategy_health import (
     Trade,
-    StrategyMetrics,
     StrategyHealthMonitor,
     HealthStatus,
 )

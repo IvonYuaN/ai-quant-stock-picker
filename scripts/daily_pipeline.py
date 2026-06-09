@@ -355,9 +355,18 @@ def _step_closing_review(
     config: PipelineConfig, logger: logging.Logger
 ) -> dict[str, Any]:
     logger.info("  执行收盘复盘")
+    report_date = today_shanghai().isoformat()
+    latest_output = config.project_root / config.closing_review_path
+    dated_output = latest_output.with_name(f"closing_review-{report_date}.md")
 
     argv = [
         "closing-review",
+        "--ledger",
+        config.ledger_path,
+        "--paper-ledger",
+        config.paper_ledger,
+        "--date",
+        report_date,
         "--output",
         config.closing_review_path,
     ]
@@ -368,11 +377,15 @@ def _step_closing_review(
 
     exit_code = main(argv)
 
-    review_path = config.project_root / config.closing_review_path
+    if exit_code == 0 and latest_output.exists():
+        dated_output.parent.mkdir(parents=True, exist_ok=True)
+        dated_output.write_text(latest_output.read_text(encoding="utf-8"), encoding="utf-8")
+
     return {
         "exit_code": exit_code,
         "report_path": config.closing_review_path,
-        "report_size": review_path.stat().st_size if review_path.exists() else 0,
+        "dated_report_path": str(dated_output.relative_to(config.project_root)),
+        "report_size": latest_output.stat().st_size if latest_output.exists() else 0,
     }
 
 
@@ -751,9 +764,9 @@ def run_pipeline(config: PipelineConfig) -> PipelineResult:
     pipeline_steps: list[tuple[str, Any]] = [
         ("数据更新", lambda: _step_update_data(config, logger)),
         ("策略运行", lambda: _step_run_strategy(config, logger)),
-        ("收盘复盘", lambda: _step_closing_review(config, logger)),
         ("预测验证", lambda: _step_validate_predictions(config, logger)),
         ("虚拟盘同步", lambda: _step_sync_paper_trades(config, logger)),
+        ("收盘复盘", lambda: _step_closing_review(config, logger)),
         ("自适应学习", lambda: _step_adaptive_learning(config, logger)),
         ("策略自进化", lambda: _step_auto_evolution(config, logger)),
         ("报告生成", lambda: _step_generate_report(config, logger)),

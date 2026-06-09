@@ -7,7 +7,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Optional
 
 import pandas as pd
 
@@ -279,7 +278,6 @@ class DataValidator:
             # 检查是否存在非预期的日期跳跃
             # 允许的时间差：1天（正常）、3天（周末）、多天（假期）
             min_diff = date_diffs.min()
-            max_diff = date_diffs.max()
 
             # 如果最小差距 > 1天，可能有缺失数据
             if hasattr(min_diff, "days"):

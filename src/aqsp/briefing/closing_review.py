@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from aqsp.core.time import now_shanghai
+from aqsp.paper import read_paper_trades
 from aqsp.presentation import format_symbol_name
 from aqsp.ratings import is_tradable_rating, rating_label
 
@@ -76,8 +77,13 @@ class ClosingReviewer:
     5. 生成复盘报告
     """
 
-    def __init__(self, ledger_path: str = "data/predictions.jsonl") -> None:
+    def __init__(
+        self,
+        ledger_path: str = "data/predictions.jsonl",
+        paper_ledger_path: str = "data/paper_trades.jsonl",
+    ) -> None:
         self.ledger_path = ledger_path
+        self.paper_ledger_path = paper_ledger_path
 
     def review_today(self, today: str | None = None) -> DailyReview:
         """复盘今日交易
@@ -89,23 +95,40 @@ class ClosingReviewer:
             每日复盘结果
         """
         if today is None:
-            today = self._latest_signal_date() or now_shanghai().strftime("%Y-%m-%d")
+            today = self._latest_review_date() or now_shanghai().strftime("%Y-%m-%d")
 
         predictions = self._load_predictions(today)
+        paper_rows = self._load_paper_rows(signal_date=today)
+        closed_rows = [row for row in paper_rows if row.get("status") == "closed"]
+        pending_rows = [row for row in paper_rows if row.get("status") == "pending_entry"]
+        blocked_rows = [
+            row for row in paper_rows if row.get("status") == "not_executable"
+        ]
 
-        if not predictions:
+        if not predictions and not paper_rows:
             return self._empty_review(today)
 
-        reviews = [self._review_single_prediction(pred) for pred in predictions]
+        predictions_by_id, predictions_by_symbol = self._prediction_indexes(predictions)
+        reviews = [
+            self._review_single_trade(
+                paper_row=row,
+                matched_prediction=self._matching_prediction(
+                    paper_row=row,
+                    predictions_by_id=predictions_by_id,
+                    predictions_by_symbol=predictions_by_symbol,
+                ),
+            )
+            for row in closed_rows
+        ]
 
-        total_signals = len(reviews)
-        executed_signals = len([r for r in reviews if r.return_pct != 0])
+        total_signals = len(predictions) if predictions else len(paper_rows)
+        executed_signals = len(reviews)
         win_count = len([r for r in reviews if r.is_win])
-        loss_count = executed_signals - win_count
+        loss_count = len([r for r in reviews if not r.is_win])
         win_rate = win_count / executed_signals if executed_signals > 0 else 0
         total_return = sum(r.return_pct for r in reviews)
 
-        returns = [r.return_pct for r in reviews if r.return_pct != 0]
+        returns = [r.return_pct for r in reviews]
         max_single_win = max(returns) if returns else 0
         max_single_loss = min(returns) if returns else 0
         avg_holding_days = (
@@ -114,10 +137,18 @@ class ClosingReviewer:
 
         strategy_breakdown = self._calculate_strategy_breakdown(reviews)
         market_environment = self._evaluate_market_environment(today)
-        key_lessons = self._extract_key_lessons(reviews)
+        key_lessons = self._extract_key_lessons(
+            reviews,
+            blocked_count=len(blocked_rows),
+            pending_count=len(pending_rows),
+            total_signals=total_signals,
+        )
         main_chain_summary = self._build_main_chain_summary(predictions)
         improvement_suggestions = self._generate_improvement_suggestions(
-            reviews, win_rate
+            reviews,
+            win_rate,
+            pending_count=len(pending_rows),
+            blocked_count=len(blocked_rows),
         )
 
         return DailyReview(
@@ -138,6 +169,12 @@ class ClosingReviewer:
             improvement_suggestions=improvement_suggestions,
         )
 
+    def _latest_review_date(self) -> str:
+        return max(
+            self._latest_signal_date(),
+            self._latest_paper_signal_date(),
+        )
+
     def _latest_signal_date(self) -> str:
         ledger_path = Path(self.ledger_path)
         if not ledger_path.exists():
@@ -156,6 +193,14 @@ class ClosingReviewer:
                 signal_date = str(row.get("signal_date", "")).strip()
                 if signal_date and signal_date > latest:
                     latest = signal_date
+        return latest
+
+    def _latest_paper_signal_date(self) -> str:
+        latest = ""
+        for row in self._load_paper_rows():
+            signal_date = str(row.get("signal_date", "")).strip()
+            if signal_date and signal_date > latest:
+                latest = signal_date
         return latest
 
     def _candidate_status(self, pred: dict) -> str:
@@ -263,6 +308,79 @@ class ClosingReviewer:
 
         return predictions
 
+    def _load_predictions_between(self, start_date: str, end_date: str) -> list[dict]:
+        predictions: list[dict] = []
+        ledger_path = Path(self.ledger_path)
+        if not ledger_path.exists():
+            return predictions
+
+        with open(ledger_path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    pred = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                signal_date = str(pred.get("signal_date", "")).strip()
+                if start_date <= signal_date <= end_date:
+                    predictions.append(pred)
+
+        return predictions
+
+    def _load_paper_rows(
+        self,
+        *,
+        signal_date: str = "",
+        start_date: str = "",
+        end_date: str = "",
+    ) -> list[dict]:
+        rows = read_paper_trades(self.paper_ledger_path)
+        if signal_date:
+            return [
+                row
+                for row in rows
+                if str(row.get("signal_date", "")).strip() == signal_date
+            ]
+        if start_date or end_date:
+            low = start_date or ""
+            high = end_date or "9999-12-31"
+            return [
+                row
+                for row in rows
+                if low <= str(row.get("signal_date", "")).strip() <= high
+            ]
+        return rows
+
+    def _prediction_indexes(
+        self,
+        predictions: list[dict],
+    ) -> tuple[dict[str, dict], dict[str, dict]]:
+        predictions_by_id: dict[str, dict] = {}
+        predictions_by_symbol: dict[str, dict] = {}
+        for prediction in predictions:
+            signal_id = str(prediction.get("id", "") or "").strip()
+            if signal_id:
+                predictions_by_id[signal_id] = prediction
+            symbol = str(prediction.get("symbol", "") or "").strip()
+            if symbol and symbol not in predictions_by_symbol:
+                predictions_by_symbol[symbol] = prediction
+        return predictions_by_id, predictions_by_symbol
+
+    def _matching_prediction(
+        self,
+        *,
+        paper_row: dict,
+        predictions_by_id: dict[str, dict],
+        predictions_by_symbol: dict[str, dict],
+    ) -> dict:
+        signal_id = str(paper_row.get("signal_id", "") or "").strip()
+        if signal_id and signal_id in predictions_by_id:
+            return predictions_by_id[signal_id]
+        symbol = str(paper_row.get("symbol", "") or "").strip()
+        return predictions_by_symbol.get(symbol, {})
+
     def _review_single_prediction(self, pred: dict) -> TradeReview:
         """复盘单条预测"""
         symbol = pred.get("symbol", "")
@@ -292,6 +410,69 @@ class ClosingReviewer:
             exit_reason=exit_reason,
             lessons=lessons,
         )
+
+    def _review_single_trade(
+        self,
+        *,
+        paper_row: dict,
+        matched_prediction: dict,
+    ) -> TradeReview:
+        merged_row = {**matched_prediction, **paper_row}
+        symbol = str(merged_row.get("symbol", "") or "")
+        name = str(merged_row.get("name", "") or "")
+        strategy_type = self._resolve_strategy_type(merged_row)
+        signal_date = str(merged_row.get("signal_date", "") or "")
+        entry_price = float(
+            merged_row.get("entry_price")
+            or matched_prediction.get("entry_price")
+            or 0
+        )
+        exit_price = float(
+            merged_row.get("exit_price")
+            or merged_row.get("current_price")
+            or matched_prediction.get("current_price")
+            or entry_price
+        )
+        return_pct = float(merged_row.get("return_pct") or 0)
+        is_win = return_pct > 0
+        holding_days = self._resolve_holding_days(merged_row)
+        exit_reason = str(merged_row.get("exit_reason", "") or "").strip()
+        if not exit_reason:
+            exit_reason = self._determine_exit_reason(return_pct)
+        lessons = self._extract_lessons(merged_row, return_pct, is_win)
+
+        return TradeReview(
+            symbol=symbol,
+            name=name,
+            strategy_type=strategy_type,
+            signal_date=signal_date,
+            entry_price=entry_price,
+            exit_price=exit_price,
+            return_pct=return_pct,
+            is_win=is_win,
+            holding_days=holding_days,
+            exit_reason=exit_reason,
+            lessons=lessons,
+        )
+
+    def _resolve_holding_days(self, row: dict) -> int:
+        explicit_days = row.get("holding_days")
+        if explicit_days not in (None, ""):
+            try:
+                return max(int(explicit_days), 1)
+            except (TypeError, ValueError):
+                pass
+
+        entry_date = str(row.get("entry_date", "") or "").strip()
+        exit_date = str(row.get("exit_date", "") or "").strip()
+        if entry_date and exit_date:
+            try:
+                entry = datetime.strptime(entry_date, "%Y-%m-%d")
+                exit_dt = datetime.strptime(exit_date, "%Y-%m-%d")
+                return max((exit_dt - entry).days + 1, 1)
+            except ValueError:
+                pass
+        return 1
 
     def _resolve_strategy_type(self, pred: dict) -> str:
         explicit = str(pred.get("strategy_type", "")).strip()
@@ -429,9 +610,25 @@ class ClosingReviewer:
         """评估市场环境"""
         return "震荡市"
 
-    def _extract_key_lessons(self, reviews: list[TradeReview]) -> tuple[str, ...]:
+    def _extract_key_lessons(
+        self,
+        reviews: list[TradeReview],
+        *,
+        blocked_count: int = 0,
+        pending_count: int = 0,
+        total_signals: int = 0,
+    ) -> tuple[str, ...]:
         """提取关键经验教训"""
         lessons = []
+
+        if total_signals > 0 and not reviews:
+            lessons.append("今日信号仍在跟踪，暂无 closed 虚拟盘结果。")
+
+        if blocked_count > 0:
+            lessons.append("存在不可成交样本，已按阻塞处理，不计入胜率。")
+
+        if pending_count > 0:
+            lessons.append("部分信号仍在等待入场或平仓，后续需继续复核。")
 
         win_count = len([r for r in reviews if r.is_win])
         loss_count = len([r for r in reviews if not r.is_win and r.return_pct != 0])
@@ -456,17 +653,28 @@ class ClosingReviewer:
         return tuple(lessons)
 
     def _generate_improvement_suggestions(
-        self, reviews: list[TradeReview], win_rate: float
+        self,
+        reviews: list[TradeReview],
+        win_rate: float,
+        *,
+        pending_count: int = 0,
+        blocked_count: int = 0,
     ) -> tuple[str, ...]:
         """生成改进建议"""
         suggestions = []
 
-        if win_rate < 0.5:
+        if pending_count > 0:
+            suggestions.append("对未完成验证的样本保留跟踪，避免过早下结论。")
+
+        if blocked_count > 0:
+            suggestions.append("复核不可成交原因，确认是否属于流动性或涨停限制。")
+
+        if reviews and win_rate < 0.5:
             suggestions.append("胜率偏低，建议减少交易频率，提高选股标准")
 
         recent_reviews = sorted(reviews, key=lambda x: x.signal_date)[-5:]
         recent_losses = len([r for r in recent_reviews if not r.is_win])
-        if recent_losses >= 3:
+        if recent_reviews and recent_losses >= 3:
             suggestions.append("连续亏损，建议暂停交易，观察市场")
 
         big_losses = [r for r in reviews if r.return_pct < -5]
@@ -505,20 +713,30 @@ class ClosingReviewer:
             周度总结
         """
         if end_date is None:
-            end_date = now_shanghai().strftime("%Y-%m-%d")
+            end_date = self._latest_review_date() or now_shanghai().strftime("%Y-%m-%d")
 
-        end = now_shanghai().strptime(end_date, "%Y-%m-%d")
+        end = datetime.strptime(end_date, "%Y-%m-%d")
         start = end - timedelta(days=6)
         week_start = start.strftime("%Y-%m-%d")
 
-        all_reviews: list[TradeReview] = []
-        current = start
-        while current <= end:
-            date_str = current.strftime("%Y-%m-%d")
-            predictions = self._load_predictions(date_str)
-            for pred in predictions:
-                all_reviews.append(self._review_single_prediction(pred))
-            current += timedelta(days=1)
+        predictions = self._load_predictions_between(week_start, end_date)
+        predictions_by_id, predictions_by_symbol = self._prediction_indexes(predictions)
+        closed_rows = [
+            row
+            for row in self._load_paper_rows(start_date=week_start, end_date=end_date)
+            if row.get("status") == "closed"
+        ]
+        all_reviews = [
+            self._review_single_trade(
+                paper_row=row,
+                matched_prediction=self._matching_prediction(
+                    paper_row=row,
+                    predictions_by_id=predictions_by_id,
+                    predictions_by_symbol=predictions_by_symbol,
+                ),
+            )
+            for row in closed_rows
+        ]
 
         total_trades = len(all_reviews)
         win_count = len([r for r in all_reviews if r.is_win])

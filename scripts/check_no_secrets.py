@@ -94,13 +94,18 @@ SAFE_SECRET_REFERENCES = (
 
 
 def relative_name(path: Path, root: Path = ROOT) -> str:
-    return path.resolve().relative_to(root.resolve()).as_posix()
+    try:
+        return path.relative_to(root).as_posix()
+    except ValueError:
+        return path.as_posix()
 
 
 def iter_files(root: Path) -> list[Path]:
     root = root.resolve()
     paths: list[Path] = []
     for path in root.rglob("*"):
+        if path.is_symlink():
+            continue
         if not path.is_file():
             continue
         rel = relative_name(path, root)

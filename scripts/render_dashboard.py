@@ -66,6 +66,25 @@ def _safe_float(value: Any) -> float | None:
         return None
 
 
+def _strategy_values(raw: Any) -> list[str]:
+    if raw in ("", None):
+        return []
+    if isinstance(raw, str):
+        try:
+            parsed = json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            parsed = [part.strip() for part in raw.split(",") if part.strip()]
+        else:
+            if isinstance(parsed, str):
+                parsed = [parsed]
+            elif not isinstance(parsed, list):
+                parsed = [str(parsed)]
+        return [str(item).strip() for item in parsed if str(item).strip()]
+    if isinstance(raw, (list, tuple, set)):
+        return [str(item).strip() for item in raw if str(item).strip()]
+    return [str(raw).strip()] if str(raw).strip() else []
+
+
 def read_ledger_rows(path: Path) -> list[dict[str, Any]]:
     if not path.exists():
         return []
@@ -369,7 +388,7 @@ def _candidate_cards(
             for part in (candidate_review_priority, candidate_review_window)
             if part
         )
-        strategies = html.escape(row.get("strategies", ""))
+        strategies = html.escape(" / ".join(_strategy_values(row.get("strategies"))))
         reasons = html.escape(row.get("reasons", ""))
         risks = html.escape(row.get("risks", ""))
         debate = debate_map.get(symbol)
@@ -1281,15 +1300,8 @@ def render_strategy_performance_panel(
 
     strategy_data: dict[str, dict[str, Any]] = {}
     for row in validated:
-        raw = row.get("strategies")
-        if isinstance(raw, str):
-            try:
-                strategies = json.loads(raw)
-            except (json.JSONDecodeError, TypeError):
-                strategies = [s.strip() for s in raw.split(",") if s.strip()]
-        elif isinstance(raw, list):
-            strategies = list(raw)
-        else:
+        strategies = _strategy_values(row.get("strategies"))
+        if not strategies:
             continue
         ret = _safe_float(
             row.get("excess_return_pct")
@@ -1456,20 +1468,19 @@ def render_morning_evening_panel(
     evening_signals = []
 
     for row in rows:
-        strategy = row.get("strategies", "")
-        if isinstance(strategy, str):
-            if (
-                "morning_breakout" in strategy
-                or "morning-breakout" in strategy
-                or "早盘" in strategy
-            ):
-                morning_signals.append(row)
-            elif (
-                "closing_premium" in strategy
-                or "closing-premium" in strategy
-                or "尾盘" in strategy
-            ):
-                evening_signals.append(row)
+        strategies = _strategy_values(row.get("strategies"))
+        if any(
+            token in strategy
+            for strategy in strategies
+            for token in ("morning_breakout", "morning-breakout", "早盘")
+        ):
+            morning_signals.append(row)
+        elif any(
+            token in strategy
+            for strategy in strategies
+            for token in ("closing_premium", "closing-premium", "尾盘")
+        ):
+            evening_signals.append(row)
 
     if not morning_signals and not evening_signals:
         return _fold_panel(
@@ -1933,6 +1944,20 @@ def render_dashboard(
     source_health_path: str | Path | None = None,
 ) -> str:
     debate_map = debate_map or {}
+    candidate_symbols = {
+        str(candidate.get("symbol", "") or "").strip()
+        for candidate in candidates
+        if str(candidate.get("symbol", "") or "").strip()
+    }
+    visible_debate_map = (
+        {
+            symbol: debate
+            for symbol, debate in debate_map.items()
+            if str(symbol).strip() in candidate_symbols
+        }
+        if candidate_symbols
+        else debate_map
+    )
     stats = summarize_ledger(rows)
     paper = summarize_paper(paper_rows or [])
     generated_at = now_shanghai().isoformat(timespec="seconds")
@@ -1968,7 +1993,7 @@ def render_dashboard(
         for css_class, message in warnings
     )
 
-    debate_modals_html = _debate_modals(debate_map)
+    debate_modals_html = _debate_modals(visible_debate_map)
     health_panel_html = _system_health_panel(
         rows, candidates, debate_map, source_health_path
     )
@@ -2725,7 +2750,7 @@ def render_dashboard(
   <!-- PANEL_MORNING_EVENING -->
   {_research_panel(research_summary)}
   <main class="grid">
-    {_candidate_cards(candidates, debate_map)}
+    {_candidate_cards(candidates, visible_debate_map)}
   </main>
   <section class="panel">
     <h2>最近信号</h2>

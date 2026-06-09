@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 from .cost import TradingCostCalculator
-from .twap import TWAPExecutor, TWAPPlan, Order
+from .twap import TWAPExecutor, TWAPPlan
 
 
 @dataclass
@@ -183,7 +183,6 @@ class ExecutionCoordinator:
 
         results = []
         total_amount = 0
-        total_cost = 0
 
         for i, order in enumerate(twap_plan.orders):
             # 这里可以扩展为更复杂的模拟逻辑

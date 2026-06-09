@@ -9,6 +9,8 @@ __pycache__/
 .DS_Store
 /pr_evidence.txt
 _external/
+gh__*/
+recent_repos_*
 A股量化分析数据/
 private_data/
 reports/*.csv
@@ -23,6 +25,7 @@ data/*.jsonl
 data/snapshots
 !data/open_source_research.jsonl
 data/risk_state.json
+data/system_risk_state.json
 data/walkforward_gate.json
 data/source_health.json
 data/archive/

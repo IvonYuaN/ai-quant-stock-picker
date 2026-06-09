@@ -174,7 +174,6 @@ class TestCostCalculation:
             is_sell=False
         )
 
-        amount = 100000 * 15.5
         expected_cost_rate = 0.18  # 0.03% + 0.15%
 
         # 成本率应该接近预期
@@ -374,7 +373,7 @@ class TestEdgeCasesAndErrors:
 
         # 验证TWAP层会拒绝非100倍数的股数
         with pytest.raises(ValueError, match="target_shares必须是100的倍数"):
-            plan = coordinator.plan_execution(
+            coordinator.plan_execution(
                 symbol='000001.SZ',
                 target_shares=9999,  # 不是100的倍数，应该失败
                 avg_daily_volume=1000000,
@@ -390,7 +389,7 @@ class TestCostBreakdown:
         """测试佣金分解"""
         coordinator = ExecutionCoordinator()
 
-        plan = coordinator.plan_execution(
+        coordinator.plan_execution(
             symbol='000001.SZ',
             target_shares=10000,
             avg_daily_volume=1000000,

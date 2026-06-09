@@ -3,9 +3,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date
 from typing import Dict
+
 import pandas as pd
 import numpy as np
-import baostock as bs
+
+try:
+    import baostock as bs
+except ModuleNotFoundError:
+    bs = None
 
 from aqsp.core.errors import DataError
 from aqsp.data.cache import DataCache
@@ -18,6 +23,13 @@ _BS_LOGGED_IN = False
 
 def _ensure_baostock_login() -> bool:
     global _BS_LOGGED_IN
+    if bs is None:
+        record_source_auth(
+            "baostock",
+            "missing_package",
+            "baostock is not installed; run: pip install -e '.[data]'",
+        )
+        return False
     if _BS_LOGGED_IN:
         record_source_auth("baostock", "ok", "baostock 登录成功，复用已有会话。")
         return True
@@ -80,8 +92,12 @@ def _fetch_pit_financials_with_status(
             {},
             PitSourceStatus(
                 source_id="baostock",
-                status="login_failed",
-                message="baostock 未登录成功，财务补充已跳过。",
+                status="missing_package" if bs is None else "login_failed",
+                message=(
+                    "baostock is not installed; run: pip install -e '.[data]'"
+                    if bs is None
+                    else "baostock 未登录成功，财务补充已跳过。"
+                ),
             ),
         )
     out: dict[str, pd.DataFrame] = {}

@@ -407,6 +407,11 @@ def test_closing_review_step_writes_output_and_skips_fanout_notify_in_summary_mo
 ) -> None:
     daily_pipeline = _load_daily_pipeline_module()
     captured: list[str] = []
+    monkeypatch.setattr(
+        daily_pipeline,
+        "today_shanghai",
+        lambda: __import__("datetime").date(2026, 6, 8),
+    )
 
     def fake_main(argv: list[str]) -> int:
         captured[:] = argv
@@ -447,10 +452,17 @@ def test_closing_review_step_writes_output_and_skips_fanout_notify_in_summary_mo
 
     assert captured == [
         "closing-review",
+        "--ledger",
+        "data/predictions.jsonl",
+        "--paper-ledger",
+        "data/paper_trades.jsonl",
+        "--date",
+        "2026-06-08",
         "--output",
         "reports/closing_review.md",
     ]
     assert result["report_path"] == "reports/closing_review.md"
+    assert result["dated_report_path"] == "reports/closing_review-2026-06-08.md"
 
 
 def test_send_pipeline_digest_sends_summary_notification(
@@ -682,9 +694,9 @@ def test_run_pipeline_excludes_intraday_sub_strategies(monkeypatch) -> None:
     assert executed == [
         "数据更新",
         "策略运行",
-        "收盘复盘",
         "预测验证",
         "虚拟盘同步",
+        "收盘复盘",
         "自适应学习",
         "策略自进化",
         "报告生成",

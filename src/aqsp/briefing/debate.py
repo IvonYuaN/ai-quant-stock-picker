@@ -726,7 +726,7 @@ class AShareDebateCoordinator:
                     None
                 )
                 if my_prev is None:
-                    _logger.error(f"辩论链路断裂: Agent {agent.agent_id} 缺失第 {round_num-1} 轮观点，无法继续辩论")
+                    logger.error(f"辩论链路断裂: Agent {agent.agent_id} 缺失第 {round_num-1} 轮观点，无法继续辩论")
                     raise ValueError(f"Agent {agent.agent_id} 的观点缺失，辩论中止")
                 updated = agent.respond_to_counterarguments(
                     my_prev,
