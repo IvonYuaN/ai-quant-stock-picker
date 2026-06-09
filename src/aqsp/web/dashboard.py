@@ -2032,7 +2032,7 @@ def _classify_candidate_queues(
 
 def _queue_item_meta(card: DashboardCandidateCard, emphasis: str) -> str:
     meta_parts = [
-        f"动作 / 状态: {escape(_action_status_label(card.action_label, card.status_label))}"
+        f"研究状态: {escape(_action_status_label(card.action_label, card.status_label))}"
     ]
     if _has_review_meta(card.review_meta):
         meta_parts.append(f"复核: {escape(card.review_meta)}")
@@ -2189,7 +2189,7 @@ def _home_action_item_lines(card: DashboardCandidateCard) -> tuple[str, ...]:
         line
         for line in (
             f"研究入口: {_review_source_label(card)}",
-            f"动作 / 状态: {_action_status_label(card.action_label, card.status_label)}",
+            f"研究状态: {_action_status_label(card.action_label, card.status_label)}",
             f"当前重点: {emphasis}",
             _review_meta_line("复核节奏", card.review_meta),
         )
@@ -2454,17 +2454,16 @@ def _home_workspace_hint(
     if paper_summary.pending_entries or paper_summary.not_executable:
         return (
             "先看虚拟盘跟踪",
-            (
-                paper_summary.action_summary_lines[0]
-                if paper_summary.action_summary_lines
-                else "当前纸面验证链路已有事件，先看入场假设和不可成交处理。"
+            _safe_paper_summary_detail(
+                paper_summary,
+                fallback="当前纸面验证链路已有事件，先看入场假设和不可成交处理。",
             ),
             "pressure",
         )
     if _report_archive_status(task_view) != "无归档":
         return (
             "先去归档回看",
-            (
+            _safe_research_hint_line(
                 task_view.next_day_focus_lines[0]
                 if task_view.next_day_focus_lines
                 else (
@@ -2492,26 +2491,39 @@ def _home_workspace_hint(
     if paper_summary.open_positions:
         return (
             "先看虚拟盘跟踪",
-            (
-                paper_summary.action_summary_lines[0]
-                if paper_summary.action_summary_lines
-                else "当前有纸面持有假设，先核对防守位、观察目标与退出条件。"
+            _safe_paper_summary_detail(
+                paper_summary,
+                fallback="当前有纸面持有假设，先核对防守位、观察目标与退出条件。",
             ),
             "focus",
         )
     return (
         "先去候选复盘",
         (
-            task_view.review_lines[0]
-            if task_view.review_lines
-            else (
-                task_view.recommendation_lines[0]
-                if task_view.recommendation_lines
-                else "当前仍以研究判断为主，先沿候选路径回看证据。"
+            _safe_research_hint_line(
+                task_view.review_lines[0]
+                if task_view.review_lines
+                else (
+                    task_view.recommendation_lines[0]
+                    if task_view.recommendation_lines
+                    else "当前仍以研究判断为主，先沿候选路径回看证据。"
+                )
             )
         ),
         "focus",
     )
+
+
+def _safe_paper_summary_detail(
+    paper_summary: DashboardPaperSummary,
+    *,
+    fallback: str,
+) -> str:
+    return _day_replay_paper_detail(paper_summary.action_summary_lines) or fallback
+
+
+def _safe_research_hint_line(line: str) -> str:
+    return _sanitize_day_replay_line(line)
 
 
 def _render_home_navigation_summary(
@@ -2689,7 +2701,7 @@ def _render_trading_cockpit(
         "<br/>".join(
             line
             for line in [
-                f"动作 / 状态: {escape(_action_status_label(focus_card.action_label, focus_card.status_label))}",
+                f"研究状态: {escape(_action_status_label(focus_card.action_label, focus_card.status_label))}",
                 (
                     f"评分 {focus_card.score:.1f} / 复核 {escape(focus_card.review_meta)}"
                     if _has_review_meta(focus_card.review_meta)
@@ -2716,9 +2728,10 @@ def _render_trading_cockpit(
         pressure_title = "纸面事件需要优先处理"
         pressure_lines.append(
             escape(
-                paper_summary.action_summary_lines[0]
-                if paper_summary.action_summary_lines
-                else "先处理纸面假设与不可成交事件。"
+                _safe_paper_summary_detail(
+                    paper_summary,
+                    fallback="先处理纸面假设与不可成交事件。",
+                )
             )
         )
     elif paper_summary.open_positions:
@@ -2745,12 +2758,12 @@ def _render_trading_cockpit(
         [
             escape(_report_archive_status(task_view)),
             escape(
-                task_view.report_summary_lines[0]
+                _safe_research_hint_line(task_view.report_summary_lines[0])
                 if task_view.report_summary_lines
                 else (overview.archive_summary or "当前还没有结构化归档摘要。")
             ),
             escape(
-                task_view.next_day_focus_lines[0]
+                _safe_research_hint_line(task_view.next_day_focus_lines[0])
                 if task_view.next_day_focus_lines
                 else "当前暂无额外次日重点。"
             ),
@@ -2898,10 +2911,7 @@ def _day_replay_next_step_line(
         blocker = _sanitize_day_replay_line(
             overview.blocker_headline or "回到候选复盘核对卡点。"
         )
-        return (
-            "⚠️ 阻塞提示: 待核对卡点，"
-            f"{blocker}"
-        )
+        return f"⚠️ 阻塞提示: 待核对卡点，{blocker}"
     if task_view.next_day_focus_lines:
         return (
             "📚 归档回看: 原报告下一交易日重点，"
@@ -3202,7 +3212,7 @@ def _render_same_day_candidate_spotlights(
             with column:
                 summary_bits = [
                     f"来源任务: {'、'.join(item.task_labels)}",
-                    f"动作 / 状态: {_action_status_label(item.action_label, item.status_label)}",
+                    f"研究状态: {_action_status_label(item.action_label, item.status_label)}",
                 ]
                 if review_line := _review_meta_line("复核", item.review_meta):
                     summary_bits.append(review_line)
@@ -3609,19 +3619,22 @@ def _home_reading_order_lines(
     if paper_summary.pending_entries or paper_summary.not_executable:
         paper_line = _join_display_parts(
             "🧪 先看纸面验证",
-            (
-                paper_summary.action_summary_lines[0]
-                if paper_summary.action_summary_lines
-                else f"入场待核对 {paper_summary.pending_entries} / 不可成交 {paper_summary.not_executable}"
+            _safe_paper_summary_detail(
+                paper_summary,
+                fallback=(
+                    f"入场待核对 {paper_summary.pending_entries} / "
+                    f"不可成交 {paper_summary.not_executable}"
+                ),
             ),
         )
     elif paper_summary.open_positions:
         paper_line = _join_display_parts(
             "🧪 先看纸面持有",
-            (
-                paper_summary.action_summary_lines[0]
-                if paper_summary.action_summary_lines
-                else f"当前纸面持有 {paper_summary.open_positions} 笔，先核对退出条件。"
+            _safe_paper_summary_detail(
+                paper_summary,
+                fallback=(
+                    f"当前纸面持有 {paper_summary.open_positions} 笔，先核对退出条件。"
+                ),
             ),
         )
     else:
@@ -3663,12 +3676,14 @@ def _home_reading_order_lines(
     elif _report_archive_status(task_view) != "无归档":
         close_line = _join_display_parts(
             "📚 最后回看归档",
-            task_view.next_day_focus_lines[0]
-            if task_view.next_day_focus_lines
-            else (
-                task_view.report_summary_lines[0]
-                if task_view.report_summary_lines
-                else overview.archive_summary
+            _safe_research_hint_line(
+                task_view.next_day_focus_lines[0]
+                if task_view.next_day_focus_lines
+                else (
+                    task_view.report_summary_lines[0]
+                    if task_view.report_summary_lines
+                    else overview.archive_summary
+                )
             ),
         )
     else:
@@ -4841,7 +4856,7 @@ def _focus_summary_lines(
         return tuple(
             line
             for line in (
-                f"动作 / 状态: {_action_status_label(selected_card.action_label, selected_card.status_label)}",
+                f"研究状态: {_action_status_label(selected_card.action_label, selected_card.status_label)}",
                 _candidate_score_context_line(selected_card),
                 (
                     f"下一步: {_card_next_action(selected_card)}"
@@ -4862,7 +4877,7 @@ def _focus_summary_lines(
             line
             for line in (
                 f"来源任务: {'、'.join(selected_spotlight.task_labels)}",
-                f"动作 / 状态: {_action_status_label(selected_spotlight.action_label, selected_spotlight.status_label)}",
+                f"研究状态: {_action_status_label(selected_spotlight.action_label, selected_spotlight.status_label)}",
                 (
                     f"当前重点: {selected_spotlight.blocker or selected_spotlight.next_step}"
                     if selected_spotlight.blocker or selected_spotlight.next_step
@@ -5108,9 +5123,7 @@ def _research_path_review_step(
                 ),
                 ("仅作辩论补齐，不替代确定性评分。",),
             )[:2],
-            tone="pressure"
-            if debate_summary.disagreement_score >= 0.35
-            else "archive",
+            tone="pressure" if debate_summary.disagreement_score >= 0.35 else "archive",
         )
     source = _review_source_label(review_card)
     source_hint = (
@@ -5765,7 +5778,7 @@ def _render_candidate_focus_summary(
             "\n".join(
                 line
                 for line in [
-                f"- 复核状态: {_action_status_label(card.action_label, card.status_label)}",
+                    f"- 复核状态: {_action_status_label(card.action_label, card.status_label)}",
                     (
                         f"- {_review_meta_line('复核节奏', card.review_meta)}"
                         if _review_meta_line("复核节奏", card.review_meta)
@@ -5840,7 +5853,7 @@ def _candidate_research_context_lines(
             line
             for line in (
                 f"研究入口: {_review_source_label(review_card)}",
-                f"动作 / 状态: {_action_status_label(review_card.action_label, review_card.status_label)}",
+                f"研究状态: {_action_status_label(review_card.action_label, review_card.status_label)}",
                 (
                     f"复核节奏: {review_card.review_meta}"
                     if _has_review_meta(review_card.review_meta)
@@ -6064,7 +6077,7 @@ def _render_candidate_journey(
                         f"### {step.phase_label}",
                         f"- 任务: {step.task_label}",
                         f"- 评分: `{step.score:.1f}`",
-                        f"- 动作 / 状态: {_action_status_label(step.action_label, step.status_label)}",
+                        f"- 研究状态: {_action_status_label(step.action_label, step.status_label)}",
                         (
                             f"- {_review_meta_line('复核节奏', step.review_meta)}"
                             if _review_meta_line("复核节奏", step.review_meta)
@@ -6537,7 +6550,9 @@ def _render_candidate_deep_dive(
         task_id=task_id,
     )
     open_positions_frame = provider.open_positions_frame(signal_date=signal_date)
-    open_positions_frame = _filter_frame_by_symbol(open_positions_frame, selected_symbol)
+    open_positions_frame = _filter_frame_by_symbol(
+        open_positions_frame, selected_symbol
+    )
 
     _render_research_path(
         _research_path_steps(
@@ -6978,7 +6993,7 @@ def _archive_brief_cards(
         line
         for line in (
             (
-            "纸面现实: 当日有纸面事件或执行日志，优先核对纸面记录链。"
+                "纸面现实: 当日有纸面事件或执行日志，优先核对纸面记录链。"
                 if has_execution_activity
                 else ""
             ),

@@ -955,7 +955,7 @@ def test_dashboard_focus_summary_lines_use_candidate_contract_when_selected_card
     )
 
     assert lines == (
-        "动作 / 状态: 上调优先级 / 延续上升",
+        "研究状态: 上调优先级 / 延续上升",
         "排队层级: 首选 / 评分 88.0",
         "下一步: 等待量能确认后决定是否保留主仓",
         "复核节奏: 高优先级 / 开盘前后",
@@ -1088,7 +1088,7 @@ def test_dashboard_focus_summary_lines_preserve_candidate_semantics_when_only_sp
 
     assert lines == (
         "来源任务: 早盘策略、尾盘策略",
-        "动作 / 状态: 降级观察 / 观察阻塞",
+        "研究状态: 降级观察 / 观察阻塞",
         "当前重点: 高位波动放大，先等待分歧收敛",
         "统一复核: 中优先级 / 午后回看",
     )
@@ -2107,7 +2107,9 @@ def test_dashboard_raw_report_markdown_is_wrapped_as_historical_evidence() -> No
     )
 
 
-def test_dashboard_sanitizes_raw_archive_action_words_without_rewriting_source() -> None:
+def test_dashboard_sanitizes_raw_archive_action_words_without_rewriting_source() -> (
+    None
+):
     raw_markdown = (
         "## 今日建议\n"
         "- 可执行主链: 复核执行顺序\n"
@@ -3323,11 +3325,14 @@ def test_dashboard_day_replay_digest_prioritizes_paper_reality() -> None:
         action_summary_lines=("600519 贵州茅台 | 等待纸面入场确认",),
     )
 
-    assert _day_replay_next_step_line(
-        task_view=_TaskView(),
-        overview=overview,
-        paper_summary=paper_summary,
-    ) == "🧪 复核提示: 纸面验证记录待核对，600519 贵州茅台 | 等待纸面入场确认"
+    assert (
+        _day_replay_next_step_line(
+            task_view=_TaskView(),
+            overview=overview,
+            paper_summary=paper_summary,
+        )
+        == "🧪 复核提示: 纸面验证记录待核对，600519 贵州茅台 | 等待纸面入场确认"
+    )
 
     lines = _day_replay_digest_lines(
         task_view=_TaskView(),
@@ -3336,7 +3341,10 @@ def test_dashboard_day_replay_digest_prioritizes_paper_reality() -> None:
         same_day_rows=(),
     )
 
-    assert lines[2] == "🧪 复核提示: 纸面验证记录待核对，600519 贵州茅台 | 等待纸面入场确认"
+    assert (
+        lines[2]
+        == "🧪 复核提示: 纸面验证记录待核对，600519 贵州茅台 | 等待纸面入场确认"
+    )
 
 
 def test_dashboard_day_replay_digest_neutralizes_raw_paper_writeback() -> None:
@@ -3385,7 +3393,10 @@ def test_dashboard_day_replay_digest_neutralizes_raw_paper_writeback() -> None:
         paper_summary=paper_summary,
     )
 
-    assert line == "🧪 复核提示: 纸面验证记录待核对，纸面入场待核对 1 笔，等待下一交易日开盘价。"
+    assert (
+        line
+        == "🧪 复核提示: 纸面验证记录待核对，纸面入场待核对 1 笔，等待下一交易日开盘价。"
+    )
     assert "BUY" not in line
     assert "SELL" not in line
     assert "下单" not in line
@@ -3435,7 +3446,14 @@ def test_dashboard_day_replay_digest_neutralizes_archived_focus_words() -> None:
     )
 
     assert line.startswith("📚 归档回看:")
-    for forbidden in ("📚 下一步", "今日建议", "立即买入", "下单", "执行顺位", "新开仓"):
+    for forbidden in (
+        "📚 下一步",
+        "今日建议",
+        "立即买入",
+        "下单",
+        "执行顺位",
+        "新开仓",
+    ):
         assert forbidden not in line
 
 
@@ -3525,11 +3543,14 @@ def test_dashboard_day_replay_digest_prioritizes_blockers_before_archive() -> No
         action_summary_lines=(),
     )
 
-    assert _day_replay_next_step_line(
-        task_view=_TaskView(),
-        overview=overview,
-        paper_summary=paper_summary,
-    ) == "⚠️ 阻塞提示: 待核对卡点，000338 潍柴动力 | 流动性不足"
+    assert (
+        _day_replay_next_step_line(
+            task_view=_TaskView(),
+            overview=overview,
+            paper_summary=paper_summary,
+        )
+        == "⚠️ 阻塞提示: 待核对卡点，000338 潍柴动力 | 流动性不足"
+    )
 
 
 def test_dashboard_day_replay_digest_neutralizes_review_action_words() -> None:
@@ -3846,9 +3867,7 @@ def test_dashboard_research_path_steps_connect_review_paper_and_archive_safely()
     assert steps[1].lines[0] == "纸面事件: 不可成交待核对"
     assert steps[2].headline == "已归档"
     rendered_text = "\n".join(
-        line
-        for step in steps
-        for line in (step.headline, *step.lines)
+        line for step in steps for line in (step.headline, *step.lines)
     )
     for forbidden in (
         "今日建议",
@@ -3980,11 +3999,14 @@ def test_dashboard_home_workspace_hint_prioritizes_execution_then_archive_then_r
         closed_trades=0,
         open_position_lines=(),
         event_lines=(),
-        action_summary_lines=("有纸面入场事件，先看纸面验证链。",),
+        action_summary_lines=(
+            "最近纸面回写: 600519 贵州茅台 | BUY 100 @ 1500",
+            "纸面入场待核对 1 笔，先看纸面验证链。",
+        ),
     )
     assert _home_workspace_hint(_TaskView(), _Overview(), execution_summary) == (
         "先看虚拟盘跟踪",
-        "有纸面入场事件，先看纸面验证链。",
+        "纸面入场待核对 1 笔，先看纸面验证链。",
         "pressure",
     )
 
@@ -4206,7 +4228,9 @@ def test_dashboard_home_brief_cards_summarize_day_without_trading_language() -> 
     assert "下单" not in rendered_text
 
 
-def test_dashboard_home_evidence_entry_lines_keep_first_screen_compact_and_safe() -> None:
+def test_dashboard_home_evidence_entry_lines_keep_first_screen_compact_and_safe() -> (
+    None
+):
     from aqsp.web.data_provider import DashboardPaperSummary
 
     class _TaskView:
@@ -4242,7 +4266,10 @@ def test_dashboard_home_evidence_entry_lines_keep_first_screen_compact_and_safe(
     assert lines == (
         ("🧪 纸面", "纸面: 持有 1 / 待核对 1 / 阻塞 1"),
         ("🧭 候选", "候选 · 1 复核 · 2 观察 · 1 阻塞"),
-        ("🗂 归档", "归档 · 已归档 · 历史回看: 历史记录: 纸面观察，历史复核名单等待纸面记录。"),
+        (
+            "🗂 归档",
+            "归档 · 已归档 · 历史回看: 历史记录: 纸面观察，历史复核名单等待纸面记录。",
+        ),
     )
     rendered_text = "\n".join(line for _, line in lines)
     for forbidden in ("今日建议", "立即买入", "执行名单", "下单", "真实持仓"):
@@ -4818,7 +4845,10 @@ def test_dashboard_home_reading_order_prioritizes_paper_events_before_candidates
         closed_trades=0,
         open_position_lines=(),
         event_lines=(),
-        action_summary_lines=("纸面入场待核对 1 笔，等待下一交易日开盘价。",),
+        action_summary_lines=(
+            "最近纸面回写: 600519 贵州茅台 | BUY 100 @ 1500",
+            "纸面入场待核对 1 笔，等待下一交易日开盘价。",
+        ),
     )
 
     lines = _home_reading_order_lines(
@@ -4831,6 +4861,8 @@ def test_dashboard_home_reading_order_prioritizes_paper_events_before_candidates
 
     assert lines[0].startswith("🧪 先看纸面验证")
     assert "下一交易日开盘价" in lines[0]
+    assert "BUY" not in lines[0]
+    assert "@" not in lines[0]
     assert "🧭 再看候选路径 | 600519 贵州茅台" in lines[1]
     assert lines[2].startswith("📚 归档待补")
 
