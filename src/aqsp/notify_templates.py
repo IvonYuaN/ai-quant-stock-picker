@@ -162,6 +162,18 @@ def build_daily_run_notification(
             f"- 重点辩论: {lead.symbol} {lead.name} | {lead.recommended_adjustment.upper()} | {consensus}"
         )
 
+    reading_order = _daily_reading_order_lines(
+        tradable=tradable,
+        candidates=candidates,
+        portfolio_summary=portfolio_summary,
+        debate_results=debate_results,
+        circuit_breaker_reason=circuit_breaker_reason,
+        is_cold_start=is_cold_start,
+    )
+    if reading_order:
+        lines.extend(["", "## 🧭 阅读顺序", ""])
+        lines.extend(reading_order)
+
     lines.extend(["", "## 📋 候选简表", ""])
     lines.extend(_daily_candidate_table(tradable, candidates, mode=mode))
     allocation_execution = _format_allocation_execution(portfolio_summary)
@@ -222,6 +234,98 @@ def _daily_lead_conclusion(
         lead = candidates[0]
         return f"👀 仅观察，先看 {format_symbol_name(lead.symbol, lead.name)} 的确认条件"
     return "⏸️ 今日没有足够清晰的候选，保持观察"
+
+
+def _daily_reading_order_lines(
+    *,
+    tradable: Sequence[PickResult],
+    candidates: Sequence[PickResult],
+    portfolio_summary: PortfolioDecisionSummary | None,
+    debate_results: Sequence[DebateResult],
+    circuit_breaker_reason: str,
+    is_cold_start: bool,
+) -> list[str]:
+    lines: list[str] = []
+    if circuit_breaker_reason:
+        lines.append(f"1. 🛡️ 先看组合保护：{circuit_breaker_reason}")
+    elif is_cold_start:
+        lines.append("1. 🧪 先看冷启动：样本仍在积累，今天只做纸面跟踪。")
+    elif tradable:
+        lead = tradable[0]
+        lines.append(
+            "1. 🧪 先看纸面复核："
+            f"{format_symbol_name(lead.symbol, lead.name)}，核对开盘承接和流动性。"
+        )
+    elif portfolio_summary is not None and portfolio_summary.allocations:
+        lead = portfolio_summary.allocations[0]
+        lines.append(
+            "1. 🧪 先看纸面配仓复核："
+            f"{format_symbol_name(lead.symbol, lead.name)}，核对开盘承接和流动性。"
+        )
+    elif portfolio_summary is not None and portfolio_summary.watch_reviews:
+        lead = portfolio_summary.watch_reviews[0]
+        lines.append(
+            "1. 👀 先看观察复核："
+            + format_watch_review_action(
+                format_symbol_name(lead.symbol, lead.name),
+                priority=lead.priority,
+                review_window=lead.review_window,
+                next_step=lead.next_step,
+            )
+        )
+    elif candidates:
+        lead = candidates[0]
+        lines.append(
+            "1. 👀 先看观察候选："
+            f"{format_symbol_name(lead.symbol, lead.name)}，等待确认条件。"
+        )
+    else:
+        lines.append("1. ⏸️ 先看空档：今日无清晰候选，不为了凑单行动。")
+
+    blocker_line = _daily_primary_blocker_line(
+        candidates=candidates,
+        portfolio_summary=portfolio_summary,
+    )
+    if blocker_line:
+        lines.append(f"2. 🔒 再看风险/阻塞：{blocker_line}")
+    elif portfolio_summary is not None and portfolio_summary.action_hotspots:
+        lines.append(
+            "2. 🔍 再看裁决热点："
+            + "；".join(portfolio_summary.action_hotspots[:2])
+        )
+    else:
+        lines.append("2. 🔍 再看候选简表：确认状态、分数、关键点是否一致。")
+
+    if debate_results:
+        lead_debate = sorted(
+            debate_results,
+            key=lambda item: item.disagreement_score,
+            reverse=True,
+        )[0]
+        lines.append(
+            "3. 🗣️ 最后看多 Agent 分歧："
+            f"{format_symbol_name(lead_debate.symbol, lead_debate.name)} "
+            f"分歧度 {lead_debate.disagreement_score:.0%}。"
+        )
+    elif portfolio_summary is not None and portfolio_summary.allocation_note:
+        lines.append(f"3. 📌 最后看约束：{portfolio_summary.allocation_note}。")
+    else:
+        lines.append("3. 📚 最后留给归档：等待收盘复盘把今日判断写回历史。")
+    return lines
+
+
+def _daily_primary_blocker_line(
+    *,
+    candidates: Sequence[PickResult],
+    portfolio_summary: PortfolioDecisionSummary | None,
+) -> str:
+    if portfolio_summary is not None and portfolio_summary.execution_blockers:
+        return "；".join(portfolio_summary.execution_blockers[:2])
+    for pick in candidates:
+        blocker = _candidate_blocker(pick)
+        if blocker:
+            return f"{format_symbol_name(pick.symbol, pick.name)}：{blocker}"
+    return ""
 
 
 def _table_cell(value: object) -> str:

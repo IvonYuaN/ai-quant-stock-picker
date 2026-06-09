@@ -108,6 +108,14 @@ def test_build_daily_run_notification_includes_allocation_guidance() -> None:
     assert "- 优先策略: 动量趋势、涨停接力" in markdown
     assert "- 配仓建议: 300750 20%" in markdown
     assert "- 现金留存: 80%" in markdown
+    assert "## 🧭 阅读顺序" in markdown
+    assert (
+        "1. 🧪 先看纸面配仓复核：300750 宁德时代，核对开盘承接和流动性。"
+        in markdown
+    )
+    assert "2. 🔍 再看候选简表：确认状态、分数、关键点是否一致。" in markdown
+    assert "3. 🗣️ 最后看多 Agent 分歧：300750 宁德时代 分歧度 42%。" in markdown
+    assert markdown.index("## 🧭 阅读顺序") < markdown.index("## 📋 候选简表")
     assert "## 配仓执行" in markdown
     assert "300750 宁德时代 20% | 主链评分 72.0" in markdown
     assert "## 多Agent辩论" in markdown
@@ -141,6 +149,13 @@ def test_build_daily_run_notification_surfaces_watchlist_blockers_when_no_alloca
     assert "- 主链状态: 今日无可执行标的，转入观察池：000021 深科技、000338 潍柴动力" in markdown
     assert "- 裁决热点: 板块集中度过高，压低科技暴露" in markdown
     assert "- 执行阻塞: 000021 深科技: 板块集中度过高，压低科技暴露" in markdown
+    assert "## 🧭 阅读顺序" in markdown
+    assert "1. ⏸️ 先看空档：今日无清晰候选，不为了凑单行动。" in markdown
+    assert (
+        "2. 🔒 再看风险/阻塞：000021 深科技: 板块集中度过高，压低科技暴露"
+        in markdown
+    )
+    assert "3. 📌 最后看约束：单票上限 20%；今日不建议建立主仓。" in markdown
     assert "暂无可执行主仓，先盯观察池" in markdown
     assert "只有阻塞条件解除后再考虑转入执行名单" in markdown
 
