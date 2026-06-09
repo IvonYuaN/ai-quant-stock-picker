@@ -283,6 +283,36 @@ def test_dashboard_renders_research_absorption_panel() -> None:
     assert "门控中" in html
 
 
+def test_dashboard_research_absorption_panel_labels_config_backed_queue() -> None:
+    summary = ResearchSummary(
+        generated_at="",
+        total_findings=0,
+        pipeline_summaries=(),
+        absorbed_families=(
+            ResearchFamilySummary(
+                family_id="market_regime_timing_filter",
+                name="大盘择时 / 市场状态过滤",
+                status="research_absorbed",
+                runtime_stage="report_only",
+                absorbed_from_count=4,
+                runtime_gate_count=4,
+            ),
+        ),
+        source_candidates=(),
+        next_actions=(),
+        prereq_items=(),
+        implemented_family_count=5,
+        report_only_family_count=1,
+        gated_family_count=0,
+    )
+
+    html = render_dashboard([], [], "研究面板", research_summary=summary)
+
+    assert "config-backed" in html
+    assert "未落盘（按配置吸收队列展示）" in html
+    assert "0 findings" not in html
+
+
 def test_dashboard_research_radar_summarizes_absorption_without_scoring_claims() -> (
     None
 ):
@@ -336,7 +366,7 @@ def test_dashboard_research_radar_summarizes_absorption_without_scoring_claims()
     card = _research_radar_card(summary)
     rendered = "\n".join((card.title, *(line for line in card.lines)))
 
-    assert "研究候选 113" in card.title
+    assert "研究发现 113 条" in card.title
     assert ("已吸收", "2") in card.metrics
     assert ("只进报告", "1") in card.metrics
     assert ("门控中", "1") in card.metrics
@@ -344,6 +374,37 @@ def test_dashboard_research_radar_summarizes_absorption_without_scoring_claims()
     assert "缠论结构语境" in rendered
     assert "只进报告" in rendered
     assert "当前主链评分" not in rendered
+
+
+def test_dashboard_research_radar_labels_config_backed_queue_when_findings_missing() -> (
+    None
+):
+    summary = ResearchSummary(
+        generated_at="",
+        total_findings=0,
+        pipeline_summaries=(),
+        absorbed_families=(
+            ResearchFamilySummary(
+                family_id="market_regime_timing_filter",
+                name="大盘择时 / 市场状态过滤",
+                status="research_absorbed",
+                runtime_stage="report_only",
+                absorbed_from_count=4,
+                runtime_gate_count=4,
+            ),
+        ),
+        source_candidates=(),
+        next_actions=(),
+        prereq_items=(),
+        implemented_family_count=5,
+        report_only_family_count=1,
+        gated_family_count=0,
+    )
+
+    card = _research_radar_card(summary)
+
+    assert "研究发现 未落盘（按配置吸收队列展示）" in card.title
+    assert ("研究发现", "配置队列") in card.metrics
 
 
 def test_dashboard_research_radar_surfaces_prereq_blockers() -> None:
@@ -396,7 +457,7 @@ def test_dashboard_research_radar_has_safe_empty_state_when_summary_missing() ->
     rendered = "\n".join((card.title, *(line for line in card.lines)))
 
     assert card.title == "研究吸收未更新"
-    assert ("研究候选", "-") in card.metrics
+    assert ("研究发现", "-") in card.metrics
     assert "研究队列缺失不影响当前主链评分" in rendered
     assert "report-only" in rendered
 

@@ -124,14 +124,21 @@ class TestBriefingGenerator:
             frames={},
         )
         main_chain_sec = next(s for s in briefing.sections if s.title == "主链总览")
-        assert "首位候选: 300750 宁德时代 | 候选观察池 | 新晋 | 评分 16.0" in main_chain_sec.content
+        assert (
+            "首位候选: 300750 宁德时代 | 候选观察池 | 新晋 | 评分 16.0"
+            in main_chain_sec.content
+        )
 
     def test_main_chain_section_includes_watch_review_checklist(self):
         gen = BriefingGenerator()
         briefing = gen.generate(
             picks=[
-                _make_pick(symbol="688981", name="中芯国际", score=-9.0, rating="watch"),
-                _make_pick(symbol="000001", name="平安银行", score=-18.0, rating="watch"),
+                _make_pick(
+                    symbol="688981", name="中芯国际", score=-9.0, rating="watch"
+                ),
+                _make_pick(
+                    symbol="000001", name="平安银行", score=-18.0, rating="watch"
+                ),
             ],
             frames={},
             portfolio_summary=PortfolioDecisionSummary(
@@ -264,7 +271,7 @@ class TestBriefingGenerator:
             ),
         )
         research_sec = next(s for s in briefing.sections if s.title == "研究吸收")
-        assert "研究候选总数" in research_sec.content
+        assert "研究发现落盘" in research_sec.content
         assert "113" in research_sec.content
         assert "mpquant/Ashare" in research_sec.content
         assert "大盘择时 / 市场状态过滤(gated_runtime)" in research_sec.content
@@ -360,7 +367,9 @@ class TestBriefingGenerator:
         )
         next_sec = next(s for s in briefing.sections if s.title == "明日重点")
         assert "当前阻塞: T+1 未解除" in next_sec.content
-        assert "下一步关注: 明日解除 T+1 后，优先复核开盘承接与流动性" in next_sec.content
+        assert (
+            "下一步关注: 明日解除 T+1 后，优先复核开盘承接与流动性" in next_sec.content
+        )
         assert "复核节奏: 高优先级 / 明日开盘前后" in next_sec.content
 
     def test_render_template(self):
@@ -647,7 +656,10 @@ class TestGenerateSmartSummary:
 
         summary = briefing.generate_smart_summary()
 
-        assert "- 解锁关注: 600519 贵州茅台 | 等待量价继续走强后，再评估是否转入执行名单" in summary
+        assert (
+            "- 解锁关注: 600519 贵州茅台 | 等待量价继续走强后，再评估是否转入执行名单"
+            in summary
+        )
         assert "- 复核节奏: 600519 贵州茅台 | 高优先级 / 盘中走强后" in summary
 
     def test_action_plan_mentions_unlock_hint_when_watch_pick_is_blocked(self):
@@ -672,7 +684,10 @@ class TestGenerateSmartSummary:
 
         summary = briefing.generate_smart_summary()
 
-        assert "- 解锁关注: 600519 贵州茅台 | 明日解除 T+1 后，优先复核开盘承接与流动性" in summary
+        assert (
+            "- 解锁关注: 600519 贵州茅台 | 明日解除 T+1 后，优先复核开盘承接与流动性"
+            in summary
+        )
         assert "- 复核节奏: 600519 贵州茅台 | 高优先级 / 明日开盘前后" in summary
 
     def test_evidence_section_includes_candidate_status_label(self):
@@ -714,7 +729,10 @@ class TestGenerateSmartSummary:
         )
         evidence_sec = next(s for s in briefing.sections if s.title == "候选证据链")
         assert "- 当前阻塞: 板块集中度过高，压低新能源暴露" in evidence_sec.content
-        assert "- 下一步关注: 等待板块暴露回落后，再重新评估执行顺位" in evidence_sec.content
+        assert (
+            "- 下一步关注: 等待板块暴露回落后，再重新评估执行顺位"
+            in evidence_sec.content
+        )
         assert "- 复核优先级/时机: 中优先级 / 板块分化时" in evidence_sec.content
 
     def test_core_items_render_structured_portfolio_summary(self):
@@ -779,7 +797,9 @@ class TestGenerateSmartSummary:
         summary = briefing.generate_smart_summary()
 
         assert "- 首仓理由: 300750 宁德时代 | 主链评分 72.0；强信号优先分配" in summary
-        assert "- 配仓执行: 300750 宁德时代 20% | 主链评分 72.0；强信号优先分配" in summary
+        assert (
+            "- 配仓执行: 300750 宁德时代 20% | 主链评分 72.0；强信号优先分配" in summary
+        )
         assert "- 执行约束: 单票上限 20%" in summary
 
     def test_main_chain_section_renders_strategy_mix_guidance(self):
@@ -795,7 +815,9 @@ class TestGenerateSmartSummary:
         assert "当前市况: 稳定上涨" in main_chain_sec.content
         assert "策略主配比: 进攻牛市" in main_chain_sec.content
         assert "当前优先策略: 动量趋势、涨停接力" in main_chain_sec.content
-        assert "策略权重建议: momentum 30%、limit_up_ladder 30%" in main_chain_sec.content
+        assert (
+            "策略权重建议: momentum 30%、limit_up_ladder 30%" in main_chain_sec.content
+        )
 
     def test_debate_results_lower_adjustment(self):
         from aqsp.briefing.debate import DebateResult

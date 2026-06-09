@@ -20,7 +20,7 @@ from aqsp.presentation import (
     format_watch_review_line,
     review_priority_label,
 )
-from aqsp.research.summary import ResearchSummary
+from aqsp.research.summary import ResearchSummary, research_findings_display
 from aqsp.ratings import rating_label
 from aqsp.config import load_debate_runtime_config
 from aqsp.briefing.debate import (
@@ -215,9 +215,7 @@ class Briefing:
             if self.portfolio_summary.regime_label:
                 items.append(f"- 当前市况: {self.portfolio_summary.regime_label}")
             if self.portfolio_summary.strategy_mix_name:
-                items.append(
-                    f"- 策略配比: {self.portfolio_summary.strategy_mix_name}"
-                )
+                items.append(f"- 策略配比: {self.portfolio_summary.strategy_mix_name}")
             if self.portfolio_summary.top_focus:
                 items.append(
                     "- 主链候选: " + "、".join(self.portfolio_summary.top_focus)
@@ -240,11 +238,11 @@ class Briefing:
                 first = self.portfolio_summary.allocations[0]
                 rationale = "；".join(first.rationale[:2])
                 if rationale:
-                    items.append(f"- 首仓理由: {first.symbol} {first.name} | {rationale}")
+                    items.append(
+                        f"- 首仓理由: {first.symbol} {first.name} | {rationale}"
+                    )
             if self.portfolio_summary.cash_reserve > 0:
-                items.append(
-                    f"- 现金留存: {self.portfolio_summary.cash_reserve:.0%}"
-                )
+                items.append(f"- 现金留存: {self.portfolio_summary.cash_reserve:.0%}")
         if self.debate_results:
             items.append(
                 f"- 多Agent辩论: 已分析 {len(self.debate_results[:3])} 只重点候选"
@@ -300,9 +298,7 @@ class Briefing:
             )
         if self.portfolio_summary and self.portfolio_summary.allocations:
             top_alloc = self.portfolio_summary.allocations[0]
-            line = (
-                f"- 配仓执行: {top_alloc.symbol} {top_alloc.name} {top_alloc.weight:.0%}"
-            )
+            line = f"- 配仓执行: {top_alloc.symbol} {top_alloc.name} {top_alloc.weight:.0%}"
             rationale = "；".join(top_alloc.rationale[:2])
             if rationale:
                 line += f" | {rationale}"
@@ -322,7 +318,8 @@ class Briefing:
             items.append(f"- 执行约束: {self.portfolio_summary.allocation_note}")
         if self.portfolio_summary and self.portfolio_summary.execution_blockers:
             items.append(
-                "- 执行阻塞: " + "；".join(self.portfolio_summary.execution_blockers[:2])
+                "- 执行阻塞: "
+                + "；".join(self.portfolio_summary.execution_blockers[:2])
             )
         if self.picks:
             lead_pick = self.picks[0]
@@ -343,7 +340,9 @@ class Briefing:
                 if part
             )
             if review_meta:
-                items.append(f"- 复核节奏: {lead_pick.symbol} {lead_pick.name} | {review_meta}")
+                items.append(
+                    f"- 复核节奏: {lead_pick.symbol} {lead_pick.name} | {review_meta}"
+                )
         elif top_scores:
             items.append(f"- 首选观察: {top_scores[0][0]}({top_scores[0][1]}分)")
         elif self.portfolio_summary:
@@ -559,7 +558,9 @@ class BriefingGenerator:
                     )
                 )
         if portfolio_summary.action_hotspots:
-            lines.append("- 裁决热点: " + "；".join(portfolio_summary.action_hotspots[:3]))
+            lines.append(
+                "- 裁决热点: " + "；".join(portfolio_summary.action_hotspots[:3])
+            )
         if portfolio_summary.execution_blockers:
             lines.append("- 执行阻塞:")
             for item in portfolio_summary.execution_blockers[:3]:
@@ -600,9 +601,7 @@ class BriefingGenerator:
             for result in debate_results[:2]:
                 display = format_symbol_name(result.symbol, result.name)
                 consensus = (
-                    result.final_consensus
-                    or result.adjustment_reason
-                    or "暂无共识摘要"
+                    result.final_consensus or result.adjustment_reason or "暂无共识摘要"
                 )
                 lines.append(
                     "  - "
@@ -613,15 +612,11 @@ class BriefingGenerator:
         lead_pick = picks[0]
         lead_display = format_symbol_name(lead_pick.symbol, lead_pick.name)
         lead_status = _candidate_status_label(lead_pick)
-        lead_line = (
-            f"- 首位候选: {lead_display} | {rating_label(lead_pick.rating)}"
-        )
+        lead_line = f"- 首位候选: {lead_display} | {rating_label(lead_pick.rating)}"
         if lead_status:
             lead_line += f" | {lead_status}"
         lead_line += f" | 评分 {lead_pick.score:.1f}"
-        lines.append(
-            lead_line
-        )
+        lines.append(lead_line)
         if not portfolio_summary.top_focus:
             lines.append("- 今日动作: 仅观察，不做放大仓位动作。")
         return BriefingSection(title="主链总览", content="\n".join(lines))
@@ -705,7 +700,7 @@ class BriefingGenerator:
                 content="研究吸收未更新；本次日报仅基于当前运行主链。",
             )
         lines = [
-            f"- 研究候选总数: **{research_summary.total_findings}**",
+            f"- 研究发现落盘: **{research_findings_display(research_summary)}**",
             f"- 已吸收但未直接入分策略族: **{len(research_summary.absorbed_families)}**",
             f"- 已部分实现策略族: **{research_summary.implemented_family_count}**",
             f"- report-only 研究族: **{research_summary.report_only_family_count}**",
@@ -767,9 +762,7 @@ class BriefingGenerator:
             if candidate_status:
                 headline += f" / 状态: {candidate_status}"
             headline += f" / PM: {pm_text})"
-            lines.append(
-                headline
-            )
+            lines.append(headline)
             if pick.strategies:
                 lines.append(f"- 命中策略: {', '.join(pick.strategies)}")
             for reason in pick.reasons:

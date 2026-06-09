@@ -22,9 +22,18 @@ from aqsp.data.source_health import (
     notification_level_for_health_label,
     read_source_health,
 )
-from aqsp.presentation import format_review_meta, format_watch_review_line, review_priority_label
+from aqsp.presentation import (
+    format_review_meta,
+    format_watch_review_line,
+    review_priority_label,
+)
 from aqsp.ratings import is_tradable_rating, portfolio_action_label, rating_label
-from aqsp.research.summary import ResearchSummary, load_research_summary
+from aqsp.research.summary import (
+    ResearchSummary,
+    load_research_summary,
+    research_findings_badge,
+    research_findings_display,
+)
 
 
 @dataclass(frozen=True)
@@ -1210,10 +1219,10 @@ def _research_panel(summary: ResearchSummary | None) -> str:
     )
     body_html = f"""
       <div class="source-head">
-        <span class="state-pill neutral">{summary.total_findings} findings</span>
+        <span class="state-pill neutral">{html.escape(research_findings_badge(summary))}</span>
       </div>
       <dl class="source-grid">
-        <dt>候选</dt><dd>{summary.total_findings}</dd>
+        <dt>研究发现</dt><dd>{html.escape(research_findings_display(summary))}</dd>
         <dt>已吸收</dt><dd>{len(summary.absorbed_families)}</dd>
         <dt>已实现</dt><dd>{summary.implemented_family_count}</dd>
         <dt>report-only</dt><dd>{summary.report_only_family_count}</dd>
@@ -1233,7 +1242,7 @@ def _research_panel(summary: ResearchSummary | None) -> str:
         "研究吸收",
         "开源研究队列与当前系统吸收状态。",
         body_html,
-        badge=f"{summary.total_findings} findings",
+        badge=research_findings_badge(summary),
     )
 
 

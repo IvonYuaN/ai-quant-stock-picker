@@ -14,6 +14,7 @@ from aqsp.presentation import (
     review_priority_label,
 )
 from aqsp.ratings import rating_label, portfolio_action_label
+from aqsp.research.summary import research_findings_display
 
 
 def _candidate_status_label(pick) -> str:
@@ -174,7 +175,7 @@ class MarkdownRenderer:
             return lines
 
         rs = data.research_summary
-        lines.append(f"- 研究候选总数: **{rs.total_findings}**")
+        lines.append(f"- 研究发现落盘: **{research_findings_display(rs)}**")
         lines.append(f"- 已吸收但未直接入分策略族: **{len(rs.absorbed_families)}**")
         lines.append(f"- 已部分实现策略族: **{rs.implemented_family_count}**")
         lines.append(f"- report-only 研究族: **{rs.report_only_family_count}**")
@@ -234,7 +235,9 @@ class MarkdownRenderer:
                 _candidate_review_priority_label(pick),
                 _candidate_review_window_label(pick),
             )
-            headline = f"### {display} (评分: {pick.score} / {rating_label(pick.rating)}"
+            headline = (
+                f"### {display} (评分: {pick.score} / {rating_label(pick.rating)}"
+            )
             if candidate_status:
                 headline += f" / 状态: {candidate_status}"
             headline += f" / PM: {pm_text})"
@@ -329,10 +332,18 @@ class MarkdownRenderer:
         one_liner = self._build_one_liner(data)
         lines = [f"**{one_liner}**", ""]
 
-        lines.extend(self._format_summary_block("核心结论", self._build_core_items(data)))
-        lines.extend(self._format_summary_block("数据透视", self._build_data_items(data)))
-        lines.extend(self._format_summary_block("作战计划", self._build_action_items(data)))
-        lines.extend(self._format_summary_block("风险提示", self._build_risk_items(data)))
+        lines.extend(
+            self._format_summary_block("核心结论", self._build_core_items(data))
+        )
+        lines.extend(
+            self._format_summary_block("数据透视", self._build_data_items(data))
+        )
+        lines.extend(
+            self._format_summary_block("作战计划", self._build_action_items(data))
+        )
+        lines.extend(
+            self._format_summary_block("风险提示", self._build_risk_items(data))
+        )
 
         lines.append("")
         return "\n".join(lines)
@@ -357,7 +368,9 @@ class MarkdownRenderer:
                 items.append("- 候选观察池: " + "、".join(ps.watchlist))
 
         if data.debate_results:
-            items.append(f"- 多Agent辩论: 已分析 {len(data.debate_results[:3])} 只重点候选")
+            items.append(
+                f"- 多Agent辩论: 已分析 {len(data.debate_results[:3])} 只重点候选"
+            )
         else:
             items.append("- 多Agent辩论: 今日无重点标的或处于冷却期")
 
@@ -387,7 +400,9 @@ class MarkdownRenderer:
 
         tradable = data.tradable_picks
         if tradable:
-            names = "、".join(format_symbol_name(p.symbol, p.name) for p in tradable[:3])
+            names = "、".join(
+                format_symbol_name(p.symbol, p.name) for p in tradable[:3]
+            )
             items.append(f"- 可执行标的: {names}")
         elif data.picks:
             top = data.top_picks
@@ -396,7 +411,9 @@ class MarkdownRenderer:
             )
             items.append(f"- 候选观察池: {names}")
         elif data.portfolio_summary and data.portfolio_summary.watchlist:
-            items.append("- 候选观察池: " + "、".join(data.portfolio_summary.watchlist[:3]))
+            items.append(
+                "- 候选观察池: " + "、".join(data.portfolio_summary.watchlist[:3])
+            )
 
         debate_points = data.debate_points
         if debate_points:
@@ -417,7 +434,9 @@ class MarkdownRenderer:
             if review_meta:
                 items.append(f"- 复核节奏: {first.symbol} {first.name} | {review_meta}")
         elif data.portfolio_summary:
-            fallback = data.portfolio_summary.top_focus or data.portfolio_summary.watchlist
+            fallback = (
+                data.portfolio_summary.top_focus or data.portfolio_summary.watchlist
+            )
             if fallback:
                 items.append(f"- 首选观察: {fallback[0]}")
 

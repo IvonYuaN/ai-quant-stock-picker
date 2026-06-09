@@ -2,7 +2,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from aqsp.research.summary import load_research_summary
+from aqsp.research.summary import (
+    load_research_summary,
+    research_findings_badge,
+    research_findings_display,
+    research_findings_metric,
+)
 
 
 def test_load_research_summary_uses_config_when_absorption_json_missing(
@@ -50,6 +55,9 @@ sources:
 
     assert summary is not None
     assert summary.total_findings == 0
+    assert research_findings_display(summary) == "未落盘（按配置吸收队列展示）"
+    assert research_findings_metric(summary) == "配置队列"
+    assert research_findings_badge(summary) == "config-backed"
     assert summary.pipeline_summaries == ()
     assert summary.implemented_family_count == 1
     assert summary.report_only_family_count == 1

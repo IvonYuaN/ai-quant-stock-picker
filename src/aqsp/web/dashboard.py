@@ -9,7 +9,12 @@ from html import escape
 import streamlit as st
 
 from aqsp.core.time import now_shanghai
-from aqsp.research.summary import ResearchSummary, load_research_summary
+from aqsp.research.summary import (
+    ResearchSummary,
+    load_research_summary,
+    research_findings_display,
+    research_findings_metric,
+)
 from aqsp.web.data_provider import (
     DashboardCandidateCard,
     DashboardCandidateJourneyStep,
@@ -1063,7 +1068,7 @@ def _research_radar_card(summary: ResearchSummary | None) -> _ResearchRadarCard:
         return _ResearchRadarCard(
             title="研究吸收未更新",
             metrics=(
-                ("研究候选", "-"),
+                ("研究发现", "-"),
                 ("已吸收", "-"),
                 ("只进报告", "-"),
                 ("门控中", "-"),
@@ -1103,11 +1108,11 @@ def _research_radar_card(summary: ResearchSummary | None) -> _ResearchRadarCard:
     )
     return _ResearchRadarCard(
         title=(
-            f"研究候选 {summary.total_findings} 条，"
+            f"研究发现 {research_findings_display(summary)}，"
             f"已吸收 {len(summary.absorbed_families)} 个策略族"
         ),
         metrics=(
-            ("研究候选", str(summary.total_findings)),
+            ("研究发现", research_findings_metric(summary)),
             ("已吸收", str(len(summary.absorbed_families))),
             ("只进报告", str(summary.report_only_family_count)),
             ("门控中", str(summary.gated_family_count)),

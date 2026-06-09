@@ -13,7 +13,7 @@ from typing import Any
 from aqsp.data.source_health import notification_level_for_health_label
 from aqsp.data.registry import list_registry_entries, local_data_status
 from aqsp.data.tdx_vipdoc_source import TDX_DAY_RECORD_SIZE
-from aqsp.research.summary import load_research_summary
+from aqsp.research.summary import load_research_summary, research_findings_display
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -245,9 +245,17 @@ def main() -> int:
         ]
     )
     runtime_source = _latest_run_source_runtime(ledger_rows)
-    source_route = runtime_source["actual_source"] or runtime_source["requested_source"] or "-"
-    if runtime_source["requested_source"] and runtime_source["actual_source"] and runtime_source["requested_source"] != runtime_source["actual_source"]:
-        source_route = f"{runtime_source['requested_source']} -> {runtime_source['actual_source']}"
+    source_route = (
+        runtime_source["actual_source"] or runtime_source["requested_source"] or "-"
+    )
+    if (
+        runtime_source["requested_source"]
+        and runtime_source["actual_source"]
+        and runtime_source["requested_source"] != runtime_source["actual_source"]
+    ):
+        source_route = (
+            f"{runtime_source['requested_source']} -> {runtime_source['actual_source']}"
+        )
     report.extend(
         [
             f"- notify_level: {runtime_source['notify_level']}",
@@ -267,6 +275,7 @@ def main() -> int:
         report.extend(
             [
                 f"- total_findings: {research_summary.total_findings}",
+                f"- findings_display: {research_findings_display(research_summary)}",
                 f"- implemented_families: {research_summary.implemented_family_count}",
                 f"- report_only_families: {research_summary.report_only_family_count}",
                 f"- gated_families: {research_summary.gated_family_count}",
@@ -287,7 +296,7 @@ def main() -> int:
         report.append("")
     report.extend(
         [
-        "## Data Quality Flags",
+            "## Data Quality Flags",
         ]
     )
     flags = _large_return_rows(ledger_rows) + _large_return_rows(paper_rows)

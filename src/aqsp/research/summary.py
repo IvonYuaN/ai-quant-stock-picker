@@ -77,6 +77,30 @@ class ResearchSummary:
     gated_family_count: int
 
 
+def research_findings_display(summary: ResearchSummary) -> str:
+    if summary.total_findings > 0:
+        return f"{summary.total_findings} 条"
+    if summary.absorbed_families or summary.next_actions or summary.source_candidates:
+        return "未落盘（按配置吸收队列展示）"
+    return "暂无"
+
+
+def research_findings_metric(summary: ResearchSummary) -> str:
+    if summary.total_findings > 0:
+        return str(summary.total_findings)
+    if summary.absorbed_families or summary.next_actions or summary.source_candidates:
+        return "配置队列"
+    return "-"
+
+
+def research_findings_badge(summary: ResearchSummary) -> str:
+    if summary.total_findings > 0:
+        return f"{summary.total_findings} findings"
+    if summary.absorbed_families or summary.next_actions or summary.source_candidates:
+        return "config-backed"
+    return "empty"
+
+
 def load_research_summary(
     absorption_path: str | Path = "docs/research_absorption.json",
     strategy_sources_path: str | Path = "config/strategy_sources.yaml",

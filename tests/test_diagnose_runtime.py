@@ -5,6 +5,7 @@ from datetime import date
 
 from aqsp.research.summary import (
     ResearchActionItem,
+    ResearchFamilySummary,
     ResearchPrereqItem,
     ResearchSummary,
 )
@@ -162,6 +163,7 @@ def test_diagnose_runtime_main_reports_research_runtime(
     assert exit_code == 0
     assert "## Research Runtime" in output
     assert "- total_findings: 113" in output
+    assert "- findings_display: 113 条" in output
     assert "- report_only_families: 1" in output
     assert "- gated_families: 2" in output
     assert "- P1 data_source tushare: token only from env" in output
@@ -169,3 +171,47 @@ def test_diagnose_runtime_main_reports_research_runtime(
         "- prereq data_source tushare: status=needs_env missing_env=TUSHARE_TOKEN"
         in output
     )
+
+
+def test_diagnose_runtime_main_labels_config_backed_research_queue(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    from scripts import diagnose_runtime
+
+    ledger = tmp_path / "predictions.jsonl"
+    paper = tmp_path / "paper.jsonl"
+    ledger.write_text("", encoding="utf-8")
+    paper.write_text("", encoding="utf-8")
+    monkeypatch.setenv("AQSP_LEDGER", str(ledger))
+    monkeypatch.setenv("AQSP_PAPER_LEDGER", str(paper))
+    monkeypatch.setattr(
+        "scripts.diagnose_runtime.load_research_summary",
+        lambda: ResearchSummary(
+            generated_at="",
+            total_findings=0,
+            pipeline_summaries=(),
+            absorbed_families=(
+                ResearchFamilySummary(
+                    family_id="market_regime_timing_filter",
+                    name="大盘择时 / 市场状态过滤",
+                    status="research_absorbed",
+                    runtime_stage="report_only",
+                    absorbed_from_count=4,
+                    runtime_gate_count=4,
+                ),
+            ),
+            source_candidates=(),
+            next_actions=(),
+            prereq_items=(),
+            implemented_family_count=5,
+            report_only_family_count=1,
+            gated_family_count=0,
+        ),
+    )
+
+    exit_code = diagnose_runtime.main()
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "- total_findings: 0" in output
+    assert "- findings_display: 未落盘（按配置吸收队列展示）" in output
