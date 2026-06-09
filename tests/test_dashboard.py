@@ -3379,7 +3379,7 @@ def test_dashboard_home_action_rail_items_prioritize_blocked_card_with_explicit_
                 status_label="等待确认",
                 decision_note="按当前顺位继续跟踪",
                 next_step="",
-                blocker="降级/阻塞原因未记录，需补 candidate_blocker 或 risks",
+                blocker="阻塞原因未记录，需补充风险说明或复核条件",
                 review_meta="中优先级 / 收盘前",
                 reasons=(),
                 risks=(),
@@ -3427,7 +3427,7 @@ def test_dashboard_home_primary_focus_card_prefers_explicit_blocker_when_only_bl
         status_label="等待确认",
         decision_note="按当前顺位继续跟踪",
         next_step="",
-        blocker="降级/阻塞原因未记录，需补 candidate_blocker 或 risks",
+        blocker="阻塞原因未记录，需补充风险说明或复核条件",
         review_meta="中优先级 / 收盘前",
         reasons=(),
         risks=(),
@@ -3526,7 +3526,7 @@ def test_dashboard_card_primary_blocker_ignores_missing_metadata_placeholder() -
         status_label="等待确认",
         decision_note="按当前顺位继续跟踪",
         next_step="",
-        blocker="降级/阻塞原因未记录，需补 candidate_blocker 或 risks",
+        blocker="阻塞原因未记录，需补充风险说明或复核条件",
         review_meta="中优先级 / 收盘前",
         reasons=(),
         risks=(),
@@ -4139,7 +4139,7 @@ def test_dashboard_candidate_next_step_lines_do_not_treat_missing_blocker_as_act
         action_label="降级观察",
         status_label="降级观察",
         decision_note="按当前顺位继续跟踪",
-        next_step="降级/阻塞原因未记录，需补 candidate_blocker 或 risks",
+        next_step="阻塞原因未记录，需补充风险说明或复核条件",
         blocker="",
         review_meta="",
         reasons=(),
@@ -4149,7 +4149,7 @@ def test_dashboard_candidate_next_step_lines_do_not_treat_missing_blocker_as_act
     )
 
     assert _candidate_next_step_lines(card) == (
-        "待补证据: 需补 candidate_blocker 或 risks",
+        "待补证据: 阻塞原因未记录，需补充风险说明或复核条件",
     )
 
 

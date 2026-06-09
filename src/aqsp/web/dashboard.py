@@ -19,6 +19,7 @@ from aqsp.web.data_provider import (
     DashboardPaperSummary,
     DashboardSameDayTaskRow,
     DashboardTaskSnapshot,
+    MISSING_BLOCKER_TEXT,
 )
 
 
@@ -1127,7 +1128,11 @@ def _card_primary_blocker(card: DashboardCandidateCard) -> str:
 
 def _is_missing_blocker_text(text: str) -> bool:
     normalized = text.strip()
-    return "阻塞原因未记录" in normalized or "需补 candidate_blocker" in normalized
+    return (
+        "阻塞原因未记录" in normalized
+        or "需补 candidate_blocker" in normalized
+        or "需补充风险说明或复核条件" in normalized
+    )
 
 
 def _card_emphasis(card: DashboardCandidateCard) -> str:
@@ -5285,7 +5290,7 @@ def _candidate_next_step_lines(
         )
     else:
         missing_evidence_line = (
-            "待补证据: 需补 candidate_blocker 或 risks"
+            f"待补证据: {MISSING_BLOCKER_TEXT}"
             if _is_missing_blocker_text(selected_card.next_step)
             or _is_missing_blocker_text(selected_card.decision_note)
             else ""

@@ -614,7 +614,7 @@ def test_dashboard_data_provider_blocked_candidate_without_reason_surfaces_missi
 
     assert (
         provider._candidate_blocker_text({"portfolio_action": "downgrade"})
-        == "降级/阻塞原因未记录，需补 candidate_blocker 或 risks"
+        == "阻塞原因未记录，需补充风险说明或复核条件"
     )
 
 

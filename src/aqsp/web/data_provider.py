@@ -30,6 +30,7 @@ _TASK_LABELS = {
     "closing_review": "收盘复盘",
     "briefing": "简报回看",
 }
+MISSING_BLOCKER_TEXT = "阻塞原因未记录，需补充风险说明或复核条件"
 _SIGNAL_TASK_IDS = ("main_chain", "morning_breakout", "closing_premium")
 _TASK_PHASE_META: dict[str, tuple[int, str, str]] = {
     "main_chain": (1, "盘前主链", "先确认当日主推候选与执行顺位"),
@@ -2525,7 +2526,7 @@ class DashboardDataProvider:
         risks = self._as_text_tuple(row.get("risks"))
         if risks:
             return risks[0]
-        return "降级/阻塞原因未记录，需补 candidate_blocker 或 risks"
+        return MISSING_BLOCKER_TEXT
 
     def _review_meta(self, row: dict[str, Any]) -> str:
         return format_review_meta(
