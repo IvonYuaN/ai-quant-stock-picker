@@ -171,6 +171,8 @@ def test_dashboard_data_provider_reads_real_runtime_files(tmp_path: Path) -> Non
     assert paper_summary.closed_trades == 1
     assert any("贵州茅台" in line for line in paper_summary.open_position_lines)
     assert any("纸面入场假设 1 笔" in line for line in paper_summary.event_lines)
+    assert not any("next open" in line for line in paper_summary.event_lines)
+    assert any("下一交易日开盘价" in line for line in paper_summary.event_lines)
     assert any("不可成交 1 笔" in line for line in paper_summary.event_lines)
     assert any(
         "最近纸面关闭: 000858 五粮液" in line for line in paper_summary.event_lines
@@ -181,6 +183,11 @@ def test_dashboard_data_provider_reads_real_runtime_files(tmp_path: Path) -> Non
     )
     assert any(
         "纸面入场待核对 1 笔" in line
+        for line in paper_summary.action_summary_lines
+    )
+    assert not any("next open" in line for line in paper_summary.action_summary_lines)
+    assert any(
+        "下一交易日开盘价" in line
         for line in paper_summary.action_summary_lines
     )
     assert any("阻塞队列 1 笔" in line for line in paper_summary.action_summary_lines)

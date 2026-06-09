@@ -985,7 +985,7 @@ class DashboardDataProvider:
         event_lines: list[str] = []
         if pending_rows:
             event_lines.append(
-                f"纸面入场假设 {len(pending_rows)} 笔，等待 next open 验证。"
+                f"纸面入场假设 {len(pending_rows)} 笔，等待下一交易日开盘价验证。"
             )
         if blocked_rows:
             event_lines.append(
@@ -1011,7 +1011,7 @@ class DashboardDataProvider:
             )
         if pending_rows:
             action_summary_lines.append(
-                f"纸面入场待核对 {len(pending_rows)} 笔，开盘优先检查 next open 是否可成交。"
+                f"纸面入场待核对 {len(pending_rows)} 笔，开盘优先检查下一交易日开盘价是否可成交。"
             )
         if blocked_rows:
             action_summary_lines.append(
@@ -1141,7 +1141,7 @@ class DashboardDataProvider:
         readiness_lines: list[str] = []
         if pending_rows:
             readiness_lines.append(
-                f"纸面入场假设 {len(pending_rows)} 笔，开盘先核对 next open 是否可成交。"
+                f"纸面入场假设 {len(pending_rows)} 笔，开盘先核对下一交易日开盘价是否可成交。"
             )
         if blocked_rows:
             latest_blocked = blocked_rows[-1]

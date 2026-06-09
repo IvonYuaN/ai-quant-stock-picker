@@ -590,7 +590,7 @@ def _render_source_status(source_status: dict[str, str]) -> None:
     health_label = source_status.get("health_label", "") or "-"
     health_message = source_status.get("health_message", "") or "无"
     latest_trade_date = source_status.get("data_latest_trade_date", "") or "-"
-    lag_days = source_status.get("lag_days", "") or "-"
+    lag_display = _source_lag_display(source_status.get("lag_days", ""))
 
     st.markdown(
         "\n".join(
@@ -599,11 +599,18 @@ def _render_source_status(source_status: dict[str, str]) -> None:
                 f"- 实际源: `{actual}`",
                 f"- 健康度: `{health_label}`",
                 f"- 最新交易日: `{latest_trade_date}`",
-                f"- 数据滞后: `{lag_days}` 天",
+                f"- 数据滞后: `{lag_display}`",
                 f"- 说明: {health_message}",
             ]
         )
     )
+
+
+def _source_lag_display(raw_lag_days: object) -> str:
+    value = "" if raw_lag_days is None else str(raw_lag_days).strip()
+    if not value or value in {"-", "未记录", "None", "nan"}:
+        return "未记录"
+    return f"{value} 天"
 
 
 def _task_metric_labels(task_id: str) -> tuple[str, str, str]:

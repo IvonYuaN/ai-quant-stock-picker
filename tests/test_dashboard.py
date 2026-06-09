@@ -65,6 +65,7 @@ from aqsp.web.dashboard import (
     _resolve_workspace_symbol,
     _signal_evidence_context,
     _should_render_candidate_journey,
+    _source_lag_display,
     _spotlight_as_candidate_card,
     _symbol_option_label,
     _top_navigation_context,
@@ -460,6 +461,14 @@ def test_dashboard_handles_missing_inputs() -> None:
     assert "暂无真实候选输出" in html
     assert "暂无 ledger 记录" in html
     assert "暂无虚拟盘记录" in html
+
+
+def test_dashboard_source_lag_display_uses_readable_missing_label() -> None:
+    assert _source_lag_display("") == "未记录"
+    assert _source_lag_display("-") == "未记录"
+    assert _source_lag_display("未记录") == "未记录"
+    assert _source_lag_display(0) == "0 天"
+    assert _source_lag_display("2") == "2 天"
 
 
 def test_read_candidates_handles_empty_csv(tmp_path: Path) -> None:
