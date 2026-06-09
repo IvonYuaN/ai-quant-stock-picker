@@ -479,11 +479,11 @@ def _candidate_cards(
               </div>
               <dl class="card-details" role="list">
                 <dt>策略</dt><dd>{strategies or "-"}</dd>
-                <dt>买点</dt><dd>{_fmt_num(row.get("ideal_buy"))}</dd>
+                <dt>参考价</dt><dd>{_fmt_num(row.get("ideal_buy"))}</dd>
                 <dt>收盘</dt><dd>{_fmt_num(row.get("close"))}</dd>
-                <dt>止损</dt><dd>{_fmt_num(row.get("stop_loss"))}</dd>
-                <dt>止盈</dt><dd>{_fmt_num(row.get("take_profit"))}</dd>
-                <dt>仓位</dt><dd>{html.escape(row.get("position", "") or "-")}</dd>
+                <dt>防守位</dt><dd>{_fmt_num(row.get("stop_loss"))}</dd>
+                <dt>观察目标</dt><dd>{_fmt_num(row.get("take_profit"))}</dd>
+                <dt>纸面仓位</dt><dd>{html.escape(row.get("position", "") or "-")}</dd>
               </dl>
               <div class="card-footer">
                 <p class="reason">{reasons or "无"}</p>
@@ -1830,7 +1830,7 @@ def render_kline_panel(
                 lineWidth: 1,
                 lineStyle: LightweightCharts.LineStyle.Dashed,
                 axisLabelVisible: true,
-                title: '买入价',
+                title: '参考价',
               }});
             }}
             if (stock.stop_loss) {{
@@ -1840,7 +1840,7 @@ def render_kline_panel(
                 lineWidth: 1,
                 lineStyle: LightweightCharts.LineStyle.Dashed,
                 axisLabelVisible: true,
-                title: '止损',
+                title: '防守位',
               }});
             }}
             if (stock.take_profit) {{
@@ -1850,7 +1850,7 @@ def render_kline_panel(
                 lineWidth: 1,
                 lineStyle: LightweightCharts.LineStyle.Dashed,
                 axisLabelVisible: true,
-                title: '止盈',
+                title: '观察目标',
               }});
             }}
           }}
@@ -2717,7 +2717,7 @@ def render_dashboard(
     <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;">
       <div>
         <h1>{safe_title}</h1>
-        <p class="sub">生成时间 {generated_at}。仅供研究，不构成投资建议；下单仍由人决策。</p>
+        <p class="sub">生成时间 {generated_at}。非交易指令 / 不下单 / 只做纸面观察与复核；下单仍由人决策。</p>
         <div class="meta">
           <span class="pill">最新信号日 {latest_date}</span>
           <span class="pill">候选数据日 {display_date}</span>

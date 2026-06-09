@@ -2345,7 +2345,7 @@ def _home_workspace_hint(
             (
                 paper_summary.action_summary_lines[0]
                 if paper_summary.action_summary_lines
-                else "当前有纸面持有假设，先核对止盈止损与退出条件。"
+                else "当前有纸面持有假设，先核对防守位、观察目标与退出条件。"
             ),
             "focus",
         )
@@ -2568,11 +2568,11 @@ def _render_trading_cockpit(
             escape(
                 paper_summary.action_summary_lines[0]
                 if paper_summary.action_summary_lines
-                else "先处理入场假设与不可成交事件。"
+                else "先处理纸面假设与不可成交事件。"
             )
         )
     elif paper_summary.open_positions:
-        pressure_lines.append("当前以纸面持有假设和止盈止损复核为主。")
+        pressure_lines.append("当前以纸面持有假设、防守位和观察目标复核为主。")
     else:
         pressure_lines.append("当前纸面侧较轻，可优先回到研究判断。")
 
@@ -3452,7 +3452,7 @@ def _home_brief_cards(
         paper_title = "已有纸面回写"
     paper_lines = _unique_lines(
         (
-            f"持有 {paper_summary.open_positions} / 入场 {paper_summary.pending_entries} / 阻塞 {paper_summary.not_executable} / 关闭 {paper_summary.closed_trades}",
+            f"持有 {paper_summary.open_positions} / 待核对 {paper_summary.pending_entries} / 阻塞 {paper_summary.not_executable} / 关闭 {paper_summary.closed_trades}",
         ),
         paper_summary.action_summary_lines[:2],
     )[:3]
@@ -6826,7 +6826,7 @@ def main() -> None:
 
     st.title("AQSP 日期任务研究台")
     st.caption(f"更新时间: {updated_at}")
-    st.caption("仅展示落盘结果。")
+    st.caption("非交易指令 / 不下单 / 只做纸面观察与复核。仅展示落盘结果。")
 
     options = provider.task_options()
     selected_task_id, selected_date = _render_top_navigation(

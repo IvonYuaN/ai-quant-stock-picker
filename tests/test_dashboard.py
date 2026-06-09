@@ -218,6 +218,7 @@ def test_dashboard_renders_candidates_and_ledger_stats_when_inputs_exist(
     assert paper_stats.closed == 1
     assert paper_stats.pending_entry == 1
     assert "测试面板" in html
+    assert "非交易指令 / 不下单 / 只做纸面观察与复核" in html
     assert "600519" in html
     assert "贵州茅台" in html
     assert "阈值版本 1.0.0" in html
@@ -238,6 +239,12 @@ def test_dashboard_renders_candidates_and_ledger_stats_when_inputs_exist(
     assert "主链动作" in html
     assert "候选分层" in html
     assert "/ 观察候选" in html
+    assert "参考价" in html
+    assert "防守位" in html
+    assert "观察目标" in html
+    assert "纸面仓位" in html
+    assert "买点" not in html
+    assert "止盈" not in html
     assert "buy_candidate" not in html
 
 
@@ -582,7 +589,7 @@ def test_dashboard_surfaces_watch_candidate_lifecycle_details() -> None:
             "reasons": "MA20 斜率向上",
             "risks": "收盘价低于 MA20",
             "candidate_status": "新晋",
-            "candidate_next_step": "等待量价继续走强后，再评估是否转入执行名单",
+            "candidate_next_step": "等待量价继续走强后，再评估是否转入纸面复核名单",
             "candidate_review_window": "盘中走强后",
             "candidate_review_priority": "high",
         },
@@ -611,7 +618,7 @@ def test_dashboard_surfaces_watch_candidate_lifecycle_details() -> None:
     assert "明日动作" in html
     assert "/ 候选观察池" in html
     assert "新晋" in html
-    assert "下一步: 等待量价继续走强后，再评估是否转入执行名单" in html
+    assert "下一步: 等待量价继续走强后，再评估是否转入纸面复核名单" in html
     assert "复核: 高优先级 / 盘中走强后" in html
     assert "观察阻塞" in html
     assert "阻塞: 板块集中度过高，压低银行暴露" in html
@@ -5481,7 +5488,7 @@ def test_dashboard_home_execution_blocked_summary_uses_aggregate_instead_of_firs
         watch_total=0,
         blocked_total=2,
         top_task_label="主链推荐",
-        top_headline="无可执行标的",
+        top_headline="无纸面复核对象",
         blocker_headline="000338 潍柴动力 | 20日均成交额不足，流动性过滤",
         focus_headline="000338 潍柴动力 | 20日均成交额不足，流动性过滤",
         workflow_summary="盘前主链 -> 收盘复盘",

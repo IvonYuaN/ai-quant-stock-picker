@@ -35,13 +35,13 @@ def _blocked_watchlist_status(
     portfolio_summary: PortfolioDecisionSummary | None,
 ) -> str:
     if portfolio_summary is None:
-        return "今日无可执行标的，仅观察"
+        return "今日无纸面复核对象，仅观察"
     watchlist = tuple(portfolio_summary.watchlist[:2])
     if watchlist:
-        return "今日无可执行标的，转入观察池：" + "、".join(watchlist)
+        return "今日无纸面复核对象，转入观察池：" + "、".join(watchlist)
     if portfolio_summary.execution_blockers:
-        return "今日无可执行标的，受执行约束暂仅观察"
-    return "今日无可执行标的，仅观察"
+        return "今日无纸面复核对象，受流动性或持仓约束暂仅观察"
+    return "今日无纸面复核对象，仅观察"
 
 
 def build_briefing_notification(
@@ -65,7 +65,7 @@ def build_briefing_notification(
         body_parts.append("## 主链总览\n\n" + main_chain)
     allocation_execution = _format_allocation_execution(briefing.portfolio_summary)
     if allocation_execution:
-        body_parts.append("## 配仓执行\n\n" + allocation_execution)
+        body_parts.append("## 纸面配仓参考\n\n" + allocation_execution)
     debate = _format_debate_summary(briefing.debate_results)
     if debate:
         body_parts.append("## 多Agent辩论\n\n" + debate)
@@ -138,10 +138,10 @@ def build_daily_run_notification(
     if circuit_breaker_reason:
         lines.append(f"- 组合保护: {circuit_breaker_reason}")
     elif tradable:
-        lines.append(f"- 可执行标的: {len(tradable)}")
-        lines.append(f"- 首选标的: {_format_daily_pick(tradable[0])}")
+        lines.append(f"- 纸面复核对象: {len(tradable)}")
+        lines.append(f"- 纸面重点: {_format_daily_pick(tradable[0])}")
     else:
-        lines.append("- 可执行标的: 0")
+        lines.append("- 纸面复核对象: 0")
         lines.append("- 主链状态: " + _blocked_watchlist_status(portfolio_summary))
     if is_cold_start and cold_start_min_days > 0:
         lines.append(f"- 冷启动进度: {cold_start_days}/{cold_start_min_days}")
@@ -166,7 +166,7 @@ def build_daily_run_notification(
             f"{item.symbol} {item.weight:.0%}"
             for item in portfolio_summary.allocations[:3]
         )
-        lines.append(f"- 配仓建议: {top_alloc}")
+        lines.append(f"- 纸面配仓参考: {top_alloc}")
     elif portfolio_summary is not None and portfolio_summary.watchlist:
         lines.append("- 观察池: " + "、".join(portfolio_summary.watchlist[:3]))
     if portfolio_summary is not None and portfolio_summary.cash_reserve > 0:
@@ -184,6 +184,19 @@ def build_daily_run_notification(
             f"- 重点辩论: {lead.symbol} {lead.name} | {lead.recommended_adjustment.upper()} | {consensus}"
         )
 
+    lines.extend(["", "## 📌 今日快照", ""])
+    lines.extend(
+        _daily_snapshot_table(
+            run_date=run_date,
+            tradable=tradable,
+            candidates=candidates,
+            portfolio_summary=portfolio_summary,
+            debate_results=debate_results,
+            circuit_breaker_reason=circuit_breaker_reason,
+            is_cold_start=is_cold_start,
+        )
+    )
+
     reading_order = _daily_reading_order_lines(
         tradable=tradable,
         candidates=candidates,
@@ -200,7 +213,7 @@ def build_daily_run_notification(
     lines.extend(_daily_candidate_table(tradable, candidates, mode=mode))
     allocation_execution = _format_allocation_execution(portfolio_summary)
     if allocation_execution:
-        lines.extend(["", "## 配仓执行", "", allocation_execution])
+        lines.extend(["", "## 纸面配仓参考", "", allocation_execution])
     debate = _format_debate_summary(debate_results[:2])
     if debate:
         lines.extend(["", "## 多Agent辩论", "", debate])
@@ -218,7 +231,7 @@ def build_daily_run_notification(
         ]
     )
     if circuit_breaker_reason:
-        lines.append("2. 熔断保护中，暂停新开仓，只保留复盘和观察。")
+        lines.append("2. 熔断保护中，暂停新增纸面复核，只保留复盘和观察。")
     elif is_cold_start:
         lines.append("2. 冷启动未完成，结果仅供跟踪，不要放大仓位。")
     elif portfolio_summary is not None and portfolio_summary.allocation_note:
@@ -351,6 +364,189 @@ def _daily_primary_blocker_line(
     return ""
 
 
+def _daily_snapshot_table(
+    *,
+    run_date: str,
+    tradable: Sequence[PickResult],
+    candidates: Sequence[PickResult],
+    portfolio_summary: PortfolioDecisionSummary | None,
+    debate_results: Sequence[DebateResult],
+    circuit_breaker_reason: str,
+    is_cold_start: bool,
+) -> list[str]:
+    rows = [
+        "| 项目 | 结论 | 先看什么 |",
+        "|---|---|---|",
+    ]
+    rows.append(
+        "| 数据 | "
+        + _table_cell(run_date)
+        + " | "
+        + _table_cell(_daily_snapshot_data_context(portfolio_summary, is_cold_start))
+        + " |"
+    )
+    rows.append(
+        "| 候选 | "
+        + _table_cell(_daily_snapshot_candidate_state(tradable, candidates))
+        + " | "
+        + _table_cell(_daily_snapshot_candidate_focus(tradable, candidates))
+        + " |"
+    )
+    rows.append(
+        "| 纸面现实 | "
+        + _table_cell(_daily_snapshot_paper_state(portfolio_summary))
+        + " | "
+        + _table_cell(_daily_snapshot_paper_focus(portfolio_summary))
+        + " |"
+    )
+    rows.append(
+        "| 风险/阻塞 | "
+        + _table_cell(
+            _daily_snapshot_risk_state(
+                circuit_breaker_reason,
+                candidates,
+                portfolio_summary,
+            )
+        )
+        + " | "
+        + _table_cell(
+            _daily_snapshot_risk_focus(
+                circuit_breaker_reason,
+                candidates,
+                portfolio_summary,
+            )
+        )
+        + " |"
+    )
+    if debate_results:
+        rows.append(
+            "| 分歧 | "
+            + _table_cell(_daily_snapshot_debate_state(debate_results))
+            + " | "
+            + _table_cell(_daily_snapshot_debate_focus(debate_results))
+            + " |"
+        )
+    return rows
+
+
+def _daily_snapshot_data_context(
+    portfolio_summary: PortfolioDecisionSummary | None,
+    is_cold_start: bool,
+) -> str:
+    if is_cold_start:
+        return "冷启动样本期，只做纸面跟踪"
+    if portfolio_summary is not None and portfolio_summary.regime_label:
+        return f"市况 {portfolio_summary.regime_label}"
+    return "常规日线刷新"
+
+
+def _daily_snapshot_candidate_state(
+    tradable: Sequence[PickResult],
+    candidates: Sequence[PickResult],
+) -> str:
+    if tradable:
+        return f"🎯 纸面复核 {len(tradable)}"
+    if candidates:
+        blocked_count = sum(1 for pick in candidates if _candidate_blocker(pick))
+        if blocked_count:
+            return f"👀 观察 {len(candidates)} / 阻塞 {blocked_count}"
+        return f"👀 观察 {len(candidates)}"
+    return "⏸️ 暂无清晰候选"
+
+
+def _daily_snapshot_candidate_focus(
+    tradable: Sequence[PickResult],
+    candidates: Sequence[PickResult],
+) -> str:
+    picks = tuple(tradable) if tradable else tuple(candidates)
+    if not picks:
+        return "等待下一轮信号"
+    lead = picks[0]
+    return format_symbol_name(lead.symbol, lead.name)
+
+
+def _daily_snapshot_paper_state(
+    portfolio_summary: PortfolioDecisionSummary | None,
+) -> str:
+    if portfolio_summary is None:
+        return "暂无配仓裁决"
+    if portfolio_summary.allocations:
+        invested = sum(item.weight for item in portfolio_summary.allocations)
+        return f"🧪 纸面配仓 {invested:.0%}"
+    if portfolio_summary.watchlist:
+        return "👀 观察池优先"
+    return "⏸️ 不建立主仓"
+
+
+def _daily_snapshot_paper_focus(
+    portfolio_summary: PortfolioDecisionSummary | None,
+) -> str:
+    if portfolio_summary is None:
+        return "先看候选简表"
+    if portfolio_summary.allocations:
+        lead = portfolio_summary.allocations[0]
+        return f"{format_symbol_name(lead.symbol, lead.name)} {lead.weight:.0%}"
+    if portfolio_summary.watch_reviews:
+        lead_review = portfolio_summary.watch_reviews[0]
+        return format_watch_review_action(
+            format_symbol_name(lead_review.symbol, lead_review.name),
+            priority=lead_review.priority,
+            review_window=lead_review.review_window,
+            next_step=lead_review.next_step,
+        )
+    if portfolio_summary.watchlist:
+        return "、".join(portfolio_summary.watchlist[:2])
+    return portfolio_summary.allocation_note or "保持观察"
+
+
+def _daily_snapshot_risk_state(
+    circuit_breaker_reason: str,
+    candidates: Sequence[PickResult],
+    portfolio_summary: PortfolioDecisionSummary | None,
+) -> str:
+    if circuit_breaker_reason:
+        return "🛡️ 组合保护触发"
+    blocker_count = (
+        len(portfolio_summary.execution_blockers)
+        if portfolio_summary is not None
+        else 0
+    )
+    if blocker_count == 0:
+        blocker_count = sum(1 for pick in candidates if _candidate_blocker(pick))
+    if blocker_count:
+        return f"🔒 {blocker_count} 条阻塞"
+    return "✅ 未见硬阻塞"
+
+
+def _daily_snapshot_risk_focus(
+    circuit_breaker_reason: str,
+    candidates: Sequence[PickResult],
+    portfolio_summary: PortfolioDecisionSummary | None,
+) -> str:
+    if circuit_breaker_reason:
+        return circuit_breaker_reason
+    blocker = _daily_primary_blocker_line(
+        candidates=candidates,
+        portfolio_summary=portfolio_summary,
+    )
+    if blocker:
+        return blocker
+    if portfolio_summary is not None and portfolio_summary.allocation_note:
+        return portfolio_summary.allocation_note
+    return "只按纸面复核节奏推进"
+
+
+def _daily_snapshot_debate_state(results: Sequence[DebateResult]) -> str:
+    lead = sorted(results, key=lambda item: item.disagreement_score, reverse=True)[0]
+    return f"🗣️ 最高分歧 {lead.disagreement_score:.0%}"
+
+
+def _daily_snapshot_debate_focus(results: Sequence[DebateResult]) -> str:
+    lead = sorted(results, key=lambda item: item.disagreement_score, reverse=True)[0]
+    consensus = lead.final_consensus or lead.adjustment_reason or "看分歧地图"
+    return f"{format_symbol_name(lead.symbol, lead.name)}：{consensus}"
+
+
 def _table_cell(value: object) -> str:
     text = str(value or "").strip()
     return text.replace("|", "/") or "-"
@@ -473,8 +669,8 @@ def build_morning_breakout_notification(
         "## 核心结论",
         "",
         f"- 候选数量: {len(signals)}",
-        f"- 首选标的: {_format_breakout_signal(signals[0])}",
-        "- 风险提示: 打板策略波动大，默认轻仓+严格止损",
+        f"- 纸面观察候选: {_format_breakout_signal(signals[0])}",
+        "- 风险提示: 打板策略波动大，仅供纸面复核，必须先看承接与防守位",
         "",
         "## Top 候选",
         "",
@@ -500,7 +696,7 @@ def build_closing_premium_notification(
                 "## 核心结论",
                 "",
                 "- 总体状态: 今日未发现符合条件的尾盘溢价标的",
-                "- 行动建议: 继续观察尾盘量价异动，避免勉强开仓",
+                "- 行动建议: 继续观察尾盘量价异动，避免勉强纳入纸面复核",
             ]
         )
 
@@ -510,7 +706,7 @@ def build_closing_premium_notification(
         "## 核心结论",
         "",
         f"- 候选数量: {len(signals)}",
-        f"- 首选标的: {_format_premium_signal(signals[0])}",
+        f"- 纸面观察候选: {_format_premium_signal(signals[0])}",
         "- 行动建议: 优先跟踪量价突破型标的，次日开盘只做强势延续",
         "",
         "## Top 候选",
@@ -645,7 +841,7 @@ def _format_allocation_execution(
                 line += f" | {rationale}"
             lines.append(line)
     elif portfolio_summary.watchlist:
-        lines.append("- 暂无可执行主仓，先盯观察池:")
+        lines.append("- 暂无纸面复核主线，先盯观察池:")
         for item in portfolio_summary.watchlist[:3]:
             lines.append(f"  - {item}")
     if portfolio_summary.watch_reviews:
@@ -679,17 +875,17 @@ def _daily_action_line_one(
         lead = portfolio_summary.allocations[0]
         return (
             f"1. 先看 {lead.symbol} {lead.name} 的开盘强弱与流动性，"
-            f"若确认延续，再按 {lead.weight:.0%} 参考仓位执行。"
+            f"若确认延续，再按 {lead.weight:.0%} 纸面配仓继续跟踪。"
         )
     if portfolio_summary is not None and portfolio_summary.watchlist:
         if tradable:
-            return "1. 优先核对首选标的的开盘强弱与流动性，再决定是否执行。"
+            return "1. 优先核对纸面重点的开盘强弱与流动性，再决定是否继续跟踪。"
         return (
             "1. 本次先盯观察池里最强票的开盘承接，"
-            "只有阻塞条件解除后再考虑转入执行名单。"
+            "只有阻塞条件解除后再考虑转入纸面复核名单。"
         )
     if tradable:
-        return "1. 优先核对首选标的的开盘强弱与流动性，再决定是否执行。"
+        return "1. 优先核对纸面重点的开盘强弱与流动性，再决定是否继续跟踪。"
     return "1. 本次以观察为主，不建议为了凑单强行开仓。"
 
 
@@ -743,7 +939,7 @@ def _daily_watch_action_line(
 
 def _daily_debate_action_line(result: DebateResult) -> str:
     if result.recommended_adjustment == "lower":
-        return f"{result.symbol} {result.name} 的辩论偏谨慎，若开盘不及预期，优先降低仓位或延后执行"
+        return f"{result.symbol} {result.name} 的辩论偏谨慎，若开盘不及假设，优先降级观察或延后纸面复核"
     if result.recommended_adjustment == "raise":
         return f"{result.symbol} {result.name} 获辩论加分，可作为优先确认对象，但仍需尊重开盘流动性"
     if result.disagreement_score >= 0.5:
@@ -783,8 +979,8 @@ def _format_breakout_signal(signal: BreakoutSignal) -> str:
     lead_reason = signal.reasons[0] if signal.reasons else signal.signal_type
     return (
         f"{symbol_name} | {signal.signal_type} | {signal.score:.1f}分 | "
-        f"现价 {signal.current_price:.2f} / 目标 {signal.target_price:.2f} / "
-        f"止损 {signal.stop_loss:.2f} | {lead_reason}"
+        f"现价 {signal.current_price:.2f} / 观察目标 {signal.target_price:.2f} / "
+        f"防守位 {signal.stop_loss:.2f} | {lead_reason}"
     )
 
 
@@ -793,8 +989,8 @@ def _format_premium_signal(signal: PremiumSignal) -> str:
     lead_reason = signal.reasons[0] if signal.reasons else signal.signal_type
     return (
         f"{symbol_name} | {signal.signal_type} | {signal.score:.1f}分 | "
-        f"入场 {signal.entry_price:.2f} / 止损 {signal.stop_loss:.2f} / "
-        f"预期 {signal.expected_return:.2f}% | {lead_reason}"
+        f"参考价 {signal.entry_price:.2f} / 防守位 {signal.stop_loss:.2f} / "
+        f"观察空间 {signal.expected_return:.2f}% | {lead_reason}"
     )
 
 
@@ -806,7 +1002,7 @@ def _format_daily_pick(pick: PickResult) -> str:
         parts.append(status)
     parts.append(f"{pick.score:.0f}分")
     parts.append(
-        f"买 {pick.ideal_buy:g} / 损 {pick.stop_loss:g} / 盈 {pick.take_profit:g}"
+        f"参考 {pick.ideal_buy:g} / 防守 {pick.stop_loss:g} / 目标 {pick.take_profit:g}"
     )
     return " | ".join(parts)
 
