@@ -259,7 +259,7 @@ result = llm_call_or_fallback(
 |---|---|---|
 | **Anthropic / OpenAI SDK** | T3 简报、T5 研报增强 | LLM 不可用 → jinja2 模板 |
 | **TradingAgents-astock**（参考项目，阶段 3 才接入） | 多 agent 投研报告 | 整个 T5 模块可关 |
-| **a-stock-data SKILL** | 端点设计参考 | 不是运行时依赖 |
+| **a-stock-data SKILL** | 端点设计与漂移修复参考 | 不是运行时依赖 |
 | **astock-peg scripts** | 数据采集参考 | 抄进项目后可独立运行 |
 
 ### 6.3 严格禁止
@@ -280,7 +280,7 @@ result = llm_call_or_fallback(
 
 | 项目 | 仓库地址 | 用途 | 借鉴方式 |
 |---|---|---|---|
-| **a-stock-data** | https://github.com/simonlin1212/a-stock-data | 28 个 A 股数据端点 SKILL 文档 | 阶段 1：抄端点设计、字段映射、踩坑 FAQ |
+| **a-stock-data** | https://github.com/simonlin1212/a-stock-data | 27 个 A 股数据端点 SKILL 文档（v3.2.2） | 阶段 1：吸收端点设计、字段映射、踩坑 FAQ；不直接复制运行时代码 |
 | **astock-peg** | https://github.com/simonlin1212/astock-peg | Next.js + AI PEG 估值（单股） | 阶段 1：抄 `scripts/collect_stock_data.py / resolve_ticker.py / detect_sector.py`<br>阶段 2：参考前端架构思路（不直接 fork） |
 | **TradingAgents-astock** | https://github.com/simonlin1212/tradingagents-astock | 7 角色多 agent 投研框架 A 股 fork | 阶段 1：参考 3 个 A 股特化角色（政策 / 游资 / 解禁）的 prompt 拆解 → 启发 T2 排雷规则<br>阶段 3：作为 T5 增强轨道核心 |
 

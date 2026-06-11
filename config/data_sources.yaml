@@ -217,6 +217,36 @@ sources:
     python_package: efinance
     reference: "https://github.com/Micro-sheep/efinance"
 
+  - id: a_stock_data_endpoint_reference
+    name: a-stock-data Endpoint Reference
+    category: data_source_design_reference
+    markets: [a_share]
+    access: markdown_skill_snippets
+    cost: free
+    runtime_ready: false
+    research_status: design_absorbed
+    license: Apache-2.0
+    absorbed_from:
+      - "simonlin1212/a-stock-data@9379ab9"
+    strengths:
+      - 27 个 A 股端点按行情、研报、信号、资金面、新闻、基础数据、公告分层，适合作为 adapter 设计清单
+      - 明确优先使用 mootdx/腾讯承接高频行情，东方财富仅用于独有数据并统一限流
+      - 已记录东财概念板块 slist 替换、巨潮公告 orgId 动态映射等近期接口漂移修复
+      - 可补充龙虎榜、解禁、融资融券、大宗交易、股东户数、分红、公告和研报的 report-only 数据面
+    risks:
+      - 上游是 Skill/Markdown 内嵌代码，不是稳定 Python library API
+      - 直连网页端点会漂移，不能绕过本项目 DataSource/schema/freshness gate
+      - 东方财富部分端点存在 IP 风控，需要集中限频、串行请求和失败可解释
+      - iwencai 语义搜索需要外部 key，不纳入默认运行链路
+    adoption_gate:
+      - 不把 SKILL 代码直接复制进 runtime；每个端点必须先实现独立 DataSource/service adapter
+      - 东方财富端点必须共用集中 session、UA/Referer、最小间隔和抖动限流
+      - 新端点先走 report-only/shadow mode，不直接参与评分和买卖建议
+      - 公告、研报、财务类数据必须保留披露日/发布日期，禁止未来信息进入回测
+      - schema、freshness、异常路径必须有 fixture 覆盖，失败抛 DataError/FreshnessError
+    review_cadence: "monthly_or_before_new_data_adapter"
+    reference: "https://github.com/simonlin1212/a-stock-data"
+
   - id: ashare_sina_tencent
     name: Ashare-style Sina/Tencent Aggregation
     category: market_data

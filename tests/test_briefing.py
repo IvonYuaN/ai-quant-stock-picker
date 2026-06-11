@@ -104,7 +104,10 @@ class TestBriefingGenerator:
         ]
         briefing = gen.generate(picks=picks, frames={})
         main_chain_sec = next(s for s in briefing.sections if s.title == "主链总览")
-        assert "首先关注: 300750 宁德时代 | 备选观察名单 | 评分 16.0" in main_chain_sec.content
+        assert (
+            "首先关注: 300750 宁德时代 | 备选观察名单 | 评分 16.0"
+            in main_chain_sec.content
+        )
 
     def test_main_chain_section_includes_candidate_status_label(self):
         gen = BriefingGenerator()
@@ -121,7 +124,47 @@ class TestBriefingGenerator:
             frames={},
         )
         main_chain_sec = next(s for s in briefing.sections if s.title == "主链总览")
-        assert "首先关注: 300750 宁德时代 | 备选观察名单 | 新晋 | 评分 16.0" in main_chain_sec.content
+        assert (
+            "首先关注: 300750 宁德时代 | 备选观察名单 | 新晋 | 评分 16.0"
+            in main_chain_sec.content
+        )
+
+    def test_main_chain_section_dedupes_watchlist_against_top_focus(self):
+        gen = BriefingGenerator()
+        picks = [
+            _make_pick(
+                symbol="600036",
+                name="招商银行",
+                score=59.0,
+                rating="watch",
+            ),
+            _make_pick(
+                symbol="601318",
+                name="中国平安",
+                score=-28.0,
+                rating="watch",
+            ),
+        ]
+        briefing = gen.generate(
+            picks=picks,
+            frames={},
+            portfolio_summary=PortfolioDecisionSummary(
+                promote_count=0,
+                downgrade_count=1,
+                keep_count=1,
+                top_focus=("600036 招商银行",),
+                watchlist=("600036 招商银行", "601318 中国平安"),
+                allocations=(),
+                cash_reserve=1.0,
+                allocation_note="保留现金",
+            ),
+        )
+
+        main_chain_sec = next(s for s in briefing.sections if s.title == "主链总览")
+        assert "- 今日重点名单: 600036 招商银行" in main_chain_sec.content
+        assert "- 备选观察名单: 601318 中国平安" in main_chain_sec.content
+        assert "备选观察名单: 600036 招商银行" not in main_chain_sec.content
+        assert "首先关注: 600036 招商银行" in main_chain_sec.content
 
     def test_main_chain_section_includes_watch_review_checklist(self):
         gen = BriefingGenerator()
@@ -831,8 +874,7 @@ class TestGenerateSmartSummary:
             in summary
         )
         assert (
-            "- 仓位参考: 300750 宁德时代 20% | 主链评分 72.0；强信号优先分配"
-            in summary
+            "- 仓位参考: 300750 宁德时代 20% | 主链评分 72.0；强信号优先分配" in summary
         )
         assert "- 跟踪约束: 单票上限 20%" in summary
 

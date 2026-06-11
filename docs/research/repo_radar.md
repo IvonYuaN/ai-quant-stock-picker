@@ -80,6 +80,14 @@
 - [DanisHack/ai-hedge-fund](https://github.com/DanisHack/ai-hedge-fund) | ⭐ 25 | Python | AI-native hedge fund using multi-agent LLM system with real market data and paper trading.
 - [renee-jia/alpha-agent](https://github.com/renee-jia/alpha-agent) | ⭐ 20 | Python | An AI-driven multi-agent trading platform for options trading and stock trends analysis. This project leverages advanced machine learning, real-time market data, and a modular multi-agent framework.
 
+### a-stock-data 审计记录（2026-06-11）
+
+- 上游：[simonlin1212/a-stock-data](https://github.com/simonlin1212/a-stock-data)，审计版本 `9379ab9`，README 标注 v3.2.2 / 27 个 A 股端点 / Apache-2.0。
+- 当前状态：AQSP 没有运行时引用它；已登记为 `config/data_sources.yaml` 的 `a_stock_data_endpoint_reference`，只作为端点设计、字段映射、踩坑记录参考。
+- 可吸收：mootdx/腾讯优先、东方财富统一限流；东财 `slist` 概念板块替代失效百度 PAE；巨潮公告 `orgId` 动态映射；龙虎榜、解禁、两融、大宗、股东户数、分红、公告、研报等 report-only 数据面。
+- 不直接吸收：Markdown Skill 内嵌代码、直连网页端点、iwencai key 依赖、任何未经过 AQSP schema/freshness/fail-closed 测试的字段。
+- 复核节奏：每月或新增数据 adapter 前重新查看一次上游 changelog；如果上游出现“接口失效替换/字段变化/风控阈值”类更新，再决定是否迁移到本项目 adapter 待办。
+
 ## CN / A-share
 
 - [vnpy/vnpy](https://github.com/vnpy/vnpy) | ⭐ 41238 | Python | 基于Python的开源量化交易平台开发框架
