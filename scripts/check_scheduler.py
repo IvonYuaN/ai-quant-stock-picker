@@ -74,7 +74,7 @@ def check_bt_script() -> CheckResult:
     if not script.exists():
         return CheckResult("bt_task.sh", False, "missing")
     text = script.read_text(encoding="utf-8")
-    expected = ["daily", "intraday", "midday", "coldstart", "monitor", "status"]
+    expected = ["daily", "intraday", "midday", "coldstart", "monitor", "news", "status"]
     missing = [item for item in expected if item not in text]
     return CheckResult(
         "bt_task.sh",
@@ -86,24 +86,45 @@ def check_bt_script() -> CheckResult:
 def check_crontab() -> CheckResult:
     code, output = _run(["crontab", "-l"])
     if code != 0:
-        return CheckResult("crontab", False, output or "crontab unavailable")
+        return CheckResult("system crontab", True, output or "crontab unavailable")
     relevant = [line for line in output.splitlines() if "bt_task.sh" in line]
     return CheckResult(
-        "BT scheduled jobs",
-        bool(relevant),
-        "\n".join(relevant) if relevant else "no bt_task.sh entries found",
+        "system crontab",
+        True,
+        "\n".join(relevant)
+        if relevant
+        else "no bt_task.sh entries; BT Panel jobs may be managed outside crontab",
     )
 
 
 def check_logs() -> list[CheckResult]:
-    paths = [
-        PROJECT_ROOT / "logs" / "bt" / f"bt-daily-{TODAY}.log",
-        PROJECT_ROOT / "logs" / "bt" / f"bt-intraday-{TODAY}.log",
-        PROJECT_ROOT / "logs" / "bt" / f"bt-midday-{TODAY}.log",
-        PROJECT_ROOT / "logs" / "bt" / f"bt-monitor-{TODAY}.log",
-        PROJECT_ROOT / "logs" / "deploy" / f"sync-{TODAY}.log",
+    bt_dir = PROJECT_ROOT / "logs" / "bt"
+    bt_logs = sorted(bt_dir.glob(f"bt-*-{TODAY}.log")) if bt_dir.exists() else []
+    expected = ("daily", "intraday", "midday", "monitor")
+    seen_actions = {
+        path.name.removeprefix("bt-").removesuffix(f"-{TODAY}.log")
+        for path in bt_logs
+    }
+    missing = [action for action in expected if action not in seen_actions]
+    results = [
+        CheckResult(
+            "BT Panel logs",
+            bool(bt_logs),
+            "actions today: " + ",".join(sorted(seen_actions))
+            if bt_logs
+            else "no bt logs today yet",
+        )
     ]
-    return [_exists(path) for path in paths]
+    if missing:
+        results.append(
+            CheckResult(
+                "BT Panel expected cadence",
+                True,
+                "not seen today yet: " + ",".join(missing),
+            )
+        )
+    results.append(_exists(PROJECT_ROOT / "logs" / "deploy" / f"sync-{TODAY}.log"))
+    return results
 
 
 def check_locks() -> list[CheckResult]:

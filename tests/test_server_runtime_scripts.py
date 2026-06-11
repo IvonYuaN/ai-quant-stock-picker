@@ -130,6 +130,9 @@ def test_scheduler_diagnosis_is_read_only_and_bt_first() -> None:
     assert "datetime.now" not in script
     assert "shell=True" not in script
     assert "bt_task.sh" in script
+    assert '"news"' in script
+    assert "BT Panel jobs may be managed outside crontab" in script
+    assert "BT Panel logs" in script
     assert "com.aqsp.daily.plist" not in script
     assert "AQSP_SCHEDULER_STRICT" in script
 
