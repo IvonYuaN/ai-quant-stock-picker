@@ -64,6 +64,33 @@ sync_code_only() {
     fi
 }
 
+is_truthy() {
+    [[ "${1,,}" =~ ^(1|true|yes|on)$ ]]
+}
+
+should_bridge_intraday_to_midday() {
+    if ! is_truthy "${AQSP_INTRADAY_MIDDAY_BRIDGE:-true}"; then
+        return 1
+    fi
+    local dow now_hm marker_dir marker_file
+    dow="$(date +%u)"
+    if [ "$dow" -ge 6 ]; then
+        return 1
+    fi
+    now_hm=$((10#$(date +%H%M)))
+    if ! { [ "$now_hm" -ge 1135 ] && [ "$now_hm" -le 1230 ]; }; then
+        return 1
+    fi
+    marker_dir="${PROJECT_ROOT}/.state"
+    marker_file="${marker_dir}/midday-$(date +%Y-%m-%d).done"
+    if [ -f "$marker_file" ]; then
+        return 1
+    fi
+    mkdir -p "$marker_dir"
+    export AQSP_MIDDAY_MARKER_FILE="$marker_file"
+    return 0
+}
+
 run_script() {
     local script_path="$1"
     shift || true
@@ -89,12 +116,22 @@ case "$ACTION" in
         run_script "${PROJECT_ROOT}/scripts/server_sync_and_run.sh"
         ;;
     intraday)
+        if should_bridge_intraday_to_midday; then
+            export AQSP_RUNNER_SCRIPT=scripts/midday_refresh.sh
+            run_script "${PROJECT_ROOT}/scripts/server_sync_and_run.sh"
+            touch "$AQSP_MIDDAY_MARKER_FILE"
+            log "午盘桥接已完成，今日不再重复触发"
+            exit 0
+        fi
         export AQSP_RUNNER_SCRIPT=scripts/intraday_refresh.sh
         run_script "${PROJECT_ROOT}/scripts/server_sync_and_run.sh"
         ;;
     midday)
         export AQSP_RUNNER_SCRIPT=scripts/midday_refresh.sh
         run_script "${PROJECT_ROOT}/scripts/server_sync_and_run.sh"
+        marker_file="${AQSP_MIDDAY_MARKER_FILE:-${PROJECT_ROOT}/.state/midday-$(date +%Y-%m-%d).done}"
+        mkdir -p "$(dirname "$marker_file")"
+        touch "$marker_file"
         ;;
     coldstart)
         sync_code_only

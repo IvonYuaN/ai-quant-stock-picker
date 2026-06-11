@@ -76,6 +76,9 @@ def test_bt_task_script_exposes_panel_safe_actions() -> None:
     assert "AQSP_RUNNER_SCRIPT=scripts/daily_pipeline.sh" in script
     assert "AQSP_RUNNER_SCRIPT=scripts/intraday_refresh.sh" in script
     assert "AQSP_RUNNER_SCRIPT=scripts/midday_refresh.sh" in script
+    assert "should_bridge_intraday_to_midday" in script
+    assert "AQSP_INTRADAY_MIDDAY_BRIDGE" in script
+    assert "midday-$(date +%Y-%m-%d).done" in script
     assert "scripts/server_sync_and_run.sh" in script
     assert "scripts/coldstart_daily.sh" in script
     assert "scripts/server_monitor.sh" in script
