@@ -99,6 +99,9 @@ def test_news_catalysts_script_sends_research_notification() -> None:
     assert "消息面雷达" in script
     assert "AQSP_NEWS_SYMBOLS" in script
     assert "AQSP_NEWS_ENABLE_LLM_REVIEW" in script
+    assert "AQSP_NEWS_SOURCE_TIMEOUT_SECONDS" in script
+    assert "AQSP_NEWS_LLM_TIMEOUT_SECONDS" in script
+    assert "AQSP_NEWS_MAX_LLM_REVIEW_EVENTS" in script
     assert "-m aqsp news-catalysts" in script
     assert "--notify" in script
     assert "--enable-llm-review" in script

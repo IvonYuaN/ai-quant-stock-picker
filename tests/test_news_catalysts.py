@@ -90,3 +90,40 @@ def test_news_catalyst_report_degrades_when_source_times_out() -> None:
     assert report.source_status == "failed"
     assert not report.events
     assert "超过 0.0s 未返回" in report.warnings[0]
+
+
+def test_news_catalyst_llm_review_is_bounded(monkeypatch) -> None:
+    calls: list[str] = []
+
+    def fake_llm_call_or_fallback(**kwargs):
+        calls.append(kwargs["prompt"])
+        return type(
+            "Result",
+            (),
+            {
+                "text": "可信度=80; 影响=利好; 理由=测试",
+                "degraded": False,
+            },
+        )()
+
+    monkeypatch.setattr(
+        "aqsp.utils.llm_safe.llm_call_or_fallback", fake_llm_call_or_fallback
+    )
+
+    report = build_catalyst_report(
+        fetch_global_news=lambda _limit: pd.DataFrame(
+            [
+                {"标题": "政策支持半导体材料国产替代", "来源": "新华社"},
+                {"标题": "MLCC 行业报价上调", "来源": "证券报"},
+                {"标题": "某公司被立案调查", "来源": "公告"},
+            ]
+        ),
+        config=NewsCatalystConfig(
+            enable_llm_review=True,
+            max_llm_review_events=1,
+            llm_timeout_seconds=2,
+        ),
+    )
+
+    assert len(calls) == 1
+    assert any(event.verification.startswith("模型复核") for event in report.events)

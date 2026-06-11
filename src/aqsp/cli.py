@@ -392,6 +392,9 @@ def main(argv: list[str] | None = None) -> int:
     news_cmd.add_argument("--notify", action="store_true")
     news_cmd.add_argument("--output", default="")
     news_cmd.add_argument("--max-events", type=int, default=8)
+    news_cmd.add_argument("--source-timeout-seconds", type=float, default=8.0)
+    news_cmd.add_argument("--llm-timeout-seconds", type=float, default=8.0)
+    news_cmd.add_argument("--max-llm-review-events", type=int, default=3)
     news_cmd.add_argument("--enable-llm-review", action="store_true")
 
     doctor_cmd = sub.add_parser("doctor", help="diagnose server/runtime readiness")
@@ -3552,6 +3555,9 @@ def run_news_catalysts(args: argparse.Namespace) -> int:
             symbols=symbols,
             max_events=args.max_events,
             enable_llm_review=args.enable_llm_review,
+            source_timeout_seconds=args.source_timeout_seconds,
+            llm_timeout_seconds=args.llm_timeout_seconds,
+            max_llm_review_events=args.max_llm_review_events,
         ),
     )
     markdown = format_catalyst_notification(report)

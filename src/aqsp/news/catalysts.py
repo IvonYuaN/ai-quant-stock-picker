@@ -22,6 +22,8 @@ class NewsCatalystConfig:
     min_confidence: float = 0.35
     enable_llm_review: bool = False
     source_timeout_seconds: float = 8.0
+    llm_timeout_seconds: float = 8.0
+    max_llm_review_events: int = 3
 
 
 @dataclass(frozen=True)
@@ -117,7 +119,12 @@ def build_catalyst_report(
     rows.extend(_events_from_rows(_iter_news_rows(global_df.head(cfg.max_global_news))))
 
     deduped = _merge_events(rows)
-    reviewed = _review_events(deduped, enable_llm=cfg.enable_llm_review)
+    reviewed = _review_events(
+        deduped,
+        enable_llm=cfg.enable_llm_review,
+        timeout_seconds=cfg.llm_timeout_seconds,
+        max_events=cfg.max_llm_review_events,
+    )
     filtered = [item for item in reviewed if item.confidence >= cfg.min_confidence]
     ranked = sorted(
         filtered,
@@ -300,13 +307,16 @@ def _review_events(
     events: Sequence[CatalystEvent],
     *,
     enable_llm: bool,
+    timeout_seconds: float,
+    max_events: int,
 ) -> tuple[CatalystEvent, ...]:
     if not enable_llm or not events:
         return tuple(events)
     from aqsp.utils.llm_safe import llm_call_or_fallback
 
     reviewed: list[CatalystEvent] = []
-    for event in events[:8]:
+    review_limit = max(0, max_events)
+    for event in events[:review_limit]:
         prompt = (
             "你是A股消息面复核助手。请判断下面新闻标题是否可能是短线高影响事件。"
             "只输出一行：可信度=0-100; 影响=利好/利空/中性; 理由=不超过30字。"
@@ -322,6 +332,7 @@ def _review_events(
             fallback=fallback,
             enable_llm=True,
             caller="news_catalyst_review",
+            timeout_s=max(1.0, timeout_seconds),
         )
         llm_conf = _parse_llm_confidence(result.text)
         confidence = event.confidence
@@ -341,7 +352,7 @@ def _review_events(
                 }
             )
         )
-    reviewed.extend(events[8:])
+    reviewed.extend(events[review_limit:])
     return tuple(reviewed)
 
 
