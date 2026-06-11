@@ -74,7 +74,7 @@ def test_news_catalysts_cli_sends_research_notification(monkeypatch, capsys) -> 
             "--symbols",
             "300001",
             "--names",
-            "300001:测试电子",
+            "300001:样本电子",
             "--notify",
         ]
     )
@@ -82,7 +82,7 @@ def test_news_catalysts_cli_sends_research_notification(monkeypatch, capsys) -> 
     output = capsys.readouterr().out
     assert exit_code == 0
     assert "消息面雷达-2026-06-11" in output
-    assert sent and "不直接改写系统评分" in sent[0]
+    assert sent and "不替代主报告结论" in sent[0]
 
 
 def test_execution_summary_uses_paper_review_when_pm_has_allocations() -> None:

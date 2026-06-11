@@ -108,7 +108,7 @@ def test_news_catalysts_script_sends_research_notification() -> None:
     assert "-m aqsp news-catalysts" in script
     assert "--notify" in script
     assert "--enable-llm-review" in script
-    assert "不改评分" in script
+    assert "不替代主报告结论" in script
 
 
 def test_server_status_surfaces_bt_task_logs() -> None:

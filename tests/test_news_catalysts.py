@@ -47,7 +47,7 @@ def test_news_catalyst_report_prioritizes_verified_price_hike_events() -> None:
 
     report = build_catalyst_report(
         symbols=("300001",),
-        symbol_names={"300001": "测试电子"},
+        symbol_names={"300001": "样本电子"},
         fetch_symbol_news=symbol_news,
         fetch_global_news=global_news,
         config=NewsCatalystConfig(symbols=("300001",), max_events=5),
@@ -72,7 +72,7 @@ def test_news_catalyst_notification_keeps_research_boundary() -> None:
     markdown = format_catalyst_notification(report)
 
     assert markdown.startswith("# 消息面雷达-")
-    assert "不直接改写系统评分" in markdown
+    assert "不替代主报告结论" in markdown
     assert "多源交叉或公告来源优先" in markdown
     assert "交易指令" in markdown
 
@@ -101,7 +101,7 @@ def test_news_catalyst_llm_review_is_bounded(monkeypatch) -> None:
             "Result",
             (),
             {
-                "text": "可信度=80; 影响=利好; 理由=测试",
+                "text": "可信度=80; 影响=利好; 理由=来源可信",
                 "degraded": False,
             },
         )()
