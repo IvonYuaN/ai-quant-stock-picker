@@ -48,7 +48,7 @@ def test_build_briefing_notification_includes_debate_summary_when_summary_mode()
     markdown = build_briefing_notification(briefing, mode="summary")
 
     assert "## 一眼结论" in markdown
-    assert "## 多视角讨论" in markdown
+    assert "## 🗣️ 多视角讨论" in markdown
     assert "分歧度 45%" in markdown
     assert "# AI 量化选股日报" not in markdown
 
@@ -189,12 +189,12 @@ def test_build_daily_run_notification_includes_allocation_guidance() -> None:
     assert "## 🧭 阅读顺序" in markdown
     assert markdown.index("## 📌 今日快照") < markdown.index("## 🧭 阅读顺序")
     assert "1. 🧪 先看纸面配仓复核：300750 宁德时代，核对开盘承接和流动性。" in markdown
-    assert "2. 🔍 再看候选简表：确认状态、分数、关键点是否一致。" in markdown
+    assert "2. 🔍 再看候选速览：确认状态、分数、关键点是否一致。" in markdown
     assert "3. 🗣️ 最后看多视角分歧：300750 宁德时代 分歧度 42%。" in markdown
-    assert markdown.index("## 🧭 阅读顺序") < markdown.index("## 📋 候选简表")
-    assert "## 仓位参考" in markdown
+    assert markdown.index("## 🧭 阅读顺序") < markdown.index("## 📋 候选速览")
+    assert "## 📦 纸面仓位参考" in markdown
     assert "300750 宁德时代 20% | 主链评分 72.0" in markdown
-    assert "## 多视角讨论" in markdown
+    assert "## 🗣️ 分歧与共识" in markdown
     assert "趋势强但仍需确认开盘承接" in markdown
     assert "先看 300750 宁德时代 的开盘强弱与流动性" in markdown
     assert "参考仓位执行" not in markdown
@@ -383,7 +383,7 @@ def test_build_daily_run_notification_lists_watch_candidates_when_not_tradable()
         source_health_message="eastmoney 健康",
     )
 
-    assert "## 📋 候选简表" in markdown
+    assert "## 📋 候选速览" in markdown
     assert "| # | 标的 | 状态 | 分数 | 处理 | 关键点 |" in markdown
     assert (
         "| 1 | 688981 中芯国际 | 新晋 | -9 | 👀 继续观察 | 等待量价继续走强后，再评估是否转入重点跟踪名单；复核 高优先级 / 盘中走强后 |"

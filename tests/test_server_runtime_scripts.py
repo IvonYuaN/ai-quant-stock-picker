@@ -43,14 +43,21 @@ def test_install_server_cron_script_installs_standard_jobs() -> None:
     assert "AQSP_ENABLE_MIDDAY_CRON" in script
     assert "AQSP_ENABLE_DAILY_CRON" in script
     assert "AQSP_ENABLE_MONITOR_CRON" in script
+    assert "AQSP_ENABLE_NEWS_CRON" in script
+    assert "AQSP_ENABLE_COLDSTART_CRON" in script
     assert "*/10 9-11 * * 1-5" in script
     assert "5 12 * * 1-5" in script
     assert "*/10 13-14 * * 1-5" in script
+    assert "45 8 * * 1-5" in script
+    assert "0 10 * * 6,0" in script
     assert "0 18 * * 1-5" in script
+    assert "40 19 * * 1-5" in script
     assert "*/15 * * * 1-5" in script
     assert "bt_task.sh intraday" in script
     assert "bt_task.sh midday" in script
     assert "bt_task.sh daily" in script
+    assert "bt_task.sh coldstart" in script
+    assert "bt_task.sh news" in script
     assert "bt_task.sh monitor" in script
 
 
@@ -116,6 +123,7 @@ def test_server_status_surfaces_bt_task_logs() -> None:
 
     assert 'print_section "BT TASK LOG"' in script
     assert "logs/bt/bt-${action}-$(date +%Y-%m-%d).log" in script
+    assert "intraday midday daily coldstart monitor news status" in script
 
 
 def test_scheduler_diagnosis_is_read_only_and_bt_first() -> None:
@@ -156,7 +164,7 @@ def test_server_sync_script_has_lock_guard() -> None:
     )
 
     assert "server-runtime.lock" in script
-    assert "已有服务器主任务在运行，跳过本次同步与跑批" in script
+    assert "主链路仍在运行，本次任务正常跳过；这是互斥保护，不是失败" in script
 
 
 def test_server_monitor_script_has_lock_guard() -> None:
@@ -165,7 +173,7 @@ def test_server_monitor_script_has_lock_guard() -> None:
     )
 
     assert "server-monitor.lock" in script
-    assert "已有监控任务在运行，跳过本次监控" in script
+    assert "上一轮监控仍在运行，本次监控正常跳过；这是互斥保护，不是失败" in script
 
 
 def test_coldstart_daily_script_updates_db_then_runs_cli() -> None:
@@ -182,6 +190,7 @@ def test_coldstart_daily_script_updates_db_then_runs_cli() -> None:
     assert "收盘前，跳过冷启动" in script
     assert "bt_task.sh intraday" in script
     assert "server-runtime.lock" in script
+    assert "主链路仍在运行，本次冷启动正常跳过；这是互斥保护，不是失败" in script
     assert '"${PYTHON_BIN}" -u "${UPDATE_SCRIPT}" "${SQLITE_DB_PATH}"' in script
     assert '"${PYTHON_BIN}" -u -m aqsp.cli run' in script
     assert "--source sqlite_db" in script

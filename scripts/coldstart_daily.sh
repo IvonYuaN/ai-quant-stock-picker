@@ -79,7 +79,7 @@ mkdir -p \
     "$(dirname "$CSV_PATH")"
 
 if ! mkdir "$LOCK_FILE" 2>/dev/null; then
-    log "已有服务器主任务在运行，跳过本次冷启动"
+    log "主链路仍在运行，本次冷启动正常跳过；这是互斥保护，不是失败"
     exit 0
 fi
 trap 'rmdir "$LOCK_FILE"' EXIT

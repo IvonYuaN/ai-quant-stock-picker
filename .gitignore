@@ -20,6 +20,14 @@ reports/*.html
 !reports/.gitkeep
 logs/
 outputs/
+.tmp_digest_check/
+AUDIT_IMPLEMENTATION.md
+DASHBOARD_SUMMARY.md
+SCHEDULER_*.md
+STRATEGY_HEALTH_IMPLEMENTATION.md
+aqsp-*.png
+dashboard-*.png
+aqsp-live-snapshot-*.md
 data/*.db
 data/*.jsonl
 data/snapshots

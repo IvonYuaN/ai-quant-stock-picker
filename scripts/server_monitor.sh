@@ -24,7 +24,7 @@ mkdir -p "$LOG_DIR"
 mkdir -p "$LOCK_DIR"
 
 if ! mkdir "$LOCK_FILE" 2>/dev/null; then
-    log "已有监控任务在运行，跳过本次监控"
+    log "上一轮监控仍在运行，本次监控正常跳过；这是互斥保护，不是失败"
     exit 0
 fi
 trap 'rmdir "$LOCK_FILE"' EXIT

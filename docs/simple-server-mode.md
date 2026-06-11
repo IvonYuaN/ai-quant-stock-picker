@@ -5,18 +5,18 @@
 1. 本地只负责开发和 `git push`
 2. 云服务器自动 `git pull`
 3. 服务器本地保存 `.env`、数据库和运行结果，不被更新覆盖
-4. 你在本地通过 `8080` 看 Dashboard
+4. 通过备案域名 `https://lh.ifidy.cn` 看 Dashboard
 
 ## 这套模式怎么理解
 
 ```text
 Mac 本地开发
 -> push 到 GitHub
--> 云服务器定时执行 scripts/server_sync_and_run.sh
--> 先 git pull --ff-only
--> 再跑指定 runner（盘中轻量刷新 / 收盘完整跑批）
--> 产出 dist/dashboard/
--> 本地通过 8080 查看
+-> 宝塔计划任务执行 scripts/bt_task.sh
+-> bt_task.sh 同步代码并运行指定任务
+-> 产出 reports/、data/、dist/dashboard/
+-> aqsp-dashboard.service 读取落盘结果
+-> Nginx / 宝塔反代到 https://lh.ifidy.cn
 ```
 
 关键点：
@@ -126,35 +126,38 @@ bash /opt/aqsp/scripts/server_sync_and_run.sh
 
 如果服务器上存在受 Git 管理的本地改动，它会直接停下，不会乱覆盖。
 
-## 宝塔面板计划任务（推荐）
+## 宝塔面板计划任务（生产推荐）
 
-既然服务器已经用宝塔面板托管域名和看板，生产定时也建议统一放在 **宝塔面板 -> 计划任务**。这样任务、日志和运行状态都在服务器侧，不再依赖本机 Mac 的 launchd，也不会出现“本地有定时、服务器没动”的错觉。
+生产入口统一放在 **宝塔面板 -> 计划任务**。本地 Mac 的 `launchd` 只保留为历史兼容方案，不再作为生产定时来源。
 
-仓库提供了一个宝塔专用统一入口：
+统一命令入口：
 
 ```bash
-/bin/bash /opt/aqsp/scripts/bt_task.sh <daily|intraday|midday|coldstart|monitor|status>
+/bin/bash /opt/aqsp/scripts/bt_task.sh <intraday|midday|daily|coldstart|monitor|news|status>
 ```
 
-推荐在宝塔里建 4 个 Shell 脚本任务：
+建议在宝塔里配置 **6 条自动任务 + 1 条手动自检命令**：
 
-| 任务 | 宝塔周期 | 命令 | 作用 |
+| 任务名 | 推荐时间 | 宝塔脚本内容 | 作用 |
 |---|---:|---|---|
-| 盘中刷新 | 工作日 `09:40-11:30`、`13:10-14:55` 每 10 分钟 | `/bin/bash /opt/aqsp/scripts/bt_task.sh intraday` | 生成盘中候选并刷新看板，不污染正式 ledger |
-| 午盘回看 | 工作日 `12:05` | `/bin/bash /opt/aqsp/scripts/bt_task.sh midday` | 复用盘中观察链路，给中午看板一次明确刷新 |
-| 收盘主链路 | 工作日 `18:00` | `/bin/bash /opt/aqsp/scripts/bt_task.sh daily` | 拉取最新代码、跑完整收盘复盘、纸面验证、简报、通知、看板刷新 |
-| 冷启动补样本 | 工作日 `17:30` | `/bin/bash /opt/aqsp/scripts/bt_task.sh coldstart` | 收盘后更新 sqlite 历史库并累计 `predictions.jsonl` 冷启动天数 |
-| 服务器监控 | 工作日每 `15` 分钟 | `/bin/bash /opt/aqsp/scripts/bt_task.sh monitor` | 检查数据、运行时和通知通道，异常才推送 |
+| `AQSP-盘中刷新` | 工作日 `09:40-11:30`、`13:10-14:55` 每 10 分钟 | `/bin/bash /opt/aqsp/scripts/bt_task.sh intraday` | 刷新盘中候选和看板，写独立盘中产物，不污染正式 ledger |
+| `AQSP-午盘分析` | 工作日 `12:05` | `/bin/bash /opt/aqsp/scripts/bt_task.sh midday` | 中午固定复核上午走势、候选和大盘状态 |
+| `AQSP-消息面雷达` | 工作日 `08:45`，周末 `10:00` | `/bin/bash /opt/aqsp/scripts/bt_task.sh news` | 盘前/周末复核高影响消息、涨价链、政策、风险事件 |
+| `AQSP-收盘主链路` | 工作日 `18:00` | `/bin/bash /opt/aqsp/scripts/bt_task.sh daily` | 完整收盘复盘、纸面验证、简报、通知和看板刷新 |
+| `AQSP-冷启动补样本` | 工作日 `19:40` | `/bin/bash /opt/aqsp/scripts/bt_task.sh coldstart` | 收盘主链路结束后再补历史库和冷启动样本，避免互斥跳过 |
+| `AQSP-服务器监控` | 工作日每 `15` 分钟 | `/bin/bash /opt/aqsp/scripts/bt_task.sh monitor` | 检查数据、运行态、通知通道；默认只推关键异常 |
+| `AQSP-状态自检` | 不建议定时，手动点运行即可 | `/bin/bash /opt/aqsp/scripts/bt_task.sh status` | 临时查看 Git、产物、日志、运行态 |
 
-如果宝塔的“每 N 分钟”不能限制交易时段，也可以让它工作日每 10 分钟跑 `intraday`。`scripts/intraday_refresh.sh` 内部会自行判断当前是否在盘中，非交易时段只记录“跳过”，不会污染结果。
+如果宝塔的“每 N 分钟”不能限制交易时段，也可以让 `intraday` 工作日每 10 分钟跑。`scripts/intraday_refresh.sh` 内部会判断交易时段，非交易时段只记“跳过”，不会污染结果。
 
-`coldstart` 默认要求北京时间 `15:30` 之后才执行，因为它会把 sqlite 日线库结果写入正式冷启动样本。开盘中需要看最新变化时，用 `intraday`；不要用 `coldstart` 代替盘中刷新。
+`daily` 和 `coldstart` 会共用主锁。如果你在 `daily` 还没跑完时手动触发 `coldstart`，日志出现“正常跳过；这是互斥保护，不是失败”是预期行为。生产建议把 `coldstart` 放到 `19:40`，不要放在 `daily` 附近。
 
 手工验证：
 
 ```bash
 cd /opt/aqsp
 /bin/bash scripts/bt_task.sh status
+/bin/bash scripts/bt_task.sh news
 /bin/bash scripts/bt_task.sh monitor
 /bin/bash scripts/bt_task.sh midday
 /bin/bash scripts/bt_task.sh daily
@@ -164,6 +167,7 @@ cd /opt/aqsp
 
 ```bash
 tail -120 /opt/aqsp/logs/bt/bt-daily-$(date +%Y-%m-%d).log
+tail -120 /opt/aqsp/logs/bt/bt-news-$(date +%Y-%m-%d).log
 tail -120 /opt/aqsp/logs/daily/pipeline-$(date +%Y-%m-%d).log
 tail -120 /opt/aqsp/logs/monitor/monitor-$(date +%Y-%m-%d).log
 ```
@@ -176,21 +180,19 @@ AQSP_NOTIFY_MODE=summary
 SERVERCHAN_SENDKEY=你的Server酱SendKey
 ```
 
-注意：选股推荐通知仍受冷启动 + walk-forward 双门保护；收盘复盘、服务器监控和策略健康告警不依赖这道选股 gate。
+消息面雷达如果要启用模型复核，再加：
+
+```bash
+AQSP_NEWS_ENABLE_LLM_REVIEW=true
+AQSP_NEWS_MAX_LLM_REVIEW_EVENTS=3
+AQSP_NEWS_TASK_TIMEOUT_SECONDS=45
+```
+
+注意：选股推荐通知仍受冷启动 + walk-forward 双门保护；收盘复盘、午盘分析、消息面雷达、服务器监控不依赖这道选股 gate。
 
 ## crontab 定时任务（兼容）
 
-推荐拆成两条任务：
-
-1. 盘中推荐，工作日北京时间 `09:40-11:25`、`13:10-14:55` 每 10 分钟执行一次。
-2. 午盘回看，工作日北京时间 `12:05` 执行一次。
-3. 收盘复盘，工作日北京时间 `18:00` 执行一次。
-
-这里的含义是：
-
-- `intraday_refresh.sh` 负责你白天看的“推荐”。
-- `midday_refresh.sh` 负责中午固定回看上午变化，本质仍是盘中观察，不写正式收盘 ledger。
-- `server_sync_and_run.sh` 默认跑 `daily_pipeline.sh`，里面已经包含收盘复盘、虚拟盘同步、Dashboard 刷新。
+如果不用宝塔面板，也可以用 `install_server_cron.sh` 安装同一组生产任务。它仍然调用 `bt_task.sh`，不是另一套路由。
 
 直接执行：
 
@@ -198,18 +200,23 @@ SERVERCHAN_SENDKEY=你的Server酱SendKey
 bash /opt/aqsp/scripts/install_server_cron.sh
 ```
 
-这条脚本会自动安装并去重这 5 类任务：
+这条脚本会自动安装并去重这些任务：
 
 - 北京时间 `09:40-11:59` 每 10 分钟跑一次盘中推荐
 - 北京时间 `12:05` 跑一次午盘回看
 - 北京时间 `13:00-14:59` 每 10 分钟跑一次盘中推荐
+- 北京时间 `08:45` 工作日跑一次消息面雷达
+- 北京时间 `10:00` 周末跑一次消息面雷达
 - 北京时间 `18:00` 跑一次完整收盘复盘
+- 北京时间 `19:40` 跑一次冷启动补样本
 - 北京时间每 `15` 分钟跑一次服务器监控
 
 如果你想暂时关闭某一类任务，可以带环境变量：
 
 ```bash
 AQSP_ENABLE_INTRADAY_CRON=false bash /opt/aqsp/scripts/install_server_cron.sh
+AQSP_ENABLE_NEWS_CRON=false bash /opt/aqsp/scripts/install_server_cron.sh
+AQSP_ENABLE_COLDSTART_CRON=false bash /opt/aqsp/scripts/install_server_cron.sh
 AQSP_ENABLE_MONITOR_CRON=false bash /opt/aqsp/scripts/install_server_cron.sh
 ```
 
@@ -226,7 +233,7 @@ bash scripts/install_coldstart_cron.sh
 含义：
 
 - `merge_server_ledgers.py`：把服务器本地 `data/ledger.jsonl` 合并进正式 `data/predictions.jsonl`，按 `(signal_date, symbol, thresholds_version, regime, intended_entry)` 去重，并自动补齐 `signal_day_group`。
-- `install_coldstart_cron.sh`：安装一个工作日北京时间 `17:30` 的冷启动任务，调用 `scripts/coldstart_daily.sh`，先执行 `update_daily.py` 更新 sqlite 历史库，再运行 `aqsp.cli run --source sqlite_db` 追加 ledger。
+- `install_coldstart_cron.sh`：旧的独立冷启动安装器。当前生产推荐直接在宝塔里建 `AQSP-冷启动补样本`，时间放到 `19:40`，避免和 `daily` 互斥。
 
 `coldstart_daily.sh` 会按下面顺序寻找 `update_daily.py`：
 
@@ -248,9 +255,11 @@ AQSP_COLDSTART_CRON_SCHEDULE="30 9 * * 1-5" bash /opt/aqsp/scripts/install_colds
 
 长任务会自动互斥：
 
-- `server_sync_and_run.sh`、`coldstart_daily.sh` 共用同一把主锁，避免日终主链路和冷启动在同一窗口并发。
-- `server_monitor.sh` 使用独立锁，避免 15 分钟监控任务自己重入。
-- 如果上一轮还没跑完，新一轮会直接跳过并记日志，不会把队列打爆。
+- `daily`、`midday`、`news` 通过 `server_sync_and_run.sh` 共用主锁，避免同步代码和写产物时互相踩踏。
+- `coldstart_daily.sh` 也使用主锁，因为它会补正式冷启动 ledger；如果 `daily` 未结束，它会正常跳过。
+- `intraday_refresh.sh` 使用盘中独立锁，只保护盘中刷新自身，不会和收盘主链路抢正式 ledger。
+- `server_monitor.sh` 使用独立监控锁，避免 15 分钟监控任务自己重入。
+- 如果上一轮还没跑完，新一轮会直接“正常跳过”，这表示互斥保护生效，不是任务失败。
 
 查看：
 
@@ -303,21 +312,21 @@ echo 'AQSP_MONITOR_NOTIFY_WARNINGS=true' >> /opt/aqsp/.env
 
 如果你已经执行了 `install_server_cron.sh`，监控 cron 也会一并装好，不用单独再配。
 
-## 本地如何看 8080
+## 如何查看 Dashboard
 
-推荐继续用 SSH 隧道：
-
-```bash
-ssh -L 8080:127.0.0.1:8080 root@aqsp-cn
-```
-
-然后本地浏览器打开：
+生产入口：
 
 ```text
-http://127.0.0.1:8080
+https://lh.ifidy.cn
 ```
 
-如果你已经在服务器上把 Nginx 配成 `127.0.0.1:8080` 指向 Dashboard 目录，这样就够了。
+服务器健康检查：
+
+```bash
+curl -Ik https://lh.ifidy.cn/_stcore/health
+```
+
+Streamlit 只监听 `127.0.0.1:8501`，不要把 8501 端口直接暴露公网。
 
 ## 不会被覆盖的东西
 
@@ -338,7 +347,7 @@ http://127.0.0.1:8080
 1. 本地改代码
 2. `git push origin main`
 3. 服务器自动更新并跑
-4. 本地打开 `8080` 看结果
+4. 打开 `https://lh.ifidy.cn` 看结果
 
 ## GitHub Actions 降噪
 

@@ -2170,7 +2170,7 @@ def test_run_scheduled_annotates_candidate_status_in_report_and_notify(
 
     assert exit_code == 0
     assert seen
-    assert "## 📋 候选简表" in seen[0]
+    assert "## 📋 候选速览" in seen[0]
     assert (
         "| 1 | 688981 中芯国际 | 新晋 | -9 | 👀 继续观察 | 等待量价继续走强后，再评估是否转入重点跟踪名单；复核 高优先级 / 盘中走强后 |"
         in seen[0]
