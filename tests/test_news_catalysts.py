@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import time
+
 import pandas as pd
 
 from aqsp.news.catalysts import (
@@ -73,3 +75,18 @@ def test_news_catalyst_notification_keeps_research_boundary() -> None:
     assert "不直接改写系统评分" in markdown
     assert "多源交叉或公告来源优先" in markdown
     assert "交易指令" in markdown
+
+
+def test_news_catalyst_report_degrades_when_source_times_out() -> None:
+    def slow_global_news(_limit: int) -> pd.DataFrame:
+        time.sleep(0.2)
+        return pd.DataFrame([{"标题": "MLCC 行业报价上调", "来源": "慢源"}])
+
+    report = build_catalyst_report(
+        fetch_global_news=slow_global_news,
+        config=NewsCatalystConfig(source_timeout_seconds=0.01),
+    )
+
+    assert report.source_status == "failed"
+    assert not report.events
+    assert "超过 0.0s 未返回" in report.warnings[0]

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Sequence
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -20,6 +21,7 @@ class NewsCatalystConfig:
     max_events: int = 8
     min_confidence: float = 0.35
     enable_llm_review: bool = False
+    source_timeout_seconds: float = 8.0
 
 
 @dataclass(frozen=True)
@@ -89,7 +91,10 @@ def build_catalyst_report(
 
     for symbol in tuple(symbols or cfg.symbols):
         try:
-            df = symbol_fetcher(symbol, cfg.max_symbol_news)
+            df = _call_fetcher_with_timeout(
+                lambda: symbol_fetcher(symbol, cfg.max_symbol_news),
+                timeout_seconds=cfg.source_timeout_seconds,
+            )
         except Exception as exc:
             warnings.append(f"{symbol} 个股新闻获取失败: {exc}")
             continue
@@ -102,7 +107,10 @@ def build_catalyst_report(
         )
 
     try:
-        global_df = global_fetcher(cfg.max_global_news)
+        global_df = _call_fetcher_with_timeout(
+            lambda: global_fetcher(cfg.max_global_news),
+            timeout_seconds=cfg.source_timeout_seconds,
+        )
     except Exception as exc:
         warnings.append(f"全市场快讯获取失败: {exc}")
         global_df = pd.DataFrame()
@@ -388,6 +396,36 @@ def _table_cell(value: object) -> str:
     return str(value or "").replace("|", "/").replace("\n", " ").strip() or "-"
 
 
+def _call_fetcher_with_timeout(
+    fetch: Callable[[], pd.DataFrame],
+    *,
+    timeout_seconds: float,
+) -> pd.DataFrame:
+    executor = ThreadPoolExecutor(max_workers=1)
+    future = executor.submit(fetch)
+    try:
+        result = future.result(timeout=max(0.1, timeout_seconds))
+    except TimeoutError as exc:
+        future.cancel()
+        executor.shutdown(wait=False, cancel_futures=True)
+        raise TimeoutError(f"消息源超过 {timeout_seconds:.1f}s 未返回") from exc
+    finally:
+        if future.done():
+            executor.shutdown(wait=False, cancel_futures=True)
+    if result is None:
+        return pd.DataFrame()
+    return result
+
+
+def _fetch_optional_frame(
+    fetch: Callable[[], pd.DataFrame], timeout_seconds: float
+) -> pd.DataFrame:
+    try:
+        return _call_fetcher_with_timeout(fetch, timeout_seconds=timeout_seconds)
+    except Exception:
+        return pd.DataFrame()
+
+
 def _akshare_symbol_news(symbol: str, limit: int) -> pd.DataFrame:
     import akshare as ak
 
@@ -398,10 +436,7 @@ def _akshare_symbol_news(symbol: str, limit: int) -> pd.DataFrame:
         lambda: ak.stock_research_report_em(symbol=symbol),
     )
     for fetch in fetchers:
-        try:
-            df = fetch()
-        except Exception:
-            continue
+        df = _fetch_optional_frame(fetch, timeout_seconds=6.0)
         if df is not None and not df.empty:
             frames.append(df.head(limit))
     if not frames:
@@ -424,10 +459,7 @@ def _akshare_global_news(limit: int) -> pd.DataFrame:
     )
     frames: list[pd.DataFrame] = []
     for fetch in fetchers:
-        try:
-            df = fetch()
-        except Exception:
-            continue
+        df = _fetch_optional_frame(fetch, timeout_seconds=6.0)
         if df is not None and not df.empty:
             frames.append(df.head(limit))
     if not frames:
