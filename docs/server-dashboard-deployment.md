@@ -36,9 +36,10 @@ GitHub Actions 定时运行
 ## 方案 B: 服务器独立跑完整任务
 
 ```text
-服务器 cron / 宝塔计划任务
+服务器宝塔计划任务
+-> scripts/bt_task.sh daily
 -> scripts/daily_pipeline.sh
--> daily_pipeline.py
+-> scripts/daily_pipeline.py
 -> 生成 reports/、data/、dist/dashboard/
 -> 可选: 再把 dist/dashboard/ 发布到 Nginx 目录
 ```

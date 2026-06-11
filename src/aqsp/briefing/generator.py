@@ -979,9 +979,9 @@ class BriefingGenerator:
         lines.append("> ⚠️ **新手必知的5个规则**:")
         lines.append("> 1. **防守线最重要** - 跌破防守线说明假设变弱，要先降风险")
         lines.append("> 2. **别集中** - 单一股票不要占纸面组合太高")
-        lines.append("> 3. **别逆势** - 今天推荐的都是顺着大势的，逆势股票很危险")
-        lines.append("> 4. **留现金** - 永远保留30-50%的现金，以防万一")
-        lines.append("> 5. **不懂不追** - 如果看不懂理由，就先只观察")
+        lines.append("> 3. **别逆势** - 纸面观察也要顺着市况验证，弱市里先降低优先级")
+        lines.append("> 4. **留现金** - 纸面组合也要保留缓冲，避免把单日信号看得过满")
+        lines.append("> 5. **看不懂就观察** - 如果理由不清楚，就只记录，不推进")
         lines.append("")
 
         if len(tradable_picks) > 3:

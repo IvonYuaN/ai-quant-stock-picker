@@ -93,7 +93,7 @@ AQSP_ENABLE_AUTO_EVOLUTION=false
 
 - `GLM_API_KEY` 用于智谱；`LLM_PROVIDER=glm` 时默认走 `GLM-4.7-Flash`。
 - `SERVERCHAN_SENDKEY` 配好后，收盘总览、监控告警、复盘摘要都可以直接推到 Server酱。
-- `AQSP_NOTIFY=true` 后，日终 `daily_pipeline.sh` 会自动带 `--notify`。
+- `AQSP_NOTIFY=true` 后，`bt_task.sh daily` 会在收盘主链路里发送汇总通知。
 - 命令入口统一推荐用 `aqsp run`；仓库仍兼容旧别名 `aqsp run-scheduled`，方便服务器老脚本平滑过渡。
 - `AQSP_NOTIFY_MODE=summary` 时，收盘链路默认只发 1 条“收盘总览”；如果你想恢复每个步骤各发各的，改成 `fanout`。
 - `AQSP_SYMBOLS` 给实盘/日报链路用；`AQSP_WALKFORWARD_SYMBOLS` 单独给 walk-forward，用历史库里覆盖完整的票，别混用。
@@ -122,7 +122,7 @@ bash /opt/aqsp/scripts/server_sync_and_run.sh
 
 1. 检查服务器代码目录是否干净
 2. `git pull --ff-only origin main`
-3. 运行 `AQSP_RUNNER_SCRIPT` 指定的脚本，默认 `scripts/daily_pipeline.sh`
+3. 运行 `AQSP_RUNNER_SCRIPT` 指定的脚本；生产入口由 `bt_task.sh` 显式设置
 
 如果服务器上存在受 Git 管理的本地改动，它会直接停下，不会乱覆盖。
 
