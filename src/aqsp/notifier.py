@@ -6,6 +6,7 @@ from typing import Any
 
 import requests
 
+from aqsp.core.time import today_shanghai
 from aqsp.data.source_health import notification_level_for_health_label
 
 
@@ -104,7 +105,7 @@ def _send_serverchan(markdown: str) -> NotifyResult | None:
         return None
     url = f"https://sctapi.ftqq.com/{sendkey}.send"
     payload = {
-        "title": "AQSP 通知",
+        "title": _notification_title(markdown),
         "desp": markdown[:12000],
     }
     return _post("serverchan", url, data=payload)
@@ -114,7 +115,7 @@ def _send_feishu(markdown: str) -> NotifyResult | None:
     url = os.getenv("FEISHU_WEBHOOK_URL", "").strip()
     if not url:
         return None
-    payload = {"msg_type": "text", "content": {"text": markdown[:3800]}}
+    payload = _build_smart_summary_card(_extract_markdown_title(markdown), markdown)
     return _post("feishu", url, json=payload)
 
 
@@ -123,9 +124,10 @@ def _send_dingtalk(markdown: str) -> NotifyResult | None:
     secret = os.getenv("DINGTALK_SECRET", "").strip()
     if not url:
         return None
+    title = _notification_title(markdown)
     payload = {
         "msgtype": "markdown",
-        "markdown": {"title": "量化选股", "text": markdown[:3800]},
+        "markdown": {"title": title, "text": markdown[:3800]},
     }
     if secret:
         import time
@@ -151,7 +153,7 @@ def _send_bark(markdown: str) -> NotifyResult | None:
         return None
     if not url.endswith("/"):
         url += "/"
-    title = "量化选股通知"
+    title = _notification_title(markdown)
     url = f"{url}{title}/{markdown[:500]}"
     return _post("bark", url)
 
@@ -163,7 +165,7 @@ def _send_pushplus(markdown: str) -> NotifyResult | None:
     url = "https://www.pushplus.plus/send"
     payload = {
         "token": token,
-        "title": "量化选股通知",
+        "title": _notification_title(markdown),
         "content": markdown[:4000],
         "template": "markdown",
     }
@@ -199,6 +201,21 @@ def _build_smart_summary_card(title: str, summary_markdown: str) -> dict[str, An
             ],
         },
     }
+
+
+def _notification_title(markdown: str) -> str:
+    title = _extract_markdown_title(markdown)
+    if title != "AQSP 通知":
+        return title
+    return f"通知-{today_shanghai().isoformat()}"
+
+
+def _extract_markdown_title(markdown: str) -> str:
+    for line in markdown.splitlines():
+        clean = line.strip()
+        if clean.startswith("# "):
+            return clean[2:].strip()[:80] or "AQSP 通知"
+    return "AQSP 通知"
 
 
 def notify_feishu_card(card: dict[str, Any]) -> NotifyResult | None:

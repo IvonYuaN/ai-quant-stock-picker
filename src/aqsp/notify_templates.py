@@ -6,6 +6,7 @@ from typing import Literal
 from aqsp.briefing.closing_review import DailyReview, WeeklySummary
 from aqsp.briefing.generator import Briefing
 from aqsp.briefing.debate import DebateResult
+from aqsp.core.time import today_shanghai
 from aqsp.monitor.checker import MonitorResult
 from aqsp.models import PickResult
 from aqsp.portfolio.manager import PortfolioDecisionSummary
@@ -46,6 +47,11 @@ def _source_safe_notification(
         _notification_research_tone(markdown),
         source_status=source_status,
     )
+
+
+def _dated_title(label: str, run_date: str = "") -> str:
+    date_text = str(run_date or "").strip() or today_shanghai().isoformat()
+    return f"{label}-{date_text}"
 
 
 def _blocked_watchlist_status(
@@ -164,6 +170,7 @@ def build_daily_run_notification(
     circuit_breaker_reason: str = "",
     snapshot_diff: SnapshotDiff | None = None,
     mode: str = "summary",
+    title_label: str = "收盘研究日报",
 ) -> str:
     lead_conclusion = _daily_lead_conclusion(
         tradable=tradable,
@@ -172,32 +179,36 @@ def build_daily_run_notification(
         circuit_breaker_reason=circuit_breaker_reason,
     )
     lines = [
-        "# AQSP 研究日报",
+        f"# {_dated_title(title_label, run_date)}",
         "",
-        "## 核心结论",
+        "> 🧭 阅读方式：先看一眼结论，再看风险/阻塞，最后看复核清单。本通知只做研究复核，不是交易指令。",
         "",
-        f"- 数据日期: {run_date}",
-        f"- **判断**: {lead_conclusion}",
+        "## 🧭 一眼看懂",
+        "",
+        f"**📅 数据日期**：{run_date}",
+        "",
+        f"**🎯 今日判断**：{lead_conclusion}",
+        "",
     ]
     if circuit_breaker_reason:
-        lines.append(f"- 风险告警: {circuit_breaker_reason}")
+        lines.append(f"**🛡️ 风险告警**：{circuit_breaker_reason}")
     elif tradable:
-        lines.append(f"- 纸面复核对象: {len(tradable)}")
-        lines.append(f"- 纸面重点: {_format_daily_pick(tradable[0])}")
+        lines.append(f"**🧪 纸面复核对象**：{len(tradable)} 个")
+        lines.append(f"**⭐ 先看对象**：{_format_daily_pick(tradable[0])}")
     elif portfolio_summary is not None and portfolio_summary.allocations:
         lead = portfolio_summary.allocations[0]
-        lines.append(f"- 纸面复核对象: {len(portfolio_summary.allocations)}")
-        lines.append(f"- 纸面重点: {format_symbol_name(lead.symbol, lead.name)}")
+        lines.append(f"**🧪 纸面复核对象**：{len(portfolio_summary.allocations)} 个")
+        lines.append(f"**⭐ 先看对象**：{format_symbol_name(lead.symbol, lead.name)}")
     else:
-        lines.append("- 纸面复核对象: 0")
-        lines.append("- 主链状态: " + _blocked_watchlist_status(portfolio_summary))
+        lines.append("**🧪 纸面复核对象**：0 个")
+        lines.append("**👀 主链状态**：" + _blocked_watchlist_status(portfolio_summary))
     if is_cold_start and cold_start_min_days > 0:
-        lines.append(f"- 冷启动进度: {cold_start_days}/{cold_start_min_days}")
+        lines.append(f"**🧊 冷启动进度**：{cold_start_days}/{cold_start_min_days}")
     if portfolio_summary is not None and portfolio_summary.regime_label:
-        lines.append(f"- 当前市况: {portfolio_summary.regime_label}")
+        lines.append(f"**🌦️ 当前市况**：{portfolio_summary.regime_label}")
     if portfolio_summary is not None and portfolio_summary.strategy_mix_name:
         lines.append(
-            "- 当前侧重策略: "
+            "**🧭 当前侧重策略**："
             f"{portfolio_summary.strategy_mix_name}"
             + (
                 f" | {portfolio_summary.strategy_mix_description}"
@@ -207,26 +218,26 @@ def build_daily_run_notification(
         )
     if portfolio_summary is not None and portfolio_summary.strategy_focus:
         lines.append(
-            "- 优先关注策略: " + "、".join(portfolio_summary.strategy_focus[:3])
+            "**🔍 优先关注策略**：" + "、".join(portfolio_summary.strategy_focus[:3])
         )
     if portfolio_summary is not None and portfolio_summary.action_hotspots:
         lines.append(
-            "- 需要重点确认: " + "；".join(portfolio_summary.action_hotspots[:2])
+            "**🟡 需要重点确认**：" + "；".join(portfolio_summary.action_hotspots[:2])
         )
     if portfolio_summary is not None and portfolio_summary.allocations:
         top_alloc = "、".join(
             f"{item.symbol} {item.weight:.0%}"
             for item in portfolio_summary.allocations[:3]
         )
-        lines.append(f"- 仓位参考: {top_alloc}")
+        lines.append(f"**📦 纸面仓位参考**：{top_alloc}")
     elif portfolio_summary is not None and portfolio_summary.watchlist:
-        lines.append("- 备选观察名单: " + "、".join(portfolio_summary.watchlist[:3]))
+        lines.append("**👀 备选观察名单**：" + "、".join(portfolio_summary.watchlist[:3]))
     if portfolio_summary is not None and portfolio_summary.cash_reserve > 0:
-        lines.append(f"- 现金留存: {portfolio_summary.cash_reserve:.0%}")
+        lines.append(f"**💧 现金留存**：{portfolio_summary.cash_reserve:.0%}")
     if portfolio_summary is not None and portfolio_summary.execution_blockers:
-        lines.append("- 当前卡点: " + "；".join(portfolio_summary.execution_blockers[:2]))
+        lines.append("**🔒 当前卡点**：" + "；".join(portfolio_summary.execution_blockers[:2]))
     if portfolio_summary is not None and portfolio_summary.watch_reviews:
-        lines.append("- 观察名单下一步:")
+        lines.extend(["", "**📝 观察名单下一步**："])
         for item in portfolio_summary.watch_reviews[:2]:
             lines.append(
                 "  - "
@@ -238,12 +249,12 @@ def build_daily_run_notification(
                 )
             )
     if snapshot_diff is not None and snapshot_diff.has_changes:
-        lines.append(f"- 候选变化: {summarize_snapshot_diff(snapshot_diff)}")
+        lines.append(f"**🔄 候选变化**：{summarize_snapshot_diff(snapshot_diff)}")
     if debate_results:
         lead = debate_results[0]
         consensus = lead.final_consensus or lead.adjustment_reason or "无共识"
         lines.append(
-            f"- 多视角讨论: {lead.symbol} {lead.name} | {lead.recommended_adjustment.upper()} | {consensus}"
+            f"**🗣️ 多视角讨论**：{lead.symbol} {lead.name} | {lead.recommended_adjustment.upper()} | {consensus}"
         )
 
     lines.extend(["", "## 📌 今日快照", ""])
@@ -721,7 +732,7 @@ def build_monitor_notification(
     warnings = [result for result in triggered if result.severity == "warning"]
 
     lines = [
-        "# 系统监控告警",
+        f"# {_dated_title('系统监控告警')}",
         "",
         "## 核心结论",
         "",
@@ -757,7 +768,7 @@ def build_morning_breakout_notification(
         return _notification_research_tone(
             "\n".join(
                 [
-                    "# 早盘打板策略",
+                    f"# {_dated_title('早盘打板策略')}",
                     "",
                     "## 核心结论",
                     "",
@@ -768,7 +779,7 @@ def build_morning_breakout_notification(
         )
 
     lines = [
-        "# 早盘打板策略",
+        f"# {_dated_title('早盘打板策略')}",
         "",
         "## 核心结论",
         "",
@@ -808,7 +819,7 @@ def build_closing_premium_notification(
         return _notification_research_tone(
             "\n".join(
                 [
-                    "# 尾盘溢价策略",
+                    f"# {_dated_title('尾盘溢价策略')}",
                     "",
                     "## 核心结论",
                     "",
@@ -819,7 +830,7 @@ def build_closing_premium_notification(
         )
 
     lines = [
-        "# 尾盘溢价策略",
+        f"# {_dated_title('尾盘溢价策略')}",
         "",
         "## 核心结论",
         "",
@@ -866,7 +877,7 @@ def build_closing_review_notification(
         return _notification_research_tone(format_daily_review(review))
 
     lines = [
-        "# 收盘复盘",
+        f"# {_dated_title('收盘复盘', review.date)}",
         "",
         "## 核心结论",
         "",
@@ -924,7 +935,7 @@ def _build_weekly_review_notification(
     return _notification_research_tone(
         "\n".join(
             [
-                "# 周度复盘",
+                f"# 周度复盘-{summary.week_start}_{summary.week_end}",
                 "",
                 "## 核心结论",
                 "",

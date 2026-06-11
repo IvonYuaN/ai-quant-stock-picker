@@ -24,6 +24,8 @@ def test_intraday_refresh_script_uses_isolated_outputs() -> None:
 
     assert 'export AQSP_RUN_TASK_ID="${AQSP_RUN_TASK_ID:-intraday}"' in script
     assert 'INTRADAY_MODE="${AQSP_INTRADAY_MODE:-open}"' in script
+    assert 'INTRADAY_NOTIFY="${AQSP_INTRADAY_NOTIFY:-false}"' in script
+    assert 'NOTIFY_ARGS=(--notify)' in script
     assert "data/intraday_predictions.jsonl" in script
     assert "reports/intraday_latest.md" in script
     assert "reports/intraday_latest.csv" in script
@@ -62,7 +64,9 @@ def test_midday_refresh_reuses_intraday_chain_without_formal_ledger_pollution() 
     assert "1135" in script
     assert "1230" in script
     assert "AQSP_INTRADAY_REQUIRE_MARKET_HOURS=false" in script
-    assert 'AQSP_RUN_TASK_ID="${AQSP_RUN_TASK_ID:-intraday}"' in script
+    assert 'AQSP_RUN_TASK_ID="${AQSP_RUN_TASK_ID:-midday}"' in script
+    assert 'AQSP_NOTIFY_TITLE_LABEL="${AQSP_NOTIFY_TITLE_LABEL:-午盘分析}"' in script
+    assert 'AQSP_INTRADAY_NOTIFY="${AQSP_INTRADAY_NOTIFY:-true}"' in script
     assert "scripts/intraday_refresh.sh" in script
 
 
@@ -72,7 +76,7 @@ def test_bt_task_script_exposes_panel_safe_actions() -> None:
     assert "宝塔面板计划任务统一入口" in script
     assert 'ACTION="${1:-}"' in script
     assert 'if [ -z "$ACTION" ]' in script
-    assert "daily|intraday|midday|coldstart|monitor|status" in script
+    assert "daily|intraday|midday|coldstart|monitor|news|status" in script
     assert "AQSP_RUNNER_SCRIPT=scripts/daily_pipeline.sh" in script
     assert "AQSP_RUNNER_SCRIPT=scripts/intraday_refresh.sh" in script
     assert "AQSP_RUNNER_SCRIPT=scripts/midday_refresh.sh" in script
@@ -82,8 +86,23 @@ def test_bt_task_script_exposes_panel_safe_actions() -> None:
     assert "scripts/server_sync_and_run.sh" in script
     assert "scripts/coldstart_daily.sh" in script
     assert "scripts/server_monitor.sh" in script
+    assert "scripts/news_catalysts.sh" in script
     assert "scripts/server_status.sh" in script
     assert "logs/bt" in script
+
+
+def test_news_catalysts_script_sends_research_notification() -> None:
+    script = (PROJECT_ROOT / "scripts" / "news_catalysts.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert "消息面雷达" in script
+    assert "AQSP_NEWS_SYMBOLS" in script
+    assert "AQSP_NEWS_ENABLE_LLM_REVIEW" in script
+    assert "-m aqsp news-catalysts" in script
+    assert "--notify" in script
+    assert "--enable-llm-review" in script
+    assert "不改评分" in script
 
 
 def test_server_status_surfaces_bt_task_logs() -> None:
@@ -91,6 +110,35 @@ def test_server_status_surfaces_bt_task_logs() -> None:
 
     assert 'print_section "BT TASK LOG"' in script
     assert "logs/bt/bt-${action}-$(date +%Y-%m-%d).log" in script
+
+
+def test_scheduler_diagnosis_is_read_only_and_bt_first() -> None:
+    script = (PROJECT_ROOT / "scripts" / "check_scheduler.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert (
+        "Diagnose AQSP scheduled tasks without touching system configuration" in script
+    )
+    assert "now_shanghai" in script
+    assert "datetime.now" not in script
+    assert "shell=True" not in script
+    assert "bt_task.sh" in script
+    assert "com.aqsp.daily.plist" not in script
+    assert "AQSP_SCHEDULER_STRICT" in script
+
+
+def test_clear_locks_is_conservative_by_default() -> None:
+    script = (PROJECT_ROOT / "scripts" / "clear_locks.sh").read_text(encoding="utf-8")
+
+    assert "AQSP_LOCK_STALE_MINUTES" in script
+    assert "AQSP_CLEAR_LOCKS_FORCE" in script
+    assert 'find "$LOCK_DIR" -maxdepth 1 -type d -name "*.lock"' in script
+    assert 'rm -rf -- "$lock_path"' in script
+    assert "pkill" not in script
+    assert "/tmp/aqsp" not in script
+    assert "~/Documents" not in script
+    assert "/www/server/panel/tmp" not in script
 
 
 def test_server_sync_script_has_lock_guard() -> None:
@@ -120,7 +168,7 @@ def test_coldstart_daily_script_updates_db_then_runs_cli() -> None:
     assert "A股量化分析数据/update_daily.py" in script
     assert "AQSP_COLDSTART_UPDATE_SCRIPT" in script
     assert "AQSP_COLDSTART_ALLOW_INTRADAY" in script
-    assert "LEDGER_PATH_FOR_PROGRESS=\"$LEDGER_PATH\"" in script
+    assert 'LEDGER_PATH_FOR_PROGRESS="$LEDGER_PATH"' in script
     assert 'os.environ["LEDGER_PATH_FOR_PROGRESS"]' in script
     assert "收盘前，跳过冷启动" in script
     assert "bt_task.sh intraday" in script

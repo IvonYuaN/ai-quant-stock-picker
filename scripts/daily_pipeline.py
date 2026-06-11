@@ -213,6 +213,100 @@ def _build_data_source(config: PipelineConfig) -> Any:
     return source
 
 
+def _build_resilient_history_source(config: PipelineConfig) -> Any:
+    from aqsp.data.cache import DataCache
+    from aqsp.data.multi_source import MultiSource, SourceFactory
+    from aqsp.data.eastmoney_source import EastmoneySource
+    from aqsp.data.sina_source import SinaSource
+    from aqsp.data.tencent_source import TencentSource
+    from aqsp.data.akshare_source import AkshareSource
+    from aqsp.data.tdx_vipdoc_source import TdxVipdocSource
+
+    cache = DataCache()
+    if config.source in {"auto", "local_first"}:
+        return MultiSource(
+            SourceFactory("tdx_vipdoc", TdxVipdocSource),
+            [
+                EastmoneySource(cache=cache),
+                SinaSource(cache=cache),
+                TencentSource(cache=cache),
+                AkshareSource(cache=cache),
+            ],
+            validate_consistency=False,
+        )
+    return MultiSource(
+        EastmoneySource(cache=cache),
+        [
+            SinaSource(cache=cache),
+            TencentSource(cache=cache),
+            AkshareSource(cache=cache),
+            SourceFactory("tdx_vipdoc", TdxVipdocSource),
+        ],
+        validate_consistency=False,
+    )
+
+
+def _fetch_history_frames_resilient(
+    config: PipelineConfig,
+    symbols: list[str],
+    *,
+    days: int,
+    logger: logging.Logger,
+    benchmark_symbols: list[str] | None = None,
+) -> tuple[dict[str, pd.DataFrame], list[str]]:
+    from aqsp.data import fetch_with_source
+
+    frames: dict[str, pd.DataFrame] = {}
+    attempted_sources = [config.source]
+    if symbols or benchmark_symbols:
+        try:
+            source = _build_data_source(config)
+            primary_benchmark = benchmark_symbols[0] if benchmark_symbols else None
+            frames = fetch_with_source(
+                source,
+                symbols,
+                days=days,
+                benchmark_symbol=primary_benchmark,
+            )
+            missing_benchmarks = [
+                symbol for symbol in (benchmark_symbols or []) if symbol not in frames
+            ]
+            if missing_benchmarks:
+                end = today_shanghai()
+                start = end - timedelta(days=max(days * 2, 120))
+                frames.update(source.fetch_index(missing_benchmarks, start, end))
+        except Exception as exc:
+            logger.warning("  主数据源历史取数失败，准备兜底: %s", exc)
+            frames = {}
+
+    missing_symbols = [symbol for symbol in symbols if symbol not in frames]
+    missing_benchmarks = [
+        symbol for symbol in (benchmark_symbols or []) if symbol not in frames
+    ]
+    if not missing_symbols and not missing_benchmarks:
+        return frames, attempted_sources
+
+    attempted_sources.append("resilient_history")
+    try:
+        fallback_source = _build_resilient_history_source(config)
+        before = len(frames)
+        if missing_symbols:
+            frames.update(fetch_with_source(fallback_source, missing_symbols, days=days))
+        if missing_benchmarks:
+            end = today_shanghai()
+            start = end - timedelta(days=max(days * 2, 120))
+            frames.update(fallback_source.fetch_index(missing_benchmarks, start, end))
+        logger.info(
+            "  历史取数兜底完成: recovered=%d still_missing=%d",
+            max(0, len(frames) - before),
+            len([symbol for symbol in missing_symbols if symbol not in frames])
+            + len([symbol for symbol in missing_benchmarks if symbol not in frames]),
+        )
+    except Exception as exc:
+        logger.warning("  兜底历史取数失败: %s", exc)
+    return frames, attempted_sources
+
+
 def _resolve_symbols(config: PipelineConfig, logger: logging.Logger) -> list[str]:
     from aqsp.universe import DEFAULT_SYMBOLS
 
@@ -418,8 +512,6 @@ def _step_validate_predictions(
         logger.info("  Ledger 为空, 跳过验证")
         return {"checked": 0, "skipped": True}
 
-    from aqsp.data import fetch_with_source
-
     symbols_in_ledger: list[str] = []
     benchmark_symbols: list[str] = []
     seen_symbols: set[str] = set()
@@ -437,26 +529,13 @@ def _step_validate_predictions(
     if not symbols_in_ledger and not benchmark_symbols:
         return {"checked": 0}
 
-    try:
-        source = _build_data_source(config)
-        primary_benchmark = benchmark_symbols[0] if benchmark_symbols else None
-        frames = fetch_with_source(
-            source,
-            symbols_in_ledger,
-            days=60,
-            benchmark_symbol=primary_benchmark,
-        )
-        missing_benchmarks = [
-            symbol for symbol in benchmark_symbols if symbol not in frames
-        ]
-        if missing_benchmarks:
-            end = today_shanghai()
-            start = end - timedelta(days=120)
-            index_frames = source.fetch_index(missing_benchmarks, start, end)
-            frames.update(index_frames)
-    except Exception as exc:
-        logger.warning("  验证数据获取失败: %s", exc)
-        frames = {}
+    frames, attempted_sources = _fetch_history_frames_resilient(
+        config,
+        symbols_in_ledger,
+        days=60,
+        logger=logger,
+        benchmark_symbols=benchmark_symbols,
+    )
 
     validation = validate_predictions(str(ledger_path), frames)
 
@@ -465,6 +544,8 @@ def _step_validate_predictions(
         "wins": validation.wins,
         "avg_return_pct": round(validation.avg_return_pct, 2),
         "avg_excess_pct": round(validation.avg_excess_pct, 2),
+        "frames_loaded": len(frames),
+        "sources_attempted": attempted_sources,
     }
 
     if validation.checked > 0:
@@ -493,7 +574,6 @@ def _step_sync_paper_trades(
         logger.info("  Ledger 文件不存在, 跳过虚拟盘同步")
         return {"skipped": True}
 
-    from aqsp.data import fetch_with_source
     from aqsp.ledger.base import read_ledger
     from aqsp.paper import read_paper_trades, render_paper_report, sync_paper_trades
 
@@ -514,8 +594,12 @@ def _step_sync_paper_trades(
         logger.info("  无可同步标的, 跳过虚拟盘同步")
         return {"skipped": True}
 
-    source = _build_data_source(config)
-    frames = fetch_with_source(source, symbols, days=60)
+    frames, attempted_sources = _fetch_history_frames_resilient(
+        config,
+        symbols,
+        days=60,
+        logger=logger,
+    )
     summary = sync_paper_trades(
         signal_ledger=ledger_path,
         paper_ledger=paper_ledger_path,
@@ -540,6 +624,8 @@ def _step_sync_paper_trades(
         "open_positions": summary.open_positions,
         "pending_entry": summary.pending_entry,
         "not_executable": summary.not_executable,
+        "frames_loaded": len(frames),
+        "sources_attempted": attempted_sources,
         "report_size": paper_report_path.stat().st_size
         if paper_report_path.exists()
         else 0,
@@ -1103,23 +1189,23 @@ def _build_pipeline_digest(
     ]
 
     core_lines = [
-        f"- 结论: {conclusion}",
-        f"- PM主裁决: {portfolio_summary.headline if portfolio_summary is not None else '暂无可用候选输出'}",
+        f"**🎯 今日结论**：{conclusion}",
+        f"**📦 PM 主裁决**：{portfolio_summary.headline if portfolio_summary is not None else '暂无可用候选输出'}",
     ]
     if latest_signal_day:
-        core_lines.append(f"- 信号日期: {latest_signal_day}")
+        core_lines.append(f"**📅 信号日期**：{latest_signal_day}")
     if portfolio_summary is not None and portfolio_summary.top_focus:
-        core_lines.append("- 今日重点名单: " + "、".join(portfolio_summary.top_focus))
+        core_lines.append("**⭐ 今日重点名单**：" + "、".join(portfolio_summary.top_focus))
     elif portfolio_summary is not None and portfolio_summary.watchlist:
         core_lines.append(
-            "- 观察主线: "
+            "**👀 观察主线**："
             + "、".join(
                 str(item).split("(", 1)[0] for item in portfolio_summary.watchlist[:3]
             )
         )
     if portfolio_summary is not None and portfolio_summary.execution_blockers:
         core_lines.append(
-            "- 当前卡点: "
+            "**🔒 当前卡点**："
             + "；".join(
                 normalize_research_tone(str(item))
                 for item in portfolio_summary.execution_blockers[:2]
@@ -1133,22 +1219,22 @@ def _build_pipeline_digest(
         ]
         if blockers:
             core_lines.append(
-                "- 当前卡点: "
+                "**🔒 当前卡点**："
                 + "；".join(normalize_research_tone(item) for item in blockers[:2])
             )
     if review_candidates:
         lead_review = review_candidates[0]
         lead_meta = _format_candidate_review_meta(lead_review)
-        lead_line = f"- 首要复核: {lead_review['display']}"
+        lead_line = f"**📝 首要复核**：{lead_review['display']}"
         if lead_meta:
             lead_line += f" | {lead_meta}"
         core_lines.append(lead_line)
     core_lines.append(
-        f"- 流程状态: {step_success}/{step_total} 成功 | {result.duration_seconds:.1f}s"
+        f"**✅ 流程状态**：{step_success}/{step_total} 成功 | {result.duration_seconds:.1f}s"
     )
     if failed_steps:
         core_lines.append(
-            "- 异常步骤: " + "、".join(step.name for step in failed_steps[:3])
+            "**🚨 异常步骤**：" + "、".join(step.name for step in failed_steps[:3])
         )
 
     main_chain_lines: list[str] = []
@@ -1290,20 +1376,22 @@ def _build_pipeline_digest(
         )
 
     lines = [
-        "## 核心结论",
+        "> 🧭 阅读方式：先看一眼结论，再看主链候选和风险卡点，最后看明日复核。本通知只做研究复核，不是交易指令。",
+        "",
+        "## 🧭 一眼看懂",
         *core_lines,
         "",
-        "## 主链候选",
+        "## 📋 主链候选",
         *main_chain_lines,
         "",
-        "## 风险与分歧",
+        "## 🔒 风险与分歧",
         *risk_lines,
         "",
-        "## 明日复核",
+        "## ✅ 明日复核",
         *plan_lines,
     ]
     if result.steps and failed_steps:
-        lines.extend(["", "## 运行侧写"])
+        lines.extend(["", "## 🧾 运行侧写"])
         for step in result.steps:
             badge = "OK" if step.success else "FAIL"
             line = f"- {badge} {step.name}: {step.duration_seconds:.1f}s"
@@ -1330,7 +1418,8 @@ def _send_pipeline_digest(
         )
         if source_status:
             digest = prepend_source_status_banner(digest, source_status)
-        send_notification("收盘总览", digest)
+        run_date = result.started_at[:10] if result.started_at else today_shanghai().isoformat()
+        send_notification(f"收盘总览-{run_date}", digest)
         logger.info("已发送收盘汇总通知 (mode=summary)")
     except Exception as exc:
         logger.warning("收盘汇总通知发送失败(非致命): %s", exc)

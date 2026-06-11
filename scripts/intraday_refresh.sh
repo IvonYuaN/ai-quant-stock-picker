@@ -75,6 +75,7 @@ INTRADAY_LIMIT="${AQSP_INTRADAY_LIMIT:-${AQSP_LIMIT:-10}}"
 INTRADAY_MAX_UNIVERSE="${AQSP_INTRADAY_MAX_UNIVERSE:-${AQSP_MAX_UNIVERSE:-50}}"
 INTRADAY_MIN_AVG_AMOUNT="${AQSP_INTRADAY_MIN_AVG_AMOUNT:-${AQSP_MIN_AVG_AMOUNT:-50000000}}"
 INTRADAY_MAX_DATA_LAG_DAYS="${AQSP_INTRADAY_MAX_DATA_LAG_DAYS:-1}"
+INTRADAY_NOTIFY="${AQSP_INTRADAY_NOTIFY:-false}"
 
 INTRADAY_LEDGER="$(resolve_path "${AQSP_INTRADAY_LEDGER:-data/intraday_predictions.jsonl}")"
 INTRADAY_REPORT="$(resolve_path "${AQSP_INTRADAY_REPORT:-reports/intraday_latest.md}")"
@@ -102,6 +103,10 @@ log "数据源: ${INTRADAY_SOURCE}"
 log "=========================================="
 
 START_TIME=$(date +%s)
+NOTIFY_ARGS=()
+if [[ "${INTRADAY_NOTIFY,,}" =~ ^(1|true|yes|on)$ ]]; then
+    NOTIFY_ARGS=(--notify)
+fi
 
 set +e
 "${PYTHON_BIN}" -m aqsp run \
@@ -115,7 +120,8 @@ set +e
     --ledger "${INTRADAY_LEDGER}" \
     --report "${INTRADAY_REPORT}" \
     --output-csv "${INTRADAY_OUTPUT_CSV}" \
-    --skip-validation 2>&1 | tee -a "$RESULT_LOG"
+    --skip-validation \
+    "${NOTIFY_ARGS[@]}" 2>&1 | tee -a "$RESULT_LOG"
 RUN_EXIT_CODE=$?
 set -e
 

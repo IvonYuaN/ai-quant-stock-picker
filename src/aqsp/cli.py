@@ -384,6 +384,16 @@ def main(argv: list[str] | None = None) -> int:
     monitor_cmd.add_argument("--notify-critical-only", action="store_true")
     monitor_cmd.add_argument("--dry-run", action="store_true")
 
+    news_cmd = sub.add_parser(
+        "news-catalysts", help="summarize high-impact market news catalysts"
+    )
+    news_cmd.add_argument("--symbols", default="")
+    news_cmd.add_argument("--names", default="")
+    news_cmd.add_argument("--notify", action="store_true")
+    news_cmd.add_argument("--output", default="")
+    news_cmd.add_argument("--max-events", type=int, default=8)
+    news_cmd.add_argument("--enable-llm-review", action="store_true")
+
     doctor_cmd = sub.add_parser("doctor", help="diagnose server/runtime readiness")
     doctor_cmd.add_argument(
         "--probe-auth",
@@ -566,6 +576,8 @@ def main(argv: list[str] | None = None) -> int:
             return run_briefing(args)
         if args.command == "monitor":
             return run_monitor(args)
+        if args.command == "news-catalysts":
+            return run_news_catalysts(args)
         if args.command == "doctor":
             return run_doctor(args)
         if args.command == "sources":
@@ -2931,6 +2943,9 @@ def run_scheduled(args: argparse.Namespace) -> int:
                 circuit_breaker_reason=status.reason if status.triggered else "",
                 snapshot_diff=diff,
                 mode=load_runtime_config().notify_mode,
+                title_label=str(
+                    os.environ.get("AQSP_NOTIFY_TITLE_LABEL", "") or "收盘研究日报"
+                ).strip(),
             )
         )
         if not results:
@@ -3517,6 +3532,56 @@ def run_monitor(args: argparse.Namespace) -> int:
             send_alerts(notify_targets)
 
     return 1 if any(r.severity == "critical" for r in triggered) else 0
+
+
+def run_news_catalysts(args: argparse.Namespace) -> int:
+    from aqsp.news import (
+        NewsCatalystConfig,
+        build_catalyst_report,
+        format_catalyst_notification,
+    )
+
+    symbols = tuple(
+        item.strip() for item in str(args.symbols or "").split(",") if item.strip()
+    )
+    names = _parse_symbol_names(str(args.names or ""))
+    report = build_catalyst_report(
+        symbols=symbols,
+        symbol_names=names,
+        config=NewsCatalystConfig(
+            symbols=symbols,
+            max_events=args.max_events,
+            enable_llm_review=args.enable_llm_review,
+        ),
+    )
+    markdown = format_catalyst_notification(report)
+    print(markdown)
+    if args.output:
+        output_path = Path(args.output)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(markdown, encoding="utf-8")
+    if args.notify:
+        notify_markdown(markdown)
+    return 0
+
+
+def _parse_symbol_names(raw: str) -> dict[str, str]:
+    names: dict[str, str] = {}
+    for item in raw.split(","):
+        text = item.strip()
+        if not text:
+            continue
+        if ":" in text:
+            symbol, name = text.split(":", 1)
+        elif "=" in text:
+            symbol, name = text.split("=", 1)
+        else:
+            continue
+        symbol = symbol.strip()
+        name = name.strip()
+        if symbol and name:
+            names[symbol] = name
+    return names
 
 
 def run_optimize(args: argparse.Namespace) -> int:

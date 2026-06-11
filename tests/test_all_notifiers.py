@@ -31,6 +31,49 @@ def test_send_dingtalk_sends_with_secret(monkeypatch):
     assert result.ok is True
 
 
+def test_send_feishu_uses_interactive_card(monkeypatch):
+    monkeypatch.setenv("FEISHU_WEBHOOK_URL", "https://open.feishu.cn/webhook/test")
+    from aqsp.notifier import _send_feishu
+
+    mock_post = MagicMock()
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_post.return_value = mock_response
+
+    markdown = "# 收盘总览\n\n## 🧭 一眼看懂\n\n**🎯 今日结论**：仅供研究复核"
+    with patch("aqsp.notifier.requests.post", mock_post):
+        result = _send_feishu(markdown)
+
+    assert result is not None
+    assert result.channel == "feishu"
+    payload = mock_post.call_args.kwargs["json"]
+    assert payload["msg_type"] == "interactive"
+    assert payload["card"]["header"]["title"]["content"] == "收盘总览"
+    assert payload["card"]["header"]["template"] == "turquoise"
+    assert payload["card"]["elements"][0]["tag"] == "markdown"
+    assert "**🎯 今日结论**" in payload["card"]["elements"][0]["content"]
+
+
+def test_send_dingtalk_uses_markdown_title(monkeypatch):
+    monkeypatch.setenv(
+        "DINGTALK_WEBHOOK_URL", "https://oapi.dingtalk.com/robot/send?access_token=test"
+    )
+    monkeypatch.delenv("DINGTALK_SECRET", raising=False)
+    from aqsp.notifier import _send_dingtalk
+
+    mock_post = MagicMock()
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_post.return_value = mock_response
+
+    with patch("aqsp.notifier.requests.post", mock_post):
+        result = _send_dingtalk("# 午盘分析-2026-06-11\n\n内容")
+
+    assert result is not None
+    payload = mock_post.call_args.kwargs["json"]
+    assert payload["markdown"]["title"] == "午盘分析-2026-06-11"
+
+
 def test_send_bark_returns_none_when_no_url(monkeypatch):
     monkeypatch.delenv("BARK_URL", raising=False)
     from aqsp.notifier import _send_bark
@@ -49,10 +92,11 @@ def test_send_bark_sends(monkeypatch):
     mock_post.return_value = mock_response
 
     with patch("aqsp.notifier.requests.post", mock_post):
-        result = _send_bark("test message")
+        result = _send_bark("# 午盘分析-2026-06-11\n\ntest message")
 
     assert result is not None
     assert result.channel == "bark"
+    assert "午盘分析-2026-06-11" in mock_post.call_args.args[0]
 
 
 def test_send_pushplus_returns_none_when_no_token(monkeypatch):
@@ -73,10 +117,12 @@ def test_send_pushplus_sends(monkeypatch):
     mock_post.return_value = mock_response
 
     with patch("aqsp.notifier.requests.post", mock_post):
-        result = _send_pushplus("test message")
+        result = _send_pushplus("# 午盘分析-2026-06-11\n\ntest message")
 
     assert result is not None
     assert result.channel == "pushplus"
+    payload = mock_post.call_args.kwargs["json"]
+    assert payload["title"] == "午盘分析-2026-06-11"
 
 
 def test_send_discord_returns_none_when_no_url(monkeypatch):

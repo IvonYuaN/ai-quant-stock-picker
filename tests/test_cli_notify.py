@@ -50,6 +50,41 @@ def test_execution_summary_uses_observation_when_pm_has_no_allocations() -> None
     assert "首选" not in line
 
 
+def test_news_catalysts_cli_sends_research_notification(monkeypatch, capsys) -> None:
+    import aqsp.cli as cli_mod
+    from aqsp.news.catalysts import CatalystReport
+
+    sent: list[str] = []
+    report = CatalystReport(
+        date="2026-06-11",
+        generated_at="2026-06-11T08:40:00+08:00",
+        events=(),
+        source_status="empty",
+    )
+
+    monkeypatch.setattr(cli_mod, "notify_markdown", lambda markdown: sent.append(markdown) or [])
+    monkeypatch.setattr(
+        "aqsp.news.build_catalyst_report",
+        lambda **_kwargs: report,
+    )
+
+    exit_code = cli_mod.main(
+        [
+            "news-catalysts",
+            "--symbols",
+            "300001",
+            "--names",
+            "300001:测试电子",
+            "--notify",
+        ]
+    )
+
+    output = capsys.readouterr().out
+    assert exit_code == 0
+    assert "消息面雷达-2026-06-11" in output
+    assert sent and "不直接改写系统评分" in sent[0]
+
+
 def test_execution_summary_uses_paper_review_when_pm_has_allocations() -> None:
     import aqsp.cli as cli_mod
 
@@ -243,8 +278,8 @@ def test_run_scheduled_notify_prepends_source_status_banner(
 
     assert exit_code == 0
     assert seen
-    assert seen[0].startswith("# AQSP 研究日报")
-    assert seen[0].index("## 数据源状态") < seen[0].index("## 核心结论")
+    assert seen[0].startswith("# 收盘研究日报-")
+    assert seen[0].index("## 数据源状态") < seen[0].index("## 🧭 一眼看懂")
     assert "auto -> eastmoney" in seen[0]
     assert "- 健康: fallback" in seen[0]
 
@@ -1665,9 +1700,9 @@ def test_run_scheduled_surfaces_t1_blockers_in_report_and_notification(
     assert "T+1 持仓约束：昨日已买标的今日不纳入重点跟踪名单" in report
     assert "贵州茅台: T+1 持仓约束，昨日已买，今日仅保留观察" in report
     assert "T+1 限制：昨日已买 1 只（600519）仅保留观察" in report
-    assert "备选观察名单: 300750 宁德时代、600519 贵州茅台" in seen[0]
+    assert "**👀 备选观察名单**：300750 宁德时代、600519 贵州茅台" in seen[0]
     assert (
-        "当前卡点: 600519 贵州茅台: T+1 持仓约束，昨日已买，今日仅保留观察"
+        "**🔒 当前卡点**：600519 贵州茅台: T+1 持仓约束，昨日已买，今日仅保留观察"
         in seen[0]
     )
 
@@ -1883,7 +1918,7 @@ def test_run_scheduled_surfaces_snapshot_lifecycle_in_summary_and_notification(
     assert "🆕 **新晋候选**: 688981 中芯国际" in report
     assert "归档移出记录: 600036 招商银行" in report
     assert "排名记录变化: 300750 #4→#5↓" in report
-    assert "- 候选变化: 新增 1 / 移出 1 / 排名异动 1" in seen[0]
+    assert "**🔄 候选变化**：新增 1 / 移出 1 / 排名异动 1" in seen[0]
     assert "## 候选变化" in seen[0]
     assert "🆕 **新晋候选**: 688981 中芯国际" in seen[0]
 

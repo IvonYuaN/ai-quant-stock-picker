@@ -559,13 +559,17 @@ def test_send_pipeline_digest_sends_summary_notification(
 
     daily_pipeline._send_pipeline_digest(config, result, logging.getLogger("test"))
 
-    assert sent["title"] == "收盘总览"
-    assert "结论:" in sent["content"]
+    assert sent["title"] == "收盘总览-2026-06-02"
+    assert "## 🧭 一眼看懂" in sent["content"]
+    assert "## 📋 主链候选" in sent["content"]
+    assert "## 🔒 风险与分歧" in sent["content"]
+    assert "## ✅ 明日复核" in sent["content"]
+    assert "**🎯 今日结论**：" in sent["content"]
     assert "数据源状态" in sent["content"]
     assert "主链候选" in sent["content"]
-    assert "PM主裁决: 上调 1 / 降级 1 / 维持 0" in sent["content"]
-    assert "当前卡点:" in sent["content"]
-    assert "首要复核: 300750 宁德时代 | 中优先级 / 板块分化时" in sent["content"]
+    assert "**📦 PM 主裁决**：上调 1 / 降级 1 / 维持 0" in sent["content"]
+    assert "**🔒 当前卡点**：" in sent["content"]
+    assert "**📝 首要复核**：300750 宁德时代 | 中优先级 / 板块分化时" in sent["content"]
     assert (
         "600519 贵州茅台 | 重点跟踪 | 延续上升 | PM 上调优先级 | 评分 71.0"
         in sent["content"]
@@ -579,8 +583,6 @@ def test_send_pipeline_digest_sends_summary_notification(
     assert "下一步: 等待板块暴露回落后，再重新评估跟踪优先级" in sent["content"]
     assert "复核: 中优先级 / 板块分化时" in sent["content"]
     assert "观察复核:" in sent["content"]
-    assert "风险与分歧" in sent["content"]
-    assert "明日复核" in sent["content"]
     assert (
         "观察复核: 先盯 300750 宁德时代，等待板块暴露回落后，再重新评估跟踪优先级（中优先级 / 板块分化时）。"
         in sent["content"]
@@ -909,6 +911,80 @@ def test_validate_predictions_fetches_benchmark_from_ledger(
     assert seen["benchmark_symbol"] == "000300"
     assert seen["fetch_index_symbols"] == ["000300"]
     assert "000300" in seen["frames"]
+
+
+def test_validate_predictions_uses_resilient_history_when_primary_fails(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    daily_pipeline = _load_daily_pipeline_module()
+    ledger_path = tmp_path / "predictions.jsonl"
+    ledger_path.write_text('{"symbol":"600519","status":"pending"}\n', encoding="utf-8")
+    rows = [{"symbol": "600519", "status": "pending"}]
+    seen: dict[str, object] = {}
+
+    monkeypatch.setattr("aqsp.ledger.base.read_ledger", lambda _path: rows)
+    monkeypatch.setattr(daily_pipeline, "_build_data_source", lambda _config: object())
+    monkeypatch.setattr(
+        daily_pipeline,
+        "_build_resilient_history_source",
+        lambda _config: "fallback-source",
+    )
+
+    def fake_fetch(source, symbols, days=60, benchmark_symbol=None):
+        seen.setdefault("sources", []).append(source)
+        if source != "fallback-source":
+            raise RuntimeError("remote disconnected")
+        return {"600519": pd.DataFrame([{"date": "2026-06-02", "close": 1.0}])}
+
+    monkeypatch.setattr("aqsp.data.fetch_with_source", fake_fetch)
+    monkeypatch.setattr(
+        "aqsp.ledger.validate_predictions",
+        lambda _path, frames: seen.update({"frames": frames})
+        or type(
+            "Validation",
+            (),
+            {
+                "checked": 0,
+                "wins": 0,
+                "avg_return_pct": 0.0,
+                "avg_excess_pct": 0.0,
+            },
+        )(),
+    )
+
+    config = daily_pipeline.PipelineConfig(
+        project_root=tmp_path,
+        source="eastmoney",
+        mode="close",
+        limit=10,
+        max_universe=50,
+        min_avg_amount=50_000_000,
+        max_data_lag_days=3,
+        enable_online_factors=False,
+        allow_online_fallback=True,
+        ledger_path=ledger_path.name,
+        report_path="reports/latest.md",
+        csv_path="reports/latest.csv",
+        briefing_path="reports/briefing.md",
+        paper_report_path="reports/paper.md",
+        dashboard_html="dist/dashboard/index.html",
+        dashboard_db="dist/dashboard/aqsp.db",
+        paper_ledger="data/paper_trades.jsonl",
+        closing_review_path="reports/closing_review.md",
+        notify=False,
+        notify_mode="summary",
+        dry_run=False,
+        enable_debate=False,
+        enable_auto_evolution=False,
+    )
+
+    result = daily_pipeline._step_validate_predictions(config, logging.getLogger("test"))
+
+    assert len(seen["sources"]) == 2
+    assert seen["sources"][1] == "fallback-source"
+    assert "600519" in seen["frames"]
+    assert result["sources_attempted"] == ["eastmoney", "resilient_history"]
 
 
 def test_sync_paper_trades_writes_report(monkeypatch, tmp_path: Path) -> None:

@@ -31,7 +31,9 @@ if [[ "${REQUIRE_WINDOW,,}" =~ ^(1|true|yes|on)$ ]]; then
 fi
 
 export AQSP_INTRADAY_REQUIRE_MARKET_HOURS=false
-export AQSP_RUN_TASK_ID="${AQSP_RUN_TASK_ID:-intraday}"
+export AQSP_RUN_TASK_ID="${AQSP_RUN_TASK_ID:-midday}"
+export AQSP_NOTIFY_TITLE_LABEL="${AQSP_NOTIFY_TITLE_LABEL:-午盘分析}"
+export AQSP_INTRADAY_NOTIFY="${AQSP_INTRADAY_NOTIFY:-true}"
 
 log "开始午盘回看，复用盘中观察链路"
 /bin/bash "${PROJECT_ROOT}/scripts/intraday_refresh.sh" 2>&1 | tee -a "$RESULT_LOG"

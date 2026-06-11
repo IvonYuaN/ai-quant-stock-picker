@@ -31,6 +31,18 @@ def test_notify_markdown_sends_serverchan_when_sendkey_present(monkeypatch):
     assert "sctapi.ftqq.com/test_sendkey.send" in mock_post.call_args.args[0]
 
 
+def test_serverchan_uses_markdown_title(monkeypatch):
+    monkeypatch.setenv("SERVERCHAN_SENDKEY", "test_sendkey")
+    from aqsp.notifier import _send_serverchan
+
+    with patch("aqsp.notifier.requests.post") as mock_post:
+        result = _send_serverchan("# 午盘分析-2026-06-11\n\n内容")
+
+    assert result is not None
+    payload = mock_post.call_args.kwargs["data"]
+    assert payload["title"] == "午盘分析-2026-06-11"
+
+
 def test_prepend_source_status_banner_keeps_title_before_source_status():
     from aqsp.notifier import prepend_source_status_banner
 

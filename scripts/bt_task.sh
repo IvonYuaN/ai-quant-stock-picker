@@ -6,6 +6,7 @@
 #   /bin/bash /opt/aqsp/scripts/bt_task.sh midday
 #   /bin/bash /opt/aqsp/scripts/bt_task.sh coldstart
 #   /bin/bash /opt/aqsp/scripts/bt_task.sh monitor
+#   /bin/bash /opt/aqsp/scripts/bt_task.sh news
 #   /bin/bash /opt/aqsp/scripts/bt_task.sh status
 
 set -euo pipefail
@@ -24,7 +25,7 @@ log() {
 
 usage() {
     cat <<'EOF'
-Usage: bt_task.sh <daily|intraday|midday|coldstart|monitor|status>
+Usage: bt_task.sh <daily|intraday|midday|coldstart|monitor|news|status>
 
 BT panel examples:
   /bin/bash /opt/aqsp/scripts/bt_task.sh intraday
@@ -32,6 +33,7 @@ BT panel examples:
   /bin/bash /opt/aqsp/scripts/bt_task.sh midday
   /bin/bash /opt/aqsp/scripts/bt_task.sh coldstart
   /bin/bash /opt/aqsp/scripts/bt_task.sh monitor
+  /bin/bash /opt/aqsp/scripts/bt_task.sh news
 EOF
 }
 
@@ -139,6 +141,9 @@ case "$ACTION" in
         ;;
     monitor)
         run_script "${PROJECT_ROOT}/scripts/server_monitor.sh"
+        ;;
+    news)
+        run_script "${PROJECT_ROOT}/scripts/news_catalysts.sh"
         ;;
     status)
         run_script "${PROJECT_ROOT}/scripts/server_status.sh"
