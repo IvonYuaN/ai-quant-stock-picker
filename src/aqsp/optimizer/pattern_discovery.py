@@ -309,9 +309,11 @@ class PatternDiscoveryEngine:
 
 def format_discovered_patterns(patterns: list[DiscoveredPattern]) -> str:
     if not patterns:
-        return "未发现满足条件的交易形态。"
+        return "未发现满足条件的研究形态。"
     lines = [
-        "# 形态发现报告",
+        "# 研究形态发现报告",
+        "",
+        "仅供研究复核：以下结果使用历史后验窗口统计，不会自动写入主链、阈值或纸面复核名单。",
         "",
         f"共发现 {len(patterns)} 个形态",
         "",
@@ -335,6 +337,7 @@ def format_discovered_patterns(patterns: list[DiscoveredPattern]) -> str:
                 f"- 历史平均收益: {p.historical_avg_return:.2f}%",
                 f"- 样本量: {p.sample_size}",
                 f"- 置信度: {p.confidence:.2%}",
+                "- 输出状态: research_candidate / proposal_only",
                 f"- 首次出现: {p.first_seen}",
                 f"- 最后出现: {p.last_seen}",
                 f"- 条件: {p.conditions}",

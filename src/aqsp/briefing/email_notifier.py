@@ -56,10 +56,10 @@ def _render_pick_card_html(pick: Pick, rank: int) -> str:
     # 根据评分定优先级颜色
     if pick.score >= 75:
         color = "#16a34a"  # green-600 强信号
-        badge = "🔥 纸面重点复核"
+        badge = "🔥 重点跟踪"
     elif pick.score >= 60:
         color = "#0891b2"  # cyan-600 纸面观察
-        badge = "✅ 纸面观察"
+        badge = "✅ 继续观察"
     else:
         color = "#94a3b8"  # slate-400 观察
         badge = "👀 观察"
@@ -117,7 +117,7 @@ def render_html_email(data: BriefingData) -> str:
         status_text = "🛡️ 组合保护中"
     elif tradable_count > 0:
         status_color = "#16a34a"
-        status_text = f"✅ {tradable_count} 只纸面复核"
+        status_text = f"✅ {tradable_count} 只重点跟踪"
     else:
         status_color = "#64748b"
         status_text = "👀 仅观察"
@@ -127,7 +127,7 @@ def render_html_email(data: BriefingData) -> str:
     <div style="background: linear-gradient(135deg, #1e293b 0%, #334155 100%); padding: 20px; border-radius: 12px; color: white; margin-bottom: 16px;">
       <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 12px;">
         <div>
-          <h1 style="margin: 0; font-size: 20px;">📊 AI 量化选股日报</h1>
+          <h1 style="margin: 0; font-size: 20px;">📊 AI 量化选股研究日报</h1>
           <p style="margin: 4px 0 0; font-size: 13px; opacity: 0.8;">{escape(data.date)}</p>
         </div>
         <span style="background: {status_color}; padding: 6px 12px; border-radius: 6px; font-size: 12px; font-weight: bold;">{escape(status_text)}</span>
@@ -139,7 +139,7 @@ def render_html_email(data: BriefingData) -> str:
         </div>
         <div style="background: rgba(255,255,255,0.1); padding: 10px; border-radius: 6px; text-align: center;">
           <div style="font-size: 22px; font-weight: bold;">{tradable_count}</div>
-          <div style="font-size: 11px; opacity: 0.8;">纸面复核</div>
+          <div style="font-size: 11px; opacity: 0.8;">重点跟踪</div>
         </div>
         <div style="background: rgba(255,255,255,0.1); padding: 10px; border-radius: 6px; text-align: center;">
           <div style="font-size: 22px; font-weight: bold;">{len(data.risk_points)}</div>
@@ -174,14 +174,14 @@ def render_html_email(data: BriefingData) -> str:
     top_picks = data.tradable_picks[:3] if data.tradable_picks else data.top_picks
     if top_picks:
         picks_html = (
-            "<h2 style='font-size: 18px; margin: 16px 0 8px;'>🎯 TOP 3 观察候选</h2>"
+            "<h2 style='font-size: 18px; margin: 16px 0 8px;'>🎯 TOP 3 首先关注</h2>"
         )
         for i, p in enumerate(top_picks, 1):
             picks_html += _render_pick_card_html(p, i)
     else:
         picks_html = """
         <div style="padding: 16px; background: #f1f5f9; border-radius: 8px; text-align: center; color: #64748b;">
-          今日无重点纸面复核对象，继续等待信号
+          今日暂无重点跟踪对象，继续等待信号
         </div>
         """
 
@@ -224,7 +224,7 @@ def render_html_email(data: BriefingData) -> str:
 <html>
 <head>
   <meta charset="utf-8">
-  <title>AI 量化选股日报 - {escape(data.date)}</title>
+  <title>AI 量化选股研究日报 - {escape(data.date)}</title>
 </head>
 <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 680px; margin: 0 auto; padding: 16px; background: #f8fafc; color: #1e293b; line-height: 1.6;">
   {header}

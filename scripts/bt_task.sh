@@ -3,6 +3,7 @@
 # 用法:
 #   /bin/bash /opt/aqsp/scripts/bt_task.sh daily
 #   /bin/bash /opt/aqsp/scripts/bt_task.sh intraday
+#   /bin/bash /opt/aqsp/scripts/bt_task.sh midday
 #   /bin/bash /opt/aqsp/scripts/bt_task.sh coldstart
 #   /bin/bash /opt/aqsp/scripts/bt_task.sh monitor
 #   /bin/bash /opt/aqsp/scripts/bt_task.sh status
@@ -23,11 +24,12 @@ log() {
 
 usage() {
     cat <<'EOF'
-Usage: bt_task.sh <daily|intraday|coldstart|monitor|status>
+Usage: bt_task.sh <daily|intraday|midday|coldstart|monitor|status>
 
 BT panel examples:
   /bin/bash /opt/aqsp/scripts/bt_task.sh intraday
   /bin/bash /opt/aqsp/scripts/bt_task.sh daily
+  /bin/bash /opt/aqsp/scripts/bt_task.sh midday
   /bin/bash /opt/aqsp/scripts/bt_task.sh coldstart
   /bin/bash /opt/aqsp/scripts/bt_task.sh monitor
 EOF
@@ -88,6 +90,10 @@ case "$ACTION" in
         ;;
     intraday)
         export AQSP_RUNNER_SCRIPT=scripts/intraday_refresh.sh
+        run_script "${PROJECT_ROOT}/scripts/server_sync_and_run.sh"
+        ;;
+    midday)
+        export AQSP_RUNNER_SCRIPT=scripts/midday_refresh.sh
         run_script "${PROJECT_ROOT}/scripts/server_sync_and_run.sh"
         ;;
     coldstart)

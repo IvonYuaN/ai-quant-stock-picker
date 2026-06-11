@@ -139,7 +139,7 @@ def test_render_html_email_uses_research_language_and_escapes_dynamic_text() -> 
         "真实持仓",
     ):
         assert forbidden not in html
-    assert "纸面重点复核" in html
+    assert "重点跟踪" in html
     assert "研究依据" in html
     assert "参考价" in html
     assert "&lt;script&gt;" in html

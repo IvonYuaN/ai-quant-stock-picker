@@ -100,9 +100,11 @@ def render_agent_dashboard(
         original = d.get("original_score", 0)
         adjusted = d.get("adjusted_score", original)
         adj = d.get("recommended_adjustment", "keep")
-        adj_text = {"raise": "建议上调", "lower": "建议下调", "keep": "维持原评级"}.get(
-            adj, adj
-        )
+        adj_text = {
+            "raise": "辩论倾向上调",
+            "lower": "辩论倾向下调",
+            "keep": "辩论倾向维持",
+        }.get(adj, adj)
         adj_class = {"raise": "bull", "lower": "bear", "keep": "neutral"}.get(
             adj, "neutral"
         )

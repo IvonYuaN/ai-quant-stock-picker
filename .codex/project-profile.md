@@ -27,6 +27,7 @@ Support: Product/Notification Systems Engineer, Data Reliability Engineer, Paper
 ## Routing Cues
 
 数据源/新鲜度问题交给 Data Reliability lens；策略/开源吸收交给 Research Librarian lens；虚拟盘/ledger/可成交性交给 Paper-Trading lens；通知/报告/多 Agent 摘要交给 Product/Notification lens；前端展示交给 Dashboard lens；合并前必须跑相关 pytest、ruff、脚本语法检查。
+静态导出链路（`scripts/render_dashboard.py`、`scripts/render_agent_dashboard.py`、旧 `reports/`、研究发现 CLI）也属于用户可见面，不能只修 Streamlit 主面板而放任旧口径残留；所有时间戳继续强制带上海时区偏移。
 
 ## Squad History
 

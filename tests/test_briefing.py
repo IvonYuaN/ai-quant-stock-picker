@@ -55,7 +55,7 @@ class TestBriefing:
             sections=[BriefingSection(title="sec1", content="body1")],
         )
         md = briefing.to_markdown()
-        assert "# AI 量化选股日报 - 2026-05-27 10:00" in md
+        assert "# AI 量化选股研究日报 - 2026-05-27 10:00" in md
         assert "## sec1" in md
         assert "body1" in md
         assert "仅供研究" in md
@@ -93,8 +93,8 @@ class TestBriefingGenerator:
         gen = BriefingGenerator()
         briefing = gen.generate(picks=[_make_pick()], frames={})
         main_chain_sec = next(s for s in briefing.sections if s.title == "主链总览")
-        assert "PM主裁决" in main_chain_sec.content
-        assert "首位候选" in main_chain_sec.content
+        assert "今日结论" in main_chain_sec.content
+        assert "首先关注" in main_chain_sec.content
 
     def test_main_chain_section_uses_score_sorted_lead_pick(self):
         gen = BriefingGenerator()
@@ -104,10 +104,7 @@ class TestBriefingGenerator:
         ]
         briefing = gen.generate(picks=picks, frames={})
         main_chain_sec = next(s for s in briefing.sections if s.title == "主链总览")
-        assert (
-            "首位候选: 300750 宁德时代 | 候选观察池 | 评分 16.0"
-            in main_chain_sec.content
-        )
+        assert "首先关注: 300750 宁德时代 | 备选观察名单 | 评分 16.0" in main_chain_sec.content
 
     def test_main_chain_section_includes_candidate_status_label(self):
         gen = BriefingGenerator()
@@ -124,10 +121,7 @@ class TestBriefingGenerator:
             frames={},
         )
         main_chain_sec = next(s for s in briefing.sections if s.title == "主链总览")
-        assert (
-            "首位候选: 300750 宁德时代 | 候选观察池 | 新晋 | 评分 16.0"
-            in main_chain_sec.content
-        )
+        assert "首先关注: 300750 宁德时代 | 备选观察名单 | 新晋 | 评分 16.0" in main_chain_sec.content
 
     def test_main_chain_section_includes_watch_review_checklist(self):
         gen = BriefingGenerator()
@@ -155,7 +149,7 @@ class TestBriefingGenerator:
                         symbol="688981",
                         name="中芯国际",
                         blocker="板块集中度过高",
-                        next_step="等待量价继续走强后，再评估是否转入纸面复核名单",
+                        next_step="等待量价继续走强后，再评估是否转入重点跟踪名单",
                         review_window="盘中走强后",
                         priority="high",
                     ),
@@ -163,7 +157,7 @@ class TestBriefingGenerator:
                         symbol="000001",
                         name="平安银行",
                         blocker="高相关未解除",
-                        next_step="等待高相关标的分化后，再重新评估纸面复核优先级",
+                        next_step="等待高相关标的分化后，再重新评估跟踪优先级",
                         review_window="分化确认后",
                         priority="medium",
                     ),
@@ -171,9 +165,9 @@ class TestBriefingGenerator:
             ),
         )
         main_chain_sec = next(s for s in briefing.sections if s.title == "主链总览")
-        assert "- 观察复核:" in main_chain_sec.content
+        assert "- 观察名单下一步:" in main_chain_sec.content
         assert (
-            "  - 688981 中芯国际 | 高优先级 / 盘中走强后 | 等待量价继续走强后，再评估是否转入纸面复核名单"
+            "  - 688981 中芯国际 | 高优先级 / 盘中走强后 | 等待量价继续走强后，再评估是否转入重点跟踪名单"
             in main_chain_sec.content
         )
 
@@ -220,8 +214,8 @@ class TestBriefingGenerator:
         )
         source_sec = next(s for s in briefing.sections if s.title == "数据源状态")
         assert "auto -> eastmoney" in source_sec.content
-        assert "fresh=realtime / cover=multi_dimensional" in source_sec.content
-        assert "fallback" in source_sec.content
+        assert "盘中实时 / 多维行情" in source_sec.content
+        assert "已切换备用源" in source_sec.content
         assert "降低信任度" in source_sec.content
 
     def test_research_section_summarizes_absorbed_backlog(self):
@@ -271,7 +265,7 @@ class TestBriefingGenerator:
             ),
         )
         research_sec = next(s for s in briefing.sections if s.title == "研究吸收")
-        assert "研究发现落盘" in research_sec.content
+        assert "研究结论落地情况" in research_sec.content
         assert "113" in research_sec.content
         assert "mpquant/Ashare" in research_sec.content
         assert "大盘择时 / 市场状态过滤(gated_runtime)" in research_sec.content
@@ -312,9 +306,9 @@ class TestBriefingGenerator:
             frames={},
         )
         next_sec = next(s for s in briefing.sections if s.title == "明日重点")
-        assert "当前暂无纸面复核重点标的" in next_sec.content
-        assert "候选观察池" in next_sec.content
-        assert "待阻塞条件解除后再考虑转入纸面复核名单" in next_sec.content
+        assert "当前暂无重点跟踪对象" in next_sec.content
+        assert "备选观察名单" in next_sec.content
+        assert "待阻塞条件解除后再考虑转入重点跟踪名单" in next_sec.content
         assert "600519" in next_sec.content
         assert "avoid" not in next_sec.content
 
@@ -325,9 +319,9 @@ class TestBriefingGenerator:
             frames={},
         )
         next_sec = next(s for s in briefing.sections if s.title == "明日重点")
-        assert "当前暂无纸面复核重点标的" in next_sec.content
-        assert "候选观察池" in next_sec.content
-        assert "待阻塞条件解除后再考虑转入纸面复核名单" in next_sec.content
+        assert "当前暂无重点跟踪对象" in next_sec.content
+        assert "备选观察名单" in next_sec.content
+        assert "待阻塞条件解除后再考虑转入重点跟踪名单" in next_sec.content
         assert "600519" in next_sec.content
 
     def test_next_day_section_includes_candidate_status_for_watch_pick(self):
@@ -344,7 +338,7 @@ class TestBriefingGenerator:
             frames={},
         )
         next_sec = next(s for s in briefing.sections if s.title == "明日重点")
-        assert "候选观察池: 600519 贵州茅台(观察阻塞)" in next_sec.content
+        assert "备选观察名单: 600519 贵州茅台(观察阻塞)" in next_sec.content
 
     def test_next_day_section_includes_blocker_and_next_step_for_watch_pick(self):
         gen = BriefingGenerator()
@@ -377,7 +371,7 @@ class TestBriefingGenerator:
         picks = [_make_pick()]
         briefing = gen.generate(picks=picks, frames={})
         rendered = gen.render_template(briefing, picks)
-        assert "AI 量化选股日报" in rendered
+        assert "AI 量化选股研究日报" in rendered
         assert "600519" in rendered
 
     def test_render_template_keeps_avoid_out_of_next_day_section(self):
@@ -385,8 +379,8 @@ class TestBriefingGenerator:
         picks = [_make_pick(symbol="600519", rating="avoid")]
         briefing = gen.generate(picks=picks, frames={})
         rendered = gen.render_template(briefing, picks)
-        next_day = rendered.split("## 明日重点", maxsplit=1)[1]
-        assert "候选观察池" in next_day
+        next_day = rendered.split("## 明日先看", maxsplit=1)[1]
+        assert "备选观察名单" in next_day
         assert "600519" in next_day
         assert "avoid" not in next_day
 
@@ -551,7 +545,7 @@ class TestSendBriefing:
         send_briefing(briefing, notifier=mock_notifier)
         mock_notifier.assert_called_once()
         assert "t" in mock_notifier.call_args[0][0]
-        assert "## 主链摘要" in mock_notifier.call_args[0][0]
+        assert "## 一眼结论" in mock_notifier.call_args[0][0]
         assert "# AI 量化选股日报" not in mock_notifier.call_args[0][0]
 
     @patch("aqsp.notifier.notify_markdown")
@@ -576,8 +570,8 @@ class TestSendBriefing:
             },
         )
         body = mock_notifier.call_args[0][0]
-        assert body.index("## 数据源状态") < body.index("## 主链摘要")
-        assert "## 主链摘要" in body
+        assert body.index("## 数据源状态") < body.index("## 一眼结论")
+        assert "## 一眼结论" in body
         assert "auto -> eastmoney" in body
         assert "降低信任度" in body
 
@@ -615,7 +609,7 @@ class TestGenerateSmartSummary:
         picks = [_make_pick(symbol="600519", name="贵州茅台", rating="buy_candidate")]
         briefing = gen.generate(picks=picks, frames={})
         summary = briefing.generate_smart_summary()
-        assert "纸面复核对象" in summary
+        assert "重点跟踪对象" in summary
         assert "600519" in summary
 
     def test_no_actionable_picks_excluded(self):
@@ -623,8 +617,8 @@ class TestGenerateSmartSummary:
         picks = [_make_pick(symbol="600519", name="贵州茅台", rating="avoid")]
         briefing = gen.generate(picks=picks, frames={})
         summary = briefing.generate_smart_summary()
-        assert "有候选观察池，当前暂无纸面复核对象" in summary
-        assert "候选观察池" in summary
+        assert "有备选观察名单，当前暂无重点跟踪对象" in summary
+        assert "备选观察名单" in summary
 
     def test_next_day_section_mentions_watchlist_when_no_tradable_pick(self):
         gen = BriefingGenerator()
@@ -633,7 +627,7 @@ class TestGenerateSmartSummary:
             frames={},
         )
         next_sec = next(s for s in briefing.sections if s.title == "明日重点")
-        assert "候选观察池" in next_sec.content
+        assert "备选观察名单" in next_sec.content
         assert "600519 贵州茅台" in next_sec.content
 
     def test_action_plan_mentions_watchlist_when_candidates_exist_but_not_tradable(
@@ -647,7 +641,7 @@ class TestGenerateSmartSummary:
 
         summary = briefing.generate_smart_summary()
 
-        assert "- 候选观察池: 600519 贵州茅台" in summary
+        assert "- 备选观察名单: 600519 贵州茅台" in summary
         assert "- 重点观察: 600519 贵州茅台" in summary
 
     def test_action_plan_mentions_candidate_status_when_candidates_exist_but_not_tradable(
@@ -668,7 +662,7 @@ class TestGenerateSmartSummary:
 
         summary = briefing.generate_smart_summary()
 
-        assert "- 候选观察池: 600519 贵州茅台(新晋)(8.5分)" in summary
+        assert "- 备选观察名单: 600519 贵州茅台(新晋)(8.5分)" in summary
         assert "- 重点观察: 600519 贵州茅台(新晋)(8.5分)" in summary
 
     def test_action_plan_mentions_default_review_for_new_watch_pick(self):
@@ -681,7 +675,7 @@ class TestGenerateSmartSummary:
                     rating="watch",
                     metrics={
                         "candidate_status": "新晋",
-                        "candidate_next_step": "等待量价继续走强后，再评估是否转入纸面复核名单",
+                        "candidate_next_step": "等待量价继续走强后，再评估是否转入重点跟踪名单",
                         "candidate_review_window": "盘中走强后",
                         "candidate_review_priority": "high",
                     },
@@ -693,7 +687,7 @@ class TestGenerateSmartSummary:
         summary = briefing.generate_smart_summary()
 
         assert (
-            "- 解锁关注: 600519 贵州茅台 | 等待量价继续走强后，再评估是否转入纸面复核名单"
+            "- 解锁关注: 600519 贵州茅台 | 等待量价继续走强后，再评估是否转入重点跟踪名单"
             in summary
         )
         assert "- 复核节奏: 600519 贵州茅台 | 高优先级 / 盘中走强后" in summary
@@ -755,7 +749,7 @@ class TestGenerateSmartSummary:
                     metrics={
                         "candidate_status": "观察阻塞",
                         "candidate_blocker": "板块集中度过高，压低新能源暴露",
-                        "candidate_next_step": "等待板块暴露回落后，再重新评估纸面复核优先级",
+                        "candidate_next_step": "等待板块暴露回落后，再重新评估跟踪优先级",
                         "candidate_review_window": "板块分化时",
                         "candidate_review_priority": "medium",
                     },
@@ -766,7 +760,7 @@ class TestGenerateSmartSummary:
         evidence_sec = next(s for s in briefing.sections if s.title == "候选证据链")
         assert "- 当前阻塞: 板块集中度过高，压低新能源暴露" in evidence_sec.content
         assert (
-            "- 下一步关注: 等待板块暴露回落后，再重新评估纸面复核优先级"
+            "- 下一步关注: 等待板块暴露回落后，再重新评估跟踪优先级"
             in evidence_sec.content
         )
         assert "- 复核优先级/时机: 中优先级 / 板块分化时" in evidence_sec.content
@@ -780,7 +774,7 @@ class TestGenerateSmartSummary:
                 downgrade_count=1,
                 keep_count=0,
                 top_focus=("600519 贵州茅台",),
-                watchlist=("300750 宁德时代(候选观察池)",),
+                watchlist=("300750 宁德时代(备选观察名单)",),
                 allocations=(),
                 cash_reserve=0.2,
                 allocation_note="单票上限 20%；信号强度不足时提高现金留存",
@@ -796,14 +790,14 @@ class TestGenerateSmartSummary:
 
         summary = briefing.generate_smart_summary()
 
-        assert "PM主裁决: 上调 1 / 降级 1 / 维持 0" in summary
+        assert "今日结论: 上调 1 / 降级 1 / 维持 0" in summary
         assert "- 当前市况: 稳定上涨" in summary
-        assert "- 策略配比: 进攻牛市" in summary
-        assert "- 主链候选: 600519 贵州茅台" in summary
-        assert "- 候选观察池: 300750 宁德时代" in summary
-        assert "- 裁决热点: 板块集中度过高，压低新能源暴露" in summary
+        assert "- 当前侧重策略: 进攻牛市" in summary
+        assert "- 今日重点名单: 600519 贵州茅台" in summary
+        assert "- 备选观察名单: 300750 宁德时代" in summary
+        assert "- 需要重点确认: 板块集中度过高，压低新能源暴露" in summary
         assert "- 现金留存: 20%" in summary
-        assert "- 纸面阻塞: 300750 宁德时代: 板块集中度过高，压低新能源暴露" in summary
+        assert "- 当前卡点: 300750 宁德时代: 板块集中度过高，压低新能源暴露" in summary
 
     def test_main_chain_section_renders_allocation_guidance(self):
         gen = BriefingGenerator()
@@ -815,7 +809,7 @@ class TestGenerateSmartSummary:
         )
         briefing = gen.generate(picks=[pick], frames={})
         main_chain_sec = next(s for s in briefing.sections if s.title == "主链总览")
-        assert "纸面组合配置参考" in main_chain_sec.content
+        assert "仓位参考" in main_chain_sec.content
         assert "300750 宁德时代: 20%" in main_chain_sec.content
         assert "强信号优先分配" in main_chain_sec.content
         assert "现金留存" in main_chain_sec.content
@@ -837,10 +831,10 @@ class TestGenerateSmartSummary:
             in summary
         )
         assert (
-            "- 纸面配仓参考: 300750 宁德时代 20% | 主链评分 72.0；强信号优先分配"
+            "- 仓位参考: 300750 宁德时代 20% | 主链评分 72.0；强信号优先分配"
             in summary
         )
-        assert "- 纸面约束: 单票上限 20%" in summary
+        assert "- 跟踪约束: 单票上限 20%" in summary
 
     def test_main_chain_section_renders_strategy_mix_guidance(self):
         gen = BriefingGenerator()
@@ -853,11 +847,8 @@ class TestGenerateSmartSummary:
         briefing = gen.generate(picks=[pick], frames={}, regime="stable_bull")
         main_chain_sec = next(s for s in briefing.sections if s.title == "主链总览")
         assert "当前市况: 稳定上涨" in main_chain_sec.content
-        assert "策略主配比: 进攻牛市" in main_chain_sec.content
-        assert "当前优先策略: 动量趋势、涨停接力" in main_chain_sec.content
-        assert (
-            "策略权重建议: momentum 30%、limit_up_ladder 30%" in main_chain_sec.content
-        )
+        assert "当前侧重策略: 进攻牛市" in main_chain_sec.content
+        assert "优先关注策略: 动量趋势、涨停接力" in main_chain_sec.content
 
     def test_debate_results_lower_adjustment(self):
         from aqsp.briefing.debate import DebateResult
@@ -882,7 +873,7 @@ class TestGenerateSmartSummary:
         assert "辩论共识" in summary
         assert "下调" in summary
         assert "6.8" in summary
-        assert "不覆盖runtime打分" in summary
+        assert "不改写系统评分" in summary
         assert "建议下调评分至" not in summary
 
     def test_debate_results_high_disagreement(self):
@@ -905,7 +896,7 @@ class TestGenerateSmartSummary:
             ],
         )
         summary = briefing.generate_smart_summary()
-        assert "辩论分歧" in summary
+        assert "讨论分歧" in summary
         assert "70%" in summary
 
     def test_degraded_source_health(self):

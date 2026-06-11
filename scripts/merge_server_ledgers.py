@@ -6,8 +6,9 @@ import json
 import shutil
 import sys
 from dataclasses import dataclass
-from datetime import datetime
 from pathlib import Path
+
+from aqsp.core.time import now_shanghai
 
 
 @dataclass(frozen=True)
@@ -98,7 +99,7 @@ def merge_ledgers(
     *,
     backup: bool = True,
 ) -> MergeSummary:
-    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    stamp = now_shanghai().strftime("%Y%m%d-%H%M%S")
     backups: list[Path] = []
 
     if backup:

@@ -347,7 +347,7 @@ def test_dashboard_data_provider_returns_debate_summary_for_symbol_and_day(
     assert summary.recommended_adjustment_label == "辩论倾向上调"
     assert summary.consensus == "维持主推，但控制追高节奏"
     assert summary.summary_lines[0] == (
-        "辩论倾向上调: runtime原始分 80.0；附件参考分 82.0；不覆盖runtime打分"
+        "讨论倾向上调: 系统原始评分 80.0；附件参考分 82.0；不改写系统评分"
     )
     assert summary.agent_views[0].role_label in {"技术多头", "风控"}
     assert summary.risk_warnings == ("高位波动放大",)
@@ -797,7 +797,7 @@ def test_dashboard_data_provider_builds_task_views_and_dedupes_latest_rows(
             "portfolio_action": "downgrade",
             "candidate_status": "观察阻塞",
             "candidate_blocker": "板块集中度过高，压低银行暴露",
-            "candidate_next_step": "等待板块暴露回落后，再重新评估纸面复核优先级",
+            "candidate_next_step": "等待板块暴露回落后，再重新评估跟踪优先级",
             "candidate_review_window": "板块分化时",
             "candidate_review_priority": "medium",
             "run_requested_source": "auto",
@@ -874,7 +874,7 @@ def test_dashboard_data_provider_builds_task_views_and_dedupes_latest_rows(
     paper_path.write_text("", encoding="utf-8")
     (reports_dir / "briefing-2026-06-05.md").write_text(
         (
-            "# AI 量化选股日报 - 2026-06-05\n\n"
+            "# AI 量化选股研究日报 - 2026-06-05\n\n"
             "## 市场态势\n\n"
             "当前市场态势: **震荡偏强：等待主线确认**\n\n"
             "## 明日重点\n\n"
@@ -893,7 +893,7 @@ def test_dashboard_data_provider_builds_task_views_and_dedupes_latest_rows(
             "- 数据时效: latest=2026-06-05 / lag=0d\n"
             "- 数据健康: healthy / eastmoney 健康\n"
             "- 候选池: 显式 2 / 解析 2 / 取数 2 / 筛选前 2 / 最终 2\n"
-            "- thresholds.version: 1.1.1\n"
+            "- 规则版本: 1.1.1\n"
             "- regime: stable_uptrend\n"
         ),
         encoding="utf-8",
@@ -923,17 +923,17 @@ def test_dashboard_data_provider_builds_task_views_and_dedupes_latest_rows(
     assert any("板块集中度过高" in item for item in main_view.blocker_lines)
     assert any("开盘前后" in item for item in main_view.review_lines)
     assert main_view.detail_cards[0].display_name == "600519 贵州茅台"
-    assert main_view.detail_cards[0].rank_label == "首选"
+    assert main_view.detail_cards[0].rank_label == "第一顺位"
     assert "上调优先级" in main_view.detail_cards[0].decision_note
     assert main_view.detail_cards[0].reasons == ("量价齐升", "接近新高")
     assert main_view.detail_cards[0].risks == ("追高波动",)
-    assert main_view.ranking_lines[0].startswith("首选: 600519 贵州茅台")
+    assert main_view.ranking_lines[0].startswith("第一顺位: 600519 贵州茅台")
     assert any(
         line.startswith("阻塞观察: 000001 平安银行") for line in main_view.ranking_lines
     )
     assert main_view.report_summary_lines == (
-        "今日主链 1 只纸面复核，另有 1 只转观察。",
-        "优先跟踪高分主链候选。",
+        "今日主链 1 只重点跟踪，另有 1 只转观察。",
+        "优先跟踪高分今日重点名单。",
     )
     assert main_view.report_source.endswith("latest.md")
     assert "T" in main_view.report_mtime
@@ -945,8 +945,8 @@ def test_dashboard_data_provider_builds_task_views_and_dedupes_latest_rows(
         for line in main_view.unlock_lines
     )
     assert main_view.previous_date == "2026-06-04"
-    assert main_view.runtime_lines[0] == "数据源: auto -> eastmoney"
-    assert main_view.runtime_lines[-1] == "regime: stable_uptrend"
+    assert main_view.runtime_lines[0] == "数据来源: auto -> eastmoney"
+    assert main_view.runtime_lines[-1] == "市场标签: stable_uptrend"
     assert main_view.delta_lines == (
         "较 2026-06-04 候选 +1",
         "较 2026-06-04 待复核 +1",
@@ -1002,7 +1002,7 @@ def test_dashboard_data_provider_builds_task_views_and_dedupes_latest_rows(
     assert snapshot_map["morning_breakout"].status_label == "有推荐"
     assert snapshot_map["closing_premium"].status_label == "有推荐"
     assert snapshot_map["briefing"].status_label == "待跟踪"
-    assert "无纸面复核对象" not in snapshot_map["briefing"].headline
+    assert "无重点跟踪对象" not in snapshot_map["briefing"].headline
 
     history_rows = provider.task_history_rows("main_chain", limit=2)
     assert [row.signal_date for row in history_rows] == ["2026-06-05", "2026-06-04"]
@@ -1078,7 +1078,7 @@ def test_dashboard_data_provider_builds_task_views_and_dedupes_latest_rows(
     assert date_overview.top_task_label in {"主链推荐", "早盘策略", "尾盘策略"}
     assert (
         "待复核" in date_overview.focus_headline
-        or "观察池" in date_overview.focus_headline
+        or "备选观察名单" in date_overview.focus_headline
         or "核对卡点" in date_overview.focus_headline
     )
     assert "当日流程:" in date_overview.workflow_summary
@@ -1413,11 +1413,11 @@ def test_dashboard_data_provider_extracts_latest_report_when_main_chain_latest(
         (
             "# AI 量化选股报告(close, 数据日期 2026-06-06)\n\n"
             "## 📌 执行摘要\n\n"
-            "今日无纸面复核对象，仅观察。\n\n"
+            "今日无重点跟踪对象，仅观察。\n\n"
             "## 运行参数\n"
             "- 数据源: auto -> csv\n"
             "- 数据健康: fallback / fallback 到 csv\n"
-            "- thresholds.version: 1.1.1\n"
+            "- 规则版本: 1.1.1\n"
             "- regime: stable_sideways\n"
         ),
         encoding="utf-8",
@@ -1432,12 +1432,12 @@ def test_dashboard_data_provider_extracts_latest_report_when_main_chain_latest(
 
     task_view = provider.build_task_view("main_chain", signal_date="2026-06-06")
 
-    assert task_view.report_summary_lines == ("今日无纸面复核对象，仅观察。",)
+    assert task_view.report_summary_lines == ("今日无重点跟踪对象，仅观察。",)
     assert task_view.runtime_lines == (
-        "数据源: auto -> csv",
-        "数据健康: fallback / fallback 到 csv",
-        "thresholds.version: 1.1.1",
-        "regime: stable_sideways",
+        "数据来源: auto -> csv",
+        "数据状态: 已切换备用源 / 已切换到备用数据源 csv",
+        "规则版本: 1.1.1",
+        "市场标签: stable_sideways",
     )
 
 
@@ -1471,7 +1471,7 @@ def test_dashboard_data_provider_sanitizes_archive_summary_action_words(
         (
             "# AI 量化选股报告(close, 数据日期 2026-06-05)\n\n"
             "## 📌 执行摘要\n\n"
-            "- 今日建议: 纸面复核对象进入纸面复核名单。\n"
+            "- 今日建议: 重点跟踪对象进入重点跟踪名单。\n"
             "- 配仓建议: 参考买点 1500，止损 1420，止盈 1680。\n\n"
             "## 明日重点\n\n"
             "- 首选观察 600519，若放量则新开仓，禁止下单只是测试词。\n"
@@ -1503,9 +1503,9 @@ def test_dashboard_data_provider_sanitizes_archive_summary_action_words(
     ):
         assert forbidden not in visible_text
     assert "研究回看" in visible_text
-    assert "纸面复核对象" in visible_text
-    assert "纸面复核名单" in visible_text
-    assert "纸面配仓参考" in visible_text
+    assert "重点跟踪对象" in visible_text
+    assert "重点跟踪名单" in visible_text
+    assert "仓位参考" in visible_text
     assert "参考价" in visible_text
     assert "防守位" in visible_text
     assert "观察目标" in visible_text
@@ -1940,7 +1940,7 @@ def test_dashboard_data_provider_ignores_report_when_body_date_mismatches_filena
     )
     paper_path.write_text("", encoding="utf-8")
     (reports_dir / "briefing-2026-06-05.md").write_text(
-        "# AI 量化选股日报 - 2026-06-06\n\n错日简报。\n",
+        "# AI 量化选股研究日报 - 2026-06-06\n\n错日简报。\n",
         encoding="utf-8",
     )
     (reports_dir / "closing_review-2026-06-05.md").write_text(
@@ -2240,6 +2240,54 @@ def test_dashboard_data_provider_execution_focus_uses_final_signal_state_when_cl
     assert focus.research_lines[0] == "研究来源: 尾盘策略 / 尾盘确认"
     assert "研究动作: 降级观察 / 尾盘降级阻塞" in focus.research_lines
     assert "当前卡点: 尾盘放量失败" in focus.research_lines
+
+
+def test_dashboard_data_provider_execution_focus_uses_paper_context_when_signal_row_missing(
+    tmp_path: Path,
+) -> None:
+    ledger_path = tmp_path / "predictions.jsonl"
+    paper_path = tmp_path / "paper_trades.jsonl"
+    logs_path = tmp_path / "logs"
+    reports_dir = tmp_path / "reports"
+    logs_path.mkdir(parents=True)
+    reports_dir.mkdir(parents=True)
+
+    ledger_path.write_text("", encoding="utf-8")
+    paper_path.write_text(
+        json.dumps(
+            {
+                "signal_id": "sig-x",
+                "symbol": "300750",
+                "name": "宁德时代",
+                "signal_date": "2026-06-05",
+                "status": "pending_entry",
+                "portfolio_action": "downgrade",
+                "candidate_status": "观察阻塞",
+                "candidate_blocker": "涨停无法追入",
+                "candidate_next_step": "等待开板后再评估",
+                "candidate_review_window": "次日开盘",
+                "candidate_review_priority": "high",
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    provider = DashboardDataProvider(
+        ledger_path=str(ledger_path),
+        paper_ledger_path=str(paper_path),
+        logs_path=str(logs_path),
+        reports_dir=str(reports_dir),
+    )
+
+    focus = provider.execution_focus(signal_date="2026-06-05", symbol="300750")
+
+    assert focus.research_status == "研究侧存在阻塞"
+    assert "研究动作: 降级观察 / 观察阻塞" in focus.research_lines
+    assert "复核节奏: 高优先级 / 次日开盘" in focus.research_lines
+    assert "研究下一步: 等待开板后再评估" in focus.research_lines
+    assert any("涨停无法追入" in line for line in focus.readiness_lines)
 
 
 def test_dashboard_data_provider_derives_blocker_from_risks_for_downgraded_candidate(

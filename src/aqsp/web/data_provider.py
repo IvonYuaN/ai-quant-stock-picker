@@ -21,6 +21,7 @@ from aqsp.paper import read_paper_trades
 from aqsp.presentation import (
     format_review_meta,
     format_symbol_name,
+    humanize_runtime_snapshot_line,
     normalize_research_tone,
 )
 from aqsp.ratings import is_tradable_rating, portfolio_action_label, rating_label
@@ -1112,6 +1113,25 @@ class DashboardDataProvider:
             if signal_row is not None
             else self._display_name_for_symbol({"symbol": selected_symbol})
         )
+        paper_context_row = next(
+            (
+                row
+                for row in [*paper_rows, *all_symbol_rows]
+                if any(
+                    str(row.get(field, "") or "").strip()
+                    for field in (
+                        "portfolio_action",
+                        "candidate_status",
+                        "candidate_blocker",
+                        "candidate_next_step",
+                        "candidate_review_window",
+                        "candidate_review_priority",
+                    )
+                )
+            ),
+            None,
+        )
+        context_row = signal_row or paper_context_row
         review_meta = self._review_meta(signal_row) if signal_row is not None else ""
         next_step = (
             str(signal_row.get("candidate_next_step", "") or "").strip()
@@ -1121,21 +1141,28 @@ class DashboardDataProvider:
         blocker = (
             self._candidate_blocker_text(signal_row) if signal_row is not None else ""
         )
+        if context_row is not None and signal_row is None:
+            review_meta = self._review_meta(context_row)
+            next_step = str(context_row.get("candidate_next_step", "") or "").strip()
+            blocker = self._candidate_blocker_text(context_row)
 
         research_lines: list[str] = []
-        if signal_row is not None:
+        if context_row is not None:
             if (
-                research_context is not None
+                signal_row is not None
+                and research_context is not None
                 and research_context["task_id"] != preferred_task_id
             ):
                 research_lines.append(
                     "研究来源: "
                     f"{research_context['task_label']} / {research_context['phase_label']}"
                 )
+            elif signal_row is None:
+                research_lines.append("研究来源: paper ledger 继承上下文")
             research_lines.extend(
                 [
-                    f"研究动作: {self._action_status_text(signal_row)}",
-                    f"评分 {float(signal_row.get('score') or 0.0):.1f}",
+                    f"研究动作: {self._action_status_text(context_row)}",
+                    f"评分 {float(context_row.get('score') or 0.0):.1f}",
                 ]
             )
             if review_meta:
@@ -1152,14 +1179,20 @@ class DashboardDataProvider:
             readiness_lines.append(
                 f"纸面入场假设 {len(pending_rows)} 笔，开盘先核对下一交易日开盘价是否可成交。"
             )
+            if blocker:
+                readiness_lines.append(f"当前卡点: {blocker}")
         if blocked_rows:
             latest_blocked = blocked_rows[-1]
+            blocked_reason = str(
+                latest_blocked.get("candidate_blocker")
+                or latest_blocked.get("not_executable_reason")
+                or "未知原因"
+            ).strip()
             readiness_lines.append(
-                f"阻塞 {len(blocked_rows)} 笔，最新原因: "
-                f"{latest_blocked.get('not_executable_reason', '未知原因')}"
+                f"阻塞 {len(blocked_rows)} 笔，最新原因: {blocked_reason}"
             )
         if not readiness_lines:
-            if signal_row is not None and not open_rows and not execution_rows:
+            if context_row is not None and not open_rows and not execution_rows:
                 if blocker:
                     readiness_lines.append(
                         f"研究已产出，但当前被{blocker}拦住，暂不进入纸面入场验证链路。"
@@ -1238,7 +1271,7 @@ class DashboardDataProvider:
         else:
             execution_status = "尚未进入执行"
 
-        if signal_row is None:
+        if context_row is None:
             research_status = "研究链路缺席"
         elif blocker:
             research_status = "研究侧存在阻塞"
@@ -1642,21 +1675,31 @@ class DashboardDataProvider:
             latest_date=available_dates[0] if available_dates else "",
             previous_date=previous_date,
             available_dates=available_dates,
-            headline=headline,
-            summary_lines=summary_lines,
-            lifecycle_lines=self._build_lifecycle_lines(deduped),
-            unlock_lines=self._build_unlock_lines(
-                watch_rows=watch_rows,
-                blocked_rows=blocked_rows,
+            headline=normalize_research_tone(headline),
+            summary_lines=tuple(normalize_research_tone(line) for line in summary_lines),
+            lifecycle_lines=tuple(
+                normalize_research_tone(line)
+                for line in self._build_lifecycle_lines(deduped)
+            ),
+            unlock_lines=tuple(
+                normalize_research_tone(line)
+                for line in self._build_unlock_lines(
+                    watch_rows=watch_rows,
+                    blocked_rows=blocked_rows,
+                )
             ),
             report_summary_lines=report_insights.report_summary_lines,
             runtime_lines=report_insights.runtime_lines,
-            delta_lines=delta_lines,
-            agenda_lines=agenda_lines,
-            recommendation_lines=recommendation_lines,
-            watchlist_lines=watchlist_lines,
-            blocker_lines=blocker_lines,
-            review_lines=review_lines,
+            delta_lines=tuple(normalize_research_tone(line) for line in delta_lines),
+            agenda_lines=tuple(normalize_research_tone(line) for line in agenda_lines),
+            recommendation_lines=tuple(
+                normalize_research_tone(line) for line in recommendation_lines
+            ),
+            watchlist_lines=tuple(
+                normalize_research_tone(line) for line in watchlist_lines
+            ),
+            blocker_lines=tuple(normalize_research_tone(line) for line in blocker_lines),
+            review_lines=tuple(normalize_research_tone(line) for line in review_lines),
             next_day_focus_lines=report_insights.next_day_focus_lines,
             report_markdown=report_markdown,
             report_source=report_document.source,
@@ -1669,7 +1712,10 @@ class DashboardDataProvider:
             watch_count=len(watch_rows),
             blocked_count=len(blocked_rows),
             detail_cards=self._build_detail_cards(deduped, task_id=task_id),
-            ranking_lines=self._build_ranking_lines(deduped),
+            ranking_lines=tuple(
+                normalize_research_tone(line)
+                for line in self._build_ranking_lines(deduped)
+            ),
             market_environment=report_insights.market_environment,
             strategy_breakdown_lines=(),
             lesson_lines=(),
@@ -1698,7 +1744,9 @@ class DashboardDataProvider:
             latest_date=available_dates[0] if available_dates else "",
             previous_date=base_view.previous_date,
             available_dates=available_dates,
-            headline=f"{_TASK_LABELS['briefing']} {selected_date or ''}".strip(),
+            headline=normalize_research_tone(
+                f"{_TASK_LABELS['briefing']} {selected_date or ''}".strip()
+            ),
             summary_lines=base_view.summary_lines,
             lifecycle_lines=base_view.lifecycle_lines,
             unlock_lines=base_view.unlock_lines,
@@ -1752,15 +1800,17 @@ class DashboardDataProvider:
         recommendation_lines = tuple(
             normalize_research_tone(line)
             for line in summary_lines
-            if line.startswith(("纸面复核主链:", "可执行主链:"))
+            if line.startswith(("今日重点名单:", "纸面复核主链:", "可执行主链:"))
         )
         watchlist_lines = tuple(
-            line for line in summary_lines if line.startswith("候选观察池:")
+            line
+            for line in summary_lines
+            if line.startswith(("备选观察名单:", "候选观察池:"))
         )
         blocker_lines = tuple(
             normalize_research_tone(line)
             for line in summary_lines
-            if line.startswith(("纸面阻塞:", "执行阻塞:"))
+            if line.startswith(("当前卡点:", "纸面阻塞:", "执行阻塞:"))
         )
         review_lines = tuple(
             line for line in summary_lines if line.startswith("观察复核:")
@@ -1788,70 +1838,85 @@ class DashboardDataProvider:
             latest_date=available_dates[0] if available_dates else "",
             previous_date=previous_date,
             available_dates=available_dates,
-            headline=headline,
-            summary_lines=(
-                f"市场环境: {review.market_environment}",
-                f"总信号 {fact_review.total_signals} / 已验证 {fact_review.closed_trades}",
+            headline=normalize_research_tone(headline),
+            summary_lines=tuple(
+                normalize_research_tone(line)
+                for line in (
+                    f"市场环境: {review.market_environment}",
+                    f"总信号 {fact_review.total_signals} / 已验证 {fact_review.closed_trades}",
                 (
                     "事实来源: paper ledger "
                     f"closed={fact_review.closed_trades} / "
                     f"not_executable={fact_review.not_executable} / "
                     f"pending={fact_review.pending_entries}"
                 ),
-                f"胜率 {fact_review.win_rate:.0%} / 总收益 {fact_review.total_return:.2f}%",
-                *summary_lines,
-            ),
-            lifecycle_lines=self._build_lifecycle_lines(
-                self._dedupe_rows(
-                    [
-                        row
-                        for row in self._task_signal_rows("main_chain")
-                        if str(row.get("signal_date", "") or "") == selected_date
-                    ]
+                    f"胜率 {fact_review.win_rate:.0%} / 总收益 {fact_review.total_return:.2f}%",
+                    *summary_lines,
                 )
             ),
-            unlock_lines=self._build_unlock_lines(
-                watch_rows=[
-                    row
-                    for row in self._dedupe_rows(
+            lifecycle_lines=tuple(
+                normalize_research_tone(line)
+                for line in self._build_lifecycle_lines(
+                    self._dedupe_rows(
                         [
                             row
                             for row in self._task_signal_rows("main_chain")
                             if str(row.get("signal_date", "") or "") == selected_date
                         ]
                     )
-                    if self._is_watch_candidate(row)
-                ],
-                blocked_rows=[
-                    row
-                    for row in self._dedupe_rows(
-                        [
-                            row
-                            for row in self._task_signal_rows("main_chain")
-                            if str(row.get("signal_date", "") or "") == selected_date
-                        ]
-                    )
-                    if self._is_blocked(row)
-                ],
+                )
+            ),
+            unlock_lines=tuple(
+                normalize_research_tone(line)
+                for line in self._build_unlock_lines(
+                    watch_rows=[
+                        row
+                        for row in self._dedupe_rows(
+                            [
+                                row
+                                for row in self._task_signal_rows("main_chain")
+                                if str(row.get("signal_date", "") or "") == selected_date
+                            ]
+                        )
+                        if self._is_watch_candidate(row)
+                    ],
+                    blocked_rows=[
+                        row
+                        for row in self._dedupe_rows(
+                            [
+                                row
+                                for row in self._task_signal_rows("main_chain")
+                                if str(row.get("signal_date", "") or "") == selected_date
+                            ]
+                        )
+                        if self._is_blocked(row)
+                    ],
+                )
             ),
             report_summary_lines=(),
             runtime_lines=(),
-            delta_lines=(
-                self._build_delta_lines(
-                    task_id="closing_review",
-                    selected_date=selected_date,
-                    previous_date=previous_date,
+            delta_lines=tuple(
+                normalize_research_tone(line)
+                for line in (
+                    self._build_delta_lines(
+                        task_id="closing_review",
+                        selected_date=selected_date,
+                        previous_date=previous_date,
+                    )
+                    if include_deltas
+                    else ()
                 )
-                if include_deltas
-                else ()
             ),
-            agenda_lines=self._build_agenda_lines(
-                recommendation_lines=recommendation_lines,
-                blocker_lines=blocker_lines,
-                review_lines=tuple(improvement_lines)
-                + review_lines
-                + tuple(lesson_lines),
-                focus_lines=(),
+            agenda_lines=tuple(
+                normalize_research_tone(line)
+                for line in self._build_agenda_lines(
+                    recommendation_lines=recommendation_lines,
+                    blocker_lines=blocker_lines,
+                    review_lines=tuple(improvement_lines)
+                    + review_lines
+                    + tuple(lesson_lines),
+                    focus_lines=(),
+                )
             ),
             recommendation_lines=recommendation_lines,
             watchlist_lines=watchlist_lines,
@@ -1883,19 +1948,26 @@ class DashboardDataProvider:
                     ]
                 )
             ),
-            ranking_lines=self._build_ranking_lines(
-                self._dedupe_rows(
-                    [
-                        row
-                        for row in self._task_signal_rows("main_chain")
-                        if str(row.get("signal_date", "") or "") == selected_date
-                    ]
+            ranking_lines=tuple(
+                normalize_research_tone(line)
+                for line in self._build_ranking_lines(
+                    self._dedupe_rows(
+                        [
+                            row
+                            for row in self._task_signal_rows("main_chain")
+                            if str(row.get("signal_date", "") or "") == selected_date
+                        ]
+                    )
                 )
             ),
             market_environment=review.market_environment,
-            strategy_breakdown_lines=strategy_breakdown_lines,
-            lesson_lines=lesson_lines,
-            improvement_lines=improvement_lines,
+            strategy_breakdown_lines=tuple(
+                normalize_research_tone(line) for line in strategy_breakdown_lines
+            ),
+            lesson_lines=tuple(normalize_research_tone(line) for line in lesson_lines),
+            improvement_lines=tuple(
+                normalize_research_tone(line) for line in improvement_lines
+            ),
         )
 
     def _closing_review_facts(
@@ -2202,16 +2274,16 @@ class DashboardDataProvider:
         return (float(row.get("score") or 0.0), str(row.get("created_at", "") or ""))
 
     def _task_label(self, task_id: str) -> str:
-        return _TASK_LABELS.get(task_id, task_id)
+        return normalize_research_tone(_TASK_LABELS.get(task_id, task_id))
 
     def _task_phase_order(self, task_id: str) -> int:
         return _TASK_PHASE_META.get(task_id, (99, task_id, ""))[0]
 
     def _task_phase_label(self, task_id: str) -> str:
-        return _TASK_PHASE_META.get(task_id, (99, task_id, ""))[1]
+        return normalize_research_tone(_TASK_PHASE_META.get(task_id, (99, task_id, ""))[1])
 
     def _task_phase_note(self, task_id: str) -> str:
-        return _TASK_PHASE_META.get(task_id, (99, task_id, ""))[2]
+        return normalize_research_tone(_TASK_PHASE_META.get(task_id, (99, task_id, ""))[2])
 
     def _task_metric_labels(self, task_id: str) -> tuple[str, str, str]:
         return _TASK_METRIC_LABELS.get(task_id, ("待复核", "观察", "阻塞"))
@@ -2441,7 +2513,7 @@ class DashboardDataProvider:
             return 3
         if item.action_label == "上调优先级":
             return 0
-        if item.action_label in {"重点关注", "观察候选"}:
+        if item.action_label in {"重点关注", "重点跟踪", "继续观察", "观察候选"}:
             return 1
         return 2
 
@@ -2464,9 +2536,9 @@ class DashboardDataProvider:
     def _action_label(self, row: dict[str, Any]) -> str:
         action = str(row.get("portfolio_action", "") or "").strip()
         if action:
-            return portfolio_action_label(action)
+            return normalize_research_tone(portfolio_action_label(action))
         rating = str(row.get("rating", "") or "").strip()
-        return rating_label(rating)
+        return normalize_research_tone(rating_label(rating))
 
     def _action_status_text(self, row: dict[str, Any]) -> str:
         action = self._action_label(row).strip()
@@ -2480,7 +2552,7 @@ class DashboardDataProvider:
     def _candidate_status(self, row: dict[str, Any]) -> str:
         explicit = str(row.get("candidate_status", "") or "").strip()
         if explicit:
-            return explicit
+            return normalize_research_tone(explicit)
         return self._action_label(row)
 
     def _symbol_name(self, row: dict[str, Any]) -> str:
@@ -2544,7 +2616,7 @@ class DashboardDataProvider:
     def _candidate_blocker_text(self, row: dict[str, Any]) -> str:
         blocker = str(row.get("candidate_blocker", "") or "").strip()
         if blocker:
-            return blocker
+            return normalize_research_tone(blocker)
         if not self._is_blocked(row):
             return ""
         risks = self._as_text_tuple(row.get("risks"))
@@ -2553,17 +2625,25 @@ class DashboardDataProvider:
         return MISSING_BLOCKER_TEXT
 
     def _review_meta(self, row: dict[str, Any]) -> str:
-        return format_review_meta(
-            str(row.get("candidate_review_priority", "") or ""),
-            str(row.get("candidate_review_window", "") or ""),
+        return normalize_research_tone(
+            format_review_meta(
+                str(row.get("candidate_review_priority", "") or ""),
+                str(row.get("candidate_review_window", "") or ""),
+            )
         )
 
     def _as_text_tuple(self, value: Any) -> tuple[str, ...]:
         if isinstance(value, str):
             parts = [item.strip() for item in value.split("；")]
-            return tuple(item for item in parts if item)
+            return tuple(
+                normalize_research_tone(item) for item in parts if item
+            )
         if isinstance(value, (list, tuple)):
-            return tuple(str(item).strip() for item in value if str(item).strip())
+            return tuple(
+                normalize_research_tone(str(item).strip())
+                for item in value
+                if str(item).strip()
+            )
         return ()
 
     def _dedupe_debate_rows(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -2812,14 +2892,18 @@ class DashboardDataProvider:
         ):
             adjustment = recommended_adjustment or "unknown"
             lines.append(
-                f"{self._debate_adjustment_label(adjustment)}: "
-                f"runtime原始分 {float(row.get('original_score') or 0.0):.1f}；"
-                f"附件参考分 {float(row.get('adjusted_score') or row.get('original_score') or 0.0):.1f}；"
-                "不覆盖runtime打分"
+                normalize_research_tone(
+                    f"{self._debate_adjustment_label(adjustment)}: "
+                    f"runtime原始分 {float(row.get('original_score') or 0.0):.1f}；"
+                    f"附件参考分 {float(row.get('adjusted_score') or row.get('original_score') or 0.0):.1f}；"
+                    "不覆盖runtime打分"
+                )
             )
         elif recommended_adjustment:
             lines.append(
-                f"辩论倾向: {self._debate_adjustment_label(recommended_adjustment)}；不覆盖runtime打分"
+                normalize_research_tone(
+                    f"辩论倾向: {self._debate_adjustment_label(recommended_adjustment)}；不覆盖runtime打分"
+                )
             )
         if bull_count + bear_count + neutral_count:
             lines.append(
@@ -2904,11 +2988,11 @@ class DashboardDataProvider:
 
     def _rank_label(self, index: int, row: dict[str, Any], task_id: str = "") -> str:
         if index == 1 and self._is_actionable(row, task_id=task_id):
-            return "首选"
+            return "第一顺位"
         if index == 2 and self._is_actionable(row, task_id=task_id):
-            return "次选"
+            return "第二顺位"
         if self._is_actionable(row, task_id=task_id):
-            return "备选"
+            return "后续顺位"
         if self._is_blocked(row):
             return "阻塞观察"
         return "观察"
@@ -2920,12 +3004,12 @@ class DashboardDataProvider:
         if blocker:
             return blocker
         if action == "promote":
-            return "PM 已上调优先级，进入优先跟踪序列"
+            return normalize_research_tone("PM 已上调优先级，进入优先跟踪序列")
         if action == "keep":
-            return "维持顺位，等待更强确认"
+            return normalize_research_tone("维持顺位，等待更强确认")
         if next_step:
-            return next_step
-        return "按当前顺位继续跟踪"
+            return normalize_research_tone(next_step)
+        return normalize_research_tone("按当前顺位继续跟踪")
 
     def _build_ranking_lines(
         self,
@@ -3101,7 +3185,7 @@ class DashboardDataProvider:
             )
         if watch_rows:
             names = "、".join(self._symbol_name(row) for row in watch_rows[:3])
-            return f"{label} {signal_date}: 无待复核候选，转观察池 {names}"
+            return f"{label} {signal_date}: 无待复核候选，转入备选观察名单 {names}"
         if blocked_rows:
             names = "、".join(self._symbol_name(row) for row in blocked_rows[:3])
             return f"{label} {signal_date}: 无待复核候选，先核对卡点 {names}"
@@ -3269,17 +3353,23 @@ class DashboardDataProvider:
             self._section_lines(markdown_text, "执行摘要", "📌 执行摘要")
         )
         runtime_lines = self._runtime_snapshot_lines(
-            self._section_lines(markdown_text, "运行参数")
+            self._section_lines(markdown_text, "运行参数", "数据与规则")
         )
-        market_environment = self._market_environment_line(markdown_text)
+        market_environment = normalize_research_tone(
+            self._market_environment_line(markdown_text)
+        )
         next_day_focus_lines = sanitize_research_lines(
-            self._focus_lines(self._section_lines(markdown_text, "明日重点"))
+            self._focus_lines(self._section_lines(markdown_text, "明日重点", "明日先看"))
         )
         return DashboardReportInsights(
-            report_summary_lines=execution_lines,
+            report_summary_lines=tuple(
+                normalize_research_tone(line) for line in execution_lines
+            ),
             runtime_lines=runtime_lines,
             market_environment=market_environment,
-            next_day_focus_lines=next_day_focus_lines,
+            next_day_focus_lines=tuple(
+                normalize_research_tone(line) for line in next_day_focus_lines
+            ),
         )
 
     def _section_lines(self, markdown_text: str, *headings: str) -> tuple[str, ...]:
@@ -3315,21 +3405,28 @@ class DashboardDataProvider:
     def _runtime_snapshot_lines(self, lines: tuple[str, ...]) -> tuple[str, ...]:
         prefixes = (
             "数据源:",
+            "数据来源:",
+            "数据层级:",
+            "数据完整度:",
             "数据时效:",
             "数据健康:",
+            "数据状态:",
             "候选池:",
+            "扫描范围:",
             "thresholds.version:",
+            "规则版本:",
             "regime:",
+            "市场标签:",
         )
         selected = [
             line
             for line in lines
             if any(line.startswith(prefix) for prefix in prefixes)
         ]
-        return tuple(selected[:6])
+        return tuple(humanize_runtime_snapshot_line(line) for line in selected[:6])
 
     def _market_environment_line(self, markdown_text: str) -> str:
-        lines = self._section_lines(markdown_text, "市场态势")
+        lines = self._section_lines(markdown_text, "市场态势", "市场环境")
         if not lines:
             return ""
         first_line = lines[0]

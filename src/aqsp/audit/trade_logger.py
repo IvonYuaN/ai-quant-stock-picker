@@ -12,7 +12,7 @@ import logging
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from aqsp.core.time import now_shanghai
 
@@ -36,6 +36,7 @@ class TradeDecisionLog:
     risk_check_passed: bool
     regime: str
     reason: str
+    context: dict[str, Any] | None = None
 
     def to_dict(self) -> dict:
         """
@@ -55,6 +56,7 @@ class TradeDecisionLog:
             "risk_check_passed": self.risk_check_passed,
             "regime": self.regime,
             "reason": self.reason,
+            "context": dict(self.context or {}),
         }
 
 

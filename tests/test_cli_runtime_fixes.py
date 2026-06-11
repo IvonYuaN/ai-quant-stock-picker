@@ -233,6 +233,75 @@ def test_factor_library_treats_missing_active_flag_as_inactive(tmp_path: Path) -
     assert library.factors[-1]["status"] == "research_candidate"
 
 
+def test_run_discover_marks_output_as_research_only(
+    monkeypatch, tmp_path: Path
+) -> None:
+    import aqsp.cli as cli_mod
+    from aqsp.optimizer.pattern_discovery import DiscoveredPattern
+
+    monkeypatch.setattr(
+        "aqsp.ledger.base.read_ledger",
+        lambda _path: [{"symbol": "600519", "signal_date": "2026-06-01"}],
+    )
+    monkeypatch.setattr(
+        cli_mod,
+        "_fetch_frames_for_cli",
+        lambda *_args, **_kwargs: {"600519": object()},
+    )
+
+    class FakeEngine:
+        def __init__(self, min_sample_size: int, min_win_rate: float) -> None:
+            assert min_sample_size == 12
+            assert min_win_rate == 0.58
+
+        def discover(self, ledger_df, frames):
+            assert not ledger_df.empty
+            assert "600519" in frames
+            return [
+                DiscoveredPattern(
+                    pattern_id="pat_demo001",
+                    pattern_type="breakout",
+                    description="突破后延续",
+                    conditions={"lookback_days": 60},
+                    historical_win_rate=0.62,
+                    historical_avg_return=3.4,
+                    sample_size=28,
+                    confidence=0.74,
+                    first_seen="2026-01-01",
+                    last_seen="2026-06-01",
+                )
+            ]
+
+    monkeypatch.setattr(
+        "aqsp.optimizer.pattern_discovery.PatternDiscoveryEngine", FakeEngine
+    )
+
+    output_path = tmp_path / "patterns.json"
+    report_path = tmp_path / "patterns.md"
+    args = Namespace(
+        ledger="data/predictions.jsonl",
+        source="eastmoney",
+        min_sample=12,
+        min_winrate=0.58,
+        output=str(output_path),
+        report=str(report_path),
+    )
+
+    exit_code = cli_mod.run_discover(args)
+
+    assert exit_code == 0
+    payload = json.loads(output_path.read_text(encoding="utf-8"))
+    assert payload[0]["status"] == "research_candidate"
+    assert payload[0]["proposal_only"] is True
+    assert payload[0]["applied"] is False
+    assert payload[0]["uses_forward_returns"] is True
+
+    report_text = report_path.read_text(encoding="utf-8")
+    assert "研究形态发现报告" in report_text
+    assert "仅供研究复核" in report_text
+    assert "自动写入主链" in report_text
+
+
 def test_run_evolve_prefers_aqsp_symbols_when_configured(monkeypatch) -> None:
     import aqsp.cli as cli_mod
 
@@ -482,7 +551,7 @@ def test_run_optimize_apply_writes_proposal_without_touching_thresholds(
 
     monkeypatch.setattr(
         "aqsp.optimizer.param_optimizer.create_walkforward_evaluator",
-        lambda **_kwargs: (lambda _params: 1.0),
+        lambda **_kwargs: lambda _params: 1.0,
     )
 
     class FakeOptimizer:

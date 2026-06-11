@@ -140,8 +140,8 @@ class TestReviewToday:
         assert any("不可成交样本" in item for item in review.key_lessons)
         assert any("等待纸面入场或纸面结束" in item for item in review.key_lessons)
         assert any("不可成交原因" in item for item in review.improvement_suggestions)
-        assert "候选观察池: 600000 测试A" in review.main_chain_summary
-        assert "纸面阻塞: 600000 测试A: 板块集中度过高" in review.main_chain_summary
+        assert "备选观察名单: 600000 测试A" in review.main_chain_summary
+        assert "当前卡点: 600000 测试A: 板块集中度过高" in review.main_chain_summary
 
     def test_review_counts_signals_when_only_pending_or_blocked_rows_exist(
         self, tmp_path
@@ -192,6 +192,43 @@ class TestReviewToday:
         assert review.executed_signals == 0
         assert review.win_rate == 0
         assert any("暂无 closed 虚拟盘结果" in item for item in review.key_lessons)
+
+    def test_review_uses_paper_context_when_ledger_prediction_missing(self, tmp_path) -> None:
+        ledger = tmp_path / "predictions.jsonl"
+        paper = tmp_path / "paper_trades.jsonl"
+        _write_jsonl(ledger, [])
+        _write_jsonl(
+            paper,
+            [
+                {
+                    "signal_id": "sig-x",
+                    "symbol": "600010",
+                    "name": "包钢股份",
+                    "signal_date": "2025-06-02",
+                    "status": "closed",
+                    "entry_date": "2025-06-03",
+                    "exit_date": "2025-06-04",
+                    "entry_price": 5.0,
+                    "exit_price": 5.4,
+                    "return_pct": 8.0,
+                    "portfolio_action": "promote",
+                    "candidate_status": "延续上升",
+                    "candidate_next_step": "放量时继续跟踪",
+                    "candidate_review_window": "开盘前后",
+                    "candidate_review_priority": "high",
+                    "strategies": ["morning_breakout"],
+                }
+            ],
+        )
+
+        review = ClosingReviewer(
+            ledger_path=str(ledger),
+            paper_ledger_path=str(paper),
+        ).review_today("2025-06-02")
+
+        assert review.executed_signals == 1
+        assert "今日重点名单: 600010 包钢股份" in review.main_chain_summary
+        assert "观察复核: 600010 包钢股份 | 高优先级 / 开盘前后 | 放量时继续跟踪" in review.main_chain_summary
 
     def test_review_defaults_to_latest_date_from_paper_ledger(self, tmp_path) -> None:
         ledger = tmp_path / "predictions.jsonl"
@@ -368,7 +405,7 @@ class TestFormatReviewOutput:
             avg_holding_days=0.0,
             strategy_breakdown={},
             market_environment="震荡市",
-            main_chain_summary=("候选观察池: 600519 贵州茅台",),
+            main_chain_summary=("备选观察名单: 600519 贵州茅台",),
             key_lessons=("今日信号仍在跟踪，暂无 closed 虚拟盘结果。",),
             improvement_suggestions=("对未完成验证的样本保留跟踪，避免过早下结论。",),
         )

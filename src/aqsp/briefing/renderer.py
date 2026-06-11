@@ -8,9 +8,13 @@ from __future__ import annotations
 from aqsp.briefing.schema import BriefingData
 from aqsp.briefing.debate import format_debate_result
 from aqsp.presentation import (
+    describe_source_health,
+    describe_source_layers,
+    display_section_title,
     format_review_meta,
     format_symbol_name,
     format_watch_review_line,
+    normalize_research_tone,
     review_priority_label,
 )
 from aqsp.ratings import rating_label, portfolio_action_label
@@ -57,7 +61,7 @@ class MarkdownRenderer:
 
     def render(self, data: BriefingData) -> str:
         """生成完整的 markdown 日报。"""
-        lines = [f"# AI 量化选股日报 - {data.date}", ""]
+        lines = [f"# AI 量化选股研究日报 - {data.date}", ""]
 
         lines.extend(self._render_main_chain(data))
         lines.extend(self._render_regime(data))
@@ -79,11 +83,11 @@ class MarkdownRenderer:
                 lines.append("")
 
         lines.append("> 仅供研究，不构成投资建议。")
-        return "\n".join(lines)
+        return normalize_research_tone("\n".join(lines))
 
     def _render_main_chain(self, data: BriefingData) -> list[str]:
         """渲染主链总览。"""
-        lines = ["## 主链总览", ""]
+        lines = [f"## {display_section_title('主链总览')}", ""]
 
         if not data.picks or data.portfolio_summary is None:
             lines.append("今日无主链候选，保持观察。")
@@ -98,10 +102,10 @@ class MarkdownRenderer:
             lines.append(f"- 信号日期: {signal_date}")
 
         if ps.top_focus:
-            lines.append("- 纸面复核主链: " + "、".join(ps.top_focus[:3]))
+            lines.append("- 今日重点名单: " + "、".join(ps.top_focus[:3]))
 
         if ps.watchlist:
-            lines.append("- 候选观察池: " + "、".join(ps.watchlist[:3]))
+            lines.append("- 备选观察名单: " + "、".join(ps.watchlist[:3]))
         if ps.watch_reviews:
             lines.append("- 观察复核:")
             for item in ps.watch_reviews[:2]:
@@ -118,7 +122,7 @@ class MarkdownRenderer:
         lead = data.picks[0]
         lead_display = format_symbol_name(lead.symbol, lead.name)
         lead_status = _candidate_status_label(lead)
-        lead_line = f"- 首位候选: {lead_display} | {rating_label(lead.rating)}"
+        lead_line = f"- 首先关注: {lead_display} | {rating_label(lead.rating)}"
         if lead_status:
             lead_line += f" | {lead_status}"
         lead_line += f" | 评分 {lead.score:.1f}"
@@ -132,7 +136,7 @@ class MarkdownRenderer:
 
     def _render_regime(self, data: BriefingData) -> list[str]:
         """渲染市场态势。"""
-        lines = ["## 市场态势", ""]
+        lines = [f"## {display_section_title('市场态势')}", ""]
 
         if data.regime_info.circuit_breaker_triggered:
             reason = data.regime_info.circuit_breaker_reason
@@ -145,7 +149,7 @@ class MarkdownRenderer:
 
     def _render_source(self, data: BriefingData) -> list[str]:
         """渲染数据源状态。"""
-        lines = ["## 数据源状态", ""]
+        lines = [f"## {display_section_title('数据源状态')}", ""]
 
         if data.source_status is None:
             lines.append("暂无最近一次运行的数据源状态记录。")
@@ -153,11 +157,12 @@ class MarkdownRenderer:
             return lines
 
         s = data.source_status
-        lines.append(f"- 路径: **{s.route}**")
-        lines.append(f"- 层级: fresh={s.freshness_tier} / cover={s.coverage_tier}")
-        lines.append(f"- 健康: **{s.health_label}**")
-        lines.append(f"- fallback: {'yes' if s.fallback_used else 'no'}")
-        lines.append(f"- 说明: {s.health_message}")
+        lines.append(f"- 数据来源: **{s.route}**")
+        lines.append(
+            f"- 数据完整度: {describe_source_layers(s.freshness_tier, s.coverage_tier)}"
+        )
+        lines.append(f"- 数据状态: **{describe_source_health(s.health_label, s.health_message)}**")
+        lines.append(f"- 是否启用备用源: {'是' if s.fallback_used else '否'}")
 
         if s.is_degraded:
             lines.append("- 提示: 本次结果请降低信任度，优先人工复核。")
@@ -167,7 +172,7 @@ class MarkdownRenderer:
 
     def _render_research(self, data: BriefingData) -> list[str]:
         """渲染研究吸收。"""
-        lines = ["## 研究吸收", ""]
+        lines = [f"## {display_section_title('研究吸收')}", ""]
 
         if data.research_summary is None:
             lines.append("研究吸收未更新；本次日报仅基于当前运行主链。")
@@ -217,7 +222,7 @@ class MarkdownRenderer:
 
     def _render_evidence(self, data: BriefingData) -> list[str]:
         """渲染候选证据链。"""
-        lines = ["## 候选证据链", ""]
+        lines = [f"## {display_section_title('候选证据链')}", ""]
 
         if not data.picks:
             lines.append("今日无候选标的。")
@@ -296,8 +301,8 @@ class MarkdownRenderer:
                     _candidate_review_window_label(lead),
                 )
                 line = (
-                    f"当前暂无纸面复核重点标的；候选观察池: {names}。"
-                    "先观察最强票，待阻塞条件解除后再考虑转入纸面复核名单。"
+                    f"当前暂无重点跟踪对象；备选观察名单: {names}。"
+                    "先观察最强票，待阻塞条件解除后再考虑转入重点跟踪名单。"
                 )
                 if blocker:
                     line += f" 当前阻塞: {blocker}。"
@@ -365,7 +370,7 @@ class MarkdownRenderer:
             if ps.top_focus:
                 items.append("- 主链候选: " + "、".join(ps.top_focus))
             if ps.watchlist:
-                items.append("- 候选观察池: " + "、".join(ps.watchlist))
+                items.append("- 备选观察名单: " + "、".join(ps.watchlist))
 
         if data.debate_results:
             items.append(
@@ -403,16 +408,16 @@ class MarkdownRenderer:
             names = "、".join(
                 format_symbol_name(p.symbol, p.name) for p in tradable[:3]
             )
-            items.append(f"- 纸面复核对象: {names}")
+            items.append(f"- 重点跟踪对象: {names}")
         elif data.picks:
             top = data.top_picks
             names = "、".join(
                 _format_pick_with_status(p, include_score=True) for p in top
             )
-            items.append(f"- 候选观察池: {names}")
+            items.append(f"- 备选观察名单: {names}")
         elif data.portfolio_summary and data.portfolio_summary.watchlist:
             items.append(
-                "- 候选观察池: " + "、".join(data.portfolio_summary.watchlist[:3])
+                "- 备选观察名单: " + "、".join(data.portfolio_summary.watchlist[:3])
             )
 
         debate_points = data.debate_points
@@ -422,7 +427,7 @@ class MarkdownRenderer:
         if data.picks:
             first = data.picks[0]
             items.append(
-                f"- 首选观察: {_format_pick_with_status(first, include_score=True)}"
+                f"- 首先关注: {_format_pick_with_status(first, include_score=True)}"
             )
             next_step = _candidate_next_step_label(first)
             if next_step:
@@ -438,7 +443,7 @@ class MarkdownRenderer:
                 data.portfolio_summary.top_focus or data.portfolio_summary.watchlist
             )
             if fallback:
-                items.append(f"- 首选观察: {fallback[0]}")
+                items.append(f"- 首先关注: {fallback[0]}")
 
         return items
 
@@ -472,7 +477,7 @@ class MarkdownRenderer:
         if data.actionable_count > 0:
             parts.append(f"{data.actionable_count}只纸面复核")
         elif data.candidate_count > 0:
-            parts.append("有候选观察池，当前暂无纸面复核对象")
+            parts.append("有备选观察名单，当前暂无重点跟踪对象")
 
         risk_count = len(data.risk_points)
         if risk_count > 0:

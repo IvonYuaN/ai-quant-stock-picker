@@ -146,6 +146,8 @@ class ClosingReviewer:
             total_signals=total_signals,
         )
         main_chain_summary = self._build_main_chain_summary(predictions)
+        if not main_chain_summary:
+            main_chain_summary = self._build_main_chain_summary_from_paper(paper_rows)
         improvement_suggestions = self._generate_improvement_suggestions(
             reviews,
             win_rate,
@@ -279,11 +281,78 @@ class ClosingReviewer:
 
         lines = [f"PM主裁决: 上调 {promoted} / 降级 {downgraded} / 维持 {kept}"]
         if tradable:
-            lines.append("纸面复核主链: " + "、".join(tradable[:3]))
+            lines.append("今日重点名单: " + "、".join(tradable[:3]))
         if watchlist:
-            lines.append("候选观察池: " + "、".join(watchlist[:5]))
+            lines.append("备选观察名单: " + "、".join(watchlist[:5]))
         if blockers:
-            lines.append("纸面阻塞: " + "；".join(blockers[:2]))
+            lines.append("当前卡点: " + "；".join(blockers[:2]))
+        for item in review_items[:2]:
+            lines.append("观察复核: " + item)
+        return tuple(lines)
+
+    def _build_main_chain_summary_from_paper(self, paper_rows: list[dict]) -> tuple[str, ...]:
+        if not paper_rows:
+            return ()
+
+        promoted = sum(
+            1
+            for row in paper_rows
+            if str(row.get("portfolio_action", "")).strip() == "promote"
+        )
+        downgraded = sum(
+            1
+            for row in paper_rows
+            if str(row.get("portfolio_action", "")).strip() == "downgrade"
+        )
+        kept = sum(
+            1
+            for row in paper_rows
+            if str(row.get("portfolio_action", "")).strip() == "keep"
+        )
+
+        tradable: list[str] = []
+        watchlist: list[str] = []
+        blockers: list[str] = []
+        review_items: list[str] = []
+        for row in paper_rows:
+            symbol = str(row.get("symbol", "")).strip()
+            name = str(row.get("name", "")).strip()
+            display = format_symbol_name(symbol, name)
+            rating = str(row.get("rating", "")).strip()
+            action = str(row.get("portfolio_action", "")).strip()
+            if is_tradable_rating(rating) or action == "promote":
+                tradable.append(display)
+            else:
+                watchlist.append(display)
+            blocker = str(row.get("candidate_blocker", "")).strip()
+            next_step = str(row.get("candidate_next_step", "")).strip()
+            review_meta = " / ".join(
+                part
+                for part in (
+                    self._review_priority_label(
+                        str(row.get("candidate_review_priority", "")).strip()
+                    ),
+                    str(row.get("candidate_review_window", "")).strip(),
+                )
+                if part
+            )
+            if blocker:
+                blockers.append(f"{display}: {blocker}")
+            if next_step or review_meta:
+                line = display
+                if review_meta:
+                    line += f" | {review_meta}"
+                if next_step:
+                    line += f" | {next_step}"
+                review_items.append(line)
+
+        lines = [f"PM主裁决: 上调 {promoted} / 降级 {downgraded} / 维持 {kept}"]
+        if tradable:
+            lines.append("今日重点名单: " + "、".join(tradable[:3]))
+        if watchlist:
+            lines.append("备选观察名单: " + "、".join(watchlist[:5]))
+        if blockers:
+            lines.append("当前卡点: " + "；".join(blockers[:2]))
         for item in review_items[:2]:
             lines.append("观察复核: " + item)
         return tuple(lines)
@@ -502,7 +571,7 @@ class ClosingReviewer:
             "trend_pullback": "均线回踩",
             "reversal_watch": "反转观察",
             "relative_strength": "相对强度",
-            "watch": "候选观察池",
+            "watch": "备选观察名单",
             "close": "收盘候选",
             "open": "盘前候选",
             "next_open": "次日开盘",

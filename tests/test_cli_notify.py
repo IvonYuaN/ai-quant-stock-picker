@@ -45,8 +45,8 @@ def test_execution_summary_uses_observation_when_pm_has_no_allocations() -> None
 
     line = cli_mod._build_execution_summary_line([pick], summary)
 
-    assert "今日无纸面复核对象" in line
-    assert "观察池" in line
+    assert "今日无重点跟踪对象" in line
+    assert "备选观察名单" in line
     assert "首选" not in line
 
 
@@ -814,7 +814,7 @@ def test_run_scheduled_report_omits_low_signal_control_sections(
 
     assert exit_code == 0
     content = report_path.read_text(encoding="utf-8")
-    assert "## 最终决策看板" in content
+    assert "## 今日重点看板" in content
     assert "## 数据异常检测" not in content
     assert "## 数据新鲜度" not in content
     assert "## 候选股相关性" not in content
@@ -977,8 +977,8 @@ def test_run_scheduled_notify_continues_when_benchmark_frame_missing(
     assert exit_code == 0
     assert seen
     assert "当前市况" not in report
-    assert "- regime: unknown" in report
-    assert "## 最终决策看板" in report
+    assert "- 市场标签: unknown" in report
+    assert "## 今日重点看板" in report
     assert "贵州茅台" in report
 
 
@@ -1302,7 +1302,7 @@ def test_run_scheduled_falls_back_to_synthetic_regime_when_benchmark_missing(
     assert exit_code == 0
     assert seen
     assert "当前市况" in report
-    assert "- regime: stable_bull" in report
+    assert "- 市场标签: stable_bull" in report
     assert "当前市况: 稳定上涨" in report
     assert "benchmark unavailable" in report
 
@@ -1446,11 +1446,8 @@ def test_run_scheduled_report_downgrades_realtime_tier_when_data_is_prior_trade_
     report = (tmp_path / "latest.md").read_text(encoding="utf-8")
 
     assert exit_code == 0
-    assert (
-        "- 数据层级: fresh=end_of_day / cover=quotes_plus / local=not_required"
-        in report
-    )
-    assert "- 数据时效: latest=2026-06-04 / lag=1d" in report
+    assert "- 数据完整度: 收盘后 / 增强行情 / 无需本地缓存" in report
+    assert "- 数据时效: 最新交易日 2026-06-04 / 延迟 1 天" in report
 
 
 def test_run_scheduled_surfaces_t1_blockers_in_report_and_notification(
@@ -1665,12 +1662,13 @@ def test_run_scheduled_surfaces_t1_blockers_in_report_and_notification(
 
     assert exit_code == 0
     assert seen
-    assert "T+1 持仓约束：昨日已买标的今日不纳入纸面复核名单" in report
+    assert "T+1 持仓约束：昨日已买标的今日不纳入重点跟踪名单" in report
     assert "贵州茅台: T+1 持仓约束，昨日已买，今日仅保留观察" in report
     assert "T+1 限制：昨日已买 1 只（600519）仅保留观察" in report
-    assert "观察池: 300750 宁德时代、600519 贵州茅台" in seen[0]
+    assert "备选观察名单: 300750 宁德时代、600519 贵州茅台" in seen[0]
     assert (
-        "纸面阻塞: 600519 贵州茅台: T+1 持仓约束，昨日已买，今日仅保留观察" in seen[0]
+        "当前卡点: 600519 贵州茅台: T+1 持仓约束，昨日已买，今日仅保留观察"
+        in seen[0]
     )
 
 
@@ -2139,18 +2137,18 @@ def test_run_scheduled_annotates_candidate_status_in_report_and_notify(
     assert seen
     assert "## 📋 候选简表" in seen[0]
     assert (
-        "| 1 | 688981 中芯国际 | 新晋 | -9 | 👀 观察 | 等待量价继续走强后，再评估是否转入纸面复核名单；复核 高优先级 / 盘中走强后 |"
+        "| 1 | 688981 中芯国际 | 新晋 | -9 | 👀 继续观察 | 等待量价继续走强后，再评估是否转入重点跟踪名单；复核 高优先级 / 盘中走强后 |"
         in seen[0]
     )
     assert (
-        "先盯 688981 中芯国际，等待量价继续走强后，再评估是否转入纸面复核名单（高优先级 / 盘中走强后）。"
+        "先盯 688981 中芯国际，等待量价继续走强后，再评估是否转入重点跟踪名单（高优先级 / 盘中走强后）。"
         in seen[0]
     )
-    assert "| 2 | 000001 平安银行 | 观察 | -18 | 👀 观察 | 估值防守 |" in seen[0]
+    assert "| 2 | 000001 平安银行 | 继续观察 | -18 | 👀 继续观察 | 估值防守 |" in seen[0]
     assert (
-        "- Top 1: 688981 中芯国际 | 候选观察池 | 新晋 | 评分 -9.0 | PM 维持原排序"
+        "- 重点 1: 688981 中芯国际 | 备选观察名单 | 新晋 | 评分 -9.0 | 处理 维持原排序"
         in report
     )
-    assert "- 决策: 候选观察池 | 新晋 | 评分 -9.0" in report
-    assert "下一步: 等待量价继续走强后，再评估是否转入纸面复核名单" in report
-    assert "复核: 高优先级 / 盘中走强后" in report
+    assert "- 决策: 备选观察名单 | 新晋 | 评分 -9.0" in report
+    assert "- 下一步关注: 等待量价继续走强后，再评估是否转入重点跟踪名单" in report
+    assert "- 复核优先级/时机: 高优先级 / 盘中走强后" in report

@@ -23,6 +23,19 @@ class PaperSummary:
     skipped: int = 0
 
 
+_PAPER_CONTEXT_FIELDS = (
+    "portfolio_action",
+    "candidate_status",
+    "candidate_blocker",
+    "candidate_next_step",
+    "candidate_review_window",
+    "candidate_review_priority",
+    "strategies",
+    "rating",
+    "score",
+)
+
+
 def read_paper_trades(path: str | Path) -> list[dict]:
     trade_path = Path(path)
     if not trade_path.exists():
@@ -119,20 +132,20 @@ def render_paper_report(summary: PaperSummary, trades: list[dict]) -> str:
     blocked_trades = [t for t in trades if t.get("status") == "not_executable"]
     pending_trades = [t for t in trades if t.get("status") == "pending_entry"]
     lines = [
-        "# AQSP 虚拟盘状态",
+        "# AQSP 纸面跟踪状态",
         "",
-        "> 本报告只同步模拟持仓，不下单；只有 buy_candidate / strong_buy_candidate 会进入模拟持仓。",
+        "> 本报告只同步纸面持有跟踪，不下单；只有 buy_candidate / strong_buy_candidate 会进入纸面跟踪。",
         "",
-        f"- 新开仓: {summary.opened}",
-        f"- 已平仓: {summary.closed}",
-        f"- 当前持仓: {len(open_trades)}",
+        f"- 新增纸面观察: {summary.opened}",
+        f"- 已完成纸面退出: {summary.closed}",
+        f"- 当前纸面持有: {len(open_trades)}",
         f"- 不可成交: {summary.not_executable or len(blocked_trades)}",
         f"- 等待入场数据: {summary.pending_entry or len(pending_trades)}",
         f"- 跳过信号: {summary.skipped}",
         "",
     ]
     if open_trades:
-        lines.append("## 当前持仓")
+        lines.append("## 当前纸面持有")
         for trade in open_trades:
             lines.append(
                 f"- {trade['symbol']} entry={trade['entry_price']} "
@@ -141,11 +154,11 @@ def render_paper_report(summary: PaperSummary, trades: list[dict]) -> str:
             )
         lines.append("")
     else:
-        lines.append("## 当前持仓")
-        lines.append("无 open 虚拟持仓。")
+        lines.append("## 当前纸面持有")
+        lines.append("无 open 纸面持有记录。")
         lines.append("")
     if closed_trades:
-        lines.append("## 最近平仓")
+        lines.append("## 最近纸面退出")
         for trade in closed_trades[-5:]:
             lines.append(
                 f"- {trade['symbol']} {trade['exit_reason']} "
@@ -175,7 +188,7 @@ def _pending_entry_from_signal(
     execution: ExecutionConfig,
     now: str,
 ) -> dict:
-    return {
+    row = {
         "id": uuid4().hex,
         "signal_id": signal.get("id"),
         "symbol": str(signal.get("symbol", "")),
@@ -197,6 +210,8 @@ def _pending_entry_from_signal(
         "created_at": now,
         "updated_at": now,
     }
+    row.update(_paper_context_from_signal(signal))
+    return row
 
 
 def _open_trade_from_signal(
@@ -222,7 +237,7 @@ def _open_trade_from_signal(
     )
     executable, reason = _check_executable(entry_bar, prev_close, signal)
     if not executable:
-        return {
+        row = {
             "id": uuid4().hex,
             "signal_id": signal.get("id"),
             "symbol": symbol,
@@ -234,13 +249,15 @@ def _open_trade_from_signal(
             "created_at": now,
             "updated_at": now,
         }
+        row.update(_paper_context_from_signal(signal))
+        return row
 
     slippage_bps = _value_or_default(signal, "slippage_bps", execution.slippage_bps)
     fee_bps = _value_or_default(signal, "fee_bps", execution.fee_bps)
     horizon_days = _value_or_default(signal, "horizon_days", execution.horizon_days)
     slippage = float(slippage_bps) / 10000
     entry_price = float(entry_bar["open"]) * (1 + slippage)
-    return {
+    row = {
         "id": uuid4().hex,
         "signal_id": signal.get("id"),
         "symbol": symbol,
@@ -260,6 +277,24 @@ def _open_trade_from_signal(
         "created_at": now,
         "updated_at": now,
     }
+    row.update(_paper_context_from_signal(signal))
+    return row
+
+
+def _paper_context_from_signal(signal: dict) -> dict:
+    context: dict[str, object] = {}
+    for field in _PAPER_CONTEXT_FIELDS:
+        value = signal.get(field)
+        if value in (None, "", [], ()):
+            continue
+        if field == "strategies":
+            if isinstance(value, tuple):
+                context[field] = list(value)
+            else:
+                context[field] = value
+            continue
+        context[field] = value
+    return context
 
 
 def _value_or_default(row: dict, key: str, default: object) -> object:

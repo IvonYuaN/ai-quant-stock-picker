@@ -1092,7 +1092,7 @@ def _build_pipeline_digest(
     elif portfolio_summary is not None and portfolio_summary.top_focus:
         conclusion = f"今日主链聚焦 {summary_target}，其余候选继续分层跟踪。"
     elif portfolio_summary is not None and portfolio_summary.watchlist:
-        conclusion = f"今日无纸面复核主链，先围绕 {summary_target} 做观察跟踪。"
+        conclusion = f"今日暂无重点名单，先围绕 {summary_target} 做观察跟踪。"
     else:
         conclusion = "今日未形成明确主链，结果以观察为主。"
 
@@ -1109,7 +1109,7 @@ def _build_pipeline_digest(
     if latest_signal_day:
         core_lines.append(f"- 信号日期: {latest_signal_day}")
     if portfolio_summary is not None and portfolio_summary.top_focus:
-        core_lines.append("- 纸面复核主链: " + "、".join(portfolio_summary.top_focus))
+        core_lines.append("- 今日重点名单: " + "、".join(portfolio_summary.top_focus))
     elif portfolio_summary is not None and portfolio_summary.watchlist:
         core_lines.append(
             "- 观察主线: "
@@ -1119,7 +1119,7 @@ def _build_pipeline_digest(
         )
     if portfolio_summary is not None and portfolio_summary.execution_blockers:
         core_lines.append(
-            "- 纸面阻塞: "
+            "- 当前卡点: "
             + "；".join(
                 normalize_research_tone(str(item))
                 for item in portfolio_summary.execution_blockers[:2]
@@ -1133,7 +1133,7 @@ def _build_pipeline_digest(
         ]
         if blockers:
             core_lines.append(
-                "- 纸面阻塞: "
+                "- 当前卡点: "
                 + "；".join(normalize_research_tone(item) for item in blockers[:2])
             )
     if review_candidates:
@@ -1173,7 +1173,7 @@ def _build_pipeline_digest(
                 main_chain_lines.append("  复核: " + review_meta)
         if portfolio_summary is not None and portfolio_summary.watchlist:
             main_chain_lines.append(
-                "- 观察池: "
+                "- 备选观察名单: "
                 + "、".join(
                     str(item).split("(", 1)[0]
                     for item in portfolio_summary.watchlist[:5]
@@ -1202,11 +1202,11 @@ def _build_pipeline_digest(
     elif portfolio_summary is not None:
         if portfolio_summary.top_focus:
             main_chain_lines.append(
-                "- 纸面复核主链: " + "、".join(portfolio_summary.top_focus)
+                "- 今日重点名单: " + "、".join(portfolio_summary.top_focus)
             )
         elif portfolio_summary.watchlist:
             main_chain_lines.append(
-                "- 候选观察池: " + "、".join(portfolio_summary.watchlist)
+                "- 备选观察名单: " + "、".join(portfolio_summary.watchlist)
             )
     else:
         main_chain_lines.append("- 暂无可用候选输出")
@@ -1217,7 +1217,7 @@ def _build_pipeline_digest(
             "- 明日先修复失败步骤对应的数据源或运行配置，再复核本次输出。"
         )
     elif portfolio_summary is not None and portfolio_summary.top_focus:
-        action_line = "- 明日先核对纸面复核主链是否延续量价确认，再决定人工跟踪优先级。"
+        action_line = "- 明日先核对今日重点名单是否延续量价确认，再决定人工跟踪优先级。"
         if portfolio_summary.top_focus:
             action_line = (
                 "- 明日先盯 "
@@ -1252,7 +1252,7 @@ def _build_pipeline_digest(
             )
         )
     elif portfolio_summary is not None and portfolio_summary.watchlist:
-        plan_lines.append("- 明日以观察池复核为主，等待右侧确认，不放大纸面仓位。")
+        plan_lines.append("- 明日以备选观察名单复核为主，等待右侧确认，不放大纸面仓位。")
     else:
         plan_lines.append("- 明日无明确主链复核，优先确认数据源和策略运行是否完整。")
     if portfolio_summary is not None and portfolio_summary.allocation_note:
@@ -1262,7 +1262,7 @@ def _build_pipeline_digest(
     plan_lines.extend(
         [
             "- 对照收盘复盘，确认强弱分层、策略标签和 PM 裁决是否一致。",
-            "- 若观察池继续拥挤，只保留最强一到两只做人工跟踪。",
+            "- 若备选观察名单继续拥挤，只保留最强一到两只做人工跟踪。",
         ]
     )
 

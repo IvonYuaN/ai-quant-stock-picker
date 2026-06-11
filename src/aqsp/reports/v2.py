@@ -84,7 +84,7 @@ class ReportGenerator:
         summary = self._generate_summary(strategy_reports, portfolio, regime, breaker)
 
         return DailyReport(
-            date=now_shanghai().strftime("%Y-%m-%d %H:%M:%S"),
+            date=now_shanghai().isoformat(timespec="seconds"),
             version=self.thresholds.version,
             market_regime=regime_name,
             regime_confidence=regime_confidence,
@@ -125,16 +125,18 @@ class ReportGenerator:
                 f"⚠️ 表现较弱策略: {', '.join(s.strategy_name for s in weak_strategies)}"
             )
 
-        parts.append(f"📈 持仓数量: {len(portfolio.symbols)}只")
-        parts.append(f"🎯 分散度评分: {portfolio.diversification_score:.1%}")
+        parts.append(f"📌 跟踪标的数: {len(portfolio.symbols)}只")
+        parts.append(f"🎯 研究分散度: {portfolio.diversification_score:.1%}")
 
         return "\n".join(parts)
 
     def to_markdown(self, report: DailyReport) -> str:
         lines = []
-        lines.append("# AI量化选股日报")
+        lines.append("# AI量化选股研究日报")
         lines.append(f"**日期**: {report.date}")
         lines.append(f"**阈值版本**: {report.version}")
+        lines.append("")
+        lines.append("**免责声明**: 本报告仅供研究复核，不构成交易指令或投资建议。")
         lines.append("")
 
         lines.append("## 📊 市场概览")
@@ -155,21 +157,21 @@ class ReportGenerator:
             )
         lines.append("")
 
-        lines.append("## 📦 持仓组合")
-        lines.append(f"- 持仓数量: {len(report.portfolio.symbols)}只")
-        lines.append(f"- 分散度评分: {report.portfolio.diversification_score:.1%}")
+        lines.append("## 📦 研究覆盖")
+        lines.append(f"- 跟踪标的数: {len(report.portfolio.symbols)}只")
+        lines.append(f"- 研究分散度: {report.portfolio.diversification_score:.1%}")
         lines.append("")
 
-        lines.append("### 板块分布")
+        lines.append("### 板块覆盖")
         for sector, weight in sorted(
             report.portfolio.sector_allocation_dict.items(), key=lambda x: -x[1]
         ):
             lines.append(f"- {sector}: {weight:.1%}")
         lines.append("")
 
-        lines.append("### 持仓明细")
-        lines.append("| 股票 | 权重 |")
-        lines.append("|------|------|")
+        lines.append("### 跟踪标的明细")
+        lines.append("| 标的 | 研究权重 |")
+        lines.append("|------|----------|")
         for symbol in sorted(report.portfolio.symbols):
             lines.append(
                 f"| {symbol} | {report.portfolio.weights.get(symbol, 0):.2%} |"

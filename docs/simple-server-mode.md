@@ -133,7 +133,7 @@ bash /opt/aqsp/scripts/server_sync_and_run.sh
 仓库提供了一个宝塔专用统一入口：
 
 ```bash
-/bin/bash /opt/aqsp/scripts/bt_task.sh <daily|intraday|coldstart|monitor|status>
+/bin/bash /opt/aqsp/scripts/bt_task.sh <daily|intraday|midday|coldstart|monitor|status>
 ```
 
 推荐在宝塔里建 4 个 Shell 脚本任务：
@@ -141,6 +141,7 @@ bash /opt/aqsp/scripts/server_sync_and_run.sh
 | 任务 | 宝塔周期 | 命令 | 作用 |
 |---|---:|---|---|
 | 盘中刷新 | 工作日 `09:40-11:30`、`13:10-14:55` 每 10 分钟 | `/bin/bash /opt/aqsp/scripts/bt_task.sh intraday` | 生成盘中候选并刷新看板，不污染正式 ledger |
+| 午盘回看 | 工作日 `12:05` | `/bin/bash /opt/aqsp/scripts/bt_task.sh midday` | 复用盘中观察链路，给中午看板一次明确刷新 |
 | 收盘主链路 | 工作日 `18:00` | `/bin/bash /opt/aqsp/scripts/bt_task.sh daily` | 拉取最新代码、跑完整收盘复盘、纸面验证、简报、通知、看板刷新 |
 | 冷启动补样本 | 工作日 `17:30` | `/bin/bash /opt/aqsp/scripts/bt_task.sh coldstart` | 收盘后更新 sqlite 历史库并累计 `predictions.jsonl` 冷启动天数 |
 | 服务器监控 | 工作日每 `15` 分钟 | `/bin/bash /opt/aqsp/scripts/bt_task.sh monitor` | 检查数据、运行时和通知通道，异常才推送 |
@@ -155,6 +156,7 @@ bash /opt/aqsp/scripts/server_sync_and_run.sh
 cd /opt/aqsp
 /bin/bash scripts/bt_task.sh status
 /bin/bash scripts/bt_task.sh monitor
+/bin/bash scripts/bt_task.sh midday
 /bin/bash scripts/bt_task.sh daily
 ```
 
@@ -181,11 +183,13 @@ SERVERCHAN_SENDKEY=你的Server酱SendKey
 推荐拆成两条任务：
 
 1. 盘中推荐，工作日北京时间 `09:40-11:25`、`13:10-14:55` 每 10 分钟执行一次。
-2. 收盘复盘，工作日北京时间 `18:00` 执行一次。
+2. 午盘回看，工作日北京时间 `12:05` 执行一次。
+3. 收盘复盘，工作日北京时间 `18:00` 执行一次。
 
 这里的含义是：
 
 - `intraday_refresh.sh` 负责你白天看的“推荐”。
+- `midday_refresh.sh` 负责中午固定回看上午变化，本质仍是盘中观察，不写正式收盘 ledger。
 - `server_sync_and_run.sh` 默认跑 `daily_pipeline.sh`，里面已经包含收盘复盘、虚拟盘同步、Dashboard 刷新。
 
 直接执行：
@@ -194,9 +198,10 @@ SERVERCHAN_SENDKEY=你的Server酱SendKey
 bash /opt/aqsp/scripts/install_server_cron.sh
 ```
 
-这条脚本会自动安装并去重这 4 类任务：
+这条脚本会自动安装并去重这 5 类任务：
 
 - 北京时间 `09:40-11:59` 每 10 分钟跑一次盘中推荐
+- 北京时间 `12:05` 跑一次午盘回看
 - 北京时间 `13:00-14:59` 每 10 分钟跑一次盘中推荐
 - 北京时间 `18:00` 跑一次完整收盘复盘
 - 北京时间每 `15` 分钟跑一次服务器监控

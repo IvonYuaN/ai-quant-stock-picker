@@ -9,9 +9,13 @@ import pandas as pd
 from aqsp.core.types import RunMetadata
 from aqsp.models import PickResult
 from aqsp.presentation import (
+    describe_source_health,
+    describe_source_layers,
+    format_source_route,
     format_review_meta,
     format_symbol_name,
     format_watch_review_line,
+    humanize_runtime_snapshot_line,
     normalize_research_tone,
     review_priority_label,
 )
@@ -117,7 +121,7 @@ def _format_final_decision_board(
 ) -> list[str]:
     if not picks:
         return []
-    lines = ["## 最终决策看板", ""]
+    lines = ["## 今日重点看板", ""]
     if portfolio_summary is not None:
         lines.append(f"- PM主裁决: {_safe_markdown_text(portfolio_summary.headline)}")
         if getattr(portfolio_summary, "regime_label", ""):
@@ -150,7 +154,7 @@ def _format_final_decision_board(
             )
         if getattr(portfolio_summary, "top_focus", ()):
             focus_label = (
-                "纸面重点复核"
+                "重点跟踪"
                 if getattr(portfolio_summary, "allocations", ())
                 else "观察重点"
             )
@@ -162,25 +166,25 @@ def _format_final_decision_board(
             )
         if getattr(portfolio_summary, "watchlist", ()):
             lines.append(
-                "- 观察池: "
+                "- 备选观察名单: "
                 + "、".join(
                     _safe_markdown_text(item) for item in portfolio_summary.watchlist
                 )
             )
         if getattr(portfolio_summary, "action_hotspots", ()):
             lines.append(
-                "- 裁决热点: "
+                "- 需要重点确认: "
                 + "；".join(
                     _safe_markdown_text(item)
                     for item in portfolio_summary.action_hotspots
                 )
             )
         if getattr(portfolio_summary, "execution_blockers", ()):
-            lines.append("- 纸面阻塞:")
+            lines.append("- 当前卡点:")
             for item in tuple(getattr(portfolio_summary, "execution_blockers", ()))[:3]:
                 lines.append(f"  - {_safe_markdown_text(item)}")
         if getattr(portfolio_summary, "watch_reviews", ()):
-            lines.append("- 观察复核:")
+            lines.append("- 观察名单下一步:")
             for item in tuple(getattr(portfolio_summary, "watch_reviews", ()))[:2]:
                 lines.append(
                     "  - "
@@ -230,10 +234,10 @@ def _format_final_decision_board(
         review_window = _candidate_review_window(pick)
         review_priority = _review_priority_label(_candidate_review_priority(pick))
         reason = _format_reason_list(pick.reasons[:2]) if pick.reasons else "无"
-        headline = f"- Top {idx}: {_safe_markdown_text(_display_name(pick))} | {label}"
+        headline = f"- 重点 {idx}: {_safe_markdown_text(_display_name(pick))} | {label}"
         if status:
             headline += f" | {_safe_markdown_text(status)}"
-        headline += f" | 评分 {pick.score} | PM {action_label}"
+        headline += f" | 评分 {pick.score} | 处理 {action_label}"
         lines.append(headline)
         lines.append(f"  参考: {reason}")
         if blocker:
@@ -265,8 +269,8 @@ def _format_portfolio_decision(decision: Any) -> str:
     ):
         return ""
     lines = [
-        "### Portfolio Manager",
-        f"- PM纸面裁决: {_resolve_portfolio_action_label(action)}",
+        "### 排序调整",
+        f"- 今日处理: {_resolve_portfolio_action_label(action)}",
         f"- 分数调整: {delta:+.1f}",
     ]
     if reasons:
@@ -276,7 +280,7 @@ def _format_portfolio_decision(decision: Any) -> str:
 
 def _format_debate_result(result: Any) -> str:
     lines = []
-    lines.append("### 多Agent辩论")
+    lines.append("### 多视角讨论")
     lines.append(f"- 最终共识: {result.final_consensus}")
     lines.append(f"- 辩论倾向: {result.recommended_adjustment}（附件观点，不覆盖 runtime 打分）")
     if float(getattr(result, "adjusted_score", 0.0) or 0.0) > 0:
@@ -332,7 +336,7 @@ def to_markdown(
         lines.extend(_metadata_lines(metadata))
     if not picks:
         lines.append("无符合条件的候选。")
-        return "\n".join(lines)
+        return normalize_research_tone("\n".join(lines))
 
     debate_map = {r.symbol: r for r in debate_results} if debate_results else {}
     decision_map = (
@@ -391,52 +395,50 @@ def to_markdown(
                 lines.append("")
 
     lines.append("> 仅供研究，不构成投资建议。")
-    return "\n".join(lines)
+    return normalize_research_tone("\n".join(lines))
 
 
 def _metadata_lines(metadata: RunMetadata) -> list[str]:
-    actual = metadata.actual_source or "unknown"
-    source_text = (
-        actual
-        if metadata.requested_source == actual
-        else f"{metadata.requested_source} -> {actual}"
+    source_text = format_source_route(
+        metadata.requested_source,
+        metadata.actual_source,
     )
     return [
-        "## 运行参数",
-        f"- 数据源: {source_text}",
-        (
-            "- 数据层级: "
-            f"fresh={metadata.source_freshness_tier or 'unknown'} / "
-            f"cover={metadata.source_coverage_tier or 'unknown'} / "
-            f"local={metadata.source_local_status or 'unknown'}"
+        "## 数据与规则",
+        f"- 数据来源: {source_text}",
+        "- 数据完整度: "
+        + describe_source_layers(
+            metadata.source_freshness_tier,
+            metadata.source_coverage_tier,
+            metadata.source_local_status,
         ),
         (
             "- 数据时效: "
-            f"latest={metadata.data_latest_trade_date or 'unknown'} / "
-            f"lag={metadata.data_lag_days}d"
+            f"最新交易日 {metadata.data_latest_trade_date or '未记录'} / "
+            f"延迟 {metadata.data_lag_days} 天"
+        ),
+        "- 数据状态: "
+        + describe_source_health(
+            metadata.source_health_label,
+            metadata.source_health_message,
         ),
         (
-            "- 数据健康: "
-            f"{metadata.source_health_label or 'unknown'}"
-            + (
-                f" / {metadata.source_health_message}"
-                if metadata.source_health_message
-                else ""
-            )
-        ),
-        (
-            "- 候选池: "
+            "- 扫描范围: "
             f"显式 {metadata.explicit_symbol_count} / "
             f"解析 {metadata.resolved_symbol_count} / "
             f"取数 {metadata.fetched_frame_count} / "
             f"筛选前 {metadata.screened_count} / "
             f"最终 {metadata.final_count}"
         ),
-        f"- max_universe: {metadata.max_universe}",
-        f"- 价格边界: {metadata.min_price} - {metadata.max_price}",
+        f"- 最大扫描范围: {metadata.max_universe}",
+        f"- 价格范围: {metadata.min_price} - {metadata.max_price}",
         f"- 20日均成交额下限: {metadata.min_avg_amount:.0f}",
-        f"- 在线观察因子: {'on' if metadata.online_factors_enabled else 'off'}",
-        f"- thresholds.version: {metadata.thresholds_version}",
-        f"- regime: {metadata.regime or 'unknown'}",
+        f"- 盘中增强: {'已开启' if metadata.online_factors_enabled else '未开启'}",
+        "- " + humanize_runtime_snapshot_line(
+            f"thresholds.version: {metadata.thresholds_version}"
+        ),
+        "- " + humanize_runtime_snapshot_line(
+            f"市场标签: {metadata.regime or 'unknown'}"
+        ),
         "",
     ]

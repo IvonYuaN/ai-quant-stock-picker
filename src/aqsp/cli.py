@@ -1159,7 +1159,7 @@ def _build_execution_summary_line(
     blockers = tuple(getattr(portfolio_summary, "execution_blockers", ()) or ())
     if watchlist:
         names = "、".join(watchlist[:2])
-        return f"👀 **今日无纸面复核对象**，转入观察池：{names}"
+        return f"👀 **今日无重点跟踪对象**，转入备选观察名单：{names}"
     if tradable:
         top = tradable[0]
         return (
@@ -1167,8 +1167,159 @@ def _build_execution_summary_line(
             "等待 PM 阻塞解除"
         )
     if blockers:
-        return "👀 **今日无纸面复核对象**，受纸面约束影响，暂仅观察。"
-    return "👀 **今日无纸面复核对象**，仅观察。等待更强信号。"
+        return "👀 **今日无重点跟踪对象**，受纸面约束影响，暂仅观察。"
+    return "👀 **今日无重点跟踪对象**，仅观察。等待更强信号。"
+
+
+def _resolve_audit_action(
+    pick: PickResult,
+    *,
+    allocation_symbols: set[str],
+) -> str:
+    if pick.symbol in allocation_symbols:
+        return "BUY"
+    return "HOLD"
+
+
+def _build_execution_preview(
+    pick: PickResult,
+    *,
+    frame: pd.DataFrame,
+    action: str,
+) -> dict[str, Any]:
+    if action != "BUY" or frame.empty:
+        return {}
+
+    recent_frame = frame.tail(20).copy()
+    if "volume" not in recent_frame.columns or "close" not in recent_frame.columns:
+        return {}
+
+    avg_daily_volume = float(recent_frame["volume"].fillna(0).mean() or 0.0)
+    estimated_price = float(pick.ideal_buy or pick.close or 0.0)
+    if avg_daily_volume <= 0 or estimated_price <= 0:
+        return {}
+
+    from aqsp.execution.executor import ExecutionCoordinator
+
+    coordinator = ExecutionCoordinator()
+    plan = coordinator.plan_execution(
+        symbol=pick.symbol,
+        target_shares=100,
+        avg_daily_volume=avg_daily_volume,
+        estimated_price=estimated_price,
+        is_sell=False,
+    )
+    return {
+        "board_lot_shares": 100,
+        "estimated_amount": round(estimated_price * 100, 2),
+        "estimated_total_cost": round(plan.estimated_total_cost, 4),
+        "estimated_cost_rate_pct": round(plan.estimated_cost_rate, 4),
+        "twap_order_count": len(plan.twap_plan.orders),
+        "plan_valid": bool(plan.is_valid),
+        "validation_errors": list(plan.validation_errors),
+    }
+
+
+def _log_run_decisions(
+    *,
+    picks: list[PickResult],
+    frames: dict[str, pd.DataFrame],
+    debate_results: list[DebateResult],
+    portfolio_summary: Any | None,
+    circuit_breaker_triggered: bool,
+    regime: str,
+    run_metadata: RunMetadata,
+) -> None:
+    if not picks:
+        return
+
+    from aqsp.audit.trade_logger import TradeDecisionLog, TradeLogger
+
+    allocation_symbols = {
+        str(item.symbol)
+        for item in tuple(getattr(portfolio_summary, "allocations", ()) or ())
+    }
+    blocker_map = _candidate_blocker_map(portfolio_summary)
+    review_map = _candidate_review_map(portfolio_summary)
+    debate_by_symbol = {result.symbol: result for result in debate_results}
+    trade_logger = TradeLogger(log_dir=os.getenv("AQSP_TRADE_LOG_DIR", "logs/trades"))
+    timestamp = now_shanghai()
+
+    for pick in picks:
+        action = _resolve_audit_action(
+            pick,
+            allocation_symbols=allocation_symbols,
+        )
+        review_meta = review_map.get(pick.symbol, {})
+        blocker = blocker_map.get(pick.symbol, "")
+        debate = debate_by_symbol.get(pick.symbol)
+        execution_preview = _build_execution_preview(
+            pick,
+            frame=frames.get(pick.symbol, pd.DataFrame()),
+            action=action,
+        )
+        reason_parts = [
+            f"PM裁决 {str(pick.metrics.get('portfolio_action', '') or 'keep')}",
+            f"评级 {pick.rating}",
+        ]
+        candidate_status = str(pick.metrics.get("candidate_status", "") or "").strip()
+        if candidate_status:
+            reason_parts.append(f"状态 {candidate_status}")
+        if blocker:
+            reason_parts.append(f"阻塞 {blocker}")
+
+        context: dict[str, Any] = {
+            "thresholds_version": run_metadata.thresholds_version,
+            "signal_date": pick.date,
+            "requested_source": run_metadata.requested_source,
+            "actual_source": run_metadata.actual_source,
+            "source_health_label": run_metadata.source_health_label,
+            "source_health_message": run_metadata.source_health_message,
+            "data_latest_trade_date": run_metadata.data_latest_trade_date,
+            "data_lag_days": run_metadata.data_lag_days,
+            "portfolio_action": str(pick.metrics.get("portfolio_action", "") or "keep"),
+            "candidate_status": candidate_status,
+            "candidate_blocker": blocker,
+            "candidate_next_step": str(review_meta.get("next_step", "") or ""),
+            "candidate_review_window": str(review_meta.get("review_window", "") or ""),
+            "candidate_review_priority": str(review_meta.get("priority", "") or ""),
+            "intended_entry": pick.entry_type,
+            "ideal_buy": pick.ideal_buy,
+            "stop_loss": pick.stop_loss,
+            "take_profit": pick.take_profit,
+            "paper_position": pick.position,
+            "run_task_id": run_metadata.task_id,
+        }
+        if execution_preview:
+            context["execution_preview"] = execution_preview
+        if debate is not None:
+            context["debate_consensus"] = debate.final_consensus
+            context["debate_adjustment"] = debate.recommended_adjustment
+            context["debate_disagreement_score"] = debate.disagreement_score
+
+        trade_logger.log_decision(
+            TradeDecisionLog(
+                timestamp=timestamp,
+                symbol=pick.symbol,
+                name=pick.name,
+                action=action,
+                score=float(pick.score),
+                strategies=list(pick.strategies),
+                debate_summary=(
+                    str(debate.final_consensus)
+                    if debate is not None
+                    else "no_debate_attached"
+                ),
+                risk_check_passed=(
+                    action == "BUY"
+                    and not circuit_breaker_triggered
+                    and not blocker
+                ),
+                regime=regime or "unknown",
+                reason="；".join(reason_parts),
+                context=context,
+            )
+        )
 
 
 def _candidate_blocker_map(portfolio_summary: Any | None) -> dict[str, str]:
@@ -2580,6 +2731,16 @@ def run_scheduled(args: argparse.Namespace) -> int:
             portfolio_summary=portfolio_summary,
         )
 
+    _log_run_decisions(
+        picks=picks,
+        frames=screen_frames,
+        debate_results=debate_results,
+        portfolio_summary=portfolio_summary,
+        circuit_breaker_triggered=status.triggered,
+        regime=regime,
+        run_metadata=run_metadata,
+    )
+
     table = to_dataframe(picks)
     markdown = to_markdown(
         picks,
@@ -3565,6 +3726,10 @@ def run_discover(args: argparse.Namespace) -> int:
                 "confidence": p.confidence,
                 "first_seen": p.first_seen,
                 "last_seen": p.last_seen,
+                "status": "research_candidate",
+                "proposal_only": True,
+                "applied": False,
+                "uses_forward_returns": True,
             }
             for p in patterns
         ]

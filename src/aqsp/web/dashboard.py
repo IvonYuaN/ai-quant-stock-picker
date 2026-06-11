@@ -1477,7 +1477,7 @@ def _research_prereq_action_line(summary: ResearchSummary) -> str:
 def _research_radar_card(summary: ResearchSummary | None) -> _ResearchRadarCard:
     if summary is None:
         return _ResearchRadarCard(
-            title="研究吸收未更新",
+            title="研究进展未更新",
             metrics=(
                 ("研究发现", "-"),
                 ("已吸收", "-"),
@@ -1486,7 +1486,7 @@ def _research_radar_card(summary: ResearchSummary | None) -> _ResearchRadarCard:
             ),
             lines=(
                 "当前只展示已落盘主链结果；研究队列缺失不影响当前主链评分。",
-                "下一步: 先补齐研究吸收配置，再决定是否进入 report-only 或门控验证。",
+                "下一步: 先补齐研究配置，再决定是否只放在报告里或继续验证。",
             ),
         )
 
@@ -1530,7 +1530,7 @@ def _research_radar_card(summary: ResearchSummary | None) -> _ResearchRadarCard:
         ),
         lines=_unique_lines(
             (
-                "边界: 研究吸收不会直接入分；只有通过验证和门控后才可能影响运行链。",
+                "边界: 研究结论不会直接改写评分；只有通过验证后才可能影响运行链。",
                 f"已吸收主题: {topic_names}",
                 pipeline_line,
                 action_line,
@@ -2109,7 +2109,7 @@ def _classify_candidate_queues(
             blocked.append(card)
             continue
         if (
-            card.rank_label in {"首选", "次选", "备选"}
+            card.rank_label in {"第一顺位", "第二顺位", "后续顺位"}
             or card.action_label == "上调优先级"
         ):
             recommend.append(card)
@@ -2956,6 +2956,11 @@ def _sanitize_day_replay_line(line: str) -> str:
         flags=re.IGNORECASE,
     )
     replacements = (
+        ("重点跟踪线索", "复核线索"),
+        ("跟踪优先级", "复核顺位"),
+        ("重点跟踪名单", "复核名单"),
+        ("重点跟踪对象", "复核对象"),
+        ("今日重点名单", "当日复核名单"),
         ("纸面复核优先级", "复核顺位"),
         ("执行顺位", "复核顺位"),
         ("执行顺序", "复核顺序"),
@@ -3047,7 +3052,7 @@ def _day_replay_digest_lines(
     archive = _join_display_parts(
         "🗂 全日覆盖",
         _report_archive_status(task_view),
-        sanitize_archive_text(overview.archive_summary),
+        _safe_archive_line(overview.archive_summary),
     )
     return _unique_lines((conclusion, workflow, next_step, archive))
 
@@ -3184,9 +3189,9 @@ def _render_decision_queues(task_view) -> None:
         else "当前没有进入优先复核的候选，先看观察与阻塞队列。"
     )
     watch_summary = (
-        f"观察池 {len(watch_cards)} 只，优先跟踪节奏和确认条件。"
+        f"备选观察名单 {len(watch_cards)} 只，优先跟踪节奏和确认条件。"
         if watch_cards
-        else "当前观察池较轻，复核重点转向推荐或阻塞处理。"
+        else "当前备选观察名单较轻，重点转向推荐或阻塞处理。"
     )
     blocked_summary = (
         f"阻塞 {len(blocked_cards)} 只，先核对最上面的研究卡点。"
@@ -3853,7 +3858,7 @@ def _home_brief_cards(
         focus_lines = _unique_lines(
             (
                 overview.focus_headline or overview.top_headline or task_view.headline,
-                "阅读提示: 观察池和任务摘要优先，不补生成纸面对象。",
+                "阅读提示: 先看备选观察名单和任务摘要，不为了凑数新增纸面对象。",
             )
         )
 
@@ -4005,7 +4010,7 @@ def _home_evidence_entry_lines(
     archive_line = _join_display_parts(
         "归档",
         _report_archive_status(task_view),
-        sanitize_archive_text(overview.archive_summary),
+        _safe_archive_line(overview.archive_summary),
         separator=" · ",
     )
     return (
@@ -5291,10 +5296,13 @@ def _research_path_paper_step(
 
 def _sanitize_research_path_line(line: str) -> str:
     clean = sanitize_archive_text(re.sub(r"\*\*(.*?)\*\*", r"\1", line).strip())
-    clean = clean.replace("无可执行标的", "无纸面复核对象")
-    clean = clean.replace("可执行标的", "纸面复核对象")
-    clean = clean.replace("可执行主链", "纸面主链复核")
-    clean = clean.replace("可执行", "纸面复核")
+    clean = clean.replace("无可执行标的", "当时未形成复核对象")
+    clean = clean.replace("可执行标的", "历史复核对象")
+    clean = clean.replace("可执行主链", "历史主链复核")
+    clean = clean.replace("可执行", "历史复核")
+    clean = clean.replace("重点跟踪对象", "历史复核对象")
+    clean = clean.replace("重点跟踪名单", "历史复核名单")
+    clean = clean.replace("跟踪优先级", "历史复核顺位")
     return clean
 
 
@@ -6576,7 +6584,7 @@ def _render_candidate_review_snapshot(
         )
     elif compact_mode:
         _render_cockpit_card(
-            kicker="纸面复核线索",
+            kicker="复核线索",
             title=_candidate_action_plan_title(selected_card),
             lines=next_step_lines,
             tone="pressure" if has_blocker else "archive",
@@ -7664,7 +7672,7 @@ def _raw_report_boundary_lines(task_view) -> tuple[str, ...]:
     return (
         f"历史原文: {task_label} / {selected_date}",
         "以下内容只用于回看当时研究语境，不是今日动作、不是交易指令。",
-        "原文中的行动词已在展示层中性化为纸面复核口径，原始文件未被改写。",
+        "原文中的行动词已在展示层中性化为研究口径，原始文件未被改写。",
     )
 
 

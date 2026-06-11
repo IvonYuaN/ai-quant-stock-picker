@@ -23,9 +23,14 @@ from aqsp.data.source_health import (
     read_source_health,
 )
 from aqsp.presentation import (
+    describe_source_health as present_source_health,
+    describe_source_layers,
+    format_source_route,
     format_review_meta,
     format_watch_review_line,
+    normalize_research_tone,
     review_priority_label,
+    source_health_label,
 )
 from aqsp.ratings import is_tradable_rating, portfolio_action_label, rating_label
 from aqsp.research.summary import (
@@ -305,13 +310,13 @@ def _lifecycle_overview_panel(candidates: list[dict[str, str]]) -> str:
             )
 
     if actionable:
-        headline = "纸面复核主链"
+        headline = "今日重点名单"
         headline_detail = "、".join(actionable[:3])
     elif review_items:
         headline = "观察复核"
         headline_detail = review_items[0]
     elif watchlist:
-        headline = "候选观察池"
+        headline = "备选观察名单"
         headline_detail = "、".join(watchlist[:3])
     else:
         headline = "暂无主链"
@@ -332,7 +337,7 @@ def _lifecycle_overview_panel(candidates: list[dict[str, str]]) -> str:
         (
             "候选分层",
             f"纸面复核 {len(actionable)} / 观察 {len(watchlist)}",
-            "纸面复核与观察候选已按当前主链输出分层。",
+            "重点跟踪与继续观察对象已按当前主链输出分层。",
         ),
         (
             "当前阻塞",
@@ -344,6 +349,14 @@ def _lifecycle_overview_panel(candidates: list[dict[str, str]]) -> str:
             action_line,
             review_items[1] if len(review_items) > 1 else "",
         ),
+    ]
+    summary_cards = [
+        (
+            normalize_research_tone(label),
+            normalize_research_tone(value),
+            normalize_research_tone(detail),
+        )
+        for label, value, detail in summary_cards
     ]
 
     card_html = "".join(
@@ -434,10 +447,10 @@ def _candidate_cards(
                 adj, "neutral"
             )
             adj_text = {
-                "raise": "建议上调",
-                "lower": "建议下调",
-                "keep": "维持原评级",
-            }.get(adj, "维持原评级")
+                "raise": "辩论倾向上调",
+                "lower": "辩论倾向下调",
+                "keep": "辩论倾向维持",
+            }.get(adj, "辩论倾向维持")
             adjustment_badge = (
                 f"<span class='adjustment-badge {adj_class}'>{adj_text}</span>"
             )
@@ -510,9 +523,11 @@ def _debate_modals(debate_map: dict[str, dict[str, Any]]) -> str:
         name = html.escape(debate.get("name", symbol))
         consensus = html.escape(debate.get("final_consensus", ""))
         adjustment = debate.get("recommended_adjustment", "keep")
-        adj_text = {"raise": "建议上调", "lower": "建议下调", "keep": "维持原评级"}.get(
-            adjustment, "维持原评级"
-        )
+        adj_text = {
+            "raise": "辩论倾向上调",
+            "lower": "辩论倾向下调",
+            "keep": "辩论倾向维持",
+        }.get(adjustment, "辩论倾向维持")
         adj_class = {"raise": "bull", "lower": "bear", "keep": "neutral"}.get(
             adjustment, "neutral"
         )
@@ -698,7 +713,7 @@ def _recent_rows(rows: list[dict[str, Any]]) -> str:
 def _paper_rows(rows: list[dict[str, Any]]) -> str:
     recent = list(reversed(rows[-10:]))
     if not recent:
-        return "<tr><td colspan='6'>暂无虚拟盘记录</td></tr>"
+        return "<tr><td colspan='6'>暂无纸面记录</td></tr>"
     out = []
     for row in recent:
         reason = (
@@ -760,44 +775,46 @@ def _source_runtime_panel(stats: LedgerStats) -> str:
     if not stats.requested_source and not stats.actual_source:
         return """
         <section class="panel source-panel">
-          <h2>数据源状态</h2>
-          <p class="muted">暂无最近一次运行的源状态记录。</p>
+          <h2>数据情况</h2>
+          <p class="muted">暂无最近一次运行的数据状态记录。</p>
         </section>
         """
 
-    source_route = stats.actual_source or stats.requested_source or "unknown"
-    if (
-        stats.requested_source
-        and stats.actual_source
-        and stats.requested_source != stats.actual_source
-    ):
-        source_route = f"{stats.requested_source} → {stats.actual_source}"
-    label = html.escape(stats.source_health_label or "unknown")
+    source_route = format_source_route(stats.requested_source, stats.actual_source)
+    label = html.escape(source_health_label(stats.source_health_label or "unknown"))
     tone = {
         "healthy": "healthy",
         "fallback": "fallback",
         "degraded": "degraded",
         "cold_start": "cold",
     }.get(stats.source_health_label, "neutral")
-    message = html.escape(stats.source_health_message or "暂无说明")
-    freshness = html.escape(stats.source_freshness_tier or "unknown")
-    coverage = html.escape(stats.source_coverage_tier or "unknown")
-    fallback_text = "yes" if stats.fallback_used else "no"
+    message = html.escape(
+        present_source_health(
+            stats.source_health_label or "unknown",
+            stats.source_health_message or "",
+        )
+    )
+    layers = html.escape(
+        describe_source_layers(
+            stats.source_freshness_tier or "unknown",
+            stats.source_coverage_tier or "unknown",
+        )
+    )
+    fallback_text = "是" if stats.fallback_used else "否"
     return f"""
     <section class="panel source-panel">
       <div class="source-head">
         <div>
-          <h2>数据源状态</h2>
-          <p class="muted">最近一次运行的数据路径与健康判断。</p>
+          <h2>数据情况</h2>
+          <p class="muted">最近一次运行的数据来源、完整度和备用源情况。</p>
         </div>
         <span class="state-pill {tone}">{label}</span>
       </div>
       <dl class="source-grid">
-        <dt>路径</dt><dd>{html.escape(source_route)}</dd>
-        <dt>通知</dt><dd>{html.escape(stats.notify_level or "info")}</dd>
-        <dt>fresh</dt><dd>{freshness}</dd>
-        <dt>cover</dt><dd>{coverage}</dd>
-        <dt>fallback</dt><dd>{fallback_text}</dd>
+        <dt>数据来源</dt><dd>{html.escape(source_route)}</dd>
+        <dt>通知级别</dt><dd>{html.escape(stats.notify_level or "info")}</dd>
+        <dt>数据完整度</dt><dd>{layers}</dd>
+        <dt>备用源</dt><dd>{fallback_text}</dd>
       </dl>
       <p class="source-message">{message}</p>
     </section>
@@ -1192,9 +1209,9 @@ def render_source_health_panel(path: str | Path | None = None) -> str:
 def _research_panel(summary: ResearchSummary | None) -> str:
     if summary is None:
         return _fold_panel(
-            "研究吸收",
-            "开源研究队列与当前系统吸收状态。",
-            "<p class='muted'>研究吸收未更新，当前页面仅展示运行主链结果。</p>",
+            "研究进展",
+            "补充研究接入情况与后续待补项。",
+            "<p class='muted'>研究进展未更新，当前页面仅展示本次运行结果。</p>",
         )
     pipeline_lines = []
     for item in summary.pipeline_summaries[:4]:
@@ -1226,8 +1243,8 @@ def _research_panel(summary: ResearchSummary | None) -> str:
       <dl class="source-grid">
         <dt>研究发现</dt><dd>{html.escape(research_findings_display(summary))}</dd>
         <dt>已吸收</dt><dd>{len(summary.absorbed_families)}</dd>
-        <dt>已实现</dt><dd>{summary.implemented_family_count}</dd>
-        <dt>report-only</dt><dd>{summary.report_only_family_count}</dd>
+        <dt>已接入</dt><dd>{summary.implemented_family_count}</dd>
+        <dt>只进报告</dt><dd>{summary.report_only_family_count}</dd>
         <dt>门控中</dt><dd>{summary.gated_family_count}</dd>
         <dt>主题</dt><dd>{html.escape(family_names)}</dd>
       </dl>
@@ -1241,8 +1258,8 @@ def _research_panel(summary: ResearchSummary | None) -> str:
       </table>
     """
     return _fold_panel(
-        "研究吸收",
-        "开源研究队列与当前系统吸收状态。",
+        "研究进展",
+        "补充研究接入情况与后续待补项。",
         body_html,
         badge=research_findings_badge(summary),
     )
@@ -2749,11 +2766,11 @@ def render_dashboard(
     <div class="stat"><b>{stats.not_executable}</b><span>不可成交样本</span></div>
     <div class="stat"><b>{_fmt_pct(stats.win_rate)}</b><span>已验证胜率</span></div>
     <div class="stat"><b>{_fmt_num(stats.avg_return_pct)}</b><span>平均收益 pct</span></div>
-    <div class="stat"><b>{paper.open_positions}</b><span>虚拟持仓</span></div>
-    <div class="stat"><b>{paper.closed}</b><span>虚拟平仓</span></div>
-    <div class="stat"><b>{paper.not_executable}</b><span>虚拟不可成交</span></div>
+    <div class="stat"><b>{paper.open_positions}</b><span>纸面持有跟踪</span></div>
+    <div class="stat"><b>{paper.closed}</b><span>纸面退出记录</span></div>
+    <div class="stat"><b>{paper.not_executable}</b><span>纸面不可成交</span></div>
     <div class="stat"><b>{paper.pending_entry}</b><span>等待入场数据</span></div>
-    <div class="stat"><b>{_fmt_num(paper.avg_return_pct)}</b><span>虚拟平均收益 pct</span></div>
+    <div class="stat"><b>{_fmt_num(paper.avg_return_pct)}</b><span>纸面平均收益 pct</span></div>
   </section>
   {_source_runtime_panel(stats)}
   {render_source_health_panel(source_health_path)}
@@ -2771,7 +2788,7 @@ def render_dashboard(
     </table>
   </section>
   <section class="panel">
-    <h2>虚拟盘</h2>
+    <h2>纸面记录</h2>
     <table>
       <thead><tr><th>代码</th><th>状态</th><th>入场日</th><th>入场价</th><th>收益 pct</th><th>原因</th></tr></thead>
       <tbody>{_paper_rows(paper_rows or [])}</tbody>

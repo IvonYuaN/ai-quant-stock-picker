@@ -38,15 +38,32 @@ def test_install_server_cron_script_installs_standard_jobs() -> None:
     )
 
     assert "AQSP_ENABLE_INTRADAY_CRON" in script
+    assert "AQSP_ENABLE_MIDDAY_CRON" in script
     assert "AQSP_ENABLE_DAILY_CRON" in script
     assert "AQSP_ENABLE_MONITOR_CRON" in script
     assert "*/10 9-11 * * 1-5" in script
+    assert "5 12 * * 1-5" in script
     assert "*/10 13-14 * * 1-5" in script
     assert "0 18 * * 1-5" in script
     assert "*/15 * * * 1-5" in script
     assert "bt_task.sh intraday" in script
+    assert "bt_task.sh midday" in script
     assert "bt_task.sh daily" in script
     assert "bt_task.sh monitor" in script
+
+
+def test_midday_refresh_reuses_intraday_chain_without_formal_ledger_pollution() -> None:
+    script = (PROJECT_ROOT / "scripts" / "midday_refresh.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert "午盘回看" in script
+    assert "AQSP_MIDDAY_REQUIRE_WINDOW" in script
+    assert "1135" in script
+    assert "1230" in script
+    assert "AQSP_INTRADAY_REQUIRE_MARKET_HOURS=false" in script
+    assert 'AQSP_RUN_TASK_ID="${AQSP_RUN_TASK_ID:-intraday}"' in script
+    assert "scripts/intraday_refresh.sh" in script
 
 
 def test_bt_task_script_exposes_panel_safe_actions() -> None:
@@ -55,9 +72,10 @@ def test_bt_task_script_exposes_panel_safe_actions() -> None:
     assert "宝塔面板计划任务统一入口" in script
     assert 'ACTION="${1:-}"' in script
     assert 'if [ -z "$ACTION" ]' in script
-    assert "daily|intraday|coldstart|monitor|status" in script
+    assert "daily|intraday|midday|coldstart|monitor|status" in script
     assert "AQSP_RUNNER_SCRIPT=scripts/daily_pipeline.sh" in script
     assert "AQSP_RUNNER_SCRIPT=scripts/intraday_refresh.sh" in script
+    assert "AQSP_RUNNER_SCRIPT=scripts/midday_refresh.sh" in script
     assert "scripts/server_sync_and_run.sh" in script
     assert "scripts/coldstart_daily.sh" in script
     assert "scripts/server_monitor.sh" in script

@@ -20,9 +20,11 @@ import json
 import os
 import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import timezone
 from pathlib import Path
 from typing import Any, Callable, Optional
+
+from aqsp.core.time import now_shanghai
 
 # 默认护栏
 _DEFAULT_TIMEOUT_S = 30.0
@@ -198,7 +200,7 @@ def llm_call_or_fallback(
     """
     started = time.monotonic()
     base_record = {
-        "ts": datetime.now(timezone.utc).isoformat(),
+        "ts": now_shanghai().astimezone(timezone.utc).isoformat(),
         "caller": caller,
         "model": model or "",
         "prompt_chars": len(prompt),

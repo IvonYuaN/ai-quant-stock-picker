@@ -115,6 +115,91 @@ def test_paper_opens_trade_from_next_open(tmp_path: Path) -> None:
     assert rows[0]["entry_price"] == 101.0
 
 
+def test_paper_carries_candidate_context_into_open_and_pending_rows(tmp_path: Path) -> None:
+    signals = tmp_path / "signals.jsonl"
+    trades = tmp_path / "paper.jsonl"
+    _write_signal(
+        signals,
+        portfolio_action="downgrade",
+        candidate_status="观察阻塞",
+        candidate_blocker="板块集中度过高",
+        candidate_next_step="等待板块回落后再评估",
+        candidate_review_window="午后",
+        candidate_review_priority="medium",
+    )
+
+    summary = sync_paper_trades(
+        signal_ledger=signals,
+        paper_ledger=trades,
+        frames={"600519": _frame()},
+    )
+
+    assert summary.opened == 1
+    open_row = read_paper_trades(trades)[0]
+    assert open_row["portfolio_action"] == "downgrade"
+    assert open_row["candidate_status"] == "观察阻塞"
+    assert open_row["candidate_blocker"] == "板块集中度过高"
+    assert open_row["candidate_next_step"] == "等待板块回落后再评估"
+    assert open_row["candidate_review_window"] == "午后"
+    assert open_row["candidate_review_priority"] == "medium"
+
+    pending_signals = tmp_path / "pending-signals.jsonl"
+    pending_trades = tmp_path / "pending-paper.jsonl"
+    _write_signal(
+        pending_signals,
+        signal_date="2026-05-29",
+        portfolio_action="promote",
+        candidate_status="延续上升",
+        candidate_next_step="等待开盘承接确认",
+        candidate_review_window="开盘前后",
+        candidate_review_priority="high",
+    )
+
+    pending_summary = sync_paper_trades(
+        signal_ledger=pending_signals,
+        paper_ledger=pending_trades,
+        frames={"600519": _frame()},
+    )
+
+    assert pending_summary.pending_entry == 1
+    pending_row = read_paper_trades(pending_trades)[0]
+    assert pending_row["status"] == "pending_entry"
+    assert pending_row["portfolio_action"] == "promote"
+    assert pending_row["candidate_status"] == "延续上升"
+    assert pending_row["candidate_next_step"] == "等待开盘承接确认"
+
+
+def test_paper_carries_candidate_context_into_not_executable_rows(tmp_path: Path) -> None:
+    signals = tmp_path / "signals.jsonl"
+    trades = tmp_path / "paper.jsonl"
+    _write_signal(
+        signals,
+        signal_close=100.0,
+        limit_up_pct=0.1,
+        portfolio_action="downgrade",
+        candidate_status="观察阻塞",
+        candidate_blocker="涨停无法追入",
+        candidate_next_step="等待开板后再评估",
+        candidate_review_window="次日开盘",
+        candidate_review_priority="high",
+    )
+    frame = _frame()
+    frame.loc[1, ["open", "high", "low", "close"]] = [110.0, 110.0, 110.0, 110.0]
+
+    summary = sync_paper_trades(
+        signal_ledger=signals,
+        paper_ledger=trades,
+        frames={"600519": frame},
+    )
+
+    assert summary.not_executable == 1
+    row = read_paper_trades(trades)[0]
+    assert row["status"] == "not_executable"
+    assert row["candidate_status"] == "观察阻塞"
+    assert row["candidate_blocker"] == "涨停无法追入"
+    assert row["candidate_next_step"] == "等待开板后再评估"
+
+
 def test_paper_marks_signal_pending_entry_when_next_open_missing(
     tmp_path: Path,
 ) -> None:
@@ -384,4 +469,4 @@ def test_paper_report_uses_order_safe_wording() -> None:
     assert "等待入场数据: 2" in report
     assert "avoid" not in report
     assert "虚拟买入" not in report
-    assert "无 open 虚拟持仓" in report
+    assert "无 open 纸面持有记录" in report
