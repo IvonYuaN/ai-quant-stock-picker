@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import signal
+import threading
 from collections.abc import Callable, Iterable, Sequence
-from concurrent.futures import ThreadPoolExecutor, TimeoutError
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -474,17 +477,48 @@ def _call_fetcher_with_timeout(
     *,
     timeout_seconds: float,
 ) -> pd.DataFrame:
+    if threading.current_thread() is threading.main_thread() and hasattr(
+        signal,
+        "SIGALRM",
+    ):
+        return _call_fetcher_with_signal_timeout(
+            fetch,
+            timeout_seconds=timeout_seconds,
+        )
     executor = ThreadPoolExecutor(max_workers=1)
     future = executor.submit(fetch)
     try:
         result = future.result(timeout=max(0.1, timeout_seconds))
-    except TimeoutError as exc:
+    except FutureTimeoutError as exc:
         future.cancel()
         executor.shutdown(wait=False, cancel_futures=True)
         raise TimeoutError(f"消息源超过 {timeout_seconds:.1f}s 未返回") from exc
     finally:
         if future.done():
             executor.shutdown(wait=False, cancel_futures=True)
+    if result is None:
+        return pd.DataFrame()
+    return result
+
+
+def _call_fetcher_with_signal_timeout(
+    fetch: Callable[[], pd.DataFrame],
+    *,
+    timeout_seconds: float,
+) -> pd.DataFrame:
+    timeout = max(0.1, float(timeout_seconds))
+
+    def _raise_timeout(_signum, _frame) -> None:
+        raise TimeoutError(f"消息源超过 {timeout_seconds:.1f}s 未返回")
+
+    previous_handler = signal.getsignal(signal.SIGALRM)
+    signal.signal(signal.SIGALRM, _raise_timeout)
+    signal.setitimer(signal.ITIMER_REAL, timeout)
+    try:
+        result = fetch()
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous_handler)
     if result is None:
         return pd.DataFrame()
     return result
