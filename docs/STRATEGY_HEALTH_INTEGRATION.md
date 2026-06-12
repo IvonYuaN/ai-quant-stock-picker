@@ -196,15 +196,16 @@ class BriefingGenerator:
 
 ```python
 from aqsp.audit.trade_logger import TradeLogger
+from aqsp.core.time import now_shanghai
 from aqsp.monitor.strategy_health import Trade
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 def collect_strategy_trades() -> dict[str, list[Trade]]:
     """从交易日志收集策略交易数据"""
     logger = TradeLogger()
 
     # 查询最近30天的交易
-    start_date = datetime.now() - timedelta(days=30)
+    start_date = now_shanghai() - timedelta(days=30)
     execution_logs = logger.query_executions(
         start_date=start_date,
         symbol=None,
