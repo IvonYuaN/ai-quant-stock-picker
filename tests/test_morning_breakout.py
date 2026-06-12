@@ -178,6 +178,13 @@ class TestFormatMorningSignals:
             ),
         ]
         result = format_morning_signals(signals)
-        assert "早盘打板策略推荐" in result
+        assert "早盘强势股观察" in result
         assert "600000" in result
         assert "测试股票" in result
+        assert "待复核候选" in result
+        assert "参考仓位" in result
+        assert "观察时点" in result
+        assert "策略推荐" not in result
+        assert "推荐 Top" not in result
+        assert "建议仓位" not in result
+        assert "入场时间" not in result

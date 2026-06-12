@@ -33,7 +33,9 @@ class EventSignal:
 
     symbol: str
     name: str
-    event_type: str  # "resume_trading" / "earnings_surge" / "sudden_breakout" / "policy_boost"
+    event_type: (
+        str  # "resume_trading" / "earnings_surge" / "sudden_breakout" / "policy_boost"
+    )
     score: float
     current_price: float
     entry_price: float
@@ -140,7 +142,7 @@ class EventDrivenStrategy(BaseStrategy):
             return 0.0
 
         # 最近是否有明显断层（停牌）
-        max_gap = float(date_diffs.iloc[-min(10, len(date_diffs)):].max())
+        max_gap = float(date_diffs.iloc[-min(10, len(date_diffs)) :].max())
         if max_gap < self.SUSPEND_GAP_DAYS:
             return 0.0  # 没有停牌迹象
 
@@ -266,7 +268,9 @@ class EventDrivenStrategy(BaseStrategy):
             signals.append(
                 EventSignal(
                     symbol=symbol,
-                    name=str(df_sorted["name"].iloc[-1]) if "name" in df_sorted.columns else symbol,
+                    name=str(df_sorted["name"].iloc[-1])
+                    if "name" in df_sorted.columns
+                    else symbol,
                     event_type=event_type,
                     score=round(best_score * 100, 1),
                     current_price=round(current_price, 2),
@@ -285,7 +289,9 @@ class EventDrivenStrategy(BaseStrategy):
         signals.sort(key=lambda x: x.score, reverse=True)
         return signals
 
-    def _calc_targets(self, event_type: str, current: float) -> tuple[float, float, float]:
+    def _calc_targets(
+        self, event_type: str, current: float
+    ) -> tuple[float, float, float]:
         if event_type == "resume_trading":
             # 复牌：波动大，宽止损
             return current, current * 0.93, current * 1.15
@@ -316,7 +322,9 @@ class EventDrivenStrategy(BaseStrategy):
             needs_data.append("停牌原因（重组/违规）需公告数据确认")
 
         elif event_type == "earnings_surge":
-            last_change = (float(df["close"].iloc[-1]) - float(df["close"].iloc[-2])) / float(df["close"].iloc[-2])
+            last_change = (
+                float(df["close"].iloc[-1]) - float(df["close"].iloc[-2])
+            ) / float(df["close"].iloc[-2])
             reasons.append(f"放巨量大涨{last_change:.1%}，脱离均线")
             reasons.append("疑似业绩超预期/重大利好")
             risks.append("可能是消息兑现，追高风险")
@@ -344,17 +352,23 @@ def format_event_signals(signals: List[EventSignal], top_n: int = 5) -> str:
     }
 
     lines: list[str] = []
-    lines.append("📰 事件驱动策略推荐")
+    lines.append("事件驱动观察")
     lines.append("=" * 50)
-    lines.append(f"发现 {len(signals)} 只事件异动股，推荐 Top {min(top_n, len(signals))}:")
+    lines.append(
+        f"发现 {len(signals)} 只待复核候选，展示前 {min(top_n, len(signals))} 只:"
+    )
     lines.append("")
 
     for i, signal in enumerate(signals[:top_n], 1):
         label = type_labels.get(signal.event_type, signal.event_type)
         lines.append(f"【{i}】{signal.symbol} {signal.name} - {label}")
         lines.append(f"   得分: {signal.score:.1f} | 置信度: {signal.confidence:.0%}")
-        lines.append(f"   现价: {signal.current_price:.2f} | 周期: {signal.holding_period}")
-        lines.append(f"   止损: {signal.stop_loss:.2f} | 目标: {signal.take_profit:.2f} | 仓位: {signal.position_pct:.0%}")
+        lines.append(
+            f"   现价: {signal.current_price:.2f} | 周期: {signal.holding_period}"
+        )
+        lines.append(
+            f"   止损: {signal.stop_loss:.2f} | 目标: {signal.take_profit:.2f} | 参考仓位: {signal.position_pct:.0%}"
+        )
         lines.append("   理由:")
         for r in signal.reasons:
             lines.append(f"     • {r}")

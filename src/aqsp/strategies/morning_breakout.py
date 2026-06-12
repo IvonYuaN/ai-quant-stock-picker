@@ -289,12 +289,14 @@ class MorningBreakoutStrategy(BaseStrategy):
 
 def format_morning_signals(signals: List[BreakoutSignal], top_n: int = 5) -> str:
     if not signals:
-        return "📊 早盘打板策略：未发现符合条件的股票"
+        return "早盘强势股观察：未发现符合条件的股票"
 
     report: list[str] = []
-    report.append("🔥 早盘打板策略推荐")
+    report.append("早盘强势股观察")
     report.append("=" * 50)
-    report.append(f"发现 {len(signals)} 只潜力股，推荐 Top {min(top_n, len(signals))}:")
+    report.append(
+        f"发现 {len(signals)} 只待复核候选，展示前 {min(top_n, len(signals))} 只:"
+    )
     report.append("")
 
     for i, signal in enumerate(signals[:top_n], 1):
@@ -305,8 +307,8 @@ def format_morning_signals(signals: List[BreakoutSignal], top_n: int = 5) -> str
         report.append(f"   目标: {signal.target_price:.2f}")
         report.append(f"   止损: {signal.stop_loss:.2f}")
         report.append(f"   置信度: {signal.confidence:.0%}")
-        report.append(f"   建议仓位: {signal.position_pct:.0%}")
-        report.append(f"   入场时间: {signal.entry_time}")
+        report.append(f"   参考仓位: {signal.position_pct:.0%}")
+        report.append(f"   观察时点: {signal.entry_time}")
         report.append("   看多理由:")
         for reason in signal.reasons:
             report.append(f"     • {reason}")
@@ -316,8 +318,8 @@ def format_morning_signals(signals: List[BreakoutSignal], top_n: int = 5) -> str
                 report.append(f"     • {risk}")
         report.append("")
 
-    report.append("⏰ 注意事项:")
-    report.append("  1. 打板策略风险较高，建议控制仓位")
+    report.append("注意事项:")
+    report.append("  1. 早盘急涨波动较高，只先做纸面观察")
     report.append("  2. 严格执行止损纪律")
     report.append("  3. 关注市场整体环境")
 

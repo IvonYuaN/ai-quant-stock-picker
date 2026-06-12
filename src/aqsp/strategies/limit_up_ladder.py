@@ -25,6 +25,7 @@ from aqsp.strategies.thresholds import Thresholds, load_thresholds
 @dataclass(frozen=True)
 class LimitUpSignal:
     """涨停板信号数据。"""
+
     symbol: str
     name: str
     board_count: int  # 连板数（1=首板, 2=二板, 3=三板...）
@@ -310,9 +311,7 @@ class LimitUpLadderStrategy(BaseStrategy):
 
         return penalty
 
-    def generate_signals(
-        self, data: Dict[str, pd.DataFrame]
-    ) -> List[LimitUpSignal]:
+    def generate_signals(self, data: Dict[str, pd.DataFrame]) -> List[LimitUpSignal]:
         """生成涨停板买入信号。"""
         signals: List[LimitUpSignal] = []
 
@@ -347,13 +346,17 @@ class LimitUpLadderStrategy(BaseStrategy):
             signals.append(
                 LimitUpSignal(
                     symbol=symbol,
-                    name=str(df_sorted["name"].iloc[-1]) if "name" in df_sorted.columns else symbol,
+                    name=str(df_sorted["name"].iloc[-1])
+                    if "name" in df_sorted.columns
+                    else symbol,
                     board_count=board_count,
                     limit_type=limit_type,
                     seal_strength=round(seal_strength, 2),
                     volume_ratio=round(volume_ratio, 2),
                     pre_market_strength=0.0,  # 需要实时数据接入
-                    next_day_open_prob=self._estimate_open_prob(board_count, seal_strength, volume_ratio),
+                    next_day_open_prob=self._estimate_open_prob(
+                        board_count, seal_strength, volume_ratio
+                    ),
                     entry_strategy=self._suggest_entry(board_count, seal_strength),
                     position_pct=round(position_pct, 2),
                     stop_loss_pct=round(stop_loss_pct, 3),
@@ -489,7 +492,7 @@ class LimitUpLadderStrategy(BaseStrategy):
             return "9:30 开盘强势"
         if board_count == 1:
             return "盘中回踩MA5"
-        return "尾盘观察买入"
+        return "尾盘观察"
 
 
 def format_limit_up_signals(signals: List[LimitUpSignal], top_n: int = 5) -> str:
@@ -498,18 +501,26 @@ def format_limit_up_signals(signals: List[LimitUpSignal], top_n: int = 5) -> str
         return "📊 涨停板梯度策略：今日未发现符合条件的涨停股"
 
     lines: list[str] = []
-    lines.append("🔥 涨停板梯度策略推荐")
+    lines.append("涨停板梯度观察")
     lines.append("=" * 50)
-    lines.append(f"发现 {len(signals)} 只涨停股，推荐 Top {min(top_n, len(signals))}:")
+    lines.append(
+        f"发现 {len(signals)} 只待复核涨停股，展示前 {min(top_n, len(signals))} 只:"
+    )
     lines.append("")
 
     for i, signal in enumerate(signals[:top_n], 1):
         lines.append(f"【{i}】{signal.symbol} {signal.name} - {signal.board_count}板")
-        lines.append(f"   板型: {signal.limit_type} (封单强度 {signal.seal_strength:.0%})")
+        lines.append(
+            f"   板型: {signal.limit_type} (封单强度 {signal.seal_strength:.0%})"
+        )
         lines.append(f"   量比: {signal.volume_ratio:.1f}x")
         lines.append(f"   次日高开概率: {signal.next_day_open_prob:.0%}")
-        lines.append(f"   建议: {signal.entry_strategy} | 仓位 {signal.position_pct:.0%}")
-        lines.append(f"   止损: -{signal.stop_loss_pct:.1%} | 目标: +{signal.target_pct:.1%}")
+        lines.append(
+            f"   观察方式: {signal.entry_strategy} | 参考仓位 {signal.position_pct:.0%}"
+        )
+        lines.append(
+            f"   止损: -{signal.stop_loss_pct:.1%} | 目标: +{signal.target_pct:.1%}"
+        )
         if signal.risk_signals:
             lines.append("   ⚠️ 风险:")
             for risk in signal.risk_signals:

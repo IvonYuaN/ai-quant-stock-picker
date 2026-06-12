@@ -54,7 +54,9 @@ class SectorSignal:
 
     sector_id: str
     sector_name: str
-    signal_type: str  # "leader_follow" / "second_line_catch_up" / "rotation_in" / "rotation_out"
+    signal_type: (
+        str  # "leader_follow" / "second_line_catch_up" / "rotation_in" / "rotation_out"
+    )
     target_stocks: list[str]
     confidence: float
     timeframe: str  # "1-3_days" / "3-7_days" / "1-2_weeks"
@@ -250,9 +252,7 @@ class SectorRotationStrategy(BaseStrategy):
 
         return metrics
 
-    def generate_signals(
-        self, data: Dict[str, pd.DataFrame]
-    ) -> List[SectorSignal]:
+    def generate_signals(self, data: Dict[str, pd.DataFrame]) -> List[SectorSignal]:
         """生成板块层面的投资信号。"""
         signals: List[SectorSignal] = []
         metrics = self.analyze_sectors(data)
@@ -597,22 +597,24 @@ def format_sector_signals(signals: List[SectorSignal], top_n: int = 5) -> str:
         return "📊 板块轮动策略：今日无板块层面信号"
 
     lines: list[str] = []
-    lines.append("🎯 板块轮动策略推荐")
+    lines.append("板块轮动观察")
     lines.append("=" * 50)
-    lines.append(f"发现 {len(signals)} 个板块信号，重点 Top {min(top_n, len(signals))}:")
+    lines.append(
+        f"发现 {len(signals)} 个板块信号，展示前 {min(top_n, len(signals))} 个:"
+    )
     lines.append("")
 
     type_labels = {
-        "leader_follow": "🚀 跟龙头",
-        "second_line_catch_up": "📈 追二线补涨",
-        "rotation_in": "🔥 新热点切入",
+        "leader_follow": "龙头带动",
+        "second_line_catch_up": "二线扩散",
+        "rotation_in": "新热点观察",
         "rotation_out": "⚠️ 退潮警示",
     }
 
     for i, signal in enumerate(signals[:top_n], 1):
         label = type_labels.get(signal.signal_type, signal.signal_type)
         lines.append(f"【{i}】{signal.sector_name} - {label}")
-        lines.append(f"   目标股票: {', '.join(signal.target_stocks[:3])}")
+        lines.append(f"   观察标的: {', '.join(signal.target_stocks[:3])}")
         lines.append(f"   置信度: {signal.confidence:.0%} | 周期: {signal.timeframe}")
         lines.append(
             f"   预期收益: {signal.expected_return:+.1%} | 风险等级: {signal.risk_level}"
@@ -626,9 +628,9 @@ def format_sector_signals(signals: List[SectorSignal], top_n: int = 5) -> str:
                 lines.append(f"     • {risk}")
         lines.append("")
 
-    lines.append("⚡ 操作纪律:")
-    lines.append("  1. 板块龙头分歧立刻撤退（不要恋战）")
+    lines.append("复核纪律:")
+    lines.append("  1. 板块龙头分歧时只保留观察")
     lines.append("  2. 板块涨停数减半 = 退潮信号")
-    lines.append("  3. 单板块持仓不超过 2 只（防共振崩盘）")
+    lines.append("  3. 单板块纸面跟踪不超过 2 只，避免同涨同跌")
 
     return "\n".join(lines)

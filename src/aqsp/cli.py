@@ -2633,7 +2633,9 @@ def run_scheduled(args: argparse.Namespace) -> int:
 
         if skipped_cooldown > 0:
             print(f"   ⏭️  {skipped_cooldown}只股票因冷却期跳过")
-        print("   📎 辩论结果已落附件；runtime评分与ledger score保持原样，非keep结论将接入PM调整优先级")
+        print(
+            "   📎 辩论结果已落附件；runtime评分与ledger score保持原样，非keep结论将接入PM调整优先级"
+        )
 
         with open(debate_file, "w", encoding="utf-8") as f:
             for data in existing_debates.values():
@@ -4076,7 +4078,7 @@ def run_morning_breakout(args: argparse.Namespace) -> int:
         format_morning_signals,
     )
 
-    print("🔥 运行早盘打板策略...")
+    print("运行早盘强势股观察...")
     strategy = MorningBreakoutStrategy()
 
     symbols = [s.strip() for s in args.symbols.split(",") if s.strip()]
@@ -4110,7 +4112,7 @@ def run_morning_breakout(args: argparse.Namespace) -> int:
         return 1
 
     print(f"数据获取完成，{len(frames)} 只股票可用")
-    print("分析打板信号...")
+    print("分析早盘强势股观察信号...")
 
     signals = strategy.analyze_pre_market(frames)
 

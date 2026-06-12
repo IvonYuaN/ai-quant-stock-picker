@@ -490,12 +490,15 @@ def test_format_closing_signals_with_signals():
     ]
 
     result = format_closing_signals(signals, top_n=2)
-    assert "尾盘溢价策略推荐" in result
+    assert "尾盘走强观察" in result
     assert "600000" in result
     assert "600001" in result
     assert "测试股票A" in result
     assert "测试股票B" in result
-    assert "操作建议" in result
+    assert "复核清单" in result
+    assert "策略推荐" not in result
+    assert "推荐 Top" not in result
+    assert "建议入场" not in result
 
 
 def test_closing_premium_evaluate_regime_filter():

@@ -54,7 +54,9 @@ class ClosingPremiumStrategy(BaseStrategy):
 
     name: str = "closing_premium"
 
-    def __init__(self, config: StrategyConfig | None = None, thresholds: Thresholds | None = None):
+    def __init__(
+        self, config: StrategyConfig | None = None, thresholds: Thresholds | None = None
+    ):
         self.thresholds = thresholds or load_thresholds()
         self.cfg = self.thresholds.closing_premium
         config = config or StrategyConfig(name="closing_premium")
@@ -456,9 +458,11 @@ def format_closing_signals(signals: List[PremiumSignal], top_n: int = 5) -> str:
         return "📊 尾盘溢价策略：未发现符合条件的股票"
 
     report = []
-    report.append("📈 尾盘溢价策略推荐")
+    report.append("尾盘走强观察")
     report.append("=" * 50)
-    report.append(f"发现 {len(signals)} 只潜力股，推荐 Top {min(top_n, len(signals))}:")
+    report.append(
+        f"发现 {len(signals)} 只待复核候选，展示前 {min(top_n, len(signals))} 只:"
+    )
     report.append("")
 
     for i, signal in enumerate(signals[:top_n], 1):
@@ -466,13 +470,13 @@ def format_closing_signals(signals: List[PremiumSignal], top_n: int = 5) -> str:
         report.append(f"   类型: {signal.signal_type}")
         report.append(f"   得分: {signal.score:.1f} 分")
         report.append(f"   现价: {signal.current_price:.2f}")
-        report.append(f"   建议入场: {signal.entry_price:.2f}")
+        report.append(f"   参考价: {signal.entry_price:.2f}")
         report.append(f"   止损: {signal.stop_loss:.2f}")
         report.append(f"   目标1: {signal.take_profit_1:.2f}")
         report.append(f"   目标2: {signal.take_profit_2:.2f}")
         report.append(f"   置信度: {signal.confidence:.0%}")
         report.append(f"   预期收益: {signal.expected_return:.1f}%")
-        report.append(f"   建议持有: {signal.holding_days} 天")
+        report.append(f"   观察周期: {signal.holding_days} 天")
         report.append("   看多理由:")
         for reason in signal.reasons:
             report.append(f"     • {reason}")
@@ -482,9 +486,9 @@ def format_closing_signals(signals: List[PremiumSignal], top_n: int = 5) -> str:
                 report.append(f"     • {risk}")
         report.append("")
 
-    report.append("⏰ 操作建议:")
-    report.append("  1. 尾盘入场，次日开盘观察")
-    report.append("  2. 达到第一目标位可减仓50%")
+    report.append("复核清单:")
+    report.append("  1. 次日先看开盘延续和量能承接")
+    report.append("  2. 到第一目标附近只做纸面兑现记录")
     report.append("  3. 严格执行止损纪律")
 
     return "\n".join(report)

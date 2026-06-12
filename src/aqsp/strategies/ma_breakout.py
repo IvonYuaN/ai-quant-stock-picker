@@ -217,9 +217,7 @@ class MABreakoutStrategy(BaseStrategy):
             return 0.4
         return 0.1
 
-    def generate_signals(
-        self, data: Dict[str, pd.DataFrame]
-    ) -> List[MABreakoutSignal]:
+    def generate_signals(self, data: Dict[str, pd.DataFrame]) -> List[MABreakoutSignal]:
         """生成均线突破买入信号。"""
         signals: List[MABreakoutSignal] = []
 
@@ -240,15 +238,21 @@ class MABreakoutStrategy(BaseStrategy):
             volume_confirm = self._is_volume_confirmed(df_sorted)
 
             current_price = float(df_sorted["close"].iloc[-1])
-            entry, stop, target = self._calc_targets(df_sorted, signal_type, current_price)
+            entry, stop, target = self._calc_targets(
+                df_sorted, signal_type, current_price
+            )
             position = self._suggest_position(signal_type, score)
 
-            reasons, risks = self._collect_info(df_sorted, signal_type, ma_alignment, volume_confirm)
+            reasons, risks = self._collect_info(
+                df_sorted, signal_type, ma_alignment, volume_confirm
+            )
 
             signals.append(
                 MABreakoutSignal(
                     symbol=symbol,
-                    name=str(df_sorted["name"].iloc[-1]) if "name" in df_sorted.columns else symbol,
+                    name=str(df_sorted["name"].iloc[-1])
+                    if "name" in df_sorted.columns
+                    else symbol,
                     signal_type=signal_type,
                     score=round(score * 100, 1),
                     current_price=round(current_price, 2),
@@ -352,7 +356,11 @@ class MABreakoutStrategy(BaseStrategy):
         return 0.15
 
     def _collect_info(
-        self, df: pd.DataFrame, signal_type: str, ma_alignment: str, volume_confirm: bool
+        self,
+        df: pd.DataFrame,
+        signal_type: str,
+        ma_alignment: str,
+        volume_confirm: bool,
     ) -> tuple[list[str], list[str]]:
         reasons: list[str] = []
         risks: list[str] = []
@@ -395,18 +403,24 @@ def format_ma_breakout_signals(signals: List[MABreakoutSignal], top_n: int = 5) 
     }
 
     lines: list[str] = []
-    lines.append("📈 均线突破策略推荐")
+    lines.append("均线突破观察")
     lines.append("=" * 50)
-    lines.append(f"发现 {len(signals)} 只强势股，推荐 Top {min(top_n, len(signals))}:")
+    lines.append(
+        f"发现 {len(signals)} 只待复核候选，展示前 {min(top_n, len(signals))} 只:"
+    )
     lines.append("")
 
     for i, signal in enumerate(signals[:top_n], 1):
         label = type_labels.get(signal.signal_type, signal.signal_type)
         lines.append(f"【{i}】{signal.symbol} {signal.name} - {label}")
         lines.append(f"   得分: {signal.score:.1f} | 均线: {signal.ma_alignment}")
-        lines.append(f"   现价: {signal.current_price:.2f} | 入场: {signal.entry_price:.2f}")
-        lines.append(f"   止损: {signal.stop_loss:.2f} | 目标: {signal.take_profit:.2f}")
-        lines.append(f"   建议仓位: {signal.position_pct:.0%}")
+        lines.append(
+            f"   现价: {signal.current_price:.2f} | 参考价: {signal.entry_price:.2f}"
+        )
+        lines.append(
+            f"   止损: {signal.stop_loss:.2f} | 目标: {signal.take_profit:.2f}"
+        )
+        lines.append(f"   参考仓位: {signal.position_pct:.0%}")
         lines.append("   理由:")
         for r in signal.reasons:
             lines.append(f"     • {r}")
@@ -416,7 +430,7 @@ def format_ma_breakout_signals(signals: List[MABreakoutSignal], top_n: int = 5) 
                 lines.append(f"     • {r}")
         lines.append("")
 
-    lines.append("⚡ 操作纪律:")
+    lines.append("复核纪律:")
     lines.append("  1. 优先回踩确认买点（胜率最高）")
     lines.append("  2. 突破买点试仓，回踩不破再加仓")
     lines.append("  3. 跌破MA20减仓，跌破MA60清仓")

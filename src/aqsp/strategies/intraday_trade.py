@@ -444,9 +444,11 @@ def format_intraday_signals(signals: List[IntradaySignal], top_n: int = 5) -> st
     }
 
     lines: list[str] = []
-    lines.append("⚡ 日内交易策略推荐")
+    lines.append("日内波动观察")
     lines.append("=" * 50)
-    lines.append(f"发现 {len(signals)} 只标的，推荐 Top {min(top_n, len(signals))}:")
+    lines.append(
+        f"发现 {len(signals)} 只待复核标的，展示前 {min(top_n, len(signals))} 只:"
+    )
     lines.append("")
 
     for i, signal in enumerate(signals[:top_n], 1):
@@ -454,7 +456,7 @@ def format_intraday_signals(signals: List[IntradaySignal], top_n: int = 5) -> st
         lines.append(f"【{i}】{signal.symbol} {signal.name} - {label}")
         lines.append(f"   得分: {signal.score:.1f} | 置信度: {signal.confidence:.0%}")
         lines.append(
-            f"   入场: {signal.entry_price:.2f} | 止损: {signal.stop_loss:.2f} | 目标: {signal.take_profit:.2f}"
+            f"   参考价: {signal.entry_price:.2f} | 止损: {signal.stop_loss:.2f} | 目标: {signal.take_profit:.2f}"
         )
         lines.append(f"   周期: {signal.timeframe}")
         lines.append("   理由:")
