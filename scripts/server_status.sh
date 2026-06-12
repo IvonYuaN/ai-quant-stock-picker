@@ -65,8 +65,10 @@ print_lock_state() {
 }
 
 print_aqsp_cron_audit() {
-    local cron_text cron_line cron_file action
+    local cron_text cron_line cron_file action found_wrapper found_direct
     cron_text="$(crontab -l 2>/dev/null || true)"
+    found_wrapper=0
+    found_direct=0
 
     echo "BT wrapper entries:"
     if [ -d /www/server/cron ]; then
@@ -78,10 +80,15 @@ print_aqsp_cron_audit() {
             if grep -q "bt_task.sh" "$cron_file" 2>/dev/null; then
                 action="$(grep -Eo 'bt_task\.sh[[:space:]]+[a-z]+' "$cron_file" | awk '{print $2}' | head -n 1)"
                 printf 'bt-wrapper action=%s script=%s\n' "${action:-unknown}" "$cron_file"
+                found_wrapper=1
             elif grep -q "$PROJECT_ROOT" "$cron_file" 2>/dev/null; then
                 printf 'project-cron-wrapper-needs-review script=%s\n' "$cron_file"
+                found_wrapper=1
             fi
         done
+        if [ "$found_wrapper" -eq 0 ]; then
+            echo "none"
+        fi
     else
         echo "bt-cron-dir missing: /www/server/cron"
     fi
@@ -95,10 +102,14 @@ print_aqsp_cron_audit() {
         if printf '%s\n' "$cron_line" | grep -qE "(/opt/aqsp|${PROJECT_ROOT})" \
             && ! printf '%s\n' "$cron_line" | grep -q "/www/server/cron/"; then
             printf 'direct-aqsp-cron-needs-review %s\n' "$cron_line"
+            found_direct=1
         fi
     done <<EOF
 $cron_text
 EOF
+    if [ "$found_direct" -eq 0 ]; then
+        echo "none"
+    fi
 }
 
 file_line() {
