@@ -554,7 +554,7 @@ def _render_beginner_glossary() -> None:
 
 def _render_footer() -> None:
     st.caption(
-        "免责声明：本看板仅供研究参考，不构成投资建议。所有下单决定都应由你自己确认。"
+        "免责声明：本看板仅供研究参考，不构成投资建议。纸面跟踪结果需要人工复核。"
     )
 
 

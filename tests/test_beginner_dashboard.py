@@ -24,6 +24,7 @@ def test_beginner_dashboard_has_no_sample_account_or_fake_holdings() -> None:
     assert "总资产" not in source
     assert "真实账户" not in source
     assert "真实持仓" not in source
+    assert "下单决定" not in source
     assert "AQSP Beginner Dashboard" not in source
     assert "先看今天主链推荐和阻塞原因" not in source
     assert "收盘前确认承接和隔夜价值" not in source
