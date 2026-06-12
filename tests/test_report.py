@@ -55,6 +55,7 @@ def test_report_renders_run_metadata_when_provided() -> None:
     assert "- 数据状态: 正常 / tdx_vipdoc 健康；数据源成功/失败 3/0" in markdown
     assert "显式 0 / 解析 100 / 取数 101 / 筛选前 8 / 最终 1" in markdown
     assert "- 规则版本: 1.0.0" in markdown
+    assert "不构成交易指令或投资建议" in markdown
 
 
 def test_report_renders_portfolio_manager_decision_when_provided() -> None:

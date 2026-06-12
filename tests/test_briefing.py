@@ -59,6 +59,7 @@ class TestBriefing:
         assert "## sec1" in md
         assert "body1" in md
         assert "仅供研究" in md
+        assert "不构成交易指令或投资建议" in md
 
     def test_to_markdown_multiple_sections(self):
         briefing = Briefing(
