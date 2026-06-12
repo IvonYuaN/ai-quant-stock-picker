@@ -37,6 +37,22 @@ def _runtime_path(env_name: str, default: str) -> Path:
     return path if path.is_absolute() else PROJECT_ROOT / path
 
 
+def _load_dotenv_defaults(path: Path | None = None) -> None:
+    env_path = path or PROJECT_ROOT / ".env"
+    if not env_path.exists():
+        return
+    for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        if not key:
+            continue
+        clean_value = value.strip().strip('"').strip("'")
+        os.environ.setdefault(key, clean_value)
+
+
 def _runtime_paths() -> RuntimePaths:
     return RuntimePaths(
         ledger=_runtime_path("AQSP_LEDGER", "data/predictions.jsonl"),
@@ -207,6 +223,7 @@ def _ready_source_lines() -> list[str]:
 
 
 def main() -> int:
+    _load_dotenv_defaults()
     paths = _runtime_paths()
 
     ledger_rows = _read_jsonl(paths.ledger)

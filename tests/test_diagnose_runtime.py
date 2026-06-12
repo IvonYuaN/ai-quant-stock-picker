@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import struct
 from datetime import date
 
@@ -14,6 +15,7 @@ from scripts.diagnose_runtime import (
     PROJECT_ROOT,
     _large_return_rows,
     _latest_run_source_runtime,
+    _load_dotenv_defaults,
     _runtime_paths,
     _scheduler_runtime_lines,
     _tdx_vipdoc_summary,
@@ -68,6 +70,29 @@ def test_runtime_paths_follow_daily_run_environment(tmp_path, monkeypatch) -> No
     assert paths.ledger == ledger
     assert paths.dashboard == dashboard
     assert paths.latest_report == PROJECT_ROOT / "reports/custom.md"
+
+
+def test_load_dotenv_defaults_does_not_override_explicit_env(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "\n".join(
+            [
+                "AQSP_SQLITE_DB_PATH=/opt/market-data/astocks_qfq.db",
+                "AQSP_REPORT='reports/from-env.md'",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("AQSP_SQLITE_DB_PATH", raising=False)
+    monkeypatch.setenv("AQSP_REPORT", "reports/explicit.md")
+
+    _load_dotenv_defaults(env_file)
+
+    assert os.environ["AQSP_SQLITE_DB_PATH"] == "/opt/market-data/astocks_qfq.db"
+    assert os.environ["AQSP_REPORT"] == "reports/explicit.md"
 
 
 def test_latest_run_source_runtime_derives_notify_level() -> None:
