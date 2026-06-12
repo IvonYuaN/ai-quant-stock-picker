@@ -46,7 +46,7 @@ def test_execution_summary_uses_observation_when_pm_has_no_allocations() -> None
     line = cli_mod._build_execution_summary_line([pick], summary)
 
     assert "今日无重点跟踪对象" in line
-    assert "备选观察名单" in line
+    assert "继续观察名单" in line
     assert "首选" not in line
 
 
@@ -62,7 +62,9 @@ def test_news_catalysts_cli_sends_research_notification(monkeypatch, capsys) -> 
         source_status="empty",
     )
 
-    monkeypatch.setattr(cli_mod, "notify_markdown", lambda markdown: sent.append(markdown) or [])
+    monkeypatch.setattr(
+        cli_mod, "notify_markdown", lambda markdown: sent.append(markdown) or []
+    )
     monkeypatch.setattr(
         "aqsp.news.build_catalyst_report",
         lambda **_kwargs: report,
@@ -449,9 +451,15 @@ def test_optional_symbol_name_map_reads_project_env_without_export(
     assert cli_mod._load_optional_symbol_name_map(["600036"]) == {"600036": "招商银行"}
 
 
-def test_run_scheduled_debate_does_not_change_runtime_scores_or_order(
+def test_run_scheduled_debate_writes_back_adjustment_keeps_runtime_score(
     monkeypatch, tmp_path
 ) -> None:
+    """辩论结论回写到 pick 供 PM 使用，但不改写 runtime 原始评分与顺序。
+
+    B 方案契约：
+    - pick.score（runtime 原始分）与顺序保持不变，用于溯源。
+    - pick.recommended_adjustment / adjusted_score 被辩论结论覆盖，PM 据此调整优先级。
+    """
     import aqsp.cli as cli_mod
 
     latest = today_shanghai().isoformat()
@@ -673,9 +681,12 @@ def test_run_scheduled_debate_does_not_change_runtime_scores_or_order(
 
     assert exit_code == 0
     assert [pick.symbol for pick in captured] == ["600519", "300750"]
+    # runtime 原始评分与顺序保持不变（溯源用）
     assert [pick.score for pick in captured] == [80.0, 40.0]
-    assert [pick.adjusted_score for pick in captured] == [0.0, 0.0]
-    assert [pick.recommended_adjustment for pick in captured] == ["keep", "keep"]
+    # 辩论结论已回写，供 PM 调整优先级（DummyDebateCoordinator 对两只都给 raise）
+    assert [pick.recommended_adjustment for pick in captured] == ["raise", "raise"]
+    # adjusted_score 来自辩论桩：600519=10.0, 300750=95.0
+    assert [pick.adjusted_score for pick in captured] == [10.0, 95.0]
     assert len(debate_rows) == 2
 
 
@@ -1700,9 +1711,9 @@ def test_run_scheduled_surfaces_t1_blockers_in_report_and_notification(
     assert "T+1 持仓约束：昨日已买标的今日不纳入重点跟踪名单" in report
     assert "贵州茅台: T+1 持仓约束，昨日已买，今日仅保留观察" in report
     assert "T+1 限制：昨日已买 1 只（600519）仅保留观察" in report
-    assert "**👀 备选观察名单**：300750 宁德时代、600519 贵州茅台" in seen[0]
+    assert "**👀 继续观察名单**：300750 宁德时代、600519 贵州茅台" in seen[0]
     assert (
-        "**🔒 当前卡点**：600519 贵州茅台: T+1 持仓约束，昨日已买，今日仅保留观察"
+        "**🔒 现在卡在哪**：600519 贵州茅台: T+1 持仓约束，昨日已买，今日仅保留观察"
         in seen[0]
     )
 
@@ -1919,7 +1930,7 @@ def test_run_scheduled_surfaces_snapshot_lifecycle_in_summary_and_notification(
     assert "归档移出记录: 600036 招商银行" in report
     assert "排名记录变化: 300750 #4→#5↓" in report
     assert "**🔄 候选变化**：新增 1 / 移出 1 / 排名异动 1" in seen[0]
-    assert "## 候选变化" in seen[0]
+    assert "## 📈 变化与复盘" in seen[0]
     assert "🆕 **新晋候选**: 688981 中芯国际" in seen[0]
 
 
@@ -2170,7 +2181,8 @@ def test_run_scheduled_annotates_candidate_status_in_report_and_notify(
 
     assert exit_code == 0
     assert seen
-    assert "## 📋 候选速览" in seen[0]
+    assert "## 📋 候选一览" in seen[0]
+    assert "| # | 标的 | 状态 | 分数 | 处理 | 关键点 |" in seen[0]
     assert (
         "| 1 | 688981 中芯国际 | 新晋 | -9 | 👀 继续观察 | 等待量价继续走强后，再评估是否转入重点跟踪名单；复核 高优先级 / 盘中走强后 |"
         in seen[0]
@@ -2179,11 +2191,13 @@ def test_run_scheduled_annotates_candidate_status_in_report_and_notify(
         "先盯 688981 中芯国际，等待量价继续走强后，再评估是否转入重点跟踪名单（高优先级 / 盘中走强后）。"
         in seen[0]
     )
-    assert "| 2 | 000001 平安银行 | 继续观察 | -18 | 👀 继续观察 | 估值防守 |" in seen[0]
     assert (
-        "- 重点 1: 688981 中芯国际 | 备选观察名单 | 新晋 | 评分 -9.0 | 处理 维持原排序"
+        "| 2 | 000001 平安银行 | 继续观察 | -18 | 👀 继续观察 | 估值防守 |" in seen[0]
+    )
+    assert (
+        "- 重点 1: 688981 中芯国际 | 继续观察名单 | 新晋 | 评分 -9.0 | 处理 维持原排序"
         in report
     )
-    assert "- 决策: 备选观察名单 | 新晋 | 评分 -9.0" in report
-    assert "- 下一步关注: 等待量价继续走强后，再评估是否转入重点跟踪名单" in report
-    assert "- 复核优先级/时机: 高优先级 / 盘中走强后" in report
+    assert "- 决策: 继续观察名单 | 新晋 | 评分 -9.0" in report
+    assert "- 接下来先看: 等待量价继续走强后，再评估是否转入重点跟踪名单" in report
+    assert "- 再看优先级/时机: 高优先级 / 盘中走强后" in report

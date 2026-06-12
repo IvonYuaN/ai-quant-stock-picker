@@ -48,6 +48,16 @@ def test_load_email_config_empty_to_returns_none(monkeypatch):
     assert load_email_config_from_env() is None
 
 
+def test_load_email_config_invalid_port_returns_none(monkeypatch):
+    monkeypatch.setenv("AQSP_SMTP_HOST", "smtp.example.com")
+    monkeypatch.setenv("AQSP_SMTP_PORT", "abc")
+    monkeypatch.setenv("AQSP_SMTP_USER", "u")
+    monkeypatch.setenv("AQSP_SMTP_PASSWORD", "p")
+    monkeypatch.setenv("AQSP_EMAIL_FROM", "from@example.com")
+    monkeypatch.setenv("AQSP_EMAIL_TO", "to@example.com")
+    assert load_email_config_from_env() is None
+
+
 def test_send_briefing_email_calls_smtp(monkeypatch):
     cfg = EmailConfig(
         smtp_host="h",
@@ -80,12 +90,17 @@ def test_send_briefing_email_returns_false_on_exception(monkeypatch):
         to_addrs=["t@x.com"],
         use_tls=True,
     )
-    with patch(
-        "aqsp.briefing.email_notifier.smtplib.SMTP",
-        side_effect=ConnectionError("network"),
+    with (
+        patch(
+            "aqsp.briefing.email_notifier.smtplib.SMTP",
+            side_effect=ConnectionError("network"),
+        ) as smtp_class,
+        patch("aqsp.briefing.email_notifier.time.sleep") as sleep_mock,
     ):
         ok = send_briefing_email(cfg, "subj", "body")
     assert ok is False
+    assert smtp_class.call_count == 3
+    assert sleep_mock.call_count == 2
 
 
 def test_render_html_email_uses_research_language_and_escapes_dynamic_text() -> None:

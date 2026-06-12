@@ -105,10 +105,12 @@ class IntradayTradeStrategy(BaseStrategy):
         # 最近5日平均振幅
         recent = df.iloc[-5:]
         amplitudes = []
-        for _, row in recent.iterrows():
-            high = float(row.get("high", 0))
-            low = float(row.get("low", 0))
-            open_p = float(row.get("open", 1))
+        for high, low, open_p in recent.reindex(
+            columns=["high", "low", "open"], fill_value=0
+        ).itertuples(index=False, name=None):
+            high = float(high)
+            low = float(low)
+            open_p = float(open_p or 1)
             if open_p > 0:
                 amplitudes.append((high - low) / open_p)
         avg_amp = np.mean(amplitudes) if amplitudes else 0.0
@@ -121,7 +123,9 @@ class IntradayTradeStrategy(BaseStrategy):
 
         # 量能评分（持续放量）
         recent_vol = float(df["volume"].iloc[-5:].mean())
-        prev_vol = float(df["volume"].iloc[-15:-5].mean()) if len(df) >= 15 else recent_vol
+        prev_vol = (
+            float(df["volume"].iloc[-15:-5].mean()) if len(df) >= 15 else recent_vol
+        )
         vol_ratio = recent_vol / prev_vol if prev_vol > 0 else 0
         vol_score = min(1.0, vol_ratio / 1.5) if vol_ratio > 1.0 else 0.3
 
@@ -269,11 +273,7 @@ class IntradayTradeStrategy(BaseStrategy):
         if ten_day_change < -0.30:
             decline_score *= 0.7  # 跌太多有问题，扣分
 
-        return (
-            0.30 * rsi_score
-            + 0.35 * stop_signal
-            + 0.35 * decline_score
-        )
+        return 0.30 * rsi_score + 0.35 * stop_signal + 0.35 * decline_score
 
     def _calculate_rsi(self, prices: pd.Series, period: int = 14) -> float | None:
         if len(prices) < period + 1:
@@ -288,9 +288,7 @@ class IntradayTradeStrategy(BaseStrategy):
         rs = avg_gain / avg_loss
         return 100 - (100 / (1 + rs))
 
-    def generate_signals(
-        self, data: Dict[str, pd.DataFrame]
-    ) -> List[IntradaySignal]:
+    def generate_signals(self, data: Dict[str, pd.DataFrame]) -> List[IntradaySignal]:
         """生成日内交易信号。"""
         signals: List[IntradaySignal] = []
 
@@ -331,7 +329,9 @@ class IntradayTradeStrategy(BaseStrategy):
             signals.append(
                 IntradaySignal(
                     symbol=symbol,
-                    name=str(df_sorted["name"].iloc[-1]) if "name" in df_sorted.columns else symbol,
+                    name=str(df_sorted["name"].iloc[-1])
+                    if "name" in df_sorted.columns
+                    else symbol,
                     strategy_type=best_strategy,
                     score=round(best_score * 100, 1),
                     entry_price=round(entry_price, 2),
@@ -406,7 +406,9 @@ class IntradayTradeStrategy(BaseStrategy):
             risks.append("尾盘买入次日开盘风险高")
 
         else:  # oversold_rebound
-            ten_day = (float(df["close"].iloc[-1]) - float(df["close"].iloc[-10])) / float(df["close"].iloc[-10])
+            ten_day = (
+                float(df["close"].iloc[-1]) - float(df["close"].iloc[-10])
+            ) / float(df["close"].iloc[-10])
             rsi = self._calculate_rsi(df["close"])
             reasons.append(f"10日跌幅 {ten_day:.1%}，超跌")
             if rsi:
@@ -419,12 +421,14 @@ class IntradayTradeStrategy(BaseStrategy):
     def _calc_avg_amplitude(self, df: pd.DataFrame, days: int) -> float:
         recent = df.iloc[-days:]
         amps = []
-        for _, row in recent.iterrows():
-            o = float(row.get("open", 0))
-            h = float(row.get("high", 0))
-            low = float(row.get("low", 0))
-            if o > 0:
-                amps.append((h - low) / o)
+        for open_price, high, low in recent.reindex(
+            columns=["open", "high", "low"], fill_value=0
+        ).itertuples(index=False, name=None):
+            open_price = float(open_price)
+            high = float(high)
+            low = float(low)
+            if open_price > 0:
+                amps.append((high - low) / open_price)
         return float(np.mean(amps)) if amps else 0.0
 
 
@@ -449,7 +453,9 @@ def format_intraday_signals(signals: List[IntradaySignal], top_n: int = 5) -> st
         label = type_labels.get(signal.strategy_type, signal.strategy_type)
         lines.append(f"【{i}】{signal.symbol} {signal.name} - {label}")
         lines.append(f"   得分: {signal.score:.1f} | 置信度: {signal.confidence:.0%}")
-        lines.append(f"   入场: {signal.entry_price:.2f} | 止损: {signal.stop_loss:.2f} | 目标: {signal.take_profit:.2f}")
+        lines.append(
+            f"   入场: {signal.entry_price:.2f} | 止损: {signal.stop_loss:.2f} | 目标: {signal.take_profit:.2f}"
+        )
         lines.append(f"   周期: {signal.timeframe}")
         lines.append("   理由:")
         for r in signal.reasons:

@@ -34,6 +34,24 @@ BT panel examples:
   /bin/bash /opt/aqsp/scripts/bt_task.sh coldstart
   /bin/bash /opt/aqsp/scripts/bt_task.sh monitor
   /bin/bash /opt/aqsp/scripts/bt_task.sh news
+
+Recommended BT schedule (Asia/Shanghai):
+  news      08:45 Mon-Fri; 10:00 Sat/Sun
+  intraday  09:40-11:50 every 10 min; 13:00-14:50 every 10 min, Mon-Fri
+  midday    12:05 Mon-Fri
+  daily     18:00 Mon-Fri
+  coldstart 19:40 Mon-Fri
+  monitor   every 15 min Mon-Fri
+  status    manual only
+
+Notes:
+  "正常跳过/互斥保护" means another AQSP task is still running or the market
+  window is closed. It is not a failed run.
+
+Optional env:
+  AQSP_RUNNER_TIMEOUT_SECONDS=5400   # 主链路最长 90 分钟
+  AQSP_MONITOR_TIMEOUT_SECONDS=600   # 监控最长 10 分钟
+  AQSP_LOCK_STALE_MINUTES=360        # 无活跃 PID 时，6 小时后视为陈旧锁
 EOF
 }
 

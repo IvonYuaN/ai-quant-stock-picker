@@ -109,7 +109,9 @@ class AkquantWalkForwardEngine:
         if not all_dates:
             raise ValueError("No data available")
 
-        start_idx = 0 if start_date is None else tester._find_date_idx(all_dates, start_date)
+        start_idx = (
+            0 if start_date is None else tester._find_date_idx(all_dates, start_date)
+        )
         end_idx = (
             len(all_dates) - 1
             if end_date is None
@@ -157,7 +159,9 @@ class AkquantWalkForwardEngine:
 
             cursor += step
 
-        return _assemble_walkforward_result(tester, periods, all_trades, config.n_variants)
+        return _assemble_walkforward_result(
+            tester, periods, all_trades, config.n_variants
+        )
 
     def _run_single_period(
         self,
@@ -231,7 +235,9 @@ class AkquantWalkForwardEngine:
         on_bar = _make_akquant_on_bar(
             entry_plan={symbol: 1.0 for symbol in executable_data},
             frame_lengths={
-                symbol: len(test_data[symbol].sort_values("date").reset_index(drop=True))
+                symbol: len(
+                    test_data[symbol].sort_values("date").reset_index(drop=True)
+                )
                 for symbol in executable_data
             },
             horizon_days=tester.horizon_days,
@@ -269,7 +275,9 @@ class AkquantWalkForwardEngine:
         return trades
 
 
-def resolve_walkforward_engine(requested: str) -> tuple[WalkForwardEngine, EngineResolution]:
+def resolve_walkforward_engine(
+    requested: str,
+) -> tuple[WalkForwardEngine, EngineResolution]:
     normalized = (requested or "auto").strip().lower() or "auto"
     if normalized not in ENGINE_CHOICES:
         raise ValueError(
@@ -319,7 +327,9 @@ def resolve_walkforward_engine(requested: str) -> tuple[WalkForwardEngine, Engin
     )
 
 
-def _build_tester(strategy: object, config: WalkForwardEngineConfig) -> WalkForwardTester:
+def _build_tester(
+    strategy: object, config: WalkForwardEngineConfig
+) -> WalkForwardTester:
     from aqsp.backtest.walk_forward import WalkForwardTester
 
     return WalkForwardTester(
@@ -352,7 +362,8 @@ def _assemble_walkforward_result(
             1.0 if trade.return_pct > 0 else 0.0
         )
     regime_winrates = {
-        regime: sum(values) / len(values) for regime, values in sorted(regime_map.items())
+        regime: sum(values) / len(values)
+        for regime, values in sorted(regime_map.items())
     }
     return WalkForwardResult(
         periods=periods,
@@ -392,7 +403,9 @@ def _resolve_market_regime(signal_data: dict[str, pd.DataFrame]) -> str:
 def _prepare_akquant_frame(frame: pd.DataFrame, symbol: str) -> pd.DataFrame:
     normalized = frame.copy()
     normalized["date"] = pd.to_datetime(normalized["date"], errors="coerce")
-    normalized = normalized.dropna(subset=["date"]).sort_values("date").reset_index(drop=True)
+    normalized = (
+        normalized.dropna(subset=["date"]).sort_values("date").reset_index(drop=True)
+    )
     normalized["symbol"] = symbol
 
     last = normalized.iloc[-1].copy()
@@ -423,7 +436,9 @@ def _make_akquant_on_bar(
     take_profit_pct: float,
 ):
     exit_signal_index = max(horizon_days - 1, 0)
-    terminal_index = {symbol: max(length, 0) for symbol, length in frame_lengths.items()}
+    terminal_index = {
+        symbol: max(length, 0) for symbol, length in frame_lengths.items()
+    }
 
     def on_bar(ctx: Any, bar: Any) -> None:
         symbol = str(bar.symbol)
@@ -494,21 +509,33 @@ def _convert_akquant_trades(
     trades: list[TradeResult] = []
     slippage = float(slippage_bps) / 10000.0
     fee_pct = float(fee_bps) / 100.0
+    if "exit_tag" not in ordered.columns:
+        ordered = ordered.copy()
+        ordered["exit_tag"] = ""
 
-    for _, row in ordered.iterrows():
-        entry_raw = float(row["entry_price"])
-        exit_raw = float(row["exit_price"])
+    for (
+        symbol,
+        entry_time_raw,
+        exit_time_raw,
+        entry_price_raw,
+        exit_price_raw,
+        exit_tag_raw,
+    ) in ordered[
+        ["symbol", "entry_time", "exit_time", "entry_price", "exit_price", "exit_tag"]
+    ].itertuples(index=False, name=None):
+        entry_raw = float(entry_price_raw)
+        exit_raw = float(exit_price_raw)
         entry_price = entry_raw * (1 + slippage)
         exit_price = exit_raw * (1 - slippage)
         return_pct = ((exit_price - entry_price) / entry_price) * 100.0 - fee_pct
-        exit_tag = str(row.get("exit_tag", "") or "")
+        exit_tag = str(exit_tag_raw or "")
         exit_reason = exit_tag.removeprefix("wf_") or "hold_period_close"
 
-        entry_time = pd.Timestamp(row["entry_time"])
-        exit_time = pd.Timestamp(row["exit_time"])
+        entry_time = pd.Timestamp(entry_time_raw)
+        exit_time = pd.Timestamp(exit_time_raw)
         trades.append(
             TradeResult(
-                symbol=str(row["symbol"]),
+                symbol=str(symbol),
                 signal_date=signal_date,
                 entry_date=entry_time.strftime("%Y-%m-%d"),
                 exit_date=exit_time.strftime("%Y-%m-%d"),

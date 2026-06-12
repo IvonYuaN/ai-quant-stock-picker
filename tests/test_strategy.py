@@ -145,3 +145,17 @@ def test_screen_detects_n_rebound_pattern() -> None:
     assert picks
     assert picks[0].symbol == "NREB"
     assert "n_rebound" in picks[0].strategies
+
+
+def test_screen_universe_skips_invalid_frames() -> None:
+    valid = _frame("GOOD", 0.004, 1.8)
+    invalid = valid.copy()
+    invalid.loc[0, "high"] = invalid.loc[0, "low"] - 1
+
+    picks = screen_universe(
+        {"GOOD": valid, "BROKEN": invalid},
+        ScreeningConfig(min_avg_amount=1),
+    )
+
+    assert picks
+    assert {pick.symbol for pick in picks} == {"GOOD"}

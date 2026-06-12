@@ -161,7 +161,7 @@ def test_dashboard_data_provider_reads_real_runtime_files(tmp_path: Path) -> Non
     assert task_snapshots[0].task_id == "main_chain"
     assert task_snapshots[0].status_label == "有推荐"
     assert task_snapshots[-1].task_id == "briefing"
-    assert task_snapshots[-1].status_label == "暂无结果"
+    assert task_snapshots[-1].status_label == "未产出"
 
     paper_summary = provider.paper_summary()
     assert paper_summary.signal_date == ""
@@ -874,7 +874,7 @@ def test_dashboard_data_provider_builds_task_views_and_dedupes_latest_rows(
     paper_path.write_text("", encoding="utf-8")
     (reports_dir / "briefing-2026-06-05.md").write_text(
         (
-            "# AI 量化选股研究日报 - 2026-06-05\n\n"
+            "# 每日研究复盘-2026-06-05\n\n"
             "## 市场态势\n\n"
             "当前市场态势: **震荡偏强：等待主线确认**\n\n"
             "## 明日重点\n\n"
@@ -941,7 +941,7 @@ def test_dashboard_data_provider_builds_task_views_and_dedupes_latest_rows(
         "600519 贵州茅台 | 上调优先级 | 延续上升"
     )
     assert any(
-        "000001 平安银行 | 当前卡点: 板块集中度过高" in line
+        "000001 平安银行 | 现在卡在哪: 板块集中度过高" in line
         for line in main_view.unlock_lines
     )
     assert main_view.previous_date == "2026-06-04"
@@ -1078,7 +1078,7 @@ def test_dashboard_data_provider_builds_task_views_and_dedupes_latest_rows(
     assert date_overview.top_task_label in {"主链推荐", "早盘策略", "尾盘策略"}
     assert (
         "待复核" in date_overview.focus_headline
-        or "备选观察名单" in date_overview.focus_headline
+        or "继续观察名单" in date_overview.focus_headline
         or "核对卡点" in date_overview.focus_headline
     )
     assert "当日流程:" in date_overview.workflow_summary
@@ -1505,10 +1505,10 @@ def test_dashboard_data_provider_sanitizes_archive_summary_action_words(
     assert "研究回看" in visible_text
     assert "重点跟踪对象" in visible_text
     assert "重点跟踪名单" in visible_text
-    assert "仓位参考" in visible_text
+    assert "比例参考" in visible_text
     assert "参考价" in visible_text
-    assert "防守位" in visible_text
-    assert "观察目标" in visible_text
+    assert "最多亏到" in visible_text
+    assert "先看目标" in visible_text
     assert "纸面新建观察" in visible_text
     assert "纸面记录" in visible_text
 
@@ -1654,7 +1654,7 @@ def test_dashboard_data_provider_formats_execution_focus_research_lines_when_can
     assert focus.research_lines[:4] == (
         "研究动作: 上调优先级 / 延续上升",
         "评分 88.0",
-        "复核节奏: 高优先级 / 开盘前后",
+        "再看时间: 高优先级 / 开盘前后",
         "研究下一步: 观察量能是否继续扩张，再决定是否维持主推",
     )
 
@@ -1940,7 +1940,7 @@ def test_dashboard_data_provider_ignores_report_when_body_date_mismatches_filena
     )
     paper_path.write_text("", encoding="utf-8")
     (reports_dir / "briefing-2026-06-05.md").write_text(
-        "# AI 量化选股研究日报 - 2026-06-06\n\n错日简报。\n",
+        "# 每日研究复盘-2026-06-06\n\n错日简报。\n",
         encoding="utf-8",
     )
     (reports_dir / "closing_review-2026-06-05.md").write_text(
@@ -2239,7 +2239,7 @@ def test_dashboard_data_provider_execution_focus_uses_final_signal_state_when_cl
     assert focus.research_status == "研究侧存在阻塞"
     assert focus.research_lines[0] == "研究来源: 尾盘策略 / 尾盘确认"
     assert "研究动作: 降级观察 / 尾盘降级阻塞" in focus.research_lines
-    assert "当前卡点: 尾盘放量失败" in focus.research_lines
+    assert "现在卡在哪: 尾盘放量失败" in focus.research_lines
 
 
 def test_dashboard_data_provider_execution_focus_uses_paper_context_when_signal_row_missing(
@@ -2285,7 +2285,7 @@ def test_dashboard_data_provider_execution_focus_uses_paper_context_when_signal_
 
     assert focus.research_status == "研究侧存在阻塞"
     assert "研究动作: 降级观察 / 观察阻塞" in focus.research_lines
-    assert "复核节奏: 高优先级 / 次日开盘" in focus.research_lines
+    assert "再看时间: 高优先级 / 次日开盘" in focus.research_lines
     assert "研究下一步: 等待开板后再评估" in focus.research_lines
     assert any("涨停无法追入" in line for line in focus.readiness_lines)
 
@@ -2333,7 +2333,7 @@ def test_dashboard_data_provider_derives_blocker_from_risks_for_downgraded_candi
     assert view.detail_cards[0].blocker == "20日均成交额不足，流动性过滤"
     assert view.detail_cards[0].decision_note == "20日均成交额不足，流动性过滤"
     assert any(
-        "000338 潍柴动力 | 当前卡点: 20日均成交额不足，流动性过滤" == line
+        "000338 潍柴动力 | 现在卡在哪: 20日均成交额不足，流动性过滤" == line
         for line in view.unlock_lines
     )
     assert any(

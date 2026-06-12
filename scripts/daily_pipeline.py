@@ -291,7 +291,9 @@ def _fetch_history_frames_resilient(
         fallback_source = _build_resilient_history_source(config)
         before = len(frames)
         if missing_symbols:
-            frames.update(fetch_with_source(fallback_source, missing_symbols, days=days))
+            frames.update(
+                fetch_with_source(fallback_source, missing_symbols, days=days)
+            )
         if missing_benchmarks:
             end = today_shanghai()
             start = end - timedelta(days=max(days * 2, 120))
@@ -1195,7 +1197,9 @@ def _build_pipeline_digest(
     if latest_signal_day:
         core_lines.append(f"**📅 信号日期**：{latest_signal_day}")
     if portfolio_summary is not None and portfolio_summary.top_focus:
-        core_lines.append("**⭐ 今日重点名单**：" + "、".join(portfolio_summary.top_focus))
+        core_lines.append(
+            "**⭐ 今日重点名单**：" + "、".join(portfolio_summary.top_focus)
+        )
     elif portfolio_summary is not None and portfolio_summary.watchlist:
         core_lines.append(
             "**👀 观察主线**："
@@ -1205,7 +1209,7 @@ def _build_pipeline_digest(
         )
     if portfolio_summary is not None and portfolio_summary.execution_blockers:
         core_lines.append(
-            "**🔒 当前卡点**："
+            "**🔒 现在卡在哪**："
             + "；".join(
                 normalize_research_tone(str(item))
                 for item in portfolio_summary.execution_blockers[:2]
@@ -1219,7 +1223,7 @@ def _build_pipeline_digest(
         ]
         if blockers:
             core_lines.append(
-                "**🔒 当前卡点**："
+                "**🔒 现在卡在哪**："
                 + "；".join(normalize_research_tone(item) for item in blockers[:2])
             )
     if review_candidates:
@@ -1247,7 +1251,7 @@ def _build_pipeline_digest(
                 )
             if candidate.get("candidate_blocker"):
                 main_chain_lines.append(
-                    "  当前阻塞: " + str(candidate["candidate_blocker"])
+                    "  现在卡在哪: " + str(candidate["candidate_blocker"])
                 )
             if candidate.get("candidate_next_step"):
                 main_chain_lines.append(
@@ -1256,10 +1260,10 @@ def _build_pipeline_digest(
                 )
             review_meta = _format_candidate_review_meta(candidate)
             if review_meta:
-                main_chain_lines.append("  复核: " + review_meta)
+                main_chain_lines.append("  再看时间: " + review_meta)
         if portfolio_summary is not None and portfolio_summary.watchlist:
             main_chain_lines.append(
-                "- 备选观察名单: "
+                "- 继续观察名单: "
                 + "、".join(
                     str(item).split("(", 1)[0]
                     for item in portfolio_summary.watchlist[:5]
@@ -1267,10 +1271,10 @@ def _build_pipeline_digest(
             )
         if portfolio_summary is not None and portfolio_summary.top_focus:
             main_chain_lines.append(
-                "- 复核顺序: 先看 " + " → ".join(portfolio_summary.top_focus[:2])
+                "- 再看顺序: 先看 " + " → ".join(portfolio_summary.top_focus[:2])
             )
         elif review_candidates:
-            main_chain_lines.append("- 观察复核:")
+            main_chain_lines.append("- 观察名单接下来:")
             for candidate in review_candidates[:2]:
                 main_chain_lines.append(
                     "  - "
@@ -1292,7 +1296,7 @@ def _build_pipeline_digest(
             )
         elif portfolio_summary.watchlist:
             main_chain_lines.append(
-                "- 备选观察名单: " + "、".join(portfolio_summary.watchlist)
+                "- 继续观察名单: " + "、".join(portfolio_summary.watchlist)
             )
     else:
         main_chain_lines.append("- 暂无可用候选输出")
@@ -1314,7 +1318,7 @@ def _build_pipeline_digest(
         lead_review = review_candidates[0] if review_candidates else None
         if lead_review is not None:
             plan_lines.append(
-                "- 观察复核: "
+                "- 观察名单接下来: "
                 + format_watch_review_action(
                     lead_review["display"],
                     priority=str(
@@ -1338,7 +1342,9 @@ def _build_pipeline_digest(
             )
         )
     elif portfolio_summary is not None and portfolio_summary.watchlist:
-        plan_lines.append("- 明日以备选观察名单复核为主，等待右侧确认，不放大纸面仓位。")
+        plan_lines.append(
+            "- 明日以继续观察名单再看为主，等待右侧确认，不放大纸面仓位。"
+        )
     else:
         plan_lines.append("- 明日无明确主链复核，优先确认数据源和策略运行是否完整。")
     if portfolio_summary is not None and portfolio_summary.allocation_note:
@@ -1348,7 +1354,7 @@ def _build_pipeline_digest(
     plan_lines.extend(
         [
             "- 对照收盘复盘，确认强弱分层、策略标签和 PM 裁决是否一致。",
-            "- 若备选观察名单继续拥挤，只保留最强一到两只做人工跟踪。",
+            "- 若继续观察名单仍然拥挤，只保留最强一到两只做人工跟踪。",
         ]
     )
 
@@ -1418,7 +1424,11 @@ def _send_pipeline_digest(
         )
         if source_status:
             digest = prepend_source_status_banner(digest, source_status)
-        run_date = result.started_at[:10] if result.started_at else today_shanghai().isoformat()
+        run_date = (
+            result.started_at[:10]
+            if result.started_at
+            else today_shanghai().isoformat()
+        )
         send_notification(f"收盘总览-{run_date}", digest)
         logger.info("已发送收盘汇总通知 (mode=summary)")
     except Exception as exc:

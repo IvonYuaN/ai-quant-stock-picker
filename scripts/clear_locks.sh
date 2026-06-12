@@ -34,18 +34,37 @@ fi
 removed=0
 kept=0
 
+load_lock_info() {
+    local info_file="$1"
+    LOCK_PID=""
+    LOCK_RUNNER=""
+    LOCK_STARTED_AT=""
+    if [ -f "$info_file" ]; then
+        # shellcheck disable=SC1090
+        . "$info_file"
+    fi
+}
+
 while IFS= read -r -d '' lock_path; do
     lock_name="$(basename "$lock_path")"
     mtime="$(stat -c %Y "$lock_path" 2>/dev/null || stat -f %m "$lock_path")"
     age_minutes=$(( (NOW_EPOCH - mtime) / 60 ))
+    info_file="${lock_path}/meta.env"
+    load_lock_info "$info_file"
+    lock_pid="${LOCK_PID:-}"
+    lock_runner="${LOCK_RUNNER:-unknown}"
+    lock_started_at="${LOCK_STARTED_AT:-unknown}"
 
-    if is_truthy "$FORCE" || [ "$age_minutes" -ge "$STALE_MINUTES" ]; then
+    if [ -n "$lock_pid" ] && kill -0 "$lock_pid" 2>/dev/null && ! is_truthy "$FORCE"; then
+        kept=$((kept + 1))
+        log "保留活跃锁: $lock_name runner=${lock_runner} pid=${lock_pid} started_at=${lock_started_at} age=${age_minutes}min"
+    elif is_truthy "$FORCE" || [ "$age_minutes" -ge "$STALE_MINUTES" ]; then
         rm -rf -- "$lock_path"
         removed=$((removed + 1))
-        log "已清理锁: $lock_name age=${age_minutes}min"
+        log "已清理锁: $lock_name runner=${lock_runner} pid=${lock_pid:-unknown} started_at=${lock_started_at} age=${age_minutes}min"
     else
         kept=$((kept + 1))
-        log "保留近期锁: $lock_name age=${age_minutes}min"
+        log "保留近期锁: $lock_name runner=${lock_runner} pid=${lock_pid:-unknown} started_at=${lock_started_at} age=${age_minutes}min"
     fi
 done < <(find "$LOCK_DIR" -maxdepth 1 -type d -name "*.lock" -print0)
 

@@ -15,6 +15,12 @@ def test_server_sync_script_supports_custom_runner() -> None:
     assert "AQSP_RUNNER_SCRIPT is required" in script
     assert 'log "开始运行任务: ${RUNNER_PATH}"' in script
     assert 'bash "${RUNNER_PATH}"' in script
+    assert 'RUNNER_TIMEOUT_SECONDS="${AQSP_RUNNER_TIMEOUT_SECONDS:-0}"' in script
+    assert (
+        'timeout --foreground "${RUNNER_TIMEOUT_SECONDS}" bash "${RUNNER_PATH}"'
+        in script
+    )
+    assert "主链路执行超时，被保护性终止" in script
 
 
 def test_intraday_refresh_script_uses_isolated_outputs() -> None:
@@ -25,7 +31,7 @@ def test_intraday_refresh_script_uses_isolated_outputs() -> None:
     assert 'export AQSP_RUN_TASK_ID="${AQSP_RUN_TASK_ID:-intraday}"' in script
     assert 'INTRADAY_MODE="${AQSP_INTRADAY_MODE:-open}"' in script
     assert 'INTRADAY_NOTIFY="${AQSP_INTRADAY_NOTIFY:-false}"' in script
-    assert 'NOTIFY_ARGS=(--notify)' in script
+    assert "NOTIFY_ARGS=(--notify)" in script
     assert "data/intraday_predictions.jsonl" in script
     assert "reports/intraday_latest.md" in script
     assert "reports/intraday_latest.csv" in script
@@ -84,6 +90,15 @@ def test_bt_task_script_exposes_panel_safe_actions() -> None:
     assert 'ACTION="${1:-}"' in script
     assert 'if [ -z "$ACTION" ]' in script
     assert "daily|intraday|midday|coldstart|monitor|news|status" in script
+    assert "AQSP_RUNNER_TIMEOUT_SECONDS=5400" in script
+    assert "AQSP_MONITOR_TIMEOUT_SECONDS=600" in script
+    assert "AQSP_LOCK_STALE_MINUTES=360" in script
+    assert "Recommended BT schedule (Asia/Shanghai)" in script
+    assert "news      08:45 Mon-Fri; 10:00 Sat/Sun" in script
+    assert "daily     18:00 Mon-Fri" in script
+    assert "coldstart 19:40 Mon-Fri" in script
+    assert '"正常跳过/互斥保护"' in script
+    assert "It is not a failed run." in script
     assert "AQSP_RUNNER_SCRIPT=scripts/daily_pipeline.sh" in script
     assert "AQSP_RUNNER_SCRIPT=scripts/intraday_refresh.sh" in script
     assert "AQSP_RUNNER_SCRIPT=scripts/midday_refresh.sh" in script
@@ -121,6 +136,9 @@ def test_news_catalysts_script_sends_research_notification() -> None:
 def test_server_status_surfaces_bt_task_logs() -> None:
     script = (PROJECT_ROOT / "scripts" / "server_status.sh").read_text(encoding="utf-8")
 
+    assert 'print_section "LOCKS"' in script
+    assert "config runner_timeout=%ss monitor_timeout=%ss stale_after=%smin" in script
+    assert "runner=%s pid=%s started_at=%s age=%smin %s" in script
     assert 'print_section "BT TASK LOG"' in script
     assert "logs/bt/bt-${action}-$(date +%Y-%m-%d).log" in script
     assert "intraday midday daily coldstart monitor news status" in script
@@ -141,6 +159,8 @@ def test_scheduler_diagnosis_is_read_only_and_bt_first() -> None:
     assert '"news"' in script
     assert "BT Panel jobs may be managed outside crontab" in script
     assert "BT Panel logs" in script
+    assert "pid-active" in script
+    assert "runner=" in script
     assert "com.aqsp.daily.plist" not in script
     assert "AQSP_SCHEDULER_STRICT" in script
 
@@ -150,6 +170,8 @@ def test_clear_locks_is_conservative_by_default() -> None:
 
     assert "AQSP_LOCK_STALE_MINUTES" in script
     assert "AQSP_CLEAR_LOCKS_FORCE" in script
+    assert "meta.env" in script
+    assert "保留活跃锁" in script
     assert 'find "$LOCK_DIR" -maxdepth 1 -type d -name "*.lock"' in script
     assert 'rm -rf -- "$lock_path"' in script
     assert "pkill" not in script
@@ -164,6 +186,12 @@ def test_server_sync_script_has_lock_guard() -> None:
     )
 
     assert "server-runtime.lock" in script
+    assert 'LOCK_INFO_FILE="${LOCK_FILE}/meta.env"' in script
+    assert 'LOCK_STALE_MINUTES="${AQSP_LOCK_STALE_MINUTES:-360}"' in script
+    assert "lock_is_stale" in script
+    assert "检测到陈旧主锁，自动回收" in script
+    assert "LOCK_RUNNER" in script
+    assert "LOCK_STARTED_AT" in script
     assert "主链路仍在运行，本次任务正常跳过；这是互斥保护，不是失败" in script
 
 
@@ -173,6 +201,12 @@ def test_server_monitor_script_has_lock_guard() -> None:
     )
 
     assert "server-monitor.lock" in script
+    assert 'LOCK_INFO_FILE="${LOCK_FILE}/meta.env"' in script
+    assert 'MONITOR_TIMEOUT_SECONDS="${AQSP_MONITOR_TIMEOUT_SECONDS:-0}"' in script
+    assert 'timeout --foreground "${MONITOR_TIMEOUT_SECONDS}" "${PYTHON_BIN}"' in script
+    assert "lock_is_stale" in script
+    assert "检测到陈旧监控锁，自动回收" in script
+    assert "监控执行超时，被保护性终止" in script
     assert "上一轮监控仍在运行，本次监控正常跳过；这是互斥保护，不是失败" in script
 
 

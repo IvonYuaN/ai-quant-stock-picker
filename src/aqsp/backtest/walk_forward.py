@@ -611,13 +611,14 @@ def _resolve_exit(
     slippage_bps: float,
 ) -> tuple[pd.Series, float, str]:
     slippage = slippage_bps / 10000
-    for _, bar in window.iterrows():
-        low = float(bar.get("low", bar["close"]))
-        high = float(bar.get("high", bar["close"]))
+    for bar in window.itertuples(index=False, name="PriceBar"):
+        bar_close = float(getattr(bar, "close"))
+        low = float(getattr(bar, "low", bar_close))
+        high = float(getattr(bar, "high", bar_close))
         if stop_loss > 0 and low <= stop_loss:
-            return bar, stop_loss * (1 - slippage), "stop_loss"
+            return pd.Series(bar._asdict()), stop_loss * (1 - slippage), "stop_loss"
         if take_profit > 0 and high >= take_profit:
-            return bar, take_profit * (1 - slippage), "take_profit"
+            return pd.Series(bar._asdict()), take_profit * (1 - slippage), "take_profit"
     last = window.iloc[-1]
     return last, float(last["close"]) * (1 - slippage), "hold_period_close"
 
@@ -634,15 +635,16 @@ def _resolve_exit_tiered(
     weighted_exit = 0.0
     exit_bar = None
 
-    for _, bar in window.iterrows():
-        low = float(bar.get("low", bar["close"]))
-        close = float(bar["close"])
+    for bar in window.itertuples(index=False, name="PriceBar"):
+        bar_series = pd.Series(bar._asdict())
+        low = float(getattr(bar, "low", getattr(bar, "close")))
+        close = float(getattr(bar, "close"))
         drop_pct = (entry_price - low) / entry_price
 
         if drop_pct >= hard_stop_pct and remaining_weight > 0:
             exit_price = hard_stop * (1 - slippage)
             weighted_exit += remaining_weight * exit_price
-            return bar, weighted_exit, "hard_stop"
+            return bar_series, weighted_exit, "hard_stop"
 
         if drop_pct >= 0.02 and remaining_weight > 0.9:
             reduce = 0.20
@@ -657,7 +659,7 @@ def _resolve_exit_tiered(
             remaining_weight -= reduce
 
         if remaining_weight <= 0:
-            return bar, weighted_exit, "tiered_exit"
+            return bar_series, weighted_exit, "tiered_exit"
 
     if remaining_weight > 0:
         last = window.iloc[-1]

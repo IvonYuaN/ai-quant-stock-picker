@@ -279,46 +279,6 @@ def _inject_dashboard_styles() -> None:
             color: #163247;
             font-weight: 700;
         }
-        .aqsp-nav-code {
-            margin-top: 0.22rem;
-            text-align: center;
-            font-size: 0.76rem;
-            line-height: 1.15;
-            color: #4f6171;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-        }
-        .aqsp-nav-code.active {
-            color: #163247;
-            font-weight: 760;
-        }
-        .aqsp-nav-name {
-            margin-top: 0.12rem;
-            text-align: center;
-            font-size: 0.8rem;
-            line-height: 1.25;
-            color: #5f6f7d;
-            min-height: 1.1rem;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-        }
-        .aqsp-nav-name.active {
-            color: #163247;
-            font-weight: 700;
-        }
-        .aqsp-nav-reason {
-            margin-top: 0.08rem;
-            text-align: center;
-            font-size: 0.72rem;
-            line-height: 1.2;
-            color: #8a6947;
-            min-height: 0.95rem;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-        }
         .aqsp-workspace-name {
             margin-top: 0.12rem;
         }
@@ -1034,6 +994,68 @@ def _inject_dashboard_styles() -> None:
                 grid-template-columns: 1fr;
             }
         }
+        /* 科技感增强：导航和按钮 */
+        .aqsp-workspace-shell {
+            position: relative;
+            border-left: 3px solid transparent;
+            border-image: linear-gradient(180deg, #1e6fff 0%, #00c2ff 100%) 1;
+            background: linear-gradient(180deg, rgba(251, 252, 255, 0.94) 0%, rgba(244, 248, 251, 0.92) 100%);
+            backdrop-filter: blur(2px);
+        }
+        /* 按钮样式增强 */
+        div[data-testid="stButton"] button[kind="primary"] {
+            background: linear-gradient(135deg, #1e6fff 0%, #00c2ff 100%);
+            border: none;
+            box-shadow: 0 4px 12px rgba(30, 111, 255, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.2);
+            transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+        div[data-testid="stButton"] button[kind="primary"]:hover {
+            box-shadow: 0 6px 20px rgba(30, 111, 255, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.3);
+            transform: translateY(-1px);
+        }
+        div[data-testid="stButton"] button[kind="secondary"] {
+            border: 1.5px solid rgba(30, 111, 255, 0.3);
+            background: rgba(255, 255, 255, 0.6);
+            backdrop-filter: blur(8px);
+            color: #1e6fff;
+            transition: all 0.25s ease;
+        }
+        div[data-testid="stButton"] button[kind="secondary"]:hover {
+            border-color: rgba(30, 111, 255, 0.6);
+            background: rgba(30, 111, 255, 0.08);
+            box-shadow: 0 4px 12px rgba(30, 111, 255, 0.2);
+        }
+        /* 状态指示器 */
+        .aqsp-status-indicator {
+            display: inline-block;
+            width: 0.6rem;
+            height: 0.6rem;
+            border-radius: 50%;
+            margin-right: 0.4rem;
+            animation: pulse-indicator 2s ease-in-out infinite;
+        }
+        .aqsp-status-indicator.healthy {
+            background: #00c248;
+            box-shadow: 0 0 8px rgba(0, 194, 72, 0.6);
+        }
+        .aqsp-status-indicator.warning {
+            background: #ffb800;
+            box-shadow: 0 0 8px rgba(255, 184, 0, 0.6);
+        }
+        .aqsp-status-indicator.error {
+            background: #ff4757;
+            box-shadow: 0 0 8px rgba(255, 71, 87, 0.6);
+        }
+        @keyframes pulse-indicator {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.7; }
+        }
+        /* Caption样式增强（用于副标题） */
+        div[data-testid="stCaptionContainer"] p {
+            color: #7a8fa1;
+            font-size: 0.78rem;
+            letter-spacing: 0.02em;
+        }
         </style>
         """,
         unsafe_allow_html=True,
@@ -1128,7 +1150,7 @@ def _task_metric_labels(task_id: str) -> tuple[str, str, str]:
 
 
 def _has_review_meta(value: str) -> bool:
-    return value.strip() not in {"", "-", "暂无额外复核节奏"}
+    return value.strip() not in {"", "-", "暂无额外再看时间"}
 
 
 def _review_meta_line(label: str, value: str) -> str:
@@ -1138,7 +1160,7 @@ def _review_meta_line(label: str, value: str) -> str:
 def _render_frame(title: str, frame) -> None:
     st.subheader(title)
     if frame.empty:
-        st.info("暂无数据。")
+        st.info("这块还没有数据。先确认对应任务已跑完，再回来回看。")
         return
     st.dataframe(frame, width="stretch", hide_index=True)
 
@@ -1150,17 +1172,13 @@ def _stretch_button(label: str, **kwargs) -> bool:
 
 
 def _render_two_line_nav_label(
-    label: _TwoLineNavLabel, *, active: bool, reason: str = ""
+    label: _TwoLineNavLabel, *, active: bool = False
 ) -> None:
     active_class = " active" if active else ""
-    reason_html = (
-        f'<div class="aqsp-nav-reason">{escape(reason)}</div>' if reason else ""
-    )
     st.markdown(
         (
             f'<div class="aqsp-nav-code{active_class}">{escape(label.code)}</div>'
             f'<div class="aqsp-nav-name{active_class}">{escape(label.name)}</div>'
-            f"{reason_html}"
         ),
         unsafe_allow_html=True,
     )
@@ -1374,7 +1392,7 @@ def _debate_overview_lines(
             debate_summary.opportunity_highlights[:2]
         )
     else:
-        review_line = "待补证据: 当前辩论未给出明确风险或机会，先回候选证据链复核。"
+        review_line = "待补依据: 当前辩论未给出明确风险或机会，先回候选来龙去脉复核。"
     agent_lines = tuple(
         line
         for line in (
@@ -1666,7 +1684,7 @@ def _archive_conclusion_context(
             for line in (
                 *_debate_primary_takeaways(debate_summary)[:2],
                 (
-                    f"当前阻塞: {_card_primary_blocker(selected_card)}"
+                    f"现在卡在哪: {_card_primary_blocker(selected_card)}"
                     if _card_primary_blocker(selected_card)
                     else ""
                 ),
@@ -1682,7 +1700,7 @@ def _archive_conclusion_context(
                     if _card_next_action(selected_card) != "-"
                     else ""
                 ),
-                _review_meta_line("复核节奏", selected_card.review_meta),
+                _review_meta_line("再看时间", selected_card.review_meta),
             )
             if line
         )
@@ -1887,7 +1905,7 @@ def _normalized_readiness_lines(
     )
     if normalized:
         return normalized
-    return (f"研究已产出，但当前被{blocker}拦住，暂不进入纸面入场验证链路。",)
+    return (f"研究已产出，但当前被{blocker}拦住，暂不进入纸面入场验证。",)
 
 
 def _symbol_focus_entry(card: DashboardCandidateCard) -> str:
@@ -1926,7 +1944,7 @@ def _home_watch_fallback_lines(
         return _singleton_lines(task_view.review_lines[0])
     if task_view.watchlist_lines:
         return _singleton_lines(task_view.watchlist_lines[0])
-    return _singleton_lines("当前没有独立观察对象。")
+    return _singleton_lines("当前没有需要单独观察的对象，不用为了凑名单硬找方向。")
 
 
 def _home_recommend_fallback_lines(
@@ -1940,12 +1958,12 @@ def _home_recommend_fallback_lines(
         blocker = _card_primary_blocker(blocked_focus)
         if blocker:
             return _singleton_lines(
-                f"当前无 ready 候选，先核对 {blocked_focus.display_name} 的卡点。"
+                f"当前没有重点跟踪候选，先核对 {blocked_focus.display_name} 的卡点。"
             )
         return _singleton_lines(
-            f"当前无 ready 候选，先核对 {blocked_focus.display_name} 的卡点。"
+            f"当前没有重点跟踪候选，先核对 {blocked_focus.display_name} 的卡点。"
         )
-    return _singleton_lines("当前无 ready 候选。")
+    return _singleton_lines("当前没有重点跟踪候选，先等下一轮主链信号。")
 
 
 def _debate_vote_snapshot_lines(
@@ -2001,7 +2019,7 @@ def _debate_brief_cards(
             (
                 f"修正原因: {debate_summary.adjustment_reason}"
                 if debate_summary.adjustment_reason
-                else "修正原因: 当前未给出充分依据，回到候选证据链。"
+                else "修正原因: 当前未给出充分依据，回到候选来龙去脉。"
             ),
         )
     )
@@ -2033,8 +2051,8 @@ def _debate_brief_cards(
             tone="archive",
         ),
         _DebateBriefCard(
-            kicker="复核动作",
-            title="先回证据链核对",
+            kicker="接下来做什么",
+            title="先回原始依据核对",
             lines=review_lines,
             tone="pressure" if debate_summary.risk_warnings else "archive",
         ),
@@ -2080,7 +2098,7 @@ def _current_mode_label(task_view) -> str:
             return "已验证未归档"
         if task_view.candidate_count > 0:
             return "待复盘"
-        return "暂无结果"
+        return "无新结论"
     if task_view.task_id == "briefing":
         return "待跟踪" if task_view.next_day_focus_lines else "已产出"
     if task_view.actionable_count > 0:
@@ -2091,7 +2109,7 @@ def _current_mode_label(task_view) -> str:
         return "观察中"
     if task_view.candidate_count > 0:
         return "已产出"
-    return "暂无结果"
+    return "无新结论"
 
 
 def _classify_candidate_queues(
@@ -2198,7 +2216,7 @@ def _render_summary_cards(task_view) -> None:
         _render_line_block(
             "报告摘要",
             task_view.report_summary_lines,
-            "当前任务暂无结构化报告摘要。",
+            "当前任务还没有结构化摘要，先看原始报告或等待下一次跑批补齐。",
         )
     with market_col:
         if task_view.market_environment:
@@ -2206,7 +2224,7 @@ def _render_summary_cards(task_view) -> None:
             st.success(task_view.market_environment)
         else:
             st.subheader("市场态势")
-            st.info("当前任务暂无结构化市场态势。")
+            st.info("当前任务还没有市场态势标签，先不要把它当作完整结论。")
 
         if task_view.runtime_lines:
             st.markdown("\n".join(f"- {line}" for line in task_view.runtime_lines))
@@ -2226,13 +2244,13 @@ def _render_focus_block(task_view) -> None:
         _render_line_block(
             "明日重点",
             task_view.next_day_focus_lines,
-            "当前任务暂无结构化明日重点。",
+            "当前任务还没有明日重点，先按主链候选和风险卡点回看。",
         )
     with nav_col:
         _render_line_block(
             "优先顺位",
             task_view.ranking_lines,
-            "当前日期暂无优先顺位说明。",
+            "当前日期还没有优先顺位，说明暂时不需要强行排序。",
         )
 
 
@@ -2294,7 +2312,7 @@ def _home_debate_item_lines(debate_summary: DashboardDebateSummary) -> tuple[str
         _debate_primary_takeaways(debate_summary)[:4],
         (
             "研究入口: 辩论主结论",
-            "先看分歧来源，再决定是否回到候选证据链。",
+            "先看分歧来源，再决定是否回到候选来龙去脉。",
         ),
     )
 
@@ -2312,13 +2330,13 @@ def _home_action_rail_items(
     rail_items: list[_HomeActionRailItem] = [
         _HomeActionRailItem(
             lane_id="recommend",
-            lane_label="优先复核",
+            lane_label="优先再看",
             tone="focus",
             button_label="去复盘",
             target_workspace="候选复盘",
             card=recommend_cards[0] if recommend_cards else None,
             summary=(
-                recommend_cards[0].display_name if recommend_cards else "暂无优先复核项"
+                recommend_cards[0].display_name if recommend_cards else "等待主链信号"
             ),
             lines=(
                 _home_action_item_lines(recommend_cards[0])
@@ -2337,7 +2355,7 @@ def _home_action_rail_items(
             button_label="归档回看",
             target_workspace="归档回看",
             card=watch_cards[0] if watch_cards else None,
-            summary=(watch_cards[0].display_name if watch_cards else "暂无观察项"),
+            summary=(watch_cards[0].display_name if watch_cards else "无需硬找方向"),
             lines=(
                 _home_action_item_lines(watch_cards[0])
                 if watch_cards
@@ -2360,7 +2378,7 @@ def _home_action_rail_items(
             summary=(
                 blocked_focus.display_name
                 if blocked_focus is not None
-                else "暂无阻塞项"
+                else "当前没有明显卡点"
             ),
             lines=(
                 _home_action_item_lines(blocked_focus)
@@ -2368,7 +2386,7 @@ def _home_action_rail_items(
                 else _singleton_lines(
                     task_view.blocker_lines[0]
                     if task_view.blocker_lines
-                    else "当前路径相对顺畅，可按候选优先级推进。"
+                    else "当前节奏相对顺畅，可按候选优先级推进。"
                 )
             ),
             visible=bool(blocked_focus is not None or task_view.blocker_lines),
@@ -2455,13 +2473,13 @@ def _render_lifecycle_overview(task_view) -> None:
         _render_line_block(
             "候选生命周期",
             task_view.lifecycle_lines,
-            "当前日期暂无候选生命周期信息。",
+            "当前日期还没有候选生命周期，先确认主链是否产出候选。",
         )
     with unlock_col:
         _render_line_block(
             "卡点提示",
             task_view.unlock_lines,
-            "当前日期暂无额外卡点提示。",
+            "当前日期没有额外卡点提示，按候选优先级正常回看即可。",
         )
 
 
@@ -2476,7 +2494,7 @@ def _render_history_overview(task_view, provider: DashboardDataProvider) -> None
         _render_line_block(
             "较前日变化",
             task_view.delta_lines,
-            "当前日期暂无可对比的上一交易日。",
+            "当前日期还没有可对比的上一交易日，先看当日结果。",
         )
 
 
@@ -2542,7 +2560,7 @@ def _home_workspace_hint(
             "先看虚拟盘跟踪",
             _safe_paper_summary_detail(
                 paper_summary,
-                fallback="当前纸面验证链路已有事件，先看入场假设和不可成交处理。",
+                fallback="当前纸面验证已有事件，先看入场假设和不可成交处理。",
             ),
             "pressure",
         )
@@ -2579,7 +2597,7 @@ def _home_workspace_hint(
             "先看虚拟盘跟踪",
             _safe_paper_summary_detail(
                 paper_summary,
-                fallback="当前有纸面持有假设，先核对防守位、观察目标与退出条件。",
+                fallback="当前有纸面持有假设，先核对最多亏到、先看目标与退出条件。",
             ),
             "focus",
         )
@@ -2592,7 +2610,7 @@ def _home_workspace_hint(
                 else (
                     task_view.recommendation_lines[0]
                     if task_view.recommendation_lines
-                    else "当前仍以研究判断为主，先沿候选路径回看证据。"
+                    else "当前仍以研究结论为主，先回看候选的来龙去脉。"
                 )
             )
         ),
@@ -2622,7 +2640,7 @@ def _render_home_navigation_summary(
     )
     blocked_focus = _home_blocked_focus_card(blocked_cards)
     focus_title = "当前无显著主推候选"
-    focus_body = "当前日期没有进入优先推进的候选，先看观察与阻塞链路。"
+    focus_body = "当前日期没有进入优先推进的候选，先看观察对象和阻塞原因。"
     if task_view.recommendation_lines:
         focus_title = "优先推进"
         focus_body = task_view.recommendation_lines[0]
@@ -2677,7 +2695,7 @@ def _render_daily_workflow(
     if not rows:
         return
     if show_heading:
-        st.subheader("阶段状态")
+        st.subheader("今天走到哪一步")
     visible_rows = rows[:3]
     for start in range(0, len(visible_rows), 3):
         columns = st.columns(min(len(visible_rows[start : start + 3]), 3))
@@ -2691,7 +2709,6 @@ def _render_daily_workflow(
                       <div class="aqsp-workflow-phase">{escape(row.phase_label)}</div>
                       <div class="aqsp-day-header">
                         <div class="aqsp-workflow-title">{escape(row.task_label)}</div>
-                        <div class="aqsp-day-status">{escape(row.status_label)}</div>
                       </div>
                       <div class="aqsp-day-metrics">
                         <div class="aqsp-day-metric">{action_label} {row.actionable_count}</div>
@@ -2704,7 +2721,7 @@ def _render_daily_workflow(
                     unsafe_allow_html=True,
                 )
                 if not is_active and _stretch_button(
-                    "打开阶段",
+                    "切到这段",
                     key=f"workflow-task-{row.task_id}-{row.signal_date}",
                 ):
                     _set_dashboard_selection(
@@ -2714,7 +2731,7 @@ def _render_daily_workflow(
                     st.rerun()
     hidden_rows = rows[3:]
     if hidden_rows:
-        with st.expander(f"查看其余阶段 ({len(hidden_rows)})", expanded=False):
+        with st.expander(f"看更多段 ({len(hidden_rows)})", expanded=False):
             extra_columns = st.columns(min(len(hidden_rows), 3))
             for column, row in zip(extra_columns, hidden_rows):
                 action_label, watch_label, blocked_label = _task_metric_labels(
@@ -2729,7 +2746,6 @@ def _render_daily_workflow(
                               <div class="aqsp-day-title">{row.task_label}</div>
                               <div class="aqsp-date-meta">{row.phase_label}</div>
                             </div>
-                            <div class="aqsp-day-status">{row.status_label}</div>
                           </div>
                           <div class="aqsp-day-metrics">
                             <div class="aqsp-day-metric">{action_label} {row.actionable_count}</div>
@@ -2742,7 +2758,7 @@ def _render_daily_workflow(
                         unsafe_allow_html=True,
                     )
                     if _stretch_button(
-                        "打开阶段",
+                        "切到这段",
                         key=f"workflow-extra-task-{row.task_id}-{row.signal_date}",
                     ):
                         _set_dashboard_selection(
@@ -2821,7 +2837,7 @@ def _render_trading_cockpit(
             )
         )
     elif paper_summary.open_positions:
-        pressure_lines.append("当前以纸面持有假设、防守位和观察目标复核为主。")
+        pressure_lines.append("当前以纸面持有假设、最多亏到和先看目标回看为主。")
     else:
         pressure_lines.append("当前纸面侧较轻，可优先回到研究判断。")
 
@@ -3031,7 +3047,7 @@ def _day_replay_digest_lines(
     if not phase_text:
         phase_text = overview.workflow_summary.replace("当日流程:", "").strip()
     if not phase_text:
-        phase_text = f"{task_view.task_label} 当前视角"
+        phase_text = task_view.task_label
 
     conclusion = _join_display_parts(
         "📍 当日结论",
@@ -3042,7 +3058,7 @@ def _day_replay_digest_lines(
     workflow = _join_display_parts(
         "🧩 任务回放",
         phase_text,
-        f"当前停在 {task_view.task_label}",
+        task_view.task_label if phase_text != task_view.task_label else "",
     )
     next_step = _day_replay_next_step_line(
         task_view=task_view,
@@ -3147,7 +3163,7 @@ def _render_command_center(
         (
             f"主焦点: {focus_text}",
             f"主阻塞: {blocker_text}",
-            f"复核节奏: {review_text or '按默认节奏复核'}",
+            f"再看时间: {review_text or '按默认时间回看'}",
         ),
         _command_center_brief_lines(
             task_view=task_view,
@@ -3184,29 +3200,29 @@ def _render_decision_queues(task_view) -> None:
     )
 
     recommend_summary = (
-        f"当前优先复核 {len(recommend_cards)} 只，先看 {recommend_cards[0].display_name}"
+        f"当前优先再看 {len(recommend_cards)} 只，先看 {recommend_cards[0].display_name}"
         if recommend_cards
-        else "当前没有进入优先复核的候选，先看观察与阻塞队列。"
+        else "当前没有进入优先再看的候选，先看观察与阻塞队列。"
     )
     watch_summary = (
-        f"备选观察名单 {len(watch_cards)} 只，优先跟踪节奏和确认条件。"
+        f"继续观察名单 {len(watch_cards)} 只，先看时间和确认条件。"
         if watch_cards
-        else "当前备选观察名单较轻，重点转向推荐或阻塞处理。"
+        else "当前继续观察名单较轻，重点转向推荐或阻塞处理。"
     )
     blocked_summary = (
         f"阻塞 {len(blocked_cards)} 只，先核对最上面的研究卡点。"
         if blocked_cards
-        else "当前没有明显阻塞，纸面验证路径相对顺畅。"
+        else "当前没有明显阻塞，纸面验证节奏相对顺畅。"
     )
 
     recommend_col, watch_col, blocked_col = st.columns(3)
     with recommend_col:
         _render_priority_queue(
-            title="优先复核队列",
+            title="优先再看队列",
             kicker="研究候选",
             summary=recommend_summary,
             cards=recommend_cards,
-            empty_text="当前日期暂无优先复核候选。",
+            empty_text="当前日期没有优先再看候选，不要为了凑名单硬找方向。",
             tone="recommend",
         )
     with watch_col:
@@ -3215,7 +3231,7 @@ def _render_decision_queues(task_view) -> None:
             kicker="继续观察",
             summary=watch_summary,
             cards=watch_cards,
-            empty_text="当前日期暂无观察候选。",
+            empty_text="当前日期没有继续观察候选，先等下一轮主链信号。",
             tone="watch",
         )
     with blocked_col:
@@ -3224,7 +3240,7 @@ def _render_decision_queues(task_view) -> None:
             kicker="核对卡点",
             summary=blocked_summary,
             cards=blocked_cards,
-            empty_text="当前日期暂无明显阻塞项。",
+            empty_text="当前日期没有明显卡点，按候选顺位回看即可。",
             tone="blocked",
         )
 
@@ -3366,7 +3382,7 @@ def _render_date_timeline_cards(
                     unsafe_allow_html=True,
                 )
                 if _stretch_button(
-                    "查看日期",
+                    "切到这天",
                     key=f"timeline-date-{row.signal_date}",
                 ):
                     _set_dashboard_selection(
@@ -3384,7 +3400,7 @@ def _render_same_day_task_matrix(
 ) -> None:
     if not rows:
         return
-    st.subheader("同日任务矩阵")
+    st.subheader("当天各段")
     for start in range(0, len(rows), 4):
         columns = st.columns(min(len(rows[start : start + 4]), 4))
         for column, row in zip(columns, rows[start : start + 4]):
@@ -3399,7 +3415,6 @@ def _render_same_day_task_matrix(
                           <div class="aqsp-day-title">{row.task_label}</div>
                           <div class="aqsp-date-meta">{row.phase_label}</div>
                         </div>
-                        <div class="aqsp-day-status">{row.status_label}</div>
                       </div>
                       <div class="aqsp-day-metrics">
                         <div class="aqsp-day-metric">{action_label} {row.actionable_count}</div>
@@ -3412,7 +3427,7 @@ def _render_same_day_task_matrix(
                     unsafe_allow_html=True,
                 )
                 if not is_active and _stretch_button(
-                    f"查看{row.task_label}",
+                    f"切到{row.task_label}",
                     key=f"same-day-task-{row.task_id}-{row.signal_date}",
                 ):
                     _set_dashboard_selection(
@@ -3435,13 +3450,13 @@ def _render_task_workbench(
     st.subheader(f"同日任务状态快照 · {signal_date or '最新'}")
     st.caption("只看已落盘结果。")
     if not snapshots:
-        st.info("当前暂无任务快照。")
+        st.info("当前还没有任务快照。先确认宝塔任务已运行，再回来看同日状态。")
         return
 
     active_snapshots = tuple(
         snapshot
         for snapshot in snapshots
-        if snapshot.status_label not in {"该日无结果", "暂无结果"}
+        if snapshot.status_label not in {"该日未产出", "未产出"}
     )
     hidden_snapshots = tuple(
         snapshot for snapshot in snapshots if snapshot not in active_snapshots
@@ -3543,18 +3558,18 @@ def _render_paper_summary(summary: DashboardPaperSummary) -> None:
         _render_line_block(
             "纸面验证摘要",
             summary.action_summary_lines,
-            "当前暂无纸面验证摘要。",
+            "当前还没有纸面验证摘要。先等候选进入纸面跟踪后再看。",
         )
         _render_line_block(
             "纸面持有假设",
             summary.open_position_lines,
-            "当前暂无纸面持有假设。",
+            "当前没有纸面持有假设。说明暂时没有需要跟踪的纸面仓位。",
         )
     with detail_col2:
         _render_line_block(
             "纸面关键事件",
             summary.event_lines,
-            "当前暂无纸面关键事件。",
+            "当前没有纸面关键事件。等出现入场、阻塞或退出记录后再复盘。",
         )
 
 
@@ -3593,7 +3608,9 @@ def _home_execution_snapshot_context(
         () if blocked_without_execution else summary.action_summary_lines[:1]
     )
     status_lines = _unique_lines(tuple(status_seed), action_summary_lines)
-    holding_lines = summary.open_position_lines[:2] or ("当前暂无纸面持有假设。",)
+    holding_lines = summary.open_position_lines[:2] or (
+        "当前没有纸面持有假设。说明暂时没有需要跟踪的纸面仓位。",
+    )
     event_lines = summary.event_lines[:2]
     if blocked_without_execution:
         generic_event_lines = {
@@ -3605,7 +3622,7 @@ def _home_execution_snapshot_context(
         )
         event_lines = filtered_event_lines or ("先回到候选复盘核对卡点与复核条件。",)
     elif not event_lines:
-        event_lines = ("当前暂无纸面关键事件。",)
+        event_lines = ("当前没有纸面关键事件。等出现入场、阻塞或退出记录后再复盘。",)
     return (status_title, status_lines, holding_lines, event_lines, tone)
 
 
@@ -3668,7 +3685,7 @@ def _render_home_execution_snapshot(
         with event_col:
             _render_cockpit_card(
                 kicker="研究阻塞联动",
-                title="先回研究链核对",
+                title="先回已有判断核对",
                 lines=_unique_lines(
                     event_lines,
                     ("当前没有持仓或纸面回写，纸面侧暂不构成独立工作面。",),
@@ -3744,7 +3761,7 @@ def _home_reading_order_lines(
 
     if focus_card is not None:
         focus_line = _join_display_parts(
-            "🧭 再看候选路径",
+            "🧭 再看候选来龙去脉",
             focus_card.display_name,
             _action_status_label(focus_card.action_label, focus_card.status_label),
             _card_emphasis(focus_card),
@@ -3756,13 +3773,13 @@ def _home_reading_order_lines(
             reverse=True,
         )[0]
         focus_line = _join_display_parts(
-            "🧭 再看分歧路径",
+            "🧭 再看分歧来龙去脉",
             debate_focus.display_name,
             f"{debate_focus.recommended_adjustment_label} / 分歧 {debate_focus.disagreement_score:.2f}",
         )
     else:
         focus_line = _join_display_parts(
-            "🧭 再看研究路径",
+            "🧭 再看研究来龙去脉",
             overview.focus_headline
             or overview.top_headline
             or task_view.headline
@@ -3849,7 +3866,7 @@ def _home_brief_cards(
                 (
                     f"待核对: {debate_focus.risk_warnings[0]}"
                     if debate_focus.risk_warnings
-                    else "待核对: 回到候选证据链。"
+                    else "待核对: 回到候选来龙去脉。"
                 ),
             )
         )
@@ -3858,7 +3875,7 @@ def _home_brief_cards(
         focus_lines = _unique_lines(
             (
                 overview.focus_headline or overview.top_headline or task_view.headline,
-                "阅读提示: 先看备选观察名单和任务摘要，不为了凑数新增纸面对象。",
+                "阅读提示: 先看继续观察名单和任务摘要，不为了凑数新增纸面对象。",
             )
         )
 
@@ -3920,9 +3937,10 @@ def _home_brief_cards(
             tone="focus" if focus_card is not None else "archive",
         ),
         _HomeBriefCard(
-            kicker="02 纸面现实",
+            kicker="02 纸面记录",
             title=paper_title,
-            lines=paper_lines or ("当前暂无纸面关键事件。",),
+            lines=paper_lines
+            or ("当前没有纸面关键事件。等出现入场、阻塞或退出记录后再复盘。",),
             tone=paper_tone,
         ),
         _HomeBriefCard(
@@ -4131,8 +4149,8 @@ def _render_home_task_board(
     paper_summary: DashboardPaperSummary,
     overview: DashboardDateOverview,
 ) -> None:
-    st.subheader("当日任务板")
-    st.caption("先看阶段状态，再看复核顺序与纸面现实。")
+    st.subheader("今天先看什么")
+    st.caption("先看今天走到哪一步，再看先看这些和纸面记录。")
     _render_daily_workflow(
         rows,
         current_task_id,
@@ -4141,7 +4159,7 @@ def _render_home_task_board(
     )
     action_col, execution_col = st.columns((1.15, 0.85))
     with action_col:
-        st.markdown("**复核顺序**")
+        st.markdown("**先看这些**")
         _render_home_action_rail(
             task_view,
             spotlights,
@@ -4150,7 +4168,7 @@ def _render_home_task_board(
             layout="stack",
         )
     with execution_col:
-        st.markdown("**纸面现实**")
+        st.markdown("**纸面记录**")
         _render_home_execution_snapshot(
             paper_summary,
             task_view=task_view,
@@ -4307,7 +4325,9 @@ def _archive_to_review_handoff_lines(
         selected_card=selected_card,
         review_card=review_card,
     )
-    lead_line = archive_lines[0] if archive_lines else "回到研究证据链核对当前判断。"
+    lead_line = (
+        archive_lines[0] if archive_lines else "回到已有判断和原始依据核对当前结论。"
+    )
     return tuple(
         line
         for line in (
@@ -4395,19 +4415,31 @@ def _render_date_jump_bar(
                         signal_date=signal_date,
                     )
                     st.rerun()
-                _render_two_line_nav_label(
-                    _TwoLineNavLabel(
-                        code=signal_date,
-                        name=_date_jump_secondary_label(
-                            provider,
-                            current_task_id,
-                            signal_date,
-                            resolution=resolution,
-                        ),
-                    ),
-                    active=is_active,
-                    reason=resolution.reason,
+                # 日期按钮后显示次要标签（如"主链推荐"）用caption
+                secondary_label = _date_jump_secondary_label(
+                    provider,
+                    current_task_id,
+                    signal_date,
+                    resolution=resolution,
                 )
+                if secondary_label:
+                    st.markdown(
+                        (
+                            '<div class="aqsp-nav-name">'
+                            f"{escape(signal_date)} · {escape(secondary_label)}"
+                            "</div>"
+                        ),
+                        unsafe_allow_html=True,
+                    )
+                if resolution.reason:
+                    st.markdown(
+                        (
+                            '<div class="aqsp-nav-name">'
+                            f"⚠ {escape(resolution.reason)}"
+                            "</div>"
+                        ),
+                        unsafe_allow_html=True,
+                    )
 
 
 def _render_execution_focus(
@@ -4566,7 +4598,7 @@ def _render_execution_focus(
         )
     with path_col:
         _render_cockpit_card(
-            kicker="纸面验证路径",
+            kicker="纸面验证",
             title="当前如何复核",
             lines=_unique_lines(
                 _workspace_context_brief(
@@ -4584,7 +4616,7 @@ def _render_execution_focus(
                     execution_focus=execution_focus,
                 ),
             )
-            or ("当前没有新增路径提示，先看纸面入场、纸面事件与日志。",),
+            or ("当前没有新增复核提示，先看纸面入场、纸面事件和日志。",),
             tone=(
                 "pressure"
                 if not scoped_paper_events.empty
@@ -4598,13 +4630,13 @@ def _render_execution_focus(
 
     if compact_mode:
         _render_cockpit_card(
-            kicker="纸面现实",
+            kicker="纸面记录",
             title="当前尚未进入纸面验证链",
             lines=_unique_lines(
                 execution_focus.execution_lines[:2],
                 execution_focus.holding_lines[:2],
                 (
-                    "当前没有纸面入场、纸面日志或纸面持有记录，先按研究判断与复核条件推进。",
+                    "当前没有纸面入场、纸面日志或纸面持有记录，先按研究结论与复核条件推进。",
                 ),
             ),
             tone="archive",
@@ -4630,7 +4662,7 @@ def _render_execution_focus(
         with debate_col:
             _render_debate_cockpit(
                 debate_summary=debate_summary,
-                empty_text="当前标的没有同日多 Agent 辩论记录，纸面验证暂以研究与虚拟盘链路为主。",
+                empty_text="当前标的没有同日多 Agent 辩论记录，纸面验证暂以研究结论和虚拟盘记录为主。",
                 tone="pressure" if debate_summary is not None else "archive",
             )
 
@@ -4753,13 +4785,7 @@ def _render_same_day_phase_jump_bar(
             ):
                 _set_dashboard_selection(task_id=row.task_id, signal_date=signal_date)
                 st.rerun()
-            _render_two_line_nav_label(
-                _TwoLineNavLabel(
-                    code=_phase_nav_label(row),
-                    name=_phase_nav_name(row),
-                ),
-                active=is_active,
-            )
+            # 阶段按钮已显示phase_label，删除冗余的two_line_label
 
 
 def _render_top_navigation_banner(
@@ -4794,7 +4820,7 @@ def _render_top_navigation(
     provider: DashboardDataProvider,
 ) -> tuple[str, str]:
     st.markdown(
-        '<div class="aqsp-nav-note">先选日期，再切阶段。</div>',
+        '<div class="aqsp-nav-note">先选日期，再看当天哪一段。</div>',
         unsafe_allow_html=True,
     )
     pending_date = st.session_state.pop("dashboard_pending_selected_date", None)
@@ -4811,7 +4837,7 @@ def _render_top_navigation(
     if not all_dates:
         task_ids = [option.task_id for option in options]
         selected_task_id = st.selectbox(
-            "任务导航",
+            "看哪一段",
             task_ids,
             format_func=lambda task_id: _task_nav_label(task_id, snapshots),
             key="dashboard_task_id_empty",
@@ -4831,7 +4857,7 @@ def _render_top_navigation(
     date_col, task_col = st.columns([1.15, 1.35])
     with date_col:
         selected_date_label = st.selectbox(
-            "回看日期",
+            "看哪一天",
             date_options,
             key="dashboard_selected_date_select",
         )
@@ -4864,7 +4890,7 @@ def _render_top_navigation(
     row_map = {row.task_id: row for row in same_day_rows}
     with task_col:
         selected_task_id = st.selectbox(
-            "阶段导航",
+            "看哪一段",
             available_task_ids,
             format_func=lambda task_id: (
                 _phase_nav_label(row_map[task_id])
@@ -4971,9 +4997,9 @@ def _focus_summary_lines(
                     if _card_next_action(selected_card)
                     else ""
                 ),
-                _review_meta_line("复核节奏", selected_card.review_meta),
+                _review_meta_line("再看时间", selected_card.review_meta),
                 (
-                    f"当前阻塞: {_safe_current_research_line(_card_primary_blocker(selected_card))}"
+                    f"现在卡在哪: {_safe_current_research_line(_card_primary_blocker(selected_card))}"
                     if _card_primary_blocker(selected_card)
                     else ""
                 ),
@@ -5035,7 +5061,7 @@ def _workspace_focus_lines(
             else f"复核状态: {_action_status_label(review_card.action_label, review_card.status_label)}"
         )
         follow_up_line = (
-            "验证动作: 等待下一次任务或纸面验证链路补充独立证据。"
+            "验证动作: 等待下一次任务或纸面验证记录补充独立依据。"
             if is_debate_review
             else (
                 f"下一步: {_safe_current_research_line(review_card.next_step or review_card.decision_note)}"
@@ -5051,9 +5077,9 @@ def _workspace_focus_lines(
         if not is_debate_review:
             focus_lines.extend(
                 [
-                    _review_meta_line("复核节奏", review_card.review_meta),
+                    _review_meta_line("再看时间", review_card.review_meta),
                     (
-                        f"当前阻塞: {_safe_current_research_line(_card_primary_blocker(review_card))}"
+                        f"现在卡在哪: {_safe_current_research_line(_card_primary_blocker(review_card))}"
                         if _card_primary_blocker(review_card)
                         else ""
                     ),
@@ -5145,7 +5171,7 @@ def _workspace_context_brief(
     if review_card is None:
         return (
             "纸面记录",
-            ("当前没有研究或辩论上下文。", "先看纸面持有假设、纸面事件和日志。"),
+            ("当前没有已有结论可参考。", "先看纸面持有假设、纸面事件和日志。"),
             "archive",
         )
     if open_position_count > 0:
@@ -5166,7 +5192,7 @@ def _workspace_context_brief(
     if has_execution_activity:
         return (
             "纸面验证优先",
-            ("已经进入纸面入场/阻塞/关闭链路。", "先顺着纸面事件与日志回看。"),
+            ("已经进入纸面入场、阻塞或关闭记录。", "先顺着纸面事件与日志回看。"),
             "pressure",
         )
     if (
@@ -5188,12 +5214,15 @@ def _workspace_context_brief(
     if selected_card is None:
         return (
             "跨任务联动回看",
-            ("当前判断来自同日联动聚合。", "先核对跨任务结论，再回到单任务证据。"),
+            (
+                "当前判断主要来自同日一起出现的信息。",
+                "先核对跨任务结论，再回到单任务原始依据。",
+            ),
             "archive",
         )
     return (
-        "研究判断回看",
-        ("当前以研究候选卡为主。", "先看路径、复核节奏和入场条件。"),
+        "研究结论回看",
+        ("当前以研究候选卡为主。", "先看来龙去脉、复核节奏和入场条件。"),
         "archive",
     )
 
@@ -5208,15 +5237,15 @@ def _research_path_review_step(
     if review_card is None:
         return _ResearchPathStep(
             icon="🧭",
-            title="研究判断",
-            headline="暂无候选上下文",
+            title="研究结论",
+            headline="暂无候选结论",
             lines=("先看纸面记录和同日任务摘要。",),
             tone="archive",
         )
     if debate_summary is not None and review_card.rank_label == "辩论主结论":
         return _ResearchPathStep(
             icon="🧠",
-            title="研究判断",
+            title="研究结论",
             headline=f"{debate_summary.recommended_adjustment_label} / 分歧 {debate_summary.disagreement_score:.2f}",
             lines=_unique_lines(
                 (
@@ -5241,7 +5270,7 @@ def _research_path_review_step(
     )
     return _ResearchPathStep(
         icon="🧭",
-        title="研究判断",
+        title="研究结论",
         headline=_join_display_parts(
             review_card.display_name,
             _action_status_label(review_card.action_label, review_card.status_label),
@@ -5282,7 +5311,7 @@ def _research_path_paper_step(
         lines = ("先按研究证据复核，不补生成纸面对象。",)
     return _ResearchPathStep(
         icon="🧪",
-        title="纸面现实",
+        title="纸面记录",
         headline=headline,
         lines=lines[:2],
         tone=_workspace_reality_tone(
@@ -5323,7 +5352,7 @@ def _research_path_archive_step(
         selected_symbol,
     )
     fallback_line = (
-        f"复核节奏: {review_card.review_meta}"
+        f"再看时间: {review_card.review_meta}"
         if review_card is not None and _has_review_meta(review_card.review_meta)
         else ""
     )
@@ -5333,10 +5362,10 @@ def _research_path_archive_step(
         (fallback_line,),
     )
     if not lines:
-        lines = ("归档尚未命中该标的，先保留研究与纸面证据链。",)
+        lines = ("归档尚未命中该标的，先保留研究结论和纸面记录。",)
     return _ResearchPathStep(
         icon="🗂",
-        title="归档落点",
+        title="归档结果",
         headline=status,
         lines=lines[:2],
         tone="archive",
@@ -5518,14 +5547,14 @@ def _render_candidate_evidence_drawers(
         journey_steps=journey_steps,
     ) and bool(journey_steps)
     if has_journey:
-        with st.expander("当日候选路径", expanded=False):
+        with st.expander("当日怎么走到这里", expanded=False):
             _render_candidate_journey(
                 journey_steps,
                 review_card=review_card,
                 spotlight=spotlight,
                 debate_summary=debate_summary,
             )
-    with st.expander("研究证据链", expanded=False):
+    with st.expander("原始依据", expanded=False):
         _render_candidate_research_stream(
             review_card=review_card,
             spotlight=spotlight,
@@ -5695,13 +5724,7 @@ def _render_review_phase_bar(
                 )
                 _queue_workspace_jump("候选复盘", selected_symbol)
                 st.rerun()
-            _render_two_line_nav_label(
-                _TwoLineNavLabel(
-                    code=_phase_nav_label(row),
-                    name=_phase_nav_name(row),
-                ),
-                active=is_active,
-            )
+            # 候选阶段按钮已显示phase_label，删除冗余的two_line_label
 
 
 def _execution_research_context_lines(
@@ -5723,7 +5746,7 @@ def _execution_research_context_lines(
     ):
         return _unique_lines(
             _debate_primary_takeaways(debate_summary)[:2],
-            ("当前没有研究候选卡，研究链路已由辩论主结论补齐。",),
+            ("当前没有研究候选卡，当前判断主要由同日多方讨论补齐。",),
         ) or ("当前没有结构化研究结论。",)
     research_seed = _prioritized_research_lines(execution_focus.research_lines)
     if not research_seed:
@@ -5774,11 +5797,11 @@ def _execution_path_context_lines(
                     else ""
                 ),
                 (
-                    _review_meta_line("复核节奏", review_card.review_meta)
+                    _review_meta_line("再看时间", review_card.review_meta)
                     if review_card is not None
                     else ""
                 ),
-                (f"当前阻塞: {blocker}" if include_blocker else ""),
+                (f"现在卡在哪: {blocker}" if include_blocker else ""),
             )
             if line
         ),
@@ -5843,12 +5866,12 @@ def _render_workspace_focus_header(
             kicker=title,
             title=focus_title,
             lines=focus_lines
-            or ("当前还没有结构化候选结论，先按纸面记录与证据回看。",),
+            or ("当前还没有结构化候选结论，先按纸面记录和已有判断回看。",),
             tone="focus" if review_card is not None else "archive",
         )
     with reality_col:
         _render_cockpit_card(
-            kicker="纸面现实",
+            kicker="纸面记录",
             title=f"{execution_focus.execution_status} / {execution_focus.holding_status}",
             lines=reality_lines,
             tone=_workspace_reality_tone(
@@ -5954,7 +5977,14 @@ def _date_jump_secondary_label(
 
 def _prioritized_research_lines(lines: tuple[str, ...]) -> tuple[str, ...]:
     prioritized: list[str] = []
-    for prefix in ("研究动作:", "研究下一步:", "当前卡点:", "复核节奏:"):
+    for prefix in (
+        "研究动作:",
+        "研究下一步:",
+        "现在卡在哪:",
+        "当前卡点:",
+        "再看时间:",
+        "复核节奏:",
+    ):
         for line in lines:
             if line.startswith(prefix) and line not in prioritized:
                 prioritized.append(line)
@@ -5998,7 +6028,7 @@ def _render_candidate_focus_summary(
 
     with action_col:
         if spotlight is None:
-            st.info("该标的当前只在本任务中出现，没有额外同日联动上下文。")
+            st.info("该标的当前只在本任务中出现，没有额外同日参考信息。")
         else:
             st.markdown(
                 "\n".join(
@@ -6014,7 +6044,7 @@ def _render_candidate_focus_summary(
                 )
             )
             if len(spotlight.task_labels) > 1:
-                st.warning("该标的在多个定时任务中重复出现，适合做日内链路复核。")
+                st.warning("该标的在多个定时任务中重复出现，适合放在一起回看。")
 
 
 def _candidate_research_context_lines(
@@ -6047,7 +6077,7 @@ def _candidate_research_context_lines(
                     if _card_primary_blocker(review_card)
                     else "监控焦点: 当前只在本任务中出现，优先等待下一次任务验证。"
                 ),
-                "验证动作: 等待下一次任务或纸面验证链路补充独立证据。",
+                "验证动作: 等待下一次任务或纸面验证记录补充独立依据。",
             )
             if line
         )
@@ -6058,7 +6088,7 @@ def _candidate_research_context_lines(
                 f"研究入口: {_review_source_label(review_card)}",
                 f"研究状态: {_action_status_label(review_card.action_label, review_card.status_label)}",
                 (
-                    f"复核节奏: {review_card.review_meta}"
+                    f"再看时间: {review_card.review_meta}"
                     if _has_review_meta(review_card.review_meta)
                     else ""
                 ),
@@ -6106,7 +6136,7 @@ def _render_candidate_research_stream(
     execution_frame,
     evidence_title: str,
 ) -> None:
-    st.subheader("研究证据链")
+    st.subheader("原始依据")
     research_col, context_col = st.columns(2)
     with research_col:
         has_task_evidence = not signal_frame.empty or not task_frame.empty
@@ -6137,7 +6167,7 @@ def _render_candidate_research_stream(
                 )
             )
         elif not has_task_evidence and debate_summary is None:
-            st.info("该标的当前只在本任务中出现，研究链以本任务落盘结果为主。")
+            st.info("该标的当前只在本任务中出现，先以本任务落盘结果为主。")
     with context_col:
         context_title, execution_lines, context_lines, context_tone = (
             _candidate_research_context_lines(
@@ -6159,7 +6189,7 @@ def _render_candidate_research_stream(
                 kicker=(
                     "监控要点"
                     if debate_summary is not None and spotlight is None
-                    else "联动上下文"
+                    else "一起参考"
                 ),
                 title=review_card.display_name,
                 lines=context_lines,
@@ -6174,7 +6204,7 @@ def _render_candidate_research_stream(
                 kicker=(
                     "监控要点"
                     if debate_summary is not None and spotlight is None
-                    else "联动上下文"
+                    else "一起参考"
                 ),
                 title=review_card.display_name,
                 lines=context_lines,
@@ -6309,16 +6339,14 @@ def _candidate_empty_journey_message(
     debate_summary: DashboardDebateSummary | None,
 ) -> str:
     if debate_summary is not None and review_card is not None:
-        return (
-            "该标的在当前回看日没有独立候选路径，当前判断主要由同日多 Agent 讨论补齐。"
-        )
+        return "该标的在当前回看日没有独立候选来龙去脉，当前判断主要由同日多 Agent 讨论补齐。"
     if (
         spotlight is not None
         and review_card is not None
         and review_card.rank_label == "同日联动"
     ):
-        return "该标的在当前回看日没有独立候选路径，当前判断主要来自同日联动聚合。"
-    return "该标的在当前回看日只有单任务记录，暂无跨阶段路径。"
+        return "该标的在当前回看日没有独立候选来龙去脉，当前判断主要来自同日联动聚合。"
+    return "该标的在当前回看日只有单任务记录，暂无跨阶段来龙去脉。"
 
 
 def _candidate_linkage_context(
@@ -6372,7 +6400,7 @@ def _candidate_linkage_context(
             )
             or (
                 f"任务覆盖: {task_summary}",
-                "当前只在本任务中出现，没有额外同日联动上下文。",
+                "当前只在本任务中出现，没有额外同日参考信息。",
             ),
             "archive",
         )
@@ -6407,7 +6435,7 @@ def _candidate_linkage_context(
         "单任务证据",
         (
             f"任务覆盖: {task_summary}",
-            "当前只在本任务中出现，没有额外同日联动上下文。",
+            "当前只在本任务中出现，没有额外同日参考信息。",
         ),
         "archive",
     )
@@ -6500,9 +6528,9 @@ def _render_candidate_review_snapshot(
             summary_lines = [
                 f"- 研究入口: {review_source}",
                 (
-                    f"- 当日路径: {path_summary}"
+                    f"- 当日经过: {path_summary}"
                     if has_expanded_path
-                    else "- 当日路径: 单任务单阶段"
+                    else "- 当日经过: 单任务单阶段"
                 ),
                 f"- 纸面联动: {execution_summary}",
             ]
@@ -6528,7 +6556,7 @@ def _render_candidate_review_snapshot(
 
     with research_col:
         _render_cockpit_card(
-            kicker="研究判断",
+            kicker="研究结论",
             title=_candidate_research_title(
                 selected_card=selected_card,
                 debate_summary=debate_summary,
@@ -6554,8 +6582,8 @@ def _render_candidate_review_snapshot(
             )
         with path_col:
             _render_cockpit_card(
-                kicker="同日路径与辩论",
-                title="分歧地图" if debate_summary is not None else path_summary,
+                kicker="当天怎么串起来",
+                title="多方怎么看" if debate_summary is not None else path_summary,
                 lines=path_lines,
                 tone="archive",
             )
@@ -6565,10 +6593,10 @@ def _render_candidate_review_snapshot(
         debate_action_lines = tuple(
             line
             for line in (
-                "验证动作: 等待下一次任务或纸面验证链路补充独立证据。",
+                "验证动作: 等待下一次任务或纸面验证记录补充独立依据。",
                 _review_meta_line("复核节奏", selected_card.review_meta),
                 (
-                    f"当前卡点: {_card_primary_blocker(selected_card)}"
+                    f"现在卡在哪: {_card_primary_blocker(selected_card)}"
                     if has_blocker
                     else ""
                 ),
@@ -6577,14 +6605,14 @@ def _render_candidate_review_snapshot(
             if line
         )
         _render_cockpit_card(
-            kicker="当前复核状态",
+            kicker="现在是什么状态",
             title="等待独立验证",
             lines=debate_action_lines,
             tone="blocked" if has_blocker else "archive",
         )
     elif compact_mode:
         _render_cockpit_card(
-            kicker="复核线索",
+            kicker="接下来怎么看",
             title=_candidate_action_plan_title(selected_card),
             lines=next_step_lines,
             tone="pressure" if has_blocker else "archive",
@@ -6593,17 +6621,17 @@ def _render_candidate_review_snapshot(
         execution_col, linkage_col = st.columns(2)
         with execution_col:
             _render_cockpit_card(
-                kicker="虚拟盘联动",
-                title="纸面现实",
+                kicker="纸面记录联动",
+                title="纸面记录",
                 lines=(execution_summary,),
                 tone="pressure" if has_execution_activity else "archive",
             )
         with linkage_col:
             _render_cockpit_card(
-                kicker="复核线索",
+                kicker="接下来怎么看",
                 title=_candidate_action_plan_title(
                     selected_card,
-                    default="如何回看证据",
+                    default="如何回看依据",
                 ),
                 lines=next_step_lines,
                 tone="pressure" if has_blocker else "archive",
@@ -6682,7 +6710,7 @@ def _render_candidate_deep_dive(
         debates=same_day_debates,
     )
     if review_card is None:
-        st.info("当前标的缺少可回看的研究与同日联动上下文。")
+        st.info("当前标的缺少可回看的研究结论和同日参考信息。")
         return
 
     journey_steps = provider.same_day_candidate_journey(
@@ -6869,7 +6897,7 @@ def _archive_conclusion_title(
             "研究候选结论": "候选补齐",
             "同日联动结论": "联动补齐",
             "辩论补齐结论": "辩论补齐",
-        }.get(source, "上下文补齐")
+        }.get(source, "补充说明")
         return f"归档未命中该标的 / {supplement}"
 
     suffix = {
@@ -7058,9 +7086,9 @@ def _candidate_next_step_lines(
     next_action = _card_next_action(selected_card)
     if blocker:
         lines = (
-            f"当前卡点: {_safe_current_research_line(blocker)}",
-            f"复核动作: {next_action}" if next_action != "-" else "",
-            _review_meta_line("复核节奏", selected_card.review_meta),
+            f"现在卡在哪: {_safe_current_research_line(blocker)}",
+            f"再看动作: {next_action}" if next_action != "-" else "",
+            _review_meta_line("再看时间", selected_card.review_meta),
         )
     else:
         missing_evidence_line = (
@@ -7074,7 +7102,7 @@ def _candidate_next_step_lines(
         lines = (
             f"下一步: {next_action}" if next_action != "-" else "",
             missing_evidence_line,
-            _review_meta_line("复核节奏", selected_card.review_meta),
+            _review_meta_line("再看时间", selected_card.review_meta),
         )
     return tuple(line for line in lines if line) or ("当前没有额外推进动作。",)
 
@@ -7172,7 +7200,7 @@ def _archive_followup_action_context(
         return "接下来做什么", action_lines
     return (
         "待补归档动作",
-        ("当前归档没有新增复盘动作，先看原文、研究链与纸面现实。",),
+        ("当前归档没有新增复盘动作，先看原文、研究链和纸面记录。",),
     )
 
 
@@ -7191,7 +7219,7 @@ def _archive_brief_cards(
         line
         for line in (
             (
-                "纸面现实: 当日有纸面事件或执行日志，优先核对纸面记录链。"
+                "纸面记录: 当日有纸面事件或执行日志，优先核对纸面记录链。"
                 if has_execution_activity
                 else ""
             ),
@@ -7201,7 +7229,7 @@ def _archive_brief_cards(
                 else ""
             ),
             (
-                "纸面现实: 当前没有绑定纸面事件，归档侧先看研究结论和复核动作。"
+                "纸面记录: 当前没有绑定纸面事件，归档侧先看研究结论和复核动作。"
                 if not has_execution_activity and not has_holding_activity
                 else ""
             ),
@@ -7218,13 +7246,13 @@ def _archive_brief_cards(
             tone="archive",
         ),
         _ArchiveBriefCard(
-            kicker="复核动作",
+            kicker="接下来做什么",
             title=action_title,
             lines=action_lines,
             tone="pressure" if getattr(task_view, "blocker_lines", ()) else "focus",
         ),
         _ArchiveBriefCard(
-            kicker="纸面现实",
+            kicker="纸面记录",
             title="有纸面联动"
             if has_execution_activity or has_holding_activity
             else "纸面侧较轻",
@@ -7232,14 +7260,14 @@ def _archive_brief_cards(
             tone="pressure" if has_execution_activity else "archive",
         ),
         _ArchiveBriefCard(
-            kicker="辩论证据",
+            kicker="多方怎么看",
             title=(
                 f"{debate_summary.recommended_adjustment_label} / 分歧 {debate_summary.disagreement_score:.2f}"
                 if debate_summary is not None
                 else "当日未触发"
             ),
             lines=debate_lines
-            or ("当前标的没有同日多 Agent 讨论归档，先按研究结论与纸面现实复盘。",),
+            or ("当前标的没有同日多 Agent 讨论归档，先按研究结论与纸面记录复盘。",),
             tone="pressure" if debate_summary is not None else "archive",
         ),
     )
@@ -7339,7 +7367,7 @@ def _render_archive_focus_brief(
             )
         with action_col:
             _render_cockpit_card(
-                kicker="归档回看线索",
+                kicker="回看重点",
                 title=action_title,
                 lines=resolved_action_lines,
                 tone="pressure" if task_view.blocker_lines else "focus",
@@ -7356,21 +7384,21 @@ def _render_archive_focus_brief(
         )
     with action_col:
         _render_cockpit_card(
-            kicker="归档回看线索",
+            kicker="回看重点",
             title=action_title,
             lines=resolved_action_lines,
             tone="pressure" if task_view.blocker_lines else "focus",
         )
     with debate_col:
         _render_cockpit_card(
-            kicker="分歧证据",
+            kicker="多方怎么看",
             title=(
                 f"{debate_summary.recommended_adjustment_label} / 分歧 {debate_summary.disagreement_score:.2f}"
                 if debate_summary is not None
                 else "当日未触发"
             ),
             lines=_archive_debate_evidence_lines(debate_summary)
-            or ("当前标的没有同日多 Agent 讨论归档，先按研究结论与纸面现实复盘。",),
+            or ("当前标的没有同日多 Agent 讨论归档，先按研究结论与纸面记录复盘。",),
             tone="archive",
         )
 
@@ -7532,7 +7560,7 @@ def _render_archive_workbench(
                 target_workspace="候选复盘",
                 source_workspace="归档回看",
                 symbol=selected_symbol,
-                title="带着归档结论回到研究链",
+                title="带着归档结论回看已有判断",
                 lines=_archive_to_review_handoff_lines(
                     task_view=task_view,
                     selected_symbol=selected_symbol,

@@ -61,7 +61,7 @@ class MarkdownRenderer:
 
     def render(self, data: BriefingData) -> str:
         """生成完整的 markdown 日报。"""
-        lines = [f"# AI 量化选股研究日报 - {data.date}", ""]
+        lines = [f"# 每日研究复盘-{data.date}", ""]
 
         lines.extend(self._render_main_chain(data))
         lines.extend(self._render_regime(data))
@@ -105,9 +105,9 @@ class MarkdownRenderer:
             lines.append("- 今日重点名单: " + "、".join(ps.top_focus[:3]))
 
         if ps.watchlist:
-            lines.append("- 备选观察名单: " + "、".join(ps.watchlist[:3]))
+            lines.append("- 继续观察名单: " + "、".join(ps.watchlist[:3]))
         if ps.watch_reviews:
-            lines.append("- 观察复核:")
+            lines.append("- 观察名单接下来:")
             for item in ps.watch_reviews[:2]:
                 lines.append(
                     "  - "
@@ -122,7 +122,7 @@ class MarkdownRenderer:
         lead = data.picks[0]
         lead_display = format_symbol_name(lead.symbol, lead.name)
         lead_status = _candidate_status_label(lead)
-        lead_line = f"- 首先关注: {lead_display} | {rating_label(lead.rating)}"
+        lead_line = f"- 先看这个: {lead_display} | {rating_label(lead.rating)}"
         if lead_status:
             lead_line += f" | {lead_status}"
         lead_line += f" | 评分 {lead.score:.1f}"
@@ -161,7 +161,9 @@ class MarkdownRenderer:
         lines.append(
             f"- 数据完整度: {describe_source_layers(s.freshness_tier, s.coverage_tier)}"
         )
-        lines.append(f"- 数据状态: **{describe_source_health(s.health_label, s.health_message)}**")
+        lines.append(
+            f"- 数据状态: **{describe_source_health(s.health_label, s.health_message)}**"
+        )
         lines.append(f"- 是否启用备用源: {'是' if s.fallback_used else '否'}")
 
         if s.is_degraded:
@@ -175,22 +177,22 @@ class MarkdownRenderer:
         lines = [f"## {display_section_title('研究吸收')}", ""]
 
         if data.research_summary is None:
-            lines.append("研究吸收未更新；本次日报仅基于当前运行主链。")
+            lines.append("研究进展本次未更新；这份日报只基于当前主链结果。")
             lines.append("")
             return lines
 
         rs = data.research_summary
         lines.append(f"- 研究发现落盘: **{research_findings_display(rs)}**")
-        lines.append(f"- 已吸收但未直接入分策略族: **{len(rs.absorbed_families)}**")
-        lines.append(f"- 已部分实现策略族: **{rs.implemented_family_count}**")
-        lines.append(f"- report-only 研究族: **{rs.report_only_family_count}**")
-        lines.append(f"- 运行门控研究族: **{rs.gated_family_count}**")
+        lines.append(f"- 已纳入观察但不直接打分: **{len(rs.absorbed_families)}**")
+        lines.append(f"- 已部分实现策略: **{rs.implemented_family_count}**")
+        lines.append(f"- 仅写进研究记录: **{rs.report_only_family_count}**")
+        lines.append(f"- 需满足条件后启用: **{rs.gated_family_count}**")
 
         top_pipelines = list(rs.pipeline_summaries[:3])
         if top_pipelines:
             for item in top_pipelines:
                 lines.append(
-                    f"- 研究管线 {item.pipeline}: P1={item.p1} / total={item.total} / top={item.top_repo or '-'}"
+                    f"- 研究来源 {item.pipeline}: 高优先级 {item.p1} / 共 {item.total} / 先参考 {item.top_repo or '-'}"
                 )
 
         if rs.absorbed_families:
@@ -203,7 +205,7 @@ class MarkdownRenderer:
         if rs.next_actions:
             next_item = rs.next_actions[0]
             lines.append(
-                f"- 下一接入重点: {next_item.kind}/{next_item.item_id} [{next_item.priority}] - {next_item.blocker or '待补 gate'}"
+                f"- 下一接入重点: {next_item.kind}/{next_item.item_id} [{next_item.priority}] - {next_item.blocker or '还缺前置条件'}"
             )
 
         prereq_item = next(
@@ -211,18 +213,18 @@ class MarkdownRenderer:
             None,
         )
         if prereq_item is not None:
-            missing_env = "、".join(prereq_item.missing_env_vars) or "fixture"
+            missing_env = "、".join(prereq_item.missing_env_vars) or "回归样本"
             lines.append(
                 f"- 当前前置缺口: {prereq_item.kind}/{prereq_item.item_id} - {prereq_item.status} ({missing_env})"
             )
 
-        lines.append("- 原则: 研究内容只做候选和解释，不直接覆盖 runtime 打分。")
+        lines.append("- 原则: 研究内容只做候选和解释，不直接改写系统评分。")
         lines.append("")
         return lines
 
     def _render_evidence(self, data: BriefingData) -> list[str]:
-        """渲染候选证据链。"""
-        lines = [f"## {display_section_title('候选证据链')}", ""]
+        """渲染候选来龙去脉。"""
+        lines = [f"## {display_section_title('候选来龙去脉')}", ""]
 
         if not data.picks:
             lines.append("今日无候选标的。")
@@ -254,11 +256,11 @@ class MarkdownRenderer:
             for reason in pick.reasons:
                 lines.append(f"- {reason}")
             if blocker:
-                lines.append(f"- 当前阻塞: {blocker}")
+                lines.append(f"- 现在卡在哪: {blocker}")
             if next_step:
-                lines.append(f"- 下一步关注: {next_step}")
+                lines.append(f"- 接下来先看: {next_step}")
             if review_meta:
-                lines.append(f"- 复核优先级/时机: {review_meta}")
+                lines.append(f"- 再看优先级/时机: {review_meta}")
 
             if pick.risks:
                 lines.append(f"风险提示: {'；'.join(pick.risks)}")
@@ -301,15 +303,15 @@ class MarkdownRenderer:
                     _candidate_review_window_label(lead),
                 )
                 line = (
-                    f"当前暂无重点跟踪对象；备选观察名单: {names}。"
+                    f"当前暂无重点跟踪对象；继续观察名单: {names}。"
                     "先观察最强票，待阻塞条件解除后再考虑转入重点跟踪名单。"
                 )
                 if blocker:
-                    line += f" 当前阻塞: {blocker}。"
+                    line += f" 现在卡在哪: {blocker}。"
                 if next_step:
-                    line += f" 下一步关注: {next_step}。"
+                    line += f" 接下来先看: {next_step}。"
                 if review_meta:
-                    line += f" 复核节奏: {review_meta}。"
+                    line += f" 再看时间: {review_meta}。"
                 lines.append(line)
             else:
                 lines.append("无纸面复核重点标的；今日无候选，继续等待下一轮信号。")
@@ -321,7 +323,7 @@ class MarkdownRenderer:
             display = _format_pick_with_status(pick)
             lines.append(
                 f"- **{display}**: "
-                f"纸面参考价 {pick.ideal_buy} / 防守位 {pick.stop_loss} / 观察目标 {pick.take_profit} / 纸面仓位上限 {pick.position}"
+                f"记录时价格 {pick.ideal_buy} / 最多亏到 {pick.stop_loss} / 先看目标 {pick.take_profit} / 纸面仓位上限 {pick.position}"
             )
 
         lines.append("")
@@ -370,7 +372,7 @@ class MarkdownRenderer:
             if ps.top_focus:
                 items.append("- 主链候选: " + "、".join(ps.top_focus))
             if ps.watchlist:
-                items.append("- 备选观察名单: " + "、".join(ps.watchlist))
+                items.append("- 继续观察名单: " + "、".join(ps.watchlist))
 
         if data.debate_results:
             items.append(
@@ -414,10 +416,10 @@ class MarkdownRenderer:
             names = "、".join(
                 _format_pick_with_status(p, include_score=True) for p in top
             )
-            items.append(f"- 备选观察名单: {names}")
+            items.append(f"- 继续观察名单: {names}")
         elif data.portfolio_summary and data.portfolio_summary.watchlist:
             items.append(
-                "- 备选观察名单: " + "、".join(data.portfolio_summary.watchlist[:3])
+                "- 继续观察名单: " + "、".join(data.portfolio_summary.watchlist[:3])
             )
 
         debate_points = data.debate_points
@@ -437,7 +439,7 @@ class MarkdownRenderer:
                 _candidate_review_window_label(first),
             )
             if review_meta:
-                items.append(f"- 复核节奏: {first.symbol} {first.name} | {review_meta}")
+                items.append(f"- 再看时间: {first.symbol} {first.name} | {review_meta}")
         elif data.portfolio_summary:
             fallback = (
                 data.portfolio_summary.top_focus or data.portfolio_summary.watchlist
@@ -477,7 +479,7 @@ class MarkdownRenderer:
         if data.actionable_count > 0:
             parts.append(f"{data.actionable_count}只纸面复核")
         elif data.candidate_count > 0:
-            parts.append("有备选观察名单，当前暂无重点跟踪对象")
+            parts.append("有继续观察名单，当前暂无重点跟踪对象")
 
         risk_count = len(data.risk_points)
         if risk_count > 0:

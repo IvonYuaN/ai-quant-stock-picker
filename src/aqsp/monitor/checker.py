@@ -117,16 +117,16 @@ class MonitorChecker:
         try:
             import sqlite3
 
-            conn = sqlite3.connect(str(cache_path))
-            cursor = conn.cursor()
-
-            cursor.execute("""
-                SELECT MAX(date) as latest_date 
-                FROM ohlcv 
-                WHERE symbol != '000300'
-            """)
-            row = cursor.fetchone()
-            conn.close()
+            with sqlite3.connect(str(cache_path), timeout=30.0) as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    """
+                    SELECT MAX(date) as latest_date
+                    FROM ohlcv
+                    WHERE symbol != '000300'
+                    """
+                )
+                row = cursor.fetchone()
 
             if not row or not row[0]:
                 return MonitorResult(

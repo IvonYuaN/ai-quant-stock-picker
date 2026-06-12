@@ -120,6 +120,28 @@ def test_cache_adj_factor(tmp_path):
     assert result == 1.1
 
 
+def test_cache_set_financial_persists_dates(tmp_path):
+    cache = DataCache(db_path=tmp_path / "test_cache.db")
+    df = pd.DataFrame(
+        {
+            "pubDate": [pd.Timestamp("2026-05-27")],
+            "statDate": [pd.Timestamp("2026-03-31")],
+            "roeAvg": [12.3],
+            "npMargin": [8.1],
+            "gpMargin": [15.2],
+            "epsTTM": [1.23],
+            "totalShare": [1000000],
+        }
+    )
+
+    cache.set_financial("600000", df, source="test")
+    result = cache.get_financial("600000")
+
+    assert result is not None
+    assert result["pubDate"].iloc[0].startswith("2026-05-27")
+    assert result["statDate"].iloc[0].startswith("2026-03-31")
+
+
 def test_cache_clear_expired(tmp_path):
     cache = DataCache(db_path=tmp_path / "test_cache.db")
     df = pd.DataFrame(

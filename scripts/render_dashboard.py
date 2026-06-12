@@ -313,10 +313,10 @@ def _lifecycle_overview_panel(candidates: list[dict[str, str]]) -> str:
         headline = "今日重点名单"
         headline_detail = "、".join(actionable[:3])
     elif review_items:
-        headline = "观察复核"
+        headline = "观察名单接下来"
         headline_detail = review_items[0]
     elif watchlist:
-        headline = "备选观察名单"
+        headline = "继续观察名单"
         headline_detail = "、".join(watchlist[:3])
     else:
         headline = "暂无主链"
@@ -328,9 +328,7 @@ def _lifecycle_overview_panel(candidates: list[dict[str, str]]) -> str:
     elif review_items:
         action_line = f"明日先盯 {review_items[0]}。"
     elif watchlist:
-        action_line = (
-            f"明日先围绕 {'、'.join(watchlist[:2])} 做观察复核，不放大纸面仓位。"
-        )
+        action_line = f"明日先围绕 {'、'.join(watchlist[:2])} 再看，不放大纸面仓位。"
 
     summary_cards = [
         ("主链复核", headline, headline_detail),
@@ -340,7 +338,7 @@ def _lifecycle_overview_panel(candidates: list[dict[str, str]]) -> str:
             "重点跟踪与继续观察对象已按当前主链输出分层。",
         ),
         (
-            "当前阻塞",
+            "现在卡在哪",
             blocked[0] if blocked else "暂无明确阻塞",
             "；".join(blocked[1:3]) if len(blocked) > 1 else "",
         ),
@@ -496,9 +494,9 @@ def _candidate_cards(
                 <dt>策略</dt><dd>{strategies or "-"}</dd>
                 <dt>参考价</dt><dd>{_fmt_num(row.get("ideal_buy"))}</dd>
                 <dt>收盘</dt><dd>{_fmt_num(row.get("close"))}</dd>
-                <dt>防守位</dt><dd>{_fmt_num(row.get("stop_loss"))}</dd>
-                <dt>观察目标</dt><dd>{_fmt_num(row.get("take_profit"))}</dd>
-                <dt>纸面仓位</dt><dd>{html.escape(row.get("position", "") or "-")}</dd>
+                <dt>最多亏到</dt><dd>{_fmt_num(row.get("stop_loss"))}</dd>
+                <dt>先看目标</dt><dd>{_fmt_num(row.get("take_profit"))}</dd>
+                <dt>比例参考</dt><dd>{html.escape(row.get("position", "") or "-")}</dd>
               </dl>
               <div class="card-footer">
                 <p class="reason">{reasons or "无"}</p>
@@ -695,7 +693,7 @@ def _debate_modals(debate_map: dict[str, dict[str, Any]]) -> str:
 def _recent_rows(rows: list[dict[str, Any]]) -> str:
     recent = list(reversed(rows[-12:]))
     if not recent:
-        return "<tr><td colspan='5'>暂无 ledger 记录</td></tr>"
+        return "<tr><td colspan='5'>还没有信号记录。先等下一次主链跑批完成，再回来回看。</td></tr>"
     out = []
     for row in recent:
         out.append(
@@ -713,7 +711,7 @@ def _recent_rows(rows: list[dict[str, Any]]) -> str:
 def _paper_rows(rows: list[dict[str, Any]]) -> str:
     recent = list(reversed(rows[-10:]))
     if not recent:
-        return "<tr><td colspan='6'>暂无纸面记录</td></tr>"
+        return "<tr><td colspan='6'>还没有纸面跟踪记录。出现候选后，系统才会记录入场、阻塞或退出。</td></tr>"
     out = []
     for row in recent:
         reason = (
@@ -776,7 +774,7 @@ def _source_runtime_panel(stats: LedgerStats) -> str:
         return """
         <section class="panel source-panel">
           <h2>数据情况</h2>
-          <p class="muted">暂无最近一次运行的数据状态记录。</p>
+          <p class="muted">还没有最近一次运行的数据状态。先确认宝塔任务是否已跑过 daily 或 intraday。</p>
         </section>
         """
 
@@ -1190,12 +1188,12 @@ def render_source_health_panel(path: str | Path | None = None) -> str:
       <h3>数据源</h3>
       <table>
         <thead><tr><th>源</th><th>成功</th><th>失败</th><th>成功率</th><th>最后成功</th><th>最后错误</th></tr></thead>
-        <tbody>{"".join(source_rows) or "<tr><td colspan='6'>暂无数据源记录</td></tr>"}</tbody>
+        <tbody>{"".join(source_rows) or "<tr><td colspan='6'>还没有数据源记录。等下一次跑批后再看成功率。</td></tr>"}</tbody>
       </table>
       <h3>路由计划</h3>
       <table>
         <thead><tr><th>计划</th><th>成功</th><th>失败</th><th>fallback成功</th><th>最后成功</th><th>最后错误</th></tr></thead>
-        <tbody>{"".join(plan_rows) or "<tr><td colspan='6'>暂无路由计划记录</td></tr>"}</tbody>
+        <tbody>{"".join(plan_rows) or "<tr><td colspan='6'>还没有路由计划记录。等下一次自动任务取数后再看。</td></tr>"}</tbody>
       </table>
     """
     return _fold_panel(
@@ -1859,7 +1857,7 @@ def render_kline_panel(
                 lineWidth: 1,
                 lineStyle: LightweightCharts.LineStyle.Dashed,
                 axisLabelVisible: true,
-                title: '防守位',
+                title: '最多亏到',
               }});
             }}
             if (stock.take_profit) {{
@@ -1869,7 +1867,7 @@ def render_kline_panel(
                 lineWidth: 1,
                 lineStyle: LightweightCharts.LineStyle.Dashed,
                 axisLabelVisible: true,
-                title: '观察目标',
+                title: '先看目标',
               }});
             }}
           }}
@@ -2002,7 +2000,7 @@ def render_dashboard(
         warnings.append(
             (
                 "warning",
-                "暂无真实候选输出。请先成功运行 aqsp run 或提供最新 CSV。",
+                "本次没有候选股。先确认宝塔 daily/intraday 是否成功跑完；如果刚开盘或数据源降级，这是正常空档，不要硬找方向。",
             )
         )
     elif candidate_date and candidate_date != today:

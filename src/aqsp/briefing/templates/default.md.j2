@@ -1,4 +1,4 @@
-# AI 量化选股研究日报 - {{ date }}
+# 每日研究复盘-{{ date }}
 
 {% if circuit_breaker_triggered %}
 > ⚠️ **组合保护中**: {{ circuit_breaker_reason }}
@@ -10,7 +10,7 @@
 ## 市场态势
 {{ regime_section }}
 
-## 候选证据链
+## 候选来龙去脉
 {% for pick in picks %}
 ### {{ pick.symbol }} {{ pick.name }} (评分: {{ pick.score }})
 - 评级: {{ pick.rating }}

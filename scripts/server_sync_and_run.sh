@@ -14,10 +14,42 @@ LOG_DIR="${PROJECT_ROOT}/logs/deploy"
 RUN_LOG="${LOG_DIR}/sync-$(date +%Y-%m-%d).log"
 LOCK_DIR="${PROJECT_ROOT}/.locks"
 LOCK_FILE="${LOCK_DIR}/server-runtime.lock"
+LOCK_INFO_FILE="${LOCK_FILE}/meta.env"
+LOCK_STALE_MINUTES="${AQSP_LOCK_STALE_MINUTES:-360}"
+RUNNER_TIMEOUT_SECONDS="${AQSP_RUNNER_TIMEOUT_SECONDS:-0}"
 
 log() {
     mkdir -p "$LOG_DIR"
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$RUN_LOG"
+}
+
+lock_age_minutes() {
+    local path="$1"
+    local now_epoch mtime
+    now_epoch="$(date +%s)"
+    mtime="$(stat -c %Y "$path" 2>/dev/null || stat -f %m "$path")"
+    echo $(( (now_epoch - mtime) / 60 ))
+}
+
+load_lock_info() {
+    if [ -f "$LOCK_INFO_FILE" ]; then
+        # shellcheck disable=SC1090
+        . "$LOCK_INFO_FILE"
+    fi
+}
+
+lock_is_stale() {
+    if [ ! -d "$LOCK_FILE" ]; then
+        return 1
+    fi
+    local age_minutes pid=""
+    age_minutes="$(lock_age_minutes "$LOCK_FILE")"
+    load_lock_info
+    pid="${LOCK_PID:-}"
+    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+        return 1
+    fi
+    [ "$age_minutes" -ge "$LOCK_STALE_MINUTES" ]
 }
 
 if [ ! -d "${PROJECT_ROOT}/.git" ]; then
@@ -39,11 +71,28 @@ fi
 cd "$PROJECT_ROOT"
 
 mkdir -p "$LOG_DIR" "$LOCK_DIR"
+if [ -d "$LOCK_FILE" ] && lock_is_stale; then
+    stale_age="$(lock_age_minutes "$LOCK_FILE")"
+    load_lock_info
+    log "检测到陈旧主锁，自动回收 runner=${LOCK_RUNNER:-unknown} pid=${LOCK_PID:-unknown} age=${stale_age}min started_at=${LOCK_STARTED_AT:-unknown}"
+    rm -rf -- "$LOCK_FILE"
+fi
 if ! mkdir "$LOCK_FILE" 2>/dev/null; then
-    log "主链路仍在运行，本次任务正常跳过；这是互斥保护，不是失败"
+    if [ -f "$LOCK_INFO_FILE" ]; then
+        load_lock_info
+        age_minutes="$(lock_age_minutes "$LOCK_FILE")"
+        log "主链路仍在运行，本次任务正常跳过；这是互斥保护，不是失败 runner=${LOCK_RUNNER:-unknown} pid=${LOCK_PID:-unknown} started_at=${LOCK_STARTED_AT:-unknown} age=${age_minutes}min"
+    else
+        log "主链路仍在运行，本次任务正常跳过；这是互斥保护，不是失败"
+    fi
     exit 0
 fi
-trap 'rmdir "$LOCK_FILE"' EXIT
+cat >"$LOCK_INFO_FILE" <<EOF
+LOCK_PID=$$
+LOCK_RUNNER=${RUNNER_SCRIPT}
+LOCK_STARTED_AT=$(date '+%Y-%m-%d %H:%M:%S')
+EOF
+trap 'rm -f "$LOCK_INFO_FILE"; rmdir "$LOCK_FILE"' EXIT
 
 log "开始同步代码: ${REMOTE}/${BRANCH}"
 
@@ -73,5 +122,25 @@ if [ ! -f "${RUNNER_PATH}" ]; then
 fi
 
 log "开始运行任务: ${RUNNER_PATH}"
-bash "${RUNNER_PATH}" 2>&1 | tee -a "$RUN_LOG"
+if [ "${RUNNER_TIMEOUT_SECONDS}" -gt 0 ] && command -v timeout >/dev/null 2>&1; then
+    log "启用主链路超时保护: ${RUNNER_TIMEOUT_SECONDS}s"
+    timeout --foreground "${RUNNER_TIMEOUT_SECONDS}" bash "${RUNNER_PATH}" 2>&1 | tee -a "$RUN_LOG"
+    RUNNER_EXIT_CODE=${PIPESTATUS[0]}
+elif [ "${RUNNER_TIMEOUT_SECONDS}" -gt 0 ]; then
+    log "系统缺少 timeout 命令，跳过主链路超时保护"
+    bash "${RUNNER_PATH}" 2>&1 | tee -a "$RUN_LOG"
+    RUNNER_EXIT_CODE=${PIPESTATUS[0]}
+else
+    bash "${RUNNER_PATH}" 2>&1 | tee -a "$RUN_LOG"
+    RUNNER_EXIT_CODE=${PIPESTATUS[0]}
+fi
+
+if [ "${RUNNER_EXIT_CODE}" -eq 124 ]; then
+    log "主链路执行超时，被保护性终止: ${RUNNER_TIMEOUT_SECONDS}s"
+    exit "${RUNNER_EXIT_CODE}"
+fi
+if [ "${RUNNER_EXIT_CODE}" -ne 0 ]; then
+    log "主链路执行失败，退出码: ${RUNNER_EXIT_CODE}"
+    exit "${RUNNER_EXIT_CODE}"
+fi
 log "同步与跑批完成"

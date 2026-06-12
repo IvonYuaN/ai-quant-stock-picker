@@ -7,14 +7,18 @@ from __future__ import annotations
 
 import os
 import smtplib
+import time
 from dataclasses import dataclass
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from html import escape
+import logging
 from pathlib import Path
 
 from aqsp.briefing.schema import BriefingData, Pick
 from aqsp.presentation import normalize_research_tone
+
+_logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -38,12 +42,16 @@ def load_email_config_from_env() -> EmailConfig | None:
     to_raw = os.environ.get("AQSP_EMAIL_TO", "")
     if not all([host, port, user, password, from_addr, to_raw]):
         return None
+    try:
+        smtp_port = int(port)
+    except (TypeError, ValueError):
+        return None
     to_addrs = [a.strip() for a in to_raw.split(",") if a.strip()]
     if not to_addrs:
         return None
     return EmailConfig(
         smtp_host=host,
-        smtp_port=int(port),
+        smtp_port=smtp_port,
         smtp_user=user,
         smtp_password=password,
         from_addr=from_addr,
@@ -93,8 +101,8 @@ def _render_pick_card_html(pick: Pick, rank: int) -> str:
       </div>
       <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 8px 0; font-size: 13px; color: #475569;">
         <div>💰 参考价: <strong>{pick.ideal_buy:.2f}</strong></div>
-        <div>🛡️ 防守位: <strong>{pick.stop_loss:.2f}</strong></div>
-        <div>🎯 观察目标: <strong>{pick.take_profit:.2f}</strong></div>
+        <div>🛡️ 最多亏到: <strong>{pick.stop_loss:.2f}</strong></div>
+        <div>🎯 先看目标: <strong>{pick.take_profit:.2f}</strong></div>
       </div>
       <div style="font-size: 13px; color: #334155;">
         <strong>📊 研究依据:</strong>
@@ -127,7 +135,7 @@ def render_html_email(data: BriefingData) -> str:
     <div style="background: linear-gradient(135deg, #1e293b 0%, #334155 100%); padding: 20px; border-radius: 12px; color: white; margin-bottom: 16px;">
       <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 12px;">
         <div>
-          <h1 style="margin: 0; font-size: 20px;">📊 AI 量化选股研究日报</h1>
+          <h1 style="margin: 0; font-size: 20px;">📊 每日研究复盘</h1>
           <p style="margin: 4px 0 0; font-size: 13px; opacity: 0.8;">{escape(data.date)}</p>
         </div>
         <span style="background: {status_color}; padding: 6px 12px; border-radius: 6px; font-size: 12px; font-weight: bold;">{escape(status_text)}</span>
@@ -224,7 +232,7 @@ def render_html_email(data: BriefingData) -> str:
 <html>
 <head>
   <meta charset="utf-8">
-  <title>AI 量化选股研究日报 - {escape(data.date)}</title>
+  <title>每日研究复盘-{escape(data.date)}</title>
 </head>
 <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 680px; margin: 0 auto; padding: 16px; background: #f8fafc; color: #1e293b; line-height: 1.6;">
   {header}
@@ -262,18 +270,23 @@ def send_briefing_email(
             msg.attach(MIMEText(html_body, "html", "utf-8"))
         except Exception as e:  # noqa: BLE001
             # HTML 渲染失败不影响纯文本发送
-            print(f"HTML 渲染失败，降级到纯文本: {e}")
+            _logger.warning("HTML 渲染失败，降级到纯文本: %s", e)
 
-    try:
-        if cfg.use_tls:
-            server = smtplib.SMTP(cfg.smtp_host, cfg.smtp_port, timeout=30)
-            server.starttls()
-        else:
-            server = smtplib.SMTP_SSL(cfg.smtp_host, cfg.smtp_port, timeout=30)
-        server.login(cfg.smtp_user, cfg.smtp_password)
-        server.send_message(msg)
-        server.quit()
-        return True
-    except Exception as e:  # noqa: BLE001
-        print(f"邮件发送失败: {e}")
-        return False
+    max_attempts = 3
+    for attempt in range(1, max_attempts + 1):
+        try:
+            if cfg.use_tls:
+                server = smtplib.SMTP(cfg.smtp_host, cfg.smtp_port, timeout=30)
+                server.starttls()
+            else:
+                server = smtplib.SMTP_SSL(cfg.smtp_host, cfg.smtp_port, timeout=30)
+            server.login(cfg.smtp_user, cfg.smtp_password)
+            server.send_message(msg)
+            server.quit()
+            return True
+        except Exception as e:  # noqa: BLE001
+            _logger.warning("邮件发送失败（第 %s/%s 次）: %s", attempt, max_attempts, e)
+            if attempt == max_attempts:
+                break
+            time.sleep(min(2 ** (attempt - 1), 4))
+    return False

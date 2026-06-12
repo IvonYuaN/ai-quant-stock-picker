@@ -98,12 +98,15 @@ class TestMonitorChecker:
         with patch("sqlite3.connect") as mock_connect:
             mock_cursor = MagicMock()
             mock_cursor.fetchone.return_value = ("2026-05-20",)
-            mock_connect.return_value.cursor.return_value = mock_cursor
+            mock_conn = MagicMock()
+            mock_conn.cursor.return_value = mock_cursor
+            mock_connect.return_value.__enter__.return_value = mock_conn
 
             result = checker._check_data_freshness({"max_lag_days": 3})
 
             assert result.name == "stale_data"
             assert result.severity == "critical"
+            mock_connect.assert_called_once_with("data/cache.db", timeout=30.0)
 
     def test_check_data_freshness_skips_when_cache_missing_and_optional(
         self, sample_config: Path
@@ -111,7 +114,11 @@ class TestMonitorChecker:
         checker = MonitorChecker(config_path=str(sample_config))
 
         result = checker._check_data_freshness(
-            {"cache_path": "data/missing_cache.db", "max_lag_days": 3, "required": False}
+            {
+                "cache_path": "data/missing_cache.db",
+                "max_lag_days": 3,
+                "required": False,
+            }
         )
 
         assert result.name == "stale_data"
@@ -132,6 +139,7 @@ class TestMonitorChecker:
         assert result.triggered is True
         assert result.severity == "critical"
         assert "数据缓存文件不存在" in result.message
+
     def test_check_circuit_breaker(self, sample_config: Path) -> None:
         checker = MonitorChecker(config_path=str(sample_config))
 

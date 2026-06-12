@@ -12,7 +12,7 @@ from aqsp.core.time import now_shanghai
 from aqsp.web.data_provider import DashboardDataProvider, DashboardTaskSnapshot
 
 st.set_page_config(
-    page_title="AQSP 新手看板",
+    page_title="新手看板",
     layout="wide",
     initial_sidebar_state="collapsed",
 )
@@ -38,13 +38,39 @@ class TimeLane:
 
 
 _TIME_LANES: tuple[TimeLane, ...] = (
-    TimeLane("09:25", "开盘前", "main_chain", "先看今天主链推荐和阻塞原因。"),
-    TimeLane("10:00", "早盘看一眼", "morning_breakout", "只看确认走强的早盘突破。"),
-    TimeLane("12:00", "午盘回看", "intraday", "中午只回看上午变化，下午再观察。"),
-    TimeLane("14:40", "尾盘确认", "closing_premium", "收盘前确认承接和隔夜价值。"),
-    TimeLane("15:30", "收盘复盘", "closing_review", "看今天哪些判断成立、哪些失效。"),
+    TimeLane("09:25", "开盘前", "main_chain", "先看今天最重要的股票和卡点。"),
+    TimeLane(
+        "10:00", "早盘看一眼", "morning_breakout", "只看早上有没有明显走强的股票。"
+    ),
+    TimeLane("12:00", "午盘回看", "intraday", "中午只回看上午变化，不急着下结论。"),
+    TimeLane("14:40", "尾盘确认", "closing_premium", "收盘前确认下午有没有继续走强。"),
+    TimeLane("15:30", "收盘复盘", "closing_review", "看今天哪些判断对了，哪些需要改。"),
     TimeLane("21:00", "明日预案", "briefing", "睡前只看明天重点，不看噪音。"),
 )
+
+BEGINNER_GLOSSARY: dict[str, tuple[tuple[str, str], ...]] = {
+    "技术指标": (
+        (
+            "bias20",
+            "现在价格离最近 20 天平均价格有多远。离得太远容易追高，离得不远更适合继续观察。",
+        ),
+        ("rps", "强弱排名。数字越高，说明这只股票最近比大多数股票更强。"),
+        ("均线多头排列", "短期平均价格在长期平均价格上面，通常说明趋势还在往上。"),
+    ),
+    "形态描述": (
+        (
+            "均线缩量回踩",
+            "价格往回落一点，但成交量也缩小了，通常说明不是恐慌下跌。",
+        ),
+        ("N字反弹", "先跌、再涨、再整理，走得像字母 N，说明资金还愿意继续往上推。"),
+        ("突破平台", "价格走出一段横盘区，说明市场开始愿意给更高价格。"),
+    ),
+    "交易规则": (
+        ("止损线", "提前想好最多亏到哪里。跌破这条线就退出，避免小亏拖成大亏。"),
+        ("T+1", "A 股今天买入的股票，当天不能卖，要等下一个交易日才能卖出。"),
+        ("纸面持有", "系统只是继续跟踪这只股票，不代表你的券商账户已经真的买入。"),
+    ),
+}
 
 
 def _inject_beginner_styles() -> None:
@@ -257,16 +283,25 @@ def build_positions() -> list[BeginnerPosition]:
     if not isinstance(frame, pd.DataFrame) or frame.empty:
         return []
     positions: list[BeginnerPosition] = []
-    for _, row in frame.iterrows():
+    columns = ["代码", "名称", "纸面入场日", "纸面入场价", "止损", "止盈", "持有周期"]
+    for (
+        symbol,
+        name,
+        entry_date,
+        entry_price,
+        stop_loss,
+        take_profit,
+        horizon_days,
+    ) in frame.reindex(columns=columns).itertuples(index=False, name=None):
         positions.append(
             BeginnerPosition(
-                symbol=str(row.get("代码", "") or "").strip(),
-                name=str(row.get("名称", "") or "").strip(),
-                entry_date=str(row.get("纸面入场日", "") or "").strip(),
-                entry_price=_to_float(row.get("纸面入场价")),
-                stop_loss=_to_optional_float(row.get("止损")),
-                take_profit=_to_optional_float(row.get("止盈")),
-                horizon_days=_to_optional_int(row.get("持有周期")),
+                symbol=str(symbol or "").strip(),
+                name=str(name or "").strip(),
+                entry_date=str(entry_date or "").strip(),
+                entry_price=_to_float(entry_price),
+                stop_loss=_to_optional_float(stop_loss),
+                take_profit=_to_optional_float(take_profit),
+                horizon_days=_to_optional_int(horizon_days),
             )
         )
     return positions
@@ -301,23 +336,25 @@ def _task_snapshot(task_id: str) -> DashboardTaskSnapshot | None:
 def _task_table(task_id: str) -> pd.DataFrame:
     provider = get_provider()
     signal_date = str(load_runtime_snapshot().get("signal_date", "") or "")
-    return provider.latest_signal_frame(limit=8, task_id=task_id, signal_date=signal_date)
+    return provider.latest_signal_frame(
+        limit=8, task_id=task_id, signal_date=signal_date
+    )
 
 
 def _render_hero() -> None:
     runtime = load_runtime_snapshot()
     signal_date = str(runtime.get("signal_date", "") or "")
     date_overview = runtime.get("date_overview")
-    headline = "今天先看主链，再看盘中，再看复盘。"
+    headline = "今天先看早上重点，再看盘中变化，最后看收盘总结。"
     if date_overview is not None and getattr(date_overview, "focus_headline", ""):
         headline = str(getattr(date_overview, "focus_headline", "") or headline)
-    sub = "现在展示的都是 AQSP 真实落盘结果，不再使用示例账户。"
+    sub = "这里展示的都是真实落盘结果，不再使用示例账户。"
     if signal_date:
         sub = f"最新结果日期：{signal_date}。先看顶部时间导航，再决定现在该看哪一块。"
     st.markdown(
         f"""
         <div class="aqsp-hero">
-          <div class="aqsp-hero-title">AQSP Beginner Dashboard</div>
+          <div class="aqsp-hero-title">给第一次看的人</div>
           <div class="aqsp-hero-main">{headline}</div>
           <div class="aqsp-hero-sub">{sub}</div>
         </div>
@@ -334,23 +371,23 @@ def _render_overview_strip() -> None:
         f"""
         <div class="aqsp-strip">
           <div class="aqsp-strip-card">
-            <div class="aqsp-strip-label">待核对</div>
-            <div class="aqsp-strip-value">{getattr(paper_summary, 'pending_entries', 0)}</div>
-            <div class="aqsp-strip-meta">下一交易日开盘后优先确认这些纸面入场。</div>
+            <div class="aqsp-strip-label">明早先确认</div>
+            <div class="aqsp-strip-value">{getattr(paper_summary, "pending_entries", 0)}</div>
+            <div class="aqsp-strip-meta">这些记录要等下一交易日开盘后再确认。</div>
           </div>
           <div class="aqsp-strip-card">
-            <div class="aqsp-strip-label">纸面持有</div>
-            <div class="aqsp-strip-value">{getattr(paper_summary, 'open_positions', 0)}</div>
-            <div class="aqsp-strip-meta">系统正在纸面跟踪，不代表你的券商实际仓位。</div>
+            <div class="aqsp-strip-label">系统跟踪中</div>
+            <div class="aqsp-strip-value">{getattr(paper_summary, "open_positions", 0)}</div>
+            <div class="aqsp-strip-meta">只是系统在继续跟踪，不代表你的券商真的持有。</div>
           </div>
           <div class="aqsp-strip-card">
-            <div class="aqsp-strip-label">不可成交</div>
-            <div class="aqsp-strip-value">{getattr(paper_summary, 'not_executable', 0)}</div>
+            <div class="aqsp-strip-label">今天买不到</div>
+            <div class="aqsp-strip-value">{getattr(paper_summary, "not_executable", 0)}</div>
             <div class="aqsp-strip-meta">通常是涨跌停或停牌，不算系统判断失败。</div>
           </div>
           <div class="aqsp-strip-card">
-            <div class="aqsp-strip-label">最近有结果</div>
-            <div class="aqsp-strip-value">{getattr(summary, 'latest_signal_date', '') or '-'}</div>
+            <div class="aqsp-strip-label">最新结果日</div>
+            <div class="aqsp-strip-value">{getattr(summary, "latest_signal_date", "") or "-"}</div>
             <div class="aqsp-strip-meta">今天没刷新的话，先确认服务器任务是否真的跑过。</div>
           </div>
         </div>
@@ -373,7 +410,9 @@ def _render_time_nav(selected_task_id: str) -> None:
     options = lane_options()
     option_ids = [task_id for task_id, _ in options]
     labels = {task_id: label for task_id, label in options}
-    default_index = option_ids.index(selected_task_id) if selected_task_id in option_ids else 0
+    default_index = (
+        option_ids.index(selected_task_id) if selected_task_id in option_ids else 0
+    )
     chosen = st.selectbox(
         "顶部导航",
         option_ids,
@@ -401,10 +440,10 @@ def _render_task_focus(task_id: str) -> None:
         unsafe_allow_html=True,
     )
     col1, col2, col3 = st.columns(3)
-    col1.metric("当前状态", status_label)
-    col2.metric("待复核", getattr(snapshot, "actionable_count", 0) if snapshot else 0)
+    col1.metric("现在处于", status_label)
+    col2.metric("要再确认", getattr(snapshot, "actionable_count", 0) if snapshot else 0)
     col3.metric(
-        "观察 / 阻塞",
+        "观察 / 卡住",
         f"{getattr(snapshot, 'watch_count', 0) if snapshot else 0} / "
         f"{getattr(snapshot, 'blocked_count', 0) if snapshot else 0}",
     )
@@ -425,31 +464,35 @@ def _render_task_focus(task_id: str) -> None:
 
 def _render_positions(positions: list[BeginnerPosition]) -> None:
     st.markdown(
-        '<div class="aqsp-panel"><div class="aqsp-panel-title">纸面持有提醒</div>'
-        '<div class="aqsp-panel-sub">这里只显示真实 paper ledger 里的纸面持有，不代表券商实际仓位。</div></div>',
+        '<div class="aqsp-panel"><div class="aqsp-panel-title">系统还在跟踪哪些股票</div>'
+        '<div class="aqsp-panel-sub">这里只显示系统继续跟踪的记录，不代表你的券商账户真的持有。</div></div>',
         unsafe_allow_html=True,
     )
     if not positions:
-        st.info("当前没有纸面持有记录。新手可以把重点放在左侧候选和阻塞原因。")
+        st.info("当前没有继续跟踪的记录。新手先把重点放在左侧的候选和卡点。")
         return
     for position in positions:
         with st.expander(f"{position.symbol} {position.name}", expanded=False):
             col1, col2, col3 = st.columns(3)
-            col1.metric("纸面入场价", f"¥{position.entry_price:.2f}")
+            col1.metric("记录时价格", f"¥{position.entry_price:.2f}")
             col2.metric(
-                "止损线",
-                f"¥{position.stop_loss:.2f}" if position.stop_loss is not None else "未记录",
+                "最多亏到",
+                f"¥{position.stop_loss:.2f}"
+                if position.stop_loss is not None
+                else "未记录",
             )
             col3.metric(
-                "止盈线",
-                f"¥{position.take_profit:.2f}" if position.take_profit is not None else "未记录",
+                "先看目标",
+                f"¥{position.take_profit:.2f}"
+                if position.take_profit is not None
+                else "未记录",
             )
             hints: list[str] = []
             if position.entry_date:
-                hints.append(f"纸面入场日：{position.entry_date}")
+                hints.append(f"开始跟踪日：{position.entry_date}")
             if position.horizon_days is not None:
-                hints.append(f"计划持有周期：{position.horizon_days} 天")
-            hints.append("这里是纸面跟踪，不是自动交易，也不是你的券商实际仓位。")
+                hints.append(f"计划观察天数：{position.horizon_days} 天")
+            hints.append("这里是系统跟踪记录，不是自动交易，也不是你的券商实际仓位。")
             for hint in hints:
                 st.markdown(f"- {hint}")
 
@@ -457,8 +500,8 @@ def _render_positions(positions: list[BeginnerPosition]) -> None:
 def _render_paper_summary() -> None:
     summary = load_runtime_snapshot()["paper_summary"]
     st.markdown(
-        '<div class="aqsp-panel"><div class="aqsp-panel-title">今天的纸面现实</div>'
-        '<div class="aqsp-panel-sub">这部分最适合新手理解“系统现在到底卡在哪”。</div></div>',
+        '<div class="aqsp-panel"><div class="aqsp-panel-title">今天系统记录了什么</div>'
+        '<div class="aqsp-panel-sub">这部分最适合理解系统现在到底卡在哪一步。</div></div>',
         unsafe_allow_html=True,
     )
     for line in getattr(summary, "action_summary_lines", ()):
@@ -483,21 +526,36 @@ def _render_history() -> None:
 def _render_beginner_tips() -> None:
     st.markdown(
         '<div class="aqsp-panel"><div class="aqsp-panel-title">新手只记住这 4 条</div>'
-        '<div class="aqsp-panel-sub">你不需要理解全部策略，只需要先避免明显错误。</div></div>',
+        '<div class="aqsp-panel-sub">你不需要一开始就全懂，先避开明显错误更重要。</div></div>',
         unsafe_allow_html=True,
     )
     tips = (
-        "先看卡点再看分数。卡点没解除，再高分也先别冲动。",
+        "先看哪里卡住，再看分数。问题没解决，再高分也先别冲动。",
         "盘中观察只是观察，不会进入正式收盘结果。",
-        "纸面持有只是系统跟踪，不代表你的券商真的买了。",
-        "不可成交样本不是判断失败，通常是涨跌停或停牌导致买不到。",
+        "系统继续跟踪，不代表你的券商真的买了。",
+        "今天买不到不等于判断错了，很多时候只是涨跌停或停牌。",
     )
     for tip in tips:
         st.markdown(f"- {tip}")
 
 
+def _render_beginner_glossary() -> None:
+    st.markdown(
+        '<div class="aqsp-panel"><div class="aqsp-panel-title">看不懂的词，从这里查</div>'
+        '<div class="aqsp-panel-sub">先理解这些高频词，再回头看今天结论会轻松很多。</div></div>',
+        unsafe_allow_html=True,
+    )
+    for category, entries in BEGINNER_GLOSSARY.items():
+        st.markdown(f"#### {category}")
+        for term, explanation in entries:
+            with st.expander(term, expanded=False):
+                st.write(explanation)
+
+
 def _render_footer() -> None:
-    st.caption("免责声明：本看板仅供研究参考，不构成投资建议。所有下单决定都应由你自己确认。")
+    st.caption(
+        "免责声明：本看板仅供研究参考，不构成投资建议。所有下单决定都应由你自己确认。"
+    )
 
 
 def main() -> None:
@@ -518,6 +576,7 @@ def main() -> None:
     with right_col:
         _render_positions(positions)
         _render_beginner_tips()
+        _render_beginner_glossary()
 
     _render_footer()
 

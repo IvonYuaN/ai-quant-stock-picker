@@ -10,6 +10,8 @@ import pandas as pd
 from aqsp.data.source import DataSource, OhlcvFrame, apply_limit_suspended_adj
 from aqsp.data.cache import DataCache
 
+_SQLITE_TIMEOUT_SECONDS = 30.0
+
 
 class SqliteDbSource(DataSource):
     name: str = "sqlite_db"
@@ -33,13 +35,15 @@ class SqliteDbSource(DataSource):
     def _load_symbol_map(self) -> dict[str, str]:
         if self._symbol_map is not None:
             return self._symbol_map
-        with sqlite3.connect(self.db_path) as conn:
+        with sqlite3.connect(self.db_path, timeout=_SQLITE_TIMEOUT_SECONDS) as conn:
             df = pd.read_sql("SELECT ts_code, name FROM stocks", conn)
         self._symbol_map = {}
         self._name_map: dict[str, str] = {}
-        for _, row in df.iterrows():
-            ts_code = str(row["ts_code"]).strip()
-            name = str(row["name"]).strip().rstrip("\x00")
+        for ts_code_raw, name_raw in df[["ts_code", "name"]].itertuples(
+            index=False, name=None
+        ):
+            ts_code = str(ts_code_raw).strip()
+            name = str(name_raw).strip().rstrip("\x00")
             if "." in ts_code:
                 symbol = ts_code.split(".")[0]
             else:
@@ -71,7 +75,7 @@ class SqliteDbSource(DataSource):
         start_str = start.strftime("%Y%m%d")
         end_str = end.strftime("%Y%m%d")
 
-        with sqlite3.connect(self.db_path) as conn:
+        with sqlite3.connect(self.db_path, timeout=_SQLITE_TIMEOUT_SECONDS) as conn:
             for symbol in symbols:
                 cached = (
                     self.cache.get_ohlcv(symbol, start, end)
@@ -172,7 +176,7 @@ class SqliteDbSource(DataSource):
         start_str = start.strftime("%Y%m%d")
         end_str = end.strftime("%Y%m%d")
 
-        with sqlite3.connect(self.db_path) as conn:
+        with sqlite3.connect(self.db_path, timeout=_SQLITE_TIMEOUT_SECONDS) as conn:
             for code in index_codes:
                 cached = self.cache.get_index(code, start, end)
                 if cached is not None and not cached.empty:

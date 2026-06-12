@@ -8,6 +8,28 @@ def _env_flag(name: str, default: str = "false") -> bool:
     return os.getenv(name, default).strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _env_int(name: str, default: int, *, minimum: int | None = None) -> int:
+    raw = os.getenv(name, str(default))
+    try:
+        value = int(str(raw).strip())
+    except (TypeError, ValueError):
+        return default
+    if minimum is not None and value < minimum:
+        return default
+    return value
+
+
+def _env_float(name: str, default: float, *, minimum: float | None = None) -> float:
+    raw = os.getenv(name, str(default))
+    try:
+        value = float(str(raw).strip())
+    except (TypeError, ValueError):
+        return default
+    if minimum is not None and value < minimum:
+        return default
+    return value
+
+
 @dataclass(frozen=True)
 class RuntimeConfig:
     symbols: tuple[str, ...]
@@ -79,10 +101,10 @@ def load_runtime_config() -> RuntimeConfig:
         research_engine=os.getenv("AQSP_RESEARCH_ENGINE", "auto").strip().lower()
         or "auto",
         mode=os.getenv("AQSP_MODE", "close").strip() or "close",
-        limit=int(os.getenv("AQSP_LIMIT", "10")),
-        max_universe=int(os.getenv("AQSP_MAX_UNIVERSE", "100")),
-        min_avg_amount=float(os.getenv("AQSP_MIN_AVG_AMOUNT", "50000000")),
-        max_data_lag_days=int(os.getenv("AQSP_MAX_DATA_LAG_DAYS", "3")),
+        limit=_env_int("AQSP_LIMIT", 10, minimum=1),
+        max_universe=_env_int("AQSP_MAX_UNIVERSE", 100, minimum=1),
+        min_avg_amount=_env_float("AQSP_MIN_AVG_AMOUNT", 50000000, minimum=0.0),
+        max_data_lag_days=_env_int("AQSP_MAX_DATA_LAG_DAYS", 3, minimum=0),
         enable_online_factors=_env_flag("AQSP_ENABLE_ONLINE_FACTORS"),
         allow_online_fallback=online_fallback_allowed(),
         enable_debate=_env_flag("AQSP_ENABLE_DEBATE"),
@@ -106,9 +128,7 @@ def load_debate_runtime_config() -> DebateRuntimeConfig:
     )
     global_enable_llm = _env_flag("AQSP_DEBATE_ENABLE_LLM")
     role_enable_map = _parse_role_mapping(os.getenv("AQSP_DEBATE_ROLE_LLM", ""))
-    role_provider_map = _parse_role_mapping(
-        os.getenv("AQSP_DEBATE_ROLE_PROVIDERS", "")
-    )
+    role_provider_map = _parse_role_mapping(os.getenv("AQSP_DEBATE_ROLE_PROVIDERS", ""))
     role_model_map = _parse_role_mapping(os.getenv("AQSP_DEBATE_ROLE_MODELS", ""))
     role_runtime = tuple(
         DebateRoleRuntime(
@@ -116,8 +136,7 @@ def load_debate_runtime_config() -> DebateRuntimeConfig:
             enable_llm=(
                 global_enable_llm
                 if role not in role_enable_map
-                else role_enable_map[role].strip().lower()
-                in {"1", "true", "yes", "on"}
+                else role_enable_map[role].strip().lower() in {"1", "true", "yes", "on"}
             ),
             provider=role_provider_map.get(role, "").strip().lower(),
             model=role_model_map.get(role, "").strip(),
@@ -127,7 +146,7 @@ def load_debate_runtime_config() -> DebateRuntimeConfig:
     return DebateRuntimeConfig(
         enabled=_env_flag("AQSP_ENABLE_DEBATE"),
         enable_llm=global_enable_llm,
-        max_rounds=max(1, int(os.getenv("AQSP_DEBATE_MAX_ROUNDS", "2"))),
+        max_rounds=max(1, _env_int("AQSP_DEBATE_MAX_ROUNDS", 2, minimum=1)),
         language=os.getenv("AQSP_DEBATE_LANGUAGE", "zh-CN").strip() or "zh-CN",
         roles=roles,
         role_runtime=role_runtime,

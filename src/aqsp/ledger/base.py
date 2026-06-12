@@ -367,13 +367,14 @@ def _resolve_exit(window: pd.DataFrame, row: dict) -> tuple[pd.Series, float, st
     stop_loss = float(row.get("stop_loss") or 0)
     take_profit = float(row.get("take_profit") or 0)
     slippage = float(row.get("slippage_bps") or 0) / 10000
-    for _, bar in window.iterrows():
-        low = float(bar["low"]) if "low" in bar else float(bar["close"])
-        high = float(bar["high"]) if "high" in bar else float(bar["close"])
+    for bar in window.itertuples(index=False, name="PriceBar"):
+        bar_close = float(getattr(bar, "close"))
+        low = float(getattr(bar, "low", bar_close))
+        high = float(getattr(bar, "high", bar_close))
         if stop_loss > 0 and low <= stop_loss:
-            return bar, stop_loss * (1 - slippage), "stop_loss"
+            return pd.Series(bar._asdict()), stop_loss * (1 - slippage), "stop_loss"
         if take_profit > 0 and high >= take_profit:
-            return bar, take_profit * (1 - slippage), "take_profit"
+            return pd.Series(bar._asdict()), take_profit * (1 - slippage), "take_profit"
     last = window.iloc[-1]
     return last, float(last["close"]) * (1 - slippage), "horizon_close"
 

@@ -189,7 +189,7 @@ class TdxVipdocSource(DataSource):
         if db_path is None:
             return {}
         try:
-            with sqlite3.connect(db_path) as conn:
+            with sqlite3.connect(db_path, timeout=30.0) as conn:
                 rows = conn.execute("SELECT ts_code, name FROM stocks").fetchall()
         except sqlite3.Error:
             return {}

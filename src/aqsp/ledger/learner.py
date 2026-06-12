@@ -50,12 +50,12 @@ def _explode_strategies(df: pd.DataFrame) -> pd.DataFrame:
     if "strategies" not in df.columns:
         return df
     records: list[dict] = []
-    for _, row in df.iterrows():
+    for row in df.to_dict(orient="records"):
         strategies = row.get("strategies") or []
         if isinstance(strategies, str):
             strategies = [strategies]
         for strategy in strategies:
-            new_row = row.to_dict()
+            new_row = dict(row)
             new_row["strategy"] = strategy
             records.append(new_row)
     if not records:
@@ -203,9 +203,7 @@ class PerformanceLearner:
     def compute_weights(
         self, ledger_df: pd.DataFrame, *, record_history: bool = False
     ) -> dict[str, float]:
-        performances = self.learn_from_ledger(
-            ledger_df, record_history=record_history
-        )
+        performances = self.learn_from_ledger(ledger_df, record_history=record_history)
         return {
             name: perf.weights.get("base", 1.0) for name, perf in performances.items()
         }
@@ -434,8 +432,8 @@ class StrategyDecayDetector:
             "signal_date", ascending=False
         )
         decay_days = 0
-        for _, row in strat_data.iterrows():
-            if row["return_decimal"] <= 0:
+        for ret in strat_data["return_decimal"].tolist():
+            if ret <= 0:
                 decay_days += 1
             else:
                 break

@@ -568,7 +568,7 @@ def test_send_pipeline_digest_sends_summary_notification(
     assert "数据源状态" in sent["content"]
     assert "主链候选" in sent["content"]
     assert "**📦 PM 主裁决**：上调 1 / 降级 1 / 维持 0" in sent["content"]
-    assert "**🔒 当前卡点**：" in sent["content"]
+    assert "**🔒 现在卡在哪**：" in sent["content"]
     assert "**📝 首要复核**：300750 宁德时代 | 中优先级 / 板块分化时" in sent["content"]
     assert (
         "600519 贵州茅台 | 重点跟踪 | 延续上升 | PM 上调优先级 | 评分 71.0"
@@ -576,15 +576,15 @@ def test_send_pipeline_digest_sends_summary_notification(
     )
     assert "600519 贵州茅台 | 重点关注" not in sent["content"]
     assert (
-        "300750 宁德时代 | 备选观察名单 | 观察阻塞 | PM 降级观察 | 评分 64.0"
+        "300750 宁德时代 | 继续观察名单 | 观察阻塞 | PM 降级观察 | 评分 64.0"
         in sent["content"]
     )
-    assert "当前阻塞: 板块集中度过高，压低新能源暴露" in sent["content"]
+    assert "现在卡在哪: 板块集中度过高，压低新能源暴露" in sent["content"]
     assert "下一步: 等待板块暴露回落后，再重新评估跟踪优先级" in sent["content"]
-    assert "复核: 中优先级 / 板块分化时" in sent["content"]
-    assert "观察复核:" in sent["content"]
+    assert "再看时间: 中优先级 / 板块分化时" in sent["content"]
+    assert "观察名单接下来:" in sent["content"]
     assert (
-        "观察复核: 先盯 300750 宁德时代，等待板块暴露回落后，再重新评估跟踪优先级（中优先级 / 板块分化时）。"
+        "观察名单接下来: 先盯 300750 宁德时代，等待板块暴露回落后，再重新评估跟踪优先级（中优先级 / 板块分化时）。"
         in sent["content"]
     )
     assert "运行侧写" not in sent["content"]
@@ -856,27 +856,31 @@ def test_validate_predictions_fetches_benchmark_from_ledger(
     monkeypatch.setattr("aqsp.ledger.base.read_ledger", lambda _path: rows)
     monkeypatch.setattr(
         "aqsp.data.fetch_with_source",
-        lambda _source, symbols, days=60, benchmark_symbol=None: seen.update(
-            {
-                "symbols": list(symbols),
-                "benchmark_symbol": benchmark_symbol,
-            }
-        )
-        or {"600519": pd.DataFrame([{"date": "2026-06-02"}])},
+        lambda _source, symbols, days=60, benchmark_symbol=None: (
+            seen.update(
+                {
+                    "symbols": list(symbols),
+                    "benchmark_symbol": benchmark_symbol,
+                }
+            )
+            or {"600519": pd.DataFrame([{"date": "2026-06-02"}])}
+        ),
     )
     monkeypatch.setattr(
         "aqsp.ledger.validate_predictions",
-        lambda _path, frames: seen.update({"frames": frames})
-        or type(
-            "Validation",
-            (),
-            {
-                "checked": 0,
-                "wins": 0,
-                "avg_return_pct": 0.0,
-                "avg_excess_pct": 0.0,
-            },
-        )(),
+        lambda _path, frames: (
+            seen.update({"frames": frames})
+            or type(
+                "Validation",
+                (),
+                {
+                    "checked": 0,
+                    "wins": 0,
+                    "avg_return_pct": 0.0,
+                    "avg_excess_pct": 0.0,
+                },
+            )()
+        ),
     )
 
     config = daily_pipeline.PipelineConfig(
@@ -940,17 +944,19 @@ def test_validate_predictions_uses_resilient_history_when_primary_fails(
     monkeypatch.setattr("aqsp.data.fetch_with_source", fake_fetch)
     monkeypatch.setattr(
         "aqsp.ledger.validate_predictions",
-        lambda _path, frames: seen.update({"frames": frames})
-        or type(
-            "Validation",
-            (),
-            {
-                "checked": 0,
-                "wins": 0,
-                "avg_return_pct": 0.0,
-                "avg_excess_pct": 0.0,
-            },
-        )(),
+        lambda _path, frames: (
+            seen.update({"frames": frames})
+            or type(
+                "Validation",
+                (),
+                {
+                    "checked": 0,
+                    "wins": 0,
+                    "avg_return_pct": 0.0,
+                    "avg_excess_pct": 0.0,
+                },
+            )()
+        ),
     )
 
     config = daily_pipeline.PipelineConfig(
@@ -979,7 +985,9 @@ def test_validate_predictions_uses_resilient_history_when_primary_fails(
         enable_auto_evolution=False,
     )
 
-    result = daily_pipeline._step_validate_predictions(config, logging.getLogger("test"))
+    result = daily_pipeline._step_validate_predictions(
+        config, logging.getLogger("test")
+    )
 
     assert len(seen["sources"]) == 2
     assert seen["sources"][1] == "fallback-source"

@@ -5,11 +5,12 @@ import logging
 
 import pandas as pd
 
+from aqsp.data.validation import DataValidator
+from aqsp.data.filters import TradabilityFilter
 from aqsp.indicators import enrich_indicators
 from aqsp.internet_strategies import evaluate_strategy_signals
 from aqsp.models import PickResult, ScreeningConfig
 from aqsp.strategies.thresholds import ScoringThresholds, load_thresholds
-from aqsp.data.filters import TradabilityFilter
 
 _logger = logging.getLogger(__name__)
 
@@ -17,22 +18,40 @@ _logger = logging.getLogger(__name__)
 def screen_universe(
     frames: dict[str, pd.DataFrame], config: ScreeningConfig
 ) -> list[PickResult]:
+    """Screen candidate frames into ranked paper-trading picks."""
     thresholds = load_thresholds()
     scoring = thresholds.scoring
     picks: list[PickResult] = []
-    
+    validator = DataValidator()
     tradability_filter = TradabilityFilter()
-    symbols = list(frames.keys())
+    validated_frames: dict[str, pd.DataFrame] = {}
 
     names_map: dict[str, str] = {}
     for symbol, frame in frames.items():
-        if not frame.empty:
-            names_map[symbol] = str(frame.iloc[-1].get("name", ""))
+        if frame.empty:
+            _logger.warning("跳过空数据: %s", symbol)
+            continue
+        validation = validator.validate_ohlc(frame, symbol=symbol)
+        nonfatal_errors = [
+            error for error in validation.errors if not error.startswith("日涨跌幅超限")
+        ]
+        if nonfatal_errors:
+            _logger.warning("跳过无效数据 %s: %s", symbol, nonfatal_errors)
+            continue
+        validation_messages = validation.warnings + [
+            error for error in validation.errors if error.startswith("日涨跌幅超限")
+        ]
+        if validation_messages:
+            _logger.warning("%s 数据校验警告: %s", symbol, validation_messages)
+        validated_frames[symbol] = frame
+        names_map[symbol] = str(frame.iloc[-1].get("name", ""))
+
+    symbols = list(validated_frames.keys())
 
     try:
         filtered_symbols = tradability_filter.filter_all(
             symbols=symbols,
-            data=frames,
+            data=validated_frames,
             names=names_map,
             min_avg_volume=tradability_filter.min_avg_volume_30d,
             min_avg_amount=tradability_filter.min_daily_amount,
@@ -46,9 +65,9 @@ def screen_universe(
     except Exception as e:
         _logger.warning(f"可交易性过滤器出错: {e}, 继续使用全部符号")
         filtered_symbols = symbols
-    
+
     for symbol in filtered_symbols:
-        frame = frames[symbol]
+        frame = validated_frames[symbol]
         try:
             result = score_symbol(symbol, frame, config, scoring)
         except (ValueError, IndexError, KeyError, TypeError):

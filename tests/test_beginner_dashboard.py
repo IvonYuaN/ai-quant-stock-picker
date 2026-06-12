@@ -13,9 +13,9 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_beginner_dashboard_has_no_sample_account_or_fake_holdings() -> None:
-    source = (PROJECT_ROOT / "src" / "aqsp" / "web" / "dashboard_beginner.py").read_text(
-        encoding="utf-8"
-    )
+    source = (
+        PROJECT_ROOT / "src" / "aqsp" / "web" / "dashboard_beginner.py"
+    ).read_text(encoding="utf-8")
 
     assert "get_sample_account" not in source
     assert "get_sample_positions" not in source
@@ -24,6 +24,9 @@ def test_beginner_dashboard_has_no_sample_account_or_fake_holdings() -> None:
     assert "总资产" not in source
     assert "真实账户" not in source
     assert "真实持仓" not in source
+    assert "AQSP Beginner Dashboard" not in source
+    assert "先看今天主链推荐和阻塞原因" not in source
+    assert "收盘前确认承接和隔夜价值" not in source
 
 
 def test_beginner_dashboard_time_lanes_include_midday_and_review_flow() -> None:
@@ -42,7 +45,9 @@ def test_beginner_dashboard_time_lanes_include_midday_and_review_flow() -> None:
     assert any(lane.task_id == "briefing" for lane in lanes)
 
 
-def test_beginner_dashboard_builds_positions_from_real_provider_frame(monkeypatch) -> None:
+def test_beginner_dashboard_builds_positions_from_real_provider_frame(
+    monkeypatch,
+) -> None:
     import pandas as pd
 
     class _FakeProvider:
@@ -107,3 +112,12 @@ def test_beginner_dashboard_builds_positions_from_real_provider_frame(monkeypatc
     assert positions[0].stop_loss == 9.3
     assert positions[0].take_profit == 10.8
     assert positions[0].horizon_days == 3
+
+
+def test_beginner_dashboard_exposes_glossary_for_new_users() -> None:
+    glossary = dashboard_beginner.BEGINNER_GLOSSARY
+
+    assert "技术指标" in glossary
+    assert "交易规则" in glossary
+    assert any(term == "T+1" for term, _ in glossary["交易规则"])
+    assert any(term == "bias20" for term, _ in glossary["技术指标"])

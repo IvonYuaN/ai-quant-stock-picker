@@ -8,6 +8,9 @@
 set -euo pipefail
 
 PROJECT_ROOT="${AQSP_PROJECT_ROOT:-/opt/aqsp}"
+LOCK_STALE_MINUTES="${AQSP_LOCK_STALE_MINUTES:-360}"
+RUNNER_TIMEOUT_SECONDS="${AQSP_RUNNER_TIMEOUT_SECONDS:-0}"
+MONITOR_TIMEOUT_SECONDS="${AQSP_MONITOR_TIMEOUT_SECONDS:-0}"
 
 if [ -f "${PROJECT_ROOT}/.env" ]; then
     set -a
@@ -17,6 +20,48 @@ fi
 
 print_section() {
     printf '\n===== %s =====\n' "$1"
+}
+
+lock_age_minutes() {
+    local path="$1"
+    local now_epoch mtime
+    now_epoch="$(date +%s)"
+    mtime="$(stat -c %Y "$path" 2>/dev/null || stat -f %m "$path")"
+    echo $(( (now_epoch - mtime) / 60 ))
+}
+
+print_lock_state() {
+    local lock_path="$1"
+    local lock_name info_file runner pid started_at age pid_state
+    lock_name="$(basename "$lock_path")"
+    if [ ! -d "$lock_path" ]; then
+        printf '%s missing\n' "$lock_name"
+        return
+    fi
+
+    info_file="${lock_path}/meta.env"
+    runner="unknown"
+    pid="unknown"
+    started_at="unknown"
+    if [ -f "$info_file" ]; then
+        while IFS='=' read -r key value; do
+            case "$key" in
+                LOCK_RUNNER) [ -n "$value" ] && runner="$value" ;;
+                LOCK_PID) [ -n "$value" ] && pid="$value" ;;
+                LOCK_STARTED_AT) [ -n "$value" ] && started_at="$value" ;;
+            esac
+        done <"$info_file"
+    fi
+
+    age="$(lock_age_minutes "$lock_path")"
+    if [ "$pid" != "unknown" ] && kill -0 "$pid" 2>/dev/null; then
+        pid_state="pid-active"
+    else
+        pid_state="pid-missing"
+    fi
+
+    printf '%s runner=%s pid=%s started_at=%s age=%smin %s\n' \
+        "$lock_name" "$runner" "$pid" "$started_at" "$age" "$pid_state"
 }
 
 file_line() {
@@ -35,6 +80,12 @@ git status --short
 
 print_section "CRON"
 crontab -l 2>/dev/null || true
+
+print_section "LOCKS"
+printf 'config runner_timeout=%ss monitor_timeout=%ss stale_after=%smin\n' \
+    "$RUNNER_TIMEOUT_SECONDS" "$MONITOR_TIMEOUT_SECONDS" "$LOCK_STALE_MINUTES"
+print_lock_state "${PROJECT_ROOT}/.locks/server-runtime.lock"
+print_lock_state "${PROJECT_ROOT}/.locks/server-monitor.lock"
 
 print_section "ARTIFACTS"
 file_line "${PROJECT_ROOT}/reports/latest.md"

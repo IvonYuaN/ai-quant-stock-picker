@@ -4,7 +4,7 @@ TRADABLE_RATINGS = frozenset({"buy_candidate", "strong_buy_candidate"})
 RATING_LABELS = {
     "strong_buy_candidate": "重点跟踪",
     "buy_candidate": "继续观察",
-    "watch": "备选观察名单",
+    "watch": "继续观察名单",
     "avoid": "仅观察",
 }
 PORTFOLIO_ACTION_LABELS = {

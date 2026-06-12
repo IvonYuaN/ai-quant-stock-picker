@@ -103,6 +103,7 @@ from aqsp.web.dashboard import (
     _render_report_archive_center,
     _render_symbol_quick_bar,
     _render_workspace_navigation,
+    _render_top_navigation,
     _workspace_widget_state,
     _workspace_jump_state,
     _review_to_archive_handoff_lines,
@@ -256,9 +257,9 @@ def test_dashboard_renders_candidates_and_ledger_stats_when_inputs_exist(
     assert "候选分层" in html
     assert "/ 继续观察" in html
     assert "参考价" in html
-    assert "防守位" in html
-    assert "观察目标" in html
-    assert "纸面仓位" in html
+    assert "最多亏到" in html
+    assert "先看目标" in html
+    assert "比例参考" in html
     assert "买点" not in html
     assert "止盈" not in html
     assert "buy_candidate" not in html
@@ -589,7 +590,7 @@ def test_dashboard_uses_clean_decision_labels_for_watch_candidates() -> None:
 
     html = render_dashboard(candidates, [], "观察面板")
 
-    assert "/ 备选观察名单" in html
+    assert "/ 继续观察名单" in html
     assert ">风险: 追高风险<" in html
     assert "watch" not in html
 
@@ -628,11 +629,11 @@ def test_dashboard_surfaces_watch_candidate_lifecycle_details() -> None:
     html = render_dashboard(candidates, [], "主链观察面板")
 
     assert "主链状态总览" in html
-    assert "观察名单下一步" in html
+    assert "观察名单接下来" in html
     assert "主链复核" in html
-    assert "当前阻塞" in html
+    assert "现在卡在哪" in html
     assert "明日复核" in html
-    assert "/ 备选观察名单" in html
+    assert "/ 继续观察名单" in html
     assert "新晋" in html
     assert "下一步: 等待量价继续走强后，再评估是否转入重点跟踪名单" in html
     assert "复核: 高优先级 / 盘中走强后" in html
@@ -667,9 +668,9 @@ def test_dashboard_handles_missing_inputs() -> None:
 
     assert "空面板" in html
     assert "本次没有候选股" in html
-    assert "暂无真实候选输出" in html
-    assert "暂无 ledger 记录" in html
-    assert "暂无纸面记录" in html
+    assert "本次没有候选股。先确认宝塔 daily/intraday 是否成功跑完" in html
+    assert "还没有信号记录。先等下一次主链跑批完成" in html
+    assert "还没有纸面跟踪记录。出现候选后" in html
 
 
 def test_dashboard_source_lag_display_uses_readable_missing_label() -> None:
@@ -967,7 +968,7 @@ def test_dashboard_focus_summary_lines_use_candidate_contract_when_selected_card
         "研究状态: 上调优先级 / 延续上升",
         "排队层级: 首选 / 评分 88.0",
         "下一步: 等待量能确认后决定是否保留主仓",
-        "复核节奏: 高优先级 / 开盘前后",
+        "再看时间: 高优先级 / 开盘前后",
     )
     assert not any("不应回退" in line for line in lines)
 
@@ -976,13 +977,13 @@ def test_dashboard_review_meta_helpers_hide_placeholder_values() -> None:
     assert _has_review_meta("高优先级 / 开盘前后") is True
     assert _has_review_meta("") is False
     assert _has_review_meta("-") is False
-    assert _has_review_meta("暂无额外复核节奏") is False
+    assert _has_review_meta("暂无额外再看时间") is False
 
     assert (
-        _review_meta_line("复核节奏", "高优先级 / 开盘前后")
-        == "复核节奏: 高优先级 / 开盘前后"
+        _review_meta_line("再看时间", "高优先级 / 开盘前后")
+        == "再看时间: 高优先级 / 开盘前后"
     )
-    assert _review_meta_line("复核节奏", "-") == ""
+    assert _review_meta_line("再看时间", "-") == ""
 
 
 def test_dashboard_focus_summary_lines_hide_placeholder_review_meta() -> None:
@@ -1543,7 +1544,7 @@ def test_dashboard_debate_overview_lines_surface_missing_evidence() -> None:
         "结论: 建议维持评分 / 分歧 0.00",
         "共识: 暂未形成明确一致结论",
         "分歧来源: 看多 0 / 看空 0 / 中性 0",
-        "待补证据: 当前辩论未给出明确风险或机会，先回候选证据链复核。",
+        "待补依据: 当前辩论未给出明确风险或机会，先回候选来龙去脉复核。",
     )
 
 
@@ -2124,7 +2125,7 @@ def test_dashboard_archive_conclusion_context_avoids_repeating_blocker_as_summar
     )
 
     assert title == "当前标的结论"
-    assert "当前阻塞: 20日均成交额不足，流动性过滤" in lines
+    assert "现在卡在哪: 20日均成交额不足，流动性过滤" in lines
     assert "下一步: 先确认复核条件，卡点解除后再决定是否恢复推进。" in lines
     assert not any(line == "候选摘要: 20日均成交额不足，流动性过滤" for line in lines)
 
@@ -2279,7 +2280,7 @@ def test_dashboard_archive_followup_action_context_does_not_relabel_research_as_
 ):
     assert _archive_followup_action_context(()) == (
         "待补归档动作",
-        ("当前归档没有新增复盘动作，先看原文、研究链与纸面现实。",),
+        ("当前归档没有新增复盘动作，先看原文、研究链和纸面记录。",),
     )
     assert _archive_followup_action_context(("600519 | 复核分歧是否收敛",)) == (
         "接下来做什么",
@@ -2338,9 +2339,9 @@ def test_dashboard_archive_brief_cards_summarize_archive_without_action_hype() -
 
     assert tuple(card.kicker for card in cards) == (
         "归档结论",
-        "复核动作",
-        "纸面现实",
-        "辩论证据",
+        "接下来做什么",
+        "纸面记录",
+        "多方怎么看",
     )
     assert cards[0].title == "已归档"
     assert cards[1].tone == "pressure"
@@ -2420,14 +2421,14 @@ def test_dashboard_sanitizes_raw_archive_action_words_without_rewriting_source()
     assert "历史复核对象" in sanitized
     assert "历史重点对象" in sanitized
     assert "重点观察" in sanitized
-    assert "历史仓位参考" in sanitized
-    assert "历史仓位参考 10%" in sanitized
+    assert "历史比例参考" in sanitized
+    assert "历史比例参考 10%" in sanitized
     assert "纸面新建观察" in sanitized
     assert "参考价" in sanitized
-    assert "防守位" in sanitized
-    assert "观察目标" in sanitized
+    assert "历史最多亏到" in sanitized
+    assert "历史先看目标" in sanitized
     assert "历史复核名单" in sanitized
-    assert "历史复核顺序" in sanitized
+    assert "历史再看顺序" in sanitized
 
 
 def test_dashboard_archive_conclusion_title_distinguishes_research_from_report_archive_status() -> (
@@ -3025,11 +3026,11 @@ def test_dashboard_execution_context_lines_absorb_debate_takeaways() -> None:
     assert any("辩论结论: 建议上调评分 / 分歧 0.42" == line for line in research_lines)
     assert any("辩论共识: 维持观察但优先级上调" == line for line in research_lines)
     assert any(
-        "当前没有研究候选卡，研究链路已由辩论主结论补齐。" == line
+        "当前没有研究候选卡，当前判断主要由同日多方讨论补齐。" == line
         for line in research_lines
     )
     assert any("修正原因: 分歧收敛后更偏正面" == line for line in path_lines)
-    assert any("当前阻塞: 需确认银行板块承接" == line for line in path_lines)
+    assert any("现在卡在哪: 需确认银行板块承接" == line for line in path_lines)
 
 
 def test_dashboard_workspace_focus_helpers_use_review_fallback_for_debate_only_symbols() -> (
@@ -3039,7 +3040,7 @@ def test_dashboard_workspace_focus_helpers_use_review_fallback_for_debate_only_s
 
     execution_focus = _DummyExecutionFocus(
         display_name="600519",
-        research_status="研究链路缺席",
+        research_status="缺少研究结论",
         research_lines=("该标的当前不在研究候选中，主要从纸面记录回看。",),
     )
     debate = DashboardDebateSummary(
@@ -3105,7 +3106,7 @@ def test_dashboard_workspace_focus_helpers_use_review_fallback_for_debate_only_s
         "复核状态: 待独立验证 / 等待下一次任务确认",
         "辩论调整分（非选股评分）: 82.0",
     )
-    assert focus_lines[2] == "验证动作: 等待下一次任务或纸面验证链路补充独立证据。"
+    assert focus_lines[2] == "验证动作: 等待下一次任务或纸面验证记录补充独立依据。"
     assert not any(line.startswith("复核节奏:") for line in focus_lines)
     assert not any(line.startswith("当前阻塞:") for line in focus_lines)
 
@@ -3419,6 +3420,226 @@ def test_dashboard_two_line_nav_label_renders_code_and_name_without_action_noise
     assert "当前" not in html
 
 
+def test_dashboard_top_navigation_uses_beginner_friendly_labels(monkeypatch) -> None:
+    import aqsp.web.dashboard as dashboard
+
+    selectbox_labels: list[str] = []
+    markdown_blocks: list[str] = []
+
+    class _StubColumn:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    class _StubProvider:
+        @staticmethod
+        def dashboard_dates() -> list[str]:
+            return ["2026-06-05"]
+
+        @staticmethod
+        def default_task_id() -> str:
+            return "main_chain"
+
+        @staticmethod
+        def same_day_task_rows(signal_date: str):
+            from aqsp.web.data_provider import DashboardSameDayTaskRow
+
+            return (
+                DashboardSameDayTaskRow(
+                    signal_date=signal_date,
+                    task_id="main_chain",
+                    task_label="主链推荐",
+                    phase_order=1,
+                    phase_label="盘前主链",
+                    phase_summary="先看主链推荐",
+                    status_label="有推荐",
+                    headline="先看主链推荐",
+                    candidate_count=1,
+                    actionable_count=1,
+                    watch_count=0,
+                    blocked_count=0,
+                ),
+            )
+
+        @staticmethod
+        def preferred_task_for_date(signal_date: str) -> str:
+            return "main_chain"
+
+    class _Opt:
+        def __init__(self, task_id: str) -> None:
+            self.task_id = task_id
+
+    monkeypatch.setattr(dashboard.st, "session_state", {})
+    monkeypatch.setattr(
+        dashboard.st,
+        "markdown",
+        lambda body, *args, **kwargs: markdown_blocks.append(str(body)),
+    )
+    monkeypatch.setattr(
+        dashboard.st, "columns", lambda spec: [_StubColumn() for _ in range(len(spec))]
+    )
+
+    def _fake_selectbox(label, options, **kwargs):
+        selectbox_labels.append(label)
+        return options[0]
+
+    monkeypatch.setattr(dashboard.st, "selectbox", _fake_selectbox)
+    monkeypatch.setattr(dashboard, "_render_date_jump_bar", lambda **kwargs: None)
+    monkeypatch.setattr(
+        dashboard, "_render_same_day_phase_jump_bar", lambda **kwargs: None
+    )
+    monkeypatch.setattr(
+        dashboard, "_render_top_navigation_banner", lambda **kwargs: None
+    )
+
+    selected_task_id, selected_date = _render_top_navigation(
+        options=(_Opt("main_chain"),),
+        snapshots=(),
+        provider=_StubProvider(),
+    )
+
+    assert selected_task_id == "main_chain"
+    assert selected_date == "2026-06-05"
+    assert selectbox_labels == ["看哪一天", "看哪一段"]
+    assert any("先选日期，再看当天哪一段。" in block for block in markdown_blocks)
+
+
+def test_dashboard_same_day_buttons_use_short_beginner_labels(monkeypatch) -> None:
+    import aqsp.web.dashboard as dashboard
+    from aqsp.web.data_provider import DashboardDateOverview, DashboardSameDayTaskRow
+
+    button_labels: list[str] = []
+    subheaders: list[str] = []
+    markdown_blocks: list[str] = []
+
+    class _StubColumn:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    monkeypatch.setattr(
+        dashboard.st, "columns", lambda count: [_StubColumn() for _ in range(count)]
+    )
+    monkeypatch.setattr(dashboard.st, "subheader", lambda text: subheaders.append(text))
+    monkeypatch.setattr(
+        dashboard.st,
+        "button",
+        lambda label, *args, **kwargs: button_labels.append(label) and False,
+    )
+    monkeypatch.setattr(
+        dashboard.st,
+        "markdown",
+        lambda body, *args, **kwargs: markdown_blocks.append(str(body)),
+    )
+
+    row = DashboardSameDayTaskRow(
+        signal_date="2026-06-05",
+        task_id="main_chain",
+        task_label="主链推荐",
+        phase_order=1,
+        phase_label="盘前主链",
+        phase_summary="先看主链推荐",
+        status_label="有推荐",
+        headline="先看主链推荐",
+        candidate_count=1,
+        actionable_count=1,
+        watch_count=0,
+        blocked_count=0,
+    )
+    overview = DashboardDateOverview(
+        signal_date="2026-06-05",
+        task_count=1,
+        actionable_total=1,
+        watch_total=0,
+        blocked_total=0,
+        top_task_label="主链推荐",
+        top_headline="先看主链推荐",
+        blocker_headline="",
+        focus_headline="",
+        workflow_summary="当日流程: 盘前主链",
+        archive_summary="",
+    )
+
+    monkeypatch.setattr(dashboard, "_set_dashboard_selection", lambda **kwargs: None)
+    monkeypatch.setattr(dashboard.st, "rerun", lambda: None)
+    dashboard._render_date_jump_bar(
+        all_dates=("2026-06-05",),
+        selected_date="2026-06-05",
+        provider=type(
+            "_Provider",
+            (),
+            {
+                "dashboard_date_overviews": staticmethod(lambda: (overview,)),
+                "default_task_id": staticmethod(lambda: "main_chain"),
+                "same_day_task_rows": staticmethod(lambda signal_date: (row,)),
+            },
+        )(),
+        current_task_id="main_chain",
+    )
+    dashboard._render_same_day_task_matrix((row,), "other_task")
+
+    assert "当天各段" in subheaders
+    assert "2026-06-05" in button_labels
+    assert "切到主链推荐" in button_labels
+    assert any("2026-06-05" in block for block in markdown_blocks)
+
+
+def test_dashboard_home_task_board_uses_direct_reading_hint(monkeypatch) -> None:
+    import aqsp.web.dashboard as dashboard
+
+    subheaders: list[str] = []
+    captions: list[str] = []
+    markdown_calls: list[str] = []
+
+    monkeypatch.setattr(dashboard.st, "subheader", lambda text: subheaders.append(text))
+    monkeypatch.setattr(dashboard.st, "caption", lambda text: captions.append(text))
+    monkeypatch.setattr(
+        dashboard, "_render_daily_workflow", lambda *args, **kwargs: None
+    )
+    monkeypatch.setattr(dashboard.st, "columns", lambda spec: (object(), object()))
+    monkeypatch.setattr(
+        dashboard.st,
+        "markdown",
+        lambda body, *args, **kwargs: markdown_calls.append(str(body)),
+    )
+    monkeypatch.setattr(
+        dashboard, "_render_home_action_rail", lambda *args, **kwargs: None
+    )
+    monkeypatch.setattr(
+        dashboard, "_render_home_execution_snapshot", lambda *args, **kwargs: None
+    )
+
+    class _StubColumn:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    monkeypatch.setattr(
+        dashboard.st, "columns", lambda spec: (_StubColumn(), _StubColumn())
+    )
+
+    dashboard._render_home_task_board(
+        rows=(),
+        current_task_id="main_chain",
+        task_view=type("_TaskView", (), {})(),
+        spotlights=(),
+        debates=(),
+        paper_summary=type("_PaperSummary", (), {})(),
+        overview=type("_Overview", (), {})(),
+    )
+
+    assert subheaders == ["今天先看什么"]
+    assert captions == ["先看今天走到哪一步，再看先看这些和纸面记录。"]
+    assert "**先看这些**" in markdown_calls
+    assert "**纸面记录**" in markdown_calls
+
+
 def test_dashboard_top_navigation_context_prefers_same_day_phase_summary() -> None:
     from aqsp.web.data_provider import DashboardSameDayTaskRow, DashboardTaskSnapshot
 
@@ -3574,7 +3795,7 @@ def test_dashboard_day_replay_digest_compresses_same_day_flow_for_humans() -> No
     )
 
     assert lines[0] == "📍 当日结论 | 2 待复核 | 1 观察 | 0 阻塞"
-    assert lines[1] == "🧩 任务回放 | 盘前主链 → 尾盘确认 | 当前停在 主链推荐"
+    assert lines[1] == "🧩 任务回放 | 盘前主链 → 尾盘确认 | 主链推荐"
     assert lines[2] == "📚 归档回看: 原报告下一交易日重点，历史回看: 先确认量能延续。"
     assert lines[3].startswith("🗂 全日覆盖 | 已归档")
     assert len(lines) == 4
@@ -3938,7 +4159,7 @@ def test_dashboard_day_replay_digest_falls_back_when_same_day_rows_are_empty() -
         paper_summary=paper_summary,
         same_day_rows=(),
     )
-    assert lines[1] == "🧩 任务回放 | 收盘复盘 -> 次日预案 | 当前停在 简报回看"
+    assert lines[1] == "🧩 任务回放 | 收盘复盘 -> 次日预案 | 简报回看"
 
     empty_overview = DashboardDateOverview(
         signal_date="2026-06-05",
@@ -3959,7 +4180,7 @@ def test_dashboard_day_replay_digest_falls_back_when_same_day_rows_are_empty() -
         paper_summary=paper_summary,
         same_day_rows=(),
     )
-    assert fallback_lines[1] == "🧩 任务回放 | 简报回看 当前视角 | 当前停在 简报回看"
+    assert fallback_lines[1] == "🧩 任务回放 | 简报回看"
 
 
 def test_dashboard_workspace_context_brief_distinguishes_review_sources_and_execution_pressure() -> (
@@ -4060,8 +4281,8 @@ def test_dashboard_workspace_context_brief_distinguishes_review_sources_and_exec
     )
     assert title == "跨任务联动回看"
     assert lines == (
-        "当前判断来自同日联动聚合。",
-        "先核对跨任务结论，再回到单任务证据。",
+        "当前判断主要来自同日一起出现的信息。",
+        "先核对跨任务结论，再回到单任务原始依据。",
     )
     assert tone == "archive"
 
@@ -4151,7 +4372,7 @@ def test_dashboard_research_path_steps_connect_review_paper_and_archive_safely()
         archive_status="已归档",
     )
 
-    assert tuple(step.title for step in steps) == ("研究判断", "纸面现实", "归档落点")
+    assert tuple(step.title for step in steps) == ("研究结论", "纸面记录", "归档结果")
     assert steps[0].tone == "blocked"
     assert steps[0].headline == "000338 潍柴动力 · 降级观察"
     assert "排队层级: 阻塞观察 / 评分 58.0" in steps[0].lines
@@ -4499,7 +4720,7 @@ def test_dashboard_home_brief_cards_summarize_day_without_trading_language() -> 
 
     assert tuple(card.kicker for card in cards) == (
         "01 先看什么",
-        "02 纸面现实",
+        "02 纸面记录",
         "03 风险卡点",
         "04 研究进化",
     )
@@ -4632,7 +4853,7 @@ def test_dashboard_home_action_rail_items_merge_same_day_spotlight_when_task_has
         _TaskView(), spotlights
     )
 
-    assert recommend_item.lane_label == "优先复核"
+    assert recommend_item.lane_label == "优先再看"
     assert recommend_item.card is not None
     assert recommend_item.card.rank_label == "同日联动"
     assert recommend_item.summary == "600519 贵州茅台"
@@ -4641,8 +4862,8 @@ def test_dashboard_home_action_rail_items_merge_same_day_spotlight_when_task_has
     assert recommend_item.target_workspace == "候选复盘"
     assert watch_item.button_label == "归档回看"
     assert watch_item.target_workspace == "归档回看"
-    assert watch_item.summary == "暂无观察项"
-    assert blocked_item.summary == "暂无阻塞项"
+    assert watch_item.summary == "无需硬找方向"
+    assert blocked_item.summary == "当前没有明显卡点"
 
 
 def test_dashboard_home_action_rail_items_preserve_existing_card_over_same_symbol_spotlight() -> (
@@ -4715,7 +4936,7 @@ def test_dashboard_home_action_rail_items_fall_back_to_task_briefs_when_lane_is_
     recommend_item, watch_item, blocked_item = _home_action_rail_items(_TaskView(), ())
 
     assert recommend_item.card is None
-    assert recommend_item.lines == ("当前无 ready 候选。",)
+    assert recommend_item.lines == ("当前没有重点跟踪候选，先等下一轮主链信号。",)
     assert watch_item.card is None
     assert watch_item.lines == ("000002 万科A | 中优先级 / 收盘前 | 等待回踩确认",)
     assert blocked_item.card is None
@@ -4772,8 +4993,8 @@ def test_dashboard_home_action_rail_items_use_blocked_focus_for_watch_empty_stat
     _, watch_item, blocked_item = _home_action_rail_items(_TaskView(), ())
 
     assert watch_item.card is None
-    assert watch_item.summary == "暂无观察项"
-    assert watch_item.lines == ("当前没有独立观察对象。",)
+    assert watch_item.summary == "无需硬找方向"
+    assert watch_item.lines == ("当前没有需要单独观察的对象，不用为了凑名单硬找方向。",)
     assert blocked_item.card is not None
     assert blocked_item.card.symbol == "000338"
 
@@ -5034,7 +5255,7 @@ def test_dashboard_execution_path_context_lines_reframe_generic_readiness_for_bl
         for line in lines
     )
     assert any(
-        "研究已产出，但当前被20日均成交额不足，流动性过滤拦住，暂不进入纸面入场验证链路。"
+        "研究已产出，但当前被20日均成交额不足，流动性过滤拦住，暂不进入纸面入场验证。"
         == line
         for line in lines
     )
@@ -5186,7 +5407,7 @@ def test_dashboard_home_reading_order_prioritizes_paper_events_before_candidates
     assert "下一交易日开盘价" in lines[0]
     assert "BUY" not in lines[0]
     assert "@" not in lines[0]
-    assert "🧭 再看候选路径 | 600519 贵州茅台" in lines[1]
+    assert "🧭 再看候选来龙去脉 | 600519 贵州茅台" in lines[1]
     assert lines[2].startswith("📚 归档待补")
 
 
@@ -5244,7 +5465,7 @@ def test_dashboard_home_reading_order_surfaces_blocked_card_as_final_gate() -> N
     )
 
     assert lines[0] == "纸面验证: 暂无新的纸面入场或不可成交事件。"
-    assert "🧭 再看候选路径 | 000338 潍柴动力" in lines[1]
+    assert "🧭 再看候选来龙去脉 | 000338 潍柴动力" in lines[1]
     assert (
         lines[2] == "🔒 最后核对卡点 | 000338 潍柴动力 | 20日均成交额不足，流动性过滤"
     )
@@ -5285,7 +5506,7 @@ def test_dashboard_home_reading_order_uses_archive_when_no_blockers() -> None:
         debates=(),
     )
 
-    assert lines[1] == "🧭 再看研究路径 | 当前无显著候选"
+    assert lines[1] == "🧭 再看研究来龙去脉 | 当前无显著候选"
     assert lines[2] == "📚 最后回看归档 | 明日继续观察量能恢复。"
 
 
@@ -5503,14 +5724,14 @@ def test_dashboard_debate_brief_cards_surface_human_summary_with_score_boundary(
     assert tuple(card.kicker for card in cards) == (
         "辩论结论",
         "票型结构",
-        "复核动作",
+        "接下来做什么",
     )
     assert cards[0].title == "建议维持评分 / 分歧 0.48"
     assert cards[0].tone == "pressure"
     assert "边界: 这是解释层，不替代选股评分。" in cards[0].lines
     assert cards[1].title == "看多 3 / 看空 2 / 中性 3"
     assert "板块轮动: 看多 / 置信 91%" in cards[1].lines
-    assert cards[2].title == "先回证据链核对"
+    assert cards[2].title == "先回原始依据核对"
     assert cards[2].tone == "pressure"
     assert cards[2].lines[0] == "先核对风险: 分歧偏大"
     rendered_text = "\n".join(
@@ -5819,9 +6040,9 @@ def test_dashboard_candidate_next_step_lines_prioritize_blocker_as_action_plan()
 
     assert _candidate_action_plan_title(card) == "先核对卡点"
     assert _candidate_next_step_lines(card) == (
-        "当前卡点: 20日均成交额不足，流动性过滤",
-        "复核动作: 等待量能恢复后再评估",
-        "复核节奏: 中优先级 / 收盘前",
+        "现在卡在哪: 20日均成交额不足，流动性过滤",
+        "再看动作: 等待量能恢复后再评估",
+        "再看时间: 中优先级 / 收盘前",
     )
 
 
@@ -5878,7 +6099,7 @@ def test_dashboard_candidate_next_step_lines_neutralize_blocker_action_words() -
 
     for forbidden in ("立即买入", "下单", "新开仓", "买入条件"):
         assert forbidden not in rendered
-    assert "当前卡点:" in rendered
+    assert "现在卡在哪:" in rendered
     assert "纸面记录阻塞" in rendered
 
 
@@ -5943,17 +6164,19 @@ def test_dashboard_candidate_review_snapshot_uses_unlock_action_card_for_compact
     )
 
     research_card = next(
-        item for item in rendered_cards if item["kicker"] == "研究判断"
+        item for item in rendered_cards if item["kicker"] == "研究结论"
     )
-    action_card = next(item for item in rendered_cards if item["kicker"] == "复核线索")
+    action_card = next(
+        item for item in rendered_cards if item["kicker"] == "接下来怎么看"
+    )
 
     assert research_card["title"] == "阻塞待核对"
     assert not any(str(line).startswith("下一步:") for line in research_card["lines"])
     assert action_card["title"] == "先核对卡点"
     assert action_card["lines"] == (
-        "当前卡点: 20日均成交额不足，流动性过滤",
-        "复核动作: 等待量能恢复后再评估",
-        "复核节奏: 中优先级 / 收盘前",
+        "现在卡在哪: 20日均成交额不足，流动性过滤",
+        "再看动作: 等待量能恢复后再评估",
+        "再看时间: 中优先级 / 收盘前",
     )
     assert "当前仍处研究阻塞阶段，尚未进入执行动作" not in action_card["lines"]
 
@@ -6122,7 +6345,7 @@ def test_dashboard_candidate_linkage_context_distinguishes_spotlight_debate_and_
         task_summary="仅当前任务",
     )
     assert title == "单任务证据"
-    assert lines[1] == "当前只在本任务中出现，没有额外同日联动上下文。"
+    assert lines[1] == "当前只在本任务中出现，没有额外同日参考信息。"
     assert tone == "archive"
 
 
@@ -6378,7 +6601,7 @@ def test_dashboard_candidate_evidence_drawers_keep_journey_and_evidence_collapse
         evidence_title="同日研究证据",
     )
 
-    assert expanders == [("当日候选路径", False), ("研究证据链", False)]
+    assert expanders == [("当日怎么走到这里", False), ("原始依据", False)]
     assert rendered == ["journey", "evidence"]
 
 
@@ -6503,7 +6726,7 @@ def test_dashboard_candidate_empty_journey_message_distinguishes_debate_spotligh
             spotlight=None,
             debate_summary=debate,
         )
-        == "该标的在当前回看日没有独立候选路径，当前判断主要由同日多 Agent 讨论补齐。"
+        == "该标的在当前回看日没有独立候选来龙去脉，当前判断主要由同日多 Agent 讨论补齐。"
     )
     assert (
         _candidate_empty_journey_message(
@@ -6511,7 +6734,7 @@ def test_dashboard_candidate_empty_journey_message_distinguishes_debate_spotligh
             spotlight=spotlight,
             debate_summary=None,
         )
-        == "该标的在当前回看日没有独立候选路径，当前判断主要来自同日联动聚合。"
+        == "该标的在当前回看日没有独立候选来龙去脉，当前判断主要来自同日联动聚合。"
     )
     assert (
         _candidate_empty_journey_message(
@@ -6519,7 +6742,7 @@ def test_dashboard_candidate_empty_journey_message_distinguishes_debate_spotligh
             spotlight=None,
             debate_summary=None,
         )
-        == "该标的在当前回看日只有单任务记录，暂无跨阶段路径。"
+        == "该标的在当前回看日只有单任务记录，暂无跨阶段来龙去脉。"
     )
 
 
@@ -6582,7 +6805,7 @@ def test_dashboard_home_execution_snapshot_context_reframes_blocked_research_day
     assert status_lines[1] == "当前没有新的纸面事件，主要因为研究侧仍有阻塞未核对。"
     assert status_lines[2] == "阻塞 6 只，其中 5 只卡在：20日均成交额不足，流动性过滤"
     assert len(status_lines) == 3
-    assert holding_lines == ("当前暂无纸面持有假设。",)
+    assert holding_lines == ("当前没有纸面持有假设。说明暂时没有需要跟踪的纸面仓位。",)
     assert event_lines == ("先回到候选复盘核对卡点与复核条件。",)
     assert tone == "blocked"
 
@@ -6821,7 +7044,7 @@ def test_dashboard_candidate_research_context_lines_use_debate_summary_for_debat
         "纸面侧仍为空白，暂无持仓或日志可交叉验证。",
     )
     assert context_lines[0] == "监控焦点: 需关注大盘系统性风险"
-    assert context_lines[1] == "验证动作: 等待下一次任务或纸面验证链路补充独立证据。"
+    assert context_lines[1] == "验证动作: 等待下一次任务或纸面验证记录补充独立依据。"
     assert "复核节奏" not in " | ".join(context_lines)
     assert not any(line.startswith("核心理由:") for line in context_lines)
     assert not any(line.startswith("风险提示:") for line in context_lines)

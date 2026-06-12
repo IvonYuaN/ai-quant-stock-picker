@@ -183,7 +183,7 @@ class BriefingData:
             elif result.disagreement_score > 0.5:
                 points.append(
                     f"🤖 辩论分歧较大: {result.name}({result.symbol}) "
-                    f"多空分歧度{result.disagreement_score:.0%}"
+                    f"多空分歧{result.disagreement_score:.0%}"
                 )
 
         return points

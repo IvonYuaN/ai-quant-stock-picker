@@ -4,9 +4,12 @@ import sqlite3
 from datetime import date
 from pathlib import Path
 from typing import Optional
+
 import pandas as pd
 
 from aqsp.core.time import now_shanghai
+
+_SQLITE_TIMEOUT_SECONDS = 30.0
 
 
 def _has_implausible_amount_scale(df: pd.DataFrame) -> bool:
@@ -45,7 +48,7 @@ class DataCache:
         self._init_db()
 
     def _init_db(self) -> None:
-        with sqlite3.connect(self.db_path) as conn:
+        with sqlite3.connect(self.db_path, timeout=_SQLITE_TIMEOUT_SECONDS) as conn:
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS ohlcv (
@@ -115,6 +118,18 @@ class DataCache:
             )
             conn.commit()
 
+    @staticmethod
+    def _records_for_insert(
+        df: pd.DataFrame,
+        columns: list[str],
+        defaults: dict[str, object],
+    ) -> list[tuple[object, ...]]:
+        prepared = df.copy()
+        for column, default in defaults.items():
+            if column not in prepared.columns:
+                prepared[column] = default
+        return list(prepared[columns].itertuples(index=False, name=None))
+
     def get_ohlcv(
         self,
         symbol: str,
@@ -122,7 +137,7 @@ class DataCache:
         end: date,
         max_age_hours: int = 24,
     ) -> Optional[pd.DataFrame]:
-        with sqlite3.connect(self.db_path) as conn:
+        with sqlite3.connect(self.db_path, timeout=_SQLITE_TIMEOUT_SECONDS) as conn:
             df = pd.read_sql(
                 """
                 SELECT * FROM ohlcv
@@ -173,33 +188,43 @@ class DataCache:
         df["symbol"] = symbol
         df["source"] = source
         df["fetched_at"] = now_shanghai().isoformat()
+        columns = [
+            "symbol",
+            "date",
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume",
+            "amount",
+            "suspended",
+            "limit_up",
+            "limit_down",
+            "adj_factor",
+            "source",
+            "fetched_at",
+        ]
+        rows = self._records_for_insert(
+            df,
+            columns,
+            {
+                "suspended": 0,
+                "limit_up": 0.0,
+                "limit_down": 0.0,
+                "adj_factor": 1.0,
+            },
+        )
 
-        with sqlite3.connect(self.db_path) as conn:
-            for _, row in df.iterrows():
-                conn.execute(
-                    """
-                    INSERT OR REPLACE INTO ohlcv (
-                        symbol, date, open, high, low, close, volume, amount,
-                        suspended, limit_up, limit_down, adj_factor, source, fetched_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        row["symbol"],
-                        row["date"],
-                        row.get("open"),
-                        row.get("high"),
-                        row.get("low"),
-                        row.get("close"),
-                        row.get("volume"),
-                        row.get("amount"),
-                        row.get("suspended", 0),
-                        row.get("limit_up", 0.0),
-                        row.get("limit_down", 0.0),
-                        row.get("adj_factor", 1.0),
-                        row["source"],
-                        row["fetched_at"],
-                    ),
-                )
+        with sqlite3.connect(self.db_path, timeout=_SQLITE_TIMEOUT_SECONDS) as conn:
+            conn.executemany(
+                """
+                INSERT OR REPLACE INTO ohlcv (
+                    symbol, date, open, high, low, close, volume, amount,
+                    suspended, limit_up, limit_down, adj_factor, source, fetched_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                rows,
+            )
             conn.commit()
 
     def get_index(
@@ -209,7 +234,7 @@ class DataCache:
         end: date,
         max_age_hours: int = 24,
     ) -> Optional[pd.DataFrame]:
-        with sqlite3.connect(self.db_path) as conn:
+        with sqlite3.connect(self.db_path, timeout=_SQLITE_TIMEOUT_SECONDS) as conn:
             df = pd.read_sql(
                 """
                 SELECT * FROM index_ohlcv
@@ -251,32 +276,33 @@ class DataCache:
         df["code"] = code
         df["source"] = source
         df["fetched_at"] = now_shanghai().isoformat()
+        columns = [
+            "code",
+            "date",
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume",
+            "amount",
+            "source",
+            "fetched_at",
+        ]
+        rows = self._records_for_insert(df, columns, {})
 
-        with sqlite3.connect(self.db_path) as conn:
-            for _, row in df.iterrows():
-                conn.execute(
-                    """
-                    INSERT OR REPLACE INTO index_ohlcv (
-                        code, date, open, high, low, close, volume, amount, source, fetched_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        row["code"],
-                        row["date"],
-                        row.get("open"),
-                        row.get("high"),
-                        row.get("low"),
-                        row.get("close"),
-                        row.get("volume"),
-                        row.get("amount"),
-                        row["source"],
-                        row["fetched_at"],
-                    ),
-                )
+        with sqlite3.connect(self.db_path, timeout=_SQLITE_TIMEOUT_SECONDS) as conn:
+            conn.executemany(
+                """
+                INSERT OR REPLACE INTO index_ohlcv (
+                    code, date, open, high, low, close, volume, amount, source, fetched_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                rows,
+            )
             conn.commit()
 
     def get_adj_factor(self, symbol: str, date: date) -> Optional[float]:
-        with sqlite3.connect(self.db_path) as conn:
+        with sqlite3.connect(self.db_path, timeout=_SQLITE_TIMEOUT_SECONDS) as conn:
             cursor = conn.execute(
                 """
                 SELECT adj_factor FROM adj_factors
@@ -295,23 +321,18 @@ class DataCache:
         df["symbol"] = symbol
         df["source"] = source
         df["fetched_at"] = now_shanghai().isoformat()
+        columns = ["symbol", "date", "adj_factor", "source", "fetched_at"]
+        rows = self._records_for_insert(df, columns, {})
 
-        with sqlite3.connect(self.db_path) as conn:
-            for _, row in df.iterrows():
-                conn.execute(
-                    """
-                    INSERT OR REPLACE INTO adj_factors (
-                        symbol, date, adj_factor, source, fetched_at
-                    ) VALUES (?, ?, ?, ?, ?)
-                    """,
-                    (
-                        row["symbol"],
-                        row["date"],
-                        row["adj_factor"],
-                        row["source"],
-                        row["fetched_at"],
-                    ),
-                )
+        with sqlite3.connect(self.db_path, timeout=_SQLITE_TIMEOUT_SECONDS) as conn:
+            conn.executemany(
+                """
+                INSERT OR REPLACE INTO adj_factors (
+                    symbol, date, adj_factor, source, fetched_at
+                ) VALUES (?, ?, ?, ?, ?)
+                """,
+                rows,
+            )
             conn.commit()
 
     def get_financial(
@@ -319,7 +340,7 @@ class DataCache:
         symbol: str,
         max_age_hours: int = 168,
     ) -> Optional[pd.DataFrame]:
-        with sqlite3.connect(self.db_path) as conn:
+        with sqlite3.connect(self.db_path, timeout=_SQLITE_TIMEOUT_SECONDS) as conn:
             df = pd.read_sql(
                 "SELECT * FROM financials WHERE symbol = ?",
                 conn,
@@ -339,33 +360,46 @@ class DataCache:
         df["symbol"] = symbol
         df["source"] = source
         df["fetched_at"] = now_shanghai().isoformat()
-        with sqlite3.connect(self.db_path) as conn:
-            for _, row in df.iterrows():
-                conn.execute(
-                    """
-                    INSERT OR REPLACE INTO financials (
-                        symbol, pubDate, statDate, roeAvg, npMargin, gpMargin,
-                        epsTTM, totalShare, source, fetched_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        row["symbol"],
-                        str(row.get("pubDate", "")),
-                        str(row.get("statDate", "")),
-                        row.get("roeAvg"),
-                        row.get("npMargin"),
-                        row.get("gpMargin"),
-                        row.get("epsTTM"),
-                        row.get("totalShare"),
-                        row["source"],
-                        row["fetched_at"],
-                    ),
-                )
+        if "pubDate" in df.columns:
+            df["pubDate"] = df["pubDate"].map(
+                lambda value: str(value) if value is not None else ""
+            )
+        else:
+            df["pubDate"] = ""
+        if "statDate" in df.columns:
+            df["statDate"] = df["statDate"].map(
+                lambda value: str(value) if value is not None else ""
+            )
+        else:
+            df["statDate"] = ""
+        columns = [
+            "symbol",
+            "pubDate",
+            "statDate",
+            "roeAvg",
+            "npMargin",
+            "gpMargin",
+            "epsTTM",
+            "totalShare",
+            "source",
+            "fetched_at",
+        ]
+        rows = self._records_for_insert(df, columns, {})
+        with sqlite3.connect(self.db_path, timeout=_SQLITE_TIMEOUT_SECONDS) as conn:
+            conn.executemany(
+                """
+                INSERT OR REPLACE INTO financials (
+                    symbol, pubDate, statDate, roeAvg, npMargin, gpMargin,
+                    epsTTM, totalShare, source, fetched_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                rows,
+            )
             conn.commit()
 
     def clear_expired(self, max_age_hours: int = 168) -> int:
         cutoff = (now_shanghai() - pd.Timedelta(hours=max_age_hours)).isoformat()
-        with sqlite3.connect(self.db_path) as conn:
+        with sqlite3.connect(self.db_path, timeout=_SQLITE_TIMEOUT_SECONDS) as conn:
             deleted = conn.execute(
                 "DELETE FROM ohlcv WHERE fetched_at < ?", (cutoff,)
             ).rowcount

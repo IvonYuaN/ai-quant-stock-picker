@@ -594,8 +594,8 @@ class DashboardDataProvider:
                         task_id=task_id,
                         task_label=label,
                         latest_date=selected_date,
-                        status_label="该日无结果",
-                        headline=f"{label} {selected_date}: 该日无独立落盘结果",
+                        status_label="该日未产出",
+                        headline=f"{label} {selected_date}: 该日没有独立落盘结果",
                         actionable_count=0,
                         watch_count=0,
                         blocked_count=0,
@@ -623,8 +623,8 @@ class DashboardDataProvider:
                     task_id=task_id,
                     task_label=label,
                     latest_date="",
-                    status_label="暂无结果",
-                    headline=f"{label}: 暂无真实落盘结果",
+                    status_label="未产出",
+                    headline=f"{label}: 还没有真实落盘结果",
                     actionable_count=0,
                     watch_count=0,
                     blocked_count=0,
@@ -1166,11 +1166,11 @@ class DashboardDataProvider:
                 ]
             )
             if review_meta:
-                research_lines.append(f"复核节奏: {review_meta}")
+                research_lines.append(f"再看时间: {review_meta}")
             if next_step:
                 research_lines.append(f"研究下一步: {next_step}")
             elif blocker:
-                research_lines.append(f"当前卡点: {blocker}")
+                research_lines.append(f"现在卡在哪: {blocker}")
         else:
             research_lines.append("该标的当前不在研究候选中，主要从纸面记录回看。")
 
@@ -1180,7 +1180,7 @@ class DashboardDataProvider:
                 f"纸面入场假设 {len(pending_rows)} 笔，开盘先核对下一交易日开盘价是否可成交。"
             )
             if blocker:
-                readiness_lines.append(f"当前卡点: {blocker}")
+                readiness_lines.append(f"现在卡在哪: {blocker}")
         if blocked_rows:
             latest_blocked = blocked_rows[-1]
             blocked_reason = str(
@@ -1272,7 +1272,7 @@ class DashboardDataProvider:
             execution_status = "尚未进入执行"
 
         if context_row is None:
-            research_status = "研究链路缺席"
+            research_status = "缺少研究结论"
         elif blocker:
             research_status = "研究侧存在阻塞"
         elif next_step:
@@ -1676,7 +1676,9 @@ class DashboardDataProvider:
             previous_date=previous_date,
             available_dates=available_dates,
             headline=normalize_research_tone(headline),
-            summary_lines=tuple(normalize_research_tone(line) for line in summary_lines),
+            summary_lines=tuple(
+                normalize_research_tone(line) for line in summary_lines
+            ),
             lifecycle_lines=tuple(
                 normalize_research_tone(line)
                 for line in self._build_lifecycle_lines(deduped)
@@ -1698,7 +1700,9 @@ class DashboardDataProvider:
             watchlist_lines=tuple(
                 normalize_research_tone(line) for line in watchlist_lines
             ),
-            blocker_lines=tuple(normalize_research_tone(line) for line in blocker_lines),
+            blocker_lines=tuple(
+                normalize_research_tone(line) for line in blocker_lines
+            ),
             review_lines=tuple(normalize_research_tone(line) for line in review_lines),
             next_day_focus_lines=report_insights.next_day_focus_lines,
             report_markdown=report_markdown,
@@ -1803,17 +1807,19 @@ class DashboardDataProvider:
             if line.startswith(("今日重点名单:", "纸面复核主链:", "可执行主链:"))
         )
         watchlist_lines = tuple(
-            line
+            normalize_research_tone(line)
             for line in summary_lines
-            if line.startswith(("备选观察名单:", "候选观察池:"))
+            if line.startswith(("备选观察名单:", "候选观察池:", "继续观察名单:"))
         )
         blocker_lines = tuple(
             normalize_research_tone(line)
             for line in summary_lines
-            if line.startswith(("当前卡点:", "纸面阻塞:", "执行阻塞:"))
+            if line.startswith(("当前卡点:", "纸面阻塞:", "执行阻塞:", "现在卡在哪:"))
         )
         review_lines = tuple(
-            line for line in summary_lines if line.startswith("观察复核:")
+            normalize_research_tone(line)
+            for line in summary_lines
+            if line.startswith(("观察复核:", "观察名单接下来:"))
         )
         strategy_breakdown_lines = self._format_strategy_breakdown_lines(
             fact_review.strategy_breakdown
@@ -1844,12 +1850,12 @@ class DashboardDataProvider:
                 for line in (
                     f"市场环境: {review.market_environment}",
                     f"总信号 {fact_review.total_signals} / 已验证 {fact_review.closed_trades}",
-                (
-                    "事实来源: paper ledger "
-                    f"closed={fact_review.closed_trades} / "
-                    f"not_executable={fact_review.not_executable} / "
-                    f"pending={fact_review.pending_entries}"
-                ),
+                    (
+                        "事实来源: paper ledger "
+                        f"closed={fact_review.closed_trades} / "
+                        f"not_executable={fact_review.not_executable} / "
+                        f"pending={fact_review.pending_entries}"
+                    ),
                     f"胜率 {fact_review.win_rate:.0%} / 总收益 {fact_review.total_return:.2f}%",
                     *summary_lines,
                 )
@@ -1875,7 +1881,8 @@ class DashboardDataProvider:
                             [
                                 row
                                 for row in self._task_signal_rows("main_chain")
-                                if str(row.get("signal_date", "") or "") == selected_date
+                                if str(row.get("signal_date", "") or "")
+                                == selected_date
                             ]
                         )
                         if self._is_watch_candidate(row)
@@ -1886,7 +1893,8 @@ class DashboardDataProvider:
                             [
                                 row
                                 for row in self._task_signal_rows("main_chain")
-                                if str(row.get("signal_date", "") or "") == selected_date
+                                if str(row.get("signal_date", "") or "")
+                                == selected_date
                             ]
                         )
                         if self._is_blocked(row)
@@ -2280,10 +2288,14 @@ class DashboardDataProvider:
         return _TASK_PHASE_META.get(task_id, (99, task_id, ""))[0]
 
     def _task_phase_label(self, task_id: str) -> str:
-        return normalize_research_tone(_TASK_PHASE_META.get(task_id, (99, task_id, ""))[1])
+        return normalize_research_tone(
+            _TASK_PHASE_META.get(task_id, (99, task_id, ""))[1]
+        )
 
     def _task_phase_note(self, task_id: str) -> str:
-        return normalize_research_tone(_TASK_PHASE_META.get(task_id, (99, task_id, ""))[2])
+        return normalize_research_tone(
+            _TASK_PHASE_META.get(task_id, (99, task_id, ""))[2]
+        )
 
     def _task_metric_labels(self, task_id: str) -> tuple[str, str, str]:
         return _TASK_METRIC_LABELS.get(task_id, ("待复核", "观察", "阻塞"))
@@ -2299,7 +2311,7 @@ class DashboardDataProvider:
             return f"{note}；当前{watch_label} {view.watch_count} 只。"
         if view.candidate_count > 0:
             return f"{note}；当前已有结果待回看。"
-        return f"{note}；当前暂无有效结果。"
+        return f"{note}；当前还没有有效结果，先确认对应任务是否已跑完。"
 
     def _workflow_summary(
         self,
@@ -2635,9 +2647,7 @@ class DashboardDataProvider:
     def _as_text_tuple(self, value: Any) -> tuple[str, ...]:
         if isinstance(value, str):
             parts = [item.strip() for item in value.split("；")]
-            return tuple(
-                normalize_research_tone(item) for item in parts if item
-            )
+            return tuple(normalize_research_tone(item) for item in parts if item)
         if isinstance(value, (list, tuple)):
             return tuple(
                 normalize_research_tone(str(item).strip())
@@ -3078,9 +3088,9 @@ class DashboardDataProvider:
         for row in blocked_rows[:limit]:
             next_step = str(row.get("candidate_next_step", "") or "").strip()
             blocker = self._candidate_blocker_text(row) or "等待条件解除"
-            line = f"{self._symbol_name(row)} | 当前卡点: {blocker}"
+            line = f"{self._symbol_name(row)} | 现在卡在哪: {blocker}"
             if next_step:
-                line += f" | 复核动作: {next_step}"
+                line += f" | 再看动作: {next_step}"
             lines.append(line)
         remaining_slots = max(limit - len(lines), 0)
         if remaining_slots <= 0:
@@ -3177,7 +3187,9 @@ class DashboardDataProvider:
                     f"{label} {signal_date}: 未收盘快照，盘中阻塞 "
                     f"{len(blocked_rows)} 只，先核对 {names}"
                 )
-            return f"{label} {signal_date}: 暂无盘中观察快照"
+            return (
+                f"{label} {signal_date}: 还没有盘中观察快照，先确认盘中任务是否已运行"
+            )
         if actionable_rows:
             names = "、".join(self._symbol_name(row) for row in actionable_rows[:3])
             return (
@@ -3185,11 +3197,11 @@ class DashboardDataProvider:
             )
         if watch_rows:
             names = "、".join(self._symbol_name(row) for row in watch_rows[:3])
-            return f"{label} {signal_date}: 无待复核候选，转入备选观察名单 {names}"
+            return f"{label} {signal_date}: 无待复核候选，转入继续观察名单 {names}"
         if blocked_rows:
             names = "、".join(self._symbol_name(row) for row in blocked_rows[:3])
             return f"{label} {signal_date}: 无待复核候选，先核对卡点 {names}"
-        return f"{label} {signal_date}: 暂无真实落盘结果"
+        return f"{label} {signal_date}: 还没有真实落盘结果，先确认任务是否已运行"
 
     def _summary_lines_for_signal_task(
         self,
@@ -3322,7 +3334,7 @@ class DashboardDataProvider:
                 return "待跟踪"
             if view.report_markdown.strip():
                 return "已产出"
-            return "暂无结果"
+            return "未产出"
         if task_id == "closing_review":
             if view.report_markdown.strip():
                 return "已复盘"
@@ -3330,7 +3342,7 @@ class DashboardDataProvider:
                 return "已验证未归档"
             if view.candidate_count > 0:
                 return "待复盘"
-            return "暂无结果"
+            return "未产出"
         if view.actionable_count > 0:
             return "有推荐"
         if view.blocked_count > 0:
@@ -3339,7 +3351,7 @@ class DashboardDataProvider:
             return "观察中"
         if view.candidate_count > 0:
             return "已产出"
-        return "暂无结果"
+        return "未产出"
 
     def _extract_report_insights(self, markdown_text: str) -> DashboardReportInsights:
         if not markdown_text.strip():
@@ -3359,7 +3371,9 @@ class DashboardDataProvider:
             self._market_environment_line(markdown_text)
         )
         next_day_focus_lines = sanitize_research_lines(
-            self._focus_lines(self._section_lines(markdown_text, "明日重点", "明日先看"))
+            self._focus_lines(
+                self._section_lines(markdown_text, "明日重点", "明日先看")
+            )
         )
         return DashboardReportInsights(
             report_summary_lines=tuple(

@@ -1174,7 +1174,7 @@ def _build_execution_summary_line(
     blockers = tuple(getattr(portfolio_summary, "execution_blockers", ()) or ())
     if watchlist:
         names = "、".join(watchlist[:2])
-        return f"👀 **今日无重点跟踪对象**，转入备选观察名单：{names}"
+        return f"👀 **今日无重点跟踪对象**，转入继续观察名单：{names}"
     if tradable:
         top = tradable[0]
         return (
@@ -1326,9 +1326,7 @@ def _log_run_decisions(
                     else "no_debate_attached"
                 ),
                 risk_check_passed=(
-                    action == "BUY"
-                    and not circuit_breaker_triggered
-                    and not blocker
+                    action == "BUY" and not circuit_breaker_triggered and not blocker
                 ),
                 regime=regime or "unknown",
                 reason="；".join(reason_parts),
@@ -2612,7 +2610,7 @@ def run_scheduled(args: argparse.Namespace) -> int:
 
                     if result.disagreement_score < DEBATE_MIN_DISAGREEMENT:
                         print(
-                            f"   ⏭️  跳过 {pick.symbol} {pick.name}（分歧度 {result.disagreement_score:.2f} < {DEBATE_MIN_DISAGREEMENT}）"
+                            f"   ⏭️  跳过 {pick.symbol} {pick.name}（分歧 {result.disagreement_score:.2f} < {DEBATE_MIN_DISAGREEMENT}）"
                         )
                         continue
 
@@ -2625,7 +2623,7 @@ def run_scheduled(args: argparse.Namespace) -> int:
                     existing_debates[key] = serialized
 
                     print(
-                        f"   ✅ 辩论完成: {pick.symbol} {pick.name} | 结果已落附件，不覆盖runtime评分、排序、PM裁决或ledger score"
+                        f"   ✅ 辩论完成: {pick.symbol} {pick.name} | 结论={result.recommended_adjustment} 分歧={result.disagreement_score:.2f}（非keep将接入PM）"
                     )
                 except Exception as e:
                     import logging
@@ -2635,12 +2633,33 @@ def run_scheduled(args: argparse.Namespace) -> int:
 
         if skipped_cooldown > 0:
             print(f"   ⏭️  {skipped_cooldown}只股票因冷却期跳过")
-        print("   📎 辩论结果已落附件；runtime评分、排序、PM裁决和ledger score保持原样")
+        print("   📎 辩论结果已落附件；runtime评分与ledger score保持原样，非keep结论将接入PM调整优先级")
 
         with open(debate_file, "w", encoding="utf-8") as f:
             for data in existing_debates.values():
                 f.write(json.dumps(data, ensure_ascii=False) + "\n")
         print("📢 辩论分析完成")
+
+        # 将辩论结论回写到对应 pick，使 PM 能据此调整优先级与配仓。
+        # 仅当辩论给出非 keep 结论时才覆盖，避免无分歧时引入噪声。
+        debate_by_symbol = {dr.symbol: dr for dr in debate_results}
+        if debate_by_symbol:
+            rewritten = 0
+            updated_picks = []
+            for pick in picks:
+                dr = debate_by_symbol.get(pick.symbol)
+                if dr is not None and dr.recommended_adjustment in ("raise", "lower"):
+                    pick = replace(
+                        pick,
+                        recommended_adjustment=dr.recommended_adjustment,
+                        adjusted_score=dr.adjusted_score,
+                        debate_consensus=dr.final_consensus,
+                    )
+                    rewritten += 1
+                updated_picks.append(pick)
+            picks = updated_picks
+            if rewritten:
+                print(f"   🔀 辩论结论已接入 PM：{rewritten} 只候选将据此调整优先级")
 
     validation = None
     if not args.skip_validation:

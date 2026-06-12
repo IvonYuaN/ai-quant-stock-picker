@@ -102,8 +102,7 @@ def check_logs() -> list[CheckResult]:
     bt_logs = sorted(bt_dir.glob(f"bt-*-{TODAY}.log")) if bt_dir.exists() else []
     expected = ("daily", "intraday", "midday", "monitor")
     seen_actions = {
-        path.name.removeprefix("bt-").removesuffix(f"-{TODAY}.log")
-        for path in bt_logs
+        path.name.removeprefix("bt-").removesuffix(f"-{TODAY}.log") for path in bt_logs
     }
     missing = [action for action in expected if action not in seen_actions]
     results = [
@@ -136,11 +135,33 @@ def check_locks() -> list[CheckResult]:
     for lock in locks:
         age = max(0.0, now_shanghai().timestamp() - lock.stat().st_mtime)
         stale = age > 6 * 60 * 60
+        info_file = lock / "meta.env"
+        runner = "unknown"
+        pid = "unknown"
+        started_at = "unknown"
+        pid_active = False
+        if info_file.exists():
+            for line in info_file.read_text(encoding="utf-8").splitlines():
+                key, _, value = line.partition("=")
+                if key == "LOCK_RUNNER" and value:
+                    runner = value
+                elif key == "LOCK_PID" and value:
+                    pid = value
+                elif key == "LOCK_STARTED_AT" and value:
+                    started_at = value
+            try:
+                pid_active = pid.isdigit() and Path(f"/proc/{pid}").exists()
+            except OSError:
+                pid_active = False
         results.append(
             CheckResult(
                 f"lock {lock.name}",
                 not stale,
-                f"age={age / 60:.1f}min {'stale?' if stale else 'active/recent'}",
+                "runner="
+                + runner
+                + f" pid={pid} started_at={started_at} age={age / 60:.1f}min "
+                + ("pid-active" if pid_active else "pid-missing")
+                + (" stale?" if stale else " active/recent"),
             )
         )
     return results

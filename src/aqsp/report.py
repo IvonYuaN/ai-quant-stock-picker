@@ -166,7 +166,7 @@ def _format_final_decision_board(
             )
         if getattr(portfolio_summary, "watchlist", ()):
             lines.append(
-                "- 备选观察名单: "
+                "- 继续观察名单: "
                 + "、".join(
                     _safe_markdown_text(item) for item in portfolio_summary.watchlist
                 )
@@ -180,11 +180,11 @@ def _format_final_decision_board(
                 )
             )
         if getattr(portfolio_summary, "execution_blockers", ()):
-            lines.append("- 当前卡点:")
+            lines.append("- 现在卡在哪:")
             for item in tuple(getattr(portfolio_summary, "execution_blockers", ()))[:3]:
                 lines.append(f"  - {_safe_markdown_text(item)}")
         if getattr(portfolio_summary, "watch_reviews", ()):
-            lines.append("- 观察名单下一步:")
+            lines.append("- 观察名单接下来:")
             for item in tuple(getattr(portfolio_summary, "watch_reviews", ()))[:2]:
                 lines.append(
                     "  - "
@@ -198,7 +198,7 @@ def _format_final_decision_board(
                     )
                 )
         if getattr(portfolio_summary, "allocations", ()):
-            lines.append("- 纸面组合参考:")
+            lines.append("- 比例参考:")
             for item in tuple(getattr(portfolio_summary, "allocations", ()))[:3]:
                 display = _safe_markdown_text(
                     format_symbol_name(item.symbol, item.name)
@@ -214,7 +214,7 @@ def _format_final_decision_board(
                     _safe_markdown_text(format_symbol_name(item.symbol, item.name))
                     for item in lead_allocations
                 )
-                lines.append(f"- 复核顺序: 先看 {order}")
+                lines.append(f"- 再看顺序: 先看 {order}")
         cash_reserve = float(getattr(portfolio_summary, "cash_reserve", 0.0) or 0.0)
         if cash_reserve > 0:
             lines.append(f"- 现金留存: {cash_reserve:.0%}")
@@ -241,12 +241,12 @@ def _format_final_decision_board(
         lines.append(headline)
         lines.append(f"  参考: {reason}")
         if blocker:
-            lines.append(f"  当前阻塞: {_safe_markdown_text(blocker)}")
+            lines.append(f"  现在卡在哪: {_safe_markdown_text(blocker)}")
         if next_step:
             lines.append(f"  下一步: {_safe_markdown_text(next_step)}")
         if review_priority or review_window:
             lines.append(
-                "  复核: "
+                "  再看时间: "
                 + _safe_markdown_text(
                     format_review_meta(review_priority, review_window)
                 )
@@ -280,15 +280,17 @@ def _format_portfolio_decision(decision: Any) -> str:
 
 def _format_debate_result(result: Any) -> str:
     lines = []
-    lines.append("### 多视角讨论")
+    lines.append("### 不同看法")
     lines.append(f"- 最终共识: {result.final_consensus}")
-    lines.append(f"- 辩论倾向: {result.recommended_adjustment}（附件观点，不覆盖 runtime 打分）")
+    lines.append(
+        f"- 讨论倾向: {result.recommended_adjustment}（附件观点，不覆盖 runtime 打分）"
+    )
     if float(getattr(result, "adjusted_score", 0.0) or 0.0) > 0:
         lines.append(
             f"- 参考分歧: runtime 原始分 {result.original_score:.1f}；附件参考分 {result.adjusted_score:.1f}"
         )
-    lines.append(f"- 分歧度: {result.disagreement_score:.0%}")
-    lines.append(f"- 辩论轮次: {len(result.rounds)}")
+    lines.append(f"- 分歧: {result.disagreement_score:.0%}")
+    lines.append(f"- 讨论轮次: {len(result.rounds)}")
 
     bull_count = sum(1 for v in result.final_vote.values() if v == "bullish")
     bear_count = sum(1 for v in result.final_vote.values() if v == "bearish")
@@ -365,24 +367,26 @@ def to_markdown(
                 f"- 收盘/参考价: {pick.close} / {pick.ideal_buy}",
                 f"- 策略入口: {_safe_markdown_text(pick.entry_type)}",
                 f"- 命中策略: {_format_reason_list(pick.strategies) or '无'}",
-                f"- 纸面仓位参考: {pick.position}",
-                f"- 防守位/观察目标: {pick.stop_loss} / {pick.take_profit}",
+                f"- 比例参考: {pick.position}",
+                f"- 最多亏到/先看目标: {pick.stop_loss} / {pick.take_profit}",
                 f"- 理由: {_format_reason_list(pick.reasons) or '无'}",
                 f"- 风险提示: {_format_reason_list(pick.risks) or '无'}",
                 "",
             ]
         )
         if blocker:
-            lines.insert(len(lines) - 1, f"- 当前阻塞: {_safe_markdown_text(blocker)}")
+            lines.insert(
+                len(lines) - 1, f"- 现在卡在哪: {_safe_markdown_text(blocker)}"
+            )
         if next_step:
             lines.insert(
                 len(lines) - 1,
-                f"- 下一步关注: {_safe_markdown_text(next_step)}",
+                f"- 接下来先看: {_safe_markdown_text(next_step)}",
             )
         if review_priority or review_window:
             lines.insert(
                 len(lines) - 1,
-                "- 复核优先级/时机: "
+                "- 再看优先级/时机: "
                 + format_review_meta(review_priority, review_window),
             )
         if pick.symbol in debate_map:
@@ -434,11 +438,11 @@ def _metadata_lines(metadata: RunMetadata) -> list[str]:
         f"- 价格范围: {metadata.min_price} - {metadata.max_price}",
         f"- 20日均成交额下限: {metadata.min_avg_amount:.0f}",
         f"- 盘中增强: {'已开启' if metadata.online_factors_enabled else '未开启'}",
-        "- " + humanize_runtime_snapshot_line(
+        "- "
+        + humanize_runtime_snapshot_line(
             f"thresholds.version: {metadata.thresholds_version}"
         ),
-        "- " + humanize_runtime_snapshot_line(
-            f"市场标签: {metadata.regime or 'unknown'}"
-        ),
+        "- "
+        + humanize_runtime_snapshot_line(f"市场标签: {metadata.regime or 'unknown'}"),
         "",
     ]

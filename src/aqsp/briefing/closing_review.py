@@ -283,14 +283,16 @@ class ClosingReviewer:
         if tradable:
             lines.append("今日重点名单: " + "、".join(tradable[:3]))
         if watchlist:
-            lines.append("备选观察名单: " + "、".join(watchlist[:5]))
+            lines.append("继续观察名单: " + "、".join(watchlist[:5]))
         if blockers:
-            lines.append("当前卡点: " + "；".join(blockers[:2]))
+            lines.append("现在卡在哪: " + "；".join(blockers[:2]))
         for item in review_items[:2]:
-            lines.append("观察复核: " + item)
+            lines.append("观察名单接下来: " + item)
         return tuple(lines)
 
-    def _build_main_chain_summary_from_paper(self, paper_rows: list[dict]) -> tuple[str, ...]:
+    def _build_main_chain_summary_from_paper(
+        self, paper_rows: list[dict]
+    ) -> tuple[str, ...]:
         if not paper_rows:
             return ()
 
@@ -350,11 +352,11 @@ class ClosingReviewer:
         if tradable:
             lines.append("今日重点名单: " + "、".join(tradable[:3]))
         if watchlist:
-            lines.append("备选观察名单: " + "、".join(watchlist[:5]))
+            lines.append("继续观察名单: " + "、".join(watchlist[:5]))
         if blockers:
-            lines.append("当前卡点: " + "；".join(blockers[:2]))
+            lines.append("现在卡在哪: " + "；".join(blockers[:2]))
         for item in review_items[:2]:
-            lines.append("观察复核: " + item)
+            lines.append("观察名单接下来: " + item)
         return tuple(lines)
 
     def _load_predictions(self, date: str) -> list[dict]:
@@ -571,7 +573,7 @@ class ClosingReviewer:
             "trend_pullback": "均线回踩",
             "reversal_watch": "反转观察",
             "relative_strength": "相对强度",
-            "watch": "备选观察名单",
+            "watch": "继续观察名单",
             "close": "收盘候选",
             "open": "盘前候选",
             "next_open": "次日开盘",
@@ -631,7 +633,7 @@ class ClosingReviewer:
                 lessons.append("纸面小赚：符合预期，继续跟踪同类样本")
         else:
             if return_pct < -3:
-                lessons.append("纸面大亏：需复核防守位规则是否及时")
+                lessons.append("纸面大亏：需复核最多亏到规则是否及时")
             else:
                 lessons.append("纸面小亏：正常波动，保持复核纪律")
 
@@ -707,7 +709,7 @@ class ClosingReviewer:
 
         big_losses = [r for r in reviews if r.return_pct < -3]
         if big_losses:
-            lessons.append("存在大亏纸面样本，需严格复核防守位规则")
+            lessons.append("存在大亏纸面样本，需严格复核最多亏到规则")
 
         breakout_reviews = [
             r for r in reviews if r.strategy_type.startswith("早盘打板")

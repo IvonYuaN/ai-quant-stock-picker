@@ -146,60 +146,106 @@ def build_catalyst_report(
 
 
 def format_catalyst_notification(report: CatalystReport) -> str:
+    has_events = bool(report.events)
+    has_warnings = bool(report.warnings)
+    if has_events:
+        lead = report.events[0]
+        lead_target = (
+            f"{lead.symbol} {lead.name}".strip() if lead.symbol else "市场/行业"
+        )
+        lead_line = f"今天先看 {lead_target} 的 {lead.category}：{lead.title[:36]}"
+    elif report.source_status == "failed":
+        lead_line = "本次消息源没有按时返回，今天不要用这条通知下结论。"
+    elif report.source_status == "partial":
+        lead_line = "消息只抓到一部分，先把它当提示，不当结论。"
+    else:
+        lead_line = "今天没有筛出足够强的消息催化，先按主链和量价节奏看盘。"
+
     lines = [
         f"# 消息面雷达-{report.date}",
         "",
-        "> 🧭 消息面只作盘前/周末复核线索，不替代主报告结论，不构成交易指令。",
+        "> 🧭 这条通知只帮你回答两件事：今天有没有值得先看的消息，以及开盘后怎么验证。它不替代主报告结论，也不是交易指令；多源交叉或公告来源优先。",
+        "",
+        "## 👀 一眼先看",
+        "",
+        f"- {lead_line}",
+        f"- 当前状态: {_source_status_label(report.source_status)}",
+        f"- 生成时间: {report.generated_at}",
         "",
         "## 🧨 高影响事件",
         "",
     ]
     if not report.events:
-        lines.append("- 暂无高影响消息面事件；继续以主链量价和风控约束为准。")
+        if report.source_status == "failed":
+            lines.extend(
+                [
+                    "- 本次没拿到可靠消息，不代表市场一定没事，只代表这条消息通知今天不能用。",
+                    "- 今天盘前先回到主链报告，优先看今日重点名单、继续观察名单和现在卡在哪。",
+                    "- 如果你担心错过突发，开盘后再人工补看公告、财联社、交易所公告。 ",
+                ]
+            )
+        else:
+            lines.extend(
+                [
+                    "- 今天没筛出足够强的高影响消息，先以主链量价和风险约束为准。",
+                    "- 这通常意味着没有明确的消息催化主线，不要为了“有消息”硬找方向。",
+                ]
+            )
     else:
-        lines.extend(
-            [
-                "| # | 影响 | 类型 | 标的 | 事件 | 可信度/复核 | 复核重点 |",
-                "|---:|---|---|---|---|---|---|",
-            ]
-        )
         for index, event in enumerate(report.events, start=1):
-            lines.append(_event_table_row(index, event))
+            lines.extend(_event_card_lines(index, event))
+            lines.append("")
 
     lines.extend(
         [
             "",
-            "## ✅ 怎么用",
+            "## ✅ 开盘怎么用",
             "",
-            "1. 多源交叉或公告来源优先；单一媒体转述只当线索，不当结论。",
-            "2. 涨价/供给收缩/政策催化：先看是否连续发酵，再看量价是否确认。",
-            "3. 减持/监管/事故/制裁：优先当作风险卡点，避免把短线热度误读成确定性。",
-            "4. 周末和早盘消息如果连续发酵，下一交易日重点看开盘承接和板块扩散。",
+            "1. 先只看前两条高影响事件，不要一早被一堆标题带偏。",
+            "2. 如果是涨价、政策、订单这类利好，开盘后先看相关股票和板块有没有一起放量走强。",
+            "3. 如果是减持、监管、事故这类利空，先把它当风险，优先回避，不要和热度对赌。",
+            "4. 单一媒体标题只能算线索；看到公告、交易所、公司原文，可信度才算明显提升。",
+            "5. 如果这条通知失败或为空，今天就回到主链报告，不要因为“没有消息”乱改计划。",
             "",
-            "## 🧾 数据状态",
+            "## 🧾 这条通知靠不靠谱",
             "",
             f"- 状态: {report.source_status}",
-            f"- 生成时间: {report.generated_at}",
+            f"- 是否抓到高影响事件: {'是' if has_events else '否'}",
+            f"- 是否有抓取告警: {'是' if has_warnings else '否'}",
         ]
     )
     if report.warnings:
-        lines.append("- 提醒: " + "；".join(report.warnings[:3]))
+        lines.append("- 告警: " + "；".join(report.warnings[:3]))
     return normalize_research_tone("\n".join(lines))
 
 
-def _event_table_row(index: int, event: CatalystEvent) -> str:
+def _source_status_label(status: str) -> str:
+    return {
+        "ok": "已拿到可用消息",
+        "partial": "只拿到部分消息",
+        "empty": "没筛出足够强的消息",
+        "failed": "抓取失败，本次通知不可直接使用",
+    }.get(status, status or "未知")
+
+
+def _event_card_lines(index: int, event: CatalystEvent) -> list[str]:
+    """把单个事件渲染成窄屏友好的卡片，不用表格，避免列被压成竖排单字。"""
     impact = {"positive": "🟢 利好", "negative": "🔴 利空", "neutral": "⚪ 中性"}[
         event.impact
     ]
-    display = _table_cell(
+    target = (
         f"{event.symbol} {event.name}".strip() if event.symbol else "市场/行业"
     )
-    return (
-        f"| {index} | {impact} | {_table_cell(event.category)} | {display} | "
-        f"{_table_cell(event.title)} | "
-        f"{event.confidence:.0%} / {_table_cell(event.verification)} | "
-        f"{_table_cell(event.reason)} |"
-    )
+    title = _inline(event.title)
+    lines = [
+        f"**{index}. {impact} ｜ {_inline(target)}**",
+        f"- 事件: {title}",
+        f"- 类型: {_inline(event.category)} ｜ 可信度: {event.confidence:.0%}（{_inline(event.verification)}）",
+    ]
+    reason = _inline(event.reason)
+    if reason and reason != "-":
+        lines.append(f"- 复核重点: {reason}")
+    return lines
 
 
 def _events_from_rows(
@@ -242,10 +288,20 @@ def _classify_title(title: str) -> tuple[str, Impact, int, str] | None:
 
     for pattern, category, weight in NEGATIVE_PATTERNS:
         if re.search(pattern, clean):
-            return category, "negative", weight, "先按风险事件复核，确认是否影响短线承接"
+            return (
+                category,
+                "negative",
+                weight,
+                "先按风险事件复核，确认是否影响短线承接",
+            )
     for pattern, category, weight in POSITIVE_PATTERNS:
         if re.search(pattern, clean):
-            return category, "positive", weight, "关注是否出现板块扩散、量价确认和连续发酵"
+            return (
+                category,
+                "positive",
+                weight,
+                "关注是否出现板块扩散、量价确认和连续发酵",
+            )
     return None
 
 
@@ -286,7 +342,9 @@ def _merge_events(events: Sequence[CatalystEvent]) -> tuple[CatalystEvent, ...]:
             merged[key] = event
             continue
         merged[key] = CatalystEvent(
-            title=existing.title if len(existing.title) <= len(event.title) else event.title,
+            title=existing.title
+            if len(existing.title) <= len(event.title)
+            else event.title,
             source="、".join(_dedupe_texts((existing.source, event.source))),
             published_at=existing.published_at or event.published_at,
             symbol=existing.symbol or event.symbol,
@@ -296,7 +354,9 @@ def _merge_events(events: Sequence[CatalystEvent]) -> tuple[CatalystEvent, ...]:
             weight=max(existing.weight, event.weight) + 1,
             confidence=min(1.0, max(existing.confidence, event.confidence) + 0.18),
             source_count=existing.source_count + event.source_count,
-            verification="多源交叉" if existing.source != event.source else existing.verification,
+            verification="多源交叉"
+            if existing.source != event.source
+            else existing.verification,
             reason=existing.reason,
             url=existing.url or event.url,
         )
@@ -403,8 +463,9 @@ def _parse_llm_confidence(text: str) -> float | None:
     return value / 100
 
 
-def _table_cell(value: object) -> str:
-    return str(value or "").replace("|", "/").replace("\n", " ").strip() or "-"
+def _inline(value: object) -> str:
+    """把字段压成单行文本，去掉换行；保留竖线无害（不再走表格）。"""
+    return str(value or "").replace("\n", " ").strip() or "-"
 
 
 def _call_fetcher_with_timeout(

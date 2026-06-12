@@ -46,3 +46,25 @@ def test_load_debate_runtime_config_reads_language_roles_and_llm(monkeypatch) ->
     assert config.role_runtime[0].provider == "agnes"
     assert config.role_runtime[1].enable_llm is False
     assert config.role_runtime[2].model == "glm-4.7-flash"
+
+
+def test_load_runtime_config_falls_back_when_numeric_env_invalid(monkeypatch) -> None:
+    monkeypatch.setenv("AQSP_LIMIT", "oops")
+    monkeypatch.setenv("AQSP_MAX_UNIVERSE", "-1")
+    monkeypatch.setenv("AQSP_MIN_AVG_AMOUNT", "nan-text")
+    monkeypatch.setenv("AQSP_MAX_DATA_LAG_DAYS", "-5")
+
+    config = load_runtime_config()
+
+    assert config.limit == 10
+    assert config.max_universe == 100
+    assert config.min_avg_amount == 50000000
+    assert config.max_data_lag_days == 3
+
+
+def test_load_debate_runtime_config_falls_back_when_rounds_invalid(monkeypatch) -> None:
+    monkeypatch.setenv("AQSP_DEBATE_MAX_ROUNDS", "bad-value")
+
+    config = load_debate_runtime_config()
+
+    assert config.max_rounds == 2
