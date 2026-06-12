@@ -142,8 +142,50 @@ def test_news_catalyst_notification_dedupes_timeout_warnings() -> None:
     report = build_catalyst_report(fetch_global_news=lambda _limit: df)
     markdown = format_catalyst_notification(report)
 
-    assert markdown.count("部分消息源超时，已降级使用其它来源") == 1
+    assert markdown.count("部分消息源超时或连接中断，已降级使用其它来源") == 1
     assert "Read timed out" not in markdown
+
+
+def test_news_catalyst_notification_hides_low_level_connection_errors() -> None:
+    df = pd.DataFrame([{"标题": "今日市场平稳运行", "来源": "新华社"}])
+    df.attrs["aqsp_warnings"] = (
+        "HTTPSConnectionPool(host='np-anotice-stock.eastmoney.com', port=443): Max retries exceeded",
+        "Remote end closed connection without response",
+    )
+
+    report = build_catalyst_report(fetch_global_news=lambda _limit: df)
+    markdown = format_catalyst_notification(report)
+
+    assert markdown.count("部分消息源超时或连接中断，已降级使用其它来源") == 1
+    assert "HTTPSConnectionPool" not in markdown
+    assert "Remote end closed" not in markdown
+
+
+def test_news_catalyst_merges_same_company_event_across_sources() -> None:
+    report = build_catalyst_report(
+        fetch_global_news=lambda _limit: pd.DataFrame(
+            [
+                {
+                    "标题": "华虹宏力：上交所并购重组审核委员会定于2026年6月18日召开2026年第9次并购重组委会议",
+                    "来源": "同花顺",
+                    "链接": "https://news.10jqka.com.cn/a",
+                },
+                {
+                    "标题": "华虹宏力：上交所并购重组委定于6月18日审核公司发行股份购买资产并募集配套资金事项",
+                    "链接": "https://news.futunn.com/flash/20409494",
+                },
+            ]
+        ),
+    )
+
+    assert len(report.events) == 1
+    assert report.events[0].source == "同花顺、富途"
+    assert report.events[0].source_count == 2
+    assert report.events[0].verification == "多源交叉"
+    markdown = format_catalyst_notification(report)
+    assert markdown.count("**1. 🟢 利好") == 1
+    assert "**2. 🟢 利好" not in markdown
+    assert "来源: 同花顺、富途" in markdown
 
 
 def test_news_catalyst_downgrades_unverified_source_tips() -> None:

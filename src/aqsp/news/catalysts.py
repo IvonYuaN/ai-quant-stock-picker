@@ -608,15 +608,40 @@ def _verification_label(row: dict[str, str]) -> str:
 def _events_can_merge(left: CatalystEvent, right: CatalystEvent) -> bool:
     left_title = _normalized_title_key(left.title)
     right_title = _normalized_title_key(right.title)
-    if not left_title or left_title != right_title:
-        return False
     if left.symbol and right.symbol and left.symbol != right.symbol:
         return False
-    return True
+    if left_title and left_title == right_title:
+        return True
+    if left.impact != right.impact or left.category != right.category:
+        return False
+    left_target = _event_target(left)
+    right_target = _event_target(right)
+    if left_target == "市场/行业" or right_target == "市场/行业":
+        return False
+    if left_target != right_target:
+        return False
+    return _title_overlap_ratio(left_title, right_title) >= 0.62
 
 
 def _normalized_title_key(title: str) -> str:
-    return "".join(ch for ch in str(title or "") if "\u4e00" <= ch <= "\u9fff")[:24]
+    import re
+
+    text = "".join(ch for ch in str(title or "") if "\u4e00" <= ch <= "\u9fff")
+    text = re.sub(r"\d+年\d+月\d+日|\d+月\d+日|\d+年第\d+次", "", text)
+    text = re.sub(r"召开|定于|公司|股份|购买资产|募集配套资金", "", text)
+    return text[:36]
+
+
+def _title_overlap_ratio(left: str, right: str) -> float:
+    if not left or not right:
+        return 0.0
+    left_tokens = set(left)
+    right_tokens = set(right)
+    if not left_tokens or not right_tokens:
+        return 0.0
+    return len(left_tokens & right_tokens) / max(
+        1, min(len(left_tokens), len(right_tokens))
+    )
 
 
 def _dedupe_texts(values: Sequence[str]) -> tuple[str, ...]:
@@ -647,6 +672,16 @@ def _inline(value: object) -> str:
 
 def _safe_warning(value: object) -> str:
     text = _inline(value).replace("<", "＜").replace(">", "＞")
+    lower = text.lower()
+    if (
+        "httpsconnectionpool" in lower
+        or "remote end closed connection" in lower
+        or "connection aborted" in lower
+        or "max retries exceeded" in lower
+        or "read timed out" in lower
+        or "timed out" in lower
+    ):
+        return "部分消息源超时或连接中断，已降级使用其它来源"
     return text[:120] + ("..." if len(text) > 120 else "")
 
 
@@ -655,10 +690,10 @@ def _display_warnings(warnings: Sequence[str], limit: int = 3) -> tuple[str, ...
     timeout_seen = False
     for warning in warnings:
         text = _safe_warning(warning)
-        if "消息源超过" in text or "Read timed out" in text or "timed out" in text:
+        if "消息源超过" in text or "超时" in text or "连接中断" in text:
             if timeout_seen:
                 continue
-            text = "部分消息源超时，已降级使用其它来源"
+            text = "部分消息源超时或连接中断，已降级使用其它来源"
             timeout_seen = True
         if text and text not in displayed:
             displayed.append(text)
