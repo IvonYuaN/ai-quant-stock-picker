@@ -130,7 +130,14 @@ file_line() {
 print_section "GIT"
 cd "$PROJECT_ROOT"
 git log --oneline -3
-git status --short
+tracked_status="$(git status --short --untracked-files=no)"
+if [ -n "$tracked_status" ]; then
+    printf '%s\n' "$tracked_status"
+else
+    echo "tracked working tree clean"
+fi
+untracked_count="$(git status --short --untracked-files=normal | awk '$1 == "??" {count++} END {print count + 0}')"
+echo "untracked runtime files: ${untracked_count} (omitted)"
 
 print_section "CRON"
 crontab -l 2>/dev/null || true

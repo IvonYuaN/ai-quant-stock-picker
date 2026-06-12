@@ -10,6 +10,8 @@ def test_server_status_script_covers_runtime_sections() -> None:
     script = (PROJECT_ROOT / "scripts" / "server_status.sh").read_text(encoding="utf-8")
 
     assert 'print_section "GIT"' in script
+    assert "git status --short --untracked-files=no" in script
+    assert "untracked runtime files:" in script
     assert 'print_section "CRON"' in script
     assert 'print_section "CRON AQSP AUDIT"' in script
     assert 'print_section "LOCKS"' in script
