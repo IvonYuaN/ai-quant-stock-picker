@@ -300,6 +300,8 @@ def test_portfolio_risk_daily_loss_blocks():
     check = mgr.check_portfolio(state)
     assert check.can_open_new_position is False
     assert any("单日亏损" in r for r in check.blocking_reasons)
+    assert "停止当日新增纸面复核" in check.suggested_actions
+    assert all("新开仓" not in action for action in check.suggested_actions)
 
 
 def test_system_risk_market_crash():
@@ -319,6 +321,7 @@ def test_system_risk_market_crash():
     check = mgr.check_market(snapshot)
     assert check.risk_level == "critical"
     assert check.halt_all_strategies is True
+    assert all("新开仓" not in action for action in check.recommended_actions)
 
 
 # ============================================================
