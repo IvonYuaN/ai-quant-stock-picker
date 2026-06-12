@@ -4,7 +4,7 @@
 # ============================================================================
 # 用途: 作为定时任务(cron)的入口脚本
 # 功能: 激活虚拟环境 -> 加载配置 -> 运行 Python 跑批 -> 记录日志 -> 发送通知
-# 调度: 建议周一至周五凌晨 2:00(北京时间)由 cron 触发
+# 调度: 建议周一至周五 18:00(北京时间)由宝塔面板触发
 # ============================================================================
 
 set -euo pipefail
@@ -22,6 +22,18 @@ RESULT_LOG="${LOG_DIR}/pipeline-$(date +%Y-%m-%d).log"
 
 log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$RESULT_LOG"
+}
+
+run_data_cleanup() {
+    log "执行数据生命周期管理..."
+    CLEANUP_SCRIPT="${PROJECT_ROOT}/scripts/manage_data_lifecycle.py"
+
+    if [ -f "$CLEANUP_SCRIPT" ]; then
+        "${PYTHON_BIN}" "$CLEANUP_SCRIPT" --auto 2>&1 | tee -a "$RESULT_LOG" || true
+        log "数据清理完成"
+    else
+        log "数据清理脚本不存在，跳过: $CLEANUP_SCRIPT"
+    fi
 }
 
 # ============================ 前置检查 ============================
@@ -64,6 +76,9 @@ export TZ="${TZ:-Asia/Shanghai}"
 
 DOW=$(date +%u)
 if [ "$DOW" -ge 6 ]; then
+    if [ "$DOW" -eq 7 ] || [ "${AQSP_FORCE_CLEANUP:-false}" = "true" ]; then
+        run_data_cleanup
+    fi
     log "周末(周${DOW}), 跳过跑批"
     exit 0
 fi
@@ -148,13 +163,7 @@ fi
 
 # 每周日凌晨执行数据清理
 if [ "$DOW" -eq 7 ] || [ "${AQSP_FORCE_CLEANUP:-false}" = "true" ]; then
-    log "执行数据生命周期管理..."
-    CLEANUP_SCRIPT="${PROJECT_ROOT}/scripts/manage_data_lifecycle.py"
-
-    if [ -f "$CLEANUP_SCRIPT" ]; then
-        "${PYTHON_BIN}" "$CLEANUP_SCRIPT" --auto 2>&1 | tee -a "$RESULT_LOG" || true
-        log "数据清理完成"
-    fi
+    run_data_cleanup
 fi
 
 # ============================ 日志轮转(保留30天) ============================

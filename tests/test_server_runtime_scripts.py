@@ -112,6 +112,13 @@ def test_bt_task_script_exposes_panel_safe_actions() -> None:
     assert "scripts/server_status.sh" in script
     assert "logs/bt" in script
 
+    daily_script = (PROJECT_ROOT / "scripts" / "daily_pipeline.sh").read_text(
+        encoding="utf-8"
+    )
+    assert "周一至周五 18:00" in daily_script
+    assert "run_data_cleanup()" in daily_script
+    assert daily_script.index("run_data_cleanup") < daily_script.index("周末(周${DOW})")
+
 
 def test_news_catalysts_script_sends_research_notification() -> None:
     script = (PROJECT_ROOT / "scripts" / "news_catalysts.sh").read_text(
