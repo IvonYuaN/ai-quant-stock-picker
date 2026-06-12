@@ -237,7 +237,7 @@ class PortfolioRiskManager:
             blocking.append(
                 f"⛔ 单日亏损{daily_loss_pct:.1%} ≥ {self.config.max_daily_loss_pct:.0%}"
             )
-            suggested.append("停止当日新开仓")
+            suggested.append("停止当日新增纸面复核")
             can_open = False
 
         # 2. 周亏损检查
@@ -407,7 +407,7 @@ class SystemRiskManager:
             triggered.append(
                 f"🟠 跌停集中：今日{snapshot.limit_down_count}只跌停"
             )
-            actions.append("警惕系统性风险，缩减新开仓")
+            actions.append("警惕系统性风险，缩减新增纸面复核")
             if risk_level == "normal":
                 risk_level = "elevated"
 
@@ -425,7 +425,7 @@ class SystemRiskManager:
             triggered.append(
                 f"🟡 量能萎缩：整体量比{snapshot.avg_volume_ratio:.1f}"
             )
-            actions.append("市场冷清，减少新开仓")
+            actions.append("市场冷清，减少新增纸面观察")
 
         # 6. 北向资金大幅流出
         if snapshot.north_flow < -5_000_000_000:  # -50亿
