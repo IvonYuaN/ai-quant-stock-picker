@@ -81,6 +81,8 @@ def test_news_catalyst_notification_keeps_research_boundary() -> None:
     assert "多源交叉或公告来源优先" in markdown
     assert "交易指令" in markdown
     assert "来源: 新华社" in markdown
+    assert "怎么验证:" in markdown
+    assert "不要做:" in markdown
 
 
 def test_news_catalyst_filters_pure_market_price_action_noise() -> None:
@@ -88,14 +90,32 @@ def test_news_catalyst_filters_pure_market_price_action_noise() -> None:
         fetch_global_news=lambda _limit: pd.DataFrame(
             [
                 {"标题": "证券ETF盘中涨超3%，成交额明显放量", "来源": "东财"},
+                {"标题": "某概念股早盘拉升封板，板块走强", "来源": "东财"},
+                {"标题": "半导体板块放量冲击涨停", "来源": "同花顺"},
                 {"标题": "MLCC 行业报价上调，龙头排产紧张", "来源": "证券报"},
+                {"标题": "新能源汽车订单需求放量", "来源": "证券报"},
             ]
         ),
     )
 
     titles = tuple(event.title for event in report.events)
     assert "MLCC 行业报价上调，龙头排产紧张" in titles
+    assert "新能源汽车订单需求放量" in titles
     assert "证券ETF盘中涨超3%，成交额明显放量" not in titles
+    assert "某概念股早盘拉升封板，板块走强" not in titles
+    assert "半导体板块放量冲击涨停" not in titles
+
+
+def test_news_catalyst_report_surfaces_source_warnings() -> None:
+    df = pd.DataFrame()
+    df.attrs["aqsp_warnings"] = ("source timeout",)
+
+    report = build_catalyst_report(fetch_global_news=lambda _limit: df)
+
+    assert report.source_status == "failed"
+    assert report.warnings == ("全市场快讯: source timeout",)
+    markdown = format_catalyst_notification(report)
+    assert "今天不要用这条通知下结论" in markdown
 
 
 def test_news_catalyst_report_degrades_when_source_times_out() -> None:

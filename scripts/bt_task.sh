@@ -37,10 +37,10 @@ BT panel examples:
 
 Recommended BT schedule (Asia/Shanghai):
   news      08:35 Mon-Fri; 09:05 Sat/Sun
-  intraday  every 10 min; script gates 09:40-11:30 / 13:00-14:50, Mon-Fri
+  intraday  every 10 min; script gates 09:35-11:30 / 13:05-14:57, Mon-Fri
   midday    12:05 Mon-Fri
   daily     18:00 Mon-Fri
-  coldstart 16:10 Mon-Fri
+  coldstart 19:40 Mon-Fri
   monitor   every 15 min
   status    manual only
 
@@ -122,6 +122,22 @@ run_script() {
     /bin/bash "$script_path" "$@" 2>&1 | tee -a "$RUN_LOG"
 }
 
+run_synced_task_with_result() {
+    local result_file="${PROJECT_ROOT}/.state/sync-${ACTION}-$(date +%Y%m%d%H%M%S)-$$.env"
+    rm -f "$result_file"
+    export AQSP_SYNC_RESULT_FILE="$result_file"
+    run_script "${PROJECT_ROOT}/scripts/server_sync_and_run.sh"
+    unset AQSP_SYNC_RESULT_FILE
+    if [ -f "$result_file" ]; then
+        # shellcheck disable=SC1090
+        . "$result_file"
+        rm -f "$result_file"
+    else
+        status="unknown"
+    fi
+    [ "${status:-unknown}" = "completed" ]
+}
+
 if [ ! -d "${PROJECT_ROOT}/.git" ]; then
     echo "Git repo not found: ${PROJECT_ROOT}" >&2
     exit 1
@@ -138,20 +154,26 @@ case "$ACTION" in
     intraday)
         if should_bridge_intraday_to_midday; then
             export AQSP_RUNNER_SCRIPT=scripts/midday_refresh.sh
-            run_script "${PROJECT_ROOT}/scripts/server_sync_and_run.sh"
-            touch "$AQSP_MIDDAY_MARKER_FILE"
-            log "午盘桥接已完成，今日不再重复触发"
+            if run_synced_task_with_result; then
+                touch "$AQSP_MIDDAY_MARKER_FILE"
+                log "午盘桥接已完成，今日不再重复触发"
+            else
+                log "午盘桥接未真实执行，不写完成标记；后续定时仍可重试"
+            fi
             exit 0
         fi
         export AQSP_RUNNER_SCRIPT=scripts/intraday_refresh.sh
-        run_script "${PROJECT_ROOT}/scripts/server_sync_and_run.sh"
+        run_synced_task_with_result || true
         ;;
     midday)
         export AQSP_RUNNER_SCRIPT=scripts/midday_refresh.sh
-        run_script "${PROJECT_ROOT}/scripts/server_sync_and_run.sh"
-        marker_file="${AQSP_MIDDAY_MARKER_FILE:-${PROJECT_ROOT}/.state/midday-$(date +%Y-%m-%d).done}"
-        mkdir -p "$(dirname "$marker_file")"
-        touch "$marker_file"
+        if run_synced_task_with_result; then
+            marker_file="${AQSP_MIDDAY_MARKER_FILE:-${PROJECT_ROOT}/.state/midday-$(date +%Y-%m-%d).done}"
+            mkdir -p "$(dirname "$marker_file")"
+            touch "$marker_file"
+        else
+            log "午盘任务未真实执行，不写完成标记；后续定时仍可重试"
+        fi
         ;;
     coldstart)
         sync_code_only

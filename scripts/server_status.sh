@@ -101,7 +101,7 @@ print_aqsp_cron_audit() {
                             ;;
                         intraday)
                             day_gate="script:Mon-Fri"
-                            time_gate="script:09:40-11:30/13:00-14:50"
+                            time_gate="script:09:35-11:30/13:05-14:57"
                             ;;
                     esac
                 fi

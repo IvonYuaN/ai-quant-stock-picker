@@ -54,8 +54,8 @@ def test_install_server_cron_script_installs_standard_jobs() -> None:
     assert "*/10 9-11 * * 1-5" in script
     assert "5 12 * * 1-5" in script
     assert "*/10 13-14 * * 1-5" in script
-    assert "45 8 * * 1-5" in script
-    assert "0 10 * * 6,0" in script
+    assert "35 8 * * 1-5" in script
+    assert "5 9 * * 6,0" in script
     assert "0 18 * * 1-5" in script
     assert "40 19 * * 1-5" in script
     assert "*/15 * * * 1-5" in script
@@ -96,7 +96,7 @@ def test_bt_task_script_exposes_panel_safe_actions() -> None:
     assert "Recommended BT schedule (Asia/Shanghai)" in script
     assert "news      08:35 Mon-Fri; 09:05 Sat/Sun" in script
     assert "daily     18:00 Mon-Fri" in script
-    assert "coldstart 16:10 Mon-Fri" in script
+    assert "coldstart 19:40 Mon-Fri" in script
     assert '"正常跳过/互斥保护"' in script
     assert "It is not a failed run." in script
     assert "AQSP_RUNNER_SCRIPT=scripts/daily_pipeline.sh" in script
@@ -203,6 +203,9 @@ def test_server_sync_script_has_lock_guard() -> None:
     assert "LOCK_RUNNER" in script
     assert "LOCK_STARTED_AT" in script
     assert "主链路仍在运行，本次任务正常跳过；这是互斥保护，不是失败" in script
+    assert "AQSP_SYNC_RESULT_FILE" in script
+    assert 'write_result "skipped_lock"' in script
+    assert 'write_result "completed"' in script
 
 
 def test_server_monitor_script_has_lock_guard() -> None:
@@ -235,6 +238,8 @@ def test_coldstart_daily_script_updates_db_then_runs_cli() -> None:
     assert "bt_task.sh intraday" in script
     assert "server-runtime.lock" in script
     assert "主链路仍在运行，本次冷启动正常跳过；这是互斥保护，不是失败" in script
+    assert "LOCK_RUNNER=scripts/coldstart_daily.sh" in script
+    assert "LOCK_STARTED_AT=$(date '+%Y-%m-%d %H:%M:%S')" in script
     assert '"${PYTHON_BIN}" -u "${UPDATE_SCRIPT}" "${SQLITE_DB_PATH}"' in script
     assert '"${PYTHON_BIN}" -u -m aqsp.cli run' in script
     assert "--source sqlite_db" in script

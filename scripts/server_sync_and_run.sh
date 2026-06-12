@@ -17,10 +17,18 @@ LOCK_FILE="${LOCK_DIR}/server-runtime.lock"
 LOCK_INFO_FILE="${LOCK_FILE}/meta.env"
 LOCK_STALE_MINUTES="${AQSP_LOCK_STALE_MINUTES:-360}"
 RUNNER_TIMEOUT_SECONDS="${AQSP_RUNNER_TIMEOUT_SECONDS:-0}"
+RUN_RESULT_FILE="${AQSP_SYNC_RESULT_FILE:-}"
 
 log() {
     mkdir -p "$LOG_DIR"
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$RUN_LOG"
+}
+
+write_result() {
+    if [ -n "$RUN_RESULT_FILE" ]; then
+        mkdir -p "$(dirname "$RUN_RESULT_FILE")"
+        printf 'status=%s\nrunner=%s\n' "$1" "$RUNNER_SCRIPT" > "$RUN_RESULT_FILE"
+    fi
 }
 
 lock_age_minutes() {
@@ -85,6 +93,7 @@ if ! mkdir "$LOCK_FILE" 2>/dev/null; then
     else
         log "主链路仍在运行，本次任务正常跳过；这是互斥保护，不是失败"
     fi
+    write_result "skipped_lock"
     exit 0
 fi
 cat >"$LOCK_INFO_FILE" <<EOF
@@ -137,10 +146,13 @@ fi
 
 if [ "${RUNNER_EXIT_CODE}" -eq 124 ]; then
     log "主链路执行超时，被保护性终止: ${RUNNER_TIMEOUT_SECONDS}s"
+    write_result "timeout"
     exit "${RUNNER_EXIT_CODE}"
 fi
 if [ "${RUNNER_EXIT_CODE}" -ne 0 ]; then
     log "主链路执行失败，退出码: ${RUNNER_EXIT_CODE}"
+    write_result "failed"
     exit "${RUNNER_EXIT_CODE}"
 fi
 log "同步与跑批完成"
+write_result "completed"

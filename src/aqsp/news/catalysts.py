@@ -62,15 +62,23 @@ Fetcher = Callable[[str, int], pd.DataFrame]
 POSITIVE_PATTERNS: tuple[tuple[str, str, int], ...] = (
     ("涨价|提价|价格上调|报价上调|缺货|供不应求", "涨价/供需催化", 5),
     ("扩产受限|停产|限产|供给收缩|库存低位|排产紧张", "供给收缩", 4),
-    ("政策支持|刺激|补贴|利好|国常会|发改委|工信部", "政策催化", 4),
-    ("中标|大单|订单|签订合同|采购|定点|放量", "订单/需求验证", 4),
+    (
+        "政策支持|补贴|国常会|发改委|工信部|行动方案|指导意见|以旧换新|设备更新",
+        "政策催化",
+        4,
+    ),
+    (
+        "中标|大单|订单|签订合同|采购|定点|销量放量|出货放量|需求放量",
+        "订单/需求验证",
+        4,
+    ),
     ("业绩预增|扭亏|超预期|利润增长|收入增长", "业绩催化", 4),
     ("回购|增持|并购|重组|注入|战略合作", "资本运作", 3),
 )
 
 NEGATIVE_PATTERNS: tuple[tuple[str, str, int], ...] = (
     ("减持|清仓|套现|解禁|质押|爆仓", "股东/筹码风险", 5),
-    ("立案|调查|处罚|问询函|监管|诉讼|仲裁", "监管/合规风险", 5),
+    ("立案|调查|处罚|问询函|监管处罚|监管问询|诉讼|仲裁", "监管/合规风险", 5),
     ("事故|停工|停产|召回|安全隐患|污染", "经营事故", 5),
     ("制裁|限制|禁令|断供|关税|出口管制", "外部冲击", 4),
     ("业绩下滑|亏损|不及预期|预亏|暴雷", "业绩风险", 4),
@@ -103,6 +111,7 @@ def build_catalyst_report(
         except Exception as exc:
             warnings.append(f"{symbol} 个股新闻获取失败: {exc}")
             continue
+        warnings.extend(_frame_warnings(df, prefix=f"{symbol} 个股新闻"))
         rows.extend(
             _events_from_rows(
                 _iter_news_rows(df.head(cfg.max_symbol_news)),
@@ -119,11 +128,19 @@ def build_catalyst_report(
     except Exception as exc:
         warnings.append(f"全市场快讯获取失败: {exc}")
         global_df = pd.DataFrame()
+    warnings.extend(_frame_warnings(global_df, prefix="全市场快讯"))
     rows.extend(_events_from_rows(_iter_news_rows(global_df.head(cfg.max_global_news))))
 
     deduped = _merge_events(rows)
+    pre_ranked = tuple(
+        sorted(
+            deduped,
+            key=lambda item: (item.weight, item.confidence, item.source_count),
+            reverse=True,
+        )
+    )
     reviewed = _review_events(
-        deduped,
+        pre_ranked,
         enable_llm=cfg.enable_llm_review,
         timeout_seconds=cfg.llm_timeout_seconds,
         max_events=cfg.max_llm_review_events,
@@ -165,7 +182,7 @@ def format_catalyst_notification(report: CatalystReport) -> str:
         lead_line = "今天没有筛出足够强的消息催化，先按主链和量价节奏看盘。"
 
     lines = [
-        f"# 消息面雷达-{report.date}",
+        f"# 消息面雷达-{report.date}｜{_report_title_status(report)}",
         "",
         "> 🧭 这条通知只帮你回答两件事：今天有没有值得先看的消息，以及开盘后怎么验证。它不替代主报告结论，也不是交易指令；多源交叉或公告来源优先。",
         "",
@@ -218,7 +235,9 @@ def format_catalyst_notification(report: CatalystReport) -> str:
         ]
     )
     if report.warnings:
-        lines.append("- 告警: " + "；".join(report.warnings[:3]))
+        lines.append(
+            "- 告警: " + "；".join(_safe_warning(item) for item in report.warnings[:3])
+        )
     return normalize_research_tone("\n".join(lines))
 
 
@@ -229,6 +248,17 @@ def _source_status_label(status: str) -> str:
         "empty": "没筛出足够强的消息",
         "failed": "抓取失败，本次通知不可直接使用",
     }.get(status, status or "未知")
+
+
+def _report_title_status(report: CatalystReport) -> str:
+    if report.events:
+        lead = report.events[0]
+        return f"{lead.category}{'/利空' if lead.impact == 'negative' else ''}"
+    if report.source_status == "failed":
+        return "抓取失败"
+    if report.source_status == "partial":
+        return "部分消息"
+    return "无强催化"
 
 
 def _event_card_lines(index: int, event: CatalystEvent) -> list[str]:
@@ -243,6 +273,8 @@ def _event_card_lines(index: int, event: CatalystEvent) -> list[str]:
         f"- 事件: {title}",
         f"- 类型: {_inline(event.category)} ｜ 可信度: {event.confidence:.0%}（{_inline(event.verification)}）",
         f"- 来源: {_inline(event.source)} ｜ 时间: {_inline(event.published_at)}",
+        f"- 怎么验证: {_verification_hint(event)}",
+        "- 不要做: 只凭标题追高；至少等公告/多源交叉/板块和量价一起确认。",
     ]
     if event.url:
         lines.append(f"- 原文: {_inline(event.url)}")
@@ -315,11 +347,14 @@ def _is_market_price_action_noise(title: str) -> bool:
     import re
 
     price_action = re.search(
-        r"ETF|指数|盘中|涨超|涨逾|涨幅|大涨|领涨|转跌|收涨|成交|放量冲击",
+        r"ETF|指数|盘中|涨超|涨逾|涨幅|大涨|领涨|转跌|收涨|成交|放量冲击|"
+        r"涨停|封板|冲板|拉升|走强|异动",
         title,
     )
     if not price_action:
         return False
+    if re.search(r"传闻|网传|市场消息|受.*刺激|受.*利好", title):
+        return True
     fundamental = re.search(
         r"公告|交易所|涨价|提价|报价上调|价格上调|缺货|供不应求|政策支持|补贴|"
         r"中标|订单|签订合同|业绩预增|回购|增持|并购|重组|减持|立案|调查|"
@@ -334,15 +369,21 @@ def _iter_news_rows(df: pd.DataFrame) -> Iterable[dict[str, str]]:
         return ()
     rows: list[dict[str, str]] = []
     for row in df.to_dict(orient="records"):
-        title = _first_text(row, ("新闻标题", "标题", "title", "内容", "摘要"))
+        title = _first_text(
+            row, ("新闻标题", "公告标题", "标题", "title", "内容", "摘要")
+        )
         if not title:
             continue
         rows.append(
             {
                 "title": title,
-                "source": _first_text(row, ("文章来源", "媒体", "source", "来源")),
-                "published_at": _first_text(row, ("发布时间", "时间", "date", "日期")),
-                "url": _first_text(row, ("新闻链接", "链接", "url")),
+                "source": _first_text(
+                    row, ("文章来源", "媒体", "source", "来源", "公告类型")
+                ),
+                "published_at": _first_text(
+                    row, ("发布时间", "时间", "date", "日期", "公告日期")
+                ),
+                "url": _first_text(row, ("新闻链接", "链接", "url", "公告链接")),
             }
         )
     return tuple(rows)
@@ -358,14 +399,21 @@ def _first_text(row: dict[str, Any], keys: Sequence[str]) -> str:
 
 
 def _merge_events(events: Sequence[CatalystEvent]) -> tuple[CatalystEvent, ...]:
-    merged: dict[str, CatalystEvent] = {}
+    merged: list[CatalystEvent] = []
     for event in events:
-        key = _event_merge_key(event)
-        existing = merged.get(key)
-        if existing is None:
-            merged[key] = event
+        existing_index = next(
+            (
+                index
+                for index, existing in enumerate(merged)
+                if _events_can_merge(existing, event)
+            ),
+            None,
+        )
+        if existing_index is None:
+            merged.append(event)
             continue
-        merged[key] = CatalystEvent(
+        existing = merged[existing_index]
+        merged[existing_index] = CatalystEvent(
             title=existing.title
             if len(existing.title) <= len(event.title)
             else event.title,
@@ -384,7 +432,7 @@ def _merge_events(events: Sequence[CatalystEvent]) -> tuple[CatalystEvent, ...]:
             reason=existing.reason,
             url=existing.url or event.url,
         )
-    return tuple(merged.values())
+    return tuple(merged)
 
 
 def _review_events(
@@ -462,8 +510,18 @@ def _verification_label(row: dict[str, str]) -> str:
     return "待证实"
 
 
-def _event_merge_key(event: CatalystEvent) -> str:
-    return "".join(ch for ch in event.title if "\u4e00" <= ch <= "\u9fff")[:24]
+def _events_can_merge(left: CatalystEvent, right: CatalystEvent) -> bool:
+    left_title = _normalized_title_key(left.title)
+    right_title = _normalized_title_key(right.title)
+    if not left_title or left_title != right_title:
+        return False
+    if left.symbol and right.symbol and left.symbol != right.symbol:
+        return False
+    return True
+
+
+def _normalized_title_key(title: str) -> str:
+    return "".join(ch for ch in str(title or "") if "\u4e00" <= ch <= "\u9fff")[:24]
 
 
 def _dedupe_texts(values: Sequence[str]) -> tuple[str, ...]:
@@ -490,6 +548,30 @@ def _parse_llm_confidence(text: str) -> float | None:
 def _inline(value: object) -> str:
     """把字段压成单行文本，去掉换行；保留竖线无害（不再走表格）。"""
     return str(value or "").replace("\n", " ").strip() or "-"
+
+
+def _safe_warning(value: object) -> str:
+    text = _inline(value).replace("<", "＜").replace(">", "＞")
+    return text[:120] + ("..." if len(text) > 120 else "")
+
+
+def _verification_hint(event: CatalystEvent) -> str:
+    if event.impact == "negative":
+        return "先找公告/监管/交易所原文；若属实，把它当风险而不是博弈点。"
+    if event.category in {"涨价/供需催化", "供给收缩"}:
+        return "看是否有报价单、产业媒体二次确认，以及同链条股票是否一起放量。"
+    if event.category in {"订单/需求验证", "业绩催化"}:
+        return "优先找公司公告或权威媒体原文，再看开盘承接是否强于大盘。"
+    if event.category == "政策催化":
+        return "先确认政策原文和受益环节，不把泛概念当成直接利好。"
+    return "先找原始来源，再看板块扩散和量价确认。"
+
+
+def _frame_warnings(df: pd.DataFrame, *, prefix: str) -> list[str]:
+    warnings = (
+        getattr(df, "attrs", {}).get("aqsp_warnings", ()) if df is not None else ()
+    )
+    return [f"{prefix}: {warning}" for warning in warnings]
 
 
 def _call_fetcher_with_timeout(
@@ -546,11 +628,11 @@ def _call_fetcher_with_signal_timeout(
 
 def _fetch_optional_frame(
     fetch: Callable[[], pd.DataFrame], timeout_seconds: float
-) -> pd.DataFrame:
+) -> tuple[pd.DataFrame, str]:
     try:
-        return _call_fetcher_with_timeout(fetch, timeout_seconds=timeout_seconds)
-    except Exception:
-        return pd.DataFrame()
+        return _call_fetcher_with_timeout(fetch, timeout_seconds=timeout_seconds), ""
+    except Exception as exc:
+        return pd.DataFrame(), str(exc)
 
 
 def _akshare_symbol_news(symbol: str, limit: int) -> pd.DataFrame:
@@ -562,13 +644,20 @@ def _akshare_symbol_news(symbol: str, limit: int) -> pd.DataFrame:
         lambda: ak.stock_individual_notice_report(symbol=symbol),
         lambda: ak.stock_research_report_em(symbol=symbol),
     )
+    warnings: list[str] = []
     for fetch in fetchers:
-        df = _fetch_optional_frame(fetch, timeout_seconds=6.0)
+        df, warning = _fetch_optional_frame(fetch, timeout_seconds=6.0)
+        if warning:
+            warnings.append(warning)
         if df is not None and not df.empty:
             frames.append(df.head(limit))
     if not frames:
-        return pd.DataFrame()
-    return pd.concat(frames, ignore_index=True).head(limit * 3)
+        empty = pd.DataFrame()
+        empty.attrs["aqsp_warnings"] = tuple(warnings)
+        return empty
+    result = pd.concat(frames, ignore_index=True).head(limit * 3)
+    result.attrs["aqsp_warnings"] = tuple(warnings[:3])
+    return result
 
 
 def _akshare_global_news(limit: int) -> pd.DataFrame:
@@ -585,10 +674,18 @@ def _akshare_global_news(limit: int) -> pd.DataFrame:
         lambda: ak.stock_notice_report(),
     )
     frames: list[pd.DataFrame] = []
+    warnings: list[str] = []
+    per_source_limit = max(2, min(5, limit))
     for fetch in fetchers:
-        df = _fetch_optional_frame(fetch, timeout_seconds=6.0)
+        df, warning = _fetch_optional_frame(fetch, timeout_seconds=6.0)
+        if warning:
+            warnings.append(warning)
         if df is not None and not df.empty:
-            frames.append(df.head(limit))
+            frames.append(df.head(per_source_limit))
     if not frames:
-        return pd.DataFrame()
-    return pd.concat(frames, ignore_index=True).head(limit)
+        empty = pd.DataFrame()
+        empty.attrs["aqsp_warnings"] = tuple(warnings)
+        return empty
+    result = pd.concat(frames, ignore_index=True).head(limit)
+    result.attrs["aqsp_warnings"] = tuple(warnings[:3])
+    return result

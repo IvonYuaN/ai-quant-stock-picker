@@ -13,6 +13,7 @@ RUN_LOG="${LOG_DIR}/coldstart-${DATE}.log"
 LOCK_DIR="${PROJECT_ROOT}/.locks"
 # 与 scripts/server_sync_and_run.sh 共用同一把锁，避免冷启动与日终主链路并发。
 LOCK_FILE="${LOCK_DIR}/server-runtime.lock"
+LOCK_INFO_FILE="${LOCK_FILE}/meta.env"
 
 log() {
     mkdir -p "$LOG_DIR"
@@ -79,10 +80,21 @@ mkdir -p \
     "$(dirname "$CSV_PATH")"
 
 if ! mkdir "$LOCK_FILE" 2>/dev/null; then
-    log "主链路仍在运行，本次冷启动正常跳过；这是互斥保护，不是失败"
+    if [ -f "$LOCK_INFO_FILE" ]; then
+        # shellcheck disable=SC1090
+        . "$LOCK_INFO_FILE"
+        log "主链路仍在运行，本次冷启动正常跳过；这是互斥保护，不是失败 runner=${LOCK_RUNNER:-unknown} pid=${LOCK_PID:-unknown} started_at=${LOCK_STARTED_AT:-unknown}"
+    else
+        log "主链路仍在运行，本次冷启动正常跳过；这是互斥保护，不是失败"
+    fi
     exit 0
 fi
-trap 'rmdir "$LOCK_FILE"' EXIT
+cat >"$LOCK_INFO_FILE" <<EOF
+LOCK_PID=$$
+LOCK_RUNNER=scripts/coldstart_daily.sh
+LOCK_STARTED_AT=$(date '+%Y-%m-%d %H:%M:%S')
+EOF
+trap 'rm -f "$LOCK_INFO_FILE"; rmdir "$LOCK_FILE"' EXIT
 
 DOW="$(date +%u)"
 if [ "$DOW" -ge 6 ]; then

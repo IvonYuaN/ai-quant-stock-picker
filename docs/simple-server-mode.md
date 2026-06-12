@@ -140,9 +140,9 @@ bash /opt/aqsp/scripts/server_sync_and_run.sh
 
 | 任务名 | 推荐时间 | 宝塔脚本内容 | 作用 |
 |---|---:|---|---|
-| `AQSP-盘中刷新` | 工作日 `09:40-11:30`、`13:10-14:55` 每 10 分钟 | `/bin/bash /opt/aqsp/scripts/bt_task.sh intraday` | 刷新盘中候选和看板，写独立盘中产物，不污染正式 ledger |
+| `AQSP-盘中刷新` | 工作日 `09:35-11:30`、`13:05-14:57` 每 10 分钟 | `/bin/bash /opt/aqsp/scripts/bt_task.sh intraday` | 刷新盘中候选和看板，写独立盘中产物，不污染正式 ledger |
 | `AQSP-午盘分析` | 工作日 `12:05` | `/bin/bash /opt/aqsp/scripts/bt_task.sh midday` | 中午固定复核上午走势、候选和大盘状态 |
-| `AQSP-消息面雷达` | 工作日 `08:45`，周末 `10:00` | `/bin/bash /opt/aqsp/scripts/bt_task.sh news` | 盘前/周末复核高影响消息、涨价链、政策、风险事件 |
+| `AQSP-消息面雷达` | 工作日 `08:35`，周末 `09:05` | `/bin/bash /opt/aqsp/scripts/bt_task.sh news` | 盘前/周末复核高影响消息、涨价链、政策、风险事件 |
 | `AQSP-收盘主链路` | 工作日 `18:00` | `/bin/bash /opt/aqsp/scripts/bt_task.sh daily` | 完整收盘复盘、纸面验证、简报、通知和看板刷新 |
 | `AQSP-冷启动补样本` | 工作日 `19:40` | `/bin/bash /opt/aqsp/scripts/bt_task.sh coldstart` | 收盘主链路结束后再补历史库和冷启动样本，避免互斥跳过 |
 | `AQSP-服务器监控` | 工作日每 `15` 分钟 | `/bin/bash /opt/aqsp/scripts/bt_task.sh monitor` | 检查数据、运行态、通知通道；默认只推关键异常 |
@@ -202,11 +202,11 @@ bash /opt/aqsp/scripts/install_server_cron.sh
 
 这条脚本会自动安装并去重这些任务：
 
-- 北京时间 `09:40-11:59` 每 10 分钟跑一次盘中推荐
+- 北京时间 `09:35-11:30` 每 10 分钟跑一次盘中推荐
 - 北京时间 `12:05` 跑一次午盘回看
-- 北京时间 `13:00-14:59` 每 10 分钟跑一次盘中推荐
-- 北京时间 `08:45` 工作日跑一次消息面雷达
-- 北京时间 `10:00` 周末跑一次消息面雷达
+- 北京时间 `13:05-14:57` 每 10 分钟跑一次盘中推荐
+- 北京时间 `08:35` 工作日跑一次消息面雷达
+- 北京时间 `09:05` 周末跑一次消息面雷达
 - 北京时间 `18:00` 跑一次完整收盘复盘
 - 北京时间 `19:40` 跑一次冷启动补样本
 - 北京时间每 `15` 分钟跑一次服务器监控
@@ -255,9 +255,10 @@ AQSP_COLDSTART_CRON_SCHEDULE="30 9 * * 1-5" bash /opt/aqsp/scripts/install_colds
 
 长任务会自动互斥：
 
-- `daily`、`midday`、`news` 通过 `server_sync_and_run.sh` 共用主锁，避免同步代码和写产物时互相踩踏。
+- `daily`、`midday` 和 BT 入口的 `intraday` 会先通过 `server_sync_and_run.sh` 共用主锁，避免同步代码和写产物时互相踩踏。
+- `news` 只写独立的 `reports/news_catalysts.md` 和通知，不写正式 ledger；为了不被长主链路挡住，默认不抢主锁。
 - `coldstart_daily.sh` 也使用主锁，因为它会补正式冷启动 ledger；如果 `daily` 未结束，它会正常跳过。
-- `intraday_refresh.sh` 使用盘中独立锁，只保护盘中刷新自身，不会和收盘主链路抢正式 ledger。
+- `intraday_refresh.sh` 还会使用盘中独立锁，只保护盘中刷新自身；如果主链路正在运行，BT 入口会先正常跳过。
 - `server_monitor.sh` 使用独立监控锁，避免 15 分钟监控任务自己重入。
 - 如果上一轮还没跑完，新一轮会直接“正常跳过”，这表示互斥保护生效，不是任务失败。
 
