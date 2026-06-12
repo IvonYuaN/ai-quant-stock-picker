@@ -269,7 +269,10 @@ def format_catalyst_notification(report: CatalystReport) -> str:
     )
     if report.warnings:
         lines.append(
-            "- 告警: " + "；".join(_safe_warning(item) for item in report.warnings[:3])
+            "- 告警: "
+            + "；".join(
+                _safe_warning(item) for item in _display_warnings(report.warnings)
+            )
         )
     return normalize_research_tone("\n".join(lines))
 
@@ -645,6 +648,23 @@ def _inline(value: object) -> str:
 def _safe_warning(value: object) -> str:
     text = _inline(value).replace("<", "＜").replace(">", "＞")
     return text[:120] + ("..." if len(text) > 120 else "")
+
+
+def _display_warnings(warnings: Sequence[str], limit: int = 3) -> tuple[str, ...]:
+    displayed: list[str] = []
+    timeout_seen = False
+    for warning in warnings:
+        text = _safe_warning(warning)
+        if "消息源超过" in text or "Read timed out" in text or "timed out" in text:
+            if timeout_seen:
+                continue
+            text = "部分消息源超时，已降级使用其它来源"
+            timeout_seen = True
+        if text and text not in displayed:
+            displayed.append(text)
+        if len(displayed) >= limit:
+            break
+    return tuple(displayed)
 
 
 def _short_text(value: object, max_chars: int) -> str:

@@ -132,6 +132,20 @@ def test_news_catalyst_report_marks_partial_when_raw_news_has_no_strong_event() 
     assert "抓取失败" not in markdown.splitlines()[0]
 
 
+def test_news_catalyst_notification_dedupes_timeout_warnings() -> None:
+    df = pd.DataFrame([{"标题": "今日市场平稳运行", "来源": "新华社"}])
+    df.attrs["aqsp_warnings"] = (
+        "消息源超过 6.0s 未返回",
+        "HTTPSConnectionPool(host='x'): Read timed out.",
+    )
+
+    report = build_catalyst_report(fetch_global_news=lambda _limit: df)
+    markdown = format_catalyst_notification(report)
+
+    assert markdown.count("部分消息源超时，已降级使用其它来源") == 1
+    assert "Read timed out" not in markdown
+
+
 def test_news_catalyst_downgrades_unverified_source_tips() -> None:
     report = build_catalyst_report(
         fetch_global_news=lambda _limit: pd.DataFrame(
