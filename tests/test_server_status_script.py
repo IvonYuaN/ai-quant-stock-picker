@@ -30,6 +30,8 @@ def test_server_status_script_covers_runtime_sections() -> None:
     assert 'cron="' in script
     assert 'gate="' in script
     assert 'days="' in script
+    assert 'env="' in script
+    assert "AQSP_[A-Z0-9_]+=" in script
     assert "Mon-Fri" in script
     assert "Sat-Sun" in script
     assert "script:Mon-Fri" in script

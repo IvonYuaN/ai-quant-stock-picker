@@ -65,7 +65,7 @@ print_lock_state() {
 }
 
 print_aqsp_cron_audit() {
-    local cron_text cron_line cron_file cron_id cron_schedule action time_gate day_gate found_wrapper found_direct
+    local cron_text cron_line cron_file cron_id cron_schedule action time_gate day_gate env_hint found_wrapper found_direct
     cron_text="$(crontab -l 2>/dev/null || true)"
     found_wrapper=0
     found_direct=0
@@ -105,8 +105,10 @@ print_aqsp_cron_audit() {
                             ;;
                     esac
                 fi
-                printf 'bt-wrapper action=%s cron="%s" gate="%s" days="%s" script=%s\n' \
-                    "${action:-unknown}" "$cron_schedule" "$time_gate" "$day_gate" "$cron_file"
+                env_hint="$(grep -Eo 'AQSP_[A-Z0-9_]+=[^[:space:]]+' "$cron_file" | tr '\n' ',' | sed 's/,$//' || true)"
+                [ -n "$env_hint" ] || env_hint="-"
+                printf 'bt-wrapper action=%s cron="%s" gate="%s" days="%s" env="%s" script=%s\n' \
+                    "${action:-unknown}" "$cron_schedule" "$time_gate" "$day_gate" "$env_hint" "$cron_file"
                 found_wrapper=1
             elif grep -q "$PROJECT_ROOT" "$cron_file" 2>/dev/null; then
                 printf 'project-cron-wrapper-needs-review script=%s\n' "$cron_file"
