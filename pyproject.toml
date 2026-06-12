@@ -4,31 +4,31 @@ version = "0.1.0"
 description = "Local-first A-share quant screening workbench with optional GitHub automation."
 requires-python = ">=3.10"
 dependencies = [
-    "pandas>=2.0",
-    "numpy>=1.24",
-    "requests>=2.31",
-    "scipy>=1.10",
-    "jinja2>=3.1",
-    "pyyaml>=6.0",
+    "pandas>=2.0,<4.0",
+    "numpy>=1.24,<3.0",
+    "requests>=2.31,<3.0",
+    "scipy>=1.10,<2.0",
+    "jinja2>=3.1,<4.0",
+    "pyyaml>=6.0,<7.0",
 ]
 
 [project.optional-dependencies]
 data = [
-    "akshare>=1.16",
-    "baostock>=0.9.1",
-    "efinance",
-    "tushare",
+    "akshare>=1.16,<2.0",
+    "baostock>=0.9.1,<1.0",
+    "efinance>=0.5,<1.0",
+    "tushare>=1.4,<2.0",
 ]
 web = [
-    "streamlit>=1.36",
+    "streamlit>=1.36,<2.0",
 ]
 llm = [
-    "openai>=1.0",
-    "anthropic>=0.30",
+    "openai>=1.0,<3.0",
+    "anthropic>=0.30,<1.0",
 ]
 dev = [
-    "pytest>=8.0",
-    "ruff>=0.8",
+    "pytest>=8.0,<10.0",
+    "ruff>=0.8,<1.0",
 ]
 
 [project.scripts]
