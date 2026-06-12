@@ -128,7 +128,7 @@ def test_news_catalyst_report_marks_partial_when_raw_news_has_no_strong_event() 
     assert report.source_status == "partial"
     assert not report.events
     markdown = format_catalyst_notification(report)
-    assert "只拿到部分消息" in markdown
+    assert "有可用消息，部分来源降级" in markdown
     assert "抓取失败" not in markdown.splitlines()[0]
 
 

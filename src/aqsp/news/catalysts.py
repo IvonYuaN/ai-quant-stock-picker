@@ -280,7 +280,7 @@ def format_catalyst_notification(report: CatalystReport) -> str:
 def _source_status_label(status: str) -> str:
     return {
         "ok": "已拿到可用消息",
-        "partial": "只拿到部分消息",
+        "partial": "有可用消息，部分来源降级",
         "empty": "没筛出足够强的消息",
         "failed": "抓取失败，本次通知不可直接使用",
     }.get(status, status or "未知")
