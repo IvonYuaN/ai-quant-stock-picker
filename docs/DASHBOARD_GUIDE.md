@@ -123,10 +123,4 @@ server {
 }
 ```
 
-不推荐直接使用下面这种方式对公网开放：
-
-```bash
-streamlit run src/aqsp/web/dashboard.py --server.address 0.0.0.0 --server.port 8501
-```
-
-除非前面已经有鉴权和访问控制。
+不要把 Streamlit 端口直接暴露到公网。公网入口只保留反向代理层，应用进程继续监听 `127.0.0.1:8501`；如果要托管静态面板，发布 `dist/dashboard/` 到受保护的 Web 目录。
