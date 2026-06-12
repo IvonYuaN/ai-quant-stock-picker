@@ -132,6 +132,22 @@ def test_news_catalyst_report_marks_partial_when_raw_news_has_no_strong_event() 
     assert "抓取失败" not in markdown.splitlines()[0]
 
 
+def test_news_catalyst_downgrades_unverified_source_tips() -> None:
+    report = build_catalyst_report(
+        fetch_global_news=lambda _limit: pd.DataFrame(
+            [
+                {
+                    "标题": "消息人士：美伊协议涉及减免制裁",
+                    "链接": "https://example.com/tip",
+                }
+            ]
+        ),
+    )
+
+    assert report.source_status == "empty"
+    assert not report.events
+
+
 def test_news_catalyst_filters_non_actionable_discipline_news() -> None:
     report = build_catalyst_report(
         fetch_global_news=lambda _limit: pd.DataFrame(
@@ -203,6 +219,25 @@ def test_news_catalyst_llm_review_is_bounded(monkeypatch) -> None:
 
     assert len(calls) == 1
     assert any(event.verification.startswith("模型复核") for event in report.events)
+
+
+def test_news_catalyst_notification_truncates_long_event_titles() -> None:
+    long_title = "美国财政部宣布制裁9家中国和中国香港的个人及实体，外交部回应将采取一切必要措施坚定维护本国企业和公民权益"
+    long_title += "，相关事项仍需继续观察后续政策原文、企业公告、产业链反馈以及市场承接"
+    report = build_catalyst_report(
+        fetch_global_news=lambda _limit: pd.DataFrame(
+            [{"标题": long_title, "来源": "新华社", "链接": "https://example.com/b"}]
+        ),
+    )
+
+    markdown = format_catalyst_notification(report)
+
+    assert (
+        "美国财政部宣布制裁9家中国和中国香港的个人及实体，外交部回应将采取一切必要措施坚定维护本国企业和公民权益"
+        not in markdown
+    )
+    assert "美国财政部宣布制裁9家中国和中国香港的个人及实体" in markdown
+    assert "外交部、财政部、海外监管或权威媒体原文" in markdown
 
 
 def test_global_news_prioritizes_notice_sources(monkeypatch) -> None:

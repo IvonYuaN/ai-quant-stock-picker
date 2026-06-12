@@ -174,7 +174,9 @@ def format_catalyst_notification(report: CatalystReport) -> str:
         lead_target = (
             f"{lead.symbol} {lead.name}".strip() if lead.symbol else "市场/行业"
         )
-        lead_line = f"今天先看 {lead_target} 的 {lead.category}：{lead.title[:36]}"
+        lead_line = (
+            f"今天先看 {lead_target} 的 {lead.category}：{_short_text(lead.title, 36)}"
+        )
     elif report.source_status == "failed":
         lead_line = "本次消息源没有按时返回，今天不要用这条通知下结论。"
     elif report.source_status == "partial":
@@ -281,7 +283,7 @@ def _event_card_lines(index: int, event: CatalystEvent) -> list[str]:
         event.impact
     ]
     target = f"{event.symbol} {event.name}".strip() if event.symbol else "市场/行业"
-    title = _inline(event.title)
+    title = _short_text(event.title, 42)
     lines = [
         f"**{index}. {impact} ｜ {_inline(target)}**",
         f"- 事件: {title}",
@@ -534,7 +536,7 @@ def _base_confidence(row: dict[str, str]) -> float:
         )
     ):
         confidence += 0.28
-    if any(token in title for token in ("据悉", "传", "网传", "市场消息")):
+    if any(token in title for token in ("据悉", "传", "网传", "市场消息", "消息人士")):
         confidence -= 0.18
     if row.get("url"):
         confidence += 0.08
@@ -598,7 +600,14 @@ def _safe_warning(value: object) -> str:
     return text[:120] + ("..." if len(text) > 120 else "")
 
 
+def _short_text(value: object, max_chars: int) -> str:
+    text = _inline(value)
+    return text[:max_chars] + ("..." if len(text) > max_chars else "")
+
+
 def _verification_hint(event: CatalystEvent) -> str:
+    if event.category == "外部冲击":
+        return "先找外交部、财政部、海外监管或权威媒体原文，再判断影响链条。"
     if event.impact == "negative":
         return "先找公告/监管/交易所原文；若属实，把它当风险而不是博弈点。"
     if event.category in {"涨价/供需催化", "供给收缩"}:
