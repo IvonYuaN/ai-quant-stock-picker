@@ -233,15 +233,16 @@ def _event_card_lines(index: int, event: CatalystEvent) -> list[str]:
     impact = {"positive": "🟢 利好", "negative": "🔴 利空", "neutral": "⚪ 中性"}[
         event.impact
     ]
-    target = (
-        f"{event.symbol} {event.name}".strip() if event.symbol else "市场/行业"
-    )
+    target = f"{event.symbol} {event.name}".strip() if event.symbol else "市场/行业"
     title = _inline(event.title)
     lines = [
         f"**{index}. {impact} ｜ {_inline(target)}**",
         f"- 事件: {title}",
         f"- 类型: {_inline(event.category)} ｜ 可信度: {event.confidence:.0%}（{_inline(event.verification)}）",
+        f"- 来源: {_inline(event.source)} ｜ 时间: {_inline(event.published_at)}",
     ]
+    if event.url:
+        lines.append(f"- 原文: {_inline(event.url)}")
     reason = _inline(event.reason)
     if reason and reason != "-":
         lines.append(f"- 复核重点: {reason}")

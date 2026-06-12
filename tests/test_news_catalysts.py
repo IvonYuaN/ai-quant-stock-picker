@@ -60,6 +60,11 @@ def test_news_catalyst_report_prioritizes_verified_price_hike_events() -> None:
     assert report.events[0].confidence >= 0.6
     assert any(event.impact == "negative" for event in report.events)
 
+    markdown = format_catalyst_notification(report)
+    assert "来源: 证券报、财联社" in markdown
+    assert "时间: 2026-06-11 08:30" in markdown
+    assert "原文: https://example.com/a" in markdown
+
 
 def test_news_catalyst_notification_keeps_research_boundary() -> None:
     report = build_catalyst_report(
@@ -75,6 +80,7 @@ def test_news_catalyst_notification_keeps_research_boundary() -> None:
     assert "不替代主报告结论" in markdown
     assert "多源交叉或公告来源优先" in markdown
     assert "交易指令" in markdown
+    assert "来源: 新华社" in markdown
 
 
 def test_news_catalyst_report_degrades_when_source_times_out() -> None:
