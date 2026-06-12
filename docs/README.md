@@ -16,6 +16,7 @@
 - `secret-and-upload-policy.md`: 上传与密钥策略
 - `server-dashboard-deployment.md`: 服务器前端部署
 - `simple-server-mode.md`: 最简单的 GitHub -> 云服务器自动更新运行模式
+- `TROUBLESHOOTING.md`: 常见故障排查手册
 - `walkforward-2026-05.md`: 当前默认 walk-forward 报告落点
 
 ## Archive
