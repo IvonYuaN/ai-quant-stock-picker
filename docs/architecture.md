@@ -380,4 +380,4 @@ class CircuitBreakerConfig:
 
 - 文档同步:任何改动 `architecture.md` 的 PR 必须包含 `docs:` 前缀,Claude 优先审查。
 - 阈值变更:阈值 PR 必须附 walk-forward 回测报告,DSR 折扣后 > 1.0 才允许合并。
-- 实盘前清单:见 `docs/checklist_before_live.md`(后续补)。
+- 实盘前清单:见 `docs/checklist_before_live.md`。
