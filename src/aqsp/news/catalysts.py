@@ -22,7 +22,7 @@ class NewsCatalystConfig:
     max_symbol_news: int = 5
     max_global_news: int = 20
     max_events: int = 8
-    min_confidence: float = 0.35
+    min_confidence: float = 0.45
     enable_llm_review: bool = False
     source_timeout_seconds: float = 8.0
     llm_timeout_seconds: float = 8.0
@@ -324,6 +324,8 @@ def _classify_title(title: str) -> tuple[str, Impact, int, str] | None:
 
     if _is_market_price_action_noise(clean):
         return None
+    if _is_non_actionable_discipline_news(clean):
+        return None
     for pattern, category, weight in NEGATIVE_PATTERNS:
         if re.search(pattern, clean):
             return (
@@ -362,6 +364,18 @@ def _is_market_price_action_noise(title: str) -> bool:
         title,
     )
     return fundamental is None
+
+
+def _is_non_actionable_discipline_news(title: str) -> bool:
+    import re
+
+    if not re.search(r"纪律审查|监察调查|严重违纪违法", title):
+        return False
+    listed_context = re.search(
+        r"上市公司|股份有限公司|证券|股票|公告|交易所|证监|董监高|实控人|控股股东",
+        title,
+    )
+    return listed_context is None
 
 
 def _iter_news_rows(df: pd.DataFrame) -> Iterable[dict[str, str]]:
@@ -492,7 +506,19 @@ def _base_confidence(row: dict[str, str]) -> float:
     title = row.get("title", "")
     source = row.get("source", "")
     confidence = 0.38
-    if any(token in source for token in ("公告", "交易所", "巨潮", "公司", "证券报")):
+    if any(
+        token in source
+        for token in (
+            "公告",
+            "交易所",
+            "巨潮",
+            "公司",
+            "证券报",
+            "新华社",
+            "央视",
+            "证监会",
+        )
+    ):
         confidence += 0.28
     if any(token in title for token in ("据悉", "传", "网传", "市场消息")):
         confidence -= 0.18
@@ -503,9 +529,12 @@ def _base_confidence(row: dict[str, str]) -> float:
 
 def _verification_label(row: dict[str, str]) -> str:
     source = row.get("source", "")
-    if any(token in source for token in ("公告", "交易所", "巨潮", "公司")):
+    if any(token in source for token in ("公告", "交易所", "巨潮", "公司", "证监会")):
         return "接近原始来源"
-    if any(token in source for token in ("证券报", "财联社", "东财", "同花顺", "新浪")):
+    if any(
+        token in source
+        for token in ("新华社", "央视", "证券报", "财联社", "东财", "同花顺", "新浪")
+    ):
         return "媒体来源"
     return "待证实"
 

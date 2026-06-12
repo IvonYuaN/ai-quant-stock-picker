@@ -118,6 +118,27 @@ def test_news_catalyst_report_surfaces_source_warnings() -> None:
     assert "今天不要用这条通知下结论" in markdown
 
 
+def test_news_catalyst_filters_non_actionable_discipline_news() -> None:
+    report = build_catalyst_report(
+        fetch_global_news=lambda _limit: pd.DataFrame(
+            [
+                {
+                    "标题": "广东通用医药有限公司调研副经理接受纪律审查和监察调查",
+                    "来源": "纪委监委",
+                },
+                {
+                    "标题": "上市公司控股股东涉嫌严重违纪违法接受监察调查",
+                    "来源": "公司公告",
+                },
+            ]
+        ),
+    )
+
+    titles = tuple(event.title for event in report.events)
+    assert "广东通用医药有限公司调研副经理接受纪律审查和监察调查" not in titles
+    assert "上市公司控股股东涉嫌严重违纪违法接受监察调查" in titles
+
+
 def test_news_catalyst_report_degrades_when_source_times_out() -> None:
     def slow_global_news(_limit: int) -> pd.DataFrame:
         time.sleep(0.2)
