@@ -109,7 +109,7 @@ def test_news_catalyst_filters_pure_market_price_action_noise() -> None:
 
 def test_news_catalyst_report_surfaces_source_warnings() -> None:
     df = pd.DataFrame()
-    df.attrs["aqsp_warnings"] = ("source timeout",)
+    df.attrs["aqsp_warnings"] = ("source timeout", "source timeout")
 
     report = build_catalyst_report(fetch_global_news=lambda _limit: df)
 
@@ -163,9 +163,12 @@ def test_news_catalyst_infers_source_from_known_url() -> None:
 
     assert report.events
     assert report.events[0].source == "同花顺"
+    assert report.events[0].name == "中国西电"
     assert report.events[0].verification == "媒体来源"
     assert report.events[0].confidence >= 0.5
     markdown = format_catalyst_notification(report)
+    assert "今天先看 中国西电 的 订单/需求验证" in markdown
+    assert "🟢 利好 ｜ 中国西电" in markdown
     assert "来源: 同花顺" in markdown
 
 

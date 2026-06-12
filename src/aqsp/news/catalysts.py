@@ -159,6 +159,7 @@ def build_catalyst_report(
         warnings.append(f"全市场快讯获取失败: {exc}")
         global_df = pd.DataFrame()
     warnings.extend(_frame_warnings(global_df, prefix="全市场快讯"))
+    warnings = list(_dedupe_texts(warnings))
     raw_news_count = len(_iter_news_rows(global_df))
     rows.extend(_events_from_rows(_iter_news_rows(global_df.head(cfg.max_global_news))))
 
@@ -201,9 +202,7 @@ def format_catalyst_notification(report: CatalystReport) -> str:
     has_warnings = bool(report.warnings)
     if has_events:
         lead = report.events[0]
-        lead_target = (
-            f"{lead.symbol} {lead.name}".strip() if lead.symbol else "市场/行业"
-        )
+        lead_target = _event_target(lead)
         lead_line = (
             f"今天先看 {lead_target} 的 {lead.category}：{_short_text(lead.title, 36)}"
         )
@@ -312,7 +311,7 @@ def _event_card_lines(index: int, event: CatalystEvent) -> list[str]:
     impact = {"positive": "🟢 利好", "negative": "🔴 利空", "neutral": "⚪ 中性"}[
         event.impact
     ]
-    target = f"{event.symbol} {event.name}".strip() if event.symbol else "市场/行业"
+    target = _event_target(event)
     title = _short_text(event.title, 42)
     lines = [
         f"**{index}. {impact} ｜ {_inline(target)}**",
@@ -349,7 +348,7 @@ def _events_from_rows(
                 source=row.get("source", ""),
                 published_at=row.get("published_at", ""),
                 symbol=symbol,
-                name=name,
+                name=name or _name_from_title(title),
                 impact=impact,
                 category=category,
                 weight=weight,
@@ -360,6 +359,24 @@ def _events_from_rows(
             )
         )
     return events
+
+
+def _event_target(event: CatalystEvent) -> str:
+    target = f"{event.symbol} {event.name}".strip()
+    return target or _name_from_title(event.title) or "市场/行业"
+
+
+def _name_from_title(title: str) -> str:
+    import re
+
+    clean = str(title or "").strip()
+    match = re.match(r"^([\u4e00-\u9fffA-Za-z0-9]{2,12})[:：]", clean)
+    if not match:
+        return ""
+    name = match.group(1)
+    if name in {"消息人士", "市场消息", "快讯"}:
+        return ""
+    return name
 
 
 def _classify_title(title: str) -> tuple[str, Impact, int, str] | None:
