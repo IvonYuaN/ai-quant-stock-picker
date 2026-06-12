@@ -8,6 +8,7 @@ from aqsp.news.catalysts import (
     NewsCatalystConfig,
     build_catalyst_report,
     format_catalyst_notification,
+    _akshare_global_news,
 )
 
 
@@ -118,6 +119,19 @@ def test_news_catalyst_report_surfaces_source_warnings() -> None:
     assert "今天不要用这条通知下结论" in markdown
 
 
+def test_news_catalyst_report_marks_partial_when_raw_news_has_no_strong_event() -> None:
+    df = pd.DataFrame([{"标题": "今日市场平稳运行", "来源": "新华社"}])
+    df.attrs["aqsp_warnings"] = ("one slow source",)
+
+    report = build_catalyst_report(fetch_global_news=lambda _limit: df)
+
+    assert report.source_status == "partial"
+    assert not report.events
+    markdown = format_catalyst_notification(report)
+    assert "只拿到部分消息" in markdown
+    assert "抓取失败" not in markdown.splitlines()[0]
+
+
 def test_news_catalyst_filters_non_actionable_discipline_news() -> None:
     report = build_catalyst_report(
         fetch_global_news=lambda _limit: pd.DataFrame(
@@ -189,3 +203,57 @@ def test_news_catalyst_llm_review_is_bounded(monkeypatch) -> None:
 
     assert len(calls) == 1
     assert any(event.verification.startswith("模型复核") for event in report.events)
+
+
+def test_global_news_prioritizes_notice_sources(monkeypatch) -> None:
+    class FakeAk:
+        @staticmethod
+        def stock_info_global_cls() -> pd.DataFrame:
+            return pd.DataFrame(
+                [{"标题": f"普通快讯{i}", "来源": "财联社"} for i in range(5)]
+            )
+
+        @staticmethod
+        def stock_info_global_em() -> pd.DataFrame:
+            return pd.DataFrame()
+
+        @staticmethod
+        def stock_info_global_ths() -> pd.DataFrame:
+            return pd.DataFrame()
+
+        @staticmethod
+        def stock_info_global_futu() -> pd.DataFrame:
+            return pd.DataFrame()
+
+        @staticmethod
+        def stock_info_global_sina() -> pd.DataFrame:
+            return pd.DataFrame()
+
+        @staticmethod
+        def news_cctv() -> pd.DataFrame:
+            return pd.DataFrame([{"标题": "国常会部署设备更新", "来源": "央视"}])
+
+        @staticmethod
+        def news_economic_baidu() -> pd.DataFrame:
+            return pd.DataFrame()
+
+        @staticmethod
+        def stock_notice_report() -> pd.DataFrame:
+            return pd.DataFrame(
+                [{"公告标题": "公司签订重大订单", "公告类型": "公司公告"}]
+            )
+
+    import sys
+
+    monkeypatch.setitem(sys.modules, "akshare", FakeAk)
+
+    df = _akshare_global_news(limit=3)
+
+    rows = df.to_dict(orient="records")
+    titles = []
+    for row in rows:
+        title = str(row.get("标题") or "")
+        if not title or title.lower() == "nan":
+            title = str(row.get("公告标题") or "")
+        titles.append(title)
+    assert titles[:2] == ["公司签订重大订单", "国常会部署设备更新"]

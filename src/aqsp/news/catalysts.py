@@ -129,6 +129,7 @@ def build_catalyst_report(
         warnings.append(f"全市场快讯获取失败: {exc}")
         global_df = pd.DataFrame()
     warnings.extend(_frame_warnings(global_df, prefix="全市场快讯"))
+    raw_news_count = len(_iter_news_rows(global_df))
     rows.extend(_events_from_rows(_iter_news_rows(global_df.head(cfg.max_global_news))))
 
     deduped = _merge_events(rows)
@@ -151,11 +152,11 @@ def build_catalyst_report(
         key=lambda item: (item.weight, item.confidence, item.source_count),
         reverse=True,
     )
-    status = "ok" if ranked else "empty"
-    if warnings and ranked:
-        status = "partial"
-    elif warnings:
-        status = "failed"
+    status = _report_source_status(
+        has_ranked=bool(ranked),
+        has_raw_news=raw_news_count > 0,
+        has_warnings=bool(warnings),
+    )
     return CatalystReport(
         date=today_shanghai().isoformat(),
         generated_at=now_shanghai().isoformat(timespec="seconds"),
@@ -248,6 +249,19 @@ def _source_status_label(status: str) -> str:
         "empty": "没筛出足够强的消息",
         "failed": "抓取失败，本次通知不可直接使用",
     }.get(status, status or "未知")
+
+
+def _report_source_status(
+    *,
+    has_ranked: bool,
+    has_raw_news: bool,
+    has_warnings: bool,
+) -> str:
+    if has_ranked:
+        return "partial" if has_warnings else "ok"
+    if has_raw_news:
+        return "partial" if has_warnings else "empty"
+    return "failed" if has_warnings else "empty"
 
 
 def _report_title_status(report: CatalystReport) -> str:
@@ -715,6 +729,33 @@ def _akshare_global_news(limit: int) -> pd.DataFrame:
         empty = pd.DataFrame()
         empty.attrs["aqsp_warnings"] = tuple(warnings)
         return empty
-    result = pd.concat(frames, ignore_index=True).head(limit)
+    result = _prioritize_news_frame(pd.concat(frames, ignore_index=True)).head(limit)
     result.attrs["aqsp_warnings"] = tuple(warnings[:3])
     return result
+
+
+def _prioritize_news_frame(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return df
+
+    def priority(row: dict[str, Any]) -> int:
+        source_text = _first_text(
+            row, ("文章来源", "媒体", "source", "来源", "公告类型")
+        )
+        title = _first_text(
+            row, ("新闻标题", "公告标题", "标题", "title", "内容", "摘要")
+        )
+        blob = f"{source_text} {title}"
+        if any(token in blob for token in ("公告", "交易所", "巨潮", "证监会")):
+            return 0
+        if any(
+            token in blob for token in ("新华社", "央视", "国常会", "发改委", "工信部")
+        ):
+            return 1
+        if any(token in blob for token in ("证券报", "财联社", "同花顺", "东财")):
+            return 2
+        return 3
+
+    rows = df.to_dict(orient="records")
+    ordered = sorted(enumerate(rows), key=lambda item: (priority(item[1]), item[0]))
+    return pd.DataFrame([row for _, row in ordered])
