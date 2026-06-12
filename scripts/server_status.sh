@@ -65,7 +65,7 @@ print_lock_state() {
 }
 
 print_aqsp_cron_audit() {
-    local cron_text cron_line cron_file action found_wrapper found_direct
+    local cron_text cron_line cron_file cron_id cron_schedule action time_gate found_wrapper found_direct
     cron_text="$(crontab -l 2>/dev/null || true)"
     found_wrapper=0
     found_direct=0
@@ -78,8 +78,14 @@ print_aqsp_cron_audit() {
                 *.log|*.lock|*.pl) continue ;;
             esac
             if grep -q "bt_task.sh" "$cron_file" 2>/dev/null; then
+                cron_id="$(basename "$cron_file")"
+                cron_schedule="$(printf '%s\n' "$cron_text" | awk -v id="$cron_id" '$0 ~ id {print $1" "$2" "$3" "$4" "$5; exit}')"
+                [ -n "$cron_schedule" ] || cron_schedule="not-installed"
                 action="$(grep -Eo 'bt_task\.sh[[:space:]]+[a-z]+' "$cron_file" | awk '{print $2}' | head -n 1)"
-                printf 'bt-wrapper action=%s script=%s\n' "${action:-unknown}" "$cron_file"
+                time_gate="$(grep -Eo 'special_time=[0-9:,]+' "$cron_file" | head -n 1 | cut -d= -f2)"
+                [ -n "$time_gate" ] || time_gate="-"
+                printf 'bt-wrapper action=%s cron="%s" gate="%s" script=%s\n' \
+                    "${action:-unknown}" "$cron_schedule" "$time_gate" "$cron_file"
                 found_wrapper=1
             elif grep -q "$PROJECT_ROOT" "$cron_file" 2>/dev/null; then
                 printf 'project-cron-wrapper-needs-review script=%s\n' "$cron_file"

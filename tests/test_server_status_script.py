@@ -25,6 +25,8 @@ def test_server_status_script_covers_runtime_sections() -> None:
     assert "pid-active" in script
     assert "direct-aqsp-cron-needs-review" in script
     assert "bt-wrapper action=" in script
+    assert 'cron="' in script
+    assert 'gate="' in script
     assert "found_direct" in script
     assert 'echo "none"' in script
     assert 'python3" -m aqsp doctor' in script or "-m aqsp doctor" in script

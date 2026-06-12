@@ -94,9 +94,9 @@ def test_bt_task_script_exposes_panel_safe_actions() -> None:
     assert "AQSP_MONITOR_TIMEOUT_SECONDS=600" in script
     assert "AQSP_LOCK_STALE_MINUTES=360" in script
     assert "Recommended BT schedule (Asia/Shanghai)" in script
-    assert "news      08:45 Mon-Fri; 10:00 Sat/Sun" in script
+    assert "news      08:35 Mon-Fri; 09:05 Sat/Sun" in script
     assert "daily     18:00 Mon-Fri" in script
-    assert "coldstart 19:40 Mon-Fri" in script
+    assert "coldstart 16:10 Mon-Fri" in script
     assert '"正常跳过/互斥保护"' in script
     assert "It is not a failed run." in script
     assert "AQSP_RUNNER_SCRIPT=scripts/daily_pipeline.sh" in script

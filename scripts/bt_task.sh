@@ -36,12 +36,12 @@ BT panel examples:
   /bin/bash /opt/aqsp/scripts/bt_task.sh news
 
 Recommended BT schedule (Asia/Shanghai):
-  news      08:45 Mon-Fri; 10:00 Sat/Sun
-  intraday  09:40-11:50 every 10 min; 13:00-14:50 every 10 min, Mon-Fri
+  news      08:35 Mon-Fri; 09:05 Sat/Sun
+  intraday  every 10 min; script gates 09:40-11:30 / 13:00-14:50, Mon-Fri
   midday    12:05 Mon-Fri
   daily     18:00 Mon-Fri
-  coldstart 19:40 Mon-Fri
-  monitor   every 15 min Mon-Fri
+  coldstart 16:10 Mon-Fri
+  monitor   every 15 min
   status    manual only
 
 Notes:
