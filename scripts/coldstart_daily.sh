@@ -14,6 +14,7 @@ LOCK_DIR="${PROJECT_ROOT}/.locks"
 # 与 scripts/server_sync_and_run.sh 共用同一把锁，避免冷启动与日终主链路并发。
 LOCK_FILE="${LOCK_DIR}/server-runtime.lock"
 LOCK_INFO_FILE="${LOCK_FILE}/meta.env"
+LOCK_STALE_MINUTES="${AQSP_LOCK_STALE_MINUTES:-360}"
 
 log() {
     mkdir -p "$LOG_DIR"
@@ -25,6 +26,35 @@ resolve_path() {
         /*) printf '%s\n' "$1" ;;
         *) printf '%s/%s\n' "$PROJECT_ROOT" "$1" ;;
     esac
+}
+
+lock_age_minutes() {
+    local path="$1"
+    local now_epoch mtime
+    now_epoch="$(date +%s)"
+    mtime="$(stat -c %Y "$path" 2>/dev/null || stat -f %m "$path")"
+    echo $(( (now_epoch - mtime) / 60 ))
+}
+
+load_lock_info() {
+    if [ -f "$LOCK_INFO_FILE" ]; then
+        # shellcheck disable=SC1090
+        . "$LOCK_INFO_FILE"
+    fi
+}
+
+lock_is_stale() {
+    if [ ! -d "$LOCK_FILE" ]; then
+        return 1
+    fi
+    local age_minutes pid=""
+    age_minutes="$(lock_age_minutes "$LOCK_FILE")"
+    load_lock_info
+    pid="${LOCK_PID:-}"
+    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+        return 1
+    fi
+    [ "$age_minutes" -ge "$LOCK_STALE_MINUTES" ]
 }
 
 first_existing_path() {
@@ -79,10 +109,16 @@ mkdir -p \
     "$(dirname "$REPORT_PATH")" \
     "$(dirname "$CSV_PATH")"
 
+if [ -d "$LOCK_FILE" ] && lock_is_stale; then
+    stale_age="$(lock_age_minutes "$LOCK_FILE")"
+    load_lock_info
+    log "检测到陈旧主锁，自动回收 runner=${LOCK_RUNNER:-unknown} pid=${LOCK_PID:-unknown} age=${stale_age}min started_at=${LOCK_STARTED_AT:-unknown}"
+    rm -rf -- "$LOCK_FILE"
+fi
+
 if ! mkdir "$LOCK_FILE" 2>/dev/null; then
     if [ -f "$LOCK_INFO_FILE" ]; then
-        # shellcheck disable=SC1090
-        . "$LOCK_INFO_FILE"
+        load_lock_info
         log "主链路仍在运行，本次冷启动正常跳过；这是互斥保护，不是失败 runner=${LOCK_RUNNER:-unknown} pid=${LOCK_PID:-unknown} started_at=${LOCK_STARTED_AT:-unknown}"
     else
         log "主链路仍在运行，本次冷启动正常跳过；这是互斥保护，不是失败"
