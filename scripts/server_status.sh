@@ -81,8 +81,8 @@ print_aqsp_cron_audit() {
                 cron_id="$(basename "$cron_file")"
                 cron_schedule="$(printf '%s\n' "$cron_text" | awk -v id="$cron_id" '$0 ~ id {print $1" "$2" "$3" "$4" "$5; exit}')"
                 [ -n "$cron_schedule" ] || cron_schedule="not-installed"
-                action="$(grep -Eo 'bt_task\.sh[[:space:]]+[a-z]+' "$cron_file" | awk '{print $2}' | head -n 1)"
-                time_gate="$(grep -Eo 'special_time=[0-9:,]+' "$cron_file" | head -n 1 | cut -d= -f2)"
+                action="$(grep -Eo 'bt_task\.sh[[:space:]]+[a-z]+' "$cron_file" | awk '{print $2}' | head -n 1 || true)"
+                time_gate="$(grep -Eo 'special_time=[0-9:,]+' "$cron_file" | head -n 1 | cut -d= -f2 || true)"
                 [ -n "$time_gate" ] || time_gate="-"
                 printf 'bt-wrapper action=%s cron="%s" gate="%s" script=%s\n' \
                     "${action:-unknown}" "$cron_schedule" "$time_gate" "$cron_file"
