@@ -155,7 +155,7 @@ class Briefing:
 
     def to_markdown(self) -> str:
         lines = [f"# 每日研究复盘-{_safe_markdown_text(self.date)}", ""]
-        lines.append("**免责声明**: 本报告仅供研究参考，不构成投资建议。")
+        lines.append("**免责声明**: 本报告仅供研究参考，不构成交易指令或投资建议。")
         lines.append("")
 
         for section in self.sections:
