@@ -15,6 +15,7 @@ from scripts.diagnose_runtime import (
     _large_return_rows,
     _latest_run_source_runtime,
     _runtime_paths,
+    _scheduler_runtime_lines,
     _tdx_vipdoc_summary,
 )
 
@@ -86,6 +87,18 @@ def test_latest_run_source_runtime_derives_notify_level() -> None:
     assert result["notify_level"] == "warning"
     assert result["health_label"] == "fallback"
     assert result["fallback_used"] is True
+
+
+def test_scheduler_runtime_lines_are_platform_specific() -> None:
+    assert _scheduler_runtime_lines("Linux") == [
+        "- scheduler: bt_panel_or_cron",
+        "- launchd: not_applicable (macOS only)",
+    ]
+
+    darwin_lines = _scheduler_runtime_lines("Darwin")
+    assert "- scheduler: launchd" in darwin_lines
+    assert any(line.startswith("- launchd_wrapper:") for line in darwin_lines)
+    assert any(line.startswith("- launch_agent:") for line in darwin_lines)
 
 
 def test_diagnose_runtime_auth_health_lines_include_recorded_sources() -> None:

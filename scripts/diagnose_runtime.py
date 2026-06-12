@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+import platform
 import struct
 from dataclasses import dataclass
 from pathlib import Path
@@ -66,6 +67,27 @@ def _file_status(path: Path) -> str:
     if not path.exists():
         return "missing"
     return f"present ({path.stat().st_size} bytes)"
+
+
+def _scheduler_runtime_lines(system_name: str | None = None) -> list[str]:
+    system = system_name or platform.system()
+    if system == "Darwin":
+        wrapper = Path.home() / ".aqsp/aqsp_daily_run_wrapper.sh"
+        launch_agent = Path.home() / "Library/LaunchAgents/com.aqsp.daily.plist"
+        return [
+            "- scheduler: launchd",
+            f"- launchd_wrapper: {_file_status(wrapper)}",
+            f"- launch_agent: {_file_status(launch_agent)}",
+        ]
+    if system == "Linux":
+        return [
+            "- scheduler: bt_panel_or_cron",
+            "- launchd: not_applicable (macOS only)",
+        ]
+    return [
+        f"- scheduler: unknown ({system or '-'})",
+        "- launchd: not_applicable (macOS only)",
+    ]
 
 
 def _source_health_summary() -> dict[str, Any]:
@@ -186,8 +208,6 @@ def _ready_source_lines() -> list[str]:
 
 def main() -> int:
     paths = _runtime_paths()
-    wrapper = Path.home() / ".aqsp/aqsp_daily_run_wrapper.sh"
-    launch_agent = Path.home() / "Library/LaunchAgents/com.aqsp.daily.plist"
 
     ledger_rows = _read_jsonl(paths.ledger)
     paper_rows = _read_jsonl(paths.paper_ledger)
@@ -202,8 +222,7 @@ def main() -> int:
         f"- ledger: {_file_status(paths.ledger)} rows={len(ledger_rows)} latest={latest_signal or '-'}",
         f"- paper_ledger: {_file_status(paths.paper_ledger)} rows={len(paper_rows)}",
         f"- risk_state: {_file_status(paths.risk_state)}",
-        f"- launchd_wrapper: {_file_status(wrapper)}",
-        f"- launch_agent: {_file_status(launch_agent)}",
+        *_scheduler_runtime_lines(),
         f"- dashboard: {_file_status(paths.dashboard)}",
         f"- latest_report: {_file_status(paths.latest_report)}",
         f"- latest_csv: {_file_status(paths.latest_csv)}",
