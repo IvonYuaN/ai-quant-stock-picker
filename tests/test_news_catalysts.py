@@ -172,6 +172,27 @@ def test_news_catalyst_infers_source_from_known_url() -> None:
     assert "来源: 同花顺" in markdown
 
 
+def test_news_catalyst_does_not_treat_wire_prefix_as_target_name() -> None:
+    report = build_catalyst_report(
+        fetch_global_news=lambda _limit: pd.DataFrame(
+            [
+                {
+                    "标题": "据伊朗迈赫尔通讯社：伊朗与美国谅解备忘录涉及解除制裁",
+                    "链接": "https://news.futunn.com/flash/20409368",
+                }
+            ]
+        ),
+        config=NewsCatalystConfig(min_confidence=0.3),
+    )
+
+    assert report.events
+    assert report.events[0].name == ""
+    assert report.events[0].source == "富途"
+    markdown = format_catalyst_notification(report)
+    assert "据伊朗迈赫尔通讯社**" not in markdown
+    assert "来源: 富途" in markdown
+
+
 def test_news_catalyst_filters_non_actionable_discipline_news() -> None:
     report = build_catalyst_report(
         fetch_global_news=lambda _limit: pd.DataFrame(

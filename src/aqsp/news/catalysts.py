@@ -106,6 +106,7 @@ _MEDIA_SOURCE_TOKENS: tuple[str, ...] = (
 _SOURCE_BY_URL_TOKEN: tuple[tuple[str, str], ...] = (
     ("10jqka.com.cn", "同花顺"),
     ("eastmoney.com", "东财"),
+    ("futunn.com", "富途"),
     ("cls.cn", "财联社"),
     ("cnstock.com", "证券报"),
     ("xinhua", "新华社"),
@@ -374,7 +375,7 @@ def _name_from_title(title: str) -> str:
     if not match:
         return ""
     name = match.group(1)
-    if name in {"消息人士", "市场消息", "快讯"}:
+    if name in {"消息人士", "市场消息", "快讯"} or name.startswith("据"):
         return ""
     return name
 
