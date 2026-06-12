@@ -65,7 +65,7 @@ print_lock_state() {
 }
 
 print_aqsp_cron_audit() {
-    local cron_text cron_line cron_file cron_id cron_schedule action time_gate found_wrapper found_direct
+    local cron_text cron_line cron_file cron_id cron_schedule action time_gate day_gate found_wrapper found_direct
     cron_text="$(crontab -l 2>/dev/null || true)"
     found_wrapper=0
     found_direct=0
@@ -84,8 +84,14 @@ print_aqsp_cron_audit() {
                 action="$(grep -Eo 'bt_task\.sh[[:space:]]+[a-z]+' "$cron_file" | awk '{print $2}' | head -n 1 || true)"
                 time_gate="$(grep -Eo 'special_time=[0-9:,]+' "$cron_file" | head -n 1 | cut -d= -f2 || true)"
                 [ -n "$time_gate" ] || time_gate="-"
-                printf 'bt-wrapper action=%s cron="%s" gate="%s" script=%s\n' \
-                    "${action:-unknown}" "$cron_schedule" "$time_gate" "$cron_file"
+                day_gate="$(grep -Eo 'time_list=[0-9,]+' "$cron_file" | head -n 1 | cut -d= -f2 || true)"
+                case "$day_gate" in
+                    1,2,3,4,5) day_gate="Mon-Fri" ;;
+                    6,7) day_gate="Sat-Sun" ;;
+                    "") day_gate="-" ;;
+                esac
+                printf 'bt-wrapper action=%s cron="%s" gate="%s" days="%s" script=%s\n' \
+                    "${action:-unknown}" "$cron_schedule" "$time_gate" "$day_gate" "$cron_file"
                 found_wrapper=1
             elif grep -q "$PROJECT_ROOT" "$cron_file" 2>/dev/null; then
                 printf 'project-cron-wrapper-needs-review script=%s\n' "$cron_file"
