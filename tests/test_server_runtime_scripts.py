@@ -141,7 +141,8 @@ def test_server_status_surfaces_bt_task_logs() -> None:
     assert "runner=%s pid=%s started_at=%s age=%smin %s" in script
     assert 'print_section "BT TASK LOG"' in script
     assert "logs/bt/bt-${action}-$(date +%Y-%m-%d).log" in script
-    assert "intraday midday daily coldstart monitor news status" in script
+    assert "intraday midday daily coldstart monitor news" in script
+    assert "bt-status-" not in script
 
 
 def test_scheduler_diagnosis_is_read_only_and_bt_first() -> None:

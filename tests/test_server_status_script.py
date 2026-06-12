@@ -27,6 +27,8 @@ def test_server_status_script_covers_runtime_sections() -> None:
     assert "bt-wrapper action=" in script
     assert 'cron="' in script
     assert 'gate="' in script
+    assert "for action in intraday midday daily coldstart monitor news; do" in script
+    assert "bt-status-" not in script
     assert "found_direct" in script
     assert 'echo "none"' in script
     assert 'python3" -m aqsp doctor' in script or "-m aqsp doctor" in script

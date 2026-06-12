@@ -171,7 +171,7 @@ print_section "DEPLOY LOG"
 tail -n 40 "${PROJECT_ROOT}/logs/deploy/sync-$(date +%Y-%m-%d).log" 2>/dev/null || true
 
 print_section "BT TASK LOG"
-for action in intraday midday daily coldstart monitor news status; do
+for action in intraday midday daily coldstart monitor news; do
     echo "--- ${action} ---"
     tail -n 20 "${PROJECT_ROOT}/logs/bt/bt-${action}-$(date +%Y-%m-%d).log" 2>/dev/null || true
 done
