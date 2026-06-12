@@ -32,6 +32,9 @@ def test_server_status_script_covers_runtime_sections() -> None:
     assert 'days="' in script
     assert "Mon-Fri" in script
     assert "Sat-Sun" in script
+    assert "script:Mon-Fri" in script
+    assert "script:09:40-11:30/13:00-14:50" in script
+    assert "script:11:35-12:30" in script
     assert "for action in intraday midday daily coldstart monitor news; do" in script
     assert "bt-status-" not in script
     assert "found_direct" in script

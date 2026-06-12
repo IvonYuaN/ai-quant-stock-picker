@@ -90,6 +90,21 @@ print_aqsp_cron_audit() {
                     6,7) day_gate="Sat-Sun" ;;
                     "") day_gate="-" ;;
                 esac
+                if [ "$day_gate" = "-" ]; then
+                    case "${action:-}" in
+                        daily|coldstart)
+                            day_gate="script:Mon-Fri"
+                            ;;
+                        midday)
+                            day_gate="script:Mon-Fri"
+                            time_gate="script:11:35-12:30"
+                            ;;
+                        intraday)
+                            day_gate="script:Mon-Fri"
+                            time_gate="script:09:40-11:30/13:00-14:50"
+                            ;;
+                    esac
+                fi
                 printf 'bt-wrapper action=%s cron="%s" gate="%s" days="%s" script=%s\n' \
                     "${action:-unknown}" "$cron_schedule" "$time_gate" "$day_gate" "$cron_file"
                 found_wrapper=1
