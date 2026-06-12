@@ -64,6 +64,43 @@ print_lock_state() {
         "$lock_name" "$runner" "$pid" "$started_at" "$age" "$pid_state"
 }
 
+print_aqsp_cron_audit() {
+    local cron_text cron_line cron_file action
+    cron_text="$(crontab -l 2>/dev/null || true)"
+
+    echo "BT wrapper entries:"
+    if [ -d /www/server/cron ]; then
+        for cron_file in /www/server/cron/*; do
+            [ -f "$cron_file" ] || continue
+            case "$cron_file" in
+                *.log|*.lock|*.pl) continue ;;
+            esac
+            if grep -q "bt_task.sh" "$cron_file" 2>/dev/null; then
+                action="$(grep -Eo 'bt_task\.sh[[:space:]]+[a-z]+' "$cron_file" | awk '{print $2}' | head -n 1)"
+                printf 'bt-wrapper action=%s script=%s\n' "${action:-unknown}" "$cron_file"
+            elif grep -q "$PROJECT_ROOT" "$cron_file" 2>/dev/null; then
+                printf 'project-cron-wrapper-needs-review script=%s\n' "$cron_file"
+            fi
+        done
+    else
+        echo "bt-cron-dir missing: /www/server/cron"
+    fi
+
+    echo "Direct AQSP crontab entries:"
+    while IFS= read -r cron_line; do
+        [ -n "$cron_line" ] || continue
+        case "$cron_line" in
+            \#*|LANG=*|LC_ALL=*) continue ;;
+        esac
+        if printf '%s\n' "$cron_line" | grep -qE "(/opt/aqsp|${PROJECT_ROOT})" \
+            && ! printf '%s\n' "$cron_line" | grep -q "/www/server/cron/"; then
+            printf 'direct-aqsp-cron-needs-review %s\n' "$cron_line"
+        fi
+    done <<EOF
+$cron_text
+EOF
+}
+
 file_line() {
     local path="$1"
     if [ -e "$path" ]; then
@@ -80,6 +117,9 @@ git status --short
 
 print_section "CRON"
 crontab -l 2>/dev/null || true
+
+print_section "CRON AQSP AUDIT"
+print_aqsp_cron_audit
 
 print_section "LOCKS"
 printf 'config runner_timeout=%ss monitor_timeout=%ss stale_after=%smin\n' \

@@ -11,6 +11,7 @@ def test_server_status_script_covers_runtime_sections() -> None:
 
     assert 'print_section "GIT"' in script
     assert 'print_section "CRON"' in script
+    assert 'print_section "CRON AQSP AUDIT"' in script
     assert 'print_section "LOCKS"' in script
     assert 'print_section "ARTIFACTS"' in script
     assert 'print_section "RUNTIME"' in script
@@ -22,4 +23,6 @@ def test_server_status_script_covers_runtime_sections() -> None:
     assert "server-runtime.lock" in script
     assert "server-monitor.lock" in script
     assert "pid-active" in script
+    assert "direct-aqsp-cron-needs-review" in script
+    assert "bt-wrapper action=" in script
     assert 'python3" -m aqsp doctor' in script or "-m aqsp doctor" in script
