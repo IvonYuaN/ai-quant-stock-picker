@@ -1,13 +1,20 @@
 from __future__ import annotations
 
 import pandas as pd
+import pytest
 
+from aqsp.data.cn import margin_trading
 from aqsp.data.cn.margin_trading import (
     compute_margin_factor,
     fetch_margin_data,
     _load_cache,
     _save_cache,
 )
+
+
+@pytest.fixture(autouse=True)
+def _disable_margin_api(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(margin_trading, "_try_fetch_single_date", lambda date_str: None)
 
 
 def test_compute_margin_factor_returns_change_ratio(tmp_path) -> None:
