@@ -75,6 +75,32 @@ def test_momentum_strategy_empty_data():
     assert scores["600000"] == 0.0
 
 
+def test_momentum_rsi_score_is_directional_when_rsi_is_high() -> None:
+    config = StrategyConfig(name="momentum")
+    strategy = MomentumStrategy(config)
+
+    assert strategy._calculate_rsi_score(pd.DataFrame({"close": [10.0] * 20})) == 1.0
+
+
+def test_momentum_rsi_score_is_not_mean_reversion_when_rsi_is_low() -> None:
+    config = StrategyConfig(name="momentum")
+    strategy = MomentumStrategy(config)
+
+    prices = [20.0 - i * 0.5 for i in range(20)]
+
+    assert strategy._calculate_rsi_score(pd.DataFrame({"close": prices})) == 0.0
+
+
+def test_momentum_return_score_does_not_go_negative_when_return_is_negative() -> None:
+    config = StrategyConfig(name="momentum")
+    strategy = MomentumStrategy(config)
+
+    score = strategy._calculate_momentum_score(total_return=-0.10, volatility=0.0)
+
+    assert 0.0 <= score <= 1.0
+    assert score == pytest.approx(0.5)
+
+
 def test_momentum_evaluate_returns_signal_score():
     dates = pd.date_range("2026-01-01", periods=60, freq="D")
     prices = np.linspace(10, 15, 60)
