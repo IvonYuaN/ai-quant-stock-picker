@@ -148,6 +148,27 @@ def test_news_catalyst_downgrades_unverified_source_tips() -> None:
     assert not report.events
 
 
+def test_news_catalyst_infers_source_from_known_url() -> None:
+    report = build_catalyst_report(
+        fetch_global_news=lambda _limit: pd.DataFrame(
+            [
+                {
+                    "标题": "中国西电：中标国家电网特高压项目，金额18.99亿元",
+                    "链接": "https://news.10jqka.com.cn/20260612/c677419676.shtml",
+                    "时间": "2026-06-12 15:33:16",
+                }
+            ]
+        ),
+    )
+
+    assert report.events
+    assert report.events[0].source == "同花顺"
+    assert report.events[0].verification == "媒体来源"
+    assert report.events[0].confidence >= 0.5
+    markdown = format_catalyst_notification(report)
+    assert "来源: 同花顺" in markdown
+
+
 def test_news_catalyst_filters_non_actionable_discipline_news() -> None:
     report = build_catalyst_report(
         fetch_global_news=lambda _limit: pd.DataFrame(

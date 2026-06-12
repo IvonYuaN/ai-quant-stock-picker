@@ -85,6 +85,36 @@ NEGATIVE_PATTERNS: tuple[tuple[str, str, int], ...] = (
     ("价格下跌|降价|需求疲弱|库存高企|产能过剩", "供需转弱", 4),
 )
 
+_AUTHORITATIVE_SOURCE_TOKENS: tuple[str, ...] = (
+    "公告",
+    "交易所",
+    "巨潮",
+    "公司",
+    "证监会",
+)
+
+_MEDIA_SOURCE_TOKENS: tuple[str, ...] = (
+    "新华社",
+    "央视",
+    "证券报",
+    "财联社",
+    "东财",
+    "同花顺",
+    "新浪",
+)
+
+_SOURCE_BY_URL_TOKEN: tuple[tuple[str, str], ...] = (
+    ("10jqka.com.cn", "同花顺"),
+    ("eastmoney.com", "东财"),
+    ("cls.cn", "财联社"),
+    ("cnstock.com", "证券报"),
+    ("xinhua", "新华社"),
+    ("cctv", "央视"),
+    ("cninfo.com.cn", "巨潮公告"),
+    ("sse.com.cn", "上交所公告"),
+    ("szse.cn", "深交所公告"),
+)
+
 
 def build_catalyst_report(
     *,
@@ -404,16 +434,18 @@ def _iter_news_rows(df: pd.DataFrame) -> Iterable[dict[str, str]]:
         )
         if not title:
             continue
+        url = _first_text(row, ("新闻链接", "链接", "url", "公告链接"))
+        source = _first_text(
+            row, ("文章来源", "媒体", "source", "来源", "公告类型")
+        ) or _source_from_url(url)
         rows.append(
             {
                 "title": title,
-                "source": _first_text(
-                    row, ("文章来源", "媒体", "source", "来源", "公告类型")
-                ),
+                "source": source,
                 "published_at": _first_text(
                     row, ("发布时间", "时间", "date", "日期", "公告日期")
                 ),
-                "url": _first_text(row, ("新闻链接", "链接", "url", "公告链接")),
+                "url": url,
             }
         )
     return tuple(rows)
@@ -425,6 +457,16 @@ def _first_text(row: dict[str, Any], keys: Sequence[str]) -> str:
         text = "" if value is None else str(value).strip()
         if text and text.lower() != "nan":
             return text
+    return ""
+
+
+def _source_from_url(url: str) -> str:
+    clean = str(url or "").lower()
+    if not clean:
+        return ""
+    for token, source in _SOURCE_BY_URL_TOKEN:
+        if token in clean:
+            return source
     return ""
 
 
@@ -522,20 +564,10 @@ def _base_confidence(row: dict[str, str]) -> float:
     title = row.get("title", "")
     source = row.get("source", "")
     confidence = 0.38
-    if any(
-        token in source
-        for token in (
-            "公告",
-            "交易所",
-            "巨潮",
-            "公司",
-            "证券报",
-            "新华社",
-            "央视",
-            "证监会",
-        )
-    ):
+    if any(token in source for token in _AUTHORITATIVE_SOURCE_TOKENS):
         confidence += 0.28
+    elif any(token in source for token in _MEDIA_SOURCE_TOKENS):
+        confidence += 0.12
     if any(token in title for token in ("据悉", "传", "网传", "市场消息", "消息人士")):
         confidence -= 0.18
     if row.get("url"):
@@ -545,12 +577,9 @@ def _base_confidence(row: dict[str, str]) -> float:
 
 def _verification_label(row: dict[str, str]) -> str:
     source = row.get("source", "")
-    if any(token in source for token in ("公告", "交易所", "巨潮", "公司", "证监会")):
+    if any(token in source for token in _AUTHORITATIVE_SOURCE_TOKENS):
         return "接近原始来源"
-    if any(
-        token in source
-        for token in ("新华社", "央视", "证券报", "财联社", "东财", "同花顺", "新浪")
-    ):
+    if any(token in source for token in _MEDIA_SOURCE_TOKENS):
         return "媒体来源"
     return "待证实"
 
@@ -755,13 +784,13 @@ def _prioritize_news_frame(df: pd.DataFrame) -> pd.DataFrame:
             row, ("新闻标题", "公告标题", "标题", "title", "内容", "摘要")
         )
         blob = f"{source_text} {title}"
-        if any(token in blob for token in ("公告", "交易所", "巨潮", "证监会")):
+        if any(token in blob for token in _AUTHORITATIVE_SOURCE_TOKENS):
             return 0
         if any(
             token in blob for token in ("新华社", "央视", "国常会", "发改委", "工信部")
         ):
             return 1
-        if any(token in blob for token in ("证券报", "财联社", "同花顺", "东财")):
+        if any(token in blob for token in _MEDIA_SOURCE_TOKENS):
             return 2
         return 3
 
