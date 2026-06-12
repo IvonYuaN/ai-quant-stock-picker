@@ -43,6 +43,7 @@ class DataValidator:
     # 涨跌幅限制（不同市场）
     LIMIT_MOVE_MAIN_BOARD: float = 0.10  # 主板：10%
     LIMIT_MOVE_GROWTH: float = 0.20  # 创业板/科创板：20%
+    LIMIT_MOVE_BEIJING: float = 0.30  # 北交所：30%
     LIMIT_MOVE_ST: float = 0.05  # ST股：5%
 
     # 异常检测阈值
@@ -50,9 +51,7 @@ class DataValidator:
     VOLUME_SPIKE_THRESHOLD: float = 100.0  # 成交量异常倍增阈值
     CONTINUOUS_ZERO_VOLUME_DAYS: int = 3  # 连续零成交天数阈值
 
-    def validate_ohlc(
-        self, df: pd.DataFrame, symbol: str = ""
-    ) -> ValidationResult:
+    def validate_ohlc(self, df: pd.DataFrame, symbol: str = "") -> ValidationResult:
         """验证OHLC数据的基本质量。
 
         验证项目：
@@ -73,9 +72,7 @@ class DataValidator:
         required_columns = {"open", "high", "low", "close", "volume"}
         missing = required_columns - set(df.columns)
         if missing:
-            result.errors.append(
-                f"缺失必需列: {', '.join(sorted(missing))}"
-            )
+            result.errors.append(f"缺失必需列: {', '.join(sorted(missing))}")
             result.is_valid = False
             return result
 
@@ -83,16 +80,14 @@ class DataValidator:
         for col in required_columns:
             null_count = df[col].isna().sum()
             if null_count > 0:
-                result.errors.append(
-                    f"列 '{col}' 包含 {null_count} 个空值"
-                )
+                result.errors.append(f"列 '{col}' 包含 {null_count} 个空值")
                 result.is_valid = False
 
         if not result.is_valid:
             return result
 
         # 进行其他验证
-        result_price_range = self.validate_price_range(df)
+        result_price_range = self.validate_price_range(df, symbol=symbol)
         result.errors.extend(result_price_range.errors)
         result.warnings.extend(result_price_range.warnings)
         if not result_price_range.is_valid:
@@ -111,7 +106,11 @@ class DataValidator:
 
         return result
 
-    def validate_price_range(self, df: pd.DataFrame) -> ValidationResult:
+    def validate_price_range(
+        self,
+        df: pd.DataFrame,
+        symbol: str = "",
+    ) -> ValidationResult:
         """验证价格合理性。
 
         检查项目：
@@ -149,57 +148,39 @@ class DataValidator:
         # 检查 high >= low
         invalid_hl = df[df["high"] < df["low"]]
         if not invalid_hl.empty:
-            result.errors.append(
-                f"发现 {len(invalid_hl)} 行数据: high < low"
-            )
+            result.errors.append(f"发现 {len(invalid_hl)} 行数据: high < low")
             result.is_valid = False
 
         # 检查 high >= open, close
         invalid_ho = df[df["high"] < df["open"]]
         if not invalid_ho.empty:
-            result.errors.append(
-                f"发现 {len(invalid_ho)} 行数据: high < open"
-            )
+            result.errors.append(f"发现 {len(invalid_ho)} 行数据: high < open")
             result.is_valid = False
 
         invalid_hc = df[df["high"] < df["close"]]
         if not invalid_hc.empty:
-            result.errors.append(
-                f"发现 {len(invalid_hc)} 行数据: high < close"
-            )
+            result.errors.append(f"发现 {len(invalid_hc)} 行数据: high < close")
             result.is_valid = False
 
         # 检查 low <= open, close
         invalid_lo = df[df["low"] > df["open"]]
         if not invalid_lo.empty:
-            result.errors.append(
-                f"发现 {len(invalid_lo)} 行数据: low > open"
-            )
+            result.errors.append(f"发现 {len(invalid_lo)} 行数据: low > open")
             result.is_valid = False
 
         invalid_lc = df[df["low"] > df["close"]]
         if not invalid_lc.empty:
-            result.errors.append(
-                f"发现 {len(invalid_lc)} 行数据: low > close"
-            )
+            result.errors.append(f"发现 {len(invalid_lc)} 行数据: low > close")
             result.is_valid = False
 
         # 检查涨跌幅
+        limit = self._limit_move_for_symbol(df, symbol)
         daily_returns = df["close"].pct_change().dropna()
         for idx, ret in daily_returns.items():
             abs_ret = abs(ret)
-            # 根据代码判断市场（简化版本）
-            if self._is_st_stock(df):
-                limit = self.LIMIT_MOVE_ST
-            elif self._is_growth_board(df):
-                limit = self.LIMIT_MOVE_GROWTH
-            else:
-                limit = self.LIMIT_MOVE_MAIN_BOARD
 
             if abs_ret >= limit + 0.0001:  # 允许浮点精度误差
-                result.errors.append(
-                    f"日涨跌幅超限: {ret:.2%} (限制: {limit:.2%})"
-                )
+                result.errors.append(f"日涨跌幅超限: {ret:.2%} (限制: {limit:.2%})")
                 result.is_valid = False
 
         return result
@@ -238,9 +219,7 @@ class DataValidator:
 
         if continuous_zeros.max() > self.CONTINUOUS_ZERO_VOLUME_DAYS:
             max_consecutive = int(continuous_zeros.max())
-            result.warnings.append(
-                f"检测到 {max_consecutive} 天连续零成交（可能停牌）"
-            )
+            result.warnings.append(f"检测到 {max_consecutive} 天连续零成交（可能停牌）")
 
         return result
 
@@ -335,20 +314,50 @@ class DataValidator:
 
         return result
 
+    def _limit_move_for_symbol(self, df: pd.DataFrame, symbol: str = "") -> float:
+        clean_symbol = self._resolve_symbol(df, symbol)
+        if self._is_st_stock(df):
+            return self.LIMIT_MOVE_ST
+        if self._is_growth_board_symbol(clean_symbol):
+            return self.LIMIT_MOVE_GROWTH
+        if self._is_beijing_board_symbol(clean_symbol):
+            return self.LIMIT_MOVE_BEIJING
+        return self.LIMIT_MOVE_MAIN_BOARD
+
+    @staticmethod
+    def _resolve_symbol(df: pd.DataFrame, symbol: str = "") -> str:
+        clean = str(symbol or "").strip()
+        if clean:
+            return clean
+        if "symbol" not in df.columns or df.empty:
+            return ""
+        try:
+            return str(df["symbol"].dropna().iloc[0]).strip()
+        except (IndexError, KeyError):
+            return ""
+
     @staticmethod
     def _is_st_stock(df: pd.DataFrame) -> bool:
         """检查是否为ST股票。
 
-        根据DataFrame推断是否为ST股票（这里返回False作为默认）。
-        实际应用中应传入stock_code参数。
+        优先根据名称字段识别，未提供名称时按普通股票处理。
         """
-        return False
+        if "name" not in df.columns or df.empty:
+            return False
+        names = df["name"].dropna().astype(str)
+        return any("ST" in name.upper() for name in names)
 
     @staticmethod
-    def _is_growth_board(df: pd.DataFrame) -> bool:
+    def _is_growth_board_symbol(symbol: str) -> bool:
         """检查是否为创业板/科创板股票。
 
-        根据DataFrame推断是否为增长板块（这里返回False作为默认）。
-        实际应用中应传入stock_code参数。
+        创业板 300/301，科创板 688/689，涨跌幅通常按 20% 校验。
         """
-        return False
+        clean = symbol.strip()
+        return clean.startswith(("300", "301", "688", "689"))
+
+    @staticmethod
+    def _is_beijing_board_symbol(symbol: str) -> bool:
+        """检查是否为北交所股票，涨跌幅通常按 30% 校验。"""
+        clean = symbol.strip()
+        return clean.startswith(("43", "83", "87", "88"))
