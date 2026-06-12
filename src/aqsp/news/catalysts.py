@@ -60,7 +60,7 @@ Fetcher = Callable[[str, int], pd.DataFrame]
 
 
 POSITIVE_PATTERNS: tuple[tuple[str, str, int], ...] = (
-    ("涨价|提价|价格上调|报价上调|涨幅|涨超|缺货|供不应求", "涨价/供需催化", 5),
+    ("涨价|提价|价格上调|报价上调|缺货|供不应求", "涨价/供需催化", 5),
     ("扩产受限|停产|限产|供给收缩|库存低位|排产紧张", "供给收缩", 4),
     ("政策支持|刺激|补贴|利好|国常会|发改委|工信部", "政策催化", 4),
     ("中标|大单|订单|签订合同|采购|定点|放量", "订单/需求验证", 4),
@@ -290,6 +290,8 @@ def _classify_title(title: str) -> tuple[str, Impact, int, str] | None:
         return None
     import re
 
+    if _is_market_price_action_noise(clean):
+        return None
     for pattern, category, weight in NEGATIVE_PATTERNS:
         if re.search(pattern, clean):
             return (
@@ -307,6 +309,24 @@ def _classify_title(title: str) -> tuple[str, Impact, int, str] | None:
                 "关注是否出现板块扩散、量价确认和连续发酵",
             )
     return None
+
+
+def _is_market_price_action_noise(title: str) -> bool:
+    import re
+
+    price_action = re.search(
+        r"ETF|指数|盘中|涨超|涨逾|涨幅|大涨|领涨|转跌|收涨|成交|放量冲击",
+        title,
+    )
+    if not price_action:
+        return False
+    fundamental = re.search(
+        r"公告|交易所|涨价|提价|报价上调|价格上调|缺货|供不应求|政策支持|补贴|"
+        r"中标|订单|签订合同|业绩预增|回购|增持|并购|重组|减持|立案|调查|"
+        r"处罚|事故|停产|制裁|出口管制|预亏|亏损",
+        title,
+    )
+    return fundamental is None
 
 
 def _iter_news_rows(df: pd.DataFrame) -> Iterable[dict[str, str]]:

@@ -83,6 +83,21 @@ def test_news_catalyst_notification_keeps_research_boundary() -> None:
     assert "来源: 新华社" in markdown
 
 
+def test_news_catalyst_filters_pure_market_price_action_noise() -> None:
+    report = build_catalyst_report(
+        fetch_global_news=lambda _limit: pd.DataFrame(
+            [
+                {"标题": "证券ETF盘中涨超3%，成交额明显放量", "来源": "东财"},
+                {"标题": "MLCC 行业报价上调，龙头排产紧张", "来源": "证券报"},
+            ]
+        ),
+    )
+
+    titles = tuple(event.title for event in report.events)
+    assert "MLCC 行业报价上调，龙头排产紧张" in titles
+    assert "证券ETF盘中涨超3%，成交额明显放量" not in titles
+
+
 def test_news_catalyst_report_degrades_when_source_times_out() -> None:
     def slow_global_news(_limit: int) -> pd.DataFrame:
         time.sleep(0.2)
