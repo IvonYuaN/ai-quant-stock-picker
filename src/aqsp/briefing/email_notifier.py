@@ -223,7 +223,7 @@ def render_html_email(data: BriefingData) -> str:
     # 底部免责
     footer = """
     <div style="margin-top: 24px; padding-top: 16px; border-top: 1px solid #e5e7eb; font-size: 11px; color: #94a3b8; text-align: center;">
-      <p>⚠️ 仅供研究参考，不构成投资建议。投资有风险，决策需谨慎。</p>
+      <p>⚠️ 仅供研究参考，不构成交易指令或投资建议。纸面跟踪结果需人工复核。</p>
       <p style="margin: 4px 0 0;">AI 量化选股系统 · 基于 walk-forward 双门验证</p>
     </div>
     """
