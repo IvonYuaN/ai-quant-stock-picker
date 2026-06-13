@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 
@@ -15,6 +16,16 @@ OUTPUT_MODULES = (
     "src/aqsp/reports/v2.py",
 )
 
+DISCLAIMER_MODULES = OUTPUT_MODULES + (
+    "README.md",
+    "scripts/diagnose_momentum.py",
+    "scripts/generate_cold_start_signals.py",
+    "src/aqsp/briefing/templates/default.md.j2",
+    "src/aqsp/news/catalysts.py",
+    "src/aqsp/web/dashboard.py",
+    "src/aqsp/web/dashboard_beginner.py",
+)
+
 FORBIDDEN_OUTPUT_WORDING = (
     "今日无重点跟踪",
     "暂无重点跟踪",
@@ -22,6 +33,10 @@ FORBIDDEN_OUTPUT_WORDING = (
     "重点跟踪对象",
     "🎯 重点跟踪",
     "抬升成重点跟踪",
+)
+
+FORBIDDEN_DISCLAIMER_WORDING = (
+    re.compile(r"(?<!交易指令或)不构成投资建议"),
 )
 
 
@@ -32,5 +47,16 @@ def test_core_output_modules_do_not_reintroduce_action_like_focus_wording() -> N
         for phrase in FORBIDDEN_OUTPUT_WORDING:
             if phrase in text:
                 offenders.append(f"{module_path}: {phrase}")
+
+    assert offenders == []
+
+
+def test_user_visible_surfaces_do_not_use_legacy_disclaimer_wording() -> None:
+    offenders: list[str] = []
+    for module_path in DISCLAIMER_MODULES:
+        text = (PROJECT_ROOT / module_path).read_text(encoding="utf-8")
+        for pattern in FORBIDDEN_DISCLAIMER_WORDING:
+            if pattern.search(text):
+                offenders.append(f"{module_path}: {pattern.pattern}")
 
     assert offenders == []
