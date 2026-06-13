@@ -3520,12 +3520,10 @@ def run_briefing(args: argparse.Namespace) -> int:
         if cfg is None:
             print("⚠️  --email 已开启但 AQSP_SMTP_* 环境变量不全，跳过邮件发送")
         else:
-            from datetime import date as _date
-
             body = Path(args.output).read_text(encoding="utf-8")
             ok = send_briefing_email(
                 cfg=cfg,
-                subject=f"aqsp briefing {_date.today().isoformat()}",
+                subject=f"aqsp briefing {today_shanghai().isoformat()}",
                 markdown_body=body,
             )
             print("✅ 邮件已发送" if ok else "❌ 邮件发送失败")
