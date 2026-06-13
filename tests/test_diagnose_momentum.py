@@ -273,3 +273,4 @@ def test_main_writes_insufficient_sample_report_when_fetch_has_no_scored_rows(
     report = output_path.read_text(encoding="utf-8")
     assert "样本不足" in report
     assert "## 4. 结论" in report
+    assert "不构成交易指令或投资建议" in report

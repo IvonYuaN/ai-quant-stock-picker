@@ -38,7 +38,7 @@ def generate_mock_signal(symbol: str, signal_date: str, price: float, score: flo
         "ideal_buy": price,
         "strategies": ["momentum", "volume_breakout"],
         "reasons": ["基于历史数据生成的模拟信号"],
-        "risks": ["模拟信号，不构成投资建议"],
+        "risks": ["模拟信号，不构成交易指令或投资建议"],
         "stop_loss": round(price * 0.95, 2),
         "take_profit": round(price * 1.15, 2),
         "horizon_days": 3,
