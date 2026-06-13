@@ -65,6 +65,7 @@
 - `test_core_time.py`
 - `test_diagnose_momentum.py`
 - `test_preflight_upload.py`
+- `test_runtime_redline_guard.py`
 
 全量回归：
 
