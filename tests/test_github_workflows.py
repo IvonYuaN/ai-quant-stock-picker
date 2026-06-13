@@ -22,6 +22,8 @@ def test_ci_workflow_limits_paths_and_sets_concurrency() -> None:
     assert '"src/**"' in text
     assert '"tests/**"' in text
     assert '"test/**"' in text
+    assert '".github/workflows/**"' in text
+    assert '".github/workflows/ci.yml"' not in text
     assert 'FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"' in text
     assert "actions/checkout@v5" in text
     assert "actions/setup-python@v6" in text
