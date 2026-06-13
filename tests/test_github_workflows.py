@@ -57,6 +57,22 @@ def test_github_workflows_define_common_runtime_controls() -> None:
     assert offenders == []
 
 
+def test_github_workflows_disable_checkout_persisted_credentials() -> None:
+    offenders: list[str] = []
+
+    for path in _workflow_files():
+        lines = path.read_text(encoding="utf-8").splitlines()
+        rel_path = path.relative_to(PROJECT_ROOT)
+        for index, line in enumerate(lines):
+            if "uses: actions/checkout@" not in line:
+                continue
+            block = "\n".join(lines[index : index + 5])
+            if "persist-credentials: false" not in block:
+                offenders.append(f"{rel_path}:{index + 1}")
+
+    assert offenders == []
+
+
 def test_github_workflows_do_not_upload_runtime_artifacts() -> None:
     offenders: list[str] = []
 
