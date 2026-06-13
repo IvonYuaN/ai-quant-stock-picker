@@ -69,3 +69,27 @@ def test_github_workflows_do_not_run_browser_or_screenshot_collection() -> None:
                 offenders.append(f"{path.relative_to(PROJECT_ROOT)}:{term}")
 
     assert offenders == []
+
+
+def test_github_workflows_keep_repository_permissions_read_only() -> None:
+    forbidden_terms = (
+        "contents: write",
+        "write-all",
+        "actions: write",
+        "checks: write",
+        "id-token: write",
+        "issues: write",
+        "pull-requests: write",
+    )
+    offenders: list[str] = []
+
+    for path in _workflow_files():
+        text = path.read_text(encoding="utf-8").lower()
+        rel_path = str(path.relative_to(PROJECT_ROOT))
+        if "permissions:" not in text or "contents: read" not in text:
+            offenders.append(f"{rel_path}:missing-contents-read")
+        for term in forbidden_terms:
+            if term in text:
+                offenders.append(f"{rel_path}:{term}")
+
+    assert offenders == []
