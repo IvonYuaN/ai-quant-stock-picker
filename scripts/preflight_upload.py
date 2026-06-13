@@ -26,8 +26,11 @@ FORBIDDEN_PREFIXES = (
 )
 FORBIDDEN_EXACT = {
     ".env",
-    "data/predictions.jsonl",
+    "data/debate_results.jsonl",
+    "data/ledger.jsonl",
+    "data/llm_calls.jsonl",
     "data/paper_trades.jsonl",
+    "data/predictions.jsonl",
     "data/risk_state.json",
     "data/cache.db",
     "data/weight_history.jsonl",

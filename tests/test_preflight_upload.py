@@ -8,12 +8,27 @@ def test_preflight_blocks_runtime_private_artifacts() -> None:
         [
             "src/aqsp/cli.py",
             "private_data/tdx/sh/lday/sh600519.day",
+            "data/debate_results.jsonl",
+            "data/ledger.jsonl",
+            "data/llm_calls.jsonl",
             "data/predictions.jsonl",
             "reports/latest.md",
         ]
     )
 
     assert sorted(findings, key=lambda item: item.path) == [
+        UploadFinding(
+            "data/debate_results.jsonl",
+            "forbidden runtime/private artifact",
+        ),
+        UploadFinding(
+            "data/ledger.jsonl",
+            "forbidden runtime/private artifact",
+        ),
+        UploadFinding(
+            "data/llm_calls.jsonl",
+            "forbidden runtime/private artifact",
+        ),
         UploadFinding(
             "data/predictions.jsonl",
             "forbidden runtime/private artifact",
