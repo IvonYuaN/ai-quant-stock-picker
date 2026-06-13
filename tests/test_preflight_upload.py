@@ -11,7 +11,12 @@ def test_preflight_blocks_runtime_private_artifacts() -> None:
             "data/debate_results.jsonl",
             "data/ledger.jsonl",
             "data/llm_calls.jsonl",
+            "data/new_runtime_dump.jsonl",
+            "data/source_health.json",
             "data/predictions.jsonl",
+            "data/temp_cache.db",
+            "reports/custom.html",
+            "reports/custom.txt",
             "reports/latest.md",
         ]
     )
@@ -30,13 +35,24 @@ def test_preflight_blocks_runtime_private_artifacts() -> None:
             "forbidden runtime/private artifact",
         ),
         UploadFinding(
+            "data/new_runtime_dump.jsonl",
+            "forbidden runtime/private artifact",
+        ),
+        UploadFinding(
             "data/predictions.jsonl",
             "forbidden runtime/private artifact",
         ),
         UploadFinding(
+            "data/source_health.json",
+            "forbidden runtime/private artifact",
+        ),
+        UploadFinding("data/temp_cache.db", "forbidden runtime/private artifact"),
+        UploadFinding(
             "private_data/tdx/sh/lday/sh600519.day",
             "forbidden runtime/private artifact",
         ),
+        UploadFinding("reports/custom.html", "forbidden runtime/private artifact"),
+        UploadFinding("reports/custom.txt", "forbidden runtime/private artifact"),
         UploadFinding("reports/latest.md", "forbidden runtime/private artifact"),
     ]
 
