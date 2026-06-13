@@ -112,6 +112,22 @@ def test_github_workflows_keep_repository_permissions_read_only() -> None:
     assert offenders == []
 
 
+def test_github_workflows_do_not_use_privileged_triggers() -> None:
+    forbidden_terms = (
+        "pull_request_target:",
+        "workflow_run:",
+    )
+    offenders: list[str] = []
+
+    for path in _workflow_files():
+        text = path.read_text(encoding="utf-8").lower()
+        for term in forbidden_terms:
+            if term in text:
+                offenders.append(f"{path.relative_to(PROJECT_ROOT)}:{term}")
+
+    assert offenders == []
+
+
 def test_github_workflow_jobs_define_timeouts() -> None:
     offenders: list[str] = []
 
