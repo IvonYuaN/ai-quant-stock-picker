@@ -8,9 +8,9 @@ on:
         required: false
         default: "close"
   schedule:
-    # 09:10 Beijing time (UTC 01:10), Mon-Fri. 盘前观察池(open):用前一交易日数据
+    # 北京时间 09:10 (UTC 01:10), Mon-Fri. 盘前观察池(open):用前一交易日数据
     - cron: "10 1 * * 1-5"
-    # 15:30 Beijing time (UTC 07:30), Mon-Fri. 收盘后候选池(close):用当天日 K
+    # 北京时间 15:30 (UTC 07:30), Mon-Fri. 收盘后候选池(close):用当天日 K
     - cron: "30 7 * * 1-5"
 
 concurrency:
