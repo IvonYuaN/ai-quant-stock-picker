@@ -165,6 +165,19 @@ def test_github_workflows_do_not_use_privileged_triggers() -> None:
     assert offenders == []
 
 
+def test_pull_request_workflows_do_not_reference_secrets() -> None:
+    offenders: list[str] = []
+
+    for path in _workflow_files():
+        text = path.read_text(encoding="utf-8")
+        if "pull_request:" not in text:
+            continue
+        if "${{ secrets." in text:
+            offenders.append(str(path.relative_to(PROJECT_ROOT)))
+
+    assert offenders == []
+
+
 def test_github_workflow_jobs_define_timeouts() -> None:
     offenders: list[str] = []
 
