@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from scripts import preflight_upload
 from scripts.preflight_upload import UploadFinding, check_upload_candidates, _git_lines
 
 
@@ -59,6 +60,23 @@ def test_preflight_blocks_runtime_private_artifacts() -> None:
 
 def test_preflight_allows_research_registry() -> None:
     assert check_upload_candidates(["data/open_source_research.jsonl"]) == []
+
+
+def test_preflight_reuses_secret_assignment_scan_for_shell_scripts(
+    monkeypatch, tmp_path
+) -> None:
+    script = tmp_path / "scripts" / "secret_check.sh"
+    script.parent.mkdir(parents=True)
+    script.write_text('export HT_APIKEY="real-api-key"\n', encoding="utf-8")
+
+    monkeypatch.setattr(preflight_upload, "PROJECT_ROOT", tmp_path)
+
+    assert check_upload_candidates(["scripts/secret_check.sh"]) == [
+        UploadFinding(
+            "scripts/secret_check.sh",
+            str(script) + ":1: non-empty HT_APIKEY",
+        )
+    ]
 
 
 def test_git_lines_runs_from_repo_root_when_called_elsewhere(

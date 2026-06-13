@@ -14,6 +14,7 @@ OUTPUT_MODULES = (
     "src/aqsp/cli.py",
     "src/aqsp/report.py",
     "src/aqsp/reports/v2.py",
+    "scripts/render_dashboard.py",
 )
 
 DISCLAIMER_MODULES = OUTPUT_MODULES + (
@@ -35,6 +36,11 @@ FORBIDDEN_OUTPUT_WORDING = (
     "抬升成重点跟踪",
 )
 
+FORBIDDEN_STATIC_DASHBOARD_WORDING = (
+    "今日重点名单",
+    "重点跟踪与继续观察",
+)
+
 FORBIDDEN_DISCLAIMER_WORDING = (
     re.compile(r"(?<!交易指令或)不构成投资建议"),
 )
@@ -47,6 +53,16 @@ def test_core_output_modules_do_not_reintroduce_action_like_focus_wording() -> N
         for phrase in FORBIDDEN_OUTPUT_WORDING:
             if phrase in text:
                 offenders.append(f"{module_path}: {phrase}")
+
+    assert offenders == []
+
+
+def test_static_dashboard_does_not_reintroduce_action_like_focus_wording() -> None:
+    offenders: list[str] = []
+    text = (PROJECT_ROOT / "scripts/render_dashboard.py").read_text(encoding="utf-8")
+    for phrase in FORBIDDEN_STATIC_DASHBOARD_WORDING:
+        if phrase in text:
+            offenders.append(f"scripts/render_dashboard.py: {phrase}")
 
     assert offenders == []
 

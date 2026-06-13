@@ -2,7 +2,7 @@
 # 华泰证券 OpenClaw Skills 测试脚本
 
 INSTALL_ROOT="$HOME/.solo/skills"
-export HT_APIKEY="ht_BZVMWXVUH8KzRTcX4UaGQcRneAUndsSnj1KlTFIRS"
+: "${HT_APIKEY:?Set HT_APIKEY in your local environment before running this script.}"
 
 echo "========================================"
 echo "华泰证券 OpenClaw Skills 测试"

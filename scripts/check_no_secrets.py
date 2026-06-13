@@ -63,6 +63,16 @@ CONFIG_SUFFIXES = {
     ".yml",
 }
 
+SCRIPT_SUFFIXES = {
+    ".bash",
+    ".sh",
+    ".zsh",
+}
+
+SECRET_KEY_PATTERN = re.compile(
+    r"(?:TOKEN|PASSWORD|WEBHOOK_URL|API_KEY|APIKEY|SENDKEY|SECRET)\b"
+)
+
 TOKEN_PATTERNS = {
     "github_pat": re.compile(r"github_pat_[A-Za-z0-9_]{20,}"),
     "github_ghp": re.compile(r"ghp_[A-Za-z0-9]{20,}"),
@@ -73,6 +83,7 @@ TOKEN_PATTERNS = {
 SECRET_KEYS = {
     "GITHUB_TOKEN",
     "GITEE_TOKEN",
+    "HT_APIKEY",
     "TUSHARE_TOKEN",
     "TELEGRAM_BOT_TOKEN",
     "WECHAT_WEBHOOK_URL",
@@ -130,8 +141,12 @@ def is_config_like(path: Path) -> bool:
     return path.suffix.lower() in CONFIG_SUFFIXES
 
 
+def is_secret_assignment_scan_target(path: Path) -> bool:
+    return is_config_like(path) or path.suffix.lower() in SCRIPT_SUFFIXES
+
+
 def find_non_empty_secret_assignments(path: Path, text: str) -> list[str]:
-    if not is_config_like(path):
+    if not is_secret_assignment_scan_target(path):
         return []
 
     findings: list[str] = []
@@ -139,14 +154,16 @@ def find_non_empty_secret_assignments(path: Path, text: str) -> list[str]:
         line = raw_line.strip()
         if not line or line.startswith("#"):
             continue
-        match = re.match(r"^([A-Z0-9_]*(?:TOKEN|PASSWORD|WEBHOOK_URL))\s*[:=]\s*(.*)$", line)
+        match = re.match(r"^(?:export\s+)?([A-Z0-9_]+)\s*[:=]\s*(.*)$", line)
         if match is None:
             continue
         key, raw_value = match.groups()
+        if key not in SECRET_KEYS and SECRET_KEY_PATTERN.search(key) is None:
+            continue
         value = raw_value.strip().strip("'\"")
         if any(value.startswith(prefix) for prefix in SAFE_SECRET_REFERENCES):
             continue
-        if key in SECRET_KEYS and value and value not in {"...", "REPLACE_ME", "<secret>"}:
+        if value and value not in {"...", "REPLACE_ME", "<secret>", "dummy"}:
             findings.append(f"{relative_name(path)}:{line_no}: non-empty {key}")
     return findings
 

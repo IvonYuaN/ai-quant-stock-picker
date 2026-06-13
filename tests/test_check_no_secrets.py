@@ -12,6 +12,7 @@ def test_secret_scan_allows_empty_env_example_placeholders() -> None:
             "GITEE_TOKEN=",
             "TUSHARE_TOKEN=",
             "TELEGRAM_BOT_TOKEN=",
+            "API_KEY=dummy",
         ]
     )
 
@@ -23,6 +24,30 @@ def test_secret_scan_blocks_non_empty_env_example_values() -> None:
 
     assert find_non_empty_secret_assignments(Path(".env.example"), text) == [
         ".env.example:1: non-empty GITHUB_TOKEN"
+    ]
+
+
+def test_secret_scan_blocks_non_empty_apikey_shell_values() -> None:
+    text = 'export HT_APIKEY="real-api-key"'
+
+    assert find_non_empty_secret_assignments(Path("scripts/test_htsc_skills.sh"), text) == [
+        "scripts/test_htsc_skills.sh:1: non-empty HT_APIKEY"
+    ]
+
+
+def test_secret_scan_blocks_broad_secret_key_names() -> None:
+    text = "\n".join(
+        [
+            "SERVICE_API_KEY=real-api-key",
+            "PUSH_SENDKEY=real-send-key",
+            "CLIENT_SECRET=real-secret",
+        ]
+    )
+
+    assert find_non_empty_secret_assignments(Path(".env.example"), text) == [
+        ".env.example:1: non-empty SERVICE_API_KEY",
+        ".env.example:2: non-empty PUSH_SENDKEY",
+        ".env.example:3: non-empty CLIENT_SECRET",
     ]
 
 
