@@ -120,3 +120,19 @@ def test_github_workflow_jobs_define_timeouts() -> None:
             offenders.append(str(path.relative_to(PROJECT_ROOT)))
 
     assert offenders == []
+
+
+def test_github_workflow_cron_entries_document_beijing_time() -> None:
+    offenders: list[str] = []
+
+    for path in _workflow_files():
+        lines = path.read_text(encoding="utf-8").splitlines()
+        rel_path = path.relative_to(PROJECT_ROOT)
+        for index, line in enumerate(lines):
+            if "cron:" not in line:
+                continue
+            context = "\n".join(lines[max(0, index - 2) : index + 1])
+            if "北京时间" not in context:
+                offenders.append(f"{rel_path}:{index + 1}")
+
+    assert offenders == []
