@@ -45,7 +45,7 @@ def test_execution_summary_uses_observation_when_pm_has_no_allocations() -> None
 
     line = cli_mod._build_execution_summary_line([pick], summary)
 
-    assert "今日无重点跟踪对象" in line
+    assert "今日无纸面复核对象" in line
     assert "继续观察名单" in line
     assert "首选" not in line
 
@@ -1708,7 +1708,7 @@ def test_run_scheduled_surfaces_t1_blockers_in_report_and_notification(
 
     assert exit_code == 0
     assert seen
-    assert "T+1 持仓约束：昨日已买标的今日不纳入重点跟踪名单" in report
+    assert "T+1 持仓约束：昨日已买标的今日不纳入纸面复核名单" in report
     assert "贵州茅台: T+1 持仓约束，昨日已买，今日仅保留观察" in report
     assert "T+1 限制：昨日已买 1 只（600519）仅保留观察" in report
     assert "**👀 继续观察名单**：300750 宁德时代、600519 贵州茅台" in seen[0]
@@ -2184,11 +2184,11 @@ def test_run_scheduled_annotates_candidate_status_in_report_and_notify(
     assert "## 📋 候选一览" in seen[0]
     assert "| # | 标的 | 状态 | 分数 | 处理 | 关键点 |" in seen[0]
     assert (
-        "| 1 | 688981 中芯国际 | 新晋 | -9 | 👀 继续观察 | 等待量价继续走强后，再评估是否转入重点跟踪名单；复核 高优先级 / 盘中走强后 |"
+        "| 1 | 688981 中芯国际 | 新晋 | -9 | 👀 继续观察 | 等待量价继续走强后，再评估是否转入纸面复核名单；复核 高优先级 / 盘中走强后 |"
         in seen[0]
     )
     assert (
-        "先盯 688981 中芯国际，等待量价继续走强后，再评估是否转入重点跟踪名单（高优先级 / 盘中走强后）。"
+        "先盯 688981 中芯国际，等待量价继续走强后，再评估是否转入纸面复核名单（高优先级 / 盘中走强后）。"
         in seen[0]
     )
     assert (
@@ -2199,5 +2199,5 @@ def test_run_scheduled_annotates_candidate_status_in_report_and_notify(
         in report
     )
     assert "- 决策: 继续观察名单 | 新晋 | 评分 -9.0" in report
-    assert "- 接下来先看: 等待量价继续走强后，再评估是否转入重点跟踪名单" in report
+    assert "- 接下来先看: 等待量价继续走强后，再评估是否转入纸面复核名单" in report
     assert "- 再看优先级/时机: 高优先级 / 盘中走强后" in report

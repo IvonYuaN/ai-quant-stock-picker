@@ -303,8 +303,8 @@ class MarkdownRenderer:
                     _candidate_review_window_label(lead),
                 )
                 line = (
-                    f"当前暂无重点跟踪对象；继续观察名单: {names}。"
-                    "先观察最强票，待阻塞条件解除后再考虑转入重点跟踪名单。"
+                    f"当前暂无纸面复核对象；继续观察名单: {names}。"
+                    "先观察最强票，待阻塞条件解除后再考虑转入纸面复核名单。"
                 )
                 if blocker:
                     line += f" 现在卡在哪: {blocker}。"
@@ -410,7 +410,7 @@ class MarkdownRenderer:
             names = "、".join(
                 format_symbol_name(p.symbol, p.name) for p in tradable[:3]
             )
-            items.append(f"- 重点跟踪对象: {names}")
+            items.append(f"- 纸面复核对象: {names}")
         elif data.picks:
             top = data.top_picks
             names = "、".join(
@@ -479,7 +479,7 @@ class MarkdownRenderer:
         if data.actionable_count > 0:
             parts.append(f"{data.actionable_count}只纸面复核")
         elif data.candidate_count > 0:
-            parts.append("有继续观察名单，当前暂无重点跟踪对象")
+            parts.append("有继续观察名单，当前暂无纸面复核对象")
 
         risk_count = len(data.risk_points)
         if risk_count > 0:

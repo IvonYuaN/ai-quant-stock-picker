@@ -186,7 +186,7 @@ class Briefing:
     def _extract_actionable_picks(self) -> list[str]:
         next_day = self._get_section("明日重点")
         if not next_day or any(
-            marker in next_day for marker in ("无可执行", "暂无重点跟踪", "今日无候选")
+            marker in next_day for marker in ("无可执行", "暂无纸面复核", "今日无候选")
         ):
             return []
         return re.findall(r"\*\*(\d{6}\s+\S+)\*\*", next_day)
@@ -351,7 +351,7 @@ class Briefing:
                 _format_pick_with_status(pick, include_score=True)
                 for pick in tradable_picks[:3]
             )
-            items.append(f"- 重点跟踪对象: {names}")
+            items.append(f"- 纸面复核对象: {names}")
         elif self.picks:
             names = "、".join(
                 _format_pick_with_status(pick, include_score=True)
@@ -518,7 +518,7 @@ class Briefing:
         if effective_actionable_count > 0:
             parts.append(f"其中{effective_actionable_count}只适合优先再看")
         elif candidate_count > 0:
-            parts.append("有继续观察名单，当前暂无重点跟踪对象")
+            parts.append("有继续观察名单，当前暂无纸面复核对象")
         if risk_count > 0:
             parts.append(f"要特别注意{risk_count}条风险")
         if not parts:
@@ -710,7 +710,7 @@ class BriefingGenerator:
         lead_line += f" | 评分 {lead_pick.score:.1f}"
         lines.append(lead_line)
         if not portfolio_summary.top_focus:
-            lines.append("- 当前暂无重点跟踪对象，先观察。")
+            lines.append("- 当前暂无纸面复核对象，先观察。")
         return BriefingSection(title="主链总览", content=_section_text(lines))
 
     def _build_portfolio_summary(
@@ -940,7 +940,7 @@ class BriefingGenerator:
                     )
                     if part
                 )
-                lines.append("### 当前暂无重点跟踪对象")
+                lines.append("### 当前暂无纸面复核对象")
                 lines.append("")
                 lines.append(f"继续观察名单: {names}")
                 lines.append("")
@@ -951,7 +951,7 @@ class BriefingGenerator:
                 if review_meta:
                     lines.append(f"再看时间: {review_meta}")
                 lines.append("")
-                lines.append("待阻塞条件解除后再考虑转入重点跟踪名单。")
+                lines.append("待阻塞条件解除后再考虑转入纸面复核名单。")
             else:
                 lines.append("### 明天有什么要做吗？")
                 lines.append("")

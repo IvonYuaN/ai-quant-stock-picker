@@ -373,7 +373,7 @@ def test_report_keeps_actionable_focus_label_when_allocations_exist() -> None:
         ),
     )
 
-    assert "- 重点跟踪: 600900 长江电力" in markdown
+    assert "- 纸面复核: 600900 长江电力" in markdown
     assert "- 重点关注: 600900 长江电力" not in markdown
     assert "- 观察重点: 600900 长江电力" not in markdown
 
@@ -629,7 +629,7 @@ def test_report_renders_candidate_blocker_and_next_step_when_present() -> None:
     markdown = to_markdown([pick])
 
     assert "现在卡在哪: 板块集中度过高，压低银行暴露" in markdown
-    assert "下一步: 等待板块暴露回落后，再重新评估跟踪优先级" in markdown
-    assert "- 接下来先看: 等待板块暴露回落后，再重新评估跟踪优先级" in markdown
+    assert "下一步: 等待板块暴露回落后，再重新评估纸面复核优先级" in markdown
+    assert "- 接下来先看: 等待板块暴露回落后，再重新评估纸面复核优先级" in markdown
     assert "再看时间: 中优先级 / 板块分化时" in markdown
     assert "- 再看优先级/时机: 中优先级 / 板块分化时" in markdown

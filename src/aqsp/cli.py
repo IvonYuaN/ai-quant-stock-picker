@@ -1174,7 +1174,7 @@ def _build_execution_summary_line(
     blockers = tuple(getattr(portfolio_summary, "execution_blockers", ()) or ())
     if watchlist:
         names = "、".join(watchlist[:2])
-        return f"👀 **今日无重点跟踪对象**，转入继续观察名单：{names}"
+        return f"👀 **今日无纸面复核对象**，转入继续观察名单：{names}"
     if tradable:
         top = tradable[0]
         return (
@@ -1182,8 +1182,8 @@ def _build_execution_summary_line(
             "等待 PM 阻塞解除"
         )
     if blockers:
-        return "👀 **今日无重点跟踪对象**，受纸面约束影响，暂仅观察。"
-    return "👀 **今日无重点跟踪对象**，仅观察。等待更强信号。"
+        return "👀 **今日无纸面复核对象**，受纸面约束影响，暂仅观察。"
+    return "👀 **今日无纸面复核对象**，仅观察。等待更强信号。"
 
 
 def _resolve_audit_action(

@@ -118,7 +118,7 @@ def test_build_briefing_notification_sanitizes_research_wording_in_both_modes() 
     combined = "\n".join((summary_markdown, full_markdown))
 
     assert "纸面重点观察" in combined
-    assert "重点跟踪名单" in combined
+    assert "纸面复核名单" in combined
     assert "纸面记录" in combined
     assert "纸面持有" in combined
     assert "立即买入" not in combined
@@ -252,13 +252,13 @@ def test_build_daily_run_notification_surfaces_watchlist_blockers_when_no_alloca
 
     assert "**👀 继续观察名单**：000021 深科技、000338 潍柴动力" in markdown
     assert (
-        "**👀 当前状态**：今日无重点跟踪对象，转入继续观察名单：000021 深科技、000338 潍柴动力"
+        "**👀 当前状态**：今日无纸面复核对象，转入继续观察名单：000021 深科技、000338 潍柴动力"
         in markdown
     )
     assert "**🟡 需要重点确认**：板块集中度过高，压低科技暴露" in markdown
     assert "**🔒 现在卡在哪**：000021 深科技: 板块集中度过高，压低科技暴露" in markdown
     assert "## ⚠️ 风险先看" in markdown
-    assert "阻塞没解除前，不要把观察名单抬升成重点跟踪" in markdown
+    assert "阻塞没解除前，不要把观察名单抬升成纸面复核" in markdown
     assert "| 候选 | 👀 继续观察名单 2 | 000021 深科技、000338 潍柴动力 |" in markdown
     assert "| 纸面现实 | 👀 继续观察优先 | 000021 深科技、000338 潍柴动力 |" in markdown
     assert (
@@ -272,8 +272,8 @@ def test_build_daily_run_notification_surfaces_watchlist_blockers_when_no_alloca
     )
     assert "3. 📌 最后看约束：单票上限 20%；今日不建议建立主仓。" in markdown
     assert "暂无可执行主仓，先盯备选观察名单" not in markdown
-    assert "暂无重点跟踪主线，先盯继续观察名单" in markdown
-    assert "只有阻塞条件解除后再考虑转入重点跟踪名单" in markdown
+    assert "暂无纸面复核主线，先盯继续观察名单" in markdown
+    assert "只有阻塞条件解除后再考虑转入纸面复核名单" in markdown
 
 
 def test_build_daily_run_notification_surfaces_watch_reviews_as_checklist() -> None:
@@ -295,7 +295,7 @@ def test_build_daily_run_notification_surfaces_watch_reviews_as_checklist() -> N
                     symbol="688981",
                     name="中芯国际",
                     blocker="板块集中度过高",
-                    next_step="等待量价继续走强后，再评估是否转入重点跟踪名单",
+                    next_step="等待量价继续走强后，再评估是否转入纸面复核名单",
                     review_window="盘中走强后",
                     priority="high",
                 ),
@@ -303,7 +303,7 @@ def test_build_daily_run_notification_surfaces_watch_reviews_as_checklist() -> N
                     symbol="000001",
                     name="平安银行",
                     blocker="高相关未解除",
-                    next_step="等待高相关标的分化后，再重新评估跟踪优先级",
+                    next_step="等待高相关标的分化后，再重新评估纸面复核优先级",
                     review_window="分化确认后",
                     priority="medium",
                 ),
@@ -316,11 +316,11 @@ def test_build_daily_run_notification_surfaces_watch_reviews_as_checklist() -> N
 
     assert "**📝 观察名单接下来**：" in markdown
     assert (
-        "  - 688981 中芯国际 | 高优先级 / 盘中走强后 | 等待量价继续走强后，再评估是否转入重点跟踪名单"
+        "  - 688981 中芯国际 | 高优先级 / 盘中走强后 | 等待量价继续走强后，再评估是否转入纸面复核名单"
         in markdown
     )
     assert (
-        "1. 先盯 688981 中芯国际，等待量价继续走强后，再评估是否转入重点跟踪名单（高优先级 / 盘中走强后）。"
+        "1. 先盯 688981 中芯国际，等待量价继续走强后，再评估是否转入纸面复核名单（高优先级 / 盘中走强后）。"
         in markdown
     )
 
@@ -349,7 +349,7 @@ def test_build_daily_run_notification_lists_watch_candidates_when_not_tradable()
                 risks=("收盘价低于 MA20",),
                 metrics={
                     "candidate_status": "新晋",
-                    "candidate_next_step": "等待量价继续走强后，再评估是否转入重点跟踪名单",
+                    "candidate_next_step": "等待量价继续走强后，再评估是否转入纸面复核名单",
                     "candidate_review_window": "盘中走强后",
                     "candidate_review_priority": "high",
                 },
@@ -372,7 +372,7 @@ def test_build_daily_run_notification_lists_watch_candidates_when_not_tradable()
                 metrics={
                     "candidate_status": "观察阻塞",
                     "candidate_blocker": "板块集中度过高，压低银行暴露",
-                    "candidate_next_step": "等待板块暴露回落后，再重新评估跟踪优先级",
+                    "candidate_next_step": "等待板块暴露回落后，再重新评估纸面复核优先级",
                 },
             ),
         ),
@@ -394,7 +394,7 @@ def test_build_daily_run_notification_lists_watch_candidates_when_not_tradable()
     assert "## 📋 候选一览" in markdown
     assert "| # | 标的 | 状态 | 分数 | 处理 | 关键点 |" in markdown
     assert (
-        "| 1 | 688981 中芯国际 | 新晋 | -9 | 👀 继续观察 | 等待量价继续走强后，再评估是否转入重点跟踪名单；复核 高优先级 / 盘中走强后 |"
+        "| 1 | 688981 中芯国际 | 新晋 | -9 | 👀 继续观察 | 等待量价继续走强后，再评估是否转入纸面复核名单；复核 高优先级 / 盘中走强后 |"
         in markdown
     )
     assert (
@@ -407,7 +407,7 @@ def test_build_daily_run_notification_lists_watch_candidates_when_not_tradable()
         in markdown
     )
     assert (
-        "1. 先盯 688981 中芯国际，等待量价继续走强后，再评估是否转入重点跟踪名单（高优先级 / 盘中走强后）。"
+        "1. 先盯 688981 中芯国际，等待量价继续走强后，再评估是否转入纸面复核名单（高优先级 / 盘中走强后）。"
         in markdown
     )
 
@@ -446,7 +446,7 @@ def test_build_daily_run_notification_includes_candidate_status_for_tradable_pic
         in markdown
     )
     assert (
-        "| 1 | 300750 宁德时代 | 延续上升 | 73 | 🎯 重点跟踪 | 趋势延续 |" in markdown
+        "| 1 | 300750 宁德时代 | 延续上升 | 73 | 🎯 纸面复核 | 趋势延续 |" in markdown
     )
     assert "买 220.5" not in markdown
 
@@ -475,7 +475,7 @@ def test_build_daily_run_notification_surfaces_default_review_for_new_watch_pick
                 risks=("收盘价低于 MA20",),
                 metrics={
                     "candidate_status": "新晋",
-                    "candidate_next_step": "等待量价继续走强后，再评估是否转入重点跟踪名单",
+                    "candidate_next_step": "等待量价继续走强后，再评估是否转入纸面复核名单",
                     "candidate_review_window": "盘中走强后",
                     "candidate_review_priority": "high",
                 },
@@ -488,7 +488,7 @@ def test_build_daily_run_notification_surfaces_default_review_for_new_watch_pick
 
     assert "复核 高优先级 / 盘中走强后" in markdown
     assert (
-        "1. 先盯 688981 中芯国际，等待量价继续走强后，再评估是否转入重点跟踪名单（高优先级 / 盘中走强后）。"
+        "1. 先盯 688981 中芯国际，等待量价继续走强后，再评估是否转入纸面复核名单（高优先级 / 盘中走强后）。"
         in markdown
     )
 
@@ -709,7 +709,7 @@ def test_build_closing_review_notification_summary_mode_highlights_main_chain() 
         main_chain_summary=(
             "今日结论: 上调 1 / 降级 2 / 维持 1",
             "纸面阻塞: 688981 中芯国际: 板块集中度过高",
-            "观察复核: 688981 中芯国际 | 高优先级 / 盘中走强后 | 等待量价继续走强后，再评估是否转入重点跟踪名单",
+            "观察复核: 688981 中芯国际 | 高优先级 / 盘中走强后 | 等待量价继续走强后，再评估是否转入纸面复核名单",
         ),
         key_lessons=("止损执行尚可，但入场分散度不足",),
         improvement_suggestions=("减少同类信号堆叠，优先保留最强票",),
