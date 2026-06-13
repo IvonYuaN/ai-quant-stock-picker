@@ -6,6 +6,7 @@ from __future__ import annotations
 import subprocess
 import sys
 from dataclasses import dataclass
+from fnmatch import fnmatch
 from pathlib import Path
 
 if __package__ in {None, ""}:
@@ -33,12 +34,26 @@ FORBIDDEN_EXACT = {
     "data/predictions.jsonl",
     "data/risk_state.json",
     "data/cache.db",
+    "data/source_health.json",
+    "data/system_risk_state.json",
+    "data/walkforward_gate.json",
     "data/weight_history.jsonl",
     "reports/latest.md",
     "reports/latest.csv",
     "reports/paper.md",
     "reports/runtime-diagnosis.md",
 }
+ALLOWED_EXACT = {
+    "data/open_source_research.jsonl",
+}
+FORBIDDEN_PATTERNS = (
+    "data/*.db",
+    "data/*.jsonl",
+    "reports/*.csv",
+    "reports/*.html",
+    "reports/*.md",
+    "reports/*.txt",
+)
 
 
 @dataclass(frozen=True)
@@ -67,8 +82,14 @@ def upload_candidate_paths() -> list[str]:
 def check_upload_candidates(paths: list[str]) -> list[UploadFinding]:
     findings: list[UploadFinding] = []
     for rel in paths:
+        if rel in ALLOWED_EXACT:
+            continue
         path = PROJECT_ROOT / rel
-        if rel in FORBIDDEN_EXACT or any(rel.startswith(p) for p in FORBIDDEN_PREFIXES):
+        if (
+            rel in FORBIDDEN_EXACT
+            or any(fnmatch(rel, pattern) for pattern in FORBIDDEN_PATTERNS)
+            or any(rel.startswith(p) for p in FORBIDDEN_PREFIXES)
+        ):
             findings.append(UploadFinding(rel, "forbidden runtime/private artifact"))
             continue
         if path.exists() and path.is_file() and path.stat().st_size > MAX_UPLOAD_BYTES:
