@@ -73,6 +73,27 @@ def test_github_workflows_disable_checkout_persisted_credentials() -> None:
     assert offenders == []
 
 
+def test_github_workflows_only_use_allowlisted_actions() -> None:
+    allowed_prefixes = (
+        "actions/checkout@",
+        "actions/setup-python@",
+    )
+    offenders: list[str] = []
+
+    for path in _workflow_files():
+        lines = path.read_text(encoding="utf-8").splitlines()
+        rel_path = path.relative_to(PROJECT_ROOT)
+        for index, line in enumerate(lines):
+            stripped = line.strip()
+            if not stripped.startswith("- uses: "):
+                continue
+            action = stripped.removeprefix("- uses: ").strip()
+            if not action.startswith(allowed_prefixes):
+                offenders.append(f"{rel_path}:{index + 1}:{action}")
+
+    assert offenders == []
+
+
 def test_github_workflows_do_not_upload_runtime_artifacts() -> None:
     offenders: list[str] = []
 
