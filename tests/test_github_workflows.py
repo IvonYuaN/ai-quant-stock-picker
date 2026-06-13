@@ -30,30 +30,31 @@ def test_ci_workflow_limits_paths_and_sets_concurrency() -> None:
     )
 
     assert "paths:" in text
-    assert "cancel-in-progress: true" in text
     assert "group: ci-${{ github.workflow }}-${{ github.ref }}" in text
     assert '"src/**"' in text
     assert '"tests/**"' in text
     assert '"test/**"' in text
     assert '".github/workflows/**"' in text
     assert '".github/workflows/ci.yml"' not in text
-    assert 'FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"' in text
-    assert "actions/checkout@v5" in text
-    assert "actions/setup-python@v6" in text
 
 
-def test_scheduled_workflows_define_concurrency() -> None:
-    for rel_path in (
-        ".github/workflows/dry-run.yml",
-        ".github/workflows/monitor.yml",
-        ".github/workflows/scheduled-screen.yml",
-    ):
-        text = (PROJECT_ROOT / rel_path).read_text(encoding="utf-8")
-        assert "concurrency:" in text
-        assert "cancel-in-progress: true" in text
-        assert 'FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"' in text
-        assert "actions/checkout@v5" in text
-        assert "actions/setup-python@v6" in text
+def test_github_workflows_define_common_runtime_controls() -> None:
+    offenders: list[str] = []
+
+    for path in _workflow_files():
+        text = path.read_text(encoding="utf-8")
+        rel_path = path.relative_to(PROJECT_ROOT)
+        for required in (
+            "concurrency:",
+            "cancel-in-progress: true",
+            'FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"',
+            "actions/checkout@v5",
+            "actions/setup-python@v6",
+        ):
+            if required not in text:
+                offenders.append(f"{rel_path}:missing {required}")
+
+    assert offenders == []
 
 
 def test_github_workflows_do_not_upload_runtime_artifacts() -> None:
