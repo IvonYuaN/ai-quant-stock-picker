@@ -7,8 +7,21 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW_DIR = PROJECT_ROOT / ".github" / "workflows"
 
 
-def _workflow_files() -> list[Path]:
-    return sorted(WORKFLOW_DIR.glob("*.yml"))
+def _workflow_files(workflow_dir: Path = WORKFLOW_DIR) -> list[Path]:
+    return sorted(
+        path for pattern in ("*.yml", "*.yaml") for path in workflow_dir.glob(pattern)
+    )
+
+
+def test_github_workflow_scan_includes_yaml_extensions(tmp_path: Path) -> None:
+    (tmp_path / "ci.yml").write_text("name: CI\n", encoding="utf-8")
+    (tmp_path / "monitor.yaml").write_text("name: Monitor\n", encoding="utf-8")
+    (tmp_path / "README.md").write_text("ignored\n", encoding="utf-8")
+
+    assert [path.name for path in _workflow_files(tmp_path)] == [
+        "ci.yml",
+        "monitor.yaml",
+    ]
 
 
 def test_ci_workflow_limits_paths_and_sets_concurrency() -> None:
