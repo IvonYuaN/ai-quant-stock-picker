@@ -797,7 +797,7 @@ def test_dashboard_data_provider_builds_task_views_and_dedupes_latest_rows(
             "portfolio_action": "downgrade",
             "candidate_status": "观察阻塞",
             "candidate_blocker": "板块集中度过高，压低银行暴露",
-            "candidate_next_step": "等待板块暴露回落后，再重新评估跟踪优先级",
+            "candidate_next_step": "等待板块暴露回落后，再重新评估纸面复核优先级",
             "candidate_review_window": "板块分化时",
             "candidate_review_priority": "medium",
             "run_requested_source": "auto",
@@ -932,7 +932,7 @@ def test_dashboard_data_provider_builds_task_views_and_dedupes_latest_rows(
         line.startswith("阻塞观察: 000001 平安银行") for line in main_view.ranking_lines
     )
     assert main_view.report_summary_lines == (
-        "今日主链 1 只重点跟踪，另有 1 只转观察。",
+        "今日主链 1 只纸面复核，另有 1 只转观察。",
         "优先跟踪高分今日重点名单。",
     )
     assert main_view.report_source.endswith("latest.md")
@@ -1002,7 +1002,7 @@ def test_dashboard_data_provider_builds_task_views_and_dedupes_latest_rows(
     assert snapshot_map["morning_breakout"].status_label == "有推荐"
     assert snapshot_map["closing_premium"].status_label == "有推荐"
     assert snapshot_map["briefing"].status_label == "待跟踪"
-    assert "无重点跟踪对象" not in snapshot_map["briefing"].headline
+    assert "无纸面复核对象" not in snapshot_map["briefing"].headline
 
     history_rows = provider.task_history_rows("main_chain", limit=2)
     assert [row.signal_date for row in history_rows] == ["2026-06-05", "2026-06-04"]
@@ -1413,7 +1413,7 @@ def test_dashboard_data_provider_extracts_latest_report_when_main_chain_latest(
         (
             "# AI 量化选股报告(close, 数据日期 2026-06-06)\n\n"
             "## 📌 执行摘要\n\n"
-            "今日无重点跟踪对象，仅观察。\n\n"
+            "今日无纸面复核对象，仅观察。\n\n"
             "## 运行参数\n"
             "- 数据源: auto -> csv\n"
             "- 数据健康: fallback / fallback 到 csv\n"
@@ -1432,7 +1432,7 @@ def test_dashboard_data_provider_extracts_latest_report_when_main_chain_latest(
 
     task_view = provider.build_task_view("main_chain", signal_date="2026-06-06")
 
-    assert task_view.report_summary_lines == ("今日无重点跟踪对象，仅观察。",)
+    assert task_view.report_summary_lines == ("今日无纸面复核对象，仅观察。",)
     assert task_view.runtime_lines == (
         "数据来源: auto -> csv",
         "数据状态: 已切换备用源 / 已切换到备用数据源 csv",
@@ -1471,7 +1471,7 @@ def test_dashboard_data_provider_sanitizes_archive_summary_action_words(
         (
             "# AI 量化选股报告(close, 数据日期 2026-06-05)\n\n"
             "## 📌 执行摘要\n\n"
-            "- 今日建议: 重点跟踪对象进入重点跟踪名单。\n"
+            "- 今日建议: 纸面复核对象进入纸面复核名单。\n"
             "- 配仓建议: 参考买点 1500，止损 1420，止盈 1680。\n\n"
             "## 明日重点\n\n"
             "- 首选观察 600519，若放量则新开仓，禁止下单只是测试词。\n"
@@ -1503,8 +1503,8 @@ def test_dashboard_data_provider_sanitizes_archive_summary_action_words(
     ):
         assert forbidden not in visible_text
     assert "研究回看" in visible_text
-    assert "重点跟踪对象" in visible_text
-    assert "重点跟踪名单" in visible_text
+    assert "纸面复核对象" in visible_text
+    assert "纸面复核名单" in visible_text
     assert "比例参考" in visible_text
     assert "参考价" in visible_text
     assert "最多亏到" in visible_text

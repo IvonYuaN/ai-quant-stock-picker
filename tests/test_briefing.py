@@ -193,7 +193,7 @@ class TestBriefingGenerator:
                         symbol="688981",
                         name="中芯国际",
                         blocker="板块集中度过高",
-                        next_step="等待量价继续走强后，再评估是否转入重点跟踪名单",
+                        next_step="等待量价继续走强后，再评估是否转入纸面复核名单",
                         review_window="盘中走强后",
                         priority="high",
                     ),
@@ -201,7 +201,7 @@ class TestBriefingGenerator:
                         symbol="000001",
                         name="平安银行",
                         blocker="高相关未解除",
-                        next_step="等待高相关标的分化后，再重新评估跟踪优先级",
+                        next_step="等待高相关标的分化后，再重新评估纸面复核优先级",
                         review_window="分化确认后",
                         priority="medium",
                     ),
@@ -211,7 +211,7 @@ class TestBriefingGenerator:
         main_chain_sec = next(s for s in briefing.sections if s.title == "主链总览")
         assert "- 观察名单下一步:" in main_chain_sec.content
         assert (
-            "  - 688981 中芯国际 | 高优先级 / 盘中走强后 | 等待量价继续走强后，再评估是否转入重点跟踪名单"
+            "  - 688981 中芯国际 | 高优先级 / 盘中走强后 | 等待量价继续走强后，再评估是否转入纸面复核名单"
             in main_chain_sec.content
         )
 
@@ -350,9 +350,9 @@ class TestBriefingGenerator:
             frames={},
         )
         next_sec = next(s for s in briefing.sections if s.title == "明日重点")
-        assert "当前暂无重点跟踪对象" in next_sec.content
+        assert "当前暂无纸面复核对象" in next_sec.content
         assert "继续观察名单" in next_sec.content
-        assert "待阻塞条件解除后再考虑转入重点跟踪名单" in next_sec.content
+        assert "待阻塞条件解除后再考虑转入纸面复核名单" in next_sec.content
         assert "600519" in next_sec.content
         assert "avoid" not in next_sec.content
 
@@ -363,9 +363,9 @@ class TestBriefingGenerator:
             frames={},
         )
         next_sec = next(s for s in briefing.sections if s.title == "明日重点")
-        assert "当前暂无重点跟踪对象" in next_sec.content
+        assert "当前暂无纸面复核对象" in next_sec.content
         assert "继续观察名单" in next_sec.content
-        assert "待阻塞条件解除后再考虑转入重点跟踪名单" in next_sec.content
+        assert "待阻塞条件解除后再考虑转入纸面复核名单" in next_sec.content
         assert "600519" in next_sec.content
 
     def test_next_day_section_includes_candidate_status_for_watch_pick(self):
@@ -653,7 +653,7 @@ class TestGenerateSmartSummary:
         picks = [_make_pick(symbol="600519", name="贵州茅台", rating="buy_candidate")]
         briefing = gen.generate(picks=picks, frames={})
         summary = briefing.generate_smart_summary()
-        assert "重点跟踪对象" in summary
+        assert "纸面复核对象" in summary
         assert "600519" in summary
 
     def test_no_actionable_picks_excluded(self):
@@ -661,7 +661,7 @@ class TestGenerateSmartSummary:
         picks = [_make_pick(symbol="600519", name="贵州茅台", rating="avoid")]
         briefing = gen.generate(picks=picks, frames={})
         summary = briefing.generate_smart_summary()
-        assert "有继续观察名单，当前暂无重点跟踪对象" in summary
+        assert "有继续观察名单，当前暂无纸面复核对象" in summary
         assert "继续观察名单" in summary
 
     def test_next_day_section_mentions_watchlist_when_no_tradable_pick(self):
@@ -719,7 +719,7 @@ class TestGenerateSmartSummary:
                     rating="watch",
                     metrics={
                         "candidate_status": "新晋",
-                        "candidate_next_step": "等待量价继续走强后，再评估是否转入重点跟踪名单",
+                        "candidate_next_step": "等待量价继续走强后，再评估是否转入纸面复核名单",
                         "candidate_review_window": "盘中走强后",
                         "candidate_review_priority": "high",
                     },
@@ -731,7 +731,7 @@ class TestGenerateSmartSummary:
         summary = briefing.generate_smart_summary()
 
         assert (
-            "- 解锁后先看: 600519 贵州茅台 | 等待量价继续走强后，再评估是否转入重点跟踪名单"
+            "- 解锁后先看: 600519 贵州茅台 | 等待量价继续走强后，再评估是否转入纸面复核名单"
             in summary
         )
         assert "- 再看时间: 600519 贵州茅台 | 高优先级 / 盘中走强后" in summary
@@ -793,7 +793,7 @@ class TestGenerateSmartSummary:
                     metrics={
                         "candidate_status": "观察阻塞",
                         "candidate_blocker": "板块集中度过高，压低新能源暴露",
-                        "candidate_next_step": "等待板块暴露回落后，再重新评估跟踪优先级",
+                        "candidate_next_step": "等待板块暴露回落后，再重新评估纸面复核优先级",
                         "candidate_review_window": "板块分化时",
                         "candidate_review_priority": "medium",
                     },
@@ -804,7 +804,7 @@ class TestGenerateSmartSummary:
         evidence_sec = next(s for s in briefing.sections if s.title == "候选来龙去脉")
         assert "- 现在卡在哪: 板块集中度过高，压低新能源暴露" in evidence_sec.content
         assert (
-            "- 接下来先看: 等待板块暴露回落后，再重新评估跟踪优先级"
+            "- 接下来先看: 等待板块暴露回落后，再重新评估纸面复核优先级"
             in evidence_sec.content
         )
         assert "- 再看优先级/时机: 中优先级 / 板块分化时" in evidence_sec.content

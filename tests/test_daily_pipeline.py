@@ -580,11 +580,11 @@ def test_send_pipeline_digest_sends_summary_notification(
         in sent["content"]
     )
     assert "现在卡在哪: 板块集中度过高，压低新能源暴露" in sent["content"]
-    assert "下一步: 等待板块暴露回落后，再重新评估跟踪优先级" in sent["content"]
+    assert "下一步: 等待板块暴露回落后，再重新评估纸面复核优先级" in sent["content"]
     assert "再看时间: 中优先级 / 板块分化时" in sent["content"]
     assert "观察名单接下来:" in sent["content"]
     assert (
-        "观察名单接下来: 先盯 300750 宁德时代，等待板块暴露回落后，再重新评估跟踪优先级（中优先级 / 板块分化时）。"
+        "观察名单接下来: 先盯 300750 宁德时代，等待板块暴露回落后，再重新评估纸面复核优先级（中优先级 / 板块分化时）。"
         in sent["content"]
     )
     assert "运行侧写" not in sent["content"]

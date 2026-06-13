@@ -78,13 +78,13 @@ def _blocked_watchlist_status(
     portfolio_summary: PortfolioDecisionSummary | None,
 ) -> str:
     if portfolio_summary is None:
-        return "今日无重点跟踪对象，仅观察"
+        return "今日无纸面复核对象，仅观察"
     watchlist = tuple(portfolio_summary.watchlist[:2])
     if watchlist:
-        return "今日无重点跟踪对象，转入继续观察名单：" + "、".join(watchlist)
+        return "今日无纸面复核对象，转入继续观察名单：" + "、".join(watchlist)
     if portfolio_summary.execution_blockers:
-        return "今日无重点跟踪对象，受流动性或持仓约束暂仅观察"
-    return "今日无重点跟踪对象，仅观察"
+        return "今日无纸面复核对象，受流动性或持仓约束暂仅观察"
+    return "今日无纸面复核对象，仅观察"
 
 
 def build_briefing_notification(
@@ -575,7 +575,7 @@ def _daily_risk_summary_lines(
     if is_cold_start:
         lines.append("- **今天先别做**：不要因为单日表现放大纸面仓位，先继续积累样本。")
     elif primary_blocker:
-        lines.append("- **今天先别做**：阻塞没解除前，不要把观察名单抬升成重点跟踪。")
+        lines.append("- **今天先别做**：阻塞没解除前，不要把观察名单抬升成纸面复核。")
     elif portfolio_summary is not None and portfolio_summary.cash_reserve >= 0.8:
         lines.append("- **今天先别做**：不要为了凑数量硬塞候选，现金留存本身就是结论。")
     else:
@@ -853,8 +853,8 @@ def _daily_candidate_table_row(
         action = "⛔ 等阻塞解除"
         key = blocker
     elif tradable:
-        status = status or "重点跟踪"
-        action = "🎯 重点跟踪"
+        status = status or "纸面复核"
+        action = "🎯 纸面复核"
         key = pick.reasons[0] if pick.reasons else "先看开盘承接"
     else:
         status = status or "继续观察"
@@ -1149,7 +1149,7 @@ def _format_allocation_execution(
                 line += f" | {rationale}"
             lines.append(line)
     elif portfolio_summary.watchlist:
-        lines.append("- 暂无重点跟踪主线，先盯继续观察名单：")
+        lines.append("- 暂无纸面复核主线，先盯继续观察名单：")
         for item in portfolio_summary.watchlist[:3]:
             lines.append(f"  - {item}")
     if portfolio_summary.watch_reviews:
@@ -1189,8 +1189,8 @@ def _daily_action_line_one(
         if tradable:
             return "1. 优先核对纸面重点的开盘强弱与流动性，再决定是否继续跟踪。"
         return (
-            "1. 暂无重点跟踪主线，先盯继续观察名单里最强票的开盘承接，"
-            "只有阻塞条件解除后再考虑转入重点跟踪名单。"
+            "1. 暂无纸面复核主线，先盯继续观察名单里最强票的开盘承接，"
+            "只有阻塞条件解除后再考虑转入纸面复核名单。"
         )
     if tradable:
         return "1. 优先核对纸面重点的开盘强弱与流动性，再决定是否继续跟踪。"

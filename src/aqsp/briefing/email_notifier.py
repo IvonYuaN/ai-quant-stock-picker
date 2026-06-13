@@ -189,7 +189,7 @@ def render_html_email(data: BriefingData) -> str:
     else:
         picks_html = """
         <div style="padding: 16px; background: #f1f5f9; border-radius: 8px; text-align: center; color: #64748b;">
-          今日暂无重点跟踪对象，继续等待信号
+          今日暂无纸面复核对象，继续等待信号
         </div>
         """
 
