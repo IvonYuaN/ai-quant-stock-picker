@@ -423,8 +423,9 @@ class AutoFactorMiner:
                     continue
                 try:
                     factor_values = self.calculate_factor_value(df, factor)
-                    close = df["close"]
-                    forward_returns = close.shift(-forward_days) / close - 1
+                    forward_returns = self._posterior_forward_returns(
+                        df["close"], forward_days
+                    )
 
                     all_factor_values.append(factor_values)
                     all_forward_returns.append(forward_returns)
@@ -486,6 +487,18 @@ class AutoFactorMiner:
 
         results.sort(key=lambda x: abs(x["evaluation"]["ic_ir"]), reverse=True)
         return results
+
+    def _posterior_forward_returns(
+        self, close: pd.Series, forward_days: int
+    ) -> pd.Series:
+        """Build an offline research label without using negative shifts."""
+        if forward_days <= 0:
+            raise ValueError("forward_days must be positive")
+        values = close.to_numpy(dtype=float, copy=False)
+        labels = np.full(len(values), np.nan, dtype=float)
+        if len(values) > forward_days:
+            labels[:-forward_days] = values[forward_days:] / values[:-forward_days] - 1
+        return pd.Series(labels, index=close.index)
 
     def save_discovered_factors(
         self, factors: list[dict[str, Any]], output_path: str
