@@ -121,6 +121,9 @@ def test_beginner_dashboard_exposes_glossary_for_new_users() -> None:
     glossary = dashboard_beginner.BEGINNER_GLOSSARY
 
     assert "技术指标" in glossary
-    assert "交易规则" in glossary
-    assert any(term == "T+1" for term, _ in glossary["交易规则"])
+    assert "纸面规则" in glossary
+    assert "交易规则" not in glossary
+    assert any(term == "T+1" for term, _ in glossary["纸面规则"])
+    assert all("今天买入" not in desc for _, desc in glossary["纸面规则"])
+    assert all("跌破这条线就退出" not in desc for _, desc in glossary["纸面规则"])
     assert any(term == "bias20" for term, _ in glossary["技术指标"])
