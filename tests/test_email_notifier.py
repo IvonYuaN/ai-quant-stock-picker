@@ -157,6 +157,8 @@ def test_render_html_email_uses_research_language_and_escapes_dynamic_text() -> 
     assert "重点跟踪" in html
     assert "研究依据" in html
     assert "参考价" in html
+    assert "不构成交易指令或投资建议" in html
+    assert "纸面跟踪结果需人工复核" in html
     assert "&lt;script&gt;" in html
     assert "<script>" not in html
     assert "<img src=x>" not in html
