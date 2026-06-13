@@ -350,7 +350,7 @@ def main() -> None:
 
     lines.append("")
     lines.append("---\n")
-    lines.append("*仅供研究，不构成投资建议。*\n")
+    lines.append("*仅供研究，不构成交易指令或投资建议。*\n")
 
     output_path = Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)

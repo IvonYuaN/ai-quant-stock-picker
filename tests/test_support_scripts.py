@@ -5,6 +5,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from scripts.generate_sample_debate import generate_sample_debate_data
+from scripts.generate_cold_start_signals import generate_mock_signal
 from scripts.manage_data_lifecycle import analyze_debate_file, clean_old_debates
 from scripts.merge_server_ledgers import merge_ledgers
 
@@ -39,6 +40,22 @@ def test_generate_sample_debate_data_uses_research_safe_wording_and_timezone(
         "买入" not in " ".join(row["rounds"][0]["opinions"][0]["arguments"])
         for row in rows
     )
+
+
+def test_generate_cold_start_signal_uses_research_safe_disclaimer(
+    monkeypatch,
+) -> None:
+    fixed_now = datetime(2026, 6, 10, 9, 30, 0, tzinfo=SHANGHAI_TZ)
+    monkeypatch.setattr(
+        "scripts.generate_cold_start_signals.now_shanghai",
+        lambda: fixed_now,
+    )
+
+    signal = generate_mock_signal("600519", "2026-06-10", 1500.0, 80.0)
+
+    assert signal["created_at"].endswith("+08:00")
+    assert "不构成交易指令或投资建议" in " ".join(signal["risks"])
+    assert "不构成投资建议" not in " ".join(signal["risks"])
 
 
 def test_manage_data_lifecycle_uses_shanghai_clock_for_analysis_and_cleanup(
