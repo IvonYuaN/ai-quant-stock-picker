@@ -310,7 +310,7 @@ def _lifecycle_overview_panel(candidates: list[dict[str, str]]) -> str:
             )
 
     if actionable:
-        headline = "今日重点名单"
+        headline = "今日纸面复核名单"
         headline_detail = "、".join(actionable[:3])
     elif review_items:
         headline = "观察名单接下来"
@@ -335,7 +335,7 @@ def _lifecycle_overview_panel(candidates: list[dict[str, str]]) -> str:
         (
             "候选分层",
             f"纸面复核 {len(actionable)} / 观察 {len(watchlist)}",
-            "重点跟踪与继续观察对象已按当前主链输出分层。",
+            "纸面复核与观察对象已按当前主链输出分层。",
         ),
         (
             "现在卡在哪",
@@ -624,6 +624,9 @@ def _debate_modals(debate_map: dict[str, dict[str, Any]]) -> str:
         adjusted_score = debate.get("adjusted_score", original_score)
         adjustment_weight = debate.get("adjustment_weight", 0)
         disagreement_score = debate.get("disagreement_score", 0)
+        adjustment_class = (
+            "pos" if adjustment_weight > 0 else "neg" if adjustment_weight < 0 else ""
+        )
 
         score_breakdown = f"""
         <div class="score-breakdown">
@@ -640,7 +643,7 @@ def _debate_modals(debate_map: dict[str, dict[str, Any]]) -> str:
                 </div>
                 <div class="score-item adjustment">
                     <span class="score-label">调整幅度</span>
-                    <span class="score-value {"pos" if adjustment_weight > 0 else "neg" if adjustment_weight < 0 else ""}">{adjustment_weight * 100:+.1f}%</span>
+                    <span class="score-value {adjustment_class}">{adjustment_weight * 100:+.1f}%</span>
                 </div>
             </div>
             <div class="meta-info">

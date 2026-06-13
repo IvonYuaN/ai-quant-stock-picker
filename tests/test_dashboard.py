@@ -602,7 +602,7 @@ def test_dashboard_surfaces_watch_candidate_lifecycle_details() -> None:
             "name": "中芯国际",
             "date": "2026-06-05",
             "score": "-9",
-            "rating": "watch",
+            "rating": "buy_candidate",
             "reasons": "MA20 斜率向上",
             "risks": "收盘价低于 MA20",
             "candidate_status": "新晋",
@@ -629,7 +629,9 @@ def test_dashboard_surfaces_watch_candidate_lifecycle_details() -> None:
     html = render_dashboard(candidates, [], "主链观察面板")
 
     assert "主链状态总览" in html
-    assert "观察名单接下来" in html
+    assert "今日纸面复核名单" in html
+    assert "纸面复核与观察对象已按当前主链输出分层。" in html
+    assert "重点跟踪与继续观察" not in html
     assert "主链复核" in html
     assert "现在卡在哪" in html
     assert "明日复核" in html
@@ -7190,6 +7192,8 @@ def test_dashboard_renders_debate_modal_without_cross_symbol_leakage_and_keeps_c
     assert "多头略占优，维持观察" in html
     assert "辩论倾向维持" in html
     assert "25%" in html
+    assert 'class="score-value "' in html
+    assert 'class="score-value {"' not in html
     assert "第二只股票的讨论，不应串进 600519" not in html
     assert "等待右侧确认" not in html
 
