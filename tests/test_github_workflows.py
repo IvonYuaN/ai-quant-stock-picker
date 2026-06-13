@@ -94,3 +94,14 @@ def test_github_workflows_keep_repository_permissions_read_only() -> None:
                 offenders.append(f"{rel_path}:{term}")
 
     assert offenders == []
+
+
+def test_github_workflow_jobs_define_timeouts() -> None:
+    offenders: list[str] = []
+
+    for path in _workflow_files():
+        text = path.read_text(encoding="utf-8")
+        if "timeout-minutes:" not in text:
+            offenders.append(str(path.relative_to(PROJECT_ROOT)))
+
+    assert offenders == []
