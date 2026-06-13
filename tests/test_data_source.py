@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date
 from types import SimpleNamespace
 
 import pytest
@@ -291,3 +292,24 @@ def test_fetch_with_source_keeps_daily_frames_when_optional_benchmark_fails():
 
     assert list(frames) == ["600000"]
     assert frames["600000"]["close"].iloc[-1] == 10.1
+
+
+def test_fetch_with_source_uses_shanghai_today(monkeypatch):
+    import aqsp.data as data_mod
+
+    seen: dict[str, date] = {}
+
+    class DummySource:
+        name = "dummy"
+
+        def fetch_daily(self, symbols, start, end, adjust=""):
+            seen["start"] = start
+            seen["end"] = end
+            return {"600000": pd.DataFrame([{"date": "2026-06-13", "close": 10.1}])}
+
+    monkeypatch.setattr(data_mod, "today_shanghai", lambda: date(2026, 6, 13))
+
+    fetch_with_source(DummySource(), ["600000"], days=30)
+
+    assert seen["end"] == date(2026, 6, 13)
+    assert seen["start"] == date(2025, 6, 13)

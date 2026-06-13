@@ -117,6 +117,36 @@ class TestCheckExecutable:
         assert ok is True
         assert reason == ""
 
+    def test_real_5pct_limit_up_at_open_not_executable(self) -> None:
+        bar = pd.Series(
+            {
+                "open": 10.5,
+                "high": 10.5,
+                "low": 10.5,
+                "close": 10.5,
+                "volume": 1000,
+                "limit_up": 10.5,
+            }
+        )
+        ok, reason = _check_executable(bar, prev_close=10.0)
+        assert ok is False
+        assert reason == "limit_up_at_open"
+
+    def test_real_20pct_non_limit_open_is_executable(self) -> None:
+        bar = pd.Series(
+            {
+                "open": 11.0,
+                "high": 11.0,
+                "low": 11.0,
+                "close": 11.0,
+                "volume": 1000,
+                "limit_up": 12.0,
+            }
+        )
+        ok, reason = _check_executable(bar, prev_close=10.0)
+        assert ok is True
+        assert reason == ""
+
 
 class TestResolveExit:
     def test_hold_period_close(self) -> None:

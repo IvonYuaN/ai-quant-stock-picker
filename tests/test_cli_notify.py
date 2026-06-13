@@ -3,6 +3,7 @@ from __future__ import annotations
 from argparse import Namespace
 from datetime import date
 import sqlite3
+from pathlib import Path
 
 import pandas as pd
 from unittest.mock import MagicMock
@@ -14,6 +15,46 @@ from aqsp.briefing.debate import DebateResult
 from aqsp.portfolio.manager import PortfolioDecisionSummary
 from aqsp.portfolio.optimizer import PortfolioAllocation
 from aqsp.portfolio.snapshot import PickSnapshot, SnapshotDiff
+
+
+def test_run_briefing_email_subject_uses_shanghai_today(
+    monkeypatch, tmp_path: Path
+) -> None:
+    import aqsp.cli as cli_mod
+
+    ledger = tmp_path / "predictions.jsonl"
+    output = tmp_path / "briefing.md"
+    ledger.write_text(
+        '{"signal_date":"2026-06-12","status":"watch_only","symbol":"600000",'
+        '"name":"浦发银行","signal_close":10.0,"score":55,"rating":"watch"}\n',
+        encoding="utf-8",
+    )
+    sent: dict[str, str] = {}
+
+    monkeypatch.setattr(cli_mod, "today_shanghai", lambda: date(2026, 6, 13))
+    monkeypatch.setattr(
+        "aqsp.briefing.enhance_briefing", lambda briefing, enable_llm: briefing
+    )
+    monkeypatch.setattr(
+        "aqsp.briefing.email_notifier.load_email_config_from_env", lambda: object()
+    )
+    monkeypatch.setattr(
+        "aqsp.briefing.email_notifier.send_briefing_email",
+        lambda cfg, subject, markdown_body: sent.setdefault("subject", subject) or True,
+    )
+
+    exit_code = cli_mod.run_briefing(
+        Namespace(
+            ledger=str(ledger),
+            output=str(output),
+            enable_llm=False,
+            notify=False,
+            email=True,
+        )
+    )
+
+    assert exit_code == 0
+    assert sent["subject"] == "aqsp briefing 2026-06-13"
 
 
 def test_execution_summary_uses_observation_when_pm_has_no_allocations() -> None:

@@ -37,6 +37,7 @@ from aqsp.data.trading_calendar import (
     trading_day_lag,
 )
 from aqsp.indicators import normalize_ohlcv
+from aqsp.core.time import today_shanghai
 
 _logger = logging.getLogger(__name__)
 
@@ -55,10 +56,17 @@ def _attach_optional_benchmark(
     try:
         bench = source.fetch_index([benchmark_symbol], start, end)
     except Exception as exc:
-        _logger.warning("optional benchmark fetch failed %s via %s: %s", benchmark_symbol, source.name, exc)
+        _logger.warning(
+            "optional benchmark fetch failed %s via %s: %s",
+            benchmark_symbol,
+            source.name,
+            exc,
+        )
         return
     if benchmark_symbol in bench:
-        out[benchmark_symbol] = bench[benchmark_symbol].tail(days).reset_index(drop=True)
+        out[benchmark_symbol] = (
+            bench[benchmark_symbol].tail(days).reset_index(drop=True)
+        )
 
 
 def load_csv(path: str | Path) -> dict[str, pd.DataFrame]:
@@ -86,7 +94,7 @@ def fetch_akshare(
     """
     cache = DataCache(db_path=cache_path) if cache_path else None
     source = AkshareSource(cache=cache) if cache else AkshareSource()
-    end = date.today()
+    end = today_shanghai()
     start = end - timedelta(days=max(days * 2, 365))
     out = source.fetch_daily(symbols, start, end, adjust)
     for symbol, df in out.items():
@@ -110,7 +118,7 @@ def fetch_with_source(
     benchmark_symbol: str | None = None,
 ) -> dict[str, pd.DataFrame]:
     """Fetch OHLCV using an arbitrary DataSource."""
-    end = date.today()
+    end = today_shanghai()
     start = end - timedelta(days=max(days * 2, 365))
     out = source.fetch_daily(symbols, start, end, adjust)
     for symbol, df in out.items():

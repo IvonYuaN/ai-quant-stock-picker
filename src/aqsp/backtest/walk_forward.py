@@ -14,6 +14,7 @@ except (
 ):  # scipy is optional; DSR will fall back to a normal CDF approximation
     _scipy_stats = None
 
+from aqsp.ledger.base import _check_executable as _ledger_check_executable
 from aqsp.strategies.composite import CompositeStrategy
 
 
@@ -583,25 +584,7 @@ class WalkForwardTester:
 
 
 def _check_executable(entry_bar: pd.Series, prev_close: float) -> tuple[bool, str]:
-    if prev_close <= 0:
-        return True, ""
-    open_price = float(entry_bar.get("open", 0))
-    if open_price <= 0:
-        return False, "no_open_price"
-    volume = entry_bar.get("volume")
-    if volume is not None:
-        try:
-            if float(volume) <= 0:
-                return False, "suspended_or_no_trade"
-        except (TypeError, ValueError):
-            pass
-    high = float(entry_bar.get("high", open_price))
-    low = float(entry_bar.get("low", open_price))
-    if open_price >= prev_close * 1.099 and high <= open_price * 1.0001:
-        return False, "limit_up_at_open"
-    if open_price <= prev_close * 0.901 and low >= open_price * 0.9999:
-        return False, "limit_down_at_open"
-    return True, ""
+    return _ledger_check_executable(entry_bar, prev_close, {})
 
 
 def _resolve_exit(
