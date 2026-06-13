@@ -7,7 +7,7 @@ on:
       - "scripts/**"
       - "tests/**"
       - "pyproject.toml"
-      - ".github/workflows/ci.yml"
+      - ".github/workflows/**"
   push:
     branches:
       - main
@@ -20,7 +20,7 @@ on:
       - "scripts/**"
       - "tests/**"
       - "pyproject.toml"
-      - ".github/workflows/ci.yml"
+      - ".github/workflows/**"
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
