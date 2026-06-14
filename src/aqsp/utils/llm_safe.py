@@ -291,7 +291,7 @@ def llm_call_or_fallback(
             )
         except Exception as exc:
             errors.append(f"{attempt_provider}: {type(exc).__name__}: {exc}")
-            if index == 0 and _is_rate_limit_error(exc):
+            if _is_rate_limit_error(exc) and index < len(attempts) - 1:
                 continue
             return _degrade(
                 {

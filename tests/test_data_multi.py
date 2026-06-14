@@ -210,6 +210,42 @@ def test_multi_source_keeps_probing_consistency_after_disjoint_fallback():
         )
 
 
+def test_multi_source_inconsistency_reports_actual_fallback_source():
+    primary = MockSource(
+        {
+            "600000": pd.DataFrame(
+                {"date": ["2026-05-27"], "open": [10.0], "close": [10.0]}
+            )
+        }
+    )
+    disjoint_fallback = MockSource(
+        {
+            "300750": pd.DataFrame(
+                {"date": ["2026-05-27"], "open": [210.0], "close": [210.0]}
+            )
+        }
+    )
+    conflicting_fallback = MockSource(
+        {
+            "600000": pd.DataFrame(
+                {"date": ["2026-05-27"], "open": [10.0], "close": [11.0]}
+            )
+        }
+    )
+    primary.name = "primary"
+    disjoint_fallback.name = "disjoint"
+    conflicting_fallback.name = "conflicting"
+
+    multi = MultiSource(primary, [disjoint_fallback, conflicting_fallback])
+
+    with pytest.raises(DataInconsistencyError, match="conflicting"):
+        multi.fetch_daily(
+            ["600000", "300750"],
+            date(2026, 5, 27),
+            date(2026, 5, 27),
+        )
+
+
 def test_multi_source_can_skip_consistency_for_cross_tier_fallbacks():
     primary_data = {"600000": pd.DataFrame({"date": ["2026-05-27"], "close": [10.0]})}
     fallback_data = {"600000": pd.DataFrame({"date": ["2026-05-27"], "close": [11.0]})}

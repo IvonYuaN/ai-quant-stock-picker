@@ -131,3 +131,38 @@ def test_llm_call_or_fallback_degrades_when_provider_fallback_fails(
     assert "agnes: RuntimeError: agnes unavailable" in result.reason
     assert calls == ["glm", "agnes"]
     assert os.getenv("LLM_PROVIDER") == "glm"
+
+
+def test_llm_call_or_fallback_keeps_trying_rate_limited_fallback_providers(
+    monkeypatch,
+) -> None:
+    calls: list[str] = []
+
+    def fake_client_factory() -> object:
+        return object()
+
+    def fake_invoke(client, prompt, model, timeout_s):
+        provider = os.getenv("LLM_PROVIDER", "")
+        calls.append(provider)
+        if provider in {"glm", "agnes"}:
+            raise RuntimeError("429 rate limit")
+        return "siliconflow ok", 0.0
+
+    monkeypatch.setenv("ENABLE_LLM_BRIEFING", "true")
+    monkeypatch.setenv("LLM_PROVIDER", "glm")
+    monkeypatch.setenv("SILICONFLOW_MODEL", "THUDM/glm-4-9b-chat")
+    monkeypatch.setattr("aqsp.utils.llm_safe._invoke", fake_invoke)
+
+    result = llm_call_or_fallback(
+        "prompt",
+        "fallback",
+        enable_llm=True,
+        _client_factory=fake_client_factory,
+        rate_limit_fallback_providers=("agnes", "siliconflow"),
+    )
+
+    assert result.degraded is False
+    assert result.text == "siliconflow ok"
+    assert result.model == "THUDM/glm-4-9b-chat"
+    assert calls == ["glm", "agnes", "siliconflow"]
+    assert os.getenv("LLM_PROVIDER") == "glm"

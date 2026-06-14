@@ -184,6 +184,7 @@ class MultiSource(DataSource):
                     consistency_checked = self._validate_consistency(
                         result,
                         usable_result,
+                        fallback_source_name=source_name,
                     )
 
                 missing_data = {
@@ -258,6 +259,8 @@ class MultiSource(DataSource):
         self,
         primary_data: dict[str, pd.DataFrame],
         fallback_data: dict[str, pd.DataFrame],
+        *,
+        fallback_source_name: str | None = None,
     ) -> bool:
         common_symbols = set(primary_data.keys()) & set(fallback_data.keys())
         if not common_symbols:
@@ -290,12 +293,13 @@ class MultiSource(DataSource):
                     raise DataInconsistencyError(
                         symbol,
                         self._source_name(self.primary),
-                        self._source_name(self.fallbacks[0])
-                        if self.fallbacks
-                        else "unknown",
+                        fallback_source_name or self._first_fallback_name(),
                         diff_pct,
                     )
         return True
+
+    def _first_fallback_name(self) -> str:
+        return self._source_name(self.fallbacks[0]) if self.fallbacks else "unknown"
 
     def _source_result_map(
         self,
