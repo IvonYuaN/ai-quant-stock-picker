@@ -5,10 +5,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 from typing import Any
+
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from aqsp.core.time import today_shanghai
 
@@ -50,6 +54,35 @@ def _read_jsonl(path: Path) -> list[dict[str, Any]]:
             continue
         if isinstance(row, dict):
             rows.append(row)
+    return rows
+
+
+def _read_pipeline_history(root: Path) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for path in sorted((root / "logs" / "pipeline").glob("*.json")):
+        payload = _read_json(path)
+        if not payload:
+            continue
+        rows.append(
+            {
+                "date": path.stem,
+                "success": payload.get("overall_success") is True,
+                "started_at": payload.get("started_at"),
+                "finished_at": payload.get("finished_at"),
+                "successful_steps": sum(
+                    1
+                    for step in payload.get("steps", [])
+                    if isinstance(step, dict) and step.get("success") is True
+                ),
+                "total_steps": len(
+                    [
+                        step
+                        for step in payload.get("steps", [])
+                        if isinstance(step, dict)
+                    ]
+                ),
+            }
+        )
     return rows
 
 
@@ -95,7 +128,7 @@ def check_before_live(
     findings: list[ReadinessFinding] = []
     findings.append(_check_walkforward_gate(gate_path, today))
     findings.append(_check_paper_sample_size(ledger_path))
-    findings.append(_check_successful_runs(run_history_path))
+    findings.append(_check_successful_runs(run_history_path, root=root))
     findings.extend(_check_runtime_outputs(root))
     return findings
 
@@ -151,20 +184,26 @@ def _check_walkforward_gate(path: Path, today: date) -> ReadinessFinding:
 def _check_paper_sample_size(path: Path) -> ReadinessFinding:
     rows = _read_jsonl(path)
     signal_days = {
-        str(row.get("signal_day_group") or row.get("signal_date") or "").strip()
+        signal_date
         for row in rows
-        if str(row.get("signal_day_group") or row.get("signal_date") or "").strip()
+        if not bool(row.get("is_simulated"))
+        for signal_date in [str(row.get("signal_date") or "").strip()[:10]]
+        if _parse_date(signal_date) is not None
     }
     count = len(signal_days)
     return ReadinessFinding(
         "paper_sample_size",
         count >= MIN_INDEPENDENT_SIGNAL_DAYS,
-        f"{count}/{MIN_INDEPENDENT_SIGNAL_DAYS} independent signal days",
+        f"{count}/{MIN_INDEPENDENT_SIGNAL_DAYS} real independent signal days",
     )
 
 
-def _check_successful_runs(path: Path) -> ReadinessFinding:
+def _check_successful_runs(path: Path, *, root: Path) -> ReadinessFinding:
     rows = _read_jsonl(path)
+    source = "daily_run_history"
+    if not rows:
+        rows = _read_pipeline_history(root)
+        source = "pipeline_logs"
     successful_days = {
         str(row.get("date") or row.get("run_date") or "").strip()
         for row in rows
@@ -174,7 +213,7 @@ def _check_successful_runs(path: Path) -> ReadinessFinding:
     return ReadinessFinding(
         "successful_daily_runs",
         count >= MIN_SUCCESSFUL_RUN_DAYS,
-        f"{count}/{MIN_SUCCESSFUL_RUN_DAYS} successful daily run days",
+        f"{count}/{MIN_SUCCESSFUL_RUN_DAYS} successful daily run days ({source})",
     )
 
 
