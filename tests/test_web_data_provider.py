@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date
 import json
 from pathlib import Path
 
@@ -9,7 +10,13 @@ from aqsp.paper import sync_paper_trades
 from aqsp.web.data_provider import DashboardDataProvider
 
 
-def test_dashboard_data_provider_reads_real_runtime_files(tmp_path: Path) -> None:
+def test_dashboard_data_provider_reads_real_runtime_files(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(
+        "aqsp.web.data_provider.today_shanghai", lambda: date(2026, 6, 6)
+    )
+
     ledger_path = tmp_path / "ledger.jsonl"
     paper_path = tmp_path / "paper_trades.jsonl"
     logs_path = tmp_path / "logs"

@@ -48,10 +48,11 @@ python3 -m pytest -q
 python3 -m ruff check src tests scripts
 python3 scripts/check_no_secrets.py
 python3 -m scripts.preflight_upload
+python3 scripts/check_before_live.py
 git status --short --ignored
 ```
 
-这些命令全部通过后，才允许 push、合并或部署到服务器。若 secret scan、preflight 或 CI 任一失败，先修仓库内 guardrail，不用服务器配置绕过。
+这些命令全部通过后，才允许 push、合并或部署到服务器。若 secret scan、preflight、before-live gate 或 CI 任一失败，先修仓库内 guardrail，不用服务器配置绕过。
 
 ## 7. 升级判定
 

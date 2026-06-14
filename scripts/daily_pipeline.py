@@ -1502,6 +1502,23 @@ def _write_result_file(result: PipelineResult, project_root: Path) -> None:
     result_file.write_text(
         json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
     )
+    _append_daily_run_history(result, project_root)
+
+
+def _append_daily_run_history(result: PipelineResult, project_root: Path) -> None:
+    history_path = project_root / "data" / "daily_run_history.jsonl"
+    history_path.parent.mkdir(parents=True, exist_ok=True)
+    row = {
+        "date": result.finished_at[:10],
+        "started_at": result.started_at,
+        "finished_at": result.finished_at,
+        "success": result.overall_success,
+        "exit_code": 0 if result.overall_success else 1,
+        "successful_steps": sum(1 for step in result.steps if step.success),
+        "total_steps": len(result.steps),
+    }
+    with history_path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
 
 
 def main(argv: list[str] | None = None) -> int:

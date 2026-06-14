@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import json
 import logging
 from pathlib import Path
 import sys
@@ -589,6 +590,41 @@ def test_send_pipeline_digest_sends_summary_notification(
     )
     assert "运行侧写" not in sent["content"]
     assert "# 收盘总览" not in sent["content"]
+
+
+def test_write_result_file_appends_daily_run_history(tmp_path: Path) -> None:
+    daily_pipeline = _load_daily_pipeline_module()
+    result = daily_pipeline.PipelineResult(
+        started_at="2026-06-02T18:00:00+08:00",
+        finished_at="2026-06-02T18:00:30+08:00",
+        duration_seconds=30.0,
+        steps=[
+            daily_pipeline.StepResult("数据更新", True, 1.0),
+            daily_pipeline.StepResult("策略运行", True, 2.0),
+        ],
+        overall_success=True,
+        summary="ok",
+    )
+
+    daily_pipeline._write_result_file(result, tmp_path)
+
+    history_path = tmp_path / "data" / "daily_run_history.jsonl"
+    rows = [
+        json.loads(line)
+        for line in history_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert rows == [
+        {
+            "date": "2026-06-02",
+            "exit_code": 0,
+            "finished_at": "2026-06-02T18:00:30+08:00",
+            "started_at": "2026-06-02T18:00:00+08:00",
+            "success": True,
+            "successful_steps": 2,
+            "total_steps": 2,
+        }
+    ]
 
 
 def test_run_step_logs_stable_completion_label(caplog) -> None:
