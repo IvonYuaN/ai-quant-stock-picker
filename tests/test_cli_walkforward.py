@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import json
 
 import pandas as pd
+import pytest
 
 from aqsp.core.time import today_shanghai
 from aqsp.strategies.composite import CompositeStrategy
@@ -61,6 +62,16 @@ def test_cold_start_counts_observation_only_signal_days(tmp_path) -> None:
     )
 
     assert _count_independent_signal_days(str(ledger)) == 2
+
+
+def test_walkforward_help_handles_percent_text(capsys) -> None:
+    from aqsp.cli import main
+
+    with pytest.raises(SystemExit) as exc_info:
+        main(["walkforward", "--help"])
+
+    assert exc_info.value.code == 0
+    assert "3.1%硬止损" in capsys.readouterr().out
 
 
 class TestCompositeStrategyInit:
@@ -682,9 +693,7 @@ class TestCLIDataSources:
             "akshare",
         ]
 
-    def test_online_source_plan_keeps_akshare_as_last_supplement(
-        self, monkeypatch
-    ):
+    def test_online_source_plan_keeps_akshare_as_last_supplement(self, monkeypatch):
         import aqsp.cli as cli_mod
 
         class DummySource:

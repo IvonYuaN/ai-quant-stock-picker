@@ -365,7 +365,7 @@ def main(argv: list[str] | None = None) -> int:
         "--tiered-stop",
         action="store_true",
         default=False,
-        help="启用分级止损（3.1%硬止损+分级减仓）",
+        help="启用分级止损（3.1%%硬止损+分级减仓）",
     )
     wf.add_argument(
         "--allow-heldout",
