@@ -129,6 +129,43 @@ def test_check_before_live_blocks_when_paper_samples_are_too_small(
     )
 
 
+def test_check_before_live_ignores_simulated_and_strategy_grouped_samples(
+    tmp_path: Path,
+) -> None:
+    _prepare_ready_runtime(tmp_path)
+    rows = [
+        {
+            "signal_date": f"2026-05-{day:02d}",
+            "signal_day_group": f"2026-05-{day:02d}_volume_breakout",
+            "symbol": "600519",
+        }
+        for day in range(1, 16)
+    ]
+    rows.extend(
+        {
+            "signal_date": f"2026-05-{day:02d}",
+            "signal_day_group": f"2026-05-{day:02d}_mock",
+            "symbol": "000001",
+            "is_simulated": True,
+        }
+        for day in range(16, 31)
+    )
+    rows.append(
+        {
+            "signal_date": "2026-05-01",
+            "signal_day_group": "2026-05-01_rps_momentum",
+            "symbol": "300750",
+        }
+    )
+    _write_jsonl(tmp_path / "data/predictions.jsonl", rows)
+
+    findings = check_before_live(root=tmp_path, today=date(2026, 6, 14))
+
+    finding = next(item for item in findings if item.gate == "paper_sample_size")
+    assert finding.ok is False
+    assert finding.detail == "15/30 real independent signal days"
+
+
 def test_check_before_live_blocks_when_daily_run_history_is_missing(
     tmp_path: Path,
 ) -> None:
@@ -141,6 +178,34 @@ def test_check_before_live_blocks_when_daily_run_history_is_missing(
         finding.gate == "successful_daily_runs" and not finding.ok
         for finding in findings
     )
+
+
+def test_check_before_live_counts_legacy_pipeline_logs_when_history_is_missing(
+    tmp_path: Path,
+) -> None:
+    _prepare_ready_runtime(tmp_path)
+    (tmp_path / "data/daily_run_history.jsonl").unlink()
+    pipeline_dir = tmp_path / "logs" / "pipeline"
+    pipeline_dir.mkdir(parents=True, exist_ok=True)
+    for day in range(1, 6):
+        _write_json(
+            pipeline_dir / f"2026-06-{day:02d}.json",
+            {
+                "started_at": f"2026-06-{day:02d}T18:00:00+08:00",
+                "finished_at": f"2026-06-{day:02d}T18:01:00+08:00",
+                "overall_success": True,
+                "steps": [
+                    {"name": "数据更新", "success": True},
+                    {"name": "策略运行", "success": True},
+                ],
+            },
+        )
+
+    findings = check_before_live(root=tmp_path, today=date(2026, 6, 14))
+
+    finding = next(item for item in findings if item.gate == "successful_daily_runs")
+    assert finding.ok is True
+    assert finding.detail == "5/5 successful daily run days (pipeline_logs)"
 
 
 def test_check_before_live_blocks_when_dashboard_output_is_missing(
