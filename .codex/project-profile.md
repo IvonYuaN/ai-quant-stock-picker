@@ -16,7 +16,7 @@ Support: Product/Notification Systems Engineer, Data Reliability Engineer, Paper
 
 ## Current Goal
 
-打通并收敛一条稳定的本地/服务器日常主线：`daily_run.sh -> aqsp run -> ledger -> aqsp paper -> aqsp briefing -> aqsp dashboard -> notification/logs`。当前重点是把主链、复盘、监控、早盘、尾盘通知统一到可复用模板层，并保留多 Agent 辩论摘要与数据源状态。
+打通并收敛一条稳定的本地/服务器日常主线：`daily_run.sh -> aqsp run -> ledger -> aqsp paper -> aqsp briefing -> aqsp dashboard -> notification/logs`。当前重点是持续推进可测试、可评审的最小开发任务；主线程负责集成和最终验证，默认用多 agent 做只读侦察、独立审查或互不重叠的代码切片。
 
 ## Constraints
 
@@ -28,8 +28,10 @@ Support: Product/Notification Systems Engineer, Data Reliability Engineer, Paper
 
 数据源/新鲜度问题交给 Data Reliability lens；策略/开源吸收交给 Research Librarian lens；虚拟盘/ledger/可成交性交给 Paper-Trading lens；通知/报告/多 Agent 摘要交给 Product/Notification lens；前端展示交给 Dashboard lens；合并前必须跑相关 pytest、ruff、脚本语法检查。
 静态导出链路（`scripts/render_dashboard.py`、`scripts/render_agent_dashboard.py`、旧 `reports/`、研究发现 CLI）也属于用户可见面，不能只修 Streamlit 主面板而放任旧口径残留；所有时间戳继续强制带上海时区偏移。
+默认 squad：Data Reliability Engineer + Minimal Change Engineer + Code Reviewer。对小型修复，主线程实现，子 agent 并行做独立审查或下一任务侦察；对多文件中型改动，拆成互不重叠的 worker 写集。
 
 ## Squad History
 
 - 2026-05-29: Rerouted from prototype stock picker to local-first paper-trading system after user clarified the real objective and requested multi-agent execution.
 - 2026-06-04: Added unified notification-template substrate for daily run, briefing, monitor, morning breakout, closing premium, and closing review so future agent work lands on one reusable output layer.
+- 2026-06-13: User requested automatic goal tracking and multi-agent development. Active goal created for continuous minimal, testable AQSP development with main-thread integration and sub-agent review/scouting.
