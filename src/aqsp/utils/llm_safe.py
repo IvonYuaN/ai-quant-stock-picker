@@ -39,6 +39,7 @@ _SILICONFLOW_FREE_MODELS = {
     "internlm/internlm2_5-7b-chat",
     "mistralai/Mistral-7B-Instruct-v0.2",
 }
+_DEFAULT_RATE_LIMIT_FALLBACK_PROVIDERS: tuple[str, ...] = ("agnes",)
 
 
 @dataclass(frozen=True)
@@ -83,6 +84,31 @@ def _model_env_for_provider(provider: str) -> str:
         if value:
             return value
     return ""
+
+
+def _is_rate_limit_error(exc: Exception) -> bool:
+    status_code = getattr(exc, "status_code", None)
+    if status_code == 429:
+        return True
+    response = getattr(exc, "response", None)
+    if getattr(response, "status_code", None) == 429:
+        return True
+    text = f"{type(exc).__name__}: {exc}".lower()
+    return "429" in text or "rate limit" in text or "ratelimit" in text
+
+
+def _provider_fallback_chain(
+    provider: str,
+    fallback_providers: tuple[str, ...],
+) -> tuple[str, ...]:
+    seen = {provider}
+    chain: list[str] = []
+    for candidate in fallback_providers:
+        clean = candidate.strip().lower()
+        if clean and clean not in seen:
+            chain.append(clean)
+            seen.add(clean)
+    return tuple(chain)
 
 
 def get_siliconflow_free_models() -> tuple[str, ...]:
@@ -189,6 +215,9 @@ def llm_call_or_fallback(
     cost_cap_usd: float = _DEFAULT_COST_CAP_USD,
     caller: str = "unknown",
     _client_factory: Optional[Callable[[], object]] = None,
+    rate_limit_fallback_providers: tuple[str, ...] = (
+        _DEFAULT_RATE_LIMIT_FALLBACK_PROVIDERS
+    ),
 ) -> LlmResult:
     """可降级 LLM 调用。任何失败都返回 fallback，绝不抛异常给上游。
 
@@ -213,37 +242,85 @@ def llm_call_or_fallback(
             base_record, started, "ENABLE_LLM_BRIEFING 未开", fallback, model
         )
 
-    try:
-        client = _client_factory() if _client_factory else _make_client()
-        text, est_cost = _invoke(client, prompt, model, timeout_s)
-        if est_cost > cost_cap_usd:
-            return _degrade(
-                base_record,
-                started,
-                f"预估成本 {est_cost:.4f} > cap {cost_cap_usd}",
-                fallback,
-                model,
+    provider = os.getenv("LLM_PROVIDER", "glm").lower()
+    attempts = (
+        provider,
+        *_provider_fallback_chain(provider, rate_limit_fallback_providers),
+    )
+    errors: list[str] = []
+
+    for index, attempt_provider in enumerate(attempts):
+        old_provider = os.getenv("LLM_PROVIDER")
+        attempt_model = model
+        if index > 0 and attempt_model is None:
+            attempt_model = _model_env_for_provider(attempt_provider) or None
+        try:
+            os.environ["LLM_PROVIDER"] = attempt_provider
+            client = _client_factory() if _client_factory else _make_client()
+            text, est_cost = _invoke(client, prompt, attempt_model, timeout_s)
+            if est_cost > cost_cap_usd:
+                return _degrade(
+                    {
+                        **base_record,
+                        "provider": attempt_provider,
+                        "model": attempt_model or "",
+                    },
+                    started,
+                    f"预估成本 {est_cost:.4f} > cap {cost_cap_usd}",
+                    fallback,
+                    attempt_model,
+                )
+            latency = time.monotonic() - started
+            _append_log(
+                {
+                    **base_record,
+                    "provider": attempt_provider,
+                    "model": attempt_model or "",
+                    "degraded": False,
+                    "latency_s": round(latency, 3),
+                    "est_cost_usd": round(est_cost, 5),
+                    "fallback_from_provider": provider if index > 0 else "",
+                }
             )
-        latency = time.monotonic() - started
-        _append_log(
-            {
-                **base_record,
-                "degraded": False,
-                "latency_s": round(latency, 3),
-                "est_cost_usd": round(est_cost, 5),
-            }
-        )
-        return LlmResult(
-            text=text,
-            degraded=False,
-            model=model or "",
-            latency_s=latency,
-            est_cost_usd=est_cost,
-        )
-    except Exception as exc:
-        return _degrade(
-            base_record, started, f"{type(exc).__name__}: {exc}", fallback, model
-        )
+            return LlmResult(
+                text=text,
+                degraded=False,
+                model=attempt_model or "",
+                latency_s=latency,
+                est_cost_usd=est_cost,
+            )
+        except Exception as exc:
+            errors.append(f"{attempt_provider}: {type(exc).__name__}: {exc}")
+            if _is_rate_limit_error(exc) and index < len(attempts) - 1:
+                continue
+            return _degrade(
+                {
+                    **base_record,
+                    "provider": attempt_provider,
+                    "model": attempt_model or "",
+                },
+                started,
+                "; ".join(errors),
+                fallback,
+                attempt_model,
+            )
+        finally:
+            if old_provider is None:
+                os.environ.pop("LLM_PROVIDER", None)
+            else:
+                os.environ["LLM_PROVIDER"] = old_provider
+
+    return _degrade(
+        {
+            **base_record,
+            "provider": provider,
+            "model": model or "",
+        },
+        started,
+        "; ".join(errors) or "rate limit fallback exhausted",
+        fallback,
+        model,
+    )
 
 
 def _degrade(

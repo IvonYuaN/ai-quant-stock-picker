@@ -1463,7 +1463,34 @@ class DashboardDataProvider:
         except Exception as exc:
             logger.error("加载执行日志失败: %s", exc)
             return []
+        execution_rows = [dict(row) for row in rows if row.get("type") == "execution"]
+        if execution_rows:
+            return execution_rows
+
+        latest_log_date = self._latest_log_file_date()
+        if latest_log_date is None or latest_log_date >= start_date:
+            return []
+        fallback_start = latest_log_date - timedelta(days=days)
+        try:
+            rows = self.logger.query_logs(
+                start_date=fallback_start,
+                end_date=latest_log_date,
+            )
+        except Exception as exc:
+            logger.error("加载最近可用执行日志失败: %s", exc)
+            return []
         return [dict(row) for row in rows if row.get("type") == "execution"]
+
+    def _latest_log_file_date(self) -> date | None:
+        latest: date | None = None
+        for path in self.logs_path.glob("*.jsonl"):
+            try:
+                log_date = date.fromisoformat(path.stem)
+            except ValueError:
+                continue
+            if latest is None or log_date > latest:
+                latest = log_date
+        return latest
 
     def execution_logs_for_date(self, signal_date: str) -> list[dict[str, Any]]:
         selected_date = signal_date.strip()
