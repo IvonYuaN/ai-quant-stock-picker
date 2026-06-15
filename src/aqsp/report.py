@@ -154,7 +154,7 @@ def _format_final_decision_board(
             )
         if getattr(portfolio_summary, "top_focus", ()):
             focus_label = (
-                "重点跟踪"
+                "纸面复核"
                 if getattr(portfolio_summary, "allocations", ())
                 else "观察重点"
             )

@@ -1386,13 +1386,13 @@ def _debate_overview_lines(
     if debate_summary.risk_warnings:
         review_line = "待核对风险: " + "；".join(debate_summary.risk_warnings[:2])
     elif debate_summary.adjustment_reason:
-        review_line = f"待核对依据: {debate_summary.adjustment_reason}"
+        review_line = f"待核对原因: {debate_summary.adjustment_reason}"
     elif debate_summary.opportunity_highlights:
         review_line = "待验证机会: " + "；".join(
             debate_summary.opportunity_highlights[:2]
         )
     else:
-        review_line = "待补依据: 当前辩论未给出明确风险或机会，先回候选来龙去脉复核。"
+        review_line = "待补原因: 当前讨论未给出明确风险或机会，先回候选来龙去脉复核。"
     agent_lines = tuple(
         line
         for line in (
@@ -1429,7 +1429,7 @@ def _pipeline_label(pipeline: str) -> str:
         "strategy": "策略",
         "timing": "择时",
         "execution_risk": "执行风控",
-        "ai_research": "AI 研究",
+        "ai_research": "研究",
     }.get(pipeline, pipeline or "未分类")
 
 
@@ -1592,7 +1592,7 @@ def _debate_evidence_composition_line(
         return ""
     parts = [
         f"{debate_summary.round_count} 轮讨论",
-        f"{len(debate_summary.agent_views)} 个 agent 观点",
+        f"{len(debate_summary.agent_views)} 个观点",
     ]
     if debate_summary.data_source:
         parts.append(f"数据源 {debate_summary.data_source}")
@@ -1796,7 +1796,7 @@ def _archive_debate_evidence_lines(
             line
             for line in (
                 (
-                    f"调整依据: {debate_summary.adjustment_reason}"
+                    f"调整原因: {debate_summary.adjustment_reason}"
                     if debate_summary.adjustment_reason
                     else ""
                 ),
@@ -1958,12 +1958,12 @@ def _home_recommend_fallback_lines(
         blocker = _card_primary_blocker(blocked_focus)
         if blocker:
             return _singleton_lines(
-                f"当前没有重点跟踪候选，先核对 {blocked_focus.display_name} 的卡点。"
+                f"当前没有纸面复核候选，先核对 {blocked_focus.display_name} 的卡点。"
             )
         return _singleton_lines(
-            f"当前没有重点跟踪候选，先核对 {blocked_focus.display_name} 的卡点。"
+            f"当前没有纸面复核候选，先核对 {blocked_focus.display_name} 的卡点。"
         )
-    return _singleton_lines("当前没有重点跟踪候选，先等下一轮主链信号。")
+    return _singleton_lines("当前没有纸面复核候选，先等下一轮主链信号。")
 
 
 def _debate_vote_snapshot_lines(
@@ -2052,7 +2052,7 @@ def _debate_brief_cards(
         ),
         _DebateBriefCard(
             kicker="接下来做什么",
-            title="先回原始依据核对",
+            title="先回原始记录核对",
             lines=review_lines,
             tone="pressure" if debate_summary.risk_warnings else "archive",
         ),
@@ -4326,7 +4326,7 @@ def _archive_to_review_handoff_lines(
         review_card=review_card,
     )
     lead_line = (
-        archive_lines[0] if archive_lines else "回到已有判断和原始依据核对当前结论。"
+        archive_lines[0] if archive_lines else "回到已有判断和原始记录核对当前结论。"
     )
     return tuple(
         line
@@ -5216,7 +5216,7 @@ def _workspace_context_brief(
             "跨任务联动回看",
             (
                 "当前判断主要来自同日一起出现的信息。",
-                "先核对跨任务结论，再回到单任务原始依据。",
+                "先核对跨任务结论，再回到单任务原始记录。",
             ),
             "archive",
         )
@@ -5554,7 +5554,7 @@ def _render_candidate_evidence_drawers(
                 spotlight=spotlight,
                 debate_summary=debate_summary,
             )
-    with st.expander("原始依据", expanded=False):
+    with st.expander("原始记录", expanded=False):
         _render_candidate_research_stream(
             review_card=review_card,
             spotlight=spotlight,
@@ -6136,7 +6136,7 @@ def _render_candidate_research_stream(
     execution_frame,
     evidence_title: str,
 ) -> None:
-    st.subheader("原始依据")
+    st.subheader("原始记录")
     research_col, context_col = st.columns(2)
     with research_col:
         has_task_evidence = not signal_frame.empty or not task_frame.empty

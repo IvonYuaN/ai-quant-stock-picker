@@ -2946,7 +2946,7 @@ class DashboardDataProvider:
         if consensus:
             lines.append(f"辩论共识: {consensus}")
         if adjustment_reason and adjustment_reason != consensus:
-            lines.append(f"复核依据: {adjustment_reason}")
+            lines.append(f"复核原因: {adjustment_reason}")
         if risk_warnings:
             lines.append(f"核心风险: {risk_warnings[0]}")
         if opportunity_highlights:

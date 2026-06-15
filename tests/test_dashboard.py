@@ -1608,7 +1608,7 @@ def test_dashboard_debate_overview_lines_surface_missing_evidence() -> None:
         "结论: 建议维持评分 / 分歧 0.00",
         "共识: 暂未形成明确一致结论",
         "分歧来源: 看多 0 / 看空 0 / 中性 0",
-        "待补依据: 当前辩论未给出明确风险或机会，先回候选来龙去脉复核。",
+        "待补原因: 当前讨论未给出明确风险或机会，先回候选来龙去脉复核。",
     )
 
 
@@ -4346,7 +4346,7 @@ def test_dashboard_workspace_context_brief_distinguishes_review_sources_and_exec
     assert title == "跨任务联动回看"
     assert lines == (
         "当前判断主要来自同日一起出现的信息。",
-        "先核对跨任务结论，再回到单任务原始依据。",
+        "先核对跨任务结论，再回到单任务原始记录。",
     )
     assert tone == "archive"
 
@@ -5000,7 +5000,7 @@ def test_dashboard_home_action_rail_items_fall_back_to_task_briefs_when_lane_is_
     recommend_item, watch_item, blocked_item = _home_action_rail_items(_TaskView(), ())
 
     assert recommend_item.card is None
-    assert recommend_item.lines == ("当前没有重点跟踪候选，先等下一轮主链信号。",)
+    assert recommend_item.lines == ("当前没有纸面复核候选，先等下一轮主链信号。",)
     assert watch_item.card is None
     assert watch_item.lines == ("000002 万科A | 中优先级 / 收盘前 | 等待回踩确认",)
     assert blocked_item.card is None
@@ -5795,7 +5795,7 @@ def test_dashboard_debate_brief_cards_surface_human_summary_with_score_boundary(
     assert "边界: 这是解释层，不替代选股评分。" in cards[0].lines
     assert cards[1].title == "看多 3 / 看空 2 / 中性 3"
     assert "板块轮动: 看多 / 置信 91%" in cards[1].lines
-    assert cards[2].title == "先回原始依据核对"
+    assert cards[2].title == "先回原始记录核对"
     assert cards[2].tone == "pressure"
     assert cards[2].lines[0] == "先核对风险: 分歧偏大"
     rendered_text = "\n".join(
@@ -5860,7 +5860,7 @@ def test_dashboard_debate_evidence_composition_line_shows_verifiable_inputs() ->
 
     assert (
         _debate_evidence_composition_line(debate)
-        == "证据构成: 2 轮讨论 / 2 个 agent 观点 / 数据源 multi / 阈值 v1"
+        == "证据构成: 2 轮讨论 / 2 个观点 / 数据源 multi / 阈值 v1"
     )
 
 
@@ -6305,8 +6305,8 @@ def test_dashboard_archive_debate_evidence_lines_show_agent_rationale_and_qualit
     assert lines[1] == "讨论轮次: 2"
     assert lines[2] == "板块轮动: 看多 / 置信 91% | 板块轮动认为当前价格位置合理"
     assert lines[3] == "基本面空头: 看空 / 置信 70% | 基本面空头认为当前价格位置偏高"
-    assert lines[4] == "调整依据: 多空分歧更大"
-    assert lines[5] == "证据构成: 2 轮讨论 / 2 个 agent 观点 / 数据源 multi / 阈值 v1"
+    assert lines[4] == "调整原因: 多空分歧更大"
+    assert lines[5] == "证据构成: 2 轮讨论 / 2 个观点 / 数据源 multi / 阈值 v1"
 
 
 def test_dashboard_candidate_linkage_context_distinguishes_spotlight_debate_and_single_task() -> (
@@ -6665,7 +6665,7 @@ def test_dashboard_candidate_evidence_drawers_keep_journey_and_evidence_collapse
         evidence_title="同日研究证据",
     )
 
-    assert expanders == [("当日怎么走到这里", False), ("原始依据", False)]
+    assert expanders == [("当日怎么走到这里", False), ("原始记录", False)]
     assert rendered == ["journey", "evidence"]
 
 

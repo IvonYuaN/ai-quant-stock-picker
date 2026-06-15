@@ -454,12 +454,12 @@ class Briefing:
             if result.recommended_adjustment == "lower":
                 points.append(
                     f"🤖 辩论共识: {result.name}({result.symbol}) "
-                    f"倾向下调；附件参考分{result.adjusted_score:.1f}，不覆盖runtime打分"
+                    f"倾向下调；附件参考分{result.adjusted_score:.1f}，不改写系统评分"
                 )
             elif result.recommended_adjustment == "raise":
                 points.append(
                     f"🤖 辩论共识: {result.name}({result.symbol}) "
-                    f"倾向上调；附件参考分{result.adjusted_score:.1f}，不覆盖runtime打分"
+                    f"倾向上调；附件参考分{result.adjusted_score:.1f}，不改写系统评分"
                 )
             elif result.disagreement_score > 0.5:
                 points.append(

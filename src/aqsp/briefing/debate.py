@@ -796,11 +796,11 @@ class AShareDebateCoordinator:
 
         if result.adjustment_weight > 0:
             result.adjustment_reason += (
-                f"，辩论倾向上调；附件参考分 {result.adjusted_score:.1f}，不覆盖runtime打分"
+                f"，辩论倾向上调；附件参考分 {result.adjusted_score:.1f}，不改写系统评分"
             )
         elif result.adjustment_weight < 0:
             result.adjustment_reason += (
-                f"，辩论倾向下调；附件参考分 {result.adjusted_score:.1f}，不覆盖runtime打分"
+                f"，辩论倾向下调；附件参考分 {result.adjusted_score:.1f}，不改写系统评分"
             )
 
 
