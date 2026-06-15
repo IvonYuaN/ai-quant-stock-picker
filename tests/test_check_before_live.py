@@ -40,6 +40,8 @@ def _prepare_ready_runtime(root: Path) -> None:
             "deflated_sharpe": 1.2,
             "pbo": 0.24,
             "pbo_valid": True,
+            "dsr_pass": True,
+            "pbo_pass": True,
             "both_pass": True,
             "n_periods": 12,
         },
@@ -75,6 +77,8 @@ def test_check_before_live_blocks_when_walkforward_gate_failed(tmp_path: Path) -
             "deflated_sharpe": 1.2,
             "pbo": 0.75,
             "pbo_valid": True,
+            "dsr_pass": True,
+            "pbo_pass": False,
             "both_pass": False,
             "n_periods": 12,
         },
@@ -98,6 +102,8 @@ def test_check_before_live_blocks_when_walkforward_metrics_are_invalid(
             "deflated_sharpe": "not-a-number",
             "pbo": 0.24,
             "pbo_valid": True,
+            "dsr_pass": True,
+            "pbo_pass": True,
             "both_pass": True,
             "n_periods": 12,
         },
@@ -108,6 +114,127 @@ def test_check_before_live_blocks_when_walkforward_metrics_are_invalid(
     assert any(
         finding.gate == "walkforward_gate" and not finding.ok for finding in findings
     )
+
+
+def test_check_before_live_blocks_non_boolean_gate_flags(tmp_path: Path) -> None:
+    _prepare_ready_runtime(tmp_path)
+    _write_json(
+        tmp_path / "data/walkforward_gate.json",
+        {
+            "run_date": "2026-06-10",
+            "deflated_sharpe": 1.2,
+            "pbo": 0.24,
+            "pbo_valid": "true",
+            "dsr_pass": "true",
+            "pbo_pass": "true",
+            "both_pass": "true",
+            "n_periods": 12,
+        },
+    )
+
+    findings = check_before_live(root=tmp_path, today=date(2026, 6, 14))
+    finding = next(item for item in findings if item.gate == "walkforward_gate")
+
+    assert finding.ok is False
+    assert "pbo_valid flag missing/invalid/false" in finding.detail
+    assert "both_pass flag missing/invalid/false" in finding.detail
+
+
+def test_check_before_live_blocks_non_integer_period_count(tmp_path: Path) -> None:
+    _prepare_ready_runtime(tmp_path)
+    _write_json(
+        tmp_path / "data/walkforward_gate.json",
+        {
+            "run_date": "2026-06-10",
+            "deflated_sharpe": 1.2,
+            "pbo": 0.24,
+            "pbo_valid": True,
+            "dsr_pass": True,
+            "pbo_pass": True,
+            "both_pass": True,
+            "n_periods": True,
+        },
+    )
+
+    findings = check_before_live(root=tmp_path, today=date(2026, 6, 14))
+    finding = next(item for item in findings if item.gate == "walkforward_gate")
+
+    assert finding.ok is False
+    assert "n_periods missing/invalid" in finding.detail
+
+
+def test_check_before_live_blocks_boolean_or_nan_metrics(tmp_path: Path) -> None:
+    _prepare_ready_runtime(tmp_path)
+    _write_json(
+        tmp_path / "data/walkforward_gate.json",
+        {
+            "run_date": "2026-06-10",
+            "deflated_sharpe": True,
+            "pbo": "NaN",
+            "pbo_valid": True,
+            "dsr_pass": True,
+            "pbo_pass": True,
+            "both_pass": True,
+            "n_periods": 12,
+        },
+    )
+
+    findings = check_before_live(root=tmp_path, today=date(2026, 6, 14))
+    finding = next(item for item in findings if item.gate == "walkforward_gate")
+
+    assert finding.ok is False
+    assert "deflated_sharpe missing/invalid" in finding.detail
+    assert "pbo missing/invalid" in finding.detail
+
+
+def test_check_before_live_blocks_string_numeric_metrics(tmp_path: Path) -> None:
+    _prepare_ready_runtime(tmp_path)
+    _write_json(
+        tmp_path / "data/walkforward_gate.json",
+        {
+            "run_date": "2026-06-10",
+            "deflated_sharpe": "1.2",
+            "pbo": "0.24",
+            "pbo_valid": True,
+            "dsr_pass": True,
+            "pbo_pass": True,
+            "both_pass": True,
+            "n_periods": 12,
+        },
+    )
+
+    findings = check_before_live(root=tmp_path, today=date(2026, 6, 14))
+    finding = next(item for item in findings if item.gate == "walkforward_gate")
+
+    assert finding.ok is False
+    assert "deflated_sharpe missing/invalid" in finding.detail
+    assert "pbo missing/invalid" in finding.detail
+
+
+def test_check_before_live_explains_zero_period_walkforward_block(
+    tmp_path: Path,
+) -> None:
+    _prepare_ready_runtime(tmp_path)
+    _write_json(
+        tmp_path / "data/walkforward_gate.json",
+        {
+            "run_date": "2026-06-10",
+            "deflated_sharpe": 1.2,
+            "pbo": 0.24,
+            "pbo_valid": True,
+            "dsr_pass": True,
+            "pbo_pass": True,
+            "both_pass": True,
+            "n_periods": 0,
+        },
+    )
+
+    findings = check_before_live(root=tmp_path, today=date(2026, 6, 14))
+    finding = next(item for item in findings if item.gate == "walkforward_gate")
+
+    assert finding.ok is False
+    assert "n_periods=FAIL(0)" in finding.detail
+    assert "blockers: n_periods=0" in finding.detail
 
 
 def test_check_before_live_blocks_when_paper_samples_are_too_small(

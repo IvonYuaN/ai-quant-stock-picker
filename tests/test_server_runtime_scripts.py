@@ -136,11 +136,12 @@ def test_news_catalysts_script_sends_research_notification() -> None:
     assert 'SOURCE_TIMEOUT_SECONDS="${AQSP_NEWS_SOURCE_TIMEOUT_SECONDS:-4}"' in script
     assert 'TASK_TIMEOUT_SECONDS="${AQSP_NEWS_TASK_TIMEOUT_SECONDS:-300}"' in script
     assert 'timeout "${TASK_TIMEOUT_SECONDS}"' in script
-    assert "消息面雷达超时降级" in script
+    assert "消息面雷达超时:" in script
     assert "-m aqsp news-catalysts" in script
     assert "--notify" in script
     assert "--enable-llm-review" in script
-    assert "不替代主报告结论" in script
+    assert "无有效结论：消息源超时" in script
+    assert "## ✅ 开盘怎么用" not in script
 
 
 def test_server_status_surfaces_bt_task_logs() -> None:

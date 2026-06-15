@@ -12,6 +12,14 @@ from aqsp.strategies.composite import CompositeStrategy
 from aqsp.strategies.thresholds import load_thresholds
 
 
+@pytest.fixture(autouse=True)
+def _isolate_walkforward_gate(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        "aqsp.cli.WALKFORWARD_GATE_PATH",
+        str(tmp_path / "data" / "walkforward_gate.json"),
+    )
+
+
 def _make_sample_data(n_days: int = 200) -> pd.DataFrame:
     dates = pd.date_range(end="2024-12-31", periods=n_days, freq="B")
     return pd.DataFrame(
@@ -72,6 +80,15 @@ def test_walkforward_help_handles_percent_text(capsys) -> None:
 
     assert exc_info.value.code == 0
     assert "3.1%硬止损" in capsys.readouterr().out
+
+
+def test_format_walkforward_pbo_marks_invalid_placeholder() -> None:
+    from aqsp.cli import _format_walkforward_pbo
+
+    assert (
+        _format_walkforward_pbo(0.0, False) == "0.00%（无效占位，需 grid 多变体 CSCV）"
+    )
+    assert _format_walkforward_pbo(0.24, True) == "24.00%"
 
 
 class TestCompositeStrategyInit:
@@ -1108,6 +1125,11 @@ class TestCLIPoolSelection:
         assert result == 0
         assert seen["cache"] is None
         assert report_path.exists()
+        report = report_path.read_text(encoding="utf-8")
+        assert "## 运行参数" in report
+        assert "| source | sqlite_db |" in report
+        assert "| horizon_days | 3 |" in report
+        assert "| min_score | thresholds.yaml |" in report
 
     def test_walkforward_uses_env_symbols_when_cli_symbols_missing(
         self, monkeypatch, tmp_path

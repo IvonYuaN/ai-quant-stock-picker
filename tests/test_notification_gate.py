@@ -13,6 +13,7 @@ def _write_gate(tmp_path, **overrides):
         "run_date": "2026-06-01",
         "deflated_sharpe": 1.9,
         "pbo": 0.24,
+        "pbo_valid": True,
         "dsr_pass": True,
         "pbo_pass": True,
         "both_pass": True,
@@ -82,6 +83,98 @@ def test_pbo_fail_blocks(tmp_path, monkeypatch):
     )
     assert ok is False
     assert any("PBO" in r for r in reasons)
+
+
+def test_string_boolean_sidecar_flags_fail_closed(tmp_path, monkeypatch):
+    import aqsp.cli as cli_mod
+    from datetime import date
+
+    monkeypatch.setattr(cli_mod, "today_shanghai", lambda: date(2026, 6, 5))
+    ok, reasons = _check_notification_gate(
+        cold_start_days=30,
+        gate_path=_write_gate(
+            tmp_path,
+            pbo_valid="true",
+            dsr_pass="true",
+            pbo_pass="true",
+            both_pass="true",
+        ),
+    )
+
+    assert ok is False
+    assert any("标志无效" in reason for reason in reasons)
+
+
+def test_both_pass_flag_must_be_true(tmp_path, monkeypatch):
+    import aqsp.cli as cli_mod
+    from datetime import date
+
+    monkeypatch.setattr(cli_mod, "today_shanghai", lambda: date(2026, 6, 5))
+    ok, reasons = _check_notification_gate(
+        cold_start_days=30,
+        gate_path=_write_gate(tmp_path, both_pass=False),
+    )
+
+    assert ok is False
+    assert any("双门总标志无效" in reason for reason in reasons)
+
+
+def test_malformed_n_periods_fail_closed(tmp_path, monkeypatch):
+    import aqsp.cli as cli_mod
+    from datetime import date
+
+    monkeypatch.setattr(cli_mod, "today_shanghai", lambda: date(2026, 6, 5))
+    ok, reasons = _check_notification_gate(
+        cold_start_days=30,
+        gate_path=_write_gate(tmp_path, n_periods="many"),
+    )
+
+    assert ok is False
+    assert any("n_periods=many" in reason for reason in reasons)
+
+
+def test_boolean_n_periods_fail_closed(tmp_path, monkeypatch):
+    import aqsp.cli as cli_mod
+    from datetime import date
+
+    monkeypatch.setattr(cli_mod, "today_shanghai", lambda: date(2026, 6, 5))
+    ok, reasons = _check_notification_gate(
+        cold_start_days=30,
+        gate_path=_write_gate(tmp_path, n_periods=True),
+    )
+
+    assert ok is False
+    assert any("n_periods=True" in reason for reason in reasons)
+
+
+def test_boolean_or_nan_metric_fields_fail_closed(tmp_path, monkeypatch):
+    import aqsp.cli as cli_mod
+    from datetime import date
+
+    monkeypatch.setattr(cli_mod, "today_shanghai", lambda: date(2026, 6, 5))
+    ok, reasons = _check_notification_gate(
+        cold_start_days=30,
+        gate_path=_write_gate(tmp_path, deflated_sharpe=True, pbo="NaN"),
+    )
+
+    assert ok is False
+    assert any("DSR 字段缺失" in reason for reason in reasons)
+    assert any("PBO 字段缺失" in reason for reason in reasons)
+
+
+def test_string_numeric_metric_fields_fail_closed(tmp_path, monkeypatch):
+    import aqsp.cli as cli_mod
+    from datetime import date
+
+    monkeypatch.setattr(cli_mod, "today_shanghai", lambda: date(2026, 6, 5))
+    ok, reasons = _check_notification_gate(
+        cold_start_days=30,
+        gate_path=_write_gate(tmp_path, deflated_sharpe="1.9", pbo="0.24"),
+    )
+
+    assert ok is False
+    assert any("DSR 字段缺失" in reason for reason in reasons)
+    assert any("PBO 字段缺失" in reason for reason in reasons)
 
 
 # ---- fail-closed：sidecar 缺失/解析失败/过期 ----

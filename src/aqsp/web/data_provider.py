@@ -1463,7 +1463,11 @@ class DashboardDataProvider:
         except Exception as exc:
             logger.error("加载执行日志失败: %s", exc)
             return []
-        return [dict(row) for row in rows if row.get("type") == "execution"]
+        return [
+            self._normalize_execution_log_row(row)
+            for row in rows
+            if row.get("type") in ("paper_execution", "execution")
+        ]
 
     def execution_logs_for_date(self, signal_date: str) -> list[dict[str, Any]]:
         selected_date = signal_date.strip()
@@ -1483,9 +1487,9 @@ class DashboardDataProvider:
             logger.error("加载 %s 执行日志失败: %s", selected_date, exc)
             return []
         return [
-            dict(row)
+            self._normalize_execution_log_row(row)
             for row in rows
-            if row.get("type") == "execution"
+            if row.get("type") in ("paper_execution", "execution")
             and str(row.get("timestamp", "") or "").startswith(selected_date)
         ]
 
@@ -1560,6 +1564,24 @@ class DashboardDataProvider:
             for row in rows[-limit:]
         ]
         return pd.DataFrame(table[::-1])
+
+    @staticmethod
+    def _normalize_execution_log_row(row: dict[str, Any]) -> dict[str, Any]:
+        normalized = dict(row)
+        normalized["action"] = DashboardDataProvider._paper_action_label(
+            normalized.get("action", "")
+        )
+        return normalized
+
+    @staticmethod
+    def _paper_action_label(action: object) -> str:
+        value = str(action or "").strip()
+        return {
+            "BUY": "纸面入场",
+            "SELL": "纸面离场",
+            "PAPER_ENTRY": "纸面入场",
+            "PAPER_EXIT": "纸面离场",
+        }.get(value, value)
 
     def latest_source_status(
         self,

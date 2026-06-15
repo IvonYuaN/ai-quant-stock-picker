@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # 消息面雷达：
 # 1. 周末/盘前/午盘复核高影响资讯催化和风险
-# 2. 只生成研究提示，不替代主报告结论
+# 2. 只输出结果、影响、来源和状态
 
 set -euo pipefail
 
@@ -71,25 +71,22 @@ if [ "$NEWS_EXIT" -eq 124 ]; then
     {
         echo "# 消息面雷达-$(date +%F)"
         echo
-        echo "> 🟡 本次消息源超过 ${TASK_TIMEOUT_SECONDS}s 未完成，已自动降级。这条通知今天不能拿来直接判断市场。"
+        echo "## 结论"
         echo
-        echo "## 👀 一眼先看"
+        echo "- 无有效结论：消息源超时"
+        echo "- 数据状态: 失败"
         echo
-        echo "- 本次消息源超时，今天不要把这条通知当结论。"
-        echo "- 盘前先回主链报告，优先看今日重点名单、继续观察名单和现在卡在哪。"
-        echo "- 如果担心错过突发，开盘后人工补看公告、交易所公告和主流媒体。"
+        echo "## 事件"
         echo
-        echo "## 🧨 高影响事件"
+        echo "- 无可靠消息面结果"
         echo
-        echo "- 暂无可靠消息面结论；继续以主链量价、风险约束和人工复核为准。"
+        echo "## 状态"
         echo
-        echo "## ✅ 开盘怎么用"
-        echo
-        echo "1. 本次消息源超时，先不要把它当作有效消息面结论。"
-        echo "2. 盘前可重新运行一次消息雷达，优先看公告来源和多源交叉。"
-        echo "3. 如果重新运行仍失败，今天直接按主链计划走，不因为消息面空白临时改计划。"
+        echo "- 状态: failed"
+        echo "- 高影响事件: 0"
+        echo "- 告警: 有"
     } > "$OUTPUT"
-    log "消息面雷达超时降级: ${OUTPUT}"
+    log "消息面雷达超时: ${OUTPUT}"
 elif [ "$NEWS_EXIT" -ne 0 ]; then
     log "[ERROR] 消息面雷达失败: exit=${NEWS_EXIT}"
     exit "$NEWS_EXIT"

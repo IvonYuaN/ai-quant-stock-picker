@@ -20,6 +20,30 @@ from aqsp.strategies.closing_premium import PremiumSignal
 from aqsp.strategies.morning_breakout import BreakoutSignal
 
 
+def _assert_clean_notification(markdown: str) -> None:
+    forbidden = (
+        "阅读方式",
+        "不是交易指令",
+        "不构成交易指令",
+        "不要做",
+        "怎么验证",
+        "模型复核",
+        "降级判断",
+        "## 🧭",
+        "## 📋",
+        "## ⚠️",
+        "## 🔒",
+        "## ✅",
+        "## 📌",
+        "## 📦",
+        "## 🗣️",
+        "## 🔬",
+        "## 📅",
+        "## 📈",
+    )
+    assert not any(token in markdown for token in forbidden)
+
+
 def test_build_briefing_notification_includes_debate_summary_when_summary_mode() -> (
     None
 ):
@@ -48,9 +72,9 @@ def test_build_briefing_notification_includes_debate_summary_when_summary_mode()
     markdown = build_briefing_notification(briefing, mode="summary")
 
     assert markdown.startswith("# 明日预案-2026-06-04")
-    assert "本通知只做研究复核，不是交易指令" in markdown
-    assert "## 一眼结论" in markdown
-    assert "## 🗣️ 不同看法" in markdown
+    _assert_clean_notification(markdown)
+    assert "## 结论" in markdown
+    assert "## 分歧" in markdown
     assert "分歧 45%" in markdown
     assert "# AI 量化选股日报" not in markdown
 
@@ -82,7 +106,8 @@ def test_build_briefing_notification_includes_research_radar_when_summary_mode()
     markdown = build_briefing_notification(briefing, mode="summary")
 
     assert markdown.startswith("# 明日预案-2026-06-04")
-    assert "## 🔬 研究补充" in markdown
+    _assert_clean_notification(markdown)
+    assert "## 研究" in markdown
     assert "已真正接入主流程：未落盘（按配置吸收队列展示）" in markdown
     assert "已纳入观察但不直接打分：4" in markdown
     assert "下一步优先补齐：baostock [P1] - 补回归样本" in markdown
@@ -171,35 +196,34 @@ def test_build_daily_run_notification_includes_allocation_guidance() -> None:
         source_health_message="eastmoney 健康",
     )
 
-    assert "**🌦️ 当前市况**：稳定上涨" in markdown
-    assert "**🧭 现在偏向**：进攻牛市 | 稳定上涨期，重仓动量+涨停板" in markdown
-    assert "**🔍 更偏好这些方向**：动量趋势、涨停接力" in markdown
-    assert "**📦 纸面仓位**：300750 20%" in markdown
-    assert "**💧 现金留存**：80%" in markdown
-    assert "## 📌 今日快照" in markdown
+    _assert_clean_notification(markdown)
+    assert "- 当前市况: 稳定上涨" in markdown
+    assert "- 现在偏向: 进攻牛市 | 稳定上涨期，重仓动量+涨停板" in markdown
+    assert "- 更偏好这些方向: 动量趋势、涨停接力" in markdown
+    assert "- 纸面仓位: 300750 20%" in markdown
+    assert "- 现金留存: 80%" in markdown
+    assert "## 快照" in markdown
     assert "# 收盘研究日报-2026-06-04" in markdown
-    assert "## 🧭 一眼看懂" in markdown
-    assert "本通知只做研究复核，不是交易指令" in markdown
-    assert "**🎯 今日判断**" in markdown
-    assert "**🗣️ 不同看法**" in markdown
-    assert "## ⚠️ 风险先看" in markdown
-    assert "不要为了凑数量硬塞候选" in markdown
+    assert "## 结论" in markdown
+    assert "- 今日判断:" in markdown
+    assert "- 不同看法:" in markdown
+    assert "## 风险" in markdown
     assert "| 项目 | 结论 | 先看什么 |" in markdown
-    assert "| 候选 | 🧪 比例参考 1 | 300750 宁德时代 |" in markdown
-    assert "| 纸面现实 | 🧪 纸面配仓 20% | 300750 宁德时代 20% |" in markdown
+    assert "| 候选 | 比例参考 1 | 300750 宁德时代 |" in markdown
+    assert "| 纸面现实 | 纸面配仓 20% | 300750 宁德时代 20% |" in markdown
     assert (
-        "| 分歧 | 🗣️ 最高分歧 42% | 300750 宁德时代：趋势强但仍需确认开盘承接 |"
+        "| 分歧 | 最高分歧 42% | 300750 宁德时代：趋势强但仍需确认开盘承接 |"
         in markdown
     )
-    assert "## 🧭 阅读顺序" in markdown
-    assert markdown.index("## 📌 今日快照") < markdown.index("## 🧭 阅读顺序")
-    assert "1. 🧪 先看纸面分配：300750 宁德时代，核对开盘承接和流动性。" in markdown
-    assert "2. 🔍 再看候选一览：确认状态、分数、关键点是否一致。" in markdown
-    assert "3. 🗣️ 最后看不同看法：300750 宁德时代 分歧 42%。" in markdown
-    assert markdown.index("## 🧭 阅读顺序") < markdown.index("## 📋 候选一览")
-    assert "## 📦 纸面仓位" in markdown
+    assert "## 顺序" in markdown
+    assert markdown.index("## 快照") < markdown.index("## 顺序")
+    assert "1. 先看纸面分配：300750 宁德时代，核对开盘承接和流动性。" in markdown
+    assert "2. 再看候选一览：确认状态、分数、关键点是否一致。" in markdown
+    assert "3. 最后看不同看法：300750 宁德时代 分歧 42%。" in markdown
+    assert markdown.index("## 顺序") < markdown.index("## 候选")
+    assert "## 纸面" in markdown
     assert "300750 宁德时代 20% | 主链评分 72.0" in markdown
-    assert "## 🗣️ 不同看法" in markdown
+    assert "## 分歧" in markdown
     assert "趋势强但仍需确认开盘承接" in markdown
     assert "先看 300750 宁德时代 的开盘强弱与流动性" in markdown
     assert "参考仓位执行" not in markdown
@@ -222,8 +246,8 @@ def test_build_daily_run_notification_supports_midday_title() -> None:
     )
 
     assert markdown.startswith("# 午盘分析-2026-06-11")
-    assert "本通知只做研究复核，不是交易指令" in markdown
-    assert "## ⚠️ 风险先看" in markdown
+    _assert_clean_notification(markdown)
+    assert "## 风险" in markdown
 
 
 def test_build_daily_run_notification_surfaces_watchlist_blockers_when_no_allocations() -> (
@@ -250,27 +274,25 @@ def test_build_daily_run_notification_surfaces_watchlist_blockers_when_no_alloca
         source_health_message="eastmoney 健康",
     )
 
-    assert "**👀 继续观察名单**：000021 深科技、000338 潍柴动力" in markdown
+    _assert_clean_notification(markdown)
+    assert "- 继续观察名单: 000021 深科技、000338 潍柴动力" in markdown
     assert (
-        "**👀 当前状态**：今日无纸面复核对象，转入继续观察名单：000021 深科技、000338 潍柴动力"
+        "- 当前状态: 今日无纸面复核对象，转入继续观察名单：000021 深科技、000338 潍柴动力"
         in markdown
     )
-    assert "**🟡 需要重点确认**：板块集中度过高，压低科技暴露" in markdown
-    assert "**🔒 现在卡在哪**：000021 深科技: 板块集中度过高，压低科技暴露" in markdown
-    assert "## ⚠️ 风险先看" in markdown
-    assert "阻塞没解除前，不要把观察名单抬升成纸面复核" in markdown
-    assert "| 候选 | 👀 继续观察名单 2 | 000021 深科技、000338 潍柴动力 |" in markdown
-    assert "| 纸面现实 | 👀 继续观察优先 | 000021 深科技、000338 潍柴动力 |" in markdown
+    assert "- 需要重点确认: 板块集中度过高，压低科技暴露" in markdown
+    assert "- 现在卡在哪: 000021 深科技: 板块集中度过高，压低科技暴露" in markdown
+    assert "## 风险" in markdown
+    assert "| 候选 | 继续观察名单 2 | 000021 深科技、000338 潍柴动力 |" in markdown
+    assert "| 纸面现实 | 继续观察优先 | 000021 深科技、000338 潍柴动力 |" in markdown
     assert (
-        "| 风险/阻塞 | 🔒 1 条阻塞 | 000021 深科技: 板块集中度过高，压低科技暴露 |"
+        "| 风险/阻塞 | 1 条阻塞 | 000021 深科技: 板块集中度过高，压低科技暴露 |"
         in markdown
     )
-    assert "## 🧭 阅读顺序" in markdown
-    assert "1. ⏸️ 先看空档：今日无清晰候选，不为了凑数量推进。" in markdown
-    assert (
-        "2. 🔒 再看风险/阻塞：000021 深科技: 板块集中度过高，压低科技暴露" in markdown
-    )
-    assert "3. 📌 最后看约束：单票上限 20%；今日不建议建立主仓。" in markdown
+    assert "## 顺序" in markdown
+    assert "1. 先看空档：今日无清晰候选，不为了凑数量推进。" in markdown
+    assert "2. 再看风险/阻塞：000021 深科技: 板块集中度过高，压低科技暴露" in markdown
+    assert "3. 最后看约束：单票上限 20%；今日不建议建立主仓。" in markdown
     assert "暂无可执行主仓，先盯备选观察名单" not in markdown
     assert "暂无纸面复核主线，先盯继续观察名单" in markdown
     assert "只有阻塞条件解除后再考虑转入纸面复核名单" in markdown
@@ -314,9 +336,10 @@ def test_build_daily_run_notification_surfaces_watch_reviews_as_checklist() -> N
         source_health_message="eastmoney 健康",
     )
 
-    assert "**📝 观察名单接下来**：" in markdown
+    _assert_clean_notification(markdown)
+    assert "- 观察名单接下来:" in markdown
     assert (
-        "  - 688981 中芯国际 | 高优先级 / 盘中走强后 | 等待量价继续走强后，再评估是否转入纸面复核名单"
+        "- 688981 中芯国际 | 高优先级 / 盘中走强后 | 等待量价继续走强后，再评估是否转入纸面复核名单"
         in markdown
     )
     assert (
@@ -391,19 +414,20 @@ def test_build_daily_run_notification_lists_watch_candidates_when_not_tradable()
         source_health_message="eastmoney 健康",
     )
 
-    assert "## 📋 候选一览" in markdown
+    _assert_clean_notification(markdown)
+    assert "## 候选" in markdown
     assert "| # | 标的 | 状态 | 分数 | 处理 | 关键点 |" in markdown
     assert (
-        "| 1 | 688981 中芯国际 | 新晋 | -9 | 👀 继续观察 | 等待量价继续走强后，再评估是否转入纸面复核名单；复核 高优先级 / 盘中走强后 |"
+        "| 1 | 688981 中芯国际 | 新晋 | -9 | 继续观察 | 等待量价继续走强后，再评估是否转入纸面复核名单；复核 高优先级 / 盘中走强后 |"
         in markdown
     )
     assert (
-        "| 2 | 000001 平安银行 | 观察阻塞 | -18 | ⛔ 等阻塞解除 | 板块集中度过高，压低银行暴露 |"
+        "| 2 | 000001 平安银行 | 观察阻塞 | -18 | 等阻塞解除 | 板块集中度过高，压低银行暴露 |"
         in markdown
     )
-    assert "| 候选 | 👀 继续观察 2 / 阻塞 1 | 688981 中芯国际 |" in markdown
+    assert "| 候选 | 继续观察 2 / 阻塞 1 | 688981 中芯国际 |" in markdown
     assert (
-        "| 风险/阻塞 | 🔒 1 条阻塞 | 000001 平安银行：板块集中度过高，压低银行暴露 |"
+        "| 风险/阻塞 | 1 条阻塞 | 000001 平安银行：板块集中度过高，压低银行暴露 |"
         in markdown
     )
     assert (
@@ -441,13 +465,12 @@ def test_build_daily_run_notification_includes_candidate_status_for_tradable_pic
         source_health_message="eastmoney 健康",
     )
 
+    _assert_clean_notification(markdown)
     assert (
-        "**⭐ 先看对象**：300750 宁德时代 | 延续上升 | 73分 | 参考 220.5 / 最多亏到 214.2 / 先看目标 238"
+        "- 先看对象: 300750 宁德时代 | 延续上升 | 73分 | 参考 220.5 / 最多亏到 214.2 / 先看目标 238"
         in markdown
     )
-    assert (
-        "| 1 | 300750 宁德时代 | 延续上升 | 73 | 🎯 纸面复核 | 趋势延续 |" in markdown
-    )
+    assert "| 1 | 300750 宁德时代 | 延续上升 | 73 | 纸面复核 | 趋势延续 |" in markdown
     assert "买 220.5" not in markdown
 
 
@@ -539,9 +562,10 @@ def test_build_daily_run_notification_surfaces_snapshot_diff_highlights() -> Non
         ),
     )
 
-    assert "**🔄 候选变化**：新增 1 / 移出 1 / 排名异动 1" in markdown
-    assert "## 📈 变化与复盘" in markdown
-    assert "🆕 **新晋候选**: 688981 中芯国际" in markdown
+    _assert_clean_notification(markdown)
+    assert "- 候选变化: 新增 1 / 移出 1 / 排名异动 1" in markdown
+    assert "## 变化" in markdown
+    assert "- 新晋候选: 688981 中芯国际" in markdown
     assert "归档移出记录: 600036 招商银行" in markdown
     assert "排名记录变化: 300750 #4→#5↓" in markdown
     assert "❌ **移出候选**" not in markdown
@@ -561,8 +585,9 @@ def test_build_monitor_notification_summary_mode_is_action_oriented() -> None:
         mode="summary",
     )
 
-    assert "## 核心结论" in markdown
-    assert "## 处理清单" in markdown
+    _assert_clean_notification(markdown)
+    assert "## 结论" in markdown
+    assert "## 处理" in markdown
     assert "stale_data" in markdown
 
 

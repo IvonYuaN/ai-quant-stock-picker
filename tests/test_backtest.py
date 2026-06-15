@@ -6,6 +6,8 @@ import pytest
 
 from aqsp.backtest.walk_forward import (
     BacktestResult,
+    TradeResult,
+    WalkForwardDiagnostics,
     WalkForwardResult,
     WalkForwardTester,
     _check_executable,
@@ -367,6 +369,7 @@ class TestWalkForwardRun:
         result = tester.run(data)
         assert isinstance(result, WalkForwardResult)
         assert isinstance(result.overall, BacktestResult)
+        assert isinstance(result.diagnostics, WalkForwardDiagnostics)
         assert result.overall.trades >= 0
 
     def test_run_with_real_price_returns(self) -> None:
@@ -573,6 +576,65 @@ class TestParameterStd:
     def test_single_period_returns_zero(self) -> None:
         periods = [BacktestResult("p0", 0.05, 0.05, 0.02, 1.5, 0.6, 1.2, 10, 0)]
         assert WalkForwardTester._calculate_parameter_std(periods) == 0.0
+
+
+class TestWalkForwardDiagnostics:
+    def test_build_diagnostics_summarizes_failure_sources(self) -> None:
+        trades = [
+            TradeResult(
+                "600000",
+                "2026-01-10",
+                "2026-01-11",
+                "2026-01-13",
+                10,
+                9,
+                -10,
+                "stop_loss",
+            ),
+            TradeResult(
+                "600000",
+                "2026-01-20",
+                "2026-01-21",
+                "2026-01-23",
+                10,
+                9.5,
+                -5,
+                "hold_period_close",
+            ),
+            TradeResult(
+                "000001",
+                "2026-01-10",
+                "2026-01-11",
+                "2026-01-13",
+                10,
+                10.5,
+                5,
+                "hold_period_close",
+            ),
+            TradeResult(
+                "300001",
+                "2026-01-10",
+                "2026-01-11",
+                "2026-01-11",
+                0,
+                0,
+                0,
+                "limit_up_at_open",
+                executable=False,
+            ),
+        ]
+
+        diagnostics = WalkForwardTester._build_diagnostics(trades)
+
+        assert diagnostics.total_trades == 4
+        assert diagnostics.executable_trades == 3
+        assert diagnostics.not_executable == 1
+        assert diagnostics.exit_reason_counts == (
+            ("hold_period_close", 2),
+            ("stop_loss", 1),
+        )
+        assert diagnostics.not_executable_reason_counts == (("limit_up_at_open", 1),)
+        assert diagnostics.worst_symbols[0] == ("600000", 2, -7.5, -15.0)
 
 
 class TestStopLossAndTakeProfit:

@@ -7,12 +7,13 @@
 
 import sys
 from pathlib import Path
-from datetime import date, timedelta
+from datetime import timedelta
 
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 from aqsp.ledger.base import read_ledger, write_ledger  # noqa: E402
+from aqsp.core.time import today_shanghai  # noqa: E402
 
 
 def main():
@@ -20,26 +21,16 @@ def main():
 
     parser = argparse.ArgumentParser(description="清理过期的信号数据")
     parser.add_argument(
-        "--ledger",
-        type=str,
-        default="data/ledger.jsonl",
-        help="Ledger 文件路径"
+        "--ledger", type=str, default="data/ledger.jsonl", help="Ledger 文件路径"
     )
     parser.add_argument(
-        "--max-age-days",
-        type=int,
-        default=90,
-        help="信号最大保留天数（默认: 90）"
+        "--max-age-days", type=int, default=90, help="信号最大保留天数（默认: 90）"
     )
     parser.add_argument(
-        "--remove-simulated",
-        action="store_true",
-        help="删除所有模拟信号"
+        "--remove-simulated", action="store_true", help="删除所有模拟信号"
     )
     parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="只显示将要删除的内容，不实际删除"
+        "--dry-run", action="store_true", help="只显示将要删除的内容，不实际删除"
     )
 
     args = parser.parse_args()
@@ -55,7 +46,7 @@ def main():
     print(f"\n总记录数: {len(existing_rows)}")
 
     # 计算截止日期
-    cutoff_date = (date.today() - timedelta(days=args.max_age_days)).isoformat()
+    cutoff_date = (today_shanghai() - timedelta(days=args.max_age_days)).isoformat()
     print(f"截止日期: {cutoff_date} (保留 {args.max_age_days} 天内的数据)")
 
     # 分类统计
@@ -94,7 +85,9 @@ def main():
     print(f"  - 将保留: {stats['keep']}")
     print(f"  - 已过期: {stats['expired']} (日期: {sorted(expired_dates)[:5]}...)")
     if args.remove_simulated:
-        print(f"  - 模拟信号: {stats['simulated']} (日期: {sorted(simulated_dates)[:5]}...)")
+        print(
+            f"  - 模拟信号: {stats['simulated']} (日期: {sorted(simulated_dates)[:5]}...)"
+        )
 
     if args.dry_run:
         print("\n⚠️  DRY RUN: 未实际删除任何数据")

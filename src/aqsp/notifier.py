@@ -8,6 +8,7 @@ import requests
 
 from aqsp.core.time import today_shanghai
 from aqsp.data.source_health import notification_level_for_health_label
+from aqsp.notification_style import compact_notification_markdown
 
 
 @dataclass(frozen=True)
@@ -49,14 +50,15 @@ def prepend_source_status_banner(
         title = lines[0].strip()
         rest = "\n".join(lines[1:]).lstrip()
         if label in {"fallback", "degraded", "cold_start"}:
-            return f"{title}\n\n{banner}\n\n{rest}".strip()
-        return f"{title}\n\n{rest}\n\n{banner}".strip()
+            return compact_notification_markdown(f"{title}\n\n{banner}\n\n{rest}")
+        return compact_notification_markdown(f"{title}\n\n{rest}\n\n{banner}")
     if label in {"fallback", "degraded", "cold_start"}:
-        return f"{banner}\n\n{body}".strip()
-    return f"{body}\n\n{banner}".strip()
+        return compact_notification_markdown(f"{banner}\n\n{body}")
+    return compact_notification_markdown(f"{body}\n\n{banner}")
 
 
 def notify_markdown(markdown: str) -> list[NotifyResult]:
+    markdown = compact_notification_markdown(markdown)
     results: list[NotifyResult] = []
     for sender in (
         _send_telegram,
@@ -82,6 +84,7 @@ def send_notification(title: str, content: str) -> list[NotifyResult]:
 
 
 def _send_telegram(markdown: str) -> NotifyResult | None:
+    markdown = compact_notification_markdown(markdown)
     token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
     chat_id = os.getenv("TELEGRAM_CHAT_ID", "").strip()
     if not token or not chat_id:
@@ -92,6 +95,7 @@ def _send_telegram(markdown: str) -> NotifyResult | None:
 
 
 def _send_wechat(markdown: str) -> NotifyResult | None:
+    markdown = compact_notification_markdown(markdown)
     url = os.getenv("WECHAT_WEBHOOK_URL", "").strip()
     if not url:
         return None
@@ -100,6 +104,7 @@ def _send_wechat(markdown: str) -> NotifyResult | None:
 
 
 def _send_serverchan(markdown: str) -> NotifyResult | None:
+    markdown = compact_notification_markdown(markdown)
     sendkey = os.getenv("SERVERCHAN_SENDKEY", "").strip()
     if not sendkey:
         return None
@@ -112,6 +117,7 @@ def _send_serverchan(markdown: str) -> NotifyResult | None:
 
 
 def _send_feishu(markdown: str) -> NotifyResult | None:
+    markdown = compact_notification_markdown(markdown)
     url = os.getenv("FEISHU_WEBHOOK_URL", "").strip()
     if not url:
         return None
@@ -120,6 +126,7 @@ def _send_feishu(markdown: str) -> NotifyResult | None:
 
 
 def _send_dingtalk(markdown: str) -> NotifyResult | None:
+    markdown = compact_notification_markdown(markdown)
     url = os.getenv("DINGTALK_WEBHOOK_URL", "").strip()
     secret = os.getenv("DINGTALK_SECRET", "").strip()
     if not url:
@@ -148,6 +155,7 @@ def _send_dingtalk(markdown: str) -> NotifyResult | None:
 
 
 def _send_bark(markdown: str) -> NotifyResult | None:
+    markdown = compact_notification_markdown(markdown)
     url = os.getenv("BARK_URL", "").strip()
     if not url:
         return None
@@ -159,6 +167,7 @@ def _send_bark(markdown: str) -> NotifyResult | None:
 
 
 def _send_pushplus(markdown: str) -> NotifyResult | None:
+    markdown = compact_notification_markdown(markdown)
     token = os.getenv("PUSHPLUS_TOKEN", "").strip()
     if not token:
         return None
@@ -173,6 +182,7 @@ def _send_pushplus(markdown: str) -> NotifyResult | None:
 
 
 def _send_discord(markdown: str) -> NotifyResult | None:
+    markdown = compact_notification_markdown(markdown)
     url = os.getenv("DISCORD_WEBHOOK_URL", "").strip()
     if not url:
         return None
@@ -181,6 +191,7 @@ def _send_discord(markdown: str) -> NotifyResult | None:
 
 
 def _send_slack(markdown: str) -> NotifyResult | None:
+    markdown = compact_notification_markdown(markdown)
     url = os.getenv("SLACK_WEBHOOK_URL", "").strip()
     if not url:
         return None
@@ -226,6 +237,7 @@ def notify_feishu_card(card: dict[str, Any]) -> NotifyResult | None:
 
 
 def _send_generic_webhook(markdown: str) -> NotifyResult | None:
+    markdown = compact_notification_markdown(markdown)
     url = os.getenv("GENERIC_WEBHOOK_URL", "").strip()
     if not url:
         return None

@@ -65,9 +65,13 @@ def test_news_catalyst_report_prioritizes_verified_price_hike_events() -> None:
     assert "来源: 证券报、财联社" in markdown
     assert "时间: 2026-06-11 08:30" in markdown
     assert "原文: https://example.com/a" in markdown
+    assert "不要做:" not in markdown
+    assert "怎么验证:" not in markdown
+    assert "模型复核" not in markdown
+    assert "依据:" not in markdown
 
 
-def test_news_catalyst_notification_keeps_research_boundary() -> None:
+def test_news_catalyst_notification_only_outputs_results_and_inference() -> None:
     report = build_catalyst_report(
         fetch_symbol_news=lambda _symbol, _limit: pd.DataFrame(),
         fetch_global_news=lambda _limit: pd.DataFrame(
@@ -78,12 +82,22 @@ def test_news_catalyst_notification_keeps_research_boundary() -> None:
     markdown = format_catalyst_notification(report)
 
     assert markdown.startswith("# 消息面雷达-")
-    assert "不替代主报告结论" in markdown
-    assert "多源交叉或公告来源优先" in markdown
-    assert "交易指令" in markdown
+    assert "## 结论" in markdown
+    assert "## 事件" in markdown
     assert "来源: 新华社" in markdown
-    assert "怎么验证:" in markdown
-    assert "不要做:" in markdown
+    forbidden = (
+        "不替代",
+        "交易指令",
+        "怎么验证",
+        "不要做",
+        "开盘怎么用",
+        "靠不靠谱",
+        "模型复核",
+        "降级判断",
+        "助手",
+        "依据",
+    )
+    assert not any(text in markdown for text in forbidden)
 
 
 def test_news_catalyst_filters_pure_market_price_action_noise() -> None:
@@ -116,7 +130,7 @@ def test_news_catalyst_report_surfaces_source_warnings() -> None:
     assert report.source_status == "failed"
     assert report.warnings == ("全市场快讯: source timeout",)
     markdown = format_catalyst_notification(report)
-    assert "今天不要用这条通知下结论" in markdown
+    assert "无有效结论：消息源失败" in markdown
 
 
 def test_news_catalyst_report_marks_partial_when_raw_news_has_no_strong_event() -> None:
@@ -128,7 +142,7 @@ def test_news_catalyst_report_marks_partial_when_raw_news_has_no_strong_event() 
     assert report.source_status == "partial"
     assert not report.events
     markdown = format_catalyst_notification(report)
-    assert "有可用消息，部分来源降级" in markdown
+    assert "数据状态: 部分可用" in markdown
     assert "抓取失败" not in markdown.splitlines()[0]
 
 
@@ -183,8 +197,8 @@ def test_news_catalyst_merges_same_company_event_across_sources() -> None:
     assert report.events[0].source_count == 2
     assert report.events[0].verification == "多源交叉"
     markdown = format_catalyst_notification(report)
-    assert markdown.count("**1. 🟢 利好") == 1
-    assert "**2. 🟢 利好" not in markdown
+    assert markdown.count("**1. 利好") == 1
+    assert "**2. 利好" not in markdown
     assert "来源: 同花顺、富途" in markdown
 
 
@@ -223,8 +237,8 @@ def test_news_catalyst_infers_source_from_known_url() -> None:
     assert report.events[0].verification == "媒体来源"
     assert report.events[0].confidence >= 0.5
     markdown = format_catalyst_notification(report)
-    assert "今天先看 中国西电 的 订单/需求验证" in markdown
-    assert "🟢 利好 ｜ 中国西电" in markdown
+    assert "中国西电|订单/需求验证" in markdown
+    assert "利好 | 中国西电" in markdown
     assert "来源: 同花顺" in markdown
 
 
@@ -319,7 +333,10 @@ def test_news_catalyst_llm_review_is_bounded(monkeypatch) -> None:
     )
 
     assert len(calls) == 1
-    assert any(event.verification.startswith("模型复核") for event in report.events)
+    assert all("模型复核" not in event.verification for event in report.events)
+    markdown = format_catalyst_notification(report)
+    assert "模型复核" not in markdown
+    assert "降级判断" not in markdown
 
 
 def test_news_catalyst_notification_truncates_long_event_titles() -> None:
@@ -338,7 +355,7 @@ def test_news_catalyst_notification_truncates_long_event_titles() -> None:
         not in markdown
     )
     assert "美国财政部宣布制裁9家中国和中国香港的个人及实体" in markdown
-    assert "外交部、财政部、海外监管或权威媒体原文" in markdown
+    assert "怎么验证" not in markdown
 
 
 def test_global_news_prioritizes_notice_sources(monkeypatch) -> None:

@@ -5,7 +5,7 @@
 
 import sys
 from pathlib import Path
-from datetime import date, timedelta
+from datetime import timedelta
 
 # 添加项目根目录到路径
 project_root = Path(__file__).parent.parent
@@ -14,6 +14,7 @@ sys.path.insert(0, str(project_root))
 
 from aqsp.data.adjust import AdjustmentService  # noqa: E402
 from aqsp.data.sqlite_db_source import SqliteDbSource  # noqa: E402
+from aqsp.core.time import today_shanghai  # noqa: E402
 
 
 def main():
@@ -36,7 +37,7 @@ def main():
 
     # 3. 获取数据：用000001作为测试标的
     symbol = "000001"
-    end_date = date.today()
+    end_date = today_shanghai()
     start_date = end_date - timedelta(days=100)
     print(f"\n获取标的: {symbol}, 日期范围: {start_date} ~ {end_date}")
 
@@ -59,12 +60,38 @@ def main():
     # 6. 应用前复权（用于指标计算）
     print("\n--- 前复权数据 ---")
     df_qfq = adjust_service.get_adjusted_df(df_raw, adjust="qfq")
-    print(df_qfq[["date", "open", "high", "low", "close", "open_qfq", "close_qfq", "adj_factor"]].head())
+    print(
+        df_qfq[
+            [
+                "date",
+                "open",
+                "high",
+                "low",
+                "close",
+                "open_qfq",
+                "close_qfq",
+                "adj_factor",
+            ]
+        ].head()
+    )
 
     # 7. 应用后复权
     print("\n--- 后复权数据 ---")
     df_hfq = adjust_service.get_adjusted_df(df_raw, adjust="hfq")
-    print(df_hfq[["date", "open", "high", "low", "close", "open_hfq", "close_hfq", "adj_factor"]].head())
+    print(
+        df_hfq[
+            [
+                "date",
+                "open",
+                "high",
+                "low",
+                "close",
+                "open_hfq",
+                "close_hfq",
+                "adj_factor",
+            ]
+        ].head()
+    )
 
     # 8. 计算简单移动平均，验证指标计算
     print("\n--- 技术指标示例 ---")

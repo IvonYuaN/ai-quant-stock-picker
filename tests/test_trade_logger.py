@@ -13,7 +13,7 @@ import pytest
 from aqsp.core.time import now_shanghai
 from aqsp.audit.trade_logger import (
     TradeDecisionLog,
-    TradeExecutionLog,
+    PaperExecutionLog,
     TradeLogger,
 )
 
@@ -43,7 +43,7 @@ class TestTradeDecisionLog:
             timestamp=datetime(2026, 6, 5, 9, 30, 0),
             symbol="000021",
             name="深科技",
-            action="BUY",
+            action="PAPER_REVIEW",
             score=75.5,
             strategies=["n_rebound", "momentum"],
             debate_summary="Bull:技术强势; Bear:估值偏高; Judge:适度参与",
@@ -53,7 +53,7 @@ class TestTradeDecisionLog:
         )
 
         assert decision.symbol == "000021"
-        assert decision.action == "BUY"
+        assert decision.action == "PAPER_REVIEW"
         assert decision.score == 75.5
         assert len(decision.strategies) == 2
         assert decision.risk_check_passed is True
@@ -64,7 +64,7 @@ class TestTradeDecisionLog:
             timestamp=datetime(2026, 6, 5, 9, 30, 0),
             symbol="000021",
             name="深科技",
-            action="BUY",
+            action="PAPER_REVIEW",
             score=75.5,
             strategies=["n_rebound"],
             debate_summary="test",
@@ -76,36 +76,36 @@ class TestTradeDecisionLog:
         d = decision.to_dict()
         assert d["symbol"] == "000021"
         assert d["timestamp"] == "2026-06-05T09:30:00"
-        assert d["action"] == "BUY"
+        assert d["action"] == "PAPER_REVIEW"
         assert d["score"] == 75.5
         assert isinstance(d["strategies"], list)
 
 
-class TestTradeExecutionLog:
-    """测试TradeExecutionLog数据类。"""
+class TestPaperExecutionLog:
+    """测试PaperExecutionLog数据类。"""
 
     def test_trade_execution_log_creation(self) -> None:
-        """测试创建TradeExecutionLog。"""
-        execution = TradeExecutionLog(
+        """测试创建PaperExecutionLog。"""
+        execution = PaperExecutionLog(
             timestamp=datetime(2026, 6, 5, 10, 0, 0),
             symbol="000021",
-            action="BUY",
+            action="PAPER_ENTRY",
             shares=100,
             price=23.50,
             cost=2350.00,
         )
 
         assert execution.symbol == "000021"
-        assert execution.action == "BUY"
+        assert execution.action == "PAPER_ENTRY"
         assert execution.shares == 100
         assert execution.price == 23.50
 
     def test_trade_execution_log_to_dict(self) -> None:
-        """测试TradeExecutionLog的to_dict方法。"""
-        execution = TradeExecutionLog(
+        """测试PaperExecutionLog的to_dict方法。"""
+        execution = PaperExecutionLog(
             timestamp=datetime(2026, 6, 5, 10, 0, 0),
             symbol="000021",
-            action="BUY",
+            action="PAPER_ENTRY",
             shares=100,
             price=23.50,
             cost=2350.00,
@@ -113,7 +113,7 @@ class TestTradeExecutionLog:
 
         d = execution.to_dict()
         assert d["symbol"] == "000021"
-        assert d["action"] == "BUY"
+        assert d["action"] == "PAPER_ENTRY"
         assert d["shares"] == 100
         assert d["price"] == 23.50
         assert d["timestamp"] == "2026-06-05T10:00:00"
@@ -139,7 +139,9 @@ class TestTradeLoggerBasics:
         # 清理
         shutil.rmtree(temp_dir)
 
-    def test_logger_raises_on_permission_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_logger_raises_on_permission_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """测试目录创建失败时抛出异常。"""
 
         def _raise_permission_error(
@@ -162,7 +164,7 @@ class TestLogDecision:
             timestamp=datetime(2026, 6, 5, 9, 30, 0),
             symbol="000021",
             name="深科技",
-            action="BUY",
+            action="PAPER_REVIEW",
             score=75.5,
             strategies=["n_rebound", "momentum"],
             debate_summary="Bull:技术强势",
@@ -183,7 +185,7 @@ class TestLogDecision:
             timestamp=datetime(2026, 6, 5, 9, 30, 0),
             symbol="000021",
             name="深科技",
-            action="BUY",
+            action="PAPER_REVIEW",
             score=75.5,
             strategies=["n_rebound"],
             debate_summary="test",
@@ -202,7 +204,7 @@ class TestLogDecision:
 
         assert record["type"] == "decision"
         assert record["symbol"] == "000021"
-        assert record["action"] == "BUY"
+        assert record["action"] == "PAPER_REVIEW"
 
     def test_log_multiple_decisions_same_day(self, logger: TradeLogger) -> None:
         """测试同一天记录多条决策。"""
@@ -211,7 +213,7 @@ class TestLogDecision:
                 timestamp=datetime(2026, 6, 5, 9, 30 + i),
                 symbol=f"00002{i}",
                 name=f"股票{i}",
-                action="BUY",
+                action="PAPER_REVIEW",
                 score=70.0 + i,
                 strategies=["strategy1"],
                 debate_summary="test",
@@ -226,14 +228,14 @@ class TestLogDecision:
         assert len(lines) == 5
 
 
-class TestLogExecution:
-    """测试记录交易执行。"""
+class TestLogPaperExecution:
+    """测试记录纸面验证回写。"""
 
-    def test_log_execution(self, logger: TradeLogger) -> None:
-        """测试记录执行。"""
-        logger.log_execution(
+    def test_log_paper_execution(self, logger: TradeLogger) -> None:
+        """测试记录纸面回写。"""
+        logger.log_paper_execution(
             symbol="000021",
-            action="BUY",
+            action="PAPER_ENTRY",
             shares=100,
             price=23.50,
             cost=2350.00,
@@ -243,11 +245,11 @@ class TestLogExecution:
         log_file = logger.log_dir / "2026-06-05.jsonl"
         assert log_file.exists()
 
-    def test_log_execution_persistence(self, logger: TradeLogger) -> None:
-        """测试执行日志持久化。"""
-        logger.log_execution(
+    def test_log_paper_execution_persistence(self, logger: TradeLogger) -> None:
+        """测试纸面回写日志持久化。"""
+        logger.log_paper_execution(
             symbol="000021",
-            action="BUY",
+            action="PAPER_ENTRY",
             shares=100,
             price=23.50,
             cost=2350.00,
@@ -259,15 +261,15 @@ class TestLogExecution:
             line = f.readline()
             record = json.loads(line)
 
-        assert record["type"] == "execution"
+        assert record["type"] == "paper_execution"
         assert record["symbol"] == "000021"
-        assert record["action"] == "BUY"
+        assert record["action"] == "PAPER_ENTRY"
         assert record["shares"] == 100
 
-    def test_log_execution_invalid_action(self, logger: TradeLogger) -> None:
+    def test_log_paper_execution_invalid_action(self, logger: TradeLogger) -> None:
         """测试无效的操作类型。"""
         with pytest.raises(ValueError):
-            logger.log_execution(
+            logger.log_paper_execution(
                 symbol="000021",
                 action="INVALID",
                 shares=100,
@@ -275,35 +277,35 @@ class TestLogExecution:
                 cost=2350.00,
             )
 
-    def test_log_execution_invalid_shares(self, logger: TradeLogger) -> None:
+    def test_log_paper_execution_invalid_shares(self, logger: TradeLogger) -> None:
         """测试无效的股数。"""
         with pytest.raises(ValueError):
-            logger.log_execution(
+            logger.log_paper_execution(
                 symbol="000021",
-                action="BUY",
+                action="PAPER_ENTRY",
                 shares=-100,
                 price=23.50,
                 cost=2350.00,
             )
 
-    def test_log_execution_invalid_price(self, logger: TradeLogger) -> None:
+    def test_log_paper_execution_invalid_price(self, logger: TradeLogger) -> None:
         """测试无效的价格。"""
         with pytest.raises(ValueError):
-            logger.log_execution(
+            logger.log_paper_execution(
                 symbol="000021",
-                action="BUY",
+                action="PAPER_ENTRY",
                 shares=100,
                 price=-23.50,
                 cost=2350.00,
             )
 
-    def test_log_execution_uses_current_time_by_default(
+    def test_log_paper_execution_uses_current_time_by_default(
         self, logger: TradeLogger
     ) -> None:
-        """测试执行时间默认使用当前时间。"""
-        logger.log_execution(
+        """测试纸面回写时间默认使用当前时间。"""
+        logger.log_paper_execution(
             symbol="000021",
-            action="BUY",
+            action="PAPER_ENTRY",
             shares=100,
             price=23.50,
             cost=2350.00,
@@ -312,6 +314,18 @@ class TestLogExecution:
         today = now_shanghai().date()
         log_file = logger.log_dir / f"{today.isoformat()}.jsonl"
         assert log_file.exists()
+
+    def test_log_execution_rejects_real_execution_api(
+        self, logger: TradeLogger
+    ) -> None:
+        with pytest.raises(ValueError, match="real execution logging is disabled"):
+            logger.log_execution(
+                symbol="000021",
+                action="BUY",
+                shares=100,
+                price=23.50,
+                cost=2350.00,
+            )
 
 
 class TestQueryLogs:
@@ -332,7 +346,7 @@ class TestQueryLogs:
             timestamp=datetime(2026, 6, 5, 9, 30, 0),
             symbol="000021",
             name="深科技",
-            action="BUY",
+            action="PAPER_REVIEW",
             score=75.5,
             strategies=["n_rebound"],
             debate_summary="test",
@@ -354,7 +368,7 @@ class TestQueryLogs:
                 timestamp=datetime(2026, 6, day, 9, 30, 0),
                 symbol="000021",
                 name="深科技",
-                action="BUY",
+                action="PAPER_REVIEW",
                 score=75.5,
                 strategies=["n_rebound"],
                 debate_summary="test",
@@ -375,7 +389,7 @@ class TestQueryLogs:
                 timestamp=datetime(2026, 6, 5, 9, 30, 0),
                 symbol=symbol,
                 name=f"股票{symbol}",
-                action="BUY",
+                action="PAPER_REVIEW",
                 score=75.5,
                 strategies=["n_rebound"],
                 debate_summary="test",
@@ -385,9 +399,7 @@ class TestQueryLogs:
             )
             logger.log_decision(decision)
 
-        results = logger.query_logs(
-            date(2026, 6, 5), date(2026, 6, 5), symbol="000021"
-        )
+        results = logger.query_logs(date(2026, 6, 5), date(2026, 6, 5), symbol="000021")
         assert len(results) == 1
         assert results[0]["symbol"] == "000021"
 
@@ -420,7 +432,7 @@ class TestFileManagement:
             timestamp=datetime(2026, 6, 5, 9, 30, 0),
             symbol="000021",
             name="深科技",
-            action="BUY",
+            action="PAPER_REVIEW",
             score=75.5,
             strategies=["n_rebound"],
             debate_summary="test",
@@ -445,7 +457,7 @@ class TestStatistics:
 
         assert stats["total_records"] == 0
         assert stats["decisions"] == 0
-        assert stats["executions"] == 0
+        assert stats["paper_executions"] == 0
 
     def test_get_statistics_with_data(self, logger: TradeLogger) -> None:
         """测试有数据的统计。"""
@@ -455,7 +467,7 @@ class TestStatistics:
                 timestamp=datetime(2026, 6, 5, 9, 30 + i),
                 symbol="000021",
                 name="深科技",
-                action="BUY" if i % 2 == 0 else "SELL",
+                action="PAPER_REVIEW" if i % 2 == 0 else "SKIP",
                 score=75.5,
                 strategies=["n_rebound"],
                 debate_summary="test",
@@ -465,10 +477,10 @@ class TestStatistics:
             )
             logger.log_decision(decision)
 
-        # 记录执行
-        logger.log_execution(
+        # 记录纸面回写
+        logger.log_paper_execution(
             symbol="000021",
-            action="BUY",
+            action="PAPER_ENTRY",
             shares=100,
             price=23.50,
             cost=2350.00,
@@ -479,12 +491,13 @@ class TestStatistics:
 
         assert stats["total_records"] == 4
         assert stats["decisions"] == 3
-        assert stats["executions"] == 1
-        assert stats["actions"]["BUY"] == 2
-        assert stats["actions"]["SELL"] == 1
+        assert stats["paper_executions"] == 1
+        assert stats["actions"]["PAPER_REVIEW"] == 2
+        assert stats["actions"]["SKIP"] == 1
+        assert stats["paper_actions"]["PAPER_ENTRY"] == 1
         assert "000021" in stats["symbols"]
         assert stats["symbols"]["000021"]["decisions"] == 3
-        assert stats["symbols"]["000021"]["executions"] == 1
+        assert stats["symbols"]["000021"]["paper_executions"] == 1
 
     def test_get_statistics_multiple_symbols(self, logger: TradeLogger) -> None:
         """测试多个符号的统计。"""
@@ -494,7 +507,7 @@ class TestStatistics:
                 timestamp=datetime(2026, 6, 5, 9, 30, 0),
                 symbol=symbol,
                 name=f"股票{symbol}",
-                action="BUY",
+                action="PAPER_REVIEW",
                 score=75.5,
                 strategies=["n_rebound"],
                 debate_summary="test",
@@ -556,8 +569,8 @@ class TestEdgeCases:
         # 写入混合的有效和无效JSON
         with open(log_file, "w", encoding="utf-8") as f:
             f.write('{"type": "decision", "symbol": "000021"}\n')
-            f.write('{ invalid json\n')
-            f.write('{"type": "execution", "symbol": "000022"}\n')
+            f.write("{ invalid json\n")
+            f.write('{"type": "paper_execution", "symbol": "000022"}\n')
 
         # 查询应该跳过损坏的行
         results = logger.query_logs(date(2026, 6, 5), date(2026, 6, 5))
@@ -578,7 +591,7 @@ class TestEdgeCases:
         with open(log_file, "w", encoding="utf-8") as f:
             f.write('{"type": "decision", "symbol": "000021"}\n')
             f.write("\n")
-            f.write('{"type": "execution", "symbol": "000022"}\n')
+            f.write('{"type": "paper_execution", "symbol": "000022"}\n')
             f.write("  \n")
 
         results = logger.query_logs(date(2026, 6, 5), date(2026, 6, 5))
@@ -590,7 +603,7 @@ class TestEdgeCases:
             timestamp=datetime(2026, 6, 5, 9, 30, 0),
             symbol="000021",
             name="深科技",
-            action="BUY",
+            action="PAPER_REVIEW",
             score=75.5,
             strategies=["N字反弹", "动量策略"],
             debate_summary="多头:技术强势; 空头:估值偏高; 评审:适度参与",

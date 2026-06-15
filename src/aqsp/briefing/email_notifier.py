@@ -64,13 +64,13 @@ def _render_pick_card_html(pick: Pick, rank: int) -> str:
     # 根据评分定优先级颜色
     if pick.score >= 75:
         color = "#16a34a"  # green-600 强信号
-        badge = "🔥 重点跟踪"
+        badge = "纸面复核"
     elif pick.score >= 60:
         color = "#0891b2"  # cyan-600 纸面观察
-        badge = "✅ 继续观察"
+        badge = "继续观察"
     else:
         color = "#94a3b8"  # slate-400 观察
-        badge = "👀 观察"
+        badge = "观察"
 
     reasons_html = "".join(
         f'<li style="margin: 4px 0;">{escape(normalize_research_tone(r))}</li>'
@@ -100,12 +100,12 @@ def _render_pick_card_html(pick: Pick, rank: int) -> str:
         <div style="font-size: 18px; font-weight: bold; color: {color};">{pick.score:.1f}</div>
       </div>
       <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 8px 0; font-size: 13px; color: #475569;">
-        <div>💰 参考价: <strong>{pick.ideal_buy:.2f}</strong></div>
-        <div>🛡️ 最多亏到: <strong>{pick.stop_loss:.2f}</strong></div>
-        <div>🎯 先看目标: <strong>{pick.take_profit:.2f}</strong></div>
+        <div>参考价: <strong>{pick.ideal_buy:.2f}</strong></div>
+        <div>最多亏到: <strong>{pick.stop_loss:.2f}</strong></div>
+        <div>先看目标: <strong>{pick.take_profit:.2f}</strong></div>
       </div>
       <div style="font-size: 13px; color: #334155;">
-        <strong>📊 研究依据:</strong>
+        <strong>关键点:</strong>
         <ul style="margin: 4px 0; padding-left: 20px;">{reasons_html}</ul>
       </div>
       {risks_html}
@@ -122,20 +122,20 @@ def render_html_email(data: BriefingData) -> str:
     # 状态徽章颜色
     if data.has_protection:
         status_color = "#dc2626"
-        status_text = "🛡️ 组合保护中"
+        status_text = "组合保护中"
     elif tradable_count > 0:
         status_color = "#16a34a"
-        status_text = f"✅ {tradable_count} 只重点跟踪"
+        status_text = f"{tradable_count} 只纸面复核"
     else:
         status_color = "#64748b"
-        status_text = "👀 仅观察"
+        status_text = "仅观察"
 
     # 头部摘要卡片
     header = f"""
     <div style="background: linear-gradient(135deg, #1e293b 0%, #334155 100%); padding: 20px; border-radius: 12px; color: white; margin-bottom: 16px;">
       <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 12px;">
         <div>
-          <h1 style="margin: 0; font-size: 20px;">📊 每日研究复盘</h1>
+          <h1 style="margin: 0; font-size: 20px;">每日研究复盘</h1>
           <p style="margin: 4px 0 0; font-size: 13px; opacity: 0.8;">{escape(data.date)}</p>
         </div>
         <span style="background: {status_color}; padding: 6px 12px; border-radius: 6px; font-size: 12px; font-weight: bold;">{escape(status_text)}</span>
@@ -147,7 +147,7 @@ def render_html_email(data: BriefingData) -> str:
         </div>
         <div style="background: rgba(255,255,255,0.1); padding: 10px; border-radius: 6px; text-align: center;">
           <div style="font-size: 22px; font-weight: bold;">{tradable_count}</div>
-          <div style="font-size: 11px; opacity: 0.8;">重点跟踪</div>
+          <div style="font-size: 11px; opacity: 0.8;">纸面复核</div>
         </div>
         <div style="background: rgba(255,255,255,0.1); padding: 10px; border-radius: 6px; text-align: center;">
           <div style="font-size: 22px; font-weight: bold;">{len(data.risk_points)}</div>
@@ -160,7 +160,7 @@ def render_html_email(data: BriefingData) -> str:
     # 市场态势
     regime_html = f"""
     <div style="margin: 12px 0; padding: 12px; background: #f1f5f9; border-radius: 8px; border-left: 4px solid #0ea5e9;">
-      <strong>🌐 市场态势:</strong> {escape(normalize_research_tone(data.regime_info.description))}
+      <strong>市场态势:</strong> {escape(normalize_research_tone(data.regime_info.description))}
     </div>
     """
 
@@ -173,7 +173,7 @@ def render_html_email(data: BriefingData) -> str:
         )
         risk_html = f"""
         <div style="margin: 12px 0; padding: 12px; background: #fef2f2; border-radius: 8px; border-left: 4px solid #dc2626;">
-          <strong style="color: #dc2626;">⚠️ 风险提示</strong>
+          <strong style="color: #dc2626;">风险</strong>
           <ul style="margin: 6px 0; padding-left: 20px; color: #7f1d1d;">{risks_list}</ul>
         </div>
         """
@@ -181,9 +181,7 @@ def render_html_email(data: BriefingData) -> str:
     # TOP3 重点推荐
     top_picks = data.tradable_picks[:3] if data.tradable_picks else data.top_picks
     if top_picks:
-        picks_html = (
-            "<h2 style='font-size: 18px; margin: 16px 0 8px;'>🎯 TOP 3 首先关注</h2>"
-        )
+        picks_html = "<h2 style='font-size: 18px; margin: 16px 0 8px;'>候选</h2>"
         for i, p in enumerate(top_picks, 1):
             picks_html += _render_pick_card_html(p, i)
     else:
@@ -204,7 +202,7 @@ def render_html_email(data: BriefingData) -> str:
         )
         more_html = f"""
         <details style="margin: 12px 0; padding: 10px; background: #f8fafc; border-radius: 6px;">
-          <summary style="cursor: pointer; font-weight: bold; color: #475569;">📋 其他 {len(data.picks) - 3} 只候选（展开查看）</summary>
+          <summary style="cursor: pointer; font-weight: bold; color: #475569;">其他 {len(data.picks) - 3} 只候选</summary>
           <ul style="margin-top: 8px; padding-left: 20px; font-size: 13px;">{more_picks}</ul>
         </details>
         """
@@ -216,15 +214,14 @@ def render_html_email(data: BriefingData) -> str:
     if data.source_status and data.source_status.is_degraded:
         source_html = f"""
         <div style="margin: 12px 0; padding: 10px; background: #fffbeb; border-radius: 6px; border-left: 3px solid #f59e0b; font-size: 13px;">
-          📉 <strong>数据源降级:</strong> {escape(data.source_status.route)} ({escape(data.source_status.health_label)})
+          <strong>数据源降级:</strong> {escape(data.source_status.route)} ({escape(data.source_status.health_label)})
         </div>
         """
 
     # 底部免责
     footer = """
     <div style="margin-top: 24px; padding-top: 16px; border-top: 1px solid #e5e7eb; font-size: 11px; color: #94a3b8; text-align: center;">
-      <p>⚠️ 仅供研究参考，不构成交易指令或投资建议。纸面跟踪结果需人工复核。</p>
-      <p style="margin: 4px 0 0;">AI 量化选股系统 · 基于 walk-forward 双门验证</p>
+      <p>纸面复核结果需人工确认。</p>
     </div>
     """
 

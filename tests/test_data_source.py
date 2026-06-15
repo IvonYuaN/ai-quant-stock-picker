@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import sqlite3
 from datetime import date
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -9,6 +11,7 @@ import pandas as pd
 from aqsp.data.source import DataSource
 from aqsp.data.akshare_source import AkshareSource
 from aqsp.data.eastmoney_source import EastmoneySource
+from aqsp.data.sqlite_db_source import SqliteDbSource
 from aqsp.data import fetch_with_source
 from aqsp.core.errors import DataError
 
@@ -313,3 +316,67 @@ def test_fetch_with_source_uses_shanghai_today(monkeypatch):
 
     assert seen["end"] == date(2026, 6, 13)
     assert seen["start"] == date(2025, 6, 13)
+
+
+def test_sqlite_db_source_fetch_index_uses_raw_close_when_qfq_differs(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "astocks_qfq.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("CREATE TABLE stocks (ts_code TEXT PRIMARY KEY, name TEXT)")
+        conn.execute(
+            """
+            CREATE TABLE daily_qfq (
+                ts_code TEXT,
+                trade_date TEXT,
+                open REAL,
+                high REAL,
+                low REAL,
+                close REAL,
+                open_qfq REAL,
+                high_qfq REAL,
+                low_qfq REAL,
+                close_qfq REAL,
+                volume REAL,
+                amount REAL
+            )
+            """
+        )
+        conn.execute(
+            "INSERT INTO stocks (ts_code, name) VALUES (?, ?)",
+            ("000300.SH", "沪深300"),
+        )
+        conn.execute(
+            """
+            INSERT INTO daily_qfq (
+                ts_code, trade_date, open, high, low, close,
+                open_qfq, high_qfq, low_qfq, close_qfq, volume, amount
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "000300.SH",
+                "20260612",
+                3500.0,
+                3510.0,
+                3490.0,
+                3505.0,
+                3000.0,
+                3010.0,
+                2990.0,
+                3005.0,
+                1000.0,
+                350500000.0,
+            ),
+        )
+
+    source = SqliteDbSource(db_path=db_path, cache=None)
+
+    result = source.fetch_index(
+        ["000300"],
+        date(2026, 6, 12),
+        date(2026, 6, 12),
+    )
+
+    df = result["000300"]
+    assert df["close"].iloc[0] == 3505.0
+    assert df["close"].iloc[0] != 3005.0

@@ -10,17 +10,19 @@
 
 import sys
 from pathlib import Path
-from datetime import date, timedelta
+from datetime import timedelta
 from uuid import uuid4
 
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from aqsp.core.time import now_shanghai  # noqa: E402
+from aqsp.core.time import now_shanghai, today_shanghai  # noqa: E402
 from aqsp.ledger.base import read_ledger, write_ledger  # noqa: E402
 
 
-def generate_mock_signal(symbol: str, signal_date: str, price: float, score: float) -> dict:
+def generate_mock_signal(
+    symbol: str, signal_date: str, price: float, score: float
+) -> dict:
     """生成模拟信号记录"""
     now = now_shanghai().isoformat(timespec="seconds")
     return {
@@ -59,28 +61,15 @@ def main():
 
     parser = argparse.ArgumentParser(description="生成冷启动期模拟信号")
     parser.add_argument(
-        "--target-days",
-        type=int,
-        default=14,
-        help="目标独立信号日数量（默认: 14）"
+        "--target-days", type=int, default=14, help="目标独立信号日数量（默认: 14）"
     )
     parser.add_argument(
-        "--days-back",
-        type=int,
-        default=60,
-        help="回溯天数（默认: 60）"
+        "--days-back", type=int, default=60, help="回溯天数（默认: 60）"
     )
     parser.add_argument(
-        "--ledger",
-        type=str,
-        default="data/ledger.jsonl",
-        help="Ledger 文件路径"
+        "--ledger", type=str, default="data/ledger.jsonl", help="Ledger 文件路径"
     )
-    parser.add_argument(
-        "--force",
-        action="store_true",
-        help="强制生成，即使已达到目标"
-    )
+    parser.add_argument("--force", action="store_true", help="强制生成，即使已达到目标")
 
     args = parser.parse_args()
 
@@ -102,7 +91,9 @@ def main():
     print(f"已有日期: {sorted(existing_dates)}")
 
     if len(existing_dates) >= args.target_days and not args.force:
-        print(f"\n✅ 已达到目标 ({len(existing_dates)} >= {args.target_days})，无需生成更多信号")
+        print(
+            f"\n✅ 已达到目标 ({len(existing_dates)} >= {args.target_days})，无需生成更多信号"
+        )
         return 0
 
     # 生成更多日期来达到目标
@@ -110,7 +101,7 @@ def main():
     print(f"\n需要生成 {dates_needed} 个独立信号日")
 
     # 计算可用的历史日期
-    end_date = date.today() - timedelta(days=1)  # 昨天
+    end_date = today_shanghai() - timedelta(days=1)  # 昨天
     start_date = end_date - timedelta(days=args.days_back)
 
     # 生成交易日列表（排除周末）

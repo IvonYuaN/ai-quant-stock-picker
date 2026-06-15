@@ -1,13 +1,13 @@
 """审计追踪模块。"""
 
 from .trade_logger import (
+    PaperExecutionLog,
     TradeDecisionLog,
-    TradeExecutionLog,
     TradeLogger,
 )
 
 __all__ = [
+    "PaperExecutionLog",
     "TradeDecisionLog",
-    "TradeExecutionLog",
     "TradeLogger",
 ]

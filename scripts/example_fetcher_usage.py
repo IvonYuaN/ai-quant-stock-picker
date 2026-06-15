@@ -10,7 +10,7 @@ This script demonstrates:
 4. Logging and monitoring
 """
 
-from datetime import date, timedelta
+from datetime import timedelta
 import logging
 import sys
 from pathlib import Path
@@ -19,6 +19,7 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root / "src"))
 
 from aqsp.core.errors import DataError
+from aqsp.core.time import today_shanghai
 from aqsp.data.akshare_source import AkshareSource
 from aqsp.data.cache import DataCache
 from aqsp.data.fetcher import MultiSourceFetcher
@@ -43,7 +44,7 @@ def main() -> None:
     fetcher = MultiSourceFetcher(primary, fallback, cache=cache)
 
     symbols = ["000001", "000002", "000858"]
-    end = date.today()
+    end = today_shanghai()
     start = end - timedelta(days=30)
 
     print(f"\nFetching data for: {symbols}")
@@ -51,7 +52,7 @@ def main() -> None:
     print()
 
     try:
-        data = fetcher.fetch_daily_data(symbols, start, end, adjust="qfq")
+        data = fetcher.fetch_daily_data(symbols, start, end, adjust="")
 
         print("\n" + "=" * 60)
         print("Fetch Results")

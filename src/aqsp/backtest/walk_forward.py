@@ -120,6 +120,16 @@ class BacktestResult:
 
 
 @dataclass(frozen=True)
+class WalkForwardDiagnostics:
+    total_trades: int
+    executable_trades: int
+    not_executable: int
+    worst_symbols: tuple[tuple[str, int, float, float], ...]
+    exit_reason_counts: tuple[tuple[str, int], ...]
+    not_executable_reason_counts: tuple[tuple[str, int], ...]
+
+
+@dataclass(frozen=True)
 class WalkForwardResult:
     periods: List[BacktestResult]
     overall: BacktestResult
@@ -128,6 +138,7 @@ class WalkForwardResult:
     deflated_sharpe: float = 0.0
     pbo: float = 0.0
     regime_winrates: Dict[str, float] = None
+    diagnostics: WalkForwardDiagnostics | None = None
 
     def __post_init__(self):
         if self.regime_winrates is None:
@@ -246,6 +257,7 @@ class WalkForwardTester:
             deflated_sharpe=dsr,
             pbo=pbo,
             regime_winrates=regime_winrate_dict,
+            diagnostics=self._build_diagnostics(all_trades),
         )
 
     def _collect_all_dates(self, data: Dict[str, pd.DataFrame]) -> list[str]:
@@ -404,6 +416,50 @@ class WalkForwardTester:
             return 0.0
         returns = np.array([p.total_return for p in periods])
         return float(np.std(returns))
+
+    @staticmethod
+    def _build_diagnostics(trades: list[TradeResult]) -> WalkForwardDiagnostics:
+        executable = [trade for trade in trades if trade.executable]
+        not_executable = [trade for trade in trades if not trade.executable]
+
+        symbol_returns: dict[str, list[float]] = {}
+        exit_reason_counts: dict[str, int] = {}
+        not_exec_reason_counts: dict[str, int] = {}
+
+        for trade in executable:
+            symbol_returns.setdefault(trade.symbol, []).append(trade.return_pct)
+            exit_reason_counts[trade.exit_reason] = (
+                exit_reason_counts.get(trade.exit_reason, 0) + 1
+            )
+
+        for trade in not_executable:
+            not_exec_reason_counts[trade.exit_reason] = (
+                not_exec_reason_counts.get(trade.exit_reason, 0) + 1
+            )
+
+        worst_symbols = tuple(
+            sorted(
+                (
+                    (
+                        symbol,
+                        len(returns),
+                        round(float(np.mean(returns)), 4),
+                        round(float(sum(returns)), 4),
+                    )
+                    for symbol, returns in symbol_returns.items()
+                ),
+                key=lambda item: (item[3], item[2], item[0]),
+            )[:10]
+        )
+
+        return WalkForwardDiagnostics(
+            total_trades=len(trades),
+            executable_trades=len(executable),
+            not_executable=len(not_executable),
+            worst_symbols=worst_symbols,
+            exit_reason_counts=tuple(sorted(exit_reason_counts.items())),
+            not_executable_reason_counts=tuple(sorted(not_exec_reason_counts.items())),
+        )
 
     @staticmethod
     def _calculate_deflated_sharpe(

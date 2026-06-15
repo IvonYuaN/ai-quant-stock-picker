@@ -147,18 +147,21 @@ def test_render_html_email_uses_research_language_and_escapes_dynamic_text() -> 
     for forbidden in (
         "强烈推荐",
         "推荐依据",
+        "研究依据",
         "可执行",
         "入场:",
         "立即买入",
         "下单",
         "真实持仓",
+        "重点跟踪",
+        "不构成交易指令或投资建议",
+        "AI 量化选股系统",
     ):
         assert forbidden not in html
-    assert "重点跟踪" in html
-    assert "研究依据" in html
+    assert "纸面复核" in html
+    assert "关键点" in html
     assert "参考价" in html
-    assert "不构成交易指令或投资建议" in html
-    assert "纸面跟踪结果需人工复核" in html
+    assert "纸面复核结果需人工确认" in html
     assert "&lt;script&gt;" in html
     assert "<script>" not in html
     assert "<img src=x>" not in html

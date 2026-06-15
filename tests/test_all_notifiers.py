@@ -51,7 +51,8 @@ def test_send_feishu_uses_interactive_card(monkeypatch):
     assert payload["card"]["header"]["title"]["content"] == "收盘总览"
     assert payload["card"]["header"]["template"] == "turquoise"
     assert payload["card"]["elements"][0]["tag"] == "markdown"
-    assert "**🎯 今日结论**" in payload["card"]["elements"][0]["content"]
+    assert "## 结论" in payload["card"]["elements"][0]["content"]
+    assert "- 今日结论: 仅供研究复核" in payload["card"]["elements"][0]["content"]
 
 
 def test_send_dingtalk_uses_markdown_title(monkeypatch):

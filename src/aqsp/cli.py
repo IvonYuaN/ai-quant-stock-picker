@@ -77,6 +77,12 @@ from aqsp.strategy import screen_universe
 from aqsp.strategies.thresholds import load_thresholds
 from aqsp.universe import DEFAULT_SYMBOLS
 from aqsp.utils.env import read_env_value
+from aqsp.walkforward_gate import (
+    MAX_GATE_AGE_DAYS,
+    WalkForwardGateValidation,
+    build_walkforward_gate_payload,
+    validate_walkforward_gate_payload,
+)
 from aqsp.briefing.debate import (
     AShareDebateCoordinator,
     DebateResult,
@@ -1192,8 +1198,8 @@ def _resolve_audit_action(
     allocation_symbols: set[str],
 ) -> str:
     if pick.symbol in allocation_symbols:
-        return "BUY"
-    return "HOLD"
+        return "PAPER_REVIEW"
+    return "SKIP"
 
 
 def _build_execution_preview(
@@ -1202,7 +1208,7 @@ def _build_execution_preview(
     frame: pd.DataFrame,
     action: str,
 ) -> dict[str, Any]:
-    if action != "BUY" or frame.empty:
+    if action != "PAPER_REVIEW" or frame.empty:
         return {}
 
     recent_frame = frame.tail(20).copy()
@@ -1306,7 +1312,7 @@ def _log_run_decisions(
             "run_task_id": run_metadata.task_id,
         }
         if execution_preview:
-            context["execution_preview"] = execution_preview
+            context["paper_execution_preview"] = execution_preview
         if debate is not None:
             context["debate_consensus"] = debate.final_consensus
             context["debate_adjustment"] = debate.recommended_adjustment
@@ -1326,7 +1332,9 @@ def _log_run_decisions(
                     else "no_debate_attached"
                 ),
                 risk_check_passed=(
-                    action == "BUY" and not circuit_breaker_triggered and not blocker
+                    action == "PAPER_REVIEW"
+                    and not circuit_breaker_triggered
+                    and not blocker
                 ),
                 regime=regime or "unknown",
                 reason="；".join(reason_parts),
@@ -2001,27 +2009,89 @@ def _write_walkforward_gate(
     """
     import json
 
-    # 宪法 §17.7：pbo==0.0 是单序列回测的占位值（无法做真 CSCV），
-    # 不能当作「零过拟合」通过门。pbo_pass 要求 0 < pbo < 0.5。
-    pbo_valid = pbo > 0.0
-    pbo_pass = pbo_valid and pbo < 0.5
-    dsr_pass = dsr > 1.0
-    payload = {
-        "run_date": run_date,
-        "deflated_sharpe": dsr,
-        "pbo": pbo,
-        "pbo_valid": pbo_valid,
-        "dsr_pass": dsr_pass,
-        "pbo_pass": pbo_pass,
-        "both_pass": dsr_pass and pbo_pass,
-        "data_start": start,
-        "data_end": end,
-        "n_periods": n_periods,
-    }
+    payload = build_walkforward_gate_payload(
+        dsr=dsr,
+        pbo=pbo,
+        run_date=run_date,
+        start=start,
+        end=end,
+        n_periods=n_periods,
+    )
     p = Path(WALKFORWARD_GATE_PATH)
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
     print(f"✅ 双门 sidecar 已写入: {p}（both_pass={payload['both_pass']}）")
+
+
+def _format_walkforward_count_map(
+    items: dict[str, int] | tuple[tuple[str, int], ...],
+) -> str:
+    if not items:
+        return "无"
+    pairs = items.items() if isinstance(items, dict) else items
+    return "；".join(f"{key}: {value}" for key, value in sorted(pairs))
+
+
+def _append_walkforward_diagnostics(report_lines: list[str], result: Any) -> None:
+    diagnostics = getattr(result, "diagnostics", None)
+    if diagnostics is None:
+        return
+
+    report_lines.extend(
+        [
+            "",
+            "## 失败诊断",
+            "",
+            "| 指标 | 值 |",
+            "|------|-----|",
+            f"| 总信号交易 | {diagnostics.total_trades} |",
+            f"| 可成交交易 | {diagnostics.executable_trades} |",
+            f"| 不可成交 | {diagnostics.not_executable} |",
+            f"| 退出原因 | {_format_walkforward_count_map(diagnostics.exit_reason_counts)} |",
+            f"| 不可成交原因 | {_format_walkforward_count_map(diagnostics.not_executable_reason_counts)} |",
+            "",
+        ]
+    )
+
+    if diagnostics.worst_symbols:
+        report_lines.extend(
+            [
+                "### 拖累最大的标的",
+                "",
+                "| Symbol | 交易次数 | 平均收益点 | 累计收益点 |",
+                "|--------|----------|------------|------------|",
+            ]
+        )
+        for symbol, trades, avg_return, sum_return in diagnostics.worst_symbols:
+            report_lines.append(
+                f"| {symbol} | {trades} | {avg_return:.4f}% | {sum_return:.4f}% |"
+            )
+    else:
+        report_lines.append("*无可成交标的诊断*")
+
+
+def _format_walkforward_pbo(pbo: float, pbo_is_valid: bool) -> str:
+    value = f"{pbo:.2%}"
+    return value if pbo_is_valid else f"{value}（无效占位，需 grid 多变体 CSCV）"
+
+
+def _walkforward_runtime_rows(
+    args: argparse.Namespace, effective_horizon: int
+) -> list[tuple[str, str]]:
+    min_score = "thresholds.yaml"
+    if getattr(args, "min_score", None) is not None:
+        min_score = str(args.min_score)
+    return [
+        ("source", str(args.source)),
+        ("pool", str(getattr(args, "pool", ""))),
+        ("symbols", str(args.symbols or "AQSP_WALKFORWARD_SYMBOLS/default_pool")),
+        ("engine", str(getattr(args, "engine", "") or "runtime_config/auto")),
+        ("min_score", min_score),
+        ("horizon_days", str(effective_horizon)),
+        ("tiered_stop", str(bool(getattr(args, "tiered_stop", False)))),
+        ("cache_path", str(getattr(args, "cache_path", "") or "")),
+        ("allow_heldout", str(bool(getattr(args, "allow_heldout", False)))),
+    ]
 
 
 def _check_notification_gate(
@@ -2035,9 +2105,6 @@ def _check_notification_gate(
       3. PBO <0.5
     sidecar 缺失/解析失败/过期 → fail-closed（不放行）。
     """
-    import json
-    from datetime import date
-
     reasons: list[str] = []
 
     if cold_start_days < COLD_START_MIN_DAYS:
@@ -2055,57 +2122,66 @@ def _check_notification_gate(
     except Exception as exc:  # noqa: BLE001
         reasons.append(f"双门 sidecar 解析失败: {exc}")
         return False, reasons
-
-    # 过期检查（对齐 §17.10，留 35 天缓冲期）
-    try:
-        run_date = date.fromisoformat(gate["run_date"])
-        age = (today_shanghai() - run_date).days
-        if age > 35:
-            reasons.append(
-                f"双门结果过期: {age} 天前（上限 35 天）—— 请重新跑 walkforward"
-            )
-    except Exception as exc:  # noqa: BLE001
-        reasons.append(f"双门 sidecar run_date 异常: {exc}")
+    if not isinstance(gate, dict):
+        reasons.append("双门 sidecar 解析失败: JSON 顶层不是对象")
         return False, reasons
 
-    if not gate.get("dsr_pass"):
-        reasons.append(f"DSR 未过门: {gate.get('deflated_sharpe')}（需 >1.0）")
-    if not gate.get("pbo_pass"):
-        reasons.append(f"PBO 未过门: {gate.get('pbo')}（需 <0.5）")
-
-    # 宪法 §17.7：n_periods=0 意味着 sidecar 来自占位/测试/无效运行，
-    # 不可能算出有效 DSR/PBO。即使标了 both_pass=true 也不可信。
-    # fail-closed：0周期视为无效，不放行推送。
-    n_periods = gate.get("n_periods", 0)
-    if not n_periods or int(n_periods) <= 0:
-        reasons.append(
-            f"双门 sidecar 无有效回测周期（n_periods={n_periods}）"
-            "—— 疑似占位/测试数据，需真正跑 walkforward 后重写"
-        )
-
-    # 宪法 §1.3 #9：拒绝用 held-out 污染的回测结果解锁推送。
-    # 即使 DSR/PBO 都过门，若 sidecar 的 data_end 越过 held-out 边界，
-    # 说明这个成绩是用 held-out 数据（可能经 --allow-heldout）算出来的，
-    # 不得用于解锁实盘推送 —— fail-closed。
-    data_end = gate.get("data_end", "")
-    if data_end:
-        from datetime import date
-
-        try:
-            end_d = date.fromisoformat(str(data_end).strip())
-            cutoff_d = date.fromisoformat(HELDOUT_TRAIN_CUTOFF)
-            if end_d > cutoff_d:
-                reasons.append(
-                    f"双门成绩用了 held-out 数据（data_end={data_end} > "
-                    f"{HELDOUT_TRAIN_CUTOFF}）—— 不得用于解锁推送（§1.3 #9）"
-                )
-        except (ValueError, TypeError):
-            # sidecar 的 data_end 格式异常 —— 看不懂就拦（fail-closed）
-            reasons.append(
-                f"双门 sidecar 的 data_end 格式异常（{data_end!r}）—— fail-closed"
-            )
+    validation = validate_walkforward_gate_payload(
+        gate,
+        today=today_shanghai(),
+        max_age_days=MAX_GATE_AGE_DAYS,
+        heldout_cutoff=date.fromisoformat(HELDOUT_TRAIN_CUTOFF),
+    )
+    reasons.extend(_notification_gate_reasons(gate, validation))
 
     return len(reasons) == 0, reasons
+
+
+def _notification_gate_reasons(
+    gate: dict[str, Any], validation: WalkForwardGateValidation
+) -> list[str]:
+    reasons: list[str] = []
+    for blocker in validation.blockers:
+        if blocker.startswith("run_date"):
+            reasons.append(f"双门 sidecar run_date 异常: {gate.get('run_date')!r}")
+        elif blocker.startswith("gate stale"):
+            age = validation.age_days if validation.age_days is not None else "?"
+            reasons.append(
+                f"双门结果过期: {age} 天前（上限 {MAX_GATE_AGE_DAYS} 天）—— 请重新跑 walkforward"
+            )
+        elif blocker.startswith("deflated_sharpe"):
+            reasons.append("DSR 字段缺失或格式异常")
+        elif blocker.startswith("DSR="):
+            reasons.append(f"DSR 未过门: {validation.dsr}（需 >1.0）")
+        elif blocker.startswith("pbo missing"):
+            reasons.append("PBO 字段缺失或格式异常")
+        elif blocker.startswith("PBO="):
+            reasons.append(f"PBO 未过门: {validation.pbo}（需 0 < PBO < 0.5）")
+        elif blocker.startswith("dsr_pass"):
+            reasons.append(f"DSR pass 标志无效: {gate.get('dsr_pass')!r}")
+        elif blocker.startswith("pbo_pass"):
+            reasons.append(f"PBO pass 标志无效: {gate.get('pbo_pass')!r}")
+        elif blocker.startswith("pbo_valid"):
+            reasons.append(f"PBO 有效性标志无效: {gate.get('pbo_valid')!r}")
+        elif blocker.startswith("both_pass"):
+            reasons.append(f"双门总标志无效: {gate.get('both_pass')!r}")
+        elif blocker.startswith("n_periods"):
+            reasons.append(
+                f"双门 sidecar 无有效回测周期（n_periods={gate.get('n_periods')}）"
+                "—— 疑似占位/测试数据，需真正跑 walkforward 后重写"
+            )
+        elif blocker.startswith("data_end malformed"):
+            reasons.append(
+                f"双门 sidecar 的 data_end 格式异常（{gate.get('data_end')!r}）—— fail-closed"
+            )
+        elif blocker.startswith("data_end="):
+            reasons.append(
+                f"双门成绩用了 held-out 数据（data_end={gate.get('data_end')} > "
+                f"{HELDOUT_TRAIN_CUTOFF}）—— 不得用于解锁推送（§1.3 #9）"
+            )
+        else:
+            reasons.append(f"双门 sidecar 未通过: {blocker}")
+    return reasons
 
 
 def _notification_gate_actions(
@@ -3181,11 +3257,12 @@ def run_walkforward(args: argparse.Namespace) -> int:
     runtime_cfg = load_runtime_config()
     requested_engine = (args.engine or runtime_cfg.research_engine or "auto").strip()
     engine, resolution = resolve_walkforward_engine(requested_engine)
+    effective_horizon = args.horizon_days or 3
     engine_cfg = WalkForwardEngineConfig(
         train_days=args.train_days,
         test_days=args.test_days,
         purge_days=args.purge_days,
-        horizon_days=args.horizon_days or 3,
+        horizon_days=effective_horizon,
         use_tiered_stop=getattr(args, "tiered_stop", False),
     )
 
@@ -3227,9 +3304,10 @@ def run_walkforward(args: argparse.Namespace) -> int:
     pbo_pass = pbo_is_valid and result.pbo < 0.5
     both_pass = dsr_pass and pbo_pass
     verdict = "PASS" if both_pass else "FAIL"
+    pbo_display = _format_walkforward_pbo(result.pbo, pbo_is_valid)
     tl_dr.append(
         f"**TL;DR**: {verdict} — DSR={result.deflated_sharpe:.4f}, "
-        f"PBO={result.pbo:.2%}, Sharpe={result.overall.sharpe_ratio:.2f}, "
+        f"PBO={pbo_display}, Sharpe={result.overall.sharpe_ratio:.2f}, "
         f"TotalReturn={result.overall.total_return:.2%}"
     )
 
@@ -3243,7 +3321,7 @@ def run_walkforward(args: argparse.Namespace) -> int:
         "## 双门判定",
         "",
         f"- DSR > 1.0：{'PASS' if dsr_pass else 'FAIL'}（实测 {result.deflated_sharpe:.4f}）",
-        f"- PBO < 0.5：{'PASS' if pbo_pass else 'FAIL'}（实测 {result.pbo:.2%}）",
+        f"- PBO < 0.5：{'PASS' if pbo_pass else 'FAIL'}（实测 {pbo_display}）",
         "",
         f"**运行日期**: {now_shanghai().strftime('%Y-%m-%d %H:%M')}",
         f"**回测区间**: {args.start} ~ {args.end}",
@@ -3252,6 +3330,15 @@ def run_walkforward(args: argparse.Namespace) -> int:
         f"**测试窗口**: {args.test_days} 天",
         f"**Purge Gap**: {args.purge_days} 天",
         f"**研究引擎**: {resolution.resolved} ({resolution.mode})",
+        "",
+        "## 运行参数",
+        "",
+        "| 参数 | 值 |",
+        "|------|-----|",
+        *[
+            f"| {key} | {value or '-'} |"
+            for key, value in _walkforward_runtime_rows(args, effective_horizon)
+        ],
         "",
         "## 整体指标",
         "",
@@ -3271,7 +3358,7 @@ def run_walkforward(args: argparse.Namespace) -> int:
         "| 指标 | 值 | 说明 |",
         "|------|-----|------|",
         f"| Deflated Sharpe Ratio | {result.deflated_sharpe:.4f} | > 1.0 表示策略可能有效 |",
-        f"| PBO (过拟合概率) | {result.pbo:.2%} | < 50% 表示低过拟合风险 |",
+        f"| PBO (过拟合概率) | {pbo_display} | < 50% 且非占位才表示低过拟合风险 |",
         f"| 稳健性评分 | {result.robustness_score:.2%} | > 70% 表示稳定 |",
         f"| 参数标准差 | {result.parameter_std:.4f} | 越小越稳定 |",
         "",
@@ -3308,6 +3395,8 @@ def run_walkforward(args: argparse.Namespace) -> int:
             f"{period.win_rate:.2%} | {period.trades} | {period.not_executable} |"
         )
 
+    _append_walkforward_diagnostics(report_lines, result)
+
     report_lines.extend(
         [
             "",
@@ -3318,7 +3407,7 @@ def run_walkforward(args: argparse.Namespace) -> int:
 
     if both_pass:
         report_lines.append(
-            f"✅ **{verdict}**: DSR={result.deflated_sharpe:.4f} > 1.0 且 PBO={result.pbo:.2%} < 50%,可以考虑实盘使用。"
+            f"✅ **{verdict}**: DSR={result.deflated_sharpe:.4f} > 1.0 且 PBO={result.pbo:.2%} < 50%，可进入人工纸面复核候选。"
         )
     else:
         reasons = []

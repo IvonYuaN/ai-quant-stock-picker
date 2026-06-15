@@ -11,6 +11,7 @@ from typing import Any, Literal
 import pandas as pd
 
 from aqsp.core.time import now_shanghai, today_shanghai
+from aqsp.notification_style import compact_notification_markdown
 from aqsp.presentation import normalize_research_tone
 
 Impact = Literal["positive", "negative", "neutral"]
@@ -204,46 +205,30 @@ def format_catalyst_notification(report: CatalystReport) -> str:
     if has_events:
         lead = report.events[0]
         lead_target = _event_target(lead)
-        lead_line = (
-            f"今天先看 {lead_target} 的 {lead.category}：{_short_text(lead.title, 36)}"
-        )
+        lead_line = f"{lead_target}｜{lead.category}｜{_short_text(lead.title, 36)}"
     elif report.source_status == "failed":
-        lead_line = "本次消息源没有按时返回，今天不要用这条通知下结论。"
+        lead_line = "无有效结论：消息源失败"
     elif report.source_status == "partial":
-        lead_line = "消息只抓到一部分，先把它当提示，不当结论。"
+        lead_line = "无强事件：仅部分消息可用"
     else:
-        lead_line = "今天没有筛出足够强的消息催化，先按主链和量价节奏看盘。"
+        lead_line = "无强事件"
 
     lines = [
         f"# 消息面雷达-{report.date}｜{_report_title_status(report)}",
         "",
-        "> 🧭 这条通知只帮你回答两件事：今天有没有值得先看的消息，以及开盘后怎么验证。它不替代主报告结论，也不是交易指令；多源交叉或公告来源优先。",
-        "",
-        "## 👀 一眼先看",
+        "## 结论",
         "",
         f"- {lead_line}",
-        f"- 当前状态: {_source_status_label(report.source_status)}",
-        f"- 生成时间: {report.generated_at}",
+        f"- 数据状态: {_source_status_label(report.source_status)}",
         "",
-        "## 🧨 高影响事件",
+        "## 事件",
         "",
     ]
     if not report.events:
         if report.source_status == "failed":
-            lines.extend(
-                [
-                    "- 本次没拿到可靠消息，不代表市场一定没事，只代表这条消息通知今天不能用。",
-                    "- 今天盘前先回到主链报告，优先看今日重点名单、继续观察名单和现在卡在哪。",
-                    "- 如果你担心错过突发，开盘后再人工补看公告、财联社、交易所公告。 ",
-                ]
-            )
+            lines.append("- 无可靠消息面结果")
         else:
-            lines.extend(
-                [
-                    "- 今天没筛出足够强的高影响消息，先以主链量价和风险约束为准。",
-                    "- 这通常意味着没有明确的消息催化主线，不要为了“有消息”硬找方向。",
-                ]
-            )
+            lines.append("- 未筛出高影响消息")
     else:
         for index, event in enumerate(report.events, start=1):
             lines.extend(_event_card_lines(index, event))
@@ -251,20 +236,11 @@ def format_catalyst_notification(report: CatalystReport) -> str:
 
     lines.extend(
         [
-            "",
-            "## ✅ 开盘怎么用",
-            "",
-            "1. 先只看前两条高影响事件，不要一早被一堆标题带偏。",
-            "2. 如果是涨价、政策、订单这类利好，开盘后先看相关股票和板块有没有一起放量走强。",
-            "3. 如果是减持、监管、事故这类利空，先把它当风险，优先回避，不要和热度对赌。",
-            "4. 单一媒体标题只能算线索；看到公告、交易所、公司原文，可信度才算明显提升。",
-            "5. 如果这条通知失败或为空，今天就回到主链报告，不要因为“没有消息”乱改计划。",
-            "",
-            "## 🧾 这条通知靠不靠谱",
+            "## 状态",
             "",
             f"- 状态: {report.source_status}",
-            f"- 是否抓到高影响事件: {'是' if has_events else '否'}",
-            f"- 是否有抓取告警: {'是' if has_warnings else '否'}",
+            f"- 高影响事件: {len(report.events)}",
+            f"- 告警: {'有' if has_warnings else '无'}",
         ]
     )
     if report.warnings:
@@ -274,15 +250,15 @@ def format_catalyst_notification(report: CatalystReport) -> str:
                 _safe_warning(item) for item in _display_warnings(report.warnings)
             )
         )
-    return normalize_research_tone("\n".join(lines))
+    return compact_notification_markdown(normalize_research_tone("\n".join(lines)))
 
 
 def _source_status_label(status: str) -> str:
     return {
-        "ok": "已拿到可用消息",
-        "partial": "有可用消息，部分来源降级",
-        "empty": "没筛出足够强的消息",
-        "failed": "抓取失败，本次通知不可直接使用",
+        "ok": "可用",
+        "partial": "部分可用",
+        "empty": "无强事件",
+        "failed": "失败",
     }.get(status, status or "未知")
 
 
@@ -319,17 +295,12 @@ def _event_card_lines(index: int, event: CatalystEvent) -> list[str]:
     title = _short_text(event.title, 42)
     lines = [
         f"**{index}. {impact} ｜ {_inline(target)}**",
-        f"- 事件: {title}",
+        f"- 结果: {title}",
         f"- 类型: {_inline(event.category)} ｜ 可信度: {event.confidence:.0%}（{_inline(event.verification)}）",
         f"- 来源: {_inline(event.source)} ｜ 时间: {_inline(event.published_at)}",
-        f"- 怎么验证: {_verification_hint(event)}",
-        "- 不要做: 只凭标题追高；至少等公告/多源交叉/板块和量价一起确认。",
     ]
     if event.url:
         lines.append(f"- 原文: {_inline(event.url)}")
-    reason = _inline(event.reason)
-    if reason and reason != "-":
-        lines.append(f"- 复核重点: {reason}")
     return lines
 
 
@@ -550,7 +521,7 @@ def _review_events(
         )
         fallback = (
             f"可信度={event.confidence:.0%}; 影响={event.impact}; "
-            "理由=未启用模型复核，按多源和关键词降级判断"
+            "理由=按来源和关键词判断"
         )
         result = llm_call_or_fallback(
             prompt=prompt,
@@ -569,11 +540,7 @@ def _review_events(
                     **event.__dict__,
                     "confidence": confidence,
                     "llm_review": result.text[:160],
-                    "verification": (
-                        "模型复核/降级"
-                        if result.degraded
-                        else f"模型复核/{event.verification}"
-                    ),
+                    "verification": event.verification,
                 }
             )
         )

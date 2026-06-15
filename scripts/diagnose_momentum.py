@@ -24,6 +24,7 @@ import pandas as pd
 from scipy.stats import spearmanr
 
 from aqsp.data.sina_source import SinaSource
+from aqsp.core.time import today_shanghai
 from aqsp.strategies.momentum import MomentumStrategy
 from aqsp.strategies.base import StrategyConfig
 
@@ -281,7 +282,7 @@ def main() -> None:
 
     lines = []
     lines.append("# PR22.5 Momentum 方向诊断报告\n")
-    lines.append(f"**运行日期**: {date.today().isoformat()}\n")
+    lines.append(f"**运行日期**: {today_shanghai().isoformat()}\n")
     lines.append(
         f"**运行命令**: `python3 scripts/diagnose_momentum.py --source {args.source} --start {args.start} --end {args.end}`\n"
     )

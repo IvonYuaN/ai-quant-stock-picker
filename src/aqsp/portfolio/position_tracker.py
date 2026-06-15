@@ -10,6 +10,8 @@ from dataclasses import dataclass, field
 from datetime import date
 from typing import Optional
 
+from aqsp.core.time import today_shanghai
+
 
 class InsufficientSharesError(Exception):
     """可卖数量不足异常"""
@@ -282,13 +284,16 @@ class PositionTracker:
         Returns:
             该股票的可卖数量，若持仓不存在则返回0
         """
-        return self.positions.get(symbol, Position(
-            symbol=symbol,
-            total_shares=0,
-            available_shares=0,
-            cost_basis=0.0,
-            last_buy_date=date.today(),
-        )).available_shares
+        return self.positions.get(
+            symbol,
+            Position(
+                symbol=symbol,
+                total_shares=0,
+                available_shares=0,
+                cost_basis=0.0,
+                last_buy_date=today_shanghai(),
+            ),
+        ).available_shares
 
     def get_total_shares(self, symbol: str) -> int:
         """获取总持仓数量
@@ -299,13 +304,16 @@ class PositionTracker:
         Returns:
             该股票的总持仓数量，若持仓不存在则返回0
         """
-        return self.positions.get(symbol, Position(
-            symbol=symbol,
-            total_shares=0,
-            available_shares=0,
-            cost_basis=0.0,
-            last_buy_date=date.today(),
-        )).total_shares
+        return self.positions.get(
+            symbol,
+            Position(
+                symbol=symbol,
+                total_shares=0,
+                available_shares=0,
+                cost_basis=0.0,
+                last_buy_date=today_shanghai(),
+            ),
+        ).total_shares
 
     def get_frozen_shares(self, symbol: str) -> int:
         """获取冻结数量（T+1未解冻）
@@ -373,10 +381,13 @@ class PositionTracker:
         Returns:
             平均成本价，若持仓不存在则返回 0.0
         """
-        return self.positions.get(symbol, Position(
-            symbol=symbol,
-            total_shares=0,
-            available_shares=0,
-            cost_basis=0.0,
-            last_buy_date=date.today(),
-        )).cost_basis
+        return self.positions.get(
+            symbol,
+            Position(
+                symbol=symbol,
+                total_shares=0,
+                available_shares=0,
+                cost_basis=0.0,
+                last_buy_date=today_shanghai(),
+            ),
+        ).cost_basis

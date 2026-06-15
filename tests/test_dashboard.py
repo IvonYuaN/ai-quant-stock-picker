@@ -111,6 +111,7 @@ from aqsp.web.dashboard import (
 )
 from scripts.export_dashboard_db import export_db
 from scripts.render_dashboard import (
+    _gate_status_for_display,
     latest_candidate_date,
     read_candidates,
     read_ledger_rows,
@@ -263,6 +264,67 @@ def test_dashboard_renders_candidates_and_ledger_stats_when_inputs_exist(
     assert "买点" not in html
     assert "止盈" not in html
     assert "buy_candidate" not in html
+
+
+def test_static_dashboard_gate_display_rejects_string_boolean_sidecar() -> None:
+    ok, detail = _gate_status_for_display(
+        {
+            "both_pass": "true",
+            "pbo_valid": "true",
+            "deflated_sharpe": 1.5,
+            "pbo": 0.24,
+            "n_periods": 12,
+        }
+    )
+
+    assert ok is False
+    assert "both_pass" in detail
+    assert "PBO占位" in detail
+
+
+def test_static_dashboard_gate_display_rejects_boolean_period_count() -> None:
+    ok, detail = _gate_status_for_display(
+        {
+            "both_pass": True,
+            "pbo_valid": True,
+            "deflated_sharpe": 1.5,
+            "pbo": 0.24,
+            "n_periods": True,
+        }
+    )
+
+    assert ok is False
+    assert detail == "missing/invalid metrics"
+
+
+def test_static_dashboard_gate_display_rejects_boolean_or_nan_metrics() -> None:
+    ok, detail = _gate_status_for_display(
+        {
+            "both_pass": True,
+            "pbo_valid": True,
+            "deflated_sharpe": True,
+            "pbo": "NaN",
+            "n_periods": 12,
+        }
+    )
+
+    assert ok is False
+    assert detail == "missing/invalid metrics"
+
+
+def test_static_dashboard_gate_display_rejects_string_numeric_metrics() -> None:
+    ok, detail = _gate_status_for_display(
+        {
+            "both_pass": True,
+            "pbo_valid": True,
+            "deflated_sharpe": "1.5",
+            "pbo": "0.24",
+            "n_periods": 12,
+        }
+    )
+
+    assert ok is False
+    assert detail == "missing/invalid metrics"
 
 
 def test_dashboard_renders_research_absorption_panel() -> None:

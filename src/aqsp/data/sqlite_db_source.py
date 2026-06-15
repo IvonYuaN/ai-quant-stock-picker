@@ -178,7 +178,9 @@ class SqliteDbSource(DataSource):
 
         with sqlite3.connect(self.db_path, timeout=_SQLITE_TIMEOUT_SECONDS) as conn:
             for code in index_codes:
-                cached = self.cache.get_index(code, start, end)
+                cached = (
+                    self.cache.get_index(code, start, end) if self._use_cache else None
+                )
                 if cached is not None and not cached.empty:
                     out[code] = cached
                     continue
@@ -189,7 +191,7 @@ class SqliteDbSource(DataSource):
 
                 df = pd.read_sql(
                     """
-                    SELECT trade_date, open, high, low, close_qfq as close, volume, amount
+                    SELECT trade_date, open, high, low, close, volume, amount
                     FROM daily_qfq
                     WHERE ts_code = ? AND trade_date >= ? AND trade_date <= ?
                     ORDER BY trade_date
@@ -213,7 +215,8 @@ class SqliteDbSource(DataSource):
                 if df.empty:
                     continue
 
-                self.cache.set_index(code, df, source="sqlite_db")
+                if self._use_cache:
+                    self.cache.set_index(code, df, source="sqlite_db")
                 out[code] = df
 
         return out

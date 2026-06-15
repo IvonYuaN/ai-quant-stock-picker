@@ -1,7 +1,7 @@
 """
-交易决策日志和审计追踪系统。
+纸面决策日志和审计追踪系统。
 
-提供持久化的交易决策记录、执行记录和日志查询功能。
+提供持久化的纸面复核决策、纸面验证回写和日志查询功能。
 所有日志以JSON Lines格式存储，按日期分文件，便于grep查询和备份。
 """
 
@@ -12,24 +12,34 @@ import logging
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from aqsp.core.time import now_shanghai
 
 logger = logging.getLogger(__name__)
 
 
+def _normalize_paper_action(action: object) -> str:
+    value = str(action or "").strip()
+    if value == "BUY":
+        return "PAPER_ENTRY"
+    if value == "SELL":
+        return "PAPER_EXIT"
+    return value
+
+
 @dataclass
 class TradeDecisionLog:
     """
-    交易决策日志。
+    纸面复核决策日志。
 
-    记录策略生成的交易信号、决策理由、风险检查结果等信息。
+    记录策略生成的研究信号、复核理由、风险检查结果等信息。
     """
+
     timestamp: datetime
     symbol: str
     name: str
-    action: str  # "BUY" / "SELL" / "HOLD"
+    action: str  # "PAPER_REVIEW" / "SKIP"
     score: float
     strategies: list[str]
     debate_summary: str
@@ -61,15 +71,16 @@ class TradeDecisionLog:
 
 
 @dataclass
-class TradeExecutionLog:
+class PaperExecutionLog:
     """
-    交易执行日志。
+    纸面验证回写日志。
 
-    记录实际执行的交易，包括时间、价格、数量等信息。
+    记录虚拟盘/纸面验证事件，不代表真实下单或券商成交。
     """
+
     timestamp: datetime
     symbol: str
-    action: str  # "BUY" / "SELL"
+    action: str  # "PAPER_ENTRY" / "PAPER_EXIT"
     shares: int
     price: float
     cost: float
@@ -93,11 +104,11 @@ class TradeExecutionLog:
 
 class TradeLogger:
     """
-    交易日志记录器。
+    纸面审计日志记录器。
 
     功能：
-    - 记录交易决策（包含策略、评分、风险检查等）
-    - 记录交易执行（包含价格、数量、成本等）
+    - 记录纸面复核决策（包含策略、评分、风险检查等）
+    - 记录纸面验证回写（包含价格、数量、成本等）
     - 查询日志（按日期范围和符号过滤）
 
     存储格式：
@@ -139,7 +150,7 @@ class TradeLogger:
 
     def log_decision(self, decision: TradeDecisionLog) -> None:
         """
-        记录交易决策。
+        记录纸面复核决策。
 
         Args:
             decision: TradeDecisionLog对象
@@ -155,37 +166,37 @@ class TradeLogger:
             }
 
             self._append_line(log_file, record)
-            logger.debug(f"决策已记录: {decision.symbol} {decision.action}")
+            logger.debug(f"纸面决策已记录: {decision.symbol} {decision.action}")
         except Exception as e:
             logger.error(f"记录决策失败: {e}")
             raise IOError(f"Failed to log decision: {e}") from e
 
-    def log_execution(
+    def log_paper_execution(
         self,
         symbol: str,
         action: str,
         shares: int,
         price: float,
         cost: float,
-        timestamp: Optional[datetime] = None,
+        timestamp: datetime | None = None,
     ) -> None:
         """
-        记录交易执行。
+        记录纸面验证回写。
 
         Args:
             symbol: 股票代码
-            action: 操作类型 ("BUY" / "SELL")
-            shares: 交易数量
-            price: 交易价格
-            cost: 交易成本（含手续费）
-            timestamp: 执行时间，默认使用当前时间
+            action: 纸面事件类型 ("PAPER_ENTRY" / "PAPER_EXIT")
+            shares: 纸面数量
+            price: 纸面价格
+            cost: 纸面成本估算
+            timestamp: 回写时间，默认使用当前时间
 
         Raises:
             IOError: 当写入文件失败时
             ValueError: 当参数无效时
         """
         try:
-            if action not in ("BUY", "SELL"):
+            if action not in ("PAPER_ENTRY", "PAPER_EXIT"):
                 raise ValueError(f"Invalid action: {action}")
             if shares <= 0:
                 raise ValueError(f"Invalid shares: {shares}")
@@ -193,7 +204,7 @@ class TradeLogger:
                 raise ValueError(f"Invalid price: {price}")
 
             timestamp = timestamp or now_shanghai()
-            execution = TradeExecutionLog(
+            execution = PaperExecutionLog(
                 timestamp=timestamp,
                 symbol=symbol,
                 action=action,
@@ -204,13 +215,13 @@ class TradeLogger:
 
             log_file = self._get_log_file(timestamp)
             record = {
-                "type": "execution",
+                "type": "paper_execution",
                 **execution.to_dict(),
             }
 
             self._append_line(log_file, record)
             logger.info(
-                f"执行已记录: {symbol} {action} {shares}股 @ {price:.2f}, 成本: {cost:.2f}"
+                f"纸面回写已记录: {symbol} {action} {shares}股 @ {price:.2f}, 成本: {cost:.2f}"
             )
         except ValueError as e:
             logger.error(f"参数无效: {e}")
@@ -219,11 +230,15 @@ class TradeLogger:
             logger.error(f"记录执行失败: {e}")
             raise IOError(f"Failed to log execution: {e}") from e
 
+    def log_execution(self, *args: Any, **kwargs: Any) -> None:
+        """禁止记录真实交易执行；请使用 log_paper_execution 记录纸面回写。"""
+        raise ValueError("real execution logging is disabled; use log_paper_execution")
+
     def query_logs(
         self,
         start_date: date,
         end_date: date,
-        symbol: Optional[str] = None,
+        symbol: str | None = None,
     ) -> list[dict]:
         """
         查询日志。
@@ -349,9 +364,10 @@ class TradeLogger:
         stats: dict = {
             "total_records": len(logs),
             "decisions": 0,
-            "executions": 0,
+            "paper_executions": 0,
             "symbols": {},
-            "actions": {"BUY": 0, "SELL": 0, "HOLD": 0},
+            "actions": {"PAPER_REVIEW": 0, "SKIP": 0},
+            "paper_actions": {"PAPER_ENTRY": 0, "PAPER_EXIT": 0},
         }
 
         for record in logs:
@@ -361,17 +377,23 @@ class TradeLogger:
                 action = record.get("action", "")
                 if action in stats["actions"]:
                     stats["actions"][action] += 1
-            elif record_type == "execution":
-                stats["executions"] += 1
+            elif record_type in ("paper_execution", "execution"):
+                stats["paper_executions"] += 1
+                action = _normalize_paper_action(record.get("action", ""))
+                if action in stats["paper_actions"]:
+                    stats["paper_actions"][action] += 1
 
             symbol = record.get("symbol", "")
             if symbol:
                 if symbol not in stats["symbols"]:
-                    stats["symbols"][symbol] = {"decisions": 0, "executions": 0}
+                    stats["symbols"][symbol] = {
+                        "decisions": 0,
+                        "paper_executions": 0,
+                    }
                 if record_type == "decision":
                     stats["symbols"][symbol]["decisions"] += 1
-                elif record_type == "execution":
-                    stats["symbols"][symbol]["executions"] += 1
+                elif record_type in ("paper_execution", "execution"):
+                    stats["symbols"][symbol]["paper_executions"] += 1
 
         return stats
 

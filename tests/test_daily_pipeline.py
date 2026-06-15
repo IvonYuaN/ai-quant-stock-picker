@@ -561,16 +561,16 @@ def test_send_pipeline_digest_sends_summary_notification(
     daily_pipeline._send_pipeline_digest(config, result, logging.getLogger("test"))
 
     assert sent["title"] == "收盘总览-2026-06-02"
-    assert "## 🧭 一眼看懂" in sent["content"]
-    assert "## 📋 主链候选" in sent["content"]
-    assert "## 🔒 风险与分歧" in sent["content"]
-    assert "## ✅ 明日复核" in sent["content"]
-    assert "**🎯 今日结论**：" in sent["content"]
+    assert "## 结论" in sent["content"]
+    assert "## 候选" in sent["content"]
+    assert "## 风险" in sent["content"]
+    assert "## 明日" in sent["content"]
+    assert "- 今日结论: " in sent["content"]
     assert "数据源状态" in sent["content"]
-    assert "主链候选" in sent["content"]
-    assert "**📦 PM 主裁决**：上调 1 / 降级 1 / 维持 0" in sent["content"]
-    assert "**🔒 现在卡在哪**：" in sent["content"]
-    assert "**📝 首要复核**：300750 宁德时代 | 中优先级 / 板块分化时" in sent["content"]
+    assert "## 候选" in sent["content"]
+    assert "- PM 主裁决: 上调 1 / 降级 1 / 维持 0" in sent["content"]
+    assert "- 现在卡在哪: " in sent["content"]
+    assert "- 首要复核: 300750 宁德时代 | 中优先级 / 板块分化时" in sent["content"]
     assert (
         "600519 贵州茅台 | 重点跟踪 | 延续上升 | PM 上调优先级 | 评分 71.0"
         in sent["content"]
@@ -588,6 +588,17 @@ def test_send_pipeline_digest_sends_summary_notification(
         "观察名单接下来: 先盯 300750 宁德时代，等待板块暴露回落后，再重新评估纸面复核优先级（中优先级 / 板块分化时）。"
         in sent["content"]
     )
+    forbidden = (
+        "阅读方式",
+        "不是交易指令",
+        "不要做",
+        "怎么验证",
+        "## 🧭",
+        "## 📋",
+        "## 🔒",
+        "## ✅",
+    )
+    assert not any(token in sent["content"] for token in forbidden)
     assert "运行侧写" not in sent["content"]
     assert "# 收盘总览" not in sent["content"]
 

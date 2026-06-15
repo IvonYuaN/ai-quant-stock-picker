@@ -60,8 +60,8 @@ def test_prepend_source_status_banner_keeps_title_before_source_status():
     assert merged.startswith("# 收盘总览")
     assert merged.count("# 收盘总览") == 1
     assert "## 数据源状态" in merged
-    assert "## 核心结论" in merged
-    assert merged.index("## 核心结论") < merged.index("## 数据源状态")
+    assert "## 结论" in merged
+    assert merged.index("## 结论") < merged.index("## 数据源状态")
 
 
 def test_prepend_source_status_banner_moves_degraded_source_before_content():
@@ -79,5 +79,5 @@ def test_prepend_source_status_banner_moves_degraded_source_before_content():
     )
 
     assert merged.startswith("# 收盘总览")
-    assert merged.index("## 数据源状态") < merged.index("## 核心结论")
+    assert merged.index("## 数据源状态") < merged.index("## 结论")
     assert "降低信任度" in merged

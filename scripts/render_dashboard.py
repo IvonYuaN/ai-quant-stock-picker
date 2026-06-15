@@ -39,6 +39,7 @@ from aqsp.research.summary import (
     research_findings_badge,
     research_findings_display,
 )
+from aqsp.walkforward_gate import validate_walkforward_gate_payload
 
 
 @dataclass(frozen=True)
@@ -850,6 +851,44 @@ def _read_gate_status(path: Path) -> dict[str, Any]:
         return {}
 
 
+def _gate_status_for_display(gate: dict[str, Any]) -> tuple[bool, str]:
+    validation = validate_walkforward_gate_payload(gate, today=now_shanghai().date())
+    if validation.ok:
+        return True, _gate_display_metrics(validation)
+    if validation.dsr is None or validation.pbo is None or validation.n_periods is None:
+        return False, "missing/invalid metrics"
+    return False, (
+        f"{_gate_display_metrics(validation)}; "
+        f"阻塞: {', '.join(_gate_display_blockers(validation.blockers))}"
+    )
+
+
+def _gate_display_metrics(validation: Any) -> str:
+    return (
+        f"DSR={validation.dsr:.4f}, "
+        f"PBO={validation.pbo:.2%}, "
+        f"periods={validation.n_periods}"
+    )
+
+
+def _gate_display_blockers(blockers: tuple[str, ...]) -> list[str]:
+    labels: list[str] = []
+    for blocker in blockers:
+        if blocker.startswith("both_pass"):
+            labels.append("both_pass")
+        elif blocker.startswith("DSR") or blocker.startswith("dsr_pass"):
+            labels.append("DSR")
+        elif blocker.startswith("pbo_valid"):
+            labels.append("PBO占位")
+        elif blocker.startswith("PBO") or blocker.startswith("pbo_pass"):
+            labels.append("PBO")
+        elif blocker.startswith("n_periods"):
+            labels.append("periods")
+        else:
+            labels.append(blocker)
+    return labels
+
+
 def _read_risk_state(path: Path) -> dict[str, Any]:
     if not path.exists():
         return {}
@@ -1016,7 +1055,7 @@ def _system_health_panel(
 
     gate_path = Path("data/walkforward_gate.json")
     gate = _read_gate_status(gate_path)
-    gate_pass = gate.get("both_pass", False)
+    gate_pass, gate_detail = _gate_status_for_display(gate)
     gate_cls = "health-green" if gate_pass else "health-red"
     gate_value = "通过" if gate_pass else "未通过"
 
@@ -1052,7 +1091,7 @@ def _system_health_panel(
             "✅",
             "双门验证",
             gate_value,
-            f"DSR={gate.get('deflated_sharpe', '-')}, PBO={gate.get('pbo', '-')}",
+            gate_detail,
             gate_cls,
         ),
     ]

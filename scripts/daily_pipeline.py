@@ -1377,34 +1377,32 @@ def _build_pipeline_digest(
         risk_points.append("总流程未全绿，先排查失败步骤再继续自动化。")
     risk_lines = [f"- {point}" for point in _dedupe_points(risk_points, limit=4)]
     if not risk_lines:
-        risk_lines.append(
-            "- 当前流程正常，但结果仍只适合作为研究参考，不直接替代人工判断。"
-        )
+        risk_lines.append("- 当前流程正常，保持纸面复核节奏。")
 
     lines = [
-        "> 🧭 阅读方式：先看一眼结论，再看主链候选和风险卡点，最后看明日复核。本通知只做研究复核，不是交易指令。",
-        "",
-        "## 🧭 一眼看懂",
+        "## 结论",
         *core_lines,
         "",
-        "## 📋 主链候选",
+        "## 候选",
         *main_chain_lines,
         "",
-        "## 🔒 风险与分歧",
+        "## 风险",
         *risk_lines,
         "",
-        "## ✅ 明日复核",
+        "## 明日",
         *plan_lines,
     ]
     if result.steps and failed_steps:
-        lines.extend(["", "## 🧾 运行侧写"])
+        lines.extend(["", "## 运行"])
         for step in result.steps:
             badge = "OK" if step.success else "FAIL"
             line = f"- {badge} {step.name}: {step.duration_seconds:.1f}s"
             if step.message:
                 line += f" ({step.message})"
             lines.append(line)
-    return "\n".join(lines)
+    from aqsp.notification_style import compact_notification_markdown
+
+    return compact_notification_markdown("\n".join(lines))
 
 
 def _send_pipeline_digest(

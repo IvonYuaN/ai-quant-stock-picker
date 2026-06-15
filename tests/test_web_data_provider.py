@@ -153,6 +153,7 @@ def test_dashboard_data_provider_reads_real_runtime_files(
 
     executions = provider.recent_execution_frame(limit=10)
     assert list(executions["代码"]) == ["600519"]
+    assert list(executions["动作"]) == ["纸面入场"]
 
     source_status = provider.latest_source_status()
     assert source_status["actual_source"] == "eastmoney"
@@ -185,9 +186,10 @@ def test_dashboard_data_provider_reads_real_runtime_files(
         "最近纸面关闭: 000858 五粮液" in line for line in paper_summary.event_lines
     )
     assert any(
-        "最近纸面回写: 600519 贵州茅台 | BUY 100 @ 1500.0" in line
+        "最近纸面回写: 600519 贵州茅台 | 纸面入场 100 @ 1500.0" in line
         for line in paper_summary.action_summary_lines
     )
+    assert not any("BUY" in line for line in paper_summary.action_summary_lines)
     assert any(
         "纸面入场待核对 1 笔" in line for line in paper_summary.action_summary_lines
     )
@@ -1751,7 +1753,7 @@ def test_dashboard_data_provider_execution_focus_uses_same_day_paper_execution_o
 
     assert focus.execution_status == "已有纸面验证"
     assert focus.execution_lines == (
-        "最近纸面回写: BUY 100 @ 1500.0 / 2026-06-05T10:10:00+08:00",
+        "最近纸面回写: 纸面入场 100 @ 1500.0 / 2026-06-05T10:10:00+08:00",
         "同日纸面验证日志 1 条。",
     )
     assert not any("SELL" in line or "000001" in line for line in focus.execution_lines)
@@ -1829,7 +1831,7 @@ def test_dashboard_data_provider_execution_focus_links_t_plus_one_execution_logs
     assert focus.execution_status == "已有纸面验证"
     assert focus.holding_status == "纸面持有跟踪中"
     assert focus.execution_lines == (
-        "最近纸面回写: BUY 100 @ 1500.0 / 2026-06-08T09:35:00+08:00",
+        "最近纸面回写: 纸面入场 100 @ 1500.0 / 2026-06-08T09:35:00+08:00",
         "关联纸面验证日志 1 条。",
     )
     assert any("最近入场: 2026-06-08" in line for line in focus.holding_lines)

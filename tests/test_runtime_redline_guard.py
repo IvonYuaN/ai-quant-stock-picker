@@ -12,6 +12,9 @@ STRATEGY_ROOT = PROJECT_ROOT / "src" / "aqsp" / "strategies"
 ALLOWED_DATETIME_NOW = {
     Path("src/aqsp/core/time.py"),
 }
+ALLOWED_DATE_TODAY = {
+    Path("src/aqsp/core/time.py"),
+}
 
 
 def _python_files() -> list[Path]:
@@ -68,6 +71,11 @@ def test_runtime_python_uses_project_clock_for_current_time() -> None:
                 node.func, "datetime.utcnow"
             ):
                 if rel not in ALLOWED_DATETIME_NOW:
+                    offenders.append(f"{rel}:{node.lineno}")
+            if _is_call_name(node.func, "date.today") or _is_call_name(
+                node.func, "datetime.today"
+            ):
+                if rel not in ALLOWED_DATE_TODAY:
                     offenders.append(f"{rel}:{node.lineno}")
 
     assert offenders == []

@@ -205,11 +205,13 @@ class TestNotifier:
         alert = format_alert(sample_results)
 
         assert "系统监控告警" in alert
-        assert "严重告警" in alert
+        assert "## 严重" in alert
         assert "警告" in alert
         assert "critical_alert" in alert
         assert "warning_alert" in alert
         assert "normal_check" not in alert
+        assert "## 🔴" not in alert
+        assert "## 🟡" not in alert
 
     def test_format_alert_no_triggered(self) -> None:
         results = [
@@ -217,7 +219,7 @@ class TestNotifier:
         ]
         alert = format_alert(results)
 
-        assert "所有监控项正常" in alert
+        assert "总体状态: 正常" in alert
 
     def test_send_alerts(self, sample_results: list[MonitorResult]) -> None:
         with patch("aqsp.monitor.notifier.notify_markdown") as mock_notify:

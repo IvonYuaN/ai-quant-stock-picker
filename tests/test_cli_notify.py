@@ -125,7 +125,9 @@ def test_news_catalysts_cli_sends_research_notification(monkeypatch, capsys) -> 
     output = capsys.readouterr().out
     assert exit_code == 0
     assert "消息面雷达-2026-06-11" in output
-    assert sent and "不替代主报告结论" in sent[0]
+    assert sent and "## 结论" in sent[0]
+    assert "不替代主报告结论" not in sent[0]
+    assert "怎么验证" not in sent[0]
 
 
 def test_execution_summary_uses_paper_review_when_pm_has_allocations() -> None:
@@ -322,9 +324,10 @@ def test_run_scheduled_notify_prepends_source_status_banner(
     assert exit_code == 0
     assert seen
     assert seen[0].startswith("# 收盘研究日报-")
-    assert seen[0].index("## 数据源状态") < seen[0].index("## 🧭 一眼看懂")
+    assert seen[0].index("## 数据源状态") < seen[0].index("## 结论")
     assert "auto -> eastmoney" in seen[0]
     assert "- 健康: fallback" in seen[0]
+    assert "## 🧭" not in seen[0]
 
 
 def test_run_scheduled_enriches_pick_name_from_symbol_map(
@@ -1752,11 +1755,12 @@ def test_run_scheduled_surfaces_t1_blockers_in_report_and_notification(
     assert "T+1 持仓约束：昨日已买标的今日不纳入纸面复核名单" in report
     assert "贵州茅台: T+1 持仓约束，昨日已买，今日仅保留观察" in report
     assert "T+1 限制：昨日已买 1 只（600519）仅保留观察" in report
-    assert "**👀 继续观察名单**：300750 宁德时代、600519 贵州茅台" in seen[0]
+    assert "- 继续观察名单: 300750 宁德时代、600519 贵州茅台" in seen[0]
     assert (
-        "**🔒 现在卡在哪**：600519 贵州茅台: T+1 持仓约束，昨日已买，今日仅保留观察"
+        "- 现在卡在哪: 600519 贵州茅台: T+1 持仓约束，昨日已买，今日仅保留观察"
         in seen[0]
     )
+    assert "## 🔒" not in seen[0]
 
 
 def test_run_scheduled_surfaces_snapshot_lifecycle_in_summary_and_notification(
@@ -1970,9 +1974,10 @@ def test_run_scheduled_surfaces_snapshot_lifecycle_in_summary_and_notification(
     assert "🆕 **新晋候选**: 688981 中芯国际" in report
     assert "归档移出记录: 600036 招商银行" in report
     assert "排名记录变化: 300750 #4→#5↓" in report
-    assert "**🔄 候选变化**：新增 1 / 移出 1 / 排名异动 1" in seen[0]
-    assert "## 📈 变化与复盘" in seen[0]
-    assert "🆕 **新晋候选**: 688981 中芯国际" in seen[0]
+    assert "- 候选变化: 新增 1 / 移出 1 / 排名异动 1" in seen[0]
+    assert "## 变化" in seen[0]
+    assert "- 新晋候选: 688981 中芯国际" in seen[0]
+    assert "## 📈" not in seen[0]
 
 
 def test_main_accepts_run_scheduled_alias(monkeypatch) -> None:
@@ -2222,19 +2227,18 @@ def test_run_scheduled_annotates_candidate_status_in_report_and_notify(
 
     assert exit_code == 0
     assert seen
-    assert "## 📋 候选一览" in seen[0]
+    assert "## 候选" in seen[0]
     assert "| # | 标的 | 状态 | 分数 | 处理 | 关键点 |" in seen[0]
     assert (
-        "| 1 | 688981 中芯国际 | 新晋 | -9 | 👀 继续观察 | 等待量价继续走强后，再评估是否转入纸面复核名单；复核 高优先级 / 盘中走强后 |"
+        "| 1 | 688981 中芯国际 | 新晋 | -9 | 继续观察 | 等待量价继续走强后，再评估是否转入纸面复核名单；复核 高优先级 / 盘中走强后 |"
         in seen[0]
     )
     assert (
         "先盯 688981 中芯国际，等待量价继续走强后，再评估是否转入纸面复核名单（高优先级 / 盘中走强后）。"
         in seen[0]
     )
-    assert (
-        "| 2 | 000001 平安银行 | 继续观察 | -18 | 👀 继续观察 | 估值防守 |" in seen[0]
-    )
+    assert "| 2 | 000001 平安银行 | 继续观察 | -18 | 继续观察 | 估值防守 |" in seen[0]
+    assert "## 📋" not in seen[0]
     assert (
         "- 重点 1: 688981 中芯国际 | 继续观察名单 | 新晋 | 评分 -9.0 | 处理 维持原排序"
         in report

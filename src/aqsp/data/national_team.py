@@ -15,6 +15,7 @@ from typing import Any
 import pandas as pd
 
 from aqsp.core.errors import DataError
+from aqsp.core.time import today_shanghai
 from aqsp.utils.env import read_project_env_value
 
 _logger = logging.getLogger(__name__)
@@ -109,7 +110,7 @@ class NationalTeamTracker:
                 - rank: Top 10 rank
         """
         if as_of_date is None:
-            as_of_date = date.today()
+            as_of_date = today_shanghai()
 
         ts_code = symbol_to_ts_code(symbol)
 

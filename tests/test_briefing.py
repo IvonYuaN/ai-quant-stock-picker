@@ -589,7 +589,8 @@ class TestSendBriefing:
         send_briefing(briefing, notifier=mock_notifier)
         mock_notifier.assert_called_once()
         assert "t" in mock_notifier.call_args[0][0]
-        assert "## 一眼结论" in mock_notifier.call_args[0][0]
+        assert "## 结论" in mock_notifier.call_args[0][0]
+        assert "阅读方式" not in mock_notifier.call_args[0][0]
         assert "# AI 量化选股日报" not in mock_notifier.call_args[0][0]
 
     @patch("aqsp.notifier.notify_markdown")
@@ -614,8 +615,8 @@ class TestSendBriefing:
             },
         )
         body = mock_notifier.call_args[0][0]
-        assert body.index("## 数据源状态") < body.index("## 一眼结论")
-        assert "## 一眼结论" in body
+        assert body.index("## 数据源状态") < body.index("## 结论")
+        assert "## 结论" in body
         assert "auto -> eastmoney" in body
         assert "降低信任度" in body
 

@@ -15,13 +15,14 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from aqsp.core.time import today_shanghai
+from aqsp.walkforward_gate import (
+    MAX_GATE_AGE_DAYS,
+    validate_walkforward_gate_payload,
+)
 
 
 MIN_INDEPENDENT_SIGNAL_DAYS = 30
 MIN_SUCCESSFUL_RUN_DAYS = 5
-MAX_GATE_AGE_DAYS = 35
-MIN_DSR = 1.0
-MAX_PBO = 0.5
 
 
 @dataclass(frozen=True)
@@ -95,20 +96,6 @@ def _parse_date(value: object) -> date | None:
         return None
 
 
-def _parse_float(value: object) -> float | None:
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
-
-
-def _parse_int(value: object) -> int | None:
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return None
-
-
 def _file_has_content(path: Path) -> bool:
     return path.exists() and path.is_file() and path.stat().st_size > 0
 
@@ -142,42 +129,15 @@ def _check_walkforward_gate(path: Path, today: date) -> ReadinessFinding:
             f"missing or unreadable gate: {path}",
         )
 
-    run_date = _parse_date(gate.get("run_date"))
-    if run_date is None:
-        return ReadinessFinding("walkforward_gate", False, "run_date missing/invalid")
-    age_days = (today - run_date).days
-    if age_days > MAX_GATE_AGE_DAYS:
-        return ReadinessFinding(
-            "walkforward_gate",
-            False,
-            f"gate stale: {age_days} days > {MAX_GATE_AGE_DAYS}",
-        )
-
-    dsr = _parse_float(gate.get("deflated_sharpe"))
-    pbo = _parse_float(gate.get("pbo"))
-    n_periods = _parse_int(gate.get("n_periods"))
-    if dsr is None or pbo is None or n_periods is None:
-        return ReadinessFinding(
-            "walkforward_gate",
-            False,
-            "deflated_sharpe, pbo or n_periods missing/invalid",
-        )
-    pbo_valid = bool(gate.get("pbo_valid", pbo > 0.0))
-    both_pass = bool(gate.get("both_pass"))
-    ok = (
-        both_pass
-        and dsr > MIN_DSR
-        and pbo_valid
-        and 0.0 < pbo < MAX_PBO
-        and n_periods > 0
+    validation = validate_walkforward_gate_payload(
+        gate,
+        today=today,
+        max_age_days=MAX_GATE_AGE_DAYS,
     )
     return ReadinessFinding(
         "walkforward_gate",
-        ok,
-        (
-            f"DSR={dsr:.4f} > {MIN_DSR}, PBO={pbo:.2%} < {MAX_PBO:.0%}, "
-            f"pbo_valid={pbo_valid}, n_periods={n_periods}, age_days={age_days}"
-        ),
+        validation.ok,
+        validation.detail,
     )
 
 

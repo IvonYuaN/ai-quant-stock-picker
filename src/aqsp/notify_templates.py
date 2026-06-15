@@ -16,6 +16,7 @@ from aqsp.portfolio.snapshot import (
     summarize_snapshot_diff,
 )
 from aqsp.notifier import prepend_source_status_banner
+from aqsp.notification_style import compact_notification_markdown
 from aqsp.presentation import (
     format_symbol_name,
     format_watch_review_action,
@@ -35,7 +36,7 @@ def _safe_mode(mode: str) -> NotifyMode:
 
 def _notification_research_tone(markdown: str) -> str:
     """Final safety pass for notification text shown outside the dashboard."""
-    return normalize_research_tone(markdown)
+    return compact_notification_markdown(normalize_research_tone(markdown))
 
 
 def _source_safe_notification(
@@ -126,22 +127,22 @@ def build_briefing_notification(
 
     body_parts: list[str] = []
     if summary:
-        body_parts.append("## 一眼结论\n\n" + summary)
+        body_parts.append("## 结论\n\n" + summary)
     main_chain = _section("主链总览", "今日结论")
     if main_chain:
-        body_parts.append("## 🧭 今天先看\n\n" + main_chain)
+        body_parts.append("## 重点\n\n" + main_chain)
     allocation_execution = _format_allocation_execution(briefing.portfolio_summary)
     if allocation_execution:
-        body_parts.append("## 📦 纸面仓位\n\n" + allocation_execution)
+        body_parts.append("## 纸面\n\n" + allocation_execution)
     debate = _format_debate_summary(briefing.debate_results)
     if debate:
-        body_parts.append("## 🗣️ 不同看法\n\n" + debate)
+        body_parts.append("## 分歧\n\n" + debate)
     research = _format_research_radar(_section("研究吸收", "研究进展"))
     if research:
-        body_parts.append("## 🔬 研究补充\n\n" + research)
+        body_parts.append("## 研究\n\n" + research)
     next_day = _section("明日重点", "明日先看")
     if next_day:
-        body_parts.append("## 📅 明天先看\n\n" + next_day)
+        body_parts.append("## 明日\n\n" + next_day)
     extra_sections = [
         section
         for section in briefing.sections
@@ -156,8 +157,6 @@ def build_briefing_notification(
     titled_body = "\n".join(
         [
             f"# {_dated_title('明日预案', briefing.date)}",
-            "",
-            "> 🧭 阅读方式：先看一眼结论，再看今天重点和风险，最后看明天先复核什么。本通知只做研究复核，不是交易指令。",
             "",
             body,
         ]
@@ -243,9 +242,7 @@ def build_daily_run_notification(
     lines = [
         f"# {_dated_title(title_label, run_date)}",
         "",
-        "> 🧭 阅读方式：先看一眼结论，再看风险/阻塞，最后看复核清单。本通知只做研究复核，不是交易指令。",
-        "",
-        "## 🧭 一眼看懂",
+        "## 结论",
         "",
         f"**📅 数据日期**：{run_date}",
         "",
@@ -333,10 +330,10 @@ def build_daily_run_notification(
         is_cold_start=is_cold_start,
     )
     if risk_lines:
-        lines.extend(["", "## ⚠️ 风险先看", ""])
+        lines.extend(["", "## 风险", ""])
         lines.extend(risk_lines)
 
-    lines.extend(["", "## 📌 今日快照", ""])
+    lines.extend(["", "## 快照", ""])
     lines.extend(
         _daily_snapshot_table(
             run_date=run_date,
@@ -358,10 +355,10 @@ def build_daily_run_notification(
         is_cold_start=is_cold_start,
     )
     if reading_order:
-        lines.extend(["", "## 🧭 阅读顺序", ""])
+        lines.extend(["", "## 顺序", ""])
         lines.extend(reading_order)
 
-    lines.extend(["", "## 📋 候选一览", ""])
+    lines.extend(["", "## 候选", ""])
     lines.extend(
         _daily_candidate_table(
             tradable,
@@ -372,18 +369,18 @@ def build_daily_run_notification(
     )
     allocation_execution = _format_allocation_execution(portfolio_summary)
     if allocation_execution:
-        lines.extend(["", "## 📦 纸面仓位", "", allocation_execution])
+        lines.extend(["", "## 纸面", "", allocation_execution])
     debate = _format_debate_summary(debate_results[:2])
     if debate:
-        lines.extend(["", "## 🗣️ 不同看法", "", debate])
+        lines.extend(["", "## 分歧", "", debate])
     if snapshot_diff is not None and snapshot_diff.has_changes:
-        lines.extend(["", "## 📈 变化与复盘", ""])
+        lines.extend(["", "## 变化", ""])
         lines.extend(snapshot_diff_highlights(snapshot_diff, max_items=3))
 
     lines.extend(
         [
             "",
-            "## ✅ 接下来怎么做",
+            "## 明日",
             "",
             _daily_watch_action_line(candidates, portfolio_summary)
             or _daily_action_line_one(tradable, portfolio_summary),
@@ -920,12 +917,10 @@ def build_morning_breakout_notification(
                 [
                     f"# {_dated_title('早盘强势股观察')}",
                     "",
-                    "## 核心结论",
+                    "## 结论",
                     "",
                     "- 总体状态: 今天早上还没有看到足够强的股票",
-                    "- 接下来怎么做: 继续观察，等更清晰的放量走强信号",
-                    "- 边界提醒: 这不是交易指令；没有信号时不要为了开盘热闹临时追高。",
-                    "- 不要做: 不要把普通拉升当成重点候选，先等量能和承接确认。",
+                    "- 明日: 继续观察，等更清晰的放量走强信号",
                 ]
             )
         )
@@ -933,13 +928,13 @@ def build_morning_breakout_notification(
     lines = [
         f"# {_dated_title('早盘强势股观察')}",
         "",
-        "## 核心结论",
+        "## 结论",
         "",
         f"- 看到几只: {len(signals)}",
         f"- 现在先看: {_format_breakout_signal(signals[0])}",
         "- 风险提示: 这类早盘急涨股票波动大，只能先看承接和最多亏到的位置。",
         "",
-        "## 📋 候选一览",
+        "## 候选",
         "",
     ]
     display_n = max(top_n, 5) if _safe_mode(mode) == "full" else top_n
@@ -953,11 +948,11 @@ def build_morning_breakout_notification(
     lines.extend(
         [
             "",
-            "## 🔒 风险/阻塞",
+            "## 风险",
             "",
             f"- {signals[0].risks[0] if signals[0].risks else '波动较大，先看承接与量能持续性。'}",
             "",
-            "## ✅ 下一步",
+            "## 明日",
             "",
             "1. 先看首个候选是否继续放量，若承接不足则只保留观察。",
         ]
@@ -976,12 +971,10 @@ def build_closing_premium_notification(
                 [
                     f"# {_dated_title('尾盘走强观察')}",
                     "",
-                    "## 核心结论",
+                    "## 结论",
                     "",
                     "- 总体状态: 今天收盘前还没有看到明显走强的股票",
-                    "- 接下来怎么做: 继续观察尾盘异动，不勉强把普通股票列进重点",
-                    "- 边界提醒: 这不是交易指令；没有尾盘强信号时，保持原计划更重要。",
-                    "- 不要做: 不要因为临近收盘就临时补票，等第二天开盘验证延续性。",
+                    "- 明日: 继续观察尾盘异动，不勉强把普通股票列进重点",
                 ]
             )
         )
@@ -989,13 +982,13 @@ def build_closing_premium_notification(
     lines = [
         f"# {_dated_title('尾盘走强观察')}",
         "",
-        "## 核心结论",
+        "## 结论",
         "",
         f"- 看到几只: {len(signals)}",
         f"- 现在先看: {_format_premium_signal(signals[0])}",
         "- 接下来怎么做: 优先跟踪收盘前继续走强的股票，第二天开盘只看是否延续",
         "",
-        "## 📋 候选一览",
+        "## 候选",
         "",
     ]
     display_n = max(top_n, 5) if _safe_mode(mode) == "full" else top_n
@@ -1009,11 +1002,11 @@ def build_closing_premium_notification(
     lines.extend(
         [
             "",
-            "## 🔒 风险/阻塞",
+            "## 风险",
             "",
             f"- {signals[0].risks[0] if signals[0].risks else '次日高开或量能衰减时仅保留观察。'}",
             "",
-            "## ✅ 下一步",
+            "## 明日",
             "",
             "1. 次日先看开盘延续和量能承接，弱于假设则不纳入纸面再看。",
         ]
