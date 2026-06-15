@@ -223,11 +223,27 @@ class TestNotifier:
 
     def test_send_alerts(self, sample_results: list[MonitorResult]) -> None:
         with patch("aqsp.monitor.notifier.notify_markdown") as mock_notify:
+            mock_notify.return_value = [MagicMock(channel="serverchan", ok=True, detail="HTTP 200")]
             send_alerts(sample_results)
 
             mock_notify.assert_called_once()
             alert_msg = mock_notify.call_args[0][0]
             assert "系统监控告警" in alert_msg
+
+    def test_send_alerts_prints_channel_results(
+        self, sample_results: list[MonitorResult], capsys
+    ) -> None:
+        with patch("aqsp.monitor.notifier.notify_markdown") as mock_notify:
+            mock_notify.return_value = [
+                MagicMock(channel="serverchan", ok=True, detail="HTTP 200"),
+                MagicMock(channel="wechat", ok=False, detail="HTTP 500"),
+            ]
+
+            send_alerts(sample_results)
+
+        output = capsys.readouterr().out
+        assert "monitor notify serverchan: ok (HTTP 200)" in output
+        assert "monitor notify wechat: failed (HTTP 500)" in output
 
     def test_send_alerts_no_triggered(self) -> None:
         results = [

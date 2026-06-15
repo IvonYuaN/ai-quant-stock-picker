@@ -6,6 +6,7 @@ import json
 import logging
 from pathlib import Path
 import sys
+from types import SimpleNamespace
 
 import pandas as pd
 import pytest
@@ -601,6 +602,85 @@ def test_send_pipeline_digest_sends_summary_notification(
     assert not any(token in sent["content"] for token in forbidden)
     assert "运行侧写" not in sent["content"]
     assert "# 收盘总览" not in sent["content"]
+
+
+def test_send_pipeline_digest_logs_channel_results(
+    monkeypatch, tmp_path: Path, caplog
+) -> None:
+    daily_pipeline = _load_daily_pipeline_module()
+
+    ledger_path = tmp_path / "data" / "predictions.jsonl"
+    ledger_path.parent.mkdir(parents=True, exist_ok=True)
+    ledger_path.write_text("{}", encoding="utf-8")
+    reports_dir = tmp_path / "reports"
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(
+        [
+            {
+                "symbol": "600519",
+                "name": "贵州茅台",
+                "date": "2026-06-02",
+                "close": 1498.0,
+                "score": 71.0,
+                "rating": "strong_buy_candidate",
+                "entry_type": "close",
+                "ideal_buy": 1495.0,
+                "stop_loss": 1450.0,
+                "take_profit": 1600.0,
+                "position": "10%-30%",
+                "portfolio_action": "promote",
+                "candidate_status": "延续上升",
+            }
+        ]
+    ).to_csv(reports_dir / "latest.csv", index=False)
+
+    monkeypatch.setattr(
+        "aqsp.notifier.send_notification",
+        lambda title, content: [
+            SimpleNamespace(channel="serverchan", ok=True, detail="HTTP 200"),
+            SimpleNamespace(channel="wechat", ok=False, detail="HTTP 500"),
+        ],
+    )
+
+    config = daily_pipeline.PipelineConfig(
+        project_root=tmp_path,
+        source="eastmoney",
+        mode="close",
+        limit=10,
+        max_universe=50,
+        min_avg_amount=50_000_000,
+        max_data_lag_days=3,
+        enable_online_factors=False,
+        allow_online_fallback=True,
+        ledger_path="data/predictions.jsonl",
+        report_path="reports/latest.md",
+        csv_path="reports/latest.csv",
+        briefing_path="reports/briefing.md",
+        paper_report_path="reports/paper.md",
+        dashboard_html="dist/dashboard/index.html",
+        dashboard_db="dist/dashboard/aqsp.db",
+        paper_ledger="data/paper_trades.jsonl",
+        closing_review_path="reports/closing_review.md",
+        notify=True,
+        notify_mode="summary",
+        dry_run=False,
+        enable_debate=False,
+        enable_auto_evolution=False,
+    )
+
+    result = daily_pipeline.PipelineResult(
+        started_at="2026-06-02T18:00:00+08:00",
+        finished_at="2026-06-02T18:00:30+08:00",
+        duration_seconds=30.0,
+        steps=[daily_pipeline.StepResult("策略运行", True, 2.0)],
+        overall_success=True,
+        summary="ok",
+    )
+
+    with caplog.at_level(logging.INFO, logger="test"):
+        daily_pipeline._send_pipeline_digest(config, result, logging.getLogger("test"))
+
+    assert "channels=serverchan=ok(HTTP 200), wechat=failed(HTTP 500)" in caplog.text
 
 
 def test_write_result_file_appends_daily_run_history(tmp_path: Path) -> None:

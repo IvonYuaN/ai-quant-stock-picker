@@ -1427,8 +1427,18 @@ def _send_pipeline_digest(
             if result.started_at
             else today_shanghai().isoformat()
         )
-        send_notification(f"收盘总览-{run_date}", digest)
-        logger.info("已发送收盘汇总通知 (mode=summary)")
+        notify_results = send_notification(f"收盘总览-{run_date}", digest)
+        if notify_results:
+            channel_summary = ", ".join(
+                f"{result.channel}={'ok' if result.ok else 'failed'}({result.detail})"
+                for result in notify_results
+            )
+            logger.info(
+                "已发送收盘汇总通知 (mode=summary, channels=%s)",
+                channel_summary,
+            )
+        else:
+            logger.warning("收盘汇总通知未发送：未配置任何通知通道")
     except Exception as exc:
         logger.warning("收盘汇总通知发送失败(非致命): %s", exc)
 

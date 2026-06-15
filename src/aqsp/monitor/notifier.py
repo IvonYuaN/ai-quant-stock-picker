@@ -68,4 +68,10 @@ def send_alerts(results: list[MonitorResult]) -> None:
         triggered,
         mode=load_runtime_config().notify_mode,
     )
-    notify_markdown(alert_msg)
+    notify_results = notify_markdown(alert_msg)
+    if notify_results:
+        for result in notify_results:
+            status = "ok" if result.ok else "failed"
+            print(f"monitor notify {result.channel}: {status} ({result.detail})")
+    else:
+        print("monitor notify skipped: No notification channel configured.")

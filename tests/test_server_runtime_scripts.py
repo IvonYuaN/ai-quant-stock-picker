@@ -30,7 +30,7 @@ def test_intraday_refresh_script_uses_isolated_outputs() -> None:
 
     assert 'export AQSP_RUN_TASK_ID="${AQSP_RUN_TASK_ID:-intraday}"' in script
     assert 'INTRADAY_MODE="${AQSP_INTRADAY_MODE:-open}"' in script
-    assert 'INTRADAY_NOTIFY="${AQSP_INTRADAY_NOTIFY:-false}"' in script
+    assert 'INTRADAY_NOTIFY="${AQSP_INTRADAY_NOTIFY:-${AQSP_NOTIFY:-true}}"' in script
     assert "NOTIFY_ARGS=(--notify)" in script
     assert "data/intraday_predictions.jsonl" in script
     assert "reports/intraday_latest.md" in script
