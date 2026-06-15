@@ -8,6 +8,7 @@ from aqsp.notify_templates import build_briefing_notification
 from aqsp.notifier import (
     _build_smart_summary_card,
     notify_feishu_card,
+    NotifyResult,
 )
 
 
@@ -35,15 +36,14 @@ def send_briefing(
     briefing: Briefing,
     notifier: Any = None,
     source_status: dict[str, str | bool] | None = None,
-) -> None:
+) -> list[NotifyResult]:
     send_smart_summary_card(briefing)
     markdown = _compose_briefing_notification_markdown(
         briefing,
         source_status=source_status,
     )
     if notifier is not None:
-        notifier(markdown)
-        return
+        return notifier(markdown)
     from aqsp.notifier import notify_markdown
 
-    notify_markdown(markdown)
+    return notify_markdown(markdown)

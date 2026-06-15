@@ -18,6 +18,29 @@ class NotifyResult:
     detail: str
 
 
+def format_notify_results(
+    results: list[NotifyResult],
+    *,
+    prefix: str = "notify",
+) -> list[str]:
+    if not results:
+        return [f"{prefix} skipped: No notification channel configured."]
+    lines: list[str] = []
+    for result in results:
+        status = "ok" if result.ok else "failed"
+        lines.append(f"{prefix} {result.channel}: {status} ({result.detail})")
+    return lines
+
+
+def print_notify_results(
+    results: list[NotifyResult],
+    *,
+    prefix: str = "notify",
+) -> None:
+    for line in format_notify_results(results, prefix=prefix):
+        print(line)
+
+
 def prepend_source_status_banner(
     markdown: str,
     source_status: dict[str, Any] | None = None,

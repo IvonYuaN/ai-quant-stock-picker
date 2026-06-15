@@ -64,7 +64,7 @@ from aqsp.notify_templates import (
     build_closing_review_notification,
     build_morning_breakout_notification,
 )
-from aqsp.notifier import notify_markdown
+from aqsp.notifier import notify_markdown, print_notify_results
 from aqsp.research.summary import load_research_summary
 from aqsp.research_engine import (
     ENGINE_CHOICES,
@@ -3059,14 +3059,7 @@ def run_scheduled(args: argparse.Namespace) -> int:
                     next_actions=next_actions,
                 )
             )
-            if gate_results:
-                for result in gate_results:
-                    gate_status = "ok" if result.ok else "failed"
-                    print(
-                        f"gate notify {result.channel}: {gate_status} ({result.detail})"
-                    )
-            else:
-                print("gate notify skipped: No notification channel configured.")
+            print_notify_results(gate_results, prefix="gate notify")
         except Exception as exc:
             print(f"gate notify failed: {exc}")
         args.notify = False
@@ -3101,11 +3094,7 @@ def run_scheduled(args: argparse.Namespace) -> int:
                 ).strip(),
             )
         )
-        if not results:
-            print("No notification channel configured.")
-        for result in results:
-            status = "ok" if result.ok else "failed"
-            print(f"notify {result.channel}: {status} ({result.detail})")
+        print_notify_results(results, prefix="notify")
     return 2 if status.triggered else 0
 
 
@@ -3650,7 +3639,10 @@ def run_briefing(args: argparse.Namespace) -> int:
     print(briefing.to_markdown())
 
     if args.notify:
-        send_briefing(briefing, source_status=source_status)
+        print_notify_results(
+            send_briefing(briefing, source_status=source_status),
+            prefix="briefing notify",
+        )
 
     if getattr(args, "email", False):
         from aqsp.briefing.email_notifier import (
@@ -3728,7 +3720,7 @@ def run_news_catalysts(args: argparse.Namespace) -> int:
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(markdown, encoding="utf-8")
     if args.notify:
-        notify_markdown(markdown)
+        print_notify_results(notify_markdown(markdown), prefix="news notify")
     return 0
 
 
@@ -4261,12 +4253,15 @@ def run_morning_breakout(args: argparse.Namespace) -> int:
 
     if args.notify and signals:
         try:
-            notify_markdown(
-                build_morning_breakout_notification(
-                    signals,
-                    mode=load_runtime_config().notify_mode,
-                    top_n=args.top,
-                )
+            print_notify_results(
+                notify_markdown(
+                    build_morning_breakout_notification(
+                        signals,
+                        mode=load_runtime_config().notify_mode,
+                        top_n=args.top,
+                    )
+                ),
+                prefix="morning notify",
             )
         except Exception:
             pass
@@ -4395,12 +4390,15 @@ def run_closing_premium(args: argparse.Namespace) -> int:
 
     if args.notify and signals:
         try:
-            notify_markdown(
-                build_closing_premium_notification(
-                    signals,
-                    mode=load_runtime_config().notify_mode,
-                    top_n=args.top,
-                )
+            print_notify_results(
+                notify_markdown(
+                    build_closing_premium_notification(
+                        signals,
+                        mode=load_runtime_config().notify_mode,
+                        top_n=args.top,
+                    )
+                ),
+                prefix="closing notify",
             )
         except Exception:
             pass
@@ -4503,12 +4501,15 @@ def run_closing_review(args: argparse.Namespace) -> int:
 
     if args.notify:
         try:
-            notify_markdown(
-                build_closing_review_notification(
-                    review=review if not args.weekly else None,
-                    weekly_summary=summary if args.weekly else None,
-                    mode=load_runtime_config().notify_mode,
-                )
+            print_notify_results(
+                notify_markdown(
+                    build_closing_review_notification(
+                        review=review if not args.weekly else None,
+                        weekly_summary=summary if args.weekly else None,
+                        mode=load_runtime_config().notify_mode,
+                    )
+                ),
+                prefix="review notify",
             )
         except Exception:
             pass

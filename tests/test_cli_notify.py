@@ -104,7 +104,10 @@ def test_news_catalysts_cli_sends_research_notification(monkeypatch, capsys) -> 
     )
 
     monkeypatch.setattr(
-        cli_mod, "notify_markdown", lambda markdown: sent.append(markdown) or []
+        cli_mod,
+        "notify_markdown",
+        lambda markdown: sent.append(markdown)
+        or [MagicMock(channel="serverchan", ok=True, detail="HTTP 200")],
     )
     monkeypatch.setattr(
         "aqsp.news.build_catalyst_report",
@@ -125,9 +128,49 @@ def test_news_catalysts_cli_sends_research_notification(monkeypatch, capsys) -> 
     output = capsys.readouterr().out
     assert exit_code == 0
     assert "消息面雷达-2026-06-11" in output
+    assert "news notify serverchan: ok (HTTP 200)" in output
     assert sent and "## 结论" in sent[0]
     assert "不替代主报告结论" not in sent[0]
     assert "怎么验证" not in sent[0]
+
+
+def test_run_briefing_prints_notify_channel_results(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
+    import aqsp.cli as cli_mod
+
+    ledger = tmp_path / "predictions.jsonl"
+    output = tmp_path / "briefing.md"
+    ledger.write_text(
+        '{"signal_date":"2026-06-12","status":"watch_only","symbol":"600000",'
+        '"name":"浦发银行","signal_close":10.0,"score":55,"rating":"watch"}\n',
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        "aqsp.briefing.enhance_briefing", lambda briefing, enable_llm: briefing
+    )
+    monkeypatch.setattr(
+        "aqsp.briefing.notifier.send_smart_summary_card", lambda briefing: None
+    )
+    monkeypatch.setattr(
+        "aqsp.notifier.notify_markdown",
+        lambda markdown: [MagicMock(channel="serverchan", ok=True, detail="HTTP 200")],
+    )
+
+    exit_code = cli_mod.run_briefing(
+        Namespace(
+            ledger=str(ledger),
+            output=str(output),
+            enable_llm=False,
+            notify=True,
+            email=False,
+        )
+    )
+
+    output_text = capsys.readouterr().out
+    assert exit_code == 0
+    assert "briefing notify serverchan: ok (HTTP 200)" in output_text
 
 
 def test_execution_summary_uses_paper_review_when_pm_has_allocations() -> None:

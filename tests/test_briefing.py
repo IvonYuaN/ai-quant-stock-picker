@@ -596,8 +596,19 @@ class TestSendBriefing:
     @patch("aqsp.notifier.notify_markdown")
     def test_calls_default_notifier(self, mock_notify):
         briefing = Briefing(date="d", sections=[])
+        mock_notify.return_value = []
         send_briefing(briefing)
         mock_notify.assert_called_once()
+
+    @patch("aqsp.notifier.notify_markdown")
+    def test_returns_default_notifier_results(self, mock_notify):
+        briefing = Briefing(date="d", sections=[])
+        mock_notify.return_value = [MagicMock(channel="serverchan", ok=True, detail="HTTP 200")]
+
+        results = send_briefing(briefing)
+
+        assert len(results) == 1
+        assert results[0].channel == "serverchan"
 
     def test_send_briefing_prepends_source_status_banner(self):
         briefing = Briefing(
@@ -619,6 +630,20 @@ class TestSendBriefing:
         assert "## 结论" in body
         assert "auto -> eastmoney" in body
         assert "降低信任度" in body
+
+    def test_send_briefing_returns_custom_notifier_results(self):
+        briefing = Briefing(
+            date="d", sections=[BriefingSection(title="t", content="c")]
+        )
+        result = send_briefing(
+            briefing,
+            notifier=lambda _markdown: [
+                MagicMock(channel="serverchan", ok=True, detail="HTTP 200")
+            ],
+        )
+
+        assert len(result) == 1
+        assert result[0].channel == "serverchan"
 
 
 class TestGenerateSmartSummary:

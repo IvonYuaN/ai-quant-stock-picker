@@ -81,3 +81,28 @@ def test_prepend_source_status_banner_moves_degraded_source_before_content():
     assert merged.startswith("# 收盘总览")
     assert merged.index("## 数据") < merged.index("## 结论")
     assert "降低信任度" in merged
+
+
+def test_format_notify_results_formats_all_channels():
+    from aqsp.notifier import NotifyResult, format_notify_results
+
+    lines = format_notify_results(
+        [
+            NotifyResult("serverchan", True, "HTTP 200"),
+            NotifyResult("wechat", False, "HTTP 500"),
+        ],
+        prefix="daily notify",
+    )
+
+    assert lines == [
+        "daily notify serverchan: ok (HTTP 200)",
+        "daily notify wechat: failed (HTTP 500)",
+    ]
+
+
+def test_format_notify_results_handles_empty_channels():
+    from aqsp.notifier import format_notify_results
+
+    assert format_notify_results([], prefix="daily notify") == [
+        "daily notify skipped: No notification channel configured."
+    ]

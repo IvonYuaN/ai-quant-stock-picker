@@ -6,7 +6,7 @@ from aqsp.config import load_runtime_config
 from aqsp.core.time import now_shanghai
 from aqsp.notification_style import compact_notification_markdown
 from aqsp.notify_templates import build_monitor_notification
-from aqsp.notifier import notify_markdown
+from aqsp.notifier import notify_markdown, print_notify_results
 
 if TYPE_CHECKING:
     from .checker import MonitorResult
@@ -69,9 +69,4 @@ def send_alerts(results: list[MonitorResult]) -> None:
         mode=load_runtime_config().notify_mode,
     )
     notify_results = notify_markdown(alert_msg)
-    if notify_results:
-        for result in notify_results:
-            status = "ok" if result.ok else "failed"
-            print(f"monitor notify {result.channel}: {status} ({result.detail})")
-    else:
-        print("monitor notify skipped: No notification channel configured.")
+    print_notify_results(notify_results, prefix="monitor notify")
