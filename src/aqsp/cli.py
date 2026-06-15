@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 from dataclasses import replace
 from datetime import date, timedelta
@@ -2239,6 +2240,26 @@ def _format_notification_gate_block(
     return "\n".join(lines) + "\n"
 
 
+def _build_notification_gate_alert(
+    *,
+    run_date: str,
+    gate_reasons: list[str],
+    next_actions: list[str],
+) -> str:
+    lines = [
+        f"# 通知未放行-{run_date}",
+        "",
+        "## 结论",
+        "",
+        "- 本次正常通知已被双门 gate 阻止。",
+    ]
+    if gate_reasons:
+        lines.append(f"- 原因: {'；'.join(gate_reasons[:2])}")
+    if next_actions:
+        lines.append(f"- 处理: {next_actions[0]}")
+    return "\n".join(lines)
+
+
 def run_screen(args: argparse.Namespace) -> int:
     actual_source = "csv"
     explicit_symbol_count = 0
@@ -2435,14 +2456,23 @@ def run_scheduled(args: argparse.Namespace) -> int:
         composite_scores = composite.calculate_score(screen_frames, regime=regime)
         if composite_scores:
             max_cs = max(composite_scores.values()) if composite_scores else 1.0
+            rescored_picks = []
             for pick in screened_picks:
                 raw_cs = composite_scores.get(pick.symbol, 0.0)
                 normalized_cs = (raw_cs / max_cs * 100) if max_cs > 0 else 0.0
-                pick.regime_score = round(normalized_cs, 2)
-                pick.score = round(pick.score * 0.7 + normalized_cs * 0.3, 2)
-            screened_picks.sort(key=lambda p: p.score, reverse=True)
-    except Exception:
-        pass
+                rescored_picks.append(
+                    replace(
+                        pick,
+                        regime_score=round(normalized_cs, 2),
+                        score=round(pick.score * 0.7 + normalized_cs * 0.3, 2),
+                    )
+                )
+            screened_picks = sorted(rescored_picks, key=lambda p: p.score, reverse=True)
+    except Exception as exc:
+        logging.getLogger(__name__).warning(
+            "CompositeStrategy 重评分失败，回退到基础筛选结果: %s",
+            exc,
+        )
 
     picks = screened_picks[:limit]
 
@@ -2999,7 +3029,10 @@ def run_scheduled(args: argparse.Namespace) -> int:
     except Exception:
         pass
 
-    Path(args.report).parent.mkdir(parents=True, exist_ok=True)
+    report_path = str(getattr(args, "report", "") or "").strip()
+    output_csv_path = str(getattr(args, "output_csv", "") or "").strip()
+    if report_path:
+        Path(report_path).parent.mkdir(parents=True, exist_ok=True)
     # 先检查双门 gate，决定是否放行 notify
     gate_ok, gate_reasons = _check_notification_gate(cold_start_days=cold_start_days)
     if args.notify and not gate_ok:
@@ -3018,11 +3051,31 @@ def run_scheduled(args: argparse.Namespace) -> int:
         markdown = (
             _format_notification_gate_block(gate_reasons, next_actions) + markdown
         )
+        try:
+            gate_results = notify_markdown(
+                _build_notification_gate_alert(
+                    run_date=latest.isoformat(),
+                    gate_reasons=gate_reasons,
+                    next_actions=next_actions,
+                )
+            )
+            if gate_results:
+                for result in gate_results:
+                    gate_status = "ok" if result.ok else "failed"
+                    print(
+                        f"gate notify {result.channel}: {gate_status} ({result.detail})"
+                    )
+            else:
+                print("gate notify skipped: No notification channel configured.")
+        except Exception as exc:
+            print(f"gate notify failed: {exc}")
         args.notify = False
     # 写报告（可能包含警告）
-    Path(args.report).write_text(markdown, encoding="utf-8")
-    Path(args.output_csv).parent.mkdir(parents=True, exist_ok=True)
-    table.to_csv(args.output_csv, index=False)
+    if report_path:
+        Path(report_path).write_text(markdown, encoding="utf-8")
+    if output_csv_path:
+        Path(output_csv_path).parent.mkdir(parents=True, exist_ok=True)
+        table.to_csv(output_csv_path, index=False)
     print(markdown)
 
     if args.notify:

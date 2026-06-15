@@ -495,6 +495,157 @@ def test_optional_symbol_name_map_reads_project_env_without_export(
     assert cli_mod._load_optional_symbol_name_map(["600036"]) == {"600036": "招商银行"}
 
 
+def test_run_scheduled_sends_gate_block_alert_when_notify_is_disabled_by_gate(
+    monkeypatch, tmp_path
+) -> None:
+    import aqsp.cli as cli_mod
+
+    latest = today_shanghai().isoformat()
+    frames = {
+        "600519": pd.DataFrame(
+            [
+                {
+                    "date": latest,
+                    "symbol": "600519",
+                    "name": "贵州茅台",
+                    "open": 1500.0,
+                    "high": 1510.0,
+                    "low": 1490.0,
+                    "close": 1505.0,
+                    "volume": 1000,
+                    "amount": 150500000.0,
+                    "suspended": False,
+                    "limit_up": 1655.5,
+                    "limit_down": 1354.5,
+                }
+            ]
+        ),
+        "000300": pd.DataFrame(
+            [
+                {
+                    "date": latest,
+                    "symbol": "000300",
+                    "name": "沪深300",
+                    "open": 3500.0,
+                    "high": 3510.0,
+                    "low": 3490.0,
+                    "close": 3505.0,
+                    "volume": 1000,
+                    "amount": 350500000.0,
+                    "suspended": False,
+                    "limit_up": 0.0,
+                    "limit_down": 0.0,
+                }
+            ]
+        ),
+    }
+
+    monkeypatch.setattr(
+        cli_mod,
+        "_check_notification_gate",
+        lambda *, cold_start_days, gate_path=None: (
+            False,
+            ["冷启动未满 30 天（当前 12 天）", "DSR 未过门（0.08 < 0.20）"],
+        ),
+    )
+    monkeypatch.setattr(
+        cli_mod,
+        "_fetch_frames_for_cli_with_metadata",
+        lambda *args, **kwargs: (frames, "eastmoney"),
+    )
+    monkeypatch.setattr(
+        cli_mod, "_resolve_run_symbols", lambda *args, **kwargs: ["600519"]
+    )
+    monkeypatch.setattr(
+        cli_mod, "strategy_weights_from_ledger", lambda *_args, **_kwargs: {}
+    )
+    monkeypatch.setattr(
+        cli_mod, "_count_independent_signal_days", lambda *_args, **_kwargs: 12
+    )
+    monkeypatch.setattr(
+        cli_mod,
+        "screen_universe",
+        lambda *_args, **_kwargs: [
+            PickResult(
+                symbol="600519",
+                name="贵州茅台",
+                date=latest,
+                close=1505.0,
+                score=71.0,
+                rating="buy_candidate",
+                entry_type="next_open",
+                ideal_buy=1505.0,
+                stop_loss=1450.0,
+                take_profit=1600.0,
+                position="10%-30%",
+                strategies=("ma_pullback",),
+                reasons=("趋势回踩",),
+                risks=("RSI偏热",),
+            )
+        ],
+    )
+
+    class DummyPipeline:
+        def run(self, *_args, **_kwargs):
+            return True, ""
+
+    monkeypatch.setattr(cli_mod, "LethalFilterPipeline", lambda: DummyPipeline())
+    monkeypatch.setattr(
+        "aqsp.universe.t1_filter.filter_t1_held",
+        lambda candidates, **_kwargs: (candidates, []),
+    )
+    monkeypatch.setattr(cli_mod, "validate_predictions", lambda *_args, **_kwargs: None)
+
+    class DummyBreaker:
+        def check(self, **_kwargs):
+            return type("Status", (), {"triggered": False, "reason": "正常"})()
+
+    monkeypatch.setattr(cli_mod, "CircuitBreaker", lambda: DummyBreaker())
+    monkeypatch.setattr(
+        cli_mod,
+        "describe_source_health",
+        lambda *_args, **_kwargs: ("healthy", "eastmoney 健康", False),
+    )
+    seen: list[str] = []
+    monkeypatch.setattr(
+        cli_mod,
+        "notify_markdown",
+        lambda markdown: seen.append(markdown) or [],
+    )
+
+    args = Namespace(
+        mode="close",
+        symbols="600519",
+        csv="",
+        source="auto",
+        limit=1,
+        max_universe=10,
+        min_avg_amount=50_000_000,
+        max_data_lag_days=3,
+        enable_online_factors=False,
+        report=str(tmp_path / "latest.md"),
+        output_csv=str(tmp_path / "latest.csv"),
+        ledger=str(tmp_path / "predictions.jsonl"),
+        horizon_days=3,
+        fee_bps=8.0,
+        slippage_bps=5.0,
+        benchmark_symbol="000300",
+        skip_validation=True,
+        notify=True,
+    )
+
+    exit_code = cli_mod.run_scheduled(args)
+
+    assert exit_code == 0
+    assert seen
+    assert seen[0].startswith(f"# 通知未放行-{latest}")
+    assert "本次正常通知已被双门 gate 阻止" in seen[0]
+    assert "冷启动未满 30 天" in seen[0]
+    assert "继续按日运行主链" in seen[0]
+    report_text = (tmp_path / "latest.md").read_text(encoding="utf-8")
+    assert "未通过 walk-forward 双门验证" in report_text
+
+
 def test_run_scheduled_debate_writes_back_adjustment_keeps_runtime_score(
     monkeypatch, tmp_path
 ) -> None:
@@ -689,6 +840,14 @@ def test_run_scheduled_debate_writes_back_adjustment_keeps_runtime_score(
     monkeypatch.setattr("aqsp.portfolio.snapshot.save_snapshot", lambda *a, **k: None)
     monkeypatch.setattr(
         "aqsp.portfolio.snapshot.compare_snapshots", lambda *a, **k: None
+    )
+    monkeypatch.setattr(
+        "aqsp.strategies.composite.CompositeStrategy",
+        lambda *args, **kwargs: type(
+            "Composite",
+            (),
+            {"calculate_score": lambda self, data, regime="unknown": {}},
+        )(),
     )
 
     args = Namespace(
@@ -1924,6 +2083,14 @@ def test_run_scheduled_surfaces_snapshot_lifecycle_in_summary_and_notification(
             score_changes=(),
         ),
     )
+    monkeypatch.setattr(
+        "aqsp.strategies.composite.CompositeStrategy",
+        lambda *args, **kwargs: type(
+            "Composite",
+            (),
+            {"calculate_score": lambda self, data, regime="unknown": {}},
+        )(),
+    )
 
     class DummyBreaker:
         def check(self, **_kwargs):
@@ -2112,6 +2279,18 @@ def test_run_scheduled_annotates_candidate_status_in_report_and_notify(
                 risks=("缺少量能确认",),
             ),
         ],
+    )
+
+    class FakeCompositeStrategy:
+        def __init__(self, thresholds=None):
+            self.thresholds = thresholds
+
+        def calculate_score(self, data, regime="unknown"):
+            return {}
+
+    monkeypatch.setattr(
+        "aqsp.strategies.composite.CompositeStrategy",
+        FakeCompositeStrategy,
     )
 
     class DummyPipeline:

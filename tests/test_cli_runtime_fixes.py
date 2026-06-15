@@ -6,6 +6,8 @@ import json
 from pathlib import Path
 import inspect
 
+import pandas as pd
+
 
 def test_run_evolve_uses_sh300_pool_when_auto_resolving_symbols(monkeypatch) -> None:
     import aqsp.cli as cli_mod
@@ -68,6 +70,232 @@ def test_run_scheduled_keeps_learning_weights_proposal_only() -> None:
     assert "learner.compute_weights(ledger_df)" in source
     assert "weights: dict[str, float] = {}" in source
     assert "未应用到本次筛选" in source
+
+
+def test_run_scheduled_composite_rescore_updates_frozen_pick_results(
+    monkeypatch, tmp_path: Path
+) -> None:
+    import aqsp.cli as cli_mod
+    from aqsp.core.types import PickResult
+
+    latest = "2026-06-15"
+    frames = {
+        "600519": pd.DataFrame(
+            [
+                {
+                    "date": latest,
+                    "symbol": "600519",
+                    "name": "贵州茅台",
+                    "open": 1500.0,
+                    "high": 1510.0,
+                    "low": 1490.0,
+                    "close": 1505.0,
+                    "volume": 1000,
+                    "amount": 150500000.0,
+                    "suspended": False,
+                    "limit_up": 1655.5,
+                    "limit_down": 1354.5,
+                }
+            ]
+        ),
+        "000001": pd.DataFrame(
+            [
+                {
+                    "date": latest,
+                    "symbol": "000001",
+                    "name": "平安银行",
+                    "open": 10.0,
+                    "high": 10.2,
+                    "low": 9.9,
+                    "close": 10.1,
+                    "volume": 1000,
+                    "amount": 10100000.0,
+                    "suspended": False,
+                    "limit_up": 11.11,
+                    "limit_down": 9.09,
+                }
+            ]
+        ),
+        "000300": pd.DataFrame(
+            [
+                {
+                    "date": latest,
+                    "symbol": "000300",
+                    "name": "沪深300",
+                    "open": 3500.0,
+                    "high": 3510.0,
+                    "low": 3490.0,
+                    "close": 3505.0,
+                    "volume": 1000,
+                    "amount": 350500000.0,
+                    "suspended": False,
+                    "limit_up": 0.0,
+                    "limit_down": 0.0,
+                }
+            ]
+        ),
+    }
+
+    monkeypatch.setattr(cli_mod, "_resolve_run_symbols", lambda *args, **kwargs: ["600519", "000001"])
+    monkeypatch.setattr(
+        cli_mod,
+        "_fetch_frames_for_cli_with_metadata",
+        lambda *args, **kwargs: (frames, "eastmoney"),
+    )
+    monkeypatch.setattr(
+        cli_mod,
+        "assert_fresh_data",
+        lambda *_args, **_kwargs: datetime.fromisoformat("2026-06-15T15:00:00+08:00").date(),
+    )
+    monkeypatch.setattr(cli_mod, "_runtime_data_lag_days", lambda *_args, **_kwargs: 0)
+    monkeypatch.setattr(
+        cli_mod,
+        "_source_runtime_metadata",
+        lambda *_args, **_kwargs: ("realtime", "multi_dimensional", "not_required"),
+    )
+    monkeypatch.setattr(
+        cli_mod,
+        "describe_source_health",
+        lambda *_args, **_kwargs: ("healthy", "ok", False),
+    )
+    monkeypatch.setattr(cli_mod, "_count_independent_signal_days", lambda *_args, **_kwargs: 35)
+    monkeypatch.setattr(cli_mod, "_detect_runtime_regime", lambda *_args, **_kwargs: "stable_bull")
+    monkeypatch.setattr("aqsp.data.anomaly.detect_anomalies", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr("aqsp.data.freshness.check_freshness", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(cli_mod, "validate_predictions", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(cli_mod, "notify_markdown", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(cli_mod, "_log_run_decisions", lambda **_kwargs: None)
+    monkeypatch.setattr(cli_mod, "_annotate_candidate_status", lambda picks, **_kwargs: picks)
+    monkeypatch.setattr(cli_mod, "append_predictions", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("aqsp.universe.t1_filter.filter_t1_held", lambda candidates, **_kwargs: (candidates, []))
+    monkeypatch.setattr(cli_mod, "LethalFilterPipeline", lambda: type("P", (), {"run": lambda self, *_args, **_kwargs: (True, "")})())
+    monkeypatch.setattr(
+        cli_mod,
+        "_check_sector_concentration_with_runtime_hints",
+        lambda *_args, **_kwargs: type("C", (), {"warnings": (), "sectors": {}})(),
+    )
+    monkeypatch.setattr(
+        "aqsp.portfolio.correlation.compute_correlation",
+        lambda *_args, **_kwargs: type(
+            "R",
+            (),
+            {"matrix": {}, "high_corr_pairs": ()},
+        )(),
+    )
+    monkeypatch.setattr("aqsp.portfolio.correlation.format_correlation", lambda *_args, **_kwargs: "")
+    monkeypatch.setattr("aqsp.portfolio.sector_check.format_concentration", lambda *_args, **_kwargs: "")
+    monkeypatch.setattr(
+        "aqsp.risk.dynamic_stop.compute_dynamic_stop",
+        lambda *_args, **_kwargs: type("S", (), {"recommended_stop": 0.0, "method": "none"})(),
+    )
+    monkeypatch.setattr(
+        "aqsp.portfolio.manager.apply_portfolio_manager",
+        lambda picks, **_kwargs: type("B", (), {"picks": picks, "decisions": (), "summary": None})(),
+    )
+    monkeypatch.setattr("aqsp.portfolio.snapshot.save_snapshot", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("aqsp.portfolio.snapshot.compare_snapshots", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("aqsp.portfolio.snapshot.format_snapshot_diff", lambda *_args, **_kwargs: "")
+
+    class DummyBreaker:
+        def check(self, **_kwargs):
+            return type("Status", (), {"triggered": False, "reason": "正常"})()
+
+    monkeypatch.setattr(cli_mod, "CircuitBreaker", lambda: DummyBreaker())
+
+    base_picks = [
+        PickResult(
+            symbol="600519",
+            name="贵州茅台",
+            date=latest,
+            close=1505.0,
+            score=60.0,
+            rating="buy_candidate",
+            entry_type="next_open",
+            ideal_buy=1505.0,
+            stop_loss=1450.0,
+            take_profit=1600.0,
+            position="10%-30%",
+            strategies=("ma_pullback",),
+            reasons=("趋势回踩",),
+            risks=(),
+        ),
+        PickResult(
+            symbol="000001",
+            name="平安银行",
+            date=latest,
+            close=10.1,
+            score=80.0,
+            rating="buy_candidate",
+            entry_type="next_open",
+            ideal_buy=10.1,
+            stop_loss=9.7,
+            take_profit=11.0,
+            position="10%-30%",
+            strategies=("ma_pullback",),
+            reasons=("趋势回踩",),
+            risks=(),
+        ),
+    ]
+    monkeypatch.setattr(cli_mod, "screen_universe", lambda *_args, **_kwargs: list(base_picks))
+    monkeypatch.setattr(cli_mod, "_enrich_pick_names", lambda picks, *_args, **_kwargs: picks)
+
+    class FakeCompositeStrategy:
+        def __init__(self, thresholds=None):
+            self.thresholds = thresholds
+
+        def calculate_score(self, data, regime="unknown"):
+            return {"600519": 0.9, "000001": 0.3}
+
+    monkeypatch.setattr("aqsp.strategies.composite.CompositeStrategy", FakeCompositeStrategy)
+
+    captured: dict[str, list[PickResult]] = {}
+
+    def fake_to_dataframe(picks):
+        captured["picks"] = list(picks)
+        return pd.DataFrame(
+            [
+                {
+                    "symbol": pick.symbol,
+                    "score": pick.score,
+                    "regime_score": pick.regime_score,
+                }
+                for pick in picks
+            ]
+        )
+
+    monkeypatch.setattr(cli_mod, "to_dataframe", fake_to_dataframe)
+    monkeypatch.setattr(cli_mod, "to_markdown", lambda *_args, **_kwargs: "# report")
+
+    args = Namespace(
+        mode="close",
+        symbols="600519,000001",
+        csv="",
+        source="auto",
+        limit=2,
+        max_universe=10,
+        min_avg_amount=50_000_000,
+        max_data_lag_days=3,
+        enable_online_factors=False,
+        report="",
+        output_csv="",
+        ledger=str(tmp_path / "predictions.jsonl"),
+        horizon_days=3,
+        fee_bps=8.0,
+        slippage_bps=5.0,
+        benchmark_symbol="000300",
+        skip_validation=True,
+        notify=False,
+    )
+
+    exit_code = cli_mod.run_scheduled(args)
+
+    assert exit_code == 0
+    rescored = captured["picks"]
+    assert [pick.symbol for pick in rescored] == ["600519", "000001"]
+    assert rescored[0].regime_score == 100.0
+    assert rescored[0].score == 72.0
+    assert rescored[1].regime_score == 33.33
+    assert rescored[1].score == 66.0
 
 
 def test_run_mine_factors_uses_sh300_pool_when_auto_resolving_symbols(
