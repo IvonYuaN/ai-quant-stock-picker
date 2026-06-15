@@ -566,13 +566,13 @@ def test_send_pipeline_digest_sends_summary_notification(
     assert "## 风险" in sent["content"]
     assert "## 明日" in sent["content"]
     assert "- 今日结论: " in sent["content"]
-    assert "数据源状态" in sent["content"]
+    assert "## 数据" in sent["content"]
     assert "## 候选" in sent["content"]
     assert "- PM 主裁决: 上调 1 / 降级 1 / 维持 0" in sent["content"]
     assert "- 现在卡在哪: " in sent["content"]
     assert "- 首要复核: 300750 宁德时代 | 中优先级 / 板块分化时" in sent["content"]
     assert (
-        "600519 贵州茅台 | 重点跟踪 | 延续上升 | PM 上调优先级 | 评分 71.0"
+        "600519 贵州茅台 | 纸面复核 | 延续上升 | PM 上调优先级 | 评分 71.0"
         in sent["content"]
     )
     assert "600519 贵州茅台 | 重点关注" not in sent["content"]

@@ -7,6 +7,7 @@ from aqsp.presentation import (
     normalize_research_tone,
     review_priority_label,
 )
+from aqsp.notification_style import compact_notification_markdown
 
 
 def test_review_priority_label_returns_chinese_label_when_known() -> None:
@@ -50,3 +51,36 @@ def test_normalize_research_tone_preserves_paper_review_wording() -> None:
         normalize_research_tone("等待量价确认后转入重点跟踪名单")
         == "等待量价确认后转入纸面复核名单"
     )
+
+
+def test_normalize_research_tone_removes_process_wording() -> None:
+    assert (
+        normalize_research_tone("AI 研究给出模型复核，调整依据来自 runtime 原始分")
+        == "研究给出复核，调整原因来自 系统原始评分"
+    )
+    assert normalize_research_tone("待核对依据: 分歧扩大") == "待核对原因: 分歧扩大"
+
+
+def test_compact_notification_markdown_adds_spacing_and_removes_process_terms() -> None:
+    markdown = compact_notification_markdown(
+        "\n".join(
+            [
+                "# AI 量化选股日报",
+                "## 数据源状态",
+                "  - 依据: fallback 到 eastmoney",
+                "## 主链候选",
+                "  - AI 研究: 模型复核通过",
+                "  - 重点跟踪名单: 600519 等待下单",
+            ]
+        )
+    )
+
+    assert "# 每日研究复盘" in markdown
+    assert "\n\n## 数据\n\n" in markdown
+    assert "\n\n## 候选\n\n" in markdown
+    assert "- 原因: 已切换到备用数据源 eastmoney" in markdown
+    assert "- 纸面复核名单: 600519 等待纸面记录" in markdown
+    assert "AI 研究" not in markdown
+    assert "模型复核" not in markdown
+    assert "复核通过" not in markdown
+    assert "依据" not in markdown

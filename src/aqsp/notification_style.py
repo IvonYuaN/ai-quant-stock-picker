@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import re
 
+from aqsp.presentation import normalize_research_tone
+
 _SECTION_RENAMES = {
     "## 一眼看懂": "## 结论",
     "## 🧭 一眼看懂": "## 结论",
@@ -35,6 +37,9 @@ _SECTION_RENAMES = {
     "## 🗣️ 不同看法": "## 分歧",
     "## 研究补充": "## 研究",
     "## 🔬 研究补充": "## 研究",
+    "## 数据源状态": "## 数据",
+    "## 数据情况": "## 数据",
+    "## 今日重点名单": "## 候选",
     "## 明天先看": "## 明日",
     "## 📅 明天先看": "## 明日",
     "## 变化与复盘": "## 变化",
@@ -98,6 +103,10 @@ _DROP_CONTAINS = (
     "怎么验证",
     "模型复核",
     "降级判断",
+    "复核通过",
+    "AI 思考",
+    "AI思考",
+    "运行话术",
     "助手",
     "不直接替代人工判断",
 )
@@ -117,7 +126,11 @@ def _normalize_line(line: str) -> str:
     clean = re.sub(r"\*\*([^*：:]{1,18})\*\*[：:]", r"- \1: ", clean)
     clean = re.sub(r"^\s*[-*]\s+\*\*([^*：:]{1,18})\*\*[：:]", r"- \1: ", clean)
     clean = re.sub(r"^\s*[-*]\s+[-*]\s+", "- ", clean)
+    clean = re.sub(r"^\s{2,}-\s+", "- ", clean)
+    clean = re.sub(r"^\s{2,}(\d+\.\s+)", r"\1", clean)
     clean = re.sub(r"\s{2,}", " ", clean).strip()
+    clean = _SECTION_RENAMES.get(clean, clean)
+    clean = normalize_research_tone(clean)
     return _SECTION_RENAMES.get(clean, clean)
 
 
@@ -160,13 +173,18 @@ def _limit_section_items(lines: list[str], *, max_items: int) -> list[str]:
         if line.startswith("## "):
             if skipped:
                 out.append(f"- 其余 {skipped} 条见完整报告")
+                out.append("")
             section_items = 0
             skipped = 0
             current_limit = 12 if line == "## 结论" else max_items
+            if out and out[-1] != "":
+                out.append("")
             out.append(line)
+            out.append("")
             continue
         if line.startswith("# "):
             out.append(line)
+            out.append("")
             continue
         if line.startswith("- ") or re.match(r"^\d+\.\s", line):
             section_items += 1
@@ -175,5 +193,7 @@ def _limit_section_items(lines: list[str], *, max_items: int) -> list[str]:
                 continue
         out.append(line)
     if skipped:
+        if out and out[-1] != "":
+            out.append("")
         out.append(f"- 其余 {skipped} 条见完整报告")
-    return out
+    return _collapse_blank_lines(out)

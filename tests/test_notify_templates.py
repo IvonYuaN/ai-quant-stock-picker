@@ -29,6 +29,10 @@ def _assert_clean_notification(markdown: str) -> None:
         "怎么验证",
         "模型复核",
         "降级判断",
+        "AI 研究",
+        "agent 观点",
+        "runtime",
+        "依据",
         "## 🧭",
         "## 📋",
         "## ⚠️",
@@ -776,7 +780,7 @@ def test_build_closing_review_notification_sanitizes_full_and_summary_modes() ->
     full_markdown = build_closing_review_notification(review=review, mode="full")
     combined = "\n".join((summary_markdown, full_markdown))
 
-    assert "纸面阻塞" in combined
+    assert "现在卡在哪" in combined
     assert "纸面推进" in combined
     assert "纸面记录" in combined
     assert "纸面重点观察" in combined

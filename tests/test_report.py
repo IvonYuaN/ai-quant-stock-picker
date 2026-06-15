@@ -242,7 +242,7 @@ def test_report_renders_final_decision_board_first() -> None:
         "- 重点 1: 600900 长江电力 | 继续观察 | 新晋 | 评分 76 | 处理 上调优先级"
         in markdown
     )
-    assert "决策依据: 不同看法支持上调优先级" in markdown
+    assert "判断原因: 不同看法支持上调优先级" in markdown
     assert "- 决策: 继续观察 | 新晋 | 评分 76.0" in markdown
     assert markdown.index("## 今日重点看板") < markdown.index("## 1. 600900 长江电力")
 

@@ -324,7 +324,7 @@ def test_run_scheduled_notify_prepends_source_status_banner(
     assert exit_code == 0
     assert seen
     assert seen[0].startswith("# 收盘研究日报-")
-    assert seen[0].index("## 数据源状态") < seen[0].index("## 结论")
+    assert seen[0].index("## 数据") < seen[0].index("## 结论")
     assert "auto -> eastmoney" in seen[0]
     assert "- 健康: fallback" in seen[0]
     assert "## 🧭" not in seen[0]

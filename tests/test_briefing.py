@@ -615,7 +615,7 @@ class TestSendBriefing:
             },
         )
         body = mock_notifier.call_args[0][0]
-        assert body.index("## 数据源状态") < body.index("## 结论")
+        assert body.index("## 数据") < body.index("## 结论")
         assert "## 结论" in body
         assert "auto -> eastmoney" in body
         assert "降低信任度" in body
