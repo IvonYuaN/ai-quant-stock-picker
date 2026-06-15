@@ -746,6 +746,53 @@ def test_run_step_marks_non_zero_exit_code_as_failure(caplog) -> None:
     assert "✗ 失败: 收盘复盘 - 参数错误" in caplog.text
 
 
+def test_latest_portfolio_summary_logs_csv_read_failure(
+    monkeypatch, tmp_path: Path, caplog
+) -> None:
+    daily_pipeline = _load_daily_pipeline_module()
+    csv_path = tmp_path / "reports" / "latest.csv"
+    csv_path.parent.mkdir(parents=True, exist_ok=True)
+    csv_path.write_text("bad", encoding="utf-8")
+
+    config = daily_pipeline.PipelineConfig(
+        project_root=tmp_path,
+        source="eastmoney",
+        mode="close",
+        limit=10,
+        max_universe=50,
+        min_avg_amount=50_000_000,
+        max_data_lag_days=3,
+        enable_online_factors=False,
+        allow_online_fallback=True,
+        ledger_path="data/predictions.jsonl",
+        report_path="reports/latest.md",
+        csv_path="reports/latest.csv",
+        briefing_path="reports/briefing.md",
+        paper_report_path="reports/paper.md",
+        dashboard_html="dist/dashboard/index.html",
+        dashboard_db="dist/dashboard/aqsp.db",
+        paper_ledger="data/paper_trades.jsonl",
+        closing_review_path="reports/closing_review.md",
+        notify=False,
+        notify_mode="summary",
+        dry_run=False,
+        enable_debate=False,
+        enable_auto_evolution=False,
+    )
+
+    monkeypatch.setattr(
+        daily_pipeline.pd,
+        "read_csv",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(ValueError("csv boom")),
+    )
+
+    with caplog.at_level(logging.WARNING, logger="aqsp.pipeline"):
+        result = daily_pipeline._latest_portfolio_summary(config)
+
+    assert result is None
+    assert "读取候选 CSV 失败，无法生成组合摘要: csv boom" in caplog.text
+
+
 def test_closing_premium_uses_explicit_symbols(monkeypatch) -> None:
     daily_pipeline = _load_daily_pipeline_module()
     captured: list[str] = []

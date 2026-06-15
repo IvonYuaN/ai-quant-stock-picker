@@ -173,6 +173,44 @@ def test_run_briefing_prints_notify_channel_results(
     assert "briefing notify serverchan: ok (HTTP 200)" in output_text
 
 
+def test_run_closing_review_prints_notify_failure(monkeypatch, capsys) -> None:
+    import aqsp.cli as cli_mod
+
+    class FakeReview:
+        date = "2026-06-15"
+
+    monkeypatch.setattr(
+        "aqsp.briefing.closing_review.ClosingReviewer",
+        lambda ledger_path: type(
+            "R",
+            (),
+            {"review_today": lambda self, date=None: FakeReview()},
+        )(),
+    )
+    monkeypatch.setattr(
+        "aqsp.briefing.closing_review.format_daily_review",
+        lambda review: "# review",
+    )
+    monkeypatch.setattr(
+        cli_mod,
+        "build_closing_review_notification",
+        lambda **_kwargs: "# notify",
+    )
+    monkeypatch.setattr(
+        cli_mod,
+        "notify_markdown",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("notify boom")),
+    )
+
+    exit_code = cli_mod.run_closing_review(
+        Namespace(date="", weekly=False, output="", notify=True)
+    )
+
+    output = capsys.readouterr().out
+    assert exit_code == 0
+    assert "review notify failed: notify boom" in output
+
+
 def test_execution_summary_uses_paper_review_when_pm_has_allocations() -> None:
     import aqsp.cli as cli_mod
 

@@ -976,7 +976,11 @@ def _latest_portfolio_summary(config: PipelineConfig) -> Any | None:
 
     try:
         df = pd.read_csv(csv_path)
-    except Exception:
+    except Exception as exc:
+        logging.getLogger("aqsp.pipeline").warning(
+            "读取候选 CSV 失败，无法生成组合摘要: %s",
+            exc,
+        )
         return None
     if df.empty:
         return None
@@ -1045,7 +1049,11 @@ def _read_latest_candidates(config: PipelineConfig) -> list[dict[str, Any]]:
         return []
     try:
         df = pd.read_csv(csv_path)
-    except Exception:
+    except Exception as exc:
+        logging.getLogger("aqsp.pipeline").warning(
+            "读取候选 CSV 失败，无法生成候选摘要: %s",
+            exc,
+        )
         return []
     if df.empty:
         return []

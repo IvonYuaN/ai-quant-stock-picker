@@ -92,6 +92,8 @@ from aqsp.briefing.debate import (
 from aqsp.models import PickResult
 from aqsp.presentation import format_symbol_name, has_meaningful_name
 
+LOGGER = logging.getLogger(__name__)
+
 
 def serialize_debate_result(result: DebateResult) -> dict:
     """将辩论结果序列化为可JSON化的字典"""
@@ -2410,7 +2412,8 @@ def run_scheduled(args: argparse.Namespace) -> int:
         learner = PerformanceLearner()
         ledger_df = ledger_rows_to_frame(read_ledger(args.ledger))
         weight_proposals = learner.compute_weights(ledger_df)
-    except Exception:
+    except Exception as exc:
+        LOGGER.warning("学习权重提案计算失败，按无提案继续: %s", exc)
         weight_proposals = {}
 
     # Runtime screening must not self-tune from recent ledger outcomes. Learning
@@ -2530,14 +2533,16 @@ def run_scheduled(args: argparse.Namespace) -> int:
 
             nb_flow = fetch_northbound_flow()
             nb_z = compute_northbound_factor(nb_flow) if not nb_flow.empty else 0.0
-        except Exception:
+        except Exception as exc:
+            LOGGER.warning("北向资金因子计算失败，按 0 处理: %s", exc)
             nb_z = 0.0
         try:
             from aqsp.data.cn.margin_trading import compute_margin_factor
 
             top_symbol = picks[0].symbol if picks else ""
             margin_z = compute_margin_factor(top_symbol) if top_symbol else 0.0
-        except Exception:
+        except Exception as exc:
+            LOGGER.warning("两融因子计算失败，按 0 处理: %s", exc)
             margin_z = 0.0
 
     run_metadata = RunMetadata(
@@ -3005,8 +3010,8 @@ def run_scheduled(args: argparse.Namespace) -> int:
         if decay_alerts and not is_cold_start:
             markdown += "\n\n" + format_decay_alerts(decay_alerts)
             print(format_decay_alerts(decay_alerts))
-    except Exception:
-        pass
+    except Exception as exc:
+        LOGGER.warning("策略衰减诊断失败，跳过附加提示: %s", exc)
 
     try:
         from aqsp.ledger.failure_analysis import (
@@ -3026,8 +3031,8 @@ def run_scheduled(args: argparse.Namespace) -> int:
                 print(
                     f"   - {p.pattern_name}: {p.description} (平均亏损 {p.avg_loss:.2f}%)"
                 )
-    except Exception:
-        pass
+    except Exception as exc:
+        LOGGER.warning("失败模式分析失败，跳过附加提示: %s", exc)
 
     report_path = str(getattr(args, "report", "") or "").strip()
     output_csv_path = str(getattr(args, "output_csv", "") or "").strip()
@@ -4263,8 +4268,8 @@ def run_morning_breakout(args: argparse.Namespace) -> int:
                 ),
                 prefix="morning notify",
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            print(f"morning notify failed: {exc}")
 
     if args.output:
         output_path = Path(args.output)
@@ -4400,8 +4405,8 @@ def run_closing_premium(args: argparse.Namespace) -> int:
                 ),
                 prefix="closing notify",
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            print(f"closing notify failed: {exc}")
 
     if args.output:
         output_path = Path(args.output)
@@ -4511,8 +4516,8 @@ def run_closing_review(args: argparse.Namespace) -> int:
                 ),
                 prefix="review notify",
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            print(f"review notify failed: {exc}")
 
     if args.output:
         output_path = Path(args.output)
