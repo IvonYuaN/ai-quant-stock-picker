@@ -8,11 +8,29 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+
+from aqsp.strategies.thresholds import load_thresholds
 
 
 # 浮点数比较精度容差
 _EPSILON = 1e-9
+
+
+def _default_single_stock_stop() -> float:
+    return -float(load_thresholds().risk.single_stock_stop_pct)
+
+
+def _default_portfolio_stop() -> float:
+    return -float(load_thresholds().risk.portfolio_stop_pct)
+
+
+def _default_trailing_stop_pct() -> float:
+    return float(load_thresholds().risk.trailing_stop_pct)
+
+
+def _default_enable_trailing() -> bool:
+    return bool(load_thresholds().risk.enable_trailing_stop)
 
 
 @dataclass
@@ -25,10 +43,10 @@ class StopLossConfig:
         trailing_stop_pct: 移动止损回撤百分比（正数，如0.05表示5%）
         enable_trailing: 是否启用移动止损
     """
-    single_stock_stop: float = -0.08  # 单只-8%
-    portfolio_stop: float = -0.15     # 组合-15%
-    trailing_stop_pct: float = 0.05   # 移动止损5%
-    enable_trailing: bool = True
+    single_stock_stop: float = field(default_factory=_default_single_stock_stop)
+    portfolio_stop: float = field(default_factory=_default_portfolio_stop)
+    trailing_stop_pct: float = field(default_factory=_default_trailing_stop_pct)
+    enable_trailing: bool = field(default_factory=_default_enable_trailing)
     
     def __post_init__(self) -> None:
         """验证配置的合理性。"""
@@ -44,6 +62,16 @@ class StopLossConfig:
             raise ValueError(
                 f"trailing_stop_pct必须在0-1之间，当前值: {self.trailing_stop_pct}"
             )
+
+    @classmethod
+    def from_thresholds(cls) -> "StopLossConfig":
+        thresholds = load_thresholds()
+        return cls(
+            single_stock_stop=-float(thresholds.risk.single_stock_stop_pct),
+            portfolio_stop=-float(thresholds.risk.portfolio_stop_pct),
+            trailing_stop_pct=float(thresholds.risk.trailing_stop_pct),
+            enable_trailing=bool(thresholds.risk.enable_trailing_stop),
+        )
 
 
 @dataclass
@@ -121,7 +149,7 @@ class StopLossManager:
         Args:
             config: 止损配置，默认使用StopLossConfig()
         """
-        self.config = config or StopLossConfig()
+        self.config = config or StopLossConfig.from_thresholds()
     
     def _compare_loss(self, pnl_pct: float, threshold: float) -> bool:
         """比较损失百分比是否达到阈值（考虑浮点数精度）。

@@ -6,8 +6,8 @@ composite:
   volume_weight: 0.0
   mean_reversion_weight: 0.0
   triple_rise_weight: 0.3
-description: "策略阈值配置 — v1.1.1：在 v1.1.0 基础上接入 N 字反弹主链形态识别，待下一轮 walk-forward 统一复核"
-effective_from: '2026-06-04'
+description: "策略阈值配置 — v1.1.2：风控止损默认阈值接入配置"
+effective_from: '2026-06-17'
 execution:
   commission_rate: 0.0003
   limit_down_tolerance: 0.005
@@ -66,6 +66,10 @@ risk:
   liquidity_threshold: 1000000
   max_drawdown: 0.2
   volatility_limit: 0.4
+  single_stock_stop_pct: 0.08
+  portfolio_stop_pct: 0.15
+  trailing_stop_pct: 0.05
+  enable_trailing_stop: true
 value:
   enabled: false
   ev_ebitda_max: 15
@@ -226,4 +230,4 @@ n_rebound:
   volume_shrink_ratio: 0.75
   ma5_deviation_max_pct: 8.0
   min_score: 14.0
-version: 1.1.1
+version: 1.1.2

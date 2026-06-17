@@ -15,6 +15,7 @@ from aqsp.risk.stop_loss import (
     StopLossConfig,
     StopLossManager,
 )
+from aqsp.strategies.thresholds import Thresholds
 
 
 class TestStopLossConfig:
@@ -40,6 +41,33 @@ class TestStopLossConfig:
         assert config.portfolio_stop == -0.15
         assert config.trailing_stop_pct == 0.05
         assert config.enable_trailing is True
+
+    def test_from_thresholds(self, monkeypatch) -> None:
+        thresholds = Thresholds()
+        object.__setattr__(
+            thresholds,
+            "risk",
+            thresholds.risk.__class__(
+                max_drawdown=0.2,
+                volatility_limit=0.4,
+                liquidity_threshold=1000000,
+                single_stock_stop_pct=0.09,
+                portfolio_stop_pct=0.18,
+                trailing_stop_pct=0.04,
+                enable_trailing_stop=False,
+            ),
+        )
+        monkeypatch.setattr(
+            "aqsp.risk.stop_loss.load_thresholds",
+            lambda: thresholds,
+        )
+
+        config = StopLossConfig.from_thresholds()
+
+        assert config.single_stock_stop == -0.09
+        assert config.portfolio_stop == -0.18
+        assert config.trailing_stop_pct == 0.04
+        assert config.enable_trailing is False
     
     def test_invalid_single_stock_stop_positive(self) -> None:
         """测试单股止损为正数时抛出异常。"""

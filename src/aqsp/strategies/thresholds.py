@@ -97,6 +97,10 @@ class RiskThresholds:
     max_drawdown: float = 0.2
     volatility_limit: float = 0.4
     liquidity_threshold: float = 1000000
+    single_stock_stop_pct: float = 0.08
+    portfolio_stop_pct: float = 0.15
+    trailing_stop_pct: float = 0.05
+    enable_trailing_stop: bool = True
 
 
 @dataclass(frozen=True)
