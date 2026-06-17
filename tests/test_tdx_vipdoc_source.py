@@ -56,7 +56,8 @@ def test_tdx_vipdoc_skips_missing_symbols(tmp_path: Path) -> None:
 
     source = TdxVipdocSource(tmp_path / "vipdoc")
 
-    assert source.fetch_daily(["600519"], date(2026, 5, 27), date(2026, 5, 28)) == {}
+    with pytest.raises(DataError, match="tdx_vipdoc 日线获取失败"):
+        source.fetch_daily(["600519"], date(2026, 5, 27), date(2026, 5, 28))
 
 
 def test_tdx_vipdoc_lists_available_symbols(tmp_path: Path) -> None:
@@ -141,13 +142,13 @@ def test_tdx_vipdoc_does_not_treat_sh000_index_as_stock(
     )
 
     source = TdxVipdocSource(tmp_path / "vipdoc")
-    frames = source.fetch_daily(
-        ["000891"],
-        start=date(2026, 5, 28),
-        end=date(2026, 5, 29),
-    )
+    with pytest.raises(DataError, match="tdx_vipdoc 日线获取失败"):
+        source.fetch_daily(
+            ["000891"],
+            start=date(2026, 5, 28),
+            end=date(2026, 5, 29),
+        )
 
-    assert "000891" not in frames
     assert "000891" not in source.get_liquid_symbols(
         limit=10,
         min_amount=50_000_000,

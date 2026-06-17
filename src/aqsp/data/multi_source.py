@@ -45,6 +45,7 @@ class MultiSource(DataSource):
         return self._with_fallback(
             lambda src: src.fetch_daily(symbols, start, end, adjust),
             "fetch_daily",
+            expected_keys=symbols,
         )
 
     def fetch_intraday(
@@ -55,6 +56,7 @@ class MultiSource(DataSource):
         return self._with_fallback(
             lambda src: src.fetch_intraday(symbols, period),
             "fetch_intraday",
+            expected_keys=symbols,
         )
 
     def fetch_realtime_quote(
@@ -64,6 +66,7 @@ class MultiSource(DataSource):
         return self._with_fallback(
             lambda src: src.fetch_realtime_quote(symbols),
             "fetch_realtime_quote",
+            expected_keys=symbols,
         )
 
     def fetch_index(
@@ -75,6 +78,7 @@ class MultiSource(DataSource):
         return self._with_fallback(
             lambda src: src.fetch_index(index_codes, start, end),
             "fetch_index",
+            expected_keys=index_codes,
         )
 
     def get_available_symbols(self) -> list[str]:
@@ -129,7 +133,7 @@ class MultiSource(DataSource):
             return source.build()
         return source
 
-    def _with_fallback(self, func, method_name: str):
+    def _with_fallback(self, func, method_name: str, *, expected_keys: list[str]):
         sources = [self.primary] + self.fallbacks
 
         primary_result = None
@@ -143,6 +147,16 @@ class MultiSource(DataSource):
                 result = func(source)
                 if not result:
                     exceptions.append((source_name, "empty result"))
+                    continue
+                missing = _missing_requested_keys(result, expected_keys)
+                if missing:
+                    exceptions.append(
+                        (
+                            source_name,
+                            f"partial result missing {len(missing)}/{len(expected_keys)}: "
+                            + ",".join(missing[:5]),
+                        )
+                    )
                     continue
                 if primary_result is None:
                     primary_result = result
@@ -196,3 +210,11 @@ class MultiSource(DataSource):
                             else "unknown",
                             diff_pct,
                         )
+
+
+def _missing_requested_keys(result: dict[str, object], expected_keys: list[str]) -> list[str]:
+    requested = [str(key) for key in expected_keys if str(key)]
+    if not requested:
+        return []
+    present = {str(key) for key in result}
+    return [key for key in requested if key not in present]

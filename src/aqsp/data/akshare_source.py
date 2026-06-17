@@ -7,7 +7,12 @@ from datetime import date
 from typing import Literal
 import pandas as pd
 
-from aqsp.data.source import DataSource, OhlcvFrame, apply_limit_suspended_adj
+from aqsp.data.source import (
+    DataSource,
+    OhlcvFrame,
+    apply_limit_suspended_adj,
+    require_non_empty_fetch_result,
+)
 from aqsp.data.cache import DataCache
 from aqsp.core.errors import DataError
 from aqsp.core.time import now_shanghai
@@ -80,6 +85,7 @@ class AkshareSource(DataSource):
                 self.cache.set_ohlcv(symbol, validated, source="akshare")
 
             out[symbol] = validated
+        require_non_empty_fetch_result(self.name, "日线", symbols, out)
         return out
 
     @staticmethod
@@ -111,6 +117,7 @@ class AkshareSource(DataSource):
                 continue
             df = self._normalize_intraday_df(df, symbol)
             out[symbol] = df
+        require_non_empty_fetch_result(self.name, "分时", symbols, out)
         return out
 
     def fetch_realtime_quote(
@@ -134,6 +141,7 @@ class AkshareSource(DataSource):
                     }
         except Exception as e:
             raise DataError(f"获取实时行情失败: {e}") from e
+        require_non_empty_fetch_result(self.name, "实时行情", symbols, quotes)
         return quotes
 
     def _realtime_snapshot(self) -> pd.DataFrame:
@@ -190,6 +198,7 @@ class AkshareSource(DataSource):
                     self.cache.set_index(code, validated, source="akshare")
 
                 out[code] = validated
+        require_non_empty_fetch_result(self.name, "指数", index_codes, out)
         return out
 
     def _fetch_index_single(

@@ -10,7 +10,12 @@ from typing import Literal
 import pandas as pd
 
 from aqsp.core.errors import DataError
-from aqsp.data.source import DataSource, OhlcvFrame, apply_limit_suspended_adj
+from aqsp.data.source import (
+    DataSource,
+    OhlcvFrame,
+    apply_limit_suspended_adj,
+    require_non_empty_fetch_result,
+)
 
 # TDX .day schema: date, open, high, low, close, amount, volume, reserved.
 TDX_DAY_RECORD = struct.Struct("<IIIIIfII")
@@ -131,6 +136,7 @@ class TdxVipdocSource(DataSource):
                 continue
             validated = self._validate_ohlcv(df, symbol)
             out[symbol] = validated
+        require_non_empty_fetch_result(self.name, "日线", symbols, out)
         return out
 
     def fetch_intraday(
@@ -167,6 +173,7 @@ class TdxVipdocSource(DataSource):
             df = self._read_day_file(path, code, start, end)
             if not df.empty:
                 out[code] = self._validate_ohlcv(df, code)
+        require_non_empty_fetch_result(self.name, "指数", index_codes, out)
         return out
 
     def _day_file(self, symbol: str, market: str) -> Path:

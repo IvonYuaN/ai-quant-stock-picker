@@ -7,7 +7,13 @@ from pathlib import Path
 from typing import Literal
 import pandas as pd
 
-from aqsp.data.source import DataSource, OhlcvFrame, apply_limit_suspended_adj
+from aqsp.core.errors import DataError
+from aqsp.data.source import (
+    DataSource,
+    OhlcvFrame,
+    apply_limit_suspended_adj,
+    require_non_empty_fetch_result,
+)
 from aqsp.data.cache import DataCache
 
 _SQLITE_TIMEOUT_SECONDS = 30.0
@@ -150,6 +156,7 @@ class SqliteDbSource(DataSource):
                 if self._use_cache:
                     self.cache.set_ohlcv(symbol, df, source="sqlite_db")
                 out[symbol] = df
+        require_non_empty_fetch_result(self.name, "日线", symbols, out)
 
         return out
 
@@ -158,13 +165,13 @@ class SqliteDbSource(DataSource):
         symbols: list[str],
         period: Literal["1", "5", "15", "30", "60"] = "5",
     ) -> dict[str, OhlcvFrame]:
-        return {}
+        raise DataError("sqlite_db 不支持分时数据")
 
     def fetch_realtime_quote(
         self,
         symbols: list[str],
     ) -> dict[str, dict]:
-        return {}
+        raise DataError("sqlite_db 不支持实时行情")
 
     def fetch_index(
         self,
@@ -218,5 +225,6 @@ class SqliteDbSource(DataSource):
                 if self._use_cache:
                     self.cache.set_index(code, df, source="sqlite_db")
                 out[code] = df
+        require_non_empty_fetch_result(self.name, "指数", index_codes, out)
 
         return out

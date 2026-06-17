@@ -11,6 +11,7 @@ import pandas as pd
 from aqsp.data.source import DataSource
 from aqsp.data.akshare_source import AkshareSource
 from aqsp.data.eastmoney_source import EastmoneySource
+from aqsp.data.sina_source import SinaSource
 from aqsp.data.sqlite_db_source import SqliteDbSource
 from aqsp.data import fetch_with_source
 from aqsp.core.errors import DataError
@@ -111,6 +112,45 @@ def test_eastmoney_fetch_daily_uses_turnover_amount_not_price_change(monkeypatch
 
     assert df is not None
     assert df["amount"].iloc[0] == pytest.approx(987654321.0)
+
+
+def test_public_fetch_methods_raise_data_error_when_eastmoney_returns_empty(
+    monkeypatch,
+) -> None:
+    source = EastmoneySource.__new__(EastmoneySource)
+    source.cache = SimpleNamespace(
+        get_ohlcv=lambda *_args, **_kwargs: None,
+        get_index=lambda *_args, **_kwargs: None,
+    )
+    source.name = "eastmoney"
+    monkeypatch.setattr(source, "_fetch_eastmoney_intraday", lambda *_args: None)
+    monkeypatch.setattr(source, "_fetch_eastmoney_quote", lambda *_args: None)
+    monkeypatch.setattr(source, "_fetch_eastmoney_index", lambda *_args: None)
+
+    with pytest.raises(DataError, match="eastmoney 分时获取失败"):
+        source.fetch_intraday(["600000"])
+    with pytest.raises(DataError, match="eastmoney 实时行情获取失败"):
+        source.fetch_realtime_quote(["600000"])
+    with pytest.raises(DataError, match="eastmoney 指数获取失败"):
+        source.fetch_index(["000300"], date(2026, 5, 20), date(2026, 5, 27))
+
+
+def test_public_fetch_methods_raise_data_error_when_sina_returns_empty(
+    monkeypatch,
+) -> None:
+    source = SinaSource.__new__(SinaSource)
+    source.cache = SimpleNamespace(get_index=lambda *_args, **_kwargs: None)
+    source.name = "sina"
+    monkeypatch.setattr(source, "_fetch_sina_intraday", lambda *_args: None)
+    monkeypatch.setattr(source, "_fetch_sina_quote", lambda *_args: None)
+    monkeypatch.setattr(source, "_fetch_sina_daily", lambda *_args, **_kwargs: None)
+
+    with pytest.raises(DataError, match="sina 分时获取失败"):
+        source.fetch_intraday(["600000"])
+    with pytest.raises(DataError, match="sina 实时行情获取失败"):
+        source.fetch_realtime_quote(["600000"])
+    with pytest.raises(DataError, match="sina 指数获取失败"):
+        source.fetch_index(["000300"], date(2026, 5, 20), date(2026, 5, 27))
 
 
 def test_validate_ohlcv_missing_columns():
@@ -318,6 +358,20 @@ def test_fetch_with_source_uses_shanghai_today(monkeypatch):
     assert seen["start"] == date(2025, 6, 13)
 
 
+def test_fetch_with_source_raises_when_source_returns_no_valid_frames() -> None:
+    class DummySource:
+        name = "dummy"
+
+        def fetch_daily(self, symbols, start, end, adjust=""):
+            return {}
+
+        def fetch_index(self, index_codes, start, end):
+            return {}
+
+    with pytest.raises(DataError, match="未返回任何有效日线"):
+        fetch_with_source(DummySource(), ["600000"], days=30)
+
+
 def test_sqlite_db_source_fetch_index_uses_raw_close_when_qfq_differs(
     tmp_path: Path,
 ) -> None:
@@ -380,3 +434,23 @@ def test_sqlite_db_source_fetch_index_uses_raw_close_when_qfq_differs(
     df = result["000300"]
     assert df["close"].iloc[0] == 3505.0
     assert df["close"].iloc[0] != 3005.0
+
+
+def test_sqlite_db_source_intraday_raises_unsupported(tmp_path: Path) -> None:
+    db_path = tmp_path / "astocks_qfq.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("CREATE TABLE stocks (ts_code TEXT PRIMARY KEY, name TEXT)")
+    source = SqliteDbSource(db_path=db_path, cache=None)
+
+    with pytest.raises(DataError, match="不支持分时数据"):
+        source.fetch_intraday(["600000"])
+
+
+def test_sqlite_db_source_realtime_raises_unsupported(tmp_path: Path) -> None:
+    db_path = tmp_path / "astocks_qfq.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("CREATE TABLE stocks (ts_code TEXT PRIMARY KEY, name TEXT)")
+    source = SqliteDbSource(db_path=db_path, cache=None)
+
+    with pytest.raises(DataError, match="不支持实时行情"):
+        source.fetch_realtime_quote(["600000"])

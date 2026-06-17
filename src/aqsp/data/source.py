@@ -80,6 +80,21 @@ def apply_limit_suspended_adj(
     return df
 
 
+def require_non_empty_fetch_result(
+    source_name: str,
+    method: str,
+    requested: list[str],
+    result: dict[str, object],
+) -> None:
+    requested_keys = [str(key) for key in requested if str(key)]
+    if requested_keys and not result:
+        raise DataError(f"{source_name} {method}获取失败: {requested}")
+    present = {str(item) for item in result}
+    missing = [key for key in requested_keys if key not in present]
+    if missing:
+        raise DataError(f"{source_name} {method}获取不完整: 缺少 {missing}")
+
+
 class DataSource(ABC):
     name: str
 

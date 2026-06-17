@@ -8,7 +8,12 @@ import pandas as pd
 from aqsp.core.errors import DataError
 from aqsp.core.time import now_shanghai
 from aqsp.data.cache import DataCache
-from aqsp.data.source import DataSource, OhlcvFrame, apply_limit_suspended_adj
+from aqsp.data.source import (
+    DataSource,
+    OhlcvFrame,
+    apply_limit_suspended_adj,
+    require_non_empty_fetch_result,
+)
 
 
 class EfinanceSource(DataSource):
@@ -55,6 +60,7 @@ class EfinanceSource(DataSource):
             validated = self._validate_ohlcv(normalized, symbol)
             self.cache.set_ohlcv(symbol, validated, source="efinance")
             out[symbol] = validated
+        require_non_empty_fetch_result(self.name, "日线", symbols, out)
         return out
 
     def fetch_intraday(
@@ -62,7 +68,7 @@ class EfinanceSource(DataSource):
         symbols: list[str],
         period: Literal["1", "5", "15", "30", "60"] = "5",
     ) -> dict[str, OhlcvFrame]:
-        return {}
+        raise DataError("efinance 不支持分时数据")
 
     def fetch_realtime_quote(
         self,
@@ -73,12 +79,13 @@ class EfinanceSource(DataSource):
         except Exception as exc:
             raise DataError(f"efinance 实时行情获取失败: {exc}") from exc
         if df is None or df.empty:
-            return {}
+            raise DataError("efinance 实时行情为空")
         quotes: dict[str, dict] = {}
         for symbol in symbols:
             quote = self._normalize_efinance_quote_row(df, symbol)
             if quote is not None:
                 quotes[symbol] = quote
+        require_non_empty_fetch_result(self.name, "实时行情", symbols, quotes)
         return quotes
 
     def fetch_index(
@@ -109,6 +116,7 @@ class EfinanceSource(DataSource):
             validated = self._validate_ohlcv(normalized, code)
             self.cache.set_index(code, validated, source="efinance")
             out[code] = validated
+        require_non_empty_fetch_result(self.name, "指数", index_codes, out)
         return out
 
     def fetch_history_bill(

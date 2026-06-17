@@ -7,7 +7,12 @@ from typing import Literal
 import pandas as pd
 import requests
 
-from aqsp.data.source import DataSource, OhlcvFrame, apply_limit_suspended_adj
+from aqsp.data.source import (
+    DataSource,
+    OhlcvFrame,
+    apply_limit_suspended_adj,
+    require_non_empty_fetch_result,
+)
 from aqsp.data.cache import DataCache
 from aqsp.core.time import now_shanghai
 
@@ -70,6 +75,7 @@ class TencentSource(DataSource):
                 validated = self._validate_ohlcv(df, symbol)
                 self.cache.set_ohlcv(symbol, validated, source="tencent")
                 out[symbol] = validated
+        require_non_empty_fetch_result(self.name, "日线", symbols, out)
         return out
 
     def fetch_intraday(
@@ -82,6 +88,7 @@ class TencentSource(DataSource):
             df = self._fetch_tencent_intraday(symbol, period)
             if df is not None and not df.empty:
                 out[symbol] = df
+        require_non_empty_fetch_result(self.name, "分时", symbols, out)
         return out
 
     def fetch_realtime_quote(
@@ -93,6 +100,7 @@ class TencentSource(DataSource):
             data = self._fetch_tencent_quote(symbol)
             if data:
                 quotes[symbol] = data
+        require_non_empty_fetch_result(self.name, "实时行情", symbols, quotes)
         return quotes
 
     def fetch_index(
@@ -114,6 +122,7 @@ class TencentSource(DataSource):
                 validated = self._validate_ohlcv(df, code)
                 self.cache.set_index(code, validated, source="tencent")
                 out[code] = validated
+        require_non_empty_fetch_result(self.name, "指数", index_codes, out)
         return out
 
     def _fetch_tencent_daily(

@@ -77,6 +77,38 @@ def test_multi_source_falls_back():
     assert "600000" in result
 
 
+def test_multi_source_rejects_partial_primary_and_uses_complete_fallback():
+    primary_data = {"600000": pd.DataFrame({"date": ["2026-05-27"], "close": [10.0]})}
+    fallback_data = {
+        "600000": pd.DataFrame({"date": ["2026-05-27"], "close": [10.0]}),
+        "000001": pd.DataFrame({"date": ["2026-05-27"], "close": [12.0]}),
+    }
+
+    multi = MultiSource(MockSource(primary_data), [MockSource(fallback_data)])
+
+    result = multi.fetch_daily(
+        ["600000", "000001"],
+        date(2026, 5, 27),
+        date(2026, 5, 27),
+    )
+
+    assert set(result) == {"600000", "000001"}
+
+
+def test_multi_source_raises_when_all_sources_are_partial():
+    primary_data = {"600000": pd.DataFrame({"date": ["2026-05-27"], "close": [10.0]})}
+    fallback_data = {"000001": pd.DataFrame({"date": ["2026-05-27"], "close": [12.0]})}
+
+    multi = MultiSource(MockSource(primary_data), [MockSource(fallback_data)])
+
+    with pytest.raises(DataError, match="partial result missing"):
+        multi.fetch_daily(
+            ["600000", "000001"],
+            date(2026, 5, 27),
+            date(2026, 5, 27),
+        )
+
+
 def test_multi_source_falls_back_when_primary_factory_init_fails():
     fallback_data = {"600000": pd.DataFrame({"date": ["2026-05-27"], "close": [10.0]})}
 

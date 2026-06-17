@@ -5,7 +5,12 @@ from datetime import date
 from typing import Literal
 import pandas as pd
 
-from aqsp.data.source import DataSource, OhlcvFrame, apply_limit_suspended_adj
+from aqsp.data.source import (
+    DataSource,
+    OhlcvFrame,
+    apply_limit_suspended_adj,
+    require_non_empty_fetch_result,
+)
 from aqsp.core.time import now_shanghai
 
 _logger = logging.getLogger("aqsp.data.mootdx")
@@ -48,6 +53,7 @@ class MootdxSource(DataSource):
             if df is not None and not df.empty:
                 df = self._normalize_mootdx_df(df, symbol)
                 out[symbol] = self._validate_ohlcv(df, symbol)
+        require_non_empty_fetch_result(self.name, "日线", symbols, out)
         return out
 
     def fetch_intraday(
@@ -60,6 +66,7 @@ class MootdxSource(DataSource):
             df = self._fetch_mootdx_intraday(symbol, period)
             if df is not None and not df.empty:
                 out[symbol] = df
+        require_non_empty_fetch_result(self.name, "分时", symbols, out)
         return out
 
     def fetch_realtime_quote(
@@ -71,6 +78,7 @@ class MootdxSource(DataSource):
             data = self._fetch_mootdx_quote(symbol)
             if data:
                 quotes[symbol] = data
+        require_non_empty_fetch_result(self.name, "实时行情", symbols, quotes)
         return quotes
 
     def fetch_index(
@@ -85,6 +93,7 @@ class MootdxSource(DataSource):
             if df is not None and not df.empty:
                 df = self._normalize_mootdx_df(df, code)
                 out[code] = self._validate_ohlcv(df, code)
+        require_non_empty_fetch_result(self.name, "指数", index_codes, out)
         return out
 
     def _fetch_mootdx_daily(

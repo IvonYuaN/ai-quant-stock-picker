@@ -4,6 +4,7 @@ import pytest
 from datetime import date
 import pandas as pd
 
+from aqsp.core.errors import DataError
 from aqsp.data.tencent_source import TencentSource, _get_market_prefix
 
 
@@ -118,11 +119,14 @@ def test_tencent_quote_uses_real_limits(tencent_source):
 
 
 def test_fetch_daily_returns_dict(tencent_source):
-    result = tencent_source.fetch_daily(
-        symbols=["600000"],
-        start=date(2026, 5, 20),
-        end=date(2026, 5, 27),
-    )
+    try:
+        result = tencent_source.fetch_daily(
+            symbols=["600000"],
+            start=date(2026, 5, 20),
+            end=date(2026, 5, 27),
+        )
+    except DataError:
+        return
     assert isinstance(result, dict)
 
 
@@ -149,27 +153,55 @@ def test_tencent_daily_request_does_not_use_qfq(monkeypatch, tencent_source):
 
 
 def test_fetch_intraday_returns_dict(tencent_source):
-    result = tencent_source.fetch_intraday(
-        symbols=["600000"],
-        period="5",
-    )
+    try:
+        result = tencent_source.fetch_intraday(
+            symbols=["600000"],
+            period="5",
+        )
+    except DataError:
+        return
     assert isinstance(result, dict)
 
 
 def test_fetch_realtime_quote_returns_dict(tencent_source):
-    result = tencent_source.fetch_realtime_quote(
-        symbols=["600000"],
-    )
+    try:
+        result = tencent_source.fetch_realtime_quote(
+            symbols=["600000"],
+        )
+    except DataError:
+        return
     assert isinstance(result, dict)
 
 
 def test_fetch_index_returns_dict(tencent_source):
-    result = tencent_source.fetch_index(
-        index_codes=["000300"],
-        start=date(2026, 5, 20),
-        end=date(2026, 5, 27),
-    )
+    try:
+        result = tencent_source.fetch_index(
+            index_codes=["000300"],
+            start=date(2026, 5, 20),
+            end=date(2026, 5, 27),
+        )
+    except DataError:
+        return
     assert isinstance(result, dict)
+
+
+def test_tencent_public_fetch_methods_raise_data_error_when_empty(
+    monkeypatch, tencent_source
+) -> None:
+    monkeypatch.setattr(tencent_source, "_fetch_tencent_intraday", lambda *_args: None)
+    monkeypatch.setattr(tencent_source, "_fetch_tencent_quote", lambda *_args: None)
+    monkeypatch.setattr(
+        tencent_source,
+        "_fetch_tencent_daily",
+        lambda *_args, **_kwargs: None,
+    )
+
+    with pytest.raises(DataError, match="tencent 分时获取失败"):
+        tencent_source.fetch_intraday(["600000"])
+    with pytest.raises(DataError, match="tencent 实时行情获取失败"):
+        tencent_source.fetch_realtime_quote(["600000"])
+    with pytest.raises(DataError, match="tencent 指数获取失败"):
+        tencent_source.fetch_index(["000300"], date(2026, 5, 20), date(2026, 5, 27))
 
 
 def test_normalize_df_has_required_columns(tencent_source, mock_tencent_daily_data):

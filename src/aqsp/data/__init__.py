@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from aqsp.core.errors import DataError
 from aqsp.data.source import DataSource, OhlcvFrame
 from aqsp.data.akshare_source import AkshareSource
 from aqsp.data.efinance_source import EfinanceSource
@@ -121,6 +122,14 @@ def fetch_with_source(
     end = today_shanghai()
     start = end - timedelta(days=max(days * 2, 365))
     out = source.fetch_daily(symbols, start, end, adjust)
+    requested = {str(symbol) for symbol in symbols}
+    returned = {
+        str(symbol)
+        for symbol, frame in out.items()
+        if symbol and isinstance(frame, pd.DataFrame) and not frame.empty
+    }
+    if requested and not returned:
+        raise DataError(f"数据源 {source.name} 未返回任何有效日线: {sorted(requested)}")
     for symbol, df in out.items():
         out[symbol] = df.tail(days).reset_index(drop=True)
     _attach_optional_benchmark(
@@ -131,6 +140,9 @@ def fetch_with_source(
         end=end,
         days=days,
     )
+    missing = sorted(requested - returned)
+    if missing:
+        _logger.warning("数据源 %s 缺少部分日线: %s", source.name, missing)
     return out
 
 
