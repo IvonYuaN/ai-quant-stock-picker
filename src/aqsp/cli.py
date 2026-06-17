@@ -66,6 +66,9 @@ from aqsp.notify_templates import (
 )
 from aqsp.notification_runtime import (
     dispatch_notification_once as _dispatch_notification_once_impl,
+    dispatch_scheduled_daily_notification,
+    finalize_scheduled_notification,
+    finalize_scheduled_outputs,
 )
 from aqsp.notifier import (
     notify_gate_markdown,
@@ -3137,123 +3140,87 @@ def run_scheduled(args: argparse.Namespace) -> int:
         Path(report_path).parent.mkdir(parents=True, exist_ok=True)
     # 先检查双门 gate，决定是否放行 notify
     gate_ok, gate_reasons = _check_notification_gate(cold_start_days=cold_start_days)
-    if args.notify and not gate_ok:
-        # 宪法 §1.3 #12/#14：门未达，--notify 自动失效
-        next_actions = _notification_gate_actions(
+    next_actions = (
+        _notification_gate_actions(
             gate_reasons,
             cold_start_days=cold_start_days,
         )
-        print("⛔ 双门未达，--notify 自动失效。原因：")
-        for r in gate_reasons:
-            print(f"   - {r}")
-        print("📌 处理项：")
-        for action in next_actions:
-            print(f"   - {action}")
-        # 在 markdown 头部加警告（§1.3 #13）
-        markdown = (
-            _format_notification_gate_block(gate_reasons, next_actions) + markdown
-        )
-        if notify_markdown is not _notify_markdown_default:
-            try:
-                gate_results = notify_markdown(
-                    build_gate_notification_markdown(
-                        run_date=latest.isoformat(),
-                        gate_reasons=gate_reasons,
-                        next_actions=next_actions,
-                    )
-                )
-                print_notify_results(gate_results, prefix="gate notify")
-            except Exception as exc:
-                print(f"gate notify failed: {exc}")
-        elif not _gate_notification_allowed():
-            print("gate notify: skipped outside daily task")
-        else:
-            run_date = latest.isoformat()
-            try:
-                should_send_gate = _should_send_gate_notification(
-                    gate_ok=gate_ok,
-                    gate_reasons=gate_reasons,
-                    run_date=run_date,
-                )
-            except Exception as exc:
-                print(f"gate notify state failed: {exc}")
-                should_send_gate = False
-            if should_send_gate:
-                try:
-                    gate_results = notify_gate_markdown(
-                        build_gate_notification_markdown(
-                            run_date=run_date,
-                            gate_reasons=gate_reasons,
-                            next_actions=next_actions,
-                        )
-                    )
-                    print_notify_results(gate_results, prefix="gate notify")
-                    if any(result.ok for result in gate_results):
-                        _mark_gate_notification_sent(
-                            gate_reasons=gate_reasons,
-                            run_date=run_date,
-                        )
-                except Exception as exc:
-                    print(f"gate notify failed: {exc}")
-            else:
-                print("gate notify: skipped duplicate")
-        args.notify = False
-    # 写报告（可能包含警告）
-    if report_path:
-        Path(report_path).write_text(markdown, encoding="utf-8")
-    if output_csv_path:
-        Path(output_csv_path).parent.mkdir(parents=True, exist_ok=True)
-        table.to_csv(output_csv_path, index=False)
-    print(markdown)
-
-    if args.notify:
-        daily_markdown = build_daily_run_notification(
-            run_date=latest.isoformat(),
-            tradable=tradable,
-            candidates=picks,
-            portfolio_summary=portfolio_summary,
-            debate_results=debate_results,
-            actual_source=actual_source,
-            source_health_label=source_health_label,
-            source_health_message=source_health_message,
-            requested_source=args.source,
-            cold_start_days=cold_start_days,
-            cold_start_min_days=COLD_START_MIN_DAYS,
-            is_cold_start=is_cold_start,
-            circuit_breaker_reason=status.reason if status.triggered else "",
-            snapshot_diff=diff,
-            mode=load_runtime_config().notify_mode,
-            title_label=str(
-                os.environ.get("AQSP_NOTIFY_TITLE_LABEL", "") or "收盘研究日报"
-            ).strip(),
-        )
-        daily_summary = build_daily_run_notification(
-                run_date=latest.isoformat(),
-                tradable=tradable,
-                candidates=picks,
-                portfolio_summary=portfolio_summary,
-                debate_results=debate_results,
-                actual_source=actual_source,
-                source_health_label=source_health_label,
-                source_health_message=source_health_message,
-                requested_source=args.source,
-                cold_start_days=cold_start_days,
-                cold_start_min_days=COLD_START_MIN_DAYS,
-                is_cold_start=is_cold_start,
-                circuit_breaker_reason=status.reason if status.triggered else "",
-                snapshot_diff=diff,
-                mode="summary",
-                title_label=str(
-                    os.environ.get("AQSP_NOTIFY_TITLE_LABEL", "") or "收盘研究日报"
-                ).strip(),
+        if not gate_ok
+        else []
+    )
+    notify_mode = load_runtime_config().notify_mode
+    title_label = str(
+        os.environ.get("AQSP_NOTIFY_TITLE_LABEL", "") or "收盘研究日报"
+    ).strip()
+    legacy_notify = (
+        notify_markdown if notify_markdown is not _notify_markdown_default else None
+    )
+    notification_artifacts = finalize_scheduled_notification(
+        markdown=markdown,
+        args_notify=args.notify,
+        gate_ok=gate_ok,
+        gate_reasons=gate_reasons,
+        next_actions=next_actions,
+        latest_iso=latest.isoformat(),
+        notify_mode=notify_mode,
+        dispatch_gate_notification_fn=lambda **kwargs: notify_gate_markdown(
+            build_gate_notification_markdown(
+                run_date=kwargs["run_date"],
+                gate_reasons=kwargs["gate_reasons"],
+                next_actions=kwargs["next_actions"],
             )
-        _dispatch_notification_once(
-            daily_markdown,
-            mode=load_runtime_config().notify_mode,
-            prefix="notify",
-            kind=f"daily:{latest.isoformat()}",
-            summary_markdown=daily_summary,
-        )
+        ),
+        should_send_gate_notification_fn=lambda **kwargs: _should_send_gate_notification(
+            gate_ok=kwargs["gate_ok"],
+            gate_reasons=kwargs["gate_reasons"],
+            run_date=kwargs["run_date"],
+        ),
+        format_notification_gate_block_fn=_format_notification_gate_block,
+        legacy_notify_fn=legacy_notify,
+        print_fn=print,
+        mark_gate_notification_sent_fn=lambda **kwargs: _mark_gate_notification_sent(
+            gate_reasons=kwargs["gate_reasons"],
+            run_date=kwargs["run_date"],
+        ),
+        gate_state_path=_resolve_runtime_state_path(
+            os.getenv("AQSP_GATE_NOTIFY_STATE_PATH", GATE_NOTIFY_STATE_PATH)
+        ),
+    )
+    finalize_scheduled_outputs(
+        markdown=notification_artifacts.markdown,
+        report_path=report_path,
+        output_csv_path=output_csv_path,
+        table=table,
+        print_fn=print,
+    )
+    dispatch_scheduled_daily_notification(
+        notify_enabled=notification_artifacts.notify_enabled,
+        notify_mode=notify_mode,
+        latest_iso=latest.isoformat(),
+        tradable=tradable,
+        picks=picks,
+        portfolio_summary=portfolio_summary,
+        debate_results=debate_results,
+        actual_source=actual_source,
+        source_health_label=source_health_label,
+        source_health_message=source_health_message,
+        requested_source=args.source,
+        cold_start_days=cold_start_days,
+        cold_start_min_days=COLD_START_MIN_DAYS,
+        is_cold_start=is_cold_start,
+        circuit_breaker_reason=status.reason if status.triggered else "",
+        snapshot_diff=diff,
+        title_label=title_label,
+        build_daily_run_notification_fn=build_daily_run_notification,
+        dispatch_notification_fn=lambda markdown, **kwargs: _dispatch_notification_once(
+            markdown,
+            mode=kwargs["mode"],
+            prefix=kwargs["prefix"],
+            kind=kwargs["kind"],
+            summary_markdown=kwargs.get("summary_markdown"),
+        ),
+        notification_kind=f"daily:{latest.isoformat()}",
+    )
     return 2 if status.triggered else 0
 
 
