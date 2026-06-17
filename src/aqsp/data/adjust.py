@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import logging
 from datetime import date
+import math
 from typing import Literal
 import pandas as pd
 
 from aqsp.data.cache import DataCache
+from aqsp.core.errors import DataError
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +28,9 @@ class AdjustmentService:
         for dt in dates:
             date_obj = pd.to_datetime(dt).date()
             factor = self.cache.get_adj_factor(symbol, date_obj)
-            factors.append({"date": dt, "adj_factor": factor or 1.0})
+            if factor is None or not math.isfinite(float(factor)):
+                raise DataError(f"缺少复权因子: symbol={symbol}, date={dt}")
+            factors.append({"date": dt, "adj_factor": float(factor)})
         return pd.DataFrame(factors)
 
     def apply_qfq(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -40,9 +44,10 @@ class AdjustmentService:
                 factors = self.get_point_in_time_factors(symbols[0], list(df["date"]))
                 df = df.merge(factors, on="date", how="left")
             else:
-                df["adj_factor"] = 1.0
+                raise DataError("多标的复权必须先显式提供 adj_factor 列")
 
-        df["adj_factor"] = df["adj_factor"].ffill().fillna(1.0)
+        df["adj_factor"] = df["adj_factor"].ffill()
+        self._assert_complete_factors(df)
         latest_factor = df["adj_factor"].iloc[-1] if not df.empty else 1.0
 
         df["open_qfq"] = df["open"] * df["adj_factor"] / latest_factor
@@ -63,9 +68,10 @@ class AdjustmentService:
                 factors = self.get_point_in_time_factors(symbols[0], list(df["date"]))
                 df = df.merge(factors, on="date", how="left")
             else:
-                df["adj_factor"] = 1.0
+                raise DataError("多标的复权必须先显式提供 adj_factor 列")
 
-        df["adj_factor"] = df["adj_factor"].ffill().fillna(1.0)
+        df["adj_factor"] = df["adj_factor"].ffill()
+        self._assert_complete_factors(df)
 
         df["open_hfq"] = df["open"] * df["adj_factor"]
         df["high_hfq"] = df["high"] * df["adj_factor"]
@@ -93,14 +99,16 @@ class AdjustmentService:
                     logger.info(
                         "复权因子缓存成功: symbol=%s, count=%d", symbol, len(df)
                     )
-        except Exception:
-            logger.warning(
-                "获取复权因子失败: symbol=%s, start=%s, end=%s",
-                symbol,
-                start,
-                end,
-                exc_info=True,
+                    return
+            raise DataError(
+                f"复权因子为空: symbol={symbol}, start={start}, end={end}"
             )
+        except DataError:
+            raise
+        except Exception as exc:
+            raise DataError(
+                f"获取复权因子失败: symbol={symbol}, start={start}, end={end}"
+            ) from exc
 
     def ensure_factors_cached(self, symbol: str, dates: list[str]) -> None:
         if not dates:
@@ -130,7 +138,7 @@ class AdjustmentService:
                 factors = self.get_point_in_time_factors(symbols[0], list(df["date"]))
                 df = df.merge(factors, on="date", how="left")
             else:
-                df["adj_factor"] = 1.0
+                raise DataError("多标的复权必须先显式提供 adj_factor 列")
 
         if adjust == "qfq":
             return self.apply_qfq(df)
@@ -138,3 +146,17 @@ class AdjustmentService:
             return self.apply_hfq(df)
 
         return df
+
+    @staticmethod
+    def _assert_complete_factors(df: pd.DataFrame) -> None:
+        if "adj_factor" not in df.columns:
+            raise DataError("缺少 adj_factor 列")
+        factors = pd.to_numeric(df["adj_factor"], errors="coerce")
+        if factors.isna().any():
+            missing_dates = (
+                df.loc[factors.isna(), "date"].astype(str).head(3).tolist()
+                if "date" in df.columns
+                else []
+            )
+            suffix = f": {', '.join(missing_dates)}" if missing_dates else ""
+            raise DataError(f"复权因子不完整{suffix}")

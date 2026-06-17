@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from datetime import date
 import pandas as pd
+import pytest
 
-from aqsp.data.cache import DataCache
+from aqsp.core.errors import DataError
 from aqsp.data.adjust import AdjustmentService
+from aqsp.data.cache import DataCache
 
 
 def test_cache_init(tmp_path):
@@ -217,3 +219,46 @@ def test_adjustment_get_point_in_time_factors(tmp_path):
     assert len(factors) == 2
     assert factors["adj_factor"].iloc[0] == 1.0
     assert factors["adj_factor"].iloc[1] == 1.1
+
+
+def test_adjustment_get_point_in_time_factors_raises_when_missing(tmp_path):
+    cache = DataCache(db_path=tmp_path / "test_cache.db")
+    service = AdjustmentService(cache=cache)
+
+    with pytest.raises(DataError, match="缺少复权因子"):
+        service.get_point_in_time_factors("600000", ["2026-05-27"])
+
+
+def test_adjustment_rejects_multi_symbol_without_explicit_factors():
+    df = pd.DataFrame(
+        {
+            "date": ["2026-05-27", "2026-05-27"],
+            "symbol": ["600000", "000001"],
+            "open": [10.0, 12.0],
+            "high": [10.5, 12.5],
+            "low": [9.9, 11.9],
+            "close": [10.2, 12.2],
+        }
+    )
+    service = AdjustmentService()
+
+    with pytest.raises(DataError, match="多标的复权必须先显式提供 adj_factor"):
+        service.apply_qfq(df)
+
+
+def test_adjustment_rejects_incomplete_explicit_factors():
+    df = pd.DataFrame(
+        {
+            "date": ["2026-05-27", "2026-05-28"],
+            "symbol": ["600000", "600000"],
+            "open": [10.0, 12.0],
+            "high": [10.5, 12.5],
+            "low": [9.9, 11.9],
+            "close": [10.2, 12.2],
+            "adj_factor": [None, 1.1],
+        }
+    )
+    service = AdjustmentService()
+
+    with pytest.raises(DataError, match="复权因子不完整"):
+        service.apply_qfq(df)
