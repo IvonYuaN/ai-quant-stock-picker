@@ -1570,14 +1570,37 @@ def _count_independent_signal_days(ledger_path: str) -> int:
     from aqsp.ledger.base import read_ledger
 
     rows = read_ledger(ledger_path)
-    signal_dates = set()
+    signal_dates: set[str] = set()
     for row in rows:
-        sd = row.get("signal_date", "")
-        if not sd:
+        if bool(row.get("is_simulated")):
             continue
-        if row.get("symbol") and row.get("thresholds_version"):
-            signal_dates.add(sd)
+        if not str(row.get("symbol") or "").strip():
+            continue
+        if str(row.get("status") or "").strip() == "not_executable":
+            continue
+        has_signal_payload = any(
+            row.get(key) not in (None, "")
+            for key in ("thresholds_version", "status", "rating", "score", "strategies")
+        )
+        if not has_signal_payload:
+            continue
+        signal_date = _ledger_signal_date(row)
+        if signal_date:
+            signal_dates.add(signal_date)
     return len(signal_dates)
+
+
+def _ledger_signal_date(row: dict[str, Any]) -> str:
+    for key in ("signal_date", "signal_day_group", "date", "created_at"):
+        raw = str(row.get(key) or "").strip()
+        if len(raw) >= 10:
+            candidate = raw[:10]
+            try:
+                date.fromisoformat(candidate)
+            except ValueError:
+                continue
+            return candidate
+    return ""
 
 
 def _compute_real_pnl(ledger_path: str) -> tuple[float, float, float]:

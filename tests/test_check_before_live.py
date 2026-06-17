@@ -49,7 +49,11 @@ def _prepare_ready_runtime(root: Path) -> None:
     _write_jsonl(
         root / "data/predictions.jsonl",
         [
-            {"signal_date": f"2026-05-{day:02d}", "symbol": "600519"}
+            {
+                "signal_date": f"2026-05-{day:02d}",
+                "symbol": "600519",
+                "status": "watch_only",
+            }
             for day in range(1, 31)
         ],
     )
@@ -244,7 +248,11 @@ def test_check_before_live_blocks_when_paper_samples_are_too_small(
     _write_jsonl(
         tmp_path / "data/predictions.jsonl",
         [
-            {"signal_date": f"2026-05-{day:02d}", "symbol": "600519"}
+            {
+                "signal_date": f"2026-05-{day:02d}",
+                "symbol": "600519",
+                "status": "watch_only",
+            }
             for day in range(1, 10)
         ],
     )
@@ -261,13 +269,14 @@ def test_check_before_live_ignores_simulated_and_strategy_grouped_samples(
 ) -> None:
     _prepare_ready_runtime(tmp_path)
     rows = [
-        {
-            "signal_date": f"2026-05-{day:02d}",
-            "signal_day_group": f"2026-05-{day:02d}_volume_breakout",
-            "symbol": "600519",
-        }
-        for day in range(1, 16)
-    ]
+            {
+                "signal_date": f"2026-05-{day:02d}",
+                "signal_day_group": f"2026-05-{day:02d}_volume_breakout",
+                "symbol": "600519",
+                "status": "watch_only",
+            }
+            for day in range(1, 16)
+        ]
     rows.extend(
         {
             "signal_date": f"2026-05-{day:02d}",
@@ -282,6 +291,7 @@ def test_check_before_live_ignores_simulated_and_strategy_grouped_samples(
             "signal_date": "2026-05-01",
             "signal_day_group": "2026-05-01_rps_momentum",
             "symbol": "300750",
+            "status": "watch_only",
         }
     )
     _write_jsonl(tmp_path / "data/predictions.jsonl", rows)
@@ -291,6 +301,41 @@ def test_check_before_live_ignores_simulated_and_strategy_grouped_samples(
     finding = next(item for item in findings if item.gate == "paper_sample_size")
     assert finding.ok is False
     assert finding.detail == "15/30 real independent signal days"
+
+
+def test_check_before_live_counts_runtime_signal_date_aliases(tmp_path: Path) -> None:
+    _prepare_ready_runtime(tmp_path)
+    rows = [
+        {
+            "signal_day_group": f"2026-05-{day:02d}_ma_pullback",
+            "symbol": "600519",
+            "status": "watch_only",
+        }
+        for day in range(1, 11)
+    ]
+    rows.extend(
+        {
+            "created_at": f"2026-05-{day:02d}T18:00:00+08:00",
+            "symbol": "000001",
+            "rating": "watch",
+        }
+        for day in range(11, 21)
+    )
+    rows.extend(
+        {
+            "date": f"2026-05-{day:02d}",
+            "symbol": "601318",
+            "score": 42.0,
+        }
+        for day in range(21, 31)
+    )
+    _write_jsonl(tmp_path / "data/predictions.jsonl", rows)
+
+    findings = check_before_live(root=tmp_path, today=date(2026, 6, 14))
+
+    finding = next(item for item in findings if item.gate == "paper_sample_size")
+    assert finding.ok is True
+    assert finding.detail == "30/30 real independent signal days"
 
 
 def test_check_before_live_blocks_when_daily_run_history_is_missing(
@@ -346,3 +391,60 @@ def test_check_before_live_blocks_when_dashboard_output_is_missing(
     assert any(
         finding.gate == "dashboard_html" and not finding.ok for finding in findings
     )
+
+
+def test_check_before_live_blocks_every_10_minute_notify_cron(
+    tmp_path: Path,
+) -> None:
+    _prepare_ready_runtime(tmp_path)
+    cron = tmp_path / "cron.txt"
+    cron.write_text(
+        "*/10 9-14 * * 1-5 /bin/bash /opt/aqsp/scripts/bt_task.sh daily --notify\n",
+        encoding="utf-8",
+    )
+
+    findings = check_before_live(
+        root=tmp_path,
+        today=date(2026, 6, 14),
+        cron_path=cron,
+    )
+
+    finding = next(item for item in findings if item.gate == "scheduler_notify_cadence")
+    assert finding.ok is False
+    assert "high-frequency notify risk" in finding.detail
+
+
+def test_check_before_live_allows_intraday_without_notify(
+    tmp_path: Path,
+) -> None:
+    _prepare_ready_runtime(tmp_path)
+    cron = tmp_path / "cron.txt"
+    cron.write_text(
+        "*/10 9-14 * * 1-5 /bin/bash /opt/aqsp/scripts/bt_task.sh intraday\n",
+        encoding="utf-8",
+    )
+
+    findings = check_before_live(
+        root=tmp_path,
+        today=date(2026, 6, 14),
+        cron_path=cron,
+    )
+
+    finding = next(item for item in findings if item.gate == "scheduler_notify_cadence")
+    assert finding.ok is True
+
+
+def test_check_before_live_blocks_unstable_gate_notify_state_path(
+    tmp_path: Path,
+) -> None:
+    _prepare_ready_runtime(tmp_path)
+    (tmp_path / ".env").write_text(
+        "AQSP_GATE_NOTIFY_STATE_PATH=/tmp/gate_notify_state.json\n",
+        encoding="utf-8",
+    )
+
+    findings = check_before_live(root=tmp_path, today=date(2026, 6, 14))
+
+    finding = next(item for item in findings if item.gate == "gate_notify_state_path")
+    assert finding.ok is False
+    assert "unstable external path" in finding.detail

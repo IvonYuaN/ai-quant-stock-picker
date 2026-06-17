@@ -107,6 +107,7 @@ def check_before_live(
     gate_path: Path | None = None,
     ledger_path: Path | None = None,
     run_history_path: Path | None = None,
+    cron_path: Path | None = None,
 ) -> list[ReadinessFinding]:
     gate_path = gate_path or root / "data" / "walkforward_gate.json"
     ledger_path = ledger_path or root / "data" / "predictions.jsonl"
@@ -116,6 +117,8 @@ def check_before_live(
     findings.append(_check_walkforward_gate(gate_path, today))
     findings.append(_check_paper_sample_size(ledger_path))
     findings.append(_check_successful_runs(run_history_path, root=root))
+    findings.append(_check_scheduler_notify_cadence(root, cron_path=cron_path))
+    findings.append(_check_gate_notify_state_path(root))
     findings.extend(_check_runtime_outputs(root))
     return findings
 
@@ -146,8 +149,8 @@ def _check_paper_sample_size(path: Path) -> ReadinessFinding:
     signal_days = {
         signal_date
         for row in rows
-        if not bool(row.get("is_simulated"))
-        for signal_date in [str(row.get("signal_date") or "").strip()[:10]]
+        if _is_real_signal_row(row)
+        for signal_date in [_row_signal_date(row)]
         if _parse_date(signal_date) is not None
     }
     count = len(signal_days)
@@ -156,6 +159,29 @@ def _check_paper_sample_size(path: Path) -> ReadinessFinding:
         count >= MIN_INDEPENDENT_SIGNAL_DAYS,
         f"{count}/{MIN_INDEPENDENT_SIGNAL_DAYS} real independent signal days",
     )
+
+
+def _is_real_signal_row(row: dict[str, Any]) -> bool:
+    if bool(row.get("is_simulated")):
+        return False
+    if not str(row.get("symbol") or "").strip():
+        return False
+    if str(row.get("status") or "").strip() == "not_executable":
+        return False
+    return any(
+        row.get(key) not in (None, "")
+        for key in ("thresholds_version", "status", "rating", "score", "strategies")
+    )
+
+
+def _row_signal_date(row: dict[str, Any]) -> str:
+    for key in ("signal_date", "signal_day_group", "date", "created_at"):
+        raw = str(row.get(key) or "").strip()
+        if len(raw) >= 10:
+            candidate = raw[:10]
+            if _parse_date(candidate) is not None:
+                return candidate
+    return ""
 
 
 def _check_successful_runs(path: Path, *, root: Path) -> ReadinessFinding:
@@ -174,6 +200,73 @@ def _check_successful_runs(path: Path, *, root: Path) -> ReadinessFinding:
         "successful_daily_runs",
         count >= MIN_SUCCESSFUL_RUN_DAYS,
         f"{count}/{MIN_SUCCESSFUL_RUN_DAYS} successful daily run days ({source})",
+    )
+
+
+def _check_scheduler_notify_cadence(
+    root: Path, *, cron_path: Path | None
+) -> ReadinessFinding:
+    texts: list[tuple[str, str]] = []
+    for path in (
+        root / "scripts" / "daily_pipeline.sh",
+        root / "scripts" / "daily_run.sh",
+        root / "scripts" / "intraday_refresh.sh",
+        root / "scripts" / "midday_refresh.sh",
+        root / "scripts" / "news_catalysts.sh",
+        root / "scripts" / "server_monitor.sh",
+    ):
+        if path.exists():
+            texts.append((str(path.relative_to(root)), path.read_text(encoding="utf-8")))
+    if cron_path is not None and cron_path.exists():
+        texts.append((str(cron_path), cron_path.read_text(encoding="utf-8")))
+
+    blockers: list[str] = []
+    for label, text in texts:
+        for line in text.splitlines():
+            clean = line.strip()
+            if not clean or clean.startswith("#"):
+                continue
+            if "--notify" not in clean:
+                continue
+            if "notify-critical-only" in clean:
+                continue
+            if _looks_like_high_frequency_schedule(clean):
+                blockers.append(f"{label}: {clean}")
+            if any(task in clean for task in ("intraday", "midday")):
+                blockers.append(f"{label}: {clean}")
+
+    return ReadinessFinding(
+        "scheduler_notify_cadence",
+        not blockers,
+        "ok" if not blockers else "high-frequency notify risk: " + " | ".join(blockers[:3]),
+    )
+
+
+def _looks_like_high_frequency_schedule(line: str) -> bool:
+    fields = line.split()
+    if len(fields) < 6:
+        return False
+    minute = fields[0]
+    return minute.startswith("*/") or "," in minute or "-" in minute
+
+
+def _check_gate_notify_state_path(root: Path) -> ReadinessFinding:
+    env_path = root / ".env"
+    if not env_path.exists():
+        return ReadinessFinding("gate_notify_state_path", True, "env missing")
+    value = ""
+    for line in env_path.read_text(encoding="utf-8").splitlines():
+        if line.strip().startswith("AQSP_GATE_NOTIFY_STATE_PATH="):
+            value = line.split("=", 1)[1].strip().strip('"').strip("'")
+            break
+    if not value:
+        value = "data/gate_notify_state.json"
+    path = Path(value)
+    ok = not path.is_absolute() or str(path).startswith(str(root))
+    return ReadinessFinding(
+        "gate_notify_state_path",
+        ok,
+        value if ok else f"unstable external path: {value}",
     )
 
 
@@ -207,6 +300,7 @@ def main() -> int:
     parser.add_argument(
         "--run-history", default="", help="Override daily run history jsonl"
     )
+    parser.add_argument("--cron", default="", help="Optional crontab dump to audit")
     args = parser.parse_args()
 
     root = Path(args.root).resolve()
@@ -217,6 +311,7 @@ def main() -> int:
         gate_path=Path(args.gate) if args.gate else None,
         ledger_path=Path(args.ledger) if args.ledger else None,
         run_history_path=Path(args.run_history) if args.run_history else None,
+        cron_path=Path(args.cron) if args.cron else None,
     )
     _print_findings(findings)
     return 0 if all(finding.ok for finding in findings) else 1

@@ -72,6 +72,40 @@ def test_cold_start_counts_observation_only_signal_days(tmp_path) -> None:
     assert _count_independent_signal_days(str(ledger)) == 2
 
 
+def test_cold_start_counts_runtime_date_aliases(tmp_path) -> None:
+    from aqsp.cli import _count_independent_signal_days
+
+    ledger = tmp_path / "predictions.jsonl"
+    rows = [
+        {
+            "signal_day_group": "2026-06-03_ma_pullback",
+            "symbol": "600036",
+            "status": "watch_only",
+        },
+        {
+            "created_at": "2026-06-04T18:00:00+08:00",
+            "symbol": "000001",
+            "rating": "watch",
+        },
+        {
+            "date": "2026-06-05",
+            "symbol": "601318",
+            "score": 51.0,
+        },
+        {
+            "created_at": "2026-06-06T18:00:00+08:00",
+            "symbol": "300750",
+            "status": "not_executable",
+        },
+    ]
+    ledger.write_text(
+        "\n".join(json.dumps(row, ensure_ascii=False) for row in rows) + "\n",
+        encoding="utf-8",
+    )
+
+    assert _count_independent_signal_days(str(ledger)) == 3
+
+
 def test_walkforward_help_handles_percent_text(capsys) -> None:
     from aqsp.cli import main
 
