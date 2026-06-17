@@ -27,6 +27,7 @@ from aqsp.data.multi_source import MultiSource
 from aqsp.data.cache import DataCache
 from aqsp.data.adjust import AdjustmentService
 from aqsp.data.fetcher import MultiSourceFetcher, create_default_fetcher
+from aqsp.data.cli_fetch import fetch_frames_for_cli_with_metadata
 from aqsp.data.intraday import IntradayService
 from aqsp.data.realtime import RealtimeService
 from aqsp.data.trading_calendar import (
@@ -176,6 +177,7 @@ __all__ = [
     "load_csv",
     "fetch_akshare",
     "fetch_with_source",
+    "fetch_frames_for_cli_with_metadata",
     "MultiSourceFetcher",
     "create_default_fetcher",
 ]

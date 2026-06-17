@@ -34,7 +34,12 @@ from aqsp.data.source_health import (
     record_source_failure,
     record_source_success,
 )
-from aqsp.data import fetch_akshare, load_csv, fetch_with_source
+from aqsp.data import (
+    fetch_akshare,
+    fetch_frames_for_cli_with_metadata,
+    fetch_with_source,
+    load_csv,
+)
 from aqsp.data.index_constituents import load_optional_index_constituents
 from aqsp.data.akshare_source import AkshareSource
 from aqsp.data.cache import DataCache
@@ -84,7 +89,7 @@ from aqsp.research_engine import (
     WalkForwardEngineConfig,
     resolve_walkforward_engine,
 )
-from aqsp.regime.detector import RegimeDetector
+from aqsp.regime import build_synthetic_regime_frame, detect_runtime_regime
 from aqsp.report import to_dataframe, to_markdown
 from aqsp.risk.circuit_breaker import CircuitBreaker
 from aqsp.runtime.gate_notify import (
@@ -1093,29 +1098,18 @@ def _fetch_frames_for_cli_with_metadata(
     cache_path: str | None = None,
     days: int = 260,
 ) -> tuple[dict[str, pd.DataFrame], str]:
-    try:
-        if source_name == "akshare":
-            frames = fetch_akshare(
-                symbols,
-                days=days,
-                benchmark_symbol=benchmark_symbol,
-                cache_path=cache_path,
-            )
-            record_source_success(source_name, "akshare")
-            return frames, "akshare"
-        source = _get_source(source_name)
-        frames = fetch_with_source(
-            source, symbols, days=days, benchmark_symbol=benchmark_symbol
-        )
-        actual_source = str(getattr(source, "last_used_source", None) or source.name)
-        record_source_success(source_name, actual_source)
-        return frames, actual_source
-    except DataError as exc:
-        record_source_failure(source_name, str(exc))
-        raise
-    except Exception as exc:
-        record_source_failure(source_name, str(exc))
-        raise DataError(f"数据源 {source_name} 获取失败: {exc}") from exc
+    return fetch_frames_for_cli_with_metadata(
+        source_name,
+        symbols,
+        benchmark_symbol=benchmark_symbol,
+        cache_path=cache_path,
+        days=days,
+        fetch_akshare_fn=fetch_akshare,
+        get_source_fn=_get_source,
+        fetch_with_source_fn=fetch_with_source,
+        record_source_success_fn=record_source_success,
+        record_source_failure_fn=record_source_failure,
+    )
 
 
 def _drop_benchmark_frame(
@@ -1130,46 +1124,7 @@ def _drop_benchmark_frame(
 def _build_synthetic_regime_frame(
     frames: dict[str, pd.DataFrame],
 ) -> pd.DataFrame | None:
-    normalized_parts: list[pd.DataFrame] = []
-    for symbol, frame in frames.items():
-        if frame is None or frame.empty or "date" not in frame.columns:
-            continue
-        part = frame.sort_values("date").copy()
-        if "close" not in part.columns or "volume" not in part.columns:
-            continue
-        part["close"] = pd.to_numeric(part["close"], errors="coerce")
-        part["volume"] = pd.to_numeric(part["volume"], errors="coerce")
-        part = part.dropna(subset=["date", "close", "volume"])
-        if part.empty:
-            continue
-        first_close = float(part["close"].iloc[0])
-        if first_close <= 0:
-            continue
-        normalized_parts.append(
-            pd.DataFrame(
-                {
-                    "date": pd.to_datetime(part["date"], errors="coerce"),
-                    "symbol": symbol,
-                    "close_norm": part["close"] / first_close * 100.0,
-                    "volume": part["volume"],
-                }
-            ).dropna(subset=["date"])
-        )
-    if not normalized_parts:
-        return None
-    merged = pd.concat(normalized_parts, ignore_index=True)
-    synthetic = (
-        merged.groupby("date", as_index=False)
-        .agg(close=("close_norm", "mean"), volume=("volume", "mean"))
-        .sort_values("date")
-        .reset_index(drop=True)
-    )
-    if synthetic.empty:
-        return None
-    synthetic["date"] = synthetic["date"].dt.strftime("%Y-%m-%d")
-    synthetic["symbol"] = "synthetic_market"
-    synthetic["name"] = "Synthetic Market Breadth"
-    return synthetic[["date", "symbol", "name", "close", "volume"]]
+    return build_synthetic_regime_frame(frames)
 
 
 def _detect_runtime_regime(
@@ -1177,18 +1132,10 @@ def _detect_runtime_regime(
     *,
     benchmark_symbol: str | None,
 ) -> str:
-    detector = RegimeDetector()
-    if benchmark_symbol:
-        bench_frame = frames.get(benchmark_symbol)
-        if bench_frame is not None and not bench_frame.empty:
-            return detector.detect({benchmark_symbol: bench_frame}).name
-    synthetic = _build_synthetic_regime_frame(
-        _drop_benchmark_frame(frames, benchmark_symbol)
+    return detect_runtime_regime(
+        frames,
+        benchmark_symbol=benchmark_symbol,
     )
-    if synthetic is None or synthetic.empty:
-        return ""
-    regime = detector.detect({"synthetic_market": synthetic}).name
-    return "" if regime == "unknown" else regime
 
 
 def _augment_summary_with_t1_blockers(
