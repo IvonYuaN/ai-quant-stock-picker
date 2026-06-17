@@ -15,6 +15,12 @@ log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$RESULT_LOG"
 }
 
+is_truthy() {
+    local value
+    value="$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')"
+    [[ "$value" =~ ^(1|true|yes|on)$ ]]
+}
+
 DOW=$(date +%u)
 if [ "$DOW" -ge 6 ]; then
     log "周末(周${DOW})，跳过午盘回看"
@@ -23,7 +29,7 @@ fi
 
 REQUIRE_WINDOW="${AQSP_MIDDAY_REQUIRE_WINDOW:-true}"
 NOW_HM=$((10#$(date +%H%M)))
-if [[ "${REQUIRE_WINDOW,,}" =~ ^(1|true|yes|on)$ ]]; then
+if is_truthy "$REQUIRE_WINDOW"; then
     if ! { [ "$NOW_HM" -ge 1135 ] && [ "$NOW_HM" -le 1230 ]; }; then
         log "当前不在午盘回看时段，跳过"
         exit 0
@@ -31,9 +37,10 @@ if [[ "${REQUIRE_WINDOW,,}" =~ ^(1|true|yes|on)$ ]]; then
 fi
 
 export AQSP_INTRADAY_REQUIRE_MARKET_HOURS=false
-export AQSP_RUN_TASK_ID="${AQSP_RUN_TASK_ID:-midday}"
+export AQSP_RUN_TASK_ID="midday"
+export AQSP_NOTIFY="false"
 export AQSP_NOTIFY_TITLE_LABEL="${AQSP_NOTIFY_TITLE_LABEL:-午盘分析}"
-export AQSP_INTRADAY_NOTIFY="${AQSP_INTRADAY_NOTIFY:-true}"
+export AQSP_INTRADAY_NOTIFY="${AQSP_INTRADAY_NOTIFY:-false}"
 
 log "开始午盘回看，复用盘中观察链路"
 /bin/bash "${PROJECT_ROOT}/scripts/intraday_refresh.sh" 2>&1 | tee -a "$RESULT_LOG"

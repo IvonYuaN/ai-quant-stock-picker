@@ -17,6 +17,12 @@ log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$RESULT_LOG"
 }
 
+is_truthy() {
+    local value
+    value="$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')"
+    [[ "$value" =~ ^(1|true|yes|on)$ ]]
+}
+
 resolve_path() {
     case "$1" in
         /*) printf '%s\n' "$1" ;;
@@ -51,7 +57,8 @@ fi
 
 export PYTHONPATH="${PROJECT_ROOT}/src:${PROJECT_ROOT}:${PYTHONPATH:-}"
 export TZ="${TZ:-Asia/Shanghai}"
-export AQSP_RUN_TASK_ID="${AQSP_RUN_TASK_ID:-intraday}"
+export AQSP_RUN_TASK_ID="intraday"
+export AQSP_NOTIFY="false"
 
 DOW=$(date +%u)
 if [ "$DOW" -ge 6 ]; then
@@ -61,7 +68,7 @@ fi
 
 REQUIRE_MARKET_HOURS="${AQSP_INTRADAY_REQUIRE_MARKET_HOURS:-true}"
 NOW_HM=$((10#$(date +%H%M)))
-if [[ "${REQUIRE_MARKET_HOURS,,}" =~ ^(1|true|yes|on)$ ]]; then
+if is_truthy "$REQUIRE_MARKET_HOURS"; then
     if ! { [ "$NOW_HM" -ge 935 ] && [ "$NOW_HM" -le 1130 ]; } && \
        ! { [ "$NOW_HM" -ge 1305 ] && [ "$NOW_HM" -le 1457 ]; }; then
         log "当前不在盘中刷新时段，跳过"
@@ -75,7 +82,7 @@ INTRADAY_LIMIT="${AQSP_INTRADAY_LIMIT:-${AQSP_LIMIT:-10}}"
 INTRADAY_MAX_UNIVERSE="${AQSP_INTRADAY_MAX_UNIVERSE:-${AQSP_MAX_UNIVERSE:-50}}"
 INTRADAY_MIN_AVG_AMOUNT="${AQSP_INTRADAY_MIN_AVG_AMOUNT:-${AQSP_MIN_AVG_AMOUNT:-50000000}}"
 INTRADAY_MAX_DATA_LAG_DAYS="${AQSP_INTRADAY_MAX_DATA_LAG_DAYS:-1}"
-INTRADAY_NOTIFY="${AQSP_INTRADAY_NOTIFY:-${AQSP_NOTIFY:-true}}"
+INTRADAY_NOTIFY="${AQSP_INTRADAY_NOTIFY:-false}"
 
 INTRADAY_LEDGER="$(resolve_path "${AQSP_INTRADAY_LEDGER:-data/intraday_predictions.jsonl}")"
 INTRADAY_REPORT="$(resolve_path "${AQSP_INTRADAY_REPORT:-reports/intraday_latest.md}")"
@@ -104,7 +111,7 @@ log "=========================================="
 
 START_TIME=$(date +%s)
 NOTIFY_ARGS=()
-if [[ "${INTRADAY_NOTIFY,,}" =~ ^(1|true|yes|on)$ ]]; then
+if is_truthy "$INTRADAY_NOTIFY"; then
     NOTIFY_ARGS=(--notify)
 fi
 
