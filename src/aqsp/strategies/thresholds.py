@@ -177,6 +177,7 @@ class ScoringThresholds:
     upper_shadow_penalty: float = -14
     upper_shadow_threshold: float = 4
     upper_shadow_volume: float = 1.5
+    reversal_rsi_threshold: float = 42
     open_calm_bonus: float = 5
     open_calm_bias: float = 10
     open_calm_volume: float = 2.5

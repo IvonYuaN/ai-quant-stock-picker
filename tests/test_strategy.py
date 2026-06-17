@@ -3,7 +3,8 @@ from __future__ import annotations
 import pandas as pd
 
 from aqsp.models import ScreeningConfig
-from aqsp.strategy import screen_universe
+from aqsp.strategies.thresholds import ScoringThresholds
+from aqsp.strategy import _entry_type, score_symbol, screen_universe
 
 
 def _frame(symbol: str, drift: float, volume_boost: float = 1.0) -> pd.DataFrame:
@@ -49,6 +50,41 @@ def test_low_liquidity_penalty() -> None:
     picks = screen_universe(frames, ScreeningConfig(min_avg_amount=10**12))
     assert picks[0].score < 55
     assert any("流动性" in risk for risk in picks[0].risks)
+
+
+def test_liquidity_penalty_uses_scoring_threshold() -> None:
+    frame = _frame("LOW", 0.004, 1.5)
+    config = ScreeningConfig(min_avg_amount=10**12)
+
+    baseline = score_symbol("LOW", frame, config, ScoringThresholds())
+    milder = score_symbol(
+        "LOW",
+        frame,
+        config,
+        ScoringThresholds(liquidity_penalty=-5),
+    )
+
+    assert baseline is not None
+    assert milder is not None
+    assert milder.score > baseline.score
+
+
+def test_reversal_entry_uses_configured_rsi_threshold() -> None:
+    row = pd.Series(
+        {
+            "close": 10.0,
+            "volume_ratio": 1.0,
+            "rsi12": 50.0,
+            "macd_hist": 0.2,
+        }
+    )
+    prev = pd.Series({"high_20": 12.0, "macd_hist": 0.1})
+
+    assert _entry_type(row, prev, False, ScoringThresholds()) == "relative_strength"
+    assert (
+        _entry_type(row, prev, False, ScoringThresholds(reversal_rsi_threshold=60))
+        == "reversal_watch"
+    )
 
 
 def test_screen_filters_price_outside_bounds() -> None:

@@ -103,7 +103,7 @@ def score_symbol(
     avg_amount = _num(row["amount_ma20"])
     if avg_amount < config.min_avg_amount:
         risks.append("20日均成交额不足，流动性过滤")
-        score -= 35
+        score += scoring.liquidity_penalty
 
     ma5, ma10, ma20, ma60 = (_num(row[f"ma{x}"]) for x in (5, 10, 20, 60))
     bias20 = _num(row["bias20"])
@@ -291,7 +291,10 @@ def _entry_type(
         and _num(row["volume_ratio"]) >= scoring.near_high_volume
     ):
         return "volume_breakout"
-    if _num(row["rsi12"]) < 42 and _num(row["macd_hist"]) > _num(prev["macd_hist"]):
+    if (
+        _num(row["rsi12"]) < scoring.reversal_rsi_threshold
+        and _num(row["macd_hist"]) > _num(prev["macd_hist"])
+    ):
         return "reversal_watch"
     return "relative_strength"
 

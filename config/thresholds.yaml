@@ -6,7 +6,7 @@ composite:
   volume_weight: 0.0
   mean_reversion_weight: 0.0
   triple_rise_weight: 0.3
-description: "策略阈值配置 — v1.1.2：风控止损默认阈值接入配置"
+description: "策略阈值配置 — v1.1.3：补齐 scoring 反转观察阈值配置"
 effective_from: '2026-06-17'
 execution:
   commission_rate: 0.0003
@@ -131,6 +131,7 @@ scoring:
   upper_shadow_penalty: -14
   upper_shadow_threshold: 4
   upper_shadow_volume: 1.5
+  reversal_rsi_threshold: 42
   open_calm_bonus: 5
   open_calm_bias: 10
   open_calm_volume: 2.5
@@ -230,4 +231,4 @@ n_rebound:
   volume_shrink_ratio: 0.75
   ma5_deviation_max_pct: 8.0
   min_score: 14.0
-version: 1.1.2
+version: 1.1.3
