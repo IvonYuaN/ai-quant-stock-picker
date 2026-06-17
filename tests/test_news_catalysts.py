@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from types import SimpleNamespace
 
 import pandas as pd
 
@@ -197,8 +198,8 @@ def test_news_catalyst_merges_same_company_event_across_sources() -> None:
     assert report.events[0].source_count == 2
     assert report.events[0].verification == "多源交叉"
     markdown = format_catalyst_notification(report)
-    assert markdown.count("**1. 利好") == 1
-    assert "**2. 利好" not in markdown
+    assert markdown.count("- 1. 利好") == 1
+    assert "- 2. 利好" not in markdown
     assert "来源: 同花顺、富途" in markdown
 
 
@@ -359,46 +360,22 @@ def test_news_catalyst_notification_truncates_long_event_titles() -> None:
 
 
 def test_global_news_prioritizes_notice_sources(monkeypatch) -> None:
-    class FakeAk:
-        @staticmethod
-        def stock_info_global_cls() -> pd.DataFrame:
-            return pd.DataFrame(
+    fake_ak = SimpleNamespace(
+        fetch_global_news=lambda: [
+            pd.DataFrame(
                 [{"标题": f"普通快讯{i}", "来源": "财联社"} for i in range(5)]
-            )
-
-        @staticmethod
-        def stock_info_global_em() -> pd.DataFrame:
-            return pd.DataFrame()
-
-        @staticmethod
-        def stock_info_global_ths() -> pd.DataFrame:
-            return pd.DataFrame()
-
-        @staticmethod
-        def stock_info_global_futu() -> pd.DataFrame:
-            return pd.DataFrame()
-
-        @staticmethod
-        def stock_info_global_sina() -> pd.DataFrame:
-            return pd.DataFrame()
-
-        @staticmethod
-        def news_cctv() -> pd.DataFrame:
-            return pd.DataFrame([{"标题": "国常会部署设备更新", "来源": "央视"}])
-
-        @staticmethod
-        def news_economic_baidu() -> pd.DataFrame:
-            return pd.DataFrame()
-
-        @staticmethod
-        def stock_notice_report() -> pd.DataFrame:
-            return pd.DataFrame(
+            ),
+            pd.DataFrame([{"标题": "国常会部署设备更新", "来源": "央视"}]),
+            pd.DataFrame(
                 [{"公告标题": "公司签订重大订单", "公告类型": "公司公告"}]
-            )
+            ),
+        ],
+        fetch_symbol_news=lambda _symbol: (
+            pd.DataFrame(),
+        ),
+    )
 
-    import sys
-
-    monkeypatch.setitem(sys.modules, "akshare", FakeAk)
+    monkeypatch.setattr("aqsp.news.catalysts._AKSHARE_NEWS", fake_ak)
 
     df = _akshare_global_news(limit=3)
 

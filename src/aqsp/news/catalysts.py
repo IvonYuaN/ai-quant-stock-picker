@@ -10,6 +10,7 @@ from typing import Any, Literal
 
 import pandas as pd
 
+from aqsp.data.news_source import AkshareNewsSource, NewsSource
 from aqsp.core.time import now_shanghai, today_shanghai
 from aqsp.notification_style import compact_notification_markdown
 from aqsp.presentation import normalize_research_tone
@@ -44,7 +45,6 @@ class CatalystEvent:
     source_count: int = 1
     verification: str = "待证实"
     llm_review: str = ""
-    reason: str = ""
     url: str = ""
 
 
@@ -58,6 +58,14 @@ class CatalystReport:
 
 
 Fetcher = Callable[[str, int], pd.DataFrame]
+_AKSHARE_NEWS: NewsSource | None = None
+
+
+def _get_akshare_news_source() -> NewsSource:
+    global _AKSHARE_NEWS
+    if _AKSHARE_NEWS is None:
+        _AKSHARE_NEWS = AkshareNewsSource()
+    return _AKSHARE_NEWS
 
 
 POSITIVE_PATTERNS: tuple[tuple[str, str, int], ...] = (
@@ -250,7 +258,10 @@ def format_catalyst_notification(report: CatalystReport) -> str:
                 _safe_warning(item) for item in _display_warnings(report.warnings)
             )
         )
-    return compact_notification_markdown(normalize_research_tone("\n".join(lines)))
+    return compact_notification_markdown(
+        normalize_research_tone("\n".join(lines)),
+        max_section_items=8,
+    )
 
 
 def _source_status_label(status: str) -> str:
@@ -287,18 +298,18 @@ def _report_title_status(report: CatalystReport) -> str:
 
 
 def _event_card_lines(index: int, event: CatalystEvent) -> list[str]:
-    """把单个事件渲染成窄屏友好的卡片，不用表格，避免列被压成竖排单字。"""
-    impact = {"positive": "🟢 利好", "negative": "🔴 利空", "neutral": "⚪ 中性"}[
+    impact = {"positive": "利好", "negative": "利空", "neutral": "中性"}[
         event.impact
     ]
     target = _event_target(event)
     title = _short_text(event.title, 42)
     lines = [
-        f"**{index}. {impact} ｜ {_inline(target)}**",
+        f"- {index}. {impact} | {_inline(target)} | {_inline(event.category)}",
         f"- 结果: {title}",
-        f"- 类型: {_inline(event.category)} ｜ 可信度: {event.confidence:.0%}（{_inline(event.verification)}）",
-        f"- 来源: {_inline(event.source)} ｜ 时间: {_inline(event.published_at)}",
+        f"- 来源: {_inline(event.source)}",
     ]
+    if event.published_at:
+        lines.append(f"- 时间: {_inline(event.published_at)}")
     if event.url:
         lines.append(f"- 原文: {_inline(event.url)}")
     return lines
@@ -316,7 +327,7 @@ def _events_from_rows(
         event = _classify_title(title)
         if event is None:
             continue
-        category, impact, weight, reason = event
+        category, impact, weight, _reason = event
         events.append(
             CatalystEvent(
                 title=title,
@@ -329,7 +340,6 @@ def _events_from_rows(
                 weight=weight,
                 confidence=_base_confidence(row),
                 verification=_verification_label(row),
-                reason=reason,
                 url=row.get("url", ""),
             )
         )
@@ -370,7 +380,7 @@ def _classify_title(title: str) -> tuple[str, Impact, int, str] | None:
                 category,
                 "negative",
                 weight,
-                "先按风险事件复核，确认是否影响短线承接",
+                "",
             )
     for pattern, category, weight in POSITIVE_PATTERNS:
         if re.search(pattern, clean):
@@ -378,7 +388,7 @@ def _classify_title(title: str) -> tuple[str, Impact, int, str] | None:
                 category,
                 "positive",
                 weight,
-                "关注是否出现板块扩散、量价确认和连续发酵",
+                "",
             )
     return None
 
@@ -493,7 +503,6 @@ def _merge_events(events: Sequence[CatalystEvent]) -> tuple[CatalystEvent, ...]:
             verification="多源交叉"
             if existing.source != event.source
             else existing.verification,
-            reason=existing.reason,
             url=existing.url or event.url,
         )
     return tuple(merged)
@@ -514,15 +523,12 @@ def _review_events(
     review_limit = max(0, max_events)
     for event in events[:review_limit]:
         prompt = (
-            "你是A股消息面复核助手。请判断下面新闻标题是否可能是短线高影响事件。"
-            "只输出一行：可信度=0-100; 影响=利好/利空/中性; 理由=不超过30字。"
-            "如果只是标题党、传闻或缺少原始来源，请降低可信度。\n"
+            "判断下面新闻标题是否属于短线高影响事件。"
+            "只输出一行：可信度=0-100; 影响=利好/利空/中性。"
+            "标题党、传闻、缺少原始来源时降低可信度。\n"
             f"标题: {event.title}\n来源: {event.source}\n类型: {event.category}\n"
         )
-        fallback = (
-            f"可信度={event.confidence:.0%}; 影响={event.impact}; "
-            "理由=按来源和关键词判断"
-        )
+        fallback = f"可信度={event.confidence:.0%}; 影响={event.impact}"
         result = llm_call_or_fallback(
             prompt=prompt,
             fallback=fallback,
@@ -674,20 +680,6 @@ def _short_text(value: object, max_chars: int) -> str:
     return text[:max_chars] + ("..." if len(text) > max_chars else "")
 
 
-def _verification_hint(event: CatalystEvent) -> str:
-    if event.category == "外部冲击":
-        return "先找外交部、财政部、海外监管或权威媒体原文，再判断影响链条。"
-    if event.impact == "negative":
-        return "先找公告/监管/交易所原文；若属实，把它当风险而不是博弈点。"
-    if event.category in {"涨价/供需催化", "供给收缩"}:
-        return "看是否有报价单、产业媒体二次确认，以及同链条股票是否一起放量。"
-    if event.category in {"订单/需求验证", "业绩催化"}:
-        return "优先找公司公告或权威媒体原文，再看开盘承接是否强于大盘。"
-    if event.category == "政策催化":
-        return "先确认政策原文和受益环节，不把泛概念当成直接利好。"
-    return "先找原始来源，再看板块扩散和量价确认。"
-
-
 def _frame_warnings(df: pd.DataFrame, *, prefix: str) -> list[str]:
     warnings = (
         getattr(df, "attrs", {}).get("aqsp_warnings", ()) if df is not None else ()
@@ -757,19 +749,16 @@ def _fetch_optional_frame(
 
 
 def _akshare_symbol_news(symbol: str, limit: int) -> pd.DataFrame:
-    import akshare as ak
-
+    akshare_news = _get_akshare_news_source()
     frames: list[pd.DataFrame] = []
-    fetchers = (
-        lambda: ak.stock_news_em(symbol=symbol),
-        lambda: ak.stock_individual_notice_report(symbol=symbol),
-        lambda: ak.stock_research_report_em(symbol=symbol),
-    )
     warnings: list[str] = []
-    for fetch in fetchers:
-        df, warning = _fetch_optional_frame(fetch, timeout_seconds=6.0)
-        if warning:
-            warnings.append(warning)
+    fetched, warning = _fetch_optional_frame(
+        lambda: akshare_news.fetch_symbol_news(symbol),
+        timeout_seconds=6.0,
+    )
+    if warning:
+        warnings.append(warning)
+    for df in fetched if isinstance(fetched, list) else []:
         if df is not None and not df.empty:
             frames.append(df.head(limit))
     if not frames:
@@ -782,25 +771,17 @@ def _akshare_symbol_news(symbol: str, limit: int) -> pd.DataFrame:
 
 
 def _akshare_global_news(limit: int) -> pd.DataFrame:
-    import akshare as ak
-
-    fetchers = (
-        lambda: ak.stock_info_global_cls(),
-        lambda: ak.stock_info_global_em(),
-        lambda: ak.stock_info_global_ths(),
-        lambda: ak.stock_info_global_futu(),
-        lambda: ak.stock_info_global_sina(),
-        lambda: ak.news_cctv(),
-        lambda: ak.news_economic_baidu(),
-        lambda: ak.stock_notice_report(),
-    )
+    akshare_news = _get_akshare_news_source()
     frames: list[pd.DataFrame] = []
     warnings: list[str] = []
     per_source_limit = max(2, min(5, limit))
-    for fetch in fetchers:
-        df, warning = _fetch_optional_frame(fetch, timeout_seconds=6.0)
-        if warning:
-            warnings.append(warning)
+    fetched, warning = _fetch_optional_frame(
+        akshare_news.fetch_global_news,
+        timeout_seconds=6.0,
+    )
+    if warning:
+        warnings.append(warning)
+    for df in fetched if isinstance(fetched, list) else []:
         if df is not None and not df.empty:
             frames.append(df.head(per_source_limit))
     if not frames:
