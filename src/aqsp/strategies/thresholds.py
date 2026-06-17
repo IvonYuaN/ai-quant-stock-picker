@@ -99,6 +99,7 @@ class RiskThresholds:
     liquidity_threshold: float = 1000000
     single_stock_stop_pct: float = 0.08
     portfolio_stop_pct: float = 0.15
+    warning_threshold_pct: float = 0.05
     trailing_stop_pct: float = 0.05
     enable_trailing_stop: bool = True
 

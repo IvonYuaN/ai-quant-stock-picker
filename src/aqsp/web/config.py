@@ -1,5 +1,10 @@
 """仪表盘配置文件"""
 
+from aqsp.strategies.thresholds import load_thresholds
+
+
+_THRESHOLDS = load_thresholds()
+
 # Streamlit配置
 DASHBOARD_CONFIG = {
     "port": 8501,
@@ -37,11 +42,11 @@ DISPLAY_CONFIG = {
 
 # 风险阈值
 RISK_CONFIG = {
-    "single_stock_stop": -0.08,  # 单股-8%
-    "portfolio_stop": -0.15,     # 组合-15%
-    "warning_threshold": -0.05,  # 警告阈值-5%
-    "enable_trailing": True,
-    "trailing_stop_pct": 0.05,   # 5%移动止损
+    "single_stock_stop": -float(_THRESHOLDS.risk.single_stock_stop_pct),
+    "portfolio_stop": -float(_THRESHOLDS.risk.portfolio_stop_pct),
+    "warning_threshold": -float(_THRESHOLDS.risk.warning_threshold_pct),
+    "enable_trailing": bool(_THRESHOLDS.risk.enable_trailing_stop),
+    "trailing_stop_pct": float(_THRESHOLDS.risk.trailing_stop_pct),
 }
 
 # 策略配置（用于显示）
