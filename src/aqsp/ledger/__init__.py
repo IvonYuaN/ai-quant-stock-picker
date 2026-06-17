@@ -17,6 +17,11 @@ from aqsp.ledger.learner import (
     StrategyPerformance,
     StrategyDecayDetector,
 )
+from aqsp.ledger.runtime import (
+    compute_real_pnl,
+    count_independent_signal_days,
+    ledger_signal_date,
+)
 
 __all__ = [
     "ExecutionConfig",
@@ -32,4 +37,7 @@ __all__ = [
     "LearningResult",
     "StrategyPerformance",
     "StrategyDecayDetector",
+    "compute_real_pnl",
+    "count_independent_signal_days",
+    "ledger_signal_date",
 ]
