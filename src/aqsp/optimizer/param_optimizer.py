@@ -231,7 +231,9 @@ class BayesianOptimizer:
             best_ei = -float("inf")
             best_x = X_list[-1]
 
-            x0_candidates = [np.random.uniform(0, 1, n_dim) for _ in range(5)]
+            x0_candidates = [
+                np.array([rng.random() for _ in range(n_dim)]) for _ in range(5)
+            ]
             x0_candidates.append(X_list[best_idx])
             x0_candidates.append(X_list[-1])
 

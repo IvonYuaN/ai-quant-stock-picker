@@ -311,7 +311,7 @@ def _make_client() -> object:
             base_url = os.getenv("CUSTOM_BASE_URL")
 
         if not api_key:
-            api_key = os.getenv("API_KEY", "dummy")
+            raise ValueError(f"{provider.upper()}_API_KEY 未配置")
 
         return openai.OpenAI(
             api_key=api_key,
@@ -320,7 +320,10 @@ def _make_client() -> object:
     elif provider == "anthropic":
         import anthropic
 
-        return anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+        api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
+        if not api_key:
+            raise ValueError("ANTHROPIC_API_KEY 未配置")
+        return anthropic.Anthropic(api_key=api_key)
 
     raise ValueError(f"不支持的 LLM provider: {provider}")
 

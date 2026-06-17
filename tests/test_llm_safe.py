@@ -5,6 +5,7 @@ import pytest
 from aqsp.utils.llm_safe import (
     choose_siliconflow_model,
     get_siliconflow_free_models,
+    llm_call_or_fallback,
     _model_env_for_provider,
 )
 
@@ -59,3 +60,22 @@ def test_model_env_for_provider_prefers_agnes_model_over_global(
     monkeypatch.setenv("AGNES_MODEL", "agnes-2.0-flash")
 
     assert _model_env_for_provider("agnes") == "agnes-2.0-flash"
+
+
+def test_llm_call_falls_back_without_api_key(monkeypatch) -> None:
+    monkeypatch.setenv("ENABLE_LLM_BRIEFING", "true")
+    monkeypatch.setenv("LLM_PROVIDER", "glm")
+    monkeypatch.delenv("GLM_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("API_KEY", raising=False)
+
+    result = llm_call_or_fallback(
+        "prompt",
+        "fallback",
+        enable_llm=True,
+        caller="test",
+    )
+
+    assert result.degraded is True
+    assert result.text == "fallback"
+    assert "GLM_API_KEY 未配置" in result.reason
