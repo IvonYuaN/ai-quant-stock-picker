@@ -27,11 +27,16 @@ from aqsp.presentation import (
 from aqsp.strategies.closing_premium import PremiumSignal
 from aqsp.strategies.morning_breakout import BreakoutSignal
 
-NotifyMode = Literal["summary", "full"]
+NotifyMode = Literal["summary", "full", "fanout"]
 
 
 def _safe_mode(mode: str) -> NotifyMode:
-    return "full" if mode == "full" else "summary"
+    clean = str(mode).strip().lower()
+    if clean == "full":
+        return "full"
+    if clean == "fanout":
+        return "fanout"
+    return "summary"
 
 
 def _notification_research_tone(markdown: str) -> str:
@@ -100,7 +105,10 @@ def build_briefing_notification(
         )
 
     summary = briefing.generate_smart_summary().strip()
-    sections = {section.title: section.content.strip() for section in briefing.sections}
+    sections = {
+        _notification_section_title(section.title): section.content.strip()
+        for section in briefing.sections
+    }
     known_titles = {
         "主链总览",
         "今日结论",
@@ -112,8 +120,7 @@ def build_briefing_notification(
         "市场环境",
         "数据源状态",
         "数据情况",
-        "候选来龙去脉",
-        "候选证据链",
+        "候选说明",
         "题材热度",
         "线索分布",
     }
@@ -164,6 +171,13 @@ def build_briefing_notification(
     return _source_safe_notification(titled_body, source_status=source_status)
 
 
+def _notification_section_title(title: str) -> str:
+    clean = str(title).strip()
+    if clean in {"候选来龙去脉", "候选证据链"}:
+        return "候选说明"
+    return clean
+
+
 def _format_research_radar(section: str) -> str:
     lines = [
         line.strip() for line in section.splitlines() if line.strip().startswith("- ")
@@ -179,7 +193,6 @@ def _format_research_radar(section: str) -> str:
         "下一步补充研究",
         "当前前置缺口",
         "当前缺少条件",
-        "原则",
     )
     selected: list[str] = []
     for marker in preferred_markers:
@@ -209,8 +222,6 @@ def _rewrite_research_radar_line(line: str) -> str:
         detail = detail.replace("TUSHARE_TOKEN", "Tushare 凭证")
         detail = detail.replace("fixture", "回归样本")
         return f"- 当前还缺条件：{detail}"
-    if "原则" in clean:
-        return "- 原则：研究结论只做辅助说明，不直接改写系统评分。"
     return clean
 
 
@@ -317,7 +328,7 @@ def build_daily_run_notification(
         lead = debate_results[0]
         consensus = lead.final_consensus or lead.adjustment_reason or "无共识"
         lines.append(
-            f"**🗣️ 不同看法**：{lead.symbol} {lead.name} | "
+            f"**⚖️ 分歧结果**：{lead.symbol} {lead.name} | "
             f"{_debate_adjustment_label(lead.recommended_adjustment)} | {consensus}"
         )
 
@@ -334,7 +345,7 @@ def build_daily_run_notification(
         lines.extend(risk_lines)
 
     lines.extend(["", "## 快照", ""])
-    lines.extend(
+    snapshot_lines = (
         _daily_snapshot_table(
             run_date=run_date,
             tradable=tradable,
@@ -344,7 +355,18 @@ def build_daily_run_notification(
             circuit_breaker_reason=circuit_breaker_reason,
             is_cold_start=is_cold_start,
         )
+        if _safe_mode(mode) == "full"
+        else _daily_snapshot_bullets(
+            run_date=run_date,
+            tradable=tradable,
+            candidates=candidates,
+            portfolio_summary=portfolio_summary,
+            debate_results=debate_results,
+            circuit_breaker_reason=circuit_breaker_reason,
+            is_cold_start=is_cold_start,
+        )
     )
+    lines.extend(snapshot_lines)
 
     reading_order = _daily_reading_order_lines(
         tradable=tradable,
@@ -500,7 +522,7 @@ def _daily_reading_order_lines(
             reverse=True,
         )[0]
         lines.append(
-            "3. 🗣️ 最后看不同看法："
+            "3. ⚖️ 最后看分歧结果："
             f"{format_symbol_name(lead_debate.symbol, lead_debate.name)} "
             f"分歧 {lead_debate.disagreement_score:.0%}。"
         )
@@ -553,32 +575,28 @@ def _daily_risk_summary_lines(
         lead_name = portfolio_summary.watchlist[0]
 
     if circuit_breaker_reason:
-        lines.append(f"- **最大风险**：组合保护已触发，原因是 {circuit_breaker_reason}")
-        lines.append("- **今天先别做**：不要新增纸面再看，先把已有判断做完复盘。")
-        lines.append("- **什么情况下再推进**：等保护原因消退后，再恢复常规主链节奏。")
+        lines.append(f"- **主要风险**：组合保护已触发，原因是 {circuit_breaker_reason}")
+        lines.append("- **当前状态**：暂停新增纸面观察。")
+        lines.append("- **恢复条件**：保护原因消退后恢复常规主链节奏。")
         return lines
 
     if primary_blocker:
-        lines.append(f"- **最大风险**：当前主要阻塞是 {primary_blocker}")
+        lines.append(f"- **主要风险**：{primary_blocker}")
     elif lead_risk and lead_name:
-        lines.append(f"- **最大风险**：{lead_name} 目前先看 {lead_risk}")
+        lines.append(f"- **主要风险**：{lead_name} | {lead_risk}")
     elif is_cold_start:
-        lines.append("- **最大风险**：冷启动样本还不够，今天的结论稳定性仍偏弱。")
+        lines.append("- **主要风险**：冷启动样本不足，结论稳定性偏弱。")
     else:
-        lines.append(
-            "- **最大风险**：今天没有出现特别明确的硬阻塞，但仍要先看开盘承接。 "
-        )
+        lines.append("- **主要风险**：无明确硬阻塞，仍需看开盘承接。")
 
     if is_cold_start:
-        lines.append("- **今天先别做**：不要因为单日表现放大纸面仓位，先继续积累样本。")
+        lines.append("- **当前状态**：继续积累冷启动样本。")
     elif primary_blocker:
-        lines.append("- **今天先别做**：阻塞没解除前，不要把观察名单抬升成纸面复核。")
+        lines.append("- **当前状态**：阻塞未解除，保持观察名单。")
     elif portfolio_summary is not None and portfolio_summary.cash_reserve >= 0.8:
-        lines.append("- **今天先别做**：不要为了凑数量硬塞候选，现金留存本身就是结论。")
+        lines.append("- **当前状态**：现金留存较高，候选不足。")
     else:
-        lines.append(
-            "- **今天先别做**：不要跳过流动性和承接检查，盘中弱于假设就降回观察。"
-        )
+        lines.append("- **当前状态**：先核对流动性和承接。")
 
     if debate_results:
         lead_debate = sorted(
@@ -587,18 +605,14 @@ def _daily_risk_summary_lines(
             reverse=True,
         )[0]
         lines.append(
-            "- **什么情况下直接降回观察**："
+            "- **降级条件**："
             f"{format_symbol_name(lead_debate.symbol, lead_debate.name)} "
-            f"若开盘不及分歧讨论里的核心假设，就先只保留观察。"
+            "开盘不及分歧核心假设。"
         )
     elif lead_name:
-        lines.append(
-            f"- **什么情况下直接降回观察**：{lead_name} 若开盘承接、量能或价格位置弱于预期，就先退回观察。"
-        )
+        lines.append(f"- **降级条件**：{lead_name} 承接、量能或价格位置弱于预期。")
     else:
-        lines.append(
-            "- **什么情况下直接降回观察**：看不清时就先不推进，等待下一轮信号。"
-        )
+        lines.append("- **降级条件**：信号不清晰。")
     return lines
 
 
@@ -658,6 +672,55 @@ def _daily_snapshot_table(
             + " |"
         )
 
+    return rows
+
+
+def _daily_snapshot_bullets(
+    *,
+    run_date: str,
+    tradable: Sequence[PickResult],
+    candidates: Sequence[PickResult],
+    portfolio_summary: PortfolioDecisionSummary | None,
+    debate_results: Sequence[DebateResult],
+    circuit_breaker_reason: str,
+    is_cold_start: bool,
+) -> list[str]:
+    rows = [
+        f"- 数据: {_daily_snapshot_data_context(portfolio_summary, is_cold_start)} | {run_date}",
+        (
+            "- 候选: "
+            + _daily_snapshot_candidate_state(tradable, candidates, portfolio_summary)
+            + " | "
+            + _daily_snapshot_candidate_focus(tradable, candidates, portfolio_summary)
+        ),
+        (
+            "- 纸面: "
+            + _daily_snapshot_paper_state(portfolio_summary)
+            + " | "
+            + _daily_snapshot_paper_focus(portfolio_summary)
+        ),
+        (
+            "- 风险: "
+            + _daily_snapshot_risk_state(
+                circuit_breaker_reason,
+                candidates,
+                portfolio_summary,
+            )
+            + " | "
+            + _daily_snapshot_risk_focus(
+                circuit_breaker_reason,
+                candidates,
+                portfolio_summary,
+            )
+        ),
+    ]
+    if debate_results:
+        rows.append(
+            "- 分歧: "
+            + _daily_snapshot_debate_state(debate_results)
+            + " | "
+            + _daily_snapshot_debate_focus(debate_results)
+        )
     return rows
 
 
@@ -781,7 +844,7 @@ def _daily_snapshot_risk_focus(
 
 def _daily_snapshot_debate_state(results: Sequence[DebateResult]) -> str:
     lead = sorted(results, key=lambda item: item.disagreement_score, reverse=True)[0]
-    return f"🗣️ 最高分歧 {lead.disagreement_score:.0%}"
+    return f"⚖️ 最高分歧 {lead.disagreement_score:.0%}"
 
 
 def _daily_snapshot_debate_focus(results: Sequence[DebateResult]) -> str:
@@ -799,6 +862,12 @@ def _daily_candidate_table(
 ) -> list[str]:
     rows: list[str] = []
     picks = tuple(tradable) if tradable else tuple(candidates)
+    if _safe_mode(mode) != "full":
+        return _daily_candidate_bullets(
+            picks,
+            portfolio_summary,
+            tradable=bool(tradable),
+        )
     if not picks:
         if portfolio_summary is not None and portfolio_summary.allocations:
             lead = portfolio_summary.allocations[0]
@@ -833,6 +902,48 @@ def _daily_candidate_table(
     for index, pick in enumerate(picks[:top_n], start=1):
         rows.append(_daily_candidate_table_row(index, pick, tradable=bool(tradable)))
 
+    return rows
+
+
+def _daily_candidate_bullets(
+    picks: Sequence[PickResult],
+    portfolio_summary: PortfolioDecisionSummary | None,
+    *,
+    tradable: bool,
+) -> list[str]:
+    if not picks:
+        if portfolio_summary is not None and portfolio_summary.allocations:
+            lead = portfolio_summary.allocations[0]
+            return [
+                (
+                    f"- 1. {format_symbol_name(lead.symbol, lead.name)} | "
+                    f"比例参考 | 纸面 {lead.weight:.0%} | 先核对开盘承接和流动性"
+                )
+            ]
+        return ["- 暂无清晰候选，等待下一轮信号。"]
+
+    rows: list[str] = []
+    for index, pick in enumerate(picks[:3], start=1):
+        symbol_name = format_symbol_name(pick.symbol, pick.name)
+        status = str(pick.metrics.get("candidate_status", "") or "")
+        blocker = _candidate_blocker(pick)
+        if blocker:
+            action = "阻塞"
+            key = blocker
+            status = status or "观察阻塞"
+        elif tradable:
+            action = "纸面复核"
+            key = pick.reasons[0] if pick.reasons else "先看开盘承接"
+            status = status or "纸面复核"
+        else:
+            action = "继续观察"
+            key = _candidate_next_step(pick) or (
+                pick.reasons[0] if pick.reasons else "等更强的确认"
+            )
+            status = status or "继续观察"
+        rows.append(
+            f"- {index}. {symbol_name} | {status} | {pick.score:.0f} | {action}: {key}"
+        )
     return rows
 
 
@@ -1242,12 +1353,12 @@ def _daily_watch_action_line(
 
 def _daily_debate_action_line(result: DebateResult) -> str:
     if result.recommended_adjustment == "lower":
-        return f"{result.symbol} {result.name} 的辩论偏谨慎，若开盘不及假设，优先降级观察或延后纸面再看"
+        return f"{result.symbol} {result.name} 分歧结果偏谨慎，若开盘不及假设，优先降级观察或延后纸面再看"
     if result.recommended_adjustment == "raise":
-        return f"{result.symbol} {result.name} 获辩论加分，可作为优先确认对象，但仍需尊重开盘流动性"
+        return f"{result.symbol} {result.name} 分歧结果偏积极，可作为优先确认对象，但仍需尊重开盘流动性"
     if result.disagreement_score >= 0.5:
         return f"{result.symbol} {result.name} 多空分歧较大，除非开盘明显走强，否则以观察为主"
-    return f"{result.symbol} {result.name} 辩论分歧可控，可按主链节奏正常跟踪"
+    return f"{result.symbol} {result.name} 分歧可控，可按主链节奏正常跟踪"
 
 
 def _format_monitor_results(results: Sequence[MonitorResult]) -> list[str]:
@@ -1266,13 +1377,13 @@ def _monitor_actions(
     if critical:
         first = critical[0]
         return [
-            f"1. 先处理 `{first.name}`，避免后续任务继续误报或停摆。",
-            "2. 暂停依赖该检查项的自动链路，问题排除后再恢复通知。",
+            f"1. 处理: 检查 `{first.name}`。",
+            "2. 影响: 相关自动链路保持降噪。",
         ]
     if warnings:
         return [
-            f"1. 优先再看 `{warnings[0].name}` 的输入源或配置。",
-            "2. 本次结果可观察，但不要直接放大纸面仓位。",
+            f"1. 处理: 检查 `{warnings[0].name}` 的输入源或配置。",
+            "2. 状态: 告警未升级为 critical。",
         ]
     return ["1. 当前无需动作。"]
 

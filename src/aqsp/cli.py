@@ -64,7 +64,15 @@ from aqsp.notify_templates import (
     build_closing_review_notification,
     build_morning_breakout_notification,
 )
-from aqsp.notifier import notify_markdown, print_notify_results
+from aqsp.notification_runtime import (
+    dispatch_notification_once as _dispatch_notification_once_impl,
+)
+from aqsp.notifier import (
+    notify_gate_markdown,
+    notify_markdown as _notify_markdown_default,
+    notify_markdown_via_config,
+    print_notify_results,
+)
 from aqsp.research.summary import load_research_summary
 from aqsp.research_engine import (
     ENGINE_CHOICES,
@@ -74,6 +82,11 @@ from aqsp.research_engine import (
 from aqsp.regime.detector import RegimeDetector
 from aqsp.report import to_dataframe, to_markdown
 from aqsp.risk.circuit_breaker import CircuitBreaker
+from aqsp.runtime.gate_notify import (
+    build_gate_notification_markdown,
+    mark_gate_notification_sent,
+    should_send_gate_notification,
+)
 from aqsp.strategy import screen_universe
 from aqsp.strategies.thresholds import load_thresholds
 from aqsp.universe import DEFAULT_SYMBOLS
@@ -93,6 +106,7 @@ from aqsp.models import PickResult
 from aqsp.presentation import format_symbol_name, has_meaningful_name
 
 LOGGER = logging.getLogger(__name__)
+notify_markdown = _notify_markdown_default
 
 
 def serialize_debate_result(result: DebateResult) -> dict:
@@ -173,9 +187,54 @@ WALKFORWARD_SOURCE_CHOICES = [
 HELDOUT_TRAIN_CUTOFF = "2024-12-31"
 # 宪法 §1.3 #12/#14：双门 gate 的 sidecar 文件
 WALKFORWARD_GATE_PATH = "data/walkforward_gate.json"
+GATE_NOTIFY_STATE_PATH = "data/gate_notify_state.json"
+NOTIFY_STATE_PATH = "data/notify_state.json"
 # 冷启动期最低独立信号日。宪法 §1.3 #7/#14 明确要求 30 个独立信号日。
 # 可用环境变量 AQSP_COLD_START_MIN_DAYS 覆盖（仅供测试加速，生产须为 30）。
 COLD_START_MIN_DAYS = int(os.getenv("AQSP_COLD_START_MIN_DAYS", "30"))
+
+
+def _resolve_runtime_state_path(path: str) -> str:
+    state_path = Path(path)
+    if state_path.is_absolute():
+        return str(state_path)
+    project_root = Path(__file__).resolve().parents[2]
+    return str(project_root / state_path)
+
+
+def _notify_via_config(markdown: str, *, mode: str) -> list:
+    if notify_markdown is not _notify_markdown_default:
+        return notify_markdown(markdown)
+    return notify_markdown_via_config(markdown, mode=mode)
+
+
+def _dispatch_notification_once(
+    markdown: str,
+    *,
+    prefix: str,
+    mode: str,
+    kind: str,
+    summary_markdown: str | None = None,
+) -> list:
+    if notify_markdown is not _notify_markdown_default:
+        payload = (
+            summary_markdown
+            if str(mode).strip().lower() == "summary" and summary_markdown
+            else markdown
+        )
+        results = notify_markdown(payload)
+        print_notify_results(results, prefix=prefix)
+        return results
+    return _dispatch_notification_once_impl(
+        markdown,
+        mode=mode,
+        prefix=prefix,
+        kind=kind,
+        state_path=_resolve_runtime_state_path(
+            os.getenv("AQSP_NOTIFY_STATE_PATH", NOTIFY_STATE_PATH)
+        ),
+        summary_markdown=summary_markdown,
+    )
 
 
 def _extract_meaningful_name_from_frame(frame: pd.DataFrame, symbol: str) -> str:
@@ -2236,30 +2295,45 @@ def _format_notification_gate_block(
     ]
     lines.extend(f"> - {reason}" for reason in gate_reasons)
     lines.append(">")
-    lines.append("> 解锁建议：")
+    lines.append("> 处理项：")
     lines.extend(f"> - {action}" for action in next_actions)
     lines.append("")
     return "\n".join(lines) + "\n"
 
 
-def _build_notification_gate_alert(
+def _gate_notification_allowed(task_id: str | None = None) -> bool:
+    value = task_id if task_id is not None else os.getenv("AQSP_RUN_TASK_ID", "")
+    return str(value or "").strip().lower() in {"daily", "scheduled", "manual"}
+
+
+def _should_send_gate_notification(
     *,
-    run_date: str,
+    gate_ok: bool,
     gate_reasons: list[str],
-    next_actions: list[str],
-) -> str:
-    lines = [
-        f"# 通知未放行-{run_date}",
-        "",
-        "## 结论",
-        "",
-        "- 本次正常通知已被双门 gate 阻止。",
-    ]
-    if gate_reasons:
-        lines.append(f"- 原因: {'；'.join(gate_reasons[:2])}")
-    if next_actions:
-        lines.append(f"- 处理: {next_actions[0]}")
-    return "\n".join(lines)
+    run_date: str,
+) -> bool:
+    return should_send_gate_notification(
+        gate_ok=gate_ok,
+        gate_reasons=gate_reasons,
+        state_path=_resolve_runtime_state_path(
+            os.getenv("AQSP_GATE_NOTIFY_STATE_PATH", GATE_NOTIFY_STATE_PATH)
+        ),
+        run_date=run_date,
+    )
+
+
+def _mark_gate_notification_sent(
+    *,
+    gate_reasons: list[str],
+    run_date: str,
+) -> None:
+    mark_gate_notification_sent(
+        gate_reasons=gate_reasons,
+        state_path=_resolve_runtime_state_path(
+            os.getenv("AQSP_GATE_NOTIFY_STATE_PATH", GATE_NOTIFY_STATE_PATH)
+        ),
+        run_date=run_date,
+    )
 
 
 def run_screen(args: argparse.Namespace) -> int:
@@ -3049,24 +3123,57 @@ def run_scheduled(args: argparse.Namespace) -> int:
         print("⛔ 双门未达，--notify 自动失效。原因：")
         for r in gate_reasons:
             print(f"   - {r}")
-        print("📌 解锁通知建议：")
+        print("📌 处理项：")
         for action in next_actions:
             print(f"   - {action}")
         # 在 markdown 头部加警告（§1.3 #13）
         markdown = (
             _format_notification_gate_block(gate_reasons, next_actions) + markdown
         )
-        try:
-            gate_results = notify_markdown(
-                _build_notification_gate_alert(
-                    run_date=latest.isoformat(),
-                    gate_reasons=gate_reasons,
-                    next_actions=next_actions,
+        if notify_markdown is not _notify_markdown_default:
+            try:
+                gate_results = notify_markdown(
+                    build_gate_notification_markdown(
+                        run_date=latest.isoformat(),
+                        gate_reasons=gate_reasons,
+                        next_actions=next_actions,
+                    )
                 )
-            )
-            print_notify_results(gate_results, prefix="gate notify")
-        except Exception as exc:
-            print(f"gate notify failed: {exc}")
+                print_notify_results(gate_results, prefix="gate notify")
+            except Exception as exc:
+                print(f"gate notify failed: {exc}")
+        elif not _gate_notification_allowed():
+            print("gate notify: skipped outside daily task")
+        else:
+            run_date = latest.isoformat()
+            try:
+                should_send_gate = _should_send_gate_notification(
+                    gate_ok=gate_ok,
+                    gate_reasons=gate_reasons,
+                    run_date=run_date,
+                )
+            except Exception as exc:
+                print(f"gate notify state failed: {exc}")
+                should_send_gate = False
+            if should_send_gate:
+                try:
+                    gate_results = notify_gate_markdown(
+                        build_gate_notification_markdown(
+                            run_date=run_date,
+                            gate_reasons=gate_reasons,
+                            next_actions=next_actions,
+                        )
+                    )
+                    print_notify_results(gate_results, prefix="gate notify")
+                    if any(result.ok for result in gate_results):
+                        _mark_gate_notification_sent(
+                            gate_reasons=gate_reasons,
+                            run_date=run_date,
+                        )
+                except Exception as exc:
+                    print(f"gate notify failed: {exc}")
+            else:
+                print("gate notify: skipped duplicate")
         args.notify = False
     # 写报告（可能包含警告）
     if report_path:
@@ -3077,8 +3184,27 @@ def run_scheduled(args: argparse.Namespace) -> int:
     print(markdown)
 
     if args.notify:
-        results = notify_markdown(
-            build_daily_run_notification(
+        daily_markdown = build_daily_run_notification(
+            run_date=latest.isoformat(),
+            tradable=tradable,
+            candidates=picks,
+            portfolio_summary=portfolio_summary,
+            debate_results=debate_results,
+            actual_source=actual_source,
+            source_health_label=source_health_label,
+            source_health_message=source_health_message,
+            requested_source=args.source,
+            cold_start_days=cold_start_days,
+            cold_start_min_days=COLD_START_MIN_DAYS,
+            is_cold_start=is_cold_start,
+            circuit_breaker_reason=status.reason if status.triggered else "",
+            snapshot_diff=diff,
+            mode=load_runtime_config().notify_mode,
+            title_label=str(
+                os.environ.get("AQSP_NOTIFY_TITLE_LABEL", "") or "收盘研究日报"
+            ).strip(),
+        )
+        daily_summary = build_daily_run_notification(
                 run_date=latest.isoformat(),
                 tradable=tradable,
                 candidates=picks,
@@ -3093,13 +3219,18 @@ def run_scheduled(args: argparse.Namespace) -> int:
                 is_cold_start=is_cold_start,
                 circuit_breaker_reason=status.reason if status.triggered else "",
                 snapshot_diff=diff,
-                mode=load_runtime_config().notify_mode,
+                mode="summary",
                 title_label=str(
                     os.environ.get("AQSP_NOTIFY_TITLE_LABEL", "") or "收盘研究日报"
                 ).strip(),
             )
+        _dispatch_notification_once(
+            daily_markdown,
+            mode=load_runtime_config().notify_mode,
+            prefix="notify",
+            kind=f"daily:{latest.isoformat()}",
+            summary_markdown=daily_summary,
         )
-        print_notify_results(results, prefix="notify")
     return 2 if status.triggered else 0
 
 
@@ -3725,7 +3856,12 @@ def run_news_catalysts(args: argparse.Namespace) -> int:
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(markdown, encoding="utf-8")
     if args.notify:
-        print_notify_results(notify_markdown(markdown), prefix="news notify")
+        _dispatch_notification_once(
+            markdown,
+            mode=load_runtime_config().notify_mode,
+            prefix="news notify",
+            kind=f"news-catalysts:{today_shanghai().isoformat()}",
+        )
     return 0
 
 
@@ -4259,12 +4395,13 @@ def run_morning_breakout(args: argparse.Namespace) -> int:
     if args.notify and signals:
         try:
             print_notify_results(
-                notify_markdown(
+                _notify_via_config(
                     build_morning_breakout_notification(
                         signals,
                         mode=load_runtime_config().notify_mode,
                         top_n=args.top,
-                    )
+                    ),
+                    mode=load_runtime_config().notify_mode,
                 ),
                 prefix="morning notify",
             )
@@ -4396,12 +4533,13 @@ def run_closing_premium(args: argparse.Namespace) -> int:
     if args.notify and signals:
         try:
             print_notify_results(
-                notify_markdown(
+                _notify_via_config(
                     build_closing_premium_notification(
                         signals,
                         mode=load_runtime_config().notify_mode,
                         top_n=args.top,
-                    )
+                    ),
+                    mode=load_runtime_config().notify_mode,
                 ),
                 prefix="closing notify",
             )
@@ -4507,12 +4645,13 @@ def run_closing_review(args: argparse.Namespace) -> int:
     if args.notify:
         try:
             print_notify_results(
-                notify_markdown(
+                _notify_via_config(
                     build_closing_review_notification(
                         review=review if not args.weekly else None,
                         weekly_summary=summary if args.weekly else None,
                         mode=load_runtime_config().notify_mode,
-                    )
+                    ),
+                    mode=load_runtime_config().notify_mode,
                 ),
                 prefix="review notify",
             )

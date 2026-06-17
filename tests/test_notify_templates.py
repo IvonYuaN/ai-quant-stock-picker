@@ -116,7 +116,7 @@ def test_build_briefing_notification_includes_research_radar_when_summary_mode()
     assert "已纳入观察但不直接打分：4" in markdown
     assert "下一步优先补齐：baostock [P1] - 补回归样本" in markdown
     assert "当前还缺条件：tushare - 缺少运行凭证 (Tushare 凭证)" in markdown
-    assert "不直接改写系统评分" in markdown
+    assert "不直接改写系统评分" not in markdown
 
 
 def test_build_briefing_notification_returns_full_markdown_when_full_mode() -> None:
@@ -210,20 +210,17 @@ def test_build_daily_run_notification_includes_allocation_guidance() -> None:
     assert "# 收盘研究日报-2026-06-04" in markdown
     assert "## 结论" in markdown
     assert "- 今日判断:" in markdown
-    assert "- 不同看法:" in markdown
+    assert "- ⚖ 分歧结果: 300750 宁德时代" in markdown
     assert "## 风险" in markdown
-    assert "| 项目 | 结论 | 先看什么 |" in markdown
-    assert "| 候选 | 比例参考 1 | 300750 宁德时代 |" in markdown
-    assert "| 纸面现实 | 纸面配仓 20% | 300750 宁德时代 20% |" in markdown
-    assert (
-        "| 分歧 | 最高分歧 42% | 300750 宁德时代：趋势强但仍需确认开盘承接 |"
-        in markdown
-    )
+    assert "| 项目 | 结论 | 先看什么 |" not in markdown
+    assert "- 候选: 比例参考 1 | 300750 宁德时代" in markdown
+    assert "- 纸面: 纸面配仓 20% | 300750 宁德时代 20%" in markdown
+    assert "- 分歧: ⚖ 最高分歧 42% | 300750 宁德时代：趋势强但仍需确认开盘承接" in markdown
     assert "## 顺序" in markdown
     assert markdown.index("## 快照") < markdown.index("## 顺序")
     assert "1. 先看纸面分配：300750 宁德时代，核对开盘承接和流动性。" in markdown
     assert "2. 再看候选一览：确认状态、分数、关键点是否一致。" in markdown
-    assert "3. 最后看不同看法：300750 宁德时代 分歧 42%。" in markdown
+    assert "3. ⚖ 最后看分歧结果：300750 宁德时代 分歧 42%。" in markdown
     assert markdown.index("## 顺序") < markdown.index("## 候选")
     assert "## 纸面" in markdown
     assert "300750 宁德时代 20% | 主链评分 72.0" in markdown
@@ -287,12 +284,9 @@ def test_build_daily_run_notification_surfaces_watchlist_blockers_when_no_alloca
     assert "- 需要重点确认: 板块集中度过高，压低科技暴露" in markdown
     assert "- 现在卡在哪: 000021 深科技: 板块集中度过高，压低科技暴露" in markdown
     assert "## 风险" in markdown
-    assert "| 候选 | 继续观察名单 2 | 000021 深科技、000338 潍柴动力 |" in markdown
-    assert "| 纸面现实 | 继续观察优先 | 000021 深科技、000338 潍柴动力 |" in markdown
-    assert (
-        "| 风险/阻塞 | 1 条阻塞 | 000021 深科技: 板块集中度过高，压低科技暴露 |"
-        in markdown
-    )
+    assert "- 候选: 继续观察名单 2 | 000021 深科技、000338 潍柴动力" in markdown
+    assert "- 纸面: 继续观察优先 | 000021 深科技、000338 潍柴动力" in markdown
+    assert "- 风险: 1 条阻塞 | 000021 深科技: 板块集中度过高，压低科技暴露" in markdown
     assert "## 顺序" in markdown
     assert "1. 先看空档：今日无清晰候选，不为了凑数量推进。" in markdown
     assert "2. 再看风险/阻塞：000021 深科技: 板块集中度过高，压低科技暴露" in markdown
@@ -420,18 +414,18 @@ def test_build_daily_run_notification_lists_watch_candidates_when_not_tradable()
 
     _assert_clean_notification(markdown)
     assert "## 候选" in markdown
-    assert "| # | 标的 | 状态 | 分数 | 处理 | 关键点 |" in markdown
+    assert "| # | 标的 | 状态 | 分数 | 处理 | 关键点 |" not in markdown
     assert (
-        "| 1 | 688981 中芯国际 | 新晋 | -9 | 继续观察 | 等待量价继续走强后，再评估是否转入纸面复核名单；复核 高优先级 / 盘中走强后 |"
+        "- 1. 688981 中芯国际 | 新晋 | -9 | 继续观察: 等待量价继续走强后，再评估是否转入纸面复核名单"
         in markdown
     )
     assert (
-        "| 2 | 000001 平安银行 | 观察阻塞 | -18 | 等阻塞解除 | 板块集中度过高，压低银行暴露 |"
+        "- 2. 000001 平安银行 | 观察阻塞 | -18 | 阻塞: 板块集中度过高，压低银行暴露"
         in markdown
     )
-    assert "| 候选 | 继续观察 2 / 阻塞 1 | 688981 中芯国际 |" in markdown
+    assert "- 候选: 继续观察 2 / 阻塞 1 | 688981 中芯国际" in markdown
     assert (
-        "| 风险/阻塞 | 1 条阻塞 | 000001 平安银行：板块集中度过高，压低银行暴露 |"
+        "- 风险: 1 条阻塞 | 000001 平安银行：板块集中度过高，压低银行暴露"
         in markdown
     )
     assert (
@@ -474,7 +468,7 @@ def test_build_daily_run_notification_includes_candidate_status_for_tradable_pic
         "- 先看对象: 300750 宁德时代 | 延续上升 | 73分 | 参考 220.5 / 最多亏到 214.2 / 先看目标 238"
         in markdown
     )
-    assert "| 1 | 300750 宁德时代 | 延续上升 | 73 | 纸面复核 | 趋势延续 |" in markdown
+    assert "- 1. 300750 宁德时代 | 延续上升 | 73 | 纸面复核: 趋势延续" in markdown
     assert "买 220.5" not in markdown
 
 
@@ -513,7 +507,7 @@ def test_build_daily_run_notification_surfaces_default_review_for_new_watch_pick
         source_health_message="eastmoney 健康",
     )
 
-    assert "复核 高优先级 / 盘中走强后" in markdown
+    assert "高优先级 / 盘中走强后" in markdown
     assert (
         "1. 先盯 688981 中芯国际，等待量价继续走强后，再评估是否转入纸面复核名单（高优先级 / 盘中走强后）。"
         in markdown

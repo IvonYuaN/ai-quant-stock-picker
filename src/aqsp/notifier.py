@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from urllib.parse import quote
 from typing import Any
 
 import requests
@@ -16,6 +17,20 @@ class NotifyResult:
     channel: str
     ok: bool
     detail: str
+
+
+def _env_flag(name: str) -> bool:
+    return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _should_suppress_real_notifications() -> bool:
+    if _env_flag("AQSP_ALLOW_REAL_NOTIFICATIONS"):
+        return False
+    if os.getenv("PYTEST_CURRENT_TEST", "").strip():
+        return False
+    if _env_flag("CODEX_CI") or os.getenv("CODEX_THREAD_ID", "").strip():
+        return True
+    return False
 
 
 def format_notify_results(
@@ -83,27 +98,124 @@ def prepend_source_status_banner(
 def notify_markdown(markdown: str) -> list[NotifyResult]:
     markdown = compact_notification_markdown(markdown)
     results: list[NotifyResult] = []
-    for sender in (
-        _send_telegram,
-        _send_serverchan,
-        _send_wechat,
-        _send_feishu,
-        _send_dingtalk,
-        _send_bark,
-        _send_pushplus,
-        _send_discord,
-        _send_slack,
-        _send_generic_webhook,
-    ):
+    for sender in _all_senders():
         result = sender(markdown)
         if result is not None:
             results.append(result)
     return results
 
 
+def notify_markdown_via_config(
+    markdown: str,
+    *,
+    mode: str,
+    summary_markdown: str | None = None,
+) -> list[NotifyResult]:
+    normalized_mode = str(mode).strip().lower()
+    if normalized_mode == "summary":
+        summary_body = compact_notification_markdown(summary_markdown or markdown)
+        results = _notify_with_senders(summary_body, _summary_senders())
+        if results:
+            return results
+        results = _notify_with_senders(summary_body, _full_senders())
+        return results
+
+    if normalized_mode == "full":
+        return notify_markdown(markdown)
+
+    summary_body = compact_notification_markdown(summary_markdown or markdown)
+    full_body = compact_notification_markdown(markdown)
+    results = _notify_with_senders(summary_body, _summary_senders())
+    results.extend(_notify_with_senders(full_body, _full_senders()))
+    return results
+
+
+def notify_gate_markdown(markdown: str) -> list[NotifyResult]:
+    markdown = compact_notification_markdown(markdown)
+    results = _notify_with_senders(markdown, _summary_senders())
+    if results:
+        return results[:1]
+    results = _notify_with_senders(markdown, _full_senders())
+    if results:
+        return results[:1]
+    return []
+
+
 def send_notification(title: str, content: str) -> list[NotifyResult]:
     markdown = f"# {title}\n\n{content}".strip()
-    return notify_markdown(markdown)
+    from aqsp.config import load_runtime_config
+
+    return notify_markdown_via_config(markdown, mode=load_runtime_config().notify_mode)
+
+
+def _summary_senders():
+    return (
+        _send_serverchan,
+        _send_wechat,
+        _send_bark,
+        _send_pushplus,
+        _send_telegram,
+    )
+
+
+def _full_senders():
+    return (
+        _send_feishu,
+        _send_dingtalk,
+        _send_discord,
+        _send_slack,
+        _send_generic_webhook,
+    )
+
+
+def _all_senders():
+    return (
+        _send_telegram,
+        _send_serverchan,
+        _send_wechat,
+        *_full_senders(),
+        _send_bark,
+        _send_pushplus,
+    )
+
+
+def configured_notification_channels() -> tuple[str, ...]:
+    channels: list[str] = []
+    if os.getenv("SERVERCHAN_SENDKEY", "").strip():
+        channels.append("serverchan")
+    if os.getenv("WECHAT_WEBHOOK_URL", "").strip():
+        channels.append("wechat")
+    if os.getenv("BARK_URL", "").strip():
+        channels.append("bark")
+    if os.getenv("PUSHPLUS_TOKEN", "").strip():
+        channels.append("pushplus")
+    if os.getenv("TELEGRAM_BOT_TOKEN", "").strip() and os.getenv(
+        "TELEGRAM_CHAT_ID", ""
+    ).strip():
+        channels.append("telegram")
+    if os.getenv("FEISHU_WEBHOOK_URL", "").strip():
+        channels.append("feishu")
+    if os.getenv("DINGTALK_WEBHOOK_URL", "").strip():
+        channels.append("dingtalk")
+    if os.getenv("DISCORD_WEBHOOK_URL", "").strip():
+        channels.append("discord")
+    if os.getenv("SLACK_WEBHOOK_URL", "").strip():
+        channels.append("slack")
+    if os.getenv("GENERIC_WEBHOOK_URL", "").strip():
+        channels.append("generic_webhook")
+    return tuple(channels)
+
+
+def _notify_with_senders(
+    markdown: str,
+    senders: tuple,
+) -> list[NotifyResult]:
+    results: list[NotifyResult] = []
+    for sender in senders:
+        result = sender(markdown)
+        if result is not None:
+            results.append(result)
+    return results
 
 
 def _send_telegram(markdown: str) -> NotifyResult | None:
@@ -185,7 +297,7 @@ def _send_bark(markdown: str) -> NotifyResult | None:
     if not url.endswith("/"):
         url += "/"
     title = _notification_title(markdown)
-    url = f"{url}{title}/{markdown[:500]}"
+    url = f"{url}{quote(title, safe='')}/{quote(markdown[:500], safe='')}"
     return _post("bark", url)
 
 
@@ -268,9 +380,61 @@ def _send_generic_webhook(markdown: str) -> NotifyResult | None:
 
 
 def _post(channel: str, url: str, **kwargs: object) -> NotifyResult:
+    if _should_suppress_real_notifications():
+        return NotifyResult(channel, True, "suppressed in Codex session")
     try:
         response = requests.post(url, timeout=15, **kwargs)
         response.raise_for_status()
     except requests.RequestException as exc:
         return NotifyResult(channel, False, str(exc))
+    business_error = _extract_business_error(channel, response)
+    if business_error:
+        return NotifyResult(channel, False, business_error)
     return NotifyResult(channel, True, f"HTTP {response.status_code}")
+
+
+def _extract_business_error(channel: str, response: requests.Response) -> str:
+    content_type = response.headers.get("content-type", "").lower()
+    data: Any | None = None
+    if "json" in content_type:
+        try:
+            data = response.json()
+        except ValueError:
+            data = None
+    else:
+        try:
+            data = response.json()
+        except ValueError:
+            return ""
+    if not isinstance(data, dict):
+        return ""
+
+    if channel == "serverchan":
+        code = data.get("code")
+        if code not in (None, 0):
+            return f"serverchan code={code}: {data.get('message') or data.get('info') or 'unknown error'}"
+    elif channel == "wechat":
+        code = data.get("errcode")
+        if code not in (None, 0):
+            return f"wechat errcode={code}: {data.get('errmsg') or 'unknown error'}"
+    elif channel == "feishu":
+        code = data.get("code")
+        if code not in (None, 0):
+            return f"feishu code={code}: {data.get('msg') or data.get('message') or 'unknown error'}"
+    elif channel == "dingtalk":
+        code = data.get("errcode")
+        if code not in (None, 0):
+            return f"dingtalk errcode={code}: {data.get('errmsg') or 'unknown error'}"
+    elif channel == "pushplus":
+        code = data.get("code")
+        if code not in (None, 200):
+            return f"pushplus code={code}: {data.get('msg') or data.get('message') or 'unknown error'}"
+    elif channel == "telegram":
+        if data.get("ok") is False:
+            return f"telegram: {data.get('description') or 'unknown error'}"
+    elif channel == "generic_webhook":
+        if any(key in data for key in ("success", "ok")):
+            success = data.get("success", data.get("ok"))
+            if success is False:
+                return f"generic_webhook: {data.get('message') or data.get('error') or 'unknown error'}"
+    return ""

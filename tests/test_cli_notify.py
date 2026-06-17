@@ -720,7 +720,7 @@ def test_run_scheduled_sends_gate_block_alert_when_notify_is_disabled_by_gate(
     assert exit_code == 0
     assert seen
     assert seen[0].startswith(f"# 通知未放行-{latest}")
-    assert "本次正常通知已被双门 gate 阻止" in seen[0]
+    assert "本次正常通知未放行" in seen[0]
     assert "冷启动未满 30 天" in seen[0]
     assert "继续按日运行主链" in seen[0]
     report_text = (tmp_path / "latest.md").read_text(encoding="utf-8")
@@ -1465,8 +1465,8 @@ def test_run_scheduled_gate_block_adds_actionable_unlock_guidance(
     report = (tmp_path / "latest.md").read_text(encoding="utf-8")
 
     assert exit_code == 0
-    assert "解锁建议：" in report
-    assert "aqsp walkforward --source sqlite_db --end 2024-12-31" in report
+    assert "处理项：" in report
+    assert "刷新 gate" in report
     assert "当前还差 27 天" in report
     assert "。；" not in report
 
@@ -2488,16 +2488,16 @@ def test_run_scheduled_annotates_candidate_status_in_report_and_notify(
     assert exit_code == 0
     assert seen
     assert "## 候选" in seen[0]
-    assert "| # | 标的 | 状态 | 分数 | 处理 | 关键点 |" in seen[0]
+    assert "| # | 标的 | 状态 | 分数 | 处理 | 关键点 |" not in seen[0]
     assert (
-        "| 1 | 688981 中芯国际 | 新晋 | -9 | 继续观察 | 等待量价继续走强后，再评估是否转入纸面复核名单；复核 高优先级 / 盘中走强后 |"
+        "- 1. 688981 中芯国际 | 新晋 | -9 | 继续观察: 等待量价继续走强后，再评估是否转入纸面复核名单"
         in seen[0]
     )
     assert (
         "先盯 688981 中芯国际，等待量价继续走强后，再评估是否转入纸面复核名单（高优先级 / 盘中走强后）。"
         in seen[0]
     )
-    assert "| 2 | 000001 平安银行 | 继续观察 | -18 | 继续观察 | 估值防守 |" in seen[0]
+    assert "- 2. 000001 平安银行 | 继续观察 | -18 | 继续观察: 估值防守" in seen[0]
     assert "## 📋" not in seen[0]
     assert (
         "- 重点 1: 688981 中芯国际 | 继续观察名单 | 新晋 | 评分 -9.0 | 处理 维持原排序"
