@@ -1163,6 +1163,8 @@ class TestCLIPoolSelection:
         assert "## 运行参数" in report
         assert "| source | sqlite_db |" in report
         assert "| horizon_days | 3 |" in report
+        assert "| fee_bps | 3 |" in report
+        assert "| slippage_bps | 20 |" in report
         assert "| min_score | thresholds.yaml |" in report
 
     def test_walkforward_uses_env_symbols_when_cli_symbols_missing(

@@ -2065,7 +2065,11 @@ def _format_walkforward_pbo(pbo: float, pbo_is_valid: bool) -> str:
 
 
 def _walkforward_runtime_rows(
-    args: argparse.Namespace, effective_horizon: int
+    args: argparse.Namespace,
+    effective_horizon: int,
+    *,
+    fee_bps: float,
+    slippage_bps: float,
 ) -> list[tuple[str, str]]:
     min_score = "thresholds.yaml"
     if getattr(args, "min_score", None) is not None:
@@ -2077,6 +2081,8 @@ def _walkforward_runtime_rows(
         ("engine", str(getattr(args, "engine", "") or "runtime_config/auto")),
         ("min_score", min_score),
         ("horizon_days", str(effective_horizon)),
+        ("fee_bps", f"{fee_bps:.4g}"),
+        ("slippage_bps", f"{slippage_bps:.4g}"),
         ("tiered_stop", str(bool(getattr(args, "tiered_stop", False)))),
         ("cache_path", str(getattr(args, "cache_path", "") or "")),
         ("allow_heldout", str(bool(getattr(args, "allow_heldout", False)))),
@@ -3617,7 +3623,12 @@ def run_walkforward(args: argparse.Namespace) -> int:
         "|------|-----|",
         *[
             f"| {key} | {value or '-'} |"
-            for key, value in _walkforward_runtime_rows(args, effective_horizon)
+            for key, value in _walkforward_runtime_rows(
+                args,
+                effective_horizon,
+                fee_bps=walkforward_fee_bps,
+                slippage_bps=walkforward_slippage_bps,
+            )
         ],
         "",
         "## 整体指标",
