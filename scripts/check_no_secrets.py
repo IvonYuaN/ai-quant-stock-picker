@@ -17,6 +17,8 @@ SKIP_DIRS = {
     ".ruff_cache",
     "__pycache__",
     "logs",
+    ".locks",
+    ".state",
     "reports",
     "dist",
     "build",
@@ -173,7 +175,7 @@ def main() -> int:
     for path in iter_files(ROOT):
         try:
             text = path.read_text(encoding="utf-8")
-        except UnicodeDecodeError:
+        except (OSError, UnicodeDecodeError):
             continue
         for name, pattern in TOKEN_PATTERNS.items():
             if pattern.search(text):

@@ -77,6 +77,8 @@ def test_secret_scan_skips_private_and_runtime_paths_when_collecting_files(
         tmp_path / "data" / "predictions.jsonl",
         tmp_path / "data" / "open_source_research.jsonl",
         tmp_path / "outputs" / "dashboard.html",
+        tmp_path / ".locks" / "server-monitor.lock" / "meta.env",
+        tmp_path / ".state" / "sync.env",
     ]
     for file in files:
         file.parent.mkdir(parents=True, exist_ok=True)
@@ -91,3 +93,5 @@ def test_secret_scan_skips_private_and_runtime_paths_when_collecting_files(
     assert "data/archive/old.jsonl" not in collected
     assert "data/predictions.jsonl" not in collected
     assert "outputs/dashboard.html" not in collected
+    assert ".locks/server-monitor.lock/meta.env" not in collected
+    assert ".state/sync.env" not in collected
