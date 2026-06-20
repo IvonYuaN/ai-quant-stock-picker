@@ -70,6 +70,34 @@ class SqliteDbSource(DataSource):
     def get_available_symbols(self) -> list[str]:
         return list(self._load_symbol_map().keys())
 
+    def get_symbols_with_daily_coverage(
+        self,
+        symbols: list[str],
+        start: date,
+        end: date,
+        *,
+        min_rows: int = 100,
+    ) -> list[str]:
+        start_str = start.strftime("%Y%m%d")
+        end_str = end.strftime("%Y%m%d")
+        covered: list[str] = []
+        with sqlite3.connect(self.db_path, timeout=_SQLITE_TIMEOUT_SECONDS) as conn:
+            for symbol in symbols:
+                ts_code = self._to_ts_code(symbol)
+                if ts_code is None:
+                    continue
+                count = conn.execute(
+                    """
+                    SELECT COUNT(*)
+                    FROM daily_qfq
+                    WHERE ts_code = ? AND trade_date >= ? AND trade_date <= ?
+                    """,
+                    (ts_code, start_str, end_str),
+                ).fetchone()[0]
+                if int(count) >= min_rows:
+                    covered.append(symbol)
+        return covered
+
     def fetch_daily(
         self,
         symbols: list[str],

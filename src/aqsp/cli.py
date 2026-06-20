@@ -4,7 +4,7 @@ import argparse
 import json
 import logging
 import os
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
@@ -433,6 +433,12 @@ def main(argv: list[str] | None = None) -> int:
         default="sqlite_db",
     )
     wf.add_argument("--horizon-days", type=int, default=None, help="持仓天数 (默认: 3)")
+    wf.add_argument(
+        "--grid-cscv",
+        action="store_true",
+        default=False,
+        help="运行固定多变体网格并用真实 CSCV PBO 写入 gate",
+    )
     wf.add_argument(
         "--pool",
         type=str,
@@ -2151,7 +2157,11 @@ def _notification_gate_reasons(
         else:
             raw_reasons.append(f"双门 sidecar 未通过: {blocker}")
 
-    if internal_flags and not any("PBO 未通过" in item for item in raw_reasons):
+    has_metric_reason = any(
+        item.startswith(("DSR 未过门", "PBO 未过门", "PBO 未通过"))
+        for item in raw_reasons
+    )
+    if internal_flags and not has_metric_reason:
         raw_reasons.append("双门 sidecar 内部通过标志未全部为真")
 
     return _dedupe_gate_reasons(raw_reasons)
@@ -3132,6 +3142,145 @@ def run_dashboard(args: argparse.Namespace) -> int:
     return 0
 
 
+
+@dataclass(frozen=True)
+class WalkForwardGridVariant:
+    variant_id: str
+    min_score: float
+    horizon_days: int
+    top_n: int
+
+
+_WALKFORWARD_GRID_VARIANTS: tuple[WalkForwardGridVariant, ...] = (
+    WalkForwardGridVariant("baseline", 0.40, 3, 10),
+    WalkForwardGridVariant("top5", 0.40, 3, 5),
+    WalkForwardGridVariant("top20", 0.40, 3, 20),
+    WalkForwardGridVariant("h1", 0.40, 1, 10),
+    WalkForwardGridVariant("h5", 0.40, 5, 10),
+    WalkForwardGridVariant("h10", 0.40, 10, 10),
+    WalkForwardGridVariant("score30", 0.30, 3, 10),
+    WalkForwardGridVariant("score50", 0.50, 3, 10),
+)
+
+
+def _apply_composite_min_score(thresholds: Any, min_score: float) -> Any:
+    from aqsp.strategies.thresholds import CompositeThresholds
+
+    return replace(
+        thresholds,
+        composite=CompositeThresholds(
+            **{
+                **thresholds.composite.__dict__,
+                "min_total_score": min_score,
+            }
+        ),
+    )
+
+
+def _run_walkforward_grid_cscv(
+    *,
+    engine: Any,
+    filtered: dict[str, pd.DataFrame],
+    thresholds: Any,
+    args: argparse.Namespace,
+    base_train_days: int,
+    base_test_days: int,
+    base_purge_days: int,
+    base_tiered_stop: bool,
+) -> tuple[float, float, int, list[tuple[str, float, float, int]]]:
+    import numpy as np
+    from aqsp.backtest.walk_forward import WalkForwardTester
+    from aqsp.strategies.composite import CompositeStrategy
+
+    variant_returns: list[list[float]] = []
+    variant_rows: list[tuple[str, float, float, int]] = []
+    min_periods: int | None = None
+
+    for variant in _WALKFORWARD_GRID_VARIANTS:
+        variant_thresholds = _apply_composite_min_score(thresholds, variant.min_score)
+        variant_strategy = CompositeStrategy(thresholds=variant_thresholds)
+        variant_cfg = WalkForwardEngineConfig(
+            train_days=base_train_days,
+            test_days=base_test_days,
+            purge_days=base_purge_days,
+            horizon_days=variant.horizon_days,
+            top_n=variant.top_n,
+            use_tiered_stop=base_tiered_stop,
+            n_variants=len(_WALKFORWARD_GRID_VARIANTS),
+        )
+        variant_result = engine.run(
+            variant_strategy,
+            filtered,
+            start_date=args.start,
+            end_date=args.end,
+            config=variant_cfg,
+        )
+        returns = [period.total_return for period in variant_result.periods]
+        if not returns:
+            continue
+        min_periods = (
+            len(returns) if min_periods is None else min(min_periods, len(returns))
+        )
+        variant_returns.append(returns)
+        variant_rows.append(
+            (
+                variant.variant_id,
+                variant_result.overall.sharpe_ratio,
+                variant_result.overall.total_return,
+                len(returns),
+            )
+        )
+
+    if len(variant_returns) < 2 or not min_periods:
+        raise ValueError(
+            "grid CSCV requires at least 2 variants with non-empty periods"
+        )
+
+    returns_matrix = np.array(
+        [returns[:min_periods] for returns in variant_returns], dtype=float
+    ).T
+    s = min(10, max(2, min_periods // 2))
+    if s % 2 == 1:
+        s -= 1
+    if s < 2:
+        raise ValueError("grid CSCV requires at least 4 aligned periods")
+    pbo, _details = WalkForwardTester.calculate_cscv_pbo(returns_matrix, s=s)
+    best_sharpe = max(row[1] for row in variant_rows)
+    dsr = WalkForwardTester._calculate_deflated_sharpe(
+        best_sharpe,
+        n_trials=len(variant_rows),
+        n_obs=int(returns_matrix.size),
+    )
+    return dsr, pbo, int(min_periods), variant_rows
+
+
+def _append_walkforward_grid_rows(
+    report_lines: list[str],
+    *,
+    dsr: float,
+    pbo: float,
+    periods: int,
+    rows: list[tuple[str, float, float, int]],
+) -> None:
+    report_lines.extend(
+        [
+            "",
+            "## 多变体 CSCV",
+            "",
+            f"- Grid DSR：{dsr:.4f}",
+            f"- Grid PBO：{pbo:.2%}",
+            f"- 对齐周期数：{periods}",
+            "",
+            "| 变体 | Sharpe | 总收益 | 周期数 |",
+            "|------|--------|--------|--------|",
+        ]
+    )
+    for variant_id, sharpe, total_return, period_count in rows:
+        report_lines.append(
+            f"| {variant_id} | {sharpe:.2f} | {total_return:.2%} | {period_count} |"
+        )
+
+
 def run_walkforward(args: argparse.Namespace) -> int:
     import logging
     import sys
@@ -3260,7 +3409,14 @@ def run_walkforward(args: argparse.Namespace) -> int:
         end_d = _date.fromisoformat(args.end)
         available = src.get_available_symbols()
         symbols = [s for s in symbols if s in available]
-        print(f"SQLite 数据库中可用标的: {len(symbols)} 只")
+        if hasattr(src, "get_symbols_with_daily_coverage"):
+            symbols = src.get_symbols_with_daily_coverage(
+                symbols,
+                start_d,
+                end_d,
+                min_rows=100,
+            )
+        print(f"SQLite 数据库中可用且覆盖区间的标的: {len(symbols)} 只")
         frames = src.fetch_daily(symbols, start_d, end_d, adjust="")
         print(
             f"正在获取 {len(symbols)} 只股票 {args.start} ~ {args.end} 的 point-in-time 财务数据..."
@@ -3330,6 +3486,7 @@ def run_walkforward(args: argparse.Namespace) -> int:
         purge_days=args.purge_days,
         horizon_days=effective_horizon,
         use_tiered_stop=getattr(args, "tiered_stop", False),
+        n_variants=len(_WALKFORWARD_GRID_VARIANTS) if args.grid_cscv else 1,
     )
 
     print("开始 walk-forward 回测...")
@@ -3359,20 +3516,40 @@ def run_walkforward(args: argparse.Namespace) -> int:
         for regime in result.regime_winrates:
             regime_counts[regime] = regime_counts.get(regime, 0) + 1
 
+    grid_rows: list[tuple[str, float, float, int]] = []
+    grid_periods = 0
+    dsr_value = result.deflated_sharpe
+    pbo_value = result.pbo
+    if args.grid_cscv:
+        dsr_value, pbo_value, grid_periods, grid_rows = _run_walkforward_grid_cscv(
+            engine=engine,
+            filtered=filtered,
+            thresholds=thresholds,
+            args=args,
+            base_train_days=args.train_days,
+            base_test_days=args.test_days,
+            base_purge_days=args.purge_days,
+            base_tiered_stop=getattr(args, "tiered_stop", False),
+        )
+        print(
+            f"Grid CSCV 完成: DSR={dsr_value:.4f}, "
+            f"PBO={pbo_value:.2%}, variants={len(grid_rows)}"
+        )
+
     tl_dr = []
-    dsr_pass = result.deflated_sharpe > 1.0
+    dsr_pass = dsr_value > 1.0
     # 宪法 §17.7：PBO 必须经真 CSCV（N>=2 变体）计算。
     # 单序列回测无法做 CSCV，calculate_cscv_pbo_from_single 会返回占位值 0.0。
     # 真 CSCV 的 PBO 几乎不可能恰为 0.0（252 组合中通常有 λ<=0）。
     # 因此 pbo==0.0 视为「未经有效 CSCV 验证」，不予通过门 —— 避免单策略
     # 用占位 0.0 蒙混过双门。需要 grid（多变体）walkforward 才能得到有效 PBO。
-    pbo_is_valid = result.pbo > 0.0
-    pbo_pass = pbo_is_valid and result.pbo < 0.5
+    pbo_is_valid = pbo_value > 0.0
+    pbo_pass = pbo_is_valid and pbo_value < 0.5
     both_pass = dsr_pass and pbo_pass
     verdict = "PASS" if both_pass else "FAIL"
-    pbo_display = _format_walkforward_pbo(result.pbo, pbo_is_valid)
+    pbo_display = _format_walkforward_pbo(pbo_value, pbo_is_valid)
     tl_dr.append(
-        f"**TL;DR**: {verdict} — DSR={result.deflated_sharpe:.4f}, "
+        f"**TL;DR**: {verdict} — DSR={dsr_value:.4f}, "
         f"PBO={pbo_display}, Sharpe={result.overall.sharpe_ratio:.2f}, "
         f"TotalReturn={result.overall.total_return:.2%}"
     )
@@ -3386,7 +3563,7 @@ def run_walkforward(args: argparse.Namespace) -> int:
         "",
         "## 双门判定",
         "",
-        f"- DSR > 1.0：{'PASS' if dsr_pass else 'FAIL'}（实测 {result.deflated_sharpe:.4f}）",
+        f"- DSR > 1.0：{'PASS' if dsr_pass else 'FAIL'}（实测 {dsr_value:.4f}）",
         f"- PBO < 0.5：{'PASS' if pbo_pass else 'FAIL'}（实测 {pbo_display}）",
         "",
         f"**运行日期**: {now_shanghai().strftime('%Y-%m-%d %H:%M')}",
@@ -3423,7 +3600,7 @@ def run_walkforward(args: argparse.Namespace) -> int:
         "",
         "| 指标 | 值 | 说明 |",
         "|------|-----|------|",
-        f"| Deflated Sharpe Ratio | {result.deflated_sharpe:.4f} | > 1.0 表示策略可能有效 |",
+        f"| Deflated Sharpe Ratio | {dsr_value:.4f} | > 1.0 表示策略可能有效 |",
         f"| PBO (过拟合概率) | {pbo_display} | < 50% 且非占位才表示低过拟合风险 |",
         f"| 稳健性评分 | {result.robustness_score:.2%} | > 70% 表示稳定 |",
         f"| 参数标准差 | {result.parameter_std:.4f} | 越小越稳定 |",
@@ -3462,6 +3639,15 @@ def run_walkforward(args: argparse.Namespace) -> int:
         )
 
     _append_walkforward_diagnostics(report_lines, result)
+    if args.grid_cscv:
+        _append_walkforward_grid_rows(
+            report_lines,
+            dsr=dsr_value,
+            pbo=pbo_value,
+            periods=grid_periods,
+            rows=grid_rows,
+        )
+
 
     report_lines.extend(
         [
@@ -3473,20 +3659,20 @@ def run_walkforward(args: argparse.Namespace) -> int:
 
     if both_pass:
         report_lines.append(
-            f"✅ **{verdict}**: DSR={result.deflated_sharpe:.4f} > 1.0 且 PBO={result.pbo:.2%} < 50%，可进入人工纸面复核候选。"
+            f"✅ **{verdict}**: DSR={dsr_value:.4f} > 1.0 且 PBO={pbo_value:.2%} < 50%，可进入人工纸面复核候选。"
         )
     else:
         reasons = []
         if not dsr_pass:
-            reasons.append(f"DSR={result.deflated_sharpe:.4f} < 1.0")
+            reasons.append(f"DSR={dsr_value:.4f} < 1.0")
         if not pbo_pass:
             if not pbo_is_valid:
                 reasons.append(
-                    f"PBO={result.pbo:.2%}（占位值，未经有效 CSCV 验证——"
+                    f"PBO={pbo_value:.2%}（占位值，未经有效 CSCV 验证——"
                     "单策略回测无法做 CSCV，需用 grid 多变体网格，见宪法 §17.7）"
                 )
             else:
-                reasons.append(f"PBO={result.pbo:.2%} > 50%")
+                reasons.append(f"PBO={pbo_value:.2%} > 50%")
         report_lines.append(f"❌ **{verdict}**: {'，'.join(reasons)}，不建议实盘使用。")
 
     report = "\n".join(report_lines)
@@ -3498,12 +3684,12 @@ def run_walkforward(args: argparse.Namespace) -> int:
 
     # 写双门 sidecar（不依赖 args.update_yaml，始终写，供 notify gate 用）
     _write_walkforward_gate(
-        dsr=result.deflated_sharpe,
-        pbo=result.pbo,
+        dsr=dsr_value,
+        pbo=pbo_value,
         run_date=today_shanghai().isoformat(),
         start=args.start,
         end=args.end,
-        n_periods=len(result.periods),
+        n_periods=grid_periods if args.grid_cscv else len(result.periods),
     )
 
     if args.update_yaml:

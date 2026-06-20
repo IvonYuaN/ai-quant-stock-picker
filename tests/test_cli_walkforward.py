@@ -1450,3 +1450,160 @@ class TestCLIRegimeDescription:
         from aqsp.cli import _regime_description
 
         assert "未知" in _regime_description("foobar")
+
+
+def test_walkforward_grid_cscv_writes_valid_pbo_gate(monkeypatch, tmp_path):
+    import aqsp.cli as cli_mod
+    from aqsp.backtest.walk_forward import BacktestResult
+    from aqsp.research_engine import EngineResolution
+    from aqsp.walkforward_gate import validate_walkforward_gate_payload
+
+    gate_path = tmp_path / "gate.json"
+    monkeypatch.setattr(cli_mod, "WALKFORWARD_GATE_PATH", str(gate_path))
+    monkeypatch.setattr(cli_mod, "today_shanghai", lambda: date(2026, 6, 20))
+    monkeypatch.setattr(
+        cli_mod,
+        "_get_hs300_symbols",
+        lambda as_of: ["600519"],
+    )
+
+    dates = pd.date_range(start="2024-01-01", periods=160, freq="B")
+
+    class DummySource:
+        def get_available_symbols(self):
+            return ["600519"]
+
+        def fetch_daily(self, symbols, start, end, adjust=""):
+            return {
+                "600519": pd.DataFrame(
+                    {
+                        "date": dates.strftime("%Y-%m-%d"),
+                        "symbol": "600519",
+                        "name": "贵州茅台",
+                        "open": 100.0,
+                        "high": 101.0,
+                        "low": 99.0,
+                        "close": 100.5,
+                        "volume": 1_000_000,
+                        "amount": 100_000_000,
+                        "suspended": False,
+                        "limit_up": 110.0,
+                        "limit_down": 90.0,
+                    }
+                )
+            }
+
+    class DummyEngine:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def run(self, strategy, data, *, start_date=None, end_date=None, config):
+            self.calls += 1
+            variant_idx = self.calls - 2
+            if self.calls == 1:
+                returns = [0.01, 0.02, 0.01, 0.03]
+                sharpe = 1.0
+            else:
+                returns = [
+                    0.01 * (variant_idx + 1),
+                    -0.004 * (variant_idx % 3),
+                    0.006 * ((variant_idx % 4) + 1),
+                    0.002 * (variant_idx + 2),
+                    -0.003 * (variant_idx % 2),
+                    0.004 * ((variant_idx % 5) + 1),
+                    0.001 * (variant_idx + 1),
+                    -0.002 * (variant_idx % 4),
+                    0.003 * ((variant_idx % 3) + 1),
+                    0.002 * ((variant_idx % 6) + 1),
+                ]
+                sharpe = 2.0 + variant_idx * 0.1
+            periods = [
+                BacktestResult(
+                    period=f"p{i}",
+                    total_return=value,
+                    annual_return=value,
+                    max_drawdown=0.01,
+                    sharpe_ratio=sharpe,
+                    win_rate=0.5,
+                    profit_factor=1.2,
+                    trades=1,
+                    not_executable=0,
+                )
+                for i, value in enumerate(returns)
+            ]
+            return SimpleNamespace(
+                overall=SimpleNamespace(
+                    total_return=sum(returns),
+                    annual_return=sum(returns),
+                    max_drawdown=0.03,
+                    sharpe_ratio=sharpe,
+                    win_rate=0.55,
+                    profit_factor=1.3,
+                    trades=len(returns),
+                    not_executable=0,
+                ),
+                deflated_sharpe=0.0,
+                pbo=0.0,
+                robustness_score=0.8,
+                parameter_std=0.1,
+                regime_winrates={},
+                periods=periods,
+            )
+
+    engine = DummyEngine()
+    monkeypatch.setattr(
+        cli_mod, "_build_sqlite_db_source", lambda cache=None: DummySource()
+    )
+    monkeypatch.setattr(
+        cli_mod,
+        "resolve_walkforward_engine",
+        lambda requested: (
+            engine,
+            EngineResolution(
+                requested="builtin",
+                resolved="builtin",
+                mode="test",
+                message="test engine",
+            ),
+        ),
+    )
+    monkeypatch.setattr(
+        "aqsp.data.pit_financial.enrich_ohlcv_with_pit_financials",
+        lambda frames, symbols, start, end, cache=None: SimpleNamespace(
+            frames=frames, financial_symbol_count=0, disclosure_symbol_count=0
+        ),
+    )
+    monkeypatch.setattr(
+        "aqsp.strategies.composite.CompositeStrategy",
+        lambda thresholds=None: object(),
+    )
+
+    report = tmp_path / "walkforward-grid.md"
+    result = cli_mod.main(
+        [
+            "walkforward",
+            "--grid-cscv",
+            "--source",
+            "sqlite_db",
+            "--symbols",
+            "600519",
+            "--start",
+            "2024-01-01",
+            "--end",
+            "2024-08-01",
+            "--report",
+            str(report),
+        ]
+    )
+
+    assert result == 0
+    payload = json.loads(gate_path.read_text(encoding="utf-8"))
+    validation = validate_walkforward_gate_payload(
+        payload,
+        today=date(2026, 6, 20),
+    )
+    assert payload["pbo"] > 0.0
+    assert payload["pbo_valid"] is True
+    assert payload["n_periods"] == 10
+    assert validation.pbo_valid is True
+    assert "## 多变体 CSCV" in report.read_text(encoding="utf-8")
