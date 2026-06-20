@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Dict, List
 import pandas as pd
 
@@ -12,71 +11,6 @@ from aqsp.strategies.volume import VolumeBreakoutStrategy
 from aqsp.strategies.mean_reversion import MeanReversionStrategy
 from aqsp.strategies.triple_rise import TripleRiseStrategy
 from aqsp.strategies.thresholds import Thresholds, load_thresholds
-
-
-@dataclass(frozen=True)
-class RegimeWeights:
-    """市场状态对应的策略权重调整"""
-
-    momentum: float = 1.0
-    quality: float = 1.0
-    value: float = 1.0
-    volume: float = 1.0
-    mean_reversion: float = 1.0
-    triple_rise: float = 1.0
-
-
-# 不同市场状态下的策略权重调整系数
-REGIME_WEIGHT_MAP: dict[str, RegimeWeights] = {
-    "stable_bull": RegimeWeights(
-        momentum=1.2,
-        quality=0.9,
-        value=0.8,
-        volume=1.1,
-        mean_reversion=0.7,
-        triple_rise=1.1,
-    ),
-    "volatile_bull": RegimeWeights(
-        momentum=1.1,
-        quality=0.8,
-        value=0.9,
-        volume=1.2,
-        mean_reversion=0.8,
-        triple_rise=1.0,
-    ),
-    "stable_bear": RegimeWeights(
-        momentum=0.7,
-        quality=1.3,
-        value=1.2,
-        volume=0.8,
-        mean_reversion=1.3,
-        triple_rise=0.8,
-    ),
-    "volatile_bear": RegimeWeights(
-        momentum=0.6,
-        quality=1.2,
-        value=1.1,
-        volume=0.9,
-        mean_reversion=1.4,
-        triple_rise=0.7,
-    ),
-    "stable_sideways": RegimeWeights(
-        momentum=0.9,
-        quality=1.1,
-        value=1.1,
-        volume=1.0,
-        mean_reversion=1.1,
-        triple_rise=0.9,
-    ),
-    "volatile_sideways": RegimeWeights(
-        momentum=0.8,
-        quality=1.0,
-        value=1.0,
-        volume=1.1,
-        mean_reversion=1.2,
-        triple_rise=0.8,
-    ),
-}
 
 
 class CompositeStrategy(BaseStrategy):
@@ -140,8 +74,17 @@ class CompositeStrategy(BaseStrategy):
     ) -> tuple[float, float, float, float, float, float]:
         """根据市场状态调整策略权重"""
         base = self.thresholds.composite
-        adjustment = REGIME_WEIGHT_MAP.get(regime, RegimeWeights())
+        adjustment = self.thresholds.regime.strategy_weights.get(regime)
 
+        if adjustment is None:
+            return (
+                base.momentum_weight,
+                base.quality_weight,
+                base.value_weight,
+                base.volume_weight,
+                base.mean_reversion_weight,
+                base.triple_rise_weight,
+            )
         return (
             base.momentum_weight * adjustment.momentum,
             base.quality_weight * adjustment.quality,

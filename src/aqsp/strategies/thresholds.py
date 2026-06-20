@@ -121,6 +121,68 @@ class ExecutionThresholds:
 
 
 @dataclass(frozen=True)
+class RegimeStrategyWeights:
+    momentum: float = 1.0
+    quality: float = 1.0
+    value: float = 1.0
+    volume: float = 1.0
+    mean_reversion: float = 1.0
+    triple_rise: float = 1.0
+
+
+_DEFAULT_REGIME_STRATEGY_WEIGHTS: Dict[str, RegimeStrategyWeights] = {
+    "stable_bull": RegimeStrategyWeights(
+        momentum=1.2,
+        quality=0.9,
+        value=0.8,
+        volume=1.1,
+        mean_reversion=0.7,
+        triple_rise=1.1,
+    ),
+    "volatile_bull": RegimeStrategyWeights(
+        momentum=1.1,
+        quality=0.8,
+        value=0.9,
+        volume=1.2,
+        mean_reversion=0.8,
+        triple_rise=1.0,
+    ),
+    "stable_bear": RegimeStrategyWeights(
+        momentum=0.7,
+        quality=1.3,
+        value=1.2,
+        volume=0.8,
+        mean_reversion=1.3,
+        triple_rise=0.8,
+    ),
+    "volatile_bear": RegimeStrategyWeights(
+        momentum=0.6,
+        quality=1.2,
+        value=1.1,
+        volume=0.9,
+        mean_reversion=1.4,
+        triple_rise=0.7,
+    ),
+    "stable_sideways": RegimeStrategyWeights(
+        momentum=0.9,
+        quality=1.1,
+        value=1.1,
+        volume=1.0,
+        mean_reversion=1.1,
+        triple_rise=0.9,
+    ),
+    "volatile_sideways": RegimeStrategyWeights(
+        momentum=0.8,
+        quality=1.0,
+        value=1.0,
+        volume=1.1,
+        mean_reversion=1.2,
+        triple_rise=0.8,
+    ),
+}
+
+
+@dataclass(frozen=True)
 class RegimeThresholds:
     volatility_high: float = 0.3
     momentum_bull: float = 0.1
@@ -141,6 +203,9 @@ class RegimeThresholds:
             "stable_sideways": 0.95,
             "volatile_sideways": 0.85,
         }
+    )
+    strategy_weights: Dict[str, RegimeStrategyWeights] = field(
+        default_factory=lambda: dict(_DEFAULT_REGIME_STRATEGY_WEIGHTS)
     )
 
 
@@ -391,11 +456,17 @@ _DEFAULT_REGIME_ADJUSTMENTS: Dict[str, float] = {
 
 def _parse_regime(data: dict) -> RegimeThresholds:
     adjustments_data = data.pop("adjustments", {})
+    strategy_weights_data = data.pop("strategy_weights", {})
+    strategy_weights = dict(_DEFAULT_REGIME_STRATEGY_WEIGHTS)
+    for regime, weights in strategy_weights_data.items():
+        if isinstance(weights, dict):
+            strategy_weights[str(regime)] = RegimeStrategyWeights(**weights)
     return RegimeThresholds(
         **data,
         adjustments=adjustments_data
         if adjustments_data
         else _DEFAULT_REGIME_ADJUSTMENTS,
+        strategy_weights=strategy_weights,
     )
 
 

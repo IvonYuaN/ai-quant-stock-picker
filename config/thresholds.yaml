@@ -6,7 +6,7 @@ composite:
   volume_weight: 0.0
   mean_reversion_weight: 0.0
   triple_rise_weight: 0.3
-description: "策略阈值配置 — v1.1.4：统一 scoring 与 dashboard 风控阈值"
+description: "策略阈值配置 — v1.1.5：regime 策略权重统一进配置"
 effective_from: '2026-06-17'
 execution:
   commission_rate: 0.0003
@@ -52,6 +52,49 @@ regime:
     volatile_bear: 0.6
     volatile_bull: 0.9
     volatile_sideways: 0.85
+  strategy_weights:
+    stable_bull:
+      momentum: 1.2
+      quality: 0.9
+      value: 0.8
+      volume: 1.1
+      mean_reversion: 0.7
+      triple_rise: 1.1
+    volatile_bull:
+      momentum: 1.1
+      quality: 0.8
+      value: 0.9
+      volume: 1.2
+      mean_reversion: 0.8
+      triple_rise: 1.0
+    stable_bear:
+      momentum: 0.7
+      quality: 1.3
+      value: 1.2
+      volume: 0.8
+      mean_reversion: 1.3
+      triple_rise: 0.8
+    volatile_bear:
+      momentum: 0.6
+      quality: 1.2
+      value: 1.1
+      volume: 0.9
+      mean_reversion: 1.4
+      triple_rise: 0.7
+    stable_sideways:
+      momentum: 0.9
+      quality: 1.1
+      value: 1.1
+      volume: 1.0
+      mean_reversion: 1.1
+      triple_rise: 0.9
+    volatile_sideways:
+      momentum: 0.8
+      quality: 1.0
+      value: 1.0
+      volume: 1.1
+      mean_reversion: 1.2
+      triple_rise: 0.8
   confidence_momentum: 0.05
   confidence_trend: 0.01
   confidence_volatility: 0.2
@@ -232,4 +275,4 @@ n_rebound:
   volume_shrink_ratio: 0.75
   ma5_deviation_max_pct: 8.0
   min_score: 14.0
-version: 1.1.4
+version: 1.1.5
