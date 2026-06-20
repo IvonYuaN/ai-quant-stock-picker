@@ -1608,4 +1608,7 @@ def test_walkforward_grid_cscv_writes_valid_pbo_gate(monkeypatch, tmp_path):
     assert payload["pbo_valid"] is True
     assert payload["n_periods"] == 10
     assert validation.pbo_valid is True
-    assert "## 多变体 CSCV" in report.read_text(encoding="utf-8")
+    report_text = report.read_text(encoding="utf-8")
+    assert "## 多变体 CSCV" in report_text
+    assert "CSCV 组合数" in report_text
+    assert "λ<=0 组合数" in report_text

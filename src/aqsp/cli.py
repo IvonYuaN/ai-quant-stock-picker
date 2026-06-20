@@ -3222,7 +3222,7 @@ def _run_walkforward_grid_cscv(
     base_test_days: int,
     base_purge_days: int,
     base_tiered_stop: bool,
-) -> tuple[float, float, int, list[tuple[str, float, float, int]]]:
+) -> tuple[float, float, int, list[tuple[str, float, float, int]], dict[str, Any]]:
     import numpy as np
     from aqsp.backtest.walk_forward import WalkForwardTester
     from aqsp.strategies.composite import CompositeStrategy
@@ -3282,14 +3282,14 @@ def _run_walkforward_grid_cscv(
         s -= 1
     if s < 2:
         raise ValueError("grid CSCV requires at least 4 aligned periods")
-    pbo, _details = WalkForwardTester.calculate_cscv_pbo(returns_matrix, s=s)
+    pbo, details = WalkForwardTester.calculate_cscv_pbo(returns_matrix, s=s)
     best_sharpe = max(row[1] for row in variant_rows)
     dsr = WalkForwardTester._calculate_deflated_sharpe(
         best_sharpe,
         n_trials=len(variant_rows),
         n_obs=int(returns_matrix.size),
     )
-    return dsr, pbo, int(min_periods), variant_rows
+    return dsr, pbo, int(min_periods), variant_rows, details
 
 
 def _append_walkforward_grid_rows(
@@ -3299,6 +3299,7 @@ def _append_walkforward_grid_rows(
     pbo: float,
     periods: int,
     rows: list[tuple[str, float, float, int]],
+    details: dict[str, Any] | None = None,
 ) -> None:
     report_lines.extend(
         [
@@ -3308,6 +3309,18 @@ def _append_walkforward_grid_rows(
             f"- Grid DSR：{dsr:.4f}",
             f"- Grid PBO：{pbo:.2%}",
             f"- 对齐周期数：{periods}",
+        ]
+    )
+    if details:
+        report_lines.extend(
+            [
+                f"- CSCV 组合数：{details.get('n_combos', '-')}",
+                f"- λ<=0 组合数：{details.get('n_lambda_le_0', '-')}",
+                f"- S / block_size：{details.get('s', '-')} / {details.get('block_size', '-')}",
+            ]
+        )
+    report_lines.extend(
+        [
             "",
             "| 变体 | Sharpe | 总收益 | 周期数 |",
             "|------|--------|--------|--------|",
@@ -3560,11 +3573,18 @@ def run_walkforward(args: argparse.Namespace) -> int:
             regime_counts[regime] = regime_counts.get(regime, 0) + 1
 
     grid_rows: list[tuple[str, float, float, int]] = []
+    grid_details: dict[str, Any] = {}
     grid_periods = 0
     dsr_value = result.deflated_sharpe
     pbo_value = result.pbo
     if args.grid_cscv:
-        dsr_value, pbo_value, grid_periods, grid_rows = _run_walkforward_grid_cscv(
+        (
+            dsr_value,
+            pbo_value,
+            grid_periods,
+            grid_rows,
+            grid_details,
+        ) = _run_walkforward_grid_cscv(
             engine=engine,
             filtered=filtered,
             thresholds=thresholds,
@@ -3694,6 +3714,7 @@ def run_walkforward(args: argparse.Namespace) -> int:
             pbo=pbo_value,
             periods=grid_periods,
             rows=grid_rows,
+            details=grid_details,
         )
 
     report_lines.extend(
