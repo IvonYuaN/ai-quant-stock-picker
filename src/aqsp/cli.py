@@ -3283,6 +3283,37 @@ def _run_walkforward_grid_cscv(
     if s < 2:
         raise ValueError("grid CSCV requires at least 4 aligned periods")
     pbo, details = WalkForwardTester.calculate_cscv_pbo(returns_matrix, s=s)
+    period_means = returns_matrix.mean(axis=1)
+    period_stds = returns_matrix.std(axis=1)
+    worst_period_indices = [
+        int(idx)
+        for idx in np.argsort(period_means)[: min(3, len(period_means))]
+    ]
+    best_variant_idx = int(np.argmax([row[1] for row in variant_rows]))
+    worst_variant_idx = int(np.argmin([row[1] for row in variant_rows]))
+    details.update(
+        {
+            "variant_dispersion_sharpe": float(
+                np.std([row[1] for row in variant_rows])
+            ),
+            "variant_dispersion_return": float(
+                np.std([row[2] for row in variant_rows])
+            ),
+            "best_variant": variant_rows[best_variant_idx][0],
+            "worst_variant": variant_rows[worst_variant_idx][0],
+            "worst_periods": [
+                {
+                    "period_index": idx + 1,
+                    "mean_return": float(period_means[idx]),
+                    "dispersion": float(period_stds[idx]),
+                    "negative_variant_count": int(
+                        np.sum(returns_matrix[idx, :] < 0)
+                    ),
+                }
+                for idx in worst_period_indices
+            ],
+        }
+    )
     best_sharpe = max(row[1] for row in variant_rows)
     dsr = WalkForwardTester._calculate_deflated_sharpe(
         best_sharpe,
@@ -3290,6 +3321,61 @@ def _run_walkforward_grid_cscv(
         n_obs=int(returns_matrix.size),
     )
     return dsr, pbo, int(min_periods), variant_rows, details
+
+
+def _format_optional_float(value: object, *, pct: bool = False) -> str:
+    if not isinstance(value, (int, float)):
+        return "-"
+    return f"{float(value):.2%}" if pct else f"{float(value):.4f}"
+
+
+def _append_walkforward_grid_diagnostics(
+    report_lines: list[str], details: dict[str, Any] | None
+) -> None:
+    if not details:
+        return
+
+    n_combos = details.get("n_combos")
+    n_lambda_le_0 = details.get("n_lambda_le_0")
+    fail_rate = None
+    if isinstance(n_combos, int) and n_combos > 0 and isinstance(n_lambda_le_0, int):
+        fail_rate = n_lambda_le_0 / n_combos
+
+    report_lines.extend(
+        [
+            "",
+            "### PBO 失败定位",
+            "",
+            "| 指标 | 值 |",
+            "|------|-----|",
+            f"| CSCV 失败组合占比 | {_format_optional_float(fail_rate, pct=True)} |",
+            f"| Lambda 中位数 | {_format_optional_float(details.get('lambda_median'))} |",
+            f"| Lambda 均值 | {_format_optional_float(details.get('lambda_mean'))} |",
+            f"| Sharpe 变体分散度 | {_format_optional_float(details.get('variant_dispersion_sharpe'))} |",
+            f"| Return 变体分散度 | {_format_optional_float(details.get('variant_dispersion_return'), pct=True)} |",
+            f"| 最优变体 | {details.get('best_variant', '-')} |",
+            f"| 最弱变体 | {details.get('worst_variant', '-')} |",
+        ]
+    )
+
+    worst_periods = details.get("worst_periods")
+    if isinstance(worst_periods, list) and worst_periods:
+        report_lines.extend(
+            [
+                "",
+                "| 最差对齐周期 | 平均收益 | 分散度 | 亏损变体数 |",
+                "|--------------|----------|--------|------------|",
+            ]
+        )
+        for item in worst_periods:
+            if not isinstance(item, dict):
+                continue
+            report_lines.append(
+                f"| #{item.get('period_index', '-')} | "
+                f"{_format_optional_float(item.get('mean_return'), pct=True)} | "
+                f"{_format_optional_float(item.get('dispersion'), pct=True)} | "
+                f"{item.get('negative_variant_count', '-')} |"
+            )
 
 
 def _append_walkforward_grid_rows(
@@ -3330,6 +3416,8 @@ def _append_walkforward_grid_rows(
         report_lines.append(
             f"| {variant_id} | {sharpe:.2f} | {total_return:.2%} | {period_count} |"
         )
+
+    _append_walkforward_grid_diagnostics(report_lines, details)
 
 
 def run_walkforward(args: argparse.Namespace) -> int:

@@ -1612,3 +1612,7 @@ def test_walkforward_grid_cscv_writes_valid_pbo_gate(monkeypatch, tmp_path):
     assert "## 多变体 CSCV" in report_text
     assert "CSCV 组合数" in report_text
     assert "λ<=0 组合数" in report_text
+    assert "### PBO 失败定位" in report_text
+    assert "CSCV 失败组合占比" in report_text
+    assert "最差对齐周期" in report_text
+    assert "最优变体" in report_text
