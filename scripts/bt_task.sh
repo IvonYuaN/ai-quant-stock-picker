@@ -88,6 +88,32 @@ is_truthy() {
     [[ "${1,,}" =~ ^(1|true|yes|on)$ ]]
 }
 
+is_market_trading_day() {
+    local python_bin="${PROJECT_ROOT}/.venv/bin/python3"
+    local target_date="${AQSP_TRADING_DAY_OVERRIDE_DATE:-}"
+    if [ ! -x "$python_bin" ]; then
+        log "[ERROR] Python 可执行文件不存在，无法检查交易日: $python_bin"
+        exit 1
+    fi
+    PYTHONPATH="${PROJECT_ROOT}/src:${PROJECT_ROOT}:${PYTHONPATH:-}" "$python_bin" - "$target_date" <<'AQSP_CALENDAR_PY'
+import sys
+from datetime import date
+
+from aqsp.core.time import is_trading_day, today_shanghai
+
+raw = sys.argv[1].strip()
+target = date.fromisoformat(raw) if raw else today_shanghai()
+raise SystemExit(0 if is_trading_day(target) else 1)
+AQSP_CALENDAR_PY
+}
+
+skip_non_trading_day() {
+    if ! is_market_trading_day; then
+        log "今日非交易日，跳过 ${ACTION} 任务"
+        exit 0
+    fi
+}
+
 should_bridge_intraday_to_midday() {
     if ! is_truthy "${AQSP_INTRADAY_MIDDAY_BRIDGE:-true}"; then
         return 1
@@ -95,6 +121,9 @@ should_bridge_intraday_to_midday() {
     local dow now_hm marker_dir marker_file
     dow="$(date +%u)"
     if [ "$dow" -ge 6 ]; then
+        return 1
+    fi
+    if ! is_market_trading_day; then
         return 1
     fi
     now_hm=$((10#$(date +%H%M)))
@@ -148,11 +177,13 @@ export TZ="${TZ:-Asia/Shanghai}"
 
 case "$ACTION" in
     daily)
+        skip_non_trading_day
         export AQSP_RUN_TASK_ID="daily"
         export AQSP_RUNNER_SCRIPT=scripts/daily_pipeline.sh
         run_script "${PROJECT_ROOT}/scripts/server_sync_and_run.sh"
         ;;
     intraday)
+        skip_non_trading_day
         export AQSP_RUN_TASK_ID="intraday"
         export AQSP_NOTIFY="false"
         export AQSP_INTRADAY_NOTIFY="${AQSP_INTRADAY_NOTIFY:-false}"
@@ -173,6 +204,7 @@ case "$ACTION" in
         run_synced_task_with_result || true
         ;;
     midday)
+        skip_non_trading_day
         export AQSP_RUN_TASK_ID="midday"
         export AQSP_NOTIFY="false"
         export AQSP_INTRADAY_NOTIFY="${AQSP_INTRADAY_NOTIFY:-false}"
@@ -186,6 +218,7 @@ case "$ACTION" in
         fi
         ;;
     coldstart)
+        skip_non_trading_day
         export AQSP_RUN_TASK_ID="coldstart"
         sync_code_only
         run_script "${PROJECT_ROOT}/scripts/coldstart_daily.sh"

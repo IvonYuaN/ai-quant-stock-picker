@@ -110,6 +110,10 @@ def test_bt_task_script_exposes_panel_safe_actions() -> None:
     assert "coldstart 19:40 Mon-Fri" in script
     assert '"正常跳过/互斥保护"' in script
     assert "It is not a failed run." in script
+    assert "is_market_trading_day" in script
+    assert "AQSP_TRADING_DAY_OVERRIDE_DATE" in script
+    assert "skip_non_trading_day" in script
+    assert "今日非交易日，跳过 ${ACTION} 任务" in script
     assert "AQSP_RUNNER_SCRIPT=scripts/daily_pipeline.sh" in script
     assert "AQSP_RUNNER_SCRIPT=scripts/intraday_refresh.sh" in script
     assert "AQSP_RUNNER_SCRIPT=scripts/midday_refresh.sh" in script
