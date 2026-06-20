@@ -943,7 +943,8 @@ def test_run_pipeline_trims_writeback_steps_when_non_trade_day(monkeypatch) -> N
     result = daily_pipeline.run_pipeline(config)
 
     assert result.overall_success is True
-    assert executed == ["数据更新", "报告生成", "Dashboard刷新", "数据清理"]
+    assert executed == ["报告生成", "Dashboard刷新", "数据清理"]
+    assert "数据更新" not in executed
     assert "策略运行" not in executed
     assert "虚拟盘同步" not in executed
     assert "收盘复盘" not in executed

@@ -1,33 +1,58 @@
 from __future__ import annotations
 
-from datetime import datetime, date, timedelta
+import json
+from datetime import datetime, date
+from functools import lru_cache
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
-
 SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
+_BASIC_CALENDAR_PATH = (
+    Path(__file__).resolve().parents[3] / "config" / "trading_holidays.json"
+)
 
 
-_A_SHARE_HOLIDAYS: dict[int, set[date]] = {
-    2026: {
-        date(2026, 1, 1),
-        date(2026, 2, 16),
-        date(2026, 2, 17),
-        date(2026, 2, 18),
-        date(2026, 2, 19),
-        date(2026, 2, 20),
-        date(2026, 4, 6),
-        date(2026, 5, 1),
-        date(2026, 5, 4),
-        date(2026, 5, 5),
-        date(2026, 6, 19),
-        date(2026, 9, 25),
-        date(2026, 10, 1),
-        date(2026, 10, 2),
-        date(2026, 10, 5),
-        date(2026, 10, 6),
-        date(2026, 10, 7),
-    },
-}
+@lru_cache(maxsize=1)
+def _load_basic_trading_calendar() -> tuple[frozenset[date], frozenset[date]]:
+    try:
+        payload = json.loads(_BASIC_CALENDAR_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return frozenset(), frozenset()
+
+    holidays = {
+        date.fromisoformat(str(item))
+        for item in payload.get("holidays", [])
+        if str(item).strip()
+    }
+    makeup_workdays = {
+        date.fromisoformat(str(item))
+        for item in payload.get("makeup_workdays", [])
+        if str(item).strip()
+    }
+    return frozenset(holidays), frozenset(makeup_workdays)
+
+
+def _is_basic_trading_day(d: date) -> bool:
+    holidays, makeup_workdays = _load_basic_trading_calendar()
+    if d in makeup_workdays:
+        return True
+    if d.weekday() >= 5:
+        return False
+    return d not in holidays
+
+
+def _get_basic_previous_trading_day(d: date) -> date:
+    cursor = d - date.resolution
+    while not _is_basic_trading_day(cursor):
+        cursor -= date.resolution
+    return cursor
+
+
+def _get_basic_next_trading_day(d: date) -> date:
+    cursor = d + date.resolution
+    while not _is_basic_trading_day(cursor):
+        cursor += date.resolution
+    return cursor
 
 
 def now_shanghai() -> datetime:
@@ -53,35 +78,25 @@ def parse_iso8601(s: str) -> datetime:
 
 
 def is_trading_day(d: date) -> bool:
-    if d.weekday() >= 5:
-        return False
-    explicit_holidays = _A_SHARE_HOLIDAYS.get(d.year, set())
-    if explicit_holidays:
-        return d not in explicit_holidays
-    holidays = {
-        date(d.year, 1, 1),
-        date(d.year, 5, 1),
-        date(d.year, 10, 1),
-    }
-    return d not in holidays
+    from aqsp.data.trading_calendar import resolve_is_trading_day
+
+    return resolve_is_trading_day(d)
 
 
 def get_previous_trading_day(d: date | None = None) -> date:
     if d is None:
         d = today_shanghai()
-    d = d - timedelta(days=1)
-    while not is_trading_day(d):
-        d = d - timedelta(days=1)
-    return d
+    from aqsp.data.trading_calendar import resolve_previous_trading_day
+
+    return resolve_previous_trading_day(d)
 
 
 def get_next_trading_day(d: date | None = None) -> date:
     if d is None:
         d = today_shanghai()
-    d = d + timedelta(days=1)
-    while not is_trading_day(d):
-        d = d + timedelta(days=1)
-    return d
+    from aqsp.data.trading_calendar import resolve_next_trading_day
+
+    return resolve_next_trading_day(d)
 
 
 def market_hours(dt: datetime) -> tuple[datetime, datetime]:

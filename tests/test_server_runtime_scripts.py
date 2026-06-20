@@ -42,6 +42,8 @@ def test_intraday_refresh_script_uses_isolated_outputs() -> None:
     assert "--skip-validation" in script
     assert '--benchmark-symbol ""' in script
     assert "--render-only" in script
+    assert "today_shanghai" in script
+    assert "今日非交易日，跳过盘中刷新" in script
 
 
 def test_install_server_cron_script_installs_standard_jobs() -> None:
@@ -87,6 +89,9 @@ def test_midday_refresh_reuses_intraday_chain_without_formal_ledger_pollution() 
     assert 'AQSP_INTRADAY_NOTIFY="false"' in script
     assert 'AQSP_INTRADAY_ALLOW_NOTIFY="false"' in script
     assert "scripts/intraday_refresh.sh" in script
+    assert 'PYTHON_BIN="${VENV_DIR}/bin/python3"' in script
+    assert "today_shanghai" in script
+    assert "今日非交易日，跳过午盘回看" in script
 
 
 def test_bt_task_script_exposes_panel_safe_actions() -> None:
@@ -127,6 +132,8 @@ def test_bt_task_script_exposes_panel_safe_actions() -> None:
     assert "周一至周五 18:00" in daily_script
     assert "run_data_cleanup()" in daily_script
     assert daily_script.index("run_data_cleanup") < daily_script.index("周末(周${DOW})")
+    assert "today_shanghai" in daily_script
+    assert "今日非交易日，跳过跑批" in daily_script
 
 
 def test_news_catalysts_script_sends_research_notification() -> None:
@@ -259,6 +266,8 @@ def test_coldstart_daily_script_updates_db_then_runs_cli() -> None:
     assert "--source sqlite_db" in script
     assert '--benchmark-symbol ""' in script
     assert "冷启动:" in script
+    assert "today_shanghai" in script
+    assert "今日非交易日，跳过冷启动任务" in script
 
 
 def test_install_coldstart_cron_script_installs_single_daily_job() -> None:

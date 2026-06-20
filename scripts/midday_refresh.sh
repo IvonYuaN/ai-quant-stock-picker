@@ -7,6 +7,8 @@
 set -euo pipefail
 
 PROJECT_ROOT="${AQSP_PROJECT_ROOT:-/opt/aqsp}"
+VENV_DIR="${PROJECT_ROOT}/.venv"
+PYTHON_BIN="${VENV_DIR}/bin/python3"
 LOG_DIR="${PROJECT_ROOT}/logs/midday"
 RESULT_LOG="${LOG_DIR}/midday-$(date +%Y-%m-%d).log"
 
@@ -24,6 +26,16 @@ is_truthy() {
 DOW=$(date +%u)
 if [ "$DOW" -ge 6 ]; then
     log "周末(周${DOW})，跳过午盘回看"
+    exit 0
+fi
+
+export PYTHONPATH="${PROJECT_ROOT}/src:${PROJECT_ROOT}:${PYTHONPATH:-}"
+if ! "${PYTHON_BIN}" - <<'AQSP_CALENDAR_PY'
+from aqsp.core.time import is_trading_day, today_shanghai
+raise SystemExit(0 if is_trading_day(today_shanghai()) else 1)
+AQSP_CALENDAR_PY
+then
+    log "今日非交易日，跳过午盘回看"
     exit 0
 fi
 

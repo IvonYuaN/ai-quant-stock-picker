@@ -7,9 +7,9 @@ import pandas as pd
 
 from aqsp.core.errors import DataError
 from aqsp.core.time import (
-    get_next_trading_day,
-    get_previous_trading_day,
-    is_trading_day,
+    _get_basic_next_trading_day,
+    _get_basic_previous_trading_day,
+    _is_basic_trading_day,
 )
 from aqsp.data.tushare_pit import (
     TusharePitClient,
@@ -62,7 +62,7 @@ def resolve_is_trading_day(
     )
     if runtime_calendar is not None:
         return is_open_day_in_calendar(runtime_calendar, target)
-    return is_trading_day(target)
+    return _is_basic_trading_day(target)
 
 
 def resolve_previous_trading_day(
@@ -86,7 +86,7 @@ def resolve_previous_trading_day(
             return previous_trade_date_from_calendar(runtime_calendar, target)
         except DataError:
             pass
-    return get_previous_trading_day(target)
+    return _get_basic_previous_trading_day(target)
 
 
 def resolve_next_trading_day(
@@ -110,7 +110,7 @@ def resolve_next_trading_day(
             return next_trade_date_from_calendar(runtime_calendar, target)
         except DataError:
             pass
-    return get_next_trading_day(target)
+    return _get_basic_next_trading_day(target)
 
 
 def trading_day_lag(
@@ -162,7 +162,7 @@ def trading_day_lag(
     lag = 0
     cursor = latest
     while cursor < anchor:
-        cursor = get_next_trading_day(cursor)
+        cursor = _get_basic_next_trading_day(cursor)
         lag += 1
     return lag
 

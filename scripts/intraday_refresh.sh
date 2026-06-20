@@ -66,6 +66,15 @@ if [ "$DOW" -ge 6 ]; then
     exit 0
 fi
 
+if ! "${PYTHON_BIN}" - <<'AQSP_CALENDAR_PY'
+from aqsp.core.time import is_trading_day, today_shanghai
+raise SystemExit(0 if is_trading_day(today_shanghai()) else 1)
+AQSP_CALENDAR_PY
+then
+    log "今日非交易日，跳过盘中刷新"
+    exit 0
+fi
+
 REQUIRE_MARKET_HOURS="${AQSP_INTRADAY_REQUIRE_MARKET_HOURS:-true}"
 NOW_HM=$((10#$(date +%H%M)))
 if is_truthy "$REQUIRE_MARKET_HOURS"; then

@@ -879,7 +879,7 @@ def run_pipeline(config: PipelineConfig) -> PipelineResult:
 
     today = today_shanghai()
     if not _is_trade_day(today):
-        logger.info("今日 (%s) 非交易日, 仅执行数据更新和报告生成", today.isoformat())
+        logger.info("今日 (%s) 非交易日, 跳过行情更新和信号写入，仅刷新展示产物", today.isoformat())
 
     pipeline_steps: list[tuple[str, Any]] = [
         ("数据更新", lambda: _step_update_data(config, logger)),
@@ -895,7 +895,6 @@ def run_pipeline(config: PipelineConfig) -> PipelineResult:
     ]
     if not _is_trade_day(today):
         pipeline_steps = [
-            ("数据更新", lambda: _step_update_data(config, logger)),
             ("报告生成", lambda: _step_generate_report(config, logger)),
             ("Dashboard刷新", lambda: _step_refresh_dashboard(config, logger)),
             ("数据清理", lambda: _step_cleanup(config, logger)),

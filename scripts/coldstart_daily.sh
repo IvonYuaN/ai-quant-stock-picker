@@ -138,6 +138,15 @@ if [ "$DOW" -ge 6 ]; then
     exit 0
 fi
 
+if ! "${PYTHON_BIN}" - <<'AQSP_CALENDAR_PY'
+from aqsp.core.time import is_trading_day, today_shanghai
+raise SystemExit(0 if is_trading_day(today_shanghai()) else 1)
+AQSP_CALENDAR_PY
+then
+    log "今日非交易日，跳过冷启动任务"
+    exit 0
+fi
+
 # 冷启动使用 sqlite 日线库补正式 predictions ledger。
 # 开盘中 baostock 可能已返回当天未收盘日线；默认必须等收盘后再跑。
 COLDSTART_ALLOW_INTRADAY="${AQSP_COLDSTART_ALLOW_INTRADAY:-false}"
