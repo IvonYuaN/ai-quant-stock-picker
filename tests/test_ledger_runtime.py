@@ -30,6 +30,12 @@ def test_count_independent_signal_days_counts_observation_only_signal_days(
         },
         {"signal_date": "", "symbol": "bad", "thresholds_version": "1.1.1"},
         {"signal_date": "2026-06-03", "symbol": "legacy_without_thresholds"},
+        {
+            "signal_date": "2026-06-04",
+            "symbol": "000002",
+            "status": "pending",
+            "is_simulated": True,
+        },
     ]
     ledger.write_text(
         "\n".join(json.dumps(row, ensure_ascii=False) for row in rows) + "\n",

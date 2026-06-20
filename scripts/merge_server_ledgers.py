@@ -72,7 +72,9 @@ def count_independent_signal_days(rows: list[dict]) -> int:
     signal_dates = {
         str(row.get("signal_date", ""))
         for row in rows
-        if row.get("status") in {"pending", "validated"} and row.get("signal_date")
+        if not bool(row.get("is_simulated"))
+        and row.get("status") in {"pending", "validated"}
+        and row.get("signal_date")
     }
     return len(signal_dates)
 
