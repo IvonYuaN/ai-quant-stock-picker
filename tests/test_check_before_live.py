@@ -352,6 +352,38 @@ def test_check_before_live_blocks_when_daily_run_history_is_missing(
     )
 
 
+
+def test_check_before_live_merges_history_with_legacy_pipeline_logs(
+    tmp_path: Path,
+) -> None:
+    _prepare_ready_runtime(tmp_path)
+    _write_jsonl(
+        tmp_path / "data/daily_run_history.jsonl",
+        [
+            {"date": f"2026-06-{day:02d}", "success": True}
+            for day in range(15, 19)
+        ]
+        + [{"date": "2026-06-19", "success": False, "exit_code": 1}],
+    )
+    pipeline_dir = tmp_path / "logs" / "pipeline"
+    pipeline_dir.mkdir(parents=True, exist_ok=True)
+    _write_json(
+        pipeline_dir / "2026-06-12.json",
+        {
+            "started_at": "2026-06-12T18:00:00+08:00",
+            "finished_at": "2026-06-12T18:01:00+08:00",
+            "overall_success": True,
+            "steps": [{"name": "策略运行", "success": True}],
+        },
+    )
+
+    findings = check_before_live(root=tmp_path, today=date(2026, 6, 20))
+
+    finding = next(item for item in findings if item.gate == "successful_daily_runs")
+    assert finding.ok is True
+    assert finding.detail == "5/5 successful daily run days (daily_run_history+pipeline_logs)"
+
+
 def test_check_before_live_counts_legacy_pipeline_logs_when_history_is_missing(
     tmp_path: Path,
 ) -> None:

@@ -185,11 +185,21 @@ def _row_signal_date(row: dict[str, Any]) -> str:
 
 
 def _check_successful_runs(path: Path, *, root: Path) -> ReadinessFinding:
-    rows = _read_jsonl(path)
-    source = "daily_run_history"
-    if not rows:
-        rows = _read_pipeline_history(root)
-        source = "pipeline_logs"
+    history_rows = _read_jsonl(path)
+    pipeline_rows = _read_pipeline_history(root)
+    rows = history_rows + [
+        row
+        for row in pipeline_rows
+        if str(row.get("date") or "").strip()
+        not in {str(item.get("date") or item.get("run_date") or "").strip() for item in history_rows}
+    ]
+    source = (
+        "daily_run_history+pipeline_logs"
+        if history_rows and pipeline_rows
+        else "daily_run_history"
+        if history_rows
+        else "pipeline_logs"
+    )
     successful_days = {
         str(row.get("date") or row.get("run_date") or "").strip()
         for row in rows

@@ -7,6 +7,29 @@ from zoneinfo import ZoneInfo
 SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
 
 
+_A_SHARE_HOLIDAYS: dict[int, set[date]] = {
+    2026: {
+        date(2026, 1, 1),
+        date(2026, 2, 16),
+        date(2026, 2, 17),
+        date(2026, 2, 18),
+        date(2026, 2, 19),
+        date(2026, 2, 20),
+        date(2026, 4, 6),
+        date(2026, 5, 1),
+        date(2026, 5, 4),
+        date(2026, 5, 5),
+        date(2026, 6, 19),
+        date(2026, 9, 25),
+        date(2026, 10, 1),
+        date(2026, 10, 2),
+        date(2026, 10, 5),
+        date(2026, 10, 6),
+        date(2026, 10, 7),
+    },
+}
+
+
 def now_shanghai() -> datetime:
     return datetime.now(tz=SHANGHAI_TZ)
 
@@ -32,11 +55,14 @@ def parse_iso8601(s: str) -> datetime:
 def is_trading_day(d: date) -> bool:
     if d.weekday() >= 5:
         return False
-    holidays = [
+    explicit_holidays = _A_SHARE_HOLIDAYS.get(d.year, set())
+    if explicit_holidays:
+        return d not in explicit_holidays
+    holidays = {
         date(d.year, 1, 1),
         date(d.year, 5, 1),
         date(d.year, 10, 1),
-    ]
+    }
     return d not in holidays
 
 

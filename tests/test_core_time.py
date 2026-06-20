@@ -66,6 +66,16 @@ def test_is_trading_day_weekends():
     assert not is_trading_day(date(2026, 6, 7))
 
 
+
+def test_is_trading_day_a_share_2026_holidays():
+    assert not is_trading_day(date(2026, 2, 17))
+    assert not is_trading_day(date(2026, 4, 6))
+    assert not is_trading_day(date(2026, 6, 19))
+    assert not is_trading_day(date(2026, 9, 25))
+    assert is_trading_day(date(2026, 6, 18))
+    assert is_trading_day(date(2026, 6, 22))
+
+
 def test_get_previous_trading_day():
     friday = date(2026, 5, 30)
     assert get_previous_trading_day(friday) == date(2026, 5, 29)
