@@ -17,11 +17,13 @@ from pathlib import Path
 from typing import Any, Dict
 
 from aqsp.core.time import now_shanghai, today_shanghai
+from aqsp.strategies.thresholds import Thresholds, load_thresholds
 
 
 # ============================================================
 # Layer 1: 个股风控
 # ============================================================
+
 
 @dataclass(frozen=True)
 class StockRiskConfig:
@@ -34,6 +36,16 @@ class StockRiskConfig:
     trailing_stop_distance: float = 0.03  # 移动止损距离
     max_holding_days: int = 10  # 最大持仓天数
     profit_take_threshold: float = 0.15  # 止盈线15%
+
+    @classmethod
+    def from_thresholds(cls, thresholds: Thresholds | None = None) -> "StockRiskConfig":
+        risk = (thresholds or load_thresholds()).risk
+        return cls(
+            hard_stop_loss=float(risk.single_stock_stop_pct),
+            soft_stop_loss=float(risk.warning_threshold_pct),
+            trailing_stop_activation=float(risk.warning_threshold_pct),
+            trailing_stop_distance=float(risk.trailing_stop_pct),
+        )
 
 
 @dataclass(frozen=True)
@@ -60,7 +72,7 @@ class StockRiskManager:
     """
 
     def __init__(self, config: StockRiskConfig | None = None):
-        self.config = config or StockRiskConfig()
+        self.config = config or StockRiskConfig.from_thresholds()
 
     def check_position(
         self,
@@ -90,8 +102,12 @@ class StockRiskManager:
             )
 
         # 2. 移动止损
-        if max_price_since_entry > entry_price * (1 + self.config.trailing_stop_activation):
-            stop_price = max_price_since_entry * (1 - self.config.trailing_stop_distance)
+        if max_price_since_entry > entry_price * (
+            1 + self.config.trailing_stop_activation
+        ):
+            stop_price = max_price_since_entry * (
+                1 - self.config.trailing_stop_distance
+            )
             if current_price <= stop_price:
                 return StockRiskCheck(
                     symbol=symbol,
@@ -167,6 +183,7 @@ class StockRiskManager:
 # Layer 2: 组合风控
 # ============================================================
 
+
 @dataclass(frozen=True)
 class PortfolioRiskConfig:
     """组合风控配置。"""
@@ -179,6 +196,16 @@ class PortfolioRiskConfig:
     max_sector_concentration: float = 0.40  # 单板块仓位上限
     max_correlation: float = 0.70  # 持仓相关性上限
     min_cash_reserve: float = 0.10  # 最低现金保留
+
+    @classmethod
+    def from_thresholds(
+        cls, thresholds: Thresholds | None = None
+    ) -> "PortfolioRiskConfig":
+        risk = (thresholds or load_thresholds()).risk
+        return cls(
+            max_weekly_loss_pct=float(risk.warning_threshold_pct),
+            max_drawdown_pct=float(risk.portfolio_stop_pct),
+        )
 
 
 @dataclass
@@ -217,7 +244,7 @@ class PortfolioRiskManager:
     """
 
     def __init__(self, config: PortfolioRiskConfig | None = None):
-        self.config = config or PortfolioRiskConfig()
+        self.config = config or PortfolioRiskConfig.from_thresholds()
 
     def check_portfolio(
         self,
@@ -232,7 +259,9 @@ class PortfolioRiskManager:
         max_new = self.config.max_single_position_pct
 
         # 1. 日亏损检查
-        daily_loss_pct = abs(state.daily_pnl) / state.total_value if state.total_value > 0 else 0
+        daily_loss_pct = (
+            abs(state.daily_pnl) / state.total_value if state.total_value > 0 else 0
+        )
         if state.daily_pnl < 0 and daily_loss_pct >= self.config.max_daily_loss_pct:
             blocking.append(
                 f"⛔ 单日亏损{daily_loss_pct:.1%} ≥ {self.config.max_daily_loss_pct:.0%}"
@@ -241,7 +270,9 @@ class PortfolioRiskManager:
             can_open = False
 
         # 2. 周亏损检查
-        weekly_loss_pct = abs(state.weekly_pnl) / state.total_value if state.total_value > 0 else 0
+        weekly_loss_pct = (
+            abs(state.weekly_pnl) / state.total_value if state.total_value > 0 else 0
+        )
         if state.weekly_pnl < 0 and weekly_loss_pct >= self.config.max_weekly_loss_pct:
             blocking.append(
                 f"⛔ 单周亏损{weekly_loss_pct:.1%} ≥ {self.config.max_weekly_loss_pct:.0%}"
@@ -297,9 +328,15 @@ class PortfolioRiskManager:
 
         # 综合决策
         if blocking:
-            overall_action = "emergency_exit" if state.drawdown >= self.config.max_drawdown_pct else "stop_buy"
+            overall_action = (
+                "emergency_exit"
+                if state.drawdown >= self.config.max_drawdown_pct
+                else "stop_buy"
+            )
         elif warnings:
-            overall_action = "reduce" if cash_ratio < self.config.min_cash_reserve else "normal"
+            overall_action = (
+                "reduce" if cash_ratio < self.config.min_cash_reserve else "normal"
+            )
         else:
             overall_action = "normal"
 
@@ -317,6 +354,7 @@ class PortfolioRiskManager:
 # Layer 3: 系统风控
 # ============================================================
 
+
 @dataclass(frozen=True)
 class SystemRiskConfig:
     """系统风控配置。"""
@@ -328,6 +366,16 @@ class SystemRiskConfig:
     sector_panic_threshold: int = 5  # 单板块跌停>=5只触发警报
     halt_trigger_count: int = 3  # 连续3日触发系统风控 → 暂停所有策略
     auto_resume_days: int = 1  # 1天后自动恢复
+
+    @classmethod
+    def from_thresholds(
+        cls, thresholds: Thresholds | None = None
+    ) -> "SystemRiskConfig":
+        risk = (thresholds or load_thresholds()).risk
+        return cls(
+            market_crash_threshold=-float(risk.warning_threshold_pct),
+            panic_index_threshold=float(risk.volatility_limit),
+        )
 
 
 @dataclass(frozen=True)
@@ -370,7 +418,7 @@ class SystemRiskManager:
     STATE_FILE = "data/system_risk_state.json"
 
     def __init__(self, config: SystemRiskConfig | None = None):
-        self.config = config or SystemRiskConfig()
+        self.config = config or SystemRiskConfig.from_thresholds()
         self.state_path = Path(self.STATE_FILE)
 
     def check_market(self, snapshot: MarketSnapshot) -> SystemRiskCheck:
@@ -383,9 +431,7 @@ class SystemRiskManager:
 
         # 1. 大盘暴跌
         if snapshot.hs300_change <= self.config.market_crash_threshold:
-            triggered.append(
-                f"🔴 大盘暴跌：沪深300单日{snapshot.hs300_change:+.1%}"
-            )
+            triggered.append(f"🔴 大盘暴跌：沪深300单日{snapshot.hs300_change:+.1%}")
             actions.append("立即停止所有进攻策略")
             actions.append("仅保留防御性持仓")
             risk_level = "critical"
@@ -394,9 +440,7 @@ class SystemRiskManager:
 
         # 2. 大盘累计调整
         elif snapshot.hs300_change_5d <= self.config.market_correction_threshold:
-            triggered.append(
-                f"🟠 大盘调整：沪深300 5日{snapshot.hs300_change_5d:+.1%}"
-            )
+            triggered.append(f"🟠 大盘调整：沪深300 5日{snapshot.hs300_change_5d:+.1%}")
             actions.append("减仓至 50% 以下")
             actions.append("提高现金比例")
             risk_level = "high"
@@ -404,33 +448,27 @@ class SystemRiskManager:
 
         # 3. 板块恐慌（跌停集中）
         if snapshot.limit_down_count >= self.config.sector_panic_threshold:
-            triggered.append(
-                f"🟠 跌停集中：今日{snapshot.limit_down_count}只跌停"
-            )
+            triggered.append(f"🟠 跌停集中：今日{snapshot.limit_down_count}只跌停")
             actions.append("警惕系统性风险，缩减新增纸面复核")
             if risk_level == "normal":
                 risk_level = "elevated"
 
         # 4. 波动率过高
         if snapshot.market_volatility >= self.config.panic_index_threshold:
-            triggered.append(
-                f"🟡 波动率过高：{snapshot.market_volatility:.1%}"
-            )
+            triggered.append(f"🟡 波动率过高：{snapshot.market_volatility:.1%}")
             actions.append("缩小仓位，等待波动率回落")
             if risk_level == "normal":
                 risk_level = "elevated"
 
         # 5. 量能萎缩（流动性问题）
         if snapshot.avg_volume_ratio < 0.7:
-            triggered.append(
-                f"🟡 量能萎缩：整体量比{snapshot.avg_volume_ratio:.1f}"
-            )
+            triggered.append(f"🟡 量能萎缩：整体量比{snapshot.avg_volume_ratio:.1f}")
             actions.append("市场冷清，减少新增纸面观察")
 
         # 6. 北向资金大幅流出
         if snapshot.north_flow < -5_000_000_000:  # -50亿
             triggered.append(
-                f"🟠 北向大幅流出：{snapshot.north_flow/100000000:.1f}亿"
+                f"🟠 北向大幅流出：{snapshot.north_flow / 100000000:.1f}亿"
             )
             actions.append("外资撤离，警惕白马股下跌")
             if risk_level == "normal":
@@ -509,6 +547,7 @@ class SystemRiskManager:
 # 统一风控调度器
 # ============================================================
 
+
 @dataclass(frozen=True)
 class UnifiedRiskReport:
     """统一风控报告。"""
@@ -585,7 +624,9 @@ class UnifiedRiskManager:
             final_action = "stop_buy_new"
             blocking.extend(portfolio_check.blocking_reasons)
         elif any(c.urgency == "critical" for c in stock_checks):
-            critical_stocks = [c.symbol for c in stock_checks if c.urgency == "critical"]
+            critical_stocks = [
+                c.symbol for c in stock_checks if c.urgency == "critical"
+            ]
             final_action = f"exit_stocks:{','.join(critical_stocks)}"
         else:
             final_action = "normal"
@@ -607,7 +648,9 @@ class UnifiedRiskManager:
         lines.append("=" * 60)
 
         # 系统风控
-        lines.append(f"\n## Layer 3: 系统风控 - {report.system_check.risk_level.upper()}")
+        lines.append(
+            f"\n## Layer 3: 系统风控 - {report.system_check.risk_level.upper()}"
+        )
         if report.system_check.triggered_rules:
             for rule in report.system_check.triggered_rules:
                 lines.append(f"  {rule}")
@@ -615,18 +658,25 @@ class UnifiedRiskManager:
             lines.append("  ✅ 市场状态正常")
 
         # 组合风控
-        lines.append(f"\n## Layer 2: 组合风控 - {report.portfolio_check.overall_action}")
+        lines.append(
+            f"\n## Layer 2: 组合风控 - {report.portfolio_check.overall_action}"
+        )
         if report.portfolio_check.blocking_reasons:
             for r in report.portfolio_check.blocking_reasons:
                 lines.append(f"  {r}")
         for w in report.portfolio_check.warnings[:3]:
             lines.append(f"  ⚠️ {w}")
-        if not report.portfolio_check.blocking_reasons and not report.portfolio_check.warnings:
+        if (
+            not report.portfolio_check.blocking_reasons
+            and not report.portfolio_check.warnings
+        ):
             lines.append("  ✅ 组合健康")
 
         # 个股风控
         critical = [c for c in report.stock_checks if c.urgency in ("high", "critical")]
-        lines.append(f"\n## Layer 1: 个股风控 - {len(critical)}/{len(report.stock_checks)} 需关注")
+        lines.append(
+            f"\n## Layer 1: 个股风控 - {len(critical)}/{len(report.stock_checks)} 需关注"
+        )
         for check in critical[:5]:
             lines.append(f"  {check.symbol}: {check.action.upper()} - {check.reason}")
 
