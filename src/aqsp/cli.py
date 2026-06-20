@@ -3198,6 +3198,42 @@ _WALKFORWARD_GRID_VARIANTS: tuple[WalkForwardGridVariant, ...] = (
 )
 
 
+def _parse_walkforward_period_range(period: object) -> tuple[str, str] | None:
+    if not isinstance(period, str) or " to " not in period:
+        return None
+    start, end = (part.strip() for part in period.split(" to ", 1))
+    if len(start) < 10 or len(end) < 10:
+        return None
+    return start[:10], end[:10]
+
+
+def _summarize_walkforward_market_window(
+    frames: dict[str, pd.DataFrame], start: str, end: str
+) -> dict[str, float | int]:
+    returns: list[float] = []
+    for df in frames.values():
+        if df is None or df.empty or not {"date", "close"}.issubset(df.columns):
+            continue
+        ordered = df.sort_values("date")
+        date_col = ordered["date"].astype(str)
+        window = ordered.loc[(date_col >= start) & (date_col <= end)]
+        if len(window) < 2:
+            continue
+        first = float(window.iloc[0]["close"] or 0.0)
+        last = float(window.iloc[-1]["close"] or 0.0)
+        if first <= 0.0:
+            continue
+        returns.append((last - first) / first)
+
+    if not returns:
+        return {"sample_count": 0}
+    return {
+        "sample_count": len(returns),
+        "avg_return": float(sum(returns) / len(returns)),
+        "negative_ratio": float(sum(1 for value in returns if value < 0.0) / len(returns)),
+    }
+
+
 def _apply_composite_min_score(thresholds: Any, min_score: float) -> Any:
     from aqsp.strategies.thresholds import CompositeThresholds
 
@@ -3229,6 +3265,7 @@ def _run_walkforward_grid_cscv(
 
     variant_returns: list[list[float]] = []
     variant_rows: list[tuple[str, float, float, int]] = []
+    period_labels: list[str] | None = None
     min_periods: int | None = None
 
     for variant in _WALKFORWARD_GRID_VARIANTS:
@@ -3256,6 +3293,8 @@ def _run_walkforward_grid_cscv(
         returns = [period.total_return for period in variant_result.periods]
         if not returns:
             continue
+        if period_labels is None:
+            period_labels = [period.period for period in variant_result.periods]
         min_periods = (
             len(returns) if min_periods is None else min(min_periods, len(returns))
         )
@@ -3291,6 +3330,21 @@ def _run_walkforward_grid_cscv(
     ]
     best_variant_idx = int(np.argmax([row[1] for row in variant_rows]))
     worst_variant_idx = int(np.argmin([row[1] for row in variant_rows]))
+    worst_period_ranges = [
+        _parse_walkforward_period_range(period_labels[idx])
+        if period_labels is not None and idx < len(period_labels)
+        else None
+        for idx in worst_period_indices
+    ]
+    worst_market_windows: list[dict[str, float | int]] = []
+    for parsed in worst_period_ranges:
+        if parsed is None:
+            worst_market_windows.append({"sample_count": 0})
+            continue
+        start, end = parsed
+        worst_market_windows.append(
+            _summarize_walkforward_market_window(filtered, start, end)
+        )
     details.update(
         {
             "variant_dispersion_sharpe": float(
@@ -3304,13 +3358,25 @@ def _run_walkforward_grid_cscv(
             "worst_periods": [
                 {
                     "period_index": idx + 1,
+                    "period": period_labels[idx]
+                    if period_labels is not None and idx < len(period_labels)
+                    else "-",
                     "mean_return": float(period_means[idx]),
                     "dispersion": float(period_stds[idx]),
                     "negative_variant_count": int(
                         np.sum(returns_matrix[idx, :] < 0)
                     ),
+                    "market_avg_return": worst_market_windows[pos].get(
+                        "avg_return"
+                    ),
+                    "market_negative_ratio": worst_market_windows[pos].get(
+                        "negative_ratio"
+                    ),
+                    "market_sample_count": worst_market_windows[pos].get(
+                        "sample_count", 0
+                    ),
                 }
-                for idx in worst_period_indices
+                for pos, idx in enumerate(worst_period_indices)
             ],
         }
     )
@@ -3363,8 +3429,8 @@ def _append_walkforward_grid_diagnostics(
         report_lines.extend(
             [
                 "",
-                "| 最差对齐周期 | 平均收益 | 分散度 | 亏损变体数 |",
-                "|--------------|----------|--------|------------|",
+                "| 最差对齐周期 | 测试窗口 | 平均收益 | 分散度 | 亏损变体数 | 全池平均收益 | 全池下跌占比 | 样本数 |",
+                "|--------------|----------|----------|--------|------------|--------------|--------------|--------|",
             ]
         )
         for item in worst_periods:
@@ -3372,9 +3438,13 @@ def _append_walkforward_grid_diagnostics(
                 continue
             report_lines.append(
                 f"| #{item.get('period_index', '-')} | "
+                f"{item.get('period', '-')} | "
                 f"{_format_optional_float(item.get('mean_return'), pct=True)} | "
                 f"{_format_optional_float(item.get('dispersion'), pct=True)} | "
-                f"{item.get('negative_variant_count', '-')} |"
+                f"{item.get('negative_variant_count', '-')} | "
+                f"{_format_optional_float(item.get('market_avg_return'), pct=True)} | "
+                f"{_format_optional_float(item.get('market_negative_ratio'), pct=True)} | "
+                f"{item.get('market_sample_count', '-')} |"
             )
 
 

@@ -1521,7 +1521,7 @@ def test_walkforward_grid_cscv_writes_valid_pbo_gate(monkeypatch, tmp_path):
                 sharpe = 2.0 + variant_idx * 0.1
             periods = [
                 BacktestResult(
-                    period=f"p{i}",
+                    period=f"{dates[i].date()} to {dates[i + 1].date()}",
                     total_return=value,
                     annual_return=value,
                     max_drawdown=0.01,
@@ -1616,3 +1616,5 @@ def test_walkforward_grid_cscv_writes_valid_pbo_gate(monkeypatch, tmp_path):
     assert "CSCV 失败组合占比" in report_text
     assert "最差对齐周期" in report_text
     assert "最优变体" in report_text
+    assert "全池平均收益" in report_text
+    assert "全池下跌占比" in report_text
