@@ -454,3 +454,26 @@ def test_sqlite_db_source_realtime_raises_unsupported(tmp_path: Path) -> None:
 
     with pytest.raises(DataError, match="不支持实时行情"):
         source.fetch_realtime_quote(["600000"])
+
+
+def test_validate_ohlcv_allows_unknown_limit_prices_as_nan() -> None:
+    df = pd.DataFrame(
+        {
+            "date": ["2026-05-27"],
+            "symbol": ["000300"],
+            "name": ["沪深300"],
+            "open": [3500.0],
+            "high": [3510.0],
+            "low": [3490.0],
+            "close": [3505.0],
+            "volume": [1000.0],
+            "amount": [350500000.0],
+            "suspended": [False],
+            "limit_up": [float("nan")],
+            "limit_down": [float("nan")],
+        }
+    )
+    source = AkshareSource.__new__(AkshareSource)
+    source.name = "test"
+
+    assert source._validate_ohlcv(df, "000300") is df

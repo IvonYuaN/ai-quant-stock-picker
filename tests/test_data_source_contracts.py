@@ -6,7 +6,12 @@ from types import SimpleNamespace
 import pytest
 
 from aqsp.core.errors import DataError
+from aqsp.data.akshare_source import AkshareSource
 from aqsp.data.baostock_source import BaostockSource
+from aqsp.data.eastmoney_source import EastmoneySource
+from aqsp.data.efinance_source import EfinanceSource
+from aqsp.data.sina_source import SinaSource
+from aqsp.data.tencent_source import TencentSource
 from aqsp.data.mootdx_source import MootdxSource
 from aqsp.data.source import require_non_empty_fetch_result
 
@@ -59,3 +64,33 @@ def test_require_non_empty_fetch_result_rejects_partial_results() -> None:
             ["600000", "000001"],
             {"600000": object()},
         )
+
+
+def test_online_public_daily_methods_raise_data_error_when_empty(monkeypatch) -> None:
+    cases = [
+        (AkshareSource, "akshare", "_ak", "stock_zh_a_hist"),
+        (EfinanceSource, "efinance", "_ef", "stock.get_quote_history"),
+        (EastmoneySource, "eastmoney", "_fetch_eastmoney_daily", None),
+        (SinaSource, "sina", "_fetch_sina_daily", None),
+        (TencentSource, "tencent", "_fetch_tencent_daily", None),
+    ]
+    for cls, name, attr, nested in cases:
+        source = cls.__new__(cls)
+        source.name = name
+        source.cache = SimpleNamespace(
+            get_ohlcv=lambda *_args, **_kwargs: None,
+            set_ohlcv=lambda *_args, **_kwargs: None,
+        )
+        if nested is None:
+            monkeypatch.setattr(source, attr, lambda *_args, **_kwargs: None)
+        elif nested == "stock.get_quote_history":
+            source._ef = SimpleNamespace(
+                stock=SimpleNamespace(get_quote_history=lambda *_args, **_kwargs: None)
+            )
+        else:
+            source._ak = SimpleNamespace(
+                stock_zh_a_hist=lambda *_args, **_kwargs: SimpleNamespace(empty=True)
+            )
+
+        with pytest.raises(DataError, match=f"{name} 日线获取失败"):
+            source.fetch_daily(["600000"], date(2026, 5, 20), date(2026, 5, 27))

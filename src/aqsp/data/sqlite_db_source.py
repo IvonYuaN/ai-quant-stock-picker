@@ -243,6 +243,8 @@ class SqliteDbSource(DataSource):
                     )
                 )
                 df = df.drop(columns=["trade_date"])
+                df["symbol"] = code
+                df["name"] = self.get_symbol_name(code)
                 for col in ["open", "high", "low", "close", "volume", "amount"]:
                     if col in df.columns:
                         df[col] = pd.to_numeric(df[col], errors="coerce")
@@ -250,9 +252,13 @@ class SqliteDbSource(DataSource):
                 if df.empty:
                     continue
 
+                df = apply_limit_suspended_adj(
+                    df, code, cache=self.cache if self._use_cache else None
+                )
+                validated = self._validate_ohlcv(df, code)
                 if self._use_cache:
-                    self.cache.set_index(code, df, source="sqlite_db")
-                out[code] = df
+                    self.cache.set_index(code, validated, source="sqlite_db")
+                out[code] = validated
         require_non_empty_fetch_result(self.name, "指数", index_codes, out)
 
         return out

@@ -138,7 +138,10 @@ class DataSource(ABC):
         invalid_dates = pd.to_datetime(df["date"], errors="coerce").isna()
         if invalid_dates.any():
             raise DataError(f"OHLCV 数据日期无效: {symbol}")
+        optional_numeric_columns = {"limit_up", "limit_down"}
         for col in NUMERIC_OHLCV_COLUMNS:
+            if col in optional_numeric_columns:
+                continue
             if pd.to_numeric(df[col], errors="coerce").isna().all():
                 raise DataError(f"OHLCV 数据列无有效数值: {symbol}.{col}")
         if df["suspended"].isna().any():
