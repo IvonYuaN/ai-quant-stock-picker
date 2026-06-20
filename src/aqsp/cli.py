@@ -2328,6 +2328,7 @@ def run_screen(args: argparse.Namespace) -> int:
 
 def run_scheduled(args: argparse.Namespace) -> int:
     env = load_runtime_config()
+    task_id = str(os.environ.get("AQSP_RUN_TASK_ID", "") or "").strip()
     mode = args.mode or env.mode
     explicit_symbols = args.symbols or ",".join(env.symbols)
     limit = args.limit or env.limit
@@ -3058,6 +3059,7 @@ def run_scheduled(args: argparse.Namespace) -> int:
         gate_state_path=_resolve_runtime_state_path(
             os.getenv("AQSP_GATE_NOTIFY_STATE_PATH", GATE_NOTIFY_STATE_PATH)
         ),
+        task_id=task_id,
     )
     finalize_scheduled_outputs(
         markdown=notification_artifacts.markdown,

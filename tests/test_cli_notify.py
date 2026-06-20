@@ -581,6 +581,8 @@ def test_run_scheduled_sends_gate_block_alert_when_notify_is_disabled_by_gate(
 ) -> None:
     import aqsp.cli as cli_mod
 
+    monkeypatch.setenv("AQSP_RUN_TASK_ID", "daily")
+
     latest = today_shanghai().isoformat()
     frames = {
         "600519": pd.DataFrame(

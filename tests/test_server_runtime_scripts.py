@@ -31,9 +31,11 @@ def test_intraday_refresh_script_uses_isolated_outputs() -> None:
     assert 'export AQSP_RUN_TASK_ID="intraday"' in script
     assert 'export AQSP_NOTIFY="false"' in script
     assert 'INTRADAY_MODE="${AQSP_INTRADAY_MODE:-open}"' in script
+    assert 'INTRADAY_ALLOW_NOTIFY="${AQSP_INTRADAY_ALLOW_NOTIFY:-false}"' in script
     assert 'INTRADAY_NOTIFY="${AQSP_INTRADAY_NOTIFY:-false}"' in script
     assert "NOTIFY_ARGS=(--notify)" in script
-    assert 'if is_truthy "$INTRADAY_NOTIFY"; then' in script
+    assert 'if is_truthy "$INTRADAY_ALLOW_NOTIFY" && is_truthy "$INTRADAY_NOTIFY"; then' in script
+    assert "盘中通知未显式放行，忽略 AQSP_INTRADAY_NOTIFY=true" in script
     assert "data/intraday_predictions.jsonl" in script
     assert "reports/intraday_latest.md" in script
     assert "reports/intraday_latest.csv" in script
@@ -82,7 +84,8 @@ def test_midday_refresh_reuses_intraday_chain_without_formal_ledger_pollution() 
     assert 'AQSP_RUN_TASK_ID="midday"' in script
     assert 'AQSP_NOTIFY="false"' in script
     assert 'AQSP_NOTIFY_TITLE_LABEL="${AQSP_NOTIFY_TITLE_LABEL:-午盘分析}"' in script
-    assert 'AQSP_INTRADAY_NOTIFY="${AQSP_INTRADAY_NOTIFY:-false}"' in script
+    assert 'AQSP_INTRADAY_NOTIFY="false"' in script
+    assert 'AQSP_INTRADAY_ALLOW_NOTIFY="false"' in script
     assert "scripts/intraday_refresh.sh" in script
 
 
@@ -105,6 +108,9 @@ def test_bt_task_script_exposes_panel_safe_actions() -> None:
     assert "AQSP_RUNNER_SCRIPT=scripts/daily_pipeline.sh" in script
     assert "AQSP_RUNNER_SCRIPT=scripts/intraday_refresh.sh" in script
     assert "AQSP_RUNNER_SCRIPT=scripts/midday_refresh.sh" in script
+    assert 'export AQSP_RUN_TASK_ID="intraday"' in script
+    assert 'export AQSP_NOTIFY="false"' in script
+    assert 'export AQSP_RUN_TASK_ID="midday"' in script
     assert "should_bridge_intraday_to_midday" in script
     assert "AQSP_INTRADAY_MIDDAY_BRIDGE" in script
     assert "midday-$(date +%Y-%m-%d).done" in script

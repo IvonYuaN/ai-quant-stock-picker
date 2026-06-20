@@ -153,6 +153,38 @@ def test_finalize_scheduled_notification_suppresses_gate_push_outside_daily(
     assert "gate notify: skipped outside daily task" in seen
 
 
+def test_finalize_scheduled_notification_uses_explicit_task_id_over_env(
+    monkeypatch,
+) -> None:
+    seen: list[str] = []
+    gate_calls: list[str] = []
+    legacy_calls: list[str] = []
+    monkeypatch.setenv("AQSP_RUN_TASK_ID", "daily")
+
+    finalize_scheduled_notification(
+        markdown="# 原始报告",
+        args_notify=True,
+        gate_ok=False,
+        gate_reasons=["冷启动未满: 14/30 个独立信号日"],
+        next_actions=["继续按日运行主链。"],
+        latest_iso="2026-06-17",
+        notify_mode="summary",
+        dispatch_gate_notification_fn=lambda **_kwargs: gate_calls.append("sent")
+        or [],
+        should_send_gate_notification_fn=lambda **_kwargs: True,
+        format_notification_gate_block_fn=lambda reasons, actions: (
+            f"BLOCK:{reasons[0]}|{actions[0]}\n"
+        ),
+        legacy_notify_fn=lambda markdown: legacy_calls.append(markdown) or [],
+        print_fn=seen.append,
+        task_id="intraday",
+    )
+
+    assert gate_calls == []
+    assert legacy_calls == []
+    assert "gate notify: skipped outside daily task" in seen
+
+
 def test_finalize_scheduled_notification_fails_closed_when_gate_state_fails(
     monkeypatch,
 ) -> None:

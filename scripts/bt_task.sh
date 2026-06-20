@@ -148,11 +148,18 @@ export TZ="${TZ:-Asia/Shanghai}"
 
 case "$ACTION" in
     daily)
+        export AQSP_RUN_TASK_ID="daily"
         export AQSP_RUNNER_SCRIPT=scripts/daily_pipeline.sh
         run_script "${PROJECT_ROOT}/scripts/server_sync_and_run.sh"
         ;;
     intraday)
+        export AQSP_RUN_TASK_ID="intraday"
+        export AQSP_NOTIFY="false"
+        export AQSP_INTRADAY_NOTIFY="${AQSP_INTRADAY_NOTIFY:-false}"
         if should_bridge_intraday_to_midday; then
+            export AQSP_RUN_TASK_ID="midday"
+            export AQSP_NOTIFY="false"
+            export AQSP_INTRADAY_NOTIFY="${AQSP_INTRADAY_NOTIFY:-false}"
             export AQSP_RUNNER_SCRIPT=scripts/midday_refresh.sh
             if run_synced_task_with_result; then
                 touch "$AQSP_MIDDAY_MARKER_FILE"
@@ -166,6 +173,9 @@ case "$ACTION" in
         run_synced_task_with_result || true
         ;;
     midday)
+        export AQSP_RUN_TASK_ID="midday"
+        export AQSP_NOTIFY="false"
+        export AQSP_INTRADAY_NOTIFY="${AQSP_INTRADAY_NOTIFY:-false}"
         export AQSP_RUNNER_SCRIPT=scripts/midday_refresh.sh
         if run_synced_task_with_result; then
             marker_file="${AQSP_MIDDAY_MARKER_FILE:-${PROJECT_ROOT}/.state/midday-$(date +%Y-%m-%d).done}"
@@ -176,13 +186,16 @@ case "$ACTION" in
         fi
         ;;
     coldstart)
+        export AQSP_RUN_TASK_ID="coldstart"
         sync_code_only
         run_script "${PROJECT_ROOT}/scripts/coldstart_daily.sh"
         ;;
     monitor)
+        export AQSP_RUN_TASK_ID="monitor"
         run_script "${PROJECT_ROOT}/scripts/server_monitor.sh"
         ;;
     news)
+        export AQSP_RUN_TASK_ID="news"
         run_script "${PROJECT_ROOT}/scripts/news_catalysts.sh"
         ;;
     status)

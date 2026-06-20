@@ -182,6 +182,7 @@ def finalize_scheduled_notification(
     gate_block_markdown: str = "",
     mark_gate_notification_sent_fn: Callable[..., None] | None = None,
     gate_state_path: str | Path | None = None,
+    task_id: str | None = None,
 ) -> ScheduledNotificationArtifacts:
     output_markdown = markdown
     notify_enabled = bool(args_notify)
@@ -197,7 +198,7 @@ def finalize_scheduled_notification(
             gate_reasons, next_actions
         )
         output_markdown = gate_block + markdown
-        if legacy_notify_fn is None and not gate_notification_allowed():
+        if not gate_notification_allowed(task_id):
             print_fn("gate notify: skipped outside daily task")
         else:
             try:
