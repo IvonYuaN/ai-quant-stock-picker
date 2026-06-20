@@ -137,7 +137,9 @@ def test_run_scheduled_composite_rescore_updates_frozen_pick_results(
         ),
     }
 
-    monkeypatch.setattr(cli_mod, "_resolve_run_symbols", lambda *args, **kwargs: ["600519", "000001"])
+    monkeypatch.setattr(
+        cli_mod, "_resolve_run_symbols", lambda *args, **kwargs: ["600519", "000001"]
+    )
     monkeypatch.setattr(
         cli_mod,
         "_fetch_frames_for_cli_with_metadata",
@@ -146,7 +148,9 @@ def test_run_scheduled_composite_rescore_updates_frozen_pick_results(
     monkeypatch.setattr(
         cli_mod,
         "assert_fresh_data",
-        lambda *_args, **_kwargs: datetime.fromisoformat("2026-06-15T15:00:00+08:00").date(),
+        lambda *_args, **_kwargs: datetime.fromisoformat(
+            "2026-06-15T15:00:00+08:00"
+        ).date(),
     )
     monkeypatch.setattr(cli_mod, "_runtime_data_lag_days", lambda *_args, **_kwargs: 0)
     monkeypatch.setattr(
@@ -159,17 +163,34 @@ def test_run_scheduled_composite_rescore_updates_frozen_pick_results(
         "describe_source_health",
         lambda *_args, **_kwargs: ("healthy", "ok", False),
     )
-    monkeypatch.setattr(cli_mod, "_count_independent_signal_days", lambda *_args, **_kwargs: 35)
-    monkeypatch.setattr(cli_mod, "_detect_runtime_regime", lambda *_args, **_kwargs: "stable_bull")
-    monkeypatch.setattr("aqsp.data.anomaly.detect_anomalies", lambda *_args, **_kwargs: [])
-    monkeypatch.setattr("aqsp.data.freshness.check_freshness", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(
+        cli_mod, "_count_independent_signal_days", lambda *_args, **_kwargs: 35
+    )
+    monkeypatch.setattr(
+        cli_mod, "_detect_runtime_regime", lambda *_args, **_kwargs: "stable_bull"
+    )
+    monkeypatch.setattr(
+        "aqsp.data.anomaly.detect_anomalies", lambda *_args, **_kwargs: []
+    )
+    monkeypatch.setattr(
+        "aqsp.data.freshness.check_freshness", lambda *_args, **_kwargs: []
+    )
     monkeypatch.setattr(cli_mod, "validate_predictions", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(cli_mod, "notify_markdown", lambda *_args, **_kwargs: [])
     monkeypatch.setattr(cli_mod, "_log_run_decisions", lambda **_kwargs: None)
-    monkeypatch.setattr(cli_mod, "_annotate_candidate_status", lambda picks, **_kwargs: picks)
+    monkeypatch.setattr(
+        cli_mod, "_annotate_candidate_status", lambda picks, **_kwargs: picks
+    )
     monkeypatch.setattr(cli_mod, "append_predictions", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr("aqsp.universe.t1_filter.filter_t1_held", lambda candidates, **_kwargs: (candidates, []))
-    monkeypatch.setattr(cli_mod, "LethalFilterPipeline", lambda: type("P", (), {"run": lambda self, *_args, **_kwargs: (True, "")})())
+    monkeypatch.setattr(
+        "aqsp.universe.t1_filter.filter_t1_held",
+        lambda candidates, **_kwargs: (candidates, []),
+    )
+    monkeypatch.setattr(
+        cli_mod,
+        "LethalFilterPipeline",
+        lambda: type("P", (), {"run": lambda self, *_args, **_kwargs: (True, "")})(),
+    )
     monkeypatch.setattr(
         cli_mod,
         "_check_sector_concentration_with_runtime_hints",
@@ -183,19 +204,33 @@ def test_run_scheduled_composite_rescore_updates_frozen_pick_results(
             {"matrix": {}, "high_corr_pairs": ()},
         )(),
     )
-    monkeypatch.setattr("aqsp.portfolio.correlation.format_correlation", lambda *_args, **_kwargs: "")
-    monkeypatch.setattr("aqsp.portfolio.sector_check.format_concentration", lambda *_args, **_kwargs: "")
+    monkeypatch.setattr(
+        "aqsp.portfolio.correlation.format_correlation", lambda *_args, **_kwargs: ""
+    )
+    monkeypatch.setattr(
+        "aqsp.portfolio.sector_check.format_concentration", lambda *_args, **_kwargs: ""
+    )
     monkeypatch.setattr(
         "aqsp.risk.dynamic_stop.compute_dynamic_stop",
-        lambda *_args, **_kwargs: type("S", (), {"recommended_stop": 0.0, "method": "none"})(),
+        lambda *_args, **_kwargs: type(
+            "S", (), {"recommended_stop": 0.0, "method": "none"}
+        )(),
     )
     monkeypatch.setattr(
         "aqsp.portfolio.manager.apply_portfolio_manager",
-        lambda picks, **_kwargs: type("B", (), {"picks": picks, "decisions": (), "summary": None})(),
+        lambda picks, **_kwargs: type(
+            "B", (), {"picks": picks, "decisions": (), "summary": None}
+        )(),
     )
-    monkeypatch.setattr("aqsp.portfolio.snapshot.save_snapshot", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr("aqsp.portfolio.snapshot.compare_snapshots", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr("aqsp.portfolio.snapshot.format_snapshot_diff", lambda *_args, **_kwargs: "")
+    monkeypatch.setattr(
+        "aqsp.portfolio.snapshot.save_snapshot", lambda *_args, **_kwargs: None
+    )
+    monkeypatch.setattr(
+        "aqsp.portfolio.snapshot.compare_snapshots", lambda *_args, **_kwargs: None
+    )
+    monkeypatch.setattr(
+        "aqsp.portfolio.snapshot.format_snapshot_diff", lambda *_args, **_kwargs: ""
+    )
 
     class DummyBreaker:
         def check(self, **_kwargs):
@@ -237,8 +272,12 @@ def test_run_scheduled_composite_rescore_updates_frozen_pick_results(
             risks=(),
         ),
     ]
-    monkeypatch.setattr(cli_mod, "screen_universe", lambda *_args, **_kwargs: list(base_picks))
-    monkeypatch.setattr(cli_mod, "_enrich_pick_names", lambda picks, *_args, **_kwargs: picks)
+    monkeypatch.setattr(
+        cli_mod, "screen_universe", lambda *_args, **_kwargs: list(base_picks)
+    )
+    monkeypatch.setattr(
+        cli_mod, "_enrich_pick_names", lambda picks, *_args, **_kwargs: picks
+    )
 
     class FakeCompositeStrategy:
         def __init__(self, thresholds=None):
@@ -247,7 +286,9 @@ def test_run_scheduled_composite_rescore_updates_frozen_pick_results(
         def calculate_score(self, data, regime="unknown"):
             return {"600519": 0.9, "000001": 0.3}
 
-    monkeypatch.setattr("aqsp.strategies.composite.CompositeStrategy", FakeCompositeStrategy)
+    monkeypatch.setattr(
+        "aqsp.strategies.composite.CompositeStrategy", FakeCompositeStrategy
+    )
 
     captured: dict[str, list[PickResult]] = {}
 
@@ -327,7 +368,9 @@ def test_run_scheduled_logs_learning_proposal_failure(
         ),
     }
 
-    monkeypatch.setattr(cli_mod, "_resolve_run_symbols", lambda *args, **kwargs: ["600519"])
+    monkeypatch.setattr(
+        cli_mod, "_resolve_run_symbols", lambda *args, **kwargs: ["600519"]
+    )
     monkeypatch.setattr(
         cli_mod,
         "_fetch_frames_for_cli_with_metadata",
@@ -336,7 +379,9 @@ def test_run_scheduled_logs_learning_proposal_failure(
     monkeypatch.setattr(
         cli_mod,
         "assert_fresh_data",
-        lambda *_args, **_kwargs: datetime.fromisoformat("2026-06-15T15:00:00+08:00").date(),
+        lambda *_args, **_kwargs: datetime.fromisoformat(
+            "2026-06-15T15:00:00+08:00"
+        ).date(),
     )
     monkeypatch.setattr(cli_mod, "_runtime_data_lag_days", lambda *_args, **_kwargs: 0)
     monkeypatch.setattr(
@@ -349,19 +394,41 @@ def test_run_scheduled_logs_learning_proposal_failure(
         "describe_source_health",
         lambda *_args, **_kwargs: ("healthy", "ok", False),
     )
-    monkeypatch.setattr(cli_mod, "_count_independent_signal_days", lambda *_args, **_kwargs: 35)
-    monkeypatch.setattr(cli_mod, "_detect_runtime_regime", lambda *_args, **_kwargs: "stable_bull")
-    monkeypatch.setattr(cli_mod, "_compute_real_pnl", lambda *_args, **_kwargs: (0.0, 0.0, 0.0))
-    monkeypatch.setattr("aqsp.ledger.base.read_ledger", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("ledger boom")))
-    monkeypatch.setattr("aqsp.data.anomaly.detect_anomalies", lambda *_args, **_kwargs: [])
-    monkeypatch.setattr("aqsp.data.freshness.check_freshness", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(
+        cli_mod, "_count_independent_signal_days", lambda *_args, **_kwargs: 35
+    )
+    monkeypatch.setattr(
+        cli_mod, "_detect_runtime_regime", lambda *_args, **_kwargs: "stable_bull"
+    )
+    monkeypatch.setattr(
+        cli_mod, "_compute_real_pnl", lambda *_args, **_kwargs: (0.0, 0.0, 0.0)
+    )
+    monkeypatch.setattr(
+        "aqsp.ledger.base.read_ledger",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("ledger boom")),
+    )
+    monkeypatch.setattr(
+        "aqsp.data.anomaly.detect_anomalies", lambda *_args, **_kwargs: []
+    )
+    monkeypatch.setattr(
+        "aqsp.data.freshness.check_freshness", lambda *_args, **_kwargs: []
+    )
     monkeypatch.setattr(cli_mod, "validate_predictions", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(cli_mod, "notify_markdown", lambda *_args, **_kwargs: [])
     monkeypatch.setattr(cli_mod, "_log_run_decisions", lambda **_kwargs: None)
-    monkeypatch.setattr(cli_mod, "_annotate_candidate_status", lambda picks, **_kwargs: picks)
+    monkeypatch.setattr(
+        cli_mod, "_annotate_candidate_status", lambda picks, **_kwargs: picks
+    )
     monkeypatch.setattr(cli_mod, "append_predictions", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr("aqsp.universe.t1_filter.filter_t1_held", lambda candidates, **_kwargs: (candidates, []))
-    monkeypatch.setattr(cli_mod, "LethalFilterPipeline", lambda: type("P", (), {"run": lambda self, *_args, **_kwargs: (True, "")})())
+    monkeypatch.setattr(
+        "aqsp.universe.t1_filter.filter_t1_held",
+        lambda candidates, **_kwargs: (candidates, []),
+    )
+    monkeypatch.setattr(
+        cli_mod,
+        "LethalFilterPipeline",
+        lambda: type("P", (), {"run": lambda self, *_args, **_kwargs: (True, "")})(),
+    )
     monkeypatch.setattr(
         cli_mod,
         "_check_sector_concentration_with_runtime_hints",
@@ -369,24 +436,42 @@ def test_run_scheduled_logs_learning_proposal_failure(
     )
     monkeypatch.setattr(
         "aqsp.portfolio.correlation.compute_correlation",
-        lambda *_args, **_kwargs: type("R", (), {"matrix": {}, "high_corr_pairs": ()})(),
+        lambda *_args, **_kwargs: type(
+            "R", (), {"matrix": {}, "high_corr_pairs": ()}
+        )(),
     )
-    monkeypatch.setattr("aqsp.portfolio.correlation.format_correlation", lambda *_args, **_kwargs: "")
-    monkeypatch.setattr("aqsp.portfolio.sector_check.format_concentration", lambda *_args, **_kwargs: "")
+    monkeypatch.setattr(
+        "aqsp.portfolio.correlation.format_correlation", lambda *_args, **_kwargs: ""
+    )
+    monkeypatch.setattr(
+        "aqsp.portfolio.sector_check.format_concentration", lambda *_args, **_kwargs: ""
+    )
     monkeypatch.setattr(
         "aqsp.risk.dynamic_stop.compute_dynamic_stop",
-        lambda *_args, **_kwargs: type("S", (), {"recommended_stop": 0.0, "method": "none"})(),
+        lambda *_args, **_kwargs: type(
+            "S", (), {"recommended_stop": 0.0, "method": "none"}
+        )(),
     )
     monkeypatch.setattr(
         "aqsp.portfolio.manager.apply_portfolio_manager",
-        lambda picks, **_kwargs: type("B", (), {"picks": picks, "decisions": (), "summary": None})(),
+        lambda picks, **_kwargs: type(
+            "B", (), {"picks": picks, "decisions": (), "summary": None}
+        )(),
     )
-    monkeypatch.setattr("aqsp.portfolio.snapshot.save_snapshot", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr("aqsp.portfolio.snapshot.compare_snapshots", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr("aqsp.portfolio.snapshot.format_snapshot_diff", lambda *_args, **_kwargs: "")
+    monkeypatch.setattr(
+        "aqsp.portfolio.snapshot.save_snapshot", lambda *_args, **_kwargs: None
+    )
+    monkeypatch.setattr(
+        "aqsp.portfolio.snapshot.compare_snapshots", lambda *_args, **_kwargs: None
+    )
+    monkeypatch.setattr(
+        "aqsp.portfolio.snapshot.format_snapshot_diff", lambda *_args, **_kwargs: ""
+    )
     monkeypatch.setattr(
         "aqsp.strategies.composite.CompositeStrategy",
-        lambda thresholds=None: type("C", (), {"calculate_score": lambda self, *_args, **_kwargs: {}})(),
+        lambda thresholds=None: type(
+            "C", (), {"calculate_score": lambda self, *_args, **_kwargs: {}}
+        )(),
     )
     monkeypatch.setattr(
         cli_mod,
@@ -410,8 +495,12 @@ def test_run_scheduled_logs_learning_proposal_failure(
             )
         ],
     )
-    monkeypatch.setattr(cli_mod, "_enrich_pick_names", lambda picks, *_args, **_kwargs: picks)
-    monkeypatch.setattr(cli_mod, "to_dataframe", lambda picks: pd.DataFrame([{"symbol": "600519"}]))
+    monkeypatch.setattr(
+        cli_mod, "_enrich_pick_names", lambda picks, *_args, **_kwargs: picks
+    )
+    monkeypatch.setattr(
+        cli_mod, "to_dataframe", lambda picks: pd.DataFrame([{"symbol": "600519"}])
+    )
     monkeypatch.setattr(cli_mod, "to_markdown", lambda *_args, **_kwargs: "# report")
 
     class DummyBreaker:
@@ -971,3 +1060,24 @@ def test_run_optimize_apply_writes_proposal_without_touching_thresholds(
     assert payload["best_params"] == {"composite.momentum_weight": 0.4}
     assert payload["status"] == "proposal_only"
     assert payload["applied"] is False
+
+
+def test_execution_cost_defaults_are_loaded_from_thresholds() -> None:
+    import aqsp.cli as cli_mod
+    from aqsp.strategies.thresholds import Thresholds
+
+    thresholds = Thresholds()
+
+    assert tuple(
+        round(value, 4)
+        for value in cli_mod._resolve_execution_cost_bps(
+            thresholds,
+            fee_bps=None,
+            slippage_bps=None,
+        )
+    ) == (3.0, 20.0)
+    assert cli_mod._resolve_execution_cost_bps(
+        thresholds,
+        fee_bps=8.0,
+        slippage_bps=5.0,
+    ) == (8.0, 5.0)

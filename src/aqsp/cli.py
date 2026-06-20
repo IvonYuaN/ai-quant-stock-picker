@@ -382,8 +382,8 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--output-csv", default="reports/latest.csv")
     run.add_argument("--ledger", default="data/predictions.jsonl")
     run.add_argument("--horizon-days", type=int, default=3)
-    run.add_argument("--fee-bps", type=float, default=8.0)
-    run.add_argument("--slippage-bps", type=float, default=5.0)
+    run.add_argument("--fee-bps", type=float, default=None)
+    run.add_argument("--slippage-bps", type=float, default=None)
     run.add_argument("--benchmark-symbol", default="000300")
     run.add_argument("--skip-validation", action="store_true")
     run.add_argument("--notify", action="store_true")
@@ -1538,6 +1538,28 @@ def _compute_real_pnl(ledger_path: str) -> tuple[float, float, float]:
     return compute_real_pnl(ledger_path)
 
 
+def _execution_cost_bps_from_thresholds(thresholds: Any) -> tuple[float, float]:
+    execution = thresholds.execution
+    fee_bps = float(execution.commission_rate) * 10000.0
+    slippage_bps = float(execution.slippage) * 10000.0
+    return fee_bps, slippage_bps
+
+
+def _resolve_execution_cost_bps(
+    thresholds: Any,
+    *,
+    fee_bps: float | None,
+    slippage_bps: float | None,
+) -> tuple[float, float]:
+    default_fee_bps, default_slippage_bps = _execution_cost_bps_from_thresholds(
+        thresholds
+    )
+    return (
+        default_fee_bps if fee_bps is None else float(fee_bps),
+        default_slippage_bps if slippage_bps is None else float(slippage_bps),
+    )
+
+
 def _walkforward_fetch_days(start: str, end: str) -> int:
     start_d = date.fromisoformat(start)
     end_d = date.fromisoformat(end)
@@ -2174,6 +2196,7 @@ def _dedupe_gate_reasons(reasons: list[str]) -> list[str]:
             deduped.append(reason)
     return deduped
 
+
 def _notification_gate_actions(
     reasons: list[str],
     *,
@@ -2522,10 +2545,15 @@ def run_scheduled(args: argparse.Namespace) -> int:
         print(f"T+1 过滤剔除 {len(removed)} 只（昨日已买）: {removed}")
     picks = [r for r in picks if r.symbol in kept]
 
-    execution = ExecutionConfig(
-        horizon_days=args.horizon_days,
+    execution_fee_bps, execution_slippage_bps = _resolve_execution_cost_bps(
+        thresholds,
         fee_bps=args.fee_bps,
         slippage_bps=args.slippage_bps,
+    )
+    execution = ExecutionConfig(
+        horizon_days=args.horizon_days,
+        fee_bps=execution_fee_bps,
+        slippage_bps=execution_slippage_bps,
         benchmark_symbol=args.benchmark_symbol,
     )
 
@@ -3077,10 +3105,12 @@ def run_scheduled(args: argparse.Namespace) -> int:
                 next_actions=kwargs["next_actions"],
             )
         ),
-        should_send_gate_notification_fn=lambda **kwargs: _should_send_gate_notification(
-            gate_ok=kwargs["gate_ok"],
-            gate_reasons=kwargs["gate_reasons"],
-            run_date=kwargs["run_date"],
+        should_send_gate_notification_fn=lambda **kwargs: (
+            _should_send_gate_notification(
+                gate_ok=kwargs["gate_ok"],
+                gate_reasons=kwargs["gate_reasons"],
+                run_date=kwargs["run_date"],
+            )
         ),
         format_notification_gate_block_fn=_format_notification_gate_block,
         legacy_notify_fn=legacy_notify,
@@ -3142,7 +3172,6 @@ def run_dashboard(args: argparse.Namespace) -> int:
     return 0
 
 
-
 @dataclass(frozen=True)
 class WalkForwardGridVariant:
     variant_id: str
@@ -3199,11 +3228,14 @@ def _run_walkforward_grid_cscv(
     for variant in _WALKFORWARD_GRID_VARIANTS:
         variant_thresholds = _apply_composite_min_score(thresholds, variant.min_score)
         variant_strategy = CompositeStrategy(thresholds=variant_thresholds)
+        fee_bps, slippage_bps = _execution_cost_bps_from_thresholds(thresholds)
         variant_cfg = WalkForwardEngineConfig(
             train_days=base_train_days,
             test_days=base_test_days,
             purge_days=base_purge_days,
             horizon_days=variant.horizon_days,
+            fee_bps=fee_bps,
+            slippage_bps=slippage_bps,
             top_n=variant.top_n,
             use_tiered_stop=base_tiered_stop,
             n_variants=len(_WALKFORWARD_GRID_VARIANTS),
@@ -3480,11 +3512,16 @@ def run_walkforward(args: argparse.Namespace) -> int:
     requested_engine = (args.engine or runtime_cfg.research_engine or "auto").strip()
     engine, resolution = resolve_walkforward_engine(requested_engine)
     effective_horizon = args.horizon_days or 3
+    walkforward_fee_bps, walkforward_slippage_bps = _execution_cost_bps_from_thresholds(
+        thresholds
+    )
     engine_cfg = WalkForwardEngineConfig(
         train_days=args.train_days,
         test_days=args.test_days,
         purge_days=args.purge_days,
         horizon_days=effective_horizon,
+        fee_bps=walkforward_fee_bps,
+        slippage_bps=walkforward_slippage_bps,
         use_tiered_stop=getattr(args, "tiered_stop", False),
         n_variants=len(_WALKFORWARD_GRID_VARIANTS) if args.grid_cscv else 1,
     )
@@ -3647,7 +3684,6 @@ def run_walkforward(args: argparse.Namespace) -> int:
             periods=grid_periods,
             rows=grid_rows,
         )
-
 
     report_lines.extend(
         [
