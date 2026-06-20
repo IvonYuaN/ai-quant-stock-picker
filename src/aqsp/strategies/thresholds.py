@@ -210,6 +210,25 @@ class RegimeThresholds:
 
 
 @dataclass(frozen=True)
+class MeanReversionThresholds:
+    enabled: bool = True
+    lookback_days: int = 20
+    rsi_period: int = 14
+    oversold_threshold: float = 30
+    deviation_threshold: float = -0.05
+    strong_oversold_threshold: float = 20
+    weak_oversold_threshold: float = 40
+    deep_deviation_threshold: float = -0.15
+    medium_deviation_threshold: float = -0.10
+    shallow_deviation_threshold: float = -0.02
+    volume_strong_ratio: float = 1.5
+    volume_medium_ratio: float = 1.2
+    rsi_weight: float = 0.45
+    deviation_weight: float = 0.35
+    volume_weight: float = 0.20
+
+
+@dataclass(frozen=True)
 class ScoringThresholds:
     liquidity_penalty: float = -35
     ma_full_bull: float = 24
@@ -374,6 +393,9 @@ class Thresholds:
     execution: ExecutionThresholds = field(default_factory=ExecutionThresholds)
     regime: RegimeThresholds = field(default_factory=RegimeThresholds)
     volume: VolumeThresholds = field(default_factory=VolumeThresholds)
+    mean_reversion: MeanReversionThresholds = field(
+        default_factory=MeanReversionThresholds
+    )
     scoring: ScoringThresholds = field(default_factory=ScoringThresholds)
     morning_breakout: MorningBreakoutThresholds = field(
         default_factory=MorningBreakoutThresholds
@@ -444,6 +466,10 @@ def _parse_n_rebound(data: dict) -> NReboundThresholds:
     return NReboundThresholds(**data)
 
 
+def _parse_mean_reversion(data: dict) -> MeanReversionThresholds:
+    return MeanReversionThresholds(**data)
+
+
 _DEFAULT_REGIME_ADJUSTMENTS: Dict[str, float] = {
     "stable_bull": 1.1,
     "volatile_bull": 0.9,
@@ -497,6 +523,7 @@ def load_thresholds(filepath: str = None) -> Thresholds:
         execution=ExecutionThresholds(**data.get("execution", {})),
         regime=_parse_regime(data.get("regime", {})),
         volume=_parse_volume(data.get("volume", {})),
+        mean_reversion=_parse_mean_reversion(data.get("mean_reversion", {})),
         scoring=ScoringThresholds(**data.get("scoring", {})),
         morning_breakout=_parse_morning_breakout(data.get("morning_breakout", {})),
         closing_premium=_parse_closing_premium(data.get("closing_premium", {})),

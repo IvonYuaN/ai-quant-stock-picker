@@ -68,3 +68,15 @@ def test_load_debate_runtime_config_falls_back_when_rounds_invalid(monkeypatch) 
     config = load_debate_runtime_config()
 
     assert config.max_rounds == 2
+
+
+def test_thresholds_load_mean_reversion_section() -> None:
+    from aqsp.strategies.thresholds import load_thresholds
+
+    thresholds = load_thresholds()
+
+    assert thresholds.mean_reversion.enabled is True
+    assert thresholds.mean_reversion.lookback_days == 20
+    assert thresholds.mean_reversion.rsi_period == 14
+    assert thresholds.mean_reversion.oversold_threshold == 30
+    assert thresholds.mean_reversion.deviation_threshold == -0.05

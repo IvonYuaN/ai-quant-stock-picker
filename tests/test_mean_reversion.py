@@ -6,7 +6,7 @@ import pytest
 
 from aqsp.strategies.mean_reversion import MeanReversionStrategy
 from aqsp.strategies.base import StrategyConfig
-from aqsp.strategies.thresholds import Thresholds
+from aqsp.strategies.thresholds import MeanReversionThresholds, Thresholds
 
 
 @pytest.fixture
@@ -105,3 +105,31 @@ def test_calculate_score_multiple_symbols(strategy):
     assert set(scores.keys()) == {"SYM1", "SYM2"}
     for s in scores.values():
         assert 0.0 <= s <= 1.0
+
+
+def test_strategy_uses_mean_reversion_enabled_threshold() -> None:
+    strategy = MeanReversionStrategy(
+        StrategyConfig(name="mean_reversion"),
+        thresholds=Thresholds(
+            mean_reversion=MeanReversionThresholds(enabled=False),
+        ),
+    )
+
+    assert (
+        strategy._calculate_single_score(_make_df(30, base_price=20.0, trend=-0.5))
+        == 0.0
+    )
+
+
+def test_strategy_uses_configured_lookback_threshold() -> None:
+    strategy = MeanReversionStrategy(
+        StrategyConfig(name="mean_reversion"),
+        thresholds=Thresholds(
+            mean_reversion=MeanReversionThresholds(lookback_days=40),
+        ),
+    )
+
+    assert (
+        strategy._calculate_single_score(_make_df(30, base_price=20.0, trend=-0.5))
+        == 0.0
+    )
