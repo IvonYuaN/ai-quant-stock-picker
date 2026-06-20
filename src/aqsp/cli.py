@@ -2101,49 +2101,68 @@ def _check_notification_gate(
 def _notification_gate_reasons(
     gate: dict[str, Any], validation: WalkForwardGateValidation
 ) -> list[str]:
-    reasons: list[str] = []
+    raw_reasons: list[str] = []
+    internal_flags: list[str] = []
     for blocker in validation.blockers:
         if blocker.startswith("run_date"):
-            reasons.append(f"双门 sidecar run_date 异常: {gate.get('run_date')!r}")
+            raw_reasons.append(f"双门 sidecar run_date 异常: {gate.get('run_date')!r}")
         elif blocker.startswith("gate stale"):
             age = validation.age_days if validation.age_days is not None else "?"
-            reasons.append(
+            raw_reasons.append(
                 f"双门结果过期: {age} 天前（上限 {MAX_GATE_AGE_DAYS} 天）—— 请重新跑 walkforward"
             )
         elif blocker.startswith("deflated_sharpe"):
-            reasons.append("DSR 字段缺失或格式异常")
+            raw_reasons.append("DSR 字段缺失或格式异常")
         elif blocker.startswith("DSR="):
-            reasons.append(f"DSR 未过门: {validation.dsr}（需 >1.0）")
+            raw_reasons.append(f"DSR 未过门: {validation.dsr:.4f}（需 >1.0）")
         elif blocker.startswith("pbo missing"):
-            reasons.append("PBO 字段缺失或格式异常")
+            raw_reasons.append("PBO 字段缺失或格式异常")
         elif blocker.startswith("PBO="):
-            reasons.append(f"PBO 未过门: {validation.pbo}（需 0 < PBO < 0.5）")
+            if validation.pbo == 0.0 and validation.pbo_valid is not True:
+                raw_reasons.append(
+                    "PBO 未通过: 当前为单策略占位 0.00%，缺少多变体 CSCV 证据"
+                )
+            else:
+                raw_reasons.append(
+                    f"PBO 未过门: {validation.pbo:.2%}（需 0 < PBO < 50%）"
+                )
         elif blocker.startswith("dsr_pass"):
-            reasons.append(f"DSR pass 标志无效: {gate.get('dsr_pass')!r}")
+            internal_flags.append("dsr_pass")
         elif blocker.startswith("pbo_pass"):
-            reasons.append(f"PBO pass 标志无效: {gate.get('pbo_pass')!r}")
+            internal_flags.append("pbo_pass")
         elif blocker.startswith("pbo_valid"):
-            reasons.append(f"PBO 有效性标志无效: {gate.get('pbo_valid')!r}")
+            internal_flags.append("pbo_valid")
         elif blocker.startswith("both_pass"):
-            reasons.append(f"双门总标志无效: {gate.get('both_pass')!r}")
+            internal_flags.append("both_pass")
         elif blocker.startswith("n_periods"):
-            reasons.append(
+            raw_reasons.append(
                 f"双门 sidecar 无有效回测周期（n_periods={gate.get('n_periods')}）"
-                "—— 疑似占位/测试数据，需真正跑 walkforward 后重写"
+                "—— 需真正跑 walkforward 后重写"
             )
         elif blocker.startswith("data_end malformed"):
-            reasons.append(
+            raw_reasons.append(
                 f"双门 sidecar 的 data_end 格式异常（{gate.get('data_end')!r}）—— fail-closed"
             )
         elif blocker.startswith("data_end="):
-            reasons.append(
+            raw_reasons.append(
                 f"双门成绩用了 held-out 数据（data_end={gate.get('data_end')} > "
                 f"{HELDOUT_TRAIN_CUTOFF}）—— 不得用于解锁推送（§1.3 #9）"
             )
         else:
-            reasons.append(f"双门 sidecar 未通过: {blocker}")
-    return reasons
+            raw_reasons.append(f"双门 sidecar 未通过: {blocker}")
 
+    if internal_flags and not any("PBO 未通过" in item for item in raw_reasons):
+        raw_reasons.append("双门 sidecar 内部通过标志未全部为真")
+
+    return _dedupe_gate_reasons(raw_reasons)
+
+
+def _dedupe_gate_reasons(reasons: list[str]) -> list[str]:
+    deduped: list[str] = []
+    for reason in reasons:
+        if reason not in deduped:
+            deduped.append(reason)
+    return deduped
 
 def _notification_gate_actions(
     reasons: list[str],
@@ -2170,7 +2189,11 @@ def _notification_gate_actions(
         actions.append(
             "重跑双门回测以刷新 gate：`.venv/bin/python3 -m aqsp walkforward --source sqlite_db --end 2024-12-31`。"
         )
-    if "DSR 未过门" in joined or "PBO 未过门" in joined:
+    if "单策略占位" in joined or "多变体 CSCV" in joined:
+        actions.append(
+            "生成多变体 grid CSCV 证据后再刷新 gate；旧归档 Markdown 不作为生产放行依据。"
+        )
+    if "DSR 未过门" in joined or "PBO 未过门" in joined or "PBO 未通过" in joined:
         actions.append("在双门过线前保留观察模式，不要开启自动通知或放大纸面仓位。")
     if "held-out" in joined:
         actions.append(

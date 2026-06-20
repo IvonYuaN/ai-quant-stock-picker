@@ -85,6 +85,27 @@ def test_pbo_fail_blocks(tmp_path, monkeypatch):
     assert any("PBO" in r for r in reasons)
 
 
+def test_pbo_placeholder_reports_grid_evidence_gap(tmp_path, monkeypatch):
+    import aqsp.cli as cli_mod
+    from datetime import date
+
+    monkeypatch.setattr(cli_mod, "today_shanghai", lambda: date(2026, 6, 5))
+    ok, reasons = _check_notification_gate(
+        cold_start_days=30,
+        gate_path=_write_gate(
+            tmp_path,
+            pbo=0.0,
+            pbo_valid=False,
+            pbo_pass=False,
+            both_pass=False,
+        ),
+    )
+
+    assert ok is False
+    assert any("单策略占位" in reason for reason in reasons)
+    assert all("PBO 有效性标志" not in reason for reason in reasons)
+
+
 def test_string_boolean_sidecar_flags_fail_closed(tmp_path, monkeypatch):
     import aqsp.cli as cli_mod
     from datetime import date
@@ -102,7 +123,7 @@ def test_string_boolean_sidecar_flags_fail_closed(tmp_path, monkeypatch):
     )
 
     assert ok is False
-    assert any("标志无效" in reason for reason in reasons)
+    assert any("内部通过标志" in reason for reason in reasons)
 
 
 def test_both_pass_flag_must_be_true(tmp_path, monkeypatch):
@@ -116,7 +137,7 @@ def test_both_pass_flag_must_be_true(tmp_path, monkeypatch):
     )
 
     assert ok is False
-    assert any("双门总标志无效" in reason for reason in reasons)
+    assert any("内部通过标志" in reason for reason in reasons)
 
 
 def test_malformed_n_periods_fail_closed(tmp_path, monkeypatch):
