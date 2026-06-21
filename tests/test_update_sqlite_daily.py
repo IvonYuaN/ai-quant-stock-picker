@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 import sys
 from datetime import date
 from pathlib import Path
@@ -14,7 +15,9 @@ def test_update_sqlite_daily_cli_exposes_historical_backfill_flags() -> None:
 
     assert "--start-date" in text
     assert "--force-from-start" in text
+    assert "--price-mode" in text
     assert "force_from_start=args.force_from_start" in text
+    assert "price_mode=args.price_mode" in text
 
 
 def test_update_sqlite_daily_requires_start_date_when_force_enabled(
@@ -33,3 +36,36 @@ def test_update_sqlite_daily_requires_start_date_when_force_enabled(
 
     with pytest.raises(SystemExit, match="--force-from-start requires --start-date"):
         update_sqlite_daily.main()
+
+
+def test_update_sqlite_daily_creates_raw_database_schema_when_missing(
+    monkeypatch, tmp_path: Path
+) -> None:
+    class FakeBaostock:
+        def login(self):
+            return type("Login", (), {"error_code": "0", "error_msg": ""})()
+
+        def logout(self) -> None:
+            return None
+
+    db = tmp_path / "astocks_raw.db"
+    monkeypatch.setattr(update_sqlite_daily, "_load_baostock", FakeBaostock)
+    monkeypatch.setattr(update_sqlite_daily, "sync_stock_list", lambda conn, bs: [])
+
+    summary = update_sqlite_daily.update_sqlite_daily(
+        db,
+        target_day=date(2026, 6, 18),
+        sleep_seconds=0.0,
+        limit=0,
+        price_mode="raw",
+    )
+
+    assert summary.price_mode == "raw"
+    with sqlite3.connect(db) as conn:
+        tables = {row[0] for row in conn.execute("select name from sqlite_master")}
+    assert {"stocks", "daily_qfq"}.issubset(tables)
+
+
+def test_adjustflag_for_price_mode_keeps_raw_unadjusted() -> None:
+    assert update_sqlite_daily._adjustflag_for_price_mode("raw") == "1"
+    assert update_sqlite_daily._adjustflag_for_price_mode("qfq") == "2"

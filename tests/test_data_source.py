@@ -555,3 +555,27 @@ def test_sqlite_db_source_marks_qfq_database_price_mode(tmp_path: Path) -> None:
     source = SqliteDbSource(db_path=db)
 
     assert source.price_mode() == "qfq"
+
+
+def test_sqlite_db_source_marks_raw_database_price_mode(tmp_path: Path) -> None:
+    db = tmp_path / "astocks_raw.db"
+    with sqlite3.connect(db) as conn:
+        conn.execute("create table stocks (ts_code text, name text)")
+        conn.execute(
+            """
+            create table daily_qfq (
+                ts_code text,
+                trade_date text,
+                open real,
+                high real,
+                low real,
+                close real,
+                volume real,
+                amount real
+            )
+            """
+        )
+
+    source = SqliteDbSource(db_path=db)
+
+    assert source.price_mode() == "raw"

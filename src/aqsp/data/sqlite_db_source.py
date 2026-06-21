@@ -90,7 +90,10 @@ class SqliteDbSource(DataSource):
         return list(self._load_symbol_map().keys())
 
     def price_mode(self) -> str:
-        if "qfq" in self.db_path.name.lower():
+        name = self.db_path.name.lower()
+        if "raw" in name or "unadjust" in name:
+            return "raw"
+        if "qfq" in name:
             return "qfq"
         return "unknown"
 

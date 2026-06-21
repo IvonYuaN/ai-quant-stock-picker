@@ -30,6 +30,7 @@ class UpdateSummary:
     skipped_symbols: int
     failed_symbols: int
     target_day: date
+    price_mode: str
 
 
 def _parse_trade_date(raw: object) -> date | None:
@@ -93,6 +94,33 @@ def _load_baostock() -> Any:
     return bs
 
 
+def ensure_schema(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS stocks (ts_code TEXT PRIMARY KEY, name TEXT)"
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS daily_qfq (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts_code TEXT NOT NULL,
+            trade_date TEXT NOT NULL,
+            open REAL,
+            high REAL,
+            low REAL,
+            close_qfq REAL,
+            volume INTEGER,
+            amount REAL,
+            open_qfq REAL,
+            high_qfq REAL,
+            low_qfq REAL,
+            close REAL,
+            UNIQUE(ts_code, trade_date)
+        )
+        """
+    )
+    conn.commit()
+
+
 def sync_stock_list(conn: sqlite3.Connection, bs: Any) -> list[str]:
     rs = bs.query_stock_basic()
     bs_a_codes: set[str] = set()
@@ -137,6 +165,14 @@ def _latest_symbol_date(conn: sqlite3.Connection, ts_code: str) -> date | None:
     return _parse_trade_date(row[0]) if row else None
 
 
+def _adjustflag_for_price_mode(price_mode: str) -> str:
+    if price_mode == "raw":
+        return "1"
+    if price_mode == "qfq":
+        return "2"
+    raise ValueError(f"unsupported price_mode: {price_mode}")
+
+
 def _insert_bar(conn: sqlite3.Connection, ts_code: str, row: list[str]) -> bool:
     if len(row) < 7 or not row[4]:
         return False
@@ -167,6 +203,7 @@ def update_sqlite_daily(
     symbols: tuple[str, ...] = (),
     start_day: date | None = None,
     force_from_start: bool = False,
+    price_mode: str = "qfq",
 ) -> UpdateSummary:
     bs = _load_baostock()
     login = bs.login()
@@ -178,6 +215,7 @@ def update_sqlite_daily(
     failed = 0
     try:
         with sqlite3.connect(db_path) as conn:
+            ensure_schema(conn)
             all_symbols = sync_stock_list(conn, bs)
             requested = {_normalize_requested_symbol(item) for item in symbols if item}
             selected_symbols = [
@@ -207,7 +245,7 @@ def update_sqlite_daily(
                     start_date=fetch_start_day.isoformat(),
                     end_date=target_day.isoformat(),
                     frequency="d",
-                    adjustflag="2",
+                    adjustflag=_adjustflag_for_price_mode(price_mode),
                 )
                 if rs.error_code != "0":
                     failed += 1
@@ -234,7 +272,7 @@ def update_sqlite_daily(
             conn.commit()
     finally:
         bs.logout()
-    return UpdateSummary(updated_rows, skipped, failed, target_day)
+    return UpdateSummary(updated_rows, skipped, failed, target_day, price_mode)
 
 
 def main() -> int:
@@ -264,17 +302,26 @@ def main() -> int:
         action="store_true",
         help="refetch from --start-date even if newer rows already exist",
     )
+    parser.add_argument(
+        "--price-mode",
+        choices=("qfq", "raw"),
+        default="qfq",
+        help="baostock adjustment mode: qfq keeps legacy behavior; raw writes unadjusted prices",
+    )
     args = parser.parse_args()
 
     if not args.db.exists():
-        raise SystemExit(f"database does not exist: {args.db}")
+        if args.price_mode != "raw":
+            raise SystemExit(f"database does not exist: {args.db}")
+        args.db.parent.mkdir(parents=True, exist_ok=True)
     target = _target_trade_day(args.target_date)
     start_day = date.fromisoformat(args.start_date) if args.start_date else None
     if args.force_from_start and start_day is None:
         raise SystemExit("--force-from-start requires --start-date")
     print(
         f"sqlite daily backfill target={target.isoformat()} "
-        f"start={start_day.isoformat() if start_day else 'incremental'} db={args.db}"
+        f"start={start_day.isoformat() if start_day else 'incremental'} "
+        f"price_mode={args.price_mode} db={args.db}"
     )
     summary = update_sqlite_daily(
         args.db,
@@ -284,13 +331,15 @@ def main() -> int:
         symbols=tuple(item.strip() for item in args.symbols.split(",") if item.strip()),
         start_day=start_day,
         force_from_start=args.force_from_start,
+        price_mode=args.price_mode,
     )
     print(
         "sqlite daily backfill done: "
         f"updated_rows={summary.updated_rows} "
         f"skipped_symbols={summary.skipped_symbols} "
         f"failed_symbols={summary.failed_symbols} "
-        f"target={summary.target_day.isoformat()}"
+        f"target={summary.target_day.isoformat()} "
+        f"price_mode={summary.price_mode}"
     )
     return 1 if summary.failed_symbols else 0
 
