@@ -74,3 +74,43 @@ def test_build_walkforward_command_uses_full_market_raw_gate() -> None:
     assert "--grid-profile" in command
     assert "stable" in command
     assert "--skip-pit-financials" in command
+
+
+def test_production_walkforward_gate_passes_raw_db_to_child_process(
+    monkeypatch, tmp_path: Path
+) -> None:
+    import scripts.run_production_walkforward_gate as gate
+
+    db = tmp_path / "raw.db"
+    db.write_text("", encoding="utf-8")
+    seen: dict[str, object] = {}
+    monkeypatch.setattr(
+        gate,
+        "inspect_raw_coverage",
+        lambda *_args, **_kwargs: gate.CoverageSummary(
+            stock_symbols=5533,
+            covered_symbols=3200,
+            rows=1,
+            first_trade_date="20180102",
+            last_trade_date="20241231",
+        ),
+    )
+    monkeypatch.setattr(
+        gate, "build_walkforward_command", lambda _args: ["python", "-m", "aqsp"]
+    )
+
+    def fake_run(command, *, check, env):
+        seen["command"] = command
+        seen["check"] = check
+        seen["db"] = env.get("AQSP_SQLITE_DB_PATH")
+        return type("Result", (), {"returncode": 0})()
+
+    monkeypatch.setattr(gate.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        gate.sys,
+        "argv",
+        ["run_production_walkforward_gate.py", "--db", str(db)],
+    )
+
+    assert gate.main() == 0
+    assert seen == {"command": ["python", "-m", "aqsp"], "check": False, "db": str(db)}

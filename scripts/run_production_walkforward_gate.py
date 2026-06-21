@@ -10,6 +10,7 @@ before-live evidence.
 from __future__ import annotations
 
 import argparse
+import os
 import sqlite3
 import subprocess
 import sys
@@ -152,7 +153,9 @@ def main() -> int:
     print("production gate command:", " ".join(command))
     if args.dry_run:
         return 0
-    return subprocess.run(command, check=False).returncode
+    env = os.environ.copy()
+    env["AQSP_SQLITE_DB_PATH"] = str(args.db)
+    return subprocess.run(command, check=False, env=env).returncode
 
 
 if __name__ == "__main__":
