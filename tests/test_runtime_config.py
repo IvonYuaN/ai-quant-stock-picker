@@ -57,7 +57,7 @@ def test_load_runtime_config_falls_back_when_numeric_env_invalid(monkeypatch) ->
     config = load_runtime_config()
 
     assert config.limit == 10
-    assert config.max_universe == 100
+    assert config.max_universe == 0
     assert config.min_avg_amount == 50000000
     assert config.max_data_lag_days == 3
 

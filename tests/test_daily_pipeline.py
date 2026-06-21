@@ -1244,3 +1244,95 @@ def test_sync_paper_trades_writes_report(monkeypatch, tmp_path: Path) -> None:
     assert (tmp_path / "reports" / "paper.md").read_text(
         encoding="utf-8"
     ) == "opened=1, rows=1"
+
+
+def test_resolve_symbols_keeps_full_available_universe_when_max_universe_zero(
+    monkeypatch,
+) -> None:
+    from scripts import daily_pipeline
+
+    class FakeSource:
+        def get_available_symbols(self) -> list[str]:
+            return ["000001", "000002", "000003"]
+
+    monkeypatch.delenv("AQSP_SYMBOLS", raising=False)
+    import aqsp.cli as cli
+
+    monkeypatch.setattr(cli, "_get_source", lambda _source: FakeSource())
+
+    config = daily_pipeline.PipelineConfig(
+        project_root=Path.cwd(),
+        source="fake",
+        mode="close",
+        limit=10,
+        max_universe=0,
+        min_avg_amount=50_000_000,
+        max_data_lag_days=3,
+        enable_online_factors=False,
+        allow_online_fallback=True,
+        ledger_path="data/predictions.jsonl",
+        report_path="reports/latest.md",
+        csv_path="reports/latest.csv",
+        briefing_path="reports/briefing.md",
+        paper_report_path="reports/paper.md",
+        dashboard_html="dist/dashboard/index.html",
+        dashboard_db="dist/dashboard/aqsp.db",
+        paper_ledger="data/paper_trades.jsonl",
+        closing_review_path="reports/closing_review.md",
+        notify=False,
+        notify_mode="summary",
+        dry_run=False,
+        enable_debate=False,
+        enable_auto_evolution=False,
+    )
+
+    assert daily_pipeline._resolve_symbols(config, logging.getLogger("test")) == [
+        "000001",
+        "000002",
+        "000003",
+    ]
+
+
+def test_resolve_symbols_truncates_available_universe_when_max_universe_positive(
+    monkeypatch,
+) -> None:
+    from scripts import daily_pipeline
+    import aqsp.cli as cli
+
+    class FakeSource:
+        def get_available_symbols(self) -> list[str]:
+            return ["000001", "000002", "000003"]
+
+    monkeypatch.delenv("AQSP_SYMBOLS", raising=False)
+    monkeypatch.setattr(cli, "_get_source", lambda _source: FakeSource())
+
+    config = daily_pipeline.PipelineConfig(
+        project_root=Path.cwd(),
+        source="fake",
+        mode="close",
+        limit=10,
+        max_universe=2,
+        min_avg_amount=50_000_000,
+        max_data_lag_days=3,
+        enable_online_factors=False,
+        allow_online_fallback=True,
+        ledger_path="data/predictions.jsonl",
+        report_path="reports/latest.md",
+        csv_path="reports/latest.csv",
+        briefing_path="reports/briefing.md",
+        paper_report_path="reports/paper.md",
+        dashboard_html="dist/dashboard/index.html",
+        dashboard_db="dist/dashboard/aqsp.db",
+        paper_ledger="data/paper_trades.jsonl",
+        closing_review_path="reports/closing_review.md",
+        notify=False,
+        notify_mode="summary",
+        dry_run=False,
+        enable_debate=False,
+        enable_auto_evolution=False,
+    )
+
+    assert daily_pipeline._resolve_symbols(config, logging.getLogger("test")) == [
+        "000001",
+        "000002",
+    ]

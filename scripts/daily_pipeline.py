@@ -347,7 +347,11 @@ def _resolve_symbols(config: PipelineConfig, logger: logging.Logger) -> list[str
         if hasattr(source, "get_available_symbols"):
             available = source.get_available_symbols()
             if available:
-                return available[: config.max_universe]
+                return (
+                    available[: config.max_universe]
+                    if config.max_universe > 0
+                    else available
+                )
     except Exception as exc:
         logger.warning("  自动选取标的失败, 使用默认池: %s", exc)
 
@@ -879,7 +883,10 @@ def run_pipeline(config: PipelineConfig) -> PipelineResult:
 
     today = today_shanghai()
     if not _is_trade_day(today):
-        logger.info("今日 (%s) 非交易日, 跳过行情更新和信号写入，仅刷新展示产物", today.isoformat())
+        logger.info(
+            "今日 (%s) 非交易日, 跳过行情更新和信号写入，仅刷新展示产物",
+            today.isoformat(),
+        )
 
     pipeline_steps: list[tuple[str, Any]] = [
         ("数据更新", lambda: _step_update_data(config, logger)),

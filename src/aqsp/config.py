@@ -102,7 +102,7 @@ def load_runtime_config() -> RuntimeConfig:
         or "auto",
         mode=os.getenv("AQSP_MODE", "close").strip() or "close",
         limit=_env_int("AQSP_LIMIT", 10, minimum=1),
-        max_universe=_env_int("AQSP_MAX_UNIVERSE", 100, minimum=1),
+        max_universe=_env_int("AQSP_MAX_UNIVERSE", 0, minimum=0),
         min_avg_amount=_env_float("AQSP_MIN_AVG_AMOUNT", 50000000, minimum=0.0),
         max_data_lag_days=_env_int("AQSP_MAX_DATA_LAG_DAYS", 3, minimum=0),
         enable_online_factors=_env_flag("AQSP_ENABLE_ONLINE_FACTORS"),

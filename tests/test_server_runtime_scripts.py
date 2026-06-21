@@ -348,3 +348,10 @@ def test_production_walkforward_gate_wrapper_suggests_gap_filling_raw_backfill()
     assert '"all"' in script
     assert "--fill-history-gaps --limit 0" in script
     assert "300-symbol run is only a smoke test" in script
+
+
+def test_daily_run_defaults_to_full_market_universe() -> None:
+    script = (PROJECT_ROOT / "scripts" / "daily_run.sh").read_text(encoding="utf-8")
+
+    assert 'export AQSP_MAX_UNIVERSE="${AQSP_MAX_UNIVERSE:-0}"' in script
+    assert '--max-universe "$AQSP_MAX_UNIVERSE"' in script
