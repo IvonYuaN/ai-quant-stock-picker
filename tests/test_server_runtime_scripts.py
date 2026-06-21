@@ -49,6 +49,18 @@ def test_intraday_refresh_script_uses_isolated_outputs() -> None:
     assert "今日非交易日，跳过盘中刷新" in script
 
 
+def test_news_catalysts_script_defaults_to_report_only() -> None:
+    script = (PROJECT_ROOT / "scripts" / "news_catalysts.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'export AQSP_RUN_TASK_ID="news"' in script
+    assert "AQSP_NEWS_NOTIFY:-false" in script
+    assert "NOTIFY_ARGS=(--notify)" in script
+    assert '"${NOTIFY_ARGS[@]}"' in script
+    assert "消息面雷达默认不推送手机通知" in script
+
+
 def test_install_server_cron_script_installs_standard_jobs() -> None:
     script = (PROJECT_ROOT / "scripts" / "install_server_cron.sh").read_text(
         encoding="utf-8"

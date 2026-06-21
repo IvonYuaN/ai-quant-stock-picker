@@ -30,17 +30,20 @@ def test_finalize_scheduled_notification_disables_notify_and_prefixes_markdown(
         next_actions=["继续按日运行主链。"],
         latest_iso="2026-06-15",
         notify_mode="summary",
-        dispatch_gate_notification_fn=lambda **kwargs: gate_calls.append(
-            (
-                kwargs["run_date"],
-                kwargs["gate_reasons"],
-                kwargs["next_actions"],
-                kwargs["mode"],
+        dispatch_gate_notification_fn=lambda **kwargs: (
+            gate_calls.append(
+                (
+                    kwargs["run_date"],
+                    kwargs["gate_reasons"],
+                    kwargs["next_actions"],
+                    kwargs["mode"],
+                )
             )
-        )
-        or [],
-        should_send_gate_notification_fn=lambda **kwargs: state_calls.append(kwargs)
-        or True,
+            or []
+        ),
+        should_send_gate_notification_fn=lambda **kwargs: (
+            state_calls.append(kwargs) or True
+        ),
         format_notification_gate_block_fn=lambda reasons, actions: (
             f"BLOCK:{reasons[0]}|{actions[0]}\n"
         ),
@@ -49,7 +52,9 @@ def test_finalize_scheduled_notification_disables_notify_and_prefixes_markdown(
     )
 
     assert artifacts.notify_enabled is False
-    assert artifacts.markdown.startswith("BLOCK:冷启动未满: 0/30 个独立信号日|继续按日运行主链。")
+    assert artifacts.markdown.startswith(
+        "BLOCK:冷启动未满: 0/30 个独立信号日|继续按日运行主链。"
+    )
     assert gate_calls == [
         (
             "2026-06-15",
@@ -169,8 +174,7 @@ def test_finalize_scheduled_notification_uses_explicit_task_id_over_env(
         next_actions=["继续按日运行主链。"],
         latest_iso="2026-06-17",
         notify_mode="summary",
-        dispatch_gate_notification_fn=lambda **_kwargs: gate_calls.append("sent")
-        or [],
+        dispatch_gate_notification_fn=lambda **_kwargs: gate_calls.append("sent") or [],
         should_send_gate_notification_fn=lambda **_kwargs: True,
         format_notification_gate_block_fn=lambda reasons, actions: (
             f"BLOCK:{reasons[0]}|{actions[0]}\n"
@@ -238,6 +242,42 @@ def test_finalize_scheduled_notification_marks_gate_only_after_success(
             f"BLOCK:{reasons[0]}|{actions[0]}\n"
         ),
         legacy_notify_fn=None,
+        print_fn=lambda *_args: None,
+        gate_state_path="data/gate_notify_state.json",
+        mark_gate_notification_sent_fn=lambda **kwargs: marked.append(kwargs),
+    )
+
+    assert marked == [
+        {
+            "gate_reasons": ["冷启动未满: 14/30 个独立信号日"],
+            "state_path": "data/gate_notify_state.json",
+            "run_date": "2026-06-17",
+        }
+    ]
+
+
+def test_finalize_scheduled_notification_marks_legacy_gate_after_success(
+    monkeypatch,
+) -> None:
+    marked: list[dict[str, object]] = []
+    monkeypatch.setenv("AQSP_RUN_TASK_ID", "daily")
+
+    finalize_scheduled_notification(
+        markdown="# 原始报告",
+        args_notify=True,
+        gate_ok=False,
+        gate_reasons=["冷启动未满: 14/30 个独立信号日"],
+        next_actions=["冷启动样本 14/30。"],
+        latest_iso="2026-06-17",
+        notify_mode="summary",
+        dispatch_gate_notification_fn=lambda **_kwargs: [],
+        should_send_gate_notification_fn=lambda **_kwargs: True,
+        format_notification_gate_block_fn=lambda reasons, actions: (
+            f"BLOCK:{reasons[0]}|{actions[0]}\n"
+        ),
+        legacy_notify_fn=lambda _markdown: [
+            NotifyResult("serverchan", True, "HTTP 200")
+        ],
         print_fn=lambda *_args: None,
         gate_state_path="data/gate_notify_state.json",
         mark_gate_notification_sent_fn=lambda **kwargs: marked.append(kwargs),
@@ -332,19 +372,21 @@ def test_dispatch_scheduled_daily_notification_builds_summary_and_full() -> None
         circuit_breaker_reason="",
         snapshot_diff=None,
         title_label="收盘研究日报",
-        build_daily_run_notification_fn=lambda **kwargs: built.append(
-            (kwargs["mode"], kwargs["run_date"])
-        )
-        or f"{kwargs['mode']}-{kwargs['run_date']}",
-        dispatch_notification_fn=lambda markdown, **kwargs: dispatched.append(
-            (
-                markdown,
-                kwargs["mode"],
-                kwargs["summary_markdown"],
-                kwargs["kind"],
+        build_daily_run_notification_fn=lambda **kwargs: (
+            built.append((kwargs["mode"], kwargs["run_date"]))
+            or f"{kwargs['mode']}-{kwargs['run_date']}"
+        ),
+        dispatch_notification_fn=lambda markdown, **kwargs: (
+            dispatched.append(
+                (
+                    markdown,
+                    kwargs["mode"],
+                    kwargs["summary_markdown"],
+                    kwargs["kind"],
+                )
             )
-        )
-        or [],
+            or []
+        ),
         notification_kind="daily:2026-06-15",
     )
 
@@ -369,10 +411,10 @@ def test_dispatch_notification_once_dedupes_same_kind_and_content(
     monkeypatch.setattr(
         runtime,
         "dispatch_notification",
-        lambda markdown, **kwargs: sent.append(
-            (markdown, kwargs["mode"], kwargs.get("summary_markdown"))
-        )
-        or [NotifyResult("serverchan", True, "HTTP 200")],
+        lambda markdown, **kwargs: (
+            sent.append((markdown, kwargs["mode"], kwargs.get("summary_markdown")))
+            or [NotifyResult("serverchan", True, "HTTP 200")]
+        ),
     )
 
     first = dispatch_notification_once(

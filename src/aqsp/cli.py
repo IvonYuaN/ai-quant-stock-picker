@@ -4219,9 +4219,13 @@ def run_monitor(args: argparse.Namespace) -> int:
     print(alert_msg)
 
     if args.notify and not args.dry_run:
-        notify_targets = triggered
-        if args.notify_critical_only:
-            notify_targets = [r for r in triggered if r.severity == "critical"]
+        notify_targets = [r for r in triggered if r.severity == "critical"]
+        if not args.notify_critical_only:
+            warning_count = sum(1 for r in triggered if r.severity == "warning")
+            if warning_count:
+                print(
+                    f"monitor notify: warning-only alerts suppressed ({warning_count})"
+                )
         if notify_targets:
             send_alerts(notify_targets)
 

@@ -16,6 +16,12 @@ log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$RESULT_LOG"
 }
 
+is_truthy() {
+    local value
+    value="$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')"
+    [[ "$value" =~ ^(1|true|yes|on)$ ]]
+}
+
 if [ -f "${PROJECT_ROOT}/.env" ]; then
     set -a
     source "${PROJECT_ROOT}/.env"
@@ -25,6 +31,7 @@ fi
 
 export PYTHONPATH="${PROJECT_ROOT}/src:${PROJECT_ROOT}:${PYTHONPATH:-}"
 export TZ="${TZ:-Asia/Shanghai}"
+export AQSP_RUN_TASK_ID="news"
 
 SYMBOLS="${AQSP_NEWS_SYMBOLS:-}"
 NAMES="${AQSP_NEWS_NAMES:-}"
@@ -37,8 +44,15 @@ OUTPUT="${AQSP_NEWS_OUTPUT:-reports/news_catalysts.md}"
 ENABLE_LLM_REVIEW="${AQSP_NEWS_ENABLE_LLM_REVIEW:-false}"
 
 LLM_ARGS=()
-if [[ "${ENABLE_LLM_REVIEW,,}" =~ ^(1|true|yes|on)$ ]]; then
+if is_truthy "$ENABLE_LLM_REVIEW"; then
     LLM_ARGS=(--enable-llm-review)
+fi
+
+NOTIFY_ARGS=()
+if is_truthy "${AQSP_NEWS_NOTIFY:-false}"; then
+    NOTIFY_ARGS=(--notify)
+else
+    log "消息面雷达默认不推送手机通知，仅写报告；设置 AQSP_NEWS_NOTIFY=true 才推送"
 fi
 
 log "开始消息面雷达"
@@ -52,7 +66,7 @@ NEWS_CMD=(
     --llm-timeout-seconds "$LLM_TIMEOUT_SECONDS" \
     --max-llm-review-events "$MAX_LLM_REVIEW_EVENTS" \
     --output "$OUTPUT" \
-    --notify \
+    "${NOTIFY_ARGS[@]}" \
     "${LLM_ARGS[@]}"
 )
 

@@ -143,7 +143,7 @@ def dispatch_gate_notification(
 
 
 def gate_notification_allowed(task_id: str | None = None) -> bool:
-    value = (task_id if task_id is not None else os.getenv("AQSP_RUN_TASK_ID", ""))
+    value = task_id if task_id is not None else os.getenv("AQSP_RUN_TASK_ID", "")
     normalized = str(value or "").strip().lower()
     return normalized in {"daily", "scheduled", "manual"}
 
@@ -228,8 +228,9 @@ def finalize_scheduled_notification(
                             next_actions=next_actions,
                             mode=notify_mode,
                         )
-                    if mark_gate_notification_sent_fn is not None and any(
-                        result.ok for result in results
+                    if (
+                        mark_gate_notification_sent_fn is not None
+                        and _has_successful_notify_result(results)
                     ):
                         _call_gate_mark_sent(
                             mark_gate_notification_sent_fn,
@@ -245,6 +246,10 @@ def finalize_scheduled_notification(
         markdown=output_markdown,
         notify_enabled=notify_enabled,
     )
+
+
+def _has_successful_notify_result(results: list[NotifyResult] | None) -> bool:
+    return any(getattr(result, "ok", False) for result in (results or []))
 
 
 def _call_gate_should_send(
