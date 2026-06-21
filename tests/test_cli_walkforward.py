@@ -1454,6 +1454,30 @@ class TestCLIRegimeDescription:
         assert "未知" in _regime_description("foobar")
 
 
+def test_walkforward_grid_uses_constitution_wfb_variants() -> None:
+    import aqsp.cli as cli_mod
+
+    variants = cli_mod._WALKFORWARD_GRID_VARIANTS
+
+    assert len(variants) == 11
+    assert [variant.variant_id for variant in variants] == [
+        "WF-001",
+        "WF-B01",
+        "WF-B02",
+        "WF-B03",
+        "WF-B04",
+        "WF-B05",
+        "WF-B06",
+        "WF-B07",
+        "WF-B08",
+        "WF-B09",
+        "WF-B10",
+    ]
+    assert {variant.lookback_days for variant in variants} == {20, 40, 60, 80, 100, 120}
+    assert {variant.horizon_days for variant in variants} == {1, 2, 3, 5, 7, 10}
+    assert {variant.top_n for variant in variants} == {5, 10, 15, 20}
+
+
 def test_walkforward_grid_cscv_writes_valid_pbo_gate(monkeypatch, tmp_path):
     import aqsp.cli as cli_mod
     from aqsp.backtest.walk_forward import BacktestResult
@@ -1620,3 +1644,7 @@ def test_walkforward_grid_cscv_writes_valid_pbo_gate(monkeypatch, tmp_path):
     assert "全池下跌占比" in report_text
     assert "训练选中变体" in report_text
     assert "测试最优变体" in report_text
+    assert (
+        "| 变体 | mom | tr | lb | h | top | Sharpe | 总收益 | 周期数 |" in report_text
+    )
+    assert "| WF-001 | 0.3 | 0.3 | 60 | 3 | 10 |" in report_text

@@ -3181,20 +3181,25 @@ def run_dashboard(args: argparse.Namespace) -> int:
 @dataclass(frozen=True)
 class WalkForwardGridVariant:
     variant_id: str
-    min_score: float
+    momentum_weight: float
+    triple_rise_weight: float
+    lookback_days: int
     horizon_days: int
     top_n: int
 
 
 _WALKFORWARD_GRID_VARIANTS: tuple[WalkForwardGridVariant, ...] = (
-    WalkForwardGridVariant("baseline", 0.40, 3, 10),
-    WalkForwardGridVariant("top5", 0.40, 3, 5),
-    WalkForwardGridVariant("top20", 0.40, 3, 20),
-    WalkForwardGridVariant("h1", 0.40, 1, 10),
-    WalkForwardGridVariant("h5", 0.40, 5, 10),
-    WalkForwardGridVariant("h10", 0.40, 10, 10),
-    WalkForwardGridVariant("score30", 0.30, 3, 10),
-    WalkForwardGridVariant("score50", 0.50, 3, 10),
+    WalkForwardGridVariant("WF-001", 0.3, 0.3, 60, 3, 10),
+    WalkForwardGridVariant("WF-B01", 0.3, 0.3, 60, 3, 5),
+    WalkForwardGridVariant("WF-B02", 0.3, 0.3, 60, 3, 20),
+    WalkForwardGridVariant("WF-B03", 0.3, 0.3, 20, 3, 10),
+    WalkForwardGridVariant("WF-B04", 0.3, 0.3, 120, 3, 10),
+    WalkForwardGridVariant("WF-B05", 0.3, 0.3, 60, 1, 10),
+    WalkForwardGridVariant("WF-B06", 0.3, 0.3, 60, 10, 10),
+    WalkForwardGridVariant("WF-B07", 0.2, 0.4, 40, 5, 5),
+    WalkForwardGridVariant("WF-B08", 0.4, 0.2, 100, 2, 15),
+    WalkForwardGridVariant("WF-B09", 0.5, 0.1, 80, 5, 10),
+    WalkForwardGridVariant("WF-B10", 0.1, 0.5, 40, 7, 10),
 )
 
 
@@ -3236,15 +3241,24 @@ def _summarize_walkforward_market_window(
     }
 
 
-def _apply_composite_min_score(thresholds: Any, min_score: float) -> Any:
-    from aqsp.strategies.thresholds import CompositeThresholds
+def _apply_walkforward_grid_variant(
+    thresholds: Any, variant: WalkForwardGridVariant
+) -> Any:
+    from aqsp.strategies.thresholds import CompositeThresholds, MomentumThresholds
 
     return replace(
         thresholds,
         composite=CompositeThresholds(
             **{
                 **thresholds.composite.__dict__,
-                "min_total_score": min_score,
+                "momentum_weight": variant.momentum_weight,
+                "triple_rise_weight": variant.triple_rise_weight,
+            }
+        ),
+        momentum=MomentumThresholds(
+            **{
+                **thresholds.momentum.__dict__,
+                "lookback_days": variant.lookback_days,
             }
         ),
     )
@@ -3266,12 +3280,12 @@ def _run_walkforward_grid_cscv(
     from aqsp.strategies.composite import CompositeStrategy
 
     variant_returns: list[list[float]] = []
-    variant_rows: list[tuple[str, float, float, int]] = []
+    variant_rows: list[tuple[WalkForwardGridVariant, float, float, int]] = []
     period_labels: list[str] | None = None
     min_periods: int | None = None
 
     for variant in _WALKFORWARD_GRID_VARIANTS:
-        variant_thresholds = _apply_composite_min_score(thresholds, variant.min_score)
+        variant_thresholds = _apply_walkforward_grid_variant(thresholds, variant)
         variant_strategy = CompositeStrategy(thresholds=variant_thresholds)
         fee_bps, slippage_bps = _execution_cost_bps_from_thresholds(thresholds)
         variant_cfg = WalkForwardEngineConfig(
@@ -3303,7 +3317,7 @@ def _run_walkforward_grid_cscv(
         variant_returns.append(returns)
         variant_rows.append(
             (
-                variant.variant_id,
+                variant,
                 variant_result.overall.sharpe_ratio,
                 variant_result.overall.total_return,
                 len(returns),
@@ -3327,7 +3341,7 @@ def _run_walkforward_grid_cscv(
     details["selection_inversions"] = _build_cscv_selection_inversions(
         returns_matrix,
         s=s,
-        variant_ids=[row[0] for row in variant_rows],
+        variant_ids=[row[0].variant_id for row in variant_rows],
     )
     period_means = returns_matrix.mean(axis=1)
     period_stds = returns_matrix.std(axis=1)
@@ -3359,8 +3373,8 @@ def _run_walkforward_grid_cscv(
             "variant_dispersion_return": float(
                 np.std([row[2] for row in variant_rows])
             ),
-            "best_variant": variant_rows[best_variant_idx][0],
-            "worst_variant": variant_rows[worst_variant_idx][0],
+            "best_variant": variant_rows[best_variant_idx][0].variant_id,
+            "worst_variant": variant_rows[worst_variant_idx][0].variant_id,
             "worst_periods": [
                 {
                     "period_index": idx + 1,
@@ -3534,7 +3548,7 @@ def _append_walkforward_grid_rows(
     dsr: float,
     pbo: float,
     periods: int,
-    rows: list[tuple[str, float, float, int]],
+    rows: list[tuple[WalkForwardGridVariant, float, float, int]],
     details: dict[str, Any] | None = None,
 ) -> None:
     report_lines.extend(
@@ -3558,13 +3572,21 @@ def _append_walkforward_grid_rows(
     report_lines.extend(
         [
             "",
-            "| 变体 | Sharpe | 总收益 | 周期数 |",
-            "|------|--------|--------|--------|",
+            "| 变体 | mom | tr | lb | h | top | Sharpe | 总收益 | 周期数 |",
+            "|------|-----|----|----|---|-----|--------|--------|--------|",
         ]
     )
-    for variant_id, sharpe, total_return, period_count in rows:
+    for variant, sharpe, total_return, period_count in rows:
         report_lines.append(
-            f"| {variant_id} | {sharpe:.2f} | {total_return:.2%} | {period_count} |"
+            f"| {variant.variant_id} | "
+            f"{variant.momentum_weight:.1f} | "
+            f"{variant.triple_rise_weight:.1f} | "
+            f"{variant.lookback_days} | "
+            f"{variant.horizon_days} | "
+            f"{variant.top_n} | "
+            f"{sharpe:.2f} | "
+            f"{total_return:.2%} | "
+            f"{period_count} |"
         )
 
     _append_walkforward_grid_diagnostics(report_lines, details)
@@ -3703,7 +3725,7 @@ def run_walkforward(args: argparse.Namespace) -> int:
                 symbols,
                 start_d,
                 end_d,
-                min_rows=100,
+                min_rows=None,
             )
         print(f"SQLite 数据库中可用且覆盖区间的标的: {len(symbols)} 只")
         frames = src.fetch_daily(symbols, start_d, end_d, adjust="")

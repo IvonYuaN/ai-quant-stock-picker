@@ -477,3 +477,43 @@ def test_validate_ohlcv_allows_unknown_limit_prices_as_nan() -> None:
     source.name = "test"
 
     assert source._validate_ohlcv(df, "000300") is df
+
+
+def test_sqlite_daily_coverage_requires_requested_start_and_end(
+    tmp_path: Path,
+) -> None:
+    db = tmp_path / "sqlite.db"
+    with sqlite3.connect(db) as conn:
+        conn.execute("create table stocks (ts_code text, name text)")
+        conn.execute("insert into stocks values ('600519.SH', '贵州茅台')")
+        conn.execute(
+            """
+            create table daily_qfq (
+                ts_code text,
+                trade_date text,
+                open real,
+                high real,
+                low real,
+                close real,
+                volume real,
+                amount real
+            )
+            """
+        )
+        for day in pd.date_range("2023-01-02", "2023-12-29", freq="B"):
+            conn.execute(
+                "insert into daily_qfq values (?, ?, 1, 1, 1, 1, 100, 100)",
+                ("600519.SH", day.strftime("%Y%m%d")),
+            )
+
+    source = SqliteDbSource(db_path=db)
+
+    assert (
+        source.get_symbols_with_daily_coverage(
+            ["600519"], date(2018, 1, 1), date(2024, 12, 31)
+        )
+        == []
+    )
+    assert source.get_symbols_with_daily_coverage(
+        ["600519"], date(2023, 1, 2), date(2023, 12, 29)
+    ) == ["600519"]

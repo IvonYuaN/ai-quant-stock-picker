@@ -76,27 +76,51 @@ class SqliteDbSource(DataSource):
         start: date,
         end: date,
         *,
-        min_rows: int = 100,
+        min_rows: int | None = None,
+        min_coverage_ratio: float = 0.8,
     ) -> list[str]:
         start_str = start.strftime("%Y%m%d")
         end_str = end.strftime("%Y%m%d")
+        expected_rows = self._count_market_rows(start_str, end_str)
+        min_required_rows = (
+            int(min_rows)
+            if min_rows is not None
+            else max(1, int(expected_rows * min_coverage_ratio))
+        )
         covered: list[str] = []
         with sqlite3.connect(self.db_path, timeout=_SQLITE_TIMEOUT_SECONDS) as conn:
             for symbol in symbols:
                 ts_code = self._to_ts_code(symbol)
                 if ts_code is None:
                     continue
-                count = conn.execute(
+                first_date, last_date, count = conn.execute(
                     """
-                    SELECT COUNT(*)
+                    SELECT MIN(trade_date), MAX(trade_date), COUNT(*)
                     FROM daily_qfq
                     WHERE ts_code = ? AND trade_date >= ? AND trade_date <= ?
                     """,
                     (ts_code, start_str, end_str),
-                ).fetchone()[0]
-                if int(count) >= min_rows:
-                    covered.append(symbol)
+                ).fetchone()
+                if not first_date or not last_date:
+                    continue
+                if str(first_date) > start_str or str(last_date) < end_str:
+                    continue
+                if int(count) < min_required_rows:
+                    continue
+                covered.append(symbol)
         return covered
+
+    def _count_market_rows(self, start_str: str, end_str: str) -> int:
+        with sqlite3.connect(self.db_path, timeout=_SQLITE_TIMEOUT_SECONDS) as conn:
+            row = conn.execute(
+                """
+                SELECT COUNT(DISTINCT trade_date)
+                FROM daily_qfq
+                WHERE trade_date >= ? AND trade_date <= ?
+                """,
+                (start_str, end_str),
+            ).fetchone()
+        return int(row[0] or 0)
 
     def fetch_daily(
         self,
