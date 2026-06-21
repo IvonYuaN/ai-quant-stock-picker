@@ -269,14 +269,14 @@ def test_check_before_live_ignores_simulated_and_strategy_grouped_samples(
 ) -> None:
     _prepare_ready_runtime(tmp_path)
     rows = [
-            {
-                "signal_date": f"2026-05-{day:02d}",
-                "signal_day_group": f"2026-05-{day:02d}_volume_breakout",
-                "symbol": "600519",
-                "status": "watch_only",
-            }
-            for day in range(1, 16)
-        ]
+        {
+            "signal_date": f"2026-05-{day:02d}",
+            "signal_day_group": f"2026-05-{day:02d}_volume_breakout",
+            "symbol": "600519",
+            "status": "watch_only",
+        }
+        for day in range(1, 16)
+    ]
     rows.extend(
         {
             "signal_date": f"2026-05-{day:02d}",
@@ -352,17 +352,13 @@ def test_check_before_live_blocks_when_daily_run_history_is_missing(
     )
 
 
-
 def test_check_before_live_merges_history_with_legacy_pipeline_logs(
     tmp_path: Path,
 ) -> None:
     _prepare_ready_runtime(tmp_path)
     _write_jsonl(
         tmp_path / "data/daily_run_history.jsonl",
-        [
-            {"date": f"2026-06-{day:02d}", "success": True}
-            for day in range(15, 19)
-        ]
+        [{"date": f"2026-06-{day:02d}", "success": True} for day in range(15, 19)]
         + [{"date": "2026-06-19", "success": False, "exit_code": 1}],
     )
     pipeline_dir = tmp_path / "logs" / "pipeline"
@@ -381,7 +377,10 @@ def test_check_before_live_merges_history_with_legacy_pipeline_logs(
 
     finding = next(item for item in findings if item.gate == "successful_daily_runs")
     assert finding.ok is True
-    assert finding.detail == "5/5 successful daily run days (daily_run_history+pipeline_logs)"
+    assert (
+        finding.detail
+        == "5/5 successful daily run days (daily_run_history+pipeline_logs)"
+    )
 
 
 def test_check_before_live_counts_legacy_pipeline_logs_when_history_is_missing(
@@ -480,3 +479,70 @@ def test_check_before_live_blocks_unstable_gate_notify_state_path(
     finding = next(item for item in findings if item.gate == "gate_notify_state_path")
     assert finding.ok is False
     assert "unstable external path" in finding.detail
+
+
+def test_check_before_live_blocks_bt_wrapper_high_frequency_notify(
+    tmp_path: Path,
+) -> None:
+    _prepare_ready_runtime(tmp_path)
+    cron_dir = tmp_path / "bt-cron"
+    cron_dir.mkdir()
+    (cron_dir / "aqsp-intraday").write_text(
+        "#!/bin/bash\n"
+        "cd /opt/aqsp\n"
+        "/bin/bash /opt/aqsp/scripts/bt_task.sh intraday --notify\n",
+        encoding="utf-8",
+    )
+
+    findings = check_before_live(
+        root=tmp_path,
+        today=date(2026, 6, 14),
+        cron_dir=cron_dir,
+    )
+
+    finding = next(item for item in findings if item.gate == "scheduler_notify_cadence")
+    assert finding.ok is False
+    assert "intraday" in finding.detail
+
+
+def test_check_before_live_blocks_bt_wrapper_that_bypasses_bt_task(
+    tmp_path: Path,
+) -> None:
+    _prepare_ready_runtime(tmp_path)
+    cron_dir = tmp_path / "bt-cron"
+    cron_dir.mkdir()
+    (cron_dir / "aqsp-daily-direct").write_text(
+        "#!/bin/bash\ncd /opt/aqsp\n/bin/bash /opt/aqsp/scripts/daily_pipeline.sh\n",
+        encoding="utf-8",
+    )
+
+    findings = check_before_live(
+        root=tmp_path,
+        today=date(2026, 6, 14),
+        cron_dir=cron_dir,
+    )
+
+    finding = next(item for item in findings if item.gate == "scheduler_notify_cadence")
+    assert finding.ok is False
+    assert "bypasses bt_task.sh" in finding.detail
+
+
+def test_check_before_live_allows_bt_wrapper_through_unified_entry(
+    tmp_path: Path,
+) -> None:
+    _prepare_ready_runtime(tmp_path)
+    cron_dir = tmp_path / "bt-cron"
+    cron_dir.mkdir()
+    (cron_dir / "aqsp-daily").write_text(
+        "#!/bin/bash\ncd /opt/aqsp\n/bin/bash /opt/aqsp/scripts/bt_task.sh daily\n",
+        encoding="utf-8",
+    )
+
+    findings = check_before_live(
+        root=tmp_path,
+        today=date(2026, 6, 14),
+        cron_dir=cron_dir,
+    )
+
+    finding = next(item for item in findings if item.gate == "scheduler_notify_cadence")
+    assert finding.ok is True

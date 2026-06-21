@@ -108,6 +108,7 @@ def check_before_live(
     ledger_path: Path | None = None,
     run_history_path: Path | None = None,
     cron_path: Path | None = None,
+    cron_dir: Path | None = None,
 ) -> list[ReadinessFinding]:
     gate_path = gate_path or root / "data" / "walkforward_gate.json"
     ledger_path = ledger_path or root / "data" / "predictions.jsonl"
@@ -117,7 +118,9 @@ def check_before_live(
     findings.append(_check_walkforward_gate(gate_path, today))
     findings.append(_check_paper_sample_size(ledger_path))
     findings.append(_check_successful_runs(run_history_path, root=root))
-    findings.append(_check_scheduler_notify_cadence(root, cron_path=cron_path))
+    findings.append(
+        _check_scheduler_notify_cadence(root, cron_path=cron_path, cron_dir=cron_dir)
+    )
     findings.append(_check_gate_notify_state_path(root))
     findings.extend(_check_runtime_outputs(root))
     return findings
@@ -191,7 +194,10 @@ def _check_successful_runs(path: Path, *, root: Path) -> ReadinessFinding:
         row
         for row in pipeline_rows
         if str(row.get("date") or "").strip()
-        not in {str(item.get("date") or item.get("run_date") or "").strip() for item in history_rows}
+        not in {
+            str(item.get("date") or item.get("run_date") or "").strip()
+            for item in history_rows
+        }
     ]
     source = (
         "daily_run_history+pipeline_logs"
@@ -214,7 +220,7 @@ def _check_successful_runs(path: Path, *, root: Path) -> ReadinessFinding:
 
 
 def _check_scheduler_notify_cadence(
-    root: Path, *, cron_path: Path | None
+    root: Path, *, cron_path: Path | None, cron_dir: Path | None = None
 ) -> ReadinessFinding:
     texts: list[tuple[str, str]] = []
     for path in (
@@ -226,9 +232,12 @@ def _check_scheduler_notify_cadence(
         root / "scripts" / "server_monitor.sh",
     ):
         if path.exists():
-            texts.append((str(path.relative_to(root)), path.read_text(encoding="utf-8")))
+            texts.append(
+                (str(path.relative_to(root)), path.read_text(encoding="utf-8"))
+            )
     if cron_path is not None and cron_path.exists():
         texts.append((str(cron_path), cron_path.read_text(encoding="utf-8")))
+    texts.extend(_read_cron_wrapper_texts(cron_dir))
 
     blockers: list[str] = []
     for label, text in texts:
@@ -244,11 +253,17 @@ def _check_scheduler_notify_cadence(
                 blockers.append(f"{label}: {clean}")
             if any(task in clean for task in ("intraday", "midday")):
                 blockers.append(f"{label}: {clean}")
+        if _should_check_cron_entry_bypass(label) and _cron_wrapper_bypasses_bt_task(
+            text
+        ):
+            blockers.append(f"{label}: trading job bypasses bt_task.sh")
 
     return ReadinessFinding(
         "scheduler_notify_cadence",
         not blockers,
-        "ok" if not blockers else "high-frequency notify risk: " + " | ".join(blockers[:3]),
+        "ok"
+        if not blockers
+        else "high-frequency notify risk: " + " | ".join(blockers[:3]),
     )
 
 
@@ -258,6 +273,48 @@ def _looks_like_high_frequency_schedule(line: str) -> bool:
         return False
     minute = fields[0]
     return minute.startswith("*/") or "," in minute or "-" in minute
+
+
+def _read_cron_wrapper_texts(cron_dir: Path | None) -> list[tuple[str, str]]:
+    if cron_dir is None or not cron_dir.exists() or not cron_dir.is_dir():
+        return []
+    texts: list[tuple[str, str]] = []
+    for path in sorted(cron_dir.iterdir()):
+        if not path.is_file():
+            continue
+        if path.suffix in {".log", ".lock", ".pl"}:
+            continue
+        try:
+            content = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        if "aqsp" in content.lower() or "/opt/aqsp" in content:
+            texts.append((str(path), content))
+    return texts
+
+
+def _should_check_cron_entry_bypass(label: str) -> bool:
+    return not label.startswith("scripts/")
+
+
+def _cron_wrapper_bypasses_bt_task(text: str) -> bool:
+    lower = text.lower()
+    if "bt_task.sh" in lower:
+        return False
+    if "aqsp" not in lower and "/opt/aqsp" not in lower:
+        return False
+    return any(
+        token in lower
+        for token in (
+            "daily_pipeline.sh",
+            "intraday_refresh.sh",
+            "midday_refresh.sh",
+            "coldstart_daily.sh",
+            "-m aqsp run",
+            "aqsp.cli run",
+            "news_catalysts.sh",
+        )
+    )
 
 
 def _check_gate_notify_state_path(root: Path) -> ReadinessFinding:
@@ -311,6 +368,11 @@ def main() -> int:
         "--run-history", default="", help="Override daily run history jsonl"
     )
     parser.add_argument("--cron", default="", help="Optional crontab dump to audit")
+    parser.add_argument(
+        "--cron-dir",
+        default="/www/server/cron",
+        help="Optional BT Panel cron wrapper directory to audit",
+    )
     args = parser.parse_args()
 
     root = Path(args.root).resolve()
@@ -322,6 +384,7 @@ def main() -> int:
         ledger_path=Path(args.ledger) if args.ledger else None,
         run_history_path=Path(args.run_history) if args.run_history else None,
         cron_path=Path(args.cron) if args.cron else None,
+        cron_dir=Path(args.cron_dir) if args.cron_dir else None,
     )
     _print_findings(findings)
     return 0 if all(finding.ok for finding in findings) else 1
