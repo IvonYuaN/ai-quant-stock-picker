@@ -261,8 +261,10 @@ def test_coldstart_daily_script_updates_db_then_runs_cli() -> None:
     )
 
     assert 'dirname "$SQLITE_DB_PATH"' in script
+    assert "scripts/update_sqlite_daily.py" in script
     assert "A股量化分析数据/update_daily.py" in script
     assert "AQSP_COLDSTART_UPDATE_SCRIPT" in script
+    assert "AQSP_COLDSTART_UPDATE_SLEEP_SECONDS" in script
     assert "AQSP_COLDSTART_ALLOW_INTRADAY" in script
     assert 'LEDGER_PATH_FOR_PROGRESS="$LEDGER_PATH"' in script
     assert 'os.environ["LEDGER_PATH_FOR_PROGRESS"]' in script
@@ -275,7 +277,8 @@ def test_coldstart_daily_script_updates_db_then_runs_cli() -> None:
     assert "主链路仍在运行，本次冷启动正常跳过；这是互斥保护，不是失败" in script
     assert "LOCK_RUNNER=scripts/coldstart_daily.sh" in script
     assert "LOCK_STARTED_AT=$(date '+%Y-%m-%d %H:%M:%S')" in script
-    assert '"${PYTHON_BIN}" -u "${UPDATE_SCRIPT}" "${SQLITE_DB_PATH}"' in script
+    assert 'UPDATE_ARGS=("${SQLITE_DB_PATH}")' in script
+    assert '"${PYTHON_BIN}" -u "${UPDATE_SCRIPT}" "${UPDATE_ARGS[@]}"' in script
     assert '"${PYTHON_BIN}" -u -m aqsp.cli run' in script
     assert "--source sqlite_db" in script
     assert '--benchmark-symbol ""' in script
