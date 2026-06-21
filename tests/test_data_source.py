@@ -505,6 +505,14 @@ def test_sqlite_daily_coverage_requires_requested_start_and_end(
                 "insert into daily_qfq values (?, ?, 1, 1, 1, 1, 100, 100)",
                 ("600519.SH", day.strftime("%Y%m%d")),
             )
+        conn.execute(
+            "insert into stocks values ('000001.SZ', '平安银行')",
+        )
+        for day in pd.date_range("2023-01-03", "2023-12-29", freq="B"):
+            conn.execute(
+                "insert into daily_qfq values (?, ?, 1, 1, 1, 1, 100, 100)",
+                ("000001.SZ", day.strftime("%Y%m%d")),
+            )
 
     source = SqliteDbSource(db_path=db)
 
@@ -515,5 +523,11 @@ def test_sqlite_daily_coverage_requires_requested_start_and_end(
         == []
     )
     assert source.get_symbols_with_daily_coverage(
-        ["600519"], date(2023, 1, 2), date(2023, 12, 29)
+        ["600519"], date(2023, 1, 1), date(2023, 12, 31)
     ) == ["600519"]
+    assert (
+        source.get_symbols_with_daily_coverage(
+            ["000001"], date(2023, 1, 1), date(2023, 12, 31)
+        )
+        == []
+    )

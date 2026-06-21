@@ -19,6 +19,25 @@ from aqsp.data.cache import DataCache
 _SQLITE_TIMEOUT_SECONDS = 30.0
 
 
+def _parse_db_date(raw: str) -> date | None:
+    text = str(raw or "").strip()
+    if len(text) == 8 and text.isdigit():
+        return date.fromisoformat(f"{text[:4]}-{text[4:6]}-{text[6:]}")
+    try:
+        return date.fromisoformat(text[:10])
+    except ValueError:
+        return None
+
+
+def _date_within_lag(left: str, right: str, *, max_days: int) -> bool:
+    left_day = _parse_db_date(left)
+    right_day = _parse_db_date(right)
+    if left_day is None or right_day is None:
+        return False
+    delta = (right_day - left_day).days
+    return 0 <= delta <= max_days
+
+
 class SqliteDbSource(DataSource):
     name: str = "sqlite_db"
 
@@ -81,13 +100,21 @@ class SqliteDbSource(DataSource):
     ) -> list[str]:
         start_str = start.strftime("%Y%m%d")
         end_str = end.strftime("%Y%m%d")
-        expected_rows = self._count_market_rows(start_str, end_str)
+        first_market_day, last_market_day, expected_rows = self._market_range(
+            start_str, end_str
+        )
         min_required_rows = (
             int(min_rows)
             if min_rows is not None
             else max(1, int(expected_rows * min_coverage_ratio))
         )
         covered: list[str] = []
+        if not first_market_day or not last_market_day:
+            return covered
+        if not _date_within_lag(start_str, first_market_day, max_days=10):
+            return covered
+        if not _date_within_lag(last_market_day, end_str, max_days=10):
+            return covered
         with sqlite3.connect(self.db_path, timeout=_SQLITE_TIMEOUT_SECONDS) as conn:
             for symbol in symbols:
                 ts_code = self._to_ts_code(symbol)
@@ -103,24 +130,29 @@ class SqliteDbSource(DataSource):
                 ).fetchone()
                 if not first_date or not last_date:
                     continue
-                if str(first_date) > start_str or str(last_date) < end_str:
+                if (
+                    str(first_date) > first_market_day
+                    or str(last_date) < last_market_day
+                ):
                     continue
                 if int(count) < min_required_rows:
                     continue
                 covered.append(symbol)
         return covered
 
-    def _count_market_rows(self, start_str: str, end_str: str) -> int:
+    def _market_range(self, start_str: str, end_str: str) -> tuple[str, str, int]:
         with sqlite3.connect(self.db_path, timeout=_SQLITE_TIMEOUT_SECONDS) as conn:
             row = conn.execute(
                 """
-                SELECT COUNT(DISTINCT trade_date)
+                SELECT MIN(trade_date), MAX(trade_date), COUNT(DISTINCT trade_date)
                 FROM daily_qfq
                 WHERE trade_date >= ? AND trade_date <= ?
                 """,
                 (start_str, end_str),
             ).fetchone()
-        return int(row[0] or 0)
+        first_day = str(row[0] or "")
+        last_day = str(row[1] or "")
+        return first_day, last_day, int(row[2] or 0)
 
     def fetch_daily(
         self,
