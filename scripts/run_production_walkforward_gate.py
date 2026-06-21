@@ -141,7 +141,7 @@ def main() -> int:
             "Backfill missing raw history first: .venv/bin/python "
             "scripts/update_sqlite_daily.py "
             f"{args.db} --price-mode raw --start-date {args.start} "
-            f"--target-date {args.end} --limit 0"
+            f"--target-date {args.end} --fill-history-gaps --limit 0"
         )
         print(
             "Only for a clean rebuild, append --force-from-start after taking a database backup."

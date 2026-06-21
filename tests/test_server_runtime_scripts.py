@@ -334,3 +334,17 @@ def test_install_coldstart_cron_script_installs_single_daily_job() -> None:
     assert "AQSP_COLDSTART_CRON_SCHEDULE" in script
     assert "30 17 * * 1-5" in script
     assert "/scripts/coldstart_daily.sh" in script
+
+
+def test_production_walkforward_gate_wrapper_suggests_gap_filling_raw_backfill() -> (
+    None
+):
+    script = (
+        PROJECT_ROOT / "scripts" / "run_production_walkforward_gate.py"
+    ).read_text(encoding="utf-8")
+
+    assert "MIN_PRODUCTION_GATE_SYMBOLS = 3000" in script
+    assert "--pool" in script
+    assert '"all"' in script
+    assert "--fill-history-gaps --limit 0" in script
+    assert "300-symbol run is only a smoke test" in script

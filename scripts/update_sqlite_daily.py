@@ -3,7 +3,9 @@
 
 The legacy server updater only requested today's bar. If a symbol missed one or
 more trading days, it stayed stale forever. This updater starts from each symbol's latest stored trade_date + 1 day by default.
-Use --start-date with --force-from-start for historical walk-forward backfills.
+Use --start-date with --fill-history-gaps for production raw backfills that must
+repair symbols with partial recent rows without refetching complete symbols.
+Use --force-from-start only for a clean rebuild after taking a database backup.
 """
 
 from __future__ import annotations
@@ -151,18 +153,47 @@ def sync_stock_list(conn: sqlite3.Connection, bs: Any) -> list[str]:
     ]
 
 
-def _latest_symbol_date(conn: sqlite3.Connection, ts_code: str) -> date | None:
+def _symbol_date_bounds(
+    conn: sqlite3.Connection, ts_code: str
+) -> tuple[date | None, date | None]:
     row = conn.execute(
         """
-        SELECT CAST(trade_date AS TEXT)
+        SELECT MIN(CAST(trade_date AS TEXT)), MAX(CAST(trade_date AS TEXT))
         FROM daily_qfq
         WHERE ts_code = ? AND trade_date != 'SKIP'
-        ORDER BY trade_date DESC
-        LIMIT 1
         """,
         (ts_code,),
     ).fetchone()
-    return _parse_trade_date(row[0]) if row else None
+    if not row:
+        return None, None
+    return _parse_trade_date(row[0]), _parse_trade_date(row[1])
+
+
+def _resolve_fetch_start_day(
+    *,
+    first: date | None,
+    latest: date | None,
+    start_day: date | None,
+    target_day: date,
+    force_from_start: bool,
+    fill_history_gaps: bool,
+) -> date:
+    if force_from_start and start_day is not None:
+        return start_day
+    if fill_history_gaps and start_day is not None:
+        # Calendar files may not include every old exchange holiday. Treat a
+        # first stored row within the opening week as covered, while still
+        # repairing symbols that only have recent partial history.
+        prefix_grace_day = start_day + timedelta(days=7)
+        if first is None or first > prefix_grace_day:
+            return start_day
+    if latest is not None:
+        return _next_calendar_day(latest)
+    return start_day or target_day
+
+
+def _latest_symbol_date(conn: sqlite3.Connection, ts_code: str) -> date | None:
+    return _symbol_date_bounds(conn, ts_code)[1]
 
 
 def _adjustflag_for_price_mode(price_mode: str) -> str:
@@ -203,6 +234,7 @@ def update_sqlite_daily(
     symbols: tuple[str, ...] = (),
     start_day: date | None = None,
     force_from_start: bool = False,
+    fill_history_gaps: bool = False,
     price_mode: str = "qfq",
 ) -> UpdateSummary:
     bs = _load_baostock()
@@ -228,13 +260,14 @@ def update_sqlite_daily(
             if limit > 0:
                 selected_symbols = selected_symbols[:limit]
             for index, ts_code in enumerate(selected_symbols, start=1):
-                latest = _latest_symbol_date(conn, ts_code)
-                fetch_start_day = (
-                    start_day
-                    if force_from_start and start_day is not None
-                    else _next_calendar_day(latest)
-                    if latest
-                    else start_day or target_day
+                first, latest = _symbol_date_bounds(conn, ts_code)
+                fetch_start_day = _resolve_fetch_start_day(
+                    first=first,
+                    latest=latest,
+                    start_day=start_day,
+                    target_day=target_day,
+                    force_from_start=force_from_start,
+                    fill_history_gaps=fill_history_gaps,
                 )
                 if fetch_start_day > target_day:
                     skipped += 1
@@ -298,6 +331,11 @@ def main() -> int:
         help="YYYY-MM-DD historical backfill start; default incremental only",
     )
     parser.add_argument(
+        "--fill-history-gaps",
+        action="store_true",
+        help="with --start-date, repair symbols whose first stored row is later than the requested start",
+    )
+    parser.add_argument(
         "--force-from-start",
         action="store_true",
         help="refetch from --start-date even if newer rows already exist",
@@ -318,9 +356,12 @@ def main() -> int:
     start_day = date.fromisoformat(args.start_date) if args.start_date else None
     if args.force_from_start and start_day is None:
         raise SystemExit("--force-from-start requires --start-date")
+    if args.fill_history_gaps and start_day is None:
+        raise SystemExit("--fill-history-gaps requires --start-date")
     print(
         f"sqlite daily backfill target={target.isoformat()} "
         f"start={start_day.isoformat() if start_day else 'incremental'} "
+        f"fill_history_gaps={args.fill_history_gaps} "
         f"price_mode={args.price_mode} db={args.db}"
     )
     summary = update_sqlite_daily(
@@ -331,6 +372,7 @@ def main() -> int:
         symbols=tuple(item.strip() for item in args.symbols.split(",") if item.strip()),
         start_day=start_day,
         force_from_start=args.force_from_start,
+        fill_history_gaps=args.fill_history_gaps,
         price_mode=args.price_mode,
     )
     print(

@@ -14,8 +14,10 @@ def test_update_sqlite_daily_cli_exposes_historical_backfill_flags() -> None:
     text = Path("scripts/update_sqlite_daily.py").read_text(encoding="utf-8")
 
     assert "--start-date" in text
+    assert "--fill-history-gaps" in text
     assert "--force-from-start" in text
     assert "--price-mode" in text
+    assert "fill_history_gaps=args.fill_history_gaps" in text
     assert "force_from_start=args.force_from_start" in text
     assert "price_mode=args.price_mode" in text
 
@@ -36,6 +38,46 @@ def test_update_sqlite_daily_requires_start_date_when_force_enabled(
 
     with pytest.raises(SystemExit, match="--force-from-start requires --start-date"):
         update_sqlite_daily.main()
+
+
+def test_update_sqlite_daily_requires_start_date_when_fill_gaps_enabled(
+    monkeypatch, tmp_path: Path
+) -> None:
+    db = tmp_path / "x.db"
+    db.write_text("", encoding="utf-8")
+    monkeypatch.setattr(
+        update_sqlite_daily, "_target_trade_day", lambda _raw: date(2026, 6, 18)
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["update_sqlite_daily.py", str(db), "--fill-history-gaps"],
+    )
+
+    with pytest.raises(SystemExit, match="--fill-history-gaps requires --start-date"):
+        update_sqlite_daily.main()
+
+
+def test_resolve_fetch_start_day_fills_historical_prefix_gap() -> None:
+    assert update_sqlite_daily._resolve_fetch_start_day(
+        first=date(2024, 1, 2),
+        latest=date(2024, 12, 31),
+        start_day=date(2018, 1, 1),
+        target_day=date(2024, 12, 31),
+        force_from_start=False,
+        fill_history_gaps=True,
+    ) == date(2018, 1, 1)
+
+
+def test_resolve_fetch_start_day_keeps_incremental_when_prefix_is_covered() -> None:
+    assert update_sqlite_daily._resolve_fetch_start_day(
+        first=date(2018, 1, 2),
+        latest=date(2024, 12, 31),
+        start_day=date(2018, 1, 1),
+        target_day=date(2024, 12, 31),
+        force_from_start=False,
+        fill_history_gaps=True,
+    ) == date(2025, 1, 1)
 
 
 def test_update_sqlite_daily_creates_raw_database_schema_when_missing(
