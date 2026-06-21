@@ -15,6 +15,7 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from aqsp.core.time import today_shanghai
+from aqsp.utils.env import read_env_value
 from aqsp.walkforward_gate import (
     MAX_GATE_AGE_DAYS,
     validate_walkforward_gate_payload,
@@ -116,6 +117,7 @@ def check_before_live(
 
     findings: list[ReadinessFinding] = []
     findings.append(_check_walkforward_gate(gate_path, today))
+    findings.append(_check_walkforward_price_mode(root, gate_path))
     findings.append(_check_pbo_diagnostics(root, gate_path))
     findings.append(_check_paper_sample_size(ledger_path))
     findings.append(_check_successful_runs(run_history_path, root=root))
@@ -146,6 +148,25 @@ def _check_walkforward_gate(path: Path, today: date) -> ReadinessFinding:
         validation.ok,
         validation.detail,
     )
+
+
+def _check_walkforward_price_mode(root: Path, gate_path: Path) -> ReadinessFinding:
+    gate = _read_json(gate_path)
+    if not gate:
+        return ReadinessFinding("walkforward_price_mode", False, "gate missing")
+
+    db_path = read_env_value(root / ".env", "AQSP_SQLITE_DB_PATH")
+    if not db_path:
+        db_path = "A股量化分析数据/astocks_qfq.db"
+    db_name = Path(db_path).name.lower()
+    source = str(gate.get("source") or "sqlite_db")
+    if source == "sqlite_db" and "qfq" in db_name:
+        return ReadinessFinding(
+            "walkforward_price_mode",
+            False,
+            "sqlite_db gate uses qfq historical database; real gate requires raw prices or point-in-time adjustment factors",
+        )
+    return ReadinessFinding("walkforward_price_mode", True, "ok")
 
 
 def _check_pbo_diagnostics(root: Path, gate_path: Path) -> ReadinessFinding:

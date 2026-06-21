@@ -531,3 +531,27 @@ def test_sqlite_daily_coverage_requires_requested_start_and_end(
         )
         == []
     )
+
+
+def test_sqlite_db_source_marks_qfq_database_price_mode(tmp_path: Path) -> None:
+    db = tmp_path / "astocks_qfq.db"
+    with sqlite3.connect(db) as conn:
+        conn.execute("create table stocks (ts_code text, name text)")
+        conn.execute(
+            """
+            create table daily_qfq (
+                ts_code text,
+                trade_date text,
+                open real,
+                high real,
+                low real,
+                close real,
+                volume real,
+                amount real
+            )
+            """
+        )
+
+    source = SqliteDbSource(db_path=db)
+
+    assert source.price_mode() == "qfq"

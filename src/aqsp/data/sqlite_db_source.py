@@ -89,6 +89,11 @@ class SqliteDbSource(DataSource):
     def get_available_symbols(self) -> list[str]:
         return list(self._load_symbol_map().keys())
 
+    def price_mode(self) -> str:
+        if "qfq" in self.db_path.name.lower():
+            return "qfq"
+        return "unknown"
+
     def get_symbols_with_daily_coverage(
         self,
         symbols: list[str],

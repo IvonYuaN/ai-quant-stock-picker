@@ -41,6 +41,10 @@ def _write_runtime_outputs(root: Path) -> None:
 
 
 def _prepare_ready_runtime(root: Path) -> None:
+    (root / ".env").write_text(
+        "AQSP_SQLITE_DB_PATH=/opt/market-data/astocks_raw.db\n",
+        encoding="utf-8",
+    )
     _write_json(
         root / "data/walkforward_gate.json",
         {
@@ -607,3 +611,19 @@ def test_check_before_live_accepts_pbo_diagnostics_when_gate_failed(
 
     finding = next(item for item in findings if item.gate == "pbo_diagnostics")
     assert finding.ok is True
+
+
+def test_check_before_live_blocks_qfq_walkforward_price_mode(
+    tmp_path: Path,
+) -> None:
+    _prepare_ready_runtime(tmp_path)
+    (tmp_path / ".env").write_text(
+        "AQSP_SQLITE_DB_PATH=/opt/market-data/astocks_qfq.db\n",
+        encoding="utf-8",
+    )
+
+    findings = check_before_live(root=tmp_path, today=date(2026, 6, 14))
+
+    finding = next(item for item in findings if item.gate == "walkforward_price_mode")
+    assert finding.ok is False
+    assert "qfq historical database" in finding.detail
