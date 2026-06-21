@@ -116,6 +116,7 @@ def check_before_live(
 
     findings: list[ReadinessFinding] = []
     findings.append(_check_walkforward_gate(gate_path, today))
+    findings.append(_check_pbo_diagnostics(root, gate_path))
     findings.append(_check_paper_sample_size(ledger_path))
     findings.append(_check_successful_runs(run_history_path, root=root))
     findings.append(
@@ -144,6 +145,34 @@ def _check_walkforward_gate(path: Path, today: date) -> ReadinessFinding:
         "walkforward_gate",
         validation.ok,
         validation.detail,
+    )
+
+
+def _check_pbo_diagnostics(root: Path, gate_path: Path) -> ReadinessFinding:
+    gate = _read_json(gate_path)
+    if not gate or gate.get("pbo_pass") is not False:
+        return ReadinessFinding("pbo_diagnostics", True, "not required")
+
+    report_path = root / "reports" / "walkforward-grid-latest.md"
+    if not report_path.exists():
+        return ReadinessFinding(
+            "pbo_diagnostics",
+            False,
+            f"PBO failed but diagnostics report missing: {report_path}",
+        )
+    text = report_path.read_text(encoding="utf-8")
+    required = (
+        "### PBO 失败定位",
+        "CSCV 失败组合占比",
+        "最差对齐周期",
+        "训练选中变体",
+        "测试最优变体",
+    )
+    missing = [item for item in required if item not in text]
+    return ReadinessFinding(
+        "pbo_diagnostics",
+        not missing,
+        "ok" if not missing else "missing: " + ", ".join(missing),
     )
 
 

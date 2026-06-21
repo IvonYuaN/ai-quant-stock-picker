@@ -30,6 +30,14 @@ def _write_runtime_outputs(root: Path) -> None:
         path = root / rel
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("ok\n", encoding="utf-8")
+    (root / "reports" / "walkforward-grid-latest.md").write_text(
+        "### PBO 失败定位\n"
+        "CSCV 失败组合占比\n"
+        "最差对齐周期\n"
+        "训练选中变体\n"
+        "测试最优变体\n",
+        encoding="utf-8",
+    )
 
 
 def _prepare_ready_runtime(root: Path) -> None:
@@ -545,4 +553,57 @@ def test_check_before_live_allows_bt_wrapper_through_unified_entry(
     )
 
     finding = next(item for item in findings if item.gate == "scheduler_notify_cadence")
+    assert finding.ok is True
+
+
+def test_check_before_live_requires_pbo_diagnostics_when_gate_failed(
+    tmp_path: Path,
+) -> None:
+    _prepare_ready_runtime(tmp_path)
+    _write_json(
+        tmp_path / "data/walkforward_gate.json",
+        {
+            "run_date": "2026-06-10",
+            "deflated_sharpe": 1.2,
+            "pbo": 0.75,
+            "pbo_valid": True,
+            "dsr_pass": True,
+            "pbo_pass": False,
+            "both_pass": False,
+            "n_periods": 12,
+        },
+    )
+    (tmp_path / "reports" / "walkforward-grid-latest.md").write_text(
+        "### PBO 失败定位\nCSCV 失败组合占比\n",
+        encoding="utf-8",
+    )
+
+    findings = check_before_live(root=tmp_path, today=date(2026, 6, 14))
+
+    finding = next(item for item in findings if item.gate == "pbo_diagnostics")
+    assert finding.ok is False
+    assert "训练选中变体" in finding.detail
+
+
+def test_check_before_live_accepts_pbo_diagnostics_when_gate_failed(
+    tmp_path: Path,
+) -> None:
+    _prepare_ready_runtime(tmp_path)
+    _write_json(
+        tmp_path / "data/walkforward_gate.json",
+        {
+            "run_date": "2026-06-10",
+            "deflated_sharpe": 1.2,
+            "pbo": 0.75,
+            "pbo_valid": True,
+            "dsr_pass": True,
+            "pbo_pass": False,
+            "both_pass": False,
+            "n_periods": 12,
+        },
+    )
+
+    findings = check_before_live(root=tmp_path, today=date(2026, 6, 14))
+
+    finding = next(item for item in findings if item.gate == "pbo_diagnostics")
     assert finding.ok is True

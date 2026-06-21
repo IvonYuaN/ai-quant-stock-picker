@@ -1618,3 +1618,5 @@ def test_walkforward_grid_cscv_writes_valid_pbo_gate(monkeypatch, tmp_path):
     assert "最优变体" in report_text
     assert "全池平均收益" in report_text
     assert "全池下跌占比" in report_text
+    assert "训练选中变体" in report_text
+    assert "测试最优变体" in report_text

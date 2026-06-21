@@ -3230,7 +3230,9 @@ def _summarize_walkforward_market_window(
     return {
         "sample_count": len(returns),
         "avg_return": float(sum(returns) / len(returns)),
-        "negative_ratio": float(sum(1 for value in returns if value < 0.0) / len(returns)),
+        "negative_ratio": float(
+            sum(1 for value in returns if value < 0.0) / len(returns)
+        ),
     }
 
 
@@ -3322,11 +3324,15 @@ def _run_walkforward_grid_cscv(
     if s < 2:
         raise ValueError("grid CSCV requires at least 4 aligned periods")
     pbo, details = WalkForwardTester.calculate_cscv_pbo(returns_matrix, s=s)
+    details["selection_inversions"] = _build_cscv_selection_inversions(
+        returns_matrix,
+        s=s,
+        variant_ids=[row[0] for row in variant_rows],
+    )
     period_means = returns_matrix.mean(axis=1)
     period_stds = returns_matrix.std(axis=1)
     worst_period_indices = [
-        int(idx)
-        for idx in np.argsort(period_means)[: min(3, len(period_means))]
+        int(idx) for idx in np.argsort(period_means)[: min(3, len(period_means))]
     ]
     best_variant_idx = int(np.argmax([row[1] for row in variant_rows]))
     worst_variant_idx = int(np.argmin([row[1] for row in variant_rows]))
@@ -3363,12 +3369,8 @@ def _run_walkforward_grid_cscv(
                     else "-",
                     "mean_return": float(period_means[idx]),
                     "dispersion": float(period_stds[idx]),
-                    "negative_variant_count": int(
-                        np.sum(returns_matrix[idx, :] < 0)
-                    ),
-                    "market_avg_return": worst_market_windows[pos].get(
-                        "avg_return"
-                    ),
+                    "negative_variant_count": int(np.sum(returns_matrix[idx, :] < 0)),
+                    "market_avg_return": worst_market_windows[pos].get("avg_return"),
                     "market_negative_ratio": worst_market_windows[pos].get(
                         "negative_ratio"
                     ),
@@ -3387,6 +3389,61 @@ def _run_walkforward_grid_cscv(
         n_obs=int(returns_matrix.size),
     )
     return dsr, pbo, int(min_periods), variant_rows, details
+
+
+def _build_cscv_selection_inversions(
+    returns_matrix: Any, *, s: int, variant_ids: list[str], limit: int = 8
+) -> list[dict[str, Any]]:
+    import numpy as np
+    from itertools import combinations
+
+    t, n = returns_matrix.shape
+    if n < 2 or t < s or s < 2:
+        return []
+    block_size = t // s
+    if block_size < 2:
+        return []
+
+    trimmed = returns_matrix[: block_size * s]
+    blocks = trimmed.reshape(s, block_size, n)
+    rows: list[dict[str, Any]] = []
+
+    for train_indices in combinations(range(s), s // 2):
+        test_indices = [idx for idx in range(s) if idx not in train_indices]
+        train_matrix = np.concatenate([blocks[idx] for idx in train_indices], axis=0)
+        test_matrix = np.concatenate([blocks[idx] for idx in test_indices], axis=0)
+        train_sr = np.array(
+            [
+                np.mean(train_matrix[:, idx]) / (np.std(train_matrix[:, idx]) + 1e-15)
+                for idx in range(n)
+            ]
+        )
+        test_sr = np.array(
+            [
+                np.mean(test_matrix[:, idx]) / (np.std(test_matrix[:, idx]) + 1e-15)
+                for idx in range(n)
+            ]
+        )
+        selected_idx = int(np.argmax(train_sr))
+        test_order = np.argsort(test_sr)
+        selected_rank = int(np.where(test_order == selected_idx)[0][0]) + 1
+        omega = max(1e-10, min(1 - 1e-10, selected_rank / (n + 1)))
+        rows.append(
+            {
+                "train_blocks": ",".join(str(idx + 1) for idx in train_indices),
+                "test_blocks": ",".join(str(idx + 1) for idx in test_indices),
+                "selected_variant": variant_ids[selected_idx],
+                "train_sharpe": float(train_sr[selected_idx]),
+                "test_sharpe": float(test_sr[selected_idx]),
+                "test_rank_from_bottom": selected_rank,
+                "lambda": float(np.log(omega / (1 - omega))),
+                "test_best_variant": variant_ids[int(np.argmax(test_sr))],
+                "test_best_sharpe": float(np.max(test_sr)),
+            }
+        )
+
+    rows.sort(key=lambda item: (item["lambda"], item["test_sharpe"]))
+    return rows[:limit]
 
 
 def _format_optional_float(value: object, *, pct: bool = False) -> str:
@@ -3445,6 +3502,29 @@ def _append_walkforward_grid_diagnostics(
                 f"{_format_optional_float(item.get('market_avg_return'), pct=True)} | "
                 f"{_format_optional_float(item.get('market_negative_ratio'), pct=True)} | "
                 f"{item.get('market_sample_count', '-')} |"
+            )
+
+    inversions = details.get("selection_inversions")
+    if isinstance(inversions, list) and inversions:
+        report_lines.extend(
+            [
+                "",
+                "| 训练选中变体 | 训练块 | 测试块 | 训练 Sharpe | 测试 Sharpe | 测试倒数排名 | 测试最优变体 | Lambda |",
+                "|--------------|--------|--------|-------------|-------------|--------------|--------------|--------|",
+            ]
+        )
+        for item in inversions:
+            if not isinstance(item, dict):
+                continue
+            report_lines.append(
+                f"| {item.get('selected_variant', '-')} | "
+                f"{item.get('train_blocks', '-')} | "
+                f"{item.get('test_blocks', '-')} | "
+                f"{_format_optional_float(item.get('train_sharpe'))} | "
+                f"{_format_optional_float(item.get('test_sharpe'))} | "
+                f"{item.get('test_rank_from_bottom', '-')} | "
+                f"{item.get('test_best_variant', '-')} | "
+                f"{_format_optional_float(item.get('lambda'))} |"
             )
 
 
