@@ -32,6 +32,7 @@ fi
 export PYTHONPATH="${PROJECT_ROOT}/src:${PROJECT_ROOT}:${PYTHONPATH:-}"
 export TZ="${TZ:-Asia/Shanghai}"
 export AQSP_RUN_TASK_ID="news"
+export AQSP_NOTIFY="false"
 
 SYMBOLS="${AQSP_NEWS_SYMBOLS:-}"
 NAMES="${AQSP_NEWS_NAMES:-}"

@@ -1542,10 +1542,30 @@ class TestCLIRegimeDescription:
         assert "未知" in _regime_description("foobar")
 
 
-def test_walkforward_grid_uses_constitution_wfb_variants() -> None:
+def test_walkforward_grid_uses_stable_gate_variants_by_default() -> None:
     import aqsp.cli as cli_mod
 
-    variants = cli_mod._WALKFORWARD_GRID_VARIANTS
+    variants = cli_mod._walkforward_grid_variants()
+
+    assert len(variants) == 7
+    assert [variant.variant_id for variant in variants] == [
+        "WF-001",
+        "WF-S01",
+        "WF-S02",
+        "WF-S03",
+        "WF-S04",
+        "WF-S05",
+        "WF-S06",
+    ]
+    assert {variant.lookback_days for variant in variants} == {20, 40, 60, 100, 120}
+    assert {variant.horizon_days for variant in variants} == {2, 3, 5, 7}
+    assert {variant.top_n for variant in variants} == {5, 10, 15}
+
+
+def test_walkforward_grid_keeps_exploratory_wfb_variants() -> None:
+    import aqsp.cli as cli_mod
+
+    variants = cli_mod._walkforward_grid_variants("exploratory")
 
     assert len(variants) == 11
     assert [variant.variant_id for variant in variants] == [

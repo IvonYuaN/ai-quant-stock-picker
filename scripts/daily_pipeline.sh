@@ -105,8 +105,11 @@ START_TIME=$(date +%s)
 
 # 运行 Python 跑批脚本
 PIPELINE_ARGS=( "$@" )
-if [ "${AQSP_NOTIFY:-false}" = "true" ] || [ "${AQSP_NOTIFY:-false}" = "1" ]; then
+RUN_TASK_ID="${AQSP_RUN_TASK_ID:-daily}"
+if { [ "${AQSP_NOTIFY:-false}" = "true" ] || [ "${AQSP_NOTIFY:-false}" = "1" ]; } && [ "$RUN_TASK_ID" = "daily" ]; then
     PIPELINE_ARGS+=( "--notify" )
+elif [ "${AQSP_NOTIFY:-false}" = "true" ] || [ "${AQSP_NOTIFY:-false}" = "1" ]; then
+    log "非 daily 任务忽略 AQSP_NOTIFY=true，避免高频任务推送"
 fi
 
 set +e

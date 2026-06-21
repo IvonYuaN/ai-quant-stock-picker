@@ -24,6 +24,7 @@ from aqsp.walkforward_gate import (
 
 MIN_INDEPENDENT_SIGNAL_DAYS = 30
 MIN_SUCCESSFUL_RUN_DAYS = 5
+MIN_PRODUCTION_GATE_SYMBOLS = 3000
 
 
 @dataclass(frozen=True)
@@ -118,6 +119,7 @@ def check_before_live(
     findings: list[ReadinessFinding] = []
     findings.append(_check_walkforward_gate(gate_path, today))
     findings.append(_check_walkforward_price_mode(root, gate_path))
+    findings.append(_check_walkforward_market_coverage(gate_path))
     findings.append(_check_pbo_diagnostics(root, gate_path))
     findings.append(_check_paper_sample_size(ledger_path))
     findings.append(_check_successful_runs(run_history_path, root=root))
@@ -174,6 +176,24 @@ def _check_walkforward_price_mode(root: Path, gate_path: Path) -> ReadinessFindi
             "sqlite_db gate uses qfq historical database; real gate requires raw prices or point-in-time adjustment factors",
         )
     return ReadinessFinding("walkforward_price_mode", True, "ok")
+
+
+def _check_walkforward_market_coverage(gate_path: Path) -> ReadinessFinding:
+    gate = _read_json(gate_path)
+    if not gate:
+        return ReadinessFinding("walkforward_market_coverage", False, "gate missing")
+    raw_count = gate.get("effective_symbols")
+    if not isinstance(raw_count, int) or isinstance(raw_count, bool):
+        return ReadinessFinding(
+            "walkforward_market_coverage",
+            False,
+            "effective_symbols missing; production short-line gate requires full-market coverage",
+        )
+    ok = raw_count >= MIN_PRODUCTION_GATE_SYMBOLS
+    detail = f"{raw_count}/{MIN_PRODUCTION_GATE_SYMBOLS} effective symbols"
+    if not ok:
+        detail += "; 300-symbol quick gates are smoke tests only"
+    return ReadinessFinding("walkforward_market_coverage", ok, detail)
 
 
 def _check_pbo_diagnostics(root: Path, gate_path: Path) -> ReadinessFinding:

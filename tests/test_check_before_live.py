@@ -56,6 +56,7 @@ def _prepare_ready_runtime(root: Path) -> None:
             "pbo_pass": True,
             "both_pass": True,
             "n_periods": 12,
+            "effective_symbols": 3200,
         },
     )
     _write_jsonl(
@@ -82,6 +83,35 @@ def test_check_before_live_passes_when_all_hard_gates_are_met(tmp_path: Path) ->
     findings = check_before_live(root=tmp_path, today=date(2026, 6, 14))
 
     assert all(finding.ok for finding in findings)
+
+
+def test_check_before_live_blocks_small_symbol_walkforward_gate(
+    tmp_path: Path,
+) -> None:
+    _prepare_ready_runtime(tmp_path)
+    _write_json(
+        tmp_path / "data/walkforward_gate.json",
+        {
+            "run_date": "2026-06-10",
+            "deflated_sharpe": 1.2,
+            "pbo": 0.24,
+            "pbo_valid": True,
+            "dsr_pass": True,
+            "pbo_pass": True,
+            "both_pass": True,
+            "n_periods": 12,
+            "effective_symbols": 300,
+        },
+    )
+
+    findings = check_before_live(root=tmp_path, today=date(2026, 6, 14))
+    finding = next(
+        item for item in findings if item.gate == "walkforward_market_coverage"
+    )
+
+    assert finding.ok is False
+    assert "300/3000 effective symbols" in finding.detail
+    assert "smoke tests only" in finding.detail
 
 
 def test_check_before_live_blocks_when_walkforward_gate_failed(tmp_path: Path) -> None:

@@ -437,7 +437,13 @@ def main(argv: list[str] | None = None) -> int:
         "--grid-cscv",
         action="store_true",
         default=False,
-        help="运行固定多变体网格并用真实 CSCV PBO 写入 gate",
+        help="运行生产稳定多变体网格并用真实 CSCV PBO 写入 gate",
+    )
+    wf.add_argument(
+        "--grid-profile",
+        choices=("stable", "exploratory"),
+        default="stable",
+        help="grid CSCV 变体集合：stable 用于上线门禁，exploratory 保留研究探索网格",
     )
     wf.add_argument(
         "--pool",
@@ -2026,11 +2032,19 @@ def _write_walkforward_gate(
     print(f"✅ 双门 sidecar 已写入: {p}（both_pass={payload['both_pass']}）")
 
 
-def _walkforward_gate_metadata(args: argparse.Namespace) -> dict[str, object]:
+def _walkforward_gate_metadata(
+    args: argparse.Namespace, *, effective_symbols: int | None = None
+) -> dict[str, object]:
     metadata: dict[str, object] = {
         "source": str(getattr(args, "source", "") or ""),
         "skip_pit_financials": bool(getattr(args, "skip_pit_financials", False)),
     }
+    if effective_symbols is not None:
+        metadata["effective_symbols"] = int(effective_symbols)
+    if bool(getattr(args, "grid_cscv", False)):
+        metadata["grid_profile"] = str(
+            getattr(args, "grid_profile", "stable") or "stable"
+        )
     if metadata["source"] == "sqlite_db":
         db_path = _resolve_sqlite_db_path()
         if db_path:
@@ -2113,6 +2127,12 @@ def _walkforward_runtime_rows(
         ("engine", str(getattr(args, "engine", "") or "runtime_config/auto")),
         ("min_score", min_score),
         ("horizon_days", str(effective_horizon)),
+        (
+            "grid_profile",
+            str(getattr(args, "grid_profile", "stable") or "stable")
+            if bool(getattr(args, "grid_cscv", False))
+            else "-",
+        ),
         ("fee_bps", f"{fee_bps:.4g}"),
         ("slippage_bps", f"{slippage_bps:.4g}"),
         ("tiered_stop", str(bool(getattr(args, "tiered_stop", False)))),
@@ -3220,7 +3240,17 @@ class WalkForwardGridVariant:
     top_n: int
 
 
-_WALKFORWARD_GRID_VARIANTS: tuple[WalkForwardGridVariant, ...] = (
+_WALKFORWARD_STABLE_GRID_VARIANTS: tuple[WalkForwardGridVariant, ...] = (
+    WalkForwardGridVariant("WF-001", 0.3, 0.3, 60, 3, 10),
+    WalkForwardGridVariant("WF-S01", 0.3, 0.3, 60, 3, 5),
+    WalkForwardGridVariant("WF-S02", 0.3, 0.3, 20, 3, 10),
+    WalkForwardGridVariant("WF-S03", 0.3, 0.3, 120, 3, 10),
+    WalkForwardGridVariant("WF-S04", 0.2, 0.4, 40, 5, 5),
+    WalkForwardGridVariant("WF-S05", 0.4, 0.2, 100, 2, 15),
+    WalkForwardGridVariant("WF-S06", 0.1, 0.5, 40, 7, 10),
+)
+
+_WALKFORWARD_EXPLORATORY_GRID_VARIANTS: tuple[WalkForwardGridVariant, ...] = (
     WalkForwardGridVariant("WF-001", 0.3, 0.3, 60, 3, 10),
     WalkForwardGridVariant("WF-B01", 0.3, 0.3, 60, 3, 5),
     WalkForwardGridVariant("WF-B02", 0.3, 0.3, 60, 3, 20),
@@ -3233,6 +3263,18 @@ _WALKFORWARD_GRID_VARIANTS: tuple[WalkForwardGridVariant, ...] = (
     WalkForwardGridVariant("WF-B09", 0.5, 0.1, 80, 5, 10),
     WalkForwardGridVariant("WF-B10", 0.1, 0.5, 40, 7, 10),
 )
+
+_WALKFORWARD_GRID_VARIANTS: tuple[WalkForwardGridVariant, ...] = (
+    _WALKFORWARD_EXPLORATORY_GRID_VARIANTS
+)
+
+
+def _walkforward_grid_variants(
+    profile: str = "stable",
+) -> tuple[WalkForwardGridVariant, ...]:
+    if profile == "exploratory":
+        return _WALKFORWARD_EXPLORATORY_GRID_VARIANTS
+    return _WALKFORWARD_STABLE_GRID_VARIANTS
 
 
 def _parse_walkforward_period_range(period: object) -> tuple[str, str] | None:
@@ -3316,7 +3358,9 @@ def _run_walkforward_grid_cscv(
     period_labels: list[str] | None = None
     min_periods: int | None = None
 
-    for variant in _WALKFORWARD_GRID_VARIANTS:
+    variants = _walkforward_grid_variants(args.grid_profile)
+
+    for variant in variants:
         variant_thresholds = _apply_walkforward_grid_variant(thresholds, variant)
         variant_strategy = CompositeStrategy(thresholds=variant_thresholds)
         fee_bps, slippage_bps = _execution_cost_bps_from_thresholds(thresholds)
@@ -3329,7 +3373,7 @@ def _run_walkforward_grid_cscv(
             slippage_bps=slippage_bps,
             top_n=variant.top_n,
             use_tiered_stop=base_tiered_stop,
-            n_variants=len(_WALKFORWARD_GRID_VARIANTS),
+            n_variants=len(variants),
         )
         variant_result = engine.run(
             variant_strategy,
@@ -3844,7 +3888,9 @@ def run_walkforward(args: argparse.Namespace) -> int:
         fee_bps=walkforward_fee_bps,
         slippage_bps=walkforward_slippage_bps,
         use_tiered_stop=getattr(args, "tiered_stop", False),
-        n_variants=len(_WALKFORWARD_GRID_VARIANTS) if args.grid_cscv else 1,
+        n_variants=len(_walkforward_grid_variants(args.grid_profile))
+        if args.grid_cscv
+        else 1,
     )
 
     print("开始 walk-forward 回测...")
@@ -3898,7 +3944,7 @@ def run_walkforward(args: argparse.Namespace) -> int:
         )
         print(
             f"Grid CSCV 完成: DSR={dsr_value:.4f}, "
-            f"PBO={pbo_value:.2%}, variants={len(grid_rows)}"
+            f"PBO={pbo_value:.2%}, profile={args.grid_profile}, variants={len(grid_rows)}"
         )
 
     tl_dr = []
@@ -4060,7 +4106,7 @@ def run_walkforward(args: argparse.Namespace) -> int:
         start=args.start,
         end=args.end,
         n_periods=grid_periods if args.grid_cscv else len(result.periods),
-        metadata=_walkforward_gate_metadata(args),
+        metadata=_walkforward_gate_metadata(args, effective_symbols=len(filtered)),
     )
 
     if args.update_yaml:
