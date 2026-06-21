@@ -224,6 +224,23 @@ def test_scheduler_diagnosis_is_read_only_and_bt_first() -> None:
     assert "AQSP_SCHEDULER_STRICT" in script
 
 
+def test_production_walkforward_gate_wrapper_requires_full_market_raw_coverage() -> (
+    None
+):
+    script = (
+        PROJECT_ROOT / "scripts" / "run_production_walkforward_gate.py"
+    ).read_text(encoding="utf-8")
+
+    assert "MIN_PRODUCTION_GATE_SYMBOLS = 3000" in script
+    assert "production gate requires raw sqlite db" in script
+    assert "--pool" in script
+    assert "all" in script
+    assert "--grid-cscv" in script
+    assert "--skip-pit-financials" in script
+    assert "scripts/update_sqlite_daily.py" in script
+    assert "--price-mode raw" in script
+
+
 def test_clear_locks_is_conservative_by_default() -> None:
     script = (PROJECT_ROOT / "scripts" / "clear_locks.sh").read_text(encoding="utf-8")
 
