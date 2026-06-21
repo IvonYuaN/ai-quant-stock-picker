@@ -36,11 +36,12 @@ def build_walkforward_gate_payload(
     start: str,
     end: str,
     n_periods: int,
+    metadata: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     pbo_valid = pbo > 0.0
     dsr_pass = dsr > MIN_DSR
     pbo_pass = pbo_valid and pbo < MAX_PBO
-    return {
+    payload: dict[str, object] = {
         "run_date": run_date,
         "deflated_sharpe": dsr,
         "pbo": pbo,
@@ -52,6 +53,9 @@ def build_walkforward_gate_payload(
         "data_end": end,
         "n_periods": n_periods,
     }
+    if metadata:
+        payload.update({str(key): value for key, value in metadata.items()})
+    return payload
 
 
 def validate_walkforward_gate_payload(

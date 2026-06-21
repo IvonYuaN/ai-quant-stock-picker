@@ -155,12 +155,19 @@ def _check_walkforward_price_mode(root: Path, gate_path: Path) -> ReadinessFindi
     if not gate:
         return ReadinessFinding("walkforward_price_mode", False, "gate missing")
 
-    db_path = read_env_value(root / ".env", "AQSP_SQLITE_DB_PATH")
+    source = str(gate.get("source") or "sqlite_db")
+    price_mode = str(gate.get("price_mode") or "").strip().lower()
+    db_path = str(gate.get("sqlite_db_path") or "").strip()
+    if not db_path:
+        db_path = read_env_value(root / ".env", "AQSP_SQLITE_DB_PATH")
     if not db_path:
         db_path = "A股量化分析数据/astocks_qfq.db"
     db_name = Path(db_path).name.lower()
-    source = str(gate.get("source") or "sqlite_db")
-    if source == "sqlite_db" and "qfq" in db_name:
+    if not price_mode:
+        price_mode = (
+            "qfq" if "qfq" in db_name else "raw" if "raw" in db_name else "unknown"
+        )
+    if source == "sqlite_db" and price_mode == "qfq":
         return ReadinessFinding(
             "walkforward_price_mode",
             False,

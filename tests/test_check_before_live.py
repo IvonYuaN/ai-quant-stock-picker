@@ -627,3 +627,28 @@ def test_check_before_live_blocks_qfq_walkforward_price_mode(
     finding = next(item for item in findings if item.gate == "walkforward_price_mode")
     assert finding.ok is False
     assert "qfq historical database" in finding.detail
+
+
+def test_check_before_live_allows_raw_gate_metadata_over_qfq_env(
+    tmp_path: Path,
+) -> None:
+    _prepare_ready_runtime(tmp_path)
+    (tmp_path / ".env").write_text(
+        "AQSP_SQLITE_DB_PATH=/opt/market-data/astocks_qfq.db\n",
+        encoding="utf-8",
+    )
+    gate_path = tmp_path / "data" / "walkforward_gate.json"
+    payload = json.loads(gate_path.read_text(encoding="utf-8"))
+    payload.update(
+        {
+            "source": "sqlite_db",
+            "sqlite_db_path": "/opt/market-data/astocks_raw.db",
+            "price_mode": "raw",
+        }
+    )
+    _write_json(gate_path, payload)
+
+    findings = check_before_live(root=tmp_path, today=date(2026, 6, 14))
+
+    finding = next(item for item in findings if item.gate == "walkforward_price_mode")
+    assert finding.ok is True

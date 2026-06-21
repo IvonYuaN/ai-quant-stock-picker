@@ -1997,7 +1997,14 @@ def _assert_not_heldout(end: str, *, allow: bool, logger=None) -> None:
 
 
 def _write_walkforward_gate(
-    *, dsr: float, pbo: float, run_date: str, start: str, end: str, n_periods: int
+    *,
+    dsr: float,
+    pbo: float,
+    run_date: str,
+    start: str,
+    end: str,
+    n_periods: int,
+    metadata: dict[str, object] | None = None,
 ) -> None:
     """写双门 sidecar，供 run_scheduled 的 notify gate 读取。
     独立 JSON，不污染 thresholds.yaml，不 bump version（§1.3 #12/#14）。
@@ -2011,11 +2018,30 @@ def _write_walkforward_gate(
         start=start,
         end=end,
         n_periods=n_periods,
+        metadata=metadata,
     )
     p = Path(WALKFORWARD_GATE_PATH)
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
     print(f"✅ 双门 sidecar 已写入: {p}（both_pass={payload['both_pass']}）")
+
+
+def _walkforward_gate_metadata(args: argparse.Namespace) -> dict[str, object]:
+    metadata: dict[str, object] = {
+        "source": str(getattr(args, "source", "") or ""),
+        "skip_pit_financials": bool(getattr(args, "skip_pit_financials", False)),
+    }
+    if metadata["source"] == "sqlite_db":
+        db_path = _resolve_sqlite_db_path()
+        if db_path:
+            metadata["sqlite_db_path"] = db_path
+            try:
+                metadata["price_mode"] = SqliteDbSource(
+                    db_path=db_path, cache=None
+                ).price_mode()
+            except Exception:  # noqa: BLE001
+                metadata["price_mode"] = "unknown"
+    return metadata
 
 
 def _format_walkforward_count_map(
@@ -4034,6 +4060,7 @@ def run_walkforward(args: argparse.Namespace) -> int:
         start=args.start,
         end=args.end,
         n_periods=grid_periods if args.grid_cscv else len(result.periods),
+        metadata=_walkforward_gate_metadata(args),
     )
 
     if args.update_yaml:
