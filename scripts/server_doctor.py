@@ -38,7 +38,10 @@ def _load_env_file() -> None:
         if not text or text.startswith("#") or "=" not in text:
             continue
         key, value = text.split("=", 1)
-        os.environ.setdefault(key.strip(), value.strip())
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        if os.getenv(key, "").strip() == "":
+            os.environ[key] = value
 
 
 def _mask_secret(value: str) -> str:
@@ -171,6 +174,18 @@ def _llm_checks(*, probe_llm: bool) -> list[DoctorCheck]:
 
 
 def _notify_checks() -> list[DoctorCheck]:
+    from aqsp.config import load_runtime_config
+    from aqsp.notifier import configured_notification_channels
+
+    notify_mode = load_runtime_config().notify_mode
+    configured_channels = configured_notification_channels()
+    checks: list[DoctorCheck] = [
+        DoctorCheck(
+            name="notify:mode",
+            status="ok",
+            detail=f"mode={notify_mode} channels={','.join(configured_channels) or '-'}",
+        )
+    ]
     channel_envs = {
         "telegram": (
             os.getenv("TELEGRAM_BOT_TOKEN", "").strip(),
@@ -185,7 +200,6 @@ def _notify_checks() -> list[DoctorCheck]:
         "slack": (os.getenv("SLACK_WEBHOOK_URL", "").strip(),),
         "generic_webhook": (os.getenv("GENERIC_WEBHOOK_URL", "").strip(),),
     }
-    checks: list[DoctorCheck] = []
     for name, values in channel_envs.items():
         configured = all(bool(value) for value in values)
         checks.append(

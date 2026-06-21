@@ -100,3 +100,32 @@ def test_server_doctor_reports_serverchan_notify_channel(monkeypatch) -> None:
 
     assert by_name["notify:serverchan"].status == "configured"
     assert by_name["notify:serverchan"].detail == "serverchan"
+
+
+def test_server_doctor_env_file_overrides_blank_process_env(
+    tmp_path, monkeypatch
+) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text('SERVERCHAN_SENDKEY="sctp_from_file"\n', encoding="utf-8")
+    monkeypatch.setattr(server_doctor, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setenv("SERVERCHAN_SENDKEY", "")
+
+    server_doctor._load_env_file()
+
+    assert server_doctor.os.getenv("SERVERCHAN_SENDKEY") == "sctp_from_file"
+
+
+def test_server_doctor_reports_notify_mode_and_channels(monkeypatch) -> None:
+    monkeypatch.setenv("AQSP_NOTIFY_MODE", "fanout")
+    monkeypatch.setenv("SERVERCHAN_SENDKEY", "sctp_test_key")
+    monkeypatch.setenv(
+        "WECHAT_WEBHOOK_URL", "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=x"
+    )
+
+    checks = server_doctor._notify_checks()
+    by_name = {item.name: item for item in checks}
+
+    assert by_name["notify:mode"].status == "ok"
+    assert "mode=fanout" in by_name["notify:mode"].detail
+    assert "serverchan" in by_name["notify:mode"].detail
+    assert "wechat" in by_name["notify:mode"].detail
