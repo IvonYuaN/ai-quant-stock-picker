@@ -239,6 +239,8 @@ def test_production_walkforward_gate_wrapper_requires_full_market_raw_coverage()
     assert "--skip-pit-financials" in script
     assert "scripts/update_sqlite_daily.py" in script
     assert "--price-mode raw" in script
+    assert "Backfill missing raw history first" in script
+    assert "Only for a clean rebuild" in script
 
 
 def test_clear_locks_is_conservative_by_default() -> None:

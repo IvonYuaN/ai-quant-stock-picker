@@ -138,9 +138,13 @@ def main() -> int:
             f"need {args.min_symbols}, got {coverage.covered_symbols}."
         )
         print(
-            "Backfill first: .venv/bin/python scripts/update_sqlite_daily.py "
+            "Backfill missing raw history first: .venv/bin/python "
+            "scripts/update_sqlite_daily.py "
             f"{args.db} --price-mode raw --start-date {args.start} "
-            f"--target-date {args.end} --force-from-start --limit 0"
+            f"--target-date {args.end} --limit 0"
+        )
+        print(
+            "Only for a clean rebuild, append --force-from-start after taking a database backup."
         )
         return 2
 
