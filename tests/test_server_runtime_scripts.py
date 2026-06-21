@@ -34,7 +34,10 @@ def test_intraday_refresh_script_uses_isolated_outputs() -> None:
     assert 'INTRADAY_ALLOW_NOTIFY="${AQSP_INTRADAY_ALLOW_NOTIFY:-false}"' in script
     assert 'INTRADAY_NOTIFY="${AQSP_INTRADAY_NOTIFY:-false}"' in script
     assert "NOTIFY_ARGS=(--notify)" in script
-    assert 'if is_truthy "$INTRADAY_ALLOW_NOTIFY" && is_truthy "$INTRADAY_NOTIFY"; then' in script
+    assert (
+        'if is_truthy "$INTRADAY_ALLOW_NOTIFY" && is_truthy "$INTRADAY_NOTIFY"; then'
+        in script
+    )
     assert "盘中通知未显式放行，忽略 AQSP_INTRADAY_NOTIFY=true" in script
     assert "data/intraday_predictions.jsonl" in script
     assert "reports/intraday_latest.md" in script
@@ -105,7 +108,7 @@ def test_bt_task_script_exposes_panel_safe_actions() -> None:
     assert "AQSP_MONITOR_TIMEOUT_SECONDS=600" in script
     assert "AQSP_LOCK_STALE_MINUTES=360" in script
     assert "Recommended BT schedule (Asia/Shanghai)" in script
-    assert "news      08:35 Mon-Fri; 09:05 Sat/Sun" in script
+    assert "news      08:35 Mon-Fri trading days only; 09:05 Sat/Sun" in script
     assert "daily     18:00 Mon-Fri" in script
     assert "coldstart 19:40 Mon-Fri" in script
     assert '"正常跳过/互斥保护"' in script
@@ -113,6 +116,9 @@ def test_bt_task_script_exposes_panel_safe_actions() -> None:
     assert "is_market_trading_day" in script
     assert "AQSP_TRADING_DAY_OVERRIDE_DATE" in script
     assert "skip_non_trading_day" in script
+    assert "is_calendar_weekend" in script
+    assert "skip_weekday_market_holiday" in script
+    assert "AQSP_WEEKEND_PY" in script
     assert "今日非交易日，跳过 ${ACTION} 任务" in script
     assert "AQSP_RUNNER_SCRIPT=scripts/daily_pipeline.sh" in script
     assert "AQSP_RUNNER_SCRIPT=scripts/intraday_refresh.sh" in script
@@ -127,6 +133,10 @@ def test_bt_task_script_exposes_panel_safe_actions() -> None:
     assert "scripts/coldstart_daily.sh" in script
     assert "scripts/server_monitor.sh" in script
     assert "scripts/news_catalysts.sh" in script
+    assert script.index("news)") < script.index("scripts/news_catalysts.sh")
+    assert script.index("skip_weekday_market_holiday") < script.index(
+        "scripts/news_catalysts.sh"
+    )
     assert "scripts/server_status.sh" in script
     assert "logs/bt" in script
 

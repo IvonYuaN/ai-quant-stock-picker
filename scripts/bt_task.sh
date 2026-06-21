@@ -36,7 +36,7 @@ BT panel examples:
   /bin/bash /opt/aqsp/scripts/bt_task.sh news
 
 Recommended BT schedule (Asia/Shanghai):
-  news      08:35 Mon-Fri; 09:05 Sat/Sun
+  news      08:35 Mon-Fri trading days only; 09:05 Sat/Sun
   intraday  every 10 min; script gates 09:35-11:30 / 13:05-14:57, Mon-Fri
   midday    12:05 Mon-Fri
   daily     18:00 Mon-Fri
@@ -112,6 +112,28 @@ skip_non_trading_day() {
         log "今日非交易日，跳过 ${ACTION} 任务"
         exit 0
     fi
+}
+
+is_calendar_weekend() {
+    local python_bin="${PROJECT_ROOT}/.venv/bin/python3"
+    local target_date="${AQSP_TRADING_DAY_OVERRIDE_DATE:-}"
+    PYTHONPATH="${PROJECT_ROOT}/src:${PROJECT_ROOT}:${PYTHONPATH:-}" "$python_bin" - "$target_date" <<'AQSP_WEEKEND_PY'
+import sys
+from datetime import date
+
+from aqsp.core.time import today_shanghai
+
+raw = sys.argv[1].strip()
+target = date.fromisoformat(raw) if raw else today_shanghai()
+raise SystemExit(0 if target.isoweekday() >= 6 else 1)
+AQSP_WEEKEND_PY
+}
+
+skip_weekday_market_holiday() {
+    if is_calendar_weekend; then
+        return 0
+    fi
+    skip_non_trading_day
 }
 
 should_bridge_intraday_to_midday() {
@@ -228,6 +250,7 @@ case "$ACTION" in
         run_script "${PROJECT_ROOT}/scripts/server_monitor.sh"
         ;;
     news)
+        skip_weekday_market_holiday
         export AQSP_RUN_TASK_ID="news"
         run_script "${PROJECT_ROOT}/scripts/news_catalysts.sh"
         ;;
