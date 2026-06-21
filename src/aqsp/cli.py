@@ -452,6 +452,12 @@ def main(argv: list[str] | None = None) -> int:
         help="启用分级止损（3.1%%硬止损+分级减仓）",
     )
     wf.add_argument(
+        "--skip-pit-financials",
+        action="store_true",
+        default=False,
+        help="跳过 point-in-time 财务补充，仅用于价格口径 gate 验证",
+    )
+    wf.add_argument(
         "--allow-heldout",
         action="store_true",
         default=False,
@@ -3694,22 +3700,27 @@ def run_walkforward(args: argparse.Namespace) -> int:
         start_d = _date.fromisoformat(args.start)
         end_d = _date.fromisoformat(args.end)
         frames = src.fetch_daily(symbols, start_d, end_d, adjust="")
-        print(
-            f"正在获取 {len(symbols)} 只股票 {args.start} ~ {args.end} 的 point-in-time 财务数据..."
-        )
-        pit_result = enrich_ohlcv_with_pit_financials(
-            frames,
-            symbols,
-            start_d,
-            end_d,
-            cache=DataCache(),
-        )
-        frames = pit_result.frames
-        print(f"财务数据合并完成: {pit_result.financial_symbol_count} 只有财务数据")
-        if pit_result.disclosure_symbol_count:
-            print(f"Tushare 披露日覆盖完成: {pit_result.disclosure_symbol_count} 只")
-        for status in getattr(pit_result, "source_statuses", ()):
-            print(f"PIT源 {status.source_id}: {status.status} - {status.message}")
+        if getattr(args, "skip_pit_financials", False):
+            print("已跳过 point-in-time 财务补充，仅使用价格数据跑 gate")
+        else:
+            print(
+                f"正在获取 {len(symbols)} 只股票 {args.start} ~ {args.end} 的 point-in-time 财务数据..."
+            )
+            pit_result = enrich_ohlcv_with_pit_financials(
+                frames,
+                symbols,
+                start_d,
+                end_d,
+                cache=DataCache(),
+            )
+            frames = pit_result.frames
+            print(f"财务数据合并完成: {pit_result.financial_symbol_count} 只有财务数据")
+            if pit_result.disclosure_symbol_count:
+                print(
+                    f"Tushare 披露日覆盖完成: {pit_result.disclosure_symbol_count} 只"
+                )
+            for status in getattr(pit_result, "source_statuses", ()):
+                print(f"PIT源 {status.source_id}: {status.status} - {status.message}")
     elif args.source == "sqlite_db":
         from datetime import date as _date
         from aqsp.data.pit_financial import enrich_ohlcv_with_pit_financials
@@ -3729,22 +3740,27 @@ def run_walkforward(args: argparse.Namespace) -> int:
             )
         print(f"SQLite 数据库中可用且覆盖区间的标的: {len(symbols)} 只")
         frames = src.fetch_daily(symbols, start_d, end_d, adjust="")
-        print(
-            f"正在获取 {len(symbols)} 只股票 {args.start} ~ {args.end} 的 point-in-time 财务数据..."
-        )
-        pit_result = enrich_ohlcv_with_pit_financials(
-            frames,
-            symbols,
-            start_d,
-            end_d,
-            cache=DataCache(),
-        )
-        frames = pit_result.frames
-        print(f"财务数据合并完成: {pit_result.financial_symbol_count} 只有财务数据")
-        if pit_result.disclosure_symbol_count:
-            print(f"Tushare 披露日覆盖完成: {pit_result.disclosure_symbol_count} 只")
-        for status in getattr(pit_result, "source_statuses", ()):
-            print(f"PIT源 {status.source_id}: {status.status} - {status.message}")
+        if getattr(args, "skip_pit_financials", False):
+            print("已跳过 point-in-time 财务补充，仅使用价格数据跑 gate")
+        else:
+            print(
+                f"正在获取 {len(symbols)} 只股票 {args.start} ~ {args.end} 的 point-in-time 财务数据..."
+            )
+            pit_result = enrich_ohlcv_with_pit_financials(
+                frames,
+                symbols,
+                start_d,
+                end_d,
+                cache=DataCache(),
+            )
+            frames = pit_result.frames
+            print(f"财务数据合并完成: {pit_result.financial_symbol_count} 只有财务数据")
+            if pit_result.disclosure_symbol_count:
+                print(
+                    f"Tushare 披露日覆盖完成: {pit_result.disclosure_symbol_count} 只"
+                )
+            for status in getattr(pit_result, "source_statuses", ()):
+                print(f"PIT源 {status.source_id}: {status.status} - {status.message}")
     else:
         frames = load_csv(args.source)
 
