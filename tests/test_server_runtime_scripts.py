@@ -265,6 +265,9 @@ def test_coldstart_daily_script_updates_db_then_runs_cli() -> None:
     assert "A股量化分析数据/update_daily.py" in script
     assert "AQSP_COLDSTART_UPDATE_SCRIPT" in script
     assert "AQSP_COLDSTART_UPDATE_SLEEP_SECONDS" in script
+    assert "AQSP_COLDSTART_BACKFILL_START_DATE" in script
+    assert "AQSP_COLDSTART_BACKFILL_FORCE" in script
+    assert "--force-from-start" in script
     assert "AQSP_COLDSTART_ALLOW_INTRADAY" in script
     assert 'LEDGER_PATH_FOR_PROGRESS="$LEDGER_PATH"' in script
     assert 'os.environ["LEDGER_PATH_FOR_PROGRESS"]' in script

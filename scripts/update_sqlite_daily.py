@@ -2,8 +2,8 @@
 """Backfill baostock daily data for the local sqlite source.
 
 The legacy server updater only requested today's bar. If a symbol missed one or
-more trading days, it stayed stale forever. This updater starts from each
-symbol's latest stored trade_date + 1 day and asks baostock for the whole gap.
+more trading days, it stayed stale forever. This updater starts from each symbol's latest stored trade_date + 1 day by default.
+Use --start-date with --force-from-start for historical walk-forward backfills.
 """
 
 from __future__ import annotations
@@ -165,6 +165,8 @@ def update_sqlite_daily(
     sleep_seconds: float,
     limit: int,
     symbols: tuple[str, ...] = (),
+    start_day: date | None = None,
+    force_from_start: bool = False,
 ) -> UpdateSummary:
     bs = _load_baostock()
     login = bs.login()
@@ -189,14 +191,20 @@ def update_sqlite_daily(
                 selected_symbols = selected_symbols[:limit]
             for index, ts_code in enumerate(selected_symbols, start=1):
                 latest = _latest_symbol_date(conn, ts_code)
-                start_day = _next_calendar_day(latest) if latest else target_day
-                if start_day > target_day:
+                fetch_start_day = (
+                    start_day
+                    if force_from_start and start_day is not None
+                    else _next_calendar_day(latest)
+                    if latest
+                    else start_day or target_day
+                )
+                if fetch_start_day > target_day:
                     skipped += 1
                     continue
                 rs = bs.query_history_k_data_plus(
                     code=_bs_code(ts_code),
                     fields="date,open,high,low,close,volume,amount",
-                    start_date=start_day.isoformat(),
+                    start_date=fetch_start_day.isoformat(),
                     end_date=target_day.isoformat(),
                     frequency="d",
                     adjustflag="2",
@@ -246,18 +254,36 @@ def main() -> int:
         default="",
         help="comma-separated test/repair hook, accepts 600519 or 600519.SH",
     )
+    parser.add_argument(
+        "--start-date",
+        default="",
+        help="YYYY-MM-DD historical backfill start; default incremental only",
+    )
+    parser.add_argument(
+        "--force-from-start",
+        action="store_true",
+        help="refetch from --start-date even if newer rows already exist",
+    )
     args = parser.parse_args()
 
     if not args.db.exists():
         raise SystemExit(f"database does not exist: {args.db}")
     target = _target_trade_day(args.target_date)
-    print(f"sqlite daily backfill target={target.isoformat()} db={args.db}")
+    start_day = date.fromisoformat(args.start_date) if args.start_date else None
+    if args.force_from_start and start_day is None:
+        raise SystemExit("--force-from-start requires --start-date")
+    print(
+        f"sqlite daily backfill target={target.isoformat()} "
+        f"start={start_day.isoformat() if start_day else 'incremental'} db={args.db}"
+    )
     summary = update_sqlite_daily(
         args.db,
         target_day=target,
         sleep_seconds=args.sleep_seconds,
         limit=args.limit,
         symbols=tuple(item.strip() for item in args.symbols.split(",") if item.strip()),
+        start_day=start_day,
+        force_from_start=args.force_from_start,
     )
     print(
         "sqlite daily backfill done: "

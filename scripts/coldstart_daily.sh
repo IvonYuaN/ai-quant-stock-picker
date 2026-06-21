@@ -182,6 +182,12 @@ log "=========================================="
 UPDATE_ARGS=("${SQLITE_DB_PATH}")
 if [ "$(basename "$UPDATE_SCRIPT")" = "update_sqlite_daily.py" ]; then
     UPDATE_ARGS+=(--sleep-seconds "${AQSP_COLDSTART_UPDATE_SLEEP_SECONDS:-0.05}")
+    if [ -n "${AQSP_COLDSTART_BACKFILL_START_DATE:-}" ]; then
+        UPDATE_ARGS+=(--start-date "${AQSP_COLDSTART_BACKFILL_START_DATE}")
+        if [[ "${AQSP_COLDSTART_BACKFILL_FORCE:-false}" =~ ^(1|true|yes|on)$ ]]; then
+            UPDATE_ARGS+=(--force-from-start)
+        fi
+    fi
 fi
 "${PYTHON_BIN}" -u "${UPDATE_SCRIPT}" "${UPDATE_ARGS[@]}" 2>&1 | tee -a "$RUN_LOG"
 
