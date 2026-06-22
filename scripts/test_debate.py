@@ -62,18 +62,18 @@ def create_mock_ohlcv(days: int = 30) -> pd.DataFrame:
     dates = pd.date_range(end=today_shanghai(), periods=days)
     base_price = 10.0
 
-    np.random.seed(42)
-    returns = np.random.normal(0, 0.02, days)
+    rng = np.random.default_rng(42)
+    returns = rng.normal(0, 0.02, days)
     prices = base_price * (1 + returns).cumprod()
 
     data = {
         "date": dates,
-        "open": prices * (1 - np.random.uniform(0, 0.01, days)),
-        "high": prices * (1 + np.random.uniform(0, 0.02, days)),
-        "low": prices * (1 - np.random.uniform(0, 0.02, days)),
+        "open": prices * (1 - rng.uniform(0, 0.01, days)),
+        "high": prices * (1 + rng.uniform(0, 0.02, days)),
+        "low": prices * (1 - rng.uniform(0, 0.02, days)),
         "close": prices,
-        "volume": np.random.randint(1000000, 10000000, days),
-        "amount": np.random.randint(10000000, 100000000, days),
+        "volume": rng.integers(1000000, 10000000, days),
+        "amount": rng.integers(10000000, 100000000, days),
     }
 
     return pd.DataFrame(data)

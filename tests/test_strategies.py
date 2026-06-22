@@ -446,6 +446,7 @@ def test_closing_premium_calculate_score_normal_data():
 
     dates = pd.date_range("2026-01-01", periods=30, freq="D")
     prices = np.linspace(10, 12, 30)
+    rng = np.random.default_rng(42)
     df = pd.DataFrame(
         {
             "date": dates.strftime("%Y-%m-%d"),
@@ -453,7 +454,7 @@ def test_closing_premium_calculate_score_normal_data():
             "open": prices * 0.99,
             "high": prices * 1.01,
             "low": prices * 0.98,
-            "volume": np.random.randint(50000, 200000, 30),
+            "volume": rng.integers(50000, 200000, 30),
         }
     )
     scores = strategy.calculate_score({"600000": df})

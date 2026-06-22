@@ -10,8 +10,11 @@ from pathlib import Path
 from aqsp.core.time import now_shanghai
 
 
-def generate_sample_debate_data(output_path: Path | None = None) -> Path:
+def generate_sample_debate_data(
+    output_path: Path | None = None, *, seed: int = 42
+) -> Path:
     """生成模拟的辩论结果数据。"""
+    rng = random.Random(seed)
     agent_roles = [
         "技术多头",
         "基本面空头",
@@ -52,26 +55,26 @@ def generate_sample_debate_data(output_path: Path | None = None) -> Path:
         for round_num in range(1, 3):
             opinions = []
             for i, (role, role_key) in enumerate(zip(agent_roles, agent_role_keys)):
-                stance = random.choice(["bullish", "bearish", "neutral"])
-                confidence = round(random.uniform(0.5, 0.95), 2)
+                stance = rng.choice(["bullish", "bearish", "neutral"])
+                confidence = round(rng.uniform(0.5, 0.95), 2)
                 arguments = [
-                    f"{role}认为当前价格位置{random.choice(['合理', '偏高', '偏低'])}",
-                    f"关注{random.choice(['成交量放大', 'MACD金叉', '布林带上轨'])}信号",
-                    f"建议{random.choice(['继续跟踪', '纸面观察', '暂缓跟踪'])}",
+                    f"{role}认为当前价格位置{rng.choice(['合理', '偏高', '偏低'])}",
+                    f"关注{rng.choice(['成交量放大', 'MACD金叉', '布林带上轨'])}信号",
+                    f"建议{rng.choice(['继续跟踪', '纸面观察', '暂缓跟踪'])}",
                 ]
                 counterarguments = [
-                    f"需要注意{random.choice(['大盘回调风险', '技术背离', '政策不确定性'])}"
+                    f"需要注意{rng.choice(['大盘回调风险', '技术背离', '政策不确定性'])}"
                 ]
                 risk_factors = [
-                    f"{random.choice(['业绩不及预期', '监管收紧', '流动性枯竭'])}风险"
+                    f"{rng.choice(['业绩不及预期', '监管收紧', '流动性枯竭'])}风险"
                 ]
                 opportunity_factors = [
-                    f"关注{random.choice(['行业景气度提升', '政策利好', '外资持续流入'])}"
+                    f"关注{rng.choice(['行业景气度提升', '政策利好', '外资持续流入'])}"
                 ]
 
                 opinions.append(
                     {
-                        "agent_id": f"{role_key}_{random.randint(1000, 9999)}",
+                        "agent_id": f"{role_key}_{rng.randint(1000, 9999)}",
                         "role": role_key,
                         "stance": stance,
                         "confidence": confidence,
@@ -97,7 +100,7 @@ def generate_sample_debate_data(output_path: Path | None = None) -> Path:
         bear_count = 0
         neutral_count = 0
         for i, role_key in enumerate(agent_role_keys):
-            vote = random.choice(["bullish", "bearish", "neutral"])
+            vote = rng.choice(["bullish", "bearish", "neutral"])
             final_vote[role_key] = vote
             if vote == "bullish":
                 bull_count += 1
@@ -122,9 +125,9 @@ def generate_sample_debate_data(output_path: Path | None = None) -> Path:
                 f"{neutral_count}个中性，观点分化，维持研究观察"
             )
 
-        adjustment_weight = round(random.uniform(-0.2, 0.2), 3)
+        adjustment_weight = round(rng.uniform(-0.2, 0.2), 3)
         adjusted_score = round(symbol_info["score"] * (1 + adjustment_weight), 1)
-        disagreement_score = round(random.uniform(0.2, 0.8), 2)
+        disagreement_score = round(rng.uniform(0.2, 0.8), 2)
 
         if adjustment_weight > 0.1:
             recommended = "raise"
