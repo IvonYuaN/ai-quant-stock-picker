@@ -143,9 +143,16 @@ def notify_gate_markdown(markdown: str) -> list[NotifyResult]:
 
 def send_notification(title: str, content: str) -> list[NotifyResult]:
     markdown = f"# {title}\n\n{content}".strip()
-    from aqsp.config import load_runtime_config
+    try:
+        from aqsp.config import load_runtime_config
 
-    return notify_markdown_via_config(markdown, mode=load_runtime_config().notify_mode)
+        mode = load_runtime_config().notify_mode
+    except Exception:  # noqa: BLE001
+        mode = "full"
+    results = notify_markdown_via_config(markdown, mode=mode)
+    if results:
+        return results
+    return notify_markdown(markdown)
 
 
 def _summary_senders():

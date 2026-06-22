@@ -3,6 +3,7 @@ from __future__ import annotations
 import pandas as pd
 
 from aqsp.regime.detector import RegimeDetector
+from aqsp.strategies.thresholds import Thresholds
 
 
 def build_synthetic_regime_frame(
@@ -55,8 +56,9 @@ def detect_runtime_regime(
     *,
     benchmark_symbol: str | None,
     detector: RegimeDetector | None = None,
+    thresholds: Thresholds | None = None,
 ) -> str:
-    regime_detector = detector or RegimeDetector()
+    regime_detector = detector or RegimeDetector(thresholds=thresholds)
     if benchmark_symbol:
         bench_frame = frames.get(benchmark_symbol)
         if bench_frame is not None and not bench_frame.empty:

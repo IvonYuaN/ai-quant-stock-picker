@@ -214,6 +214,11 @@ def llm_call_or_fallback(
         )
 
     try:
+        provider = os.getenv("LLM_PROVIDER", "glm").strip().lower()
+        if _client_factory is None:
+            missing_key = _missing_api_key_reason(provider)
+            if missing_key:
+                return _degrade(base_record, started, missing_key, fallback, model)
         client = _client_factory() if _client_factory else _make_client()
         text, est_cost = _invoke(client, prompt, model, timeout_s)
         if est_cost > cost_cap_usd:
@@ -244,6 +249,26 @@ def llm_call_or_fallback(
         return _degrade(
             base_record, started, f"{type(exc).__name__}: {exc}", fallback, model
         )
+
+
+def _missing_api_key_reason(provider: str) -> str:
+    provider = provider.strip().lower()
+    if provider in {
+        "deepseek",
+        "qwen",
+        "glm",
+        "agnes",
+        "siliconflow",
+        "custom",
+        "openai",
+    }:
+        env_name = f"{provider.upper()}_API_KEY"
+        if not (os.getenv(env_name) or os.getenv("OPENAI_API_KEY")):
+            return f"{env_name} 未配置"
+        return ""
+    if provider == "anthropic" and not os.getenv("ANTHROPIC_API_KEY", "").strip():
+        return "ANTHROPIC_API_KEY 未配置"
+    return ""
 
 
 def _degrade(

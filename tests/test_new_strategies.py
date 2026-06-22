@@ -261,7 +261,7 @@ def test_stock_risk_hard_stop():
     check = mgr.check_position(
         symbol="600000",
         entry_price=10.0,
-        current_price=9.4,  # -6%
+        current_price=9.1,  # -9%
         max_price_since_entry=10.0,
         entry_date=date(2024, 1, 1),
         position_pct=0.2,

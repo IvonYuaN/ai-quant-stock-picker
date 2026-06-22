@@ -126,6 +126,11 @@ class RiskThresholds:
     auto_resume_days: int = 1
     avg_volume_ratio_min: float = 0.7
     north_flow_exit_threshold: float = -5000000000
+    dynamic_stop_atr_multiplier: float = 2.0
+    dynamic_stop_fallback_pct: float = 0.05
+    dynamic_stop_recent_low_days: int = 5
+    dynamic_stop_trailing_pct: float = 0.03
+    dynamic_stop_support_lookback: int = 20
 
 
 @dataclass(frozen=True)

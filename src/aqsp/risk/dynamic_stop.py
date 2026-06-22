@@ -61,24 +61,29 @@ def compute_dynamic_stop(
     entry_price: float,
     symbol: str = "",
     atr_multiplier: float = 2.0,
+    fallback_pct: float = 0.05,
+    recent_low_days: int = 5,
+    trailing_pct: float = 0.03,
+    support_lookback: int = 20,
 ) -> DynamicStopResult:
     if df.empty or "close" not in df.columns:
+        fallback_stop = entry_price * (1 - fallback_pct)
         return DynamicStopResult(
             symbol=symbol,
-            atr_stop=entry_price * 0.95,
-            trailing_stop=entry_price * 0.95,
-            support_level=entry_price * 0.95,
-            recommended_stop=entry_price * 0.95,
-            method="fallback_5pct",
+            atr_stop=fallback_stop,
+            trailing_stop=fallback_stop,
+            support_level=fallback_stop,
+            recommended_stop=fallback_stop,
+            method=f"fallback_{fallback_pct:.0%}",
         )
 
     atr = compute_atr(df)
     atr_stop = round(entry_price - atr_multiplier * atr, 2)
 
-    recent_lows = df["low"].tail(5)
-    trailing_stop = round(float(recent_lows.max()) * 0.97, 2)
+    recent_lows = df["low"].tail(max(1, int(recent_low_days)))
+    trailing_stop = round(float(recent_lows.max()) * (1 - trailing_pct), 2)
 
-    support_level = round(_find_support_level(df), 2)
+    support_level = round(_find_support_level(df, lookback=support_lookback), 2)
 
     recommended = max(atr_stop, trailing_stop, support_level)
     recommended = round(recommended, 2)

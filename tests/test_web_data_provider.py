@@ -1355,6 +1355,7 @@ def test_dashboard_data_provider_closing_review_uses_paper_facts_when_signal_row
                     "low": 109.9,
                     "close": 109.9,
                     "volume": 1000,
+                    "limit_up": 109.9,
                 },
             ]
         ),

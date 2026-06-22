@@ -1157,10 +1157,12 @@ def _detect_runtime_regime(
     frames: dict[str, pd.DataFrame],
     *,
     benchmark_symbol: str | None,
+    thresholds: Any | None = None,
 ) -> str:
     return detect_runtime_regime(
         frames,
         benchmark_symbol=benchmark_symbol,
+        thresholds=thresholds,
     )
 
 
@@ -2089,6 +2091,8 @@ def _walkforward_gate_metadata(
                 ).price_mode()
             except Exception:  # noqa: BLE001
                 metadata["price_mode"] = "unknown"
+        else:
+            metadata["price_mode"] = "unknown"
     return metadata
 
 
@@ -2570,12 +2574,8 @@ def run_scheduled(args: argparse.Namespace) -> int:
     regime = _detect_runtime_regime(
         frames,
         benchmark_symbol=args.benchmark_symbol,
+        thresholds=thresholds,
     )
-
-    if regime:
-        regime_multiplier = thresholds.regime.adjustments.get(regime, 1.0)
-        if regime_multiplier != 1.0:
-            weights = {k: round(v * regime_multiplier, 3) for k, v in weights.items()}
 
     screen_frames = _drop_benchmark_frame(frames, args.benchmark_symbol)
     config = ScreeningConfig(
@@ -2771,9 +2771,19 @@ def run_scheduled(args: argparse.Namespace) -> int:
         from aqsp.risk.dynamic_stop import compute_dynamic_stop
 
         updated_picks = []
+        risk_thresholds = thresholds.risk
         for pick in picks:
             df = screen_frames.get(pick.symbol, pd.DataFrame())
-            stop = compute_dynamic_stop(df, pick.close, symbol=pick.symbol)
+            stop = compute_dynamic_stop(
+                df,
+                pick.close,
+                symbol=pick.symbol,
+                atr_multiplier=float(risk_thresholds.dynamic_stop_atr_multiplier),
+                fallback_pct=float(risk_thresholds.dynamic_stop_fallback_pct),
+                recent_low_days=int(risk_thresholds.dynamic_stop_recent_low_days),
+                trailing_pct=float(risk_thresholds.dynamic_stop_trailing_pct),
+                support_lookback=int(risk_thresholds.dynamic_stop_support_lookback),
+            )
             if stop.recommended_stop > pick.stop_loss:
                 pick = PickResult(
                     symbol=pick.symbol,

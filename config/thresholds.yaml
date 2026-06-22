@@ -6,7 +6,7 @@ composite:
   volume_weight: 0.0
   mean_reversion_weight: 0.0
   triple_rise_weight: 0.3
-description: "策略阈值配置 — v1.1.8：主链策略信号阈值统一进配置"
+description: "策略阈值配置 — v1.1.9：动态止损参数统一进配置"
 effective_from: '2026-06-17'
 execution:
   commission_rate: 0.0003
@@ -142,6 +142,11 @@ risk:
   auto_resume_days: 1
   avg_volume_ratio_min: 0.7
   north_flow_exit_threshold: -5000000000
+  dynamic_stop_atr_multiplier: 2.0
+  dynamic_stop_fallback_pct: 0.05
+  dynamic_stop_recent_low_days: 5
+  dynamic_stop_trailing_pct: 0.03
+  dynamic_stop_support_lookback: 20
 value:
   enabled: false
   ev_ebitda_max: 15
@@ -357,4 +362,4 @@ internet_strategy:
   low_vol_amplitude_max: 5.5
   low_vol_volume_max: 1.8
   low_vol_score: 10.0
-version: 1.1.8
+version: 1.1.9
