@@ -191,7 +191,7 @@ def test_run_scheduled_persists_decision_audit_log(
     assert record["symbol"] == "600519"
     assert record["action"] == "PAPER_REVIEW"
     assert record["risk_check_passed"] is True
-    assert record["context"]["thresholds_version"] == "1.1.9"
+    assert record["context"]["thresholds_version"] == "1.1.10"
     assert record["context"]["actual_source"] == "eastmoney"
     assert record["context"]["portfolio_action"] == "keep"
     assert record["context"]["paper_execution_preview"]["board_lot_shares"] == 100

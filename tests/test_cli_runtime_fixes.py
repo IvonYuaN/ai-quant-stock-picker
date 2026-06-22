@@ -69,7 +69,7 @@ def test_run_scheduled_keeps_learning_weights_proposal_only() -> None:
 
     assert "strategy_weights_from_ledger(args.ledger)" not in source
     assert "learner.compute_weights(ledger_df)" in source
-    assert "weights: dict[str, float] = {}" in source
+    assert "strategy_weights_for_regime(thresholds, regime)" in source
     assert "未应用到本次筛选" in source
 
 

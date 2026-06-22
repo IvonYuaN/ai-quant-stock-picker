@@ -25,7 +25,7 @@ class ConcentrationResult:
 
     @property
     def is_concentrated(self) -> bool:
-        return self.max_concentration > 0.4
+        return bool(self.warnings)
 
 
 # 常见A股板块映射（静态缓存，避免每次查询）
@@ -216,12 +216,6 @@ def check_sector_concentration(
         warnings.append(
             f"⚠️ 板块集中度过高：{max_sector}占比{max_ratio:.0%}（{max_count}/{total}只）"
         )
-
-    for sector, syms in sector_symbols.items():
-        if sector == "其他":
-            continue
-        if len(syms) >= 3:
-            warnings.append(f"⚠️ {sector}板块过多：{', '.join(syms)}")
 
     sectors = tuple(
         SectorConcentration(

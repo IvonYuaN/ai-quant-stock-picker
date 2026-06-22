@@ -10,7 +10,12 @@ from aqsp.strategies.thresholds import (
     ScoringThresholds,
     Thresholds,
 )
-from aqsp.strategy import _entry_type, score_symbol, screen_universe
+from aqsp.strategy import (
+    _entry_type,
+    score_symbol,
+    screen_universe,
+    strategy_weights_for_regime,
+)
 
 
 def _frame(symbol: str, drift: float, volume_boost: float = 1.0) -> pd.DataFrame:
@@ -207,6 +212,38 @@ def test_internet_strategy_signal_uses_configured_score() -> None:
 
     breakout = next(item for item in signals if item.strategy_id == "volume_breakout")
     assert breakout.score == 31.0
+
+
+def test_strategy_weights_for_regime_maps_screening_strategy_ids() -> None:
+    weights = strategy_weights_for_regime(Thresholds(), "stable_bull")
+
+    assert weights["rps_momentum"] == 1.2
+    assert weights["volume_breakout"] == 1.1
+    assert weights["bowl_rebound"] == 0.7
+    assert weights["n_rebound"] == 1.1
+
+
+def test_score_symbol_applies_screening_strategy_weights() -> None:
+    frame = _frame("VOL", 0.004, 1.8)
+    base = score_symbol(
+        "VOL",
+        frame,
+        ScreeningConfig(min_avg_amount=1, strategy_weights={"rps_momentum": 1.0}),
+        ScoringThresholds(),
+        Thresholds(),
+    )
+    boosted = score_symbol(
+        "VOL",
+        frame,
+        ScreeningConfig(min_avg_amount=1, strategy_weights={"rps_momentum": 2.0}),
+        ScoringThresholds(),
+        Thresholds(),
+    )
+
+    assert base is not None
+    assert boosted is not None
+    assert "rps_momentum" in base.strategies
+    assert boosted.score > base.score
 
 
 def test_screen_filters_price_outside_bounds() -> None:

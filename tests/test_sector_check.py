@@ -33,3 +33,24 @@ def test_check_sector_concentration_uses_runtime_sector_map() -> None:
 
     assert result.max_concentration == 1.0
     assert any("银行占比100%" in warning for warning in result.warnings)
+
+
+def test_check_sector_concentration_uses_configured_threshold() -> None:
+    result = check_sector_concentration(
+        ["600036", "000001", "000021", "000338"],
+        max_concentration=0.6,
+    )
+
+    assert result.max_concentration == 0.5
+    assert result.warnings == ()
+    assert result.is_concentrated is False
+
+
+def test_check_sector_concentration_does_not_warn_only_because_three_symbols() -> None:
+    result = check_sector_concentration(
+        ["600036", "000001", "601398", "000021", "000338", "000400"],
+        max_concentration=0.6,
+    )
+
+    assert result.max_concentration == 0.5
+    assert result.warnings == ()

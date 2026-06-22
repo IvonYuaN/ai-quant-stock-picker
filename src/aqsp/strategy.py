@@ -12,12 +12,44 @@ from aqsp.internet_strategies import evaluate_strategy_signals
 from aqsp.models import PickResult, ScreeningConfig
 from aqsp.strategies.thresholds import (
     InternetStrategyThresholds,
+    RegimeStrategyWeights,
     ScoringThresholds,
     Thresholds,
     load_thresholds,
 )
 
 _logger = logging.getLogger(__name__)
+
+_INTERNET_STRATEGY_REGIME_BUCKETS: dict[str, str] = {
+    "rps_momentum": "momentum",
+    "volume_breakout": "volume",
+    "ma_pullback": "momentum",
+    "bowl_rebound": "mean_reversion",
+    "low_vol_trend": "momentum",
+    "n_rebound": "triple_rise",
+}
+
+
+def strategy_weights_for_regime(
+    thresholds: Thresholds,
+    regime: str,
+) -> dict[str, float]:
+    """Map regime strategy buckets onto concrete screening strategy ids."""
+    if not regime:
+        return {}
+    regime_weights = thresholds.regime.strategy_weights.get(regime)
+    if regime_weights is None:
+        return {}
+    return _internet_strategy_weights(regime_weights)
+
+
+def _internet_strategy_weights(
+    regime_weights: RegimeStrategyWeights,
+) -> dict[str, float]:
+    return {
+        strategy_id: float(getattr(regime_weights, bucket))
+        for strategy_id, bucket in _INTERNET_STRATEGY_REGIME_BUCKETS.items()
+    }
 
 
 def screen_universe(

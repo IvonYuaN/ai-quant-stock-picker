@@ -99,7 +99,7 @@ from aqsp.runtime.gate_notify import (
     mark_gate_notification_sent,
     should_send_gate_notification,
 )
-from aqsp.strategy import screen_universe
+from aqsp.strategy import screen_universe, strategy_weights_for_regime
 from aqsp.strategies.thresholds import load_thresholds
 from aqsp.universe import DEFAULT_SYMBOLS
 from aqsp.utils.env import read_env_value
@@ -1166,6 +1166,22 @@ def _detect_runtime_regime(
     )
 
 
+def _blend_base_and_regime_scores(
+    *,
+    base_score: float,
+    regime_score: float,
+    thresholds: Any,
+) -> float:
+    composite = thresholds.composite
+    base_weight = float(composite.base_blend_weight)
+    regime_weight = float(composite.regime_blend_weight)
+    total_weight = base_weight + regime_weight
+    if total_weight <= 0:
+        return round(base_score, 2)
+    blended = (base_score * base_weight + regime_score * regime_weight) / total_weight
+    return round(blended, 2)
+
+
 def _augment_summary_with_t1_blockers(
     summary: Any | None,
     *,
@@ -1508,6 +1524,7 @@ def _resolve_run_symbols(
 def _check_sector_concentration_with_runtime_hints(
     symbols: list[str],
     *,
+    max_concentration: float | None = None,
     sector_map: dict[str, str] | None = None,
     industry_map: dict[str, str] | None = None,
 ):
@@ -1516,6 +1533,9 @@ def _check_sector_concentration_with_runtime_hints(
     try:
         return check_sector_concentration(
             symbols,
+            max_concentration=max_concentration
+            if max_concentration is not None
+            else 0.4,
             sector_map=sector_map,
             industry_map=industry_map,
         )
@@ -2437,11 +2457,17 @@ def run_screen(args: argparse.Namespace) -> int:
     )
     screen_frames = _drop_benchmark_frame(frames, args.benchmark_symbol)
     thresholds = load_thresholds()
+    regime = _detect_runtime_regime(
+        frames,
+        benchmark_symbol=args.benchmark_symbol,
+        thresholds=thresholds,
+    )
     config = ScreeningConfig(
         mode=args.mode,
         min_avg_amount=args.min_avg_amount,
         min_price=thresholds.filter.min_price,
         max_price=thresholds.filter.max_price,
+        strategy_weights=strategy_weights_for_regime(thresholds, regime),
     )
     picks = _enrich_pick_names(screen_universe(screen_frames, config), screen_frames)[
         : args.limit
@@ -2565,7 +2591,6 @@ def run_scheduled(args: argparse.Namespace) -> int:
         print(
             f"学习权重提案: {len(weight_proposals)} 个策略，仅记录研究观察，未应用到本次筛选"
         )
-    weights: dict[str, float] = {}
 
     cold_start_days = _count_independent_signal_days(args.ledger)
     is_cold_start = cold_start_days < COLD_START_MIN_DAYS
@@ -2577,6 +2602,7 @@ def run_scheduled(args: argparse.Namespace) -> int:
         benchmark_symbol=args.benchmark_symbol,
         thresholds=thresholds,
     )
+    weights = strategy_weights_for_regime(thresholds, regime)
 
     screen_frames = _drop_benchmark_frame(frames, args.benchmark_symbol)
     config = ScreeningConfig(
@@ -2606,7 +2632,11 @@ def run_scheduled(args: argparse.Namespace) -> int:
                     replace(
                         pick,
                         regime_score=round(normalized_cs, 2),
-                        score=round(pick.score * 0.7 + normalized_cs * 0.3, 2),
+                        score=_blend_base_and_regime_scores(
+                            base_score=pick.score,
+                            regime_score=normalized_cs,
+                            thresholds=thresholds,
+                        ),
                     )
                 )
             screened_picks = sorted(rescored_picks, key=lambda p: p.score, reverse=True)
@@ -2751,6 +2781,7 @@ def run_scheduled(args: argparse.Namespace) -> int:
 
         concentration = _check_sector_concentration_with_runtime_hints(
             [p.symbol for p in picks],
+            max_concentration=float(thresholds.risk.max_sector_concentration),
             sector_map=sector_map,
             industry_map=industry_map,
         )
@@ -2764,6 +2795,7 @@ def run_scheduled(args: argparse.Namespace) -> int:
         correlation_result = compute_correlation(
             screen_frames,
             [p.symbol for p in picks],
+            high_corr_threshold=float(thresholds.risk.max_correlation),
         )
         if correlation_result.matrix:
             print(format_correlation(correlation_result))
@@ -5019,49 +5051,39 @@ def run_morning_breakout(args: argparse.Namespace) -> int:
         )
         print(f"\n结果已保存到: {output_path}")
 
-    from aqsp.ledger.base import read_ledger, write_ledger
-    from uuid import uuid4
+    from aqsp.ledger.special_signals import (
+        SpecialSignalLedgerRow,
+        append_special_strategy_signals,
+    )
 
     ledger_path = getattr(args, "ledger", "data/predictions.jsonl")
-    rows = read_ledger(ledger_path)
-    existing_keys = {
-        (
-            str(r.get("signal_date", "")),
-            str(r.get("symbol", "")),
-            str(r.get("thresholds_version", "")),
-        )
-        for r in rows
-    }
     thresholds_version = strategy.thresholds.version
-    now = now_shanghai().isoformat(timespec="seconds")
-    signal_date = now_shanghai().date().isoformat()
-    for signal in signals:
-        key = (signal_date, signal.symbol, thresholds_version)
-        if key in existing_keys:
-            continue
-        rows.append(
-            {
-                "id": uuid4().hex,
-                "created_at": now,
-                "signal_date": signal_date,
-                "symbol": signal.symbol,
-                "name": signal.name,
-                "signal_close": signal.current_price,
-                "intended_entry": "next_open",
-                "score": signal.score,
-                "rating": "buy_candidate",
-                "strategies": ["morning_breakout"],
-                "sub_strategy": signal.signal_type,
-                "reasons": list(signal.reasons),
-                "risks": list(signal.risks),
-                "stop_loss": signal.stop_loss,
-                "confidence": signal.confidence,
-                "thresholds_version": thresholds_version,
-                "status": "pending",
-            }
-        )
-        existing_keys.add(key)
-    write_ledger(ledger_path, rows)
+    now = now_shanghai()
+    append_special_strategy_signals(
+        ledger_path,
+        [
+            SpecialSignalLedgerRow(
+                symbol=signal.symbol,
+                name=signal.name,
+                signal_close=signal.current_price,
+                score=signal.score,
+                strategy_id="morning_breakout",
+                sub_strategy=signal.signal_type,
+                reasons=tuple(signal.reasons),
+                risks=tuple(signal.risks),
+                stop_loss=signal.stop_loss,
+                confidence=signal.confidence,
+                take_profit=signal.target_price,
+                position=f"{signal.position_pct:.0%}",
+                ideal_buy=signal.current_price,
+            )
+            for signal in signals
+        ],
+        signal_date=now.date().isoformat(),
+        created_at=now.isoformat(timespec="seconds"),
+        thresholds_version=thresholds_version,
+        execution=execution_config_from_thresholds(strategy.thresholds),
+    )
 
     return 0
 
@@ -5159,49 +5181,38 @@ def run_closing_premium(args: argparse.Namespace) -> int:
         )
         print(f"\n结果已保存到: {output_path}")
 
-    from aqsp.ledger.base import read_ledger, write_ledger
-    from uuid import uuid4
+    from aqsp.ledger.special_signals import (
+        SpecialSignalLedgerRow,
+        append_special_strategy_signals,
+    )
 
     ledger_path = getattr(args, "ledger", "data/predictions.jsonl")
-    rows = read_ledger(ledger_path)
-    existing_keys = {
-        (
-            str(r.get("signal_date", "")),
-            str(r.get("symbol", "")),
-            str(r.get("thresholds_version", "")),
-        )
-        for r in rows
-    }
     thresholds_version = strategy.thresholds.version
-    now = now_shanghai().isoformat(timespec="seconds")
-    signal_date = now_shanghai().date().isoformat()
-    for signal in signals:
-        key = (signal_date, signal.symbol, thresholds_version)
-        if key in existing_keys:
-            continue
-        rows.append(
-            {
-                "id": uuid4().hex,
-                "created_at": now,
-                "signal_date": signal_date,
-                "symbol": signal.symbol,
-                "name": signal.name,
-                "signal_close": signal.entry_price,
-                "intended_entry": "next_open",
-                "score": signal.score,
-                "rating": "buy_candidate",
-                "strategies": ["closing_premium"],
-                "sub_strategy": signal.signal_type,
-                "reasons": list(signal.reasons),
-                "risks": list(signal.risks),
-                "stop_loss": signal.stop_loss,
-                "confidence": signal.confidence,
-                "thresholds_version": thresholds_version,
-                "status": "pending",
-            }
-        )
-        existing_keys.add(key)
-    write_ledger(ledger_path, rows)
+    now = now_shanghai()
+    append_special_strategy_signals(
+        ledger_path,
+        [
+            SpecialSignalLedgerRow(
+                symbol=signal.symbol,
+                name=signal.name,
+                signal_close=signal.entry_price,
+                score=signal.score,
+                strategy_id="closing_premium",
+                sub_strategy=signal.signal_type,
+                reasons=tuple(signal.reasons),
+                risks=tuple(signal.risks),
+                stop_loss=signal.stop_loss,
+                confidence=signal.confidence,
+                take_profit=signal.take_profit_1,
+                ideal_buy=signal.entry_price,
+            )
+            for signal in signals
+        ],
+        signal_date=now.date().isoformat(),
+        created_at=now.isoformat(timespec="seconds"),
+        thresholds_version=thresholds_version,
+        execution=execution_config_from_thresholds(strategy.thresholds),
+    )
 
     return 0
 

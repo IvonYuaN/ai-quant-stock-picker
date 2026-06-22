@@ -1,12 +1,14 @@
 composite:
+  base_blend_weight: 0.7
   min_total_score: 0.4
   momentum_weight: 0.3
   quality_weight: 0.2
+  regime_blend_weight: 0.3
   value_weight: 0.2
   volume_weight: 0.0
   mean_reversion_weight: 0.0
   triple_rise_weight: 0.3
-description: "策略阈值配置 — v1.1.9：动态止损参数统一进配置"
+description: "策略阈值配置 — v1.1.10：regime 权重接入主筛选与风控阈值统一"
 effective_from: '2026-06-17'
 execution:
   commission_rate: 0.0003
@@ -362,4 +364,4 @@ internet_strategy:
   low_vol_amplitude_max: 5.5
   low_vol_volume_max: 1.8
   low_vol_score: 10.0
-version: 1.1.9
+version: 1.1.10

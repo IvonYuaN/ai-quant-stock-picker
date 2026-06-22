@@ -90,6 +90,8 @@ class CompositeThresholds:
     mean_reversion_weight: float = 0.0
     triple_rise_weight: float = 0.0
     min_total_score: float = 0.6
+    base_blend_weight: float = 0.7
+    regime_blend_weight: float = 0.3
 
 
 @dataclass(frozen=True)

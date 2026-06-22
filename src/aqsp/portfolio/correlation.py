@@ -11,12 +11,14 @@ class CorrelationResult:
     matrix: dict[str, dict[str, float]]
     high_corr_pairs: list[tuple[str, str, float]]
     avg_correlation: float
+    high_corr_threshold: float = 0.7
 
 
 def compute_correlation(
     frames: dict[str, pd.DataFrame],
     symbols: list[str],
     window: int = 20,
+    high_corr_threshold: float = 0.7,
 ) -> CorrelationResult:
     available = [s for s in symbols if s in frames and len(frames[s]) >= 2]
     if len(available) < 2:
@@ -62,7 +64,7 @@ def compute_correlation(
                 continue
             val = matrix[s1][s2]
             off_diag_values.append(val)
-            if val > 0.7:
+            if val > high_corr_threshold:
                 if s1 < s2:
                     high_corr_pairs.append((s1, s2, val))
                 else:
@@ -76,6 +78,7 @@ def compute_correlation(
         matrix=matrix,
         high_corr_pairs=high_corr_pairs,
         avg_correlation=round(avg_corr, 4),
+        high_corr_threshold=high_corr_threshold,
     )
 
 
@@ -85,7 +88,9 @@ def format_correlation(result: CorrelationResult) -> str:
 
     if result.high_corr_pairs:
         lines.append("")
-        lines.append("   ⚠️ 高相关性配对（> 0.7，分散化风险）:")
+        lines.append(
+            f"   ⚠️ 高相关性配对（> {result.high_corr_threshold:.2f}，分散化风险）:"
+        )
         for s1, s2, corr in result.high_corr_pairs:
             lines.append(f"      {s1} ↔ {s2}: {corr:.2f}")
     else:
