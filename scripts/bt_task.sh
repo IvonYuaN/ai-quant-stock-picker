@@ -246,6 +246,7 @@ case "$ACTION" in
         run_script "${PROJECT_ROOT}/scripts/coldstart_daily.sh"
         ;;
     monitor)
+        skip_weekday_market_holiday
         export AQSP_RUN_TASK_ID="monitor"
         sync_code_only
         run_script "${PROJECT_ROOT}/scripts/server_monitor.sh"

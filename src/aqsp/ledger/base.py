@@ -330,8 +330,7 @@ def validate_predictions(
         frame = frame.sort_values("date").reset_index(drop=True)
         signal_date = row.get("signal_date", row.get("pick_date", ""))
         future = frame[frame["date"] > signal_date]
-        horizon = int(row.get("horizon_days") or 1)
-        if len(future) < horizon:
+        if future.empty:
             continue
         entry_bar = future.iloc[0]
 
@@ -348,6 +347,10 @@ def validate_predictions(
             row["not_executable_reason"] = reason
             skipped += 1
             not_executable_reasons[reason] = not_executable_reasons.get(reason, 0) + 1
+            continue
+
+        horizon = int(row.get("horizon_days") or 1)
+        if len(future) < horizon:
             continue
 
         eval_window = future.iloc[:horizon]

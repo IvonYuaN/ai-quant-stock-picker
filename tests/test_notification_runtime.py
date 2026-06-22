@@ -292,10 +292,10 @@ def test_finalize_scheduled_notification_marks_legacy_gate_after_success(
     ]
 
 
-def test_finalize_scheduled_notification_does_not_mark_gate_after_failure(
+def test_finalize_scheduled_notification_reserves_gate_before_failure(
     monkeypatch,
 ) -> None:
-    marked: list[list[str]] = []
+    marked: list[dict[str, object]] = []
     monkeypatch.setenv("AQSP_RUN_TASK_ID", "daily")
 
     finalize_scheduled_notification(
@@ -315,10 +315,17 @@ def test_finalize_scheduled_notification_does_not_mark_gate_after_failure(
         ),
         legacy_notify_fn=None,
         print_fn=lambda *_args: None,
-        mark_gate_notification_sent_fn=lambda reasons: marked.append(list(reasons)),
+        gate_state_path="data/gate_notify_state.json",
+        mark_gate_notification_sent_fn=lambda **kwargs: marked.append(kwargs),
     )
 
-    assert marked == []
+    assert marked == [
+        {
+            "gate_reasons": ["冷启动未满: 14/30 个独立信号日"],
+            "state_path": "data/gate_notify_state.json",
+            "run_date": "2026-06-17",
+        }
+    ]
 
 
 def test_gate_notification_allowed_only_for_main_tasks(monkeypatch) -> None:

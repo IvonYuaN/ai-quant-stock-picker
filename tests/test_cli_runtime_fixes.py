@@ -73,6 +73,61 @@ def test_run_scheduled_keeps_learning_weights_proposal_only() -> None:
     assert "未应用到本次筛选" in source
 
 
+def test_run_scheduled_skips_runtime_chain_on_non_trading_day(
+    monkeypatch, tmp_path
+) -> None:
+    import aqsp.cli as cli_mod
+
+    monkeypatch.setattr(cli_mod, "today_shanghai", lambda: datetime(2026, 6, 19).date())
+    monkeypatch.setattr("aqsp.core.time.is_trading_day", lambda _day: False)
+    monkeypatch.setattr(
+        cli_mod,
+        "_resolve_run_symbols",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("non-trading day must not resolve universe")
+        ),
+    )
+    monkeypatch.setattr(
+        cli_mod,
+        "append_predictions",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("non-trading day must not write ledger")
+        ),
+    )
+    monkeypatch.setattr(
+        cli_mod,
+        "notify_markdown",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("non-trading day must not notify")
+        ),
+    )
+
+    args = Namespace(
+        mode="close",
+        symbols="",
+        csv="",
+        source="auto",
+        limit=5,
+        max_universe=0,
+        min_avg_amount=10_000_000,
+        max_data_lag_days=3,
+        enable_online_factors=False,
+        report=str(tmp_path / "latest.md"),
+        output_csv=str(tmp_path / "latest.csv"),
+        ledger=str(tmp_path / "predictions.jsonl"),
+        horizon_days=3,
+        fee_bps=3.0,
+        slippage_bps=20.0,
+        benchmark_symbol="000300",
+        skip_validation=True,
+        notify=True,
+        enable_debate=False,
+        pool="",
+    )
+
+    assert cli_mod.run_scheduled(args) == 0
+
+
 def test_run_scheduled_validates_ledger_before_circuit_breaker_pnl() -> None:
     import aqsp.cli as cli_mod
 

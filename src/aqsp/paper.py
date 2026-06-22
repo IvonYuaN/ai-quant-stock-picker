@@ -33,6 +33,15 @@ _PAPER_CONTEXT_FIELDS = (
     "strategies",
     "rating",
     "score",
+    "thresholds_version",
+    "regime_at_signal",
+    "signal_day_group",
+    "entry_type",
+    "sub_strategy",
+    "position",
+    "benchmark_symbol",
+    "limit_up_pct",
+    "limit_down_pct",
 )
 
 
@@ -188,7 +197,28 @@ def _pending_entry_from_signal(
     execution: ExecutionConfig,
     now: str,
 ) -> dict:
-    row = {
+    row = _paper_row_common_from_signal(
+        signal,
+        execution,
+        now,
+        include_execution_prices=False,
+    )
+    row.update(
+        {
+            "status": "pending_entry",
+        }
+    )
+    return row
+
+
+def _paper_row_common_from_signal(
+    signal: dict,
+    execution: ExecutionConfig,
+    now: str,
+    *,
+    include_execution_prices: bool = True,
+) -> dict:
+    row: dict[str, object] = {
         "id": uuid4().hex,
         "signal_id": signal.get("id"),
         "symbol": str(signal.get("symbol", "")),
@@ -206,10 +236,11 @@ def _pending_entry_from_signal(
         "score": float(signal.get("score") or 0),
         "rating": signal.get("rating", ""),
         "strategies": signal.get("strategies", []),
-        "status": "pending_entry",
         "created_at": now,
         "updated_at": now,
     }
+    if include_execution_prices:
+        row["entry_price"] = 0.0
     row.update(_paper_context_from_signal(signal))
     return row
 
@@ -237,19 +268,14 @@ def _open_trade_from_signal(
     )
     executable, reason = _check_executable(entry_bar, prev_close, signal)
     if not executable:
-        row = {
-            "id": uuid4().hex,
-            "signal_id": signal.get("id"),
-            "symbol": symbol,
-            "name": signal.get("name", symbol),
-            "signal_date": signal_date,
-            "entry_date": str(entry_bar["date"]),
-            "status": "not_executable",
-            "not_executable_reason": reason,
-            "created_at": now,
-            "updated_at": now,
-        }
-        row.update(_paper_context_from_signal(signal))
+        row = _paper_row_common_from_signal(signal, execution, now)
+        row.update(
+            {
+                "entry_date": str(entry_bar["date"]),
+                "status": "not_executable",
+                "not_executable_reason": reason,
+            }
+        )
         return row
 
     slippage_bps = _value_or_default(signal, "slippage_bps", execution.slippage_bps)

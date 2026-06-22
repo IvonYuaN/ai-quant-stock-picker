@@ -399,6 +399,38 @@ class TestNotifier:
 
         assert mock_notify.call_count == 2
 
+    def test_send_alerts_dedupes_flapping_alert_set_per_alert(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        monkeypatch.setenv(
+            "AQSP_MONITOR_NOTIFY_STATE_PATH", str(tmp_path / "monitor_state.json")
+        )
+        alert_a = MonitorResult(
+            name="stale_data",
+            triggered=True,
+            severity="critical",
+            message="数据滞后",
+        )
+        alert_b = MonitorResult(
+            name="notify_failure",
+            triggered=True,
+            severity="warning",
+            message="通知失败",
+        )
+
+        with patch("aqsp.monitor.notifier.notify_markdown") as mock_notify:
+            mock_notify.return_value = [
+                MagicMock(channel="serverchan", ok=True, detail="HTTP 200")
+            ]
+            send_alerts([alert_a])
+            send_alerts([alert_a, alert_b])
+            send_alerts([alert_a])
+
+        assert mock_notify.call_count == 2
+        assert "stale_data" in mock_notify.call_args_list[0].args[0]
+        assert "notify_failure" in mock_notify.call_args_list[1].args[0]
+        assert "stale_data" not in mock_notify.call_args_list[1].args[0]
+
     def test_send_alerts_dedupes_same_alert_names_when_message_changes(
         self, tmp_path: Path, monkeypatch
     ) -> None:

@@ -2522,6 +2522,13 @@ def run_screen(args: argparse.Namespace) -> int:
 
 def run_scheduled(args: argparse.Namespace) -> int:
     env = load_runtime_config()
+    today = today_shanghai()
+    from aqsp.core.time import is_trading_day
+
+    if not is_trading_day(today):
+        print(f"今日 {today.isoformat()} 非交易日，跳过策略运行、ledger 写入和通知。")
+        return 0
+
     task_id = str(os.environ.get("AQSP_RUN_TASK_ID", "") or "").strip()
     mode = args.mode or env.mode
     explicit_symbols = args.symbols or ",".join(env.symbols)
@@ -3031,21 +3038,7 @@ def run_scheduled(args: argparse.Namespace) -> int:
         if portfolio_decisions:
             print("📦 Portfolio Manager 裁决完成")
 
-    if status.triggered:
-        print(f"🛡️ 组合保护已触发，跳过正式信号 ledger 写入: {status.reason}")
-    else:
-        append_predictions(
-            args.ledger,
-            picks,
-            execution=execution,
-            thresholds_version=thresholds.version,
-            regime=regime,
-            northbound_flow_5d_z=nb_z,
-            margin_balance_change_5d=margin_z,
-            run_metadata=run_metadata,
-        )
-
-    # 保存选股快照：必须使用 PM 裁决后的最终候选，确保后续报告/briefing/仪表盘一致
+    # 保存选股快照并在 ledger 写入前补齐候选状态，确保 report / ledger / paper 三端一致。
     if picks and not status.triggered:
         from aqsp.portfolio.snapshot import (
             save_snapshot,
@@ -3071,6 +3064,20 @@ def run_scheduled(args: argparse.Namespace) -> int:
             picks,
             diff=diff,
             portfolio_summary=portfolio_summary,
+        )
+
+    if status.triggered:
+        print(f"🛡️ 组合保护已触发，跳过正式信号 ledger 写入: {status.reason}")
+    else:
+        append_predictions(
+            args.ledger,
+            picks,
+            execution=execution,
+            thresholds_version=thresholds.version,
+            regime=regime,
+            northbound_flow_5d_z=nb_z,
+            margin_balance_change_5d=margin_z,
+            run_metadata=run_metadata,
         )
 
     _log_run_decisions(
@@ -5009,16 +5016,17 @@ def run_morning_breakout(args: argparse.Namespace) -> int:
     print("分析早盘强势股观察信号...")
 
     signals = strategy.analyze_pre_market(frames)
+    selected_signals = signals[: args.top]
 
-    report = format_morning_signals(signals, top_n=args.top)
+    report = format_morning_signals(selected_signals, top_n=args.top)
     print(report)
 
-    if args.notify and signals:
+    if args.notify and selected_signals:
         try:
             print_notify_results(
                 _notify_via_config(
                     build_morning_breakout_notification(
-                        signals,
+                        selected_signals,
                         mode=load_runtime_config().notify_mode,
                         top_n=args.top,
                     ),
@@ -5048,7 +5056,7 @@ def run_morning_breakout(args: argparse.Namespace) -> int:
                     "reasons": list(s.reasons),
                     "risks": list(s.risks),
                 }
-                for s in signals[: args.top]
+                for s in selected_signals
             ],
             "timestamp": now_shanghai().isoformat(),
         }
@@ -5083,7 +5091,7 @@ def run_morning_breakout(args: argparse.Namespace) -> int:
                 position=f"{signal.position_pct:.0%}",
                 ideal_buy=signal.current_price,
             )
-            for signal in signals
+            for signal in selected_signals
         ],
         signal_date=now.date().isoformat(),
         created_at=now.isoformat(timespec="seconds"),
@@ -5137,16 +5145,17 @@ def run_closing_premium(args: argparse.Namespace) -> int:
     print("分析溢价信号...")
 
     signals = strategy.analyze_closing(frames)
+    selected_signals = signals[: args.top]
 
-    report = format_closing_signals(signals, top_n=args.top)
+    report = format_closing_signals(selected_signals, top_n=args.top)
     print(report)
 
-    if args.notify and signals:
+    if args.notify and selected_signals:
         try:
             print_notify_results(
                 _notify_via_config(
                     build_closing_premium_notification(
-                        signals,
+                        selected_signals,
                         mode=load_runtime_config().notify_mode,
                         top_n=args.top,
                     ),
@@ -5178,7 +5187,7 @@ def run_closing_premium(args: argparse.Namespace) -> int:
                     "reasons": list(s.reasons),
                     "risks": list(s.risks),
                 }
-                for s in signals[: args.top]
+                for s in selected_signals
             ],
             "timestamp": now_shanghai().isoformat(),
         }
@@ -5212,7 +5221,7 @@ def run_closing_premium(args: argparse.Namespace) -> int:
                 take_profit=signal.take_profit_1,
                 ideal_buy=signal.entry_price,
             )
-            for signal in signals
+            for signal in selected_signals
         ],
         signal_date=now.date().isoformat(),
         created_at=now.isoformat(timespec="seconds"),

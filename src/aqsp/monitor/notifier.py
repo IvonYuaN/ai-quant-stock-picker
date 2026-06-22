@@ -74,27 +74,29 @@ def send_alerts(results: list[MonitorResult]) -> None:
     date_key = now_shanghai().date().isoformat()
     state_path = _monitor_notify_state_path()
     try:
-        reserved = _reserve_monitor_alert(
+        new_triggered = _reserve_monitor_alerts(
             state_path=state_path,
+            results=triggered,
             fingerprint=fingerprint,
             date_key=date_key,
         )
     except OSError as exc:
         print(f"monitor notify: state write failed; fail closed: {exc}")
         return
-    if not reserved:
+    if not new_triggered:
         print("monitor notify: skipped duplicate critical alert")
         return
 
     alert_msg = build_monitor_notification(
-        triggered,
+        new_triggered,
         mode=load_runtime_config().notify_mode,
     )
     notify_results = notify_markdown(alert_msg)
     print_notify_results(notify_results, prefix="monitor notify")
     if any(result.ok for result in notify_results):
-        _mark_monitor_alert_sent(
+        _mark_monitor_alerts_sent(
             state_path=state_path,
+            results=new_triggered,
             fingerprint=fingerprint,
             date_key=date_key,
         )
@@ -121,6 +123,10 @@ def _monitor_alert_fingerprint(results: list[MonitorResult]) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
+def _monitor_alert_key(result: MonitorResult) -> str:
+    return f"{result.name}|{result.severity}"
+
+
 def _read_monitor_notify_state(path: Path) -> dict[str, object]:
     if not path.exists():
         return {}
@@ -131,36 +137,73 @@ def _read_monitor_notify_state(path: Path) -> dict[str, object]:
     return payload if isinstance(payload, dict) else {}
 
 
-def _reserve_monitor_alert(
-    *, state_path: Path, fingerprint: str, date_key: str
-) -> bool:
+def _reserve_monitor_alerts(
+    *,
+    state_path: Path,
+    results: list[MonitorResult],
+    fingerprint: str,
+    date_key: str,
+) -> list[MonitorResult]:
     with advisory_lock(state_path):
         state = _read_monitor_notify_state(state_path)
-        if state.get("fingerprint") == fingerprint and state.get("date") == date_key:
-            return False
+        sent_by_date = state.get("sent_by_date", {})
+        if not isinstance(sent_by_date, dict):
+            sent_by_date = {}
+        day_state = sent_by_date.get(date_key, {})
+        if not isinstance(day_state, dict):
+            day_state = {}
+        new_results = [
+            result for result in results if _monitor_alert_key(result) not in day_state
+        ]
+        if not new_results:
+            return []
+        for result in new_results:
+            day_state[_monitor_alert_key(result)] = "pending"
+        sent_by_date[date_key] = day_state
         _write_monitor_notify_state(
             state_path=state_path,
             fingerprint=fingerprint,
             date_key=date_key,
             status="pending",
+            sent_by_date=sent_by_date,
         )
-        return True
+        return new_results
 
 
-def _mark_monitor_alert_sent(
-    *, state_path: Path, fingerprint: str, date_key: str
+def _mark_monitor_alerts_sent(
+    *,
+    state_path: Path,
+    results: list[MonitorResult],
+    fingerprint: str,
+    date_key: str,
 ) -> None:
     with advisory_lock(state_path):
+        state = _read_monitor_notify_state(state_path)
+        sent_by_date = state.get("sent_by_date", {})
+        if not isinstance(sent_by_date, dict):
+            sent_by_date = {}
+        day_state = sent_by_date.get(date_key, {})
+        if not isinstance(day_state, dict):
+            day_state = {}
+        for result in results:
+            day_state[_monitor_alert_key(result)] = "sent"
+        sent_by_date[date_key] = day_state
         _write_monitor_notify_state(
             state_path=state_path,
             fingerprint=fingerprint,
             date_key=date_key,
             status="sent",
+            sent_by_date=sent_by_date,
         )
 
 
 def _write_monitor_notify_state(
-    *, state_path: Path, fingerprint: str, date_key: str, status: str
+    *,
+    state_path: Path,
+    fingerprint: str,
+    date_key: str,
+    status: str,
+    sent_by_date: dict[str, object] | None = None,
 ) -> None:
     state_path.parent.mkdir(parents=True, exist_ok=True)
     atomic_write_text(
@@ -170,6 +213,7 @@ def _write_monitor_notify_state(
                 "fingerprint": fingerprint,
                 "date": date_key,
                 "status": status,
+                "sent_by_date": sent_by_date or {},
                 "updated_at": now_shanghai().isoformat(timespec="seconds"),
             },
             ensure_ascii=False,

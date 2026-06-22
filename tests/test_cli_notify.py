@@ -2435,7 +2435,12 @@ def test_run_scheduled_annotates_candidate_status_in_report_and_notify(
         lambda candidates, **_kwargs: (candidates, []),
     )
     monkeypatch.setattr(cli_mod, "validate_predictions", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(cli_mod, "append_predictions", lambda *args, **kwargs: None)
+    ledger_picks: list[PickResult] = []
+    monkeypatch.setattr(
+        cli_mod,
+        "append_predictions",
+        lambda _path, picks, **_kwargs: ledger_picks.extend(picks),
+    )
     monkeypatch.setattr(
         "aqsp.data.anomaly.detect_anomalies",
         lambda _frames: [],
@@ -2538,6 +2543,12 @@ def test_run_scheduled_annotates_candidate_status_in_report_and_notify(
 
     assert exit_code == 0
     assert seen
+    assert ledger_picks[0].metrics["candidate_status"] == "新晋"
+    assert (
+        ledger_picks[0].metrics["candidate_next_step"]
+        == "等待量价继续走强后，再评估是否转入纸面复核名单"
+    )
+    assert ledger_picks[0].metrics["candidate_review_priority"] == "high"
     assert "## 候选" in seen[0]
     assert "| # | 标的 | 状态 | 分数 | 处理 | 关键点 |" not in seen[0]
     assert (

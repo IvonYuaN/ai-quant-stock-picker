@@ -204,6 +204,13 @@ def test_paper_carries_candidate_context_into_not_executable_rows(
         candidate_next_step="等待开板后再评估",
         candidate_review_window="次日开盘",
         candidate_review_priority="high",
+        thresholds_version="1.1.11",
+        regime_at_signal="stable_bull",
+        signal_day_group="2026-05-27_morning_breakout",
+        entry_type="next_open",
+        sub_strategy="强势观察",
+        position="20%",
+        benchmark_symbol="000300",
     )
     frame = _frame()
     frame.loc[1, ["open", "high", "low", "close"]] = [110.0, 110.0, 110.0, 110.0]
@@ -220,6 +227,22 @@ def test_paper_carries_candidate_context_into_not_executable_rows(
     assert row["candidate_status"] == "观察阻塞"
     assert row["candidate_blocker"] == "涨停无法追入"
     assert row["candidate_next_step"] == "等待开板后再评估"
+    assert row["stop_loss"] == 95.0
+    assert row["take_profit"] == 110.0
+    assert row["horizon_days"] == 2
+    assert row["fee_bps"] == 0
+    assert row["slippage_bps"] == 0
+    assert row["score"] == 70
+    assert row["rating"] == "buy_candidate"
+    assert row["strategies"] == ["momentum"]
+    assert row["thresholds_version"] == "1.1.11"
+    assert row["regime_at_signal"] == "stable_bull"
+    assert row["signal_day_group"] == "2026-05-27_morning_breakout"
+    assert row["entry_type"] == "next_open"
+    assert row["sub_strategy"] == "强势观察"
+    assert row["position"] == "20%"
+    assert row["benchmark_symbol"] == "000300"
+    assert row["limit_up_pct"] == 0.1
 
 
 def test_paper_marks_signal_pending_entry_when_next_open_missing(

@@ -266,6 +266,67 @@ def test_validation_leaves_excess_return_unknown_when_benchmark_missing(
     assert summary.avg_excess_pct == 0.0
 
 
+def test_validation_marks_not_executable_before_horizon_complete(tmp_path) -> None:
+    ledger = tmp_path / "predictions.jsonl"
+    pick = PickResult(
+        symbol="600000",
+        name="测试",
+        date="2026-01-02",
+        close=10,
+        score=70,
+        rating="buy_candidate",
+        entry_type="volume_breakout",
+        ideal_buy=10,
+        stop_loss=9.5,
+        take_profit=11,
+        position="10%-30%",
+        strategies=("volume_breakout",),
+    )
+    append_predictions(
+        ledger,
+        [pick],
+        execution=ExecutionConfig(
+            horizon_days=3,
+            fee_bps=0,
+            slippage_bps=0,
+            limit_up_pct=0.10,
+            limit_down_pct=0.10,
+        ),
+    )
+
+    summary = validate_predictions(
+        ledger,
+        {
+            "600000": pd.DataFrame(
+                [
+                    {
+                        "date": "2026-01-02",
+                        "open": 10,
+                        "high": 10,
+                        "low": 10,
+                        "close": 10,
+                    },
+                    {
+                        "date": "2026-01-03",
+                        "open": 11,
+                        "high": 11,
+                        "low": 11,
+                        "close": 11,
+                    },
+                ]
+            )
+        },
+    )
+
+    row = read_ledger(ledger)[0]
+    assert summary.checked == 0
+    assert summary.skipped_not_executable == 1
+    assert summary.not_executable_reasons == {"limit_up_at_open": 1}
+    assert row["status"] == "not_executable"
+    assert row["entry_date"] == "2026-01-03"
+    assert row["not_executable_reason"] == "limit_up_at_open"
+
+
 def _make_validated_entries(
     count: int, strategy: str, return_pct: float = 2.0
 ) -> list[str]:

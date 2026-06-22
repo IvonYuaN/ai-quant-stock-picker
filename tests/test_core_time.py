@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from datetime import datetime, date
 
+import pandas as pd
+
 from aqsp.core.time import (
     now_shanghai,
     today_shanghai,
@@ -76,6 +78,14 @@ def test_is_trading_day_a_share_2026_holidays():
     assert is_trading_day(date(2026, 6, 22))
     assert get_previous_trading_day(date(2026, 6, 22)) == date(2026, 6, 18)
     assert get_next_trading_day(date(2026, 6, 18)) == date(2026, 6, 22)
+
+
+def test_static_holiday_overrides_runtime_calendar_open_flag():
+    from aqsp.data.trading_calendar import resolve_is_trading_day
+
+    calendar = pd.DataFrame([{"cal_date": "20260619", "is_open": 1}])
+
+    assert not resolve_is_trading_day(date(2026, 6, 19), calendar_df=calendar)
 
 
 def test_get_previous_trading_day():

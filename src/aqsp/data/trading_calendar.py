@@ -7,6 +7,7 @@ import pandas as pd
 
 from aqsp.core.errors import DataError
 from aqsp.core.time import (
+    _load_basic_trading_calendar,
     _get_basic_next_trading_day,
     _get_basic_previous_trading_day,
     _is_basic_trading_day,
@@ -51,6 +52,11 @@ def resolve_is_trading_day(
     exchange: str = "SSE",
     window: TradingCalendarWindow | None = None,
 ) -> bool:
+    holidays, makeup_workdays = _load_basic_trading_calendar()
+    if target in holidays:
+        return False
+    if target in makeup_workdays:
+        return True
     runtime_calendar = (
         calendar_df
         if calendar_df is not None

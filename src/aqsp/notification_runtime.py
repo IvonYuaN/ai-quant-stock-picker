@@ -213,6 +213,13 @@ def finalize_scheduled_notification(
                 print_fn(f"gate notify state failed: {exc}")
                 should_send_gate = False
             if should_send_gate:
+                if mark_gate_notification_sent_fn is not None:
+                    _call_gate_mark_sent(
+                        mark_gate_notification_sent_fn,
+                        gate_reasons=gate_reasons,
+                        gate_state_path=gate_state_path,
+                        run_date=latest_iso,
+                    )
                 try:
                     if legacy_notify_fn is not None:
                         gate_markdown = build_gate_notification_markdown(
@@ -228,16 +235,8 @@ def finalize_scheduled_notification(
                             next_actions=next_actions,
                             mode=notify_mode,
                         )
-                    if (
-                        mark_gate_notification_sent_fn is not None
-                        and _has_successful_notify_result(results)
-                    ):
-                        _call_gate_mark_sent(
-                            mark_gate_notification_sent_fn,
-                            gate_reasons=gate_reasons,
-                            gate_state_path=gate_state_path,
-                            run_date=latest_iso,
-                        )
+                    if not _has_successful_notify_result(results):
+                        print_fn("gate notify: delivery failed; suppressing duplicate retries today")
                 except Exception as exc:  # noqa: BLE001
                     print_fn(f"gate notify failed: {exc}")
         notify_enabled = False
