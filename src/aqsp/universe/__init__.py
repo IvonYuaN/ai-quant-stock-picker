@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from aqsp.universe.pool import UniversePool, StockUniverse
+from aqsp.universe.runtime import resolve_run_symbols
 from aqsp.universe.filters import (
     STFilter,
     SuspendedFilter,
@@ -35,4 +36,5 @@ __all__ = [
     "PriceFilter",
     "FilterPipeline",
     "DEFAULT_SYMBOLS",
+    "resolve_run_symbols",
 ]

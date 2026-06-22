@@ -66,6 +66,7 @@ from aqsp.ledger import (
     validate_predictions,
 )
 from aqsp.models import ScreeningConfig
+from aqsp.universe.runtime import resolve_run_symbols as resolve_runtime_run_symbols
 from aqsp.notify_templates import (
     build_daily_run_notification,
     build_closing_premium_notification,
@@ -1489,39 +1490,16 @@ def _resolve_run_symbols(
     max_universe: int,
     min_avg_amount: float,
 ) -> list[str]:
-    target_day = as_of or today_shanghai()
-    symbols = [item.strip() for item in explicit_symbols.split(",") if item.strip()]
-    if symbols:
-        return symbols
-    if pool_name and pool_name != "all":
-        from aqsp.universe.pool import UniversePool
-
-        pool = UniversePool.from_default(pool_name)
-        return pool.get_symbols(as_of=target_day)
-    try:
-        source = _get_source(source_name)
-    except DataError:
-        return list(
-            DEFAULT_SYMBOLS[:max_universe] if max_universe > 0 else DEFAULT_SYMBOLS
-        )
-    if hasattr(source, "get_liquid_symbols"):
-        try:
-            liquid_symbols = source.get_liquid_symbols(
-                limit=max_universe,
-                min_amount=min_avg_amount,
-            )
-        except DataError:
-            liquid_symbols = []
-        if liquid_symbols:
-            return liquid_symbols
-    if hasattr(source, "get_available_symbols"):
-        try:
-            available = source.get_available_symbols()
-        except DataError:
-            available = []
-        if available:
-            return available[:max_universe] if max_universe > 0 else available
-    return list(DEFAULT_SYMBOLS[:max_universe] if max_universe > 0 else DEFAULT_SYMBOLS)
+    return resolve_runtime_run_symbols(
+        source_name,
+        explicit_symbols,
+        get_source_fn=_get_source,
+        default_symbols=DEFAULT_SYMBOLS,
+        pool_name=pool_name,
+        as_of=as_of,
+        max_universe=max_universe,
+        min_avg_amount=min_avg_amount,
+    )
 
 
 def _check_sector_concentration_with_runtime_hints(
