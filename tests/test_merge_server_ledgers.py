@@ -88,6 +88,15 @@ def test_merge_ledgers_fills_missing_signal_day_group_and_counts_days(
                     },
                     ensure_ascii=False,
                 ),
+                json.dumps(
+                    {
+                        "created_at": "2026-06-04T18:00:00+08:00",
+                        "symbol": "000004",
+                        "rating": "watch",
+                        "status": "watch_only",
+                    },
+                    ensure_ascii=False,
+                ),
             ]
         )
         + "\n",
@@ -96,10 +105,12 @@ def test_merge_ledgers_fills_missing_signal_day_group_and_counts_days(
 
     summary = merge_ledgers(target, source, backup=False)
 
-    merged_rows = [json.loads(line) for line in target.read_text(encoding="utf-8").splitlines()]
+    merged_rows = [
+        json.loads(line) for line in target.read_text(encoding="utf-8").splitlines()
+    ]
     assert summary.target_rows == 1
-    assert summary.source_rows == 2
-    assert summary.merged_rows == 3
-    assert summary.cold_start_days == 2
+    assert summary.source_rows == 3
+    assert summary.merged_rows == 4
+    assert summary.cold_start_days == 3
     assert merged_rows[0]["signal_day_group"] == "2026-06-01"
     assert merged_rows[1]["signal_day_group"] == "2026-06-02"

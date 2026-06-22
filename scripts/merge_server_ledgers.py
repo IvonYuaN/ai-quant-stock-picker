@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from aqsp.core.time import now_shanghai
+from aqsp.ledger.runtime import ledger_signal_date
 
 
 @dataclass(frozen=True)
@@ -69,13 +70,23 @@ def merge_rows(target_rows: list[dict], source_rows: list[dict]) -> list[dict]:
 
 
 def count_independent_signal_days(rows: list[dict]) -> int:
-    signal_dates = {
-        str(row.get("signal_date", ""))
-        for row in rows
-        if not bool(row.get("is_simulated"))
-        and row.get("status") in {"pending", "validated"}
-        and row.get("signal_date")
-    }
+    signal_dates: set[str] = set()
+    for row in rows:
+        if bool(row.get("is_simulated")):
+            continue
+        if not str(row.get("symbol") or "").strip():
+            continue
+        if str(row.get("status") or "").strip() == "not_executable":
+            continue
+        has_signal_payload = any(
+            row.get(key) not in (None, "")
+            for key in ("thresholds_version", "status", "rating", "score", "strategies")
+        )
+        if not has_signal_payload:
+            continue
+        signal_date = ledger_signal_date(row)
+        if signal_date:
+            signal_dates.add(signal_date)
     return len(signal_dates)
 
 
