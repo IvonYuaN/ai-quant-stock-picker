@@ -33,7 +33,7 @@ def test_append_special_strategy_signals_writes_paper_required_fields(tmp_path) 
         [_signal()],
         signal_date="2026-06-22",
         created_at="2026-06-22T15:01:00+08:00",
-        thresholds_version="1.1.10",
+        thresholds_version="1.1.11",
         regime="stable_bull",
         execution=ExecutionConfig(horizon_days=2, fee_bps=3.0, slippage_bps=20.0),
     )
@@ -55,7 +55,7 @@ def test_append_special_strategy_signals_dedupes_and_preserves_status(tmp_path) 
     kwargs = {
         "signal_date": "2026-06-22",
         "created_at": "2026-06-22T15:01:00+08:00",
-        "thresholds_version": "1.1.10",
+        "thresholds_version": "1.1.11",
     }
 
     append_special_strategy_signals(path, [_signal()], **kwargs)
@@ -76,7 +76,7 @@ def test_append_special_strategy_signals_keeps_distinct_sub_strategies(tmp_path)
     kwargs = {
         "signal_date": "2026-06-22",
         "created_at": "2026-06-22T15:01:00+08:00",
-        "thresholds_version": "1.1.10",
+        "thresholds_version": "1.1.11",
     }
 
     append_special_strategy_signals(

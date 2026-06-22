@@ -2467,6 +2467,9 @@ def run_screen(args: argparse.Namespace) -> int:
         min_avg_amount=args.min_avg_amount,
         min_price=thresholds.filter.min_price,
         max_price=thresholds.filter.max_price,
+        max_bias20=thresholds.scoring.max_bias20,
+        stop_loss_buffer=thresholds.risk.soft_stop_loss_pct,
+        max_position_pct=thresholds.risk.max_position_pct,
         strategy_weights=strategy_weights_for_regime(thresholds, regime),
     )
     picks = _enrich_pick_names(screen_universe(screen_frames, config), screen_frames)[
@@ -2610,6 +2613,9 @@ def run_scheduled(args: argparse.Namespace) -> int:
         min_avg_amount=min_avg_amount,
         min_price=thresholds.filter.min_price,
         max_price=thresholds.filter.max_price,
+        max_bias20=thresholds.scoring.max_bias20,
+        stop_loss_buffer=thresholds.risk.soft_stop_loss_pct,
+        max_position_pct=thresholds.risk.max_position_pct,
         strategy_weights=weights,
     )
     screened_picks = _enrich_pick_names(

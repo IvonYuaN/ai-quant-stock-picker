@@ -8,7 +8,7 @@ composite:
   volume_weight: 0.0
   mean_reversion_weight: 0.0
   triple_rise_weight: 0.3
-description: "策略阈值配置 — v1.1.10：regime 权重接入主筛选与风控阈值统一"
+description: "策略阈值配置 — v1.1.11：筛选止损与组合仓位曲线配置化"
 effective_from: '2026-06-17'
 execution:
   commission_rate: 0.0003
@@ -137,6 +137,21 @@ risk:
   max_sector_concentration: 0.40
   max_correlation: 0.70
   min_cash_reserve: 0.10
+  allocation_score_strong: 75.0
+  allocation_score_mid: 65.0
+  allocation_score_watch: 55.0
+  allocation_invested_strong: 0.80
+  allocation_invested_mid: 0.72
+  allocation_invested_watch: 0.62
+  allocation_invested_floor_base: 0.50
+  allocation_adjustment_step: 0.05
+  allocation_floor_pct: 0.35
+  allocation_avg_correlation_threshold: 0.55
+  allocation_strong_multiplier: 1.15
+  allocation_promote_multiplier: 1.10
+  allocation_downgrade_multiplier: 0.75
+  allocation_high_corr_multiplier: 0.88
+  allocation_sector_concentration_multiplier: 0.92
   market_crash_threshold: -0.05
   market_correction_threshold: -0.10
   sector_panic_threshold: 5
@@ -235,6 +250,7 @@ scoring:
   rsi_overbought: 82
   rsi_overbought_penalty: -12
   bias_high_penalty: -18
+  max_bias20: 18
   bias_healthy_bonus: 8
   bias_healthy_max: 8
   range_strong_threshold: 0.68
@@ -268,6 +284,10 @@ scoring:
   position_strong_score: 68
   position_strong_risks: 1
   position_mid_score: 52
+  position_strong_lower_pct: 0.30
+  position_strong_upper_pct: 0.50
+  position_mid_lower_pct: 0.10
+  position_mid_upper_pct: 0.30
   stop_atr_multiplier: 1.2
   take_profit_multiplier: 1.8
   ma20_slope_lookback: 6
@@ -364,4 +384,4 @@ internet_strategy:
   low_vol_amplitude_max: 5.5
   low_vol_volume_max: 1.8
   low_vol_score: 10.0
-version: 1.1.10
+version: 1.1.11

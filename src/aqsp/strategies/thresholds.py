@@ -121,6 +121,21 @@ class RiskThresholds:
     max_sector_concentration: float = 0.40
     max_correlation: float = 0.70
     min_cash_reserve: float = 0.10
+    allocation_score_strong: float = 75.0
+    allocation_score_mid: float = 65.0
+    allocation_score_watch: float = 55.0
+    allocation_invested_strong: float = 0.80
+    allocation_invested_mid: float = 0.72
+    allocation_invested_watch: float = 0.62
+    allocation_invested_floor_base: float = 0.50
+    allocation_adjustment_step: float = 0.05
+    allocation_floor_pct: float = 0.35
+    allocation_avg_correlation_threshold: float = 0.55
+    allocation_strong_multiplier: float = 1.15
+    allocation_promote_multiplier: float = 1.10
+    allocation_downgrade_multiplier: float = 0.75
+    allocation_high_corr_multiplier: float = 0.88
+    allocation_sector_concentration_multiplier: float = 0.92
     market_crash_threshold: float = -0.05
     market_correction_threshold: float = -0.10
     sector_panic_threshold: int = 5
@@ -329,6 +344,7 @@ class ScoringThresholds:
     rsi_overbought: float = 82
     rsi_overbought_penalty: float = -12
     bias_high_penalty: float = -18
+    max_bias20: float = 18
     bias_healthy_bonus: float = 8
     bias_healthy_max: float = 8
     range_strong_threshold: float = 0.68
@@ -362,6 +378,10 @@ class ScoringThresholds:
     position_strong_score: float = 68
     position_strong_risks: float = 1
     position_mid_score: float = 52
+    position_strong_lower_pct: float = 0.30
+    position_strong_upper_pct: float = 0.50
+    position_mid_lower_pct: float = 0.10
+    position_mid_upper_pct: float = 0.30
     stop_atr_multiplier: float = 1.2
     take_profit_multiplier: float = 1.8
     ma20_slope_lookback: float = 6
@@ -609,7 +629,11 @@ def _parse_regime(data: dict) -> RegimeThresholds:
     )
 
 
-def load_thresholds(filepath: str = None) -> Thresholds:
+def load_thresholds(
+    filepath: str | None = None,
+    *,
+    allow_missing: bool = False,
+) -> Thresholds:
     if filepath is None:
         filepath = (
             Path(__file__).parent.parent.parent.parent / "config" / "thresholds.yaml"
@@ -617,7 +641,9 @@ def load_thresholds(filepath: str = None) -> Thresholds:
 
     path = Path(filepath)
     if not path.exists():
-        return Thresholds()
+        if allow_missing:
+            return Thresholds()
+        raise ValueError(f"thresholds config not found: {path}")
 
     with open(path, "r", encoding="utf-8") as f:
         data = yaml.safe_load(f)

@@ -258,7 +258,7 @@ def score_symbol(
     )
     stop_loss = max(stop_base * (1 - config.stop_loss_buffer), 0.01)
     take_profit = close + max(close - stop_loss, atr14) * scoring.take_profit_multiplier
-    position = _position(score, risks, scoring)
+    position = _position(score, risks, scoring, max_position_pct=config.max_position_pct)
     rating = _rating(score, scoring)
 
     return PickResult(
@@ -337,15 +337,40 @@ def _entry_type(
     return "relative_strength"
 
 
-def _position(score: float, risks: list[str], scoring: ScoringThresholds) -> str:
+def _position(
+    score: float,
+    risks: list[str],
+    scoring: ScoringThresholds,
+    *,
+    max_position_pct: float = 1.0,
+) -> str:
     if (
         score >= scoring.position_strong_score
         and len(risks) <= scoring.position_strong_risks
     ):
-        return "30%-50%"
+        return _position_range(
+            lower_pct=scoring.position_strong_lower_pct,
+            upper_pct=scoring.position_strong_upper_pct,
+            max_position_pct=max_position_pct,
+        )
     if score >= scoring.position_mid_score:
-        return "10%-30%"
+        return _position_range(
+            lower_pct=scoring.position_mid_lower_pct,
+            upper_pct=scoring.position_mid_upper_pct,
+            max_position_pct=max_position_pct,
+        )
     return "watch"
+
+
+def _position_range(
+    *,
+    lower_pct: float,
+    upper_pct: float,
+    max_position_pct: float,
+) -> str:
+    capped_upper = max(0.0, min(float(upper_pct), float(max_position_pct)))
+    capped_lower = max(0.0, min(float(lower_pct), capped_upper))
+    return f"{capped_lower:.0%}-{capped_upper:.0%}"
 
 
 def _rating(score: float, scoring: ScoringThresholds) -> str:

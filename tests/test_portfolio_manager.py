@@ -3,7 +3,7 @@ from __future__ import annotations
 from aqsp.core.types import PickResult
 from aqsp.portfolio.correlation import CorrelationResult
 from aqsp.portfolio.manager import apply_portfolio_manager
-from aqsp.portfolio.optimizer import _cap_weights
+from aqsp.portfolio.optimizer import _cap_weights, optimize_portfolio_allocations_from_risk
 from aqsp.portfolio.sector_check import ConcentrationResult, SectorConcentration
 from aqsp.strategies.thresholds import RiskThresholds, Thresholds
 
@@ -142,6 +142,48 @@ def test_apply_portfolio_manager_uses_configured_allocation_limits() -> None:
 
     assert bundle.summary.allocations[0].weight <= 0.12
     assert bundle.summary.cash_reserve >= 0.50
+
+
+def test_portfolio_optimizer_uses_configured_target_curve() -> None:
+    picks = [_pick("300750", 85)]
+
+    conservative = optimize_portfolio_allocations_from_risk(
+        picks,
+        {},
+        risk=RiskThresholds(
+            max_positions=1,
+            max_single_position_pct=1.0,
+            min_cash_reserve=0.0,
+            allocation_score_strong=80.0,
+            allocation_invested_strong=0.40,
+            allocation_adjustment_step=0.0,
+            allocation_floor_pct=0.10,
+        ),
+    )
+    assert conservative.invested_ratio == 0.40
+
+
+def test_portfolio_optimizer_uses_configured_weight_multipliers() -> None:
+    strong = _pick("300750", 80)
+    strong = PickResult(**{**strong.__dict__, "rating": "strong_buy_candidate"})
+    normal = _pick("000001", 80)
+
+    boosted = optimize_portfolio_allocations_from_risk(
+        [strong, normal],
+        {},
+        risk=RiskThresholds(
+            max_positions=2,
+            max_single_position_pct=1.0,
+            min_cash_reserve=0.0,
+            allocation_invested_strong=0.80,
+            allocation_adjustment_step=0.0,
+            allocation_floor_pct=0.10,
+            allocation_strong_multiplier=2.0,
+        ),
+    )
+
+    weights = {item.symbol: item.weight for item in boosted.allocations}
+    assert weights["300750"] > weights["000001"]
 
 
 def test_apply_portfolio_manager_excludes_downgraded_tradable_from_allocations() -> (

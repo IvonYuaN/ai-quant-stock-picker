@@ -20,7 +20,7 @@ from aqsp.strategies.thresholds import load_thresholds
 
 def test_load_thresholds():
     thresholds = load_thresholds()
-    assert thresholds.version == "1.1.10"
+    assert thresholds.version == "1.1.11"
     assert thresholds.last_walkforward_run == "2026-05-30"
     assert thresholds.momentum.lookback_days == 60
     assert thresholds.momentum.weights.momentum == 0.4
@@ -51,6 +51,10 @@ def test_load_thresholds():
     assert thresholds.risk.dynamic_stop_recent_low_days == 5
     assert thresholds.risk.dynamic_stop_trailing_pct == 0.03
     assert thresholds.risk.dynamic_stop_support_lookback == 20
+    assert thresholds.risk.allocation_score_strong == 75.0
+    assert thresholds.risk.allocation_invested_strong == 0.80
+    assert thresholds.risk.allocation_floor_pct == 0.35
+    assert thresholds.scoring.max_bias20 == 18
 
 
 def test_momentum_strategy():
@@ -72,7 +76,7 @@ def test_momentum_strategy():
     strategy = MomentumStrategy(config)
 
     assert strategy.id == "momentum"
-    assert strategy.version == "1.1.10"
+    assert strategy.version == "1.1.11"
     assert strategy.hypothesis != ""
 
     scores = strategy.calculate_score({"600000": df})
@@ -407,7 +411,7 @@ def test_closing_premium_strategy_init():
 
     assert strategy.id == "closing_premium"
     assert strategy.name == "closing_premium"
-    assert strategy.version == "1.1.10"
+    assert strategy.version == "1.1.11"
     assert strategy.hypothesis == "尾盘异动股票往往有资金介入，次日有溢价空间"
     assert "stable_bull" in strategy.regime_required
     assert "stable_sideways" in strategy.regime_required

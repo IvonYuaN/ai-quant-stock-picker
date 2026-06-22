@@ -83,6 +83,116 @@ def test_run_scheduled_validates_ledger_before_circuit_breaker_pnl() -> None:
     )
 
 
+def test_run_screen_injects_threshold_screening_config(monkeypatch) -> None:
+    import aqsp.cli as cli_mod
+    from aqsp.core.types import PickResult
+    from aqsp.strategies.thresholds import (
+        RiskThresholds,
+        ScoringThresholds,
+        Thresholds,
+    )
+
+    frames = {
+        "600519": pd.DataFrame(
+            [
+                {
+                    "date": "2026-06-22",
+                    "symbol": "600519",
+                    "name": "贵州茅台",
+                    "open": 1500.0,
+                    "high": 1510.0,
+                    "low": 1490.0,
+                    "close": 1505.0,
+                    "volume": 1000,
+                    "amount": 150500000.0,
+                }
+            ]
+        )
+    }
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        cli_mod,
+        "_fetch_frames_for_cli_with_metadata",
+        lambda *_args, **_kwargs: (frames, "eastmoney"),
+    )
+    monkeypatch.setattr(
+        cli_mod, "_resolve_run_symbols", lambda *_args, **_kwargs: ["600519"]
+    )
+    monkeypatch.setattr(cli_mod, "latest_trade_date", lambda *_args: "2026-06-22")
+    monkeypatch.setattr(cli_mod, "_runtime_data_lag_days", lambda *_args: 0)
+    monkeypatch.setattr(
+        cli_mod,
+        "_source_runtime_metadata",
+        lambda *_args, **_kwargs: ("realtime", "multi_dimensional", "not_required"),
+    )
+    monkeypatch.setattr(
+        cli_mod,
+        "describe_source_health",
+        lambda *_args, **_kwargs: ("healthy", "ok", False),
+    )
+    monkeypatch.setattr(
+        cli_mod,
+        "_detect_runtime_regime",
+        lambda *_args, **_kwargs: "stable_bull",
+    )
+    monkeypatch.setattr(
+        cli_mod,
+        "load_thresholds",
+        lambda: Thresholds(
+            scoring=ScoringThresholds(max_bias20=9.0),
+            risk=RiskThresholds(soft_stop_loss_pct=0.07, max_position_pct=0.12),
+        ),
+    )
+
+    def fake_screen_universe(_frames, config):
+        captured["config"] = config
+        return [
+            PickResult(
+                symbol="600519",
+                name="贵州茅台",
+                date="2026-06-22",
+                close=1505.0,
+                score=60.0,
+                rating="buy_candidate",
+                entry_type="next_open",
+                ideal_buy=1505.0,
+                stop_loss=1450.0,
+                take_profit=1600.0,
+                position="10%-12%",
+                strategies=("ma_pullback",),
+                reasons=("趋势回踩",),
+                risks=(),
+            )
+        ]
+
+    monkeypatch.setattr(cli_mod, "screen_universe", fake_screen_universe)
+    monkeypatch.setattr(
+        cli_mod, "_enrich_pick_names", lambda picks, *_args, **_kwargs: picks
+    )
+    monkeypatch.setattr(cli_mod, "to_dataframe", lambda picks: pd.DataFrame())
+
+    args = Namespace(
+        csv="",
+        source="auto",
+        symbols="600519",
+        benchmark_symbol="000300",
+        pool="",
+        min_avg_amount=50_000_000,
+        mode="close",
+        limit=1,
+        report="",
+        output_csv="",
+        enable_online_factors=False,
+    )
+
+    assert cli_mod.run_screen(args) == 0
+    config = captured["config"]
+    assert config.max_bias20 == 9.0
+    assert config.stop_loss_buffer == 0.07
+    assert config.max_position_pct == 0.12
+
+
 def test_run_scheduled_composite_rescore_updates_frozen_pick_results(
     monkeypatch, tmp_path: Path
 ) -> None:

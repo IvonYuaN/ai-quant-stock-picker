@@ -9,6 +9,7 @@ from aqsp.strategies.thresholds import (
     NReboundThresholds,
     ScoringThresholds,
     Thresholds,
+    load_thresholds,
 )
 from aqsp.strategy import (
     _entry_type,
@@ -147,6 +148,20 @@ def test_liquidity_penalty_uses_scoring_threshold() -> None:
     assert baseline is not None
     assert milder is not None
     assert milder.score > baseline.score
+
+
+def test_score_symbol_caps_position_text_by_configured_max_position() -> None:
+    frame = _frame("CAP", 0.004, 1.8)
+    result = score_symbol(
+        "CAP",
+        frame,
+        ScreeningConfig(min_avg_amount=1, max_position_pct=0.12),
+        ScoringThresholds(position_strong_score=1, position_strong_risks=99),
+        Thresholds(),
+    )
+
+    assert result is not None
+    assert result.position == "12%-12%"
 
 
 def test_reversal_entry_uses_configured_rsi_threshold() -> None:
@@ -308,3 +323,20 @@ def test_screen_universe_skips_invalid_frames() -> None:
 
     assert picks
     assert {pick.symbol for pick in picks} == {"GOOD"}
+
+
+def test_load_thresholds_raises_when_config_missing(tmp_path) -> None:
+    missing = tmp_path / "missing.yaml"
+
+    try:
+        load_thresholds(str(missing))
+    except ValueError as exc:
+        assert "thresholds config not found" in str(exc)
+    else:
+        raise AssertionError("missing thresholds config should fail closed")
+
+
+def test_load_thresholds_allows_explicit_missing_fallback(tmp_path) -> None:
+    thresholds = load_thresholds(str(tmp_path / "missing.yaml"), allow_missing=True)
+
+    assert thresholds.version

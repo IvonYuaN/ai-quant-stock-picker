@@ -17,4 +17,5 @@ class ScreeningConfig:
     max_price: float = 1000.0
     max_bias20: float = 18.0
     stop_loss_buffer: float = 0.03
+    max_position_pct: float = 1.0
     strategy_weights: dict[str, float] = field(default_factory=dict)

@@ -37,7 +37,9 @@ def optimize_portfolio_allocations(
     max_names: int = 5,
     max_single_weight: float = 0.20,
     min_cash_reserve: float = 0.15,
+    risk: RiskThresholds | None = None,
 ) -> PortfolioOptimizationResult:
+    risk = risk or RiskThresholds()
     tradable = [
         pick
         for pick in picks
@@ -58,12 +60,13 @@ def optimize_portfolio_allocations(
         concentration=concentration,
         correlation_result=correlation_result,
         min_cash_reserve=min_cash_reserve,
+        risk=risk,
     )
 
     raw_scores: dict[str, float] = {}
     rationales: dict[str, tuple[str, ...]] = {}
     for pick in tradable:
-        raw_scores[pick.symbol] = _raw_weight_score(pick, decision_by_symbol)
+        raw_scores[pick.symbol] = _raw_weight_score(pick, decision_by_symbol, risk=risk)
         rationales[pick.symbol] = _build_rationale(pick, decision_by_symbol)
 
     capped_weights = _cap_weights(
@@ -113,6 +116,7 @@ def optimize_portfolio_allocations_from_risk(
         max_names=int(risk.max_positions),
         max_single_weight=float(risk.max_single_position_pct),
         min_cash_reserve=float(risk.min_cash_reserve),
+        risk=risk,
     )
 
 
@@ -123,6 +127,7 @@ def _target_invested_ratio(
     concentration: ConcentrationResult | None,
     correlation_result: CorrelationResult | None,
     min_cash_reserve: float,
+    risk: RiskThresholds,
 ) -> float:
     top_score = tradable[0].score if tradable else 0.0
     strong_count = sum(1 for pick in tradable if pick.rating == "strong_buy_candidate")
@@ -137,47 +142,55 @@ def _target_invested_ratio(
         if getattr(decision_by_symbol.get(pick.symbol), "action", "keep") == "downgrade"
     )
 
-    if top_score >= 75:
-        ratio = 0.80
-    elif top_score >= 65:
-        ratio = 0.72
-    elif top_score >= 55:
-        ratio = 0.62
+    if top_score >= risk.allocation_score_strong:
+        ratio = risk.allocation_invested_strong
+    elif top_score >= risk.allocation_score_mid:
+        ratio = risk.allocation_invested_mid
+    elif top_score >= risk.allocation_score_watch:
+        ratio = risk.allocation_invested_watch
     else:
-        ratio = 0.50
+        ratio = risk.allocation_invested_floor_base
 
     if strong_count == 0:
-        ratio -= 0.05
+        ratio -= risk.allocation_adjustment_step
     if promote_count >= 2 and strong_count >= 1:
-        ratio += 0.05
+        ratio += risk.allocation_adjustment_step
     if downgrade_count > promote_count:
-        ratio -= 0.05
+        ratio -= risk.allocation_adjustment_step
     if concentration is not None and concentration.is_concentrated:
-        ratio -= 0.05
-    if correlation_result is not None and correlation_result.avg_correlation >= 0.55:
-        ratio -= 0.05
+        ratio -= risk.allocation_adjustment_step
+    if (
+        correlation_result is not None
+        and correlation_result.avg_correlation >= risk.allocation_avg_correlation_threshold
+    ):
+        ratio -= risk.allocation_adjustment_step
 
     max_invested = max(0.0, min(1.0, 1.0 - min_cash_reserve))
-    floor = min(0.35, max_invested)
+    floor = min(risk.allocation_floor_pct, max_invested)
     return max(floor, min(max_invested, round(ratio, 4)))
 
 
-def _raw_weight_score(pick: PickResult, decision_by_symbol: dict[str, object]) -> float:
+def _raw_weight_score(
+    pick: PickResult,
+    decision_by_symbol: dict[str, object],
+    *,
+    risk: RiskThresholds,
+) -> float:
     decision = decision_by_symbol.get(pick.symbol)
     action = getattr(decision, "action", "keep") if decision is not None else "keep"
     reasons = tuple(getattr(decision, "reasons", ()) or ())
 
     multiplier = 1.0
     if pick.rating == "strong_buy_candidate":
-        multiplier *= 1.15
+        multiplier *= risk.allocation_strong_multiplier
     if action == "promote":
-        multiplier *= 1.10
+        multiplier *= risk.allocation_promote_multiplier
     elif action == "downgrade":
-        multiplier *= 0.75
+        multiplier *= risk.allocation_downgrade_multiplier
     if any("高相关" in reason for reason in reasons):
-        multiplier *= 0.88
+        multiplier *= risk.allocation_high_corr_multiplier
     if any("板块集中度" in reason for reason in reasons):
-        multiplier *= 0.92
+        multiplier *= risk.allocation_sector_concentration_multiplier
 
     return max(1.0, pick.score + 1.0) * multiplier
 
