@@ -2464,14 +2464,6 @@ def run_scheduled(args: argparse.Namespace) -> int:
     explicit_symbol_count = len(
         [item.strip() for item in explicit_symbols.split(",") if item.strip()]
     )
-    breaker = CircuitBreaker()
-    daily_pnl, weekly_pnl, monthly_pnl = _compute_real_pnl(args.ledger)
-    status = breaker.check(
-        daily_pnl_pct=daily_pnl,
-        weekly_pnl_pct=weekly_pnl,
-        monthly_pnl_pct=monthly_pnl,
-    )
-
     symbols: list[str] = []
 
     if args.csv:
@@ -2501,6 +2493,18 @@ def run_scheduled(args: argparse.Namespace) -> int:
     source_health_label, source_health_message, fallback_used = describe_source_health(
         args.source,
         actual_source,
+    )
+
+    validation = None
+    if not args.skip_validation:
+        validation = validate_predictions(args.ledger, frames)
+
+    breaker = CircuitBreaker()
+    daily_pnl, weekly_pnl, monthly_pnl = _compute_real_pnl(args.ledger)
+    status = breaker.check(
+        daily_pnl_pct=daily_pnl,
+        weekly_pnl_pct=weekly_pnl,
+        monthly_pnl_pct=monthly_pnl,
     )
 
     weight_proposals: dict[str, float] = {}
@@ -2880,10 +2884,6 @@ def run_scheduled(args: argparse.Namespace) -> int:
             if rewritten:
                 print(f"   🔀 辩论结论已接入 PM：{rewritten} 只候选将据此调整优先级")
 
-    validation = None
-    if not args.skip_validation:
-        validation = validate_predictions(args.ledger, frames)
-
     if validation and validation.checked and debate_results:
         try:
             from aqsp.briefing.debate_tracker import DebatePerformanceTracker
@@ -2947,19 +2947,22 @@ def run_scheduled(args: argparse.Namespace) -> int:
         if portfolio_decisions:
             print("📦 Portfolio Manager 裁决完成")
 
-    append_predictions(
-        args.ledger,
-        picks,
-        execution=execution,
-        thresholds_version=thresholds.version,
-        regime=regime,
-        northbound_flow_5d_z=nb_z,
-        margin_balance_change_5d=margin_z,
-        run_metadata=run_metadata,
-    )
+    if status.triggered:
+        print(f"🛡️ 组合保护已触发，跳过正式信号 ledger 写入: {status.reason}")
+    else:
+        append_predictions(
+            args.ledger,
+            picks,
+            execution=execution,
+            thresholds_version=thresholds.version,
+            regime=regime,
+            northbound_flow_5d_z=nb_z,
+            margin_balance_change_5d=margin_z,
+            run_metadata=run_metadata,
+        )
 
     # 保存选股快照：必须使用 PM 裁决后的最终候选，确保后续报告/briefing/仪表盘一致
-    if picks:
+    if picks and not status.triggered:
         from aqsp.portfolio.snapshot import (
             save_snapshot,
             compare_snapshots,
@@ -2976,6 +2979,8 @@ def run_scheduled(args: argparse.Namespace) -> int:
         )
         if diff is not None and diff.has_changes:
             print(format_snapshot_diff(diff))
+    elif picks and status.triggered:
+        print("🛡️ 组合保护已触发，跳过正式候选快照写入")
 
     if picks:
         picks = _annotate_candidate_status(

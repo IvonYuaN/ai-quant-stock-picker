@@ -171,10 +171,10 @@
 AQSP_SOURCE=eastmoney
 AQSP_SQLITE_DB_PATH=/opt/market-data/astocks_qfq.db
 AQSP_ALLOW_ONLINE_FALLBACK=true
-AQSP_SYMBOLS=600519,300750,000001,601318,600036
+AQSP_SYMBOLS=
 AQSP_MODE=close
 AQSP_LIMIT=10
-AQSP_MAX_UNIVERSE=50
+AQSP_MAX_UNIVERSE=0
 AQSP_MIN_AVG_AMOUNT=50000000
 AQSP_MAX_DATA_LAG_DAYS=3
 AQSP_NOTIFY=true
@@ -222,7 +222,7 @@ cd /opt/aqsp && .venv/bin/python3 -m aqsp doctor --probe-auth --probe-llm
 
 ### 3.2 数据和回测
 
-- 继续解决历史数据覆盖问题：当前私有 SQLite 不一定覆盖 `AQSP_SYMBOLS` 里的所有票。
+- 生产短线扫描保持 `AQSP_SYMBOLS=` 和 `AQSP_MAX_UNIVERSE=0`，小池股票列表只用于本地 smoke test 或手工观察。
 - walk-forward 要拆成“短线观察池回测”和“中长线策略回测”，不能混用数据源和标的池。
 - 对接更稳定的 PIT 财务披露日和指数成分快照。
 - 记录每次 walk-forward 的数据源、标的池、覆盖率、不可成交数、DSR/PBO。

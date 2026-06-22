@@ -30,27 +30,71 @@ class TripleRiseStrategy(BaseStrategy):
         return scores
 
     def _calculate_single_score(self, df: pd.DataFrame) -> float:
-        df = df.sort_values("date").tail(25)
+        config = self.thresholds.triple_rise
+        if not config.enabled:
+            return 0.0
+        df = df.sort_values("date").tail(config.lookback_days)
 
-        if len(df) < 20:
+        if len(df) < config.min_data_points:
             return 0.0
 
         closes = df["close"].values
         volumes = df["volume"].values
 
-        triple_rise_score = self._triple_rise(closes)
-        v_bottom_score = self._v_bottom(closes, lookback=20)
-        volume_confirm_score = self._volume_confirmation(volumes, closes)
+        triple_rise_score = self._triple_rise(
+            closes,
+            strong_threshold=config.avg_rise_strong,
+            medium_threshold=config.avg_rise_medium,
+            weak_threshold=config.avg_rise_weak,
+            strong_score=config.avg_rise_strong_score,
+            medium_score=config.avg_rise_medium_score,
+            weak_score=config.avg_rise_weak_score,
+            min_score=config.avg_rise_min_score,
+        )
+        v_bottom_score = self._v_bottom(
+            closes,
+            lookback=config.v_bottom_lookback,
+            edge_days=config.v_bottom_edge_days,
+            strong_recovery=config.v_bottom_strong_recovery,
+            medium_recovery=config.v_bottom_medium_recovery,
+            weak_recovery=config.v_bottom_weak_recovery,
+            strong_score=config.v_bottom_strong_score,
+            medium_score=config.v_bottom_medium_score,
+            weak_score=config.v_bottom_weak_score,
+            min_score=config.v_bottom_min_score,
+        )
+        volume_confirm_score = self._volume_confirmation(
+            volumes,
+            closes,
+            recent_days=config.volume_recent_days,
+            min_points=config.volume_min_points,
+            avg_window=config.volume_avg_window,
+            strong_ratio=config.volume_strong_ratio,
+            medium_ratio=config.volume_medium_ratio,
+            strong_score=config.volume_strong_score,
+            medium_score=config.volume_medium_score,
+            price_up_score=config.volume_price_up_score,
+        )
 
         final = (
-            triple_rise_score * 0.40
-            + v_bottom_score * 0.35
-            + volume_confirm_score * 0.25
+            triple_rise_score * config.weights.triple_rise
+            + v_bottom_score * config.weights.v_bottom
+            + volume_confirm_score * config.weights.volume_confirmation
         )
         return max(0.0, min(1.0, final))
 
     @staticmethod
-    def _triple_rise(closes: np.ndarray) -> float:
+    def _triple_rise(
+        closes: np.ndarray,
+        *,
+        strong_threshold: float = 0.03,
+        medium_threshold: float = 0.02,
+        weak_threshold: float = 0.01,
+        strong_score: float = 1.0,
+        medium_score: float = 0.8,
+        weak_score: float = 0.6,
+        min_score: float = 0.4,
+    ) -> float:
         if len(closes) < 4:
             return 0.0
         last4 = closes[-4:]
@@ -60,18 +104,30 @@ class TripleRiseStrategy(BaseStrategy):
                 + (last4[2] - last4[1]) / last4[1]
                 + (last4[3] - last4[2]) / last4[2]
             ) / 3
-            if avg_rise > 0.03:
-                return 1.0
-            elif avg_rise > 0.02:
-                return 0.8
-            elif avg_rise > 0.01:
-                return 0.6
+            if avg_rise > strong_threshold:
+                return strong_score
+            elif avg_rise > medium_threshold:
+                return medium_score
+            elif avg_rise > weak_threshold:
+                return weak_score
             else:
-                return 0.4
+                return min_score
         return 0.0
 
     @staticmethod
-    def _v_bottom(closes: np.ndarray, lookback: int = 20) -> float:
+    def _v_bottom(
+        closes: np.ndarray,
+        lookback: int = 20,
+        *,
+        edge_days: int = 3,
+        strong_recovery: float = 0.10,
+        medium_recovery: float = 0.05,
+        weak_recovery: float = 0.02,
+        strong_score: float = 1.0,
+        medium_score: float = 0.7,
+        weak_score: float = 0.4,
+        min_score: float = 0.1,
+    ) -> float:
         if len(closes) < lookback:
             return 0.0
         window = closes[-lookback:]
@@ -81,36 +137,50 @@ class TripleRiseStrategy(BaseStrategy):
         if min_val <= 0:
             return 0.0
         recovery = (current - min_val) / min_val
-        if min_idx <= 3:
+        if min_idx <= edge_days:
             return 0.0
-        if min_idx >= lookback - 3:
+        if min_idx >= lookback - edge_days:
             return 0.0
-        if recovery > 0.10:
-            return 1.0
-        elif recovery > 0.05:
-            return 0.7
-        elif recovery > 0.02:
-            return 0.4
+        if recovery > strong_recovery:
+            return strong_score
+        elif recovery > medium_recovery:
+            return medium_score
+        elif recovery > weak_recovery:
+            return weak_score
         else:
-            return 0.1
+            return min_score
 
     @staticmethod
-    def _volume_confirmation(volumes: np.ndarray, closes: np.ndarray) -> float:
-        if len(volumes) < 5 or len(closes) < 5:
+    def _volume_confirmation(
+        volumes: np.ndarray,
+        closes: np.ndarray,
+        *,
+        recent_days: int = 3,
+        min_points: int = 5,
+        avg_window: int = 20,
+        strong_ratio: float = 1.3,
+        medium_ratio: float = 1.0,
+        strong_score: float = 1.0,
+        medium_score: float = 0.6,
+        price_up_score: float = 0.3,
+    ) -> float:
+        if len(volumes) < min_points or len(closes) < min_points:
             return 0.0
-        recent_vol = np.mean(volumes[-3:])
+        recent_vol = np.mean(volumes[-recent_days:])
         avg_vol = (
-            np.mean(volumes[-20:]) if len(volumes) >= 20 else np.mean(volumes[:-3])
+            np.mean(volumes[-avg_window:])
+            if len(volumes) >= avg_window
+            else np.mean(volumes[:-recent_days])
         )
         if avg_vol <= 0:
             return 0.0
         vol_ratio = recent_vol / avg_vol
         price_up = closes[-1] > closes[-4]
-        if price_up and vol_ratio > 1.3:
-            return 1.0
-        elif price_up and vol_ratio > 1.0:
-            return 0.6
+        if price_up and vol_ratio > strong_ratio:
+            return strong_score
+        elif price_up and vol_ratio > medium_ratio:
+            return medium_score
         elif price_up:
-            return 0.3
+            return price_up_score
         else:
             return 0.0

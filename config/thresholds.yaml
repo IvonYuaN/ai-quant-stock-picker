@@ -6,7 +6,7 @@ composite:
   volume_weight: 0.0
   mean_reversion_weight: 0.0
   triple_rise_weight: 0.3
-description: "策略阈值配置 — v1.1.6：执行成本与涨跌停 fallback 统一进配置"
+description: "策略阈值配置 — v1.1.7：triple_rise 参数统一进配置"
 effective_from: '2026-06-17'
 execution:
   commission_rate: 0.0003
@@ -118,6 +118,30 @@ risk:
   warning_threshold_pct: 0.05
   trailing_stop_pct: 0.05
   enable_trailing_stop: true
+  circuit_breaker_daily_loss_pct: 3.0
+  circuit_breaker_weekly_loss_pct: 6.0
+  circuit_breaker_monthly_loss_pct: 10.0
+  circuit_breaker_cooldown_days: 5
+  max_position_pct: 0.30
+  soft_stop_loss_pct: 0.03
+  trailing_stop_activation_pct: 0.05
+  max_holding_days: 10
+  profit_take_threshold_pct: 0.15
+  portfolio_daily_loss_pct: 0.02
+  portfolio_weekly_loss_pct: 0.05
+  portfolio_max_drawdown_pct: 0.10
+  max_positions: 8
+  max_single_position_pct: 0.30
+  max_sector_concentration: 0.40
+  max_correlation: 0.70
+  min_cash_reserve: 0.10
+  market_crash_threshold: -0.05
+  market_correction_threshold: -0.10
+  sector_panic_threshold: 5
+  halt_trigger_count: 3
+  auto_resume_days: 1
+  avg_volume_ratio_min: 0.7
+  north_flow_exit_threshold: -5000000000
 value:
   enabled: false
   ev_ebitda_max: 15
@@ -146,6 +170,38 @@ mean_reversion:
   rsi_period: 14
   oversold_threshold: 30
   deviation_threshold: -0.05
+triple_rise:
+  enabled: true
+  lookback_days: 25
+  min_data_points: 20
+  v_bottom_lookback: 20
+  avg_rise_strong: 0.03
+  avg_rise_medium: 0.02
+  avg_rise_weak: 0.01
+  avg_rise_strong_score: 1.0
+  avg_rise_medium_score: 0.8
+  avg_rise_weak_score: 0.6
+  avg_rise_min_score: 0.4
+  v_bottom_edge_days: 3
+  v_bottom_strong_recovery: 0.10
+  v_bottom_medium_recovery: 0.05
+  v_bottom_weak_recovery: 0.02
+  v_bottom_strong_score: 1.0
+  v_bottom_medium_score: 0.7
+  v_bottom_weak_score: 0.4
+  v_bottom_min_score: 0.1
+  volume_recent_days: 3
+  volume_min_points: 5
+  volume_avg_window: 20
+  volume_strong_ratio: 1.3
+  volume_medium_ratio: 1.0
+  volume_strong_score: 1.0
+  volume_medium_score: 0.6
+  volume_price_up_score: 0.3
+  weights:
+    triple_rise: 0.40
+    v_bottom: 0.35
+    volume_confirmation: 0.25
 scoring:
   liquidity_penalty: -35
   ma_full_bull: 24
@@ -279,4 +335,4 @@ n_rebound:
   volume_shrink_ratio: 0.75
   ma5_deviation_max_pct: 8.0
   min_score: 14.0
-version: 1.1.6
+version: 1.1.7

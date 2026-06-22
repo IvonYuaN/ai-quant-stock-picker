@@ -80,3 +80,15 @@ def test_thresholds_load_mean_reversion_section() -> None:
     assert thresholds.mean_reversion.rsi_period == 14
     assert thresholds.mean_reversion.oversold_threshold == 30
     assert thresholds.mean_reversion.deviation_threshold == -0.05
+
+
+def test_thresholds_load_triple_rise_section() -> None:
+    from aqsp.strategies.thresholds import load_thresholds
+
+    thresholds = load_thresholds()
+
+    assert thresholds.triple_rise.enabled is True
+    assert thresholds.triple_rise.lookback_days == 25
+    assert thresholds.triple_rise.min_data_points == 20
+    assert thresholds.triple_rise.volume_avg_window == 20
+    assert thresholds.triple_rise.weights.triple_rise == 0.4

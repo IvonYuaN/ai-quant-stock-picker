@@ -42,9 +42,12 @@ class StockRiskConfig:
         risk = (thresholds or load_thresholds()).risk
         return cls(
             hard_stop_loss=float(risk.single_stock_stop_pct),
-            soft_stop_loss=float(risk.warning_threshold_pct),
-            trailing_stop_activation=float(risk.warning_threshold_pct),
+            soft_stop_loss=float(risk.soft_stop_loss_pct),
+            trailing_stop_activation=float(risk.trailing_stop_activation_pct),
             trailing_stop_distance=float(risk.trailing_stop_pct),
+            max_position_pct=float(risk.max_position_pct),
+            max_holding_days=int(risk.max_holding_days),
+            profit_take_threshold=float(risk.profit_take_threshold_pct),
         )
 
 
@@ -203,8 +206,14 @@ class PortfolioRiskConfig:
     ) -> "PortfolioRiskConfig":
         risk = (thresholds or load_thresholds()).risk
         return cls(
-            max_weekly_loss_pct=float(risk.warning_threshold_pct),
-            max_drawdown_pct=float(risk.portfolio_stop_pct),
+            max_daily_loss_pct=float(risk.portfolio_daily_loss_pct),
+            max_weekly_loss_pct=float(risk.portfolio_weekly_loss_pct),
+            max_drawdown_pct=float(risk.portfolio_max_drawdown_pct),
+            max_positions=int(risk.max_positions),
+            max_single_position_pct=float(risk.max_single_position_pct),
+            max_sector_concentration=float(risk.max_sector_concentration),
+            max_correlation=float(risk.max_correlation),
+            min_cash_reserve=float(risk.min_cash_reserve),
         )
 
 
@@ -366,6 +375,8 @@ class SystemRiskConfig:
     sector_panic_threshold: int = 5  # 单板块跌停>=5只触发警报
     halt_trigger_count: int = 3  # 连续3日触发系统风控 → 暂停所有策略
     auto_resume_days: int = 1  # 1天后自动恢复
+    avg_volume_ratio_min: float = 0.7
+    north_flow_exit_threshold: float = -5_000_000_000
 
     @classmethod
     def from_thresholds(
@@ -373,8 +384,15 @@ class SystemRiskConfig:
     ) -> "SystemRiskConfig":
         risk = (thresholds or load_thresholds()).risk
         return cls(
-            market_crash_threshold=-float(risk.warning_threshold_pct),
+            market_crash_threshold=float(risk.market_crash_threshold),
+            market_correction_threshold=float(risk.market_correction_threshold),
             panic_index_threshold=float(risk.volatility_limit),
+            liquidity_min=float(risk.liquidity_threshold),
+            sector_panic_threshold=int(risk.sector_panic_threshold),
+            halt_trigger_count=int(risk.halt_trigger_count),
+            auto_resume_days=int(risk.auto_resume_days),
+            avg_volume_ratio_min=float(risk.avg_volume_ratio_min),
+            north_flow_exit_threshold=float(risk.north_flow_exit_threshold),
         )
 
 
@@ -461,12 +479,12 @@ class SystemRiskManager:
                 risk_level = "elevated"
 
         # 5. 量能萎缩（流动性问题）
-        if snapshot.avg_volume_ratio < 0.7:
+        if snapshot.avg_volume_ratio < self.config.avg_volume_ratio_min:
             triggered.append(f"🟡 量能萎缩：整体量比{snapshot.avg_volume_ratio:.1f}")
             actions.append("市场冷清，减少新增纸面观察")
 
         # 6. 北向资金大幅流出
-        if snapshot.north_flow < -5_000_000_000:  # -50亿
+        if snapshot.north_flow < self.config.north_flow_exit_threshold:
             triggered.append(
                 f"🟠 北向大幅流出：{snapshot.north_flow / 100000000:.1f}亿"
             )

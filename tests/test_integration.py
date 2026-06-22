@@ -252,6 +252,29 @@ class TestCLIIntegration:
             )
             assert result == 2
 
+
+def test_circuit_breaker_config_from_thresholds() -> None:
+    from aqsp.risk.circuit_breaker import CircuitBreakerConfig
+    from aqsp.strategies.thresholds import RiskThresholds, Thresholds
+
+    config = CircuitBreakerConfig.from_thresholds(
+        Thresholds(
+            risk=RiskThresholds(
+                circuit_breaker_daily_loss_pct=2.5,
+                circuit_breaker_weekly_loss_pct=5.5,
+                circuit_breaker_monthly_loss_pct=9.0,
+                circuit_breaker_cooldown_days=4,
+            )
+        ),
+        state_file="tmp/risk_state.json",
+    )
+
+    assert config.daily_loss_pct == 2.5
+    assert config.weekly_loss_pct == 5.5
+    assert config.monthly_loss_pct == 9.0
+    assert config.cooldown_days == 4
+    assert config.state_file == "tmp/risk_state.json"
+
     def test_csv_run_does_not_resolve_online_symbols_when_local_file_is_provided(
         self, tmp_path, monkeypatch
     ):

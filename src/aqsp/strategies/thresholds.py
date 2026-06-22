@@ -102,6 +102,30 @@ class RiskThresholds:
     warning_threshold_pct: float = 0.05
     trailing_stop_pct: float = 0.05
     enable_trailing_stop: bool = True
+    circuit_breaker_daily_loss_pct: float = 3.0
+    circuit_breaker_weekly_loss_pct: float = 6.0
+    circuit_breaker_monthly_loss_pct: float = 10.0
+    circuit_breaker_cooldown_days: int = 5
+    max_position_pct: float = 0.30
+    soft_stop_loss_pct: float = 0.03
+    trailing_stop_activation_pct: float = 0.05
+    max_holding_days: int = 10
+    profit_take_threshold_pct: float = 0.15
+    portfolio_daily_loss_pct: float = 0.02
+    portfolio_weekly_loss_pct: float = 0.05
+    portfolio_max_drawdown_pct: float = 0.10
+    max_positions: int = 8
+    max_single_position_pct: float = 0.30
+    max_sector_concentration: float = 0.40
+    max_correlation: float = 0.70
+    min_cash_reserve: float = 0.10
+    market_crash_threshold: float = -0.05
+    market_correction_threshold: float = -0.10
+    sector_panic_threshold: int = 5
+    halt_trigger_count: int = 3
+    auto_resume_days: int = 1
+    avg_volume_ratio_min: float = 0.7
+    north_flow_exit_threshold: float = -5000000000
 
 
 @dataclass(frozen=True)
@@ -230,6 +254,45 @@ class MeanReversionThresholds:
     rsi_weight: float = 0.45
     deviation_weight: float = 0.35
     volume_weight: float = 0.20
+
+
+@dataclass(frozen=True)
+class TripleRiseWeights:
+    triple_rise: float = 0.40
+    v_bottom: float = 0.35
+    volume_confirmation: float = 0.25
+
+
+@dataclass(frozen=True)
+class TripleRiseThresholds:
+    enabled: bool = True
+    lookback_days: int = 25
+    min_data_points: int = 20
+    v_bottom_lookback: int = 20
+    avg_rise_strong: float = 0.03
+    avg_rise_medium: float = 0.02
+    avg_rise_weak: float = 0.01
+    avg_rise_strong_score: float = 1.0
+    avg_rise_medium_score: float = 0.8
+    avg_rise_weak_score: float = 0.6
+    avg_rise_min_score: float = 0.4
+    v_bottom_edge_days: int = 3
+    v_bottom_strong_recovery: float = 0.10
+    v_bottom_medium_recovery: float = 0.05
+    v_bottom_weak_recovery: float = 0.02
+    v_bottom_strong_score: float = 1.0
+    v_bottom_medium_score: float = 0.7
+    v_bottom_weak_score: float = 0.4
+    v_bottom_min_score: float = 0.1
+    volume_recent_days: int = 3
+    volume_min_points: int = 5
+    volume_avg_window: int = 20
+    volume_strong_ratio: float = 1.3
+    volume_medium_ratio: float = 1.0
+    volume_strong_score: float = 1.0
+    volume_medium_score: float = 0.6
+    volume_price_up_score: float = 0.3
+    weights: TripleRiseWeights = field(default_factory=TripleRiseWeights)
 
 
 @dataclass(frozen=True)
@@ -400,6 +463,7 @@ class Thresholds:
     mean_reversion: MeanReversionThresholds = field(
         default_factory=MeanReversionThresholds
     )
+    triple_rise: TripleRiseThresholds = field(default_factory=TripleRiseThresholds)
     scoring: ScoringThresholds = field(default_factory=ScoringThresholds)
     morning_breakout: MorningBreakoutThresholds = field(
         default_factory=MorningBreakoutThresholds
@@ -474,6 +538,16 @@ def _parse_mean_reversion(data: dict) -> MeanReversionThresholds:
     return MeanReversionThresholds(**data)
 
 
+def _parse_triple_rise(data: dict) -> TripleRiseThresholds:
+    weights_data = data.pop("weights", {})
+    return TripleRiseThresholds(
+        **data,
+        weights=TripleRiseWeights(**weights_data)
+        if weights_data
+        else TripleRiseWeights(),
+    )
+
+
 _DEFAULT_REGIME_ADJUSTMENTS: Dict[str, float] = {
     "stable_bull": 1.1,
     "volatile_bull": 0.9,
@@ -528,6 +602,7 @@ def load_thresholds(filepath: str = None) -> Thresholds:
         regime=_parse_regime(data.get("regime", {})),
         volume=_parse_volume(data.get("volume", {})),
         mean_reversion=_parse_mean_reversion(data.get("mean_reversion", {})),
+        triple_rise=_parse_triple_rise(data.get("triple_rise", {})),
         scoring=ScoringThresholds(**data.get("scoring", {})),
         morning_breakout=_parse_morning_breakout(data.get("morning_breakout", {})),
         closing_premium=_parse_closing_premium(data.get("closing_premium", {})),

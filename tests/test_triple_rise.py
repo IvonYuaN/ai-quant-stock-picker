@@ -6,7 +6,11 @@ import pytest
 
 from aqsp.strategies.triple_rise import TripleRiseStrategy
 from aqsp.strategies.base import StrategyConfig
-from aqsp.strategies.thresholds import Thresholds
+from aqsp.strategies.thresholds import (
+    Thresholds,
+    TripleRiseThresholds,
+    TripleRiseWeights,
+)
 
 
 @pytest.fixture
@@ -119,3 +123,49 @@ def test_calculate_score_multiple(strategy):
     data = {"SYM1": _make_df(25), "SYM2": _make_df(25)}
     scores = strategy.calculate_score(data)
     assert set(scores.keys()) == {"SYM1", "SYM2"}
+
+
+def test_strategy_uses_triple_rise_enabled_threshold() -> None:
+    strategy = TripleRiseStrategy(
+        StrategyConfig(name="triple_rise"),
+        thresholds=Thresholds(triple_rise=TripleRiseThresholds(enabled=False)),
+    )
+
+    assert (
+        strategy._calculate_single_score(_make_df(25, base_price=10.0, trend=0.3))
+        == 0.0
+    )
+
+
+def test_strategy_uses_configured_triple_rise_lookback_threshold() -> None:
+    strategy = TripleRiseStrategy(
+        StrategyConfig(name="triple_rise"),
+        thresholds=Thresholds(triple_rise=TripleRiseThresholds(min_data_points=30)),
+    )
+
+    assert (
+        strategy._calculate_single_score(_make_df(25, base_price=10.0, trend=0.3))
+        == 0.0
+    )
+
+
+def test_strategy_uses_configured_triple_rise_weights() -> None:
+    df = _make_df(25, base_price=10.0, trend=0.3)
+    baseline = TripleRiseStrategy(
+        StrategyConfig(name="triple_rise"),
+        thresholds=Thresholds(),
+    )._calculate_single_score(df)
+    no_price_pattern_weight = TripleRiseStrategy(
+        StrategyConfig(name="triple_rise"),
+        thresholds=Thresholds(
+            triple_rise=TripleRiseThresholds(
+                weights=TripleRiseWeights(
+                    triple_rise=0.0,
+                    v_bottom=0.0,
+                    volume_confirmation=1.0,
+                )
+            )
+        ),
+    )._calculate_single_score(df)
+
+    assert no_price_pattern_weight != baseline

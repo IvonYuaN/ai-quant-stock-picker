@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Optional
 
 from aqsp.core.time import now_shanghai
+from aqsp.strategies.thresholds import Thresholds, load_thresholds
 
 
 @dataclass(frozen=True)
@@ -16,6 +17,22 @@ class CircuitBreakerConfig:
     monthly_loss_pct: float = 10.0
     cooldown_days: int = 5
     state_file: str = "data/risk_state.json"
+
+    @classmethod
+    def from_thresholds(
+        cls,
+        thresholds: Thresholds | None = None,
+        *,
+        state_file: str = "data/risk_state.json",
+    ) -> "CircuitBreakerConfig":
+        risk = (thresholds or load_thresholds()).risk
+        return cls(
+            daily_loss_pct=float(risk.circuit_breaker_daily_loss_pct),
+            weekly_loss_pct=float(risk.circuit_breaker_weekly_loss_pct),
+            monthly_loss_pct=float(risk.circuit_breaker_monthly_loss_pct),
+            cooldown_days=int(risk.circuit_breaker_cooldown_days),
+            state_file=state_file,
+        )
 
 
 @dataclass(frozen=True)
@@ -31,7 +48,9 @@ class BreakerStatus:
 
 @dataclass
 class CircuitBreaker:
-    config: CircuitBreakerConfig = field(default_factory=CircuitBreakerConfig)
+    config: CircuitBreakerConfig = field(
+        default_factory=CircuitBreakerConfig.from_thresholds
+    )
     _cooldown_until: Optional[date] = field(default=None, repr=False)
     _last_triggered_date: Optional[date] = field(default=None, repr=False)
 
