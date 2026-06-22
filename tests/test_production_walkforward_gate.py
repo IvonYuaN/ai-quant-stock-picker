@@ -99,10 +99,11 @@ def test_production_walkforward_gate_passes_raw_db_to_child_process(
         gate, "build_walkforward_command", lambda _args: ["python", "-m", "aqsp"]
     )
 
-    def fake_run(command, *, check, env):
+    def fake_run(command, *, check, env, timeout):
         seen["command"] = command
         seen["check"] = check
         seen["db"] = env.get("AQSP_SQLITE_DB_PATH")
+        seen["timeout"] = timeout
         return type("Result", (), {"returncode": 0})()
 
     monkeypatch.setattr(gate.subprocess, "run", fake_run)
@@ -113,4 +114,50 @@ def test_production_walkforward_gate_passes_raw_db_to_child_process(
     )
 
     assert gate.main() == 0
-    assert seen == {"command": ["python", "-m", "aqsp"], "check": False, "db": str(db)}
+    assert seen == {
+        "command": ["python", "-m", "aqsp"],
+        "check": False,
+        "db": str(db),
+        "timeout": 7200,
+    }
+
+
+def test_production_walkforward_gate_returns_timeout_code(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
+    import subprocess
+    import scripts.run_production_walkforward_gate as gate
+
+    db = tmp_path / "raw.db"
+    db.write_text("", encoding="utf-8")
+    monkeypatch.setattr(
+        gate,
+        "inspect_raw_coverage",
+        lambda *_args, **_kwargs: gate.CoverageSummary(
+            stock_symbols=5533,
+            covered_symbols=3200,
+            rows=1,
+            first_trade_date="20180102",
+            last_trade_date="20241231",
+        ),
+    )
+    monkeypatch.setattr(gate, "build_walkforward_command", lambda _args: ["python"])
+
+    def fake_run(*_args, **_kwargs):
+        raise subprocess.TimeoutExpired(cmd=["python"], timeout=1)
+
+    monkeypatch.setattr(gate.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        gate.sys,
+        "argv",
+        [
+            "run_production_walkforward_gate.py",
+            "--db",
+            str(db),
+            "--timeout-seconds",
+            "1",
+        ],
+    )
+
+    assert gate.main() == 124
+    assert "production walk-forward timed out" in capsys.readouterr().out

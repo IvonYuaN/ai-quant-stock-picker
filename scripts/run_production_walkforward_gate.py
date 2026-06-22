@@ -124,6 +124,12 @@ def main() -> int:
         "--cache-path", default="data/walkforward_raw_production_cache.db"
     )
     parser.add_argument("--log", default="logs/walkforward-raw-production.log")
+    parser.add_argument(
+        "--timeout-seconds",
+        type=int,
+        default=7200,
+        help="stop the production walk-forward run if it hangs during data loading/backtest",
+    )
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 
@@ -155,7 +161,20 @@ def main() -> int:
         return 0
     env = os.environ.copy()
     env["AQSP_SQLITE_DB_PATH"] = str(args.db)
-    return subprocess.run(command, check=False, env=env).returncode
+    try:
+        return subprocess.run(
+            command,
+            check=False,
+            env=env,
+            timeout=args.timeout_seconds if args.timeout_seconds > 0 else None,
+        ).returncode
+    except subprocess.TimeoutExpired:
+        print(
+            "BLOCK: production walk-forward timed out; "
+            f"timeout_seconds={args.timeout_seconds}. "
+            "Reduce the covered symbol batch or inspect sqlite fetch performance."
+        )
+        return 124
 
 
 if __name__ == "__main__":
