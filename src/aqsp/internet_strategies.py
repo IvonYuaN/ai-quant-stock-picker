@@ -5,7 +5,12 @@ from dataclasses import dataclass
 import pandas as pd
 
 from aqsp.strategies.n_rebound import detect_n_rebound_signal
-from aqsp.strategies.thresholds import InternetStrategyThresholds, load_thresholds
+from aqsp.strategies.thresholds import (
+    InternetStrategyThresholds,
+    NReboundThresholds,
+    Thresholds,
+    load_thresholds,
+)
 
 
 @dataclass(frozen=True)
@@ -28,9 +33,16 @@ STRATEGY_SOURCES = {
 
 def evaluate_strategy_signals(
     df: pd.DataFrame,
-    thresholds: InternetStrategyThresholds | None = None,
+    thresholds: InternetStrategyThresholds | Thresholds | None = None,
 ) -> list[StrategySignal]:
-    cfg = thresholds or load_thresholds().internet_strategy
+    threshold_snapshot = (
+        thresholds if isinstance(thresholds, Thresholds) else load_thresholds()
+    )
+    cfg = (
+        thresholds
+        if isinstance(thresholds, InternetStrategyThresholds)
+        else threshold_snapshot.internet_strategy
+    )
     row = df.iloc[-1]
     prev = df.iloc[-2]
     signals: list[StrategySignal] = []
@@ -121,15 +133,16 @@ def evaluate_strategy_signals(
             )
         )
 
-    n_rebound_signal = _evaluate_n_rebound(df)
+    n_rebound_signal = _evaluate_n_rebound(df, thresholds=threshold_snapshot.n_rebound)
     if n_rebound_signal is not None:
         signals.append(n_rebound_signal)
 
     return signals
 
 
-def _evaluate_n_rebound(df: pd.DataFrame) -> StrategySignal | None:
-    thresholds = load_thresholds().n_rebound
+def _evaluate_n_rebound(
+    df: pd.DataFrame, *, thresholds: NReboundThresholds
+) -> StrategySignal | None:
     signal = detect_n_rebound_signal(df, thresholds=thresholds)
     if signal is None:
         return None

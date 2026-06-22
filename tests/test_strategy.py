@@ -4,7 +4,12 @@ import pandas as pd
 
 from aqsp.models import ScreeningConfig
 from aqsp.internet_strategies import evaluate_strategy_signals
-from aqsp.strategies.thresholds import InternetStrategyThresholds, ScoringThresholds
+from aqsp.strategies.thresholds import (
+    InternetStrategyThresholds,
+    NReboundThresholds,
+    ScoringThresholds,
+    Thresholds,
+)
 from aqsp.strategy import _entry_type, score_symbol, screen_universe
 
 
@@ -33,6 +38,75 @@ def _frame(symbol: str, drift: float, volume_boost: float = 1.0) -> pd.DataFrame
             }
         )
     return pd.DataFrame(rows)
+
+
+def _n_rebound_frame() -> pd.DataFrame:
+    base_closes = [9.7 + i * 0.015 for i in range(20)]
+    pattern_closes = [
+        10.0,
+        10.05,
+        10.08,
+        10.12,
+        10.18,
+        10.22,
+        10.28,
+        10.35,
+        10.42,
+        10.48,
+        10.55,
+        10.65,
+        11.72,
+        11.45,
+        11.34,
+        11.33,
+        11.34,
+        11.35,
+        11.35,
+        11.34,
+        11.34,
+        11.34,
+    ]
+    closes = base_closes + pattern_closes
+    dates = pd.date_range("2026-01-01", periods=len(closes), freq="D")
+    base_volumes = [1_000_000] * len(base_closes)
+    pattern_volumes = [
+        1_000_000,
+        1_010_000,
+        1_000_000,
+        1_020_000,
+        1_030_000,
+        1_040_000,
+        1_050_000,
+        1_060_000,
+        1_050_000,
+        1_040_000,
+        1_020_000,
+        1_100_000,
+        2_400_000,
+        1_100_000,
+        980_000,
+        920_000,
+        900_000,
+        880_000,
+        850_000,
+        820_000,
+        800_000,
+        780_000,
+    ]
+    volumes = base_volumes + pattern_volumes
+    return pd.DataFrame(
+        {
+            "date": dates,
+            "symbol": "NREB",
+            "name": "NREB",
+            "open": [price * 0.99 for price in closes],
+            "high": [price * 1.01 for price in closes],
+            "low": [price * 0.985 for price in closes],
+            "close": closes,
+            "volume": volumes,
+            "amount": [price * volume * 100 for price, volume in zip(closes, volumes)],
+        }
+    )
 
 
 def test_screen_prefers_strong_trend() -> None:
@@ -154,72 +228,7 @@ def test_screen_filters_price_outside_bounds() -> None:
 
 
 def test_screen_detects_n_rebound_pattern() -> None:
-    base_closes = [9.7 + i * 0.015 for i in range(20)]
-    pattern_closes = [
-        10.0,
-        10.05,
-        10.08,
-        10.12,
-        10.18,
-        10.22,
-        10.28,
-        10.35,
-        10.42,
-        10.48,
-        10.55,
-        10.65,
-        11.72,
-        11.45,
-        11.34,
-        11.33,
-        11.34,
-        11.35,
-        11.35,
-        11.34,
-        11.34,
-        11.34,
-    ]
-    closes = base_closes + pattern_closes
-    dates = pd.date_range("2026-01-01", periods=len(closes), freq="D")
-    base_volumes = [1_000_000] * len(base_closes)
-    pattern_volumes = [
-        1_000_000,
-        1_010_000,
-        1_000_000,
-        1_020_000,
-        1_030_000,
-        1_040_000,
-        1_050_000,
-        1_060_000,
-        1_050_000,
-        1_040_000,
-        1_020_000,
-        1_100_000,
-        2_400_000,
-        1_100_000,
-        980_000,
-        920_000,
-        900_000,
-        880_000,
-        850_000,
-        820_000,
-        800_000,
-        780_000,
-    ]
-    volumes = base_volumes + pattern_volumes
-    frame = pd.DataFrame(
-        {
-            "date": dates,
-            "symbol": "NREB",
-            "name": "NREB",
-            "open": [price * 0.99 for price in closes],
-            "high": [price * 1.01 for price in closes],
-            "low": [price * 0.985 for price in closes],
-            "close": closes,
-            "volume": volumes,
-            "amount": [price * volume * 100 for price, volume in zip(closes, volumes)],
-        }
-    )
+    frame = _n_rebound_frame()
 
     picks = screen_universe(
         {"NREB": frame},
@@ -229,6 +238,25 @@ def test_screen_detects_n_rebound_pattern() -> None:
     assert picks
     assert picks[0].symbol == "NREB"
     assert "n_rebound" in picks[0].strategies
+
+
+def test_score_symbol_uses_single_threshold_snapshot_for_n_rebound() -> None:
+    frame = _n_rebound_frame()
+    config = ScreeningConfig(min_avg_amount=1, min_bars=20)
+
+    enabled = score_symbol("NREB", frame, config, ScoringThresholds(), Thresholds())
+    disabled = score_symbol(
+        "NREB",
+        frame,
+        config,
+        ScoringThresholds(),
+        Thresholds(n_rebound=NReboundThresholds(enabled=False)),
+    )
+
+    assert enabled is not None
+    assert disabled is not None
+    assert "n_rebound" in enabled.strategies
+    assert "n_rebound" not in disabled.strategies
 
 
 def test_screen_universe_skips_invalid_frames() -> None:

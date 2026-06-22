@@ -19,13 +19,14 @@ from aqsp.ledger.runtime import count_independent_signal_days
 from aqsp.utils.env import read_env_value
 from aqsp.walkforward_gate import (
     MAX_GATE_AGE_DAYS,
+    MIN_PRODUCTION_GATE_SYMBOLS,
     validate_walkforward_gate_payload,
+    validate_walkforward_market_coverage,
 )
 
 
 MIN_INDEPENDENT_SIGNAL_DAYS = 30
 MIN_SUCCESSFUL_RUN_DAYS = 5
-MIN_PRODUCTION_GATE_SYMBOLS = 3000
 
 
 @dataclass(frozen=True)
@@ -185,18 +186,17 @@ def _check_walkforward_market_coverage(gate_path: Path) -> ReadinessFinding:
     gate = _read_json(gate_path)
     if not gate:
         return ReadinessFinding("walkforward_market_coverage", False, "gate missing")
-    raw_count = gate.get("effective_symbols")
-    if not isinstance(raw_count, int) or isinstance(raw_count, bool):
+    validation = validate_walkforward_market_coverage(gate)
+    if validation.effective_symbols is None:
         return ReadinessFinding(
             "walkforward_market_coverage",
             False,
             "effective_symbols missing; production short-line gate requires full-market coverage",
         )
-    ok = raw_count >= MIN_PRODUCTION_GATE_SYMBOLS
-    detail = f"{raw_count}/{MIN_PRODUCTION_GATE_SYMBOLS} effective symbols"
-    if not ok:
+    detail = validation.detail
+    if not validation.ok:
         detail += "; 300-symbol quick gates are smoke tests only"
-    return ReadinessFinding("walkforward_market_coverage", ok, detail)
+    return ReadinessFinding("walkforward_market_coverage", validation.ok, detail)
 
 
 def _check_runtime_universe_cap(root: Path) -> ReadinessFinding:

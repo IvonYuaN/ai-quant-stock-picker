@@ -24,8 +24,8 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from aqsp.data.sqlite_db_source import SqliteDbSource
+from aqsp.walkforward_gate import MIN_PRODUCTION_GATE_SYMBOLS
 
-MIN_PRODUCTION_GATE_SYMBOLS = 3000
 DEFAULT_RAW_DB = Path("/opt/market-data/astocks_raw.db")
 DEFAULT_START = "2018-01-01"
 DEFAULT_END = "2024-12-31"

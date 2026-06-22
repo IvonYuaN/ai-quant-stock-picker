@@ -73,11 +73,16 @@ def send_alerts(results: list[MonitorResult]) -> None:
     fingerprint = _monitor_alert_fingerprint(triggered)
     date_key = now_shanghai().date().isoformat()
     state_path = _monitor_notify_state_path()
-    if not _reserve_monitor_alert(
-        state_path=state_path,
-        fingerprint=fingerprint,
-        date_key=date_key,
-    ):
+    try:
+        reserved = _reserve_monitor_alert(
+            state_path=state_path,
+            fingerprint=fingerprint,
+            date_key=date_key,
+        )
+    except OSError as exc:
+        print(f"monitor notify: state write failed; fail closed: {exc}")
+        return
+    if not reserved:
         print("monitor notify: skipped duplicate critical alert")
         return
 
@@ -99,7 +104,11 @@ def send_alerts(results: list[MonitorResult]) -> None:
 
 def _monitor_notify_state_path() -> Path:
     raw = os.getenv("AQSP_MONITOR_NOTIFY_STATE_PATH", "data/monitor_notify_state.json")
-    return Path(raw)
+    path = Path(raw).expanduser()
+    if path.is_absolute():
+        return path
+    root = Path(os.getenv("AQSP_PROJECT_ROOT", Path(__file__).resolve().parents[3]))
+    return root / path
 
 
 def _monitor_alert_fingerprint(results: list[MonitorResult]) -> str:
@@ -153,6 +162,7 @@ def _mark_monitor_alert_sent(
 def _write_monitor_notify_state(
     *, state_path: Path, fingerprint: str, date_key: str, status: str
 ) -> None:
+    state_path.parent.mkdir(parents=True, exist_ok=True)
     atomic_write_text(
         state_path,
         json.dumps(

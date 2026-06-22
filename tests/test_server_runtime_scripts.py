@@ -234,7 +234,7 @@ def test_production_walkforward_gate_wrapper_requires_full_market_raw_coverage()
         PROJECT_ROOT / "scripts" / "run_production_walkforward_gate.py"
     ).read_text(encoding="utf-8")
 
-    assert "MIN_PRODUCTION_GATE_SYMBOLS = 3000" in script
+    assert "from aqsp.walkforward_gate import MIN_PRODUCTION_GATE_SYMBOLS" in script
     assert "production gate requires raw sqlite db" in script
     assert "--pool" in script
     assert "all" in script
@@ -346,7 +346,7 @@ def test_production_walkforward_gate_wrapper_suggests_gap_filling_raw_backfill()
         PROJECT_ROOT / "scripts" / "run_production_walkforward_gate.py"
     ).read_text(encoding="utf-8")
 
-    assert "MIN_PRODUCTION_GATE_SYMBOLS = 3000" in script
+    assert "from aqsp.walkforward_gate import MIN_PRODUCTION_GATE_SYMBOLS" in script
     assert "--pool" in script
     assert '"all"' in script
     assert "--fill-history-gaps --limit 0" in script

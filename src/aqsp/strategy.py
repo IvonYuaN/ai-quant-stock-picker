@@ -13,6 +13,7 @@ from aqsp.models import PickResult, ScreeningConfig
 from aqsp.strategies.thresholds import (
     InternetStrategyThresholds,
     ScoringThresholds,
+    Thresholds,
     load_thresholds,
 )
 
@@ -25,7 +26,6 @@ def screen_universe(
     """Screen candidate frames into ranked paper-trading picks."""
     thresholds = load_thresholds()
     scoring = thresholds.scoring
-    internet_strategy = thresholds.internet_strategy
     picks: list[PickResult] = []
     validator = DataValidator()
     tradability_filter = TradabilityFilter()
@@ -74,7 +74,7 @@ def screen_universe(
     for symbol in filtered_symbols:
         frame = validated_frames[symbol]
         try:
-            result = score_symbol(symbol, frame, config, scoring, internet_strategy)
+            result = score_symbol(symbol, frame, config, scoring, thresholds)
         except (ValueError, IndexError, KeyError, TypeError) as exc:
             _logger.warning("score_symbol %s 异常，已跳过: %s", symbol, exc)
             continue
@@ -88,7 +88,7 @@ def score_symbol(
     frame: pd.DataFrame,
     config: ScreeningConfig,
     scoring: ScoringThresholds,
-    internet_strategy: InternetStrategyThresholds | None = None,
+    internet_strategy: InternetStrategyThresholds | Thresholds | None = None,
 ) -> PickResult | None:
     df = enrich_indicators(frame)
     if len(df) < config.min_bars:

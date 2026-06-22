@@ -108,6 +108,7 @@ from aqsp.walkforward_gate import (
     WalkForwardGateValidation,
     build_walkforward_gate_payload,
     validate_walkforward_gate_payload,
+    validate_walkforward_market_coverage,
 )
 from aqsp.briefing.debate import (
     AShareDebateCoordinator,
@@ -200,7 +201,6 @@ HELDOUT_TRAIN_CUTOFF = "2024-12-31"
 # 宪法 §1.3 #12/#14：双门 gate 的 sidecar 文件
 WALKFORWARD_GATE_PATH = "data/walkforward_gate.json"
 GATE_NOTIFY_STATE_PATH = "data/gate_notify_state.json"
-MIN_PRODUCTION_GATE_SYMBOLS = 3000
 NOTIFY_STATE_PATH = "data/notify_state.json"
 # 冷启动期最低独立信号日。宪法 §1.3 #7/#14 明确要求 30 个独立信号日。
 # 可用环境变量 AQSP_COLD_START_MIN_DAYS 覆盖（仅供测试加速，生产须为 30）。
@@ -2224,12 +2224,13 @@ def _check_notification_gate(
 
 
 def _notification_gate_market_coverage_reasons(gate: dict[str, Any]) -> list[str]:
-    raw_count = gate.get("effective_symbols")
-    if not isinstance(raw_count, int) or isinstance(raw_count, bool):
+    validation = validate_walkforward_market_coverage(gate)
+    if validation.effective_symbols is None:
         return ["双门全市场覆盖缺失: effective_symbols missing"]
-    if raw_count < MIN_PRODUCTION_GATE_SYMBOLS:
+    if not validation.ok:
         return [
-            f"双门全市场覆盖不足: {raw_count}/{MIN_PRODUCTION_GATE_SYMBOLS} 个有效标的"
+            "双门全市场覆盖不足: "
+            f"{validation.effective_symbols}/{validation.min_symbols} 个有效标的"
         ]
     return []
 

@@ -9,7 +9,7 @@ import pytest
 import yaml
 
 from aqsp.monitor.checker import MonitorChecker, MonitorResult, MonitorConfig
-from aqsp.monitor.notifier import format_alert, send_alerts
+from aqsp.monitor.notifier import format_alert, send_alerts, _monitor_notify_state_path
 
 
 @pytest.fixture
@@ -291,6 +291,43 @@ class TestNotifier:
             send_alerts(sample_results)
 
         assert mock_notify.call_count == 1
+        assert "skipped duplicate critical alert" in capsys.readouterr().out
+
+    def test_monitor_notify_state_path_uses_project_root_when_relative(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        monkeypatch.setenv("AQSP_PROJECT_ROOT", str(tmp_path))
+        monkeypatch.setenv(
+            "AQSP_MONITOR_NOTIFY_STATE_PATH", "data/monitor_notify_state.json"
+        )
+
+        assert _monitor_notify_state_path() == (
+            tmp_path / "data/monitor_notify_state.json"
+        )
+
+    def test_send_alerts_dedupes_across_cwd_changes(
+        self, sample_results: list[MonitorResult], tmp_path: Path, monkeypatch, capsys
+    ) -> None:
+        monkeypatch.setenv("AQSP_PROJECT_ROOT", str(tmp_path))
+        monkeypatch.setenv(
+            "AQSP_MONITOR_NOTIFY_STATE_PATH", "data/monitor_notify_state.json"
+        )
+        first_cwd = tmp_path / "first"
+        second_cwd = tmp_path / "second"
+        first_cwd.mkdir()
+        second_cwd.mkdir()
+
+        with patch("aqsp.monitor.notifier.notify_markdown") as mock_notify:
+            mock_notify.return_value = [
+                MagicMock(channel="serverchan", ok=True, detail="HTTP 200")
+            ]
+            monkeypatch.chdir(first_cwd)
+            send_alerts(sample_results)
+            monkeypatch.chdir(second_cwd)
+            send_alerts(sample_results)
+
+        assert mock_notify.call_count == 1
+        assert (tmp_path / "data/monitor_notify_state.json").exists()
         assert "skipped duplicate critical alert" in capsys.readouterr().out
 
     def test_send_alerts_reserves_before_delivery(

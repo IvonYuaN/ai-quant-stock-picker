@@ -9,6 +9,7 @@ from typing import Mapping
 MIN_DSR = 1.0
 MAX_PBO = 0.5
 MAX_GATE_AGE_DAYS = 35
+MIN_PRODUCTION_GATE_SYMBOLS = 3000
 
 
 @dataclass(frozen=True)
@@ -24,6 +25,15 @@ class WalkForwardGateValidation:
     pbo_valid: bool | None
     both_pass: bool | None
     data_end: date | None
+    blockers: tuple[str, ...]
+    detail: str
+
+
+@dataclass(frozen=True)
+class WalkForwardMarketCoverageValidation:
+    ok: bool
+    effective_symbols: int | None
+    min_symbols: int
     blockers: tuple[str, ...]
     detail: str
 
@@ -56,6 +66,33 @@ def build_walkforward_gate_payload(
     if metadata:
         payload.update({str(key): value for key, value in metadata.items()})
     return payload
+
+
+def validate_walkforward_market_coverage(
+    payload: Mapping[str, object],
+    *,
+    min_symbols: int = MIN_PRODUCTION_GATE_SYMBOLS,
+) -> WalkForwardMarketCoverageValidation:
+    raw_count = payload.get("effective_symbols")
+    blockers: list[str] = []
+    effective_symbols = raw_count if isinstance(raw_count, int) else None
+    if isinstance(raw_count, bool) or not isinstance(raw_count, int):
+        effective_symbols = None
+        blockers.append("effective_symbols missing/invalid")
+    elif raw_count < min_symbols:
+        blockers.append(f"effective_symbols={raw_count} < {min_symbols}")
+
+    if effective_symbols is None:
+        detail = f"effective_symbols invalid; require >= {min_symbols}"
+    else:
+        detail = f"{effective_symbols}/{min_symbols} effective symbols"
+    return WalkForwardMarketCoverageValidation(
+        ok=not blockers,
+        effective_symbols=effective_symbols,
+        min_symbols=min_symbols,
+        blockers=tuple(blockers),
+        detail=detail,
+    )
 
 
 def validate_walkforward_gate_payload(

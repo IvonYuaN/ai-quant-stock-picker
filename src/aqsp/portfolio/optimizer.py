@@ -6,6 +6,7 @@ from aqsp.core.types import PickResult
 from aqsp.portfolio.correlation import CorrelationResult
 from aqsp.portfolio.sector_check import ConcentrationResult
 from aqsp.ratings import is_tradable_rating
+from aqsp.strategies.thresholds import RiskThresholds
 
 
 @dataclass(frozen=True)
@@ -35,6 +36,7 @@ def optimize_portfolio_allocations(
     correlation_result: CorrelationResult | None = None,
     max_names: int = 5,
     max_single_weight: float = 0.20,
+    min_cash_reserve: float = 0.15,
 ) -> PortfolioOptimizationResult:
     tradable = [
         pick
@@ -55,6 +57,7 @@ def optimize_portfolio_allocations(
         decision_by_symbol=decision_by_symbol,
         concentration=concentration,
         correlation_result=correlation_result,
+        min_cash_reserve=min_cash_reserve,
     )
 
     raw_scores: dict[str, float] = {}
@@ -94,12 +97,32 @@ def optimize_portfolio_allocations(
     )
 
 
+def optimize_portfolio_allocations_from_risk(
+    picks: list[PickResult],
+    decision_by_symbol: dict[str, object],
+    *,
+    risk: RiskThresholds,
+    concentration: ConcentrationResult | None = None,
+    correlation_result: CorrelationResult | None = None,
+) -> PortfolioOptimizationResult:
+    return optimize_portfolio_allocations(
+        picks,
+        decision_by_symbol,
+        concentration=concentration,
+        correlation_result=correlation_result,
+        max_names=int(risk.max_positions),
+        max_single_weight=float(risk.max_single_position_pct),
+        min_cash_reserve=float(risk.min_cash_reserve),
+    )
+
+
 def _target_invested_ratio(
     tradable: list[PickResult],
     *,
     decision_by_symbol: dict[str, object],
     concentration: ConcentrationResult | None,
     correlation_result: CorrelationResult | None,
+    min_cash_reserve: float,
 ) -> float:
     top_score = tradable[0].score if tradable else 0.0
     strong_count = sum(1 for pick in tradable if pick.rating == "strong_buy_candidate")
@@ -111,8 +134,7 @@ def _target_invested_ratio(
     downgrade_count = sum(
         1
         for pick in tradable
-        if getattr(decision_by_symbol.get(pick.symbol), "action", "keep")
-        == "downgrade"
+        if getattr(decision_by_symbol.get(pick.symbol), "action", "keep") == "downgrade"
     )
 
     if top_score >= 75:
@@ -135,7 +157,9 @@ def _target_invested_ratio(
     if correlation_result is not None and correlation_result.avg_correlation >= 0.55:
         ratio -= 0.05
 
-    return max(0.35, min(0.85, round(ratio, 4)))
+    max_invested = max(0.0, min(1.0, 1.0 - min_cash_reserve))
+    floor = min(0.35, max_invested)
+    return max(floor, min(max_invested, round(ratio, 4)))
 
 
 def _raw_weight_score(pick: PickResult, decision_by_symbol: dict[str, object]) -> float:

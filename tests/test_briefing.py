@@ -882,7 +882,7 @@ class TestGenerateSmartSummary:
         briefing = gen.generate(picks=[pick], frames={})
         main_chain_sec = next(s for s in briefing.sections if s.title == "主链总览")
         assert "比例参考" in main_chain_sec.content
-        assert "300750 宁德时代: 20%" in main_chain_sec.content
+        assert "300750 宁德时代: 30%" in main_chain_sec.content
         assert "强信号优先分配" in main_chain_sec.content
         assert "现金留存" in main_chain_sec.content
 
@@ -902,9 +902,9 @@ class TestGenerateSmartSummary:
             "- 首个纸面理由: 300750 宁德时代 | 主链评分 72.0；强信号优先分配" in summary
         )
         assert (
-            "- 比例参考: 300750 宁德时代 20% | 主链评分 72.0；强信号优先分配" in summary
+            "- 比例参考: 300750 宁德时代 30% | 主链评分 72.0；强信号优先分配" in summary
         )
-        assert "- 跟踪约束: 单票上限 20%" in summary
+        assert "- 跟踪约束: 单票上限 30%" in summary
 
     def test_main_chain_section_renders_strategy_mix_guidance(self):
         gen = BriefingGenerator()
@@ -917,8 +917,8 @@ class TestGenerateSmartSummary:
         briefing = gen.generate(picks=[pick], frames={}, regime="stable_bull")
         main_chain_sec = next(s for s in briefing.sections if s.title == "主链总览")
         assert "当前市况: 稳定上涨" in main_chain_sec.content
-        assert "现在偏向: 进攻牛市" in main_chain_sec.content
-        assert "更偏好这些方向: 动量趋势、涨停接力" in main_chain_sec.content
+        assert "现在偏向: 配置化策略权重" in main_chain_sec.content
+        assert "更偏好这些方向: 动量趋势、质量稳健" in main_chain_sec.content
 
     def test_debate_results_lower_adjustment(self):
         from aqsp.briefing.debate import DebateResult

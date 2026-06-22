@@ -5,6 +5,7 @@ from aqsp.portfolio.correlation import CorrelationResult
 from aqsp.portfolio.manager import apply_portfolio_manager
 from aqsp.portfolio.optimizer import _cap_weights
 from aqsp.portfolio.sector_check import ConcentrationResult, SectorConcentration
+from aqsp.strategies.thresholds import RiskThresholds, Thresholds
 
 
 def _pick(
@@ -89,17 +90,63 @@ def test_apply_portfolio_manager_promotes_when_debate_supports_buy_candidate() -
     assert bundle.summary.promote_count == 1
     assert bundle.summary.top_focus == ("300750",)
     assert bundle.summary.allocations[0].symbol == "300750"
-    assert 0 < bundle.summary.allocations[0].weight <= 0.20
+    assert 0 < bundle.summary.allocations[0].weight <= 0.30
     assert bundle.summary.regime_label == "稳定上涨"
-    assert bundle.summary.strategy_mix_name == "进攻牛市"
+    assert bundle.summary.strategy_mix_name == "配置化策略权重"
     assert "动量趋势" in bundle.summary.strategy_focus
     assert any(
-        strategy_id == "momentum" and weight > 0
+        strategy_id == "momentum" and weight == 1.2
         for strategy_id, weight in bundle.summary.strategy_weights
     )
 
 
-def test_apply_portfolio_manager_excludes_downgraded_tradable_from_allocations() -> None:
+def test_apply_portfolio_manager_uses_configured_correlation_threshold() -> None:
+    picks = [_pick("600036", 70), _pick("000001", 60)]
+    correlation = CorrelationResult(
+        matrix={
+            "600036": {"600036": 1.0, "000001": 0.82},
+            "000001": {"600036": 0.82, "000001": 1.0},
+        },
+        high_corr_pairs=[("000001", "600036", 0.82)],
+        avg_correlation=0.82,
+    )
+
+    loose = apply_portfolio_manager(
+        picks,
+        correlation_result=correlation,
+        thresholds=Thresholds(risk=RiskThresholds(max_correlation=0.9)),
+    )
+    strict = apply_portfolio_manager(
+        picks,
+        correlation_result=correlation,
+        thresholds=Thresholds(risk=RiskThresholds(max_correlation=0.7)),
+    )
+
+    assert {item.action for item in loose.decisions} == {"keep"}
+    assert any(item.action == "downgrade" for item in strict.decisions)
+
+
+def test_apply_portfolio_manager_uses_configured_allocation_limits() -> None:
+    picks = [_pick("300750", 85, recommended_adjustment="raise")]
+
+    bundle = apply_portfolio_manager(
+        picks,
+        thresholds=Thresholds(
+            risk=RiskThresholds(
+                max_positions=1,
+                max_single_position_pct=0.12,
+                min_cash_reserve=0.50,
+            )
+        ),
+    )
+
+    assert bundle.summary.allocations[0].weight <= 0.12
+    assert bundle.summary.cash_reserve >= 0.50
+
+
+def test_apply_portfolio_manager_excludes_downgraded_tradable_from_allocations() -> (
+    None
+):
     picks = [_pick("000001", 85)]
     concentration = ConcentrationResult(
         total_candidates=1,
@@ -172,7 +219,9 @@ def test_apply_portfolio_manager_uses_runtime_sector_map_for_concentration() -> 
     assert any("银行暴露" in reason for reason in decisions["000021"].reasons)
 
 
-def test_apply_portfolio_manager_builds_watch_reviews_with_priority_and_window() -> None:
+def test_apply_portfolio_manager_builds_watch_reviews_with_priority_and_window() -> (
+    None
+):
     picks = [
         _pick("600036", 42, recommended_adjustment="lower"),
         _pick("000001", 38),

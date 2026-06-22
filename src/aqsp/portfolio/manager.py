@@ -9,11 +9,11 @@ from aqsp.presentation import format_symbol_name
 from aqsp.portfolio.correlation import CorrelationResult
 from aqsp.portfolio.optimizer import (
     PortfolioAllocation,
-    optimize_portfolio_allocations,
+    optimize_portfolio_allocations_from_risk,
 )
 from aqsp.portfolio.sector_check import ConcentrationResult, get_sector
 from aqsp.ratings import is_tradable_rating
-from aqsp.strategies.adaptive_evolution import StrategyMixAdaptor
+from aqsp.strategies.thresholds import Thresholds, load_thresholds
 
 _logger = logging.getLogger(__name__)
 
@@ -117,19 +117,24 @@ def _resolve_strategy_label(strategy_id: str) -> str:
 
 
 def _build_strategy_mix_summary(
-    regime: str,
+    regime: str, *, thresholds: Thresholds
 ) -> tuple[str, str, str, tuple[str, ...], tuple[tuple[str, float], ...]]:
     if not regime:
         return "", "", "", (), ()
-    mix = StrategyMixAdaptor().select_mix(regime)
-    weights = tuple(
-        (strategy_id, float(weight)) for strategy_id, weight in mix.weights.items()
-    )
-    focus = tuple(_resolve_strategy_label(item) for item in mix.enabled_strategies)
+    regime_weights = thresholds.regime.strategy_weights.get(regime)
+    if regime_weights is None:
+        return _resolve_regime_label(regime), "", "", (), ()
+    raw_weights = {
+        strategy_id: float(weight)
+        for strategy_id, weight in regime_weights.__dict__.items()
+        if float(weight) > 0
+    }
+    weights = tuple(raw_weights.items())
+    focus = tuple(_resolve_strategy_label(item) for item in raw_weights)
     return (
         _resolve_regime_label(regime),
-        mix.name,
-        mix.description,
+        "配置化策略权重",
+        "来自 thresholds.yaml 的 regime.strategy_weights",
         focus,
         weights,
     )
@@ -245,7 +250,9 @@ def summarize_portfolio_decisions(
     regime: str = "",
     concentration: ConcentrationResult | None = None,
     correlation_result: CorrelationResult | None = None,
+    thresholds: Thresholds | None = None,
 ) -> PortfolioDecisionSummary:
+    current_thresholds = thresholds or load_thresholds()
     promote_count = sum(1 for item in decisions if item.action == "promote")
     downgrade_count = sum(1 for item in decisions if item.action == "downgrade")
     keep_count = sum(1 for item in decisions if item.action == "keep")
@@ -262,9 +269,10 @@ def summarize_portfolio_decisions(
         if pick.metrics.get("portfolio_action") == "downgrade" or pick.rating == "watch"
     )[:5]
     decision_by_symbol = {item.symbol: item for item in decisions}
-    optimization = optimize_portfolio_allocations(
+    optimization = optimize_portfolio_allocations_from_risk(
         picks,
         decision_by_symbol,
+        risk=current_thresholds.risk,
         concentration=concentration,
         correlation_result=correlation_result,
     )
@@ -274,7 +282,7 @@ def summarize_portfolio_decisions(
         strategy_mix_description,
         strategy_focus,
         strategy_weights,
-    ) = _build_strategy_mix_summary(regime)
+    ) = _build_strategy_mix_summary(regime, thresholds=current_thresholds)
     return PortfolioDecisionSummary(
         promote_count=promote_count,
         downgrade_count=downgrade_count,
@@ -303,7 +311,9 @@ def apply_portfolio_manager(
     correlation_result: CorrelationResult | None = None,
     sector_map: dict[str, str] | None = None,
     industry_map: dict[str, str] | None = None,
+    thresholds: Thresholds | None = None,
 ) -> PortfolioDecisionBundle:
+    current_thresholds = thresholds or load_thresholds()
     sector_map = sector_map or {}
     industry_map = industry_map or {}
     decisions: list[PortfolioDecision] = []
@@ -322,7 +332,7 @@ def apply_portfolio_manager(
         # 与评分无关。若直接降 right 会变成「按代码大小降级」，可能误降高分票。
         score_by_symbol = {p.symbol: p.score for p in picks}
         for left, right, corr in correlation_result.high_corr_pairs:
-            if corr >= 0.7:
+            if corr >= current_thresholds.risk.max_correlation:
                 left_score = score_by_symbol.get(left, 0.0)
                 right_score = score_by_symbol.get(right, 0.0)
                 # 降级评分较低的一只（相等时降 right，保持确定性）
@@ -420,5 +430,6 @@ def apply_portfolio_manager(
             regime=regime,
             concentration=concentration,
             correlation_result=correlation_result,
+            thresholds=current_thresholds,
         ),
     )
