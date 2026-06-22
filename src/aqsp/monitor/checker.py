@@ -9,6 +9,7 @@ from typing import Any, Literal
 import yaml
 
 from aqsp.core.time import today_shanghai
+from aqsp.data.trading_calendar import trading_day_lag
 from aqsp.ledger.base import read_ledger
 
 
@@ -138,18 +139,18 @@ class MonitorChecker:
 
             latest_date = date.fromisoformat(row[0])
             today = today_shanghai()
-            lag_days = (today - latest_date).days
+            lag_days = trading_day_lag(latest_date, today)
 
             if lag_days > max_lag_days:
                 return MonitorResult(
                     name="stale_data",
                     triggered=True,
                     severity="critical",
-                    message=f"数据滞后 {lag_days} 天，超过阈值 {max_lag_days} 天",
+                    message=f"数据滞后 {lag_days} 个交易日，超过阈值 {max_lag_days}",
                     details={
                         "latest_date": latest_date.isoformat(),
-                        "lag_days": lag_days,
-                        "max_lag_days": max_lag_days,
+                        "trading_lag_days": lag_days,
+                        "max_trading_lag_days": max_lag_days,
                     },
                 )
 
@@ -157,8 +158,11 @@ class MonitorChecker:
                 name="stale_data",
                 triggered=False,
                 severity="critical",
-                message=f"数据新鲜度正常，滞后 {lag_days} 天",
-                details={"latest_date": latest_date.isoformat(), "lag_days": lag_days},
+                message=f"数据新鲜度正常，滞后 {lag_days} 个交易日",
+                details={
+                    "latest_date": latest_date.isoformat(),
+                    "trading_lag_days": lag_days,
+                },
             )
 
         except Exception as e:

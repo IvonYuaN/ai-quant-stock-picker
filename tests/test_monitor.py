@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import date
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
@@ -107,6 +108,26 @@ class TestMonitorChecker:
             assert result.name == "stale_data"
             assert result.severity == "critical"
             mock_connect.assert_called_once_with("data/cache.db", timeout=30.0)
+
+    def test_check_data_freshness_uses_trading_day_lag(
+        self, sample_config: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        checker = MonitorChecker(config_path=str(sample_config))
+        monkeypatch.setattr(
+            "aqsp.monitor.checker.today_shanghai", lambda: date(2026, 6, 22)
+        )
+
+        with patch("sqlite3.connect") as mock_connect:
+            mock_cursor = MagicMock()
+            mock_cursor.fetchone.return_value = ("2026-06-18",)
+            mock_conn = MagicMock()
+            mock_conn.cursor.return_value = mock_cursor
+            mock_connect.return_value.__enter__.return_value = mock_conn
+
+            result = checker._check_data_freshness({"max_lag_days": 1})
+
+        assert result.triggered is False
+        assert result.details["trading_lag_days"] == 1
 
     def test_check_data_freshness_skips_when_cache_missing_and_optional(
         self, sample_config: Path
@@ -349,6 +370,31 @@ class TestNotifier:
         with patch("aqsp.monitor.notifier.notify_markdown") as mock_notify:
             send_alerts(results)
             mock_notify.assert_not_called()
+
+    def test_send_alerts_keeps_today_dedupe_state_after_normal_round(
+        self, sample_results: list[MonitorResult], tmp_path: Path, monkeypatch
+    ) -> None:
+        monkeypatch.setenv(
+            "AQSP_MONITOR_NOTIFY_STATE_PATH", str(tmp_path / "monitor_state.json")
+        )
+        with patch("aqsp.monitor.notifier.notify_markdown") as mock_notify:
+            mock_notify.return_value = [
+                MagicMock(channel="serverchan", ok=True, detail="HTTP 200")
+            ]
+            send_alerts(sample_results)
+            send_alerts(
+                [
+                    MonitorResult(
+                        name="ok",
+                        triggered=False,
+                        severity="info",
+                        message="ok",
+                    )
+                ]
+            )
+            send_alerts(sample_results)
+
+        assert mock_notify.call_count == 1
 
 
 class TestMonitorResult:

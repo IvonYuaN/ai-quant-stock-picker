@@ -67,7 +67,7 @@ def send_alerts(results: list[MonitorResult]) -> None:
     """Send alerts for triggered monitors via notifier."""
     triggered = [r for r in results if r.triggered]
     if not triggered:
-        _clear_monitor_notify_state()
+        _expire_monitor_notify_state()
         return
 
     fingerprint = _monitor_alert_fingerprint(triggered)
@@ -111,9 +111,7 @@ def _monitor_alert_fingerprint(results: list[MonitorResult]) -> str:
     for result in sorted(results, key=lambda item: item.name):
         if not result.triggered:
             continue
-        detail_items = sorted((result.details or {}).items())
-        details = ",".join(f"{key}={value}" for key, value in detail_items)
-        parts.append(f"{result.name}|{result.severity}|{result.message}|{details}")
+        parts.append(f"{result.name}|{result.severity}|{result.message}")
     raw = "\n".join(parts) or "no-triggered"
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
@@ -189,7 +187,10 @@ def _write_monitor_notify_state(
     )
 
 
-def _clear_monitor_notify_state() -> None:
+def _expire_monitor_notify_state() -> None:
     path = _monitor_notify_state_path()
+    today = now_shanghai().date().isoformat()
     with advisory_lock(path):
-        path.unlink(missing_ok=True)
+        state = _read_monitor_notify_state(path)
+        if state.get("date") != today:
+            path.unlink(missing_ok=True)
