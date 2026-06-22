@@ -42,9 +42,11 @@ def test_inspect_source_readiness_reads_tushare_token_from_project_env(
     monkeypatch, tmp_path
 ) -> None:
     env_path = tmp_path / ".env"
+    health_path = tmp_path / "source_health.json"
     env_path.write_text("TUSHARE_TOKEN=demo-token\n", encoding="utf-8")
     monkeypatch.delenv("TUSHARE_TOKEN", raising=False)
     monkeypatch.setenv("AQSP_ENV_FILE", str(env_path))
+    monkeypatch.setenv("AQSP_SOURCE_HEALTH", str(health_path))
     entry = get_registry_entry("tushare")
     assert entry is not None
 
