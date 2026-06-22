@@ -152,13 +152,16 @@ def test_production_walkforward_gate_passes_raw_db_to_child_process(
     stamped: dict[str, object] = {}
     monkeypatch.setattr(
         gate,
-        "inspect_raw_coverage",
-        lambda *_args, **_kwargs: gate.CoverageSummary(
-            stock_symbols=5533,
-            covered_symbols=3200,
-            rows=1,
-            first_trade_date="20180102",
-            last_trade_date="20241231",
+        "inspect_raw_coverage_with_symbols",
+        lambda *_args, **_kwargs: gate.CoverageInspection(
+            summary=gate.CoverageSummary(
+                stock_symbols=5533,
+                covered_symbols=3200,
+                rows=1,
+                first_trade_date="20180102",
+                last_trade_date="20241231",
+            ),
+            covered_symbols=[f"600{idx:03d}" for idx in range(3200)],
         ),
     )
     monkeypatch.setattr(
@@ -167,7 +170,9 @@ def test_production_walkforward_gate_passes_raw_db_to_child_process(
     monkeypatch.setattr(
         gate,
         "select_covered_symbols",
-        lambda *_args, **_kwargs: [f"600{idx:03d}" for idx in range(3200)],
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("main should reuse coverage inspection")
+        ),
     )
     monkeypatch.setattr(
         gate,
@@ -210,19 +215,24 @@ def test_production_walkforward_gate_passes_selected_symbols_file(
     seen: dict[str, object] = {}
     monkeypatch.setattr(
         gate,
-        "inspect_raw_coverage",
-        lambda *_args, **_kwargs: gate.CoverageSummary(
-            stock_symbols=5533,
-            covered_symbols=3,
-            rows=1,
-            first_trade_date="20180102",
-            last_trade_date="20241231",
+        "inspect_raw_coverage_with_symbols",
+        lambda *_args, **_kwargs: gate.CoverageInspection(
+            summary=gate.CoverageSummary(
+                stock_symbols=5533,
+                covered_symbols=3,
+                rows=1,
+                first_trade_date="20180102",
+                last_trade_date="20241231",
+            ),
+            covered_symbols=["600000", "000001", "300750"],
         ),
     )
     monkeypatch.setattr(
         gate,
         "select_covered_symbols",
-        lambda *_args, **_kwargs: ["600000", "000001", "300750"],
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("main should reuse coverage inspection")
+        ),
     )
     monkeypatch.setattr(
         gate, "annotate_production_gate_metadata", lambda **_kwargs: None
@@ -264,20 +274,25 @@ def test_production_walkforward_gate_returns_timeout_code(
     db.write_text("", encoding="utf-8")
     monkeypatch.setattr(
         gate,
-        "inspect_raw_coverage",
-        lambda *_args, **_kwargs: gate.CoverageSummary(
-            stock_symbols=5533,
-            covered_symbols=3200,
-            rows=1,
-            first_trade_date="20180102",
-            last_trade_date="20241231",
+        "inspect_raw_coverage_with_symbols",
+        lambda *_args, **_kwargs: gate.CoverageInspection(
+            summary=gate.CoverageSummary(
+                stock_symbols=5533,
+                covered_symbols=3200,
+                rows=1,
+                first_trade_date="20180102",
+                last_trade_date="20241231",
+            ),
+            covered_symbols=[f"600{idx:03d}" for idx in range(3200)],
         ),
     )
     monkeypatch.setattr(gate, "build_walkforward_command", lambda _args: ["python"])
     monkeypatch.setattr(
         gate,
         "select_covered_symbols",
-        lambda *_args, **_kwargs: [f"600{idx:03d}" for idx in range(3200)],
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("main should reuse coverage inspection")
+        ),
     )
     monkeypatch.setattr(
         gate, "annotate_production_gate_metadata", lambda **_kwargs: None

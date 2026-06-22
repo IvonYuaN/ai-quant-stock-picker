@@ -40,6 +40,12 @@ class CoverageSummary:
     last_trade_date: str
 
 
+@dataclass(frozen=True)
+class CoverageInspection:
+    summary: CoverageSummary
+    covered_symbols: list[str]
+
+
 def _compact_day(raw: str) -> str:
     return date.fromisoformat(raw).strftime("%Y%m%d")
 
@@ -67,6 +73,12 @@ def select_covered_symbols(db_path: Path, *, start: str, end: str) -> list[str]:
 
 
 def inspect_raw_coverage(db_path: Path, *, start: str, end: str) -> CoverageSummary:
+    return inspect_raw_coverage_with_symbols(db_path, start=start, end=end).summary
+
+
+def inspect_raw_coverage_with_symbols(
+    db_path: Path, *, start: str, end: str
+) -> CoverageInspection:
     source = _raw_sqlite_source(db_path)
     available = source.get_available_symbols()
     covered = source.get_symbols_with_daily_coverage(
@@ -86,12 +98,15 @@ def inspect_raw_coverage(db_path: Path, *, start: str, end: str) -> CoverageSumm
             """,
             (start_str, end_str),
         ).fetchone()
-    return CoverageSummary(
-        stock_symbols=len(available),
-        covered_symbols=len(covered),
-        rows=int(row[0] or 0),
-        first_trade_date=str(row[1] or ""),
-        last_trade_date=str(row[2] or ""),
+    return CoverageInspection(
+        summary=CoverageSummary(
+            stock_symbols=len(available),
+            covered_symbols=len(covered),
+            rows=int(row[0] or 0),
+            first_trade_date=str(row[1] or ""),
+            last_trade_date=str(row[2] or ""),
+        ),
+        covered_symbols=covered,
     )
 
 
@@ -192,7 +207,10 @@ def main() -> int:
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 
-    coverage = inspect_raw_coverage(args.db, start=args.start, end=args.end)
+    inspection = inspect_raw_coverage_with_symbols(
+        args.db, start=args.start, end=args.end
+    )
+    coverage = inspection.summary
     print(
         "production gate raw coverage: "
         f"stocks={coverage.stock_symbols} covered={coverage.covered_symbols} "
@@ -214,7 +232,7 @@ def main() -> int:
         )
         return 2
 
-    covered_symbols = select_covered_symbols(args.db, start=args.start, end=args.end)
+    covered_symbols = inspection.covered_symbols
     if len(covered_symbols) < args.min_symbols:
         print(
             "BLOCK: selected production symbols are insufficient; "
