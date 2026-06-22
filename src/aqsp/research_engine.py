@@ -29,8 +29,8 @@ class WalkForwardEngineConfig:
     test_days: int
     purge_days: int
     horizon_days: int
-    fee_bps: float = 8.0
-    slippage_bps: float = 5.0
+    fee_bps: float = 3.0
+    slippage_bps: float = 20.0
     top_n: int = 10
     use_tiered_stop: bool = False
     n_variants: int = 1

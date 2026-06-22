@@ -25,11 +25,33 @@ class ValidationSummary:
 @dataclass(frozen=True)
 class ExecutionConfig:
     horizon_days: int = 3
-    fee_bps: float = 8.0
-    slippage_bps: float = 5.0
+    fee_bps: float = 3.0
+    slippage_bps: float = 20.0
     benchmark_symbol: str = "000300"
-    limit_up_pct: float = 0.099
-    limit_down_pct: float = 0.099
+    limit_up_pct: float = 0.10
+    limit_down_pct: float = 0.10
+
+
+def execution_config_from_thresholds(
+    thresholds: object | None = None,
+    *,
+    horizon_days: int = 3,
+    benchmark_symbol: str = "000300",
+) -> ExecutionConfig:
+    if thresholds is None:
+        from aqsp.strategies.thresholds import load_thresholds
+
+        thresholds = load_thresholds()
+    execution = getattr(thresholds, "execution")
+    main_limit = float(execution.fallback_limit_main_pct)
+    return ExecutionConfig(
+        horizon_days=horizon_days,
+        fee_bps=float(execution.commission_rate) * 10000.0,
+        slippage_bps=float(execution.slippage) * 10000.0,
+        benchmark_symbol=benchmark_symbol,
+        limit_up_pct=main_limit,
+        limit_down_pct=main_limit,
+    )
 
 
 def read_ledger(path: str | Path) -> list[dict]:
@@ -80,7 +102,7 @@ def append_predictions(
     margin_balance_change_5d: float = 0.0,
     run_metadata: RunMetadata | None = None,
 ) -> None:
-    execution = execution or ExecutionConfig()
+    execution = execution or execution_config_from_thresholds()
     rows = read_ledger(path)
     row_index_by_key = {_prediction_key(row): idx for idx, row in enumerate(rows)}
     now = now_shanghai().isoformat(timespec="seconds")
@@ -189,6 +211,34 @@ def _prediction_key(row: dict) -> tuple[str, str, str, str, str]:
     )
 
 
+def _fallback_limit_pct(row: dict) -> float:
+    explicit = row.get("limit_up_pct") or row.get("limit_down_pct")
+    if explicit:
+        try:
+            value = float(explicit)
+        except (TypeError, ValueError):
+            value = 0.0
+        if value > 0:
+            return value
+
+    symbol = str(row.get("symbol", ""))
+    name = str(row.get("name", "")).upper()
+    try:
+        from aqsp.strategies.thresholds import load_thresholds
+
+        execution = load_thresholds().execution
+    except Exception:
+        return 0.10
+
+    if "ST" in name:
+        return float(execution.fallback_limit_st_pct)
+    if symbol.startswith(("300", "301", "688", "689")):
+        return float(execution.fallback_limit_growth_pct)
+    if symbol.startswith(("8", "4")):
+        return float(execution.fallback_limit_bse_pct)
+    return float(execution.fallback_limit_main_pct)
+
+
 def _check_executable(
     entry_bar: pd.Series, prev_close: float, row: dict
 ) -> tuple[bool, str]:
@@ -229,14 +279,14 @@ def _check_executable(
     if bar_limit_up > 0:
         limit_up_price = bar_limit_up
     else:
-        limit_up_pct = float(row.get("limit_up_pct") or 0.099)
+        limit_up_pct = _fallback_limit_pct(row)
         # 涨跌停价四舍五入到分（A股交易所规则），与 source.apply_limit_suspended_adj 口径一致
         limit_up_price = round(prev_close * (1 + limit_up_pct), 2)
 
     if bar_limit_down > 0:
         limit_down_price = bar_limit_down
     else:
-        limit_down_pct = float(row.get("limit_down_pct") or 0.099)
+        limit_down_pct = _fallback_limit_pct(row)
         limit_down_price = round(prev_close * (1 - limit_down_pct), 2)
 
     if open_price >= limit_up_price * 0.999 and high <= open_price * 1.0001:

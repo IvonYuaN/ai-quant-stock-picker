@@ -59,6 +59,7 @@ from aqsp.freshness import assert_fresh_data, latest_trade_date
 from aqsp.ledger import (
     ExecutionConfig,
     append_predictions,
+    execution_config_from_thresholds,
     compute_real_pnl,
     count_independent_signal_days,
     strategy_weights_from_ledger,  # noqa: F401 - kept for legacy monkeypatches.
@@ -1556,10 +1557,8 @@ def _compute_real_pnl(ledger_path: str) -> tuple[float, float, float]:
 
 
 def _execution_cost_bps_from_thresholds(thresholds: Any) -> tuple[float, float]:
-    execution = thresholds.execution
-    fee_bps = float(execution.commission_rate) * 10000.0
-    slippage_bps = float(execution.slippage) * 10000.0
-    return fee_bps, slippage_bps
+    execution = execution_config_from_thresholds(thresholds)
+    return execution.fee_bps, execution.slippage_bps
 
 
 def _resolve_execution_cost_bps(

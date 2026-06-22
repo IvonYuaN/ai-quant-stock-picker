@@ -8,7 +8,7 @@ from uuid import uuid4
 import pandas as pd
 
 from aqsp.core.time import now_shanghai
-from aqsp.ledger import ExecutionConfig, read_ledger
+from aqsp.ledger import ExecutionConfig, execution_config_from_thresholds, read_ledger
 from aqsp.ledger.base import _check_executable, _resolve_exit
 from aqsp.ratings import is_tradable_rating
 
@@ -63,7 +63,7 @@ def sync_paper_trades(
     frames: dict[str, pd.DataFrame],
     execution: ExecutionConfig | None = None,
 ) -> PaperSummary:
-    execution = execution or ExecutionConfig()
+    execution = execution or execution_config_from_thresholds()
     signals = read_ledger(signal_ledger)
     trades = read_paper_trades(paper_ledger)
 

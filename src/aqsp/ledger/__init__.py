@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from aqsp.ledger.base import (
     ExecutionConfig,
+    execution_config_from_thresholds,
     ValidationSummary,
     ledger_rows_to_frame,
     read_ledger,
@@ -25,6 +26,7 @@ from aqsp.ledger.runtime import (
 
 __all__ = [
     "ExecutionConfig",
+    "execution_config_from_thresholds",
     "ValidationSummary",
     "ledger_rows_to_frame",
     "read_ledger",

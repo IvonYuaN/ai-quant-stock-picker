@@ -1062,6 +1062,20 @@ def test_run_optimize_apply_writes_proposal_without_touching_thresholds(
     assert payload["applied"] is False
 
 
+def test_direct_walkforward_defaults_match_threshold_costs() -> None:
+    from aqsp.backtest.walk_forward import WalkForwardTester
+    from aqsp.research_engine import WalkForwardEngineConfig
+
+    config = WalkForwardEngineConfig(
+        train_days=120, test_days=30, purge_days=5, horizon_days=3
+    )
+    assert config.fee_bps == 3.0
+    assert config.slippage_bps == 20.0
+    tester = WalkForwardTester(strategy=object())
+    assert tester.fee_bps == 3.0
+    assert tester.slippage_bps == 20.0
+
+
 def test_execution_cost_defaults_are_loaded_from_thresholds() -> None:
     import aqsp.cli as cli_mod
     from aqsp.strategies.thresholds import Thresholds

@@ -6,13 +6,17 @@ composite:
   volume_weight: 0.0
   mean_reversion_weight: 0.0
   triple_rise_weight: 0.3
-description: "策略阈值配置 — v1.1.5：regime 策略权重统一进配置"
+description: "策略阈值配置 — v1.1.6：执行成本与涨跌停 fallback 统一进配置"
 effective_from: '2026-06-17'
 execution:
   commission_rate: 0.0003
   limit_down_tolerance: 0.005
   limit_up_tolerance: 0.005
   slippage: 0.002
+  fallback_limit_main_pct: 0.10
+  fallback_limit_growth_pct: 0.20
+  fallback_limit_bse_pct: 0.30
+  fallback_limit_st_pct: 0.05
 filter:
   max_price: 1000.0
   min_avg_volume: 1000000
@@ -275,4 +279,4 @@ n_rebound:
   volume_shrink_ratio: 0.75
   ma5_deviation_max_pct: 8.0
   min_score: 14.0
-version: 1.1.5
+version: 1.1.6

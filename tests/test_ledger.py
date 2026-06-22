@@ -3,11 +3,13 @@ from __future__ import annotations
 import json
 
 import pandas as pd
+import pytest
 
 from aqsp.core.time import now_shanghai
 from aqsp.core.types import RunMetadata
 from aqsp.ledger import (
     ExecutionConfig,
+    execution_config_from_thresholds,
     LearnerConfig,
     PerformanceLearner,
     StrategyDecayDetector,
@@ -19,6 +21,36 @@ from aqsp.ledger import (
 )
 from aqsp.ledger.learner import format_decay_alerts
 from aqsp.models import PickResult
+
+
+def test_execution_config_defaults_load_from_thresholds() -> None:
+    execution = execution_config_from_thresholds()
+
+    assert execution.fee_bps == pytest.approx(3.0)
+    assert execution.slippage_bps == pytest.approx(20.0)
+    assert execution.benchmark_symbol == "000300"
+    assert execution.limit_up_pct == pytest.approx(0.10)
+    assert execution.limit_down_pct == pytest.approx(0.10)
+
+
+def test_fallback_limit_pct_uses_symbol_board_thresholds(tmp_path) -> None:
+    from aqsp.ledger.base import _check_executable
+
+    entry_bar = pd.Series({"open": 120.0, "high": 120.0, "low": 120.0})
+    assert _check_executable(entry_bar, 100.0, {"symbol": "300750"}) == (
+        False,
+        "limit_up_at_open",
+    )
+    main_board_bar = pd.Series({"open": 110.0, "high": 110.0, "low": 110.0})
+    assert _check_executable(main_board_bar, 100.0, {"symbol": "600000"}) == (
+        False,
+        "limit_up_at_open",
+    )
+    bse_bar = pd.Series({"open": 130.0, "high": 130.0, "low": 130.0})
+    assert _check_executable(bse_bar, 100.0, {"symbol": "830000"}) == (
+        False,
+        "limit_up_at_open",
+    )
 
 
 def test_ledger_validates_pending_prediction(tmp_path) -> None:

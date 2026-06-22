@@ -118,6 +118,10 @@ class ExecutionThresholds:
     limit_down_tolerance: float = 0.005
     slippage: float = 0.002
     commission_rate: float = 0.0003
+    fallback_limit_main_pct: float = 0.10
+    fallback_limit_growth_pct: float = 0.20
+    fallback_limit_bse_pct: float = 0.30
+    fallback_limit_st_pct: float = 0.05
 
 
 @dataclass(frozen=True)

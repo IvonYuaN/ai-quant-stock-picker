@@ -14,10 +14,14 @@ from datetime import timedelta
 from uuid import uuid4
 
 project_root = Path(__file__).parent.parent
-sys.path.insert(0, str(project_root))
+sys.path.insert(0, str(project_root / "src"))
 
 from aqsp.core.time import now_shanghai, today_shanghai  # noqa: E402
-from aqsp.ledger.base import read_ledger, write_ledger  # noqa: E402
+from aqsp.ledger.base import (  # noqa: E402
+    execution_config_from_thresholds,
+    read_ledger,
+    write_ledger,
+)
 
 
 def generate_mock_signal(
@@ -25,6 +29,7 @@ def generate_mock_signal(
 ) -> dict:
     """生成模拟信号记录"""
     now = now_shanghai().isoformat(timespec="seconds")
+    execution = execution_config_from_thresholds()
     return {
         "id": uuid4().hex,
         "created_at": now,
@@ -44,11 +49,11 @@ def generate_mock_signal(
         "stop_loss": round(price * 0.95, 2),
         "take_profit": round(price * 1.15, 2),
         "horizon_days": 3,
-        "fee_bps": 8.0,
-        "slippage_bps": 5.0,
-        "benchmark_symbol": "000300",
-        "limit_up_pct": 0.099,
-        "limit_down_pct": 0.099,
+        "fee_bps": execution.fee_bps,
+        "slippage_bps": execution.slippage_bps,
+        "benchmark_symbol": execution.benchmark_symbol,
+        "limit_up_pct": execution.limit_up_pct,
+        "limit_down_pct": execution.limit_down_pct,
         "thresholds_version": "1.1.0",
         "regime_at_signal": "trend",
         "status": "pending",

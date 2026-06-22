@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 import pandas as pd
+import pytest
 
 from aqsp.paper import (
     PaperSummary,
@@ -65,6 +66,23 @@ def _frame() -> pd.DataFrame:
     )
 
 
+def test_paper_default_execution_costs_use_thresholds(tmp_path: Path) -> None:
+    signals = tmp_path / "signals.jsonl"
+    trades = tmp_path / "paper.jsonl"
+    _write_signal(signals, fee_bps=None, slippage_bps=None)
+
+    summary = sync_paper_trades(
+        signal_ledger=signals,
+        paper_ledger=trades,
+        frames={"600519": _frame()},
+    )
+
+    row = read_paper_trades(trades)[0]
+    assert summary.opened == 1
+    assert row["fee_bps"] == pytest.approx(3.0)
+    assert row["slippage_bps"] == pytest.approx(20.0)
+
+
 def test_paper_skips_avoid_signals(tmp_path: Path) -> None:
     signals = tmp_path / "signals.jsonl"
     trades = tmp_path / "paper.jsonl"
@@ -115,7 +133,9 @@ def test_paper_opens_trade_from_next_open(tmp_path: Path) -> None:
     assert rows[0]["entry_price"] == 101.0
 
 
-def test_paper_carries_candidate_context_into_open_and_pending_rows(tmp_path: Path) -> None:
+def test_paper_carries_candidate_context_into_open_and_pending_rows(
+    tmp_path: Path,
+) -> None:
     signals = tmp_path / "signals.jsonl"
     trades = tmp_path / "paper.jsonl"
     _write_signal(
@@ -169,7 +189,9 @@ def test_paper_carries_candidate_context_into_open_and_pending_rows(tmp_path: Pa
     assert pending_row["candidate_next_step"] == "等待开盘承接确认"
 
 
-def test_paper_carries_candidate_context_into_not_executable_rows(tmp_path: Path) -> None:
+def test_paper_carries_candidate_context_into_not_executable_rows(
+    tmp_path: Path,
+) -> None:
     signals = tmp_path / "signals.jsonl"
     trades = tmp_path / "paper.jsonl"
     _write_signal(
