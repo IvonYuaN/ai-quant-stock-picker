@@ -241,6 +241,7 @@ def build_daily_run_notification(
     is_cold_start: bool = False,
     circuit_breaker_reason: str = "",
     snapshot_diff: SnapshotDiff | None = None,
+    validation_summary: dict[str, object] | None = None,
     mode: str = "summary",
     title_label: str = "收盘研究日报",
 ) -> str:
@@ -324,6 +325,18 @@ def build_daily_run_notification(
             )
     if snapshot_diff is not None and snapshot_diff.has_changes:
         lines.append(f"**🔄 候选变化**：{summarize_snapshot_diff(snapshot_diff)}")
+    if validation_summary:
+        checked = int(validation_summary.get("checked") or 0)
+        skipped = int(validation_summary.get("skipped_not_executable") or 0)
+        if checked > 0 or skipped > 0:
+            parts: list[str] = []
+            if checked > 0:
+                wins = int(validation_summary.get("wins") or 0)
+                parts.append(f"验证 {checked} 条")
+                parts.append(f"胜率 {wins / checked * 100:.1f}%")
+            if skipped > 0:
+                parts.append(f"不可成交跳过 {skipped} 条")
+            lines.append("**✅ 策略自检**：" + " / ".join(parts))
     if debate_results:
         lead = debate_results[0]
         consensus = lead.final_consensus or lead.adjustment_reason or "无共识"
@@ -343,6 +356,9 @@ def build_daily_run_notification(
     if risk_lines:
         lines.extend(["", "## 风险", ""])
         lines.extend(risk_lines)
+        reason_lines = _validation_reason_lines(validation_summary)
+        if reason_lines:
+            lines.extend(reason_lines)
 
     lines.extend(["", "## 快照", ""])
     snapshot_lines = (
@@ -426,6 +442,25 @@ def build_daily_run_notification(
             "health_message": source_health_message,
         },
     )
+
+
+def _validation_reason_lines(
+    validation_summary: dict[str, object] | None,
+) -> list[str]:
+    if not validation_summary:
+        return []
+    skipped = int(validation_summary.get("skipped_not_executable") or 0)
+    reasons = validation_summary.get("not_executable_reasons") or {}
+    if skipped <= 0 or not isinstance(reasons, dict) or not reasons:
+        return []
+    top_reasons = sorted(
+        ((str(reason), int(count)) for reason, count in reasons.items()),
+        key=lambda item: (-item[1], item[0]),
+    )[:3]
+    return [
+        "- 不可成交原因: "
+        + ", ".join(f"{reason}×{count}" for reason, count in top_reasons)
+    ]
 
 
 def _daily_lead_conclusion(

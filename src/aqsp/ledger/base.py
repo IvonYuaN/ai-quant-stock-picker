@@ -20,6 +20,7 @@ class ValidationSummary:
     avg_return_pct: float
     avg_excess_pct: float
     skipped_not_executable: int = 0
+    not_executable_reasons: dict[str, int] | None = None
 
 
 @dataclass(frozen=True)
@@ -305,6 +306,7 @@ def validate_predictions(
     checked = 0
     wins = 0
     skipped = 0
+    not_executable_reasons: dict[str, int] = {}
     returns: list[float] = []
     excess_returns: list[float] = []
 
@@ -338,6 +340,7 @@ def validate_predictions(
             row["entry_date"] = str(entry_bar["date"])
             row["not_executable_reason"] = reason
             skipped += 1
+            not_executable_reasons[reason] = not_executable_reasons.get(reason, 0) + 1
             continue
 
         eval_window = future.iloc[:horizon]
@@ -376,6 +379,7 @@ def validate_predictions(
         avg_return_pct=round(avg, 4),
         avg_excess_pct=round(avg_excess, 4),
         skipped_not_executable=skipped,
+        not_executable_reasons=dict(sorted(not_executable_reasons.items())),
     )
 
 

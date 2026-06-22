@@ -1535,6 +1535,41 @@ def _compute_real_pnl(ledger_path: str) -> tuple[float, float, float]:
     return compute_real_pnl(ledger_path)
 
 
+def _format_validation_summary_lines(validation: Any) -> list[str]:
+    skipped = int(getattr(validation, "skipped_not_executable", 0) or 0)
+    if skipped <= 0:
+        return []
+
+    lines = [f"- 不可成交跳过: {skipped} 条"]
+    reasons = getattr(validation, "not_executable_reasons", None) or {}
+    if isinstance(reasons, dict) and reasons:
+        top_reasons = sorted(
+            ((str(reason), int(count)) for reason, count in reasons.items()),
+            key=lambda item: (-item[1], item[0]),
+        )[:3]
+        lines.append(
+            "- 不可成交原因: "
+            + ", ".join(f"{reason}×{count}" for reason, count in top_reasons)
+        )
+    return lines
+
+
+def _validation_summary_payload(validation: Any) -> dict[str, object] | None:
+    if validation is None:
+        return None
+    return {
+        "checked": int(getattr(validation, "checked", 0) or 0),
+        "wins": int(getattr(validation, "wins", 0) or 0),
+        "avg_return_pct": float(getattr(validation, "avg_return_pct", 0.0) or 0.0),
+        "avg_excess_pct": float(getattr(validation, "avg_excess_pct", 0.0) or 0.0),
+        "skipped_not_executable": int(
+            getattr(validation, "skipped_not_executable", 0) or 0
+        ),
+        "not_executable_reasons": getattr(validation, "not_executable_reasons", None)
+        or {},
+    }
+
+
 def _execution_cost_bps_from_thresholds(thresholds: Any) -> tuple[float, float]:
     execution = execution_config_from_thresholds(thresholds)
     return execution.fee_bps, execution.slippage_bps
@@ -3078,6 +3113,9 @@ def run_scheduled(args: argparse.Namespace) -> int:
         if not is_cold_start and validation.checked:
             validation_text += f"- 平均收益: {validation.avg_return_pct}%\n"
             validation_text += f"- 平均超额收益: {validation.avg_excess_pct}%\n"
+        validation_summary_lines = _format_validation_summary_lines(validation)
+        if validation_summary_lines:
+            validation_text += "\n".join(validation_summary_lines) + "\n"
         if weights:
             validation_text += (
                 "- 当前策略权重: "
@@ -3224,6 +3262,7 @@ def run_scheduled(args: argparse.Namespace) -> int:
         is_cold_start=is_cold_start,
         circuit_breaker_reason=status.reason if status.triggered else "",
         snapshot_diff=diff,
+        validation_summary=_validation_summary_payload(validation),
         title_label=title_label,
         build_daily_run_notification_fn=build_daily_run_notification,
         dispatch_notification_fn=lambda markdown, **kwargs: _dispatch_notification_once(

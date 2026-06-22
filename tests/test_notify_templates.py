@@ -215,7 +215,9 @@ def test_build_daily_run_notification_includes_allocation_guidance() -> None:
     assert "| 项目 | 结论 | 先看什么 |" not in markdown
     assert "- 候选: 比例参考 1 | 300750 宁德时代" in markdown
     assert "- 纸面: 纸面配仓 20% | 300750 宁德时代 20%" in markdown
-    assert "- 分歧: ⚖ 最高分歧 42% | 300750 宁德时代：趋势强但仍需确认开盘承接" in markdown
+    assert (
+        "- 分歧: ⚖ 最高分歧 42% | 300750 宁德时代：趋势强但仍需确认开盘承接" in markdown
+    )
     assert "## 顺序" in markdown
     assert markdown.index("## 快照") < markdown.index("## 顺序")
     assert "1. 先看纸面分配：300750 宁德时代，核对开盘承接和流动性。" in markdown
@@ -233,6 +235,34 @@ def test_build_daily_run_notification_includes_allocation_guidance() -> None:
     assert "配仓建议" not in markdown
     assert "配仓执行" not in markdown
     assert "新开仓" not in markdown
+
+
+def test_build_daily_run_notification_includes_validation_summary() -> None:
+    markdown = build_daily_run_notification(
+        run_date="2026-06-04",
+        tradable=[],
+        candidates=[],
+        portfolio_summary=None,
+        debate_results=(),
+        actual_source="eastmoney",
+        source_health_label="healthy",
+        source_health_message="eastmoney 健康",
+        validation_summary={
+            "checked": 3,
+            "wins": 2,
+            "avg_return_pct": 1.23,
+            "avg_excess_pct": 0.45,
+            "skipped_not_executable": 2,
+            "not_executable_reasons": {
+                "limit_up_at_open": 1,
+                "suspended_or_no_trade": 1,
+            },
+        },
+    )
+
+    _assert_clean_notification(markdown)
+    assert "- 策略自检: 验证 3 条 / 胜率 66.7% / 不可成交跳过 2 条" in markdown
+    assert "- 不可成交原因: limit_up_at_open×1, suspended_or_no_trade×1" in markdown
 
 
 def test_build_daily_run_notification_supports_midday_title() -> None:
@@ -425,8 +455,7 @@ def test_build_daily_run_notification_lists_watch_candidates_when_not_tradable()
     )
     assert "- 候选: 继续观察 2 / 阻塞 1 | 688981 中芯国际" in markdown
     assert (
-        "- 风险: 1 条阻塞 | 000001 平安银行：板块集中度过高，压低银行暴露"
-        in markdown
+        "- 风险: 1 条阻塞 | 000001 平安银行：板块集中度过高，压低银行暴露" in markdown
     )
     assert (
         "1. 先盯 688981 中芯国际，等待量价继续走强后，再评估是否转入纸面复核名单（高优先级 / 盘中走强后）。"

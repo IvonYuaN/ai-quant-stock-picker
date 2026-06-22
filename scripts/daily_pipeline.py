@@ -158,6 +158,46 @@ def _run_step(
         )
 
 
+def _latest_validation_details(result: PipelineResult) -> dict[str, Any]:
+    for step in reversed(result.steps):
+        if step.name == "预测验证" and step.success and step.details:
+            return step.details
+    return {}
+
+
+def _format_validation_digest_lines(result: PipelineResult) -> list[str]:
+    details = _latest_validation_details(result)
+    if not details:
+        return []
+
+    checked = int(details.get("checked") or 0)
+    skipped = int(details.get("skipped_not_executable") or 0)
+    if checked <= 0 and skipped <= 0:
+        return ["- 策略自检: 暂无可验证历史预测"]
+
+    pieces: list[str] = []
+    if checked > 0:
+        wins = int(details.get("wins") or 0)
+        pieces.append(f"验证 {checked} 条")
+        pieces.append(f"胜率 {wins / checked * 100:.1f}%")
+        pieces.append(f"平均收益 {float(details.get('avg_return_pct') or 0.0):.2f}%")
+    if skipped > 0:
+        pieces.append(f"不可成交跳过 {skipped} 条")
+
+    lines = ["- 策略自检: " + " / ".join(pieces)]
+    reasons = details.get("not_executable_reasons") or {}
+    if skipped > 0 and isinstance(reasons, dict) and reasons:
+        top_reasons = sorted(
+            ((str(reason), int(count)) for reason, count in reasons.items()),
+            key=lambda item: (-item[1], item[0]),
+        )[:3]
+        lines.append(
+            "- 不可成交原因: "
+            + ", ".join(f"{reason}×{count}" for reason, count in top_reasons)
+        )
+    return lines
+
+
 def _step_update_data(config: PipelineConfig, logger: logging.Logger) -> dict[str, Any]:
     from aqsp.data import fetch_with_source
 
@@ -550,6 +590,11 @@ def _step_validate_predictions(
         "wins": validation.wins,
         "avg_return_pct": round(validation.avg_return_pct, 2),
         "avg_excess_pct": round(validation.avg_excess_pct, 2),
+        "skipped_not_executable": int(
+            getattr(validation, "skipped_not_executable", 0) or 0
+        ),
+        "not_executable_reasons": getattr(validation, "not_executable_reasons", None)
+        or {},
         "frames_loaded": len(frames),
         "sources_attempted": attempted_sources,
     }
@@ -1390,6 +1435,9 @@ def _build_pipeline_digest(
     if not result.overall_success:
         risk_points.append("总流程未全绿，先排查失败步骤再继续自动化。")
     risk_lines = [f"- {point}" for point in _dedupe_points(risk_points, limit=4)]
+    validation_lines = _format_validation_digest_lines(result)
+    if validation_lines:
+        risk_lines.extend(validation_lines)
     if not risk_lines:
         risk_lines.append("- 当前流程正常，保持纸面复核节奏。")
 

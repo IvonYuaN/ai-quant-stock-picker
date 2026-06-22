@@ -554,6 +554,22 @@ def test_send_pipeline_digest_sends_summary_notification(
         steps=[
             daily_pipeline.StepResult("数据更新", True, 1.0),
             daily_pipeline.StepResult("策略运行", True, 2.0),
+            daily_pipeline.StepResult(
+                "预测验证",
+                True,
+                0.5,
+                details={
+                    "checked": 1,
+                    "wins": 1,
+                    "avg_return_pct": 2.3,
+                    "avg_excess_pct": 1.1,
+                    "skipped_not_executable": 2,
+                    "not_executable_reasons": {
+                        "limit_up_at_open": 1,
+                        "suspended_or_no_trade": 1,
+                    },
+                },
+            ),
         ],
         overall_success=True,
         summary="ok",
@@ -585,6 +601,13 @@ def test_send_pipeline_digest_sends_summary_notification(
     assert "下一步: 等待板块暴露回落后，再重新评估纸面复核优先级" in sent["content"]
     assert "再看时间: 中优先级 / 板块分化时" in sent["content"]
     assert "观察名单接下来:" in sent["content"]
+    assert (
+        "- 策略自检: 验证 1 条 / 胜率 100.0% / 平均收益 2.30% / 不可成交跳过 2 条"
+        in sent["content"]
+    )
+    assert (
+        "- 不可成交原因: limit_up_at_open×1, suspended_or_no_trade×1" in sent["content"]
+    )
     assert (
         "观察名单接下来: 先盯 300750 宁德时代，等待板块暴露回落后，再重新评估纸面复核优先级（中优先级 / 板块分化时）。"
         in sent["content"]
@@ -1053,6 +1076,8 @@ def test_validate_predictions_fetches_benchmark_from_ledger(
                     "wins": 0,
                     "avg_return_pct": 0.0,
                     "avg_excess_pct": 0.0,
+                    "skipped_not_executable": 0,
+                    "not_executable_reasons": {},
                 },
             )()
         ),
@@ -1129,6 +1154,8 @@ def test_validate_predictions_uses_resilient_history_when_primary_fails(
                     "wins": 0,
                     "avg_return_pct": 0.0,
                     "avg_excess_pct": 0.0,
+                    "skipped_not_executable": 0,
+                    "not_executable_reasons": {},
                 },
             )()
         ),
@@ -1168,6 +1195,80 @@ def test_validate_predictions_uses_resilient_history_when_primary_fails(
     assert seen["sources"][1] == "fallback-source"
     assert "600519" in seen["frames"]
     assert result["sources_attempted"] == ["eastmoney", "resilient_history"]
+
+
+def test_validate_predictions_returns_not_executable_summary(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    daily_pipeline = _load_daily_pipeline_module()
+    ledger_path = tmp_path / "predictions.jsonl"
+    ledger_path.write_text('{"symbol":"600519","status":"pending"}\n', encoding="utf-8")
+
+    monkeypatch.setattr(
+        "aqsp.ledger.base.read_ledger",
+        lambda _path: [{"symbol": "600519", "status": "pending"}],
+    )
+    monkeypatch.setattr(daily_pipeline, "_build_data_source", lambda _config: object())
+    monkeypatch.setattr(
+        "aqsp.data.fetch_with_source",
+        lambda *_args, **_kwargs: {
+            "600519": pd.DataFrame([{"date": "2026-06-02", "close": 1.0}])
+        },
+    )
+    monkeypatch.setattr(
+        "aqsp.ledger.validate_predictions",
+        lambda *_args, **_kwargs: type(
+            "Validation",
+            (),
+            {
+                "checked": 1,
+                "wins": 1,
+                "avg_return_pct": 2.3,
+                "avg_excess_pct": 1.1,
+                "skipped_not_executable": 2,
+                "not_executable_reasons": {
+                    "limit_up_at_open": 1,
+                    "suspended_or_no_trade": 1,
+                },
+            },
+        )(),
+    )
+    config = daily_pipeline.PipelineConfig(
+        project_root=tmp_path,
+        source="eastmoney",
+        mode="close",
+        limit=10,
+        max_universe=50,
+        min_avg_amount=50_000_000,
+        max_data_lag_days=3,
+        enable_online_factors=False,
+        allow_online_fallback=True,
+        ledger_path=ledger_path.name,
+        report_path="reports/latest.md",
+        csv_path="reports/latest.csv",
+        briefing_path="reports/briefing.md",
+        paper_report_path="reports/paper.md",
+        dashboard_html="dist/dashboard/index.html",
+        dashboard_db="dist/dashboard/aqsp.db",
+        paper_ledger="data/paper_trades.jsonl",
+        closing_review_path="reports/closing_review.md",
+        notify=False,
+        notify_mode="summary",
+        dry_run=False,
+        enable_debate=False,
+        enable_auto_evolution=False,
+    )
+
+    result = daily_pipeline._step_validate_predictions(
+        config, logging.getLogger("test")
+    )
+
+    assert result["skipped_not_executable"] == 2
+    assert result["not_executable_reasons"] == {
+        "limit_up_at_open": 1,
+        "suspended_or_no_trade": 1,
+    }
 
 
 def test_sync_paper_trades_writes_report(monkeypatch, tmp_path: Path) -> None:

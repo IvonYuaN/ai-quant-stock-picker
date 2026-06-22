@@ -511,6 +511,7 @@ def test_validation_marks_limit_up_at_open_not_executable(tmp_path) -> None:
     rows = read_ledger(ledger)
     assert summary.checked == 0
     assert summary.skipped_not_executable == 1
+    assert summary.not_executable_reasons == {"limit_up_at_open": 1}
     assert rows[0]["status"] == "not_executable"
     assert rows[0]["not_executable_reason"] == "limit_up_at_open"
 

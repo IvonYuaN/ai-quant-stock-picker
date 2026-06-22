@@ -371,9 +371,16 @@ def test_dispatch_scheduled_daily_notification_builds_summary_and_full() -> None
         is_cold_start=False,
         circuit_breaker_reason="",
         snapshot_diff=None,
+        validation_summary={"checked": 1, "skipped_not_executable": 2},
         title_label="收盘研究日报",
         build_daily_run_notification_fn=lambda **kwargs: (
-            built.append((kwargs["mode"], kwargs["run_date"]))
+            built.append(
+                (
+                    kwargs["mode"],
+                    kwargs["run_date"],
+                    kwargs["validation_summary"],
+                )
+            )
             or f"{kwargs['mode']}-{kwargs['run_date']}"
         ),
         dispatch_notification_fn=lambda markdown, **kwargs: (
@@ -390,7 +397,10 @@ def test_dispatch_scheduled_daily_notification_builds_summary_and_full() -> None
         notification_kind="daily:2026-06-15",
     )
 
-    assert built == [("fanout", "2026-06-15"), ("summary", "2026-06-15")]
+    assert built == [
+        ("fanout", "2026-06-15", {"checked": 1, "skipped_not_executable": 2}),
+        ("summary", "2026-06-15", {"checked": 1, "skipped_not_executable": 2}),
+    ]
     assert dispatched == [
         (
             "fanout-2026-06-15",

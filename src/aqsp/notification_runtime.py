@@ -309,6 +309,7 @@ def dispatch_scheduled_daily_notification(
     title_label: str,
     build_daily_run_notification_fn: Callable[..., str],
     dispatch_notification_fn: Callable[..., list[NotifyResult]],
+    validation_summary: dict[str, object] | None = None,
     notification_kind: str = "",
 ) -> None:
     if not notify_enabled:
@@ -329,6 +330,7 @@ def dispatch_scheduled_daily_notification(
         is_cold_start=is_cold_start,
         circuit_breaker_reason=circuit_breaker_reason,
         snapshot_diff=snapshot_diff,
+        validation_summary=validation_summary,
         mode=notify_mode,
         title_label=title_label,
     )
@@ -347,6 +349,7 @@ def dispatch_scheduled_daily_notification(
         is_cold_start=is_cold_start,
         circuit_breaker_reason=circuit_breaker_reason,
         snapshot_diff=snapshot_diff,
+        validation_summary=validation_summary,
         mode="summary",
         title_label=title_label,
     )
