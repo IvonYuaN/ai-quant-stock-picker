@@ -29,6 +29,7 @@ MIN_PRODUCTION_GATE_SYMBOLS = 3000
 DEFAULT_RAW_DB = Path("/opt/market-data/astocks_raw.db")
 DEFAULT_START = "2018-01-01"
 DEFAULT_END = "2024-12-31"
+MIN_COVERAGE_RATIO = 0.8
 
 
 @dataclass(frozen=True)
@@ -48,6 +49,30 @@ class CoverageInspection:
 
 def _compact_day(raw: str) -> str:
     return date.fromisoformat(raw).strftime("%Y%m%d")
+
+
+def _parse_db_day(raw: str) -> date | None:
+    text = str(raw or "").strip()
+    if len(text) == 8 and text.isdigit():
+        return date.fromisoformat(f"{text[:4]}-{text[4:6]}-{text[6:]}")
+    try:
+        return date.fromisoformat(text[:10])
+    except ValueError:
+        return None
+
+
+def _date_within_lag(left: str, right: str, *, max_days: int) -> bool:
+    left_day = _parse_db_day(left)
+    right_day = _parse_db_day(right)
+    if left_day is None or right_day is None:
+        return False
+    delta = (right_day - left_day).days
+    return 0 <= delta <= max_days
+
+
+def _symbol_from_ts_code(ts_code: object) -> str:
+    text = str(ts_code).strip()
+    return text.split(".", 1)[0] if "." in text else text
 
 
 def _raw_sqlite_source(db_path: Path) -> SqliteDbSource:
@@ -79,32 +104,59 @@ def inspect_raw_coverage(db_path: Path, *, start: str, end: str) -> CoverageSumm
 def inspect_raw_coverage_with_symbols(
     db_path: Path, *, start: str, end: str
 ) -> CoverageInspection:
-    source = _raw_sqlite_source(db_path)
-    available = source.get_available_symbols()
-    covered = source.get_symbols_with_daily_coverage(
-        available,
-        date.fromisoformat(start),
-        date.fromisoformat(end),
-        min_rows=None,
-    )
+    _raw_sqlite_source(db_path)
     start_str = _compact_day(start)
     end_str = _compact_day(end)
     with sqlite3.connect(db_path) as conn:
+        stock_rows = conn.execute(
+            "SELECT ts_code FROM stocks ORDER BY ts_code"
+        ).fetchall()
         row = conn.execute(
             """
-            SELECT COUNT(*), MIN(trade_date), MAX(trade_date)
+            SELECT COUNT(*), MIN(trade_date), MAX(trade_date), COUNT(DISTINCT trade_date)
             FROM daily_qfq
             WHERE trade_date >= ? AND trade_date <= ?
             """,
             (start_str, end_str),
         ).fetchone()
+        first_market_day = str(row[1] or "")
+        last_market_day = str(row[2] or "")
+        expected_rows = int(row[3] or 0)
+        min_required_rows = max(1, int(expected_rows * MIN_COVERAGE_RATIO))
+        coverage_rows = conn.execute(
+            """
+            SELECT ts_code, MIN(trade_date), MAX(trade_date), COUNT(*)
+            FROM daily_qfq
+            WHERE trade_date >= ? AND trade_date <= ?
+            GROUP BY ts_code
+            ORDER BY ts_code
+            """,
+            (start_str, end_str),
+        ).fetchall()
+
+    covered: list[str] = []
+    if (
+        first_market_day
+        and last_market_day
+        and _date_within_lag(start_str, first_market_day, max_days=10)
+        and _date_within_lag(last_market_day, end_str, max_days=10)
+    ):
+        for ts_code, first_date, last_date, count in coverage_rows:
+            first_text = str(first_date or "")
+            last_text = str(last_date or "")
+            if first_text > first_market_day or last_text < last_market_day:
+                continue
+            if int(count or 0) < min_required_rows:
+                continue
+            covered.append(_symbol_from_ts_code(ts_code))
+
     return CoverageInspection(
         summary=CoverageSummary(
-            stock_symbols=len(available),
+            stock_symbols=len(stock_rows),
             covered_symbols=len(covered),
             rows=int(row[0] or 0),
-            first_trade_date=str(row[1] or ""),
-            last_trade_date=str(row[2] or ""),
+            first_trade_date=first_market_day,
+            last_trade_date=last_market_day,
         ),
         covered_symbols=covered,
     )
