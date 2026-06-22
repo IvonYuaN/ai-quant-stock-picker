@@ -101,6 +101,23 @@ def test_check_before_live_blocks_small_runtime_universe_cap(
     assert "AQSP_MAX_UNIVERSE=300" in finding.detail
 
 
+def test_check_before_live_blocks_small_runtime_symbol_override(
+    tmp_path: Path,
+) -> None:
+    _prepare_ready_runtime(tmp_path)
+    (tmp_path / ".env").write_text(
+        "AQSP_SQLITE_DB_PATH=/opt/market-data/astocks_raw.db\n"
+        "AQSP_SYMBOLS=600519,300750,000001\n",
+        encoding="utf-8",
+    )
+
+    findings = check_before_live(root=tmp_path, today=date(2026, 6, 14))
+
+    finding = next(item for item in findings if item.gate == "runtime_symbol_override")
+    assert finding.ok is False
+    assert "AQSP_SYMBOLS=3" in finding.detail
+
+
 def test_check_before_live_blocks_small_symbol_walkforward_gate(
     tmp_path: Path,
 ) -> None:

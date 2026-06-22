@@ -122,6 +122,7 @@ def check_before_live(
     findings.append(_check_walkforward_price_mode(root, gate_path))
     findings.append(_check_walkforward_market_coverage(gate_path))
     findings.append(_check_runtime_universe_cap(root))
+    findings.append(_check_runtime_symbol_override(root))
     findings.append(_check_pbo_diagnostics(root, gate_path))
     findings.append(_check_paper_sample_size(ledger_path))
     findings.append(_check_successful_runs(run_history_path, root=root))
@@ -219,6 +220,23 @@ def _check_runtime_universe_cap(root: Path) -> ReadinessFinding:
         else f"AQSP_MAX_UNIVERSE={max_universe}; production short-line runs require 0 or >= {MIN_PRODUCTION_GATE_SYMBOLS}"
     )
     return ReadinessFinding("runtime_universe_cap", ok, detail)
+
+
+def _check_runtime_symbol_override(root: Path) -> ReadinessFinding:
+    raw_value = read_env_value(root / ".env", "AQSP_SYMBOLS")
+    symbols = [item.strip() for item in raw_value.split(",") if item.strip()]
+    if not symbols:
+        return ReadinessFinding(
+            "runtime_symbol_override",
+            True,
+            "AQSP_SYMBOLS unset; runtime can resolve full pool",
+        )
+    ok = len(symbols) >= MIN_PRODUCTION_GATE_SYMBOLS
+    detail = (
+        f"AQSP_SYMBOLS={len(symbols)} explicit symbols; "
+        f"production short-line runs require empty AQSP_SYMBOLS or >= {MIN_PRODUCTION_GATE_SYMBOLS}"
+    )
+    return ReadinessFinding("runtime_symbol_override", ok, detail)
 
 
 def _check_pbo_diagnostics(root: Path, gate_path: Path) -> ReadinessFinding:
