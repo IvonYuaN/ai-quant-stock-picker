@@ -15,6 +15,7 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from aqsp.core.time import today_shanghai
+from aqsp.ledger.runtime import count_independent_signal_days
 from aqsp.utils.env import read_env_value
 from aqsp.walkforward_gate import (
     MAX_GATE_AGE_DAYS,
@@ -225,43 +226,12 @@ def _check_pbo_diagnostics(root: Path, gate_path: Path) -> ReadinessFinding:
 
 
 def _check_paper_sample_size(path: Path) -> ReadinessFinding:
-    rows = _read_jsonl(path)
-    signal_days = {
-        signal_date
-        for row in rows
-        if _is_real_signal_row(row)
-        for signal_date in [_row_signal_date(row)]
-        if _parse_date(signal_date) is not None
-    }
-    count = len(signal_days)
+    count = count_independent_signal_days(str(path))
     return ReadinessFinding(
         "paper_sample_size",
         count >= MIN_INDEPENDENT_SIGNAL_DAYS,
         f"{count}/{MIN_INDEPENDENT_SIGNAL_DAYS} real independent signal days",
     )
-
-
-def _is_real_signal_row(row: dict[str, Any]) -> bool:
-    if bool(row.get("is_simulated")):
-        return False
-    if not str(row.get("symbol") or "").strip():
-        return False
-    if str(row.get("status") or "").strip() == "not_executable":
-        return False
-    return any(
-        row.get(key) not in (None, "")
-        for key in ("thresholds_version", "status", "rating", "score", "strategies")
-    )
-
-
-def _row_signal_date(row: dict[str, Any]) -> str:
-    for key in ("signal_date", "signal_day_group", "date", "created_at"):
-        raw = str(row.get(key) or "").strip()
-        if len(raw) >= 10:
-            candidate = raw[:10]
-            if _parse_date(candidate) is not None:
-                return candidate
-    return ""
 
 
 def _check_successful_runs(path: Path, *, root: Path) -> ReadinessFinding:
