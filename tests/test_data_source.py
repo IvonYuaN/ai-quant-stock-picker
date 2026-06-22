@@ -372,6 +372,91 @@ def test_fetch_with_source_raises_when_source_returns_no_valid_frames() -> None:
         fetch_with_source(DummySource(), ["600000"], days=30)
 
 
+def _make_sqlite_daily_db(path: Path, symbols: int = 3, days: int = 3) -> None:
+    with sqlite3.connect(path) as conn:
+        conn.execute("CREATE TABLE stocks (ts_code TEXT PRIMARY KEY, name TEXT)")
+        conn.execute(
+            """
+            CREATE TABLE daily_qfq (
+                ts_code TEXT,
+                trade_date TEXT,
+                open REAL,
+                high REAL,
+                low REAL,
+                close REAL,
+                open_qfq REAL,
+                high_qfq REAL,
+                low_qfq REAL,
+                close_qfq REAL,
+                volume REAL,
+                amount REAL
+            )
+            """
+        )
+        for idx in range(symbols):
+            market = "SH" if idx % 2 == 0 else "SZ"
+            code = f"600{idx:03d}.{market}"
+            conn.execute(
+                "INSERT INTO stocks (ts_code, name) VALUES (?, ?)", (code, code)
+            )
+            for day in range(1, days + 1):
+                conn.execute(
+                    """
+                    INSERT INTO daily_qfq (
+                        ts_code, trade_date, open, high, low, close,
+                        open_qfq, high_qfq, low_qfq, close_qfq, volume, amount
+                    ) VALUES (?, ?, 10, 11, 9, ?, 8, 9, 7, ?, 1000, ?)
+                    """,
+                    (
+                        code,
+                        f"202401{day:02d}",
+                        10 + idx,
+                        8 + idx,
+                        0 if day == 1 else 10000,
+                    ),
+                )
+
+
+def test_sqlite_db_source_fetch_daily_batches_symbols(
+    tmp_path: Path, monkeypatch
+) -> None:
+    db_path = tmp_path / "astocks_raw.db"
+    _make_sqlite_daily_db(db_path, symbols=5, days=3)
+    monkeypatch.setattr("aqsp.data.sqlite_db_source._SQLITE_BATCH_SIZE", 2)
+    source = SqliteDbSource(db_path=db_path, cache=None)
+
+    result = source.fetch_daily(
+        ["600000", "600001", "600002", "600003", "600004"],
+        date(2024, 1, 1),
+        date(2024, 1, 3),
+    )
+
+    assert list(result) == ["600000", "600001", "600002", "600003", "600004"]
+    assert result["600000"]["date"].tolist() == [
+        "2024-01-01",
+        "2024-01-02",
+        "2024-01-03",
+    ]
+    assert result["600000"]["amount"].iloc[0] > 0
+    assert result["600004"]["name"].iloc[0] == "600004.SH"
+
+
+def test_sqlite_daily_coverage_uses_batched_group_query(
+    tmp_path: Path, monkeypatch
+) -> None:
+    db_path = tmp_path / "astocks_raw.db"
+    _make_sqlite_daily_db(db_path, symbols=5, days=30)
+    monkeypatch.setattr("aqsp.data.sqlite_db_source._SQLITE_BATCH_SIZE", 2)
+    source = SqliteDbSource(db_path=db_path, cache=None)
+
+    assert source.get_symbols_with_daily_coverage(
+        ["600000", "600001", "600002", "600003", "600004"],
+        date(2024, 1, 1),
+        date(2024, 1, 30),
+        min_rows=None,
+    ) == ["600000", "600001", "600002", "600003", "600004"]
+
+
 def test_sqlite_db_source_fetch_index_uses_raw_close_when_qfq_differs(
     tmp_path: Path,
 ) -> None:

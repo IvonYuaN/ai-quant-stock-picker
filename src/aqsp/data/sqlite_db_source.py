@@ -17,6 +17,16 @@ from aqsp.data.source import (
 from aqsp.data.cache import DataCache
 
 _SQLITE_TIMEOUT_SECONDS = 30.0
+_SQLITE_BATCH_SIZE = 400
+
+
+def _chunks(items: list[str], size: int) -> list[list[str]]:
+    return [items[idx : idx + size] for idx in range(0, len(items), size)]
+
+
+def _format_db_date(value: object) -> str:
+    text = str(value)
+    return f"{text[:4]}-{text[4:6]}-{text[6:]}" if len(text) == 8 else text
 
 
 def _parse_db_date(raw: str) -> date | None:
@@ -116,35 +126,51 @@ class SqliteDbSource(DataSource):
             if min_rows is not None
             else max(1, int(expected_rows * min_coverage_ratio))
         )
-        covered: list[str] = []
         if not first_market_day or not last_market_day:
-            return covered
+            return []
         if not _date_within_lag(start_str, first_market_day, max_days=10):
-            return covered
+            return []
         if not _date_within_lag(last_market_day, end_str, max_days=10):
-            return covered
+            return []
+
+        symbol_map = self._load_symbol_map()
+        ts_to_symbol = {ts_code: symbol for symbol, ts_code in symbol_map.items()}
+        requested_ts_codes = [
+            symbol_map[symbol] for symbol in symbols if symbol in symbol_map
+        ]
+        coverage_by_ts_code: dict[str, tuple[str, str, int]] = {}
         with sqlite3.connect(self.db_path, timeout=_SQLITE_TIMEOUT_SECONDS) as conn:
-            for symbol in symbols:
-                ts_code = self._to_ts_code(symbol)
-                if ts_code is None:
-                    continue
-                first_date, last_date, count = conn.execute(
-                    """
-                    SELECT MIN(trade_date), MAX(trade_date), COUNT(*)
+            for chunk in _chunks(requested_ts_codes, _SQLITE_BATCH_SIZE):
+                placeholders = ",".join("?" for _ in chunk)
+                rows = conn.execute(
+                    f"""
+                    SELECT ts_code, MIN(trade_date), MAX(trade_date), COUNT(*)
                     FROM daily_qfq
-                    WHERE ts_code = ? AND trade_date >= ? AND trade_date <= ?
+                    WHERE ts_code IN ({placeholders})
+                      AND trade_date >= ? AND trade_date <= ?
+                    GROUP BY ts_code
                     """,
-                    (ts_code, start_str, end_str),
-                ).fetchone()
-                if not first_date or not last_date:
-                    continue
-                if (
-                    str(first_date) > first_market_day
-                    or str(last_date) < last_market_day
-                ):
-                    continue
-                if int(count) < min_required_rows:
-                    continue
+                    (*chunk, start_str, end_str),
+                ).fetchall()
+                for ts_code, first_date, last_date, count in rows:
+                    coverage_by_ts_code[str(ts_code)] = (
+                        str(first_date or ""),
+                        str(last_date or ""),
+                        int(count or 0),
+                    )
+
+        covered: list[str] = []
+        for ts_code in requested_ts_codes:
+            row = coverage_by_ts_code.get(ts_code)
+            if row is None:
+                continue
+            first_date, last_date, count = row
+            if first_date > first_market_day or last_date < last_market_day:
+                continue
+            if count < min_required_rows:
+                continue
+            symbol = ts_to_symbol.get(ts_code)
+            if symbol is not None:
                 covered.append(symbol)
         return covered
 
@@ -172,85 +198,89 @@ class SqliteDbSource(DataSource):
         out: dict[str, OhlcvFrame] = {}
         start_str = start.strftime("%Y%m%d")
         end_str = end.strftime("%Y%m%d")
+        pending_symbols: list[str] = []
 
-        with sqlite3.connect(self.db_path, timeout=_SQLITE_TIMEOUT_SECONDS) as conn:
-            for symbol in symbols:
-                cached = (
-                    self.cache.get_ohlcv(symbol, start, end)
-                    if self._use_cache
-                    else None
-                )
-                if cached is not None and not cached.empty:
-                    if "name" not in cached.columns:
-                        cached = cached.copy()
-                        cached["name"] = self.get_symbol_name(symbol)
-                    out[symbol] = cached
-                    continue
+        for symbol in symbols:
+            cached = (
+                self.cache.get_ohlcv(symbol, start, end) if self._use_cache else None
+            )
+            if cached is not None and not cached.empty:
+                if "name" not in cached.columns:
+                    cached = cached.copy()
+                    cached["name"] = self.get_symbol_name(symbol)
+                out[symbol] = cached
+            else:
+                pending_symbols.append(symbol)
 
-                ts_code = self._to_ts_code(symbol)
-                if ts_code is None:
-                    continue
-
-                if adjust == "":
-                    # 默认不复权
+        symbol_map = self._load_symbol_map()
+        ts_to_symbol = {ts_code: symbol for symbol, ts_code in symbol_map.items()}
+        pending_ts_codes = [
+            symbol_map[symbol] for symbol in pending_symbols if symbol in symbol_map
+        ]
+        if pending_ts_codes:
+            select_columns = (
+                "trade_date, ts_code, open, high, low, close, volume, amount"
+                if adjust == ""
+                else "trade_date, ts_code, open_qfq as open, high_qfq as high, low_qfq as low, close_qfq as close, volume, amount"
+            )
+            with sqlite3.connect(self.db_path, timeout=_SQLITE_TIMEOUT_SECONDS) as conn:
+                for chunk in _chunks(pending_ts_codes, _SQLITE_BATCH_SIZE):
+                    placeholders = ",".join("?" for _ in chunk)
                     df = pd.read_sql(
-                        """
-                        SELECT trade_date, open, high, low, close, volume, amount
+                        f"""
+                        SELECT {select_columns}
                         FROM daily_qfq
-                        WHERE ts_code = ? AND trade_date >= ? AND trade_date <= ?
-                        ORDER BY trade_date
+                        WHERE ts_code IN ({placeholders})
+                          AND trade_date >= ? AND trade_date <= ?
+                        ORDER BY ts_code, trade_date
                         """,
                         conn,
-                        params=(ts_code, start_str, end_str),
+                        params=(*chunk, start_str, end_str),
                     )
-                else:
-                    # 前复权
-                    df = pd.read_sql(
-                        """
-                        SELECT trade_date, open_qfq as open, high_qfq as high, low_qfq as low, close_qfq as close, volume, amount
-                        FROM daily_qfq
-                        WHERE ts_code = ? AND trade_date >= ? AND trade_date <= ?
-                        ORDER BY trade_date
-                        """,
-                        conn,
-                        params=(ts_code, start_str, end_str),
-                    )
-                if df.empty:
-                    continue
+                    if df.empty:
+                        continue
+                    for ts_code, part in df.groupby("ts_code", sort=False):
+                        symbol = ts_to_symbol.get(str(ts_code))
+                        if symbol is None:
+                            continue
+                        frame = self._normalize_daily_frame(
+                            part.drop(columns=["ts_code"]), symbol
+                        )
+                        if frame.empty:
+                            continue
+                        if self._use_cache:
+                            self.cache.set_ohlcv(symbol, frame, source="sqlite_db")
+                        out[symbol] = frame
 
-                df["date"] = df["trade_date"].apply(
-                    lambda x: (
-                        f"{x[:4]}-{x[4:6]}-{x[6:]}" if len(str(x)) == 8 else str(x)
-                    )
-                )
-                df = df.drop(columns=["trade_date"])
-                df["symbol"] = symbol
-                df["name"] = self.get_symbol_name(symbol)
-
-                for col in ["open", "high", "low", "close", "volume", "amount"]:
-                    if col in df.columns:
-                        df[col] = pd.to_numeric(df[col], errors="coerce")
-
-                df = df.dropna(subset=["close"])
-
-                # 估算缺失的 amount：用 (high + low + close) / 3 作为均价
-                if "amount" in df.columns:
-                    mask = df["amount"].isna() | (df["amount"] <= 0)
-                    if mask.any():
-                        avg_price = (df["high"] + df["low"] + df["close"]) / 3
-                        df.loc[mask, "amount"] = df.loc[mask, "volume"] * avg_price
-                if df.empty:
-                    continue
-
-                df = apply_limit_suspended_adj(
-                    df, symbol, cache=self.cache if self._use_cache else None
-                )
-                if self._use_cache:
-                    self.cache.set_ohlcv(symbol, df, source="sqlite_db")
-                out[symbol] = df
         require_non_empty_fetch_result(self.name, "日线", symbols, out)
 
         return out
+
+    def _normalize_daily_frame(self, df: pd.DataFrame, symbol: str) -> pd.DataFrame:
+        if df.empty:
+            return df
+        frame = df.copy()
+        frame["date"] = frame["trade_date"].apply(_format_db_date)
+        frame = frame.drop(columns=["trade_date"])
+        frame["symbol"] = symbol
+        frame["name"] = self.get_symbol_name(symbol)
+
+        for col in ["open", "high", "low", "close", "volume", "amount"]:
+            if col in frame.columns:
+                frame[col] = pd.to_numeric(frame[col], errors="coerce")
+
+        frame = frame.dropna(subset=["close"])
+        if "amount" in frame.columns:
+            mask = frame["amount"].isna() | (frame["amount"] <= 0)
+            if mask.any():
+                avg_price = (frame["high"] + frame["low"] + frame["close"]) / 3
+                frame.loc[mask, "amount"] = frame.loc[mask, "volume"] * avg_price
+        if frame.empty:
+            return frame
+
+        return apply_limit_suspended_adj(
+            frame, symbol, cache=self.cache if self._use_cache else None
+        )
 
     def fetch_intraday(
         self,
