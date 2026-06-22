@@ -198,6 +198,8 @@ def _run_metadata_fields(metadata: RunMetadata | None) -> dict[str, object]:
         "run_online_factors_enabled": metadata.online_factors_enabled,
         "run_data_latest_trade_date": metadata.data_latest_trade_date,
         "run_data_lag_days": metadata.data_lag_days,
+        "run_circuit_breaker_triggered": metadata.circuit_breaker_triggered,
+        "run_circuit_breaker_reason": metadata.circuit_breaker_reason,
     }
 
 

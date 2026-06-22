@@ -146,6 +146,9 @@ def test_bt_task_script_exposes_panel_safe_actions() -> None:
     assert "scripts/server_sync_and_run.sh" in script
     assert "scripts/coldstart_daily.sh" in script
     assert "scripts/server_monitor.sh" in script
+    assert script.index("monitor)") < script.index("scripts/server_monitor.sh")
+    monitor_block = script[script.index("monitor)") : script.index("news)")]
+    assert "sync_code_only" in monitor_block
     assert "scripts/news_catalysts.sh" in script
     assert script.index("news)") < script.index("scripts/news_catalysts.sh")
     assert script.index("skip_weekday_market_holiday") < script.index(

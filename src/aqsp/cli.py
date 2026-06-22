@@ -2660,6 +2660,8 @@ def run_scheduled(args: argparse.Namespace) -> int:
         regime=regime,
         max_universe=max_universe,
         task_id=str(os.environ.get("AQSP_RUN_TASK_ID", "") or "").strip(),
+        circuit_breaker_triggered=status.triggered,
+        circuit_breaker_reason=status.reason,
     )
 
     diff = None

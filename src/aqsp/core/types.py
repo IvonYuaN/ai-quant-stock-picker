@@ -76,6 +76,8 @@ class RunMetadata:
     regime: str = ""
     max_universe: int = 0
     task_id: str = ""
+    circuit_breaker_triggered: bool = False
+    circuit_breaker_reason: str = ""
 
 
 @dataclass(frozen=True)

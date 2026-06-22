@@ -20,7 +20,7 @@ from aqsp.strategies.thresholds import load_thresholds
 
 def test_load_thresholds():
     thresholds = load_thresholds()
-    assert thresholds.version == "1.1.5"
+    assert thresholds.version == "1.1.6"
     assert thresholds.last_walkforward_run == "2026-05-30"
     assert thresholds.momentum.lookback_days == 60
     assert thresholds.momentum.weights.momentum == 0.4
@@ -61,7 +61,7 @@ def test_momentum_strategy():
     strategy = MomentumStrategy(config)
 
     assert strategy.id == "momentum"
-    assert strategy.version == "1.1.5"
+    assert strategy.version == "1.1.6"
     assert strategy.hypothesis != ""
 
     scores = strategy.calculate_score({"600000": df})
@@ -283,6 +283,46 @@ def test_composite_strategy_detailed_momentum_only():
     assert "value" not in detailed["600000"]
 
 
+def test_composite_strategy_applies_regime_score_multiplier():
+    from dataclasses import replace
+
+    from aqsp.strategies.thresholds import Thresholds
+
+    dates = pd.date_range("2026-01-01", periods=60, freq="D")
+    prices = np.linspace(10, 12, 60)
+    df = pd.DataFrame(
+        {
+            "date": dates.strftime("%Y-%m-%d"),
+            "close": prices,
+            "open": prices,
+            "high": prices * 1.01,
+            "low": prices * 0.99,
+            "volume": 100000,
+        }
+    )
+    thresholds = Thresholds()
+    thresholds = replace(
+        thresholds,
+        regime=replace(
+            thresholds.regime,
+            adjustments={"test_half": 0.5},
+        ),
+    )
+    strategy = CompositeStrategy(
+        StrategyConfig(name="composite"), thresholds=thresholds
+    )
+
+    base_score = strategy.calculate_score({"600000": df}, regime="unknown")["600000"]
+    half_score = strategy.calculate_score({"600000": df}, regime="test_half")["600000"]
+    detailed = strategy.calculate_detailed_scores({"600000": df}, regime="test_half")[
+        "600000"
+    ]
+
+    assert half_score == pytest.approx(base_score * 0.5)
+    assert detailed["regime_multiplier"] == 0.5
+    assert detailed["total"] == pytest.approx(half_score)
+
+
 def test_composite_strategy_select_stocks():
     dates = pd.date_range("2026-01-01", periods=60, freq="D")
 
@@ -356,7 +396,7 @@ def test_closing_premium_strategy_init():
 
     assert strategy.id == "closing_premium"
     assert strategy.name == "closing_premium"
-    assert strategy.version == "1.1.5"
+    assert strategy.version == "1.1.6"
     assert strategy.hypothesis == "尾盘异动股票往往有资金介入，次日有溢价空间"
     assert "stable_bull" in strategy.regime_required
     assert "stable_sideways" in strategy.regime_required

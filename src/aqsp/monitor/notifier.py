@@ -73,7 +73,7 @@ def send_alerts(results: list[MonitorResult]) -> None:
     fingerprint = _monitor_alert_fingerprint(triggered)
     date_key = now_shanghai().date().isoformat()
     state_path = _monitor_notify_state_path()
-    if not _should_send_monitor_alert(
+    if not _reserve_monitor_alert(
         state_path=state_path,
         fingerprint=fingerprint,
         date_key=date_key,
@@ -93,6 +93,12 @@ def send_alerts(results: list[MonitorResult]) -> None:
             fingerprint=fingerprint,
             date_key=date_key,
         )
+    else:
+        _release_monitor_alert_reservation(
+            state_path=state_path,
+            fingerprint=fingerprint,
+            date_key=date_key,
+        )
 
 
 def _monitor_notify_state_path() -> Path:
@@ -103,12 +109,12 @@ def _monitor_notify_state_path() -> Path:
 def _monitor_alert_fingerprint(results: list[MonitorResult]) -> str:
     parts: list[str] = []
     for result in sorted(results, key=lambda item: item.name):
-        if not result.triggered or result.severity != "critical":
+        if not result.triggered:
             continue
         detail_items = sorted((result.details or {}).items())
         details = ",".join(f"{key}={value}" for key, value in detail_items)
         parts.append(f"{result.name}|{result.severity}|{result.message}|{details}")
-    raw = "\n".join(parts) or "no-critical"
+    raw = "\n".join(parts) or "no-triggered"
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
@@ -122,34 +128,65 @@ def _read_monitor_notify_state(path: Path) -> dict[str, object]:
     return payload if isinstance(payload, dict) else {}
 
 
-def _should_send_monitor_alert(
+def _reserve_monitor_alert(
     *, state_path: Path, fingerprint: str, date_key: str
 ) -> bool:
     with advisory_lock(state_path):
         state = _read_monitor_notify_state(state_path)
-        return not (
-            state.get("fingerprint") == fingerprint and state.get("date") == date_key
+        if state.get("fingerprint") == fingerprint and state.get("date") == date_key:
+            return False
+        _write_monitor_notify_state(
+            state_path=state_path,
+            fingerprint=fingerprint,
+            date_key=date_key,
+            status="pending",
         )
+        return True
 
 
 def _mark_monitor_alert_sent(
     *, state_path: Path, fingerprint: str, date_key: str
 ) -> None:
     with advisory_lock(state_path):
-        atomic_write_text(
-            state_path,
-            json.dumps(
-                {
-                    "fingerprint": fingerprint,
-                    "date": date_key,
-                    "updated_at": now_shanghai().isoformat(timespec="seconds"),
-                },
-                ensure_ascii=False,
-                indent=2,
-                sort_keys=True,
-            )
-            + "\n",
+        _write_monitor_notify_state(
+            state_path=state_path,
+            fingerprint=fingerprint,
+            date_key=date_key,
+            status="sent",
         )
+
+
+def _release_monitor_alert_reservation(
+    *, state_path: Path, fingerprint: str, date_key: str
+) -> None:
+    with advisory_lock(state_path):
+        state = _read_monitor_notify_state(state_path)
+        if (
+            state.get("fingerprint") == fingerprint
+            and state.get("date") == date_key
+            and state.get("status") == "pending"
+        ):
+            state_path.unlink(missing_ok=True)
+
+
+def _write_monitor_notify_state(
+    *, state_path: Path, fingerprint: str, date_key: str, status: str
+) -> None:
+    atomic_write_text(
+        state_path,
+        json.dumps(
+            {
+                "fingerprint": fingerprint,
+                "date": date_key,
+                "status": status,
+                "updated_at": now_shanghai().isoformat(timespec="seconds"),
+            },
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+    )
 
 
 def _clear_monitor_notify_state() -> None:

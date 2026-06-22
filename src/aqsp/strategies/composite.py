@@ -94,6 +94,11 @@ class CompositeStrategy(BaseStrategy):
             base.triple_rise_weight * adjustment.triple_rise,
         )
 
+    def _regime_score_multiplier(self, regime: str) -> float:
+        if not regime:
+            return 1.0
+        return float(self.thresholds.regime.adjustments.get(regime, 1.0))
+
     def calculate_score(
         self, data: Dict[str, pd.DataFrame], regime: str = "unknown"
     ) -> Dict[str, float]:
@@ -163,7 +168,10 @@ class CompositeStrategy(BaseStrategy):
                 total += tr * trw
                 w_sum += trw
 
-            final_scores[symbol] = total / w_sum if w_sum > 0 else 0.0
+            base_score = total / w_sum if w_sum > 0 else 0.0
+            final_scores[symbol] = max(
+                0.0, min(1.0, base_score * self._regime_score_multiplier(regime))
+            )
 
         return final_scores
 
@@ -239,7 +247,9 @@ class CompositeStrategy(BaseStrategy):
                 total += tr * trw
                 w_sum += trw
 
-            entry["total"] = total / w_sum if w_sum > 0 else 0.0
+            base_total = total / w_sum if w_sum > 0 else 0.0
+            entry["regime_multiplier"] = self._regime_score_multiplier(regime)
+            entry["total"] = max(0.0, min(1.0, base_total * entry["regime_multiplier"]))
             detailed[symbol] = entry
 
         return detailed

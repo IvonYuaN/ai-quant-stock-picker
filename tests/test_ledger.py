@@ -658,6 +658,8 @@ def test_append_predictions_writes_run_metadata_when_provided(tmp_path) -> None:
         data_lag_days=0,
         regime="stable_bull",
         max_universe=100,
+        circuit_breaker_triggered=True,
+        circuit_breaker_reason="单日亏损触发",
     )
 
     append_predictions(
@@ -683,6 +685,8 @@ def test_append_predictions_writes_run_metadata_when_provided(tmp_path) -> None:
     assert row["run_online_factors_enabled"] is False
     assert row["run_data_latest_trade_date"] == "2026-05-29"
     assert row["run_data_lag_days"] == 0
+    assert row["run_circuit_breaker_triggered"] is True
+    assert row["run_circuit_breaker_reason"] == "单日亏损触发"
 
 
 def test_append_predictions_persists_portfolio_and_debate_fields(tmp_path) -> None:

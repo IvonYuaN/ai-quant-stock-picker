@@ -272,6 +272,23 @@ class TestNotifier:
         assert mock_notify.call_count == 1
         assert "skipped duplicate critical alert" in capsys.readouterr().out
 
+    def test_send_alerts_reserves_before_delivery(
+        self, sample_results: list[MonitorResult], tmp_path: Path, monkeypatch
+    ) -> None:
+        state_path = tmp_path / "monitor_state.json"
+        monkeypatch.setenv("AQSP_MONITOR_NOTIFY_STATE_PATH", str(state_path))
+
+        def _notify(_markdown: str) -> list[MagicMock]:
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            assert state["status"] == "pending"
+            return [MagicMock(channel="serverchan", ok=True, detail="HTTP 200")]
+
+        with patch("aqsp.monitor.notifier.notify_markdown", side_effect=_notify):
+            send_alerts(sample_results)
+
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        assert state["status"] == "sent"
+
     def test_send_alerts_retries_when_delivery_fails(
         self, sample_results: list[MonitorResult], tmp_path: Path, monkeypatch
     ) -> None:
@@ -285,6 +302,42 @@ class TestNotifier:
 
             send_alerts(sample_results)
             send_alerts(sample_results)
+
+        assert mock_notify.call_count == 2
+
+    def test_send_alerts_uses_warning_details_in_fingerprint(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        monkeypatch.setenv(
+            "AQSP_MONITOR_NOTIFY_STATE_PATH", str(tmp_path / "monitor_state.json")
+        )
+        first = [
+            MonitorResult(
+                name="win_rate_drop",
+                triggered=True,
+                severity="warning",
+                message="胜率 20.0% 低于阈值 30.0%",
+                details={"win_rate": 0.2},
+            )
+        ]
+        second = [
+            MonitorResult(
+                name="data_source_failure",
+                triggered=True,
+                severity="warning",
+                message="数据源连续失败 4 次",
+                details={"consecutive_failures": 4},
+            )
+        ]
+
+        with patch("aqsp.monitor.notifier.notify_markdown") as mock_notify:
+            mock_notify.return_value = [
+                MagicMock(channel="serverchan", ok=True, detail="HTTP 200")
+            ]
+
+            send_alerts(first)
+            send_alerts(second)
+            send_alerts(second)
 
         assert mock_notify.call_count == 2
 

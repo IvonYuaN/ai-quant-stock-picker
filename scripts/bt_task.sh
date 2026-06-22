@@ -247,6 +247,7 @@ case "$ACTION" in
         ;;
     monitor)
         export AQSP_RUN_TASK_ID="monitor"
+        sync_code_only
         run_script "${PROJECT_ROOT}/scripts/server_monitor.sh"
         ;;
     news)

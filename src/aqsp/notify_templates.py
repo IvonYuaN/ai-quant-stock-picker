@@ -992,28 +992,28 @@ def build_monitor_notification(
     lines = [
         f"# {_dated_title('系统监控告警')}",
         "",
-        "## 核心结论",
+        "## 结论",
         "",
         f"- 严重告警: {len(critical)}",
         f"- 一般告警: {len(warnings)}",
     ]
     if critical:
-        lines.append(f"- 最高优先级: {critical[0].name} | {critical[0].message}")
+        lines.append(f"- 优先处理: {critical[0].name}")
     elif warnings:
-        lines.append(f"- 首条告警: {warnings[0].name} | {warnings[0].message}")
+        lines.append(f"- 优先查看: {warnings[0].name}")
     else:
         lines.append("- 总体状态: 正常")
 
     if _safe_mode(mode) == "full":
-        lines.extend(["", "## 详细告警", ""])
+        lines.extend(["", "## 告警", ""])
         lines.extend(_format_monitor_results(triggered or list(results)))
         return _notification_research_tone("\n".join(lines))
 
     if critical or warnings:
-        lines.extend(["", "## 处理清单", ""])
-        lines.extend(_monitor_actions(critical, warnings))
-        lines.extend(["", "## 告警回放", ""])
+        lines.extend(["", "## 告警", ""])
         lines.extend(_format_monitor_results((critical + warnings)[:5]))
+        lines.extend(["", "## 处理", ""])
+        lines.extend(_monitor_actions(critical, warnings))
     return _notification_research_tone("\n".join(lines))
 
 
@@ -1365,8 +1365,11 @@ def _format_monitor_results(results: Sequence[MonitorResult]) -> list[str]:
     lines: list[str] = []
     for result in results:
         lines.append(f"- {result.name}: {result.message}")
-        for key, value in list(result.details.items())[:3]:
-            lines.append(f"  {key}: {value}")
+        detail = " / ".join(
+            f"{key}={value}" for key, value in list(result.details.items())[:3]
+        )
+        if detail:
+            lines.append(f"  {detail}")
     return lines
 
 
