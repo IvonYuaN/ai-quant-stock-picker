@@ -1489,12 +1489,33 @@ def _send_pipeline_digest(
             if result.started_at
             else today_shanghai().isoformat()
         )
+        from aqsp.notification_runtime import (
+            mark_notification_sent,
+            should_send_notification,
+        )
+
+        state_path = config.project_root / "data" / "notify_state.json"
+        notification_key = f"pipeline-summary:{run_date}"
+        state_markdown = f"# 收盘总览-{run_date}\n\n{digest}"
+        if not should_send_notification(
+            kind=notification_key,
+            markdown=state_markdown,
+            state_path=state_path,
+        ):
+            logger.info("收盘汇总通知已发送过，跳过重复发送 (date=%s)", run_date)
+            return
         notify_results = send_notification(f"收盘总览-{run_date}", digest)
         if notify_results:
             channel_summary = ", ".join(
                 f"{result.channel}={'ok' if result.ok else 'failed'}({result.detail})"
                 for result in notify_results
             )
+            if any(result.ok for result in notify_results):
+                mark_notification_sent(
+                    kind=notification_key,
+                    markdown=state_markdown,
+                    state_path=state_path,
+                )
             logger.info(
                 "已发送收盘汇总通知 (mode=summary, channels=%s)",
                 channel_summary,

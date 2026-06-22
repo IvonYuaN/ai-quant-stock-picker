@@ -22,7 +22,7 @@ _logger = logging.getLogger("aqsp.data.fetcher")
 
 class MultiSourceFetcher:
     """Fetches daily OHLCV data with automatic fallback from Tushare to Akshare.
-    
+
     Attributes:
         primary_source: Primary data source (usually Tushare)
         fallback_source: Fallback data source (usually Akshare)
@@ -36,7 +36,7 @@ class MultiSourceFetcher:
         cache: DataCache | None = None,
     ) -> None:
         """Initialize MultiSourceFetcher with primary and fallback sources.
-        
+
         Args:
             primary_source: Primary data source
             fallback_source: Fallback data source
@@ -55,21 +55,21 @@ class MultiSourceFetcher:
         adjust: Literal["", "qfq", "hfq"] = "",
     ) -> dict[str, OhlcvFrame]:
         """Fetch daily OHLCV data with automatic fallback.
-        
+
         Priority:
         1. Try primary source (Tushare)
         2. If primary fails, fallback to secondary source (Akshare)
         3. Log switching events
-        
+
         Args:
             symbols: List of stock symbols to fetch
             start: Start date
             end: End date
             adjust: Price adjustment type ("", "qfq", "hfq")
-            
+
         Returns:
             Dictionary mapping symbol to OHLCV DataFrame
-            
+
         Raises:
             DataError: If both primary and fallback sources fail
         """
@@ -101,7 +101,9 @@ class MultiSourceFetcher:
         missing_symbols = [s for s in symbols if s not in result]
         if missing_symbols:
             try:
-                fallback_data = self._fetch_from_akshare(missing_symbols, start, end, adjust)
+                fallback_data = self._fetch_from_akshare(
+                    missing_symbols, start, end, adjust
+                )
                 result.update(fallback_data)
                 for symbol in fallback_data:
                     self._last_source_used[symbol] = self.fallback_source.name
@@ -146,11 +148,18 @@ class MultiSourceFetcher:
                     _logger.error(f"{symbol} 数据验证失败: {validation.errors}")
             except Exception as e:
                 _logger.error(f"{symbol} 数据验证异常: {e}")
-        
+
         if not validated_result:
             raise DataError(f"所有 {len(result)} 个符号的数据验证失败，拒绝返回脏数据")
-        
-        _logger.info(f"数据验证完成: {len(result)} -> {len(validated_result)} (通过验证 {len(validated_result)} 条)")
+        missing_after_validation = [
+            symbol for symbol in symbols if symbol not in validated_result
+        ]
+        if missing_after_validation:
+            raise DataError(f"数据验证后缺少请求标的: {missing_after_validation}")
+
+        _logger.info(
+            f"数据验证完成: {len(result)} -> {len(validated_result)} (通过验证 {len(validated_result)} 条)"
+        )
         return validated_result
 
     def _fetch_from_tushare(
@@ -161,13 +170,13 @@ class MultiSourceFetcher:
         adjust: Literal["", "qfq", "hfq"] = "",
     ) -> dict[str, OhlcvFrame]:
         """Fetch data from Tushare (primary source).
-        
+
         Args:
             symbols: List of stock symbols
             start: Start date
             end: End date
             adjust: Price adjustment type
-            
+
         Returns:
             Dictionary mapping symbol to normalized OHLCV DataFrame
         """
@@ -189,13 +198,13 @@ class MultiSourceFetcher:
         adjust: Literal["", "qfq", "hfq"] = "",
     ) -> dict[str, OhlcvFrame]:
         """Fetch data from Akshare (fallback source).
-        
+
         Args:
             symbols: List of stock symbols
             start: Start date
             end: End date
             adjust: Price adjustment type
-            
+
         Returns:
             Dictionary mapping symbol to normalized OHLCV DataFrame
         """
@@ -211,14 +220,14 @@ class MultiSourceFetcher:
 
     def _normalize_columns(self, df: pd.DataFrame, symbol: str) -> pd.DataFrame:
         """Normalize OHLCV column names to standard format.
-        
+
         Standardizes to: date, symbol, name, open, high, low, close, volume, amount,
         suspended, limit_up, limit_down
-        
+
         Args:
             df: Raw OHLCV DataFrame
             symbol: Stock symbol for validation
-            
+
         Returns:
             Normalized DataFrame with standard column names
         """
@@ -285,10 +294,10 @@ class MultiSourceFetcher:
 
     def get_last_source_used(self, symbol: str) -> str | None:
         """Get the last source used for fetching a symbol's data.
-        
+
         Args:
             symbol: Stock symbol
-            
+
         Returns:
             Source name or None if symbol not yet fetched
         """
@@ -296,7 +305,7 @@ class MultiSourceFetcher:
 
     def get_all_last_sources(self) -> dict[str, str]:
         """Get all symbols and their last used sources.
-        
+
         Returns:
             Dictionary mapping symbol to source name
         """
@@ -305,19 +314,19 @@ class MultiSourceFetcher:
 
 def create_default_fetcher(cache: DataCache | None = None) -> MultiSourceFetcher:
     """Factory function to create a MultiSourceFetcher with default sources.
-    
+
     Creates a fetcher with:
     - Primary: Tushare (requires token setup)
     - Fallback: Akshare (free, no setup needed)
-    
+
     Args:
         cache: Optional DataCache instance
-        
+
     Returns:
         Configured MultiSourceFetcher instance
     """
     from aqsp.data.akshare_source import AkshareSource
-    
+
     try:
         # Try to import and create Tushare source
         # This is a placeholder - actual Tushare integration would go here
@@ -328,5 +337,5 @@ def create_default_fetcher(cache: DataCache | None = None) -> MultiSourceFetcher
         raise RuntimeError(
             "Failed to create default fetcher: Tushare/Akshare not properly configured"
         ) from exc
-    
+
     return MultiSourceFetcher(primary, fallback, cache=cache)

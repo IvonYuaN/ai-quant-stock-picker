@@ -143,7 +143,7 @@ def fetch_with_source(
     )
     missing = sorted(requested - returned)
     if missing:
-        _logger.warning("数据源 %s 缺少部分日线: %s", source.name, missing)
+        raise DataError(f"数据源 {source.name} 日线获取不完整: 缺少 {missing}")
     return out
 
 

@@ -106,8 +106,10 @@ def test_news_catalysts_cli_sends_research_notification(monkeypatch, capsys) -> 
     monkeypatch.setattr(
         cli_mod,
         "notify_markdown",
-        lambda markdown: sent.append(markdown)
-        or [MagicMock(channel="serverchan", ok=True, detail="HTTP 200")],
+        lambda markdown: (
+            sent.append(markdown)
+            or [MagicMock(channel="serverchan", ok=True, detail="HTTP 200")]
+        ),
     )
     monkeypatch.setattr(
         "aqsp.news.build_catalyst_report",
@@ -154,7 +156,8 @@ def test_run_briefing_prints_notify_channel_results(
         "aqsp.briefing.notifier.send_smart_summary_card", lambda briefing: None
     )
     monkeypatch.setattr(
-        "aqsp.notifier.notify_markdown",
+        cli_mod,
+        "notify_markdown",
         lambda markdown: [MagicMock(channel="serverchan", ok=True, detail="HTTP 200")],
     )
 
@@ -171,6 +174,52 @@ def test_run_briefing_prints_notify_channel_results(
     output_text = capsys.readouterr().out
     assert exit_code == 0
     assert "briefing notify serverchan: ok (HTTP 200)" in output_text
+
+
+def test_run_briefing_dedupes_same_date_notification(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
+    import aqsp.cli as cli_mod
+
+    ledger = tmp_path / "predictions.jsonl"
+    output = tmp_path / "briefing.md"
+    state_path = tmp_path / "notify_state.json"
+    ledger.write_text(
+        '{"signal_date":"2026-06-12","status":"watch_only","symbol":"600000",'
+        '"name":"浦发银行","signal_close":10.0,"score":55,"rating":"watch"}\n',
+        encoding="utf-8",
+    )
+    calls: list[str] = []
+
+    monkeypatch.setenv("AQSP_NOTIFY_STATE_PATH", str(state_path))
+    monkeypatch.setattr(
+        "aqsp.briefing.enhance_briefing", lambda briefing, enable_llm: briefing
+    )
+    monkeypatch.setattr(
+        "aqsp.briefing.notifier.send_smart_summary_card", lambda briefing: None
+    )
+    monkeypatch.setattr(
+        "aqsp.notification_runtime.dispatch_notification",
+        lambda markdown, **_kwargs: (
+            calls.append(markdown)
+            or [MagicMock(channel="serverchan", ok=True, detail="HTTP 200")]
+        ),
+    )
+
+    args = Namespace(
+        ledger=str(ledger),
+        output=str(output),
+        enable_llm=False,
+        notify=True,
+        email=False,
+    )
+
+    assert cli_mod.run_briefing(args) == 0
+    assert cli_mod.run_briefing(args) == 0
+
+    output_text = capsys.readouterr().out
+    assert len(calls) == 1
+    assert "briefing notify: skipped duplicate" in output_text
 
 
 def test_run_closing_review_prints_notify_failure(monkeypatch, capsys) -> None:

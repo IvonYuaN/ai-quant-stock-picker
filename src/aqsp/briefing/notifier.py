@@ -21,7 +21,7 @@ def send_smart_summary_card(briefing: Briefing) -> None:
     notify_feishu_card(card)
 
 
-def _compose_briefing_notification_markdown(
+def compose_briefing_notification_markdown(
     briefing: Briefing,
     source_status: dict[str, str | bool] | None = None,
 ) -> str:
@@ -38,7 +38,7 @@ def send_briefing(
     source_status: dict[str, str | bool] | None = None,
 ) -> list[NotifyResult]:
     send_smart_summary_card(briefing)
-    markdown = _compose_briefing_notification_markdown(
+    markdown = compose_briefing_notification_markdown(
         briefing,
         source_status=source_status,
     )

@@ -21,6 +21,7 @@ __all__ = [
     "enhance_briefing",
     "format_daily_review",
     "format_weekly_summary",
+    "compose_briefing_notification_markdown",
     "send_briefing",
 ]
 
@@ -34,4 +35,8 @@ def __getattr__(name: str):
         from aqsp.briefing.notifier import send_briefing
 
         return send_briefing
+    if name == "compose_briefing_notification_markdown":
+        from aqsp.briefing.notifier import compose_briefing_notification_markdown
+
+        return compose_briefing_notification_markdown
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

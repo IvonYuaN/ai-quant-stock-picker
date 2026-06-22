@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import ast
 from datetime import date
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -14,6 +16,67 @@ from aqsp.data.sina_source import SinaSource
 from aqsp.data.tencent_source import TencentSource
 from aqsp.data.mootdx_source import MootdxSource
 from aqsp.data.source import require_non_empty_fetch_result
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+CONCRETE_DATA_SOURCE_FILES = (
+    "src/aqsp/data/akshare_source.py",
+    "src/aqsp/data/baostock_source.py",
+    "src/aqsp/data/eastmoney_source.py",
+    "src/aqsp/data/efinance_source.py",
+    "src/aqsp/data/mootdx_source.py",
+    "src/aqsp/data/sina_source.py",
+    "src/aqsp/data/sqlite_db_source.py",
+    "src/aqsp/data/tdx_vipdoc_source.py",
+    "src/aqsp/data/tencent_source.py",
+)
+PUBLIC_FETCH_METHODS = {
+    "fetch_daily",
+    "fetch_intraday",
+    "fetch_realtime_quote",
+    "fetch_index",
+}
+
+
+def _contains_call(node: ast.AST, name: str) -> bool:
+    for child in ast.walk(node):
+        if not isinstance(child, ast.Call):
+            continue
+        func = child.func
+        if isinstance(func, ast.Name) and func.id == name:
+            return True
+    return False
+
+
+def _contains_raise_data_error(node: ast.AST) -> bool:
+    for child in ast.walk(node):
+        if not isinstance(child, ast.Raise) or child.exc is None:
+            continue
+        exc = child.exc
+        if isinstance(exc, ast.Call):
+            exc = exc.func
+        if isinstance(exc, ast.Name) and exc.id == "DataError":
+            return True
+    return False
+
+
+def test_public_data_source_fetch_methods_fail_loud_on_empty_results() -> None:
+    violations: list[str] = []
+    for rel_path in CONCRETE_DATA_SOURCE_FILES:
+        path = PROJECT_ROOT / rel_path
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if (
+                not isinstance(node, ast.FunctionDef)
+                or node.name not in PUBLIC_FETCH_METHODS
+            ):
+                continue
+            if _contains_call(node, "require_non_empty_fetch_result"):
+                continue
+            if _contains_raise_data_error(node):
+                continue
+            violations.append(f"{rel_path}:{node.name}")
+
+    assert violations == []
 
 
 def test_mootdx_public_fetch_methods_raise_data_error_when_empty(monkeypatch) -> None:

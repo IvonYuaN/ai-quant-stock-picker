@@ -4204,7 +4204,12 @@ def run_walkforward(args: argparse.Namespace) -> int:
 
 
 def run_briefing(args: argparse.Namespace) -> int:
-    from aqsp.briefing import BriefingGenerator, enhance_briefing, send_briefing
+    from aqsp.briefing import (
+        BriefingGenerator,
+        compose_briefing_notification_markdown,
+        enhance_briefing,
+    )
+    from aqsp.briefing.notifier import send_smart_summary_card
     from aqsp.ledger.base import read_ledger
 
     rows = read_ledger(args.ledger)
@@ -4342,9 +4347,16 @@ def run_briefing(args: argparse.Namespace) -> int:
     print(briefing.to_markdown())
 
     if args.notify:
-        print_notify_results(
-            send_briefing(briefing, source_status=source_status),
+        send_smart_summary_card(briefing)
+        notify_markdown_body = compose_briefing_notification_markdown(
+            briefing,
+            source_status=source_status,
+        )
+        _dispatch_notification_once(
+            notify_markdown_body,
             prefix="briefing notify",
+            mode=load_runtime_config().notify_mode,
+            kind=f"briefing:{briefing.date[:10]}",
         )
 
     if getattr(args, "email", False):

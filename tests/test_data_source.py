@@ -372,6 +372,20 @@ def test_fetch_with_source_raises_when_source_returns_no_valid_frames() -> None:
         fetch_with_source(DummySource(), ["600000"], days=30)
 
 
+def test_fetch_with_source_raises_when_source_returns_partial_daily_frames() -> None:
+    class DummySource:
+        name = "dummy"
+
+        def fetch_daily(self, symbols, start, end, adjust=""):
+            return {"600000": pd.DataFrame([{"date": "2026-06-13", "close": 10.1}])}
+
+        def fetch_index(self, index_codes, start, end):
+            return {}
+
+    with pytest.raises(DataError, match="日线获取不完整"):
+        fetch_with_source(DummySource(), ["600000", "000001"], days=30)
+
+
 def _make_sqlite_daily_db(path: Path, symbols: int = 3, days: int = 3) -> None:
     with sqlite3.connect(path) as conn:
         conn.execute("CREATE TABLE stocks (ts_code TEXT PRIMARY KEY, name TEXT)")
