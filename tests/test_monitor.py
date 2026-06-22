@@ -310,7 +310,7 @@ class TestNotifier:
         state = json.loads(state_path.read_text(encoding="utf-8"))
         assert state["status"] == "sent"
 
-    def test_send_alerts_retries_when_delivery_fails(
+    def test_send_alerts_suppresses_duplicate_retries_when_delivery_fails(
         self, sample_results: list[MonitorResult], tmp_path: Path, monkeypatch
     ) -> None:
         monkeypatch.setenv(
@@ -324,9 +324,9 @@ class TestNotifier:
             send_alerts(sample_results)
             send_alerts(sample_results)
 
-        assert mock_notify.call_count == 2
+        assert mock_notify.call_count == 1
 
-    def test_send_alerts_uses_warning_details_in_fingerprint(
+    def test_send_alerts_sends_new_alert_name_once(
         self, tmp_path: Path, monkeypatch
     ) -> None:
         monkeypatch.setenv(
@@ -361,6 +361,38 @@ class TestNotifier:
             send_alerts(second)
 
         assert mock_notify.call_count == 2
+
+    def test_send_alerts_dedupes_same_alert_names_when_message_changes(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        monkeypatch.setenv(
+            "AQSP_MONITOR_NOTIFY_STATE_PATH", str(tmp_path / "monitor_state.json")
+        )
+        first = [
+            MonitorResult(
+                name="stale_data",
+                triggered=True,
+                severity="critical",
+                message="数据滞后 4 天，超过阈值 3 天",
+            )
+        ]
+        second = [
+            MonitorResult(
+                name="stale_data",
+                triggered=True,
+                severity="critical",
+                message="数据滞后 5 天，超过阈值 3 天",
+            )
+        ]
+
+        with patch("aqsp.monitor.notifier.notify_markdown") as mock_notify:
+            mock_notify.return_value = [
+                MagicMock(channel="serverchan", ok=True, detail="HTTP 200")
+            ]
+            send_alerts(first)
+            send_alerts(second)
+
+        assert mock_notify.call_count == 1
 
     def test_send_alerts_no_triggered(self) -> None:
         results = [

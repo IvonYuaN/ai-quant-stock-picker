@@ -94,11 +94,7 @@ def send_alerts(results: list[MonitorResult]) -> None:
             date_key=date_key,
         )
     else:
-        _release_monitor_alert_reservation(
-            state_path=state_path,
-            fingerprint=fingerprint,
-            date_key=date_key,
-        )
+        print("monitor notify: delivery failed; suppressing duplicate retries today")
 
 
 def _monitor_notify_state_path() -> Path:
@@ -111,7 +107,7 @@ def _monitor_alert_fingerprint(results: list[MonitorResult]) -> str:
     for result in sorted(results, key=lambda item: item.name):
         if not result.triggered:
             continue
-        parts.append(f"{result.name}|{result.severity}|{result.message}")
+        parts.append(f"{result.name}|{result.severity}")
     raw = "\n".join(parts) or "no-triggered"
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
@@ -152,19 +148,6 @@ def _mark_monitor_alert_sent(
             date_key=date_key,
             status="sent",
         )
-
-
-def _release_monitor_alert_reservation(
-    *, state_path: Path, fingerprint: str, date_key: str
-) -> None:
-    with advisory_lock(state_path):
-        state = _read_monitor_notify_state(state_path)
-        if (
-            state.get("fingerprint") == fingerprint
-            and state.get("date") == date_key
-            and state.get("status") == "pending"
-        ):
-            state_path.unlink(missing_ok=True)
 
 
 def _write_monitor_notify_state(
