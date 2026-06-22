@@ -399,6 +399,11 @@ def main(argv: list[str] | None = None) -> int:
     wf.add_argument(
         "--symbols", default="", help="comma separated symbols (default: HS300)"
     )
+    wf.add_argument(
+        "--symbols-file",
+        default="",
+        help="file with one symbol per line, or comma separated symbols",
+    )
     wf.add_argument("--start", default="2018-01-01", help="backtest start date")
     wf.add_argument("--end", default="2024-12-31", help="backtest end date")
     wf.add_argument("--train-days", type=int, default=120)
@@ -1570,6 +1575,22 @@ def _resolve_execution_cost_bps(
         default_fee_bps if fee_bps is None else float(fee_bps),
         default_slippage_bps if slippage_bps is None else float(slippage_bps),
     )
+
+
+def _read_symbols_file(path: str | Path) -> list[str]:
+    raw_path = Path(path)
+    symbols: list[str] = []
+    seen: set[str] = set()
+    for line in raw_path.read_text(encoding="utf-8").splitlines():
+        text = line.split("#", 1)[0].strip()
+        if not text:
+            continue
+        for part in text.split(","):
+            symbol = part.strip()
+            if symbol and symbol not in seen:
+                seen.add(symbol)
+                symbols.append(symbol)
+    return symbols
 
 
 def _walkforward_fetch_days(start: str, end: str) -> int:
@@ -3696,9 +3717,17 @@ def run_walkforward(args: argparse.Namespace) -> int:
     _assert_not_heldout(args.end, allow=args.allow_heldout, logger=logger)
 
     explicit_symbols = args.symbols.strip()
-    if not explicit_symbols:
-        explicit_symbols = os.getenv("AQSP_WALKFORWARD_SYMBOLS", "").strip()
-    symbols = [s.strip() for s in explicit_symbols.split(",") if s.strip()]
+    symbols_file = str(getattr(args, "symbols_file", "") or "").strip()
+    if explicit_symbols:
+        symbols = [s.strip() for s in explicit_symbols.split(",") if s.strip()]
+        if symbols_file:
+            print("提示: 同时传入 --symbols 和 --symbols-file，已优先使用 --symbols")
+    elif symbols_file:
+        symbols = _read_symbols_file(symbols_file)
+        print(f"使用 symbols 文件标的池: {len(symbols)} 只")
+    else:
+        env_symbols = os.getenv("AQSP_WALKFORWARD_SYMBOLS", "").strip()
+        symbols = [s.strip() for s in env_symbols.split(",") if s.strip()]
     if not symbols:
         if args.pool == "all":
             src = _get_source(args.source)

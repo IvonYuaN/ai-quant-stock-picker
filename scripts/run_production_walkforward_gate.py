@@ -14,6 +14,7 @@ import os
 import sqlite3
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -42,7 +43,7 @@ def _compact_day(raw: str) -> str:
     return date.fromisoformat(raw).strftime("%Y%m%d")
 
 
-def inspect_raw_coverage(db_path: Path, *, start: str, end: str) -> CoverageSummary:
+def _raw_sqlite_source(db_path: Path) -> SqliteDbSource:
     if not db_path.exists():
         raise SystemExit(f"raw sqlite db missing: {db_path}")
     source = SqliteDbSource(db_path=db_path, cache=None)
@@ -51,14 +52,26 @@ def inspect_raw_coverage(db_path: Path, *, start: str, end: str) -> CoverageSumm
         raise SystemExit(
             f"production gate requires raw sqlite db, got price_mode={price_mode}: {db_path}"
         )
+    return source
 
-    start_day = date.fromisoformat(start)
-    end_day = date.fromisoformat(end)
+
+def select_covered_symbols(db_path: Path, *, start: str, end: str) -> list[str]:
+    source = _raw_sqlite_source(db_path)
+    return source.get_symbols_with_daily_coverage(
+        source.get_available_symbols(),
+        date.fromisoformat(start),
+        date.fromisoformat(end),
+        min_rows=None,
+    )
+
+
+def inspect_raw_coverage(db_path: Path, *, start: str, end: str) -> CoverageSummary:
+    source = _raw_sqlite_source(db_path)
     available = source.get_available_symbols()
     covered = source.get_symbols_with_daily_coverage(
         available,
-        start_day,
-        end_day,
+        date.fromisoformat(start),
+        date.fromisoformat(end),
         min_rows=None,
     )
     start_str = _compact_day(start)
@@ -99,6 +112,11 @@ def build_walkforward_command(args: argparse.Namespace) -> list[str]:
         "--grid-profile",
         args.grid_profile,
         "--skip-pit-financials",
+        *(
+            ["--symbols-file", args.symbols_file]
+            if getattr(args, "symbols_file", "")
+            else []
+        ),
         "--report",
         args.report,
         "--cache-path",
@@ -155,6 +173,28 @@ def main() -> int:
         )
         return 2
 
+    covered_symbols = select_covered_symbols(args.db, start=args.start, end=args.end)
+    if len(covered_symbols) < args.min_symbols:
+        print(
+            "BLOCK: selected production symbols are insufficient; "
+            f"need {args.min_symbols}, got {len(covered_symbols)}."
+        )
+        return 2
+
+    tmp_symbols_path: Path | None = None
+    if not args.dry_run:
+        with tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            prefix="aqsp-walkforward-symbols-",
+            suffix=".txt",
+            delete=False,
+        ) as tmp_symbols:
+            tmp_symbols.write("\n".join(covered_symbols) + "\n")
+            tmp_symbols_path = Path(tmp_symbols.name)
+        args.symbols_file = str(tmp_symbols_path)
+        print(f"production gate selected symbols: {len(covered_symbols)}")
+
     command = build_walkforward_command(args)
     print("production gate command:", " ".join(command))
     if args.dry_run:
@@ -175,6 +215,9 @@ def main() -> int:
             "Reduce the covered symbol batch or inspect sqlite fetch performance."
         )
         return 124
+    finally:
+        if tmp_symbols_path is not None:
+            tmp_symbols_path.unlink(missing_ok=True)
 
 
 if __name__ == "__main__":

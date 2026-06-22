@@ -924,6 +924,46 @@ class TestCLILogParam:
         assert result == 0
 
 
+class TestCLISymbolsFileParam:
+    def test_symbols_file_param_is_used_when_symbols_absent(
+        self, tmp_path, monkeypatch
+    ):
+        from aqsp.cli import main
+        import aqsp.cli as cli_mod
+
+        symbols_file = tmp_path / "symbols.txt"
+        symbols_file.write_text("600519\n300750,000001\n600519\n", encoding="utf-8")
+
+        def mock_run_walkforward(args):
+            assert args.symbols_file == str(symbols_file)
+            return 0
+
+        monkeypatch.setattr(cli_mod, "run_walkforward", mock_run_walkforward)
+        result = main(
+            [
+                "walkforward",
+                "--symbols-file",
+                str(symbols_file),
+                "--start",
+                "2024-01-01",
+                "--end",
+                "2024-06-30",
+            ]
+        )
+        assert result == 0
+
+    def test_read_symbols_file_dedupes_and_allows_commas(self, tmp_path):
+        from aqsp.cli import _read_symbols_file
+
+        symbols_file = tmp_path / "symbols.txt"
+        symbols_file.write_text(
+            "600519 # keep comment out\n300750, 000001\n600519\n",
+            encoding="utf-8",
+        )
+
+        assert _read_symbols_file(symbols_file) == ["600519", "300750", "000001"]
+
+
 class TestCLIUpdateYamlParam:
     def test_update_yaml_param_accepted(self, monkeypatch):
         from aqsp.cli import main

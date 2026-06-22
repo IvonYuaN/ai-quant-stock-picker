@@ -6,6 +6,7 @@ from pathlib import Path
 from scripts.run_production_walkforward_gate import (
     build_walkforward_command,
     inspect_raw_coverage,
+    select_covered_symbols,
 )
 
 
@@ -56,6 +57,19 @@ def test_inspect_raw_coverage_counts_covered_symbols(tmp_path: Path) -> None:
     assert coverage.last_trade_date == "20240130"
 
 
+def test_select_covered_symbols_returns_full_eligible_market(tmp_path: Path) -> None:
+    db = tmp_path / "astocks_raw.db"
+    _make_raw_db(db, symbols=5)
+
+    assert select_covered_symbols(db, start="2024-01-01", end="2024-01-30") == [
+        "600000",
+        "600001",
+        "600002",
+        "600003",
+        "600004",
+    ]
+
+
 def test_build_walkforward_command_uses_full_market_raw_gate() -> None:
     class Args:
         start = "2018-01-01"
@@ -64,6 +78,7 @@ def test_build_walkforward_command_uses_full_market_raw_gate() -> None:
         report = "reports/prod.md"
         cache_path = "data/prod.db"
         log = "logs/prod.log"
+        symbols_file = "/tmp/symbols.txt"
 
     command = build_walkforward_command(Args())
 
@@ -74,6 +89,8 @@ def test_build_walkforward_command_uses_full_market_raw_gate() -> None:
     assert "--grid-profile" in command
     assert "stable" in command
     assert "--skip-pit-financials" in command
+    assert "--symbols-file" in command
+    assert "/tmp/symbols.txt" in command
 
 
 def test_production_walkforward_gate_passes_raw_db_to_child_process(
@@ -97,6 +114,11 @@ def test_production_walkforward_gate_passes_raw_db_to_child_process(
     )
     monkeypatch.setattr(
         gate, "build_walkforward_command", lambda _args: ["python", "-m", "aqsp"]
+    )
+    monkeypatch.setattr(
+        gate,
+        "select_covered_symbols",
+        lambda *_args, **_kwargs: [f"600{idx:03d}" for idx in range(3200)],
     )
 
     def fake_run(command, *, check, env, timeout):
@@ -122,6 +144,57 @@ def test_production_walkforward_gate_passes_raw_db_to_child_process(
     }
 
 
+def test_production_walkforward_gate_passes_selected_symbols_file(
+    monkeypatch, tmp_path: Path
+) -> None:
+    import scripts.run_production_walkforward_gate as gate
+
+    db = tmp_path / "raw.db"
+    db.write_text("", encoding="utf-8")
+    seen: dict[str, object] = {}
+    monkeypatch.setattr(
+        gate,
+        "inspect_raw_coverage",
+        lambda *_args, **_kwargs: gate.CoverageSummary(
+            stock_symbols=5533,
+            covered_symbols=3,
+            rows=1,
+            first_trade_date="20180102",
+            last_trade_date="20241231",
+        ),
+    )
+    monkeypatch.setattr(
+        gate,
+        "select_covered_symbols",
+        lambda *_args, **_kwargs: ["600000", "000001", "300750"],
+    )
+
+    def fake_run(command, *, check, env, timeout):
+        symbol_file = Path(command[command.index("--symbols-file") + 1])
+        seen["symbols"] = symbol_file.read_text(encoding="utf-8").splitlines()
+        seen["exists_during_run"] = symbol_file.exists()
+        return type("Result", (), {"returncode": 0})()
+
+    monkeypatch.setattr(gate.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        gate.sys,
+        "argv",
+        [
+            "run_production_walkforward_gate.py",
+            "--db",
+            str(db),
+            "--min-symbols",
+            "3",
+        ],
+    )
+
+    assert gate.main() == 0
+    assert seen == {
+        "symbols": ["600000", "000001", "300750"],
+        "exists_during_run": True,
+    }
+
+
 def test_production_walkforward_gate_returns_timeout_code(
     monkeypatch, tmp_path: Path, capsys
 ) -> None:
@@ -142,6 +215,11 @@ def test_production_walkforward_gate_returns_timeout_code(
         ),
     )
     monkeypatch.setattr(gate, "build_walkforward_command", lambda _args: ["python"])
+    monkeypatch.setattr(
+        gate,
+        "select_covered_symbols",
+        lambda *_args, **_kwargs: [f"600{idx:03d}" for idx in range(3200)],
+    )
 
     def fake_run(*_args, **_kwargs):
         raise subprocess.TimeoutExpired(cmd=["python"], timeout=1)
