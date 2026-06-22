@@ -97,7 +97,9 @@ def test_send_bark_sends(monkeypatch):
 
     assert result is not None
     assert result.channel == "bark"
-    assert "%E5%8D%88%E7%9B%98%E5%88%86%E6%9E%90-2026-06-11" in mock_post.call_args.args[0]
+    assert (
+        "%E5%8D%88%E7%9B%98%E5%88%86%E6%9E%90-2026-06-11" in mock_post.call_args.args[0]
+    )
 
 
 def test_send_bark_url_encodes_title_and_body(monkeypatch):
@@ -148,7 +150,10 @@ def test_send_pushplus_sends(monkeypatch):
 
 
 def test_send_wechat_marks_business_failure(monkeypatch):
-    monkeypatch.setenv("WECHAT_WEBHOOK_URL", "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=test")
+    monkeypatch.setenv(
+        "WECHAT_WEBHOOK_URL",
+        "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=test",
+    )
     from aqsp.notifier import _send_wechat
 
     mock_post = MagicMock()
@@ -197,7 +202,9 @@ def test_notify_markdown_allows_delivery_when_explicitly_enabled(monkeypatch):
     mock_post.assert_called_once()
 
 
-def test_notify_markdown_via_config_fanout_splits_summary_and_full_channels(monkeypatch):
+def test_notify_markdown_via_config_fanout_splits_summary_and_full_channels(
+    monkeypatch,
+):
     from aqsp.notifier import NotifyResult, notify_markdown_via_config
 
     sent: list[tuple[str, str]] = []
@@ -274,6 +281,54 @@ def test_notify_markdown_via_config_summary_only_uses_summary_channels(monkeypat
     ]
     assert all("摘要版" in item for item in sent)
     assert all("完整内容" not in item for item in sent)
+
+
+def test_notify_markdown_via_config_summary_falls_back_when_summary_channels_fail(
+    monkeypatch,
+):
+    from aqsp.notifier import NotifyResult, notify_markdown_via_config
+
+    sent: list[tuple[str, str]] = []
+
+    def failed_sender(channel: str):
+        def _sender(markdown: str) -> NotifyResult:
+            sent.append((channel, markdown))
+            return NotifyResult(channel, False, "HTTP 500")
+
+        return _sender
+
+    def ok_sender(channel: str):
+        def _sender(markdown: str) -> NotifyResult:
+            sent.append((channel, markdown))
+            return NotifyResult(channel, True, "HTTP 200")
+
+        return _sender
+
+    monkeypatch.setattr("aqsp.notifier._send_serverchan", failed_sender("serverchan"))
+    monkeypatch.setattr("aqsp.notifier._send_wechat", lambda _markdown: None)
+    monkeypatch.setattr("aqsp.notifier._send_bark", lambda _markdown: None)
+    monkeypatch.setattr("aqsp.notifier._send_pushplus", lambda _markdown: None)
+    monkeypatch.setattr("aqsp.notifier._send_telegram", lambda _markdown: None)
+    monkeypatch.setattr("aqsp.notifier._send_feishu", ok_sender("feishu"))
+    monkeypatch.setattr("aqsp.notifier._send_dingtalk", lambda _markdown: None)
+    monkeypatch.setattr("aqsp.notifier._send_discord", lambda _markdown: None)
+    monkeypatch.setattr("aqsp.notifier._send_slack", lambda _markdown: None)
+    monkeypatch.setattr("aqsp.notifier._send_generic_webhook", lambda _markdown: None)
+
+    results = notify_markdown_via_config(
+        "# 完整版\n\n内容",
+        mode="summary",
+        summary_markdown="# 摘要版\n\n摘要内容",
+    )
+
+    assert [(result.channel, result.ok) for result in results] == [
+        ("serverchan", False),
+        ("feishu", True),
+    ]
+    assert sent == [
+        ("serverchan", "# 摘要版\n\n摘要内容"),
+        ("feishu", "# 摘要版\n\n摘要内容"),
+    ]
 
 
 def test_notify_markdown_via_config_summary_falls_back_to_full_channels_when_needed(

@@ -115,9 +115,9 @@ def notify_markdown_via_config(
     if normalized_mode == "summary":
         summary_body = compact_notification_markdown(summary_markdown or markdown)
         results = _notify_with_senders(summary_body, _summary_senders())
-        if results:
+        if any(result.ok for result in results):
             return results
-        results = _notify_with_senders(summary_body, _full_senders())
+        results.extend(_notify_with_senders(summary_body, _full_senders()))
         return results
 
     if normalized_mode == "full":
@@ -189,9 +189,10 @@ def configured_notification_channels() -> tuple[str, ...]:
         channels.append("bark")
     if os.getenv("PUSHPLUS_TOKEN", "").strip():
         channels.append("pushplus")
-    if os.getenv("TELEGRAM_BOT_TOKEN", "").strip() and os.getenv(
-        "TELEGRAM_CHAT_ID", ""
-    ).strip():
+    if (
+        os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+        and os.getenv("TELEGRAM_CHAT_ID", "").strip()
+    ):
         channels.append("telegram")
     if os.getenv("FEISHU_WEBHOOK_URL", "").strip():
         channels.append("feishu")
