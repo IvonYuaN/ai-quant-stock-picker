@@ -26,7 +26,10 @@ def should_send_gate_notification(
         sent_by_date = state.get("sent_by_date", {})
         if isinstance(sent_by_date, dict) and sent_by_date.get(date_key) == fingerprint:
             return False
-        if state.get("fingerprint") == fingerprint and state.get("run_date") == date_key:
+        if (
+            state.get("fingerprint") == fingerprint
+            and state.get("run_date") == date_key
+        ):
             return False
         return True
 
@@ -118,6 +121,10 @@ def _normalize_gate_reason(reason: str) -> str:
         return "data_end_invalid"
     if text.startswith("双门成绩用了 held-out 数据"):
         return "heldout_contaminated"
+    if text.startswith("双门全市场覆盖缺失"):
+        return "market_coverage_missing"
+    if text.startswith("双门全市场覆盖不足"):
+        return "market_coverage_insufficient"
     if text.startswith("DSR pass 标志无效"):
         return "dsr_flag_invalid"
     if text.startswith("PBO pass 标志无效"):

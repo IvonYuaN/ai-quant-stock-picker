@@ -49,7 +49,7 @@ AQSP_WALKFORWARD_SYMBOLS=000915,000921,000923,000930,000932,000937,000938,000950
 AQSP_RESEARCH_ENGINE=auto
 AQSP_MODE=close
 AQSP_LIMIT=10
-AQSP_MAX_UNIVERSE=50
+AQSP_MAX_UNIVERSE=0
 AQSP_MIN_AVG_AMOUNT=50000000
 AQSP_MAX_DATA_LAG_DAYS=3
 
@@ -96,7 +96,8 @@ AQSP_ENABLE_AUTO_EVOLUTION=false
 - `AQSP_NOTIFY=true` 后，`bt_task.sh daily` 会在收盘主链路里发送汇总通知。
 - 命令入口统一推荐用 `aqsp run`；仓库仍兼容旧别名 `aqsp run-scheduled`，方便服务器老脚本平滑过渡。
 - `AQSP_NOTIFY_MODE=summary` 时，收盘链路默认只发 1 条“收盘总览”；如果你想恢复每个步骤各发各的，改成 `fanout`。
-- `AQSP_SYMBOLS` 给实盘/日报链路用；`AQSP_WALKFORWARD_SYMBOLS` 单独给 walk-forward，用历史库里覆盖完整的票，别混用。
+- `AQSP_MAX_UNIVERSE=0` 表示短线生产扫描不截断；50/100/300 只能用于本地 smoke test，不能作为上线运行配置。
+- `AQSP_SYMBOLS` 给小范围手工观察用；生产日报/短线扫描应保持空值并配合 `AQSP_MAX_UNIVERSE=0` 走全市场可用池。`AQSP_WALKFORWARD_SYMBOLS` 单独给 walk-forward，用历史库里覆盖完整的票，别混用。
 - `AQSP_RESEARCH_ENGINE` 现在支持 `auto / builtin / akquant`。当前 `akquant` 已接入原生单窗口执行：AQSP 负责滚动窗口编排、选股和报告，AKQuant 负责窗口内回测撮合；如果服务器没装 `akquant`，仍可按 compat 逻辑自动回退到 builtin。
 - `AKShare` 适合做研究补充和字段补数，不建议当短线高频主源；现在运行时会把它放在在线混合源靠后位置，并对全市场实时快照做最小间隔与失败冷却。
 - 选股推荐通知仍受 walk-forward 双门 gate 保护；收盘复盘、监控告警、策略自进化通知不依赖这道 gate。

@@ -121,6 +121,7 @@ def check_before_live(
     findings.append(_check_walkforward_gate(gate_path, today))
     findings.append(_check_walkforward_price_mode(root, gate_path))
     findings.append(_check_walkforward_market_coverage(gate_path))
+    findings.append(_check_runtime_universe_cap(root))
     findings.append(_check_pbo_diagnostics(root, gate_path))
     findings.append(_check_paper_sample_size(ledger_path))
     findings.append(_check_successful_runs(run_history_path, root=root))
@@ -195,6 +196,29 @@ def _check_walkforward_market_coverage(gate_path: Path) -> ReadinessFinding:
     if not ok:
         detail += "; 300-symbol quick gates are smoke tests only"
     return ReadinessFinding("walkforward_market_coverage", ok, detail)
+
+
+def _check_runtime_universe_cap(root: Path) -> ReadinessFinding:
+    raw_value = read_env_value(root / ".env", "AQSP_MAX_UNIVERSE")
+    if not raw_value:
+        return ReadinessFinding(
+            "runtime_universe_cap", True, "AQSP_MAX_UNIVERSE unset; default full market"
+        )
+    try:
+        max_universe = int(raw_value)
+    except ValueError:
+        return ReadinessFinding(
+            "runtime_universe_cap",
+            False,
+            f"AQSP_MAX_UNIVERSE invalid: {raw_value!r}",
+        )
+    ok = max_universe == 0 or max_universe >= MIN_PRODUCTION_GATE_SYMBOLS
+    detail = (
+        "full market"
+        if max_universe == 0
+        else f"AQSP_MAX_UNIVERSE={max_universe}; production short-line runs require 0 or >= {MIN_PRODUCTION_GATE_SYMBOLS}"
+    )
+    return ReadinessFinding("runtime_universe_cap", ok, detail)
 
 
 def _check_pbo_diagnostics(root: Path, gate_path: Path) -> ReadinessFinding:

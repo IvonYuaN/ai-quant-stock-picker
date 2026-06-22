@@ -20,6 +20,7 @@ def _write_gate(tmp_path, **overrides):
         "data_start": "2018-01-01",
         "data_end": "2024-12-31",  # 边界内，干净
         "n_periods": 30,
+        "effective_symbols": 3200,
     }
     payload.update(overrides)
     p = tmp_path / "gate.json"
@@ -83,6 +84,34 @@ def test_pbo_fail_blocks(tmp_path, monkeypatch):
     )
     assert ok is False
     assert any("PBO" in r for r in reasons)
+
+
+def test_small_symbol_smoke_gate_blocks_notification(tmp_path, monkeypatch):
+    import aqsp.cli as cli_mod
+    from datetime import date
+
+    monkeypatch.setattr(cli_mod, "today_shanghai", lambda: date(2026, 6, 5))
+    ok, reasons = _check_notification_gate(
+        cold_start_days=30,
+        gate_path=_write_gate(tmp_path, effective_symbols=300),
+    )
+
+    assert ok is False
+    assert any("全市场覆盖不足" in reason for reason in reasons)
+
+
+def test_missing_effective_symbols_blocks_notification(tmp_path, monkeypatch):
+    import aqsp.cli as cli_mod
+    from datetime import date
+
+    monkeypatch.setattr(cli_mod, "today_shanghai", lambda: date(2026, 6, 5))
+    ok, reasons = _check_notification_gate(
+        cold_start_days=30,
+        gate_path=_write_gate(tmp_path, effective_symbols=None),
+    )
+
+    assert ok is False
+    assert any("全市场覆盖缺失" in reason for reason in reasons)
 
 
 def test_pbo_placeholder_reports_grid_evidence_gap(tmp_path, monkeypatch):

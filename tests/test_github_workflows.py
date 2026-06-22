@@ -178,18 +178,11 @@ def test_pull_request_workflows_do_not_reference_secrets() -> None:
     assert offenders == []
 
 
-def test_monitor_notify_workflow_maps_notifier_secrets() -> None:
+def test_monitor_workflow_does_not_send_notifications_from_ephemeral_runner() -> None:
     text = (WORKFLOW_DIR / "monitor.yml").read_text(encoding="utf-8")
-    required = (
-        "aqsp monitor --notify --notify-critical-only",
-        "TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}",
-        "TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}",
-        "WECHAT_WEBHOOK_URL: ${{ secrets.WECHAT_WEBHOOK_URL }}",
-        "FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}",
-        "GENERIC_WEBHOOK_URL: ${{ secrets.GENERIC_WEBHOOK_URL }}",
-    )
 
-    assert [item for item in required if item not in text] == []
+    assert "aqsp monitor --notify" not in text
+    assert "${{ secrets." not in text
 
 
 def test_github_workflow_jobs_define_timeouts() -> None:
