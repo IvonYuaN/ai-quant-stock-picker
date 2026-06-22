@@ -10,6 +10,7 @@ before-live evidence.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sqlite3
 import subprocess
@@ -126,6 +127,45 @@ def build_walkforward_command(args: argparse.Namespace) -> list[str]:
     ]
 
 
+def annotate_production_gate_metadata(
+    *,
+    gate_path: Path,
+    db_path: Path,
+    coverage: CoverageSummary,
+    effective_symbols: int,
+) -> None:
+    """Stamp production coverage evidence onto the child gate sidecar."""
+    if not gate_path.exists():
+        raise SystemExit(
+            f"production gate sidecar missing after child run: {gate_path}"
+        )
+    payload = json.loads(gate_path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise SystemExit(f"production gate sidecar is not an object: {gate_path}")
+    payload.update(
+        {
+            "source": "sqlite_db",
+            "sqlite_db_path": str(db_path),
+            "price_mode": "raw",
+            "effective_symbols": int(effective_symbols),
+            "production_gate_coverage": {
+                "stock_symbols": coverage.stock_symbols,
+                "covered_symbols": coverage.covered_symbols,
+                "rows": coverage.rows,
+                "first_trade_date": coverage.first_trade_date,
+                "last_trade_date": coverage.last_trade_date,
+            },
+        }
+    )
+    gate_path.write_text(
+        json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
+    print(
+        "production gate metadata stamped: "
+        f"effective_symbols={effective_symbols} price_mode=raw db={db_path}"
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--db", type=Path, default=DEFAULT_RAW_DB)
@@ -142,6 +182,7 @@ def main() -> int:
         "--cache-path", default="data/walkforward_raw_production_cache.db"
     )
     parser.add_argument("--log", default="logs/walkforward-raw-production.log")
+    parser.add_argument("--gate-path", default="data/walkforward_gate.json")
     parser.add_argument(
         "--timeout-seconds",
         type=int,
@@ -202,12 +243,25 @@ def main() -> int:
     env = os.environ.copy()
     env["AQSP_SQLITE_DB_PATH"] = str(args.db)
     try:
-        return subprocess.run(
+        result = subprocess.run(
             command,
             check=False,
             env=env,
             timeout=args.timeout_seconds if args.timeout_seconds > 0 else None,
-        ).returncode
+        )
+        if result.returncode != 0:
+            return result.returncode
+        try:
+            annotate_production_gate_metadata(
+                gate_path=Path(args.gate_path),
+                db_path=args.db,
+                coverage=coverage,
+                effective_symbols=len(covered_symbols),
+            )
+        except (json.JSONDecodeError, OSError, SystemExit) as exc:
+            print(f"BLOCK: failed to stamp production gate metadata: {exc}")
+            return 2
+        return 0
     except subprocess.TimeoutExpired:
         print(
             "BLOCK: production walk-forward timed out; "

@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 from pathlib import Path
 
 from scripts.run_production_walkforward_gate import (
+    CoverageSummary,
+    annotate_production_gate_metadata,
     build_walkforward_command,
     inspect_raw_coverage,
     select_covered_symbols,
@@ -93,6 +96,51 @@ def test_build_walkforward_command_uses_full_market_raw_gate() -> None:
     assert "/tmp/symbols.txt" in command
 
 
+def test_annotate_production_gate_metadata_preserves_gate_result(
+    tmp_path: Path,
+) -> None:
+    gate_path = tmp_path / "walkforward_gate.json"
+    gate_path.write_text(
+        json.dumps(
+            {
+                "run_date": "2026-06-21",
+                "both_pass": False,
+                "deflated_sharpe": 0.8275,
+                "pbo": 0.7778,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    annotate_production_gate_metadata(
+        gate_path=gate_path,
+        db_path=tmp_path / "astocks_raw.db",
+        coverage=CoverageSummary(
+            stock_symbols=5533,
+            covered_symbols=3200,
+            rows=123456,
+            first_trade_date="20180102",
+            last_trade_date="20241231",
+        ),
+        effective_symbols=3200,
+    )
+
+    payload = json.loads(gate_path.read_text(encoding="utf-8"))
+    assert payload["both_pass"] is False
+    assert payload["deflated_sharpe"] == 0.8275
+    assert payload["pbo"] == 0.7778
+    assert payload["source"] == "sqlite_db"
+    assert payload["price_mode"] == "raw"
+    assert payload["effective_symbols"] == 3200
+    assert payload["production_gate_coverage"] == {
+        "stock_symbols": 5533,
+        "covered_symbols": 3200,
+        "rows": 123456,
+        "first_trade_date": "20180102",
+        "last_trade_date": "20241231",
+    }
+
+
 def test_production_walkforward_gate_passes_raw_db_to_child_process(
     monkeypatch, tmp_path: Path
 ) -> None:
@@ -101,6 +149,7 @@ def test_production_walkforward_gate_passes_raw_db_to_child_process(
     db = tmp_path / "raw.db"
     db.write_text("", encoding="utf-8")
     seen: dict[str, object] = {}
+    stamped: dict[str, object] = {}
     monkeypatch.setattr(
         gate,
         "inspect_raw_coverage",
@@ -119,6 +168,11 @@ def test_production_walkforward_gate_passes_raw_db_to_child_process(
         gate,
         "select_covered_symbols",
         lambda *_args, **_kwargs: [f"600{idx:03d}" for idx in range(3200)],
+    )
+    monkeypatch.setattr(
+        gate,
+        "annotate_production_gate_metadata",
+        lambda **kwargs: stamped.update(kwargs),
     )
 
     def fake_run(command, *, check, env, timeout):
@@ -142,6 +196,8 @@ def test_production_walkforward_gate_passes_raw_db_to_child_process(
         "db": str(db),
         "timeout": 7200,
     }
+    assert stamped["db_path"] == db
+    assert stamped["effective_symbols"] == 3200
 
 
 def test_production_walkforward_gate_passes_selected_symbols_file(
@@ -167,6 +223,9 @@ def test_production_walkforward_gate_passes_selected_symbols_file(
         gate,
         "select_covered_symbols",
         lambda *_args, **_kwargs: ["600000", "000001", "300750"],
+    )
+    monkeypatch.setattr(
+        gate, "annotate_production_gate_metadata", lambda **_kwargs: None
     )
 
     def fake_run(command, *, check, env, timeout):
@@ -219,6 +278,9 @@ def test_production_walkforward_gate_returns_timeout_code(
         gate,
         "select_covered_symbols",
         lambda *_args, **_kwargs: [f"600{idx:03d}" for idx in range(3200)],
+    )
+    monkeypatch.setattr(
+        gate, "annotate_production_gate_metadata", lambda **_kwargs: None
     )
 
     def fake_run(*_args, **_kwargs):
