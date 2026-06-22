@@ -4,7 +4,10 @@ import time
 from types import SimpleNamespace
 
 import pandas as pd
+import pytest
 
+from aqsp.core.errors import DataError
+from aqsp.data.news_source import AkshareNewsSource
 from aqsp.news.catalysts import (
     NewsCatalystConfig,
     build_catalyst_report,
@@ -366,13 +369,9 @@ def test_global_news_prioritizes_notice_sources(monkeypatch) -> None:
                 [{"标题": f"普通快讯{i}", "来源": "财联社"} for i in range(5)]
             ),
             pd.DataFrame([{"标题": "国常会部署设备更新", "来源": "央视"}]),
-            pd.DataFrame(
-                [{"公告标题": "公司签订重大订单", "公告类型": "公司公告"}]
-            ),
+            pd.DataFrame([{"公告标题": "公司签订重大订单", "公告类型": "公司公告"}]),
         ],
-        fetch_symbol_news=lambda _symbol: (
-            pd.DataFrame(),
-        ),
+        fetch_symbol_news=lambda _symbol: (pd.DataFrame(),),
     )
 
     monkeypatch.setattr("aqsp.news.catalysts._AKSHARE_NEWS", fake_ak)
@@ -387,3 +386,61 @@ def test_global_news_prioritizes_notice_sources(monkeypatch) -> None:
             title = str(row.get("公告标题") or "")
         titles.append(title)
     assert titles[:2] == ["公司签订重大订单", "国常会部署设备更新"]
+
+
+def test_akshare_news_source_raises_data_error_when_all_global_sources_fail() -> None:
+    def boom() -> pd.DataFrame:
+        raise RuntimeError("remote closed")
+
+    source = AkshareNewsSource.__new__(AkshareNewsSource)
+    source._ak = SimpleNamespace(
+        stock_info_global_cls=boom,
+        stock_info_global_em=boom,
+        stock_info_global_ths=boom,
+        stock_info_global_futu=boom,
+        stock_info_global_sina=boom,
+        news_cctv=boom,
+        news_economic_baidu=boom,
+        stock_notice_report=boom,
+    )
+
+    with pytest.raises(DataError, match="akshare 全市场新闻获取失败"):
+        source.fetch_global_news()
+
+
+def test_akshare_news_source_surfaces_partial_fetch_warnings() -> None:
+    def empty() -> pd.DataFrame:
+        return pd.DataFrame()
+
+    source = AkshareNewsSource.__new__(AkshareNewsSource)
+    source._ak = SimpleNamespace(
+        stock_info_global_cls=lambda: pd.DataFrame(
+            [{"标题": "政策支持半导体材料国产替代", "来源": "新华社"}]
+        ),
+        stock_info_global_em=empty,
+        stock_info_global_ths=empty,
+        stock_info_global_futu=empty,
+        stock_info_global_sina=empty,
+        news_cctv=empty,
+        news_economic_baidu=empty,
+        stock_notice_report=empty,
+    )
+
+    frames = source.fetch_global_news()
+
+    assert len(frames) == 1
+    assert "stock_info_global_em: empty" in frames[0].attrs["aqsp_warnings"]
+
+
+def test_akshare_global_news_preserves_adapter_warnings(monkeypatch) -> None:
+    frame = pd.DataFrame([{"标题": "政策支持半导体材料国产替代", "来源": "新华社"}])
+    frame.attrs["aqsp_warnings"] = ("stock_info_global_em: empty",)
+    fake_ak = SimpleNamespace(
+        fetch_global_news=lambda: [frame],
+        fetch_symbol_news=lambda _symbol: (),
+    )
+    monkeypatch.setattr("aqsp.news.catalysts._AKSHARE_NEWS", fake_ak)
+
+    df = _akshare_global_news(limit=3)
+
+    assert df.attrs["aqsp_warnings"] == ("stock_info_global_em: empty",)

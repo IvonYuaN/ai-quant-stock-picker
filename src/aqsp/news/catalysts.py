@@ -298,9 +298,7 @@ def _report_title_status(report: CatalystReport) -> str:
 
 
 def _event_card_lines(index: int, event: CatalystEvent) -> list[str]:
-    impact = {"positive": "利好", "negative": "利空", "neutral": "中性"}[
-        event.impact
-    ]
+    impact = {"positive": "利好", "negative": "利空", "neutral": "中性"}[event.impact]
     target = _event_target(event)
     title = _short_text(event.title, 42)
     lines = [
@@ -766,7 +764,7 @@ def _akshare_symbol_news(symbol: str, limit: int) -> pd.DataFrame:
         empty.attrs["aqsp_warnings"] = tuple(warnings)
         return empty
     result = pd.concat(frames, ignore_index=True).head(limit * 3)
-    result.attrs["aqsp_warnings"] = tuple(warnings[:3])
+    result.attrs["aqsp_warnings"] = _merge_frame_warnings(frames, warnings)[:3]
     return result
 
 
@@ -789,8 +787,18 @@ def _akshare_global_news(limit: int) -> pd.DataFrame:
         empty.attrs["aqsp_warnings"] = tuple(warnings)
         return empty
     result = _prioritize_news_frame(pd.concat(frames, ignore_index=True)).head(limit)
-    result.attrs["aqsp_warnings"] = tuple(warnings[:3])
+    result.attrs["aqsp_warnings"] = _merge_frame_warnings(frames, warnings)[:3]
     return result
+
+
+def _merge_frame_warnings(
+    frames: Sequence[pd.DataFrame],
+    warnings: Sequence[str],
+) -> tuple[str, ...]:
+    merged = list(warnings)
+    for frame in frames:
+        merged.extend(getattr(frame, "attrs", {}).get("aqsp_warnings", ()))
+    return _dedupe_texts(merged)
 
 
 def _prioritize_news_frame(df: pd.DataFrame) -> pd.DataFrame:

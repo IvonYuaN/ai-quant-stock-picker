@@ -6,7 +6,7 @@ composite:
   volume_weight: 0.0
   mean_reversion_weight: 0.0
   triple_rise_weight: 0.3
-description: "策略阈值配置 — v1.1.7：triple_rise 参数统一进配置"
+description: "策略阈值配置 — v1.1.8：主链策略信号阈值统一进配置"
 effective_from: '2026-06-17'
 execution:
   commission_rate: 0.0003
@@ -335,4 +335,26 @@ n_rebound:
   volume_shrink_ratio: 0.75
   ma5_deviation_max_pct: 8.0
   min_score: 14.0
-version: 1.1.7
+internet_strategy:
+  rps_ret20_min_pct: 10.0
+  rps_near_high20: 0.98
+  rps_score: 14.0
+  volume_breakout_near_high20: 0.995
+  volume_breakout_volume_ratio: 1.35
+  volume_breakout_range_pos: 0.62
+  volume_breakout_score: 18.0
+  ma_pullback_ma5_lower: 0.985
+  ma_pullback_ma10_upper: 1.025
+  ma_pullback_volume_max: 1.1
+  ma_pullback_score: 16.0
+  bowl_rebound_min_pct: 4.0
+  bowl_rebound_max_pct: 18.0
+  bowl_rebound_rsi_low: 35.0
+  bowl_rebound_rsi_high: 58.0
+  bowl_rebound_score: 12.0
+  low_vol_bias_min: 0.0
+  low_vol_bias_max: 8.0
+  low_vol_amplitude_max: 5.5
+  low_vol_volume_max: 1.8
+  low_vol_score: 10.0
+version: 1.1.8

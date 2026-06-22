@@ -3,7 +3,8 @@ from __future__ import annotations
 import pandas as pd
 
 from aqsp.models import ScreeningConfig
-from aqsp.strategies.thresholds import ScoringThresholds
+from aqsp.internet_strategies import evaluate_strategy_signals
+from aqsp.strategies.thresholds import InternetStrategyThresholds, ScoringThresholds
 from aqsp.strategy import _entry_type, score_symbol, screen_universe
 
 
@@ -85,6 +86,53 @@ def test_reversal_entry_uses_configured_rsi_threshold() -> None:
         _entry_type(row, prev, False, ScoringThresholds(reversal_rsi_threshold=60))
         == "reversal_watch"
     )
+
+
+def test_internet_strategy_signal_uses_configured_score() -> None:
+    df = pd.DataFrame(
+        [
+            {
+                "close": 10.0,
+                "high_20": 10.0,
+                "ma5": 10.0,
+                "ma10": 9.5,
+                "ma20": 9.0,
+                "ma60": 8.5,
+                "volume_ratio": 1.0,
+                "ret_20": 0.0,
+                "bias20": 1.0,
+                "rsi12": 50.0,
+                "macd_hist": 0.1,
+                "amplitude_pct": 3.0,
+                "range_pos": 0.5,
+                "low_20": 9.0,
+            },
+            {
+                "close": 10.3,
+                "high_20": 10.0,
+                "ma5": 10.2,
+                "ma10": 9.8,
+                "ma20": 9.4,
+                "ma60": 8.8,
+                "volume_ratio": 1.4,
+                "ret_20": 0.13,
+                "bias20": 2.0,
+                "rsi12": 50.0,
+                "macd_hist": 0.2,
+                "amplitude_pct": 3.0,
+                "range_pos": 0.7,
+                "low_20": 9.0,
+            },
+        ]
+    )
+
+    signals = evaluate_strategy_signals(
+        df,
+        thresholds=InternetStrategyThresholds(volume_breakout_score=31.0),
+    )
+
+    breakout = next(item for item in signals if item.strategy_id == "volume_breakout")
+    assert breakout.score == 31.0
 
 
 def test_screen_filters_price_outside_bounds() -> None:

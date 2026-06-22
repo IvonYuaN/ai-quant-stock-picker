@@ -10,7 +10,11 @@ from aqsp.data.filters import TradabilityFilter
 from aqsp.indicators import enrich_indicators
 from aqsp.internet_strategies import evaluate_strategy_signals
 from aqsp.models import PickResult, ScreeningConfig
-from aqsp.strategies.thresholds import ScoringThresholds, load_thresholds
+from aqsp.strategies.thresholds import (
+    InternetStrategyThresholds,
+    ScoringThresholds,
+    load_thresholds,
+)
 
 _logger = logging.getLogger(__name__)
 
@@ -21,6 +25,7 @@ def screen_universe(
     """Screen candidate frames into ranked paper-trading picks."""
     thresholds = load_thresholds()
     scoring = thresholds.scoring
+    internet_strategy = thresholds.internet_strategy
     picks: list[PickResult] = []
     validator = DataValidator()
     tradability_filter = TradabilityFilter()
@@ -69,7 +74,7 @@ def screen_universe(
     for symbol in filtered_symbols:
         frame = validated_frames[symbol]
         try:
-            result = score_symbol(symbol, frame, config, scoring)
+            result = score_symbol(symbol, frame, config, scoring, internet_strategy)
         except (ValueError, IndexError, KeyError, TypeError):
             continue
         if result is not None:
@@ -82,6 +87,7 @@ def score_symbol(
     frame: pd.DataFrame,
     config: ScreeningConfig,
     scoring: ScoringThresholds,
+    internet_strategy: InternetStrategyThresholds | None = None,
 ) -> PickResult | None:
     df = enrich_indicators(frame)
     if len(df) < config.min_bars:
@@ -206,7 +212,7 @@ def score_symbol(
             score += scoring.amplitude_penalty
             risks.append("前一交易日振幅过大")
 
-    strategy_signals = evaluate_strategy_signals(df)
+    strategy_signals = evaluate_strategy_signals(df, thresholds=internet_strategy)
     for signal in strategy_signals:
         weight = config.strategy_weights.get(signal.strategy_id, 1.0)
         score += signal.score * weight
@@ -291,10 +297,9 @@ def _entry_type(
         and _num(row["volume_ratio"]) >= scoring.near_high_volume
     ):
         return "volume_breakout"
-    if (
-        _num(row["rsi12"]) < scoring.reversal_rsi_threshold
-        and _num(row["macd_hist"]) > _num(prev["macd_hist"])
-    ):
+    if _num(row["rsi12"]) < scoring.reversal_rsi_threshold and _num(
+        row["macd_hist"]
+    ) > _num(prev["macd_hist"]):
         return "reversal_watch"
     return "relative_strength"
 

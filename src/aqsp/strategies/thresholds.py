@@ -363,6 +363,31 @@ class ScoringThresholds:
 
 
 @dataclass(frozen=True)
+class InternetStrategyThresholds:
+    rps_ret20_min_pct: float = 10.0
+    rps_near_high20: float = 0.98
+    rps_score: float = 14.0
+    volume_breakout_near_high20: float = 0.995
+    volume_breakout_volume_ratio: float = 1.35
+    volume_breakout_range_pos: float = 0.62
+    volume_breakout_score: float = 18.0
+    ma_pullback_ma5_lower: float = 0.985
+    ma_pullback_ma10_upper: float = 1.025
+    ma_pullback_volume_max: float = 1.1
+    ma_pullback_score: float = 16.0
+    bowl_rebound_min_pct: float = 4.0
+    bowl_rebound_max_pct: float = 18.0
+    bowl_rebound_rsi_low: float = 35.0
+    bowl_rebound_rsi_high: float = 58.0
+    bowl_rebound_score: float = 12.0
+    low_vol_bias_min: float = 0.0
+    low_vol_bias_max: float = 8.0
+    low_vol_amplitude_max: float = 5.5
+    low_vol_volume_max: float = 1.8
+    low_vol_score: float = 10.0
+
+
+@dataclass(frozen=True)
 class MorningBreakoutWeights:
     change_pct: float = 0.30
     volume: float = 0.25
@@ -465,6 +490,9 @@ class Thresholds:
     )
     triple_rise: TripleRiseThresholds = field(default_factory=TripleRiseThresholds)
     scoring: ScoringThresholds = field(default_factory=ScoringThresholds)
+    internet_strategy: InternetStrategyThresholds = field(
+        default_factory=InternetStrategyThresholds
+    )
     morning_breakout: MorningBreakoutThresholds = field(
         default_factory=MorningBreakoutThresholds
     )
@@ -604,6 +632,9 @@ def load_thresholds(filepath: str = None) -> Thresholds:
         mean_reversion=_parse_mean_reversion(data.get("mean_reversion", {})),
         triple_rise=_parse_triple_rise(data.get("triple_rise", {})),
         scoring=ScoringThresholds(**data.get("scoring", {})),
+        internet_strategy=InternetStrategyThresholds(
+            **data.get("internet_strategy", {})
+        ),
         morning_breakout=_parse_morning_breakout(data.get("morning_breakout", {})),
         closing_premium=_parse_closing_premium(data.get("closing_premium", {})),
         n_rebound=_parse_n_rebound(data.get("n_rebound", {})),

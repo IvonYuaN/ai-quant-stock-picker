@@ -5,7 +5,7 @@ from dataclasses import dataclass
 import pandas as pd
 
 from aqsp.strategies.n_rebound import detect_n_rebound_signal
-from aqsp.strategies.thresholds import load_thresholds
+from aqsp.strategies.thresholds import InternetStrategyThresholds, load_thresholds
 
 
 @dataclass(frozen=True)
@@ -26,7 +26,11 @@ STRATEGY_SOURCES = {
 }
 
 
-def evaluate_strategy_signals(df: pd.DataFrame) -> list[StrategySignal]:
+def evaluate_strategy_signals(
+    df: pd.DataFrame,
+    thresholds: InternetStrategyThresholds | None = None,
+) -> list[StrategySignal]:
+    cfg = thresholds or load_thresholds().internet_strategy
     row = df.iloc[-1]
     prev = df.iloc[-2]
     signals: list[StrategySignal] = []
@@ -44,62 +48,75 @@ def evaluate_strategy_signals(df: pd.DataFrame) -> list[StrategySignal]:
     prev_macd_hist = _num(prev["macd_hist"])
     amplitude = _num(row["amplitude_pct"])
 
-    if ret20 >= 10 and close >= _num(prev["high_20"]) * 0.98 and ma5 > ma10 > ma20:
+    if (
+        ret20 >= cfg.rps_ret20_min_pct
+        and close >= _num(prev["high_20"]) * cfg.rps_near_high20
+        and ma5 > ma10 > ma20
+    ):
         signals.append(
             StrategySignal(
                 "rps_momentum",
                 "RPS相对强度",
-                14,
+                cfg.rps_score,
                 ("20日涨幅靠前", "价格接近20日高位", "短中期趋势向上"),
             )
         )
 
     if (
-        close >= _num(prev["high_20"]) * 0.995
-        and volume_ratio >= 1.35
-        and _num(row["range_pos"]) >= 0.62
+        close >= _num(prev["high_20"]) * cfg.volume_breakout_near_high20
+        and volume_ratio >= cfg.volume_breakout_volume_ratio
+        and _num(row["range_pos"]) >= cfg.volume_breakout_range_pos
     ):
         signals.append(
             StrategySignal(
                 "volume_breakout",
                 "放量突破",
-                18,
+                cfg.volume_breakout_score,
                 ("突破20日高点附近", "量能超过5日均量", "收盘位置偏强"),
             )
         )
 
     if (
-        ma5 * 0.985 <= close <= ma10 * 1.025
-        and volume_ratio <= 1.1
+        ma5 * cfg.ma_pullback_ma5_lower <= close <= ma10 * cfg.ma_pullback_ma10_upper
+        and volume_ratio <= cfg.ma_pullback_volume_max
         and ma5 > ma10 > ma20
     ):
         signals.append(
             StrategySignal(
                 "ma_pullback",
                 "缩量回踩均线",
-                16,
+                cfg.ma_pullback_score,
                 ("多头趋势未破坏", "回踩MA5/MA10附近", "回踩阶段未明显放量"),
             )
         )
 
     low20 = _num(row["low_20"])
     rebound_from_low = (close / low20 - 1) * 100 if low20 else 0
-    if 4 <= rebound_from_low <= 18 and macd_hist > prev_macd_hist and 35 <= rsi12 <= 58:
+    if (
+        cfg.bowl_rebound_min_pct <= rebound_from_low <= cfg.bowl_rebound_max_pct
+        and macd_hist > prev_macd_hist
+        and cfg.bowl_rebound_rsi_low <= rsi12 <= cfg.bowl_rebound_rsi_high
+    ):
         signals.append(
             StrategySignal(
                 "bowl_rebound",
                 "碗口反弹",
-                12,
+                cfg.bowl_rebound_score,
                 ("从20日低位温和反弹", "MACD动能改善", "RSI尚未过热"),
             )
         )
 
-    if ma20 > ma60 and 0 <= bias20 <= 8 and amplitude <= 5.5 and volume_ratio <= 1.8:
+    if (
+        ma20 > ma60
+        and cfg.low_vol_bias_min <= bias20 <= cfg.low_vol_bias_max
+        and amplitude <= cfg.low_vol_amplitude_max
+        and volume_ratio <= cfg.low_vol_volume_max
+    ):
         signals.append(
             StrategySignal(
                 "low_vol_trend",
                 "低波趋势",
-                10,
+                cfg.low_vol_score,
                 ("中期趋势向上", "乖离不高", "波动和量能未失控"),
             )
         )
