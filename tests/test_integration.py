@@ -173,6 +173,20 @@ class TestCircuitBreakerIntegration:
         assert state["cooldown_until"] is not None
         assert state["last_triggered_date"] is not None
 
+    def test_corrupt_state_file_fails_closed(self, tmp_path):
+        config = self._make_config(tmp_path)
+        state_file = tmp_path / "risk_state.json"
+        state_file.write_text("{broken", encoding="utf-8")
+
+        breaker = CircuitBreaker(config=config)
+
+        assert breaker.is_in_cooldown()
+        status = breaker.check(
+            daily_pnl_pct=0.0, weekly_pnl_pct=0.0, monthly_pnl_pct=0.0
+        )
+        assert status.triggered
+        assert status.level == "cooldown"
+
 
 class TestCLIIntegration:
     def _make_stale_csv(self, tmp_path: Path, days_old: int = 7) -> Path:

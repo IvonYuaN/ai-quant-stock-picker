@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
@@ -245,8 +246,14 @@ def _fallback_limit_pct(row: dict) -> float:
 def _check_executable(
     entry_bar: pd.Series, prev_close: float, row: dict
 ) -> tuple[bool, str]:
-    if prev_close is None or prev_close <= 0:
-        return True, ""
+    if prev_close is None:
+        return False, "missing_prev_close"
+    try:
+        prev_close_value = float(prev_close)
+    except (TypeError, ValueError):
+        return False, "missing_prev_close"
+    if not math.isfinite(prev_close_value) or prev_close_value <= 0:
+        return False, "missing_prev_close"
     open_price = float(entry_bar.get("open") or 0)
     if open_price <= 0:
         return False, "no_open_price"
@@ -284,13 +291,13 @@ def _check_executable(
     else:
         limit_up_pct = _fallback_limit_pct(row)
         # 涨跌停价四舍五入到分（A股交易所规则），与 source.apply_limit_suspended_adj 口径一致
-        limit_up_price = round(prev_close * (1 + limit_up_pct), 2)
+        limit_up_price = round(prev_close_value * (1 + limit_up_pct), 2)
 
     if bar_limit_down > 0:
         limit_down_price = bar_limit_down
     else:
         limit_down_pct = _fallback_limit_pct(row)
-        limit_down_price = round(prev_close * (1 - limit_down_pct), 2)
+        limit_down_price = round(prev_close_value * (1 - limit_down_pct), 2)
 
     if open_price >= limit_up_price * 0.999 and high <= open_price * 1.0001:
         return False, "limit_up_at_open"

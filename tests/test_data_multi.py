@@ -154,6 +154,23 @@ def test_multi_source_validates_consistency():
         multi.fetch_daily(["600000"], date(2026, 5, 27), date(2026, 5, 27))
 
 
+def test_multi_source_consistency_reports_actual_fallback_name():
+    primary_data = {"600000": pd.DataFrame({"date": ["2026-05-27"], "close": [10.0]})}
+    incomplete_fallback = {}
+    complete_bad_fallback = {
+        "600000": pd.DataFrame({"date": ["2026-05-27"], "close": [11.0]})
+    }
+
+    first = MockSource(incomplete_fallback)
+    first.name = "empty_fallback"
+    second = MockSource(complete_bad_fallback)
+    second.name = "complete_fallback"
+    multi = MultiSource(MockSource(primary_data), [first, second])
+
+    with pytest.raises(DataInconsistencyError, match="complete_fallback"):
+        multi.fetch_daily(["600000"], date(2026, 5, 27), date(2026, 5, 27))
+
+
 def test_multi_source_can_skip_consistency_for_cross_tier_fallbacks():
     primary_data = {"600000": pd.DataFrame({"date": ["2026-05-27"], "close": [10.0]})}
     fallback_data = {"600000": pd.DataFrame({"date": ["2026-05-27"], "close": [11.0]})}

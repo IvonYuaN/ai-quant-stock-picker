@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from dataclasses import dataclass
 from datetime import datetime
@@ -10,6 +11,7 @@ from typing import Any
 from aqsp.core.time import now_shanghai
 
 PLAN_SOURCE_IDS = {"auto", "local_first", "online_first", "multi", "csv"}
+_logger = logging.getLogger(__name__)
 
 
 def source_health_path(path: str | Path | None = None) -> Path:
@@ -25,7 +27,11 @@ def read_source_health(path: str | Path | None = None) -> dict[str, Any]:
     resolved = source_health_path(path)
     if not resolved.exists():
         return _empty_health()
-    return json.loads(resolved.read_text(encoding="utf-8"))
+    try:
+        return json.loads(resolved.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
+        _logger.warning("数据源健康文件损坏，已按空健康状态处理: %s", exc)
+        return _empty_health()
 
 
 def record_source_success(

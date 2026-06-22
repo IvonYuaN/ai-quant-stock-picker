@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from pathlib import Path
@@ -18,6 +19,8 @@ from typing import Any, Dict
 
 from aqsp.core.time import now_shanghai, today_shanghai
 from aqsp.strategies.thresholds import Thresholds, load_thresholds
+
+_logger = logging.getLogger(__name__)
 
 
 # ============================================================
@@ -494,6 +497,11 @@ class SystemRiskManager:
 
         # 检查连续触发
         state = self._load_state()
+        if state.get("state_error") == "corrupt_state":
+            halt = True
+            triggered.append("⛔ 系统风控状态损坏，保守暂停所有策略")
+            actions.append("修复风控状态文件后再恢复")
+
         if triggered:
             state["consecutive_triggers"] = state.get("consecutive_triggers", 0) + 1
             state["last_trigger_date"] = snapshot.date.isoformat()
@@ -544,18 +552,25 @@ class SystemRiskManager:
             return {}
         try:
             return json.loads(self.state_path.read_text(encoding="utf-8"))
-        except Exception:
-            return {}
+        except (OSError, json.JSONDecodeError, ValueError) as exc:
+            _logger.error("系统风控状态损坏，保守保持暂停: %s", exc)
+            return {
+                "consecutive_triggers": self.config.halt_trigger_count,
+                "last_trigger_date": today_shanghai().isoformat(),
+                "state_error": "corrupt_state",
+            }
 
     def _save_state(self, state: Dict[str, Any]) -> None:
         try:
             self.state_path.parent.mkdir(parents=True, exist_ok=True)
-            self.state_path.write_text(
+            tmp_path = self.state_path.with_suffix(self.state_path.suffix + ".tmp")
+            tmp_path.write_text(
                 json.dumps(state, ensure_ascii=False, indent=2),
                 encoding="utf-8",
             )
-        except Exception:
-            pass
+            tmp_path.replace(self.state_path)
+        except OSError as exc:
+            _logger.error("系统风控状态保存失败: %s", exc)
 
     def _reset_state(self) -> None:
         self._save_state({"consecutive_triggers": 0})

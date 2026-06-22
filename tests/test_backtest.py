@@ -104,12 +104,13 @@ class TestCheckExecutable:
         assert ok is False
         assert reason == "no_open_price"
 
-    def test_prev_close_zero_is_executable(self) -> None:
+    def test_prev_close_zero_is_not_executable(self) -> None:
         bar = pd.Series(
             {"open": 10.0, "high": 10.0, "low": 10.0, "close": 10.0, "volume": 100}
         )
-        ok, _ = _check_executable(bar, prev_close=0)
-        assert ok is True
+        ok, reason = _check_executable(bar, prev_close=0)
+        assert ok is False
+        assert reason == "missing_prev_close"
 
     def test_gap_up_below_limit_is_executable(self) -> None:
         bar = pd.Series(

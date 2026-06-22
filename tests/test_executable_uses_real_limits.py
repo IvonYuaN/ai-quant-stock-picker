@@ -161,7 +161,7 @@ class TestCheckExecutableUsesRealLimits:
         assert executable is False
         assert reason == "no_open_price"
 
-    def test_zero_prev_close_passes(self):
+    def test_zero_prev_close_blocks_as_missing_prev_close(self):
         entry_bar = pd.Series(
             {
                 "open": 100.0,
@@ -173,7 +173,8 @@ class TestCheckExecutableUsesRealLimits:
             }
         )
         executable, reason = _check_executable(entry_bar, prev_close=0.0, row={})
-        assert executable is True
+        assert executable is False
+        assert reason == "missing_prev_close"
 
     def test_near_limit_up_with_tolerance(self):
         entry_bar = pd.Series(

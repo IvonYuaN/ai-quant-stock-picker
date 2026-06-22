@@ -138,6 +138,8 @@ class MultiSource(DataSource):
 
         primary_result = None
         fallback_result = None
+        primary_source_name = ""
+        fallback_source_name = ""
         exceptions = []
 
         for source_ref in sources:
@@ -160,18 +162,25 @@ class MultiSource(DataSource):
                     continue
                 if primary_result is None:
                     primary_result = result
+                    primary_source_name = source_name
                     self._last_used_source = source_name
                     if not self.validate_consistency:
                         return primary_result
                 elif fallback_result is None:
                     fallback_result = result
+                    fallback_source_name = source_name
                     break
             except Exception as e:
                 exceptions.append((source_name, e))
 
         if primary_result is not None:
             if self.validate_consistency and fallback_result is not None:
-                self._validate_consistency(primary_result, fallback_result)
+                self._validate_consistency(
+                    primary_result,
+                    fallback_result,
+                    primary_source_name=primary_source_name,
+                    fallback_source_name=fallback_source_name,
+                )
             return primary_result
 
         raise DataError(
@@ -182,6 +191,9 @@ class MultiSource(DataSource):
         self,
         primary_data: dict[str, pd.DataFrame],
         fallback_data: dict[str, pd.DataFrame],
+        *,
+        primary_source_name: str | None = None,
+        fallback_source_name: str | None = None,
     ) -> None:
         common_symbols = set(primary_data.keys()) & set(fallback_data.keys())
 
@@ -204,10 +216,13 @@ class MultiSource(DataSource):
                     if diff_pct > 0.5:
                         raise DataInconsistencyError(
                             symbol,
-                            self._source_name(self.primary),
-                            self._source_name(self.fallbacks[0])
-                            if self.fallbacks
-                            else "unknown",
+                            primary_source_name or self._source_name(self.primary),
+                            fallback_source_name
+                            or (
+                                self._source_name(self.fallbacks[0])
+                                if self.fallbacks
+                                else "unknown"
+                            ),
                             diff_pct,
                         )
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 
 import pandas as pd
 import pytest
@@ -50,6 +51,21 @@ def test_fallback_limit_pct_uses_symbol_board_thresholds(tmp_path) -> None:
     assert _check_executable(bse_bar, 100.0, {"symbol": "830000"}) == (
         False,
         "limit_up_at_open",
+    )
+
+
+def test_check_executable_blocks_when_prev_close_missing() -> None:
+    from aqsp.ledger.base import _check_executable
+
+    entry_bar = pd.Series({"open": 10.0, "high": 10.2, "low": 9.8})
+
+    assert _check_executable(entry_bar, math.nan, {"symbol": "600000"}) == (
+        False,
+        "missing_prev_close",
+    )
+    assert _check_executable(entry_bar, 0.0, {"symbol": "600000"}) == (
+        False,
+        "missing_prev_close",
     )
 
 

@@ -75,7 +75,8 @@ def screen_universe(
         frame = validated_frames[symbol]
         try:
             result = score_symbol(symbol, frame, config, scoring, internet_strategy)
-        except (ValueError, IndexError, KeyError, TypeError):
+        except (ValueError, IndexError, KeyError, TypeError) as exc:
+            _logger.warning("score_symbol %s 异常，已跳过: %s", symbol, exc)
             continue
         if result is not None:
             picks.append(result)

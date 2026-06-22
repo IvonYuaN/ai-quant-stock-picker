@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from aqsp.data.registry import get_registry_entry
-from aqsp.data.source_health import record_source_auth
+from aqsp.data.source_health import read_source_health, record_source_auth
 from aqsp.data.source_readiness import (
     inspect_source_readiness,
     workload_fit_for_source,
@@ -81,3 +81,13 @@ def test_inspect_source_readiness_when_baostock_not_yet_checked() -> None:
 
     assert snapshot.auth_kind == "login_session"
     assert snapshot.auth_status in {"not_checked", "ok", "login_failed"}
+
+
+def test_read_source_health_returns_empty_when_json_corrupt(tmp_path) -> None:
+    health_path = tmp_path / "source_health.json"
+    health_path.write_text("{broken", encoding="utf-8")
+
+    health = read_source_health(health_path)
+
+    assert health["consecutive_failures"] == 0
+    assert health["sources"] == {}

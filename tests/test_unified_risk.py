@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from datetime import date
+
 from aqsp.risk.unified_risk import (
+    MarketSnapshot,
     PortfolioRiskConfig,
     PortfolioRiskManager,
     StockRiskConfig,
@@ -91,3 +94,27 @@ def test_unified_risk_managers_load_threshold_defaults(monkeypatch) -> None:
     assert StockRiskManager().config.hard_stop_loss == 0.09
     assert PortfolioRiskManager().config.max_drawdown_pct == 0.11
     assert SystemRiskManager().config.panic_index_threshold == 0.33
+
+
+def test_system_risk_corrupt_state_fails_closed(tmp_path) -> None:
+    config = SystemRiskConfig.from_thresholds(_thresholds())
+    manager = SystemRiskManager(config)
+    manager.state_path = tmp_path / "system_risk.json"
+    manager.state_path.write_text("{broken", encoding="utf-8")
+
+    assert manager.is_halt_active()
+    check = manager.check_market(
+        MarketSnapshot(
+            date=date(2026, 6, 22),
+            hs300_change=0.0,
+            hs300_change_5d=0.0,
+            limit_up_count=0,
+            limit_down_count=0,
+            market_volatility=0.0,
+            avg_volume_ratio=1.0,
+            north_flow=0.0,
+        )
+    )
+
+    assert check.halt_all_strategies
+    assert check.duration_days >= config.halt_trigger_count

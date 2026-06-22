@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from pathlib import Path
@@ -8,6 +9,8 @@ from typing import Optional
 
 from aqsp.core.time import now_shanghai
 from aqsp.strategies.thresholds import Thresholds, load_thresholds
+
+_logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -68,8 +71,10 @@ class CircuitBreaker:
                     self._last_triggered_date = date.fromisoformat(
                         state["last_triggered_date"]
                     )
-            except (json.JSONDecodeError, ValueError):
-                pass
+            except (OSError, json.JSONDecodeError, ValueError) as exc:
+                _logger.error("组合熔断状态损坏，保守进入冷却期: %s", exc)
+                self._cooldown_until = date.max
+                self._last_triggered_date = now_shanghai().date()
 
     def _save_state(self):
         state_file = Path(self.config.state_file)
