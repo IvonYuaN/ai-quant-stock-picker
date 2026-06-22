@@ -201,6 +201,14 @@ class TestMonitorChecker:
 
 
 class TestNotifier:
+    @pytest.fixture(autouse=True)
+    def _isolated_monitor_notify_state(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv(
+            "AQSP_MONITOR_NOTIFY_STATE_PATH", str(tmp_path / "monitor_state.json")
+        )
+
     def test_format_alert(self, sample_results: list[MonitorResult]) -> None:
         alert = format_alert(sample_results)
 
@@ -223,7 +231,9 @@ class TestNotifier:
 
     def test_send_alerts(self, sample_results: list[MonitorResult]) -> None:
         with patch("aqsp.monitor.notifier.notify_markdown") as mock_notify:
-            mock_notify.return_value = [MagicMock(channel="serverchan", ok=True, detail="HTTP 200")]
+            mock_notify.return_value = [
+                MagicMock(channel="serverchan", ok=True, detail="HTTP 200")
+            ]
             send_alerts(sample_results)
 
             mock_notify.assert_called_once()
@@ -244,6 +254,39 @@ class TestNotifier:
         output = capsys.readouterr().out
         assert "monitor notify serverchan: ok (HTTP 200)" in output
         assert "monitor notify wechat: failed (HTTP 500)" in output
+
+    def test_send_alerts_dedupes_same_critical_alert(
+        self, sample_results: list[MonitorResult], tmp_path: Path, monkeypatch, capsys
+    ) -> None:
+        monkeypatch.setenv(
+            "AQSP_MONITOR_NOTIFY_STATE_PATH", str(tmp_path / "monitor_state.json")
+        )
+        with patch("aqsp.monitor.notifier.notify_markdown") as mock_notify:
+            mock_notify.return_value = [
+                MagicMock(channel="serverchan", ok=True, detail="HTTP 200")
+            ]
+
+            send_alerts(sample_results)
+            send_alerts(sample_results)
+
+        assert mock_notify.call_count == 1
+        assert "skipped duplicate critical alert" in capsys.readouterr().out
+
+    def test_send_alerts_retries_when_delivery_fails(
+        self, sample_results: list[MonitorResult], tmp_path: Path, monkeypatch
+    ) -> None:
+        monkeypatch.setenv(
+            "AQSP_MONITOR_NOTIFY_STATE_PATH", str(tmp_path / "monitor_state.json")
+        )
+        with patch("aqsp.monitor.notifier.notify_markdown") as mock_notify:
+            mock_notify.return_value = [
+                MagicMock(channel="serverchan", ok=False, detail="HTTP 500")
+            ]
+
+            send_alerts(sample_results)
+            send_alerts(sample_results)
+
+        assert mock_notify.call_count == 2
 
     def test_send_alerts_no_triggered(self) -> None:
         results = [

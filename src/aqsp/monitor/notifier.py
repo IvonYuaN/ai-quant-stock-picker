@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import hashlib
+import json
+import os
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from aqsp.config import load_runtime_config
@@ -7,6 +11,7 @@ from aqsp.core.time import now_shanghai
 from aqsp.notification_style import compact_notification_markdown
 from aqsp.notify_templates import build_monitor_notification
 from aqsp.notifier import notify_markdown, print_notify_results
+from aqsp.utils.jsonl_io import advisory_lock, atomic_write_text
 
 if TYPE_CHECKING:
     from .checker import MonitorResult
@@ -62,6 +67,18 @@ def send_alerts(results: list[MonitorResult]) -> None:
     """Send alerts for triggered monitors via notifier."""
     triggered = [r for r in results if r.triggered]
     if not triggered:
+        _clear_monitor_notify_state()
+        return
+
+    fingerprint = _monitor_alert_fingerprint(triggered)
+    date_key = now_shanghai().date().isoformat()
+    state_path = _monitor_notify_state_path()
+    if not _should_send_monitor_alert(
+        state_path=state_path,
+        fingerprint=fingerprint,
+        date_key=date_key,
+    ):
+        print("monitor notify: skipped duplicate critical alert")
         return
 
     alert_msg = build_monitor_notification(
@@ -70,3 +87,72 @@ def send_alerts(results: list[MonitorResult]) -> None:
     )
     notify_results = notify_markdown(alert_msg)
     print_notify_results(notify_results, prefix="monitor notify")
+    if any(result.ok for result in notify_results):
+        _mark_monitor_alert_sent(
+            state_path=state_path,
+            fingerprint=fingerprint,
+            date_key=date_key,
+        )
+
+
+def _monitor_notify_state_path() -> Path:
+    raw = os.getenv("AQSP_MONITOR_NOTIFY_STATE_PATH", "data/monitor_notify_state.json")
+    return Path(raw)
+
+
+def _monitor_alert_fingerprint(results: list[MonitorResult]) -> str:
+    parts: list[str] = []
+    for result in sorted(results, key=lambda item: item.name):
+        if not result.triggered or result.severity != "critical":
+            continue
+        detail_items = sorted((result.details or {}).items())
+        details = ",".join(f"{key}={value}" for key, value in detail_items)
+        parts.append(f"{result.name}|{result.severity}|{result.message}|{details}")
+    raw = "\n".join(parts) or "no-critical"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _read_monitor_notify_state(path: Path) -> dict[str, object]:
+    if not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _should_send_monitor_alert(
+    *, state_path: Path, fingerprint: str, date_key: str
+) -> bool:
+    with advisory_lock(state_path):
+        state = _read_monitor_notify_state(state_path)
+        return not (
+            state.get("fingerprint") == fingerprint and state.get("date") == date_key
+        )
+
+
+def _mark_monitor_alert_sent(
+    *, state_path: Path, fingerprint: str, date_key: str
+) -> None:
+    with advisory_lock(state_path):
+        atomic_write_text(
+            state_path,
+            json.dumps(
+                {
+                    "fingerprint": fingerprint,
+                    "date": date_key,
+                    "updated_at": now_shanghai().isoformat(timespec="seconds"),
+                },
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n",
+        )
+
+
+def _clear_monitor_notify_state() -> None:
+    path = _monitor_notify_state_path()
+    with advisory_lock(path):
+        path.unlink(missing_ok=True)
