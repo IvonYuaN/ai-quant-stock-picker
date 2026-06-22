@@ -2,7 +2,15 @@
 
 默认模式：**本地优先**。GitHub Actions 不是必需项。
 
-## 自动跑（推荐）
+## 自动跑（本地 legacy）
+
+生产服务器统一使用：
+
+```bash
+bash scripts/bt_task.sh daily
+```
+
+`daily_run.sh` 只保留给本地 smoke run，默认 fail-closed，必须显式设置 `AQSP_ALLOW_LEGACY_ENTRY=1`。
 
 加载 launchd 任务（一次性）：
 ```bash
@@ -17,7 +25,7 @@ launchctl list | grep com.aqsp
 ## 手动跑（验证用）
 
 ```bash
-bash scripts/daily_run.sh
+AQSP_ALLOW_LEGACY_ENTRY=1 bash scripts/daily_run.sh
 tail -50 logs/daily/run-$(date +%Y-%m-%d).log
 ```
 

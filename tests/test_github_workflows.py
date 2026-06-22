@@ -185,6 +185,14 @@ def test_monitor_workflow_does_not_send_notifications_from_ephemeral_runner() ->
     assert "${{ secrets." not in text
 
 
+def test_scheduled_screen_workflow_is_manual_report_only() -> None:
+    text = (WORKFLOW_DIR / "scheduled-screen.yml").read_text(encoding="utf-8")
+
+    assert "schedule:" not in text
+    assert "--notify" not in text
+    assert "${{ secrets." not in text
+
+
 def test_github_workflow_jobs_define_timeouts() -> None:
     offenders: list[str] = []
 

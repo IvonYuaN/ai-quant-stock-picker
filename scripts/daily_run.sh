@@ -3,6 +3,11 @@
 # 由 macOS launchd 在工作日 16:00 触发（北京时间 16:00）
 set -e
 
+if [ "${AQSP_ALLOW_LEGACY_ENTRY:-0}" != "1" ]; then
+    echo "daily_run.sh is a legacy local entry. Use scripts/bt_task.sh daily in production, or set AQSP_ALLOW_LEGACY_ENTRY=1 for local smoke runs." >&2
+    exit 2
+fi
+
 PROJECT_ROOT="${AQSP_PROJECT_ROOT:-$HOME/Documents/AI量化选股}"
 cd "$PROJECT_ROOT"
 
