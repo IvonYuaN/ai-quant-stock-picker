@@ -38,6 +38,11 @@ DEFAULT_LOOKBACK_DAYS = 260
 DEFAULT_FUTURE_BUFFER_DAYS = 10
 
 
+def _history_window_start(signal_day: date, lookback_days: int) -> date:
+    calendar_buffer_days = max(lookback_days + 180, 300)
+    return signal_day - timedelta(days=calendar_buffer_days)
+
+
 @dataclass(frozen=True)
 class BackfillDayPlan:
     trading_days: list[date]
@@ -133,7 +138,7 @@ def fetch_history_window(
     lookback_days: int,
     future_buffer_days: int,
 ) -> dict[str, pd.DataFrame]:
-    start = signal_day - timedelta(days=max(lookback_days * 2, 365))
+    start = _history_window_start(signal_day, lookback_days)
     end = signal_day + timedelta(days=max(future_buffer_days, 1) * 2)
     return source.fetch_daily(symbols, start, end, adjust="")
 
@@ -147,6 +152,7 @@ def resolve_backfill_symbols(
     signal_day: date,
     max_universe: int,
     min_avg_amount: float,
+    lookback_days: int,
 ) -> list[str]:
     if source_name != "sqlite_db":
         return _resolve_run_symbols(
@@ -163,7 +169,7 @@ def resolve_backfill_symbols(
 
     symbols = list(getattr(source, "get_available_symbols")())
     if hasattr(source, "get_symbols_with_daily_coverage"):
-        start = signal_day - timedelta(days=max(DEFAULT_LOOKBACK_DAYS * 2, 365))
+        start = _history_window_start(signal_day, lookback_days)
         symbols = source.get_symbols_with_daily_coverage(
             symbols,
             start,
@@ -250,6 +256,7 @@ def backfill_real_sample_days(args: argparse.Namespace) -> int:
             max_universe=max_universe,
             min_avg_amount=min_avg_amount,
             signal_day=signal_day,
+            lookback_days=args.lookback_days,
         )
         if not symbols:
             print(f"{signal_day.isoformat()}: skip, no symbols resolved", flush=True)

@@ -116,6 +116,8 @@ def test_resolve_backfill_symbols_uses_sqlite_source_directly() -> None:
 
         def get_symbols_with_daily_coverage(self, symbols, start, end, min_rows=None):
             assert min_rows is None
+            assert start == date(2025, 8, 17)
+            assert end == date(2026, 6, 23)
             return symbols[:2]
 
     symbols = backfill.resolve_backfill_symbols(
@@ -126,6 +128,16 @@ def test_resolve_backfill_symbols_uses_sqlite_source_directly() -> None:
         signal_day=date(2026, 6, 23),
         max_universe=0,
         min_avg_amount=50_000_000,
+        lookback_days=130,
     )
 
     assert symbols == ["600000", "600519"]
+
+
+def test_history_window_start_scales_with_lookback() -> None:
+    assert backfill._history_window_start(date(2026, 6, 23), 120) == date(
+        2025, 8, 27
+    )
+    assert backfill._history_window_start(date(2026, 6, 23), 260) == date(
+        2025, 4, 9
+    )
