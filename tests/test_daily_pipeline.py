@@ -477,6 +477,51 @@ def test_auto_evolution_step_skips_when_prerequisites_missing(
     assert result == {"skipped": True, "reason": "missing_tushare_or_symbols"}
 
 
+def test_auto_evolution_step_skips_when_pool_constituents_unavailable(
+    monkeypatch, tmp_path: Path
+) -> None:
+    daily_pipeline = _load_daily_pipeline_module()
+    monkeypatch.setenv("TUSHARE_TOKEN", "configured-but-unavailable")
+
+    def fake_main(_argv: list[str]) -> int:
+        print(
+            "配置错误: Pool sh300 requires TUSHARE_TOKEN or explicit --symbols for point-in-time constituents"
+        )
+        return 1
+
+    monkeypatch.setattr("aqsp.cli.main", fake_main)
+
+    config = daily_pipeline.PipelineConfig(
+        project_root=tmp_path,
+        source="eastmoney",
+        mode="close",
+        limit=10,
+        max_universe=50,
+        min_avg_amount=50_000_000,
+        max_data_lag_days=3,
+        enable_online_factors=False,
+        allow_online_fallback=True,
+        ledger_path="data/predictions.jsonl",
+        report_path="reports/latest.md",
+        csv_path="reports/latest.csv",
+        briefing_path="reports/briefing.md",
+        paper_report_path="reports/paper.md",
+        dashboard_html="dist/dashboard/index.html",
+        dashboard_db="dist/dashboard/aqsp.db",
+        paper_ledger="data/paper_trades.jsonl",
+        closing_review_path="reports/closing_review.md",
+        notify=False,
+        notify_mode="summary",
+        dry_run=False,
+        enable_debate=False,
+        enable_auto_evolution=True,
+    )
+
+    result = daily_pipeline._step_auto_evolution(config, logging.getLogger("test"))
+
+    assert result == {"skipped": True, "reason": "missing_pool_constituents"}
+
+
 def test_closing_review_step_writes_output_and_skips_fanout_notify_in_summary_mode(
     monkeypatch, tmp_path: Path
 ) -> None:

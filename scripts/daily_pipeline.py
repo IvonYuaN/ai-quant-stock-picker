@@ -743,10 +743,23 @@ def _step_auto_evolution(
         str(output_path),
     ]
 
+    import contextlib
+    import io
+
     from aqsp.cli import main
 
-    exit_code = main(argv)
+    output_buffer = io.StringIO()
+    with contextlib.redirect_stdout(output_buffer), contextlib.redirect_stderr(
+        output_buffer
+    ):
+        exit_code = main(argv)
+    cli_output = output_buffer.getvalue().strip()
+    for line in cli_output.splitlines():
+        logger.info("  %s", line)
     if exit_code != 0:
+        if "requires TUSHARE_TOKEN or explicit --symbols" in cli_output:
+            logger.info("  缺少可用成分股数据，跳过策略自进化")
+            return {"skipped": True, "reason": "missing_pool_constituents"}
         raise DataError(f"策略自进化失败, exit_code={exit_code}")
 
     payload: dict[str, Any] = {}
