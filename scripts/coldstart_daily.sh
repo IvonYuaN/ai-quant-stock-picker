@@ -28,6 +28,20 @@ resolve_path() {
     esac
 }
 
+detect_sqlite_price_mode() {
+    local path_lc
+    path_lc="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
+    if [[ "$path_lc" == *raw* || "$path_lc" == *unadjust* ]]; then
+        printf 'raw\n'
+        return 0
+    fi
+    if [[ "$path_lc" == *qfq* || "$path_lc" == *hfq* ]]; then
+        printf 'qfq\n'
+        return 0
+    fi
+    printf 'unknown\n'
+}
+
 lock_age_minutes() {
     local path="$1"
     local now_epoch mtime
@@ -82,6 +96,7 @@ if [ ! -x "$PYTHON_BIN" ]; then
 fi
 
 SQLITE_DB_PATH="$(resolve_path "${AQSP_COLDSTART_DB_PATH:-${AQSP_SQLITE_DB_PATH:-A股量化分析数据/astocks_raw.db}}")"
+RUNTIME_SQLITE_DB_PATH="$(resolve_path "${AQSP_SQLITE_DB_PATH:-A股量化分析数据/astocks_raw.db}")"
 UPDATE_SCRIPT_HINT="${AQSP_COLDSTART_UPDATE_SCRIPT:-}"
 PROJECT_UPDATE_SCRIPT="$(resolve_path "scripts/update_sqlite_daily.py")"
 SQLITE_UPDATE_SCRIPT="$(dirname "$SQLITE_DB_PATH")/update_daily.py"
@@ -169,6 +184,20 @@ if [ ! -f "$SQLITE_DB_PATH" ]; then
     exit 1
 fi
 
+SQLITE_PRICE_MODE="${AQSP_COLDSTART_PRICE_MODE:-$(detect_sqlite_price_mode "$SQLITE_DB_PATH")}"
+if [ "$SQLITE_PRICE_MODE" = "unknown" ]; then
+    log "[ERROR] 无法从 sqlite 路径判断 price_mode: $SQLITE_DB_PATH"
+    exit 1
+fi
+if [ "${AQSP_SOURCE:-}" = "sqlite_db" ] && [ "$SQLITE_DB_PATH" != "$RUNTIME_SQLITE_DB_PATH" ]; then
+    log "[ERROR] 冷启动 sqlite 路径与运行时不一致: coldstart=$SQLITE_DB_PATH runtime=$RUNTIME_SQLITE_DB_PATH"
+    exit 1
+fi
+if [ "${AQSP_SOURCE:-}" = "sqlite_db" ] && [ "$SQLITE_PRICE_MODE" != "raw" ]; then
+    log "[ERROR] sqlite_db 运行时要求 coldstart 更新 raw 历史库，当前 price_mode=$SQLITE_PRICE_MODE path=$SQLITE_DB_PATH"
+    exit 1
+fi
+
 cd "$PROJECT_ROOT"
 
 log "=========================================="
@@ -177,10 +206,12 @@ log "项目目录: ${PROJECT_ROOT}"
 log "Python: ${PYTHON_BIN}"
 log "更新脚本: ${UPDATE_SCRIPT}"
 log "历史库: ${SQLITE_DB_PATH}"
+log "price_mode: ${SQLITE_PRICE_MODE}"
 log "=========================================="
 
 UPDATE_ARGS=("${SQLITE_DB_PATH}")
 if [ "$(basename "$UPDATE_SCRIPT")" = "update_sqlite_daily.py" ]; then
+    UPDATE_ARGS+=(--price-mode "$SQLITE_PRICE_MODE")
     UPDATE_ARGS+=(--sleep-seconds "${AQSP_COLDSTART_UPDATE_SLEEP_SECONDS:-0.05}")
     if [ -n "${AQSP_COLDSTART_BACKFILL_START_DATE:-}" ]; then
         UPDATE_ARGS+=(--start-date "${AQSP_COLDSTART_BACKFILL_START_DATE}")

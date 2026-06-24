@@ -290,6 +290,49 @@ def test_check_before_live_blocks_runtime_ledger_path_drift(tmp_path: Path) -> N
     assert "AQSP_LEDGER=data/coldstart_predictions.jsonl" in finding.detail
 
 
+def test_check_before_live_blocks_coldstart_db_drift_for_sqlite_runtime(
+    tmp_path: Path,
+) -> None:
+    _prepare_ready_runtime(tmp_path)
+    _touch_runtime_db(tmp_path, "coldstart_qfq.db", mtime_day=date(2026, 6, 12))
+    (tmp_path / ".env").write_text(
+        "AQSP_SOURCE=sqlite_db\n"
+        "AQSP_ALLOW_ONLINE_FALLBACK=false\n"
+        "AQSP_SQLITE_DB_PATH=data/astocks_raw.db\n"
+        "AQSP_COLDSTART_DB_PATH=data/coldstart_qfq.db\n",
+        encoding="utf-8",
+    )
+
+    findings = check_before_live(root=tmp_path, today=date(2026, 6, 14))
+
+    finding = next(
+        item for item in findings if item.gate == "coldstart_runtime_alignment"
+    )
+    assert finding.ok is False
+    assert "AQSP_COLDSTART_DB_PATH" in finding.detail
+
+
+def test_check_before_live_blocks_legacy_coldstart_update_script_override(
+    tmp_path: Path,
+) -> None:
+    _prepare_ready_runtime(tmp_path)
+    (tmp_path / ".env").write_text(
+        "AQSP_SOURCE=sqlite_db\n"
+        "AQSP_ALLOW_ONLINE_FALLBACK=false\n"
+        "AQSP_SQLITE_DB_PATH=data/astocks_raw.db\n"
+        "AQSP_COLDSTART_UPDATE_SCRIPT=/opt/market-data/update_daily.py\n",
+        encoding="utf-8",
+    )
+
+    findings = check_before_live(root=tmp_path, today=date(2026, 6, 14))
+
+    finding = next(
+        item for item in findings if item.gate == "coldstart_runtime_alignment"
+    )
+    assert finding.ok is False
+    assert "legacy qfq updater" in finding.detail
+
+
 def test_check_before_live_blocks_stale_runtime_sqlite_db(tmp_path: Path) -> None:
     _prepare_ready_runtime(tmp_path)
     _touch_runtime_db(tmp_path, "astocks_raw.db", mtime_day=date(2026, 6, 10))

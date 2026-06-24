@@ -162,6 +162,7 @@ def check_before_live(
     findings.append(_check_runtime_data_source_config(root))
     findings.append(_check_runtime_sqlite_price_mode(root))
     findings.append(_check_runtime_sqlite_freshness(root, today))
+    findings.append(_check_coldstart_runtime_alignment(root))
     findings.append(_check_runtime_ledger_paths(root))
     findings.append(_check_short_line_subcommand_universe(root))
     findings.append(_check_cold_start_gate_config(root))
@@ -465,6 +466,59 @@ def _check_runtime_sqlite_freshness(root: Path, today: date) -> ReadinessFinding
             detail += f"; qfq sibling newer: {qfq_day.isoformat()}"
 
     return ReadinessFinding("runtime_sqlite_freshness", ok, detail)
+
+
+def _check_coldstart_runtime_alignment(root: Path) -> ReadinessFinding:
+    env_path = root / ".env"
+    source = (read_env_value(env_path, "AQSP_SOURCE") or "").strip().lower()
+    runtime_db_path = read_env_value(env_path, "AQSP_SQLITE_DB_PATH")
+    coldstart_db_path = read_env_value(env_path, "AQSP_COLDSTART_DB_PATH")
+    coldstart_update_script = read_env_value(env_path, "AQSP_COLDSTART_UPDATE_SCRIPT")
+    blockers: list[str] = []
+
+    if source == "sqlite_db":
+        if not runtime_db_path:
+            blockers.append("AQSP_SQLITE_DB_PATH unset")
+        elif "qfq" in Path(runtime_db_path).name.lower():
+            blockers.append(f"runtime sqlite path is qfq: {runtime_db_path}")
+
+        if coldstart_db_path:
+            runtime_normalized = (
+                _normalize_runtime_path(root, runtime_db_path)
+                if runtime_db_path
+                else None
+            )
+            coldstart_normalized = _normalize_runtime_path(root, coldstart_db_path)
+            if runtime_normalized is None or coldstart_normalized != runtime_normalized:
+                blockers.append(
+                    "AQSP_COLDSTART_DB_PATH must match AQSP_SQLITE_DB_PATH for sqlite_db runtime"
+                )
+
+        if coldstart_update_script:
+            script_name = Path(coldstart_update_script).name.lower()
+            if script_name == "update_daily.py":
+                blockers.append(
+                    "AQSP_COLDSTART_UPDATE_SCRIPT points to legacy qfq updater"
+                )
+
+    script_path = root / "scripts" / "coldstart_daily.sh"
+    if script_path.exists():
+        text = script_path.read_text(encoding="utf-8")
+        required_tokens = (
+            "detect_sqlite_price_mode",
+            'AQSP_COLDSTART_PRICE_MODE:-$(detect_sqlite_price_mode "$SQLITE_DB_PATH")',
+            'UPDATE_ARGS+=(--price-mode "$SQLITE_PRICE_MODE")',
+            'sqlite_db 运行时要求 coldstart 更新 raw 历史库',
+        )
+        missing = [token for token in required_tokens if token not in text]
+        if missing:
+            blockers.append("coldstart_daily.sh missing raw sqlite guardrails")
+
+    return ReadinessFinding(
+        "coldstart_runtime_alignment",
+        not blockers,
+        "ok" if not blockers else "; ".join(blockers[:4]),
+    )
 
 
 def _check_short_line_subcommand_universe(root: Path) -> ReadinessFinding:

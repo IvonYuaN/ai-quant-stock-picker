@@ -301,12 +301,18 @@ def test_coldstart_daily_script_updates_db_then_runs_cli() -> None:
         encoding="utf-8"
     )
 
+    assert "detect_sqlite_price_mode" in script
+    assert 'RUNTIME_SQLITE_DB_PATH="$(resolve_path "${AQSP_SQLITE_DB_PATH:-A股量化分析数据/astocks_raw.db}")"' in script
     assert 'dirname "$SQLITE_DB_PATH"' in script
     assert "scripts/update_sqlite_daily.py" in script
     assert "A股量化分析数据/update_daily.py" in script
     assert "AQSP_COLDSTART_UPDATE_SCRIPT" in script
+    assert "AQSP_COLDSTART_PRICE_MODE" in script
     assert "A股量化分析数据/astocks_raw.db" in script
     assert "A股量化分析数据/astocks_qfq.db" not in script
+    assert 'UPDATE_ARGS+=(--price-mode "$SQLITE_PRICE_MODE")' in script
+    assert "冷启动 sqlite 路径与运行时不一致" in script
+    assert "sqlite_db 运行时要求 coldstart 更新 raw 历史库" in script
     assert "AQSP_COLDSTART_UPDATE_SLEEP_SECONDS" in script
     assert "AQSP_COLDSTART_BACKFILL_START_DATE" in script
     assert "AQSP_COLDSTART_BACKFILL_FORCE" in script
