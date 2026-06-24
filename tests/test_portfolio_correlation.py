@@ -22,3 +22,15 @@ def test_compute_correlation_uses_configured_threshold() -> None:
     assert strict.high_corr_pairs
     assert strict.high_corr_threshold == 0.55
     assert "> 0.55" in format_correlation(strict)
+
+
+def test_compute_correlation_treats_nan_as_high_correlation() -> None:
+    frames = {
+        "A": _prices([10.0, 10.0, 10.0, 10.0]),
+        "B": _prices([20.0, 20.0, 20.0, 20.0]),
+    }
+
+    result = compute_correlation(frames, ["A", "B"], high_corr_threshold=0.7)
+
+    assert result.matrix["A"]["B"] == 1.0
+    assert result.high_corr_pairs == [("A", "B", 1.0)]

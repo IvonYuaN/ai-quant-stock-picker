@@ -226,7 +226,7 @@ class DataValidator:
     def validate_data_continuity(self, df: pd.DataFrame) -> ValidationResult:
         """验证数据连续性。
 
-        检查日期索引是否连续（假设按日期排序）。
+        检查日期序列是否连续（优先使用 date 列，其次回退到日期索引）。
 
         Args:
             df: OHLCV数据框（假设索引是日期）
@@ -239,9 +239,14 @@ class DataValidator:
         if df.empty or len(df) < 2:
             return result
 
-        # 尝试处理日期索引
+        # 优先使用标准 OHLCV 的 date 列，避免默认整数索引下连续性检查失效。
         try:
-            if hasattr(df.index, "to_pydatetime"):
+            if "date" in df.columns:
+                parsed = pd.to_datetime(df["date"], errors="coerce").dropna()
+                if len(parsed) < 2:
+                    return result
+                dates = parsed.dt.to_pydatetime()
+            elif hasattr(df.index, "to_pydatetime"):
                 dates = df.index.to_pydatetime()
             elif isinstance(df.index[0], pd.Timestamp):
                 dates = df.index
@@ -254,19 +259,17 @@ class DataValidator:
             if date_diffs.empty:
                 return result
 
-            # 检查是否存在非预期的日期跳跃
-            # 允许的时间差：1天（正常）、3天（周末）、多天（假期）
-            min_diff = date_diffs.min()
-
-            # 如果最小差距 > 1天，可能有缺失数据
-            if hasattr(min_diff, "days"):
-                min_days = min_diff.days
+            # 检查是否存在非预期的日期跳跃。
+            # 1 天是正常日频，3 天通常对应周末；明显更长的间隔才提示可能缺口。
+            max_diff = date_diffs.max()
+            if hasattr(max_diff, "days"):
+                max_days = max_diff.days
             else:
-                min_days = min_diff.total_seconds() / (24 * 3600)
+                max_days = max_diff.total_seconds() / (24 * 3600)
 
-            if min_days > 1.5:  # 允许一些浮点误差
+            if max_days > 3.5:  # 周末不告警，明显长缺口才提示
                 result.warnings.append(
-                    f"检测到数据间断：最小日期间隔 {min_days:.1f} 天"
+                    f"检测到数据间断：最大日期间隔 {max_days:.1f} 天"
                 )
 
         except (TypeError, AttributeError):

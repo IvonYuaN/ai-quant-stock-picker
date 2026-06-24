@@ -54,7 +54,7 @@ def compute_correlation(
         matrix[s1] = {}
         for s2 in valid_symbols:
             val = corr_df.loc[s1, s2]
-            matrix[s1][s2] = round(float(val), 4) if not np.isnan(val) else 0.0
+            matrix[s1][s2] = round(float(val), 4) if not np.isnan(val) else 1.0
 
     high_corr_pairs: list[tuple[str, str, float]] = []
     off_diag_values: list[float] = []

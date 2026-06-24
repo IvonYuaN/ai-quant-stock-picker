@@ -40,13 +40,14 @@ NUMERIC_OHLCV_COLUMNS = {
 
 
 def get_limit_pct(symbol: str, name: str = "") -> float:
+    clean_symbol = str(symbol or "").strip().split(".", 1)[0]
     if "*ST" in name or name.endswith("ST"):
         return 0.05
-    if symbol.startswith("688") or symbol.startswith("689"):
+    if clean_symbol.startswith(("688", "689")):
         return 0.20
-    if symbol.startswith("300") or symbol.startswith("301"):
+    if clean_symbol.startswith(("300", "301")):
         return 0.20
-    if symbol.startswith("8") or symbol.startswith("4"):
+    if clean_symbol.startswith(("43", "83", "87", "88")):
         return 0.30
     return 0.10
 

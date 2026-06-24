@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import pytest
 import pandas as pd
 
-from aqsp.data.source import DataSource
+from aqsp.data.source import DataSource, get_limit_pct
 from aqsp.data.akshare_source import AkshareSource
 from aqsp.data.baostock_source import BaostockSource
 from aqsp.data.eastmoney_source import EastmoneySource
@@ -223,6 +223,13 @@ def test_validate_ohlcv_missing_columns():
     source.name = "test"
     with pytest.raises(DataError):
         source._validate_ohlcv(df, "600000")
+
+
+def test_get_limit_pct_uses_precise_beijing_board_prefixes() -> None:
+    assert get_limit_pct("430001") == pytest.approx(0.30)
+    assert get_limit_pct("830001") == pytest.approx(0.30)
+    assert get_limit_pct("400001") == pytest.approx(0.10)
+    assert get_limit_pct("800001") == pytest.approx(0.10)
 
 
 def test_validate_ohlcv_valid():

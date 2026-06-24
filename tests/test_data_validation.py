@@ -519,6 +519,25 @@ class TestEmptyDataHandling:
         result = validator.validate_data_continuity(df)
         assert result.is_valid is True
 
+    def test_price_continuity_uses_date_column_when_index_is_default(
+        self, validator: DataValidator
+    ) -> None:
+        df = pd.DataFrame(
+            {
+                "date": ["2026-06-02", "2026-06-10", "2026-06-11"],
+                "open": [10.0, 10.1, 10.2],
+                "high": [10.5, 10.6, 10.7],
+                "low": [9.9, 10.0, 10.1],
+                "close": [10.1, 10.2, 10.3],
+                "volume": [1000, 1100, 1200],
+            }
+        )
+
+        result = validator.validate_data_continuity(df)
+
+        assert result.is_valid is True
+        assert any("数据间断" in warning for warning in result.warnings)
+
 
 class TestWarningVsErrorClassification:
     """测试警告vs错误分类"""
