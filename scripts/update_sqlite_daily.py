@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import re
+import signal
 import sqlite3
 import sys
 import time
@@ -212,6 +213,51 @@ def _adjustflag_for_price_mode(price_mode: str) -> str:
     raise ValueError(f"unsupported price_mode: {price_mode}")
 
 
+def _run_with_timeout(fetch: Any, timeout_seconds: float) -> Any:
+    if timeout_seconds <= 0 or not hasattr(signal, "setitimer"):
+        return fetch()
+
+    def _raise_timeout(_signum: int, _frame: Any) -> None:
+        raise TimeoutError(f"query timed out after {timeout_seconds}s")
+
+    previous_handler = signal.getsignal(signal.SIGALRM)
+    signal.signal(signal.SIGALRM, _raise_timeout)
+    signal.setitimer(signal.ITIMER_REAL, timeout_seconds)
+    try:
+        return fetch()
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0.0)
+        signal.signal(signal.SIGALRM, previous_handler)
+
+
+def _query_history_rows(
+    *,
+    bs: Any,
+    ts_code: str,
+    fetch_start_day: date,
+    target_day: date,
+    price_mode: str,
+    timeout_seconds: float,
+) -> tuple[str, list[list[str]]]:
+    def _fetch() -> tuple[str, list[list[str]]]:
+        rs = bs.query_history_k_data_plus(
+            code=_bs_code(ts_code),
+            fields="date,open,high,low,close,volume,amount",
+            start_date=fetch_start_day.isoformat(),
+            end_date=target_day.isoformat(),
+            frequency="d",
+            adjustflag=_adjustflag_for_price_mode(price_mode),
+        )
+        rows: list[list[str]] = []
+        if rs.error_code != "0":
+            return str(rs.error_code), rows
+        while rs.next():
+            rows.append(rs.get_row_data())
+        return str(rs.error_code), rows
+
+    return _run_with_timeout(_fetch, timeout_seconds)
+
+
 def _insert_bar(conn: sqlite3.Connection, ts_code: str, row: list[str]) -> bool:
     if len(row) < 7 or not row[4]:
         return False
@@ -244,6 +290,7 @@ def update_sqlite_daily(
     force_from_start: bool = False,
     fill_history_gaps: bool = False,
     price_mode: str = "qfq",
+    query_timeout_seconds: float = 15.0,
 ) -> UpdateSummary:
     bs = _load_baostock()
     login = bs.login()
@@ -281,20 +328,21 @@ def update_sqlite_daily(
                 if fetch_start_day > target_day:
                     skipped += 1
                     continue
-                rs = bs.query_history_k_data_plus(
-                    code=_bs_code(ts_code),
-                    fields="date,open,high,low,close,volume,amount",
-                    start_date=fetch_start_day.isoformat(),
-                    end_date=target_day.isoformat(),
-                    frequency="d",
-                    adjustflag=_adjustflag_for_price_mode(price_mode),
-                )
-                if rs.error_code != "0":
+                try:
+                    error_code, rows = _query_history_rows(
+                        bs=bs,
+                        ts_code=ts_code,
+                        fetch_start_day=fetch_start_day,
+                        target_day=target_day,
+                        price_mode=price_mode,
+                        timeout_seconds=query_timeout_seconds,
+                    )
+                except TimeoutError:
                     failed += 1
                     continue
-                rows = []
-                while rs.next():
-                    rows.append(rs.get_row_data())
+                if error_code != "0":
+                    failed += 1
+                    continue
                 inserted = 0
                 for row in rows:
                     if _insert_bar(conn, ts_code, row):
@@ -355,6 +403,12 @@ def main() -> int:
         default="qfq",
         help="baostock adjustment mode: qfq keeps legacy behavior; raw writes unadjusted prices",
     )
+    parser.add_argument(
+        "--query-timeout-seconds",
+        type=float,
+        default=15.0,
+        help="per-symbol upstream query timeout; 0 disables the timeout guard",
+    )
     args = parser.parse_args()
 
     if not args.db.exists():
@@ -383,6 +437,7 @@ def main() -> int:
         force_from_start=args.force_from_start,
         fill_history_gaps=args.fill_history_gaps,
         price_mode=args.price_mode,
+        query_timeout_seconds=args.query_timeout_seconds,
     )
     print(
         "sqlite daily backfill done: "

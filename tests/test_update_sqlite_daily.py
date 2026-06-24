@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 import sys
+import time
 from datetime import date
 from pathlib import Path
 
@@ -17,6 +18,7 @@ def test_update_sqlite_daily_cli_exposes_historical_backfill_flags() -> None:
     assert "--fill-history-gaps" in text
     assert "--force-from-start" in text
     assert "--price-mode" in text
+    assert "--query-timeout-seconds" in text
     assert "fill_history_gaps=args.fill_history_gaps" in text
     assert "force_from_start=args.force_from_start" in text
     assert "price_mode=args.price_mode" in text
@@ -119,6 +121,11 @@ def test_update_sqlite_daily_configures_wal_and_busy_timeout(tmp_path: Path) -> 
     assert str(journal_mode[0]).lower() == "wal"
     assert int(busy_timeout[0]) == 30000
     assert int(synchronous[0]) >= 1
+
+
+def test_run_with_timeout_raises_for_stalled_query() -> None:
+    with pytest.raises(TimeoutError, match="query timed out"):
+        update_sqlite_daily._run_with_timeout(lambda: time.sleep(0.2), 0.05)
 
 
 def test_adjustflag_for_price_mode_keeps_raw_unadjusted() -> None:
