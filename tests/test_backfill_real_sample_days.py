@@ -51,6 +51,32 @@ def test_truncate_frames_to_date_filters_future_rows_and_keeps_tail() -> None:
     assert trimmed["600000"]["date"].tolist() == ["2026-06-02", "2026-06-03"]
 
 
+def test_fetch_history_window_filters_symbols_by_coverage() -> None:
+    seen: dict[str, object] = {}
+
+    class DummySource:
+        def get_symbols_with_daily_coverage(self, symbols, start, end, min_rows=None):
+            seen["coverage"] = (list(symbols), start, end, min_rows)
+            return ["600519"]
+
+        def fetch_daily(self, symbols, start, end, adjust=""):
+            seen["fetch"] = (list(symbols), start, end, adjust)
+            return {"600519": pd.DataFrame([{"date": "2026-06-23", "close": 1.0}])}
+
+    out = backfill.fetch_history_window(
+        source=DummySource(),
+        symbols=["600519", "688981"],
+        signal_day=date(2026, 6, 23),
+        lookback_days=120,
+        future_buffer_days=2,
+    )
+
+    assert list(out.keys()) == ["600519"]
+    assert seen["coverage"][0] == ["600519", "688981"]
+    assert seen["coverage"][3] == 1
+    assert seen["fetch"][0] == ["600519"]
+
+
 def test_collect_paper_sync_symbols_dedupes_and_skips_run_marker(
     tmp_path: Path,
 ) -> None:

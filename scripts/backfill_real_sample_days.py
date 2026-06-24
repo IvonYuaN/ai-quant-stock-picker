@@ -21,6 +21,7 @@ from aqsp.cli import (
 from aqsp.config import load_runtime_config
 from aqsp.core.time import is_trading_day, today_shanghai
 from aqsp.data.cache import DataCache
+from aqsp.core.errors import DataError
 from aqsp.data.source_factory import build_data_source
 from aqsp.ledger.base import ExecutionConfig, append_predictions, read_ledger
 from aqsp.ledger.runtime import (
@@ -140,7 +141,26 @@ def fetch_history_window(
 ) -> dict[str, pd.DataFrame]:
     start = _history_window_start(signal_day, lookback_days)
     end = signal_day + timedelta(days=max(future_buffer_days, 1) * 2)
-    return source.fetch_daily(symbols, start, end, adjust="")
+    if hasattr(source, "get_symbols_with_daily_coverage"):
+        try:
+            symbols = list(
+                source.get_symbols_with_daily_coverage(
+                    symbols,
+                    start,
+                    end,
+                    min_rows=1,
+                )
+            )
+        except TypeError:
+            symbols = list(source.get_symbols_with_daily_coverage(symbols, start, end))
+    if not symbols:
+        return {}
+    try:
+        return source.fetch_daily(symbols, start, end, adjust="")
+    except DataError as exc:
+        raise DataError(
+            f"backfill fetch_history_window failed for {len(symbols)} symbols: {exc}"
+        ) from exc
 
 
 def resolve_backfill_symbols(
