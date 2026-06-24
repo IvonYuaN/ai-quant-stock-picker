@@ -138,6 +138,43 @@ def fetch_history_window(
     return source.fetch_daily(symbols, start, end, adjust="")
 
 
+def resolve_backfill_symbols(
+    *,
+    source_name: str,
+    source: Any,
+    explicit_symbols: str,
+    pool_name: str,
+    signal_day: date,
+    max_universe: int,
+    min_avg_amount: float,
+) -> list[str]:
+    if source_name != "sqlite_db":
+        return _resolve_run_symbols(
+            source_name,
+            explicit_symbols,
+            pool_name=pool_name,
+            as_of=signal_day,
+            max_universe=max_universe,
+            min_avg_amount=min_avg_amount,
+        )
+
+    if explicit_symbols.strip():
+        return [item.strip() for item in explicit_symbols.split(",") if item.strip()]
+
+    symbols = list(getattr(source, "get_available_symbols")())
+    if hasattr(source, "get_symbols_with_daily_coverage"):
+        start = signal_day - timedelta(days=max(DEFAULT_LOOKBACK_DAYS * 2, 365))
+        symbols = source.get_symbols_with_daily_coverage(
+            symbols,
+            start,
+            signal_day,
+            min_rows=None,
+        )
+    if max_universe > 0:
+        symbols = symbols[:max_universe]
+    return symbols
+
+
 def build_screening_config(
     *,
     thresholds: Any,
@@ -165,7 +202,7 @@ def backfill_real_sample_days(args: argparse.Namespace) -> int:
     project_root = Path(args.project_root).resolve()
     ledger_path = project_root / args.ledger
     paper_ledger_path = project_root / args.paper_ledger
-    source = build_data_source(args.source, cache=DataCache())
+    source = build_data_source(args.source, cache=DataCache(), overrides={})
 
     existing_signal_days = collect_signal_days(ledger_path)
     existing_paper_days = collect_signal_days(paper_ledger_path)
@@ -204,13 +241,14 @@ def backfill_real_sample_days(args: argparse.Namespace) -> int:
         ):
             break
 
-        symbols = _resolve_run_symbols(
-            args.source,
-            explicit_symbols,
+        symbols = resolve_backfill_symbols(
+            source_name=args.source,
+            source=source,
+            explicit_symbols=explicit_symbols,
             pool_name=args.pool,
-            as_of=signal_day,
             max_universe=max_universe,
             min_avg_amount=min_avg_amount,
+            signal_day=signal_day,
         )
         if not symbols:
             print(f"{signal_day.isoformat()}: skip, no symbols resolved")

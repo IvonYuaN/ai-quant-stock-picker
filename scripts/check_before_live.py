@@ -5,16 +5,17 @@ from __future__ import annotations
 
 import argparse
 import json
+import sqlite3
 import sys
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from aqsp.core.time import today_shanghai
+from aqsp.core.time import SHANGHAI_TZ, get_previous_trading_day, today_shanghai
 from aqsp.ledger.runtime import count_independent_signal_days, count_paper_tracking_days
 from aqsp.utils.env import read_env_value
 from aqsp.walkforward_gate import (
@@ -160,6 +161,7 @@ def check_before_live(
     findings.append(_check_runtime_symbol_override(root))
     findings.append(_check_runtime_data_source_config(root))
     findings.append(_check_runtime_sqlite_price_mode(root))
+    findings.append(_check_runtime_sqlite_freshness(root, today))
     findings.append(_check_runtime_ledger_paths(root))
     findings.append(_check_short_line_subcommand_universe(root))
     findings.append(_check_cold_start_gate_config(root))
@@ -395,6 +397,74 @@ def _check_runtime_sqlite_price_mode(root: Path) -> ReadinessFinding:
             f"AQSP_SQLITE_DB_PATH={db_path}; production runtime requires raw prices or PIT-adjusted path, not qfq/hfq",
         )
     return ReadinessFinding("runtime_sqlite_price_mode", True, "ok")
+
+
+def _check_runtime_sqlite_freshness(root: Path, today: date) -> ReadinessFinding:
+    env_path = root / ".env"
+    source = (read_env_value(env_path, "AQSP_SOURCE") or "").strip().lower()
+    raw_path = read_env_value(env_path, "AQSP_SQLITE_DB_PATH")
+    if source != "sqlite_db" and not raw_path:
+        return ReadinessFinding("runtime_sqlite_freshness", True, "not used")
+    if not raw_path:
+        return ReadinessFinding(
+            "runtime_sqlite_freshness",
+            False,
+            "AQSP_SOURCE=sqlite_db but AQSP_SQLITE_DB_PATH is unset",
+        )
+
+    db_path = _normalize_runtime_path(root, raw_path)
+    if not db_path.exists():
+        return ReadinessFinding(
+            "runtime_sqlite_freshness",
+            False,
+            f"runtime sqlite db missing: {db_path}",
+        )
+    if db_path.stat().st_size <= 0:
+        return ReadinessFinding(
+            "runtime_sqlite_freshness",
+            False,
+            f"runtime sqlite db empty: {db_path}",
+        )
+
+    mtime_day = datetime.fromtimestamp(db_path.stat().st_mtime, tz=SHANGHAI_TZ).date()
+    required_day = get_previous_trading_day(today)
+    required_day_compact = required_day.strftime("%Y%m%d")
+    symbol_count: int | None = None
+    query_error = ""
+    try:
+        with sqlite3.connect(db_path, timeout=30.0) as conn:
+            row = conn.execute(
+                "SELECT COUNT(DISTINCT ts_code) FROM daily_qfq WHERE trade_date = ?",
+                (required_day_compact,),
+            ).fetchone()
+        symbol_count = int(row[0] or 0) if row else 0
+    except sqlite3.Error as exc:
+        query_error = str(exc)
+
+    ok = mtime_day >= required_day
+    if symbol_count is not None:
+        ok = ok and symbol_count >= MIN_PRODUCTION_GATE_SYMBOLS
+    detail = (
+        f"{db_path} mtime={mtime_day.isoformat()}; "
+        f"require >= {required_day.isoformat()} (latest completed trading day)"
+    )
+    if symbol_count is not None:
+        detail += (
+            f"; {required_day.isoformat()} rows="
+            f"{symbol_count}/{MIN_PRODUCTION_GATE_SYMBOLS} symbols"
+        )
+    elif query_error:
+        detail += f"; symbol_count_unavailable={query_error}"
+
+    sibling_qfq = db_path.with_name("astocks_qfq.db")
+    if sibling_qfq.exists():
+        qfq_day = datetime.fromtimestamp(
+            sibling_qfq.stat().st_mtime, tz=SHANGHAI_TZ
+        ).date()
+        if qfq_day > mtime_day:
+            detail += f"; qfq sibling newer: {qfq_day.isoformat()}"
+
+    return ReadinessFinding("runtime_sqlite_freshness", ok, detail)
 
 
 def _check_short_line_subcommand_universe(root: Path) -> ReadinessFinding:

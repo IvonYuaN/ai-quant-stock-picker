@@ -107,3 +107,25 @@ def test_collect_paper_sync_symbols_dedupes_and_skips_run_marker(
     )
 
     assert symbols == ["600000", "600519", "601318"]
+
+
+def test_resolve_backfill_symbols_uses_sqlite_source_directly() -> None:
+    class DummySqliteSource:
+        def get_available_symbols(self):
+            return ["600000", "600519", "601318"]
+
+        def get_symbols_with_daily_coverage(self, symbols, start, end, min_rows=None):
+            assert min_rows is None
+            return symbols[:2]
+
+    symbols = backfill.resolve_backfill_symbols(
+        source_name="sqlite_db",
+        source=DummySqliteSource(),
+        explicit_symbols="",
+        pool_name="",
+        signal_day=date(2026, 6, 23),
+        max_universe=0,
+        min_avg_amount=50_000_000,
+    )
+
+    assert symbols == ["600000", "600519"]

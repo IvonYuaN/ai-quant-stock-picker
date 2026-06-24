@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
-from datetime import date
+import os
+import sqlite3
+from datetime import date, datetime
 from pathlib import Path
 
 from scripts.check_before_live import (
@@ -49,11 +51,23 @@ def _write_runtime_outputs(root: Path) -> None:
     )
 
 
+def _touch_runtime_db(root: Path, name: str, *, mtime_day: date) -> str:
+    path = root / "data" / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("sqlite placeholder\n", encoding="utf-8")
+    timestamp = datetime(
+        mtime_day.year, mtime_day.month, mtime_day.day, 18, 0, 0
+    ).timestamp()
+    os.utime(path, (timestamp, timestamp))
+    return str(path.relative_to(root))
+
+
 def _prepare_ready_runtime(root: Path) -> None:
+    raw_db = _touch_runtime_db(root, "astocks_raw.db", mtime_day=date(2026, 6, 12))
     (root / ".env").write_text(
         "AQSP_SOURCE=sqlite_db\n"
         "AQSP_ALLOW_ONLINE_FALLBACK=false\n"
-        "AQSP_SQLITE_DB_PATH=/opt/market-data/astocks_raw.db\n",
+        f"AQSP_SQLITE_DB_PATH={raw_db}\n",
         encoding="utf-8",
     )
     _write_json(
@@ -192,7 +206,7 @@ def test_check_before_live_blocks_small_runtime_universe_cap(
 ) -> None:
     _prepare_ready_runtime(tmp_path)
     (tmp_path / ".env").write_text(
-        "AQSP_SQLITE_DB_PATH=/opt/market-data/astocks_raw.db\nAQSP_MAX_UNIVERSE=300\n",
+        "AQSP_SQLITE_DB_PATH=data/astocks_raw.db\nAQSP_MAX_UNIVERSE=300\n",
         encoding="utf-8",
     )
 
@@ -208,7 +222,7 @@ def test_check_before_live_blocks_small_runtime_symbol_override(
 ) -> None:
     _prepare_ready_runtime(tmp_path)
     (tmp_path / ".env").write_text(
-        "AQSP_SQLITE_DB_PATH=/opt/market-data/astocks_raw.db\n"
+        "AQSP_SQLITE_DB_PATH=data/astocks_raw.db\n"
         "AQSP_SYMBOLS=600519,300750,000001\n",
         encoding="utf-8",
     )
@@ -225,7 +239,7 @@ def test_check_before_live_blocks_runtime_online_fallback(tmp_path: Path) -> Non
     (tmp_path / ".env").write_text(
         "AQSP_SOURCE=auto\n"
         "AQSP_ALLOW_ONLINE_FALLBACK=true\n"
-        "AQSP_SQLITE_DB_PATH=/opt/market-data/astocks_raw.db\n",
+        "AQSP_SQLITE_DB_PATH=data/astocks_raw.db\n",
         encoding="utf-8",
     )
 
@@ -241,10 +255,11 @@ def test_check_before_live_blocks_runtime_online_fallback(tmp_path: Path) -> Non
 
 def test_check_before_live_blocks_runtime_qfq_sqlite_db(tmp_path: Path) -> None:
     _prepare_ready_runtime(tmp_path)
+    _touch_runtime_db(tmp_path, "astocks_qfq.db", mtime_day=date(2026, 6, 12))
     (tmp_path / ".env").write_text(
         "AQSP_SOURCE=sqlite_db\n"
         "AQSP_ALLOW_ONLINE_FALLBACK=false\n"
-        "AQSP_SQLITE_DB_PATH=/opt/market-data/astocks_qfq.db\n",
+        "AQSP_SQLITE_DB_PATH=data/astocks_qfq.db\n",
         encoding="utf-8",
     )
 
@@ -262,7 +277,7 @@ def test_check_before_live_blocks_runtime_ledger_path_drift(tmp_path: Path) -> N
     (tmp_path / ".env").write_text(
         "AQSP_SOURCE=sqlite_db\n"
         "AQSP_ALLOW_ONLINE_FALLBACK=false\n"
-        "AQSP_SQLITE_DB_PATH=/opt/market-data/astocks_raw.db\n"
+        "AQSP_SQLITE_DB_PATH=data/astocks_raw.db\n"
         "AQSP_LEDGER=data/coldstart_predictions.jsonl\n",
         encoding="utf-8",
     )
@@ -273,6 +288,44 @@ def test_check_before_live_blocks_runtime_ledger_path_drift(tmp_path: Path) -> N
     assert finding.ok is False
     assert "ledger path drift" in finding.detail
     assert "AQSP_LEDGER=data/coldstart_predictions.jsonl" in finding.detail
+
+
+def test_check_before_live_blocks_stale_runtime_sqlite_db(tmp_path: Path) -> None:
+    _prepare_ready_runtime(tmp_path)
+    _touch_runtime_db(tmp_path, "astocks_raw.db", mtime_day=date(2026, 6, 10))
+
+    findings = check_before_live(root=tmp_path, today=date(2026, 6, 14))
+
+    finding = next(item for item in findings if item.gate == "runtime_sqlite_freshness")
+    assert finding.ok is False
+    assert "mtime=2026-06-10" in finding.detail
+    assert "require >= 2026-06-12" in finding.detail
+
+
+def test_check_before_live_blocks_partial_runtime_sqlite_db_coverage(
+    tmp_path: Path,
+) -> None:
+    _prepare_ready_runtime(tmp_path)
+    db_path = tmp_path / "data" / "astocks_raw.db"
+    db_path.unlink()
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("DROP TABLE IF EXISTS daily_qfq")
+        conn.execute(
+            "CREATE TABLE daily_qfq (ts_code TEXT NOT NULL, trade_date TEXT NOT NULL)"
+        )
+        conn.executemany(
+            "INSERT INTO daily_qfq(ts_code, trade_date) VALUES(?, ?)",
+            [(f"{idx:06d}.SH", "20260612") for idx in range(2999)],
+        )
+        conn.commit()
+    timestamp = datetime(2026, 6, 12, 18, 0, 0).timestamp()
+    os.utime(db_path, (timestamp, timestamp))
+
+    findings = check_before_live(root=tmp_path, today=date(2026, 6, 14))
+
+    finding = next(item for item in findings if item.gate == "runtime_sqlite_freshness")
+    assert finding.ok is False
+    assert "2026-06-12 rows=2999/3000 symbols" in finding.detail
 
 
 def test_check_before_live_blocks_missing_executability_runtime_feedback(
