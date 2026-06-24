@@ -229,7 +229,8 @@ def backfill_real_sample_days(args: argparse.Namespace) -> int:
     print(
         f"backfill plan: trading_days={len(plan.trading_days)} "
         f"existing_signal_days={len(plan.existing_signal_days)} "
-        f"existing_paper_days={len(plan.existing_paper_days)}"
+        f"existing_paper_days={len(plan.existing_paper_days)}",
+        flush=True,
     )
 
     for signal_day in plan.trading_days:
@@ -251,8 +252,12 @@ def backfill_real_sample_days(args: argparse.Namespace) -> int:
             signal_day=signal_day,
         )
         if not symbols:
-            print(f"{signal_day.isoformat()}: skip, no symbols resolved")
+            print(f"{signal_day.isoformat()}: skip, no symbols resolved", flush=True)
             continue
+        print(
+            f"{signal_day.isoformat()}: scanning {len(symbols)} symbols",
+            flush=True,
+        )
 
         raw_frames = fetch_history_window(
             source=source,
@@ -286,7 +291,7 @@ def backfill_real_sample_days(args: argparse.Namespace) -> int:
             screen_frames,
         )[: args.limit]
         if not picks:
-            print(f"{signal_day.isoformat()}: skip, no picks")
+            print(f"{signal_day.isoformat()}: skip, no picks", flush=True)
             continue
 
         append_predictions(
@@ -326,14 +331,16 @@ def backfill_real_sample_days(args: argparse.Namespace) -> int:
             f"paper(opened={summary.opened}, closed={summary.closed}, "
             f"pending={summary.pending_entry}, blocked={summary.not_executable}) "
             f"progress(signal={count_independent_signal_days(ledger_path)}, "
-            f"paper={count_paper_tracking_days(paper_ledger_path)})"
+            f"paper={count_paper_tracking_days(paper_ledger_path)})",
+            flush=True,
         )
 
     final_signal_days = count_independent_signal_days(ledger_path)
     final_paper_days = count_paper_tracking_days(paper_ledger_path)
     print(
         f"done: signal_days={final_signal_days}/{args.target_signal_days} "
-        f"paper_days={final_paper_days}/{args.target_paper_days}"
+        f"paper_days={final_paper_days}/{args.target_paper_days}",
+        flush=True,
     )
     return 0
 
