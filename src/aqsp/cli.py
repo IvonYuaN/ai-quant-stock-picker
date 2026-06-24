@@ -596,6 +596,7 @@ def main(argv: list[str] | None = None) -> int:
     monitor_cmd.add_argument("--config", default="config/monitors.yaml")
     monitor_cmd.add_argument("--notify", action="store_true")
     monitor_cmd.add_argument("--notify-critical-only", action="store_true")
+    monitor_cmd.add_argument("--quiet-healthy", action="store_true")
     monitor_cmd.add_argument("--dry-run", action="store_true")
 
     news_cmd = sub.add_parser(
@@ -4652,7 +4653,8 @@ def run_monitor(args: argparse.Namespace) -> int:
 
     triggered = [r for r in results if r.triggered]
     if not triggered:
-        print("✅ 所有监控项正常")
+        if not getattr(args, "quiet_healthy", False):
+            print("✅ 所有监控项正常")
         return 0
 
     alert_msg = format_alert(triggered)

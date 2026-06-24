@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from typing import Dict
 import yaml
 from pathlib import Path
@@ -584,75 +584,110 @@ class Thresholds:
     n_rebound: NReboundThresholds = field(default_factory=NReboundThresholds)
 
 
+def _as_dict(data: object) -> dict:
+    return dict(data) if isinstance(data, dict) else {}
+
+
+def _filter_dataclass_kwargs(cls: type, data: object) -> dict:
+    raw = _as_dict(data)
+    allowed = {item.name for item in fields(cls)}
+    return {key: value for key, value in raw.items() if str(key) in allowed}
+
+
 def _parse_momentum(data: dict) -> MomentumThresholds:
+    data = _as_dict(data)
     weights_data = data.pop("weights", {})
     return MomentumThresholds(
-        **data,
-        weights=MomentumWeights(**weights_data) if weights_data else MomentumWeights(),
+        **_filter_dataclass_kwargs(MomentumThresholds, data),
+        weights=MomentumWeights(
+            **_filter_dataclass_kwargs(MomentumWeights, weights_data)
+        )
+        if weights_data
+        else MomentumWeights(),
     )
 
 
 def _parse_quality(data: dict) -> QualityThresholds:
+    data = _as_dict(data)
     weights_data = data.pop("weights", {})
     return QualityThresholds(
-        **data,
-        weights=QualityWeights(**weights_data) if weights_data else QualityWeights(),
+        **_filter_dataclass_kwargs(QualityThresholds, data),
+        weights=QualityWeights(**_filter_dataclass_kwargs(QualityWeights, weights_data))
+        if weights_data
+        else QualityWeights(),
     )
 
 
 def _parse_value(data: dict) -> ValueThresholds:
+    data = _as_dict(data)
     weights_data = data.pop("weights", {})
     return ValueThresholds(
-        **data,
-        weights=ValueWeights(**weights_data) if weights_data else ValueWeights(),
+        **_filter_dataclass_kwargs(ValueThresholds, data),
+        weights=ValueWeights(**_filter_dataclass_kwargs(ValueWeights, weights_data))
+        if weights_data
+        else ValueWeights(),
     )
 
 
 def _parse_volume(data: dict) -> VolumeThresholds:
+    data = _as_dict(data)
     weights_data = data.pop("weights", {})
     return VolumeThresholds(
-        **data,
-        weights=VolumeWeights(**weights_data) if weights_data else VolumeWeights(),
+        **_filter_dataclass_kwargs(VolumeThresholds, data),
+        weights=VolumeWeights(**_filter_dataclass_kwargs(VolumeWeights, weights_data))
+        if weights_data
+        else VolumeWeights(),
     )
 
 
 def _parse_morning_breakout(data: dict) -> MorningBreakoutThresholds:
+    data = _as_dict(data)
     weights_data = data.pop("weights", {})
     return MorningBreakoutThresholds(
-        **data,
-        weights=MorningBreakoutWeights(**weights_data)
+        **_filter_dataclass_kwargs(MorningBreakoutThresholds, data),
+        weights=MorningBreakoutWeights(
+            **_filter_dataclass_kwargs(MorningBreakoutWeights, weights_data)
+        )
         if weights_data
         else MorningBreakoutWeights(),
     )
 
 
 def _parse_closing_premium(data: dict) -> ClosingPremiumThresholds:
+    data = _as_dict(data)
     weights_data = data.pop("weights", {})
     ma_periods = data.pop("ma_periods", (5, 10, 20))
     if isinstance(ma_periods, list):
         ma_periods = tuple(ma_periods)
     return ClosingPremiumThresholds(
-        **data,
+        **_filter_dataclass_kwargs(ClosingPremiumThresholds, data),
         ma_periods=ma_periods,
-        weights=ClosingPremiumWeights(**weights_data)
+        weights=ClosingPremiumWeights(
+            **_filter_dataclass_kwargs(ClosingPremiumWeights, weights_data)
+        )
         if weights_data
         else ClosingPremiumWeights(),
     )
 
 
 def _parse_n_rebound(data: dict) -> NReboundThresholds:
-    return NReboundThresholds(**data)
+    return NReboundThresholds(**_filter_dataclass_kwargs(NReboundThresholds, data))
 
 
 def _parse_mean_reversion(data: dict) -> MeanReversionThresholds:
-    return MeanReversionThresholds(**data)
+    return MeanReversionThresholds(
+        **_filter_dataclass_kwargs(MeanReversionThresholds, data)
+    )
 
 
 def _parse_triple_rise(data: dict) -> TripleRiseThresholds:
+    data = _as_dict(data)
     weights_data = data.pop("weights", {})
     return TripleRiseThresholds(
-        **data,
-        weights=TripleRiseWeights(**weights_data)
+        **_filter_dataclass_kwargs(TripleRiseThresholds, data),
+        weights=TripleRiseWeights(
+            **_filter_dataclass_kwargs(TripleRiseWeights, weights_data)
+        )
         if weights_data
         else TripleRiseWeights(),
     )
@@ -669,14 +704,17 @@ _DEFAULT_REGIME_ADJUSTMENTS: Dict[str, float] = {
 
 
 def _parse_regime(data: dict) -> RegimeThresholds:
+    data = _as_dict(data)
     adjustments_data = data.pop("adjustments", {})
     strategy_weights_data = data.pop("strategy_weights", {})
     strategy_weights = dict(_DEFAULT_REGIME_STRATEGY_WEIGHTS)
     for regime, weights in strategy_weights_data.items():
         if isinstance(weights, dict):
-            strategy_weights[str(regime)] = RegimeStrategyWeights(**weights)
+            strategy_weights[str(regime)] = RegimeStrategyWeights(
+                **_filter_dataclass_kwargs(RegimeStrategyWeights, weights)
+            )
     return RegimeThresholds(
-        **data,
+        **_filter_dataclass_kwargs(RegimeThresholds, data),
         adjustments=adjustments_data
         if adjustments_data
         else _DEFAULT_REGIME_ADJUSTMENTS,
@@ -711,17 +749,29 @@ def load_thresholds(
         momentum=_parse_momentum(data.get("momentum", {})),
         quality=_parse_quality(data.get("quality", {})),
         value=_parse_value(data.get("value", {})),
-        composite=CompositeThresholds(**data.get("composite", {})),
-        risk=RiskThresholds(**data.get("risk", {})),
-        filter=FilterThresholds(**data.get("filter", {})),
-        execution=ExecutionThresholds(**data.get("execution", {})),
+        composite=CompositeThresholds(
+            **_filter_dataclass_kwargs(CompositeThresholds, data.get("composite", {}))
+        ),
+        risk=RiskThresholds(
+            **_filter_dataclass_kwargs(RiskThresholds, data.get("risk", {}))
+        ),
+        filter=FilterThresholds(
+            **_filter_dataclass_kwargs(FilterThresholds, data.get("filter", {}))
+        ),
+        execution=ExecutionThresholds(
+            **_filter_dataclass_kwargs(ExecutionThresholds, data.get("execution", {}))
+        ),
         regime=_parse_regime(data.get("regime", {})),
         volume=_parse_volume(data.get("volume", {})),
         mean_reversion=_parse_mean_reversion(data.get("mean_reversion", {})),
         triple_rise=_parse_triple_rise(data.get("triple_rise", {})),
-        scoring=ScoringThresholds(**data.get("scoring", {})),
+        scoring=ScoringThresholds(
+            **_filter_dataclass_kwargs(ScoringThresholds, data.get("scoring", {}))
+        ),
         internet_strategy=InternetStrategyThresholds(
-            **data.get("internet_strategy", {})
+            **_filter_dataclass_kwargs(
+                InternetStrategyThresholds, data.get("internet_strategy", {})
+            )
         ),
         morning_breakout=_parse_morning_breakout(data.get("morning_breakout", {})),
         closing_premium=_parse_closing_premium(data.get("closing_premium", {})),

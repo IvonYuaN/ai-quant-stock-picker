@@ -92,3 +92,41 @@ def test_thresholds_load_triple_rise_section() -> None:
     assert thresholds.triple_rise.min_data_points == 20
     assert thresholds.triple_rise.volume_avg_window == 20
     assert thresholds.triple_rise.weights.triple_rise == 0.4
+
+
+def test_thresholds_ignore_unknown_yaml_fields(tmp_path) -> None:
+    from aqsp.strategies.thresholds import load_thresholds
+
+    path = tmp_path / "thresholds.yaml"
+    path.write_text(
+        """
+version: "test"
+momentum:
+  lookback_days: 33
+  extra_field: 1
+  weights:
+    momentum: 0.55
+    nested_extra: 99
+composite:
+  momentum_weight: 0.66
+  extra_field: 2
+internet_strategy:
+  rps_score: 21.0
+  extra_field: 3
+regime:
+  strategy_weights:
+    stable_bull:
+      momentum: 1.25
+      extra_field: 4
+""".strip(),
+        encoding="utf-8",
+    )
+
+    thresholds = load_thresholds(str(path))
+
+    assert thresholds.version == "test"
+    assert thresholds.momentum.lookback_days == 33
+    assert thresholds.momentum.weights.momentum == 0.55
+    assert thresholds.composite.momentum_weight == 0.66
+    assert thresholds.internet_strategy.rps_score == 21.0
+    assert thresholds.regime.strategy_weights["stable_bull"].momentum == 1.25

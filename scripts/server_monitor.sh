@@ -14,6 +14,7 @@ RESULT_LOG="${LOG_DIR}/monitor-$(date +%Y-%m-%d).log"
 MONITOR_CONFIG="${AQSP_MONITOR_CONFIG:-config/monitors.yaml}"
 NOTIFY_WARNINGS="${AQSP_MONITOR_NOTIFY_WARNINGS:-false}"
 EXIT_ON_ALERT="${AQSP_MONITOR_EXIT_ON_ALERT:-false}"
+QUIET_HEALTHY="${AQSP_MONITOR_QUIET_HEALTHY:-true}"
 LOCK_DIR="${PROJECT_ROOT}/.locks"
 LOCK_FILE="${LOCK_DIR}/server-monitor.lock"
 LOCK_INFO_FILE="${LOCK_FILE}/meta.env"
@@ -107,6 +108,11 @@ case "${NOTIFY_WARNINGS,,}" in
     1|true|yes|on) ;;
     *)
         MONITOR_ARGS+=( --notify-critical-only )
+        ;;
+esac
+case "${QUIET_HEALTHY,,}" in
+    1|true|yes|on)
+        MONITOR_ARGS+=( --quiet-healthy )
         ;;
 esac
 
