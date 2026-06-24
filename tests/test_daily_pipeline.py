@@ -357,6 +357,7 @@ def test_auto_evolution_step_reads_output_when_success(
     monkeypatch, tmp_path: Path
 ) -> None:
     daily_pipeline = _load_daily_pipeline_module()
+    monkeypatch.setenv("AQSP_SYMBOLS", "600000,600519")
 
     def fake_main(argv: list[str]) -> int:
         output = Path(argv[argv.index("--output") + 1])
@@ -404,6 +405,7 @@ def test_auto_evolution_step_reads_output_when_success(
 
 def test_auto_evolution_step_raises_when_cli_fails(monkeypatch, tmp_path: Path) -> None:
     daily_pipeline = _load_daily_pipeline_module()
+    monkeypatch.setenv("AQSP_SYMBOLS", "600000,600519")
 
     monkeypatch.setattr("aqsp.cli.main", lambda _argv: 1)
 
@@ -435,6 +437,44 @@ def test_auto_evolution_step_raises_when_cli_fails(monkeypatch, tmp_path: Path) 
 
     with pytest.raises(Exception, match="策略自进化失败"):
         daily_pipeline._step_auto_evolution(config, logging.getLogger("test"))
+
+
+def test_auto_evolution_step_skips_when_prerequisites_missing(
+    monkeypatch, tmp_path: Path
+) -> None:
+    daily_pipeline = _load_daily_pipeline_module()
+    monkeypatch.delenv("AQSP_SYMBOLS", raising=False)
+    monkeypatch.delenv("TUSHARE_TOKEN", raising=False)
+
+    config = daily_pipeline.PipelineConfig(
+        project_root=tmp_path,
+        source="eastmoney",
+        mode="close",
+        limit=10,
+        max_universe=50,
+        min_avg_amount=50_000_000,
+        max_data_lag_days=3,
+        enable_online_factors=False,
+        allow_online_fallback=True,
+        ledger_path="data/predictions.jsonl",
+        report_path="reports/latest.md",
+        csv_path="reports/latest.csv",
+        briefing_path="reports/briefing.md",
+        paper_report_path="reports/paper.md",
+        dashboard_html="dist/dashboard/index.html",
+        dashboard_db="dist/dashboard/aqsp.db",
+        paper_ledger="data/paper_trades.jsonl",
+        closing_review_path="reports/closing_review.md",
+        notify=False,
+        notify_mode="summary",
+        dry_run=False,
+        enable_debate=False,
+        enable_auto_evolution=True,
+    )
+
+    result = daily_pipeline._step_auto_evolution(config, logging.getLogger("test"))
+
+    assert result == {"skipped": True, "reason": "missing_tushare_or_symbols"}
 
 
 def test_closing_review_step_writes_output_and_skips_fanout_notify_in_summary_mode(

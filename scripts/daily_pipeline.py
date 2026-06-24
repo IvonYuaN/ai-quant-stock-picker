@@ -722,6 +722,16 @@ def _step_auto_evolution(
         logger.info("  自进化已禁用，跳过")
         return {"skipped": True, "reason": "disabled"}
 
+    import os
+
+    explicit_symbols = os.getenv("AQSP_SYMBOLS", "").strip()
+    tushare_token = os.getenv("TUSHARE_TOKEN", "").strip()
+    if not explicit_symbols and not tushare_token:
+        logger.info(
+            "  缺少 TUSHARE_TOKEN 且未显式配置 AQSP_SYMBOLS，跳过策略自进化"
+        )
+        return {"skipped": True, "reason": "missing_tushare_or_symbols"}
+
     output_path = config.project_root / "data" / "evolution_result.json"
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
