@@ -123,6 +123,14 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def configure_sqlite_connection(conn: sqlite3.Connection) -> None:
+    conn.execute("PRAGMA busy_timeout = 30000")
+    journal_mode = conn.execute("PRAGMA journal_mode = WAL").fetchone()
+    if not journal_mode or str(journal_mode[0]).lower() != "wal":
+        raise sqlite3.OperationalError("failed to enable WAL mode for sqlite updater")
+    conn.execute("PRAGMA synchronous = NORMAL")
+
+
 def sync_stock_list(conn: sqlite3.Connection, bs: Any) -> list[str]:
     rs = bs.query_stock_basic()
     bs_a_codes: set[str] = set()
@@ -247,6 +255,7 @@ def update_sqlite_daily(
     failed = 0
     try:
         with sqlite3.connect(db_path) as conn:
+            configure_sqlite_connection(conn)
             ensure_schema(conn)
             all_symbols = sync_stock_list(conn, bs)
             requested = {_normalize_requested_symbol(item) for item in symbols if item}

@@ -108,6 +108,19 @@ def test_update_sqlite_daily_creates_raw_database_schema_when_missing(
     assert {"stocks", "daily_qfq"}.issubset(tables)
 
 
+def test_update_sqlite_daily_configures_wal_and_busy_timeout(tmp_path: Path) -> None:
+    db = tmp_path / "x.db"
+    with sqlite3.connect(db) as conn:
+        update_sqlite_daily.configure_sqlite_connection(conn)
+        journal_mode = conn.execute("PRAGMA journal_mode").fetchone()
+        busy_timeout = conn.execute("PRAGMA busy_timeout").fetchone()
+        synchronous = conn.execute("PRAGMA synchronous").fetchone()
+
+    assert str(journal_mode[0]).lower() == "wal"
+    assert int(busy_timeout[0]) == 30000
+    assert int(synchronous[0]) >= 1
+
+
 def test_adjustflag_for_price_mode_keeps_raw_unadjusted() -> None:
     assert update_sqlite_daily._adjustflag_for_price_mode("raw") == "1"
     assert update_sqlite_daily._adjustflag_for_price_mode("qfq") == "2"
