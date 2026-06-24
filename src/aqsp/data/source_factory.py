@@ -83,7 +83,8 @@ def build_data_source(
     overrides: dict[str, SourceBuilder] | None = None,
 ) -> DataSource:
     cache = cache or DataCache()
-    builders = _source_builders(overrides or {})
+    override_builders = overrides or {}
+    builders = _source_builders(override_builders)
     if source_name in {"auto", "local_first"}:
         if not online_fallback_allowed():
             return builders["tdx_vipdoc"]()
@@ -130,7 +131,7 @@ def build_data_source(
     if source_name == "sqlite_db":
         return build_sqlite_db_source_with(
             cache=cache,
-            builder=overrides.get("sqlite_db"),
+            builder=override_builders.get("sqlite_db"),
         )
     if source_name in builders:
         return _build_with_cache(builders[source_name], cache)
