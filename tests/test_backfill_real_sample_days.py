@@ -10,7 +10,7 @@ from aqsp.core.types import PickResult
 from scripts import backfill_real_sample_days as backfill
 
 
-def test_build_backfill_plan_skips_existing_days(monkeypatch) -> None:
+def test_build_backfill_plan_keeps_days_missing_signal_or_paper(monkeypatch) -> None:
     monkeypatch.setattr(
         backfill,
         "is_trading_day",
@@ -27,9 +27,23 @@ def test_build_backfill_plan_skips_existing_days(monkeypatch) -> None:
 
     assert [day.isoformat() for day in plan.trading_days] == [
         "2026-06-02",
+        "2026-06-03",
+        "2026-06-04",
         "2026-06-05",
         "2026-06-08",
     ]
+    assert plan.missing_signal_days == {
+        "2026-06-02",
+        "2026-06-04",
+        "2026-06-05",
+        "2026-06-08",
+    }
+    assert plan.missing_paper_days == {
+        "2026-06-02",
+        "2026-06-03",
+        "2026-06-05",
+        "2026-06-08",
+    }
 
 
 def test_truncate_frames_to_date_filters_future_rows_and_keeps_tail() -> None:
@@ -161,9 +175,28 @@ def test_resolve_backfill_symbols_uses_sqlite_source_directly() -> None:
 
 
 def test_history_window_start_scales_with_lookback() -> None:
-    assert backfill._history_window_start(date(2026, 6, 23), 120) == date(
-        2025, 8, 27
+    assert backfill._history_window_start(date(2026, 6, 23), 120) == date(2025, 8, 27)
+    assert backfill._history_window_start(date(2026, 6, 23), 260) == date(2025, 4, 9)
+
+
+def test_build_backfill_plan_trims_missing_sets_with_max_days(monkeypatch) -> None:
+    monkeypatch.setattr(
+        backfill,
+        "is_trading_day",
+        lambda day: day.weekday() < 5,
     )
-    assert backfill._history_window_start(date(2026, 6, 23), 260) == date(
-        2025, 4, 9
+
+    plan = backfill.build_backfill_plan(
+        start_date=date(2026, 6, 1),
+        end_date=date(2026, 6, 5),
+        existing_signal_days={"2026-06-02"},
+        existing_paper_days=set(),
+        max_days=2,
     )
+
+    assert [day.isoformat() for day in plan.trading_days] == [
+        "2026-06-04",
+        "2026-06-05",
+    ]
+    assert plan.missing_signal_days == {"2026-06-04", "2026-06-05"}
+    assert plan.missing_paper_days == {"2026-06-04", "2026-06-05"}

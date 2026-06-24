@@ -49,6 +49,8 @@ class BackfillDayPlan:
     trading_days: list[date]
     existing_signal_days: set[str]
     existing_paper_days: set[str]
+    missing_signal_days: set[str]
+    missing_paper_days: set[str]
 
 
 def build_backfill_plan(
@@ -60,22 +62,30 @@ def build_backfill_plan(
     max_days: int,
 ) -> BackfillDayPlan:
     trading_days: list[date] = []
+    missing_signal_days: set[str] = set()
+    missing_paper_days: set[str] = set()
     cursor = start_date
     while cursor <= end_date:
         date_str = cursor.isoformat()
-        if (
-            is_trading_day(cursor)
-            and date_str not in existing_signal_days
-            and date_str not in existing_paper_days
-        ):
-            trading_days.append(cursor)
+        if is_trading_day(cursor):
+            signal_missing = date_str not in existing_signal_days
+            paper_missing = date_str not in existing_paper_days
+            if signal_missing:
+                missing_signal_days.add(date_str)
+            if paper_missing:
+                missing_paper_days.add(date_str)
+            if signal_missing or paper_missing:
+                trading_days.append(cursor)
         cursor += timedelta(days=1)
     if max_days > 0:
         trading_days = trading_days[-max_days:]
+    planned_days = {day.isoformat() for day in trading_days}
     return BackfillDayPlan(
         trading_days=trading_days,
         existing_signal_days=existing_signal_days,
         existing_paper_days=existing_paper_days,
+        missing_signal_days=missing_signal_days & planned_days,
+        missing_paper_days=missing_paper_days & planned_days,
     )
 
 
@@ -255,11 +265,14 @@ def backfill_real_sample_days(args: argparse.Namespace) -> int:
     print(
         f"backfill plan: trading_days={len(plan.trading_days)} "
         f"existing_signal_days={len(plan.existing_signal_days)} "
-        f"existing_paper_days={len(plan.existing_paper_days)}",
+        f"existing_paper_days={len(plan.existing_paper_days)} "
+        f"missing_signal_days={len(plan.missing_signal_days)} "
+        f"missing_paper_days={len(plan.missing_paper_days)}",
         flush=True,
     )
 
     for signal_day in plan.trading_days:
+        signal_day_str = signal_day.isoformat()
         current_signal_days = count_independent_signal_days(ledger_path)
         current_paper_days = count_paper_tracking_days(paper_ledger_path)
         if (
@@ -267,6 +280,8 @@ def backfill_real_sample_days(args: argparse.Namespace) -> int:
             and current_paper_days >= args.target_paper_days
         ):
             break
+        need_signal_backfill = signal_day_str in plan.missing_signal_days
+        need_paper_backfill = signal_day_str in plan.missing_paper_days
 
         symbols = resolve_backfill_symbols(
             source_name=args.source,
@@ -282,7 +297,9 @@ def backfill_real_sample_days(args: argparse.Namespace) -> int:
             print(f"{signal_day.isoformat()}: skip, no symbols resolved", flush=True)
             continue
         print(
-            f"{signal_day.isoformat()}: scanning {len(symbols)} symbols",
+            f"{signal_day.isoformat()}: scanning {len(symbols)} symbols "
+            f"(signal={'yes' if need_signal_backfill else 'no'}, "
+            f"paper={'yes' if need_paper_backfill else 'no'})",
             flush=True,
         )
 
@@ -309,54 +326,61 @@ def backfill_real_sample_days(args: argparse.Namespace) -> int:
             min_avg_amount=min_avg_amount,
             regime=regime,
         )
-        picks = _enrich_pick_names(
-            _screen_universe_with_thresholds(
-                _drop_benchmark_frame(screen_frames, benchmark_symbol),
-                config,
-                thresholds,
-            ),
-            screen_frames,
-        )[: args.limit]
-        if not picks:
-            print(f"{signal_day.isoformat()}: skip, no picks", flush=True)
-            continue
+        picks: list[PickResult] = []
+        if need_signal_backfill:
+            picks = _enrich_pick_names(
+                _screen_universe_with_thresholds(
+                    _drop_benchmark_frame(screen_frames, benchmark_symbol),
+                    config,
+                    thresholds,
+                ),
+                screen_frames,
+            )[: args.limit]
+            if not picks:
+                print(f"{signal_day.isoformat()}: skip, no picks", flush=True)
+                continue
 
-        append_predictions(
-            ledger_path,
-            picks,
-            execution=ExecutionConfig(
-                horizon_days=args.horizon_days,
-                fee_bps=execution_fee_bps,
-                slippage_bps=execution_slippage_bps,
-                benchmark_symbol=benchmark_symbol,
-                limit_up_pct=float(thresholds.execution.fallback_limit_main_pct),
-                limit_down_pct=float(thresholds.execution.fallback_limit_main_pct),
-            ),
-            thresholds_version=thresholds.version,
-            regime=regime,
-        )
+            append_predictions(
+                ledger_path,
+                picks,
+                execution=ExecutionConfig(
+                    horizon_days=args.horizon_days,
+                    fee_bps=execution_fee_bps,
+                    slippage_bps=execution_slippage_bps,
+                    benchmark_symbol=benchmark_symbol,
+                    limit_up_pct=float(thresholds.execution.fallback_limit_main_pct),
+                    limit_down_pct=float(thresholds.execution.fallback_limit_main_pct),
+                ),
+                thresholds_version=thresholds.version,
+                regime=regime,
+            )
 
-        paper_symbols = collect_paper_sync_symbols(
-            ledger_path=ledger_path,
-            paper_ledger_path=paper_ledger_path,
-            new_picks=picks,
-        )
-        paper_frames = fetch_history_window(
-            source=source,
-            symbols=paper_symbols,
-            signal_day=signal_day,
-            lookback_days=args.lookback_days,
-            future_buffer_days=args.future_buffer_days,
-        )
-        summary = sync_paper_trades(
-            signal_ledger=ledger_path,
-            paper_ledger=paper_ledger_path,
-            frames=paper_frames,
-        )
+        if need_paper_backfill:
+            paper_symbols = collect_paper_sync_symbols(
+                ledger_path=ledger_path,
+                paper_ledger_path=paper_ledger_path,
+                new_picks=picks,
+            )
+            paper_frames = fetch_history_window(
+                source=source,
+                symbols=paper_symbols,
+                signal_day=signal_day,
+                lookback_days=args.lookback_days,
+                future_buffer_days=args.future_buffer_days,
+            )
+            summary = sync_paper_trades(
+                signal_ledger=ledger_path,
+                paper_ledger=paper_ledger_path,
+                frames=paper_frames,
+            )
+        else:
+            summary = None
         print(
             f"{signal_day.isoformat()}: picks={len(picks)} "
-            f"paper(opened={summary.opened}, closed={summary.closed}, "
-            f"pending={summary.pending_entry}, blocked={summary.not_executable}) "
+            f"paper(opened={getattr(summary, 'opened', 0)}, "
+            f"closed={getattr(summary, 'closed', 0)}, "
+            f"pending={getattr(summary, 'pending_entry', 0)}, "
+            f"blocked={getattr(summary, 'not_executable', 0)}) "
             f"progress(signal={count_independent_signal_days(ledger_path)}, "
             f"paper={count_paper_tracking_days(paper_ledger_path)})",
             flush=True,
