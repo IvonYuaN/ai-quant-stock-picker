@@ -4,11 +4,17 @@ import hashlib
 import json
 import os
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
 from aqsp.core.time import now_shanghai
-from aqsp.runtime.gate_notify import build_gate_notification_markdown
+from aqsp.runtime.gate_notify import (
+    build_gate_notification_markdown,
+    mark_gate_notification_failed,
+    mark_gate_notification_sent,
+    reserve_gate_notification,
+)
 from aqsp.notifier import (
     NotifyResult,
     notify_gate_markdown,
@@ -17,6 +23,9 @@ from aqsp.notifier import (
 )
 from aqsp.utils.jsonl_io import advisory_lock, atomic_write_text
 
+DEFAULT_NOTIFY_FAILURE_RETRY_MINUTES = 60
+DEFAULT_NOTIFY_PENDING_TTL_MINUTES = 30
+
 
 @dataclass(frozen=True)
 class ScheduledNotificationArtifacts:
@@ -24,20 +33,85 @@ class ScheduledNotificationArtifacts:
     notify_enabled: bool
 
 
+def notification_state_path(default: str | Path = "data/notify_state.json") -> Path:
+    raw = os.getenv("AQSP_NOTIFY_STATE_PATH", str(default))
+    path = Path(raw).expanduser()
+    if path.is_absolute():
+        return path
+    root = Path(os.getenv("AQSP_PROJECT_ROOT", Path(__file__).resolve().parents[2]))
+    return root / path
+
+
 def should_send_notification(
     *,
     kind: str,
     markdown: str,
     state_path: str | Path,
+    retry_minutes: int = DEFAULT_NOTIFY_FAILURE_RETRY_MINUTES,
 ) -> bool:
     path = Path(state_path)
     fingerprint = notification_fingerprint(kind=kind, markdown=markdown)
     with advisory_lock(path):
         state = _read_notification_state(path)
         sent = state.get("sent", {})
-        if isinstance(sent, dict) and sent.get(str(kind)) == fingerprint:
+        pending = state.get("pending", {})
+        failed = state.get("failed", {})
+        if isinstance(sent, dict) and _state_entry_matches(
+            sent.get(str(kind)), fingerprint
+        ):
+            return False
+        if isinstance(pending, dict) and _state_entry_matches_recent(
+            pending.get(str(kind)),
+            fingerprint,
+            ttl_minutes=DEFAULT_NOTIFY_PENDING_TTL_MINUTES,
+        ):
+            return False
+        if isinstance(failed, dict) and _state_entry_matches_recent(
+            failed.get(str(kind)),
+            fingerprint,
+            ttl_minutes=retry_minutes,
+        ):
             return False
     return True
+
+
+def reserve_notification(
+    *,
+    kind: str,
+    markdown: str,
+    state_path: str | Path,
+    retry_minutes: int = DEFAULT_NOTIFY_FAILURE_RETRY_MINUTES,
+) -> bool:
+    path = Path(state_path)
+    fingerprint = notification_fingerprint(kind=kind, markdown=markdown)
+    with advisory_lock(path):
+        state = _read_notification_state(path)
+        sent = state.get("sent", {})
+        pending = state.get("pending", {})
+        failed = state.get("failed", {})
+        if not isinstance(sent, dict):
+            sent = {}
+        if not isinstance(pending, dict):
+            pending = {}
+        if not isinstance(failed, dict):
+            failed = {}
+        if _state_entry_matches(sent.get(str(kind)), fingerprint) or (
+            _state_entry_matches_recent(
+                pending.get(str(kind)),
+                fingerprint,
+                ttl_minutes=DEFAULT_NOTIFY_PENDING_TTL_MINUTES,
+            )
+            or _state_entry_matches_recent(
+                failed.get(str(kind)),
+                fingerprint,
+                ttl_minutes=retry_minutes,
+            )
+        ):
+            return False
+        pending[str(kind)] = _state_entry(fingerprint, markdown)
+        failed.pop(str(kind), None)
+        _write_notification_state(path, sent=sent, pending=pending, failed=failed)
+        return True
 
 
 def mark_notification_sent(
@@ -51,28 +125,123 @@ def mark_notification_sent(
     with advisory_lock(path):
         state = _read_notification_state(path)
         sent = state.get("sent", {})
+        pending = state.get("pending", {})
+        failed = state.get("failed", {})
         if not isinstance(sent, dict):
             sent = {}
-        sent[str(kind)] = fingerprint
-        atomic_write_text(
-            path,
-            json.dumps(
-                {
-                    "sent": sent,
-                    "updated_at": now_shanghai().isoformat(timespec="seconds"),
-                },
-                ensure_ascii=False,
-                indent=2,
-                sort_keys=True,
-            )
-            + "\n",
+        if not isinstance(pending, dict):
+            pending = {}
+        if not isinstance(failed, dict):
+            failed = {}
+        sent[str(kind)] = _state_entry(fingerprint, markdown)
+        pending.pop(str(kind), None)
+        failed.pop(str(kind), None)
+        _write_notification_state(path, sent=sent, pending=pending, failed=failed)
+
+
+def mark_notification_failed(
+    *,
+    kind: str,
+    markdown: str,
+    state_path: str | Path,
+) -> None:
+    path = Path(state_path)
+    fingerprint = notification_fingerprint(kind=kind, markdown=markdown)
+    with advisory_lock(path):
+        state = _read_notification_state(path)
+        sent = state.get("sent", {})
+        pending = state.get("pending", {})
+        failed = state.get("failed", {})
+        if not isinstance(sent, dict):
+            sent = {}
+        if not isinstance(pending, dict):
+            pending = {}
+        if not isinstance(failed, dict):
+            failed = {}
+        pending.pop(str(kind), None)
+        failed[str(kind)] = _state_entry(fingerprint, markdown)
+        _write_notification_state(path, sent=sent, pending=pending, failed=failed)
+
+
+def _write_notification_state(
+    path: Path,
+    *,
+    sent: dict[str, object],
+    pending: dict[str, object],
+    failed: dict[str, object],
+) -> None:
+    atomic_write_text(
+        path,
+        json.dumps(
+            {
+                "sent": sent,
+                "pending": pending,
+                "failed": failed,
+                "updated_at": now_shanghai().isoformat(timespec="seconds"),
+            },
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
         )
+        + "\n",
+    )
 
 
 def notification_fingerprint(*, kind: str, markdown: str) -> str:
-    normalized_kind = str(kind).strip()
-    digest = hashlib.sha256(markdown.strip().encode("utf-8")).hexdigest()
-    return f"{normalized_kind}:{digest}"
+    _ = markdown
+    return str(kind).strip()
+
+
+def notification_content_hash(markdown: str) -> str:
+    return hashlib.sha256(markdown.strip().encode("utf-8")).hexdigest()
+
+
+def _legacy_content_fingerprint_matches(value: str, fingerprint: str) -> bool:
+    prefix = f"{fingerprint}:"
+    if not value.startswith(prefix):
+        return False
+    digest = value[len(prefix) :]
+    return len(digest) == 64 and all(char in "0123456789abcdef" for char in digest)
+
+
+def _state_entry(fingerprint: str, markdown: str) -> dict[str, str]:
+    return {
+        "fingerprint": fingerprint,
+        "content_hash": notification_content_hash(markdown),
+        "updated_at": now_shanghai().isoformat(timespec="seconds"),
+    }
+
+
+def _state_entry_matches(entry: object, fingerprint: str) -> bool:
+    if isinstance(entry, str):
+        return entry == fingerprint or _legacy_content_fingerprint_matches(
+            entry, fingerprint
+        )
+    if isinstance(entry, dict):
+        value = str(entry.get("fingerprint") or "")
+        return value == fingerprint or _legacy_content_fingerprint_matches(
+            value, fingerprint
+        )
+    return False
+
+
+def _state_entry_matches_recent(
+    entry: object,
+    fingerprint: str,
+    *,
+    ttl_minutes: int,
+) -> bool:
+    if not _state_entry_matches(entry, fingerprint):
+        return False
+    if isinstance(entry, str):
+        return False
+    updated_at = str(entry.get("updated_at") or "")
+    try:
+        updated = datetime.fromisoformat(updated_at)
+    except ValueError:
+        return False
+    age_seconds = (now_shanghai() - updated).total_seconds()
+    return age_seconds < max(int(ttl_minutes), 1) * 60
 
 
 def dispatch_notification(
@@ -102,21 +271,35 @@ def dispatch_notification_once(
     print_fn: Callable[[str], None] = print,
 ) -> list[NotifyResult]:
     state_markdown = summary_markdown or markdown
-    if not should_send_notification(
+    if not reserve_notification(
         kind=kind,
         markdown=state_markdown,
         state_path=state_path,
     ):
         print_fn(f"{prefix}: skipped duplicate")
         return []
-    results = dispatch_notification(
-        markdown,
-        mode=mode,
-        prefix=prefix,
-        summary_markdown=summary_markdown,
-    )
+    try:
+        results = dispatch_notification(
+            markdown,
+            mode=mode,
+            prefix=prefix,
+            summary_markdown=summary_markdown,
+        )
+    except Exception:
+        mark_notification_failed(
+            kind=kind,
+            markdown=state_markdown,
+            state_path=state_path,
+        )
+        raise
     if any(result.ok for result in results):
         mark_notification_sent(
+            kind=kind,
+            markdown=state_markdown,
+            state_path=state_path,
+        )
+    else:
+        mark_notification_failed(
             kind=kind,
             markdown=state_markdown,
             state_path=state_path,
@@ -131,14 +314,38 @@ def dispatch_gate_notification(
     next_actions: list[str],
     mode: str,
     prefix: str = "gate notify",
+    state_path: str | Path | None = None,
+    reserve_before_send: bool = False,
 ) -> list[NotifyResult]:
     markdown = build_gate_notification_markdown(
         run_date=run_date,
         gate_reasons=gate_reasons,
         next_actions=next_actions,
     )
+    if state_path is not None and reserve_before_send:
+        if not reserve_gate_notification(
+            gate_ok=False,
+            gate_reasons=gate_reasons,
+            state_path=state_path,
+            run_date=run_date,
+        ):
+            print(f"{prefix}: skipped duplicate")
+            return []
     results = notify_gate_markdown(markdown)
     print_notify_results(results, prefix=prefix)
+    if state_path is not None:
+        if any(result.ok for result in results):
+            mark_gate_notification_sent(
+                gate_reasons=gate_reasons,
+                state_path=state_path,
+                run_date=run_date,
+            )
+        else:
+            mark_gate_notification_failed(
+                gate_reasons=gate_reasons,
+                state_path=state_path,
+                run_date=run_date,
+            )
     return results
 
 
@@ -157,11 +364,9 @@ def finalize_scheduled_outputs(
     print_fn: Callable[[str], None],
 ) -> None:
     if report_path:
-        Path(report_path).parent.mkdir(parents=True, exist_ok=True)
-        Path(report_path).write_text(markdown, encoding="utf-8")
+        atomic_write_text(report_path, markdown)
     if output_csv_path:
-        Path(output_csv_path).parent.mkdir(parents=True, exist_ok=True)
-        table.to_csv(output_csv_path, index=False)
+        atomic_write_text(output_csv_path, table.to_csv(index=False))
     print_fn(markdown)
 
 
@@ -181,6 +386,7 @@ def finalize_scheduled_notification(
     print_fn: Callable[[str], None],
     gate_block_markdown: str = "",
     mark_gate_notification_sent_fn: Callable[..., None] | None = None,
+    mark_gate_notification_failed_fn: Callable[..., None] | None = None,
     gate_state_path: str | Path | None = None,
     task_id: str | None = None,
 ) -> ScheduledNotificationArtifacts:
@@ -213,13 +419,6 @@ def finalize_scheduled_notification(
                 print_fn(f"gate notify state failed: {exc}")
                 should_send_gate = False
             if should_send_gate:
-                if mark_gate_notification_sent_fn is not None:
-                    _call_gate_mark_sent(
-                        mark_gate_notification_sent_fn,
-                        gate_reasons=gate_reasons,
-                        gate_state_path=gate_state_path,
-                        run_date=latest_iso,
-                    )
                 try:
                     if legacy_notify_fn is not None:
                         gate_markdown = build_gate_notification_markdown(
@@ -234,10 +433,35 @@ def finalize_scheduled_notification(
                             gate_reasons=gate_reasons,
                             next_actions=next_actions,
                             mode=notify_mode,
+                            state_path=gate_state_path,
+                            reserve_before_send=True,
                         )
                     if not _has_successful_notify_result(results):
-                        print_fn("gate notify: delivery failed; suppressing duplicate retries today")
+                        if mark_gate_notification_failed_fn is not None:
+                            _call_gate_mark_failed(
+                                mark_gate_notification_failed_fn,
+                                gate_reasons=gate_reasons,
+                                gate_state_path=gate_state_path,
+                                run_date=latest_iso,
+                            )
+                        print_fn(
+                            "gate notify: delivery failed; suppressing duplicate retries today"
+                        )
+                    elif mark_gate_notification_sent_fn is not None:
+                        _call_gate_mark_sent(
+                            mark_gate_notification_sent_fn,
+                            gate_reasons=gate_reasons,
+                            gate_state_path=gate_state_path,
+                            run_date=latest_iso,
+                        )
                 except Exception as exc:  # noqa: BLE001
+                    if mark_gate_notification_failed_fn is not None:
+                        _call_gate_mark_failed(
+                            mark_gate_notification_failed_fn,
+                            gate_reasons=gate_reasons,
+                            gate_state_path=gate_state_path,
+                            run_date=latest_iso,
+                        )
                     print_fn(f"gate notify failed: {exc}")
         notify_enabled = False
 
@@ -271,6 +495,23 @@ def _call_gate_should_send(
 
 
 def _call_gate_mark_sent(
+    callback: Callable[..., None],
+    *,
+    gate_reasons: list[str],
+    gate_state_path: str | Path | None,
+    run_date: str,
+) -> None:
+    try:
+        callback(
+            gate_reasons=gate_reasons,
+            state_path=gate_state_path,
+            run_date=run_date,
+        )
+    except TypeError:
+        callback(gate_reasons)
+
+
+def _call_gate_mark_failed(
     callback: Callable[..., None],
     *,
     gate_reasons: list[str],

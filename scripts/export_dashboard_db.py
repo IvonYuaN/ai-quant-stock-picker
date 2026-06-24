@@ -91,9 +91,11 @@ def export_db(csv_path: Path, ledger_path: Path, db_path: Path) -> None:
     ledger = pd.DataFrame(ledger_rows)
     for col in ledger.columns:
         ledger[col] = ledger[col].map(
-            lambda value: json.dumps(value, ensure_ascii=False)
-            if isinstance(value, (dict, list))
-            else value
+            lambda value: (
+                json.dumps(value, ensure_ascii=False)
+                if isinstance(value, (dict, list))
+                else value
+            )
         )
     ledger = _normalize_columns(ledger, LEDGER_EXPORT_COLUMNS)
     latest_row = _latest_runtime_row(ledger_rows)
@@ -112,13 +114,17 @@ def export_db(csv_path: Path, ledger_path: Path, db_path: Path) -> None:
                 "requested_source": latest_row.get("run_requested_source", ""),
                 "actual_source": latest_row.get("run_actual_source", ""),
                 "source_health_label": latest_row.get("run_source_health_label", ""),
-                "source_health_message": latest_row.get("run_source_health_message", ""),
+                "source_health_message": latest_row.get(
+                    "run_source_health_message", ""
+                ),
                 "notify_level": notification_level_for_health_label(
                     str(latest_row.get("run_source_health_label", "") or "")
                 ),
                 "fallback_used": latest_row.get("run_fallback_used", ""),
                 "research_total_findings": (
-                    research_summary.total_findings if research_summary is not None else 0
+                    research_summary.total_findings
+                    if research_summary is not None
+                    else 0
                 ),
                 "research_absorbed_families": (
                     len(research_summary.absorbed_families)
@@ -135,10 +141,18 @@ def export_db(csv_path: Path, ledger_path: Path, db_path: Path) -> None:
                     if research_summary is not None
                     else 0
                 ),
-                "research_next_action_id": next_action.item_id if next_action is not None else "",
-                "research_next_action_kind": next_action.kind if next_action is not None else "",
-                "research_next_action_priority": next_action.priority if next_action is not None else "",
-                "research_next_action_blocker": next_action.blocker if next_action is not None else "",
+                "research_next_action_id": next_action.item_id
+                if next_action is not None
+                else "",
+                "research_next_action_kind": next_action.kind
+                if next_action is not None
+                else "",
+                "research_next_action_priority": next_action.priority
+                if next_action is not None
+                else "",
+                "research_next_action_blocker": next_action.blocker
+                if next_action is not None
+                else "",
             }
         ]
     )

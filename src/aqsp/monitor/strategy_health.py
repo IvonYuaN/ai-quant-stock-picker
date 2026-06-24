@@ -18,14 +18,16 @@ from aqsp.core.time import now_shanghai
 
 class HealthStatus(Enum):
     """策略健康状态"""
-    HEALTHY = "healthy"        # 正常
-    WARNING = "warning"        # 预警，降权50%
-    UNHEALTHY = "unhealthy"    # 不健康，停用
+
+    HEALTHY = "healthy"  # 正常
+    WARNING = "warning"  # 预警，降权50%
+    UNHEALTHY = "unhealthy"  # 不健康，停用
 
 
 @dataclass
 class Trade:
     """交易记录"""
+
     symbol: str
     strategy: str
     entry_date: date
@@ -40,6 +42,7 @@ class Trade:
 @dataclass
 class StrategyMetrics:
     """策略指标"""
+
     name: str
     total_trades: int
     winning_trades: int
@@ -88,10 +91,7 @@ class StrategyHealthMonitor:
 
         # 筛选回溯期内的交易
         cutoff_date = (now_shanghai() - timedelta(days=lookback_days)).date()
-        filtered_trades = [
-            t for t in recent_trades
-            if t.exit_date >= cutoff_date
-        ]
+        filtered_trades = [t for t in recent_trades if t.exit_date >= cutoff_date]
 
         if not filtered_trades:
             # 回溯期内没有交易
@@ -161,10 +161,7 @@ class StrategyHealthMonitor:
 
         # 筛选回溯期内的交易
         cutoff_date = (now_shanghai() - timedelta(days=lookback_days)).date()
-        filtered_trades = [
-            t for t in recent_trades
-            if t.exit_date >= cutoff_date
-        ]
+        filtered_trades = [t for t in recent_trades if t.exit_date >= cutoff_date]
 
         if not filtered_trades:
             return StrategyMetrics(

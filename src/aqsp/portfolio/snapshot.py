@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from aqsp.core.time import now_shanghai
+from aqsp.utils.jsonl_io import advisory_lock, atomic_write_text
 
 
 @dataclass(frozen=True)
@@ -68,28 +69,26 @@ def save_snapshot(
     }
 
     path = Path(snapshot_path)
-    path.parent.mkdir(parents=True, exist_ok=True)
+    with advisory_lock(path):
+        snapshots: dict[str, dict] = {}
+        if path.exists():
+            for line in path.read_text(encoding="utf-8").splitlines():
+                if line.strip():
+                    try:
+                        data = json.loads(line)
+                        snapshots[data["date"]] = data
+                    except (json.JSONDecodeError, KeyError):
+                        pass
 
-    # 读取现有快照，按日期去重
-    snapshots: dict[str, dict] = {}
-    if path.exists():
-        for line in path.read_text(encoding="utf-8").splitlines():
-            if line.strip():
-                try:
-                    data = json.loads(line)
-                    snapshots[data["date"]] = data
-                except (json.JSONDecodeError, KeyError):
-                    pass
+        snapshots[date] = snapshot
 
-    snapshots[date] = snapshot
-
-    # 只保留最近30天
-    cutoff = (now_shanghai() - timedelta(days=30)).strftime("%Y-%m-%d")
-    snapshots = {k: v for k, v in snapshots.items() if k >= cutoff}
-
-    with open(path, "w", encoding="utf-8") as f:
-        for data in sorted(snapshots.values(), key=lambda x: x["date"]):
-            f.write(json.dumps(data, ensure_ascii=False) + "\n")
+        cutoff = (now_shanghai() - timedelta(days=30)).strftime("%Y-%m-%d")
+        snapshots = {k: v for k, v in snapshots.items() if k >= cutoff}
+        text = "".join(
+            json.dumps(data, ensure_ascii=False) + "\n"
+            for data in sorted(snapshots.values(), key=lambda x: x["date"])
+        )
+        atomic_write_text(path, text)
 
 
 def load_snapshot(
@@ -273,10 +272,14 @@ def build_candidate_status_map(diff: SnapshotDiff | None) -> dict[str, str]:
         if new_rank > old_rank
     }
     improved_symbols.update(
-        symbol for symbol, old_score, new_score in diff.score_changes if new_score > old_score
+        symbol
+        for symbol, old_score, new_score in diff.score_changes
+        if new_score > old_score
     )
     weakened_symbols.update(
-        symbol for symbol, old_score, new_score in diff.score_changes if new_score < old_score
+        symbol
+        for symbol, old_score, new_score in diff.score_changes
+        if new_score < old_score
     )
 
     for symbol in improved_symbols:

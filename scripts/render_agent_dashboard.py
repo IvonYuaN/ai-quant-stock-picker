@@ -9,6 +9,7 @@ from pathlib import Path
 from aqsp.briefing.agent_roles import agent_role_emoji, agent_role_label
 from aqsp.briefing.debate_tracker import DebatePerformanceTracker
 from aqsp.core.time import now_shanghai
+from aqsp.utils.jsonl_io import atomic_write_text
 
 
 def _load_debates(debate_file: Path) -> list[dict]:
@@ -413,9 +414,7 @@ def render_agent_dashboard(
 </html>
 """
 
-    # 保存文件
-    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-    Path(output_path).write_text(html, encoding="utf-8")
+    atomic_write_text(output_path, html)
     print(f"✅ Agent性能Dashboard已保存至 {output_path}")
 
 

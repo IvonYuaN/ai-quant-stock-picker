@@ -127,7 +127,7 @@ def test_run_monitor_returns_zero_when_only_warning_and_notify_enabled(
     assert sent == []
 
 
-def test_run_monitor_suppresses_warning_push_even_when_notify_enabled(
+def test_run_monitor_sends_warning_push_when_warning_notify_enabled(
     monkeypatch, capsys
 ) -> None:
     sent: list[list[MonitorResult]] = []
@@ -165,5 +165,5 @@ def test_run_monitor_suppresses_warning_push_even_when_notify_enabled(
     )
 
     assert exit_code == 0
-    assert sent == []
-    assert "warning-only alerts suppressed" in capsys.readouterr().out
+    assert sent and sent[0][0].name == "warn_case"
+    assert "warning alerts enabled" in capsys.readouterr().out

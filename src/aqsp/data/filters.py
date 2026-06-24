@@ -146,11 +146,7 @@ class TradabilityFilter:
         volume_floor = (
             min_avg_volume
             if min_avg_volume is not None
-            else (
-                min_volume
-                if min_volume is not None
-                else self.min_avg_volume_30d
-            )
+            else (min_volume if min_volume is not None else self.min_avg_volume_30d)
         )
         amount_floor = (
             min_avg_amount if min_avg_amount is not None else self.min_daily_amount

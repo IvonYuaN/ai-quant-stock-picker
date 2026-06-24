@@ -137,6 +137,60 @@ def test_news_catalyst_report_surfaces_source_warnings() -> None:
     assert "无有效结论：消息源失败" in markdown
 
 
+def test_news_catalyst_report_fails_when_all_attempted_sources_warn_empty() -> None:
+    symbol_df = pd.DataFrame()
+    symbol_df.attrs["aqsp_warnings"] = ("symbol timeout",)
+    global_df = pd.DataFrame()
+    global_df.attrs["aqsp_warnings"] = ("global timeout",)
+
+    report = build_catalyst_report(
+        symbols=("300001",),
+        fetch_symbol_news=lambda _symbol, _limit: symbol_df,
+        fetch_global_news=lambda _limit: global_df,
+    )
+
+    assert report.source_status == "failed"
+    assert report.events == ()
+    assert report.warnings == (
+        "300001 个股新闻: symbol timeout",
+        "全市场快讯: global timeout",
+    )
+
+
+def test_news_catalyst_report_fails_when_all_attempted_sources_are_empty() -> None:
+    report = build_catalyst_report(
+        symbols=("300001",),
+        fetch_symbol_news=lambda _symbol, _limit: pd.DataFrame(),
+        fetch_global_news=lambda _limit: pd.DataFrame(),
+    )
+
+    assert report.source_status == "failed"
+    assert report.events == ()
+
+
+def test_news_catalyst_report_fails_when_fetcher_returns_none() -> None:
+    report = build_catalyst_report(
+        fetch_global_news=lambda _limit: None,  # type: ignore[return-value]
+    )
+
+    assert report.source_status == "failed"
+    assert report.events == ()
+
+
+def test_news_catalyst_report_fails_when_one_source_errors_and_other_is_empty() -> None:
+    def broken_symbol_news(_symbol: str, _limit: int) -> pd.DataFrame:
+        raise DataError("symbol source down")
+
+    report = build_catalyst_report(
+        symbols=("300001",),
+        fetch_symbol_news=broken_symbol_news,
+        fetch_global_news=lambda _limit: pd.DataFrame(),
+    )
+
+    assert report.source_status == "failed"
+    assert report.events == ()
+
+
 def test_news_catalyst_report_marks_partial_when_raw_news_has_no_strong_event() -> None:
     df = pd.DataFrame([{"标题": "今日市场平稳运行", "来源": "新华社"}])
     df.attrs["aqsp_warnings"] = ("one slow source",)

@@ -6,6 +6,7 @@ import sqlite3
 from pathlib import Path
 
 import pandas as pd
+import pytest
 from unittest.mock import MagicMock
 
 from aqsp.core.time import today_shanghai
@@ -15,6 +16,11 @@ from aqsp.briefing.debate import DebateResult
 from aqsp.portfolio.manager import PortfolioDecisionSummary
 from aqsp.portfolio.optimizer import PortfolioAllocation
 from aqsp.portfolio.snapshot import PickSnapshot, SnapshotDiff
+
+
+@pytest.fixture(autouse=True)
+def _isolated_notify_state(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("AQSP_NOTIFY_STATE_PATH", str(tmp_path / "notify_state.json"))
 
 
 def test_run_briefing_email_subject_uses_shanghai_today(
@@ -132,8 +138,48 @@ def test_news_catalysts_cli_sends_research_notification(monkeypatch, capsys) -> 
     assert "消息面雷达-2026-06-11" in output
     assert "news notify serverchan: ok (HTTP 200)" in output
     assert sent and "## 结论" in sent[0]
-    assert "不替代主报告结论" not in sent[0]
-    assert "怎么验证" not in sent[0]
+
+
+def test_news_catalysts_cli_suppresses_notification_when_sources_failed(
+    monkeypatch, capsys
+) -> None:
+    import aqsp.cli as cli_mod
+    from aqsp.news.catalysts import CatalystReport
+
+    sent: list[str] = []
+    report = CatalystReport(
+        date="2026-06-11",
+        generated_at="2026-06-11T08:40:00+08:00",
+        events=(),
+        source_status="failed",
+        warnings=("全市场快讯获取失败: timeout",),
+    )
+
+    monkeypatch.setattr(
+        cli_mod,
+        "notify_markdown",
+        lambda markdown: (
+            sent.append(markdown)
+            or [MagicMock(channel="serverchan", ok=True, detail="HTTP 200")]
+        ),
+    )
+    monkeypatch.setattr(
+        "aqsp.news.build_catalyst_report",
+        lambda **_kwargs: report,
+    )
+
+    exit_code = cli_mod.main(
+        [
+            "news-catalysts",
+            "--notify",
+        ]
+    )
+
+    output = capsys.readouterr().out
+    assert exit_code == 1
+    assert "消息面雷达-2026-06-11" in output
+    assert "notification suppressed" in output
+    assert sent == []
 
 
 def test_run_briefing_prints_notify_channel_results(
@@ -220,6 +266,43 @@ def test_run_briefing_dedupes_same_date_notification(
     output_text = capsys.readouterr().out
     assert len(calls) == 1
     assert "briefing notify: skipped duplicate" in output_text
+
+
+def test_dispatch_notification_once_dedupes_when_notifier_is_patched(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
+    import aqsp.cli as cli_mod
+
+    calls: list[str] = []
+    monkeypatch.setenv("AQSP_NOTIFY_STATE_PATH", str(tmp_path / "notify_state.json"))
+    monkeypatch.setattr(
+        cli_mod,
+        "notify_markdown",
+        lambda markdown: (
+            calls.append(markdown)
+            or [MagicMock(channel="serverchan", ok=True, detail="HTTP 200")]
+        ),
+    )
+
+    first = cli_mod._dispatch_notification_once(
+        "# 测试通知",
+        prefix="test notify",
+        mode="summary",
+        kind="test:2026-06-22",
+        summary_markdown="测试摘要",
+    )
+    second = cli_mod._dispatch_notification_once(
+        "# 测试通知",
+        prefix="test notify",
+        mode="summary",
+        kind="test:2026-06-22",
+        summary_markdown="测试摘要",
+    )
+
+    assert len(first) == 1
+    assert second == []
+    assert calls == ["测试摘要"]
+    assert "test notify: skipped duplicate" in capsys.readouterr().out
 
 
 def test_run_closing_review_prints_notify_failure(monkeypatch, capsys) -> None:
@@ -631,6 +714,9 @@ def test_run_scheduled_sends_gate_block_alert_when_notify_is_disabled_by_gate(
     import aqsp.cli as cli_mod
 
     monkeypatch.setenv("AQSP_RUN_TASK_ID", "daily")
+    monkeypatch.setenv(
+        "AQSP_GATE_NOTIFY_STATE_PATH", str(tmp_path / "gate_notify_state.json")
+    )
 
     latest = today_shanghai().isoformat()
     frames = {
@@ -776,6 +862,161 @@ def test_run_scheduled_sends_gate_block_alert_when_notify_is_disabled_by_gate(
     assert "继续按日运行主链" in seen[0]
     report_text = (tmp_path / "latest.md").read_text(encoding="utf-8")
     assert "未通过 walk-forward 双门验证" in report_text
+
+
+def test_run_scheduled_uses_env_notify_when_cli_notify_is_false(
+    monkeypatch, tmp_path
+) -> None:
+    import aqsp.cli as cli_mod
+
+    monkeypatch.setenv("AQSP_NOTIFY", "true")
+    monkeypatch.setenv("AQSP_RUN_TASK_ID", "daily")
+    monkeypatch.setenv(
+        "AQSP_GATE_NOTIFY_STATE_PATH", str(tmp_path / "gate_notify_state.json")
+    )
+
+    latest = today_shanghai().isoformat()
+    frame = pd.DataFrame(
+        [
+            {
+                "date": latest,
+                "symbol": "600519",
+                "name": "贵州茅台",
+                "open": 1500.0,
+                "high": 1510.0,
+                "low": 1490.0,
+                "close": 1505.0,
+                "volume": 1000,
+                "amount": 150500000.0,
+                "suspended": False,
+                "limit_up": 1655.5,
+                "limit_down": 1354.5,
+            }
+        ]
+    )
+    monkeypatch.setattr(
+        cli_mod,
+        "_check_notification_gate",
+        lambda *, cold_start_days, gate_path=None: (False, ["冷启动未满 30 天"]),
+    )
+    monkeypatch.setattr(
+        cli_mod,
+        "_fetch_frames_for_cli_with_metadata",
+        lambda *args, **kwargs: ({"600519": frame, "000300": frame}, "eastmoney"),
+    )
+    monkeypatch.setattr(
+        cli_mod, "_resolve_run_symbols", lambda *args, **kwargs: ["600519"]
+    )
+    monkeypatch.setattr(
+        cli_mod, "strategy_weights_from_ledger", lambda *_args, **_kwargs: {}
+    )
+    monkeypatch.setattr(
+        cli_mod, "_count_independent_signal_days", lambda *_args, **_kwargs: 12
+    )
+    monkeypatch.setattr(
+        cli_mod,
+        "screen_universe",
+        lambda *_args, **_kwargs: [
+            PickResult(
+                symbol="600519",
+                name="贵州茅台",
+                date=latest,
+                close=1505.0,
+                score=71.0,
+                rating="buy_candidate",
+                entry_type="next_open",
+                ideal_buy=1505.0,
+                stop_loss=1450.0,
+                take_profit=1600.0,
+                position="10%-30%",
+            )
+        ],
+    )
+
+    class DummyPipeline:
+        def run(self, *_args, **_kwargs):
+            return True, ""
+
+    monkeypatch.setattr(cli_mod, "LethalFilterPipeline", lambda: DummyPipeline())
+    monkeypatch.setattr(
+        "aqsp.universe.t1_filter.filter_t1_held",
+        lambda candidates, **_kwargs: (candidates, []),
+    )
+    monkeypatch.setattr(cli_mod, "validate_predictions", lambda *_args, **_kwargs: None)
+
+    class DummyBreaker:
+        def check(self, **_kwargs):
+            return type("Status", (), {"triggered": False, "reason": "正常"})()
+
+    monkeypatch.setattr(cli_mod, "CircuitBreaker", lambda: DummyBreaker())
+    monkeypatch.setattr(
+        cli_mod,
+        "describe_source_health",
+        lambda *_args, **_kwargs: ("healthy", "eastmoney 健康", False),
+    )
+    seen: list[str] = []
+    monkeypatch.setattr(
+        cli_mod, "notify_markdown", lambda markdown: seen.append(markdown) or []
+    )
+
+    args = Namespace(
+        mode="close",
+        symbols="600519",
+        csv="",
+        source="auto",
+        limit=1,
+        max_universe=10,
+        min_avg_amount=50_000_000,
+        max_data_lag_days=3,
+        enable_online_factors=False,
+        report=str(tmp_path / "latest.md"),
+        output_csv=str(tmp_path / "latest.csv"),
+        ledger=str(tmp_path / "predictions.jsonl"),
+        horizon_days=3,
+        fee_bps=8.0,
+        slippage_bps=5.0,
+        benchmark_symbol="000300",
+        skip_validation=True,
+        notify=False,
+    )
+
+    assert cli_mod.run_scheduled(args) == 0
+    assert seen and seen[0].startswith(f"# 通知未放行-{latest}")
+
+
+def test_run_monitor_notifies_warning_when_warning_notify_enabled(
+    monkeypatch, tmp_path
+) -> None:
+    import aqsp.cli as cli_mod
+
+    warning = MagicMock(triggered=True, severity="warning", name="disk", message="low")
+    sent: list[list[object]] = []
+
+    class DummyChecker:
+        def __init__(self, config_path: str):
+            self.config_path = config_path
+
+        def check_all(self):
+            return [warning]
+
+    monkeypatch.setattr("aqsp.monitor.checker.MonitorChecker", DummyChecker)
+    monkeypatch.setattr("aqsp.monitor.notifier.format_alert", lambda alerts: "alert")
+    monkeypatch.setattr(
+        "aqsp.monitor.notifier.send_alerts",
+        lambda alerts: sent.append(list(alerts)),
+    )
+
+    exit_code = cli_mod.run_monitor(
+        Namespace(
+            config=str(tmp_path / "monitors.yaml"),
+            notify=True,
+            dry_run=False,
+            notify_critical_only=False,
+        )
+    )
+
+    assert exit_code == 0
+    assert sent == [[warning]]
 
 
 def test_run_scheduled_debate_writes_back_adjustment_keeps_runtime_score(

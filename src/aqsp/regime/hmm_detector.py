@@ -4,6 +4,7 @@ HMM隐马尔可夫市场状态检测器
 参考：gh__Abdullah-BA__RegimeSwitchingMomentumStrategy
 核心：使用HMM识别牛市/熊市/震荡三种状态，自动切换策略权重
 """
+
 from __future__ import annotations
 
 import logging
@@ -185,7 +186,11 @@ class HMMRegimeDetector:
         # 最高收益率 -> bull, 最低 -> bear, 中间 -> sideways
         bull_state = state_means[0][0]
         bear_state = state_means[-1][0]
-        sideways_state = state_means[len(state_means) // 2][0] if len(state_means) >= 3 else state_means[0][0]
+        sideways_state = (
+            state_means[len(state_means) // 2][0]
+            if len(state_means) >= 3
+            else state_means[0][0]
+        )
 
         # 记录状态映射，供概率查询使用
         self._state_mapping = {

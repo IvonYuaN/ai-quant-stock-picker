@@ -92,6 +92,15 @@ def test_server_doctor_artifact_check_uses_runtime_paths(tmp_path, monkeypatch) 
     assert "sqlite_db" in names
 
 
+def test_server_doctor_sqlite_default_is_raw(monkeypatch) -> None:
+    monkeypatch.delenv("AQSP_SQLITE_DB_PATH", raising=False)
+    monkeypatch.setattr(server_doctor, "_load_env_file", lambda: None)
+
+    checks = {item.name: item for item in server_doctor._artifact_checks()}
+
+    assert checks["sqlite_db"].detail.endswith("data/astocks_raw.db")
+
+
 def test_server_doctor_reports_serverchan_notify_channel(monkeypatch) -> None:
     monkeypatch.setenv("SERVERCHAN_SENDKEY", "sctp_test_key")
 

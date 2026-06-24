@@ -4,7 +4,10 @@ from pathlib import Path
 
 import pytest
 
-from aqsp._constitution_check import ConstitutionViolation, _check_no_top_level_llm_import
+from aqsp._constitution_check import (
+    ConstitutionViolation,
+    _check_no_top_level_llm_import,
+)
 
 
 def test_check_no_top_level_llm_import_passes_for_repo() -> None:

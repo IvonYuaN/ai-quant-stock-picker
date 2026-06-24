@@ -319,7 +319,7 @@ def local_data_status(entry: DataSourceRegistryEntry) -> str:
         return "missing"
     if entry.id == "sqlite_db":
         candidates = [
-            Path("A股量化分析数据/astocks_qfq.db"),
+            Path("A股量化分析数据/astocks_raw.db"),
             Path("data/aqsp_cache.sqlite"),
         ]
         env_path = os.getenv("AQSP_SQLITE_DB_PATH", "").strip()

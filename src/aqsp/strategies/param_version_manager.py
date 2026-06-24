@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from aqsp.core.time import now_shanghai
+from aqsp.utils.jsonl_io import advisory_lock, append_jsonl, atomic_write_text
 
 
 @dataclass(frozen=True)
@@ -67,8 +68,7 @@ class ParamVersionManager:
             "description": version.description,
         }
 
-        with open(self.versions_path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        append_jsonl(self.versions_path, entry)
 
         self.cleanup_old_versions(keep_count=self.config.max_versions)
 
@@ -124,26 +124,31 @@ class ParamVersionManager:
         return versions[-limit:]
 
     def cleanup_old_versions(self, keep_count: int = 10) -> int:
-        versions = self._load_all_versions()
-        if len(versions) <= keep_count:
-            return 0
+        with advisory_lock(self.versions_path):
+            versions = self._load_all_versions()
+            if len(versions) <= keep_count:
+                return 0
 
-        versions_to_remove = versions[:-keep_count]
-        removed_count = len(versions_to_remove)
+            versions_to_remove = versions[:-keep_count]
+            removed_count = len(versions_to_remove)
 
-        remaining_versions = versions[-keep_count:]
-
-        with open(self.versions_path, "w", encoding="utf-8") as f:
-            for version in remaining_versions:
-                entry = {
-                    "version_id": version.version_id,
-                    "timestamp": version.timestamp,
-                    "params": version.params,
-                    "performance": version.performance,
-                    "regime": version.regime,
-                    "description": version.description,
-                }
-                f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+            remaining_versions = versions[-keep_count:]
+            text = "".join(
+                json.dumps(
+                    {
+                        "version_id": version.version_id,
+                        "timestamp": version.timestamp,
+                        "params": version.params,
+                        "performance": version.performance,
+                        "regime": version.regime,
+                        "description": version.description,
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+                for version in remaining_versions
+            )
+            atomic_write_text(self.versions_path, text)
 
         return removed_count
 
@@ -334,8 +339,7 @@ class ParamVersionManager:
                 "description": data["description"],
             }
 
-            with open(self.versions_path, "a", encoding="utf-8") as f:
-                f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+            append_jsonl(self.versions_path, entry)
 
             imported_count += 1
 

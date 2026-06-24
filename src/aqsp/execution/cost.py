@@ -29,8 +29,8 @@ class TradingCostCalculator:
 
     # 费率常数 (万分比)
     COMMISSION_RATE: float = 0.0003  # 0.03% = 3个基点
-    STAMP_TAX_RATE: float = 0.001    # 0.1% = 10个基点
-    MIN_COMMISSION: float = 5.0      # 最低佣金5元
+    STAMP_TAX_RATE: float = 0.001  # 0.1% = 10个基点
+    MIN_COMMISSION: float = 5.0  # 最低佣金5元
 
     @staticmethod
     def calculate_buy_cost(
@@ -70,8 +70,10 @@ class TradingCostCalculator:
             return 0.0
 
         # 计算佣金 (取最小值和计算值的较大者)
-        commission_amount = max(amount * TradingCostCalculator.COMMISSION_RATE,
-                               TradingCostCalculator.MIN_COMMISSION)
+        commission_amount = max(
+            amount * TradingCostCalculator.COMMISSION_RATE,
+            TradingCostCalculator.MIN_COMMISSION,
+        )
         commission_pct = (commission_amount / amount) * 100 if amount > 0 else 0
 
         # 滑点转换为百分比
@@ -120,8 +122,10 @@ class TradingCostCalculator:
             return 0.0
 
         # 计算佣金 (取最小值和计算值的较大者)
-        commission_amount = max(amount * TradingCostCalculator.COMMISSION_RATE,
-                               TradingCostCalculator.MIN_COMMISSION)
+        commission_amount = max(
+            amount * TradingCostCalculator.COMMISSION_RATE,
+            TradingCostCalculator.MIN_COMMISSION,
+        )
         commission_pct = (commission_amount / amount) * 100 if amount > 0 else 0
 
         # 印花税百分比
@@ -212,8 +216,10 @@ class TradingCostCalculator:
             return 0.0
 
         # 佣金
-        commission = max(amount * TradingCostCalculator.COMMISSION_RATE,
-                        TradingCostCalculator.MIN_COMMISSION)
+        commission = max(
+            amount * TradingCostCalculator.COMMISSION_RATE,
+            TradingCostCalculator.MIN_COMMISSION,
+        )
 
         # 滑点
         slippage = amount * slippage_bps / 10000
@@ -247,8 +253,10 @@ class TradingCostCalculator:
             return 0.0
 
         # 佣金
-        commission = max(amount * TradingCostCalculator.COMMISSION_RATE,
-                        TradingCostCalculator.MIN_COMMISSION)
+        commission = max(
+            amount * TradingCostCalculator.COMMISSION_RATE,
+            TradingCostCalculator.MIN_COMMISSION,
+        )
 
         # 印花税
         stamp_tax = amount * TradingCostCalculator.STAMP_TAX_RATE
@@ -284,7 +292,11 @@ class TradingCostCalculator:
         if amount == 0:
             return 0.0
 
-        buy_cost = TradingCostCalculator.calculate_buy_cost_absolute(amount, slippage_bps)
-        sell_cost = TradingCostCalculator.calculate_sell_cost_absolute(amount, slippage_bps)
+        buy_cost = TradingCostCalculator.calculate_buy_cost_absolute(
+            amount, slippage_bps
+        )
+        sell_cost = TradingCostCalculator.calculate_sell_cost_absolute(
+            amount, slippage_bps
+        )
 
         return buy_cost + sell_cost

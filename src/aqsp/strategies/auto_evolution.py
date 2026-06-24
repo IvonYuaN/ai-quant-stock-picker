@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -13,6 +12,7 @@ import yaml
 
 from aqsp.core.time import now_shanghai
 from aqsp.strategies.thresholds import load_thresholds
+from aqsp.utils.jsonl_io import append_jsonl
 
 
 @dataclass(frozen=True)
@@ -392,31 +392,29 @@ class AutoEvolution:
             "reason": result.reason,
         }
 
-        with open(history_file, "a", encoding="utf-8") as f:
-            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        append_jsonl(history_file, entry)
         return result
 
     def _apply_evolution(self, result: EvolutionResult) -> None:
         if not result.new_params:
             return
 
-        content = self.thresholds_path.read_text(encoding="utf-8")
-
-        for key, value in result.new_params.items():
-            pattern = re.compile(
-                rf"^(\s*{re.escape(key)}:\s*)(['\"]?)(.*?)\2(\s*(?:#.*)?)$",
-                flags=re.MULTILINE,
-            )
-            updated, count = pattern.subn(
-                lambda m, v=value: (
-                    f"{m.group(1)}{m.group(2)}{v}{m.group(2)}{m.group(4)}"
-                ),
-                content,
-            )
-            if count > 0:
-                content = updated
-
-        self.thresholds_path.write_text(content, encoding="utf-8")
+        proposal_file = self.data_dir / "threshold_proposals.jsonl"
+        append_jsonl(
+            proposal_file,
+            {
+                "timestamp": now_shanghai().isoformat(timespec="seconds"),
+                "strategy_name": result.strategy_name,
+                "old_params": result.old_params,
+                "new_params": result.new_params,
+                "confidence": result.confidence,
+                "performance_improvement": result.performance_improvement,
+                "reason": result.reason,
+                "status": "proposal_only",
+                "applied": False,
+                "thresholds_path": str(self.thresholds_path),
+            },
+        )
         self.thresholds = load_thresholds(str(self.thresholds_path))
 
     def save_evolution_history(self, output_path: str) -> None:

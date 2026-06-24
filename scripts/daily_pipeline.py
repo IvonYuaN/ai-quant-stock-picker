@@ -20,6 +20,7 @@ from aqsp.presentation import (
 )
 from aqsp.core.errors import DataError, FreshnessError
 from aqsp.core.time import now_shanghai, today_shanghai
+from aqsp.utils.jsonl_io import append_jsonl, atomic_write_text
 
 
 @dataclass(frozen=True)
@@ -66,6 +67,7 @@ class PipelineResult:
     steps: list[StepResult]
     overall_success: bool
     summary: str
+    notify_status: dict[str, Any] = field(default_factory=dict)
 
 
 def _setup_logging(verbose: bool, log_dir: Path) -> logging.Logger:
@@ -195,6 +197,16 @@ def _format_validation_digest_lines(result: PipelineResult) -> list[str]:
             "- 不可成交原因: "
             + ", ".join(f"{reason}×{count}" for reason, count in top_reasons)
         )
+    rates = details.get("strategy_not_executable_rates") or {}
+    if skipped > 0 and isinstance(rates, dict) and rates:
+        top_rates = sorted(
+            ((str(strategy), float(rate)) for strategy, rate in rates.items()),
+            key=lambda item: (-item[1], item[0]),
+        )[:3]
+        lines.append(
+            "- 不可成交策略: "
+            + ", ".join(f"{strategy} {rate:.0%}" for strategy, rate in top_rates)
+        )
     return lines
 
 
@@ -221,69 +233,17 @@ def _step_update_data(config: PipelineConfig, logger: logging.Logger) -> dict[st
 
 
 def _build_data_source(config: PipelineConfig) -> Any:
-    from aqsp.data.multi_source import MultiSource, SourceFactory
-    from aqsp.data.eastmoney_source import EastmoneySource
-    from aqsp.data.sina_source import SinaSource
-    from aqsp.data.tencent_source import TencentSource
-    from aqsp.data.akshare_source import AkshareSource
-    from aqsp.data.tdx_vipdoc_source import TdxVipdocSource
+    from aqsp.data.source_factory import build_data_source
 
-    if config.source in ("auto", "local_first", "multi"):
-        if config.allow_online_fallback:
-            from aqsp.data.cache import DataCache
-
-            cache = DataCache()
-            sources = [
-                EastmoneySource(cache=cache),
-                SinaSource(cache=cache),
-                TencentSource(cache=cache),
-                AkshareSource(cache=cache),
-            ]
-            source = MultiSource(
-                SourceFactory("tdx_vipdoc", TdxVipdocSource),
-                sources,
-                validate_consistency=False,
-            )
-        else:
-            source = TdxVipdocSource()
-    else:
-        from aqsp.cli import _get_source
-
-        source = _get_source(config.source)
-    return source
+    return build_data_source(config.source)
 
 
 def _build_resilient_history_source(config: PipelineConfig) -> Any:
-    from aqsp.data.cache import DataCache
-    from aqsp.data.multi_source import MultiSource, SourceFactory
-    from aqsp.data.eastmoney_source import EastmoneySource
-    from aqsp.data.sina_source import SinaSource
-    from aqsp.data.tencent_source import TencentSource
-    from aqsp.data.akshare_source import AkshareSource
-    from aqsp.data.tdx_vipdoc_source import TdxVipdocSource
+    from aqsp.data.source_factory import build_data_source
 
-    cache = DataCache()
     if config.source in {"auto", "local_first"}:
-        return MultiSource(
-            SourceFactory("tdx_vipdoc", TdxVipdocSource),
-            [
-                EastmoneySource(cache=cache),
-                SinaSource(cache=cache),
-                TencentSource(cache=cache),
-                AkshareSource(cache=cache),
-            ],
-            validate_consistency=False,
-        )
-    return MultiSource(
-        EastmoneySource(cache=cache),
-        [
-            SinaSource(cache=cache),
-            TencentSource(cache=cache),
-            AkshareSource(cache=cache),
-            SourceFactory("tdx_vipdoc", TdxVipdocSource),
-        ],
-        validate_consistency=False,
-    )
+        return build_data_source("local_first")
+    return build_data_source("online_first")
 
 
 def _fetch_history_frames_resilient(
@@ -365,17 +325,7 @@ def _resolve_symbols(config: PipelineConfig, logger: logging.Logger) -> list[str
         return [s.strip() for s in symbols_str.split(",") if s.strip()]
 
     try:
-        from aqsp.cli import _get_source
-
-        if not config.allow_online_fallback and config.source in {
-            "auto",
-            "local_first",
-        }:
-            from aqsp.data.tdx_vipdoc_source import TdxVipdocSource
-
-            source = TdxVipdocSource()
-        else:
-            source = _get_source(config.source)
+        source = _build_data_source(config)
         if hasattr(source, "get_liquid_symbols"):
             liquid = source.get_liquid_symbols(
                 limit=config.max_universe,
@@ -418,7 +368,7 @@ def _step_run_strategy(
         "--max-data-lag-days",
         str(config.max_data_lag_days),
         "--benchmark-symbol",
-        "",
+        "000300",
         "--ledger",
         config.ledger_path,
         "--report",
@@ -445,9 +395,20 @@ def _step_run_strategy(
 
     report_path = Path(config.project_root / config.report_path)
     report_size = report_path.stat().st_size if report_path.exists() else 0
+    report_text = (
+        report_path.read_text(encoding="utf-8") if report_path.exists() else ""
+    )
+    gate_blocked = (
+        "未通过 walk-forward 双门验证" in report_text
+        or report_text.startswith("> ⚠️ **未通过 walk-forward 双门验证")
+    )
     logger.info("  报告已生成: %s (%d bytes)", config.report_path, report_size)
 
-    return {"exit_code": 0, "report_size": report_size}
+    return {
+        "exit_code": 0,
+        "report_size": report_size,
+        "gate_ok": not gate_blocked,
+    }
 
 
 def _step_morning_breakout(
@@ -527,10 +488,7 @@ def _step_closing_review(
     exit_code = main(argv)
 
     if exit_code == 0 and latest_output.exists():
-        dated_output.parent.mkdir(parents=True, exist_ok=True)
-        dated_output.write_text(
-            latest_output.read_text(encoding="utf-8"), encoding="utf-8"
-        )
+        atomic_write_text(dated_output, latest_output.read_text(encoding="utf-8"))
 
     return {
         "exit_code": exit_code,
@@ -595,6 +553,10 @@ def _step_validate_predictions(
         ),
         "not_executable_reasons": getattr(validation, "not_executable_reasons", None)
         or {},
+        "strategy_not_executable_rates": getattr(
+            validation, "strategy_not_executable_rates", None
+        )
+        or {},
         "frames_loaded": len(frames),
         "sources_attempted": attempted_sources,
     }
@@ -658,8 +620,7 @@ def _step_sync_paper_trades(
     )
     paper_rows = read_paper_trades(paper_ledger_path)
     report = render_paper_report(summary=summary, trades=paper_rows)
-    paper_report_path.parent.mkdir(parents=True, exist_ok=True)
-    paper_report_path.write_text(report, encoding="utf-8")
+    atomic_write_text(paper_report_path, report)
 
     logger.info(
         "  虚拟盘同步完成: opened=%d closed=%d open_positions=%d pending=%d",
@@ -798,17 +759,30 @@ def _step_auto_evolution(
             confidence * 100,
         )
         if _notify_fanout_enabled(config):
-            from aqsp.notifier import send_notification
+            from aqsp.notification_runtime import (
+                dispatch_notification_once,
+                notification_state_path,
+            )
 
-            send_notification(
-                "策略自进化",
+            run_date = today_shanghai().isoformat()
+            dispatch_notification_once(
                 "\n".join(
                     [
+                        f"# 策略自进化-{run_date}",
+                        "",
+                        "## 结论",
+                        "",
                         f"- 策略: {strategy_name}",
                         f"- 性能提升: {improvement:.2%}",
                         f"- 置信度: {confidence:.2%}",
-                        f"- 结论: {reason}",
+                        f"- 结果: {reason}",
                     ]
+                ),
+                mode=config.notify_mode,
+                prefix="auto evolution notify",
+                kind=f"auto-evolution:{run_date}",
+                state_path=notification_state_path(
+                    config.project_root / "data" / "notify_state.json"
                 ),
             )
     else:
@@ -825,7 +799,7 @@ def _step_auto_evolution(
 
 
 def _step_generate_report(
-    config: PipelineConfig, logger: logging.Logger
+    config: PipelineConfig, logger: logging.Logger, *, allow_notify: bool = True
 ) -> dict[str, Any]:
     logger.info("  生成每日简报")
 
@@ -836,7 +810,7 @@ def _step_generate_report(
         "--output",
         config.briefing_path,
     ]
-    if _notify_fanout_enabled(config):
+    if allow_notify and _notify_fanout_enabled(config):
         argv_briefing.append("--notify")
 
     from aqsp.cli import main
@@ -872,8 +846,7 @@ def _step_refresh_dashboard(
             ledger_path=str(ledger_path),
             paper_ledger_path=str(paper_ledger_path),
         )
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(html, encoding="utf-8")
+        atomic_write_text(output_path, html)
         db_path.parent.mkdir(parents=True, exist_ok=True)
         export_db(csv_path, ledger_path, db_path)
         logger.info("  Dashboard 已保存: %s", config.dashboard_html)
@@ -947,7 +920,10 @@ def run_pipeline(config: PipelineConfig) -> PipelineResult:
     ]
     if not _is_trade_day(today):
         pipeline_steps = [
-            ("报告生成", lambda: _step_generate_report(config, logger)),
+            (
+                "报告生成",
+                lambda: _step_generate_report(config, logger, allow_notify=False),
+            ),
             ("Dashboard刷新", lambda: _step_refresh_dashboard(config, logger)),
             ("数据清理", lambda: _step_cleanup(config, logger)),
         ]
@@ -1214,6 +1190,8 @@ def _format_candidate_review_meta(candidate: dict[str, Any]) -> str:
 def _build_pipeline_digest(
     config: PipelineConfig,
     result: PipelineResult,
+    *,
+    gate_block_reason: str = "",
 ) -> str:
     step_total = len(result.steps)
     step_success = sum(1 for step in result.steps if step.success)
@@ -1234,7 +1212,9 @@ def _build_pipeline_digest(
             str(item).split("(", 1)[0] for item in portfolio_summary.watchlist[:2]
         )
 
-    if failed_steps:
+    if gate_block_reason:
+        conclusion = "正常候选未放行，先处理双门 gate 阻塞。"
+    elif failed_steps:
         conclusion = "流程未全绿，先排障，再看本次信号。"
     elif portfolio_summary is not None and portfolio_summary.top_focus:
         conclusion = f"今日主链聚焦 {summary_target}，其余候选继续分层跟踪。"
@@ -1253,6 +1233,8 @@ def _build_pipeline_digest(
         f"**🎯 今日结论**：{conclusion}",
         f"**📦 PM 主裁决**：{portfolio_summary.headline if portfolio_summary is not None else '暂无可用候选输出'}",
     ]
+    if gate_block_reason:
+        core_lines.append(f"**🔒 通知状态**：正常候选未放行（{gate_block_reason}）")
     if latest_signal_day:
         core_lines.append(f"**📅 信号日期**：{latest_signal_day}")
     if portfolio_summary is not None and portfolio_summary.top_focus:
@@ -1361,7 +1343,11 @@ def _build_pipeline_digest(
         main_chain_lines.append("- 暂无可用候选输出")
 
     plan_lines = []
-    if failed_steps:
+    if gate_block_reason:
+        plan_lines.append(
+            "- 先重新跑生产 walk-forward gate 或补齐冷启动/纸面样本，再恢复正常候选通知。"
+        )
+    elif failed_steps:
         plan_lines.append(
             "- 明日先修复失败步骤对应的数据源或运行配置，再复核本次输出。"
         )
@@ -1432,6 +1418,8 @@ def _build_pipeline_digest(
     for candidate in candidates[:3]:
         for risk in candidate["risks"][:1]:
             risk_points.append(f"{candidate['display']}: {risk}")
+    if gate_block_reason:
+        risk_points.append(f"正常候选通知已被阻塞: {gate_block_reason}")
     if not result.overall_success:
         risk_points.append("总流程未全绿，先排查失败步骤再继续自动化。")
     risk_lines = [f"- {point}" for point in _dedupe_points(risk_points, limit=4)]
@@ -1472,30 +1460,71 @@ def _send_pipeline_digest(
     result: PipelineResult,
     logger: logging.Logger,
 ) -> None:
-    if not config.notify or config.notify_mode != "summary" or config.dry_run:
+    def set_status(status: str, reason: str, **extra: Any) -> None:
+        result.notify_status = {
+            "mode": config.notify_mode,
+            "status": status,
+            "reason": reason,
+            **extra,
+        }
+
+    if not config.notify:
+        set_status("skipped", "notify_disabled")
         return
+    if config.notify_mode != "summary":
+        set_status("skipped", f"notify_mode={config.notify_mode}")
+        return
+    if config.dry_run:
+        set_status("skipped", "dry_run")
+        return
+    run_date = (
+        result.started_at[:10] if result.started_at else today_shanghai().isoformat()
+    )
+    try:
+        digest_date = date.fromisoformat(run_date)
+    except ValueError:
+        digest_date = today_shanghai()
+    if not _is_trade_day(digest_date):
+        logger.info("收盘汇总通知跳过：%s 非交易日", run_date)
+        set_status("skipped", "non_trading_day", date=run_date)
+        return
+    gate_block_reason = ""
+    if not _pipeline_strategy_gate_ok(result):
+        logger.info("收盘汇总通知降级：策略运行未明确通过双门 gate")
+        gate_block_reason = "strategy_gate_not_confirmed"
 
     try:
         from aqsp.notifier import prepend_source_status_banner, send_notification
 
-        digest = _build_pipeline_digest(config, result)
+        digest = _build_pipeline_digest(
+            config,
+            result,
+            gate_block_reason=gate_block_reason,
+        )
         source_status = _latest_source_status_from_ledger(
             config.project_root / config.ledger_path
         )
         if source_status:
             digest = prepend_source_status_banner(digest, source_status)
-        run_date = (
-            result.started_at[:10]
-            if result.started_at
-            else today_shanghai().isoformat()
-        )
         from aqsp.notification_runtime import (
             mark_notification_sent,
+            mark_notification_failed,
+            notification_state_path,
+            reserve_notification,
             should_send_notification,
         )
 
-        state_path = config.project_root / "data" / "notify_state.json"
-        notification_key = f"pipeline-summary:{run_date}"
+        state_path = notification_state_path(
+            config.project_root / "data" / "notify_state.json"
+        )
+        notification_state = (
+            "gate_block"
+            if gate_block_reason
+            else "ok"
+            if result.overall_success
+            else "failure"
+        )
+        notification_key = f"pipeline-summary:{run_date}:{notification_state}"
         state_markdown = f"# 收盘总览-{run_date}\n\n{digest}"
         if not should_send_notification(
             kind=notification_key,
@@ -1503,6 +1532,15 @@ def _send_pipeline_digest(
             state_path=state_path,
         ):
             logger.info("收盘汇总通知已发送过，跳过重复发送 (date=%s)", run_date)
+            set_status("skipped", "duplicate_sent", date=run_date)
+            return
+        if not reserve_notification(
+            kind=notification_key,
+            markdown=state_markdown,
+            state_path=state_path,
+        ):
+            logger.info("收盘汇总通知已预占位，跳过重复发送 (date=%s)", run_date)
+            set_status("skipped", "duplicate_reserved", date=run_date)
             return
         notify_results = send_notification(f"收盘总览-{run_date}", digest)
         if notify_results:
@@ -1516,14 +1554,44 @@ def _send_pipeline_digest(
                     markdown=state_markdown,
                     state_path=state_path,
                 )
+                set_status(
+                    "sent",
+                    "gate_block_summary_sent" if gate_block_reason else "ok",
+                    date=run_date,
+                    channels=channel_summary,
+                )
+            else:
+                mark_notification_failed(
+                    kind=notification_key,
+                    markdown=state_markdown,
+                    state_path=state_path,
+                )
+                set_status(
+                    "failed",
+                    "all_channels_failed",
+                    date=run_date,
+                    channels=channel_summary,
+                )
             logger.info(
                 "已发送收盘汇总通知 (mode=summary, channels=%s)",
                 channel_summary,
             )
         else:
             logger.warning("收盘汇总通知未发送：未配置任何通知通道")
+            set_status("skipped", "no_channels_configured", date=run_date)
     except Exception as exc:
         logger.warning("收盘汇总通知发送失败(非致命): %s", exc)
+        set_status("failed", str(exc), date=run_date)
+
+
+def _pipeline_strategy_gate_ok(result: PipelineResult) -> bool:
+    for step in result.steps:
+        if step.name != "策略运行":
+            continue
+        if not step.success:
+            return False
+        return step.details.get("gate_ok") is True
+    return False
 
 
 def _build_config(args: argparse.Namespace) -> PipelineConfig:
@@ -1570,14 +1638,15 @@ def _write_result_file(result: PipelineResult, project_root: Path) -> None:
     result_dir = project_root / "logs" / "pipeline"
     result_dir.mkdir(parents=True, exist_ok=True)
 
-    today_str = today_shanghai().isoformat()
-    result_file = result_dir / f"{today_str}.json"
+    result_date = result.finished_at[:10] or today_shanghai().isoformat()
+    result_file = result_dir / f"{result_date}.json"
 
     payload = {
         "started_at": result.started_at,
         "finished_at": result.finished_at,
         "duration_seconds": round(result.duration_seconds, 1),
         "overall_success": result.overall_success,
+        "notify_status": result.notify_status,
         "steps": [
             {
                 "name": s.name,
@@ -1590,9 +1659,7 @@ def _write_result_file(result: PipelineResult, project_root: Path) -> None:
         ],
     }
 
-    result_file.write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
+    atomic_write_text(result_file, json.dumps(payload, ensure_ascii=False, indent=2))
     _append_daily_run_history(result, project_root)
 
 
@@ -1608,8 +1675,7 @@ def _append_daily_run_history(result: PipelineResult, project_root: Path) -> Non
         "successful_steps": sum(1 for step in result.steps if step.success),
         "total_steps": len(result.steps),
     }
-    with history_path.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
+    append_jsonl(history_path, row)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1655,8 +1721,8 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         result = run_pipeline(config)
-        _write_result_file(result, config.project_root)
         _send_pipeline_digest(config, result, logger)
+        _write_result_file(result, config.project_root)
 
         if result.overall_success:
             logger.info("跑批成功完成")

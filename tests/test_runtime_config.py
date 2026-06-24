@@ -75,7 +75,7 @@ def test_thresholds_load_mean_reversion_section() -> None:
 
     thresholds = load_thresholds()
 
-    assert thresholds.mean_reversion.enabled is True
+    assert thresholds.mean_reversion.enabled is False
     assert thresholds.mean_reversion.lookback_days == 20
     assert thresholds.mean_reversion.rsi_period == 14
     assert thresholds.mean_reversion.oversold_threshold == 30

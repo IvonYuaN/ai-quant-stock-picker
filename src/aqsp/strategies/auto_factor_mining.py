@@ -380,20 +380,7 @@ class AutoFactorMiner:
         rank_changes = ranks.diff().abs()
         turnover_rate = float(rank_changes.mean())
 
-        n_quantiles = 5
-        quantile_labels = pd.qcut(fv, n_quantiles, labels=False, duplicates="drop")
-        if quantile_labels is not None and not quantile_labels.empty:
-            quantile_returns = fr.groupby(quantile_labels).mean()
-            if len(quantile_returns) >= 2:
-                monotonicity = float(
-                    np.polyfit(
-                        range(len(quantile_returns)), quantile_returns.values, 1
-                    )[0]
-                )
-            else:
-                monotonicity = 0.0
-        else:
-            monotonicity = 0.0
+        monotonicity = abs(ic_mean)
 
         is_valid = abs(ic_mean) >= self.min_ic and abs(ic_ir) >= self.min_ir
 

@@ -134,16 +134,13 @@ class FundFlowAnalyzer:
         recent_vol = float(price_data_sorted["volume"].iloc[-3:].mean())
         prev_vol = (
             float(price_data.sort_values("date")["volume"].iloc[-15:-5].mean())
-            if len(price_data) >= 15 else recent_vol
+            if len(price_data) >= 15
+            else recent_vol
         )
         vol_ratio = recent_vol / prev_vol if prev_vol > 0 else 1.0
 
         # 模式 1: 主力吸筹（价格震荡，主力持续买入）
-        if (
-            abs(price_change) < 0.05
-            and main_5d > 0
-            and consistency >= 0.6
-        ):
+        if abs(price_change) < 0.05 and main_5d > 0 and consistency >= 0.6:
             confidence = min(0.85, consistency + (main_5d / 10000) * 0.1)
             return FundFlowSignal(
                 symbol=symbol,
@@ -154,7 +151,7 @@ class FundFlowAnalyzer:
                 inst_seat_count_30d=0,
                 rationale=[
                     f"价格5日变化{price_change:+.1%}（震荡）",
-                    f"主力5日净流入{main_5d/10000:.0f}万",
+                    f"主力5日净流入{main_5d / 10000:.0f}万",
                     f"主力买入持续性{consistency:.0%}",
                     "经典吸筹模式" if vol_ratio < 1.2 else "活跃吸筹",
                 ],
@@ -165,11 +162,7 @@ class FundFlowAnalyzer:
             )
 
         # 模式 2: 主力出货（价格新高，主力卖出）
-        if (
-            price_change > 0.10
-            and main_5d < 0
-            and vol_ratio > 1.5
-        ):
+        if price_change > 0.10 and main_5d < 0 and vol_ratio > 1.5:
             confidence = min(0.80, abs(main_5d) / 50000 + 0.3)
             return FundFlowSignal(
                 symbol=symbol,
@@ -180,7 +173,7 @@ class FundFlowAnalyzer:
                 inst_seat_count_30d=0,
                 rationale=[
                     f"价格5日涨{price_change:.1%}（创新高）",
-                    f"主力5日净流出{abs(main_5d)/10000:.0f}万",
+                    f"主力5日净流出{abs(main_5d) / 10000:.0f}万",
                     f"量比{vol_ratio:.1f}倍（放量）",
                     "高位派发特征",
                 ],
@@ -196,7 +189,9 @@ class FundFlowAnalyzer:
             and main_5d > 0
             and price_change > 0
         ):
-            confidence = min(0.85, 0.5 + (north_5d / 5000000) * 0.3 + (main_5d / 30000) * 0.05)
+            confidence = min(
+                0.85, 0.5 + (north_5d / 5000000) * 0.3 + (main_5d / 30000) * 0.05
+            )
             return FundFlowSignal(
                 symbol=symbol,
                 signal_type="smart_money_following",
@@ -205,8 +200,8 @@ class FundFlowAnalyzer:
                 north_holding_5d_change=north_5d,
                 inst_seat_count_30d=0,
                 rationale=[
-                    f"北向5日增持{north_5d/10000:.0f}万股",
-                    f"主力5日净流入{main_5d/10000:.0f}万",
+                    f"北向5日增持{north_5d / 10000:.0f}万股",
+                    f"主力5日净流入{main_5d / 10000:.0f}万",
                     f"价格上涨{price_change:.1%}",
                     "外资+主力共振，高确定性",
                 ],
@@ -216,10 +211,7 @@ class FundFlowAnalyzer:
             )
 
         # 模式 4: 散户追高（涨停但主力出货）
-        if (
-            price_change > 0.07
-            and main_5d < -10000
-        ):
+        if price_change > 0.07 and main_5d < -10000:
             return FundFlowSignal(
                 symbol=symbol,
                 signal_type="retail_chasing_high",
@@ -229,7 +221,7 @@ class FundFlowAnalyzer:
                 inst_seat_count_30d=0,
                 rationale=[
                     f"价格涨{price_change:.1%}（散户追涨）",
-                    f"主力净流出{abs(main_5d)/10000:.0f}万",
+                    f"主力净流出{abs(main_5d) / 10000:.0f}万",
                     "高位接盘风险大",
                 ],
                 risks=[
@@ -240,9 +232,7 @@ class FundFlowAnalyzer:
 
         return None
 
-    def analyze_longhubang(
-        self, lhb_records: List[LongHuBangRecord]
-    ) -> Dict[str, Any]:
+    def analyze_longhubang(self, lhb_records: List[LongHuBangRecord]) -> Dict[str, Any]:
         """分析龙虎榜数据。
 
         返回每只股票的：
@@ -354,9 +344,11 @@ def format_fund_flow_signals(signals: List[FundFlowSignal], top_n: int = 5) -> s
         label = type_labels.get(signal.signal_type, signal.signal_type)
         lines.append(f"【{i}】{signal.symbol} - {label}")
         lines.append(f"   置信度: {signal.confidence:.0%}")
-        lines.append(f"   主力5日净流入: {signal.main_inflow_5d/10000:+.0f}万")
+        lines.append(f"   主力5日净流入: {signal.main_inflow_5d / 10000:+.0f}万")
         if signal.north_holding_5d_change != 0:
-            lines.append(f"   北向5日变化: {signal.north_holding_5d_change/10000:+.0f}万股")
+            lines.append(
+                f"   北向5日变化: {signal.north_holding_5d_change / 10000:+.0f}万股"
+            )
         lines.append("   分析:")
         for r in signal.rationale:
             lines.append(f"     • {r}")

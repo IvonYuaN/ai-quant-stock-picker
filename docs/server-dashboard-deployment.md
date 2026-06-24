@@ -138,14 +138,15 @@ server {
 放到 `/opt/aqsp/.env`:
 
 ```bash
-AQSP_SOURCE=auto
+AQSP_SOURCE=sqlite_db
 AQSP_MODE=close
 AQSP_LIMIT=10
 AQSP_MAX_UNIVERSE=0
 AQSP_MIN_AVG_AMOUNT=50000000
 AQSP_ENABLE_ONLINE_FACTORS=false
-AQSP_ALLOW_ONLINE_FALLBACK=true
+AQSP_ALLOW_ONLINE_FALLBACK=false
 AQSP_MAX_DATA_LAG_DAYS=3
+AQSP_SQLITE_DB_PATH=/opt/market-data/astocks_raw.db
 
 AQSP_LEDGER=data/predictions.jsonl
 AQSP_PAPER_LEDGER=data/paper_trades.jsonl
@@ -161,7 +162,6 @@ FEISHU_WEBHOOK_URL=
 GENERIC_WEBHOOK_URL=
 
 TUSHARE_TOKEN=
-AQSP_SQLITE_DB_PATH=/opt/market-data/astocks_qfq.db
 
 # 只有“跑批机”要把面板再发布到另一台 Web 服务器时才开启
 AQSP_DEPLOY_DASHBOARD=false
@@ -177,6 +177,7 @@ AQSP_DEPLOY_SSH_KEY_PATH=/home/aqsp/.ssh/aqsp_deploy
 - `AQSP_DEPLOY_DASHBOARD=false` 表示服务器本机生成完 `dist/dashboard/` 就结束。
 - `AQSP_DEPLOY_DASHBOARD=true` 表示这台服务器还会继续把 `dist/dashboard/` 推送到另一台机器。
 - `AQSP_ALLOW_ONLINE_FALLBACK=false` 表示 `auto/local_first` 只允许本地数据源，不再意外回退到公网接口。
+- `AQSP_SQLITE_DB_PATH` 的生产候选/ledger 路径必须是不复权 raw 库；qfq/hfq 库只能用于展示或历史辅助。
 
 ## Streamlit 服务启动建议
 

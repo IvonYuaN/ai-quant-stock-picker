@@ -35,11 +35,11 @@ class CompositeStrategy(BaseStrategy):
             thresholds=self.thresholds,
         )
         self.quality_strategy = QualityStrategy(
-            StrategyConfig(name="quality", enabled=self.thresholds.quality.enabled),
+            StrategyConfig(name="quality", enabled=self._has_quality()),
             thresholds=self.thresholds,
         )
         self.value_strategy = ValueStrategy(
-            StrategyConfig(name="value", enabled=self.thresholds.value.enabled),
+            StrategyConfig(name="value", enabled=self._has_value()),
             thresholds=self.thresholds,
         )
         self.volume_strategy = VolumeBreakoutStrategy(
@@ -51,23 +51,46 @@ class CompositeStrategy(BaseStrategy):
         self.mean_reversion_strategy = MeanReversionStrategy(
             StrategyConfig(
                 name="mean_reversion",
-                enabled=self.thresholds.composite.mean_reversion_weight > 0,
+                enabled=self._has_mr(),
             ),
             thresholds=self.thresholds,
         )
         self.triple_rise_strategy = TripleRiseStrategy(
             StrategyConfig(
                 name="triple_rise",
-                enabled=self.thresholds.composite.triple_rise_weight > 0,
+                enabled=self._has_tr(),
             ),
             thresholds=self.thresholds,
         )
 
+    def _has_volume(self) -> bool:
+        return (
+            self.thresholds.volume.enabled
+            and self.thresholds.composite.volume_weight > 0
+        )
+
+    def _has_quality(self) -> bool:
+        return (
+            self.thresholds.quality.enabled
+            and self.thresholds.composite.quality_weight > 0
+        )
+
+    def _has_value(self) -> bool:
+        return (
+            self.thresholds.value.enabled and self.thresholds.composite.value_weight > 0
+        )
+
     def _has_mr(self) -> bool:
-        return self.thresholds.composite.mean_reversion_weight > 0
+        return (
+            self.thresholds.mean_reversion.enabled
+            and self.thresholds.composite.mean_reversion_weight > 0
+        )
 
     def _has_tr(self) -> bool:
-        return self.thresholds.composite.triple_rise_weight > 0
+        return (
+            self.thresholds.triple_rise.enabled
+            and self.thresholds.composite.triple_rise_weight > 0
+        )
 
     def get_regime_adjusted_weights(
         self, regime: str
@@ -85,19 +108,18 @@ class CompositeStrategy(BaseStrategy):
                 base.mean_reversion_weight,
                 base.triple_rise_weight,
             )
-        return (
-            base.momentum_weight * adjustment.momentum,
-            base.quality_weight * adjustment.quality,
-            base.value_weight * adjustment.value,
-            base.volume_weight * adjustment.volume,
-            base.mean_reversion_weight * adjustment.mean_reversion,
-            base.triple_rise_weight * adjustment.triple_rise,
-        )
 
-    def _regime_score_multiplier(self, regime: str) -> float:
-        if not regime:
-            return 1.0
-        return float(self.thresholds.regime.adjustments.get(regime, 1.0))
+        def blended(multiplier: float) -> float:
+            return base.base_blend_weight + base.regime_blend_weight * multiplier
+
+        return (
+            base.momentum_weight * blended(adjustment.momentum),
+            base.quality_weight * blended(adjustment.quality),
+            base.value_weight * blended(adjustment.value),
+            base.volume_weight * blended(adjustment.volume),
+            base.mean_reversion_weight * blended(adjustment.mean_reversion),
+            base.triple_rise_weight * blended(adjustment.triple_rise),
+        )
 
     def calculate_score(
         self, data: Dict[str, pd.DataFrame], regime: str = "unknown"
@@ -105,15 +127,15 @@ class CompositeStrategy(BaseStrategy):
         momentum_scores = self.momentum_strategy.calculate_score(data)
 
         quality_scores: Dict[str, float] = {}
-        if self.thresholds.quality.enabled:
+        if self._has_quality():
             quality_scores = self.quality_strategy.calculate_score(data)
 
         value_scores: Dict[str, float] = {}
-        if self.thresholds.value.enabled:
+        if self._has_value():
             value_scores = self.value_strategy.calculate_score(data)
 
         volume_scores: Dict[str, float] = {}
-        if self.thresholds.volume.enabled:
+        if self._has_volume():
             volume_scores = self.volume_strategy.calculate_score(data)
 
         mr_scores: Dict[str, float] = {}
@@ -143,17 +165,17 @@ class CompositeStrategy(BaseStrategy):
             total += m * mw
             w_sum += mw
 
-            if self.thresholds.quality.enabled:
+            if self._has_quality():
                 q = quality_scores.get(symbol, 0.5)
                 total += q * qw
                 w_sum += qw
 
-            if self.thresholds.value.enabled:
+            if self._has_value():
                 v = value_scores.get(symbol, 0.5)
                 total += v * vw
                 w_sum += vw
 
-            if self.thresholds.volume.enabled:
+            if self._has_volume():
                 vol = volume_scores.get(symbol, 0.5)
                 total += vol * volw
                 w_sum += volw
@@ -169,9 +191,7 @@ class CompositeStrategy(BaseStrategy):
                 w_sum += trw
 
             base_score = total / w_sum if w_sum > 0 else 0.0
-            final_scores[symbol] = max(
-                0.0, min(1.0, base_score * self._regime_score_multiplier(regime))
-            )
+            final_scores[symbol] = max(0.0, min(1.0, base_score))
 
         return final_scores
 
@@ -181,15 +201,15 @@ class CompositeStrategy(BaseStrategy):
         momentum_scores = self.momentum_strategy.calculate_score(data)
 
         quality_scores: Dict[str, float] = {}
-        if self.thresholds.quality.enabled:
+        if self._has_quality():
             quality_scores = self.quality_strategy.calculate_score(data)
 
         value_scores: Dict[str, float] = {}
-        if self.thresholds.value.enabled:
+        if self._has_value():
             value_scores = self.value_strategy.calculate_score(data)
 
         volume_scores: Dict[str, float] = {}
-        if self.thresholds.volume.enabled:
+        if self._has_volume():
             volume_scores = self.volume_strategy.calculate_score(data)
 
         mr_scores: Dict[str, float] = {}
@@ -217,19 +237,19 @@ class CompositeStrategy(BaseStrategy):
             total = m * mw
             w_sum = mw
 
-            if self.thresholds.quality.enabled:
+            if self._has_quality():
                 q = quality_scores.get(symbol, 0.5)
                 entry["quality"] = q
                 total += q * qw
                 w_sum += qw
 
-            if self.thresholds.value.enabled:
+            if self._has_value():
                 v = value_scores.get(symbol, 0.5)
                 entry["value"] = v
                 total += v * vw
                 w_sum += vw
 
-            if self.thresholds.volume.enabled:
+            if self._has_volume():
                 vol = volume_scores.get(symbol, 0.5)
                 entry["volume"] = vol
                 total += vol * volw
@@ -248,14 +268,15 @@ class CompositeStrategy(BaseStrategy):
                 w_sum += trw
 
             base_total = total / w_sum if w_sum > 0 else 0.0
-            entry["regime_multiplier"] = self._regime_score_multiplier(regime)
-            entry["total"] = max(0.0, min(1.0, base_total * entry["regime_multiplier"]))
+            entry["total"] = max(0.0, min(1.0, base_total))
             detailed[symbol] = entry
 
         return detailed
 
-    def select_stocks(self, data: Dict[str, pd.DataFrame], n: int = 10) -> List[str]:
-        scores = self.calculate_score(data)
+    def select_stocks(
+        self, data: Dict[str, pd.DataFrame], n: int = 10, regime: str = "unknown"
+    ) -> List[str]:
+        scores = self.calculate_score(data, regime=regime)
         ranked = self.rank(scores, ascending=False)
         filtered = [
             s for s in ranked if scores[s] >= self.thresholds.composite.min_total_score

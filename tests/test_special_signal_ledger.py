@@ -71,7 +71,9 @@ def test_append_special_strategy_signals_dedupes_and_preserves_status(tmp_path) 
     assert rows[0]["status"] == "entered"
 
 
-def test_append_special_strategy_signals_keeps_distinct_sub_strategies(tmp_path) -> None:
+def test_append_special_strategy_signals_keeps_distinct_sub_strategies(
+    tmp_path,
+) -> None:
     path = tmp_path / "predictions.jsonl"
     kwargs = {
         "signal_date": "2026-06-22",

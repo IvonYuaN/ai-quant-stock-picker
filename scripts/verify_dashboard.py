@@ -144,7 +144,9 @@ def check_dashboard_capabilities():
     ]
     all_passed = True
     for needle, label in checks:
-        haystack = dashboard_text if needle != "same_day_candidate_journey" else provider_text
+        haystack = (
+            dashboard_text if needle != "same_day_candidate_journey" else provider_text
+        )
         if needle in haystack:
             print(f"  ✓ {needle:28} - {label}")
         else:
@@ -160,6 +162,7 @@ def check_script_executable():
     script = project_root / "scripts/start_dashboard.sh"
     if script.exists():
         import os
+
         if os.access(script, os.X_OK):
             print(f"  ✓ {script.name:35} - 可执行")
         else:
@@ -219,7 +222,9 @@ def main():
         return 0
     else:
         print("\n✗ 部分检查失败，请先解决上述问题。")
-        print("  如果只有 streamlit 缺失，则属于本地运行环境问题，不代表工作台代码本身有误。")
+        print(
+            "  如果只有 streamlit 缺失，则属于本地运行环境问题，不代表工作台代码本身有误。"
+        )
         return 1
 
 

@@ -24,12 +24,12 @@ class TestExecutionPlanGeneration:
         coordinator = ExecutionCoordinator()
 
         plan = coordinator.plan_execution(
-            symbol='000001.SZ',
+            symbol="000001.SZ",
             target_shares=10000,
             avg_daily_volume=1000000,
             estimated_price=15.5,
             time_window_minutes=30,
-            is_sell=False
+            is_sell=False,
         )
 
         assert isinstance(plan, ExecutionPlan)
@@ -43,12 +43,12 @@ class TestExecutionPlanGeneration:
         coordinator = ExecutionCoordinator()
 
         plan = coordinator.plan_execution(
-            symbol='000001.SZ',
+            symbol="000001.SZ",
             target_shares=10000,
             avg_daily_volume=1000000,
             estimated_price=15.5,
             time_window_minutes=30,
-            is_sell=True
+            is_sell=True,
         )
 
         assert isinstance(plan, ExecutionPlan)
@@ -60,19 +60,19 @@ class TestExecutionPlanGeneration:
         coordinator = ExecutionCoordinator()
 
         buy_plan = coordinator.plan_execution(
-            symbol='000001.SZ',
+            symbol="000001.SZ",
             target_shares=10000,
             avg_daily_volume=1000000,
             estimated_price=15.5,
-            is_sell=False
+            is_sell=False,
         )
 
         sell_plan = coordinator.plan_execution(
-            symbol='000001.SZ',
+            symbol="000001.SZ",
             target_shares=10000,
             avg_daily_volume=1000000,
             estimated_price=15.5,
-            is_sell=True
+            is_sell=True,
         )
 
         # 卖出成本应该大于买入成本（多了印花税）
@@ -85,11 +85,11 @@ class TestExecutionPlanGeneration:
         coordinator = ExecutionCoordinator()
 
         plan = coordinator.plan_execution(
-            symbol='000001.SZ',
+            symbol="000001.SZ",
             target_shares=10000,
             avg_daily_volume=1000000,
             estimated_price=15.5,
-            price_limit=15.0
+            price_limit=15.0,
         )
 
         # 所有订单应该都有限价
@@ -108,11 +108,11 @@ class TestCostCalculation:
         amount = 10000 * 15.5  # 10000股 × 15.5元
 
         plan = coordinator.plan_execution(
-            symbol='000001.SZ',
+            symbol="000001.SZ",
             target_shares=10000,
             avg_daily_volume=1000000,
             estimated_price=15.5,
-            is_sell=False
+            is_sell=False,
         )
 
         # 计算器的买入成本
@@ -126,19 +126,19 @@ class TestCostCalculation:
         coordinator = ExecutionCoordinator()
 
         plan_10bp = coordinator.plan_execution(
-            symbol='000001.SZ',
+            symbol="000001.SZ",
             target_shares=10000,
             avg_daily_volume=1000000,
             estimated_price=15.5,
-            slippage_bps=10
+            slippage_bps=10,
         )
 
         plan_20bp = coordinator.plan_execution(
-            symbol='000001.SZ',
+            symbol="000001.SZ",
             target_shares=10000,
             avg_daily_volume=1000000,
             estimated_price=15.5,
-            slippage_bps=20
+            slippage_bps=20,
         )
 
         # 更高的滑点应该导致更高的成本
@@ -149,12 +149,12 @@ class TestCostCalculation:
         coordinator = ExecutionCoordinator()
 
         plan = coordinator.plan_execution(
-            symbol='000001.SZ',
+            symbol="000001.SZ",
             target_shares=10000,
             avg_daily_volume=1000000,
             estimated_price=15.5,
             slippage_bps=15,
-            is_sell=False
+            is_sell=False,
         )
 
         # 买入成本率应该在0.1%-0.2%之间
@@ -165,13 +165,13 @@ class TestCostCalculation:
         coordinator = ExecutionCoordinator()
 
         plan = coordinator.plan_execution(
-            symbol='000001.SZ',
+            symbol="000001.SZ",
             target_shares=100000,
             avg_daily_volume=1000000,
             estimated_price=15.5,
             time_window_minutes=60,
             slippage_bps=15,
-            is_sell=False
+            is_sell=False,
         )
 
         expected_cost_rate = 0.18  # 0.03% + 0.15%
@@ -190,11 +190,11 @@ class TestPlanComparison:
         plans = []
         for window in [15, 30, 60]:
             plan = coordinator.plan_execution(
-                symbol='000001.SZ',
+                symbol="000001.SZ",
                 target_shares=10000,
                 avg_daily_volume=1000000,
                 estimated_price=15.5,
-                time_window_minutes=window
+                time_window_minutes=window,
             )
             plans.append(plan)
 
@@ -206,7 +206,10 @@ class TestPlanComparison:
         assert "all_plans" in comparison
 
         # 最佳计划应该有最低的成本率
-        assert comparison["best_plan"].estimated_cost_rate <= comparison["worst_plan"].estimated_cost_rate
+        assert (
+            comparison["best_plan"].estimated_cost_rate
+            <= comparison["worst_plan"].estimated_cost_rate
+        )
 
     def test_compare_empty_list_returns_error(self):
         """测试比较空列表返回错误"""
@@ -224,10 +227,10 @@ class TestExecutionSimulation:
         coordinator = ExecutionCoordinator()
 
         plan = coordinator.plan_execution(
-            symbol='000001.SZ',
+            symbol="000001.SZ",
             target_shares=10000,
             avg_daily_volume=1000000,
-            estimated_price=15.5
+            estimated_price=15.5,
         )
 
         simulation = coordinator.simulate_execution(plan)
@@ -243,15 +246,15 @@ class TestExecutionSimulation:
         coordinator = ExecutionCoordinator()
 
         plan = coordinator.plan_execution(
-            symbol='000001.SZ',
+            symbol="000001.SZ",
             target_shares=1000,
             avg_daily_volume=1000000,
-            estimated_price=15.5
+            estimated_price=15.5,
         )
 
         # 模拟实际成交价格
         actual_prices = [15.4, 15.5, 15.6] * ((len(plan.twap_plan.orders) // 3) + 1)
-        actual_prices = actual_prices[:len(plan.twap_plan.orders)]
+        actual_prices = actual_prices[: len(plan.twap_plan.orders)]
 
         simulation = coordinator.simulate_execution(plan, actual_prices)
 
@@ -267,12 +270,12 @@ class TestRealWorldExecutionScenarios:
 
         # 平安银行大宗购买
         plan = coordinator.plan_execution(
-            symbol='000001.SZ',
+            symbol="000001.SZ",
             target_shares=50000,
             avg_daily_volume=10000000,
             estimated_price=9.5,
             time_window_minutes=60,
-            is_sell=False
+            is_sell=False,
         )
 
         assert plan.is_valid
@@ -283,13 +286,13 @@ class TestRealWorldExecutionScenarios:
         coordinator = ExecutionCoordinator()
 
         plan = coordinator.plan_execution(
-            symbol='002000.SZ',
+            symbol="002000.SZ",
             target_shares=30000,
             avg_daily_volume=2000000,
             estimated_price=25.0,
             time_window_minutes=120,
             max_participation_rate=0.01,
-            is_sell=True
+            is_sell=True,
         )
 
         assert plan.is_valid
@@ -301,13 +304,13 @@ class TestRealWorldExecutionScenarios:
         coordinator = ExecutionCoordinator()
 
         plan = coordinator.plan_execution(
-            symbol='002500.SZ',
+            symbol="002500.SZ",
             target_shares=20000,
             avg_daily_volume=500000,
             estimated_price=12.0,
             time_window_minutes=240,
             slippage_bps=50,  # 高滑点
-            is_sell=False
+            is_sell=False,
         )
 
         assert plan.estimated_cost_rate > 0.4
@@ -319,20 +322,23 @@ class TestRealWorldExecutionScenarios:
         plans = []
         for window in [30, 60, 120]:
             plan = coordinator.plan_execution(
-                symbol='000001.SZ',
+                symbol="000001.SZ",
                 target_shares=100000,
                 avg_daily_volume=5000000,
                 estimated_price=15.5,
                 time_window_minutes=window,
                 max_participation_rate=0.01,
-                is_sell=False
+                is_sell=False,
             )
             plans.append(plan)
 
         comparison = coordinator.compare_execution_plans(plans)
 
         # 应该能够找到最优方案
-        assert comparison["best_plan"].estimated_cost_rate <= comparison["worst_plan"].estimated_cost_rate
+        assert (
+            comparison["best_plan"].estimated_cost_rate
+            <= comparison["worst_plan"].estimated_cost_rate
+        )
 
 
 class TestEdgeCasesAndErrors:
@@ -343,11 +349,11 @@ class TestEdgeCasesAndErrors:
         coordinator = ExecutionCoordinator()
 
         plan = coordinator.plan_execution(
-            symbol='000001.SZ',
+            symbol="000001.SZ",
             target_shares=1000,
             avg_daily_volume=1000000,
             estimated_price=0.1,  # 0.1元
-            is_sell=False
+            is_sell=False,
         )
 
         # 应该能生成有效的计划
@@ -358,11 +364,11 @@ class TestEdgeCasesAndErrors:
         coordinator = ExecutionCoordinator()
 
         plan = coordinator.plan_execution(
-            symbol='600000.SH',
+            symbol="600000.SH",
             target_shares=1000,
             avg_daily_volume=5000000,
             estimated_price=100.0,  # 100元
-            is_sell=False
+            is_sell=False,
         )
 
         assert plan.is_valid
@@ -374,11 +380,11 @@ class TestEdgeCasesAndErrors:
         # 验证TWAP层会拒绝非100倍数的股数
         with pytest.raises(ValueError, match="target_shares必须是100的倍数"):
             coordinator.plan_execution(
-                symbol='000001.SZ',
+                symbol="000001.SZ",
                 target_shares=9999,  # 不是100的倍数，应该失败
                 avg_daily_volume=1000000,
                 estimated_price=15.5,
-                is_sell=False
+                is_sell=False,
             )
 
 
@@ -390,12 +396,12 @@ class TestCostBreakdown:
         coordinator = ExecutionCoordinator()
 
         coordinator.plan_execution(
-            symbol='000001.SZ',
+            symbol="000001.SZ",
             target_shares=10000,
             avg_daily_volume=1000000,
             estimated_price=15.5,
             slippage_bps=0,  # 无滑点，只看佣金
-            is_sell=False
+            is_sell=False,
         )
 
         amount = 10000 * 15.5
@@ -403,7 +409,7 @@ class TestCostBreakdown:
         # 计算期望的佣金
         expected_commission = max(
             amount * TradingCostCalculator.COMMISSION_RATE,
-            TradingCostCalculator.MIN_COMMISSION
+            TradingCostCalculator.MIN_COMMISSION,
         )
 
         # 由于金额较大，应该是正常佣金而非最低佣金
@@ -414,12 +420,12 @@ class TestCostBreakdown:
         coordinator = ExecutionCoordinator()
 
         plan = coordinator.plan_execution(
-            symbol='000001.SZ',
+            symbol="000001.SZ",
             target_shares=10000,
             avg_daily_volume=1000000,
             estimated_price=15.5,
             slippage_bps=0,
-            is_sell=True
+            is_sell=True,
         )
 
         amount = 10000 * 15.5

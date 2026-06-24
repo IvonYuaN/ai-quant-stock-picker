@@ -41,6 +41,11 @@ def _has_implausible_amount_scale(df: pd.DataFrame) -> bool:
     return float(ratio.median()) < 1e-5
 
 
+def _normalize_price_mode(price_mode: str) -> str:
+    mode = str(price_mode or "raw").strip().lower()
+    return mode if mode in {"raw", "qfq", "hfq"} else "raw"
+
+
 class DataCache:
     def __init__(self, db_path: str | Path = "data/cache.db"):
         self.db_path = Path(db_path)
@@ -49,11 +54,13 @@ class DataCache:
 
     def _init_db(self) -> None:
         with sqlite3.connect(self.db_path, timeout=_SQLITE_TIMEOUT_SECONDS) as conn:
+            self._migrate_ohlcv_price_mode(conn)
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS ohlcv (
                     symbol TEXT NOT NULL,
                     date TEXT NOT NULL,
+                    price_mode TEXT NOT NULL DEFAULT 'raw',
                     open REAL,
                     high REAL,
                     low REAL,
@@ -66,9 +73,28 @@ class DataCache:
                     adj_factor REAL DEFAULT 1.0,
                     source TEXT,
                     fetched_at TEXT,
-                    PRIMARY KEY (symbol, date)
+                    PRIMARY KEY (symbol, date, price_mode)
                 )
                 """
+            )
+            columns = {
+                row[1] for row in conn.execute("PRAGMA table_info(ohlcv)").fetchall()
+            }
+            if "price_mode" not in columns:
+                conn.execute(
+                    "ALTER TABLE ohlcv ADD COLUMN price_mode TEXT NOT NULL DEFAULT 'raw'"
+                )
+            indexes = {
+                row[1] for row in conn.execute("PRAGMA index_list(ohlcv)").fetchall()
+            }
+            if "idx_ohlcv_symbol_date" not in indexes:
+                conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_ohlcv_symbol_date "
+                    "ON ohlcv(symbol, date)"
+                )
+            conn.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_ohlcv_symbol_date_price_mode "
+                "ON ohlcv(symbol, date, price_mode)"
             )
             conn.execute(
                 """
@@ -118,6 +144,61 @@ class DataCache:
             )
             conn.commit()
 
+    def _migrate_ohlcv_price_mode(self, conn: sqlite3.Connection) -> None:
+        table = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='ohlcv'"
+        ).fetchone()
+        if table is None:
+            return
+        info = conn.execute("PRAGMA table_info(ohlcv)").fetchall()
+        columns = {str(row[1]) for row in info}
+        pk_columns = [
+            str(row[1]) for row in sorted(info, key=lambda row: int(row[5])) if row[5]
+        ]
+        if "price_mode" in columns and pk_columns == ["symbol", "date", "price_mode"]:
+            return
+        if "price_mode" not in columns:
+            conn.execute(
+                "ALTER TABLE ohlcv ADD COLUMN price_mode TEXT NOT NULL DEFAULT 'raw'"
+            )
+        conn.execute("ALTER TABLE ohlcv RENAME TO ohlcv_legacy")
+        conn.execute(
+            """
+            CREATE TABLE ohlcv (
+                symbol TEXT NOT NULL,
+                date TEXT NOT NULL,
+                price_mode TEXT NOT NULL DEFAULT 'raw',
+                open REAL,
+                high REAL,
+                low REAL,
+                close REAL,
+                volume REAL,
+                amount REAL,
+                suspended INTEGER DEFAULT 0,
+                limit_up REAL DEFAULT 0.0,
+                limit_down REAL DEFAULT 0.0,
+                adj_factor REAL DEFAULT 1.0,
+                source TEXT,
+                fetched_at TEXT,
+                PRIMARY KEY (symbol, date, price_mode)
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO ohlcv (
+                symbol, date, price_mode, open, high, low, close, volume, amount,
+                suspended, limit_up, limit_down, adj_factor, source, fetched_at
+            )
+            SELECT
+                symbol, date, COALESCE(NULLIF(price_mode, ''), 'raw'),
+                open, high, low, close, volume, amount,
+                suspended, limit_up, limit_down, adj_factor, source, fetched_at
+            FROM ohlcv_legacy
+            """
+        )
+        conn.execute("DROP TABLE ohlcv_legacy")
+
     @staticmethod
     def _records_for_insert(
         df: pd.DataFrame,
@@ -136,15 +217,22 @@ class DataCache:
         start: date,
         end: date,
         max_age_hours: int = 24,
+        price_mode: str = "raw",
     ) -> Optional[pd.DataFrame]:
+        normalized_price_mode = _normalize_price_mode(price_mode)
         with sqlite3.connect(self.db_path, timeout=_SQLITE_TIMEOUT_SECONDS) as conn:
             df = pd.read_sql(
                 """
                 SELECT * FROM ohlcv
-                WHERE symbol = ? AND date >= ? AND date <= ?
+                WHERE symbol = ? AND price_mode = ? AND date >= ? AND date <= ?
                 """,
                 conn,
-                params=(symbol, start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d")),
+                params=(
+                    symbol,
+                    normalized_price_mode,
+                    start.strftime("%Y-%m-%d"),
+                    end.strftime("%Y-%m-%d"),
+                ),
             )
         if df.empty:
             return None
@@ -183,14 +271,23 @@ class DataCache:
             df["limit_down"] = df["limit_down"].fillna(0.0)
         return df
 
-    def set_ohlcv(self, symbol: str, df: pd.DataFrame, source: str = "unknown") -> None:
+    def set_ohlcv(
+        self,
+        symbol: str,
+        df: pd.DataFrame,
+        source: str = "unknown",
+        price_mode: str = "raw",
+    ) -> None:
+        normalized_price_mode = _normalize_price_mode(price_mode)
         df = df.copy()
         df["symbol"] = symbol
+        df["price_mode"] = normalized_price_mode
         df["source"] = source
         df["fetched_at"] = now_shanghai().isoformat()
         columns = [
             "symbol",
             "date",
+            "price_mode",
             "open",
             "high",
             "low",
@@ -219,9 +316,9 @@ class DataCache:
             conn.executemany(
                 """
                 INSERT OR REPLACE INTO ohlcv (
-                    symbol, date, open, high, low, close, volume, amount,
+                    symbol, date, price_mode, open, high, low, close, volume, amount,
                     suspended, limit_up, limit_down, adj_factor, source, fetched_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 rows,
             )

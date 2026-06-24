@@ -68,7 +68,9 @@ class NationalTeamTracker:
             ) from exc
         self._token = cfg.token
 
-    def has_national_team_holding(self, symbol: str, as_of_date: date | None = None) -> bool:
+    def has_national_team_holding(
+        self, symbol: str, as_of_date: date | None = None
+    ) -> bool:
         """Check if a stock has national team holdings.
 
         Args:
@@ -205,16 +207,16 @@ class NationalTeamTracker:
 
         # Normalize numeric columns
         if "hold_ratio" in normalized.columns:
-            normalized["holding_ratio"] = (
-                pd.to_numeric(normalized["hold_ratio"], errors="coerce").fillna(0)
-            )
+            normalized["holding_ratio"] = pd.to_numeric(
+                normalized["hold_ratio"], errors="coerce"
+            ).fillna(0)
         else:
             normalized["holding_ratio"] = 0.0
 
         if "hold_amount" in normalized.columns:
-            normalized["holding_shares"] = (
-                pd.to_numeric(normalized["hold_amount"], errors="coerce").fillna(0)
-            )
+            normalized["holding_shares"] = pd.to_numeric(
+                normalized["hold_amount"], errors="coerce"
+            ).fillna(0)
         else:
             normalized["holding_shares"] = 0.0
 

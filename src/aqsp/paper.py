@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
@@ -11,6 +12,9 @@ from aqsp.core.time import now_shanghai
 from aqsp.ledger import ExecutionConfig, execution_config_from_thresholds, read_ledger
 from aqsp.ledger.base import _check_executable, _resolve_exit
 from aqsp.ratings import is_tradable_rating
+from aqsp.utils.jsonl_io import advisory_lock, atomic_write_text
+
+LOGGER = logging.getLogger("aqsp.paper")
 
 
 @dataclass(frozen=True)
@@ -50,19 +54,32 @@ def read_paper_trades(path: str | Path) -> list[dict]:
     if not trade_path.exists():
         return []
     rows: list[dict] = []
-    for line in trade_path.read_text(encoding="utf-8").splitlines():
-        if line.strip():
-            rows.append(json.loads(line))
+    for lineno, line in enumerate(
+        trade_path.read_text(encoding="utf-8").splitlines(), start=1
+    ):
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError as exc:
+            LOGGER.warning(
+                "纸面账本 %s 第 %d 行 JSON 损坏，已跳过: %s",
+                trade_path,
+                lineno,
+                exc,
+            )
+            continue
+        if isinstance(row, dict):
+            rows.append(row)
     return rows
 
 
 def write_paper_trades(path: str | Path, rows: list[dict]) -> None:
     trade_path = Path(path)
-    trade_path.parent.mkdir(parents=True, exist_ok=True)
     text = "\n".join(
         json.dumps(row, ensure_ascii=False, sort_keys=True) for row in rows
     )
-    trade_path.write_text((text + "\n") if text else "", encoding="utf-8")
+    atomic_write_text(trade_path, (text + "\n") if text else "")
 
 
 def sync_paper_trades(
@@ -74,57 +91,60 @@ def sync_paper_trades(
 ) -> PaperSummary:
     execution = execution or execution_config_from_thresholds()
     signals = read_ledger(signal_ledger)
-    trades = read_paper_trades(paper_ledger)
+    with advisory_lock(paper_ledger):
+        trades = read_paper_trades(paper_ledger)
 
-    opened, not_executable = _update_pending_entry_trades(trades, frames, execution)
-    closed = _update_open_trades(trades, frames)
-    existing_signal_ids = {str(t.get("signal_id", "")) for t in trades}
-    open_symbols = {
-        str(t.get("symbol", ""))
-        for t in trades
-        if t.get("status") == "open" and t.get("symbol")
-    }
+        opened, not_executable = _update_pending_entry_trades(trades, frames, execution)
+        closed = _update_open_trades(trades, frames)
+        existing_signal_ids = {str(t.get("signal_id", "")) for t in trades}
+        open_symbols = {
+            str(t.get("symbol", ""))
+            for t in trades
+            if t.get("status") == "open" and t.get("symbol")
+        }
 
-    skipped = 0
-    now = now_shanghai().isoformat(timespec="seconds")
-    for signal in signals:
-        signal_id = str(signal.get("id", ""))
-        symbol = str(signal.get("symbol", ""))
-        if not signal_id or signal_id in existing_signal_ids:
-            continue
-        if signal.get("status") not in ("pending", "validated"):
-            skipped += 1
-            continue
-        if not is_tradable_rating(signal.get("rating")):
-            skipped += 1
-            continue
-        if symbol in open_symbols:
-            skipped += 1
-            continue
+        skipped = 0
+        now = now_shanghai().isoformat(timespec="seconds")
+        for signal in signals:
+            signal_id = str(signal.get("id", ""))
+            symbol = str(signal.get("symbol", ""))
+            if not signal_id or signal_id in existing_signal_ids:
+                continue
+            if signal.get("status") not in ("pending", "validated"):
+                skipped += 1
+                continue
+            if not is_tradable_rating(signal.get("rating")):
+                skipped += 1
+                continue
+            if symbol in open_symbols:
+                skipped += 1
+                continue
 
-        frame = frames.get(symbol)
-        if frame is None or frame.empty:
-            skipped += 1
-            continue
-        trade = _open_trade_from_signal(signal, frame, execution, now)
-        if trade is None:
-            trades.append(_pending_entry_from_signal(signal, execution, now))
+            frame = frames.get(symbol)
+            if frame is None or frame.empty:
+                skipped += 1
+                continue
+            trade = _open_trade_from_signal(signal, frame, execution, now)
+            if trade is None:
+                trades.append(_pending_entry_from_signal(signal, execution, now))
+                existing_signal_ids.add(signal_id)
+                continue
+            trades.append(trade)
             existing_signal_ids.add(signal_id)
-            continue
-        trades.append(trade)
-        existing_signal_ids.add(signal_id)
-        if trade["status"] == "open":
-            open_symbols.add(symbol)
-            opened += 1
-        elif trade["status"] == "not_executable":
-            not_executable += 1
-        else:
-            skipped += 1
+            if trade["status"] == "open":
+                open_symbols.add(symbol)
+                opened += 1
+            elif trade["status"] == "not_executable":
+                not_executable += 1
+            else:
+                skipped += 1
 
-    closed += _update_open_trades(trades, frames)
-    write_paper_trades(paper_ledger, trades)
-    open_positions = sum(1 for trade in trades if trade.get("status") == "open")
-    pending_entry = sum(1 for trade in trades if trade.get("status") == "pending_entry")
+        closed += _update_open_trades(trades, frames)
+        write_paper_trades(paper_ledger, trades)
+        open_positions = sum(1 for trade in trades if trade.get("status") == "open")
+        pending_entry = sum(
+            1 for trade in trades if trade.get("status") == "pending_entry"
+        )
     return PaperSummary(
         opened=opened,
         closed=closed,

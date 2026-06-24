@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pandas as pd
@@ -37,6 +38,7 @@ def test_finalize_scheduled_notification_disables_notify_and_prefixes_markdown(
                     kwargs["gate_reasons"],
                     kwargs["next_actions"],
                     kwargs["mode"],
+                    kwargs["reserve_before_send"],
                 )
             )
             or []
@@ -61,6 +63,7 @@ def test_finalize_scheduled_notification_disables_notify_and_prefixes_markdown(
             ["冷启动未满: 0/30 个独立信号日"],
             ["继续按日运行主链。"],
             "summary",
+            True,
         )
     ]
     assert state_calls == [
@@ -256,6 +259,44 @@ def test_finalize_scheduled_notification_marks_gate_only_after_success(
     ]
 
 
+def test_finalize_scheduled_notification_marks_gate_failed_when_dispatch_raises(
+    monkeypatch,
+) -> None:
+    failed: list[dict[str, object]] = []
+    seen: list[str] = []
+    monkeypatch.setenv("AQSP_RUN_TASK_ID", "daily")
+
+    finalize_scheduled_notification(
+        markdown="# 原始报告",
+        args_notify=True,
+        gate_ok=False,
+        gate_reasons=["冷启动未满: 14/30 个独立信号日"],
+        next_actions=["冷启动样本 14/30。"],
+        latest_iso="2026-06-17",
+        notify_mode="summary",
+        dispatch_gate_notification_fn=lambda **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("network down")
+        ),
+        should_send_gate_notification_fn=lambda **_kwargs: True,
+        format_notification_gate_block_fn=lambda reasons, actions: (
+            f"BLOCK:{reasons[0]}|{actions[0]}\n"
+        ),
+        legacy_notify_fn=None,
+        print_fn=seen.append,
+        gate_state_path="data/gate_notify_state.json",
+        mark_gate_notification_failed_fn=lambda **kwargs: failed.append(kwargs),
+    )
+
+    assert failed == [
+        {
+            "gate_reasons": ["冷启动未满: 14/30 个独立信号日"],
+            "state_path": "data/gate_notify_state.json",
+            "run_date": "2026-06-17",
+        }
+    ]
+    assert "gate notify failed: network down" in seen
+
+
 def test_finalize_scheduled_notification_marks_legacy_gate_after_success(
     monkeypatch,
 ) -> None:
@@ -296,6 +337,7 @@ def test_finalize_scheduled_notification_reserves_gate_before_failure(
     monkeypatch,
 ) -> None:
     marked: list[dict[str, object]] = []
+    failed: list[dict[str, object]] = []
     monkeypatch.setenv("AQSP_RUN_TASK_ID", "daily")
 
     finalize_scheduled_notification(
@@ -317,9 +359,11 @@ def test_finalize_scheduled_notification_reserves_gate_before_failure(
         print_fn=lambda *_args: None,
         gate_state_path="data/gate_notify_state.json",
         mark_gate_notification_sent_fn=lambda **kwargs: marked.append(kwargs),
+        mark_gate_notification_failed_fn=lambda **kwargs: failed.append(kwargs),
     )
 
-    assert marked == [
+    assert marked == []
+    assert failed == [
         {
             "gate_reasons": ["冷启动未满: 14/30 个独立信号日"],
             "state_path": "data/gate_notify_state.json",
@@ -463,7 +507,85 @@ def test_dispatch_notification_once_dedupes_same_kind_and_content(
     ]
 
 
-def test_dispatch_notification_once_retries_after_failed_delivery(
+def test_dispatch_notification_once_dedupes_same_kind_when_content_changes(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from aqsp import notification_runtime as runtime
+
+    sent: list[str] = []
+    monkeypatch.setattr(
+        runtime,
+        "dispatch_notification",
+        lambda markdown, **_kwargs: (
+            sent.append(markdown) or [NotifyResult("serverchan", True, "HTTP 200")]
+        ),
+    )
+
+    first = dispatch_notification_once(
+        "# 收盘研究日报-2026-06-17\n\n## 结论\n- 候选 3 只",
+        mode="summary",
+        prefix="daily notify",
+        kind="daily:2026-06-17",
+        state_path=tmp_path / "notify_state.json",
+        summary_markdown="# 摘要\n- 候选 3 只",
+    )
+    second = dispatch_notification_once(
+        "# 收盘研究日报-2026-06-17\n\n## 结论\n- 候选 4 只",
+        mode="summary",
+        prefix="daily notify",
+        kind="daily:2026-06-17",
+        state_path=tmp_path / "notify_state.json",
+        summary_markdown="# 摘要\n- 候选 4 只",
+    )
+
+    assert len(first) == 1
+    assert second == []
+    assert sent == ["# 收盘研究日报-2026-06-17\n\n## 结论\n- 候选 3 只"]
+    state = json.loads((tmp_path / "notify_state.json").read_text(encoding="utf-8"))
+    entry = state["sent"]["daily:2026-06-17"]
+    assert entry["fingerprint"] == "daily:2026-06-17"
+    assert len(entry["content_hash"]) == 64
+
+
+def test_dispatch_notification_once_allows_distinct_notification_kind(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from aqsp import notification_runtime as runtime
+
+    sent: list[str] = []
+    monkeypatch.setattr(
+        runtime,
+        "dispatch_notification",
+        lambda markdown, **_kwargs: (
+            sent.append(markdown) or [NotifyResult("serverchan", True, "HTTP 200")]
+        ),
+    )
+
+    dispatch_notification_once(
+        "# 收盘研究日报-2026-06-17",
+        mode="summary",
+        prefix="daily notify",
+        kind="daily:2026-06-17",
+        state_path=tmp_path / "notify_state.json",
+    )
+    second = dispatch_notification_once(
+        "# 收盘研究日报-2026-06-18",
+        mode="summary",
+        prefix="daily notify",
+        kind="daily:2026-06-18",
+        state_path=tmp_path / "notify_state.json",
+    )
+
+    assert len(second) == 1
+    assert sent == [
+        "# 收盘研究日报-2026-06-17",
+        "# 收盘研究日报-2026-06-18",
+    ]
+
+
+def test_dispatch_notification_once_retries_after_failed_delivery_cooldown(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -493,8 +615,64 @@ def test_dispatch_notification_once_retries_after_failed_delivery(
         state_path=tmp_path / "notify_state.json",
         summary_markdown="summary",
     )
+    state_path = tmp_path / "notify_state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["failed"]["news-catalysts:2026-06-17"]["updated_at"] = (
+        "2026-06-17T09:00:00+08:00"
+    )
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    third = dispatch_notification_once(
+        "# 消息面雷达-2026-06-17\n\n## 结论\n- 无新增风险",
+        mode="summary",
+        prefix="news notify",
+        kind="news-catalysts:2026-06-17",
+        state_path=state_path,
+        summary_markdown="summary",
+    )
 
     assert first[0].ok is False
-    assert second[0].ok is False
+    assert second == []
+    assert third[0].ok is False
     assert len(attempts) == 2
-    assert not (tmp_path / "notify_state.json").exists()
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert (
+        state["failed"]["news-catalysts:2026-06-17"]["fingerprint"]
+        == "news-catalysts:2026-06-17"
+    )
+    assert len(state["failed"]["news-catalysts:2026-06-17"]["content_hash"]) == 64
+
+
+def test_dispatch_notification_once_marks_failed_when_dispatch_raises(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from aqsp import notification_runtime as runtime
+
+    monkeypatch.setattr(
+        runtime,
+        "dispatch_notification",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("boom")),
+    )
+
+    try:
+        dispatch_notification_once(
+            "# 收盘总览-2026-06-17",
+            mode="summary",
+            prefix="daily notify",
+            kind="daily:2026-06-17",
+            state_path=tmp_path / "notify_state.json",
+        )
+    except RuntimeError:
+        pass
+
+    second = dispatch_notification_once(
+        "# 收盘总览-2026-06-17",
+        mode="summary",
+        prefix="daily notify",
+        kind="daily:2026-06-17",
+        state_path=tmp_path / "notify_state.json",
+    )
+
+    assert second == []
+    state = json.loads((tmp_path / "notify_state.json").read_text(encoding="utf-8"))
+    assert state["failed"]["daily:2026-06-17"]["fingerprint"] == "daily:2026-06-17"

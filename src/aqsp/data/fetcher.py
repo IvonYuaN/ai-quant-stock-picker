@@ -186,7 +186,12 @@ class MultiSourceFetcher:
             if df.empty:
                 continue
             df = self._normalize_columns(df, symbol)
-            self.cache.set_ohlcv(symbol, df, source=self.primary_source.name)
+            self.cache.set_ohlcv(
+                symbol,
+                df,
+                source=self.primary_source.name,
+                price_mode=adjust or "raw",
+            )
             result[symbol] = df
         return result
 
@@ -214,7 +219,12 @@ class MultiSourceFetcher:
             if df.empty:
                 continue
             df = self._normalize_columns(df, symbol)
-            self.cache.set_ohlcv(symbol, df, source=self.fallback_source.name)
+            self.cache.set_ohlcv(
+                symbol,
+                df,
+                source=self.fallback_source.name,
+                price_mode=adjust or "raw",
+            )
             result[symbol] = df
         return result
 

@@ -26,3 +26,26 @@ def test_reports_v2_markdown_uses_research_wording_and_timezone() -> None:
     assert "### 跟踪标的明细" in markdown
     assert "持仓组合" not in markdown
     assert "持仓明细" not in markdown
+
+
+def test_reports_v2_reloads_thresholds_on_generate(monkeypatch) -> None:
+    from dataclasses import replace
+
+    import aqsp.reports.v2 as reports_v2
+    from aqsp.strategies.thresholds import Thresholds
+
+    first = Thresholds(version="old")
+    second = replace(first, version="new")
+    loaded = iter([first, second])
+    monkeypatch.setattr(reports_v2, "load_thresholds", lambda: next(loaded))
+    generator = ReportGenerator()
+    portfolio = PortfolioReport(
+        symbols=[],
+        weights={},
+        sector_allocations=[],
+        diversification_score=0.0,
+    )
+
+    report = generator.generate(strategies={}, portfolio=portfolio)
+
+    assert report.version == "new"

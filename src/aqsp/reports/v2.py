@@ -63,6 +63,7 @@ class ReportGenerator:
         regime: Optional[MarketRegime] = None,
         breaker: Optional[BreakerStatus] = None,
     ) -> DailyReport:
+        self.thresholds = load_thresholds()
 
         strategy_reports = []
         for name, perf in strategies.items():

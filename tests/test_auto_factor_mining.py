@@ -32,3 +32,11 @@ def test_strategy_modules_do_not_use_negative_shift() -> None:
             offenders.append(str(path.relative_to(PROJECT_ROOT)))
 
     assert offenders == []
+
+
+def test_auto_factor_mining_does_not_rank_quantiles_by_forward_returns() -> None:
+    text = (
+        PROJECT_ROOT / "src" / "aqsp" / "strategies" / "auto_factor_mining.py"
+    ).read_text(encoding="utf-8")
+
+    assert ".groupby(quantile_labels).mean()" not in text

@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 from aqsp.core.time import now_shanghai
+from aqsp.utils.jsonl_io import append_jsonl, atomic_write_text
 
 # 默认护栏
 _DEFAULT_TIMEOUT_S = 30.0
@@ -65,9 +66,7 @@ def _append_log(record: dict) -> None:
     记录本身失败也不能冒泡——监控不能反过来弄崩主链路。
     """
     try:
-        _LLM_CALLS_LOG.parent.mkdir(parents=True, exist_ok=True)
-        with open(_LLM_CALLS_LOG, "a", encoding="utf-8") as f:
-            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+        append_jsonl(_LLM_CALLS_LOG, record)
     except Exception:
         pass
 
@@ -91,10 +90,9 @@ def get_siliconflow_free_models() -> tuple[str, ...]:
 
 def _save_siliconflow_models(payload: dict[str, Any]) -> None:
     try:
-        _SILICONFLOW_MODELS_CACHE.parent.mkdir(parents=True, exist_ok=True)
-        _SILICONFLOW_MODELS_CACHE.write_text(
+        atomic_write_text(
+            _SILICONFLOW_MODELS_CACHE,
             json.dumps(payload, ensure_ascii=False, indent=2),
-            encoding="utf-8",
         )
     except Exception:
         pass

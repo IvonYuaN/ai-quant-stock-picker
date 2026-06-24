@@ -41,9 +41,7 @@ FORBIDDEN_STATIC_DASHBOARD_WORDING = (
     "重点跟踪与继续观察",
 )
 
-FORBIDDEN_DISCLAIMER_WORDING = (
-    re.compile(r"(?<!交易指令或)不构成投资建议"),
-)
+FORBIDDEN_DISCLAIMER_WORDING = (re.compile(r"(?<!交易指令或)不构成投资建议"),)
 
 
 def test_core_output_modules_do_not_reintroduce_action_like_focus_wording() -> None:

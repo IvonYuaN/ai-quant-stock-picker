@@ -61,7 +61,7 @@ def _runtime_paths() -> RuntimePaths:
         dashboard=_runtime_path("AQSP_DASHBOARD", "dist/dashboard/index.html"),
         latest_report=_runtime_path("AQSP_REPORT", "reports/latest.md"),
         latest_csv=_runtime_path("AQSP_OUTPUT_CSV", "reports/latest.csv"),
-        sqlite_db=_runtime_path("AQSP_SQLITE_DB_PATH", "data/astocks_qfq.db"),
+        sqlite_db=_runtime_path("AQSP_SQLITE_DB_PATH", "data/astocks_raw.db"),
     )
 
 

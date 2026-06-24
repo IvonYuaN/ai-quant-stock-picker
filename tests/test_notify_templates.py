@@ -257,12 +257,14 @@ def test_build_daily_run_notification_includes_validation_summary() -> None:
                 "limit_up_at_open": 1,
                 "suspended_or_no_trade": 1,
             },
+            "strategy_not_executable_rates": {"limit_up_ladder": 0.5},
         },
     )
 
     _assert_clean_notification(markdown)
     assert "- 策略自检: 验证 3 条 / 胜率 66.7% / 不可成交跳过 2 条" in markdown
     assert "- 不可成交原因: limit_up_at_open×1, suspended_or_no_trade×1" in markdown
+    assert "- 不可成交策略: limit_up_ladder 50%" in markdown
 
 
 def test_build_daily_run_notification_supports_midday_title() -> None:

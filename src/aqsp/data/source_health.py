@@ -6,9 +6,10 @@ import os
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from aqsp.core.time import now_shanghai
+from aqsp.utils.jsonl_io import advisory_lock, atomic_write_text
 
 PLAN_SOURCE_IDS = {"auto", "local_first", "online_first", "multi", "csv"}
 _logger = logging.getLogger(__name__)
@@ -40,30 +41,31 @@ def record_source_success(
     *,
     path: str | Path | None = None,
 ) -> None:
-    health = read_source_health(path)
-    ts = now_shanghai().isoformat(timespec="seconds")
-    fallback_used = requested_source != actual_source
+    def update(health: dict[str, Any]) -> dict[str, Any]:
+        ts = now_shanghai().isoformat(timespec="seconds")
+        fallback_used = requested_source != actual_source
 
-    health["updated_at"] = ts
-    health["consecutive_failures"] = 0
-    health["last_success"] = ts
-    health["last_requested_source"] = requested_source
-    health["last_actual_source"] = actual_source
-    health["last_error"] = ""
-    health["fallback_used"] = fallback_used
+        health["updated_at"] = ts
+        health["consecutive_failures"] = 0
+        health["last_success"] = ts
+        health["last_requested_source"] = requested_source
+        health["last_actual_source"] = actual_source
+        health["last_error"] = ""
+        health["fallback_used"] = fallback_used
 
-    plan = _bucket(health, "plans", requested_source)
-    plan["successes"] += 1
-    plan["last_success"] = ts
-    plan["last_actual_source"] = actual_source
-    if fallback_used:
-        plan["fallback_successes"] += 1
+        plan = _bucket(health, "plans", requested_source)
+        plan["successes"] += 1
+        plan["last_success"] = ts
+        plan["last_actual_source"] = actual_source
+        if fallback_used:
+            plan["fallback_successes"] += 1
 
-    source = _bucket(health, "sources", actual_source)
-    source["successes"] += 1
-    source["last_success"] = ts
+        source = _bucket(health, "sources", actual_source)
+        source["successes"] += 1
+        source["last_success"] = ts
+        return health
 
-    _write_source_health(health, path)
+    _update_source_health(path, update)
 
 
 def record_source_failure(
@@ -72,28 +74,29 @@ def record_source_failure(
     *,
     path: str | Path | None = None,
 ) -> None:
-    health = read_source_health(path)
-    ts = now_shanghai().isoformat(timespec="seconds")
+    def update(health: dict[str, Any]) -> dict[str, Any]:
+        ts = now_shanghai().isoformat(timespec="seconds")
 
-    health["updated_at"] = ts
-    health["consecutive_failures"] = int(health.get("consecutive_failures", 0)) + 1
-    health["last_failure"] = ts
-    health["last_requested_source"] = requested_source
-    health["last_error"] = error_message
-    health["fallback_used"] = False
+        health["updated_at"] = ts
+        health["consecutive_failures"] = int(health.get("consecutive_failures", 0)) + 1
+        health["last_failure"] = ts
+        health["last_requested_source"] = requested_source
+        health["last_error"] = error_message
+        health["fallback_used"] = False
 
-    plan = _bucket(health, "plans", requested_source)
-    plan["failures"] += 1
-    plan["last_failure"] = ts
-    plan["last_error"] = error_message
+        plan = _bucket(health, "plans", requested_source)
+        plan["failures"] += 1
+        plan["last_failure"] = ts
+        plan["last_error"] = error_message
 
-    if requested_source not in PLAN_SOURCE_IDS:
-        source = _bucket(health, "sources", requested_source)
-        source["failures"] += 1
-        source["last_failure"] = ts
-        source["last_error"] = error_message
+        if requested_source not in PLAN_SOURCE_IDS:
+            source = _bucket(health, "sources", requested_source)
+            source["failures"] += 1
+            source["last_failure"] = ts
+            source["last_error"] = error_message
+        return health
 
-    _write_source_health(health, path)
+    _update_source_health(path, update)
 
 
 def prioritize_source_ids(
@@ -188,14 +191,16 @@ def record_source_auth(
     *,
     path: str | Path | None = None,
 ) -> None:
-    health = read_source_health(path)
-    auth = health.setdefault("auth", {})
-    auth[source_id] = {
-        "status": status,
-        "message": message,
-        "checked_at": now_shanghai().isoformat(timespec="seconds"),
-    }
-    _write_source_health(health, path)
+    def update(health: dict[str, Any]) -> dict[str, Any]:
+        auth = health.setdefault("auth", {})
+        auth[source_id] = {
+            "status": status,
+            "message": message,
+            "checked_at": now_shanghai().isoformat(timespec="seconds"),
+        }
+        return health
+
+    _update_source_health(path, update)
 
 
 def read_source_auth(
@@ -253,11 +258,20 @@ def _write_source_health(
     path: str | Path | None = None,
 ) -> None:
     resolved = source_health_path(path)
-    resolved.parent.mkdir(parents=True, exist_ok=True)
-    resolved.write_text(
+    atomic_write_text(
+        resolved,
         json.dumps(health, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
     )
+
+
+def _update_source_health(
+    path: str | Path | None,
+    update: Callable[[dict[str, Any]], dict[str, Any]],
+) -> None:
+    resolved = source_health_path(path)
+    with advisory_lock(resolved):
+        health = read_source_health(resolved)
+        _write_source_health(update(health), resolved)
 
 
 def _iso_to_timestamp(value: str) -> float:

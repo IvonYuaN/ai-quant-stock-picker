@@ -138,10 +138,10 @@ class MorningBreakoutStrategy(BaseStrategy):
 
     def _score_change_pct(self, change_pct: float) -> float:
         if change_pct >= self.mb.near_limit_pct:
-            return 1.0
+            return self.mb.change_score_near_limit
         if change_pct >= self.mb.strong_pct:
-            return 0.7
-        return 0.4
+            return self.mb.change_score_strong
+        return self.mb.change_score_default
 
     def _score_volume(self, df: pd.DataFrame) -> float:
         if len(df) < 6:
@@ -152,12 +152,12 @@ class MorningBreakoutStrategy(BaseStrategy):
             return 0.0
         ratio = current_vol / avg_vol
         if ratio >= self.mb.volume_ratio_strong:
-            return 1.0
+            return self.mb.volume_score_strong
         if ratio >= self.mb.volume_ratio_medium:
-            return 0.6
-        if ratio < 1.0:
+            return self.mb.volume_score_medium
+        if ratio < self.mb.volume_ratio_min:
             return 0.0
-        return 0.3
+        return self.mb.volume_score_default
 
     def _score_technical(self, df: pd.DataFrame) -> float:
         score = 0.0
@@ -166,10 +166,10 @@ class MorningBreakoutStrategy(BaseStrategy):
             ma10 = float(df["close"].rolling(10).mean().iloc[-1])
             ma20 = float(df["close"].rolling(20).mean().iloc[-1])
             if ma5 > ma10 > ma20:
-                score += 0.5
+                score += self.mb.technical_ma_bull_score
             recent_high = float(df["high"].iloc[-20:].max())
             if float(df["close"].iloc[-1]) > recent_high:
-                score += 0.5
+                score += self.mb.technical_new_high_score
         return min(1.0, score)
 
     def _score_fund_flow(self, df: pd.DataFrame) -> float:
@@ -180,14 +180,14 @@ class MorningBreakoutStrategy(BaseStrategy):
         if vol_3 <= 0:
             return 0.0
         ratio = vol_1 / vol_3
-        if ratio > 1.5:
-            return 1.0
-        if ratio > 1.2:
-            return 0.5
+        if ratio > self.mb.fund_flow_strong_ratio:
+            return self.mb.fund_flow_strong_score
+        if ratio > self.mb.fund_flow_medium_ratio:
+            return self.mb.fund_flow_medium_score
         return 0.0
 
     def _score_market(self) -> float:
-        return 0.7
+        return self.mb.market_score
 
     def _collect_reasons(
         self,
@@ -212,7 +212,7 @@ class MorningBreakoutStrategy(BaseStrategy):
                     reasons.append(f"量比{ratio:.1f}倍，资金强势")
                 elif ratio >= self.mb.volume_ratio_medium:
                     reasons.append(f"量比{ratio:.1f}倍")
-                elif ratio < 1.0:
+                elif ratio < self.mb.volume_ratio_min:
                     risks.append("量能不足")
 
         if len(df) >= 20:
@@ -228,7 +228,7 @@ class MorningBreakoutStrategy(BaseStrategy):
         if len(df) >= 3:
             vol_3 = float(df["volume"].iloc[-3])
             vol_1 = float(df["volume"].iloc[-1])
-            if vol_3 > 0 and vol_1 / vol_3 > 1.5:
+            if vol_3 > 0 and vol_1 / vol_3 > self.mb.fund_flow_strong_ratio:
                 reasons.append("近期资金持续流入")
 
     def _determine_signal_type(self, change_pct: float) -> str:
@@ -242,14 +242,14 @@ class MorningBreakoutStrategy(BaseStrategy):
         self, score: float, reasons_count: int, risks_count: int
     ) -> float:
         base = score / 100.0
-        bonus = reasons_count * 0.05
-        penalty = risks_count * 0.1
-        return max(0.1, min(1.0, base + bonus - penalty))
+        bonus = reasons_count * self.mb.confidence_reason_bonus
+        penalty = risks_count * self.mb.confidence_risk_penalty
+        return max(self.mb.confidence_floor, min(1.0, base + bonus - penalty))
 
     def _calc_target_price(self, current_price: float, change_pct: float) -> float:
         if change_pct >= self.mb.near_limit_pct:
             return current_price * (1.0 + self.mb.next_day_limit_pct)
-        remaining = (10.0 - change_pct) / 100.0
+        remaining = (self.mb.full_limit_pct - change_pct) / 100.0
         return current_price * (1.0 + remaining)
 
     def _calc_stop_loss(self, current_price: float, df: pd.DataFrame) -> float:

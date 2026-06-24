@@ -32,6 +32,10 @@ def _iter_records():
             yield i, json.loads(line)
 
 
+def _is_run_event(rec: dict) -> bool:
+    return str(rec.get("symbol") or "") == "__RUN__"
+
+
 def test_ledger_path_exists():
     if not LEDGER_PATH.exists():
         pytest.skip("ledger not yet created")
@@ -40,6 +44,10 @@ def test_ledger_path_exists():
 
 def test_ledger_records_have_required_fields():
     for i, rec in _iter_records():
+        if _is_run_event(rec):
+            assert rec.get("status") == "blocked_by_circuit_breaker"
+            assert rec.get("reason")
+            continue
         missing = REQUIRED_LEDGER_FIELDS - set(rec.keys())
         assert not missing, f"line {i + 1} missing: {missing}"
 
@@ -53,6 +61,8 @@ def test_ledger_dates_are_valid():
 
 def test_ledger_symbols_are_6_digit():
     for i, rec in _iter_records():
+        if _is_run_event(rec):
+            continue
         sym = str(rec.get("symbol", ""))
         assert sym.isdigit() and len(sym) == 6, f"line {i + 1} bad symbol: {sym!r}"
 

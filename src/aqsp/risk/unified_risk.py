@@ -19,6 +19,7 @@ from typing import Any, Dict
 
 from aqsp.core.time import now_shanghai, today_shanghai
 from aqsp.strategies.thresholds import Thresholds, load_thresholds
+from aqsp.utils.jsonl_io import atomic_write_text
 
 _logger = logging.getLogger(__name__)
 
@@ -39,6 +40,7 @@ class StockRiskConfig:
     trailing_stop_distance: float = 0.03  # 移动止损距离
     max_holding_days: int = 10  # 最大持仓天数
     profit_take_threshold: float = 0.15  # 止盈线15%
+    profit_take_reduce_multiplier: float = 0.50
 
     @classmethod
     def from_thresholds(cls, thresholds: Thresholds | None = None) -> "StockRiskConfig":
@@ -51,6 +53,7 @@ class StockRiskConfig:
             max_position_pct=float(risk.max_position_pct),
             max_holding_days=int(risk.max_holding_days),
             profit_take_threshold=float(risk.profit_take_threshold_pct),
+            profit_take_reduce_multiplier=float(risk.profit_take_reduce_multiplier),
         )
 
 
@@ -127,13 +130,15 @@ class StockRiskManager:
 
         # 3. 止盈
         if pnl_pct >= self.config.profit_take_threshold:
+            reduce_pct = 1 - self.config.profit_take_reduce_multiplier
             return StockRiskCheck(
                 symbol=symbol,
                 action="reduce",
-                reason=f"达到止盈线：盈利{pnl_pct:.1%} ≥ {self.config.profit_take_threshold:.0%}，建议减仓50%",
+                reason=f"达到止盈线：盈利{pnl_pct:.1%} ≥ {self.config.profit_take_threshold:.0%}，建议减仓{reduce_pct:.0%}",
                 current_pnl_pct=pnl_pct,
                 holding_days=holding_days,
-                suggested_position=position_pct * 0.5,
+                suggested_position=position_pct
+                * self.config.profit_take_reduce_multiplier,
                 urgency="medium",
             )
 
@@ -202,6 +207,7 @@ class PortfolioRiskConfig:
     max_sector_concentration: float = 0.40  # 单板块仓位上限
     max_correlation: float = 0.70  # 持仓相关性上限
     min_cash_reserve: float = 0.10  # 最低现金保留
+    cash_low_new_position_multiplier: float = 0.50
 
     @classmethod
     def from_thresholds(
@@ -217,6 +223,9 @@ class PortfolioRiskConfig:
             max_sector_concentration=float(risk.max_sector_concentration),
             max_correlation=float(risk.max_correlation),
             min_cash_reserve=float(risk.min_cash_reserve),
+            cash_low_new_position_multiplier=float(
+                risk.cash_low_new_position_multiplier
+            ),
         )
 
 
@@ -313,7 +322,7 @@ class PortfolioRiskManager:
             warnings.append(
                 f"现金比例{cash_ratio:.0%} < {self.config.min_cash_reserve:.0%}，建议保留弹药"
             )
-            max_new *= 0.5  # 限制新仓位大小
+            max_new *= self.config.cash_low_new_position_multiplier
 
         # 6. 板块集中度
         if sector_map:
@@ -562,13 +571,10 @@ class SystemRiskManager:
 
     def _save_state(self, state: Dict[str, Any]) -> None:
         try:
-            self.state_path.parent.mkdir(parents=True, exist_ok=True)
-            tmp_path = self.state_path.with_suffix(self.state_path.suffix + ".tmp")
-            tmp_path.write_text(
+            atomic_write_text(
+                self.state_path,
                 json.dumps(state, ensure_ascii=False, indent=2),
-                encoding="utf-8",
             )
-            tmp_path.replace(self.state_path)
         except OSError as exc:
             _logger.error("系统风控状态保存失败: %s", exc)
 

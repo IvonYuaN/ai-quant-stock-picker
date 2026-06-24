@@ -18,8 +18,7 @@ class InsufficientSharesError(Exception):
 
     def __init__(self, symbol: str, requested: int, available: int):
         super().__init__(
-            f"可卖数量不足: {symbol} 申请卖出 {requested} 股, "
-            f"实际可卖 {available} 股"
+            f"可卖数量不足: {symbol} 申请卖出 {requested} 股, 实际可卖 {available} 股"
         )
         self.symbol = symbol
         self.requested = requested
@@ -47,7 +46,7 @@ class InvalidPriceError(Exception):
 @dataclass
 class Position:
     """持仓记录（支持T+1）
-    
+
     Attributes:
         symbol: 股票代码
         total_shares: 总持仓数量
@@ -81,7 +80,7 @@ class Position:
     @property
     def frozen_shares(self) -> int:
         """冻结股数（T+1未解冻）
-        
+
         Returns:
             T+1冻结的股数，即当日新买入且未解冻的股数
         """
@@ -90,24 +89,22 @@ class Position:
     @property
     def is_fully_sellable(self) -> bool:
         """是否全部可卖
-        
+
         Returns:
             True 表示所有持仓都已解冻可卖，False 表示还有冻结股数
         """
         return self.available_shares == self.total_shares
 
-    def add_shares(
-        self, shares: int, price: float, trade_date: date
-    ) -> None:
+    def add_shares(self, shares: int, price: float, trade_date: date) -> None:
         """增加持仓（买入时调用）
-        
+
         新买入的股份当日不可卖，会在T+1状态下冻结。
-        
+
         Args:
             shares: 买入数量（必须为正整数）
             price: 买入价格（必须为正数）
             trade_date: 买入日期
-            
+
         Raises:
             NegativeSharesError: 买入数量为负或零
             InvalidPriceError: 价格为负或零
@@ -131,12 +128,12 @@ class Position:
 
     def remove_shares(self, shares: int) -> None:
         """减少可卖持仓（卖出时调用）
-        
+
         只能卖出已解冻的可卖数量。
-        
+
         Args:
             shares: 卖出数量（必须为正整数且不超过可卖数量）
-            
+
         Raises:
             NegativeSharesError: 卖出数量为负或零
             InsufficientSharesError: 可卖数量不足
@@ -144,18 +141,16 @@ class Position:
         if shares <= 0:
             raise NegativeSharesError(self.symbol, shares)
         if shares > self.available_shares:
-            raise InsufficientSharesError(
-                self.symbol, shares, self.available_shares
-            )
+            raise InsufficientSharesError(self.symbol, shares, self.available_shares)
 
         self.available_shares -= shares
         self.total_shares -= shares
 
     def unfreeze_for_date(self, current_date: date) -> None:
         """解冻T+1约束（当日开盘前调用）
-        
+
         将前一日及更早买入的股份转为可卖状态。
-        
+
         Args:
             current_date: 当前交易日期
         """
@@ -165,10 +160,10 @@ class Position:
 
     def get_buy_info_for_date(self, target_date: date) -> dict[str, int]:
         """获取指定日期的买入信息
-        
+
         Args:
             target_date: 目标日期
-            
+
         Returns:
             包含该日期买入数量和总数的字典
         """
@@ -179,28 +174,26 @@ class Position:
 @dataclass
 class PositionTracker:
     """持仓追踪器（支持T+1）
-    
+
     管理多只股票的持仓，确保T+1约束得到正确实施。
-    
+
     Attributes:
         positions: 股票代码 -> 持仓对象的映射
     """
 
     positions: dict[str, Position] = field(default_factory=dict)
 
-    def add_buy(
-        self, symbol: str, shares: int, price: float, trade_date: date
-    ) -> None:
+    def add_buy(self, symbol: str, shares: int, price: float, trade_date: date) -> None:
         """记录买入（新买入的shares当日不可卖）
-        
+
         买入操作会增加总持仓，但新买入的股份在T+1解冻前不能卖出。
-        
+
         Args:
             symbol: 股票代码
             shares: 买入数量（必须为正整数）
             price: 买入价格（必须为正数）
             trade_date: 买入日期
-            
+
         Raises:
             NegativeSharesError: 买入数量为负或零
             InvalidPriceError: 价格为负或零
@@ -224,21 +217,19 @@ class PositionTracker:
             # 更新现有持仓
             self.positions[symbol].add_shares(shares, price, trade_date)
 
-    def add_sell(
-        self, symbol: str, shares: int, trade_date: date
-    ) -> bool:
+    def add_sell(self, symbol: str, shares: int, trade_date: date) -> bool:
         """记录卖出（检查可卖数量，不足则失败）
-        
+
         卖出操作会检查可卖数量是否足够。只有已解冻的股份才能卖出。
-        
+
         Args:
             symbol: 股票代码
             shares: 卖出数量（必须为正整数）
             trade_date: 卖出日期（用于未来扩展）
-            
+
         Returns:
             True 表示卖出成功，False 表示操作失败
-            
+
         Raises:
             NegativeSharesError: 卖出数量为负或零
             InsufficientSharesError: 可卖数量不足
@@ -252,9 +243,7 @@ class PositionTracker:
 
         position = self.positions[symbol]
         if shares > position.available_shares:
-            raise InsufficientSharesError(
-                symbol, shares, position.available_shares
-            )
+            raise InsufficientSharesError(symbol, shares, position.available_shares)
 
         position.remove_shares(shares)
 
@@ -266,9 +255,9 @@ class PositionTracker:
 
     def update_available_shares(self, current_date: date) -> None:
         """更新可卖数量（每日开盘前调用，解冻T+1）
-        
+
         此方法应在每日开盘前调用，将前一日及更早买入的股份解冻为可卖状态。
-        
+
         Args:
             current_date: 当前交易日期
         """
@@ -277,10 +266,10 @@ class PositionTracker:
 
     def get_sellable_shares(self, symbol: str) -> int:
         """获取可卖数量
-        
+
         Args:
             symbol: 股票代码
-            
+
         Returns:
             该股票的可卖数量，若持仓不存在则返回0
         """
@@ -297,10 +286,10 @@ class PositionTracker:
 
     def get_total_shares(self, symbol: str) -> int:
         """获取总持仓数量
-        
+
         Args:
             symbol: 股票代码
-            
+
         Returns:
             该股票的总持仓数量，若持仓不存在则返回0
         """
@@ -317,10 +306,10 @@ class PositionTracker:
 
     def get_frozen_shares(self, symbol: str) -> int:
         """获取冻结数量（T+1未解冻）
-        
+
         Args:
             symbol: 股票代码
-            
+
         Returns:
             该股票的冻结数量，若持仓不存在则返回0
         """
@@ -330,11 +319,11 @@ class PositionTracker:
 
     def can_sell(self, symbol: str, shares: int) -> bool:
         """检查是否可以卖出指定数量
-        
+
         Args:
             symbol: 股票代码
             shares: 要卖出的数量
-            
+
         Returns:
             True 表示可以卖出，False 表示不能卖出
         """
@@ -344,10 +333,10 @@ class PositionTracker:
 
     def get_position(self, symbol: str) -> Optional[Position]:
         """获取持仓对象
-        
+
         Args:
             symbol: 股票代码
-            
+
         Returns:
             持仓对象，若不存在则返回 None
         """
@@ -355,7 +344,7 @@ class PositionTracker:
 
     def get_all_positions(self) -> dict[str, Position]:
         """获取所有持仓
-        
+
         Returns:
             所有持仓的副本字典
         """
@@ -363,10 +352,10 @@ class PositionTracker:
 
     def has_position(self, symbol: str) -> bool:
         """检查是否存在某股票的持仓
-        
+
         Args:
             symbol: 股票代码
-            
+
         Returns:
             True 表示存在持仓，False 表示不存在
         """
@@ -374,10 +363,10 @@ class PositionTracker:
 
     def get_cost_basis(self, symbol: str) -> float:
         """获取某股票的平均成本价
-        
+
         Args:
             symbol: 股票代码
-            
+
         Returns:
             平均成本价，若持仓不存在则返回 0.0
         """

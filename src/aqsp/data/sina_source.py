@@ -11,9 +11,12 @@ from aqsp.data.source import (
     DataSource,
     OhlcvFrame,
     apply_limit_suspended_adj,
+    require_fetched_frame,
+    require_fetched_mapping,
     require_non_empty_fetch_result,
 )
 from aqsp.data.cache import DataCache
+from aqsp.core.errors import DataError
 from aqsp.core.time import now_shanghai
 
 _REQUEST_DELAY = 0.3
@@ -52,17 +55,25 @@ class SinaSource(DataSource):
     ) -> dict[str, OhlcvFrame]:
         out: dict[str, OhlcvFrame] = {}
         for symbol in symbols:
-            cached = self.cache.get_ohlcv(symbol, start, end)
+            cached = self.cache.get_ohlcv(
+                symbol, start, end, price_mode=adjust or "raw"
+            )
             if cached is not None and not cached.empty:
                 out[symbol] = cached
                 continue
 
-            df = self._fetch_sina_daily(symbol, start, end)
-            if df is not None and not df.empty:
-                df = self._normalize_sina_df(df, symbol)
-                validated = self._validate_ohlcv(df, symbol)
-                self.cache.set_ohlcv(symbol, validated, source="sina")
-                out[symbol] = validated
+            df = require_fetched_frame(
+                self.name,
+                "日线",
+                symbol,
+                self._fetch_sina_daily(symbol, start, end),
+            )
+            df = self._normalize_sina_df(df, symbol)
+            validated = self._validate_ohlcv(df, symbol)
+            self.cache.set_ohlcv(
+                symbol, validated, source="sina", price_mode=adjust or "raw"
+            )
+            out[symbol] = validated
         require_non_empty_fetch_result(self.name, "日线", symbols, out)
         return out
 
@@ -73,9 +84,12 @@ class SinaSource(DataSource):
     ) -> dict[str, OhlcvFrame]:
         out: dict[str, OhlcvFrame] = {}
         for symbol in symbols:
-            df = self._fetch_sina_intraday(symbol, period)
-            if df is not None and not df.empty:
-                out[symbol] = df
+            out[symbol] = require_fetched_frame(
+                self.name,
+                "分时",
+                symbol,
+                self._fetch_sina_intraday(symbol, period),
+            )
         require_non_empty_fetch_result(self.name, "分时", symbols, out)
         return out
 
@@ -85,9 +99,12 @@ class SinaSource(DataSource):
     ) -> dict[str, dict]:
         quotes = {}
         for symbol in symbols:
-            data = self._fetch_sina_quote(symbol)
-            if data:
-                quotes[symbol] = data
+            quotes[symbol] = require_fetched_mapping(
+                self.name,
+                "实时行情",
+                symbol,
+                self._fetch_sina_quote(symbol),
+            )
         require_non_empty_fetch_result(self.name, "实时行情", symbols, quotes)
         return quotes
 
@@ -104,12 +121,16 @@ class SinaSource(DataSource):
                 out[code] = cached
                 continue
 
-            df = self._fetch_sina_daily(code, start, end, is_index=True)
-            if df is not None and not df.empty:
-                df = self._normalize_sina_df(df, code)
-                validated = self._validate_ohlcv(df, code)
-                self.cache.set_index(code, validated, source="sina")
-                out[code] = validated
+            df = require_fetched_frame(
+                self.name,
+                "指数",
+                code,
+                self._fetch_sina_daily(code, start, end, is_index=True),
+            )
+            df = self._normalize_sina_df(df, code)
+            validated = self._validate_ohlcv(df, code)
+            self.cache.set_index(code, validated, source="sina")
+            out[code] = validated
         require_non_empty_fetch_result(self.name, "指数", index_codes, out)
         return out
 
@@ -149,8 +170,11 @@ class SinaSource(DataSource):
                 else:
                     _logger.warning(
                         "sina 日线获取失败 %s（重试%d次后放弃）: %s",
-                        symbol, _MAX_RETRIES, exc,
+                        symbol,
+                        _MAX_RETRIES,
+                        exc,
                     )
+                    raise DataError(f"sina 日线获取失败: {symbol}") from exc
         return None
 
     def _fetch_sina_intraday(self, symbol: str, period: str) -> pd.DataFrame | None:
@@ -192,8 +216,11 @@ class SinaSource(DataSource):
                 else:
                     _logger.warning(
                         "sina 分时获取失败 %s（重试%d次后放弃）: %s",
-                        symbol, _MAX_RETRIES, exc,
+                        symbol,
+                        _MAX_RETRIES,
+                        exc,
                     )
+                    raise DataError(f"sina 分时获取失败: {symbol}") from exc
         return None
 
     def _fetch_sina_quote(self, symbol: str) -> dict | None:
@@ -221,8 +248,11 @@ class SinaSource(DataSource):
                 else:
                     _logger.warning(
                         "sina 实时报价获取失败 %s（重试%d次后放弃）: %s",
-                        symbol, _MAX_RETRIES, exc,
+                        symbol,
+                        _MAX_RETRIES,
+                        exc,
                     )
+                    raise DataError(f"sina 实时报价获取失败: {symbol}") from exc
         return None
 
     def _normalize_sina_df(self, df: pd.DataFrame, symbol: str) -> pd.DataFrame:

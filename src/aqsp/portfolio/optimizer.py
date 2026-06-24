@@ -161,7 +161,8 @@ def _target_invested_ratio(
         ratio -= risk.allocation_adjustment_step
     if (
         correlation_result is not None
-        and correlation_result.avg_correlation >= risk.allocation_avg_correlation_threshold
+        and correlation_result.avg_correlation
+        >= risk.allocation_avg_correlation_threshold
     ):
         ratio -= risk.allocation_adjustment_step
 

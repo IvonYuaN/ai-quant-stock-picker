@@ -31,11 +31,15 @@ def main() -> int:
     print("# Data Source Registry")
     for source in data_sources.get("sources", []):
         ready = "ready" if source.get("runtime_ready") else "candidate"
-        print(f"- {source['id']} ({ready}): {source['name']} - {source.get('reference', '')}")
+        print(
+            f"- {source['id']} ({ready}): {source['name']} - {source.get('reference', '')}"
+        )
 
     print("\n# Strategy Source Registry")
     for family in strategy_sources.get("families", []):
-        print(f"- {family['id']} ({family.get('current_status', '')}): {family['name']}")
+        print(
+            f"- {family['id']} ({family.get('current_status', '')}): {family['name']}"
+        )
         print(f"  hypothesis: {family.get('hypothesis', '')}")
 
     return 0

@@ -48,7 +48,9 @@ class NationalTeamFilterStrategy(BaseStrategy):
         scores = {}
 
         if self.tracker is None:
-            _logger.warning("NationalTeamTracker not available; returning 0 for all symbols")
+            _logger.warning(
+                "NationalTeamTracker not available; returning 0 for all symbols"
+            )
             return {symbol: 0.0 for symbol in data.keys()}
 
         for symbol in data.keys():
@@ -56,7 +58,9 @@ class NationalTeamFilterStrategy(BaseStrategy):
                 has_holding = self.tracker.has_national_team_holding(symbol)
                 scores[symbol] = 1.0 if has_holding else 0.0
             except Exception as exc:
-                _logger.warning("Failed to check national team holding for %s: %s", symbol, exc)
+                _logger.warning(
+                    "Failed to check national team holding for %s: %s", symbol, exc
+                )
                 scores[symbol] = 0.0
 
         return scores

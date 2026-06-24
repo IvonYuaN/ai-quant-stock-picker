@@ -12,6 +12,7 @@ from aqsp.core.time import now_shanghai
 from aqsp.core.types import RunMetadata
 from aqsp.models import PickResult
 from aqsp.ratings import is_tradable_rating
+from aqsp.utils.jsonl_io import advisory_lock, atomic_write_text
 
 
 @dataclass(frozen=True)
@@ -22,6 +23,7 @@ class ValidationSummary:
     avg_excess_pct: float
     skipped_not_executable: int = 0
     not_executable_reasons: dict[str, int] | None = None
+    strategy_not_executable_rates: dict[str, float] | None = None
 
 
 @dataclass(frozen=True)
@@ -87,11 +89,10 @@ def ledger_rows_to_frame(rows: list[dict]) -> pd.DataFrame:
 
 def write_ledger(path: str | Path, rows: list[dict]) -> None:
     ledger = Path(path)
-    ledger.parent.mkdir(parents=True, exist_ok=True)
     text = "\n".join(
         json.dumps(row, ensure_ascii=False, sort_keys=True) for row in rows
     )
-    ledger.write_text((text + "\n") if text else "", encoding="utf-8")
+    atomic_write_text(ledger, (text + "\n") if text else "")
 
 
 def append_predictions(
@@ -104,74 +105,135 @@ def append_predictions(
     margin_balance_change_5d: float = 0.0,
     run_metadata: RunMetadata | None = None,
 ) -> None:
-    execution = execution or execution_config_from_thresholds()
-    rows = read_ledger(path)
-    row_index_by_key = {_prediction_key(row): idx for idx, row in enumerate(rows)}
-    now = now_shanghai().isoformat(timespec="seconds")
-    for pick in picks:
-        strategies = list(pick.strategies)
-        signal_day_group = pick.date
-        row_key = (pick.date, pick.symbol, thresholds_version, regime, "next_open")
-        prediction_fields = {
-            "signal_date": pick.date,
-            "symbol": pick.symbol,
-            "name": pick.name,
-            "signal_close": pick.close,
-            "intended_entry": "next_open",
-            "score": pick.score,
-            "rating": pick.rating,
-            "position": pick.position,
-            "portfolio_action": str(pick.metrics.get("portfolio_action", "")),
-            "entry_type": pick.entry_type,
-            "ideal_buy": pick.ideal_buy,
-            "strategies": strategies,
-            "reasons": list(pick.reasons),
-            "risks": list(pick.risks),
-            "stop_loss": pick.stop_loss,
-            "stop_method": str(pick.metrics.get("stop_method", "")),
-            "take_profit": pick.take_profit,
-            "adjusted_score": pick.adjusted_score,
-            "recommended_adjustment": pick.recommended_adjustment,
-            "debate_consensus": pick.debate_consensus,
-            "confidence": pick.confidence,
-            "regime_score": pick.regime_score,
-            "sector": str(pick.metrics.get("sector", "") or ""),
-            "industry": str(pick.metrics.get("industry", "") or ""),
-            "horizon_days": execution.horizon_days,
-            "fee_bps": execution.fee_bps,
-            "slippage_bps": execution.slippage_bps,
-            "benchmark_symbol": execution.benchmark_symbol,
-            "limit_up_pct": execution.limit_up_pct,
-            "limit_down_pct": execution.limit_down_pct,
-            "thresholds_version": thresholds_version,
-            "regime_at_signal": regime,
-            "signal_day_group": signal_day_group,
-            "northbound_flow_5d_z": northbound_flow_5d_z,
-            "margin_balance_change_5d": margin_balance_change_5d,
-            **_run_metadata_fields(run_metadata),
-        }
-
-        existing_idx = row_index_by_key.get(row_key)
-        if existing_idx is not None:
-            existing_row = rows[existing_idx]
-            preserved_status = str(existing_row.get("status", "") or "pending")
-            rows[existing_idx] = {
-                **existing_row,
-                **prediction_fields,
-                "status": preserved_status,
+    with advisory_lock(path):
+        execution = execution or execution_config_from_thresholds()
+        rows = read_ledger(path)
+        row_index_by_key = {_prediction_key(row): idx for idx, row in enumerate(rows)}
+        now = now_shanghai().isoformat(timespec="seconds")
+        for pick in picks:
+            strategies = list(pick.strategies)
+            signal_day_group = pick.date
+            row_key = (pick.date, pick.symbol, thresholds_version, regime, "next_open")
+            prediction_fields = {
+                "signal_date": pick.date,
+                "symbol": pick.symbol,
+                "name": pick.name,
+                "signal_close": pick.close,
+                "intended_entry": "next_open",
+                "score": pick.score,
+                "rating": pick.rating,
+                "position": pick.position,
+                "portfolio_action": str(pick.metrics.get("portfolio_action", "")),
+                "entry_type": pick.entry_type,
+                "ideal_buy": pick.ideal_buy,
+                "strategies": strategies,
+                "reasons": list(pick.reasons),
+                "risks": list(pick.risks),
+                "stop_loss": pick.stop_loss,
+                "stop_method": str(pick.metrics.get("stop_method", "")),
+                "take_profit": pick.take_profit,
+                "adjusted_score": pick.adjusted_score,
+                "recommended_adjustment": pick.recommended_adjustment,
+                "debate_consensus": pick.debate_consensus,
+                "confidence": pick.confidence,
+                "regime_score": pick.regime_score,
+                "strategy_weight_snapshot": pick.metrics.get(
+                    "strategy_weight_snapshot", {}
+                ),
+                "composite_score_raw": pick.metrics.get("composite_score_raw", 0.0),
+                "composite_score_normalized": pick.metrics.get(
+                    "composite_score_normalized", 0.0
+                ),
+                "base_score_before_composite": pick.metrics.get(
+                    "base_score_before_composite", 0.0
+                ),
+                "final_score_after_composite": pick.metrics.get(
+                    "final_score_after_composite", pick.score
+                ),
+                "sector": str(pick.metrics.get("sector", "") or ""),
+                "industry": str(pick.metrics.get("industry", "") or ""),
+                "horizon_days": execution.horizon_days,
+                "fee_bps": execution.fee_bps,
+                "slippage_bps": execution.slippage_bps,
+                "benchmark_symbol": execution.benchmark_symbol,
+                "limit_up_pct": execution.limit_up_pct,
+                "limit_down_pct": execution.limit_down_pct,
+                "thresholds_version": thresholds_version,
+                "regime_at_signal": regime,
+                "signal_day_group": signal_day_group,
+                "northbound_flow_5d_z": northbound_flow_5d_z,
+                "margin_balance_change_5d": margin_balance_change_5d,
+                **_run_metadata_fields(run_metadata),
             }
-            continue
 
+            existing_idx = row_index_by_key.get(row_key)
+            if existing_idx is not None:
+                existing_row = rows[existing_idx]
+                preserved_status = str(existing_row.get("status", "") or "pending")
+                rows[existing_idx] = {
+                    **existing_row,
+                    **prediction_fields,
+                    "status": preserved_status,
+                }
+                continue
+
+            rows.append(
+                {
+                    "id": uuid4().hex,
+                    "created_at": now,
+                    **prediction_fields,
+                    "status": "pending",
+                }
+            )
+            row_index_by_key[row_key] = len(rows) - 1
+        write_ledger(path, rows)
+
+
+def append_run_event(
+    path: str | Path,
+    *,
+    event_date: str,
+    status: str,
+    reason: str,
+    run_metadata: RunMetadata | None = None,
+    details: dict[str, object] | None = None,
+) -> None:
+    with advisory_lock(path):
+        rows = read_ledger(path)
+        row_key = (
+            event_date,
+            "__RUN__",
+            status,
+            str(run_metadata.task_id if run_metadata else ""),
+        )
+        existing_keys = {
+            (
+                str(row.get("signal_date", "")),
+                str(row.get("symbol", "")),
+                str(row.get("status", "")),
+                str(row.get("run_task_id", "")),
+            )
+            for row in rows
+        }
+        if row_key in existing_keys:
+            return
+        now = now_shanghai().isoformat(timespec="seconds")
         rows.append(
             {
                 "id": uuid4().hex,
                 "created_at": now,
-                **prediction_fields,
-                "status": "pending",
+                "signal_date": event_date,
+                "signal_day_group": event_date,
+                "symbol": "__RUN__",
+                "name": "run_event",
+                "status": status,
+                "reason": reason,
+                "event_type": status,
+                **(details or {}),
+                **_run_metadata_fields(run_metadata),
             }
         )
-        row_index_by_key[row_key] = len(rows) - 1
-    write_ledger(path, rows)
+        write_ledger(path, rows)
 
 
 def _run_metadata_fields(metadata: RunMetadata | None) -> dict[str, object]:
@@ -314,6 +376,8 @@ def validate_predictions(
     wins = 0
     skipped = 0
     not_executable_reasons: dict[str, int] = {}
+    strategy_attempts: dict[str, int] = {}
+    strategy_not_executable: dict[str, int] = {}
     returns: list[float] = []
     excess_returns: list[float] = []
 
@@ -323,6 +387,7 @@ def validate_predictions(
         if not is_tradable_rating(row.get("rating")):
             row["status"] = "watch_only"
             continue
+        strategies = [str(item) for item in row.get("strategies") or [] if str(item)]
         symbol = str(row.get("symbol", ""))
         frame = frames.get(symbol)
         if frame is None or frame.empty:
@@ -333,6 +398,8 @@ def validate_predictions(
         if future.empty:
             continue
         entry_bar = future.iloc[0]
+        for strategy in strategies:
+            strategy_attempts[strategy] = strategy_attempts.get(strategy, 0) + 1
 
         signal_rows = frame[frame["date"] <= signal_date]
         prev_close = (
@@ -347,6 +414,10 @@ def validate_predictions(
             row["not_executable_reason"] = reason
             skipped += 1
             not_executable_reasons[reason] = not_executable_reasons.get(reason, 0) + 1
+            for strategy in strategies:
+                strategy_not_executable[strategy] = (
+                    strategy_not_executable.get(strategy, 0) + 1
+                )
             continue
 
         horizon = int(row.get("horizon_days") or 1)
@@ -390,6 +461,11 @@ def validate_predictions(
         avg_excess_pct=round(avg_excess, 4),
         skipped_not_executable=skipped,
         not_executable_reasons=dict(sorted(not_executable_reasons.items())),
+        strategy_not_executable_rates={
+            strategy: round(strategy_not_executable.get(strategy, 0) / attempts, 4)
+            for strategy, attempts in sorted(strategy_attempts.items())
+            if attempts > 0 and strategy_not_executable.get(strategy, 0) > 0
+        },
     )
 
 

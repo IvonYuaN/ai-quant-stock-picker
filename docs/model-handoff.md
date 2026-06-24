@@ -26,8 +26,8 @@
 
 ### 1.1 数据源与数据健康
 
-- `eastmoney`：当前短线主源，用于最新日线、分时、实时 quote。
-- `sqlite_db`：私有历史数据库源，服务器路径通常为 `/opt/market-data/astocks_qfq.db`。
+- `eastmoney`：公网补充源，用于临时最新日线、分时、实时 quote，不作为生产默认依赖。
+- `sqlite_db`：私有历史数据库源，生产候选/ledger 路径通常为 `/opt/market-data/astocks_raw.db`；qfq/hfq 只用于展示或历史辅助。
 - `tdx_vipdoc`：本地/服务器私有通达信数据源，可做本地全市场历史补充。
 - `baostock`：可登录，主要用于历史/PIT 财务补充。
 - `tushare`：已接入交易日历、指数成分、财报披露日；需要 `TUSHARE_TOKEN`。
@@ -162,15 +162,15 @@
 /opt/aqsp
 /opt/aqsp/.env
 /opt/aqsp/.venv
-/opt/market-data/astocks_qfq.db
+/opt/market-data/astocks_raw.db
 ```
 
 关键 `.env`：
 
 ```bash
-AQSP_SOURCE=eastmoney
-AQSP_SQLITE_DB_PATH=/opt/market-data/astocks_qfq.db
-AQSP_ALLOW_ONLINE_FALLBACK=true
+AQSP_SOURCE=sqlite_db
+AQSP_SQLITE_DB_PATH=/opt/market-data/astocks_raw.db
+AQSP_ALLOW_ONLINE_FALLBACK=false
 AQSP_SYMBOLS=
 AQSP_MODE=close
 AQSP_LIMIT=10

@@ -24,8 +24,10 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from aqsp.data.sqlite_db_source import SqliteDbSource
+from aqsp.utils.jsonl_io import atomic_write_text
 from aqsp.walkforward_gate import MIN_PRODUCTION_GATE_SYMBOLS
 
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_RAW_DB = Path("/opt/market-data/astocks_raw.db")
 DEFAULT_START = "2018-01-01"
 DEFAULT_END = "2024-12-31"
@@ -187,6 +189,8 @@ def build_walkforward_command(args: argparse.Namespace) -> list[str]:
         ),
         "--report",
         args.report,
+        "--gate-path",
+        args.gate_path,
         "--cache-path",
         args.cache_path,
         "--log",
@@ -224,13 +228,110 @@ def annotate_production_gate_metadata(
             },
         }
     )
-    gate_path.write_text(
-        json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+    atomic_write_text(
+        gate_path, json.dumps(payload, indent=2, ensure_ascii=False) + "\n"
     )
     print(
         "production gate metadata stamped: "
         f"effective_symbols={effective_symbols} price_mode=raw db={db_path}"
     )
+
+
+def write_minimal_pbo_diagnostics(
+    *,
+    gate_path: Path,
+    report_path: Path,
+    coverage: CoverageSummary | None = None,
+) -> bool:
+    """Write a reviewable PBO failure report when the child report is missing."""
+    if report_path.exists() or not gate_path.exists():
+        return False
+    try:
+        payload = json.loads(gate_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return False
+    if not isinstance(payload, dict) or payload.get("pbo_pass") is not False:
+        return False
+
+    pbo = payload.get("pbo")
+    dsr = payload.get("deflated_sharpe")
+    lines = [
+        "# Walk-Forward 生产门禁诊断",
+        "",
+        "## TL;DR",
+        "",
+        "- 结论: BLOCK，当前 sidecar 未通过双门，不允许作为上线证据。",
+        f"- DSR: {_format_report_float(dsr)}",
+        f"- PBO: {_format_report_pct(pbo)}",
+        f"- Gate 日期: {payload.get('run_date', '-')}",
+        f"- 回测区间: {payload.get('data_start', '-')} ~ {payload.get('data_end', '-')}",
+        "",
+        "### PBO 失败定位",
+        "",
+        "| 指标 | 值 |",
+        "|------|-----|",
+        "| CSCV 失败组合占比 | - |",
+        "| Lambda 中位数 | - |",
+        "| Lambda 均值 | - |",
+        "| Sharpe 变体分散度 | - |",
+        "| Return 变体分散度 | - |",
+        "| 最优变体 | - |",
+        "| 最弱变体 | - |",
+        "",
+        "| 最差对齐周期 | 测试窗口 | 平均收益 | 分散度 | 亏损变体数 | 全池平均收益 | 全池下跌占比 | 样本数 |",
+        "|--------------|----------|----------|--------|------------|--------------|--------------|--------|",
+        "| - | - | - | - | - | - | - | - |",
+        "",
+        "| 训练选中变体 | 训练块 | 测试块 | 训练 Sharpe | 测试 Sharpe | 测试倒数排名 | 测试最优变体 | Lambda |",
+        "|--------------|--------|--------|-------------|-------------|--------------|--------------|--------|",
+        "| - | - | - | - | - | - | - | - |",
+        "",
+        "## 生产覆盖",
+        "",
+        "| 项目 | 值 |",
+        "|------|-----|",
+        f"| effective_symbols | {payload.get('effective_symbols', '-')} |",
+        f"| price_mode | {payload.get('price_mode', '-')} |",
+        f"| sqlite_db_path | {payload.get('sqlite_db_path', '-')} |",
+    ]
+    coverage_payload = payload.get("production_gate_coverage")
+    if not isinstance(coverage_payload, dict) and coverage is not None:
+        coverage_payload = {
+            "stock_symbols": coverage.stock_symbols,
+            "covered_symbols": coverage.covered_symbols,
+            "rows": coverage.rows,
+            "first_trade_date": coverage.first_trade_date,
+            "last_trade_date": coverage.last_trade_date,
+        }
+    if isinstance(coverage_payload, dict):
+        lines.extend(
+            [
+                f"| stock_symbols | {coverage_payload.get('stock_symbols', '-')} |",
+                f"| covered_symbols | {coverage_payload.get('covered_symbols', '-')} |",
+                f"| rows | {coverage_payload.get('rows', '-')} |",
+                f"| first_trade_date | {coverage_payload.get('first_trade_date', '-')} |",
+                f"| last_trade_date | {coverage_payload.get('last_trade_date', '-')} |",
+            ]
+        )
+    lines.extend(
+        [
+            "",
+            "## 处理",
+            "",
+            "- 重新运行 `scripts/run_production_walkforward_gate.py` 生成完整多变体 CSCV 报告。",
+            "- 不要手工改写 DSR/PBO/pass 标志；只能由 walk-forward 结果写入 sidecar。",
+        ]
+    )
+    atomic_write_text(report_path, "\n".join(lines) + "\n")
+    return True
+
+
+def _format_report_float(value: object) -> str:
+    return f"{float(value):.4f}" if isinstance(value, (int, float)) else "-"
+
+
+def _format_report_pct(value: object) -> str:
+    return f"{float(value):.2%}" if isinstance(value, (int, float)) else "-"
 
 
 def main() -> int:
@@ -317,9 +418,16 @@ def main() -> int:
             command,
             check=False,
             env=env,
+            cwd=PROJECT_ROOT,
             timeout=args.timeout_seconds if args.timeout_seconds > 0 else None,
         )
         if result.returncode != 0:
+            if write_minimal_pbo_diagnostics(
+                gate_path=Path(args.gate_path),
+                report_path=Path(args.report),
+                coverage=coverage,
+            ):
+                print(f"production gate diagnostic report written: {args.report}")
             return result.returncode
         try:
             annotate_production_gate_metadata(
@@ -331,6 +439,12 @@ def main() -> int:
         except (json.JSONDecodeError, OSError, SystemExit) as exc:
             print(f"BLOCK: failed to stamp production gate metadata: {exc}")
             return 2
+        if write_minimal_pbo_diagnostics(
+            gate_path=Path(args.gate_path),
+            report_path=Path(args.report),
+            coverage=coverage,
+        ):
+            print(f"production gate diagnostic report written: {args.report}")
         return 0
     except subprocess.TimeoutExpired:
         print(

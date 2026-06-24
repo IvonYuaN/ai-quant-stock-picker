@@ -795,13 +795,9 @@ class AShareDebateCoordinator:
         result.recommended_adjustment = recommended_adjustment
 
         if result.adjustment_weight > 0:
-            result.adjustment_reason += (
-                f"，辩论倾向上调；附件参考分 {result.adjusted_score:.1f}，不改写系统评分"
-            )
+            result.adjustment_reason += f"，辩论倾向上调；附件参考分 {result.adjusted_score:.1f}，不改写系统评分"
         elif result.adjustment_weight < 0:
-            result.adjustment_reason += (
-                f"，辩论倾向下调；附件参考分 {result.adjusted_score:.1f}，不改写系统评分"
-            )
+            result.adjustment_reason += f"，辩论倾向下调；附件参考分 {result.adjusted_score:.1f}，不改写系统评分"
 
 
 def format_debate_result(result: DebateResult) -> str:

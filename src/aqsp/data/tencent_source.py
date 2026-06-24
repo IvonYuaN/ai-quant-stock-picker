@@ -11,9 +11,12 @@ from aqsp.data.source import (
     DataSource,
     OhlcvFrame,
     apply_limit_suspended_adj,
+    require_fetched_frame,
+    require_fetched_mapping,
     require_non_empty_fetch_result,
 )
 from aqsp.data.cache import DataCache
+from aqsp.core.errors import DataError
 from aqsp.core.time import now_shanghai
 
 _logger = logging.getLogger("aqsp.data.tencent")
@@ -64,17 +67,25 @@ class TencentSource(DataSource):
     ) -> dict[str, OhlcvFrame]:
         out: dict[str, OhlcvFrame] = {}
         for symbol in symbols:
-            cached = self.cache.get_ohlcv(symbol, start, end)
+            cached = self.cache.get_ohlcv(
+                symbol, start, end, price_mode=adjust or "raw"
+            )
             if cached is not None and not cached.empty:
                 out[symbol] = cached
                 continue
 
-            df = self._fetch_tencent_daily(symbol, start, end)
-            if df is not None and not df.empty:
-                df = self._normalize_tencent_df(df, symbol)
-                validated = self._validate_ohlcv(df, symbol)
-                self.cache.set_ohlcv(symbol, validated, source="tencent")
-                out[symbol] = validated
+            df = require_fetched_frame(
+                self.name,
+                "日线",
+                symbol,
+                self._fetch_tencent_daily(symbol, start, end),
+            )
+            df = self._normalize_tencent_df(df, symbol)
+            validated = self._validate_ohlcv(df, symbol)
+            self.cache.set_ohlcv(
+                symbol, validated, source="tencent", price_mode=adjust or "raw"
+            )
+            out[symbol] = validated
         require_non_empty_fetch_result(self.name, "日线", symbols, out)
         return out
 
@@ -85,9 +96,12 @@ class TencentSource(DataSource):
     ) -> dict[str, OhlcvFrame]:
         out: dict[str, OhlcvFrame] = {}
         for symbol in symbols:
-            df = self._fetch_tencent_intraday(symbol, period)
-            if df is not None and not df.empty:
-                out[symbol] = df
+            out[symbol] = require_fetched_frame(
+                self.name,
+                "分时",
+                symbol,
+                self._fetch_tencent_intraday(symbol, period),
+            )
         require_non_empty_fetch_result(self.name, "分时", symbols, out)
         return out
 
@@ -97,9 +111,12 @@ class TencentSource(DataSource):
     ) -> dict[str, dict]:
         quotes = {}
         for symbol in symbols:
-            data = self._fetch_tencent_quote(symbol)
-            if data:
-                quotes[symbol] = data
+            quotes[symbol] = require_fetched_mapping(
+                self.name,
+                "实时行情",
+                symbol,
+                self._fetch_tencent_quote(symbol),
+            )
         require_non_empty_fetch_result(self.name, "实时行情", symbols, quotes)
         return quotes
 
@@ -116,12 +133,16 @@ class TencentSource(DataSource):
                 out[code] = cached
                 continue
 
-            df = self._fetch_tencent_daily(code, start, end, is_index=True)
-            if df is not None and not df.empty:
-                df = self._normalize_tencent_df(df, code)
-                validated = self._validate_ohlcv(df, code)
-                self.cache.set_index(code, validated, source="tencent")
-                out[code] = validated
+            df = require_fetched_frame(
+                self.name,
+                "指数",
+                code,
+                self._fetch_tencent_daily(code, start, end, is_index=True),
+            )
+            df = self._normalize_tencent_df(df, code)
+            validated = self._validate_ohlcv(df, code)
+            self.cache.set_index(code, validated, source="tencent")
+            out[code] = validated
         require_non_empty_fetch_result(self.name, "指数", index_codes, out)
         return out
 
@@ -170,8 +191,11 @@ class TencentSource(DataSource):
                 else:
                     _logger.warning(
                         "tencent 日线获取失败 %s（重试%d次后放弃）: %s",
-                        symbol, _MAX_RETRIES, exc,
+                        symbol,
+                        _MAX_RETRIES,
+                        exc,
                     )
+                    raise DataError(f"tencent 日线获取失败: {symbol}") from exc
         return None
 
     def _fetch_tencent_intraday(self, symbol: str, period: str) -> pd.DataFrame | None:
@@ -213,8 +237,11 @@ class TencentSource(DataSource):
                 else:
                     _logger.warning(
                         "tencent 分时获取失败 %s（重试%d次后放弃）: %s",
-                        symbol, _MAX_RETRIES, exc,
+                        symbol,
+                        _MAX_RETRIES,
+                        exc,
                     )
+                    raise DataError(f"tencent 分时获取失败: {symbol}") from exc
         return None
 
     def _fetch_tencent_quote(self, symbol: str) -> dict | None:
@@ -259,8 +286,11 @@ class TencentSource(DataSource):
                 else:
                     _logger.warning(
                         "tencent 实时报价获取失败 %s（重试%d次后放弃）: %s",
-                        symbol, _MAX_RETRIES, exc,
+                        symbol,
+                        _MAX_RETRIES,
+                        exc,
                     )
+                    raise DataError(f"tencent 实时报价获取失败: {symbol}") from exc
         return None
 
     def _normalize_tencent_df(self, df: pd.DataFrame, symbol: str) -> pd.DataFrame:

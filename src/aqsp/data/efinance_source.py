@@ -40,7 +40,9 @@ class EfinanceSource(DataSource):
         out: dict[str, OhlcvFrame] = {}
         adjust_flag = {"": 0, "qfq": 1, "hfq": 2}.get(adjust, 0)
         for symbol in symbols:
-            cached = self.cache.get_ohlcv(symbol, start, end)
+            cached = self.cache.get_ohlcv(
+                symbol, start, end, price_mode=adjust or "raw"
+            )
             if cached is not None and not cached.empty:
                 out[symbol] = cached
                 continue
@@ -55,10 +57,12 @@ class EfinanceSource(DataSource):
             except Exception as exc:
                 raise DataError(f"efinance 日线获取失败: {symbol} - {exc}") from exc
             if df is None or df.empty:
-                continue
+                raise DataError(f"efinance 日线获取失败: {symbol} - empty result")
             normalized = self._normalize_efinance_daily_df(df, symbol)
             validated = self._validate_ohlcv(normalized, symbol)
-            self.cache.set_ohlcv(symbol, validated, source="efinance")
+            self.cache.set_ohlcv(
+                symbol, validated, source="efinance", price_mode=adjust or "raw"
+            )
             out[symbol] = validated
         require_non_empty_fetch_result(self.name, "日线", symbols, out)
         return out
@@ -111,7 +115,7 @@ class EfinanceSource(DataSource):
             except Exception as exc:
                 raise DataError(f"efinance 指数获取失败: {code} - {exc}") from exc
             if df is None or df.empty:
-                continue
+                raise DataError(f"efinance 指数获取失败: {code} - empty result")
             normalized = self._normalize_efinance_daily_df(df, code)
             validated = self._validate_ohlcv(normalized, code)
             self.cache.set_index(code, validated, source="efinance")

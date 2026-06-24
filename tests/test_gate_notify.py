@@ -3,7 +3,9 @@ from __future__ import annotations
 from aqsp.runtime.gate_notify import (
     build_gate_notification_markdown,
     gate_reason_fingerprint,
+    mark_gate_notification_failed,
     mark_gate_notification_sent,
+    reserve_gate_notification,
     should_send_gate_notification,
 )
 
@@ -80,3 +82,59 @@ def test_should_send_gate_notification_dedupes_same_normalized_reasons(
     assert next_day is True
     assert cleared is False
     assert not state_path.exists()
+
+
+def test_reserve_gate_notification_dedupes_before_delivery(tmp_path) -> None:
+    state_path = tmp_path / "gate_notify_state.json"
+
+    first = reserve_gate_notification(
+        gate_ok=False,
+        gate_reasons=["冷启动未满: 0/30 个独立信号日", "DSR 未过门: 0.0（需 >1.0）"],
+        state_path=state_path,
+        run_date="2026-06-17",
+    )
+    second = reserve_gate_notification(
+        gate_ok=False,
+        gate_reasons=["冷启动未满: 1/30 个独立信号日", "DSR 未过门: 0.2（需 >1.0）"],
+        state_path=state_path,
+        run_date="2026-06-17",
+    )
+
+    assert first is True
+    assert second is False
+
+
+def test_failed_gate_notification_blocks_same_day_retry(tmp_path) -> None:
+    state_path = tmp_path / "gate_notify_state.json"
+    reasons = ["冷启动未满: 0/30 个独立信号日", "DSR 未过门: 0.0（需 >1.0）"]
+
+    assert reserve_gate_notification(
+        gate_ok=False,
+        gate_reasons=reasons,
+        state_path=state_path,
+        run_date="2026-06-17",
+    )
+    mark_gate_notification_failed(
+        gate_reasons=reasons,
+        state_path=state_path,
+        run_date="2026-06-17",
+    )
+
+    assert (
+        should_send_gate_notification(
+            gate_ok=False,
+            gate_reasons=[
+                "冷启动未满: 8/30 个独立信号日",
+                "DSR 未过门: 0.2（需 >1.0）",
+            ],
+            state_path=state_path,
+            run_date="2026-06-17",
+        )
+        is False
+    )
+    assert reserve_gate_notification(
+        gate_ok=False,
+        gate_reasons=reasons,
+        state_path=state_path,
+        run_date="2026-06-18",
+    )

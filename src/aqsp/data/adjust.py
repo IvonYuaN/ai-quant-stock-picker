@@ -100,9 +100,7 @@ class AdjustmentService:
                         "复权因子缓存成功: symbol=%s, count=%d", symbol, len(df)
                     )
                     return
-            raise DataError(
-                f"复权因子为空: symbol={symbol}, start={start}, end={end}"
-            )
+            raise DataError(f"复权因子为空: symbol={symbol}, start={start}, end={end}")
         except DataError:
             raise
         except Exception as exc:

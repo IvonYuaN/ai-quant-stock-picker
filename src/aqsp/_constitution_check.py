@@ -89,7 +89,9 @@ def _check_no_top_level_llm_import() -> None:
                 continue
             hit = [name for name in names if name in _FORBIDDEN_TOP_LEVEL_LLM]
             if hit:
-                violations.append(f"{path.relative_to(project_root.parent)}:{','.join(hit)}")
+                violations.append(
+                    f"{path.relative_to(project_root.parent)}:{','.join(hit)}"
+                )
     if violations:
         raise ConstitutionViolation(
             "§1.3 #4",

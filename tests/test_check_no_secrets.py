@@ -30,9 +30,9 @@ def test_secret_scan_blocks_non_empty_env_example_values() -> None:
 def test_secret_scan_blocks_non_empty_apikey_shell_values() -> None:
     text = 'export HT_APIKEY="real-api-key"'
 
-    assert find_non_empty_secret_assignments(Path("scripts/test_htsc_skills.sh"), text) == [
-        "scripts/test_htsc_skills.sh:1: non-empty HT_APIKEY"
-    ]
+    assert find_non_empty_secret_assignments(
+        Path("scripts/test_htsc_skills.sh"), text
+    ) == ["scripts/test_htsc_skills.sh:1: non-empty HT_APIKEY"]
 
 
 def test_secret_scan_blocks_broad_secret_key_names() -> None:

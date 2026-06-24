@@ -14,5 +14,7 @@ def test_server_monitor_script_runs_monitor_with_notify() -> None:
     assert 'source "${PROJECT_ROOT}/.env"' in script
     assert 'PYTHON_BIN="${VENV_DIR}/bin/python3"' in script
     assert '-m aqsp monitor --config "${MONITOR_CONFIG}" --notify' in script
-    assert '--notify-critical-only' in script
-    assert 'logs/monitor' in script
+    assert "--notify-critical-only" in script
+    assert 'EXIT_ON_ALERT="${AQSP_MONITOR_EXIT_ON_ALERT:-false}"' in script
+    assert "避免外层调度重复告警" in script
+    assert "logs/monitor" in script

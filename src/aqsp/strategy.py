@@ -40,7 +40,31 @@ def strategy_weights_for_regime(
     regime_weights = thresholds.regime.strategy_weights.get(regime)
     if regime_weights is None:
         return {}
-    return _internet_strategy_weights(regime_weights)
+    enabled_buckets = _enabled_strategy_buckets(thresholds)
+    return {
+        strategy_id: _blend_regime_multiplier(thresholds, weight)
+        for strategy_id, weight in _internet_strategy_weights(regime_weights).items()
+        if _INTERNET_STRATEGY_REGIME_BUCKETS[strategy_id] in enabled_buckets
+    }
+
+
+def _blend_regime_multiplier(thresholds: Thresholds, multiplier: float) -> float:
+    composite = thresholds.composite
+    return float(composite.base_blend_weight) + float(
+        composite.regime_blend_weight
+    ) * float(multiplier)
+
+
+def _enabled_strategy_buckets(thresholds: Thresholds) -> set[str]:
+    buckets = {"momentum"}
+    composite = thresholds.composite
+    if thresholds.volume.enabled and composite.volume_weight > 0:
+        buckets.add("volume")
+    if thresholds.mean_reversion.enabled and composite.mean_reversion_weight > 0:
+        buckets.add("mean_reversion")
+    if thresholds.triple_rise.enabled and composite.triple_rise_weight > 0:
+        buckets.add("triple_rise")
+    return buckets
 
 
 def _internet_strategy_weights(
@@ -53,11 +77,14 @@ def _internet_strategy_weights(
 
 
 def screen_universe(
-    frames: dict[str, pd.DataFrame], config: ScreeningConfig
+    frames: dict[str, pd.DataFrame],
+    config: ScreeningConfig,
+    thresholds: Thresholds | None = None,
 ) -> list[PickResult]:
     """Screen candidate frames into ranked paper-trading picks."""
-    thresholds = load_thresholds()
-    scoring = thresholds.scoring
+    current_thresholds = thresholds or load_thresholds()
+    scoring = current_thresholds.scoring
+    internet_strategy = current_thresholds.internet_strategy
     picks: list[PickResult] = []
     validator = DataValidator()
     tradability_filter = TradabilityFilter()
@@ -106,7 +133,7 @@ def screen_universe(
     for symbol in filtered_symbols:
         frame = validated_frames[symbol]
         try:
-            result = score_symbol(symbol, frame, config, scoring, thresholds)
+            result = score_symbol(symbol, frame, config, scoring, internet_strategy)
         except (ValueError, IndexError, KeyError, TypeError) as exc:
             _logger.warning("score_symbol %s 异常，已跳过: %s", symbol, exc)
             continue
@@ -246,8 +273,15 @@ def score_symbol(
             risks.append("前一交易日振幅过大")
 
     strategy_signals = evaluate_strategy_signals(df, thresholds=internet_strategy)
+    applied_strategy_weights: dict[str, float] = {}
+    applied_strategy_weight_reasons: dict[str, str] = {}
     for signal in strategy_signals:
         weight = config.strategy_weights.get(signal.strategy_id, 1.0)
+        applied_strategy_weights[signal.strategy_id] = round(float(weight), 4)
+        if signal.strategy_id in config.strategy_weight_reasons:
+            applied_strategy_weight_reasons[signal.strategy_id] = (
+                config.strategy_weight_reasons[signal.strategy_id]
+            )
         score += signal.score * weight
         strategy_ids.append(signal.strategy_id)
         reasons.append(f"{signal.display_name}: {'/'.join(signal.reasons[:2])}")
@@ -258,7 +292,9 @@ def score_symbol(
     )
     stop_loss = max(stop_base * (1 - config.stop_loss_buffer), 0.01)
     take_profit = close + max(close - stop_loss, atr14) * scoring.take_profit_multiplier
-    position = _position(score, risks, scoring, max_position_pct=config.max_position_pct)
+    position = _position(
+        score, risks, scoring, max_position_pct=config.max_position_pct
+    )
     rating = _rating(score, scoring)
 
     return PickResult(
@@ -285,6 +321,8 @@ def score_symbol(
             "avg_amount_20": round(avg_amount, 2),
             "sector": _text(row.get("sector")),
             "industry": _text(row.get("industry")),
+            "strategy_weights": applied_strategy_weights,
+            "strategy_weight_reasons": applied_strategy_weight_reasons,
         },
         confidence=_compute_confidence(
             len(strategy_ids), score, len(risks), volume_ratio, scoring

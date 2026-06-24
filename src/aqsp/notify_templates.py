@@ -451,16 +451,27 @@ def _validation_reason_lines(
         return []
     skipped = int(validation_summary.get("skipped_not_executable") or 0)
     reasons = validation_summary.get("not_executable_reasons") or {}
-    if skipped <= 0 or not isinstance(reasons, dict) or not reasons:
-        return []
-    top_reasons = sorted(
-        ((str(reason), int(count)) for reason, count in reasons.items()),
-        key=lambda item: (-item[1], item[0]),
-    )[:3]
-    return [
-        "- 不可成交原因: "
-        + ", ".join(f"{reason}×{count}" for reason, count in top_reasons)
-    ]
+    lines: list[str] = []
+    if skipped > 0 and isinstance(reasons, dict) and reasons:
+        top_reasons = sorted(
+            ((str(reason), int(count)) for reason, count in reasons.items()),
+            key=lambda item: (-item[1], item[0]),
+        )[:3]
+        lines.append(
+            "- 不可成交原因: "
+            + ", ".join(f"{reason}×{count}" for reason, count in top_reasons)
+        )
+    rates = validation_summary.get("strategy_not_executable_rates") or {}
+    if skipped > 0 and isinstance(rates, dict) and rates:
+        top_rates = sorted(
+            ((str(strategy), float(rate)) for strategy, rate in rates.items()),
+            key=lambda item: (-item[1], item[0]),
+        )[:3]
+        lines.append(
+            "- 不可成交策略: "
+            + ", ".join(f"{strategy} {rate:.0%}" for strategy, rate in top_rates)
+        )
+    return lines
 
 
 def _daily_lead_conclusion(

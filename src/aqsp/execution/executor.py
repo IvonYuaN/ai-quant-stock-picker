@@ -16,14 +16,15 @@ from .twap import TWAPExecutor, TWAPPlan
 @dataclass
 class ExecutionPlan:
     """完整执行计划"""
+
     twap_plan: TWAPPlan
-    total_commission: float           # 总佣金（元）
-    total_stamp_tax: float            # 总印花税（元）
-    total_slippage: float             # 总滑点（元）
-    estimated_total_cost: float       # 预计总成本（元）
-    estimated_cost_rate: float        # 预计成本率（%）
-    is_valid: bool                    # 是否有效
-    validation_errors: list[str]      # 验证错误
+    total_commission: float  # 总佣金（元）
+    total_stamp_tax: float  # 总印花税（元）
+    total_slippage: float  # 总滑点（元）
+    estimated_total_cost: float  # 预计总成本（元）
+    estimated_cost_rate: float  # 预计成本率（%）
+    is_valid: bool  # 是否有效
+    validation_errors: list[str]  # 验证错误
 
 
 class ExecutionCoordinator:
@@ -149,9 +150,7 @@ class ExecutionCoordinator:
             return {"error": "执行计划列表为空"}
 
         # 按成本率排序
-        sorted_plans = sorted(
-            plans, key=lambda p: p.estimated_cost_rate
-        )
+        sorted_plans = sorted(plans, key=lambda p: p.estimated_cost_rate)
 
         return {
             "best_plan": sorted_plans[0],
@@ -186,12 +185,14 @@ class ExecutionCoordinator:
 
         for i, order in enumerate(twap_plan.orders):
             # 这里可以扩展为更复杂的模拟逻辑
-            results.append({
-                "order_index": i + 1,
-                "shares": order.shares,
-                "price": actual_prices[i] if i < len(actual_prices) else None,
-                "symbol": order.symbol,
-            })
+            results.append(
+                {
+                    "order_index": i + 1,
+                    "shares": order.shares,
+                    "price": actual_prices[i] if i < len(actual_prices) else None,
+                    "symbol": order.symbol,
+                }
+            )
             total_amount += order.shares
 
         return {

@@ -34,6 +34,7 @@ def safe_val(row, key):
         if v is None:
             return None
         import numpy as np
+
         if isinstance(v, (np.integer,)):
             return int(v)
         if isinstance(v, (np.floating,)):
@@ -76,10 +77,8 @@ def fetch_tencent_quote(ticker: str) -> dict:
 def fetch_consensus_eps(ticker: str) -> list:
     try:
         import akshare as ak
-        df = ak.stock_profit_forecast_ths(
-            symbol=ticker,
-            indicator="预测年报每股收益"
-        )
+
+        df = ak.stock_profit_forecast_ths(symbol=ticker, indicator="预测年报每股收益")
         if df is not None and not df.empty:
             return df.head(20).to_dict(orient="records")
     except Exception as e:
@@ -90,6 +89,7 @@ def fetch_consensus_eps(ticker: str) -> list:
 def fetch_research_reports(ticker: str) -> list:
     try:
         import akshare as ak
+
         df = ak.stock_research_report_em(symbol=ticker)
         if df is not None and not df.empty:
             return df.head(15).to_dict(orient="records")
@@ -101,6 +101,7 @@ def fetch_research_reports(ticker: str) -> list:
 def fetch_news(ticker: str) -> list:
     try:
         import akshare as ak
+
         df = ak.stock_news_em(symbol=ticker)
         if df is not None and not df.empty:
             return df.head(10).to_dict(orient="records")
@@ -112,6 +113,7 @@ def fetch_news(ticker: str) -> list:
 def fetch_financial_snapshot(ticker: str) -> dict:
     try:
         from mootdx.quotes import Quotes
+
         client = Quotes.factory(market="std")
         df = client.finance(symbol=ticker)
         if df is not None and not df.empty:
@@ -125,6 +127,7 @@ def fetch_financial_snapshot(ticker: str) -> dict:
 def fetch_f10_overview(ticker: str) -> dict:
     try:
         from mootdx.quotes import Quotes
+
         client = Quotes.factory(market="std")
         overview = client.F10(symbol=ticker, name="最新提示")
         if overview:
@@ -138,6 +141,7 @@ def fetch_f10_overview(ticker: str) -> dict:
 def fetch_growth_history(ticker: str) -> list:
     try:
         import akshare as ak
+
         df = ak.stock_financial_abstract_ths(symbol=ticker, indicator="按报告期")
         if df is not None and not df.empty:
             return df.tail(8).iloc[::-1].to_dict(orient="records")

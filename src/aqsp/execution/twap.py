@@ -19,6 +19,7 @@ from typing import Optional
 @dataclass
 class Order:
     """单笔订单"""
+
     symbol: str
     shares: int
     price_limit: Optional[float] = None  # 限价，None表示市价
@@ -27,6 +28,7 @@ class Order:
 @dataclass
 class TWAPPlan:
     """TWAP拆单计划"""
+
     orders: list[Order]
     total_shares: int
     interval_seconds: int
@@ -38,7 +40,7 @@ class TWAPExecutor:
 
     # A股交易规则常数
     MIN_SHARES_PER_ORDER = 100  # 最小100股
-    SHARES_UNIT = 100           # 100的整数倍
+    SHARES_UNIT = 100  # 100的整数倍
 
     def split_order(
         self,
@@ -87,8 +89,11 @@ class TWAPExecutor:
         """
         # 1. 参数验证
         self._validate_parameters(
-            symbol, target_shares, avg_daily_volume,
-            time_window_minutes, max_participation_rate
+            symbol,
+            target_shares,
+            avg_daily_volume,
+            time_window_minutes,
+            max_participation_rate,
         )
 
         # 2. 计算单笔最大量
@@ -105,9 +110,7 @@ class TWAPExecutor:
         interval_seconds = max(60, time_window_seconds // num_slices)
 
         # 5. 生成订单列表
-        orders = self._generate_orders(
-            symbol, target_shares, num_slices, price_limit
-        )
+        orders = self._generate_orders(symbol, target_shares, num_slices, price_limit)
 
         # 6. 计算预计执行时间
         estimated_duration_minutes = math.ceil(
@@ -273,19 +276,17 @@ class TWAPExecutor:
         # 检查订单总数
         total_shares = sum(order.shares for order in plan.orders)
         if total_shares != plan.total_shares:
-            errors.append(
-                f"订单总股数{total_shares}与目标股数{plan.total_shares}不符"
-            )
+            errors.append(f"订单总股数{total_shares}与目标股数{plan.total_shares}不符")
 
         # 检查每笔订单
         for i, order in enumerate(plan.orders):
             # 检查是否是100的倍数
             if order.shares % 100 != 0:
-                errors.append(f"第{i+1}笔订单({order.shares}股)不是100的倍数")
+                errors.append(f"第{i + 1}笔订单({order.shares}股)不是100的倍数")
 
             # 检查最小股数
             if order.shares < 100:
-                errors.append(f"第{i+1}笔订单({order.shares}股)少于最小100股")
+                errors.append(f"第{i + 1}笔订单({order.shares}股)少于最小100股")
 
             # 检查参与率
             participation_rate = self.calculate_participation_rate(
@@ -293,8 +294,8 @@ class TWAPExecutor:
             )
             if participation_rate > max_participation_rate * 100:
                 warnings.append(
-                    f"第{i+1}笔订单参与率{participation_rate:.2f}%"
-                    f"超过限制{max_participation_rate*100:.2f}%"
+                    f"第{i + 1}笔订单参与率{participation_rate:.2f}%"
+                    f"超过限制{max_participation_rate * 100:.2f}%"
                 )
 
         # 检查时间间隔

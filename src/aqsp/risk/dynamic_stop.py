@@ -5,6 +5,8 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
+from aqsp.strategies.thresholds import load_thresholds
+
 
 @dataclass(frozen=True)
 class DynamicStopResult:
@@ -60,12 +62,54 @@ def compute_dynamic_stop(
     df: pd.DataFrame,
     entry_price: float,
     symbol: str = "",
-    atr_multiplier: float = 2.0,
-    fallback_pct: float = 0.05,
-    recent_low_days: int = 5,
-    trailing_pct: float = 0.03,
-    support_lookback: int = 20,
+    atr_period: int | None = None,
+    atr_multiplier: float | None = None,
+    fallback_pct: float | None = None,
+    recent_low_days: int | None = None,
+    trailing_pct: float | None = None,
+    support_lookback: int | None = None,
 ) -> DynamicStopResult:
+    if any(
+        value is None
+        for value in (
+            atr_period,
+            atr_multiplier,
+            fallback_pct,
+            recent_low_days,
+            trailing_pct,
+            support_lookback,
+        )
+    ):
+        risk = load_thresholds().risk
+        atr_period = risk.dynamic_stop_atr_period if atr_period is None else atr_period
+        atr_multiplier = (
+            risk.dynamic_stop_atr_multiplier
+            if atr_multiplier is None
+            else atr_multiplier
+        )
+        fallback_pct = (
+            risk.dynamic_stop_fallback_pct if fallback_pct is None else fallback_pct
+        )
+        recent_low_days = (
+            risk.dynamic_stop_recent_low_days
+            if recent_low_days is None
+            else recent_low_days
+        )
+        trailing_pct = (
+            risk.dynamic_stop_trailing_pct if trailing_pct is None else trailing_pct
+        )
+        support_lookback = (
+            risk.dynamic_stop_support_lookback
+            if support_lookback is None
+            else support_lookback
+        )
+    atr_period = int(atr_period)
+    atr_multiplier = float(atr_multiplier)
+    fallback_pct = float(fallback_pct)
+    recent_low_days = int(recent_low_days)
+    trailing_pct = float(trailing_pct)
+    support_lookback = int(support_lookback)
+
     if df.empty or "close" not in df.columns:
         fallback_stop = entry_price * (1 - fallback_pct)
         return DynamicStopResult(
@@ -77,7 +121,7 @@ def compute_dynamic_stop(
             method=f"fallback_{fallback_pct:.0%}",
         )
 
-    atr = compute_atr(df)
+    atr = compute_atr(df, period=max(1, int(atr_period)))
     atr_stop = round(entry_price - atr_multiplier * atr, 2)
 
     recent_lows = df["low"].tail(max(1, int(recent_low_days)))

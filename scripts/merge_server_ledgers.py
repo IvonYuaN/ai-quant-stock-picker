@@ -10,6 +10,7 @@ from pathlib import Path
 
 from aqsp.core.time import now_shanghai
 from aqsp.ledger.runtime import ledger_signal_date
+from aqsp.utils.jsonl_io import atomic_write_text
 
 
 @dataclass(frozen=True)
@@ -95,7 +96,7 @@ def write_rows(path: Path, rows: list[dict]) -> None:
     text = "\n".join(
         json.dumps(row, ensure_ascii=False, sort_keys=True) for row in rows
     )
-    path.write_text((text + "\n") if text else "", encoding="utf-8")
+    atomic_write_text(path, (text + "\n") if text else "")
 
 
 def backup_file(path: Path, stamp: str) -> Path | None:

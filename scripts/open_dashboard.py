@@ -26,6 +26,7 @@ from scripts.render_dashboard import (
     render_dashboard,
 )  # noqa: E402
 from aqsp.research.summary import load_research_summary  # noqa: E402
+from aqsp.utils.jsonl_io import atomic_write_text  # noqa: E402
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 9876
@@ -59,7 +60,7 @@ def render_dashboard_bundle(
         read_paper_rows(paper_ledger_path),
         load_research_summary(),
     )
-    output_path.write_text(html_text, encoding="utf-8")
+    atomic_write_text(output_path, html_text)
     export_db(csv_path, ledger_path, db_path)
 
 

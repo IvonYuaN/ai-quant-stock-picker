@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -10,11 +11,14 @@ from aqsp.config import load_runtime_config
 from aqsp.core.time import now_shanghai
 from aqsp.notification_style import compact_notification_markdown
 from aqsp.notify_templates import build_monitor_notification
-from aqsp.notifier import notify_markdown, print_notify_results
+from aqsp.notifier import notify_markdown_via_config, print_notify_results
 from aqsp.utils.jsonl_io import advisory_lock, atomic_write_text
 
 if TYPE_CHECKING:
     from .checker import MonitorResult
+
+MONITOR_NOTIFY_PENDING_TTL_MINUTES = 30
+MONITOR_NOTIFY_FAILURE_RETRY_MINUTES = 60
 
 
 def format_alert(results: list[MonitorResult]) -> str:
@@ -84,14 +88,15 @@ def send_alerts(results: list[MonitorResult]) -> None:
         print(f"monitor notify: state write failed; fail closed: {exc}")
         return
     if not new_triggered:
-        print("monitor notify: skipped duplicate critical alert")
+        print("monitor notify: skipped duplicate alert")
         return
 
+    notify_mode = load_runtime_config().notify_mode
     alert_msg = build_monitor_notification(
         new_triggered,
-        mode=load_runtime_config().notify_mode,
+        mode=notify_mode,
     )
-    notify_results = notify_markdown(alert_msg)
+    notify_results = notify_markdown_via_config(alert_msg, mode=notify_mode)
     print_notify_results(notify_results, prefix="monitor notify")
     if any(result.ok for result in notify_results):
         _mark_monitor_alerts_sent(
@@ -101,7 +106,13 @@ def send_alerts(results: list[MonitorResult]) -> None:
             date_key=date_key,
         )
     else:
-        print("monitor notify: delivery failed; suppressing duplicate retries today")
+        _mark_monitor_alerts_failed(
+            state_path=state_path,
+            results=new_triggered,
+            fingerprint=fingerprint,
+            date_key=date_key,
+        )
+        print("monitor notify: delivery failed; retry after cooldown")
 
 
 def _monitor_notify_state_path() -> Path:
@@ -152,13 +163,16 @@ def _reserve_monitor_alerts(
         day_state = sent_by_date.get(date_key, {})
         if not isinstance(day_state, dict):
             day_state = {}
-        new_results = [
-            result for result in results if _monitor_alert_key(result) not in day_state
-        ]
+        new_results = []
+        for result in results:
+            entry = day_state.get(_monitor_alert_key(result))
+            if _monitor_state_entry_blocks(entry):
+                continue
+            new_results.append(result)
         if not new_results:
             return []
         for result in new_results:
-            day_state[_monitor_alert_key(result)] = "pending"
+            day_state[_monitor_alert_key(result)] = _monitor_state_entry("pending")
         sent_by_date[date_key] = day_state
         _write_monitor_notify_state(
             state_path=state_path,
@@ -186,7 +200,7 @@ def _mark_monitor_alerts_sent(
         if not isinstance(day_state, dict):
             day_state = {}
         for result in results:
-            day_state[_monitor_alert_key(result)] = "sent"
+            day_state[_monitor_alert_key(result)] = _monitor_state_entry("sent")
         sent_by_date[date_key] = day_state
         _write_monitor_notify_state(
             state_path=state_path,
@@ -195,6 +209,64 @@ def _mark_monitor_alerts_sent(
             status="sent",
             sent_by_date=sent_by_date,
         )
+
+
+def _mark_monitor_alerts_failed(
+    *,
+    state_path: Path,
+    results: list[MonitorResult],
+    fingerprint: str,
+    date_key: str,
+) -> None:
+    with advisory_lock(state_path):
+        state = _read_monitor_notify_state(state_path)
+        sent_by_date = state.get("sent_by_date", {})
+        if not isinstance(sent_by_date, dict):
+            sent_by_date = {}
+        day_state = sent_by_date.get(date_key, {})
+        if not isinstance(day_state, dict):
+            day_state = {}
+        for result in results:
+            day_state[_monitor_alert_key(result)] = _monitor_state_entry("failed")
+        sent_by_date[date_key] = day_state
+        _write_monitor_notify_state(
+            state_path=state_path,
+            fingerprint=fingerprint,
+            date_key=date_key,
+            status="failed",
+            sent_by_date=sent_by_date,
+        )
+
+
+def _monitor_state_entry(status: str) -> dict[str, str]:
+    return {
+        "status": status,
+        "updated_at": now_shanghai().isoformat(timespec="seconds"),
+    }
+
+
+def _monitor_state_entry_blocks(entry: object) -> bool:
+    if isinstance(entry, str):
+        return entry in {"pending", "sent", "failed"}
+    if not isinstance(entry, dict):
+        return False
+    status = str(entry.get("status") or "")
+    if status == "sent":
+        return True
+    ttl = (
+        MONITOR_NOTIFY_PENDING_TTL_MINUTES
+        if status == "pending"
+        else MONITOR_NOTIFY_FAILURE_RETRY_MINUTES
+        if status == "failed"
+        else 0
+    )
+    if ttl <= 0:
+        return False
+    try:
+        updated = datetime.fromisoformat(str(entry.get("updated_at") or ""))
+    except ValueError:
+        return False
+    return (now_shanghai() - updated).total_seconds() < ttl * 60
 
 
 def _write_monitor_notify_state(

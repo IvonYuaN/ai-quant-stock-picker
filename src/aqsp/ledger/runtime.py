@@ -1,21 +1,73 @@
 from __future__ import annotations
 
+import json
 from datetime import date
 from typing import Any
+
+import pandas as pd
 
 from aqsp.core.time import now_shanghai
 from aqsp.ledger.base import read_ledger
 
 
+REAL_SIGNAL_STATUSES = frozenset(
+    {
+        "pending",
+        "validated",
+        "watch_only",
+    }
+)
+
+PAPER_TRACKING_STATUSES = frozenset(
+    {
+        "open",
+        "closed",
+        "pending_entry",
+        "not_executable",
+    }
+)
+
+EXECUTABILITY_FEEDBACK_STATUSES = frozenset({"validated", "not_executable"})
+
+MIN_EXECUTABILITY_FEEDBACK_ATTEMPTS = 5
+MAX_EXECUTABILITY_BLOCK_RATE = 0.35
+EXECUTABILITY_WEIGHT_MULTIPLIER = 0.5
+
+
 def count_independent_signal_days(ledger_path: str) -> int:
     rows = read_ledger(ledger_path)
+    return _count_independent_days(
+        rows,
+        allowed_statuses=REAL_SIGNAL_STATUSES,
+        require_status=False,
+    )
+
+
+def count_paper_tracking_days(paper_ledger_path: str) -> int:
+    rows = read_ledger(paper_ledger_path)
+    return _count_independent_days(
+        rows,
+        allowed_statuses=PAPER_TRACKING_STATUSES,
+        require_status=True,
+    )
+
+
+def _count_independent_days(
+    rows: list[dict[str, Any]],
+    *,
+    allowed_statuses: frozenset[str],
+    require_status: bool,
+) -> int:
     signal_dates: set[str] = set()
     for row in rows:
         if bool(row.get("is_simulated")):
             continue
         if not str(row.get("symbol") or "").strip():
             continue
-        if str(row.get("status") or "").strip() == "not_executable":
+        status = str(row.get("status") or "").strip()
+        if require_status and not status:
+            continue
+        if status and status not in allowed_statuses:
             continue
         has_signal_payload = any(
             row.get(key) not in (None, "")
@@ -40,6 +92,44 @@ def ledger_signal_date(row: dict[str, Any]) -> str:
                 continue
             return candidate
     return ""
+
+
+def strategy_executability_weight_adjustments(
+    ledger_path: str,
+    *,
+    min_attempts: int = MIN_EXECUTABILITY_FEEDBACK_ATTEMPTS,
+    max_block_rate: float = MAX_EXECUTABILITY_BLOCK_RATE,
+    penalty_multiplier: float = EXECUTABILITY_WEIGHT_MULTIPLIER,
+) -> tuple[dict[str, float], dict[str, str]]:
+    rows = read_ledger(ledger_path)
+    attempts: dict[str, int] = {}
+    blocked: dict[str, int] = {}
+    for row in rows:
+        status = str(row.get("status") or "").strip()
+        if status not in EXECUTABILITY_FEEDBACK_STATUSES:
+            continue
+        strategies = _row_strategies(row.get("strategies"))
+        if not strategies:
+            continue
+        for strategy in strategies:
+            attempts[strategy] = attempts.get(strategy, 0) + 1
+            if status == "not_executable":
+                blocked[strategy] = blocked.get(strategy, 0) + 1
+
+    adjustments: dict[str, float] = {}
+    reasons: dict[str, str] = {}
+    for strategy, total in sorted(attempts.items()):
+        if total < min_attempts:
+            continue
+        block_count = blocked.get(strategy, 0)
+        rate = block_count / total
+        if rate <= max_block_rate:
+            continue
+        adjustments[strategy] = penalty_multiplier
+        reasons[strategy] = (
+            f"recent not_executable rate {rate:.0%} ({block_count}/{total})"
+        )
+    return adjustments, reasons
 
 
 def compute_real_pnl(ledger_path: str) -> tuple[float, float, float]:
@@ -89,3 +179,156 @@ def compute_real_pnl(ledger_path: str) -> tuple[float, float, float]:
     monthly_pnl = (monthly_cum - 1) * 100 if monthly_returns else 0.0
 
     return daily_pnl, weekly_pnl, monthly_pnl
+
+
+def _row_strategies(raw: object) -> list[str]:
+    if raw is None:
+        return []
+    if isinstance(raw, (list, tuple)):
+        return [str(item).strip() for item in raw if str(item).strip()]
+    if isinstance(raw, str):
+        text = raw.strip()
+        if not text:
+            return []
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError:
+            return [item.strip() for item in text.split(",") if item.strip()]
+        if isinstance(parsed, (list, tuple)):
+            return [str(item).strip() for item in parsed if str(item).strip()]
+        return []
+    return []
+
+
+def compute_paper_mark_to_market_pnl(
+    paper_ledger_path: str,
+    frames: dict[str, pd.DataFrame],
+) -> tuple[float, float, float] | None:
+    rows = read_ledger(paper_ledger_path)
+    open_rows = [row for row in rows if row.get("status") == "open"]
+    if not open_rows:
+        return None
+
+    today = now_shanghai().date()
+    daily_returns: list[float] = []
+    weekly_returns: list[float] = []
+    monthly_returns: list[float] = []
+    for row in open_rows:
+        symbol = str(row.get("symbol") or "")
+        frame = frames.get(symbol)
+        if frame is None or frame.empty:
+            continue
+        entry_price = _safe_float(row.get("entry_price"))
+        if entry_price <= 0:
+            continue
+        frame = frame.sort_values("date").reset_index(drop=True)
+        latest = frame.iloc[-1]
+        latest_close = _safe_float(latest.get("close"))
+        if latest_close <= 0:
+            continue
+        signal_date = _parse_row_date(row.get("signal_date") or row.get("entry_date"))
+        if signal_date == today:
+            entry_ret = (latest_close - entry_price) / entry_price * 100
+            daily_returns.append(entry_ret)
+        else:
+            prev_close = _previous_close(frame, latest_close)
+            if prev_close > 0:
+                daily_returns.append((latest_close - prev_close) / prev_close * 100)
+        weekly_ret = _period_mark_to_market_return(
+            row,
+            frame,
+            latest_close=latest_close,
+            entry_price=entry_price,
+            today=today,
+            lookback_days=7,
+        )
+        if weekly_ret is not None:
+            weekly_returns.append(weekly_ret)
+        monthly_ret = _period_mark_to_market_return(
+            row,
+            frame,
+            latest_close=latest_close,
+            entry_price=entry_price,
+            today=today,
+            lookback_days=30,
+        )
+        if monthly_ret is not None:
+            monthly_returns.append(monthly_ret)
+
+    if not daily_returns:
+        return None
+    return (
+        _compound_returns(daily_returns),
+        _compound_returns(weekly_returns),
+        _compound_returns(monthly_returns),
+    )
+
+
+def _compound_returns(values: list[float]) -> float:
+    if not values:
+        return 0.0
+    cumulative = 1.0
+    for value in values:
+        cumulative *= 1 + value / 100
+    return (cumulative - 1) * 100
+
+
+def _safe_float(value: object) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _previous_close(frame: pd.DataFrame, latest_close: float) -> float:
+    if len(frame) < 2:
+        return 0.0
+    previous = frame.iloc[-2]
+    prev_close = _safe_float(previous.get("close"))
+    if prev_close <= 0:
+        return 0.0
+    return prev_close
+
+
+def _period_mark_to_market_return(
+    row: dict[str, Any],
+    frame: pd.DataFrame,
+    *,
+    latest_close: float,
+    entry_price: float,
+    today: date,
+    lookback_days: int,
+) -> float | None:
+    entry_date = _parse_row_date(row.get("entry_date") or row.get("signal_date"))
+    period_start = today - pd.Timedelta(days=lookback_days).to_pytimedelta()
+    if entry_date is not None and entry_date >= period_start:
+        base_price = entry_price
+    else:
+        base_price = _close_on_or_before(frame, period_start)
+    if base_price <= 0:
+        return None
+    return (latest_close - base_price) / base_price * 100
+
+
+def _close_on_or_before(frame: pd.DataFrame, target: date) -> float:
+    if "date" not in frame.columns:
+        return 0.0
+    dated = frame.copy()
+    dated["_date"] = pd.to_datetime(dated["date"], errors="coerce").dt.date
+    dated = dated.dropna(subset=["_date"])
+    if dated.empty:
+        return 0.0
+    before = dated[dated["_date"] <= target]
+    if before.empty:
+        return 0.0
+    return _safe_float(before.iloc[-1].get("close"))
+
+
+def _parse_row_date(value: object) -> date | None:
+    raw = str(value or "").strip()
+    if len(raw) < 10:
+        return None
+    try:
+        return date.fromisoformat(raw[:10])
+    except ValueError:
+        return None

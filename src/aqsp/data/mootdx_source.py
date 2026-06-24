@@ -9,8 +9,11 @@ from aqsp.data.source import (
     DataSource,
     OhlcvFrame,
     apply_limit_suspended_adj,
+    require_fetched_frame,
+    require_fetched_mapping,
     require_non_empty_fetch_result,
 )
+from aqsp.core.errors import DataError
 from aqsp.core.time import now_shanghai
 
 _logger = logging.getLogger("aqsp.data.mootdx")
@@ -49,10 +52,14 @@ class MootdxSource(DataSource):
     ) -> dict[str, OhlcvFrame]:
         out: dict[str, OhlcvFrame] = {}
         for symbol in symbols:
-            df = self._fetch_mootdx_daily(symbol, start, end, count=count)
-            if df is not None and not df.empty:
-                df = self._normalize_mootdx_df(df, symbol)
-                out[symbol] = self._validate_ohlcv(df, symbol)
+            df = require_fetched_frame(
+                self.name,
+                "日线",
+                symbol,
+                self._fetch_mootdx_daily(symbol, start, end, count=count),
+            )
+            df = self._normalize_mootdx_df(df, symbol)
+            out[symbol] = self._validate_ohlcv(df, symbol)
         require_non_empty_fetch_result(self.name, "日线", symbols, out)
         return out
 
@@ -63,9 +70,12 @@ class MootdxSource(DataSource):
     ) -> dict[str, OhlcvFrame]:
         out: dict[str, OhlcvFrame] = {}
         for symbol in symbols:
-            df = self._fetch_mootdx_intraday(symbol, period)
-            if df is not None and not df.empty:
-                out[symbol] = df
+            out[symbol] = require_fetched_frame(
+                self.name,
+                "分时",
+                symbol,
+                self._fetch_mootdx_intraday(symbol, period),
+            )
         require_non_empty_fetch_result(self.name, "分时", symbols, out)
         return out
 
@@ -75,9 +85,12 @@ class MootdxSource(DataSource):
     ) -> dict[str, dict]:
         quotes = {}
         for symbol in symbols:
-            data = self._fetch_mootdx_quote(symbol)
-            if data:
-                quotes[symbol] = data
+            quotes[symbol] = require_fetched_mapping(
+                self.name,
+                "实时行情",
+                symbol,
+                self._fetch_mootdx_quote(symbol),
+            )
         require_non_empty_fetch_result(self.name, "实时行情", symbols, quotes)
         return quotes
 
@@ -89,10 +102,14 @@ class MootdxSource(DataSource):
     ) -> dict[str, OhlcvFrame]:
         out: dict[str, OhlcvFrame] = {}
         for code in index_codes:
-            df = self._fetch_mootdx_daily(code, start, end, is_index=True)
-            if df is not None and not df.empty:
-                df = self._normalize_mootdx_df(df, code)
-                out[code] = self._validate_ohlcv(df, code)
+            df = require_fetched_frame(
+                self.name,
+                "指数",
+                code,
+                self._fetch_mootdx_daily(code, start, end, is_index=True),
+            )
+            df = self._normalize_mootdx_df(df, code)
+            out[code] = self._validate_ohlcv(df, code)
         require_non_empty_fetch_result(self.name, "指数", index_codes, out)
         return out
 
@@ -126,7 +143,7 @@ class MootdxSource(DataSource):
             return df
         except Exception as exc:
             _logger.warning("mootdx 日线获取失败 %s: %s", symbol, exc)
-            return None
+            raise DataError(f"mootdx 日线获取失败: {symbol}") from exc
 
     def _fetch_mootdx_intraday(self, symbol: str, period: str) -> pd.DataFrame | None:
         try:
@@ -150,7 +167,7 @@ class MootdxSource(DataSource):
             return df
         except Exception as exc:
             _logger.warning("mootdx 分时获取失败 %s: %s", symbol, exc)
-            return None
+            raise DataError(f"mootdx 分时获取失败: {symbol}") from exc
 
     def _fetch_mootdx_quote(self, symbol: str) -> dict | None:
         try:
@@ -168,7 +185,7 @@ class MootdxSource(DataSource):
             }
         except Exception as exc:
             _logger.warning("mootdx 实时报价获取失败 %s: %s", symbol, exc)
-            return None
+            raise DataError(f"mootdx 实时报价获取失败: {symbol}") from exc
 
     def _normalize_mootdx_df(self, df: pd.DataFrame, symbol: str) -> pd.DataFrame:
         df = df.copy()

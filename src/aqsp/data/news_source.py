@@ -82,3 +82,7 @@ class AkshareNewsSource:
             for frame in frames:
                 frame.attrs["aqsp_warnings"] = warnings
         return frames, errors
+
+
+def build_default_news_source() -> NewsSource:
+    return AkshareNewsSource()

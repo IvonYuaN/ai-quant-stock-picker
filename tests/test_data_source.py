@@ -10,9 +10,12 @@ import pandas as pd
 
 from aqsp.data.source import DataSource
 from aqsp.data.akshare_source import AkshareSource
+from aqsp.data.baostock_source import BaostockSource
 from aqsp.data.eastmoney_source import EastmoneySource
+from aqsp.data.mootdx_source import MootdxSource
 from aqsp.data.sina_source import SinaSource
 from aqsp.data.sqlite_db_source import SqliteDbSource
+from aqsp.data.tencent_source import TencentSource
 from aqsp.data import fetch_with_source
 from aqsp.core.errors import DataError
 
@@ -153,6 +156,61 @@ def test_public_fetch_methods_raise_data_error_when_sina_returns_empty(
         source.fetch_index(["000300"], date(2026, 5, 20), date(2026, 5, 27))
 
 
+def test_http_style_sources_fail_when_one_daily_symbol_returns_empty(
+    monkeypatch,
+) -> None:
+    def frame_for(symbol: str) -> pd.DataFrame | None:
+        if symbol == "000001":
+            return None
+        return pd.DataFrame(
+            [
+                {
+                    "date": "2026-06-05",
+                    "open": 10.0,
+                    "high": 10.5,
+                    "low": 9.8,
+                    "close": 10.2,
+                    "volume": 1000,
+                    "amount": 10200,
+                }
+            ]
+        )
+
+    class Cache:
+        def get_ohlcv(self, *_args, **_kwargs):
+            return None
+
+        def set_ohlcv(self, *_args, **_kwargs):
+            return None
+
+        def get_adj_factor(self, *_args, **_kwargs):
+            return 1.0
+
+    cases = [
+        (EastmoneySource, "_fetch_eastmoney_daily", "eastmoney"),
+        (SinaSource, "_fetch_sina_daily", "sina"),
+        (TencentSource, "_fetch_tencent_daily", "tencent"),
+        (BaostockSource, "_fetch_daily_single", "baostock"),
+        (MootdxSource, "_fetch_mootdx_daily", "mootdx"),
+    ]
+    for source_cls, helper_name, source_name in cases:
+        source = source_cls.__new__(source_cls)
+        source.cache = Cache()
+        source.name = source_name
+        if source_name == "baostock":
+            source._logged_in = True
+        monkeypatch.setattr(
+            source, helper_name, lambda symbol, *_args, **_kwargs: frame_for(symbol)
+        )
+
+        with pytest.raises(DataError, match=f"{source_name} 日线获取失败"):
+            source.fetch_daily(
+                ["600000", "000001"],
+                date(2026, 6, 1),
+                date(2026, 6, 5),
+            )
+
+
 def test_validate_ohlcv_missing_columns():
     df = pd.DataFrame(
         {
@@ -207,6 +265,54 @@ def test_validate_ohlcv_requires_architecture_schema():
     source.name = "test"
 
     with pytest.raises(DataError, match="amount"):
+        source._validate_ohlcv(df, "600000")
+
+
+def test_validate_ohlcv_rejects_partial_nan_price_values() -> None:
+    df = pd.DataFrame(
+        {
+            "date": ["2026-05-27", "2026-05-28"],
+            "symbol": ["600000", "600000"],
+            "name": ["测试", "测试"],
+            "open": [10.0, None],
+            "high": [10.5, 10.6],
+            "low": [9.5, 9.6],
+            "close": [10.2, 10.3],
+            "volume": [1000, 1200],
+            "amount": [10_200, 12_360],
+            "suspended": [False, False],
+            "limit_up": [11.22, 11.33],
+            "limit_down": [9.18, 9.27],
+        }
+    )
+    source = AkshareSource.__new__(AkshareSource)
+    source.name = "test"
+
+    with pytest.raises(DataError, match="存在无效数值"):
+        source._validate_ohlcv(df, "600000")
+
+
+def test_validate_ohlcv_rejects_impossible_price_range() -> None:
+    df = pd.DataFrame(
+        {
+            "date": ["2026-05-27"],
+            "symbol": ["600000"],
+            "name": ["测试"],
+            "open": [10.8],
+            "high": [10.5],
+            "low": [9.5],
+            "close": [10.2],
+            "volume": [1000],
+            "amount": [10_200],
+            "suspended": [False],
+            "limit_up": [11.22],
+            "limit_down": [9.18],
+        }
+    )
+    source = AkshareSource.__new__(AkshareSource)
+    source.name = "test"
+
+    with pytest.raises(DataError, match="超出 high-low"):
         source._validate_ohlcv(df, "600000")
 
 
@@ -656,6 +762,33 @@ def test_sqlite_db_source_marks_qfq_database_price_mode(tmp_path: Path) -> None:
     assert source.price_mode() == "qfq"
 
 
+def test_sqlite_db_source_rejects_qfq_database_for_raw_fetch(
+    tmp_path: Path, monkeypatch
+) -> None:
+    db = tmp_path / "astocks_qfq.db"
+    with sqlite3.connect(db) as conn:
+        conn.execute("create table stocks (ts_code text, name text)")
+        conn.execute(
+            """
+            create table daily_qfq (
+                ts_code text,
+                trade_date text,
+                open real,
+                high real,
+                low real,
+                close real,
+                volume real,
+                amount real
+            )
+            """
+        )
+    monkeypatch.delenv("AQSP_ALLOW_QFQ_SQLITE_SOURCE", raising=False)
+    source = SqliteDbSource(db_path=db)
+
+    with pytest.raises(DataError, match="qfq 数据库"):
+        source.fetch_daily(["600519"], date(2026, 1, 1), date(2026, 1, 2), adjust="")
+
+
 def test_sqlite_db_source_marks_raw_database_price_mode(tmp_path: Path) -> None:
     db = tmp_path / "astocks_raw.db"
     with sqlite3.connect(db) as conn:
@@ -677,4 +810,35 @@ def test_sqlite_db_source_marks_raw_database_price_mode(tmp_path: Path) -> None:
 
     source = SqliteDbSource(db_path=db)
 
+    assert source.price_mode() == "raw"
+
+
+def test_sqlite_db_source_default_path_prefers_raw_database(
+    tmp_path: Path, monkeypatch
+) -> None:
+    raw_dir = tmp_path / "A股量化分析数据"
+    raw_dir.mkdir()
+    db = raw_dir / "astocks_raw.db"
+    with sqlite3.connect(db) as conn:
+        conn.execute("create table stocks (ts_code text, name text)")
+        conn.execute(
+            """
+            create table daily_qfq (
+                ts_code text,
+                trade_date text,
+                open real,
+                high real,
+                low real,
+                close real,
+                volume real,
+                amount real
+            )
+            """
+        )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("AQSP_SQLITE_DB_PATH", raising=False)
+
+    source = SqliteDbSource()
+
+    assert source.db_path.name == "astocks_raw.db"
     assert source.price_mode() == "raw"

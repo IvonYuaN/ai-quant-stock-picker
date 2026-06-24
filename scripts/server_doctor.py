@@ -57,7 +57,7 @@ def _artifact_checks() -> list[DoctorCheck]:
     for name, path in (
         ("env", PROJECT_ROOT / ".env"),
         ("venv", PROJECT_ROOT / ".venv"),
-        ("sqlite_db", _runtime_path("AQSP_SQLITE_DB_PATH", "data/astocks_qfq.db")),
+        ("sqlite_db", _runtime_path("AQSP_SQLITE_DB_PATH", "data/astocks_raw.db")),
         (
             "dashboard",
             _runtime_path("AQSP_DASHBOARD_HTML", "dist/dashboard/index.html"),

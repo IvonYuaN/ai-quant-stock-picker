@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 
 from aqsp.core.time import now_shanghai, today_shanghai
+from aqsp.utils.jsonl_io import append_jsonl
 
 
 @dataclass(frozen=True)
@@ -156,21 +157,32 @@ class PerformanceLearner:
 
         for strategy in agg_df["strategy"].unique():
             strat_data = agg_df[agg_df["strategy"] == strategy].copy()
+            recent_data = self._filter_recent_window(strat_data)
 
             regime_weights: dict[str, float] | None = None
             if self.config.by_regime and "regime" in strat_data.columns:
                 regime_weights = {}
-                for regime_val in strat_data["regime"].dropna().unique():
-                    regime_data = strat_data[strat_data["regime"] == regime_val]
+                for regime_val in recent_data["regime"].dropna().unique():
+                    regime_data = recent_data[recent_data["regime"] == regime_val]
                     regime_result = self._compute_performance(
-                        regime_data, strategy, regime=str(regime_val), period="all"
+                        regime_data, strategy, regime=str(regime_val), period="recent"
                     )
-                    regime_weights[str(regime_val)] = self._calculate_weight(
-                        regime_result
-                    )
+                    regime_key = f"{strategy}:{regime_val}"
+                    regime_weight = self._calculate_weight(regime_result)
+                    old_regime_weight = self._current_weights.get(regime_key, 1.0)
+                    if not self._can_update_weight(regime_key):
+                        regime_weight = old_regime_weight
+                    elif record_history and regime_weight != old_regime_weight:
+                        self._record_weight_change(
+                            regime_key,
+                            old_regime_weight,
+                            regime_weight,
+                            "learner_regime_update",
+                        )
+                    regime_weights[str(regime_val)] = regime_weight
 
             recent = self._compute_performance(
-                strat_data, strategy, regime=None, period="recent"
+                recent_data, strategy, regime=None, period="recent"
             )
             rolling = self._compute_rolling(strat_data, strategy)
             weight = self._calculate_weight(recent)
@@ -207,6 +219,15 @@ class PerformanceLearner:
         return {
             name: perf.weights.get("base", 1.0) for name, perf in performances.items()
         }
+
+    def _filter_recent_window(self, df: pd.DataFrame) -> pd.DataFrame:
+        if df.empty or "signal_date" not in df.columns:
+            return df
+        max_date = df["signal_date"].max()
+        if pd.isna(max_date):
+            return df.iloc[0:0].copy()
+        cutoff = max_date - timedelta(days=self.config.rolling_window_days)
+        return df[df["signal_date"] >= cutoff].copy()
 
     def _compute_performance(
         self, df: pd.DataFrame, strategy: str, regime: str | None, period: str
@@ -339,7 +360,6 @@ class PerformanceLearner:
         self._last_weight_change[strategy] = now.timestamp()
         self._current_weights[strategy] = new_weight
 
-        self.weight_history_path.parent.mkdir(parents=True, exist_ok=True)
         entry = {
             "timestamp": now.isoformat(timespec="seconds"),
             "strategy": strategy,
@@ -347,8 +367,7 @@ class PerformanceLearner:
             "new_weight": new_weight,
             "reason": reason,
         }
-        with open(self.weight_history_path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        append_jsonl(self.weight_history_path, entry)
 
 
 @dataclass(frozen=True)

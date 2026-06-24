@@ -70,6 +70,7 @@ def test_compact_notification_markdown_adds_spacing_and_removes_process_terms() 
                 "  - 依据: fallback 到 eastmoney",
                 "## 主链候选",
                 "  - AI 研究: 模型复核通过",
+                "  - LLM 推理: Agent 运行过程正常，prompt token 充足",
                 "  - 重点跟踪名单: 600519 等待下单",
             ]
         )
@@ -83,4 +84,9 @@ def test_compact_notification_markdown_adds_spacing_and_removes_process_terms() 
     assert "AI 研究" not in markdown
     assert "模型复核" not in markdown
     assert "复核通过" not in markdown
+    assert "LLM" not in markdown
+    assert "Agent" not in markdown
+    assert "运行过程" not in markdown
+    assert "prompt" not in markdown
+    assert "token" not in markdown
     assert "依据" not in markdown

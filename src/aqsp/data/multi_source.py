@@ -227,7 +227,9 @@ class MultiSource(DataSource):
                         )
 
 
-def _missing_requested_keys(result: dict[str, object], expected_keys: list[str]) -> list[str]:
+def _missing_requested_keys(
+    result: dict[str, object], expected_keys: list[str]
+) -> list[str]:
     requested = [str(key) for key in expected_keys if str(key)]
     if not requested:
         return []

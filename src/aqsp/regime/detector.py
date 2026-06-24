@@ -34,11 +34,13 @@ class RegimeDetector:
         thresholds: Thresholds = None,
     ):
         self.lookback_days = lookback_days
+        self._fixed_thresholds = thresholds is not None
         self.thresholds = thresholds or load_thresholds()
         self._history: List[MarketRegime] = []
         self._last_detect_time: Optional[datetime] = None
 
     def detect(self, index_data: Dict[str, pd.DataFrame]) -> MarketRegime:
+        self._refresh_thresholds()
         if self._is_in_cooldown():
             if self._history:
                 return self._history[-1]
@@ -63,6 +65,10 @@ class RegimeDetector:
             return False
         elapsed = now_shanghai() - self._last_detect_time
         return elapsed.total_seconds() < self.thresholds.regime.cooldown_hours * 3600
+
+    def _refresh_thresholds(self) -> None:
+        if not self._fixed_thresholds:
+            self.thresholds = load_thresholds()
 
     def _default_regime(self) -> MarketRegime:
         return MarketRegime(

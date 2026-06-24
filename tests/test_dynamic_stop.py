@@ -3,6 +3,7 @@ from __future__ import annotations
 import pandas as pd
 
 from aqsp.risk.dynamic_stop import compute_dynamic_stop
+from aqsp.strategies.thresholds import RiskThresholds, Thresholds
 
 
 def _frame() -> pd.DataFrame:
@@ -30,11 +31,41 @@ def test_compute_dynamic_stop_uses_configured_fallback_pct_when_empty() -> None:
     assert stop.method == "fallback_8%"
 
 
+def test_compute_dynamic_stop_defaults_to_thresholds(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "aqsp.risk.dynamic_stop.load_thresholds",
+        lambda: Thresholds(
+            risk=RiskThresholds(
+                dynamic_stop_atr_period=2,
+                dynamic_stop_atr_multiplier=1.0,
+                dynamic_stop_fallback_pct=0.08,
+                dynamic_stop_recent_low_days=2,
+                dynamic_stop_trailing_pct=0.01,
+                dynamic_stop_support_lookback=2,
+            )
+        ),
+    )
+
+    empty = compute_dynamic_stop(pd.DataFrame(), 100.0)
+    stop = compute_dynamic_stop(_frame(), 12.0)
+
+    assert empty.recommended_stop == 92.0
+    assert stop.support_level == 10.1
+    assert stop.trailing_stop == 10.1
+
+
 def test_compute_dynamic_stop_uses_configured_atr_multiplier() -> None:
     lower = compute_dynamic_stop(_frame(), 12.0, atr_multiplier=1.0)
     wider = compute_dynamic_stop(_frame(), 12.0, atr_multiplier=3.0)
 
     assert wider.atr_stop < lower.atr_stop
+
+
+def test_compute_dynamic_stop_uses_configured_atr_period() -> None:
+    short = compute_dynamic_stop(_frame(), 12.0, atr_period=2)
+    long = compute_dynamic_stop(_frame(), 12.0, atr_period=7)
+
+    assert short.atr_stop != long.atr_stop
 
 
 def test_compute_dynamic_stop_uses_recent_low_and_trailing_pct() -> None:

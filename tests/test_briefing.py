@@ -598,15 +598,18 @@ class TestSendBriefing:
         briefing = Briefing(date="d", sections=[])
         mock_notify.return_value = []
         send_briefing(briefing)
-        mock_notify.assert_called_once()
+        mock_notify.assert_not_called()
 
-    @patch("aqsp.notifier.notify_markdown")
-    def test_returns_default_notifier_results(self, mock_notify):
+    @patch("aqsp.briefing.notifier.dispatch_notification_once")
+    def test_returns_default_notifier_results(self, mock_dispatch):
         briefing = Briefing(date="d", sections=[])
-        mock_notify.return_value = [MagicMock(channel="serverchan", ok=True, detail="HTTP 200")]
+        mock_dispatch.return_value = [
+            MagicMock(channel="serverchan", ok=True, detail="HTTP 200")
+        ]
 
         results = send_briefing(briefing)
 
+        mock_dispatch.assert_called_once()
         assert len(results) == 1
         assert results[0].channel == "serverchan"
 
@@ -1076,33 +1079,50 @@ class TestBuildSmartSummaryCard:
 
 class TestSendSmartSummaryCard:
     @patch("aqsp.briefing.notifier.notify_feishu_card")
-    def test_sends_card(self, mock_send):
+    def test_sends_card(self, mock_send, tmp_path):
         from aqsp.briefing.notifier import send_smart_summary_card
 
         gen = BriefingGenerator()
         picks = [_make_pick()]
         briefing = gen.generate(picks=picks, frames={})
-        send_smart_summary_card(briefing)
+        send_smart_summary_card(briefing, state_path=tmp_path / "notify_state.json")
         mock_send.assert_called_once()
         card = mock_send.call_args[0][0]
         assert card["msg_type"] == "interactive"
         assert "选股快报" in card["card"]["header"]["title"]["content"]
 
     @patch("aqsp.briefing.notifier.notify_feishu_card")
-    def test_skips_empty_summary(self, mock_send):
+    def test_skips_empty_summary(self, mock_send, tmp_path):
         from aqsp.briefing.notifier import send_smart_summary_card
 
         briefing = Briefing(date="2026-05-27 10:00", sections=[])
         with patch.object(Briefing, "generate_smart_summary", return_value="   "):
-            send_smart_summary_card(briefing)
+            send_smart_summary_card(briefing, state_path=tmp_path / "notify_state.json")
         mock_send.assert_not_called()
 
+    @patch("aqsp.briefing.notifier.notify_feishu_card")
+    def test_smart_summary_card_dedupes_same_content(self, mock_send, tmp_path):
+        from aqsp.briefing.notifier import send_smart_summary_card
+        from aqsp.notifier import NotifyResult
+
+        mock_send.return_value = [NotifyResult(channel="feishu", ok=True, detail="ok")]
+        briefing = Briefing(
+            date="2026-05-27 10:00",
+            sections=[BriefingSection(title="t", content="c")],
+        )
+        state_path = tmp_path / "notify_state.json"
+
+        send_smart_summary_card(briefing, state_path=state_path)
+        send_smart_summary_card(briefing, state_path=state_path)
+
+        mock_send.assert_called_once()
+
     @patch("aqsp.briefing.notifier.send_smart_summary_card")
-    @patch("aqsp.notifier.notify_markdown")
-    def test_send_briefing_calls_smart_summary_first(self, mock_notify, mock_card):
+    @patch("aqsp.briefing.notifier.dispatch_notification_once")
+    def test_send_briefing_calls_smart_summary_first(self, mock_dispatch, mock_card):
         briefing = Briefing(
             date="d", sections=[BriefingSection(title="t", content="c")]
         )
         send_briefing(briefing)
         mock_card.assert_called_once_with(briefing)
-        mock_notify.assert_called_once()
+        mock_dispatch.assert_called_once()

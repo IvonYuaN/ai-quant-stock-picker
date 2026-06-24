@@ -11,6 +11,8 @@ from aqsp.data.source import (
     DataSource,
     OhlcvFrame,
     apply_limit_suspended_adj,
+    require_fetched_frame,
+    require_fetched_mapping,
     require_non_empty_fetch_result,
 )
 from aqsp.data.cache import DataCache
@@ -56,7 +58,9 @@ class AkshareSource(DataSource):
         for symbol in symbols:
             cached = None
             if use_cache:
-                cached = self.cache.get_ohlcv(symbol, start, end)
+                cached = self.cache.get_ohlcv(
+                    symbol, start, end, price_mode=adjust or "raw"
+                )
 
             if (
                 cached is not None
@@ -76,13 +80,14 @@ class AkshareSource(DataSource):
                 )
             except Exception as exc:
                 raise DataError(f"akshare 日线获取失败: {symbol} - {exc}") from exc
-            if df.empty:
-                continue
+            df = require_fetched_frame(self.name, "日线", symbol, df)
             df = self._normalize_akshare_df(df, symbol)
             validated = self._validate_ohlcv(df, symbol)
 
             if use_cache:
-                self.cache.set_ohlcv(symbol, validated, source="akshare")
+                self.cache.set_ohlcv(
+                    symbol, validated, source="akshare", price_mode=adjust or "raw"
+                )
 
             out[symbol] = validated
         require_non_empty_fetch_result(self.name, "日线", symbols, out)
@@ -113,8 +118,7 @@ class AkshareSource(DataSource):
                 )
             except Exception as exc:
                 raise DataError(f"akshare 分时获取失败: {symbol} - {exc}") from exc
-            if df.empty:
-                continue
+            df = require_fetched_frame(self.name, "分时", symbol, df)
             df = self._normalize_intraday_df(df, symbol)
             out[symbol] = df
         require_non_empty_fetch_result(self.name, "分时", symbols, out)
@@ -139,6 +143,8 @@ class AkshareSource(DataSource):
                         "amount": float(row.iloc[0]["成交额"]),
                         "ts": now_shanghai().isoformat(),
                     }
+                else:
+                    require_fetched_mapping(self.name, "实时行情", symbol, None)
         except Exception as e:
             raise DataError(f"获取实时行情失败: {e}") from e
         require_non_empty_fetch_result(self.name, "实时行情", symbols, quotes)
@@ -160,9 +166,7 @@ class AkshareSource(DataSource):
         try:
             df = self._ak.stock_zh_a_spot_em()
         except Exception as exc:
-            self._realtime_cooldown_until = (
-                now_ts + self._realtime_failure_cooldown_sec
-            )
+            self._realtime_cooldown_until = now_ts + self._realtime_failure_cooldown_sec
             raise DataError(
                 f"akshare 全市场实时快照失败，进入冷却 {int(self._realtime_failure_cooldown_sec)}s: {exc}"
             ) from exc
@@ -189,15 +193,19 @@ class AkshareSource(DataSource):
                 out[code] = cached
                 continue
 
-            df = self._fetch_index_single(code, start, end)
-            if df is not None and not df.empty:
-                df = self._normalize_akshare_df(df, code)
-                validated = self._validate_ohlcv(df, code)
+            df = require_fetched_frame(
+                self.name,
+                "指数",
+                code,
+                self._fetch_index_single(code, start, end),
+            )
+            df = self._normalize_akshare_df(df, code)
+            validated = self._validate_ohlcv(df, code)
 
-                if use_cache:
-                    self.cache.set_index(code, validated, source="akshare")
+            if use_cache:
+                self.cache.set_index(code, validated, source="akshare")
 
-                out[code] = validated
+            out[code] = validated
         require_non_empty_fetch_result(self.name, "指数", index_codes, out)
         return out
 

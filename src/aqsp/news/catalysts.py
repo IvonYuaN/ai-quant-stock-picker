@@ -10,7 +10,7 @@ from typing import Any, Literal
 
 import pandas as pd
 
-from aqsp.data.news_source import AkshareNewsSource, NewsSource
+from aqsp.data.news_source import NewsSource, build_default_news_source
 from aqsp.core.time import now_shanghai, today_shanghai
 from aqsp.notification_style import compact_notification_markdown
 from aqsp.presentation import normalize_research_tone
@@ -57,6 +57,27 @@ class CatalystReport:
     warnings: tuple[str, ...] = ()
 
 
+@dataclass
+class _SourceStats:
+    attempted: int = 0
+    successful: int = 0
+    failed: int = 0
+    raw_rows: int = 0
+
+    def record_frame(self, df: pd.DataFrame, warnings: Sequence[str]) -> None:
+        self.attempted += 1
+        row_count = len(_iter_news_rows(df))
+        if row_count <= 0:
+            self.failed += 1
+            return
+        self.successful += 1
+        self.raw_rows += row_count
+
+    def record_failure(self) -> None:
+        self.attempted += 1
+        self.failed += 1
+
+
 Fetcher = Callable[[str, int], pd.DataFrame]
 _AKSHARE_NEWS: NewsSource | None = None
 
@@ -64,7 +85,7 @@ _AKSHARE_NEWS: NewsSource | None = None
 def _get_akshare_news_source() -> NewsSource:
     global _AKSHARE_NEWS
     if _AKSHARE_NEWS is None:
-        _AKSHARE_NEWS = AkshareNewsSource()
+        _AKSHARE_NEWS = build_default_news_source()
     return _AKSHARE_NEWS
 
 
@@ -138,6 +159,7 @@ def build_catalyst_report(
     names = symbol_names or {}
     warnings: list[str] = []
     rows: list[CatalystEvent] = []
+    source_stats = _SourceStats()
 
     symbol_fetcher = fetch_symbol_news or _akshare_symbol_news
     global_fetcher = fetch_global_news or _akshare_global_news
@@ -149,9 +171,12 @@ def build_catalyst_report(
                 timeout_seconds=cfg.source_timeout_seconds,
             )
         except Exception as exc:
+            source_stats.record_failure()
             warnings.append(f"{symbol} 个股新闻获取失败: {exc}")
             continue
-        warnings.extend(_frame_warnings(df, prefix=f"{symbol} 个股新闻"))
+        frame_warnings = _frame_warnings(df, prefix=f"{symbol} 个股新闻")
+        source_stats.record_frame(df, frame_warnings)
+        warnings.extend(frame_warnings)
         rows.extend(
             _events_from_rows(
                 _iter_news_rows(df.head(cfg.max_symbol_news)),
@@ -166,11 +191,14 @@ def build_catalyst_report(
             timeout_seconds=cfg.source_timeout_seconds,
         )
     except Exception as exc:
+        source_stats.record_failure()
         warnings.append(f"全市场快讯获取失败: {exc}")
         global_df = pd.DataFrame()
-    warnings.extend(_frame_warnings(global_df, prefix="全市场快讯"))
+    else:
+        frame_warnings = _frame_warnings(global_df, prefix="全市场快讯")
+        source_stats.record_frame(global_df, frame_warnings)
+        warnings.extend(frame_warnings)
     warnings = list(_dedupe_texts(warnings))
-    raw_news_count = len(_iter_news_rows(global_df))
     rows.extend(_events_from_rows(_iter_news_rows(global_df.head(cfg.max_global_news))))
 
     deduped = _merge_events(rows)
@@ -195,7 +223,9 @@ def build_catalyst_report(
     )
     status = _report_source_status(
         has_ranked=bool(ranked),
-        has_raw_news=raw_news_count > 0,
+        has_raw_news=source_stats.raw_rows > 0,
+        has_successful_source=source_stats.successful > 0,
+        all_sources_failed=source_stats.attempted > 0 and source_stats.successful == 0,
         has_warnings=bool(warnings),
     )
     return CatalystReport(
@@ -277,11 +307,17 @@ def _report_source_status(
     *,
     has_ranked: bool,
     has_raw_news: bool,
+    has_successful_source: bool,
+    all_sources_failed: bool,
     has_warnings: bool,
 ) -> str:
+    if all_sources_failed:
+        return "failed"
     if has_ranked:
         return "partial" if has_warnings else "ok"
     if has_raw_news:
+        return "partial" if has_warnings else "empty"
+    if has_successful_source:
         return "partial" if has_warnings else "empty"
     return "failed" if has_warnings else "empty"
 

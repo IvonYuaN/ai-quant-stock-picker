@@ -61,6 +61,8 @@ def test_news_catalysts_script_defaults_to_report_only() -> None:
     assert "NOTIFY_ARGS=(--notify)" in script
     assert '"${NOTIFY_ARGS[@]}"' in script
     assert "消息面雷达默认不推送手机通知" in script
+    assert "AQSP_ALLOW_NON_TRADING_NEWS_NOTIFY" in script
+    assert "今日非交易日，消息面雷达仅写报告" in script
 
 
 def test_install_server_cron_script_installs_standard_jobs() -> None:
@@ -303,6 +305,8 @@ def test_coldstart_daily_script_updates_db_then_runs_cli() -> None:
     assert "scripts/update_sqlite_daily.py" in script
     assert "A股量化分析数据/update_daily.py" in script
     assert "AQSP_COLDSTART_UPDATE_SCRIPT" in script
+    assert "A股量化分析数据/astocks_raw.db" in script
+    assert "A股量化分析数据/astocks_qfq.db" not in script
     assert "AQSP_COLDSTART_UPDATE_SLEEP_SECONDS" in script
     assert "AQSP_COLDSTART_BACKFILL_START_DATE" in script
     assert "AQSP_COLDSTART_BACKFILL_FORCE" in script
@@ -360,6 +364,15 @@ def test_daily_run_defaults_to_full_market_universe() -> None:
     assert "Use scripts/bt_task.sh daily in production" in script
     assert 'export AQSP_MAX_UNIVERSE="${AQSP_MAX_UNIVERSE:-0}"' in script
     assert '--max-universe "$AQSP_MAX_UNIVERSE"' in script
+
+
+def test_deploy_setup_env_template_matches_production_readiness() -> None:
+    script = (PROJECT_ROOT / "deploy" / "setup.sh").read_text(encoding="utf-8")
+
+    assert "AQSP_MAX_UNIVERSE=0" in script
+    assert "AQSP_SOURCE=sqlite_db" in script
+    assert "AQSP_ALLOW_ONLINE_FALLBACK=false" in script
+    assert "AQSP_SQLITE_DB_PATH=/opt/market-data/astocks_raw.db" in script
 
 
 def test_launchd_daily_wrapper_explicitly_opts_into_legacy_entry() -> None:

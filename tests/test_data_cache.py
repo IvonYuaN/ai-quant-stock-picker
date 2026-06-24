@@ -106,6 +106,37 @@ def test_cache_rejects_implausible_amount_scale(tmp_path):
     assert result is None
 
 
+def test_cache_separates_raw_and_qfq_price_modes(tmp_path):
+    cache = DataCache(db_path=tmp_path / "test_cache.db")
+    base = {
+        "date": ["2026-05-27"],
+        "open": [10.0],
+        "high": [10.5],
+        "low": [9.9],
+        "volume": [1000],
+        "amount": [10_000],
+        "suspended": [0],
+        "limit_up": [0.0],
+        "limit_down": [0.0],
+        "adj_factor": [1.0],
+    }
+    raw = pd.DataFrame({**base, "close": [10.2]})
+    qfq = pd.DataFrame({**base, "close": [8.8]})
+
+    cache.set_ohlcv("600000", raw, source="test", price_mode="raw")
+    cache.set_ohlcv("600000", qfq, source="test", price_mode="qfq")
+
+    start = date(2026, 5, 27)
+    end = date(2026, 5, 27)
+    raw_result = cache.get_ohlcv("600000", start, end, price_mode="raw")
+    qfq_result = cache.get_ohlcv("600000", start, end, price_mode="qfq")
+
+    assert raw_result is not None
+    assert qfq_result is not None
+    assert raw_result["close"].iloc[0] == 10.2
+    assert qfq_result["close"].iloc[0] == 8.8
+
+
 def test_cache_adj_factor(tmp_path):
     cache = DataCache(db_path=tmp_path / "test_cache.db")
     df = pd.DataFrame(

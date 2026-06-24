@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pandas as pd
+import pytest
 
 from aqsp.models import ScreeningConfig
 from aqsp.internet_strategies import evaluate_strategy_signals
@@ -230,12 +231,99 @@ def test_internet_strategy_signal_uses_configured_score() -> None:
 
 
 def test_strategy_weights_for_regime_maps_screening_strategy_ids() -> None:
-    weights = strategy_weights_for_regime(Thresholds(), "stable_bull")
+    from dataclasses import replace
 
-    assert weights["rps_momentum"] == 1.2
-    assert weights["volume_breakout"] == 1.1
-    assert weights["bowl_rebound"] == 0.7
-    assert weights["n_rebound"] == 1.1
+    from aqsp.strategies.thresholds import CompositeThresholds, Thresholds
+
+    thresholds = replace(
+        Thresholds(),
+        composite=CompositeThresholds(
+            momentum_weight=0.3,
+            quality_weight=0.0,
+            value_weight=0.0,
+            volume_weight=0.3,
+            mean_reversion_weight=0.3,
+            triple_rise_weight=0.3,
+        ),
+    )
+    weights = strategy_weights_for_regime(thresholds, "stable_bull")
+
+    assert weights["rps_momentum"] == pytest.approx(1.06)
+    assert weights["volume_breakout"] == pytest.approx(1.03)
+    assert weights["bowl_rebound"] == pytest.approx(0.91)
+    assert weights["n_rebound"] == pytest.approx(1.03)
+
+
+def test_strategy_weights_for_regime_uses_composite_blend_weights() -> None:
+    from dataclasses import replace
+
+    from aqsp.strategies.thresholds import (
+        CompositeThresholds,
+        RegimeStrategyWeights,
+        RegimeThresholds,
+        Thresholds,
+    )
+
+    thresholds = replace(
+        Thresholds(),
+        composite=CompositeThresholds(
+            momentum_weight=0.3,
+            quality_weight=0.0,
+            value_weight=0.0,
+            volume_weight=0.0,
+            mean_reversion_weight=0.0,
+            triple_rise_weight=0.3,
+            base_blend_weight=0.25,
+            regime_blend_weight=0.75,
+        ),
+        regime=RegimeThresholds(
+            strategy_weights={
+                "test_regime": RegimeStrategyWeights(
+                    momentum=2.0,
+                    triple_rise=0.5,
+                )
+            }
+        ),
+    )
+
+    weights = strategy_weights_for_regime(thresholds, "test_regime")
+
+    assert weights["rps_momentum"] == 1.75
+    assert weights["ma_pullback"] == 1.75
+    assert weights["low_vol_trend"] == 1.75
+    assert weights["n_rebound"] == 0.625
+
+
+def test_strategy_weights_for_regime_filters_disabled_strategy_buckets() -> None:
+    from dataclasses import replace
+
+    from aqsp.strategies.thresholds import (
+        CompositeThresholds,
+        MeanReversionThresholds,
+        Thresholds,
+        TripleRiseThresholds,
+        VolumeThresholds,
+    )
+
+    thresholds = replace(
+        Thresholds(),
+        composite=CompositeThresholds(
+            momentum_weight=0.3,
+            quality_weight=0.0,
+            value_weight=0.0,
+            volume_weight=0.0,
+            mean_reversion_weight=0.0,
+            triple_rise_weight=0.3,
+        ),
+        volume=VolumeThresholds(enabled=False),
+        mean_reversion=MeanReversionThresholds(enabled=False),
+        triple_rise=TripleRiseThresholds(enabled=True),
+    )
+
+    weights = strategy_weights_for_regime(thresholds, "stable_bull")
+
+    assert set(weights) == {"rps_momentum", "ma_pullback", "low_vol_trend", "n_rebound"}
+    assert weights["n_rebound"] == pytest.approx(1.03)
 
 
 def test_score_symbol_applies_screening_strategy_weights() -> None:
@@ -259,6 +347,28 @@ def test_score_symbol_applies_screening_strategy_weights() -> None:
     assert boosted is not None
     assert "rps_momentum" in base.strategies
     assert boosted.score > base.score
+
+
+def test_score_symbol_records_strategy_weight_feedback() -> None:
+    frame = _frame("VOL", 0.004, 1.8)
+
+    pick = score_symbol(
+        "VOL",
+        frame,
+        ScreeningConfig(
+            min_avg_amount=1,
+            strategy_weights={"rps_momentum": 0.5},
+            strategy_weight_reasons={
+                "rps_momentum": "recent not_executable rate 60% (3/5)"
+            },
+        ),
+        ScoringThresholds(),
+        Thresholds(),
+    )
+
+    assert pick is not None
+    assert pick.metrics["strategy_weights"]["rps_momentum"] == 0.5
+    assert "not_executable" in pick.metrics["strategy_weight_reasons"]["rps_momentum"]
 
 
 def test_screen_filters_price_outside_bounds() -> None:

@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 from aqsp.strategies.thresholds import (
+    CompositeThresholds,
+    QualityThresholds,
     RegimeStrategyWeights,
     RegimeThresholds,
     RiskThresholds,
     Thresholds,
+    VolumeThresholds,
     load_thresholds,
 )
 from aqsp.web.config import RISK_CONFIG, get_risk_config, get_strategy_display_config
@@ -32,6 +35,16 @@ def test_web_risk_config_can_be_reloaded_from_threshold_snapshot() -> None:
 
 def test_strategy_display_config_uses_regime_threshold_weights() -> None:
     thresholds = Thresholds(
+        composite=CompositeThresholds(
+            momentum_weight=0.5,
+            quality_weight=0.25,
+            value_weight=0.0,
+            volume_weight=0.25,
+            mean_reversion_weight=0.0,
+            triple_rise_weight=0.0,
+        ),
+        quality=QualityThresholds(enabled=True),
+        volume=VolumeThresholds(enabled=True),
         regime=RegimeThresholds(
             strategy_weights={
                 "stable_bull": RegimeStrategyWeights(
@@ -43,11 +56,11 @@ def test_strategy_display_config_uses_regime_threshold_weights() -> None:
                     triple_rise=0.0,
                 )
             }
-        )
+        ),
     )
 
     config = get_strategy_display_config(thresholds=thresholds)
 
     assert set(config) == {"momentum", "quality", "volume"}
-    assert config["momentum"]["weight"] == 0.5
-    assert config["quality"]["weight"] == 0.25
+    assert config["momentum"]["weight"] == 0.6667
+    assert config["quality"]["weight"] == 0.1667

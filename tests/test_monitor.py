@@ -92,6 +92,43 @@ class TestMonitorChecker:
 
             assert len(results) == 1
             assert results[0].name == "test_monitor"
+            assert results[0].severity == "warning"
+
+    def test_check_all_applies_configured_severity_to_source_health(
+        self, tmp_path: Path
+    ) -> None:
+        config = {
+            "monitors": [
+                {
+                    "name": "data_source_failure",
+                    "description": "数据源连续失败",
+                    "enabled": True,
+                    "check": "source_health",
+                    "params": {"max_consecutive_failures": 3},
+                    "severity": "critical",
+                }
+            ]
+        }
+        config_path = tmp_path / "monitors.yaml"
+        config_path.write_text(yaml.dump(config, allow_unicode=True), encoding="utf-8")
+        (tmp_path / "data").mkdir()
+        (tmp_path / "data/source_health.json").write_text(
+            json.dumps({"consecutive_failures": 4}),
+            encoding="utf-8",
+        )
+        with patch("aqsp.monitor.checker.Path", side_effect=lambda raw: Path(raw)):
+            checker = MonitorChecker(config_path=str(config_path))
+
+        with patch("pathlib.Path.exists", return_value=True):
+            with patch(
+                "pathlib.Path.read_text",
+                return_value=json.dumps({"consecutive_failures": 4}),
+            ):
+                result = checker.check_all()[0]
+
+        assert result.name == "data_source_failure"
+        assert result.triggered is True
+        assert result.severity == "critical"
 
     def test_check_data_freshness(self, sample_config: Path) -> None:
         checker = MonitorChecker(config_path=str(sample_config))
@@ -174,6 +211,7 @@ class TestMonitorChecker:
             assert result.name == "circuit_breaker"
             assert result.triggered is True
             assert result.severity == "critical"
+            assert mock_breaker.call_args.kwargs["config"].daily_loss_pct > 0
 
     def test_check_win_rate(self, sample_config: Path) -> None:
         checker = MonitorChecker(config_path=str(sample_config))
@@ -251,7 +289,7 @@ class TestNotifier:
         assert "总体状态: 正常" in alert
 
     def test_send_alerts(self, sample_results: list[MonitorResult]) -> None:
-        with patch("aqsp.monitor.notifier.notify_markdown") as mock_notify:
+        with patch("aqsp.monitor.notifier.notify_markdown_via_config") as mock_notify:
             mock_notify.return_value = [
                 MagicMock(channel="serverchan", ok=True, detail="HTTP 200")
             ]
@@ -260,11 +298,12 @@ class TestNotifier:
             mock_notify.assert_called_once()
             alert_msg = mock_notify.call_args[0][0]
             assert "系统监控告警" in alert_msg
+            assert mock_notify.call_args.kwargs["mode"] == "summary"
 
     def test_send_alerts_prints_channel_results(
         self, sample_results: list[MonitorResult], capsys
     ) -> None:
-        with patch("aqsp.monitor.notifier.notify_markdown") as mock_notify:
+        with patch("aqsp.monitor.notifier.notify_markdown_via_config") as mock_notify:
             mock_notify.return_value = [
                 MagicMock(channel="serverchan", ok=True, detail="HTTP 200"),
                 MagicMock(channel="wechat", ok=False, detail="HTTP 500"),
@@ -282,7 +321,7 @@ class TestNotifier:
         monkeypatch.setenv(
             "AQSP_MONITOR_NOTIFY_STATE_PATH", str(tmp_path / "monitor_state.json")
         )
-        with patch("aqsp.monitor.notifier.notify_markdown") as mock_notify:
+        with patch("aqsp.monitor.notifier.notify_markdown_via_config") as mock_notify:
             mock_notify.return_value = [
                 MagicMock(channel="serverchan", ok=True, detail="HTTP 200")
             ]
@@ -291,7 +330,7 @@ class TestNotifier:
             send_alerts(sample_results)
 
         assert mock_notify.call_count == 1
-        assert "skipped duplicate critical alert" in capsys.readouterr().out
+        assert "skipped duplicate alert" in capsys.readouterr().out
 
     def test_monitor_notify_state_path_uses_project_root_when_relative(
         self, tmp_path: Path, monkeypatch
@@ -317,7 +356,7 @@ class TestNotifier:
         first_cwd.mkdir()
         second_cwd.mkdir()
 
-        with patch("aqsp.monitor.notifier.notify_markdown") as mock_notify:
+        with patch("aqsp.monitor.notifier.notify_markdown_via_config") as mock_notify:
             mock_notify.return_value = [
                 MagicMock(channel="serverchan", ok=True, detail="HTTP 200")
             ]
@@ -328,7 +367,7 @@ class TestNotifier:
 
         assert mock_notify.call_count == 1
         assert (tmp_path / "data/monitor_notify_state.json").exists()
-        assert "skipped duplicate critical alert" in capsys.readouterr().out
+        assert "skipped duplicate alert" in capsys.readouterr().out
 
     def test_send_alerts_reserves_before_delivery(
         self, sample_results: list[MonitorResult], tmp_path: Path, monkeypatch
@@ -336,12 +375,14 @@ class TestNotifier:
         state_path = tmp_path / "monitor_state.json"
         monkeypatch.setenv("AQSP_MONITOR_NOTIFY_STATE_PATH", str(state_path))
 
-        def _notify(_markdown: str) -> list[MagicMock]:
+        def _notify(_markdown: str, **_kwargs) -> list[MagicMock]:
             state = json.loads(state_path.read_text(encoding="utf-8"))
             assert state["status"] == "pending"
             return [MagicMock(channel="serverchan", ok=True, detail="HTTP 200")]
 
-        with patch("aqsp.monitor.notifier.notify_markdown", side_effect=_notify):
+        with patch(
+            "aqsp.monitor.notifier.notify_markdown_via_config", side_effect=_notify
+        ):
             send_alerts(sample_results)
 
         state = json.loads(state_path.read_text(encoding="utf-8"))
@@ -353,7 +394,7 @@ class TestNotifier:
         monkeypatch.setenv(
             "AQSP_MONITOR_NOTIFY_STATE_PATH", str(tmp_path / "monitor_state.json")
         )
-        with patch("aqsp.monitor.notifier.notify_markdown") as mock_notify:
+        with patch("aqsp.monitor.notifier.notify_markdown_via_config") as mock_notify:
             mock_notify.return_value = [
                 MagicMock(channel="serverchan", ok=False, detail="HTTP 500")
             ]
@@ -388,7 +429,7 @@ class TestNotifier:
             )
         ]
 
-        with patch("aqsp.monitor.notifier.notify_markdown") as mock_notify:
+        with patch("aqsp.monitor.notifier.notify_markdown_via_config") as mock_notify:
             mock_notify.return_value = [
                 MagicMock(channel="serverchan", ok=True, detail="HTTP 200")
             ]
@@ -418,7 +459,7 @@ class TestNotifier:
             message="通知失败",
         )
 
-        with patch("aqsp.monitor.notifier.notify_markdown") as mock_notify:
+        with patch("aqsp.monitor.notifier.notify_markdown_via_config") as mock_notify:
             mock_notify.return_value = [
                 MagicMock(channel="serverchan", ok=True, detail="HTTP 200")
             ]
@@ -454,7 +495,7 @@ class TestNotifier:
             )
         ]
 
-        with patch("aqsp.monitor.notifier.notify_markdown") as mock_notify:
+        with patch("aqsp.monitor.notifier.notify_markdown_via_config") as mock_notify:
             mock_notify.return_value = [
                 MagicMock(channel="serverchan", ok=True, detail="HTTP 200")
             ]
@@ -468,7 +509,7 @@ class TestNotifier:
             MonitorResult(name="ok", triggered=False, severity="info", message="ok"),
         ]
 
-        with patch("aqsp.monitor.notifier.notify_markdown") as mock_notify:
+        with patch("aqsp.monitor.notifier.notify_markdown_via_config") as mock_notify:
             send_alerts(results)
             mock_notify.assert_not_called()
 
@@ -478,7 +519,7 @@ class TestNotifier:
         monkeypatch.setenv(
             "AQSP_MONITOR_NOTIFY_STATE_PATH", str(tmp_path / "monitor_state.json")
         )
-        with patch("aqsp.monitor.notifier.notify_markdown") as mock_notify:
+        with patch("aqsp.monitor.notifier.notify_markdown_via_config") as mock_notify:
             mock_notify.return_value = [
                 MagicMock(channel="serverchan", ok=True, detail="HTTP 200")
             ]
@@ -542,3 +583,10 @@ class TestMonitorConfig:
         assert config.check == "test_check"
         assert config.params == {"key": "value"}
         assert config.severity == "warning"
+
+
+def test_default_data_source_failure_monitor_is_critical() -> None:
+    payload = yaml.safe_load(Path("config/monitors.yaml").read_text(encoding="utf-8"))
+    monitors = {item["name"]: item for item in payload["monitors"]}
+
+    assert monitors["data_source_failure"]["severity"] == "critical"

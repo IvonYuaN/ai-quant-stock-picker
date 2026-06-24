@@ -43,6 +43,7 @@ MAX_LLM_REVIEW_EVENTS="${AQSP_NEWS_MAX_LLM_REVIEW_EVENTS:-1}"
 TASK_TIMEOUT_SECONDS="${AQSP_NEWS_TASK_TIMEOUT_SECONDS:-300}"
 OUTPUT="${AQSP_NEWS_OUTPUT:-reports/news_catalysts.md}"
 ENABLE_LLM_REVIEW="${AQSP_NEWS_ENABLE_LLM_REVIEW:-false}"
+ALLOW_NON_TRADING_NOTIFY="${AQSP_ALLOW_NON_TRADING_NEWS_NOTIFY:-false}"
 
 LLM_ARGS=()
 if is_truthy "$ENABLE_LLM_REVIEW"; then
@@ -51,7 +52,17 @@ fi
 
 NOTIFY_ARGS=()
 if is_truthy "${AQSP_NEWS_NOTIFY:-false}"; then
-    NOTIFY_ARGS=(--notify)
+    if "${PYTHON_BIN}" - <<'AQSP_CALENDAR_PY'
+from aqsp.core.time import is_trading_day, today_shanghai
+raise SystemExit(0 if is_trading_day(today_shanghai()) else 1)
+AQSP_CALENDAR_PY
+    then
+        NOTIFY_ARGS=(--notify)
+    elif is_truthy "$ALLOW_NON_TRADING_NOTIFY"; then
+        NOTIFY_ARGS=(--notify)
+    else
+        log "今日非交易日，消息面雷达仅写报告；设置 AQSP_ALLOW_NON_TRADING_NEWS_NOTIFY=true 才允许非交易日推送"
+    fi
 else
     log "消息面雷达默认不推送手机通知，仅写报告；设置 AQSP_NEWS_NOTIFY=true 才推送"
 fi

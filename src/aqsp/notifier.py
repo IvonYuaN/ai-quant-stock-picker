@@ -27,7 +27,7 @@ def _should_suppress_real_notifications() -> bool:
     if _env_flag("AQSP_ALLOW_REAL_NOTIFICATIONS"):
         return False
     if os.getenv("PYTEST_CURRENT_TEST", "").strip():
-        return False
+        return True
     if _env_flag("CODEX_CI") or os.getenv("CODEX_THREAD_ID", "").strip():
         return True
     return False
@@ -115,9 +115,9 @@ def notify_markdown_via_config(
     if normalized_mode == "summary":
         summary_body = compact_notification_markdown(summary_markdown or markdown)
         results = _notify_with_senders(summary_body, _summary_senders())
-        if any(result.ok for result in results):
+        if results or not _env_flag("AQSP_NOTIFY_SUMMARY_FALLBACK_FULL"):
             return results
-        results.extend(_notify_with_senders(summary_body, _full_senders()))
+        results = _notify_with_senders(summary_body, _full_senders())
         return results
 
     if normalized_mode == "full":

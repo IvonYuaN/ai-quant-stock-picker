@@ -4,6 +4,7 @@ Regime自适应策略混合器
 根据HMM检测的市场状态，自动调整策略权重
 参考：gh__Abdullah-BA__RegimeSwitchingMomentumStrategy
 """
+
 from __future__ import annotations
 
 import logging
@@ -177,7 +178,5 @@ def get_current_regime_and_strategy(
         (regime, strategy_mix, hmm_result)
     """
     selector = RegimeAdaptiveStrategySelector()
-    strategy_mix, hmm_result = selector.select_strategy_mix(
-        {"index_df": index_df}
-    )
+    strategy_mix, hmm_result = selector.select_strategy_mix({"index_df": index_df})
     return hmm_result.regime, strategy_mix, hmm_result

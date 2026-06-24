@@ -3,6 +3,10 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 
+def _allow_real_notification_posts(monkeypatch):
+    monkeypatch.setenv("AQSP_ALLOW_REAL_NOTIFICATIONS", "1")
+
+
 def test_send_dingtalk_returns_none_when_no_url(monkeypatch):
     monkeypatch.delenv("DINGTALK_WEBHOOK_URL", raising=False)
     from aqsp.notifier import _send_dingtalk
@@ -12,6 +16,7 @@ def test_send_dingtalk_returns_none_when_no_url(monkeypatch):
 
 
 def test_send_dingtalk_sends_with_secret(monkeypatch):
+    _allow_real_notification_posts(monkeypatch)
     monkeypatch.setenv(
         "DINGTALK_WEBHOOK_URL", "https://oapi.dingtalk.com/robot/send?access_token=test"
     )
@@ -32,6 +37,7 @@ def test_send_dingtalk_sends_with_secret(monkeypatch):
 
 
 def test_send_feishu_uses_interactive_card(monkeypatch):
+    _allow_real_notification_posts(monkeypatch)
     monkeypatch.setenv("FEISHU_WEBHOOK_URL", "https://open.feishu.cn/webhook/test")
     from aqsp.notifier import _send_feishu
 
@@ -56,6 +62,7 @@ def test_send_feishu_uses_interactive_card(monkeypatch):
 
 
 def test_send_dingtalk_uses_markdown_title(monkeypatch):
+    _allow_real_notification_posts(monkeypatch)
     monkeypatch.setenv(
         "DINGTALK_WEBHOOK_URL", "https://oapi.dingtalk.com/robot/send?access_token=test"
     )
@@ -84,6 +91,7 @@ def test_send_bark_returns_none_when_no_url(monkeypatch):
 
 
 def test_send_bark_sends(monkeypatch):
+    _allow_real_notification_posts(monkeypatch)
     monkeypatch.setenv("BARK_URL", "https://api.day.app/yourkey")
     from aqsp.notifier import _send_bark
 
@@ -103,6 +111,7 @@ def test_send_bark_sends(monkeypatch):
 
 
 def test_send_bark_url_encodes_title_and_body(monkeypatch):
+    _allow_real_notification_posts(monkeypatch)
     monkeypatch.setenv("BARK_URL", "https://api.day.app/yourkey")
     from aqsp.notifier import _send_bark
 
@@ -132,6 +141,7 @@ def test_send_pushplus_returns_none_when_no_token(monkeypatch):
 
 
 def test_send_pushplus_sends(monkeypatch):
+    _allow_real_notification_posts(monkeypatch)
     monkeypatch.setenv("PUSHPLUS_TOKEN", "test_token")
     from aqsp.notifier import _send_pushplus
 
@@ -150,6 +160,7 @@ def test_send_pushplus_sends(monkeypatch):
 
 
 def test_send_wechat_marks_business_failure(monkeypatch):
+    _allow_real_notification_posts(monkeypatch)
     monkeypatch.setenv(
         "WECHAT_WEBHOOK_URL",
         "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=test",
@@ -283,7 +294,7 @@ def test_notify_markdown_via_config_summary_only_uses_summary_channels(monkeypat
     assert all("完整内容" not in item for item in sent)
 
 
-def test_notify_markdown_via_config_summary_falls_back_when_summary_channels_fail(
+def test_notify_markdown_via_config_summary_does_not_fallback_by_default(
     monkeypatch,
 ):
     from aqsp.notifier import NotifyResult, notify_markdown_via_config
@@ -322,16 +333,14 @@ def test_notify_markdown_via_config_summary_falls_back_when_summary_channels_fai
     )
 
     assert [(result.channel, result.ok) for result in results] == [
-        ("serverchan", False),
-        ("feishu", True),
+        ("serverchan", False)
     ]
     assert sent == [
         ("serverchan", "# 摘要版\n\n摘要内容"),
-        ("feishu", "# 摘要版\n\n摘要内容"),
     ]
 
 
-def test_notify_markdown_via_config_summary_falls_back_to_full_channels_when_needed(
+def test_notify_markdown_via_config_summary_falls_back_to_full_channels_when_enabled(
     monkeypatch,
 ):
     from aqsp.notifier import NotifyResult, notify_markdown_via_config
@@ -360,6 +369,7 @@ def test_notify_markdown_via_config_summary_falls_back_to_full_channels_when_nee
     monkeypatch.setattr(
         "aqsp.notifier._send_generic_webhook", make_sender("generic_webhook")
     )
+    monkeypatch.setenv("AQSP_NOTIFY_SUMMARY_FALLBACK_FULL", "1")
 
     results = notify_markdown_via_config(
         "# 完整版\n\n内容",
@@ -412,6 +422,7 @@ def test_send_discord_returns_none_when_no_url(monkeypatch):
 
 
 def test_send_discord_sends(monkeypatch):
+    _allow_real_notification_posts(monkeypatch)
     monkeypatch.setenv("DISCORD_WEBHOOK_URL", "https://discord.com/api/webhooks/...")
     from aqsp.notifier import _send_discord
 
@@ -436,6 +447,7 @@ def test_send_slack_returns_none_when_no_url(monkeypatch):
 
 
 def test_send_slack_sends(monkeypatch):
+    _allow_real_notification_posts(monkeypatch)
     monkeypatch.setenv("SLACK_WEBHOOK_URL", "https://hooks.slack.com/services/...")
     from aqsp.notifier import _send_slack
 

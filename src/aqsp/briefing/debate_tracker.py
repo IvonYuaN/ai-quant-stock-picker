@@ -10,6 +10,7 @@ from typing import Any
 from aqsp.briefing.agent_roles import AgentRole, agent_role_label
 from aqsp.briefing.debate import AgentPerformanceMetrics
 from aqsp.core.time import now_shanghai
+from aqsp.utils.jsonl_io import append_jsonl
 
 
 class DebatePerformanceTracker:
@@ -126,8 +127,7 @@ class DebatePerformanceTracker:
             "created_at": now_shanghai().isoformat(timespec="seconds"),
         }
 
-        with open(self.storage_path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+        append_jsonl(self.storage_path, record)
 
     def calculate_adjustment_weight(
         self,

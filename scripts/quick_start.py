@@ -46,24 +46,30 @@ def demo_regime_adaptive_selector():
         # 模拟不同市场状态的数据
         # 牛市场景：持续上涨
         bull_prices = 100 * (1.001 ** np.arange(100))
-        index_df_bull = pd.DataFrame({
-            "date": dates,
-            "close": bull_prices,
-        })
+        index_df_bull = pd.DataFrame(
+            {
+                "date": dates,
+                "close": bull_prices,
+            }
+        )
 
         # 熊市场景：持续下跌
         bear_prices = 100 * (0.999 ** np.arange(100))
-        index_df_bear = pd.DataFrame({
-            "date": dates,
-            "close": bear_prices,
-        })
+        index_df_bear = pd.DataFrame(
+            {
+                "date": dates,
+                "close": bear_prices,
+            }
+        )
 
         # 震荡市场：上下波动
         sideways_prices = 100 + 5 * np.sin(np.arange(100) * 0.1)
-        index_df_sideways = pd.DataFrame({
-            "date": dates,
-            "close": sideways_prices,
-        })
+        index_df_sideways = pd.DataFrame(
+            {
+                "date": dates,
+                "close": sideways_prices,
+            }
+        )
 
         # 初始化选择器
         selector = RegimeAdaptiveStrategySelector()
@@ -95,7 +101,9 @@ def demo_regime_adaptive_selector():
                 logger.info(f"  momentum策略权重: {momentum_weight:.2%}")
 
                 # 测试策略激活判断
-                is_active = selector.is_strategy_active("momentum", market_data, min_weight=0.1)
+                is_active = selector.is_strategy_active(
+                    "momentum", market_data, min_weight=0.1
+                )
                 logger.info(f"  momentum策略激活: {is_active}")
 
             except Exception as exc:
@@ -140,18 +148,24 @@ def demo_national_team_filter():
 
         # 模拟数据
         example_data = {
-            "600000": pd.DataFrame({
-                "date": ["2024-01-01", "2024-01-02"],
-                "close": [10.0, 10.5],
-            }),
-            "601398": pd.DataFrame({
-                "date": ["2024-01-01", "2024-01-02"],
-                "close": [5.0, 5.1],
-            }),
-            "000001": pd.DataFrame({
-                "date": ["2024-01-01", "2024-01-02"],
-                "close": [15.0, 15.2],
-            }),
+            "600000": pd.DataFrame(
+                {
+                    "date": ["2024-01-01", "2024-01-02"],
+                    "close": [10.0, 10.5],
+                }
+            ),
+            "601398": pd.DataFrame(
+                {
+                    "date": ["2024-01-01", "2024-01-02"],
+                    "close": [5.0, 5.1],
+                }
+            ),
+            "000001": pd.DataFrame(
+                {
+                    "date": ["2024-01-01", "2024-01-02"],
+                    "close": [15.0, 15.2],
+                }
+            ),
         }
 
         logger.info(f"\n计算{len(example_data)}个股票的国家队持仓评分...")
@@ -196,7 +210,9 @@ def demo_error_handling():
             prices = 100 * (1.001 ** np.arange(50))
             valid_df = pd.DataFrame({"date": dates, "close": prices})
 
-            weight = selector.get_strategy_weight("nonexistent_strategy", {"index_df": valid_df})
+            weight = selector.get_strategy_weight(
+                "nonexistent_strategy", {"index_df": valid_df}
+            )
             logger.info(f"  ✓ 安全返回: {weight}")
         except Exception as exc:
             logger.error("  ✗ 异常: %s", exc, exc_info=True)

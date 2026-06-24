@@ -14,7 +14,6 @@ import pandas as pd
 from aqsp.config import (
     load_debate_runtime_config,
     load_runtime_config,
-    online_fallback_allowed,
 )
 from aqsp.core.errors import DataError
 from aqsp.core.time import now_shanghai, today_shanghai
@@ -29,36 +28,33 @@ from aqsp.data.registry import get_registry_entry
 from aqsp.data.source_readiness import inspect_source_readiness
 from aqsp.data.source_health import (
     describe_source_health,
-    prioritize_source_ids,
     read_source_health,
     record_source_failure,
     record_source_success,
 )
 from aqsp.data import (
-    fetch_akshare,
     fetch_frames_for_cli_with_metadata,
     fetch_with_source,
     load_csv,
 )
 from aqsp.data.index_constituents import load_optional_index_constituents
-from aqsp.data.akshare_source import AkshareSource
 from aqsp.data.cache import DataCache
-from aqsp.data.eastmoney_source import EastmoneySource
-from aqsp.data.efinance_source import EfinanceSource
-from aqsp.data.mootdx_source import MootdxSource
-from aqsp.data.multi_source import MultiSource, SourceFactory
-from aqsp.data.sina_source import SinaSource
-from aqsp.data.tencent_source import TencentSource
+from aqsp.data.source_factory import (
+    build_data_source,
+    build_sqlite_db_source,
+    load_sqlite_symbol_name_map,
+    resolve_sqlite_db_path,
+    sqlite_price_mode,
+)
 from aqsp.data.tushare_pit import TusharePitClient
-from aqsp.data.baostock_source import BaostockSource
-from aqsp.data.sqlite_db_source import SqliteDbSource
-from aqsp.data.tdx_vipdoc_source import TdxVipdocSource
 from aqsp.data.trading_calendar import trading_day_lag
 from aqsp.filters_lethal.pipeline import LethalFilterPipeline
 from aqsp.freshness import assert_fresh_data, latest_trade_date
 from aqsp.ledger import (
     ExecutionConfig,
     append_predictions,
+    append_run_event,
+    compute_paper_mark_to_market_pnl,
     execution_config_from_thresholds,
     compute_real_pnl,
     count_independent_signal_days,
@@ -74,13 +70,16 @@ from aqsp.notify_templates import (
     build_morning_breakout_notification,
 )
 from aqsp.notification_runtime import (
+    dispatch_gate_notification,
     dispatch_notification_once as _dispatch_notification_once_impl,
     dispatch_scheduled_daily_notification,
     finalize_scheduled_notification,
     finalize_scheduled_outputs,
+    mark_notification_failed,
+    mark_notification_sent,
+    reserve_notification,
 )
 from aqsp.notifier import (
-    notify_gate_markdown,
     notify_markdown as _notify_markdown_default,
     notify_markdown_via_config,
     print_notify_results,
@@ -93,16 +92,16 @@ from aqsp.research_engine import (
 )
 from aqsp.regime import build_synthetic_regime_frame, detect_runtime_regime
 from aqsp.report import to_dataframe, to_markdown
-from aqsp.risk.circuit_breaker import CircuitBreaker
+from aqsp.risk.circuit_breaker import CircuitBreaker, CircuitBreakerConfig
 from aqsp.runtime.gate_notify import (
-    build_gate_notification_markdown,
     mark_gate_notification_sent,
+    mark_gate_notification_failed,
     should_send_gate_notification,
 )
 from aqsp.strategy import screen_universe, strategy_weights_for_regime
 from aqsp.strategies.thresholds import load_thresholds
 from aqsp.universe import DEFAULT_SYMBOLS
-from aqsp.utils.env import read_env_value
+from aqsp.utils.jsonl_io import advisory_lock, atomic_write_text
 from aqsp.walkforward_gate import (
     MAX_GATE_AGE_DAYS,
     WalkForwardGateValidation,
@@ -171,6 +170,60 @@ def serialize_debate_result(result: DebateResult) -> dict:
     }
 
 
+def _read_retained_debates(debate_file: Path, cutoff_date: str) -> dict[str, dict]:
+    retained: dict[str, dict] = {}
+    if not debate_file.exists():
+        return retained
+    for line in debate_file.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            data = json.loads(line)
+            debate_date = str(
+                data.get("related_signal_date", "") or data.get("debate_date", "")
+            )
+            if debate_date < cutoff_date:
+                continue
+            key = f"{data['symbol']}_{debate_date}"
+            if key not in retained or retained[key].get("created_at", "") < data.get(
+                "created_at", ""
+            ):
+                retained[key] = data
+        except (json.JSONDecodeError, KeyError):
+            pass
+    return retained
+
+
+def _merge_debate_records(target: dict[str, dict], updates: dict[str, dict]) -> None:
+    for data in updates.values():
+        debate_date = str(
+            data.get("related_signal_date", "") or data.get("debate_date", "")
+        )
+        symbol = str(data.get("symbol", ""))
+        if not symbol or not debate_date:
+            continue
+        key = f"{symbol}_{debate_date}"
+        if key not in target or target[key].get("created_at", "") < data.get(
+            "created_at", ""
+        ):
+            target[key] = data
+
+
+def _write_debate_records(debate_file: Path, records: dict[str, dict]) -> None:
+    text = "".join(
+        json.dumps(data, ensure_ascii=False) + "\n"
+        for data in sorted(
+            records.values(),
+            key=lambda item: (
+                str(item.get("related_signal_date", "") or item.get("debate_date", "")),
+                str(item.get("symbol", "")),
+                str(item.get("created_at", "")),
+            ),
+        )
+    )
+    atomic_write_text(debate_file, text)
+
+
 SOURCE_CHOICES = [
     "auto",
     "local_first",
@@ -202,9 +255,22 @@ HELDOUT_TRAIN_CUTOFF = "2024-12-31"
 WALKFORWARD_GATE_PATH = "data/walkforward_gate.json"
 GATE_NOTIFY_STATE_PATH = "data/gate_notify_state.json"
 NOTIFY_STATE_PATH = "data/notify_state.json"
-# 冷启动期最低独立信号日。宪法 §1.3 #7/#14 明确要求 30 个独立信号日。
-# 可用环境变量 AQSP_COLD_START_MIN_DAYS 覆盖（仅供测试加速，生产须为 30）。
-COLD_START_MIN_DAYS = int(os.getenv("AQSP_COLD_START_MIN_DAYS", "30"))
+# 冷启动期最低独立信号日。宪法 §1.3 #7/#14 明确要求生产至少 30 个独立信号日。
+DEFAULT_COLD_START_MIN_DAYS = 30
+COLD_START_MIN_DAYS = DEFAULT_COLD_START_MIN_DAYS
+
+
+def _cold_start_min_days() -> int:
+    raw = os.getenv("AQSP_COLD_START_MIN_DAYS", "").strip()
+    if not raw:
+        return DEFAULT_COLD_START_MIN_DAYS
+    try:
+        value = int(raw)
+    except ValueError:
+        return DEFAULT_COLD_START_MIN_DAYS
+    if str(os.getenv("PYTEST_CURRENT_TEST", "")).strip():
+        return max(value, 1)
+    return max(value, DEFAULT_COLD_START_MIN_DAYS)
 
 
 def _resolve_runtime_state_path(path: str) -> str:
@@ -229,25 +295,83 @@ def _dispatch_notification_once(
     kind: str,
     summary_markdown: str | None = None,
 ) -> list:
+    state_path = _resolve_runtime_state_path(
+        os.getenv("AQSP_NOTIFY_STATE_PATH", NOTIFY_STATE_PATH)
+    )
     if notify_markdown is not _notify_markdown_default:
         payload = (
             summary_markdown
             if str(mode).strip().lower() == "summary" and summary_markdown
             else markdown
         )
-        results = notify_markdown(payload)
-        print_notify_results(results, prefix=prefix)
+        if not reserve_notification(
+            kind=kind,
+            markdown=payload,
+            state_path=state_path,
+        ):
+            print(f"{prefix}: skipped duplicate")
+            return []
+        try:
+            results = notify_markdown(payload)
+            print_notify_results(results, prefix=prefix)
+        except Exception:
+            mark_notification_failed(
+                kind=kind,
+                markdown=payload,
+                state_path=state_path,
+            )
+            raise
+        if any(result.ok for result in results):
+            mark_notification_sent(
+                kind=kind,
+                markdown=payload,
+                state_path=state_path,
+            )
+        else:
+            mark_notification_failed(
+                kind=kind,
+                markdown=payload,
+                state_path=state_path,
+            )
         return results
     return _dispatch_notification_once_impl(
         markdown,
         mode=mode,
         prefix=prefix,
         kind=kind,
-        state_path=_resolve_runtime_state_path(
-            os.getenv("AQSP_NOTIFY_STATE_PATH", NOTIFY_STATE_PATH)
-        ),
+        state_path=state_path,
         summary_markdown=summary_markdown,
     )
+
+
+def _screen_universe_with_thresholds(
+    frames: dict[str, pd.DataFrame],
+    config: ScreeningConfig,
+    thresholds: Any,
+) -> list[PickResult]:
+    try:
+        return screen_universe(frames, config, thresholds=thresholds)
+    except TypeError as exc:
+        if "thresholds" not in str(exc):
+            raise
+        return screen_universe(frames, config)
+
+
+def _runtime_max_universe(arg_value: int | None) -> int:
+    if arg_value and arg_value > 0:
+        return int(arg_value)
+    env = load_runtime_config()
+    return int(env.max_universe or 0)
+
+
+def _build_circuit_breaker(thresholds: Any) -> CircuitBreaker:
+    config = CircuitBreakerConfig.from_thresholds(thresholds)
+    try:
+        return CircuitBreaker(config=config)
+    except TypeError as exc:
+        if "config" not in str(exc):
+            raise
+        return CircuitBreaker()
 
 
 def _extract_meaningful_name_from_frame(frame: pd.DataFrame, symbol: str) -> str:
@@ -266,18 +390,11 @@ def _extract_meaningful_name_from_frame(frame: pd.DataFrame, symbol: str) -> str
 def _load_optional_symbol_name_map(symbols: list[str]) -> dict[str, str]:
     if not symbols:
         return {}
-    db_path = _resolve_sqlite_db_path()
-    try:
-        source = SqliteDbSource(db_path=db_path) if db_path else SqliteDbSource()
-    except Exception:
-        return {}
-
-    name_map: dict[str, str] = {}
-    for symbol in symbols:
-        name = str(source.get_symbol_name(symbol)).strip()
-        if has_meaningful_name(symbol, name):
-            name_map[symbol] = name
-    return name_map
+    return {
+        symbol: name
+        for symbol, name in load_sqlite_symbol_name_map(symbols).items()
+        if has_meaningful_name(symbol, name)
+    }
 
 
 def _enrich_pick_names(
@@ -317,23 +434,11 @@ def _enrich_pick_names(
 
 
 def _resolve_sqlite_db_path() -> str | None:
-    db_candidates = [
-        os.getenv("AQSP_SQLITE_DB_PATH", "").strip(),
-        read_env_value(".env", "AQSP_SQLITE_DB_PATH"),
-        "/opt/market-data/astocks_qfq.db",
-        "A股量化分析数据/astocks_qfq.db",
-    ]
-    return next((str(p) for p in db_candidates if p and Path(str(p)).exists()), None)
+    return resolve_sqlite_db_path()
 
 
-def _build_sqlite_db_source(*, cache: DataCache | None) -> SqliteDbSource:
-    db_path = _resolve_sqlite_db_path()
-    if db_path:
-        try:
-            return SqliteDbSource(db_path=db_path, cache=cache)
-        except TypeError:
-            return SqliteDbSource(cache=cache)
-    return SqliteDbSource(cache=cache)
+def _build_sqlite_db_source(*, cache: DataCache | None):
+    return build_sqlite_db_source(cache=cache)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -421,6 +526,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     wf.add_argument(
         "--cache-path", default="", help="independent cache path (avoid stale data)"
+    )
+    wf.add_argument(
+        "--gate-path",
+        default=WALKFORWARD_GATE_PATH,
+        help="walk-forward gate sidecar path",
     )
     wf.add_argument("--log", default="", help="tee output to log file")
     wf.add_argument(
@@ -620,6 +730,7 @@ def main(argv: list[str] | None = None) -> int:
     evolve_cmd = sub.add_parser("evolve", help="auto evolve strategy parameters")
     evolve_cmd.add_argument("--source", choices=SOURCE_CHOICES, default="auto")
     evolve_cmd.add_argument("--config", default="config/evolution_config.yaml")
+    evolve_cmd.add_argument("--max-universe", type=int, default=0)
     evolve_cmd.add_argument(
         "--apply",
         action="store_true",
@@ -632,6 +743,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     multi_factor_cmd.add_argument("--source", choices=SOURCE_CHOICES, default="auto")
     multi_factor_cmd.add_argument("--pool", default="sh300")
+    multi_factor_cmd.add_argument("--max-universe", type=int, default=0)
     multi_factor_cmd.add_argument("--top", type=int, default=10)
     multi_factor_cmd.add_argument("--output", default="")
     multi_factor_cmd.add_argument("--report", default="")
@@ -642,6 +754,7 @@ def main(argv: list[str] | None = None) -> int:
     morning_cmd.add_argument("--source", choices=SOURCE_CHOICES, default="auto")
     morning_cmd.add_argument("--symbols", default="")
     morning_cmd.add_argument("--pool", default="sh300")
+    morning_cmd.add_argument("--max-universe", type=int, default=0)
     morning_cmd.add_argument("--top", type=int, default=5)
     morning_cmd.add_argument("--notify", action="store_true")
     morning_cmd.add_argument("--output", default="")
@@ -652,6 +765,7 @@ def main(argv: list[str] | None = None) -> int:
     closing_cmd.add_argument("--source", choices=SOURCE_CHOICES, default="auto")
     closing_cmd.add_argument("--symbols", default="")
     closing_cmd.add_argument("--pool", default="sh300")
+    closing_cmd.add_argument("--max-universe", type=int, default=0)
     closing_cmd.add_argument("--top", type=int, default=5)
     closing_cmd.add_argument("--notify", action="store_true")
     closing_cmd.add_argument("--output", default="")
@@ -1006,96 +1120,8 @@ def _source_runtime_metadata(
     )
 
 
-def _reorder_source_refs(
-    source_refs: list[object],
-    *,
-    pinned_last: tuple[str, ...] = (),
-) -> list[object]:
-    order = prioritize_source_ids(
-        [str(getattr(item, "name", "")) for item in source_refs]
-    )
-    by_name = {str(getattr(item, "name", "")): item for item in source_refs}
-    prioritized = [by_name[name] for name in order if name in by_name]
-    if not pinned_last:
-        return prioritized
-    keep: list[object] = []
-    tail: list[object] = []
-    pinned = set(pinned_last)
-    for item in prioritized:
-        if str(getattr(item, "name", "")) in pinned:
-            tail.append(item)
-        else:
-            keep.append(item)
-    return keep + tail
-
-
 def _get_source(source_name: str):
-    cache = DataCache()
-    if source_name in {"auto", "local_first"}:
-        if not online_fallback_allowed():
-            return TdxVipdocSource()
-        fallbacks = _reorder_source_refs(
-            [
-                EastmoneySource(cache=cache),
-                SinaSource(cache=cache),
-                TencentSource(cache=cache),
-                AkshareSource(cache=cache),
-            ],
-            pinned_last=("akshare",),
-        )
-        return MultiSource(
-            SourceFactory("tdx_vipdoc", TdxVipdocSource),
-            fallbacks,
-            validate_consistency=False,
-        )
-    if source_name == "online_first":
-        online_sources = _reorder_source_refs(
-            [
-                EastmoneySource(cache=cache),
-                SinaSource(cache=cache),
-                TencentSource(cache=cache),
-                AkshareSource(cache=cache),
-            ],
-            pinned_last=("akshare",),
-        )
-        return MultiSource(
-            online_sources[0],
-            online_sources[1:] + [SourceFactory("tdx_vipdoc", TdxVipdocSource)],
-            validate_consistency=False,
-        )
-    if source_name == "multi":
-        sources = _reorder_source_refs(
-            [
-                AkshareSource(cache=cache),
-                SinaSource(cache=cache),
-                EastmoneySource(cache=cache),
-                TencentSource(cache=cache),
-            ],
-            pinned_last=("akshare",),
-        )
-        return MultiSource(
-            sources[0],
-            sources[1:],
-        )
-    if source_name == "akshare":
-        return AkshareSource(cache=cache)
-    if source_name == "sina":
-        return SinaSource(cache=cache)
-    if source_name == "eastmoney":
-        return EastmoneySource(cache=cache)
-    if source_name == "tencent":
-        return TencentSource(cache=cache)
-    if source_name == "mootdx":
-        return MootdxSource(cache=cache)
-    if source_name == "baostock":
-        return BaostockSource(cache=cache)
-    if source_name == "efinance":
-        return EfinanceSource(cache=cache)
-    if source_name == "sqlite_db":
-        return SqliteDbSource(cache=cache)
-    if source_name == "tdx_vipdoc":
-        return TdxVipdocSource()
-    raise ValueError(f"Unknown data source: {source_name}")
+    return build_data_source(source_name, cache=DataCache())
 
 
 def _fetch_frames_for_cli(
@@ -1130,7 +1156,6 @@ def _fetch_frames_for_cli_with_metadata(
         benchmark_symbol=benchmark_symbol,
         cache_path=cache_path,
         days=days,
-        fetch_akshare_fn=fetch_akshare,
         get_source_fn=_get_source,
         fetch_with_source_fn=fetch_with_source,
         record_source_success_fn=record_source_success,
@@ -1180,6 +1205,30 @@ def _blend_base_and_regime_scores(
         return round(base_score, 2)
     blended = (base_score * base_weight + regime_score * regime_weight) / total_weight
     return round(blended, 2)
+
+
+def _runtime_weight_snapshot(
+    *,
+    thresholds: Any,
+    regime: str,
+    strategy_weights: dict[str, float],
+    strategy_weight_reasons: dict[str, str],
+) -> dict[str, Any]:
+    composite = thresholds.composite
+    return {
+        "regime": regime,
+        "strategy_weights": {
+            str(key): round(float(value), 6)
+            for key, value in sorted(strategy_weights.items())
+        },
+        "strategy_weight_reasons": {
+            str(key): str(value)
+            for key, value in sorted(strategy_weight_reasons.items())
+        },
+        "base_blend_weight": float(composite.base_blend_weight),
+        "regime_blend_weight": float(composite.regime_blend_weight),
+        "thresholds_version": str(thresholds.version),
+    }
 
 
 def _augment_summary_with_t1_blockers(
@@ -1553,7 +1602,15 @@ def _ledger_signal_date(row: dict[str, Any]) -> str:
     return ledger_signal_date(row)
 
 
-def _compute_real_pnl(ledger_path: str) -> tuple[float, float, float]:
+def _compute_real_pnl(
+    ledger_path: str,
+    paper_ledger_path: str | None = None,
+    frames: dict[str, pd.DataFrame] | None = None,
+) -> tuple[float, float, float]:
+    if paper_ledger_path and frames:
+        paper_pnl = compute_paper_mark_to_market_pnl(paper_ledger_path, frames)
+        if paper_pnl is not None:
+            return paper_pnl
     return compute_real_pnl(ledger_path)
 
 
@@ -1573,6 +1630,16 @@ def _format_validation_summary_lines(validation: Any) -> list[str]:
             "- 不可成交原因: "
             + ", ".join(f"{reason}×{count}" for reason, count in top_reasons)
         )
+    rates = getattr(validation, "strategy_not_executable_rates", None) or {}
+    if isinstance(rates, dict) and rates:
+        top_rates = sorted(
+            ((str(strategy), float(rate)) for strategy, rate in rates.items()),
+            key=lambda item: (-item[1], item[0]),
+        )[:3]
+        lines.append(
+            "- 不可成交策略: "
+            + ", ".join(f"{strategy} {rate:.0%}" for strategy, rate in top_rates)
+        )
     return lines
 
 
@@ -1589,7 +1656,115 @@ def _validation_summary_payload(validation: Any) -> dict[str, object] | None:
         ),
         "not_executable_reasons": getattr(validation, "not_executable_reasons", None)
         or {},
+        "strategy_not_executable_rates": getattr(
+            validation, "strategy_not_executable_rates", None
+        )
+        or {},
     }
+
+
+def _handle_circuit_breaker_block(
+    *,
+    args: argparse.Namespace,
+    status: Any,
+    latest: date,
+    run_metadata: RunMetadata,
+    validation: Any,
+    cold_start_days: int,
+    cold_start_min_days: int,
+    daily_pnl: float,
+    weekly_pnl: float,
+    monthly_pnl: float,
+    task_id: str,
+) -> int:
+    print(f"🛡️ 组合保护已触发，停止新增候选生成: {status.reason}")
+    append_run_event(
+        args.ledger,
+        event_date=latest.isoformat(),
+        status="blocked_by_circuit_breaker",
+        reason=status.reason,
+        run_metadata=run_metadata,
+        details={
+            "daily_pnl_pct": round(daily_pnl, 4),
+            "weekly_pnl_pct": round(weekly_pnl, 4),
+            "monthly_pnl_pct": round(monthly_pnl, 4),
+        },
+    )
+
+    markdown = "\n".join(
+        [
+            f"# AI 量化选股报告(组合保护, 数据日期 {latest.isoformat()})",
+            "",
+            "## 执行摘要",
+            "",
+            f"🛡️ **组合保护已触发**: {status.reason}，本次停止新增纸面复核。",
+            "",
+            "## 组合保护",
+            "",
+            f"- 日度损益: {daily_pnl:.2f}%",
+            f"- 周度损益: {weekly_pnl:.2f}%",
+            f"- 月度损益: {monthly_pnl:.2f}%",
+        ]
+    )
+    if validation is not None:
+        markdown += "\n\n## 策略自检\n"
+        if cold_start_days < cold_start_min_days:
+            markdown += f"- 冷启动期: 已积累 {cold_start_days}/{cold_start_min_days} 个独立信号日\n"
+        elif getattr(validation, "checked", 0):
+            markdown += f"- 本次验证历史预测: {validation.checked} 条\n"
+        else:
+            markdown += "- 本次暂无可验证历史预测\n"
+        validation_summary_lines = _format_validation_summary_lines(validation)
+        if validation_summary_lines:
+            markdown += "\n".join(validation_summary_lines) + "\n"
+
+    notification_artifacts = finalize_scheduled_notification(
+        markdown=markdown,
+        args_notify=args.notify,
+        gate_ok=False,
+        gate_reasons=[status.reason],
+        next_actions=["组合保护解除前暂停新增纸面复核，仅保留风险观察。"],
+        latest_iso=latest.isoformat(),
+        notify_mode=load_runtime_config().notify_mode,
+        dispatch_gate_notification_fn=dispatch_gate_notification,
+        should_send_gate_notification_fn=lambda **kwargs: (
+            _should_send_gate_notification(
+                gate_ok=kwargs["gate_ok"],
+                gate_reasons=kwargs["gate_reasons"],
+                run_date=kwargs["run_date"],
+            )
+        ),
+        format_notification_gate_block_fn=_format_notification_gate_block,
+        legacy_notify_fn=notify_markdown
+        if notify_markdown is not _notify_markdown_default
+        else None,
+        print_fn=print,
+        mark_gate_notification_sent_fn=lambda **kwargs: _mark_gate_notification_sent(
+            gate_reasons=kwargs["gate_reasons"],
+            run_date=kwargs["run_date"],
+        ),
+        mark_gate_notification_failed_fn=lambda **kwargs: (
+            _mark_gate_notification_failed(
+                gate_reasons=kwargs["gate_reasons"],
+                run_date=kwargs["run_date"],
+            )
+        ),
+        gate_state_path=_resolve_runtime_state_path(
+            os.getenv("AQSP_GATE_NOTIFY_STATE_PATH", GATE_NOTIFY_STATE_PATH)
+        ),
+        task_id=task_id,
+    )
+    report_path = str(getattr(args, "report", "") or "").strip()
+    if report_path:
+        Path(report_path).parent.mkdir(parents=True, exist_ok=True)
+    finalize_scheduled_outputs(
+        markdown=notification_artifacts.markdown,
+        report_path=report_path,
+        output_csv_path=str(getattr(args, "output_csv", "") or "").strip(),
+        table=to_dataframe([]),
+        print_fn=print,
+    )
+    return 2
 
 
 def _execution_cost_bps_from_thresholds(thresholds: Any) -> tuple[float, float]:
@@ -2067,6 +2242,7 @@ def _write_walkforward_gate(
     end: str,
     n_periods: int,
     metadata: dict[str, object] | None = None,
+    gate_path: str | Path = WALKFORWARD_GATE_PATH,
 ) -> None:
     """写双门 sidecar，供 run_scheduled 的 notify gate 读取。
     独立 JSON，不污染 thresholds.yaml，不 bump version（§1.3 #12/#14）。
@@ -2082,9 +2258,8 @@ def _write_walkforward_gate(
         n_periods=n_periods,
         metadata=metadata,
     )
-    p = Path(WALKFORWARD_GATE_PATH)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    p = Path(gate_path)
+    atomic_write_text(p, json.dumps(payload, indent=2, ensure_ascii=False))
     print(f"✅ 双门 sidecar 已写入: {p}（both_pass={payload['both_pass']}）")
 
 
@@ -2106,9 +2281,7 @@ def _walkforward_gate_metadata(
         if db_path:
             metadata["sqlite_db_path"] = db_path
             try:
-                metadata["price_mode"] = SqliteDbSource(
-                    db_path=db_path, cache=None
-                ).price_mode()
+                metadata["price_mode"] = sqlite_price_mode(db_path)
             except Exception:  # noqa: BLE001
                 metadata["price_mode"] = "unknown"
         else:
@@ -2211,10 +2384,11 @@ def _check_notification_gate(
     sidecar 缺失/解析失败/过期 → fail-closed（不放行）。
     """
     reasons: list[str] = []
+    cold_start_min_days = _cold_start_min_days()
 
-    if cold_start_days < COLD_START_MIN_DAYS:
+    if cold_start_days < cold_start_min_days:
         reasons.append(
-            f"冷启动未满: {cold_start_days}/{COLD_START_MIN_DAYS} 个独立信号日"
+            f"冷启动未满: {cold_start_days}/{cold_start_min_days} 个独立信号日"
         )
 
     p = Path(gate_path)
@@ -2335,10 +2509,11 @@ def _notification_gate_actions(
     joined = " ".join(reasons)
 
     if "冷启动未满" in joined:
-        remaining_days = max(COLD_START_MIN_DAYS - cold_start_days, 0)
+        cold_start_min_days = _cold_start_min_days()
+        remaining_days = max(cold_start_min_days - cold_start_days, 0)
         actions.append(
             "继续按日运行主链，先把冷启动样本积累到 "
-            f"{COLD_START_MIN_DAYS} 个独立信号日"
+            f"{cold_start_min_days} 个独立信号日"
             + (f"（当前还差 {remaining_days} 天）" if remaining_days > 0 else "")
             + "。"
         )
@@ -2420,6 +2595,20 @@ def _mark_gate_notification_sent(
     )
 
 
+def _mark_gate_notification_failed(
+    *,
+    gate_reasons: list[str],
+    run_date: str,
+) -> None:
+    mark_gate_notification_failed(
+        gate_reasons=gate_reasons,
+        state_path=_resolve_runtime_state_path(
+            os.getenv("AQSP_GATE_NOTIFY_STATE_PATH", GATE_NOTIFY_STATE_PATH)
+        ),
+        run_date=run_date,
+    )
+
+
 def run_screen(args: argparse.Namespace) -> int:
     actual_source = "csv"
     explicit_symbol_count = 0
@@ -2472,9 +2661,10 @@ def run_screen(args: argparse.Namespace) -> int:
         max_position_pct=thresholds.risk.max_position_pct,
         strategy_weights=strategy_weights_for_regime(thresholds, regime),
     )
-    picks = _enrich_pick_names(screen_universe(screen_frames, config), screen_frames)[
-        : args.limit
-    ]
+    picks = _enrich_pick_names(
+        _screen_universe_with_thresholds(screen_frames, config, thresholds),
+        screen_frames,
+    )[: args.limit]
     table = to_dataframe(picks)
     if table.empty:
         print("No candidates.")
@@ -2506,21 +2696,26 @@ def run_screen(args: argparse.Namespace) -> int:
             data_lag_days=data_lag_days,
             task_id=str(os.environ.get("AQSP_RUN_TASK_ID", "") or "").strip(),
         )
-        Path(args.report).write_text(
+        atomic_write_text(
+            args.report,
             to_markdown(
                 picks,
                 title=f"AI 量化选股报告({args.mode})",
                 metadata=run_metadata,
             ),
-            encoding="utf-8",
         )
     if args.output_csv:
-        Path(args.output_csv).parent.mkdir(parents=True, exist_ok=True)
-        table.to_csv(args.output_csv, index=False)
+        atomic_write_text(args.output_csv, table.to_csv(index=False))
     return 0
 
 
 def run_scheduled(args: argparse.Namespace) -> int:
+    from aqsp.services import scheduled
+
+    return scheduled.run_scheduled_service(args, legacy_runner=_run_scheduled_legacy)
+
+
+def _run_scheduled_legacy(args: argparse.Namespace) -> int:
     env = load_runtime_config()
     today = today_shanghai()
     from aqsp.core.time import is_trading_day
@@ -2575,12 +2770,71 @@ def run_scheduled(args: argparse.Namespace) -> int:
     if not args.skip_validation:
         validation = validate_predictions(args.ledger, frames)
 
-    breaker = CircuitBreaker()
-    daily_pnl, weekly_pnl, monthly_pnl = _compute_real_pnl(args.ledger)
+    thresholds = load_thresholds()
+
+    breaker = _build_circuit_breaker(thresholds)
+    paper_ledger_path = os.getenv("AQSP_PAPER_LEDGER", "data/paper_trades.jsonl")
+    daily_pnl, weekly_pnl, monthly_pnl = _compute_real_pnl(
+        args.ledger,
+        paper_ledger_path,
+        frames,
+    )
     status = breaker.check(
         daily_pnl_pct=daily_pnl,
         weekly_pnl_pct=weekly_pnl,
         monthly_pnl_pct=monthly_pnl,
+    )
+
+    cold_start_days = _count_independent_signal_days(args.ledger)
+    cold_start_min_days = _cold_start_min_days()
+    is_cold_start = cold_start_days < cold_start_min_days
+
+    run_metadata_base = RunMetadata(
+        requested_source=args.source,
+        actual_source=actual_source,
+        source_freshness_tier=freshness_tier,
+        source_coverage_tier=coverage_tier,
+        source_local_status=source_local_status,
+        source_health_label=source_health_label,
+        source_health_message=source_health_message,
+        fallback_used=fallback_used,
+        explicit_symbol_count=explicit_symbol_count,
+        resolved_symbol_count=len(symbols),
+        fetched_frame_count=len(frames),
+        screened_count=0,
+        final_count=0,
+        min_price=thresholds.filter.min_price,
+        max_price=thresholds.filter.max_price,
+        min_avg_amount=min_avg_amount,
+        online_factors_enabled=enable_online_factors,
+        thresholds_version=thresholds.version,
+        data_latest_trade_date=latest.isoformat(),
+        data_lag_days=data_lag_days,
+        regime="",
+        max_universe=max_universe,
+        task_id=str(os.environ.get("AQSP_RUN_TASK_ID", "") or "").strip(),
+        circuit_breaker_triggered=status.triggered,
+        circuit_breaker_reason=status.reason,
+    )
+    if status.triggered:
+        return _handle_circuit_breaker_block(
+            args=args,
+            status=status,
+            latest=latest,
+            run_metadata=run_metadata_base,
+            validation=validation,
+            cold_start_days=cold_start_days,
+            cold_start_min_days=cold_start_min_days,
+            daily_pnl=daily_pnl,
+            weekly_pnl=weekly_pnl,
+            monthly_pnl=monthly_pnl,
+            task_id=task_id,
+        )
+
+    regime = _detect_runtime_regime(
+        frames,
+        benchmark_symbol=args.benchmark_symbol,
+        thresholds=thresholds,
     )
 
     weight_proposals: dict[str, float] = {}
@@ -2601,18 +2855,35 @@ def run_scheduled(args: argparse.Namespace) -> int:
         print(
             f"学习权重提案: {len(weight_proposals)} 个策略，仅记录研究观察，未应用到本次筛选"
         )
-
-    cold_start_days = _count_independent_signal_days(args.ledger)
-    is_cold_start = cold_start_days < COLD_START_MIN_DAYS
-
-    thresholds = load_thresholds()
-
-    regime = _detect_runtime_regime(
-        frames,
-        benchmark_symbol=args.benchmark_symbol,
-        thresholds=thresholds,
-    )
     weights = strategy_weights_for_regime(thresholds, regime)
+    strategy_weight_reasons: dict[str, str] = {}
+    try:
+        from aqsp.ledger.runtime import strategy_executability_weight_adjustments
+
+        executability_adjustments, executability_reasons = (
+            strategy_executability_weight_adjustments(args.ledger)
+        )
+        if executability_adjustments:
+            print(
+                "不可成交反馈降权提案: "
+                + ", ".join(
+                    f"{strategy_id}×{multiplier:.2f}"
+                    for strategy_id, multiplier in executability_adjustments.items()
+                )
+                + "；仅记录研究观察，未应用到本次筛选"
+            )
+            LOGGER.info(
+                "不可成交反馈降权提案未应用: %s",
+                {
+                    key: {
+                        "multiplier": executability_adjustments[key],
+                        "reason": executability_reasons.get(key, ""),
+                    }
+                    for key in sorted(executability_adjustments)
+                },
+            )
+    except Exception as exc:
+        LOGGER.warning("不可成交反馈权重计算失败，按原始权重继续: %s", exc)
 
     screen_frames = _drop_benchmark_frame(frames, args.benchmark_symbol)
     config = ScreeningConfig(
@@ -2624,9 +2895,10 @@ def run_scheduled(args: argparse.Namespace) -> int:
         stop_loss_buffer=thresholds.risk.soft_stop_loss_pct,
         max_position_pct=thresholds.risk.max_position_pct,
         strategy_weights=weights,
+        strategy_weight_reasons=strategy_weight_reasons,
     )
     screened_picks = _enrich_pick_names(
-        screen_universe(screen_frames, config),
+        _screen_universe_with_thresholds(screen_frames, config, thresholds),
         screen_frames,
     )
 
@@ -2637,19 +2909,35 @@ def run_scheduled(args: argparse.Namespace) -> int:
         composite_scores = composite.calculate_score(screen_frames, regime=regime)
         if composite_scores:
             max_cs = max(composite_scores.values()) if composite_scores else 1.0
+            weight_snapshot = _runtime_weight_snapshot(
+                thresholds=thresholds,
+                regime=regime,
+                strategy_weights=weights,
+                strategy_weight_reasons=strategy_weight_reasons,
+            )
             rescored_picks = []
             for pick in screened_picks:
                 raw_cs = composite_scores.get(pick.symbol, 0.0)
                 normalized_cs = (raw_cs / max_cs * 100) if max_cs > 0 else 0.0
+                blended_score = _blend_base_and_regime_scores(
+                    base_score=pick.score,
+                    regime_score=normalized_cs,
+                    thresholds=thresholds,
+                )
+                metrics = {
+                    **pick.metrics,
+                    "strategy_weight_snapshot": weight_snapshot,
+                    "composite_score_raw": round(float(raw_cs), 6),
+                    "composite_score_normalized": round(float(normalized_cs), 6),
+                    "base_score_before_composite": round(float(pick.score), 6),
+                    "final_score_after_composite": round(float(blended_score), 6),
+                }
                 rescored_picks.append(
                     replace(
                         pick,
+                        metrics=metrics,
                         regime_score=round(normalized_cs, 2),
-                        score=_blend_base_and_regime_scores(
-                            base_score=pick.score,
-                            regime_score=normalized_cs,
-                            thresholds=thresholds,
-                        ),
+                        score=blended_score,
                     )
                 )
             screened_picks = sorted(rescored_picks, key=lambda p: p.score, reverse=True)
@@ -2824,6 +3112,7 @@ def run_scheduled(args: argparse.Namespace) -> int:
                 df,
                 pick.close,
                 symbol=pick.symbol,
+                atr_period=int(risk_thresholds.dynamic_stop_atr_period),
                 atr_multiplier=float(risk_thresholds.dynamic_stop_atr_multiplier),
                 fallback_pct=float(risk_thresholds.dynamic_stop_fallback_pct),
                 recent_low_days=int(risk_thresholds.dynamic_stop_recent_low_days),
@@ -2879,20 +3168,7 @@ def run_scheduled(args: argparse.Namespace) -> int:
         cutoff_date = (
             (now_shanghai() - timedelta(days=DEBATE_RETENTION_DAYS)).date().isoformat()
         )
-        if debate_file.exists():
-            for line in debate_file.read_text(encoding="utf-8").splitlines():
-                if line.strip():
-                    try:
-                        data = json.loads(line)
-                        debate_date = data.get("related_signal_date", "")
-                        if debate_date >= cutoff_date:
-                            key = f"{data['symbol']}_{debate_date}"
-                            if key not in existing_debates or existing_debates[key].get(
-                                "created_at", ""
-                            ) < data.get("created_at", ""):
-                                existing_debates[key] = data
-                    except json.JSONDecodeError:
-                        pass
+        existing_debates = _read_retained_debates(debate_file, cutoff_date)
 
         today = now_shanghai().date().isoformat()
         now = now_shanghai().isoformat(timespec="seconds")
@@ -2949,9 +3225,10 @@ def run_scheduled(args: argparse.Namespace) -> int:
             "   📎 辩论结果已落附件；runtime评分与ledger score保持原样，非keep结论将接入PM调整优先级"
         )
 
-        with open(debate_file, "w", encoding="utf-8") as f:
-            for data in existing_debates.values():
-                f.write(json.dumps(data, ensure_ascii=False) + "\n")
+        with advisory_lock(debate_file):
+            retained_debates = _read_retained_debates(debate_file, cutoff_date)
+            _merge_debate_records(retained_debates, existing_debates)
+            _write_debate_records(debate_file, retained_debates)
         print("📢 辩论分析完成")
 
         # 将辩论结论回写到对应 pick，使 PM 能据此调整优先级与配仓。
@@ -3026,6 +3303,7 @@ def run_scheduled(args: argparse.Namespace) -> int:
             correlation_result=correlation_result,
             sector_map=sector_map,
             industry_map=industry_map,
+            thresholds=thresholds,
         )
         picks = bundle.picks
         portfolio_decisions = list(bundle.decisions)
@@ -3068,6 +3346,18 @@ def run_scheduled(args: argparse.Namespace) -> int:
 
     if status.triggered:
         print(f"🛡️ 组合保护已触发，跳过正式信号 ledger 写入: {status.reason}")
+        append_run_event(
+            args.ledger,
+            event_date=latest.isoformat(),
+            status="blocked_by_circuit_breaker",
+            reason=status.reason,
+            run_metadata=run_metadata,
+            details={
+                "daily_pnl_pct": round(daily_pnl, 4),
+                "weekly_pnl_pct": round(weekly_pnl, 4),
+                "monthly_pnl_pct": round(monthly_pnl, 4),
+            },
+        )
     else:
         append_predictions(
             args.ledger,
@@ -3132,7 +3422,7 @@ def run_scheduled(args: argparse.Namespace) -> int:
 
     if is_cold_start:
         summary_lines.append(
-            f"⏳ 冷启动期: {cold_start_days}/{COLD_START_MIN_DAYS} 天（策略权重未调整，仅供观察）"
+            f"⏳ 冷启动期: {cold_start_days}/{cold_start_min_days} 天（策略权重未调整，仅供观察）"
         )
 
     summary_lines.append("")
@@ -3157,7 +3447,7 @@ def run_scheduled(args: argparse.Namespace) -> int:
     if validation is not None:
         validation_text = "\n\n## 策略自检\n"
         if is_cold_start:
-            validation_text += f"- ⏳ 冷启动期:已积累 {cold_start_days}/{COLD_START_MIN_DAYS} 个独立信号日\n"
+            validation_text += f"- ⏳ 冷启动期:已积累 {cold_start_days}/{cold_start_min_days} 个独立信号日\n"
             validation_text += "- 策略权重调整和胜率统计将在冷启动期结束后启用\n"
         elif validation.checked:
             validation_text += f"- 本次验证历史预测: {validation.checked} 条\n"
@@ -3253,7 +3543,9 @@ def run_scheduled(args: argparse.Namespace) -> int:
         if not gate_ok
         else []
     )
-    notify_mode = load_runtime_config().notify_mode
+    runtime_config = load_runtime_config()
+    notify_mode = runtime_config.notify_mode
+    notify_requested = bool(args.notify or runtime_config.notify)
     title_label = str(
         os.environ.get("AQSP_NOTIFY_TITLE_LABEL", "") or "收盘研究日报"
     ).strip()
@@ -3262,19 +3554,13 @@ def run_scheduled(args: argparse.Namespace) -> int:
     )
     notification_artifacts = finalize_scheduled_notification(
         markdown=markdown,
-        args_notify=args.notify,
+        args_notify=notify_requested,
         gate_ok=gate_ok,
         gate_reasons=gate_reasons,
         next_actions=next_actions,
         latest_iso=latest.isoformat(),
         notify_mode=notify_mode,
-        dispatch_gate_notification_fn=lambda **kwargs: notify_gate_markdown(
-            build_gate_notification_markdown(
-                run_date=kwargs["run_date"],
-                gate_reasons=kwargs["gate_reasons"],
-                next_actions=kwargs["next_actions"],
-            )
-        ),
+        dispatch_gate_notification_fn=dispatch_gate_notification,
         should_send_gate_notification_fn=lambda **kwargs: (
             _should_send_gate_notification(
                 gate_ok=kwargs["gate_ok"],
@@ -3288,6 +3574,12 @@ def run_scheduled(args: argparse.Namespace) -> int:
         mark_gate_notification_sent_fn=lambda **kwargs: _mark_gate_notification_sent(
             gate_reasons=kwargs["gate_reasons"],
             run_date=kwargs["run_date"],
+        ),
+        mark_gate_notification_failed_fn=lambda **kwargs: (
+            _mark_gate_notification_failed(
+                gate_reasons=kwargs["gate_reasons"],
+                run_date=kwargs["run_date"],
+            )
         ),
         gate_state_path=_resolve_runtime_state_path(
             os.getenv("AQSP_GATE_NOTIFY_STATE_PATH", GATE_NOTIFY_STATE_PATH)
@@ -3314,7 +3606,7 @@ def run_scheduled(args: argparse.Namespace) -> int:
         source_health_message=source_health_message,
         requested_source=args.source,
         cold_start_days=cold_start_days,
-        cold_start_min_days=COLD_START_MIN_DAYS,
+        cold_start_min_days=cold_start_min_days,
         is_cold_start=is_cold_start,
         circuit_breaker_reason=status.reason if status.triggered else "",
         snapshot_diff=diff,
@@ -3337,8 +3629,7 @@ def run_dashboard(args: argparse.Namespace) -> int:
     from scripts.render_dashboard import render_all_panels
 
     html = render_all_panels(ledger_path=args.ledger)
-    Path(args.output).parent.mkdir(parents=True, exist_ok=True)
-    Path(args.output).write_text(html, encoding="utf-8")
+    atomic_write_text(args.output, html)
     print(f"Dashboard saved to {args.output}")
     return 0
 
@@ -3857,103 +4148,31 @@ def run_walkforward(args: argparse.Namespace) -> int:
     if logger:
         logger.info("获取 %d 只股票数据...", len(symbols))
 
-    if args.source in {"multi", "akshare", "eastmoney", "tencent"}:
-        frames = _fetch_frames_for_cli(
-            args.source,
-            symbols,
-            benchmark_symbol=None,
+    from aqsp.services.walkforward_data import (
+        WalkforwardFetchRequest,
+        fetch_walkforward_frames,
+    )
+
+    fetch_result = fetch_walkforward_frames(
+        WalkforwardFetchRequest(
+            source=args.source,
+            symbols=symbols,
+            start=args.start,
+            end=args.end,
             cache_path=args.cache_path or None,
-            days=_walkforward_fetch_days(args.start, args.end),
-        )
-    elif args.source == "mootdx":
-        from datetime import date as _date
-        from aqsp.data.mootdx_source import MootdxSource
-
-        src = MootdxSource()
-        start_d = _date.fromisoformat(args.start)
-        end_d = _date.fromisoformat(args.end)
-        # 7 年 ~1700 交易日，count=2000 留余量；mootdx 实际上限可能 < 2000，
-        # 拿不满会按实际返回。第一次跑后看 logs 确认覆盖了 args.start。
-        frames = src.fetch_daily(symbols, start_d, end_d, adjust="", count=2000)
-    elif args.source == "sina":
-        from datetime import date as _date
-        from aqsp.data.sina_source import SinaSource
-
-        src = SinaSource(cache=DataCache())
-        start_d = _date.fromisoformat(args.start)
-        end_d = _date.fromisoformat(args.end)
-        frames = src.fetch_daily(symbols, start_d, end_d, adjust="")
-    elif args.source == "baostock":
-        from datetime import date as _date
-        from aqsp.data.pit_financial import enrich_ohlcv_with_pit_financials
-
-        src = BaostockSource(cache=DataCache())
-        start_d = _date.fromisoformat(args.start)
-        end_d = _date.fromisoformat(args.end)
-        frames = src.fetch_daily(symbols, start_d, end_d, adjust="")
-        if getattr(args, "skip_pit_financials", False):
-            print("已跳过 point-in-time 财务补充，仅使用价格数据跑 gate")
-        else:
-            print(
-                f"正在获取 {len(symbols)} 只股票 {args.start} ~ {args.end} 的 point-in-time 财务数据..."
-            )
-            pit_result = enrich_ohlcv_with_pit_financials(
-                frames,
-                symbols,
-                start_d,
-                end_d,
-                cache=DataCache(),
-            )
-            frames = pit_result.frames
-            print(f"财务数据合并完成: {pit_result.financial_symbol_count} 只有财务数据")
-            if pit_result.disclosure_symbol_count:
-                print(
-                    f"Tushare 披露日覆盖完成: {pit_result.disclosure_symbol_count} 只"
-                )
-            for status in getattr(pit_result, "source_statuses", ()):
-                print(f"PIT源 {status.source_id}: {status.status} - {status.message}")
-    elif args.source == "sqlite_db":
-        from datetime import date as _date
-        from aqsp.data.pit_financial import enrich_ohlcv_with_pit_financials
-
-        # walkforward 直接读本地历史库，避免被短周期 runtime cache 截断区间。
-        src = _build_sqlite_db_source(cache=None)
-        start_d = _date.fromisoformat(args.start)
-        end_d = _date.fromisoformat(args.end)
-        available = src.get_available_symbols()
-        symbols = [s for s in symbols if s in available]
-        if hasattr(src, "get_symbols_with_daily_coverage"):
-            symbols = src.get_symbols_with_daily_coverage(
-                symbols,
-                start_d,
-                end_d,
-                min_rows=None,
-            )
-        print(f"SQLite 数据库中可用且覆盖区间的标的: {len(symbols)} 只")
-        frames = src.fetch_daily(symbols, start_d, end_d, adjust="")
-        if getattr(args, "skip_pit_financials", False):
-            print("已跳过 point-in-time 财务补充，仅使用价格数据跑 gate")
-        else:
-            print(
-                f"正在获取 {len(symbols)} 只股票 {args.start} ~ {args.end} 的 point-in-time 财务数据..."
-            )
-            pit_result = enrich_ohlcv_with_pit_financials(
-                frames,
-                symbols,
-                start_d,
-                end_d,
-                cache=DataCache(),
-            )
-            frames = pit_result.frames
-            print(f"财务数据合并完成: {pit_result.financial_symbol_count} 只有财务数据")
-            if pit_result.disclosure_symbol_count:
-                print(
-                    f"Tushare 披露日覆盖完成: {pit_result.disclosure_symbol_count} 只"
-                )
-            for status in getattr(pit_result, "source_statuses", ()):
-                print(f"PIT源 {status.source_id}: {status.status} - {status.message}")
-    else:
-        frames = load_csv(args.source)
+            skip_pit_financials=getattr(args, "skip_pit_financials", False),
+        ),
+        get_source_fn=lambda source_name: (
+            _build_sqlite_db_source(cache=None)
+            if source_name == "sqlite_db"
+            else _get_source(source_name)
+        ),
+        fetch_frames_for_cli_fn=_fetch_frames_for_cli,
+        load_csv_fn=load_csv,
+        fetch_days_fn=_walkforward_fetch_days,
+    )
+    frames = fetch_result.frames
+    symbols = fetch_result.symbols
 
     filtered = {}
     for sym, df in frames.items():
@@ -4214,8 +4433,7 @@ def run_walkforward(args: argparse.Namespace) -> int:
 
     report = "\n".join(report_lines)
 
-    Path(args.report).parent.mkdir(parents=True, exist_ok=True)
-    Path(args.report).write_text(report, encoding="utf-8")
+    atomic_write_text(args.report, report)
     print(report)
     print(f"\n报告已保存到: {args.report}")
 
@@ -4228,6 +4446,7 @@ def run_walkforward(args: argparse.Namespace) -> int:
         end=args.end,
         n_periods=grid_periods if args.grid_cscv else len(result.periods),
         metadata=_walkforward_gate_metadata(args, effective_symbols=len(filtered)),
+        gate_path=getattr(args, "gate_path", WALKFORWARD_GATE_PATH),
     )
 
     if args.update_yaml:
@@ -4387,8 +4606,7 @@ def run_briefing(args: argparse.Namespace) -> int:
     )
     briefing = enhance_briefing(briefing, enable_llm=args.enable_llm)
 
-    Path(args.output).parent.mkdir(parents=True, exist_ok=True)
-    Path(args.output).write_text(briefing.to_markdown(), encoding="utf-8")
+    atomic_write_text(args.output, briefing.to_markdown())
     print(briefing.to_markdown())
 
     if args.notify:
@@ -4443,10 +4661,11 @@ def run_monitor(args: argparse.Namespace) -> int:
     if args.notify and not args.dry_run:
         notify_targets = [r for r in triggered if r.severity == "critical"]
         if not args.notify_critical_only:
-            warning_count = sum(1 for r in triggered if r.severity == "warning")
-            if warning_count:
+            warning_targets = [r for r in triggered if r.severity == "warning"]
+            notify_targets.extend(warning_targets)
+            if warning_targets:
                 print(
-                    f"monitor notify: warning-only alerts suppressed ({warning_count})"
+                    f"monitor notify: warning alerts enabled ({len(warning_targets)})"
                 )
         if notify_targets:
             send_alerts(notify_targets)
@@ -4481,8 +4700,10 @@ def run_news_catalysts(args: argparse.Namespace) -> int:
     print(markdown)
     if args.output:
         output_path = Path(args.output)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(markdown, encoding="utf-8")
+        atomic_write_text(output_path, markdown)
+    if report.source_status == "failed":
+        print("news catalysts: source failed; notification suppressed")
+        return 1
     if args.notify:
         _dispatch_notification_once(
             markdown,
@@ -4591,9 +4812,7 @@ def run_optimize(args: argparse.Namespace) -> int:
         "applied": False,
         "run_date": now_shanghai().isoformat(timespec="seconds"),
     }
-    output_path.write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
+    atomic_write_text(output_path, json.dumps(payload, ensure_ascii=False, indent=2))
     print(f"\n结果已保存到: {output_path}")
 
     if args.apply:
@@ -4726,15 +4945,14 @@ def run_discover(args: argparse.Namespace) -> int:
             }
             for p in patterns
         ]
-        output_path.write_text(
-            _json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+        atomic_write_text(
+            output_path, _json.dumps(payload, ensure_ascii=False, indent=2)
         )
         print(f"\nJSON 已保存到: {output_path}")
 
     if args.report:
         report_path = Path(args.report)
-        report_path.parent.mkdir(parents=True, exist_ok=True)
-        report_path.write_text(report, encoding="utf-8")
+        atomic_write_text(report_path, report)
         print(f"报告已保存到: {report_path}")
 
     return 0
@@ -4751,7 +4969,7 @@ def run_mine_factors(args: argparse.Namespace) -> int:
         args.source,
         explicit_symbols,
         pool_name="sh300",
-        max_universe=300,
+        max_universe=_runtime_max_universe(getattr(args, "max_universe", 0)),
         min_avg_amount=10_000_000,
     )
     if not symbols:
@@ -4808,10 +5026,9 @@ def run_mine_factors(args: argparse.Namespace) -> int:
 
     if args.output:
         output_path = Path(args.output)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(
+        atomic_write_text(
+            output_path,
             json.dumps(inactive_results, ensure_ascii=False, indent=2),
-            encoding="utf-8",
         )
         print(f"结果已保存到: {output_path}")
 
@@ -4834,7 +5051,7 @@ def run_evolve(args: argparse.Namespace) -> int:
         args.source,
         explicit_symbols,
         pool_name="sh300",
-        max_universe=300,
+        max_universe=_runtime_max_universe(getattr(args, "max_universe", 0)),
         min_avg_amount=10_000_000,
     )
     if not symbols:
@@ -4889,8 +5106,8 @@ def run_evolve(args: argparse.Namespace) -> int:
             "applied": False,
             "timestamp": now_shanghai().isoformat(),
         }
-        output_path.write_text(
-            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+        atomic_write_text(
+            output_path, json.dumps(payload, ensure_ascii=False, indent=2)
         )
         print(f"结果已保存到: {output_path}")
 
@@ -4907,7 +5124,7 @@ def run_multi_factor(args: argparse.Namespace) -> int:
         args.source,
         "",
         pool_name=args.pool,
-        max_universe=300,
+        max_universe=_runtime_max_universe(getattr(args, "max_universe", 0)),
         min_avg_amount=10_000_000,
     )
     if not symbols:
@@ -4965,8 +5182,8 @@ def run_multi_factor(args: argparse.Namespace) -> int:
             "factor_effectiveness": effectiveness,
             "timestamp": now_shanghai().isoformat(),
         }
-        output_path.write_text(
-            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+        atomic_write_text(
+            output_path, json.dumps(payload, ensure_ascii=False, indent=2)
         )
         print(f"\n结果已保存到: {output_path}")
 
@@ -4990,7 +5207,7 @@ def run_morning_breakout(args: argparse.Namespace) -> int:
             args.source,
             "",
             pool_name=args.pool,
-            max_universe=300,
+            max_universe=_runtime_max_universe(getattr(args, "max_universe", 0)),
             min_avg_amount=10_000_000,
         )
     if not symbols:
@@ -5023,16 +5240,18 @@ def run_morning_breakout(args: argparse.Namespace) -> int:
 
     if args.notify and selected_signals:
         try:
-            print_notify_results(
-                _notify_via_config(
-                    build_morning_breakout_notification(
-                        selected_signals,
-                        mode=load_runtime_config().notify_mode,
-                        top_n=args.top,
-                    ),
-                    mode=load_runtime_config().notify_mode,
-                ),
+            mode = load_runtime_config().notify_mode
+            markdown = build_morning_breakout_notification(
+                selected_signals,
+                mode=mode,
+                top_n=args.top,
+            )
+            _dispatch_notification_once(
+                markdown,
                 prefix="morning notify",
+                mode=mode,
+                kind=f"morning:{today_shanghai().isoformat()}",
+                summary_markdown=markdown,
             )
         except Exception as exc:
             print(f"morning notify failed: {exc}")
@@ -5060,8 +5279,8 @@ def run_morning_breakout(args: argparse.Namespace) -> int:
             ],
             "timestamp": now_shanghai().isoformat(),
         }
-        output_path.write_text(
-            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+        atomic_write_text(
+            output_path, json.dumps(payload, ensure_ascii=False, indent=2)
         )
         print(f"\n结果已保存到: {output_path}")
 
@@ -5119,7 +5338,7 @@ def run_closing_premium(args: argparse.Namespace) -> int:
             args.source,
             "",
             pool_name=args.pool,
-            max_universe=300,
+            max_universe=_runtime_max_universe(getattr(args, "max_universe", 0)),
             min_avg_amount=10_000_000,
         )
     if not symbols:
@@ -5152,16 +5371,18 @@ def run_closing_premium(args: argparse.Namespace) -> int:
 
     if args.notify and selected_signals:
         try:
-            print_notify_results(
-                _notify_via_config(
-                    build_closing_premium_notification(
-                        selected_signals,
-                        mode=load_runtime_config().notify_mode,
-                        top_n=args.top,
-                    ),
-                    mode=load_runtime_config().notify_mode,
-                ),
+            mode = load_runtime_config().notify_mode
+            markdown = build_closing_premium_notification(
+                selected_signals,
+                mode=mode,
+                top_n=args.top,
+            )
+            _dispatch_notification_once(
+                markdown,
                 prefix="closing notify",
+                mode=mode,
+                kind=f"closing:{today_shanghai().isoformat()}",
+                summary_markdown=markdown,
             )
         except Exception as exc:
             print(f"closing notify failed: {exc}")
@@ -5191,8 +5412,8 @@ def run_closing_premium(args: argparse.Namespace) -> int:
             ],
             "timestamp": now_shanghai().isoformat(),
         }
-        output_path.write_text(
-            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+        atomic_write_text(
+            output_path, json.dumps(payload, ensure_ascii=False, indent=2)
         )
         print(f"\n结果已保存到: {output_path}")
 
@@ -5253,24 +5474,27 @@ def run_closing_review(args: argparse.Namespace) -> int:
 
     if args.notify:
         try:
-            print_notify_results(
-                _notify_via_config(
-                    build_closing_review_notification(
-                        review=review if not args.weekly else None,
-                        weekly_summary=summary if args.weekly else None,
-                        mode=load_runtime_config().notify_mode,
-                    ),
-                    mode=load_runtime_config().notify_mode,
-                ),
+            mode = load_runtime_config().notify_mode
+            markdown = build_closing_review_notification(
+                review=review if not args.weekly else None,
+                weekly_summary=summary if args.weekly else None,
+                mode=mode,
+            )
+            review_date = args.date or today_shanghai().isoformat()
+            review_kind = "weekly-review" if args.weekly else "closing-review"
+            _dispatch_notification_once(
+                markdown,
                 prefix="review notify",
+                mode=mode,
+                kind=f"{review_kind}:{review_date}",
+                summary_markdown=markdown,
             )
         except Exception as exc:
             print(f"review notify failed: {exc}")
 
     if args.output:
         output_path = Path(args.output)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(report, encoding="utf-8")
+        atomic_write_text(output_path, report)
         print(f"\n报告已保存到: {output_path}")
 
     return 0

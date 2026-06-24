@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from aqsp.core.time import now_shanghai
+from aqsp.utils.jsonl_io import append_jsonl
 
 logger = logging.getLogger(__name__)
 
@@ -296,11 +297,7 @@ class TradeLogger:
             IOError: 当写入失败时
         """
         try:
-            json_line = json.dumps(record, ensure_ascii=False, sort_keys=True)
-
-            # 使用追加模式写入，确保原子性
-            with open(log_file, "a", encoding="utf-8") as f:
-                f.write(json_line + "\n")
+            append_jsonl(log_file, record)
         except OSError as e:
             logger.error(f"写入日志文件失败 {log_file}: {e}")
             raise IOError(f"Failed to write to log file: {e}") from e

@@ -211,13 +211,13 @@ class ClosingPremiumStrategy(BaseStrategy):
 
         if self.cfg.optimal_change_min <= change_pct <= self.cfg.optimal_change_max:
             reasons.append("涨幅适中，有上涨空间")
-            return 20.0, reasons
+            return self.cfg.change_score_optimal, reasons
         elif self.cfg.min_change_pct <= change_pct < self.cfg.optimal_change_min:
             reasons.append("小幅上涨，可关注")
-            return 10.0, reasons
+            return self.cfg.change_score_low, reasons
         elif self.cfg.optimal_change_max < change_pct <= self.cfg.max_change_pct:
             reasons.append("涨幅较大，注意追高风险")
-            return 15.0, reasons
+            return self.cfg.change_score_high, reasons
 
         return 0.0, reasons
 
@@ -239,17 +239,17 @@ class ClosingPremiumStrategy(BaseStrategy):
         )
 
         if volume_ratio > self.cfg.volume_ratio_strong and price_change > 0:
-            score += 15.0
+            score += self.cfg.volume_price_strong_score
             reasons.append(f"量价齐升，量比{volume_ratio:.1f}")
         elif volume_ratio > self.cfg.volume_ratio_moderate and price_change > 0:
-            score += 10.0
+            score += self.cfg.volume_price_moderate_score
             reasons.append(f"温和放量，量比{volume_ratio:.1f}")
 
         if len(df) >= 5:
             last_2_vol = df["volume"].iloc[-2:].mean()
             prev_vol = df["volume"].iloc[-5:-2].mean()
             if prev_vol > 0 and last_2_vol > prev_vol * self.cfg.closing_volume_ratio:
-                score += 10.0
+                score += self.cfg.closing_volume_score
                 reasons.append("尾盘资金流入")
 
         return score, reasons
@@ -268,14 +268,14 @@ class ClosingPremiumStrategy(BaseStrategy):
             closing_change = (last_close - last_open) / last_open * 100
 
             if closing_change > self.cfg.closing_change_threshold:
-                score += 15.0
+                score += self.cfg.closing_change_score
                 reasons.append("尾盘拉升")
             elif closing_change > 0:
-                score += 10.0
+                score += self.cfg.closing_positive_score
                 reasons.append("尾盘走强")
 
-        if last_close >= df["high"].iloc[-1] * 0.98:
-            score += 5.0
+        if last_close >= df["high"].iloc[-1] * self.cfg.high_close_ratio:
+            score += self.cfg.high_close_score
             reasons.append("收盘价接近最高价")
 
         return score, reasons
@@ -296,16 +296,16 @@ class ClosingPremiumStrategy(BaseStrategy):
         if all(current > ma for ma in ma_values) and all(
             ma_values[i] > ma_values[i + 1] for i in range(len(ma_values) - 1)
         ):
-            score += 15.0
+            score += self.cfg.technical_ma_bull_score
             reasons.append("均线多头排列")
         elif len(ma_values) >= 2 and current > ma_values[0] > ma_values[1]:
-            score += 10.0
+            score += self.cfg.technical_short_ma_score
             reasons.append("短期均线向上")
 
-        if len(df) >= 26:
+        if len(df) >= self.cfg.macd_min_points:
             macd, signal, hist = self._calculate_macd(df)
             if hist.iloc[-1] > 0 and hist.iloc[-2] <= 0:
-                score += 5.0
+                score += self.cfg.technical_macd_cross_score
                 reasons.append("MACD金叉")
 
         return score, reasons
@@ -325,23 +325,24 @@ class ClosingPremiumStrategy(BaseStrategy):
         score = 0.0
         reasons = []
 
-        if len(df) < 20:
+        lookback = max(self.cfg.support_lookback, self.cfg.resistance_lookback)
+        if len(df) < lookback:
             return score, reasons
 
         current = df["close"].iloc[-1]
-        recent_low = df["low"].iloc[-20:].min()
+        recent_low = df["low"].iloc[-self.cfg.support_lookback :].min()
 
         if current > 0:
             support_distance = (current - recent_low) / current * 100
             if support_distance < self.cfg.support_threshold:
-                score += 10.0
+                score += self.cfg.support_score
                 reasons.append("接近支撑位，下跌空间有限")
 
-        recent_high = df["high"].iloc[-20:].max()
+        recent_high = df["high"].iloc[-self.cfg.resistance_lookback :].max()
         if current > 0:
             resistance_distance = (recent_high - current) / current * 100
             if resistance_distance > self.cfg.resistance_threshold:
-                score += 5.0
+                score += self.cfg.resistance_score
                 reasons.append("上方压力较小")
 
         return score, reasons
@@ -371,9 +372,9 @@ class ClosingPremiumStrategy(BaseStrategy):
         return avg_vol > 0 and recent_vol < avg_vol * self.cfg.volume_shrink_ratio
 
     def _calculate_entry_price(self, current_price: float, df: pd.DataFrame) -> float:
-        if len(df) >= 5:
-            ma5 = df["close"].rolling(5).mean().iloc[-1]
-            return min(current_price, ma5 * 1.01)
+        if len(df) >= self.cfg.entry_ma_period:
+            ma = df["close"].rolling(self.cfg.entry_ma_period).mean().iloc[-1]
+            return min(current_price, ma * self.cfg.entry_ma_multiplier)
         return current_price
 
     def _calculate_stop_loss(self, entry_price: float, df: pd.DataFrame) -> float:
@@ -416,20 +417,29 @@ class ClosingPremiumStrategy(BaseStrategy):
         avg_volume = df["volume"].iloc[-6:-1].mean()
         if avg_volume > 0:
             volume_ratio = df["volume"].iloc[-1] / avg_volume
-            if volume_ratio > 2.0 and change_pct > 3.0:
+            if (
+                volume_ratio > self.cfg.volume_signal_ratio
+                and change_pct > self.cfg.volume_signal_change_pct
+            ):
                 return "量价突破"
 
         if len(df) >= 20:
             ma20 = df["close"].rolling(20).mean().iloc[-1]
             current = df["close"].iloc[-1]
-            if ma20 > 0 and ma20 * 0.98 < current < ma20 * 1.02:
+            if (
+                ma20 > 0
+                and ma20 * self.cfg.ma_support_lower
+                < current
+                < ma20 * self.cfg.ma_support_upper
+            ):
                 return "均线支撑"
 
-        if len(df) >= 10:
-            recent_low = df["low"].iloc[-10:].min()
+        if len(df) >= self.cfg.reversal_lookback:
+            recent_low = df["low"].iloc[-self.cfg.reversal_lookback :].min()
             if (
                 recent_low > 0
-                and (df["close"].iloc[-1] - recent_low) / recent_low > 0.05
+                and (df["close"].iloc[-1] - recent_low) / recent_low
+                > self.cfg.reversal_min_rebound_pct
             ):
                 return "底部反转"
 
@@ -439,17 +449,20 @@ class ClosingPremiumStrategy(BaseStrategy):
         self, score: float, reasons_count: int, risks_count: int
     ) -> float:
         base_confidence = score / 100.0
-        reason_bonus = reasons_count * 0.03
-        risk_penalty = risks_count * 0.08
-        return max(0.1, min(1.0, base_confidence + reason_bonus - risk_penalty))
+        reason_bonus = reasons_count * self.cfg.confidence_reason_bonus
+        risk_penalty = risks_count * self.cfg.confidence_risk_penalty
+        return max(
+            self.cfg.confidence_floor,
+            min(1.0, base_confidence + reason_bonus - risk_penalty),
+        )
 
     def _determine_holding_days(self, score: float, signal_type: str) -> int:
         if signal_type == "量价突破":
-            return 3
+            return self.cfg.holding_days_breakout
         elif signal_type == "底部反转":
-            return 5
+            return self.cfg.holding_days_reversal
         else:
-            return 2
+            return self.cfg.holding_days_default
 
 
 def format_closing_signals(signals: List[PremiumSignal], top_n: int = 5) -> str:

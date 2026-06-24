@@ -65,7 +65,9 @@ def test_inspect_source_readiness_ignores_stale_missing_env_cache_when_token_exi
     monkeypatch.delenv("TUSHARE_TOKEN", raising=False)
     monkeypatch.setenv("AQSP_ENV_FILE", str(env_path))
     monkeypatch.setenv("AQSP_SOURCE_HEALTH", str(health_path))
-    record_source_auth("tushare", "missing_env", "缺少 TUSHARE_TOKEN。", path=health_path)
+    record_source_auth(
+        "tushare", "missing_env", "缺少 TUSHARE_TOKEN。", path=health_path
+    )
     entry = get_registry_entry("tushare")
     assert entry is not None
 

@@ -140,7 +140,9 @@ def test_akquant_walkforward_engine_runs_native_bridge(monkeypatch) -> None:
             )
 
     monkeypatch.setattr("aqsp.research_engine._akquant_importable", lambda: True)
-    monkeypatch.setattr("aqsp.research_engine._import_akquant_module", lambda: FakeAkquant)
+    monkeypatch.setattr(
+        "aqsp.research_engine._import_akquant_module", lambda: FakeAkquant
+    )
 
     engine = AkquantWalkForwardEngine()
     result = engine.run(

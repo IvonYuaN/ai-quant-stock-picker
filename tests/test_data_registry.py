@@ -50,6 +50,20 @@ def test_sqlite_db_local_data_status_uses_env_path(
     assert local_data_status(entry) == "present"
 
 
+def test_sqlite_db_local_data_status_prefers_raw_default(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    market_dir = tmp_path / "A股量化分析数据"
+    market_dir.mkdir()
+    (market_dir / "astocks_raw.db").write_text("", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("AQSP_SQLITE_DB_PATH", raising=False)
+    entry = {item.id: item for item in list_registry_entries()}["sqlite_db"]
+
+    assert local_data_status(entry) == "present"
+
+
 def test_data_registry_sort_prefers_runtime_ready_and_fresher_sources() -> None:
     ordered = sort_registry_entries(ready_only=True)
 

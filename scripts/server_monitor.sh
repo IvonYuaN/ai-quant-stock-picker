@@ -13,6 +13,7 @@ LOG_DIR="${PROJECT_ROOT}/logs/monitor"
 RESULT_LOG="${LOG_DIR}/monitor-$(date +%Y-%m-%d).log"
 MONITOR_CONFIG="${AQSP_MONITOR_CONFIG:-config/monitors.yaml}"
 NOTIFY_WARNINGS="${AQSP_MONITOR_NOTIFY_WARNINGS:-false}"
+EXIT_ON_ALERT="${AQSP_MONITOR_EXIT_ON_ALERT:-false}"
 LOCK_DIR="${PROJECT_ROOT}/.locks"
 LOCK_FILE="${LOCK_DIR}/server-monitor.lock"
 LOCK_INFO_FILE="${LOCK_FILE}/meta.env"
@@ -136,4 +137,14 @@ log "=========================================="
 
 find "$LOG_DIR" -name "monitor-*.log" -mtime +30 -delete 2>/dev/null || true
 
-exit "${MONITOR_EXIT_CODE}"
+case "${EXIT_ON_ALERT,,}" in
+    1|true|yes|on)
+        exit "${MONITOR_EXIT_CODE}"
+        ;;
+    *)
+        if [ "${MONITOR_EXIT_CODE}" -ne 0 ]; then
+            log "监控告警已由 AQSP 内部通知/去重处理；对外返回 0，避免外层调度重复告警"
+        fi
+        exit 0
+        ;;
+esac

@@ -88,6 +88,14 @@ class MonitorChecker:
                     message=f"Monitor check failed: {e}",
                     details={"error": str(e)},
                 )
+            if result.severity != "critical":
+                result = MonitorResult(
+                    name=result.name,
+                    triggered=result.triggered,
+                    severity=monitor.severity,
+                    message=result.message,
+                    details=result.details,
+                )
 
             results.append(result)
 
@@ -176,9 +184,13 @@ class MonitorChecker:
 
     def _check_circuit_breaker(self, params: dict[str, Any]) -> MonitorResult:
         try:
-            from aqsp.risk.circuit_breaker import CircuitBreaker
+            from aqsp.risk.circuit_breaker import CircuitBreaker, CircuitBreakerConfig
+            from aqsp.strategies.thresholds import load_thresholds
 
-            breaker = CircuitBreaker()
+            thresholds = load_thresholds()
+            breaker = CircuitBreaker(
+                config=CircuitBreakerConfig.from_thresholds(thresholds)
+            )
             if breaker.is_in_cooldown():
                 return MonitorResult(
                     name="circuit_breaker",

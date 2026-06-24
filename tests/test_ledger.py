@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+from concurrent.futures import ThreadPoolExecutor
 
 import pandas as pd
 import pytest
@@ -15,6 +16,7 @@ from aqsp.ledger import (
     PerformanceLearner,
     StrategyDecayDetector,
     append_predictions,
+    append_run_event,
     ledger_rows_to_frame,
     read_ledger,
     strategy_weights_from_ledger,
@@ -151,6 +153,39 @@ def test_append_predictions_is_idempotent_for_same_signal_run(tmp_path) -> None:
     assert len(rows) == 1
     assert rows[0]["symbol"] == "600000"
     assert rows[0]["thresholds_version"] == "2026.05.29"
+
+
+def test_append_predictions_keeps_concurrent_writes(tmp_path) -> None:
+    ledger = tmp_path / "predictions.jsonl"
+
+    def _append(idx: int) -> None:
+        pick = PickResult(
+            symbol=f"600{idx:03d}",
+            name=f"测试{idx}",
+            date="2026-01-02",
+            close=10 + idx,
+            score=60 + idx,
+            rating="buy_candidate",
+            entry_type="volume_breakout",
+            ideal_buy=10 + idx,
+            stop_loss=9,
+            take_profit=12,
+            position="10%-30%",
+            strategies=("volume_breakout",),
+        )
+        append_predictions(
+            ledger,
+            [pick],
+            thresholds_version="test",
+            regime="stable_bull",
+        )
+
+    with ThreadPoolExecutor(max_workers=6) as executor:
+        list(executor.map(_append, range(12)))
+
+    rows = read_ledger(ledger)
+    assert len(rows) == 12
+    assert {row["symbol"] for row in rows} == {f"600{idx:03d}" for idx in range(12)}
 
 
 def test_ledger_rows_to_frame_returns_dataframe_when_rows_exist() -> None:
@@ -495,6 +530,70 @@ def test_learner_uses_weight_history_for_restart_cooldown(tmp_path) -> None:
     assert len(lines) == 1
 
 
+def test_learner_weights_use_recent_rolling_window(tmp_path) -> None:
+    rows = []
+    for i, signal_date in enumerate(pd.date_range("2026-01-01", periods=30)):
+        rows.append(
+            {
+                "status": "validated",
+                "signal_date": signal_date.date().isoformat(),
+                "return_pct": 4.0,
+                "strategies": ["volume_breakout"],
+            }
+        )
+    for signal_date in pd.date_range("2026-05-01", periods=30):
+        rows.append(
+            {
+                "status": "validated",
+                "signal_date": signal_date.date().isoformat(),
+                "return_pct": -4.0,
+                "strategies": ["volume_breakout"],
+            }
+        )
+    learner = PerformanceLearner(
+        config=LearnerConfig(
+            min_independent_signal_days=30,
+            rolling_window_days=45,
+        ),
+        weight_history_path=tmp_path / "weight_history.jsonl",
+    )
+
+    weights = learner.compute_weights(pd.DataFrame(rows))
+
+    assert weights["volume_breakout"] < 1.0
+
+
+def test_learner_records_regime_weight_history_when_enabled(tmp_path) -> None:
+    rows = [
+        {
+            "status": "validated",
+            "signal_date": f"2026-05-{day:02d}",
+            "return_pct": 3.0,
+            "strategies": ["volume_breakout"],
+            "regime_at_signal": "bull",
+        }
+        for day in range(1, 31)
+    ]
+    history_path = tmp_path / "weight_history.jsonl"
+    learner = PerformanceLearner(
+        config=LearnerConfig(min_independent_signal_days=30, by_regime=True),
+        weight_history_path=history_path,
+    )
+
+    perf = learner.learn_from_ledger(pd.DataFrame(rows), record_history=True)[
+        "volume_breakout"
+    ]
+
+    assert perf.regime_weights is not None
+    assert perf.regime_weights["bull"] > 1.0
+    history = [
+        json.loads(line)
+        for line in history_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert any(item["strategy"] == "volume_breakout:bull" for item in history)
+
+
 def test_decay_detector_accepts_naive_signal_dates() -> None:
     df = pd.DataFrame(
         [
@@ -767,6 +866,66 @@ def test_append_predictions_writes_run_metadata_when_provided(tmp_path) -> None:
     assert row["run_circuit_breaker_reason"] == "单日亏损触发"
 
 
+def test_append_run_event_records_circuit_breaker_without_signal_payload(
+    tmp_path,
+) -> None:
+    ledger = tmp_path / "predictions.jsonl"
+    metadata = RunMetadata(
+        requested_source="auto",
+        actual_source="tdx_vipdoc",
+        source_freshness_tier="end_of_day",
+        source_coverage_tier="history_core",
+        source_local_status="present",
+        source_health_label="healthy",
+        source_health_message="ok",
+        fallback_used=False,
+        explicit_symbol_count=0,
+        resolved_symbol_count=5000,
+        fetched_frame_count=5000,
+        screened_count=20,
+        final_count=0,
+        min_price=1.0,
+        max_price=1000.0,
+        min_avg_amount=50_000_000,
+        online_factors_enabled=False,
+        thresholds_version="1.0.0",
+        data_latest_trade_date="2026-06-17",
+        data_lag_days=0,
+        regime="bear",
+        max_universe=0,
+        task_id="daily",
+        circuit_breaker_triggered=True,
+        circuit_breaker_reason="单日亏损触发",
+    )
+
+    append_run_event(
+        ledger,
+        event_date="2026-06-17",
+        status="blocked_by_circuit_breaker",
+        reason="单日亏损触发",
+        run_metadata=metadata,
+        details={"daily_pnl_pct": -8.2},
+    )
+    append_run_event(
+        ledger,
+        event_date="2026-06-17",
+        status="blocked_by_circuit_breaker",
+        reason="单日亏损触发",
+        run_metadata=metadata,
+        details={"daily_pnl_pct": -8.2},
+    )
+
+    rows = read_ledger(ledger)
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["symbol"] == "__RUN__"
+    assert row["status"] == "blocked_by_circuit_breaker"
+    assert row["reason"] == "单日亏损触发"
+    assert row["daily_pnl_pct"] == -8.2
+    assert row["run_circuit_breaker_triggered"] is True
+    assert row["run_resolved_symbol_count"] == 5000
+
+
 def test_append_predictions_persists_portfolio_and_debate_fields(tmp_path) -> None:
     ledger = tmp_path / "predictions.jsonl"
     pick = PickResult(
@@ -787,6 +946,16 @@ def test_append_predictions_persists_portfolio_and_debate_fields(tmp_path) -> No
             "stop_method": "atr_trailing",
             "sector": "公用事业",
             "industry": "电力",
+            "strategy_weight_snapshot": {
+                "regime": "stable_bull",
+                "strategy_weights": {"volume_breakout": 1.2},
+                "base_blend_weight": 0.7,
+                "regime_blend_weight": 0.3,
+            },
+            "composite_score_raw": 0.812345,
+            "composite_score_normalized": 91.2345,
+            "base_score_before_composite": 72.0,
+            "final_score_after_composite": 77.77,
         },
         adjusted_score=75.5,
         recommended_adjustment="raise",
@@ -809,6 +978,14 @@ def test_append_predictions_persists_portfolio_and_debate_fields(tmp_path) -> No
     assert row["recommended_adjustment"] == "raise"
     assert row["debate_consensus"] == "bullish"
     assert row["confidence"] == 83.0
+    assert row["strategy_weight_snapshot"]["strategy_weights"] == {
+        "volume_breakout": 1.2
+    }
+    assert row["strategy_weight_snapshot"]["base_blend_weight"] == 0.7
+    assert row["composite_score_raw"] == 0.812345
+    assert row["composite_score_normalized"] == 91.2345
+    assert row["base_score_before_composite"] == 72.0
+    assert row["final_score_after_composite"] == 77.77
     assert row["regime_score"] == 68.0
     assert row["sector"] == "公用事业"
     assert row["industry"] == "电力"

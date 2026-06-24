@@ -18,6 +18,7 @@ def test_send_notification_delegates_to_markdown(monkeypatch):
 
 
 def test_notify_markdown_sends_serverchan_when_sendkey_present(monkeypatch):
+    monkeypatch.setenv("AQSP_ALLOW_REAL_NOTIFICATIONS", "1")
     monkeypatch.setenv("SERVERCHAN_SENDKEY", "test_sendkey")
     from aqsp.notifier import notify_markdown
 
@@ -32,6 +33,7 @@ def test_notify_markdown_sends_serverchan_when_sendkey_present(monkeypatch):
 
 
 def test_serverchan_uses_markdown_title(monkeypatch):
+    monkeypatch.setenv("AQSP_ALLOW_REAL_NOTIFICATIONS", "1")
     monkeypatch.setenv("SERVERCHAN_SENDKEY", "test_sendkey")
     from aqsp.notifier import _send_serverchan
 

@@ -95,6 +95,28 @@ def require_non_empty_fetch_result(
         raise DataError(f"{source_name} {method}获取不完整: 缺少 {missing}")
 
 
+def require_fetched_frame(
+    source_name: str,
+    method: str,
+    key: str,
+    frame: pd.DataFrame | None,
+) -> pd.DataFrame:
+    if frame is None or frame.empty:
+        raise DataError(f"{source_name} {method}获取失败: {key} 返回空结果")
+    return frame
+
+
+def require_fetched_mapping(
+    source_name: str,
+    method: str,
+    key: str,
+    data: dict | None,
+) -> dict:
+    if not data:
+        raise DataError(f"{source_name} {method}获取失败: {key} 返回空结果")
+    return data
+
+
 class DataSource(ABC):
     name: str
 
@@ -142,8 +164,21 @@ class DataSource(ABC):
         for col in NUMERIC_OHLCV_COLUMNS:
             if col in optional_numeric_columns:
                 continue
-            if pd.to_numeric(df[col], errors="coerce").isna().all():
-                raise DataError(f"OHLCV 数据列无有效数值: {symbol}.{col}")
+            numeric = pd.to_numeric(df[col], errors="coerce")
+            if numeric.isna().any():
+                raise DataError(f"OHLCV 数据列存在无效数值: {symbol}.{col}")
+            if col in {"open", "high", "low", "close"} and (numeric <= 0).any():
+                raise DataError(f"OHLCV 价格必须为正: {symbol}.{col}")
+            if col in {"volume", "amount"} and (numeric < 0).any():
+                raise DataError(f"OHLCV 成交数据不能为负: {symbol}.{col}")
+        high = pd.to_numeric(df["high"], errors="coerce")
+        low = pd.to_numeric(df["low"], errors="coerce")
+        open_ = pd.to_numeric(df["open"], errors="coerce")
+        close = pd.to_numeric(df["close"], errors="coerce")
+        if (high < low).any():
+            raise DataError(f"OHLCV high 小于 low: {symbol}")
+        if ((open_ < low) | (open_ > high) | (close < low) | (close > high)).any():
+            raise DataError(f"OHLCV open/close 超出 high-low 区间: {symbol}")
         if df["suspended"].isna().any():
             raise DataError(f"OHLCV 数据 suspended 缺失: {symbol}")
         return df

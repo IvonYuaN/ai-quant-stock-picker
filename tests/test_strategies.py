@@ -20,7 +20,7 @@ from aqsp.strategies.thresholds import load_thresholds
 
 def test_load_thresholds():
     thresholds = load_thresholds()
-    assert thresholds.version == "1.1.11"
+    assert thresholds.version == "1.1.13"
     assert thresholds.last_walkforward_run == "2026-05-30"
     assert thresholds.momentum.lookback_days == 60
     assert thresholds.momentum.weights.momentum == 0.4
@@ -29,15 +29,15 @@ def test_load_thresholds():
     assert thresholds.quality.enabled is False
     assert thresholds.value.enabled is False
     assert thresholds.composite.momentum_weight == 0.3
-    assert thresholds.composite.quality_weight == 0.2
-    assert thresholds.composite.value_weight == 0.2
+    assert thresholds.composite.quality_weight == 0.0
+    assert thresholds.composite.value_weight == 0.0
     assert thresholds.composite.triple_rise_weight == 0.3
     assert thresholds.composite.base_blend_weight == 0.7
     assert thresholds.composite.regime_blend_weight == 0.3
     assert thresholds.triple_rise.enabled is True
     assert thresholds.triple_rise.lookback_days == 25
     assert thresholds.triple_rise.weights.triple_rise == 0.4
-    assert thresholds.volume.enabled is True
+    assert thresholds.volume.enabled is False
     assert thresholds.regime.volatility_high == 0.3
     assert thresholds.regime.min_sample_size == 20
     assert thresholds.regime.cooldown_hours == 24
@@ -47,6 +47,7 @@ def test_load_thresholds():
     assert thresholds.n_rebound.lookback_days == 30
     assert thresholds.internet_strategy.volume_breakout_score == 18.0
     assert thresholds.risk.dynamic_stop_atr_multiplier == 2.0
+    assert thresholds.risk.dynamic_stop_atr_period == 14
     assert thresholds.risk.dynamic_stop_fallback_pct == 0.05
     assert thresholds.risk.dynamic_stop_recent_low_days == 5
     assert thresholds.risk.dynamic_stop_trailing_pct == 0.03
@@ -54,6 +55,8 @@ def test_load_thresholds():
     assert thresholds.risk.allocation_score_strong == 75.0
     assert thresholds.risk.allocation_invested_strong == 0.80
     assert thresholds.risk.allocation_floor_pct == 0.35
+    assert thresholds.risk.profit_take_reduce_multiplier == 0.50
+    assert thresholds.risk.cash_low_new_position_multiplier == 0.50
     assert thresholds.scoring.max_bias20 == 18
 
 
@@ -76,7 +79,7 @@ def test_momentum_strategy():
     strategy = MomentumStrategy(config)
 
     assert strategy.id == "momentum"
-    assert strategy.version == "1.1.11"
+    assert strategy.version == "1.1.13"
     assert strategy.hypothesis != ""
 
     scores = strategy.calculate_score({"600000": df})
@@ -298,7 +301,7 @@ def test_composite_strategy_detailed_momentum_only():
     assert "value" not in detailed["600000"]
 
 
-def test_composite_strategy_applies_regime_score_multiplier():
+def test_composite_strategy_does_not_apply_regime_adjustment_to_total_score():
     from dataclasses import replace
 
     from aqsp.strategies.thresholds import Thresholds
@@ -333,9 +336,107 @@ def test_composite_strategy_applies_regime_score_multiplier():
         "600000"
     ]
 
-    assert half_score == pytest.approx(base_score * 0.5)
-    assert detailed["regime_multiplier"] == 0.5
+    assert half_score == pytest.approx(base_score)
+    assert "regime_multiplier" not in detailed
     assert detailed["total"] == pytest.approx(half_score)
+
+
+def test_composite_strategy_blends_regime_strategy_weights() -> None:
+    from dataclasses import replace
+
+    from aqsp.strategies.thresholds import (
+        CompositeThresholds,
+        RegimeStrategyWeights,
+        Thresholds,
+    )
+
+    thresholds = Thresholds(
+        composite=CompositeThresholds(
+            momentum_weight=0.3,
+            quality_weight=0.0,
+            value_weight=0.0,
+            volume_weight=0.0,
+            mean_reversion_weight=0.0,
+            triple_rise_weight=0.3,
+            base_blend_weight=0.7,
+            regime_blend_weight=0.3,
+        )
+    )
+    thresholds = replace(
+        thresholds,
+        regime=replace(
+            thresholds.regime,
+            strategy_weights={
+                "test_regime": RegimeStrategyWeights(
+                    momentum=2.0,
+                    triple_rise=0.5,
+                )
+            },
+        ),
+    )
+    strategy = CompositeStrategy(
+        StrategyConfig(name="composite"), thresholds=thresholds
+    )
+
+    weights = strategy.get_regime_adjusted_weights("test_regime")
+
+    assert weights[0] == pytest.approx(0.3 * (0.7 + 0.3 * 2.0))
+    assert weights[5] == pytest.approx(0.3 * (0.7 + 0.3 * 0.5))
+
+
+def test_composite_strategy_ignores_disabled_substrategy_even_when_weight_positive(
+    monkeypatch,
+) -> None:
+    from dataclasses import replace
+
+    from aqsp.strategies.thresholds import (
+        CompositeThresholds,
+        MeanReversionThresholds,
+        Thresholds,
+    )
+
+    dates = pd.date_range("2026-01-01", periods=60, freq="D")
+    prices = np.linspace(10, 12, 60)
+    df = pd.DataFrame(
+        {
+            "date": dates.strftime("%Y-%m-%d"),
+            "close": prices,
+            "open": prices,
+            "high": prices * 1.01,
+            "low": prices * 0.99,
+            "volume": 100000,
+        }
+    )
+    thresholds = Thresholds(
+        composite=CompositeThresholds(
+            momentum_weight=1.0,
+            quality_weight=0.0,
+            value_weight=0.0,
+            volume_weight=0.0,
+            mean_reversion_weight=1.0,
+            triple_rise_weight=0.0,
+        ),
+        mean_reversion=MeanReversionThresholds(enabled=False),
+    )
+    thresholds = replace(thresholds, regime=replace(thresholds.regime, adjustments={}))
+    strategy = CompositeStrategy(
+        StrategyConfig(name="composite"), thresholds=thresholds
+    )
+    monkeypatch.setattr(
+        strategy.momentum_strategy,
+        "calculate_score",
+        lambda _data: {"600000": 0.2},
+    )
+    monkeypatch.setattr(
+        strategy.mean_reversion_strategy,
+        "calculate_score",
+        lambda _data: {"600000": 1.0},
+    )
+
+    detailed = strategy.calculate_detailed_scores({"600000": df})["600000"]
+
+    assert "mean_reversion" not in detailed
+    assert detailed["total"] == pytest.approx(0.2)
 
 
 def test_composite_strategy_select_stocks():
@@ -361,6 +462,24 @@ def test_composite_strategy_select_stocks():
 
     selected = strategy.select_stocks(data, n=10)
     assert len(selected) <= 10
+
+
+def test_composite_strategy_select_stocks_passes_regime(monkeypatch):
+    strategy = CompositeStrategy(StrategyConfig(name="composite"))
+    seen: dict[str, str] = {}
+
+    def fake_calculate_score(data, regime="unknown"):
+        seen["regime"] = regime
+        return {"600000": 0.9}
+
+    monkeypatch.setattr(strategy, "calculate_score", fake_calculate_score)
+
+    selected = strategy.select_stocks(
+        {"600000": pd.DataFrame()}, n=1, regime="stable_bull"
+    )
+
+    assert selected == ["600000"]
+    assert seen["regime"] == "stable_bull"
 
 
 def test_base_strategy_rank():
@@ -411,7 +530,7 @@ def test_closing_premium_strategy_init():
 
     assert strategy.id == "closing_premium"
     assert strategy.name == "closing_premium"
-    assert strategy.version == "1.1.11"
+    assert strategy.version == "1.1.13"
     assert strategy.hypothesis == "尾盘异动股票往往有资金介入，次日有溢价空间"
     assert "stable_bull" in strategy.regime_required
     assert "stable_sideways" in strategy.regime_required

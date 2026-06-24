@@ -435,7 +435,7 @@ class TestWalkforwardPitEnrichment:
                 disclosure_symbol_count=1,
             )
 
-        monkeypatch.setattr("aqsp.cli.BaostockSource", DummyBaostockSource)
+        monkeypatch.setattr("aqsp.cli._get_source", lambda _name: DummyBaostockSource())
         monkeypatch.setattr(
             "aqsp.data.pit_financial.enrich_ohlcv_with_pit_financials",
             mock_enrich,
@@ -564,7 +564,7 @@ class TestCLIDataSources:
         def boom(*args, **kwargs):
             raise RuntimeError("proxy died")
 
-        monkeypatch.setattr(cli_mod, "fetch_akshare", boom)
+        monkeypatch.setattr(cli_mod, "_get_source", boom)
 
         try:
             cli_mod._fetch_frames_for_cli("akshare", ["600519"], benchmark_symbol=None)
@@ -585,9 +585,18 @@ class TestCLIDataSources:
         monkeypatch.setenv("AQSP_SOURCE_HEALTH", str(health_path))
 
         sample = _make_sample_data()
+
+        class DummySource:
+            name = "akshare"
+
         monkeypatch.setattr(
             cli_mod,
-            "fetch_akshare",
+            "_get_source",
+            lambda _source_name: DummySource(),
+        )
+        monkeypatch.setattr(
+            cli_mod,
+            "fetch_with_source",
             lambda *args, **kwargs: {"600519": sample},
         )
 
@@ -605,7 +614,7 @@ class TestCLIDataSources:
         def fail(*args, **kwargs):
             raise DataError("upstream failed")
 
-        monkeypatch.setattr(cli_mod, "fetch_akshare", fail)
+        monkeypatch.setattr(cli_mod, "fetch_with_source", fail)
         try:
             cli_mod._fetch_frames_for_cli_with_metadata(
                 "akshare",
@@ -624,11 +633,12 @@ class TestCLIDataSources:
     def test_auto_source_plan_is_local_first_without_cross_tier_consistency(
         self, monkeypatch
     ):
-        import aqsp.cli as cli_mod
+        from aqsp.data import source_factory as sf
+        from aqsp.data.multi_source import SourceFactory
 
         monkeypatch.delenv("AQSP_SOURCE_HEALTH", raising=False)
         monkeypatch.setattr(
-            cli_mod,
+            sf,
             "prioritize_source_ids",
             lambda source_ids, path=None: list(source_ids),
         )
@@ -637,30 +647,19 @@ class TestCLIDataSources:
             def __init__(self, *args, **kwargs):
                 pass
 
-        monkeypatch.setattr(
-            cli_mod,
-            "TdxVipdocSource",
-            type("Tdx", (DummySource,), {"name": "tdx_vipdoc"}),
+        source = sf.build_data_source(
+            "auto",
+            overrides={
+                "tdx_vipdoc": type("Tdx", (DummySource,), {"name": "tdx_vipdoc"}),
+                "eastmoney": type("Em", (DummySource,), {"name": "eastmoney"}),
+                "sina": type("Sina", (DummySource,), {"name": "sina"}),
+                "tencent": type("Ten", (DummySource,), {"name": "tencent"}),
+                "akshare": type("Ak", (DummySource,), {"name": "akshare"}),
+            },
         )
-        monkeypatch.setattr(
-            cli_mod,
-            "EastmoneySource",
-            type("Em", (DummySource,), {"name": "eastmoney"}),
-        )
-        monkeypatch.setattr(
-            cli_mod, "SinaSource", type("Sina", (DummySource,), {"name": "sina"})
-        )
-        monkeypatch.setattr(
-            cli_mod, "TencentSource", type("Ten", (DummySource,), {"name": "tencent"})
-        )
-        monkeypatch.setattr(
-            cli_mod, "AkshareSource", type("Ak", (DummySource,), {"name": "akshare"})
-        )
-
-        source = cli_mod._get_source("auto")
 
         assert source.primary.name == "tdx_vipdoc"
-        assert isinstance(source.primary, cli_mod.SourceFactory)
+        assert isinstance(source.primary, SourceFactory)
         assert [item.name for item in source.fallbacks] == [
             "eastmoney",
             "sina",
@@ -672,7 +671,7 @@ class TestCLIDataSources:
     def test_auto_source_plan_becomes_local_only_when_online_fallback_disabled(
         self, monkeypatch
     ):
-        import aqsp.cli as cli_mod
+        from aqsp.data import source_factory as sf
 
         monkeypatch.setenv("AQSP_ALLOW_ONLINE_FALLBACK", "false")
 
@@ -682,9 +681,7 @@ class TestCLIDataSources:
             def __init__(self, *args, **kwargs):
                 pass
 
-        monkeypatch.setattr(cli_mod, "TdxVipdocSource", DummyTdx)
-
-        source = cli_mod._get_source("auto")
+        source = sf.build_data_source("auto", overrides={"tdx_vipdoc": DummyTdx})
 
         assert source.name == "tdx_vipdoc"
 
@@ -693,7 +690,7 @@ class TestCLIDataSources:
         tmp_path,
         monkeypatch,
     ):
-        import aqsp.cli as cli_mod
+        from aqsp.data import source_factory as sf
 
         health_path = tmp_path / "source_health.json"
         health_path.write_text(
@@ -715,27 +712,16 @@ class TestCLIDataSources:
             def __init__(self, *args, **kwargs):
                 pass
 
-        monkeypatch.setattr(
-            cli_mod,
-            "TdxVipdocSource",
-            type("Tdx", (DummySource,), {"name": "tdx_vipdoc"}),
+        source = sf.build_data_source(
+            "auto",
+            overrides={
+                "tdx_vipdoc": type("Tdx", (DummySource,), {"name": "tdx_vipdoc"}),
+                "eastmoney": type("Em", (DummySource,), {"name": "eastmoney"}),
+                "sina": type("Sina", (DummySource,), {"name": "sina"}),
+                "tencent": type("Ten", (DummySource,), {"name": "tencent"}),
+                "akshare": type("Ak", (DummySource,), {"name": "akshare"}),
+            },
         )
-        monkeypatch.setattr(
-            cli_mod,
-            "EastmoneySource",
-            type("Em", (DummySource,), {"name": "eastmoney"}),
-        )
-        monkeypatch.setattr(
-            cli_mod, "SinaSource", type("Sina", (DummySource,), {"name": "sina"})
-        )
-        monkeypatch.setattr(
-            cli_mod, "TencentSource", type("Ten", (DummySource,), {"name": "tencent"})
-        )
-        monkeypatch.setattr(
-            cli_mod, "AkshareSource", type("Ak", (DummySource,), {"name": "akshare"})
-        )
-
-        source = cli_mod._get_source("auto")
 
         assert [item.name for item in source.fallbacks] == [
             "tencent",
@@ -745,33 +731,28 @@ class TestCLIDataSources:
         ]
 
     def test_online_source_plan_keeps_akshare_as_last_supplement(self, monkeypatch):
-        import aqsp.cli as cli_mod
+        from aqsp.data import source_factory as sf
 
         class DummySource:
             def __init__(self, *args, **kwargs):
                 pass
 
         monkeypatch.setattr(
-            cli_mod,
-            "EastmoneySource",
-            type("Em", (DummySource,), {"name": "eastmoney"}),
-        )
-        monkeypatch.setattr(
-            cli_mod, "SinaSource", type("Sina", (DummySource,), {"name": "sina"})
-        )
-        monkeypatch.setattr(
-            cli_mod, "TencentSource", type("Ten", (DummySource,), {"name": "tencent"})
-        )
-        monkeypatch.setattr(
-            cli_mod, "AkshareSource", type("Ak", (DummySource,), {"name": "akshare"})
-        )
-        monkeypatch.setattr(
-            cli_mod,
+            sf,
             "prioritize_source_ids",
             lambda source_ids, path=None: ["akshare", "tencent", "eastmoney", "sina"],
         )
 
-        source = cli_mod._get_source("online_first")
+        source = sf.build_data_source(
+            "online_first",
+            overrides={
+                "eastmoney": type("Em", (DummySource,), {"name": "eastmoney"}),
+                "sina": type("Sina", (DummySource,), {"name": "sina"}),
+                "tencent": type("Ten", (DummySource,), {"name": "tencent"}),
+                "akshare": type("Ak", (DummySource,), {"name": "akshare"}),
+                "tdx_vipdoc": type("Tdx", (DummySource,), {"name": "tdx_vipdoc"}),
+            },
+        )
 
         ordered = [source.primary.name] + [item.name for item in source.fallbacks[:-1]]
         assert ordered == ["tencent", "eastmoney", "sina", "akshare"]
@@ -779,14 +760,25 @@ class TestCLIDataSources:
     def test_auto_source_does_not_require_local_vipdoc_at_construction(
         self, monkeypatch
     ):
-        import aqsp.cli as cli_mod
+        from aqsp.data import source_factory as sf
 
         def fail_if_called():
             raise AssertionError("tdx source should be lazy")
 
-        monkeypatch.setattr(cli_mod, "TdxVipdocSource", fail_if_called)
+        class DummySource:
+            def __init__(self, *args, **kwargs):
+                pass
 
-        source = cli_mod._get_source("auto")
+        source = sf.build_data_source(
+            "auto",
+            overrides={
+                "tdx_vipdoc": fail_if_called,
+                "eastmoney": type("Em", (DummySource,), {"name": "eastmoney"}),
+                "sina": type("Sina", (DummySource,), {"name": "sina"}),
+                "tencent": type("Ten", (DummySource,), {"name": "tencent"}),
+                "akshare": type("Ak", (DummySource,), {"name": "akshare"}),
+            },
+        )
 
         assert source.primary.name == "tdx_vipdoc"
 
@@ -1166,7 +1158,10 @@ class TestCLIPoolSelection:
                     periods=[],
                 )
 
-        monkeypatch.setattr("aqsp.cli.SqliteDbSource", DummySqliteDbSource)
+        monkeypatch.setattr(
+            "aqsp.cli._build_sqlite_db_source",
+            lambda *, cache=None: DummySqliteDbSource(cache=cache),
+        )
         monkeypatch.setattr(
             "aqsp.data.pit_financial.enrich_ohlcv_with_pit_financials",
             lambda frames, symbols, start, end, cache=None: SimpleNamespace(
@@ -1270,7 +1265,10 @@ class TestCLIPoolSelection:
                 )
 
         monkeypatch.setenv("AQSP_WALKFORWARD_SYMBOLS", "000915,000921")
-        monkeypatch.setattr("aqsp.cli.SqliteDbSource", DummySqliteDbSource)
+        monkeypatch.setattr(
+            "aqsp.cli._build_sqlite_db_source",
+            lambda *, cache=None: DummySqliteDbSource(cache=cache),
+        )
         monkeypatch.setattr(
             "aqsp.data.pit_financial.enrich_ohlcv_with_pit_financials",
             lambda frames, symbols, start, end, cache=None: SimpleNamespace(
@@ -1371,7 +1369,10 @@ class TestCLIPoolSelection:
 
         monkeypatch.chdir(tmp_path)
         monkeypatch.delenv("AQSP_SQLITE_DB_PATH", raising=False)
-        monkeypatch.setattr("aqsp.cli.SqliteDbSource", DummySqliteDbSource)
+        monkeypatch.setattr(
+            "aqsp.cli._build_sqlite_db_source",
+            lambda *, cache=None: DummySqliteDbSource(db_path=db_path, cache=cache),
+        )
         monkeypatch.setattr(
             "aqsp.data.pit_financial.enrich_ohlcv_with_pit_financials",
             lambda frames, symbols, start, end, cache=None: SimpleNamespace(
@@ -1463,7 +1464,10 @@ class TestCLIPoolSelection:
                     periods=[],
                 )
 
-        monkeypatch.setattr("aqsp.cli.SqliteDbSource", DummySqliteDbSource)
+        monkeypatch.setattr(
+            "aqsp.cli._build_sqlite_db_source",
+            lambda *, cache=None: DummySqliteDbSource(cache=cache),
+        )
         monkeypatch.setattr(
             "aqsp.data.pit_financial.enrich_ohlcv_with_pit_financials",
             lambda *_args, **_kwargs: pit_called.__setitem__("value", True),
@@ -1632,8 +1636,9 @@ def test_walkforward_grid_cscv_writes_valid_pbo_gate(monkeypatch, tmp_path):
     from aqsp.research_engine import EngineResolution
     from aqsp.walkforward_gate import validate_walkforward_gate_payload
 
-    gate_path = tmp_path / "gate.json"
-    monkeypatch.setattr(cli_mod, "WALKFORWARD_GATE_PATH", str(gate_path))
+    default_gate_path = tmp_path / "default_gate.json"
+    gate_path = tmp_path / "custom_gate.json"
+    monkeypatch.setattr(cli_mod, "WALKFORWARD_GATE_PATH", str(default_gate_path))
     monkeypatch.setattr(cli_mod, "today_shanghai", lambda: date(2026, 6, 20))
     monkeypatch.setattr(
         cli_mod,
@@ -1767,10 +1772,14 @@ def test_walkforward_grid_cscv_writes_valid_pbo_gate(monkeypatch, tmp_path):
             "2024-08-01",
             "--report",
             str(report),
+            "--gate-path",
+            str(gate_path),
         ]
     )
 
     assert result == 0
+    assert gate_path.exists()
+    assert not default_gate_path.exists()
     payload = json.loads(gate_path.read_text(encoding="utf-8"))
     validation = validate_walkforward_gate_payload(
         payload,

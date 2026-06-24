@@ -18,6 +18,7 @@ def test_run_evolve_uses_sh300_pool_when_auto_resolving_symbols(monkeypatch) -> 
     def fake_resolve_run_symbols(source, symbols, **kwargs):
         seen["pool_name"] = kwargs["pool_name"]
         seen["symbols"] = symbols
+        seen["max_universe"] = kwargs["max_universe"]
         return ["600519"]
 
     monkeypatch.setattr(cli_mod, "_resolve_run_symbols", fake_resolve_run_symbols)
@@ -49,6 +50,7 @@ def test_run_evolve_uses_sh300_pool_when_auto_resolving_symbols(monkeypatch) -> 
     args = Namespace(
         source="eastmoney",
         config="config/evolution_config.yaml",
+        max_universe=0,
         apply=False,
         output="",
     )
@@ -58,6 +60,7 @@ def test_run_evolve_uses_sh300_pool_when_auto_resolving_symbols(monkeypatch) -> 
     assert exit_code == 0
     assert seen["pool_name"] == "sh300"
     assert seen["symbols"] == ""
+    assert seen["max_universe"] == 0
     assert seen["benchmark_symbol"] is None
     assert seen["days"] == 250
 
@@ -65,12 +68,42 @@ def test_run_evolve_uses_sh300_pool_when_auto_resolving_symbols(monkeypatch) -> 
 def test_run_scheduled_keeps_learning_weights_proposal_only() -> None:
     import aqsp.cli as cli_mod
 
-    source = inspect.getsource(cli_mod.run_scheduled)
+    source = inspect.getsource(cli_mod._run_scheduled_legacy)
 
     assert "strategy_weights_from_ledger(args.ledger)" not in source
     assert "learner.compute_weights(ledger_df)" in source
     assert "strategy_weights_for_regime(thresholds, regime)" in source
     assert "未应用到本次筛选" in source
+
+
+def test_run_scheduled_runtime_weights_exclude_learner_proposals() -> None:
+    import aqsp.cli as cli_mod
+
+    source = inspect.getsource(cli_mod._run_scheduled_legacy)
+    proposal_at = source.index("weight_proposals = learner.compute_weights(ledger_df)")
+    runtime_weight_at = source.index(
+        "weights = strategy_weights_for_regime(thresholds, regime)"
+    )
+    snapshot_at = source.index("strategy_weights=weights")
+
+    assert proposal_at < runtime_weight_at < snapshot_at
+    between = source[proposal_at:runtime_weight_at]
+    assert "weights.update(weight_proposals)" not in between
+    assert "weight_proposals[" not in source[runtime_weight_at:snapshot_at]
+
+
+def test_run_scheduled_executability_feedback_is_proposal_only() -> None:
+    import aqsp.cli as cli_mod
+
+    source = inspect.getsource(cli_mod._run_scheduled_legacy)
+    feedback_at = source.index("executability_adjustments, executability_reasons = (")
+    config_at = source.index("config = ScreeningConfig(")
+    between = source[feedback_at:config_at]
+
+    assert "不可成交反馈降权提案" in between
+    assert "未应用到本次筛选" in between
+    assert "weights[strategy_id]" not in between
+    assert "strategy_weight_reasons = executability_reasons" not in between
 
 
 def test_run_scheduled_skips_runtime_chain_on_non_trading_day(
@@ -128,13 +161,32 @@ def test_run_scheduled_skips_runtime_chain_on_non_trading_day(
     assert cli_mod.run_scheduled(args) == 0
 
 
+def test_run_scheduled_dispatches_through_service_boundary(monkeypatch) -> None:
+    import aqsp.cli as cli_mod
+    import aqsp.services.scheduled as scheduled_service
+
+    seen: dict[str, object] = {}
+
+    def fake_service(args, *, legacy_runner):
+        seen["args"] = args
+        seen["legacy_runner"] = legacy_runner
+        return 7
+
+    monkeypatch.setattr(scheduled_service, "run_scheduled_service", fake_service)
+    args = Namespace()
+
+    assert cli_mod.run_scheduled(args) == 7
+    assert seen["args"] is args
+    assert seen["legacy_runner"] is cli_mod._run_scheduled_legacy
+
+
 def test_run_scheduled_validates_ledger_before_circuit_breaker_pnl() -> None:
     import aqsp.cli as cli_mod
 
-    source = inspect.getsource(cli_mod.run_scheduled)
+    source = inspect.getsource(cli_mod._run_scheduled_legacy)
 
     assert source.index("validate_predictions(args.ledger, frames)") < source.index(
-        "_compute_real_pnl(args.ledger)"
+        "_compute_real_pnl("
     )
 
 
@@ -519,7 +571,6 @@ def test_run_scheduled_skips_formal_ledger_writes_when_circuit_breaker_triggers(
     monkeypatch, tmp_path: Path
 ) -> None:
     import aqsp.cli as cli_mod
-    from aqsp.core.types import PickResult
 
     latest = "2026-06-15"
     frames = {
@@ -627,24 +678,9 @@ def test_run_scheduled_skips_formal_ledger_writes_when_circuit_breaker_triggers(
     monkeypatch.setattr(
         cli_mod,
         "screen_universe",
-        lambda *_args, **_kwargs: [
-            PickResult(
-                symbol="600519",
-                name="贵州茅台",
-                date=latest,
-                close=1505.0,
-                score=60.0,
-                rating="buy_candidate",
-                entry_type="next_open",
-                ideal_buy=1505.0,
-                stop_loss=1450.0,
-                take_profit=1600.0,
-                position="10%-30%",
-                strategies=("ma_pullback",),
-                reasons=("趋势回踩",),
-                risks=(),
-            )
-        ],
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("circuit breaker must stop before screening")
+        ),
     )
     monkeypatch.setattr(
         cli_mod, "_enrich_pick_names", lambda picks, *_args, **_kwargs: picks
@@ -653,9 +689,7 @@ def test_run_scheduled_skips_formal_ledger_writes_when_circuit_breaker_triggers(
         cli_mod, "_annotate_candidate_status", lambda picks, **_kwargs: picks
     )
     monkeypatch.setattr(cli_mod, "_log_run_decisions", lambda **_kwargs: None)
-    monkeypatch.setattr(
-        cli_mod, "to_dataframe", lambda picks: pd.DataFrame([{"symbol": "600519"}])
-    )
+    monkeypatch.setattr(cli_mod, "to_dataframe", lambda picks: pd.DataFrame())
     monkeypatch.setattr(cli_mod, "to_markdown", lambda *_args, **_kwargs: "# report")
     monkeypatch.setattr(cli_mod, "notify_markdown", lambda *_args, **_kwargs: [])
     monkeypatch.setattr(
@@ -1178,6 +1212,7 @@ def test_run_evolve_prefers_aqsp_symbols_when_configured(monkeypatch) -> None:
     args = Namespace(
         source="eastmoney",
         config="config/evolution_config.yaml",
+        max_universe=0,
         apply=False,
         output="",
     )
@@ -1429,6 +1464,41 @@ def test_run_optimize_apply_writes_proposal_without_touching_thresholds(
     assert payload["best_params"] == {"composite.momentum_weight": 0.4}
     assert payload["status"] == "proposal_only"
     assert payload["applied"] is False
+
+
+def test_auto_evolution_apply_writes_proposal_without_touching_thresholds(
+    tmp_path: Path,
+) -> None:
+    from aqsp.strategies.auto_evolution import AutoEvolution, EvolutionResult
+
+    thresholds_path = tmp_path / "thresholds.yaml"
+    thresholds_path.write_text(
+        "version: test\nstrategies:\n  composite:\n    momentum_weight: 0.3\n",
+        encoding="utf-8",
+    )
+    original = thresholds_path.read_text(encoding="utf-8")
+    evolution = AutoEvolution(
+        thresholds_path=str(thresholds_path),
+        data_dir=str(tmp_path / "evolution"),
+    )
+    result = EvolutionResult(
+        strategy_name="composite",
+        old_params={"momentum_weight": 0.3},
+        new_params={"momentum_weight": 0.4},
+        performance_improvement=0.12,
+        confidence=0.9,
+        timestamp=datetime(2026, 6, 3, 12, 0, 0),
+        reason="test",
+    )
+
+    evolution._apply_evolution(result)
+
+    assert thresholds_path.read_text(encoding="utf-8") == original
+    proposal_path = tmp_path / "evolution" / "threshold_proposals.jsonl"
+    payload = json.loads(proposal_path.read_text(encoding="utf-8").splitlines()[0])
+    assert payload["status"] == "proposal_only"
+    assert payload["applied"] is False
+    assert payload["new_params"] == {"momentum_weight": 0.4}
 
 
 def test_direct_walkforward_defaults_match_threshold_costs() -> None:

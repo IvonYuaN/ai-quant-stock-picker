@@ -39,6 +39,7 @@ from aqsp.research.summary import (
     research_findings_badge,
     research_findings_display,
 )
+from aqsp.utils.jsonl_io import atomic_write_text
 from aqsp.walkforward_gate import validate_walkforward_gate_payload
 
 
@@ -3105,7 +3106,7 @@ def main() -> int:
         args.source_health,
         args.title,
     )
-    output.write_text(html_text, encoding="utf-8")
+    atomic_write_text(output, html_text)
     print(f"dashboard={output}")
     return 0
 

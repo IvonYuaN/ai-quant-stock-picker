@@ -19,3 +19,4 @@ class ScreeningConfig:
     stop_loss_buffer: float = 0.03
     max_position_pct: float = 1.0
     strategy_weights: dict[str, float] = field(default_factory=dict)
+    strategy_weight_reasons: dict[str, str] = field(default_factory=dict)

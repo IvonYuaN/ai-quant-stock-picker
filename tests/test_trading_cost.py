@@ -99,8 +99,9 @@ class TestSellCostCalculation:
         stamp_tax_pct = 0.1  # 10bp
         expected_diff = stamp_tax_pct
         actual_diff = sell_cost - buy_cost
-        assert abs(actual_diff - expected_diff) < 0.001, \
+        assert abs(actual_diff - expected_diff) < 0.001, (
             f"Expected diff {expected_diff}%, got {actual_diff}%"
+        )
 
     def test_sell_cost_zero_amount(self):
         """测试零金额的卖出成本"""
@@ -145,8 +146,9 @@ class TestRoundTripCostCalculation:
         sell_cost = TradingCostCalculator.calculate_sell_cost(amount)
         round_trip_cost = TradingCostCalculator.calculate_round_trip_cost(amount)
         expected = buy_cost + sell_cost
-        assert abs(round_trip_cost - expected) < 0.0001, \
+        assert abs(round_trip_cost - expected) < 0.0001, (
             f"Expected {expected}%, got {round_trip_cost}%"
+        )
 
     def test_round_trip_cost_zero_amount(self):
         """测试零金额的单次买卖成本"""
@@ -199,14 +201,18 @@ class TestMinimumCommissionHandling:
         # 佣金 = 金额 * 0.03%
         # 当佣金 = 5元时，金额 = 5 / 0.0003 = 16666.67元
         threshold = 5.0 / 0.0003
-        
+
         # 金额略小于临界点
-        cost_below = TradingCostCalculator.calculate_buy_cost(threshold - 1, slippage_bps=0)
+        cost_below = TradingCostCalculator.calculate_buy_cost(
+            threshold - 1, slippage_bps=0
+        )
         # 应该应用最低佣金
         assert cost_below > 0.029, "Min commission not applied below threshold"
-        
+
         # 金额略大于临界点
-        cost_above = TradingCostCalculator.calculate_buy_cost(threshold + 1, slippage_bps=0)
+        cost_above = TradingCostCalculator.calculate_buy_cost(
+            threshold + 1, slippage_bps=0
+        )
         # 不应该应用最低佣金
         assert cost_above < 0.035, "Min commission incorrectly applied above threshold"
 
@@ -252,13 +258,17 @@ class TestAbsoluteCostCalculation:
 
     def test_sell_cost_absolute_standard(self):
         """测试标准金额的绝对卖出成本"""
-        cost = TradingCostCalculator.calculate_sell_cost_absolute(10000, slippage_bps=15)
+        cost = TradingCostCalculator.calculate_sell_cost_absolute(
+            10000, slippage_bps=15
+        )
         # 佣金：5元 + 印花税：10元 + 滑点：15元 = 30元
         assert 29 < cost < 31, f"Expected ~30 yuan, got {cost}"
 
     def test_round_trip_cost_absolute_standard(self):
         """测试标准金额的绝对单次买卖成本"""
-        cost = TradingCostCalculator.calculate_round_trip_cost_absolute(10000, slippage_bps=15)
+        cost = TradingCostCalculator.calculate_round_trip_cost_absolute(
+            10000, slippage_bps=15
+        )
         # 买入：20元 + 卖出：30元 = 50元
         assert 49 < cost < 51, f"Expected ~50 yuan, got {cost}"
 
@@ -274,11 +284,14 @@ class TestAbsoluteCostCalculation:
         """测试绝对成本与百分比的一致性"""
         amount = 10000
         buy_cost_pct = TradingCostCalculator.calculate_buy_cost(amount, slippage_bps=15)
-        buy_cost_abs = TradingCostCalculator.calculate_buy_cost_absolute(amount, slippage_bps=15)
-        
+        buy_cost_abs = TradingCostCalculator.calculate_buy_cost_absolute(
+            amount, slippage_bps=15
+        )
+
         expected_abs = amount * buy_cost_pct / 100
-        assert abs(buy_cost_abs - expected_abs) < 0.01, \
+        assert abs(buy_cost_abs - expected_abs) < 0.01, (
             f"Mismatch: {buy_cost_abs} vs {expected_abs}"
+        )
 
 
 class TestSlippageVariation:

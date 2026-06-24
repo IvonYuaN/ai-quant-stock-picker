@@ -24,11 +24,13 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 
 from aqsp.core.time import now_shanghai, today_shanghai
+from aqsp.utils.jsonl_io import atomic_write_text
 
 
 # ============================================================
 # Layer 2: 因子动态权重
 # ============================================================
+
 
 @dataclass(frozen=True)
 class FactorPerformance:
@@ -163,6 +165,7 @@ class FactorWeightAdaptor:
 # Layer 3: 策略组合自适应（市场制度联动）
 # ============================================================
 
+
 @dataclass(frozen=True)
 class StrategyMix:
     """策略组合配置。"""
@@ -280,6 +283,7 @@ class StrategyMixAdaptor:
 # Layer 4: 元策略学习
 # ============================================================
 
+
 @dataclass(frozen=True)
 class StrategyPerformanceRecord:
     """策略表现记录。"""
@@ -355,7 +359,8 @@ class MetaStrategyLearner:
         """基于历史表现推荐策略组合。"""
         cutoff = today_shanghai() - timedelta(days=lookback_days)
         relevant_records = [
-            r for r in self.records
+            r
+            for r in self.records
             if r.regime == current_regime and r.date_range[1] >= cutoff
         ]
 
@@ -382,12 +387,13 @@ class MetaStrategyLearner:
 
         # 平均评分
         avg_scores = {
-            name: float(np.mean(scores))
-            for name, scores in strategy_scores.items()
+            name: float(np.mean(scores)) for name, scores in strategy_scores.items()
         }
 
         # 找出表现最好的 3-4 个策略
-        top_strategies = sorted(avg_scores.items(), key=lambda x: x[1], reverse=True)[:4]
+        top_strategies = sorted(avg_scores.items(), key=lambda x: x[1], reverse=True)[
+            :4
+        ]
 
         # 匹配到最相似的预定义组合
         top_names = set(s[0] for s in top_strategies)
@@ -428,13 +434,16 @@ class MetaStrategyLearner:
             data = [
                 {
                     **asdict(r),
-                    "date_range": [r.date_range[0].isoformat(), r.date_range[1].isoformat()],
+                    "date_range": [
+                        r.date_range[0].isoformat(),
+                        r.date_range[1].isoformat(),
+                    ],
                 }
                 for r in self.records
             ]
-            self.history_path.write_text(
+            atomic_write_text(
+                self.history_path,
                 json.dumps(data, ensure_ascii=False, indent=2),
-                encoding="utf-8",
             )
         except Exception:
             pass
@@ -443,6 +452,7 @@ class MetaStrategyLearner:
 # ============================================================
 # 回滚机制
 # ============================================================
+
 
 @dataclass(frozen=True)
 class ConfigSnapshot:
@@ -507,7 +517,9 @@ class RollbackManager:
         snapshot_id: str,
     ) -> Tuple[bool, str]:
         """检查是否应该回滚。"""
-        snapshot = next((s for s in self.snapshots if s.snapshot_id == snapshot_id), None)
+        snapshot = next(
+            (s for s in self.snapshots if s.snapshot_id == snapshot_id), None
+        )
         if not snapshot:
             return False, "快照不存在"
 
@@ -517,7 +529,10 @@ class RollbackManager:
 
         change = (current_sharpe - baseline) / abs(baseline)
         if change < self.DEGRADATION_THRESHOLD:
-            return True, f"Sharpe 下降 {change:.0%}（{baseline:.2f} → {current_sharpe:.2f}），建议回滚"
+            return (
+                True,
+                f"Sharpe 下降 {change:.0%}（{baseline:.2f} → {current_sharpe:.2f}），建议回滚",
+            )
 
         return False, f"表现稳定（变化 {change:+.0%}）"
 
@@ -558,9 +573,9 @@ class RollbackManager:
                 }
                 for s in self.snapshots
             ]
-            self.snapshot_path.write_text(
+            atomic_write_text(
+                self.snapshot_path,
                 json.dumps(data, ensure_ascii=False, indent=2),
-                encoding="utf-8",
             )
         except Exception:
             pass
@@ -569,6 +584,7 @@ class RollbackManager:
 # ============================================================
 # 统一进化调度器
 # ============================================================
+
 
 class AdaptiveEvolutionCoordinator:
     """4层自进化统一调度。

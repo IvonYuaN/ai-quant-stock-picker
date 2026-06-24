@@ -70,6 +70,7 @@ def test_runtime_paths_follow_daily_run_environment(tmp_path, monkeypatch) -> No
     assert paths.ledger == ledger
     assert paths.dashboard == dashboard
     assert paths.latest_report == PROJECT_ROOT / "reports/custom.md"
+    assert paths.sqlite_db == PROJECT_ROOT / "data/astocks_raw.db"
 
 
 def test_load_dotenv_defaults_does_not_override_explicit_env(

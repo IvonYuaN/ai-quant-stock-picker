@@ -18,6 +18,7 @@ from aqsp.data.cache import DataCache
 
 _SQLITE_TIMEOUT_SECONDS = 30.0
 _SQLITE_BATCH_SIZE = 400
+_ALLOW_QFQ_SQLITE_SOURCE_ENV = "AQSP_ALLOW_QFQ_SQLITE_SOURCE"
 
 
 def _chunks(items: list[str], size: int) -> list[list[str]]:
@@ -59,7 +60,7 @@ class SqliteDbSource(DataSource):
         self.db_path = Path(
             db_path
             or os.getenv("AQSP_SQLITE_DB_PATH")
-            or "A股量化分析数据/astocks_qfq.db"
+            or "A股量化分析数据/astocks_raw.db"
         )
         if not self.db_path.exists():
             raise FileNotFoundError(f"数据库不存在: {self.db_path}")
@@ -195,6 +196,7 @@ class SqliteDbSource(DataSource):
         end: date,
         adjust: Literal["", "qfq", "hfq"] = "",
     ) -> dict[str, OhlcvFrame]:
+        self._assert_price_mode_allowed(adjust)
         out: dict[str, OhlcvFrame] = {}
         start_str = start.strftime("%Y%m%d")
         end_str = end.strftime("%Y%m%d")
@@ -202,7 +204,9 @@ class SqliteDbSource(DataSource):
 
         for symbol in symbols:
             cached = (
-                self.cache.get_ohlcv(symbol, start, end) if self._use_cache else None
+                self.cache.get_ohlcv(symbol, start, end, price_mode=adjust or "raw")
+                if self._use_cache
+                else None
             )
             if cached is not None and not cached.empty:
                 if "name" not in cached.columns:
@@ -249,12 +253,27 @@ class SqliteDbSource(DataSource):
                         if frame.empty:
                             continue
                         if self._use_cache:
-                            self.cache.set_ohlcv(symbol, frame, source="sqlite_db")
+                            self.cache.set_ohlcv(
+                                symbol,
+                                frame,
+                                source="sqlite_db",
+                                price_mode=adjust or "raw",
+                            )
                         out[symbol] = frame
 
         require_non_empty_fetch_result(self.name, "日线", symbols, out)
 
         return out
+
+    def _assert_price_mode_allowed(self, adjust: str) -> None:
+        mode = self.price_mode()
+        if adjust == "" and mode == "qfq":
+            allowed = os.getenv(_ALLOW_QFQ_SQLITE_SOURCE_ENV, "").strip().lower()
+            if allowed not in {"1", "true", "yes", "on"}:
+                raise DataError(
+                    "sqlite_db 当前指向 qfq 数据库；生产候选/ledger 必须使用 raw "
+                    f"数据库，或显式设置 {_ALLOW_QFQ_SQLITE_SOURCE_ENV}=1 仅用于研究"
+                )
 
     def _normalize_daily_frame(self, df: pd.DataFrame, symbol: str) -> pd.DataFrame:
         if df.empty:

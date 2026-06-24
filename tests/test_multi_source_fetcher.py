@@ -80,6 +80,26 @@ class TestMultiSourceFetcherSuccessPath:
         primary_source.fetch_daily.assert_called_once()
         fallback_source.fetch_daily.assert_not_called()
 
+    def test_fetch_from_primary_writes_adjusted_cache_slot(
+        self, sample_ohlcv_data, tmp_path
+    ):
+        primary_source = Mock()
+        primary_source.name = "tushare"
+        primary_source.fetch_daily = Mock(return_value={"000001": sample_ohlcv_data})
+        fallback_source = Mock()
+        fallback_source.name = "akshare"
+        cache = DataCache(tmp_path / "cache.sqlite")
+        fetcher = MultiSourceFetcher(primary_source, fallback_source, cache=cache)
+
+        start = date(2024, 1, 1)
+        end = date(2024, 1, 10)
+        fetcher.fetch_daily_data(["000001"], start, end, adjust="qfq")
+
+        assert cache.get_ohlcv("000001", start, end, price_mode="raw") is None
+        cached = cache.get_ohlcv("000001", start, end, price_mode="qfq")
+        assert cached is not None
+        assert not cached.empty
+
     def test_data_format_normalization(self, sample_ohlcv_data):
         """Test that data is normalized to standard column format."""
         primary_source = Mock()

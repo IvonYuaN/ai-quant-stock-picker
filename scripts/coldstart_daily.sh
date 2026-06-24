@@ -81,7 +81,7 @@ if [ ! -x "$PYTHON_BIN" ]; then
     PYTHON_BIN="$(command -v python3)"
 fi
 
-SQLITE_DB_PATH="$(resolve_path "${AQSP_COLDSTART_DB_PATH:-${AQSP_SQLITE_DB_PATH:-A股量化分析数据/astocks_qfq.db}}")"
+SQLITE_DB_PATH="$(resolve_path "${AQSP_COLDSTART_DB_PATH:-${AQSP_SQLITE_DB_PATH:-A股量化分析数据/astocks_raw.db}}")"
 UPDATE_SCRIPT_HINT="${AQSP_COLDSTART_UPDATE_SCRIPT:-}"
 PROJECT_UPDATE_SCRIPT="$(resolve_path "scripts/update_sqlite_daily.py")"
 SQLITE_UPDATE_SCRIPT="$(dirname "$SQLITE_DB_PATH")/update_daily.py"

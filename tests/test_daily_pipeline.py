@@ -25,6 +25,40 @@ def _load_daily_pipeline_module():
     return module
 
 
+def _pipeline_config(
+    daily_pipeline,
+    tmp_path: Path,
+    *,
+    notify: bool = False,
+    notify_mode: str = "summary",
+):
+    return daily_pipeline.PipelineConfig(
+        project_root=tmp_path,
+        source="eastmoney",
+        mode="close",
+        limit=10,
+        max_universe=50,
+        min_avg_amount=50_000_000,
+        max_data_lag_days=3,
+        enable_online_factors=False,
+        allow_online_fallback=True,
+        ledger_path="data/predictions.jsonl",
+        report_path="reports/latest.md",
+        csv_path="reports/latest.csv",
+        briefing_path="reports/briefing.md",
+        paper_report_path="reports/paper.md",
+        dashboard_html="dist/dashboard/index.html",
+        dashboard_db="dist/dashboard/aqsp.db",
+        paper_ledger="data/paper_trades.jsonl",
+        closing_review_path="reports/closing_review.md",
+        notify=notify,
+        notify_mode=notify_mode,
+        dry_run=False,
+        enable_debate=False,
+        enable_auto_evolution=False,
+    )
+
+
 def test_build_config_prefers_env_source_when_cli_source_missing(monkeypatch) -> None:
     daily_pipeline = _load_daily_pipeline_module()
     monkeypatch.setenv("AQSP_SOURCE", "eastmoney")
@@ -518,7 +552,10 @@ def test_send_pipeline_digest_sends_summary_notification(
 
     monkeypatch.setattr(
         "aqsp.notifier.send_notification",
-        lambda title, content: sent.update({"title": title, "content": content}) or [],
+        lambda title, content: (
+            sent.update({"title": title, "content": content})
+            or [SimpleNamespace(channel="serverchan", ok=True, detail="HTTP 200")]
+        ),
     )
 
     config = daily_pipeline.PipelineConfig(
@@ -553,7 +590,7 @@ def test_send_pipeline_digest_sends_summary_notification(
         duration_seconds=30.0,
         steps=[
             daily_pipeline.StepResult("数据更新", True, 1.0),
-            daily_pipeline.StepResult("策略运行", True, 2.0),
+            daily_pipeline.StepResult("策略运行", True, 2.0, details={"gate_ok": True}),
             daily_pipeline.StepResult(
                 "预测验证",
                 True,
@@ -568,6 +605,7 @@ def test_send_pipeline_digest_sends_summary_notification(
                         "limit_up_at_open": 1,
                         "suspended_or_no_trade": 1,
                     },
+                    "strategy_not_executable_rates": {"limit_up_ladder": 0.5},
                 },
             ),
         ],
@@ -578,6 +616,8 @@ def test_send_pipeline_digest_sends_summary_notification(
     daily_pipeline._send_pipeline_digest(config, result, logging.getLogger("test"))
 
     assert sent["title"] == "收盘总览-2026-06-02"
+    assert result.notify_status["status"] == "sent"
+    assert result.notify_status["reason"] == "ok"
     assert "## 结论" in sent["content"]
     assert "## 候选" in sent["content"]
     assert "## 风险" in sent["content"]
@@ -608,6 +648,7 @@ def test_send_pipeline_digest_sends_summary_notification(
     assert (
         "- 不可成交原因: limit_up_at_open×1, suspended_or_no_trade×1" in sent["content"]
     )
+    assert "- 不可成交策略: limit_up_ladder 50%" in sent["content"]
     assert (
         "观察名单接下来: 先盯 300750 宁德时代，等待板块暴露回落后，再重新评估纸面复核优先级（中优先级 / 板块分化时）。"
         in sent["content"]
@@ -695,7 +736,9 @@ def test_send_pipeline_digest_logs_channel_results(
         started_at="2026-06-02T18:00:00+08:00",
         finished_at="2026-06-02T18:00:30+08:00",
         duration_seconds=30.0,
-        steps=[daily_pipeline.StepResult("策略运行", True, 2.0)],
+        steps=[
+            daily_pipeline.StepResult("策略运行", True, 2.0, details={"gate_ok": True})
+        ],
         overall_success=True,
         summary="ok",
     )
@@ -769,7 +812,9 @@ def test_send_pipeline_digest_dedupes_same_date_summary(
         started_at="2026-06-02T18:00:00+08:00",
         finished_at="2026-06-02T18:00:30+08:00",
         duration_seconds=30.0,
-        steps=[daily_pipeline.StepResult("策略运行", True, 2.0)],
+        steps=[
+            daily_pipeline.StepResult("策略运行", True, 2.0, details={"gate_ok": True})
+        ],
         overall_success=True,
         summary="ok",
     )
@@ -780,6 +825,140 @@ def test_send_pipeline_digest_dedupes_same_date_summary(
 
     assert len(calls) == 1
     assert "收盘汇总通知已发送过" in caplog.text
+
+
+def test_send_pipeline_digest_allows_same_day_gate_block_then_ok(
+    monkeypatch, tmp_path: Path
+) -> None:
+    daily_pipeline = _load_daily_pipeline_module()
+    reports_dir = tmp_path / "reports"
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(
+        [
+            {
+                "symbol": "600519",
+                "name": "贵州茅台",
+                "date": "2026-06-02",
+                "close": 1498.0,
+                "score": 71.0,
+                "rating": "strong_buy_candidate",
+                "entry_type": "close",
+                "ideal_buy": 1495.0,
+                "stop_loss": 1450.0,
+                "take_profit": 1600.0,
+                "position": "10%-30%",
+                "portfolio_action": "promote",
+                "candidate_status": "延续上升",
+            }
+        ]
+    ).to_csv(reports_dir / "latest.csv", index=False)
+    calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        "aqsp.notifier.send_notification",
+        lambda title, content: (
+            calls.append((title, content))
+            or [SimpleNamespace(channel="serverchan", ok=True, detail="HTTP 200")]
+        ),
+    )
+    config = _pipeline_config(
+        daily_pipeline, tmp_path, notify=True, notify_mode="summary"
+    )
+    blocked = daily_pipeline.PipelineResult(
+        started_at="2026-06-02T18:00:00+08:00",
+        finished_at="2026-06-02T18:00:30+08:00",
+        duration_seconds=30.0,
+        steps=[daily_pipeline.StepResult("策略运行", True, 2.0)],
+        overall_success=True,
+        summary="blocked",
+    )
+    ok = daily_pipeline.PipelineResult(
+        started_at="2026-06-02T18:10:00+08:00",
+        finished_at="2026-06-02T18:10:30+08:00",
+        duration_seconds=30.0,
+        steps=[
+            daily_pipeline.StepResult("策略运行", True, 2.0, details={"gate_ok": True})
+        ],
+        overall_success=True,
+        summary="ok",
+    )
+
+    daily_pipeline._send_pipeline_digest(config, blocked, logging.getLogger("test"))
+    daily_pipeline._send_pipeline_digest(config, ok, logging.getLogger("test"))
+
+    assert len(calls) == 2
+    assert "正常候选未放行" in calls[0][1]
+    assert "正常候选未放行" not in calls[1][1]
+
+
+def test_send_pipeline_digest_sends_block_summary_when_strategy_gate_not_confirmed(
+    monkeypatch, tmp_path: Path, caplog
+) -> None:
+    daily_pipeline = _load_daily_pipeline_module()
+    calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        "aqsp.notifier.send_notification",
+        lambda title, content: (
+            calls.append((title, content))
+            or [SimpleNamespace(channel="serverchan", ok=True, detail="HTTP 200")]
+        ),
+    )
+    config = _pipeline_config(
+        daily_pipeline, tmp_path, notify=True, notify_mode="summary"
+    )
+    result = daily_pipeline.PipelineResult(
+        started_at="2026-06-02T18:00:00+08:00",
+        finished_at="2026-06-02T18:00:30+08:00",
+        duration_seconds=30.0,
+        steps=[daily_pipeline.StepResult("策略运行", True, 2.0)],
+        overall_success=True,
+        summary="ok",
+    )
+
+    with caplog.at_level(logging.INFO, logger="test"):
+        daily_pipeline._send_pipeline_digest(config, result, logging.getLogger("test"))
+
+    assert len(calls) == 1
+    assert calls[0][0] == "收盘总览-2026-06-02"
+    assert "正常候选未放行" in calls[0][1]
+    assert "strategy_gate_not_confirmed" in calls[0][1]
+    assert result.notify_status == {
+        "mode": "summary",
+        "status": "sent",
+        "reason": "gate_block_summary_sent",
+        "date": "2026-06-02",
+        "channels": "serverchan=ok(HTTP 200)",
+    }
+    assert "收盘汇总通知降级" in caplog.text
+
+
+def test_send_pipeline_digest_skips_non_trading_day(
+    monkeypatch, tmp_path: Path, caplog
+) -> None:
+    daily_pipeline = _load_daily_pipeline_module()
+    calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        "aqsp.notifier.send_notification",
+        lambda title, content: calls.append((title, content)) or [],
+    )
+    config = _pipeline_config(
+        daily_pipeline, tmp_path, notify=True, notify_mode="summary"
+    )
+    result = daily_pipeline.PipelineResult(
+        started_at="2026-06-19T18:00:00+08:00",
+        finished_at="2026-06-19T18:00:30+08:00",
+        duration_seconds=30.0,
+        steps=[
+            daily_pipeline.StepResult("策略运行", True, 2.0, details={"gate_ok": True})
+        ],
+        overall_success=True,
+        summary="ok",
+    )
+
+    with caplog.at_level(logging.INFO, logger="test"):
+        daily_pipeline._send_pipeline_digest(config, result, logging.getLogger("test"))
+
+    assert calls == []
+    assert "非交易日" in caplog.text
 
 
 def test_write_result_file_appends_daily_run_history(tmp_path: Path) -> None:
@@ -798,6 +977,10 @@ def test_write_result_file_appends_daily_run_history(tmp_path: Path) -> None:
 
     daily_pipeline._write_result_file(result, tmp_path)
 
+    result_file = tmp_path / "logs" / "pipeline" / "2026-06-02.json"
+    payload = json.loads(result_file.read_text(encoding="utf-8"))
+    assert payload["notify_status"] == {}
+
     history_path = tmp_path / "data" / "daily_run_history.jsonl"
     rows = [
         json.loads(line)
@@ -815,6 +998,47 @@ def test_write_result_file_appends_daily_run_history(tmp_path: Path) -> None:
             "total_steps": 2,
         }
     ]
+
+
+def test_main_writes_notify_status_after_summary_send(
+    monkeypatch, tmp_path: Path
+) -> None:
+    daily_pipeline = _load_daily_pipeline_module()
+    result = daily_pipeline.PipelineResult(
+        started_at="2026-06-02T18:00:00+08:00",
+        finished_at="2026-06-02T18:00:30+08:00",
+        duration_seconds=30.0,
+        steps=[
+            daily_pipeline.StepResult("策略运行", True, 2.0, details={"gate_ok": True})
+        ],
+        overall_success=True,
+        summary="ok",
+    )
+
+    monkeypatch.setattr(daily_pipeline, "run_pipeline", lambda _config: result)
+
+    def fake_send(_config, sent_result, _logger):
+        sent_result.notify_status = {
+            "mode": "summary",
+            "status": "sent",
+            "reason": "ok",
+            "date": "2026-06-02",
+        }
+
+    monkeypatch.setattr(daily_pipeline, "_send_pipeline_digest", fake_send)
+
+    code = daily_pipeline.main(["--project-root", str(tmp_path), "--notify"])
+
+    assert code == 0
+    payload = json.loads(
+        (tmp_path / "logs" / "pipeline" / "2026-06-02.json").read_text(encoding="utf-8")
+    )
+    assert payload["notify_status"] == {
+        "mode": "summary",
+        "status": "sent",
+        "reason": "ok",
+        "date": "2026-06-02",
+    }
 
 
 def test_run_step_logs_stable_completion_label(caplog) -> None:
@@ -1049,6 +1273,35 @@ def test_run_pipeline_trims_writeback_steps_when_non_trade_day(monkeypatch) -> N
     assert "收盘复盘" not in executed
 
 
+def test_generate_report_suppresses_fanout_notify_when_non_trade_day(
+    monkeypatch, tmp_path: Path
+) -> None:
+    daily_pipeline = _load_daily_pipeline_module()
+    captured: list[str] = []
+
+    def fake_main(argv: list[str]) -> int:
+        captured[:] = argv
+        output_path = tmp_path / "reports" / "briefing.md"
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text("briefing\n", encoding="utf-8")
+        return 0
+
+    monkeypatch.setattr("aqsp.cli.main", fake_main)
+    config = _pipeline_config(
+        daily_pipeline,
+        tmp_path,
+        notify=True,
+        notify_mode="fanout",
+    )
+
+    result = daily_pipeline._step_generate_report(
+        config, logging.getLogger("test"), allow_notify=False
+    )
+
+    assert result["exit_code"] == 0
+    assert "--notify" not in captured
+
+
 def test_run_pipeline_marks_overall_failure_when_later_step_fails(
     monkeypatch,
 ) -> None:
@@ -1095,6 +1348,51 @@ def test_run_pipeline_marks_overall_failure_when_later_step_fails(
 
     assert result.overall_success is False
     assert "✗ 策略自进化" in result.summary
+
+
+def test_step_run_strategy_uses_real_benchmark_for_regime(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    daily_pipeline = _load_daily_pipeline_module()
+    seen: dict[str, list[str]] = {}
+
+    def fake_main(argv):
+        seen["argv"] = list(argv)
+        return 0
+
+    monkeypatch.setattr("aqsp.cli.main", fake_main)
+    config = daily_pipeline.PipelineConfig(
+        project_root=tmp_path,
+        source="sqlite_db",
+        mode="close",
+        limit=10,
+        max_universe=0,
+        min_avg_amount=50_000_000,
+        max_data_lag_days=3,
+        enable_online_factors=False,
+        allow_online_fallback=True,
+        ledger_path="data/predictions.jsonl",
+        report_path="reports/latest.md",
+        csv_path="reports/latest.csv",
+        briefing_path="reports/briefing.md",
+        paper_report_path="reports/paper.md",
+        dashboard_html="dist/dashboard/index.html",
+        dashboard_db="dist/dashboard/aqsp.db",
+        paper_ledger="data/paper_trades.jsonl",
+        closing_review_path="reports/closing_review.md",
+        notify=False,
+        notify_mode="summary",
+        dry_run=False,
+        enable_debate=False,
+        enable_auto_evolution=False,
+    )
+
+    result = daily_pipeline._step_run_strategy(config, logging.getLogger("test"))
+
+    assert result["exit_code"] == 0
+    argv = seen["argv"]
+    assert argv[argv.index("--benchmark-symbol") + 1] == "000300"
 
 
 def test_validate_predictions_fetches_benchmark_from_ledger(
@@ -1433,9 +1731,9 @@ def test_resolve_symbols_keeps_full_available_universe_when_max_universe_zero(
             return ["000001", "000002", "000003"]
 
     monkeypatch.delenv("AQSP_SYMBOLS", raising=False)
-    import aqsp.cli as cli
-
-    monkeypatch.setattr(cli, "_get_source", lambda _source: FakeSource())
+    monkeypatch.setattr(
+        daily_pipeline, "_build_data_source", lambda _config: FakeSource()
+    )
 
     config = daily_pipeline.PipelineConfig(
         project_root=Path.cwd(),
@@ -1474,14 +1772,15 @@ def test_resolve_symbols_truncates_available_universe_when_max_universe_positive
     monkeypatch,
 ) -> None:
     from scripts import daily_pipeline
-    import aqsp.cli as cli
 
     class FakeSource:
         def get_available_symbols(self) -> list[str]:
             return ["000001", "000002", "000003"]
 
     monkeypatch.delenv("AQSP_SYMBOLS", raising=False)
-    monkeypatch.setattr(cli, "_get_source", lambda _source: FakeSource())
+    monkeypatch.setattr(
+        daily_pipeline, "_build_data_source", lambda _config: FakeSource()
+    )
 
     config = daily_pipeline.PipelineConfig(
         project_root=Path.cwd(),

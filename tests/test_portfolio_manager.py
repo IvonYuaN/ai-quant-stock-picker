@@ -3,7 +3,10 @@ from __future__ import annotations
 from aqsp.core.types import PickResult
 from aqsp.portfolio.correlation import CorrelationResult
 from aqsp.portfolio.manager import apply_portfolio_manager
-from aqsp.portfolio.optimizer import _cap_weights, optimize_portfolio_allocations_from_risk
+from aqsp.portfolio.optimizer import (
+    _cap_weights,
+    optimize_portfolio_allocations_from_risk,
+)
 from aqsp.portfolio.sector_check import ConcentrationResult, SectorConcentration
 from aqsp.strategies.thresholds import RiskThresholds, Thresholds
 

@@ -32,81 +32,20 @@ class FactorBacktester:
         quantile: int = 5,
         holding_days: int = 5,
     ) -> FactorBacktestResult:
-        aligned = pd.concat([factor_values, returns], axis=1).dropna()
-        if len(aligned) < 20:
-            return self._empty_result("")
+        if _is_date_symbol_multiindex(
+            factor_values.index
+        ) and _is_date_symbol_multiindex(returns.index):
+            return self._backtest_cross_sectional_factor(
+                factor_values,
+                returns,
+                quantile=quantile,
+                holding_days=holding_days,
+                factor_name="",
+            )
 
-        fv = aligned.iloc[:, 0]
-        fr = aligned.iloc[:, 1]
-
-        try:
-            quantile_labels = pd.qcut(fv, quantile, labels=False, duplicates="drop")
-        except ValueError:
-            return self._empty_result("")
-
-        if quantile_labels is None or quantile_labels.empty:
-            return self._empty_result("")
-
-        quantile_returns = fr.groupby(quantile_labels).mean()
-
-        if len(quantile_returns) < 2:
-            return self._empty_result("")
-
-        long_quantile = quantile_returns.idxmax()
-        short_quantile = quantile_returns.idxmin()
-
-        long_mask = quantile_labels == long_quantile
-        short_mask = quantile_labels == short_quantile
-
-        long_returns = fr[long_mask]
-        short_returns = fr[short_mask]
-
-        strategy_returns = long_returns - short_returns.mean()
-
-        equity = np.cumprod(1 + strategy_returns.values / 100)
-        total_return = float(equity[-1] - 1)
-
-        n_periods = len(strategy_returns)
-        annualized_return = float((1 + total_return) ** (252 / max(n_periods, 1)) - 1)
-
-        returns_std = float(strategy_returns.std())
-        sharpe_ratio = (
-            float(strategy_returns.mean() / returns_std * np.sqrt(252))
-            if returns_std > 0
-            else 0.0
-        )
-
-        running_max = np.maximum.accumulate(equity)
-        drawdown = 1 - equity / running_max
-        max_drawdown = float(drawdown.max())
-
-        wins = sum(1 for r in strategy_returns if r > 0)
-        win_rate = wins / len(strategy_returns) if len(strategy_returns) > 0 else 0.0
-
-        pos_returns = strategy_returns[strategy_returns > 0]
-        neg_returns = strategy_returns[strategy_returns < 0]
-        avg_pos = float(pos_returns.mean()) if len(pos_returns) > 0 else 0.0
-        avg_neg = float(neg_returns.mean()) if len(neg_returns) > 0 else 0.0
-        profit_loss_ratio = abs(avg_pos / avg_neg) if avg_neg != 0 else 0.0
-
-        ic_series = fv.rolling(20).corr(fr)
-        ic_series = ic_series.dropna()
-        ic_mean = float(ic_series.mean()) if len(ic_series) > 0 else 0.0
-        ic_std = float(ic_series.std()) if len(ic_series) > 0 else 0.0
-        ic_ir = ic_mean / ic_std if ic_std > 0 else 0.0
-
-        return FactorBacktestResult(
-            factor_name="",
-            total_return=round(total_return, 6),
-            annualized_return=round(annualized_return, 6),
-            sharpe_ratio=round(sharpe_ratio, 4),
-            max_drawdown=round(max_drawdown, 6),
-            win_rate=round(win_rate, 4),
-            profit_loss_ratio=round(profit_loss_ratio, 4),
-            total_trades=len(strategy_returns),
-            ic_mean=round(ic_mean, 6),
-            ic_std=round(ic_std, 6),
-            ic_ir=round(ic_ir, 4),
+        raise ValueError(
+            "factor backtest requires a (date, symbol) MultiIndex for point-in-time "
+            "cross-sectional validation"
         )
 
     def backtest_factor_combination(
@@ -119,92 +58,135 @@ class FactorBacktester:
         if not factors or not weights:
             return self._empty_result("")
 
-        common_index = returns.index
-        for fv in factors.values():
-            common_index = common_index.intersection(fv.dropna().index)
+        if _is_date_symbol_multiindex(returns.index) and all(
+            _is_date_symbol_multiindex(fv.index) for fv in factors.values()
+        ):
+            combined = self._combine_factor_scores(factors, weights, returns.index)
+            return self._backtest_cross_sectional_factor(
+                combined,
+                returns,
+                quantile=quantile,
+                holding_days=1,
+                factor_name="_".join(sorted(factors.keys())),
+            )
 
-        if len(common_index) < 20:
-            return self._empty_result("")
+        raise ValueError(
+            "factor combination backtest requires (date, symbol) MultiIndex factors "
+            "and returns"
+        )
 
-        combined_score = pd.Series(0.0, index=common_index)
+    def _backtest_cross_sectional_factor(
+        self,
+        factor_values: pd.Series,
+        returns: pd.Series,
+        *,
+        quantile: int,
+        holding_days: int,
+        factor_name: str,
+    ) -> FactorBacktestResult:
+        aligned = pd.concat([factor_values, returns], axis=1).dropna()
+        if len(aligned) < 20:
+            return self._empty_result(factor_name)
+        aligned.columns = ["factor", "return"]
+        daily_returns: list[tuple[object, float]] = []
+        ic_values: list[float] = []
+        for trade_date, group in aligned.groupby(level=0, sort=True):
+            if len(group) < quantile * 2:
+                continue
+            try:
+                labels = pd.qcut(
+                    group["factor"],
+                    quantile,
+                    labels=False,
+                    duplicates="drop",
+                )
+            except ValueError:
+                continue
+            valid = labels.dropna()
+            if valid.empty or valid.nunique() < 2:
+                continue
+            long_ret = group.loc[labels == valid.max(), "return"].mean()
+            short_ret = group.loc[labels == valid.min(), "return"].mean()
+            daily_returns.append((trade_date, float(long_ret - short_ret)))
+            ic = group["factor"].corr(group["return"], method="spearman")
+            if pd.notna(ic):
+                ic_values.append(float(ic))
+        if not daily_returns:
+            return self._empty_result(factor_name)
+        strategy_returns = pd.Series(
+            [value for _date, value in daily_returns],
+            index=[trade_date for trade_date, _value in daily_returns],
+        )
+        ic_mean = float(np.mean(ic_values)) if ic_values else 0.0
+        ic_std = float(np.std(ic_values, ddof=1)) if len(ic_values) > 1 else 0.0
+        return self._result_from_returns(
+            strategy_returns,
+            factor_name=factor_name,
+            holding_days=holding_days,
+            ic_mean=ic_mean,
+            ic_std=ic_std,
+            ic_ir=ic_mean / ic_std if ic_std > 0 else 0.0,
+        )
+
+    def _combine_factor_scores(
+        self,
+        factors: dict[str, pd.Series],
+        weights: dict[str, float],
+        target_index: pd.Index,
+    ) -> pd.Series:
+        common_index = target_index
+        for name, series in factors.items():
+            if name in weights:
+                common_index = common_index.intersection(series.dropna().index)
+        combined = pd.Series(0.0, index=common_index)
         total_weight = 0.0
-
-        for name, fv in factors.items():
+        for name, series in factors.items():
             if name not in weights:
                 continue
-            w = weights[name]
-            aligned = fv.reindex(common_index)
-            ranked = aligned.rank(pct=True)
-            combined_score += ranked * w
-            total_weight += abs(w)
-
+            weight = float(weights[name])
+            aligned = series.reindex(common_index)
+            ranks = aligned.groupby(level=0).rank(pct=True)
+            combined += ranks * weight
+            total_weight += abs(weight)
         if total_weight > 0:
-            combined_score = combined_score / total_weight
+            combined = combined / total_weight
+        return combined
 
-        aligned_returns = returns.reindex(common_index)
-
-        try:
-            quantile_labels = pd.qcut(
-                combined_score, quantile, labels=False, duplicates="drop"
-            )
-        except ValueError:
-            return self._empty_result("")
-
-        if quantile_labels is None or quantile_labels.empty:
-            return self._empty_result("")
-
-        quantile_returns = aligned_returns.groupby(quantile_labels).mean()
-
-        if len(quantile_returns) < 2:
-            return self._empty_result("")
-
-        long_quantile = quantile_returns.idxmax()
-        short_quantile = quantile_returns.idxmin()
-
-        long_mask = quantile_labels == long_quantile
-        short_mask = quantile_labels == short_quantile
-
-        long_returns = aligned_returns[long_mask]
-        short_returns = aligned_returns[short_mask]
-
-        strategy_returns = long_returns - short_returns.mean()
-
+    def _result_from_returns(
+        self,
+        strategy_returns: pd.Series,
+        *,
+        factor_name: str,
+        holding_days: int,
+        ic_mean: float,
+        ic_std: float,
+        ic_ir: float,
+    ) -> FactorBacktestResult:
         equity = np.cumprod(1 + strategy_returns.values / 100)
         total_return = float(equity[-1] - 1)
-
         n_periods = len(strategy_returns)
-        annualized_return = float((1 + total_return) ** (252 / max(n_periods, 1)) - 1)
-
+        periods_per_year = 252 / max(int(holding_days), 1)
+        annualized_return = float(
+            (1 + total_return) ** (periods_per_year / max(n_periods, 1)) - 1
+        )
         returns_std = float(strategy_returns.std())
         sharpe_ratio = (
-            float(strategy_returns.mean() / returns_std * np.sqrt(252))
+            float(strategy_returns.mean() / returns_std * np.sqrt(periods_per_year))
             if returns_std > 0
             else 0.0
         )
-
         running_max = np.maximum.accumulate(equity)
         drawdown = 1 - equity / running_max
         max_drawdown = float(drawdown.max())
-
         wins = sum(1 for r in strategy_returns if r > 0)
         win_rate = wins / len(strategy_returns) if len(strategy_returns) > 0 else 0.0
-
         pos_returns = strategy_returns[strategy_returns > 0]
         neg_returns = strategy_returns[strategy_returns < 0]
         avg_pos = float(pos_returns.mean()) if len(pos_returns) > 0 else 0.0
         avg_neg = float(neg_returns.mean()) if len(neg_returns) > 0 else 0.0
         profit_loss_ratio = abs(avg_pos / avg_neg) if avg_neg != 0 else 0.0
-
-        ic_series = combined_score.rolling(20).corr(aligned_returns)
-        ic_series = ic_series.dropna()
-        ic_mean = float(ic_series.mean()) if len(ic_series) > 0 else 0.0
-        ic_std = float(ic_series.std()) if len(ic_series) > 0 else 0.0
-        ic_ir = ic_mean / ic_std if ic_std > 0 else 0.0
-
-        factor_names = "_".join(sorted(factors.keys()))
-
         return FactorBacktestResult(
-            factor_name=factor_names,
+            factor_name=factor_name,
             total_return=round(total_return, 6),
             annualized_return=round(annualized_return, 6),
             sharpe_ratio=round(sharpe_ratio, 4),
@@ -277,3 +259,7 @@ class FactorBacktester:
             ic_std=0.0,
             ic_ir=0.0,
         )
+
+
+def _is_date_symbol_multiindex(index: pd.Index) -> bool:
+    return isinstance(index, pd.MultiIndex) and index.nlevels >= 2

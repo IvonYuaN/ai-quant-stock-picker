@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pandas as pd
@@ -432,6 +433,66 @@ def test_paper_does_not_duplicate_open_symbol(tmp_path: Path) -> None:
     assert summary.opened == 0
     assert summary.skipped == 1
     assert len(rows) == 1
+
+
+def test_paper_concurrent_sync_keeps_unique_signal_rows(tmp_path: Path) -> None:
+    signals = tmp_path / "signals.jsonl"
+    trades = tmp_path / "paper.jsonl"
+    signal_rows = []
+    frames = {}
+    for idx in range(12):
+        symbol = f"6005{idx:02d}"
+        row = {
+            "id": f"sig-{idx}",
+            "status": "pending",
+            "signal_date": "2026-05-27",
+            "symbol": symbol,
+            "name": symbol,
+            "signal_close": 100.0,
+            "rating": "buy_candidate",
+            "score": 70,
+            "strategies": ["momentum"],
+            "stop_loss": 95.0,
+            "take_profit": 110.0,
+            "horizon_days": 3,
+            "fee_bps": 0,
+            "slippage_bps": 0,
+        }
+        signal_rows.append(json.dumps(row, ensure_ascii=False))
+        frames[symbol] = _frame()
+    signals.write_text("\n".join(signal_rows) + "\n", encoding="utf-8")
+
+    def sync_once() -> PaperSummary:
+        return sync_paper_trades(
+            signal_ledger=signals,
+            paper_ledger=trades,
+            frames=frames,
+        )
+
+    with ThreadPoolExecutor(max_workers=6) as executor:
+        list(executor.map(lambda _: sync_once(), range(6)))
+
+    rows = read_paper_trades(trades)
+    signal_ids = [row["signal_id"] for row in rows]
+    assert len(rows) == 12
+    assert set(signal_ids) == {f"sig-{idx}" for idx in range(12)}
+
+
+def test_read_paper_trades_skips_corrupt_jsonl_line(tmp_path: Path, caplog) -> None:
+    trades = tmp_path / "paper.jsonl"
+    trades.write_text(
+        json.dumps({"id": "ok-1", "status": "open"}, ensure_ascii=False)
+        + "\n"
+        + "{bad-json\n"
+        + json.dumps({"id": "ok-2", "status": "closed"}, ensure_ascii=False)
+        + "\n",
+        encoding="utf-8",
+    )
+
+    rows = read_paper_trades(trades)
+
+    assert [row["id"] for row in rows] == ["ok-1", "ok-2"]
+    assert "JSON 损坏，已跳过" in caplog.text
 
 
 def test_paper_closes_old_position_before_opening_new_same_symbol(

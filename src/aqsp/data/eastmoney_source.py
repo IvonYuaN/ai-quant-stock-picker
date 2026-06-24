@@ -11,9 +11,12 @@ from aqsp.data.source import (
     DataSource,
     OhlcvFrame,
     apply_limit_suspended_adj,
+    require_fetched_frame,
+    require_fetched_mapping,
     require_non_empty_fetch_result,
 )
 from aqsp.data.cache import DataCache
+from aqsp.core.errors import DataError
 from aqsp.core.time import now_shanghai
 
 _REQUEST_DELAY = 0.3
@@ -52,17 +55,25 @@ class EastmoneySource(DataSource):
     ) -> dict[str, OhlcvFrame]:
         out: dict[str, OhlcvFrame] = {}
         for symbol in symbols:
-            cached = self.cache.get_ohlcv(symbol, start, end)
+            cached = self.cache.get_ohlcv(
+                symbol, start, end, price_mode=adjust or "raw"
+            )
             if cached is not None and not cached.empty:
                 out[symbol] = cached
                 continue
 
-            df = self._fetch_eastmoney_daily(symbol, start, end)
-            if df is not None and not df.empty:
-                df = self._normalize_eastmoney_df(df, symbol)
-                validated = self._validate_ohlcv(df, symbol)
-                self.cache.set_ohlcv(symbol, validated, source="eastmoney")
-                out[symbol] = validated
+            df = require_fetched_frame(
+                self.name,
+                "日线",
+                symbol,
+                self._fetch_eastmoney_daily(symbol, start, end),
+            )
+            df = self._normalize_eastmoney_df(df, symbol)
+            validated = self._validate_ohlcv(df, symbol)
+            self.cache.set_ohlcv(
+                symbol, validated, source="eastmoney", price_mode=adjust or "raw"
+            )
+            out[symbol] = validated
         require_non_empty_fetch_result(self.name, "日线", symbols, out)
         return out
 
@@ -73,9 +84,12 @@ class EastmoneySource(DataSource):
     ) -> dict[str, OhlcvFrame]:
         out: dict[str, OhlcvFrame] = {}
         for symbol in symbols:
-            df = self._fetch_eastmoney_intraday(symbol, period)
-            if df is not None and not df.empty:
-                out[symbol] = df
+            out[symbol] = require_fetched_frame(
+                self.name,
+                "分时",
+                symbol,
+                self._fetch_eastmoney_intraday(symbol, period),
+            )
         require_non_empty_fetch_result(self.name, "分时", symbols, out)
         return out
 
@@ -85,9 +99,12 @@ class EastmoneySource(DataSource):
     ) -> dict[str, dict]:
         quotes = {}
         for symbol in symbols:
-            data = self._fetch_eastmoney_quote(symbol)
-            if data:
-                quotes[symbol] = data
+            quotes[symbol] = require_fetched_mapping(
+                self.name,
+                "实时行情",
+                symbol,
+                self._fetch_eastmoney_quote(symbol),
+            )
         require_non_empty_fetch_result(self.name, "实时行情", symbols, quotes)
         return quotes
 
@@ -104,12 +121,16 @@ class EastmoneySource(DataSource):
                 out[code] = cached
                 continue
 
-            df = self._fetch_eastmoney_index(code, start, end)
-            if df is not None and not df.empty:
-                df = self._normalize_eastmoney_df(df, code)
-                validated = self._validate_ohlcv(df, code)
-                self.cache.set_index(code, validated, source="eastmoney")
-                out[code] = validated
+            df = require_fetched_frame(
+                self.name,
+                "指数",
+                code,
+                self._fetch_eastmoney_index(code, start, end),
+            )
+            df = self._normalize_eastmoney_df(df, code)
+            validated = self._validate_ohlcv(df, code)
+            self.cache.set_index(code, validated, source="eastmoney")
+            out[code] = validated
         require_non_empty_fetch_result(self.name, "指数", index_codes, out)
         return out
 
@@ -167,8 +188,11 @@ class EastmoneySource(DataSource):
                 else:
                     _logger.warning(
                         "eastmoney 日线获取失败 %s（重试%d次后放弃）: %s",
-                        symbol, _MAX_RETRIES, exc,
+                        symbol,
+                        _MAX_RETRIES,
+                        exc,
                     )
+                    raise DataError(f"eastmoney 日线获取失败: {symbol}") from exc
         return None
 
     def _fetch_eastmoney_intraday(
@@ -220,8 +244,11 @@ class EastmoneySource(DataSource):
                 else:
                     _logger.warning(
                         "eastmoney 分时获取失败 %s（重试%d次后放弃）: %s",
-                        symbol, _MAX_RETRIES, exc,
+                        symbol,
+                        _MAX_RETRIES,
+                        exc,
                     )
+                    raise DataError(f"eastmoney 分时获取失败: {symbol}") from exc
         return None
 
     def _fetch_eastmoney_quote(self, symbol: str) -> dict | None:
@@ -253,8 +280,11 @@ class EastmoneySource(DataSource):
                 else:
                     _logger.warning(
                         "eastmoney 实时报价获取失败 %s（重试%d次后放弃）: %s",
-                        symbol, _MAX_RETRIES, exc,
+                        symbol,
+                        _MAX_RETRIES,
+                        exc,
                     )
+                    raise DataError(f"eastmoney 实时报价获取失败: {symbol}") from exc
         return None
 
     def _fetch_eastmoney_index(
@@ -307,8 +337,11 @@ class EastmoneySource(DataSource):
                 else:
                     _logger.warning(
                         "eastmoney 指数获取失败 %s（重试%d次后放弃）: %s",
-                        code, _MAX_RETRIES, exc,
+                        code,
+                        _MAX_RETRIES,
+                        exc,
                     )
+                    raise DataError(f"eastmoney 指数获取失败: {code}") from exc
         return None
 
     def _normalize_eastmoney_df(self, df: pd.DataFrame, symbol: str) -> pd.DataFrame:

@@ -8,4 +8,3 @@ def test_bt_task_monitor_skips_weekday_market_holiday() -> None:
     monitor_branch = script.split("monitor)", maxsplit=1)[1].split(";;", maxsplit=1)[0]
 
     assert "skip_weekday_market_holiday" in monitor_branch
-

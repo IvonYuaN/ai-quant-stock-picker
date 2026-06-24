@@ -6,6 +6,7 @@ from aqsp.risk.unified_risk import (
     MarketSnapshot,
     PortfolioRiskConfig,
     PortfolioRiskManager,
+    PortfolioState,
     StockRiskConfig,
     StockRiskManager,
     SystemRiskConfig,
@@ -30,6 +31,7 @@ def _thresholds() -> Thresholds:
             trailing_stop_activation_pct=0.045,
             max_holding_days=7,
             profit_take_threshold_pct=0.12,
+            profit_take_reduce_multiplier=0.40,
             portfolio_daily_loss_pct=0.015,
             portfolio_weekly_loss_pct=0.045,
             portfolio_max_drawdown_pct=0.11,
@@ -38,6 +40,7 @@ def _thresholds() -> Thresholds:
             max_sector_concentration=0.33,
             max_correlation=0.62,
             min_cash_reserve=0.18,
+            cash_low_new_position_multiplier=0.35,
             market_crash_threshold=-0.055,
             market_correction_threshold=-0.12,
             sector_panic_threshold=4,
@@ -59,6 +62,7 @@ def test_unified_stock_risk_config_from_thresholds() -> None:
     assert config.max_position_pct == 0.22
     assert config.max_holding_days == 7
     assert config.profit_take_threshold == 0.12
+    assert config.profit_take_reduce_multiplier == 0.40
 
 
 def test_unified_portfolio_risk_config_from_thresholds() -> None:
@@ -72,6 +76,7 @@ def test_unified_portfolio_risk_config_from_thresholds() -> None:
     assert config.max_sector_concentration == 0.33
     assert config.max_correlation == 0.62
     assert config.min_cash_reserve == 0.18
+    assert config.cash_low_new_position_multiplier == 0.35
 
 
 def test_unified_system_risk_config_from_thresholds() -> None:
@@ -94,6 +99,35 @@ def test_unified_risk_managers_load_threshold_defaults(monkeypatch) -> None:
     assert StockRiskManager().config.hard_stop_loss == 0.09
     assert PortfolioRiskManager().config.max_drawdown_pct == 0.11
     assert SystemRiskManager().config.panic_index_threshold == 0.33
+
+
+def test_stock_profit_take_uses_configured_reduce_multiplier() -> None:
+    manager = StockRiskManager(StockRiskConfig.from_thresholds(_thresholds()))
+
+    check = manager.check_position(
+        symbol="600519",
+        entry_price=100.0,
+        current_price=115.0,
+        max_price_since_entry=115.0,
+        entry_date=date(2026, 6, 1),
+        position_pct=0.25,
+        today=date(2026, 6, 3),
+    )
+
+    assert check.action == "reduce"
+    assert check.suggested_position == 0.10
+    assert "建议减仓60%" in check.reason
+
+
+def test_portfolio_low_cash_uses_configured_new_position_multiplier() -> None:
+    manager = PortfolioRiskManager(PortfolioRiskConfig.from_thresholds(_thresholds()))
+
+    check = manager.check_portfolio(
+        PortfolioState(total_value=100.0, cash=10.0, positions={})
+    )
+
+    assert check.overall_action == "reduce"
+    assert check.max_new_position_pct == 0.24 * 0.35
 
 
 def test_system_risk_corrupt_state_fails_closed(tmp_path) -> None:

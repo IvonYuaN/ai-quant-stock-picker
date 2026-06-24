@@ -29,7 +29,9 @@ def detect_sector(ticker: str) -> dict:
         section = section[: end.start()]
 
     board_match = re.search(r"【([^】]+)】（共(\d+)家）", section)
-    board_name = board_match.group(1).replace("--", "-") if board_match else industry_short
+    board_name = (
+        board_match.group(1).replace("--", "-") if board_match else industry_short
+    )
 
     codes = re.findall(r"\d+\s+(\d{6})\s+(\S+)", section)
 

@@ -304,8 +304,8 @@ AQSP_MODE=close
 # 最终输出候选数量
 AQSP_LIMIT=10
 
-# 最大标的池数量
-AQSP_MAX_UNIVERSE=100
+# 最大标的池数量（0=全市场）
+AQSP_MAX_UNIVERSE=0
 
 # 最低日均成交额(元)
 AQSP_MIN_AVG_AMOUNT=50000000
@@ -316,8 +316,10 @@ AQSP_ENABLE_ONLINE_FACTORS=false
 # 最大数据延迟天数
 AQSP_MAX_DATA_LAG_DAYS=3
 
-# 数据源: auto / multi / akshare / sina / eastmoney / tencent / mootdx / baostock
-AQSP_SOURCE=auto
+# 数据源: 生产默认使用本地 raw sqlite；公网源只能手工临时开启
+AQSP_SOURCE=sqlite_db
+AQSP_ALLOW_ONLINE_FALLBACK=false
+AQSP_SQLITE_DB_PATH=/opt/market-data/astocks_raw.db
 
 # ---------- 路径配置 ----------
 AQSP_LEDGER=data/predictions.jsonl
@@ -387,20 +389,30 @@ CRONEOF
 setup_cron_tasks() {
     log_step "步骤 7/7: 配置定时任务"
 
-    DAILY_PIPELINE="$PROJECT_DIR/scripts/daily_pipeline.sh"
+    if [ "${AQSP_INSTALL_SYSTEM_CRON:-false}" != "true" ]; then
+        log_info "默认不写系统 crontab，避免与宝塔计划任务形成双入口"
+        log_info "如需使用系统 crontab，显式设置 AQSP_INSTALL_SYSTEM_CRON=true 后重跑"
+        return
+    fi
+
+    BT_TASK="$PROJECT_DIR/scripts/bt_task.sh"
     CRON_LOG="$PROJECT_DIR/logs/cron.log"
 
-    CRON_ENTRY="0 2 * * 1-5 /bin/bash ${DAILY_PIPELINE} >> ${CRON_LOG} 2>&1"
+    CRON_ENTRY="0 18 * * 1-5 /bin/bash ${BT_TASK} daily >> ${CRON_LOG} 2>&1"
 
     if crontab -l 2>/dev/null | grep -qF "daily_pipeline.sh"; then
         log_info "定时任务已存在, 更新..."
         crontab -l 2>/dev/null | grep -vF "daily_pipeline.sh" | crontab -
     fi
+    if crontab -l 2>/dev/null | grep -qF "bt_task.sh daily"; then
+        log_info "统一定时任务已存在, 更新..."
+        crontab -l 2>/dev/null | grep -vF "bt_task.sh daily" | crontab -
+    fi
 
     (crontab -l 2>/dev/null; echo "$CRON_ENTRY") | crontab -
-    add_rollback "crontab -l 2>/dev/null | grep -vF 'daily_pipeline.sh' | crontab -"
+    add_rollback "crontab -l 2>/dev/null | grep -vF 'bt_task.sh daily' | crontab -"
 
-    log_info "定时任务已配置: 每周一至周五凌晨 2:00(北京时间)运行"
+    log_info "定时任务已配置: 每周一至周五 18:00(北京时间)运行统一 daily 入口"
     log_info "查看定时任务: crontab -l"
 }
 

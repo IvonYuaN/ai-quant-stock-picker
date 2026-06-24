@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from scripts.generate_sample_debate import generate_sample_debate_data
@@ -112,3 +113,16 @@ def test_merge_ledgers_backup_stamp_uses_shanghai_clock(tmp_path, monkeypatch) -
 
     assert summary.backup_paths
     assert all("20260610-093000" in path.name for path in summary.backup_paths)
+
+
+def test_runtime_output_scripts_use_atomic_writes() -> None:
+    script_paths = (
+        Path("scripts/run_production_walkforward_gate.py"),
+        Path("scripts/merge_server_ledgers.py"),
+        Path("scripts/render_dashboard.py"),
+    )
+
+    for path in script_paths:
+        text = path.read_text(encoding="utf-8")
+        assert "atomic_write_text" in text
+        assert ".write_text(" not in text

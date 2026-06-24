@@ -94,11 +94,13 @@ class TestFilterSuspended:
         symbols = ["600000"]
 
         data = {
-            "600000": pd.DataFrame({
-                "date": ["2026-01-01"],
-                "volume": [0],
-                "close": [10.0],
-            })
+            "600000": pd.DataFrame(
+                {
+                    "date": ["2026-01-01"],
+                    "volume": [0],
+                    "close": [10.0],
+                }
+            )
         }
 
         result = flt.filter_suspended(symbols, data=data)
@@ -110,16 +112,20 @@ class TestFilterSuspended:
         symbols = ["600000", "000001"]
 
         data = {
-            "600000": pd.DataFrame({
-                "date": ["2026-01-01"],
-                "volume": [1000000],
-                "close": [10.0],
-            }),
-            "000001": pd.DataFrame({
-                "date": ["2026-01-01"],
-                "volume": [500000],
-                "close": [15.0],
-            }),
+            "600000": pd.DataFrame(
+                {
+                    "date": ["2026-01-01"],
+                    "volume": [1000000],
+                    "close": [10.0],
+                }
+            ),
+            "000001": pd.DataFrame(
+                {
+                    "date": ["2026-01-01"],
+                    "volume": [500000],
+                    "close": [15.0],
+                }
+            ),
         }
 
         result = flt.filter_suspended(symbols, data=data)
@@ -146,10 +152,12 @@ class TestFilterSuspended:
         symbols = ["600000"]
 
         # 模拟DataFrame.iloc[-1]返回Series的情况
-        df = pd.DataFrame({
-            "volume": [1000000],
-            "close": [10.0],
-        })
+        df = pd.DataFrame(
+            {
+                "volume": [1000000],
+                "close": [10.0],
+            }
+        )
 
         data = {"600000": df}
         result = flt.filter_suspended(symbols, data=data)
@@ -323,14 +331,18 @@ class TestFilterLowLiquidity:
         symbols = ["600000", "000001"]
 
         data = {
-            "600000": pd.DataFrame({
-                "volume": [600000] * 30,  # 30天，平均60万
-                "amount": [10000000] * 30,
-            }),
-            "000001": pd.DataFrame({
-                "volume": [400000] * 30,  # 30天，平均40万
-                "amount": [8000000] * 30,
-            }),
+            "600000": pd.DataFrame(
+                {
+                    "volume": [600000] * 30,  # 30天，平均60万
+                    "amount": [10000000] * 30,
+                }
+            ),
+            "000001": pd.DataFrame(
+                {
+                    "volume": [400000] * 30,  # 30天，平均40万
+                    "amount": [8000000] * 30,
+                }
+            ),
         }
 
         # min_volume=500000，所以600000通过，000001不通过
@@ -343,14 +355,18 @@ class TestFilterLowLiquidity:
         symbols = ["600000", "000001"]
 
         data = {
-            "600000": pd.DataFrame({
-                "volume": [600000] * 30,
-                "amount": [12000000] * 30,  # 1200万
-            }),
-            "000001": pd.DataFrame({
-                "volume": [600000] * 30,
-                "amount": [500000] * 30,  # 50万
-            }),
+            "600000": pd.DataFrame(
+                {
+                    "volume": [600000] * 30,
+                    "amount": [12000000] * 30,  # 1200万
+                }
+            ),
+            "000001": pd.DataFrame(
+                {
+                    "volume": [600000] * 30,
+                    "amount": [500000] * 30,  # 50万
+                }
+            ),
         }
 
         # min_daily_amount=1000000，所以600000通过，000001不通过
@@ -364,10 +380,12 @@ class TestFilterLowLiquidity:
 
         # 30天数据
         data = {
-            "600000": pd.DataFrame({
-                "volume": [600000] * 30,
-                "amount": [10000000] * 30,
-            }),
+            "600000": pd.DataFrame(
+                {
+                    "volume": [600000] * 30,
+                    "amount": [10000000] * 30,
+                }
+            ),
         }
 
         # 回看15天
@@ -382,23 +400,27 @@ class TestFilterLowLiquidity:
         symbols = ["600000", "000001", "000002"]
 
         data = {
-            "600000": pd.DataFrame({
-                "volume": [600000] * 30,
-                "amount": [10000000] * 30,
-            }),
-            "000001": pd.DataFrame({
-                "volume": [300000] * 30,  # 流动性不足
-                "amount": [5000000] * 30,
-            }),
-            "000002": pd.DataFrame({
-                "volume": [700000] * 30,
-                "amount": [11000000] * 30,
-            }),
+            "600000": pd.DataFrame(
+                {
+                    "volume": [600000] * 30,
+                    "amount": [10000000] * 30,
+                }
+            ),
+            "000001": pd.DataFrame(
+                {
+                    "volume": [300000] * 30,  # 流动性不足
+                    "amount": [5000000] * 30,
+                }
+            ),
+            "000002": pd.DataFrame(
+                {
+                    "volume": [700000] * 30,
+                    "amount": [11000000] * 30,
+                }
+            ),
         }
 
-        result = flt.filter_low_liquidity(
-            symbols, data=data, min_volume=500000
-        )
+        result = flt.filter_low_liquidity(symbols, data=data, min_volume=500000)
         assert set(result) == {"600000", "000002"}
 
     def test_filter_low_liquidity_insufficient_lookback(self) -> None:
@@ -408,10 +430,12 @@ class TestFilterLowLiquidity:
 
         # 只有15天数据
         data = {
-            "600000": pd.DataFrame({
-                "volume": [600000] * 15,
-                "amount": [10000000] * 15,
-            }),
+            "600000": pd.DataFrame(
+                {
+                    "volume": [600000] * 15,
+                    "amount": [10000000] * 15,
+                }
+            ),
         }
 
         # 要求30天回看，但只有15天，应该跳过
@@ -439,23 +463,31 @@ class TestFilterAll:
         }
 
         data = {
-            "600000": pd.DataFrame({
-                "volume": [600000] * 30,
-                "amount": [10000000] * 30,
-            }),
+            "600000": pd.DataFrame(
+                {
+                    "volume": [600000] * 30,
+                    "amount": [10000000] * 30,
+                }
+            ),
             "600001": None,  # 黑名单，不需要数据
-            "000001": pd.DataFrame({
-                "volume": [0] * 30,  # 停牌
-                "amount": [0] * 30,
-            }),
-            "000002": pd.DataFrame({
-                "volume": [300000] * 30,  # 流动性不足
-                "amount": [5000000] * 30,
-            }),
-            "000003": pd.DataFrame({
-                "volume": [700000] * 30,
-                "amount": [11000000] * 30,
-            }),
+            "000001": pd.DataFrame(
+                {
+                    "volume": [0] * 30,  # 停牌
+                    "amount": [0] * 30,
+                }
+            ),
+            "000002": pd.DataFrame(
+                {
+                    "volume": [300000] * 30,  # 流动性不足
+                    "amount": [5000000] * 30,
+                }
+            ),
+            "000003": pd.DataFrame(
+                {
+                    "volume": [700000] * 30,
+                    "amount": [11000000] * 30,
+                }
+            ),
         }
 
         result = flt.filter_all(symbols, data=data, names=names, min_volume=500000)
@@ -473,14 +505,18 @@ class TestFilterAll:
         }
 
         data = {
-            "600000": pd.DataFrame({
-                "volume": [100] * 30,  # 流动性不足
-                "amount": [1000] * 30,
-            }),
-            "600001": pd.DataFrame({
-                "volume": [1000000] * 30,  # 即使流动性好，也被黑名单过滤
-                "amount": [10000000] * 30,
-            }),
+            "600000": pd.DataFrame(
+                {
+                    "volume": [100] * 30,  # 流动性不足
+                    "amount": [1000] * 30,
+                }
+            ),
+            "600001": pd.DataFrame(
+                {
+                    "volume": [1000000] * 30,  # 即使流动性好，也被黑名单过滤
+                    "amount": [10000000] * 30,
+                }
+            ),
         }
 
         result = flt.filter_all(symbols, data=data, names=names)
@@ -523,10 +559,12 @@ class TestEdgeCases:
         symbols = ["600000"]
 
         data = {
-            "600000": pd.DataFrame({
-                "volume": [np.nan],
-                "close": [10.0],
-            }),
+            "600000": pd.DataFrame(
+                {
+                    "volume": [np.nan],
+                    "close": [10.0],
+                }
+            ),
         }
 
         result = flt.filter_suspended(symbols, data=data)
@@ -564,10 +602,12 @@ class TestEdgeCases:
         symbols = ["600000"]
 
         data = {
-            "600000": pd.DataFrame({
-                "volume": [int(1e10)],  # 100亿股
-                "amount": [1e15],
-            }),
+            "600000": pd.DataFrame(
+                {
+                    "volume": [int(1e10)],  # 100亿股
+                    "amount": [1e15],
+                }
+            ),
         }
 
         result = flt.filter_suspended(symbols, data=data)
@@ -579,10 +619,12 @@ class TestEdgeCases:
         symbols = ["600000"]
 
         data = {
-            "600000": pd.DataFrame({
-                "volume": [-100],
-                "close": [10.0],
-            }),
+            "600000": pd.DataFrame(
+                {
+                    "volume": [-100],
+                    "close": [10.0],
+                }
+            ),
         }
 
         result = flt.filter_suspended(symbols, data=data)
@@ -638,10 +680,12 @@ class TestAccuracy:
         }
 
         data = {
-            symbol: pd.DataFrame({
-                "volume": [600000] * 30,
-                "amount": [10000000] * 30,
-            })
+            symbol: pd.DataFrame(
+                {
+                    "volume": [600000] * 30,
+                    "amount": [10000000] * 30,
+                }
+            )
             for symbol in symbols
         }
 

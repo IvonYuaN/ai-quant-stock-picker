@@ -14,14 +14,11 @@ def append_jsonl(path: str | Path, record: dict[str, Any]) -> None:
     file_path.parent.mkdir(parents=True, exist_ok=True)
     json_line = json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n"
 
-    with open(file_path, "a", encoding="utf-8") as handle:
-        _lock_file(handle)
-        try:
+    with advisory_lock(file_path):
+        with open(file_path, "a", encoding="utf-8") as handle:
             handle.write(json_line)
             handle.flush()
             os.fsync(handle.fileno())
-        finally:
-            _unlock_file(handle)
 
 
 def atomic_write_text(path: str | Path, text: str) -> None:

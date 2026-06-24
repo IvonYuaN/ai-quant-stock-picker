@@ -68,10 +68,28 @@ def get_strategy_display_config(
     *, thresholds: Thresholds | None = None, regime: str = "stable_bull"
 ) -> dict[str, dict[str, object]]:
     current = thresholds or load_thresholds()
-    weights = current.regime.strategy_weights.get(regime)
-    if weights is None:
-        weights = current.regime.strategy_weights.get("stable_bull")
-    raw_weights = weights.__dict__ if weights is not None else {}
+    regime_weights = current.regime.strategy_weights.get(regime)
+    if regime_weights is None:
+        regime_weights = current.regime.strategy_weights.get("stable_bull")
+    multipliers = regime_weights.__dict__ if regime_weights is not None else {}
+    composite = current.composite
+    enabled_weights = {
+        "momentum": composite.momentum_weight,
+        "quality": composite.quality_weight if current.quality.enabled else 0.0,
+        "value": composite.value_weight if current.value.enabled else 0.0,
+        "volume": composite.volume_weight if current.volume.enabled else 0.0,
+        "mean_reversion": composite.mean_reversion_weight
+        if current.mean_reversion.enabled
+        else 0.0,
+        "triple_rise": composite.triple_rise_weight
+        if current.triple_rise.enabled
+        else 0.0,
+    }
+    raw_weights = {
+        strategy_id: float(base_weight) * float(multipliers.get(strategy_id, 1.0))
+        for strategy_id, base_weight in enabled_weights.items()
+        if float(base_weight) > 0
+    }
     total = sum(float(value) for value in raw_weights.values() if float(value) > 0)
     if total <= 0:
         total = 1.0

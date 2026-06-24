@@ -9,6 +9,7 @@ from typing import Optional
 
 from aqsp.core.time import now_shanghai
 from aqsp.strategies.thresholds import Thresholds, load_thresholds
+from aqsp.utils.jsonl_io import atomic_write_text
 
 _logger = logging.getLogger(__name__)
 
@@ -87,9 +88,7 @@ class CircuitBreaker:
             if self._last_triggered_date
             else None,
         }
-        state_file.write_text(
-            json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
+        atomic_write_text(state_file, json.dumps(state, ensure_ascii=False, indent=2))
 
     def check(
         self, daily_pnl_pct: float, weekly_pnl_pct: float, monthly_pnl_pct: float

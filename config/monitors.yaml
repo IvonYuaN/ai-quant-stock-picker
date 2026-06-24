@@ -32,4 +32,4 @@ monitors:
     check: "source_health"
     params:
       max_consecutive_failures: 3
-    severity: "warning"
+    severity: "critical"

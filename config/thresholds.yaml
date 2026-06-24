@@ -2,13 +2,13 @@ composite:
   base_blend_weight: 0.7
   min_total_score: 0.4
   momentum_weight: 0.3
-  quality_weight: 0.2
+  quality_weight: 0.0
   regime_blend_weight: 0.3
-  value_weight: 0.2
+  value_weight: 0.0
   volume_weight: 0.0
   mean_reversion_weight: 0.0
   triple_rise_weight: 0.3
-description: "策略阈值配置 — v1.1.11：筛选止损与组合仓位曲线配置化"
+description: "策略阈值配置 — v1.1.13：组合权重只保留已启用且有验证证据的子策略"
 effective_from: '2026-06-17'
 execution:
   commission_rate: 0.0003
@@ -51,6 +51,8 @@ quality:
     roa: 0.25
     roe: 0.3
 regime:
+  # Legacy scalar multipliers kept for old reports only.
+  # Runtime scoring uses strategy_weights with composite base/regime blend.
   adjustments:
     stable_bear: 0.8
     stable_bull: 1.1
@@ -152,6 +154,8 @@ risk:
   allocation_downgrade_multiplier: 0.75
   allocation_high_corr_multiplier: 0.88
   allocation_sector_concentration_multiplier: 0.92
+  profit_take_reduce_multiplier: 0.50
+  cash_low_new_position_multiplier: 0.50
   market_crash_threshold: -0.05
   market_correction_threshold: -0.10
   sector_panic_threshold: 5
@@ -159,6 +163,7 @@ risk:
   auto_resume_days: 1
   avg_volume_ratio_min: 0.7
   north_flow_exit_threshold: -5000000000
+  dynamic_stop_atr_period: 14
   dynamic_stop_atr_multiplier: 2.0
   dynamic_stop_fallback_pct: 0.05
   dynamic_stop_recent_low_days: 5
@@ -176,7 +181,7 @@ value:
     pb: 0.3
     pe: 0.4
 volume:
-  enabled: true
+  enabled: false
   lookback_days: 60
   volume_ma_period: 20
   surge_multiplier: 1.5
@@ -187,7 +192,7 @@ volume:
     breakout: 0.35
     correlation: 0.25
 mean_reversion:
-  enabled: true
+  enabled: false
   lookback_days: 20
   rsi_period: 14
   oversold_threshold: 30
@@ -300,6 +305,24 @@ morning_breakout:
   strong_pct: 7.0
   volume_ratio_strong: 3.0
   volume_ratio_medium: 2.0
+  volume_ratio_min: 1.0
+  change_score_near_limit: 1.0
+  change_score_strong: 0.7
+  change_score_default: 0.4
+  volume_score_strong: 1.0
+  volume_score_medium: 0.6
+  volume_score_default: 0.3
+  technical_ma_bull_score: 0.5
+  technical_new_high_score: 0.5
+  fund_flow_strong_ratio: 1.5
+  fund_flow_medium_ratio: 1.2
+  fund_flow_strong_score: 1.0
+  fund_flow_medium_score: 0.5
+  market_score: 0.7
+  confidence_reason_bonus: 0.05
+  confidence_risk_penalty: 0.10
+  confidence_floor: 0.10
+  full_limit_pct: 10.0
   min_score: 60.0
   atr_period: 14
   atr_stop_multiplier: 2.0
@@ -324,26 +347,58 @@ closing_premium:
   max_change_pct: 7.0
   optimal_change_min: 3.0
   optimal_change_max: 5.0
+  change_score_optimal: 20.0
+  change_score_low: 10.0
+  change_score_high: 15.0
   min_score: 65.0
   volume_ratio_strong: 1.5
   volume_ratio_moderate: 1.2
+  volume_price_strong_score: 15.0
+  volume_price_moderate_score: 10.0
+  closing_volume_score: 10.0
   closing_volume_ratio: 1.3
   closing_change_threshold: 1.0
+  closing_change_score: 15.0
+  closing_positive_score: 10.0
+  high_close_ratio: 0.98
+  high_close_score: 5.0
   ma_periods:
     - 5
     - 10
     - 20
+  technical_ma_bull_score: 15.0
+  technical_short_ma_score: 10.0
+  technical_macd_cross_score: 5.0
+  macd_min_points: 26
   atr_period: 14
   atr_stop_multiplier: 2.0
   atr_tp1_multiplier: 2.0
   atr_tp2_multiplier: 3.0
   default_stop_pct: 0.05
   support_threshold: 5.0
+  support_lookback: 20
+  support_score: 10.0
   resistance_threshold: 5.0
+  resistance_lookback: 20
+  resistance_score: 5.0
   high_open_check_days: 5
   high_open_count_threshold: 3
   volume_shrink_ratio: 0.7
   volume_shrink_days: 3
+  volume_signal_ratio: 2.0
+  volume_signal_change_pct: 3.0
+  ma_support_lower: 0.98
+  ma_support_upper: 1.02
+  reversal_lookback: 10
+  reversal_min_rebound_pct: 0.05
+  entry_ma_period: 5
+  entry_ma_multiplier: 1.01
+  confidence_reason_bonus: 0.03
+  confidence_risk_penalty: 0.08
+  confidence_floor: 0.10
+  holding_days_breakout: 3
+  holding_days_reversal: 5
+  holding_days_default: 2
   lookback_days: 30
   min_data_points: 10
   weights:
@@ -384,4 +439,4 @@ internet_strategy:
   low_vol_amplitude_max: 5.5
   low_vol_volume_max: 1.8
   low_vol_score: 10.0
-version: 1.1.11
+version: 1.1.13
