@@ -46,6 +46,36 @@ def test_build_backfill_plan_keeps_days_missing_signal_or_paper(monkeypatch) -> 
     }
 
 
+def test_collect_signal_days_treats_no_pick_marker_as_attempted_day(
+    tmp_path: Path,
+) -> None:
+    ledger = tmp_path / "predictions.jsonl"
+    ledger.write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "signal_date": "2026-06-02",
+                        "symbol": "__RUN__",
+                        "status": backfill.BACKFILL_NO_PICKS_STATUS,
+                    }
+                ),
+                json.dumps(
+                    {
+                        "signal_date": "2026-06-03",
+                        "symbol": "__RUN__",
+                        "status": "blocked_by_circuit_breaker",
+                    }
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    assert backfill.collect_signal_days(ledger) == {"2026-06-02"}
+
+
 def test_truncate_frames_to_date_filters_future_rows_and_keeps_tail() -> None:
     frame = pd.DataFrame(
         [

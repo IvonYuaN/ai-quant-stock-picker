@@ -24,7 +24,12 @@ from aqsp.core.time import is_trading_day, today_shanghai
 from aqsp.data.cache import DataCache
 from aqsp.core.errors import DataError
 from aqsp.data.source_factory import build_data_source
-from aqsp.ledger.base import ExecutionConfig, append_predictions, read_ledger
+from aqsp.ledger.base import (
+    ExecutionConfig,
+    append_predictions,
+    append_run_event,
+    read_ledger,
+)
 from aqsp.ledger.runtime import (
     count_independent_signal_days,
     count_paper_tracking_days,
@@ -39,6 +44,7 @@ from aqsp.strategies.thresholds import load_thresholds
 DEFAULT_LOOKBACK_DAYS = 260
 DEFAULT_FUTURE_BUFFER_DAYS = 10
 DEFAULT_SCREEN_BATCH_SIZE = 400
+BACKFILL_NO_PICKS_STATUS = "backfill_no_picks"
 
 
 def _configure_logging(level_name: str) -> None:
@@ -105,6 +111,10 @@ def build_backfill_plan(
 def collect_signal_days(path: str | Path) -> set[str]:
     days: set[str] = set()
     for row in read_ledger(path):
+        symbol = str(row.get("symbol") or "").strip()
+        status = str(row.get("status") or "").strip()
+        if symbol == "__RUN__" and status != BACKFILL_NO_PICKS_STATUS:
+            continue
         signal_date = ledger_signal_date(row)
         if signal_date and not bool(row.get("is_simulated")):
             days.add(signal_date)
@@ -344,87 +354,131 @@ def backfill_real_sample_days(args: argparse.Namespace) -> int:
             and current_paper_days >= args.target_paper_days
         ):
             break
-        need_signal_backfill = signal_day_str in plan.missing_signal_days
-        need_paper_backfill = signal_day_str in plan.missing_paper_days
-
-        symbols = resolve_backfill_symbols(
-            source_name=args.source,
-            source=source,
-            explicit_symbols=explicit_symbols,
-            pool_name=args.pool,
-            max_universe=max_universe,
-            min_avg_amount=min_avg_amount,
-            signal_day=signal_day,
-            lookback_days=args.lookback_days,
+        current_signal_day_set = collect_signal_days(ledger_path)
+        current_paper_day_set = collect_signal_days(paper_ledger_path)
+        need_signal_backfill = (
+            current_signal_days < args.target_signal_days
+            and signal_day_str not in current_signal_day_set
         )
-        if not symbols:
-            print(f"{signal_day.isoformat()}: skip, no symbols resolved", flush=True)
+        need_paper_backfill = (
+            current_paper_days < args.target_paper_days
+            and signal_day_str not in current_paper_day_set
+        )
+        if not need_signal_backfill and not need_paper_backfill:
             continue
-        print(
-            f"{signal_day.isoformat()}: scanning {len(symbols)} symbols "
-            f"(signal={'yes' if need_signal_backfill else 'no'}, "
-            f"paper={'yes' if need_paper_backfill else 'no'})",
-            flush=True,
-        )
 
-        raw_frames = fetch_history_window(
-            source=source,
-            symbols=symbols[: min(len(symbols), args.screen_batch_size)],
-            signal_day=signal_day,
-            lookback_days=args.lookback_days,
-            future_buffer_days=args.future_buffer_days,
-        )
-        screen_frames = truncate_frames_to_date(
-            raw_frames,
-            end_date=signal_day,
-            lookback_days=args.lookback_days,
-        )
-        regime = _detect_runtime_regime(
-            screen_frames,
-            benchmark_symbol=benchmark_symbol if benchmark_symbol else None,
-            thresholds=thresholds,
-        )
-        config = build_screening_config(
-            thresholds=thresholds,
-            mode=args.mode,
-            min_avg_amount=min_avg_amount,
-            regime=regime,
-        )
         picks: list[PickResult] = []
+        screen_frames: dict[str, pd.DataFrame] = {}
+        regime = ""
         if need_signal_backfill:
-            picks, pick_frames = screen_backfill_picks(
+            symbols = resolve_backfill_symbols(
+                source_name=args.source,
                 source=source,
-                symbols=symbols,
+                explicit_symbols=explicit_symbols,
+                pool_name=args.pool,
+                max_universe=max_universe,
+                min_avg_amount=min_avg_amount,
                 signal_day=signal_day,
                 lookback_days=args.lookback_days,
-                future_buffer_days=args.future_buffer_days,
-                benchmark_symbol=benchmark_symbol,
-                thresholds=thresholds,
-                config=config,
-                limit=args.limit,
-                batch_size=args.screen_batch_size,
             )
-            if not picks:
-                print(f"{signal_day.isoformat()}: skip, no picks", flush=True)
-                continue
-            for pick in picks:
-                frame = pick_frames.get(pick.symbol)
-                if frame is not None and not frame.empty:
-                    screen_frames[pick.symbol] = frame
+            if not symbols:
+                append_run_event(
+                    ledger_path,
+                    event_date=signal_day_str,
+                    status=BACKFILL_NO_PICKS_STATUS,
+                    reason="no symbols resolved for real sample backfill",
+                    details={"source": args.source, "pool": args.pool},
+                )
+                print(
+                    f"{signal_day.isoformat()}: skip, no symbols resolved", flush=True
+                )
+                if not need_paper_backfill:
+                    continue
+            else:
+                print(
+                    f"{signal_day.isoformat()}: scanning {len(symbols)} symbols "
+                    f"(signal=yes, paper={'yes' if need_paper_backfill else 'no'})",
+                    flush=True,
+                )
 
-            append_predictions(
-                ledger_path,
-                picks,
-                execution=ExecutionConfig(
-                    horizon_days=args.horizon_days,
-                    fee_bps=execution_fee_bps,
-                    slippage_bps=execution_slippage_bps,
+                raw_frames = fetch_history_window(
+                    source=source,
+                    symbols=symbols[: min(len(symbols), args.screen_batch_size)],
+                    signal_day=signal_day,
+                    lookback_days=args.lookback_days,
+                    future_buffer_days=args.future_buffer_days,
+                )
+                screen_frames = truncate_frames_to_date(
+                    raw_frames,
+                    end_date=signal_day,
+                    lookback_days=args.lookback_days,
+                )
+                regime = _detect_runtime_regime(
+                    screen_frames,
+                    benchmark_symbol=benchmark_symbol if benchmark_symbol else None,
+                    thresholds=thresholds,
+                )
+                config = build_screening_config(
+                    thresholds=thresholds,
+                    mode=args.mode,
+                    min_avg_amount=min_avg_amount,
+                    regime=regime,
+                )
+
+                picks, pick_frames = screen_backfill_picks(
+                    source=source,
+                    symbols=symbols,
+                    signal_day=signal_day,
+                    lookback_days=args.lookback_days,
+                    future_buffer_days=args.future_buffer_days,
                     benchmark_symbol=benchmark_symbol,
-                    limit_up_pct=float(thresholds.execution.fallback_limit_main_pct),
-                    limit_down_pct=float(thresholds.execution.fallback_limit_main_pct),
-                ),
-                thresholds_version=thresholds.version,
-                regime=regime,
+                    thresholds=thresholds,
+                    config=config,
+                    limit=args.limit,
+                    batch_size=args.screen_batch_size,
+                )
+                if not picks:
+                    append_run_event(
+                        ledger_path,
+                        event_date=signal_day_str,
+                        status=BACKFILL_NO_PICKS_STATUS,
+                        reason="no picks from real sample backfill",
+                        details={
+                            "source": args.source,
+                            "pool": args.pool,
+                            "scanned_symbols": len(symbols),
+                            "regime": regime,
+                        },
+                    )
+                    print(f"{signal_day.isoformat()}: no picks", flush=True)
+                for pick in picks:
+                    frame = pick_frames.get(pick.symbol)
+                    if frame is not None and not frame.empty:
+                        screen_frames[pick.symbol] = frame
+
+                if picks:
+                    append_predictions(
+                        ledger_path,
+                        picks,
+                        execution=ExecutionConfig(
+                            horizon_days=args.horizon_days,
+                            fee_bps=execution_fee_bps,
+                            slippage_bps=execution_slippage_bps,
+                            benchmark_symbol=benchmark_symbol,
+                            limit_up_pct=float(
+                                thresholds.execution.fallback_limit_main_pct
+                            ),
+                            limit_down_pct=float(
+                                thresholds.execution.fallback_limit_main_pct
+                            ),
+                        ),
+                        thresholds_version=thresholds.version,
+                        regime=regime,
+                    )
+        else:
+            print(
+                f"{signal_day.isoformat()}: syncing paper only (signal=no, paper=yes)",
+                flush=True,
             )
 
         if need_paper_backfill:
