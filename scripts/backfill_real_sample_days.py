@@ -37,11 +37,18 @@ from aqsp.strategies.thresholds import load_thresholds
 
 DEFAULT_LOOKBACK_DAYS = 260
 DEFAULT_FUTURE_BUFFER_DAYS = 10
+DEFAULT_SCREEN_BATCH_SIZE = 400
 
 
 def _history_window_start(signal_day: date, lookback_days: int) -> date:
     calendar_buffer_days = max(lookback_days + 180, 300)
     return signal_day - timedelta(days=calendar_buffer_days)
+
+
+def _chunks(items: list[str], size: int) -> list[list[str]]:
+    if size <= 0:
+        return [items]
+    return [items[idx : idx + size] for idx in range(0, len(items), size)]
 
 
 @dataclass(frozen=True)
@@ -232,6 +239,57 @@ def build_screening_config(
     )
 
 
+def screen_backfill_picks(
+    *,
+    source: Any,
+    symbols: list[str],
+    signal_day: date,
+    lookback_days: int,
+    future_buffer_days: int,
+    benchmark_symbol: str,
+    thresholds: Any,
+    config: ScreeningConfig,
+    limit: int,
+    batch_size: int,
+) -> tuple[list[PickResult], dict[str, pd.DataFrame]]:
+    best_by_symbol: dict[str, PickResult] = {}
+    screen_frames_by_symbol: dict[str, pd.DataFrame] = {}
+
+    for symbol_batch in _chunks(symbols, batch_size):
+        raw_frames = fetch_history_window(
+            source=source,
+            symbols=symbol_batch,
+            signal_day=signal_day,
+            lookback_days=lookback_days,
+            future_buffer_days=future_buffer_days,
+        )
+        screen_frames = truncate_frames_to_date(
+            raw_frames,
+            end_date=signal_day,
+            lookback_days=lookback_days,
+        )
+        if not screen_frames:
+            continue
+        picks = _enrich_pick_names(
+            _screen_universe_with_thresholds(
+                _drop_benchmark_frame(screen_frames, benchmark_symbol),
+                config,
+                thresholds,
+            ),
+            screen_frames,
+        )
+        for pick in picks:
+            existing = best_by_symbol.get(pick.symbol)
+            if existing is None or pick.score > existing.score:
+                best_by_symbol[pick.symbol] = pick
+                frame = screen_frames.get(pick.symbol)
+                if frame is not None and not frame.empty:
+                    screen_frames_by_symbol[pick.symbol] = frame
+
+    ranked = sorted(best_by_symbol.values(), key=lambda item: item.score, reverse=True)
+    return ranked[:limit], screen_frames_by_symbol
+
+
 def backfill_real_sample_days(args: argparse.Namespace) -> int:
     thresholds = load_thresholds()
     runtime = load_runtime_config()
@@ -305,7 +363,7 @@ def backfill_real_sample_days(args: argparse.Namespace) -> int:
 
         raw_frames = fetch_history_window(
             source=source,
-            symbols=symbols,
+            symbols=symbols[: min(len(symbols), args.screen_batch_size)],
             signal_day=signal_day,
             lookback_days=args.lookback_days,
             future_buffer_days=args.future_buffer_days,
@@ -328,17 +386,25 @@ def backfill_real_sample_days(args: argparse.Namespace) -> int:
         )
         picks: list[PickResult] = []
         if need_signal_backfill:
-            picks = _enrich_pick_names(
-                _screen_universe_with_thresholds(
-                    _drop_benchmark_frame(screen_frames, benchmark_symbol),
-                    config,
-                    thresholds,
-                ),
-                screen_frames,
-            )[: args.limit]
+            picks, pick_frames = screen_backfill_picks(
+                source=source,
+                symbols=symbols,
+                signal_day=signal_day,
+                lookback_days=args.lookback_days,
+                future_buffer_days=args.future_buffer_days,
+                benchmark_symbol=benchmark_symbol,
+                thresholds=thresholds,
+                config=config,
+                limit=args.limit,
+                batch_size=args.screen_batch_size,
+            )
             if not picks:
                 print(f"{signal_day.isoformat()}: skip, no picks", flush=True)
                 continue
+            for pick in picks:
+                frame = pick_frames.get(pick.symbol)
+                if frame is not None and not frame.empty:
+                    screen_frames[pick.symbol] = frame
 
             append_predictions(
                 ledger_path,
@@ -421,6 +487,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--horizon-days", type=int, default=3)
     parser.add_argument("--target-signal-days", type=int, default=30)
     parser.add_argument("--target-paper-days", type=int, default=30)
+    parser.add_argument(
+        "--screen-batch-size", type=int, default=DEFAULT_SCREEN_BATCH_SIZE
+    )
     return parser
 
 

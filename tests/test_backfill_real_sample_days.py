@@ -200,3 +200,68 @@ def test_build_backfill_plan_trims_missing_sets_with_max_days(monkeypatch) -> No
     ]
     assert plan.missing_signal_days == {"2026-06-04", "2026-06-05"}
     assert plan.missing_paper_days == {"2026-06-04", "2026-06-05"}
+
+
+def test_screen_backfill_picks_batches_and_keeps_global_top_n(monkeypatch) -> None:
+    calls: list[list[str]] = []
+
+    def fake_fetch_history_window(**kwargs):
+        batch = list(kwargs["symbols"])
+        calls.append(batch)
+        return {
+            symbol: pd.DataFrame(
+                [{"date": "2026-04-01", "symbol": symbol, "name": symbol, "close": 1.0}]
+            )
+            for symbol in batch
+        }
+
+    def fake_truncate_frames_to_date(frames, **_kwargs):
+        return frames
+
+    def fake_screen(screen_frames, _config, _thresholds):
+        picks = []
+        for symbol in screen_frames:
+            score = float(symbol.replace("S", ""))
+            picks.append(
+                PickResult(
+                    symbol=symbol,
+                    name=symbol,
+                    date="2026-04-01",
+                    close=10.0,
+                    score=score,
+                    rating="watch",
+                    entry_type="next_open",
+                    ideal_buy=10.0,
+                    stop_loss=9.5,
+                    take_profit=11.0,
+                    position="10%",
+                )
+            )
+        return picks
+
+    monkeypatch.setattr(backfill, "fetch_history_window", fake_fetch_history_window)
+    monkeypatch.setattr(
+        backfill, "truncate_frames_to_date", fake_truncate_frames_to_date
+    )
+    monkeypatch.setattr(backfill, "_screen_universe_with_thresholds", fake_screen)
+    monkeypatch.setattr(
+        backfill, "_drop_benchmark_frame", lambda frames, _benchmark: frames
+    )
+    monkeypatch.setattr(backfill, "_enrich_pick_names", lambda picks, _frames: picks)
+
+    picks, pick_frames = backfill.screen_backfill_picks(
+        source=object(),
+        symbols=["S1", "S2", "S3", "S4", "S5"],
+        signal_day=date(2026, 4, 1),
+        lookback_days=120,
+        future_buffer_days=2,
+        benchmark_symbol="000300",
+        thresholds=object(),
+        config=backfill.ScreeningConfig(),
+        limit=2,
+        batch_size=2,
+    )
+
+    assert calls == [["S1", "S2"], ["S3", "S4"], ["S5"]]
+    assert [pick.symbol for pick in picks] == ["S5", "S4"]
+    assert sorted(pick_frames) == ["S1", "S2", "S3", "S4", "S5"]

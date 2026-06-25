@@ -1768,6 +1768,8 @@ def test_run_scheduled_falls_back_to_synthetic_regime_when_benchmark_missing(
 ) -> None:
     import aqsp.cli as cli_mod
 
+    monkeypatch.setattr(cli_mod, "today_shanghai", lambda: date(2026, 6, 23))
+    monkeypatch.setattr("aqsp.freshness.today_shanghai", lambda: date(2026, 6, 23))
     dates = pd.date_range("2026-03-01", periods=80, freq="B")
 
     def make_frame(symbol: str, start_close: float) -> pd.DataFrame:
