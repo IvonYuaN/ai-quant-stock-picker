@@ -421,8 +421,8 @@ def _step_morning_breakout(
         config.source,
         "--symbols",
         ",".join(symbols),
-        "--pool",
-        "sh300",
+        "--max-universe",
+        str(config.max_universe),
         "--top",
         "5",
     ]
@@ -448,8 +448,8 @@ def _step_closing_premium(
         config.source,
         "--symbols",
         ",".join(symbols),
-        "--pool",
-        "sh300",
+        "--max-universe",
+        str(config.max_universe),
         "--top",
         "5",
     ]

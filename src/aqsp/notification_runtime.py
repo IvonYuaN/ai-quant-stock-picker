@@ -352,7 +352,9 @@ def dispatch_gate_notification(
 def gate_notification_allowed(task_id: str | None = None) -> bool:
     value = task_id if task_id is not None else os.getenv("AQSP_RUN_TASK_ID", "")
     normalized = str(value or "").strip().lower()
-    return normalized in {"daily", "scheduled", "manual"}
+    notify_flag = str(os.getenv("AQSP_NOTIFY", "") or "").strip().lower()
+    notify_enabled = notify_flag in {"1", "true", "yes", "on"}
+    return normalized in {"daily", "scheduled", "manual"} and notify_enabled
 
 
 def finalize_scheduled_outputs(

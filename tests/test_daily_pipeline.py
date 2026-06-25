@@ -154,7 +154,7 @@ def test_build_config_enables_notify_and_auto_evolution_from_env(monkeypatch) ->
     assert config.enable_auto_evolution is True
 
 
-def test_morning_breakout_uses_sh300_pool(monkeypatch) -> None:
+def test_morning_breakout_uses_runtime_symbols_without_sh300_override(monkeypatch) -> None:
     daily_pipeline = _load_daily_pipeline_module()
     captured: list[str] = []
 
@@ -169,31 +169,7 @@ def test_morning_breakout_uses_sh300_pool(monkeypatch) -> None:
         lambda _config, _logger: ["600519", "300750"],
     )
 
-    config = daily_pipeline.PipelineConfig(
-        project_root=Path.cwd(),
-        source="eastmoney",
-        mode="close",
-        limit=10,
-        max_universe=50,
-        min_avg_amount=50_000_000,
-        max_data_lag_days=3,
-        enable_online_factors=False,
-        allow_online_fallback=True,
-        ledger_path="data/predictions.jsonl",
-        report_path="reports/latest.md",
-        csv_path="reports/latest.csv",
-        briefing_path="reports/briefing.md",
-        paper_report_path="reports/paper.md",
-        dashboard_html="dist/dashboard/index.html",
-        dashboard_db="dist/dashboard/aqsp.db",
-        paper_ledger="data/paper_trades.jsonl",
-        closing_review_path="reports/closing_review.md",
-        notify=False,
-        notify_mode="summary",
-        dry_run=False,
-        enable_debate=False,
-        enable_auto_evolution=False,
-    )
+    config = _pipeline_config(daily_pipeline, Path.cwd())
 
     daily_pipeline._step_morning_breakout(config, logging.getLogger("test"))
 
@@ -203,8 +179,8 @@ def test_morning_breakout_uses_sh300_pool(monkeypatch) -> None:
         "eastmoney",
         "--symbols",
         "600519,300750",
-        "--pool",
-        "sh300",
+        "--max-universe",
+        "50",
         "--top",
         "5",
     ]
@@ -1216,31 +1192,7 @@ def test_closing_premium_uses_explicit_symbols(monkeypatch) -> None:
         lambda _config, _logger: ["000001", "601318"],
     )
 
-    config = daily_pipeline.PipelineConfig(
-        project_root=Path.cwd(),
-        source="eastmoney",
-        mode="close",
-        limit=10,
-        max_universe=50,
-        min_avg_amount=50_000_000,
-        max_data_lag_days=3,
-        enable_online_factors=False,
-        allow_online_fallback=True,
-        ledger_path="data/predictions.jsonl",
-        report_path="reports/latest.md",
-        csv_path="reports/latest.csv",
-        briefing_path="reports/briefing.md",
-        paper_report_path="reports/paper.md",
-        dashboard_html="dist/dashboard/index.html",
-        dashboard_db="dist/dashboard/aqsp.db",
-        paper_ledger="data/paper_trades.jsonl",
-        closing_review_path="reports/closing_review.md",
-        notify=False,
-        notify_mode="summary",
-        dry_run=False,
-        enable_debate=False,
-        enable_auto_evolution=False,
-    )
+    config = _pipeline_config(daily_pipeline, Path.cwd())
 
     daily_pipeline._step_closing_premium(config, logging.getLogger("test"))
 
@@ -1250,8 +1202,8 @@ def test_closing_premium_uses_explicit_symbols(monkeypatch) -> None:
         "eastmoney",
         "--symbols",
         "000001,601318",
-        "--pool",
-        "sh300",
+        "--max-universe",
+        "50",
         "--top",
         "5",
     ]
