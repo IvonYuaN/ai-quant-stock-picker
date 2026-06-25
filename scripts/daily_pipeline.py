@@ -376,8 +376,6 @@ def _step_run_strategy(
         "--output-csv",
         config.csv_path,
     ]
-    if _notify_fanout_enabled(config):
-        argv.append("--notify")
     if config.enable_debate:
         argv.append("--enable-debate")
     if config.enable_online_factors:

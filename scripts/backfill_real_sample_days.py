@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import logging
 from dataclasses import dataclass
 from datetime import date, timedelta
 from pathlib import Path
@@ -38,6 +39,11 @@ from aqsp.strategies.thresholds import load_thresholds
 DEFAULT_LOOKBACK_DAYS = 260
 DEFAULT_FUTURE_BUFFER_DAYS = 10
 DEFAULT_SCREEN_BATCH_SIZE = 400
+
+
+def _configure_logging(level_name: str) -> None:
+    level = getattr(logging, str(level_name or "ERROR").upper(), logging.ERROR)
+    logging.basicConfig(level=level, format="%(levelname)s %(name)s: %(message)s")
 
 
 def _history_window_start(signal_day: date, lookback_days: int) -> date:
@@ -490,12 +496,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--screen-batch-size", type=int, default=DEFAULT_SCREEN_BATCH_SIZE
     )
+    parser.add_argument("--log-level", default="ERROR")
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    _configure_logging(getattr(args, "log_level", "ERROR"))
     if not args.end:
         args.end = (today_shanghai() - timedelta(days=1)).isoformat()
     if not args.start:

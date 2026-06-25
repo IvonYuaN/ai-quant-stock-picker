@@ -1478,6 +1478,7 @@ def test_step_run_strategy_uses_real_benchmark_for_regime(
     assert result["exit_code"] == 0
     argv = seen["argv"]
     assert argv[argv.index("--benchmark-symbol") + 1] == "000300"
+    assert "--notify" not in argv
 
 
 def test_validate_predictions_fetches_benchmark_from_ledger(
