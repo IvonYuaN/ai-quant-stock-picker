@@ -49,6 +49,15 @@ def _write_runtime_outputs(root: Path) -> None:
         "测试最优变体\n",
         encoding="utf-8",
     )
+    (root / "reports" / "walkforward-grid-raw-production-latest.md").write_text(
+        "**标的数量**: 3200\n"
+        "### PBO 失败定位\n"
+        "CSCV 失败组合占比\n"
+        "最差对齐周期\n"
+        "训练选中变体\n"
+        "测试最优变体\n",
+        encoding="utf-8",
+    )
 
 
 def _touch_runtime_db(root: Path, name: str, *, mtime_day: date) -> str:
@@ -222,8 +231,7 @@ def test_check_before_live_blocks_small_runtime_symbol_override(
 ) -> None:
     _prepare_ready_runtime(tmp_path)
     (tmp_path / ".env").write_text(
-        "AQSP_SQLITE_DB_PATH=data/astocks_raw.db\n"
-        "AQSP_SYMBOLS=600519,300750,000001\n",
+        "AQSP_SQLITE_DB_PATH=data/astocks_raw.db\nAQSP_SYMBOLS=600519,300750,000001\n",
         encoding="utf-8",
     )
 
@@ -434,6 +442,10 @@ def test_check_before_live_blocks_small_symbol_walkforward_gate(
     tmp_path: Path,
 ) -> None:
     _prepare_ready_runtime(tmp_path)
+    (tmp_path / "reports" / "walkforward-grid-raw-production-latest.md").write_text(
+        "**标的数量**: 300\n",
+        encoding="utf-8",
+    )
     _write_json(
         tmp_path / "data/walkforward_gate.json",
         {
@@ -457,6 +469,26 @@ def test_check_before_live_blocks_small_symbol_walkforward_gate(
     assert finding.ok is False
     assert "300/3000 effective symbols" in finding.detail
     assert "smoke tests only" in finding.detail
+
+
+def test_check_before_live_blocks_when_gate_and_report_symbol_counts_diverge(
+    tmp_path: Path,
+) -> None:
+    _prepare_ready_runtime(tmp_path)
+    (tmp_path / "reports" / "walkforward-grid-raw-production-latest.md").write_text(
+        "**标的数量**: 300\n",
+        encoding="utf-8",
+    )
+
+    findings = check_before_live(root=tmp_path, today=date(2026, 6, 14))
+    finding = next(
+        item for item in findings if item.gate == "walkforward_market_coverage"
+    )
+
+    assert finding.ok is False
+    assert "symbol count mismatch" in finding.detail
+    assert "report=300" in finding.detail
+    assert "gate=3200" in finding.detail
 
 
 def test_check_before_live_blocks_when_walkforward_gate_failed(tmp_path: Path) -> None:
@@ -1659,6 +1691,10 @@ def test_check_before_live_requires_pbo_diagnostics_when_gate_failed(
     )
     (tmp_path / "reports" / "walkforward-grid-latest.md").write_text(
         "### PBO 失败定位\nCSCV 失败组合占比\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "reports" / "walkforward-grid-raw-production-latest.md").write_text(
+        "**标的数量**: 3200\n### PBO 失败定位\nCSCV 失败组合占比\n",
         encoding="utf-8",
     )
 

@@ -213,12 +213,22 @@ def annotate_production_gate_metadata(
     payload = json.loads(gate_path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
         raise SystemExit(f"production gate sidecar is not an object: {gate_path}")
+    child_effective_symbols = payload.get("effective_symbols")
+    if (
+        isinstance(child_effective_symbols, bool)
+        or not isinstance(child_effective_symbols, int)
+        or child_effective_symbols != int(effective_symbols)
+    ):
+        raise SystemExit(
+            "child walk-forward effective_symbols mismatch: "
+            f"child={child_effective_symbols!r} wrapper={effective_symbols}; "
+            "refusing to stamp production coverage over a different child universe"
+        )
     payload.update(
         {
             "source": "sqlite_db",
             "sqlite_db_path": str(db_path),
             "price_mode": "raw",
-            "effective_symbols": int(effective_symbols),
             "production_gate_coverage": {
                 "stock_symbols": coverage.stock_symbols,
                 "covered_symbols": coverage.covered_symbols,

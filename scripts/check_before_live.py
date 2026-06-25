@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sqlite3
 import sys
 from dataclasses import dataclass
@@ -156,7 +157,11 @@ def check_before_live(
     findings: list[ReadinessFinding] = []
     findings.append(_check_walkforward_gate(gate_path, today))
     findings.append(_check_walkforward_price_mode(root, gate_path))
-    findings.append(_check_walkforward_market_coverage(gate_path))
+    findings.append(
+        _check_walkforward_market_coverage(
+            gate_path, root / "reports" / "walkforward-grid-raw-production-latest.md"
+        )
+    )
     findings.append(_check_runtime_universe_cap(root))
     findings.append(_check_runtime_symbol_override(root))
     findings.append(_check_runtime_data_source_config(root))
@@ -253,7 +258,23 @@ def _check_walkforward_price_mode(root: Path, gate_path: Path) -> ReadinessFindi
     return ReadinessFinding("walkforward_price_mode", True, "ok")
 
 
-def _check_walkforward_market_coverage(gate_path: Path) -> ReadinessFinding:
+def _extract_walkforward_report_symbols(report_path: Path) -> int | None:
+    if not report_path.exists():
+        return None
+    try:
+        text = report_path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    match = re.search(r"\*\*标的数量\*\*\s*[:：]\s*(\d+)", text)
+    if match:
+        return int(match.group(1))
+    match = re.search(r"\|\s*effective_symbols\s*\|\s*(\d+)\s*\|", text)
+    return int(match.group(1)) if match else None
+
+
+def _check_walkforward_market_coverage(
+    gate_path: Path, production_report_path: Path
+) -> ReadinessFinding:
     gate = _read_json(gate_path)
     if not gate:
         return ReadinessFinding("walkforward_market_coverage", False, "gate missing")
@@ -265,6 +286,20 @@ def _check_walkforward_market_coverage(gate_path: Path) -> ReadinessFinding:
             "effective_symbols missing; production short-line gate requires full-market coverage",
         )
     detail = validation.detail
+    report_symbols = _extract_walkforward_report_symbols(production_report_path)
+    if report_symbols is None:
+        return ReadinessFinding(
+            "walkforward_market_coverage",
+            False,
+            f"{detail}; production report missing actual symbol count: {production_report_path}",
+        )
+    if report_symbols != validation.effective_symbols:
+        return ReadinessFinding(
+            "walkforward_market_coverage",
+            False,
+            f"{detail}; production report symbol count mismatch: "
+            f"report={report_symbols}, gate={validation.effective_symbols}",
+        )
     if not validation.ok:
         detail += "; 300-symbol quick gates are smoke tests only"
     return ReadinessFinding("walkforward_market_coverage", validation.ok, detail)
@@ -508,7 +543,7 @@ def _check_coldstart_runtime_alignment(root: Path) -> ReadinessFinding:
             "detect_sqlite_price_mode",
             'AQSP_COLDSTART_PRICE_MODE:-$(detect_sqlite_price_mode "$SQLITE_DB_PATH")',
             'UPDATE_ARGS+=(--price-mode "$SQLITE_PRICE_MODE")',
-            'sqlite_db 运行时要求 coldstart 更新 raw 历史库',
+            "sqlite_db 运行时要求 coldstart 更新 raw 历史库",
         )
         missing = [token for token in required_tokens if token not in text]
         if missing:

@@ -111,6 +111,7 @@ def test_annotate_production_gate_metadata_preserves_gate_result(
                 "both_pass": False,
                 "deflated_sharpe": 0.8275,
                 "pbo": 0.7778,
+                "effective_symbols": 3200,
             }
         ),
         encoding="utf-8",
@@ -143,6 +144,46 @@ def test_annotate_production_gate_metadata_preserves_gate_result(
         "first_trade_date": "20180102",
         "last_trade_date": "20241231",
     }
+
+
+def test_annotate_production_gate_metadata_rejects_child_universe_mismatch(
+    tmp_path: Path,
+) -> None:
+    gate_path = tmp_path / "walkforward_gate.json"
+    gate_path.write_text(
+        json.dumps(
+            {
+                "run_date": "2026-06-21",
+                "both_pass": False,
+                "deflated_sharpe": 0.8275,
+                "pbo": 0.7778,
+                "effective_symbols": 300,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    try:
+        annotate_production_gate_metadata(
+            gate_path=gate_path,
+            db_path=tmp_path / "astocks_raw.db",
+            coverage=CoverageSummary(
+                stock_symbols=5533,
+                covered_symbols=3200,
+                rows=123456,
+                first_trade_date="20180102",
+                last_trade_date="20241231",
+            ),
+            effective_symbols=3200,
+        )
+    except SystemExit as exc:
+        assert "effective_symbols mismatch" in str(exc)
+    else:
+        raise AssertionError("expected production metadata mismatch to block")
+
+    payload = json.loads(gate_path.read_text(encoding="utf-8"))
+    assert payload["effective_symbols"] == 300
+    assert "production_gate_coverage" not in payload
 
 
 def test_write_minimal_pbo_diagnostics_for_failed_gate(
