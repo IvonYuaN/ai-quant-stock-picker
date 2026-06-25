@@ -336,6 +336,15 @@ def write_minimal_pbo_diagnostics(
     return True
 
 
+def diagnostic_report_path(report_path: Path) -> Path:
+    name = report_path.name
+    if name.endswith("-latest.md"):
+        return report_path.with_name(
+            f"{name[: -len('-latest.md')]}-diagnostic-latest.md"
+        )
+    return report_path.with_suffix(f".diagnostic{report_path.suffix}")
+
+
 def _format_report_float(value: object) -> str:
     return f"{float(value):.4f}" if isinstance(value, (int, float)) else "-"
 
@@ -432,12 +441,13 @@ def main() -> int:
             timeout=args.timeout_seconds if args.timeout_seconds > 0 else None,
         )
         if result.returncode != 0:
+            diagnostic_path = diagnostic_report_path(Path(args.report))
             if write_minimal_pbo_diagnostics(
                 gate_path=Path(args.gate_path),
-                report_path=Path(args.report),
+                report_path=diagnostic_path,
                 coverage=coverage,
             ):
-                print(f"production gate diagnostic report written: {args.report}")
+                print(f"production gate diagnostic report written: {diagnostic_path}")
             return result.returncode
         try:
             annotate_production_gate_metadata(
@@ -449,12 +459,13 @@ def main() -> int:
         except (json.JSONDecodeError, OSError, SystemExit) as exc:
             print(f"BLOCK: failed to stamp production gate metadata: {exc}")
             return 2
+        diagnostic_path = diagnostic_report_path(Path(args.report))
         if write_minimal_pbo_diagnostics(
             gate_path=Path(args.gate_path),
-            report_path=Path(args.report),
+            report_path=diagnostic_path,
             coverage=coverage,
         ):
-            print(f"production gate diagnostic report written: {args.report}")
+            print(f"production gate diagnostic report written: {diagnostic_path}")
         return 0
     except subprocess.TimeoutExpired:
         print(

@@ -1771,6 +1771,33 @@ def test_check_before_live_accepts_production_pbo_diagnostics_report(
     assert finding.ok is True
 
 
+def test_check_before_live_accepts_separate_production_diagnostic_report(
+    tmp_path: Path,
+) -> None:
+    _prepare_ready_runtime(tmp_path)
+    (tmp_path / "reports" / "walkforward-grid-latest.md").unlink()
+    (tmp_path / "reports" / "walkforward-grid-raw-production-latest.md").unlink()
+    (
+        tmp_path / "reports" / "walkforward-grid-raw-production-diagnostic-latest.md"
+    ).write_text(
+        "### PBO 失败定位\n"
+        "CSCV 失败组合占比\n"
+        "最差对齐周期\n"
+        "训练选中变体\n"
+        "测试最优变体\n",
+        encoding="utf-8",
+    )
+    gate_path = tmp_path / "data/walkforward_gate.json"
+    payload = json.loads(gate_path.read_text(encoding="utf-8"))
+    payload.update({"pbo_pass": False, "both_pass": False, "pbo": 0.75})
+    _write_json(gate_path, payload)
+
+    findings = check_before_live(root=tmp_path, today=date(2026, 6, 14))
+
+    finding = next(item for item in findings if item.gate == "pbo_diagnostics")
+    assert finding.ok is True
+
+
 def test_check_before_live_blocks_qfq_walkforward_price_mode(
     tmp_path: Path,
 ) -> None:

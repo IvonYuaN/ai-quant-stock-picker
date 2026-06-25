@@ -132,6 +132,7 @@ def _file_has_content(path: Path) -> bool:
 
 def _pbo_diagnostic_report_candidates(root: Path) -> tuple[Path, ...]:
     return (
+        root / "reports" / "walkforward-grid-raw-production-diagnostic-latest.md",
         root / "reports" / "walkforward-grid-raw-production-latest.md",
         root / "reports" / "walkforward-grid-latest.md",
     )

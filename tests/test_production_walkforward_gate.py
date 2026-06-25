@@ -8,6 +8,7 @@ from scripts.run_production_walkforward_gate import (
     CoverageSummary,
     annotate_production_gate_metadata,
     build_walkforward_command,
+    diagnostic_report_path,
     inspect_raw_coverage,
     select_covered_symbols,
     write_minimal_pbo_diagnostics,
@@ -228,6 +229,16 @@ def test_write_minimal_pbo_diagnostics_for_failed_gate(
     assert "effective_symbols | 3200" in text
 
 
+def test_diagnostic_report_path_keeps_formal_production_report_separate(
+    tmp_path: Path,
+) -> None:
+    report_path = tmp_path / "walkforward-grid-raw-production-latest.md"
+
+    assert diagnostic_report_path(report_path) == (
+        tmp_path / "walkforward-grid-raw-production-diagnostic-latest.md"
+    )
+
+
 def test_production_walkforward_gate_passes_raw_db_to_child_process(
     monkeypatch, tmp_path: Path
 ) -> None:
@@ -303,6 +314,7 @@ def test_production_walkforward_gate_writes_minimal_diagnostic_after_child_failu
     db.write_text("", encoding="utf-8")
     gate_path = tmp_path / "walkforward_gate.json"
     report_path = tmp_path / "walkforward-grid-raw-production-latest.md"
+    diagnostic_path = tmp_path / "walkforward-grid-raw-production-diagnostic-latest.md"
     gate_path.write_text(
         json.dumps({"pbo_pass": False, "pbo": 0.0, "deflated_sharpe": 0.0}),
         encoding="utf-8",
@@ -342,7 +354,8 @@ def test_production_walkforward_gate_writes_minimal_diagnostic_after_child_failu
     )
 
     assert gate.main() == 7
-    assert "### PBO 失败定位" in report_path.read_text(encoding="utf-8")
+    assert not report_path.exists()
+    assert "### PBO 失败定位" in diagnostic_path.read_text(encoding="utf-8")
 
 
 def test_production_walkforward_gate_passes_selected_symbols_file(
