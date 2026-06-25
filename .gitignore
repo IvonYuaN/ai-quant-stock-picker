@@ -29,9 +29,13 @@ aqsp-*.png
 dashboard-*.png
 aqsp-live-snapshot-*.md
 data/*.db
+data/*.lock
 data/*.jsonl
 data/snapshots
 !data/open_source_research.jsonl
+data/gate_notify_state.json
+data/monitor_notify_state.json
+data/notify_state.json
 data/risk_state.json
 data/system_risk_state.json
 data/walkforward_gate.json
