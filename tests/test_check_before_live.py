@@ -491,6 +491,24 @@ def test_check_before_live_blocks_when_gate_and_report_symbol_counts_diverge(
     assert "gate=3200" in finding.detail
 
 
+def test_check_before_live_does_not_use_diagnostic_effective_symbols_as_report_count(
+    tmp_path: Path,
+) -> None:
+    _prepare_ready_runtime(tmp_path)
+    (tmp_path / "reports" / "walkforward-grid-raw-production-latest.md").write_text(
+        "| 项目 | 值 |\n|------|-----|\n| effective_symbols | 3200 |\n",
+        encoding="utf-8",
+    )
+
+    findings = check_before_live(root=tmp_path, today=date(2026, 6, 14))
+    finding = next(
+        item for item in findings if item.gate == "walkforward_market_coverage"
+    )
+
+    assert finding.ok is False
+    assert "production report missing actual symbol count" in finding.detail
+
+
 def test_check_before_live_blocks_when_walkforward_gate_failed(tmp_path: Path) -> None:
     _prepare_ready_runtime(tmp_path)
     _write_json(

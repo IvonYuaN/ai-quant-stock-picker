@@ -266,9 +266,6 @@ def _extract_walkforward_report_symbols(report_path: Path) -> int | None:
     except OSError:
         return None
     match = re.search(r"\*\*标的数量\*\*\s*[:：]\s*(\d+)", text)
-    if match:
-        return int(match.group(1))
-    match = re.search(r"\|\s*effective_symbols\s*\|\s*(\d+)\s*\|", text)
     return int(match.group(1)) if match else None
 
 
