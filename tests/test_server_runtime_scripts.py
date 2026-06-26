@@ -302,7 +302,10 @@ def test_coldstart_daily_script_updates_db_then_runs_cli() -> None:
     )
 
     assert "detect_sqlite_price_mode" in script
-    assert 'RUNTIME_SQLITE_DB_PATH="$(resolve_path "${AQSP_SQLITE_DB_PATH:-A股量化分析数据/astocks_raw.db}")"' in script
+    assert (
+        'RUNTIME_SQLITE_DB_PATH="$(resolve_path "${AQSP_SQLITE_DB_PATH:-A股量化分析数据/astocks_raw.db}")"'
+        in script
+    )
     assert 'dirname "$SQLITE_DB_PATH"' in script
     assert "scripts/update_sqlite_daily.py" in script
     assert "A股量化分析数据/update_daily.py" in script
@@ -316,7 +319,9 @@ def test_coldstart_daily_script_updates_db_then_runs_cli() -> None:
     assert "AQSP_COLDSTART_UPDATE_SLEEP_SECONDS" in script
     assert "AQSP_COLDSTART_BACKFILL_START_DATE" in script
     assert "AQSP_COLDSTART_BACKFILL_FORCE" in script
+    assert "AQSP_COLDSTART_FILL_HISTORY_GAPS" in script
     assert "--force-from-start" in script
+    assert "--fill-history-gaps" in script
     assert "AQSP_COLDSTART_ALLOW_INTRADAY" in script
     assert 'LEDGER_PATH_FOR_PROGRESS="$LEDGER_PATH"' in script
     assert 'os.environ["LEDGER_PATH_FOR_PROGRESS"]' in script

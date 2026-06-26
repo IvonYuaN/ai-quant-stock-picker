@@ -218,6 +218,9 @@ if [ "$(basename "$UPDATE_SCRIPT")" = "update_sqlite_daily.py" ]; then
         if [[ "${AQSP_COLDSTART_BACKFILL_FORCE:-false}" =~ ^(1|true|yes|on)$ ]]; then
             UPDATE_ARGS+=(--force-from-start)
         fi
+        if [[ "${AQSP_COLDSTART_FILL_HISTORY_GAPS:-false}" =~ ^(1|true|yes|on)$ ]]; then
+            UPDATE_ARGS+=(--fill-history-gaps)
+        fi
     fi
 fi
 "${PYTHON_BIN}" -u "${UPDATE_SCRIPT}" "${UPDATE_ARGS[@]}" 2>&1 | tee -a "$RUN_LOG"
