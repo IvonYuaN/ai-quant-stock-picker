@@ -347,6 +347,37 @@ def diagnostic_report_path(report_path: Path) -> Path:
     return report_path.with_suffix(f".diagnostic{report_path.suffix}")
 
 
+def formal_report_backup_path(report_path: Path) -> Path:
+    name = report_path.name
+    if name.endswith("-latest.md"):
+        return report_path.with_name(f"{name[: -len('-latest.md')]}-formal-latest.md")
+    return report_path.with_suffix(f".formal{report_path.suffix}")
+
+
+def preserve_formal_report_snapshot(report_path: Path) -> None:
+    if not report_path.exists():
+        return
+    backup_path = formal_report_backup_path(report_path)
+    try:
+        atomic_write_text(
+            backup_path, report_path.read_text(encoding="utf-8")
+        )
+    except OSError:
+        return
+
+
+def warn_if_report_path_not_writable(report_path: Path) -> None:
+    if not report_path.exists():
+        return
+    if os.access(report_path, os.W_OK):
+        return
+    print(
+        "WARN: formal production walk-forward report is not writable by current user: "
+        f"{report_path}. Child walk-forward may fail to refresh the formal report; "
+        "fix file ownership/permissions on the server."
+    )
+
+
 def _format_report_float(value: object) -> str:
     return f"{float(value):.4f}" if isinstance(value, (int, float)) else "-"
 
@@ -434,6 +465,8 @@ def main() -> int:
         return 0
     env = os.environ.copy()
     env["AQSP_SQLITE_DB_PATH"] = str(args.db)
+    warn_if_report_path_not_writable(Path(args.report))
+    preserve_formal_report_snapshot(Path(args.report))
     try:
         result = subprocess.run(
             command,

@@ -9,8 +9,11 @@ from scripts.run_production_walkforward_gate import (
     annotate_production_gate_metadata,
     build_walkforward_command,
     diagnostic_report_path,
+    formal_report_backup_path,
     inspect_raw_coverage,
+    preserve_formal_report_snapshot,
     select_covered_symbols,
+    warn_if_report_path_not_writable,
     write_minimal_pbo_diagnostics,
 )
 
@@ -240,6 +243,41 @@ def test_diagnostic_report_path_keeps_formal_production_report_separate(
     )
 
 
+def test_formal_report_backup_path_keeps_formal_snapshot_separate(
+    tmp_path: Path,
+) -> None:
+    report_path = tmp_path / "walkforward-grid-raw-production-latest.md"
+
+    assert formal_report_backup_path(report_path) == (
+        tmp_path / "walkforward-grid-raw-production-formal-latest.md"
+    )
+
+
+def test_preserve_formal_report_snapshot_copies_existing_report(
+    tmp_path: Path,
+) -> None:
+    report_path = tmp_path / "walkforward-grid-raw-production-latest.md"
+    report_path.write_text("# formal report\n", encoding="utf-8")
+
+    preserve_formal_report_snapshot(report_path)
+
+    assert formal_report_backup_path(report_path).read_text(encoding="utf-8") == (
+        "# formal report\n"
+    )
+
+
+def test_warn_if_report_path_not_writable_prints_hint(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
+    report_path = tmp_path / "walkforward-grid-raw-production-latest.md"
+    report_path.write_text("# formal report\n", encoding="utf-8")
+    monkeypatch.setattr("scripts.run_production_walkforward_gate.os.access", lambda *_args: False)
+
+    warn_if_report_path_not_writable(report_path)
+
+    assert "not writable" in capsys.readouterr().out
+
+
 def test_production_walkforward_gate_passes_raw_db_to_child_process(
     monkeypatch, tmp_path: Path
 ) -> None:
@@ -315,6 +353,7 @@ def test_production_walkforward_gate_writes_minimal_diagnostic_after_child_failu
     db.write_text("", encoding="utf-8")
     gate_path = tmp_path / "walkforward_gate.json"
     report_path = tmp_path / "walkforward-grid-raw-production-latest.md"
+    report_path.write_text("# prior formal report\n", encoding="utf-8")
     diagnostic_path = tmp_path / "walkforward-grid-raw-production-diagnostic-latest.md"
     gate_path.write_text(
         json.dumps({"pbo_pass": False, "pbo": 0.0, "deflated_sharpe": 0.0}),
@@ -355,7 +394,10 @@ def test_production_walkforward_gate_writes_minimal_diagnostic_after_child_failu
     )
 
     assert gate.main() == 7
-    assert not report_path.exists()
+    assert report_path.read_text(encoding="utf-8") == "# prior formal report\n"
+    assert formal_report_backup_path(report_path).read_text(encoding="utf-8") == (
+        "# prior formal report\n"
+    )
     assert "### PBO 失败定位" in diagnostic_path.read_text(encoding="utf-8")
 
 
