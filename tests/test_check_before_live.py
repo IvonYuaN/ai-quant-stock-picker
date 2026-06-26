@@ -1368,7 +1368,7 @@ def test_check_before_live_blocks_run_scheduled_ignoring_env_notify(
         item for item in findings if item.gate == "run_scheduled_env_notify_guard"
     )
     assert finding.ok is False
-    assert "AQSP_NOTIFY=true" in finding.detail
+    assert "daily/scheduled tasks" in finding.detail
 
 
 def test_check_before_live_blocks_monitor_warning_notify_suppression(

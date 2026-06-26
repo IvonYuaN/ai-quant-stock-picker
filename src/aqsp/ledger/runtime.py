@@ -86,12 +86,12 @@ def _collect_independent_dates(
     for row in rows:
         if bool(row.get("is_simulated")):
             continue
-        if not str(row.get("symbol") or "").strip():
-            continue
         status = str(row.get("status") or "").strip()
         if require_status and not status:
             continue
         if status and status not in allowed_statuses:
+            continue
+        if not str(row.get("symbol") or "").strip() and status != "run_completed_no_picks":
             continue
         has_signal_payload = any(
             row.get(key) not in (None, "")

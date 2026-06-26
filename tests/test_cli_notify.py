@@ -984,6 +984,126 @@ def test_run_scheduled_uses_env_notify_when_cli_notify_is_false(
     assert seen and seen[0].startswith(f"# 通知未放行-{latest}")
 
 
+def test_run_scheduled_ignores_env_notify_without_daily_task_id(
+    monkeypatch, tmp_path
+) -> None:
+    import aqsp.cli as cli_mod
+
+    monkeypatch.setenv("AQSP_NOTIFY", "true")
+    monkeypatch.delenv("AQSP_RUN_TASK_ID", raising=False)
+    monkeypatch.setenv(
+        "AQSP_GATE_NOTIFY_STATE_PATH", str(tmp_path / "gate_notify_state.json")
+    )
+
+    latest = today_shanghai().isoformat()
+    frame = pd.DataFrame(
+        [
+            {
+                "date": latest,
+                "symbol": "600519",
+                "name": "贵州茅台",
+                "open": 1500.0,
+                "high": 1510.0,
+                "low": 1490.0,
+                "close": 1505.0,
+                "volume": 1000,
+                "amount": 150500000.0,
+                "suspended": False,
+                "limit_up": 1655.5,
+                "limit_down": 1354.5,
+            }
+        ]
+    )
+    monkeypatch.setattr(
+        cli_mod,
+        "_check_notification_gate",
+        lambda *, cold_start_days, gate_path=None: (False, ["冷启动未满 30 天"]),
+    )
+    monkeypatch.setattr(
+        cli_mod,
+        "_fetch_frames_for_cli_with_metadata",
+        lambda *args, **kwargs: ({"600519": frame, "000300": frame}, "eastmoney"),
+    )
+    monkeypatch.setattr(
+        cli_mod, "_resolve_run_symbols", lambda *args, **kwargs: ["600519"]
+    )
+    monkeypatch.setattr(
+        cli_mod, "strategy_weights_from_ledger", lambda *_args, **_kwargs: {}
+    )
+    monkeypatch.setattr(
+        cli_mod, "_count_independent_signal_days", lambda *_args, **_kwargs: 12
+    )
+    monkeypatch.setattr(
+        cli_mod,
+        "screen_universe",
+        lambda *_args, **_kwargs: [
+            PickResult(
+                symbol="600519",
+                name="贵州茅台",
+                date=latest,
+                close=1505.0,
+                score=71.0,
+                rating="buy_candidate",
+                entry_type="next_open",
+                ideal_buy=1505.0,
+                stop_loss=1450.0,
+                take_profit=1600.0,
+                position="10%-30%",
+            )
+        ],
+    )
+
+    class DummyPipeline:
+        def run(self, *_args, **_kwargs):
+            return True, ""
+
+    monkeypatch.setattr(cli_mod, "LethalFilterPipeline", lambda: DummyPipeline())
+    monkeypatch.setattr(
+        "aqsp.universe.t1_filter.filter_t1_held",
+        lambda candidates, **_kwargs: (candidates, []),
+    )
+    monkeypatch.setattr(cli_mod, "validate_predictions", lambda *_args, **_kwargs: None)
+
+    class DummyBreaker:
+        def check(self, **_kwargs):
+            return type("Status", (), {"triggered": False, "reason": "正常"})()
+
+    monkeypatch.setattr(cli_mod, "CircuitBreaker", lambda: DummyBreaker())
+    monkeypatch.setattr(
+        cli_mod,
+        "describe_source_health",
+        lambda *_args, **_kwargs: ("healthy", "eastmoney 健康", False),
+    )
+    seen: list[str] = []
+    monkeypatch.setattr(
+        cli_mod, "notify_markdown", lambda markdown: seen.append(markdown) or []
+    )
+
+    args = Namespace(
+        mode="close",
+        symbols="600519",
+        csv="",
+        source="auto",
+        limit=1,
+        max_universe=10,
+        min_avg_amount=50_000_000,
+        max_data_lag_days=3,
+        enable_online_factors=False,
+        report=str(tmp_path / "latest.md"),
+        output_csv=str(tmp_path / "latest.csv"),
+        ledger=str(tmp_path / "predictions.jsonl"),
+        horizon_days=3,
+        fee_bps=8.0,
+        slippage_bps=5.0,
+        benchmark_symbol="000300",
+        skip_validation=True,
+        notify=False,
+    )
+
+    assert cli_mod.run_scheduled(args) == 0
+    assert seen == []
+
+
 def test_run_monitor_notifies_warning_when_warning_notify_enabled(
     monkeypatch, tmp_path
 ) -> None:

@@ -167,6 +167,30 @@ def test_finalize_scheduled_notification_suppresses_gate_push_outside_daily(
     assert "gate notify: skipped outside daily task" in seen
 
 
+def test_finalize_scheduled_notification_disables_high_frequency_notify_even_when_gate_ok(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("AQSP_RUN_TASK_ID", "intraday")
+
+    artifacts = finalize_scheduled_notification(
+        markdown="# 原始报告",
+        args_notify=True,
+        gate_ok=True,
+        gate_reasons=[],
+        next_actions=[],
+        latest_iso="2026-06-17",
+        notify_mode="summary",
+        dispatch_gate_notification_fn=lambda **_kwargs: [],
+        should_send_gate_notification_fn=lambda **_kwargs: True,
+        format_notification_gate_block_fn=lambda *_args: "unused\n",
+        legacy_notify_fn=None,
+        print_fn=lambda *_args: None,
+    )
+
+    assert artifacts.notify_enabled is False
+    assert artifacts.markdown == "# 原始报告"
+
+
 def test_finalize_scheduled_notification_keeps_gate_guidance_for_manual_run(
     monkeypatch,
 ) -> None:

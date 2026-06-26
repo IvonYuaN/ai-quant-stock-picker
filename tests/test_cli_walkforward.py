@@ -106,6 +106,35 @@ def test_cold_start_counts_runtime_date_aliases(tmp_path) -> None:
     assert _count_independent_signal_days(str(ledger)) == 3
 
 
+def test_cold_start_counts_no_pick_runtime_days(tmp_path) -> None:
+    from aqsp.cli import _count_independent_signal_days
+
+    ledger = tmp_path / "predictions.jsonl"
+    rows = [
+        {
+            "signal_date": "2026-06-10",
+            "status": "run_completed_no_picks",
+            "thresholds_version": "1.1.1",
+        },
+        {
+            "created_at": "2026-06-11T18:00:00+08:00",
+            "status": "run_completed_no_picks",
+            "thresholds_version": "1.1.1",
+        },
+        {
+            "signal_date": "2026-06-11",
+            "status": "run_completed_no_picks",
+            "thresholds_version": "1.1.1",
+        },
+    ]
+    ledger.write_text(
+        "\n".join(json.dumps(row, ensure_ascii=False) for row in rows) + "\n",
+        encoding="utf-8",
+    )
+
+    assert _count_independent_signal_days(str(ledger)) == 2
+
+
 def test_walkforward_help_handles_percent_text(capsys) -> None:
     from aqsp.cli import main
 

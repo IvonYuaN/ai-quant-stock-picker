@@ -1330,13 +1330,17 @@ def _check_run_scheduled_env_notify_guard(root: Path) -> ReadinessFinding:
     ok = (
         "runtime_config = load_runtime_config()" in block
         and "notify_requested" in block
-        and "args.notify or runtime_config.notify" in block
+        and "env_notify_requested" in block
+        and 'normalized_task_id in {"daily", "scheduled"}' in block
+        and "args.notify or env_notify_requested" in block
         and "args_notify=notify_requested" in block
     )
     return ReadinessFinding(
         "run_scheduled_env_notify_guard",
         ok,
-        "ok" if ok else "run_scheduled must treat AQSP_NOTIFY=true as notify request",
+        "ok"
+        if ok
+        else "run_scheduled must only auto-apply AQSP_NOTIFY=true for daily/scheduled tasks",
     )
 
 

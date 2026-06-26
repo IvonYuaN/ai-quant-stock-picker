@@ -662,6 +662,7 @@ def _step_adaptive_learning(
         StrategyDecayDetector,
         format_decay_alerts,
     )
+    from aqsp.ledger.runtime import count_independent_signal_days
 
     rows = read_ledger(str(ledger_path))
     if not rows:
@@ -669,12 +670,7 @@ def _step_adaptive_learning(
         return {"skipped": True}
 
     ledger_df = ledger_rows_to_frame(rows)
-    independent_signal_days = 0
-    if not ledger_df.empty and "signal_date" in ledger_df.columns:
-        signal_dates = pd.to_datetime(
-            ledger_df["signal_date"], errors="coerce"
-        ).dropna()
-        independent_signal_days = signal_dates.dt.date.nunique()
+    independent_signal_days = count_independent_signal_days(str(ledger_path))
 
     learner = PerformanceLearner()
     weights = learner.compute_weights(ledger_df)

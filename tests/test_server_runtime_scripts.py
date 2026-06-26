@@ -172,6 +172,8 @@ def test_bt_task_script_exposes_panel_safe_actions() -> None:
     assert "今日非交易日，跳过跑批" in daily_script
     assert 'RUN_TASK_ID="${AQSP_RUN_TASK_ID:-daily}"' in daily_script
     assert '[ "$RUN_TASK_ID" = "daily" ]' in daily_script
+    assert "拒绝运行 daily_pipeline" in daily_script
+    assert "请统一走 scripts/bt_task.sh" in daily_script
     assert "非 daily 任务忽略 AQSP_NOTIFY=true" in daily_script
 
 

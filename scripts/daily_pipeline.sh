@@ -106,6 +106,10 @@ START_TIME=$(date +%s)
 # 运行 Python 跑批脚本
 PIPELINE_ARGS=( "$@" )
 RUN_TASK_ID="${AQSP_RUN_TASK_ID:-daily}"
+if [ "$RUN_TASK_ID" != "daily" ] && [ -n "${AQSP_RUN_TASK_ID:-}" ]; then
+    log "拒绝运行 daily_pipeline：AQSP_RUN_TASK_ID=${RUN_TASK_ID}，请统一走 scripts/bt_task.sh ${RUN_TASK_ID}"
+    exit 0
+fi
 if { [ "${AQSP_NOTIFY:-false}" = "true" ] || [ "${AQSP_NOTIFY:-false}" = "1" ]; } && [ "$RUN_TASK_ID" = "daily" ]; then
     PIPELINE_ARGS+=( "--notify" )
 elif [ "${AQSP_NOTIFY:-false}" = "true" ] || [ "${AQSP_NOTIFY:-false}" = "1" ]; then

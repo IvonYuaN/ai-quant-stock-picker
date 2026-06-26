@@ -408,9 +408,10 @@ def finalize_scheduled_notification(
 ) -> ScheduledNotificationArtifacts:
     output_markdown = markdown
     notify_enabled = bool(args_notify)
+    is_high_frequency = high_frequency_task(task_id)
 
     if notify_enabled and not gate_ok:
-        if high_frequency_task(task_id):
+        if is_high_frequency:
             print_fn("gate notify: skipped outside daily task")
             notify_enabled = False
             return ScheduledNotificationArtifacts(
@@ -492,6 +493,8 @@ def finalize_scheduled_notification(
                         run_date=latest_iso,
                     )
                 print_fn(f"gate notify failed: {exc}")
+        notify_enabled = False
+    elif is_high_frequency:
         notify_enabled = False
 
     return ScheduledNotificationArtifacts(

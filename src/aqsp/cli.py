@@ -3633,7 +3633,10 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
         )
     runtime_config = load_runtime_config()
     notify_mode = runtime_config.notify_mode
-    notify_requested = bool(args.notify or runtime_config.notify)
+    env_notify_requested = bool(
+        runtime_config.notify and normalized_task_id in {"daily", "scheduled"}
+    )
+    notify_requested = bool(args.notify or env_notify_requested)
     title_label = str(
         os.environ.get("AQSP_NOTIFY_TITLE_LABEL", "") or "收盘研究日报"
     ).strip()
