@@ -50,6 +50,10 @@ DEFAULT_SCREEN_BATCH_SIZE = 400
 BACKFILL_NO_PICKS_STATUS = "backfill_no_picks"
 
 
+class BackfillTimeoutError(RuntimeError):
+    pass
+
+
 def _configure_logging(level_name: str) -> None:
     level = getattr(logging, str(level_name or "ERROR").upper(), logging.ERROR)
     logging.basicConfig(level=level, format="%(levelname)s %(name)s: %(message)s")
@@ -139,6 +143,19 @@ def should_stop_for_processed_day_cap(
     *, processed_days: int, max_processed_days: int
 ) -> bool:
     return max_processed_days > 0 and processed_days >= max_processed_days
+
+
+def backfill_deadline(seconds: float) -> float | None:
+    if seconds <= 0:
+        return None
+    return time.monotonic() + seconds
+
+
+def raise_if_deadline_exceeded(deadline: float | None, *, signal_day: date) -> None:
+    if deadline is not None and time.monotonic() >= deadline:
+        raise BackfillTimeoutError(
+            f"{signal_day.isoformat()}: per-day time budget exhausted"
+        )
 
 
 def collect_signal_days(path: str | Path) -> set[str]:
@@ -307,12 +324,14 @@ def screen_backfill_picks(
     limit: int,
     batch_size: int,
     prefetched_frames: dict[str, pd.DataFrame] | None = None,
+    deadline: float | None = None,
 ) -> tuple[list[PickResult], dict[str, pd.DataFrame]]:
     best_by_symbol: dict[str, PickResult] = {}
     screen_frames_by_symbol: dict[str, pd.DataFrame] = {}
 
     prefetched = prefetched_frames or {}
     for index, symbol_batch in enumerate(_chunks(symbols, batch_size)):
+        raise_if_deadline_exceeded(deadline, signal_day=signal_day)
         if index == 0 and prefetched:
             raw_frames = {
                 symbol: frame
@@ -334,6 +353,7 @@ def screen_backfill_picks(
         )
         if not screen_frames:
             continue
+        raise_if_deadline_exceeded(deadline, signal_day=signal_day)
         picks = _enrich_pick_names(
             _screen_universe_with_thresholds(
                 _drop_benchmark_frame(screen_frames, benchmark_symbol),
@@ -397,6 +417,7 @@ def backfill_real_sample_days(args: argparse.Namespace) -> int:
 
     processed_days = 0
     for signal_day in plan.trading_days:
+        day_deadline = backfill_deadline(args.max_seconds_per_day)
         signal_day_str = signal_day.isoformat()
         current_signal_days = count_independent_signal_days(ledger_path)
         current_paper_days = count_paper_tracking_days(paper_ledger_path)
@@ -434,16 +455,20 @@ def backfill_real_sample_days(args: argparse.Namespace) -> int:
         screen_frames: dict[str, pd.DataFrame] = {}
         regime = ""
         if need_signal_backfill:
-            symbols = resolve_backfill_symbols(
-                source_name=args.source,
-                source=source,
-                explicit_symbols=explicit_symbols,
-                pool_name=args.pool,
-                max_universe=max_universe,
-                min_avg_amount=min_avg_amount,
-                signal_day=signal_day,
-                lookback_days=args.lookback_days,
-            )
+            try:
+                symbols = resolve_backfill_symbols(
+                    source_name=args.source,
+                    source=source,
+                    explicit_symbols=explicit_symbols,
+                    pool_name=args.pool,
+                    max_universe=max_universe,
+                    min_avg_amount=min_avg_amount,
+                    signal_day=signal_day,
+                    lookback_days=args.lookback_days,
+                )
+            except BackfillTimeoutError as exc:
+                print(str(exc), flush=True)
+                break
             if not symbols:
                 append_run_event(
                     ledger_path,
@@ -464,13 +489,18 @@ def backfill_real_sample_days(args: argparse.Namespace) -> int:
                     flush=True,
                 )
 
-                raw_frames = fetch_history_window(
-                    source=source,
-                    symbols=symbols[: min(len(symbols), args.screen_batch_size)],
-                    signal_day=signal_day,
-                    lookback_days=args.lookback_days,
-                    future_buffer_days=args.future_buffer_days,
-                )
+                try:
+                    raise_if_deadline_exceeded(day_deadline, signal_day=signal_day)
+                    raw_frames = fetch_history_window(
+                        source=source,
+                        symbols=symbols[: min(len(symbols), args.screen_batch_size)],
+                        signal_day=signal_day,
+                        lookback_days=args.lookback_days,
+                        future_buffer_days=args.future_buffer_days,
+                    )
+                except BackfillTimeoutError as exc:
+                    print(str(exc), flush=True)
+                    break
                 screen_frames = truncate_frames_to_date(
                     raw_frames,
                     end_date=signal_day,
@@ -488,19 +518,24 @@ def backfill_real_sample_days(args: argparse.Namespace) -> int:
                     regime=regime,
                 )
 
-                picks, pick_frames = screen_backfill_picks(
-                    source=source,
-                    symbols=symbols,
-                    signal_day=signal_day,
-                    lookback_days=args.lookback_days,
-                    future_buffer_days=args.future_buffer_days,
-                    benchmark_symbol=benchmark_symbol,
-                    thresholds=thresholds,
-                    config=config,
-                    limit=args.limit,
-                    batch_size=args.screen_batch_size,
-                    prefetched_frames=raw_frames,
-                )
+                try:
+                    picks, pick_frames = screen_backfill_picks(
+                        source=source,
+                        symbols=symbols,
+                        signal_day=signal_day,
+                        lookback_days=args.lookback_days,
+                        future_buffer_days=args.future_buffer_days,
+                        benchmark_symbol=benchmark_symbol,
+                        thresholds=thresholds,
+                        config=config,
+                        limit=args.limit,
+                        batch_size=args.screen_batch_size,
+                        prefetched_frames=raw_frames,
+                        deadline=day_deadline,
+                    )
+                except BackfillTimeoutError as exc:
+                    print(str(exc), flush=True)
+                    break
                 if not picks:
                     append_run_event(
                         ledger_path,
@@ -630,6 +665,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--max-processed-days", type=int, default=0)
     parser.add_argument("--sleep-between-days", type=float, default=0.0)
+    parser.add_argument("--max-seconds-per-day", type=float, default=0.0)
     parser.add_argument("--nice-level", type=int, default=10)
     parser.add_argument("--log-level", default="ERROR")
     return parser

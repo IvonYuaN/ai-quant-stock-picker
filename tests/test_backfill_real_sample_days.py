@@ -5,6 +5,7 @@ from datetime import date
 from pathlib import Path
 
 import pandas as pd
+import pytest
 
 from aqsp.core.types import PickResult
 from scripts import backfill_real_sample_days as backfill
@@ -94,6 +95,16 @@ def test_lower_process_priority_ignores_nonpositive_levels(monkeypatch) -> None:
     backfill._lower_process_priority(5)
 
     assert called == [5]
+
+
+def test_raise_if_deadline_exceeded_stops_backfill_day(monkeypatch) -> None:
+    monkeypatch.setattr(backfill.time, "monotonic", lambda: 10.0)
+
+    with pytest.raises(backfill.BackfillTimeoutError):
+        backfill.raise_if_deadline_exceeded(9.0, signal_day=date(2026, 6, 9))
+
+    backfill.raise_if_deadline_exceeded(11.0, signal_day=date(2026, 6, 9))
+    assert backfill.backfill_deadline(0) is None
 
 
 def test_collect_signal_days_treats_no_pick_marker_as_attempted_day(
@@ -381,6 +392,23 @@ def test_screen_backfill_picks_batches_and_keeps_global_top_n(monkeypatch) -> No
     assert calls == [["S1", "S2"], ["S3", "S4"], ["S5"]]
     assert [pick.symbol for pick in picks] == ["S5", "S4"]
     assert sorted(pick_frames) == ["S1", "S2", "S3", "S4", "S5"]
+
+
+def test_screen_backfill_picks_raises_before_partial_deadline_work() -> None:
+    with pytest.raises(backfill.BackfillTimeoutError):
+        backfill.screen_backfill_picks(
+            source=object(),
+            symbols=["S1"],
+            signal_day=date(2026, 4, 1),
+            lookback_days=120,
+            future_buffer_days=2,
+            benchmark_symbol="000300",
+            thresholds=object(),
+            config=backfill.ScreeningConfig(),
+            limit=1,
+            batch_size=1,
+            deadline=0.0,
+        )
 
 
 def test_screen_backfill_picks_reuses_prefetched_first_batch(monkeypatch) -> None:
