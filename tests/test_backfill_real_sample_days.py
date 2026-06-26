@@ -70,6 +70,21 @@ def test_should_generate_signal_when_paper_still_needs_samples() -> None:
     )
 
 
+def test_should_stop_for_processed_day_cap() -> None:
+    assert not backfill.should_stop_for_processed_day_cap(
+        processed_days=99,
+        max_processed_days=0,
+    )
+    assert not backfill.should_stop_for_processed_day_cap(
+        processed_days=1,
+        max_processed_days=2,
+    )
+    assert backfill.should_stop_for_processed_day_cap(
+        processed_days=2,
+        max_processed_days=2,
+    )
+
+
 def test_collect_signal_days_treats_no_pick_marker_as_attempted_day(
     tmp_path: Path,
 ) -> None:

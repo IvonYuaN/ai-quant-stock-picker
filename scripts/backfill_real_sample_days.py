@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import time
 from dataclasses import dataclass
 from datetime import date, timedelta
 from pathlib import Path
@@ -120,6 +121,12 @@ def should_generate_signal_for_backfill(
     if signal_day in existing_signal_days:
         return False
     return current_signal_days < target_signal_days or need_paper_backfill
+
+
+def should_stop_for_processed_day_cap(
+    *, processed_days: int, max_processed_days: int
+) -> bool:
+    return max_processed_days > 0 and processed_days >= max_processed_days
 
 
 def collect_signal_days(path: str | Path) -> set[str]:
@@ -375,6 +382,7 @@ def backfill_real_sample_days(args: argparse.Namespace) -> int:
         flush=True,
     )
 
+    processed_days = 0
     for signal_day in plan.trading_days:
         signal_day_str = signal_day.isoformat()
         current_signal_days = count_independent_signal_days(ledger_path)
@@ -399,6 +407,15 @@ def backfill_real_sample_days(args: argparse.Namespace) -> int:
         )
         if not need_signal_backfill and not need_paper_backfill:
             continue
+        if should_stop_for_processed_day_cap(
+            processed_days=processed_days,
+            max_processed_days=args.max_processed_days,
+        ):
+            print(
+                f"processed day cap reached: {processed_days}/{args.max_processed_days}",
+                flush=True,
+            )
+            break
 
         picks: list[PickResult] = []
         screen_frames: dict[str, pd.DataFrame] = {}
@@ -551,6 +568,9 @@ def backfill_real_sample_days(args: argparse.Namespace) -> int:
             f"paper={count_paper_tracking_days(paper_ledger_path)})",
             flush=True,
         )
+        processed_days += 1
+        if args.sleep_between_days > 0:
+            time.sleep(args.sleep_between_days)
 
     final_signal_days = count_independent_signal_days(ledger_path)
     final_paper_days = count_paper_tracking_days(paper_ledger_path)
@@ -595,6 +615,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--screen-batch-size", type=int, default=DEFAULT_SCREEN_BATCH_SIZE
     )
+    parser.add_argument("--max-processed-days", type=int, default=0)
+    parser.add_argument("--sleep-between-days", type=float, default=0.0)
     parser.add_argument("--log-level", default="ERROR")
     return parser
 
