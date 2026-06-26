@@ -94,6 +94,7 @@ fi
 
 export PYTHONPATH="${PROJECT_ROOT}/src:${PROJECT_ROOT}:${PYTHONPATH:-}"
 export TZ="${TZ:-Asia/Shanghai}"
+export AQSP_NOTIFY="false"
 
 cd "$PROJECT_ROOT"
 

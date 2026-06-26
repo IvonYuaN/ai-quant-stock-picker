@@ -21,6 +21,7 @@ from aqsp.ledger import (
     read_ledger,
     strategy_weights_from_ledger,
     validate_predictions,
+    write_ledger,
 )
 from aqsp.ledger.learner import format_decay_alerts
 from aqsp.models import PickResult
@@ -1048,3 +1049,134 @@ def test_append_predictions_updates_existing_row_for_same_signal_key(tmp_path) -
     assert row["portfolio_action"] == "promote"
     assert row["status"] == "pending"
     assert row["adjusted_score"] == 75.5
+
+
+def test_append_predictions_preserves_validated_row_when_same_signal_key(
+    tmp_path,
+) -> None:
+    ledger = tmp_path / "predictions.jsonl"
+    original = PickResult(
+        symbol="600900",
+        name="长江电力",
+        date="2026-05-29",
+        close=27.75,
+        score=60,
+        rating="buy_candidate",
+        entry_type="relative_strength",
+        ideal_buy=27.75,
+        stop_loss=26.1,
+        take_profit=31.0,
+        position="10%-30%",
+        metrics={"portfolio_action": "keep"},
+    )
+    updated = PickResult(
+        symbol="600900",
+        name="长江电力",
+        date="2026-05-29",
+        close=99.9,
+        score=99,
+        rating="watch",
+        entry_type="relative_strength",
+        ideal_buy=99.9,
+        stop_loss=88.8,
+        take_profit=120.0,
+        position="watch",
+        metrics={"portfolio_action": "demote"},
+    )
+
+    append_predictions(
+        ledger,
+        [original],
+        thresholds_version="1.0.0",
+        regime="stable_bull",
+    )
+    rows = read_ledger(ledger)
+    rows[0].update(
+        {
+            "status": "validated",
+            "entry_date": "2026-06-01",
+            "entry_price": 28.0,
+            "exit_date": "2026-06-03",
+            "exit_price": 29.0,
+            "return_pct": 3.5714,
+            "win": True,
+        }
+    )
+    write_ledger(ledger, rows)
+
+    append_predictions(
+        ledger,
+        [updated],
+        thresholds_version="1.0.0",
+        regime="stable_bull",
+    )
+
+    row = read_ledger(ledger)[0]
+    assert row["status"] == "validated"
+    assert row["score"] == 60
+    assert row["rating"] == "buy_candidate"
+    assert row["portfolio_action"] == "keep"
+    assert row["entry_price"] == 28.0
+    assert row["return_pct"] == 3.5714
+    assert row["win"] is True
+
+
+def test_append_predictions_preserves_not_executable_row_when_same_signal_key(
+    tmp_path,
+) -> None:
+    ledger = tmp_path / "predictions.jsonl"
+    original = PickResult(
+        symbol="600900",
+        name="长江电力",
+        date="2026-05-29",
+        close=27.75,
+        score=60,
+        rating="buy_candidate",
+        entry_type="relative_strength",
+        ideal_buy=27.75,
+        stop_loss=26.1,
+        take_profit=31.0,
+        position="10%-30%",
+    )
+    updated = PickResult(
+        symbol="600900",
+        name="长江电力",
+        date="2026-05-29",
+        close=27.8,
+        score=72,
+        rating="strong_buy_candidate",
+        entry_type="relative_strength",
+        ideal_buy=27.8,
+        stop_loss=26.5,
+        take_profit=31.5,
+        position="30%-50%",
+    )
+
+    append_predictions(
+        ledger,
+        [original],
+        thresholds_version="1.0.0",
+        regime="stable_bull",
+    )
+    rows = read_ledger(ledger)
+    rows[0].update(
+        {
+            "status": "not_executable",
+            "entry_date": "2026-06-01",
+            "not_executable_reason": "limit_up_at_open",
+        }
+    )
+    write_ledger(ledger, rows)
+
+    append_predictions(
+        ledger,
+        [updated],
+        thresholds_version="1.0.0",
+        regime="stable_bull",
+    )
+
+    row = read_ledger(ledger)[0]
+    assert row["status"] == "not_executable"
+    assert row["score"] == 60
+    assert row["not_executable_reason"] == "limit_up_at_open"
+    assert row["entry_date"] == "2026-06-01"

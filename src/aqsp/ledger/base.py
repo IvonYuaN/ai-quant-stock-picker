@@ -15,6 +15,16 @@ from aqsp.ratings import is_tradable_rating
 from aqsp.utils.jsonl_io import advisory_lock, atomic_write_text
 
 
+TERMINAL_PREDICTION_STATUSES = frozenset(
+    {
+        "validated",
+        "not_executable",
+        "watch_only",
+        "closed",
+    }
+)
+
+
 @dataclass(frozen=True)
 class ValidationSummary:
     checked: int
@@ -169,6 +179,8 @@ def append_predictions(
             existing_idx = row_index_by_key.get(row_key)
             if existing_idx is not None:
                 existing_row = rows[existing_idx]
+                if _is_terminal_prediction_row(existing_row):
+                    continue
                 preserved_status = str(existing_row.get("status", "") or "pending")
                 rows[existing_idx] = {
                     **existing_row,
@@ -275,6 +287,10 @@ def _prediction_key(row: dict) -> tuple[str, str, str, str, str]:
         str(row.get("regime_at_signal", "")),
         str(row.get("intended_entry", "next_open")),
     )
+
+
+def _is_terminal_prediction_row(row: dict) -> bool:
+    return str(row.get("status", "") or "pending") in TERMINAL_PREDICTION_STATUSES
 
 
 def _fallback_limit_pct(row: dict) -> float:

@@ -41,53 +41,63 @@ def test_get_yesterday_buys_empty_ledger():
         assert result == set()
 
 
-def test_get_yesterday_buys_returns_signals(tmp_path):
-    """返回昨日 signal_date 匹配且可交易的 symbol"""
+def test_get_yesterday_buys_returns_active_paper_rows(tmp_path):
+    """返回昨日真实纸面持有或待入场的 symbol"""
     ledger_path = tmp_path / "ledger.jsonl"
     records = [
         {
             "signal_date": "2026-05-26",
             "symbol": "600519",
-            "status": "pending",
+            "entry_date": "2026-05-26",
+            "status": "open",
             "rating": "buy_candidate",
         },
         {
             "signal_date": "2026-05-26",
             "symbol": "000858",
-            "status": "pending",
-            "rating": "watch",
+            "status": "pending_entry",
+            "rating": "buy_candidate",
         },
         {
             "signal_date": "2026-05-25",
             "symbol": "000001",
-            "status": "pending",
+            "entry_date": "2026-05-25",
+            "status": "open",
             "rating": "buy_candidate",
         },
     ]
     ledger_path.write_text("\n".join(json.dumps(r) for r in records))
     result = get_yesterday_buys(ledger_path, date(2026, 5, 27))
-    assert result == {"600519"}
+    assert result == {"600519", "000858"}
 
 
-def test_get_yesterday_buys_ignores_non_tradable_signals(tmp_path):
+def test_get_yesterday_buys_ignores_non_blocking_paper_rows(tmp_path):
     ledger_path = tmp_path / "ledger.jsonl"
     records = [
         {
             "signal_date": "2026-05-26",
             "symbol": "600519",
-            "status": "pending",
-            "rating": "avoid",
+            "status": "watch_only",
+            "rating": "buy_candidate",
         },
         {
             "signal_date": "2026-05-26",
             "symbol": "000001",
-            "status": "pending",
-            "rating": "watch",
+            "entry_date": "2026-05-26",
+            "status": "not_executable",
+            "rating": "buy_candidate",
         },
         {
             "signal_date": "2026-05-26",
             "symbol": "000858",
             "status": "pending",
+            "rating": "buy_candidate",
+            "candidate_blocker": "gate blocked",
+        },
+        {
+            "signal_date": "2026-05-26",
+            "symbol": "300750",
+            "status": "research_candidate",
             "rating": "buy_candidate",
         },
     ]
@@ -95,37 +105,38 @@ def test_get_yesterday_buys_ignores_non_tradable_signals(tmp_path):
 
     result = get_yesterday_buys(ledger_path, date(2026, 5, 27))
 
-    assert result == {"000858"}
+    assert result == set()
 
 
-def test_filter_t1_held_removes_yesterday_signals(tmp_path):
-    """剔除昨日有信号的 symbol"""
+def test_filter_t1_held_removes_yesterday_active_paper_rows(tmp_path):
+    """剔除昨日真实 paper ledger 仍 open/pending_entry 的 symbol"""
     ledger_path = tmp_path / "ledger.jsonl"
     records = [
         {
             "signal_date": "2026-05-26",
             "symbol": "600519",
-            "status": "pending",
+            "entry_date": "2026-05-26",
+            "status": "open",
             "rating": "buy_candidate",
         },
         {
             "signal_date": "2026-05-26",
             "symbol": "000858",
-            "status": "pending",
-            "rating": "watch",
+            "status": "pending_entry",
+            "rating": "buy_candidate",
         },
     ]
     ledger_path.write_text("\n".join(json.dumps(r) for r in records))
     candidates = ["600519", "000858", "000001", "002475"]
     kept, removed = filter_t1_held(candidates, ledger_path, date(2026, 5, 27))
-    assert kept == ["000858", "000001", "002475"]
-    assert removed == ["600519"]
+    assert kept == ["000001", "002475"]
+    assert removed == ["600519", "000858"]
 
 
 def test_filter_t1_held_skips_invalid_lines(tmp_path):
     """优雅处理格式错误的 JSON"""
     ledger_path = tmp_path / "ledger.jsonl"
-    content = """{"signal_date": "2026-05-26", "symbol": "600519", "status": "pending", "rating": "buy_candidate"}
+    content = """{"signal_date": "2026-05-26", "entry_date": "2026-05-26", "symbol": "600519", "status": "open", "rating": "buy_candidate"}
 invalid json line
 {"signal_date": "2026-05-26", "symbol": "000858", "status": "pending", "rating": "watch"}
 """
@@ -153,16 +164,42 @@ def test_get_yesterday_buys_deduplicates(tmp_path):
         {
             "signal_date": "2026-05-26",
             "symbol": "600519",
-            "status": "pending",
+            "entry_date": "2026-05-26",
+            "status": "open",
             "rating": "buy_candidate",
         },
         {
             "signal_date": "2026-05-26",
             "symbol": "600519",
-            "status": "executed",
+            "status": "pending_entry",
             "rating": "buy_candidate",
         },
     ]
     ledger_path.write_text("\n".join(json.dumps(r) for r in records))
     result = get_yesterday_buys(ledger_path, date(2026, 5, 27))
+    assert result == {"600519"}
+
+
+def test_get_yesterday_buys_uses_open_entry_date_not_signal_date(tmp_path):
+    ledger_path = tmp_path / "ledger.jsonl"
+    records = [
+        {
+            "signal_date": "2026-05-25",
+            "entry_date": "2026-05-26",
+            "symbol": "600519",
+            "status": "open",
+            "rating": "buy_candidate",
+        },
+        {
+            "signal_date": "2026-05-26",
+            "entry_date": "2026-05-27",
+            "symbol": "000858",
+            "status": "open",
+            "rating": "buy_candidate",
+        },
+    ]
+    ledger_path.write_text("\n".join(json.dumps(r) for r in records))
+
+    result = get_yesterday_buys(ledger_path, date(2026, 5, 27))
+
     assert result == {"600519"}
