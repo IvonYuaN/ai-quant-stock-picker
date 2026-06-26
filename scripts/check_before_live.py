@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import json
 import re
 import sqlite3
@@ -675,16 +676,7 @@ def _check_strategy_runtime_threshold_application(root: Path) -> ReadinessFindin
             "source tree unavailable; skipped",
         )
     text = path.read_text(encoding="utf-8")
-    screen_block = _cli_function_block(text, "screen_universe")
-    score_block = _cli_function_block(text, "score_symbol")
-    ok = (
-        "current_thresholds" in screen_block
-        and "score_symbol(symbol, frame, config, scoring, current_thresholds)"
-        in screen_block
-        and "if config.strategy_weights and signal.strategy_id not in config.strategy_weights:"
-        in score_block
-        and "continue" in score_block
-    )
+    ok = _strategy_runtime_threshold_application_ok(text)
     return ReadinessFinding(
         "strategy_runtime_threshold_application",
         ok,
@@ -692,6 +684,53 @@ def _check_strategy_runtime_threshold_application(root: Path) -> ReadinessFindin
         if ok
         else "runtime screening must pass full Thresholds and skip strategy ids omitted by explicit regime weights",
     )
+
+
+def _strategy_runtime_threshold_application_ok(text: str) -> bool:
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return False
+    screen_func = _find_ast_function(tree, "screen_universe")
+    score_func = _find_ast_function(tree, "score_symbol")
+    if screen_func is None or score_func is None:
+        return False
+    passes_full_thresholds = any(
+        isinstance(node, ast.Call)
+        and _ast_name(node.func) == "score_symbol"
+        and len(node.args) >= 5
+        and _ast_name(node.args[4]) == "current_thresholds"
+        for node in ast.walk(screen_func)
+    )
+    skips_omitted_strategy = any(
+        isinstance(node, ast.If)
+        and any(isinstance(child, ast.Continue) for child in ast.walk(node))
+        and "config.strategy_weights" in ast.unparse(node.test)
+        and "signal.strategy_id not in config.strategy_weights"
+        in ast.unparse(node.test)
+        for node in ast.walk(score_func)
+    )
+    return passes_full_thresholds and skips_omitted_strategy
+
+
+def _find_ast_function(tree: ast.AST, name: str) -> ast.FunctionDef | None:
+    return next(
+        (
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.FunctionDef) and node.name == name
+        ),
+        None,
+    )
+
+
+def _ast_name(node: ast.AST) -> str:
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        parent = _ast_name(node.value)
+        return f"{parent}.{node.attr}" if parent else node.attr
+    return ""
 
 
 def _check_regime_strategy_weight_blending(root: Path) -> ReadinessFinding:
