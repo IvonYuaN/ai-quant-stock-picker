@@ -34,6 +34,8 @@ class UpdateSummary:
     failed_symbols: int
     target_day: date
     price_mode: str
+    target_day_symbol_count: int
+    total_symbols: int
 
 
 def _parse_trade_date(raw: object) -> date | None:
@@ -279,6 +281,14 @@ def _insert_bar(conn: sqlite3.Connection, ts_code: str, row: list[str]) -> bool:
     return True
 
 
+def _count_target_day_symbols(conn: sqlite3.Connection, target_day: date) -> int:
+    row = conn.execute(
+        "SELECT COUNT(DISTINCT ts_code) FROM daily_qfq WHERE trade_date = ?",
+        (_to_compact(target_day),),
+    ).fetchone()
+    return int(row[0] or 0) if row else 0
+
+
 def update_sqlite_daily(
     db_path: Path,
     *,
@@ -300,6 +310,7 @@ def update_sqlite_daily(
     updated_rows = 0
     skipped = 0
     failed = 0
+    total_symbols = 0
     try:
         with sqlite3.connect(db_path) as conn:
             configure_sqlite_connection(conn)
@@ -315,6 +326,7 @@ def update_sqlite_daily(
             ]
             if limit > 0:
                 selected_symbols = selected_symbols[:limit]
+            total_symbols = len(selected_symbols)
             for index, ts_code in enumerate(selected_symbols, start=1):
                 first, latest = _symbol_date_bounds(conn, ts_code)
                 fetch_start_day = _resolve_fetch_start_day(
@@ -360,9 +372,18 @@ def update_sqlite_daily(
                 if sleep_seconds > 0:
                     time.sleep(sleep_seconds)
             conn.commit()
+            target_day_symbol_count = _count_target_day_symbols(conn, target_day)
     finally:
         bs.logout()
-    return UpdateSummary(updated_rows, skipped, failed, target_day, price_mode)
+    return UpdateSummary(
+        updated_rows=updated_rows,
+        skipped_symbols=skipped,
+        failed_symbols=failed,
+        target_day=target_day,
+        price_mode=price_mode,
+        target_day_symbol_count=target_day_symbol_count,
+        total_symbols=total_symbols,
+    )
 
 
 def main() -> int:
@@ -445,7 +466,8 @@ def main() -> int:
         f"skipped_symbols={summary.skipped_symbols} "
         f"failed_symbols={summary.failed_symbols} "
         f"target={summary.target_day.isoformat()} "
-        f"price_mode={summary.price_mode}"
+        f"price_mode={summary.price_mode} "
+        f"target_day_symbols={summary.target_day_symbol_count}/{summary.total_symbols}"
     )
     return 1 if summary.failed_symbols else 0
 

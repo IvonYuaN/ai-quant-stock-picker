@@ -17,6 +17,11 @@ LOG_DIR="${PROJECT_ROOT}/logs/bt"
 RUN_LOG="${LOG_DIR}/bt-${ACTION}-$(date +%Y-%m-%d).log"
 BRANCH="${AQSP_GIT_BRANCH:-main}"
 REMOTE="${AQSP_GIT_REMOTE:-origin}"
+LOCK_DIR="${PROJECT_ROOT}/.locks"
+GIT_SYNC_LOCK_FILE="${LOCK_DIR}/server-git-sync.lock"
+GIT_SYNC_LOCK_INFO_FILE="${GIT_SYNC_LOCK_FILE}/meta.env"
+GIT_SYNC_WAIT_SECONDS="${AQSP_GIT_SYNC_WAIT_SECONDS:-180}"
+GIT_LOCK_STALE_MINUTES="${AQSP_GIT_LOCK_STALE_MINUTES:-30}"
 
 log() {
     mkdir -p "$LOG_DIR"
@@ -61,27 +66,94 @@ if [ -z "$ACTION" ]; then
 fi
 
 sync_code_only() {
-    cd "$PROJECT_ROOT"
-    log "开始同步代码: ${REMOTE}/${BRANCH}"
+    (
+        release_git_sync_lock() {
+            rm -f "$GIT_SYNC_LOCK_INFO_FILE"
+            rmdir "$GIT_SYNC_LOCK_FILE" 2>/dev/null || true
+        }
 
-    git update-index --refresh >/dev/null 2>&1 || true
-    local dirty_tracked
-    dirty_tracked="$(git status --porcelain --untracked-files=no)"
-    if [ -n "$dirty_tracked" ]; then
-        log "检测到受 Git 管理的本地修改，拒绝自动覆盖："
-        printf '%s\n' "$dirty_tracked" | tee -a "$RUN_LOG"
-        exit 1
-    fi
+        git_lock_age_minutes() {
+            local path="$1"
+            local now_epoch mtime
+            now_epoch="$(date +%s)"
+            mtime="$(stat -c %Y "$path" 2>/dev/null || stat -f %m "$path")"
+            echo $(( (now_epoch - mtime) / 60 ))
+        }
 
-    git fetch "$REMOTE" "$BRANCH" 2>&1 | tee -a "$RUN_LOG"
-    local local_head remote_head
-    local_head="$(git rev-parse HEAD)"
-    remote_head="$(git rev-parse "${REMOTE}/${BRANCH}")"
-    if [ "$local_head" != "$remote_head" ]; then
-        git pull --ff-only "$REMOTE" "$BRANCH" 2>&1 | tee -a "$RUN_LOG"
-    else
-        log "代码已是最新"
-    fi
+        load_git_sync_lock_info() {
+            if [ -f "$GIT_SYNC_LOCK_INFO_FILE" ]; then
+                # shellcheck disable=SC1090
+                . "$GIT_SYNC_LOCK_INFO_FILE"
+            fi
+        }
+
+        git_sync_lock_is_stale() {
+            if [ ! -d "$GIT_SYNC_LOCK_FILE" ]; then
+                return 1
+            fi
+            local age_minutes pid=""
+            age_minutes="$(git_lock_age_minutes "$GIT_SYNC_LOCK_FILE")"
+            load_git_sync_lock_info
+            pid="${GIT_SYNC_LOCK_PID:-}"
+            if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+                return 1
+            fi
+            [ "$age_minutes" -ge "$GIT_LOCK_STALE_MINUTES" ]
+        }
+
+        acquire_git_sync_lock() {
+            mkdir -p "$LOCK_DIR"
+            local waited=0
+            while ! mkdir "$GIT_SYNC_LOCK_FILE" 2>/dev/null; do
+                if git_sync_lock_is_stale; then
+                    stale_age="$(git_lock_age_minutes "$GIT_SYNC_LOCK_FILE")"
+                    load_git_sync_lock_info
+                    log "检测到陈旧 Git 同步锁，自动回收 runner=${GIT_SYNC_LOCK_RUNNER:-unknown} pid=${GIT_SYNC_LOCK_PID:-unknown} age=${stale_age}min started_at=${GIT_SYNC_LOCK_STARTED_AT:-unknown}"
+                    rm -rf -- "$GIT_SYNC_LOCK_FILE"
+                    continue
+                fi
+                if [ "$waited" -eq 0 ]; then
+                    load_git_sync_lock_info
+                    log "Git 同步进行中，等待释放 runner=${GIT_SYNC_LOCK_RUNNER:-unknown} pid=${GIT_SYNC_LOCK_PID:-unknown} started_at=${GIT_SYNC_LOCK_STARTED_AT:-unknown}"
+                fi
+                if [ "$waited" -ge "$GIT_SYNC_WAIT_SECONDS" ]; then
+                    log "等待 Git 同步锁超时 ${GIT_SYNC_WAIT_SECONDS}s，取消本次同步"
+                    return 1
+                fi
+                sleep 2
+                waited=$((waited + 2))
+            done
+            cat >"$GIT_SYNC_LOCK_INFO_FILE" <<EOF
+GIT_SYNC_LOCK_PID=$$
+GIT_SYNC_LOCK_RUNNER=bt_task:${ACTION}
+GIT_SYNC_LOCK_STARTED_AT=$(date '+%Y-%m-%d %H:%M:%S')
+EOF
+            return 0
+        }
+
+        acquire_git_sync_lock || exit 1
+        trap 'release_git_sync_lock' EXIT
+
+        cd "$PROJECT_ROOT"
+        log "开始同步代码: ${REMOTE}/${BRANCH}"
+
+        git update-index --refresh >/dev/null 2>&1 || true
+        dirty_tracked="$(git status --porcelain --untracked-files=no)"
+        if [ -n "$dirty_tracked" ]; then
+            log "检测到受 Git 管理的本地修改，拒绝自动覆盖："
+            printf '%s\n' "$dirty_tracked" | tee -a "$RUN_LOG"
+            exit 1
+        fi
+
+        git fetch "$REMOTE" "$BRANCH" 2>&1 | tee -a "$RUN_LOG"
+        local_head="$(git rev-parse HEAD)"
+        remote_head="$(git rev-parse "${REMOTE}/${BRANCH}")"
+        if [ "$local_head" != "$remote_head" ]; then
+            git pull --ff-only "$REMOTE" "$BRANCH" 2>&1 | tee -a "$RUN_LOG"
+        else
+            log "代码已是最新"
+        fi
+    )
 }
 
 is_truthy() {

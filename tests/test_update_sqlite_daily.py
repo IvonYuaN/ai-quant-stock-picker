@@ -105,9 +105,60 @@ def test_update_sqlite_daily_creates_raw_database_schema_when_missing(
     )
 
     assert summary.price_mode == "raw"
+    assert summary.target_day_symbol_count == 0
+    assert summary.total_symbols == 0
     with sqlite3.connect(db) as conn:
         tables = {row[0] for row in conn.execute("select name from sqlite_master")}
     assert {"stocks", "daily_qfq"}.issubset(tables)
+
+
+def test_update_sqlite_daily_counts_target_day_coverage(monkeypatch, tmp_path: Path) -> None:
+    class FakeBaostock:
+        def login(self):
+            return type("Login", (), {"error_code": "0", "error_msg": ""})()
+
+        def logout(self) -> None:
+            return None
+
+    db = tmp_path / "astocks_raw.db"
+    monkeypatch.setattr(update_sqlite_daily, "_load_baostock", FakeBaostock)
+
+    def fake_sync_stock_list(conn, _bs):
+        update_sqlite_daily.ensure_schema(conn)
+        conn.execute(
+            "INSERT OR REPLACE INTO stocks(ts_code, name) VALUES(?, ?)",
+            ("600000.SH", "PF Bank"),
+        )
+        conn.execute(
+            "INSERT OR REPLACE INTO stocks(ts_code, name) VALUES(?, ?)",
+            ("000001.SZ", "SZ Bank"),
+        )
+        conn.commit()
+        return ["000001.SZ", "600000.SH"]
+
+    monkeypatch.setattr(update_sqlite_daily, "sync_stock_list", fake_sync_stock_list)
+    monkeypatch.setattr(
+        update_sqlite_daily,
+        "_query_history_rows",
+        lambda **kwargs: (
+            "0",
+            [["2026-06-18", "1", "2", "0.5", "1.5", "100", "200"]]
+            if kwargs["ts_code"] == "600000.SH"
+            else [],
+        ),
+    )
+
+    summary = update_sqlite_daily.update_sqlite_daily(
+        db,
+        target_day=date(2026, 6, 18),
+        sleep_seconds=0.0,
+        limit=0,
+        price_mode="raw",
+    )
+
+    assert summary.updated_rows == 1
+    assert summary.target_day_symbol_count == 1
+    assert summary.total_symbols == 2
 
 
 def test_update_sqlite_daily_configures_wal_and_busy_timeout(tmp_path: Path) -> None:

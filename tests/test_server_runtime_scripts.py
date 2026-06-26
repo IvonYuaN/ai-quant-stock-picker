@@ -143,6 +143,11 @@ def test_bt_task_script_exposes_panel_safe_actions() -> None:
     assert "AQSP_RUNNER_SCRIPT=scripts/daily_pipeline.sh" in script
     assert "AQSP_RUNNER_SCRIPT=scripts/intraday_refresh.sh" in script
     assert "AQSP_RUNNER_SCRIPT=scripts/midday_refresh.sh" in script
+    assert "server-git-sync.lock" in script
+    assert "AQSP_GIT_SYNC_WAIT_SECONDS" in script
+    assert "AQSP_GIT_LOCK_STALE_MINUTES" in script
+    assert "Git 同步进行中，等待释放" in script
+    assert "等待 Git 同步锁超时" in script
     assert 'export AQSP_RUN_TASK_ID="intraday"' in script
     assert 'export AQSP_NOTIFY="false"' in script
     assert 'export AQSP_RUN_TASK_ID="midday"' in script
@@ -277,13 +282,21 @@ def test_server_sync_script_has_lock_guard() -> None:
     )
 
     assert "server-runtime.lock" in script
+    assert "server-git-sync.lock" in script
     assert 'LOCK_INFO_FILE="${LOCK_FILE}/meta.env"' in script
+    assert 'GIT_SYNC_LOCK_INFO_FILE="${GIT_SYNC_LOCK_FILE}/meta.env"' in script
     assert 'LOCK_STALE_MINUTES="${AQSP_LOCK_STALE_MINUTES:-360}"' in script
+    assert 'GIT_SYNC_WAIT_SECONDS="${AQSP_GIT_SYNC_WAIT_SECONDS:-180}"' in script
+    assert 'GIT_LOCK_STALE_MINUTES="${AQSP_GIT_LOCK_STALE_MINUTES:-30}"' in script
     assert "lock_is_stale" in script
+    assert "git_sync_lock_is_stale" in script
     assert "检测到陈旧主锁，自动回收" in script
+    assert "检测到陈旧 Git 同步锁，自动回收" in script
     assert "LOCK_RUNNER" in script
     assert "LOCK_STARTED_AT" in script
     assert "主链路仍在运行，本次任务正常跳过；这是互斥保护，不是失败" in script
+    assert "Git 同步进行中，等待释放" in script
+    assert "等待 Git 同步锁超时" in script
     assert "AQSP_SYNC_RESULT_FILE" in script
     assert 'write_result "skipped_lock"' in script
     assert 'write_result "completed"' in script

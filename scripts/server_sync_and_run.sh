@@ -15,6 +15,10 @@ RUN_LOG="${LOG_DIR}/sync-$(date +%Y-%m-%d).log"
 LOCK_DIR="${PROJECT_ROOT}/.locks"
 LOCK_FILE="${LOCK_DIR}/server-runtime.lock"
 LOCK_INFO_FILE="${LOCK_FILE}/meta.env"
+GIT_SYNC_LOCK_FILE="${LOCK_DIR}/server-git-sync.lock"
+GIT_SYNC_LOCK_INFO_FILE="${GIT_SYNC_LOCK_FILE}/meta.env"
+GIT_SYNC_WAIT_SECONDS="${AQSP_GIT_SYNC_WAIT_SECONDS:-180}"
+GIT_LOCK_STALE_MINUTES="${AQSP_GIT_LOCK_STALE_MINUTES:-30}"
 LOCK_STALE_MINUTES="${AQSP_LOCK_STALE_MINUTES:-360}"
 RUNNER_TIMEOUT_SECONDS="${AQSP_RUNNER_TIMEOUT_SECONDS:-0}"
 RUN_RESULT_FILE="${AQSP_SYNC_RESULT_FILE:-}"
@@ -29,6 +33,69 @@ write_result() {
         mkdir -p "$(dirname "$RUN_RESULT_FILE")"
         printf 'status=%s\nrunner=%s\n' "$1" "$RUNNER_SCRIPT" > "$RUN_RESULT_FILE"
     fi
+}
+
+release_git_sync_lock() {
+    rm -f "$GIT_SYNC_LOCK_INFO_FILE"
+    rmdir "$GIT_SYNC_LOCK_FILE" 2>/dev/null || true
+}
+
+git_lock_age_minutes() {
+    local path="$1"
+    local now_epoch mtime
+    now_epoch="$(date +%s)"
+    mtime="$(stat -c %Y "$path" 2>/dev/null || stat -f %m "$path")"
+    echo $(( (now_epoch - mtime) / 60 ))
+}
+
+load_git_sync_lock_info() {
+    if [ -f "$GIT_SYNC_LOCK_INFO_FILE" ]; then
+        # shellcheck disable=SC1090
+        . "$GIT_SYNC_LOCK_INFO_FILE"
+    fi
+}
+
+git_sync_lock_is_stale() {
+    if [ ! -d "$GIT_SYNC_LOCK_FILE" ]; then
+        return 1
+    fi
+    local age_minutes pid=""
+    age_minutes="$(git_lock_age_minutes "$GIT_SYNC_LOCK_FILE")"
+    load_git_sync_lock_info
+    pid="${GIT_SYNC_LOCK_PID:-}"
+    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+        return 1
+    fi
+    [ "$age_minutes" -ge "$GIT_LOCK_STALE_MINUTES" ]
+}
+
+acquire_git_sync_lock() {
+    local waited=0
+    while ! mkdir "$GIT_SYNC_LOCK_FILE" 2>/dev/null; do
+        if git_sync_lock_is_stale; then
+            stale_age="$(git_lock_age_minutes "$GIT_SYNC_LOCK_FILE")"
+            load_git_sync_lock_info
+            log "检测到陈旧 Git 同步锁，自动回收 runner=${GIT_SYNC_LOCK_RUNNER:-unknown} pid=${GIT_SYNC_LOCK_PID:-unknown} age=${stale_age}min started_at=${GIT_SYNC_LOCK_STARTED_AT:-unknown}"
+            rm -rf -- "$GIT_SYNC_LOCK_FILE"
+            continue
+        fi
+        if [ "$waited" -eq 0 ]; then
+            load_git_sync_lock_info
+            log "Git 同步进行中，等待释放 runner=${GIT_SYNC_LOCK_RUNNER:-unknown} pid=${GIT_SYNC_LOCK_PID:-unknown} started_at=${GIT_SYNC_LOCK_STARTED_AT:-unknown}"
+        fi
+        if [ "$waited" -ge "$GIT_SYNC_WAIT_SECONDS" ]; then
+            log "等待 Git 同步锁超时 ${GIT_SYNC_WAIT_SECONDS}s，取消本次同步"
+            return 1
+        fi
+        sleep 2
+        waited=$((waited + 2))
+    done
+    cat >"$GIT_SYNC_LOCK_INFO_FILE" <<EOF
+GIT_SYNC_LOCK_PID=$$
+GIT_SYNC_LOCK_RUNNER=${RUNNER_SCRIPT}
+GIT_SYNC_LOCK_STARTED_AT=$(date '+%Y-%m-%d %H:%M:%S')
+EOF
+    return 0
 }
 
 lock_age_minutes() {
@@ -105,6 +172,9 @@ trap 'rm -f "$LOCK_INFO_FILE"; rmdir "$LOCK_FILE"' EXIT
 
 log "开始同步代码: ${REMOTE}/${BRANCH}"
 
+acquire_git_sync_lock || exit 1
+trap 'release_git_sync_lock; rm -f "$LOCK_INFO_FILE"; rmdir "$LOCK_FILE"' EXIT
+
 git update-index --refresh >/dev/null 2>&1 || true
 
 DIRTY_TRACKED="$(git status --porcelain --untracked-files=no)"
@@ -124,6 +194,9 @@ if [ "$LOCAL_HEAD" != "$REMOTE_HEAD" ]; then
 else
     log "代码已是最新，无需更新"
 fi
+
+release_git_sync_lock
+trap 'rm -f "$LOCK_INFO_FILE"; rmdir "$LOCK_FILE"' EXIT
 
 if [ ! -f "${RUNNER_PATH}" ]; then
     log "运行脚本不存在: ${RUNNER_PATH}"
