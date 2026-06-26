@@ -46,6 +46,30 @@ def test_build_backfill_plan_keeps_days_missing_signal_or_paper(monkeypatch) -> 
     }
 
 
+def test_should_generate_signal_when_paper_still_needs_samples() -> None:
+    assert backfill.should_generate_signal_for_backfill(
+        signal_day="2026-06-09",
+        current_signal_days=30,
+        target_signal_days=30,
+        existing_signal_days={"2026-06-06"},
+        need_paper_backfill=True,
+    )
+    assert not backfill.should_generate_signal_for_backfill(
+        signal_day="2026-06-09",
+        current_signal_days=30,
+        target_signal_days=30,
+        existing_signal_days={"2026-06-09"},
+        need_paper_backfill=True,
+    )
+    assert not backfill.should_generate_signal_for_backfill(
+        signal_day="2026-06-09",
+        current_signal_days=30,
+        target_signal_days=30,
+        existing_signal_days=set(),
+        need_paper_backfill=False,
+    )
+
+
 def test_collect_signal_days_treats_no_pick_marker_as_attempted_day(
     tmp_path: Path,
 ) -> None:

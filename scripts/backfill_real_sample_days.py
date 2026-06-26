@@ -109,6 +109,19 @@ def build_backfill_plan(
     )
 
 
+def should_generate_signal_for_backfill(
+    *,
+    signal_day: str,
+    current_signal_days: int,
+    target_signal_days: int,
+    existing_signal_days: set[str],
+    need_paper_backfill: bool,
+) -> bool:
+    if signal_day in existing_signal_days:
+        return False
+    return current_signal_days < target_signal_days or need_paper_backfill
+
+
 def collect_signal_days(path: str | Path) -> set[str]:
     days: set[str] = set()
     for row in read_ledger(path):
@@ -372,13 +385,16 @@ def backfill_real_sample_days(args: argparse.Namespace) -> int:
             break
         current_signal_day_set = collect_signal_days(ledger_path)
         current_paper_day_set = collect_paper_tracking_dates(str(paper_ledger_path))
-        need_signal_backfill = (
-            current_signal_days < args.target_signal_days
-            and signal_day_str not in current_signal_day_set
-        )
         need_paper_backfill = (
             current_paper_days < args.target_paper_days
             and signal_day_str not in current_paper_day_set
+        )
+        need_signal_backfill = should_generate_signal_for_backfill(
+            signal_day=signal_day_str,
+            current_signal_days=current_signal_days,
+            target_signal_days=args.target_signal_days,
+            existing_signal_days=current_signal_day_set,
+            need_paper_backfill=need_paper_backfill,
         )
         if not need_signal_backfill and not need_paper_backfill:
             continue
