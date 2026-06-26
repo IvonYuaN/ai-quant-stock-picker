@@ -216,14 +216,13 @@ class WalkForwardTester:
             all_trades.extend(trades)
 
             executable = [t for t in trades if t.executable]
-            if executable:
-                returns = [t.return_pct for t in executable]
-                period_result = _compute_backtest_metrics(
-                    returns,
-                    f"{test_start} to {test_end}",
-                    len(trades) - len(executable),
-                )
-                periods.append(period_result)
+            returns = [t.return_pct for t in executable]
+            period_result = _compute_backtest_metrics(
+                returns,
+                f"{test_start} to {test_end}",
+                len(trades) - len(executable),
+            )
+            periods.append(period_result)
 
             i += step
 

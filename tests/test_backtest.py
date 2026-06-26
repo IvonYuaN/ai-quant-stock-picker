@@ -833,3 +833,59 @@ class TestDeflatedSharpe:
             sharpe=sr, n_trials=n, n_obs=t, kurtosis=10.0
         )
         assert d_fat_tail < d_normal
+
+
+def test_walkforward_keeps_zero_trade_periods_for_cscv_stability(monkeypatch) -> None:
+    strategy = _StubStrategy()
+    tester = WalkForwardTester(
+        strategy=strategy,
+        train_period_days=60,
+        test_period_days=20,
+        purge_days=3,
+    )
+    data = {"600519": pd.DataFrame([{"date": "2024-01-01", "close": 10.0}])}
+
+    monkeypatch.setattr(
+        tester,
+        "_collect_all_dates",
+        lambda _data: [f"2024-01-{day:02d}" for day in range(1, 121)],
+    )
+    monkeypatch.setattr(tester, "_slice_data", lambda _data, _start, _end: data)
+    monkeypatch.setattr(tester, "_run_single_period", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(
+        tester,
+        "_calculate_robustness",
+        lambda periods: float(len(periods)),
+    )
+    monkeypatch.setattr(
+        tester,
+        "_calculate_parameter_std",
+        lambda periods: float(len(periods)),
+    )
+    monkeypatch.setattr(
+        tester,
+        "_calculate_deflated_sharpe",
+        lambda sharpe, n_trials, n_obs, **_kwargs: float(n_obs),
+    )
+    monkeypatch.setattr(
+        tester,
+        "_calculate_pbo",
+        lambda periods: float(len(periods)),
+    )
+    monkeypatch.setattr(
+        tester,
+        "_build_diagnostics",
+        lambda trades: WalkForwardDiagnostics(
+            total_trades=len(trades),
+            executable_trades=0,
+            not_executable=0,
+            worst_symbols=(),
+            exit_reason_counts=(),
+            not_executable_reason_counts=(),
+        ),
+    )
+
+    result = tester.run(data, start_date="2024-01-01", end_date="2024-04-30")
+
+    assert len(result.periods) > 0
+    assert all(period.trades == 0 for period in result.periods)
