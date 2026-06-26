@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import inspect
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -44,11 +45,26 @@ def build_sqlite_db_source_with(
     source_builder = builder or SqliteDbSource
     db_path = db_path_resolver()
     if db_path:
-        try:
+        if _callable_accepts_keyword(source_builder, "db_path"):
             return source_builder(db_path=db_path, cache=cache)
-        except TypeError:
-            return source_builder(cache=cache)
+        return source_builder(cache=cache)
     return source_builder(cache=cache)
+
+
+def _callable_accepts_keyword(fn: SourceBuilder, keyword: str) -> bool:
+    try:
+        signature = inspect.signature(fn)
+    except (TypeError, ValueError):
+        return True
+    for parameter in signature.parameters.values():
+        if parameter.kind == inspect.Parameter.VAR_KEYWORD:
+            return True
+        if parameter.name == keyword and parameter.kind in {
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            inspect.Parameter.KEYWORD_ONLY,
+        }:
+            return True
+    return False
 
 
 def load_sqlite_symbol_name_map(symbols: list[str]) -> dict[str, str]:

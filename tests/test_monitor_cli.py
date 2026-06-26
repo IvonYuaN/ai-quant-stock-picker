@@ -23,7 +23,7 @@ def test_run_monitor_notifies_critical_only_when_enabled(monkeypatch, capsys) ->
 
     fake_notifier = types.SimpleNamespace(
         format_alert=lambda results: "\n".join(r.name for r in results),
-        send_alerts=lambda results: sent.append(results),
+        send_alerts=lambda results: sent.append(results) or results,
     )
 
     monkeypatch.setitem(
@@ -47,7 +47,53 @@ def test_run_monitor_notifies_critical_only_when_enabled(monkeypatch, capsys) ->
     assert exit_code == 1
     assert len(sent) == 1
     assert [r.name for r in sent[0]] == ["crit_case"]
-    assert "warn_case" in capsys.readouterr().out
+    output = capsys.readouterr().out
+    assert "crit_case" in output
+    assert "warn_case" not in output
+
+
+def test_run_monitor_suppresses_duplicate_alert_body_when_notify_dedupes(
+    monkeypatch, capsys
+) -> None:
+    class FakeChecker:
+        def __init__(self, config_path: str) -> None:
+            self.config_path = config_path
+
+        def check_all(self) -> list[MonitorResult]:
+            return [
+                MonitorResult("crit_case", True, "critical", "critical hit"),
+            ]
+
+    fake_notifier = types.SimpleNamespace(
+        format_alert=lambda results: (
+            "# 系统监控告警\n" + "\n".join(r.name for r in results)
+        ),
+        send_alerts=lambda results: [],
+    )
+
+    monkeypatch.setitem(
+        __import__("sys").modules, "aqsp.monitor.notifier", fake_notifier
+    )
+    monkeypatch.setitem(
+        __import__("sys").modules,
+        "aqsp.monitor.checker",
+        types.SimpleNamespace(MonitorChecker=FakeChecker),
+    )
+
+    exit_code = cli.run_monitor(
+        argparse.Namespace(
+            config="config/monitors.yaml",
+            notify=True,
+            notify_critical_only=True,
+            quiet_healthy=False,
+            dry_run=False,
+        )
+    )
+
+    output = capsys.readouterr().out
+    assert exit_code == 1
+    assert "monitor alert still active; duplicate suppressed" in output
+    assert "# 系统监控告警" not in output
 
 
 def test_run_monitor_returns_zero_for_warning_only(monkeypatch) -> None:
@@ -102,7 +148,7 @@ def test_run_monitor_returns_zero_when_only_warning_and_notify_enabled(
 
     fake_notifier = types.SimpleNamespace(
         format_alert=lambda results: "\n".join(r.name for r in results),
-        send_alerts=lambda results: sent.append(results),
+        send_alerts=lambda results: sent.append(results) or results,
     )
 
     monkeypatch.setitem(
@@ -180,7 +226,7 @@ def test_run_monitor_sends_warning_push_when_warning_notify_enabled(
 
     fake_notifier = types.SimpleNamespace(
         format_alert=lambda results: "\n".join(r.name for r in results),
-        send_alerts=lambda results: sent.append(results),
+        send_alerts=lambda results: sent.append(results) or results,
     )
 
     monkeypatch.setitem(
@@ -220,7 +266,7 @@ def test_run_monitor_suppresses_warning_push_without_env(monkeypatch, capsys) ->
 
     fake_notifier = types.SimpleNamespace(
         format_alert=lambda results: "\n".join(r.name for r in results),
-        send_alerts=lambda results: sent.append(results),
+        send_alerts=lambda results: sent.append(results) or results,
     )
 
     monkeypatch.setitem(

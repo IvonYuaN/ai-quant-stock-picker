@@ -630,6 +630,44 @@ class TestCLIDataSources:
         assert '"consecutive_failures": 1' in health_text
         assert '"last_requested_source": "akshare"' in health_text
 
+    def test_fetch_frames_for_cli_with_metadata_passes_cache_path_to_source_factory(
+        self, monkeypatch, tmp_path
+    ):
+        import aqsp.cli as cli_mod
+
+        sample = _make_sample_data()
+        seen: dict[str, object] = {}
+        cache_path = tmp_path / "walkforward_cache.db"
+
+        class DummySource:
+            name = "akshare"
+
+        def fake_get_source(source_name, *, cache=None):
+            seen["source_name"] = source_name
+            seen["cache_path"] = str(cache.db_path) if cache is not None else None
+            return DummySource()
+
+        monkeypatch.setattr(cli_mod, "_get_source", fake_get_source)
+        monkeypatch.setattr(
+            cli_mod,
+            "fetch_with_source",
+            lambda *args, **kwargs: {"600519": sample},
+        )
+
+        frames, actual = cli_mod._fetch_frames_for_cli_with_metadata(
+            "akshare",
+            ["600519"],
+            benchmark_symbol=None,
+            cache_path=str(cache_path),
+        )
+
+        assert actual == "akshare"
+        assert "600519" in frames
+        assert seen == {
+            "source_name": "akshare",
+            "cache_path": str(cache_path),
+        }
+
     def test_auto_source_plan_is_local_first_without_cross_tier_consistency(
         self, monkeypatch
     ):

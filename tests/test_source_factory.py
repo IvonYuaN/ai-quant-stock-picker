@@ -41,3 +41,38 @@ def test_build_data_source_sqlite_db_preserves_explicit_no_cache(monkeypatch) ->
 
     assert result["cache"] is None
     assert seen["cache"] is None
+
+
+def test_build_sqlite_db_source_with_reraises_builder_type_error(monkeypatch) -> None:
+    from aqsp.data import source_factory as sf
+
+    def broken_builder(*, db_path=None, cache=None):
+        raise TypeError("schema broken")
+
+    monkeypatch.setattr(sf, "resolve_sqlite_db_path", lambda: "/tmp/astocks_raw.db")
+
+    try:
+        sf.build_sqlite_db_source_with(cache=None, builder=broken_builder)
+    except TypeError as exc:
+        assert "schema broken" in str(exc)
+    else:
+        raise AssertionError("expected builder TypeError")
+
+
+def test_build_sqlite_db_source_with_omits_db_path_when_builder_lacks_keyword(
+    monkeypatch,
+) -> None:
+    from aqsp.data import source_factory as sf
+
+    seen: dict[str, object] = {}
+
+    def legacy_builder(*, cache=None):
+        seen["cache"] = cache
+        return "legacy"
+
+    monkeypatch.setattr(sf, "resolve_sqlite_db_path", lambda: "/tmp/astocks_raw.db")
+
+    assert (
+        sf.build_sqlite_db_source_with(cache=None, builder=legacy_builder) == "legacy"
+    )
+    assert seen["cache"] is None

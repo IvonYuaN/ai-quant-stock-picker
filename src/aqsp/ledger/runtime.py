@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import date
 from typing import Any
 
@@ -29,9 +30,23 @@ PAPER_TRACKING_STATUSES = frozenset(
 
 EXECUTABILITY_FEEDBACK_STATUSES = frozenset({"validated", "not_executable"})
 
+DEFAULT_COLD_START_MIN_DAYS = 30
 MIN_EXECUTABILITY_FEEDBACK_ATTEMPTS = 5
 MAX_EXECUTABILITY_BLOCK_RATE = 0.35
 EXECUTABILITY_WEIGHT_MULTIPLIER = 0.5
+
+
+def cold_start_min_days() -> int:
+    raw = os.getenv("AQSP_COLD_START_MIN_DAYS", "").strip()
+    if not raw:
+        return DEFAULT_COLD_START_MIN_DAYS
+    try:
+        value = int(raw)
+    except ValueError:
+        return DEFAULT_COLD_START_MIN_DAYS
+    if str(os.getenv("PYTEST_CURRENT_TEST", "")).strip():
+        return max(value, 1)
+    return max(value, DEFAULT_COLD_START_MIN_DAYS)
 
 
 def count_independent_signal_days(ledger_path: str) -> int:

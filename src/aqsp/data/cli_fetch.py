@@ -3,6 +3,7 @@ from __future__ import annotations
 import pandas as pd
 
 from aqsp.core.errors import DataError
+from aqsp.data.cache import DataCache
 
 
 def fetch_frames_for_cli_with_metadata(
@@ -18,8 +19,12 @@ def fetch_frames_for_cli_with_metadata(
     record_source_failure_fn,
 ) -> tuple[dict[str, pd.DataFrame], str]:
     try:
-        source = get_source_fn(source_name)
-        _ = cache_path
+        cache = DataCache(db_path=cache_path) if cache_path else None
+        source = _get_source_with_optional_cache(
+            get_source_fn,
+            source_name,
+            cache=cache,
+        )
         frames = fetch_with_source_fn(
             source,
             symbols,
@@ -35,3 +40,26 @@ def fetch_frames_for_cli_with_metadata(
     except Exception as exc:
         record_source_failure_fn(source_name, str(exc))
         raise DataError(f"数据源 {source_name} 获取失败: {exc}") from exc
+
+
+def _get_source_with_optional_cache(get_source_fn, source_name: str, *, cache):
+    import inspect
+
+    try:
+        signature = inspect.signature(get_source_fn)
+    except (TypeError, ValueError):
+        return get_source_fn(source_name, cache=cache)
+    if any(
+        parameter.kind == inspect.Parameter.VAR_KEYWORD
+        or (
+            parameter.name == "cache"
+            and parameter.kind
+            in {
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                inspect.Parameter.KEYWORD_ONLY,
+            }
+        )
+        for parameter in signature.parameters.values()
+    ):
+        return get_source_fn(source_name, cache=cache)
+    return get_source_fn(source_name)

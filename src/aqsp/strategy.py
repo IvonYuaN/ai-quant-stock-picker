@@ -84,7 +84,6 @@ def screen_universe(
     """Screen candidate frames into ranked paper-trading picks."""
     current_thresholds = thresholds or load_thresholds()
     scoring = current_thresholds.scoring
-    internet_strategy = current_thresholds.internet_strategy
     picks: list[PickResult] = []
     validator = DataValidator()
     tradability_filter = TradabilityFilter()
@@ -133,7 +132,7 @@ def screen_universe(
     for symbol in filtered_symbols:
         frame = validated_frames[symbol]
         try:
-            result = score_symbol(symbol, frame, config, scoring, internet_strategy)
+            result = score_symbol(symbol, frame, config, scoring, current_thresholds)
         except (ValueError, IndexError, KeyError, TypeError) as exc:
             _logger.warning("score_symbol %s 异常，已跳过: %s", symbol, exc)
             continue
@@ -276,6 +275,11 @@ def score_symbol(
     applied_strategy_weights: dict[str, float] = {}
     applied_strategy_weight_reasons: dict[str, str] = {}
     for signal in strategy_signals:
+        if (
+            config.strategy_weights
+            and signal.strategy_id not in config.strategy_weights
+        ):
+            continue
         weight = config.strategy_weights.get(signal.strategy_id, 1.0)
         applied_strategy_weights[signal.strategy_id] = round(float(weight), 4)
         if signal.strategy_id in config.strategy_weight_reasons:

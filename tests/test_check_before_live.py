@@ -210,6 +210,39 @@ def test_check_before_live_blocks_unblended_regime_screening_weights(
     assert "same composite regime blend formula" in finding.detail
 
 
+def test_check_before_live_blocks_missing_runtime_threshold_application(
+    tmp_path: Path,
+) -> None:
+    _prepare_ready_runtime(tmp_path)
+    path = tmp_path / "src/aqsp/strategy.py"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "def screen_universe(frames, config, thresholds=None):\n"
+        "    current_thresholds = thresholds\n"
+        "    return score_symbol(symbol, frame, config, scoring, current_thresholds.internet_strategy)\n"
+        "def score_symbol(symbol, frame, config, scoring, internet_strategy=None):\n"
+        "    for signal in strategy_signals:\n"
+        "        weight = config.strategy_weights.get(signal.strategy_id, 1.0)\n"
+        "def strategy_weights_for_regime(thresholds, regime):\n"
+        "    return {strategy_id: _blend_regime_multiplier(thresholds, weight) for strategy_id, weight in items}\n"
+        "def _blend_regime_multiplier(thresholds, weight):\n"
+        "    base_blend_weight = thresholds.composite.base_blend_weight\n"
+        "    regime_blend_weight = thresholds.composite.regime_blend_weight\n"
+        "    return base_blend_weight + regime_blend_weight * weight\n",
+        encoding="utf-8",
+    )
+
+    findings = check_before_live(root=tmp_path, today=date(2026, 6, 14))
+
+    finding = next(
+        item
+        for item in findings
+        if item.gate == "strategy_runtime_threshold_application"
+    )
+    assert finding.ok is False
+    assert "full Thresholds" in finding.detail
+
+
 def test_check_before_live_blocks_small_runtime_universe_cap(
     tmp_path: Path,
 ) -> None:

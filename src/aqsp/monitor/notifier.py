@@ -67,12 +67,12 @@ def format_alert(results: list[MonitorResult]) -> str:
     return compact_notification_markdown("\n".join(lines))
 
 
-def send_alerts(results: list[MonitorResult]) -> None:
+def send_alerts(results: list[MonitorResult]) -> list[MonitorResult]:
     """Send alerts for triggered monitors via notifier."""
     triggered = [r for r in results if r.triggered]
     if not triggered:
         _expire_monitor_notify_state()
-        return
+        return []
 
     fingerprint = _monitor_alert_fingerprint(triggered)
     date_key = now_shanghai().date().isoformat()
@@ -86,10 +86,10 @@ def send_alerts(results: list[MonitorResult]) -> None:
         )
     except OSError as exc:
         print(f"monitor notify: state write failed; fail closed: {exc}")
-        return
+        return []
     if not new_triggered:
         print("monitor notify: skipped duplicate alert")
-        return
+        return []
 
     notify_mode = load_runtime_config().notify_mode
     alert_msg = build_monitor_notification(
@@ -113,6 +113,7 @@ def send_alerts(results: list[MonitorResult]) -> None:
             date_key=date_key,
         )
         print("monitor notify: delivery failed; retry after cooldown")
+    return new_triggered
 
 
 def _monitor_notify_state_path() -> Path:

@@ -349,12 +349,26 @@ def dispatch_gate_notification(
     return results
 
 
-def gate_notification_allowed(task_id: str | None = None) -> bool:
-    value = task_id if task_id is not None else os.getenv("AQSP_RUN_TASK_ID", "")
+def gate_notification_allowed(
+    task_id: str | None = None,
+    *,
+    notify_requested: bool | None = None,
+) -> bool:
+    value = task_id or os.getenv("AQSP_RUN_TASK_ID", "")
     normalized = str(value or "").strip().lower()
     notify_flag = str(os.getenv("AQSP_NOTIFY", "") or "").strip().lower()
-    notify_enabled = notify_flag in {"1", "true", "yes", "on"}
+    notify_enabled = (
+        bool(notify_requested)
+        if notify_requested is not None
+        else notify_flag in {"1", "true", "yes", "on"}
+    )
     return normalized in {"daily", "scheduled", "manual"} and notify_enabled
+
+
+def high_frequency_task(task_id: str | None = None) -> bool:
+    value = task_id or os.getenv("AQSP_RUN_TASK_ID", "")
+    normalized = str(value or "").strip().lower()
+    return normalized in {"intraday", "midday", "monitor", "news", "status"}
 
 
 def finalize_scheduled_outputs(
@@ -396,6 +410,17 @@ def finalize_scheduled_notification(
     notify_enabled = bool(args_notify)
 
     if notify_enabled and not gate_ok:
+        if high_frequency_task(task_id):
+            print_fn("gate notify: skipped outside daily task")
+            notify_enabled = False
+            return ScheduledNotificationArtifacts(
+                markdown=output_markdown,
+                notify_enabled=notify_enabled,
+            )
+        gate_allowed = gate_notification_allowed(
+            task_id,
+            notify_requested=notify_enabled,
+        )
         print_fn("⛔ 双门未达，--notify 自动失效。原因：")
         for reason in gate_reasons:
             print_fn(f"   - {reason}")
@@ -406,9 +431,8 @@ def finalize_scheduled_notification(
             gate_reasons, next_actions
         )
         output_markdown = gate_block + markdown
-        if not gate_notification_allowed(task_id):
-            print_fn("gate notify: skipped outside daily task")
-        else:
+        should_send_gate = False
+        if gate_allowed:
             try:
                 should_send_gate = _call_gate_should_send(
                     should_send_gate_notification_fn,
@@ -419,44 +443,29 @@ def finalize_scheduled_notification(
                 )
             except Exception as exc:  # noqa: BLE001
                 print_fn(f"gate notify state failed: {exc}")
-                should_send_gate = False
-            if should_send_gate:
-                try:
-                    if legacy_notify_fn is not None:
-                        gate_markdown = build_gate_notification_markdown(
-                            run_date=latest_iso,
-                            gate_reasons=gate_reasons,
-                            next_actions=next_actions,
-                        )
-                        results = legacy_notify_fn(gate_markdown)
-                    else:
-                        results = dispatch_gate_notification_fn(
-                            run_date=latest_iso,
-                            gate_reasons=gate_reasons,
-                            next_actions=next_actions,
-                            mode=notify_mode,
-                            state_path=gate_state_path,
-                            reserve_before_send=True,
-                        )
-                    if not _has_successful_notify_result(results):
-                        if mark_gate_notification_failed_fn is not None:
-                            _call_gate_mark_failed(
-                                mark_gate_notification_failed_fn,
-                                gate_reasons=gate_reasons,
-                                gate_state_path=gate_state_path,
-                                run_date=latest_iso,
-                            )
-                        print_fn(
-                            "gate notify: delivery failed; suppressing duplicate retries today"
-                        )
-                    elif mark_gate_notification_sent_fn is not None:
-                        _call_gate_mark_sent(
-                            mark_gate_notification_sent_fn,
-                            gate_reasons=gate_reasons,
-                            gate_state_path=gate_state_path,
-                            run_date=latest_iso,
-                        )
-                except Exception as exc:  # noqa: BLE001
+        else:
+            print_fn("gate notify: skipped outside daily task")
+        if not gate_allowed:
+            should_send_gate = False
+        if should_send_gate:
+            try:
+                if legacy_notify_fn is not None:
+                    gate_markdown = build_gate_notification_markdown(
+                        run_date=latest_iso,
+                        gate_reasons=gate_reasons,
+                        next_actions=next_actions,
+                    )
+                    results = legacy_notify_fn(gate_markdown)
+                else:
+                    results = dispatch_gate_notification_fn(
+                        run_date=latest_iso,
+                        gate_reasons=gate_reasons,
+                        next_actions=next_actions,
+                        mode=notify_mode,
+                        state_path=gate_state_path,
+                        reserve_before_send=True,
+                    )
+                if not _has_successful_notify_result(results):
                     if mark_gate_notification_failed_fn is not None:
                         _call_gate_mark_failed(
                             mark_gate_notification_failed_fn,
@@ -464,7 +473,25 @@ def finalize_scheduled_notification(
                             gate_state_path=gate_state_path,
                             run_date=latest_iso,
                         )
-                    print_fn(f"gate notify failed: {exc}")
+                    print_fn(
+                        "gate notify: delivery failed; suppressing duplicate retries today"
+                    )
+                elif mark_gate_notification_sent_fn is not None:
+                    _call_gate_mark_sent(
+                        mark_gate_notification_sent_fn,
+                        gate_reasons=gate_reasons,
+                        gate_state_path=gate_state_path,
+                        run_date=latest_iso,
+                    )
+            except Exception as exc:  # noqa: BLE001
+                if mark_gate_notification_failed_fn is not None:
+                    _call_gate_mark_failed(
+                        mark_gate_notification_failed_fn,
+                        gate_reasons=gate_reasons,
+                        gate_state_path=gate_state_path,
+                        run_date=latest_iso,
+                    )
+                print_fn(f"gate notify failed: {exc}")
         notify_enabled = False
 
     return ScheduledNotificationArtifacts(

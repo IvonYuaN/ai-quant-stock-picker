@@ -398,6 +398,22 @@ def test_score_symbol_applies_screening_strategy_weights() -> None:
     assert boosted.score > base.score
 
 
+def test_score_symbol_skips_unlisted_strategy_when_weights_are_explicit() -> None:
+    frame = _frame("VOL", 0.004, 1.8)
+
+    pick = score_symbol(
+        "VOL",
+        frame,
+        ScreeningConfig(min_avg_amount=1, strategy_weights={"rps_momentum": 1.0}),
+        ScoringThresholds(),
+        Thresholds(),
+    )
+
+    assert pick is not None
+    assert "volume_breakout" not in pick.strategies
+    assert "volume_breakout" not in pick.metrics["strategy_weights"]
+
+
 def test_score_symbol_records_strategy_weight_feedback() -> None:
     frame = _frame("VOL", 0.004, 1.8)
 
@@ -468,6 +484,19 @@ def test_score_symbol_uses_single_threshold_snapshot_for_n_rebound() -> None:
     assert disabled is not None
     assert "n_rebound" in enabled.strategies
     assert "n_rebound" not in disabled.strategies
+
+
+def test_screen_universe_preserves_full_threshold_snapshot_for_n_rebound() -> None:
+    frame = _n_rebound_frame()
+
+    picks = screen_universe(
+        {"NREB": frame},
+        ScreeningConfig(min_avg_amount=1, min_bars=20),
+        thresholds=Thresholds(n_rebound=NReboundThresholds(enabled=False)),
+    )
+
+    assert picks
+    assert "n_rebound" not in picks[0].strategies
 
 
 def test_screen_universe_skips_invalid_frames() -> None:

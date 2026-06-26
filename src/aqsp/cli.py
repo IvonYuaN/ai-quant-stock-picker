@@ -53,6 +53,7 @@ from aqsp.freshness import assert_fresh_data, latest_trade_date
 from aqsp.ledger import (
     ExecutionConfig,
     append_predictions,
+    cold_start_min_days,
     append_run_event,
     compute_paper_mark_to_market_pnl,
     execution_config_from_thresholds,
@@ -255,22 +256,10 @@ HELDOUT_TRAIN_CUTOFF = "2024-12-31"
 WALKFORWARD_GATE_PATH = "data/walkforward_gate.json"
 GATE_NOTIFY_STATE_PATH = "data/gate_notify_state.json"
 NOTIFY_STATE_PATH = "data/notify_state.json"
-# 冷启动期最低独立信号日。宪法 §1.3 #7/#14 明确要求生产至少 30 个独立信号日。
-DEFAULT_COLD_START_MIN_DAYS = 30
-COLD_START_MIN_DAYS = DEFAULT_COLD_START_MIN_DAYS
 
 
 def _cold_start_min_days() -> int:
-    raw = os.getenv("AQSP_COLD_START_MIN_DAYS", "").strip()
-    if not raw:
-        return DEFAULT_COLD_START_MIN_DAYS
-    try:
-        value = int(raw)
-    except ValueError:
-        return DEFAULT_COLD_START_MIN_DAYS
-    if str(os.getenv("PYTEST_CURRENT_TEST", "")).strip():
-        return max(value, 1)
-    return max(value, DEFAULT_COLD_START_MIN_DAYS)
+    return cold_start_min_days()
 
 
 def _resolve_runtime_state_path(path: str) -> str:
@@ -1121,8 +1110,8 @@ def _source_runtime_metadata(
     )
 
 
-def _get_source(source_name: str):
-    return build_data_source(source_name, cache=DataCache())
+def _get_source(source_name: str, *, cache: DataCache | None = None):
+    return build_data_source(source_name, cache=cache or DataCache())
 
 
 def _fetch_frames_for_cli(
@@ -4657,9 +4646,7 @@ def run_monitor(args: argparse.Namespace) -> int:
             print("✅ 所有监控项正常")
         return 0
 
-    alert_msg = format_alert(triggered)
-    print(alert_msg)
-
+    printed_alert = False
     if args.notify and not args.dry_run:
         notify_targets = [r for r in triggered if r.severity == "critical"]
         warning_notify_enabled = os.getenv(
@@ -4680,7 +4667,15 @@ def run_monitor(args: argparse.Namespace) -> int:
                 "(set AQSP_MONITOR_NOTIFY_WARNINGS=true to enable)"
             )
         if notify_targets:
-            send_alerts(notify_targets)
+            sent_targets = send_alerts(notify_targets) or []
+            if sent_targets:
+                print(format_alert(sent_targets))
+                printed_alert = True
+            else:
+                print("monitor alert still active; duplicate suppressed")
+
+    if not printed_alert and (args.dry_run or not args.notify):
+        print(format_alert(triggered))
 
     return 1 if any(r.severity == "critical" for r in triggered) else 0
 

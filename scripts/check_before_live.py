@@ -173,6 +173,7 @@ def check_before_live(
     findings.append(_check_short_line_subcommand_universe(root))
     findings.append(_check_cold_start_gate_config(root))
     findings.append(_check_strategy_threshold_consistency(thresholds))
+    findings.append(_check_strategy_runtime_threshold_application(root))
     findings.append(_check_regime_strategy_weight_blending(root))
     findings.append(_check_pbo_diagnostics(root, gate_path))
     findings.append(_check_trading_calendar_coverage(root, today))
@@ -662,6 +663,34 @@ def _strategy_threshold_consistency_blockers(thresholds: Thresholds) -> list[str
     if not thresholds.triple_rise.enabled and composite.triple_rise_weight > 0:
         blockers.append("triple_rise.enabled=false but composite.triple_rise_weight>0")
     return blockers
+
+
+def _check_strategy_runtime_threshold_application(root: Path) -> ReadinessFinding:
+    path = root / "src" / "aqsp" / "strategy.py"
+    if not path.exists():
+        return ReadinessFinding(
+            "strategy_runtime_threshold_application",
+            True,
+            "source tree unavailable; skipped",
+        )
+    text = path.read_text(encoding="utf-8")
+    screen_block = _cli_function_block(text, "screen_universe")
+    score_block = _cli_function_block(text, "score_symbol")
+    ok = (
+        "current_thresholds" in screen_block
+        and "score_symbol(symbol, frame, config, scoring, current_thresholds)"
+        in screen_block
+        and "if config.strategy_weights and signal.strategy_id not in config.strategy_weights:"
+        in score_block
+        and "continue" in score_block
+    )
+    return ReadinessFinding(
+        "strategy_runtime_threshold_application",
+        ok,
+        "ok"
+        if ok
+        else "runtime screening must pass full Thresholds and skip strategy ids omitted by explicit regime weights",
+    )
 
 
 def _check_regime_strategy_weight_blending(root: Path) -> ReadinessFinding:
@@ -1171,13 +1200,15 @@ def _check_monitor_warning_notify_guard(root: Path) -> ReadinessFinding:
         "AQSP_MONITOR_NOTIFY_WARNINGS" in block
         and "warning_targets" in block
         and "notify_targets.extend(warning_targets)" in block
+        and "sent_targets = send_alerts(notify_targets)" in block
+        and "monitor alert still active; duplicate suppressed" in block
     )
     return ReadinessFinding(
         "monitor_warning_notify_guard",
         ok,
         "ok"
         if ok
-        else "monitor warning pushes must require AQSP_MONITOR_NOTIFY_WARNINGS=true",
+        else "monitor warning pushes must require AQSP_MONITOR_NOTIFY_WARNINGS=true and full alert bodies must print only after notify dedupe",
     )
 
 

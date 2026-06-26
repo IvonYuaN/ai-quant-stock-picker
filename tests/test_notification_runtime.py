@@ -11,6 +11,7 @@ from aqsp.notification_runtime import (
     finalize_scheduled_notification,
     finalize_scheduled_outputs,
     gate_notification_allowed,
+    high_frequency_task,
 )
 from aqsp.notifier import NotifyResult
 
@@ -160,7 +161,39 @@ def test_finalize_scheduled_notification_suppresses_gate_push_outside_daily(
     )
 
     assert artifacts.notify_enabled is False
+    assert artifacts.markdown == "# 原始报告"
     assert gate_calls == []
+    assert "gate notify: skipped outside daily task" in seen
+
+
+def test_finalize_scheduled_notification_keeps_gate_guidance_for_manual_run(
+    monkeypatch,
+) -> None:
+    seen: list[str] = []
+    monkeypatch.delenv("AQSP_RUN_TASK_ID", raising=False)
+    monkeypatch.delenv("AQSP_NOTIFY", raising=False)
+
+    artifacts = finalize_scheduled_notification(
+        markdown="# 原始报告",
+        args_notify=True,
+        gate_ok=False,
+        gate_reasons=["冷启动未满: 14/30 个独立信号日"],
+        next_actions=["继续按日运行主链。"],
+        latest_iso="2026-06-17",
+        notify_mode="summary",
+        dispatch_gate_notification_fn=lambda **_kwargs: [],
+        should_send_gate_notification_fn=lambda **_kwargs: True,
+        format_notification_gate_block_fn=lambda reasons, actions: (
+            f"BLOCK:{reasons[0]}|{actions[0]}\n"
+        ),
+        legacy_notify_fn=None,
+        print_fn=seen.append,
+    )
+
+    assert artifacts.notify_enabled is False
+    assert artifacts.markdown.startswith(
+        "BLOCK:冷启动未满: 14/30 个独立信号日|继续按日运行主链。"
+    )
     assert "gate notify: skipped outside daily task" in seen
 
 
@@ -393,6 +426,15 @@ def test_gate_notification_allowed_only_for_main_tasks(monkeypatch) -> None:
     assert gate_notification_allowed("scheduled") is True
     assert gate_notification_allowed("intraday") is False
     assert gate_notification_allowed("midday") is False
+
+
+def test_high_frequency_task_identifies_noisy_runners(monkeypatch) -> None:
+    monkeypatch.setenv("AQSP_RUN_TASK_ID", "intraday")
+    assert high_frequency_task() is True
+    assert high_frequency_task("midday") is True
+    assert high_frequency_task("daily") is False
+    monkeypatch.delenv("AQSP_RUN_TASK_ID", raising=False)
+    assert high_frequency_task("") is False
 
 
 def test_finalize_scheduled_outputs_writes_report_and_csv(tmp_path: Path) -> None:
