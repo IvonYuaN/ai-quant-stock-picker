@@ -584,6 +584,22 @@ def test_sqlite_daily_coverage_uses_batched_group_query(
     ) == ["600000", "600001", "600002", "600003", "600004"]
 
 
+def test_sqlite_db_source_fetch_daily_filters_to_covered_symbols(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "astocks_raw.db"
+    _make_sqlite_daily_db(db_path, symbols=2, days=30)
+    source = SqliteDbSource(db_path=db_path, cache=None)
+
+    result = source.fetch_daily(
+        ["600000", "600001", "600999"],
+        date(2024, 1, 1),
+        date(2024, 1, 30),
+    )
+
+    assert list(result) == ["600000", "600001"]
+
+
 def test_sqlite_db_source_fetch_index_uses_raw_close_when_qfq_differs(
     tmp_path: Path,
 ) -> None:

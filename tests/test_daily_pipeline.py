@@ -1115,6 +1115,39 @@ def test_write_result_file_appends_daily_run_history(tmp_path: Path) -> None:
     ]
 
 
+def test_write_result_file_marks_circuit_breaker_run_as_successful_history(
+    tmp_path: Path,
+) -> None:
+    daily_pipeline = _load_daily_pipeline_module()
+    result = daily_pipeline.PipelineResult(
+        started_at="2026-06-02T18:00:00+08:00",
+        finished_at="2026-06-02T18:00:30+08:00",
+        duration_seconds=30.0,
+        steps=[
+            daily_pipeline.StepResult(
+                "策略运行",
+                True,
+                2.0,
+                details={"raw_exit_code": 2, "circuit_breaker": True, "gate_ok": True},
+            )
+        ],
+        overall_success=True,
+        summary="ok",
+    )
+
+    daily_pipeline._write_result_file(result, tmp_path)
+
+    rows = [
+        json.loads(line)
+        for line in (
+            tmp_path / "data" / "daily_run_history.jsonl"
+        ).read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert rows[0]["success"] is True
+    assert rows[0]["exit_code"] == 0
+
+
 def test_main_writes_notify_status_after_summary_send(
     monkeypatch, tmp_path: Path
 ) -> None:
@@ -1455,6 +1488,11 @@ def test_step_run_strategy_uses_real_benchmark_for_regime(
         return 0
 
     monkeypatch.setattr("aqsp.cli.main", fake_main)
+    monkeypatch.setattr(
+        daily_pipeline,
+        "_resolve_symbols",
+        lambda _config, _logger: ["000001", "000002"],
+    )
     config = daily_pipeline.PipelineConfig(
         project_root=tmp_path,
         source="sqlite_db",
@@ -1485,8 +1523,58 @@ def test_step_run_strategy_uses_real_benchmark_for_regime(
 
     assert result["exit_code"] == 0
     argv = seen["argv"]
+    assert argv[argv.index("--symbols") + 1] == "000001,000002"
     assert argv[argv.index("--benchmark-symbol") + 1] == "000300"
     assert "--notify" not in argv
+
+
+def test_step_run_strategy_treats_circuit_breaker_as_controlled_result(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    daily_pipeline = _load_daily_pipeline_module()
+    report_path = tmp_path / "reports" / "latest.md"
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text("# report\n", encoding="utf-8")
+
+    monkeypatch.setattr("aqsp.cli.main", lambda _argv: 2)
+    monkeypatch.setattr(
+        daily_pipeline,
+        "_resolve_symbols",
+        lambda _config, _logger: ["000001", "000002"],
+    )
+    config = daily_pipeline.PipelineConfig(
+        project_root=tmp_path,
+        source="sqlite_db",
+        mode="close",
+        limit=10,
+        max_universe=0,
+        min_avg_amount=50_000_000,
+        max_data_lag_days=3,
+        enable_online_factors=False,
+        allow_online_fallback=True,
+        ledger_path="data/predictions.jsonl",
+        report_path="reports/latest.md",
+        csv_path="reports/latest.csv",
+        briefing_path="reports/briefing.md",
+        paper_report_path="reports/paper.md",
+        dashboard_html="dist/dashboard/index.html",
+        dashboard_db="dist/dashboard/aqsp.db",
+        paper_ledger="data/paper_trades.jsonl",
+        closing_review_path="reports/closing_review.md",
+        notify=False,
+        notify_mode="summary",
+        dry_run=False,
+        enable_debate=False,
+        enable_auto_evolution=False,
+    )
+
+    result = daily_pipeline._step_run_strategy(config, logging.getLogger("test"))
+
+    assert result["exit_code"] == 0
+    assert result["raw_exit_code"] == 2
+    assert result["circuit_breaker"] is True
+    assert result["gate_ok"] is True
 
 
 def test_validate_predictions_fetches_benchmark_from_ledger(

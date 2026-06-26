@@ -374,11 +374,14 @@ def _step_run_strategy(
     config: PipelineConfig, logger: logging.Logger
 ) -> dict[str, Any]:
     logger.info("  执行选股策略 (mode=%s, limit=%d)", config.mode, config.limit)
+    symbols = _resolve_symbols(config, logger)
 
     argv = [
         "run",
         "--source",
         config.source,
+        "--symbols",
+        ",".join(symbols),
         "--mode",
         config.mode,
         "--limit",
@@ -407,11 +410,11 @@ def _step_run_strategy(
 
     exit_code = main(argv)
 
-    if exit_code == 2:
-        logger.warning("  策略运行完成但熔断器触发 (exit_code=2)")
-        return {"exit_code": 2, "circuit_breaker": True}
     if exit_code != 0:
-        raise DataError(f"策略运行失败, exit_code={exit_code}")
+        if exit_code == 2:
+            logger.warning("  策略运行完成但熔断器触发 (exit_code=2)")
+        else:
+            raise DataError(f"策略运行失败, exit_code={exit_code}")
 
     report_path = Path(config.project_root / config.report_path)
     report_size = report_path.stat().st_size if report_path.exists() else 0
@@ -424,11 +427,16 @@ def _step_run_strategy(
     )
     logger.info("  报告已生成: %s (%d bytes)", config.report_path, report_size)
 
-    return {
+    result: dict[str, Any] = {
         "exit_code": 0,
+        "raw_exit_code": exit_code,
         "report_size": report_size,
         "gate_ok": not gate_blocked,
     }
+    if exit_code == 2:
+        result["circuit_breaker"] = True
+        result["circuit_breaker_message"] = "组合保护已触发"
+    return result
 
 
 def _step_morning_breakout(

@@ -200,9 +200,26 @@ class SqliteDbSource(DataSource):
         out: dict[str, OhlcvFrame] = {}
         start_str = start.strftime("%Y%m%d")
         end_str = end.strftime("%Y%m%d")
+        effective_symbols = list(symbols)
+        if adjust == "":
+            try:
+                covered_symbols = self.get_symbols_with_daily_coverage(
+                    effective_symbols,
+                    start,
+                    end,
+                    min_rows=None,
+                )
+            except Exception as exc:
+                raise DataError(f"sqlite_db 覆盖检查失败: {exc}") from exc
+            if covered_symbols:
+                effective_symbols = covered_symbols
+            elif effective_symbols:
+                raise DataError(
+                    f"sqlite_db 日线覆盖不足: requested={len(effective_symbols)} covered=0"
+                )
         pending_symbols: list[str] = []
 
-        for symbol in symbols:
+        for symbol in effective_symbols:
             cached = (
                 self.cache.get_ohlcv(symbol, start, end, price_mode=adjust or "raw")
                 if self._use_cache
@@ -261,7 +278,7 @@ class SqliteDbSource(DataSource):
                             )
                         out[symbol] = frame
 
-        require_non_empty_fetch_result(self.name, "日线", symbols, out)
+        require_non_empty_fetch_result(self.name, "日线", effective_symbols, out)
 
         return out
 
