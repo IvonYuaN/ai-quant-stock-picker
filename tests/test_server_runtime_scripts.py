@@ -391,6 +391,17 @@ def test_deploy_setup_env_template_matches_production_readiness() -> None:
     assert "AQSP_SQLITE_DB_PATH=/opt/market-data/astocks_raw.db" in script
 
 
+def test_env_example_defaults_match_production_readiness() -> None:
+    text = (PROJECT_ROOT / ".env.example").read_text(encoding="utf-8")
+
+    assert "AQSP_SYMBOLS=\n" in text
+    assert "AQSP_MAX_UNIVERSE=0" in text
+    assert "AQSP_SOURCE=sqlite_db" in text
+    assert "AQSP_ALLOW_ONLINE_FALLBACK=false" in text
+    assert "AQSP_SQLITE_DB_PATH=/opt/market-data/astocks_raw.db" in text
+    assert "astocks_qfq.db" not in text
+
+
 def test_launchd_daily_wrapper_explicitly_opts_into_legacy_entry() -> None:
     script = (
         PROJECT_ROOT / "scripts" / "launchd" / "aqsp_daily_run_wrapper.sh"

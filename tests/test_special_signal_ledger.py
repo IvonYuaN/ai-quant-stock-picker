@@ -98,3 +98,29 @@ def test_append_special_strategy_signals_keeps_distinct_sub_strategies(
     rows = read_ledger(path)
     assert len(rows) == 2
     assert {row["sub_strategy"] for row in rows} == {"强势观察", "尾盘承接"}
+
+
+def test_append_special_strategy_signals_uses_advisory_lock(
+    tmp_path, monkeypatch
+) -> None:
+    import aqsp.ledger.special_signals as module
+
+    path = tmp_path / "predictions.jsonl"
+    lock_calls: list[str] = []
+    original_lock = module.advisory_lock
+
+    def tracking_lock(lock_path):
+        lock_calls.append(str(lock_path))
+        return original_lock(lock_path)
+
+    monkeypatch.setattr(module, "advisory_lock", tracking_lock)
+
+    append_special_strategy_signals(
+        path,
+        [_signal()],
+        signal_date="2026-06-22",
+        created_at="2026-06-22T15:01:00+08:00",
+        thresholds_version="1.1.11",
+    )
+
+    assert lock_calls == [str(path)]

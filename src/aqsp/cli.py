@@ -745,6 +745,7 @@ def main(argv: list[str] | None = None) -> int:
     morning_cmd.add_argument("--symbols", default="")
     morning_cmd.add_argument("--pool", default="sh300")
     morning_cmd.add_argument("--max-universe", type=int, default=0)
+    morning_cmd.add_argument("--max-data-lag-days", type=int, default=1)
     morning_cmd.add_argument("--top", type=int, default=5)
     morning_cmd.add_argument("--notify", action="store_true")
     morning_cmd.add_argument("--output", default="")
@@ -756,6 +757,7 @@ def main(argv: list[str] | None = None) -> int:
     closing_cmd.add_argument("--symbols", default="")
     closing_cmd.add_argument("--pool", default="sh300")
     closing_cmd.add_argument("--max-universe", type=int, default=0)
+    closing_cmd.add_argument("--max-data-lag-days", type=int, default=1)
     closing_cmd.add_argument("--top", type=int, default=5)
     closing_cmd.add_argument("--notify", action="store_true")
     closing_cmd.add_argument("--output", default="")
@@ -1558,6 +1560,23 @@ def _resolve_run_symbols(
         max_universe=max_universe,
         min_avg_amount=min_avg_amount,
     )
+
+
+def _special_strategy_ledger_write_allowed(
+    frames: dict[str, pd.DataFrame],
+    *,
+    max_data_lag_days: int,
+) -> tuple[bool, str]:
+    from aqsp.core.time import is_trading_day
+
+    today = today_shanghai()
+    if not is_trading_day(today):
+        return False, f"{today.isoformat()} 非交易日"
+    try:
+        latest = assert_fresh_data(frames, max_data_lag_days)
+    except Exception as exc:
+        return False, f"数据新鲜度未通过: {exc}"
+    return True, f"latest={latest.isoformat()}"
 
 
 def _check_sector_concentration_with_runtime_hints(
@@ -5299,6 +5318,13 @@ def run_morning_breakout(args: argparse.Namespace) -> int:
     ledger_path = getattr(args, "ledger", "data/predictions.jsonl")
     thresholds_version = strategy.thresholds.version
     now = now_shanghai()
+    ledger_allowed, ledger_reason = _special_strategy_ledger_write_allowed(
+        frames,
+        max_data_lag_days=int(getattr(args, "max_data_lag_days", 1) or 1),
+    )
+    if not ledger_allowed:
+        print(f"特殊策略 ledger 写入跳过: {ledger_reason}")
+        return 0
     append_special_strategy_signals(
         ledger_path,
         [
@@ -5432,6 +5458,13 @@ def run_closing_premium(args: argparse.Namespace) -> int:
     ledger_path = getattr(args, "ledger", "data/predictions.jsonl")
     thresholds_version = strategy.thresholds.version
     now = now_shanghai()
+    ledger_allowed, ledger_reason = _special_strategy_ledger_write_allowed(
+        frames,
+        max_data_lag_days=int(getattr(args, "max_data_lag_days", 1) or 1),
+    )
+    if not ledger_allowed:
+        print(f"特殊策略 ledger 写入跳过: {ledger_reason}")
+        return 0
     append_special_strategy_signals(
         ledger_path,
         [

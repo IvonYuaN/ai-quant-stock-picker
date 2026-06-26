@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from argparse import Namespace
+from datetime import date
 from datetime import datetime
 import json
 import logging
@@ -8,6 +9,53 @@ from pathlib import Path
 import inspect
 
 import pandas as pd
+
+
+def _fresh_frame(day: str) -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "date": [day],
+            "symbol": ["600000"],
+            "open": [10.0],
+            "high": [10.5],
+            "low": [9.8],
+            "close": [10.2],
+            "volume": [1000],
+            "amount": [10200.0],
+            "suspended": [False],
+            "limit_up": [11.22],
+            "limit_down": [9.18],
+        }
+    )
+
+
+def test_special_strategy_ledger_guard_blocks_non_trading_day(monkeypatch) -> None:
+    import aqsp.cli as cli_mod
+
+    monkeypatch.setattr("aqsp.core.time.is_trading_day", lambda _day: False)
+
+    allowed, reason = cli_mod._special_strategy_ledger_write_allowed(
+        {"600000": _fresh_frame("2026-06-22")},
+        max_data_lag_days=1,
+    )
+
+    assert allowed is False
+    assert "非交易日" in reason
+
+
+def test_special_strategy_ledger_guard_requires_fresh_data(monkeypatch) -> None:
+    import aqsp.cli as cli_mod
+
+    monkeypatch.setattr("aqsp.core.time.is_trading_day", lambda _day: True)
+    monkeypatch.setattr(cli_mod, "today_shanghai", lambda: date(2026, 6, 26))
+
+    allowed, reason = cli_mod._special_strategy_ledger_write_allowed(
+        {"600000": _fresh_frame("2026-06-20")},
+        max_data_lag_days=0,
+    )
+
+    assert allowed is False
+    assert "数据新鲜度未通过" in reason
 
 
 def test_run_evolve_uses_sh300_pool_when_auto_resolving_symbols(monkeypatch) -> None:

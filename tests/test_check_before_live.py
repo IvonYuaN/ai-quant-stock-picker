@@ -1744,6 +1744,36 @@ def test_check_before_live_blocks_wrapper_enabling_daily_notify(
     assert "AQSP_NOTIFY" in finding.detail
 
 
+def test_check_before_live_blocks_unguarded_special_strategy_ledger_writes(
+    tmp_path: Path,
+) -> None:
+    _prepare_ready_runtime(tmp_path)
+    cli_path = tmp_path / "src/aqsp/cli.py"
+    ledger_path = tmp_path / "src/aqsp/ledger/special_signals.py"
+    cli_path.parent.mkdir(parents=True, exist_ok=True)
+    ledger_path.parent.mkdir(parents=True, exist_ok=True)
+    cli_path.write_text(
+        "def run_morning_breakout(args):\n"
+        "    append_special_strategy_signals('x', [])\n"
+        "def run_closing_premium(args):\n"
+        "    append_special_strategy_signals('x', [])\n",
+        encoding="utf-8",
+    )
+    ledger_path.write_text(
+        "def append_special_strategy_signals(path, signals):\n"
+        "    write_ledger(path, [])\n",
+        encoding="utf-8",
+    )
+
+    findings = check_before_live(root=tmp_path, today=date(2026, 6, 14))
+
+    finding = next(
+        item for item in findings if item.gate == "special_strategy_ledger_guards"
+    )
+    assert finding.ok is False
+    assert "trading day plus freshness" in finding.detail
+
+
 def test_check_before_live_requires_pbo_diagnostics_when_gate_failed(
     tmp_path: Path,
 ) -> None:

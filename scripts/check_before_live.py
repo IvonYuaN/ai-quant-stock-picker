@@ -203,6 +203,7 @@ def check_before_live(
     findings.append(_check_backtest_no_global_quantile_leakage(root))
     findings.append(_check_notification_runtime_boundaries(root))
     findings.append(_check_scheduled_service_boundary(root))
+    findings.append(_check_special_strategy_ledger_guards(root))
     findings.append(_check_server_monitor_exit_policy(root))
     findings.extend(_check_notify_state_paths(root))
     findings.extend(_check_runtime_outputs(root))
@@ -1578,6 +1579,36 @@ def _check_scheduled_service_boundary(root: Path) -> ReadinessFinding:
         "scheduled_service_boundary",
         ok,
         "ok" if ok else "run_scheduled must dispatch through services.scheduled",
+    )
+
+
+def _check_special_strategy_ledger_guards(root: Path) -> ReadinessFinding:
+    cli_path = root / "src" / "aqsp" / "cli.py"
+    ledger_path = root / "src" / "aqsp" / "ledger" / "special_signals.py"
+    if not cli_path.exists() or not ledger_path.exists():
+        return ReadinessFinding(
+            "special_strategy_ledger_guards",
+            True,
+            "source tree unavailable; skipped",
+        )
+    cli_text = cli_path.read_text(encoding="utf-8")
+    ledger_text = ledger_path.read_text(encoding="utf-8")
+    helper = _cli_function_block(cli_text, "_special_strategy_ledger_write_allowed")
+    ok = (
+        "with advisory_lock(path):" in ledger_text
+        and "is_trading_day(today)" in helper
+        and "assert_fresh_data(frames, max_data_lag_days)" in helper
+        and "_special_strategy_ledger_write_allowed("
+        in _cli_function_block(cli_text, "run_morning_breakout")
+        and "_special_strategy_ledger_write_allowed("
+        in _cli_function_block(cli_text, "run_closing_premium")
+    )
+    return ReadinessFinding(
+        "special_strategy_ledger_guards",
+        ok,
+        "ok"
+        if ok
+        else "special strategy ledger writes must be locked and gated by trading day plus freshness",
     )
 
 
