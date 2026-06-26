@@ -181,6 +181,12 @@ AQSP_NOTIFY_MODE=summary
 SERVERCHAN_SENDKEY=你的Server酱SendKey
 ```
 
+监控告警如需推送，再单独开启：
+
+```bash
+AQSP_MONITOR_NOTIFY=true
+```
+
 消息面雷达如果要启用模型复核，再加：
 
 ```bash
@@ -190,7 +196,7 @@ AQSP_NEWS_SOURCE_TIMEOUT_SECONDS=4
 AQSP_NEWS_TASK_TIMEOUT_SECONDS=300
 ```
 
-注意：选股推荐通知仍受冷启动 + walk-forward 双门保护；收盘复盘、午盘分析、消息面雷达、服务器监控不依赖这道选股 gate。
+注意：选股推荐通知仍受冷启动 + walk-forward 双门保护；收盘复盘、午盘分析、消息面雷达不依赖这道选股 gate。服务器监控现在默认只记日志，只有设置 `AQSP_MONITOR_NOTIFY=true` 才推送。
 
 ## crontab 定时任务（兼容）
 
@@ -307,7 +313,13 @@ bash /opt/aqsp/scripts/init_server_runtime.sh
 bash /opt/aqsp/scripts/server_monitor.sh
 ```
 
-默认只推送 `critical` 级别告警；如果要连 `warning` 也推送：
+默认不推送手机告警；如果要开启监控推送，先打开：
+
+```bash
+echo 'AQSP_MONITOR_NOTIFY=true' >> /opt/aqsp/.env
+```
+
+开启后默认只推送 `critical` 级别告警；如果要连 `warning` 也推送：
 
 ```bash
 echo 'AQSP_MONITOR_NOTIFY_WARNINGS=true' >> /opt/aqsp/.env

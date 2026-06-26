@@ -14,6 +14,7 @@ from aqsp.notification_runtime import (
     high_frequency_task,
 )
 from aqsp.notifier import NotifyResult
+from aqsp.runtime.gate_notify import normalize_gate_run_date
 
 
 def test_finalize_scheduled_notification_disables_notify_and_prefixes_markdown(
@@ -227,6 +228,11 @@ def test_finalize_scheduled_notification_uses_explicit_task_id_over_env(
     assert gate_calls == []
     assert legacy_calls == []
     assert "gate notify: skipped outside daily task" in seen
+
+
+def test_normalize_gate_run_date_collapses_intraday_timestamp() -> None:
+    assert normalize_gate_run_date("2026-06-17T10:20:30+08:00") == "2026-06-17"
+    assert normalize_gate_run_date("2026-06-17") == "2026-06-17"
 
 
 def test_finalize_scheduled_notification_fails_closed_when_gate_state_fails(

@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from datetime import date
+
 import pandas as pd
+import pytest
 
 from aqsp.data.intraday import IntradayService
 from aqsp.data.realtime import RealtimeService
@@ -76,6 +79,84 @@ def test_synthesize_daily_from_intraday():
     assert df["low"].iloc[0] == 9.9
     assert df["close"].iloc[0] == 10.2
     assert df["volume"].iloc[0] == 3000
+
+
+def test_merge_intraday_bar_into_daily_replaces_same_trade_day() -> None:
+    intraday_data = {
+        "600000": pd.DataFrame(
+            {
+                "date": ["2026-06-26 09:30:00", "2026-06-26 09:35:00"],
+                "open": [10.0, 10.1],
+                "high": [10.2, 10.4],
+                "low": [9.9, 10.0],
+                "close": [10.1, 10.3],
+                "volume": [1000, 2000],
+                "amount": [10100.0, 20600.0],
+                "symbol": ["600000", "600000"],
+                "name": ["test", "test"],
+            }
+        )
+    }
+    daily_data = {
+        "600000": pd.DataFrame(
+            {
+                "date": ["2026-06-25", "2026-06-26"],
+                "symbol": ["600000", "600000"],
+                "name": ["test", "test"],
+                "open": [9.8, 9.9],
+                "high": [10.0, 10.0],
+                "low": [9.7, 9.8],
+                "close": [9.9, 10.0],
+                "volume": [500, 600],
+                "amount": [4950.0, 6000.0],
+                "suspended": [False, False],
+                "limit_up": [10.89, 11.0],
+                "limit_down": [8.91, 9.0],
+                "adj_factor": [1.0, 1.0],
+            }
+        )
+    }
+
+    source = MockSource(intraday_data=intraday_data)
+    service = IntradayService(source)
+
+    merged = service.merge_intraday_bar_into_daily(
+        daily_data,
+        ["600000"],
+        target_date=date(2026, 6, 26),
+    )
+
+    frame = merged["600000"]
+    assert list(frame["date"]) == ["2026-06-25", "2026-06-26"]
+    assert frame["close"].iloc[-1] == 10.3
+    assert frame["volume"].iloc[-1] == 3000
+    assert frame["amount"].iloc[-1] == pytest.approx(30700.0)
+
+
+def test_merge_intraday_bar_into_daily_requires_target_day_bars() -> None:
+    intraday_data = {
+        "600000": pd.DataFrame(
+            {
+                "date": ["2026-06-25 14:55:00"],
+                "open": [10.0],
+                "high": [10.2],
+                "low": [9.9],
+                "close": [10.1],
+                "volume": [1000],
+                "symbol": ["600000"],
+                "name": ["test"],
+            }
+        )
+    }
+    source = MockSource(intraday_data=intraday_data)
+    service = IntradayService(source)
+
+    with pytest.raises(Exception, match="当日 bar"):
+        service.merge_intraday_bar_into_daily(
+            {},
+            ["600000"],
+            target_date=date(2026, 6, 26),
+        )
 
 
 def test_get_current_bar():

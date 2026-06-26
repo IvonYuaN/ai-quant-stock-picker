@@ -10,6 +10,19 @@ from aqsp.utils.jsonl_io import advisory_lock, atomic_write_text
 GATE_NOTIFY_PENDING_TTL_MINUTES = 30
 
 
+def normalize_gate_run_date(run_date: str = "") -> str:
+    text = str(run_date or "").strip()
+    if len(text) >= 10:
+        candidate = text[:10]
+        try:
+            datetime.fromisoformat(candidate)
+        except ValueError:
+            pass
+        else:
+            return candidate
+    return now_shanghai().date().isoformat()
+
+
 def should_send_gate_notification(
     *,
     gate_ok: bool,
@@ -24,7 +37,7 @@ def should_send_gate_notification(
             return False
 
         fingerprint = gate_reason_fingerprint(gate_reasons)
-        date_key = str(run_date or now_shanghai().date().isoformat())
+        date_key = normalize_gate_run_date(run_date)
         state = _read_gate_notify_state(path)
         sent_by_date = state.get("sent_by_date", {})
         day_entry = (
@@ -57,7 +70,7 @@ def reserve_gate_notification(
             return False
 
         fingerprint = gate_reason_fingerprint(gate_reasons)
-        date_key = str(run_date or now_shanghai().date().isoformat())
+        date_key = normalize_gate_run_date(run_date)
         state = _read_gate_notify_state(path)
         sent_by_date = state.get("sent_by_date", {})
         if not isinstance(sent_by_date, dict):
@@ -97,7 +110,7 @@ def mark_gate_notification_sent(
     path = Path(state_path)
     with advisory_lock(path):
         fingerprint = gate_reason_fingerprint(gate_reasons)
-        date_key = str(run_date or now_shanghai().date().isoformat())
+        date_key = normalize_gate_run_date(run_date)
         state = _read_gate_notify_state(path)
         sent_by_date = state.get("sent_by_date", {})
         if not isinstance(sent_by_date, dict):
@@ -122,7 +135,7 @@ def mark_gate_notification_failed(
     path = Path(state_path)
     with advisory_lock(path):
         fingerprint = gate_reason_fingerprint(gate_reasons)
-        date_key = str(run_date or now_shanghai().date().isoformat())
+        date_key = normalize_gate_run_date(run_date)
         state = _read_gate_notify_state(path)
         sent_by_date = state.get("sent_by_date", {})
         if not isinstance(sent_by_date, dict):

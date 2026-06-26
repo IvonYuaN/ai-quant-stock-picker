@@ -85,6 +85,36 @@ def test_count_independent_signal_days_ignores_backfill_no_pick_markers(
     assert count_independent_signal_days(str(ledger)) == 1
 
 
+def test_count_independent_signal_days_counts_real_run_days_without_picks(
+    tmp_path,
+) -> None:
+    ledger = tmp_path / "predictions.jsonl"
+    rows = [
+        {
+            "signal_date": "2026-06-01",
+            "symbol": "__RUN__",
+            "status": "run_completed_no_picks",
+            "event_type": "run_completed_no_picks",
+            "thresholds_version": "1.1.1",
+        },
+        {
+            "signal_date": "2026-06-02",
+            "symbol": "600036",
+            "thresholds_version": "1.1.1",
+            "status": "watch_only",
+        },
+    ]
+    ledger.write_text(
+        "\n".join(json.dumps(row, ensure_ascii=False) for row in rows) + "\n",
+        encoding="utf-8",
+    )
+
+    assert collect_independent_signal_dates(str(ledger)) == {
+        "2026-06-01",
+        "2026-06-02",
+    }
+
+
 def test_count_independent_signal_days_counts_runtime_date_aliases(tmp_path) -> None:
     ledger = tmp_path / "predictions.jsonl"
     rows = [

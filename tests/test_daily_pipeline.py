@@ -183,6 +183,8 @@ def test_morning_breakout_uses_runtime_symbols_without_sh300_override(
         "600519,300750",
         "--max-universe",
         "50",
+        "--benchmark-symbol",
+        "000300",
         "--top",
         "5",
     ]
@@ -1255,6 +1257,8 @@ def test_closing_premium_uses_explicit_symbols(monkeypatch) -> None:
         "000001,601318",
         "--max-universe",
         "50",
+        "--benchmark-symbol",
+        "000300",
         "--top",
         "5",
     ]

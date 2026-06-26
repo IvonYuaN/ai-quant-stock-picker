@@ -342,6 +342,7 @@ python3 -m pytest -q
 
 ```bash
 cd /opt/aqsp && .venv/bin/python3 -m aqsp doctor --probe-auth --probe-llm
+cd /opt/aqsp && AQSP_MONITOR_NOTIFY=true bash scripts/server_monitor.sh
 cd /opt/aqsp && bash scripts/server_monitor.sh
 cd /opt/aqsp && bash scripts/install_server_cron.sh
 cd /opt/aqsp && crontab -l

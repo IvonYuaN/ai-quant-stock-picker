@@ -188,7 +188,7 @@ def _write_notification_state(
 
 
 def notification_fingerprint(*, kind: str, markdown: str) -> str:
-    _ = markdown
+    del markdown
     return str(kind).strip()
 
 

@@ -67,6 +67,12 @@ AQSP_NOTIFY_MODE=summary
 SERVERCHAN_SENDKEY=你的Server酱SendKey
 ```
 
+监控告警如需推送，额外开启：
+
+```bash
+AQSP_MONITOR_NOTIFY=true
+```
+
 消息面雷达模型复核：
 
 ```bash

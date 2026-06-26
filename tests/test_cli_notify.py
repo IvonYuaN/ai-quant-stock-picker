@@ -2811,3 +2811,109 @@ def test_run_scheduled_annotates_candidate_status_in_report_and_notify(
     assert "- 决策: 继续观察名单 | 新晋 | 评分 -9.0" in report
     assert "- 接下来先看: 等待量价继续走强后，再评估是否转入纸面复核名单" in report
     assert "- 再看优先级/时机: 高优先级 / 盘中走强后" in report
+
+
+def test_run_scheduled_skips_gate_for_intraday_task(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
+    import aqsp.cli as cli_mod
+
+    latest = today_shanghai().isoformat()
+    frames = {
+        "600519": pd.DataFrame(
+            [
+                {
+                    "date": latest,
+                    "symbol": "600519",
+                    "name": "贵州茅台",
+                    "open": 1500.0,
+                    "high": 1510.0,
+                    "low": 1490.0,
+                    "close": 1505.0,
+                    "volume": 1000,
+                    "amount": 150500000.0,
+                    "suspended": False,
+                    "limit_up": 1655.5,
+                    "limit_down": 1354.5,
+                }
+            ]
+        )
+    }
+
+    monkeypatch.setenv("AQSP_RUN_TASK_ID", "intraday")
+    monkeypatch.setattr(
+        cli_mod,
+        "_fetch_frames_for_cli_with_metadata",
+        lambda *args, **kwargs: (frames, "eastmoney"),
+    )
+    monkeypatch.setattr(
+        cli_mod, "_resolve_run_symbols", lambda *args, **kwargs: ["600519"]
+    )
+    monkeypatch.setattr(
+        cli_mod,
+        "_check_notification_gate",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            AssertionError("gate should be skipped")
+        ),
+    )
+    monkeypatch.setattr(cli_mod, "validate_predictions", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(cli_mod, "append_predictions", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(cli_mod, "append_run_event", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(cli_mod, "_count_independent_signal_days", lambda *_args, **_kwargs: 0)
+    monkeypatch.setattr(cli_mod, "screen_universe", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(
+        "aqsp.data.anomaly.detect_anomalies",
+        lambda _frames: [],
+    )
+    monkeypatch.setattr(
+        "aqsp.data.freshness.check_freshness",
+        lambda _frames: [],
+    )
+    monkeypatch.setattr(
+        "aqsp.portfolio.sector_check.check_sector_concentration",
+        lambda _symbols: MagicMock(warnings=(), sectors=(), is_concentrated=False),
+    )
+    monkeypatch.setattr(
+        "aqsp.portfolio.correlation.compute_correlation",
+        lambda *_args, **_kwargs: MagicMock(high_corr_pairs=(), matrix={}),
+    )
+
+    class DummyPipeline:
+        def run(self, *_args, **_kwargs):
+            return True, ""
+
+    monkeypatch.setattr(cli_mod, "LethalFilterPipeline", lambda: DummyPipeline())
+    monkeypatch.setattr(
+        "aqsp.universe.t1_filter.filter_t1_held",
+        lambda candidates, **_kwargs: (candidates, []),
+    )
+
+    args = Namespace(
+        mode="close",
+        symbols="600519",
+        csv="",
+        source="eastmoney",
+        limit=1,
+        max_universe=1,
+        min_avg_amount=50_000_000,
+        max_data_lag_days=3,
+        enable_online_factors=False,
+        report=str(tmp_path / "latest.md"),
+        output_csv=str(tmp_path / "latest.csv"),
+        ledger=str(tmp_path / "intraday.jsonl"),
+        horizon_days=3,
+        fee_bps=8.0,
+        slippage_bps=5.0,
+        benchmark_symbol="000300",
+        skip_validation=True,
+        notify=False,
+        enable_debate=False,
+        pool="",
+    )
+
+    exit_code = cli_mod.run_scheduled(args)
+
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    assert "高频任务跳过双门检查: task_id=intraday" in output
+    assert "冷启动统计: ledger=" in output

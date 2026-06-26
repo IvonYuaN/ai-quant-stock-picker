@@ -9,6 +9,8 @@ from pathlib import Path
 import inspect
 
 import pandas as pd
+import pytest
+from aqsp.core.errors import MissingDataError
 
 
 def _fresh_frame(day: str) -> pd.DataFrame:
@@ -58,7 +60,99 @@ def test_special_strategy_ledger_guard_requires_fresh_data(monkeypatch) -> None:
     assert "数据新鲜度未通过" in reason
 
 
-def test_run_evolve_uses_sh300_pool_when_auto_resolving_symbols(monkeypatch) -> None:
+def test_fetch_special_strategy_frames_requires_today_intraday(monkeypatch) -> None:
+    import aqsp.cli as cli_mod
+
+    frames = {
+        "600000": _fresh_frame("2026-06-25"),
+        "000300": _fresh_frame("2026-06-25"),
+    }
+
+    monkeypatch.setattr(
+        cli_mod,
+        "_fetch_frames_for_cli_with_metadata",
+        lambda *_args, **_kwargs: (frames, "eastmoney"),
+    )
+
+    class FakeIntradayService:
+        def __init__(self, _source) -> None:
+            pass
+
+        def merge_intraday_bar_into_daily(self, *_args, **_kwargs):
+            raise MissingDataError("600000", reason="分时数据不含 2026-06-26 当日 bar")
+
+    monkeypatch.setattr(cli_mod, "IntradayService", FakeIntradayService)
+    monkeypatch.setattr(cli_mod, "today_shanghai", lambda: date(2026, 6, 26))
+
+    with pytest.raises(MissingDataError, match="当日 bar"):
+        cli_mod._fetch_special_strategy_frames(
+            "eastmoney",
+            ["600000"],
+            benchmark_symbol="000300",
+        )
+
+
+def test_special_strategy_runtime_ready_requires_enabled_and_regime(monkeypatch) -> None:
+    import aqsp.cli as cli_mod
+
+    class FakeThresholdConfig:
+        enabled = True
+
+    class FakeStrategy:
+        thresholds = object()
+        cfg = FakeThresholdConfig()
+        regime_required = ("stable_bull",)
+
+    monkeypatch.setattr(
+        cli_mod,
+        "_detect_runtime_regime",
+        lambda *_args, **_kwargs: "stable_bear",
+    )
+
+    allowed, regime, reason = cli_mod._special_strategy_runtime_ready(
+        strategy=FakeStrategy(),
+        frames={"000300": _fresh_frame("2026-06-26")},
+        benchmark_symbol="000300",
+    )
+
+    assert allowed is False
+    assert regime == "stable_bear"
+    assert "市场状态不匹配" in reason
+
+
+def test_special_strategy_runtime_ready_blocks_disabled_threshold(monkeypatch) -> None:
+    import aqsp.cli as cli_mod
+
+    class FakeThresholdConfig:
+        enabled = False
+
+    class FakeStrategy:
+        thresholds = object()
+        mb = FakeThresholdConfig()
+        regime_required = ()
+
+    monkeypatch.setattr(
+        cli_mod,
+        "_detect_runtime_regime",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("should not detect regime")
+        ),
+    )
+
+    allowed, regime, reason = cli_mod._special_strategy_runtime_ready(
+        strategy=FakeStrategy(),
+        frames={"000300": _fresh_frame("2026-06-26")},
+        benchmark_symbol="000300",
+    )
+
+    assert allowed is False
+    assert regime == ""
+    assert reason == "策略已禁用"
+
+
+def test_run_evolve_uses_full_runtime_universe_when_auto_resolving_symbols(
+    monkeypatch,
+) -> None:
     import aqsp.cli as cli_mod
 
     seen: dict[str, object] = {}
@@ -106,7 +200,7 @@ def test_run_evolve_uses_sh300_pool_when_auto_resolving_symbols(monkeypatch) -> 
     exit_code = cli_mod.run_evolve(args)
 
     assert exit_code == 0
-    assert seen["pool_name"] == "sh300"
+    assert seen["pool_name"] == ""
     assert seen["symbols"] == ""
     assert seen["max_universe"] == 0
     assert seen["benchmark_symbol"] is None
@@ -988,7 +1082,7 @@ def test_run_scheduled_logs_learning_proposal_failure(
     assert "学习权重提案计算失败，按无提案继续: ledger boom" in caplog.text
 
 
-def test_run_mine_factors_uses_sh300_pool_when_auto_resolving_symbols(
+def test_run_mine_factors_uses_full_runtime_universe_when_auto_resolving_symbols(
     monkeypatch,
 ) -> None:
     import aqsp.cli as cli_mod
@@ -1047,7 +1141,7 @@ def test_run_mine_factors_uses_sh300_pool_when_auto_resolving_symbols(
     exit_code = cli_mod.run_mine_factors(args)
 
     assert exit_code == 0
-    assert seen["pool_name"] == "sh300"
+    assert seen["pool_name"] == ""
     assert seen["symbols"] == ""
     assert seen["benchmark_symbol"] is None
     assert seen["days"] == 250
@@ -1269,7 +1363,7 @@ def test_run_evolve_prefers_aqsp_symbols_when_configured(monkeypatch) -> None:
 
     assert exit_code == 0
     assert seen["symbols"] == "600519,300750"
-    assert seen["pool_name"] == "sh300"
+    assert seen["pool_name"] == ""
     assert seen["benchmark_symbol"] is None
     assert seen["days"] == 250
 

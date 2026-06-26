@@ -15,7 +15,7 @@ from aqsp.config import (
     load_debate_runtime_config,
     load_runtime_config,
 )
-from aqsp.core.errors import DataError
+from aqsp.core.errors import DataError, MissingDataError
 from aqsp.core.time import now_shanghai, today_shanghai
 from aqsp.core.types import RunMetadata
 from aqsp.data.registry import (
@@ -33,6 +33,7 @@ from aqsp.data.source_health import (
     record_source_success,
 )
 from aqsp.data import (
+    IntradayService,
     fetch_frames_for_cli_with_metadata,
     fetch_with_source,
     load_csv,
@@ -494,7 +495,7 @@ def main(argv: list[str] | None = None) -> int:
 
     wf = sub.add_parser("walkforward", help="run walk-forward backtest")
     wf.add_argument(
-        "--symbols", default="", help="comma separated symbols (default: HS300)"
+        "--symbols", default="", help="comma separated symbols (default: full market)"
     )
     wf.add_argument(
         "--symbols-file",
@@ -555,8 +556,8 @@ def main(argv: list[str] | None = None) -> int:
     wf.add_argument(
         "--pool",
         type=str,
-        default=None,
-        help="标的池: sh300, zz500, zz1000, all (默认: sh300)",
+        default="all",
+        help="标的池: sh300, zz500, zz1000, all (默认: all)",
     )
     wf.add_argument(
         "--tiered-stop",
@@ -732,7 +733,7 @@ def main(argv: list[str] | None = None) -> int:
         "multi-factor", help="run multi-factor rotation strategy"
     )
     multi_factor_cmd.add_argument("--source", choices=SOURCE_CHOICES, default="auto")
-    multi_factor_cmd.add_argument("--pool", default="sh300")
+    multi_factor_cmd.add_argument("--pool", default="all")
     multi_factor_cmd.add_argument("--max-universe", type=int, default=0)
     multi_factor_cmd.add_argument("--top", type=int, default=10)
     multi_factor_cmd.add_argument("--output", default="")
@@ -743,9 +744,10 @@ def main(argv: list[str] | None = None) -> int:
     )
     morning_cmd.add_argument("--source", choices=SOURCE_CHOICES, default="auto")
     morning_cmd.add_argument("--symbols", default="")
-    morning_cmd.add_argument("--pool", default="sh300")
+    morning_cmd.add_argument("--pool", default="all")
     morning_cmd.add_argument("--max-universe", type=int, default=0)
     morning_cmd.add_argument("--max-data-lag-days", type=int, default=1)
+    morning_cmd.add_argument("--benchmark-symbol", default="000300")
     morning_cmd.add_argument("--top", type=int, default=5)
     morning_cmd.add_argument("--notify", action="store_true")
     morning_cmd.add_argument("--output", default="")
@@ -755,9 +757,10 @@ def main(argv: list[str] | None = None) -> int:
     closing_cmd = sub.add_parser("closing-premium", help="run closing premium strategy")
     closing_cmd.add_argument("--source", choices=SOURCE_CHOICES, default="auto")
     closing_cmd.add_argument("--symbols", default="")
-    closing_cmd.add_argument("--pool", default="sh300")
+    closing_cmd.add_argument("--pool", default="all")
     closing_cmd.add_argument("--max-universe", type=int, default=0)
     closing_cmd.add_argument("--max-data-lag-days", type=int, default=1)
+    closing_cmd.add_argument("--benchmark-symbol", default="000300")
     closing_cmd.add_argument("--top", type=int, default=5)
     closing_cmd.add_argument("--notify", action="store_true")
     closing_cmd.add_argument("--output", default="")
@@ -1577,6 +1580,59 @@ def _special_strategy_ledger_write_allowed(
     except Exception as exc:
         return False, f"数据新鲜度未通过: {exc}"
     return True, f"latest={latest.isoformat()}"
+
+
+def _special_strategy_runtime_ready(
+    *,
+    strategy: Any,
+    frames: dict[str, pd.DataFrame],
+    benchmark_symbol: str | None,
+) -> tuple[bool, str, str]:
+    threshold_config = getattr(strategy, "mb", None) or getattr(strategy, "cfg", None)
+    if threshold_config is not None and not bool(getattr(threshold_config, "enabled", True)):
+        return False, "", "策略已禁用"
+    regime = _detect_runtime_regime(
+        frames,
+        benchmark_symbol=benchmark_symbol,
+        thresholds=getattr(strategy, "thresholds", None),
+    )
+    required = tuple(getattr(strategy, "regime_required", ()) or ())
+    if required and regime not in required:
+        regime_text = regime or "unknown"
+        return False, regime, f"市场状态不匹配: {regime_text} not in {required}"
+    return True, regime, regime or "ok"
+
+
+def _fetch_special_strategy_frames(
+    source_name: str,
+    symbols: list[str],
+    *,
+    benchmark_symbol: str | None,
+    days: int = 250,
+    intraday_period: str = "5",
+) -> tuple[dict[str, pd.DataFrame], str]:
+    frames, _source = _fetch_frames_for_cli_with_metadata(
+        source_name,
+        symbols,
+        benchmark_symbol=benchmark_symbol,
+        days=days,
+    )
+    if not frames:
+        raise MissingDataError(symbols[0], reason="无法获取历史日线数据")
+    data_source = _get_source(source_name)
+    intraday_service = IntradayService(data_source)
+    merged = intraday_service.merge_intraday_bar_into_daily(
+        _drop_benchmark_frame(frames, benchmark_symbol),
+        symbols,
+        period=intraday_period,
+        target_date=today_shanghai(),
+    )
+    if benchmark_symbol:
+        benchmark_frame = frames.get(benchmark_symbol)
+        if benchmark_frame is None or benchmark_frame.empty:
+            raise MissingDataError(benchmark_symbol, reason="缺少基准指数数据")
+        merged[benchmark_symbol] = benchmark_frame
+    return merged, _source
 
 
 def _check_sector_concentration_with_runtime_hints(
@@ -2734,6 +2790,7 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
         return 0
 
     task_id = str(os.environ.get("AQSP_RUN_TASK_ID", "") or "").strip()
+    normalized_task_id = task_id.lower()
     mode = args.mode or env.mode
     explicit_symbols = args.symbols or ",".join(env.symbols)
     limit = args.limit or env.limit
@@ -3378,6 +3435,20 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
             margin_balance_change_5d=margin_z,
             run_metadata=run_metadata,
         )
+        if not picks:
+            append_run_event(
+                args.ledger,
+                event_date=latest.isoformat(),
+                status="run_completed_no_picks",
+                reason="screened_no_formal_candidates",
+                run_metadata=run_metadata,
+                details={
+                    "screened_count": len(screened_picks),
+                    "final_count": 0,
+                    "regime_at_signal": regime,
+                    "thresholds_version": thresholds.version,
+                },
+            )
 
     _log_run_decisions(
         picks=picks,
@@ -3542,16 +3613,24 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
     output_csv_path = str(getattr(args, "output_csv", "") or "").strip()
     if report_path:
         Path(report_path).parent.mkdir(parents=True, exist_ok=True)
-    # 先检查双门 gate，决定是否放行 notify
-    gate_ok, gate_reasons = _check_notification_gate(cold_start_days=cold_start_days)
-    next_actions = (
-        _notification_gate_actions(
-            gate_reasons,
-            cold_start_days=cold_start_days,
+    # 高频任务只产出结果，不进入双门阻塞通知链。
+    skip_gate_for_high_frequency = normalized_task_id in {"intraday", "midday"}
+    if skip_gate_for_high_frequency:
+        gate_ok = True
+        gate_reasons = []
+        next_actions = []
+    else:
+        gate_ok, gate_reasons = _check_notification_gate(
+            cold_start_days=cold_start_days
         )
-        if not gate_ok
-        else []
-    )
+        next_actions = (
+            _notification_gate_actions(
+                gate_reasons,
+                cold_start_days=cold_start_days,
+            )
+            if not gate_ok
+            else []
+        )
     runtime_config = load_runtime_config()
     notify_mode = runtime_config.notify_mode
     notify_requested = bool(args.notify or runtime_config.notify)
@@ -3561,6 +3640,11 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
     legacy_notify = (
         notify_markdown if notify_markdown is not _notify_markdown_default else None
     )
+    print(
+        f"冷启动统计: ledger={args.ledger} days={cold_start_days}/{cold_start_min_days}"
+    )
+    if skip_gate_for_high_frequency:
+        print(f"高频任务跳过双门检查: task_id={normalized_task_id}")
     notification_artifacts = finalize_scheduled_notification(
         markdown=markdown,
         args_notify=notify_requested,
@@ -3593,7 +3677,7 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
         gate_state_path=_resolve_runtime_state_path(
             os.getenv("AQSP_GATE_NOTIFY_STATE_PATH", GATE_NOTIFY_STATE_PATH)
         ),
-        task_id=task_id,
+        task_id=normalized_task_id,
     )
     finalize_scheduled_outputs(
         markdown=notification_artifacts.markdown,
@@ -4127,8 +4211,7 @@ def run_walkforward(args: argparse.Namespace) -> int:
                 symbols = src.get_available_symbols()
                 print(f"使用全市场标的池: {len(symbols)} 只")
             else:
-                symbols = _get_hs300_symbols(date.fromisoformat(args.start))
-                print(f"数据源不支持全市场查询，回退到沪深300: {len(symbols)} 只")
+                raise DataError("数据源不支持全市场查询，walkforward 不再回退到沪深300")
         elif args.pool and args.pool != "sh300":
             from aqsp.universe.pool import UniversePool
 
@@ -4140,7 +4223,7 @@ def run_walkforward(args: argparse.Namespace) -> int:
             print(f"使用 {pool_name} 标的池: {len(symbols)} 只")
         else:
             symbols = _get_hs300_symbols(date.fromisoformat(args.start))
-            print(f"使用沪深300默认池: {len(symbols)} 只")
+            print(f"使用沪深300标的池: {len(symbols)} 只")
     else:
         # 用户传入的也去重，保持顺序
         seen: set[str] = set()
@@ -4994,7 +5077,7 @@ def run_mine_factors(args: argparse.Namespace) -> int:
     symbols = _resolve_run_symbols(
         args.source,
         explicit_symbols,
-        pool_name="sh300",
+        pool_name="",
         max_universe=_runtime_max_universe(getattr(args, "max_universe", 0)),
         min_avg_amount=10_000_000,
     )
@@ -5076,7 +5159,7 @@ def run_evolve(args: argparse.Namespace) -> int:
     symbols = _resolve_run_symbols(
         args.source,
         explicit_symbols,
-        pool_name="sh300",
+        pool_name="",
         max_universe=_runtime_max_universe(getattr(args, "max_universe", 0)),
         min_avg_amount=10_000_000,
     )
@@ -5242,23 +5325,35 @@ def run_morning_breakout(args: argparse.Namespace) -> int:
 
     print(f"正在获取 {len(symbols)} 只股票数据...")
     try:
-        frames = _fetch_frames_for_cli(
+        frames, _ = _fetch_special_strategy_frames(
             args.source,
             symbols,
-            benchmark_symbol=None,
+            benchmark_symbol=getattr(args, "benchmark_symbol", "000300"),
             days=250,
         )
-    except Exception:
+    except Exception as exc:
+        print(f"无法获取可用盘中数据: {exc}")
         frames = {}
 
     if not frames:
         print("无法获取数据")
         return 1
 
+    runtime_ready, regime, runtime_reason = _special_strategy_runtime_ready(
+        strategy=strategy,
+        frames=frames,
+        benchmark_symbol=getattr(args, "benchmark_symbol", "000300"),
+    )
+    if not runtime_ready:
+        print(f"跳过早盘策略: {runtime_reason}")
+        return 0
+
     print(f"数据获取完成，{len(frames)} 只股票可用")
     print("分析早盘强势股观察信号...")
 
-    signals = strategy.analyze_pre_market(frames)
+    signals = strategy.analyze_pre_market(
+        _drop_benchmark_frame(frames, getattr(args, "benchmark_symbol", "000300"))
+    )
     selected_signals = signals[: args.top]
 
     report = format_morning_signals(selected_signals, top_n=args.top)
@@ -5348,6 +5443,7 @@ def run_morning_breakout(args: argparse.Namespace) -> int:
         signal_date=now.date().isoformat(),
         created_at=now.isoformat(timespec="seconds"),
         thresholds_version=thresholds_version,
+        regime=regime,
         execution=execution_config_from_thresholds(strategy.thresholds),
     )
 
@@ -5380,23 +5476,35 @@ def run_closing_premium(args: argparse.Namespace) -> int:
 
     print(f"正在获取 {len(symbols)} 只股票数据...")
     try:
-        frames = _fetch_frames_for_cli(
+        frames, _ = _fetch_special_strategy_frames(
             args.source,
             symbols,
-            benchmark_symbol=None,
+            benchmark_symbol=getattr(args, "benchmark_symbol", "000300"),
             days=250,
         )
-    except Exception:
+    except Exception as exc:
+        print(f"无法获取可用盘中数据: {exc}")
         frames = {}
 
     if not frames:
         print("无法获取数据")
         return 1
 
+    runtime_ready, regime, runtime_reason = _special_strategy_runtime_ready(
+        strategy=strategy,
+        frames=frames,
+        benchmark_symbol=getattr(args, "benchmark_symbol", "000300"),
+    )
+    if not runtime_ready:
+        print(f"跳过尾盘策略: {runtime_reason}")
+        return 0
+
     print(f"数据获取完成，{len(frames)} 只股票可用")
     print("分析溢价信号...")
 
-    signals = strategy.analyze_closing(frames)
+    signals = strategy.analyze_closing(
+        _drop_benchmark_frame(frames, getattr(args, "benchmark_symbol", "000300"))
+    )
     selected_signals = signals[: args.top]
 
     report = format_closing_signals(selected_signals, top_n=args.top)
@@ -5487,6 +5595,7 @@ def run_closing_premium(args: argparse.Namespace) -> int:
         signal_date=now.date().isoformat(),
         created_at=now.isoformat(timespec="seconds"),
         thresholds_version=thresholds_version,
+        regime=regime,
         execution=execution_config_from_thresholds(strategy.thresholds),
     )
 

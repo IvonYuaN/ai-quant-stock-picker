@@ -569,6 +569,7 @@ def _check_short_line_subcommand_universe(root: Path) -> ReadinessFinding:
         )
     text = cli_path.read_text(encoding="utf-8")
     blockers = []
+    parser_blockers = []
     for marker in (
         "def run_morning_breakout",
         "def run_closing_premium",
@@ -582,10 +583,24 @@ def _check_short_line_subcommand_universe(root: Path) -> ReadinessFinding:
         block = text[start:] if end < 0 else text[start:end]
         if "max_universe=300" in block:
             blockers.append(marker.removeprefix("def "))
+    for default_marker in (
+        'multi_factor_cmd.add_argument("--pool", default="sh300")',
+        'morning_cmd.add_argument("--pool", default="sh300")',
+        'closing_cmd.add_argument("--pool", default="sh300")',
+        'wf.add_argument(\n        "--pool",\n        type=str,\n        default=None,',
+    ):
+        if default_marker in text:
+            parser_blockers.append(default_marker)
+    ok = not blockers and not parser_blockers
+    detail_parts = []
+    if blockers:
+        detail_parts.append("hard-coded 300 universe cap: " + ", ".join(blockers))
+    if parser_blockers:
+        detail_parts.append("default small-pool entrypoints detected")
     return ReadinessFinding(
         "short_line_subcommand_universe",
-        not blockers,
-        "ok" if not blockers else "hard-coded 300 universe cap: " + ", ".join(blockers),
+        ok,
+        "ok" if ok else "; ".join(detail_parts),
     )
 
 
@@ -1619,21 +1634,25 @@ def _check_special_strategy_ledger_guards(root: Path) -> ReadinessFinding:
     cli_text = cli_path.read_text(encoding="utf-8")
     ledger_text = ledger_path.read_text(encoding="utf-8")
     helper = _cli_function_block(cli_text, "_special_strategy_ledger_write_allowed")
+    morning_block = _cli_function_block(cli_text, "run_morning_breakout")
+    closing_block = _cli_function_block(cli_text, "run_closing_premium")
     ok = (
         "with advisory_lock(path):" in ledger_text
         and "is_trading_day(today)" in helper
         and "assert_fresh_data(frames, max_data_lag_days)" in helper
-        and "_special_strategy_ledger_write_allowed("
-        in _cli_function_block(cli_text, "run_morning_breakout")
-        and "_special_strategy_ledger_write_allowed("
-        in _cli_function_block(cli_text, "run_closing_premium")
+        and "_special_strategy_ledger_write_allowed(" in morning_block
+        and "_special_strategy_ledger_write_allowed(" in closing_block
+        and "_fetch_special_strategy_frames(" in morning_block
+        and "_fetch_special_strategy_frames(" in closing_block
+        and "_special_strategy_runtime_ready(" in morning_block
+        and "_special_strategy_runtime_ready(" in closing_block
     )
     return ReadinessFinding(
         "special_strategy_ledger_guards",
         ok,
         "ok"
         if ok
-        else "special strategy ledger writes must be locked and gated by trading day plus freshness",
+        else "special strategy ledger writes must be locked and gated by trading day, freshness, intraday merge, and runtime regime",
     )
 
 

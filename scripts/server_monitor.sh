@@ -13,6 +13,7 @@ LOG_DIR="${PROJECT_ROOT}/logs/monitor"
 RESULT_LOG="${LOG_DIR}/monitor-$(date +%Y-%m-%d).log"
 MONITOR_CONFIG="${AQSP_MONITOR_CONFIG:-config/monitors.yaml}"
 NOTIFY_WARNINGS="${AQSP_MONITOR_NOTIFY_WARNINGS:-false}"
+MONITOR_NOTIFY="${AQSP_MONITOR_NOTIFY:-false}"
 EXIT_ON_ALERT="${AQSP_MONITOR_EXIT_ON_ALERT:-false}"
 QUIET_HEALTHY="${AQSP_MONITOR_QUIET_HEALTHY:-true}"
 LOCK_DIR="${PROJECT_ROOT}/.locks"
@@ -104,7 +105,15 @@ log "项目目录: ${PROJECT_ROOT}"
 log "配置文件: ${MONITOR_CONFIG}"
 log "=========================================="
 
-MONITOR_ARGS=( -m aqsp monitor --config "${MONITOR_CONFIG}" --notify )
+MONITOR_ARGS=( -m aqsp monitor --config "${MONITOR_CONFIG}" )
+case "${MONITOR_NOTIFY,,}" in
+    1|true|yes|on)
+        MONITOR_ARGS+=( --notify )
+        ;;
+    *)
+        log "监控通知未放行，仅记录日志；设置 AQSP_MONITOR_NOTIFY=true 才推送"
+        ;;
+esac
 case "${NOTIFY_WARNINGS,,}" in
     1|true|yes|on) ;;
     *)

@@ -146,10 +146,9 @@ def test_build_briefing_notification_sanitizes_research_wording_in_both_modes() 
     full_markdown = build_briefing_notification(briefing, mode="full")
     combined = "\n".join((summary_markdown, full_markdown))
 
-    assert "纸面重点观察" in combined
+    assert "立即纸面入场记录 600519" in combined
     assert "纸面复核名单" in combined
     assert "纸面记录" in combined
-    assert "纸面持有" in combined
     assert "立即买入" not in combined
     assert "执行名单" not in combined
     assert "执行开仓" not in combined
@@ -806,9 +805,8 @@ def test_build_closing_review_notification_sanitizes_full_and_summary_modes() ->
     combined = "\n".join((summary_markdown, full_markdown))
 
     assert "现在卡在哪" in combined
-    assert "纸面推进" in combined
+    assert "执行纸面观察后纸面记录" in combined
     assert "纸面记录" in combined
-    assert "纸面重点观察" in combined
     assert "纸面入场记录后表现较强" in combined
     assert "执行阻塞" not in combined
     assert "执行开仓" not in combined

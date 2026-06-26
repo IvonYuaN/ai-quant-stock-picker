@@ -1793,7 +1793,29 @@ def test_check_before_live_blocks_unguarded_special_strategy_ledger_writes(
         item for item in findings if item.gate == "special_strategy_ledger_guards"
     )
     assert finding.ok is False
-    assert "trading day plus freshness" in finding.detail
+    assert "intraday merge" in finding.detail
+
+
+def test_check_before_live_blocks_default_sh300_short_line_entrypoints(
+    tmp_path: Path,
+) -> None:
+    _prepare_ready_runtime(tmp_path)
+    cli_path = tmp_path / "src/aqsp/cli.py"
+    cli_path.parent.mkdir(parents=True, exist_ok=True)
+    cli_path.write_text(
+        'multi_factor_cmd.add_argument("--pool", default="sh300")\n'
+        'morning_cmd.add_argument("--pool", default="sh300")\n'
+        'closing_cmd.add_argument("--pool", default="sh300")\n',
+        encoding="utf-8",
+    )
+
+    findings = check_before_live(root=tmp_path, today=date(2026, 6, 14))
+
+    finding = next(
+        item for item in findings if item.gate == "short_line_subcommand_universe"
+    )
+    assert finding.ok is False
+    assert "default small-pool entrypoints detected" in finding.detail
 
 
 def test_check_before_live_requires_pbo_diagnostics_when_gate_failed(

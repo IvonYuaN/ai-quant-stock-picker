@@ -51,6 +51,10 @@ def test_normalize_research_tone_preserves_paper_review_wording() -> None:
         normalize_research_tone("等待量价确认后转入重点跟踪名单")
         == "等待量价确认后转入纸面复核名单"
     )
+    assert normalize_research_tone("主链总览") == "主链总览"
+    assert normalize_research_tone("研究雷达") == "研究雷达"
+    assert normalize_research_tone("当前卡点: 板块集中") == "当前卡点: 板块集中"
+    assert normalize_research_tone("首位候选: 600519") == "首位候选: 600519"
 
 
 def test_normalize_research_tone_removes_process_wording() -> None:

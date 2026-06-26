@@ -423,6 +423,8 @@ def _step_morning_breakout(
         ",".join(symbols),
         "--max-universe",
         str(config.max_universe),
+        "--benchmark-symbol",
+        "000300",
         "--top",
         "5",
     ]
@@ -450,6 +452,8 @@ def _step_closing_premium(
         ",".join(symbols),
         "--max-universe",
         str(config.max_universe),
+        "--benchmark-symbol",
+        "000300",
         "--top",
         "5",
     ]
