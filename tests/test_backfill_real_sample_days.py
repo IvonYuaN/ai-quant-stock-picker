@@ -295,3 +295,66 @@ def test_screen_backfill_picks_batches_and_keeps_global_top_n(monkeypatch) -> No
     assert calls == [["S1", "S2"], ["S3", "S4"], ["S5"]]
     assert [pick.symbol for pick in picks] == ["S5", "S4"]
     assert sorted(pick_frames) == ["S1", "S2", "S3", "S4", "S5"]
+
+
+def test_screen_backfill_picks_reuses_prefetched_first_batch(monkeypatch) -> None:
+    calls: list[list[str]] = []
+
+    def fake_fetch_history_window(**kwargs):
+        batch = list(kwargs["symbols"])
+        calls.append(batch)
+        return {
+            symbol: pd.DataFrame(
+                [{"date": "2026-04-01", "symbol": symbol, "name": symbol, "close": 1.0}]
+            )
+            for symbol in batch
+        }
+
+    def fake_screen(screen_frames, _config, _thresholds):
+        return [
+            PickResult(
+                symbol=symbol,
+                name=symbol,
+                date="2026-04-01",
+                close=10.0,
+                score=float(symbol.replace("S", "")),
+                rating="watch",
+                entry_type="next_open",
+                ideal_buy=10.0,
+                stop_loss=9.5,
+                take_profit=11.0,
+                position="10%",
+            )
+            for symbol in screen_frames
+        ]
+
+    monkeypatch.setattr(backfill, "fetch_history_window", fake_fetch_history_window)
+    monkeypatch.setattr(backfill, "_screen_universe_with_thresholds", fake_screen)
+    monkeypatch.setattr(
+        backfill, "_drop_benchmark_frame", lambda frames, _benchmark: frames
+    )
+    monkeypatch.setattr(backfill, "_enrich_pick_names", lambda picks, _frames: picks)
+
+    picks, _pick_frames = backfill.screen_backfill_picks(
+        source=object(),
+        symbols=["S1", "S2", "S3", "S4"],
+        signal_day=date(2026, 4, 1),
+        lookback_days=120,
+        future_buffer_days=2,
+        benchmark_symbol="000300",
+        thresholds=object(),
+        config=backfill.ScreeningConfig(),
+        limit=4,
+        batch_size=2,
+        prefetched_frames={
+            "S1": pd.DataFrame(
+                [{"date": "2026-04-01", "symbol": "S1", "name": "S1", "close": 1.0}]
+            ),
+            "S2": pd.DataFrame(
+                [{"date": "2026-04-01", "symbol": "S2", "name": "S2", "close": 1.0}]
+            ),
+        },
+    )
+
+    assert calls == [["S3", "S4"]]
+    assert [pick.symbol for pick in picks] == ["S4", "S3", "S2", "S1"]

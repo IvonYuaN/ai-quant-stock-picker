@@ -267,18 +267,27 @@ def screen_backfill_picks(
     config: ScreeningConfig,
     limit: int,
     batch_size: int,
+    prefetched_frames: dict[str, pd.DataFrame] | None = None,
 ) -> tuple[list[PickResult], dict[str, pd.DataFrame]]:
     best_by_symbol: dict[str, PickResult] = {}
     screen_frames_by_symbol: dict[str, pd.DataFrame] = {}
 
-    for symbol_batch in _chunks(symbols, batch_size):
-        raw_frames = fetch_history_window(
-            source=source,
-            symbols=symbol_batch,
-            signal_day=signal_day,
-            lookback_days=lookback_days,
-            future_buffer_days=future_buffer_days,
-        )
+    prefetched = prefetched_frames or {}
+    for index, symbol_batch in enumerate(_chunks(symbols, batch_size)):
+        if index == 0 and prefetched:
+            raw_frames = {
+                symbol: frame
+                for symbol, frame in prefetched.items()
+                if symbol in set(symbol_batch)
+            }
+        else:
+            raw_frames = fetch_history_window(
+                source=source,
+                symbols=symbol_batch,
+                signal_day=signal_day,
+                lookback_days=lookback_days,
+                future_buffer_days=future_buffer_days,
+            )
         screen_frames = truncate_frames_to_date(
             raw_frames,
             end_date=signal_day,
@@ -436,6 +445,7 @@ def backfill_real_sample_days(args: argparse.Namespace) -> int:
                     config=config,
                     limit=args.limit,
                     batch_size=args.screen_batch_size,
+                    prefetched_frames=raw_frames,
                 )
                 if not picks:
                     append_run_event(
