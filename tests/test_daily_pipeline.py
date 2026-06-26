@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from datetime import date
 import importlib.util
 import json
 import logging
@@ -1878,6 +1879,124 @@ def test_resolve_symbols_truncates_available_universe_when_max_universe_positive
     config = daily_pipeline.PipelineConfig(
         project_root=Path.cwd(),
         source="fake",
+        mode="close",
+        limit=10,
+        max_universe=2,
+        min_avg_amount=50_000_000,
+        max_data_lag_days=3,
+        enable_online_factors=False,
+        allow_online_fallback=True,
+        ledger_path="data/predictions.jsonl",
+        report_path="reports/latest.md",
+        csv_path="reports/latest.csv",
+        briefing_path="reports/briefing.md",
+        paper_report_path="reports/paper.md",
+        dashboard_html="dist/dashboard/index.html",
+        dashboard_db="dist/dashboard/aqsp.db",
+        paper_ledger="data/paper_trades.jsonl",
+        closing_review_path="reports/closing_review.md",
+        notify=False,
+        notify_mode="summary",
+        dry_run=False,
+        enable_debate=False,
+        enable_auto_evolution=False,
+    )
+
+    assert daily_pipeline._resolve_symbols(config, logging.getLogger("test")) == [
+        "000001",
+        "000002",
+    ]
+
+
+def test_resolve_symbols_filters_sqlite_db_to_covered_universe(
+    monkeypatch,
+) -> None:
+    from scripts import daily_pipeline
+
+    seen: dict[str, object] = {}
+
+    class FakeSource:
+        def get_available_symbols(self) -> list[str]:
+            return ["000001", "000002", "000003"]
+
+        def get_symbols_with_daily_coverage(
+            self,
+            symbols: list[str],
+            start: date,
+            end: date,
+        ) -> list[str]:
+            seen["symbols"] = list(symbols)
+            seen["start"] = start
+            seen["end"] = end
+            return ["000002", "000003"]
+
+    monkeypatch.delenv("AQSP_SYMBOLS", raising=False)
+    monkeypatch.setattr(
+        daily_pipeline, "_build_data_source", lambda _config: FakeSource()
+    )
+    monkeypatch.setattr(daily_pipeline, "today_shanghai", lambda: date(2026, 6, 26))
+
+    config = daily_pipeline.PipelineConfig(
+        project_root=Path.cwd(),
+        source="sqlite_db",
+        mode="close",
+        limit=10,
+        max_universe=0,
+        min_avg_amount=50_000_000,
+        max_data_lag_days=3,
+        enable_online_factors=False,
+        allow_online_fallback=True,
+        ledger_path="data/predictions.jsonl",
+        report_path="reports/latest.md",
+        csv_path="reports/latest.csv",
+        briefing_path="reports/briefing.md",
+        paper_report_path="reports/paper.md",
+        dashboard_html="dist/dashboard/index.html",
+        dashboard_db="dist/dashboard/aqsp.db",
+        paper_ledger="data/paper_trades.jsonl",
+        closing_review_path="reports/closing_review.md",
+        notify=False,
+        notify_mode="summary",
+        dry_run=False,
+        enable_debate=False,
+        enable_auto_evolution=False,
+    )
+
+    assert daily_pipeline._resolve_symbols(config, logging.getLogger("test")) == [
+        "000002",
+        "000003",
+    ]
+    assert seen["symbols"] == ["000001", "000002", "000003"]
+    assert seen["start"] == date(2018, 6, 28)
+    assert seen["end"] == date(2026, 6, 26)
+
+
+def test_resolve_symbols_truncates_sqlite_db_covered_universe_when_max_universe_positive(
+    monkeypatch,
+) -> None:
+    from scripts import daily_pipeline
+
+    class FakeSource:
+        def get_available_symbols(self) -> list[str]:
+            return ["000001", "000002", "000003"]
+
+        def get_symbols_with_daily_coverage(
+            self,
+            symbols: list[str],
+            start: date,
+            end: date,
+        ) -> list[str]:
+            return ["000001", "000002", "000003"]
+
+    monkeypatch.delenv("AQSP_SYMBOLS", raising=False)
+    monkeypatch.setattr(
+        daily_pipeline, "_build_data_source", lambda _config: FakeSource()
+    )
+    monkeypatch.setattr(daily_pipeline, "today_shanghai", lambda: date(2026, 6, 26))
+
+    config = daily_pipeline.PipelineConfig(
+        project_root=Path.cwd(),
+        source="sqlite_db",
         mode="close",
         limit=10,
         max_universe=2,

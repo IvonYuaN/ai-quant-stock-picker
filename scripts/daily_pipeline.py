@@ -326,6 +326,28 @@ def _resolve_symbols(config: PipelineConfig, logger: logging.Logger) -> list[str
 
     try:
         source = _build_data_source(config)
+        if (
+            config.source == "sqlite_db"
+            and hasattr(source, "get_symbols_with_daily_coverage")
+            and hasattr(source, "get_available_symbols")
+        ):
+            available = source.get_available_symbols()
+            if available:
+                end = today_shanghai()
+                start = end - timedelta(days=365 * 8)
+                covered = source.get_symbols_with_daily_coverage(
+                    available,
+                    start,
+                    end,
+                )
+                if covered:
+                    selected = (
+                        covered[: config.max_universe]
+                        if config.max_universe > 0
+                        else covered
+                    )
+                    logger.info("  sqlite_db 覆盖过滤后保留 %d 只标的", len(selected))
+                    return list(selected)
         if hasattr(source, "get_liquid_symbols"):
             liquid = source.get_liquid_symbols(
                 limit=config.max_universe,
