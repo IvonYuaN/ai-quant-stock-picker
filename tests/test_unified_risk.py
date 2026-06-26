@@ -152,3 +152,26 @@ def test_system_risk_corrupt_state_fails_closed(tmp_path) -> None:
 
     assert check.halt_all_strategies
     assert check.duration_days >= config.halt_trigger_count
+
+
+def test_system_risk_counts_consecutive_triggers_by_trade_day(tmp_path) -> None:
+    config = SystemRiskConfig.from_thresholds(_thresholds())
+    manager = SystemRiskManager(config)
+    manager.state_path = tmp_path / "system_risk.json"
+    snapshot = MarketSnapshot(
+        date=date(2026, 6, 22),
+        hs300_change=0.0,
+        hs300_change_5d=-0.13,
+        limit_up_count=0,
+        limit_down_count=0,
+        market_volatility=0.0,
+        avg_volume_ratio=1.0,
+        north_flow=0.0,
+    )
+
+    first = manager.check_market(snapshot)
+    second = manager.check_market(snapshot)
+
+    assert first.duration_days == 1
+    assert second.duration_days == 1
+    assert not second.halt_all_strategies

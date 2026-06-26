@@ -91,3 +91,26 @@ def test_compute_dynamic_stop_uses_configured_support_lookback() -> None:
 
     assert short.support_level == 10.1
     assert long.support_level == 9.4
+
+
+def test_compute_dynamic_stop_never_recommends_stop_above_price() -> None:
+    frame = pd.DataFrame(
+        {
+            "date": pd.date_range("2026-01-01", periods=5).strftime("%Y-%m-%d"),
+            "open": [10.0, 11.0, 12.0, 13.0, 8.0],
+            "high": [11.0, 12.0, 13.0, 14.0, 9.0],
+            "low": [9.5, 10.5, 11.5, 12.5, 7.5],
+            "close": [10.5, 11.5, 12.5, 13.5, 8.0],
+        }
+    )
+
+    stop = compute_dynamic_stop(
+        frame,
+        10.0,
+        fallback_pct=0.08,
+        recent_low_days=3,
+        trailing_pct=0.01,
+        support_lookback=3,
+    )
+
+    assert stop.recommended_stop < 8.0

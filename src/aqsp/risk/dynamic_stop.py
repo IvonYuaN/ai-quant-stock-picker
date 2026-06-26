@@ -131,13 +131,25 @@ def compute_dynamic_stop(
 
     recommended = max(atr_stop, trailing_stop, support_level)
     recommended = round(recommended, 2)
+    latest_close = float(pd.to_numeric(df["close"], errors="coerce").dropna().iloc[-1])
+    stop_ceiling = round(min(float(entry_price), latest_close) * 0.999, 2)
+    if recommended >= min(float(entry_price), latest_close):
+        fallback_stop = round(min(float(entry_price), latest_close) * (1 - fallback_pct), 2)
+        valid_stops = [
+            value
+            for value in (atr_stop, trailing_stop, support_level, fallback_stop)
+            if value < min(float(entry_price), latest_close)
+        ]
+        recommended = round(max(valid_stops), 2) if valid_stops else stop_ceiling
 
     if recommended == atr_stop:
         method = "atr"
     elif recommended == trailing_stop:
         method = "trailing"
-    else:
+    elif recommended == support_level:
         method = "support"
+    else:
+        method = "fallback_guard"
 
     return DynamicStopResult(
         symbol=symbol,

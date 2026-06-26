@@ -126,6 +126,21 @@ class TestAnalyzePreMarket:
         signals = strategy.analyze_pre_market({"600000": df})
         assert signals == []
 
+    def test_new_high_uses_previous_twenty_bars(self):
+        config = StrategyConfig(name="morning_breakout")
+        strategy = MorningBreakoutStrategy(config)
+        df = _make_df(days=30, final_change_pct=6.0)
+        df.loc[df.index[-21:-1], "high"] = 12.0
+        df.loc[df.index[-2], "close"] = 11.7
+        df.loc[df.index[-1], "close"] = 12.5
+        df.loc[df.index[-1], "high"] = 12.6
+        df.loc[df.index[-1], "volume"] = df["volume"].iloc[-6:-1].mean() * 4
+
+        signals = strategy.analyze_pre_market({"600000": df})
+
+        assert signals
+        assert "突破20日新高" in signals[0].reasons
+
     def test_multiple_symbols(self):
         config = StrategyConfig(name="morning_breakout")
         strategy = MorningBreakoutStrategy(config)

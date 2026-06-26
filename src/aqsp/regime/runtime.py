@@ -63,14 +63,5 @@ def detect_runtime_regime(
         bench_frame = frames.get(benchmark_symbol)
         if bench_frame is not None and not bench_frame.empty:
             return regime_detector.detect({benchmark_symbol: bench_frame}).name
-    synthetic = build_synthetic_regime_frame(
-        {
-            symbol: df
-            for symbol, df in frames.items()
-            if not benchmark_symbol or symbol != benchmark_symbol
-        }
-    )
-    if synthetic is None or synthetic.empty:
         return ""
-    regime = regime_detector.detect({"synthetic_market": synthetic}).name
-    return "" if regime == "unknown" else regime
+    return ""

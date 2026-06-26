@@ -161,13 +161,13 @@ class MorningBreakoutStrategy(BaseStrategy):
 
     def _score_technical(self, df: pd.DataFrame) -> float:
         score = 0.0
-        if len(df) >= 20:
+        if len(df) >= 21:
             ma5 = float(df["close"].rolling(5).mean().iloc[-1])
             ma10 = float(df["close"].rolling(10).mean().iloc[-1])
             ma20 = float(df["close"].rolling(20).mean().iloc[-1])
             if ma5 > ma10 > ma20:
                 score += self.mb.technical_ma_bull_score
-            recent_high = float(df["high"].iloc[-20:].max())
+            recent_high = float(df["high"].iloc[-21:-1].max())
             if float(df["close"].iloc[-1]) > recent_high:
                 score += self.mb.technical_new_high_score
         return min(1.0, score)
@@ -215,13 +215,13 @@ class MorningBreakoutStrategy(BaseStrategy):
                 elif ratio < self.mb.volume_ratio_min:
                     risks.append("量能不足")
 
-        if len(df) >= 20:
+        if len(df) >= 21:
             ma5 = float(df["close"].rolling(5).mean().iloc[-1])
             ma10 = float(df["close"].rolling(10).mean().iloc[-1])
             ma20 = float(df["close"].rolling(20).mean().iloc[-1])
             if ma5 > ma10 > ma20:
                 reasons.append("均线多头排列")
-            recent_high = float(df["high"].iloc[-20:].max())
+            recent_high = float(df["high"].iloc[-21:-1].max())
             if float(df["close"].iloc[-1]) > recent_high:
                 reasons.append("突破20日新高")
 

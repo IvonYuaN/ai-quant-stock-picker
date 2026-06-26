@@ -243,6 +243,28 @@ def test_check_before_live_blocks_missing_runtime_threshold_application(
     assert "full Thresholds" in finding.detail
 
 
+def test_check_before_live_blocks_runtime_synthetic_regime_scoring(
+    tmp_path: Path,
+) -> None:
+    _prepare_ready_runtime(tmp_path)
+    path = tmp_path / "src/aqsp/regime/runtime.py"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "def detect_runtime_regime(frames, *, benchmark_symbol):\n"
+        "    synthetic = build_synthetic_regime_frame(frames)\n"
+        "    return detector.detect({'synthetic_market': synthetic}).name\n",
+        encoding="utf-8",
+    )
+
+    findings = check_before_live(root=tmp_path, today=date(2026, 6, 14))
+
+    finding = next(
+        item for item in findings if item.gate == "runtime_regime_requires_benchmark"
+    )
+    assert finding.ok is False
+    assert "benchmark data is missing" in finding.detail
+
+
 def test_check_before_live_blocks_small_runtime_universe_cap(
     tmp_path: Path,
 ) -> None:

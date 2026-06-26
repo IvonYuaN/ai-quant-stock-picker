@@ -1764,7 +1764,7 @@ def test_run_scheduled_gate_block_adds_actionable_unlock_guidance(
     assert "。；" not in report
 
 
-def test_run_scheduled_falls_back_to_synthetic_regime_when_benchmark_missing(
+def test_run_scheduled_fails_closed_on_regime_when_benchmark_missing(
     monkeypatch, tmp_path
 ) -> None:
     import aqsp.cli as cli_mod
@@ -1926,9 +1926,8 @@ def test_run_scheduled_falls_back_to_synthetic_regime_when_benchmark_missing(
 
     assert exit_code == 0
     assert seen
-    assert "当前市况" in report
-    assert "- 市场标签: stable_bull" in report
-    assert "当前市况: 稳定上涨" in report
+    assert "- 市场标签: unknown" in report
+    assert "当前市况: 稳定上涨" not in report
     assert "benchmark unavailable" in report
 
 

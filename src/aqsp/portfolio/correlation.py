@@ -33,10 +33,20 @@ def compute_correlation(
         df = frames[sym]
         if "close" not in df.columns:
             continue
-        tail = df["close"].tail(window + 1)
-        ret = tail.pct_change().dropna()
+        frame = df.copy()
+        if "date" in frame.columns:
+            frame["date"] = pd.to_datetime(frame["date"], errors="coerce")
+            frame = frame.dropna(subset=["date"]).sort_values("date")
+            close = pd.to_numeric(frame["close"], errors="coerce")
+            ret = close.pct_change()
+            ret.index = frame["date"]
+            ret = ret.dropna().tail(window)
+        else:
+            close = pd.to_numeric(frame["close"], errors="coerce").tail(window + 1)
+            ret = close.pct_change().dropna()
+            ret = ret.reset_index(drop=True)
         if len(ret) >= 2:
-            returns_dict[sym] = ret.reset_index(drop=True)
+            returns_dict[sym] = ret
 
     valid_symbols = sorted(returns_dict.keys())
     if len(valid_symbols) < 2:
@@ -46,7 +56,13 @@ def compute_correlation(
             avg_correlation=0.0,
         )
 
-    returns_df = pd.DataFrame(returns_dict)
+    returns_df = pd.DataFrame(returns_dict).dropna(how="any")
+    if len(returns_df) < 2:
+        return CorrelationResult(
+            matrix={},
+            high_corr_pairs=[],
+            avg_correlation=0.0,
+        )
     corr_df = returns_df.corr()
 
     matrix: dict[str, dict[str, float]] = {}

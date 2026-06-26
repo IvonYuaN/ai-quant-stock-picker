@@ -176,6 +176,7 @@ def check_before_live(
     findings.append(_check_strategy_threshold_consistency(thresholds))
     findings.append(_check_strategy_runtime_threshold_application(root))
     findings.append(_check_regime_strategy_weight_blending(root))
+    findings.append(_check_runtime_regime_requires_benchmark(root))
     findings.append(_check_pbo_diagnostics(root, gate_path))
     findings.append(_check_trading_calendar_coverage(root, today))
     findings.append(_check_signal_sample_size(ledger_path))
@@ -756,6 +757,30 @@ def _check_regime_strategy_weight_blending(root: Path) -> ReadinessFinding:
         "ok"
         if ok
         else "screening strategy weights must use the same composite regime blend formula as CompositeStrategy",
+    )
+
+
+def _check_runtime_regime_requires_benchmark(root: Path) -> ReadinessFinding:
+    path = root / "src" / "aqsp" / "regime" / "runtime.py"
+    if not path.exists():
+        return ReadinessFinding(
+            "runtime_regime_requires_benchmark",
+            True,
+            "source tree unavailable; skipped",
+        )
+    text = path.read_text(encoding="utf-8")
+    block = _cli_function_block(text, "detect_runtime_regime")
+    ok = (
+        "build_synthetic_regime_frame(" not in block
+        and '"synthetic_market"' not in block
+        and "return \"\"" in block
+    )
+    return ReadinessFinding(
+        "runtime_regime_requires_benchmark",
+        ok,
+        "ok"
+        if ok
+        else "runtime scoring regime must fail closed when benchmark data is missing; synthetic candidate breadth is diagnostic-only",
     )
 
 

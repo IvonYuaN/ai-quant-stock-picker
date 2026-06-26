@@ -64,3 +64,23 @@ def test_regime_detector_reloads_thresholds_when_not_fixed(monkeypatch) -> None:
 
     assert first_regime == "stable_sideways"
     assert second_regime == "stable_bull"
+
+
+def test_detect_runtime_regime_fails_closed_when_benchmark_missing() -> None:
+    frame = _benchmark_frame()
+
+    regime = detect_runtime_regime(
+        {"600519": frame},
+        benchmark_symbol="000300",
+        thresholds=Thresholds(
+            regime=replace(
+                RegimeThresholds(),
+                min_sample_size=5,
+                trend_bull=0.001,
+                momentum_bull=10.0,
+                volatility_high=10.0,
+            )
+        ),
+    )
+
+    assert regime == ""
