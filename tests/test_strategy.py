@@ -230,6 +230,55 @@ def test_internet_strategy_signal_uses_configured_score() -> None:
     assert breakout.score == 31.0
 
 
+def test_internet_strategy_thresholds_do_not_reload_yaml(monkeypatch) -> None:
+    def fail_load_thresholds():
+        raise AssertionError("unexpected thresholds reload")
+
+    monkeypatch.setattr(
+        "aqsp.internet_strategies.load_thresholds", fail_load_thresholds
+    )
+    df = pd.DataFrame(
+        [
+            {
+                "close": 10.0,
+                "high_20": 10.0,
+                "ma5": 10.0,
+                "ma10": 9.5,
+                "ma20": 9.0,
+                "ma60": 8.5,
+                "volume_ratio": 1.0,
+                "ret_20": 0.0,
+                "bias20": 1.0,
+                "rsi12": 50.0,
+                "macd_hist": 0.1,
+                "amplitude_pct": 3.0,
+                "range_pos": 0.5,
+                "low_20": 9.0,
+            },
+            {
+                "close": 10.3,
+                "high_20": 10.0,
+                "ma5": 10.2,
+                "ma10": 9.8,
+                "ma20": 9.4,
+                "ma60": 8.8,
+                "volume_ratio": 1.4,
+                "ret_20": 0.13,
+                "bias20": 2.0,
+                "rsi12": 50.0,
+                "macd_hist": 0.2,
+                "amplitude_pct": 3.0,
+                "range_pos": 0.7,
+                "low_20": 9.0,
+            },
+        ]
+    )
+
+    signals = evaluate_strategy_signals(df, thresholds=InternetStrategyThresholds())
+
+    assert any(item.strategy_id == "volume_breakout" for item in signals)
+
+
 def test_strategy_weights_for_regime_maps_screening_strategy_ids() -> None:
     from dataclasses import replace
 

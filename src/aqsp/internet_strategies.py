@@ -35,14 +35,15 @@ def evaluate_strategy_signals(
     df: pd.DataFrame,
     thresholds: InternetStrategyThresholds | Thresholds | None = None,
 ) -> list[StrategySignal]:
-    threshold_snapshot = (
-        thresholds if isinstance(thresholds, Thresholds) else load_thresholds()
-    )
-    cfg = (
-        thresholds
-        if isinstance(thresholds, InternetStrategyThresholds)
-        else threshold_snapshot.internet_strategy
-    )
+    if isinstance(thresholds, Thresholds):
+        threshold_snapshot = thresholds
+        cfg = thresholds.internet_strategy
+    elif isinstance(thresholds, InternetStrategyThresholds):
+        threshold_snapshot = Thresholds(internet_strategy=thresholds)
+        cfg = thresholds
+    else:
+        threshold_snapshot = load_thresholds()
+        cfg = threshold_snapshot.internet_strategy
     row = df.iloc[-1]
     prev = df.iloc[-2]
     signals: list[StrategySignal] = []
