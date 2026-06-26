@@ -264,9 +264,8 @@ class TestNotifier:
     def _isolated_monitor_notify_state(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setenv(
-            "AQSP_MONITOR_NOTIFY_STATE_PATH", str(tmp_path / "monitor_state.json")
-        )
+        monkeypatch.setenv("AQSP_PROJECT_ROOT", str(tmp_path))
+        monkeypatch.setenv("AQSP_MONITOR_NOTIFY_STATE_PATH", "data/monitor_state.json")
 
     def test_format_alert(self, sample_results: list[MonitorResult]) -> None:
         alert = format_alert(sample_results)
@@ -318,9 +317,8 @@ class TestNotifier:
     def test_send_alerts_dedupes_same_critical_alert(
         self, sample_results: list[MonitorResult], tmp_path: Path, monkeypatch, capsys
     ) -> None:
-        monkeypatch.setenv(
-            "AQSP_MONITOR_NOTIFY_STATE_PATH", str(tmp_path / "monitor_state.json")
-        )
+        monkeypatch.setenv("AQSP_PROJECT_ROOT", str(tmp_path))
+        monkeypatch.setenv("AQSP_MONITOR_NOTIFY_STATE_PATH", "data/monitor_state.json")
         with patch("aqsp.monitor.notifier.notify_markdown_via_config") as mock_notify:
             mock_notify.return_value = [
                 MagicMock(channel="serverchan", ok=True, detail="HTTP 200")
@@ -343,6 +341,16 @@ class TestNotifier:
         assert _monitor_notify_state_path() == (
             tmp_path / "data/monitor_notify_state.json"
         )
+
+    def test_monitor_notify_state_path_rejects_tmp_state_path(
+        self, monkeypatch
+    ) -> None:
+        monkeypatch.setenv(
+            "AQSP_MONITOR_NOTIFY_STATE_PATH", "/tmp/monitor_notify_state.json"
+        )
+
+        with pytest.raises(OSError):
+            _monitor_notify_state_path()
 
     def test_send_alerts_dedupes_across_cwd_changes(
         self, sample_results: list[MonitorResult], tmp_path: Path, monkeypatch, capsys
@@ -372,8 +380,9 @@ class TestNotifier:
     def test_send_alerts_reserves_before_delivery(
         self, sample_results: list[MonitorResult], tmp_path: Path, monkeypatch
     ) -> None:
-        state_path = tmp_path / "monitor_state.json"
-        monkeypatch.setenv("AQSP_MONITOR_NOTIFY_STATE_PATH", str(state_path))
+        state_path = tmp_path / "data" / "monitor_state.json"
+        monkeypatch.setenv("AQSP_PROJECT_ROOT", str(tmp_path))
+        monkeypatch.setenv("AQSP_MONITOR_NOTIFY_STATE_PATH", "data/monitor_state.json")
 
         def _notify(_markdown: str, **_kwargs) -> list[MagicMock]:
             state = json.loads(state_path.read_text(encoding="utf-8"))
@@ -391,9 +400,8 @@ class TestNotifier:
     def test_send_alerts_suppresses_duplicate_retries_when_delivery_fails(
         self, sample_results: list[MonitorResult], tmp_path: Path, monkeypatch
     ) -> None:
-        monkeypatch.setenv(
-            "AQSP_MONITOR_NOTIFY_STATE_PATH", str(tmp_path / "monitor_state.json")
-        )
+        monkeypatch.setenv("AQSP_PROJECT_ROOT", str(tmp_path))
+        monkeypatch.setenv("AQSP_MONITOR_NOTIFY_STATE_PATH", "data/monitor_state.json")
         with patch("aqsp.monitor.notifier.notify_markdown_via_config") as mock_notify:
             mock_notify.return_value = [
                 MagicMock(channel="serverchan", ok=False, detail="HTTP 500")
@@ -407,9 +415,8 @@ class TestNotifier:
     def test_send_alerts_sends_new_alert_name_once(
         self, tmp_path: Path, monkeypatch
     ) -> None:
-        monkeypatch.setenv(
-            "AQSP_MONITOR_NOTIFY_STATE_PATH", str(tmp_path / "monitor_state.json")
-        )
+        monkeypatch.setenv("AQSP_PROJECT_ROOT", str(tmp_path))
+        monkeypatch.setenv("AQSP_MONITOR_NOTIFY_STATE_PATH", "data/monitor_state.json")
         first = [
             MonitorResult(
                 name="win_rate_drop",
@@ -443,9 +450,8 @@ class TestNotifier:
     def test_send_alerts_dedupes_flapping_alert_set_per_alert(
         self, tmp_path: Path, monkeypatch
     ) -> None:
-        monkeypatch.setenv(
-            "AQSP_MONITOR_NOTIFY_STATE_PATH", str(tmp_path / "monitor_state.json")
-        )
+        monkeypatch.setenv("AQSP_PROJECT_ROOT", str(tmp_path))
+        monkeypatch.setenv("AQSP_MONITOR_NOTIFY_STATE_PATH", "data/monitor_state.json")
         alert_a = MonitorResult(
             name="stale_data",
             triggered=True,
@@ -475,9 +481,8 @@ class TestNotifier:
     def test_send_alerts_dedupes_same_alert_names_when_message_changes(
         self, tmp_path: Path, monkeypatch
     ) -> None:
-        monkeypatch.setenv(
-            "AQSP_MONITOR_NOTIFY_STATE_PATH", str(tmp_path / "monitor_state.json")
-        )
+        monkeypatch.setenv("AQSP_PROJECT_ROOT", str(tmp_path))
+        monkeypatch.setenv("AQSP_MONITOR_NOTIFY_STATE_PATH", "data/monitor_state.json")
         first = [
             MonitorResult(
                 name="stale_data",
@@ -516,9 +521,8 @@ class TestNotifier:
     def test_send_alerts_keeps_today_dedupe_state_after_normal_round(
         self, sample_results: list[MonitorResult], tmp_path: Path, monkeypatch
     ) -> None:
-        monkeypatch.setenv(
-            "AQSP_MONITOR_NOTIFY_STATE_PATH", str(tmp_path / "monitor_state.json")
-        )
+        monkeypatch.setenv("AQSP_PROJECT_ROOT", str(tmp_path))
+        monkeypatch.setenv("AQSP_MONITOR_NOTIFY_STATE_PATH", "data/monitor_state.json")
         with patch("aqsp.monitor.notifier.notify_markdown_via_config") as mock_notify:
             mock_notify.return_value = [
                 MagicMock(channel="serverchan", ok=True, detail="HTTP 200")

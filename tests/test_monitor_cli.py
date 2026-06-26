@@ -167,6 +167,7 @@ def test_run_monitor_sends_warning_push_when_warning_notify_enabled(
     monkeypatch, capsys
 ) -> None:
     sent: list[list[MonitorResult]] = []
+    monkeypatch.setenv("AQSP_MONITOR_NOTIFY_WARNINGS", "true")
 
     class FakeChecker:
         def __init__(self, config_path: str) -> None:
@@ -203,3 +204,43 @@ def test_run_monitor_sends_warning_push_when_warning_notify_enabled(
     assert exit_code == 0
     assert sent and sent[0][0].name == "warn_case"
     assert "warning alerts enabled" in capsys.readouterr().out
+
+
+def test_run_monitor_suppresses_warning_push_without_env(monkeypatch, capsys) -> None:
+    sent: list[list[MonitorResult]] = []
+
+    class FakeChecker:
+        def __init__(self, config_path: str) -> None:
+            self.config_path = config_path
+
+        def check_all(self) -> list[MonitorResult]:
+            return [
+                MonitorResult("warn_case", True, "warning", "warning hit"),
+            ]
+
+    fake_notifier = types.SimpleNamespace(
+        format_alert=lambda results: "\n".join(r.name for r in results),
+        send_alerts=lambda results: sent.append(results),
+    )
+
+    monkeypatch.setitem(
+        __import__("sys").modules, "aqsp.monitor.notifier", fake_notifier
+    )
+    monkeypatch.setitem(
+        __import__("sys").modules,
+        "aqsp.monitor.checker",
+        types.SimpleNamespace(MonitorChecker=FakeChecker),
+    )
+
+    exit_code = cli.run_monitor(
+        argparse.Namespace(
+            config="config/monitors.yaml",
+            notify=True,
+            notify_critical_only=False,
+            dry_run=False,
+        )
+    )
+
+    assert exit_code == 0
+    assert sent == []
+    assert "warning alerts suppressed" in capsys.readouterr().out

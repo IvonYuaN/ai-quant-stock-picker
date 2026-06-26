@@ -5,6 +5,8 @@ import json
 import pandas as pd
 
 from aqsp.ledger.runtime import (
+    collect_independent_signal_dates,
+    collect_paper_tracking_dates,
     compute_paper_mark_to_market_pnl,
     compute_real_pnl,
     count_independent_signal_days,
@@ -50,6 +52,10 @@ def test_count_independent_signal_days_counts_observation_only_signal_days(
         encoding="utf-8",
     )
 
+    assert collect_independent_signal_dates(str(ledger)) == {
+        "2026-06-01",
+        "2026-06-02",
+    }
     assert count_independent_signal_days(str(ledger)) == 2
 
 
@@ -209,6 +215,11 @@ def test_count_paper_tracking_days_counts_real_paper_events(tmp_path) -> None:
         encoding="utf-8",
     )
 
+    assert collect_paper_tracking_dates(str(ledger)) == {
+        "2026-06-01",
+        "2026-06-02",
+        "2026-06-03",
+    }
     assert count_paper_tracking_days(str(ledger)) == 3
 
 

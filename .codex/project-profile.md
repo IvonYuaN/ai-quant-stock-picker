@@ -16,7 +16,7 @@ Support: Product/Notification Systems Engineer, Data Reliability Engineer, Paper
 
 ## Current Goal
 
-打通并收敛一条稳定的本地/服务器日常主线：`daily_run.sh -> aqsp run -> ledger -> aqsp paper -> aqsp briefing -> aqsp dashboard -> notification/logs`。当前重点是把主链、复盘、监控、早盘、尾盘通知统一到可复用模板层，并保留多 Agent 辩论摘要与数据源状态。
+上线前运行正确性硬化：服务器必须以全市场、raw sqlite、真实冷启动样本、正式 walk-forward 证据、稳定通知去重和可复现 readiness gate 作为放行条件。当前重点是补齐 signal/paper 样本口径、修复 monitor/gate 通知防刷屏、同步服务器运行态，并继续压实策略/风控/阈值的一致性。
 
 ## Constraints
 
@@ -33,3 +33,4 @@ Support: Product/Notification Systems Engineer, Data Reliability Engineer, Paper
 
 - 2026-05-29: Rerouted from prototype stock picker to local-first paper-trading system after user clarified the real objective and requested multi-agent execution.
 - 2026-06-04: Added unified notification-template substrate for daily run, briefing, monitor, morning breakout, closing premium, and closing review so future agent work lands on one reusable output layer.
+- 2026-06-26: Rerouted to launch-readiness reliability. Active blockers are real sample fill, formal production walk-forward, paper tracking sync, and notification spam guards; avoid cosmetic-only edits until these are green.

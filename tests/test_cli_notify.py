@@ -989,6 +989,7 @@ def test_run_monitor_notifies_warning_when_warning_notify_enabled(
 ) -> None:
     import aqsp.cli as cli_mod
 
+    monkeypatch.setenv("AQSP_MONITOR_NOTIFY_WARNINGS", "true")
     warning = MagicMock(triggered=True, severity="warning", name="disk", message="low")
     sent: list[list[object]] = []
 

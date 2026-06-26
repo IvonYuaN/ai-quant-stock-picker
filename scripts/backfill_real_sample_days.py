@@ -31,6 +31,7 @@ from aqsp.ledger.base import (
     read_ledger,
 )
 from aqsp.ledger.runtime import (
+    collect_paper_tracking_dates,
     count_independent_signal_days,
     count_paper_tracking_days,
     ledger_signal_date,
@@ -148,16 +149,22 @@ def collect_paper_sync_symbols(
     ledger_path: str | Path,
     paper_ledger_path: str | Path,
     new_picks: list[PickResult],
+    signal_dates: set[str] | None = None,
 ) -> list[str]:
     symbols: list[str] = []
     seen: set[str] = set()
+    allowed_dates = {str(item) for item in signal_dates or set() if str(item)}
     for row in read_ledger(ledger_path) + read_ledger(paper_ledger_path):
+        if signal_dates is not None and ledger_signal_date(row) not in allowed_dates:
+            continue
         symbol = str(row.get("symbol") or "").strip()
         if not symbol or symbol == "__RUN__" or symbol in seen:
             continue
         seen.add(symbol)
         symbols.append(symbol)
     for pick in new_picks:
+        if signal_dates is not None and str(pick.date) not in allowed_dates:
+            continue
         if pick.symbol not in seen:
             seen.add(pick.symbol)
             symbols.append(pick.symbol)
@@ -324,7 +331,7 @@ def backfill_real_sample_days(args: argparse.Namespace) -> int:
     source = build_data_source(args.source, cache=DataCache(), overrides={})
 
     existing_signal_days = collect_signal_days(ledger_path)
-    existing_paper_days = collect_signal_days(paper_ledger_path)
+    existing_paper_days = collect_paper_tracking_dates(str(paper_ledger_path))
     start_date = date.fromisoformat(args.start)
     end_date = date.fromisoformat(args.end)
     plan = build_backfill_plan(
@@ -364,7 +371,7 @@ def backfill_real_sample_days(args: argparse.Namespace) -> int:
         ):
             break
         current_signal_day_set = collect_signal_days(ledger_path)
-        current_paper_day_set = collect_signal_days(paper_ledger_path)
+        current_paper_day_set = collect_paper_tracking_dates(str(paper_ledger_path))
         need_signal_backfill = (
             current_signal_days < args.target_signal_days
             and signal_day_str not in current_signal_day_set
@@ -496,18 +503,24 @@ def backfill_real_sample_days(args: argparse.Namespace) -> int:
                 ledger_path=ledger_path,
                 paper_ledger_path=paper_ledger_path,
                 new_picks=picks,
+                signal_dates={signal_day_str},
             )
-            paper_frames = fetch_history_window(
-                source=source,
-                symbols=paper_symbols,
-                signal_day=signal_day,
-                lookback_days=args.lookback_days,
-                future_buffer_days=args.future_buffer_days,
+            paper_frames = (
+                fetch_history_window(
+                    source=source,
+                    symbols=paper_symbols,
+                    signal_day=signal_day,
+                    lookback_days=args.lookback_days,
+                    future_buffer_days=args.future_buffer_days,
+                )
+                if paper_symbols
+                else {}
             )
             summary = sync_paper_trades(
                 signal_ledger=ledger_path,
                 paper_ledger=paper_ledger_path,
                 frames=paper_frames,
+                signal_dates={signal_day_str},
             )
         else:
             summary = None
@@ -529,6 +542,11 @@ def backfill_real_sample_days(args: argparse.Namespace) -> int:
         f"paper_days={final_paper_days}/{args.target_paper_days}",
         flush=True,
     )
+    if (
+        final_signal_days < args.target_signal_days
+        or final_paper_days < args.target_paper_days
+    ):
+        return 2
     return 0
 
 

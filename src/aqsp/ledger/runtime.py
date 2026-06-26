@@ -35,8 +35,12 @@ EXECUTABILITY_WEIGHT_MULTIPLIER = 0.5
 
 
 def count_independent_signal_days(ledger_path: str) -> int:
+    return len(collect_independent_signal_dates(ledger_path))
+
+
+def collect_independent_signal_dates(ledger_path: str) -> set[str]:
     rows = read_ledger(ledger_path)
-    return _count_independent_days(
+    return _collect_independent_dates(
         rows,
         allowed_statuses=REAL_SIGNAL_STATUSES,
         require_status=False,
@@ -44,20 +48,24 @@ def count_independent_signal_days(ledger_path: str) -> int:
 
 
 def count_paper_tracking_days(paper_ledger_path: str) -> int:
+    return len(collect_paper_tracking_dates(paper_ledger_path))
+
+
+def collect_paper_tracking_dates(paper_ledger_path: str) -> set[str]:
     rows = read_ledger(paper_ledger_path)
-    return _count_independent_days(
+    return _collect_independent_dates(
         rows,
         allowed_statuses=PAPER_TRACKING_STATUSES,
         require_status=True,
     )
 
 
-def _count_independent_days(
+def _collect_independent_dates(
     rows: list[dict[str, Any]],
     *,
     allowed_statuses: frozenset[str],
     require_status: bool,
-) -> int:
+) -> set[str]:
     signal_dates: set[str] = set()
     for row in rows:
         if bool(row.get("is_simulated")):
@@ -78,7 +86,7 @@ def _count_independent_days(
         signal_date = ledger_signal_date(row)
         if signal_date:
             signal_dates.add(signal_date)
-    return len(signal_dates)
+    return signal_dates
 
 
 def ledger_signal_date(row: dict[str, Any]) -> str:

@@ -1253,7 +1253,7 @@ def test_check_before_live_blocks_monitor_warning_notify_suppression(
         item for item in findings if item.gate == "monitor_warning_notify_guard"
     )
     assert finding.ok is False
-    assert "warning alerts" in finding.detail
+    assert "AQSP_MONITOR_NOTIFY_WARNINGS" in finding.detail
 
 
 def test_check_before_live_blocks_monitor_wrapper_without_critical_only_default(

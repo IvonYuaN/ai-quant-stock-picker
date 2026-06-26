@@ -1168,7 +1168,7 @@ def _check_monitor_warning_notify_guard(root: Path) -> ReadinessFinding:
         )
     block = _cli_function_block(cli_path.read_text(encoding="utf-8"), "run_monitor")
     ok = (
-        "if not args.notify_critical_only:" in block
+        "AQSP_MONITOR_NOTIFY_WARNINGS" in block
         and "warning_targets" in block
         and "notify_targets.extend(warning_targets)" in block
     )
@@ -1177,7 +1177,7 @@ def _check_monitor_warning_notify_guard(root: Path) -> ReadinessFinding:
         ok,
         "ok"
         if ok
-        else "monitor must notify warning alerts when critical-only mode is disabled",
+        else "monitor warning pushes must require AQSP_MONITOR_NOTIFY_WARNINGS=true",
     )
 
 

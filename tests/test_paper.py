@@ -134,6 +134,52 @@ def test_paper_opens_trade_from_next_open(tmp_path: Path) -> None:
     assert rows[0]["entry_price"] == 101.0
 
 
+def test_paper_sync_can_scope_new_trades_to_signal_dates(tmp_path: Path) -> None:
+    signals = tmp_path / "signals.jsonl"
+    trades = tmp_path / "paper.jsonl"
+    rows = [
+        {
+            "id": "sig-1",
+            "status": "pending",
+            "signal_date": "2026-05-27",
+            "symbol": "600519",
+            "rating": "buy_candidate",
+            "score": 70,
+            "stop_loss": 95.0,
+            "take_profit": 110.0,
+            "horizon_days": 2,
+        },
+        {
+            "id": "sig-2",
+            "status": "pending",
+            "signal_date": "2026-05-28",
+            "symbol": "600519",
+            "rating": "buy_candidate",
+            "score": 71,
+            "stop_loss": 95.0,
+            "take_profit": 110.0,
+            "horizon_days": 2,
+        },
+    ]
+    signals.write_text(
+        "\n".join(json.dumps(row, ensure_ascii=False) for row in rows) + "\n",
+        encoding="utf-8",
+    )
+
+    summary = sync_paper_trades(
+        signal_ledger=signals,
+        paper_ledger=trades,
+        frames={"600519": _frame()},
+        signal_dates={"2026-05-27"},
+    )
+
+    paper_rows = read_paper_trades(trades)
+    assert summary.opened == 1
+    assert len(paper_rows) == 1
+    assert paper_rows[0]["signal_id"] == "sig-1"
+    assert paper_rows[0]["signal_date"] == "2026-05-27"
+
+
 def test_paper_carries_candidate_context_into_open_and_pending_rows(
     tmp_path: Path,
 ) -> None:

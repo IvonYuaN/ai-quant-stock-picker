@@ -88,9 +88,17 @@ def sync_paper_trades(
     paper_ledger: str | Path,
     frames: dict[str, pd.DataFrame],
     execution: ExecutionConfig | None = None,
+    signal_dates: set[str] | None = None,
 ) -> PaperSummary:
     execution = execution or execution_config_from_thresholds()
     signals = read_ledger(signal_ledger)
+    if signal_dates is not None:
+        allowed_dates = {str(item) for item in signal_dates if str(item)}
+        signals = [
+            signal
+            for signal in signals
+            if str(signal.get("signal_date") or "") in allowed_dates
+        ]
     with advisory_lock(paper_ledger):
         trades = read_paper_trades(paper_ledger)
 

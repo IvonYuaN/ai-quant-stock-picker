@@ -179,6 +179,42 @@ def test_collect_paper_sync_symbols_dedupes_and_skips_run_marker(
     assert symbols == ["600000", "600519", "601318"]
 
 
+def test_collect_paper_sync_symbols_can_scope_to_signal_dates(
+    tmp_path: Path,
+) -> None:
+    ledger_path = tmp_path / "predictions.jsonl"
+    paper_path = tmp_path / "paper_trades.jsonl"
+    ledger_path.write_text(
+        "\n".join(
+            [
+                json.dumps({"symbol": "600000", "signal_date": "2026-06-02"}),
+                json.dumps({"symbol": "600001", "signal_date": "2026-06-03"}),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    paper_path.write_text(
+        "\n".join(
+            [
+                json.dumps({"symbol": "600519", "signal_date": "2026-06-02"}),
+                json.dumps({"symbol": "000001", "signal_date": "2026-06-04"}),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    symbols = backfill.collect_paper_sync_symbols(
+        ledger_path=ledger_path,
+        paper_ledger_path=paper_path,
+        new_picks=[],
+        signal_dates={"2026-06-02"},
+    )
+
+    assert symbols == ["600000", "600519"]
+
+
 def test_resolve_backfill_symbols_uses_sqlite_source_directly() -> None:
     class DummySqliteSource:
         def get_available_symbols(self):

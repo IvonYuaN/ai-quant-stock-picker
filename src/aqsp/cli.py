@@ -4662,13 +4662,23 @@ def run_monitor(args: argparse.Namespace) -> int:
 
     if args.notify and not args.dry_run:
         notify_targets = [r for r in triggered if r.severity == "critical"]
-        if not args.notify_critical_only:
+        warning_notify_enabled = os.getenv(
+            "AQSP_MONITOR_NOTIFY_WARNINGS", "false"
+        ).strip().lower() in {"1", "true", "yes", "on"}
+        if not args.notify_critical_only and warning_notify_enabled:
             warning_targets = [r for r in triggered if r.severity == "warning"]
             notify_targets.extend(warning_targets)
             if warning_targets:
                 print(
                     f"monitor notify: warning alerts enabled ({len(warning_targets)})"
                 )
+        elif not args.notify_critical_only and any(
+            r.severity == "warning" for r in triggered
+        ):
+            print(
+                "monitor notify: warning alerts suppressed "
+                "(set AQSP_MONITOR_NOTIFY_WARNINGS=true to enable)"
+            )
         if notify_targets:
             send_alerts(notify_targets)
 

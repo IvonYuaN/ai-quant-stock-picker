@@ -119,9 +119,19 @@ def _monitor_notify_state_path() -> Path:
     raw = os.getenv("AQSP_MONITOR_NOTIFY_STATE_PATH", "data/monitor_notify_state.json")
     path = Path(raw).expanduser()
     if path.is_absolute():
-        return path
+        resolved = path.resolve(strict=False)
+        if _is_unstable_state_path(resolved):
+            raise OSError(
+                f"AQSP_MONITOR_NOTIFY_STATE_PATH must not use volatile tmp path: {path}"
+            )
+        return resolved
     root = Path(os.getenv("AQSP_PROJECT_ROOT", Path(__file__).resolve().parents[3]))
-    return root / path
+    return (root / path).resolve(strict=False)
+
+
+def _is_unstable_state_path(path: Path) -> bool:
+    volatile_roots = (Path("/tmp"), Path("/private/tmp"))
+    return any(path == root or root in path.parents for root in volatile_roots)
 
 
 def _monitor_alert_fingerprint(results: list[MonitorResult]) -> str:
@@ -297,7 +307,11 @@ def _write_monitor_notify_state(
 
 
 def _expire_monitor_notify_state() -> None:
-    path = _monitor_notify_state_path()
+    try:
+        path = _monitor_notify_state_path()
+    except OSError as exc:
+        print(f"monitor notify: state path invalid; fail closed: {exc}")
+        return
     today = now_shanghai().date().isoformat()
     with advisory_lock(path):
         state = _read_monitor_notify_state(path)
