@@ -2930,24 +2930,41 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
             strategy_executability_weight_adjustments(args.ledger)
         )
         if executability_adjustments:
-            print(
-                "不可成交反馈降权提案: "
-                + ", ".join(
-                    f"{strategy_id}×{multiplier:.2f}"
-                    for strategy_id, multiplier in executability_adjustments.items()
+            applied_adjustments: list[str] = []
+            for strategy_id, multiplier in sorted(executability_adjustments.items()):
+                if strategy_id not in weights:
+                    continue
+                weights[strategy_id] = round(
+                    float(weights[strategy_id]) * float(multiplier), 6
                 )
-                + "；仅记录研究观察，未应用到本次筛选"
+                reason = executability_reasons.get(strategy_id, "")
+                if reason:
+                    strategy_weight_reasons[strategy_id] = reason
+                applied_adjustments.append(
+                    f"{strategy_id}×{multiplier:.2f}"
+                )
+            if applied_adjustments:
+                print("不可成交反馈降权: " + ", ".join(applied_adjustments))
+                LOGGER.info(
+                    "不可成交反馈已应用: %s",
+                    {
+                        key: {
+                            "weight": weights.get(key),
+                            "reason": strategy_weight_reasons.get(key, ""),
+                        }
+                        for key in sorted(strategy_weight_reasons)
+                    },
+                )
+            skipped_adjustments = sorted(
+                strategy_id
+                for strategy_id in executability_adjustments
+                if strategy_id not in weights
             )
-            LOGGER.info(
-                "不可成交反馈降权提案未应用: %s",
-                {
-                    key: {
-                        "multiplier": executability_adjustments[key],
-                        "reason": executability_reasons.get(key, ""),
-                    }
-                    for key in sorted(executability_adjustments)
-                },
-            )
+            if skipped_adjustments:
+                LOGGER.info(
+                    "不可成交反馈未接入当前 regime 权重: %s",
+                    skipped_adjustments,
+                )
     except Exception as exc:
         LOGGER.warning("不可成交反馈权重计算失败，按原始权重继续: %s", exc)
 

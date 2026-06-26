@@ -88,6 +88,28 @@ def test_static_holiday_overrides_runtime_calendar_open_flag():
     assert not resolve_is_trading_day(date(2026, 6, 19), calendar_df=calendar)
 
 
+def test_static_holiday_overrides_runtime_calendar_previous_and_next_trade_day():
+    from aqsp.data.trading_calendar import (
+        resolve_next_trading_day,
+        resolve_previous_trading_day,
+    )
+
+    calendar = pd.DataFrame(
+        [
+            {"cal_date": "20260618", "is_open": 1},
+            {"cal_date": "20260619", "is_open": 1},
+            {"cal_date": "20260622", "is_open": 1},
+        ]
+    )
+
+    assert resolve_previous_trading_day(date(2026, 6, 22), calendar_df=calendar) == date(
+        2026, 6, 18
+    )
+    assert resolve_next_trading_day(date(2026, 6, 18), calendar_df=calendar) == date(
+        2026, 6, 22
+    )
+
+
 def test_get_previous_trading_day():
     friday = date(2026, 5, 30)
     assert get_previous_trading_day(friday) == date(2026, 5, 29)

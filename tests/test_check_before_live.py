@@ -152,6 +152,28 @@ def test_check_before_live_passes_when_all_hard_gates_are_met(tmp_path: Path) ->
     assert all(finding.ok for finding in findings)
 
 
+def test_check_before_live_blocks_missing_critical_trading_holiday(
+    tmp_path: Path,
+) -> None:
+    _prepare_ready_runtime(tmp_path)
+    _write_json(
+        tmp_path / "config/trading_holidays.json",
+        {
+            "holidays": ["2026-01-01"],
+            "makeup_workdays": [],
+        },
+    )
+
+    findings = check_before_live(
+        root=tmp_path,
+        today=date(2026, 6, 14),
+    )
+
+    finding = next(item for item in findings if item.gate == "trading_calendar_coverage")
+    assert finding.ok is False
+    assert "2026-06-19" in finding.detail
+
+
 def test_strategy_threshold_consistency_blocks_enabled_zero_weight() -> None:
     thresholds = Thresholds(
         volume=VolumeThresholds(enabled=True),
@@ -460,7 +482,7 @@ def test_check_before_live_blocks_missing_executability_runtime_feedback(
     assert "not_executable" in finding.detail
 
 
-def test_check_before_live_blocks_executability_feedback_applied_to_weights(
+def test_check_before_live_allows_executability_feedback_applied_to_weights(
     tmp_path: Path,
 ) -> None:
     _prepare_ready_runtime(tmp_path)
@@ -474,7 +496,13 @@ def test_check_before_live_blocks_executability_feedback_applied_to_weights(
         "        strategy_executability_weight_adjustments(args.ledger)\n"
         "    )\n"
         "    for strategy_id, multiplier in executability_adjustments.items():\n"
-        "        weights[strategy_id] = weights.get(strategy_id, 1.0) * multiplier\n",
+        "        if strategy_id not in weights:\n"
+        "            continue\n"
+        "        weights[strategy_id] = float(weights[strategy_id]) * float(multiplier)\n"
+        "        reason = executability_reasons.get(strategy_id, '')\n"
+        "        if reason:\n"
+        "            strategy_weight_reasons[strategy_id] = reason\n"
+        "    print('不可成交反馈降权: ok')\n",
         encoding="utf-8",
     )
     runtime_path.write_text(
@@ -489,8 +517,7 @@ def test_check_before_live_blocks_executability_feedback_applied_to_weights(
         for item in findings
         if item.gate == "strategy_executability_runtime_feedback"
     )
-    assert finding.ok is False
-    assert "proposal-only" in finding.detail
+    assert finding.ok is True
 
 
 def test_check_before_live_blocks_small_symbol_walkforward_gate(

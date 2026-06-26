@@ -28,7 +28,7 @@ def test_intraday_refresh_script_uses_isolated_outputs() -> None:
         encoding="utf-8"
     )
 
-    assert 'export AQSP_RUN_TASK_ID="intraday"' in script
+    assert 'export AQSP_RUN_TASK_ID="${AQSP_RUN_TASK_ID:-intraday}"' in script
     assert 'export AQSP_NOTIFY="false"' in script
     assert 'INTRADAY_MODE="${AQSP_INTRADAY_MODE:-open}"' in script
     assert 'INTRADAY_ALLOW_NOTIFY="${AQSP_INTRADAY_ALLOW_NOTIFY:-false}"' in script
@@ -56,6 +56,7 @@ def test_news_catalysts_script_defaults_to_report_only() -> None:
 
     assert 'export AQSP_RUN_TASK_ID="news"' in script
     assert "AQSP_NEWS_NOTIFY:-false" in script
+    assert "GLOBAL_NOTIFY" not in script
     assert 'export AQSP_NOTIFY="false"' in script
     assert script.index("已加载 .env 配置") < script.index('export AQSP_NOTIFY="false"')
     assert "NOTIFY_ARGS=(--notify)" in script
@@ -170,8 +171,8 @@ def test_bt_task_script_exposes_panel_safe_actions() -> None:
     assert daily_script.index("run_data_cleanup") < daily_script.index("周末(周${DOW})")
     assert "today_shanghai" in daily_script
     assert "今日非交易日，跳过跑批" in daily_script
-    assert 'RUN_TASK_ID="${AQSP_RUN_TASK_ID:-daily}"' in daily_script
-    assert '[ "$RUN_TASK_ID" = "daily" ]' in daily_script
+    assert 'RUN_TASK_ID="${AQSP_RUN_TASK_ID:-}"' in daily_script
+    assert "缺少 AQSP_RUN_TASK_ID" in daily_script
     assert "拒绝运行 daily_pipeline" in daily_script
     assert "请统一走 scripts/bt_task.sh" in daily_script
     assert "非 daily 任务忽略 AQSP_NOTIFY=true" in daily_script

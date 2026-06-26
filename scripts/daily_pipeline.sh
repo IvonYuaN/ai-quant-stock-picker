@@ -105,8 +105,12 @@ START_TIME=$(date +%s)
 
 # 运行 Python 跑批脚本
 PIPELINE_ARGS=( "$@" )
-RUN_TASK_ID="${AQSP_RUN_TASK_ID:-daily}"
-if [ "$RUN_TASK_ID" != "daily" ] && [ -n "${AQSP_RUN_TASK_ID:-}" ]; then
+RUN_TASK_ID="${AQSP_RUN_TASK_ID:-}"
+if [ -z "$RUN_TASK_ID" ]; then
+    log "拒绝直接运行 daily_pipeline：缺少 AQSP_RUN_TASK_ID，请统一走 scripts/bt_task.sh daily"
+    exit 0
+fi
+if [ "$RUN_TASK_ID" != "daily" ]; then
     log "拒绝运行 daily_pipeline：AQSP_RUN_TASK_ID=${RUN_TASK_ID}，请统一走 scripts/bt_task.sh ${RUN_TASK_ID}"
     exit 0
 fi

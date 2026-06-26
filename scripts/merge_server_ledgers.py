@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from aqsp.core.time import now_shanghai
-from aqsp.ledger.runtime import ledger_signal_date
+from aqsp.ledger.runtime import count_independent_signal_days
 from aqsp.utils.jsonl_io import atomic_write_text
 
 
@@ -70,27 +70,6 @@ def merge_rows(target_rows: list[dict], source_rows: list[dict]) -> list[dict]:
     return merged
 
 
-def count_independent_signal_days(rows: list[dict]) -> int:
-    signal_dates: set[str] = set()
-    for row in rows:
-        if bool(row.get("is_simulated")):
-            continue
-        if not str(row.get("symbol") or "").strip():
-            continue
-        if str(row.get("status") or "").strip() == "not_executable":
-            continue
-        has_signal_payload = any(
-            row.get(key) not in (None, "")
-            for key in ("thresholds_version", "status", "rating", "score", "strategies")
-        )
-        if not has_signal_payload:
-            continue
-        signal_date = ledger_signal_date(row)
-        if signal_date:
-            signal_dates.add(signal_date)
-    return len(signal_dates)
-
-
 def write_rows(path: Path, rows: list[dict]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     text = "\n".join(
@@ -131,7 +110,7 @@ def merge_ledgers(
         target_rows=len(target_rows),
         source_rows=len(source_rows),
         merged_rows=len(merged_rows),
-        cold_start_days=count_independent_signal_days(merged_rows),
+        cold_start_days=count_independent_signal_days(str(target_path)),
         backup_paths=tuple(sorted(backups)),
     )
 

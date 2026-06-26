@@ -234,7 +234,7 @@ def test_run_scheduled_runtime_weights_exclude_learner_proposals() -> None:
     assert "weight_proposals[" not in source[runtime_weight_at:snapshot_at]
 
 
-def test_run_scheduled_executability_feedback_is_proposal_only() -> None:
+def test_run_scheduled_executability_feedback_applies_runtime_downweights() -> None:
     import aqsp.cli as cli_mod
 
     source = inspect.getsource(cli_mod._run_scheduled_legacy)
@@ -242,10 +242,9 @@ def test_run_scheduled_executability_feedback_is_proposal_only() -> None:
     config_at = source.index("config = ScreeningConfig(")
     between = source[feedback_at:config_at]
 
-    assert "不可成交反馈降权提案" in between
-    assert "未应用到本次筛选" in between
-    assert "weights[strategy_id]" not in between
-    assert "strategy_weight_reasons = executability_reasons" not in between
+    assert "不可成交反馈降权:" in between
+    assert "weights[strategy_id]" in between
+    assert "strategy_weight_reasons[strategy_id] = reason" in between
 
 
 def test_run_scheduled_skips_runtime_chain_on_non_trading_day(

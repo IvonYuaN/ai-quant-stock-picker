@@ -57,7 +57,7 @@ fi
 
 export PYTHONPATH="${PROJECT_ROOT}/src:${PROJECT_ROOT}:${PYTHONPATH:-}"
 export TZ="${TZ:-Asia/Shanghai}"
-export AQSP_RUN_TASK_ID="intraday"
+export AQSP_RUN_TASK_ID="${AQSP_RUN_TASK_ID:-intraday}"
 export AQSP_NOTIFY="false"
 
 DOW=$(date +%u)

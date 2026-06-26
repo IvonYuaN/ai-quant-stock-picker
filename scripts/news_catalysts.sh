@@ -49,12 +49,7 @@ if is_truthy "$ENABLE_LLM_REVIEW"; then
     LLM_ARGS=(--enable-llm-review)
 fi
 
-GLOBAL_NOTIFY="${AQSP_NOTIFY:-false}"
-NEWS_NOTIFY_OVERRIDE="${AQSP_NEWS_NOTIFY:-false}"
-NEWS_NOTIFY_ENABLED="$GLOBAL_NOTIFY"
-if [ -n "${AQSP_NEWS_NOTIFY:-}" ]; then
-    NEWS_NOTIFY_ENABLED="$NEWS_NOTIFY_OVERRIDE"
-fi
+NEWS_NOTIFY_ENABLED="${AQSP_NEWS_NOTIFY:-false}"
 export AQSP_NOTIFY="false"
 
 NOTIFY_ARGS=()
@@ -71,7 +66,7 @@ AQSP_CALENDAR_PY
         log "今日非交易日，消息面雷达仅写报告；设置 AQSP_ALLOW_NON_TRADING_NEWS_NOTIFY=true 才允许非交易日推送"
     fi
 else
-    log "消息面雷达默认不推送手机通知；设置 AQSP_NOTIFY=true 或 AQSP_NEWS_NOTIFY=true 才推送"
+    log "消息面雷达默认不推送手机通知；设置 AQSP_NEWS_NOTIFY=true 才推送"
 fi
 
 log "开始消息面雷达"

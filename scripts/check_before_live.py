@@ -861,10 +861,35 @@ def _check_trading_calendar_coverage(root: Path, today: date) -> ReadinessFindin
     if today.month >= 11:
         required_years.add(today.year + 1)
     missing = sorted(required_years - covered_years)
+    critical_holidays = {
+        date(2026, 6, 19),
+    }
+    critical_missing = sorted(
+        holiday.isoformat()
+        for holiday in critical_holidays
+        if holiday.year in required_years and holiday not in dates
+    )
     return ReadinessFinding(
         "trading_calendar_coverage",
-        not missing,
-        "ok" if not missing else "missing years: " + ", ".join(map(str, missing)),
+        not missing and not critical_missing,
+        "ok"
+        if not missing and not critical_missing
+        else "; ".join(
+            part
+            for part in (
+                (
+                    "missing years: " + ", ".join(map(str, missing))
+                    if missing
+                    else ""
+                ),
+                (
+                    "missing critical holidays: " + ", ".join(critical_missing)
+                    if critical_missing
+                    else ""
+                ),
+            )
+            if part
+        ),
     )
 
 
@@ -999,17 +1024,17 @@ def _check_strategy_executability_runtime_feedback(root: Path) -> ReadinessFindi
     ok = (
         "strategy_executability_weight_adjustments" in runtime_text
         and "strategy_executability_weight_adjustments(args.ledger)" in cli_text
-        and "不可成交反馈降权提案" in block
-        and "未应用到本次筛选" in block
-        and "weights[strategy_id]" not in block
-        and "strategy_weight_reasons = executability_reasons" not in block
+        and "weights[strategy_id]" in block
+        and "strategy_weight_reasons[strategy_id] = reason" in block
+        and "float(weights[strategy_id]) * float(multiplier)" in block
+        and "不可成交反馈降权:" in block
     )
     return ReadinessFinding(
         "strategy_executability_runtime_feedback",
         ok,
         "ok"
         if ok
-        else "not_executable strategy feedback must stay proposal-only until configured with freeze gates",
+        else "not_executable strategy feedback must apply conservative runtime downweights and record reasons",
     )
 
 

@@ -9,7 +9,6 @@ from aqsp.core.errors import DataError
 from aqsp.core.time import (
     _load_basic_trading_calendar,
     _get_basic_next_trading_day,
-    _get_basic_previous_trading_day,
     _is_basic_trading_day,
 )
 from aqsp.data.tushare_pit import (
@@ -89,10 +88,25 @@ def resolve_previous_trading_day(
     )
     if runtime_calendar is not None:
         try:
-            return previous_trade_date_from_calendar(runtime_calendar, target)
+            candidate = previous_trade_date_from_calendar(runtime_calendar, target)
+            if resolve_is_trading_day(
+                candidate,
+                calendar_df=runtime_calendar,
+                exchange=exchange,
+                window=window,
+            ):
+                return candidate
         except DataError:
             pass
-    return _get_basic_previous_trading_day(target)
+    cursor = target - timedelta(days=1)
+    while not resolve_is_trading_day(
+        cursor,
+        calendar_df=runtime_calendar,
+        exchange=exchange,
+        window=window,
+    ):
+        cursor -= timedelta(days=1)
+    return cursor
 
 
 def resolve_next_trading_day(
@@ -113,10 +127,25 @@ def resolve_next_trading_day(
     )
     if runtime_calendar is not None:
         try:
-            return next_trade_date_from_calendar(runtime_calendar, target)
+            candidate = next_trade_date_from_calendar(runtime_calendar, target)
+            if resolve_is_trading_day(
+                candidate,
+                calendar_df=runtime_calendar,
+                exchange=exchange,
+                window=window,
+            ):
+                return candidate
         except DataError:
             pass
-    return _get_basic_next_trading_day(target)
+    cursor = target + timedelta(days=1)
+    while not resolve_is_trading_day(
+        cursor,
+        calendar_df=runtime_calendar,
+        exchange=exchange,
+        window=window,
+    ):
+        cursor += timedelta(days=1)
+    return cursor
 
 
 def trading_day_lag(
