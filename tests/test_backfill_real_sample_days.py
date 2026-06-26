@@ -85,6 +85,17 @@ def test_should_stop_for_processed_day_cap() -> None:
     )
 
 
+def test_lower_process_priority_ignores_nonpositive_levels(monkeypatch) -> None:
+    called: list[int] = []
+    monkeypatch.setattr(backfill.os, "nice", lambda value: called.append(value))
+
+    backfill._lower_process_priority(0)
+    backfill._lower_process_priority(-1)
+    backfill._lower_process_priority(5)
+
+    assert called == [5]
+
+
 def test_collect_signal_days_treats_no_pick_marker_as_attempted_day(
     tmp_path: Path,
 ) -> None:

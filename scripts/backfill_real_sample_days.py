@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import logging
 import time
 from dataclasses import dataclass
@@ -52,6 +53,17 @@ BACKFILL_NO_PICKS_STATUS = "backfill_no_picks"
 def _configure_logging(level_name: str) -> None:
     level = getattr(logging, str(level_name or "ERROR").upper(), logging.ERROR)
     logging.basicConfig(level=level, format="%(levelname)s %(name)s: %(message)s")
+
+
+def _lower_process_priority(nice_level: int) -> None:
+    if nice_level <= 0:
+        return
+    try:
+        os.nice(nice_level)
+    except OSError:
+        logging.getLogger(__name__).warning(
+            "unable to lower backfill priority by %s", nice_level
+        )
 
 
 def _history_window_start(signal_day: date, lookback_days: int) -> date:
@@ -343,6 +355,7 @@ def screen_backfill_picks(
 
 
 def backfill_real_sample_days(args: argparse.Namespace) -> int:
+    _lower_process_priority(int(getattr(args, "nice_level", 0) or 0))
     thresholds = load_thresholds()
     runtime = load_runtime_config()
     project_root = Path(args.project_root).resolve()
@@ -617,6 +630,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--max-processed-days", type=int, default=0)
     parser.add_argument("--sleep-between-days", type=float, default=0.0)
+    parser.add_argument("--nice-level", type=int, default=10)
     parser.add_argument("--log-level", default="ERROR")
     return parser
 
