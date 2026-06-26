@@ -341,7 +341,8 @@ def backfill_real_sample_days(args: argparse.Namespace) -> int:
     project_root = Path(args.project_root).resolve()
     ledger_path = project_root / args.ledger
     paper_ledger_path = project_root / args.paper_ledger
-    source = build_data_source(args.source, cache=DataCache(), overrides={})
+    source_cache = None if args.source == "sqlite_db" else DataCache()
+    source = build_data_source(args.source, cache=source_cache, overrides={})
 
     existing_signal_days = collect_signal_days(ledger_path)
     existing_paper_days = collect_paper_tracking_dates(str(paper_ledger_path))

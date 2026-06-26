@@ -82,18 +82,23 @@ def build_data_source(
     cache: DataCache | None = None,
     overrides: dict[str, SourceBuilder] | None = None,
 ) -> DataSource:
-    cache = cache or DataCache()
+    source_cache = cache or DataCache()
     override_builders = overrides or {}
+    if source_name == "sqlite_db":
+        return build_sqlite_db_source_with(
+            cache=cache,
+            builder=override_builders.get("sqlite_db"),
+        )
     builders = _source_builders(override_builders)
     if source_name in {"auto", "local_first"}:
         if not online_fallback_allowed():
             return builders["tdx_vipdoc"]()
         fallbacks = _reorder_source_refs(
             [
-                _build_with_cache(builders["eastmoney"], cache),
-                _build_with_cache(builders["sina"], cache),
-                _build_with_cache(builders["tencent"], cache),
-                _build_with_cache(builders["akshare"], cache),
+                _build_with_cache(builders["eastmoney"], source_cache),
+                _build_with_cache(builders["sina"], source_cache),
+                _build_with_cache(builders["tencent"], source_cache),
+                _build_with_cache(builders["akshare"], source_cache),
             ],
             pinned_last=("akshare",),
         )
@@ -105,10 +110,10 @@ def build_data_source(
     if source_name == "online_first":
         online_sources = _reorder_source_refs(
             [
-                _build_with_cache(builders["eastmoney"], cache),
-                _build_with_cache(builders["sina"], cache),
-                _build_with_cache(builders["tencent"], cache),
-                _build_with_cache(builders["akshare"], cache),
+                _build_with_cache(builders["eastmoney"], source_cache),
+                _build_with_cache(builders["sina"], source_cache),
+                _build_with_cache(builders["tencent"], source_cache),
+                _build_with_cache(builders["akshare"], source_cache),
             ],
             pinned_last=("akshare",),
         )
@@ -120,21 +125,16 @@ def build_data_source(
     if source_name == "multi":
         sources = _reorder_source_refs(
             [
-                _build_with_cache(builders["akshare"], cache),
-                _build_with_cache(builders["sina"], cache),
-                _build_with_cache(builders["eastmoney"], cache),
-                _build_with_cache(builders["tencent"], cache),
+                _build_with_cache(builders["akshare"], source_cache),
+                _build_with_cache(builders["sina"], source_cache),
+                _build_with_cache(builders["eastmoney"], source_cache),
+                _build_with_cache(builders["tencent"], source_cache),
             ],
             pinned_last=("akshare",),
         )
         return MultiSource(sources[0], sources[1:])
-    if source_name == "sqlite_db":
-        return build_sqlite_db_source_with(
-            cache=cache,
-            builder=override_builders.get("sqlite_db"),
-        )
     if source_name in builders:
-        return _build_with_cache(builders[source_name], cache)
+        return _build_with_cache(builders[source_name], source_cache)
     raise ValueError(f"Unknown data source: {source_name}")
 
 
