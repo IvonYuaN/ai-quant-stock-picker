@@ -88,12 +88,17 @@ def check_crontab() -> CheckResult:
     if code != 0:
         return CheckResult("system crontab", True, output or "crontab unavailable")
     relevant = [line for line in output.splitlines() if "bt_task.sh" in line]
+    if relevant:
+        return CheckResult(
+            "system crontab",
+            False,
+            "duplicate AQSP system cron entries; production should use BT Panel only:\n"
+            + "\n".join(relevant),
+        )
     return CheckResult(
         "system crontab",
         True,
-        "\n".join(relevant)
-        if relevant
-        else "no bt_task.sh entries; BT Panel jobs may be managed outside crontab",
+        "no bt_task.sh entries; production schedule should be managed by BT Panel",
     )
 
 

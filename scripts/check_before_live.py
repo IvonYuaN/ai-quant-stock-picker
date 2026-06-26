@@ -188,6 +188,7 @@ def check_before_live(
     findings.append(
         _check_scheduler_notify_cadence(root, cron_path=cron_path, cron_dir=cron_dir)
     )
+    findings.append(_check_system_cron_install_guard(root))
     findings.append(_check_cli_subcommand_notify_dedupe(root))
     findings.append(_check_news_catalysts_failed_notify_guard(root))
     findings.append(_check_run_scheduled_env_notify_guard(root))
@@ -1010,6 +1011,29 @@ def _check_scheduler_notify_cadence(
     )
 
 
+def _check_system_cron_install_guard(root: Path) -> ReadinessFinding:
+    path = root / "scripts" / "install_server_cron.sh"
+    if not path.exists():
+        return ReadinessFinding(
+            "system_cron_install_guard",
+            True,
+            "system cron installer unavailable; skipped",
+        )
+    text = path.read_text(encoding="utf-8")
+    ok = (
+        "AQSP_INSTALL_SYSTEM_CRON" in text
+        and "system cron install skipped" in text
+        and "exit 0" in text
+    )
+    return ReadinessFinding(
+        "system_cron_install_guard",
+        ok,
+        "ok"
+        if ok
+        else "system cron installer must default to no-op so production does not double-run with BT Panel",
+    )
+
+
 def _looks_like_high_frequency_schedule(line: str) -> bool:
     fields = line.split()
     if len(fields) < 6:
@@ -1250,6 +1274,8 @@ def _check_pipeline_gate_block_summary_notify(root: Path) -> ReadinessFinding:
         and "gate_block_summary_sent" in block
         and "收盘汇总通知降级" in block
         and "strategy_gate_not_confirmed" in block
+        and "_gate_block_notification_already_recorded" in block
+        and "gate_block_already_notified" in block
         and "notification_state =" in block
         and 'f"pipeline-summary:{run_date}:{notification_state}"' in block
     )

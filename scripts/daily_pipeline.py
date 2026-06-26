@@ -725,9 +725,7 @@ def _step_auto_evolution(
     explicit_symbols = os.getenv("AQSP_SYMBOLS", "").strip()
     tushare_token = os.getenv("TUSHARE_TOKEN", "").strip()
     if not explicit_symbols and not tushare_token:
-        logger.info(
-            "  缺少 TUSHARE_TOKEN 且未显式配置 AQSP_SYMBOLS，跳过策略自进化"
-        )
+        logger.info("  缺少 TUSHARE_TOKEN 且未显式配置 AQSP_SYMBOLS，跳过策略自进化")
         return {"skipped": True, "reason": "missing_tushare_or_symbols"}
 
     output_path = config.project_root / "data" / "evolution_result.json"
@@ -747,8 +745,9 @@ def _step_auto_evolution(
     from aqsp.cli import main
 
     output_buffer = io.StringIO()
-    with contextlib.redirect_stdout(output_buffer), contextlib.redirect_stderr(
-        output_buffer
+    with (
+        contextlib.redirect_stdout(output_buffer),
+        contextlib.redirect_stderr(output_buffer),
     ):
         exit_code = main(argv)
     cli_output = output_buffer.getvalue().strip()
@@ -1513,6 +1512,13 @@ def _send_pipeline_digest(
     if not _pipeline_strategy_gate_ok(result):
         logger.info("收盘汇总通知降级：策略运行未明确通过双门 gate")
         gate_block_reason = "strategy_gate_not_confirmed"
+    if gate_block_reason and _gate_block_notification_already_recorded(
+        config.project_root,
+        run_date,
+    ):
+        logger.info("收盘汇总通知跳过：当日 gate-block 通知已由主链发送")
+        set_status("skipped", "gate_block_already_notified", date=run_date)
+        return
 
     try:
         from aqsp.notifier import prepend_source_status_banner, send_notification
@@ -1603,6 +1609,27 @@ def _send_pipeline_digest(
     except Exception as exc:
         logger.warning("收盘汇总通知发送失败(非致命): %s", exc)
         set_status("failed", str(exc), date=run_date)
+
+
+def _gate_block_notification_already_recorded(
+    project_root: Path, run_date: str
+) -> bool:
+    path = project_root / "data" / "gate_notify_state.json"
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    if not isinstance(payload, dict):
+        return False
+    sent_by_date = payload.get("sent_by_date", {})
+    if not isinstance(sent_by_date, dict):
+        return False
+    entry = sent_by_date.get(str(run_date))
+    if isinstance(entry, str):
+        return bool(entry)
+    if not isinstance(entry, dict):
+        return False
+    return str(entry.get("status") or "") in {"pending", "sent", "failed"}
 
 
 def _pipeline_strategy_gate_ok(result: PipelineResult) -> bool:

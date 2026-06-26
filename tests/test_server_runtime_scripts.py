@@ -65,11 +65,14 @@ def test_news_catalysts_script_defaults_to_report_only() -> None:
     assert "今日非交易日，消息面雷达仅写报告" in script
 
 
-def test_install_server_cron_script_installs_standard_jobs() -> None:
+def test_install_server_cron_script_defaults_to_noop_migration_guard() -> None:
     script = (PROJECT_ROOT / "scripts" / "install_server_cron.sh").read_text(
         encoding="utf-8"
     )
 
+    assert "AQSP_INSTALL_SYSTEM_CRON" in script
+    assert "system cron install skipped" in script
+    assert "生产定时统一使用宝塔计划任务" in script
     assert "AQSP_ENABLE_INTRADAY_CRON" in script
     assert "AQSP_ENABLE_MIDDAY_CRON" in script
     assert "AQSP_ENABLE_DAILY_CRON" in script
@@ -221,7 +224,9 @@ def test_scheduler_diagnosis_is_read_only_and_bt_first() -> None:
     assert "shell=True" not in script
     assert "bt_task.sh" in script
     assert '"news"' in script
-    assert "BT Panel jobs may be managed outside crontab" in script
+    assert "duplicate AQSP system cron entries" in script
+    assert "production should use BT Panel only" in script
+    assert "production schedule should be managed by BT Panel" in script
     assert "BT Panel logs" in script
     assert "pid-active" in script
     assert "runner=" in script

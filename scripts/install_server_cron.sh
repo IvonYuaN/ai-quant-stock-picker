@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# 安装简单服务器模式 cron：
+# 备用/迁移用 system cron 安装脚本：
+# 生产定时默认统一由宝塔计划任务管理；直接运行本脚本不会写 crontab。
+# 如确需迁移到 system cron，必须显式设置 AQSP_INSTALL_SYSTEM_CRON=true。
 # 1. 北京时间 09:40-11:59 每 10 分钟运行盘中刷新
 # 2. 北京时间 12:05 运行一次午盘回看
 # 3. 北京时间 13:00-14:59 每 10 分钟运行盘中刷新
@@ -12,6 +14,7 @@ set -euo pipefail
 
 PROJECT_ROOT="${AQSP_PROJECT_ROOT:-/opt/aqsp}"
 CRON_LOG="${AQSP_CRON_LOG:-${PROJECT_ROOT}/logs/cron.log}"
+INSTALL_SYSTEM_CRON="${AQSP_INSTALL_SYSTEM_CRON:-false}"
 ENABLE_INTRADAY="${AQSP_ENABLE_INTRADAY_CRON:-true}"
 ENABLE_MIDDAY="${AQSP_ENABLE_MIDDAY_CRON:-true}"
 ENABLE_DAILY="${AQSP_ENABLE_DAILY_CRON:-true}"
@@ -20,6 +23,15 @@ ENABLE_NEWS="${AQSP_ENABLE_NEWS_CRON:-true}"
 ENABLE_COLDSTART="${AQSP_ENABLE_COLDSTART_CRON:-true}"
 
 mkdir -p "$(dirname "$CRON_LOG")"
+
+if [[ ! "${INSTALL_SYSTEM_CRON,,}" =~ ^(1|true|yes|on)$ ]]; then
+    cat <<EOF
+AQSP system cron install skipped.
+生产定时统一使用宝塔计划任务：/bin/bash ${PROJECT_ROOT}/scripts/bt_task.sh <action>
+如确需迁移到 system cron，请显式设置 AQSP_INSTALL_SYSTEM_CRON=true 后重跑。
+EOF
+    exit 0
+fi
 
 emit_jobs() {
     if [[ "${ENABLE_INTRADAY,,}" =~ ^(1|true|yes|on)$ ]]; then

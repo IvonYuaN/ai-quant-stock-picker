@@ -1135,6 +1135,27 @@ def test_check_before_live_allows_intraday_without_notify(
     assert finding.ok is True
 
 
+def test_check_before_live_blocks_system_cron_installer_without_noop_guard(
+    tmp_path: Path,
+) -> None:
+    _prepare_ready_runtime(tmp_path)
+    path = tmp_path / "scripts/install_server_cron.sh"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "#!/usr/bin/env bash\n"
+        "echo '*/15 * * * 1-5 /bin/bash /opt/aqsp/scripts/bt_task.sh monitor' | crontab -\n",
+        encoding="utf-8",
+    )
+
+    findings = check_before_live(root=tmp_path, today=date(2026, 6, 14))
+
+    finding = next(
+        item for item in findings if item.gate == "system_cron_install_guard"
+    )
+    assert finding.ok is False
+    assert "double-run" in finding.detail
+
+
 def test_check_before_live_blocks_unstable_gate_notify_state_path(
     tmp_path: Path,
 ) -> None:

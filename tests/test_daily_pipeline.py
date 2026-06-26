@@ -154,7 +154,9 @@ def test_build_config_enables_notify_and_auto_evolution_from_env(monkeypatch) ->
     assert config.enable_auto_evolution is True
 
 
-def test_morning_breakout_uses_runtime_symbols_without_sh300_override(monkeypatch) -> None:
+def test_morning_breakout_uses_runtime_symbols_without_sh300_override(
+    monkeypatch,
+) -> None:
     daily_pipeline = _load_daily_pipeline_module()
     captured: list[str] = []
 
@@ -990,6 +992,55 @@ def test_send_pipeline_digest_sends_block_summary_when_strategy_gate_not_confirm
         "channels": "serverchan=ok(HTTP 200)",
     }
     assert "收盘汇总通知降级" in caplog.text
+
+
+def test_send_pipeline_digest_skips_block_summary_when_gate_notice_recorded(
+    monkeypatch, tmp_path: Path, caplog
+) -> None:
+    daily_pipeline = _load_daily_pipeline_module()
+    calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        "aqsp.notifier.send_notification",
+        lambda title, content: calls.append((title, content)) or [],
+    )
+    state_path = tmp_path / "data" / "gate_notify_state.json"
+    state_path.parent.mkdir(parents=True)
+    state_path.write_text(
+        json.dumps(
+            {
+                "sent_by_date": {
+                    "2026-06-02": {
+                        "fingerprint": "cold_start|dsr",
+                        "status": "sent",
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    config = _pipeline_config(
+        daily_pipeline, tmp_path, notify=True, notify_mode="summary"
+    )
+    result = daily_pipeline.PipelineResult(
+        started_at="2026-06-02T18:00:00+08:00",
+        finished_at="2026-06-02T18:00:30+08:00",
+        duration_seconds=30.0,
+        steps=[daily_pipeline.StepResult("策略运行", True, 2.0)],
+        overall_success=True,
+        summary="ok",
+    )
+
+    with caplog.at_level(logging.INFO, logger="test"):
+        daily_pipeline._send_pipeline_digest(config, result, logging.getLogger("test"))
+
+    assert calls == []
+    assert result.notify_status == {
+        "mode": "summary",
+        "status": "skipped",
+        "reason": "gate_block_already_notified",
+        "date": "2026-06-02",
+    }
+    assert "gate-block 通知已由主链发送" in caplog.text
 
 
 def test_send_pipeline_digest_skips_non_trading_day(
