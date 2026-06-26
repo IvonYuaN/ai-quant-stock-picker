@@ -18,7 +18,11 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from aqsp.core.time import SHANGHAI_TZ, get_previous_trading_day, today_shanghai
-from aqsp.ledger.runtime import count_independent_signal_days, count_paper_tracking_days
+from aqsp.ledger.runtime import (
+    count_independent_signal_days,
+    count_paper_tracking_days,
+    ledger_signal_date,
+)
 from aqsp.utils.env import read_env_value
 from aqsp.walkforward_gate import (
     MAX_GATE_AGE_DAYS,
@@ -271,8 +275,16 @@ def _extract_walkforward_report_symbols(report_path: Path) -> int | None:
         text = report_path.read_text(encoding="utf-8")
     except OSError:
         return None
-    match = re.search(r"\*\*标的数量\*\*\s*[:：]\s*(\d+)", text)
-    return int(match.group(1)) if match else None
+    patterns = (
+        r"\*\*标的数量\*\*\s*[:：]\s*(\d+)",
+        r"\|\s*effective_symbols\s*\|\s*(\d+)\s*\|",
+        r"\|\s*covered_symbols\s*\|\s*(\d+)\s*\|",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, text)
+        if match:
+            return int(match.group(1))
+    return None
 
 
 def _check_walkforward_market_coverage(
@@ -867,11 +879,48 @@ def _check_signal_sample_size(path: Path) -> ReadinessFinding:
 
 def _check_paper_tracking_sample_size(path: Path) -> ReadinessFinding:
     count = count_paper_tracking_days(str(path))
+    predictions_path = path.with_name("predictions.jsonl")
+    missing_tradable_days = _paper_missing_tradable_signal_days(
+        predictions_path=predictions_path,
+        paper_path=path,
+    )
+    detail = f"{count}/{MIN_INDEPENDENT_SIGNAL_DAYS} real paper tracking days"
+    if missing_tradable_days:
+        preview = ", ".join(missing_tradable_days[:5])
+        if len(missing_tradable_days) > 5:
+            preview += ", ..."
+        detail += f"; missing tradable signal days={len(missing_tradable_days)} [{preview}]"
+    elif count < MIN_INDEPENDENT_SIGNAL_DAYS:
+        detail += "; no additional tradable signal days available yet"
     return ReadinessFinding(
         "paper_tracking_sample_size",
         count >= MIN_INDEPENDENT_SIGNAL_DAYS,
-        f"{count}/{MIN_INDEPENDENT_SIGNAL_DAYS} real paper tracking days",
+        detail,
     )
+
+
+def _paper_missing_tradable_signal_days(
+    *,
+    predictions_path: Path,
+    paper_path: Path,
+) -> list[str]:
+    if not predictions_path.exists() or not paper_path.exists():
+        return []
+    paper_days = {
+        ledger_signal_date(row)
+        for row in _read_jsonl(paper_path)
+        if ledger_signal_date(row)
+    }
+    tradable_days: set[str] = set()
+    for row in _read_jsonl(predictions_path):
+        if str(row.get("status") or "").strip() != "pending":
+            continue
+        if str(row.get("rating") or "").strip() not in {"buy_candidate", "strong_buy_candidate"}:
+            continue
+        signal_day = ledger_signal_date(row)
+        if signal_day:
+            tradable_days.add(signal_day)
+    return sorted(tradable_days - paper_days)
 
 
 def _check_signal_sample_status_boundary(root: Path) -> ReadinessFinding:

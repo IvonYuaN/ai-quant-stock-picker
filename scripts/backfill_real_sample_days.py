@@ -114,8 +114,16 @@ def build_backfill_plan(
             if signal_missing or paper_missing:
                 trading_days.append(cursor)
         cursor += timedelta(days=1)
+    trading_days = sorted(
+        trading_days,
+        key=lambda day: (
+            day.isoformat() not in missing_paper_days,
+            day.isoformat() not in existing_signal_days,
+            day,
+        ),
+    )
     if max_days > 0:
-        trading_days = trading_days[-max_days:]
+        trading_days = trading_days[:max_days]
     planned_days = {day.isoformat() for day in trading_days}
     return BackfillDayPlan(
         trading_days=trading_days,

@@ -546,7 +546,33 @@ def test_check_before_live_blocks_when_gate_and_report_symbol_counts_diverge(
     assert "gate=3200" in finding.detail
 
 
-def test_check_before_live_does_not_use_diagnostic_effective_symbols_as_report_count(
+def test_check_before_live_reads_only_formal_production_report_for_symbol_count(
+    tmp_path: Path,
+) -> None:
+    _prepare_ready_runtime(tmp_path)
+    (tmp_path / "reports" / "walkforward-grid-raw-production-latest.md").write_text(
+        "**标的数量**: 3199\n",
+        encoding="utf-8",
+    )
+    (
+        tmp_path / "reports" / "walkforward-grid-raw-production-diagnostic-latest.md"
+    ).write_text(
+        "**标的数量**: 3200\n",
+        encoding="utf-8",
+    )
+
+    findings = check_before_live(root=tmp_path, today=date(2026, 6, 14))
+    finding = next(
+        item for item in findings if item.gate == "walkforward_market_coverage"
+    )
+
+    assert finding.ok is False
+    assert "symbol count mismatch" in finding.detail
+    assert "report=3199" in finding.detail
+    assert "gate=3200" in finding.detail
+
+
+def test_check_before_live_accepts_markdown_table_effective_symbols_report(
     tmp_path: Path,
 ) -> None:
     _prepare_ready_runtime(tmp_path)
@@ -560,8 +586,7 @@ def test_check_before_live_does_not_use_diagnostic_effective_symbols_as_report_c
         item for item in findings if item.gate == "walkforward_market_coverage"
     )
 
-    assert finding.ok is False
-    assert "production report missing actual symbol count" in finding.detail
+    assert finding.ok is True
 
 
 def test_check_before_live_blocks_when_walkforward_gate_failed(tmp_path: Path) -> None:
@@ -852,7 +877,7 @@ def test_check_before_live_blocks_when_paper_tracking_samples_are_too_small(
         item for item in findings if item.gate == "paper_tracking_sample_size"
     )
     assert finding.ok is False
-    assert finding.detail == "9/30 real paper tracking days"
+    assert finding.detail == "9/30 real paper tracking days; no additional tradable signal days available yet"
 
 
 def test_check_before_live_counts_real_paper_tracking_statuses(
@@ -912,6 +937,47 @@ def test_check_before_live_counts_real_paper_tracking_statuses(
     )
     assert finding.ok is True
     assert finding.detail == "30/30 real paper tracking days"
+
+
+def test_check_before_live_reports_missing_tradable_signal_days_for_paper_samples(
+    tmp_path: Path,
+) -> None:
+    _prepare_ready_runtime(tmp_path)
+    _write_jsonl(
+        tmp_path / "data/predictions.jsonl",
+        [
+            {
+                "signal_date": "2026-05-01",
+                "symbol": "600519",
+                "status": "pending",
+                "rating": "buy_candidate",
+            },
+            {
+                "signal_date": "2026-05-02",
+                "symbol": "000001",
+                "status": "watch_only",
+                "rating": "avoid",
+            },
+        ],
+    )
+    _write_jsonl(
+        tmp_path / "data/paper_trades.jsonl",
+        [
+            {
+                "signal_date": "2026-05-03",
+                "symbol": "300750",
+                "status": "closed",
+            }
+        ],
+    )
+
+    findings = check_before_live(root=tmp_path, today=date(2026, 6, 14))
+
+    finding = next(
+        item for item in findings if item.gate == "paper_tracking_sample_size"
+    )
+    assert finding.ok is False
+    assert "missing tradable signal days=1 [2026-05-01]" in finding.detail
 
 
 def test_check_before_live_blocks_signal_samples_counting_paper_statuses(

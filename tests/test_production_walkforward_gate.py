@@ -226,6 +226,7 @@ def test_write_minimal_pbo_diagnostics_for_failed_gate(
     assert "CSCV 失败组合占比" in text
     assert "最差对齐周期" in text
     assert "训练选中变体" in text
+    assert "**标的数量**: 3200" in text
     assert "effective_symbols | 3200" in text
 
 

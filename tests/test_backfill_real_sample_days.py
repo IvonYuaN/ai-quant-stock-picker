@@ -27,11 +27,11 @@ def test_build_backfill_plan_keeps_days_missing_signal_or_paper(monkeypatch) -> 
     )
 
     assert [day.isoformat() for day in plan.trading_days] == [
-        "2026-06-02",
         "2026-06-03",
-        "2026-06-04",
+        "2026-06-02",
         "2026-06-05",
         "2026-06-08",
+        "2026-06-04",
     ]
     assert plan.missing_signal_days == {
         "2026-06-02",
@@ -321,12 +321,14 @@ def test_build_backfill_plan_trims_missing_sets_with_max_days(monkeypatch) -> No
         max_days=2,
     )
 
-    assert [day.isoformat() for day in plan.trading_days] == [
-        "2026-06-04",
-        "2026-06-05",
-    ]
-    assert plan.missing_signal_days == {"2026-06-04", "2026-06-05"}
-    assert plan.missing_paper_days == {"2026-06-04", "2026-06-05"}
+    assert {day.isoformat() for day in plan.trading_days} == {
+        "2026-06-01",
+        "2026-06-02",
+    }
+    assert plan.trading_days[0].isoformat() == "2026-06-02"
+    assert all(day.isoformat() in plan.missing_paper_days for day in plan.trading_days)
+    assert plan.missing_signal_days == {"2026-06-01"}
+    assert plan.missing_paper_days == {"2026-06-01", "2026-06-02"}
 
 
 def test_screen_backfill_picks_batches_and_keeps_global_top_n(monkeypatch) -> None:

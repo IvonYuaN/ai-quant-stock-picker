@@ -298,6 +298,8 @@ def write_minimal_pbo_diagnostics(
         "",
         "## 生产覆盖",
         "",
+        f"**标的数量**: {payload.get('effective_symbols', '-')}",
+        "",
         "| 项目 | 值 |",
         "|------|-----|",
         f"| effective_symbols | {payload.get('effective_symbols', '-')} |",
