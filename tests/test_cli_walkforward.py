@@ -1845,3 +1845,74 @@ def test_walkforward_grid_cscv_writes_valid_pbo_gate(monkeypatch, tmp_path):
         "| 变体 | mom | tr | lb | h | top | Sharpe | 总收益 | 周期数 |" in report_text
     )
     assert "| WF-001 | 0.3 | 0.3 | 60 | 3 | 10 |" in report_text
+
+
+def test_walkforward_grid_dsr_uses_period_level_observation_count(
+    monkeypatch,
+) -> None:
+    import aqsp.cli as cli_mod
+
+    captured: dict[str, int] = {}
+
+    class DummyEngine:
+        def run(self, strategy, data, *, start_date=None, end_date=None, config=None):
+            raise AssertionError("engine.run should be monkeypatched per variant result")
+
+    variant_result = SimpleNamespace(
+        overall=SimpleNamespace(sharpe_ratio=2.0, total_return=0.1),
+        periods=[
+            SimpleNamespace(period="p1", total_return=0.01),
+            SimpleNamespace(period="p2", total_return=0.02),
+            SimpleNamespace(period="p3", total_return=0.03),
+            SimpleNamespace(period="p4", total_return=0.04),
+        ],
+    )
+
+    variants = (
+        cli_mod.WalkForwardGridVariant("A", 0.3, 0.3, 60, 3, 10),
+        cli_mod.WalkForwardGridVariant("B", 0.4, 0.2, 40, 5, 10),
+    )
+    run_calls = {"count": 0}
+
+    def fake_engine_run(*_args, **_kwargs):
+        run_calls["count"] += 1
+        return variant_result
+
+    monkeypatch.setattr(DummyEngine, "run", fake_engine_run)
+    monkeypatch.setattr(cli_mod, "_walkforward_grid_variants", lambda _profile: variants)
+    monkeypatch.setattr(cli_mod, "_apply_walkforward_grid_variant", lambda thresholds, variant: thresholds)
+    monkeypatch.setattr(
+        "aqsp.cli._execution_cost_bps_from_thresholds",
+        lambda thresholds: (3.0, 20.0),
+    )
+    monkeypatch.setattr(
+        "aqsp.backtest.walk_forward.WalkForwardTester.calculate_cscv_pbo",
+        lambda returns_matrix, s=2: (
+            0.25,
+            {"n_combos": 1, "n_lambda_le_0": 0, "lambda_median": 0.1, "lambda_mean": 0.1, "s": s, "block_size": 2},
+        ),
+    )
+    monkeypatch.setattr(
+        "aqsp.backtest.walk_forward.WalkForwardTester._calculate_deflated_sharpe",
+        lambda sharpe, n_trials, n_obs, **_kwargs: captured.setdefault("n_obs", n_obs) or 1.23,
+    )
+
+    dsr, pbo, min_periods, _rows, _details = cli_mod._run_walkforward_grid_cscv(
+        engine=DummyEngine(),
+        filtered={"600519": pd.DataFrame()},
+        thresholds=load_thresholds(),
+        args=SimpleNamespace(
+            grid_profile="stable",
+            start="2024-01-01",
+            end="2024-08-01",
+        ),
+        base_train_days=120,
+        base_test_days=20,
+        base_purge_days=5,
+        base_tiered_stop=False,
+    )
+
+    assert pbo == 0.25
+    assert min_periods == 4
+    assert run_calls["count"] == 2
+    assert captured["n_obs"] == 8

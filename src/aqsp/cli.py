@@ -3970,10 +3970,11 @@ def _run_walkforward_grid_cscv(
         }
     )
     best_sharpe = max(row[1] for row in variant_rows)
+    dsr_n_obs = int(min_periods * len(variant_rows))
     dsr = WalkForwardTester._calculate_deflated_sharpe(
         best_sharpe,
         n_trials=len(variant_rows),
-        n_obs=int(returns_matrix.size),
+        n_obs=dsr_n_obs,
     )
     return dsr, pbo, int(min_periods), variant_rows, details
 
