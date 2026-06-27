@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date
+import inspect
 import os
 from typing import Any
 
@@ -28,6 +29,40 @@ class WalkforwardFetchRequest:
 class WalkforwardFetchResult:
     frames: dict[str, pd.DataFrame]
     symbols: list[str]
+
+
+def _get_source_with_optional_cache(
+    get_source_fn: Callable[..., Any],
+    source: str,
+    cache: DataCache | None,
+) -> Any:
+    if cache is None:
+        return get_source_fn(source)
+    try:
+        signature = inspect.signature(get_source_fn)
+    except (TypeError, ValueError):
+        signature = None
+    if signature is not None:
+        parameters = signature.parameters.values()
+        if not any(
+            parameter.kind == inspect.Parameter.VAR_KEYWORD
+            or (
+                parameter.name == "cache"
+                and parameter.kind
+                in {
+                    inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                    inspect.Parameter.KEYWORD_ONLY,
+                }
+            )
+            for parameter in parameters
+        ):
+            return get_source_fn(source)
+    try:
+        return get_source_fn(source, cache=cache)
+    except TypeError as exc:
+        if "cache" not in str(exc):
+            raise
+        return get_source_fn(source)
 
 
 def fetch_walkforward_frames(
@@ -65,7 +100,12 @@ def fetch_walkforward_frames(
         return WalkforwardFetchResult(frames=frames, symbols=symbols)
 
     if source in {"baostock", "sqlite_db"}:
-        src = get_source_fn(source)
+        cache = (
+            DataCache(request.cache_path)
+            if source == "sqlite_db" and request.cache_path
+            else None
+        )
+        src = _get_source_with_optional_cache(get_source_fn, source, cache)
         if source == "sqlite_db":
             available = src.get_available_symbols()
             symbols = [symbol for symbol in symbols if symbol in available]

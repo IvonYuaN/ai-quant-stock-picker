@@ -1753,6 +1753,104 @@ def test_walkforward_sqlite_prefiltered_symbols_skip_duplicate_coverage_check(
     assert dummy.coverage_calls == 0
 
 
+def test_walkforward_sqlite_main_passes_cache_path_to_sqlite_source(
+    monkeypatch, tmp_path
+) -> None:
+    import aqsp.cli as cli_mod
+
+    seen: dict[str, object] = {}
+    cache_path = tmp_path / "walkforward-cache.db"
+
+    class DummySource:
+        def get_available_symbols(self):
+            return ["600519"]
+
+        def fetch_daily(self, symbols, start, end, adjust=""):
+            dates = pd.date_range(start="2024-01-01", periods=140, freq="B")
+            return {
+                "600519": pd.DataFrame(
+                    {
+                        "date": dates.strftime("%Y-%m-%d"),
+                        "symbol": "600519",
+                        "name": "贵州茅台",
+                        "open": 100.0,
+                        "high": 101.0,
+                        "low": 99.0,
+                        "close": 100.5,
+                        "volume": 1_000_000,
+                        "amount": 100_000_000,
+                        "suspended": False,
+                        "limit_up": 110.0,
+                        "limit_down": 90.0,
+                    }
+                )
+            }
+
+    class DummyTester:
+        def __init__(self, **kwargs) -> None:
+            pass
+
+        def run(self, filtered, start_date=None, end_date=None):
+            return SimpleNamespace(
+                overall=SimpleNamespace(
+                    total_return=0.1,
+                    annual_return=0.12,
+                    max_drawdown=0.03,
+                    sharpe_ratio=1.2,
+                    win_rate=0.55,
+                    profit_factor=1.3,
+                    trades=10,
+                    not_executable=0,
+                ),
+                deflated_sharpe=1.1,
+                pbo=0.2,
+                robustness_score=0.8,
+                parameter_std=0.1,
+                regime_winrates={},
+                periods=[],
+            )
+
+    def fake_build_sqlite_db_source(*, cache=None):
+        seen["cache_path"] = str(cache.db_path) if cache is not None else None
+        return DummySource()
+
+    monkeypatch.setattr(cli_mod, "_build_sqlite_db_source", fake_build_sqlite_db_source)
+    monkeypatch.setattr(
+        "aqsp.data.pit_financial.enrich_ohlcv_with_pit_financials",
+        lambda frames, symbols, start, end, cache=None: SimpleNamespace(
+            frames=frames, financial_symbol_count=0, disclosure_symbol_count=0
+        ),
+    )
+    monkeypatch.setattr("aqsp.backtest.walk_forward.WalkForwardTester", DummyTester)
+    monkeypatch.setattr(
+        "aqsp.strategies.composite.CompositeStrategy",
+        lambda thresholds=None: object(),
+    )
+
+    report_path = tmp_path / "walkforward-cache-pass.md"
+    result = cli_mod.main(
+        [
+            "walkforward",
+            "--source",
+            "sqlite_db",
+            "--symbols",
+            "600519",
+            "--start",
+            "2024-01-01",
+            "--end",
+            "2024-06-30",
+            "--cache-path",
+            str(cache_path),
+            "--skip-pit-financials",
+            "--report",
+            str(report_path),
+        ]
+    )
+
+    assert result == 0
+    assert seen == {"cache_path": str(cache_path)}
+
+
 def test_sqlite_fetch_daily_skips_duplicate_coverage_check_when_prefiltered(
     monkeypatch, tmp_path
 ) -> None:

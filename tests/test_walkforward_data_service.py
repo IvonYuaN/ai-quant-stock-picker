@@ -86,15 +86,20 @@ def test_fetch_walkforward_frames_filters_sqlite_coverage_when_available() -> No
             seen["fetch"] = (list(symbols), start, end, adjust)
             return {"600519": _frame()}
 
+    def get_source(name: str, *, cache=None):
+        seen["cache_path"] = getattr(cache, "db_path", None)
+        return Source() if name == "sqlite_db" else None
+
     result = fetch_walkforward_frames(
         WalkforwardFetchRequest(
             source="sqlite_db",
             symbols=["600519", "300750"],
             start="2024-01-01",
             end="2024-06-30",
+            cache_path="/tmp/walkforward-cache.db",
             skip_pit_financials=True,
         ),
-        get_source_fn=lambda name: Source() if name == "sqlite_db" else None,
+        get_source_fn=get_source,
         fetch_frames_for_cli_fn=lambda *args, **kwargs: {},
         load_csv_fn=lambda _path: {},
         fetch_days_fn=lambda _start, _end: 0,
@@ -115,6 +120,7 @@ def test_fetch_walkforward_frames_filters_sqlite_coverage_when_available() -> No
         date(2024, 6, 30),
         "",
     )
+    assert str(seen["cache_path"]).endswith("/tmp/walkforward-cache.db")
 
 
 def test_fetch_walkforward_frames_skips_pit_enrichment_when_requested(

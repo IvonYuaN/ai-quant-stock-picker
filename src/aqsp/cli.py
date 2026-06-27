@@ -4,6 +4,7 @@ import argparse
 import json
 import logging
 import os
+import inspect
 from dataclasses import dataclass, replace
 from datetime import date, timedelta
 from pathlib import Path
@@ -1118,6 +1119,34 @@ def _source_runtime_metadata(
 
 def _get_source(source_name: str, *, cache: DataCache | None = None):
     return build_data_source(source_name, cache=cache or DataCache())
+
+
+def _get_source_optional_cache(source_name: str, *, cache: DataCache | None = None):
+    if cache is None:
+        return _get_source(source_name)
+    try:
+        signature = inspect.signature(_get_source)
+    except (TypeError, ValueError):
+        signature = None
+    if signature is not None and not any(
+        parameter.kind == inspect.Parameter.VAR_KEYWORD
+        or (
+            parameter.name == "cache"
+            and parameter.kind
+            in {
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                inspect.Parameter.KEYWORD_ONLY,
+            }
+        )
+        for parameter in signature.parameters.values()
+    ):
+        return _get_source(source_name)
+    try:
+        return _get_source(source_name, cache=cache)
+    except TypeError as exc:
+        if "cache" not in str(exc):
+            raise
+        return _get_source(source_name)
 
 
 def _fetch_frames_for_cli(
@@ -4281,10 +4310,10 @@ def run_walkforward(args: argparse.Namespace) -> int:
             cache_path=args.cache_path or None,
             skip_pit_financials=getattr(args, "skip_pit_financials", False),
         ),
-        get_source_fn=lambda source_name: (
-            _build_sqlite_db_source(cache=None)
+        get_source_fn=lambda source_name, *, cache=None: (
+            _build_sqlite_db_source(cache=cache)
             if source_name == "sqlite_db"
-            else _get_source(source_name)
+            else _get_source_optional_cache(source_name, cache=cache)
         ),
         fetch_frames_for_cli_fn=_fetch_frames_for_cli,
         load_csv_fn=load_csv,
