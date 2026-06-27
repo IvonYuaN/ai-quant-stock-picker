@@ -13,7 +13,6 @@ from typing import Any
 
 from aqsp.presentation import (
     format_review_meta,
-    format_watch_review_action,
     format_watch_review_line,
     normalize_research_tone,
     review_priority_label,
@@ -1263,15 +1262,15 @@ def _build_pipeline_digest(
         )
 
     if gate_block_reason:
-        conclusion = "正常候选未放行，先处理双门 gate 阻塞。"
+        conclusion = "正常候选未放行"
     elif failed_steps:
-        conclusion = "流程未全绿，先排障，再看本次信号。"
+        conclusion = "主流程未全绿"
     elif portfolio_summary is not None and portfolio_summary.top_focus:
-        conclusion = f"今日主链聚焦 {summary_target}，其余候选继续分层跟踪。"
+        conclusion = summary_target
     elif portfolio_summary is not None and portfolio_summary.watchlist:
-        conclusion = f"今日暂无重点名单，先围绕 {summary_target} 做观察跟踪。"
+        conclusion = f"观察 {summary_target}"
     else:
-        conclusion = "今日未形成明确主链，结果以观察为主。"
+        conclusion = "暂无重点名单"
 
     review_candidates = [
         candidate
@@ -1279,21 +1278,18 @@ def _build_pipeline_digest(
         if candidate.get("candidate_next_step") or candidate.get("candidate_blocker")
     ]
 
-    core_lines = [
-        f"**🎯 今日结论**：{conclusion}",
-        f"**📦 PM 主裁决**：{portfolio_summary.headline if portfolio_summary is not None else '暂无可用候选输出'}",
-    ]
+    core_lines = [f"- 结论: {conclusion}"]
+    if portfolio_summary is not None and portfolio_summary.headline:
+        core_lines.append(f"- PM: {portfolio_summary.headline}")
     if gate_block_reason:
-        core_lines.append(f"**🔒 通知状态**：正常候选未放行（{gate_block_reason}）")
+        core_lines.append(f"- 阻塞: {gate_block_reason}")
     if latest_signal_day:
-        core_lines.append(f"**📅 信号日期**：{latest_signal_day}")
+        core_lines.append(f"- 信号日期: {latest_signal_day}")
     if portfolio_summary is not None and portfolio_summary.top_focus:
-        core_lines.append(
-            "**⭐ 今日重点名单**：" + "、".join(portfolio_summary.top_focus)
-        )
+        core_lines.append("- 重点名单: " + "、".join(portfolio_summary.top_focus))
     elif portfolio_summary is not None and portfolio_summary.watchlist:
         core_lines.append(
-            "**👀 观察主线**："
+            "- 观察名单: "
             + "、".join(
                 str(item).split("(", 1)[0] for item in portfolio_summary.watchlist[:3]
             )
@@ -1314,23 +1310,19 @@ def _build_pipeline_digest(
         ]
         if blockers:
             core_lines.append(
-                "**🔒 现在卡在哪**："
+                "- 现在卡在哪: "
                 + "；".join(normalize_research_tone(item) for item in blockers[:2])
             )
     if review_candidates:
         lead_review = review_candidates[0]
         lead_meta = _format_candidate_review_meta(lead_review)
-        lead_line = f"**📝 首要复核**：{lead_review['display']}"
+        lead_line = f"- 首要复核: {lead_review['display']}"
         if lead_meta:
             lead_line += f" | {lead_meta}"
         core_lines.append(lead_line)
-    core_lines.append(
-        f"**✅ 流程状态**：{step_success}/{step_total} 成功 | {result.duration_seconds:.1f}s"
-    )
+    core_lines.append(f"- 流程: {step_success}/{step_total} 成功 | {result.duration_seconds:.1f}s")
     if failed_steps:
-        core_lines.append(
-            "**🚨 异常步骤**：" + "、".join(step.name for step in failed_steps[:3])
-        )
+        core_lines.append("- 异常步骤: " + "、".join(step.name for step in failed_steps[:3]))
 
     main_chain_lines: list[str] = []
     if candidates:
@@ -1392,67 +1384,6 @@ def _build_pipeline_digest(
     else:
         main_chain_lines.append("- 暂无可用候选输出")
 
-    plan_lines = []
-    if gate_block_reason:
-        plan_lines.append(
-            "- 先重新跑生产 walk-forward gate 或补齐冷启动/纸面样本，再恢复正常候选通知。"
-        )
-    elif failed_steps:
-        plan_lines.append(
-            "- 明日先修复失败步骤对应的数据源或运行配置，再复核本次输出。"
-        )
-    elif portfolio_summary is not None and portfolio_summary.top_focus:
-        action_line = "- 明日先核对今日重点名单是否延续量价确认，再决定人工跟踪优先级。"
-        if portfolio_summary.top_focus:
-            action_line = (
-                "- 明日先盯 "
-                + " → ".join(portfolio_summary.top_focus[:2])
-                + " 的开盘强弱与流动性，再决定人工跟踪优先级。"
-            )
-        plan_lines.append(action_line)
-        lead_review = review_candidates[0] if review_candidates else None
-        if lead_review is not None:
-            plan_lines.append(
-                "- 观察名单接下来: "
-                + format_watch_review_action(
-                    lead_review["display"],
-                    priority=str(
-                        lead_review.get("candidate_review_priority", "") or ""
-                    ),
-                    review_window=str(
-                        lead_review.get("candidate_review_window", "") or ""
-                    ),
-                    next_step=str(lead_review.get("candidate_next_step", "") or ""),
-                )
-            )
-    elif review_candidates:
-        lead_review = review_candidates[0]
-        plan_lines.append(
-            "- 明日"
-            + format_watch_review_action(
-                lead_review["display"],
-                priority=str(lead_review.get("candidate_review_priority", "") or ""),
-                review_window=str(lead_review.get("candidate_review_window", "") or ""),
-                next_step=str(lead_review.get("candidate_next_step", "") or ""),
-            )
-        )
-    elif portfolio_summary is not None and portfolio_summary.watchlist:
-        plan_lines.append(
-            "- 明日以继续观察名单再看为主，等待右侧确认，不放大纸面仓位。"
-        )
-    else:
-        plan_lines.append("- 明日无明确主链复核，优先确认数据源和策略运行是否完整。")
-    if portfolio_summary is not None and portfolio_summary.allocation_note:
-        plan_lines.append(
-            f"- 纸面约束: {normalize_research_tone(portfolio_summary.allocation_note)}。"
-        )
-    plan_lines.extend(
-        [
-            "- 对照收盘复盘，确认强弱分层、策略标签和 PM 裁决是否一致。",
-            "- 若继续观察名单仍然拥挤，只保留最强一到两只做人工跟踪。",
-        ]
-    )
-
     risk_points: list[str] = []
     if portfolio_summary is not None and not portfolio_summary.top_focus:
         risk_points.append("当前没有进入纸面复核区的主链候选，纸面仓位不宜放大。")
@@ -1480,7 +1411,7 @@ def _build_pipeline_digest(
         risk_lines.append("- 当前流程正常，保持纸面复核节奏。")
 
     lines = [
-        "## 结论",
+        "## 结果",
         *core_lines,
         "",
         "## 候选",
@@ -1488,18 +1419,7 @@ def _build_pipeline_digest(
         "",
         "## 风险",
         *risk_lines,
-        "",
-        "## 明日",
-        *plan_lines,
     ]
-    if result.steps and failed_steps:
-        lines.extend(["", "## 运行"])
-        for step in result.steps:
-            badge = "OK" if step.success else "FAIL"
-            line = f"- {badge} {step.name}: {step.duration_seconds:.1f}s"
-            if step.message:
-                line += f" ({step.message})"
-            lines.append(line)
     from aqsp.notification_style import compact_notification_markdown
 
     return compact_notification_markdown("\n".join(lines))

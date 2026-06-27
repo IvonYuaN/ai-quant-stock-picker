@@ -187,7 +187,9 @@ def _limit_section_items(lines: list[str], *, max_items: int) -> list[str]:
                 out.append("")
             section_items = 0
             skipped = 0
-            current_limit = 12 if line == "## 结论" else max_items
+            current_limit = (
+                12 if line in {"## 结论", "## 结果", "## 状态"} else max_items
+            )
             if out and out[-1] != "":
                 out.append("")
             out.append(line)

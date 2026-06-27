@@ -31,11 +31,12 @@ def test_build_gate_notification_markdown_keeps_compact_summary() -> None:
 
     assert markdown.startswith("# 通知未放行-2026-06-15")
     assert "本次正常通知未放行" in markdown
-    assert "## 阻塞原因" in markdown
+    assert "## 状态" in markdown
+    assert "## 阻塞" in markdown
     assert "- 冷启动未满: 0/30 个独立信号日" in markdown
     assert "- DSR 未过门: 0.0（需 >1.0）" in markdown
-    assert "## 处理" in markdown
-    assert "- 继续按日运行主链" in markdown
+    assert "## 处理" not in markdown
+    assert "继续按日运行主链" not in markdown
 
 
 def test_should_send_gate_notification_dedupes_same_normalized_reasons(

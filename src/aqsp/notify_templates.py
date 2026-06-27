@@ -254,32 +254,30 @@ def build_daily_run_notification(
     lines = [
         f"# {_dated_title(title_label, run_date)}",
         "",
-        "## 结论",
+        "## 结果",
         "",
-        f"**📅 数据日期**：{run_date}",
-        "",
-        f"**🎯 今日判断**：{lead_conclusion}",
-        "",
+        f"- 日期: {run_date}",
+        f"- 结论: {lead_conclusion}",
     ]
     if circuit_breaker_reason:
-        lines.append(f"**🛡️ 风险告警**：{circuit_breaker_reason}")
+        lines.append(f"- 风控: {circuit_breaker_reason}")
     elif tradable:
-        lines.append(f"**🧪 先看的股票**：{len(tradable)} 个")
-        lines.append(f"**⭐ 先看对象**：{_format_daily_pick(tradable[0])}")
+        lines.append(f"- 重点数量: {len(tradable)}")
+        lines.append(f"- 首位: {_format_daily_pick(tradable[0])}")
     elif portfolio_summary is not None and portfolio_summary.allocations:
         lead = portfolio_summary.allocations[0]
-        lines.append(f"**🧪 先看的股票**：{len(portfolio_summary.allocations)} 个")
-        lines.append(f"**⭐ 先看对象**：{format_symbol_name(lead.symbol, lead.name)}")
+        lines.append(f"- 重点数量: {len(portfolio_summary.allocations)}")
+        lines.append(f"- 首位: {format_symbol_name(lead.symbol, lead.name)}")
     else:
-        lines.append("**🧪 先看的股票**：0 个")
-        lines.append("**👀 当前状态**：" + _blocked_watchlist_status(portfolio_summary))
+        lines.append("- 重点数量: 0")
+        lines.append("- 状态: " + _blocked_watchlist_status(portfolio_summary))
     if is_cold_start and cold_start_min_days > 0:
-        lines.append(f"**🧊 冷启动进度**：{cold_start_days}/{cold_start_min_days}")
+        lines.append(f"- 冷启动: {cold_start_days}/{cold_start_min_days}")
     if portfolio_summary is not None and portfolio_summary.regime_label:
-        lines.append(f"**🌦️ 当前市况**：{portfolio_summary.regime_label}")
+        lines.append(f"- 市况: {portfolio_summary.regime_label}")
     if portfolio_summary is not None and portfolio_summary.strategy_mix_name:
         lines.append(
-            "**🧭 现在偏向**："
+            "- 风格: "
             f"{portfolio_summary.strategy_mix_name}"
             + (
                 f" | {portfolio_summary.strategy_mix_description}"
@@ -288,34 +286,26 @@ def build_daily_run_notification(
             )
         )
     if portfolio_summary is not None and portfolio_summary.strategy_focus:
-        lines.append(
-            "**🔍 更偏好这些方向**：" + "、".join(portfolio_summary.strategy_focus[:3])
-        )
+        lines.append("- 方向: " + "、".join(portfolio_summary.strategy_focus[:3]))
     if portfolio_summary is not None and portfolio_summary.action_hotspots:
-        lines.append(
-            "**🟡 需要重点确认**：" + "；".join(portfolio_summary.action_hotspots[:2])
-        )
+        lines.append("- 关注点: " + "；".join(portfolio_summary.action_hotspots[:2]))
     if portfolio_summary is not None and portfolio_summary.allocations:
         top_alloc = "、".join(
             f"{item.symbol} {item.weight:.0%}"
             for item in portfolio_summary.allocations[:3]
         )
-        lines.append(f"**📦 纸面仓位**：{top_alloc}")
+        lines.append(f"- 纸面仓位: {top_alloc}")
     elif portfolio_summary is not None and portfolio_summary.watchlist:
-        lines.append(
-            "**👀 继续观察名单**：" + "、".join(portfolio_summary.watchlist[:3])
-        )
+        lines.append("- 观察名单: " + "、".join(portfolio_summary.watchlist[:3]))
     if portfolio_summary is not None and portfolio_summary.cash_reserve > 0:
-        lines.append(f"**💧 现金留存**：{portfolio_summary.cash_reserve:.0%}")
+        lines.append(f"- 现金留存: {portfolio_summary.cash_reserve:.0%}")
     if portfolio_summary is not None and portfolio_summary.execution_blockers:
-        lines.append(
-            "**🔒 现在卡在哪**：" + "；".join(portfolio_summary.execution_blockers[:2])
-        )
+        lines.append("- 阻塞: " + "；".join(portfolio_summary.execution_blockers[:2]))
     if portfolio_summary is not None and portfolio_summary.watch_reviews:
-        lines.extend(["", "**📝 观察名单接下来**："])
+        lines.extend(["", "## 观察", ""])
         for item in portfolio_summary.watch_reviews[:2]:
             lines.append(
-                "  - "
+                "- "
                 + format_watch_review_line(
                     format_symbol_name(item.symbol, item.name),
                     priority=item.priority,
@@ -324,7 +314,7 @@ def build_daily_run_notification(
                 )
             )
     if snapshot_diff is not None and snapshot_diff.has_changes:
-        lines.append(f"**🔄 候选变化**：{summarize_snapshot_diff(snapshot_diff)}")
+        lines.append(f"- 变化: {summarize_snapshot_diff(snapshot_diff)}")
     if validation_summary:
         checked = int(validation_summary.get("checked") or 0)
         skipped = int(validation_summary.get("skipped_not_executable") or 0)
@@ -336,12 +326,12 @@ def build_daily_run_notification(
                 parts.append(f"胜率 {wins / checked * 100:.1f}%")
             if skipped > 0:
                 parts.append(f"不可成交跳过 {skipped} 条")
-            lines.append("**✅ 策略自检**：" + " / ".join(parts))
+            lines.append("- 自检: " + " / ".join(parts))
     if debate_results:
         lead = debate_results[0]
         consensus = lead.final_consensus or lead.adjustment_reason or "无共识"
         lines.append(
-            f"**⚖️ 分歧结果**：{lead.symbol} {lead.name} | "
+            f"- 分歧: {lead.symbol} {lead.name} | "
             f"{_debate_adjustment_label(lead.recommended_adjustment)} | {consensus}"
         )
 
@@ -360,43 +350,13 @@ def build_daily_run_notification(
         if reason_lines:
             lines.extend(reason_lines)
 
-    lines.extend(["", "## 快照", ""])
-    snapshot_lines = (
-        _daily_snapshot_table(
-            run_date=run_date,
-            tradable=tradable,
-            candidates=candidates,
-            portfolio_summary=portfolio_summary,
-            debate_results=debate_results,
-            circuit_breaker_reason=circuit_breaker_reason,
-            is_cold_start=is_cold_start,
-        )
-        if _safe_mode(mode) == "full"
-        else _daily_snapshot_bullets(
-            run_date=run_date,
-            tradable=tradable,
-            candidates=candidates,
-            portfolio_summary=portfolio_summary,
-            debate_results=debate_results,
-            circuit_breaker_reason=circuit_breaker_reason,
-            is_cold_start=is_cold_start,
-        )
-    )
-    lines.extend(snapshot_lines)
-
-    reading_order = _daily_reading_order_lines(
-        tradable=tradable,
-        candidates=candidates,
-        portfolio_summary=portfolio_summary,
-        debate_results=debate_results,
-        circuit_breaker_reason=circuit_breaker_reason,
-        is_cold_start=is_cold_start,
-    )
-    if reading_order:
-        lines.extend(["", "## 顺序", ""])
-        lines.extend(reading_order)
-
     lines.extend(["", "## 候选", ""])
+    lines.append(
+        "- 候选: "
+        + _daily_snapshot_candidate_state(tradable, candidates, portfolio_summary)
+        + " | "
+        + _daily_snapshot_candidate_focus(tradable, candidates, portfolio_summary)
+    )
     lines.extend(
         _daily_candidate_table(
             tradable,
@@ -407,31 +367,22 @@ def build_daily_run_notification(
     )
     allocation_execution = _format_allocation_execution(portfolio_summary)
     if allocation_execution:
-        lines.extend(["", "## 纸面", "", allocation_execution])
+        lines.extend(["", "## 纸面", ""])
+        lines.append(
+            "- 纸面: "
+            + _daily_snapshot_paper_state(portfolio_summary)
+            + " | "
+            + _daily_snapshot_paper_focus(portfolio_summary)
+        )
+        lines.extend(["", allocation_execution])
     debate = _format_debate_summary(debate_results[:2])
     if debate:
         lines.extend(["", "## 分歧", "", debate])
     if snapshot_diff is not None and snapshot_diff.has_changes:
         lines.extend(["", "## 变化", ""])
+        lines.append(f"- 变化: {summarize_snapshot_diff(snapshot_diff)}")
+        lines.append("")
         lines.extend(snapshot_diff_highlights(snapshot_diff, max_items=3))
-
-    lines.extend(
-        [
-            "",
-            "## 明日",
-            "",
-            _daily_watch_action_line(candidates, portfolio_summary)
-            or _daily_action_line_one(tradable, portfolio_summary),
-        ]
-    )
-    if circuit_breaker_reason:
-        lines.append("2. 熔断保护中，暂停新增纸面再看，只保留复盘和观察。")
-    elif is_cold_start:
-        lines.append("2. 冷启动未完成，结果仅供跟踪，不要放大纸面仓位。")
-    elif portfolio_summary is not None and portfolio_summary.allocation_note:
-        lines.append(f"2. {portfolio_summary.allocation_note}。")
-    if debate_results:
-        lines.append(f"3. {_daily_debate_action_line(debate_results[0])}")
 
     return _source_safe_notification(
         "\n".join(lines),
@@ -987,6 +938,13 @@ def _daily_candidate_bullets(
                 pick.reasons[0] if pick.reasons else "等更强的确认"
             )
             status = status or "继续观察"
+        review_window = _candidate_review_window(pick)
+        review_priority = _review_priority_label(_candidate_review_priority(pick))
+        review_meta = " / ".join(
+            part for part in (review_priority, review_window) if part
+        )
+        if review_meta:
+            key = f"{key} | 复核: {review_meta}"
         rows.append(
             f"- {index}. {symbol_name} | {status} | {pick.score:.0f} | {action}: {key}"
         )
@@ -1038,28 +996,26 @@ def build_monitor_notification(
     lines = [
         f"# {_dated_title('系统监控告警')}",
         "",
-        "## 结论",
+        "## 状态",
         "",
-        f"- 严重告警: {len(critical)}",
-        f"- 一般告警: {len(warnings)}",
+        f"- 严重: {len(critical)}",
+        f"- 一般: {len(warnings)}",
     ]
     if critical:
-        lines.append(f"- 优先处理: {critical[0].name}")
+        lines.append(f"- 首个严重项: {critical[0].name}")
     elif warnings:
-        lines.append(f"- 优先查看: {warnings[0].name}")
+        lines.append(f"- 首个一般项: {warnings[0].name}")
     else:
         lines.append("- 总体状态: 正常")
-
-    if _safe_mode(mode) == "full":
-        lines.extend(["", "## 告警", ""])
-        lines.extend(_format_monitor_results(triggered or list(results)))
-        return _notification_research_tone("\n".join(lines))
 
     if critical or warnings:
         lines.extend(["", "## 告警", ""])
         lines.extend(_format_monitor_results((critical + warnings)[:5]))
-        lines.extend(["", "## 处理", ""])
-        lines.extend(_monitor_actions(critical, warnings))
+    if _safe_mode(mode) == "full" and triggered:
+        extra = _format_monitor_results((critical + warnings)[5:])
+        if extra:
+            lines.extend(["", "## 其余", ""])
+            lines.extend(extra)
     return _notification_research_tone("\n".join(lines))
 
 

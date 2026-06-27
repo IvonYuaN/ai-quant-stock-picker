@@ -221,16 +221,13 @@ def build_gate_notification_markdown(
     lines = [
         f"# 通知未放行-{run_date}",
         "",
-        "## 结论",
+        "## 状态",
         "",
         "- 本次正常通知未放行。",
     ]
     if gate_reasons:
-        lines.extend(["", "## 阻塞原因", ""])
+        lines.extend(["", "## 阻塞", ""])
         lines.extend(f"- {reason}" for reason in gate_reasons[:4])
-    if next_actions:
-        lines.extend(["", "## 处理", ""])
-        lines.extend(f"- {action}" for action in next_actions[:3])
     return "\n".join(lines)
 
 
