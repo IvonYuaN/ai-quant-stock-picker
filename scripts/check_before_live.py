@@ -974,7 +974,26 @@ def _check_trading_calendar_coverage(root: Path, today: date) -> ReadinessFindin
         required_years.add(today.year + 1)
     missing = sorted(required_years - covered_years)
     critical_holidays = {
+        date(2026, 1, 1),
+        date(2026, 2, 16),
+        date(2026, 2, 17),
+        date(2026, 2, 18),
+        date(2026, 2, 19),
+        date(2026, 2, 20),
+        date(2026, 2, 21),
+        date(2026, 2, 22),
+        date(2026, 4, 6),
+        date(2026, 5, 1),
+        date(2026, 5, 4),
+        date(2026, 5, 5),
         date(2026, 6, 19),
+        date(2026, 9, 25),
+        date(2026, 10, 1),
+        date(2026, 10, 2),
+        date(2026, 10, 5),
+        date(2026, 10, 6),
+        date(2026, 10, 7),
+        date(2026, 10, 8),
     }
     critical_missing = sorted(
         holiday.isoformat()
@@ -1009,6 +1028,39 @@ def _check_signal_sample_size(path: Path) -> ReadinessFinding:
     count = count_independent_signal_days(str(path))
     simulated_count = len(collect_simulated_signal_dates(str(path)))
     detail = f"{count}/{MIN_INDEPENDENT_SIGNAL_DAYS} real independent signal days"
+    rows = _read_jsonl(path)
+    real_signal_days = sorted(
+        {
+            ledger_signal_date(row)
+            for row in rows
+            if ledger_signal_date(row)
+            and str(row.get("symbol") or "").strip() != "__RUN__"
+            and not bool(row.get("is_simulated"))
+            and any(
+                row.get(key) not in (None, "")
+                for key in (
+                    "thresholds_version",
+                    "status",
+                    "rating",
+                    "score",
+                    "strategies",
+                )
+            )
+        }
+    )
+    blocked_runtime_days = sorted(
+        {
+            ledger_signal_date(row)
+            for row in rows
+            if ledger_signal_date(row)
+            and str(row.get("symbol") or "").strip() == "__RUN__"
+            and str(row.get("status") or "").strip() == "blocked_by_circuit_breaker"
+        }
+    )
+    if real_signal_days:
+        detail += f"; latest real signal day={real_signal_days[-1]}"
+    if blocked_runtime_days:
+        detail += f"; blocked runtime days={len(blocked_runtime_days)}"
     if simulated_count > 0:
         detail += f"; excluded simulated days={simulated_count}"
     return ReadinessFinding(

@@ -323,6 +323,7 @@ def test_server_monitor_script_has_lock_guard() -> None:
     assert "检测到陈旧监控锁，自动回收" in script
     assert "监控执行超时，被保护性终止" in script
     assert "上一轮监控仍在运行，本次监控正常跳过；这是互斥保护，不是失败" in script
+    assert 'MONITOR_ARGS+=( --suppress-console-alert )' in script
 
 
 def test_coldstart_daily_script_updates_db_then_runs_cli() -> None:

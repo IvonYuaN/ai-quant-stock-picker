@@ -255,6 +255,53 @@ def test_run_monitor_quiet_healthy_suppresses_ok_output(monkeypatch, capsys) -> 
     assert capsys.readouterr().out == ""
 
 
+def test_run_monitor_suppress_console_alert_hides_non_notify_body(
+    monkeypatch, capsys
+) -> None:
+    class FakeChecker:
+        def __init__(self, config_path: str) -> None:
+            self.config_path = config_path
+
+        def check_all(self) -> list[MonitorResult]:
+            return [
+                MonitorResult(
+                    "circuit_breaker",
+                    True,
+                    "critical",
+                    "组合熔断冷却期中",
+                    {"cooldown_until": "2026-07-01"},
+                ),
+            ]
+
+    fake_notifier = types.SimpleNamespace(
+        format_alert=lambda results: "\n".join(r.name for r in results),
+        send_alerts=lambda results: None,
+    )
+
+    monkeypatch.setitem(
+        __import__("sys").modules, "aqsp.monitor.notifier", fake_notifier
+    )
+    monkeypatch.setitem(
+        __import__("sys").modules,
+        "aqsp.monitor.checker",
+        types.SimpleNamespace(MonitorChecker=FakeChecker),
+    )
+
+    exit_code = cli.run_monitor(
+        argparse.Namespace(
+            config="config/monitors.yaml",
+            notify=False,
+            notify_critical_only=True,
+            quiet_healthy=False,
+            suppress_console_alert=True,
+            dry_run=False,
+        )
+    )
+
+    assert exit_code == 1
+    assert capsys.readouterr().out == ""
+
+
 def test_run_monitor_sends_warning_push_when_warning_notify_enabled(
     monkeypatch, capsys
 ) -> None:

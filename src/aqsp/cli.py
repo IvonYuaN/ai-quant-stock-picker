@@ -587,6 +587,7 @@ def main(argv: list[str] | None = None) -> int:
     monitor_cmd.add_argument("--notify", action="store_true")
     monitor_cmd.add_argument("--notify-critical-only", action="store_true")
     monitor_cmd.add_argument("--quiet-healthy", action="store_true")
+    monitor_cmd.add_argument("--suppress-console-alert", action="store_true")
     monitor_cmd.add_argument("--dry-run", action="store_true")
 
     news_cmd = sub.add_parser(
@@ -4799,7 +4800,11 @@ def run_monitor(args: argparse.Namespace) -> int:
             else:
                 print("monitor alert still active; duplicate suppressed")
 
-    if not printed_alert and (args.dry_run or not args.notify):
+    if (
+        not printed_alert
+        and (args.dry_run or not args.notify)
+        and not getattr(args, "suppress_console_alert", False)
+    ):
         print(format_alert(triggered))
 
     return 1 if any(r.severity == "critical" for r in triggered) else 0

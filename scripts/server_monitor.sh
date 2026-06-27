@@ -125,6 +125,12 @@ case "${QUIET_HEALTHY,,}" in
         MONITOR_ARGS+=( --quiet-healthy )
         ;;
 esac
+case "${MONITOR_NOTIFY,,}" in
+    1|true|yes|on) ;;
+    *)
+        MONITOR_ARGS+=( --suppress-console-alert )
+        ;;
+esac
 
 set +e
 if [ "${MONITOR_TIMEOUT_SECONDS}" -gt 0 ] && command -v timeout >/dev/null 2>&1; then

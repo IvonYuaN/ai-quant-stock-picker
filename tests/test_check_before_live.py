@@ -83,8 +83,34 @@ def _prepare_ready_runtime(root: Path) -> None:
     _write_json(
         root / "config/trading_holidays.json",
         {
-            "holidays": ["2026-06-19"],
-            "makeup_workdays": [],
+            "holidays": [
+                "2026-01-01",
+                "2026-02-16",
+                "2026-02-17",
+                "2026-02-18",
+                "2026-02-19",
+                "2026-02-20",
+                "2026-02-21",
+                "2026-02-22",
+                "2026-04-06",
+                "2026-05-01",
+                "2026-05-04",
+                "2026-05-05",
+                "2026-06-19",
+                "2026-09-25",
+                "2026-10-01",
+                "2026-10-02",
+                "2026-10-05",
+                "2026-10-06",
+                "2026-10-07",
+                "2026-10-08",
+            ],
+            "makeup_workdays": [
+                "2026-02-15",
+                "2026-02-28",
+                "2026-09-27",
+                "2026-10-10",
+            ],
         },
     )
     _write_json(
@@ -172,6 +198,7 @@ def test_check_before_live_blocks_missing_critical_trading_holiday(
 
     finding = next(item for item in findings if item.gate == "trading_calendar_coverage")
     assert finding.ok is False
+    assert "2026-02-16" in finding.detail
     assert "2026-06-19" in finding.detail
 
 
@@ -845,7 +872,10 @@ def test_check_before_live_ignores_simulated_and_strategy_grouped_samples(
 
     finding = next(item for item in findings if item.gate == "signal_sample_size")
     assert finding.ok is False
-    assert finding.detail == "15/30 real independent signal days; excluded simulated days=15"
+    assert (
+        finding.detail
+        == "15/30 real independent signal days; latest real signal day=2026-05-15; excluded simulated days=15"
+    )
 
 
 def test_check_before_live_counts_runtime_signal_date_aliases(tmp_path: Path) -> None:
@@ -880,7 +910,7 @@ def test_check_before_live_counts_runtime_signal_date_aliases(tmp_path: Path) ->
 
     finding = next(item for item in findings if item.gate == "signal_sample_size")
     assert finding.ok is True
-    assert finding.detail == "30/30 real independent signal days"
+    assert finding.detail == "30/30 real independent signal days; latest real signal day=2026-05-30"
 
 
 def test_check_before_live_blocks_when_paper_tracking_samples_are_too_small(

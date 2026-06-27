@@ -435,6 +435,8 @@ def test_diagnose_runtime_reports_simulated_signal_days(
 
     assert exit_code == 0
     assert "- signal_days: 1/30" in output
+    assert "- signal_rows: 1" in output
+    assert "- latest_real_signal_day: 2026-06-20" in output
     assert "- simulated_signal_days: 1" in output
 
 
@@ -469,6 +471,7 @@ def test_diagnose_runtime_counts_ledger_run_events_as_successful_run_days(
     output = capsys.readouterr().out
 
     assert exit_code == 0
+    assert "- blocked_runtime_days: 1" in output
     assert "- successful_run_days: 2 latest=2026-06-21 source=ledger_run_events" in output
 
 

@@ -17,10 +17,12 @@ from aqsp.data.source_health import notification_level_for_health_label
 from aqsp.data.registry import list_registry_entries, local_data_status
 from aqsp.data.tdx_vipdoc_source import TDX_DAY_RECORD_SIZE
 from aqsp.ledger.runtime import (
+    REAL_SIGNAL_STATUSES,
     cold_start_min_days,
     collect_simulated_signal_dates,
     count_independent_signal_days,
     count_paper_tracking_days,
+    ledger_signal_date,
 )
 from aqsp.notifier import configured_notification_channels
 from aqsp.research.summary import load_research_summary, research_findings_display
@@ -214,6 +216,50 @@ def _successful_run_history_summary(root: Path) -> dict[str, Any]:
         "latest": latest_success,
         "source": "+".join(source_labels) if source_labels else "-",
     }
+
+
+def _blocked_runtime_day_count(rows: list[dict[str, Any]]) -> int:
+    blocked_days = {
+        ledger_signal_date(row)
+        for row in rows
+        if str(row.get("symbol") or "").strip() == "__RUN__"
+        and str(row.get("status") or "").strip() == "blocked_by_circuit_breaker"
+        and ledger_signal_date(row)
+    }
+    return len(blocked_days)
+
+
+def _real_signal_row_count(rows: list[dict[str, Any]]) -> int:
+    return sum(
+        1
+        for row in rows
+        if str(row.get("status") or "").strip() in REAL_SIGNAL_STATUSES
+        and str(row.get("symbol") or "").strip() != "__RUN__"
+        and not bool(row.get("is_simulated"))
+    )
+
+
+def _latest_real_signal_day(rows: list[dict[str, Any]]) -> str:
+    days = sorted(
+        {
+            ledger_signal_date(row)
+            for row in rows
+            if str(row.get("symbol") or "").strip() != "__RUN__"
+            and not bool(row.get("is_simulated"))
+            and ledger_signal_date(row)
+            and any(
+                row.get(key) not in (None, "")
+                for key in (
+                    "thresholds_version",
+                    "status",
+                    "rating",
+                    "score",
+                    "strategies",
+                )
+            )
+        }
+    )
+    return days[-1] if days else ""
 
 
 def _state_count(value: object) -> int:
@@ -429,6 +475,9 @@ def main() -> int:
     signal_days = count_independent_signal_days(str(paths.ledger))
     simulated_signal_days = len(collect_simulated_signal_dates(str(paths.ledger)))
     paper_days = count_paper_tracking_days(str(paths.paper_ledger))
+    blocked_runtime_days = _blocked_runtime_day_count(ledger_rows)
+    real_signal_rows = _real_signal_row_count(ledger_rows)
+    latest_real_signal_day = _latest_real_signal_day(ledger_rows)
     cold_start_target = cold_start_min_days()
     latest_signal = max(
         (str(row.get("signal_date", "")) for row in ledger_rows),
@@ -441,8 +490,11 @@ def main() -> int:
         f"- ledger: {_file_status(paths.ledger)} rows={len(ledger_rows)} latest={latest_signal or '-'}",
         f"- paper_ledger: {_file_status(paths.paper_ledger)} rows={len(paper_rows)}",
         f"- signal_days: {signal_days}/{cold_start_target}",
+        f"- signal_rows: {real_signal_rows}",
+        f"- latest_real_signal_day: {latest_real_signal_day or '-'}",
         f"- simulated_signal_days: {simulated_signal_days}",
         f"- paper_days: {paper_days}/{cold_start_target}",
+        f"- blocked_runtime_days: {blocked_runtime_days}",
         f"- risk_state: {_file_status(paths.risk_state)}",
         *_scheduler_runtime_lines(),
         f"- dashboard: {_file_status(paths.dashboard)}",
