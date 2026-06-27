@@ -665,3 +665,190 @@ def test_production_walkforward_gate_returns_timeout_code(
 
     assert gate.main() == 124
     assert "production walk-forward timed out" in capsys.readouterr().out
+
+
+def test_production_walkforward_gate_dry_run_writes_status(
+    monkeypatch, tmp_path: Path
+) -> None:
+    import scripts.run_production_walkforward_gate as gate
+
+    db = tmp_path / "raw.db"
+    db.write_text("", encoding="utf-8")
+    status_path = tmp_path / "status.json"
+    monkeypatch.setattr(
+        gate,
+        "inspect_raw_coverage_with_symbols",
+        lambda *_args, **_kwargs: gate.CoverageInspection(
+            summary=gate.CoverageSummary(
+                stock_symbols=5533,
+                covered_symbols=3200,
+                rows=1,
+                first_trade_date="20180102",
+                last_trade_date="20241231",
+            ),
+            covered_symbols=[f"600{idx:03d}" for idx in range(3200)],
+        ),
+    )
+    monkeypatch.setattr(gate, "build_walkforward_command", lambda _args: ["python"])
+    monkeypatch.setattr(
+        gate.sys,
+        "argv",
+        [
+            "run_production_walkforward_gate.py",
+            "--db",
+            str(db),
+            "--status-path",
+            str(status_path),
+            "--dry-run",
+        ],
+    )
+
+    assert gate.main() == 0
+    payload = json.loads(status_path.read_text(encoding="utf-8"))
+    assert payload["status"] == "dry_run"
+    assert payload["effective_symbols"] == 3200
+    assert payload["command"] == ["python"]
+
+
+def test_production_walkforward_gate_blocked_coverage_writes_status(
+    monkeypatch, tmp_path: Path
+) -> None:
+    import scripts.run_production_walkforward_gate as gate
+
+    db = tmp_path / "raw.db"
+    db.write_text("", encoding="utf-8")
+    status_path = tmp_path / "status.json"
+    monkeypatch.setattr(
+        gate,
+        "inspect_raw_coverage_with_symbols",
+        lambda *_args, **_kwargs: gate.CoverageInspection(
+            summary=gate.CoverageSummary(
+                stock_symbols=5533,
+                covered_symbols=300,
+                rows=1,
+                first_trade_date="20180102",
+                last_trade_date="20241231",
+            ),
+            covered_symbols=[f"600{idx:03d}" for idx in range(300)],
+        ),
+    )
+    monkeypatch.setattr(
+        gate.sys,
+        "argv",
+        [
+            "run_production_walkforward_gate.py",
+            "--db",
+            str(db),
+            "--status-path",
+            str(status_path),
+            "--min-symbols",
+            "3200",
+        ],
+    )
+
+    assert gate.main() == 2
+    payload = json.loads(status_path.read_text(encoding="utf-8"))
+    assert payload["status"] == "blocked_coverage"
+    assert payload["coverage"]["covered_symbols"] == 300
+
+
+def test_production_walkforward_gate_completed_writes_status(
+    monkeypatch, tmp_path: Path
+) -> None:
+    import scripts.run_production_walkforward_gate as gate
+
+    db = tmp_path / "raw.db"
+    db.write_text("", encoding="utf-8")
+    gate_path = tmp_path / "gate.json"
+    gate_path.write_text(json.dumps({"effective_symbols": 3200}), encoding="utf-8")
+    status_path = tmp_path / "status.json"
+    monkeypatch.setattr(
+        gate,
+        "inspect_raw_coverage_with_symbols",
+        lambda *_args, **_kwargs: gate.CoverageInspection(
+            summary=gate.CoverageSummary(
+                stock_symbols=5533,
+                covered_symbols=3200,
+                rows=1,
+                first_trade_date="20180102",
+                last_trade_date="20241231",
+            ),
+            covered_symbols=[f"600{idx:03d}" for idx in range(3200)],
+        ),
+    )
+    monkeypatch.setattr(gate, "build_walkforward_command", lambda _args: ["python"])
+    monkeypatch.setattr(
+        gate.subprocess,
+        "run",
+        lambda *_args, **_kwargs: type("Result", (), {"returncode": 0})(),
+    )
+    monkeypatch.setattr(gate, "annotate_production_gate_metadata", lambda **_kwargs: None)
+    monkeypatch.setattr(
+        gate.sys,
+        "argv",
+        [
+            "run_production_walkforward_gate.py",
+            "--db",
+            str(db),
+            "--gate-path",
+            str(gate_path),
+            "--status-path",
+            str(status_path),
+        ],
+    )
+
+    assert gate.main() == 0
+    payload = json.loads(status_path.read_text(encoding="utf-8"))
+    assert payload["status"] == "completed"
+    assert payload["child_exit_code"] == 0
+
+
+def test_production_walkforward_gate_timeout_writes_status(
+    monkeypatch, tmp_path: Path
+) -> None:
+    import subprocess
+    import scripts.run_production_walkforward_gate as gate
+
+    db = tmp_path / "raw.db"
+    db.write_text("", encoding="utf-8")
+    status_path = tmp_path / "status.json"
+    monkeypatch.setattr(
+        gate,
+        "inspect_raw_coverage_with_symbols",
+        lambda *_args, **_kwargs: gate.CoverageInspection(
+            summary=gate.CoverageSummary(
+                stock_symbols=5533,
+                covered_symbols=3200,
+                rows=1,
+                first_trade_date="20180102",
+                last_trade_date="20241231",
+            ),
+            covered_symbols=[f"600{idx:03d}" for idx in range(3200)],
+        ),
+    )
+    monkeypatch.setattr(gate, "build_walkforward_command", lambda _args: ["python"])
+    monkeypatch.setattr(
+        gate.subprocess,
+        "run",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            subprocess.TimeoutExpired(cmd=["python"], timeout=1)
+        ),
+    )
+    monkeypatch.setattr(
+        gate.sys,
+        "argv",
+        [
+            "run_production_walkforward_gate.py",
+            "--db",
+            str(db),
+            "--status-path",
+            str(status_path),
+            "--timeout-seconds",
+            "1",
+        ],
+    )
+
+    assert gate.main() == 124
+    payload = json.loads(status_path.read_text(encoding="utf-8"))
+    assert payload["status"] == "timeout"
+    assert payload["child_exit_code"] == 124

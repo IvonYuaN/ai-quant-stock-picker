@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import socket
 import sqlite3
 import subprocess
 import sys
@@ -24,6 +25,7 @@ import re
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+from aqsp.core.time import now_shanghai
 from aqsp.data.sqlite_db_source import SqliteDbSource
 from aqsp.utils.jsonl_io import atomic_write_text
 from aqsp.walkforward_gate import MIN_PRODUCTION_GATE_SYMBOLS
@@ -33,6 +35,7 @@ DEFAULT_RAW_DB = Path("/opt/market-data/astocks_raw.db")
 DEFAULT_START = "2018-01-01"
 DEFAULT_END = "2024-12-31"
 MIN_COVERAGE_RATIO = 0.8
+DEFAULT_STATUS_PATH = "data/walkforward_production_status.json"
 
 
 @dataclass(frozen=True)
@@ -48,6 +51,57 @@ class CoverageSummary:
 class CoverageInspection:
     summary: CoverageSummary
     covered_symbols: list[str]
+
+
+def _status_path(raw: str | Path) -> Path:
+    path = Path(raw).expanduser()
+    if path.is_absolute():
+        return path
+    return PROJECT_ROOT / path
+
+
+def _write_status(
+    path: Path,
+    *,
+    status: str,
+    args: argparse.Namespace,
+    coverage: CoverageSummary | None = None,
+    effective_symbols: int | None = None,
+    command: list[str] | None = None,
+    child_exit_code: int | None = None,
+    detail: str = "",
+) -> None:
+    payload: dict[str, object] = {
+        "status": status,
+        "updated_at": now_shanghai().isoformat(timespec="seconds"),
+        "pid": os.getpid(),
+        "host": socket.gethostname(),
+        "db_path": str(args.db),
+        "start": args.start,
+        "end": args.end,
+        "grid_profile": args.grid_profile,
+        "report_path": str(args.report),
+        "gate_path": str(args.gate_path),
+        "log_path": str(args.log),
+        "timeout_seconds": args.timeout_seconds,
+    }
+    if detail:
+        payload["detail"] = detail
+    if coverage is not None:
+        payload["coverage"] = {
+            "stock_symbols": coverage.stock_symbols,
+            "covered_symbols": coverage.covered_symbols,
+            "rows": coverage.rows,
+            "first_trade_date": coverage.first_trade_date,
+            "last_trade_date": coverage.last_trade_date,
+        }
+    if effective_symbols is not None:
+        payload["effective_symbols"] = effective_symbols
+    if command is not None:
+        payload["command"] = command
+    if child_exit_code is not None:
+        payload["child_exit_code"] = child_exit_code
+    atomic_write_text(path, json.dumps(payload, indent=2, ensure_ascii=False) + "\n")
 
 
 def _compact_day(raw: str) -> str:
@@ -585,6 +639,11 @@ def main() -> int:
     parser.add_argument("--log", default="logs/walkforward-raw-production.log")
     parser.add_argument("--gate-path", default="data/walkforward_gate.json")
     parser.add_argument(
+        "--status-path",
+        default=DEFAULT_STATUS_PATH,
+        help="write production walkforward wrapper status for remote diagnosis",
+    )
+    parser.add_argument(
         "--timeout-seconds",
         type=int,
         default=7200,
@@ -592,12 +651,19 @@ def main() -> int:
     )
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
+    status_path = _status_path(args.status_path)
 
     if args.repair_only:
         repaired = repair_production_gate_metadata(
             gate_path=Path(args.gate_path),
             report_path=Path(args.report),
             db_path=args.db,
+        )
+        _write_status(
+            status_path,
+            status="repair_completed" if repaired else "repair_unchanged",
+            args=args,
+            detail="production gate metadata repair-only mode",
         )
         print("production gate metadata repaired" if repaired else "production gate metadata unchanged")
         return 0 if repaired else 1
@@ -612,6 +678,14 @@ def main() -> int:
         f"rows={coverage.rows} range={coverage.first_trade_date}..{coverage.last_trade_date}"
     )
     if coverage.covered_symbols < args.min_symbols:
+        _write_status(
+            status_path,
+            status="blocked_coverage",
+            args=args,
+            coverage=coverage,
+            effective_symbols=coverage.covered_symbols,
+            detail=f"need {args.min_symbols}, got {coverage.covered_symbols}",
+        )
         print(
             "BLOCK: raw full-market coverage is insufficient; "
             f"need {args.min_symbols}, got {coverage.covered_symbols}."
@@ -629,6 +703,14 @@ def main() -> int:
 
     covered_symbols = inspection.covered_symbols
     if len(covered_symbols) < args.min_symbols:
+        _write_status(
+            status_path,
+            status="blocked_symbols",
+            args=args,
+            coverage=coverage,
+            effective_symbols=len(covered_symbols),
+            detail=f"need {args.min_symbols}, got {len(covered_symbols)} selected symbols",
+        )
         print(
             "BLOCK: selected production symbols are insufficient; "
             f"need {args.min_symbols}, got {len(covered_symbols)}."
@@ -652,11 +734,29 @@ def main() -> int:
     command = build_walkforward_command(args)
     print("production gate command:", " ".join(command))
     if args.dry_run:
+        _write_status(
+            status_path,
+            status="dry_run",
+            args=args,
+            coverage=coverage,
+            effective_symbols=len(covered_symbols),
+            command=command,
+            detail="dry-run only; child walkforward not started",
+        )
         return 0
     env = os.environ.copy()
     env["AQSP_SQLITE_DB_PATH"] = str(args.db)
     warn_if_report_path_not_writable(Path(args.report))
     preserve_formal_report_snapshot(Path(args.report))
+    _write_status(
+        status_path,
+        status="running",
+        args=args,
+        coverage=coverage,
+        effective_symbols=len(covered_symbols),
+        command=command,
+        detail="child walkforward started",
+    )
     try:
         result = subprocess.run(
             command,
@@ -673,6 +773,16 @@ def main() -> int:
                 coverage=coverage,
             ):
                 print(f"production gate diagnostic report written: {diagnostic_path}")
+            _write_status(
+                status_path,
+                status="failed",
+                args=args,
+                coverage=coverage,
+                effective_symbols=len(covered_symbols),
+                command=command,
+                child_exit_code=result.returncode,
+                detail="child walkforward returned non-zero",
+            )
             return result.returncode
         try:
             annotate_production_gate_metadata(
@@ -682,6 +792,16 @@ def main() -> int:
                 effective_symbols=len(covered_symbols),
             )
         except (json.JSONDecodeError, OSError, SystemExit) as exc:
+            _write_status(
+                status_path,
+                status="failed_metadata",
+                args=args,
+                coverage=coverage,
+                effective_symbols=len(covered_symbols),
+                command=command,
+                child_exit_code=result.returncode,
+                detail=str(exc),
+            )
             print(f"BLOCK: failed to stamp production gate metadata: {exc}")
             return 2
         diagnostic_path = diagnostic_report_path(Path(args.report))
@@ -691,8 +811,28 @@ def main() -> int:
             coverage=coverage,
         ):
             print(f"production gate diagnostic report written: {diagnostic_path}")
+        _write_status(
+            status_path,
+            status="completed",
+            args=args,
+            coverage=coverage,
+            effective_symbols=len(covered_symbols),
+            command=command,
+            child_exit_code=result.returncode,
+            detail="child walkforward completed",
+        )
         return 0
     except subprocess.TimeoutExpired:
+        _write_status(
+            status_path,
+            status="timeout",
+            args=args,
+            coverage=coverage,
+            effective_symbols=len(covered_symbols),
+            command=command,
+            child_exit_code=124,
+            detail="child walkforward timed out",
+        )
         print(
             "BLOCK: production walk-forward timed out; "
             f"timeout_seconds={args.timeout_seconds}. "

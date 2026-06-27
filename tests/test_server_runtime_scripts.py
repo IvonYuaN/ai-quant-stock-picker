@@ -261,6 +261,8 @@ def test_production_walkforward_gate_wrapper_requires_full_market_raw_coverage()
     assert "all" in script
     assert "--grid-cscv" in script
     assert "--skip-pit-financials" in script
+    assert "walkforward_production_status.json" in script
+    assert '--status-path' in script
     assert "scripts/update_sqlite_daily.py" in script
     assert "--price-mode raw" in script
     assert "Backfill missing raw history first" in script
