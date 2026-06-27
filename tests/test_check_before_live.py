@@ -2139,6 +2139,33 @@ def test_check_before_live_blocks_wrapper_enabling_daily_notify(
     assert "AQSP_NOTIFY" in finding.detail
 
 
+def test_check_before_live_blocks_wrapper_enabling_gate_notify(
+    tmp_path: Path,
+) -> None:
+    _prepare_ready_runtime(tmp_path)
+    cron_dir = tmp_path / "bt-cron"
+    cron_dir.mkdir()
+    (cron_dir / "aqsp-daily-gate-notify").write_text(
+        "#!/bin/bash\n"
+        "export AQSP_NOTIFY=true\n"
+        "export AQSP_GATE_NOTIFY=true\n"
+        "export AQSP_RUN_TASK_ID=daily\n"
+        "cd /opt/aqsp\n"
+        "/bin/bash /opt/aqsp/scripts/bt_task.sh daily\n",
+        encoding="utf-8",
+    )
+
+    findings = check_before_live(
+        root=tmp_path,
+        today=date(2026, 6, 14),
+        cron_dir=cron_dir,
+    )
+
+    finding = next(item for item in findings if item.gate == "scheduler_notify_cadence")
+    assert finding.ok is False
+    assert "AQSP_GATE_NOTIFY" in finding.detail
+
+
 def test_check_before_live_blocks_bt_wrapper_with_unexpected_live_cron_cadence(
     tmp_path: Path,
     monkeypatch,

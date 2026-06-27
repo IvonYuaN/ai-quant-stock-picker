@@ -25,6 +25,7 @@ def test_finalize_scheduled_notification_disables_notify_and_prefixes_markdown(
     state_calls: list[dict[str, object]] = []
     monkeypatch.setenv("AQSP_RUN_TASK_ID", "daily")
     monkeypatch.setenv("AQSP_NOTIFY", "true")
+    monkeypatch.setenv("AQSP_GATE_NOTIFY", "true")
 
     artifacts = finalize_scheduled_notification(
         markdown="# 原始报告",
@@ -86,6 +87,7 @@ def test_finalize_scheduled_notification_uses_prebuilt_gate_block_markdown(
     legacy_seen: list[str] = []
     monkeypatch.setenv("AQSP_RUN_TASK_ID", "daily")
     monkeypatch.setenv("AQSP_NOTIFY", "true")
+    monkeypatch.setenv("AQSP_GATE_NOTIFY", "true")
 
     artifacts = finalize_scheduled_notification(
         markdown="# 原始报告",
@@ -114,6 +116,7 @@ def test_finalize_scheduled_notification_prefers_legacy_notify_when_patched(
     legacy_seen: list[str] = []
     monkeypatch.setenv("AQSP_RUN_TASK_ID", "daily")
     monkeypatch.setenv("AQSP_NOTIFY", "true")
+    monkeypatch.setenv("AQSP_GATE_NOTIFY", "true")
 
     artifacts = finalize_scheduled_notification(
         markdown="# 原始报告",
@@ -222,6 +225,40 @@ def test_finalize_scheduled_notification_keeps_gate_guidance_for_manual_run(
     assert "gate notify: skipped outside daily task" in seen
 
 
+def test_finalize_scheduled_notification_skips_gate_push_when_gate_notify_disabled(
+    monkeypatch,
+) -> None:
+    seen: list[str] = []
+    gate_calls: list[str] = []
+    monkeypatch.setenv("AQSP_RUN_TASK_ID", "daily")
+    monkeypatch.setenv("AQSP_NOTIFY", "true")
+    monkeypatch.delenv("AQSP_GATE_NOTIFY", raising=False)
+
+    artifacts = finalize_scheduled_notification(
+        markdown="# 原始报告",
+        args_notify=True,
+        gate_ok=False,
+        gate_reasons=["冷启动未满: 14/30 个独立信号日"],
+        next_actions=["继续按日运行主链。"],
+        latest_iso="2026-06-17",
+        notify_mode="summary",
+        dispatch_gate_notification_fn=lambda **_kwargs: gate_calls.append("sent") or [],
+        should_send_gate_notification_fn=lambda **_kwargs: True,
+        format_notification_gate_block_fn=lambda reasons, actions: (
+            f"BLOCK:{reasons[0]}|{actions[0]}\n"
+        ),
+        legacy_notify_fn=None,
+        print_fn=seen.append,
+    )
+
+    assert artifacts.notify_enabled is False
+    assert artifacts.markdown.startswith(
+        "BLOCK:冷启动未满: 14/30 个独立信号日|继续按日运行主链。"
+    )
+    assert gate_calls == []
+    assert "gate notify: skipped outside daily task" in seen
+
+
 def test_finalize_scheduled_notification_uses_explicit_task_id_over_env(
     monkeypatch,
 ) -> None:
@@ -266,6 +303,7 @@ def test_finalize_scheduled_notification_fails_closed_when_gate_state_fails(
     gate_calls: list[str] = []
     monkeypatch.setenv("AQSP_RUN_TASK_ID", "daily")
     monkeypatch.setenv("AQSP_NOTIFY", "true")
+    monkeypatch.setenv("AQSP_GATE_NOTIFY", "true")
 
     artifacts = finalize_scheduled_notification(
         markdown="# 原始报告",
@@ -297,6 +335,7 @@ def test_finalize_scheduled_notification_marks_gate_only_after_success(
     marked: list[dict[str, object]] = []
     monkeypatch.setenv("AQSP_RUN_TASK_ID", "daily")
     monkeypatch.setenv("AQSP_NOTIFY", "true")
+    monkeypatch.setenv("AQSP_GATE_NOTIFY", "true")
 
     finalize_scheduled_notification(
         markdown="# 原始报告",
@@ -335,6 +374,7 @@ def test_finalize_scheduled_notification_marks_gate_failed_when_dispatch_raises(
     seen: list[str] = []
     monkeypatch.setenv("AQSP_RUN_TASK_ID", "daily")
     monkeypatch.setenv("AQSP_NOTIFY", "true")
+    monkeypatch.setenv("AQSP_GATE_NOTIFY", "true")
 
     finalize_scheduled_notification(
         markdown="# 原始报告",
@@ -373,6 +413,7 @@ def test_finalize_scheduled_notification_marks_legacy_gate_after_success(
     marked: list[dict[str, object]] = []
     monkeypatch.setenv("AQSP_RUN_TASK_ID", "daily")
     monkeypatch.setenv("AQSP_NOTIFY", "true")
+    monkeypatch.setenv("AQSP_GATE_NOTIFY", "true")
 
     finalize_scheduled_notification(
         markdown="# 原始报告",
@@ -411,6 +452,7 @@ def test_finalize_scheduled_notification_reserves_gate_before_failure(
     failed: list[dict[str, object]] = []
     monkeypatch.setenv("AQSP_RUN_TASK_ID", "daily")
     monkeypatch.setenv("AQSP_NOTIFY", "true")
+    monkeypatch.setenv("AQSP_GATE_NOTIFY", "true")
 
     finalize_scheduled_notification(
         markdown="# 原始报告",
@@ -447,10 +489,13 @@ def test_finalize_scheduled_notification_reserves_gate_before_failure(
 def test_gate_notification_allowed_only_for_main_tasks(monkeypatch) -> None:
     monkeypatch.delenv("AQSP_RUN_TASK_ID", raising=False)
     monkeypatch.delenv("AQSP_NOTIFY", raising=False)
+    monkeypatch.delenv("AQSP_GATE_NOTIFY", raising=False)
     assert gate_notification_allowed() is False
     assert gate_notification_allowed("") is False
     assert gate_notification_allowed("daily") is False
     monkeypatch.setenv("AQSP_NOTIFY", "true")
+    assert gate_notification_allowed("daily") is False
+    monkeypatch.setenv("AQSP_GATE_NOTIFY", "true")
     assert gate_notification_allowed("daily") is True
     assert gate_notification_allowed("manual") is True
     assert gate_notification_allowed("scheduled") is True

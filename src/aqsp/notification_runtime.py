@@ -367,12 +367,18 @@ def gate_notification_allowed(
     value = task_id or os.getenv("AQSP_RUN_TASK_ID", "")
     normalized = str(value or "").strip().lower()
     notify_flag = str(os.getenv("AQSP_NOTIFY", "") or "").strip().lower()
+    gate_notify_flag = str(os.getenv("AQSP_GATE_NOTIFY", "") or "").strip().lower()
     notify_enabled = (
         bool(notify_requested)
         if notify_requested is not None
         else notify_flag in {"1", "true", "yes", "on"}
     )
-    return normalized in {"daily", "scheduled", "manual"} and notify_enabled
+    gate_notify_enabled = gate_notify_flag in {"1", "true", "yes", "on"}
+    return (
+        normalized in {"daily", "scheduled", "manual"}
+        and notify_enabled
+        and gate_notify_enabled
+    )
 
 
 def high_frequency_task(task_id: str | None = None) -> bool:

@@ -77,6 +77,7 @@ SERVERCHAN_SENDKEY=
 GLM_API_KEY=
 
 AQSP_NOTIFY=false
+AQSP_GATE_NOTIFY=false
 AQSP_NOTIFY_MODE=summary
 AQSP_ENABLE_DEBATE=false
 AQSP_DEBATE_ENABLE_LLM=false
@@ -94,6 +95,7 @@ AQSP_ENABLE_AUTO_EVOLUTION=false
 - `GLM_API_KEY` 用于智谱；`LLM_PROVIDER=glm` 时默认走 `GLM-4.7-Flash`。
 - `SERVERCHAN_SENDKEY` 配好后，收盘总览、监控告警、复盘摘要都可以直接推到 Server酱。
 - `AQSP_NOTIFY=true` 后，`bt_task.sh daily` 会在收盘主链路里发送汇总通知。
+- `AQSP_GATE_NOTIFY=true` 才允许把“双门未放行”单独推到手机；默认关闭，避免冷启动/未过 gate 时反复打扰。
 - 命令入口统一推荐用 `aqsp run`；仓库仍兼容旧别名 `aqsp run-scheduled`，方便服务器老脚本平滑过渡。
 - `AQSP_NOTIFY_MODE=summary` 时，收盘链路默认只发 1 条“收盘总览”；如果你想恢复每个步骤各发各的，改成 `fanout`。
 - `AQSP_MAX_UNIVERSE=0` 表示短线生产扫描不截断；50/100/300 只能用于本地 smoke test，不能作为上线运行配置。
@@ -177,6 +179,7 @@ tail -120 /opt/aqsp/logs/monitor/monitor-$(date +%Y-%m-%d).log
 
 ```bash
 AQSP_NOTIFY=true
+AQSP_GATE_NOTIFY=false
 AQSP_NOTIFY_MODE=summary
 SERVERCHAN_SENDKEY=你的Server酱SendKey
 ```

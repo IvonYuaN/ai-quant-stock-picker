@@ -73,6 +73,52 @@ def test_build_report_surfaces_layered_failures(monkeypatch) -> None:
     assert remote_runtime_probe._has_failures(checks) is True
 
 
+def test_format_checks_includes_layered_summary(monkeypatch) -> None:
+    monkeypatch.setattr(
+        remote_runtime_probe,
+        "_tcp_probe",
+        lambda host, port, timeout: remote_runtime_probe.ProbeCheck(
+            "tcp", "ok", f"{host}:{port}:{timeout}"
+        ),
+    )
+    monkeypatch.setattr(
+        remote_runtime_probe,
+        "_ssh_banner_probe",
+        lambda host, port, timeout: remote_runtime_probe.ProbeCheck(
+            "ssh_banner", "timeout", f"{host}:{port}:{timeout}"
+        ),
+    )
+    monkeypatch.setattr(
+        remote_runtime_probe,
+        "_tls_probe",
+        lambda host, port, server_name, timeout: remote_runtime_probe.ProbeCheck(
+            "tls", "timeout", f"{server_name}:{port}:{timeout}"
+        ),
+    )
+    monkeypatch.setattr(
+        remote_runtime_probe,
+        "_http_probe",
+        lambda url, timeout: remote_runtime_probe.ProbeCheck(
+            "http", "failed", f"{url}:{timeout}"
+        ),
+    )
+
+    checks = remote_runtime_probe.build_report(
+        ssh_alias="aqsp-server",
+        ssh_host="8.130.124.238",
+        ssh_port=22,
+        ssh_user="root",
+        http_url="https://lh.ifidy.cn/_stcore/health",
+        timeout=5.0,
+    )
+    rendered = remote_runtime_probe._format_checks(checks)
+
+    assert "## Summary" in rendered
+    assert "SSH 入口异常" in rendered
+    assert "HTTPS 入口异常" in rendered
+    assert "应用健康检查失败" in rendered
+
+
 def test_http_probe_reports_http_error(monkeypatch) -> None:
     def _boom(*_args, **_kwargs):
         raise urllib.error.HTTPError(

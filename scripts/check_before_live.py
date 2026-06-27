@@ -1384,6 +1384,10 @@ def _check_scheduler_notify_cadence(
             text
         ):
             blockers.append(f"{label}: wrapper enables AQSP_NOTIFY for daily")
+        if _should_check_cron_entry_bypass(label) and _wrapper_enables_gate_notify(
+            text
+        ):
+            blockers.append(f"{label}: wrapper enables AQSP_GATE_NOTIFY for daily")
         wrapper_schedule_blocker = _cron_wrapper_schedule_blocker(
             label=label,
             text=text,
@@ -1616,6 +1620,13 @@ def _cron_wrapper_bypasses_bt_task(text: str) -> bool:
 def _wrapper_enables_daily_notify(text: str) -> bool:
     lower = text.lower()
     if "aqsp_notify=true" not in lower and "aqsp_notify=1" not in lower:
+        return False
+    return _looks_like_high_frequency_daily(lower) or "aqsp_run_task_id=daily" in lower
+
+
+def _wrapper_enables_gate_notify(text: str) -> bool:
+    lower = text.lower()
+    if "aqsp_gate_notify=true" not in lower and "aqsp_gate_notify=1" not in lower:
         return False
     return _looks_like_high_frequency_daily(lower) or "aqsp_run_task_id=daily" in lower
 

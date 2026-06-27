@@ -167,11 +167,35 @@ def _format_checks(checks: list[ProbeCheck]) -> str:
     lines = ["# AQSP Remote Runtime Probe", ""]
     for check in checks:
         lines.append(f"- {check.name}: status={check.status} detail={check.detail}")
+    summary = _summarize_checks(checks)
+    if summary:
+        lines.extend(["", "## Summary", ""])
+        lines.extend(f"- {line}" for line in summary)
     return "\n".join(lines)
 
 
 def _has_failures(checks: list[ProbeCheck]) -> bool:
     return any(check.status in {"failed", "timeout"} for check in checks)
+
+
+def _find_check(checks: list[ProbeCheck], name: str) -> ProbeCheck | None:
+    return next((check for check in checks if check.name == name), None)
+
+
+def _summarize_checks(checks: list[ProbeCheck]) -> list[str]:
+    summary: list[str] = []
+    ssh_banner = _find_check(checks, "ssh_banner")
+    tls = _find_check(checks, "tls")
+    http = _find_check(checks, "http")
+    if ssh_banner is not None and ssh_banner.status in {"timeout", "failed"}:
+        summary.append("SSH 入口异常：TCP 可达但 SSH banner 未正常返回，优先检查 sshd/防火墙/负载层。")
+    if tls is not None and tls.status in {"timeout", "failed"}:
+        summary.append("HTTPS 入口异常：443 可达但 TLS 握手失败，优先检查 Nginx/证书/反向代理链路。")
+    if http is not None and http.status in {"timeout", "failed"}:
+        summary.append("应用健康检查失败：health 接口未正常响应，继续检查 dashboard 进程和上游代理。")
+    if not summary and not _has_failures(checks):
+        summary.append("SSH、TLS 和 HTTP health 均正常。")
+    return summary
 
 
 def main(argv: list[str] | None = None) -> int:
