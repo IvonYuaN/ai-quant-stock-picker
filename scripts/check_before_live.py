@@ -300,10 +300,32 @@ def _check_walkforward_gate(path: Path, today: date) -> ReadinessFinding:
         today=today,
         max_age_days=MAX_GATE_AGE_DAYS,
     )
+    detail = validation.detail
+    status_path = path.with_name("walkforward_production_status.json")
+    status_payload = _read_json(status_path)
+    if not validation.ok and status_payload:
+        status = str(status_payload.get("status") or "").strip()
+        updated_at = str(status_payload.get("updated_at") or "").strip()
+        child_exit = status_payload.get("child_exit_code")
+        extra = ", ".join(
+            part
+            for part in (
+                f"status={status}" if status else "",
+                f"updated_at={updated_at}" if updated_at else "",
+                (
+                    f"child_exit_code={child_exit}"
+                    if isinstance(child_exit, int)
+                    else ""
+                ),
+            )
+            if part
+        )
+        if extra:
+            detail = f"{detail}; production_status: {extra}"
     return ReadinessFinding(
         "walkforward_gate",
         validation.ok,
-        validation.detail,
+        detail,
     )
 
 

@@ -2277,6 +2277,42 @@ def test_check_before_live_accepts_separate_production_diagnostic_report(
     assert finding.ok is True
 
 
+def test_check_before_live_appends_production_status_to_walkforward_block_detail(
+    tmp_path: Path,
+) -> None:
+    _prepare_ready_runtime(tmp_path)
+    gate_path = tmp_path / "data" / "walkforward_gate.json"
+    payload = json.loads(gate_path.read_text(encoding="utf-8"))
+    payload.update(
+        {
+            "run_date": "2026-06-01",
+            "deflated_sharpe": 0.0,
+            "pbo": 0.0,
+            "pbo_valid": False,
+            "dsr_pass": False,
+            "pbo_pass": False,
+            "both_pass": False,
+            "n_periods": 4,
+        }
+    )
+    _write_json(gate_path, payload)
+    _write_json(
+        tmp_path / "data" / "walkforward_production_status.json",
+        {
+            "status": "timeout",
+            "updated_at": "2026-06-14T18:10:00+08:00",
+            "child_exit_code": 124,
+        },
+    )
+
+    findings = check_before_live(root=tmp_path, today=date(2026, 6, 14))
+
+    finding = next(item for item in findings if item.gate == "walkforward_gate")
+    assert finding.ok is False
+    assert "production_status: status=timeout" in finding.detail
+    assert "child_exit_code=124" in finding.detail
+
+
 def test_check_before_live_blocks_qfq_walkforward_price_mode(
     tmp_path: Path,
 ) -> None:

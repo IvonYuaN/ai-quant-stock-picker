@@ -33,6 +33,7 @@ class RuntimePaths:
     ledger: Path
     paper_ledger: Path
     risk_state: Path
+    walkforward_production_status: Path
     gate_notify_state: Path
     notify_state: Path
     monitor_notify_state: Path
@@ -69,6 +70,10 @@ def _runtime_paths() -> RuntimePaths:
         ledger=_runtime_path("AQSP_LEDGER", "data/predictions.jsonl"),
         paper_ledger=_runtime_path("AQSP_PAPER_LEDGER", "data/paper_trades.jsonl"),
         risk_state=_runtime_path("AQSP_RISK_STATE", "data/risk_state.json"),
+        walkforward_production_status=_runtime_path(
+            "AQSP_WALKFORWARD_PRODUCTION_STATUS",
+            "data/walkforward_production_status.json",
+        ),
         gate_notify_state=_runtime_path(
             "AQSP_GATE_NOTIFY_STATE_PATH", "data/gate_notify_state.json"
         ),
@@ -254,6 +259,26 @@ def _notify_state_summary(path: Path) -> dict[str, Any]:
         "pending": _state_count(payload.get("pending")),
         "failed": _state_count(payload.get("failed")),
         "updated_at": str(payload.get("updated_at", "") or ""),
+    }
+
+
+def _walkforward_production_status_summary(path: Path) -> dict[str, Any]:
+    payload = _read_json_file(path)
+    coverage = payload.get("coverage", {})
+    if not isinstance(coverage, dict):
+        coverage = {}
+    return {
+        "path": str(path),
+        "present": path.exists(),
+        "status": str(payload.get("status", "") or ""),
+        "updated_at": str(payload.get("updated_at", "") or ""),
+        "detail": str(payload.get("detail", "") or ""),
+        "effective_symbols": payload.get("effective_symbols"),
+        "child_exit_code": payload.get("child_exit_code"),
+        "db_path": str(payload.get("db_path", "") or ""),
+        "gate_path": str(payload.get("gate_path", "") or ""),
+        "report_path": str(payload.get("report_path", "") or ""),
+        "coverage_symbols": coverage.get("covered_symbols"),
     }
 
 
@@ -482,12 +507,20 @@ def main() -> int:
             "## Notify State",
         ]
     )
+    walkforward_status = _walkforward_production_status_summary(
+        paths.walkforward_production_status
+    )
     gate_state = _gate_state_summary(paths.gate_notify_state)
     notify_state = _notify_state_summary(paths.notify_state)
     monitor_state = _notify_state_summary(paths.monitor_notify_state)
     run_history = _successful_run_history_summary(PROJECT_ROOT)
     report.extend(
         [
+            f"- walkforward_production_status_file: {_file_status(paths.walkforward_production_status)}",
+            f"- walkforward_production_status: {walkforward_status['status'] or '-'} updated={walkforward_status['updated_at'] or '-'}",
+            f"- walkforward_production_effective_symbols: {walkforward_status['effective_symbols'] if walkforward_status['effective_symbols'] is not None else '-'}",
+            f"- walkforward_production_child_exit: {walkforward_status['child_exit_code'] if walkforward_status['child_exit_code'] is not None else '-'}",
+            f"- walkforward_production_detail: {walkforward_status['detail'] or '-'}",
             f"- gate_notify_state: {_file_status(paths.gate_notify_state)}",
             f"- gate_days: {gate_state['days']} latest={gate_state['latest_date'] or '-'}",
             f"- gate_latest_status: {gate_state['latest_status'] or '-'}",

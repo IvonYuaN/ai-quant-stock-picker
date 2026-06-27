@@ -266,6 +266,7 @@ def test_diagnose_runtime_main_reports_signal_and_notify_state(
     gate_state = tmp_path / "gate_notify_state.json"
     notify_state = tmp_path / "notify_state.json"
     monitor_state = tmp_path / "monitor_notify_state.json"
+    walkforward_status = tmp_path / "walkforward_production_status.json"
     ledger.write_text(
         "\n".join(
             [
@@ -292,9 +293,16 @@ def test_diagnose_runtime_main_reports_signal_and_notify_state(
         '{"sent":{},"pending":{"data_source_failure":{"fingerprint":"data_source_failure","updated_at":"2026-06-21T18:05:00+08:00"}},"failed":{},"updated_at":"2026-06-21T18:05:00+08:00"}\n',
         encoding="utf-8",
     )
+    walkforward_status.write_text(
+        '{"status":"timeout","updated_at":"2026-06-21T18:10:00+08:00","effective_symbols":3200,"child_exit_code":124,"detail":"child walkforward timed out"}\n',
+        encoding="utf-8",
+    )
 
     monkeypatch.setenv("AQSP_LEDGER", str(ledger))
     monkeypatch.setenv("AQSP_PAPER_LEDGER", str(paper))
+    monkeypatch.setenv(
+        "AQSP_WALKFORWARD_PRODUCTION_STATUS", str(walkforward_status)
+    )
     monkeypatch.setenv("AQSP_GATE_NOTIFY_STATE_PATH", str(gate_state))
     monkeypatch.setenv("AQSP_NOTIFY_STATE_PATH", str(notify_state))
     monkeypatch.setenv("AQSP_MONITOR_NOTIFY_STATE_PATH", str(monitor_state))
@@ -310,6 +318,8 @@ def test_diagnose_runtime_main_reports_signal_and_notify_state(
     assert "- signal_days: 2/30" in output
     assert "- simulated_signal_days: 0" in output
     assert "- paper_days: 1/30" in output
+    assert "- walkforward_production_status: timeout updated=2026-06-21T18:10:00+08:00" in output
+    assert "- walkforward_production_child_exit: 124" in output
     assert "- gate_days: 1 latest=2026-06-21" in output
     assert "- gate_latest_status: failed" in output
     assert "- gate_latest_fingerprint: cold_start|dsr" in output
