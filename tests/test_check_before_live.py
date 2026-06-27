@@ -76,7 +76,8 @@ def _prepare_ready_runtime(root: Path) -> None:
     (root / ".env").write_text(
         "AQSP_SOURCE=sqlite_db\n"
         "AQSP_ALLOW_ONLINE_FALLBACK=false\n"
-        f"AQSP_SQLITE_DB_PATH={raw_db}\n",
+        f"AQSP_SQLITE_DB_PATH={raw_db}\n"
+        "SERVERCHAN_SENDKEY=sctp_test_key\n",
         encoding="utf-8",
     )
     _write_json(
@@ -1484,6 +1485,62 @@ def test_check_before_live_blocks_unstable_regular_notify_state_path(
     finding = next(item for item in findings if item.gate == "notify_state_path")
     assert finding.ok is False
     assert "AQSP_NOTIFY_STATE_PATH" in finding.detail
+
+
+def test_check_before_live_blocks_when_no_notify_channel_configured(
+    tmp_path: Path,
+) -> None:
+    _prepare_ready_runtime(tmp_path)
+    (tmp_path / ".env").write_text(
+        "AQSP_SOURCE=sqlite_db\n"
+        "AQSP_ALLOW_ONLINE_FALLBACK=false\n"
+        "AQSP_SQLITE_DB_PATH=data/astocks_raw.db\n",
+        encoding="utf-8",
+    )
+
+    findings = check_before_live(root=tmp_path, today=date(2026, 6, 14))
+
+    finding = next(item for item in findings if item.gate == "notify_channels")
+    assert finding.ok is False
+    assert "no real notification channel configured" in finding.detail
+
+
+def test_check_before_live_blocks_incomplete_telegram_notify_config(
+    tmp_path: Path,
+) -> None:
+    _prepare_ready_runtime(tmp_path)
+    (tmp_path / ".env").write_text(
+        "AQSP_SOURCE=sqlite_db\n"
+        "AQSP_ALLOW_ONLINE_FALLBACK=false\n"
+        "AQSP_SQLITE_DB_PATH=data/astocks_raw.db\n"
+        "TELEGRAM_BOT_TOKEN=test-token\n",
+        encoding="utf-8",
+    )
+
+    findings = check_before_live(root=tmp_path, today=date(2026, 6, 14))
+
+    finding = next(item for item in findings if item.gate == "notify_channels")
+    assert finding.ok is False
+    assert "telegram notify config incomplete" in finding.detail
+
+
+def test_check_before_live_accepts_configured_notify_channel(
+    tmp_path: Path,
+) -> None:
+    _prepare_ready_runtime(tmp_path)
+    (tmp_path / ".env").write_text(
+        "AQSP_SOURCE=sqlite_db\n"
+        "AQSP_ALLOW_ONLINE_FALLBACK=false\n"
+        "AQSP_SQLITE_DB_PATH=data/astocks_raw.db\n"
+        "SERVERCHAN_SENDKEY=sctp_test_key\n",
+        encoding="utf-8",
+    )
+
+    findings = check_before_live(root=tmp_path, today=date(2026, 6, 14))
+
+    finding = next(item for item in findings if item.gate == "notify_channels")
+    assert finding.ok is True
+    assert "SERVERCHAN_SENDKEY" in finding.detail
 
 
 def test_check_before_live_blocks_direct_cli_subcommand_notify(

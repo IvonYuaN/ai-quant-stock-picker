@@ -281,6 +281,7 @@ def check_before_live(
     findings.append(_check_scheduled_service_boundary(root))
     findings.append(_check_special_strategy_ledger_guards(root))
     findings.append(_check_server_monitor_exit_policy(root))
+    findings.append(_check_notify_channels(root))
     findings.extend(_check_notify_state_paths(root))
     findings.extend(_check_runtime_outputs(root))
     return findings
@@ -1583,6 +1584,46 @@ def _check_notify_state_paths(root: Path) -> list[ReadinessFinding]:
             default_value="data/monitor_notify_state.json",
         ),
     ]
+
+
+def _check_notify_channels(root: Path) -> ReadinessFinding:
+    env_path = root / ".env"
+    channel_keys = (
+        "SERVERCHAN_SENDKEY",
+        "WECHAT_WEBHOOK_URL",
+        "BARK_URL",
+        "PUSHPLUS_TOKEN",
+        "TELEGRAM_BOT_TOKEN",
+        "TELEGRAM_CHAT_ID",
+        "FEISHU_WEBHOOK_URL",
+        "DINGTALK_WEBHOOK_URL",
+        "DISCORD_WEBHOOK_URL",
+        "SLACK_WEBHOOK_URL",
+        "GENERIC_WEBHOOK_URL",
+    )
+    configured: list[str] = []
+    for key in channel_keys:
+        value = read_env_value(env_path, key)
+        if value:
+            configured.append(key)
+    telegram_pair = {"TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID"}
+    if telegram_pair & set(configured) and not telegram_pair.issubset(set(configured)):
+        return ReadinessFinding(
+            "notify_channels",
+            False,
+            "telegram notify config incomplete: need TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID",
+        )
+    if not configured:
+        return ReadinessFinding(
+            "notify_channels",
+            False,
+            "no real notification channel configured in .env",
+        )
+    return ReadinessFinding(
+        "notify_channels",
+        True,
+        "configured: " + ", ".join(configured),
+    )
 
 
 def _check_cli_subcommand_notify_dedupe(root: Path) -> ReadinessFinding:

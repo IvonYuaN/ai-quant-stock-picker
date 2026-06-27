@@ -22,6 +22,7 @@ from aqsp.ledger.runtime import (
     count_independent_signal_days,
     count_paper_tracking_days,
 )
+from aqsp.notifier import configured_notification_channels
 from aqsp.research.summary import load_research_summary, research_findings_display
 
 
@@ -521,6 +522,7 @@ def main() -> int:
             f"- walkforward_production_effective_symbols: {walkforward_status['effective_symbols'] if walkforward_status['effective_symbols'] is not None else '-'}",
             f"- walkforward_production_child_exit: {walkforward_status['child_exit_code'] if walkforward_status['child_exit_code'] is not None else '-'}",
             f"- walkforward_production_detail: {walkforward_status['detail'] or '-'}",
+            f"- configured_notify_channels: {','.join(configured_notification_channels()) or '-'}",
             f"- gate_notify_state: {_file_status(paths.gate_notify_state)}",
             f"- gate_days: {gate_state['days']} latest={gate_state['latest_date'] or '-'}",
             f"- gate_latest_status: {gate_state['latest_status'] or '-'}",

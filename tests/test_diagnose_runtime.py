@@ -300,6 +300,7 @@ def test_diagnose_runtime_main_reports_signal_and_notify_state(
 
     monkeypatch.setenv("AQSP_LEDGER", str(ledger))
     monkeypatch.setenv("AQSP_PAPER_LEDGER", str(paper))
+    monkeypatch.setenv("SERVERCHAN_SENDKEY", "test_key")
     monkeypatch.setenv(
         "AQSP_WALKFORWARD_PRODUCTION_STATUS", str(walkforward_status)
     )
@@ -320,6 +321,7 @@ def test_diagnose_runtime_main_reports_signal_and_notify_state(
     assert "- paper_days: 1/30" in output
     assert "- walkforward_production_status: timeout updated=2026-06-21T18:10:00+08:00" in output
     assert "- walkforward_production_child_exit: 124" in output
+    assert "- configured_notify_channels: serverchan" in output
     assert "- gate_days: 1 latest=2026-06-21" in output
     assert "- gate_latest_status: failed" in output
     assert "- gate_latest_fingerprint: cold_start|dsr" in output
