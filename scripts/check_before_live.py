@@ -984,17 +984,33 @@ def _check_paper_tracking_sample_size(path: Path) -> ReadinessFinding:
         predictions_path=predictions_path,
         paper_path=path,
     )
+    tradable_days = _tradable_signal_days(predictions_path)
+    ceiling_active = bool(tradable_days)
+    effective_target = (
+        min(MIN_INDEPENDENT_SIGNAL_DAYS, len(tradable_days))
+        if ceiling_active
+        else MIN_INDEPENDENT_SIGNAL_DAYS
+    )
     detail = f"{count}/{MIN_INDEPENDENT_SIGNAL_DAYS} real paper tracking days"
     if missing_tradable_days:
         preview = ", ".join(missing_tradable_days[:5])
         if len(missing_tradable_days) > 5:
             preview += ", ..."
         detail += f"; missing tradable signal days={len(missing_tradable_days)} [{preview}]"
+    elif (
+        ceiling_active
+        and effective_target < MIN_INDEPENDENT_SIGNAL_DAYS
+        and count >= effective_target
+    ):
+        detail += (
+            f"; tradable signal day ceiling={effective_target}/"
+            f"{MIN_INDEPENDENT_SIGNAL_DAYS}"
+        )
     elif count < MIN_INDEPENDENT_SIGNAL_DAYS:
         detail += "; no additional tradable signal days available yet"
     return ReadinessFinding(
         "paper_tracking_sample_size",
-        count >= MIN_INDEPENDENT_SIGNAL_DAYS,
+        count >= effective_target and not missing_tradable_days,
         detail,
     )
 
@@ -1011,16 +1027,24 @@ def _paper_missing_tradable_signal_days(
         for row in _read_jsonl(paper_path)
         if ledger_signal_date(row)
     }
+    tradable_days = _tradable_signal_days(predictions_path)
+    return sorted(tradable_days - paper_days)
+
+
+def _tradable_signal_days(predictions_path: Path) -> set[str]:
     tradable_days: set[str] = set()
     for row in _read_jsonl(predictions_path):
         if str(row.get("status") or "").strip() != "pending":
             continue
-        if str(row.get("rating") or "").strip() not in {"buy_candidate", "strong_buy_candidate"}:
+        if str(row.get("rating") or "").strip() not in {
+            "buy_candidate",
+            "strong_buy_candidate",
+        }:
             continue
         signal_day = ledger_signal_date(row)
         if signal_day:
             tradable_days.add(signal_day)
-    return sorted(tradable_days - paper_days)
+    return tradable_days
 
 
 def _check_signal_sample_status_boundary(root: Path) -> ReadinessFinding:

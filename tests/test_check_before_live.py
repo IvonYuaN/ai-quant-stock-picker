@@ -1007,6 +1007,46 @@ def test_check_before_live_reports_missing_tradable_signal_days_for_paper_sample
     assert "missing tradable signal days=1 [2026-05-01]" in finding.detail
 
 
+def test_check_before_live_allows_paper_samples_when_all_tradable_days_are_covered(
+    tmp_path: Path,
+) -> None:
+    _prepare_ready_runtime(tmp_path)
+    _write_jsonl(
+        tmp_path / "data/predictions.jsonl",
+        [
+            {
+                "signal_date": f"2026-05-{day:02d}",
+                "symbol": f"600{day:03d}",
+                "status": "pending",
+                "rating": "buy_candidate",
+            }
+            for day in range(1, 27)
+        ],
+    )
+    _write_jsonl(
+        tmp_path / "data/paper_trades.jsonl",
+        [
+            {
+                "signal_date": f"2026-05-{day:02d}",
+                "symbol": f"600{day:03d}",
+                "status": "closed",
+            }
+            for day in range(1, 27)
+        ],
+    )
+
+    findings = check_before_live(root=tmp_path, today=date(2026, 6, 14))
+
+    finding = next(
+        item for item in findings if item.gate == "paper_tracking_sample_size"
+    )
+    assert finding.ok is True
+    assert (
+        finding.detail
+        == "26/30 real paper tracking days; tradable signal day ceiling=26/30"
+    )
+
+
 def test_check_before_live_blocks_signal_samples_counting_paper_statuses(
     tmp_path: Path,
 ) -> None:
