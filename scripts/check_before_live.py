@@ -887,6 +887,24 @@ def _check_pbo_diagnostics(root: Path, gate_path: Path) -> ReadinessFinding:
     if not gate or gate.get("pbo_pass") is not False:
         return ReadinessFinding("pbo_diagnostics", True, "not required")
 
+    grid_diagnostics = gate.get("grid_diagnostics")
+    if isinstance(grid_diagnostics, dict) and grid_diagnostics:
+        required_keys = (
+            "n_combos",
+            "n_lambda_le_0",
+            "worst_periods",
+            "selection_inversions",
+            "best_variant",
+        )
+        missing_keys = [
+            key
+            for key in required_keys
+            if key not in grid_diagnostics
+            or grid_diagnostics.get(key) in (None, "", [], {})
+        ]
+        if not missing_keys:
+            return ReadinessFinding("pbo_diagnostics", True, "ok(sidecar)")
+
     report_path = next(
         (path for path in _pbo_diagnostic_report_candidates(root) if path.exists()),
         None,

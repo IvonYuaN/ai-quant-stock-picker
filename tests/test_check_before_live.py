@@ -2193,6 +2193,39 @@ def test_check_before_live_accepts_pbo_diagnostics_when_gate_failed(
     assert finding.ok is True
 
 
+def test_check_before_live_accepts_sidecar_grid_diagnostics_when_gate_failed(
+    tmp_path: Path,
+) -> None:
+    _prepare_ready_runtime(tmp_path)
+    _write_json(
+        tmp_path / "data/walkforward_gate.json",
+        {
+            "run_date": "2026-06-10",
+            "deflated_sharpe": 1.2,
+            "pbo": 0.75,
+            "pbo_valid": True,
+            "dsr_pass": True,
+            "pbo_pass": False,
+            "both_pass": False,
+            "n_periods": 12,
+            "grid_diagnostics": {
+                "n_combos": 252,
+                "n_lambda_le_0": 196,
+                "best_variant": "WF-S06",
+                "worst_periods": [{"period": "2020-05-19 to 2020-07-01"}],
+                "selection_inversions": [{"selected_variant": "WF-S05"}],
+            },
+        },
+    )
+    (tmp_path / "reports" / "walkforward-grid-latest.md").unlink()
+
+    findings = check_before_live(root=tmp_path, today=date(2026, 6, 14))
+
+    finding = next(item for item in findings if item.gate == "pbo_diagnostics")
+    assert finding.ok is True
+    assert finding.detail == "ok(sidecar)"
+
+
 def test_check_before_live_accepts_production_pbo_diagnostics_report(
     tmp_path: Path,
 ) -> None:
