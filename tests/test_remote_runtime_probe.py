@@ -17,6 +17,16 @@ def test_resolve_ssh_target_uses_ssh_config(monkeypatch) -> None:
     assert (host, port, user) == ("8.8.8.8", 2222, "root")
 
 
+def test_resolve_ssh_target_defaults_localhost_for_server_self_probe(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(remote_runtime_probe, "_parse_ssh_config", lambda _alias: {})
+
+    host, port, user = remote_runtime_probe._resolve_ssh_target("aqsp-server")
+
+    assert (host, port, user) == ("127.0.0.1", 22, "")
+
+
 def test_build_report_surfaces_layered_failures(monkeypatch) -> None:
     monkeypatch.setattr(
         remote_runtime_probe,

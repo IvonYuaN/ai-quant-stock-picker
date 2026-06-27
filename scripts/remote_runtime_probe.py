@@ -48,6 +48,8 @@ def _resolve_ssh_target(host_alias: str) -> tuple[str, int, str]:
     host = config.get("hostname", "").strip() or host_alias.strip()
     port_raw = config.get("port", "22").strip() or "22"
     user = config.get("user", "").strip()
+    if not config and host_alias.strip() == "aqsp-server":
+        host = "127.0.0.1"
     try:
         port = int(port_raw)
     except ValueError:
