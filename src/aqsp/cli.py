@@ -3760,17 +3760,7 @@ class WalkForwardGridVariant:
     top_n: int
 
 
-_WALKFORWARD_STABLE_GRID_VARIANTS: tuple[WalkForwardGridVariant, ...] = (
-    WalkForwardGridVariant("WF-001", 0.3, 0.3, 60, 3, 10),
-    WalkForwardGridVariant("WF-S01", 0.3, 0.3, 60, 3, 5),
-    WalkForwardGridVariant("WF-S02", 0.3, 0.3, 20, 3, 10),
-    WalkForwardGridVariant("WF-S03", 0.3, 0.3, 120, 3, 10),
-    WalkForwardGridVariant("WF-S04", 0.2, 0.4, 40, 5, 5),
-    WalkForwardGridVariant("WF-S05", 0.4, 0.2, 100, 2, 15),
-    WalkForwardGridVariant("WF-S06", 0.1, 0.5, 40, 7, 10),
-)
-
-_WALKFORWARD_EXPLORATORY_GRID_VARIANTS: tuple[WalkForwardGridVariant, ...] = (
+_WALKFORWARD_VALIDATED_GRID_VARIANTS: tuple[WalkForwardGridVariant, ...] = (
     WalkForwardGridVariant("WF-001", 0.3, 0.3, 60, 3, 10),
     WalkForwardGridVariant("WF-B01", 0.3, 0.3, 60, 3, 5),
     WalkForwardGridVariant("WF-B02", 0.3, 0.3, 60, 3, 20),
@@ -3782,6 +3772,14 @@ _WALKFORWARD_EXPLORATORY_GRID_VARIANTS: tuple[WalkForwardGridVariant, ...] = (
     WalkForwardGridVariant("WF-B08", 0.4, 0.2, 100, 2, 15),
     WalkForwardGridVariant("WF-B09", 0.5, 0.1, 80, 5, 10),
     WalkForwardGridVariant("WF-B10", 0.1, 0.5, 40, 7, 10),
+)
+
+_WALKFORWARD_STABLE_GRID_VARIANTS: tuple[WalkForwardGridVariant, ...] = (
+    _WALKFORWARD_VALIDATED_GRID_VARIANTS
+)
+
+_WALKFORWARD_EXPLORATORY_GRID_VARIANTS: tuple[WalkForwardGridVariant, ...] = (
+    _WALKFORWARD_VALIDATED_GRID_VARIANTS
 )
 
 _WALKFORWARD_GRID_VARIANTS: tuple[WalkForwardGridVariant, ...] = (
