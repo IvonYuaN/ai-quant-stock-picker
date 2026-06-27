@@ -7,6 +7,7 @@ import pandas as pd
 from aqsp.ledger.runtime import (
     collect_independent_signal_dates,
     collect_paper_tracking_dates,
+    collect_simulated_signal_dates,
     compute_paper_mark_to_market_pnl,
     compute_real_pnl,
     count_independent_signal_days,
@@ -56,6 +57,7 @@ def test_count_independent_signal_days_counts_observation_only_signal_days(
         "2026-06-01",
         "2026-06-02",
     }
+    assert collect_simulated_signal_dates(str(ledger)) == {"2026-06-04"}
     assert count_independent_signal_days(str(ledger)) == 2
 
 

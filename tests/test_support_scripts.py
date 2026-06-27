@@ -9,6 +9,7 @@ from scripts.generate_sample_debate import generate_sample_debate_data
 from scripts.generate_cold_start_signals import generate_mock_signal
 from scripts.manage_data_lifecycle import analyze_debate_file, clean_old_debates
 from scripts.merge_server_ledgers import merge_ledgers
+from scripts import cleanup_ledger
 
 SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
 
@@ -126,3 +127,62 @@ def test_runtime_output_scripts_use_atomic_writes() -> None:
         text = path.read_text(encoding="utf-8")
         assert "atomic_write_text" in text
         assert ".write_text(" not in text
+
+
+def test_runtime_maintenance_scripts_default_to_predictions_ledger() -> None:
+    cold_text = Path("scripts/generate_cold_start_signals.py").read_text(
+        encoding="utf-8"
+    )
+    cleanup_text = Path("scripts/cleanup_ledger.py").read_text(encoding="utf-8")
+
+    assert 'default="data/predictions.jsonl"' in cold_text
+    assert 'default="data/predictions.jsonl"' in cleanup_text
+
+
+def test_cleanup_ledger_simulated_only_keeps_expired_real_rows(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    ledger = tmp_path / "predictions.jsonl"
+    ledger.write_text(
+        "\n".join(
+            [
+                json.dumps({"signal_date": "2026-01-01", "symbol": "600000", "status": "pending"}),
+                json.dumps(
+                    {
+                        "signal_date": "2026-06-01",
+                        "symbol": "600001",
+                        "status": "pending",
+                        "is_simulated": True,
+                    }
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(cleanup_ledger, "project_root", tmp_path)
+    monkeypatch.setattr(
+        cleanup_ledger,
+        "today_shanghai",
+        lambda: datetime(2026, 6, 27, 9, 30, 0, tzinfo=SHANGHAI_TZ).date(),
+    )
+
+    exit_code = cleanup_ledger.main(
+        [
+            "--ledger",
+            "predictions.jsonl",
+            "--remove-simulated",
+            "--simulated-only",
+        ]
+    )
+    output = capsys.readouterr().out
+    rows = [
+        json.loads(line)
+        for line in ledger.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+    assert exit_code == 0
+    assert "模式: 仅删除模拟信号" in output
+    assert len(rows) == 1
+    assert rows[0]["signal_date"] == "2026-01-01"

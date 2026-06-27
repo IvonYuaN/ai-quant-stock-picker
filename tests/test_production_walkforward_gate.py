@@ -12,6 +12,7 @@ from scripts.run_production_walkforward_gate import (
     formal_report_backup_path,
     inspect_raw_coverage,
     preserve_formal_report_snapshot,
+    repair_production_gate_metadata,
     select_covered_symbols,
     warn_if_report_path_not_writable,
     write_minimal_pbo_diagnostics,
@@ -276,6 +277,87 @@ def test_warn_if_report_path_not_writable_prints_hint(
     warn_if_report_path_not_writable(report_path)
 
     assert "not writable" in capsys.readouterr().out
+
+
+def test_repair_production_gate_metadata_backfills_report_metadata(
+    tmp_path: Path,
+) -> None:
+    gate_path = tmp_path / "walkforward_gate.json"
+    report_path = tmp_path / "walkforward-grid-raw-production-latest.md"
+    gate_path.write_text(
+        json.dumps(
+            {
+                "run_date": "2026-06-21",
+                "deflated_sharpe": 0.0,
+                "pbo": 0.0,
+                "pbo_valid": False,
+                "dsr_pass": False,
+                "pbo_pass": False,
+                "both_pass": False,
+            }
+        ),
+        encoding="utf-8",
+    )
+    report_path.write_text(
+        "\n".join(
+            [
+                "# Walk-Forward 生产门禁诊断",
+                "",
+                "**标的数量**: 3200",
+                "",
+                "| 项目 | 值 |",
+                "|------|-----|",
+                "| effective_symbols | 3200 |",
+                "| price_mode | raw |",
+                "| sqlite_db_path | /opt/market-data/astocks_raw.db |",
+                "| stock_symbols | 5533 |",
+                "| covered_symbols | 3200 |",
+                "| rows | 123456 |",
+                "| first_trade_date | 20180102 |",
+                "| last_trade_date | 20241231 |",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    repaired = repair_production_gate_metadata(
+        gate_path=gate_path,
+        report_path=report_path,
+    )
+
+    payload = json.loads(gate_path.read_text(encoding="utf-8"))
+    assert repaired is True
+    assert payload["effective_symbols"] == 3200
+    assert payload["price_mode"] == "raw"
+    assert payload["sqlite_db_path"] == "/opt/market-data/astocks_raw.db"
+    assert payload["both_pass"] is False
+    assert payload["production_gate_coverage"] == {
+        "stock_symbols": 5533,
+        "covered_symbols": 3200,
+        "rows": 123456,
+        "first_trade_date": "20180102",
+        "last_trade_date": "20241231",
+    }
+
+
+def test_repair_production_gate_metadata_returns_false_when_report_has_no_metadata(
+    tmp_path: Path,
+) -> None:
+    gate_path = tmp_path / "walkforward_gate.json"
+    report_path = tmp_path / "walkforward-grid-raw-production-latest.md"
+    gate_path.write_text(
+        json.dumps({"both_pass": False, "pbo": 0.0, "deflated_sharpe": 0.0}),
+        encoding="utf-8",
+    )
+    report_path.write_text("# report without coverage table\n", encoding="utf-8")
+
+    repaired = repair_production_gate_metadata(
+        gate_path=gate_path,
+        report_path=report_path,
+    )
+
+    assert repaired is False
 
 
 def test_production_walkforward_gate_passes_raw_db_to_child_process(

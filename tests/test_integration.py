@@ -216,16 +216,17 @@ class TestCLIIntegration:
         from aqsp.cli import main
 
         csv_path = self._make_stale_csv(tmp_path, days_old=7)
-        result = main(
-            [
-                "run",
-                "--csv",
-                str(csv_path),
-                "--max-data-lag-days",
-                "3",
-                "--skip-validation",
-            ]
-        )
+        with patch("aqsp.core.time.is_trading_day", return_value=True):
+            result = main(
+                [
+                    "run",
+                    "--csv",
+                    str(csv_path),
+                    "--max-data-lag-days",
+                    "3",
+                    "--skip-validation",
+                ]
+            )
 
         assert result == 1
 
@@ -254,16 +255,17 @@ class TestCLIIntegration:
             )
             MockBreaker.return_value = mock_instance
 
-            result = main(
-                [
-                    "run",
-                    "--csv",
-                    str(csv_path),
-                    "--max-data-lag-days",
-                    "3",
-                    "--skip-validation",
-                ]
-            )
+            with patch("aqsp.core.time.is_trading_day", return_value=True):
+                result = main(
+                    [
+                        "run",
+                        "--csv",
+                        str(csv_path),
+                        "--max-data-lag-days",
+                        "3",
+                        "--skip-validation",
+                    ]
+                )
             assert result == 2
 
 

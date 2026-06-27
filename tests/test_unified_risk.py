@@ -175,3 +175,14 @@ def test_system_risk_counts_consecutive_triggers_by_trade_day(tmp_path) -> None:
     assert first.duration_days == 1
     assert second.duration_days == 1
     assert not second.halt_all_strategies
+
+
+def test_system_risk_save_state_creates_parent_dir(tmp_path) -> None:
+    config = SystemRiskConfig.from_thresholds(_thresholds())
+    manager = SystemRiskManager(config)
+    manager.state_path = tmp_path / "nested" / "system_risk.json"
+
+    manager._save_state({"consecutive_triggers": 1})
+
+    assert manager.state_path.exists()
+    assert '"consecutive_triggers": 1' in manager.state_path.read_text(encoding="utf-8")

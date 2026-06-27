@@ -575,6 +575,7 @@ class SystemRiskManager:
             }
 
     def _save_state(self, state: Dict[str, Any]) -> None:
+        self.state_path.parent.mkdir(parents=True, exist_ok=True)
         try:
             atomic_write_text(
                 self.state_path,

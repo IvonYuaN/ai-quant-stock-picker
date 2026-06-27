@@ -72,7 +72,10 @@ def main():
         "--days-back", type=int, default=60, help="回溯天数（默认: 60）"
     )
     parser.add_argument(
-        "--ledger", type=str, default="data/ledger.jsonl", help="Ledger 文件路径"
+        "--ledger",
+        type=str,
+        default="data/predictions.jsonl",
+        help="Ledger 文件路径（默认: data/predictions.jsonl）",
     )
     parser.add_argument("--force", action="store_true", help="强制生成，即使已达到目标")
 

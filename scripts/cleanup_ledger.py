@@ -16,12 +16,15 @@ from aqsp.ledger.base import read_ledger, write_ledger  # noqa: E402
 from aqsp.core.time import today_shanghai  # noqa: E402
 
 
-def main():
+def main(argv: list[str] | None = None):
     import argparse
 
     parser = argparse.ArgumentParser(description="清理过期的信号数据")
     parser.add_argument(
-        "--ledger", type=str, default="data/ledger.jsonl", help="Ledger 文件路径"
+        "--ledger",
+        type=str,
+        default="data/predictions.jsonl",
+        help="Ledger 文件路径（默认: data/predictions.jsonl）",
     )
     parser.add_argument(
         "--max-age-days", type=int, default=90, help="信号最大保留天数（默认: 90）"
@@ -30,10 +33,15 @@ def main():
         "--remove-simulated", action="store_true", help="删除所有模拟信号"
     )
     parser.add_argument(
+        "--simulated-only",
+        action="store_true",
+        help="只删除模拟信号，不处理过期真实记录",
+    )
+    parser.add_argument(
         "--dry-run", action="store_true", help="只显示将要删除的内容，不实际删除"
     )
 
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     print("=" * 70)
     print("清理过期信号数据")
@@ -71,6 +79,11 @@ def main():
             simulated_dates.add(signal_date)
             continue
 
+        if args.simulated_only:
+            filtered_rows.append(row)
+            stats["keep"] += 1
+            continue
+
         if is_expired:
             stats["expired"] += 1
             expired_dates.add(signal_date)
@@ -88,6 +101,8 @@ def main():
         print(
             f"  - 模拟信号: {stats['simulated']} (日期: {sorted(simulated_dates)[:5]}...)"
         )
+    if args.simulated_only:
+        print("  - 模式: 仅删除模拟信号，忽略过期真实记录")
 
     if args.dry_run:
         print("\n⚠️  DRY RUN: 未实际删除任何数据")

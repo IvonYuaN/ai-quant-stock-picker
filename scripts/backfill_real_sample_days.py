@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import os
 import logging
+import ast
 import time
 from dataclasses import dataclass
 from datetime import date, timedelta
@@ -54,9 +55,26 @@ class BackfillTimeoutError(RuntimeError):
     pass
 
 
+def _missing_symbols_from_data_error(exc: DataError) -> list[str]:
+    message = str(exc)
+    marker = "缺少 "
+    if marker not in message:
+        return []
+    raw = message.split(marker, 1)[1].strip()
+    try:
+        parsed = ast.literal_eval(raw)
+    except (SyntaxError, ValueError):
+        return []
+    if not isinstance(parsed, list):
+        return []
+    return [str(item).strip() for item in parsed if str(item).strip()]
+
+
 def _configure_logging(level_name: str) -> None:
     level = getattr(logging, str(level_name or "ERROR").upper(), logging.ERROR)
     logging.basicConfig(level=level, format="%(levelname)s %(name)s: %(message)s")
+    if level >= logging.ERROR:
+        logging.getLogger("aqsp.strategy").setLevel(logging.ERROR)
 
 
 def _lower_process_priority(nice_level: int) -> None:
@@ -252,12 +270,30 @@ def fetch_history_window(
             symbols = list(source.get_symbols_with_daily_coverage(symbols, start, end))
     if not symbols:
         return {}
-    try:
-        return source.fetch_daily(symbols, start, end, adjust="")
-    except DataError as exc:
-        raise DataError(
-            f"backfill fetch_history_window failed for {len(symbols)} symbols: {exc}"
-        ) from exc
+    retry_symbols = list(symbols)
+    while retry_symbols:
+        try:
+            return source.fetch_daily(retry_symbols, start, end, adjust="")
+        except DataError as exc:
+            missing_symbols = _missing_symbols_from_data_error(exc)
+            if not missing_symbols:
+                raise DataError(
+                    f"backfill fetch_history_window failed for {len(retry_symbols)} symbols: {exc}"
+                ) from exc
+            filtered = [
+                symbol for symbol in retry_symbols if symbol not in set(missing_symbols)
+            ]
+            if len(filtered) == len(retry_symbols):
+                raise DataError(
+                    f"backfill fetch_history_window failed for {len(retry_symbols)} symbols: {exc}"
+                ) from exc
+            logging.getLogger(__name__).warning(
+                "backfill fetch filtered %d missing symbols: %s",
+                len(missing_symbols),
+                ",".join(missing_symbols[:8]),
+            )
+            retry_symbols = filtered
+    return {}
 
 
 def resolve_backfill_symbols(

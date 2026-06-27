@@ -197,6 +197,20 @@ else
     echo "aqsp doctor unavailable"
 fi
 
+print_section "BEFORE LIVE"
+if [ -f "${PROJECT_ROOT}/.venv/bin/python3" ] && [ -f "${PROJECT_ROOT}/scripts/check_before_live.py" ]; then
+    ( cd "${PROJECT_ROOT}" && "${PROJECT_ROOT}/.venv/bin/python3" scripts/check_before_live.py ) || true
+else
+    echo "check_before_live unavailable"
+fi
+
+print_section "REMOTE PROBE"
+if [ -f "${PROJECT_ROOT}/scripts/remote_runtime_probe.py" ]; then
+    ( cd "${PROJECT_ROOT}" && python3 scripts/remote_runtime_probe.py ) || true
+else
+    echo "remote_runtime_probe unavailable"
+fi
+
 print_section "DEPLOY LOG"
 tail -n 40 "${PROJECT_ROOT}/logs/deploy/sync-$(date +%Y-%m-%d).log" 2>/dev/null || true
 

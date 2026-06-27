@@ -18,10 +18,14 @@ def test_server_status_script_covers_runtime_sections() -> None:
     assert 'print_section "ARTIFACTS"' in script
     assert 'print_section "RUNTIME"' in script
     assert 'print_section "DOCTOR"' in script
+    assert 'print_section "BEFORE LIVE"' in script
+    assert 'print_section "REMOTE PROBE"' in script
     assert 'print_section "DEPLOY LOG"' in script
     assert 'print_section "INTRADAY LOG"' in script
     assert 'print_section "DAILY LOG"' in script
     assert "scripts/diagnose_runtime.py" in script
+    assert "scripts/check_before_live.py" in script
+    assert "scripts/remote_runtime_probe.py" in script
     assert "server-runtime.lock" in script
     assert "server-monitor.lock" in script
     assert "pid-active" in script

@@ -138,3 +138,53 @@ def test_failed_gate_notification_blocks_same_day_retry(tmp_path) -> None:
         state_path=state_path,
         run_date="2026-06-18",
     )
+
+
+def test_failed_gate_notification_blocks_same_day_retry_after_pending_ttl(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    from aqsp.runtime import gate_notify as mod
+
+    state_path = tmp_path / "gate_notify_state.json"
+    reasons = ["冷启动未满: 0/30 个独立信号日", "DSR 未过门: 0.0（需 >1.0）"]
+
+    assert reserve_gate_notification(
+        gate_ok=False,
+        gate_reasons=reasons,
+        state_path=state_path,
+        run_date="2026-06-17",
+    )
+    mark_gate_notification_failed(
+        gate_reasons=reasons,
+        state_path=state_path,
+        run_date="2026-06-17",
+    )
+
+    class _FakeNow:
+        def __init__(self, iso: str) -> None:
+            self._iso = iso
+
+        def isoformat(self, timespec: str = "seconds") -> str:
+            del timespec
+            return self._iso
+
+        def __sub__(self, other):
+            from datetime import datetime
+
+            return datetime.fromisoformat(self._iso) - other
+
+    monkeypatch.setattr(mod, "now_shanghai", lambda: _FakeNow("2026-06-17T23:30:00+08:00"))
+
+    assert (
+        should_send_gate_notification(
+            gate_ok=False,
+            gate_reasons=[
+                "冷启动未满: 20/30 个独立信号日",
+                "DSR 未过门: 0.8（需 >1.0）",
+            ],
+            state_path=state_path,
+            run_date="2026-06-17",
+        )
+        is False
+    )

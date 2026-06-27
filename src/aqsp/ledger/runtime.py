@@ -63,6 +63,18 @@ def collect_independent_signal_dates(ledger_path: str) -> set[str]:
     )
 
 
+def collect_simulated_signal_dates(ledger_path: str) -> set[str]:
+    rows = read_ledger(ledger_path)
+    signal_dates: set[str] = set()
+    for row in rows:
+        if not bool(row.get("is_simulated")):
+            continue
+        signal_date = ledger_signal_date(row)
+        if signal_date:
+            signal_dates.add(signal_date)
+    return signal_dates
+
+
 def count_paper_tracking_days(paper_ledger_path: str) -> int:
     return len(collect_paper_tracking_dates(paper_ledger_path))
 

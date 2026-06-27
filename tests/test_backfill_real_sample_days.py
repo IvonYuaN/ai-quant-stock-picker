@@ -182,6 +182,34 @@ def test_fetch_history_window_filters_symbols_by_coverage() -> None:
     assert seen["fetch"][0] == ["600519"]
 
 
+def test_fetch_history_window_retries_after_filtering_missing_symbols() -> None:
+    seen: list[list[str]] = []
+
+    class DummySource:
+        def fetch_daily(self, symbols, start, end, adjust=""):
+            batch = list(symbols)
+            seen.append(batch)
+            if "688981" in batch:
+                raise backfill.DataError(
+                    "tdx_vipdoc 日线获取不完整: 缺少 ['688981']"
+                )
+            return {
+                symbol: pd.DataFrame([{"date": "2026-06-23", "close": 1.0}])
+                for symbol in batch
+            }
+
+    out = backfill.fetch_history_window(
+        source=DummySource(),
+        symbols=["600519", "688981", "000001"],
+        signal_day=date(2026, 6, 23),
+        lookback_days=120,
+        future_buffer_days=2,
+    )
+
+    assert seen == [["600519", "688981", "000001"], ["600519", "000001"]]
+    assert sorted(out) == ["000001", "600519"]
+
+
 def test_collect_paper_sync_symbols_dedupes_and_skips_run_marker(
     tmp_path: Path,
 ) -> None:

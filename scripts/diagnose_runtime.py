@@ -6,14 +6,22 @@ from __future__ import annotations
 import json
 import os
 import platform
+import re
 import struct
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from aqsp.data.source_health import notification_level_for_health_label
 from aqsp.data.registry import list_registry_entries, local_data_status
 from aqsp.data.tdx_vipdoc_source import TDX_DAY_RECORD_SIZE
+from aqsp.ledger.runtime import (
+    cold_start_min_days,
+    collect_simulated_signal_dates,
+    count_independent_signal_days,
+    count_paper_tracking_days,
+)
 from aqsp.research.summary import load_research_summary, research_findings_display
 
 
@@ -25,6 +33,9 @@ class RuntimePaths:
     ledger: Path
     paper_ledger: Path
     risk_state: Path
+    gate_notify_state: Path
+    notify_state: Path
+    monitor_notify_state: Path
     dashboard: Path
     latest_report: Path
     latest_csv: Path
@@ -58,6 +69,13 @@ def _runtime_paths() -> RuntimePaths:
         ledger=_runtime_path("AQSP_LEDGER", "data/predictions.jsonl"),
         paper_ledger=_runtime_path("AQSP_PAPER_LEDGER", "data/paper_trades.jsonl"),
         risk_state=_runtime_path("AQSP_RISK_STATE", "data/risk_state.json"),
+        gate_notify_state=_runtime_path(
+            "AQSP_GATE_NOTIFY_STATE_PATH", "data/gate_notify_state.json"
+        ),
+        notify_state=_runtime_path("AQSP_NOTIFY_STATE_PATH", "data/notify_state.json"),
+        monitor_notify_state=_runtime_path(
+            "AQSP_MONITOR_NOTIFY_STATE_PATH", "data/monitor_notify_state.json"
+        ),
         dashboard=_runtime_path("AQSP_DASHBOARD", "dist/dashboard/index.html"),
         latest_report=_runtime_path("AQSP_REPORT", "reports/latest.md"),
         latest_csv=_runtime_path("AQSP_OUTPUT_CSV", "reports/latest.csv"),
@@ -79,10 +97,164 @@ def _read_jsonl(path: Path) -> list[dict[str, Any]]:
     return rows
 
 
+def _read_json_file(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, ValueError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _read_pipeline_history(root: Path) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for path in sorted((root / "logs" / "pipeline").glob("*.json")):
+        payload = _read_json_file(path)
+        if not payload:
+            continue
+        rows.append(
+            {
+                "date": path.stem,
+                "success": payload.get("overall_success") is True,
+            }
+        )
+    return rows
+
+
+def _read_daily_log_history(root: Path) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    daily_dir = root / "logs" / "daily"
+    if not daily_dir.exists():
+        return rows
+    for path in sorted(daily_dir.glob("run-*.log")):
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        segments = re.split(r"(?=^=== aqsp run @ )", text, flags=re.MULTILINE)
+        for segment in segments:
+            if not segment.startswith("=== aqsp run @ "):
+                continue
+            match = re.match(r"^=== aqsp run @ (.+?) ===$", segment.splitlines()[0].strip())
+            run_date = _daily_log_segment_date(match.group(1) if match else "")
+            if not run_date:
+                continue
+            if "=== outputs ===" not in segment and "=== aqsp dashboard @" not in segment:
+                continue
+            if "aqsp run failed:" in segment:
+                continue
+            rows.append({"date": run_date, "success": True})
+    return rows
+
+
+def _daily_log_segment_date(header: str) -> str:
+    tokens = header.split()
+    if len(tokens) >= 6:
+        candidate = " ".join(tokens[:4] + tokens[5:6])
+        try:
+            return datetime.strptime(candidate, "%a %b %d %H:%M:%S %Y").date().isoformat()
+        except ValueError:
+            return ""
+    return ""
+
+
 def _file_status(path: Path) -> str:
     if not path.exists():
         return "missing"
     return f"present ({path.stat().st_size} bytes)"
+
+
+def _successful_run_history_summary(root: Path) -> dict[str, Any]:
+    history_path = _runtime_path("AQSP_DAILY_RUN_HISTORY", "data/daily_run_history.jsonl")
+    history_rows = _read_jsonl(history_path)
+    pipeline_rows = _read_pipeline_history(root)
+    daily_log_rows = _read_daily_log_history(root)
+    ledger_run_rows = [
+        {
+            "date": str(row.get("signal_date") or "").strip(),
+            "success": True,
+        }
+        for row in _read_jsonl(_runtime_path("AQSP_LEDGER", "data/predictions.jsonl"))
+        if str(row.get("symbol") or "").strip() == "__RUN__"
+        and str(row.get("status") or "").strip()
+        in {"run_completed_no_picks", "blocked_by_circuit_breaker"}
+        and str(row.get("signal_date") or "").strip()
+    ]
+    merged: dict[str, bool] = {}
+    source_labels: list[str] = []
+    for label, rows in (
+        ("daily_run_history", history_rows),
+        ("pipeline_logs", pipeline_rows),
+        ("daily_logs", daily_log_rows),
+        ("ledger_run_events", ledger_run_rows),
+    ):
+        any_rows = False
+        for row in rows:
+            run_date = str(row.get("date") or row.get("run_date") or "").strip()
+            if not run_date:
+                continue
+            any_rows = True
+            merged[run_date] = merged.get(run_date, False) or (
+                row.get("success") is True or row.get("exit_code") == 0
+            )
+        if any_rows:
+            source_labels.append(label)
+    successful_dates = sorted(day for day, ok in merged.items() if ok)
+    latest_success = successful_dates[-1] if successful_dates else ""
+    return {
+        "path": str(history_path),
+        "count": len(successful_dates),
+        "latest": latest_success,
+        "source": "+".join(source_labels) if source_labels else "-",
+    }
+
+
+def _state_count(value: object) -> int:
+    return len(value) if isinstance(value, dict) else 0
+
+
+def _gate_state_summary(path: Path) -> dict[str, Any]:
+    payload = _read_json_file(path)
+    sent_by_date = payload.get("sent_by_date", {})
+    latest_date = ""
+    latest_status = ""
+    latest_fingerprint = ""
+    legacy_format = False
+    if isinstance(sent_by_date, dict) and sent_by_date:
+        latest_date = max(str(key) for key in sent_by_date)
+        latest_entry = sent_by_date.get(latest_date)
+        if isinstance(latest_entry, dict):
+            latest_status = str(latest_entry.get("status", "") or "")
+            latest_fingerprint = str(latest_entry.get("fingerprint", "") or "")
+        elif isinstance(latest_entry, str):
+            latest_status = "legacy"
+            latest_fingerprint = latest_entry
+            legacy_format = True
+    return {
+        "path": str(path),
+        "present": path.exists(),
+        "invalid_json": bool(payload.get("invalid_json")),
+        "days": _state_count(sent_by_date),
+        "latest_date": latest_date,
+        "latest_status": latest_status,
+        "latest_fingerprint": latest_fingerprint,
+        "legacy_format": legacy_format,
+        "state_updated_at": str(payload.get("updated_at", "") or ""),
+    }
+
+
+def _notify_state_summary(path: Path) -> dict[str, Any]:
+    payload = _read_json_file(path)
+    return {
+        "path": str(path),
+        "present": path.exists(),
+        "invalid_json": bool(payload.get("invalid_json")),
+        "sent": _state_count(payload.get("sent")),
+        "pending": _state_count(payload.get("pending")),
+        "failed": _state_count(payload.get("failed")),
+        "updated_at": str(payload.get("updated_at", "") or ""),
+    }
 
 
 def _scheduler_runtime_lines(system_name: str | None = None) -> list[str]:
@@ -228,6 +400,10 @@ def main() -> int:
 
     ledger_rows = _read_jsonl(paths.ledger)
     paper_rows = _read_jsonl(paths.paper_ledger)
+    signal_days = count_independent_signal_days(str(paths.ledger))
+    simulated_signal_days = len(collect_simulated_signal_dates(str(paths.ledger)))
+    paper_days = count_paper_tracking_days(str(paths.paper_ledger))
+    cold_start_target = cold_start_min_days()
     latest_signal = max(
         (str(row.get("signal_date", "")) for row in ledger_rows),
         default="",
@@ -238,6 +414,9 @@ def main() -> int:
         f"- project_root: {PROJECT_ROOT}",
         f"- ledger: {_file_status(paths.ledger)} rows={len(ledger_rows)} latest={latest_signal or '-'}",
         f"- paper_ledger: {_file_status(paths.paper_ledger)} rows={len(paper_rows)}",
+        f"- signal_days: {signal_days}/{cold_start_target}",
+        f"- simulated_signal_days: {simulated_signal_days}",
+        f"- paper_days: {paper_days}/{cold_start_target}",
         f"- risk_state: {_file_status(paths.risk_state)}",
         *_scheduler_runtime_lines(),
         f"- dashboard: {_file_status(paths.dashboard)}",
@@ -299,6 +478,29 @@ def main() -> int:
             f"- source_route: {source_route}",
             f"- fallback_used: {runtime_source['fallback_used']}",
             f"- source_message: {runtime_source['health_message'] or '-'}",
+            "",
+            "## Notify State",
+        ]
+    )
+    gate_state = _gate_state_summary(paths.gate_notify_state)
+    notify_state = _notify_state_summary(paths.notify_state)
+    monitor_state = _notify_state_summary(paths.monitor_notify_state)
+    run_history = _successful_run_history_summary(PROJECT_ROOT)
+    report.extend(
+        [
+            f"- gate_notify_state: {_file_status(paths.gate_notify_state)}",
+            f"- gate_days: {gate_state['days']} latest={gate_state['latest_date'] or '-'}",
+            f"- gate_latest_status: {gate_state['latest_status'] or '-'}",
+            f"- gate_latest_fingerprint: {gate_state['latest_fingerprint'] or '-'}",
+            f"- gate_legacy_format: {gate_state['legacy_format']}",
+            f"- gate_updated_at: {gate_state['state_updated_at'] or '-'}",
+            f"- notify_state: {_file_status(paths.notify_state)}",
+            f"- notify_counts: sent={notify_state['sent']} pending={notify_state['pending']} failed={notify_state['failed']}",
+            f"- notify_updated_at: {notify_state['updated_at'] or '-'}",
+            f"- monitor_notify_state: {_file_status(paths.monitor_notify_state)}",
+            f"- monitor_counts: sent={monitor_state['sent']} pending={monitor_state['pending']} failed={monitor_state['failed']}",
+            f"- monitor_updated_at: {monitor_state['updated_at'] or '-'}",
+            f"- successful_run_days: {run_history['count']} latest={run_history['latest'] or '-'} source={run_history['source']}",
             "",
             "## Research Runtime",
         ]

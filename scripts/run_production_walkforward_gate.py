@@ -19,6 +19,7 @@ import tempfile
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
+import re
 
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
@@ -386,8 +387,96 @@ def _format_report_pct(value: object) -> str:
     return f"{float(value):.2%}" if isinstance(value, (int, float)) else "-"
 
 
+def _extract_report_value(text: str, key: str) -> str:
+    patterns = (
+        rf"\|\s*{re.escape(key)}\s*\|\s*([^\|\n]+?)\s*\|",
+        rf"\*\*{re.escape(key)}\*\*\s*[:：]\s*([^\n]+)",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, text)
+        if match:
+            return str(match.group(1)).strip()
+    return ""
+
+
+def repair_production_gate_metadata(
+    *,
+    gate_path: Path,
+    report_path: Path,
+    db_path: Path | None = None,
+) -> bool:
+    if not gate_path.exists() or not report_path.exists():
+        return False
+    try:
+        payload = json.loads(gate_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return False
+    if not isinstance(payload, dict):
+        return False
+    try:
+        report_text = report_path.read_text(encoding="utf-8")
+    except OSError:
+        return False
+
+    changed = False
+    if "effective_symbols" not in payload:
+        raw_effective = _extract_report_value(report_text, "effective_symbols")
+        if raw_effective in {"", "-"}:
+            raw_effective = _extract_report_value(report_text, "标的数量")
+        if raw_effective in {"", "-"}:
+            raw_effective = _extract_report_value(report_text, "covered_symbols")
+        if raw_effective.isdigit():
+            payload["effective_symbols"] = int(raw_effective)
+            changed = True
+    if str(payload.get("price_mode") or "").strip() in {"", "-"}:
+        raw_price_mode = _extract_report_value(report_text, "price_mode")
+        if raw_price_mode in {"-", ""} and db_path:
+            raw_price_mode = "raw" if "raw" in db_path.name.lower() else ""
+        if raw_price_mode:
+            payload["price_mode"] = raw_price_mode
+            changed = True
+    if str(payload.get("sqlite_db_path") or "").strip() in {"", "-"}:
+        extracted_db = _extract_report_value(report_text, "sqlite_db_path")
+        resolved_db = str(db_path) if db_path else extracted_db
+        if extracted_db not in {"", "-"}:
+            resolved_db = extracted_db
+        if resolved_db and resolved_db != "-":
+            payload["sqlite_db_path"] = resolved_db
+            changed = True
+    coverage_keys = (
+        "stock_symbols",
+        "covered_symbols",
+        "rows",
+        "first_trade_date",
+        "last_trade_date",
+    )
+    coverage = payload.get("production_gate_coverage")
+    if not isinstance(coverage, dict):
+        coverage = {}
+    coverage_changed = False
+    for key in coverage_keys:
+        if key in coverage and str(coverage.get(key) or "").strip():
+            continue
+        value = _extract_report_value(report_text, key)
+        if not value:
+            continue
+        if key in {"stock_symbols", "covered_symbols", "rows"} and value.isdigit():
+            coverage[key] = int(value)
+        else:
+            coverage[key] = value
+        coverage_changed = True
+    if coverage_changed:
+        payload["production_gate_coverage"] = coverage
+        changed = True
+    if not changed:
+        return False
+    atomic_write_text(gate_path, json.dumps(payload, indent=2, ensure_ascii=False) + "\n")
+    return True
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--repair-only", action="store_true")
     parser.add_argument("--db", type=Path, default=DEFAULT_RAW_DB)
     parser.add_argument("--start", default=DEFAULT_START)
     parser.add_argument("--end", default=DEFAULT_END)
@@ -411,6 +500,15 @@ def main() -> int:
     )
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
+
+    if args.repair_only:
+        repaired = repair_production_gate_metadata(
+            gate_path=Path(args.gate_path),
+            report_path=Path(args.report),
+            db_path=args.db,
+        )
+        print("production gate metadata repaired" if repaired else "production gate metadata unchanged")
+        return 0 if repaired else 1
 
     inspection = inspect_raw_coverage_with_symbols(
         args.db, start=args.start, end=args.end

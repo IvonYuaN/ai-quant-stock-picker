@@ -844,7 +844,7 @@ def test_check_before_live_ignores_simulated_and_strategy_grouped_samples(
 
     finding = next(item for item in findings if item.gate == "signal_sample_size")
     assert finding.ok is False
-    assert finding.detail == "15/30 real independent signal days"
+    assert finding.detail == "15/30 real independent signal days; excluded simulated days=15"
 
 
 def test_check_before_live_counts_runtime_signal_date_aliases(tmp_path: Path) -> None:
@@ -1173,6 +1173,131 @@ def test_check_before_live_counts_legacy_pipeline_logs_when_history_is_missing(
     finding = next(item for item in findings if item.gate == "successful_daily_runs")
     assert finding.ok is True
     assert finding.detail == "5/5 successful daily run days (pipeline_logs)"
+
+
+def test_check_before_live_counts_legacy_daily_logs_when_history_is_missing(
+    tmp_path: Path,
+) -> None:
+    _prepare_ready_runtime(tmp_path)
+    (tmp_path / "data/daily_run_history.jsonl").unlink()
+    daily_dir = tmp_path / "logs" / "daily"
+    daily_dir.mkdir(parents=True, exist_ok=True)
+    for day in range(1, 6):
+        (daily_dir / f"run-2026-06-{day:02d}.log").write_text(
+            "\n".join(
+                [
+                    f"=== aqsp run @ Mon Jun {day:02d} 18:00:00 CST 2026 ===",
+                    "source=tdx_vipdoc symbols=600519 mode=close",
+                    "=== outputs ===",
+                    "ok",
+                    "=== aqsp dashboard @ Mon Jun 01 18:05:00 CST 2026 ===",
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+    findings = check_before_live(root=tmp_path, today=date(2026, 6, 14))
+
+    finding = next(item for item in findings if item.gate == "successful_daily_runs")
+    assert finding.ok is True
+    assert finding.detail == "5/5 successful daily run days (daily_logs)"
+
+
+def test_check_before_live_ignores_failed_legacy_daily_log_segments(
+    tmp_path: Path,
+) -> None:
+    _prepare_ready_runtime(tmp_path)
+    (tmp_path / "data/daily_run_history.jsonl").unlink()
+    daily_dir = tmp_path / "logs" / "daily"
+    daily_dir.mkdir(parents=True, exist_ok=True)
+    (daily_dir / "run-2026-06-01.log").write_text(
+        "\n".join(
+            [
+                "=== aqsp run @ Mon Jun 01 09:00:00 CST 2026 ===",
+                "aqsp run failed: 1",
+                "=== aqsp run @ Mon Jun 01 18:00:00 CST 2026 ===",
+                "=== outputs ===",
+                "ok",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    findings = check_before_live(root=tmp_path, today=date(2026, 6, 14))
+
+    finding = next(item for item in findings if item.gate == "successful_daily_runs")
+    assert finding.ok is False
+    assert finding.detail == "1/5 successful daily run days (daily_logs)"
+
+
+def test_check_before_live_counts_ledger_run_events_when_history_is_missing(
+    tmp_path: Path,
+) -> None:
+    _prepare_ready_runtime(tmp_path)
+    (tmp_path / "data/daily_run_history.jsonl").unlink()
+    _write_jsonl(
+        tmp_path / "data/predictions.jsonl",
+        [
+            {
+                "signal_date": f"2026-06-0{day}",
+                "signal_day_group": f"2026-06-0{day}",
+                "symbol": "__RUN__",
+                "status": "blocked_by_circuit_breaker",
+                "event_type": "blocked_by_circuit_breaker",
+                "reason": "cooldown",
+            }
+            for day in range(1, 6)
+        ],
+    )
+
+    findings = check_before_live(root=tmp_path, today=date(2026, 6, 14))
+
+    finding = next(item for item in findings if item.gate == "successful_daily_runs")
+    assert finding.ok is True
+    assert finding.detail == "5/5 successful daily run days (ledger_run_events)"
+
+
+def test_check_before_live_dedupes_ledger_run_events_against_daily_logs(
+    tmp_path: Path,
+) -> None:
+    _prepare_ready_runtime(tmp_path)
+    (tmp_path / "data/daily_run_history.jsonl").unlink()
+    _write_jsonl(
+        tmp_path / "data/predictions.jsonl",
+        [
+            {
+                "signal_date": f"2026-06-0{day}",
+                "signal_day_group": f"2026-06-0{day}",
+                "symbol": "__RUN__",
+                "status": "blocked_by_circuit_breaker",
+                "event_type": "blocked_by_circuit_breaker",
+                "reason": "cooldown",
+            }
+            for day in range(1, 4)
+        ],
+    )
+    daily_dir = tmp_path / "logs" / "daily"
+    daily_dir.mkdir(parents=True, exist_ok=True)
+    for day in range(1, 4):
+        (daily_dir / f"run-2026-06-0{day}.log").write_text(
+            "\n".join(
+                [
+                    f"=== aqsp run @ Mon Jun 0{day} 18:00:00 CST 2026 ===",
+                    "=== outputs ===",
+                    "ok",
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+    findings = check_before_live(root=tmp_path, today=date(2026, 6, 14))
+
+    finding = next(item for item in findings if item.gate == "successful_daily_runs")
+    assert finding.ok is False
+    assert finding.detail == "3/5 successful daily run days (daily_logs+ledger_run_events)"
 
 
 def test_check_before_live_blocks_when_dashboard_output_is_missing(
@@ -1857,6 +1982,35 @@ def test_check_before_live_blocks_wrapper_enabling_daily_notify(
     finding = next(item for item in findings if item.gate == "scheduler_notify_cadence")
     assert finding.ok is False
     assert "AQSP_NOTIFY" in finding.detail
+
+
+def test_check_before_live_blocks_bt_wrapper_with_unexpected_live_cron_cadence(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    _prepare_ready_runtime(tmp_path)
+    cron_dir = tmp_path / "bt-cron"
+    cron_dir.mkdir()
+    wrapper = cron_dir / "aqsp-news"
+    wrapper.write_text(
+        "#!/bin/bash\n"
+        "AQSP_NEWS_ENABLE_LLM_REVIEW=true /bin/bash /opt/aqsp/scripts/bt_task.sh news\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "scripts.check_before_live._load_live_crontab_text",
+        lambda: "*/5 * * * * flock -xn /www/server/cron/aqsp-news.lock -c /www/server/cron/aqsp-news\n",
+    )
+
+    findings = check_before_live(
+        root=tmp_path,
+        today=date(2026, 6, 14),
+        cron_dir=cron_dir,
+    )
+
+    finding = next(item for item in findings if item.gate == "scheduler_notify_cadence")
+    assert finding.ok is False
+    assert "unexpected wrapper cadence for news" in finding.detail
 
 
 def test_check_before_live_blocks_unguarded_special_strategy_ledger_writes(

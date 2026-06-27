@@ -8,6 +8,7 @@ from aqsp.core.time import now_shanghai
 from aqsp.utils.jsonl_io import advisory_lock, atomic_write_text
 
 GATE_NOTIFY_PENDING_TTL_MINUTES = 30
+GATE_NOTIFY_RETRY_MINUTES = 24 * 60
 
 
 def normalize_gate_run_date(run_date: str = "") -> str:
@@ -44,7 +45,14 @@ def should_send_gate_notification(
             sent_by_date.get(date_key) if isinstance(sent_by_date, dict) else None
         )
         day_entry = _coerce_legacy_day_entry(state, day_entry, fingerprint, date_key)
-        if _entry_has_status(day_entry, fingerprint, {"sent", "failed"}):
+        if _entry_has_status(day_entry, fingerprint, {"sent"}):
+            return False
+        if _entry_recent(
+            day_entry,
+            fingerprint,
+            statuses={"failed"},
+            ttl_minutes=GATE_NOTIFY_RETRY_MINUTES,
+        ):
             return False
         if _entry_recent(
             day_entry,
@@ -81,7 +89,14 @@ def reserve_gate_notification(
             fingerprint,
             date_key,
         )
-        if _entry_has_status(day_entry, fingerprint, {"sent", "failed"}):
+        if _entry_has_status(day_entry, fingerprint, {"sent"}):
+            return False
+        if _entry_recent(
+            day_entry,
+            fingerprint,
+            statuses={"failed"},
+            ttl_minutes=GATE_NOTIFY_RETRY_MINUTES,
+        ):
             return False
         if _entry_recent(
             day_entry,

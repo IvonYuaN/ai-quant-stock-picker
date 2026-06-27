@@ -8,6 +8,7 @@ import ast
 import json
 import re
 import sqlite3
+import subprocess
 import sys
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -19,6 +20,7 @@ if __package__ in {None, ""}:
 
 from aqsp.core.time import SHANGHAI_TZ, get_previous_trading_day, today_shanghai
 from aqsp.ledger.runtime import (
+    collect_simulated_signal_dates,
     count_independent_signal_days,
     count_paper_tracking_days,
     ledger_signal_date,
@@ -120,6 +122,75 @@ def _read_pipeline_history(root: Path) -> list[dict[str, Any]]:
             }
         )
     return rows
+
+
+def _read_daily_log_history(root: Path) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    seen_dates: set[str] = set()
+    daily_dir = root / "logs" / "daily"
+    if not daily_dir.exists():
+        return rows
+
+    for path in sorted(daily_dir.glob("run-*.log")):
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        segments = re.split(r"(?=^=== aqsp run @ )", text, flags=re.MULTILINE)
+        for segment in segments:
+            if not segment.startswith("=== aqsp run @ "):
+                continue
+            match = re.match(r"^=== aqsp run @ (.+?) ===$", segment.splitlines()[0].strip())
+            run_date = _daily_log_segment_date(match.group(1) if match else "")
+            if not run_date or run_date in seen_dates:
+                continue
+            if "=== outputs ===" not in segment and "=== aqsp dashboard @" not in segment:
+                continue
+            if "aqsp run failed:" in segment:
+                continue
+            rows.append(
+                {
+                    "date": run_date,
+                    "success": True,
+                    "source": "daily_log",
+                }
+            )
+            seen_dates.add(run_date)
+    return rows
+
+
+def _read_ledger_run_history(root: Path) -> list[dict[str, Any]]:
+    path = root / "data" / "predictions.jsonl"
+    rows: list[dict[str, Any]] = []
+    for row in _read_jsonl(path):
+        if str(row.get("symbol") or "").strip() != "__RUN__":
+            continue
+        status = str(row.get("status") or "").strip()
+        if status not in {"run_completed_no_picks", "blocked_by_circuit_breaker"}:
+            continue
+        run_date = str(row.get("signal_date") or "").strip()
+        if not run_date:
+            continue
+        rows.append(
+            {
+                "date": run_date,
+                "success": True,
+                "source": "ledger_run_events",
+                "status": status,
+            }
+        )
+    return rows
+
+
+def _daily_log_segment_date(header: str) -> str:
+    tokens = header.split()
+    if len(tokens) >= 6:
+        candidate = " ".join(tokens[:4] + tokens[5:6])
+        try:
+            return datetime.strptime(candidate, "%a %b %d %H:%M:%S %Y").date().isoformat()
+        except ValueError:
+            return ""
+    return ""
 
 
 def _parse_date(value: object) -> date | None:
@@ -895,10 +966,14 @@ def _check_trading_calendar_coverage(root: Path, today: date) -> ReadinessFindin
 
 def _check_signal_sample_size(path: Path) -> ReadinessFinding:
     count = count_independent_signal_days(str(path))
+    simulated_count = len(collect_simulated_signal_dates(str(path)))
+    detail = f"{count}/{MIN_INDEPENDENT_SIGNAL_DAYS} real independent signal days"
+    if simulated_count > 0:
+        detail += f"; excluded simulated days={simulated_count}"
     return ReadinessFinding(
         "signal_sample_size",
         count >= MIN_INDEPENDENT_SIGNAL_DAYS,
-        f"{count}/{MIN_INDEPENDENT_SIGNAL_DAYS} real independent signal days",
+        detail,
     )
 
 
@@ -1080,6 +1155,8 @@ def _check_strategy_weight_snapshot_audit(root: Path) -> ReadinessFinding:
 def _check_successful_runs(path: Path, *, root: Path) -> ReadinessFinding:
     history_rows = _read_jsonl(path)
     pipeline_rows = _read_pipeline_history(root)
+    daily_log_rows = _read_daily_log_history(root)
+    ledger_run_rows = _read_ledger_run_history(root)
     rows = history_rows + [
         row
         for row in pipeline_rows
@@ -1088,14 +1165,33 @@ def _check_successful_runs(path: Path, *, root: Path) -> ReadinessFinding:
             str(item.get("date") or item.get("run_date") or "").strip()
             for item in history_rows
         }
+    ] + [
+        row
+        for row in daily_log_rows
+        if str(row.get("date") or row.get("run_date") or "").strip()
+        not in {
+            str(item.get("date") or item.get("run_date") or "").strip()
+            for item in history_rows + pipeline_rows
+        }
+    ] + [
+        row
+        for row in ledger_run_rows
+        if str(row.get("date") or row.get("run_date") or "").strip()
+        not in {
+            str(item.get("date") or item.get("run_date") or "").strip()
+            for item in history_rows + pipeline_rows + daily_log_rows
+        }
     ]
-    source = (
-        "daily_run_history+pipeline_logs"
-        if history_rows and pipeline_rows
-        else "daily_run_history"
-        if history_rows
-        else "pipeline_logs"
-    )
+    source_parts: list[str] = []
+    if history_rows:
+        source_parts.append("daily_run_history")
+    if pipeline_rows:
+        source_parts.append("pipeline_logs")
+    if daily_log_rows:
+        source_parts.append("daily_logs")
+    if ledger_run_rows:
+        source_parts.append("ledger_run_events")
+    source = "+".join(source_parts) if source_parts else "none"
     successful_days = {
         str(row.get("date") or row.get("run_date") or "").strip()
         for row in rows
@@ -1113,6 +1209,7 @@ def _check_scheduler_notify_cadence(
     root: Path, *, cron_path: Path | None, cron_dir: Path | None = None
 ) -> ReadinessFinding:
     texts: list[tuple[str, str]] = []
+    cron_text = ""
     for path in (
         root / "scripts" / "daily_pipeline.sh",
         root / "scripts" / "daily_run.sh",
@@ -1126,7 +1223,13 @@ def _check_scheduler_notify_cadence(
                 (str(path.relative_to(root)), path.read_text(encoding="utf-8"))
             )
     if cron_path is not None and cron_path.exists():
-        texts.append((str(cron_path), cron_path.read_text(encoding="utf-8")))
+        cron_text = cron_path.read_text(encoding="utf-8")
+        texts.append((str(cron_path), cron_text))
+    elif cron_dir is not None:
+        cron_text = _load_live_crontab_text()
+        if cron_text:
+            texts.append(("live_crontab", cron_text))
+    cron_schedule_map = _cron_wrapper_schedule_map(cron_text)
     texts.extend(_read_cron_wrapper_texts(cron_dir))
 
     blockers: list[str] = []
@@ -1155,6 +1258,13 @@ def _check_scheduler_notify_cadence(
             text
         ):
             blockers.append(f"{label}: wrapper enables AQSP_NOTIFY for daily")
+        wrapper_schedule_blocker = _cron_wrapper_schedule_blocker(
+            label=label,
+            text=text,
+            cron_schedule_map=cron_schedule_map,
+        )
+        if wrapper_schedule_blocker:
+            blockers.append(wrapper_schedule_blocker)
 
     return ReadinessFinding(
         "scheduler_notify_cadence",
@@ -1210,6 +1320,46 @@ def _looks_like_high_frequency_daily(line: str) -> bool:
     )
 
 
+def _load_live_crontab_text() -> str:
+    try:
+        result = subprocess.run(
+            ["crontab", "-l"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    if result.returncode != 0:
+        return ""
+    return result.stdout
+
+
+def _cron_wrapper_schedule_map(cron_text: str) -> dict[str, list[str]]:
+    schedule_map: dict[str, list[str]] = {}
+    for line in cron_text.splitlines():
+        clean = line.strip()
+        if not clean or clean.startswith("#"):
+            continue
+        fields = clean.split()
+        if len(fields) < 6:
+            continue
+        command = " ".join(fields[5:])
+        matches = re.findall(
+            r"/www/server/cron/([a-z0-9._-]+)",
+            command,
+            flags=re.IGNORECASE,
+        )
+        if not matches:
+            continue
+        wrapper_name = matches[-1]
+        if wrapper_name.endswith(".lock"):
+            wrapper_name = wrapper_name[: -len(".lock")]
+        schedule_map.setdefault(wrapper_name, []).append(" ".join(fields[:5]))
+    return schedule_map
+
+
 def _read_cron_wrapper_texts(cron_dir: Path | None) -> list[tuple[str, str]]:
     if cron_dir is None or not cron_dir.exists() or not cron_dir.is_dir():
         return []
@@ -1230,6 +1380,74 @@ def _read_cron_wrapper_texts(cron_dir: Path | None) -> list[tuple[str, str]]:
 
 def _should_check_cron_entry_bypass(label: str) -> bool:
     return not label.startswith("scripts/")
+
+
+def _cron_wrapper_schedule_blocker(
+    *,
+    label: str,
+    text: str,
+    cron_schedule_map: dict[str, list[str]],
+) -> str:
+    wrapper_name = Path(label).name
+    schedules = cron_schedule_map.get(wrapper_name, [])
+    if not schedules:
+        return ""
+    action = _cron_wrapper_action(text)
+    if not action:
+        return ""
+    bad_schedules = [
+        schedule
+        for schedule in schedules
+        if not _schedule_matches_bt_action(schedule=schedule, action=action)
+    ]
+    if not bad_schedules:
+        return ""
+    preview = ", ".join(bad_schedules[:2])
+    return (
+        f"{label}: unexpected wrapper cadence for {action} "
+        f'(cron="{preview}")'
+    )
+
+
+def _cron_wrapper_action(text: str) -> str:
+    match = re.search(r"bt_task\.sh\s+([a-z]+)", text)
+    if match:
+        return match.group(1).strip().lower()
+    if "server_monitor.sh" in text:
+        return "monitor"
+    return ""
+
+
+def _schedule_matches_bt_action(*, schedule: str, action: str) -> bool:
+    fields = schedule.split()
+    if len(fields) != 5:
+        return True
+    minute, hour, _dom, _month, weekday = fields
+    normalized_action = action.strip().lower()
+    if normalized_action == "intraday":
+        return minute == "*/10"
+    if normalized_action == "monitor":
+        return minute == "*/15"
+    if normalized_action == "daily":
+        return minute in {"0", "00"} and hour == "18"
+    if normalized_action == "midday":
+        return minute in {"5", "05"} and hour == "12"
+    if normalized_action == "coldstart":
+        return minute == "40" and hour == "19"
+    if normalized_action == "news":
+        weekday_normalized = weekday.replace("7", "0")
+        is_weekday_run = (
+            minute == "35"
+            and hour == "8"
+            and weekday_normalized in {"1-5", "1,2,3,4,5"}
+        )
+        is_weekend_run = (
+            minute in {"5", "05"}
+            and hour == "9"
+            and weekday_normalized in {"6,0", "6,7", "0,6", "6-0"}
+        )
+        return is_weekday_run or is_weekend_run
+    return True
 
 
 def _cron_wrapper_bypasses_bt_task(text: str) -> bool:
