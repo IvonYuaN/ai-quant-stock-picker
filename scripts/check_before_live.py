@@ -1034,7 +1034,11 @@ def _paper_missing_tradable_signal_days(
 def _tradable_signal_days(predictions_path: Path) -> set[str]:
     tradable_days: set[str] = set()
     for row in _read_jsonl(predictions_path):
-        if str(row.get("status") or "").strip() != "pending":
+        if str(row.get("status") or "").strip() not in {
+            "pending",
+            "validated",
+            "not_executable",
+        }:
             continue
         if str(row.get("rating") or "").strip() not in {
             "buy_candidate",
