@@ -19,8 +19,8 @@ class NotifyResult:
     detail: str
 
 
-def _env_flag(name: str) -> bool:
-    return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
+def _env_flag(name: str, default: str = "") -> bool:
+    return os.getenv(name, default).strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _should_suppress_real_notifications() -> bool:
@@ -115,7 +115,11 @@ def notify_markdown_via_config(
     if normalized_mode == "summary":
         summary_body = compact_notification_markdown(summary_markdown or markdown)
         results = _notify_with_senders(summary_body, _summary_senders())
-        if results or not _env_flag("AQSP_NOTIFY_SUMMARY_FALLBACK_FULL"):
+        if results:
+            return results
+        if _has_configured_summary_channels() or not _has_configured_full_channels():
+            return results
+        if not _env_flag("AQSP_NOTIFY_SUMMARY_FALLBACK_FULL", "true"):
             return results
         results = _notify_with_senders(summary_body, _full_senders())
         return results
@@ -212,6 +216,20 @@ def configured_notification_channels() -> tuple[str, ...]:
     if os.getenv("GENERIC_WEBHOOK_URL", "").strip():
         channels.append("generic_webhook")
     return tuple(channels)
+
+
+def _has_configured_summary_channels() -> bool:
+    return any(
+        channel in {"serverchan", "wechat", "bark", "pushplus", "telegram"}
+        for channel in configured_notification_channels()
+    )
+
+
+def _has_configured_full_channels() -> bool:
+    return any(
+        channel in {"feishu", "dingtalk", "discord", "slack", "generic_webhook"}
+        for channel in configured_notification_channels()
+    )
 
 
 def _notify_with_senders(

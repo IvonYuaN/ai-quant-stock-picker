@@ -362,6 +362,11 @@ def test_notify_markdown_via_config_summary_falls_back_to_full_channels_when_ena
     monkeypatch.setattr("aqsp.notifier._send_bark", empty_sender)
     monkeypatch.setattr("aqsp.notifier._send_pushplus", empty_sender)
     monkeypatch.setattr("aqsp.notifier._send_telegram", empty_sender)
+    monkeypatch.setenv("FEISHU_WEBHOOK_URL", "https://open.feishu.cn/test")
+    monkeypatch.setenv("DINGTALK_WEBHOOK_URL", "https://oapi.dingtalk.com/test")
+    monkeypatch.setenv("DISCORD_WEBHOOK_URL", "https://discord.com/api/webhooks/test")
+    monkeypatch.setenv("SLACK_WEBHOOK_URL", "https://hooks.slack.com/services/test")
+    monkeypatch.setenv("GENERIC_WEBHOOK_URL", "https://example.com/webhook")
     monkeypatch.setattr("aqsp.notifier._send_feishu", make_sender("feishu"))
     monkeypatch.setattr("aqsp.notifier._send_dingtalk", make_sender("dingtalk"))
     monkeypatch.setattr("aqsp.notifier._send_discord", make_sender("discord"))
@@ -385,6 +390,46 @@ def test_notify_markdown_via_config_summary_falls_back_to_full_channels_when_ena
         "generic_webhook",
     ]
     assert all("摘要内容" in item[1] for item in sent)
+
+
+def test_notify_markdown_via_config_summary_falls_back_to_full_channels_when_only_full_configured(
+    monkeypatch,
+):
+    from aqsp.notifier import NotifyResult, notify_markdown_via_config
+
+    def empty_sender(_markdown: str) -> NotifyResult | None:
+        return None
+
+    sent: list[tuple[str, str]] = []
+
+    def make_sender(channel: str):
+        def _sender(markdown: str) -> NotifyResult:
+            sent.append((channel, markdown))
+            return NotifyResult(channel, True, "HTTP 200")
+
+        return _sender
+
+    monkeypatch.setattr("aqsp.notifier._send_serverchan", empty_sender)
+    monkeypatch.setattr("aqsp.notifier._send_wechat", empty_sender)
+    monkeypatch.setattr("aqsp.notifier._send_bark", empty_sender)
+    monkeypatch.setattr("aqsp.notifier._send_pushplus", empty_sender)
+    monkeypatch.setattr("aqsp.notifier._send_telegram", empty_sender)
+    monkeypatch.setenv("FEISHU_WEBHOOK_URL", "https://open.feishu.cn/test")
+    monkeypatch.setattr("aqsp.notifier._send_feishu", make_sender("feishu"))
+    monkeypatch.setattr("aqsp.notifier._send_dingtalk", lambda _markdown: None)
+    monkeypatch.setattr("aqsp.notifier._send_discord", lambda _markdown: None)
+    monkeypatch.setattr("aqsp.notifier._send_slack", lambda _markdown: None)
+    monkeypatch.setattr("aqsp.notifier._send_generic_webhook", lambda _markdown: None)
+    monkeypatch.delenv("AQSP_NOTIFY_SUMMARY_FALLBACK_FULL", raising=False)
+
+    results = notify_markdown_via_config(
+        "# 完整版\n\n内容",
+        mode="summary",
+        summary_markdown="# 摘要版\n\n摘要内容",
+    )
+
+    assert [result.channel for result in results] == ["feishu"]
+    assert sent == [("feishu", "# 摘要版\n\n摘要内容")]
 
 
 def test_dispatch_gate_notification_builds_and_routes_summary(monkeypatch):

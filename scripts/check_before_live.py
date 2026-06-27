@@ -1726,6 +1726,7 @@ def _check_notify_state_paths(root: Path) -> list[ReadinessFinding]:
 
 def _check_notify_channels(root: Path) -> ReadinessFinding:
     env_path = root / ".env"
+    notify_mode = read_env_value(env_path, "AQSP_NOTIFY_MODE") or "summary"
     channel_keys = (
         "SERVERCHAN_SENDKEY",
         "WECHAT_WEBHOOK_URL",
@@ -1756,6 +1757,31 @@ def _check_notify_channels(root: Path) -> ReadinessFinding:
             "notify_channels",
             False,
             "no real notification channel configured in .env",
+        )
+    summary_keys = {
+        "SERVERCHAN_SENDKEY",
+        "WECHAT_WEBHOOK_URL",
+        "BARK_URL",
+        "PUSHPLUS_TOKEN",
+        "TELEGRAM_BOT_TOKEN",
+        "TELEGRAM_CHAT_ID",
+    }
+    full_keys = {
+        "FEISHU_WEBHOOK_URL",
+        "DINGTALK_WEBHOOK_URL",
+        "DISCORD_WEBHOOK_URL",
+        "SLACK_WEBHOOK_URL",
+        "GENERIC_WEBHOOK_URL",
+    }
+    if (
+        str(notify_mode).strip().lower() == "summary"
+        and not any(key in summary_keys for key in configured)
+        and any(key in full_keys for key in configured)
+    ):
+        return ReadinessFinding(
+            "notify_channels",
+            False,
+            "AQSP_NOTIFY_MODE=summary but no summary channel configured; mobile summary notify would be dropped",
         )
     return ReadinessFinding(
         "notify_channels",
