@@ -2307,6 +2307,7 @@ def _write_walkforward_gate(
     end: str,
     n_periods: int,
     metadata: dict[str, object] | None = None,
+    diagnostics: dict[str, object] | None = None,
     gate_path: str | Path = WALKFORWARD_GATE_PATH,
 ) -> None:
     """写双门 sidecar，供 run_scheduled 的 notify gate 读取。
@@ -2323,6 +2324,8 @@ def _write_walkforward_gate(
         n_periods=n_periods,
         metadata=metadata,
     )
+    if diagnostics:
+        payload["grid_diagnostics"] = diagnostics
     p = Path(gate_path)
     atomic_write_text(p, json.dumps(payload, indent=2, ensure_ascii=False))
     print(f"✅ 双门 sidecar 已写入: {p}（both_pass={payload['both_pass']}）")
@@ -4559,6 +4562,7 @@ def run_walkforward(args: argparse.Namespace) -> int:
         end=args.end,
         n_periods=grid_periods if args.grid_cscv else len(result.periods),
         metadata=_walkforward_gate_metadata(args, effective_symbols=len(filtered)),
+        diagnostics=grid_details if args.grid_cscv and grid_details else None,
         gate_path=getattr(args, "gate_path", WALKFORWARD_GATE_PATH),
     )
 

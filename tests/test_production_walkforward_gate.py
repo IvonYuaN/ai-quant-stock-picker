@@ -234,6 +234,75 @@ def test_write_minimal_pbo_diagnostics_for_failed_gate(
     assert "effective_symbols | 3200" in text
 
 
+def test_write_minimal_pbo_diagnostics_uses_gate_grid_diagnostics(
+    tmp_path: Path,
+) -> None:
+    gate_path = tmp_path / "walkforward_gate.json"
+    report_path = tmp_path / "walkforward-grid-raw-production-latest.md"
+    gate_path.write_text(
+        json.dumps(
+            {
+                "run_date": "2026-06-21",
+                "both_pass": False,
+                "deflated_sharpe": 0.8275,
+                "pbo": 0.7778,
+                "pbo_pass": False,
+                "effective_symbols": 3281,
+                "price_mode": "raw",
+                "sqlite_db_path": "/opt/market-data/astocks_raw.db",
+                "grid_diagnostics": {
+                    "n_combos": 252,
+                    "n_lambda_le_0": 196,
+                    "lambda_median": -0.2554,
+                    "lambda_mean": -0.3293,
+                    "variant_dispersion_sharpe": 0.386,
+                    "variant_dispersion_return": 2.3688,
+                    "best_variant": "WF-S06",
+                    "worst_variant": "WF-S04",
+                    "worst_periods": [
+                        {
+                            "period_index": 8,
+                            "period": "2020-05-19 to 2020-07-01",
+                            "mean_return": -0.2494,
+                            "dispersion": 0.0794,
+                            "negative_variant_count": 7,
+                            "market_avg_return": 0.0673,
+                            "market_negative_ratio": 0.33,
+                            "market_sample_count": 300,
+                        }
+                    ],
+                    "selection_inversions": [
+                        {
+                            "selected_variant": "WF-S05",
+                            "train_blocks": "1,3,6,8,9",
+                            "test_blocks": "2,4,5,7,10",
+                            "train_sharpe": 0.6535,
+                            "test_sharpe": -0.1236,
+                            "test_rank_from_bottom": 1,
+                            "test_best_variant": "WF-S06",
+                            "lambda": -1.9459,
+                        }
+                    ],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    written = write_minimal_pbo_diagnostics(
+        gate_path=gate_path,
+        report_path=report_path,
+    )
+
+    assert written is True
+    text = report_path.read_text(encoding="utf-8")
+    assert "77.78%" in text
+    assert "WF-S06" in text
+    assert "WF-S05" in text
+    assert "2020-05-19 to 2020-07-01" in text
+    assert "196" in text
+
+
 def test_diagnostic_report_path_keeps_formal_production_report_separate(
     tmp_path: Path,
 ) -> None:

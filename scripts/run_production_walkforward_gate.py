@@ -266,6 +266,34 @@ def write_minimal_pbo_diagnostics(
 
     pbo = payload.get("pbo")
     dsr = payload.get("deflated_sharpe")
+    diagnostic_lines: list[str] = []
+    if not _append_grid_diagnostics_report(
+        diagnostic_lines, payload.get("grid_diagnostics")
+    ):
+        diagnostic_lines.extend(
+            [
+                "### PBO 失败定位",
+                "",
+                "| 指标 | 值 |",
+                "|------|-----|",
+                "| CSCV 失败组合占比 | - |",
+                "| Lambda 中位数 | - |",
+                "| Lambda 均值 | - |",
+                "| Sharpe 变体分散度 | - |",
+                "| Return 变体分散度 | - |",
+                "| 最优变体 | - |",
+                "| 最弱变体 | - |",
+                "",
+                "| 最差对齐周期 | 测试窗口 | 平均收益 | 分散度 | 亏损变体数 | 全池平均收益 | 全池下跌占比 | 样本数 |",
+                "|--------------|----------|----------|--------|------------|--------------|--------------|--------|",
+                "| - | - | - | - | - | - | - | - |",
+                "",
+                "| 训练选中变体 | 训练块 | 测试块 | 训练 Sharpe | 测试 Sharpe | 测试倒数排名 | 测试最优变体 | Lambda |",
+                "|--------------|--------|--------|-------------|-------------|--------------|--------------|--------|",
+                "| - | - | - | - | - | - | - | - |",
+                "",
+            ]
+        )
     lines = [
         "# Walk-Forward 生产门禁诊断",
         "",
@@ -277,26 +305,7 @@ def write_minimal_pbo_diagnostics(
         f"- Gate 日期: {payload.get('run_date', '-')}",
         f"- 回测区间: {payload.get('data_start', '-')} ~ {payload.get('data_end', '-')}",
         "",
-        "### PBO 失败定位",
-        "",
-        "| 指标 | 值 |",
-        "|------|-----|",
-        "| CSCV 失败组合占比 | - |",
-        "| Lambda 中位数 | - |",
-        "| Lambda 均值 | - |",
-        "| Sharpe 变体分散度 | - |",
-        "| Return 变体分散度 | - |",
-        "| 最优变体 | - |",
-        "| 最弱变体 | - |",
-        "",
-        "| 最差对齐周期 | 测试窗口 | 平均收益 | 分散度 | 亏损变体数 | 全池平均收益 | 全池下跌占比 | 样本数 |",
-        "|--------------|----------|----------|--------|------------|--------------|--------------|--------|",
-        "| - | - | - | - | - | - | - | - |",
-        "",
-        "| 训练选中变体 | 训练块 | 测试块 | 训练 Sharpe | 测试 Sharpe | 测试倒数排名 | 测试最优变体 | Lambda |",
-        "|--------------|--------|--------|-------------|-------------|--------------|--------------|--------|",
-        "| - | - | - | - | - | - | - | - |",
-        "",
+        *diagnostic_lines,
         "## 生产覆盖",
         "",
         f"**标的数量**: {payload.get('effective_symbols', '-')}",
@@ -385,6 +394,89 @@ def _format_report_float(value: object) -> str:
 
 def _format_report_pct(value: object) -> str:
     return f"{float(value):.2%}" if isinstance(value, (int, float)) else "-"
+
+
+def _format_optional_float(value: object, *, pct: bool = False) -> str:
+    if not isinstance(value, (int, float)):
+        return "-"
+    return f"{float(value):.2%}" if pct else f"{float(value):.4f}"
+
+
+def _append_grid_diagnostics_report(lines: list[str], details: object) -> bool:
+    if not isinstance(details, dict) or not details:
+        return False
+
+    n_combos = details.get("n_combos")
+    n_lambda_le_0 = details.get("n_lambda_le_0")
+    fail_rate = None
+    if isinstance(n_combos, int) and n_combos > 0 and isinstance(n_lambda_le_0, int):
+        fail_rate = n_lambda_le_0 / n_combos
+
+    lines.extend(
+        [
+            "### PBO 失败定位",
+            "",
+            "| 指标 | 值 |",
+            "|------|-----|",
+            f"| CSCV 组合数 | {n_combos if isinstance(n_combos, int) else '-'} |",
+            f"| λ<=0 组合数 | {n_lambda_le_0 if isinstance(n_lambda_le_0, int) else '-'} |",
+            f"| CSCV 失败组合占比 | {_format_optional_float(fail_rate, pct=True)} |",
+            f"| Lambda 中位数 | {_format_optional_float(details.get('lambda_median'))} |",
+            f"| Lambda 均值 | {_format_optional_float(details.get('lambda_mean'))} |",
+            f"| Sharpe 变体分散度 | {_format_optional_float(details.get('variant_dispersion_sharpe'))} |",
+            f"| Return 变体分散度 | {_format_optional_float(details.get('variant_dispersion_return'), pct=True)} |",
+            f"| 最优变体 | {details.get('best_variant', '-')} |",
+            f"| 最弱变体 | {details.get('worst_variant', '-')} |",
+            "",
+        ]
+    )
+
+    worst_periods = details.get("worst_periods")
+    if isinstance(worst_periods, list) and worst_periods:
+        lines.extend(
+            [
+                "| 最差对齐周期 | 测试窗口 | 平均收益 | 分散度 | 亏损变体数 | 全池平均收益 | 全池下跌占比 | 样本数 |",
+                "|--------------|----------|----------|--------|------------|--------------|--------------|--------|",
+            ]
+        )
+        for item in worst_periods:
+            if not isinstance(item, dict):
+                continue
+            lines.append(
+                f"| #{item.get('period_index', '-')} | "
+                f"{item.get('period', '-')} | "
+                f"{_format_optional_float(item.get('mean_return'), pct=True)} | "
+                f"{_format_optional_float(item.get('dispersion'), pct=True)} | "
+                f"{item.get('negative_variant_count', '-')} | "
+                f"{_format_optional_float(item.get('market_avg_return'), pct=True)} | "
+                f"{_format_optional_float(item.get('market_negative_ratio'), pct=True)} | "
+                f"{item.get('market_sample_count', '-')} |"
+            )
+        lines.append("")
+
+    inversions = details.get("selection_inversions")
+    if isinstance(inversions, list) and inversions:
+        lines.extend(
+            [
+                "| 训练选中变体 | 训练块 | 测试块 | 训练 Sharpe | 测试 Sharpe | 测试倒数排名 | 测试最优变体 | Lambda |",
+                "|--------------|--------|--------|-------------|-------------|--------------|--------------|--------|",
+            ]
+        )
+        for item in inversions:
+            if not isinstance(item, dict):
+                continue
+            lines.append(
+                f"| {item.get('selected_variant', '-')} | "
+                f"{item.get('train_blocks', '-')} | "
+                f"{item.get('test_blocks', '-')} | "
+                f"{_format_optional_float(item.get('train_sharpe'))} | "
+                f"{_format_optional_float(item.get('test_sharpe'))} | "
+                f"{item.get('test_rank_from_bottom', '-')} | "
+                f"{item.get('test_best_variant', '-')} | "
+                f"{_format_optional_float(item.get('lambda'))} |"
+            )
+        lines.append("")
+    return True
 
 
 def _extract_report_value(text: str, key: str) -> str:
