@@ -19,6 +19,7 @@ from aqsp.data.cache import DataCache
 _SQLITE_TIMEOUT_SECONDS = 30.0
 _SQLITE_BATCH_SIZE = 400
 _ALLOW_QFQ_SQLITE_SOURCE_ENV = "AQSP_ALLOW_QFQ_SQLITE_SOURCE"
+_PREFILTERED_SYMBOLS_ENV = "AQSP_SQLITE_PREFILTERED_SYMBOLS"
 
 
 def _chunks(items: list[str], size: int) -> list[list[str]]:
@@ -201,7 +202,8 @@ class SqliteDbSource(DataSource):
         start_str = start.strftime("%Y%m%d")
         end_str = end.strftime("%Y%m%d")
         effective_symbols = list(symbols)
-        if adjust == "":
+        prefiltered = str(os.getenv(_PREFILTERED_SYMBOLS_ENV, "")).strip().lower()
+        if adjust == "" and prefiltered not in {"1", "true", "yes", "on"}:
             try:
                 covered_symbols = self.get_symbols_with_daily_coverage(
                     effective_symbols,

@@ -1753,6 +1753,58 @@ def test_walkforward_sqlite_prefiltered_symbols_skip_duplicate_coverage_check(
     assert dummy.coverage_calls == 0
 
 
+def test_sqlite_fetch_daily_skips_duplicate_coverage_check_when_prefiltered(
+    monkeypatch, tmp_path
+) -> None:
+    from aqsp.data.sqlite_db_source import SqliteDbSource
+
+    db = tmp_path / "astocks_raw.db"
+    import sqlite3
+
+    with sqlite3.connect(db) as conn:
+        conn.execute("CREATE TABLE stocks(ts_code TEXT PRIMARY KEY, name TEXT)")
+        conn.execute(
+            """
+            CREATE TABLE daily_qfq(
+                ts_code TEXT,
+                trade_date TEXT,
+                open REAL,
+                high REAL,
+                low REAL,
+                close REAL,
+                close_qfq REAL,
+                volume INTEGER,
+                amount REAL
+            )
+            """
+        )
+        conn.execute(
+            "INSERT INTO stocks(ts_code, name) VALUES('600519.SH', 'demo')"
+        )
+        conn.execute(
+            """
+            INSERT INTO daily_qfq(
+                ts_code, trade_date, open, high, low, close, close_qfq, volume, amount
+            ) VALUES('600519.SH', '20240102', 10, 11, 9, 10, 10, 1000, 10000)
+            """
+        )
+        conn.commit()
+
+    source = SqliteDbSource(db_path=db, cache=None)
+
+    def fail_coverage(*_args, **_kwargs):
+        raise AssertionError("duplicate coverage check should be skipped")
+
+    monkeypatch.setattr(source, "get_symbols_with_daily_coverage", fail_coverage)
+    monkeypatch.setenv("AQSP_SQLITE_PREFILTERED_SYMBOLS", "1")
+
+    out = source.fetch_daily(
+        ["600519"], start=date(2024, 1, 1), end=date(2024, 1, 31), adjust=""
+    )
+
+    assert "600519" in out
+
+
 def test_walkforward_grid_cscv_writes_valid_pbo_gate(monkeypatch, tmp_path):
     import aqsp.cli as cli_mod
     from aqsp.backtest.walk_forward import BacktestResult
