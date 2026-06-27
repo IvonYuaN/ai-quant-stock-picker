@@ -194,9 +194,9 @@ class MonitorChecker:
             if breaker.is_in_cooldown():
                 return MonitorResult(
                     name="circuit_breaker",
-                    triggered=True,
+                    triggered=False,
                     severity="critical",
-                    message="组合熔断冷却期中",
+                    message="组合保护冷却期中",
                     details={
                         "cooldown_until": breaker._cooldown_until.isoformat()
                         if breaker._cooldown_until

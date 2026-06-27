@@ -204,13 +204,16 @@ class TestMonitorChecker:
         with patch("aqsp.risk.circuit_breaker.CircuitBreaker") as mock_breaker:
             mock_instance = MagicMock()
             mock_instance.is_in_cooldown.return_value = True
+            mock_instance._cooldown_until = date(2026, 7, 1)
             mock_breaker.return_value = mock_instance
 
             result = checker._check_circuit_breaker({})
 
             assert result.name == "circuit_breaker"
-            assert result.triggered is True
+            assert result.triggered is False
             assert result.severity == "critical"
+            assert result.message == "组合保护冷却期中"
+            assert result.details["cooldown_until"] == "2026-07-01"
             assert mock_breaker.call_args.kwargs["config"].daily_loss_pct > 0
 
     def test_check_win_rate(self, sample_config: Path) -> None:
