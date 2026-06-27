@@ -191,6 +191,13 @@ python -m aqsp.cli pit --kind disclosure_dates --symbols 600519,300750 --start 2
 
 GitHub Actions 当前不上传 `data/predictions.jsonl`。如果需要跨运行保留验证账本,优先部署到私有服务器或对象存储,不要把 ledger 提交到 GitHub。
 
+如果服务器需要手机通知，建议把开关拆开配置：
+
+- `AQSP_NOTIFY=true`: 允许发送收盘总览等正常汇总通知
+- `AQSP_GATE_NOTIFY=false`: 默认不要单独推“双门未放行”通知
+
+只有在你明确希望收到 gate 阻塞手机通知时，才打开 `AQSP_GATE_NOTIFY=true`。
+
 这个协议避免“事后数据预测”：当天只产生信号，不把当天收盘当作可成交价；下一次运行才用后来真实出现的 K 线验证。
 
 ## 风险声明

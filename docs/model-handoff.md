@@ -178,6 +178,7 @@ AQSP_MAX_UNIVERSE=0
 AQSP_MIN_AVG_AMOUNT=50000000
 AQSP_MAX_DATA_LAG_DAYS=3
 AQSP_NOTIFY=true
+AQSP_GATE_NOTIFY=false
 AQSP_NOTIFY_MODE=summary
 AQSP_ENABLE_DEBATE=false
 AQSP_DEBATE_ENABLE_LLM=false
@@ -312,6 +313,7 @@ cd /opt/aqsp && git pull --ff-only origin main && bash /opt/aqsp/scripts/server_
 - 报告里的候选名称不是纯代码
 - briefing 里的 `风险提示` 完整显示
 - Server 酱只收到一条收盘总览，除非显式 `fanout`
+- 双门未放行默认不单独推手机；只有显式 `AQSP_GATE_NOTIFY=true` 才允许发送 `通知未放行-YYYY-MM-DD`
 
 ### 第三步：优先修用户可见主链
 
