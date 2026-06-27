@@ -7,13 +7,19 @@ from dataclasses import dataclass
 from pathlib import Path
 import os
 import subprocess
-
-from aqsp.core.time import now_shanghai
+import sys
 
 
 PROJECT_ROOT = Path(
     os.environ.get("AQSP_PROJECT_ROOT", Path(__file__).resolve().parents[1])
 ).resolve()
+for candidate in (PROJECT_ROOT / "src", PROJECT_ROOT):
+    candidate_str = str(candidate)
+    if candidate_str not in sys.path:
+        sys.path.insert(0, candidate_str)
+
+from aqsp.core.time import now_shanghai
+
 TODAY = now_shanghai().date().isoformat()
 
 

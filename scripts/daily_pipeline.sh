@@ -72,6 +72,12 @@ export PYTHONPATH="${PROJECT_ROOT}/src:${PROJECT_ROOT}:${PYTHONPATH:-}"
 # 设置时区
 export TZ="${TZ:-Asia/Shanghai}"
 
+is_truthy() {
+    local value
+    value="$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')"
+    [[ "$value" =~ ^(1|true|yes|on)$ ]]
+}
+
 # ============================ 周末跳过检查 ============================
 
 DOW=$(date +%u)
@@ -92,6 +98,18 @@ then
     exit 0
 fi
 
+ENFORCE_DAILY_WINDOW="${AQSP_ENFORCE_DAILY_WINDOW:-true}"
+RUN_TASK_ID="${AQSP_RUN_TASK_ID:-}"
+NOW_HM=$((10#$(date +%H%M)))
+DAILY_WINDOW_START_HM="${AQSP_DAILY_WINDOW_START_HM:-1730}"
+DAILY_WINDOW_END_HM="${AQSP_DAILY_WINDOW_END_HM:-2300}"
+if [ "$RUN_TASK_ID" = "daily" ] && is_truthy "$ENFORCE_DAILY_WINDOW"; then
+    if [ "$NOW_HM" -lt "$DAILY_WINDOW_START_HM" ] || [ "$NOW_HM" -gt "$DAILY_WINDOW_END_HM" ]; then
+        log "当前时间 ${NOW_HM} 不在 daily 允许窗口 ${DAILY_WINDOW_START_HM}-${DAILY_WINDOW_END_HM}，跳过跑批"
+        exit 0
+    fi
+fi
+
 # ============================ 运行跑批 ============================
 
 log "=========================================="
@@ -105,7 +123,6 @@ START_TIME=$(date +%s)
 
 # 运行 Python 跑批脚本
 PIPELINE_ARGS=( "$@" )
-RUN_TASK_ID="${AQSP_RUN_TASK_ID:-}"
 if [ -z "$RUN_TASK_ID" ]; then
     log "拒绝直接运行 daily_pipeline：缺少 AQSP_RUN_TASK_ID，请统一走 scripts/bt_task.sh daily"
     exit 0

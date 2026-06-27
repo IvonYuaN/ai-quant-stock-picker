@@ -146,7 +146,7 @@ def test_count_independent_signal_days_counts_runtime_date_aliases(tmp_path) -> 
         encoding="utf-8",
     )
 
-    assert count_independent_signal_days(str(ledger)) == 3
+    assert count_independent_signal_days(str(ledger)) == 4
 
 
 def test_count_independent_signal_days_rejects_unknown_status(tmp_path) -> None:
@@ -205,6 +205,40 @@ def test_count_independent_signal_days_rejects_paper_only_statuses(tmp_path) -> 
     )
 
     assert count_independent_signal_days(str(ledger)) == 1
+
+
+def test_count_independent_signal_days_counts_not_executable_days(tmp_path) -> None:
+    ledger = tmp_path / "predictions.jsonl"
+    rows = [
+        {
+            "signal_date": "2026-06-03",
+            "symbol": "600036",
+            "status": "validated",
+            "score": 60,
+        },
+        {
+            "signal_date": "2026-06-04",
+            "symbol": "000001",
+            "status": "not_executable",
+            "score": 61,
+        },
+        {
+            "signal_date": "2026-06-05",
+            "symbol": "601318",
+            "status": "closed",
+            "score": 62,
+        },
+    ]
+    ledger.write_text(
+        "\n".join(json.dumps(row, ensure_ascii=False) for row in rows) + "\n",
+        encoding="utf-8",
+    )
+
+    assert collect_independent_signal_dates(str(ledger)) == {
+        "2026-06-03",
+        "2026-06-04",
+    }
+    assert count_independent_signal_days(str(ledger)) == 2
 
 
 def test_count_paper_tracking_days_counts_real_paper_events(tmp_path) -> None:

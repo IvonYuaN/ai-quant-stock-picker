@@ -176,6 +176,10 @@ def test_bt_task_script_exposes_panel_safe_actions() -> None:
     assert daily_script.index("run_data_cleanup") < daily_script.index("周末(周${DOW})")
     assert "today_shanghai" in daily_script
     assert "今日非交易日，跳过跑批" in daily_script
+    assert 'ENFORCE_DAILY_WINDOW="${AQSP_ENFORCE_DAILY_WINDOW:-true}"' in daily_script
+    assert 'DAILY_WINDOW_START_HM="${AQSP_DAILY_WINDOW_START_HM:-1730}"' in daily_script
+    assert 'DAILY_WINDOW_END_HM="${AQSP_DAILY_WINDOW_END_HM:-2300}"' in daily_script
+    assert "不在 daily 允许窗口" in daily_script
     assert 'RUN_TASK_ID="${AQSP_RUN_TASK_ID:-}"' in daily_script
     assert "缺少 AQSP_RUN_TASK_ID" in daily_script
     assert "拒绝运行 daily_pipeline" in daily_script
@@ -227,6 +231,8 @@ def test_scheduler_diagnosis_is_read_only_and_bt_first() -> None:
     assert (
         "Diagnose AQSP scheduled tasks without touching system configuration" in script
     )
+    assert "sys.path.insert(0, candidate_str)" in script
+    assert 'for candidate in (PROJECT_ROOT / "src", PROJECT_ROOT)' in script
     assert "now_shanghai" in script
     assert "datetime.now" not in script
     assert "shell=True" not in script

@@ -23,6 +23,15 @@ def _isolated_notify_state(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("AQSP_NOTIFY_STATE_PATH", str(tmp_path / "notify_state.json"))
 
 
+@pytest.fixture(autouse=True)
+def _force_trading_day(monkeypatch) -> None:
+    import aqsp.cli as cli_mod
+
+    monkeypatch.setattr(cli_mod, "today_shanghai", lambda: date(2026, 6, 26))
+    monkeypatch.setattr("aqsp.core.time.today_shanghai", lambda: date(2026, 6, 26))
+    monkeypatch.setattr("aqsp.core.time.is_trading_day", lambda _day: True)
+
+
 def test_run_briefing_email_subject_uses_shanghai_today(
     monkeypatch, tmp_path: Path
 ) -> None:
