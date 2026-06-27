@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from aqsp.runtime.gate_notify import (
     build_gate_notification_markdown,
     gate_reason_fingerprint,
@@ -188,3 +190,15 @@ def test_failed_gate_notification_blocks_same_day_retry_after_pending_ttl(
         )
         is False
     )
+
+
+def test_gate_notify_state_path_rejects_tmp_path(monkeypatch) -> None:
+    monkeypatch.setenv("AQSP_PROJECT_ROOT", "/Users/ivon/Documents/AI量化选股")
+
+    with pytest.raises(OSError):
+        should_send_gate_notification(
+            gate_ok=False,
+            gate_reasons=["冷启动未满: 0/30 个独立信号日"],
+            state_path="/tmp/gate_notify_state.json",
+            run_date="2026-06-17",
+        )

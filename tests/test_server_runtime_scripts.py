@@ -28,7 +28,7 @@ def test_intraday_refresh_script_uses_isolated_outputs() -> None:
         encoding="utf-8"
     )
 
-    assert 'export AQSP_RUN_TASK_ID="${AQSP_RUN_TASK_ID:-intraday}"' in script
+    assert 'export AQSP_RUN_TASK_ID="intraday"' in script
     assert 'export AQSP_NOTIFY="false"' in script
     assert 'INTRADAY_MODE="${AQSP_INTRADAY_MODE:-open}"' in script
     assert 'INTRADAY_ALLOW_NOTIFY="${AQSP_INTRADAY_ALLOW_NOTIFY:-false}"' in script

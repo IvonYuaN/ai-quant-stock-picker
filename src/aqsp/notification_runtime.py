@@ -33,13 +33,23 @@ class ScheduledNotificationArtifacts:
     notify_enabled: bool
 
 
+def _is_unstable_state_path(path: Path) -> bool:
+    volatile_roots = (Path("/tmp"), Path("/private/tmp"))
+    return any(path == root or root in path.parents for root in volatile_roots)
+
+
 def notification_state_path(default: str | Path = "data/notify_state.json") -> Path:
     raw = os.getenv("AQSP_NOTIFY_STATE_PATH", str(default))
     path = Path(raw).expanduser()
     if path.is_absolute():
-        return path
+        resolved = path.resolve(strict=False)
+        if _is_unstable_state_path(resolved):
+            raise OSError(
+                f"AQSP_NOTIFY_STATE_PATH must not use volatile tmp path: {path}"
+            )
+        return resolved
     root = Path(os.getenv("AQSP_PROJECT_ROOT", Path(__file__).resolve().parents[2]))
-    return root / path
+    return (root / path).resolve(strict=False)
 
 
 def should_send_notification(

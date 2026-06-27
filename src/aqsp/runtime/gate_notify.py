@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime
 from pathlib import Path
 
@@ -9,6 +10,24 @@ from aqsp.utils.jsonl_io import advisory_lock, atomic_write_text
 
 GATE_NOTIFY_PENDING_TTL_MINUTES = 30
 GATE_NOTIFY_RETRY_MINUTES = 24 * 60
+
+
+def _resolve_gate_state_path(state_path: str | Path) -> Path:
+    path = Path(state_path).expanduser()
+    if path.is_absolute():
+        resolved = path.resolve(strict=False)
+        if _is_unstable_state_path(resolved):
+            raise OSError(
+                f"AQSP_GATE_NOTIFY_STATE_PATH must not use volatile tmp path: {path}"
+            )
+        return resolved
+    root = Path(os.getenv("AQSP_PROJECT_ROOT", Path(__file__).resolve().parents[3]))
+    return (root / path).resolve(strict=False)
+
+
+def _is_unstable_state_path(path: Path) -> bool:
+    volatile_roots = (Path("/tmp"), Path("/private/tmp"))
+    return any(path == root or root in path.parents for root in volatile_roots)
 
 
 def normalize_gate_run_date(run_date: str = "") -> str:
@@ -31,7 +50,7 @@ def should_send_gate_notification(
     state_path: str | Path,
     run_date: str = "",
 ) -> bool:
-    path = Path(state_path)
+    path = _resolve_gate_state_path(state_path)
     with advisory_lock(path):
         if gate_ok:
             path.unlink(missing_ok=True)
@@ -71,7 +90,7 @@ def reserve_gate_notification(
     state_path: str | Path,
     run_date: str = "",
 ) -> bool:
-    path = Path(state_path)
+    path = _resolve_gate_state_path(state_path)
     with advisory_lock(path):
         if gate_ok:
             path.unlink(missing_ok=True)
@@ -122,7 +141,7 @@ def mark_gate_notification_sent(
     state_path: str | Path,
     run_date: str = "",
 ) -> None:
-    path = Path(state_path)
+    path = _resolve_gate_state_path(state_path)
     with advisory_lock(path):
         fingerprint = gate_reason_fingerprint(gate_reasons)
         date_key = normalize_gate_run_date(run_date)
@@ -147,7 +166,7 @@ def mark_gate_notification_failed(
     state_path: str | Path,
     run_date: str = "",
 ) -> None:
-    path = Path(state_path)
+    path = _resolve_gate_state_path(state_path)
     with advisory_lock(path):
         fingerprint = gate_reason_fingerprint(gate_reasons)
         date_key = normalize_gate_run_date(run_date)

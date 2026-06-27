@@ -13,6 +13,11 @@ import pytest
 from aqsp.core.errors import MissingDataError
 
 
+@pytest.fixture(autouse=True)
+def _force_runtime_trading_day(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("aqsp.core.time.is_trading_day", lambda _day: True)
+
+
 def _fresh_frame(day: str) -> pd.DataFrame:
     return pd.DataFrame(
         {

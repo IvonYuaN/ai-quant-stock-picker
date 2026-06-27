@@ -10,6 +10,7 @@ import yaml
 
 from aqsp.monitor.checker import MonitorChecker, MonitorResult, MonitorConfig
 from aqsp.monitor.notifier import format_alert, send_alerts, _monitor_notify_state_path
+from aqsp.notification_runtime import notification_state_path
 
 
 @pytest.fixture
@@ -354,6 +355,14 @@ class TestNotifier:
 
         with pytest.raises(OSError):
             _monitor_notify_state_path()
+
+    def test_regular_notify_state_path_rejects_tmp_state_path(
+        self, monkeypatch
+    ) -> None:
+        monkeypatch.setenv("AQSP_NOTIFY_STATE_PATH", "/tmp/notify_state.json")
+
+        with pytest.raises(OSError):
+            notification_state_path()
 
     def test_send_alerts_dedupes_across_cwd_changes(
         self, sample_results: list[MonitorResult], tmp_path: Path, monkeypatch, capsys
