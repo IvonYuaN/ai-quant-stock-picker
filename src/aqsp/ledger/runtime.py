@@ -15,7 +15,6 @@ REAL_SIGNAL_STATUSES = frozenset(
     {
         "pending",
         "validated",
-        "not_executable",
         "watch_only",
         "run_completed_no_picks",
     }

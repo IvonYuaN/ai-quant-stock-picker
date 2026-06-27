@@ -303,6 +303,49 @@ def test_write_minimal_pbo_diagnostics_uses_gate_grid_diagnostics(
     assert "196" in text
 
 
+def test_write_minimal_pbo_diagnostics_overwrites_existing_diagnostic_when_requested(
+    tmp_path: Path,
+) -> None:
+    gate_path = tmp_path / "walkforward_gate.json"
+    report_path = tmp_path / "walkforward-grid-raw-production-diagnostic-latest.md"
+    gate_path.write_text(
+        json.dumps(
+            {
+                "run_date": "2026-06-21",
+                "both_pass": False,
+                "deflated_sharpe": 0.8275,
+                "pbo": 0.7778,
+                "pbo_pass": False,
+                "effective_symbols": 3281,
+                "price_mode": "raw",
+                "sqlite_db_path": "/opt/market-data/astocks_raw.db",
+                "grid_diagnostics": {
+                    "n_combos": 252,
+                    "n_lambda_le_0": 196,
+                    "best_variant": "WF-B02",
+                    "worst_variant": "WF-B06",
+                    "worst_periods": [{"period": "2020-05-19 to 2020-07-01"}],
+                    "selection_inversions": [{"selected_variant": "WF-B04"}],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    report_path.write_text("stale placeholder", encoding="utf-8")
+
+    written = write_minimal_pbo_diagnostics(
+        gate_path=gate_path,
+        report_path=report_path,
+        overwrite=True,
+    )
+
+    assert written is True
+    text = report_path.read_text(encoding="utf-8")
+    assert "stale placeholder" not in text
+    assert "WF-B02" in text
+    assert "WF-B04" in text
+
+
 def test_diagnostic_report_path_keeps_formal_production_report_separate(
     tmp_path: Path,
 ) -> None:

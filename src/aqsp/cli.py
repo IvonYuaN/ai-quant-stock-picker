@@ -3776,7 +3776,11 @@ _WALKFORWARD_VALIDATED_GRID_VARIANTS: tuple[WalkForwardGridVariant, ...] = (
 )
 
 _WALKFORWARD_STABLE_GRID_VARIANTS: tuple[WalkForwardGridVariant, ...] = (
-    _WALKFORWARD_VALIDATED_GRID_VARIANTS
+    tuple(
+        variant
+        for variant in _WALKFORWARD_VALIDATED_GRID_VARIANTS
+        if variant.variant_id in {"WF-001", "WF-B01", "WF-B02", "WF-B04", "WF-B08"}
+    )
 )
 
 _WALKFORWARD_EXPLORATORY_GRID_VARIANTS: tuple[WalkForwardGridVariant, ...] = (

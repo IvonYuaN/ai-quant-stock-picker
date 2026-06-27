@@ -913,6 +913,34 @@ def test_check_before_live_counts_runtime_signal_date_aliases(tmp_path: Path) ->
     assert finding.detail == "30/30 real independent signal days; latest real signal day=2026-05-30"
 
 
+def test_check_before_live_excludes_not_executable_from_signal_sample_size(
+    tmp_path: Path,
+) -> None:
+    _prepare_ready_runtime(tmp_path)
+    rows = [
+        {
+            "signal_day_group": f"2026-05-{day:02d}_ma_pullback",
+            "symbol": "600519",
+            "status": "watch_only",
+        }
+        for day in range(1, 30)
+    ]
+    rows.append(
+        {
+            "created_at": "2026-05-30T18:00:00+08:00",
+            "symbol": "300750",
+            "status": "not_executable",
+        }
+    )
+    _write_jsonl(tmp_path / "data/predictions.jsonl", rows)
+
+    findings = check_before_live(root=tmp_path, today=date(2026, 6, 14))
+
+    finding = next(item for item in findings if item.gate == "signal_sample_size")
+    assert finding.ok is False
+    assert finding.detail == "29/30 real independent signal days; latest real signal day=2026-05-29"
+
+
 def test_check_before_live_blocks_when_paper_tracking_samples_are_too_small(
     tmp_path: Path,
 ) -> None:

@@ -1658,22 +1658,16 @@ def test_walkforward_grid_uses_stable_gate_variants_by_default() -> None:
 
     variants = cli_mod._walkforward_grid_variants()
 
-    assert len(variants) == 11
+    assert len(variants) == 5
     assert [variant.variant_id for variant in variants] == [
         "WF-001",
         "WF-B01",
         "WF-B02",
-        "WF-B03",
         "WF-B04",
-        "WF-B05",
-        "WF-B06",
-        "WF-B07",
         "WF-B08",
-        "WF-B09",
-        "WF-B10",
     ]
-    assert {variant.lookback_days for variant in variants} == {20, 40, 60, 80, 100, 120}
-    assert {variant.horizon_days for variant in variants} == {1, 2, 3, 5, 7, 10}
+    assert {variant.lookback_days for variant in variants} == {60, 100, 120}
+    assert {variant.horizon_days for variant in variants} == {2, 3}
     assert {variant.top_n for variant in variants} == {5, 10, 15, 20}
 
 

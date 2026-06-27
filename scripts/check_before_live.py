@@ -20,6 +20,7 @@ if __package__ in {None, ""}:
 
 from aqsp.core.time import SHANGHAI_TZ, get_previous_trading_day, today_shanghai
 from aqsp.ledger.runtime import (
+    REAL_SIGNAL_STATUSES,
     collect_simulated_signal_dates,
     count_independent_signal_days,
     count_paper_tracking_days,
@@ -1036,6 +1037,10 @@ def _check_signal_sample_size(path: Path) -> ReadinessFinding:
             if ledger_signal_date(row)
             and str(row.get("symbol") or "").strip() != "__RUN__"
             and not bool(row.get("is_simulated"))
+            and (
+                not str(row.get("status") or "").strip()
+                or str(row.get("status") or "").strip() in REAL_SIGNAL_STATUSES
+            )
             and any(
                 row.get(key) not in (None, "")
                 for key in (

@@ -307,9 +307,10 @@ def write_minimal_pbo_diagnostics(
     gate_path: Path,
     report_path: Path,
     coverage: CoverageSummary | None = None,
+    overwrite: bool = False,
 ) -> bool:
     """Write a reviewable PBO failure report when the child report is missing."""
-    if report_path.exists() or not gate_path.exists():
+    if (report_path.exists() and not overwrite) or not gate_path.exists():
         return False
     try:
         payload = json.loads(gate_path.read_text(encoding="utf-8"))
@@ -771,6 +772,7 @@ def main() -> int:
                 gate_path=Path(args.gate_path),
                 report_path=diagnostic_path,
                 coverage=coverage,
+                overwrite=True,
             ):
                 print(f"production gate diagnostic report written: {diagnostic_path}")
             _write_status(
@@ -809,6 +811,7 @@ def main() -> int:
             gate_path=Path(args.gate_path),
             report_path=diagnostic_path,
             coverage=coverage,
+            overwrite=True,
         ):
             print(f"production gate diagnostic report written: {diagnostic_path}")
         _write_status(
