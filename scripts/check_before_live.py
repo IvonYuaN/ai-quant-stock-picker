@@ -1399,6 +1399,7 @@ def _cron_wrapper_schedule_blocker(
         schedule
         for schedule in schedules
         if not _schedule_matches_bt_action(schedule=schedule, action=action)
+        and not _wrapper_time_gate_matches_action(text=text, action=action)
     ]
     if not bad_schedules:
         return ""
@@ -1448,6 +1449,22 @@ def _schedule_matches_bt_action(*, schedule: str, action: str) -> bool:
         )
         return is_weekday_run or is_weekend_run
     return True
+
+
+def _wrapper_time_gate_matches_action(*, text: str, action: str) -> bool:
+    normalized_action = action.strip().lower()
+    if normalized_action != "news":
+        return False
+    lowered = text.lower()
+    if "time_check.py" not in lowered:
+        return False
+    weekday_gate = (
+        'special_time=08:35' in text and 'time_list=1,2,3,4,5' in text
+    )
+    weekend_gate = (
+        'special_time=09:05' in text and 'time_list=6,7' in text
+    )
+    return weekday_gate or weekend_gate
 
 
 def _cron_wrapper_bypasses_bt_task(text: str) -> bool:

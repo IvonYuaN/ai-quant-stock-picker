@@ -2013,6 +2013,37 @@ def test_check_before_live_blocks_bt_wrapper_with_unexpected_live_cron_cadence(
     assert "unexpected wrapper cadence for news" in finding.detail
 
 
+def test_check_before_live_allows_news_wrapper_with_time_gate_even_if_cron_polls(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    _prepare_ready_runtime(tmp_path)
+    cron_dir = tmp_path / "bt-cron"
+    cron_dir.mkdir()
+    wrapper = cron_dir / "aqsp-news"
+    wrapper.write_text(
+        "#!/bin/bash\n"
+        "if ! btpython /www/server/panel/script/time_check.py time_type=sweek special_time=08:35 time_list=1,2,3,4,5; then\n"
+        "  exit 1\n"
+        "fi\n"
+        "AQSP_NEWS_ENABLE_LLM_REVIEW=true /bin/bash /opt/aqsp/scripts/bt_task.sh news\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "scripts.check_before_live._load_live_crontab_text",
+        lambda: "*/5 * * * * flock -xn /www/server/cron/aqsp-news.lock -c /www/server/cron/aqsp-news\n",
+    )
+
+    findings = check_before_live(
+        root=tmp_path,
+        today=date(2026, 6, 14),
+        cron_dir=cron_dir,
+    )
+
+    finding = next(item for item in findings if item.gate == "scheduler_notify_cadence")
+    assert finding.ok is True
+
+
 def test_check_before_live_blocks_unguarded_special_strategy_ledger_writes(
     tmp_path: Path,
 ) -> None:
