@@ -36,6 +36,7 @@ DEFAULT_START = "2018-01-01"
 DEFAULT_END = "2024-12-31"
 MIN_COVERAGE_RATIO = 0.8
 DEFAULT_STATUS_PATH = "data/walkforward_production_status.json"
+DEFAULT_SYMBOL_CACHE_PATH = "data/walkforward_production_symbols.json"
 
 
 @dataclass(frozen=True)
@@ -54,6 +55,13 @@ class CoverageInspection:
 
 
 def _status_path(raw: str | Path) -> Path:
+    path = Path(raw).expanduser()
+    if path.is_absolute():
+        return path
+    return PROJECT_ROOT / path
+
+
+def _symbol_cache_path(raw: str | Path) -> Path:
     path = Path(raw).expanduser()
     if path.is_absolute():
         return path
@@ -216,6 +224,87 @@ def inspect_raw_coverage_with_symbols(
             last_trade_date=last_market_day,
         ),
         covered_symbols=covered,
+    )
+
+
+def _db_mtime_epoch(db_path: Path) -> int:
+    return int(db_path.stat().st_mtime)
+
+
+def load_cached_coverage_symbols(
+    cache_path: Path,
+    *,
+    db_path: Path,
+    start: str,
+    end: str,
+    min_symbols: int,
+) -> CoverageInspection | None:
+    if not cache_path.exists():
+        return None
+    try:
+        payload = json.loads(cache_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    expected = {
+        "db_path": str(db_path),
+        "db_mtime_epoch": _db_mtime_epoch(db_path),
+        "start": start,
+        "end": end,
+        "min_symbols": int(min_symbols),
+    }
+    for key, value in expected.items():
+        if payload.get(key) != value:
+            return None
+    summary_raw = payload.get("summary")
+    covered_symbols = payload.get("covered_symbols")
+    if not isinstance(summary_raw, dict) or not isinstance(covered_symbols, list):
+        return None
+    try:
+        summary = CoverageSummary(
+            stock_symbols=int(summary_raw["stock_symbols"]),
+            covered_symbols=int(summary_raw["covered_symbols"]),
+            rows=int(summary_raw["rows"]),
+            first_trade_date=str(summary_raw["first_trade_date"]),
+            last_trade_date=str(summary_raw["last_trade_date"]),
+        )
+    except (KeyError, TypeError, ValueError):
+        return None
+    normalized_symbols = [str(symbol).strip() for symbol in covered_symbols if str(symbol).strip()]
+    if len(normalized_symbols) != summary.covered_symbols:
+        return None
+    return CoverageInspection(summary=summary, covered_symbols=normalized_symbols)
+
+
+def write_cached_coverage_symbols(
+    cache_path: Path,
+    *,
+    db_path: Path,
+    start: str,
+    end: str,
+    min_symbols: int,
+    inspection: CoverageInspection,
+) -> None:
+    payload = {
+        "db_path": str(db_path),
+        "db_mtime_epoch": _db_mtime_epoch(db_path),
+        "start": start,
+        "end": end,
+        "min_symbols": int(min_symbols),
+        "updated_at": now_shanghai().isoformat(timespec="seconds"),
+        "summary": {
+            "stock_symbols": inspection.summary.stock_symbols,
+            "covered_symbols": inspection.summary.covered_symbols,
+            "rows": inspection.summary.rows,
+            "first_trade_date": inspection.summary.first_trade_date,
+            "last_trade_date": inspection.summary.last_trade_date,
+        },
+        "covered_symbols": inspection.covered_symbols,
+    }
+    atomic_write_text(
+        cache_path,
+        json.dumps(payload, indent=2, ensure_ascii=False) + "\n",
     )
 
 
@@ -651,8 +740,14 @@ def main() -> int:
         help="stop the production walk-forward run if it hangs during data loading/backtest",
     )
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument(
+        "--symbols-cache-path",
+        default=DEFAULT_SYMBOL_CACHE_PATH,
+        help="cache production coverage-selected symbols to avoid repeating full-market sqlite scans",
+    )
     args = parser.parse_args()
     status_path = _status_path(args.status_path)
+    symbols_cache_path = _symbol_cache_path(args.symbols_cache_path)
 
     if args.repair_only:
         repaired = repair_production_gate_metadata(
@@ -669,9 +764,28 @@ def main() -> int:
         print("production gate metadata repaired" if repaired else "production gate metadata unchanged")
         return 0 if repaired else 1
 
-    inspection = inspect_raw_coverage_with_symbols(
-        args.db, start=args.start, end=args.end
+    inspection = load_cached_coverage_symbols(
+        symbols_cache_path,
+        db_path=args.db,
+        start=args.start,
+        end=args.end,
+        min_symbols=args.min_symbols,
     )
+    if inspection is None:
+        inspection = inspect_raw_coverage_with_symbols(
+            args.db, start=args.start, end=args.end
+        )
+        write_cached_coverage_symbols(
+            symbols_cache_path,
+            db_path=args.db,
+            start=args.start,
+            end=args.end,
+            min_symbols=args.min_symbols,
+            inspection=inspection,
+        )
+        print(f"production gate symbols cache refreshed: {symbols_cache_path}")
+    else:
+        print(f"production gate symbols cache hit: {symbols_cache_path}")
     coverage = inspection.summary
     print(
         "production gate raw coverage: "

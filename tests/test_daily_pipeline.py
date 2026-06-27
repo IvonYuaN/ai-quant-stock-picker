@@ -155,6 +155,39 @@ def test_build_config_enables_notify_and_auto_evolution_from_env(monkeypatch) ->
     assert config.enable_auto_evolution is True
 
 
+def test_build_config_uses_runtime_ledger_paths_from_env(monkeypatch) -> None:
+    daily_pipeline = _load_daily_pipeline_module()
+    monkeypatch.setenv("AQSP_LEDGER", "runtime/predictions.jsonl")
+    monkeypatch.setenv("AQSP_PAPER_LEDGER", "runtime/paper.jsonl")
+
+    args = argparse.Namespace(
+        project_root="",
+        source="",
+        mode="",
+        limit=0,
+        max_universe=0,
+        min_avg_amount=0,
+        max_data_lag_days=0,
+        enable_online_factors=False,
+        ledger="",
+        report="",
+        csv="",
+        briefing="",
+        dashboard_html="",
+        dashboard_db="",
+        paper_ledger="",
+        closing_review="",
+        notify=False,
+        dry_run=False,
+        enable_debate=False,
+    )
+
+    config = daily_pipeline._build_config(args)
+
+    assert config.ledger_path == "runtime/predictions.jsonl"
+    assert config.paper_ledger == "runtime/paper.jsonl"
+
+
 def test_morning_breakout_uses_runtime_symbols_without_sh300_override(
     monkeypatch,
 ) -> None:
@@ -684,14 +717,14 @@ def test_send_pipeline_digest_sends_summary_notification(
     assert sent["title"] == "收盘总览-2026-06-02"
     assert result.notify_status["status"] == "sent"
     assert result.notify_status["reason"] == "ok"
-    assert "## 结论" in sent["content"]
+    assert "## 数据" in sent["content"]
+    assert "- 健康: fallback" in sent["content"]
+    assert "- 路径: auto -> eastmoney" in sent["content"]
     assert "## 候选" in sent["content"]
     assert "## 风险" in sent["content"]
-    assert "## 明日" in sent["content"]
-    assert "- 今日结论: " in sent["content"]
-    assert "## 数据" in sent["content"]
-    assert "## 候选" in sent["content"]
-    assert "- PM 主裁决: 上调 1 / 降级 1 / 维持 0" in sent["content"]
+    assert "## 结果" in sent["content"]
+    assert "- 结论: " in sent["content"]
+    assert "- PM: 上调 1 / 降级 1 / 维持 0" in sent["content"]
     assert "- 现在卡在哪: " in sent["content"]
     assert "- 首要复核: 300750 宁德时代 | 中优先级 / 板块分化时" in sent["content"]
     assert (
@@ -706,7 +739,6 @@ def test_send_pipeline_digest_sends_summary_notification(
     assert "现在卡在哪: 板块集中度过高，压低新能源暴露" in sent["content"]
     assert "下一步: 等待板块暴露回落后，再重新评估纸面复核优先级" in sent["content"]
     assert "再看时间: 中优先级 / 板块分化时" in sent["content"]
-    assert "观察名单接下来:" in sent["content"]
     assert (
         "- 策略自检: 验证 1 条 / 胜率 100.0% / 平均收益 2.30% / 不可成交跳过 2 条"
         in sent["content"]
@@ -715,10 +747,6 @@ def test_send_pipeline_digest_sends_summary_notification(
         "- 不可成交原因: limit_up_at_open×1, suspended_or_no_trade×1" in sent["content"]
     )
     assert "- 不可成交策略: limit_up_ladder 50%" in sent["content"]
-    assert (
-        "观察名单接下来: 先盯 300750 宁德时代，等待板块暴露回落后，再重新评估纸面复核优先级（中优先级 / 板块分化时）。"
-        in sent["content"]
-    )
     forbidden = (
         "阅读方式",
         "不是交易指令",
@@ -1007,6 +1035,55 @@ def test_send_pipeline_digest_skips_block_summary_when_gate_notice_recorded(
         lambda title, content: calls.append((title, content)) or [],
     )
     state_path = tmp_path / "data" / "gate_notify_state.json"
+    state_path.parent.mkdir(parents=True)
+    state_path.write_text(
+        json.dumps(
+            {
+                "sent_by_date": {
+                    "2026-06-02": {
+                        "fingerprint": "cold_start|dsr",
+                        "status": "sent",
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    config = _pipeline_config(
+        daily_pipeline, tmp_path, notify=True, notify_mode="summary"
+    )
+    result = daily_pipeline.PipelineResult(
+        started_at="2026-06-02T18:00:00+08:00",
+        finished_at="2026-06-02T18:00:30+08:00",
+        duration_seconds=30.0,
+        steps=[daily_pipeline.StepResult("策略运行", True, 2.0)],
+        overall_success=True,
+        summary="ok",
+    )
+
+    with caplog.at_level(logging.INFO, logger="test"):
+        daily_pipeline._send_pipeline_digest(config, result, logging.getLogger("test"))
+
+    assert calls == []
+    assert result.notify_status == {
+        "mode": "summary",
+        "status": "skipped",
+        "reason": "gate_block_already_notified",
+        "date": "2026-06-02",
+    }
+
+
+def test_send_pipeline_digest_uses_runtime_gate_state_path(
+    monkeypatch, tmp_path: Path, caplog
+) -> None:
+    daily_pipeline = _load_daily_pipeline_module()
+    calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        "aqsp.notifier.send_notification",
+        lambda title, content: calls.append((title, content)) or [],
+    )
+    monkeypatch.setenv("AQSP_GATE_NOTIFY_STATE_PATH", "runtime/gate_notify_state.json")
+    state_path = tmp_path / "runtime" / "gate_notify_state.json"
     state_path.parent.mkdir(parents=True)
     state_path.write_text(
         json.dumps(

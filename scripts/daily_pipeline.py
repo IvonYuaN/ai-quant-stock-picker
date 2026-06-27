@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import pandas as pd
 import sys
 import traceback
@@ -20,6 +21,28 @@ from aqsp.presentation import (
 from aqsp.core.errors import DataError, FreshnessError
 from aqsp.core.time import now_shanghai, today_shanghai
 from aqsp.utils.jsonl_io import append_jsonl, atomic_write_text
+
+
+def _runtime_path_env(
+    env_name: str,
+    default: str,
+    *,
+    project_root: Path,
+) -> str:
+    raw = str(os.getenv(env_name, "") or "").strip()
+    if raw:
+        return raw
+    return default
+
+
+def _gate_notify_state_path(project_root: Path) -> Path:
+    raw = str(
+        os.getenv("AQSP_GATE_NOTIFY_STATE_PATH", "data/gate_notify_state.json") or ""
+    ).strip()
+    path = Path(raw).expanduser()
+    if path.is_absolute():
+        return path.resolve(strict=False)
+    return (project_root / path).resolve(strict=False)
 
 
 @dataclass(frozen=True)
@@ -1564,7 +1587,7 @@ def _send_pipeline_digest(
 def _gate_block_notification_already_recorded(
     project_root: Path, run_date: str
 ) -> bool:
-    path = project_root / "data" / "gate_notify_state.json"
+    path = _gate_notify_state_path(project_root)
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
@@ -1593,8 +1616,6 @@ def _pipeline_strategy_gate_ok(result: PipelineResult) -> bool:
 
 
 def _build_config(args: argparse.Namespace) -> PipelineConfig:
-    import os
-
     from aqsp.config import load_runtime_config
 
     env = load_runtime_config()
@@ -1615,14 +1636,24 @@ def _build_config(args: argparse.Namespace) -> PipelineConfig:
         max_data_lag_days=args.max_data_lag_days or env.max_data_lag_days,
         enable_online_factors=args.enable_online_factors or env.enable_online_factors,
         allow_online_fallback=env.allow_online_fallback,
-        ledger_path=args.ledger or "data/predictions.jsonl",
+        ledger_path=args.ledger
+        or _runtime_path_env(
+            "AQSP_LEDGER",
+            "data/predictions.jsonl",
+            project_root=project_root,
+        ),
         report_path=args.report or "reports/latest.md",
         csv_path=args.csv or "reports/latest.csv",
         briefing_path=args.briefing or "reports/briefing.md",
         paper_report_path="reports/paper.md",
         dashboard_html=args.dashboard_html or "dist/dashboard/index.html",
         dashboard_db=args.dashboard_db or "dist/dashboard/aqsp.db",
-        paper_ledger=args.paper_ledger or "data/paper_trades.jsonl",
+        paper_ledger=args.paper_ledger
+        or _runtime_path_env(
+            "AQSP_PAPER_LEDGER",
+            "data/paper_trades.jsonl",
+            project_root=project_root,
+        ),
         closing_review_path="reports/closing_review.md",
         notify=args.notify or env.notify,
         notify_mode=env.notify_mode,

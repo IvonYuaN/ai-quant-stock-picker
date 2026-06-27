@@ -39,6 +39,8 @@ data/notify_state.json
 data/risk_state.json
 data/system_risk_state.json
 data/walkforward_gate.json
+data/walkforward_production_status.json
+data/walkforward_production_symbols.json
 data/source_health.json
 data/archive/
 data/walkforward_cache*

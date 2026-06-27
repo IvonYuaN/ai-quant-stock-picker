@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 from pathlib import Path
 
@@ -64,6 +65,52 @@ def test_inspect_raw_coverage_counts_covered_symbols(tmp_path: Path) -> None:
     assert coverage.rows == 120
     assert coverage.first_trade_date == "20240101"
     assert coverage.last_trade_date == "20240130"
+
+
+def test_inspect_raw_coverage_accepts_raw_columns_even_if_filename_contains_qfq(
+    tmp_path: Path,
+) -> None:
+    db = tmp_path / "astocks_qfq.db"
+    with sqlite3.connect(db) as conn:
+        conn.execute("CREATE TABLE stocks(ts_code TEXT PRIMARY KEY, name TEXT)")
+        conn.execute(
+            """
+            CREATE TABLE daily_qfq(
+                ts_code TEXT,
+                trade_date TEXT,
+                open REAL,
+                high REAL,
+                low REAL,
+                close REAL,
+                open_qfq REAL,
+                high_qfq REAL,
+                low_qfq REAL,
+                close_qfq REAL,
+                volume INTEGER,
+                amount REAL
+            )
+            """
+        )
+        for idx in range(4):
+            market = "SH" if idx % 2 == 0 else "SZ"
+            code = f"600{idx:03d}.{market}"
+            conn.execute("INSERT INTO stocks(ts_code, name) VALUES(?, ?)", (code, code))
+            for day in range(1, 31):
+                conn.execute(
+                    """
+                    INSERT INTO daily_qfq(
+                        ts_code, trade_date, open, high, low, close,
+                        open_qfq, high_qfq, low_qfq, close_qfq, volume, amount
+                    ) VALUES(?, ?, 10, 11, 9, 10, 9, 10, 8, 9, 1000000, 10000000)
+                    """,
+                    (code, f"202401{day:02d}"),
+                )
+        conn.commit()
+
+    coverage = inspect_raw_coverage(db, start="2024-01-01", end="2024-01-30")
+
+    assert coverage.stock_symbols == 4
+    assert coverage.covered_symbols == 4
 
 
 def test_select_covered_symbols_returns_full_eligible_market(tmp_path: Path) -> None:
@@ -725,6 +772,130 @@ def test_production_walkforward_gate_passes_selected_symbols_file(
         "exists_during_run": True,
         "cwd": gate.PROJECT_ROOT,
     }
+
+
+def test_production_walkforward_gate_reuses_cached_symbols(
+    monkeypatch, tmp_path: Path
+) -> None:
+    import scripts.run_production_walkforward_gate as gate
+
+    db = tmp_path / "raw.db"
+    db.write_text("", encoding="utf-8")
+    os.utime(db, None)
+    cache_path = tmp_path / "symbols-cache.json"
+    gate_path = tmp_path / "walkforward_gate.json"
+    gate_path.write_text(json.dumps({"effective_symbols": 3}), encoding="utf-8")
+    cache_path.write_text(
+        json.dumps(
+            {
+                "db_path": str(db),
+                "db_mtime_epoch": int(db.stat().st_mtime),
+                "start": "2018-01-01",
+                "end": "2024-12-31",
+                "min_symbols": 3,
+                "summary": {
+                    "stock_symbols": 5533,
+                    "covered_symbols": 3,
+                    "rows": 1,
+                    "first_trade_date": "20180102",
+                    "last_trade_date": "20241231",
+                },
+                "covered_symbols": ["600000", "000001", "300750"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        gate,
+        "inspect_raw_coverage_with_symbols",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("should reuse cached coverage symbols")
+        ),
+    )
+    monkeypatch.setattr(gate, "build_walkforward_command", lambda _args: ["python"])
+    monkeypatch.setattr(
+        gate, "annotate_production_gate_metadata", lambda **_kwargs: None
+    )
+    monkeypatch.setattr(
+        gate.subprocess,
+        "run",
+        lambda *_args, **_kwargs: type("Result", (), {"returncode": 0})(),
+    )
+    monkeypatch.setattr(
+        gate.sys,
+        "argv",
+        [
+            "run_production_walkforward_gate.py",
+            "--db",
+            str(db),
+            "--min-symbols",
+            "3",
+            "--symbols-cache-path",
+            str(cache_path),
+            "--gate-path",
+            str(gate_path),
+        ],
+    )
+
+    assert gate.main() == 0
+
+
+def test_production_walkforward_gate_refreshes_symbols_cache(
+    monkeypatch, tmp_path: Path
+) -> None:
+    import scripts.run_production_walkforward_gate as gate
+
+    db = tmp_path / "raw.db"
+    db.write_text("", encoding="utf-8")
+    os.utime(db, None)
+    cache_path = tmp_path / "symbols-cache.json"
+    gate_path = tmp_path / "walkforward_gate.json"
+    gate_path.write_text(json.dumps({"effective_symbols": 3}), encoding="utf-8")
+    inspection = gate.CoverageInspection(
+        summary=gate.CoverageSummary(
+            stock_symbols=5533,
+            covered_symbols=3,
+            rows=1,
+            first_trade_date="20180102",
+            last_trade_date="20241231",
+        ),
+        covered_symbols=["600000", "000001", "300750"],
+    )
+    monkeypatch.setattr(
+        gate,
+        "inspect_raw_coverage_with_symbols",
+        lambda *_args, **_kwargs: inspection,
+    )
+    monkeypatch.setattr(gate, "build_walkforward_command", lambda _args: ["python"])
+    monkeypatch.setattr(
+        gate, "annotate_production_gate_metadata", lambda **_kwargs: None
+    )
+    monkeypatch.setattr(
+        gate.subprocess,
+        "run",
+        lambda *_args, **_kwargs: type("Result", (), {"returncode": 0})(),
+    )
+    monkeypatch.setattr(
+        gate.sys,
+        "argv",
+        [
+            "run_production_walkforward_gate.py",
+            "--db",
+            str(db),
+            "--min-symbols",
+            "3",
+            "--symbols-cache-path",
+            str(cache_path),
+            "--gate-path",
+            str(gate_path),
+        ],
+    )
+
+    assert gate.main() == 0
+    payload = json.loads(cache_path.read_text(encoding="utf-8"))
+    assert payload["db_path"] == str(db)
+    assert payload["min_symbols"] == 3
+    assert payload["covered_symbols"] == ["600000", "000001", "300750"]
 
 
 def test_production_walkforward_gate_returns_timeout_code(

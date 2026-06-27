@@ -180,7 +180,8 @@ class WalkForwardTester:
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
     ) -> WalkForwardResult:
-        all_dates = self._collect_all_dates(data)
+        normalized_data = self._prepare_data_views(data)
+        all_dates = self._collect_all_dates(normalized_data)
         if not all_dates:
             raise ValueError("No data available")
 
@@ -209,8 +210,8 @@ class WalkForwardTester:
             test_start = all_dates[i]
             test_end = all_dates[min(i + step - 1, end_idx)]
 
-            train_data = self._slice_data(data, train_start, train_end)
-            test_data = self._slice_data(data, test_start, test_end)
+            train_data = self._slice_data(normalized_data, train_start, train_end)
+            test_data = self._slice_data(normalized_data, test_start, test_end)
 
             trades = self._run_single_period(train_data, test_data, train_end)
             all_trades.extend(trades)
@@ -259,11 +260,23 @@ class WalkForwardTester:
             diagnostics=self._build_diagnostics(all_trades),
         )
 
+    def _prepare_data_views(
+        self, data: Dict[str, pd.DataFrame]
+    ) -> Dict[str, pd.DataFrame]:
+        prepared: dict[str, pd.DataFrame] = {}
+        for symbol, df in data.items():
+            if df is None or df.empty:
+                continue
+            ordered = df.sort_values("date").reset_index(drop=True).copy()
+            ordered.attrs["_aqsp_date_keys"] = ordered["date"].astype(str).tolist()
+            prepared[symbol] = ordered
+        return prepared
+
     def _collect_all_dates(self, data: Dict[str, pd.DataFrame]) -> list[str]:
         dates: set[str] = set()
         for df in data.values():
             if df is not None and not df.empty:
-                dates.update(df["date"].astype(str).tolist())
+                dates.update(self._date_keys(df))
         return sorted(dates)
 
     def _find_date_idx(self, dates: list[str], target: str) -> int:
@@ -279,10 +292,11 @@ class WalkForwardTester:
         for symbol, df in data.items():
             if df is None or df.empty:
                 continue
-            date_col = df["date"].astype(str)
-            mask = (date_col >= start_date) & (date_col <= end_date)
-            sliced = df.loc[mask]
-            if not sliced.empty:
+            date_keys = self._date_keys(df)
+            left = bisect.bisect_left(date_keys, start_date)
+            right = bisect.bisect_right(date_keys, end_date)
+            if left < right:
+                sliced = df.iloc[left:right]
                 result[symbol] = sliced.copy()
         return result
 
@@ -296,7 +310,7 @@ class WalkForwardTester:
 
         signal_data: dict[str, pd.DataFrame] = {}
         for symbol, df in train_data.items():
-            hist = df[df["date"].astype(str) <= signal_date]
+            hist = self._slice_until(df, signal_date)
             if not hist.empty:
                 signal_data[symbol] = hist
 
@@ -336,7 +350,7 @@ class WalkForwardTester:
             train_sym = train_data.get(symbol)
             if train_sym is None or train_sym.empty:
                 continue
-            prev_rows = train_sym[train_sym["date"].astype(str) <= signal_date]
+            prev_rows = self._slice_until(train_sym, signal_date)
             if prev_rows.empty:
                 continue
             prev_close = float(prev_rows.iloc[-1]["close"])
@@ -396,6 +410,22 @@ class WalkForwardTester:
             )
 
         return trades
+
+    @staticmethod
+    def _date_keys(df: pd.DataFrame) -> list[str]:
+        cached = df.attrs.get("_aqsp_date_keys")
+        if isinstance(cached, list):
+            return cached
+        values = df["date"].astype(str).tolist()
+        df.attrs["_aqsp_date_keys"] = values
+        return values
+
+    def _slice_until(self, df: pd.DataFrame, end_date: str) -> pd.DataFrame:
+        date_keys = self._date_keys(df)
+        right = bisect.bisect_right(date_keys, end_date)
+        if right <= 0:
+            return df.iloc[0:0]
+        return df.iloc[:right]
 
     @staticmethod
     def _calculate_robustness(periods: list[BacktestResult]) -> float:
