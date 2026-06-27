@@ -1695,6 +1695,64 @@ def test_walkforward_grid_keeps_exploratory_wfb_variants() -> None:
     assert {variant.top_n for variant in variants} == {5, 10, 15, 20}
 
 
+def test_walkforward_sqlite_prefiltered_symbols_skip_duplicate_coverage_check(
+    monkeypatch,
+) -> None:
+    from aqsp.services.walkforward_data import (
+        WalkforwardFetchRequest,
+        fetch_walkforward_frames,
+    )
+
+    class DummySqliteSource:
+        def __init__(self) -> None:
+            self.coverage_calls = 0
+
+        def get_available_symbols(self):
+            return ["600519", "300750"]
+
+        def get_symbols_with_daily_coverage(self, symbols, start, end, min_rows=None):
+            self.coverage_calls += 1
+            return symbols
+
+        def fetch_daily(self, symbols, start, end, adjust=""):
+            frame = pd.DataFrame(
+                {
+                    "date": ["2024-01-02"],
+                    "open": [1.0],
+                    "high": [1.0],
+                    "low": [1.0],
+                    "close": [1.0],
+                    "volume": [1.0],
+                    "amount": [1.0],
+                    "symbol": ["600519"],
+                    "name": ["demo"],
+                }
+            )
+            return {symbol: frame for symbol in symbols}
+
+    dummy = DummySqliteSource()
+    monkeypatch.setenv("AQSP_SQLITE_PREFILTERED_SYMBOLS", "1")
+
+    result = fetch_walkforward_frames(
+        WalkforwardFetchRequest(
+            source="sqlite_db",
+            symbols=["600519", "300750"],
+            start="2024-01-01",
+            end="2024-01-31",
+            cache_path=None,
+            skip_pit_financials=True,
+        ),
+        get_source_fn=lambda _source: dummy,
+        fetch_frames_for_cli_fn=lambda *args, **kwargs: {},
+        load_csv_fn=lambda _source: {},
+        fetch_days_fn=lambda *_args: 20,
+        print_fn=lambda *_args: None,
+    )
+
+    assert sorted(result.symbols) == ["300750", "600519"]
+    assert dummy.coverage_calls == 0
+
+
 def test_walkforward_grid_cscv_writes_valid_pbo_gate(monkeypatch, tmp_path):
     import aqsp.cli as cli_mod
     from aqsp.backtest.walk_forward import BacktestResult

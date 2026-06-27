@@ -3,12 +3,15 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date
+import os
 from typing import Any
 
 import pandas as pd
 
 from aqsp.data import pit_financial
 from aqsp.data.cache import DataCache
+
+_SQLITE_PREFILTERED_SYMBOLS_ENV = "AQSP_SQLITE_PREFILTERED_SYMBOLS"
 
 
 @dataclass(frozen=True)
@@ -66,7 +69,15 @@ def fetch_walkforward_frames(
         if source == "sqlite_db":
             available = src.get_available_symbols()
             symbols = [symbol for symbol in symbols if symbol in available]
-            if hasattr(src, "get_symbols_with_daily_coverage"):
+            prefiltered = str(
+                os.environ.get(_SQLITE_PREFILTERED_SYMBOLS_ENV, "")
+            ).strip().lower()
+            if hasattr(src, "get_symbols_with_daily_coverage") and prefiltered not in {
+                "1",
+                "true",
+                "yes",
+                "on",
+            }:
                 symbols = src.get_symbols_with_daily_coverage(
                     symbols,
                     start_d,

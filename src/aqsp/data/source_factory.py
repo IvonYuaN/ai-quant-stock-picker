@@ -44,11 +44,12 @@ def build_sqlite_db_source_with(
 
     source_builder = builder or SqliteDbSource
     db_path = db_path_resolver()
+    source_cache = cache if cache is not None else DataCache()
     if db_path:
         if _callable_accepts_keyword(source_builder, "db_path"):
-            return source_builder(db_path=db_path, cache=cache)
-        return source_builder(cache=cache)
-    return source_builder(cache=cache)
+            return source_builder(db_path=db_path, cache=source_cache)
+        return source_builder(cache=source_cache)
+    return source_builder(cache=source_cache)
 
 
 def _callable_accepts_keyword(fn: SourceBuilder, keyword: str) -> bool:

@@ -747,6 +747,7 @@ def main() -> int:
         return 0
     env = os.environ.copy()
     env["AQSP_SQLITE_DB_PATH"] = str(args.db)
+    env["AQSP_SQLITE_PREFILTERED_SYMBOLS"] = "1"
     warn_if_report_path_not_writable(Path(args.report))
     preserve_formal_report_snapshot(Path(args.report))
     _write_status(

@@ -105,6 +105,77 @@ def test_build_walkforward_command_uses_full_market_raw_gate() -> None:
     assert "/tmp/symbols.txt" in command
 
 
+def test_production_walkforward_gate_sets_prefiltered_symbols_env(
+    monkeypatch, tmp_path: Path
+) -> None:
+    from scripts import run_production_walkforward_gate as gate_mod
+
+    db = tmp_path / "astocks_raw.db"
+    _make_raw_db(db, symbols=5)
+    status_path = tmp_path / "status.json"
+    report_path = tmp_path / "report.md"
+    gate_path = tmp_path / "gate.json"
+    log_path = tmp_path / "prod.log"
+    cache_path = tmp_path / "cache.db"
+
+    seen: dict[str, str] = {}
+
+    def fake_run(command, *, check, env, cwd, timeout):
+        seen["prefiltered"] = env.get("AQSP_SQLITE_PREFILTERED_SYMBOLS", "")
+        seen["db"] = env.get("AQSP_SQLITE_DB_PATH", "")
+        gate_path.write_text(
+            json.dumps(
+                {
+                    "run_date": "2026-06-27",
+                    "deflated_sharpe": 1.1,
+                    "pbo": 0.2,
+                    "pbo_valid": True,
+                    "dsr_pass": True,
+                    "pbo_pass": True,
+                    "both_pass": True,
+                    "n_periods": 10,
+                    "effective_symbols": 5,
+                }
+            ),
+            encoding="utf-8",
+        )
+        return type("Result", (), {"returncode": 0})()
+
+    monkeypatch.setattr(gate_mod.subprocess, "run", fake_run)
+
+    code = gate_mod.main.__wrapped__ if hasattr(gate_mod.main, "__wrapped__") else None
+    assert code is None
+
+    argv = [
+        "scripts/run_production_walkforward_gate.py",
+        "--db",
+        str(db),
+        "--start",
+        "2024-01-01",
+        "--end",
+        "2024-01-30",
+        "--min-symbols",
+        "5",
+        "--report",
+        str(report_path),
+        "--gate-path",
+        str(gate_path),
+        "--log",
+        str(log_path),
+        "--cache-path",
+        str(cache_path),
+        "--status-path",
+        str(status_path),
+        "--timeout-seconds",
+        "30",
+    ]
+    monkeypatch.setattr("sys.argv", argv)
+
+    assert gate_mod.main() == 0
+    assert seen["prefiltered"] == "1"
+    assert seen["db"] == str(db)
+
+
 def test_annotate_production_gate_metadata_preserves_gate_result(
     tmp_path: Path,
 ) -> None:
