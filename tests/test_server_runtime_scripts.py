@@ -430,3 +430,15 @@ def test_launchd_daily_wrapper_explicitly_opts_into_legacy_entry() -> None:
     ).read_text(encoding="utf-8")
 
     assert 'export AQSP_ALLOW_LEGACY_ENTRY="${AQSP_ALLOW_LEGACY_ENTRY:-1}"' in script
+
+
+def test_launchd_strategy_wrappers_set_explicit_task_ids() -> None:
+    morning = (
+        PROJECT_ROOT / "scripts" / "launchd" / "aqsp_morning_wrapper.sh"
+    ).read_text(encoding="utf-8")
+    closing = (
+        PROJECT_ROOT / "scripts" / "launchd" / "aqsp_closing_wrapper.sh"
+    ).read_text(encoding="utf-8")
+
+    assert 'export AQSP_RUN_TASK_ID="morning"' in morning
+    assert 'export AQSP_RUN_TASK_ID="closing"' in closing

@@ -59,6 +59,7 @@ log "Python: ${PYTHON_BIN} ($("${PYTHON_BIN}" --version 2>&1))"
 
 export PYTHONPATH="${PROJECT_ROOT}/src:${PROJECT_ROOT}:${PYTHONPATH:-}"
 export AQSP_MODE="closing"
+export AQSP_RUN_TASK_ID="closing"
 
 # ============================ 执行 ============================
 
