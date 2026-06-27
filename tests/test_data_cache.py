@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from datetime import date
+import sqlite3
 import pandas as pd
 import pytest
 
 from aqsp.core.errors import DataError
+from aqsp.core.time import now_shanghai
 from aqsp.data.adjust import AdjustmentService
 from aqsp.data.cache import DataCache
 
@@ -79,6 +81,76 @@ def test_cache_get_empty_when_not_cached(tmp_path):
     start = date(2026, 5, 27)
     end = date(2026, 5, 28)
     result = cache.get_ohlcv("600000", start, end)
+    assert result is None
+
+
+def test_cache_allows_stale_historical_ohlcv_for_old_ranges(tmp_path) -> None:
+    cache = DataCache(db_path=tmp_path / "test_cache.db")
+    df = pd.DataFrame(
+        {
+            "date": ["2024-01-02", "2024-01-03"],
+            "open": [10.0, 10.1],
+            "high": [10.5, 10.6],
+            "low": [9.9, 10.0],
+            "close": [10.2, 10.3],
+            "volume": [1000, 2000],
+            "amount": [10000, 20000],
+            "suspended": [0, 0],
+            "limit_up": [0.0, 0.0],
+            "limit_down": [0.0, 0.0],
+            "adj_factor": [1.0, 1.0],
+        }
+    )
+    cache.set_ohlcv("600000", df, source="test")
+
+    stale_cutoff = (now_shanghai() - pd.Timedelta(hours=72)).isoformat()
+    with sqlite3.connect(cache.db_path) as conn:
+        conn.execute("UPDATE ohlcv SET fetched_at = ?", (stale_cutoff,))
+        conn.commit()
+
+    result = cache.get_ohlcv(
+        "600000",
+        date(2024, 1, 2),
+        date(2024, 1, 3),
+        max_age_hours=1,
+    )
+
+    assert result is not None
+    assert len(result) == 2
+
+
+def test_cache_rejects_stale_recent_ohlcv(tmp_path) -> None:
+    cache = DataCache(db_path=tmp_path / "test_cache.db")
+    recent_day = now_shanghai().date() - pd.Timedelta(days=1)
+    df = pd.DataFrame(
+        {
+            "date": [recent_day.isoformat()],
+            "open": [10.0],
+            "high": [10.5],
+            "low": [9.9],
+            "close": [10.2],
+            "volume": [1000],
+            "amount": [10000],
+            "suspended": [0],
+            "limit_up": [0.0],
+            "limit_down": [0.0],
+            "adj_factor": [1.0],
+        }
+    )
+    cache.set_ohlcv("600000", df, source="test")
+
+    stale_cutoff = (now_shanghai() - pd.Timedelta(hours=72)).isoformat()
+    with sqlite3.connect(cache.db_path) as conn:
+        conn.execute("UPDATE ohlcv SET fetched_at = ?", (stale_cutoff,))
+        conn.commit()
+
+    result = cache.get_ohlcv(
+        "600000",
+        recent_day,
+        recent_day,
+        max_age_hours=1,
+    )
+
     assert result is None
 
 

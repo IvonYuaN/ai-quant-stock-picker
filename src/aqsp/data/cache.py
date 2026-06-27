@@ -10,6 +10,7 @@ import pandas as pd
 from aqsp.core.time import now_shanghai
 
 _SQLITE_TIMEOUT_SECONDS = 30.0
+_STALE_CACHE_RECENCY_DAYS = 7
 
 
 def _has_implausible_amount_scale(df: pd.DataFrame) -> bool:
@@ -44,6 +45,10 @@ def _has_implausible_amount_scale(df: pd.DataFrame) -> bool:
 def _normalize_price_mode(price_mode: str) -> str:
     mode = str(price_mode or "raw").strip().lower()
     return mode if mode in {"raw", "qfq", "hfq"} else "raw"
+
+
+def _requires_freshness_window(end: date) -> bool:
+    return (now_shanghai().date() - end).days <= _STALE_CACHE_RECENCY_DAYS
 
 
 class DataCache:
@@ -237,10 +242,11 @@ class DataCache:
         if df.empty:
             return None
 
-        cutoff = (now_shanghai() - pd.Timedelta(hours=max_age_hours)).isoformat()
-        stale = df[df["fetched_at"] < cutoff]
-        if not stale.empty:
-            return None
+        if _requires_freshness_window(end):
+            cutoff = (now_shanghai() - pd.Timedelta(hours=max_age_hours)).isoformat()
+            stale = df[df["fetched_at"] < cutoff]
+            if not stale.empty:
+                return None
 
         # 缓存完整性校验：仅当缓存覆盖了请求区间的两端才算命中。
         # 否则（例如上次只缓存了区间的一半）会把残缺数据当完整返回，
@@ -343,10 +349,11 @@ class DataCache:
         if df.empty:
             return None
 
-        cutoff = (now_shanghai() - pd.Timedelta(hours=max_age_hours)).isoformat()
-        stale = df[df["fetched_at"] < cutoff]
-        if not stale.empty:
-            return None
+        if _requires_freshness_window(end):
+            cutoff = (now_shanghai() - pd.Timedelta(hours=max_age_hours)).isoformat()
+            stale = df[df["fetched_at"] < cutoff]
+            if not stale.empty:
+                return None
 
         # 缓存完整性校验（同 get_ohlcv）：缓存须覆盖请求区间两端，
         # 否则残缺指数数据会被当完整返回。7 天容差吸收节假日/停牌。
