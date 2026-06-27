@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import hashlib
 import json
 import re
 import sqlite3
@@ -20,11 +21,11 @@ if __package__ in {None, ""}:
 
 from aqsp.core.time import SHANGHAI_TZ, get_previous_trading_day, today_shanghai
 from aqsp.ledger.runtime import (
-    REAL_SIGNAL_STATUSES,
     collect_simulated_signal_dates,
     count_independent_signal_days,
     count_paper_tracking_days,
     ledger_signal_date,
+    latest_independent_signal_day,
 )
 from aqsp.utils.env import read_env_value
 from aqsp.walkforward_gate import (
@@ -267,12 +268,14 @@ def check_before_live(
         _check_scheduler_notify_cadence(root, cron_path=cron_path, cron_dir=cron_dir)
     )
     findings.append(_check_system_cron_install_guard(root))
+    findings.append(_check_launchd_wrapper_drift(root))
     findings.append(_check_cli_subcommand_notify_dedupe(root))
     findings.append(_check_news_catalysts_failed_notify_guard(root))
     findings.append(_check_run_scheduled_env_notify_guard(root))
     findings.append(_check_monitor_warning_notify_guard(root))
     findings.append(_check_monitor_wrapper_critical_only_default(root))
     findings.append(_check_pipeline_gate_block_summary_notify(root))
+    findings.append(_check_git_sync_health(root))
     findings.append(_check_cli_data_source_boundary(root))
     findings.append(_check_data_source_fail_closed_contract(root))
     findings.append(_check_walkforward_service_boundary(root))
@@ -309,6 +312,12 @@ def _check_walkforward_gate(path: Path, today: date) -> ReadinessFinding:
         status = str(status_payload.get("status") or "").strip()
         updated_at = str(status_payload.get("updated_at") or "").strip()
         child_exit = status_payload.get("child_exit_code")
+        if status == "running":
+            return ReadinessFinding(
+                "walkforward_gate",
+                False,
+                f"production walkforward running; refreshed gate evidence pending ({updated_at or '-'})",
+            )
         extra = ", ".join(
             part
             for part in (
@@ -388,7 +397,20 @@ def _check_walkforward_market_coverage(
     gate = _read_json(gate_path)
     if not gate:
         return ReadinessFinding("walkforward_market_coverage", False, "gate missing")
-    validation = validate_walkforward_market_coverage(gate)
+    status_path = gate_path.with_name("walkforward_production_status.json")
+    status_payload = _read_json(status_path)
+    coverage_payload = gate
+    if status_payload:
+        status_coverage = status_payload.get("coverage")
+        covered = None
+        if isinstance(status_coverage, dict):
+            covered = status_coverage.get("covered_symbols")
+        if isinstance(covered, int) and not isinstance(covered, bool):
+            coverage_payload = {
+                **gate,
+                "effective_symbols": covered,
+            }
+    validation = validate_walkforward_market_coverage(coverage_payload)
     if validation.effective_symbols is None:
         return ReadinessFinding(
             "walkforward_market_coverage",
@@ -1030,29 +1052,7 @@ def _check_signal_sample_size(path: Path) -> ReadinessFinding:
     simulated_count = len(collect_simulated_signal_dates(str(path)))
     detail = f"{count}/{MIN_INDEPENDENT_SIGNAL_DAYS} real independent signal days"
     rows = _read_jsonl(path)
-    real_signal_days = sorted(
-        {
-            ledger_signal_date(row)
-            for row in rows
-            if ledger_signal_date(row)
-            and str(row.get("symbol") or "").strip() != "__RUN__"
-            and not bool(row.get("is_simulated"))
-            and (
-                not str(row.get("status") or "").strip()
-                or str(row.get("status") or "").strip() in REAL_SIGNAL_STATUSES
-            )
-            and any(
-                row.get(key) not in (None, "")
-                for key in (
-                    "thresholds_version",
-                    "status",
-                    "rating",
-                    "score",
-                    "strategies",
-                )
-            )
-        }
-    )
+    latest_real_signal_day = latest_independent_signal_day(str(path))
     blocked_runtime_days = sorted(
         {
             ledger_signal_date(row)
@@ -1062,8 +1062,8 @@ def _check_signal_sample_size(path: Path) -> ReadinessFinding:
             and str(row.get("status") or "").strip() == "blocked_by_circuit_breaker"
         }
     )
-    if real_signal_days:
-        detail += f"; latest real signal day={real_signal_days[-1]}"
+    if latest_real_signal_day:
+        detail += f"; latest real signal day={latest_real_signal_day}"
     if blocked_runtime_days:
         detail += f"; blocked runtime days={len(blocked_runtime_days)}"
     if simulated_count > 0:
@@ -1395,6 +1395,13 @@ def _check_scheduler_notify_cadence(
         )
         if wrapper_schedule_blocker:
             blockers.append(wrapper_schedule_blocker)
+        legacy_frequency_blocker = _cron_wrapper_legacy_frequency_blocker(
+            label=label,
+            text=text,
+            cron_schedule_map=cron_schedule_map,
+        )
+        if legacy_frequency_blocker:
+            blockers.append(legacy_frequency_blocker)
 
     return ReadinessFinding(
         "scheduler_notify_cadence",
@@ -1425,6 +1432,40 @@ def _check_system_cron_install_guard(root: Path) -> ReadinessFinding:
         "ok"
         if ok
         else "system cron installer must default to no-op so production does not double-run with BT Panel",
+    )
+
+
+def _check_launchd_wrapper_drift(root: Path) -> ReadinessFinding:
+    wrapper = Path.home() / ".aqsp/aqsp_daily_run_wrapper.sh"
+    repo_wrapper = root / "scripts" / "launchd" / "aqsp_daily_run_wrapper.sh"
+    if not wrapper.exists():
+        return ReadinessFinding(
+            "launchd_wrapper_drift",
+            True,
+            "local launchd wrapper missing; skipped",
+        )
+    if not repo_wrapper.exists():
+        return ReadinessFinding(
+            "launchd_wrapper_drift",
+            True,
+            "repo launchd wrapper missing; skipped",
+        )
+    current = wrapper.read_text(encoding="utf-8", errors="ignore")
+    expected = repo_wrapper.read_text(encoding="utf-8", errors="ignore")
+    if current == expected:
+        return ReadinessFinding("launchd_wrapper_drift", True, "ok")
+    current_hash = hashlib.sha256(current.encode("utf-8")).hexdigest()[:12]
+    expected_hash = hashlib.sha256(expected.encode("utf-8")).hexdigest()[:12]
+    markers = [
+        token
+        for token in ("aqsp paper", "aqsp dashboard", "周末跳过")
+        if token in current
+    ]
+    suffix = f" markers={','.join(markers)}" if markers else ""
+    return ReadinessFinding(
+        "launchd_wrapper_drift",
+        False,
+        f"~/.aqsp/aqsp_daily_run_wrapper.sh drifted current={current_hash} expected={expected_hash}{suffix}",
     )
 
 
@@ -1538,6 +1579,35 @@ def _cron_wrapper_schedule_blocker(
         f"{label}: unexpected wrapper cadence for {action} "
         f'(cron="{preview}")'
     )
+
+
+def _cron_wrapper_legacy_frequency_blocker(
+    *,
+    label: str,
+    text: str,
+    cron_schedule_map: dict[str, list[str]],
+) -> str:
+    wrapper_name = Path(label).name
+    schedules = cron_schedule_map.get(wrapper_name, [])
+    if not schedules:
+        return ""
+    action = _cron_wrapper_action(text)
+    if action != "news":
+        return ""
+    if _wrapper_time_gate_matches_action(text=text, action=action):
+        return ""
+    for schedule in schedules:
+        fields = schedule.split()
+        if len(fields) != 5:
+            continue
+        minute, hour, _dom, _month, weekday = fields
+        weekday_normalized = weekday.replace("7", "0")
+        if minute == "*/5" and hour == "*" and weekday_normalized == "*":
+            return (
+                f"{label}: legacy all-day */5 cadence for news "
+                f'(cron="{schedule}")'
+            )
+    return ""
 
 
 def _cron_wrapper_action(text: str) -> str:
@@ -1827,6 +1897,66 @@ def _check_monitor_wrapper_critical_only_default(root: Path) -> ReadinessFinding
         if ok
         else "server monitor must default to critical-only notifications; warning pushes require AQSP_MONITOR_NOTIFY_WARNINGS=true",
     )
+
+
+def _check_git_sync_health(root: Path) -> ReadinessFinding:
+    git_dir = root / ".git"
+    if not git_dir.exists():
+        return ReadinessFinding(
+            "git_sync_health",
+            True,
+            "git metadata unavailable; skipped",
+        )
+    try:
+        branch_result = subprocess.run(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            cwd=root,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
+        branch = branch_result.stdout.strip() if branch_result.returncode == 0 else ""
+        sync_result = subprocess.run(
+            ["git", "rev-list", "--left-right", "--count", "origin/main...HEAD"],
+            cwd=root,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ReadinessFinding(
+            "git_sync_health",
+            True,
+            "git sync probe unavailable; skipped",
+        )
+    if sync_result.returncode != 0:
+        return ReadinessFinding(
+            "git_sync_health",
+            True,
+            "origin/main sync probe unavailable; skipped",
+        )
+    parts = sync_result.stdout.strip().split()
+    if len(parts) != 2:
+        return ReadinessFinding(
+            "git_sync_health",
+            True,
+            "origin/main sync probe malformed; skipped",
+        )
+    try:
+        behind, ahead = (int(parts[0]), int(parts[1]))
+    except ValueError:
+        return ReadinessFinding(
+            "git_sync_health",
+            True,
+            "origin/main sync probe malformed; skipped",
+        )
+    ok = behind == 0
+    detail = f"branch={branch or '-'} behind={behind} ahead={ahead}"
+    if not ok:
+        detail += "; fast-forward sync blocked"
+    return ReadinessFinding("git_sync_health", ok, detail)
 
 
 def _check_pipeline_gate_block_summary_notify(root: Path) -> ReadinessFinding:

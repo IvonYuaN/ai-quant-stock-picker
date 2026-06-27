@@ -4769,6 +4769,17 @@ def run_monitor(args: argparse.Namespace) -> int:
 
     checker = MonitorChecker(config_path=args.config)
     results = checker.check_all()
+    suppress_console_alert = bool(
+        getattr(args, "suppress_console_alert", False)
+        or (
+            str(os.getenv("AQSP_RUN_TASK_ID", "")).strip().lower() == "monitor"
+            and not args.dry_run
+        )
+        or str(os.getenv("AQSP_MONITOR_SUPPRESS_CONSOLE_ALERT", "false"))
+        .strip()
+        .lower()
+        in {"1", "true", "yes", "on"}
+    )
 
     triggered = [r for r in results if r.triggered]
     if not triggered:
@@ -4807,7 +4818,7 @@ def run_monitor(args: argparse.Namespace) -> int:
     if (
         not printed_alert
         and (args.dry_run or not args.notify)
-        and not getattr(args, "suppress_console_alert", False)
+        and not suppress_console_alert
     ):
         print(format_alert(triggered))
 

@@ -601,6 +601,62 @@ def test_check_before_live_blocks_when_gate_and_report_symbol_counts_diverge(
     assert "gate=3200" in finding.detail
 
 
+def test_check_before_live_prefers_production_status_coverage_over_stale_gate(
+    tmp_path: Path,
+) -> None:
+    _prepare_ready_runtime(tmp_path)
+    (tmp_path / "reports" / "walkforward-grid-raw-production-latest.md").write_text(
+        "**标的数量**: 3200\n",
+        encoding="utf-8",
+    )
+    _write_json(
+        tmp_path / "data" / "walkforward_production_status.json",
+        {
+            "status": "blocked_coverage",
+            "updated_at": "2026-06-14T18:10:00+08:00",
+            "coverage": {
+                "covered_symbols": 1286,
+            },
+        },
+    )
+
+    findings = check_before_live(root=tmp_path, today=date(2026, 6, 14))
+    finding = next(
+        item for item in findings if item.gate == "walkforward_market_coverage"
+    )
+
+    assert finding.ok is False
+    assert "1286/3000 effective symbols" in finding.detail
+
+
+def test_check_before_live_blocks_drifted_launchd_wrapper(tmp_path: Path) -> None:
+    _prepare_ready_runtime(tmp_path)
+    repo_wrapper_dir = tmp_path / "scripts" / "launchd"
+    repo_wrapper_dir.mkdir(parents=True, exist_ok=True)
+    (repo_wrapper_dir / "aqsp_daily_run_wrapper.sh").write_text(
+        "#!/usr/bin/env bash\nexec repo\n",
+        encoding="utf-8",
+    )
+    fake_home = tmp_path / "fake-home"
+    wrapper_dir = fake_home / ".aqsp"
+    wrapper_dir.mkdir(parents=True, exist_ok=True)
+    (wrapper_dir / "aqsp_daily_run_wrapper.sh").write_text(
+        "#!/usr/bin/env bash\n# aqsp paper\n# 周末跳过\n",
+        encoding="utf-8",
+    )
+
+    original_home = Path.home
+    try:
+        Path.home = lambda: fake_home  # type: ignore[method-assign]
+        findings = check_before_live(root=tmp_path, today=date(2026, 6, 14))
+    finally:
+        Path.home = original_home  # type: ignore[method-assign]
+
+    finding = next(item for item in findings if item.gate == "launchd_wrapper_drift")
+    assert finding.ok is False
+    assert "drifted" in finding.detail
+
+
 def test_check_before_live_reads_only_formal_production_report_for_symbol_count(
     tmp_path: Path,
 ) -> None:
@@ -2195,6 +2251,35 @@ def test_check_before_live_blocks_bt_wrapper_with_unexpected_live_cron_cadence(
     assert "unexpected wrapper cadence for news" in finding.detail
 
 
+def test_check_before_live_blocks_legacy_all_day_news_polling(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    _prepare_ready_runtime(tmp_path)
+    cron_dir = tmp_path / "bt-cron"
+    cron_dir.mkdir()
+    wrapper = cron_dir / "aqsp-news"
+    wrapper.write_text(
+        "#!/bin/bash\n"
+        "AQSP_NEWS_ENABLE_LLM_REVIEW=true /bin/bash /opt/aqsp/scripts/bt_task.sh news\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "scripts.check_before_live._load_live_crontab_text",
+        lambda: "*/5 * * * * flock -xn /www/server/cron/aqsp-news.lock -c /www/server/cron/aqsp-news\n",
+    )
+
+    findings = check_before_live(
+        root=tmp_path,
+        today=date(2026, 6, 14),
+        cron_dir=cron_dir,
+    )
+
+    finding = next(item for item in findings if item.gate == "scheduler_notify_cadence")
+    assert finding.ok is False
+    assert "legacy all-day */5 cadence for news" in finding.detail
+
+
 def test_check_before_live_allows_news_wrapper_with_time_gate_even_if_cron_polls(
     tmp_path: Path,
     monkeypatch,
@@ -2335,6 +2420,52 @@ def test_check_before_live_accepts_pbo_diagnostics_when_gate_failed(
     assert finding.ok is True
 
 
+def test_check_before_live_blocks_git_divergence_from_origin(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    _prepare_ready_runtime(tmp_path)
+    (tmp_path / ".git").mkdir()
+
+    def fake_run(cmd: list[str], **kwargs):
+        if cmd[:3] == ["git", "rev-parse", "--abbrev-ref"]:
+            return type("Result", (), {"returncode": 0, "stdout": "main\n"})()
+        if cmd[:4] == ["git", "rev-list", "--left-right", "--count"]:
+            return type("Result", (), {"returncode": 0, "stdout": "4\t1\n"})()
+        raise AssertionError(f"unexpected command: {cmd}")
+
+    monkeypatch.setattr("scripts.check_before_live.subprocess.run", fake_run)
+
+    findings = check_before_live(root=tmp_path, today=date(2026, 6, 14))
+
+    finding = next(item for item in findings if item.gate == "git_sync_health")
+    assert finding.ok is False
+    assert finding.detail == "branch=main behind=4 ahead=1; fast-forward sync blocked"
+
+
+def test_check_before_live_allows_git_ahead_only_state(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    _prepare_ready_runtime(tmp_path)
+    (tmp_path / ".git").mkdir()
+
+    def fake_run(cmd: list[str], **kwargs):
+        if cmd[:3] == ["git", "rev-parse", "--abbrev-ref"]:
+            return type("Result", (), {"returncode": 0, "stdout": "main\n"})()
+        if cmd[:4] == ["git", "rev-list", "--left-right", "--count"]:
+            return type("Result", (), {"returncode": 0, "stdout": "0\t2\n"})()
+        raise AssertionError(f"unexpected command: {cmd}")
+
+    monkeypatch.setattr("scripts.check_before_live.subprocess.run", fake_run)
+
+    findings = check_before_live(root=tmp_path, today=date(2026, 6, 14))
+
+    finding = next(item for item in findings if item.gate == "git_sync_health")
+    assert finding.ok is True
+    assert finding.detail == "branch=main behind=0 ahead=2"
+
+
 def test_check_before_live_accepts_sidecar_grid_diagnostics_when_gate_failed(
     tmp_path: Path,
 ) -> None:
@@ -2453,6 +2584,39 @@ def test_check_before_live_appends_production_status_to_walkforward_block_detail
     assert finding.ok is False
     assert "production_status: status=timeout" in finding.detail
     assert "child_exit_code=124" in finding.detail
+
+
+def test_check_before_live_reports_running_production_walkforward_as_pending(
+    tmp_path: Path,
+) -> None:
+    _prepare_ready_runtime(tmp_path)
+    _write_json(
+        tmp_path / "data" / "walkforward_gate.json",
+        {
+            "run_date": "2026-06-10",
+            "deflated_sharpe": 0.0,
+            "pbo": 0.0,
+            "pbo_valid": False,
+            "dsr_pass": False,
+            "pbo_pass": False,
+            "both_pass": False,
+            "n_periods": 4,
+            "effective_symbols": 3200,
+        },
+    )
+    _write_json(
+        tmp_path / "data" / "walkforward_production_status.json",
+        {
+            "status": "running",
+            "updated_at": "2026-06-14T18:10:00+08:00",
+        },
+    )
+
+    findings = check_before_live(root=tmp_path, today=date(2026, 6, 14))
+
+    finding = next(item for item in findings if item.gate == "walkforward_gate")
+    assert finding.ok is False
+    assert "production walkforward running" in finding.detail
 
 
 def test_check_before_live_blocks_qfq_walkforward_price_mode(
