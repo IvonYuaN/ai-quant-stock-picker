@@ -44,12 +44,11 @@ def build_sqlite_db_source_with(
 
     source_builder = builder or SqliteDbSource
     db_path = db_path_resolver()
-    source_cache = cache if cache is not None else DataCache()
     if db_path:
         if _callable_accepts_keyword(source_builder, "db_path"):
-            return source_builder(db_path=db_path, cache=source_cache)
-        return source_builder(cache=source_cache)
-    return source_builder(cache=source_cache)
+            return source_builder(db_path=db_path, cache=cache)
+        return source_builder(cache=cache)
+    return source_builder(cache=cache)
 
 
 def _callable_accepts_keyword(fn: SourceBuilder, keyword: str) -> bool:
@@ -166,7 +165,6 @@ def _build_with_cache(builder: SourceBuilder, cache: DataCache) -> DataSource:
 
 def _source_builders(overrides: dict[str, SourceBuilder]) -> dict[str, SourceBuilder]:
     from aqsp.data.akshare_source import AkshareSource
-    from aqsp.data.baostock_source import BaostockSource
     from aqsp.data.eastmoney_source import EastmoneySource
     from aqsp.data.efinance_source import EfinanceSource
     from aqsp.data.mootdx_source import MootdxSource
@@ -180,10 +178,15 @@ def _source_builders(overrides: dict[str, SourceBuilder]) -> dict[str, SourceBui
         "eastmoney": EastmoneySource,
         "tencent": TencentSource,
         "mootdx": MootdxSource,
-        "baostock": BaostockSource,
         "efinance": EfinanceSource,
         "tdx_vipdoc": TdxVipdocSource,
     }
+    try:
+        from aqsp.data.baostock_source import BaostockSource
+    except ModuleNotFoundError:
+        pass
+    else:
+        builders["baostock"] = BaostockSource
     for name, builder in overrides.items():
         if builder is not None:
             builders[name] = builder

@@ -10,7 +10,6 @@ import pandas as pd
 
 from aqsp.data.source import DataSource, get_limit_pct
 from aqsp.data.akshare_source import AkshareSource
-from aqsp.data.baostock_source import BaostockSource
 from aqsp.data.eastmoney_source import EastmoneySource
 from aqsp.data.mootdx_source import MootdxSource
 from aqsp.data.sina_source import SinaSource
@@ -18,6 +17,11 @@ from aqsp.data.sqlite_db_source import SqliteDbSource
 from aqsp.data.tencent_source import TencentSource
 from aqsp.data import fetch_with_source
 from aqsp.core.errors import DataError
+
+try:
+    from aqsp.data.baostock_source import BaostockSource
+except ModuleNotFoundError:  # pragma: no cover - depends on optional local package
+    BaostockSource = None
 
 
 def test_datasource_is_abstract():
@@ -190,9 +194,10 @@ def test_http_style_sources_fail_when_one_daily_symbol_returns_empty(
         (EastmoneySource, "_fetch_eastmoney_daily", "eastmoney"),
         (SinaSource, "_fetch_sina_daily", "sina"),
         (TencentSource, "_fetch_tencent_daily", "tencent"),
-        (BaostockSource, "_fetch_daily_single", "baostock"),
         (MootdxSource, "_fetch_mootdx_daily", "mootdx"),
     ]
+    if BaostockSource is not None:
+        cases.append((BaostockSource, "_fetch_daily_single", "baostock"))
     for source_cls, helper_name, source_name in cases:
         source = source_cls.__new__(source_cls)
         source.cache = Cache()
@@ -783,6 +788,42 @@ def test_sqlite_db_source_marks_qfq_database_price_mode(tmp_path: Path) -> None:
     source = SqliteDbSource(db_path=db)
 
     assert source.price_mode() == "qfq"
+
+
+def test_sqlite_db_source_treats_filename_qfq_as_raw_when_raw_columns_present(
+    tmp_path: Path,
+) -> None:
+    db = tmp_path / "astocks_qfq.db"
+    with sqlite3.connect(db) as conn:
+        conn.execute("create table stocks (ts_code text, name text)")
+        conn.execute(
+            """
+            create table daily_qfq (
+                ts_code text,
+                trade_date text,
+                open real,
+                high real,
+                low real,
+                close real,
+                open_qfq real,
+                high_qfq real,
+                low_qfq real,
+                close_qfq real,
+                volume real,
+                amount real
+            )
+            """
+        )
+        conn.execute(
+            """
+            insert into daily_qfq values
+            ('600519.SH', '20260102', 1400, 1410, 1390, 1405, null, null, null, null, 1000, 1405000)
+            """
+        )
+
+    source = SqliteDbSource(db_path=db)
+
+    assert source.price_mode() == "raw"
 
 
 def test_sqlite_db_source_rejects_qfq_database_for_raw_fetch(

@@ -76,3 +76,29 @@ def test_build_sqlite_db_source_with_omits_db_path_when_builder_lacks_keyword(
         sf.build_sqlite_db_source_with(cache=None, builder=legacy_builder) == "legacy"
     )
     assert seen["cache"] is None
+
+
+def test_build_data_source_tdx_vipdoc_does_not_require_baostock_dependency(
+    monkeypatch,
+) -> None:
+    from aqsp.data import source_factory as sf
+    import builtins
+
+    real_import = builtins.__import__
+
+    def guarded_import(name, globals=None, locals=None, fromlist=(), level=0):
+        if name == "aqsp.data.baostock_source":
+            raise ModuleNotFoundError("No module named 'baostock'")
+        return real_import(name, globals, locals, fromlist, level)
+
+    class DummyTdx:
+        name = "tdx_vipdoc"
+
+        def __init__(self, *args, **kwargs):
+            pass
+
+    monkeypatch.setattr(builtins, "__import__", guarded_import)
+
+    source = sf.build_data_source("tdx_vipdoc", overrides={"tdx_vipdoc": DummyTdx})
+
+    assert source.name == "tdx_vipdoc"

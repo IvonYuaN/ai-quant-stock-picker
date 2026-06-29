@@ -11,6 +11,7 @@ Use --force-from-start only for a clean rebuild after taking a database backup.
 from __future__ import annotations
 
 import argparse
+import inspect
 import re
 import signal
 import sqlite3
@@ -134,7 +135,12 @@ def configure_sqlite_connection(conn: sqlite3.Connection) -> None:
     conn.execute("PRAGMA synchronous = NORMAL")
 
 
-def sync_stock_list(conn: sqlite3.Connection, bs: Any) -> list[str]:
+def sync_stock_list(
+    conn: sqlite3.Connection,
+    bs: Any,
+    *,
+    preserve_existing: bool = True,
+) -> list[str]:
     rs = bs.query_stock_basic()
     bs_a_codes: set[str] = set()
     name_map: dict[str, str] = {}
@@ -155,13 +161,39 @@ def sync_stock_list(conn: sqlite3.Connection, bs: Any) -> list[str]:
             "INSERT OR IGNORE INTO stocks(ts_code, name) VALUES(?, ?)",
             (ts_code, name_map.get(ts_code, "")),
         )
-    for ts_code in sorted(existing - bs_a_codes):
-        cur.execute("DELETE FROM stocks WHERE ts_code = ?", (ts_code,))
-        cur.execute("DELETE FROM daily_qfq WHERE ts_code = ?", (ts_code,))
+    if not preserve_existing:
+        for ts_code in sorted(existing - bs_a_codes):
+            cur.execute("DELETE FROM stocks WHERE ts_code = ?", (ts_code,))
+            cur.execute("DELETE FROM daily_qfq WHERE ts_code = ?", (ts_code,))
+    for ts_code, name in sorted(name_map.items()):
+        cur.execute(
+            "UPDATE stocks SET name = ? WHERE ts_code = ?",
+            (name, ts_code),
+        )
     conn.commit()
     return [
         row[0] for row in cur.execute("SELECT ts_code FROM stocks ORDER BY ts_code")
     ]
+
+
+def _sync_stock_list_compat(
+    conn: sqlite3.Connection,
+    bs: Any,
+    *,
+    preserve_existing: bool,
+) -> list[str]:
+    try:
+        signature = inspect.signature(sync_stock_list)
+    except (TypeError, ValueError):
+        signature = None
+    if signature is not None and "preserve_existing" not in signature.parameters:
+        return sync_stock_list(conn, bs)
+    try:
+        return sync_stock_list(conn, bs, preserve_existing=preserve_existing)
+    except TypeError as exc:
+        if "preserve_existing" not in str(exc):
+            raise
+        return sync_stock_list(conn, bs)
 
 
 def _symbol_date_bounds(
@@ -315,7 +347,11 @@ def update_sqlite_daily(
         with sqlite3.connect(db_path) as conn:
             configure_sqlite_connection(conn)
             ensure_schema(conn)
-            all_symbols = sync_stock_list(conn, bs)
+            all_symbols = _sync_stock_list_compat(
+                conn,
+                bs,
+                preserve_existing=True,
+            )
             requested = {_normalize_requested_symbol(item) for item in symbols if item}
             selected_symbols = [
                 ts_code

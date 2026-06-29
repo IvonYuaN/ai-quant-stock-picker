@@ -102,6 +102,37 @@ class SqliteDbSource(DataSource):
         return list(self._load_symbol_map().keys())
 
     def price_mode(self) -> str:
+        columns: set[str] = set()
+        samples: list[tuple[object, ...]] = []
+        try:
+            with sqlite3.connect(self.db_path, timeout=_SQLITE_TIMEOUT_SECONDS) as conn:
+                columns = {
+                    str(row[1]).strip().lower()
+                    for row in conn.execute("PRAGMA table_info(daily_qfq)").fetchall()
+                }
+                if {"open", "high", "low", "close"} <= columns:
+                    samples = conn.execute(
+                        """
+                        SELECT open, high, low, close, open_qfq, high_qfq, low_qfq, close_qfq
+                        FROM daily_qfq
+                        WHERE close IS NOT NULL
+                        LIMIT 50
+                        """
+                    ).fetchall()
+        except sqlite3.Error:
+            columns = set()
+            samples = []
+
+        if {"open", "high", "low", "close"} <= columns:
+            for sample in samples:
+                raw_values = sample[:4]
+                qfq_values = sample[4:]
+                if any(value is not None for value in raw_values):
+                    if not any(value is not None for value in qfq_values):
+                        return "raw"
+                    if tuple(raw_values) != tuple(qfq_values):
+                        return "raw"
+
         name = self.db_path.name.lower()
         if "raw" in name or "unadjust" in name:
             return "raw"

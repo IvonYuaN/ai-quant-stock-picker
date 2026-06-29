@@ -123,7 +123,8 @@ def test_update_sqlite_daily_counts_target_day_coverage(monkeypatch, tmp_path: P
     db = tmp_path / "astocks_raw.db"
     monkeypatch.setattr(update_sqlite_daily, "_load_baostock", FakeBaostock)
 
-    def fake_sync_stock_list(conn, _bs):
+    def fake_sync_stock_list(conn, _bs, preserve_existing=True):
+        del preserve_existing
         update_sqlite_daily.ensure_schema(conn)
         conn.execute(
             "INSERT OR REPLACE INTO stocks(ts_code, name) VALUES(?, ?)",
@@ -159,6 +160,100 @@ def test_update_sqlite_daily_counts_target_day_coverage(monkeypatch, tmp_path: P
     assert summary.updated_rows == 1
     assert summary.target_day_symbol_count == 1
     assert summary.total_symbols == 2
+
+
+def test_sync_stock_list_preserves_existing_historical_symbols_by_default(
+    tmp_path: Path,
+) -> None:
+    class FakeResult:
+        error_code = "0"
+
+        def __init__(self) -> None:
+            self.rows = [["sh.600000", "PF Bank"]]
+            self.index = -1
+
+        def next(self) -> bool:
+            self.index += 1
+            return self.index < len(self.rows)
+
+        def get_row_data(self):
+            return self.rows[self.index]
+
+    class FakeBaostock:
+        def query_stock_basic(self):
+            return FakeResult()
+
+    db = tmp_path / "x.db"
+    with sqlite3.connect(db) as conn:
+        update_sqlite_daily.ensure_schema(conn)
+        conn.execute(
+            "INSERT INTO stocks(ts_code, name) VALUES(?, ?)",
+            ("000001.SZ", "Old Bank"),
+        )
+        conn.execute(
+            """
+            INSERT INTO daily_qfq(
+                ts_code, trade_date, open, high, low, close_qfq, volume, amount, open_qfq, high_qfq, low_qfq, close
+            ) VALUES(?, ?, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1)
+            """,
+            ("000001.SZ", "20180102"),
+        )
+        symbols = update_sqlite_daily.sync_stock_list(
+            conn, FakeBaostock(), preserve_existing=True
+        )
+        stocks = conn.execute("SELECT ts_code FROM stocks ORDER BY ts_code").fetchall()
+        rows = conn.execute("SELECT COUNT(*) FROM daily_qfq WHERE ts_code='000001.SZ'").fetchone()[0]
+
+    assert symbols == ["000001.SZ", "600000.SH"]
+    assert stocks == [("000001.SZ",), ("600000.SH",)]
+    assert rows == 1
+
+
+def test_sync_stock_list_can_drop_missing_symbols_when_explicitly_disabled(
+    tmp_path: Path,
+) -> None:
+    class FakeResult:
+        error_code = "0"
+
+        def __init__(self) -> None:
+            self.rows = [["sh.600000", "PF Bank"]]
+            self.index = -1
+
+        def next(self) -> bool:
+            self.index += 1
+            return self.index < len(self.rows)
+
+        def get_row_data(self):
+            return self.rows[self.index]
+
+    class FakeBaostock:
+        def query_stock_basic(self):
+            return FakeResult()
+
+    db = tmp_path / "x.db"
+    with sqlite3.connect(db) as conn:
+        update_sqlite_daily.ensure_schema(conn)
+        conn.execute(
+            "INSERT INTO stocks(ts_code, name) VALUES(?, ?)",
+            ("000001.SZ", "Old Bank"),
+        )
+        conn.execute(
+            """
+            INSERT INTO daily_qfq(
+                ts_code, trade_date, open, high, low, close_qfq, volume, amount, open_qfq, high_qfq, low_qfq, close
+            ) VALUES(?, ?, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1)
+            """,
+            ("000001.SZ", "20180102"),
+        )
+        symbols = update_sqlite_daily.sync_stock_list(
+            conn, FakeBaostock(), preserve_existing=False
+        )
+        stocks = conn.execute("SELECT ts_code FROM stocks ORDER BY ts_code").fetchall()
+        rows = conn.execute("SELECT COUNT(*) FROM daily_qfq WHERE ts_code='000001.SZ'").fetchone()[0]
+
+    assert symbols == ["600000.SH"]
+    assert stocks == [("600000.SH",)]
+    assert rows == 0
 
 
 def test_update_sqlite_daily_configures_wal_and_busy_timeout(tmp_path: Path) -> None:
