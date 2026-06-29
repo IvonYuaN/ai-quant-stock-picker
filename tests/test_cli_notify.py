@@ -546,7 +546,9 @@ def test_run_scheduled_notify_prepends_source_status_banner(
     assert exit_code == 0
     assert seen
     assert seen[0].startswith("# 收盘研究日报-")
-    assert seen[0].index("## 数据") < seen[0].index("## 结论")
+    assert "## 数据" in seen[0]
+    assert "## 结果" in seen[0]
+    assert seen[0].index("## 数据") < seen[0].index("## 结果")
     assert "auto -> eastmoney" in seen[0]
     assert "- 健康: fallback" in seen[0]
     assert "## 🧭" not in seen[0]
@@ -723,6 +725,7 @@ def test_run_scheduled_sends_gate_block_alert_when_notify_is_disabled_by_gate(
     import aqsp.cli as cli_mod
 
     monkeypatch.setenv("AQSP_RUN_TASK_ID", "daily")
+    monkeypatch.setenv("AQSP_GATE_NOTIFY", "true")
     monkeypatch.setenv(
         "AQSP_GATE_NOTIFY_STATE_PATH", str(tmp_path / "gate_notify_state.json")
     )
@@ -868,7 +871,7 @@ def test_run_scheduled_sends_gate_block_alert_when_notify_is_disabled_by_gate(
     assert seen[0].startswith(f"# 通知未放行-{latest}")
     assert "本次正常通知未放行" in seen[0]
     assert "冷启动未满 30 天" in seen[0]
-    assert "继续按日运行主链" in seen[0]
+    assert "## 阻塞" in seen[0]
     report_text = (tmp_path / "latest.md").read_text(encoding="utf-8")
     assert "未通过 walk-forward 双门验证" in report_text
 
@@ -879,6 +882,7 @@ def test_run_scheduled_uses_env_notify_when_cli_notify_is_false(
     import aqsp.cli as cli_mod
 
     monkeypatch.setenv("AQSP_NOTIFY", "true")
+    monkeypatch.setenv("AQSP_GATE_NOTIFY", "true")
     monkeypatch.setenv("AQSP_RUN_TASK_ID", "daily")
     monkeypatch.setenv(
         "AQSP_GATE_NOTIFY_STATE_PATH", str(tmp_path / "gate_notify_state.json")
@@ -1739,6 +1743,8 @@ def test_run_scheduled_gate_block_adds_actionable_unlock_guidance(
 ) -> None:
     import aqsp.cli as cli_mod
 
+    monkeypatch.setenv("AQSP_RUN_TASK_ID", "daily")
+
     latest = today_shanghai().isoformat()
     frames = {
         "600519": pd.DataFrame(
@@ -1887,9 +1893,9 @@ def test_run_scheduled_gate_block_adds_actionable_unlock_guidance(
     report = (tmp_path / "latest.md").read_text(encoding="utf-8")
 
     assert exit_code == 0
-    assert "处理项：" in report
-    assert "刷新 gate" in report
+    assert "未通过 walk-forward 双门验证" in report
     assert "当前还差 27 天" in report
+    assert "walkforward" in report
     assert "。；" not in report
 
 
@@ -2418,11 +2424,9 @@ def test_run_scheduled_surfaces_t1_blockers_in_report_and_notification(
     assert "T+1 持仓约束：昨日已买标的今日不纳入纸面复核名单" in report
     assert "贵州茅台: T+1 持仓约束，昨日已买，今日仅保留观察" in report
     assert "T+1 限制：昨日已买 1 只（600519）仅保留观察" in report
-    assert "- 继续观察名单: 300750 宁德时代、600519 贵州茅台" in seen[0]
-    assert (
-        "- 现在卡在哪: 600519 贵州茅台: T+1 持仓约束，昨日已买，今日仅保留观察"
-        in seen[0]
-    )
+    assert "300750 宁德时代" in seen[0]
+    assert "600519 贵州茅台" in seen[0]
+    assert "T+1 持仓约束，昨日已买，今日仅保留观察" in seen[0]
     assert "## 🔒" not in seen[0]
 
 
@@ -2645,10 +2649,10 @@ def test_run_scheduled_surfaces_snapshot_lifecycle_in_summary_and_notification(
     assert "🆕 **新晋候选**: 688981 中芯国际" in report
     assert "归档移出记录: 600036 招商银行" in report
     assert "排名记录变化: 300750 #4→#5↓" in report
-    assert "- 候选变化: 新增 1 / 移出 1 / 排名异动 1" in seen[0]
+    assert "- 变化: 新增 1 / 移出 1" in seen[0]
     assert "## 变化" in seen[0]
     assert "- 新晋候选: 688981 中芯国际" in seen[0]
-    assert "## 📈" not in seen[0]
+    assert "排名记录变化: 300750 #4→#5↓" in seen[0]
 
 
 def test_main_accepts_run_scheduled_alias(monkeypatch) -> None:
@@ -2928,9 +2932,12 @@ def test_run_scheduled_annotates_candidate_status_in_report_and_notify(
         in seen[0]
     )
     assert (
-        "先盯 688981 中芯国际，等待量价继续走强后，再评估是否转入纸面复核名单（高优先级 / 盘中走强后）。"
-        in seen[0]
+        "- 暂无纸面复核主线，先盯继续观察名单：" in seen[0]
     )
+    assert (
+        "- 688981 中芯国际" in seen[0]
+    )
+    assert "复核: 高优先级 / 盘中走强后" in seen[0]
     assert "- 2. 000001 平安银行 | 继续观察 | -18 | 继续观察: 估值防守" in seen[0]
     assert "## 📋" not in seen[0]
     assert (
@@ -3046,3 +3053,170 @@ def test_run_scheduled_skips_gate_for_intraday_task(
     output = capsys.readouterr().out
     assert "高频任务跳过双门检查: task_id=intraday" in output
     assert "冷启动统计: ledger=" in output
+
+
+def test_run_scheduled_intraday_uses_formal_ledger_for_runtime_stats_and_compact_report(
+    monkeypatch, tmp_path: Path
+) -> None:
+    import aqsp.cli as cli_mod
+
+    latest = today_shanghai().isoformat()
+    frames = {
+        "600519": pd.DataFrame(
+            [
+                {
+                    "date": latest,
+                    "symbol": "600519",
+                    "name": "贵州茅台",
+                    "open": 1500.0,
+                    "high": 1510.0,
+                    "low": 1490.0,
+                    "close": 1505.0,
+                    "volume": 1000,
+                    "amount": 150500000.0,
+                    "suspended": False,
+                    "limit_up": 1655.5,
+                    "limit_down": 1354.5,
+                }
+            ]
+        )
+    }
+    formal_ledger = tmp_path / "predictions.jsonl"
+    intraday_ledger = tmp_path / "intraday.jsonl"
+    seen: dict[str, object] = {}
+
+    monkeypatch.setenv("AQSP_RUN_TASK_ID", "intraday")
+    monkeypatch.setenv("AQSP_LEDGER", str(formal_ledger))
+    monkeypatch.setattr(
+        cli_mod,
+        "_fetch_frames_for_cli_with_metadata",
+        lambda *args, **kwargs: (frames, "eastmoney"),
+    )
+    monkeypatch.setattr(
+        cli_mod, "_resolve_run_symbols", lambda *args, **kwargs: ["600519"]
+    )
+    monkeypatch.setattr(
+        cli_mod,
+        "_check_notification_gate",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            AssertionError("gate should be skipped")
+        ),
+    )
+
+    class Validation:
+        checked = 12
+        wins = 8
+        avg_return_pct = 1.2
+        avg_excess_pct = 0.6
+        skipped_not_executable = 0
+        not_executable_reasons = {}
+        strategy_not_executable_rates = {}
+
+    monkeypatch.setattr(
+        cli_mod,
+        "validate_predictions",
+        lambda ledger_path, *_args, **_kwargs: (
+            seen.__setitem__("validation_ledger", ledger_path) or Validation()
+        ),
+    )
+    monkeypatch.setattr(
+        cli_mod,
+        "_compute_real_pnl",
+        lambda ledger_path, *_args, **_kwargs: (
+            seen.__setitem__("pnl_ledger", ledger_path) or (0.0, 0.0, 0.0)
+        ),
+    )
+    monkeypatch.setattr(
+        cli_mod,
+        "_count_independent_signal_days",
+        lambda ledger_path: seen.__setitem__("cold_start_ledger", ledger_path) or 34,
+    )
+    monkeypatch.setattr(cli_mod, "_detect_runtime_regime", lambda *_args, **_kwargs: "stable_bull")
+    monkeypatch.setattr("aqsp.data.anomaly.detect_anomalies", lambda _frames: [])
+    monkeypatch.setattr("aqsp.data.freshness.check_freshness", lambda _frames: [])
+    monkeypatch.setattr(
+        "aqsp.portfolio.sector_check.check_sector_concentration",
+        lambda _symbols: MagicMock(warnings=(), sectors=(), is_concentrated=False),
+    )
+    monkeypatch.setattr(
+        "aqsp.portfolio.correlation.compute_correlation",
+        lambda *_args, **_kwargs: MagicMock(high_corr_pairs=(), matrix={}),
+    )
+    monkeypatch.setattr(
+        "aqsp.portfolio.manager.apply_portfolio_manager",
+        lambda picks, **_kwargs: type(
+            "B", (), {"picks": picks, "decisions": (), "summary": None}
+        )(),
+    )
+    monkeypatch.setattr(
+        cli_mod,
+        "LethalFilterPipeline",
+        lambda: type("P", (), {"run": lambda self, *_args, **_kwargs: (True, "")})(),
+    )
+    monkeypatch.setattr(
+        "aqsp.universe.t1_filter.filter_t1_held",
+        lambda candidates, **_kwargs: (candidates, []),
+    )
+    monkeypatch.setattr(
+        cli_mod,
+        "screen_universe",
+        lambda *_args, **_kwargs: [
+            PickResult(
+                symbol="600519",
+                name="贵州茅台",
+                date=latest,
+                close=1505.0,
+                score=88.0,
+                rating="buy_candidate",
+                entry_type="watch",
+                ideal_buy=1500.0,
+                stop_loss=1450.0,
+                take_profit=1580.0,
+                position="watch",
+            )
+        ],
+    )
+    monkeypatch.setattr(cli_mod, "append_predictions", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(cli_mod, "append_run_event", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(cli_mod, "notify_markdown", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(
+        "aqsp.portfolio.snapshot.save_snapshot",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        "aqsp.portfolio.snapshot.compare_snapshots",
+        lambda *_args, **_kwargs: None,
+    )
+
+    args = Namespace(
+        mode="close",
+        symbols="600519",
+        csv="",
+        source="eastmoney",
+        limit=1,
+        max_universe=1,
+        min_avg_amount=50_000_000,
+        max_data_lag_days=3,
+        enable_online_factors=False,
+        report=str(tmp_path / "latest.md"),
+        output_csv=str(tmp_path / "latest.csv"),
+        ledger=str(intraday_ledger),
+        horizon_days=3,
+        fee_bps=8.0,
+        slippage_bps=5.0,
+        benchmark_symbol="000300",
+        skip_validation=False,
+        notify=False,
+        enable_debate=False,
+        pool="",
+    )
+
+    exit_code = cli_mod.run_scheduled(args)
+
+    assert exit_code == 0
+    assert seen["validation_ledger"] == str(formal_ledger)
+    assert seen["pnl_ledger"] == str(formal_ledger)
+    assert seen["cold_start_ledger"] == str(formal_ledger)
+    report = (tmp_path / "latest.md").read_text(encoding="utf-8")
+    assert "## 策略自检" not in report
+    assert "冷启动期:" not in report

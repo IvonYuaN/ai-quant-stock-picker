@@ -252,6 +252,36 @@ def test_run_scheduled_executability_feedback_applies_runtime_downweights() -> N
     assert "strategy_weight_reasons[strategy_id] = reason" in between
 
 
+def test_formal_runtime_ledger_path_uses_formal_ledger_for_intraday(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import aqsp.cli as cli_mod
+
+    monkeypatch.setenv("AQSP_LEDGER", "data/predictions.jsonl")
+
+    assert (
+        cli_mod._formal_runtime_ledger_path(
+            "data/intraday_predictions.jsonl",
+            task_id="intraday",
+        )
+        == "data/predictions.jsonl"
+    )
+    assert (
+        cli_mod._formal_runtime_ledger_path(
+            "data/midday_predictions.jsonl",
+            task_id="midday",
+        )
+        == "data/predictions.jsonl"
+    )
+    assert (
+        cli_mod._formal_runtime_ledger_path(
+            "data/predictions.jsonl",
+            task_id="daily",
+        )
+        == "data/predictions.jsonl"
+    )
+
+
 def test_run_scheduled_skips_runtime_chain_on_non_trading_day(
     monkeypatch, tmp_path
 ) -> None:
@@ -331,7 +361,7 @@ def test_run_scheduled_validates_ledger_before_circuit_breaker_pnl() -> None:
 
     source = inspect.getsource(cli_mod._run_scheduled_legacy)
 
-    assert source.index("validate_predictions(args.ledger, frames)") < source.index(
+    assert source.index("validate_predictions(formal_ledger_path, frames)") < source.index(
         "_compute_real_pnl("
     )
 

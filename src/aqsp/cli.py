@@ -1691,6 +1691,19 @@ def _count_independent_signal_days(ledger_path: str) -> int:
     return count_independent_signal_days(ledger_path)
 
 
+def _formal_runtime_ledger_path(current_ledger_path: str, *, task_id: str) -> str:
+    normalized_task_id = str(task_id or "").strip().lower()
+    current = str(current_ledger_path or "").strip()
+    if normalized_task_id in {"intraday", "midday"}:
+        env_ledger = str(os.getenv("AQSP_LEDGER", "data/predictions.jsonl") or "").strip()
+        return env_ledger or current
+    return current
+
+
+def _is_high_frequency_task(task_id: str) -> bool:
+    return str(task_id or "").strip().lower() in {"intraday", "midday"}
+
+
 def _ledger_signal_date(row: dict[str, Any]) -> str:
     from aqsp.ledger.runtime import ledger_signal_date
 
@@ -1863,8 +1876,7 @@ def _handle_circuit_breaker_block(
 
 
 def _allow_observation_during_circuit_breaker(task_id: str) -> bool:
-    normalized = str(task_id or "").strip().lower()
-    return normalized in {"intraday", "midday"}
+    return _is_high_frequency_task(task_id)
 
 
 def _execution_cost_bps_from_thresholds(thresholds: Any) -> tuple[float, float]:
@@ -2870,16 +2882,18 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
         actual_source,
     )
 
+    formal_ledger_path = _formal_runtime_ledger_path(args.ledger, task_id=task_id)
+
     validation = None
     if not args.skip_validation:
-        validation = validate_predictions(args.ledger, frames)
+        validation = validate_predictions(formal_ledger_path, frames)
 
     thresholds = load_thresholds()
 
     breaker = _build_circuit_breaker(thresholds)
     paper_ledger_path = os.getenv("AQSP_PAPER_LEDGER", "data/paper_trades.jsonl")
     daily_pnl, weekly_pnl, monthly_pnl = _compute_real_pnl(
-        args.ledger,
+        formal_ledger_path,
         paper_ledger_path,
         frames,
     )
@@ -2889,7 +2903,7 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
         monthly_pnl_pct=monthly_pnl,
     )
 
-    cold_start_days = _count_independent_signal_days(args.ledger)
+    cold_start_days = _count_independent_signal_days(formal_ledger_path)
     cold_start_min_days = _cold_start_min_days()
     is_cold_start = cold_start_days < cold_start_min_days
 
@@ -2952,7 +2966,7 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
         from aqsp.ledger.learner import PerformanceLearner
 
         learner = PerformanceLearner()
-        ledger_df = ledger_rows_to_frame(read_ledger(args.ledger))
+        ledger_df = ledger_rows_to_frame(read_ledger(formal_ledger_path))
         weight_proposals = learner.compute_weights(ledger_df)
     except Exception as exc:
         LOGGER.warning("学习权重提案计算失败，按无提案继续: %s", exc)
@@ -2970,7 +2984,7 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
         from aqsp.ledger.runtime import strategy_executability_weight_adjustments
 
         executability_adjustments, executability_reasons = (
-            strategy_executability_weight_adjustments(args.ledger)
+            strategy_executability_weight_adjustments(formal_ledger_path)
         )
         if executability_adjustments:
             applied_adjustments: list[str] = []
@@ -3390,7 +3404,7 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
 
             from aqsp.ledger.base import read_ledger
 
-            rows = read_ledger(args.ledger)
+            rows = read_ledger(formal_ledger_path)
             for row in rows:
                 if row.get("status") != "validated":
                     continue
@@ -3541,8 +3555,12 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
         "## 📌 执行摘要",
         "",
     ]
+    compact_report = _is_high_frequency_task(normalized_task_id)
     if status.triggered:
-        summary_lines.append(f"🛡️ **组合保护已触发**: {status.reason}，暂停新增纸面复核")
+        if compact_report:
+            summary_lines.append(f"🛡️ 当前处于组合保护: {status.reason}")
+        else:
+            summary_lines.append(f"🛡️ **组合保护已触发**: {status.reason}，暂停新增纸面复核")
     else:
         summary_lines.append(_build_execution_summary_line(tradable, portfolio_summary))
         if has_allocations and len(tradable) > 1:
@@ -3560,7 +3578,7 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
 
             summary_lines.extend(snapshot_diff_highlights(diff, max_items=2))
 
-    if is_cold_start:
+    if is_cold_start and not compact_report:
         summary_lines.append(
             f"⏳ 冷启动期: {cold_start_days}/{cold_start_min_days} 天（策略权重未调整，仅供观察）"
         )
@@ -3582,9 +3600,13 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
         markdown += (
             "\n\n## 组合保护\n"
             f"- ⚠️ 熔断触发: {status.reason}\n"
-            "- 本期信号仅供参考，不建议新建仓位\n"
+            + (
+                "- 当前不新增纸面复核\n"
+                if compact_report
+                else "- 本期信号仅供参考，不建议新建仓位\n"
+            )
         )
-    if validation is not None:
+    if validation is not None and not compact_report:
         validation_text = "\n\n## 策略自检\n"
         if is_cold_start:
             validation_text += f"- ⏳ 冷启动期:已积累 {cold_start_days}/{cold_start_min_days} 个独立信号日\n"
@@ -3639,7 +3661,7 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
 
         decay_detector = StrategyDecayDetector()
         decay_alerts = decay_detector.detect(
-            ledger_rows_to_frame(read_ledger(args.ledger))
+            ledger_rows_to_frame(read_ledger(formal_ledger_path))
         )
         if decay_alerts and not is_cold_start:
             markdown += "\n\n" + format_decay_alerts(decay_alerts)
@@ -3654,7 +3676,7 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
         )
         from aqsp.ledger.base import read_ledger as _read_ledger_for_failure
 
-        _failure_rows = _read_ledger_for_failure(args.ledger)
+        _failure_rows = _read_ledger_for_failure(formal_ledger_path)
         _failure_df = pd.DataFrame(_failure_rows) if _failure_rows else pd.DataFrame()
         failure_patterns = analyze_failures(_failure_df)
         if failure_patterns:
@@ -3673,7 +3695,7 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
     if report_path:
         Path(report_path).parent.mkdir(parents=True, exist_ok=True)
     # 高频任务只产出结果，不进入双门阻塞通知链。
-    skip_gate_for_high_frequency = normalized_task_id in {"intraday", "midday"}
+    skip_gate_for_high_frequency = _is_high_frequency_task(normalized_task_id)
     if skip_gate_for_high_frequency:
         gate_ok = True
         gate_reasons = []
@@ -3703,7 +3725,7 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
         notify_markdown if notify_markdown is not _notify_markdown_default else None
     )
     print(
-        f"冷启动统计: ledger={args.ledger} days={cold_start_days}/{cold_start_min_days}"
+        f"冷启动统计: ledger={formal_ledger_path} days={cold_start_days}/{cold_start_min_days}"
     )
     if skip_gate_for_high_frequency:
         print(f"高频任务跳过双门检查: task_id={normalized_task_id}")
