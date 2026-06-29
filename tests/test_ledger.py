@@ -637,6 +637,40 @@ def test_decay_detector_formats_lookback_days_when_alert_triggered() -> None:
     assert "近30天胜率" in text
 
 
+def test_learner_tolerates_scalar_or_nan_strategies(tmp_path) -> None:
+    rows = pd.DataFrame(
+        [
+            {
+                "status": "validated",
+                "signal_date": "2026-06-01",
+                "return_pct": 2.0,
+                "strategies": "volume_breakout",
+            },
+            {
+                "status": "validated",
+                "signal_date": "2026-06-02",
+                "return_pct": -1.0,
+                "strategies": 1.23,
+            },
+            {
+                "status": "validated",
+                "signal_date": "2026-06-03",
+                "return_pct": 1.0,
+                "strategies": float("nan"),
+            },
+        ]
+    )
+    learner = PerformanceLearner(
+        config=LearnerConfig(min_independent_signal_days=1),
+        weight_history_path=tmp_path / "weight_history.jsonl",
+    )
+
+    result = learner.learn_from_ledger(rows)
+
+    assert "volume_breakout" in result
+    assert "1.23" in result
+
+
 def test_validation_marks_limit_up_at_open_not_executable(tmp_path) -> None:
     """P0-2: 一字涨停信号 status=not_executable,不计入胜率。"""
     ledger = tmp_path / "predictions.jsonl"

@@ -55,9 +55,19 @@ def _explode_strategies(df: pd.DataFrame) -> pd.DataFrame:
         strategies = row.get("strategies") or []
         if isinstance(strategies, str):
             strategies = [strategies]
+        elif isinstance(strategies, float):
+            if pd.isna(strategies):
+                strategies = []
+            else:
+                strategies = [str(strategies)]
+        elif not isinstance(strategies, (list, tuple, set)):
+            strategies = [str(strategies)]
         for strategy in strategies:
+            strategy_text = str(strategy or "").strip()
+            if not strategy_text or strategy_text.lower() == "nan":
+                continue
             new_row = dict(row)
-            new_row["strategy"] = strategy
+            new_row["strategy"] = strategy_text
             records.append(new_row)
     if not records:
         return pd.DataFrame()

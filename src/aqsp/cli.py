@@ -1704,6 +1704,30 @@ def _is_high_frequency_task(task_id: str) -> bool:
     return str(task_id or "").strip().lower() in {"intraday", "midday"}
 
 
+def _trim_high_frequency_markdown(markdown: str) -> str:
+    if not markdown.strip():
+        return markdown
+    keep_sections = {
+        "## 数据与规则",
+        "## 今日重点看板",
+        "## 组合保护",
+        "## 选股变化",
+        "## 板块集中度",
+        "## 候选股相关性",
+    }
+    lines = markdown.splitlines()
+    kept: list[str] = []
+    current_header = ""
+    keep_current = True
+    for line in lines:
+        if line.startswith("## "):
+            current_header = line.strip()
+            keep_current = current_header in keep_sections or current_header == ""
+        if keep_current:
+            kept.append(line)
+    return "\n".join(kept).rstrip() + "\n"
+
+
 def _ledger_signal_date(row: dict[str, Any]) -> str:
     from aqsp.ledger.runtime import ledger_signal_date
 
@@ -3633,11 +3657,11 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
         markdown += validation_text
 
     anomaly_text = format_anomaly_alerts(anomaly_alerts)
-    if critical_alerts or warning_alerts:
+    if (critical_alerts or warning_alerts) and not compact_report:
         markdown += "\n\n" + anomaly_text
 
     freshness_text = format_freshness_report(freshness_reports)
-    if stale_reports:
+    if stale_reports and not compact_report:
         markdown += "\n\n" + freshness_text
 
     if diff is not None and diff.has_changes:
@@ -3663,7 +3687,7 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
         decay_alerts = decay_detector.detect(
             ledger_rows_to_frame(read_ledger(formal_ledger_path))
         )
-        if decay_alerts and not is_cold_start:
+        if decay_alerts and not is_cold_start and not compact_report:
             markdown += "\n\n" + format_decay_alerts(decay_alerts)
             print(format_decay_alerts(decay_alerts))
     except Exception as exc:
@@ -3679,7 +3703,7 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
         _failure_rows = _read_ledger_for_failure(formal_ledger_path)
         _failure_df = pd.DataFrame(_failure_rows) if _failure_rows else pd.DataFrame()
         failure_patterns = analyze_failures(_failure_df)
-        if failure_patterns:
+        if failure_patterns and not compact_report:
             failure_text = format_failure_patterns(failure_patterns)
             markdown += "\n\n" + failure_text
             print("\n⚠️ 发现失败模式:")
@@ -3689,6 +3713,9 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
                 )
     except Exception as exc:
         LOGGER.warning("失败模式分析失败，跳过附加提示: %s", exc)
+
+    if compact_report:
+        markdown = _trim_high_frequency_markdown(markdown)
 
     report_path = str(getattr(args, "report", "") or "").strip()
     output_csv_path = str(getattr(args, "output_csv", "") or "").strip()

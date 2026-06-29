@@ -3220,3 +3220,5 @@ def test_run_scheduled_intraday_uses_formal_ledger_for_runtime_stats_and_compact
     report = (tmp_path / "latest.md").read_text(encoding="utf-8")
     assert "## 策略自检" not in report
     assert "冷启动期:" not in report
+    assert "## 失败模式分析" not in report
+    assert "## 1." not in report
