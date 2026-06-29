@@ -3632,7 +3632,6 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
         from aqsp.portfolio.correlation import format_correlation
 
         markdown += "\n\n## 候选股相关性\n" + format_correlation(correlation_result)
-        markdown += "\n\n> ⚠️ 存在高相关性配对，分散化不足，建议关注组合风险\n"
 
     try:
         from aqsp.ledger.base import ledger_rows_to_frame, read_ledger

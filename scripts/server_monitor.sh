@@ -77,7 +77,7 @@ fi
 cat >"$LOCK_INFO_FILE" <<EOF
 LOCK_PID=$$
 LOCK_RUNNER=monitor
-LOCK_STARTED_AT=$(date '+%Y-%m-%d %H:%M:%S')
+LOCK_STARTED_AT="$(date '+%Y-%m-%d %H:%M:%S')"
 EOF
 trap 'rm -f "$LOCK_INFO_FILE"; rmdir "$LOCK_FILE"' EXIT
 

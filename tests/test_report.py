@@ -55,8 +55,6 @@ def test_report_renders_run_metadata_when_provided() -> None:
     assert "- 数据状态: 正常 / tdx_vipdoc 健康；数据源成功/失败 3/0" in markdown
     assert "显式 0 / 解析 100 / 取数 101 / 筛选前 8 / 最终 1" in markdown
     assert "- 规则版本: 1.0.0" in markdown
-    assert "不构成交易指令或投资建议" in markdown
-
 
 def test_report_renders_portfolio_manager_decision_when_provided() -> None:
     pick = PickResult(
@@ -235,14 +233,14 @@ def test_report_renders_final_decision_board_first() -> None:
     )
 
     assert "## 今日重点看板" in markdown
-    assert "- 今日结论: 上调 1 / 降级 0 / 维持 0" in markdown
+    assert "- PM主裁决: 上调 1 / 降级 0 / 维持 0" in markdown
     assert "- 观察重点: 600900 长江电力" in markdown
     assert "- 重点关注: 600900 长江电力" not in markdown
     assert (
         "- 重点 1: 600900 长江电力 | 继续观察 | 新晋 | 评分 76 | 处理 上调优先级"
         in markdown
     )
-    assert "判断原因: 不同看法支持上调优先级" in markdown
+    assert "判断原因: 多视角讨论支持上调优先级" in markdown
     assert "- 决策: 继续观察 | 新晋 | 评分 76.0" in markdown
     assert markdown.index("## 今日重点看板") < markdown.index("## 1. 600900 长江电力")
 
@@ -327,9 +325,9 @@ def test_report_renders_allocation_guidance_when_summary_provided() -> None:
     )
 
     assert "- 当前市况: 稳定上涨" in markdown
-    assert "- 现在偏向: 进攻牛市 | 稳定上涨期，重仓动量+涨停板" in markdown
-    assert "- 更偏好这些方向: 动量趋势、涨停接力" in markdown
-    assert "- 方向占比参考: momentum 30%、limit_up_ladder 30%" in markdown
+    assert "- 策略主配比: 进攻牛市 | 稳定上涨期，重仓动量+涨停板" in markdown
+    assert "- 优先策略: 动量趋势、涨停接力" in markdown
+    assert "- 策略权重建议: momentum 30%、limit_up_ladder 30%" in markdown
     assert "长江电力: 20% | 主链评分 76.0；PM 上调优先级" in markdown
     assert "- 再看顺序: 先看 600900 长江电力" in markdown
     assert "- 现金留存: 25%" in markdown

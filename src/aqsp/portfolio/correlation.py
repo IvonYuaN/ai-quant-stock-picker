@@ -99,26 +99,13 @@ def compute_correlation(
 
 
 def format_correlation(result: CorrelationResult) -> str:
-    lines = ["📈 候选股相关性分析"]
-    lines.append(f"   平均相关系数: {result.avg_correlation:.2f}")
+    lines = [f"- 平均相关系数: {result.avg_correlation:.2f}"]
 
     if result.high_corr_pairs:
-        lines.append("")
-        lines.append(
-            f"   ⚠️ 高相关性配对（> {result.high_corr_threshold:.2f}，分散化风险）:"
-        )
+        lines.append(f"- 高相关性配对（> {result.high_corr_threshold:.2f}）:")
         for s1, s2, corr in result.high_corr_pairs:
-            lines.append(f"      {s1} ↔ {s2}: {corr:.2f}")
+            lines.append(f"  - {s1} ↔ {s2}: {corr:.2f}")
     else:
-        lines.append("   ✅ 无高相关性配对，分散化良好")
-
-    if result.matrix:
-        syms = sorted(result.matrix.keys())
-        lines.append("")
-        header = "         " + "  ".join(f"{s:>8s}" for s in syms)
-        lines.append(header)
-        for s1 in syms:
-            row_vals = "  ".join(f"{result.matrix[s1][s2]:8.2f}" for s2 in syms)
-            lines.append(f"   {s1:>6s}  {row_vals}")
+        lines.append("- 无高相关性配对")
 
     return "\n".join(lines)

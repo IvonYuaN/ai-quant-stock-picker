@@ -386,7 +386,7 @@ def test_coldstart_daily_script_updates_db_then_runs_cli() -> None:
     assert "检测到陈旧主锁，自动回收" in script
     assert "主链路仍在运行，本次冷启动正常跳过；这是互斥保护，不是失败" in script
     assert "LOCK_RUNNER=scripts/coldstart_daily.sh" in script
-    assert "LOCK_STARTED_AT=$(date '+%Y-%m-%d %H:%M:%S')" in script
+    assert 'LOCK_STARTED_AT="$(date \'+%Y-%m-%d %H:%M:%S\')"' in script
     assert 'UPDATE_ARGS=("${SQLITE_DB_PATH}")' in script
     assert '"${PYTHON_BIN}" -u "${UPDATE_SCRIPT}" "${UPDATE_ARGS[@]}"' in script
     assert '"${PYTHON_BIN}" -u -m aqsp.cli run' in script

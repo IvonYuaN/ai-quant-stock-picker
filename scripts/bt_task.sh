@@ -126,7 +126,7 @@ sync_code_only() {
             cat >"$GIT_SYNC_LOCK_INFO_FILE" <<EOF
 GIT_SYNC_LOCK_PID=$$
 GIT_SYNC_LOCK_RUNNER=bt_task:${ACTION}
-GIT_SYNC_LOCK_STARTED_AT=$(date '+%Y-%m-%d %H:%M:%S')
+GIT_SYNC_LOCK_STARTED_AT="$(date '+%Y-%m-%d %H:%M:%S')"
 EOF
             return 0
         }

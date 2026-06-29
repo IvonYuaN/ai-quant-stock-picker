@@ -398,7 +398,6 @@ def to_markdown(
                 lines.append(decision_text)
                 lines.append("")
 
-    lines.append("> 仅供研究，不构成交易指令或投资建议。")
     return normalize_research_tone("\n".join(lines))
 
 

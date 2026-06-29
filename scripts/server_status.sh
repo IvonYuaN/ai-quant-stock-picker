@@ -45,6 +45,10 @@ print_lock_state() {
     started_at="unknown"
     if [ -f "$info_file" ]; then
         while IFS='=' read -r key value; do
+            value="${value%\"}"
+            value="${value#\"}"
+            value="${value%\'}"
+            value="${value#\'}"
             case "$key" in
                 LOCK_RUNNER) [ -n "$value" ] && runner="$value" ;;
                 LOCK_PID) [ -n "$value" ] && pid="$value" ;;

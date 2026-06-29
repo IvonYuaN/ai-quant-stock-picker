@@ -25,7 +25,7 @@ def test_compute_correlation_uses_configured_threshold() -> None:
     assert loose.high_corr_pairs == []
     assert strict.high_corr_pairs
     assert strict.high_corr_threshold == 0.55
-    assert "> 0.55" in format_correlation(strict)
+    assert "高相关性配对（> 0.55）" in format_correlation(strict)
 
 
 def test_compute_correlation_treats_nan_as_high_correlation() -> None:

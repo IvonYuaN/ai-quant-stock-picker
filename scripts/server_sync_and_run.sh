@@ -93,7 +93,7 @@ acquire_git_sync_lock() {
     cat >"$GIT_SYNC_LOCK_INFO_FILE" <<EOF
 GIT_SYNC_LOCK_PID=$$
 GIT_SYNC_LOCK_RUNNER=${RUNNER_SCRIPT}
-GIT_SYNC_LOCK_STARTED_AT=$(date '+%Y-%m-%d %H:%M:%S')
+GIT_SYNC_LOCK_STARTED_AT="$(date '+%Y-%m-%d %H:%M:%S')"
 EOF
     return 0
 }
@@ -166,7 +166,7 @@ fi
 cat >"$LOCK_INFO_FILE" <<EOF
 LOCK_PID=$$
 LOCK_RUNNER=${RUNNER_SCRIPT}
-LOCK_STARTED_AT=$(date '+%Y-%m-%d %H:%M:%S')
+LOCK_STARTED_AT="$(date '+%Y-%m-%d %H:%M:%S')"
 EOF
 trap 'rm -f "$LOCK_INFO_FILE"; rmdir "$LOCK_FILE"' EXIT
 

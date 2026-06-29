@@ -18,7 +18,7 @@ for candidate in (PROJECT_ROOT / "src", PROJECT_ROOT):
     if candidate_str not in sys.path:
         sys.path.insert(0, candidate_str)
 
-from aqsp.core.time import now_shanghai
+from aqsp.core.time import now_shanghai  # noqa: E402
 
 TODAY = now_shanghai().date().isoformat()
 
@@ -154,6 +154,7 @@ def check_locks() -> list[CheckResult]:
         if info_file.exists():
             for line in info_file.read_text(encoding="utf-8").splitlines():
                 key, _, value = line.partition("=")
+                value = value.strip().strip('"').strip("'")
                 if key == "LOCK_RUNNER" and value:
                     runner = value
                 elif key == "LOCK_PID" and value:
