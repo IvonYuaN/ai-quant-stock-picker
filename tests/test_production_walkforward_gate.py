@@ -1161,3 +1161,61 @@ def test_repair_stale_running_status_rewrites_dead_pid_status(tmp_path: Path) ->
     assert payload["status"] == "timeout"
     assert payload["child_exit_code"] == 124
     assert "stale running status auto-repaired" in payload["detail"]
+
+
+def test_production_walkforward_gate_repair_only_keeps_status_file_when_unchanged(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
+    import scripts.run_production_walkforward_gate as gate
+
+    db = tmp_path / "raw.db"
+    db.write_text("", encoding="utf-8")
+    status_path = tmp_path / "walkforward_production_status.json"
+    gate_path = tmp_path / "walkforward_gate.json"
+    report_path = tmp_path / "walkforward-grid-raw-production-latest.md"
+    status_path.write_text(
+        json.dumps(
+            {
+                "status": "timeout",
+                "updated_at": "2026-06-27T17:48:19+08:00",
+                "child_exit_code": 124,
+            }
+        ),
+        encoding="utf-8",
+    )
+    gate_path.write_text(json.dumps({"both_pass": False}), encoding="utf-8")
+    report_path.write_text(
+        "\n".join(
+            [
+                "# Walk-Forward 生产门禁诊断",
+                "",
+                "| 项目 | 值 |",
+                "|------|-----|",
+                "| effective_symbols | 3200 |",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        gate.sys,
+        "argv",
+        [
+            "run_production_walkforward_gate.py",
+            "--db",
+            str(db),
+            "--status-path",
+            str(status_path),
+            "--gate-path",
+            str(gate_path),
+            "--report",
+            str(report_path),
+            "--repair-only",
+        ],
+    )
+
+    assert gate.main() == 0
+    payload = json.loads(status_path.read_text(encoding="utf-8"))
+    assert payload["status"] == "timeout"
+    assert payload["child_exit_code"] == 124
+    assert "metadata repaired" in capsys.readouterr().out

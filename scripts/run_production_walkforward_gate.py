@@ -807,19 +807,23 @@ def main() -> int:
     repair_stale_running_status(status_path, args=args)
 
     if args.repair_only:
+        stale_repaired = repair_stale_running_status(status_path, args=args)
         repaired = repair_production_gate_metadata(
             gate_path=Path(args.gate_path),
             report_path=Path(args.report),
             db_path=args.db,
         )
-        _write_status(
-            status_path,
-            status="repair_completed" if repaired else "repair_unchanged",
-            args=args,
-            detail="production gate metadata repair-only mode",
-        )
-        print("production gate metadata repaired" if repaired else "production gate metadata unchanged")
-        return 0 if repaired else 1
+        if stale_repaired and repaired:
+            print("production gate status and metadata repaired")
+            return 0
+        if stale_repaired:
+            print("production gate status repaired")
+            return 0
+        if repaired:
+            print("production gate metadata repaired")
+            return 0
+        print("production gate metadata unchanged")
+        return 1
 
     inspection = load_cached_coverage_symbols(
         symbols_cache_path,
