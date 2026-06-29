@@ -14,6 +14,7 @@ from scripts.run_production_walkforward_gate import (
     inspect_raw_coverage,
     preserve_formal_report_snapshot,
     repair_production_gate_metadata,
+    repair_stale_running_status,
     select_covered_symbols,
     warn_if_report_path_not_writable,
     write_minimal_pbo_diagnostics,
@@ -1137,3 +1138,26 @@ def test_production_walkforward_gate_timeout_writes_status(
     payload = json.loads(status_path.read_text(encoding="utf-8"))
     assert payload["status"] == "timeout"
     assert payload["child_exit_code"] == 124
+
+
+def test_repair_stale_running_status_rewrites_dead_pid_status(tmp_path: Path) -> None:
+    status_path = tmp_path / "walkforward_production_status.json"
+    status_path.write_text(
+        json.dumps(
+            {
+                "status": "running",
+                "updated_at": "2026-06-27T17:48:19+08:00",
+                "pid": 999999,
+                "detail": "child walkforward started",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    repaired = repair_stale_running_status(status_path)
+
+    payload = json.loads(status_path.read_text(encoding="utf-8"))
+    assert repaired is True
+    assert payload["status"] == "timeout"
+    assert payload["child_exit_code"] == 124
+    assert "stale running status auto-repaired" in payload["detail"]

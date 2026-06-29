@@ -381,6 +381,12 @@ def gate_notification_allowed(
     )
 
 
+def gate_notification_task(task_id: str | None = None) -> bool:
+    value = task_id or os.getenv("AQSP_RUN_TASK_ID", "")
+    normalized = str(value or "").strip().lower()
+    return normalized in {"daily", "scheduled", "manual"}
+
+
 def high_frequency_task(task_id: str | None = None) -> bool:
     value = task_id or os.getenv("AQSP_RUN_TASK_ID", "")
     normalized = str(value or "").strip().lower()
@@ -425,9 +431,10 @@ def finalize_scheduled_notification(
     output_markdown = markdown
     notify_enabled = bool(args_notify)
     is_high_frequency = high_frequency_task(task_id)
+    is_gate_task = gate_notification_task(task_id)
 
     if notify_enabled and not gate_ok:
-        if is_high_frequency:
+        if is_high_frequency or not is_gate_task:
             print_fn("gate notify: skipped outside daily task")
             notify_enabled = False
             return ScheduledNotificationArtifacts(

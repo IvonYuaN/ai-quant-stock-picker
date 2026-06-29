@@ -112,6 +112,62 @@ def _write_status(
     atomic_write_text(path, json.dumps(payload, indent=2, ensure_ascii=False) + "\n")
 
 
+def _read_status(path: Path) -> dict[str, object]:
+    if not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _pid_active(pid_value: object) -> bool:
+    if isinstance(pid_value, bool) or not isinstance(pid_value, int) or pid_value <= 0:
+        return False
+    try:
+        os.kill(pid_value, 0)
+    except OSError:
+        return False
+    return True
+
+
+def repair_stale_running_status(
+    path: Path,
+    *,
+    args: argparse.Namespace | None = None,
+) -> bool:
+    payload = _read_status(path)
+    if str(payload.get("status") or "").strip() != "running":
+        return False
+    if _pid_active(payload.get("pid")):
+        return False
+
+    payload["status"] = "timeout"
+    payload["child_exit_code"] = (
+        int(payload["child_exit_code"])
+        if isinstance(payload.get("child_exit_code"), int)
+        else 124
+    )
+    detail = str(payload.get("detail") or "").strip()
+    stale_detail = "stale running status auto-repaired"
+    payload["detail"] = (
+        f"{detail}; {stale_detail}" if detail and stale_detail not in detail else stale_detail
+    )
+    payload["updated_at"] = now_shanghai().isoformat(timespec="seconds")
+    if args is not None:
+        payload.setdefault("db_path", str(args.db))
+        payload.setdefault("start", args.start)
+        payload.setdefault("end", args.end)
+        payload.setdefault("grid_profile", args.grid_profile)
+        payload.setdefault("report_path", str(args.report))
+        payload.setdefault("gate_path", str(args.gate_path))
+        payload.setdefault("log_path", str(args.log))
+        payload.setdefault("timeout_seconds", args.timeout_seconds)
+    atomic_write_text(path, json.dumps(payload, indent=2, ensure_ascii=False) + "\n")
+    return True
+
+
 def _compact_day(raw: str) -> str:
     return date.fromisoformat(raw).strftime("%Y%m%d")
 
@@ -748,6 +804,7 @@ def main() -> int:
     args = parser.parse_args()
     status_path = _status_path(args.status_path)
     symbols_cache_path = _symbol_cache_path(args.symbols_cache_path)
+    repair_stale_running_status(status_path, args=args)
 
     if args.repair_only:
         repaired = repair_production_gate_metadata(
