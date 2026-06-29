@@ -889,6 +889,190 @@ def test_run_scheduled_skips_formal_ledger_writes_when_circuit_breaker_triggers(
     assert order == ["validate", "pnl"]
 
 
+def test_run_scheduled_intraday_keeps_observation_output_during_circuit_breaker(
+    monkeypatch, tmp_path: Path
+) -> None:
+    import aqsp.cli as cli_mod
+    from aqsp.core.types import PickResult
+
+    latest = "2026-06-15"
+    frames = {
+        "600519": pd.DataFrame(
+            [
+                {
+                    "date": latest,
+                    "symbol": "600519",
+                    "name": "贵州茅台",
+                    "open": 1500.0,
+                    "high": 1510.0,
+                    "low": 1490.0,
+                    "close": 1505.0,
+                    "volume": 1000,
+                    "amount": 150500000.0,
+                    "suspended": False,
+                    "limit_up": 1655.5,
+                    "limit_down": 1354.5,
+                }
+            ]
+        )
+    }
+
+    monkeypatch.setenv("AQSP_RUN_TASK_ID", "intraday")
+    monkeypatch.setattr(cli_mod, "_resolve_run_symbols", lambda *_, **__: ["600519"])
+    monkeypatch.setattr(
+        cli_mod,
+        "_fetch_frames_for_cli_with_metadata",
+        lambda *_, **__: (frames, "eastmoney"),
+    )
+    monkeypatch.setattr(
+        cli_mod,
+        "assert_fresh_data",
+        lambda *_args, **_kwargs: datetime.fromisoformat(
+            "2026-06-15T15:00:00+08:00"
+        ).date(),
+    )
+    monkeypatch.setattr(cli_mod, "_runtime_data_lag_days", lambda *_args, **_kwargs: 0)
+    monkeypatch.setattr(
+        cli_mod,
+        "_source_runtime_metadata",
+        lambda *_args, **_kwargs: ("realtime", "multi_dimensional", "not_required"),
+    )
+    monkeypatch.setattr(
+        cli_mod,
+        "describe_source_health",
+        lambda *_args, **_kwargs: ("healthy", "ok", False),
+    )
+    monkeypatch.setattr(cli_mod, "validate_predictions", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(cli_mod, "_compute_real_pnl", lambda *_args, **_kwargs: (-4.0, 0.0, 0.0))
+    monkeypatch.setattr(cli_mod, "_count_independent_signal_days", lambda *_, **__: 35)
+    monkeypatch.setattr(cli_mod, "_detect_runtime_regime", lambda *_, **__: "")
+    monkeypatch.setattr("aqsp.data.anomaly.detect_anomalies", lambda *_, **__: [])
+    monkeypatch.setattr("aqsp.data.freshness.check_freshness", lambda *_, **__: [])
+    monkeypatch.setattr(
+        "aqsp.universe.t1_filter.filter_t1_held",
+        lambda candidates, **_kwargs: (candidates, []),
+    )
+    monkeypatch.setattr(
+        cli_mod,
+        "LethalFilterPipeline",
+        lambda: type("P", (), {"run": lambda self, *_args, **_kwargs: (True, "")})(),
+    )
+    monkeypatch.setattr(
+        cli_mod,
+        "_check_sector_concentration_with_runtime_hints",
+        lambda *_args, **_kwargs: type("C", (), {"warnings": (), "sectors": {}})(),
+    )
+    monkeypatch.setattr(
+        "aqsp.portfolio.correlation.compute_correlation",
+        lambda *_, **__: type("R", (), {"matrix": {}, "high_corr_pairs": ()})(),
+    )
+    monkeypatch.setattr(
+        "aqsp.portfolio.correlation.format_correlation", lambda *_, **__: ""
+    )
+    monkeypatch.setattr(
+        "aqsp.portfolio.sector_check.format_concentration", lambda *_, **__: ""
+    )
+    monkeypatch.setattr(
+        "aqsp.risk.dynamic_stop.compute_dynamic_stop",
+        lambda *_args, **_kwargs: type(
+            "S", (), {"recommended_stop": 0.0, "method": "none"}
+        )(),
+    )
+    monkeypatch.setattr(
+        "aqsp.portfolio.manager.apply_portfolio_manager",
+        lambda picks, **_kwargs: type(
+            "B", (), {"picks": picks, "decisions": (), "summary": None}
+        )(),
+    )
+    monkeypatch.setattr(
+        "aqsp.strategies.composite.CompositeStrategy",
+        lambda thresholds=None: type(
+            "C", (), {"calculate_score": lambda self, *_args, **_kwargs: {}}
+        )(),
+    )
+    monkeypatch.setattr(
+        cli_mod,
+        "_screen_universe_with_thresholds",
+        lambda *_args, **_kwargs: [
+            PickResult(
+                symbol="600519",
+                name="贵州茅台",
+                date=latest,
+                close=1505.0,
+                score=72.0,
+                rating="watch",
+                entry_type="observe",
+                ideal_buy=1498.0,
+                stop_loss=1470.0,
+                take_profit=1535.0,
+                position="observe",
+                strategies=("observation",),
+                reasons=("观察候选",),
+            )
+        ],
+    )
+    monkeypatch.setattr(cli_mod, "_enrich_pick_names", lambda picks, *_args, **_kwargs: picks)
+    monkeypatch.setattr(cli_mod, "_annotate_candidate_status", lambda picks, **_kwargs: picks)
+    monkeypatch.setattr(cli_mod, "_log_run_decisions", lambda **_kwargs: None)
+    monkeypatch.setattr(cli_mod, "to_dataframe", lambda picks: pd.DataFrame([{"symbol": p.symbol} for p in picks]))
+    monkeypatch.setattr(cli_mod, "to_markdown", lambda *_args, **_kwargs: "# report")
+    monkeypatch.setattr(cli_mod, "notify_markdown", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(
+        "aqsp.portfolio.snapshot.save_snapshot",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("snapshot should stay disabled during circuit breaker")
+        ),
+    )
+    appended_events: list[str] = []
+    monkeypatch.setattr(
+        cli_mod,
+        "append_run_event",
+        lambda *_args, **kwargs: appended_events.append(str(kwargs.get("status"))),
+    )
+    monkeypatch.setattr(
+        cli_mod,
+        "append_predictions",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("formal ledger should stay disabled during circuit breaker")
+        ),
+    )
+
+    class TriggeredBreaker:
+        def check(self, **_kwargs):
+            return type(
+                "Status", (), {"triggered": True, "reason": "组合保护冷却期中，至 2026-07-01 解除"}
+            )()
+
+    monkeypatch.setattr(cli_mod, "CircuitBreaker", lambda: TriggeredBreaker())
+
+    args = Namespace(
+        mode="open",
+        symbols="600519",
+        csv="",
+        source="auto",
+        limit=1,
+        max_universe=10,
+        min_avg_amount=50_000_000,
+        max_data_lag_days=3,
+        enable_online_factors=False,
+        report=str(tmp_path / "intraday.md"),
+        output_csv=str(tmp_path / "intraday.csv"),
+        ledger=str(tmp_path / "intraday_predictions.jsonl"),
+        horizon_days=3,
+        fee_bps=8.0,
+        slippage_bps=5.0,
+        benchmark_symbol="",
+        skip_validation=False,
+        notify=False,
+    )
+
+    assert cli_mod.run_scheduled(args) == 2
+    assert appended_events == ["blocked_by_circuit_breaker"]
+    report_text = (tmp_path / "intraday.md").read_text(encoding="utf-8")
+    assert report_text.startswith("# report")
+    assert "## 组合保护" in report_text
+
+
 def test_run_scheduled_logs_learning_proposal_failure(
     monkeypatch, tmp_path: Path, caplog
 ) -> None:

@@ -1862,6 +1862,11 @@ def _handle_circuit_breaker_block(
     return 2
 
 
+def _allow_observation_during_circuit_breaker(task_id: str) -> bool:
+    normalized = str(task_id or "").strip().lower()
+    return normalized in {"intraday", "midday"}
+
+
 def _execution_cost_bps_from_thresholds(thresholds: Any) -> tuple[float, float]:
     execution = execution_config_from_thresholds(thresholds)
     return execution.fee_bps, execution.slippage_bps
@@ -2915,7 +2920,7 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
         circuit_breaker_triggered=status.triggered,
         circuit_breaker_reason=status.reason,
     )
-    if status.triggered:
+    if status.triggered and not _allow_observation_during_circuit_breaker(task_id):
         return _handle_circuit_breaker_block(
             args=args,
             status=status,
@@ -2928,6 +2933,11 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
             weekly_pnl=weekly_pnl,
             monthly_pnl=monthly_pnl,
             task_id=task_id,
+        )
+    if status.triggered:
+        print(
+            "🛡️ 组合保护已触发，但当前任务保留观察模式候选生成: "
+            f"{status.reason}"
         )
 
     regime = _detect_runtime_regime(
