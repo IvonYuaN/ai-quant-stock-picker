@@ -377,6 +377,43 @@ def test_diagnose_runtime_marks_legacy_gate_state_format(
     assert "- gate_updated_at: 2026-06-22T18:08:40+08:00" in output
 
 
+def test_diagnose_runtime_treats_stale_running_walkforward_status_as_timeout(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    from scripts import diagnose_runtime
+
+    ledger = tmp_path / "predictions.jsonl"
+    paper = tmp_path / "paper.jsonl"
+    walkforward_status = tmp_path / "walkforward_production_status.json"
+    ledger.write_text("", encoding="utf-8")
+    paper.write_text("", encoding="utf-8")
+    walkforward_status.write_text(
+        '{"status":"running","updated_at":"2026-06-21T18:10:00+08:00","pid":999999,"effective_symbols":3200,"detail":"child walkforward started"}\n',
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("AQSP_LEDGER", str(ledger))
+    monkeypatch.setenv("AQSP_PAPER_LEDGER", str(paper))
+    monkeypatch.setenv(
+        "AQSP_WALKFORWARD_PRODUCTION_STATUS", str(walkforward_status)
+    )
+    monkeypatch.setattr(
+        "scripts.diagnose_runtime.os.kill",
+        lambda *_args: (_ for _ in ()).throw(OSError("missing pid")),
+    )
+    monkeypatch.setattr(
+        "scripts.diagnose_runtime.load_research_summary",
+        lambda: None,
+    )
+
+    exit_code = diagnose_runtime.main()
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "- walkforward_production_status: timeout updated=2026-06-21T18:10:00+08:00" in output
+    assert "- walkforward_production_child_exit: 124" in output
+
+
 def test_diagnose_runtime_main_counts_successful_run_days_from_legacy_daily_logs(
     tmp_path, monkeypatch, capsys
 ) -> None:

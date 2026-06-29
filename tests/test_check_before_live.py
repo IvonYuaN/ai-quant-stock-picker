@@ -2607,7 +2607,7 @@ def test_check_before_live_appends_production_status_to_walkforward_block_detail
 
 
 def test_check_before_live_reports_running_production_walkforward_as_pending(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch
 ) -> None:
     _prepare_ready_runtime(tmp_path)
     _write_json(
@@ -2629,14 +2629,55 @@ def test_check_before_live_reports_running_production_walkforward_as_pending(
         {
             "status": "running",
             "updated_at": "2026-06-14T18:10:00+08:00",
+            "pid": 12345,
         },
     )
+    monkeypatch.setattr("scripts.check_before_live.os.kill", lambda *_args: None)
 
     findings = check_before_live(root=tmp_path, today=date(2026, 6, 14))
 
     finding = next(item for item in findings if item.gate == "walkforward_gate")
     assert finding.ok is False
     assert "production walkforward running" in finding.detail
+
+
+def test_check_before_live_treats_stale_running_production_status_as_timeout(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _prepare_ready_runtime(tmp_path)
+    _write_json(
+        tmp_path / "data" / "walkforward_gate.json",
+        {
+            "run_date": "2026-06-10",
+            "deflated_sharpe": 0.0,
+            "pbo": 0.0,
+            "pbo_valid": False,
+            "dsr_pass": False,
+            "pbo_pass": False,
+            "both_pass": False,
+            "n_periods": 4,
+            "effective_symbols": 3200,
+        },
+    )
+    _write_json(
+        tmp_path / "data" / "walkforward_production_status.json",
+        {
+            "status": "running",
+            "updated_at": "2026-06-14T18:10:00+08:00",
+            "pid": 999999,
+        },
+    )
+    monkeypatch.setattr(
+        "scripts.check_before_live.os.kill",
+        lambda *_args: (_ for _ in ()).throw(OSError("missing pid")),
+    )
+
+    findings = check_before_live(root=tmp_path, today=date(2026, 6, 14))
+
+    finding = next(item for item in findings if item.gate == "walkforward_gate")
+    assert finding.ok is False
+    assert "status=timeout" in finding.detail
+    assert "stale_running_status" in finding.detail
 
 
 def test_check_before_live_blocks_qfq_walkforward_price_mode(

@@ -298,14 +298,29 @@ def _walkforward_production_status_summary(path: Path) -> dict[str, Any]:
     coverage = payload.get("coverage", {})
     if not isinstance(coverage, dict):
         coverage = {}
+    status = str(payload.get("status", "") or "")
+    child_exit_code = payload.get("child_exit_code")
+    if status == "running":
+        pid_value = payload.get("pid")
+        pid_active = False
+        if isinstance(pid_value, int) and pid_value > 0:
+            try:
+                os.kill(pid_value, 0)
+            except OSError:
+                pid_active = False
+            else:
+                pid_active = True
+        if not pid_active:
+            status = "timeout"
+            child_exit_code = 124 if not isinstance(child_exit_code, int) else child_exit_code
     return {
         "path": str(path),
         "present": path.exists(),
-        "status": str(payload.get("status", "") or ""),
+        "status": status,
         "updated_at": str(payload.get("updated_at", "") or ""),
         "detail": str(payload.get("detail", "") or ""),
         "effective_symbols": payload.get("effective_symbols"),
-        "child_exit_code": payload.get("child_exit_code"),
+        "child_exit_code": child_exit_code,
         "db_path": str(payload.get("db_path", "") or ""),
         "gate_path": str(payload.get("gate_path", "") or ""),
         "report_path": str(payload.get("report_path", "") or ""),

@@ -7,6 +7,7 @@ import argparse
 import ast
 import hashlib
 import json
+import os
 import re
 import sqlite3
 import subprocess
@@ -313,11 +314,28 @@ def _check_walkforward_gate(path: Path, today: date) -> ReadinessFinding:
         updated_at = str(status_payload.get("updated_at") or "").strip()
         child_exit = status_payload.get("child_exit_code")
         if status == "running":
-            return ReadinessFinding(
-                "walkforward_gate",
-                False,
-                f"production walkforward running; refreshed gate evidence pending ({updated_at or '-'})",
+            pid_value = status_payload.get("pid")
+            pid_active = False
+            if isinstance(pid_value, int) and pid_value > 0:
+                try:
+                    os.kill(pid_value, 0)
+                except OSError:
+                    pid_active = False
+                else:
+                    pid_active = True
+            if pid_active:
+                return ReadinessFinding(
+                    "walkforward_gate",
+                    False,
+                    f"production walkforward running; refreshed gate evidence pending ({updated_at or '-'})",
+                )
+            child_exit = 124 if not isinstance(child_exit, int) else child_exit
+            detail = (
+                f"{detail}; production_status: status=timeout"
+                + (f", updated_at={updated_at}" if updated_at else "")
+                + f", child_exit_code={child_exit}, stale_running_status"
             )
+            return ReadinessFinding("walkforward_gate", False, detail)
         extra = ", ".join(
             part
             for part in (
