@@ -17,6 +17,7 @@ REAL_SIGNAL_STATUSES = frozenset(
         "validated",
         "watch_only",
         "run_completed_no_picks",
+        "backfill_no_picks",
     }
 )
 
@@ -61,6 +62,18 @@ def collect_independent_signal_dates(ledger_path: str) -> set[str]:
         allowed_statuses=REAL_SIGNAL_STATUSES,
         require_status=False,
     )
+
+
+def latest_independent_signal_day(ledger_path: str) -> str:
+    rows = read_ledger(ledger_path)
+    signal_dates = sorted(
+        _collect_independent_dates(
+            rows,
+            allowed_statuses=REAL_SIGNAL_STATUSES,
+            require_status=False,
+        )
+    )
+    return signal_dates[-1] if signal_dates else ""
 
 
 def collect_simulated_signal_dates(ledger_path: str) -> set[str]:

@@ -1657,7 +1657,7 @@ def test_check_before_live_accepts_configured_notify_channel(
     assert "SERVERCHAN_SENDKEY" in finding.detail
 
 
-def test_check_before_live_blocks_summary_mode_with_only_full_notify_channel(
+def test_check_before_live_accepts_summary_mode_with_only_full_notify_channel(
     tmp_path: Path,
 ) -> None:
     _prepare_ready_runtime(tmp_path)
@@ -1673,8 +1673,8 @@ def test_check_before_live_blocks_summary_mode_with_only_full_notify_channel(
     findings = check_before_live(root=tmp_path, today=date(2026, 6, 14))
 
     finding = next(item for item in findings if item.gate == "notify_channels")
-    assert finding.ok is False
-    assert "AQSP_NOTIFY_MODE=summary" in finding.detail
+    assert finding.ok is True
+    assert "FEISHU_WEBHOOK_URL" in finding.detail
 
 
 def test_check_before_live_blocks_direct_cli_subcommand_notify(

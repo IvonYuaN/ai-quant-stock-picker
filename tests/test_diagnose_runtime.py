@@ -19,6 +19,7 @@ from scripts.diagnose_runtime import (
     _runtime_paths,
     _scheduler_runtime_lines,
     _tdx_vipdoc_summary,
+    _wrapper_drift_summary,
 )
 
 
@@ -125,6 +126,18 @@ def test_scheduler_runtime_lines_are_platform_specific() -> None:
     assert "- scheduler: launchd" in darwin_lines
     assert any(line.startswith("- launchd_wrapper:") for line in darwin_lines)
     assert any(line.startswith("- launch_agent:") for line in darwin_lines)
+    assert any(line.startswith("- launchd_wrapper_drift:") for line in darwin_lines)
+
+
+def test_wrapper_drift_summary_flags_legacy_wrapper(tmp_path) -> None:
+    current = tmp_path / "current.sh"
+    expected = tmp_path / "expected.sh"
+    current.write_text("echo test\n# aqsp paper\n# 周末跳过\n", encoding="utf-8")
+    expected.write_text("echo test\n", encoding="utf-8")
+
+    result = _wrapper_drift_summary(current, expected)
+
+    assert result.startswith("drifted_legacy ")
 
 
 def test_diagnose_runtime_auth_health_lines_include_recorded_sources() -> None:
@@ -471,6 +484,7 @@ def test_diagnose_runtime_counts_ledger_run_events_as_successful_run_days(
     output = capsys.readouterr().out
 
     assert exit_code == 0
+    assert "- latest_real_signal_day: 2026-06-21" in output
     assert "- blocked_runtime_days: 1" in output
     assert "- successful_run_days: 2 latest=2026-06-21 source=ledger_run_events" in output
 

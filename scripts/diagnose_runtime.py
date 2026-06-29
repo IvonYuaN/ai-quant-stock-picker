@@ -8,6 +8,7 @@ import os
 import platform
 import re
 import struct
+import hashlib
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -23,6 +24,7 @@ from aqsp.ledger.runtime import (
     count_independent_signal_days,
     count_paper_tracking_days,
     ledger_signal_date,
+    latest_independent_signal_day,
 )
 from aqsp.notifier import configured_notification_channels
 from aqsp.research.summary import load_research_summary, research_findings_display
@@ -240,26 +242,8 @@ def _real_signal_row_count(rows: list[dict[str, Any]]) -> int:
 
 
 def _latest_real_signal_day(rows: list[dict[str, Any]]) -> str:
-    days = sorted(
-        {
-            ledger_signal_date(row)
-            for row in rows
-            if str(row.get("symbol") or "").strip() != "__RUN__"
-            and not bool(row.get("is_simulated"))
-            and ledger_signal_date(row)
-            and any(
-                row.get(key) not in (None, "")
-                for key in (
-                    "thresholds_version",
-                    "status",
-                    "rating",
-                    "score",
-                    "strategies",
-                )
-            )
-        }
-    )
-    return days[-1] if days else ""
+    del rows
+    return latest_independent_signal_day(str(_runtime_path("AQSP_LEDGER", "data/predictions.jsonl")))
 
 
 def _state_count(value: object) -> int:
@@ -334,10 +318,12 @@ def _scheduler_runtime_lines(system_name: str | None = None) -> list[str]:
     if system == "Darwin":
         wrapper = Path.home() / ".aqsp/aqsp_daily_run_wrapper.sh"
         launch_agent = Path.home() / "Library/LaunchAgents/com.aqsp.daily.plist"
+        repo_wrapper = PROJECT_ROOT / "scripts" / "launchd" / "aqsp_daily_run_wrapper.sh"
         return [
             "- scheduler: launchd",
             f"- launchd_wrapper: {_file_status(wrapper)}",
             f"- launch_agent: {_file_status(launch_agent)}",
+            f"- launchd_wrapper_drift: {_wrapper_drift_summary(wrapper, repo_wrapper)}",
         ]
     if system == "Linux":
         return [
@@ -450,6 +436,20 @@ def _tdx_vipdoc_summary(base: Path | None = None) -> dict[str, Any]:
         "symbols_with_records": symbol_count,
         "latest": latest,
     }
+
+
+def _wrapper_drift_summary(wrapper: Path, repo_wrapper: Path) -> str:
+    if not wrapper.exists() or not repo_wrapper.exists():
+        return "unknown"
+    current = wrapper.read_text(encoding="utf-8", errors="ignore")
+    expected = repo_wrapper.read_text(encoding="utf-8", errors="ignore")
+    if current == expected:
+        return "in_sync"
+    current_hash = hashlib.sha256(current.encode("utf-8")).hexdigest()[:12]
+    expected_hash = hashlib.sha256(expected.encode("utf-8")).hexdigest()[:12]
+    if any(token in current for token in ("aqsp paper", "aqsp dashboard", "周末跳过")):
+        return f"drifted_legacy current={current_hash} expected={expected_hash}"
+    return f"drifted current={current_hash} expected={expected_hash}"
 
 
 def _ready_source_lines() -> list[str]:

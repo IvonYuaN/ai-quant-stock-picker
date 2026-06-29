@@ -66,6 +66,18 @@ def test_news_catalysts_script_defaults_to_report_only() -> None:
     assert "今日非交易日，消息面雷达仅写报告" in script
 
 
+def test_daily_run_script_loads_env_before_runtime_exports() -> None:
+    script = (PROJECT_ROOT / "scripts" / "daily_run.sh").read_text(encoding="utf-8")
+
+    assert 'source "${PROJECT_ROOT}/.env"' in script
+    assert "已加载 .env 配置" in script
+    assert script.index('source "${PROJECT_ROOT}/.env"') < script.index(
+        'export AQSP_SOURCE="${AQSP_SOURCE:-auto}"'
+    )
+    assert "is_trading_day" in script
+    assert "今日非交易日，跳过" in script
+
+
 def test_install_server_cron_script_defaults_to_noop_migration_guard() -> None:
     script = (PROJECT_ROOT / "scripts" / "install_server_cron.sh").read_text(
         encoding="utf-8"
@@ -262,11 +274,22 @@ def test_production_walkforward_gate_wrapper_requires_full_market_raw_coverage()
     assert "--grid-cscv" in script
     assert "--skip-pit-financials" in script
     assert "walkforward_production_status.json" in script
-    assert '--status-path' in script
+    assert "--status-path" in script
     assert "scripts/update_sqlite_daily.py" in script
     assert "--price-mode raw" in script
     assert "Backfill missing raw history first" in script
     assert "Only for a clean rebuild" in script
+
+
+def test_launchd_daily_wrapper_loads_env_before_daily_run() -> None:
+    script = (
+        PROJECT_ROOT / "scripts" / "launchd" / "aqsp_daily_run_wrapper.sh"
+    ).read_text(encoding="utf-8")
+
+    assert 'source "${PROJECT_ROOT}/.env"' in script
+    assert script.index('source "${PROJECT_ROOT}/.env"') < script.index(
+        'exec /bin/bash --login "$PROJECT_ROOT/scripts/daily_run.sh"'
+    )
 
 
 def test_clear_locks_is_conservative_by_default() -> None:
@@ -403,6 +426,14 @@ def test_daily_run_defaults_to_full_market_universe() -> None:
 
     assert "AQSP_ALLOW_LEGACY_ENTRY" in script
     assert "Use scripts/bt_task.sh daily in production" in script
+    assert 'RUN_TASK_ID="${AQSP_RUN_TASK_ID:-}"' in script
+    assert "AQSP_RUN_TASK_ID=${RUN_TASK_ID:-<empty>}" in script
+    assert "仅允许 daily" in script
+    assert 'export AQSP_RUN_TASK_ID="daily"' in script
+    assert 'ENFORCE_DAILY_WINDOW="${AQSP_ENFORCE_DAILY_WINDOW:-true}"' in script
+    assert 'DAILY_WINDOW_START_HM="${AQSP_DAILY_WINDOW_START_HM:-1730}"' in script
+    assert 'DAILY_WINDOW_END_HM="${AQSP_DAILY_WINDOW_END_HM:-2300}"' in script
+    assert "不在 legacy daily_run 允许窗口" in script
     assert 'export AQSP_MAX_UNIVERSE="${AQSP_MAX_UNIVERSE:-0}"' in script
     assert '--max-universe "$AQSP_MAX_UNIVERSE"' in script
 
@@ -433,6 +464,7 @@ def test_launchd_daily_wrapper_explicitly_opts_into_legacy_entry() -> None:
     ).read_text(encoding="utf-8")
 
     assert 'export AQSP_ALLOW_LEGACY_ENTRY="${AQSP_ALLOW_LEGACY_ENTRY:-1}"' in script
+    assert 'export AQSP_RUN_TASK_ID="${AQSP_RUN_TASK_ID:-daily}"' in script
 
 
 def test_launchd_strategy_wrappers_set_explicit_task_ids() -> None:

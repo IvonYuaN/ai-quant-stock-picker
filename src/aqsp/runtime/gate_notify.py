@@ -64,6 +64,8 @@ def should_send_gate_notification(
             sent_by_date.get(date_key) if isinstance(sent_by_date, dict) else None
         )
         day_entry = _coerce_legacy_day_entry(state, day_entry, fingerprint, date_key)
+        if _same_day_entry_blocks(day_entry):
+            return False
         if _entry_has_status(day_entry, fingerprint, {"sent"}):
             return False
         if _entry_recent(
@@ -108,6 +110,8 @@ def reserve_gate_notification(
             fingerprint,
             date_key,
         )
+        if _same_day_entry_blocks(day_entry):
+            return False
         if _entry_has_status(day_entry, fingerprint, {"sent"}):
             return False
         if _entry_recent(
@@ -334,6 +338,32 @@ def _entry_recent(
     except ValueError:
         return False
     return (now_shanghai() - updated).total_seconds() < max(ttl_minutes, 1) * 60
+
+
+def _same_day_entry_blocks(entry: object) -> bool:
+    if isinstance(entry, str):
+        return bool(entry)
+    if not isinstance(entry, dict):
+        return False
+    status = str(entry.get("status") or "")
+    fingerprint = _entry_fingerprint(entry)
+    if status == "sent":
+        return True
+    if status == "pending":
+        return _entry_recent(
+            entry,
+            fingerprint,
+            statuses={"pending"},
+            ttl_minutes=GATE_NOTIFY_PENDING_TTL_MINUTES,
+        )
+    if status == "failed":
+        return _entry_recent(
+            entry,
+            fingerprint,
+            statuses={"failed"},
+            ttl_minutes=GATE_NOTIFY_RETRY_MINUTES,
+        )
+    return False
 
 
 def _coerce_legacy_day_entry(

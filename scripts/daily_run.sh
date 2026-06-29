@@ -24,10 +24,43 @@ fi
 
 export PATH="/Library/Frameworks/Python.framework/Versions/3.11/bin:/usr/local/bin:/opt/homebrew/bin:$HOME/Library/Python/3.11/bin:$PATH"
 export PYTHONPATH="$PROJECT_ROOT/src:$PROJECT_ROOT:${PYTHONPATH:-}"
+if [ -f "${PROJECT_ROOT}/.env" ]; then
+    set -a
+    # shellcheck disable=SC1090
+    source "${PROJECT_ROOT}/.env"
+    set +a
+    echo "[$(date)] 已加载 .env 配置" >> "$LOG"
+fi
 PYTHON_BIN="${AQSP_PYTHON:-/Library/Frameworks/Python.framework/Versions/3.11/bin/python3}"
 if [ ! -x "$PYTHON_BIN" ]; then
     PYTHON_BIN="$(command -v python3)"
 fi
+if ! "${PYTHON_BIN}" - <<'AQSP_CALENDAR_PY' >/dev/null 2>&1
+from aqsp.core.time import is_trading_day, today_shanghai
+raise SystemExit(0 if is_trading_day(today_shanghai()) else 1)
+AQSP_CALENDAR_PY
+then
+    echo "[$(date)] 今日非交易日，跳过" >> "$LOG"
+    exit 0
+fi
+RUN_TASK_ID="${AQSP_RUN_TASK_ID:-}"
+if [ "$RUN_TASK_ID" != "daily" ]; then
+    echo "[$(date)] 拒绝 legacy daily_run：AQSP_RUN_TASK_ID=${RUN_TASK_ID:-<empty>}，仅允许 daily" >> "$LOG"
+    exit 0
+fi
+export AQSP_RUN_TASK_ID="daily"
+ENFORCE_DAILY_WINDOW="${AQSP_ENFORCE_DAILY_WINDOW:-true}"
+NOW_HM=$((10#$(date +%H%M)))
+DAILY_WINDOW_START_HM="${AQSP_DAILY_WINDOW_START_HM:-1730}"
+DAILY_WINDOW_END_HM="${AQSP_DAILY_WINDOW_END_HM:-2300}"
+case "${ENFORCE_DAILY_WINDOW,,}" in
+    1|true|yes|on)
+        if [ "$NOW_HM" -lt "$DAILY_WINDOW_START_HM" ] || [ "$NOW_HM" -gt "$DAILY_WINDOW_END_HM" ]; then
+            echo "[$(date)] 当前时间 ${NOW_HM} 不在 legacy daily_run 允许窗口 ${DAILY_WINDOW_START_HM}-${DAILY_WINDOW_END_HM}，跳过" >> "$LOG"
+            exit 0
+        fi
+        ;;
+esac
 export AQSP_SOURCE="${AQSP_SOURCE:-auto}"
 export AQSP_SYMBOLS="${AQSP_SYMBOLS:-}"
 export AQSP_MODE="${AQSP_MODE:-close}"

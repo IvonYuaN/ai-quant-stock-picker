@@ -143,6 +143,34 @@ def test_failed_gate_notification_blocks_same_day_retry(tmp_path) -> None:
     )
 
 
+def test_gate_notification_blocks_same_day_retry_when_fingerprint_changes(
+    tmp_path,
+) -> None:
+    state_path = tmp_path / "gate_notify_state.json"
+
+    assert reserve_gate_notification(
+        gate_ok=False,
+        gate_reasons=["冷启动未满: 0/30 个独立信号日", "DSR 未过门: 0.0（需 >1.0）"],
+        state_path=state_path,
+        run_date="2026-06-17",
+    )
+    mark_gate_notification_failed(
+        gate_reasons=["冷启动未满: 0/30 个独立信号日", "DSR 未过门: 0.0（需 >1.0）"],
+        state_path=state_path,
+        run_date="2026-06-17",
+    )
+
+    assert (
+        should_send_gate_notification(
+            gate_ok=False,
+            gate_reasons=["PBO 未过门: 60.0%（需 <50%）"],
+            state_path=state_path,
+            run_date="2026-06-17",
+        )
+        is False
+    )
+
+
 def test_failed_gate_notification_blocks_same_day_retry_after_pending_ttl(
     tmp_path,
     monkeypatch,

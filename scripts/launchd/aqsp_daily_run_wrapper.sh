@@ -9,5 +9,12 @@ cd "$PROJECT_ROOT"
 export PATH="/Library/Frameworks/Python.framework/Versions/3.11/bin:/usr/local/bin:/opt/homebrew/bin:$HOME/Library/Python/3.11/bin:$PATH"
 export PYTHONPATH="$PROJECT_ROOT/src:$PROJECT_ROOT:${PYTHONPATH:-}"
 export AQSP_ALLOW_LEGACY_ENTRY="${AQSP_ALLOW_LEGACY_ENTRY:-1}"
+export AQSP_RUN_TASK_ID="${AQSP_RUN_TASK_ID:-daily}"
+if [ -f "${PROJECT_ROOT}/.env" ]; then
+    set -a
+    # shellcheck disable=SC1090
+    source "${PROJECT_ROOT}/.env"
+    set +a
+fi
 
 exec /bin/bash --login "$PROJECT_ROOT/scripts/daily_run.sh"

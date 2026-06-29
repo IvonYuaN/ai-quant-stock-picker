@@ -61,7 +61,7 @@ def test_count_independent_signal_days_counts_observation_only_signal_days(
     assert count_independent_signal_days(str(ledger)) == 2
 
 
-def test_count_independent_signal_days_ignores_backfill_no_pick_markers(
+def test_count_independent_signal_days_counts_backfill_no_pick_markers(
     tmp_path,
 ) -> None:
     ledger = tmp_path / "predictions.jsonl"
@@ -84,7 +84,7 @@ def test_count_independent_signal_days_ignores_backfill_no_pick_markers(
         encoding="utf-8",
     )
 
-    assert count_independent_signal_days(str(ledger)) == 1
+    assert count_independent_signal_days(str(ledger)) == 2
 
 
 def test_count_independent_signal_days_counts_real_run_days_without_picks(
@@ -146,7 +146,7 @@ def test_count_independent_signal_days_counts_runtime_date_aliases(tmp_path) -> 
         encoding="utf-8",
     )
 
-    assert count_independent_signal_days(str(ledger)) == 4
+    assert count_independent_signal_days(str(ledger)) == 3
 
 
 def test_count_independent_signal_days_rejects_unknown_status(tmp_path) -> None:
@@ -234,11 +234,8 @@ def test_count_independent_signal_days_counts_not_executable_days(tmp_path) -> N
         encoding="utf-8",
     )
 
-    assert collect_independent_signal_dates(str(ledger)) == {
-        "2026-06-03",
-        "2026-06-04",
-    }
-    assert count_independent_signal_days(str(ledger)) == 2
+    assert collect_independent_signal_dates(str(ledger)) == {"2026-06-03"}
+    assert count_independent_signal_days(str(ledger)) == 1
 
 
 def test_count_paper_tracking_days_counts_real_paper_events(tmp_path) -> None:
