@@ -90,11 +90,11 @@ acquire_git_sync_lock() {
         sleep 2
         waited=$((waited + 2))
     done
-    cat >"$GIT_SYNC_LOCK_INFO_FILE" <<EOF
-GIT_SYNC_LOCK_PID=$$
-GIT_SYNC_LOCK_RUNNER=${RUNNER_SCRIPT}
-GIT_SYNC_LOCK_STARTED_AT="$(date '+%Y-%m-%d %H:%M:%S')"
-EOF
+    {
+        printf 'GIT_SYNC_LOCK_PID=%q\n' "$$"
+        printf 'GIT_SYNC_LOCK_RUNNER=%q\n' "${RUNNER_SCRIPT}"
+        printf 'GIT_SYNC_LOCK_STARTED_AT=%q\n' "$(date '+%Y-%m-%d %H:%M:%S')"
+    } >"$GIT_SYNC_LOCK_INFO_FILE"
     return 0
 }
 
@@ -163,11 +163,11 @@ if ! mkdir "$LOCK_FILE" 2>/dev/null; then
     write_result "skipped_lock"
     exit 0
 fi
-cat >"$LOCK_INFO_FILE" <<EOF
-LOCK_PID=$$
-LOCK_RUNNER=${RUNNER_SCRIPT}
-LOCK_STARTED_AT="$(date '+%Y-%m-%d %H:%M:%S')"
-EOF
+{
+    printf 'LOCK_PID=%q\n' "$$"
+    printf 'LOCK_RUNNER=%q\n' "${RUNNER_SCRIPT}"
+    printf 'LOCK_STARTED_AT=%q\n' "$(date '+%Y-%m-%d %H:%M:%S')"
+} >"$LOCK_INFO_FILE"
 trap 'rm -f "$LOCK_INFO_FILE"; rmdir "$LOCK_FILE"' EXIT
 
 log "开始同步代码: ${REMOTE}/${BRANCH}"

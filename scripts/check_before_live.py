@@ -1240,9 +1240,13 @@ def _check_strategy_executability_runtime_feedback(root: Path) -> ReadinessFindi
     cli_text = cli_path.read_text(encoding="utf-8")
     runtime_text = runtime_path.read_text(encoding="utf-8")
     block = _cli_function_block(cli_text, "_run_scheduled_legacy")
+    adjustment_call_present = (
+        "strategy_executability_weight_adjustments(args.ledger)" in cli_text
+        or "strategy_executability_weight_adjustments(formal_ledger_path)" in cli_text
+    )
     ok = (
         "strategy_executability_weight_adjustments" in runtime_text
-        and "strategy_executability_weight_adjustments(args.ledger)" in cli_text
+        and adjustment_call_present
         and "weights[strategy_id]" in block
         and "strategy_weight_reasons[strategy_id] = reason" in block
         and "float(weights[strategy_id]) * float(multiplier)" in block

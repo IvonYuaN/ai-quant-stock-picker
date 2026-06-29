@@ -548,6 +548,44 @@ def test_check_before_live_allows_executability_feedback_applied_to_weights(
     assert finding.ok is True
 
 
+def test_check_before_live_allows_executability_feedback_with_formal_runtime_ledger(
+    tmp_path: Path,
+) -> None:
+    _prepare_ready_runtime(tmp_path)
+    cli_path = tmp_path / "src/aqsp/cli.py"
+    runtime_path = tmp_path / "src/aqsp/ledger/runtime.py"
+    cli_path.parent.mkdir(parents=True, exist_ok=True)
+    runtime_path.parent.mkdir(parents=True, exist_ok=True)
+    cli_path.write_text(
+        "def _run_scheduled_legacy(args):\n"
+        "    executability_adjustments, executability_reasons = (\n"
+        "        strategy_executability_weight_adjustments(formal_ledger_path)\n"
+        "    )\n"
+        "    for strategy_id, multiplier in executability_adjustments.items():\n"
+        "        if strategy_id not in weights:\n"
+        "            continue\n"
+        "        weights[strategy_id] = float(weights[strategy_id]) * float(multiplier)\n"
+        "        reason = executability_reasons.get(strategy_id, '')\n"
+        "        if reason:\n"
+        "            strategy_weight_reasons[strategy_id] = reason\n"
+        "    print('不可成交反馈降权: ok')\n",
+        encoding="utf-8",
+    )
+    runtime_path.write_text(
+        "def strategy_executability_weight_adjustments(path):\n    return {}, {}\n",
+        encoding="utf-8",
+    )
+
+    findings = check_before_live(root=tmp_path, today=date(2026, 6, 14))
+
+    finding = next(
+        item
+        for item in findings
+        if item.gate == "strategy_executability_runtime_feedback"
+    )
+    assert finding.ok is True
+
+
 def test_check_before_live_blocks_small_symbol_walkforward_gate(
     tmp_path: Path,
 ) -> None:

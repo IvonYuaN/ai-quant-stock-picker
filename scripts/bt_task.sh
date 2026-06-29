@@ -123,11 +123,11 @@ sync_code_only() {
                 sleep 2
                 waited=$((waited + 2))
             done
-            cat >"$GIT_SYNC_LOCK_INFO_FILE" <<EOF
-GIT_SYNC_LOCK_PID=$$
-GIT_SYNC_LOCK_RUNNER=bt_task:${ACTION}
-GIT_SYNC_LOCK_STARTED_AT="$(date '+%Y-%m-%d %H:%M:%S')"
-EOF
+            {
+                printf 'GIT_SYNC_LOCK_PID=%q\n' "$$"
+                printf 'GIT_SYNC_LOCK_RUNNER=%q\n' "bt_task:${ACTION}"
+                printf 'GIT_SYNC_LOCK_STARTED_AT=%q\n' "$(date '+%Y-%m-%d %H:%M:%S')"
+            } >"$GIT_SYNC_LOCK_INFO_FILE"
             return 0
         }
 

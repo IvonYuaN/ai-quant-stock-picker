@@ -74,11 +74,11 @@ if ! mkdir "$LOCK_FILE" 2>/dev/null; then
     fi
     exit 0
 fi
-cat >"$LOCK_INFO_FILE" <<EOF
-LOCK_PID=$$
-LOCK_RUNNER=monitor
-LOCK_STARTED_AT="$(date '+%Y-%m-%d %H:%M:%S')"
-EOF
+{
+    printf 'LOCK_PID=%q\n' "$$"
+    printf 'LOCK_RUNNER=%q\n' "monitor"
+    printf 'LOCK_STARTED_AT=%q\n' "$(date '+%Y-%m-%d %H:%M:%S')"
+} >"$LOCK_INFO_FILE"
 trap 'rm -f "$LOCK_INFO_FILE"; rmdir "$LOCK_FILE"' EXIT
 
 if [ ! -f "$PYTHON_BIN" ]; then

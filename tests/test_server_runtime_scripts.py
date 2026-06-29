@@ -15,6 +15,8 @@ def test_server_sync_script_supports_custom_runner() -> None:
     assert "AQSP_RUNNER_SCRIPT is required" in script
     assert 'log "开始运行任务: ${RUNNER_PATH}"' in script
     assert 'bash "${RUNNER_PATH}"' in script
+    assert "printf 'GIT_SYNC_LOCK_STARTED_AT=%q\\n'" in script
+    assert "printf 'LOCK_STARTED_AT=%q\\n'" in script
     assert 'RUNNER_TIMEOUT_SECONDS="${AQSP_RUNNER_TIMEOUT_SECONDS:-0}"' in script
     assert (
         'timeout --foreground "${RUNNER_TIMEOUT_SECONDS}" bash "${RUNNER_PATH}"'
@@ -156,6 +158,7 @@ def test_bt_task_script_exposes_panel_safe_actions() -> None:
     assert "AQSP_RUNNER_SCRIPT=scripts/intraday_refresh.sh" in script
     assert "AQSP_RUNNER_SCRIPT=scripts/midday_refresh.sh" in script
     assert "server-git-sync.lock" in script
+    assert "printf 'GIT_SYNC_LOCK_STARTED_AT=%q\\n'" in script
     assert "AQSP_GIT_SYNC_WAIT_SECONDS" in script
     assert "AQSP_GIT_LOCK_STALE_MINUTES" in script
     assert "Git 同步进行中，等待释放" in script
@@ -179,6 +182,16 @@ def test_bt_task_script_exposes_panel_safe_actions() -> None:
     )
     assert "scripts/server_status.sh" in script
     assert "logs/bt" in script
+
+    monitor_script = (PROJECT_ROOT / "scripts" / "server_monitor.sh").read_text(
+        encoding="utf-8"
+    )
+    assert "printf 'LOCK_STARTED_AT=%q\\n'" in monitor_script
+
+    coldstart_script = (PROJECT_ROOT / "scripts" / "coldstart_daily.sh").read_text(
+        encoding="utf-8"
+    )
+    assert "printf 'LOCK_STARTED_AT=%q\\n'" in coldstart_script
 
     daily_script = (PROJECT_ROOT / "scripts" / "daily_pipeline.sh").read_text(
         encoding="utf-8"
@@ -385,8 +398,8 @@ def test_coldstart_daily_script_updates_db_then_runs_cli() -> None:
     assert "lock_is_stale" in script
     assert "检测到陈旧主锁，自动回收" in script
     assert "主链路仍在运行，本次冷启动正常跳过；这是互斥保护，不是失败" in script
-    assert "LOCK_RUNNER=scripts/coldstart_daily.sh" in script
-    assert 'LOCK_STARTED_AT="$(date \'+%Y-%m-%d %H:%M:%S\')"' in script
+    assert "printf 'LOCK_RUNNER=%q\\n' \"scripts/coldstart_daily.sh\"" in script
+    assert "printf 'LOCK_STARTED_AT=%q\\n'" in script
     assert 'UPDATE_ARGS=("${SQLITE_DB_PATH}")' in script
     assert '"${PYTHON_BIN}" -u "${UPDATE_SCRIPT}" "${UPDATE_ARGS[@]}"' in script
     assert '"${PYTHON_BIN}" -u -m aqsp.cli run' in script
