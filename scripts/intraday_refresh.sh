@@ -59,6 +59,7 @@ export PYTHONPATH="${PROJECT_ROOT}/src:${PROJECT_ROOT}:${PYTHONPATH:-}"
 export TZ="${TZ:-Asia/Shanghai}"
 export AQSP_RUN_TASK_ID="intraday"
 export AQSP_NOTIFY="false"
+export AQSP_GATE_NOTIFY="false"
 
 DOW=$(date +%u)
 if [ "$DOW" -ge 6 ]; then

@@ -18,6 +18,13 @@ def test_server_sync_script_supports_custom_runner() -> None:
     assert "printf 'GIT_SYNC_LOCK_STARTED_AT=%q\\n'" in script
     assert "printf 'LOCK_STARTED_AT=%q\\n'" in script
     assert 'RUNNER_TIMEOUT_SECONDS="${AQSP_RUNNER_TIMEOUT_SECONDS:-0}"' in script
+    assert 'write_result "blocked_dirty"' in script
+    assert 'write_result "missing_runner"' in script
+    assert 'DIRTY_STATE_FILE="${STATE_DIR}/server-sync-dirty.env"' in script
+    assert 'dirty_state_hash()' in script
+    assert 'dirty_state_count()' in script
+    assert 'write_dirty_state()' in script
+    assert "仍未清理；明细未变化" in script
     assert (
         'timeout --foreground "${RUNNER_TIMEOUT_SECONDS}" bash "${RUNNER_PATH}"'
         in script
@@ -32,6 +39,7 @@ def test_intraday_refresh_script_uses_isolated_outputs() -> None:
 
     assert 'export AQSP_RUN_TASK_ID="intraday"' in script
     assert 'export AQSP_NOTIFY="false"' in script
+    assert 'export AQSP_GATE_NOTIFY="false"' in script
     assert 'INTRADAY_MODE="${AQSP_INTRADAY_MODE:-open}"' in script
     assert 'INTRADAY_ALLOW_NOTIFY="${AQSP_INTRADAY_ALLOW_NOTIFY:-false}"' in script
     assert 'INTRADAY_NOTIFY="${AQSP_INTRADAY_NOTIFY:-false}"' in script
@@ -60,6 +68,7 @@ def test_news_catalysts_script_defaults_to_report_only() -> None:
     assert "AQSP_NEWS_NOTIFY:-false" in script
     assert "GLOBAL_NOTIFY" not in script
     assert 'export AQSP_NOTIFY="false"' in script
+    assert 'export AQSP_GATE_NOTIFY="false"' in script
     assert script.index("已加载 .env 配置") < script.index('export AQSP_NOTIFY="false"')
     assert "NOTIFY_ARGS=(--notify)" in script
     assert '"${NOTIFY_ARGS[@]}"' in script
@@ -122,6 +131,7 @@ def test_midday_refresh_reuses_intraday_chain_without_formal_ledger_pollution() 
     assert "AQSP_INTRADAY_REQUIRE_MARKET_HOURS=false" in script
     assert 'AQSP_RUN_TASK_ID="midday"' in script
     assert 'AQSP_NOTIFY="false"' in script
+    assert 'AQSP_GATE_NOTIFY="false"' in script
     assert 'AQSP_NOTIFY_TITLE_LABEL="${AQSP_NOTIFY_TITLE_LABEL:-午盘分析}"' in script
     assert 'AQSP_INTRADAY_NOTIFY="false"' in script
     assert 'AQSP_INTRADAY_ALLOW_NOTIFY="false"' in script
@@ -165,6 +175,7 @@ def test_bt_task_script_exposes_panel_safe_actions() -> None:
     assert "等待 Git 同步锁超时" in script
     assert 'export AQSP_RUN_TASK_ID="intraday"' in script
     assert 'export AQSP_NOTIFY="false"' in script
+    assert 'export AQSP_GATE_NOTIFY="false"' in script
     assert 'export AQSP_RUN_TASK_ID="midday"' in script
     assert "should_bridge_intraday_to_midday" in script
     assert "AQSP_INTRADAY_MIDDAY_BRIDGE" in script
@@ -175,11 +186,14 @@ def test_bt_task_script_exposes_panel_safe_actions() -> None:
     assert script.index("monitor)") < script.index("scripts/server_monitor.sh")
     monitor_block = script[script.index("monitor)") : script.index("news)")]
     assert "sync_code_only" in monitor_block
+    assert 'export AQSP_GATE_NOTIFY="false"' in monitor_block
     assert "scripts/news_catalysts.sh" in script
     assert script.index("news)") < script.index("scripts/news_catalysts.sh")
     assert script.index("skip_weekday_market_holiday") < script.index(
         "scripts/news_catalysts.sh"
     )
+    news_block = script[script.index("news)") : script.index("status)")]
+    assert 'export AQSP_GATE_NOTIFY="false"' in news_block
     assert "scripts/server_status.sh" in script
     assert "logs/bt" in script
 
@@ -209,7 +223,8 @@ def test_bt_task_script_exposes_panel_safe_actions() -> None:
     assert "缺少 AQSP_RUN_TASK_ID" in daily_script
     assert "拒绝运行 daily_pipeline" in daily_script
     assert "请统一走 scripts/bt_task.sh" in daily_script
-    assert "非 daily 任务忽略 AQSP_NOTIFY=true" in daily_script
+    assert 'DAILY_NOTIFY_RESOLVED="${AQSP_DAILY_NOTIFY:-${AQSP_NOTIFY:-true}}"' in daily_script
+    assert "daily 通知已关闭" in daily_script
 
 
 def test_news_catalysts_script_sends_research_notification() -> None:

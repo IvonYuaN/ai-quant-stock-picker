@@ -21,6 +21,7 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from aqsp.core.time import SHANGHAI_TZ, get_previous_trading_day, today_shanghai
+from aqsp.cli import WALKFORWARD_GATE_PATH, _check_notification_gate
 from aqsp.ledger.runtime import (
     collect_simulated_signal_dates,
     count_independent_signal_days,
@@ -28,6 +29,7 @@ from aqsp.ledger.runtime import (
     ledger_signal_date,
     latest_independent_signal_day,
 )
+from aqsp.runtime.gate_notify import gate_reason_fingerprint
 from aqsp.utils.env import read_env_value
 from aqsp.walkforward_gate import (
     MAX_GATE_AGE_DAYS,
@@ -258,6 +260,7 @@ def check_before_live(
     findings.append(_check_pbo_diagnostics(root, gate_path))
     findings.append(_check_trading_calendar_coverage(root, today))
     findings.append(_check_signal_sample_size(ledger_path))
+    findings.append(_check_gate_cold_start_alignment(root, ledger_path))
     findings.append(_check_paper_tracking_sample_size(paper_ledger_path))
     findings.append(_check_signal_sample_status_boundary(root))
     findings.append(_check_strategy_executability_feedback(paper_ledger_path))
@@ -310,6 +313,13 @@ def _check_walkforward_gate(path: Path, today: date) -> ReadinessFinding:
     status_path = path.with_name("walkforward_production_status.json")
     status_payload = _read_json(status_path)
     if not validation.ok and status_payload:
+        status_db_path = str(status_payload.get("db_path") or "").strip()
+        if _looks_like_ephemeral_test_path(status_db_path):
+            detail = (
+                f"{detail}; production_status ignored: ephemeral test artifact "
+                f"({status_db_path})"
+            )
+            return ReadinessFinding("walkforward_gate", False, detail)
         status = str(status_payload.get("status") or "").strip()
         updated_at = str(status_payload.get("updated_at") or "").strip()
         child_exit = status_payload.get("child_exit_code")
@@ -355,6 +365,22 @@ def _check_walkforward_gate(path: Path, today: date) -> ReadinessFinding:
         "walkforward_gate",
         validation.ok,
         detail,
+    )
+
+
+def _looks_like_ephemeral_test_path(raw: str) -> bool:
+    text = str(raw or "").strip().lower()
+    if not text:
+        return False
+    return any(
+        token in text
+        for token in (
+            "/pytest-of-",
+            "\\pytest-of-",
+            "/tmp/",
+            "/var/folders/",
+            "/private/var/folders/",
+        )
     )
 
 
@@ -417,17 +443,24 @@ def _check_walkforward_market_coverage(
         return ReadinessFinding("walkforward_market_coverage", False, "gate missing")
     status_path = gate_path.with_name("walkforward_production_status.json")
     status_payload = _read_json(status_path)
-    coverage_payload = gate
-    if status_payload:
-        status_coverage = status_payload.get("coverage")
-        covered = None
-        if isinstance(status_coverage, dict):
-            covered = status_coverage.get("covered_symbols")
-        if isinstance(covered, int) and not isinstance(covered, bool):
-            coverage_payload = {
-                **gate,
-                "effective_symbols": covered,
-            }
+    coverage_payload = dict(gate)
+    effective_symbols = gate.get("effective_symbols")
+    if not isinstance(effective_symbols, int) or isinstance(effective_symbols, bool):
+        production_coverage = gate.get("production_gate_coverage")
+        if isinstance(production_coverage, dict):
+            covered = production_coverage.get("covered_symbols")
+            if isinstance(covered, int) and not isinstance(covered, bool):
+                coverage_payload["effective_symbols"] = covered
+                effective_symbols = covered
+        if (
+            (not isinstance(effective_symbols, int) or isinstance(effective_symbols, bool))
+            and status_payload
+        ):
+            status_coverage = status_payload.get("coverage")
+            if isinstance(status_coverage, dict):
+                covered = status_coverage.get("covered_symbols")
+                if isinstance(covered, int) and not isinstance(covered, bool):
+                    coverage_payload["effective_symbols"] = covered
     validation = validate_walkforward_market_coverage(coverage_payload)
     if validation.effective_symbols is None:
         return ReadinessFinding(
@@ -1093,6 +1126,107 @@ def _check_signal_sample_size(path: Path) -> ReadinessFinding:
     )
 
 
+def _check_gate_cold_start_alignment(root: Path, ledger_path: Path) -> ReadinessFinding:
+    signal_days = count_independent_signal_days(str(ledger_path))
+    if signal_days < MIN_INDEPENDENT_SIGNAL_DAYS:
+        return ReadinessFinding(
+            "gate_cold_start_alignment",
+            True,
+            f"signal days below cold-start gate: {signal_days}/{MIN_INDEPENDENT_SIGNAL_DAYS}",
+        )
+    env_path = root / ".env"
+    value = (
+        _read_env_assignment(env_path, "AQSP_GATE_NOTIFY_STATE_PATH")
+        if env_path.exists()
+        else ""
+    )
+    gate_state_path = _normalize_runtime_path(
+        root, value or "data/gate_notify_state.json"
+    )
+    gate_path = _normalize_runtime_path(
+        root,
+        (
+            _read_env_assignment(env_path, "AQSP_WALKFORWARD_GATE_PATH")
+            if env_path.exists()
+            else ""
+        )
+        or WALKFORWARD_GATE_PATH,
+    )
+    gate_ok, gate_reasons = _check_notification_gate(
+        cold_start_days=signal_days,
+        gate_path=str(gate_path),
+    )
+    expected_fingerprint = gate_reason_fingerprint(gate_reasons) if gate_reasons else ""
+    payload = _read_json(gate_state_path)
+    if not payload:
+        if gate_ok:
+            return ReadinessFinding(
+                "gate_cold_start_alignment",
+                True,
+                (
+                    f"signal days {signal_days}/{MIN_INDEPENDENT_SIGNAL_DAYS}; "
+                    "current gate open and gate notify state already cleared"
+                ),
+            )
+        return ReadinessFinding(
+            "gate_cold_start_alignment",
+            False,
+            (
+                f"signal days reached {signal_days}/{MIN_INDEPENDENT_SIGNAL_DAYS} "
+                f"but gate notify state missing/unreadable: {gate_state_path}"
+            ),
+        )
+    sent_by_date = payload.get("sent_by_date", {})
+    latest_fingerprint = ""
+    latest_date = ""
+    if isinstance(sent_by_date, dict) and sent_by_date:
+        latest_date = max(str(key) for key in sent_by_date)
+        latest_entry = sent_by_date.get(latest_date)
+        if isinstance(latest_entry, dict):
+            latest_fingerprint = str(latest_entry.get("fingerprint") or "")
+        elif isinstance(latest_entry, str):
+            latest_fingerprint = latest_entry
+    fingerprint_tokens = {token for token in latest_fingerprint.split("|") if token}
+    if "cold_start" in fingerprint_tokens:
+        return ReadinessFinding(
+            "gate_cold_start_alignment",
+            False,
+            (
+                f"signal days reached {signal_days}/{MIN_INDEPENDENT_SIGNAL_DAYS} "
+                f"but latest gate fingerprint still contains cold_start"
+                + (f" ({latest_date}: {latest_fingerprint})" if latest_date else "")
+            ),
+        )
+    if gate_ok and latest_fingerprint:
+        return ReadinessFinding(
+            "gate_cold_start_alignment",
+            False,
+            (
+                f"signal days reached {signal_days}/{MIN_INDEPENDENT_SIGNAL_DAYS} "
+                f"and current gate is open, but gate notify state still records "
+                f"{latest_fingerprint or '-'}"
+            ),
+        )
+    if (not gate_ok) and expected_fingerprint and latest_fingerprint != expected_fingerprint:
+        return ReadinessFinding(
+            "gate_cold_start_alignment",
+            False,
+            (
+                f"signal days reached {signal_days}/{MIN_INDEPENDENT_SIGNAL_DAYS} "
+                f"but gate notify fingerprint drifted: state={latest_fingerprint or '-'} "
+                f"expected={expected_fingerprint}"
+            ),
+        )
+    return ReadinessFinding(
+        "gate_cold_start_alignment",
+        True,
+        (
+            f"signal days {signal_days}/{MIN_INDEPENDENT_SIGNAL_DAYS}; "
+            f"latest gate fingerprint={latest_fingerprint or '-'}"
+        ),
+    )
+
+
 def _check_paper_tracking_sample_size(path: Path) -> ReadinessFinding:
     count = count_paper_tracking_days(str(path))
     predictions_path = path.with_name("predictions.jsonl")
@@ -1748,6 +1882,10 @@ def _check_notify_state_paths(root: Path) -> list[ReadinessFinding]:
 
 def _check_notify_channels(root: Path) -> ReadinessFinding:
     env_path = root / ".env"
+    notify_enabled = (
+        str(read_env_value(env_path, "AQSP_NOTIFY") or "").strip().lower()
+        in {"1", "true", "yes", "on"}
+    )
     channel_keys = (
         "SERVERCHAN_SENDKEY",
         "WECHAT_WEBHOOK_URL",
@@ -1777,7 +1915,17 @@ def _check_notify_channels(root: Path) -> ReadinessFinding:
         return ReadinessFinding(
             "notify_channels",
             False,
-            "no real notification channel configured in .env",
+            "no real notification channel configured in .env; set one of "
+            "SERVERCHAN_SENDKEY / WECHAT_WEBHOOK_URL / BARK_URL / PUSHPLUS_TOKEN / "
+            "TELEGRAM_BOT_TOKEN+TELEGRAM_CHAT_ID / FEISHU_WEBHOOK_URL / "
+            "DINGTALK_WEBHOOK_URL / DISCORD_WEBHOOK_URL / SLACK_WEBHOOK_URL / "
+            "GENERIC_WEBHOOK_URL",
+        )
+    if not notify_enabled:
+        return ReadinessFinding(
+            "notify_channels",
+            False,
+            "AQSP_NOTIFY=false in .env; scheduled daily notifications are disabled",
         )
     return ReadinessFinding(
         "notify_channels",

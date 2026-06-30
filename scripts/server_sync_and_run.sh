@@ -22,6 +22,8 @@ GIT_LOCK_STALE_MINUTES="${AQSP_GIT_LOCK_STALE_MINUTES:-30}"
 LOCK_STALE_MINUTES="${AQSP_LOCK_STALE_MINUTES:-360}"
 RUNNER_TIMEOUT_SECONDS="${AQSP_RUNNER_TIMEOUT_SECONDS:-0}"
 RUN_RESULT_FILE="${AQSP_SYNC_RESULT_FILE:-}"
+STATE_DIR="${PROJECT_ROOT}/.state"
+DIRTY_STATE_FILE="${STATE_DIR}/server-sync-dirty.env"
 
 log() {
     mkdir -p "$LOG_DIR"
@@ -33,6 +35,38 @@ write_result() {
         mkdir -p "$(dirname "$RUN_RESULT_FILE")"
         printf 'status=%s\nrunner=%s\n' "$1" "$RUNNER_SCRIPT" > "$RUN_RESULT_FILE"
     fi
+}
+
+dirty_state_hash() {
+    if command -v sha256sum >/dev/null 2>&1; then
+        printf '%s' "$1" | sha256sum | awk '{print $1}'
+        return 0
+    fi
+    if command -v shasum >/dev/null 2>&1; then
+        printf '%s' "$1" | shasum -a 256 | awk '{print $1}'
+        return 0
+    fi
+    printf 'nohash\n'
+}
+
+dirty_state_count() {
+    printf '%s\n' "$1" | awk 'NF { count += 1 } END { print count + 0 }'
+}
+
+load_dirty_state() {
+    if [ -f "$DIRTY_STATE_FILE" ]; then
+        # shellcheck disable=SC1090
+        . "$DIRTY_STATE_FILE"
+    fi
+}
+
+write_dirty_state() {
+    mkdir -p "$STATE_DIR"
+    {
+        printf 'PREV_DIRTY_HASH=%q\n' "$1"
+        printf 'PREV_DIRTY_COUNT=%q\n' "$2"
+        printf 'PREV_DIRTY_UPDATED_AT=%q\n' "$(date '+%Y-%m-%d %H:%M:%S')"
+    } >"$DIRTY_STATE_FILE"
 }
 
 release_git_sync_lock() {
@@ -179,10 +213,20 @@ git update-index --refresh >/dev/null 2>&1 || true
 
 DIRTY_TRACKED="$(git status --porcelain --untracked-files=no)"
 if [ -n "$DIRTY_TRACKED" ]; then
-    log "检测到受 Git 管理的本地修改，拒绝自动覆盖："
-    printf '%s\n' "$DIRTY_TRACKED" | tee -a "$RUN_LOG"
+    DIRTY_HASH="$(dirty_state_hash "$DIRTY_TRACKED")"
+    DIRTY_COUNT_NOW="$(dirty_state_count "$DIRTY_TRACKED")"
+    load_dirty_state
+    if [ "${DIRTY_HASH:-}" = "${PREV_DIRTY_HASH:-}" ]; then
+        log "检测到受 Git 管理的本地修改，仍未清理；明细未变化 count=${DIRTY_COUNT_NOW} hash=${DIRTY_HASH}"
+    else
+        log "检测到受 Git 管理的本地修改，拒绝自动覆盖："
+        printf '%s\n' "$DIRTY_TRACKED" | tee -a "$RUN_LOG"
+        write_dirty_state "$DIRTY_HASH" "$DIRTY_COUNT_NOW"
+    fi
+    write_result "blocked_dirty"
     exit 1
 fi
+rm -f "$DIRTY_STATE_FILE"
 
 git fetch "$REMOTE" "$BRANCH" 2>&1 | tee -a "$RUN_LOG"
 LOCAL_HEAD="$(git rev-parse HEAD)"
@@ -200,6 +244,7 @@ trap 'rm -f "$LOCK_INFO_FILE"; rmdir "$LOCK_FILE"' EXIT
 
 if [ ! -f "${RUNNER_PATH}" ]; then
     log "运行脚本不存在: ${RUNNER_PATH}"
+    write_result "missing_runner"
     exit 1
 fi
 

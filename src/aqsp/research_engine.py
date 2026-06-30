@@ -194,7 +194,7 @@ class AkquantWalkForwardEngine:
             if symbol not in test_data:
                 continue
 
-            test_df = test_data[symbol].sort_values("date").reset_index(drop=True)
+            test_df = test_data[symbol]
             if test_df.empty:
                 continue
 
@@ -235,9 +235,7 @@ class AkquantWalkForwardEngine:
         on_bar = _make_akquant_on_bar(
             entry_plan={symbol: 1.0 for symbol in executable_data},
             frame_lengths={
-                symbol: len(
-                    test_data[symbol].sort_values("date").reset_index(drop=True)
-                )
+                symbol: len(test_data[symbol])
                 for symbol in executable_data
             },
             horizon_days=tester.horizon_days,

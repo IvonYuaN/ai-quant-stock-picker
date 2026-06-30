@@ -418,6 +418,43 @@ class DataCache:
             row = cursor.fetchone()
         return row[0] if row else None
 
+    def get_adj_factors(
+        self,
+        symbol: str,
+        dates: list[date],
+    ) -> dict[date, float]:
+        normalized_dates = sorted({item for item in dates if isinstance(item, date)})
+        if not normalized_dates:
+            return {}
+        start = normalized_dates[0].strftime("%Y-%m-%d")
+        end = normalized_dates[-1].strftime("%Y-%m-%d")
+        with sqlite3.connect(self.db_path, timeout=_SQLITE_TIMEOUT_SECONDS) as conn:
+            rows = conn.execute(
+                """
+                SELECT date, adj_factor FROM adj_factors
+                WHERE symbol = ? AND date >= ? AND date <= ?
+                ORDER BY date
+                """,
+                (symbol, start, end),
+            ).fetchall()
+
+        factors_by_day: dict[date, float] = {}
+        for raw_day, raw_factor in rows:
+            try:
+                day = date.fromisoformat(str(raw_day)[:10])
+                factor = float(raw_factor)
+            except (TypeError, ValueError):
+                continue
+            factors_by_day[day] = factor
+
+        resolved: dict[date, float] = {}
+        latest_factor = 1.0
+        for day in normalized_dates:
+            if day in factors_by_day:
+                latest_factor = factors_by_day[day]
+            resolved[day] = latest_factor
+        return resolved
+
     def set_adj_factors(
         self, symbol: str, df: pd.DataFrame, source: str = "unknown"
     ) -> None:

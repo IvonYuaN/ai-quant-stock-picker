@@ -214,7 +214,7 @@ def test_dashboard_data_provider_reads_real_runtime_files(
         symbol="600519",
     )
     assert open_focus.display_name == "600519 贵州茅台"
-    assert open_focus.research_status == "研究结论已落盘"
+    assert open_focus.research_status == "已落盘"
     assert open_focus.execution_status == "尚未进入执行"
     assert open_focus.holding_status == "纸面持有未绑定本日"
     assert any(
@@ -933,7 +933,7 @@ def test_dashboard_data_provider_builds_task_views_and_dedupes_latest_rows(
     assert any("开盘前后" in item for item in main_view.review_lines)
     assert main_view.detail_cards[0].display_name == "600519 贵州茅台"
     assert main_view.detail_cards[0].rank_label == "第一顺位"
-    assert "上调优先级" in main_view.detail_cards[0].decision_note
+    assert "优先级上调" in main_view.detail_cards[0].decision_note
     assert main_view.detail_cards[0].reasons == ("量价齐升", "接近新高")
     assert main_view.detail_cards[0].risks == ("追高波动",)
     assert main_view.ranking_lines[0].startswith("第一顺位: 600519 贵州茅台")
@@ -947,10 +947,10 @@ def test_dashboard_data_provider_builds_task_views_and_dedupes_latest_rows(
     assert main_view.report_source.endswith("latest.md")
     assert "T" in main_view.report_mtime
     assert main_view.lifecycle_lines[0].startswith(
-        "600519 贵州茅台 | 上调优先级 | 延续上升"
+        "600519 贵州茅台 | 优先级上调 | 延续上升"
     )
     assert any(
-        "000001 平安银行 | 现在卡在哪: 板块集中度过高" in line
+        "000001 平安银行 | 当前限制: 板块集中度过高" in line
         for line in main_view.unlock_lines
     )
     assert main_view.previous_date == "2026-06-04"
@@ -1066,7 +1066,7 @@ def test_dashboard_data_provider_builds_task_views_and_dedupes_latest_rows(
     journey = provider.same_day_candidate_journey("2026-06-05", "600519")
     assert [step.task_id for step in journey] == ["main_chain", "closing_premium"]
     assert [step.phase_label for step in journey] == ["盘前主链", "尾盘确认"]
-    assert [step.action_label for step in journey] == ["上调优先级", "上调优先级"]
+    assert [step.action_label for step in journey] == ["优先级上调", "优先级上调"]
 
     morning_journey = provider.same_day_candidate_journey("2026-06-05", "300750")
     assert len(morning_journey) == 1
@@ -1087,7 +1087,7 @@ def test_dashboard_data_provider_builds_task_views_and_dedupes_latest_rows(
     assert date_overview.top_task_label in {"主链推荐", "早盘策略", "尾盘策略"}
     assert (
         "待复核" in date_overview.focus_headline
-        or "继续观察名单" in date_overview.focus_headline
+        or "继续观察" in date_overview.focus_headline
         or "核对卡点" in date_overview.focus_headline
     )
     assert "当日流程:" in date_overview.workflow_summary
@@ -1515,7 +1515,7 @@ def test_dashboard_data_provider_sanitizes_archive_summary_action_words(
     assert "研究回看" in visible_text
     assert "纸面复核对象" in visible_text
     assert "纸面复核名单" in visible_text
-    assert "比例参考" in visible_text
+    assert "仓位参考" in visible_text
     assert "参考价" in visible_text
     assert "最多亏到" in visible_text
     assert "先看目标" in visible_text
@@ -1616,8 +1616,8 @@ def test_dashboard_data_provider_dedupes_action_status_when_execution_focus_matc
 
     focus = provider.execution_focus(signal_date="2026-06-05", symbol="600519")
 
-    assert focus.research_lines[0] == "研究动作: 维持原排序"
-    assert not any("维持原排序 / 维持原排序" in line for line in focus.research_lines)
+    assert focus.research_lines[0] == "研究动作: 结果不变"
+    assert not any("结果不变 / 结果不变" in line for line in focus.research_lines)
 
 
 def test_dashboard_data_provider_formats_execution_focus_research_lines_when_candidate_context_exists(
@@ -1662,7 +1662,7 @@ def test_dashboard_data_provider_formats_execution_focus_research_lines_when_can
     focus = provider.execution_focus(signal_date="2026-06-05", symbol="300750")
 
     assert focus.research_lines[:4] == (
-        "研究动作: 上调优先级 / 延续上升",
+        "研究动作: 优先级上调 / 延续上升",
         "评分 88.0",
         "再看时间: 高优先级 / 开盘前后",
         "研究下一步: 观察量能是否继续扩张，再决定是否维持主推",
@@ -2055,20 +2055,20 @@ def test_dashboard_data_provider_same_day_spotlight_uses_latest_phase_as_final_s
     }
     overview = provider.date_overview("2026-06-05")
 
-    assert spotlights["300750"].action_label == "上调优先级"
+    assert spotlights["300750"].action_label == "优先级上调"
     assert spotlights["300750"].blocker == ""
     assert spotlights["300750"].next_step == "早盘观察: 尾盘确认后再跟踪"
     assert spotlights["300750"].reasons == ("早盘观察: 早盘资金回流",)
     assert spotlights["300750"].risks == ("早盘观察: 早盘追高风险",)
     assert spotlights["300750"].task_labels == ("早盘策略", "尾盘策略")
-    assert spotlights["002594"].action_label == "降级观察"
+    assert spotlights["002594"].action_label == "优先级下调"
     assert spotlights["002594"].status_label == "尾盘降级阻塞"
     assert spotlights["002594"].blocker == "早盘观察: 早盘放量失败"
     assert spotlights["002594"].risks == ("早盘观察: 早盘风险未解除",)
     review_cards = {
         item.symbol: item for item in provider.candidate_review_cards("2026-06-05")
     }
-    assert review_cards["300750"].action_label == "上调优先级"
+    assert review_cards["300750"].action_label == "优先级上调"
     assert review_cards["300750"].blocker == ""
     assert review_cards["300750"].reasons == ("早盘观察: 早盘资金回流",)
     assert review_cards["002594"].status_label == "尾盘降级阻塞"
@@ -2188,7 +2188,7 @@ def test_dashboard_data_provider_execution_focus_falls_back_to_same_day_signal_t
         task_id="closing_review",
     )
 
-    assert focus.research_status == "研究侧待确认"
+    assert focus.research_status == "待确认"
     assert focus.research_lines[0] == "研究来源: 早盘策略 / 早盘观察"
     assert "研究链路缺席" not in focus.research_status
 
@@ -2246,10 +2246,10 @@ def test_dashboard_data_provider_execution_focus_uses_final_signal_state_when_cl
         task_id="closing_review",
     )
 
-    assert focus.research_status == "研究侧存在阻塞"
+    assert focus.research_status == "存在阻塞"
     assert focus.research_lines[0] == "研究来源: 尾盘策略 / 尾盘确认"
-    assert "研究动作: 降级观察 / 尾盘降级阻塞" in focus.research_lines
-    assert "现在卡在哪: 尾盘放量失败" in focus.research_lines
+    assert "研究动作: 优先级下调 / 尾盘降级阻塞" in focus.research_lines
+    assert "当前限制: 尾盘放量失败" in focus.research_lines
 
 
 def test_dashboard_data_provider_execution_focus_uses_paper_context_when_signal_row_missing(
@@ -2293,8 +2293,8 @@ def test_dashboard_data_provider_execution_focus_uses_paper_context_when_signal_
 
     focus = provider.execution_focus(signal_date="2026-06-05", symbol="300750")
 
-    assert focus.research_status == "研究侧存在阻塞"
-    assert "研究动作: 降级观察 / 观察阻塞" in focus.research_lines
+    assert focus.research_status == "存在阻塞"
+    assert "研究动作: 优先级下调 / 观察阻塞" in focus.research_lines
     assert "再看时间: 高优先级 / 次日开盘" in focus.research_lines
     assert "研究下一步: 等待开板后再评估" in focus.research_lines
     assert any("涨停无法追入" in line for line in focus.readiness_lines)
@@ -2343,7 +2343,7 @@ def test_dashboard_data_provider_derives_blocker_from_risks_for_downgraded_candi
     assert view.detail_cards[0].blocker == "20日均成交额不足，流动性过滤"
     assert view.detail_cards[0].decision_note == "20日均成交额不足，流动性过滤"
     assert any(
-        "000338 潍柴动力 | 现在卡在哪: 20日均成交额不足，流动性过滤" == line
+        "000338 潍柴动力 | 当前限制: 20日均成交额不足，流动性过滤" == line
         for line in view.unlock_lines
     )
     assert any(

@@ -140,8 +140,8 @@ class TestReviewToday:
         assert any("不可成交样本" in item for item in review.key_lessons)
         assert any("等待纸面入场或纸面结束" in item for item in review.key_lessons)
         assert any("不可成交原因" in item for item in review.improvement_suggestions)
-        assert "继续观察名单: 600000 测试A" in review.main_chain_summary
-        assert "现在卡在哪: 600000 测试A: 板块集中度过高" in review.main_chain_summary
+        assert "观察名单: 600000 测试A" in review.main_chain_summary
+        assert "阻塞: 600000 测试A: 板块集中度过高" in review.main_chain_summary
 
     def test_review_counts_signals_when_only_pending_or_blocked_rows_exist(
         self, tmp_path
@@ -229,9 +229,9 @@ class TestReviewToday:
         ).review_today("2025-06-02")
 
         assert review.executed_signals == 1
-        assert "今日重点名单: 600010 包钢股份" in review.main_chain_summary
+        assert "主看名单: 600010 包钢股份" in review.main_chain_summary
         assert (
-            "观察名单接下来: 600010 包钢股份 | 高优先级 / 开盘前后 | 放量时继续跟踪"
+            "后续关注: 600010 包钢股份 | 高优先级 / 开盘前后 | 放量时继续跟踪"
             in review.main_chain_summary
         )
 

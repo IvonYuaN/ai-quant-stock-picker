@@ -1851,6 +1851,114 @@ def test_walkforward_sqlite_main_passes_cache_path_to_sqlite_source(
     assert seen == {"cache_path": str(cache_path)}
 
 
+def test_walkforward_defaults_to_recent_window_dates(
+    monkeypatch, tmp_path
+) -> None:
+    import aqsp.cli as cli_mod
+
+    seen: dict[str, str] = {}
+
+    class DummySource:
+        def get_available_symbols(self):
+            return ["600519"]
+
+        def fetch_daily(self, symbols, start, end, adjust=""):
+            seen["start"] = start.isoformat()
+            seen["end"] = end.isoformat()
+            dates = pd.date_range(start="2023-06-22", periods=260, freq="B")
+            return {
+                "600519": pd.DataFrame(
+                    {
+                        "date": dates.strftime("%Y-%m-%d"),
+                        "symbol": "600519",
+                        "name": "贵州茅台",
+                        "open": 100.0,
+                        "high": 101.0,
+                        "low": 99.0,
+                        "close": 100.5,
+                        "volume": 1_000_000,
+                        "amount": 100_000_000,
+                        "suspended": False,
+                        "limit_up": 110.0,
+                        "limit_down": 90.0,
+                    }
+                )
+            }
+
+    class DummyEngine:
+        def run(self, strategy, filtered, start_date=None, end_date=None, config=None):
+            seen["run_start"] = str(start_date)
+            seen["run_end"] = str(end_date)
+            return SimpleNamespace(
+                overall=SimpleNamespace(
+                    total_return=0.1,
+                    annual_return=0.12,
+                    max_drawdown=0.03,
+                    sharpe_ratio=1.2,
+                    win_rate=0.55,
+                    profit_factor=1.3,
+                    trades=10,
+                    not_executable=0,
+                ),
+                deflated_sharpe=1.1,
+                pbo=0.2,
+                robustness_score=0.8,
+                parameter_std=0.1,
+                regime_winrates={},
+                periods=[],
+            )
+
+    monkeypatch.setattr(cli_mod, "today_shanghai", lambda: date(2026, 6, 20))
+    monkeypatch.setattr(
+        cli_mod,
+        "_build_sqlite_db_source",
+        lambda *, cache=None: DummySource(),
+    )
+    monkeypatch.setattr(
+        "aqsp.data.pit_financial.enrich_ohlcv_with_pit_financials",
+        lambda frames, symbols, start, end, cache=None: SimpleNamespace(
+            frames=frames, financial_symbol_count=0, disclosure_symbol_count=0
+        ),
+    )
+    monkeypatch.setattr(
+        cli_mod,
+        "resolve_walkforward_engine",
+        lambda _requested: (
+            DummyEngine(),
+            SimpleNamespace(
+                requested="auto",
+                resolved="builtin",
+                mode="native",
+                message="ok",
+            ),
+        ),
+    )
+    monkeypatch.setattr(
+        "aqsp.strategies.composite.CompositeStrategy",
+        lambda thresholds=None: object(),
+    )
+
+    report_path = tmp_path / "walkforward-default-window.md"
+    result = cli_mod.main(
+        [
+            "walkforward",
+            "--source",
+            "sqlite_db",
+            "--symbols",
+            "600519",
+            "--skip-pit-financials",
+            "--report",
+            str(report_path),
+        ]
+    )
+
+    assert result == 0
+    assert seen["start"] == "2023-06-21"
+    assert seen["end"] == "2026-06-20"
+    assert seen["run_start"] == "2023-06-21"
+    assert seen["run_end"] == "2026-06-20"
+
+
 def test_sqlite_fetch_daily_skips_duplicate_coverage_check_when_prefiltered(
     monkeypatch, tmp_path
 ) -> None:
@@ -1879,13 +1987,15 @@ def test_sqlite_fetch_daily_skips_duplicate_coverage_check_when_prefiltered(
         conn.execute(
             "INSERT INTO stocks(ts_code, name) VALUES('600519.SH', 'demo')"
         )
-        conn.execute(
-            """
-            INSERT INTO daily_qfq(
-                ts_code, trade_date, open, high, low, close, close_qfq, volume, amount
-            ) VALUES('600519.SH', '20240102', 10, 11, 9, 10, 10, 1000, 10000)
-            """
-        )
+        for trade_date in ("20240102", "20240115", "20240131"):
+            conn.execute(
+                """
+                INSERT INTO daily_qfq(
+                    ts_code, trade_date, open, high, low, close, close_qfq, volume, amount
+                ) VALUES('600519.SH', ?, 10, 11, 9, 10, 10, 1000, 10000)
+                """,
+                (trade_date,),
+            )
         conn.commit()
 
     source = SqliteDbSource(db_path=db, cache=None)
@@ -1895,6 +2005,66 @@ def test_sqlite_fetch_daily_skips_duplicate_coverage_check_when_prefiltered(
 
     monkeypatch.setattr(source, "get_symbols_with_daily_coverage", fail_coverage)
     monkeypatch.setenv("AQSP_SQLITE_PREFILTERED_SYMBOLS", "1")
+
+    out = source.fetch_daily(
+        ["600519"], start=date(2024, 1, 1), end=date(2024, 1, 31), adjust=""
+    )
+
+    assert "600519" in out
+
+
+def test_sqlite_fetch_daily_reuses_service_prefilter_snapshot_without_env(
+    monkeypatch, tmp_path
+) -> None:
+    from aqsp.data.sqlite_db_source import SqliteDbSource
+
+    db = tmp_path / "astocks_raw.db"
+    import sqlite3
+
+    with sqlite3.connect(db) as conn:
+        conn.execute("CREATE TABLE stocks(ts_code TEXT PRIMARY KEY, name TEXT)")
+        conn.execute(
+            """
+            CREATE TABLE daily_qfq(
+                ts_code TEXT,
+                trade_date TEXT,
+                open REAL,
+                high REAL,
+                low REAL,
+                close REAL,
+                close_qfq REAL,
+                volume INTEGER,
+                amount REAL
+            )
+            """
+        )
+        conn.execute(
+            "INSERT INTO stocks(ts_code, name) VALUES('600519.SH', 'demo')"
+        )
+        for trade_date in ("20240102", "20240115", "20240131"):
+            conn.execute(
+                """
+                INSERT INTO daily_qfq(
+                    ts_code, trade_date, open, high, low, close, close_qfq, volume, amount
+                ) VALUES('600519.SH', ?, 10, 11, 9, 10, 10, 1000, 10000)
+                """,
+                (trade_date,),
+            )
+        conn.commit()
+
+    source = SqliteDbSource(db_path=db, cache=None)
+    covered = source.get_symbols_with_daily_coverage(
+        ["600519"],
+        date(2024, 1, 1),
+        date(2024, 1, 31),
+        min_rows=None,
+    )
+    assert covered == ["600519"]
+
+    def fail_coverage(*_args, **_kwargs):
+        raise AssertionError("service-prefiltered coverage should be reused")
+
+    monkeypatch.setattr(source, "get_symbols_with_daily_coverage", fail_coverage)
 
     out = source.fetch_daily(
         ["600519"], start=date(2024, 1, 1), end=date(2024, 1, 31), adjust=""
@@ -2093,15 +2263,26 @@ def test_walkforward_grid_dsr_uses_period_level_observation_count(
         def run(self, strategy, data, *, start_date=None, end_date=None, config=None):
             raise AssertionError("engine.run should be monkeypatched per variant result")
 
-    variant_result = SimpleNamespace(
-        overall=SimpleNamespace(sharpe_ratio=2.0, total_return=0.1),
-        periods=[
-            SimpleNamespace(period="p1", total_return=0.01),
-            SimpleNamespace(period="p2", total_return=0.02),
-            SimpleNamespace(period="p3", total_return=0.03),
-            SimpleNamespace(period="p4", total_return=0.04),
-        ],
-    )
+    variant_results = [
+        SimpleNamespace(
+            overall=SimpleNamespace(sharpe_ratio=1.2, total_return=0.08, trades=40),
+            periods=[
+                SimpleNamespace(period="p1", total_return=0.01),
+                SimpleNamespace(period="p2", total_return=0.02),
+                SimpleNamespace(period="p3", total_return=0.03),
+                SimpleNamespace(period="p4", total_return=0.04),
+            ],
+        ),
+        SimpleNamespace(
+            overall=SimpleNamespace(sharpe_ratio=2.0, total_return=0.1, trades=55),
+            periods=[
+                SimpleNamespace(period="p1", total_return=0.01),
+                SimpleNamespace(period="p2", total_return=0.02),
+                SimpleNamespace(period="p3", total_return=0.03),
+                SimpleNamespace(period="p4", total_return=0.04),
+            ],
+        ),
+    ]
 
     variants = (
         cli_mod.WalkForwardGridVariant("A", 0.3, 0.3, 60, 3, 10),
@@ -2110,8 +2291,9 @@ def test_walkforward_grid_dsr_uses_period_level_observation_count(
     run_calls = {"count": 0}
 
     def fake_engine_run(*_args, **_kwargs):
+        idx = run_calls["count"]
         run_calls["count"] += 1
-        return variant_result
+        return variant_results[idx]
 
     monkeypatch.setattr(DummyEngine, "run", fake_engine_run)
     monkeypatch.setattr(cli_mod, "_walkforward_grid_variants", lambda _profile: variants)
@@ -2150,4 +2332,4 @@ def test_walkforward_grid_dsr_uses_period_level_observation_count(
     assert pbo == 0.25
     assert min_periods == 4
     assert run_calls["count"] == 2
-    assert captured["n_obs"] == 8
+    assert captured["n_obs"] == 55

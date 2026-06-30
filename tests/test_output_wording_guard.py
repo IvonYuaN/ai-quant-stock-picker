@@ -8,12 +8,16 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 OUTPUT_MODULES = (
     "src/aqsp/notify_templates.py",
+    "src/aqsp/notifier.py",
+    "src/aqsp/briefing/notifier.py",
     "src/aqsp/briefing/generator.py",
     "src/aqsp/briefing/renderer.py",
     "src/aqsp/briefing/email_notifier.py",
     "src/aqsp/cli.py",
     "src/aqsp/report.py",
     "src/aqsp/reports/v2.py",
+    "src/aqsp/web/data_provider.py",
+    "scripts/daily_pipeline.py",
     "scripts/render_dashboard.py",
 )
 
@@ -34,6 +38,13 @@ FORBIDDEN_OUTPUT_WORDING = (
     "重点跟踪对象",
     "🎯 重点跟踪",
     "抬升成重点跟踪",
+    "现在先看",
+    "接下来怎么做",
+    "降低信任度",
+    "选股快报",
+    "先看这个",
+    "接下来先看",
+    "现在卡在哪",
 )
 
 FORBIDDEN_STATIC_DASHBOARD_WORDING = (

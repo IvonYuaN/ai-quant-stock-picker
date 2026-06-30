@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import struct
 from datetime import date
@@ -11,11 +12,13 @@ from aqsp.research.summary import (
     ResearchSummary,
 )
 from aqsp.data.tdx_vipdoc_source import TDX_DAY_RECORD
+from aqsp.core.time import now_shanghai
 from scripts.diagnose_runtime import (
     PROJECT_ROOT,
     _large_return_rows,
     _latest_run_source_runtime,
     _load_dotenv_defaults,
+    _runtime_cadence_summary,
     _runtime_paths,
     _scheduler_runtime_lines,
     _tdx_vipdoc_summary,
@@ -72,6 +75,12 @@ def test_runtime_paths_follow_daily_run_environment(tmp_path, monkeypatch) -> No
     assert paths.dashboard == dashboard
     assert paths.latest_report == PROJECT_ROOT / "reports/custom.md"
     assert paths.sqlite_db == PROJECT_ROOT / "data/astocks_raw.db"
+
+
+def test_default_runtime_path_is_project_relative() -> None:
+    from scripts.diagnose_runtime import _default_runtime_path
+
+    assert _default_runtime_path("data/predictions.jsonl") == PROJECT_ROOT / "data/predictions.jsonl"
 
 
 def test_load_dotenv_defaults_does_not_override_explicit_env(
@@ -225,6 +234,27 @@ def test_diagnose_runtime_main_reports_research_runtime(
     )
 
 
+def test_runtime_cadence_summary_counts_today_runs(tmp_path) -> None:
+    today = now_shanghai().date().isoformat()
+    daily_log = tmp_path / "logs" / "daily" / f"run-{today}.log"
+    news_log = tmp_path / "logs" / "news" / f"news-{today}.log"
+    monitor_log = tmp_path / "logs" / "monitor" / f"monitor-{today}.log"
+    daily_log.parent.mkdir(parents=True, exist_ok=True)
+    news_log.parent.mkdir(parents=True, exist_ok=True)
+    monitor_log.parent.mkdir(parents=True, exist_ok=True)
+    daily_log.write_text(
+        "=== aqsp run @ Mon Jun 29 18:00:00 CST 2026 ===\n"
+        "=== aqsp run @ Mon Jun 29 18:10:00 CST 2026 ===\n",
+        encoding="utf-8",
+    )
+    news_log.write_text("开始消息面雷达\n开始消息面雷达\n", encoding="utf-8")
+    monitor_log.write_text("AQSP 服务器监控开始\n", encoding="utf-8")
+
+    result = _runtime_cadence_summary(tmp_path)
+
+    assert result == {"daily_runs": 2, "news_runs": 2, "monitor_runs": 1}
+
+
 def test_diagnose_runtime_main_labels_config_backed_research_queue(
     tmp_path, monkeypatch, capsys
 ) -> None:
@@ -317,6 +347,7 @@ def test_diagnose_runtime_main_reports_signal_and_notify_state(
     monkeypatch.setenv(
         "AQSP_WALKFORWARD_PRODUCTION_STATUS", str(walkforward_status)
     )
+    monkeypatch.setenv("AQSP_WALKFORWARD_GATE_PATH", str(tmp_path / "missing_gate.json"))
     monkeypatch.setenv("AQSP_GATE_NOTIFY_STATE_PATH", str(gate_state))
     monkeypatch.setenv("AQSP_NOTIFY_STATE_PATH", str(notify_state))
     monkeypatch.setenv("AQSP_MONITOR_NOTIFY_STATE_PATH", str(monitor_state))
@@ -338,6 +369,8 @@ def test_diagnose_runtime_main_reports_signal_and_notify_state(
     assert "- gate_days: 1 latest=2026-06-21" in output
     assert "- gate_latest_status: failed" in output
     assert "- gate_latest_fingerprint: cold_start|dsr" in output
+    assert "- gate_expected_ok: False" in output
+    assert "- gate_expected_fingerprint: cold_start|sidecar_missing" in output
     assert "- gate_legacy_format: False" in output
     assert "- gate_updated_at: -" in output
     assert "- notify_counts: sent=1 pending=0 failed=0" in output
@@ -375,6 +408,170 @@ def test_diagnose_runtime_marks_legacy_gate_state_format(
     assert "- gate_latest_status: legacy" in output
     assert "- gate_legacy_format: True" in output
     assert "- gate_updated_at: 2026-06-22T18:08:40+08:00" in output
+
+
+def test_diagnose_runtime_warns_when_gate_state_missing_after_cold_start_target(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    from scripts import diagnose_runtime
+
+    ledger = tmp_path / "predictions.jsonl"
+    paper = tmp_path / "paper.jsonl"
+    rows = [
+        f'{{"signal_date":"2026-05-{day:02d}","symbol":"600000","status":"pending","thresholds_version":"v1"}}'
+        for day in range(1, 31)
+    ]
+    ledger.write_text("\n".join(rows) + "\n", encoding="utf-8")
+    paper.write_text("", encoding="utf-8")
+
+    monkeypatch.setenv("AQSP_LEDGER", str(ledger))
+    monkeypatch.setenv("AQSP_PAPER_LEDGER", str(paper))
+    monkeypatch.delenv("SERVERCHAN_SENDKEY", raising=False)
+    monkeypatch.delenv("WECHAT_WEBHOOK_URL", raising=False)
+    monkeypatch.delenv("BARK_URL", raising=False)
+    monkeypatch.delenv("PUSHPLUS_TOKEN", raising=False)
+    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+    monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)
+    monkeypatch.delenv("FEISHU_WEBHOOK_URL", raising=False)
+    monkeypatch.delenv("DINGTALK_WEBHOOK_URL", raising=False)
+    monkeypatch.delenv("DISCORD_WEBHOOK_URL", raising=False)
+    monkeypatch.delenv("SLACK_WEBHOOK_URL", raising=False)
+    monkeypatch.delenv("GENERIC_WEBHOOK_URL", raising=False)
+    monkeypatch.setattr("scripts.diagnose_runtime.PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(
+        "scripts.diagnose_runtime.load_research_summary",
+        lambda: None,
+    )
+
+    exit_code = diagnose_runtime.main()
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "- signal_days: 30/30" in output
+    assert "- warning_gate_state_missing: signal_days=30/30" in output
+    assert "- gate_expected_ok: False" in output
+    assert "- configured_notify_enabled: False" in output
+    assert "- warning_no_notify_channel: 当前未配置任何手机/IM 通知通道" in output
+    assert "- warning_notify_disabled: AQSP_NOTIFY=false" in output
+
+
+def test_diagnose_runtime_marks_timeout_when_child_pid_is_dead_but_parent_pid_alive(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    from scripts import diagnose_runtime
+
+    ledger = tmp_path / "predictions.jsonl"
+    paper = tmp_path / "paper.jsonl"
+    walkforward_status = tmp_path / "walkforward_production_status.json"
+    ledger.write_text("", encoding="utf-8")
+    paper.write_text("", encoding="utf-8")
+    walkforward_status.write_text(
+        json.dumps(
+            {
+                "status": "running",
+                "updated_at": "2026-06-21T18:10:00+08:00",
+                "pid": 12345,
+                "child_pid": 67890,
+                "timeout_seconds": 1500,
+                "detail": "child walkforward running; elapsed=0s",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    def fake_kill(pid: int, _sig: int) -> None:
+        if pid == 12345:
+            return None
+        raise OSError("no such process")
+
+    monkeypatch.setenv("AQSP_LEDGER", str(ledger))
+    monkeypatch.setenv("AQSP_PAPER_LEDGER", str(paper))
+    monkeypatch.setenv(
+        "AQSP_WALKFORWARD_PRODUCTION_STATUS", str(walkforward_status)
+    )
+    monkeypatch.setattr("scripts.diagnose_runtime.os.kill", fake_kill)
+    monkeypatch.setattr("scripts.diagnose_runtime.PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(
+        "scripts.diagnose_runtime.load_research_summary",
+        lambda: None,
+    )
+
+    exit_code = diagnose_runtime.main()
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "- walkforward_production_status: timeout updated=2026-06-21T18:10:00+08:00" in output
+    assert "- walkforward_production_child_exit: 124" in output
+
+
+def test_diagnose_runtime_warns_when_gate_state_fingerprint_drifted(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    from scripts import diagnose_runtime
+
+    ledger = tmp_path / "predictions.jsonl"
+    paper = tmp_path / "paper.jsonl"
+    gate_state = tmp_path / "gate_notify_state.json"
+    walkforward_gate = tmp_path / "walkforward_gate.json"
+    rows = [
+        f'{{"signal_date":"2026-05-{day:02d}","symbol":"600000","status":"pending","thresholds_version":"v1"}}'
+        for day in range(1, 31)
+    ]
+    ledger.write_text("\n".join(rows) + "\n", encoding="utf-8")
+    paper.write_text("", encoding="utf-8")
+    gate_state.write_text(
+        '{"sent_by_date":{"2026-06-21":{"fingerprint":"dsr|pbo|market_coverage_insufficient","status":"suppressed","updated_at":"2026-06-21T18:00:00+08:00"}}}\n',
+        encoding="utf-8",
+    )
+    walkforward_gate.write_text(
+        '{"run_date":"2026-06-21","deflated_sharpe":0.82,"pbo":0.7778,"pbo_valid":true,"dsr_pass":false,"pbo_pass":false,"both_pass":false,"n_periods":19,"effective_symbols":5209,"data_end":"2026-06-20"}\n',
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("AQSP_LEDGER", str(ledger))
+    monkeypatch.setenv("AQSP_PAPER_LEDGER", str(paper))
+    monkeypatch.setenv("AQSP_GATE_NOTIFY_STATE_PATH", str(gate_state))
+    monkeypatch.setenv("AQSP_WALKFORWARD_GATE_PATH", str(walkforward_gate))
+    monkeypatch.setattr("scripts.diagnose_runtime.PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(
+        "scripts.diagnose_runtime.load_research_summary",
+        lambda: None,
+    )
+
+    exit_code = diagnose_runtime.main()
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "- gate_expected_ok: False" in output
+    assert "- gate_expected_fingerprint: dsr|pbo" in output
+    assert "- warning_gate_state_drift: state=dsr|pbo|market_coverage_insufficient expected=dsr|pbo" in output
+
+
+def test_diagnose_runtime_warns_when_runtime_ledger_paths_drift(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    from scripts import diagnose_runtime
+
+    ledger = tmp_path / "runtime_predictions.jsonl"
+    paper = tmp_path / "runtime_paper.jsonl"
+    ledger.write_text("", encoding="utf-8")
+    paper.write_text("", encoding="utf-8")
+
+    monkeypatch.setenv("AQSP_LEDGER", str(ledger))
+    monkeypatch.setenv("AQSP_PAPER_LEDGER", str(paper))
+    monkeypatch.setattr("scripts.diagnose_runtime.PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(
+        "scripts.diagnose_runtime.load_research_summary",
+        lambda: None,
+    )
+
+    exit_code = diagnose_runtime.main()
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "- warning_ledger_path_drift: AQSP_LEDGER=" in output
+    assert "- warning_paper_ledger_path_drift: AQSP_PAPER_LEDGER=" in output
 
 
 def test_diagnose_runtime_treats_stale_running_walkforward_status_as_timeout(

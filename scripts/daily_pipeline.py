@@ -348,28 +348,16 @@ def _resolve_symbols(config: PipelineConfig, logger: logging.Logger) -> list[str
 
     try:
         source = _build_data_source(config)
-        if (
-            config.source == "sqlite_db"
-            and hasattr(source, "get_symbols_with_daily_coverage")
-            and hasattr(source, "get_available_symbols")
-        ):
+        if config.source == "sqlite_db" and hasattr(source, "get_available_symbols"):
             available = source.get_available_symbols()
             if available:
-                end = today_shanghai()
-                start = end - timedelta(days=365 * 8)
-                covered = source.get_symbols_with_daily_coverage(
-                    available,
-                    start,
-                    end,
+                selected = (
+                    available[: config.max_universe]
+                    if config.max_universe > 0
+                    else available
                 )
-                if covered:
-                    selected = (
-                        covered[: config.max_universe]
-                        if config.max_universe > 0
-                        else covered
-                    )
-                    logger.info("  sqlite_db 覆盖过滤后保留 %d 只标的", len(selected))
-                    return list(selected)
+                logger.info("  sqlite_db 全市场候选池 %d 只", len(selected))
+                return list(selected)
         if hasattr(source, "get_liquid_symbols"):
             liquid = source.get_liquid_symbols(
                 limit=config.max_universe,
@@ -1319,7 +1307,7 @@ def _build_pipeline_digest(
         )
     if portfolio_summary is not None and portfolio_summary.execution_blockers:
         core_lines.append(
-            "**🔒 现在卡在哪**："
+            "- 当前限制: "
             + "；".join(
                 normalize_research_tone(str(item))
                 for item in portfolio_summary.execution_blockers[:2]
@@ -1333,7 +1321,7 @@ def _build_pipeline_digest(
         ]
         if blockers:
             core_lines.append(
-                "- 现在卡在哪: "
+                "- 当前限制: "
                 + "；".join(normalize_research_tone(item) for item in blockers[:2])
             )
     if review_candidates:
@@ -1357,7 +1345,8 @@ def _build_pipeline_digest(
                 )
             if candidate.get("candidate_blocker"):
                 main_chain_lines.append(
-                    "  现在卡在哪: " + str(candidate["candidate_blocker"])
+                    "  当前限制: "
+                    + normalize_research_tone(str(candidate["candidate_blocker"]))
                 )
             if candidate.get("candidate_next_step"):
                 main_chain_lines.append(
@@ -1377,10 +1366,10 @@ def _build_pipeline_digest(
             )
         if portfolio_summary is not None and portfolio_summary.top_focus:
             main_chain_lines.append(
-                "- 再看顺序: 先看 " + " → ".join(portfolio_summary.top_focus[:2])
+                "- 先看顺序: " + " → ".join(portfolio_summary.top_focus[:2])
             )
         elif review_candidates:
-            main_chain_lines.append("- 观察名单接下来:")
+            main_chain_lines.append("- 后续关注:")
             for candidate in review_candidates[:2]:
                 main_chain_lines.append(
                     "  - "

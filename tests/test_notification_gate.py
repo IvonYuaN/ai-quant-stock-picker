@@ -299,6 +299,26 @@ def test_dataend_exactly_cutoff_passes(tmp_path, monkeypatch):
     assert reasons == []
 
 
+def test_recent_window_gate_can_notify_beyond_legacy_cutoff(tmp_path, monkeypatch):
+    import aqsp.cli as cli_mod
+    from datetime import date
+
+    monkeypatch.setattr(cli_mod, "today_shanghai", lambda: date(2026, 6, 21))
+    ok, reasons = _check_notification_gate(
+        cold_start_days=30,
+        gate_path=_write_gate(
+            tmp_path,
+            data_end="2026-06-20",
+            window_mode="rolling_recent",
+            coverage_mode="auto_recent_window",
+            production_gate_coverage={"stock_symbols": 5000},
+            effective_symbols=5000,
+        ),
+    )
+    assert ok is True
+    assert reasons == []
+
+
 def test_dataend_malformed_fail_closed(tmp_path, monkeypatch):
     """sidecar 的 data_end 格式异常 → fail-closed（看不懂就拦）。"""
     import aqsp.cli as cli_mod

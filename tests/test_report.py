@@ -83,8 +83,8 @@ def test_report_renders_portfolio_manager_decision_when_provided() -> None:
         ],
     )
 
-    assert "### 排序调整" in markdown
-    assert "- 今日处理: 上调优先级" in markdown
+    assert "### 排序变化" in markdown
+    assert "- 本次变化: 优先级上调" in markdown
     assert "- 分数调整: +4.0" in markdown
     assert "最终动作" not in markdown
 
@@ -159,7 +159,7 @@ def test_report_renders_watch_position_for_downgraded_candidate() -> None:
         ],
     )
 
-    assert "- 比例参考: watch" in markdown
+    assert "- 仓位参考: watch" in markdown
     assert "仓位建议" not in markdown
 
 
@@ -190,7 +190,7 @@ def test_report_hides_noop_portfolio_manager_decision() -> None:
         ],
     )
 
-    assert "### 排序调整" not in markdown
+    assert "### 排序变化" not in markdown
 
 
 def test_report_renders_final_decision_board_first() -> None:
@@ -233,14 +233,11 @@ def test_report_renders_final_decision_board_first() -> None:
     )
 
     assert "## 今日重点看板" in markdown
-    assert "- PM主裁决: 上调 1 / 降级 0 / 维持 0" in markdown
+    assert "- 结果概览: 上调 1 / 降级 0 / 维持 0" in markdown
     assert "- 观察重点: 600900 长江电力" in markdown
     assert "- 重点关注: 600900 长江电力" not in markdown
-    assert (
-        "- 重点 1: 600900 长江电力 | 继续观察 | 新晋 | 评分 76 | 处理 上调优先级"
-        in markdown
-    )
-    assert "判断原因: 多视角讨论支持上调优先级" in markdown
+    assert "- 重点 1: 600900 长江电力 | 继续观察 | 新晋 | 评分 76" in markdown
+    assert "原因: 分歧支持提高优先级" in markdown
     assert "- 决策: 继续观察 | 新晋 | 评分 76.0" in markdown
     assert markdown.index("## 今日重点看板") < markdown.index("## 1. 600900 长江电力")
 
@@ -277,8 +274,8 @@ def test_report_renders_action_hotspots_and_execution_blockers() -> None:
         ),
     )
 
-    assert "- 需要重点确认: 板块集中度过高，压低公用事业暴露" in markdown
-    assert "- 现在卡在哪:" in markdown
+    assert "- 待确认: 板块集中度过高，压低公用事业暴露" in markdown
+    assert "- 阻塞:" in markdown
     assert "600900 长江电力: 板块集中度过高，压低公用事业暴露" in markdown
 
 
@@ -328,10 +325,10 @@ def test_report_renders_allocation_guidance_when_summary_provided() -> None:
     assert "- 策略主配比: 进攻牛市 | 稳定上涨期，重仓动量+涨停板" in markdown
     assert "- 优先策略: 动量趋势、涨停接力" in markdown
     assert "- 策略权重建议: momentum 30%、limit_up_ladder 30%" in markdown
-    assert "长江电力: 20% | 主链评分 76.0；PM 上调优先级" in markdown
-    assert "- 再看顺序: 先看 600900 长江电力" in markdown
+    assert "长江电力: 20% | 主链评分 76.0；优先级上调" in markdown
+    assert "- 先看顺序: 600900 长江电力" in markdown
     assert "- 现金留存: 25%" in markdown
-    assert "- 配置说明: 单票上限 20%；信号强度不足时提高现金留存" in markdown
+    assert "- 仓位约束: 单票上限 20%；信号强度不足时提高现金留存" in markdown
 
 
 def test_report_keeps_actionable_focus_label_when_allocations_exist() -> None:
@@ -444,7 +441,7 @@ def test_report_renders_debate_score_change_when_available() -> None:
         ],
     )
 
-    assert "- 讨论倾向: raise（附件观点，不改写系统评分）" in markdown
+    assert "- 结论倾向: raise（仅作补充，不改写系统评分）" in markdown
     assert "- 参考分歧: 系统原始评分 76.0；附件参考分 79.0" in markdown
     assert "评分变化" not in markdown
     assert "- 分歧: 35%" in markdown
@@ -479,10 +476,10 @@ def test_report_hides_non_promote_portfolio_section_below_pick_detail() -> None:
     )
 
     assert "## 1. 600900 长江电力" in markdown
-    assert "- 重点 1: 600900 长江电力 | 仅观察 | 评分 76 | 处理 降级观察" in markdown
+    assert "- 重点 1: 600900 长江电力 | 仅观察 | 评分 76" in markdown
     detail_section = markdown.split("## 1. 600900 长江电力", maxsplit=1)[1]
-    assert "### 排序调整" in detail_section
-    assert "- 今日处理: 降级观察" in detail_section
+    assert "### 排序变化" in detail_section
+    assert "- 本次变化: 优先级下调" in detail_section
     assert "板块集中度过高，压低公用事业暴露" in detail_section
 
 
@@ -626,8 +623,8 @@ def test_report_renders_candidate_blocker_and_next_step_when_present() -> None:
 
     markdown = to_markdown([pick])
 
-    assert "现在卡在哪: 板块集中度过高，压低银行暴露" in markdown
+    assert "阻塞: 板块集中度过高，压低银行暴露" in markdown
     assert "下一步: 等待板块暴露回落后，再重新评估纸面复核优先级" in markdown
-    assert "- 接下来先看: 等待板块暴露回落后，再重新评估纸面复核优先级" in markdown
-    assert "再看时间: 中优先级 / 板块分化时" in markdown
+    assert "- 下一步: 等待板块暴露回落后，再重新评估纸面复核优先级" in markdown
+    assert "复核窗口: 中优先级 / 板块分化时" in markdown
     assert "- 再看优先级/时机: 中优先级 / 板块分化时" in markdown

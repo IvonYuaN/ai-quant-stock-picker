@@ -18,6 +18,14 @@ def _force_runtime_trading_day(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("aqsp.core.time.is_trading_day", lambda _day: True)
 
 
+@pytest.fixture(autouse=True)
+def _isolated_runtime_state(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("AQSP_NOTIFY_STATE_PATH", str(tmp_path / "notify_state.json"))
+    monkeypatch.setenv(
+        "AQSP_GATE_NOTIFY_STATE_PATH", str(tmp_path / "gate_notify_state.json")
+    )
+
+
 def _fresh_frame(day: str) -> pd.DataFrame:
     return pd.DataFrame(
         {
@@ -63,6 +71,58 @@ def test_special_strategy_ledger_guard_requires_fresh_data(monkeypatch) -> None:
 
     assert allowed is False
     assert "数据新鲜度未通过" in reason
+
+
+def test_run_morning_breakout_skips_non_trading_day_before_fetch(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import aqsp.cli as cli_mod
+
+    monkeypatch.setattr("aqsp.core.time.is_trading_day", lambda _day: False)
+    monkeypatch.setattr(cli_mod, "_fetch_special_strategy_frames", lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("should not fetch on holiday")))
+
+    args = Namespace(
+        symbols="600000",
+        source="auto",
+        pool="all",
+        max_universe=0,
+        max_data_lag_days=1,
+        benchmark_symbol="000300",
+        top=5,
+        notify=False,
+        output="",
+        report="",
+        ledger="data/predictions.jsonl",
+    )
+
+    assert cli_mod.run_morning_breakout(args) == 0
+    assert "今日非交易日，跳过早盘策略" in capsys.readouterr().out
+
+
+def test_run_closing_premium_skips_non_trading_day_before_fetch(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import aqsp.cli as cli_mod
+
+    monkeypatch.setattr("aqsp.core.time.is_trading_day", lambda _day: False)
+    monkeypatch.setattr(cli_mod, "_fetch_special_strategy_frames", lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("should not fetch on holiday")))
+
+    args = Namespace(
+        symbols="600000",
+        source="auto",
+        pool="all",
+        max_universe=0,
+        max_data_lag_days=1,
+        benchmark_symbol="000300",
+        top=5,
+        notify=False,
+        output="",
+        report="",
+        ledger="data/predictions.jsonl",
+    )
+
+    assert cli_mod.run_closing_premium(args) == 0
+    assert "今日非交易日，跳过尾盘策略" in capsys.readouterr().out
 
 
 def test_fetch_special_strategy_frames_requires_today_intraday(monkeypatch) -> None:
@@ -1096,7 +1156,7 @@ def test_run_scheduled_intraday_keeps_observation_output_during_circuit_breaker(
         notify=False,
     )
 
-    assert cli_mod.run_scheduled(args) == 2
+    assert cli_mod.run_scheduled(args) == 0
     assert appended_events == ["blocked_by_circuit_breaker"]
     report_text = (tmp_path / "intraday.md").read_text(encoding="utf-8")
     assert report_text.startswith("# report")

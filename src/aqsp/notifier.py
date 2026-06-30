@@ -66,6 +66,8 @@ def prepend_source_status_banner(
     actual = str(source_status.get("actual_source", "") or "")
     label = str(source_status.get("health_label", "") or "unknown")
     message = str(source_status.get("health_message", "") or "暂无说明")
+    if label in {"fallback", "degraded", "cold_start"} and "需人工复核" not in message:
+        message = f"{message}；需人工复核"
     notify_level = notification_level_for_health_label(label)
     route = actual or requested or "unknown"
     if requested and actual and requested != actual:
@@ -81,8 +83,6 @@ def prepend_source_status_banner(
             f"- 说明: {message}",
         ]
     )
-    if label in {"fallback", "degraded", "cold_start"}:
-        banner += "\n- 提示: 数据源已降级，本次结果请降低信任度并优先人工复核。"
     if body.startswith("# "):
         lines = body.splitlines()
         title = lines[0].strip()

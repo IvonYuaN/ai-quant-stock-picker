@@ -6,6 +6,8 @@ from collections.abc import Callable, Iterable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from dataclasses import dataclass
+from datetime import date
+import re
 from typing import Any, Literal
 
 import pandas as pd
@@ -25,6 +27,8 @@ class NewsCatalystConfig:
     max_global_news: int = 20
     max_events: int = 8
     min_confidence: float = 0.45
+    max_news_age_days: int = 30
+    allow_undated_news: bool = False
     enable_llm_review: bool = False
     source_timeout_seconds: float = 8.0
     llm_timeout_seconds: float = 8.0
@@ -44,6 +48,7 @@ class CatalystEvent:
     confidence: float = 0.0
     source_count: int = 1
     verification: str = "待证实"
+    inference: str = ""
     llm_review: str = ""
     url: str = ""
 
@@ -108,7 +113,11 @@ POSITIVE_PATTERNS: tuple[tuple[str, str, int], ...] = (
 
 NEGATIVE_PATTERNS: tuple[tuple[str, str, int], ...] = (
     ("减持|清仓|套现|解禁|质押|爆仓", "股东/筹码风险", 5),
-    ("立案|调查|处罚|问询函|监管处罚|监管问询|诉讼|仲裁", "监管/合规风险", 5),
+    (
+        "立案|调查|处罚|问询函|监管处罚|监管问询|监管重拳|反垄断|拆分|诉讼|仲裁|听证",
+        "监管/合规风险",
+        5,
+    ),
     ("事故|停工|停产|召回|安全隐患|污染", "经营事故", 5),
     ("制裁|限制|禁令|断供|关税|出口管制", "外部冲击", 4),
     ("业绩下滑|亏损|不及预期|预亏|暴雷", "业绩风险", 4),
@@ -163,6 +172,7 @@ def build_catalyst_report(
 
     symbol_fetcher = fetch_symbol_news or _akshare_symbol_news
     global_fetcher = fetch_global_news or _akshare_global_news
+    anchor_day = today_shanghai()
 
     for symbol in tuple(symbols or cfg.symbols):
         try:
@@ -177,9 +187,24 @@ def build_catalyst_report(
         frame_warnings = _frame_warnings(df, prefix=f"{symbol} 个股新闻")
         source_stats.record_frame(df, frame_warnings)
         warnings.extend(frame_warnings)
+        symbol_rows, stale_count, undated_count = _filter_recent_news_rows(
+            _sorted_news_rows(_iter_news_rows(df)),
+            today=anchor_day,
+            max_age_days=cfg.max_news_age_days,
+            allow_undated=cfg.allow_undated_news,
+            limit=cfg.max_symbol_news,
+        )
+        if stale_count > 0:
+            warnings.append(
+                f"{symbol} 个股新闻: 已过滤 {stale_count} 条过期消息"
+            )
+        if undated_count > 0:
+            warnings.append(
+                f"{symbol} 个股新闻: 已过滤 {undated_count} 条无日期消息"
+            )
         rows.extend(
             _events_from_rows(
-                _iter_news_rows(df.head(cfg.max_symbol_news)),
+                symbol_rows,
                 symbol=symbol,
                 name=names.get(symbol, ""),
             )
@@ -199,13 +224,24 @@ def build_catalyst_report(
         source_stats.record_frame(global_df, frame_warnings)
         warnings.extend(frame_warnings)
     warnings = list(_dedupe_texts(warnings))
-    rows.extend(_events_from_rows(_iter_news_rows(global_df.head(cfg.max_global_news))))
+    global_rows, global_stale_count, global_undated_count = _filter_recent_news_rows(
+        _sorted_news_rows(_iter_news_rows(global_df)),
+        today=anchor_day,
+        max_age_days=cfg.max_news_age_days,
+        allow_undated=cfg.allow_undated_news,
+        limit=cfg.max_global_news,
+    )
+    if global_stale_count > 0:
+        warnings.append(f"全市场快讯: 已过滤 {global_stale_count} 条过期消息")
+    if global_undated_count > 0:
+        warnings.append(f"全市场快讯: 已过滤 {global_undated_count} 条无日期消息")
+    rows.extend(_events_from_rows(global_rows))
 
     deduped = _merge_events(rows)
     pre_ranked = tuple(
         sorted(
             deduped,
-            key=lambda item: (item.weight, item.confidence, item.source_count),
+            key=_event_rank_key,
             reverse=True,
         )
     )
@@ -218,7 +254,7 @@ def build_catalyst_report(
     filtered = [item for item in reviewed if item.confidence >= cfg.min_confidence]
     ranked = sorted(
         filtered,
-        key=lambda item: (item.weight, item.confidence, item.source_count),
+        key=_event_rank_key,
         reverse=True,
     )
     status = _report_source_status(
@@ -242,8 +278,9 @@ def format_catalyst_notification(report: CatalystReport) -> str:
     has_warnings = bool(report.warnings)
     if has_events:
         lead = report.events[0]
-        lead_target = _event_target(lead)
-        lead_line = f"{lead_target}｜{lead.category}｜{_short_text(lead.title, 36)}"
+        lead_line = lead.inference or (
+            f"{_event_target(lead)}｜{lead.category}｜{_short_text(lead.title, 36)}"
+        )
     elif report.source_status == "failed":
         lead_line = "无有效结论：消息源失败"
     elif report.source_status == "partial":
@@ -340,6 +377,8 @@ def _event_card_lines(index: int, event: CatalystEvent) -> list[str]:
     lines = [
         f"- {index}. {impact} | {_inline(target)} | {_inline(event.category)}",
         f"- 结果: {title}",
+        f"- 结论: {_inline(event.inference or _event_impact_summary(event))}",
+        f"- 影响: {_event_impact_summary(event)}",
         f"- 来源: {_inline(event.source)}",
     ]
     if event.published_at:
@@ -374,6 +413,11 @@ def _events_from_rows(
                 weight=weight,
                 confidence=_base_confidence(row),
                 verification=_verification_label(row),
+                inference=_build_event_inference(
+                    impact=impact,
+                    category=category,
+                    target=(f"{symbol} {name}".strip() or _name_from_title(title) or "市场/行业"),
+                ),
                 url=row.get("url", ""),
             )
         )
@@ -407,6 +451,8 @@ def _classify_title(title: str) -> tuple[str, Impact, int, str] | None:
     if _is_market_price_action_noise(clean):
         return None
     if _is_non_actionable_discipline_news(clean):
+        return None
+    if _is_non_actionable_price_hike_noise(clean):
         return None
     for pattern, category, weight in NEGATIVE_PATTERNS:
         if re.search(pattern, clean):
@@ -460,6 +506,19 @@ def _is_non_actionable_discipline_news(title: str) -> bool:
     return listed_context is None
 
 
+def _is_non_actionable_price_hike_noise(title: str) -> bool:
+    import re
+
+    if not re.search(r"涨价|提价|价格上调|报价上调", title):
+        return False
+    if re.search(
+        r"监管|反垄断|拆分|众议员|议员|国会|听证|处罚|调查|诉讼|关税|制裁",
+        title,
+    ):
+        return True
+    return False
+
+
 def _iter_news_rows(df: pd.DataFrame) -> Iterable[dict[str, str]]:
     if df is None or df.empty:
         return ()
@@ -471,6 +530,21 @@ def _iter_news_rows(df: pd.DataFrame) -> Iterable[dict[str, str]]:
         if not title:
             continue
         url = _first_text(row, ("新闻链接", "链接", "url", "公告链接"))
+        published_at = _first_text(
+            row,
+            (
+                "发布时间",
+                "时间",
+                "date",
+                "日期",
+                "公告日期",
+                "发布日期",
+                "发稿时间",
+                "pub_time",
+                "pubDate",
+                "display_time",
+            ),
+        )
         source = _first_text(
             row, ("文章来源", "媒体", "source", "来源", "公告类型")
         ) or _source_from_url(url)
@@ -478,9 +552,7 @@ def _iter_news_rows(df: pd.DataFrame) -> Iterable[dict[str, str]]:
             {
                 "title": title,
                 "source": source,
-                "published_at": _first_text(
-                    row, ("发布时间", "时间", "date", "日期", "公告日期")
-                ),
+                "published_at": published_at or _fallback_published_at(title, url),
                 "url": url,
             }
         )
@@ -504,6 +576,11 @@ def _source_from_url(url: str) -> str:
         if token in clean:
             return source
     return ""
+
+
+def _fallback_published_at(title: str, url: str) -> str:
+    published_day = _parse_published_day(title) or _parse_published_day(url)
+    return published_day.isoformat() if published_day is not None else ""
 
 
 def _merge_events(events: Sequence[CatalystEvent]) -> tuple[CatalystEvent, ...]:
@@ -537,6 +614,12 @@ def _merge_events(events: Sequence[CatalystEvent]) -> tuple[CatalystEvent, ...]:
             verification="多源交叉"
             if existing.source != event.source
             else existing.verification,
+            inference=_build_event_inference(
+                impact=existing.impact,
+                category=existing.category,
+                target=((existing.symbol or event.symbol) + " " + (existing.name or event.name)).strip()
+                or "市场/行业",
+            ),
             url=existing.url or event.url,
         )
     return tuple(merged)
@@ -663,13 +746,123 @@ def _dedupe_texts(values: Sequence[str]) -> tuple[str, ...]:
 
 
 def _parse_llm_confidence(text: str) -> float | None:
-    import re
-
     match = re.search(r"可信度\s*[=:：]\s*(\d{1,3})", text)
     if not match:
         return None
     value = max(0, min(100, int(match.group(1))))
     return value / 100
+
+
+def _parse_published_day(raw: str) -> date | None:
+    text = str(raw or "").strip()
+    if not text:
+        return None
+    iso_like = text.replace("Z", "+00:00")
+    try:
+        return date.fromisoformat(iso_like[:10])
+    except ValueError:
+        pass
+    try:
+        return pd.to_datetime(text, errors="raise").date()
+    except (TypeError, ValueError):
+        pass
+    match = re.search(r"\b(20\d{2})[-/_](\d{1,2})[-/_](\d{1,2})\b", text)
+    if match:
+        try:
+            return date(int(match.group(1)), int(match.group(2)), int(match.group(3)))
+        except ValueError:
+            return None
+    compact = re.search(r"\b(20\d{2})(\d{2})(\d{2})\b", text)
+    if compact:
+        try:
+            return date(
+                int(compact.group(1)),
+                int(compact.group(2)),
+                int(compact.group(3)),
+            )
+        except ValueError:
+            return None
+    match = re.search(r"(20\d{2})[-/.年](\d{1,2})[-/.月](\d{1,2})", text)
+    if not match:
+        return None
+    try:
+        return date(int(match.group(1)), int(match.group(2)), int(match.group(3)))
+    except ValueError:
+        return None
+
+
+def _filter_recent_news_rows(
+    rows: Iterable[dict[str, str]],
+    *,
+    today: date,
+    max_age_days: int,
+    allow_undated: bool,
+    limit: int | None = None,
+) -> tuple[tuple[dict[str, str], ...], int, int]:
+    if max_age_days <= 0:
+        normalized = tuple(rows)
+        if limit is not None:
+            normalized = normalized[: max(0, limit)]
+        return normalized, 0, 0
+    filtered: list[dict[str, str]] = []
+    stale_count = 0
+    undated_count = 0
+    for row in rows:
+        published_day = _row_published_day(row)
+        if published_day is None:
+            if not allow_undated:
+                undated_count += 1
+                continue
+            filtered.append(row)
+            if limit is not None and len(filtered) >= max(0, limit):
+                break
+            continue
+        if published_day > today:
+            stale_count += 1
+            continue
+        if published_day is not None and (today - published_day).days > max_age_days:
+            stale_count += 1
+            continue
+        filtered.append(row)
+        if limit is not None and len(filtered) >= max(0, limit):
+            break
+    return tuple(filtered), stale_count, undated_count
+
+
+def _event_recency_rank(event: CatalystEvent) -> int:
+    published_day = _row_published_day(
+        {"published_at": event.published_at, "title": event.title, "url": event.url}
+    )
+    if published_day is None:
+        return -999999
+    return published_day.toordinal()
+
+
+def _event_rank_key(event: CatalystEvent) -> tuple[int, int, float, int]:
+    return (
+        int(event.weight),
+        _event_recency_rank(event),
+        float(event.confidence),
+        int(event.source_count),
+    )
+
+
+def _build_event_inference(*, impact: Impact, category: str, target: str) -> str:
+    if impact == "negative":
+        return f"{target} 风险抬升，短线回避 {category} 方向。"
+    if category in {"涨价/供需催化", "供给收缩"}:
+        return f"{target} 催化强化，短线关注度上升。"
+    if category in {"订单/需求验证", "业绩催化", "资本运作", "政策催化"}:
+        return f"{target} 交易催化明确，短线偏强。"
+    return f"{target} 关注度抬升，等待后续确认。"
+
+
+def _event_impact_summary(event: CatalystEvent) -> str:
+    if event.impact == "negative":
+        return "短线偏空"
+    if event.impact == "positive":
+        return "短线偏多"
+    return "中性观察"
 
 
 def _inline(value: object) -> str:
@@ -835,6 +1028,30 @@ def _merge_frame_warnings(
     for frame in frames:
         merged.extend(getattr(frame, "attrs", {}).get("aqsp_warnings", ()))
     return _dedupe_texts(merged)
+
+
+def _row_published_day(row: dict[str, str]) -> date | None:
+    published_day = _parse_published_day(row.get("published_at", ""))
+    if published_day is not None:
+        return published_day
+    title_day = _parse_published_day(row.get("title", ""))
+    if title_day is not None:
+        return title_day
+    return _parse_published_day(row.get("url", ""))
+
+
+def _sorted_news_rows(rows: Iterable[dict[str, str]]) -> tuple[dict[str, str], ...]:
+    materialized = tuple(rows)
+    return tuple(
+        sorted(
+            materialized,
+            key=lambda row: (
+                _row_published_day(row) is not None,
+                (_row_published_day(row) or date.min).toordinal(),
+            ),
+            reverse=True,
+        )
+    )
 
 
 def _prioritize_news_frame(df: pd.DataFrame) -> pd.DataFrame:

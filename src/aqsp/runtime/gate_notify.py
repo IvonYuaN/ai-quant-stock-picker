@@ -59,6 +59,8 @@ def should_send_gate_notification(
         fingerprint = gate_reason_fingerprint(gate_reasons)
         date_key = normalize_gate_run_date(run_date)
         state = _read_gate_notify_state(path)
+        if _same_day_global_block(state, date_key):
+            return False
         sent_by_date = state.get("sent_by_date", {})
         day_entry = (
             sent_by_date.get(date_key) if isinstance(sent_by_date, dict) else None
@@ -101,6 +103,8 @@ def reserve_gate_notification(
         fingerprint = gate_reason_fingerprint(gate_reasons)
         date_key = normalize_gate_run_date(run_date)
         state = _read_gate_notify_state(path)
+        if _same_day_global_block(state, date_key):
+            return False
         sent_by_date = state.get("sent_by_date", {})
         if not isinstance(sent_by_date, dict):
             sent_by_date = {}
@@ -189,6 +193,31 @@ def mark_gate_notification_failed(
         )
 
 
+def mark_gate_notification_suppressed(
+    *,
+    gate_reasons: list[str],
+    state_path: str | Path,
+    run_date: str = "",
+) -> None:
+    path = _resolve_gate_state_path(state_path)
+    with advisory_lock(path):
+        fingerprint = gate_reason_fingerprint(gate_reasons)
+        date_key = normalize_gate_run_date(run_date)
+        state = _read_gate_notify_state(path)
+        sent_by_date = state.get("sent_by_date", {})
+        if not isinstance(sent_by_date, dict):
+            sent_by_date = {}
+        sent_by_date[date_key] = _state_entry(fingerprint, "suppressed")
+
+        _write_gate_notify_state(
+            path=path,
+            fingerprint=fingerprint,
+            date_key=date_key,
+            sent_by_date=sent_by_date,
+            status="suppressed",
+        )
+
+
 def _write_gate_notify_state(
     *,
     path: Path,
@@ -203,6 +232,7 @@ def _write_gate_notify_state(
             {
                 "fingerprint": fingerprint,
                 "run_date": date_key,
+                "last_sent_date": date_key,
                 "sent_by_date": sent_by_date,
                 "normalized_reasons": fingerprint.split("|"),
                 "status": status,
@@ -349,6 +379,8 @@ def _same_day_entry_blocks(entry: object) -> bool:
     fingerprint = _entry_fingerprint(entry)
     if status == "sent":
         return True
+    if status == "suppressed":
+        return True
     if status == "pending":
         return _entry_recent(
             entry,
@@ -364,6 +396,14 @@ def _same_day_entry_blocks(entry: object) -> bool:
             ttl_minutes=GATE_NOTIFY_RETRY_MINUTES,
         )
     return False
+
+
+def _same_day_global_block(state: dict[str, object], date_key: str) -> bool:
+    status = str(state.get("status") or "")
+    last_sent_date = str(state.get("last_sent_date") or state.get("run_date") or "")
+    if last_sent_date != date_key:
+        return False
+    return status in {"sent", "pending", "failed", "suppressed"}
 
 
 def _coerce_legacy_day_entry(

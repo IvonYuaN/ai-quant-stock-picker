@@ -29,7 +29,7 @@ def send_smart_summary_card(
     summary = briefing.generate_smart_summary()
     if not summary.strip():
         return
-    title = f"📋 选股快报 {briefing.date}"
+    title = f"选股简报 {briefing.date}"
     notify_kind = kind or f"briefing-card:{briefing.date}"
     resolved_state_path = state_path or notification_state_path()
     state_markdown = f"{title}\n\n{summary}"

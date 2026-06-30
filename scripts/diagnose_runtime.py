@@ -17,6 +17,7 @@ from typing import Any
 from aqsp.data.source_health import notification_level_for_health_label
 from aqsp.data.registry import list_registry_entries, local_data_status
 from aqsp.data.tdx_vipdoc_source import TDX_DAY_RECORD_SIZE
+from aqsp.cli import WALKFORWARD_GATE_PATH, _check_notification_gate
 from aqsp.ledger.runtime import (
     REAL_SIGNAL_STATUSES,
     cold_start_min_days,
@@ -26,8 +27,10 @@ from aqsp.ledger.runtime import (
     ledger_signal_date,
     latest_independent_signal_day,
 )
+from aqsp.core.time import now_shanghai
 from aqsp.notifier import configured_notification_channels
 from aqsp.research.summary import load_research_summary, research_findings_display
+from aqsp.runtime.gate_notify import gate_reason_fingerprint
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -91,6 +94,11 @@ def _runtime_paths() -> RuntimePaths:
         latest_csv=_runtime_path("AQSP_OUTPUT_CSV", "reports/latest.csv"),
         sqlite_db=_runtime_path("AQSP_SQLITE_DB_PATH", "data/astocks_raw.db"),
     )
+
+
+def _default_runtime_path(default: str) -> Path:
+    path = Path(default).expanduser()
+    return path if path.is_absolute() else PROJECT_ROOT / path
 
 
 def _read_jsonl(path: Path) -> list[dict[str, Any]]:
@@ -220,6 +228,34 @@ def _successful_run_history_summary(root: Path) -> dict[str, Any]:
     }
 
 
+def _count_log_occurrences(path: Path, marker: str) -> int:
+    if not path.exists():
+        return 0
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return 0
+    return text.count(marker)
+
+
+def _runtime_cadence_summary(root: Path) -> dict[str, int]:
+    today = now_shanghai().date().isoformat()
+    return {
+        "daily_runs": _count_log_occurrences(
+            root / "logs" / "daily" / f"run-{today}.log",
+            "=== aqsp run @ ",
+        ),
+        "news_runs": _count_log_occurrences(
+            root / "logs" / "news" / f"news-{today}.log",
+            "开始消息面雷达",
+        ),
+        "monitor_runs": _count_log_occurrences(
+            root / "logs" / "monitor" / f"monitor-{today}.log",
+            "AQSP 服务器监控开始",
+        ),
+    }
+
+
 def _blocked_runtime_day_count(rows: list[dict[str, Any]]) -> int:
     blocked_days = {
         ledger_signal_date(row)
@@ -280,6 +316,20 @@ def _gate_state_summary(path: Path) -> dict[str, Any]:
     }
 
 
+def _current_gate_expectation(signal_days: int) -> dict[str, Any]:
+    gate_path = _runtime_path("AQSP_WALKFORWARD_GATE_PATH", WALKFORWARD_GATE_PATH)
+    gate_ok, gate_reasons = _check_notification_gate(
+        cold_start_days=signal_days,
+        gate_path=str(gate_path),
+    )
+    return {
+        "ok": gate_ok,
+        "reasons": gate_reasons,
+        "fingerprint": gate_reason_fingerprint(gate_reasons) if gate_reasons else "",
+        "path": str(gate_path),
+    }
+
+
 def _notify_state_summary(path: Path) -> dict[str, Any]:
     payload = _read_json_file(path)
     return {
@@ -293,6 +343,15 @@ def _notify_state_summary(path: Path) -> dict[str, Any]:
     }
 
 
+def _configured_notify_enabled() -> bool:
+    return str(os.getenv("AQSP_NOTIFY", "") or "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
 def _walkforward_production_status_summary(path: Path) -> dict[str, Any]:
     payload = _read_json_file(path)
     coverage = payload.get("coverage", {})
@@ -301,8 +360,17 @@ def _walkforward_production_status_summary(path: Path) -> dict[str, Any]:
     status = str(payload.get("status", "") or "")
     child_exit_code = payload.get("child_exit_code")
     if status == "running":
+        child_pid = payload.get("child_pid")
         pid_value = payload.get("pid")
+        child_active = False
         pid_active = False
+        if isinstance(child_pid, int) and child_pid > 0:
+            try:
+                os.kill(child_pid, 0)
+            except OSError:
+                child_active = False
+            else:
+                child_active = True
         if isinstance(pid_value, int) and pid_value > 0:
             try:
                 os.kill(pid_value, 0)
@@ -310,7 +378,19 @@ def _walkforward_production_status_summary(path: Path) -> dict[str, Any]:
                 pid_active = False
             else:
                 pid_active = True
-        if not pid_active:
+        updated_at = str(payload.get("updated_at", "") or "")
+        timeout_seconds = payload.get("timeout_seconds")
+        timed_out = False
+        try:
+            if updated_at and isinstance(timeout_seconds, int) and timeout_seconds > 0:
+                timed_out = (
+                    now_shanghai() - datetime.fromisoformat(updated_at)
+                ).total_seconds() > timeout_seconds
+        except ValueError:
+            timed_out = False
+        if (isinstance(child_pid, int) and child_pid > 0 and not child_active) or (
+            not child_active and not pid_active
+        ) or (not child_active and timed_out):
             status = "timeout"
             child_exit_code = 124 if not isinstance(child_exit_code, int) else child_exit_code
     return {
@@ -579,9 +659,72 @@ def main() -> int:
         paths.walkforward_production_status
     )
     gate_state = _gate_state_summary(paths.gate_notify_state)
+    gate_expected = _current_gate_expectation(signal_days)
     notify_state = _notify_state_summary(paths.notify_state)
     monitor_state = _notify_state_summary(paths.monitor_notify_state)
     run_history = _successful_run_history_summary(PROJECT_ROOT)
+    cadence = _runtime_cadence_summary(PROJECT_ROOT)
+    notify_warnings: list[str] = []
+    default_ledger = _default_runtime_path("data/predictions.jsonl")
+    default_paper_ledger = _default_runtime_path("data/paper_trades.jsonl")
+    if paths.ledger.resolve(strict=False) != default_ledger.resolve(strict=False):
+        notify_warnings.append(
+            f"- warning_ledger_path_drift: AQSP_LEDGER={paths.ledger} (expected {default_ledger})"
+        )
+    if (
+        paths.paper_ledger.resolve(strict=False)
+        != default_paper_ledger.resolve(strict=False)
+    ):
+        notify_warnings.append(
+            f"- warning_paper_ledger_path_drift: AQSP_PAPER_LEDGER={paths.paper_ledger} (expected {default_paper_ledger})"
+        )
+    if cadence["daily_runs"] > 1:
+        notify_warnings.append(
+            f"- warning_daily_runs_today: {cadence['daily_runs']} (daily 应为收盘 1 次；若明显偏多，先检查宝塔是否把 bt_task.sh daily 绑到高频调度)"
+        )
+    if (
+        "cold_start" in str(gate_state["latest_fingerprint"] or "").split("|")
+        and signal_days >= cold_start_target
+    ):
+        notify_warnings.append(
+            (
+                f"- warning_gate_cold_start_mismatch: signal_days={signal_days}/{cold_start_target} "
+                "但最新 gate 仍是 cold_start；优先核对线上 ledger 路径、运行入口和部署版本"
+            )
+        )
+    if gate_expected["ok"] and gate_state["present"]:
+        notify_warnings.append(
+            "- warning_gate_state_stale_open: 当前 gate 已放行，但 gate_notify_state 仍存在；"
+            "先修复状态文件再上线"
+        )
+    if (
+        (not gate_expected["ok"])
+        and gate_state["present"]
+        and gate_state["latest_fingerprint"] != gate_expected["fingerprint"]
+    ):
+        notify_warnings.append(
+            (
+                "- warning_gate_state_drift: "
+                f"state={gate_state['latest_fingerprint'] or '-'} "
+                f"expected={gate_expected['fingerprint'] or '-'} "
+                f"(gate_path={gate_expected['path']})"
+            )
+        )
+    if gate_state["present"] is False and signal_days >= cold_start_target:
+        notify_warnings.append(
+            (
+                f"- warning_gate_state_missing: signal_days={signal_days}/{cold_start_target} "
+                "但 gate_notify_state 缺失；双门去重不会持久化，先核对线上状态文件路径和部署版本"
+            )
+        )
+    if not configured_notification_channels():
+        notify_warnings.append(
+            "- warning_no_notify_channel: 当前未配置任何手机/IM 通知通道，服务器即使运行成功也不会直达手机"
+        )
+    if not _configured_notify_enabled():
+        notify_warnings.append(
+            "- warning_notify_disabled: AQSP_NOTIFY=false；定时链即使运行成功也不会发送正常手机通知"
+        )
     report.extend(
         [
             f"- walkforward_production_status_file: {_file_status(paths.walkforward_production_status)}",
@@ -589,11 +732,14 @@ def main() -> int:
             f"- walkforward_production_effective_symbols: {walkforward_status['effective_symbols'] if walkforward_status['effective_symbols'] is not None else '-'}",
             f"- walkforward_production_child_exit: {walkforward_status['child_exit_code'] if walkforward_status['child_exit_code'] is not None else '-'}",
             f"- walkforward_production_detail: {walkforward_status['detail'] or '-'}",
+            f"- configured_notify_enabled: {_configured_notify_enabled()}",
             f"- configured_notify_channels: {','.join(configured_notification_channels()) or '-'}",
             f"- gate_notify_state: {_file_status(paths.gate_notify_state)}",
             f"- gate_days: {gate_state['days']} latest={gate_state['latest_date'] or '-'}",
             f"- gate_latest_status: {gate_state['latest_status'] or '-'}",
             f"- gate_latest_fingerprint: {gate_state['latest_fingerprint'] or '-'}",
+            f"- gate_expected_ok: {gate_expected['ok']}",
+            f"- gate_expected_fingerprint: {gate_expected['fingerprint'] or '-'}",
             f"- gate_legacy_format: {gate_state['legacy_format']}",
             f"- gate_updated_at: {gate_state['state_updated_at'] or '-'}",
             f"- notify_state: {_file_status(paths.notify_state)}",
@@ -603,6 +749,8 @@ def main() -> int:
             f"- monitor_counts: sent={monitor_state['sent']} pending={monitor_state['pending']} failed={monitor_state['failed']}",
             f"- monitor_updated_at: {monitor_state['updated_at'] or '-'}",
             f"- successful_run_days: {run_history['count']} latest={run_history['latest'] or '-'} source={run_history['source']}",
+            f"- cadence_today: daily={cadence['daily_runs']} news={cadence['news_runs']} monitor={cadence['monitor_runs']}",
+            *notify_warnings,
             "",
             "## Research Runtime",
         ]

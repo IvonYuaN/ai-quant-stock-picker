@@ -21,6 +21,21 @@ from aqsp.presentation import normalize_research_tone
 _logger = logging.getLogger(__name__)
 
 
+def _safe_email_text(value: object) -> str:
+    text = normalize_research_tone(str(value or "").strip())
+    replacements = (
+        ("可执行", "可继续"),
+        ("立即买入", "优先观察"),
+        ("下单", "纸面记录"),
+        ("真实持仓", "纸面持有"),
+        ("重点跟踪", "纸面复核"),
+        ("执行开仓", "纸面观察"),
+    )
+    for old, new in replacements:
+        text = text.replace(old, new)
+    return text
+
+
 @dataclass
 class EmailConfig:
     smtp_host: str
@@ -73,13 +88,13 @@ def _render_pick_card_html(pick: Pick, rank: int) -> str:
         badge = "观察"
 
     reasons_html = "".join(
-        f'<li style="margin: 4px 0;">{escape(normalize_research_tone(r))}</li>'
+        f'<li style="margin: 4px 0;">{escape(_safe_email_text(r))}</li>'
         for r in pick.reasons[:4]
     )
     risks_html = ""
     if pick.risks:
         risks_text = escape(
-            normalize_research_tone(", ".join(str(risk) for risk in pick.risks[:2]))
+            _safe_email_text(", ".join(str(risk) for risk in pick.risks[:2]))
         )
         risks_html = (
             '<div style="margin-top: 8px; padding: 6px 10px; background: #fef3c7; border-left: 3px solid #f59e0b; border-radius: 4px;">'
@@ -87,7 +102,7 @@ def _render_pick_card_html(pick: Pick, rank: int) -> str:
             f"{risks_text}"
             "</div>"
         )
-    display_name = escape(normalize_research_tone(f"{pick.symbol} {pick.name}".strip()))
+    display_name = escape(_safe_email_text(f"{pick.symbol} {pick.name}".strip()))
     safe_badge = escape(badge)
 
     return f"""
@@ -160,7 +175,7 @@ def render_html_email(data: BriefingData) -> str:
     # 市场态势
     regime_html = f"""
     <div style="margin: 12px 0; padding: 12px; background: #f1f5f9; border-radius: 8px; border-left: 4px solid #0ea5e9;">
-      <strong>市场态势:</strong> {escape(normalize_research_tone(data.regime_info.description))}
+      <strong>市场态势:</strong> {escape(_safe_email_text(data.regime_info.description))}
     </div>
     """
 

@@ -13,6 +13,16 @@ def test_server_doctor_formats_sections_when_no_optional_env(
     monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
     monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)
     monkeypatch.setattr(server_doctor, "_load_env_file", lambda: None)
+    monkeypatch.setattr(
+        server_doctor,
+        "_tracked_worktree_check",
+        lambda: server_doctor.DoctorCheck("git:tracked_worktree", "ok", "clean"),
+    )
+    monkeypatch.setattr(
+        server_doctor,
+        "_dashboard_ingress_checks",
+        lambda: [server_doctor.DoctorCheck("ingress:public_listener", "ok", "443 ssl")],
+    )
 
     exit_code = server_doctor.main([])
     output = capsys.readouterr().out
@@ -20,6 +30,8 @@ def test_server_doctor_formats_sections_when_no_optional_env(
     assert exit_code == 1
     assert "# AQSP Server Doctor" in output
     assert "## Artifacts" in output
+    assert "## Git" in output
+    assert "## Ingress" in output
     assert "## Source Auth" in output
     assert "## LLM" in output
     assert "## Notify" in output
@@ -28,6 +40,16 @@ def test_server_doctor_formats_sections_when_no_optional_env(
 def test_server_doctor_reports_llm_probe_status(monkeypatch, capsys) -> None:
     monkeypatch.setenv("GLM_API_KEY", "glm-test-key")
     monkeypatch.setattr(server_doctor, "_load_env_file", lambda: None)
+    monkeypatch.setattr(
+        server_doctor,
+        "_tracked_worktree_check",
+        lambda: server_doctor.DoctorCheck("git:tracked_worktree", "ok", "clean"),
+    )
+    monkeypatch.setattr(
+        server_doctor,
+        "_dashboard_ingress_checks",
+        lambda: [server_doctor.DoctorCheck("ingress:public_listener", "ok", "443 ssl")],
+    )
     monkeypatch.setattr(
         server_doctor,
         "llm_call_or_fallback",
@@ -44,6 +66,16 @@ def test_server_doctor_reports_llm_probe_status(monkeypatch, capsys) -> None:
 
 def test_server_doctor_reports_source_auth_probe(monkeypatch, capsys) -> None:
     monkeypatch.setattr(server_doctor, "_load_env_file", lambda: None)
+    monkeypatch.setattr(
+        server_doctor,
+        "_tracked_worktree_check",
+        lambda: server_doctor.DoctorCheck("git:tracked_worktree", "ok", "clean"),
+    )
+    monkeypatch.setattr(
+        server_doctor,
+        "_dashboard_ingress_checks",
+        lambda: [server_doctor.DoctorCheck("ingress:public_listener", "ok", "443 ssl")],
+    )
     monkeypatch.setattr(
         server_doctor,
         "inspect_source_readiness",
@@ -138,3 +170,54 @@ def test_server_doctor_reports_notify_mode_and_channels(monkeypatch) -> None:
     assert "mode=fanout" in by_name["notify:mode"].detail
     assert "serverchan" in by_name["notify:mode"].detail
     assert "wechat" in by_name["notify:mode"].detail
+
+
+def test_server_doctor_reports_dirty_worktree(monkeypatch) -> None:
+    monkeypatch.setattr(
+        server_doctor.subprocess,
+        "run",
+        lambda *args, **kwargs: type(
+            "Result",
+            (),
+            {"stdout": " M src/aqsp/cli.py\n M scripts/run_production_walkforward_gate.py\n"},
+        )(),
+    )
+
+    check = server_doctor._tracked_worktree_check()
+
+    assert check.status == "dirty"
+    assert "2 tracked changes" in check.detail
+    assert "src/aqsp/cli.py" in check.detail
+
+
+def test_server_doctor_flags_localhost_only_ingress(tmp_path, monkeypatch) -> None:
+    site_dir = tmp_path / "etc/nginx/sites-enabled"
+    site_dir.mkdir(parents=True)
+    (site_dir / "aqsp").write_text(
+        "\n".join(
+            [
+                "server {",
+                "    listen 127.0.0.1:8080;",
+                "    root /opt/aqsp/dist/dashboard;",
+                "}",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    real_path = server_doctor.Path
+
+    def fake_path(raw: str) -> server_doctor.Path:
+        if raw == "/etc/nginx/sites-enabled/aqsp":
+            return real_path(site_dir / "aqsp")
+        return real_path(raw)
+
+    monkeypatch.setattr(server_doctor, "Path", fake_path)
+
+    checks = server_doctor._dashboard_ingress_checks()
+    by_name = {item.name: item for item in checks}
+
+    assert by_name["ingress:public_listener"].status == "failed"
+    assert "localhost" in by_name["ingress:public_listener"].detail
+    assert by_name["ingress:upstream"].status == "failed"

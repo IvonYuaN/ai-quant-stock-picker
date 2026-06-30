@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import date
 
 from aqsp.walkforward_gate import (
+    MIN_PRODUCTION_GATE_COVERAGE_RATIO,
     MIN_PRODUCTION_GATE_SYMBOLS,
     build_walkforward_gate_payload,
     validate_walkforward_gate_payload,
@@ -92,11 +93,14 @@ def test_walkforward_gate_rejects_stale_and_heldout_payloads() -> None:
 
 def test_walkforward_market_coverage_passes_full_market_gate() -> None:
     result = validate_walkforward_market_coverage(
-        _valid_payload(effective_symbols=MIN_PRODUCTION_GATE_SYMBOLS)
+        _valid_payload(
+            effective_symbols=5000,
+            production_gate_coverage={"stock_symbols": 5533},
+        )
     )
 
     assert result.ok is True
-    assert result.effective_symbols == MIN_PRODUCTION_GATE_SYMBOLS
+    assert result.effective_symbols == 5000
     assert result.blockers == ()
 
 
@@ -119,4 +123,51 @@ def test_walkforward_market_coverage_rejects_smoke_sample_counts() -> None:
 
     assert result.ok is False
     assert result.effective_symbols == 300
-    assert f"effective_symbols=300 < {MIN_PRODUCTION_GATE_SYMBOLS}" in result.blockers
+    assert (
+        f"effective_symbols=300 < required_symbols={MIN_PRODUCTION_GATE_SYMBOLS}"
+        in result.blockers
+    )
+
+
+def test_walkforward_market_coverage_rejects_partial_full_market_ratio() -> None:
+    result = validate_walkforward_market_coverage(
+        _valid_payload(
+            effective_symbols=3200,
+            production_gate_coverage={"stock_symbols": 5533},
+        )
+    )
+
+    assert result.ok is False
+    assert result.coverage_ratio is not None
+    assert result.coverage_ratio < MIN_PRODUCTION_GATE_COVERAGE_RATIO
+    assert "required_symbols=4980" in result.blockers[0]
+
+
+def test_walkforward_market_coverage_prefers_selected_symbols_denominator() -> None:
+    result = validate_walkforward_market_coverage(
+        _valid_payload(
+            effective_symbols=5157,
+            production_gate_coverage={
+                "stock_symbols": 5797,
+                "selected_symbols": 5193,
+            },
+        )
+    )
+
+    assert result.ok is True
+    assert result.stock_symbols == 5193
+    assert result.required_symbols == 4674
+
+
+def test_walkforward_gate_allows_recent_window_beyond_heldout_cutoff() -> None:
+    result = validate_walkforward_gate_payload(
+        _valid_payload(
+            data_end="2026-06-20",
+            window_mode="rolling_recent",
+            coverage_mode="auto_recent_window",
+        ),
+        today=date(2026, 6, 21),
+        heldout_cutoff=date(2024, 12, 31),
+    )
+
+    assert result.ok is True

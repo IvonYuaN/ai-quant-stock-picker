@@ -275,21 +275,21 @@ class Briefing:
                     _format_pick_with_status(pick, include_score=True)
                     for pick in self.picks[:3]
                 )
-                items.append(f"- 继续观察名单: {watch_names}")
+                items.append(f"- 观察名单: {watch_names}")
             items.append(f"- 今日结论: {self.portfolio_summary.headline}")
             if self.portfolio_summary.regime_label:
                 items.append(f"- 当前市况: {self.portfolio_summary.regime_label}")
             if self.portfolio_summary.strategy_mix_name:
-                items.append(f"- 现在偏向: {self.portfolio_summary.strategy_mix_name}")
+                items.append(f"- 策略偏向: {self.portfolio_summary.strategy_mix_name}")
             if self.portfolio_summary.top_focus:
                 items.append(
-                    "- 今日重点名单: " + "、".join(self.portfolio_summary.top_focus)
+                    "- 主看名单: " + "、".join(self.portfolio_summary.top_focus)
                 )
             if watchlist:
-                items.append("- 继续观察名单: " + "、".join(watchlist))
+                items.append("- 观察名单: " + "、".join(watchlist))
             if self.portfolio_summary.action_hotspots:
                 items.append(
-                    "- 需要重点确认: "
+                    "- 待确认: "
                     + "；".join(self.portfolio_summary.action_hotspots[:2])
                 )
             if self.portfolio_summary.allocations:
@@ -297,7 +297,7 @@ class Briefing:
                     f"{item.symbol} {item.name} {item.weight:.0%}"
                     for item in self.portfolio_summary.allocations[:3]
                 )
-                items.append(f"- 比例参考: {top_alloc}")
+                items.append(f"- 仓位参考: {top_alloc}")
                 first = self.portfolio_summary.allocations[0]
                 rationale = "；".join(first.rationale[:2])
                 if rationale:
@@ -366,10 +366,10 @@ class Briefing:
                 self.portfolio_summary.watchlist,
                 self.portfolio_summary.top_focus,
             )
-            items.append("- 继续观察名单: " + "、".join(watchlist[:3]))
+            items.append("- 观察名单: " + "、".join(watchlist[:3]))
         if self.portfolio_summary and self.portfolio_summary.allocations:
             top_alloc = self.portfolio_summary.allocations[0]
-            line = f"- 比例参考: {top_alloc.symbol} {top_alloc.name} {top_alloc.weight:.0%}"
+            line = f"- 仓位参考: {top_alloc.symbol} {top_alloc.name} {top_alloc.weight:.0%}"
             rationale = "；".join(top_alloc.rationale[:2])
             if rationale:
                 line += f" | {rationale}"
@@ -386,7 +386,7 @@ class Briefing:
             items.append(f"- 跟踪约束: {self.portfolio_summary.allocation_note}")
         if self.portfolio_summary and self.portfolio_summary.execution_blockers:
             items.append(
-                "- 现在卡在哪: "
+                "- 阻塞: "
                 + "；".join(self.portfolio_summary.execution_blockers[:2])
             )
         if self.picks:
@@ -394,7 +394,11 @@ class Briefing:
             lead_display = format_symbol_name(lead_pick.symbol, lead_pick.name)
             next_step = _candidate_next_step_label(lead_pick)
             if next_step:
-                items.append(f"- 解锁后先看: {lead_display} | {next_step}")
+                items.append(
+                    "- 下一步: "
+                    f"{lead_display} | "
+                    f"{normalize_research_tone(next_step).replace('优先复核', '优先再看')}"
+                )
             review_meta = " / ".join(
                 part
                 for part in (
@@ -404,7 +408,7 @@ class Briefing:
                 if part
             )
             if review_meta:
-                items.append(f"- 再看时间: {lead_display} | {review_meta}")
+                items.append(f"- 复核窗口: {lead_display} | {review_meta}")
         return items
 
     def _build_risk_items(
@@ -463,7 +467,7 @@ class Briefing:
                 )
             elif result.disagreement_score > 0.5:
                 points.append(
-                    f"🤖 辩论分歧较大: {result.name}({result.symbol}) "
+                    f"🤖 讨论分歧较大: {result.name}({result.symbol}) "
                     f"多空分歧{result.disagreement_score:.0%}"
                 )
         return points
@@ -472,10 +476,10 @@ class Briefing:
         source = self._get_section("数据源状态")
         if not source:
             return []
-        if "降低信任度" in source:
+        if "需人工复核" in source:
             route_match = re.search(r"(?:路径|数据来源)[:：]\s*\*\*(.+?)\*\*", source)
             route = route_match.group(1) if route_match else "未知"
-            return [f"📉 数据源降级: {route}，结果请降低信任度"]
+            return [f"📉 数据源降级: {route}，结果需人工复核"]
         return []
 
     def _extract_regime_points(self) -> list[str]:
@@ -518,7 +522,7 @@ class Briefing:
         if effective_actionable_count > 0:
             parts.append(f"其中{effective_actionable_count}只适合优先再看")
         elif candidate_count > 0:
-            parts.append("有继续观察名单，当前暂无纸面复核对象")
+            parts.append("有观察名单，今日无纸面复核对象")
         if risk_count > 0:
             parts.append(f"要特别注意{risk_count}条风险")
         if not parts:
@@ -626,12 +630,12 @@ class BriefingGenerator:
             lines.append(f"- 信号日期: {signal_date}")
         if portfolio_summary.top_focus:
             lines.append(
-                "- 今日重点名单: " + "、".join(portfolio_summary.top_focus[:3])
+                "- 主看名单: " + "、".join(portfolio_summary.top_focus[:3])
             )
         if display_watchlist:
-            lines.append("- 继续观察名单: " + "、".join(display_watchlist[:3]))
+            lines.append("- 观察名单: " + "、".join(display_watchlist[:3]))
         if portfolio_summary.watch_reviews:
-            lines.append("- 观察名单下一步:")
+            lines.append("- 后续关注:")
             for item in portfolio_summary.watch_reviews[:2]:
                 lines.append(
                     "  - "
@@ -644,17 +648,17 @@ class BriefingGenerator:
                 )
         if portfolio_summary.action_hotspots:
             lines.append(
-                "- 需要重点确认: " + "；".join(portfolio_summary.action_hotspots[:3])
+                "- 待确认: " + "；".join(portfolio_summary.action_hotspots[:3])
             )
         if portfolio_summary.execution_blockers:
-            lines.append("- 现在卡在哪:")
+            lines.append("- 阻塞:")
             for item in portfolio_summary.execution_blockers[:3]:
                 lines.append(f"  - {item}")
         if portfolio_summary.regime_label:
             lines.append(f"- 当前市况: {portfolio_summary.regime_label}")
         if portfolio_summary.strategy_mix_name:
             lines.append(
-                f"- 现在偏向: {portfolio_summary.strategy_mix_name} | {portfolio_summary.strategy_mix_description}"
+                f"- 策略偏向: {portfolio_summary.strategy_mix_name} | {portfolio_summary.strategy_mix_description}"
             )
         if portfolio_summary.strategy_focus:
             lines.append(
@@ -669,7 +673,7 @@ class BriefingGenerator:
                 )
             )
         if portfolio_summary.allocations:
-            lines.append("- 比例参考:")
+            lines.append("- 仓位参考:")
             for item in portfolio_summary.allocations[:3]:
                 display = format_symbol_name(item.symbol, item.name)
                 rationale = "；".join(item.rationale[:3])
@@ -704,13 +708,13 @@ class BriefingGenerator:
         )
         lead_display = format_symbol_name(lead_pick.symbol, lead_pick.name)
         lead_status = _candidate_status_label(lead_pick)
-        lead_line = f"- 先看这个: {lead_display} | {rating_label(lead_pick.rating)}"
+        lead_line = f"- 当前主看: {lead_display} | {rating_label(lead_pick.rating)}"
         if lead_status:
             lead_line += f" | {lead_status}"
         lead_line += f" | 评分 {lead_pick.score:.1f}"
         lines.append(lead_line)
         if not portfolio_summary.top_focus:
-            lines.append("- 当前暂无纸面复核对象，先观察。")
+            lines.append("- 今日无纸面复核对象，先观察。")
         return BriefingSection(title="主链总览", content=_section_text(lines))
 
     def _build_portfolio_summary(
@@ -802,7 +806,7 @@ class BriefingGenerator:
             f"- 是否启用备用源: {'是' if fallback_used else '否'}",
         ]
         if label in {"fallback", "degraded", "cold_start"}:
-            lines.append("- 提示: 本次结果请降低信任度，优先人工复核。")
+            lines.append("- 复核: 本次结果需人工复核。")
         return BriefingSection(title="数据源状态", content=_section_text(lines))
 
     def _build_research_section(
@@ -817,7 +821,7 @@ class BriefingGenerator:
                 ),
             )
         lines = [
-            f"- 研究发现落盘: **{research_findings_display(research_summary)}**",
+            f"- 研究结论落地情况: **{research_findings_display(research_summary)}**",
             f"- 已纳入观察但不直接打分: **{len(research_summary.absorbed_families)}**",
             f"- 已部分实现策略: **{research_summary.implemented_family_count}**",
             f"- 仅写进研究记录: **{research_summary.report_only_family_count}**",
@@ -884,11 +888,11 @@ class BriefingGenerator:
             for reason in pick.reasons:
                 lines.append(f"- {reason}")
             if blocker:
-                lines.append(f"- 现在卡在哪: {blocker}")
+                lines.append(f"- 阻塞: {blocker}")
             if next_step:
-                lines.append(f"- 接下来先看: {next_step}")
+                lines.append(f"- 下一步: {next_step}")
             if review_meta:
-                lines.append(f"- 再看优先级/时机: {review_meta}")
+                lines.append(f"- 复核窗口: {review_meta}")
             if pick.risks:
                 lines.append(f"风险提示: {'；'.join(pick.risks)}")
             lines.append("")
@@ -940,24 +944,24 @@ class BriefingGenerator:
                     )
                     if part
                 )
-                lines.append("### 当前暂无纸面复核对象")
+                lines.append("### 今日无纸面复核对象")
                 lines.append("")
-                lines.append(f"继续观察名单: {names}")
+                lines.append(f"观察名单: {names}")
                 lines.append("")
                 if blocker:
-                    lines.append(f"现在卡在哪: {blocker}")
+                    lines.append(f"阻塞: {blocker}")
                 if next_step:
-                    lines.append(f"接下来先看: {next_step}")
+                    lines.append(
+                        f"下一步: {normalize_research_tone(next_step).replace('优先复核', '优先再看')}"
+                    )
                 if review_meta:
-                    lines.append(f"再看时间: {review_meta}")
+                    lines.append(f"复核窗口: {review_meta}")
                 lines.append("")
-                lines.append("待阻塞条件解除后再考虑转入纸面复核名单。")
+                lines.append("待阻塞解除后再考虑转入纸面复核名单。")
             else:
-                lines.append("### 明天有什么要做吗？")
+                lines.append("### 明日复核")
                 lines.append("")
-                lines.append(
-                    "**没有。** 今天没有合适的股票，继续等待。不要为了交易而交易，这很关键！"
-                )
+                lines.append("今日无候选，继续等待。")
             return BriefingSection(title="明日重点", content=_section_text(lines))
 
         # 新手友好的行动清单
@@ -983,7 +987,7 @@ class BriefingGenerator:
             lines.append(f"- **最多亏到**: {stop}元（跌破这里说明原来的判断变弱）")
             lines.append(f"- **先看目标**: {tp}元（接近这里就回看是否已经走完）")
             lines.append(
-                f"- **比例参考**: 这只股票占纸面组合的 {position_text}（不要集中到单一标的）"
+                f"- **仓位参考**: 这只股票占纸面组合的 {position_text}（不要集中到单一标的）"
             )
             lines.append("")
 

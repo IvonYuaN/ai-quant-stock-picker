@@ -6,9 +6,18 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pandas as pd
+import pytest
 
 from aqsp.core.time import today_shanghai
 from aqsp.core.types import PickResult
+
+
+@pytest.fixture(autouse=True)
+def _isolated_runtime_state(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("AQSP_NOTIFY_STATE_PATH", str(tmp_path / "notify_state.json"))
+    monkeypatch.setenv(
+        "AQSP_GATE_NOTIFY_STATE_PATH", str(tmp_path / "gate_notify_state.json")
+    )
 
 
 def test_run_scheduled_persists_decision_audit_log(

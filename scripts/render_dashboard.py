@@ -315,10 +315,10 @@ def _lifecycle_overview_panel(candidates: list[dict[str, str]]) -> str:
         headline = "今日纸面复核名单"
         headline_detail = "、".join(actionable[:3])
     elif review_items:
-        headline = "观察名单接下来"
+        headline = "后续关注"
         headline_detail = review_items[0]
     elif watchlist:
-        headline = "继续观察名单"
+        headline = "观察名单"
         headline_detail = "、".join(watchlist[:3])
     else:
         headline = "暂无主链"
@@ -340,7 +340,7 @@ def _lifecycle_overview_panel(candidates: list[dict[str, str]]) -> str:
             "纸面复核与观察对象已按当前主链输出分层。",
         ),
         (
-            "现在卡在哪",
+            "阻塞",
             blocked[0] if blocked else "暂无明确阻塞",
             "；".join(blocked[1:3]) if len(blocked) > 1 else "",
         ),
@@ -428,16 +428,16 @@ def _candidate_cards(
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/>
                 </svg>
-                Agent讨论 {f'<span class="debate-age">({debate_age})</span>' if debate_age else ""}
+                多视角结论 {f'<span class="debate-age">({debate_age})</span>' if debate_age else ""}
             </button>"""
             if has_debate
-            else """<button class="debate-btn no-debate" disabled aria-label="暂无辩论数据">
+            else """<button class="debate-btn no-debate" disabled aria-label="暂无多视角结论">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <circle cx="12" cy="12" r="10"/>
                     <line x1="12" y1="8" x2="12" y2="12"/>
                     <line x1="12" y1="16" x2="12.01" y2="16"/>
                 </svg>
-                暂无 Agent 讨论
+                暂无多视角结论
             </button>"""
         )
         adjustment_badge = ""
@@ -447,10 +447,10 @@ def _candidate_cards(
                 adj, "neutral"
             )
             adj_text = {
-                "raise": "辩论倾向上调",
-                "lower": "辩论倾向下调",
-                "keep": "辩论倾向维持",
-            }.get(adj, "辩论倾向维持")
+                "raise": "观点修正上调",
+                "lower": "观点修正下调",
+                "keep": "观点修正维持",
+            }.get(adj, "观点修正维持")
             adjustment_badge = (
                 f"<span class='adjustment-badge {adj_class}'>{adj_text}</span>"
             )
@@ -498,7 +498,7 @@ def _candidate_cards(
                 <dt>收盘</dt><dd>{_fmt_num(row.get("close"))}</dd>
                 <dt>最多亏到</dt><dd>{_fmt_num(row.get("stop_loss"))}</dd>
                 <dt>先看目标</dt><dd>{_fmt_num(row.get("take_profit"))}</dd>
-                <dt>比例参考</dt><dd>{html.escape(row.get("position", "") or "-")}</dd>
+                <dt>仓位参考</dt><dd>{html.escape(row.get("position", "") or "-")}</dd>
               </dl>
               <div class="card-footer">
                 <p class="reason">{reasons or "无"}</p>
@@ -524,10 +524,10 @@ def _debate_modals(debate_map: dict[str, dict[str, Any]]) -> str:
         consensus = html.escape(debate.get("final_consensus", ""))
         adjustment = debate.get("recommended_adjustment", "keep")
         adj_text = {
-            "raise": "辩论倾向上调",
-            "lower": "辩论倾向下调",
-            "keep": "辩论倾向维持",
-        }.get(adjustment, "辩论倾向维持")
+            "raise": "观点修正上调",
+            "lower": "观点修正下调",
+            "keep": "观点修正维持",
+        }.get(adjustment, "观点修正维持")
         adj_class = {"raise": "bull", "lower": "bear", "keep": "neutral"}.get(
             adjustment, "neutral"
         )
@@ -662,12 +662,12 @@ def _debate_modals(debate_map: dict[str, dict[str, Any]]) -> str:
             <div class="debate-modal-content" role="document">
                 <div class="debate-modal-header">
                     <div>
-                        <h2 id="debate-title-{symbol}">多Agent讨论摘要</h2>
+                        <h2 id="debate-title-{symbol}">多视角结论摘要</h2>
                         <p class="debate-subtitle">{symbol} {name}</p>
                     </div>
                     <div class="header-badges">
                         <span class="adjustment-badge {adj_class}">{adj_text}</span>
-                        <button class="copy-btn" onclick="copyDebate('{symbol}')" aria-label="复制辩论详情" title="复制辩论详情">
+                        <button class="copy-btn" onclick="copyDebate('{symbol}')" aria-label="复制结论详情" title="复制结论详情">
                             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
                                 <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
@@ -1081,7 +1081,7 @@ def _system_health_panel(
         _health_card("📈", "市场状态", regime_desc, regime_name, regime_cls),
         _health_card(
             "🤖",
-            "辩论状态",
+            "观点状态",
             debate_value,
             f"多{consensus_dist['bullish']}/空{consensus_dist['bearish']}/中{consensus_dist['neutral']}",
             debate_cls,
@@ -2792,7 +2792,7 @@ def render_dashboard(
           <circle cx="12" cy="12" r="3"/>
           <path d="M12 1v6m0 6v6m4.22-13.22l-4.24 4.24m0 4.24l4.24 4.24m-12.44-8.48l4.24 4.24m0 4.24l-4.24 4.24"/>
         </svg>
-        Agent性能
+        观点表现
       </a>
     </div>
   </header>
@@ -2966,7 +2966,7 @@ def render_dashboard(
       if (modal) {{
         const text = modal.textContent;
         navigator.clipboard.writeText(text).then(() => {{
-          showToast('辩论详情已复制到剪贴板');
+          showToast('结论详情已复制到剪贴板');
         }}).catch(() => {{
           showToast('复制失败，请手动复制');
         }});

@@ -14,6 +14,7 @@ def test_server_monitor_script_runs_monitor_with_notify() -> None:
     assert 'source "${PROJECT_ROOT}/.env"' in script
     assert 'PYTHON_BIN="${VENV_DIR}/bin/python3"' in script
     assert 'export AQSP_NOTIFY="false"' in script
+    assert 'export AQSP_GATE_NOTIFY="false"' in script
     assert 'MONITOR_NOTIFY="${AQSP_MONITOR_NOTIFY:-false}"' in script
     assert 'MONITOR_ARGS=( -m aqsp monitor --config "${MONITOR_CONFIG}" )' in script
     assert 'MONITOR_ARGS+=( --notify )' in script

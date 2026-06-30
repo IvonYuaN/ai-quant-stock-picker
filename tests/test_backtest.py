@@ -256,10 +256,15 @@ class TestComputeBacktestMetrics:
         dd = 1 - equity_1 / equity_0
         assert result.max_drawdown == pytest.approx(dd, rel=1e-4)
 
-    def test_sharpe_ratio_positive_for_consistent_gains(self) -> None:
+    def test_sharpe_ratio_zero_for_zero_variance_returns(self) -> None:
         returns = [1.0] * 20
         result = _compute_backtest_metrics(returns, "test")
-        assert result.sharpe_ratio > 0
+        assert result.sharpe_ratio == 0.0
+
+    def test_sharpe_ratio_zero_for_zero_variance_losses(self) -> None:
+        returns = [-4.15] * 10
+        result = _compute_backtest_metrics(returns, "test")
+        assert result.sharpe_ratio == 0.0
 
 
 class TestWalkForwardDataOps:
@@ -889,3 +894,14 @@ def test_walkforward_keeps_zero_trade_periods_for_cscv_stability(monkeypatch) ->
 
     assert len(result.periods) > 0
     assert all(period.trades == 0 for period in result.periods)
+
+
+def test_walkforward_planned_period_count_matches_window_math() -> None:
+    tester = WalkForwardTester(
+        strategy=_StubStrategy(),
+        train_period_days=120,
+        test_period_days=30,
+        purge_days=5,
+    )
+
+    assert tester._planned_period_count(0, 707) == 19

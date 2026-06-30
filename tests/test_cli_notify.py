@@ -21,6 +21,9 @@ from aqsp.portfolio.snapshot import PickSnapshot, SnapshotDiff
 @pytest.fixture(autouse=True)
 def _isolated_notify_state(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("AQSP_NOTIFY_STATE_PATH", str(tmp_path / "notify_state.json"))
+    monkeypatch.setenv(
+        "AQSP_GATE_NOTIFY_STATE_PATH", str(tmp_path / "gate_notify_state.json")
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -102,7 +105,7 @@ def test_execution_summary_uses_observation_when_pm_has_no_allocations() -> None
     line = cli_mod._build_execution_summary_line([pick], summary)
 
     assert "今日无纸面复核对象" in line
-    assert "继续观察名单" in line
+    assert "继续观察" in line
     assert "首选" not in line
 
 
@@ -2931,21 +2934,16 @@ def test_run_scheduled_annotates_candidate_status_in_report_and_notify(
         "- 1. 688981 中芯国际 | 新晋 | -9 | 继续观察: 等待量价继续走强后，再评估是否转入纸面复核名单"
         in seen[0]
     )
-    assert (
-        "- 暂无纸面复核主线，先盯继续观察名单：" in seen[0]
-    )
+    assert "- 暂无纸面复核主线，观察名单：" in seen[0]
     assert (
         "- 688981 中芯国际" in seen[0]
     )
     assert "复核: 高优先级 / 盘中走强后" in seen[0]
     assert "- 2. 000001 平安银行 | 继续观察 | -18 | 继续观察: 估值防守" in seen[0]
     assert "## 📋" not in seen[0]
-    assert (
-        "- 重点 1: 688981 中芯国际 | 继续观察名单 | 新晋 | 评分 -9.0 | 处理 维持原排序"
-        in report
-    )
-    assert "- 决策: 继续观察名单 | 新晋 | 评分 -9.0" in report
-    assert "- 接下来先看: 等待量价继续走强后，再评估是否转入纸面复核名单" in report
+    assert "- 重点 1: 688981 中芯国际 | 继续观察 | 新晋 | 评分 -9.0" in report
+    assert "- 决策: 继续观察 | 新晋 | 评分 -9.0" in report
+    assert "- 下一步: 等待量价继续走强后，再评估是否转入纸面复核名单" in report
     assert "- 再看优先级/时机: 高优先级 / 盘中走强后" in report
 
 

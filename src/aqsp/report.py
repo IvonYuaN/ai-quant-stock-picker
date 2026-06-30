@@ -166,25 +166,25 @@ def _format_final_decision_board(
             )
         if getattr(portfolio_summary, "watchlist", ()):
             lines.append(
-                "- 继续观察名单: "
+                "- 观察名单: "
                 + "、".join(
                     _safe_markdown_text(item) for item in portfolio_summary.watchlist
                 )
             )
         if getattr(portfolio_summary, "action_hotspots", ()):
             lines.append(
-                "- 需要重点确认: "
+                "- 待确认: "
                 + "；".join(
                     _safe_markdown_text(item)
                     for item in portfolio_summary.action_hotspots
                 )
             )
         if getattr(portfolio_summary, "execution_blockers", ()):
-            lines.append("- 现在卡在哪:")
+            lines.append("- 阻塞:")
             for item in tuple(getattr(portfolio_summary, "execution_blockers", ()))[:3]:
                 lines.append(f"  - {_safe_markdown_text(item)}")
         if getattr(portfolio_summary, "watch_reviews", ()):
-            lines.append("- 观察名单接下来:")
+            lines.append("- 后续关注:")
             for item in tuple(getattr(portfolio_summary, "watch_reviews", ()))[:2]:
                 lines.append(
                     "  - "
@@ -198,7 +198,7 @@ def _format_final_decision_board(
                     )
                 )
         if getattr(portfolio_summary, "allocations", ()):
-            lines.append("- 比例参考:")
+            lines.append("- 仓位参考:")
             for item in tuple(getattr(portfolio_summary, "allocations", ()))[:3]:
                 display = _safe_markdown_text(
                     format_symbol_name(item.symbol, item.name)
@@ -214,18 +214,16 @@ def _format_final_decision_board(
                     _safe_markdown_text(format_symbol_name(item.symbol, item.name))
                     for item in lead_allocations
                 )
-                lines.append(f"- 再看顺序: 先看 {order}")
+                lines.append(f"- 先看顺序: {order}")
         cash_reserve = float(getattr(portfolio_summary, "cash_reserve", 0.0) or 0.0)
         if cash_reserve > 0:
             lines.append(f"- 现金留存: {cash_reserve:.0%}")
         allocation_note = str(getattr(portfolio_summary, "allocation_note", "") or "")
         if allocation_note:
-            lines.append(f"- 配置说明: {_safe_markdown_text(allocation_note)}")
+            lines.append(f"- 仓位约束: {_safe_markdown_text(allocation_note)}")
         lines.append("")
     for idx, pick in enumerate(picks[:3], 1):
         decision = decision_map.get(pick.symbol)
-        action = getattr(decision, "action", "keep") if decision is not None else "keep"
-        action_label = _resolve_portfolio_action_label(action)
         pm_reasons = getattr(decision, "reasons", ()) if decision is not None else ()
         label = _resolve_display_decision_label(pick, decision)
         status = _candidate_status(pick)
@@ -237,23 +235,23 @@ def _format_final_decision_board(
         headline = f"- 重点 {idx}: {_safe_markdown_text(_display_name(pick))} | {label}"
         if status:
             headline += f" | {_safe_markdown_text(status)}"
-        headline += f" | 评分 {pick.score} | 处理 {action_label}"
+        headline += f" | 评分 {pick.score}"
         lines.append(headline)
         lines.append(f"  参考: {reason}")
         if blocker:
-            lines.append(f"  现在卡在哪: {_safe_markdown_text(blocker)}")
+            lines.append(f"  阻塞: {_safe_markdown_text(blocker)}")
         if next_step:
             lines.append(f"  下一步: {_safe_markdown_text(next_step)}")
         if review_priority or review_window:
             lines.append(
-                "  再看时间: "
+                "  复核窗口: "
                 + _safe_markdown_text(
                     format_review_meta(review_priority, review_window)
                 )
             )
         pm_reason_text = _format_reason_list(pm_reasons, limit=2)
         if pm_reason_text and pm_reason_text != "保持原排序":
-            lines.append("  PM依据: " + pm_reason_text)
+            lines.append("  原因: " + pm_reason_text)
     lines.append("")
     return lines
 
@@ -269,21 +267,21 @@ def _format_portfolio_decision(decision: Any) -> str:
     ):
         return ""
     lines = [
-        "### 排序调整",
-        f"- 今日处理: {_resolve_portfolio_action_label(action)}",
+        "### 排序变化",
+        f"- 本次变化: {_resolve_portfolio_action_label(action)}",
         f"- 分数调整: {delta:+.1f}",
     ]
     if reasons:
-        lines.append("- 决策依据: " + _format_reason_list(reasons))
+        lines.append("- 原因: " + _format_reason_list(reasons))
     return normalize_research_tone("\n".join(lines))
 
 
 def _format_debate_result(result: Any) -> str:
     lines = []
-    lines.append("### 不同看法")
+    lines.append("### 分歧摘要")
     lines.append(f"- 最终共识: {result.final_consensus}")
     lines.append(
-        f"- 讨论倾向: {result.recommended_adjustment}（附件观点，不覆盖 runtime 打分）"
+        f"- 结论倾向: {result.recommended_adjustment}（仅作补充，不改写系统评分）"
     )
     if float(getattr(result, "adjusted_score", 0.0) or 0.0) > 0:
         lines.append(
@@ -367,7 +365,7 @@ def to_markdown(
                 f"- 收盘/参考价: {pick.close} / {pick.ideal_buy}",
                 f"- 策略入口: {_safe_markdown_text(pick.entry_type)}",
                 f"- 命中策略: {_format_reason_list(pick.strategies) or '无'}",
-                f"- 比例参考: {pick.position}",
+                f"- 仓位参考: {pick.position}",
                 f"- 最多亏到/先看目标: {pick.stop_loss} / {pick.take_profit}",
                 f"- 理由: {_format_reason_list(pick.reasons) or '无'}",
                 f"- 风险提示: {_format_reason_list(pick.risks) or '无'}",
@@ -376,12 +374,12 @@ def to_markdown(
         )
         if blocker:
             lines.insert(
-                len(lines) - 1, f"- 现在卡在哪: {_safe_markdown_text(blocker)}"
+                len(lines) - 1, f"- 阻塞: {_safe_markdown_text(blocker)}"
             )
         if next_step:
             lines.insert(
                 len(lines) - 1,
-                f"- 接下来先看: {_safe_markdown_text(next_step)}",
+                f"- 下一步: {_safe_markdown_text(next_step)}",
             )
         if review_priority or review_window:
             lines.insert(

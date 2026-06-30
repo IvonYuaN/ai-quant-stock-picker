@@ -8,7 +8,8 @@ from types import SimpleNamespace
 import pytest
 import pandas as pd
 
-from aqsp.data.source import DataSource, get_limit_pct
+from aqsp.data.cache import DataCache
+from aqsp.data.source import DataSource, apply_limit_suspended_adj, get_limit_pct
 from aqsp.data.akshare_source import AkshareSource
 from aqsp.data.eastmoney_source import EastmoneySource
 from aqsp.data.mootdx_source import MootdxSource
@@ -258,6 +259,42 @@ def test_validate_ohlcv_valid():
     source.name = "test"
     result = source._validate_ohlcv(df, "600000")
     assert result is not None
+
+
+def test_apply_limit_suspended_adj_prefers_bulk_adj_factor_lookup() -> None:
+    class Cache:
+        def __init__(self) -> None:
+            self.bulk_calls = 0
+
+        def get_adj_factors(self, symbol: str, dates: list[date]) -> dict[date, float]:
+            self.bulk_calls += 1
+            assert symbol == "600000"
+            assert dates == [date(2026, 5, 27), date(2026, 5, 28)]
+            return {
+                date(2026, 5, 27): 1.0,
+                date(2026, 5, 28): 1.1,
+            }
+
+        def get_adj_factor(self, *_args, **_kwargs):
+            raise AssertionError("single-row adj lookup should not be used")
+
+    df = pd.DataFrame(
+        {
+            "date": ["2026-05-27", "2026-05-28"],
+            "name": ["测试", "测试"],
+            "close": [10.0, 10.5],
+            "high": [10.2, 10.8],
+            "low": [9.8, 10.1],
+            "volume": [1000, 1200],
+            "amount": [10000, 12600],
+        }
+    )
+
+    cache = Cache()
+    result = apply_limit_suspended_adj(df, "600000", cache=cache)
+
+    assert cache.bulk_calls == 1
+    assert list(result["adj_factor"]) == [1.0, 1.1]
 
 
 def test_validate_ohlcv_requires_architecture_schema():
@@ -603,6 +640,77 @@ def test_sqlite_db_source_fetch_daily_filters_to_covered_symbols(
     )
 
     assert list(result) == ["600000", "600001"]
+
+
+def test_sqlite_db_source_fetch_daily_reuses_recent_coverage_snapshot(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "astocks_raw.db"
+    _make_sqlite_daily_db(db_path, symbols=2, days=30)
+    source = SqliteDbSource(db_path=db_path, cache=None)
+
+    covered = source.get_symbols_with_daily_coverage(
+        ["600000", "600001"],
+        date(2024, 1, 1),
+        date(2024, 1, 30),
+        min_rows=None,
+    )
+    assert covered == ["600000", "600001"]
+
+    def fail_coverage(*_args, **_kwargs):
+        raise AssertionError("duplicate coverage check should be skipped")
+
+    source.get_symbols_with_daily_coverage = fail_coverage  # type: ignore[method-assign]
+
+    result = source.fetch_daily(
+        ["600000", "600001"],
+        date(2024, 1, 1),
+        date(2024, 1, 30),
+    )
+
+    assert list(result) == ["600000", "600001"]
+
+
+def test_sqlite_db_source_fetch_daily_uses_bulk_cache_paths(
+    tmp_path: Path, monkeypatch
+) -> None:
+    db_path = tmp_path / "astocks_raw.db"
+    cache_path = tmp_path / "cache.db"
+    _make_sqlite_daily_db(db_path, symbols=3, days=5)
+    cache = DataCache(db_path=cache_path)
+    source = SqliteDbSource(db_path=db_path, cache=cache)
+
+    get_calls: list[str] = []
+    set_calls: list[str] = []
+
+    def fail_get_ohlcv(symbol, *_args, **_kwargs):
+        get_calls.append(symbol)
+        raise AssertionError("fetch_daily should not fall back to per-symbol cache reads")
+
+    def fail_set_ohlcv(symbol, *_args, **_kwargs):
+        set_calls.append(symbol)
+        raise AssertionError("fetch_daily should not fall back to per-symbol cache writes")
+
+    monkeypatch.setattr(cache, "get_ohlcv", fail_get_ohlcv)
+    monkeypatch.setattr(cache, "set_ohlcv", fail_set_ohlcv)
+
+    first = source.fetch_daily(
+        ["600000", "600001", "600002"],
+        date(2024, 1, 1),
+        date(2024, 1, 5),
+    )
+    assert list(first) == ["600000", "600001", "600002"]
+    assert get_calls == []
+    assert set_calls == []
+
+    second = source.fetch_daily(
+        ["600000", "600001", "600002"],
+        date(2024, 1, 1),
+        date(2024, 1, 5),
+    )
+    assert list(second) == ["600000", "600001", "600002"]
+    assert get_calls == []
+    assert set_calls == []
 
 
 def test_sqlite_db_source_fetch_index_uses_raw_close_when_qfq_differs(

@@ -1170,7 +1170,7 @@ class DashboardDataProvider:
             if next_step:
                 research_lines.append(f"研究下一步: {next_step}")
             elif blocker:
-                research_lines.append(f"现在卡在哪: {blocker}")
+                research_lines.append(normalize_research_tone(f"当前限制: {blocker}"))
         else:
             research_lines.append("该标的当前不在研究候选中，主要从纸面记录回看。")
 
@@ -1180,7 +1180,7 @@ class DashboardDataProvider:
                 f"纸面入场假设 {len(pending_rows)} 笔，开盘先核对下一交易日开盘价是否可成交。"
             )
             if blocker:
-                readiness_lines.append(f"现在卡在哪: {blocker}")
+                readiness_lines.append(normalize_research_tone(f"当前限制: {blocker}"))
         if blocked_rows:
             latest_blocked = blocked_rows[-1]
             blocked_reason = str(
@@ -1272,13 +1272,13 @@ class DashboardDataProvider:
             execution_status = "尚未进入执行"
 
         if context_row is None:
-            research_status = "缺少研究结论"
+            research_status = "缺少结论"
         elif blocker:
-            research_status = "研究侧存在阻塞"
+            research_status = "存在阻塞"
         elif next_step:
-            research_status = "研究侧待确认"
+            research_status = "待确认"
         else:
-            research_status = "研究结论已落盘"
+            research_status = "已落盘"
 
         return DashboardExecutionFocus(
             symbol=selected_symbol,
@@ -1836,12 +1836,12 @@ class DashboardDataProvider:
         blocker_lines = tuple(
             normalize_research_tone(line)
             for line in summary_lines
-            if line.startswith(("当前卡点:", "纸面阻塞:", "执行阻塞:", "现在卡在哪:"))
+            if line.startswith(("当前卡点:", "纸面阻塞:", "执行阻塞:", "当前限制:"))
         )
         review_lines = tuple(
             normalize_research_tone(line)
             for line in summary_lines
-            if line.startswith(("观察复核:", "观察名单接下来:"))
+            if line.startswith(("观察复核:", "后续关注:"))
         )
         strategy_breakdown_lines = self._format_strategy_breakdown_lines(
             fact_review.strategy_breakdown
@@ -2545,7 +2545,7 @@ class DashboardDataProvider:
     def _spotlight_priority_rank(self, item: DashboardCandidateSpotlight) -> int:
         if item.blocker:
             return 3
-        if item.action_label == "上调优先级":
+        if item.action_label in {"上调优先级", "优先级上调"}:
             return 0
         if item.action_label in {"重点关注", "重点跟踪", "继续观察", "观察候选"}:
             return 1
@@ -2923,9 +2923,10 @@ class DashboardDataProvider:
             or row.get("adjusted_score") is not None
         ):
             adjustment = recommended_adjustment or "unknown"
+            summary_label = self._debate_summary_adjustment_label(adjustment)
             lines.append(
                 normalize_research_tone(
-                    f"{self._debate_adjustment_label(adjustment)}: "
+                    f"{summary_label}: "
                     f"runtime原始分 {float(row.get('original_score') or 0.0):.1f}；"
                     f"附件参考分 {float(row.get('adjusted_score') or row.get('original_score') or 0.0):.1f}；"
                     "不覆盖runtime打分"
@@ -2967,6 +2968,10 @@ class DashboardDataProvider:
 
     def _debate_adjustment_label(self, adjustment: str) -> str:
         return _DEBATE_ADJUSTMENT_LABELS.get(adjustment, adjustment or "辩论证据待补全")
+
+    def _debate_summary_adjustment_label(self, adjustment: str) -> str:
+        label = self._debate_adjustment_label(adjustment)
+        return label.replace("辩论倾向", "讨论倾向", 1)
 
     def _build_detail_cards(
         self,
@@ -3110,7 +3115,9 @@ class DashboardDataProvider:
         for row in blocked_rows[:limit]:
             next_step = str(row.get("candidate_next_step", "") or "").strip()
             blocker = self._candidate_blocker_text(row) or "等待条件解除"
-            line = f"{self._symbol_name(row)} | 现在卡在哪: {blocker}"
+            line = normalize_research_tone(
+                f"{self._symbol_name(row)} | 当前限制: {blocker}"
+            )
             if next_step:
                 line += f" | 再看动作: {next_step}"
             lines.append(line)
@@ -3399,7 +3406,10 @@ class DashboardDataProvider:
         )
         return DashboardReportInsights(
             report_summary_lines=tuple(
-                normalize_research_tone(line) for line in execution_lines
+                normalize_research_tone(line)
+                .replace("主链候选", "今日重点名单")
+                .replace("高分主链候选", "高分今日重点名单")
+                for line in execution_lines
             ),
             runtime_lines=runtime_lines,
             market_environment=market_environment,

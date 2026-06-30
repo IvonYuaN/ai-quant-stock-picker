@@ -10,6 +10,7 @@ MIN_DSR = 1.0
 MAX_PBO = 0.5
 MAX_GATE_AGE_DAYS = 35
 MIN_PRODUCTION_GATE_SYMBOLS = 3000
+MIN_PRODUCTION_GATE_COVERAGE_RATIO = 0.9
 
 
 @dataclass(frozen=True)
@@ -33,7 +34,10 @@ class WalkForwardGateValidation:
 class WalkForwardMarketCoverageValidation:
     ok: bool
     effective_symbols: int | None
+    stock_symbols: int | None
     min_symbols: int
+    required_symbols: int | None
+    coverage_ratio: float | None
     blockers: tuple[str, ...]
     detail: str
 
@@ -72,24 +76,66 @@ def validate_walkforward_market_coverage(
     payload: Mapping[str, object],
     *,
     min_symbols: int = MIN_PRODUCTION_GATE_SYMBOLS,
+    min_coverage_ratio: float = MIN_PRODUCTION_GATE_COVERAGE_RATIO,
 ) -> WalkForwardMarketCoverageValidation:
     raw_count = payload.get("effective_symbols")
+    raw_stock_symbols = payload.get("stock_symbols")
+    selected_symbols = None
+    if not isinstance(raw_stock_symbols, int):
+        coverage_payload = payload.get("production_gate_coverage")
+        if isinstance(coverage_payload, Mapping):
+            raw_stock_symbols = coverage_payload.get("stock_symbols")
+            selected_raw = coverage_payload.get("selected_symbols")
+            if isinstance(selected_raw, int) and not isinstance(selected_raw, bool):
+                selected_symbols = selected_raw
     blockers: list[str] = []
     effective_symbols = raw_count if isinstance(raw_count, int) else None
+    stock_symbols = selected_symbols
+    if stock_symbols is None:
+        stock_symbols = raw_stock_symbols if isinstance(raw_stock_symbols, int) else None
     if isinstance(raw_count, bool) or not isinstance(raw_count, int):
         effective_symbols = None
         blockers.append("effective_symbols missing/invalid")
-    elif raw_count < min_symbols:
-        blockers.append(f"effective_symbols={raw_count} < {min_symbols}")
+    if isinstance(raw_stock_symbols, bool) or (
+        raw_stock_symbols is not None and not isinstance(raw_stock_symbols, int)
+    ):
+        stock_symbols = None
+        blockers.append("stock_symbols invalid")
+
+    required_symbols = min_symbols
+    coverage_ratio = None
+    if stock_symbols is not None and stock_symbols > 0:
+        required_symbols = max(
+            min_symbols, int(math.ceil(stock_symbols * min_coverage_ratio))
+        )
+        if effective_symbols is not None:
+            coverage_ratio = effective_symbols / stock_symbols
+    if effective_symbols is not None and effective_symbols < required_symbols:
+        blockers.append(
+            f"effective_symbols={effective_symbols} < required_symbols={required_symbols}"
+        )
 
     if effective_symbols is None:
         detail = f"effective_symbols invalid; require >= {min_symbols}"
+    elif stock_symbols is None:
+        detail = f"{effective_symbols}/{required_symbols} effective symbols"
     else:
-        detail = f"{effective_symbols}/{min_symbols} effective symbols"
+        ratio_text = (
+            f"; coverage={coverage_ratio:.1%}"
+            if coverage_ratio is not None
+            else ""
+        )
+        detail = (
+            f"{effective_symbols}/{stock_symbols} effective symbols; "
+            f"require >= {required_symbols}{ratio_text}"
+        )
     return WalkForwardMarketCoverageValidation(
         ok=not blockers,
         effective_symbols=effective_symbols,
+        stock_symbols=stock_symbols,
         min_symbols=min_symbols,
+        required_symbols=required_symbols,
+        coverage_ratio=coverage_ratio,
         blockers=tuple(blockers),
         detail=detail,
     )
@@ -110,6 +156,16 @@ def validate_walkforward_gate_payload(
     pbo_pass = _strict_bool(payload.get("pbo_pass"))
     pbo_valid = _strict_bool(payload.get("pbo_valid"))
     both_pass = _strict_bool(payload.get("both_pass"))
+    window_mode = str(
+        payload.get("window_mode")
+        or payload.get("coverage_mode")
+        or (
+            payload.get("production_gate_coverage", {}).get("coverage_mode")
+            if isinstance(payload.get("production_gate_coverage"), Mapping)
+            else ""
+        )
+        or ""
+    ).strip().lower()
 
     data_end = None
     if payload.get("data_end"):
@@ -130,6 +186,7 @@ def validate_walkforward_gate_payload(
         raw_data_end=payload.get("data_end"),
         data_end=data_end,
         heldout_cutoff=heldout_cutoff,
+        window_mode=window_mode,
     )
     return WalkForwardGateValidation(
         ok=not blockers,
@@ -173,6 +230,7 @@ def _gate_blockers(
     raw_data_end: object,
     data_end: date | None,
     heldout_cutoff: date | None,
+    window_mode: str,
 ) -> list[str]:
     blockers: list[str] = []
     if run_date is None:
@@ -204,7 +262,11 @@ def _gate_blockers(
     if both_pass is not True:
         blockers.append("both_pass flag missing/invalid/false")
 
-    if heldout_cutoff is not None and raw_data_end:
+    if heldout_cutoff is not None and raw_data_end and window_mode not in {
+        "auto_recent_window",
+        "rolling_recent",
+        "rolling_recent_window",
+    }:
         if data_end is None:
             blockers.append(f"data_end malformed: {raw_data_end!r}")
         elif data_end > heldout_cutoff:

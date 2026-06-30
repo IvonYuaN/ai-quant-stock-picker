@@ -260,7 +260,7 @@ def test_dashboard_renders_candidates_and_ledger_stats_when_inputs_exist(
     assert "参考价" in html
     assert "最多亏到" in html
     assert "先看目标" in html
-    assert "比例参考" in html
+    assert "仓位参考" in html
     assert "买点" not in html
     assert "止盈" not in html
     assert "buy_candidate" not in html
@@ -629,7 +629,7 @@ def test_dashboard_renders_debate_modal_with_shared_role_registry() -> None:
 
     html = render_dashboard(candidates, [], "辩论面板", debate_map=debate_map)
 
-    assert "多Agent讨论摘要" in html
+    assert "多视角结论摘要" in html
     assert "🐂 技术多头" in html
     assert "🛡️ 风险控制" in html
     assert "仅保留最终一轮" in html
@@ -695,7 +695,7 @@ def test_dashboard_surfaces_watch_candidate_lifecycle_details() -> None:
     assert "纸面复核与观察对象已按当前主链输出分层。" in html
     assert "重点跟踪与继续观察" not in html
     assert "主链复核" in html
-    assert "现在卡在哪" in html
+    assert "阻塞" in html
     assert "明日复核" in html
     assert "/ 继续观察名单" in html
     assert "新晋" in html
@@ -1532,7 +1532,7 @@ def test_dashboard_debate_overview_lines_show_summary_and_top_agent_views() -> N
         thresholds_version="v1.0.0",
         summary_lines=(
             "建议上调评分: 80.0 -> 82.0",
-            "辩论共识: 维持主推，但需要控制追高节奏",
+            "结论共识: 维持主推，但需要控制追高节奏",
         ),
         round_summaries=(),
         risk_warnings=("高位波动放大",),
@@ -2147,7 +2147,7 @@ def test_dashboard_archive_conclusion_context_distinguishes_symbol_and_task_leve
         debate_summary=debate,
     )
     assert debate_title == "当前标的结论"
-    assert any("辩论结论: 建议上调评分 / 分歧 0.42" == line for line in debate_lines)
+    assert any("补充结论: 建议上调评分 / 分歧 0.42" == line for line in debate_lines)
     assert not any(line.startswith("投票分布:") for line in debate_lines)
     assert not any(line.startswith("当前阻塞:") for line in debate_lines)
 
@@ -2189,7 +2189,7 @@ def test_dashboard_archive_conclusion_context_avoids_repeating_blocker_as_summar
     )
 
     assert title == "当前标的结论"
-    assert "现在卡在哪: 20日均成交额不足，流动性过滤" in lines
+    assert "当前限制: 20日均成交额不足，流动性过滤" in lines
     assert "下一步: 先确认复核条件，卡点解除后再决定是否恢复推进。" in lines
     assert not any(line == "候选摘要: 20日均成交额不足，流动性过滤" for line in lines)
 
@@ -3087,14 +3087,14 @@ def test_dashboard_execution_context_lines_absorb_debate_takeaways() -> None:
         execution_focus=execution_focus,
     )
 
-    assert any("辩论结论: 建议上调评分 / 分歧 0.42" == line for line in research_lines)
-    assert any("辩论共识: 维持观察但优先级上调" == line for line in research_lines)
+    assert any("补充结论: 建议上调评分 / 分歧 0.42" == line for line in research_lines)
+    assert any("结论共识: 维持观察但优先级上调" == line for line in research_lines)
     assert any(
         "当前没有研究候选卡，当前判断主要由同日多方讨论补齐。" == line
         for line in research_lines
     )
     assert any("修正原因: 分歧收敛后更偏正面" == line for line in path_lines)
-    assert any("现在卡在哪: 需确认银行板块承接" == line for line in path_lines)
+    assert any("当前限制: 需确认银行板块承接" == line for line in path_lines)
 
 
 def test_dashboard_workspace_focus_helpers_use_review_fallback_for_debate_only_symbols() -> (
@@ -5405,7 +5405,7 @@ def test_dashboard_home_action_rail_items_insert_debate_lane_when_same_day_debat
     assert items[2].button_label == "候选复盘"
     assert items[2].target_workspace == "候选复盘"
     assert items[2].tone == "pressure"
-    assert items[2].lines[0] == "辩论结论: 建议维持评分 / 分歧 0.48"
+    assert items[2].lines[0] == "补充结论: 建议维持评分 / 分歧 0.48"
     assert any("研究入口: 辩论主结论" == line for line in items[2].lines)
 
 
@@ -6104,7 +6104,7 @@ def test_dashboard_candidate_next_step_lines_prioritize_blocker_as_action_plan()
 
     assert _candidate_action_plan_title(card) == "先核对卡点"
     assert _candidate_next_step_lines(card) == (
-        "现在卡在哪: 20日均成交额不足，流动性过滤",
+        "当前限制: 20日均成交额不足，流动性过滤",
         "再看动作: 等待量能恢复后再评估",
         "再看时间: 中优先级 / 收盘前",
     )
@@ -6163,7 +6163,7 @@ def test_dashboard_candidate_next_step_lines_neutralize_blocker_action_words() -
 
     for forbidden in ("立即买入", "下单", "新开仓", "买入条件"):
         assert forbidden not in rendered
-    assert "现在卡在哪:" in rendered
+    assert "当前限制:" in rendered
     assert "纸面记录阻塞" in rendered
 
 
@@ -6238,7 +6238,7 @@ def test_dashboard_candidate_review_snapshot_uses_unlock_action_card_for_compact
     assert not any(str(line).startswith("下一步:") for line in research_card["lines"])
     assert action_card["title"] == "先核对卡点"
     assert action_card["lines"] == (
-        "现在卡在哪: 20日均成交额不足，流动性过滤",
+        "当前限制: 20日均成交额不足，流动性过滤",
         "再看动作: 等待量能恢复后再评估",
         "再看时间: 中优先级 / 收盘前",
     )
@@ -7250,9 +7250,9 @@ def test_dashboard_renders_debate_modal_without_cross_symbol_leakage_and_keeps_c
 
     html = render_dashboard(candidates, [], "辩论面板", debate_map=debate_map)
 
-    assert "多Agent讨论摘要" in html
+    assert "多视角结论摘要" in html
     assert "多头略占优，维持观察" in html
-    assert "辩论倾向维持" in html
+    assert "观点修正维持" in html
     assert "25%" in html
     assert 'class="score-value "' in html
     assert 'class="score-value {"' not in html

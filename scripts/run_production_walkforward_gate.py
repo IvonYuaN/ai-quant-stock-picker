@@ -17,26 +17,28 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
-from dataclasses import dataclass
-from datetime import date
+import time
+from bisect import bisect_left
+from dataclasses import dataclass, replace
+from datetime import date, datetime, timedelta
 from pathlib import Path
 import re
 
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from aqsp.core.time import now_shanghai
+from aqsp.core.time import get_previous_trading_day, now_shanghai, today_shanghai
 from aqsp.data.sqlite_db_source import SqliteDbSource
 from aqsp.utils.jsonl_io import atomic_write_text
 from aqsp.walkforward_gate import MIN_PRODUCTION_GATE_SYMBOLS
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_RAW_DB = Path("/opt/market-data/astocks_raw.db")
-DEFAULT_START = "2018-01-01"
-DEFAULT_END = "2024-12-31"
 MIN_COVERAGE_RATIO = 0.8
 DEFAULT_STATUS_PATH = "data/walkforward_production_status.json"
 DEFAULT_SYMBOL_CACHE_PATH = "data/walkforward_production_symbols.json"
+DEFAULT_COVERAGE_MODE = "auto_recent_window"
+DEFAULT_LOOKBACK_YEARS = 3
 
 
 @dataclass(frozen=True)
@@ -46,12 +48,52 @@ class CoverageSummary:
     rows: int
     first_trade_date: str
     last_trade_date: str
+    coverage_mode: str = "legacy_full_span"
+    coverage_window_start: str = ""
+    coverage_window_end: str = ""
+    lookback_years: int | None = None
+    listing_aware: bool = False
+    expected_trade_days: int = 0
 
 
 @dataclass(frozen=True)
 class CoverageInspection:
     summary: CoverageSummary
     covered_symbols: list[str]
+
+
+def _coverage_payload_from_summary(coverage: CoverageSummary) -> dict[str, object]:
+    return {
+        "stock_symbols": coverage.stock_symbols,
+        "covered_symbols": coverage.covered_symbols,
+        "rows": coverage.rows,
+        "first_trade_date": coverage.first_trade_date,
+        "last_trade_date": coverage.last_trade_date,
+        "coverage_mode": coverage.coverage_mode,
+        "coverage_window_start": coverage.coverage_window_start,
+        "coverage_window_end": coverage.coverage_window_end,
+        "lookback_years": coverage.lookback_years,
+        "listing_aware": coverage.listing_aware,
+        "expected_trade_days": coverage.expected_trade_days,
+    }
+
+
+def _merge_diagnostic_coverage_payload(
+    raw_payload: object,
+    coverage: CoverageSummary | None,
+) -> dict[str, object] | None:
+    payload = dict(raw_payload) if isinstance(raw_payload, dict) else {}
+    if coverage is None:
+        return payload or None
+    summary_payload = _coverage_payload_from_summary(coverage)
+    payload_covered = payload.get("covered_symbols")
+    if isinstance(payload_covered, int) and payload_covered > 0:
+        for key, value in summary_payload.items():
+            if payload.get(key) in {"", None, "-"}:
+                payload[key] = value
+        return payload
+    payload.update(summary_payload)
+    return payload
 
 
 def _status_path(raw: str | Path) -> Path:
@@ -77,6 +119,7 @@ def _write_status(
     effective_symbols: int | None = None,
     command: list[str] | None = None,
     child_exit_code: int | None = None,
+    child_pid: int | None = None,
     detail: str = "",
 ) -> None:
     payload: dict[str, object] = {
@@ -96,12 +139,26 @@ def _write_status(
     if detail:
         payload["detail"] = detail
     if coverage is not None:
+        payload["coverage_mode"] = coverage.coverage_mode
+        payload["coverage_window"] = {
+            "start": coverage.coverage_window_start,
+            "end": coverage.coverage_window_end,
+            "lookback_years": coverage.lookback_years,
+            "listing_aware": coverage.listing_aware,
+            "expected_trade_days": coverage.expected_trade_days,
+        }
         payload["coverage"] = {
             "stock_symbols": coverage.stock_symbols,
             "covered_symbols": coverage.covered_symbols,
             "rows": coverage.rows,
             "first_trade_date": coverage.first_trade_date,
             "last_trade_date": coverage.last_trade_date,
+            "coverage_mode": coverage.coverage_mode,
+            "coverage_window_start": coverage.coverage_window_start,
+            "coverage_window_end": coverage.coverage_window_end,
+            "lookback_years": coverage.lookback_years,
+            "listing_aware": coverage.listing_aware,
+            "expected_trade_days": coverage.expected_trade_days,
         }
     if effective_symbols is not None:
         payload["effective_symbols"] = effective_symbols
@@ -109,7 +166,87 @@ def _write_status(
         payload["command"] = command
     if child_exit_code is not None:
         payload["child_exit_code"] = child_exit_code
+    if child_pid is not None:
+        payload["child_pid"] = child_pid
     atomic_write_text(path, json.dumps(payload, indent=2, ensure_ascii=False) + "\n")
+
+
+def _write_preflight_status(
+    path: Path,
+    *,
+    args: argparse.Namespace,
+    status: str,
+    detail: str,
+) -> None:
+    _write_status(
+        path,
+        status=status,
+        args=args,
+        detail=detail,
+    )
+
+
+def _execute_child_walkforward(
+    *,
+    command: list[str],
+    env: dict[str, str],
+    cwd: Path,
+    timeout_seconds: int,
+    status_path: Path,
+    args: argparse.Namespace,
+    coverage: CoverageSummary,
+    effective_symbols: int,
+) -> tuple[int, int | None]:
+    heartbeat_seconds = max(15, int(getattr(args, "heartbeat_seconds", 60) or 60))
+    process = subprocess.Popen(
+        command,
+        env=env,
+        cwd=cwd,
+        start_new_session=True,
+    )
+    child_pid = process.pid
+    started_monotonic = time.monotonic()
+    _write_status(
+        status_path,
+        status="running",
+        args=args,
+        coverage=coverage,
+        effective_symbols=effective_symbols,
+        command=command,
+        child_pid=child_pid,
+        detail="child walkforward started",
+    )
+    while True:
+        elapsed_seconds = int(max(0, time.monotonic() - started_monotonic))
+        remaining_seconds: float | None = None
+        if timeout_seconds > 0:
+            remaining_seconds = max(0.0, timeout_seconds - elapsed_seconds)
+            if remaining_seconds <= 0:
+                process.terminate()
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait(timeout=5)
+                raise subprocess.TimeoutExpired(cmd=command, timeout=timeout_seconds)
+        wait_timeout = (
+            heartbeat_seconds
+            if remaining_seconds is None
+            else min(float(heartbeat_seconds), remaining_seconds)
+        )
+        try:
+            return process.wait(timeout=max(0.1, wait_timeout)), child_pid
+        except subprocess.TimeoutExpired:
+            _write_status(
+                status_path,
+                status="running",
+                args=args,
+                coverage=coverage,
+                effective_symbols=effective_symbols,
+                command=command,
+                child_pid=child_pid,
+                detail=f"child walkforward running; elapsed={elapsed_seconds}s",
+            )
 
 
 def _read_status(path: Path) -> dict[str, object]:
@@ -132,15 +269,50 @@ def _pid_active(pid_value: object) -> bool:
     return True
 
 
+def _status_updated_at(payload: dict[str, object]) -> datetime | None:
+    raw = str(payload.get("updated_at") or "").strip()
+    if not raw:
+        return None
+    try:
+        return datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+
+
+def _running_status_is_stale(payload: dict[str, object]) -> bool:
+    if str(payload.get("status") or "").strip() != "running":
+        return False
+    child_pid = payload.get("child_pid")
+    pid = payload.get("pid")
+    child_active = _pid_active(child_pid)
+    parent_active = _pid_active(pid)
+    if isinstance(child_pid, int) and child_pid > 0:
+        if child_active:
+            return False
+        return True
+    updated_at = _status_updated_at(payload)
+    timeout_seconds = payload.get("timeout_seconds")
+    timeout_value = (
+        int(timeout_seconds)
+        if isinstance(timeout_seconds, int) and timeout_seconds > 0
+        else 0
+    )
+    if updated_at is not None and timeout_value > 0:
+        age_seconds = (now_shanghai() - updated_at).total_seconds()
+        if age_seconds > timeout_value:
+            return True
+    if isinstance(pid, int) and pid > 0:
+        return not parent_active
+    return True
+
+
 def repair_stale_running_status(
     path: Path,
     *,
     args: argparse.Namespace | None = None,
 ) -> bool:
     payload = _read_status(path)
-    if str(payload.get("status") or "").strip() != "running":
-        return False
-    if _pid_active(payload.get("pid")):
+    if not _running_status_is_stale(payload):
         return False
 
     payload["status"] = "timeout"
@@ -182,6 +354,97 @@ def _parse_db_day(raw: str) -> date | None:
         return None
 
 
+def _shift_years(raw: date, years: int) -> date:
+    try:
+        return raw.replace(year=raw.year - years)
+    except ValueError:
+        return raw.replace(month=2, day=28, year=raw.year - years)
+
+
+def _default_production_end() -> str:
+    return get_previous_trading_day(today_shanghai()).isoformat()
+
+
+def _default_production_start(*, end: str, lookback_years: int) -> str:
+    end_day = date.fromisoformat(end)
+    return (_shift_years(end_day, max(int(lookback_years), 1)) + timedelta(days=1)).isoformat()
+
+
+def _normalize_coverage_mode(raw: str) -> str:
+    normalized = str(raw or "").strip().lower().replace("-", "_")
+    aliases = {
+        "auto_recent": "auto_recent_window",
+        "auto_recent_window": "auto_recent_window",
+        "rolling": "auto_recent_window",
+        "recent": "auto_recent_window",
+        "legacy": "legacy_full_span",
+        "legacy_full_span": "legacy_full_span",
+        "full_span": "legacy_full_span",
+    }
+    if normalized not in aliases:
+        raise SystemExit(
+            "unsupported coverage mode: "
+            f"{raw!r}; expected one of auto_recent_window/full_span/legacy"
+        )
+    return aliases[normalized]
+
+
+def _resolve_coverage_window(
+    *,
+    start: str,
+    end: str,
+    coverage_mode: str,
+    lookback_years: int,
+) -> tuple[str, str, bool]:
+    normalized_mode = _normalize_coverage_mode(coverage_mode)
+    start_day = date.fromisoformat(start)
+    end_day = date.fromisoformat(end)
+    if normalized_mode == "legacy_full_span":
+        return start, end, False
+    if lookback_years <= 0:
+        raise SystemExit(f"lookback-years must be >= 1, got {lookback_years}")
+    window_start_day = _shift_years(end_day, lookback_years) + timedelta(days=1)
+    if window_start_day < start_day:
+        window_start_day = start_day
+    return window_start_day.isoformat(), end, True
+
+
+def _align_inspection_metadata(
+    inspection: CoverageInspection,
+    *,
+    start: str,
+    end: str,
+    coverage_mode: str,
+    lookback_years: int,
+) -> CoverageInspection:
+    coverage_start, coverage_end, listing_aware = _resolve_coverage_window(
+        start=start,
+        end=end,
+        coverage_mode=coverage_mode,
+        lookback_years=lookback_years,
+    )
+    summary = inspection.summary
+    normalized_mode = _normalize_coverage_mode(coverage_mode)
+    if (
+        summary.coverage_mode == normalized_mode
+        and summary.coverage_window_start
+        and summary.coverage_window_end
+    ):
+        return inspection
+    return CoverageInspection(
+        summary=replace(
+            summary,
+            coverage_mode=normalized_mode,
+            coverage_window_start=coverage_start,
+            coverage_window_end=coverage_end,
+            lookback_years=lookback_years if listing_aware else None,
+            listing_aware=listing_aware,
+            expected_trade_days=summary.expected_trade_days,
+        ),
+        covered_symbols=inspection.covered_symbols,
+    )
+
+
 def _date_within_lag(left: str, right: str, *, max_days: int) -> bool:
     left_day = _parse_db_day(left)
     right_day = _parse_db_day(right)
@@ -208,14 +471,21 @@ def _raw_sqlite_source(db_path: Path) -> SqliteDbSource:
     return source
 
 
-def select_covered_symbols(db_path: Path, *, start: str, end: str) -> list[str]:
-    source = _raw_sqlite_source(db_path)
-    return source.get_symbols_with_daily_coverage(
-        source.get_available_symbols(),
-        date.fromisoformat(start),
-        date.fromisoformat(end),
-        min_rows=None,
-    )
+def select_covered_symbols(
+    db_path: Path,
+    *,
+    start: str,
+    end: str,
+    coverage_mode: str = DEFAULT_COVERAGE_MODE,
+    lookback_years: int = DEFAULT_LOOKBACK_YEARS,
+) -> list[str]:
+    return inspect_raw_coverage_with_symbols(
+        db_path,
+        start=start,
+        end=end,
+        coverage_mode=coverage_mode,
+        lookback_years=lookback_years,
+    ).covered_symbols
 
 
 def inspect_raw_coverage(db_path: Path, *, start: str, end: str) -> CoverageSummary:
@@ -223,15 +493,63 @@ def inspect_raw_coverage(db_path: Path, *, start: str, end: str) -> CoverageSumm
 
 
 def inspect_raw_coverage_with_symbols(
-    db_path: Path, *, start: str, end: str
+    db_path: Path,
+    *,
+    start: str,
+    end: str,
+    coverage_mode: str = DEFAULT_COVERAGE_MODE,
+    lookback_years: int = DEFAULT_LOOKBACK_YEARS,
 ) -> CoverageInspection:
     _raw_sqlite_source(db_path)
-    start_str = _compact_day(start)
-    end_str = _compact_day(end)
+    coverage_start, coverage_end, listing_aware = _resolve_coverage_window(
+        start=start,
+        end=end,
+        coverage_mode=coverage_mode,
+        lookback_years=lookback_years,
+    )
+    return inspect_raw_coverage_window_with_symbols(
+        db_path,
+        requested_start=start,
+        requested_end=end,
+        coverage_start=coverage_start,
+        coverage_end=coverage_end,
+        coverage_mode=coverage_mode,
+        lookback_years=lookback_years,
+        listing_aware=listing_aware,
+    )
+
+
+def inspect_raw_coverage_window_with_symbols(
+    db_path: Path,
+    *,
+    requested_start: str,
+    requested_end: str,
+    coverage_start: str,
+    coverage_end: str,
+    coverage_mode: str,
+    lookback_years: int,
+    listing_aware: bool,
+) -> CoverageInspection:
+    _raw_sqlite_source(db_path)
+    start_str = _compact_day(coverage_start)
+    end_str = _compact_day(coverage_end)
     with sqlite3.connect(db_path) as conn:
         stock_rows = conn.execute(
             "SELECT ts_code FROM stocks ORDER BY ts_code"
         ).fetchall()
+        market_days = [
+            str(raw_day[0] or "")
+            for raw_day in conn.execute(
+                """
+                SELECT DISTINCT trade_date
+                FROM daily_qfq
+                WHERE trade_date >= ? AND trade_date <= ?
+                ORDER BY trade_date
+                """,
+                (start_str, end_str),
+            ).fetchall()
+            if str(raw_day[0] or "")
+        ]
         row = conn.execute(
             """
             SELECT COUNT(*), MIN(trade_date), MAX(trade_date), COUNT(DISTINCT trade_date)
@@ -243,31 +561,42 @@ def inspect_raw_coverage_with_symbols(
         first_market_day = str(row[1] or "")
         last_market_day = str(row[2] or "")
         expected_rows = int(row[3] or 0)
-        min_required_rows = max(1, int(expected_rows * MIN_COVERAGE_RATIO))
         coverage_rows = conn.execute(
             """
-            SELECT ts_code, MIN(trade_date), MAX(trade_date), COUNT(*)
+            SELECT
+                ts_code,
+                MIN(trade_date) AS first_seen_any,
+                MIN(CASE WHEN trade_date >= ? AND trade_date <= ? THEN trade_date END) AS first_seen_window,
+                MAX(CASE WHEN trade_date >= ? AND trade_date <= ? THEN trade_date END) AS last_seen_window,
+                SUM(CASE WHEN trade_date >= ? AND trade_date <= ? THEN 1 ELSE 0 END) AS rows_window
             FROM daily_qfq
-            WHERE trade_date >= ? AND trade_date <= ?
             GROUP BY ts_code
+            HAVING rows_window > 0
             ORDER BY ts_code
             """,
-            (start_str, end_str),
+            (start_str, end_str, start_str, end_str, start_str, end_str),
         ).fetchall()
 
     covered: list[str] = []
-    if (
-        first_market_day
-        and last_market_day
-        and _date_within_lag(start_str, first_market_day, max_days=10)
-        and _date_within_lag(last_market_day, end_str, max_days=10)
-    ):
-        for ts_code, first_date, last_date, count in coverage_rows:
-            first_text = str(first_date or "")
-            last_text = str(last_date or "")
-            if first_text > first_market_day or last_text < last_market_day:
+    if first_market_day and last_market_day and market_days:
+        market_end_index = len(market_days) - 1
+        for ts_code, first_any, first_window, last_window, count_window in coverage_rows:
+            first_any_text = str(first_any or "")
+            first_window_text = str(first_window or "")
+            last_window_text = str(last_window or "")
+            if not first_window_text or not last_window_text:
                 continue
-            if int(count or 0) < min_required_rows:
+            eligible_start = first_market_day
+            if listing_aware and first_any_text and first_any_text > first_market_day:
+                eligible_start = first_any_text
+            if not _date_within_lag(eligible_start, first_window_text, max_days=10):
+                continue
+            if not _date_within_lag(last_window_text, last_market_day, max_days=10):
+                continue
+            eligible_index = bisect_left(market_days, eligible_start)
+            eligible_trade_days = market_end_index - eligible_index + 1
+            min_required_rows = max(1, int(eligible_trade_days * MIN_COVERAGE_RATIO))
+            if int(count_window or 0) < min_required_rows:
                 continue
             covered.append(_symbol_from_ts_code(ts_code))
 
@@ -278,6 +607,12 @@ def inspect_raw_coverage_with_symbols(
             rows=int(row[0] or 0),
             first_trade_date=first_market_day,
             last_trade_date=last_market_day,
+            coverage_mode=_normalize_coverage_mode(coverage_mode),
+            coverage_window_start=coverage_start,
+            coverage_window_end=coverage_end,
+            lookback_years=lookback_years if listing_aware else None,
+            listing_aware=listing_aware,
+            expected_trade_days=expected_rows,
         ),
         covered_symbols=covered,
     )
@@ -294,6 +629,8 @@ def load_cached_coverage_symbols(
     start: str,
     end: str,
     min_symbols: int,
+    coverage_mode: str,
+    lookback_years: int,
 ) -> CoverageInspection | None:
     if not cache_path.exists():
         return None
@@ -309,6 +646,8 @@ def load_cached_coverage_symbols(
         "start": start,
         "end": end,
         "min_symbols": int(min_symbols),
+        "coverage_mode": _normalize_coverage_mode(coverage_mode),
+        "lookback_years": int(lookback_years),
     }
     for key, value in expected.items():
         if payload.get(key) != value:
@@ -324,6 +663,20 @@ def load_cached_coverage_symbols(
             rows=int(summary_raw["rows"]),
             first_trade_date=str(summary_raw["first_trade_date"]),
             last_trade_date=str(summary_raw["last_trade_date"]),
+            coverage_mode=str(
+                summary_raw.get("coverage_mode")
+                or payload.get("coverage_mode")
+                or "legacy_full_span"
+            ),
+            coverage_window_start=str(summary_raw.get("coverage_window_start") or ""),
+            coverage_window_end=str(summary_raw.get("coverage_window_end") or ""),
+            lookback_years=(
+                int(summary_raw["lookback_years"])
+                if summary_raw.get("lookback_years") is not None
+                else None
+            ),
+            listing_aware=bool(summary_raw.get("listing_aware", False)),
+            expected_trade_days=int(summary_raw.get("expected_trade_days") or 0),
         )
     except (KeyError, TypeError, ValueError):
         return None
@@ -348,6 +701,14 @@ def write_cached_coverage_symbols(
         "start": start,
         "end": end,
         "min_symbols": int(min_symbols),
+        "coverage_mode": inspection.summary.coverage_mode,
+        "lookback_years": inspection.summary.lookback_years or 0,
+        "coverage_window": {
+            "start": inspection.summary.coverage_window_start,
+            "end": inspection.summary.coverage_window_end,
+            "listing_aware": inspection.summary.listing_aware,
+            "expected_trade_days": inspection.summary.expected_trade_days,
+        },
         "updated_at": now_shanghai().isoformat(timespec="seconds"),
         "summary": {
             "stock_symbols": inspection.summary.stock_symbols,
@@ -355,6 +716,12 @@ def write_cached_coverage_symbols(
             "rows": inspection.summary.rows,
             "first_trade_date": inspection.summary.first_trade_date,
             "last_trade_date": inspection.summary.last_trade_date,
+            "coverage_mode": inspection.summary.coverage_mode,
+            "coverage_window_start": inspection.summary.coverage_window_start,
+            "coverage_window_end": inspection.summary.coverage_window_end,
+            "lookback_years": inspection.summary.lookback_years,
+            "listing_aware": inspection.summary.listing_aware,
+            "expected_trade_days": inspection.summary.expected_trade_days,
         },
         "covered_symbols": inspection.covered_symbols,
     }
@@ -378,10 +745,13 @@ def build_walkforward_command(args: argparse.Namespace) -> list[str]:
         args.start,
         "--end",
         args.end,
+        "--window-mode",
+        "rolling_recent",
         "--grid-cscv",
         "--grid-profile",
         args.grid_profile,
         "--skip-pit-financials",
+        "--allow-heldout",
         *(
             ["--symbols-file", args.symbols_file]
             if getattr(args, "symbols_file", "")
@@ -404,7 +774,7 @@ def annotate_production_gate_metadata(
     db_path: Path,
     coverage: CoverageSummary,
     effective_symbols: int,
-) -> None:
+) -> int:
     """Stamp production coverage evidence onto the child gate sidecar."""
     if not gate_path.exists():
         raise SystemExit(
@@ -414,27 +784,50 @@ def annotate_production_gate_metadata(
     if not isinstance(payload, dict):
         raise SystemExit(f"production gate sidecar is not an object: {gate_path}")
     child_effective_symbols = payload.get("effective_symbols")
+    if int(effective_symbols) >= MIN_PRODUCTION_GATE_SYMBOLS:
+        min_allowed_symbols = max(
+            MIN_PRODUCTION_GATE_SYMBOLS,
+            int(int(effective_symbols) * MIN_COVERAGE_RATIO),
+        )
+    else:
+        min_allowed_symbols = int(effective_symbols)
     if (
         isinstance(child_effective_symbols, bool)
         or not isinstance(child_effective_symbols, int)
-        or child_effective_symbols != int(effective_symbols)
+        or child_effective_symbols > int(effective_symbols)
+        or child_effective_symbols < min_allowed_symbols
     ):
         raise SystemExit(
             "child walk-forward effective_symbols mismatch: "
             f"child={child_effective_symbols!r} wrapper={effective_symbols}; "
-            "refusing to stamp production coverage over a different child universe"
+            f"require child <= wrapper and >= {min_allowed_symbols}"
         )
     payload.update(
         {
             "source": "sqlite_db",
             "sqlite_db_path": str(db_path),
             "price_mode": "raw",
+            "coverage_mode": coverage.coverage_mode,
+            "coverage_window": {
+                "start": coverage.coverage_window_start,
+                "end": coverage.coverage_window_end,
+                "lookback_years": coverage.lookback_years,
+                "listing_aware": coverage.listing_aware,
+                "expected_trade_days": coverage.expected_trade_days,
+            },
             "production_gate_coverage": {
                 "stock_symbols": coverage.stock_symbols,
-                "covered_symbols": coverage.covered_symbols,
+                "covered_symbols": child_effective_symbols,
+                "selected_symbols": int(effective_symbols),
                 "rows": coverage.rows,
                 "first_trade_date": coverage.first_trade_date,
                 "last_trade_date": coverage.last_trade_date,
+                "coverage_mode": coverage.coverage_mode,
+                "coverage_window_start": coverage.coverage_window_start,
+                "coverage_window_end": coverage.coverage_window_end,
+                "lookback_years": coverage.lookback_years,
+                "listing_aware": coverage.listing_aware,
+                "expected_trade_days": coverage.expected_trade_days,
             },
         }
     )
@@ -443,8 +836,80 @@ def annotate_production_gate_metadata(
     )
     print(
         "production gate metadata stamped: "
-        f"effective_symbols={effective_symbols} price_mode=raw db={db_path}"
+        f"effective_symbols={child_effective_symbols} selected_symbols={effective_symbols} "
+        f"price_mode=raw db={db_path}"
     )
+    return child_effective_symbols
+
+
+def _coverage_summary_from_status_payload(payload: dict[str, object]) -> CoverageSummary | None:
+    raw = payload.get("coverage")
+    if not isinstance(raw, dict):
+        return None
+    try:
+        return CoverageSummary(
+            stock_symbols=int(raw["stock_symbols"]),
+            covered_symbols=int(raw["covered_symbols"]),
+            rows=int(raw["rows"]),
+            first_trade_date=str(raw["first_trade_date"]),
+            last_trade_date=str(raw["last_trade_date"]),
+            coverage_mode=str(raw.get("coverage_mode") or DEFAULT_COVERAGE_MODE),
+            coverage_window_start=str(raw.get("coverage_window_start") or ""),
+            coverage_window_end=str(raw.get("coverage_window_end") or ""),
+            lookback_years=(
+                int(raw["lookback_years"])
+                if raw.get("lookback_years") not in (None, "")
+                else None
+            ),
+            listing_aware=bool(raw.get("listing_aware", False)),
+            expected_trade_days=int(raw.get("expected_trade_days") or 0),
+        )
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def repair_status_backed_production_metadata(
+    status_path: Path,
+    *,
+    args: argparse.Namespace,
+) -> bool:
+    payload = _read_status(status_path)
+    if not isinstance(payload, dict):
+        return False
+    if str(payload.get("status") or "").strip() not in {"failed_metadata", "completed"}:
+        return False
+    coverage = _coverage_summary_from_status_payload(payload)
+    effective_symbols = payload.get("effective_symbols")
+    if coverage is None or isinstance(effective_symbols, bool) or not isinstance(
+        effective_symbols, int
+    ):
+        return False
+    final_effective_symbols = annotate_production_gate_metadata(
+        gate_path=Path(args.gate_path),
+        db_path=args.db,
+        coverage=coverage,
+        effective_symbols=effective_symbols,
+    )
+    _write_status(
+        status_path,
+        status="completed",
+        args=args,
+        coverage=coverage,
+        effective_symbols=final_effective_symbols,
+        command=payload.get("command") if isinstance(payload.get("command"), list) else None,
+        child_exit_code=(
+            int(payload["child_exit_code"])
+            if isinstance(payload.get("child_exit_code"), int)
+            else 0
+        ),
+        child_pid=(
+            int(payload["child_pid"])
+            if isinstance(payload.get("child_pid"), int)
+            else None
+        ),
+        detail="production metadata repaired from status coverage",
+    )
+    return True
 
 
 def write_minimal_pbo_diagnostics(
@@ -466,6 +931,21 @@ def write_minimal_pbo_diagnostics(
 
     pbo = payload.get("pbo")
     dsr = payload.get("deflated_sharpe")
+    display_effective_symbols = payload.get("effective_symbols", "-")
+    if isinstance(display_effective_symbols, bool) or not isinstance(
+        display_effective_symbols, int
+    ):
+        display_effective_symbols = "-"
+    coverage_payload = _merge_diagnostic_coverage_payload(
+        payload.get("production_gate_coverage"),
+        coverage,
+    )
+    if isinstance(coverage_payload, dict):
+        covered_symbols = coverage_payload.get("covered_symbols")
+        if isinstance(covered_symbols, int) and covered_symbols > 0:
+            display_effective_symbols = covered_symbols
+    elif coverage is not None:
+        display_effective_symbols = coverage.covered_symbols
     diagnostic_lines: list[str] = []
     if not _append_grid_diagnostics_report(
         diagnostic_lines, payload.get("grid_diagnostics")
@@ -508,23 +988,14 @@ def write_minimal_pbo_diagnostics(
         *diagnostic_lines,
         "## 生产覆盖",
         "",
-        f"**标的数量**: {payload.get('effective_symbols', '-')}",
+        f"**标的数量**: {display_effective_symbols}",
         "",
         "| 项目 | 值 |",
         "|------|-----|",
-        f"| effective_symbols | {payload.get('effective_symbols', '-')} |",
+        f"| effective_symbols | {display_effective_symbols} |",
         f"| price_mode | {payload.get('price_mode', '-')} |",
         f"| sqlite_db_path | {payload.get('sqlite_db_path', '-')} |",
     ]
-    coverage_payload = payload.get("production_gate_coverage")
-    if not isinstance(coverage_payload, dict) and coverage is not None:
-        coverage_payload = {
-            "stock_symbols": coverage.stock_symbols,
-            "covered_symbols": coverage.covered_symbols,
-            "rows": coverage.rows,
-            "first_trade_date": coverage.first_trade_date,
-            "last_trade_date": coverage.last_trade_date,
-        }
     if isinstance(coverage_payload, dict):
         lines.extend(
             [
@@ -535,6 +1006,18 @@ def write_minimal_pbo_diagnostics(
                 f"| last_trade_date | {coverage_payload.get('last_trade_date', '-')} |",
             ]
         )
+        optional_pairs = (
+            ("coverage_mode", coverage_payload.get("coverage_mode")),
+            ("coverage_window_start", coverage_payload.get("coverage_window_start")),
+            ("coverage_window_end", coverage_payload.get("coverage_window_end")),
+            ("lookback_years", coverage_payload.get("lookback_years")),
+            ("listing_aware", coverage_payload.get("listing_aware")),
+            ("expected_trade_days", coverage_payload.get("expected_trade_days")),
+        )
+        for key, value in optional_pairs:
+            if value in {"", None, "-"}:
+                continue
+            lines.append(f"| {key} | {value} |")
     lines.extend(
         [
             "",
@@ -741,19 +1224,33 @@ def repair_production_gate_metadata(
         "rows",
         "first_trade_date",
         "last_trade_date",
+        "coverage_mode",
+        "coverage_window_start",
+        "coverage_window_end",
+        "lookback_years",
+        "listing_aware",
+        "expected_trade_days",
     )
     coverage = payload.get("production_gate_coverage")
     if not isinstance(coverage, dict):
         coverage = {}
     coverage_changed = False
+    if (
+        "selected_symbols" not in coverage
+        and isinstance(payload.get("effective_symbols"), int)
+    ):
+        coverage["selected_symbols"] = int(payload["effective_symbols"])
+        coverage_changed = True
     for key in coverage_keys:
         if key in coverage and str(coverage.get(key) or "").strip():
             continue
         value = _extract_report_value(report_text, key)
         if not value:
             continue
-        if key in {"stock_symbols", "covered_symbols", "rows"} and value.isdigit():
+        if key in {"stock_symbols", "covered_symbols", "rows", "lookback_years", "expected_trade_days"} and value.isdigit():
             coverage[key] = int(value)
+        elif key == "listing_aware":
+            coverage[key] = value.lower() == "true"
         else:
             coverage[key] = value
         coverage_changed = True
@@ -770,8 +1267,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repair-only", action="store_true")
     parser.add_argument("--db", type=Path, default=DEFAULT_RAW_DB)
-    parser.add_argument("--start", default=DEFAULT_START)
-    parser.add_argument("--end", default=DEFAULT_END)
+    parser.add_argument("--start", default="")
+    parser.add_argument("--end", default="")
     parser.add_argument("--min-symbols", type=int, default=MIN_PRODUCTION_GATE_SYMBOLS)
     parser.add_argument(
         "--grid-profile", choices=("stable", "exploratory"), default="stable"
@@ -797,44 +1294,112 @@ def main() -> int:
     )
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument(
+        "--coverage-mode",
+        default=DEFAULT_COVERAGE_MODE,
+        help="coverage filter mode: auto_recent_window (default) or legacy/full_span",
+    )
+    parser.add_argument(
+        "--lookback-years",
+        type=int,
+        default=DEFAULT_LOOKBACK_YEARS,
+        help="rolling coverage window length for auto_recent_window mode",
+    )
+    parser.add_argument(
         "--symbols-cache-path",
         default=DEFAULT_SYMBOL_CACHE_PATH,
         help="cache production coverage-selected symbols to avoid repeating full-market sqlite scans",
     )
+    parser.add_argument(
+        "--heartbeat-seconds",
+        type=int,
+        default=60,
+        help="status heartbeat interval while the child walkforward process is still running",
+    )
     args = parser.parse_args()
+    args.coverage_mode = _normalize_coverage_mode(args.coverage_mode)
+    if not str(args.end or "").strip():
+        args.end = _default_production_end()
+    if not str(args.start or "").strip():
+        args.start = _default_production_start(
+            end=args.end,
+            lookback_years=args.lookback_years,
+        )
     status_path = _status_path(args.status_path)
     symbols_cache_path = _symbol_cache_path(args.symbols_cache_path)
     repair_stale_running_status(status_path, args=args)
 
     if args.repair_only:
         stale_repaired = repair_stale_running_status(status_path, args=args)
+        status_payload = _read_status(status_path)
+        status_coverage = (
+            _coverage_summary_from_status_payload(status_payload)
+            if isinstance(status_payload, dict)
+            else None
+        )
+        status_backed_repaired = repair_status_backed_production_metadata(
+            status_path,
+            args=args,
+        )
         repaired = repair_production_gate_metadata(
             gate_path=Path(args.gate_path),
             report_path=Path(args.report),
             db_path=args.db,
         )
-        if stale_repaired and repaired:
+        diagnostic_repaired = write_minimal_pbo_diagnostics(
+            gate_path=Path(args.gate_path),
+            report_path=diagnostic_report_path(Path(args.report)),
+            coverage=status_coverage,
+            overwrite=True,
+        )
+        if stale_repaired and (
+            status_backed_repaired or repaired or diagnostic_repaired
+        ):
             print("production gate status and metadata repaired")
+            return 0
+        if status_backed_repaired and (repaired or diagnostic_repaired):
+            print("production gate metadata repaired from status and report")
+            return 0
+        if status_backed_repaired:
+            print("production gate metadata repaired from status")
             return 0
         if stale_repaired:
             print("production gate status repaired")
             return 0
-        if repaired:
+        if repaired or diagnostic_repaired:
             print("production gate metadata repaired")
             return 0
         print("production gate metadata unchanged")
         return 1
 
+    _write_preflight_status(
+        status_path,
+        args=args,
+        status="inspecting_coverage",
+        detail="inspecting raw sqlite full-market coverage",
+    )
     inspection = load_cached_coverage_symbols(
         symbols_cache_path,
         db_path=args.db,
         start=args.start,
         end=args.end,
         min_symbols=args.min_symbols,
+        coverage_mode=args.coverage_mode,
+        lookback_years=args.lookback_years,
     )
     if inspection is None:
         inspection = inspect_raw_coverage_with_symbols(
-            args.db, start=args.start, end=args.end
+            args.db,
+            start=args.start,
+            end=args.end,
+            coverage_mode=args.coverage_mode,
+            lookback_years=args.lookback_years,
+        )
+        inspection = _align_inspection_metadata(
+            inspection,
+            start=args.start,
+            end=args.end,
+            coverage_mode=args.coverage_mode,
+            lookback_years=args.lookback_years,
         )
         write_cached_coverage_symbols(
             symbols_cache_path,
@@ -846,12 +1411,20 @@ def main() -> int:
         )
         print(f"production gate symbols cache refreshed: {symbols_cache_path}")
     else:
+        inspection = _align_inspection_metadata(
+            inspection,
+            start=args.start,
+            end=args.end,
+            coverage_mode=args.coverage_mode,
+            lookback_years=args.lookback_years,
+        )
         print(f"production gate symbols cache hit: {symbols_cache_path}")
     coverage = inspection.summary
     print(
         "production gate raw coverage: "
         f"stocks={coverage.stock_symbols} covered={coverage.covered_symbols} "
-        f"rows={coverage.rows} range={coverage.first_trade_date}..{coverage.last_trade_date}"
+        f"rows={coverage.rows} range={coverage.first_trade_date}..{coverage.last_trade_date} "
+        f"mode={coverage.coverage_mode} window={coverage.coverage_window_start}..{coverage.coverage_window_end}"
     )
     if coverage.covered_symbols < args.min_symbols:
         _write_status(
@@ -906,6 +1479,14 @@ def main() -> int:
             tmp_symbols_path = Path(tmp_symbols.name)
         args.symbols_file = str(tmp_symbols_path)
         print(f"production gate selected symbols: {len(covered_symbols)}")
+        _write_status(
+            status_path,
+            status="preparing_child",
+            args=args,
+            coverage=coverage,
+            effective_symbols=len(covered_symbols),
+            detail="selected covered symbols; preparing child walkforward",
+        )
 
     command = build_walkforward_command(args)
     print("production gate command:", " ".join(command))
@@ -925,24 +1506,18 @@ def main() -> int:
     env["AQSP_SQLITE_PREFILTERED_SYMBOLS"] = "1"
     warn_if_report_path_not_writable(Path(args.report))
     preserve_formal_report_snapshot(Path(args.report))
-    _write_status(
-        status_path,
-        status="running",
-        args=args,
-        coverage=coverage,
-        effective_symbols=len(covered_symbols),
-        command=command,
-        detail="child walkforward started",
-    )
     try:
-        result = subprocess.run(
-            command,
-            check=False,
+        child_exit_code, child_pid = _execute_child_walkforward(
+            command=command,
             env=env,
             cwd=PROJECT_ROOT,
-            timeout=args.timeout_seconds if args.timeout_seconds > 0 else None,
+            timeout_seconds=args.timeout_seconds,
+            status_path=status_path,
+            args=args,
+            coverage=coverage,
+            effective_symbols=len(covered_symbols),
         )
-        if result.returncode != 0:
+        if child_exit_code != 0:
             diagnostic_path = diagnostic_report_path(Path(args.report))
             if write_minimal_pbo_diagnostics(
                 gate_path=Path(args.gate_path),
@@ -958,12 +1533,13 @@ def main() -> int:
                 coverage=coverage,
                 effective_symbols=len(covered_symbols),
                 command=command,
-                child_exit_code=result.returncode,
+                child_exit_code=child_exit_code,
+                child_pid=child_pid,
                 detail="child walkforward returned non-zero",
             )
-            return result.returncode
+            return child_exit_code
         try:
-            annotate_production_gate_metadata(
+            final_effective_symbols = annotate_production_gate_metadata(
                 gate_path=Path(args.gate_path),
                 db_path=args.db,
                 coverage=coverage,
@@ -977,7 +1553,8 @@ def main() -> int:
                 coverage=coverage,
                 effective_symbols=len(covered_symbols),
                 command=command,
-                child_exit_code=result.returncode,
+                child_exit_code=child_exit_code,
+                child_pid=child_pid,
                 detail=str(exc),
             )
             print(f"BLOCK: failed to stamp production gate metadata: {exc}")
@@ -995,9 +1572,10 @@ def main() -> int:
             status="completed",
             args=args,
             coverage=coverage,
-            effective_symbols=len(covered_symbols),
+            effective_symbols=final_effective_symbols,
             command=command,
-            child_exit_code=result.returncode,
+            child_exit_code=child_exit_code,
+            child_pid=child_pid,
             detail="child walkforward completed",
         )
         return 0

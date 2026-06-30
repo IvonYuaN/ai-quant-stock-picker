@@ -224,7 +224,7 @@ def test_finalize_scheduled_notification_keeps_gate_guidance_for_manual_run(
     assert artifacts.markdown.startswith(
         "BLOCK:冷启动未满: 14/30 个独立信号日|继续按日运行主链。"
     )
-    assert "gate notify: skipped outside daily task" in seen
+    assert "gate notify: notification disabled or skipped" in seen
 
 
 def test_finalize_scheduled_notification_skips_gate_push_when_gate_notify_disabled(
@@ -258,7 +258,88 @@ def test_finalize_scheduled_notification_skips_gate_push_when_gate_notify_disabl
         "BLOCK:冷启动未满: 14/30 个独立信号日|继续按日运行主链。"
     )
     assert gate_calls == []
-    assert "gate notify: skipped outside daily task" in seen
+    assert "gate notify: notification disabled or skipped" in seen
+
+
+def test_finalize_scheduled_notification_marks_suppressed_when_daily_notify_disabled(
+    monkeypatch,
+) -> None:
+    suppressed: list[dict[str, object]] = []
+    monkeypatch.setenv("AQSP_RUN_TASK_ID", "daily")
+    monkeypatch.delenv("AQSP_NOTIFY", raising=False)
+    monkeypatch.setenv("AQSP_GATE_NOTIFY", "true")
+
+    artifacts = finalize_scheduled_notification(
+        markdown="# 原始报告",
+        args_notify=False,
+        gate_ok=False,
+        gate_reasons=["冷启动未满: 14/30 个独立信号日"],
+        next_actions=["继续按日运行主链。"],
+        latest_iso="2026-06-17",
+        notify_mode="summary",
+        dispatch_gate_notification_fn=lambda **_kwargs: [],
+        should_send_gate_notification_fn=lambda **_kwargs: True,
+        format_notification_gate_block_fn=lambda reasons, actions: (
+            f"BLOCK:{reasons[0]}|{actions[0]}\n"
+        ),
+        legacy_notify_fn=None,
+        print_fn=lambda *_args: None,
+        gate_state_path="data/gate_notify_state.json",
+        mark_gate_notification_suppressed_fn=lambda **kwargs: suppressed.append(kwargs),
+    )
+
+    assert artifacts.notify_enabled is False
+    assert artifacts.markdown.startswith(
+        "BLOCK:冷启动未满: 14/30 个独立信号日|继续按日运行主链。"
+    )
+    assert suppressed == [
+        {
+            "gate_reasons": ["冷启动未满: 14/30 个独立信号日"],
+            "state_path": "data/gate_notify_state.json",
+            "run_date": "2026-06-17",
+        }
+    ]
+
+
+def test_finalize_scheduled_notification_marks_suppressed_for_manual_gate_block(
+    monkeypatch,
+) -> None:
+    suppressed: list[dict[str, object]] = []
+    monkeypatch.delenv("AQSP_RUN_TASK_ID", raising=False)
+    monkeypatch.delenv("AQSP_NOTIFY", raising=False)
+    monkeypatch.setenv("AQSP_GATE_NOTIFY", "true")
+
+    artifacts = finalize_scheduled_notification(
+        markdown="# 原始报告",
+        args_notify=True,
+        gate_ok=False,
+        gate_reasons=["DSR 未过门: 0.0（需 >1.0）"],
+        next_actions=["继续按日运行主链。"],
+        latest_iso="2026-06-17",
+        notify_mode="summary",
+        dispatch_gate_notification_fn=lambda **_kwargs: [],
+        should_send_gate_notification_fn=lambda **_kwargs: True,
+        format_notification_gate_block_fn=lambda reasons, actions: (
+            f"BLOCK:{reasons[0]}|{actions[0]}\n"
+        ),
+        legacy_notify_fn=None,
+        print_fn=lambda *_args: None,
+        gate_state_path="data/gate_notify_state.json",
+        mark_gate_notification_suppressed_fn=lambda **kwargs: suppressed.append(kwargs),
+        task_id="manual",
+    )
+
+    assert artifacts.notify_enabled is False
+    assert artifacts.markdown.startswith(
+        "BLOCK:DSR 未过门: 0.0（需 >1.0）|继续按日运行主链。"
+    )
+    assert suppressed == [
+        {
+            "gate_reasons": ["DSR 未过门: 0.0（需 >1.0）"],
+            "state_path": "data/gate_notify_state.json",
+            "run_date": "2026-06-17",
+        }
+    ]
 
 
 def test_finalize_scheduled_notification_uses_explicit_task_id_over_env(
@@ -499,7 +580,7 @@ def test_gate_notification_allowed_only_for_main_tasks(monkeypatch) -> None:
     assert gate_notification_allowed("daily") is False
     monkeypatch.setenv("AQSP_GATE_NOTIFY", "true")
     assert gate_notification_allowed("daily") is True
-    assert gate_notification_allowed("manual") is True
+    assert gate_notification_allowed("manual") is False
     assert gate_notification_allowed("scheduled") is True
     assert gate_notification_allowed("intraday") is False
     assert gate_notification_allowed("midday") is False
@@ -512,7 +593,7 @@ def test_gate_notification_task_accepts_only_main_chain_tasks(monkeypatch) -> No
     assert gate_notification_task("") is False
     assert gate_notification_task("daily") is True
     assert gate_notification_task("scheduled") is True
-    assert gate_notification_task("manual") is True
+    assert gate_notification_task("manual") is False
     assert gate_notification_task("intraday") is False
     assert gate_notification_task("monitor") is False
 

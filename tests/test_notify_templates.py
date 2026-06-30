@@ -207,11 +207,11 @@ def test_build_daily_run_notification_includes_allocation_guidance() -> None:
     assert "- 现金留存: 80%" in markdown
     assert "# 收盘研究日报-2026-06-04" in markdown
     assert "## 结果" in markdown
-    assert "- 结论:" in markdown
+    assert "- 结论: 1 个仓位参考对象" in markdown
     assert "- 分歧: 300750 宁德时代 | 偏积极 | 趋势强但仍需确认开盘承接" in markdown
     assert "## 风险" in markdown
     assert "| 项目 | 结论 | 先看什么 |" not in markdown
-    assert "- 候选: 比例参考 1 | 300750 宁德时代" in markdown
+    assert "- 候选: 仓位参考 1 | 300750 宁德时代" in markdown
     assert "- 纸面: 纸面配仓 20% | 300750 宁德时代 20%" in markdown
     assert "## 纸面" in markdown
     assert "300750 宁德时代 20% | 主链评分 72.0" in markdown
@@ -297,15 +297,15 @@ def test_build_daily_run_notification_surfaces_watchlist_blockers_when_no_alloca
 
     _assert_clean_notification(markdown)
     assert "- 观察名单: 000021 深科技、000338 潍柴动力" in markdown
-    assert "- 状态: 今日无纸面复核对象，转入继续观察名单：000021 深科技、000338 潍柴动力" in markdown
+    assert "- 状态: 今日无纸面复核对象，转入观察名单：000021 深科技、000338 潍柴动力" in markdown
     assert "- 关注点: 板块集中度过高，压低科技暴露" in markdown
     assert "- 阻塞: 000021 深科技: 板块集中度过高，压低科技暴露" in markdown
     assert "## 风险" in markdown
-    assert "- 候选: 继续观察名单 2 | 000021 深科技、000338 潍柴动力" in markdown
+    assert "- 候选: 观察名单 2 | 000021 深科技、000338 潍柴动力" in markdown
     assert "- 纸面: 继续观察优先 | 000021 深科技、000338 潍柴动力" in markdown
     assert "- 主要风险: 000021 深科技: 板块集中度过高，压低科技暴露" in markdown
     assert "暂无可执行主仓，先盯备选观察名单" not in markdown
-    assert "- 暂无纸面复核主线，先盯继续观察名单：" in markdown
+    assert "- 暂无纸面复核主线，观察名单：" in markdown
     assert "- 纸面约束: 单票上限 20%；今日不建议建立主仓" in markdown
 
 
@@ -611,7 +611,7 @@ def test_build_morning_breakout_notification_lists_top_candidates() -> None:
     markdown = build_morning_breakout_notification(signals, mode="summary", top_n=3)
 
     assert "# 早盘强势股观察" in markdown
-    assert "现在先看" in markdown
+    assert "- 首位:" in markdown
     assert "000001 平安银行" in markdown
     assert "量价齐升" in markdown
     assert "首选标的" not in markdown
@@ -638,7 +638,7 @@ def test_build_morning_breakout_notification_full_mode_keeps_research_wording() 
 
     markdown = build_morning_breakout_notification(signals, mode="full", top_n=3)
 
-    assert "现在先看" in markdown
+    assert "- 首位:" in markdown
     assert "先看目标" in markdown
     assert "策略推荐" not in markdown
     assert "推荐 Top" not in markdown
@@ -669,7 +669,7 @@ def test_build_closing_premium_notification_lists_observation_space() -> None:
     markdown = build_closing_premium_notification(signals, mode="summary", top_n=3)
 
     assert "# 尾盘走强观察" in markdown
-    assert "现在先看" in markdown
+    assert "- 首位:" in markdown
     assert "观察空间 5.42%" in markdown
     assert "尾盘资金流入" in markdown
     assert "首选标的" not in markdown
@@ -699,7 +699,7 @@ def test_build_closing_premium_notification_full_mode_keeps_research_wording() -
 
     markdown = build_closing_premium_notification(signals, mode="full", top_n=3)
 
-    assert "现在先看" in markdown
+    assert "- 首位:" in markdown
     assert "观察空间 5.42%" in markdown
     assert "策略推荐" not in markdown
     assert "推荐 Top" not in markdown
@@ -743,8 +743,8 @@ def test_build_closing_review_notification_summary_mode_highlights_main_chain() 
 
     assert "# 收盘复盘" in markdown
     assert "今日结论: 上调 1 / 降级 2 / 维持 1" in markdown
-    assert "现在卡在哪: 688981 中芯国际: 板块集中度过高" in markdown
-    assert "观察名单接下来: 688981 中芯国际 | 高优先级 / 盘中走强后" in markdown
+    assert "阻塞: 688981 中芯国际: 板块集中度过高" in markdown
+    assert "观察名单: 688981 中芯国际 | 高优先级 / 盘中走强后" in markdown
     assert "减少同类信号堆叠" in markdown
     assert "优先再看 688981 中芯国际 | 高优先级 / 盘中走强后" in markdown
 
@@ -775,7 +775,7 @@ def test_build_closing_review_notification_sanitizes_full_and_summary_modes() ->
     full_markdown = build_closing_review_notification(review=review, mode="full")
     combined = "\n".join((summary_markdown, full_markdown))
 
-    assert "现在卡在哪" in combined
+    assert "阻塞" in combined
     assert "执行纸面观察后纸面记录" in combined
     assert "纸面记录" in combined
     assert "纸面入场记录后表现较强" in combined

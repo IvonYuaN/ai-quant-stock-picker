@@ -127,6 +127,130 @@ def test_select_covered_symbols_returns_full_eligible_market(tmp_path: Path) -> 
     ]
 
 
+def test_inspect_raw_coverage_listing_aware_recent_window_keeps_recent_ipo(
+    tmp_path: Path,
+) -> None:
+    from scripts.run_production_walkforward_gate import inspect_raw_coverage_window_with_symbols
+
+    db = tmp_path / "astocks_raw.db"
+    with sqlite3.connect(db) as conn:
+        conn.execute("CREATE TABLE stocks(ts_code TEXT PRIMARY KEY, name TEXT)")
+        conn.execute(
+            """
+            CREATE TABLE daily_qfq(
+                ts_code TEXT,
+                trade_date TEXT,
+                open REAL,
+                high REAL,
+                low REAL,
+                close REAL,
+                close_qfq REAL,
+                volume INTEGER,
+                amount REAL
+            )
+            """
+        )
+        dates = ["20240102", "20240103", "20240104", "20240105", "20240108", "20240109"]
+        for code in ("600000.SH", "301000.SZ"):
+            conn.execute("INSERT INTO stocks(ts_code, name) VALUES(?, ?)", (code, code))
+        for trade_date in dates:
+            conn.execute(
+                """
+                INSERT INTO daily_qfq(
+                    ts_code, trade_date, open, high, low, close, close_qfq, volume, amount
+                ) VALUES('600000.SH', ?, 10, 11, 9, 10, 10, 1000000, 10000000)
+                """,
+                (trade_date,),
+            )
+        for trade_date in dates[3:]:
+            conn.execute(
+                """
+                INSERT INTO daily_qfq(
+                    ts_code, trade_date, open, high, low, close, close_qfq, volume, amount
+                ) VALUES('301000.SZ', ?, 20, 21, 19, 20, 20, 1000000, 10000000)
+                """,
+                (trade_date,),
+            )
+        conn.commit()
+
+    inspection = inspect_raw_coverage_window_with_symbols(
+        db,
+        requested_start="2018-01-01",
+        requested_end="2024-01-09",
+        coverage_start="2024-01-01",
+        coverage_end="2024-01-09",
+        coverage_mode="auto_recent_window",
+        lookback_years=1,
+        listing_aware=True,
+    )
+
+    assert inspection.covered_symbols == ["301000", "600000"]
+    assert inspection.summary.coverage_mode == "auto_recent_window"
+    assert inspection.summary.coverage_window_start == "2024-01-01"
+    assert inspection.summary.coverage_window_end == "2024-01-09"
+    assert inspection.summary.listing_aware is True
+
+
+def test_inspect_raw_coverage_legacy_full_span_excludes_recent_ipo(tmp_path: Path) -> None:
+    from scripts.run_production_walkforward_gate import inspect_raw_coverage_window_with_symbols
+
+    db = tmp_path / "astocks_raw.db"
+    with sqlite3.connect(db) as conn:
+        conn.execute("CREATE TABLE stocks(ts_code TEXT PRIMARY KEY, name TEXT)")
+        conn.execute(
+            """
+            CREATE TABLE daily_qfq(
+                ts_code TEXT,
+                trade_date TEXT,
+                open REAL,
+                high REAL,
+                low REAL,
+                close REAL,
+                close_qfq REAL,
+                volume INTEGER,
+                amount REAL
+            )
+            """
+        )
+        dates = ["20240102", "20240103", "20240104", "20240105", "20240108", "20240109"]
+        for code in ("600000.SH", "301000.SZ"):
+            conn.execute("INSERT INTO stocks(ts_code, name) VALUES(?, ?)", (code, code))
+        for trade_date in dates:
+            conn.execute(
+                """
+                INSERT INTO daily_qfq(
+                    ts_code, trade_date, open, high, low, close, close_qfq, volume, amount
+                ) VALUES('600000.SH', ?, 10, 11, 9, 10, 10, 1000000, 10000000)
+                """,
+                (trade_date,),
+            )
+        for trade_date in dates[3:]:
+            conn.execute(
+                """
+                INSERT INTO daily_qfq(
+                    ts_code, trade_date, open, high, low, close, close_qfq, volume, amount
+                ) VALUES('301000.SZ', ?, 20, 21, 19, 20, 20, 1000000, 10000000)
+                """,
+                (trade_date,),
+            )
+        conn.commit()
+
+    inspection = inspect_raw_coverage_window_with_symbols(
+        db,
+        requested_start="2024-01-01",
+        requested_end="2024-01-09",
+        coverage_start="2024-01-01",
+        coverage_end="2024-01-09",
+        coverage_mode="legacy_full_span",
+        lookback_years=1,
+        listing_aware=False,
+    )
+
+    assert inspection.covered_symbols == ["600000"]
+    assert inspection.summary.coverage_mode == "legacy_full_span"
+    assert inspection.summary.listing_aware is False
+
+
 def test_build_walkforward_command_uses_full_market_raw_gate() -> None:
     class Args:
         start = "2018-01-01"
@@ -168,7 +292,17 @@ def test_production_walkforward_gate_sets_prefiltered_symbols_env(
 
     seen: dict[str, str] = {}
 
-    def fake_run(command, *, check, env, cwd, timeout):
+    def fake_execute_child_walkforward(
+        *,
+        command,
+        env,
+        cwd,
+        timeout_seconds,
+        status_path,
+        args,
+        coverage,
+        effective_symbols,
+    ):
         seen["prefiltered"] = env.get("AQSP_SQLITE_PREFILTERED_SYMBOLS", "")
         seen["db"] = env.get("AQSP_SQLITE_DB_PATH", "")
         gate_path.write_text(
@@ -187,9 +321,13 @@ def test_production_walkforward_gate_sets_prefiltered_symbols_env(
             ),
             encoding="utf-8",
         )
-        return type("Result", (), {"returncode": 0})()
+        return 0, 43210
 
-    monkeypatch.setattr(gate_mod.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        gate_mod,
+        "_execute_child_walkforward",
+        fake_execute_child_walkforward,
+    )
 
     code = gate_mod.main.__wrapped__ if hasattr(gate_mod.main, "__wrapped__") else None
     assert code is None
@@ -250,6 +388,12 @@ def test_annotate_production_gate_metadata_preserves_gate_result(
             rows=123456,
             first_trade_date="20180102",
             last_trade_date="20241231",
+            coverage_mode="auto_recent_window",
+            coverage_window_start="2023-01-01",
+            coverage_window_end="2024-12-31",
+            lookback_years=2,
+            listing_aware=True,
+            expected_trade_days=490,
         ),
         effective_symbols=3200,
     )
@@ -258,15 +402,30 @@ def test_annotate_production_gate_metadata_preserves_gate_result(
     assert payload["both_pass"] is False
     assert payload["deflated_sharpe"] == 0.8275
     assert payload["pbo"] == 0.7778
+    assert payload["coverage_mode"] == "auto_recent_window"
+    assert payload["coverage_window"] == {
+        "start": "2023-01-01",
+        "end": "2024-12-31",
+        "lookback_years": 2,
+        "listing_aware": True,
+        "expected_trade_days": 490,
+    }
     assert payload["source"] == "sqlite_db"
     assert payload["price_mode"] == "raw"
     assert payload["effective_symbols"] == 3200
     assert payload["production_gate_coverage"] == {
         "stock_symbols": 5533,
         "covered_symbols": 3200,
+        "selected_symbols": 3200,
         "rows": 123456,
         "first_trade_date": "20180102",
         "last_trade_date": "20241231",
+        "coverage_mode": "auto_recent_window",
+        "coverage_window_start": "2023-01-01",
+        "coverage_window_end": "2024-12-31",
+        "lookback_years": 2,
+        "listing_aware": True,
+        "expected_trade_days": 490,
     }
 
 
@@ -291,17 +450,18 @@ def test_annotate_production_gate_metadata_rejects_child_universe_mismatch(
         annotate_production_gate_metadata(
             gate_path=gate_path,
             db_path=tmp_path / "astocks_raw.db",
-            coverage=CoverageSummary(
-                stock_symbols=5533,
-                covered_symbols=3200,
-                rows=123456,
-                first_trade_date="20180102",
-                last_trade_date="20241231",
-            ),
-            effective_symbols=3200,
-        )
+        coverage=CoverageSummary(
+            stock_symbols=5533,
+            covered_symbols=3200,
+            rows=123456,
+            first_trade_date="20180102",
+            last_trade_date="20241231",
+            coverage_mode="legacy_full_span",
+        ),
+        effective_symbols=3200,
+    )
     except SystemExit as exc:
-        assert "effective_symbols mismatch" in str(exc)
+        assert "require child <= wrapper" in str(exc)
     else:
         raise AssertionError("expected production metadata mismatch to block")
 
@@ -351,6 +511,7 @@ def test_write_minimal_pbo_diagnostics_for_failed_gate(
     assert "训练选中变体" in text
     assert "**标的数量**: 3200" in text
     assert "effective_symbols | 3200" in text
+    assert "coverage_mode | -" not in text
 
 
 def test_write_minimal_pbo_diagnostics_uses_gate_grid_diagnostics(
@@ -465,6 +626,62 @@ def test_write_minimal_pbo_diagnostics_overwrites_existing_diagnostic_when_reque
     assert "WF-B04" in text
 
 
+def test_write_minimal_pbo_diagnostics_prefers_gate_coverage_over_stale_summary(
+    tmp_path: Path,
+) -> None:
+    gate_path = tmp_path / "walkforward_gate.json"
+    report_path = tmp_path / "walkforward-grid-raw-production-diagnostic-latest.md"
+    gate_path.write_text(
+        json.dumps(
+            {
+                "run_date": "2026-06-29",
+                "both_pass": False,
+                "deflated_sharpe": -0.5708,
+                "pbo": 0.6,
+                "pbo_pass": False,
+                "effective_symbols": 5157,
+                "price_mode": "raw",
+                "sqlite_db_path": "/opt/market-data/astocks_raw.db",
+                "production_gate_coverage": {
+                    "stock_symbols": 5797,
+                    "covered_symbols": 5157,
+                    "selected_symbols": 5193,
+                    "rows": 3752714,
+                    "first_trade_date": "20230627",
+                    "last_trade_date": "20260529",
+                    "coverage_mode": "auto_recent_window",
+                    "coverage_window_start": "2023-06-27",
+                    "coverage_window_end": "2026-06-26",
+                    "lookback_years": 3,
+                    "listing_aware": True,
+                    "expected_trade_days": 708,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    written = write_minimal_pbo_diagnostics(
+        gate_path=gate_path,
+        report_path=report_path,
+        coverage=CoverageSummary(
+            stock_symbols=5533,
+            covered_symbols=3,
+            rows=1,
+            first_trade_date="20180102",
+            last_trade_date="20241231",
+        ),
+        overwrite=True,
+    )
+
+    assert written is True
+    text = report_path.read_text(encoding="utf-8")
+    assert "**标的数量**: 5157" in text
+    assert "| covered_symbols | 5157 |" in text
+    assert "| selected_symbols |" not in text
+    assert "| rows | 3752714 |" in text
+
+
 def test_diagnostic_report_path_keeps_formal_production_report_separate(
     tmp_path: Path,
 ) -> None:
@@ -546,6 +763,12 @@ def test_repair_production_gate_metadata_backfills_report_metadata(
                 "| rows | 123456 |",
                 "| first_trade_date | 20180102 |",
                 "| last_trade_date | 20241231 |",
+                "| coverage_mode | auto_recent_window |",
+                "| coverage_window_start | 2023-01-01 |",
+                "| coverage_window_end | 2024-12-31 |",
+                "| lookback_years | 2 |",
+                "| listing_aware | True |",
+                "| expected_trade_days | 490 |",
             ]
         )
         + "\n",
@@ -566,9 +789,16 @@ def test_repair_production_gate_metadata_backfills_report_metadata(
     assert payload["production_gate_coverage"] == {
         "stock_symbols": 5533,
         "covered_symbols": 3200,
+        "selected_symbols": 3200,
         "rows": 123456,
         "first_trade_date": "20180102",
         "last_trade_date": "20241231",
+        "coverage_mode": "auto_recent_window",
+        "coverage_window_start": "2023-01-01",
+        "coverage_window_end": "2024-12-31",
+        "lookback_years": 2,
+        "listing_aware": True,
+        "expected_trade_days": 490,
     }
 
 
@@ -598,6 +828,8 @@ def test_production_walkforward_gate_passes_raw_db_to_child_process(
 
     db = tmp_path / "raw.db"
     db.write_text("", encoding="utf-8")
+    status_path = tmp_path / "status.json"
+    symbols_cache_path = tmp_path / "symbols-cache.json"
     seen: dict[str, object] = {}
     stamped: dict[str, object] = {}
     monkeypatch.setattr(
@@ -630,28 +862,48 @@ def test_production_walkforward_gate_passes_raw_db_to_child_process(
         lambda **kwargs: stamped.update(kwargs),
     )
 
-    def fake_run(command, *, check, env, cwd, timeout):
+    def fake_execute_child_walkforward(
+        *,
+        command,
+        env,
+        cwd,
+        timeout_seconds,
+        status_path,
+        args,
+        coverage,
+        effective_symbols,
+    ):
         seen["command"] = command
-        seen["check"] = check
         seen["db"] = env.get("AQSP_SQLITE_DB_PATH")
         seen["cwd"] = cwd
-        seen["timeout"] = timeout
-        return type("Result", (), {"returncode": 0})()
+        seen["timeout"] = timeout_seconds
+        seen["status_path"] = status_path
+        seen["effective_symbols"] = effective_symbols
+        return 0, 43210
 
-    monkeypatch.setattr(gate.subprocess, "run", fake_run)
+    monkeypatch.setattr(gate, "_execute_child_walkforward", fake_execute_child_walkforward)
     monkeypatch.setattr(
         gate.sys,
         "argv",
-        ["run_production_walkforward_gate.py", "--db", str(db)],
+        [
+            "run_production_walkforward_gate.py",
+            "--db",
+            str(db),
+            "--status-path",
+            str(status_path),
+            "--symbols-cache-path",
+            str(symbols_cache_path),
+        ],
     )
 
     assert gate.main() == 0
     assert seen == {
         "command": ["python", "-m", "aqsp"],
-        "check": False,
         "db": str(db),
         "cwd": gate.PROJECT_ROOT,
         "timeout": 7200,
+        "status_path": status_path,
+        "effective_symbols": 3200,
     }
     assert stamped["db_path"] == db
     assert stamped["effective_symbols"] == 3200
@@ -664,6 +916,8 @@ def test_production_walkforward_gate_writes_minimal_diagnostic_after_child_failu
 
     db = tmp_path / "raw.db"
     db.write_text("", encoding="utf-8")
+    status_path = tmp_path / "status.json"
+    symbols_cache_path = tmp_path / "symbols-cache.json"
     gate_path = tmp_path / "walkforward_gate.json"
     report_path = tmp_path / "walkforward-grid-raw-production-latest.md"
     report_path.write_text("# prior formal report\n", encoding="utf-8")
@@ -688,9 +942,9 @@ def test_production_walkforward_gate_writes_minimal_diagnostic_after_child_failu
     )
     monkeypatch.setattr(gate, "build_walkforward_command", lambda _args: ["python"])
     monkeypatch.setattr(
-        gate.subprocess,
-        "run",
-        lambda *_args, **_kwargs: type("Result", (), {"returncode": 7})(),
+        gate,
+        "_execute_child_walkforward",
+        lambda **_kwargs: (7, 43210),
     )
     monkeypatch.setattr(
         gate.sys,
@@ -699,6 +953,10 @@ def test_production_walkforward_gate_writes_minimal_diagnostic_after_child_failu
             "run_production_walkforward_gate.py",
             "--db",
             str(db),
+            "--status-path",
+            str(status_path),
+            "--symbols-cache-path",
+            str(symbols_cache_path),
             "--gate-path",
             str(gate_path),
             "--report",
@@ -721,6 +979,8 @@ def test_production_walkforward_gate_passes_selected_symbols_file(
 
     db = tmp_path / "raw.db"
     db.write_text("", encoding="utf-8")
+    status_path = tmp_path / "status.json"
+    symbols_cache_path = tmp_path / "symbols-cache.json"
     seen: dict[str, object] = {}
     monkeypatch.setattr(
         gate,
@@ -747,14 +1007,25 @@ def test_production_walkforward_gate_passes_selected_symbols_file(
         gate, "annotate_production_gate_metadata", lambda **_kwargs: None
     )
 
-    def fake_run(command, *, check, env, cwd, timeout):
+    def fake_execute_child_walkforward(
+        *,
+        command,
+        env,
+        cwd,
+        timeout_seconds,
+        status_path,
+        args,
+        coverage,
+        effective_symbols,
+    ):
         symbol_file = Path(command[command.index("--symbols-file") + 1])
         seen["symbols"] = symbol_file.read_text(encoding="utf-8").splitlines()
         seen["exists_during_run"] = symbol_file.exists()
         seen["cwd"] = cwd
-        return type("Result", (), {"returncode": 0})()
+        seen["timeout"] = timeout_seconds
+        return 0, 43210
 
-    monkeypatch.setattr(gate.subprocess, "run", fake_run)
+    monkeypatch.setattr(gate, "_execute_child_walkforward", fake_execute_child_walkforward)
     monkeypatch.setattr(
         gate.sys,
         "argv",
@@ -764,6 +1035,10 @@ def test_production_walkforward_gate_passes_selected_symbols_file(
             str(db),
             "--min-symbols",
             "3",
+            "--status-path",
+            str(status_path),
+            "--symbols-cache-path",
+            str(symbols_cache_path),
         ],
     )
 
@@ -772,6 +1047,7 @@ def test_production_walkforward_gate_passes_selected_symbols_file(
         "symbols": ["600000", "000001", "300750"],
         "exists_during_run": True,
         "cwd": gate.PROJECT_ROOT,
+        "timeout": 7200,
     }
 
 
@@ -782,6 +1058,7 @@ def test_production_walkforward_gate_reuses_cached_symbols(
 
     db = tmp_path / "raw.db"
     db.write_text("", encoding="utf-8")
+    status_path = tmp_path / "status.json"
     os.utime(db, None)
     cache_path = tmp_path / "symbols-cache.json"
     gate_path = tmp_path / "walkforward_gate.json"
@@ -794,12 +1071,26 @@ def test_production_walkforward_gate_reuses_cached_symbols(
                 "start": "2018-01-01",
                 "end": "2024-12-31",
                 "min_symbols": 3,
+                "coverage_mode": "auto_recent_window",
+                "lookback_years": 3,
+                "coverage_window": {
+                    "start": "2022-01-01",
+                    "end": "2024-12-31",
+                    "listing_aware": True,
+                    "expected_trade_days": 720,
+                },
                 "summary": {
                     "stock_symbols": 5533,
                     "covered_symbols": 3,
                     "rows": 1,
                     "first_trade_date": "20180102",
                     "last_trade_date": "20241231",
+                    "coverage_mode": "auto_recent_window",
+                    "coverage_window_start": "2022-01-01",
+                    "coverage_window_end": "2024-12-31",
+                    "lookback_years": 3,
+                    "listing_aware": True,
+                    "expected_trade_days": 720,
                 },
                 "covered_symbols": ["600000", "000001", "300750"],
             }
@@ -818,9 +1109,9 @@ def test_production_walkforward_gate_reuses_cached_symbols(
         gate, "annotate_production_gate_metadata", lambda **_kwargs: None
     )
     monkeypatch.setattr(
-        gate.subprocess,
-        "run",
-        lambda *_args, **_kwargs: type("Result", (), {"returncode": 0})(),
+        gate,
+        "_execute_child_walkforward",
+        lambda **_kwargs: (0, 43210),
     )
     monkeypatch.setattr(
         gate.sys,
@@ -831,10 +1122,16 @@ def test_production_walkforward_gate_reuses_cached_symbols(
             str(db),
             "--min-symbols",
             "3",
+            "--start",
+            "2018-01-01",
+            "--end",
+            "2024-12-31",
             "--symbols-cache-path",
             str(cache_path),
             "--gate-path",
             str(gate_path),
+            "--status-path",
+            str(status_path),
         ],
     )
 
@@ -848,6 +1145,7 @@ def test_production_walkforward_gate_refreshes_symbols_cache(
 
     db = tmp_path / "raw.db"
     db.write_text("", encoding="utf-8")
+    status_path = tmp_path / "status.json"
     os.utime(db, None)
     cache_path = tmp_path / "symbols-cache.json"
     gate_path = tmp_path / "walkforward_gate.json"
@@ -859,6 +1157,12 @@ def test_production_walkforward_gate_refreshes_symbols_cache(
             rows=1,
             first_trade_date="20180102",
             last_trade_date="20241231",
+            coverage_mode="auto_recent_window",
+            coverage_window_start="2022-01-01",
+            coverage_window_end="2024-12-31",
+            lookback_years=3,
+            listing_aware=True,
+            expected_trade_days=720,
         ),
         covered_symbols=["600000", "000001", "300750"],
     )
@@ -872,9 +1176,9 @@ def test_production_walkforward_gate_refreshes_symbols_cache(
         gate, "annotate_production_gate_metadata", lambda **_kwargs: None
     )
     monkeypatch.setattr(
-        gate.subprocess,
-        "run",
-        lambda *_args, **_kwargs: type("Result", (), {"returncode": 0})(),
+        gate,
+        "_execute_child_walkforward",
+        lambda **_kwargs: (0, 43210),
     )
     monkeypatch.setattr(
         gate.sys,
@@ -889,6 +1193,8 @@ def test_production_walkforward_gate_refreshes_symbols_cache(
             str(cache_path),
             "--gate-path",
             str(gate_path),
+            "--status-path",
+            str(status_path),
         ],
     )
 
@@ -896,6 +1202,8 @@ def test_production_walkforward_gate_refreshes_symbols_cache(
     payload = json.loads(cache_path.read_text(encoding="utf-8"))
     assert payload["db_path"] == str(db)
     assert payload["min_symbols"] == 3
+    assert payload["coverage_mode"] == "auto_recent_window"
+    assert payload["coverage_window"]["listing_aware"] is True
     assert payload["covered_symbols"] == ["600000", "000001", "300750"]
 
 
@@ -907,6 +1215,8 @@ def test_production_walkforward_gate_returns_timeout_code(
 
     db = tmp_path / "raw.db"
     db.write_text("", encoding="utf-8")
+    status_path = tmp_path / "status.json"
+    symbols_cache_path = tmp_path / "symbols-cache.json"
     monkeypatch.setattr(
         gate,
         "inspect_raw_coverage_with_symbols",
@@ -933,10 +1243,10 @@ def test_production_walkforward_gate_returns_timeout_code(
         gate, "annotate_production_gate_metadata", lambda **_kwargs: None
     )
 
-    def fake_run(*_args, **_kwargs):
+    def fake_execute_child_walkforward(**_kwargs):
         raise subprocess.TimeoutExpired(cmd=["python"], timeout=1)
 
-    monkeypatch.setattr(gate.subprocess, "run", fake_run)
+    monkeypatch.setattr(gate, "_execute_child_walkforward", fake_execute_child_walkforward)
     monkeypatch.setattr(
         gate.sys,
         "argv",
@@ -946,6 +1256,10 @@ def test_production_walkforward_gate_returns_timeout_code(
             str(db),
             "--timeout-seconds",
             "1",
+            "--status-path",
+            str(status_path),
+            "--symbols-cache-path",
+            str(symbols_cache_path),
         ],
     )
 
@@ -993,7 +1307,52 @@ def test_production_walkforward_gate_dry_run_writes_status(
     payload = json.loads(status_path.read_text(encoding="utf-8"))
     assert payload["status"] == "dry_run"
     assert payload["effective_symbols"] == 3200
+    assert payload["coverage_mode"] == "auto_recent_window"
     assert payload["command"] == ["python"]
+
+
+def test_production_walkforward_gate_writes_inspecting_status_before_coverage_scan(
+    monkeypatch, tmp_path: Path
+) -> None:
+    import scripts.run_production_walkforward_gate as gate
+
+    db = tmp_path / "raw.db"
+    db.write_text("", encoding="utf-8")
+    status_path = tmp_path / "status.json"
+
+    def fake_inspect_raw_coverage_with_symbols(*_args, **_kwargs):
+        payload = json.loads(status_path.read_text(encoding="utf-8"))
+        assert payload["status"] == "inspecting_coverage"
+        assert payload["detail"] == "inspecting raw sqlite full-market coverage"
+        return gate.CoverageInspection(
+            summary=gate.CoverageSummary(
+                stock_symbols=5533,
+                covered_symbols=3200,
+                rows=1,
+                first_trade_date="20180102",
+                last_trade_date="20241231",
+            ),
+            covered_symbols=[f"600{idx:03d}" for idx in range(3200)],
+        )
+
+    monkeypatch.setattr(gate, "inspect_raw_coverage_with_symbols", fake_inspect_raw_coverage_with_symbols)
+    monkeypatch.setattr(gate, "build_walkforward_command", lambda _args: ["python"])
+    monkeypatch.setattr(
+        gate.sys,
+        "argv",
+        [
+            "run_production_walkforward_gate.py",
+            "--db",
+            str(db),
+            "--status-path",
+            str(status_path),
+            "--dry-run",
+        ],
+    )
+
+    assert gate.main() == 0
+    payload = json.loads(status_path.read_text(encoding="utf-8"))
+    assert payload["status"] == "dry_run"
 
 
 def test_production_walkforward_gate_blocked_coverage_writes_status(
@@ -1038,6 +1397,65 @@ def test_production_walkforward_gate_blocked_coverage_writes_status(
     assert payload["coverage"]["covered_symbols"] == 300
 
 
+def test_production_walkforward_gate_writes_preparing_child_status_before_child_run(
+    monkeypatch, tmp_path: Path
+) -> None:
+    import scripts.run_production_walkforward_gate as gate
+
+    db = tmp_path / "raw.db"
+    db.write_text("", encoding="utf-8")
+    gate_path = tmp_path / "gate.json"
+    gate_path.write_text(json.dumps({"effective_symbols": 3200}), encoding="utf-8")
+    status_path = tmp_path / "status.json"
+    observed: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        gate,
+        "inspect_raw_coverage_with_symbols",
+        lambda *_args, **_kwargs: gate.CoverageInspection(
+            summary=gate.CoverageSummary(
+                stock_symbols=5533,
+                covered_symbols=3200,
+                rows=1,
+                first_trade_date="20180102",
+                last_trade_date="20241231",
+            ),
+            covered_symbols=[f"600{idx:03d}" for idx in range(3200)],
+        ),
+    )
+    monkeypatch.setattr(gate, "build_walkforward_command", lambda _args: ["python"])
+
+    def fake_execute_child_walkforward(**_kwargs):
+        payload = json.loads(status_path.read_text(encoding="utf-8"))
+        observed["status"] = payload["status"]
+        observed["detail"] = payload["detail"]
+        observed["effective_symbols"] = payload["effective_symbols"]
+        return 0, 43210
+
+    monkeypatch.setattr(gate, "_execute_child_walkforward", fake_execute_child_walkforward)
+    monkeypatch.setattr(gate, "annotate_production_gate_metadata", lambda **_kwargs: 3200)
+    monkeypatch.setattr(
+        gate.sys,
+        "argv",
+        [
+            "run_production_walkforward_gate.py",
+            "--db",
+            str(db),
+            "--gate-path",
+            str(gate_path),
+            "--status-path",
+            str(status_path),
+        ],
+    )
+
+    assert gate.main() == 0
+    assert observed == {
+        "status": "preparing_child",
+        "detail": "selected covered symbols; preparing child walkforward",
+        "effective_symbols": 3200,
+    }
+
+
 def test_production_walkforward_gate_completed_writes_status(
     monkeypatch, tmp_path: Path
 ) -> None:
@@ -1064,9 +1482,9 @@ def test_production_walkforward_gate_completed_writes_status(
     )
     monkeypatch.setattr(gate, "build_walkforward_command", lambda _args: ["python"])
     monkeypatch.setattr(
-        gate.subprocess,
-        "run",
-        lambda *_args, **_kwargs: type("Result", (), {"returncode": 0})(),
+        gate,
+        "_execute_child_walkforward",
+        lambda **_kwargs: (0, 43210),
     )
     monkeypatch.setattr(gate, "annotate_production_gate_metadata", lambda **_kwargs: None)
     monkeypatch.setattr(
@@ -1114,9 +1532,9 @@ def test_production_walkforward_gate_timeout_writes_status(
     )
     monkeypatch.setattr(gate, "build_walkforward_command", lambda _args: ["python"])
     monkeypatch.setattr(
-        gate.subprocess,
-        "run",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+        gate,
+        "_execute_child_walkforward",
+        lambda **_kwargs: (_ for _ in ()).throw(
             subprocess.TimeoutExpired(cmd=["python"], timeout=1)
         ),
     )
@@ -1161,6 +1579,40 @@ def test_repair_stale_running_status_rewrites_dead_pid_status(tmp_path: Path) ->
     assert payload["status"] == "timeout"
     assert payload["child_exit_code"] == 124
     assert "stale running status auto-repaired" in payload["detail"]
+
+
+def test_repair_stale_running_status_prefers_dead_child_pid_over_reused_parent_pid(
+    monkeypatch, tmp_path: Path
+) -> None:
+    import scripts.run_production_walkforward_gate as gate
+
+    status_path = tmp_path / "walkforward_production_status.json"
+    status_path.write_text(
+        json.dumps(
+            {
+                "status": "running",
+                "updated_at": "2026-06-27T17:48:19+08:00",
+                "pid": 12345,
+                "child_pid": 67890,
+                "timeout_seconds": 1500,
+                "detail": "child walkforward running; elapsed=0s",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        gate,
+        "_pid_active",
+        lambda value: bool(value == 12345),
+    )
+
+    repaired = gate.repair_stale_running_status(status_path)
+
+    payload = json.loads(status_path.read_text(encoding="utf-8"))
+    assert repaired is True
+    assert payload["status"] == "timeout"
+    assert payload["child_exit_code"] == 124
 
 
 def test_production_walkforward_gate_repair_only_keeps_status_file_when_unchanged(
@@ -1219,3 +1671,106 @@ def test_production_walkforward_gate_repair_only_keeps_status_file_when_unchange
     assert payload["status"] == "timeout"
     assert payload["child_exit_code"] == 124
     assert "metadata repaired" in capsys.readouterr().out
+
+
+def test_production_walkforward_gate_repair_only_rewrites_diagnostic_with_status_coverage(
+    monkeypatch, tmp_path: Path
+) -> None:
+    import scripts.run_production_walkforward_gate as gate
+
+    db = tmp_path / "raw.db"
+    db.write_text("", encoding="utf-8")
+    status_path = tmp_path / "walkforward_production_status.json"
+    gate_path = tmp_path / "walkforward_gate.json"
+    report_path = tmp_path / "walkforward-grid-raw-production-latest.md"
+    diagnostic_path = tmp_path / "walkforward-grid-raw-production-diagnostic-latest.md"
+    status_path.write_text(
+        json.dumps(
+            {
+                "status": "completed",
+                "updated_at": "2026-06-29T16:06:29+08:00",
+                "coverage": {
+                    "stock_symbols": 5797,
+                    "covered_symbols": 5193,
+                    "rows": 3752714,
+                    "first_trade_date": "20230627",
+                    "last_trade_date": "20260529",
+                    "coverage_mode": "auto_recent_window",
+                    "coverage_window_start": "2023-06-27",
+                    "coverage_window_end": "2026-06-26",
+                    "lookback_years": 3,
+                    "listing_aware": True,
+                    "expected_trade_days": 708,
+                },
+                "effective_symbols": 5157,
+            }
+        ),
+        encoding="utf-8",
+    )
+    gate_path.write_text(
+        json.dumps(
+            {
+                "run_date": "2026-06-29",
+                "both_pass": False,
+                "deflated_sharpe": -0.5708,
+                "pbo": 0.6,
+                "pbo_pass": False,
+                "effective_symbols": 5157,
+                "production_gate_coverage": {
+                    "stock_symbols": 5797,
+                    "covered_symbols": 5157,
+                    "selected_symbols": 5193,
+                    "rows": 3752714,
+                    "first_trade_date": "20230627",
+                    "last_trade_date": "20260529",
+                    "coverage_mode": "auto_recent_window",
+                    "coverage_window_start": "2023-06-27",
+                    "coverage_window_end": "2026-06-26",
+                    "lookback_years": 3,
+                    "listing_aware": True,
+                    "expected_trade_days": 708,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    report_path.write_text("# formal report\n", encoding="utf-8")
+    diagnostic_path.write_text(
+        "\n".join(
+            [
+                "# Walk-Forward 生产门禁诊断",
+                "",
+                "**标的数量**: 3",
+                "",
+                "| 项目 | 值 |",
+                "|------|-----|",
+                "| effective_symbols | 3 |",
+                "| covered_symbols | 3 |",
+                "| rows | 1 |",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        gate.sys,
+        "argv",
+        [
+            "run_production_walkforward_gate.py",
+            "--db",
+            str(db),
+            "--status-path",
+            str(status_path),
+            "--gate-path",
+            str(gate_path),
+            "--report",
+            str(report_path),
+            "--repair-only",
+        ],
+    )
+
+    assert gate.main() == 0
+    text = diagnostic_path.read_text(encoding="utf-8")
+    assert "**标的数量**: 5157" in text
+    assert "| covered_symbols | 5157 |" in text
+    assert "| rows | 3752714 |" in text

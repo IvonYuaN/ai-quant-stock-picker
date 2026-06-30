@@ -131,10 +131,11 @@ if [ "$RUN_TASK_ID" != "daily" ]; then
     log "拒绝运行 daily_pipeline：AQSP_RUN_TASK_ID=${RUN_TASK_ID}，请统一走 scripts/bt_task.sh ${RUN_TASK_ID}"
     exit 0
 fi
-if { [ "${AQSP_NOTIFY:-false}" = "true" ] || [ "${AQSP_NOTIFY:-false}" = "1" ]; } && [ "$RUN_TASK_ID" = "daily" ]; then
+DAILY_NOTIFY_RESOLVED="${AQSP_DAILY_NOTIFY:-${AQSP_NOTIFY:-true}}"
+if is_truthy "$DAILY_NOTIFY_RESOLVED"; then
     PIPELINE_ARGS+=( "--notify" )
-elif [ "${AQSP_NOTIFY:-false}" = "true" ] || [ "${AQSP_NOTIFY:-false}" = "1" ]; then
-    log "非 daily 任务忽略 AQSP_NOTIFY=true，避免高频任务推送"
+else
+    log "daily 通知已关闭；设置 AQSP_DAILY_NOTIFY=true 可恢复推送"
 fi
 
 set +e

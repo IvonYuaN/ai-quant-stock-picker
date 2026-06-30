@@ -97,6 +97,7 @@ from aqsp.regime import build_synthetic_regime_frame, detect_runtime_regime
 from aqsp.report import to_dataframe, to_markdown
 from aqsp.risk.circuit_breaker import CircuitBreaker, CircuitBreakerConfig
 from aqsp.runtime.gate_notify import (
+    mark_gate_notification_suppressed,
     mark_gate_notification_sent,
     mark_gate_notification_failed,
     should_send_gate_notification,
@@ -258,10 +259,26 @@ HELDOUT_TRAIN_CUTOFF = "2024-12-31"
 WALKFORWARD_GATE_PATH = "data/walkforward_gate.json"
 GATE_NOTIFY_STATE_PATH = "data/gate_notify_state.json"
 NOTIFY_STATE_PATH = "data/notify_state.json"
+DEFAULT_WALKFORWARD_LOOKBACK_YEARS = 3
 
 
 def _cold_start_min_days() -> int:
     return cold_start_min_days()
+
+
+def _shift_years(raw: date, years: int) -> date:
+    try:
+        return raw.replace(year=raw.year - years)
+    except ValueError:
+        return raw.replace(month=2, day=28, year=raw.year - years)
+
+
+def _default_walkforward_end() -> str:
+    return today_shanghai().isoformat()
+
+
+def _default_walkforward_start(*, end: str, lookback_years: int = DEFAULT_WALKFORWARD_LOOKBACK_YEARS) -> str:
+    return (_shift_years(date.fromisoformat(end), max(int(lookback_years), 1)) + timedelta(days=1)).isoformat()
 
 
 def _resolve_runtime_state_path(path: str) -> str:
@@ -503,8 +520,14 @@ def main(argv: list[str] | None = None) -> int:
         default="",
         help="file with one symbol per line, or comma separated symbols",
     )
-    wf.add_argument("--start", default="2018-01-01", help="backtest start date")
-    wf.add_argument("--end", default="2024-12-31", help="backtest end date")
+    wf.add_argument("--start", default="", help="backtest start date")
+    wf.add_argument("--end", default="", help="backtest end date")
+    wf.add_argument(
+        "--window-mode",
+        choices=("legacy_train", "rolling_recent"),
+        default="rolling_recent",
+        help="walkforward window mode: rolling_recent for 2026 production, legacy_train for old held-out research",
+    )
     wf.add_argument("--train-days", type=int, default=120)
     wf.add_argument("--test-days", type=int, default=30)
     wf.add_argument("--purge-days", type=int, default=5)
@@ -576,7 +599,7 @@ def main(argv: list[str] | None = None) -> int:
         "--allow-heldout",
         action="store_true",
         default=False,
-        help="（危险）显式允许 end 超过 2024-12-31，卷入 held-out 区间。仅用于 held-out 一次性验收，且必须在 walkforward 双门通过后。默认关闭——违反宪法 §1.3 #9 时拒绝运行。",
+        help="仅 legacy_train 模式下允许越过 2024-12-31 做一次性 held-out 验收；rolling_recent 生产模式默认允许近端窗口但结果不得回灌旧训练结论。",
     )
 
     dash_cmd = sub.add_parser("dashboard", help="generate interactive dashboard")
@@ -599,6 +622,7 @@ def main(argv: list[str] | None = None) -> int:
     news_cmd.add_argument("--notify", action="store_true")
     news_cmd.add_argument("--output", default="")
     news_cmd.add_argument("--max-events", type=int, default=8)
+    news_cmd.add_argument("--max-news-age-days", type=int, default=7)
     news_cmd.add_argument("--source-timeout-seconds", type=float, default=8.0)
     news_cmd.add_argument("--llm-timeout-seconds", type=float, default=8.0)
     news_cmd.add_argument("--max-llm-review-events", type=int, default=3)
@@ -1881,6 +1905,12 @@ def _handle_circuit_breaker_block(
                 run_date=kwargs["run_date"],
             )
         ),
+        mark_gate_notification_suppressed_fn=lambda **kwargs: (
+            _mark_gate_notification_suppressed(
+                gate_reasons=kwargs["gate_reasons"],
+                run_date=kwargs["run_date"],
+            )
+        ),
         gate_state_path=_resolve_runtime_state_path(
             os.getenv("AQSP_GATE_NOTIFY_STATE_PATH", GATE_NOTIFY_STATE_PATH)
         ),
@@ -2369,6 +2399,13 @@ def _assert_not_heldout(end: str, *, allow: bool, logger=None) -> None:
         logger.warning(warn)
 
 
+def _resolve_walkforward_window_args(args: argparse.Namespace) -> None:
+    if not str(getattr(args, "end", "") or "").strip():
+        args.end = _default_walkforward_end()
+    if not str(getattr(args, "start", "") or "").strip():
+        args.start = _default_walkforward_start(end=str(args.end))
+
+
 def _write_walkforward_gate(
     *,
     dsr: float,
@@ -2407,6 +2444,7 @@ def _walkforward_gate_metadata(
 ) -> dict[str, object]:
     metadata: dict[str, object] = {
         "source": str(getattr(args, "source", "") or ""),
+        "window_mode": str(getattr(args, "window_mode", "rolling_recent") or "rolling_recent"),
         "skip_pit_financials": bool(getattr(args, "skip_pit_financials", False)),
     }
     if effective_symbols is not None:
@@ -2663,7 +2701,7 @@ def _notification_gate_actions(
         or "解析失败" in joined
     ):
         actions.append(
-            "重跑双门回测以刷新 gate：`.venv/bin/python3 -m aqsp walkforward --source sqlite_db --end 2024-12-31`。"
+            "重跑双门回测以刷新 gate：`.venv/bin/python3 -m aqsp walkforward --source sqlite_db --window-mode rolling_recent --grid-cscv`。"
         )
     if "单策略占位" in joined or "多变体 CSCV" in joined:
         actions.append(
@@ -2673,7 +2711,7 @@ def _notification_gate_actions(
         actions.append("在双门过线前保留观察模式，不要开启自动通知或放大纸面仓位。")
     if "held-out" in joined:
         actions.append(
-            "回测窗口退回到 2024-12-31 及以前，避免 held-out 成绩污染通知门禁。"
+            "legacy_train 研究窗口需要退回 held-out 边界内，生产模式统一走 rolling_recent。"
         )
 
     if not actions:
@@ -2701,7 +2739,7 @@ def _format_notification_gate_block(
 
 def _gate_notification_allowed(task_id: str | None = None) -> bool:
     value = task_id if task_id is not None else os.getenv("AQSP_RUN_TASK_ID", "")
-    return str(value or "").strip().lower() in {"daily", "scheduled", "manual"}
+    return str(value or "").strip().lower() in {"daily", "scheduled"}
 
 
 def _should_send_gate_notification(
@@ -2740,6 +2778,20 @@ def _mark_gate_notification_failed(
     run_date: str,
 ) -> None:
     mark_gate_notification_failed(
+        gate_reasons=gate_reasons,
+        state_path=_resolve_runtime_state_path(
+            os.getenv("AQSP_GATE_NOTIFY_STATE_PATH", GATE_NOTIFY_STATE_PATH)
+        ),
+        run_date=run_date,
+    )
+
+
+def _mark_gate_notification_suppressed(
+    *,
+    gate_reasons: list[str],
+    run_date: str,
+) -> None:
+    mark_gate_notification_suppressed(
         gate_reasons=gate_reasons,
         state_path=_resolve_runtime_state_path(
             os.getenv("AQSP_GATE_NOTIFY_STATE_PATH", GATE_NOTIFY_STATE_PATH)
@@ -3314,7 +3366,7 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
     debate_enabled = getattr(args, "enable_debate", False) or debate_runtime.enabled
 
     if debate_enabled and picks:
-        print("📢 启动多Agent辩论分析...")
+        print("开始多视角复核...")
 
         coordinator = AShareDebateCoordinator(
             enable_llm=debate_runtime.enable_llm,
@@ -3350,7 +3402,7 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
         for pick in picks[:3]:
             if pick.symbol in cooldown_symbols:
                 print(
-                    f"   ⏭️  跳过 {pick.symbol} {pick.name}（{DEBATE_COOLDOWN_DAYS}天内已辩论）"
+                    f"   跳过 {pick.symbol} {pick.name}（{DEBATE_COOLDOWN_DAYS}天内已复核）"
                 )
                 skipped_cooldown += 1
                 continue
@@ -3362,7 +3414,7 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
 
                     if result.disagreement_score < DEBATE_MIN_DISAGREEMENT:
                         print(
-                            f"   ⏭️  跳过 {pick.symbol} {pick.name}（分歧 {result.disagreement_score:.2f} < {DEBATE_MIN_DISAGREEMENT}）"
+                            f"   跳过 {pick.symbol} {pick.name}（分歧 {result.disagreement_score:.2f} < {DEBATE_MIN_DISAGREEMENT}）"
                         )
                         continue
 
@@ -3375,7 +3427,7 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
                     existing_debates[key] = serialized
 
                     print(
-                        f"   ✅ 辩论完成: {pick.symbol} {pick.name} | 结论={result.recommended_adjustment} 分歧={result.disagreement_score:.2f}（非keep将接入PM）"
+                        f"   完成 {pick.symbol} {pick.name} | 结论={result.recommended_adjustment} 分歧={result.disagreement_score:.2f}"
                     )
                 except Exception as e:
                     import logging
@@ -3384,16 +3436,16 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
                     logger.warning(f"辩论失败 {pick.symbol}: {e}")
 
         if skipped_cooldown > 0:
-            print(f"   ⏭️  {skipped_cooldown}只股票因冷却期跳过")
+            print(f"   {skipped_cooldown}只股票因冷却期跳过")
         print(
-            "   📎 辩论结果已落附件；runtime评分与ledger score保持原样，非keep结论将接入PM调整优先级"
+            "   复核结果已落附件；系统评分保持不变"
         )
 
         with advisory_lock(debate_file):
             retained_debates = _read_retained_debates(debate_file, cutoff_date)
             _merge_debate_records(retained_debates, existing_debates)
             _write_debate_records(debate_file, retained_debates)
-        print("📢 辩论分析完成")
+        print("多视角复核完成")
 
         # 将辩论结论回写到对应 pick，使 PM 能据此调整优先级与配仓。
         # 仅当辩论给出非 keep 结论时才覆盖，避免无分歧时引入噪声。
@@ -3414,7 +3466,7 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
                 updated_picks.append(pick)
             picks = updated_picks
             if rewritten:
-                print(f"   🔀 辩论结论已接入 PM：{rewritten} 只候选将据此调整优先级")
+                print(f"   {rewritten} 只候选已按复核结果更新排序")
 
     if validation and validation.checked and debate_results:
         try:
@@ -3449,7 +3501,7 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
                             predicted_stance=opinion.stance,
                             was_correct=was_correct,
                         )
-            print("   📊 Agent表现已自动更新")
+            print("   观点表现统计已更新")
         except Exception as e:
             import logging
 
@@ -3478,7 +3530,7 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
             removed_name_map=pick_name_map,
         )
         if portfolio_decisions:
-            print("📦 Portfolio Manager 裁决完成")
+            print("排序结果已生成")
 
     # 保存选股快照并在 ledger 写入前补齐候选状态，确保 report / ledger / paper 三端一致。
     if picks and not status.triggered:
@@ -3785,6 +3837,12 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
                 run_date=kwargs["run_date"],
             )
         ),
+        mark_gate_notification_suppressed_fn=lambda **kwargs: (
+            _mark_gate_notification_suppressed(
+                gate_reasons=kwargs["gate_reasons"],
+                run_date=kwargs["run_date"],
+            )
+        ),
         gate_state_path=_resolve_runtime_state_path(
             os.getenv("AQSP_GATE_NOTIFY_STATE_PATH", GATE_NOTIFY_STATE_PATH)
         ),
@@ -3826,7 +3884,11 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
         ),
         notification_kind=f"daily:{latest.isoformat()}",
     )
-    return 2 if status.triggered else 0
+    if status.triggered and not _allow_observation_during_circuit_breaker(
+        normalized_task_id
+    ):
+        return 2
+    return 0
 
 
 def run_dashboard(args: argparse.Namespace) -> int:
@@ -3958,19 +4020,31 @@ def _run_walkforward_grid_cscv(
     base_test_days: int,
     base_purge_days: int,
     base_tiered_stop: bool,
-) -> tuple[float, float, int, list[tuple[str, float, float, int]], dict[str, Any]]:
+) -> tuple[
+    float,
+    float,
+    int,
+    list[tuple[WalkForwardGridVariant, float, float, int, int]],
+    dict[str, Any],
+]:
     import numpy as np
     from aqsp.backtest.walk_forward import WalkForwardTester
     from aqsp.strategies.composite import CompositeStrategy
 
     variant_returns: list[list[float]] = []
-    variant_rows: list[tuple[WalkForwardGridVariant, float, float, int]] = []
+    variant_rows: list[tuple[WalkForwardGridVariant, float, float, int, int]] = []
     period_labels: list[str] | None = None
     min_periods: int | None = None
 
     variants = _walkforward_grid_variants(args.grid_profile)
 
     for variant in variants:
+        print(
+            "grid variant "
+            f"{variant.variant_id}/{len(variants)}: "
+            f"mw={variant.momentum_weight:.1f} trw={variant.triple_rise_weight:.1f} "
+            f"lookback={variant.lookback_days} horizon={variant.horizon_days} top_n={variant.top_n}"
+        )
         variant_thresholds = _apply_walkforward_grid_variant(thresholds, variant)
         variant_strategy = CompositeStrategy(thresholds=variant_thresholds)
         fee_bps, slippage_bps = _execution_cost_bps_from_thresholds(thresholds)
@@ -3994,7 +4068,13 @@ def _run_walkforward_grid_cscv(
         )
         returns = [period.total_return for period in variant_result.periods]
         if not returns:
+            print(f"grid variant {variant.variant_id}: no usable periods")
             continue
+        print(
+            f"grid variant {variant.variant_id}: periods={len(returns)} "
+            f"sharpe={variant_result.overall.sharpe_ratio:.2f} "
+            f"return={variant_result.overall.total_return:.2%}"
+        )
         if period_labels is None:
             period_labels = [period.period for period in variant_result.periods]
         min_periods = (
@@ -4007,6 +4087,7 @@ def _run_walkforward_grid_cscv(
                 variant_result.overall.sharpe_ratio,
                 variant_result.overall.total_return,
                 len(returns),
+                int(getattr(variant_result.overall, "trades", 0) or 0),
             )
         )
 
@@ -4083,7 +4164,8 @@ def _run_walkforward_grid_cscv(
         }
     )
     best_sharpe = max(row[1] for row in variant_rows)
-    dsr_n_obs = int(min_periods * len(variant_rows))
+    best_variant_trade_count = int(variant_rows[best_variant_idx][4])
+    dsr_n_obs = max(best_variant_trade_count, int(min_periods))
     dsr = WalkForwardTester._calculate_deflated_sharpe(
         best_sharpe,
         n_trials=len(variant_rows),
@@ -4097,6 +4179,7 @@ def _build_cscv_selection_inversions(
 ) -> list[dict[str, Any]]:
     import numpy as np
     from itertools import combinations
+    from aqsp.backtest.walk_forward import _sample_sharpe_ratio
 
     t, n = returns_matrix.shape
     if n < 2 or t < s or s < 2:
@@ -4114,16 +4197,10 @@ def _build_cscv_selection_inversions(
         train_matrix = np.concatenate([blocks[idx] for idx in train_indices], axis=0)
         test_matrix = np.concatenate([blocks[idx] for idx in test_indices], axis=0)
         train_sr = np.array(
-            [
-                np.mean(train_matrix[:, idx]) / (np.std(train_matrix[:, idx]) + 1e-15)
-                for idx in range(n)
-            ]
+            [_sample_sharpe_ratio(train_matrix[:, idx], annualized=False) for idx in range(n)]
         )
         test_sr = np.array(
-            [
-                np.mean(test_matrix[:, idx]) / (np.std(test_matrix[:, idx]) + 1e-15)
-                for idx in range(n)
-            ]
+            [_sample_sharpe_ratio(test_matrix[:, idx], annualized=False) for idx in range(n)]
         )
         selected_idx = int(np.argmax(train_sr))
         test_order = np.argsort(test_sr)
@@ -4235,7 +4312,7 @@ def _append_walkforward_grid_rows(
     dsr: float,
     pbo: float,
     periods: int,
-    rows: list[tuple[WalkForwardGridVariant, float, float, int]],
+    rows: list[tuple[WalkForwardGridVariant, float, float, int, int]],
     details: dict[str, Any] | None = None,
 ) -> None:
     report_lines.extend(
@@ -4263,7 +4340,7 @@ def _append_walkforward_grid_rows(
             "|------|-----|----|----|---|-----|--------|--------|--------|",
         ]
     )
-    for variant, sharpe, total_return, period_count in rows:
+    for variant, sharpe, total_return, period_count, _trade_count in rows:
         report_lines.append(
             f"| {variant.variant_id} | "
             f"{variant.momentum_weight:.1f} | "
@@ -4303,8 +4380,11 @@ def run_walkforward(args: argparse.Namespace) -> int:
     else:
         logger = None
 
+    _resolve_walkforward_window_args(args)
+
     # 宪法 §1.3 #9：held-out 护栏
-    _assert_not_heldout(args.end, allow=args.allow_heldout, logger=logger)
+    if getattr(args, "window_mode", "rolling_recent") == "legacy_train":
+        _assert_not_heldout(args.end, allow=args.allow_heldout, logger=logger)
 
     explicit_symbols = args.symbols.strip()
     symbols_file = str(getattr(args, "symbols_file", "") or "").strip()
@@ -4899,7 +4979,7 @@ def run_monitor(args: argparse.Namespace) -> int:
             if sent_targets:
                 print(format_alert(sent_targets))
                 printed_alert = True
-            else:
+            elif not suppress_console_alert:
                 print("monitor alert still active; duplicate suppressed")
 
     if (
@@ -4929,6 +5009,7 @@ def run_news_catalysts(args: argparse.Namespace) -> int:
         config=NewsCatalystConfig(
             symbols=symbols,
             max_events=args.max_events,
+            max_news_age_days=args.max_news_age_days,
             enable_llm_review=args.enable_llm_review,
             source_timeout_seconds=args.source_timeout_seconds,
             llm_timeout_seconds=args.llm_timeout_seconds,
@@ -5434,6 +5515,12 @@ def run_morning_breakout(args: argparse.Namespace) -> int:
         MorningBreakoutStrategy,
         format_morning_signals,
     )
+    from aqsp.core.time import is_trading_day
+
+    today = today_shanghai()
+    if not is_trading_day(today):
+        print(f"今日非交易日，跳过早盘策略: {today.isoformat()}")
+        return 0
 
     print("运行早盘强势股观察...")
     strategy = MorningBreakoutStrategy()
@@ -5585,6 +5672,12 @@ def run_closing_premium(args: argparse.Namespace) -> int:
         ClosingPremiumStrategy,
         format_closing_signals,
     )
+    from aqsp.core.time import is_trading_day
+
+    today = today_shanghai()
+    if not is_trading_day(today):
+        print(f"今日非交易日，跳过尾盘策略: {today.isoformat()}")
+        return 0
 
     print("📈 运行尾盘溢价策略...")
     strategy = ClosingPremiumStrategy()

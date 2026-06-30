@@ -72,9 +72,18 @@ def apply_limit_suspended_adj(
     df["suspended"] = vol_zero | amt_zero
 
     if cache is not None:
-        df["adj_factor"] = df["date"].apply(
-            lambda d: cache.get_adj_factor(symbol, pd.to_datetime(d).date()) or 1.0
-        )
+        parsed_dates = pd.to_datetime(df["date"], errors="coerce")
+        valid_dates = [item.date() for item in parsed_dates if not pd.isna(item)]
+        if valid_dates and hasattr(cache, "get_adj_factors"):
+            factors = cache.get_adj_factors(symbol, valid_dates)
+            df["adj_factor"] = [
+                factors.get(item.date(), 1.0) if not pd.isna(item) else 1.0
+                for item in parsed_dates
+            ]
+        else:
+            df["adj_factor"] = df["date"].apply(
+                lambda d: cache.get_adj_factor(symbol, pd.to_datetime(d).date()) or 1.0
+            )
     else:
         df["adj_factor"] = 1.0
 

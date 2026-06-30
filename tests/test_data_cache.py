@@ -225,6 +225,28 @@ def test_cache_adj_factor(tmp_path):
     assert result == 1.1
 
 
+def test_cache_get_adj_factors_returns_forward_filled_mapping(tmp_path):
+    cache = DataCache(db_path=tmp_path / "test_cache.db")
+    df = pd.DataFrame(
+        {
+            "date": ["2026-05-27", "2026-05-29"],
+            "adj_factor": [1.0, 1.2],
+        }
+    )
+    cache.set_adj_factors("600000", df, source="test")
+
+    result = cache.get_adj_factors(
+        "600000",
+        [date(2026, 5, 27), date(2026, 5, 28), date(2026, 5, 29)],
+    )
+
+    assert result == {
+        date(2026, 5, 27): 1.0,
+        date(2026, 5, 28): 1.0,
+        date(2026, 5, 29): 1.2,
+    }
+
+
 def test_cache_set_financial_persists_dates(tmp_path):
     cache = DataCache(db_path=tmp_path / "test_cache.db")
     df = pd.DataFrame(

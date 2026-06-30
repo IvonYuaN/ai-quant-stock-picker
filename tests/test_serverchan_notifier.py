@@ -82,7 +82,7 @@ def test_prepend_source_status_banner_moves_degraded_source_before_content():
 
     assert merged.startswith("# 收盘总览")
     assert merged.index("## 数据") < merged.index("## 结论")
-    assert "降低信任度" in merged
+    assert "需人工复核" in merged
 
 
 def test_format_notify_results_formats_all_channels():

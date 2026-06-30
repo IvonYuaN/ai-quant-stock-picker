@@ -8,18 +8,25 @@ from typing import Literal
 import pandas as pd
 
 from aqsp.core.errors import DataError
+from aqsp.core.time import now_shanghai
+from aqsp.data.cache import (
+    DataCache,
+    _has_implausible_amount_scale,
+    _normalize_price_mode,
+    _requires_freshness_window,
+)
 from aqsp.data.source import (
     DataSource,
     OhlcvFrame,
     apply_limit_suspended_adj,
     require_non_empty_fetch_result,
 )
-from aqsp.data.cache import DataCache
 
 _SQLITE_TIMEOUT_SECONDS = 30.0
 _SQLITE_BATCH_SIZE = 400
 _ALLOW_QFQ_SQLITE_SOURCE_ENV = "AQSP_ALLOW_QFQ_SQLITE_SOURCE"
 _PREFILTERED_SYMBOLS_ENV = "AQSP_SQLITE_PREFILTERED_SYMBOLS"
+_CACHE_TOLERANCE_DAYS = 7
 
 
 def _chunks(items: list[str], size: int) -> list[list[str]]:
@@ -68,6 +75,7 @@ class SqliteDbSource(DataSource):
         self._use_cache = cache is not None
         self.cache = cache if cache is not None else DataCache()
         self._symbol_map: dict[str, str] | None = None
+        self._last_coverage_snapshot: tuple[str, str, frozenset[str]] | None = None
 
     def _load_symbol_map(self) -> dict[str, str]:
         if self._symbol_map is not None:
@@ -205,6 +213,11 @@ class SqliteDbSource(DataSource):
             symbol = ts_to_symbol.get(ts_code)
             if symbol is not None:
                 covered.append(symbol)
+        self._last_coverage_snapshot = (
+            start_str,
+            end_str,
+            frozenset(covered),
+        )
         return covered
 
     def _market_range(self, start_str: str, end_str: str) -> tuple[str, str, int]:
@@ -234,7 +247,15 @@ class SqliteDbSource(DataSource):
         end_str = end.strftime("%Y%m%d")
         effective_symbols = list(symbols)
         prefiltered = str(os.getenv(_PREFILTERED_SYMBOLS_ENV, "")).strip().lower()
-        if adjust == "" and prefiltered not in {"1", "true", "yes", "on"}:
+        skip_duplicate_coverage = (
+            adjust == ""
+            and self._matches_last_coverage_snapshot(effective_symbols, start_str, end_str)
+        )
+        if (
+            adjust == ""
+            and prefiltered not in {"1", "true", "yes", "on"}
+            and not skip_duplicate_coverage
+        ):
             try:
                 covered_symbols = self.get_symbols_with_daily_coverage(
                     effective_symbols,
@@ -251,26 +272,39 @@ class SqliteDbSource(DataSource):
                     f"sqlite_db 日线覆盖不足: requested={len(effective_symbols)} covered=0"
                 )
         pending_symbols: list[str] = []
-
+        cache_db_path = self._cache_db_path()
+        cached_frames = self._get_cached_daily_frames(
+            effective_symbols,
+            start,
+            end,
+            price_mode=adjust or "raw",
+        )
         for symbol in effective_symbols:
-            cached = (
-                self.cache.get_ohlcv(symbol, start, end, price_mode=adjust or "raw")
-                if self._use_cache
-                else None
-            )
+            cached = cached_frames.get(symbol)
             if cached is not None and not cached.empty:
-                if "name" not in cached.columns:
-                    cached = cached.copy()
-                    cached["name"] = self.get_symbol_name(symbol)
                 out[symbol] = cached
-            else:
-                pending_symbols.append(symbol)
+                continue
+            if self._use_cache and cache_db_path is None:
+                cached = self.cache.get_ohlcv(
+                    symbol,
+                    start,
+                    end,
+                    price_mode=adjust or "raw",
+                )
+                if cached is not None and not cached.empty:
+                    if "name" not in cached.columns:
+                        cached = cached.copy()
+                        cached["name"] = self.get_symbol_name(symbol)
+                    out[symbol] = cached
+                    continue
+            pending_symbols.append(symbol)
 
         symbol_map = self._load_symbol_map()
         ts_to_symbol = {ts_code: symbol for symbol, ts_code in symbol_map.items()}
         pending_ts_codes = [
             symbol_map[symbol] for symbol in pending_symbols if symbol in symbol_map
         ]
+        frames_to_cache: dict[str, pd.DataFrame] = {}
         if pending_ts_codes:
             select_columns = (
                 "trade_date, ts_code, open, high, low, close, volume, amount"
@@ -302,18 +336,194 @@ class SqliteDbSource(DataSource):
                         )
                         if frame.empty:
                             continue
-                        if self._use_cache:
-                            self.cache.set_ohlcv(
-                                symbol,
-                                frame,
-                                source="sqlite_db",
-                                price_mode=adjust or "raw",
-                            )
+                        frames_to_cache[symbol] = frame
                         out[symbol] = frame
+        self._set_cached_daily_frames(frames_to_cache, price_mode=adjust or "raw")
 
         require_non_empty_fetch_result(self.name, "日线", effective_symbols, out)
 
         return out
+
+    def _matches_last_coverage_snapshot(
+        self,
+        symbols: list[str],
+        start_str: str,
+        end_str: str,
+    ) -> bool:
+        snapshot = self._last_coverage_snapshot
+        if snapshot is None:
+            return False
+        cached_start, cached_end, covered_symbols = snapshot
+        if cached_start != start_str or cached_end != end_str:
+            return False
+        return all(symbol in covered_symbols for symbol in symbols)
+
+    def _cache_db_path(self) -> Path | None:
+        if not self._use_cache:
+            return None
+        db_path = getattr(self.cache, "db_path", None)
+        return Path(db_path) if db_path else None
+
+    def _get_cached_daily_frames(
+        self,
+        symbols: list[str],
+        start: date,
+        end: date,
+        *,
+        price_mode: str,
+        max_age_hours: int = 24,
+    ) -> dict[str, pd.DataFrame]:
+        import pandas as pandas_lib
+
+        cache_db = self._cache_db_path()
+        if cache_db is None or not symbols:
+            return {}
+
+        normalized_price_mode = _normalize_price_mode(price_mode)
+        rows_by_symbol: dict[str, list[pd.DataFrame]] = {}
+        start_iso = start.strftime("%Y-%m-%d")
+        end_iso = end.strftime("%Y-%m-%d")
+        with sqlite3.connect(cache_db, timeout=_SQLITE_TIMEOUT_SECONDS) as conn:
+            column_names = [
+                "symbol",
+                "date",
+                "price_mode",
+                "open",
+                "high",
+                "low",
+                "close",
+                "volume",
+                "amount",
+                "suspended",
+                "limit_up",
+                "limit_down",
+                "adj_factor",
+                "source",
+                "fetched_at",
+            ]
+            for chunk in _chunks(symbols, _SQLITE_BATCH_SIZE):
+                placeholders = ",".join("?" for _ in chunk)
+                rows = conn.execute(
+                    f"""
+                    SELECT symbol, date, price_mode, open, high, low, close, volume, amount,
+                           suspended, limit_up, limit_down, adj_factor, source, fetched_at
+                    FROM ohlcv
+                    WHERE symbol IN ({placeholders})
+                      AND price_mode = ?
+                      AND date >= ? AND date <= ?
+                    ORDER BY symbol, date
+                    """,
+                    (*chunk, normalized_price_mode, start_iso, end_iso),
+                ).fetchall()
+                if not rows:
+                    continue
+                df = pandas_lib.DataFrame.from_records(rows, columns=column_names)
+                for symbol, part in df.groupby("symbol", sort=False):
+                    rows_by_symbol.setdefault(str(symbol), []).append(part.copy())
+
+        out: dict[str, pd.DataFrame] = {}
+        for symbol in symbols:
+            parts = rows_by_symbol.get(symbol)
+            if not parts:
+                continue
+            frame = pandas_lib.concat(parts, ignore_index=True)
+            if frame.empty:
+                continue
+            if _requires_freshness_window(end):
+                cutoff = (
+                    now_shanghai() - pandas_lib.Timedelta(hours=max_age_hours)
+                ).isoformat()
+                stale = frame[frame["fetched_at"] < cutoff]
+                if not stale.empty:
+                    continue
+            cached_min = pandas_lib.to_datetime(frame["date"].min())
+            cached_max = pandas_lib.to_datetime(frame["date"].max())
+            req_start = pandas_lib.Timestamp(start)
+            req_end = pandas_lib.Timestamp(end)
+            if cached_min > req_start + pandas_lib.Timedelta(days=_CACHE_TOLERANCE_DAYS):
+                continue
+            if cached_max < req_end - pandas_lib.Timedelta(days=_CACHE_TOLERANCE_DAYS):
+                continue
+            if _has_implausible_amount_scale(frame):
+                continue
+            frame = frame.sort_values("date").reset_index(drop=True)
+            frame["symbol"] = symbol
+            frame["name"] = self.get_symbol_name(symbol)
+            if "suspended" in frame.columns:
+                frame["suspended"] = frame["suspended"].fillna(0).astype(bool)
+            if "limit_up" in frame.columns:
+                frame["limit_up"] = frame["limit_up"].fillna(0.0)
+            if "limit_down" in frame.columns:
+                frame["limit_down"] = frame["limit_down"].fillna(0.0)
+            out[symbol] = frame
+        return out
+
+    def _set_cached_daily_frames(
+        self,
+        frames: dict[str, pd.DataFrame],
+        *,
+        price_mode: str,
+    ) -> None:
+        if not self._use_cache or not frames:
+            return
+
+        cache_db = self._cache_db_path()
+        if cache_db is None:
+            for symbol, frame in frames.items():
+                self.cache.set_ohlcv(
+                    symbol,
+                    frame,
+                    source="sqlite_db",
+                    price_mode=price_mode,
+                )
+            return
+
+        normalized_price_mode = _normalize_price_mode(price_mode)
+        fetched_at = now_shanghai().isoformat()
+        columns = [
+            "symbol",
+            "date",
+            "price_mode",
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume",
+            "amount",
+            "suspended",
+            "limit_up",
+            "limit_down",
+            "adj_factor",
+            "source",
+            "fetched_at",
+        ]
+
+        with sqlite3.connect(cache_db, timeout=_SQLITE_TIMEOUT_SECONDS) as conn:
+            for symbol, frame in frames.items():
+                prepared = frame.copy()
+                prepared["symbol"] = symbol
+                prepared["price_mode"] = normalized_price_mode
+                prepared["source"] = "sqlite_db"
+                prepared["fetched_at"] = fetched_at
+                if "suspended" not in prepared.columns:
+                    prepared["suspended"] = 0
+                if "limit_up" not in prepared.columns:
+                    prepared["limit_up"] = 0.0
+                if "limit_down" not in prepared.columns:
+                    prepared["limit_down"] = 0.0
+                if "adj_factor" not in prepared.columns:
+                    prepared["adj_factor"] = 1.0
+                rows = list(prepared[columns].itertuples(index=False, name=None))
+                conn.executemany(
+                    """
+                    INSERT OR REPLACE INTO ohlcv (
+                        symbol, date, price_mode, open, high, low, close, volume, amount,
+                        suspended, limit_up, limit_down, adj_factor, source, fetched_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    rows,
+                )
+            conn.commit()
 
     def _assert_price_mode_allowed(self, adjust: str) -> None:
         mode = self.price_mode()

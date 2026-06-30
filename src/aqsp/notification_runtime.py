@@ -375,7 +375,7 @@ def gate_notification_allowed(
     )
     gate_notify_enabled = gate_notify_flag in {"1", "true", "yes", "on"}
     return (
-        normalized in {"daily", "scheduled", "manual"}
+        normalized in {"daily", "scheduled"}
         and notify_enabled
         and gate_notify_enabled
     )
@@ -384,7 +384,7 @@ def gate_notification_allowed(
 def gate_notification_task(task_id: str | None = None) -> bool:
     value = task_id or os.getenv("AQSP_RUN_TASK_ID", "")
     normalized = str(value or "").strip().lower()
-    return normalized in {"daily", "scheduled", "manual"}
+    return normalized in {"daily", "scheduled"}
 
 
 def high_frequency_task(task_id: str | None = None) -> bool:
@@ -425,16 +425,19 @@ def finalize_scheduled_notification(
     gate_block_markdown: str = "",
     mark_gate_notification_sent_fn: Callable[..., None] | None = None,
     mark_gate_notification_failed_fn: Callable[..., None] | None = None,
+    mark_gate_notification_suppressed_fn: Callable[..., None] | None = None,
     gate_state_path: str | Path | None = None,
     task_id: str | None = None,
 ) -> ScheduledNotificationArtifacts:
     output_markdown = markdown
     notify_enabled = bool(args_notify)
+    normalized_task_id = str(task_id or os.getenv("AQSP_RUN_TASK_ID", "")).strip().lower()
     is_high_frequency = high_frequency_task(task_id)
     is_gate_task = gate_notification_task(task_id)
+    is_manual_task = normalized_task_id == "manual"
 
-    if notify_enabled and not gate_ok:
-        if is_high_frequency or not is_gate_task:
+    if not gate_ok:
+        if is_high_frequency or (not is_gate_task and not is_manual_task):
             print_fn("gate notify: skipped outside daily task")
             notify_enabled = False
             return ScheduledNotificationArtifacts(
@@ -456,7 +459,7 @@ def finalize_scheduled_notification(
         )
         output_markdown = gate_block + markdown
         should_send_gate = False
-        if gate_allowed:
+        if notify_enabled and gate_allowed:
             try:
                 should_send_gate = _call_gate_should_send(
                     should_send_gate_notification_fn,
@@ -468,8 +471,8 @@ def finalize_scheduled_notification(
             except Exception as exc:  # noqa: BLE001
                 print_fn(f"gate notify state failed: {exc}")
         else:
-            print_fn("gate notify: skipped outside daily task")
-        if not gate_allowed:
+            print_fn("gate notify: notification disabled or skipped")
+        if not gate_allowed or not notify_enabled:
             should_send_gate = False
         if should_send_gate:
             try:
@@ -516,6 +519,13 @@ def finalize_scheduled_notification(
                         run_date=latest_iso,
                     )
                 print_fn(f"gate notify failed: {exc}")
+        elif mark_gate_notification_suppressed_fn is not None:
+            _call_gate_mark_suppressed(
+                mark_gate_notification_suppressed_fn,
+                gate_reasons=gate_reasons,
+                gate_state_path=gate_state_path,
+                run_date=latest_iso,
+            )
         notify_enabled = False
     elif is_high_frequency:
         notify_enabled = False
@@ -567,6 +577,23 @@ def _call_gate_mark_sent(
 
 
 def _call_gate_mark_failed(
+    callback: Callable[..., None],
+    *,
+    gate_reasons: list[str],
+    gate_state_path: str | Path | None,
+    run_date: str,
+) -> None:
+    try:
+        callback(
+            gate_reasons=gate_reasons,
+            state_path=gate_state_path,
+            run_date=run_date,
+        )
+    except TypeError:
+        callback(gate_reasons)
+
+
+def _call_gate_mark_suppressed(
     callback: Callable[..., None],
     *,
     gate_reasons: list[str],

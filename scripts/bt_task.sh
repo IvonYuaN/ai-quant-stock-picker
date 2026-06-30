@@ -280,10 +280,12 @@ case "$ACTION" in
         skip_non_trading_day
         export AQSP_RUN_TASK_ID="intraday"
         export AQSP_NOTIFY="false"
+        export AQSP_GATE_NOTIFY="false"
         export AQSP_INTRADAY_NOTIFY="${AQSP_INTRADAY_NOTIFY:-false}"
         if should_bridge_intraday_to_midday; then
             export AQSP_RUN_TASK_ID="midday"
             export AQSP_NOTIFY="false"
+            export AQSP_GATE_NOTIFY="false"
             export AQSP_INTRADAY_NOTIFY="${AQSP_INTRADAY_NOTIFY:-false}"
             export AQSP_RUNNER_SCRIPT=scripts/midday_refresh.sh
             if run_synced_task_with_result; then
@@ -301,6 +303,7 @@ case "$ACTION" in
         skip_non_trading_day
         export AQSP_RUN_TASK_ID="midday"
         export AQSP_NOTIFY="false"
+        export AQSP_GATE_NOTIFY="false"
         export AQSP_INTRADAY_NOTIFY="${AQSP_INTRADAY_NOTIFY:-false}"
         export AQSP_RUNNER_SCRIPT=scripts/midday_refresh.sh
         if run_synced_task_with_result; then
@@ -314,21 +317,29 @@ case "$ACTION" in
     coldstart)
         skip_non_trading_day
         export AQSP_RUN_TASK_ID="coldstart"
+        export AQSP_NOTIFY="false"
+        export AQSP_GATE_NOTIFY="false"
         sync_code_only
         run_script "${PROJECT_ROOT}/scripts/coldstart_daily.sh"
         ;;
     monitor)
         skip_weekday_market_holiday
         export AQSP_RUN_TASK_ID="monitor"
+        export AQSP_NOTIFY="false"
+        export AQSP_GATE_NOTIFY="false"
         sync_code_only
         run_script "${PROJECT_ROOT}/scripts/server_monitor.sh"
         ;;
     news)
         skip_weekday_market_holiday
         export AQSP_RUN_TASK_ID="news"
+        export AQSP_NOTIFY="false"
+        export AQSP_GATE_NOTIFY="false"
         run_script "${PROJECT_ROOT}/scripts/news_catalysts.sh"
         ;;
     status)
+        export AQSP_NOTIFY="false"
+        export AQSP_GATE_NOTIFY="false"
         run_script "${PROJECT_ROOT}/scripts/server_status.sh"
         ;;
     help|-h|--help)

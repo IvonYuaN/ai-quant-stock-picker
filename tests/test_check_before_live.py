@@ -50,7 +50,7 @@ def _write_runtime_outputs(root: Path) -> None:
         encoding="utf-8",
     )
     (root / "reports" / "walkforward-grid-raw-production-latest.md").write_text(
-        "**标的数量**: 3200\n"
+        "**标的数量**: 5000\n"
         "### PBO 失败定位\n"
         "CSCV 失败组合占比\n"
         "最差对齐周期\n"
@@ -77,6 +77,7 @@ def _prepare_ready_runtime(root: Path) -> None:
         "AQSP_SOURCE=sqlite_db\n"
         "AQSP_ALLOW_ONLINE_FALLBACK=false\n"
         f"AQSP_SQLITE_DB_PATH={raw_db}\n"
+        "AQSP_NOTIFY=true\n"
         "SERVERCHAN_SENDKEY=sctp_test_key\n",
         encoding="utf-8",
     )
@@ -124,7 +125,13 @@ def _prepare_ready_runtime(root: Path) -> None:
             "pbo_pass": True,
             "both_pass": True,
             "n_periods": 12,
-            "effective_symbols": 3200,
+            "effective_symbols": 5000,
+            "window_mode": "rolling_recent",
+            "production_gate_coverage": {
+                "stock_symbols": 5533,
+                "covered_symbols": 5000,
+                "coverage_mode": "auto_recent_window",
+            },
         },
     )
     _write_jsonl(
@@ -636,15 +643,61 @@ def test_check_before_live_blocks_when_gate_and_report_symbol_counts_diverge(
     assert finding.ok is False
     assert "symbol count mismatch" in finding.detail
     assert "report=300" in finding.detail
-    assert "gate=3200" in finding.detail
+    assert "gate=5000" in finding.detail
 
 
-def test_check_before_live_prefers_production_status_coverage_over_stale_gate(
+def test_check_before_live_keeps_gate_effective_symbols_when_status_coverage_differs(
     tmp_path: Path,
 ) -> None:
     _prepare_ready_runtime(tmp_path)
     (tmp_path / "reports" / "walkforward-grid-raw-production-latest.md").write_text(
-        "**标的数量**: 3200\n",
+        "**标的数量**: 5000\n",
+        encoding="utf-8",
+    )
+    _write_json(
+        tmp_path / "data" / "walkforward_production_status.json",
+        {
+            "status": "blocked_coverage",
+            "updated_at": "2026-06-14T18:10:00+08:00",
+            "coverage": {
+                "covered_symbols": 1286,
+            },
+        },
+    )
+
+    findings = check_before_live(root=tmp_path, today=date(2026, 6, 14))
+    finding = next(
+        item for item in findings if item.gate == "walkforward_market_coverage"
+    )
+
+    assert finding.ok is True
+    assert "5000/5533 effective symbols" in finding.detail
+
+
+def test_check_before_live_falls_back_to_status_coverage_when_gate_missing_effective_symbols(
+    tmp_path: Path,
+) -> None:
+    _prepare_ready_runtime(tmp_path)
+    _write_json(
+        tmp_path / "data" / "walkforward_gate.json",
+        {
+            "run_date": "2026-06-10",
+            "deflated_sharpe": 1.2,
+            "pbo": 0.24,
+            "pbo_valid": True,
+            "dsr_pass": True,
+            "pbo_pass": True,
+            "both_pass": True,
+            "n_periods": 12,
+            "window_mode": "rolling_recent",
+            "production_gate_coverage": {
+                "stock_symbols": 5533,
+                "coverage_mode": "auto_recent_window",
+            },
+        },
+    )
+    (tmp_path / "reports" / "walkforward-grid-raw-production-latest.md").write_text(
+        "**标的数量**: 1286\n",
         encoding="utf-8",
     )
     _write_json(
@@ -664,7 +717,47 @@ def test_check_before_live_prefers_production_status_coverage_over_stale_gate(
     )
 
     assert finding.ok is False
-    assert "1286/3000 effective symbols" in finding.detail
+    assert "1286/5533 effective symbols" in finding.detail
+    assert "require >= 4980" in finding.detail
+
+
+def test_check_before_live_accepts_selected_symbol_denominator_from_production_gate(
+    tmp_path: Path,
+) -> None:
+    _prepare_ready_runtime(tmp_path)
+    _write_json(
+        tmp_path / "data" / "walkforward_gate.json",
+        {
+            "run_date": "2026-06-10",
+            "deflated_sharpe": 1.2,
+            "pbo": 0.24,
+            "pbo_valid": True,
+            "dsr_pass": True,
+            "pbo_pass": True,
+            "both_pass": True,
+            "n_periods": 12,
+            "effective_symbols": 5157,
+            "window_mode": "rolling_recent",
+            "production_gate_coverage": {
+                "stock_symbols": 5797,
+                "covered_symbols": 5157,
+                "selected_symbols": 5193,
+                "coverage_mode": "auto_recent_window",
+            },
+        },
+    )
+    (tmp_path / "reports" / "walkforward-grid-raw-production-latest.md").write_text(
+        "**标的数量**: 5157\n",
+        encoding="utf-8",
+    )
+
+    findings = check_before_live(root=tmp_path, today=date(2026, 6, 14))
+    finding = next(
+        item for item in findings if item.gate == "walkforward_market_coverage"
+    )
+
+    assert finding.ok is True
+    assert "5157/5193 effective symbols" in finding.detail
 
 
 def test_check_before_live_blocks_drifted_launchd_wrapper(tmp_path: Path) -> None:
@@ -718,7 +811,7 @@ def test_check_before_live_reads_only_formal_production_report_for_symbol_count(
     assert finding.ok is False
     assert "symbol count mismatch" in finding.detail
     assert "report=3199" in finding.detail
-    assert "gate=3200" in finding.detail
+    assert "gate=5000" in finding.detail
 
 
 def test_check_before_live_accepts_markdown_table_effective_symbols_report(
@@ -726,7 +819,7 @@ def test_check_before_live_accepts_markdown_table_effective_symbols_report(
 ) -> None:
     _prepare_ready_runtime(tmp_path)
     (tmp_path / "reports" / "walkforward-grid-raw-production-latest.md").write_text(
-        "| 项目 | 值 |\n|------|-----|\n| effective_symbols | 3200 |\n",
+        "| 项目 | 值 |\n|------|-----|\n| effective_symbols | 5000 |\n",
         encoding="utf-8",
     )
 
@@ -1033,6 +1126,155 @@ def test_check_before_live_excludes_not_executable_from_signal_sample_size(
     finding = next(item for item in findings if item.gate == "signal_sample_size")
     assert finding.ok is False
     assert finding.detail == "29/30 real independent signal days; latest real signal day=2026-05-29"
+
+
+def test_check_before_live_blocks_when_gate_notify_state_missing_after_cold_start_ready(
+    tmp_path: Path,
+) -> None:
+    _prepare_ready_runtime(tmp_path)
+    _write_json(
+        tmp_path / "data/walkforward_gate.json",
+        {
+            "run_date": "2026-06-14",
+            "deflated_sharpe": 0.82,
+            "pbo": 0.7778,
+            "pbo_valid": True,
+            "dsr_pass": False,
+            "pbo_pass": False,
+            "both_pass": False,
+            "n_periods": 19,
+            "effective_symbols": 5209,
+            "data_end": "2026-06-13",
+        },
+    )
+    _write_jsonl(
+        tmp_path / "data/predictions.jsonl",
+        [
+            {
+                "signal_date": f"2026-05-{day:02d}",
+                "symbol": "600519",
+                "status": "watch_only",
+            }
+            for day in range(1, 31)
+        ],
+    )
+
+    findings = check_before_live(root=tmp_path, today=date(2026, 6, 14))
+
+    finding = next(
+        item for item in findings if item.gate == "gate_cold_start_alignment"
+    )
+    assert finding.ok is False
+    assert "gate notify state missing/unreadable" in finding.detail
+
+
+def test_check_before_live_blocks_when_gate_notify_state_still_marks_cold_start(
+    tmp_path: Path,
+) -> None:
+    _prepare_ready_runtime(tmp_path)
+    _write_jsonl(
+        tmp_path / "data/predictions.jsonl",
+        [
+            {
+                "signal_date": f"2026-05-{day:02d}",
+                "symbol": "600519",
+                "status": "watch_only",
+            }
+            for day in range(1, 31)
+        ],
+    )
+    (tmp_path / "data" / "gate_notify_state.json").write_text(
+        json.dumps(
+            {
+                "sent_by_date": {
+                    "2026-06-14": {
+                        "fingerprint": "cold_start|dsr",
+                        "status": "sent",
+                    }
+                }
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    findings = check_before_live(root=tmp_path, today=date(2026, 6, 14))
+
+    finding = next(
+        item for item in findings if item.gate == "gate_cold_start_alignment"
+    )
+    assert finding.ok is False
+    assert "latest gate fingerprint still contains cold_start" in finding.detail
+
+
+def test_check_before_live_passes_when_gate_notify_state_is_cleared_for_open_gate(
+    tmp_path: Path,
+) -> None:
+    _prepare_ready_runtime(tmp_path)
+
+    findings = check_before_live(root=tmp_path, today=date(2026, 6, 14))
+
+    finding = next(
+        item for item in findings if item.gate == "gate_cold_start_alignment"
+    )
+    assert finding.ok is True
+    assert "current gate open and gate notify state already cleared" in finding.detail
+
+
+def test_check_before_live_blocks_when_gate_notify_state_fingerprint_drifted(
+    tmp_path: Path,
+) -> None:
+    _prepare_ready_runtime(tmp_path)
+    _write_json(
+        tmp_path / "data/walkforward_gate.json",
+        {
+            "run_date": "2026-06-14",
+            "deflated_sharpe": 0.82,
+            "pbo": 0.7778,
+            "pbo_valid": True,
+            "dsr_pass": False,
+            "pbo_pass": False,
+            "both_pass": False,
+            "n_periods": 19,
+            "effective_symbols": 5209,
+            "data_end": "2026-06-13",
+        },
+    )
+    _write_jsonl(
+        tmp_path / "data/predictions.jsonl",
+        [
+            {
+                "signal_date": f"2026-05-{day:02d}",
+                "symbol": "600519",
+                "status": "watch_only",
+            }
+            for day in range(1, 31)
+        ],
+    )
+    (tmp_path / "data" / "gate_notify_state.json").write_text(
+        json.dumps(
+            {
+                "sent_by_date": {
+                    "2026-06-14": {
+                        "fingerprint": "dsr|pbo|market_coverage_insufficient",
+                        "status": "suppressed",
+                    }
+                }
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    findings = check_before_live(root=tmp_path, today=date(2026, 6, 14))
+
+    finding = next(
+        item for item in findings if item.gate == "gate_cold_start_alignment"
+    )
+    assert finding.ok is False
+    assert "gate notify fingerprint drifted" in finding.detail
 
 
 def test_check_before_live_blocks_when_paper_tracking_samples_are_too_small(
@@ -1684,6 +1926,7 @@ def test_check_before_live_accepts_configured_notify_channel(
         "AQSP_SOURCE=sqlite_db\n"
         "AQSP_ALLOW_ONLINE_FALLBACK=false\n"
         "AQSP_SQLITE_DB_PATH=data/astocks_raw.db\n"
+        "AQSP_NOTIFY=true\n"
         "SERVERCHAN_SENDKEY=sctp_test_key\n",
         encoding="utf-8",
     )
@@ -1695,6 +1938,26 @@ def test_check_before_live_accepts_configured_notify_channel(
     assert "SERVERCHAN_SENDKEY" in finding.detail
 
 
+def test_check_before_live_blocks_disabled_notify_even_with_channel_config(
+    tmp_path: Path,
+) -> None:
+    _prepare_ready_runtime(tmp_path)
+    (tmp_path / ".env").write_text(
+        "AQSP_SOURCE=sqlite_db\n"
+        "AQSP_ALLOW_ONLINE_FALLBACK=false\n"
+        "AQSP_SQLITE_DB_PATH=data/astocks_raw.db\n"
+        "AQSP_NOTIFY=false\n"
+        "SERVERCHAN_SENDKEY=sctp_test_key\n",
+        encoding="utf-8",
+    )
+
+    findings = check_before_live(root=tmp_path, today=date(2026, 6, 14))
+
+    finding = next(item for item in findings if item.gate == "notify_channels")
+    assert finding.ok is False
+    assert "AQSP_NOTIFY=false" in finding.detail
+
+
 def test_check_before_live_accepts_summary_mode_with_only_full_notify_channel(
     tmp_path: Path,
 ) -> None:
@@ -1703,6 +1966,7 @@ def test_check_before_live_accepts_summary_mode_with_only_full_notify_channel(
         "AQSP_SOURCE=sqlite_db\n"
         "AQSP_ALLOW_ONLINE_FALLBACK=false\n"
         "AQSP_SQLITE_DB_PATH=data/astocks_raw.db\n"
+        "AQSP_NOTIFY=true\n"
         "AQSP_NOTIFY_MODE=summary\n"
         "FEISHU_WEBHOOK_URL=https://open.feishu.cn/webhook/test\n",
         encoding="utf-8",
@@ -2716,6 +2980,41 @@ def test_check_before_live_treats_stale_running_production_status_as_timeout(
     assert finding.ok is False
     assert "status=timeout" in finding.detail
     assert "stale_running_status" in finding.detail
+
+
+def test_check_before_live_ignores_ephemeral_test_production_status_path(
+    tmp_path: Path,
+) -> None:
+    _prepare_ready_runtime(tmp_path)
+    _write_json(
+        tmp_path / "data" / "walkforward_gate.json",
+        {
+            "run_date": "2026-06-10",
+            "deflated_sharpe": 0.0,
+            "pbo": 0.0,
+            "pbo_valid": False,
+            "dsr_pass": False,
+            "pbo_pass": False,
+            "both_pass": False,
+            "n_periods": 4,
+            "effective_symbols": 3200,
+        },
+    )
+    _write_json(
+        tmp_path / "data" / "walkforward_production_status.json",
+        {
+            "status": "timeout",
+            "updated_at": "2026-06-14T18:10:00+08:00",
+            "child_exit_code": 124,
+            "db_path": "/private/var/folders/xx/pytest-of-ivon/pytest-999/test_gate/raw.db",
+        },
+    )
+
+    findings = check_before_live(root=tmp_path, today=date(2026, 6, 14))
+
+    finding = next(item for item in findings if item.gate == "walkforward_gate")
+    assert finding.ok is False
+    assert "production_status ignored: ephemeral test artifact" in finding.detail
 
 
 def test_check_before_live_blocks_qfq_walkforward_price_mode(

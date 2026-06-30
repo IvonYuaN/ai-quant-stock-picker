@@ -81,6 +81,7 @@ def test_news_catalyst_notification_only_outputs_results_and_inference() -> None
         fetch_global_news=lambda _limit: pd.DataFrame(
             [{"标题": "政策支持半导体材料国产替代", "来源": "新华社"}]
         ),
+        config=NewsCatalystConfig(allow_undated_news=True),
     )
 
     markdown = format_catalyst_notification(report)
@@ -88,6 +89,9 @@ def test_news_catalyst_notification_only_outputs_results_and_inference() -> None
     assert markdown.startswith("# 消息面雷达-")
     assert "## 结论" in markdown
     assert "## 事件" in markdown
+    assert "结论: 市场/行业 交易催化明确，短线偏强。" in markdown
+    assert "推论:" not in markdown
+    assert "影响: 短线偏多" in markdown
     assert "来源: 新华社" in markdown
     forbidden = (
         "不替代",
@@ -104,6 +108,151 @@ def test_news_catalyst_notification_only_outputs_results_and_inference() -> None
     assert not any(text in markdown for text in forbidden)
 
 
+def test_news_catalyst_filters_undated_event_by_default() -> None:
+    report = build_catalyst_report(
+        fetch_global_news=lambda _limit: pd.DataFrame(
+            [
+                {"标题": "政策支持半导体材料国产替代", "来源": "新华社", "时间": ""},
+                {
+                    "标题": "MLCC 行业报价上调，龙头排产紧张",
+                    "来源": "证券报",
+                    "时间": "2026-06-11 08:30",
+                },
+            ]
+        ),
+    )
+
+    titles = tuple(event.title for event in report.events)
+    assert "MLCC 行业报价上调，龙头排产紧张" in titles
+    assert "政策支持半导体材料国产替代" not in titles
+    assert any("已过滤 1 条无日期消息" in warning for warning in report.warnings)
+
+
+def test_news_catalyst_prefers_dated_recent_event_over_undated_event_when_enabled() -> None:
+    report = build_catalyst_report(
+        fetch_global_news=lambda _limit: pd.DataFrame(
+            [
+                {"标题": "政策支持半导体材料国产替代", "来源": "新华社", "时间": ""},
+                {
+                    "标题": "MLCC 行业报价上调，龙头排产紧张",
+                    "来源": "证券报",
+                    "时间": "2026-06-11 08:30",
+                },
+            ]
+        ),
+        config=NewsCatalystConfig(allow_undated_news=True),
+    )
+
+    markdown = format_catalyst_notification(report)
+    assert "MLCC 行业报价上调，龙头排产紧张" in markdown
+    assert markdown.index("MLCC 行业报价上调，龙头排产紧张") < markdown.index(
+        "政策支持半导体材料国产替代"
+    )
+
+
+def test_news_catalyst_filters_stale_history_news() -> None:
+    report = build_catalyst_report(
+        fetch_global_news=lambda _limit: pd.DataFrame(
+            [
+                {"标题": "政策支持半导体材料国产替代", "来源": "新华社", "时间": "2016-06-10 08:00"},
+                {"标题": "MLCC 行业报价上调，龙头排产紧张", "来源": "证券报", "时间": "2026-06-11 08:30"},
+            ]
+        ),
+    )
+
+    titles = tuple(event.title for event in report.events)
+    assert "MLCC 行业报价上调，龙头排产紧张" in titles
+    assert "政策支持半导体材料国产替代" not in titles
+    assert any("已过滤 1 条过期消息" in warning for warning in report.warnings)
+
+
+def test_news_catalyst_filters_stale_history_news_when_only_title_contains_date() -> None:
+    report = build_catalyst_report(
+        fetch_global_news=lambda _limit: pd.DataFrame(
+            [
+                {
+                    "标题": "2016-06-10 政策支持半导体材料国产替代",
+                    "来源": "新华社",
+                    "时间": "",
+                },
+                {
+                    "标题": "2026-06-11 MLCC 行业报价上调，龙头排产紧张",
+                    "来源": "证券报",
+                    "时间": "",
+                },
+            ]
+        ),
+    )
+
+    titles = tuple(event.title for event in report.events)
+    assert "2026-06-11 MLCC 行业报价上调，龙头排产紧张" in titles
+    assert "2016-06-10 政策支持半导体材料国产替代" not in titles
+    assert any("已过滤 1 条过期消息" in warning for warning in report.warnings)
+
+
+def test_news_catalyst_filters_stale_history_news_when_only_url_contains_date() -> None:
+    report = build_catalyst_report(
+        fetch_global_news=lambda _limit: pd.DataFrame(
+            [
+                {
+                    "标题": "政策支持半导体材料国产替代",
+                    "来源": "新华社",
+                    "时间": "",
+                    "链接": "https://example.com/20160610/a.html",
+                },
+                {
+                    "标题": "MLCC 行业报价上调，龙头排产紧张",
+                    "来源": "证券报",
+                    "时间": "",
+                    "链接": "https://example.com/20260611/b.html",
+                },
+            ]
+        ),
+    )
+
+    titles = tuple(event.title for event in report.events)
+    assert "MLCC 行业报价上调，龙头排产紧张" in titles
+    assert "政策支持半导体材料国产替代" not in titles
+    assert any("已过滤 1 条过期消息" in warning for warning in report.warnings)
+
+
+def test_news_catalyst_uses_title_or_url_date_as_visible_timestamp() -> None:
+    report = build_catalyst_report(
+        fetch_global_news=lambda _limit: pd.DataFrame(
+            [
+                {
+                    "标题": "2026-06-27 政策支持半导体材料国产替代",
+                    "来源": "新华社",
+                    "时间": "",
+                    "链接": "https://example.com/20260627/a.html",
+                }
+            ]
+        ),
+        config=NewsCatalystConfig(allow_undated_news=True),
+    )
+
+    markdown = format_catalyst_notification(report)
+    assert "时间: 2026-06-27" in markdown
+
+
+def test_news_catalyst_reads_extended_published_at_fields() -> None:
+    report = build_catalyst_report(
+        fetch_global_news=lambda _limit: pd.DataFrame(
+            [
+                {
+                    "标题": "MLCC 行业报价上调，龙头排产紧张",
+                    "来源": "证券报",
+                    "发布日期": "2026-06-28 09:15",
+                }
+            ]
+        ),
+        config=NewsCatalystConfig(allow_undated_news=True),
+    )
+
+    markdown = format_catalyst_notification(report)
+    assert "时间: 2026-06-28 09:15" in markdown
+
+
 def test_news_catalyst_filters_pure_market_price_action_noise() -> None:
     report = build_catalyst_report(
         fetch_global_news=lambda _limit: pd.DataFrame(
@@ -115,6 +264,7 @@ def test_news_catalyst_filters_pure_market_price_action_noise() -> None:
                 {"标题": "新能源汽车订单需求放量", "来源": "证券报"},
             ]
         ),
+        config=NewsCatalystConfig(allow_undated_news=True),
     )
 
     titles = tuple(event.title for event in report.events)
@@ -123,6 +273,22 @@ def test_news_catalyst_filters_pure_market_price_action_noise() -> None:
     assert "证券ETF盘中涨超3%，成交额明显放量" not in titles
     assert "某概念股早盘拉升封板，板块走强" not in titles
     assert "半导体板块放量冲击涨停" not in titles
+
+
+def test_news_catalyst_filters_price_hike_headline_with_regulation_risk() -> None:
+    report = build_catalyst_report(
+        fetch_global_news=lambda _limit: pd.DataFrame(
+            [
+                {
+                    "标题": "苹果提价或招来美国监管重拳！众议员提议拆分规模过大的科技公司",
+                    "来源": "东财",
+                    "时间": "2026-06-29 10:00",
+                }
+            ]
+        ),
+    )
+
+    assert report.events == ()
 
 
 def test_news_catalyst_report_surfaces_source_warnings() -> None:
@@ -248,6 +414,7 @@ def test_news_catalyst_merges_same_company_event_across_sources() -> None:
                 },
             ]
         ),
+        config=NewsCatalystConfig(allow_undated_news=True),
     )
 
     assert len(report.events) == 1
@@ -272,8 +439,9 @@ def test_news_catalyst_downgrades_unverified_source_tips() -> None:
         ),
     )
 
-    assert report.source_status == "empty"
+    assert report.source_status == "partial"
     assert not report.events
+    assert any("已过滤 1 条无日期消息" in warning for warning in report.warnings)
 
 
 def test_news_catalyst_infers_source_from_known_url() -> None:
@@ -295,7 +463,7 @@ def test_news_catalyst_infers_source_from_known_url() -> None:
     assert report.events[0].verification == "媒体来源"
     assert report.events[0].confidence >= 0.5
     markdown = format_catalyst_notification(report)
-    assert "中国西电|订单/需求验证" in markdown
+    assert "中国西电 交易催化明确，短线偏强。" in markdown
     assert "利好 | 中国西电" in markdown
     assert "来源: 同花顺" in markdown
 
@@ -310,7 +478,7 @@ def test_news_catalyst_does_not_treat_wire_prefix_as_target_name() -> None:
                 }
             ]
         ),
-        config=NewsCatalystConfig(min_confidence=0.3),
+        config=NewsCatalystConfig(min_confidence=0.3, allow_undated_news=True),
     )
 
     assert report.events
@@ -335,6 +503,7 @@ def test_news_catalyst_filters_non_actionable_discipline_news() -> None:
                 },
             ]
         ),
+        config=NewsCatalystConfig(allow_undated_news=True),
     )
 
     titles = tuple(event.title for event in report.events)
@@ -387,6 +556,7 @@ def test_news_catalyst_llm_review_is_bounded(monkeypatch) -> None:
             enable_llm_review=True,
             max_llm_review_events=1,
             llm_timeout_seconds=2,
+            allow_undated_news=True,
         ),
     )
 
@@ -404,6 +574,7 @@ def test_news_catalyst_notification_truncates_long_event_titles() -> None:
         fetch_global_news=lambda _limit: pd.DataFrame(
             [{"标题": long_title, "来源": "新华社", "链接": "https://example.com/b"}]
         ),
+        config=NewsCatalystConfig(allow_undated_news=True),
     )
 
     markdown = format_catalyst_notification(report)

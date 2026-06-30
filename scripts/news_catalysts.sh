@@ -36,6 +36,7 @@ export AQSP_RUN_TASK_ID="news"
 SYMBOLS="${AQSP_NEWS_SYMBOLS:-}"
 NAMES="${AQSP_NEWS_NAMES:-}"
 MAX_EVENTS="${AQSP_NEWS_MAX_EVENTS:-8}"
+MAX_NEWS_AGE_DAYS="${AQSP_NEWS_MAX_NEWS_AGE_DAYS:-7}"
 SOURCE_TIMEOUT_SECONDS="${AQSP_NEWS_SOURCE_TIMEOUT_SECONDS:-4}"
 LLM_TIMEOUT_SECONDS="${AQSP_NEWS_LLM_TIMEOUT_SECONDS:-8}"
 MAX_LLM_REVIEW_EVENTS="${AQSP_NEWS_MAX_LLM_REVIEW_EVENTS:-1}"
@@ -51,6 +52,7 @@ fi
 
 NEWS_NOTIFY_ENABLED="${AQSP_NEWS_NOTIFY:-false}"
 export AQSP_NOTIFY="false"
+export AQSP_GATE_NOTIFY="false"
 
 NOTIFY_ARGS=()
 if is_truthy "$NEWS_NOTIFY_ENABLED"; then
@@ -76,6 +78,7 @@ NEWS_CMD=(
     --symbols "$SYMBOLS" \
     --names "$NAMES" \
     --max-events "$MAX_EVENTS" \
+    --max-news-age-days "$MAX_NEWS_AGE_DAYS" \
     --source-timeout-seconds "$SOURCE_TIMEOUT_SECONDS" \
     --llm-timeout-seconds "$LLM_TIMEOUT_SECONDS" \
     --max-llm-review-events "$MAX_LLM_REVIEW_EVENTS" \

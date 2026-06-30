@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-from datetime import date
 import importlib.util
 import json
 import logging
@@ -725,18 +724,18 @@ def test_send_pipeline_digest_sends_summary_notification(
     assert "## 结果" in sent["content"]
     assert "- 结论: " in sent["content"]
     assert "- PM: 上调 1 / 降级 1 / 维持 0" in sent["content"]
-    assert "- 现在卡在哪: " in sent["content"]
+    assert "- 当前限制: " in sent["content"]
     assert "- 首要复核: 300750 宁德时代 | 中优先级 / 板块分化时" in sent["content"]
     assert (
-        "600519 贵州茅台 | 纸面复核 | 延续上升 | PM 上调优先级 | 评分 71.0"
+        "600519 贵州茅台 | 纸面复核 | 延续上升 | 优先级上调 | 评分 71.0"
         in sent["content"]
     )
     assert "600519 贵州茅台 | 重点关注" not in sent["content"]
     assert (
-        "300750 宁德时代 | 继续观察名单 | 观察阻塞 | PM 降级观察 | 评分 64.0"
+        "300750 宁德时代 | 继续观察 | 观察阻塞 | 优先级下调 | 评分 64.0"
         in sent["content"]
     )
-    assert "现在卡在哪: 板块集中度过高，压低新能源暴露" in sent["content"]
+    assert "当前限制: 板块集中度过高，压低新能源暴露" in sent["content"]
     assert "下一步: 等待板块暴露回落后，再重新评估纸面复核优先级" in sent["content"]
     assert "再看时间: 中优先级 / 板块分化时" in sent["content"]
     assert (
@@ -2073,33 +2072,19 @@ def test_resolve_symbols_truncates_available_universe_when_max_universe_positive
     ]
 
 
-def test_resolve_symbols_filters_sqlite_db_to_covered_universe(
+def test_resolve_symbols_returns_full_sqlite_db_available_universe(
     monkeypatch,
 ) -> None:
     from scripts import daily_pipeline
-
-    seen: dict[str, object] = {}
 
     class FakeSource:
         def get_available_symbols(self) -> list[str]:
             return ["000001", "000002", "000003"]
 
-        def get_symbols_with_daily_coverage(
-            self,
-            symbols: list[str],
-            start: date,
-            end: date,
-        ) -> list[str]:
-            seen["symbols"] = list(symbols)
-            seen["start"] = start
-            seen["end"] = end
-            return ["000002", "000003"]
-
     monkeypatch.delenv("AQSP_SYMBOLS", raising=False)
     monkeypatch.setattr(
         daily_pipeline, "_build_data_source", lambda _config: FakeSource()
     )
-    monkeypatch.setattr(daily_pipeline, "today_shanghai", lambda: date(2026, 6, 26))
 
     config = daily_pipeline.PipelineConfig(
         project_root=Path.cwd(),
@@ -2128,15 +2113,12 @@ def test_resolve_symbols_filters_sqlite_db_to_covered_universe(
     )
 
     assert daily_pipeline._resolve_symbols(config, logging.getLogger("test")) == [
+        "000001",
         "000002",
         "000003",
     ]
-    assert seen["symbols"] == ["000001", "000002", "000003"]
-    assert seen["start"] == date(2018, 6, 28)
-    assert seen["end"] == date(2026, 6, 26)
 
-
-def test_resolve_symbols_truncates_sqlite_db_covered_universe_when_max_universe_positive(
+def test_resolve_symbols_truncates_sqlite_db_available_universe_when_max_universe_positive(
     monkeypatch,
 ) -> None:
     from scripts import daily_pipeline
@@ -2145,19 +2127,10 @@ def test_resolve_symbols_truncates_sqlite_db_covered_universe_when_max_universe_
         def get_available_symbols(self) -> list[str]:
             return ["000001", "000002", "000003"]
 
-        def get_symbols_with_daily_coverage(
-            self,
-            symbols: list[str],
-            start: date,
-            end: date,
-        ) -> list[str]:
-            return ["000001", "000002", "000003"]
-
     monkeypatch.delenv("AQSP_SYMBOLS", raising=False)
     monkeypatch.setattr(
         daily_pipeline, "_build_data_source", lambda _config: FakeSource()
     )
-    monkeypatch.setattr(daily_pipeline, "today_shanghai", lambda: date(2026, 6, 26))
 
     config = daily_pipeline.PipelineConfig(
         project_root=Path.cwd(),

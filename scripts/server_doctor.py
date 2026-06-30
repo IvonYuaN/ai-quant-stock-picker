@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -75,6 +77,153 @@ def _artifact_checks() -> list[DoctorCheck]:
                 detail=detail,
             )
         )
+    return checks
+
+
+def _run_subprocess(command: list[str], *, timeout: int = 5) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        command,
+        cwd=PROJECT_ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+    )
+
+
+def _tracked_worktree_check() -> DoctorCheck:
+    try:
+        result = _run_subprocess(["git", "status", "--short", "--untracked-files=no"])
+    except (OSError, subprocess.SubprocessError) as exc:
+        return DoctorCheck("git:tracked_worktree", "unknown", str(exc))
+    dirty = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+    if not dirty:
+        return DoctorCheck("git:tracked_worktree", "ok", "clean")
+    preview = ", ".join(dirty[:5])
+    if len(dirty) > 5:
+        preview += f", ... (+{len(dirty) - 5})"
+    return DoctorCheck(
+        "git:tracked_worktree",
+        "dirty",
+        f"{len(dirty)} tracked changes: {preview}",
+    )
+
+
+def _dashboard_ingress_checks() -> list[DoctorCheck]:
+    site_path = Path("/etc/nginx/sites-enabled/aqsp")
+    bt_vhost_path = Path("/www/server/panel/vhost/nginx/lh.ifidy.cn.conf")
+    if not site_path.exists() and not bt_vhost_path.exists():
+        return [DoctorCheck("ingress:nginx_site", "missing", f"{site_path} / {bt_vhost_path}")]
+
+    site_text = ""
+    bt_text = ""
+    try:
+        if site_path.exists():
+            site_text = site_path.read_text(encoding="utf-8")
+        if bt_vhost_path.exists():
+            bt_text = bt_vhost_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        return [DoctorCheck("ingress:nginx_site", "unknown", str(exc))]
+
+    active_text = site_text or bt_text
+    active_label = str(site_path if site_text else bt_vhost_path)
+
+    listens = [
+        match.group(1).strip().rstrip(";")
+        for match in re.finditer(r"^\s*listen\s+(.+?);", active_text, flags=re.MULTILINE)
+    ]
+    checks: list[DoctorCheck] = [
+        DoctorCheck(
+            "ingress:nginx_listen",
+            "ok" if listens else "missing",
+            f"{active_label}: {','.join(listens) if listens else 'no listen directives'}",
+        )
+    ]
+    public_listeners = [
+        item
+        for item in listens
+        if item.startswith("80")
+        or item.startswith("443")
+        or item.startswith("[::]:80")
+        or item.startswith("[::]:443")
+    ]
+    localhost_only = bool(listens) and all(
+        item.startswith("127.0.0.1:") or item.startswith("localhost:")
+        for item in listens
+    )
+    if public_listeners:
+        checks.append(
+            DoctorCheck(
+                "ingress:public_listener",
+                "ok",
+                ",".join(public_listeners),
+            )
+        )
+    elif localhost_only:
+        checks.append(
+            DoctorCheck(
+                "ingress:public_listener",
+                "failed",
+                "nginx only listens on localhost; public 80/443 listener missing",
+            )
+        )
+    else:
+        checks.append(
+            DoctorCheck(
+                "ingress:public_listener",
+                "failed",
+                "no public 80/443 listener found",
+            )
+        )
+
+    if "127.0.0.1:8501" in active_text:
+        checks.append(
+            DoctorCheck(
+                "ingress:upstream",
+                "ok",
+                "reverse proxy to 127.0.0.1:8501",
+            )
+        )
+    elif "/opt/aqsp/dist/dashboard" in active_text:
+        checks.append(
+            DoctorCheck(
+                "ingress:upstream",
+                "failed",
+                "serving dist/dashboard only; expected reverse proxy to 127.0.0.1:8501",
+            )
+        )
+    else:
+        checks.append(
+            DoctorCheck(
+                "ingress:upstream",
+                "unknown",
+                "unable to confirm 127.0.0.1:8501 reverse proxy",
+            )
+        )
+    if bt_text:
+        try:
+            loaded = _run_subprocess(["nginx", "-T"], timeout=8).stdout
+        except (OSError, subprocess.SubprocessError) as exc:
+            checks.append(
+                DoctorCheck("ingress:bt_vhost_loaded", "unknown", str(exc))
+            )
+        else:
+            if str(bt_vhost_path) in loaded:
+                checks.append(
+                    DoctorCheck(
+                        "ingress:bt_vhost_loaded",
+                        "ok",
+                        str(bt_vhost_path),
+                    )
+                )
+            else:
+                checks.append(
+                    DoctorCheck(
+                        "ingress:bt_vhost_loaded",
+                        "failed",
+                        f"{bt_vhost_path} exists but nginx -T does not include it",
+                    )
+                )
     return checks
 
 
@@ -227,6 +376,8 @@ def _has_hard_failures(checks: list[DoctorCheck]) -> bool:
         "login_failed",
         "auth_failed",
         "missing_package",
+        "failed",
+        "dirty",
     }
     return any(check.status in failing for check in checks)
 
@@ -251,18 +402,24 @@ def main(argv: list[str] | None = None) -> int:
     _load_env_file()
 
     artifact_checks = _artifact_checks()
+    git_checks = [_tracked_worktree_check()]
+    ingress_checks = _dashboard_ingress_checks()
     source_checks = _source_auth_checks(probe_auth=args.probe_auth)
     llm_checks = _llm_checks(probe_llm=args.probe_llm)
     notify_checks = _notify_checks()
 
     lines = ["# AQSP Server Doctor", ""]
     lines.extend(_format_section("Artifacts", artifact_checks))
+    lines.extend(_format_section("Git", git_checks))
+    lines.extend(_format_section("Ingress", ingress_checks))
     lines.extend(_format_section("Source Auth", source_checks))
     lines.extend(_format_section("LLM", llm_checks))
     lines.extend(_format_section("Notify", notify_checks))
     print("\n".join(lines).rstrip())
 
-    return 1 if _has_hard_failures(artifact_checks + source_checks + llm_checks) else 0
+    return 1 if _has_hard_failures(
+        artifact_checks + git_checks + ingress_checks + source_checks + llm_checks
+    ) else 0
 
 
 if __name__ == "__main__":

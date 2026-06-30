@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import bisect
+import os
 from dataclasses import dataclass
 from typing import Dict, List, Optional
 
@@ -199,16 +200,27 @@ class WalkForwardTester:
 
         step = self.test_period_days
         i = start_idx + self.train_period_days + self.purge_days
+        total_periods = self._planned_period_count(start_idx, end_idx)
+        progress_enabled = str(
+            os.getenv("AQSP_WALKFORWARD_PROGRESS", "true")
+        ).strip().lower() in {"1", "true", "yes", "on"}
+        period_index = 0
         while i + step <= end_idx:
             train_end_idx = i - self.purge_days - 1
             if train_end_idx < start_idx:
                 i += step
                 continue
+            period_index += 1
 
             train_start = all_dates[start_idx]
             train_end = all_dates[train_end_idx]
             test_start = all_dates[i]
             test_end = all_dates[min(i + step - 1, end_idx)]
+            if progress_enabled:
+                print(
+                    f"walkforward period {period_index}/{total_periods}: "
+                    f"train={train_start}..{train_end} test={test_start}..{test_end}"
+                )
 
             train_data = self._slice_data(normalized_data, train_start, train_end)
             test_data = self._slice_data(normalized_data, test_start, test_end)
@@ -259,6 +271,16 @@ class WalkForwardTester:
             regime_winrates=regime_winrate_dict,
             diagnostics=self._build_diagnostics(all_trades),
         )
+
+    def _planned_period_count(self, start_idx: int, end_idx: int) -> int:
+        step = self.test_period_days
+        cursor = start_idx + self.train_period_days + self.purge_days
+        count = 0
+        while cursor + step <= end_idx:
+            if cursor - self.purge_days - 1 >= start_idx:
+                count += 1
+            cursor += step
+        return count
 
     def _prepare_data_views(
         self, data: Dict[str, pd.DataFrame]
@@ -321,7 +343,7 @@ class WalkForwardTester:
         market_returns = []
         for symbol, df in signal_data.items():
             if len(df) >= 20:
-                recent = df.sort_values("date").tail(20)
+                recent = df.tail(20)
                 prices = recent["close"].values
                 ret = (prices[-1] - prices[0]) / prices[0]
                 market_returns.append(ret)
@@ -343,7 +365,7 @@ class WalkForwardTester:
         for symbol in selected:
             if symbol not in test_data:
                 continue
-            test_df = test_data[symbol].sort_values("date").reset_index(drop=True)
+            test_df = test_data[symbol]
             if test_df.empty:
                 continue
 
@@ -585,16 +607,10 @@ class WalkForwardTester:
             test_matrix = np.concatenate([blocks[i] for i in test_indices], axis=0)
 
             train_sr = np.array(
-                [
-                    np.mean(train_matrix[:, j]) / (np.std(train_matrix[:, j]) + 1e-15)
-                    for j in range(n)
-                ]
+                [_sample_sharpe_ratio(train_matrix[:, j], annualized=False) for j in range(n)]
             )
             test_sr = np.array(
-                [
-                    np.mean(test_matrix[:, j]) / (np.std(test_matrix[:, j]) + 1e-15)
-                    for j in range(n)
-                ]
+                [_sample_sharpe_ratio(test_matrix[:, j], annualized=False) for j in range(n)]
             )
 
             n_star = int(np.argmax(train_sr))
@@ -738,6 +754,25 @@ def _resolve_exit_tiered(
     return exit_bar, weighted_exit, "tiered_exit"
 
 
+def _sample_sharpe_ratio(
+    values: np.ndarray,
+    *,
+    annualized: bool,
+    periods_per_year: int = 252,
+    zero_std_epsilon: float = 1e-12,
+) -> float:
+    if values.size == 0:
+        return 0.0
+    mean_value = float(np.mean(values))
+    std_value = float(np.std(values))
+    if not np.isfinite(mean_value) or not np.isfinite(std_value):
+        return 0.0
+    if std_value <= zero_std_epsilon:
+        return 0.0
+    scale = float(np.sqrt(periods_per_year)) if annualized else 1.0
+    return float(mean_value / std_value * scale)
+
+
 def _compute_backtest_metrics(
     returns: list[float], period: str, not_executable: int = 0
 ) -> BacktestResult:
@@ -761,10 +796,7 @@ def _compute_backtest_metrics(
     running_max = np.maximum.accumulate(equity)
     drawdown = 1 - equity / running_max
     max_drawdown = float(drawdown.max())
-    returns_std = float(np.std(arr))
-    sharpe_ratio = (
-        float(np.mean(arr) / returns_std * np.sqrt(252)) if returns_std > 0 else 0.0
-    )
+    sharpe_ratio = _sample_sharpe_ratio(arr, annualized=True)
     wins = sum(1 for r in returns if r > 0)
     win_rate = wins / n
     pos_sum = float(np.sum(arr[arr > 0])) if any(r > 0 for r in returns) else 0.0

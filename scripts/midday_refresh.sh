@@ -51,6 +51,7 @@ fi
 export AQSP_INTRADAY_REQUIRE_MARKET_HOURS=false
 export AQSP_RUN_TASK_ID="midday"
 export AQSP_NOTIFY="false"
+export AQSP_GATE_NOTIFY="false"
 export AQSP_NOTIFY_TITLE_LABEL="${AQSP_NOTIFY_TITLE_LABEL:-午盘分析}"
 export AQSP_INTRADAY_NOTIFY="false"
 export AQSP_INTRADAY_ALLOW_NOTIFY="false"

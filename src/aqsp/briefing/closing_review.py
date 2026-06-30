@@ -281,13 +281,13 @@ class ClosingReviewer:
 
         lines = [f"PM主裁决: 上调 {promoted} / 降级 {downgraded} / 维持 {kept}"]
         if tradable:
-            lines.append("今日重点名单: " + "、".join(tradable[:3]))
+            lines.append("主看名单: " + "、".join(tradable[:3]))
         if watchlist:
-            lines.append("继续观察名单: " + "、".join(watchlist[:5]))
+            lines.append("观察名单: " + "、".join(watchlist[:5]))
         if blockers:
-            lines.append("现在卡在哪: " + "；".join(blockers[:2]))
+            lines.append("阻塞: " + "；".join(blockers[:2]))
         for item in review_items[:2]:
-            lines.append("观察名单接下来: " + item)
+            lines.append("后续关注: " + item)
         return tuple(lines)
 
     def _build_main_chain_summary_from_paper(
@@ -350,13 +350,13 @@ class ClosingReviewer:
 
         lines = [f"PM主裁决: 上调 {promoted} / 降级 {downgraded} / 维持 {kept}"]
         if tradable:
-            lines.append("今日重点名单: " + "、".join(tradable[:3]))
+            lines.append("主看名单: " + "、".join(tradable[:3]))
         if watchlist:
-            lines.append("继续观察名单: " + "、".join(watchlist[:5]))
+            lines.append("观察名单: " + "、".join(watchlist[:5]))
         if blockers:
-            lines.append("现在卡在哪: " + "；".join(blockers[:2]))
+            lines.append("阻塞: " + "；".join(blockers[:2]))
         for item in review_items[:2]:
-            lines.append("观察名单接下来: " + item)
+            lines.append("后续关注: " + item)
         return tuple(lines)
 
     def _load_predictions(self, date: str) -> list[dict]:
@@ -573,7 +573,7 @@ class ClosingReviewer:
             "trend_pullback": "均线回踩",
             "reversal_watch": "反转观察",
             "relative_strength": "相对强度",
-            "watch": "继续观察名单",
+            "watch": "观察名单",
             "close": "收盘候选",
             "open": "盘前候选",
             "next_open": "次日开盘",

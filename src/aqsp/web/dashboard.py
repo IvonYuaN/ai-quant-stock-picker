@@ -1309,7 +1309,7 @@ def _debate_as_candidate_card(
         action_label=debate_summary.recommended_adjustment_label,
         status_label=debate_summary.consensus
         or debate_summary.recommended_adjustment_label,
-        decision_note="该标的当前没有独立候选卡，以下仅是同日多 Agent 讨论摘要，不替代选股评分。",
+        decision_note="该标的当前没有独立候选卡，以下仅保留同日多视角补充结论，不替代选股评分。",
         next_step=(
             debate_summary.adjustment_reason
             or (
@@ -1319,11 +1319,11 @@ def _debate_as_candidate_card(
             )
         ),
         blocker=debate_summary.risk_warnings[0] if debate_summary.risk_warnings else "",
-        review_meta="辩论主结论 / 待复核",
+        review_meta="补充结论 / 待复核",
         reasons=debate_summary.opportunity_highlights,
         risks=debate_summary.risk_warnings,
         strategies=(),
-        data_source=debate_summary.data_source or "多 Agent 讨论",
+        data_source=debate_summary.data_source or "多视角补充",
     )
 
 
@@ -1610,11 +1610,11 @@ def _debate_primary_takeaways(
         line
         for line in (
             (
-                f"辩论结论: {debate_summary.recommended_adjustment_label}"
+                f"补充结论: {debate_summary.recommended_adjustment_label}"
                 f" / 分歧 {debate_summary.disagreement_score:.2f}"
             ),
             (
-                f"辩论共识: {debate_summary.consensus}"
+                f"结论共识: {debate_summary.consensus}"
                 if debate_summary.consensus
                 else ""
             ),
@@ -1624,12 +1624,12 @@ def _debate_primary_takeaways(
                 else ""
             ),
             (
-                f"辩论风险: {'；'.join(debate_summary.risk_warnings[:2])}"
+                f"补充风险: {'；'.join(debate_summary.risk_warnings[:2])}"
                 if debate_summary.risk_warnings
                 else ""
             ),
             (
-                f"辩论机会: {'；'.join(debate_summary.opportunity_highlights[:2])}"
+                f"补充机会: {'；'.join(debate_summary.opportunity_highlights[:2])}"
                 if debate_summary.opportunity_highlights
                 else ""
             ),
@@ -1684,7 +1684,7 @@ def _archive_conclusion_context(
             for line in (
                 *_debate_primary_takeaways(debate_summary)[:2],
                 (
-                    f"现在卡在哪: {_card_primary_blocker(selected_card)}"
+                    f"当前限制: {_card_primary_blocker(selected_card)}"
                     if _card_primary_blocker(selected_card)
                     else ""
                 ),
@@ -1811,7 +1811,7 @@ def _render_debate_cockpit(
     *,
     debate_summary: DashboardDebateSummary | None,
     empty_text: str,
-    kicker: str = "多 Agent 讨论",
+    kicker: str = "多视角补充",
     tone: str = "archive",
 ) -> None:
     if debate_summary is None:
@@ -3857,11 +3857,11 @@ def _home_brief_cards(
         focus_title = debate_focus.display_name
         focus_lines = _unique_lines(
             (
-                f"多 Agent: {debate_focus.recommended_adjustment_label} / 分歧 {debate_focus.disagreement_score:.2f}",
+                f"多视角: {debate_focus.recommended_adjustment_label} / 分歧 {debate_focus.disagreement_score:.2f}",
                 (
                     f"共识: {debate_focus.consensus}"
                     if debate_focus.consensus
-                    else "共识: 当前辩论只作解释，不替代评分。"
+                    else "共识: 当前补充结论只作解释，不替代评分。"
                 ),
                 (
                     f"待核对: {debate_focus.risk_warnings[0]}"
@@ -4662,7 +4662,7 @@ def _render_execution_focus(
         with debate_col:
             _render_debate_cockpit(
                 debate_summary=debate_summary,
-                empty_text="当前标的没有同日多 Agent 辩论记录，纸面验证暂以研究结论和虚拟盘记录为主。",
+                empty_text="当前标的没有同日多视角记录，纸面验证暂以研究结论和虚拟盘记录为主。",
                 tone="pressure" if debate_summary is not None else "archive",
             )
 
@@ -4999,7 +4999,7 @@ def _focus_summary_lines(
                 ),
                 _review_meta_line("再看时间", selected_card.review_meta),
                 (
-                    f"现在卡在哪: {_safe_current_research_line(_card_primary_blocker(selected_card))}"
+                    f"当前限制: {_safe_current_research_line(_card_primary_blocker(selected_card))}"
                     if _card_primary_blocker(selected_card)
                     else ""
                 ),
@@ -5079,7 +5079,7 @@ def _workspace_focus_lines(
                 [
                     _review_meta_line("再看时间", review_card.review_meta),
                     (
-                        f"现在卡在哪: {_safe_current_research_line(_card_primary_blocker(review_card))}"
+                        f"当前限制: {_safe_current_research_line(_card_primary_blocker(review_card))}"
                         if _card_primary_blocker(review_card)
                         else ""
                     ),
@@ -5801,7 +5801,7 @@ def _execution_path_context_lines(
                     if review_card is not None
                     else ""
                 ),
-                (f"现在卡在哪: {blocker}" if include_blocker else ""),
+                (f"当前限制: {blocker}" if include_blocker else ""),
             )
             if line
         ),
@@ -5980,7 +5980,7 @@ def _prioritized_research_lines(lines: tuple[str, ...]) -> tuple[str, ...]:
     for prefix in (
         "研究动作:",
         "研究下一步:",
-        "现在卡在哪:",
+        "当前限制:",
         "当前卡点:",
         "再看时间:",
         "复核节奏:",
@@ -6596,7 +6596,7 @@ def _render_candidate_review_snapshot(
                 "验证动作: 等待下一次任务或纸面验证记录补充独立依据。",
                 _review_meta_line("复核节奏", selected_card.review_meta),
                 (
-                    f"现在卡在哪: {_card_primary_blocker(selected_card)}"
+                    f"当前限制: {_card_primary_blocker(selected_card)}"
                     if has_blocker
                     else ""
                 ),
@@ -7086,7 +7086,7 @@ def _candidate_next_step_lines(
     next_action = _card_next_action(selected_card)
     if blocker:
         lines = (
-            f"现在卡在哪: {_safe_current_research_line(blocker)}",
+            f"当前限制: {_safe_current_research_line(blocker)}",
             f"再看动作: {next_action}" if next_action != "-" else "",
             _review_meta_line("再看时间", selected_card.review_meta),
         )
