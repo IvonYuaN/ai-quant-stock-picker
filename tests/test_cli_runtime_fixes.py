@@ -7,10 +7,11 @@ import json
 import logging
 from pathlib import Path
 import inspect
+from types import SimpleNamespace
 
 import pandas as pd
 import pytest
-from aqsp.core.errors import MissingDataError
+from aqsp.core.errors import DataError, MissingDataError
 
 
 @pytest.fixture(autouse=True)
@@ -44,6 +45,117 @@ def _fresh_frame(day: str) -> pd.DataFrame:
     )
 
 
+def test_intraday_debate_coordinator_requires_second_round() -> None:
+    import aqsp.cli as cli_mod
+
+    runtime = SimpleNamespace(
+        enable_llm=False,
+        max_rounds=1,
+        thresholds_version="",
+        language="zh-CN",
+        roles=("bull", "bear"),
+        role_runtime=(),
+    )
+
+    coordinator = cli_mod._build_debate_coordinator(
+        runtime,
+        thresholds_version="test",
+        regime="intraday",
+        data_source="test",
+    )
+
+    assert coordinator.max_rounds == 2
+
+
+def test_data_quality_context_is_visible_without_blocking_candidate() -> None:
+    import aqsp.cli as cli_mod
+    from aqsp.core.types import PickResult
+    from aqsp.data.anomaly import AnomalyAlert
+    from aqsp.data.freshness import FreshnessReport
+
+    pick = PickResult(
+        symbol="600000",
+        name="浦发银行",
+        date="2026-07-10",
+        close=10.0,
+        score=72.0,
+        rating="strong_buy_candidate",
+        entry_type="pullback",
+        ideal_buy=9.9,
+        stop_loss=9.2,
+        take_profit=11.0,
+        position="medium",
+    )
+
+    enriched = cli_mod._annotate_data_quality_context(
+        [pick],
+        anomaly_alerts=[
+            AnomalyAlert(
+                symbol="600000",
+                anomaly_type="price_gap",
+                severity="critical",
+                detail="开盘跳空: +12.00%",
+                value=0.12,
+                threshold=0.05,
+            )
+        ],
+        freshness_reports=[
+            FreshnessReport(
+                symbol="600000",
+                last_date="2026-07-06",
+                delay_days=4,
+                status="critical",
+            )
+        ],
+    )
+
+    result = enriched[0]
+    assert result.rating == "strong_buy_candidate"
+    assert result.metrics["data_quality_status"] == "critical"
+    assert "candidate_blocker" not in result.metrics
+    assert "先复核数据质量" in result.metrics["candidate_next_step"]
+    assert any("数据质量" in risk for risk in result.risks)
+
+
+def test_data_quality_context_preserves_existing_candidate_blocker() -> None:
+    import aqsp.cli as cli_mod
+    from aqsp.core.types import PickResult
+    from aqsp.data.anomaly import AnomalyAlert
+
+    pick = PickResult(
+        symbol="600000",
+        name="浦发银行",
+        date="2026-07-10",
+        close=10.0,
+        score=72.0,
+        rating="watch",
+        entry_type="pullback",
+        ideal_buy=9.9,
+        stop_loss=9.2,
+        take_profit=11.0,
+        position="small",
+        metrics={"candidate_blocker": "板块集中度过高"},
+    )
+
+    result = cli_mod._annotate_data_quality_context(
+        [pick],
+        anomaly_alerts=[
+            AnomalyAlert(
+                symbol="600000",
+                anomaly_type="volume_spike",
+                severity="warning",
+                detail="成交量异常放大: 6.0x 20日均量",
+                value=6.0,
+                threshold=5.0,
+            )
+        ],
+        freshness_reports=[],
+    )[0]
+
+    assert result.metrics["candidate_blocker"] == "板块集中度过高"
+    assert result.metrics["data_quality_status"] == "watch"
+
+
 def test_special_strategy_ledger_guard_blocks_non_trading_day(monkeypatch) -> None:
     import aqsp.cli as cli_mod
 
@@ -56,6 +168,33 @@ def test_special_strategy_ledger_guard_blocks_non_trading_day(monkeypatch) -> No
 
     assert allowed is False
     assert "非交易日" in reason
+
+
+def test_cli_debate_execution_enabled_does_not_bypass_goal_switch(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import aqsp.cli as cli_mod
+
+    goal_switch_path = tmp_path / "goal_switches.yaml"
+    goal_switch_path.write_text(
+        """
+version: "test"
+mode: short_term_realtime
+switches:
+  multi_agent_advisory_layer:
+    enabled: false
+    purpose: disable debate
+""".strip(),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AQSP_GOAL_SWITCHES", str(goal_switch_path))
+
+    enabled = cli_mod._debate_execution_enabled(
+        Namespace(enable_debate=True),
+        Namespace(enabled=False),
+    )
+
+    assert enabled is False
 
 
 def test_special_strategy_ledger_guard_requires_fresh_data(monkeypatch) -> None:
@@ -79,7 +218,13 @@ def test_run_morning_breakout_skips_non_trading_day_before_fetch(
     import aqsp.cli as cli_mod
 
     monkeypatch.setattr("aqsp.core.time.is_trading_day", lambda _day: False)
-    monkeypatch.setattr(cli_mod, "_fetch_special_strategy_frames", lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("should not fetch on holiday")))
+    monkeypatch.setattr(
+        cli_mod,
+        "_fetch_special_strategy_frames",
+        lambda *_a, **_k: (_ for _ in ()).throw(
+            AssertionError("should not fetch on holiday")
+        ),
+    )
 
     args = Namespace(
         symbols="600000",
@@ -105,7 +250,13 @@ def test_run_closing_premium_skips_non_trading_day_before_fetch(
     import aqsp.cli as cli_mod
 
     monkeypatch.setattr("aqsp.core.time.is_trading_day", lambda _day: False)
-    monkeypatch.setattr(cli_mod, "_fetch_special_strategy_frames", lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("should not fetch on holiday")))
+    monkeypatch.setattr(
+        cli_mod,
+        "_fetch_special_strategy_frames",
+        lambda *_a, **_k: (_ for _ in ()).throw(
+            AssertionError("should not fetch on holiday")
+        ),
+    )
 
     args = Namespace(
         symbols="600000",
@@ -123,6 +274,497 @@ def test_run_closing_premium_skips_non_trading_day_before_fetch(
 
     assert cli_mod.run_closing_premium(args) == 0
     assert "今日非交易日，跳过尾盘策略" in capsys.readouterr().out
+
+
+def test_augment_summary_with_market_context_merges_candidate_and_global_overview() -> (
+    None
+):
+    import aqsp.cli as cli_mod
+    from aqsp.market_context import build_market_context_artifact
+    from aqsp.news.catalysts import CatalystEvent, CatalystReport
+    from aqsp.portfolio.manager import PortfolioDecisionSummary
+
+    summary = PortfolioDecisionSummary(
+        promote_count=1,
+        downgrade_count=0,
+        keep_count=0,
+        top_focus=("688297 中无人机",),
+        watchlist=(),
+        allocations=(),
+        cash_reserve=1.0,
+        allocation_note="今日以观察为主",
+        cross_market_overview="海外商业航天催化，重点看 688297 中无人机",
+    )
+    artifact = build_market_context_artifact(
+        catalyst_report=CatalystReport(
+            date="2026-06-30",
+            generated_at="2026-06-30T14:35:00+08:00",
+            source_status="ok",
+            events=(
+                CatalystEvent(
+                    title="SpaceX 拟推进上市并加快低轨卫星部署",
+                    source="财联社",
+                    published_at="2026-06-30 10:02:00+08:00",
+                    impact="positive",
+                    category="资本运作",
+                    inference="海外商业航天关注度抬升。",
+                ),
+            ),
+            warnings=(),
+        )
+    )
+
+    merged = cli_mod._augment_summary_with_market_context(
+        summary,
+        market_context=artifact,
+    )
+
+    assert merged is not None
+    assert (
+        merged.cross_market_overview
+        == "海外商业航天催化，重点看 688297 中无人机；方向 商业航天、卫星互联网、军工电子"
+    )
+
+
+def test_runtime_market_context_does_not_restore_prelimit_ranking_hook() -> None:
+    import aqsp.cli as cli_mod
+
+    assert not hasattr(cli_mod, "_reprioritize_screened_picks_with_market_context")
+
+
+def test_filter_catalyst_report_for_symbols_keeps_global_and_selected_events() -> None:
+    import aqsp.cli as cli_mod
+    from aqsp.news.catalysts import CatalystEvent, CatalystReport
+
+    report = CatalystReport(
+        date="2026-06-30",
+        generated_at="2026-06-30T14:35:00+08:00",
+        source_status="ok",
+        events=(
+            CatalystEvent(
+                title="英伟达发布 Physical AI 平台",
+                source="新华社",
+                published_at="2026-06-30 09:40:00+08:00",
+                impact="positive",
+                category="科技催化",
+                inference="具身智能和机器人链预期升温。",
+            ),
+            CatalystEvent(
+                title="宁德时代拿下新订单",
+                source="公告",
+                published_at="2026-06-30 10:20:00+08:00",
+                symbol="300750",
+                name="宁德时代",
+                impact="positive",
+                category="订单/需求验证",
+                inference="电池链关注度抬升。",
+            ),
+            CatalystEvent(
+                title="招商银行获长期资金增持",
+                source="公告",
+                published_at="2026-06-30 10:40:00+08:00",
+                symbol="600036",
+                name="招商银行",
+                impact="positive",
+                category="资本运作",
+                inference="银行方向关注度抬升。",
+            ),
+        ),
+        warnings=(),
+    )
+
+    filtered = cli_mod._filter_catalyst_report_for_symbols(report, ("300750",))
+
+    assert filtered is not None
+    assert [event.symbol for event in filtered.events] == ["", "300750"]
+
+
+def test_reprioritize_screened_picks_keeps_direct_news_context_only() -> None:
+    import aqsp.cli as cli_mod
+    from aqsp.core.types import PickResult
+    from aqsp.market_context import build_market_context_artifact
+    from aqsp.news.catalysts import CatalystEvent, CatalystReport
+
+    _picks = [
+        PickResult(
+            symbol="300750",
+            name="宁德时代",
+            date="2026-07-07",
+            close=180.0,
+            score=70.0,
+            rating="watch",
+            entry_type="relative_strength",
+            ideal_buy=180.0,
+            stop_loss=170.0,
+            take_profit=198.0,
+            position="watch",
+        ),
+        PickResult(
+            symbol="600036",
+            name="招商银行",
+            date="2026-07-07",
+            close=36.0,
+            score=69.9,
+            rating="watch",
+            entry_type="relative_strength",
+            ideal_buy=36.0,
+            stop_loss=34.0,
+            take_profit=39.0,
+            position="watch",
+        ),
+    ]
+    artifact = build_market_context_artifact(
+        catalyst_report=CatalystReport(
+            date="2026-07-07",
+            generated_at="2026-07-07T09:10:00+08:00",
+            source_status="ok",
+            events=(
+                CatalystEvent(
+                    title="宁德时代被监管问询",
+                    source="交易所",
+                    published_at="2026-07-07T08:40:00+08:00",
+                    symbol="300750",
+                    name="宁德时代",
+                    impact="negative",
+                    category="监管/合规风险",
+                    confidence=0.82,
+                    source_quality_label="高价值来源",
+                    source_quality_score=4,
+                    inference="宁德时代 风险抬升，短线回避监管/合规风险方向。",
+                ),
+            ),
+            warnings=(),
+        )
+    )
+
+    assert artifact is not None
+    assert not hasattr(cli_mod, "_reprioritize_screened_picks_with_market_context")
+
+
+def test_load_runtime_market_context_catalyst_report_reuses_preview_report(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import aqsp.cli as cli_mod
+    from aqsp.core.types import PickResult
+    from aqsp.news.catalysts import CatalystEvent, CatalystReport
+
+    preview_report = CatalystReport(
+        date="2026-06-30",
+        generated_at="2026-06-30T14:35:00+08:00",
+        source_status="ok",
+        events=(
+            CatalystEvent(
+                title="英伟达发布 Physical AI 平台",
+                source="新华社",
+                published_at="2026-06-30 09:40:00+08:00",
+                impact="positive",
+                category="科技催化",
+                inference="具身智能和机器人链预期升温。",
+            ),
+            CatalystEvent(
+                title="宁德时代拿下新订单",
+                source="公告",
+                published_at="2026-06-30 10:20:00+08:00",
+                symbol="300750",
+                name="宁德时代",
+                impact="positive",
+                category="订单/需求验证",
+                inference="电池链关注度抬升。",
+            ),
+            CatalystEvent(
+                title="招商银行获长期资金增持",
+                source="公告",
+                published_at="2026-06-30 10:40:00+08:00",
+                symbol="600036",
+                name="招商银行",
+                impact="positive",
+                category="资本运作",
+                inference="银行方向关注度抬升。",
+            ),
+        ),
+        warnings=(),
+    )
+    picks = [
+        PickResult(
+            symbol="300750",
+            name="宁德时代",
+            date="2026-06-30",
+            close=220.0,
+            score=70.0,
+            rating="watch",
+            entry_type="relative_strength",
+            ideal_buy=220.0,
+            stop_loss=210.0,
+            take_profit=240.0,
+            position="watch",
+        ),
+        PickResult(
+            symbol="600036",
+            name="招商银行",
+            date="2026-06-30",
+            close=45.0,
+            score=66.0,
+            rating="watch",
+            entry_type="relative_strength",
+            ideal_buy=45.0,
+            stop_loss=43.0,
+            take_profit=49.0,
+            position="watch",
+        ),
+    ]
+
+    monkeypatch.setattr(
+        cli_mod,
+        "_build_runtime_catalyst_report",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("should reuse preview report")
+        ),
+    )
+    filtered = cli_mod._load_runtime_market_context_catalyst_report(
+        preview_report=preview_report,
+        preview_symbols=("300750", "600036", "688981"),
+        picks=picks,
+        task_id="intraday",
+    )
+
+    assert filtered is not None
+    assert [event.symbol for event in filtered.events] == ["", "300750", "600036"]
+
+
+def test_load_runtime_market_context_catalyst_report_refetches_when_preview_is_incomplete(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import aqsp.cli as cli_mod
+    from aqsp.core.types import PickResult
+
+    seen: dict[str, object] = {}
+
+    def fake_build_runtime_catalyst_report(picks, *, task_id: str):
+        seen["symbols"] = tuple(pick.symbol for pick in picks)
+        seen["task_id"] = task_id
+        return "rebuilt-report"
+
+    monkeypatch.setattr(
+        cli_mod,
+        "_build_runtime_catalyst_report",
+        fake_build_runtime_catalyst_report,
+    )
+    picks = [
+        PickResult(
+            symbol="300750",
+            name="宁德时代",
+            date="2026-06-30",
+            close=220.0,
+            score=70.0,
+            rating="watch",
+            entry_type="relative_strength",
+            ideal_buy=220.0,
+            stop_loss=210.0,
+            take_profit=240.0,
+            position="watch",
+        ),
+        PickResult(
+            symbol="600036",
+            name="招商银行",
+            date="2026-06-30",
+            close=45.0,
+            score=66.0,
+            rating="watch",
+            entry_type="relative_strength",
+            ideal_buy=45.0,
+            stop_loss=43.0,
+            take_profit=49.0,
+            position="watch",
+        ),
+    ]
+
+    report = cli_mod._load_runtime_market_context_catalyst_report(
+        preview_report="preview-report",
+        preview_symbols=("300750",),
+        picks=picks,
+        task_id="intraday",
+    )
+
+    assert report == "rebuilt-report"
+    assert seen["symbols"] == ("300750", "600036")
+    assert seen["task_id"] == "intraday"
+
+
+def test_build_runtime_catalyst_report_enables_cache_for_intraday(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import aqsp.cli as cli_mod
+    from aqsp.core.types import PickResult
+
+    seen: dict[str, object] = {}
+
+    def fake_build_catalyst_report(
+        *, symbols=(), symbol_names=None, config=None, **_kwargs
+    ):
+        seen["symbols"] = symbols
+        seen["symbol_names"] = symbol_names
+        seen["cache_path"] = getattr(config, "cache_path", "")
+        seen["cache_ttl_seconds"] = getattr(config, "cache_ttl_seconds", 0.0)
+        seen["max_stale_cache_age_seconds"] = getattr(
+            config,
+            "max_stale_cache_age_seconds",
+            0.0,
+        )
+        seen["max_news_age_days"] = getattr(config, "max_news_age_days", 0)
+        seen["allow_stale_cache_on_failure"] = getattr(
+            config, "allow_stale_cache_on_failure", False
+        )
+        return "ok"
+
+    monkeypatch.setattr(
+        "aqsp.news.catalysts.build_catalyst_report",
+        fake_build_catalyst_report,
+    )
+    result = cli_mod._build_runtime_catalyst_report(
+        [
+            PickResult(
+                symbol="300750",
+                name="宁德时代",
+                date="2026-06-30",
+                close=220.0,
+                score=70.0,
+                rating="watch",
+                entry_type="relative_strength",
+                ideal_buy=220.0,
+                stop_loss=210.0,
+                take_profit=240.0,
+                position="watch",
+            )
+        ],
+        task_id="intraday",
+    )
+
+    assert result == "ok"
+    assert seen["symbols"] == ("300750",)
+    assert seen["symbol_names"] == {"300750": "宁德时代"}
+    assert seen["cache_path"] == "data/runtime/catalyst_report_cache.json"
+    assert seen["cache_ttl_seconds"] == 120.0
+    assert seen["max_stale_cache_age_seconds"] == 30 * 60
+    assert seen["max_news_age_days"] == 5
+    assert seen["allow_stale_cache_on_failure"] is True
+
+
+def test_apply_debate_results_to_picks_keeps_runtime_score_when_override_disabled(
+    monkeypatch, tmp_path: Path
+) -> None:
+    import aqsp.cli as cli_mod
+    from aqsp.briefing.debate import DebateResult
+    from aqsp.core.types import PickResult
+
+    goal_switch_path = tmp_path / "goal_switches.yaml"
+    goal_switch_path.write_text(
+        """
+version: "test"
+mode: short_term_realtime
+switches:
+  multi_agent_runtime_override:
+    enabled: false
+    purpose: no runtime override
+""".strip(),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AQSP_GOAL_SWITCHES", str(goal_switch_path))
+    picks = [
+        PickResult(
+            symbol="300750",
+            name="宁德时代",
+            date="2026-06-30",
+            close=220.0,
+            score=70.0,
+            rating="watch",
+            entry_type="relative_strength",
+            ideal_buy=220.0,
+            stop_loss=210.0,
+            take_profit=240.0,
+            position="watch",
+        )
+    ]
+    debate_results = [
+        DebateResult(
+            debate_id="d1",
+            symbol="300750",
+            name="宁德时代",
+            original_score=70.0,
+            adjusted_score=76.0,
+            rating="watch",
+            final_consensus="倾向优先纸面复核",
+            recommended_adjustment="raise",
+            research_verdict="倾向优先纸面复核",
+            support_points=("量价共振仍在延续。",),
+        )
+    ]
+
+    updated, rewritten = cli_mod._apply_debate_results_to_picks(picks, debate_results)
+
+    assert rewritten == 0
+    assert updated[0].score == 70.0
+    assert updated[0].recommended_adjustment == "keep"
+    assert updated[0].adjusted_score == 0.0
+    assert "debate_recommended_adjustment" not in updated[0].metrics
+    assert "debate_adjusted_score" not in updated[0].metrics
+    assert updated[0].metrics["debate_research_verdict"] == "倾向优先纸面复核"
+    assert updated[0].metrics["support_points"] == ["量价共振仍在延续。"]
+
+
+def test_apply_debate_results_to_picks_ignores_runtime_override_switch(
+    monkeypatch, tmp_path: Path
+) -> None:
+    import aqsp.cli as cli_mod
+    from aqsp.briefing.debate import DebateResult
+    from aqsp.core.types import PickResult
+
+    goal_switch_path = tmp_path / "goal_switches.yaml"
+    goal_switch_path.write_text(
+        """
+version: "test"
+mode: short_term_realtime
+switches:
+  multi_agent_runtime_override:
+    enabled: true
+            purpose: obsolete switch must not affect ordering
+""".strip(),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AQSP_GOAL_SWITCHES", str(goal_switch_path))
+    picks = [
+        PickResult(
+            symbol="300750",
+            name="宁德时代",
+            date="2026-06-30",
+            close=220.0,
+            score=70.0,
+            rating="watch",
+            entry_type="relative_strength",
+            ideal_buy=220.0,
+            stop_loss=210.0,
+            take_profit=240.0,
+            position="watch",
+        )
+    ]
+    debate_results = [
+        DebateResult(
+            debate_id="d1",
+            symbol="300750",
+            name="宁德时代",
+            original_score=70.0,
+            adjusted_score=76.0,
+            rating="watch",
+            final_consensus="倾向优先纸面复核",
+            recommended_adjustment="raise",
+        )
+    ]
+
+    updated, rewritten = cli_mod._apply_debate_results_to_picks(picks, debate_results)
+
+    assert rewritten == 0
+    assert updated[0].recommended_adjustment == "keep"
+    assert updated[0].adjusted_score == 0.0
+    assert updated[0].debate_consensus == "倾向优先纸面复核"
 
 
 def test_fetch_special_strategy_frames_requires_today_intraday(monkeypatch) -> None:
@@ -143,7 +785,7 @@ def test_fetch_special_strategy_frames_requires_today_intraday(monkeypatch) -> N
         def __init__(self, _source) -> None:
             pass
 
-        def merge_intraday_bar_into_daily(self, *_args, **_kwargs):
+        def merge_intraday_bar_into_daily_with_coverage(self, *_args, **_kwargs):
             raise MissingDataError("600000", reason="分时数据不含 2026-06-26 当日 bar")
 
     monkeypatch.setattr(cli_mod, "IntradayService", FakeIntradayService)
@@ -157,7 +799,131 @@ def test_fetch_special_strategy_frames_requires_today_intraday(monkeypatch) -> N
         )
 
 
-def test_special_strategy_runtime_ready_requires_enabled_and_regime(monkeypatch) -> None:
+def test_fetch_special_strategy_frames_blocks_historical_only_live_short_source(
+    monkeypatch,
+) -> None:
+    import aqsp.cli as cli_mod
+
+    monkeypatch.setattr(
+        cli_mod,
+        "_fetch_frames_for_cli_with_metadata",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("should not fetch historical-only live_short source")
+        ),
+    )
+
+    with pytest.raises(DataError, match="sqlite_db 不适合 live_short"):
+        cli_mod._fetch_special_strategy_frames(
+            "sqlite_db",
+            ["600000"],
+            benchmark_symbol="000300",
+        )
+
+
+def test_live_short_rejects_candidate_actual_source() -> None:
+    import aqsp.cli as cli_mod
+
+    allowed, reason = cli_mod._runtime_actual_source_workload_allowed(
+        "auto",
+        "akshare",
+        workload="live_short",
+    )
+
+    assert allowed is False
+    assert "仅可作为 observation 层" in reason
+
+
+def test_force_intraday_observation_keeps_score_but_blocks_review() -> None:
+    import aqsp.cli as cli_mod
+    from aqsp.core.types import PickResult
+
+    pick = PickResult(
+        symbol="600000",
+        name="测试标的",
+        date="2026-06-26",
+        close=10.0,
+        score=88.0,
+        rating="buy_candidate",
+        entry_type="next_open",
+        ideal_buy=10.0,
+        stop_loss=9.4,
+        take_profit=11.0,
+        position="10%-30%",
+        strategies=("volume_breakout",),
+        reasons=("放量",),
+        risks=(),
+    )
+
+    observed = cli_mod._force_intraday_observation(
+        [pick],
+        missing_symbols=("000300",),
+    )
+
+    assert observed[0].score == 88.0
+    assert observed[0].rating == "buy_candidate"
+    assert observed[0].metrics["observation_only"] is True
+    assert observed[0].metrics["intraday_missing_symbols"] == ("000300",)
+    assert observed[0].metrics["candidate_review_priority"] == "low"
+    assert observed[0].metrics["portfolio_action"] == "observation_only"
+
+
+def test_relevant_intraday_missing_symbols_ignores_unrelated_pool_gaps() -> None:
+    import aqsp.cli as cli_mod
+    from aqsp.core.types import PickResult
+
+    pick = PickResult(
+        symbol="688981",
+        name="中芯国际",
+        date="2026-07-14",
+        close=100.0,
+        score=80.0,
+        rating="buy_candidate",
+        entry_type="intraday",
+        ideal_buy=100.0,
+        stop_loss=95.0,
+        take_profit=110.0,
+        position="medium",
+    )
+
+    assert cli_mod._relevant_intraday_missing_symbols(
+        [pick],
+        missing_symbols=("000004", "688981", "000300"),
+        benchmark_symbol="000300",
+    ) == ("688981", "000300")
+
+
+def test_fetch_special_strategy_frames_blocks_history_actual_source_after_fallback(
+    monkeypatch,
+) -> None:
+    import aqsp.cli as cli_mod
+
+    monkeypatch.setattr(
+        cli_mod,
+        "_fetch_frames_for_cli_with_metadata",
+        lambda *_args, **_kwargs: (
+            {"600000": _fresh_frame("2026-06-26")},
+            "tdx_vipdoc",
+        ),
+    )
+    monkeypatch.setattr(
+        cli_mod,
+        "_get_source",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("should not build intraday service for historical fallback")
+        ),
+    )
+
+    with pytest.raises(DataError, match="请求源 auto 实际落到 tdx_vipdoc"):
+        cli_mod._fetch_special_strategy_frames(
+            "auto",
+            ["600000"],
+            benchmark_symbol="",
+        )
+
+
+def test_special_strategy_runtime_ready_requires_enabled_and_regime(
+    monkeypatch,
+) -> None:
     import aqsp.cli as cli_mod
 
     class FakeThresholdConfig:
@@ -272,6 +1038,267 @@ def test_run_evolve_uses_full_runtime_universe_when_auto_resolving_symbols(
     assert seen["days"] == 250
 
 
+def test_run_scheduled_intraday_blocks_historical_only_source_before_fetch(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import aqsp.cli as cli_mod
+
+    monkeypatch.setenv("AQSP_RUN_TASK_ID", "intraday")
+    monkeypatch.setattr(
+        cli_mod,
+        "_resolve_run_symbols",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("should not resolve symbols for blocked source")
+        ),
+    )
+
+    args = Namespace(
+        mode="open",
+        symbols="",
+        source="sqlite_db",
+        pool="all",
+        limit=10,
+        max_universe=0,
+        min_avg_amount=50_000_000,
+        max_data_lag_days=1,
+        enable_online_factors=False,
+        csv="",
+        benchmark_symbol="000300",
+        ledger="data/intraday_predictions.jsonl",
+        report="",
+        output_csv="",
+        skip_validation=True,
+        notify=False,
+        fee_bps=None,
+        slippage_bps=None,
+        skip_pit_financials=False,
+    )
+
+    assert cli_mod._run_scheduled_legacy(args) == 1
+    assert "sqlite_db 不适合 live_short" in capsys.readouterr().out
+
+
+def test_run_scheduled_intraday_merges_today_intraday_before_freshness(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import aqsp.cli as cli_mod
+
+    merged_frames = {"600519": _fresh_frame("2026-07-09")}
+    seen: dict[str, object] = {}
+
+    monkeypatch.setenv("AQSP_RUN_TASK_ID", "intraday")
+    monkeypatch.setattr(cli_mod, "_resolve_run_symbols", lambda *_, **__: ["600519"])
+    monkeypatch.setattr(
+        cli_mod,
+        "_fetch_frames_for_cli_with_metadata",
+        lambda *_, **__: (_ for _ in ()).throw(
+            AssertionError("intraday run must use merged intraday frames")
+        ),
+    )
+
+    def fake_fetch_special(source, symbols, **kwargs):
+        seen["source"] = source
+        seen["symbols"] = symbols
+        seen["benchmark_symbol"] = kwargs.get("benchmark_symbol")
+        return merged_frames, "eastmoney"
+
+    def fake_assert_fresh_data(frames, max_data_lag_days, **kwargs):
+        seen["frames"] = frames
+        seen["max_data_lag_days"] = max_data_lag_days
+        seen["workload"] = kwargs.get("workload")
+        raise RuntimeError("stop after merged intraday freshness")
+
+    monkeypatch.setattr(cli_mod, "_fetch_special_strategy_frames", fake_fetch_special)
+    monkeypatch.setattr(cli_mod, "assert_fresh_data", fake_assert_fresh_data)
+
+    args = Namespace(
+        mode="open",
+        symbols="",
+        source="eastmoney",
+        pool="all",
+        limit=10,
+        max_universe=0,
+        min_avg_amount=50_000_000,
+        max_data_lag_days=1,
+        enable_online_factors=False,
+        csv="",
+        benchmark_symbol="000300",
+        ledger="data/intraday_predictions.jsonl",
+        report="",
+        output_csv="",
+        skip_validation=True,
+        notify=False,
+        fee_bps=None,
+        slippage_bps=None,
+        skip_pit_financials=False,
+        as_of="",
+    )
+
+    with pytest.raises(RuntimeError, match="merged intraday freshness"):
+        cli_mod._run_scheduled_legacy(args)
+
+    assert seen["source"] == "eastmoney"
+    assert seen["symbols"] == ["600519"]
+    assert seen["benchmark_symbol"] == "000300"
+    assert seen["frames"] is merged_frames
+    assert seen["max_data_lag_days"] == 1
+    assert seen["workload"] == "live_short"
+
+
+def test_run_scheduled_live_short_task_requires_intraday_overlay(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import aqsp.cli as cli_mod
+
+    merged_frames = {"600519": _fresh_frame("2026-07-09")}
+    seen: dict[str, object] = {}
+
+    monkeypatch.setenv("AQSP_RUN_TASK_ID", "live_short")
+    monkeypatch.setattr(cli_mod, "_resolve_run_symbols", lambda *_, **__: ["600519"])
+    monkeypatch.setattr(
+        cli_mod,
+        "_fetch_frames_for_cli_with_metadata",
+        lambda *_, **__: (_ for _ in ()).throw(
+            AssertionError("live_short task must use intraday overlay")
+        ),
+    )
+
+    def fake_fetch_special(source, symbols, **kwargs):
+        seen["source"] = source
+        seen["symbols"] = symbols
+        seen["benchmark_symbol"] = kwargs.get("benchmark_symbol")
+        return merged_frames, "eastmoney"
+
+    def fake_assert_fresh_data(frames, max_data_lag_days, **kwargs):
+        seen["frames"] = frames
+        seen["workload"] = kwargs.get("workload")
+        raise RuntimeError("stop after live_short overlay")
+
+    monkeypatch.setattr(cli_mod, "_fetch_special_strategy_frames", fake_fetch_special)
+    monkeypatch.setattr(cli_mod, "assert_fresh_data", fake_assert_fresh_data)
+
+    args = Namespace(
+        mode="open",
+        symbols="600519",
+        source="eastmoney",
+        pool="",
+        limit=10,
+        max_universe=0,
+        min_avg_amount=50_000_000,
+        max_data_lag_days=1,
+        enable_online_factors=False,
+        csv="",
+        benchmark_symbol="000300",
+        ledger="data/intraday_predictions.jsonl",
+        report="",
+        output_csv="",
+        skip_validation=True,
+        notify=False,
+        fee_bps=None,
+        slippage_bps=None,
+        skip_pit_financials=False,
+        as_of="",
+        enable_debate=False,
+    )
+
+    with pytest.raises(RuntimeError, match="stop after live_short overlay"):
+        cli_mod._run_scheduled_legacy(args)
+
+    assert seen["source"] == "eastmoney"
+    assert seen["symbols"] == ["600519"]
+    assert seen["benchmark_symbol"] == "000300"
+    assert seen["frames"] is merged_frames
+    assert seen["workload"] == "live_short"
+
+
+def test_run_scheduled_daily_blocks_history_only_source_without_as_of(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import aqsp.cli as cli_mod
+
+    monkeypatch.delenv("AQSP_RUN_TASK_ID", raising=False)
+    monkeypatch.setattr(
+        cli_mod,
+        "_resolve_run_symbols",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("should not resolve symbols for blocked source")
+        ),
+    )
+
+    args = Namespace(
+        mode="close",
+        symbols="",
+        csv="",
+        source="sqlite_db",
+        pool="all",
+        limit=10,
+        max_universe=0,
+        min_avg_amount=50_000_000,
+        max_data_lag_days=1,
+        enable_online_factors=False,
+        benchmark_symbol="000300",
+        ledger="data/predictions.jsonl",
+        report="",
+        output_csv="",
+        skip_validation=True,
+        notify=False,
+        fee_bps=None,
+        slippage_bps=None,
+        skip_pit_financials=False,
+        as_of="",
+    )
+
+    assert cli_mod._run_scheduled_legacy(args) == 1
+    assert "sqlite_db 不适合 live_short" in capsys.readouterr().out
+
+
+def test_run_scheduled_daily_blocks_history_actual_source_after_fallback(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import aqsp.cli as cli_mod
+
+    monkeypatch.delenv("AQSP_RUN_TASK_ID", raising=False)
+    monkeypatch.setattr(
+        cli_mod,
+        "_resolve_run_symbols",
+        lambda *_args, **_kwargs: ["600519"],
+    )
+    monkeypatch.setattr(
+        cli_mod,
+        "_fetch_frames_for_cli_with_metadata",
+        lambda *_args, **_kwargs: (
+            {"600519": _fresh_frame("2026-06-26")},
+            "tdx_vipdoc",
+        ),
+    )
+
+    args = Namespace(
+        mode="close",
+        symbols="600519",
+        csv="",
+        source="auto",
+        pool="all",
+        limit=10,
+        max_universe=0,
+        min_avg_amount=50_000_000,
+        max_data_lag_days=1,
+        enable_online_factors=False,
+        benchmark_symbol="",
+        ledger="data/predictions.jsonl",
+        report="",
+        output_csv="",
+        skip_validation=True,
+        notify=False,
+        fee_bps=None,
+        slippage_bps=None,
+        skip_pit_financials=False,
+        as_of="",
+    )
+
+    assert cli_mod._run_scheduled_legacy(args) == 1
+    assert "请求源 auto 实际落到 tdx_vipdoc" in capsys.readouterr().out
+
+
 def test_run_scheduled_keeps_learning_weights_proposal_only() -> None:
     import aqsp.cli as cli_mod
 
@@ -279,8 +1306,145 @@ def test_run_scheduled_keeps_learning_weights_proposal_only() -> None:
 
     assert "strategy_weights_from_ledger(args.ledger)" not in source
     assert "learner.compute_weights(ledger_df)" in source
-    assert "strategy_weights_for_regime(thresholds, regime)" in source
+    assert "_runtime_strategy_weights(thresholds, regime)" in source
     assert "未应用到本次筛选" in source
+
+
+def test_run_screen_uses_freshness_guard_for_non_csv_sources() -> None:
+    import aqsp.cli as cli_mod
+
+    source = inspect.getsource(cli_mod.run_screen)
+
+    assert "assert_fresh_data(" in source
+    assert "latest_trade_date(frames)" in source
+    assert "if args.csv" in source
+    assert "_runtime_strategy_weights(thresholds, regime)" in source
+
+
+def test_run_screen_blocks_history_only_source_before_fetch(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import aqsp.cli as cli_mod
+
+    monkeypatch.setattr(
+        cli_mod,
+        "_fetch_frames_for_cli_with_metadata",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("should not fetch frames for blocked source")
+        ),
+    )
+
+    args = Namespace(
+        csv="",
+        source="sqlite_db",
+        symbols="600519",
+        benchmark_symbol="000300",
+        pool="",
+        min_avg_amount=50_000_000,
+        mode="close",
+        limit=1,
+        max_data_lag_days=0,
+        report="",
+        output_csv="",
+        enable_online_factors=False,
+    )
+
+    assert cli_mod.run_screen(args) == 1
+    assert "sqlite_db 不适合 live_short" in capsys.readouterr().out
+
+
+def test_run_screen_rejects_csv_as_live_short_input(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import aqsp.cli as cli_mod
+
+    monkeypatch.setattr(
+        cli_mod,
+        "load_csv",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("historical CSV must be rejected before loading")
+        ),
+    )
+    args = Namespace(
+        csv="history.csv",
+        source="auto",
+        symbols="",
+        benchmark_symbol="000300",
+        pool="",
+        min_avg_amount=50_000_000,
+        mode="close",
+        limit=1,
+        max_data_lag_days=0,
+        report="",
+        output_csv="",
+        enable_online_factors=False,
+    )
+
+    assert cli_mod.run_screen(args) == 1
+    assert "不能形成 live_short 候选" in capsys.readouterr().out
+
+
+def test_scheduled_rejects_csv_even_with_as_of(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import aqsp.cli as cli_mod
+
+    monkeypatch.setattr("aqsp.core.time.is_trading_day", lambda _day: True)
+    args = Namespace(
+        csv="history.csv",
+        source="auto",
+        symbols="",
+        benchmark_symbol="000300",
+        pool="",
+        mode="close",
+        limit=1,
+        max_universe=0,
+        min_avg_amount=50_000_000,
+        max_data_lag_days=0,
+        enable_online_factors=False,
+        as_of="2026-06-22",
+        skip_validation=True,
+        ledger="data/predictions.jsonl",
+        report="",
+        output_csv="",
+        notify=False,
+    )
+
+    assert cli_mod._run_scheduled_legacy(args) == 1
+    assert "scheduled --csv" in capsys.readouterr().out
+
+
+def test_run_screen_blocks_history_actual_source_after_fallback(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import aqsp.cli as cli_mod
+
+    monkeypatch.setattr(
+        cli_mod,
+        "_fetch_frames_for_cli_with_metadata",
+        lambda *_args, **_kwargs: (
+            {"600519": _fresh_frame("2026-06-26")},
+            "tdx_vipdoc",
+        ),
+    )
+
+    args = Namespace(
+        csv="",
+        source="auto",
+        symbols="600519",
+        benchmark_symbol="",
+        pool="",
+        min_avg_amount=50_000_000,
+        mode="close",
+        limit=1,
+        max_data_lag_days=0,
+        report="",
+        output_csv="",
+        enable_online_factors=False,
+    )
+
+    assert cli_mod.run_screen(args) == 1
+    assert "请求源 auto 实际落到 tdx_vipdoc" in capsys.readouterr().out
 
 
 def test_run_scheduled_runtime_weights_exclude_learner_proposals() -> None:
@@ -289,27 +1453,89 @@ def test_run_scheduled_runtime_weights_exclude_learner_proposals() -> None:
     source = inspect.getsource(cli_mod._run_scheduled_legacy)
     proposal_at = source.index("weight_proposals = learner.compute_weights(ledger_df)")
     runtime_weight_at = source.index(
-        "weights = strategy_weights_for_regime(thresholds, regime)"
+        "weights = _runtime_strategy_weights(thresholds, regime)"
     )
-    snapshot_at = source.index("strategy_weights=weights")
+    snapshot_attach_at = source.index("_attach_runtime_weight_snapshot(")
+    snapshot_at = source.index("strategy_weights=weights", snapshot_attach_at)
 
-    assert proposal_at < runtime_weight_at < snapshot_at
+    assert proposal_at < runtime_weight_at < snapshot_attach_at < snapshot_at
     between = source[proposal_at:runtime_weight_at]
     assert "weights.update(weight_proposals)" not in between
     assert "weight_proposals[" not in source[runtime_weight_at:snapshot_at]
 
 
-def test_run_scheduled_executability_feedback_applies_runtime_downweights() -> None:
+def test_run_scheduled_executability_feedback_does_not_change_runtime_weights() -> None:
     import aqsp.cli as cli_mod
 
     source = inspect.getsource(cli_mod._run_scheduled_legacy)
-    feedback_at = source.index("executability_adjustments, executability_reasons = (")
+    runtime_weight_at = source.index(
+        "weights = _runtime_strategy_weights(thresholds, regime)"
+    )
     config_at = source.index("config = ScreeningConfig(")
-    between = source[feedback_at:config_at]
 
-    assert "不可成交反馈降权:" in between
-    assert "weights[strategy_id]" in between
-    assert "strategy_weight_reasons[strategy_id] = reason" in between
+    assert "strategy_executability_weight_adjustments" not in source
+    assert "不可成交反馈降权:" not in source
+    assert "weights[strategy_id]" not in source[runtime_weight_at:config_at]
+
+
+def test_runtime_strategy_weights_are_resolved_from_strategy_mix(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import aqsp.cli as cli_mod
+    from aqsp.regime.strategy_mixer import RuntimeStrategyMix
+    from aqsp.strategies.thresholds import Thresholds
+
+    expected = {"rps_momentum": 1.23, "n_rebound": 0.77}
+    mix = RuntimeStrategyMix(
+        regime="stable_bull",
+        regime_label="稳定上涨",
+        strategy_weights=tuple(expected.items()),
+    )
+
+    monkeypatch.setattr(
+        cli_mod,
+        "build_runtime_strategy_mix",
+        lambda regime, thresholds: mix,
+    )
+    assert cli_mod._runtime_strategy_weights(Thresholds(), "stable_bull") == expected
+
+
+def test_runtime_weight_snapshot_is_attached_without_changing_score() -> None:
+    import aqsp.cli as cli_mod
+    from aqsp.core.types import PickResult
+    from aqsp.strategies.thresholds import Thresholds
+
+    pick = PickResult(
+        symbol="600000",
+        name="测试标的",
+        date="2026-07-13",
+        close=10.0,
+        score=72.5,
+        rating="buy_candidate",
+        entry_type="next_open",
+        ideal_buy=10.0,
+        stop_loss=9.5,
+        take_profit=11.0,
+        position="10%-30%",
+    )
+    updated = cli_mod._attach_runtime_weight_snapshot(
+        [pick],
+        thresholds=Thresholds(),
+        regime="stable_bull",
+        strategy_weights={"rps_momentum": 1.06},
+        strategy_weight_reasons={},
+    )[0]
+
+    assert updated.score == 72.5
+    assert updated.metrics["strategy_weight_snapshot"] == {
+        "source": "runtime_strategy_mix",
+        "regime": "stable_bull",
+        "strategy_weights": {"rps_momentum": 1.06},
+        "strategy_weight_reasons": {},
+        "base_blend_weight": 0.7,
+        "regime_blend_weight": 0.3,
+        "thresholds_version": Thresholds().version,
+    }
 
 
 def test_formal_runtime_ledger_path_uses_formal_ledger_for_intraday(
@@ -340,6 +1566,78 @@ def test_formal_runtime_ledger_path_uses_formal_ledger_for_intraday(
         )
         == "data/predictions.jsonl"
     )
+
+
+def test_should_build_market_context_allows_intraday_when_live_short_enabled(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import aqsp.cli as cli_mod
+
+    goal_switch_path = tmp_path / "goal_switches.yaml"
+    goal_switch_path.write_text(
+        """
+version: "test"
+mode: short_term_realtime
+switches:
+  live_short_runtime:
+    enabled: true
+    purpose: allow realtime intraday context
+""".strip(),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AQSP_GOAL_SWITCHES", str(goal_switch_path))
+
+    assert cli_mod._should_build_market_context("intraday") is True
+    assert cli_mod._should_build_market_context("midday") is True
+
+
+def test_should_build_market_context_blocks_intraday_when_live_short_disabled(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import aqsp.cli as cli_mod
+
+    goal_switch_path = tmp_path / "goal_switches.yaml"
+    goal_switch_path.write_text(
+        """
+version: "test"
+mode: short_term_realtime
+switches:
+  live_short_runtime:
+    enabled: false
+    purpose: disable realtime intraday context
+""".strip(),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AQSP_GOAL_SWITCHES", str(goal_switch_path))
+
+    assert cli_mod._should_build_market_context("intraday") is False
+    assert cli_mod._should_build_market_context("daily") is True
+
+
+def test_market_context_source_timeout_seconds_shrinks_for_intraday() -> None:
+    import aqsp.cli as cli_mod
+
+    assert cli_mod._market_context_source_timeout_seconds("intraday") == 1.0
+    assert cli_mod._market_context_source_timeout_seconds("daily") == 4.0
+
+
+def test_runtime_catalyst_max_news_age_days_shrinks_for_intraday() -> None:
+    import aqsp.cli as cli_mod
+
+    assert cli_mod._runtime_catalyst_max_news_age_days("intraday") == 5
+    assert cli_mod._runtime_catalyst_max_news_age_days("daily") == 30
+
+
+def test_run_scheduled_routes_market_context_through_shared_task_gate() -> None:
+    import aqsp.cli as cli_mod
+
+    source = inspect.getsource(cli_mod._run_scheduled_legacy)
+
+    assert (
+        "if screened_picks and _should_build_market_context(normalized_task_id):"
+        in source
+    )
+    assert "if _should_build_market_context(normalized_task_id):" in source
 
 
 def test_run_scheduled_skips_runtime_chain_on_non_trading_day(
@@ -421,12 +1719,309 @@ def test_run_scheduled_validates_ledger_before_circuit_breaker_pnl() -> None:
 
     source = inspect.getsource(cli_mod._run_scheduled_legacy)
 
-    assert source.index("validate_predictions(formal_ledger_path, frames)") < source.index(
-        "_compute_real_pnl("
+    assert source.index(
+        "validate_predictions(formal_ledger_path, frames)"
+    ) < source.index("_compute_real_pnl(")
+
+
+def test_disabled_circuit_breaker_status_is_not_triggered() -> None:
+    from aqsp.cli import _disabled_circuit_breaker_status
+
+    status = _disabled_circuit_breaker_status(
+        daily_pnl_pct=-99.0,
+        weekly_pnl_pct=-99.0,
+        monthly_pnl_pct=-99.0,
     )
 
+    assert status.triggered is False
+    assert status.level == "disabled"
+    assert "AQSP_DISABLE_CIRCUIT_BREAKER" in status.reason
 
-def test_run_screen_injects_threshold_screening_config(monkeypatch) -> None:
+
+def test_intraday_circuit_breaker_disable_requires_explicit_intraday_switch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import aqsp.cli as cli_mod
+
+    monkeypatch.delenv("AQSP_INTRADAY_DISABLE_CIRCUIT_BREAKER", raising=False)
+    monkeypatch.setenv("AQSP_DISABLE_CIRCUIT_BREAKER", "true")
+    assert cli_mod._circuit_breaker_disabled(task_id="intraday") is False
+
+    monkeypatch.setenv("AQSP_INTRADAY_DISABLE_CIRCUIT_BREAKER", "true")
+    assert cli_mod._circuit_breaker_disabled(task_id="intraday") is True
+    status = cli_mod._disabled_circuit_breaker_status(
+        daily_pnl_pct=-1.0,
+        weekly_pnl_pct=-2.0,
+        monthly_pnl_pct=-3.0,
+        switch_name=cli_mod._circuit_breaker_disable_switch_name("intraday"),
+    )
+    assert "AQSP_INTRADAY_DISABLE_CIRCUIT_BREAKER" in status.reason
+
+
+def test_run_scheduled_as_of_controls_universe_and_fetch_end_date(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import aqsp.cli as cli_mod
+
+    seen: dict[str, object] = {}
+
+    def fake_resolve_run_symbols(_source, _symbols, **kwargs):
+        seen["as_of"] = kwargs["as_of"]
+        return ["600519"]
+
+    def fake_fetch_frames_for_cli_with_metadata(_source, _symbols, **kwargs):
+        seen["end_date"] = kwargs["end_date"]
+        raise RuntimeError("stop after date wiring")
+
+    monkeypatch.setattr(cli_mod, "_resolve_run_symbols", fake_resolve_run_symbols)
+    monkeypatch.setattr(
+        cli_mod,
+        "_fetch_frames_for_cli_with_metadata",
+        fake_fetch_frames_for_cli_with_metadata,
+    )
+
+    args = Namespace(
+        mode="close",
+        symbols="",
+        csv="",
+        source="sqlite_db",
+        limit=5,
+        max_universe=3000,
+        min_avg_amount=50_000_000,
+        max_data_lag_days=3,
+        enable_online_factors=False,
+        report="",
+        output_csv="",
+        ledger="data/predictions.jsonl",
+        horizon_days=3,
+        fee_bps=None,
+        slippage_bps=None,
+        benchmark_symbol="",
+        skip_validation=True,
+        notify=False,
+        enable_debate=False,
+        pool="",
+        as_of="2026-07-06",
+    )
+
+    with pytest.raises(RuntimeError, match="stop after date wiring"):
+        cli_mod._run_scheduled_legacy(args)
+
+    assert seen == {
+        "as_of": date(2026, 7, 6),
+        "end_date": date(2026, 7, 6),
+    }
+
+
+def test_run_scheduled_live_short_caps_env_lag_before_freshness(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import aqsp.cli as cli_mod
+
+    seen: dict[str, object] = {}
+    frames = {"600519": _fresh_frame("2026-07-08")}
+
+    monkeypatch.delenv("AQSP_RUN_TASK_ID", raising=False)
+    monkeypatch.setenv("AQSP_MAX_DATA_LAG_DAYS", "3")
+    monkeypatch.setattr(cli_mod, "_resolve_run_symbols", lambda *_, **__: ["600519"])
+    monkeypatch.setattr(
+        cli_mod,
+        "_fetch_frames_for_cli_with_metadata",
+        lambda *_, **__: (frames, "sina"),
+    )
+
+    def fake_assert_fresh_data(_frames, max_data_lag_days, **kwargs):
+        seen["max_data_lag_days"] = max_data_lag_days
+        seen["workload"] = kwargs.get("workload")
+        raise RuntimeError("stop after freshness")
+
+    monkeypatch.setattr(cli_mod, "assert_fresh_data", fake_assert_fresh_data)
+
+    args = Namespace(
+        mode="close",
+        symbols="600519",
+        csv="",
+        source="auto",
+        limit=5,
+        max_universe=3000,
+        min_avg_amount=50_000_000,
+        max_data_lag_days=0,
+        enable_online_factors=False,
+        report="",
+        output_csv="",
+        ledger="data/predictions.jsonl",
+        horizon_days=3,
+        fee_bps=None,
+        slippage_bps=None,
+        benchmark_symbol="",
+        skip_validation=True,
+        notify=False,
+        enable_debate=False,
+        pool="",
+        as_of="",
+    )
+
+    with pytest.raises(RuntimeError, match="stop after freshness"):
+        cli_mod._run_scheduled_legacy(args)
+
+    assert seen["max_data_lag_days"] == 1
+    assert seen["workload"] == "live_short"
+
+
+def test_run_scheduled_as_of_keeps_configured_lag_for_history(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import aqsp.cli as cli_mod
+
+    seen: dict[str, int] = {}
+    frames = {"600519": _fresh_frame("2026-07-06")}
+
+    monkeypatch.setenv("AQSP_MAX_DATA_LAG_DAYS", "3")
+    monkeypatch.setattr(cli_mod, "_resolve_run_symbols", lambda *_, **__: ["600519"])
+    monkeypatch.setattr(
+        cli_mod,
+        "_fetch_frames_for_cli_with_metadata",
+        lambda *_, **__: (frames, "sqlite_db"),
+    )
+
+    def fake_assert_fresh_data(_frames, max_data_lag_days, **kwargs):
+        seen["max_data_lag_days"] = max_data_lag_days
+        seen["workload"] = kwargs.get("workload")
+        raise RuntimeError("stop after freshness")
+
+    monkeypatch.setattr(cli_mod, "assert_fresh_data", fake_assert_fresh_data)
+
+    args = Namespace(
+        mode="close",
+        symbols="600519",
+        csv="",
+        source="sqlite_db",
+        limit=5,
+        max_universe=3000,
+        min_avg_amount=50_000_000,
+        max_data_lag_days=0,
+        enable_online_factors=False,
+        report="",
+        output_csv="",
+        ledger="data/predictions.jsonl",
+        horizon_days=3,
+        fee_bps=None,
+        slippage_bps=None,
+        benchmark_symbol="",
+        skip_validation=True,
+        notify=False,
+        enable_debate=False,
+        pool="",
+        as_of="2026-07-06",
+    )
+
+    with pytest.raises(RuntimeError, match="stop after freshness"):
+        cli_mod._run_scheduled_legacy(args)
+
+    assert seen["max_data_lag_days"] == 3
+    assert seen["workload"] is None
+
+
+def test_run_screen_live_short_caps_env_lag_before_freshness(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import aqsp.cli as cli_mod
+
+    seen: dict[str, object] = {}
+    frames = {"600519": _fresh_frame("2026-07-08")}
+
+    monkeypatch.setenv("AQSP_MAX_DATA_LAG_DAYS", "3")
+    monkeypatch.setattr(
+        cli_mod,
+        "_fetch_frames_for_cli_with_metadata",
+        lambda *_, **__: (frames, "sina"),
+    )
+
+    def fake_assert_fresh_data(_frames, max_data_lag_days, **kwargs):
+        seen["max_data_lag_days"] = max_data_lag_days
+        seen["workload"] = kwargs.get("workload")
+        raise RuntimeError("stop after freshness")
+
+    monkeypatch.setattr(cli_mod, "assert_fresh_data", fake_assert_fresh_data)
+
+    args = Namespace(
+        mode="close",
+        symbols="600519",
+        csv="",
+        source="auto",
+        limit=5,
+        min_avg_amount=50_000_000,
+        max_data_lag_days=0,
+        report="",
+        output_csv="",
+        benchmark_symbol="",
+        pool="",
+    )
+
+    with pytest.raises(RuntimeError, match="stop after freshness"):
+        cli_mod.run_screen(args)
+
+    assert seen["max_data_lag_days"] == 1
+    assert seen["workload"] == "live_short"
+
+
+def test_run_screen_open_live_short_requires_intraday_overlay(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import aqsp.cli as cli_mod
+
+    merged_frames = {"600519": _fresh_frame("2026-07-09")}
+    seen: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        cli_mod,
+        "_fetch_frames_for_cli_with_metadata",
+        lambda *_, **__: (_ for _ in ()).throw(
+            AssertionError("open live_short screen must use intraday overlay")
+        ),
+    )
+
+    def fake_fetch_special(source, symbols, **kwargs):
+        seen["source"] = source
+        seen["symbols"] = symbols
+        seen["benchmark_symbol"] = kwargs.get("benchmark_symbol")
+        return merged_frames, "sina"
+
+    def fake_assert_fresh_data(frames, max_data_lag_days, **kwargs):
+        seen["frames"] = frames
+        seen["workload"] = kwargs.get("workload")
+        raise RuntimeError("stop after screen overlay")
+
+    monkeypatch.setattr(cli_mod, "_fetch_special_strategy_frames", fake_fetch_special)
+    monkeypatch.setattr(cli_mod, "assert_fresh_data", fake_assert_fresh_data)
+
+    args = Namespace(
+        mode="open",
+        symbols="600519",
+        csv="",
+        source="auto",
+        limit=5,
+        min_avg_amount=50_000_000,
+        max_data_lag_days=1,
+        report="",
+        output_csv="",
+        benchmark_symbol="000300",
+        pool="",
+    )
+
+    with pytest.raises(RuntimeError, match="stop after screen overlay"):
+        cli_mod.run_screen(args)
+
+    assert seen["source"] == "auto"
+    assert seen["symbols"] == ["600519"]
+    assert seen["benchmark_symbol"] == "000300"
+    assert seen["frames"] is merged_frames
+    assert seen["workload"] == "live_short"
+
+
+def test_run_screen_injects_threshold_screening_config(
+    monkeypatch, tmp_path: Path
+) -> None:
     import aqsp.cli as cli_mod
     from aqsp.core.types import PickResult
     from aqsp.strategies.thresholds import (
@@ -448,6 +2043,9 @@ def test_run_screen_injects_threshold_screening_config(monkeypatch) -> None:
                     "close": 1505.0,
                     "volume": 1000,
                     "amount": 150500000.0,
+                    "suspended": False,
+                    "limit_up": 1655.5,
+                    "limit_down": 1354.5,
                 }
             ]
         )
@@ -463,6 +2061,11 @@ def test_run_screen_injects_threshold_screening_config(monkeypatch) -> None:
         cli_mod, "_resolve_run_symbols", lambda *_args, **_kwargs: ["600519"]
     )
     monkeypatch.setattr(cli_mod, "latest_trade_date", lambda *_args: "2026-06-22")
+    monkeypatch.setattr(
+        cli_mod,
+        "assert_fresh_data",
+        lambda *_args, **_kwargs: date(2026, 6, 22),
+    )
     monkeypatch.setattr(cli_mod, "_runtime_data_lag_days", lambda *_args: 0)
     monkeypatch.setattr(
         cli_mod,
@@ -478,6 +2081,11 @@ def test_run_screen_injects_threshold_screening_config(monkeypatch) -> None:
         cli_mod,
         "_detect_runtime_regime",
         lambda *_args, **_kwargs: "stable_bull",
+    )
+    monkeypatch.setattr(
+        cli_mod,
+        "_runtime_regime_market_context_lines",
+        lambda *_args, **_kwargs: ("运行判定: HMM stable_bull",),
     )
     monkeypatch.setattr(
         cli_mod,
@@ -515,6 +2123,7 @@ def test_run_screen_injects_threshold_screening_config(monkeypatch) -> None:
     )
     monkeypatch.setattr(cli_mod, "to_dataframe", lambda picks: pd.DataFrame())
 
+    report_path = tmp_path / "screen.md"
     args = Namespace(
         csv="",
         source="auto",
@@ -524,7 +2133,8 @@ def test_run_screen_injects_threshold_screening_config(monkeypatch) -> None:
         min_avg_amount=50_000_000,
         mode="close",
         limit=1,
-        report="",
+        max_data_lag_days=999,
+        report=str(report_path),
         output_csv="",
         enable_online_factors=False,
     )
@@ -534,6 +2144,10 @@ def test_run_screen_injects_threshold_screening_config(monkeypatch) -> None:
     assert config.max_bias20 == 9.0
     assert config.stop_loss_buffer == 0.07
     assert config.max_position_pct == 0.12
+    report = report_path.read_text(encoding="utf-8")
+    assert "- 市场标签: stable_bull" in report
+    assert "- 运行判定: HMM stable_bull" in report
+    assert "- 市场标签: unknown" not in report
 
 
 def test_run_scheduled_composite_rescore_updates_frozen_pick_results(
@@ -707,13 +2321,13 @@ def test_run_scheduled_composite_rescore_updates_frozen_pick_results(
             name="贵州茅台",
             date=latest,
             close=1505.0,
-            score=60.0,
-            rating="buy_candidate",
+            score=40.0,
+            rating="watch",
             entry_type="next_open",
             ideal_buy=1505.0,
             stop_loss=1450.0,
             take_profit=1600.0,
-            position="10%-30%",
+            position="watch",
             strategies=("ma_pullback",),
             reasons=("趋势回踩",),
             risks=(),
@@ -795,12 +2409,15 @@ def test_run_scheduled_composite_rescore_updates_frozen_pick_results(
     exit_code = cli_mod.run_scheduled(args)
 
     assert exit_code == 0
-    rescored = captured["picks"]
-    assert [pick.symbol for pick in rescored] == ["600519", "000001"]
-    assert rescored[0].regime_score == 100.0
-    assert rescored[0].score == 72.0
-    assert rescored[1].regime_score == 33.33
-    assert rescored[1].score == 66.0
+    runtime_picks = captured["picks"]
+    by_symbol = {pick.symbol: pick for pick in runtime_picks}
+    assert by_symbol["600519"].regime_score == 0.0
+    assert by_symbol["600519"].score == 40.0
+    assert by_symbol["600519"].rating == "watch"
+    assert by_symbol["600519"].position == "watch"
+    assert by_symbol["000001"].regime_score == 0.0
+    assert by_symbol["000001"].score == 80.0
+    assert by_symbol["000001"].rating == "buy_candidate"
 
 
 def test_run_scheduled_skips_formal_ledger_writes_when_circuit_breaker_triggers(
@@ -834,6 +2451,11 @@ def test_run_scheduled_skips_formal_ledger_writes_when_circuit_breaker_triggers(
     monkeypatch.setattr(
         cli_mod,
         "_fetch_frames_for_cli_with_metadata",
+        lambda *_, **__: (frames, "eastmoney"),
+    )
+    monkeypatch.setattr(
+        cli_mod,
+        "_fetch_special_strategy_frames",
         lambda *_, **__: (frames, "eastmoney"),
     )
     monkeypatch.setattr(
@@ -1016,6 +2638,11 @@ def test_run_scheduled_intraday_keeps_observation_output_during_circuit_breaker(
     )
     monkeypatch.setattr(
         cli_mod,
+        "_fetch_special_strategy_frames",
+        lambda *_, **__: (frames, "eastmoney"),
+    )
+    monkeypatch.setattr(
+        cli_mod,
         "assert_fresh_data",
         lambda *_args, **_kwargs: datetime.fromisoformat(
             "2026-06-15T15:00:00+08:00"
@@ -1033,7 +2660,9 @@ def test_run_scheduled_intraday_keeps_observation_output_during_circuit_breaker(
         lambda *_args, **_kwargs: ("healthy", "ok", False),
     )
     monkeypatch.setattr(cli_mod, "validate_predictions", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(cli_mod, "_compute_real_pnl", lambda *_args, **_kwargs: (-4.0, 0.0, 0.0))
+    monkeypatch.setattr(
+        cli_mod, "_compute_real_pnl", lambda *_args, **_kwargs: (-4.0, 0.0, 0.0)
+    )
     monkeypatch.setattr(cli_mod, "_count_independent_signal_days", lambda *_, **__: 35)
     monkeypatch.setattr(cli_mod, "_detect_runtime_regime", lambda *_, **__: "")
     monkeypatch.setattr("aqsp.data.anomaly.detect_anomalies", lambda *_, **__: [])
@@ -1101,10 +2730,18 @@ def test_run_scheduled_intraday_keeps_observation_output_during_circuit_breaker(
             )
         ],
     )
-    monkeypatch.setattr(cli_mod, "_enrich_pick_names", lambda picks, *_args, **_kwargs: picks)
-    monkeypatch.setattr(cli_mod, "_annotate_candidate_status", lambda picks, **_kwargs: picks)
+    monkeypatch.setattr(
+        cli_mod, "_enrich_pick_names", lambda picks, *_args, **_kwargs: picks
+    )
+    monkeypatch.setattr(
+        cli_mod, "_annotate_candidate_status", lambda picks, **_kwargs: picks
+    )
     monkeypatch.setattr(cli_mod, "_log_run_decisions", lambda **_kwargs: None)
-    monkeypatch.setattr(cli_mod, "to_dataframe", lambda picks: pd.DataFrame([{"symbol": p.symbol} for p in picks]))
+    monkeypatch.setattr(
+        cli_mod,
+        "to_dataframe",
+        lambda picks: pd.DataFrame([{"symbol": p.symbol} for p in picks]),
+    )
     monkeypatch.setattr(cli_mod, "to_markdown", lambda *_args, **_kwargs: "# report")
     monkeypatch.setattr(cli_mod, "notify_markdown", lambda *_args, **_kwargs: [])
     monkeypatch.setattr(
@@ -1130,7 +2767,9 @@ def test_run_scheduled_intraday_keeps_observation_output_during_circuit_breaker(
     class TriggeredBreaker:
         def check(self, **_kwargs):
             return type(
-                "Status", (), {"triggered": True, "reason": "组合保护冷却期中，至 2026-07-01 解除"}
+                "Status",
+                (),
+                {"triggered": True, "reason": "组合保护冷却期中，至 2026-07-01 解除"},
             )()
 
     monkeypatch.setattr(cli_mod, "CircuitBreaker", lambda: TriggeredBreaker())

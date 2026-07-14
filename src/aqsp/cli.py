@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import logging
 import os
@@ -26,7 +27,13 @@ from aqsp.data.registry import (
     workload_fit_label,
 )
 from aqsp.data.registry import get_registry_entry
-from aqsp.data.source_readiness import inspect_source_readiness
+from aqsp.data.source_readiness import (
+    WorkloadId,
+    inspect_source_readiness,
+    source_role_for_workload,
+    source_supports_workload,
+    workload_guard_message,
+)
 from aqsp.data.source_health import (
     describe_source_health,
     read_source_health,
@@ -88,21 +95,34 @@ from aqsp.notifier import (
     print_notify_results,
 )
 from aqsp.research.summary import load_research_summary
+from aqsp.runtime_snapshot import build_runtime_research_snapshot
 from aqsp.research_engine import (
     ENGINE_CHOICES,
     WalkForwardEngineConfig,
     resolve_walkforward_engine,
 )
-from aqsp.regime import build_synthetic_regime_frame, detect_runtime_regime
-from aqsp.report import to_dataframe, to_markdown
-from aqsp.risk.circuit_breaker import CircuitBreaker, CircuitBreakerConfig
+from aqsp.regime import (
+    build_synthetic_regime_frame,
+    build_runtime_strategy_mix,
+    detect_runtime_regime,
+    detect_runtime_regime_context,
+    format_runtime_regime_lines,
+)
+from aqsp.report import to_dataframe, to_intraday_dataframe, to_markdown
+from aqsp.risk.circuit_breaker import (
+    BreakerStatus,
+    CircuitBreaker,
+    CircuitBreakerConfig,
+)
 from aqsp.runtime.gate_notify import (
     mark_gate_notification_suppressed,
     mark_gate_notification_sent,
     mark_gate_notification_failed,
     should_send_gate_notification,
 )
-from aqsp.strategy import screen_universe, strategy_weights_for_regime
+from aqsp.strategy import (
+    screen_universe,
+)
 from aqsp.strategies.thresholds import load_thresholds
 from aqsp.universe import DEFAULT_SYMBOLS
 from aqsp.utils.jsonl_io import advisory_lock, atomic_write_text
@@ -116,62 +136,177 @@ from aqsp.walkforward_gate import (
 from aqsp.briefing.debate import (
     AShareDebateCoordinator,
     DebateResult,
+    debate_active_role_summary,
+    debate_active_roles,
     parse_agent_roles,
 )
+from aqsp.goal_switches import goal_switch_enabled
 from aqsp.models import PickResult
 from aqsp.presentation import format_symbol_name, has_meaningful_name
 
 LOGGER = logging.getLogger(__name__)
 notify_markdown = _notify_markdown_default
+DEBATE_RETENTION_DAYS = 30
+DEBATE_COOLDOWN_DAYS = 3
 
 
 def serialize_debate_result(result: DebateResult) -> dict:
     """将辩论结果序列化为可JSON化的字典"""
-    return {
-        "debate_id": result.debate_id,
-        "symbol": result.symbol,
-        "name": result.name,
-        "original_score": result.original_score,
-        "rating": result.rating,
-        "rounds": [
-            {
-                "round_num": r.round_num,
-                "summary": r.summary,
-                "opinions": [
-                    {
-                        "agent_id": o.agent_id,
-                        "role": o.role.value,
-                        "stance": o.stance,
-                        "confidence": o.confidence,
-                        "arguments": o.arguments,
-                        "counterarguments": o.counterarguments,
-                        "risk_factors": o.risk_factors,
-                        "opportunity_factors": o.opportunity_factors,
-                        "final_position": o.final_position,
-                    }
-                    for o in r.opinions
-                ],
-                "cross_opinions": r.cross_opinions,
-            }
-            for r in result.rounds
-        ],
-        "final_consensus": result.final_consensus,
-        "final_vote": {k.value: v for k, v in result.final_vote.items()},
-        "disagreement_score": result.disagreement_score,
-        "adjustment_weight": result.adjustment_weight,
-        "adjusted_score": result.adjusted_score,
-        "recommended_adjustment": result.recommended_adjustment,
-        "adjustment_reason": result.adjustment_reason,
-        "risk_warnings": result.risk_warnings,
-        "opportunity_highlights": result.opportunity_highlights,
-        "thresholds_version": result.thresholds_version,
-        "regime": result.regime,
-        "data_source": result.data_source,
-        "related_signal_date": result.related_signal_date,
-        "agent_performance_snapshot": {
-            k: v.to_dict() for k, v in result.agent_performance_snapshot.items()
-        },
-    }
+    return result.to_dict()
+
+
+def _build_debate_coordinator(
+    debate_runtime: Any,
+    *,
+    thresholds_version: str,
+    regime: str,
+    data_source: str,
+    roles_override: tuple[str, ...] | None = None,
+) -> AShareDebateCoordinator:
+    active_roles = parse_agent_roles(roles_override or debate_runtime.roles)
+    active_role_names = {role.value for role in active_roles}
+    role_runtime = tuple(
+        item for item in debate_runtime.role_runtime if item.role in active_role_names
+    )
+    return AShareDebateCoordinator(
+        enable_llm=debate_runtime.enable_llm,
+        # 实时盘中讨论必须至少完成一轮反驳，避免只产出单轮观点。
+        max_rounds=(
+            max(2, debate_runtime.max_rounds)
+            if str(regime).strip().lower() == "intraday"
+            else debate_runtime.max_rounds
+        ),
+        thresholds_version=thresholds_version,
+        regime=regime,
+        data_source=data_source,
+        language=debate_runtime.language,
+        roles=active_roles,
+        role_runtime=role_runtime,
+    )
+
+
+def _resolve_pick_debate_roles(
+    debate_runtime: Any,
+    *,
+    pick: PickResult,
+    market_context_lines: tuple[str, ...],
+) -> tuple[str, ...]:
+    if getattr(debate_runtime, "context_roles_locked", False):
+        return tuple(debate_runtime.roles)
+
+    from aqsp.briefing.agent_roles import infer_context_agent_roles
+
+    return tuple(
+        role.value
+        for role in infer_context_agent_roles(
+            pick,
+            base_roles=debate_runtime.roles,
+            market_context_lines=market_context_lines,
+            disabled_roles=getattr(debate_runtime, "disabled_roles", ()),
+        )
+    )
+
+
+def _debate_execution_enabled(args: Any, debate_runtime: Any) -> bool:
+    return goal_switch_enabled("multi_agent_advisory_layer", default=True) and (
+        getattr(args, "enable_debate", False) or debate_runtime.enabled
+    )
+
+
+def _apply_debate_results_to_picks(
+    picks: list[PickResult],
+    debate_results: list[DebateResult],
+) -> tuple[list[PickResult], int]:
+    debate_by_symbol = {result.symbol: result for result in debate_results}
+    if not debate_by_symbol:
+        return picks, 0
+
+    rewritten = 0
+    updated_picks: list[PickResult] = []
+    for pick in picks:
+        result = debate_by_symbol.get(pick.symbol)
+        if result is None:
+            updated_picks.append(pick)
+            continue
+
+        metrics = dict(pick.metrics)
+        deterministic_baseline = (
+            result.deterministic_score
+            if result.deterministic_score
+            else result.original_score
+        )
+        metrics["deterministic_score"] = float(pick.score)
+        metrics["deterministic_score_unchanged"] = bool(
+            result.deterministic_score_unchanged
+            and deterministic_baseline == result.original_score == pick.score
+        )
+        metrics["advisory_only"] = bool(result.advisory_only)
+        metrics["debate_id"] = result.debate_id
+        metrics["debate_disagreement_score"] = result.disagreement_score
+        metrics["debate_final_vote"] = {
+            role.value: stance for role, stance in result.final_vote.items()
+        }
+        metrics["debate_active_roles"] = [
+            role.value for role in debate_active_roles(result)
+        ]
+        active_role_summary = debate_active_role_summary(result)
+        if active_role_summary:
+            metrics["debate_active_role_summary"] = active_role_summary
+        if result.role_selection_summary:
+            metrics["debate_role_selection_summary"] = result.role_selection_summary
+        if result.role_selection_plan:
+            metrics["debate_role_selection_plan"] = result.role_selection_plan
+        if result.research_verdict:
+            metrics["debate_research_verdict"] = result.research_verdict
+        if result.primary_risk_gate:
+            metrics["debate_primary_risk_gate"] = result.primary_risk_gate
+        if result.next_trigger:
+            metrics["debate_next_trigger"] = result.next_trigger
+        if result.support_points:
+            metrics["support_points"] = list(result.support_points)
+        if result.opposition_points:
+            metrics["opposition_points"] = list(result.opposition_points)
+        if result.watch_items:
+            metrics["watch_items"] = list(result.watch_items)
+        if result.role_reliability_lines:
+            metrics["role_reliability_lines"] = list(result.role_reliability_lines)
+        if result.historical_context_note:
+            metrics["debate_historical_context_note"] = result.historical_context_note
+        if result.historical_context_bucket:
+            metrics["debate_historical_context_bucket"] = (
+                result.historical_context_bucket
+            )
+        if result.historical_context_sample_count > 0:
+            metrics["debate_historical_context_sample_count"] = (
+                result.historical_context_sample_count
+            )
+            metrics["debate_historical_context_accuracy"] = (
+                result.historical_context_accuracy
+            )
+        elif result.historical_context_accuracy > 0:
+            metrics["debate_historical_context_accuracy"] = (
+                result.historical_context_accuracy
+            )
+        if result.cross_market_support_event_count > 0:
+            metrics["cross_market_support_event_count"] = (
+                result.cross_market_support_event_count
+            )
+        if result.cross_market_conflict_event_count > 0:
+            metrics["cross_market_conflict_event_count"] = (
+                result.cross_market_conflict_event_count
+            )
+        if result.cross_market_evidence_stack_summary:
+            metrics["cross_market_evidence_stack_summary"] = (
+                result.cross_market_evidence_stack_summary
+            )
+
+        pick = replace(
+            pick,
+            metrics=metrics,
+            debate_consensus=result.final_consensus,
+        )
+        updated_picks.append(pick)
+    return updated_picks, rewritten
 
 
 def _read_retained_debates(debate_file: Path, cutoff_date: str) -> dict[str, dict]:
@@ -188,7 +323,7 @@ def _read_retained_debates(debate_file: Path, cutoff_date: str) -> dict[str, dic
             )
             if debate_date < cutoff_date:
                 continue
-            key = f"{data['symbol']}_{debate_date}"
+            key = _debate_record_key(data)
             if key not in retained or retained[key].get("created_at", "") < data.get(
                 "created_at", ""
             ):
@@ -206,7 +341,7 @@ def _merge_debate_records(target: dict[str, dict], updates: dict[str, dict]) -> 
         symbol = str(data.get("symbol", ""))
         if not symbol or not debate_date:
             continue
-        key = f"{symbol}_{debate_date}"
+        key = _debate_record_key(data)
         if key not in target or target[key].get("created_at", "") < data.get(
             "created_at", ""
         ):
@@ -221,11 +356,40 @@ def _write_debate_records(debate_file: Path, records: dict[str, dict]) -> None:
             key=lambda item: (
                 str(item.get("related_signal_date", "") or item.get("debate_date", "")),
                 str(item.get("symbol", "")),
+                str(item.get("task_id", "")),
+                str(item.get("candidate_fingerprint", "")),
                 str(item.get("created_at", "")),
             ),
         )
     )
     atomic_write_text(debate_file, text)
+
+
+def _debate_record_key(data: dict[str, Any]) -> str:
+    symbol = str(data.get("symbol", "") or "")
+    debate_date = str(
+        data.get("related_signal_date", "") or data.get("debate_date", "")
+    )
+    task_id = str(data.get("task_id", "") or "")
+    fingerprint = str(data.get("candidate_fingerprint", "") or "")
+    if task_id or fingerprint:
+        return "|".join((symbol, debate_date, task_id, fingerprint))
+    return f"{symbol}_{debate_date}"
+
+
+def _candidate_debate_fingerprint(pick: PickResult) -> str:
+    payload = {
+        "symbol": pick.symbol,
+        "date": pick.date,
+        "score": round(float(pick.score or 0.0), 4),
+        "rating": pick.rating,
+        "strategies": list(pick.strategies),
+        "reasons": list(pick.reasons),
+        "risks": list(pick.risks),
+    }
+    return hashlib.sha256(
+        json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    ).hexdigest()[:16]
 
 
 SOURCE_CHOICES = [
@@ -277,8 +441,13 @@ def _default_walkforward_end() -> str:
     return today_shanghai().isoformat()
 
 
-def _default_walkforward_start(*, end: str, lookback_years: int = DEFAULT_WALKFORWARD_LOOKBACK_YEARS) -> str:
-    return (_shift_years(date.fromisoformat(end), max(int(lookback_years), 1)) + timedelta(days=1)).isoformat()
+def _default_walkforward_start(
+    *, end: str, lookback_years: int = DEFAULT_WALKFORWARD_LOOKBACK_YEARS
+) -> str:
+    return (
+        _shift_years(date.fromisoformat(end), max(int(lookback_years), 1))
+        + timedelta(days=1)
+    ).isoformat()
 
 
 def _resolve_runtime_state_path(path: str) -> str:
@@ -365,6 +534,15 @@ def _screen_universe_with_thresholds(
         return screen_universe(frames, config)
 
 
+def _runtime_strategy_weights(
+    thresholds: Any,
+    regime: str,
+) -> dict[str, float]:
+    """Resolve deterministic screening weights from the runtime StrategyMix."""
+    mix = build_runtime_strategy_mix(regime, thresholds=thresholds)
+    return {strategy_id: float(weight) for strategy_id, weight in mix.strategy_weights}
+
+
 def _runtime_max_universe(arg_value: int | None) -> int:
     if arg_value and arg_value > 0:
         return int(arg_value)
@@ -380,6 +558,36 @@ def _build_circuit_breaker(thresholds: Any) -> CircuitBreaker:
         if "config" not in str(exc):
             raise
         return CircuitBreaker()
+
+
+def _circuit_breaker_disabled(*, task_id: str = "") -> bool:
+    switch_name = _circuit_breaker_disable_switch_name(task_id)
+    value = os.getenv(switch_name, "false").strip().lower()
+    return value in {"1", "true", "yes", "on"}
+
+
+def _circuit_breaker_disable_switch_name(task_id: str = "") -> str:
+    normalized_task_id = str(task_id or "").strip().lower()
+    if _is_high_frequency_task(normalized_task_id):
+        return "AQSP_INTRADAY_DISABLE_CIRCUIT_BREAKER"
+    return "AQSP_DISABLE_CIRCUIT_BREAKER"
+
+
+def _disabled_circuit_breaker_status(
+    *,
+    daily_pnl_pct: float,
+    weekly_pnl_pct: float,
+    monthly_pnl_pct: float,
+    switch_name: str = "AQSP_DISABLE_CIRCUIT_BREAKER",
+) -> BreakerStatus:
+    return BreakerStatus(
+        triggered=False,
+        reason=f"组合保护已按 {switch_name} 关闭，仅用于本地开发纸面研究",
+        level="disabled",
+        daily_pnl_pct=daily_pnl_pct,
+        weekly_pnl_pct=weekly_pnl_pct,
+        monthly_pnl_pct=monthly_pnl_pct,
+    )
 
 
 def _extract_meaningful_name_from_frame(frame: pd.DataFrame, symbol: str) -> str:
@@ -465,6 +673,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     screen.add_argument("--limit", type=int, default=20)
     screen.add_argument("--min-avg-amount", type=float, default=50_000_000)
+    screen.add_argument("--max-data-lag-days", type=int, default=0)
     screen.add_argument("--report", default="", help="write markdown report")
     screen.add_argument("--output-csv", default="", help="write result csv")
     screen.add_argument("--benchmark-symbol", default="000300")
@@ -493,6 +702,11 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--max-universe", type=int, default=0)
     run.add_argument("--min-avg-amount", type=float, default=0)
     run.add_argument("--max-data-lag-days", type=int, default=0)
+    run.add_argument(
+        "--as-of",
+        default="",
+        help="按指定数据日期运行，主要用于冷启动/历史 sqlite 补样本",
+    )
     run.add_argument("--enable-online-factors", action="store_true")
     run.add_argument("--report", default="reports/latest.md")
     run.add_argument("--output-csv", default="reports/latest.csv")
@@ -509,7 +723,11 @@ def main(argv: list[str] | None = None) -> int:
         default="",
         help="标的池: sh300, zz500, zz1000, cyb, zxb, all",
     )
-    run.add_argument("--enable-debate", action="store_true", help="启用多Agent辩论分析")
+    run.add_argument(
+        "--enable-debate",
+        action="store_true",
+        help="启用多 Agent 委员会分析",
+    )
 
     wf = sub.add_parser("walkforward", help="run walk-forward backtest")
     wf.add_argument(
@@ -564,6 +782,11 @@ def main(argv: list[str] | None = None) -> int:
         choices=WALKFORWARD_SOURCE_CHOICES,
         default="sqlite_db",
     )
+    wf.add_argument(
+        "--benchmark-symbol",
+        default="000300",
+        help="regime benchmark symbol; fetched for HMM context and excluded from screening",
+    )
     wf.add_argument("--horizon-days", type=int, default=None, help="持仓天数 (默认: 3)")
     wf.add_argument(
         "--grid-cscv",
@@ -601,10 +824,31 @@ def main(argv: list[str] | None = None) -> int:
         default=False,
         help="仅 legacy_train 模式下允许越过 2024-12-31 做一次性 held-out 验收；rolling_recent 生产模式默认允许近端窗口但结果不得回灌旧训练结论。",
     )
+    wf.add_argument(
+        "--streaming",
+        action="store_true",
+        default=False,
+        help="使用低内存逐窗口/逐批 walk-forward；正式生产仅支持 sqlite_db + builtin + skip PIT",
+    )
+    wf.add_argument(
+        "--stream-batch-size",
+        type=int,
+        default=200,
+        help="低内存 walk-forward 每批标的数；不改变市场覆盖和统计门槛",
+    )
 
-    dash_cmd = sub.add_parser("dashboard", help="generate interactive dashboard")
-    dash_cmd.add_argument("--ledger", default="data/predictions.jsonl")
-    dash_cmd.add_argument("--output", default="dist/dashboard/index.html")
+    dash_cmd = sub.add_parser(
+        "dashboard", help="open or reuse the current Streamlit dashboard"
+    )
+    dash_cmd.add_argument("--host", default="127.0.0.1")
+    dash_cmd.add_argument("--port", type=int, default=8501)
+    dash_cmd.add_argument("--open-browser", action="store_true")
+
+    static_dash_cmd = sub.add_parser(
+        "dashboard-static", help="generate the static dashboard archive artifact"
+    )
+    static_dash_cmd.add_argument("--ledger", default="data/predictions.jsonl")
+    static_dash_cmd.add_argument("--output", default="dist/dashboard/index.html")
 
     monitor_cmd = sub.add_parser("monitor", help="run monitoring checks")
     monitor_cmd.add_argument("--config", default="config/monitors.yaml")
@@ -621,6 +865,7 @@ def main(argv: list[str] | None = None) -> int:
     news_cmd.add_argument("--names", default="")
     news_cmd.add_argument("--notify", action="store_true")
     news_cmd.add_argument("--output", default="")
+    news_cmd.add_argument("--json-output", default="")
     news_cmd.add_argument("--max-events", type=int, default=8)
     news_cmd.add_argument("--max-news-age-days", type=int, default=7)
     news_cmd.add_argument("--source-timeout-seconds", type=float, default=8.0)
@@ -668,6 +913,14 @@ def main(argv: list[str] | None = None) -> int:
     research_cmd.add_argument("--json", action="store_true")
     research_cmd.add_argument("--next", action="store_true")
     research_cmd.add_argument("--prereqs", action="store_true")
+
+    runtime_snapshot_cmd = sub.add_parser(
+        "runtime-snapshot",
+        help="emit one typed, read-only runtime view for research agents",
+    )
+    runtime_snapshot_cmd.add_argument("--date", default="")
+    runtime_snapshot_cmd.add_argument("--task-id", default="")
+    runtime_snapshot_cmd.add_argument("--output", default="")
 
     pit_cmd = sub.add_parser("pit", help="inspect point-in-time data endpoints")
     pit_cmd.add_argument(
@@ -812,6 +1065,8 @@ def main(argv: list[str] | None = None) -> int:
             return run_scheduled(args)
         if args.command == "dashboard":
             return run_dashboard(args)
+        if args.command == "dashboard-static":
+            return run_dashboard_static(args)
         if args.command == "walkforward":
             return run_walkforward(args)
         if args.command == "briefing":
@@ -826,6 +1081,8 @@ def main(argv: list[str] | None = None) -> int:
             return run_sources(args)
         if args.command == "research":
             return run_research(args)
+        if args.command == "runtime-snapshot":
+            return run_runtime_snapshot(args)
         if args.command == "pit":
             return run_pit(args)
         if args.command == "compare-snapshots":
@@ -1053,6 +1310,23 @@ def run_research(args: argparse.Namespace) -> int:
     return 0
 
 
+def run_runtime_snapshot(args: argparse.Namespace) -> int:
+    """Expose one shared runtime payload without adding a public service."""
+    from aqsp.web.data_provider import DashboardDataProvider
+
+    snapshot = build_runtime_research_snapshot(
+        DashboardDataProvider(),
+        signal_date=str(args.date or "").strip(),
+        task_id=str(args.task_id or "").strip(),
+    )
+    rendered = snapshot.to_json() + "\n"
+    output = str(args.output or "").strip()
+    if output:
+        atomic_write_text(Path(output), rendered)
+    print(rendered, end="")
+    return 0
+
+
 def run_pit(args: argparse.Namespace) -> int:
     client = TusharePitClient()
     start = date.fromisoformat(args.start)
@@ -1180,6 +1454,8 @@ def _fetch_frames_for_cli(
     benchmark_symbol: str | None,
     cache_path: str | None = None,
     days: int = 260,
+    end_date: date | None = None,
+    workload: WorkloadId | None = None,
 ) -> dict[str, pd.DataFrame]:
     frames, _actual_source = _fetch_frames_for_cli_with_metadata(
         source_name,
@@ -1187,6 +1463,8 @@ def _fetch_frames_for_cli(
         benchmark_symbol=benchmark_symbol,
         cache_path=cache_path,
         days=days,
+        end_date=end_date,
+        workload=workload,
     )
     return frames
 
@@ -1198,6 +1476,8 @@ def _fetch_frames_for_cli_with_metadata(
     benchmark_symbol: str | None,
     cache_path: str | None = None,
     days: int = 260,
+    end_date: date | None = None,
+    workload: WorkloadId | None = None,
 ) -> tuple[dict[str, pd.DataFrame], str]:
     return fetch_frames_for_cli_with_metadata(
         source_name,
@@ -1205,6 +1485,8 @@ def _fetch_frames_for_cli_with_metadata(
         benchmark_symbol=benchmark_symbol,
         cache_path=cache_path,
         days=days,
+        end_date=end_date,
+        workload=workload,
         get_source_fn=_get_source,
         fetch_with_source_fn=fetch_with_source,
         record_source_success_fn=record_source_success,
@@ -1240,6 +1522,21 @@ def _detect_runtime_regime(
     )
 
 
+def _runtime_regime_market_context_lines(
+    frames: dict[str, pd.DataFrame],
+    *,
+    benchmark_symbol: str | None,
+    thresholds: Any | None = None,
+) -> tuple[str, ...]:
+    return format_runtime_regime_lines(
+        detect_runtime_regime_context(
+            frames,
+            benchmark_symbol=benchmark_symbol,
+            thresholds=thresholds,
+        )
+    )
+
+
 def _blend_base_and_regime_scores(
     *,
     base_score: float,
@@ -1265,6 +1562,7 @@ def _runtime_weight_snapshot(
 ) -> dict[str, Any]:
     composite = thresholds.composite
     return {
+        "source": "runtime_strategy_mix",
         "regime": regime,
         "strategy_weights": {
             str(key): round(float(value), 6)
@@ -1278,6 +1576,32 @@ def _runtime_weight_snapshot(
         "regime_blend_weight": float(composite.regime_blend_weight),
         "thresholds_version": str(thresholds.version),
     }
+
+
+def _attach_runtime_weight_snapshot(
+    picks: list[PickResult],
+    *,
+    thresholds: Any,
+    regime: str,
+    strategy_weights: dict[str, float],
+    strategy_weight_reasons: dict[str, str],
+) -> list[PickResult]:
+    snapshot = _runtime_weight_snapshot(
+        thresholds=thresholds,
+        regime=regime,
+        strategy_weights=strategy_weights,
+        strategy_weight_reasons=strategy_weight_reasons,
+    )
+    return [
+        replace(
+            pick,
+            metrics={
+                **pick.metrics,
+                "strategy_weight_snapshot": snapshot,
+            },
+        )
+        for pick in picks
+    ]
 
 
 def _augment_summary_with_t1_blockers(
@@ -1319,6 +1643,31 @@ def _augment_summary_with_t1_blockers(
         execution_blockers=merged_blockers,
         allocation_note=merged_note,
     )
+
+
+def _augment_summary_with_market_context(
+    summary: Any | None,
+    *,
+    market_context: Any | None,
+) -> Any | None:
+    if summary is None or market_context is None:
+        return summary
+
+    from aqsp.market_context import combine_cross_market_overview
+
+    combined = combine_cross_market_overview(
+        str(getattr(summary, "cross_market_overview", "") or ""),
+        market_context,
+    )
+    if not combined:
+        return summary
+    return replace(summary, cross_market_overview=combined)
+
+
+def _market_context_preview_count(limit: int, total: int) -> int:
+    if total <= 0:
+        return 0
+    return min(total, max(int(limit) * 2, 6))
 
 
 def _build_execution_summary_line(
@@ -1498,6 +1847,51 @@ def _log_run_decisions(
             )
         )
 
+    from aqsp.audit.decision_chain import append_decision_record, new_decision_record
+
+    evidence_ids = tuple(
+        sorted(
+            {
+                str(item)
+                for pick in picks
+                for item in tuple(pick.metrics.get("artifact_ids", ()) or ())
+                if str(item).strip()
+            }
+        )
+    )
+    advisory_ids = tuple(
+        sorted(result.debate_id for result in debate_results if result.debate_id)
+    )
+    append_decision_record(
+        os.getenv("AQSP_DECISION_AUDIT_PATH", "data/audit/decision-chain.jsonl"),
+        new_decision_record(
+            run_id=f"{run_metadata.task_id or 'scheduled'}:{run_metadata.data_latest_trade_date}",
+            thresholds_version=run_metadata.thresholds_version,
+            regime=regime or "unknown",
+            source=run_metadata.actual_source,
+            candidates=tuple(
+                {
+                    "symbol": pick.symbol,
+                    "score": round(float(pick.score), 4),
+                    "deterministic_score": round(
+                        float(pick.metrics.get("deterministic_score", pick.score) or pick.score),
+                        4,
+                    ),
+                    "deterministic_score_unchanged": bool(
+                        pick.metrics.get("deterministic_score_unchanged", True)
+                    ),
+                    "advisory_only": bool(pick.metrics.get("advisory_only", True)),
+                    "rating": pick.rating,
+                    "position": pick.position,
+                    "strategies": tuple(pick.strategies),
+                }
+                for pick in picks
+            ),
+            evidence_ids=evidence_ids,
+            advisory_ids=advisory_ids,
+        ),
+    )
+
 
 def _candidate_blocker_map(portfolio_summary: Any | None) -> dict[str, str]:
     blockers: dict[str, str] = {}
@@ -1598,6 +1992,140 @@ def _annotate_candidate_status(
     return enriched
 
 
+def _merge_candidate_note(existing: str, note: str) -> str:
+    existing = str(existing or "").strip()
+    note = str(note or "").strip()
+    if not existing:
+        return note
+    if not note or note in existing:
+        return existing
+    return f"{existing}；{note}"
+
+
+def _annotate_data_quality_context(
+    picks: list[PickResult],
+    *,
+    anomaly_alerts: list[Any],
+    freshness_reports: list[Any],
+    current_dates: dict[str, str] | None = None,
+) -> list[PickResult]:
+    if not picks:
+        return picks
+
+    alerts_by_symbol: dict[str, list[Any]] = {}
+    for alert in anomaly_alerts:
+        symbol = str(getattr(alert, "symbol", "") or "").strip()
+        if symbol:
+            observed_date = str(getattr(alert, "observed_date", "") or "").strip()
+            current_date = str((current_dates or {}).get(symbol, "") or "").strip()
+            if current_date and observed_date and observed_date != current_date:
+                continue
+            alerts_by_symbol.setdefault(symbol, []).append(alert)
+
+    freshness_by_symbol = {
+        str(getattr(report, "symbol", "") or "").strip(): report
+        for report in freshness_reports
+        if str(getattr(report, "symbol", "") or "").strip()
+    }
+
+    enriched: list[PickResult] = []
+    for pick in picks:
+        alerts = alerts_by_symbol.get(pick.symbol, [])
+        freshness = freshness_by_symbol.get(pick.symbol)
+        quality_notes: list[str] = []
+        severe_notes: list[str] = []
+
+        if freshness is not None and getattr(freshness, "status", "fresh") != "fresh":
+            note = (
+                f"数据新鲜度{getattr(freshness, 'status', '')}: "
+                f"{getattr(freshness, 'last_date', '') or 'N/A'}"
+                f"/延迟{getattr(freshness, 'delay_days', 'N/A')}天"
+            )
+            quality_notes.append(note)
+            if getattr(freshness, "status", "") == "critical":
+                severe_notes.append(note)
+
+        for alert in alerts:
+            note = str(getattr(alert, "detail", "") or "").strip()
+            if not note:
+                continue
+            quality_notes.append(note)
+            if getattr(alert, "severity", "") == "critical":
+                severe_notes.append(note)
+
+        if not quality_notes:
+            enriched.append(pick)
+            continue
+
+        metrics = dict(pick.metrics)
+        metrics["data_quality_status"] = "critical" if severe_notes else "watch"
+        metrics["data_quality_alerts"] = tuple(quality_notes[:5])
+        if severe_notes:
+            metrics["candidate_next_step"] = _merge_candidate_note(
+                str(metrics.get("candidate_next_step", "") or ""),
+                "先复核数据质量: " + "；".join(severe_notes[:2]),
+            )
+
+        risks = tuple(
+            dict.fromkeys(
+                (*pick.risks, *(f"数据质量: {note}" for note in quality_notes[:3]))
+            )
+        )
+        enriched.append(replace(pick, risks=risks, metrics=metrics))
+    return enriched
+
+
+def _annotate_cross_market_context(
+    picks: list[PickResult],
+    *,
+    market_context: Any | None,
+) -> list[PickResult]:
+    if not picks or market_context is None:
+        return picks
+
+    from aqsp.market_context import market_context_metrics_for_pick
+
+    enriched: list[PickResult] = []
+    for pick in picks:
+        context_metrics = market_context_metrics_for_pick(pick, market_context)
+        if not context_metrics:
+            enriched.append(pick)
+            continue
+        metrics = dict(pick.metrics)
+        metrics.update(context_metrics)
+        evidence_ids = {
+            str(item).strip()
+            for item in tuple(metrics.get("artifact_ids", ()) or ())
+            if str(item).strip()
+        }
+        news_payload = "|".join(
+            str(metrics.get(key, "") or "").strip()
+            for key in (
+                "news_catalyst_source",
+                "news_catalyst_url",
+                "news_catalyst_title",
+                "news_catalyst_published_at",
+            )
+        )
+        if news_payload.strip("|"):
+            evidence_ids.add(
+                "news:" + hashlib.sha256(news_payload.encode("utf-8")).hexdigest()[:16]
+            )
+        rule_payload = "|".join(
+            str(metrics.get(key, "") or "")
+            for key in ("cross_market_rule_ids", "cross_market_chain_summary")
+        )
+        if rule_payload.strip("|"):
+            evidence_ids.add(
+                "market-context:"
+                + hashlib.sha256(rule_payload.encode("utf-8")).hexdigest()[:16]
+            )
+        if evidence_ids:
+            metrics["artifact_ids"] = tuple(sorted(evidence_ids))
+        enriched.append(replace(pick, metrics=metrics))
+    return enriched
+
+
 def _resolve_run_symbols(
     source_name: str,
     explicit_symbols: str,
@@ -1619,6 +2147,51 @@ def _resolve_run_symbols(
     )
 
 
+def _runtime_source_workload_allowed(
+    source_name: str,
+    *,
+    workload: str,
+) -> tuple[bool, str]:
+    if source_supports_workload(source_name, workload):  # type: ignore[arg-type]
+        return True, ""
+    return False, workload_guard_message(source_name, workload)  # type: ignore[arg-type]
+
+
+def _runtime_actual_source_workload_allowed(
+    requested_source: str,
+    actual_source: str,
+    *,
+    workload: str,
+) -> tuple[bool, str]:
+    resolved_actual = (actual_source or requested_source).strip()
+    allowed, reason = _runtime_source_workload_allowed(
+        resolved_actual,
+        workload=workload,
+    )
+    if workload == "live_short" and resolved_actual not in {
+        "auto",
+        "local_first",
+        "online_first",
+        "multi",
+    }:
+        role = source_role_for_workload(resolved_actual, "live_short")
+        if role != "realtime":
+            reason = (
+                f"数据源 {resolved_actual} 仅可作为 {role or 'unknown'} 层，"
+                "不能形成正式 live_short 候选"
+            )
+            requested = requested_source.strip()
+            if requested and requested != resolved_actual:
+                return False, f"请求源 {requested} 实际落到 {resolved_actual}；{reason}"
+            return False, reason
+    if allowed:
+        return True, ""
+    requested = requested_source.strip()
+    if requested and requested != resolved_actual:
+        return False, f"请求源 {requested} 实际落到 {resolved_actual}；{reason}"
+    return False, reason
+
+
 def _special_strategy_ledger_write_allowed(
     frames: dict[str, pd.DataFrame],
     *,
@@ -1630,10 +2203,59 @@ def _special_strategy_ledger_write_allowed(
     if not is_trading_day(today):
         return False, f"{today.isoformat()} 非交易日"
     try:
-        latest = assert_fresh_data(frames, max_data_lag_days)
+        latest = assert_fresh_data(
+            frames,
+            max_data_lag_days,
+            workload="live_short",
+        )
     except Exception as exc:
         return False, f"数据新鲜度未通过: {exc}"
     return True, f"latest={latest.isoformat()}"
+
+
+def _special_strategy_run_metadata(
+    *,
+    requested_source: str,
+    actual_source: str,
+    frames: dict[str, pd.DataFrame],
+    thresholds_version: str,
+    task_id: str,
+) -> RunMetadata:
+    """Build the same provenance envelope used by the main runtime ledger."""
+    latest = latest_trade_date(frames)
+    freshness_tier, coverage_tier, source_local_status = _source_runtime_metadata(
+        actual_source,
+        latest_trade_day=latest,
+    )
+    health_label, health_message, fallback_used = describe_source_health(
+        requested_source,
+        actual_source,
+    )
+    return RunMetadata(
+        requested_source=requested_source,
+        actual_source=actual_source,
+        source_freshness_tier=freshness_tier,
+        source_coverage_tier=coverage_tier,
+        source_local_status=source_local_status,
+        source_health_label=health_label,
+        source_health_message=health_message,
+        fallback_used=fallback_used,
+        explicit_symbol_count=len(frames),
+        resolved_symbol_count=len(frames),
+        fetched_frame_count=len(frames),
+        screened_count=0,
+        final_count=0,
+        min_price=0.0,
+        max_price=0.0,
+        min_avg_amount=0.0,
+        online_factors_enabled=False,
+        thresholds_version=thresholds_version,
+        data_latest_trade_date=latest.isoformat() if latest is not None else "",
+        data_lag_days=_runtime_data_lag_days(latest),
+        regime="",
+        task_id=task_id,
+        workload="live_short",
+    )
 
 
 def _special_strategy_runtime_ready(
@@ -1643,7 +2265,9 @@ def _special_strategy_runtime_ready(
     benchmark_symbol: str | None,
 ) -> tuple[bool, str, str]:
     threshold_config = getattr(strategy, "mb", None) or getattr(strategy, "cfg", None)
-    if threshold_config is not None and not bool(getattr(threshold_config, "enabled", True)):
+    if threshold_config is not None and not bool(
+        getattr(threshold_config, "enabled", True)
+    ):
         return False, "", "策略已禁用"
     regime = _detect_runtime_regime(
         frames,
@@ -1665,28 +2289,109 @@ def _fetch_special_strategy_frames(
     days: int = 250,
     intraday_period: str = "5",
 ) -> tuple[dict[str, pd.DataFrame], str]:
-    frames, _source = _fetch_frames_for_cli_with_metadata(
+    allowed, reason = _runtime_source_workload_allowed(
+        source_name,
+        workload="live_short",
+    )
+    if not allowed:
+        raise DataError(reason)
+    frames, actual_source = _fetch_frames_for_cli_with_metadata(
         source_name,
         symbols,
         benchmark_symbol=benchmark_symbol,
         days=days,
+        workload="live_short",
     )
+    actual_allowed, actual_reason = _runtime_actual_source_workload_allowed(
+        source_name,
+        actual_source,
+        workload="live_short",
+    )
+    if not actual_allowed:
+        raise DataError(actual_reason)
     if not frames:
         raise MissingDataError(symbols[0], reason="无法获取历史日线数据")
     data_source = _get_source(source_name)
     intraday_service = IntradayService(data_source)
-    merged = intraday_service.merge_intraday_bar_into_daily(
-        _drop_benchmark_frame(frames, benchmark_symbol),
-        symbols,
+    overlay_symbols = list(symbols)
+    if benchmark_symbol and benchmark_symbol not in overlay_symbols:
+        overlay_symbols.append(benchmark_symbol)
+    overlay = intraday_service.merge_intraday_bar_into_daily_with_coverage(
+        frames,
+        overlay_symbols,
         period=intraday_period,
         target_date=today_shanghai(),
+        index_symbols=(benchmark_symbol,) if benchmark_symbol else (),
     )
-    if benchmark_symbol:
-        benchmark_frame = frames.get(benchmark_symbol)
-        if benchmark_frame is None or benchmark_frame.empty:
-            raise MissingDataError(benchmark_symbol, reason="缺少基准指数数据")
-        merged[benchmark_symbol] = benchmark_frame
-    return merged, _source
+    coverage = {
+        "status": "complete" if overlay.complete else "partial",
+        "requested_symbols": overlay.requested_symbols,
+        "covered_symbols": overlay.covered_symbols,
+        "missing_symbols": overlay.missing_symbols,
+    }
+    for frame in overlay.frames.values():
+        frame.attrs["intraday_overlay_coverage"] = coverage
+    return overlay.frames, actual_source
+
+
+def _intraday_overlay_coverage(frames: dict[str, pd.DataFrame]) -> tuple[str, tuple[str, ...]]:
+    for frame in frames.values():
+        coverage = frame.attrs.get("intraday_overlay_coverage")
+        if not isinstance(coverage, dict):
+            continue
+        missing = tuple(str(item) for item in coverage.get("missing_symbols", ()) if str(item))
+        status = str(coverage.get("status", "partial" if missing else "complete"))
+        return status, missing
+    return "not_available", ()
+
+
+def _force_intraday_observation(
+    picks: list[PickResult],
+    *,
+    missing_symbols: tuple[str, ...],
+) -> list[PickResult]:
+    """Keep deterministic scores visible while forbidding partial-live recommendations."""
+    if not picks or not missing_symbols:
+        return picks
+    reason = "盘中覆盖不完整，缺少: " + "、".join(missing_symbols)
+    observed: list[PickResult] = []
+    for pick in picks:
+        metrics = dict(pick.metrics)
+        alerts = tuple(metrics.get("data_quality_alerts", ()) or ())
+        metrics.update(
+            {
+                "observation_only": True,
+                "intraday_coverage_status": "partial",
+                "intraday_missing_symbols": missing_symbols,
+                "data_quality_status": "critical",
+                "data_quality_alerts": tuple(dict.fromkeys((*alerts, reason))),
+                "candidate_status": "盘中覆盖观察",
+                "candidate_blocker": reason,
+                "candidate_review_priority": "low",
+                "candidate_next_step": "补齐全部盘中报价后，再重新评估纸面复核",
+                "candidate_review_window": "盘中数据覆盖完整后",
+                "portfolio_action": "observation_only",
+            }
+        )
+        risks = tuple(dict.fromkeys((*pick.risks, reason)))
+        observed.append(replace(pick, metrics=metrics, risks=risks))
+    return observed
+
+
+def _relevant_intraday_missing_symbols(
+    picks: list[PickResult],
+    *,
+    missing_symbols: tuple[str, ...],
+    benchmark_symbol: str,
+) -> tuple[str, ...]:
+    """Only candidate or benchmark gaps can block a live recommendation batch."""
+    candidate_symbols = {str(pick.symbol).strip() for pick in picks if pick.symbol}
+    benchmark = str(benchmark_symbol or "").strip()
+    return tuple(
+        symbol
+        for symbol in missing_symbols
+        if symbol in candidate_symbols or (benchmark and symbol == benchmark)
+    )
 
 
 def _check_sector_concentration_with_runtime_hints(
@@ -1719,7 +2424,9 @@ def _formal_runtime_ledger_path(current_ledger_path: str, *, task_id: str) -> st
     normalized_task_id = str(task_id or "").strip().lower()
     current = str(current_ledger_path or "").strip()
     if normalized_task_id in {"intraday", "midday"}:
-        env_ledger = str(os.getenv("AQSP_LEDGER", "data/predictions.jsonl") or "").strip()
+        env_ledger = str(
+            os.getenv("AQSP_LEDGER", "data/predictions.jsonl") or ""
+        ).strip()
         return env_ledger or current
     return current
 
@@ -1728,11 +2435,220 @@ def _is_high_frequency_task(task_id: str) -> bool:
     return str(task_id or "").strip().lower() in {"intraday", "midday"}
 
 
+def _requires_intraday_overlay_task(task_id: str) -> bool:
+    return str(task_id or "").strip().lower() in {"intraday", "midday", "live_short"}
+
+
+def _effective_live_short_max_data_lag_days(
+    configured_days: int,
+    *,
+    requires_live_short_source: bool,
+    csv_path: str,
+    as_of_raw: str = "",
+) -> int:
+    lag_days = max(0, int(configured_days))
+    if not requires_live_short_source or str(csv_path or "").strip() or as_of_raw:
+        return lag_days
+    return min(lag_days, 1)
+
+
+def _should_build_market_context(task_id: str) -> bool:
+    normalized_task_id = str(task_id or "").strip().lower()
+    if not _is_high_frequency_task(normalized_task_id):
+        return True
+    return goal_switch_enabled("live_short_runtime", default=True)
+
+
+def _market_context_source_timeout_seconds(task_id: str) -> float:
+    if _is_high_frequency_task(task_id):
+        return 1.0
+    return 4.0
+
+
+def _runtime_catalyst_cache_path(task_id: str) -> str:
+    configured = str(os.getenv("AQSP_CATALYST_REPORT_CACHE_PATH", "") or "").strip()
+    if configured:
+        return configured
+    if _is_high_frequency_task(task_id):
+        return "data/runtime/catalyst_report_cache.json"
+    return ""
+
+
+def _runtime_catalyst_cache_ttl_seconds(task_id: str) -> float:
+    configured = str(
+        os.getenv("AQSP_CATALYST_REPORT_CACHE_TTL_SECONDS", "") or ""
+    ).strip()
+    if configured:
+        try:
+            return max(0.0, float(configured))
+        except ValueError:
+            return 0.0
+    if _is_high_frequency_task(task_id):
+        return 120.0
+    return 0.0
+
+
+def _runtime_catalyst_allow_stale_cache_on_failure(task_id: str) -> bool:
+    configured = str(
+        os.getenv("AQSP_CATALYST_REPORT_ALLOW_STALE_CACHE", "") or ""
+    ).strip()
+    if configured.lower() in {"1", "true", "yes", "on"}:
+        return True
+    if configured.lower() in {"0", "false", "no", "off"}:
+        return False
+    return _is_high_frequency_task(task_id)
+
+
+def _runtime_catalyst_max_stale_cache_age_seconds(task_id: str) -> float:
+    configured = str(
+        os.getenv("AQSP_CATALYST_REPORT_MAX_STALE_CACHE_AGE_SECONDS", "") or ""
+    ).strip()
+    if configured:
+        try:
+            return max(0.0, float(configured))
+        except ValueError:
+            return 30 * 60
+    if _is_high_frequency_task(task_id):
+        return 30 * 60
+    return 0.0
+
+
+def _runtime_catalyst_max_news_age_days(task_id: str) -> int:
+    configured = str(
+        os.getenv("AQSP_CATALYST_REPORT_MAX_NEWS_AGE_DAYS", "") or ""
+    ).strip()
+    if configured:
+        try:
+            return max(1, int(configured))
+        except ValueError:
+            return 30
+    if _is_high_frequency_task(task_id):
+        return 5
+    return 30
+
+
+def _runtime_news_artifact_path(task_id: str) -> str:
+    configured = str(os.getenv("AQSP_NEWS_JSON_OUTPUT", "") or "").strip()
+    if configured:
+        return configured
+    return "data/runtime/news_catalysts_latest.json" if _is_high_frequency_task(task_id) else ""
+
+
+def _runtime_news_artifact_max_age_seconds(task_id: str) -> float:
+    configured = str(
+        os.getenv("AQSP_NEWS_RUNTIME_ARTIFACT_MAX_AGE_SECONDS", "") or ""
+    ).strip()
+    if configured:
+        try:
+            return max(0.0, float(configured))
+        except ValueError:
+            return 0.0
+    return 6 * 60 * 60 if _is_high_frequency_task(task_id) else 0.0
+
+
+def _build_runtime_catalyst_report(
+    picks: list[PickResult],
+    *,
+    task_id: str,
+) -> Any | None:
+    if not picks:
+        return None
+
+    from aqsp.news.catalysts import NewsCatalystConfig, build_catalyst_report
+
+    source_timeout_seconds = _market_context_source_timeout_seconds(task_id)
+    cache_path = _runtime_catalyst_cache_path(task_id)
+    cache_ttl_seconds = _runtime_catalyst_cache_ttl_seconds(task_id)
+    max_stale_cache_age_seconds = _runtime_catalyst_max_stale_cache_age_seconds(task_id)
+    max_news_age_days = _runtime_catalyst_max_news_age_days(task_id)
+    symbols = tuple(pick.symbol for pick in picks)
+    symbol_names = {pick.symbol: pick.name for pick in picks}
+    return build_catalyst_report(
+        symbols=symbols,
+        symbol_names=symbol_names,
+        config=NewsCatalystConfig(
+            symbols=symbols,
+            max_symbol_news=3,
+            max_global_news=6,
+            max_events=4,
+            max_news_age_days=max_news_age_days,
+            source_timeout_seconds=source_timeout_seconds,
+            enable_llm_review=False,
+            cache_path=cache_path,
+            cache_ttl_seconds=cache_ttl_seconds,
+            max_stale_cache_age_seconds=max_stale_cache_age_seconds,
+            allow_stale_cache_on_failure=_runtime_catalyst_allow_stale_cache_on_failure(
+                task_id
+            ),
+        ),
+    )
+
+
+def _filter_catalyst_report_for_symbols(
+    report: Any | None,
+    symbols: tuple[str, ...],
+) -> Any | None:
+    if report is None:
+        return None
+
+    from aqsp.news.catalysts import CatalystReport
+
+    allowed_symbols = {str(symbol).strip() for symbol in symbols if str(symbol).strip()}
+    if not allowed_symbols:
+        return report
+
+    events = tuple(
+        event
+        for event in getattr(report, "events", ())
+        if not getattr(event, "symbol", "")
+        or getattr(event, "symbol", "") in allowed_symbols
+    )
+    return CatalystReport(
+        date=str(getattr(report, "date", "")).strip(),
+        generated_at=str(getattr(report, "generated_at", "")).strip(),
+        events=events,
+        source_status=str(getattr(report, "source_status", "")).strip(),
+        warnings=tuple(getattr(report, "warnings", ()) or ()),
+    )
+
+
+def _load_runtime_market_context_catalyst_report(
+    *,
+    preview_report: Any | None,
+    preview_symbols: tuple[str, ...],
+    picks: list[PickResult],
+    task_id: str,
+) -> Any | None:
+    from aqsp.news.catalysts import load_catalyst_report_artifact
+
+    debate_runtime = load_debate_runtime_config(task_id=task_id)
+    target_picks = picks[: max(1, int(debate_runtime.max_candidates))]
+    if not target_picks:
+        return None
+
+    target_symbols = tuple(pick.symbol for pick in target_picks)
+    artifact_path = _runtime_news_artifact_path(task_id)
+    if artifact_path:
+        artifact = load_catalyst_report_artifact(
+            artifact_path,
+            expected_date=today_shanghai().isoformat(),
+            max_age_seconds=_runtime_news_artifact_max_age_seconds(task_id),
+        )
+        if artifact is not None:
+            return _filter_catalyst_report_for_symbols(artifact, target_symbols)
+    if preview_report is not None and set(target_symbols).issubset(
+        set(preview_symbols)
+    ):
+        return _filter_catalyst_report_for_symbols(preview_report, target_symbols)
+    return _build_runtime_catalyst_report(target_picks, task_id=task_id)
+
+
 def _trim_high_frequency_markdown(markdown: str) -> str:
     if not markdown.strip():
         return markdown
     keep_sections = {
         "## 数据与规则",
+        "## 市场上下文",
         "## 今日重点看板",
         "## 组合保护",
         "## 选股变化",
@@ -1750,6 +2666,50 @@ def _trim_high_frequency_markdown(markdown: str) -> str:
         if keep_current:
             kept.append(line)
     return "\n".join(kept).rstrip() + "\n"
+
+
+def _write_high_frequency_provisional_outputs(
+    *,
+    task_id: str,
+    args: argparse.Namespace,
+    picks: list[PickResult],
+    latest: date,
+    mode: str,
+    run_metadata: RunMetadata,
+) -> None:
+    if not _is_high_frequency_task(task_id):
+        return
+    report_path = str(getattr(args, "report", "") or "").strip()
+    output_csv_path = str(getattr(args, "output_csv", "") or "").strip()
+    mirror_report_path = str(os.environ.get("AQSP_PROVISIONAL_REPORT") or "").strip()
+    mirror_csv_path = str(os.environ.get("AQSP_PROVISIONAL_OUTPUT_CSV") or "").strip()
+    if not any((report_path, output_csv_path, mirror_report_path, mirror_csv_path)):
+        return
+
+    table = to_intraday_dataframe(picks, metadata=run_metadata)
+    markdown = to_markdown(
+        picks,
+        title=f"AI 量化选股盘中快照({mode}, 数据日期 {latest.isoformat()})",
+        metadata=replace(
+            run_metadata,
+            final_count=len(picks),
+        ),
+    )
+    markdown = _trim_high_frequency_markdown(markdown)
+    report_targets = tuple(
+        dict.fromkeys(p for p in (report_path, mirror_report_path) if p)
+    )
+    csv_targets = tuple(
+        dict.fromkeys(p for p in (output_csv_path, mirror_csv_path) if p)
+    )
+    for target in report_targets:
+        Path(target).parent.mkdir(parents=True, exist_ok=True)
+        atomic_write_text(target, markdown)
+    csv_payload = table.to_csv(index=False)
+    for target in csv_targets:
+        Path(target).parent.mkdir(parents=True, exist_ok=True)
+        atomic_write_text(target, csv_payload)
+    print("盘中候选快照已先行落盘")
 
 
 def _ledger_signal_date(row: dict[str, Any]) -> str:
@@ -1967,6 +2927,99 @@ def _read_symbols_file(path: str | Path) -> list[str]:
                 seen.add(symbol)
                 symbols.append(symbol)
     return symbols
+
+
+def _build_streaming_sqlite_context(
+    args: argparse.Namespace,
+    symbols: list[str],
+) -> tuple[
+    list[str],
+    Any,
+    list[str],
+    dict[str, pd.DataFrame],
+    Any,
+]:
+    """Build a bounded sqlite loader for production walk-forward evidence."""
+    import sqlite3
+
+    from aqsp.backtest.walk_forward import DEFAULT_STREAM_BATCH_SIZE
+
+    if args.source != "sqlite_db":
+        raise DataError("--streaming 目前只允许 source=sqlite_db")
+    if not getattr(args, "skip_pit_financials", False):
+        raise DataError("--streaming 必须显式 --skip-pit-financials，避免无界 PIT 内存")
+    if int(getattr(args, "stream_batch_size", 0) or 0) <= 0:
+        raise DataError("--stream-batch-size 必须为正整数")
+
+    cache = DataCache(args.cache_path) if args.cache_path else None
+    source = _build_sqlite_db_source(cache=cache)
+    start_day = date.fromisoformat(args.start)
+    end_day = date.fromisoformat(args.end)
+    benchmark = str(getattr(args, "benchmark_symbol", "") or "").strip()
+    fixed_frames: dict[str, pd.DataFrame] = {}
+    if benchmark:
+        fixed_frames = source.fetch_index([benchmark], start_day, end_day)
+
+    with sqlite3.connect(source.db_path) as conn:
+        raw_dates = conn.execute(
+            """
+            SELECT DISTINCT trade_date
+            FROM daily_qfq
+            WHERE trade_date >= ? AND trade_date <= ?
+            ORDER BY trade_date
+            """,
+            (start_day.strftime("%Y%m%d"), end_day.strftime("%Y%m%d")),
+        ).fetchall()
+    all_dates = [
+        f"{str(raw[0])[:4]}-{str(raw[0])[4:6]}-{str(raw[0])[6:8]}"
+        for raw in raw_dates
+        if len(str(raw[0] or "")) == 8
+    ]
+    if not all_dates:
+        raise DataError("sqlite_db 没有可用于 streaming walk-forward 的交易日")
+
+    effective_symbols = [symbol for symbol in symbols if symbol != benchmark]
+
+    def load_batch(batch: list[str], load_start: str, load_end: str):
+        return source.fetch_daily(
+            batch,
+            date.fromisoformat(load_start),
+            date.fromisoformat(load_end),
+            adjust="",
+        )
+
+    def summarize_market_window(window_start: str, window_end: str):
+        returns: list[float] = []
+        batch_size = int(
+            getattr(args, "stream_batch_size", DEFAULT_STREAM_BATCH_SIZE)
+        )
+        for index in range(0, len(effective_symbols), batch_size):
+            batch = effective_symbols[index : index + batch_size]
+            frames = load_batch(batch, window_start, window_end)
+            for frame in frames.values():
+                if len(frame) < 2:
+                    continue
+                first = float(frame.iloc[0]["close"])
+                last = float(frame.iloc[-1]["close"])
+                if first > 0:
+                    returns.append((last - first) / first)
+        if not returns:
+            return {"sample_count": 0}
+        return {
+            "sample_count": len(returns),
+            "avg_return": float(sum(returns) / len(returns)),
+            "negative_ratio": float(
+                sum(1 for value in returns if value < 0.0) / len(returns)
+            ),
+        }
+
+    return (
+        effective_symbols,
+        load_batch,
+        all_dates,
+        fixed_frames,
+        summarize_market_window,
+    )
 
 
 def _walkforward_fetch_days(start: str, end: str) -> int:
@@ -2444,7 +3497,9 @@ def _walkforward_gate_metadata(
 ) -> dict[str, object]:
     metadata: dict[str, object] = {
         "source": str(getattr(args, "source", "") or ""),
-        "window_mode": str(getattr(args, "window_mode", "rolling_recent") or "rolling_recent"),
+        "window_mode": str(
+            getattr(args, "window_mode", "rolling_recent") or "rolling_recent"
+        ),
         "skip_pit_financials": bool(getattr(args, "skip_pit_financials", False)),
     }
     if effective_symbols is not None:
@@ -2452,6 +3507,11 @@ def _walkforward_gate_metadata(
     if bool(getattr(args, "grid_cscv", False)):
         metadata["grid_profile"] = str(
             getattr(args, "grid_profile", "stable") or "stable"
+        )
+    if bool(getattr(args, "streaming", False)):
+        metadata["memory_mode"] = "streaming"
+        metadata["stream_batch_size"] = int(
+            getattr(args, "stream_batch_size", 0) or 0
         )
     if metadata["source"] == "sqlite_db":
         db_path = _resolve_sqlite_db_path()
@@ -2708,6 +3768,10 @@ def _notification_gate_actions(
             "生成多变体 grid CSCV 证据后再刷新 gate；旧归档 Markdown 不作为生产放行依据。"
         )
     if "DSR 未过门" in joined or "PBO 未过门" in joined or "PBO 未通过" in joined:
+        if cold_start_days >= _cold_start_min_days():
+            actions.append(
+                "冷启动样本门已达标；当前不是冷启动卡住，是 walk-forward 双门质量门未过。"
+            )
         actions.append("在双门过线前保留观察模式，不要开启自动通知或放大纸面仓位。")
     if "held-out" in joined:
         actions.append(
@@ -2805,8 +3869,20 @@ def run_screen(args: argparse.Namespace) -> int:
     explicit_symbol_count = 0
     symbols: list[str] = []
     if args.csv:
-        frames = load_csv(args.csv)
+        # A CSV has no trustworthy live-source/freshness provenance.  The
+        # screen command is a live_short entrypoint; historical files belong
+        # to walkforward/pit and must fail closed instead of yielding a silent
+        # empty recommendation set.
+        print("screen --csv 仅允许进入 walkforward/pit，不能形成 live_short 候选")
+        return 1
     else:
+        allowed, reason = _runtime_source_workload_allowed(
+            args.source,
+            workload="live_short",
+        )
+        if not allowed:
+            print(reason)
+            return 1
         symbols = [item.strip() for item in args.symbols.split(",") if item.strip()]
         if not symbols:
             symbols = _resolve_run_symbols(
@@ -2819,13 +3895,45 @@ def run_screen(args: argparse.Namespace) -> int:
             )
         else:
             explicit_symbol_count = len(symbols)
-        frames, actual_source = _fetch_frames_for_cli_with_metadata(
-            args.source,
-            symbols,
-            benchmark_symbol=args.benchmark_symbol,
-        )
+        if str(getattr(args, "mode", "") or "").strip().lower() == "open":
+            frames, actual_source = _fetch_special_strategy_frames(
+                args.source,
+                symbols,
+                benchmark_symbol=args.benchmark_symbol,
+            )
+        else:
+            frames, actual_source = _fetch_frames_for_cli_with_metadata(
+                args.source,
+                symbols,
+                benchmark_symbol=args.benchmark_symbol,
+                workload="live_short",
+            )
+            actual_allowed, actual_reason = _runtime_actual_source_workload_allowed(
+                args.source,
+                actual_source,
+                workload="live_short",
+            )
+            if not actual_allowed:
+                print(actual_reason)
+                return 1
 
-    latest = latest_trade_date(frames)
+    configured_max_data_lag_days = int(
+        getattr(args, "max_data_lag_days", 0) or load_runtime_config().max_data_lag_days
+    )
+    max_data_lag_days = _effective_live_short_max_data_lag_days(
+        configured_max_data_lag_days,
+        requires_live_short_source=not bool(args.csv),
+        csv_path=args.csv,
+    )
+    latest = (
+        latest_trade_date(frames)
+        if args.csv
+        else assert_fresh_data(
+            frames,
+            max_data_lag_days,
+            workload="live_short",
+        )
+    )
     data_lag_days = _runtime_data_lag_days(latest)
     freshness_tier, coverage_tier, source_local_status = _source_runtime_metadata(
         actual_source,
@@ -2842,6 +3950,11 @@ def run_screen(args: argparse.Namespace) -> int:
         benchmark_symbol=args.benchmark_symbol,
         thresholds=thresholds,
     )
+    market_context_lines = _runtime_regime_market_context_lines(
+        frames,
+        benchmark_symbol=args.benchmark_symbol,
+        thresholds=thresholds,
+    )
     config = ScreeningConfig(
         mode=args.mode,
         min_avg_amount=args.min_avg_amount,
@@ -2850,7 +3963,7 @@ def run_screen(args: argparse.Namespace) -> int:
         max_bias20=thresholds.scoring.max_bias20,
         stop_loss_buffer=thresholds.risk.soft_stop_loss_pct,
         max_position_pct=thresholds.risk.max_position_pct,
-        strategy_weights=strategy_weights_for_regime(thresholds, regime),
+        strategy_weights=_runtime_strategy_weights(thresholds, regime),
     )
     picks = _enrich_pick_names(
         _screen_universe_with_thresholds(screen_frames, config, thresholds),
@@ -2885,6 +3998,8 @@ def run_screen(args: argparse.Namespace) -> int:
             thresholds_version=thresholds.version,
             data_latest_trade_date=latest.isoformat() if latest is not None else "",
             data_lag_days=data_lag_days,
+            regime=regime,
+            market_context_lines=market_context_lines,
             task_id=str(os.environ.get("AQSP_RUN_TASK_ID", "") or "").strip(),
         )
         atomic_write_text(
@@ -2908,7 +4023,11 @@ def run_scheduled(args: argparse.Namespace) -> int:
 
 def _run_scheduled_legacy(args: argparse.Namespace) -> int:
     env = load_runtime_config()
-    today = today_shanghai()
+    as_of_raw = str(getattr(args, "as_of", "") or "").strip()
+    try:
+        today = date.fromisoformat(as_of_raw) if as_of_raw else today_shanghai()
+    except ValueError as exc:
+        raise ValueError(f"--as-of 日期格式无效: {as_of_raw}") from exc
     from aqsp.core.time import is_trading_day
 
     if not is_trading_day(today):
@@ -2917,17 +4036,39 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
 
     task_id = str(os.environ.get("AQSP_RUN_TASK_ID", "") or "").strip()
     normalized_task_id = task_id.lower()
+    requires_live_short_source = _is_high_frequency_task(normalized_task_id) or (
+        not as_of_raw and not getattr(args, "csv", "")
+    )
+    if getattr(args, "csv", ""):
+        print("scheduled --csv 仅允许历史验证，不能形成 live_short 候选")
+        return 1
+    if requires_live_short_source:
+        allowed, reason = _runtime_source_workload_allowed(
+            args.source,
+            workload="live_short",
+        )
+        if not allowed:
+            print(reason)
+            return 1
     mode = args.mode or env.mode
     explicit_symbols = args.symbols or ",".join(env.symbols)
     limit = args.limit or env.limit
     max_universe = args.max_universe or env.max_universe
     min_avg_amount = args.min_avg_amount or env.min_avg_amount
-    max_data_lag_days = args.max_data_lag_days or env.max_data_lag_days
+    configured_max_data_lag_days = args.max_data_lag_days or env.max_data_lag_days
+    max_data_lag_days = _effective_live_short_max_data_lag_days(
+        configured_max_data_lag_days,
+        requires_live_short_source=requires_live_short_source,
+        csv_path=getattr(args, "csv", ""),
+        as_of_raw=as_of_raw,
+    )
     enable_online_factors = args.enable_online_factors or env.enable_online_factors
     explicit_symbol_count = len(
         [item.strip() for item in explicit_symbols.split(",") if item.strip()]
     )
     symbols: list[str] = []
+    intraday_coverage_status = "not_applicable"
+    intraday_missing_symbols: tuple[str, ...] = ()
 
     if args.csv:
         frames = load_csv(args.csv)
@@ -2937,17 +4078,46 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
             args.source,
             explicit_symbols,
             pool_name=getattr(args, "pool", ""),
-            as_of=today_shanghai(),
+            as_of=today,
             max_universe=max_universe,
             min_avg_amount=min_avg_amount,
         )
-        frames, actual_source = _fetch_frames_for_cli_with_metadata(
-            args.source,
-            symbols,
-            benchmark_symbol=args.benchmark_symbol,
+        if _requires_intraday_overlay_task(normalized_task_id):
+            frames, actual_source = _fetch_special_strategy_frames(
+                args.source,
+                symbols,
+                benchmark_symbol=args.benchmark_symbol,
+            )
+        else:
+            frames, actual_source = _fetch_frames_for_cli_with_metadata(
+                args.source,
+                symbols,
+                benchmark_symbol=args.benchmark_symbol,
+                end_date=today,
+                workload="live_short" if requires_live_short_source else None,
+            )
+        if requires_live_short_source and not _requires_intraday_overlay_task(
+            normalized_task_id
+        ):
+            actual_allowed, actual_reason = _runtime_actual_source_workload_allowed(
+                args.source,
+                actual_source,
+                workload="live_short",
+            )
+            if not actual_allowed:
+                print(actual_reason)
+                return 1
+
+    if _requires_intraday_overlay_task(normalized_task_id):
+        intraday_coverage_status, intraday_missing_symbols = _intraday_overlay_coverage(
+            frames
         )
 
-    latest = assert_fresh_data(frames, max_data_lag_days)
+    latest = assert_fresh_data(
+        frames,
+        max_data_lag_days,
+        workload="live_short" if requires_live_short_source else None,
+    )
     data_lag_days = _runtime_data_lag_days(latest)
     freshness_tier, coverage_tier, source_local_status = _source_runtime_metadata(
         actual_source,
@@ -2973,10 +4143,19 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
         paper_ledger_path,
         frames,
     )
-    status = breaker.check(
-        daily_pnl_pct=daily_pnl,
-        weekly_pnl_pct=weekly_pnl,
-        monthly_pnl_pct=monthly_pnl,
+    status = (
+        _disabled_circuit_breaker_status(
+            daily_pnl_pct=daily_pnl,
+            weekly_pnl_pct=weekly_pnl,
+            monthly_pnl_pct=monthly_pnl,
+            switch_name=_circuit_breaker_disable_switch_name(normalized_task_id),
+        )
+        if _circuit_breaker_disabled(task_id=normalized_task_id)
+        else breaker.check(
+            daily_pnl_pct=daily_pnl,
+            weekly_pnl_pct=weekly_pnl,
+            monthly_pnl_pct=monthly_pnl,
+        )
     )
 
     cold_start_days = _count_independent_signal_days(formal_ledger_path)
@@ -3009,6 +4188,9 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
         task_id=str(os.environ.get("AQSP_RUN_TASK_ID", "") or "").strip(),
         circuit_breaker_triggered=status.triggered,
         circuit_breaker_reason=status.reason,
+        workload="live_short" if requires_live_short_source else "scheduled",
+        intraday_coverage_status=intraday_coverage_status,
+        intraday_missing_symbols=intraday_missing_symbols,
     )
     if status.triggered and not _allow_observation_during_circuit_breaker(task_id):
         return _handle_circuit_breaker_block(
@@ -3025,10 +4207,7 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
             task_id=task_id,
         )
     if status.triggered:
-        print(
-            "🛡️ 组合保护已触发，但当前任务保留观察模式候选生成: "
-            f"{status.reason}"
-        )
+        print(f"🛡️ 组合保护已触发，但当前任务保留观察模式候选生成: {status.reason}")
 
     regime = _detect_runtime_regime(
         frames,
@@ -3054,52 +4233,8 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
         print(
             f"学习权重提案: {len(weight_proposals)} 个策略，仅记录研究观察，未应用到本次筛选"
         )
-    weights = strategy_weights_for_regime(thresholds, regime)
+    weights = _runtime_strategy_weights(thresholds, regime)
     strategy_weight_reasons: dict[str, str] = {}
-    try:
-        from aqsp.ledger.runtime import strategy_executability_weight_adjustments
-
-        executability_adjustments, executability_reasons = (
-            strategy_executability_weight_adjustments(formal_ledger_path)
-        )
-        if executability_adjustments:
-            applied_adjustments: list[str] = []
-            for strategy_id, multiplier in sorted(executability_adjustments.items()):
-                if strategy_id not in weights:
-                    continue
-                weights[strategy_id] = round(
-                    float(weights[strategy_id]) * float(multiplier), 6
-                )
-                reason = executability_reasons.get(strategy_id, "")
-                if reason:
-                    strategy_weight_reasons[strategy_id] = reason
-                applied_adjustments.append(
-                    f"{strategy_id}×{multiplier:.2f}"
-                )
-            if applied_adjustments:
-                print("不可成交反馈降权: " + ", ".join(applied_adjustments))
-                LOGGER.info(
-                    "不可成交反馈已应用: %s",
-                    {
-                        key: {
-                            "weight": weights.get(key),
-                            "reason": strategy_weight_reasons.get(key, ""),
-                        }
-                        for key in sorted(strategy_weight_reasons)
-                    },
-                )
-            skipped_adjustments = sorted(
-                strategy_id
-                for strategy_id in executability_adjustments
-                if strategy_id not in weights
-            )
-            if skipped_adjustments:
-                LOGGER.info(
-                    "不可成交反馈未接入当前 regime 权重: %s",
-                    skipped_adjustments,
-                )
-    except Exception as exc:
-        LOGGER.warning("不可成交反馈权重计算失败，按原始权重继续: %s", exc)
 
     screen_frames = _drop_benchmark_frame(frames, args.benchmark_symbol)
     config = ScreeningConfig(
@@ -3117,51 +4252,54 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
         _screen_universe_with_thresholds(screen_frames, config, thresholds),
         screen_frames,
     )
-
-    try:
-        from aqsp.strategies.composite import CompositeStrategy
-
-        composite = CompositeStrategy(thresholds=thresholds)
-        composite_scores = composite.calculate_score(screen_frames, regime=regime)
-        if composite_scores:
-            max_cs = max(composite_scores.values()) if composite_scores else 1.0
-            weight_snapshot = _runtime_weight_snapshot(
+    screened_picks = _attach_runtime_weight_snapshot(
+        screened_picks,
+        thresholds=thresholds,
+        regime=regime,
+        strategy_weights=weights,
+        strategy_weight_reasons=strategy_weight_reasons,
+    )
+    relevant_intraday_missing_symbols = _relevant_intraday_missing_symbols(
+        screened_picks,
+        missing_symbols=intraday_missing_symbols,
+        benchmark_symbol=args.benchmark_symbol,
+    )
+    screened_picks = _force_intraday_observation(
+        screened_picks,
+        missing_symbols=relevant_intraday_missing_symbols,
+    )
+    _write_high_frequency_provisional_outputs(
+        task_id=normalized_task_id,
+        args=args,
+        picks=screened_picks[:limit],
+        latest=latest,
+        mode=mode,
+        run_metadata=replace(
+            run_metadata_base,
+            screened_count=len(screened_picks),
+            final_count=min(len(screened_picks), limit),
+            regime=regime,
+            market_context_lines=_runtime_regime_market_context_lines(
+                frames,
+                benchmark_symbol=args.benchmark_symbol,
                 thresholds=thresholds,
-                regime=regime,
-                strategy_weights=weights,
-                strategy_weight_reasons=strategy_weight_reasons,
+            ),
+        ),
+    )
+
+    preview_report = None
+    preview_symbols: tuple[str, ...] = ()
+    if screened_picks and _should_build_market_context(normalized_task_id):
+        try:
+            preview_count = _market_context_preview_count(limit, len(screened_picks))
+            preview_picks = screened_picks[:preview_count]
+            preview_symbols = tuple(pick.symbol for pick in preview_picks)
+            preview_report = _build_runtime_catalyst_report(
+                preview_picks,
+                task_id=normalized_task_id,
             )
-            rescored_picks = []
-            for pick in screened_picks:
-                raw_cs = composite_scores.get(pick.symbol, 0.0)
-                normalized_cs = (raw_cs / max_cs * 100) if max_cs > 0 else 0.0
-                blended_score = _blend_base_and_regime_scores(
-                    base_score=pick.score,
-                    regime_score=normalized_cs,
-                    thresholds=thresholds,
-                )
-                metrics = {
-                    **pick.metrics,
-                    "strategy_weight_snapshot": weight_snapshot,
-                    "composite_score_raw": round(float(raw_cs), 6),
-                    "composite_score_normalized": round(float(normalized_cs), 6),
-                    "base_score_before_composite": round(float(pick.score), 6),
-                    "final_score_after_composite": round(float(blended_score), 6),
-                }
-                rescored_picks.append(
-                    replace(
-                        pick,
-                        metrics=metrics,
-                        regime_score=round(normalized_cs, 2),
-                        score=blended_score,
-                    )
-                )
-            screened_picks = sorted(rescored_picks, key=lambda p: p.score, reverse=True)
-    except Exception as exc:
-        logging.getLogger(__name__).warning(
-            "CompositeStrategy 重评分失败，回退到基础筛选结果: %s",
-            exc,
-        )
+        except Exception as exc:
+            LOGGER.warning("候选前跨市证据预览失败，按原排序继续: %s", exc)
 
     picks = screened_picks[:limit]
 
@@ -3236,6 +4374,46 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
             LOGGER.warning("两融因子计算失败，按 0 处理: %s", exc)
             margin_z = 0.0
 
+    market_context = None
+    market_context_overview = ""
+    news_summary = ""
+    market_context_lines = _runtime_regime_market_context_lines(
+        frames,
+        benchmark_symbol=args.benchmark_symbol,
+        thresholds=thresholds,
+    )
+    if _should_build_market_context(normalized_task_id):
+        try:
+            from aqsp.market_context import build_market_context_artifact
+
+            catalyst_report = _load_runtime_market_context_catalyst_report(
+                preview_report=preview_report,
+                preview_symbols=preview_symbols,
+                picks=picks,
+                task_id=normalized_task_id,
+            )
+            if catalyst_report is not None:
+                from aqsp.news.catalysts import format_catalyst_notification
+
+                news_summary = format_catalyst_notification(catalyst_report)
+            market_context = build_market_context_artifact(
+                catalyst_report=catalyst_report,
+                northbound_flow_5d_z=nb_z,
+                margin_balance_change_5d=margin_z,
+            )
+        except Exception as exc:
+            LOGGER.warning("市场上下文构建失败，跳过附加展示: %s", exc)
+            news_summary = f"消息面上下文失败：{str(exc)[:180]}"
+        else:
+            market_context_overview = market_context.cross_market_overview
+            market_context_lines = market_context_lines + market_context.summary_lines
+
+    if picks:
+        picks = _annotate_cross_market_context(
+            picks,
+            market_context=market_context,
+        )
+
     run_metadata = RunMetadata(
         requested_source=args.source,
         actual_source=actual_source,
@@ -3262,6 +4440,19 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
         task_id=str(os.environ.get("AQSP_RUN_TASK_ID", "") or "").strip(),
         circuit_breaker_triggered=status.triggered,
         circuit_breaker_reason=status.reason,
+        market_context_overview=market_context_overview,
+        market_context_lines=market_context_lines,
+        workload="live_short" if requires_live_short_source else "scheduled",
+        intraday_coverage_status=intraday_coverage_status,
+        intraday_missing_symbols=intraday_missing_symbols,
+    )
+    _write_high_frequency_provisional_outputs(
+        task_id=normalized_task_id,
+        args=args,
+        picks=picks,
+        latest=latest,
+        mode=mode,
+        run_metadata=run_metadata,
     )
 
     diff = None
@@ -3358,25 +4549,20 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
 
     debate_results = []
     debate_file = Path("data/debate_results.jsonl")
-    DEBATE_RETENTION_DAYS = 30
-    DEBATE_COOLDOWN_DAYS = 3
     DEBATE_MIN_DISAGREEMENT = 0.3
 
-    debate_runtime = load_debate_runtime_config()
-    debate_enabled = getattr(args, "enable_debate", False) or debate_runtime.enabled
+    debate_runtime = load_debate_runtime_config(task_id=normalized_task_id)
+    debate_enabled = _debate_execution_enabled(args, debate_runtime)
 
     if debate_enabled and picks:
-        print("开始多视角复核...")
+        print("开始多 Agent 委员会复核...")
 
-        coordinator = AShareDebateCoordinator(
-            enable_llm=debate_runtime.enable_llm,
-            max_rounds=debate_runtime.max_rounds,
+        default_roles = tuple(debate_runtime.roles)
+        default_coordinator = _build_debate_coordinator(
+            debate_runtime,
             thresholds_version=thresholds.version,
             regime=regime or "unknown",
             data_source="multi" if args.source == "multi" else str(args.source),
-            language=debate_runtime.language,
-            roles=parse_agent_roles(debate_runtime.roles),
-            role_runtime=debate_runtime.role_runtime,
         )
         debate_file.parent.mkdir(parents=True, exist_ok=True)
 
@@ -3389,18 +4575,34 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
         today = now_shanghai().date().isoformat()
         now = now_shanghai().isoformat(timespec="seconds")
 
-        cooldown_symbols: set[str] = set()
+        cooldown_keys: set[tuple[str, str, str, str]] = set()
         cooldown_cutoff = (
             (now_shanghai() - timedelta(days=DEBATE_COOLDOWN_DAYS)).date().isoformat()
         )
         for data in existing_debates.values():
-            if data.get("related_signal_date", "") >= cooldown_cutoff:
-                cooldown_symbols.add(data.get("symbol", ""))
+            related_signal_date = str(data.get("related_signal_date", "") or "")
+            if related_signal_date >= cooldown_cutoff:
+                cooldown_keys.add(
+                    (
+                        str(data.get("symbol", "") or ""),
+                        related_signal_date,
+                        str(data.get("task_id", "") or ""),
+                        str(data.get("candidate_fingerprint", "") or ""),
+                    )
+                )
 
         skipped_cooldown = 0
 
-        for pick in picks[:3]:
-            if pick.symbol in cooldown_symbols:
+        for pick in picks[: max(1, int(debate_runtime.max_candidates))]:
+            candidate_signal_date = str(pick.date or today)
+            candidate_fingerprint = _candidate_debate_fingerprint(pick)
+            cooldown_key = (
+                pick.symbol,
+                candidate_signal_date,
+                normalized_task_id,
+                candidate_fingerprint,
+            )
+            if cooldown_key in cooldown_keys:
                 print(
                     f"   跳过 {pick.symbol} {pick.name}（{DEBATE_COOLDOWN_DAYS}天内已复核）"
                 )
@@ -3410,25 +4612,66 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
             df = screen_frames.get(pick.symbol, pd.DataFrame())
             if not df.empty:
                 try:
-                    result = coordinator.run_debate(pick, df, signal_date=today)
+                    pick_market_context_lines = market_context_lines
+                    if market_context is not None:
+                        from aqsp.market_context import market_context_lines_for_pick
 
-                    if result.disagreement_score < DEBATE_MIN_DISAGREEMENT:
-                        print(
-                            f"   跳过 {pick.symbol} {pick.name}（分歧 {result.disagreement_score:.2f} < {DEBATE_MIN_DISAGREEMENT}）"
+                        pick_market_context_lines = market_context_lines_for_pick(
+                            pick,
+                            market_context,
                         )
-                        continue
+                    pick_debate_roles = _resolve_pick_debate_roles(
+                        debate_runtime,
+                        pick=pick,
+                        market_context_lines=pick_market_context_lines,
+                    )
+                    coordinator = (
+                        default_coordinator
+                        if pick_debate_roles == default_roles
+                        else _build_debate_coordinator(
+                            debate_runtime,
+                            thresholds_version=thresholds.version,
+                            regime=regime or "unknown",
+                            data_source=(
+                                "multi" if args.source == "multi" else str(args.source)
+                            ),
+                            roles_override=pick_debate_roles,
+                        )
+                    )
+                    result = coordinator.run_debate(
+                        pick,
+                        df,
+                        signal_date=candidate_signal_date,
+                        market_context_lines=pick_market_context_lines,
+                    )
+                    result.candidate_fingerprint = candidate_fingerprint
 
                     debate_results.append(result)
 
                     serialized = serialize_debate_result(result)
                     serialized["debate_date"] = today
                     serialized["created_at"] = now
-                    key = f"{result.symbol}_{today}"
+                    serialized["task_id"] = normalized_task_id
+                    serialized["candidate_created_at"] = str(
+                        pick.metrics.get("created_at")
+                        or pick.metrics.get("run_created_at")
+                        or now
+                    )
+                    serialized["candidate_signal_date"] = candidate_signal_date
+                    serialized["candidate_fingerprint"] = candidate_fingerprint
+                    key = (
+                        f"{result.symbol}_{candidate_signal_date}_"
+                        f"{normalized_task_id}_{candidate_fingerprint}"
+                    )
                     existing_debates[key] = serialized
 
                     print(
                         f"   完成 {pick.symbol} {pick.name} | 结论={result.recommended_adjustment} 分歧={result.disagreement_score:.2f}"
                     )
+                    if result.disagreement_score < DEBATE_MIN_DISAGREEMENT:
+                        print(
+                            f"   {pick.symbol} {pick.name} 分歧较低（{result.disagreement_score:.2f} < {DEBATE_MIN_DISAGREEMENT}），按一致结论记录并在首页降噪"
+                        )
                 except Exception as e:
                     import logging
 
@@ -3437,36 +4680,17 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
 
         if skipped_cooldown > 0:
             print(f"   {skipped_cooldown}只股票因冷却期跳过")
-        print(
-            "   复核结果已落附件；系统评分保持不变"
-        )
+        print("   复核结果已落附件；系统评分保持不变")
 
         with advisory_lock(debate_file):
             retained_debates = _read_retained_debates(debate_file, cutoff_date)
             _merge_debate_records(retained_debates, existing_debates)
             _write_debate_records(debate_file, retained_debates)
-        print("多视角复核完成")
+        print("多 Agent 委员会复核完成")
 
-        # 将辩论结论回写到对应 pick，使 PM 能据此调整优先级与配仓。
-        # 仅当辩论给出非 keep 结论时才覆盖，避免无分歧时引入噪声。
-        debate_by_symbol = {dr.symbol: dr for dr in debate_results}
-        if debate_by_symbol:
-            rewritten = 0
-            updated_picks = []
-            for pick in picks:
-                dr = debate_by_symbol.get(pick.symbol)
-                if dr is not None and dr.recommended_adjustment in ("raise", "lower"):
-                    pick = replace(
-                        pick,
-                        recommended_adjustment=dr.recommended_adjustment,
-                        adjusted_score=dr.adjusted_score,
-                        debate_consensus=dr.final_consensus,
-                    )
-                    rewritten += 1
-                updated_picks.append(pick)
-            picks = updated_picks
-            if rewritten:
-                print(f"   {rewritten} 只候选已按复核结果更新排序")
+        if debate_results:
+            picks, rewritten = _apply_debate_results_to_picks(picks, debate_results)
+            print("   复核结论仅写入解释层，未直接改写 runtime 排序")
 
     if validation and validation.checked and debate_results:
         try:
@@ -3492,15 +4716,44 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
                     continue
                 actual_return = float(row.get("return_pct", 0))
                 target_stance = "bullish" if actual_return > 0 else "bearish"
+                final_opinions: dict[tuple[str, str], Any] = {}
                 for round_data in debate.rounds:
                     for opinion in round_data.opinions:
-                        was_correct = opinion.stance == target_stance
-                        tracker.record_prediction(
-                            role=opinion.role,
-                            agent_id=opinion.agent_id,
-                            predicted_stance=opinion.stance,
-                            was_correct=was_correct,
-                        )
+                        final_opinions[(opinion.role.value, opinion.agent_id)] = opinion
+                for opinion in final_opinions.values():
+                    was_correct = opinion.stance == target_stance
+                    tracker.record_prediction(
+                        role=opinion.role,
+                        agent_id=opinion.agent_id,
+                        predicted_stance=opinion.stance,
+                        was_correct=was_correct,
+                        context={
+                            "cross_market_support_event_count": getattr(
+                                debate,
+                                "cross_market_support_event_count",
+                                0,
+                            ),
+                            "cross_market_conflict_event_count": getattr(
+                                debate,
+                                "cross_market_conflict_event_count",
+                                0,
+                            ),
+                            "cross_market_evidence_stack_summary": str(
+                                getattr(
+                                    debate,
+                                    "cross_market_evidence_stack_summary",
+                                    "",
+                                )
+                                or ""
+                            ),
+                        },
+                        task_id=normalized_task_id,
+                        debate_id=debate.debate_id,
+                        signal_date=signal_date,
+                        candidate_fingerprint=str(
+                            getattr(debate, "candidate_fingerprint", "") or ""
+                        ),
+                    )
             print("   观点表现统计已更新")
         except Exception as e:
             import logging
@@ -3528,6 +4781,10 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
             portfolio_summary,
             removed_symbols=removed,
             removed_name_map=pick_name_map,
+        )
+        portfolio_summary = _augment_summary_with_market_context(
+            portfolio_summary,
+            market_context=market_context,
         )
         if portfolio_decisions:
             print("排序结果已生成")
@@ -3558,6 +4815,16 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
             picks,
             diff=diff,
             portfolio_summary=portfolio_summary,
+        )
+        picks = _annotate_data_quality_context(
+            picks,
+            anomaly_alerts=anomaly_alerts,
+            freshness_reports=freshness_reports,
+            current_dates={
+                symbol: str(pd.to_datetime(frame["date"], errors="coerce").max())[:10]
+                for symbol, frame in screen_frames.items()
+                if not frame.empty and "date" in frame.columns
+            },
         )
 
     if status.triggered:
@@ -3610,7 +4877,11 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
         run_metadata=run_metadata,
     )
 
-    table = to_dataframe(picks)
+    table = (
+        to_intraday_dataframe(picks, metadata=run_metadata)
+        if _is_high_frequency_task(normalized_task_id)
+        else to_dataframe(picks)
+    )
     markdown = to_markdown(
         picks,
         title=f"AI 量化选股报告({mode}, 数据日期 {latest.isoformat()})",
@@ -3622,7 +4893,10 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
 
     # 执行摘要：3秒抓重点，插在报告标题后第一段
     tradable = [
-        p for p in picks if p.rating in ("strong_buy_candidate", "buy_candidate")
+        p
+        for p in picks
+        if p.rating in ("strong_buy_candidate", "buy_candidate")
+        and not bool(p.metrics.get("observation_only", False))
     ]
     has_allocations = bool(getattr(portfolio_summary, "allocations", ()) or ())
     summary_lines = [
@@ -3636,7 +4910,9 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
         if compact_report:
             summary_lines.append(f"🛡️ 当前处于组合保护: {status.reason}")
         else:
-            summary_lines.append(f"🛡️ **组合保护已触发**: {status.reason}，暂停新增纸面复核")
+            summary_lines.append(
+                f"🛡️ **组合保护已触发**: {status.reason}，暂停新增纸面复核"
+            )
     else:
         summary_lines.append(_build_execution_summary_line(tradable, portfolio_summary))
         if has_allocations and len(tradable) > 1:
@@ -3673,14 +4949,10 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
             + markdown[title_end:]
         )
     if status.triggered:
-        markdown += (
-            "\n\n## 组合保护\n"
-            f"- ⚠️ 熔断触发: {status.reason}\n"
-            + (
-                "- 当前不新增纸面复核\n"
-                if compact_report
-                else "- 本期信号仅供参考，不建议新建仓位\n"
-            )
+        markdown += f"\n\n## 组合保护\n- ⚠️ 熔断触发: {status.reason}\n" + (
+            "- 当前不新增纸面复核\n"
+            if compact_report
+            else "- 本期信号仅供参考，不建议新建仓位\n"
         )
     if validation is not None and not compact_report:
         validation_text = "\n\n## 策略自检\n"
@@ -3873,6 +5145,7 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
         circuit_breaker_reason=status.reason if status.triggered else "",
         snapshot_diff=diff,
         validation_summary=_validation_summary_payload(validation),
+        news_summary=news_summary,
         title_label=title_label,
         build_daily_run_notification_fn=build_daily_run_notification,
         dispatch_notification_fn=lambda markdown, **kwargs: _dispatch_notification_once(
@@ -3892,10 +5165,37 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
 
 
 def run_dashboard(args: argparse.Namespace) -> int:
+    from scripts.open_dashboard import open_dashboard
+    from aqsp.web.entrypoint import public_dashboard_url
+
+    result = open_dashboard(
+        csv_path=Path(os.getenv("AQSP_OUTPUT_CSV", "reports/latest.csv")),
+        ledger_path=Path(os.getenv("AQSP_LEDGER", "data/predictions.jsonl")),
+        paper_ledger_path=Path(
+            os.getenv("AQSP_PAPER_LEDGER", "data/paper_trades.jsonl")
+        ),
+        intraday_csv_path=Path(
+            os.getenv("AQSP_INTRADAY_OUTPUT_CSV", "reports/intraday_latest.csv")
+        ),
+        output_path=Path(os.getenv("AQSP_DASHBOARD_HTML", "dist/dashboard/index.html")),
+        db_path=Path(os.getenv("AQSP_DASHBOARD_DB", "dist/dashboard/aqsp.db")),
+        host=args.host,
+        port=args.port,
+        open_browser=args.open_browser,
+        render_static_artifact=False,
+    )
+    print(f"Dashboard URL: {public_dashboard_url()}")
+    print(f"Local Dashboard URL: {result.url}")
+    print(f"Dashboard server started: {'yes' if result.server_started else 'reused'}")
+    return 0
+
+
+def run_dashboard_static(args: argparse.Namespace) -> int:
     from scripts.render_dashboard import render_all_panels
+    from aqsp.web.entrypoint import write_dashboard_artifact
 
     html = render_all_panels(ledger_path=args.ledger)
-    atomic_write_text(args.output, html)
+    write_dashboard_artifact(Path(args.output), html)
     print(f"Dashboard saved to {args.output}")
     return 0
 
@@ -3924,12 +5224,10 @@ _WALKFORWARD_VALIDATED_GRID_VARIANTS: tuple[WalkForwardGridVariant, ...] = (
     WalkForwardGridVariant("WF-B10", 0.1, 0.5, 40, 7, 10),
 )
 
-_WALKFORWARD_STABLE_GRID_VARIANTS: tuple[WalkForwardGridVariant, ...] = (
-    tuple(
-        variant
-        for variant in _WALKFORWARD_VALIDATED_GRID_VARIANTS
-        if variant.variant_id in {"WF-001", "WF-B01", "WF-B02", "WF-B04", "WF-B08"}
-    )
+_WALKFORWARD_STABLE_GRID_VARIANTS: tuple[WalkForwardGridVariant, ...] = tuple(
+    variant
+    for variant in _WALKFORWARD_VALIDATED_GRID_VARIANTS
+    if variant.variant_id in {"WF-001", "WF-B01", "WF-B02", "WF-B04", "WF-B08"}
 )
 
 _WALKFORWARD_EXPLORATORY_GRID_VARIANTS: tuple[WalkForwardGridVariant, ...] = (
@@ -4020,6 +5318,8 @@ def _run_walkforward_grid_cscv(
     base_test_days: int,
     base_purge_days: int,
     base_tiered_stop: bool,
+    streaming_runner: Any | None = None,
+    market_window_summary: Any | None = None,
 ) -> tuple[
     float,
     float,
@@ -4058,14 +5358,18 @@ def _run_walkforward_grid_cscv(
             top_n=variant.top_n,
             use_tiered_stop=base_tiered_stop,
             n_variants=len(variants),
+            benchmark_symbol=getattr(args, "benchmark_symbol", None),
         )
-        variant_result = engine.run(
-            variant_strategy,
-            filtered,
-            start_date=args.start,
-            end_date=args.end,
-            config=variant_cfg,
-        )
+        if streaming_runner is None:
+            variant_result = engine.run(
+                variant_strategy,
+                filtered,
+                start_date=args.start,
+                end_date=args.end,
+                config=variant_cfg,
+            )
+        else:
+            variant_result = streaming_runner(variant_strategy, variant_cfg)
         returns = [period.total_return for period in variant_result.periods]
         if not returns:
             print(f"grid variant {variant.variant_id}: no usable periods")
@@ -4129,9 +5433,12 @@ def _run_walkforward_grid_cscv(
             worst_market_windows.append({"sample_count": 0})
             continue
         start, end = parsed
-        worst_market_windows.append(
-            _summarize_walkforward_market_window(filtered, start, end)
-        )
+        if market_window_summary is None:
+            worst_market_windows.append(
+                _summarize_walkforward_market_window(filtered, start, end)
+            )
+        else:
+            worst_market_windows.append(market_window_summary(start, end))
     details.update(
         {
             "variant_dispersion_sharpe": float(
@@ -4197,10 +5504,16 @@ def _build_cscv_selection_inversions(
         train_matrix = np.concatenate([blocks[idx] for idx in train_indices], axis=0)
         test_matrix = np.concatenate([blocks[idx] for idx in test_indices], axis=0)
         train_sr = np.array(
-            [_sample_sharpe_ratio(train_matrix[:, idx], annualized=False) for idx in range(n)]
+            [
+                _sample_sharpe_ratio(train_matrix[:, idx], annualized=False)
+                for idx in range(n)
+            ]
         )
         test_sr = np.array(
-            [_sample_sharpe_ratio(test_matrix[:, idx], annualized=False) for idx in range(n)]
+            [
+                _sample_sharpe_ratio(test_matrix[:, idx], annualized=False)
+                for idx in range(n)
+            ]
         )
         selected_idx = int(np.argmax(train_sr))
         test_order = np.argsort(test_sr)
@@ -4430,56 +5743,93 @@ def run_walkforward(args: argparse.Namespace) -> int:
             print(f"提示: --symbols 去重后 {len(symbols)} → {len(deduped)} 只")
         symbols = deduped
 
-    print(f"正在获取 {len(symbols)} 只股票 {args.start} ~ {args.end} 的日线数据...")
-    if logger:
-        logger.info("获取 %d 只股票数据...", len(symbols))
-
-    from aqsp.services.walkforward_data import (
-        WalkforwardFetchRequest,
-        fetch_walkforward_frames,
-    )
-
-    fetch_result = fetch_walkforward_frames(
-        WalkforwardFetchRequest(
-            source=args.source,
-            symbols=symbols,
-            start=args.start,
-            end=args.end,
-            cache_path=args.cache_path or None,
-            skip_pit_financials=getattr(args, "skip_pit_financials", False),
-        ),
-        get_source_fn=lambda source_name, *, cache=None: (
-            _build_sqlite_db_source(cache=cache)
-            if source_name == "sqlite_db"
-            else _get_source_optional_cache(source_name, cache=cache)
-        ),
-        fetch_frames_for_cli_fn=_fetch_frames_for_cli,
-        load_csv_fn=load_csv,
-        fetch_days_fn=_walkforward_fetch_days,
-    )
-    frames = fetch_result.frames
-    symbols = fetch_result.symbols
-
-    filtered = {}
-    for sym, df in frames.items():
-        if df is None or df.empty:
-            continue
-        mask = (df["date"].astype(str) >= args.start) & (
-            df["date"].astype(str) <= args.end
+    streaming_context = None
+    effective_symbols = len(symbols)
+    if getattr(args, "streaming", False):
+        if args.engine not in {"", "builtin"}:
+            raise DataError("--streaming 不支持 akquant；请使用 --engine builtin")
+        print(
+            f"使用低内存 streaming walk-forward: {len(symbols)} 只股票，"
+            f"batch={args.stream_batch_size}"
         )
-        sliced = df.loc[mask]
-        if len(sliced) >= 100:
-            filtered[sym] = sliced.copy()
-
-    if not filtered:
-        print("没有足够数据进行回测")
-        if logger:
-            logger.error("没有足够数据进行回测")
-        return 1
-
-    print(f"有效标的: {len(filtered)} 只")
+        (
+            symbols,
+            stream_loader,
+            stream_dates,
+            stream_fixed_frames,
+            stream_market_summary,
+        ) = _build_streaming_sqlite_context(args, symbols)
+        streaming_context = {
+            "symbols": symbols,
+            "load_batch": stream_loader,
+            "all_dates": stream_dates,
+            "fixed_frames": stream_fixed_frames,
+            "market_summary": stream_market_summary,
+        }
+        effective_symbols = len(symbols)
+        filtered: dict[str, pd.DataFrame] = {}
+    else:
+        print(f"正在获取 {len(symbols)} 只股票 {args.start} ~ {args.end} 的日线数据...")
     if logger:
-        logger.info("有效标的: %d 只", len(filtered))
+        logger.info(
+            "%s %d 只股票数据...",
+            "streaming 准备" if streaming_context is not None else "获取",
+            len(symbols),
+        )
+
+    if streaming_context is None:
+        from aqsp.services.walkforward_data import (
+            WalkforwardFetchRequest,
+            fetch_walkforward_frames,
+        )
+
+        fetch_result = fetch_walkforward_frames(
+            WalkforwardFetchRequest(
+                source=args.source,
+                symbols=symbols,
+                start=args.start,
+                end=args.end,
+                cache_path=args.cache_path or None,
+                skip_pit_financials=getattr(args, "skip_pit_financials", False),
+                benchmark_symbol=args.benchmark_symbol,
+            ),
+            get_source_fn=lambda source_name, *, cache=None: (
+                _build_sqlite_db_source(cache=cache)
+                if source_name == "sqlite_db"
+                else _get_source_optional_cache(source_name, cache=cache)
+            ),
+            fetch_frames_for_cli_fn=_fetch_frames_for_cli,
+            load_csv_fn=load_csv,
+            fetch_days_fn=_walkforward_fetch_days,
+        )
+        frames = fetch_result.frames
+        symbols = fetch_result.symbols
+
+        filtered = {}
+        for sym, df in frames.items():
+            if df is None or df.empty:
+                continue
+            mask = (df["date"].astype(str) >= args.start) & (
+                df["date"].astype(str) <= args.end
+            )
+            sliced = df.loc[mask]
+            if len(sliced) >= 100:
+                filtered[sym] = sliced.copy()
+
+        if not filtered:
+            print("没有足够数据进行回测")
+            if logger:
+                logger.error("没有足够数据进行回测")
+            return 1
+
+        effective_symbols = len(filtered)
+        print(f"有效标的: {len(filtered)} 只")
+        if logger:
+            logger.info("有效标的: %d 只", len(filtered))
+    else:
+        print(f"正式覆盖标的: {effective_symbols} 只（按批加载，不保留全市场 DataFrame）")
+        if logger:
+            logger.info("streaming 正式覆盖标的: %d 只", effective_symbols)
 
     thresholds = load_thresholds()
     if args.min_score is not None:
@@ -4517,6 +5867,7 @@ def run_walkforward(args: argparse.Namespace) -> int:
         n_variants=len(_walkforward_grid_variants(args.grid_profile))
         if args.grid_cscv
         else 1,
+        benchmark_symbol=args.benchmark_symbol,
     )
 
     print("开始 walk-forward 回测...")
@@ -4533,13 +5884,34 @@ def run_walkforward(args: argparse.Namespace) -> int:
             resolution.mode,
         )
 
-    result = engine.run(
-        strategy,
-        filtered,
-        start_date=args.start,
-        end_date=args.end,
-        config=engine_cfg,
-    )
+    if streaming_context is not None and not hasattr(engine, "run_streaming"):
+        raise DataError("低内存 streaming 只支持 builtin walk-forward 引擎")
+
+    def run_engine_for_strategy(
+        current_strategy: Any,
+        current_config: WalkForwardEngineConfig,
+    ):
+        if streaming_context is None:
+            return engine.run(
+                current_strategy,
+                filtered,
+                start_date=args.start,
+                end_date=args.end,
+                config=current_config,
+            )
+        return engine.run_streaming(
+            current_strategy,
+            streaming_context["symbols"],
+            streaming_context["load_batch"],
+            streaming_context["all_dates"],
+            start_date=args.start,
+            end_date=args.end,
+            config=current_config,
+            fixed_frames=streaming_context["fixed_frames"],
+            batch_size=int(args.stream_batch_size),
+        )
+
+    result = run_engine_for_strategy(strategy, engine_cfg)
 
     regime_counts: dict[str, int] = {}
     if hasattr(result, "regime_winrates") and result.regime_winrates:
@@ -4567,6 +5939,12 @@ def run_walkforward(args: argparse.Namespace) -> int:
             base_test_days=args.test_days,
             base_purge_days=args.purge_days,
             base_tiered_stop=getattr(args, "tiered_stop", False),
+            streaming_runner=run_engine_for_strategy
+            if streaming_context is not None
+            else None,
+            market_window_summary=streaming_context["market_summary"]
+            if streaming_context is not None
+            else None,
         )
         print(
             f"Grid CSCV 完成: DSR={dsr_value:.4f}, "
@@ -4605,7 +5983,7 @@ def run_walkforward(args: argparse.Namespace) -> int:
         "",
         f"**运行日期**: {now_shanghai().strftime('%Y-%m-%d %H:%M')}",
         f"**回测区间**: {args.start} ~ {args.end}",
-        f"**标的数量**: {len(filtered)}",
+        f"**标的数量**: {effective_symbols}",
         f"**训练窗口**: {args.train_days} 天",
         f"**测试窗口**: {args.test_days} 天",
         f"**Purge Gap**: {args.purge_days} 天",
@@ -4731,7 +6109,7 @@ def run_walkforward(args: argparse.Namespace) -> int:
         start=args.start,
         end=args.end,
         n_periods=grid_periods if args.grid_cscv else len(result.periods),
-        metadata=_walkforward_gate_metadata(args, effective_symbols=len(filtered)),
+        metadata=_walkforward_gate_metadata(args, effective_symbols=effective_symbols),
         diagnostics=grid_details if args.grid_cscv and grid_details else None,
         gate_path=getattr(args, "gate_path", WALKFORWARD_GATE_PATH),
     )
@@ -4752,6 +6130,17 @@ def run_walkforward(args: argparse.Namespace) -> int:
         logger.info("Walk-forward 完成，报告: %s", args.report)
 
     return 0
+
+
+def _ledger_text_tuple(value: object) -> tuple[str, ...]:
+    if value is None:
+        return ()
+    if isinstance(value, str):
+        clean = value.strip()
+        return (clean,) if clean else ()
+    if isinstance(value, list | tuple):
+        return tuple(str(item).strip() for item in value if str(item).strip())
+    return ()
 
 
 def run_briefing(args: argparse.Namespace) -> int:
@@ -4810,6 +6199,96 @@ def run_briefing(args: argparse.Namespace) -> int:
                     "stop_method": str(row.get("stop_method", "") or ""),
                     "sector": str(row.get("sector", "") or ""),
                     "industry": str(row.get("industry", "") or ""),
+                    "cross_market_primary_theme": str(
+                        row.get("cross_market_primary_theme", "") or ""
+                    ),
+                    "cross_market_linkage_basis": str(
+                        row.get("cross_market_linkage_basis", "") or ""
+                    ),
+                    "cross_market_action": str(
+                        row.get("cross_market_action", "") or ""
+                    ),
+                    "cross_market_strength": str(
+                        row.get("cross_market_strength", "") or ""
+                    ),
+                    "cross_market_lead_window": str(
+                        row.get("cross_market_lead_window", "") or ""
+                    ),
+                    "cross_market_observation_window": str(
+                        row.get("cross_market_observation_window", "") or ""
+                    ),
+                    "cross_market_priority_score": int(
+                        row.get("cross_market_priority_score", 0) or 0
+                    ),
+                    "cross_market_themes": tuple(
+                        row.get("cross_market_themes", []) or []
+                    ),
+                    "cross_market_rule_ids": tuple(
+                        row.get("cross_market_rule_ids", []) or []
+                    ),
+                    "cross_market_first_order_targets": tuple(
+                        row.get("cross_market_first_order_targets", []) or []
+                    ),
+                    "cross_market_second_order_targets": tuple(
+                        row.get("cross_market_second_order_targets", []) or []
+                    ),
+                    "cross_market_pressure_targets": tuple(
+                        row.get("cross_market_pressure_targets", []) or []
+                    ),
+                    "cross_market_execution_watchpoints": tuple(
+                        row.get("cross_market_execution_watchpoints", []) or []
+                    ),
+                    "cross_market_transmission_path": tuple(
+                        row.get("cross_market_transmission_path", []) or []
+                    ),
+                    "cross_market_validation_signals": tuple(
+                        row.get("cross_market_validation_signals", []) or []
+                    ),
+                    "cross_market_invalidation_signals": tuple(
+                        row.get("cross_market_invalidation_signals", []) or []
+                    ),
+                    "cross_market_chain_summary": str(
+                        row.get("cross_market_chain_summary", "") or ""
+                    ),
+                    "cross_market_support_event_count": int(
+                        row.get("cross_market_support_event_count", 0) or 0
+                    ),
+                    "cross_market_conflict_event_count": int(
+                        row.get("cross_market_conflict_event_count", 0) or 0
+                    ),
+                    "cross_market_evidence_stack_summary": str(
+                        row.get("cross_market_evidence_stack_summary", "") or ""
+                    ),
+                    "cross_market_summaries": tuple(
+                        row.get("cross_market_summaries", []) or []
+                    ),
+                    "debate_research_verdict": str(
+                        row.get("debate_research_verdict", "") or ""
+                    ),
+                    "debate_primary_risk_gate": str(
+                        row.get("debate_primary_risk_gate", "") or ""
+                    ),
+                    "debate_next_trigger": str(
+                        row.get("debate_next_trigger", "") or ""
+                    ),
+                    "support_points": tuple(row.get("support_points", []) or []),
+                    "opposition_points": tuple(row.get("opposition_points", []) or []),
+                    "watch_items": tuple(row.get("watch_items", []) or []),
+                    "role_reliability_lines": tuple(
+                        row.get("role_reliability_lines", []) or []
+                    ),
+                    "debate_historical_context_note": str(
+                        row.get("debate_historical_context_note", "") or ""
+                    ),
+                    "debate_historical_context_bucket": str(
+                        row.get("debate_historical_context_bucket", "") or ""
+                    ),
+                    "debate_historical_context_sample_count": int(
+                        row.get("debate_historical_context_sample_count", 0) or 0
+                    ),
+                    "debate_historical_context_accuracy": float(
+                        row.get("debate_historical_context_accuracy", 0.0) or 0.0
+                    ),
                 },
                 adjusted_score=float(row.get("adjusted_score", 0) or 0),
                 recommended_adjustment=str(
@@ -4829,12 +6308,15 @@ def run_briefing(args: argparse.Namespace) -> int:
         (
             row
             for row in reversed(rows)
+            if str(row.get("signal_date", "") or "") == str(latest_date)
             if row.get("run_requested_source") or row.get("run_actual_source")
         ),
         None,
     )
 
     source_status = None
+    market_context_lines: tuple[str, ...] = ()
+    market_context_overview = ""
     if latest_source_row is not None:
         source_status = {
             "requested_source": str(
@@ -4854,7 +6336,21 @@ def run_briefing(args: argparse.Namespace) -> int:
                 latest_source_row.get("run_source_health_message", "") or ""
             ),
             "fallback_used": bool(latest_source_row.get("run_fallback_used", False)),
+            "data_latest_trade_date": str(
+                latest_source_row.get("run_data_latest_trade_date", "") or ""
+            ),
+            "data_lag_days": str(
+                latest_source_row.get("run_data_lag_days", "")
+                if latest_source_row.get("run_data_lag_days", "") is not None
+                else ""
+            ),
         }
+        market_context_lines = _ledger_text_tuple(
+            latest_source_row.get("run_market_context_lines")
+        )
+        market_context_overview = str(
+            latest_source_row.get("run_market_context_overview", "") or ""
+        ).strip()
 
     picks = _enrich_pick_names(picks)
 
@@ -4880,6 +6376,11 @@ def run_briefing(args: argparse.Namespace) -> int:
             concentration=None,
             correlation_result=None,
         )
+        if market_context_overview:
+            portfolio_summary = replace(
+                portfolio_summary,
+                cross_market_overview=market_context_overview,
+            )
 
     generator = BriefingGenerator()
     research_summary = load_research_summary()
@@ -4890,6 +6391,7 @@ def run_briefing(args: argparse.Namespace) -> int:
         source_status=source_status,
         research_summary=research_summary,
         portfolio_summary=portfolio_summary,
+        market_context_lines=market_context_lines,
     )
     briefing = enhance_briefing(briefing, enable_llm=args.enable_llm)
 
@@ -4997,6 +6499,7 @@ def run_news_catalysts(args: argparse.Namespace) -> int:
         NewsCatalystConfig,
         build_catalyst_report,
         format_catalyst_notification,
+        serialize_catalyst_report,
     )
 
     symbols = tuple(
@@ -5021,6 +6524,17 @@ def run_news_catalysts(args: argparse.Namespace) -> int:
     if args.output:
         output_path = Path(args.output)
         atomic_write_text(output_path, markdown)
+    if args.json_output:
+        json_output_path = Path(args.json_output)
+        atomic_write_text(
+            json_output_path,
+            json.dumps(
+                serialize_catalyst_report(report),
+                ensure_ascii=False,
+                indent=2,
+            )
+            + "\n",
+        )
     if report.source_status == "failed":
         print("news catalysts: source failed; notification suppressed")
         return 1
@@ -5542,7 +7056,7 @@ def run_morning_breakout(args: argparse.Namespace) -> int:
 
     print(f"正在获取 {len(symbols)} 只股票数据...")
     try:
-        frames, _ = _fetch_special_strategy_frames(
+        frames, actual_source = _fetch_special_strategy_frames(
             args.source,
             symbols,
             benchmark_symbol=getattr(args, "benchmark_symbol", "000300"),
@@ -5662,6 +7176,14 @@ def run_morning_breakout(args: argparse.Namespace) -> int:
         thresholds_version=thresholds_version,
         regime=regime,
         execution=execution_config_from_thresholds(strategy.thresholds),
+        workload="live_short",
+        run_metadata=_special_strategy_run_metadata(
+            requested_source=args.source,
+            actual_source=actual_source,
+            frames=frames,
+            thresholds_version=thresholds_version,
+            task_id="morning_breakout",
+        ),
     )
 
     return 0
@@ -5699,7 +7221,7 @@ def run_closing_premium(args: argparse.Namespace) -> int:
 
     print(f"正在获取 {len(symbols)} 只股票数据...")
     try:
-        frames, _ = _fetch_special_strategy_frames(
+        frames, actual_source = _fetch_special_strategy_frames(
             args.source,
             symbols,
             benchmark_symbol=getattr(args, "benchmark_symbol", "000300"),
@@ -5820,6 +7342,14 @@ def run_closing_premium(args: argparse.Namespace) -> int:
         thresholds_version=thresholds_version,
         regime=regime,
         execution=execution_config_from_thresholds(strategy.thresholds),
+        workload="live_short",
+        run_metadata=_special_strategy_run_metadata(
+            requested_source=args.source,
+            actual_source=actual_source,
+            frames=frames,
+            thresholds_version=thresholds_version,
+            task_id="closing_premium",
+        ),
     )
 
     return 0
