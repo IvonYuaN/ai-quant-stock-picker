@@ -22,6 +22,10 @@ data = [
 web = [
     "streamlit>=1.36,<2.0",
 ]
+api = [
+    "fastapi>=0.110,<1.0",
+    "uvicorn>=0.29,<1.0",
+]
 llm = [
     "openai>=1.0,<3.0",
     "anthropic>=0.30,<1.0",
@@ -35,5 +39,5 @@ dev = [
 aqsp = "aqsp.cli:main"
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["tests", "backend/tests"]
 pythonpath = ["src", "."]

@@ -1,0 +1,745 @@
+"""Read-only bridge from AQSP runtime snapshots to the Vibe-Research API."""
+
+from __future__ import annotations
+
+import json
+import math
+import os
+from collections.abc import Mapping
+from dataclasses import asdict, dataclass
+from datetime import date as CalendarDate
+from datetime import datetime
+from pathlib import Path
+from typing import Any
+
+from aqsp.core.time import now_shanghai
+
+
+DEFAULT_SNAPSHOT_PATH = "data/runtime/home_dashboard_snapshot.json"
+SNAPSHOT_SCHEMA_VERSION = "v1"
+INDEX_SCHEMA_VERSION = "v1-index"
+MAX_SNAPSHOT_BYTES = 64 * 1024
+MAX_DATES = 4
+MAX_CANDIDATES = 5
+MAX_DEBATES = 3
+MAX_SUMMARIES = 3
+MAX_MESSAGES = 5
+MAX_CROSS_MARKET = 3
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+
+class AQSPBridgeError(Exception):
+    """Base error for a request that cannot be served from the snapshot."""
+
+
+class AQSPSnapshotUnavailable(AQSPBridgeError):
+    """The configured snapshot is absent, malformed, or unsafe to use."""
+
+
+class AQSPInvalidRequest(AQSPBridgeError):
+    """A bridge query parameter is invalid."""
+
+
+class AQSPDateNotFound(AQSPBridgeError):
+    """The requested date is not present in the snapshot surface."""
+
+
+class AQSPCandidateNotFound(AQSPBridgeError):
+    """The requested candidate is not present for the exact date."""
+
+
+class AQSPSnapshotStale(AQSPBridgeError):
+    """The current snapshot passed its explicit freshness deadline."""
+
+
+@dataclass(frozen=True)
+class AQSPCandidate:
+    symbol: str
+    display_name: str
+    score: float
+    research_status: str
+    next_step: str
+    context: str
+    deterministic_reasons: tuple[str, ...] = ()
+    strategies: tuple[str, ...] = ()
+    evidence_status: str = "证据不足"
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class AQSPDebate:
+    symbol: str
+    display_name: str
+    conclusion: str
+    primary_risk_gate: str
+    next_trigger: str
+    active_roles: tuple[str, ...]
+    round_count: int = 0
+    bull_count: int = 0
+    bear_count: int = 0
+    neutral_count: int = 0
+    process_summary: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class AQSPMessage:
+    title: str
+    summary: str
+    impact: str
+    category: str
+    source: str
+    published_at: str
+
+
+@dataclass(frozen=True)
+class AQSPSource:
+    effective: str
+    latest_trade_date: str
+    lag_days: int
+    status: str
+
+
+@dataclass(frozen=True)
+class AQSPColdstart:
+    status: str
+    detail: str
+
+
+@dataclass(frozen=True)
+class AQSPCrossMarket:
+    rule_id: str
+    theme: str
+    strength: str
+    action: str
+    source_title: str
+    source_region: str
+    source_published_at: str
+    affected_sectors: tuple[str, ...]
+    transmission_path: tuple[str, ...]
+    validation_signals: tuple[str, ...]
+    invalidation_signals: tuple[str, ...]
+    summary: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class AQSPMarketContext:
+    status: str
+    overview: str
+    summary_lines: tuple[str, ...]
+    cross_market: tuple[AQSPCrossMarket, ...]
+    warnings: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class AQSPSnapshot:
+    schema_version: str
+    generated_at: str
+    selected_date: str
+    available_dates: tuple[str, ...]
+    candidates: tuple[AQSPCandidate, ...]
+    debates: tuple[AQSPDebate, ...]
+    summaries: tuple[str, ...]
+    source: AQSPSource
+    coldstart: AQSPColdstart
+    stale_after: str = ""
+    message_status: str = "未产出"
+    messages: tuple[AQSPMessage, ...] = ()
+    market_context: AQSPMarketContext | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    def is_stale(self) -> bool:
+        if not self.stale_after:
+            return True
+        deadline = _timestamp(self.stale_after, "stale_after")
+        current_time = now_shanghai()
+        return current_time >= deadline.astimezone(current_time.tzinfo)
+
+
+@dataclass(frozen=True)
+class AQSPResearchSurface:
+    """Validated date-addressable snapshots loaded from one file surface."""
+
+    source_path: Path
+    current: AQSPSnapshot
+    dated_snapshots: tuple[AQSPSnapshot, ...]
+
+    @property
+    def available_dates(self) -> tuple[str, ...]:
+        if self.dated_snapshots:
+            return tuple(item.selected_date for item in self.dated_snapshots)
+        return (self.current.selected_date,)
+
+    def snapshot_for_date(self, selected_date: str | None) -> AQSPSnapshot:
+        requested = (
+            self.current.selected_date if selected_date is None else selected_date
+        )
+        if not requested:
+            raise AQSPInvalidRequest("date 不能为空")
+        _validate_date(requested, "date", request=True)
+        if self.dated_snapshots:
+            for snapshot in self.dated_snapshots:
+                if snapshot.selected_date == requested:
+                    return snapshot
+        elif self.current.selected_date == requested:
+            return self.current
+        raise AQSPDateNotFound(f"历史日期 {requested} 不存在，未替换为最新日期")
+
+
+def snapshot_path() -> Path:
+    """Resolve only the configured snapshot path or the repository default."""
+    raw_path = os.environ.get("AQSP_RESEARCH_SURFACE_SNAPSHOT", "").strip()
+    raw_path = raw_path or DEFAULT_SNAPSHOT_PATH
+    path = Path(raw_path).expanduser()
+    return path if path.is_absolute() else _PROJECT_ROOT / path
+
+
+def load_surface() -> AQSPResearchSurface:
+    """Load and validate the read-only snapshot surface without network or state."""
+    path = snapshot_path()
+    payload = _read_json(path)
+    schema_version = (
+        payload.get("schema_version") if isinstance(payload, dict) else None
+    )
+    if schema_version == INDEX_SCHEMA_VERSION:
+        snapshots, selected_date = _parse_index(payload)
+        current = _select_current(snapshots, selected_date)
+        return AQSPResearchSurface(path, current, snapshots)
+    if schema_version != SNAPSHOT_SCHEMA_VERSION:
+        raise AQSPSnapshotUnavailable("schema_version 不支持或缺失")
+
+    current = _parse_snapshot(payload)
+    index_path = path.with_name("home_dashboard_snapshot_index.json")
+    if index_path != path and index_path.is_file():
+        index_payload = _read_json(index_path)
+        if index_payload.get("schema_version") != INDEX_SCHEMA_VERSION:
+            raise AQSPSnapshotUnavailable("日期索引 schema_version 不支持或缺失")
+        snapshots, selected_date = _parse_index(index_payload)
+        return AQSPResearchSurface(
+            path,
+            _select_current(snapshots, selected_date),
+            snapshots,
+        )
+    return AQSPResearchSurface(path, current, ())
+
+
+def snapshot_payload(selected_date: str | None = None) -> dict[str, Any]:
+    """Return one exact-date snapshot as a JSON-safe typed payload."""
+    surface = load_surface()
+    snapshot = surface.snapshot_for_date(selected_date)
+    _require_current_snapshot_fresh(surface, selected_date)
+    return snapshot.to_dict()
+
+
+def snapshot_response(selected_date: str | None = None) -> dict[str, Any]:
+    """Return snapshot data plus freshness metadata for the HTTP boundary."""
+    surface = load_surface()
+    snapshot = surface.snapshot_for_date(selected_date)
+    historical = (
+        selected_date is not None and selected_date != surface.current.selected_date
+    )
+    stale = snapshot.is_stale()
+    _require_current_snapshot_fresh(surface, selected_date, stale=stale)
+    return {
+        "data": snapshot.to_dict(),
+        "meta": {"historical": historical, "stale": stale},
+    }
+
+
+def dates_payload() -> dict[str, Any]:
+    """Return the dates actually exposed by the loaded snapshot surface."""
+    surface = load_surface()
+    _require_current_snapshot_fresh(surface, None)
+    return {
+        "selected_date": surface.current.selected_date,
+        "available_dates": list(surface.available_dates),
+    }
+
+
+def candidate_payload(symbol: str, selected_date: str | None = None) -> dict[str, Any]:
+    """Return one candidate and its advisory-only debate for an exact date."""
+    normalized = _validate_symbol(symbol, request=True)
+    surface = load_surface()
+    snapshot = surface.snapshot_for_date(selected_date)
+    _require_current_snapshot_fresh(surface, selected_date)
+    candidate = next(
+        (item for item in snapshot.candidates if item.symbol == normalized), None
+    )
+    if candidate is None:
+        raise AQSPCandidateNotFound(
+            f"候选 {normalized} 在 {snapshot.selected_date} 不存在"
+        )
+    debate = next(
+        (item for item in snapshot.debates if item.symbol == normalized), None
+    )
+    payload = candidate.to_dict()
+    payload["date"] = snapshot.selected_date
+    payload["debate"] = debate.to_dict() if debate is not None else None
+    return payload
+
+
+def _require_current_snapshot_fresh(
+    surface: AQSPResearchSurface,
+    selected_date: str | None,
+    *,
+    stale: bool | None = None,
+) -> None:
+    """Block current-data reads while allowing explicitly requested archives."""
+    is_current = selected_date is None or selected_date == surface.current.selected_date
+    if not is_current:
+        return
+    if not surface.current.stale_after:
+        raise AQSPSnapshotStale("当前 AQSP 研究快照缺少 stale_after")
+    is_stale = surface.current.is_stale() if stale is None else stale
+    if is_stale:
+        raise AQSPSnapshotStale("当前 AQSP 研究快照已过期")
+
+
+def _read_json(path: Path) -> dict[str, Any]:
+    try:
+        raw = path.read_bytes()
+    except OSError as exc:
+        raise AQSPSnapshotUnavailable(f"无法读取快照文件：{path}") from exc
+    if len(raw) > MAX_SNAPSHOT_BYTES:
+        raise AQSPSnapshotUnavailable("快照超过 64 KiB 大小上限")
+    try:
+        payload = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise AQSPSnapshotUnavailable("快照不是合法 UTF-8 JSON") from exc
+    if not isinstance(payload, dict):
+        raise AQSPSnapshotUnavailable("快照顶层必须是 JSON object")
+    return payload
+
+
+def _parse_index(payload: Mapping[str, Any]) -> tuple[tuple[AQSPSnapshot, ...], str]:
+    _check_keys(
+        payload,
+        {"schema_version", "generated_at", "stale_after", "selected_date", "days"},
+        "日期索引",
+    )
+    _timestamp(
+        _text(payload["generated_at"], "index.generated_at"), "index.generated_at"
+    )
+    _timestamp(_text(payload["stale_after"], "index.stale_after"), "index.stale_after")
+    days = _list(payload["days"], "index.days")
+    if not days:
+        raise AQSPSnapshotUnavailable("日期索引 days 不能为空")
+    _check_limit(days, MAX_DATES, "index.days")
+    snapshots: list[AQSPSnapshot] = []
+    seen: set[str] = set()
+    for raw_day in days:
+        day = _object(raw_day, "index.day")
+        _check_keys(day, {"date", "snapshot"}, "日期索引 day")
+        day_date = _validate_date(_text(day["date"], "day.date"), "day.date")
+        snapshot = _parse_snapshot(_object(day["snapshot"], "day.snapshot"))
+        if snapshot.selected_date != day_date or day_date in seen:
+            raise AQSPSnapshotUnavailable("日期索引包含不一致或重复日期")
+        seen.add(day_date)
+        snapshots.append(snapshot)
+    selected_date = _text(payload["selected_date"], "index.selected_date")
+    if not selected_date or selected_date not in seen:
+        raise AQSPSnapshotUnavailable("index.selected_date 不存在于 days")
+    return tuple(snapshots), selected_date
+
+
+def _parse_snapshot(payload: Mapping[str, Any]) -> AQSPSnapshot:
+    required = {
+        "schema_version",
+        "generated_at",
+        "selected_date",
+        "available_dates",
+        "candidates",
+        "summaries",
+        "source",
+        "coldstart",
+    }
+    optional = {
+        "debate",
+        "debates",
+        "stale_after",
+        "message_status",
+        "messages",
+        "market_context",
+    }
+    _check_keys(payload, required, "快照", optional)
+    schema_version = _text(payload["schema_version"], "schema_version")
+    if schema_version != SNAPSHOT_SCHEMA_VERSION:
+        raise AQSPSnapshotUnavailable("快照 schema_version 不支持")
+    generated_at = _text(payload["generated_at"], "generated_at")
+    _timestamp(generated_at, "generated_at")
+    selected_date = _validate_date(
+        _text(payload["selected_date"], "selected_date"), "selected_date"
+    )
+    available_dates = tuple(
+        _validate_date(value, "available_dates")
+        for value in _text_list(payload["available_dates"], "available_dates")
+    )
+    _check_limit(available_dates, MAX_DATES, "available_dates")
+    if selected_date not in available_dates or len(set(available_dates)) != len(
+        available_dates
+    ):
+        raise AQSPSnapshotUnavailable(
+            "selected_date 必须存在且 available_dates 不得重复"
+        )
+    raw_debates = payload.get("debates")
+    if raw_debates is None and payload.get("debate") is not None:
+        raw_debates = [payload["debate"]]
+    debates = tuple(_parse_debate(item) for item in _list(raw_debates or [], "debates"))
+    candidates = tuple(
+        _parse_candidate(item) for item in _list(payload["candidates"], "candidates")
+    )
+    _check_limit(candidates, MAX_CANDIDATES, "candidates")
+    _check_limit(debates, MAX_DEBATES, "debates")
+    summaries = tuple(_text_list(payload["summaries"], "summaries"))
+    _check_limit(summaries, MAX_SUMMARIES, "summaries")
+    messages = tuple(
+        _parse_message(item) for item in _list(payload.get("messages", []), "messages")
+    )
+    _check_limit(messages, MAX_MESSAGES, "messages")
+    if len({item.symbol for item in candidates}) != len(candidates):
+        raise AQSPSnapshotUnavailable("candidates 不得包含重复 symbol")
+    if len({item.symbol for item in debates}) != len(debates):
+        raise AQSPSnapshotUnavailable("debates 不得包含重复 symbol")
+    _validate_advisory_boundary(raw_debates or [], candidates)
+    stale_after = _optional_text(payload.get("stale_after"), "stale_after")
+    if stale_after:
+        _timestamp(stale_after, "stale_after")
+    return AQSPSnapshot(
+        schema_version=schema_version,
+        generated_at=generated_at,
+        selected_date=selected_date,
+        available_dates=available_dates,
+        candidates=candidates,
+        debates=debates,
+        summaries=summaries,
+        source=_parse_source(payload["source"]),
+        coldstart=_parse_coldstart(payload["coldstart"]),
+        stale_after=stale_after,
+        message_status=_optional_text(payload.get("message_status"), "message_status")
+        or "未产出",
+        messages=messages,
+        market_context=_parse_market_context(payload.get("market_context")),
+    )
+
+
+def _parse_candidate(payload: object) -> AQSPCandidate:
+    item = _object(payload, "candidate")
+    _check_keys(
+        item,
+        {"symbol", "display_name", "score", "research_status", "next_step", "context"},
+        "candidate",
+        {"deterministic_reasons", "strategies", "evidence_status"},
+    )
+    return AQSPCandidate(
+        symbol=_validate_symbol(_text(item["symbol"], "candidate.symbol")),
+        display_name=_text(item["display_name"], "candidate.display_name"),
+        score=_number(item["score"], "candidate.score"),
+        research_status=_text(item["research_status"], "candidate.research_status"),
+        next_step=_text(item["next_step"], "candidate.next_step"),
+        context=_text(item["context"], "candidate.context"),
+        deterministic_reasons=tuple(
+            _text_list(
+                item.get("deterministic_reasons", []), "candidate.deterministic_reasons"
+            )
+        ),
+        strategies=tuple(
+            _text_list(item.get("strategies", []), "candidate.strategies")
+        ),
+        evidence_status=_optional_text(
+            item.get("evidence_status"), "candidate.evidence_status"
+        )
+        or "证据不足",
+    )
+
+
+def _parse_debate(payload: object) -> AQSPDebate:
+    item = _object(payload, "debate")
+    _check_keys(
+        item,
+        {
+            "symbol",
+            "display_name",
+            "conclusion",
+            "primary_risk_gate",
+            "next_trigger",
+            "active_roles",
+        },
+        "debate",
+        {
+            "round_count",
+            "bull_count",
+            "bear_count",
+            "neutral_count",
+            "process_summary",
+            "advisory_only",
+            "deterministic_score",
+            "deterministic_score_unchanged",
+            "advisory_boundary_ok",
+        },
+    )
+    return AQSPDebate(
+        symbol=_validate_symbol(_text(item["symbol"], "debate.symbol")),
+        display_name=_text(item["display_name"], "debate.display_name"),
+        conclusion=_text(item["conclusion"], "debate.conclusion"),
+        primary_risk_gate=_text(item["primary_risk_gate"], "debate.primary_risk_gate"),
+        next_trigger=_text(item["next_trigger"], "debate.next_trigger"),
+        active_roles=tuple(_text_list(item["active_roles"], "debate.active_roles")),
+        round_count=_integer(item.get("round_count", 0), "debate.round_count"),
+        bull_count=_integer(item.get("bull_count", 0), "debate.bull_count"),
+        bear_count=_integer(item.get("bear_count", 0), "debate.bear_count"),
+        neutral_count=_integer(item.get("neutral_count", 0), "debate.neutral_count"),
+        process_summary=_optional_text(
+            item.get("process_summary"), "debate.process_summary"
+        ),
+    )
+
+
+def _validate_advisory_boundary(
+    payloads: list[Any], candidates: tuple[AQSPCandidate, ...]
+) -> None:
+    """Reject agent metadata that can be mistaken for deterministic scoring."""
+    candidates_by_symbol = {candidate.symbol: candidate for candidate in candidates}
+    for payload in payloads:
+        item = _object(payload, "debate")
+        if "advisory_only" in item and item["advisory_only"] is not True:
+            raise AQSPSnapshotUnavailable("debate 必须保持 advisory-only")
+        if (
+            "deterministic_score_unchanged" in item
+            and item["deterministic_score_unchanged"] is not True
+        ):
+            raise AQSPSnapshotUnavailable("debate 不得改写确定性评分")
+        if "advisory_boundary_ok" in item and item["advisory_boundary_ok"] is not True:
+            raise AQSPSnapshotUnavailable("debate advisory 边界校验未通过")
+        if "deterministic_score" not in item:
+            continue
+        symbol = _validate_symbol(_text(item["symbol"], "debate.symbol"))
+        candidate = candidates_by_symbol.get(symbol)
+        if candidate is None:
+            raise AQSPSnapshotUnavailable("debate.deterministic_score 必须对应一个候选")
+        deterministic_score = _number(
+            item["deterministic_score"], "debate.deterministic_score"
+        )
+        if deterministic_score != candidate.score:
+            raise AQSPSnapshotUnavailable("debate 不得覆盖 candidate.score")
+
+
+def _parse_message(payload: object) -> AQSPMessage:
+    item = _object(payload, "message")
+    _check_keys(
+        item,
+        {"title", "summary", "impact", "category", "source", "published_at"},
+        "message",
+    )
+    published_at = _text(item["published_at"], "message.published_at")
+    _timestamp(published_at, "message.published_at")
+    return AQSPMessage(
+        title=_text(item["title"], "message.title"),
+        summary=_text(item["summary"], "message.summary"),
+        impact=_text(item["impact"], "message.impact"),
+        category=_text(item["category"], "message.category"),
+        source=_text(item["source"], "message.source"),
+        published_at=published_at,
+    )
+
+
+def _parse_source(payload: object) -> AQSPSource:
+    item = _object(payload, "source")
+    _check_keys(
+        item, {"effective", "latest_trade_date", "lag_days", "status"}, "source"
+    )
+    return AQSPSource(
+        effective=_text(item["effective"], "source.effective"),
+        latest_trade_date=_text(item["latest_trade_date"], "source.latest_trade_date"),
+        lag_days=_integer(item["lag_days"], "source.lag_days"),
+        status=_text(item["status"], "source.status"),
+    )
+
+
+def _parse_coldstart(payload: object) -> AQSPColdstart:
+    item = _object(payload, "coldstart")
+    _check_keys(item, {"status", "detail"}, "coldstart")
+    return AQSPColdstart(
+        status=_text(item["status"], "coldstart.status"),
+        detail=_text(item["detail"], "coldstart.detail"),
+    )
+
+
+def _parse_market_context(payload: object) -> AQSPMarketContext | None:
+    if payload is None:
+        return None
+    item = _object(payload, "market_context")
+    _check_keys(
+        item,
+        {"status", "overview", "summary_lines", "cross_market", "warnings"},
+        "market_context",
+    )
+    cross_market = tuple(
+        _parse_cross_market(value)
+        for value in _list(item["cross_market"], "market_context.cross_market")
+    )
+    _check_limit(cross_market, MAX_CROSS_MARKET, "market_context.cross_market")
+    return AQSPMarketContext(
+        status=_text(item["status"], "market_context.status"),
+        overview=_text(item["overview"], "market_context.overview"),
+        summary_lines=tuple(
+            _text_list(item["summary_lines"], "market_context.summary_lines")
+        ),
+        cross_market=cross_market,
+        warnings=tuple(_text_list(item["warnings"], "market_context.warnings")),
+    )
+
+
+def _parse_cross_market(payload: object) -> AQSPCrossMarket:
+    item = _object(payload, "cross_market")
+    fields = {
+        "rule_id",
+        "theme",
+        "strength",
+        "action",
+        "source_title",
+        "source_region",
+        "source_published_at",
+        "affected_sectors",
+        "transmission_path",
+        "validation_signals",
+        "invalidation_signals",
+        "summary",
+    }
+    _check_keys(item, fields, "cross_market")
+    return AQSPCrossMarket(
+        rule_id=_text(item["rule_id"], "cross_market.rule_id"),
+        theme=_text(item["theme"], "cross_market.theme"),
+        strength=_text(item["strength"], "cross_market.strength"),
+        action=_text(item["action"], "cross_market.action"),
+        source_title=_text(item["source_title"], "cross_market.source_title"),
+        source_region=_text(item["source_region"], "cross_market.source_region"),
+        source_published_at=_text(
+            item["source_published_at"], "cross_market.source_published_at"
+        ),
+        affected_sectors=tuple(
+            _text_list(item["affected_sectors"], "cross_market.affected_sectors")
+        ),
+        transmission_path=tuple(
+            _text_list(item["transmission_path"], "cross_market.transmission_path")
+        ),
+        validation_signals=tuple(
+            _text_list(item["validation_signals"], "cross_market.validation_signals")
+        ),
+        invalidation_signals=tuple(
+            _text_list(
+                item["invalidation_signals"], "cross_market.invalidation_signals"
+            )
+        ),
+        summary=_text(item["summary"], "cross_market.summary"),
+    )
+
+
+def _select_current(
+    snapshots: tuple[AQSPSnapshot, ...], selected_date: str
+) -> AQSPSnapshot:
+    if not snapshots:
+        raise AQSPSnapshotUnavailable("日期索引没有可用快照")
+    for snapshot in snapshots:
+        if snapshot.selected_date == selected_date:
+            return snapshot
+    raise AQSPSnapshotUnavailable("index.selected_date 对应的快照不存在")
+
+
+def _check_keys(
+    payload: Mapping[str, Any],
+    required: set[str],
+    name: str,
+    optional: set[str] | None = None,
+) -> None:
+    allowed = required | (optional or set())
+    if not required.issubset(payload) or not set(payload).issubset(allowed):
+        raise AQSPSnapshotUnavailable(f"{name} schema 不匹配")
+
+
+def _check_limit(values: tuple[Any, ...] | list[Any], limit: int, name: str) -> None:
+    if len(values) > limit:
+        raise AQSPSnapshotUnavailable(f"{name} 超过 {limit} 项上限")
+
+
+def _object(payload: object, name: str) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        raise AQSPSnapshotUnavailable(f"{name} 必须是 JSON object")
+    return payload
+
+
+def _list(payload: object, name: str) -> list[Any]:
+    if not isinstance(payload, list):
+        raise AQSPSnapshotUnavailable(f"{name} 必须是 JSON array")
+    return payload
+
+
+def _text(payload: object, name: str) -> str:
+    if not isinstance(payload, str):
+        raise AQSPSnapshotUnavailable(f"{name} 必须是字符串")
+    return payload
+
+
+def _text_list(payload: object, name: str) -> list[str]:
+    return [_text(item, name) for item in _list(payload, name)]
+
+
+def _optional_text(payload: object, name: str) -> str:
+    return "" if payload is None else _text(payload, name)
+
+
+def _number(payload: object, name: str) -> float:
+    if isinstance(payload, bool) or not isinstance(payload, (int, float)):
+        raise AQSPSnapshotUnavailable(f"{name} 必须是有限数字")
+    value = float(payload)
+    if not math.isfinite(value):
+        raise AQSPSnapshotUnavailable(f"{name} 必须是有限数字")
+    return value
+
+
+def _integer(payload: object, name: str) -> int:
+    if isinstance(payload, bool) or not isinstance(payload, int):
+        raise AQSPSnapshotUnavailable(f"{name} 必须是整数")
+    return payload
+
+
+def _timestamp(value: str, name: str) -> datetime:
+    normalized = value[:-1] + "+00:00" if value.endswith("Z") else value
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError as exc:
+        raise AQSPSnapshotUnavailable(f"{name} 必须是带时区的 ISO 8601 时间") from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise AQSPSnapshotUnavailable(f"{name} 必须包含时区偏移")
+    return parsed
+
+
+def _validate_date(value: str, name: str, *, request: bool = False) -> str:
+    error_type = AQSPInvalidRequest if request else AQSPSnapshotUnavailable
+    try:
+        parsed = CalendarDate.fromisoformat(value)
+    except (TypeError, ValueError) as exc:
+        raise error_type(f"{name} 必须使用 YYYY-MM-DD") from exc
+    if parsed.isoformat() != value:
+        raise error_type(f"{name} 必须使用 YYYY-MM-DD")
+    return value
+
+
+def _validate_symbol(value: str, *, request: bool = False) -> str:
+    normalized = value.strip()
+    if (
+        not normalized
+        or len(normalized) > 32
+        or any(char.isspace() for char in normalized)
+    ):
+        error_type = AQSPInvalidRequest if request else AQSPSnapshotUnavailable
+        raise error_type("candidate symbol 非法")
+    return normalized

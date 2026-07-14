@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from aqsp.briefing.agent_roles import AgentRole
 from aqsp.briefing import Briefing, BriefingSection
 from aqsp.briefing.closing_review import DailyReview, WeeklySummary
 from aqsp.briefing.debate import DebateResult
@@ -9,11 +10,15 @@ from aqsp.portfolio.optimizer import PortfolioAllocation
 from aqsp.portfolio.manager import PortfolioDecisionSummary, WatchlistReviewItem
 from aqsp.portfolio.snapshot import PickSnapshot, SnapshotDiff
 from aqsp.notify_templates import (
+    _notification_news_summary,
+    _notification_live_source_status_line,
+    _daily_snapshot_debate_focus,
+    _daily_snapshot_debate_state,
     build_briefing_notification,
+    build_daily_run_notification,
     build_closing_premium_notification,
     build_closing_review_notification,
     build_monitor_notification,
-    build_daily_run_notification,
     build_morning_breakout_notification,
 )
 from aqsp.strategies.closing_premium import PremiumSignal
@@ -69,6 +74,22 @@ def test_build_briefing_notification_includes_debate_summary_when_summary_mode()
                 final_consensus="技术面偏强，但仓位不宜过大",
                 disagreement_score=0.45,
                 recommended_adjustment="keep",
+                final_vote={
+                    AgentRole.BULL: "bullish",
+                    AgentRole.RISK_CONTROL: "neutral",
+                    AgentRole.CROSS_MARKET: "bullish",
+                },
+                market_context_lines=(
+                    "确认信号: 竞价高弹性方向明显强于防御方向",
+                    "失效条件: 外盘强但A股竞价无明显风险偏好跟随",
+                ),
+                support_points=("竞价强弱与跨市风险偏好共振。",),
+                opposition_points=("若高开过猛，追高回撤风险会放大。",),
+                watch_items=("先确认开盘承接是否继续增强。",),
+                research_verdict="倾向继续观察，等待开盘承接确认",
+                next_trigger="先确认开盘承接是否继续增强。",
+                role_selection_summary="因海外传导、分歧校验，本轮先看 技术多头、风险控制、跨市传导。",
+                role_selection_plan="技术多头看趋势延续和量价共振；风险控制看流动性、止损和不可成交；跨市传导看海外催化到A股映射。",
             )
         ],
     )
@@ -80,6 +101,12 @@ def test_build_briefing_notification_includes_debate_summary_when_summary_mode()
     assert "## 结论" in markdown
     assert "## 分歧" in markdown
     assert "分歧 45%" in markdown
+    assert "倾向继续观察，等待开盘承接确认" in markdown
+    assert "待确认 先确认开盘承接是否继续增强。" in markdown
+    assert "选角 " not in markdown
+    assert "分工 " not in markdown
+    assert "选角理由" not in markdown
+    assert "角色分工" not in markdown
     assert "# AI 量化选股日报" not in markdown
 
 
@@ -177,10 +204,23 @@ def test_build_daily_run_notification_includes_allocation_guidance() -> None:
             cash_reserve=0.8,
             allocation_note="单票上限 20%；信号强度不足时提高现金留存",
             regime_label="稳定上涨",
+            cross_market_overview="海外物理AI叙事升温，纸面复核 300750 宁德时代",
             strategy_mix_name="进攻牛市",
             strategy_mix_description="稳定上涨期，重仓动量+涨停板",
             strategy_focus=("动量趋势", "涨停接力"),
             strategy_weights=(("momentum", 0.3), ("limit_up_ladder", 0.3)),
+            cross_market_focus=("300750 宁德时代 | 海外物理AI叙事升温(纸面复核)",),
+            debate_focus=("300750 宁德时代 | 倾向优先纸面复核，主因 技术面强势",),
+            debate_support_points=("300750 宁德时代 | 量价共振且跨市主线仍在扩散",),
+            debate_opposition_points=(
+                "300750 宁德时代 | 若高开过猛则追高回撤风险放大",
+            ),
+            debate_watch_items=("300750 宁德时代 | 先确认开盘承接与量价延续",),
+            debate_risk_gates=("300750 宁德时代 | 追高回撤风险",),
+            debate_next_triggers=("300750 宁德时代 | 先确认开盘承接与量价延续",),
+            debate_priority_queue=(
+                "300750 宁德时代 | 倾向优先纸面复核，主因 技术面强势 | 先确认开盘承接与量价延续 | 卡点 追高回撤风险",
+            ),
         ),
         debate_results=(
             DebateResult(
@@ -192,6 +232,17 @@ def test_build_daily_run_notification_includes_allocation_guidance() -> None:
                 final_consensus="趋势强但仍需确认开盘承接",
                 disagreement_score=0.42,
                 recommended_adjustment="raise",
+                final_vote={
+                    AgentRole.BULL: "bullish",
+                    AgentRole.RISK_CONTROL: "neutral",
+                    AgentRole.CROSS_MARKET: "bullish",
+                },
+                market_context_lines=(
+                    "确认信号: 次日竞价高弹性方向明显强于防御方向",
+                    "失效条件: 美股强但A股竞价无明显风险偏好跟随",
+                ),
+                role_selection_summary="因海外传导、分歧校验，本轮先看 技术多头、风险控制、跨市传导。",
+                role_selection_plan="技术多头看趋势延续和量价共振；风险控制看流动性、止损和不可成交；跨市传导看海外催化到A股映射。",
             ),
         ),
         actual_source="eastmoney",
@@ -200,15 +251,30 @@ def test_build_daily_run_notification_includes_allocation_guidance() -> None:
     )
 
     _assert_clean_notification(markdown)
+    assert "- 数据链路: 实时源 eastmoney（live_short=primary）" in markdown
+    assert (
+        "- 运行边界: 历史验证专用 开 / 回退链 开 / 国内情报 开 / 海外情报 开 / PIT 可缺省。"
+        in markdown
+    )
     assert "- 市况: 稳定上涨" in markdown
+    assert (
+        "- 跨市主线: 海外物理AI叙事升温，纸面复核 300750 宁德时代 | 先看 300750 宁德时代 | 确认 次日竞价高弹性方向明显强于防御方向 | 失效 美股强但A股竞价无明显风险偏好跟随"
+        in markdown
+    )
+    assert markdown.count("跨市主线") == 1
     assert "- 风格: 进攻牛市 | 稳定上涨期，重仓动量+涨停板" in markdown
-    assert "- 方向: 动量趋势、涨停接力" in markdown
-    assert "- 纸面仓位: 300750 20%" in markdown
-    assert "- 现金留存: 80%" in markdown
+    assert "- 讨论支持:" not in markdown
+    assert "- 讨论反对:" not in markdown
+    assert "- 纸面判断:" not in markdown
+    assert "- 讨论焦点:" not in markdown
+    assert "- 讨论顺序:" not in markdown
+    assert "- 纸面: 纸面配仓 20% | 300750 宁德时代 20%" in markdown
+    assert "- 300750 宁德时代 20% | 主链评分 72.0" in markdown
+    assert "- 现金留存 80%" in markdown
     assert "# 收盘研究日报-2026-06-04" in markdown
     assert "## 结果" in markdown
     assert "- 结论: 1 个仓位参考对象" in markdown
-    assert "- 分歧: 300750 宁德时代 | 偏积极 | 趋势强但仍需确认开盘承接" in markdown
+    assert "- 300750 宁德时代: 偏积极 / 分歧 42% | 趋势强但仍需确认开盘承接" in markdown
     assert "## 风险" in markdown
     assert "| 项目 | 结论 | 先看什么 |" not in markdown
     assert "- 候选: 仓位参考 1 | 300750 宁德时代" in markdown
@@ -216,13 +282,138 @@ def test_build_daily_run_notification_includes_allocation_guidance() -> None:
     assert "## 纸面" in markdown
     assert "300750 宁德时代 20% | 主链评分 72.0" in markdown
     assert "## 分歧" in markdown
-    assert "300750 宁德时代: 偏积极 | 分歧 42% | 趋势强但仍需确认开盘承接" in markdown
     assert "参考仓位执行" not in markdown
     assert "可执行标的" not in markdown
     assert "首选标的" not in markdown
+    assert "选角 " not in markdown
+    assert "分工 " not in markdown
+    assert "选角理由" not in markdown
+    assert "角色分工" not in markdown
     assert "配仓建议" not in markdown
     assert "配仓执行" not in markdown
     assert "新开仓" not in markdown
+
+
+def test_build_daily_run_notification_full_mode_hides_agent_process_terms() -> None:
+    markdown = build_daily_run_notification(
+        run_date="2026-06-04",
+        tradable=[],
+        debate_results=(
+            DebateResult(
+                debate_id="d1",
+                symbol="300750",
+                name="宁德时代",
+                original_score=72.0,
+                rating="buy_candidate",
+                final_consensus="趋势强但仍需确认开盘承接",
+                disagreement_score=0.42,
+                recommended_adjustment="raise",
+                final_vote={
+                    AgentRole.BULL: "bullish",
+                    AgentRole.RISK_CONTROL: "neutral",
+                    AgentRole.CROSS_MARKET: "bullish",
+                },
+                role_selection_summary="因海外传导、分歧校验，本轮先看 技术多头、风险控制、跨市传导。",
+                role_selection_plan="技术多头看趋势延续和量价共振；风险控制看流动性、止损和不可成交；跨市传导看海外催化到A股映射。",
+            ),
+        ),
+        actual_source="eastmoney",
+        source_health_label="healthy",
+        source_health_message="eastmoney 健康",
+        mode="full",
+    )
+
+    assert "- 分歧: 300750 宁德时代 | 偏积极 | 趋势强但仍需确认开盘承接" in markdown
+    assert "- 300750 宁德时代: 偏积极 / 分歧 42% | 趋势强但仍需确认开盘承接" in markdown
+    assert "视角 " not in markdown
+    assert "讨论视角" not in markdown
+    assert "选角 " not in markdown
+    assert "分工 " not in markdown
+    assert "选角理由" not in markdown
+    assert "角色分工" not in markdown
+
+
+def test_daily_snapshot_debate_helpers_surface_cross_market_then_roles() -> None:
+    result = DebateResult(
+        debate_id="d1",
+        symbol="300750",
+        name="宁德时代",
+        original_score=72.0,
+        rating="buy_candidate",
+        final_consensus="趋势强但仍需确认开盘承接",
+        disagreement_score=0.42,
+        recommended_adjustment="raise",
+        final_vote={
+            AgentRole.BULL: "bullish",
+            AgentRole.RISK_CONTROL: "neutral",
+            AgentRole.CROSS_MARKET: "bullish",
+        },
+        role_selection_summary="因海外传导、分歧校验，本轮先看 技术多头、风险控制、跨市传导。",
+        role_selection_plan="技术多头看趋势延续和量价共振；风险控制看流动性、止损和不可成交；跨市传导看海外催化到A股映射。",
+        market_context_lines=(
+            "确认信号: 次日竞价高弹性方向明显强于防御方向",
+            "失效条件: 美股强但A股竞价无明显风险偏好跟随",
+        ),
+    )
+
+    assert (
+        _daily_snapshot_debate_state((result,)) == "300750 宁德时代 偏积极 / 分歧 42%"
+    )
+    assert _daily_snapshot_debate_focus((result,)) == (
+        "先看 300750 宁德时代 | 确认 次日竞价高弹性方向明显强于防御方向 | "
+        "失效 美股强但A股竞价无明显风险偏好跟随"
+    )
+
+
+def test_daily_snapshot_debate_helpers_fall_back_to_support_and_watch_when_cross_market_missing() -> (
+    None
+):
+    result = DebateResult(
+        debate_id="d2",
+        symbol="600036",
+        name="招商银行",
+        original_score=68.0,
+        rating="watch",
+        final_consensus="观点分化，保持原评级",
+        disagreement_score=0.48,
+        recommended_adjustment="keep",
+        final_vote={
+            AgentRole.BULL: "bullish",
+            AgentRole.BEAR: "bearish",
+        },
+        role_selection_summary="因多空分歧，本轮先看 技术多头、技术空头。",
+        role_selection_plan="技术多头看防御承接；技术空头看系统性风险是否继续扩散。",
+        support_points=("防御属性仍在。",),
+        opposition_points=("系统性风险仍需确认。",),
+        watch_items=("观察次日承接是否继续。",),
+    )
+
+    assert (
+        _daily_snapshot_debate_state((result,)) == "600036 招商银行 暂维持 / 分歧 48%"
+    )
+    assert _daily_snapshot_debate_focus((result,)) == (
+        "观点分化，保持原评级 | 支持 防御属性仍在。"
+    )
+
+
+def test_notification_live_source_status_line_marks_fallback_and_history_only() -> None:
+    assert (
+        _notification_live_source_status_line(
+            requested_source="auto",
+            actual_source="eastmoney",
+            source_health_label="fallback",
+        )
+        == "数据链路: 备用实时源 eastmoney（live_short=primary）"
+    )
+
+    assert (
+        _notification_live_source_status_line(
+            requested_source="sqlite_db",
+            actual_source="sqlite_db",
+            source_health_label="healthy",
+        )
+        == "数据链路: 当前实际源 sqlite_db 只适合历史验证（live_short=avoid）"
+    )
 
 
 def test_build_daily_run_notification_includes_validation_summary() -> None:
@@ -297,7 +488,10 @@ def test_build_daily_run_notification_surfaces_watchlist_blockers_when_no_alloca
 
     _assert_clean_notification(markdown)
     assert "- 观察名单: 000021 深科技、000338 潍柴动力" in markdown
-    assert "- 状态: 今日无纸面复核对象，转入观察名单：000021 深科技、000338 潍柴动力" in markdown
+    assert (
+        "- 状态: 今日无纸面复核对象，转入观察名单：000021 深科技、000338 潍柴动力"
+        in markdown
+    )
     assert "- 关注点: 板块集中度过高，压低科技暴露" in markdown
     assert "- 阻塞: 000021 深科技: 板块集中度过高，压低科技暴露" in markdown
     assert "## 风险" in markdown
@@ -382,6 +576,11 @@ def test_build_daily_run_notification_lists_watch_candidates_when_not_tradable()
                     "candidate_next_step": "等待量价继续走强后，再评估是否转入纸面复核名单",
                     "candidate_review_window": "盘中走强后",
                     "candidate_review_priority": "high",
+                    "cross_market_primary_theme": "海外物理AI叙事升温",
+                    "cross_market_action": "重点跟踪",
+                    "cross_market_observation_window": "2-5日",
+                    "cross_market_validation_signals": ("龙头封单增强",),
+                    "cross_market_invalidation_signals": ("高开低走且量能背离",),
                 },
             ),
             PickResult(
@@ -429,13 +628,16 @@ def test_build_daily_run_notification_lists_watch_candidates_when_not_tradable()
         in markdown
     )
     assert (
+        "跨市主线: 海外物理AI叙事升温(纸面复核) | 先看 688981 中芯国际 | 确认 龙头封单增强 | 失效 高开低走且量能背离"
+        in markdown
+    )
+    assert markdown.count("跨市主线") == 1
+    assert (
         "- 2. 000001 平安银行 | 观察阻塞 | -18 | 阻塞: 板块集中度过高，压低银行暴露"
         in markdown
     )
     assert "- 候选: 继续观察 2 / 阻塞 1 | 688981 中芯国际" in markdown
-    assert (
-        "- 主要风险: 000001 平安银行：板块集中度过高，压低银行暴露" in markdown
-    )
+    assert "- 主要风险: 000001 平安银行：板块集中度过高，压低银行暴露" in markdown
 
 
 def test_build_daily_run_notification_includes_candidate_status_for_tradable_pick() -> (
@@ -459,7 +661,17 @@ def test_build_daily_run_notification_includes_candidate_status_for_tradable_pic
                 strategies=(),
                 reasons=("趋势延续",),
                 risks=("高开回落",),
-                metrics={"candidate_status": "延续上升"},
+                metrics={
+                    "candidate_status": "延续上升",
+                    "cross_market_primary_theme": "外盘风险偏好修复",
+                    "cross_market_action": "重点跟踪",
+                    "cross_market_validation_signals": (
+                        "次日竞价高弹性方向明显强于防御方向",
+                    ),
+                    "cross_market_invalidation_signals": (
+                        "北向继续流出导致开盘后快速回落",
+                    ),
+                },
             ),
         ),
         actual_source="eastmoney",
@@ -472,6 +684,11 @@ def test_build_daily_run_notification_includes_candidate_status_for_tradable_pic
         "- 首位: 300750 宁德时代 | 延续上升 | 73分 | 参考 220.5 / 最多亏到 214.2 / 先看目标 238"
         in markdown
     )
+    assert (
+        "- 跨市主线: 外盘风险偏好修复(纸面复核) | 先看 300750 宁德时代 | 确认 次日竞价高弹性方向明显强于防御方向 | 失效 北向继续流出导致开盘后快速回落"
+        in markdown
+    )
+    assert markdown.count("跨市主线") == 1
     assert "- 1. 300750 宁德时代 | 延续上升 | 73 | 纸面复核: 趋势延续" in markdown
     assert "买 220.5" not in markdown
 
@@ -503,6 +720,10 @@ def test_build_daily_run_notification_surfaces_default_review_for_new_watch_pick
                     "candidate_next_step": "等待量价继续走强后，再评估是否转入纸面复核名单",
                     "candidate_review_window": "盘中走强后",
                     "candidate_review_priority": "high",
+                    "cross_market_primary_theme": "海外物理AI叙事升温",
+                    "cross_market_action": "重点跟踪",
+                    "cross_market_validation_signals": ("龙头封单增强",),
+                    "cross_market_invalidation_signals": ("高开低走且量能背离",),
                 },
             ),
         ),
@@ -512,6 +733,11 @@ def test_build_daily_run_notification_surfaces_default_review_for_new_watch_pick
     )
 
     assert "复核: 高优先级 / 盘中走强后" in markdown
+    assert (
+        "跨市主线: 海外物理AI叙事升温(纸面复核) | 先看 688981 中芯国际 | 确认 龙头封单增强 | 失效 高开低走且量能背离"
+        in markdown
+    )
+    assert markdown.count("跨市主线") == 1
 
 
 def test_build_daily_run_notification_surfaces_snapshot_diff_highlights() -> None:
@@ -807,3 +1033,21 @@ def test_build_closing_review_notification_weekly_mode_supports_summary() -> Non
     assert "# 本周回看" in markdown
     assert "尾盘溢价" in markdown
     assert "延续轻仓试错" in markdown
+
+
+def test_daily_notification_renders_news_as_summary_without_score_field() -> None:
+    markdown = build_daily_run_notification(
+        run_date="2026-07-13",
+        tradable=(),
+        actual_source="eastmoney",
+        source_health_label="healthy",
+        source_health_message="eastmoney 健康",
+        news_summary="海外消息源可用，已产出但未筛出高影响事件",
+    )
+
+    assert "- 消息摘要: 海外消息源可用，已产出但未筛出高影响事件" in markdown
+    assert "deterministic score" not in _notification_news_summary(
+        "海外消息源可用，已产出但未筛出高影响事件"
+    )
+    assert "消息摘要" in markdown
+    assert "分数:" not in markdown
