@@ -77,7 +77,7 @@ npm exec tsc -b --pretty false
 
 该检查覆盖正常快照及消息/Agent 为空的合法形状，不修改任何页面实现。
 
-## 独立端口部署演练
+## 正式持久部署
 
 当前仓库的部署边界是：
 
@@ -109,19 +109,142 @@ export AQSP_RESEARCH_SURFACE_SNAPSHOT=/opt/aqsp/data/runtime/home_dashboard_snap
 若使用日期索引，索引文件必须与当前快照同目录，并命名为
 `home_dashboard_snapshot_index.json`。不要把临时快照、ledger、`.env` 或密钥提交到仓库。
 
-启动演练不会触碰公网服务：
+正式部署不再使用临时后台进程、`nohup` 或人工保活。仓库提供两个独立
+systemd service 和一个 target：
 
-```bash
-AQSP_RESEARCH_SURFACE_SNAPSHOT=/opt/aqsp/data/runtime/home_dashboard_snapshot.json \
-  scripts/start_vibe_research.sh
+- `aqsp-vibe-research-api.service`：FastAPI，监听 `127.0.0.1:8900`。
+- `aqsp-vibe-research-preview.service`：Vite preview，监听 `127.0.0.1:5899`。
+- `aqsp-vibe-research.target`：统一启动、停止和开机恢复。
+
+systemd 的 API 和前端日志分别写入：
+
+```text
+/opt/aqsp/logs/vibe-research/api.log
+/opt/aqsp/logs/vibe-research/frontend.log
 ```
 
-脚本默认使用 `127.0.0.1:5899` 和 `127.0.0.1:8900`；健康进程会复用，未知进程占用端口会失败，
-不会 kill、重启或覆盖已有服务。仅检查已经运行的本地进程：
+日志同时带有独立的 `SyslogIdentifier`，也可以用 `journalctl -u` 查询。
+
+### 现网运行时证据
+
+当前 `aqsp-server` 只有 `root` 用户，现有 `/opt/aqsp/.venv/bin/python` 无法导入
+`fastapi`，而 `aqsp-dashboard.service` 当前以 `root` 运行。因此不能把已有 dashboard
+服务身份或已有 venv 当作 Vibe-Research 运行时；否则 systemd unit 会在启动前就失败。
+当前快照 `/opt/aqsp/data/runtime/home_dashboard_snapshot.json` 为 `root:root 600`，隔离用户
+默认也无法直接读取。
+本仓库的安装脚本默认创建隔离的 `aqsp-vibe` 系统用户和
+`/opt/aqsp/.venv-vibe-research`，并在启动前用该用户验证 `fastapi`、`uvicorn`、`aqsp`
+和 `aqsp_bridge` 的导入路径。对 600 快照，provision 会要求 `setfacl`，给运行用户添加
+文件 `r--` ACL、快照目录 default `r--` ACL 和每级父目录 `--x` ACL；ACL 不可用或验证失败
+则中止，不会偷偷改成 root 运行。可用 `getfacl /opt/aqsp/data/runtime/home_dashboard_snapshot.json`
+审计结果。default ACL 用于快照被流水线原子替换后仍保持可读。
+
+先执行静态验证，再执行 provision。provision 会创建运行用户和目录、建立独立 venv、安装 `.[api]`，渲染
+`User`、`Group`、venv、Node、日志路径和 `PYTHONPATH` 后再安装 systemd unit；不会复用
+缺少 `fastapi` 的 `/opt/aqsp/.venv`，也不会修改 Nginx：
+
+```bash
+cd /opt/aqsp
+scripts/test_vibe_research_deployment.sh
+sudo install -d /etc/aqsp
+sudo install -m 0640 deploy/systemd/aqsp-vibe-research.env.example /etc/aqsp/vibe-research.env
+sudoedit /etc/aqsp/vibe-research.env
+sudo scripts/install_vibe_research_systemd.sh \
+  --env-file /etc/aqsp/vibe-research.env
+```
+
+环境样例无密钥；编辑 `/etc/aqsp/vibe-research.env`，至少确认
+`AQSP_RESEARCH_SURFACE_SNAPSHOT` 指向服务器上的可读 JSON 快照或日期索引；该文件不应
+包含 API key、Webhook secret 或其它密钥。安装脚本随后安装 Python API 依赖并构建静态产物。
+
+若要显式指定运行时，使用独立路径，不要传入当前缺少 `fastapi` 的旧 venv：
+
+```bash
+sudo scripts/install_vibe_research_systemd.sh \
+  --user aqsp-vibe \
+  --venv-dir /opt/aqsp/.venv-vibe-research \
+  --python /usr/bin/python3 \
+  --npm /usr/bin/npm \
+  --env-file /etc/aqsp/vibe-research.env
+```
+
+安装脚本默认执行 `npm ci` 和 `npm run build`；只复用已有构建产物时才使用
+`--skip-build`，但仍会检查 `frontend/dist/index.html`。只 provision、不启动可使用
+`--no-start`，之后再执行启动脚本。
+
+如果服务器没有 `setfacl`，先安装提供 ACL 工具的系统包，再重跑 provision；等价的最小权限
+手工命令如下，路径和用户必须与实际配置一致：
+
+```bash
+sudo apt-get update && sudo apt-get install -y acl
+sudo setfacl -m u:aqsp-vibe:--x /opt /opt/aqsp /opt/aqsp/data /opt/aqsp/data/runtime
+sudo setfacl -m d:u:aqsp-vibe:r-- /opt/aqsp/data/runtime
+sudo setfacl -m u:aqsp-vibe:r-- \
+  /opt/aqsp/data/runtime/home_dashboard_snapshot.json
+sudo -u aqsp-vibe test -r \
+  /opt/aqsp/data/runtime/home_dashboard_snapshot.json
+```
+
+启动、停止和健康检查都通过仓库脚本调用 systemd，脚本不会按端口杀进程：
+
+```bash
+cd /opt/aqsp
+sudo scripts/start_vibe_research_service.sh --env-file /etc/aqsp/vibe-research.env
+scripts/health_vibe_research.sh --env-file /etc/aqsp/vibe-research.env \
+  --systemd-unit aqsp-vibe-research.target
+sudo scripts/stop_vibe_research_service.sh
+```
+
+需要由脚本构建前端时显式加 `--build`；systemd 重启本身不会偷偷联网安装依赖或重建产物。
+启动前预检会验证 Python API 依赖、`frontend/node_modules`、`frontend/dist/index.html`、
+快照 JSON 和两个端口。端口已有监听者时直接失败，未知服务不会被覆盖；服务自身异常退出
+由 systemd `Restart=on-failure` 恢复。
+
+查看独立日志和状态：
+
+```bash
+sudo systemctl status aqsp-vibe-research.target
+sudo journalctl -u aqsp-vibe-research-api.service -n 100 --no-pager
+sudo journalctl -u aqsp-vibe-research-preview.service -n 100 --no-pager
+tail -100 /opt/aqsp/logs/vibe-research/api.log
+tail -100 /opt/aqsp/logs/vibe-research/frontend.log
+```
+
+### 回滚
+
+回滚只接受本地仓库中已经存在的 Git ref，并要求工作树和暂存区干净。脚本先停止
+target，再切换到目标提交并健康检查；目标版本不健康时自动恢复原提交并重启检查，避免
+把坏版本留在运行态：
+
+```bash
+cd /opt/aqsp
+sudo scripts/rollback_vibe_research.sh <已存在的提交或 tag> \
+  --env-file /etc/aqsp/vibe-research.env
+```
+
+回滚记录只写入 `/opt/aqsp/logs/vibe-research/rollback.log`，不记录环境变量内容。
+回滚前应先保存当前 commit；若目标 ref 尚未在服务器本地存在，应先按既有服务器同步流程
+获取代码，不在回滚脚本中隐式执行远程操作。
+
+### 本地独立检查
+
+不接 systemd 的本地临时演练仍可使用旧的 `scripts/start_vibe_research.sh`，但正式服务器
+不得把它当作持久服务入口。该脚本的作用是前台演练并在退出时清理自己启动的子进程；正式
+运行统一使用 `start_vibe_research_service.sh`。
+
+本地只检查已运行服务：
 
 ```bash
 AQSP_RESEARCH_SURFACE_SNAPSHOT=/opt/aqsp/data/runtime/home_dashboard_snapshot.json \
   scripts/check_vibe_research.sh
+```
+
+部署模板的静态验证命令为：
+
+```bash
+bash -n scripts/health_vibe_research.sh scripts/start_vibe_research_service.sh \
+  scripts/stop_vibe_research_service.sh scripts/rollback_vibe_research.sh
+scripts/test_vibe_research_deployment.sh
 ```
 
 当前生产配置 `deploy/nginx/aqsp-dashboard.conf` 仍是 AQSP Streamlit 入口：
@@ -130,3 +253,35 @@ AQSP_RESEARCH_SURFACE_SNAPSHOT=/opt/aqsp/data/runtime/home_dashboard_snapshot.js
 - `/_stcore/stream` 和 `/_stcore/health` 继续走 `8501`。
 - `/dashboard*`、`/dist/dashboard*`、`/beginner*`、`/agent*`、`/agents*` 和归档 HTML 旧入口继续 `302` 到根路径。
 - 这份公网规则没有 Vibe-Research 的新 host/path 路由；独立端口检查应使用 `127.0.0.1`，不得 reload Nginx 或覆盖公网服务。
+
+## 根路径切换候选配置
+
+切换候选为 `deploy/nginx/vibe-research-mainline.conf`，目标是同一域名的唯一根
+入口，而不是新增第二个公网域名。它与当前 `aqsp-dashboard.conf` 互斥：启用候选
+配置前必须保留旧文件为 Streamlit 回滚副本，并确保宝塔 include 目录中只有一份
+声明 `location /` 的活动片段。
+
+```text
+浏览器 -> lh.ifidy.cn
+       -> /api/*             -> 127.0.0.1:8900 FastAPI
+       -> /、React history     -> 127.0.0.1:5899 Vite preview
+       -> /dashboard* 等旧 URL -> 302 /
+```
+
+配置要点：
+
+- `/api` 使用不带 URI 的 `proxy_pass`，因此 `/api/aqsp/snapshot` 等路径不会被
+  重写；`/api/health` 作为 Nginx/后端联合健康检查，API 默认关闭缓存。
+- 根路径不使用 proxy cache，避免 `index.html` 把一次发布后的切换卡在旧版本；
+  `/assets/` 仅使用一小时客户端缓存。`error_page 404 =200 /index.html` 是
+  Vite preview fallback 之外的兜底，覆盖 BrowserRouter 的 `/daily-review`、
+  `/paper-research`、`/intel` 直达访问。
+- `Authorization`、Cookie、`Upgrade` 和 HTTP/1.1 被明确转发。当前后端没有
+  WebSocket endpoint，但 `/api/chat` 是 NDJSON 流，配置关闭 proxy buffering，
+  防止响应被 Nginx 聚合后才交给浏览器。
+- 旧 `dashboard`、`beginner`、`agent`、`agents` 和归档 HTML URL 使用 `302`，
+  保留 query string。稳定运行后是否改为 `301` 属于单独变更，不包含在本次候选中。
+
+本次交付只生成候选配置和文档，不执行服务器复制、`nginx -t` 或 reload。正式切换
+前后验收命令、鉴权检查和失败回滚步骤以 `docs/server-dashboard-deployment.md`
+的“Vibe-Research 根路径切换（候选方案）”为准。

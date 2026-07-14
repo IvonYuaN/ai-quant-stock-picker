@@ -1,0 +1,7 @@
+[Unit]
+Description=AQSP Vibe-Research persistent service group
+Requires=aqsp-vibe-research-api.service aqsp-vibe-research-preview.service
+After=aqsp-vibe-research-api.service aqsp-vibe-research-preview.service
+
+[Install]
+WantedBy=multi-user.target

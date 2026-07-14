@@ -1,0 +1,32 @@
+# Template rendered by scripts/install_vibe_research_systemd.sh.
+# Do not install this source file directly: @AQSP_*@ values must be resolved.
+[Unit]
+Description=AQSP Vibe-Research FastAPI service
+Wants=network-online.target
+After=network-online.target
+PartOf=aqsp-vibe-research.target
+
+[Service]
+Type=simple
+User=@AQSP_VIBE_USER@
+Group=@AQSP_VIBE_GROUP@
+WorkingDirectory=@AQSP_PROJECT_ROOT@/backend
+EnvironmentFile=-@AQSP_ENV_FILE@
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONPATH=@AQSP_PROJECT_ROOT@/src:@AQSP_PROJECT_ROOT@/backend
+Environment=VIBE_RESEARCH_PYTHON_BIN=@AQSP_VENV_DIR@/bin/python
+ExecStartPre=/usr/bin/test -d @AQSP_LOG_DIR@
+ExecStartPre=@AQSP_PROJECT_ROOT@/scripts/health_vibe_research.sh --preflight-only --component api --port-guard
+ExecStart=@AQSP_VENV_DIR@/bin/python -m uvicorn app:app --host 127.0.0.1 --port 8900
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=15s
+PrivateTmp=true
+NoNewPrivileges=true
+UMask=0027
+SyslogIdentifier=aqsp-vibe-research-api
+StandardOutput=append:@AQSP_LOG_DIR@/api.log
+StandardError=append:@AQSP_LOG_DIR@/api.log
+
+[Install]
+WantedBy=aqsp-vibe-research.target

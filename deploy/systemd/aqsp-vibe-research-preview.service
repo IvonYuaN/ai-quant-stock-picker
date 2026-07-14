@@ -1,0 +1,34 @@
+# Template rendered by scripts/install_vibe_research_systemd.sh.
+# Do not install this source file directly: @AQSP_*@ values must be resolved.
+[Unit]
+Description=AQSP Vibe-Research Vite preview service
+Requires=aqsp-vibe-research-api.service
+After=aqsp-vibe-research-api.service
+PartOf=aqsp-vibe-research.target
+
+[Service]
+Type=simple
+User=@AQSP_VIBE_USER@
+Group=@AQSP_VIBE_GROUP@
+WorkingDirectory=@AQSP_PROJECT_ROOT@/frontend
+EnvironmentFile=-@AQSP_ENV_FILE@
+Environment=NODE_ENV=production
+Environment=VITE_API_URL=http://127.0.0.1:8900
+Environment=PYTHONPATH=@AQSP_PROJECT_ROOT@/src:@AQSP_PROJECT_ROOT@/backend
+Environment=VIBE_RESEARCH_PYTHON_BIN=@AQSP_VENV_DIR@/bin/python
+Environment=VIBE_RESEARCH_NPM_BIN=@AQSP_NPM_BIN@
+ExecStartPre=/usr/bin/test -d @AQSP_LOG_DIR@
+ExecStartPre=@AQSP_PROJECT_ROOT@/scripts/health_vibe_research.sh --preflight-only --component frontend --port-guard
+ExecStart=@AQSP_NPM_BIN@ run preview -- --host 127.0.0.1 --port 5899 --strictPort
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=15s
+PrivateTmp=true
+NoNewPrivileges=true
+UMask=0027
+SyslogIdentifier=aqsp-vibe-research-preview
+StandardOutput=append:@AQSP_LOG_DIR@/frontend.log
+StandardError=append:@AQSP_LOG_DIR@/frontend.log
+
+[Install]
+WantedBy=aqsp-vibe-research.target
