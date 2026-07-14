@@ -4,7 +4,11 @@ from datetime import datetime
 
 import pytest
 
-from aqsp.data.market_context_source import HttpJsonProvider, MarketContextSource
+from aqsp.data.market_context_source import (
+    HttpJsonProvider,
+    MarketContextSource,
+    fetch_live_market_context_payload,
+)
 from aqsp.market_context import RealtimeCrossMarketPolicy
 
 
@@ -134,3 +138,19 @@ def test_market_context_source_rejects_invalid_provider_config() -> None:
         MarketContextSource.from_config(
             {"SPX": [{"name": "mock", "url": "https://mock.test", "api_key": "x"}]}
         )
+
+
+def test_fetch_live_market_context_payload_uses_short_term_timeout(monkeypatch) -> None:
+    seen: dict[str, object] = {}
+
+    def fake_fetch_payload(self, *, now=None, policy):
+        seen["now"] = now
+        seen["timeout"] = policy.timeout_seconds
+        return {"SPX": {"status": "unavailable", "value": None}}
+
+    monkeypatch.setattr(MarketContextSource, "fetch_payload", fake_fetch_payload)
+
+    payload = fetch_live_market_context_payload(timeout_seconds=0.75, now=NOW)
+
+    assert payload["SPX"]["status"] == "unavailable"
+    assert seen == {"now": NOW, "timeout": 0.75}

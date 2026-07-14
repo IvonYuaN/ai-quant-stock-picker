@@ -110,6 +110,8 @@ export AQSP_NOTIFY="false"
 export AQSP_GATE_NOTIFY="false"
 # live_short 不能在消息源失败时复用上一交易日的催化缓存。
 export AQSP_CATALYST_REPORT_ALLOW_STALE_CACHE="false"
+# 盘中主链显式抓取海外指数/宏观上下文；失败只标记 unavailable，不阻塞候选。
+export AQSP_MARKET_CONTEXT_LIVE_SOURCE="${AQSP_MARKET_CONTEXT_LIVE_SOURCE:-true}"
 if [ -n "$PRESET_AQSP_INTRADAY_ENABLE_DEBATE" ]; then
     export AQSP_INTRADAY_ENABLE_DEBATE="$PRESET_AQSP_INTRADAY_ENABLE_DEBATE"
 fi

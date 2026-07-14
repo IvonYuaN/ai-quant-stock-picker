@@ -168,6 +168,22 @@ def _snapshot_task_id(task_id: str) -> str:
     return "intraday" if task_id.strip() == "midday" else task_id.strip()
 
 
+def _snapshot_realtime_cross_market(task_id: str) -> dict | None:
+    """Fetch live macro context for an explicitly enabled intraday snapshot."""
+    if task_id.strip().lower() not in {"intraday", "live_short"}:
+        return None
+    enabled = str(os.getenv("AQSP_MARKET_CONTEXT_LIVE_SOURCE", "false")).strip().lower()
+    if enabled not in {"1", "true", "yes", "on"}:
+        return None
+    try:
+        from aqsp.data.market_context_source import fetch_live_market_context_payload
+
+        return fetch_live_market_context_payload(timeout_seconds=1.0)
+    except Exception as exc:
+        print(f"实时跨市场上下文获取失败，保留不可用状态: {exc}", file=sys.stderr)
+        return None
+
+
 def _candidate_context(candidate: Any) -> str:
     return _first_text(
         getattr(candidate, "news_catalyst_summary", ""),
@@ -793,7 +809,10 @@ def build_home_snapshot(
     )
     market_context = None
     if catalyst_report is not None:
-        artifact = build_market_context_artifact(catalyst_report=catalyst_report)
+        artifact = build_market_context_artifact(
+            catalyst_report=catalyst_report,
+            realtime_cross_market=_snapshot_realtime_cross_market(selected_task_id),
+        )
         market_context = _snapshot_market_context(
             artifact,
             status_override=(message_status if not artifact.catalyst_events else ""),

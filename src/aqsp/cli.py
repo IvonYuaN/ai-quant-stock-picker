@@ -2459,6 +2459,24 @@ def _should_build_market_context(task_id: str) -> bool:
     return goal_switch_enabled("live_short_runtime", default=True)
 
 
+def _runtime_realtime_cross_market_payload(task_id: str) -> dict | None:
+    """Load live macro context only for explicitly enabled short-term runs."""
+    if not _is_high_frequency_task(task_id):
+        return None
+    enabled = str(os.getenv("AQSP_MARKET_CONTEXT_LIVE_SOURCE", "false")).strip().lower()
+    if enabled not in {"1", "true", "yes", "on"}:
+        return None
+    try:
+        from aqsp.data.market_context_source import fetch_live_market_context_payload
+
+        return fetch_live_market_context_payload(
+            timeout_seconds=_market_context_source_timeout_seconds(task_id)
+        )
+    except Exception as exc:
+        LOGGER.warning("实时跨市场上下文获取失败，保留不可用状态: %s", exc)
+        return None
+
+
 def _market_context_source_timeout_seconds(task_id: str) -> float:
     if _is_high_frequency_task(task_id):
         return 1.0
@@ -4392,6 +4410,9 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
                 picks=picks,
                 task_id=normalized_task_id,
             )
+            realtime_cross_market = _runtime_realtime_cross_market_payload(
+                normalized_task_id
+            )
             if catalyst_report is not None:
                 from aqsp.news.catalysts import format_catalyst_notification
 
@@ -4400,6 +4421,7 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
                 catalyst_report=catalyst_report,
                 northbound_flow_5d_z=nb_z,
                 margin_balance_change_5d=margin_z,
+                realtime_cross_market=realtime_cross_market,
             )
         except Exception as exc:
             LOGGER.warning("市场上下文构建失败，跳过附加展示: %s", exc)

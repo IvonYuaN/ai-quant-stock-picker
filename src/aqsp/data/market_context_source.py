@@ -224,6 +224,16 @@ class MarketContextSource:
         }
 
 
+def fetch_live_market_context_payload(
+    *,
+    timeout_seconds: float = 1.0,
+    now: datetime | None = None,
+) -> dict[str, dict[str, object]]:
+    """Fetch the live cross-market payload for a short-term runtime task."""
+    policy = RealtimeCrossMarketPolicy(timeout_seconds=timeout_seconds)
+    return MarketContextSource().fetch_payload(now=now, policy=policy)
+
+
 def default_market_context_providers() -> dict[str, tuple[HttpJsonProvider, ...]]:
     """Return keyless public defaults; stale data is rejected by the policy."""
 
