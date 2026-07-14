@@ -165,7 +165,9 @@ render_unit() {
         -e "s|@AQSP_LOG_DIR@|${LOG_DIR_ESCAPED}|g" \
         -e "s|@AQSP_NPM_BIN@|${NPM_BIN_ESCAPED}|g" \
         "$source" >"$destination"
-    ! grep -q '@AQSP_' "$destination"
+    # Template comments document the placeholder syntax; only executable unit
+    # lines must be checked for unresolved substitutions.
+    ! grep -vE '^[[:space:]]*#' "$destination" | grep -Eq '@AQSP_[A-Z_]+@'
 }
 
 install -d "$SYSTEMD_DEST_DIR"

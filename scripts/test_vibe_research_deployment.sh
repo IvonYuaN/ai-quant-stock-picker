@@ -45,7 +45,7 @@ for unit in aqsp-vibe-research-api.service aqsp-vibe-research-preview.service; d
         -e 's|@AQSP_LOG_DIR@|/opt/aqsp/logs/vibe-research|g' \
         -e 's|@AQSP_NPM_BIN@|/usr/bin/npm|g' \
         "${SYSTEMD_DIR}/${unit}" >"${rendered_dir}/${unit}"
-    ! rg -q '@AQSP_' "${rendered_dir}/${unit}"
+    ! rg -v '^\s*#' "${rendered_dir}/${unit}" | rg -q '@AQSP_[A-Z_]+@'
 done
 rg -q '^User=aqsp-vibe$' "${rendered_dir}/aqsp-vibe-research-api.service"
 rg -q 'PYTHONPATH=/opt/aqsp/src:/opt/aqsp/backend' \
@@ -100,8 +100,8 @@ fi
 
 if command -v systemd-analyze >/dev/null 2>&1; then
     systemd-analyze verify \
-        "${SYSTEMD_DIR}/aqsp-vibe-research-api.service" \
-        "${SYSTEMD_DIR}/aqsp-vibe-research-preview.service" \
+        "${rendered_dir}/aqsp-vibe-research-api.service" \
+        "${rendered_dir}/aqsp-vibe-research-preview.service" \
         "${SYSTEMD_DIR}/aqsp-vibe-research.target"
 else
     echo "SKIP systemd-analyze: command unavailable"
