@@ -5,8 +5,12 @@
 
 from __future__ import annotations
 
-from aqsp.briefing.schema import BriefingData
-from aqsp.briefing.debate import format_debate_result
+from datetime import date
+
+from aqsp.briefing.conclusion import build_debate_conclusion_view
+from aqsp.briefing.debate import debate_active_role_summary
+from aqsp.briefing.schema import BriefingData, CommitteeConclusion
+from aqsp.core.time import now_shanghai
 from aqsp.presentation import (
     describe_source_health,
     describe_source_layers,
@@ -56,6 +60,25 @@ def _format_pick_with_status(pick, *, include_score: bool = False) -> str:
     return display
 
 
+def _date_only(value: object) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    candidate = text.replace("T", " ").split(" ", 1)[0]
+    try:
+        return date.fromisoformat(candidate).isoformat()
+    except ValueError:
+        return ""
+
+
+def _is_today(value: object) -> bool:
+    return _date_only(value) == now_shanghai().date().isoformat()
+
+
+def _join_or_default(values: tuple[str, ...], default: str) -> str:
+    return "；".join(values[:3]) if values else default
+
+
 class MarkdownRenderer:
     """将 BriefingData 渲染为 markdown 格式。"""
 
@@ -63,27 +86,115 @@ class MarkdownRenderer:
         """生成完整的 markdown 日报。"""
         lines = [f"# 每日研究复盘-{data.date}", ""]
 
+        lines.extend(self._render_committee_conclusions(data))
         lines.extend(self._render_main_chain(data))
         lines.extend(self._render_regime(data))
         lines.extend(self._render_source(data))
         lines.extend(self._render_research(data))
+        lines.extend(self._render_decision_context(data))
         lines.extend(self._render_evidence(data))
         lines.extend(self._render_theme(data))
         lines.extend(self._render_next_day(data))
-
-        # 添加辩论结果
-        if data.debate_results:
-            lines.append("## 多Agent辩论")
-            lines.append("")
-            lines.append("对重点候选标的进行了多Agent辩论分析：")
-            lines.append("")
-            for result in data.debate_results[:3]:
-                lines.append(format_debate_result(result))
-                lines.append("---")
-                lines.append("")
+        lines.extend(self._render_artifacts(data))
+        lines.extend(self._render_debate_process(data))
 
         lines.append("> 仅供研究，不构成交易指令或投资建议。")
         return normalize_research_tone("\n".join(lines))
+
+    def _render_committee_conclusions(self, data: BriefingData) -> list[str]:
+        if not data.debate_results:
+            return []
+
+        conclusions = tuple(
+            CommitteeConclusion.from_debate_result(result)
+            for result in data.debate_results[:3]
+        )
+        all_current = all(
+            _is_today(item.signal_date or data.date) for item in conclusions
+        )
+        heading_suffix = "今日 advisory-only" if all_current else "历史归档，非今日建议"
+        lines = [f"## 多 Agent 结论（{heading_suffix}）", ""]
+        lines.append("重点候选的委员会结论如下：")
+        lines.append(
+            "委员会只提供 advisory-only 研究参考，不改写确定性评分，也不构成交易指令。"
+        )
+        lines.append("")
+
+        for conclusion in conclusions:
+            signal_date = _date_only(conclusion.signal_date) or _date_only(data.date)
+            signal_date = signal_date or "未记录"
+            date_note = "今日信号" if _is_today(signal_date) else "历史信号，非今日建议"
+            confidence = (
+                f"{conclusion.confidence:.0%}"
+                if conclusion.confidence is not None
+                else "未记录"
+            )
+            lines.extend(
+                [
+                    f"### 多 Agent 结论 - {conclusion.symbol} {conclusion.name}",
+                    f"- 信号日期: {signal_date}（{date_note}）",
+                    f"- 结论: **{conclusion.headline}**",
+                    f"- 委员会置信度: **{confidence}**",
+                    "- 投票: "
+                    f"看多 {conclusion.bullish_votes} / "
+                    f"看空 {conclusion.bearish_votes} / "
+                    f"中性 {conclusion.neutral_votes}",
+                    "- 支持理由: "
+                    + _join_or_default(conclusion.support_points, "未记录"),
+                    "- 反对理由: "
+                    + _join_or_default(conclusion.opposition_points, "未记录"),
+                    "- 风险: " + _join_or_default(conclusion.risk_points, "未记录"),
+                    "- 失效条件: "
+                    + _join_or_default(
+                        conclusion.failure_conditions,
+                        "未记录，需补充实时验证",
+                    ),
+                    "- 评分边界: 确定性评分保持不变；委员会结果仅作 advisory-only 附件",
+                ]
+            )
+            if not conclusion.advisory_only:
+                lines.append("- 边界异常: advisory-only 标记缺失，禁止据此形成行动判断")
+            lines.append("")
+
+        return lines
+
+    def _render_debate_process(self, data: BriefingData) -> list[str]:
+        if not data.debate_results:
+            return []
+
+        lines = ["## 结构化讨论过程", ""]
+        lines.append(
+            "以下仅记录角色、轮次、投票与证据分层；不展示原始 AI 思考话术，过程不能覆盖确定性评分。"
+        )
+        lines.append("")
+        for result in data.debate_results[:3]:
+            conclusion = CommitteeConclusion.from_debate_result(result)
+            view = build_debate_conclusion_view(result)
+            roles = "、".join(conclusion.active_roles) or "未记录"
+            lines.append(f"### {conclusion.symbol} {conclusion.name}")
+            lines.append(f"- 讨论轮次: {conclusion.round_count}")
+            lines.append(f"- 参与角色: {roles}")
+            if result.rounds:
+                lines.append("- 轮次摘要（结构化字段）:")
+                for round_data in result.rounds[:3]:
+                    summary = str(round_data.summary or "").strip() or "未提供"
+                    lines.append(f"  - 第{round_data.round_num}轮: {summary}")
+            lines.append(
+                "- 最终投票: "
+                f"看多 {conclusion.bullish_votes} / "
+                f"看空 {conclusion.bearish_votes} / "
+                f"中性 {conclusion.neutral_votes}"
+            )
+            if view.quality_audit is not None:
+                status = "通过" if view.quality_audit.passed else "未通过"
+                lines.append(f"- 过程审计: {status}")
+            if conclusion.llm_advisory_count:
+                lines.append(
+                    f"- LLM advisory: {conclusion.llm_advisory_count} 个角色有增强内容，已留在审计字段，未作为结论"
+                )
+            lines.append("- 过程边界: advisory-only；不改写确定性评分")
+            lines.append("")
+        return lines
 
     def _render_main_chain(self, data: BriefingData) -> list[str]:
         """渲染主链总览。"""
@@ -106,6 +217,8 @@ class MarkdownRenderer:
 
         if ps.watchlist:
             lines.append("- 观察名单: " + "、".join(ps.watchlist[:3]))
+        if ps.portfolio_risk_lines:
+            lines.append("- 组合风险: " + "；".join(ps.portfolio_risk_lines[:2]))
         if ps.watch_reviews:
             lines.append("- 观察名单:")
             for item in ps.watch_reviews[:2]:
@@ -118,6 +231,12 @@ class MarkdownRenderer:
                         next_step=item.next_step,
                     )
                 )
+        active_role_summary = self._debate_role_summary(data)
+        if active_role_summary:
+            lines.append(f"- 讨论视角: {active_role_summary}")
+        role_selection_plan = self._debate_role_plan_summary(data)
+        if role_selection_plan:
+            lines.append(f"- 角色分工: {role_selection_plan}")
 
         lead = data.picks[0]
         lead_display = format_symbol_name(lead.symbol, lead.name)
@@ -134,6 +253,33 @@ class MarkdownRenderer:
         lines.append("")
         return lines
 
+    def _render_decision_context(self, data: BriefingData) -> list[str]:
+        lines = ["## 候选上下文", ""]
+
+        if not data.decision_context_cards:
+            lines.append("暂无候选上下文卡。")
+            lines.append("")
+            return lines
+
+        for card in data.decision_context_cards[:5]:
+            display = format_symbol_name(card.symbol, card.name)
+            lines.append(f"### {display}")
+            for label, value in (
+                ("量价", card.price_signal),
+                ("消息", card.news_judgement),
+                ("跨市", card.cross_market),
+                ("讨论", card.debate),
+                ("风险", card.risk),
+                ("下一步", card.next_step),
+            ):
+                if value:
+                    lines.append(f"- {label}: {value}")
+            if card.artifact_ids:
+                lines.append("- 证据: " + "、".join(card.artifact_ids[:3]))
+            lines.append("")
+
+        return lines
+
     def _render_regime(self, data: BriefingData) -> list[str]:
         """渲染市场态势。"""
         lines = [f"## {display_section_title('市场态势')}", ""]
@@ -144,6 +290,26 @@ class MarkdownRenderer:
             lines.append("")
 
         lines.append(f"当前市场态势: **{data.regime_info.description}**")
+        lines.append("")
+        return lines
+
+    def _render_artifacts(self, data: BriefingData) -> list[str]:
+        if not data.artifacts:
+            return []
+
+        lines = ["## 产物追溯", ""]
+        for artifact in data.artifacts[:6]:
+            source_text = "、".join(artifact.sources[:3]) or "-"
+            version_text = "、".join(
+                f"{key}={value}"
+                for key, value in sorted(artifact.upstream_versions.items())[:3]
+            )
+            if not version_text:
+                version_text = "-"
+            hash_text = artifact.input_hash or "-"
+            lines.append(
+                f"- {artifact.artifact_id} | {artifact.artifact_type} | {artifact.generated_at} | 来源 {source_text} | hash {hash_text} | 版本 {version_text}"
+            )
         lines.append("")
         return lines
 
@@ -187,6 +353,24 @@ class MarkdownRenderer:
         lines.append(f"- 已部分实现策略: **{rs.implemented_family_count}**")
         lines.append(f"- 仅写进研究记录: **{rs.report_only_family_count}**")
         lines.append(f"- 需满足条件后启用: **{rs.gated_family_count}**")
+        if rs.repo_intake_total:
+            lines.append(
+                "- 开源扫描池: "
+                f"共 {rs.repo_intake_total} 项 / "
+                f"底座候选 {rs.repo_substrate_candidate_count} / "
+                f"执行红线 {rs.repo_reject_boundary_count} / "
+                f"仅记录 {rs.repo_report_only_count}"
+            )
+        if rs.repo_lane_summaries:
+            lanes = "、".join(
+                f"{item.lane} {item.count}" for item in rs.repo_lane_summaries[:4]
+            )
+            lines.append(f"- 扫描分类: {lanes}")
+        if rs.repo_backlog:
+            item = rs.repo_backlog[0]
+            lines.append(
+                f"- 开源接入队列: {item.repo} [{item.priority}/{item.lane}] -> {item.landing}"
+            )
 
         top_pipelines = list(rs.pipeline_summaries[:3])
         if top_pipelines:
@@ -205,7 +389,7 @@ class MarkdownRenderer:
         if rs.next_actions:
             next_item = rs.next_actions[0]
             lines.append(
-                f"- 下一接入重点: {next_item.kind}/{next_item.item_id} [{next_item.priority}] - {next_item.blocker or '还缺前置条件'}"
+                f"- 门控候选主题: {next_item.kind}/{next_item.item_id} [{next_item.priority}] - {next_item.blocker or '还缺前置条件'}"
             )
 
         prereq_item = next(
@@ -289,7 +473,12 @@ class MarkdownRenderer:
 
     def _render_next_day(self, data: BriefingData) -> list[str]:
         """渲染明日重点。"""
-        lines = ["## 明日重点", ""]
+        is_current = _is_today(data.date)
+        section_title = "明日重点" if is_current else "历史后续观察（非今日建议）"
+        lines = [f"## {section_title}", ""]
+        if not is_current:
+            lines.append("以下只记录该历史信号日的后续观察，不代表今日建议。")
+            lines.append("")
 
         tradable = data.tradable_picks
         if not tradable:
@@ -303,7 +492,7 @@ class MarkdownRenderer:
                     _candidate_review_window_label(lead),
                 )
                 line = (
-                    f"今日无纸面复核对象；观察名单: {names}。"
+                    f"{'今日' if is_current else '该信号日'}无纸面复核对象；观察名单: {names}。"
                     "待阻塞解除后再考虑转入纸面复核名单。"
                 )
                 if blocker:
@@ -373,13 +562,19 @@ class MarkdownRenderer:
                 items.append("- 主链候选: " + "、".join(ps.top_focus))
             if ps.watchlist:
                 items.append("- 观察名单: " + "、".join(ps.watchlist))
-
         if data.debate_results:
-            items.append(
-                f"- 多Agent辩论: 已分析 {len(data.debate_results[:3])} 只重点候选"
-            )
+            items.append(f"- 委员会覆盖: 已分析 {len(data.debate_results)} 只重点候选")
         else:
-            items.append("- 多Agent辩论: 今日无重点标的或处于冷却期")
+            items.append("- 委员会覆盖: 今日无重点标的或处于冷却期")
+        active_role_summary = self._debate_role_summary(data)
+        if active_role_summary:
+            items.append(f"- 讨论视角: {active_role_summary}")
+        role_selection_summary = self._debate_role_selection_summary(data)
+        if role_selection_summary:
+            items.append(f"- 选角理由: {role_selection_summary}")
+        role_selection_plan = self._debate_role_plan_summary(data)
+        if role_selection_plan:
+            items.append(f"- 角色分工: {role_selection_plan}")
 
         return items
 
@@ -392,6 +587,22 @@ class MarkdownRenderer:
                 _format_pick_with_status(p, include_score=True) for p in top
             )
             items.append(f"- 候选标的: {names}")
+        if data.decision_context_cards:
+            lead = data.decision_context_cards[0]
+            context_bits = tuple(
+                bit
+                for bit in (
+                    lead.news_judgement,
+                    lead.cross_market,
+                    lead.risk,
+                )
+                if bit
+            )
+            if context_bits:
+                items.append(
+                    f"- 候选上下文: {format_symbol_name(lead.symbol, lead.name)} | "
+                    + "；".join(context_bits[:3])
+                )
 
         source_summary = data.source_health_summary
         if source_summary:
@@ -463,6 +674,8 @@ class MarkdownRenderer:
         source_summary = data.source_health_summary
         if source_summary:
             items.append(f"- 数据源提示: {self._strip_leading_markers(source_summary)}")
+        if data.artifacts:
+            items.append(f"- 证据追溯: 已记录 {len(data.artifacts)} 个产物元数据")
 
         return items
 
@@ -489,3 +702,35 @@ class MarkdownRenderer:
             return "今日无候选标的，保持观望"
 
         return "，".join(parts) + "。"
+
+    @staticmethod
+    def _debate_role_summary(data: BriefingData) -> str:
+        if not data.debate_results:
+            return ""
+        if len(data.debate_results) > 1:
+            return "；".join(
+                f"{result.symbol} {result.name}: "
+                f"{debate_active_role_summary(result, language='zh-CN', max_labels=3) or '无完整角色记录'}"
+                for result in data.debate_results[:3]
+            )
+        return debate_active_role_summary(
+            data.debate_results[0],
+            language="zh-CN",
+            max_labels=5,
+        )
+
+    @staticmethod
+    def _debate_role_selection_summary(data: BriefingData) -> str:
+        if not data.debate_results:
+            return ""
+        if len(data.debate_results) > 1:
+            return "各候选按自身证据分别选角，详见候选讨论"
+        return str(data.debate_results[0].role_selection_summary or "").strip()
+
+    @staticmethod
+    def _debate_role_plan_summary(data: BriefingData) -> str:
+        if not data.debate_results:
+            return ""
+        if len(data.debate_results) > 1:
+            return "各候选分别记录角色分工，不用首个候选代表全部候选"
+        return str(data.debate_results[0].role_selection_plan or "").strip()
