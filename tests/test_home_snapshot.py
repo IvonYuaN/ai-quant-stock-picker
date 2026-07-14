@@ -28,10 +28,13 @@ from aqsp.web.home_snapshot import (
     HomeSnapshotMarketContext,
     HomeSnapshotMessage,
     HomeSnapshotSource,
+    HOME_SNAPSHOT_CLOSE_TTL,
+    HOME_SNAPSHOT_INTRADAY_TTL,
     load_home_dashboard_snapshot,
     load_home_snapshot_for_date,
     load_home_snapshot_index,
     stale_after_for,
+    stale_after_for_task,
     write_home_dashboard_snapshot,
     write_home_snapshot_index,
 )
@@ -298,6 +301,18 @@ def test_home_snapshot_freshness_is_timezone_aware_and_legacy_is_stale() -> None
     assert snapshot.is_stale(as_of.replace(minute=30)) is True
     assert _snapshot().is_stale(as_of) is True
     assert stale_after_for("2026-07-11T09:30:00+08:00") == ("2026-07-12T09:30:00+08:00")
+
+
+def test_home_snapshot_task_freshness_distinguishes_intraday_and_close() -> None:
+    generated_at = "2026-07-11T15:00:00+08:00"
+
+    assert HOME_SNAPSHOT_INTRADAY_TTL.total_seconds() == 30 * 60
+    assert HOME_SNAPSHOT_CLOSE_TTL.total_seconds() == 18 * 60 * 60
+    assert stale_after_for_task(generated_at, "intraday") == (
+        "2026-07-11T15:30:00+08:00"
+    )
+    assert stale_after_for_task(generated_at, "midday") == ("2026-07-11T15:30:00+08:00")
+    assert stale_after_for_task(generated_at, "daily") == ("2026-07-12T09:00:00+08:00")
 
 
 @pytest.mark.parametrize(

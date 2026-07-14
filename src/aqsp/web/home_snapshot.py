@@ -26,6 +26,9 @@ MAX_HOME_SNAPSHOT_CROSS_MARKET = 3
 HOME_SNAPSHOT_INDEX_SCHEMA_VERSION = "v1-index"
 MAX_HOME_SNAPSHOT_INDEX_DAYS = 4
 HOME_SNAPSHOT_DEFAULT_TTL = timedelta(hours=24)
+HOME_SNAPSHOT_INTRADAY_TTL = timedelta(minutes=30)
+HOME_SNAPSHOT_CLOSE_TTL = timedelta(hours=18)
+_INTRADAY_TASK_IDS = frozenset({"intraday", "midday"})
 
 
 @dataclass(frozen=True)
@@ -386,6 +389,16 @@ def stale_after_for(
     if validity <= timedelta(0):
         raise ValueError("snapshot validity must be positive")
     return (generated + validity).isoformat(timespec="seconds")
+
+
+def stale_after_for_task(generated_at: str, task_id: str) -> str:
+    """Compute freshness for a live task while keeping history independently readable."""
+    validity = (
+        HOME_SNAPSHOT_INTRADAY_TTL
+        if str(task_id or "").strip().lower() in _INTRADAY_TASK_IDS
+        else HOME_SNAPSHOT_CLOSE_TTL
+    )
+    return stale_after_for(generated_at, validity)
 
 
 def _normalize_timestamp_for_write(

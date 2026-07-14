@@ -10,7 +10,7 @@ import os
 import re
 import sys
 from dataclasses import replace
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -43,7 +43,7 @@ from aqsp.web.home_snapshot import (
     HomeSnapshotMessage,
     HomeSnapshotSource,
     is_home_recommendation,
-    stale_after_for,
+    stale_after_for_task,
     write_home_dashboard_snapshot,
     write_home_snapshot_index,
 )
@@ -55,7 +55,7 @@ MAX_HOME_DATES = 4
 MAX_HOME_CANDIDATES = MAX_HOME_SNAPSHOT_CANDIDATES
 MAX_HOME_SUMMARIES = 3
 MAX_HOME_MESSAGES = 5
-HOME_SNAPSHOT_VALIDITY = timedelta(hours=24)
+NEWS_REPORT_MAX_AGE_SECONDS = 6 * 60 * 60
 _SOURCE_STATUS_LABELS = {
     "ok": "可用",
     "partial": "部分可用",
@@ -444,16 +444,51 @@ def _parse_event_source(raw_source: str) -> tuple[str, str, int, str]:
 def _parse_news_report_payload(
     signal_date: str,
 ) -> tuple[str, tuple[HomeSnapshotMessage, ...], CatalystReport | None]:
+    structured_path = _news_json_report_path()
     structured_report = load_catalyst_report_artifact(
-        _news_json_report_path(),
+        structured_path,
         expected_date=signal_date,
-        max_age_seconds=6 * 60 * 60,
+        max_age_seconds=NEWS_REPORT_MAX_AGE_SECONDS,
     )
+    if structured_report is None and structured_path.is_file():
+        is_current_day = signal_date == now_shanghai().date().isoformat()
+        if is_current_day:
+            unbounded_report = load_catalyst_report_artifact(
+                structured_path,
+                expected_date=signal_date,
+            )
+            if unbounded_report is not None:
+                warning = (
+                    "当前日消息源产物超过 6 小时有效窗口，旧消息已排除；"
+                    "请检查消息刷新调度。"
+                )
+                source_status = "timeout"
+            else:
+                warning = "当前日消息源产物不可用，旧消息已排除；请检查消息刷新调度。"
+                source_status = "failed"
+            report = CatalystReport(
+                date=signal_date,
+                generated_at=now_shanghai().isoformat(timespec="seconds"),
+                events=(),
+                source_status=source_status,
+                warnings=(warning,),
+                event_status="source_failed",
+            )
+            return _SOURCE_STATUS_LABELS[source_status], (), report
     if structured_report is not None:
         structured_report, historical_count, invalid_count = (
             _normalize_catalyst_report_for_snapshot(structured_report, signal_date)
         )
-        messages = _messages_from_catalyst_report(structured_report)
+        source_failed = structured_report.source_status in {"failed", "timeout"}
+        cache_restricted = structured_report.news_status in {
+            "source_failed",
+            "stale_cache",
+        }
+        if source_failed or cache_restricted:
+            structured_report = replace(structured_report, events=())
+            messages = ()
+        else:
+            messages = _messages_from_catalyst_report(structured_report)
         if messages:
             status = _SOURCE_STATUS_LABELS.get(
                 structured_report.source_status,
@@ -550,6 +585,12 @@ def _parse_news_report_payload(
                 published_at=published_at,
             )
         )
+    if source_status in {"failed", "timeout"} or event_status in {
+        "source_failed",
+        "stale_cache",
+    }:
+        messages = []
+        events = []
     if not messages:
         status = _EVENT_STATUS_LABELS.get(
             event_status,
@@ -565,11 +606,18 @@ def _parse_news_report_payload(
         ),
         f"{signal_date}T23:59:59+08:00",
     )
+    warnings: tuple[str, ...] = ()
+    warning_match = re.search(r"^- (?:原因|告警):\s*(.+)$", text, re.MULTILINE)
+    if warning_match:
+        warnings = (warning_match.group(1).strip(),)
+    elif source_status in {"failed", "timeout"}:
+        warnings = ("当前日消息源失败，当前日无可用消息。",)
     report = CatalystReport(
         date=signal_date,
         generated_at=generated_at,
         events=tuple(events),
         source_status=source_status,
+        warnings=warnings,
         event_status=event_status,
     )
     return status, tuple(messages[:MAX_HOME_MESSAGES]), report
@@ -777,7 +825,7 @@ def build_home_snapshot(
         summaries=summaries,
         source=_snapshot_source(runtime, task_view),
         coldstart=_snapshot_coldstart(runtime),
-        stale_after=stale_after_for(generated_at, HOME_SNAPSHOT_VALIDITY),
+        stale_after=stale_after_for_task(generated_at, selected_task_id),
         message_status=message_status,
         messages=messages,
         market_context=market_context,
@@ -819,7 +867,7 @@ def build_home_snapshot_index(
     return HomeSnapshotIndex(
         schema_version=HOME_SNAPSHOT_INDEX_SCHEMA_VERSION,
         generated_at=generated_at,
-        stale_after=stale_after_for(generated_at, HOME_SNAPSHOT_VALIDITY),
+        stale_after=stale_after_for_task(generated_at, selected_task_id),
         selected_date=first.selected_date,
         days=tuple(day_snapshots),
     )

@@ -163,7 +163,7 @@ def test_write_home_snapshot_builds_bounded_advisory_only_payload(monkeypatch) -
         "重点看首个确定性候选",
         "量能阻塞待解除",
     )
-    assert snapshot.stale_after == "2026-07-11T15:01:00+08:00"
+    assert snapshot.stale_after == "2026-07-10T15:31:00+08:00"
 
 
 def test_write_home_snapshot_normalizes_legacy_news_and_cross_market_timestamps(
@@ -223,6 +223,94 @@ def test_write_home_snapshot_normalizes_legacy_news_and_cross_market_timestamps(
     )
     assert all("2026-07-09" not in item.title for item in snapshot.messages)
     assert all(item.title != "无时间事件" for item in snapshot.messages)
+
+
+def test_write_home_snapshot_rejects_stale_current_news_without_markdown_fallback(
+    monkeypatch, tmp_path
+) -> None:
+    current_time = datetime(2026, 7, 10, 15, 1, tzinfo=ZoneInfo("Asia/Shanghai"))
+    report_path = tmp_path / "news.json"
+    markdown_path = tmp_path / "news.md"
+    report = CatalystReport(
+        date="2026-07-10",
+        generated_at="2026-07-10T08:00:00+08:00",
+        source_status="ok",
+        events=(
+            CatalystEvent(
+                title="旧消息",
+                source="旧缓存",
+                published_at="2026-07-10T08:00:00+08:00",
+                impact="positive",
+            ),
+        ),
+    )
+    report_path.write_text(
+        json.dumps(serialize_catalyst_report(report), ensure_ascii=False),
+        encoding="utf-8",
+    )
+    markdown_path.write_text(
+        "# 消息面雷达-2026-07-10|可用\n\n"
+        "## 事件\n\n"
+        "- 1. 利好 | 全市场 | 消息\n"
+        "- 结果: 不应回退的旧 Markdown\n"
+        "- 时间: 2026-07-10T08:00:00+08:00\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AQSP_NEWS_JSON_OUTPUT", str(report_path))
+    monkeypatch.setenv("AQSP_NEWS_OUTPUT", str(markdown_path))
+    monkeypatch.setattr(write_home_snapshot, "now_shanghai", lambda: current_time)
+    monkeypatch.setattr("aqsp.news.catalysts.now_shanghai", lambda: current_time)
+
+    snapshot = write_home_snapshot.build_home_snapshot(
+        _Provider(), signal_date="2026-07-10", task_id="intraday"
+    )
+
+    assert snapshot.message_status == "超时"
+    assert snapshot.messages == ()
+    assert snapshot.market_context is not None
+    assert any(
+        "超过 6 小时有效窗口" in item for item in snapshot.market_context.warnings
+    )
+    assert "不应回退的旧 Markdown" not in snapshot.to_json()
+
+
+def test_write_home_snapshot_clears_messages_when_current_source_failed(
+    monkeypatch, tmp_path
+) -> None:
+    current_time = datetime(2026, 7, 10, 15, 1, tzinfo=ZoneInfo("Asia/Shanghai"))
+    report_path = tmp_path / "news.json"
+    report = CatalystReport(
+        date="2026-07-10",
+        generated_at="2026-07-10T15:00:00+08:00",
+        source_status="failed",
+        warnings=("国际源超时",),
+        event_status="source_failed",
+        events=(
+            CatalystEvent(
+                title="失败源残留消息",
+                source="旧缓存",
+                published_at="2026-07-10T15:00:00+08:00",
+                impact="positive",
+            ),
+        ),
+    )
+    report_path.write_text(
+        json.dumps(serialize_catalyst_report(report), ensure_ascii=False),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AQSP_NEWS_JSON_OUTPUT", str(report_path))
+    monkeypatch.setattr(write_home_snapshot, "now_shanghai", lambda: current_time)
+    monkeypatch.setattr("aqsp.news.catalysts.now_shanghai", lambda: current_time)
+
+    snapshot = write_home_snapshot.build_home_snapshot(
+        _Provider(), signal_date="2026-07-10", task_id="intraday"
+    )
+
+    assert snapshot.message_status == "来源失败"
+    assert snapshot.messages == ()
+    assert snapshot.market_context is not None
+    assert "国际源超时" in snapshot.market_context.warnings
+    assert snapshot.market_context.cross_market == ()
 
 
 def test_write_home_snapshot_rejects_provider_historical_date_fallback() -> None:
