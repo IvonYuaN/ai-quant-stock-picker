@@ -22,11 +22,13 @@ from aqsp.data.source_health import (
     notification_level_for_health_label,
     read_source_health,
 )
+from aqsp.data.source_readiness import source_supports_workload, workload_fit_for_source
 from aqsp.presentation import (
     describe_source_health as present_source_health,
     describe_source_layers,
     format_source_route,
     format_review_meta,
+    format_symbol_name,
     format_watch_review_line,
     normalize_research_tone,
     review_priority_label,
@@ -39,7 +41,7 @@ from aqsp.research.summary import (
     research_findings_badge,
     research_findings_display,
 )
-from aqsp.utils.jsonl_io import atomic_write_text
+from aqsp.web.entrypoint import public_dashboard_url, write_dashboard_artifact
 from aqsp.walkforward_gate import validate_walkforward_gate_payload
 
 
@@ -71,6 +73,13 @@ class PaperStats:
     not_executable: int
     pending_entry: int
     avg_return_pct: float | None
+
+
+@dataclass(frozen=True)
+class CandidateSourceSelection:
+    candidates: list[dict[str, str]]
+    path: Path
+    source_label: str
 
 
 def _safe_float(value: Any) -> float | None:
@@ -176,8 +185,36 @@ def summarize_paper(rows: list[dict[str, Any]]) -> PaperStats:
     )
 
 
+def _short_date(value: Any) -> str:
+    return str(value or "").strip()[:10]
+
+
+def _debate_match_date(debate: dict[str, Any]) -> str:
+    for key in ("related_signal_date", "signal_date", "debate_date"):
+        date_value = _short_date(debate.get(key))
+        if date_value:
+            return date_value
+    return ""
+
+
+def _candidate_match_date(candidate: dict[str, Any]) -> str:
+    for key in ("date", "signal_date", "related_signal_date", "debate_date"):
+        date_value = _short_date(candidate.get(key))
+        if date_value:
+            return date_value
+    return ""
+
+
+def _debate_storage_key(debate: dict[str, Any]) -> str:
+    symbol = str(debate.get("symbol", "") or "").strip()
+    match_date = _debate_match_date(debate)
+    if symbol and match_date:
+        return f"{symbol}::{match_date}"
+    return symbol
+
+
 def read_debate_results(path: Path) -> dict[str, dict[str, Any]]:
-    """读取辩论结果，按symbol聚合，每个股票返回最新日期的辩论"""
+    """读取辩论结果，保留同一 symbol 在不同信号日的记录。"""
     if not path.exists():
         return {}
     results: dict[str, dict[str, Any]] = {}
@@ -185,14 +222,12 @@ def read_debate_results(path: Path) -> dict[str, dict[str, Any]]:
         if line.strip():
             try:
                 data = json.loads(line)
-                symbol = data.get("symbol", "")
-                if symbol:
-                    debate_date = data.get("debate_date", "")
-                    # 如果该股票还没有记录，或者新记录的日期更近，则更新
-                    if symbol not in results or debate_date > results[symbol].get(
-                        "debate_date", ""
-                    ):
-                        results[symbol] = data
+                key = _debate_storage_key(data)
+                if key:
+                    debate_date = _short_date(data.get("debate_date"))
+                    existing_date = _short_date(results.get(key, {}).get("debate_date"))
+                    if key not in results or debate_date > existing_date:
+                        results[key] = data
             except json.JSONDecodeError:
                 continue
     return results
@@ -206,6 +241,72 @@ def read_candidates(path: Path) -> list[dict[str, str]]:
     except EmptyDataError:
         return []
     return [dict(row) for row in df.to_dict(orient="records")]
+
+
+def _tag_candidate_source(
+    candidates: list[dict[str, str]],
+    *,
+    source_label: str,
+    source_path: Path,
+) -> list[dict[str, str]]:
+    return [
+        {
+            **row,
+            "__candidate_source_label": source_label,
+            "__candidate_source_path": str(source_path),
+        }
+        for row in candidates
+    ]
+
+
+def read_preferred_candidates(
+    csv_path: Path,
+    *,
+    intraday_csv_path: Path | None = None,
+) -> CandidateSourceSelection:
+    close_candidates = read_candidates(csv_path)
+    intraday_candidates = (
+        read_candidates(intraday_csv_path)
+        if intraday_csv_path is not None and intraday_csv_path.exists()
+        else []
+    )
+    close_date = latest_candidate_date(close_candidates)
+    intraday_date = latest_candidate_date(intraday_candidates)
+    today = now_shanghai().date().isoformat()
+    intraday_is_today = bool(intraday_date and intraday_date == today)
+    if (
+        intraday_candidates
+        and intraday_is_today
+        and (not close_date or intraday_date >= close_date)
+    ):
+        assert intraday_csv_path is not None
+        return CandidateSourceSelection(
+            candidates=_tag_candidate_source(
+                intraday_candidates,
+                source_label="盘中实时",
+                source_path=intraday_csv_path,
+            ),
+            path=intraday_csv_path,
+            source_label="盘中实时",
+        )
+    return CandidateSourceSelection(
+        candidates=_tag_candidate_source(
+            close_candidates,
+            source_label="收盘主链",
+            source_path=csv_path,
+        ),
+        path=csv_path,
+        source_label="收盘主链",
+    )
+
+
+def read_daily_digest(path: Path) -> str:
+    if not path.exists():
+        return ""
+    try:
+        return path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
 
 
 def latest_candidate_date(candidates: list[dict[str, str]]) -> str:
@@ -226,6 +327,354 @@ def _fmt_num(value: str | float | None) -> str:
         return f"{float(value):.2f}"
     except (TypeError, ValueError):
         return html.escape(str(value))
+
+
+_DAILY_DIGEST_PRIORITY_TERMS: tuple[tuple[str, ...], ...] = (
+    ("结论", "总控"),
+    ("跨市", "主线"),
+    ("运行状态", "数据:", "数据日"),
+    ("讨论结论", "委员会结论", "多 Agent 结论", "多Agent结论"),
+    ("风险", "风控", "阻塞", "卡点", "失效"),
+    ("市场上下文", "北向", "全局雷达", "跨市"),
+    ("首要复核", "候选:", "纸面复核"),
+    ("讨论支持", "讨论反对", "讨论待确认", "讨论执行", "讨论过程", "讨论"),
+)
+
+
+def _daily_digest_priority_rank(point: str) -> int:
+    for index, terms in enumerate(_DAILY_DIGEST_PRIORITY_TERMS):
+        if any(term in point for term in terms):
+            return index
+    return len(_DAILY_DIGEST_PRIORITY_TERMS)
+
+
+def _daily_digest_points(markdown: str, *, limit: int = 5) -> list[str]:
+    points: list[str] = []
+    for raw in markdown.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("## "):
+            continue
+        if line.startswith("- "):
+            line = line[2:].strip()
+        elif line.startswith("* "):
+            line = line[2:].strip()
+        else:
+            continue
+        if line and line not in points:
+            points.append(line)
+    if len(points) <= limit:
+        return points
+    ordered = sorted(
+        enumerate(points),
+        key=lambda item: (_daily_digest_priority_rank(item[1]), item[0]),
+    )
+    return [point for _, point in ordered[:limit]]
+
+
+def _daily_digest_panel(markdown: str) -> str:
+    points = _daily_digest_points(markdown, limit=5)
+    if not points:
+        return ""
+    items = "".join(f"<li>{html.escape(point)}</li>" for point in points)
+    return f"""
+  <section id="daily-digest" class="daily-digest-panel">
+    <div class="section-heading">
+      <span>当天消息汇总</span>
+      <small>收盘总览压缩版</small>
+    </div>
+    <ul>{items}</ul>
+  </section>
+    """
+
+
+def _vote_snapshot(debate: dict[str, Any]) -> str:
+    final_vote = debate.get("final_vote", {}) or {}
+    if not isinstance(final_vote, dict) or not final_vote:
+        return "暂无投票快照"
+    bull_count = sum(1 for value in final_vote.values() if value == "bullish")
+    bear_count = sum(1 for value in final_vote.values() if value == "bearish")
+    neutral_count = len(final_vote) - bull_count - bear_count
+    return f"看多 {bull_count} / 中性 {neutral_count} / 看空 {bear_count}"
+
+
+def _debate_frontdesk_lines(debate: dict[str, Any]) -> tuple[str, ...]:
+    lines: list[str] = []
+    consensus = str(debate.get("final_consensus", "") or "").strip()
+    cross_market = _debate_cross_market_digest(debate)
+    support_line = _debate_brief_line(debate, "support_points", "支持")
+    watch_line = _debate_brief_line(debate, "watch_items", "待确认")
+    if consensus:
+        lines.append(f"结论: {normalize_research_tone(consensus)}")
+    if cross_market:
+        lines.append(f"跨市链: {normalize_research_tone(cross_market)}")
+    if support_line:
+        lines.append(normalize_research_tone(support_line))
+    if watch_line:
+        lines.append(normalize_research_tone(watch_line))
+    lines.append(f"投票: {_vote_snapshot(debate)}")
+    return tuple(lines[:5])
+
+
+def _debate_process_snapshot(debate: dict[str, Any]) -> str:
+    rounds = debate.get("rounds", []) or []
+    if not rounds:
+        return ""
+    latest_round = rounds[-1]
+    round_num = latest_round.get("round_num", len(rounds))
+    summary = str(latest_round.get("summary", "") or "").strip()
+    if not summary:
+        return f"过程: 共 {len(rounds)} 轮讨论，保留结构化结论。"
+    return f"过程: 第 {round_num} 轮摘要: {normalize_research_tone(summary)}"
+
+
+def _frontdesk_debate_panel(debate_map: dict[str, dict[str, Any]]) -> str:
+    cards: list[str] = []
+    for symbol, debate in list(debate_map.items())[:3]:
+        display_name = format_symbol_name(
+            str(debate.get("symbol", symbol) or symbol).strip(),
+            str(debate.get("name", "") or "").strip(),
+        )
+        adjustment = str(debate.get("recommended_adjustment", "keep") or "keep")
+        tone = {"raise": "bull", "lower": "bear", "keep": "neutral"}.get(
+            adjustment, "neutral"
+        )
+        process = _debate_process_snapshot(debate)
+        line_items = "".join(
+            f"<li>{html.escape(line)}</li>"
+            for line in (*_debate_frontdesk_lines(debate), process)
+            if line
+        )
+        cards.append(
+            f"""
+        <article class="frontdesk-debate-card {tone}">
+          <div class="frontdesk-card-kicker">Agent 结果</div>
+          <h3>{html.escape(display_name or symbol)}</h3>
+          <ul>{line_items}</ul>
+          <button class="debate-btn" onclick="showDebate('{html.escape(symbol)}')" aria-label="查看多 Agent 详情">查看结构化讨论</button>
+        </article>
+            """
+        )
+    if not cards:
+        cards.append(
+            """
+        <article class="frontdesk-debate-card neutral">
+          <div class="frontdesk-card-kicker">Agent 结果</div>
+          <h3>候选已更新，讨论回填中</h3>
+          <ul>
+            <li>首页先展示全局盘中候选；多 Agent 讨论异步补充。</li>
+            <li>该模块不阻塞盘中候选落盘，也不改写系统评分。</li>
+          </ul>
+        </article>
+            """
+        )
+    return f"""
+  <section id="agent-discussion" class="frontdesk-agent-panel">
+    <div class="section-heading">
+      <span>Agent讨论</span>
+      <small>先看委员会结果，再看过程摘要</small>
+    </div>
+    <div class="frontdesk-debate-grid">
+      {"".join(cards)}
+    </div>
+  </section>
+    """
+
+
+def _live_source_boundary_label(source_id: str) -> str:
+    source = str(source_id or "").strip()
+    if not source:
+        return ""
+    fit = workload_fit_for_source(source).get("live_short", "unknown")
+    if source_supports_workload(source, "live_short"):
+        return f"实时源 {source}（live_short={fit}）"
+    return f"当前实际源 {source} 只适合历史验证，盘中短线不可用（live_short={fit}）"
+
+
+def _latest_run_event(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+    for row in reversed(rows):
+        if str(row.get("symbol", "") or "") == "__RUN__":
+            return row
+        if row.get("event_type") or row.get("run_task_id"):
+            return row
+    return None
+
+
+def _text_values(value: Any) -> list[str]:
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return []
+        try:
+            parsed = json.loads(stripped)
+        except (json.JSONDecodeError, TypeError):
+            return [part.strip() for part in stripped.split("；") if part.strip()]
+        return _text_values(parsed)
+    if isinstance(value, (list, tuple, set)):
+        return [str(item).strip() for item in value if str(item).strip()]
+    return []
+
+
+def _candidate_news_catalyst_summary(row: dict[str, Any]) -> str:
+    judgement = str(row.get("news_catalyst_judgement", "") or "").strip()
+    if not judgement:
+        return ""
+    label = {
+        "supports": "消息支持",
+        "opposes": "消息反对",
+        "mixed": "消息分歧",
+        "needs_review": "消息待复核",
+    }.get(judgement, "消息观察")
+    lead = str(row.get("news_catalyst_lead", "") or "").strip()
+    if not lead:
+        for field in (
+            "news_catalyst_opposes",
+            "news_catalyst_supports",
+            "news_catalyst_needs_review",
+        ):
+            values = _text_values(row.get(field))
+            if values:
+                lead = values[0]
+                break
+    source = str(row.get("news_catalyst_source", "") or "").strip()
+    source_suffix = f"｜{source}" if source and source not in lead else ""
+    return normalize_research_tone(f"{label}: {lead}{source_suffix}" if lead else label)
+
+
+def _candidate_cross_market_summary(row: dict[str, Any]) -> str:
+    theme = str(row.get("cross_market_primary_theme", "") or "").strip()
+    if not theme:
+        return ""
+    action = str(row.get("cross_market_action", "") or "").strip()
+    stack = str(row.get("cross_market_evidence_stack_summary", "") or "").strip()
+    stack_suffix = f"｜{stack}" if stack else ""
+    if action:
+        return normalize_research_tone(f"{theme}({action}){stack_suffix}")
+    return normalize_research_tone(f"{theme}{stack_suffix}")
+
+
+def _candidate_cross_market_chain_lead(row: dict[str, Any]) -> str:
+    chain = str(row.get("cross_market_chain_summary", "") or "").strip()
+    if chain:
+        return normalize_research_tone(chain.split("｜", 1)[0].strip())
+    values = _text_values(row.get("cross_market_transmission_path"))
+    return normalize_research_tone(values[0]) if values else ""
+
+
+def _latest_market_context_lines(
+    rows: list[dict[str, Any]],
+    *,
+    signal_date: str,
+) -> list[str]:
+    selected_date = signal_date.strip()[:10]
+    candidates = [
+        row
+        for row in rows
+        if (
+            not selected_date
+            or str(row.get("signal_date", "") or "")[:10] == selected_date
+        )
+        and _text_values(row.get("run_market_context_lines"))
+    ]
+    if not candidates and selected_date:
+        candidates = [
+            row for row in rows if _text_values(row.get("run_market_context_lines"))
+        ]
+    if not candidates:
+        return []
+    latest = max(
+        candidates,
+        key=lambda row: (
+            str(row.get("signal_date", "") or ""),
+            str(row.get("created_at", "") or ""),
+            _safe_float(row.get("score")) or 0.0,
+        ),
+    )
+    return _text_values(latest.get("run_market_context_lines"))[:2]
+
+
+def _fmt_pct_points(value: Any) -> str:
+    number = _safe_float(value)
+    return "-" if number is None else f"{number:.2f}%"
+
+
+def _runtime_digest_from_ledger(
+    rows: list[dict[str, Any]],
+    candidates: list[dict[str, str]],
+) -> str:
+    run = _latest_run_event(rows)
+    if run is None:
+        return ""
+
+    task_id = str(run.get("run_task_id") or run.get("task_id") or "").strip()
+    status = str(run.get("status") or "").strip()
+    reason = str(
+        run.get("run_circuit_breaker_reason") or run.get("reason") or ""
+    ).strip()
+    final_count = _safe_float(run.get("run_final_count"))
+    screened_count = _safe_float(run.get("run_screened_count"))
+    fetched_count = _safe_float(run.get("run_fetched_frame_count"))
+    signal_date = str(
+        run.get("signal_date") or run.get("signal_day_group") or ""
+    ).strip()
+
+    if status == "blocked_by_circuit_breaker" or run.get(
+        "run_circuit_breaker_triggered"
+    ):
+        conclusion = "组合保护生效，暂停新增纸面复核"
+    elif candidates:
+        conclusion = f"当前看板有 {len(candidates)} 个候选，先看候选卡片"
+    elif final_count == 0:
+        conclusion = "最近运行无新增候选，先看阻塞与数据状态"
+    else:
+        conclusion = "最近运行已落盘，等待完整收盘摘要"
+
+    lines = ["## 结果", f"- 结论: {conclusion}"]
+    if reason:
+        lines.append(f"- 风险/阻塞: {normalize_research_tone(reason)}")
+    if task_id or signal_date:
+        parts = []
+        if task_id:
+            parts.append(f"任务 {task_id}")
+        if signal_date:
+            parts.append(f"日期 {signal_date[:10]}")
+        lines.append("- 运行状态: " + " / ".join(parts))
+
+    source = str(run.get("run_actual_source") or run.get("run_requested_source") or "")
+    data_date = str(run.get("run_data_latest_trade_date") or "")
+    lag_value = run.get("run_data_lag_days")
+    lag = "" if lag_value in ("", None) else str(lag_value)
+    data_parts = []
+    if source:
+        data_parts.append(_live_source_boundary_label(source))
+    if data_date:
+        data_parts.append(f"数据日 {data_date}")
+    if lag:
+        data_parts.append(f"延迟 {lag} 天")
+    if data_parts:
+        lines.append("- 数据: " + " / ".join(data_parts))
+
+    for context_line in _latest_market_context_lines(rows, signal_date=signal_date)[:1]:
+        lines.append(f"- 市场上下文: {normalize_research_tone(context_line)}")
+
+    count_parts = []
+    if fetched_count is not None:
+        count_parts.append(f"获取 {int(fetched_count)}")
+    if screened_count is not None:
+        count_parts.append(f"筛选 {int(screened_count)}")
+    if final_count is not None:
+        count_parts.append(f"候选 {int(final_count)}")
+    if count_parts:
+        lines.append("- 流程: " + " / ".join(count_parts))
+
+    if any(run.get(key) is not None for key in ("daily_pnl_pct", "monthly_pnl_pct")):
+        lines.append(
+            "- 风控读数: "
+            f"日 {_fmt_pct_points(run.get('daily_pnl_pct'))} / "
+            f"月 {_fmt_pct_points(run.get('monthly_pnl_pct'))}"
+        )
+    return "\n".join(lines)
 
 
 def _fmt_return(value: Any) -> str:
@@ -251,10 +700,138 @@ def _debate_age_label(debate_date: str) -> str:
     return f"{days_diff}天前"
 
 
+def _debate_matches_candidate_date(
+    candidate: dict[str, str],
+    debate: dict[str, Any],
+) -> bool:
+    candidate_date = _candidate_match_date(candidate)
+    debate_date = _debate_match_date(debate)
+    return bool(candidate_date and debate_date and candidate_date == debate_date)
+
+
+def _debate_symbol_for_key(key: str, debate: dict[str, Any]) -> str:
+    symbol = str(debate.get("symbol", "") or "").strip()
+    if symbol:
+        return symbol
+    return str(key).split("::", 1)[0].strip()
+
+
+def _select_debate_for_candidate(
+    candidate: dict[str, Any],
+    debate_map: dict[str, dict[str, Any]],
+) -> dict[str, Any] | None:
+    symbol = str(candidate.get("symbol", "") or "").strip()
+    if not symbol:
+        return None
+    candidate_date = _candidate_match_date(candidate)
+    symbol_debates = [
+        debate
+        for key, debate in debate_map.items()
+        if _debate_symbol_for_key(key, debate) == symbol
+    ]
+    if not symbol_debates:
+        return None
+    exact_matches = [
+        debate
+        for debate in symbol_debates
+        if candidate_date and _debate_match_date(debate) == candidate_date
+    ]
+    if candidate_date:
+        if not exact_matches:
+            return None
+        debates = exact_matches
+    else:
+        debates = symbol_debates
+    return max(debates, key=lambda debate: _short_date(debate.get("debate_date")))
+
+
+def _visible_debate_map_for_candidates(
+    candidates: list[dict[str, str]],
+    debate_map: dict[str, dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    if not candidates:
+        return {}
+
+    visible: dict[str, dict[str, Any]] = {}
+    for candidate in candidates:
+        symbol = str(candidate.get("symbol", "") or "").strip()
+        if not symbol:
+            continue
+        debate = _select_debate_for_candidate(candidate, debate_map)
+        if debate is None:
+            continue
+        visible[symbol] = {
+            **debate,
+            "_archive_only": not _debate_matches_candidate_date(candidate, debate),
+        }
+    return visible
+
+
 def _role_display_name(role: str) -> str:
     emoji = agent_role_emoji(role)
     label = agent_role_label(role, language="zh-CN")
     return f"{emoji} {label}".strip()
+
+
+def _debate_context_line_value(
+    debate: dict[str, Any],
+    *,
+    attr_names: tuple[str, ...] = (),
+    prefixes: tuple[str, ...] = (),
+) -> str:
+    for attr_name in attr_names:
+        value = str(debate.get(attr_name, "") or "").strip()
+        if value:
+            return value
+    for raw in debate.get("market_context_lines", []) or []:
+        line = str(raw).strip()
+        for prefix in prefixes:
+            if line.startswith(prefix):
+                return line[len(prefix) :].strip()
+    return ""
+
+
+def _debate_cross_market_digest(debate: dict[str, Any]) -> str:
+    theme = _debate_context_line_value(
+        debate,
+        attr_names=("cross_market_summary",),
+        prefixes=("跨市传导:",),
+    )
+    validation = _debate_context_line_value(
+        debate,
+        attr_names=("cross_market_validation_summary",),
+        prefixes=("确认信号:", "确认条件:"),
+    )
+    invalidation = _debate_context_line_value(
+        debate,
+        attr_names=("cross_market_invalidation_summary",),
+        prefixes=("失效信号:", "失效条件:"),
+    )
+    display = format_symbol_name(
+        str(debate.get("symbol", "") or "").strip(),
+        str(debate.get("name", "") or "").strip(),
+    )
+    parts: list[str] = []
+    if theme:
+        parts.append(theme)
+    if display:
+        parts.append(f"先看 {display}")
+    if validation:
+        parts.append(f"确认 {validation}")
+    if invalidation:
+        parts.append(f"失效 {invalidation}")
+    if len(parts) <= 1 and not theme:
+        return ""
+    return " | ".join(parts)
+
+
+def _debate_brief_line(debate: dict[str, Any], key: str, label: str) -> str:
+    values = tuple(
+        str(item).strip() for item in (debate.get(key, []) or []) if str(item).strip()
+    )
+    if not values:
+        return ""
+    return f"{label}: {'；'.join(values[:2])}"
 
 
 def _decision_label_from_rating(rating: str) -> str:
@@ -326,11 +903,11 @@ def _lifecycle_overview_panel(candidates: list[dict[str, str]]) -> str:
 
     action_line = "明日无明确主链复核，先确认数据与候选是否完整。"
     if actionable:
-        action_line = f"明日先盯 {' → '.join(actionable[:2])} 的开盘强弱与流动性。"
+        action_line = f"明日先盯 {' → '.join(actionable[:3])} 的开盘强弱与流动性。"
     elif review_items:
         action_line = f"明日先盯 {review_items[0]}。"
     elif watchlist:
-        action_line = f"明日先围绕 {'、'.join(watchlist[:2])} 再看，不放大纸面仓位。"
+        action_line = f"明日先围绕 {'、'.join(watchlist[:3])} 再看，不放大纸面仓位。"
 
     summary_cards = [
         ("主链复核", headline, headline_detail),
@@ -412,11 +989,25 @@ def _candidate_cards(
             for part in (candidate_review_priority, candidate_review_window)
             if part
         )
+        news_catalyst = html.escape(_candidate_news_catalyst_summary(row))
+        cross_market = html.escape(_candidate_cross_market_summary(row))
+        cross_market_chain = html.escape(_candidate_cross_market_chain_lead(row))
+        cross_market_validation = html.escape(
+            (_text_values(row.get("cross_market_validation_signals")) or [""])[0]
+        )
+        cross_market_invalidation = html.escape(
+            (_text_values(row.get("cross_market_invalidation_signals")) or [""])[0]
+        )
         strategies = html.escape(" / ".join(_strategy_values(row.get("strategies"))))
         reasons = html.escape(row.get("reasons", ""))
         risks = html.escape(row.get("risks", ""))
         debate = debate_map.get(symbol)
         has_debate = debate is not None
+        has_current_debate = (
+            has_debate
+            and debate is not None
+            and _debate_matches_candidate_date(row, debate)
+        )
 
         # 数据关联性检查：辩论时间是否在合理范围内
         debate_age = (
@@ -428,20 +1019,20 @@ def _candidate_cards(
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/>
                 </svg>
-                多视角结论 {f'<span class="debate-age">({debate_age})</span>' if debate_age else ""}
+                {"多 Agent 结论" if has_current_debate else "历史多 Agent 归档"} {f'<span class="debate-age">({debate_age})</span>' if debate_age else ""}
             </button>"""
             if has_debate
-            else """<button class="debate-btn no-debate" disabled aria-label="暂无多视角结论">
+            else """<button class="debate-btn no-debate" disabled aria-label="暂无多 Agent 结论">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <circle cx="12" cy="12" r="10"/>
                     <line x1="12" y1="8" x2="12" y2="12"/>
                     <line x1="12" y1="16" x2="12.01" y2="16"/>
                 </svg>
-                暂无多视角结论
+                暂无多 Agent 结论
             </button>"""
         )
         adjustment_badge = ""
-        if has_debate:
+        if has_current_debate:
             adj = debate.get("recommended_adjustment", "keep")
             adj_class = {"raise": "bull", "lower": "bear", "keep": "neutral"}.get(
                 adj, "neutral"
@@ -455,20 +1046,46 @@ def _candidate_cards(
                 f"<span class='adjustment-badge {adj_class}'>{adj_text}</span>"
             )
 
-        # 准备评分展示
+        # 多 Agent 只能作为附件参考，候选卡主评分始终显示确定性筛选分。
         original_score = _fmt_num(row.get("score"))
-        adj_score = ""
+        reference_score = ""
         score_diff = ""
-        if has_debate:
+        if has_current_debate:
             debate_original = debate.get("original_score", 0)
             debate_adjusted = debate.get("adjusted_score", debate_original)
             adj_weight = debate.get("adjustment_weight", 0)
-            adj_score = _fmt_num(debate_adjusted)
+            reference_score = _fmt_num(debate_adjusted)
             diff_pct = adj_weight * 100
             if diff_pct > 0:
                 score_diff = f"<span class='score-diff bull'>+{diff_pct:.1f}%</span>"
             elif diff_pct < 0:
                 score_diff = f"<span class='score-diff bear'>{diff_pct:.1f}%</span>"
+
+        quick_lines = []
+        if news_catalyst:
+            quick_lines.append(("催化", news_catalyst))
+        if cross_market:
+            quick_lines.append(("跨市主线", cross_market))
+        if cross_market_chain:
+            quick_lines.append(("传导", cross_market_chain))
+        if cross_market_validation:
+            quick_lines.append(("确认", cross_market_validation))
+        if cross_market_invalidation:
+            quick_lines.append(("失效", cross_market_invalidation))
+        quick_lines.extend(
+            [
+                ("逻辑", reasons or "暂无结构化理由"),
+                ("风险", risks or "无明显风险标签"),
+            ]
+        )
+        if candidate_blocker:
+            quick_lines.append(("卡点", candidate_blocker))
+        if candidate_next_step:
+            quick_lines.append(("下一步", candidate_next_step))
+        quick_html = "".join(
+            f"<p><b>{html.escape(label)}</b>{value}</p>"
+            for label, value in quick_lines[:6]
+        )
 
         cards.append(
             f"""
@@ -478,13 +1095,13 @@ def _candidate_cards(
                 <div class="title-area">
                     <h3>{symbol} <span>{name}</span></h3>
                     <div class="rating-row">
-                        <span class="score">{adj_score if has_debate else score}</span>
+                        <span class="score">{score}</span>
                         <small>/ {decision_label}</small>
                         {f"<small>/ {candidate_status}</small>" if candidate_status else ""}
                         {f"<small>/ PM {portfolio_text}</small>" if portfolio_text and portfolio_action != "keep" else ""}
                         {adjustment_badge}
                     </div>
-                    {f"<div class='score-compare'>原始 {original_score} · 调整 {adj_score} {score_diff}</div>" if has_debate and score_diff else ""}
+                    {f"<div class='score-compare'>系统评分 {original_score} · 附件参考 {reference_score} {score_diff}</div>" if has_current_debate and score_diff else ""}
                 </div>
                 <button class="expand-btn" onclick="toggleCard(this)" aria-label="展开详情" aria-expanded="false">
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -492,6 +1109,7 @@ def _candidate_cards(
                     </svg>
                 </button>
               </div>
+              <div class="card-quick-lines">{quick_html}</div>
               <dl class="card-details" role="list">
                 <dt>策略</dt><dd>{strategies or "-"}</dd>
                 <dt>参考价</dt><dd>{_fmt_num(row.get("ideal_buy"))}</dd>
@@ -520,6 +1138,7 @@ def _debate_modals(debate_map: dict[str, dict[str, Any]]) -> str:
         return ""
     modals: list[str] = []
     for symbol, debate in debate_map.items():
+        archive_only = bool(debate.get("_archive_only", False))
         name = html.escape(debate.get("name", symbol))
         consensus = html.escape(debate.get("final_consensus", ""))
         adjustment = debate.get("recommended_adjustment", "keep")
@@ -550,62 +1169,11 @@ def _debate_modals(debate_map: dict[str, dict[str, Any]]) -> str:
         latest_round = debate.get("rounds", [])[-1] if debate.get("rounds") else {}
         round_num = latest_round.get("round_num", 0)
         summary = html.escape(latest_round.get("summary", ""))
-        opinions_html = ""
-        for opinion in latest_round.get("opinions", []):
-            role = opinion.get("role", "")
-            role_name = html.escape(_role_display_name(str(role)))
-            stance = opinion.get("stance", "neutral")
-            stance_icon = {"bullish": "🐂", "bearish": "🐻", "neutral": "⚖️"}.get(
-                stance, ""
-            )
-            confidence = opinion.get("confidence", 0) * 100
-            arguments = opinion.get("arguments", [])
-            counterarguments = opinion.get("counterarguments", [])
-            risk_factors = opinion.get("risk_factors", [])
-            opportunity_factors = opinion.get("opportunity_factors", [])
-            bullets: list[str] = []
-            for argument in arguments[:2]:
-                bullets.append(
-                    f"<li><span class='point-label'>论点</span>{html.escape(argument)}</li>"
-                )
-            for opportunity in opportunity_factors[:1]:
-                bullets.append(
-                    "<li class='opp-item'><span class='point-label'>机会</span>"
-                    f"✅ {html.escape(opportunity)}</li>"
-                )
-            for risk in risk_factors[:1]:
-                bullets.append(
-                    "<li class='risk-item'><span class='point-label'>风险</span>"
-                    f"⚠️ {html.escape(risk)}</li>"
-                )
-            for counterargument in counterarguments[:1]:
-                bullets.append(
-                    "<li><span class='point-label'>反驳</span>"
-                    f"{html.escape(counterargument)}</li>"
-                )
-            bullet_html = "".join(bullets)
-
-            opinions_html += f"""
-                <div class="opinion-card {stance}">
-                    <div class="opinion-header">
-                        <span class="agent-role">{role_name}</span>
-                        <span class="stance-badge">{stance_icon} {stance}</span>
-                        <span class="confidence-bar">
-                            <span class="confidence-fill" style="width: {confidence:.0f}%"></span>
-                        </span>
-                        <span class="confidence-text">{confidence:.0f}%</span>
-                    </div>
-                    <div class="opinion-body">
-                        {"<ul class='opinion-points'>" + bullet_html + "</ul>" if bullet_html else "<p class='muted'>暂无观点细节。</p>"}
-                    </div>
-                </div>
-                """
         rounds_html = f"""
-        <div class="debate-round">
-            <h4>最终一轮观点</h4>
-            <p class='round-summary'>仅保留最终一轮，避免重复堆叠。{f"第 {round_num} 轮摘要：{summary}" if summary else ""}</p>
-            <div class="opinions-grid">{opinions_html or "<p class='muted'>暂无最终观点明细。</p>"}</div>
-        </div>
+        <details class="debate-round">
+            <summary>查看讨论附录</summary>
+            <p class='round-summary'>讨论附录只保留轮次摘要，不展示原始辩词。{f"第 {round_num} 轮摘要：{summary}" if summary else ""}</p>
+        </details>
         """
 
         risk_warnings = debate.get("risk_warnings", [])
@@ -629,25 +1197,29 @@ def _debate_modals(debate_map: dict[str, dict[str, Any]]) -> str:
         adjustment_class = (
             "pos" if adjustment_weight > 0 else "neg" if adjustment_weight < 0 else ""
         )
+        cross_market_digest = _debate_cross_market_digest(debate)
+        support_line = _debate_brief_line(debate, "support_points", "讨论支持")
+        watch_line = _debate_brief_line(debate, "watch_items", "讨论待确认")
 
         score_breakdown = f"""
         <div class="score-breakdown">
-            <h3>📈 评分分解</h3>
+            <h3>📎 附件参考分</h3>
             <div class="score-comparison">
                 <div class="score-item original">
-                    <span class="score-label">原始评分</span>
+                    <span class="score-label">系统评分</span>
                     <span class="score-value">{original_score:.1f}</span>
                 </div>
                 <div class="score-arrow">→</div>
                 <div class="score-item adjusted">
-                    <span class="score-label">调整后评分</span>
+                    <span class="score-label">附件参考分</span>
                     <span class="score-value">{"+" if adjustment_weight > 0 else ""}{adjusted_score:.1f}</span>
                 </div>
                 <div class="score-item adjustment">
-                    <span class="score-label">调整幅度</span>
+                    <span class="score-label">参考幅度</span>
                     <span class="score-value {adjustment_class}">{adjustment_weight * 100:+.1f}%</span>
                 </div>
             </div>
+            <p class="muted">多 Agent 只提供附件参考，不改写系统筛选评分。</p>
             <div class="meta-info">
                 <span>分歧程度: {disagreement_score:.0%}</span>
                 <span>阈值版本: {html.escape(debate.get("thresholds_version", "N/A"))}</span>
@@ -656,24 +1228,45 @@ def _debate_modals(debate_map: dict[str, dict[str, Any]]) -> str:
             </div>
         </div>
         """
+        if archive_only:
+            score_breakdown = """
+        <div class="score-breakdown archive-only">
+            <h3>📎 归档说明</h3>
+            <p class="muted">这条多 Agent 结论不是候选当日生成，只作为历史研究记录展示，不参与当前候选评分。</p>
+        </div>
+        """
 
         modals.append(f"""
-        <div id="debate-{symbol}" class="debate-modal" role="dialog" aria-labelledby="debate-title-{symbol}" aria-hidden="true">
+        <div id="debate-{
+            symbol
+        }" class="debate-modal" role="dialog" aria-labelledby="debate-title-{
+            symbol
+        }" aria-hidden="true">
             <div class="debate-modal-content" role="document">
                 <div class="debate-modal-header">
                     <div>
-                        <h2 id="debate-title-{symbol}">多视角结论摘要</h2>
+                        <h2 id="debate-title-{symbol}">{
+            "历史多 Agent 归档" if archive_only else "多 Agent 结论摘要"
+        }</h2>
                         <p class="debate-subtitle">{symbol} {name}</p>
                     </div>
                     <div class="header-badges">
-                        <span class="adjustment-badge {adj_class}">{adj_text}</span>
-                        <button class="copy-btn" onclick="copyDebate('{symbol}')" aria-label="复制结论详情" title="复制结论详情">
+                        {
+            ""
+            if archive_only
+            else f'<span class="adjustment-badge {adj_class}">{adj_text}</span>'
+        }
+                        <button class="copy-btn" onclick="copyDebate('{
+            symbol
+        }')" aria-label="复制结论详情" title="复制结论详情">
                             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
                                 <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
                             </svg>
                         </button>
-                        <button class="close-btn" onclick="closeDebate('{symbol}')" aria-label="关闭">&times;</button>
+                        <button class="close-btn" onclick="closeDebate('{
+            symbol
+        }')" aria-label="关闭">&times;</button>
                     </div>
                 </div>
                 <div class="debate-modal-body">
@@ -682,12 +1275,44 @@ def _debate_modals(debate_map: dict[str, dict[str, Any]]) -> str:
                         <h3>📊 最终共识</h3>
                         <p>{consensus}</p>
                     </div>
+                    {
+            "<div class='consensus-section'>"
+            "<h3>🧭 跨市判断</h3>"
+            f"<p>{html.escape(cross_market_digest)}</p>"
+            "</div>"
+            if cross_market_digest
+            else ""
+        }
+                    {
+            "<div class='consensus-section'>"
+            "<h3>📌 当前重点</h3>"
+            + "".join(
+                f"<p>{html.escape(line)}</p>"
+                for line in (support_line, watch_line)
+                if line
+            )
+            + "</div>"
+            if support_line or watch_line
+            else ""
+        }
                     {vote_html}
                     <div class="rounds-section">
                         {rounds_html}
                     </div>
-                    {"<div class='warnings-section'><h3>⚠️ 风险提示</h3><ul>" + risk_warnings_html + "</ul></div>" if risk_warnings_html else ""}
-                    {"<div class='opportunities-section'><h3>✅ 机会亮点</h3><ul>" + opportunity_highlights_html + "</ul></div>" if opportunity_highlights_html else ""}
+                    {
+            "<div class='warnings-section'><h3>⚠️ 风险提示</h3><ul>"
+            + risk_warnings_html
+            + "</ul></div>"
+            if risk_warnings_html
+            else ""
+        }
+                    {
+            "<div class='opportunities-section'><h3>✅ 机会亮点</h3><ul>"
+            + opportunity_highlights_html
+            + "</ul></div>"
+            if opportunity_highlights_html
+            else ""
+        }
                 </div>
             </div>
         </div>
@@ -825,6 +1450,13 @@ def _source_runtime_panel(stats: LedgerStats) -> str:
 
 
 def _source_warning(stats: LedgerStats) -> tuple[str, str] | None:
+    actual_source = str(stats.actual_source or "").strip()
+    if actual_source and not source_supports_workload(actual_source, "live_short"):
+        fit = workload_fit_for_source(actual_source).get("live_short", "unknown")
+        return (
+            "warning historical-source-warning",
+            f"最近一次运行实际源 {actual_source} 只适合历史验证，盘中短线不可用（live_short={fit}）。不要把本页当成实时短线信号质量样本。",
+        )
     if stats.source_health_label == "fallback":
         return (
             "warning fallback-warning",
@@ -888,6 +1520,65 @@ def _gate_display_blockers(blockers: tuple[str, ...]) -> list[str]:
         else:
             labels.append(blocker)
     return labels
+
+
+def _static_research_unlock_panel(
+    *,
+    candidates: list[dict[str, str]],
+    gate_pass: bool,
+    gate_detail: str,
+    candidate_date: str,
+) -> str:
+    source_label = _candidate_source_label(candidates)
+    actionable = sum(1 for row in candidates if is_tradable_rating(row.get("rating")))
+    watch = sum(1 for row in candidates if str(row.get("rating", "") or "") == "watch")
+    blocked = sum(
+        1
+        for row in candidates
+        if str(row.get("candidate_blocker", "") or "").strip()
+        or str(row.get("portfolio_action", "") or "").strip() == "downgrade"
+    )
+    if candidates:
+        status_title = "研究候选已解锁"
+        status_line = (
+            f"{len(candidates)} 张候选卡片可看；"
+            f"纸面 {actionable} / 观察 {watch} / 阻塞 {blocked}。"
+        )
+        tone = "unlocked"
+    else:
+        status_title = "等待当日候选"
+        status_line = "当前没有候选卡片，先看运行状态和消息雷达。"
+        tone = "waiting"
+    gate_line = (
+        "生产 gate 已通过，可进入常规纸面研究复核。"
+        if gate_pass
+        else f"生产 gate 未放行: {gate_detail or '未确认通过'}。"
+    )
+    return f"""
+    <aside class="static-rail-card {tone}">
+      <div class="static-rail-kicker">DATE</div>
+      <div class="static-rail-date">{html.escape(candidate_date or "暂无")}</div>
+      <div class="static-rail-boundary">候选来源: {html.escape(source_label or "未记录")}。只做纸面研究；不连接券商；不触发真实委托。</div>
+      <div class="static-unlock-box">
+        <div class="static-unlock-title">{html.escape(status_title)}</div>
+        <div class="static-unlock-line">{html.escape(status_line)}</div>
+        <div class="static-unlock-line">{html.escape(gate_line)}</div>
+      </div>
+      <div class="static-module-title">模块</div>
+      <a class="static-module active" href="#today-candidates">今日候选 <span>{len(candidates)}</span></a>
+      <a class="static-module" href="#agent-discussion">Agent讨论 <span>结果/过程</span></a>
+      <a class="static-module" href="#daily-digest">消息汇总 <span>当天</span></a>
+      <a class="static-module" href="#supporting-status">系统状态 <span>{"通过" if gate_pass else "未放行"}</span></a>
+    </aside>
+    """
+
+
+def _candidate_source_label(candidates: list[dict[str, str]]) -> str:
+    for row in candidates:
+        label = str(row.get("__candidate_source_label", "") or "").strip()
+        if label:
+            return label
+    return ""
 
 
 def _read_risk_state(path: Path) -> dict[str, Any]:
@@ -1046,7 +1737,7 @@ def _system_health_panel(
                 cooldown_date = datetime.strptime(cooldown, "%Y-%m-%d").date()
                 if today < cooldown_date:
                     breaker_triggered = True
-                    breaker_reason = f"冷却至 {cooldown}"
+                    breaker_reason = f"解除日 {cooldown}"
                     breaker_cls = "health-red"
             except ValueError:
                 pass
@@ -2011,22 +2702,10 @@ def render_dashboard(
     research_summary: ResearchSummary | None = None,
     debate_map: dict[str, dict[str, Any]] | None = None,
     source_health_path: str | Path | None = None,
+    daily_digest_markdown: str = "",
 ) -> str:
     debate_map = debate_map or {}
-    candidate_symbols = {
-        str(candidate.get("symbol", "") or "").strip()
-        for candidate in candidates
-        if str(candidate.get("symbol", "") or "").strip()
-    }
-    visible_debate_map = (
-        {
-            symbol: debate
-            for symbol, debate in debate_map.items()
-            if str(symbol).strip() in candidate_symbols
-        }
-        if candidate_symbols
-        else debate_map
-    )
+    visible_debate_map = _visible_debate_map_for_candidates(candidates, debate_map)
     stats = summarize_ledger(rows)
     paper = summarize_paper(paper_rows or [])
     generated_at = now_shanghai().isoformat(timespec="seconds")
@@ -2035,6 +2714,9 @@ def render_dashboard(
     safe_title = html.escape(title)
     latest_date = html.escape(stats.latest_signal_date or "暂无")
     display_date = html.escape(candidate_date or "暂无")
+    candidate_source_label = html.escape(
+        _candidate_source_label(candidates) or "未记录"
+    )
     thresholds_version = html.escape(stats.thresholds_version or "未知")
     notify_level = html.escape(stats.notify_level or "info")
     source_health_label = html.escape(stats.source_health_label or "unknown")
@@ -2066,12 +2748,102 @@ def render_dashboard(
     health_panel_html = _system_health_panel(
         rows, candidates, debate_map, source_health_path
     )
+    effective_daily_digest = daily_digest_markdown or _runtime_digest_from_ledger(
+        rows,
+        candidates,
+    )
+    gate = _read_gate_status(Path("data/walkforward_gate.json"))
+    gate_pass, gate_detail = _gate_status_for_display(gate)
+    unlock_panel_html = _static_research_unlock_panel(
+        candidates=candidates,
+        gate_pass=gate_pass,
+        gate_detail=gate_detail,
+        candidate_date=candidate_date,
+    )
+    daily_digest_html = _daily_digest_panel(effective_daily_digest)
+    candidate_grid_html = f"""
+  <section id="today-candidates" class="focus-candidates">
+    <div class="section-heading">
+      <span>今日候选卡片</span>
+      <small>先看当日复核对象，再展开辅助数据</small>
+    </div>
+    <main class="grid">
+      {_candidate_cards(candidates, visible_debate_map)}
+    </main>
+  </section>
+    """
+    frontdesk_html = f"""
+  <section class="aqsp-static-two-column">
+    {unlock_panel_html}
+    <div class="static-main-column">
+      {candidate_grid_html}
+      {_frontdesk_debate_panel(visible_debate_map)}
+      {daily_digest_html}
+    </div>
+  </section>
+    """
+    stats_html = f"""
+  <section class="stats">
+    <div class="stat"><b>{stats.total}</b><span>ledger 总记录</span></div>
+    <div class="stat"><b>{stats.pending}</b><span>待验证信号</span></div>
+    <div class="stat"><b>{stats.validated}</b><span>已验证信号</span></div>
+    <div class="stat"><b>{stats.not_executable}</b><span>不可成交样本</span></div>
+    <div class="stat"><b>{_fmt_pct(stats.win_rate)}</b><span>已验证胜率</span></div>
+    <div class="stat"><b>{_fmt_num(stats.avg_return_pct)}</b><span>平均收益 pct</span></div>
+    <div class="stat"><b>{paper.open_positions}</b><span>纸面持有跟踪</span></div>
+    <div class="stat"><b>{paper.closed}</b><span>纸面退出记录</span></div>
+    <div class="stat"><b>{paper.not_executable}</b><span>纸面不可成交</span></div>
+    <div class="stat"><b>{paper.pending_entry}</b><span>等待入场数据</span></div>
+    <div class="stat"><b>{_fmt_num(paper.avg_return_pct)}</b><span>纸面平均收益 pct</span></div>
+  </section>
+    """
+    supporting_html = f"""
+  <details id="supporting-status" class="panel panel-fold supporting-panel">
+    <summary class="fold-summary">
+      <div>
+        <h2>系统与历史辅助信息</h2>
+        <p class="muted">健康、统计、最近信号和纸面记录默认收起，避免抢占当天判断主线。</p>
+      </div>
+      <div class="fold-meta">
+        <span class="pill">候选 {len(candidates)}</span>
+        <span class="pill">ledger {stats.total}</span>
+        <span class="fold-caret">展开</span>
+      </div>
+    </summary>
+    <div class="fold-body">
+      {health_panel_html}
+      {_lifecycle_overview_panel(candidates)}
+      {stats_html}
+      {_source_runtime_panel(stats)}
+      {render_source_health_panel(source_health_path)}
+      <!-- PANEL_STRATEGY_PERF -->
+      <!-- PANEL_KLINE -->
+      <!-- PANEL_MORNING_EVENING -->
+      {_research_panel(research_summary)}
+      <section class="panel">
+        <h2>最近信号</h2>
+        <table>
+          <thead><tr><th>日期</th><th>代码</th><th>评分</th><th>状态</th><th>收益 pct</th></tr></thead>
+          <tbody>{_recent_rows(rows)}</tbody>
+        </table>
+      </section>
+      <section class="panel">
+        <h2>纸面记录</h2>
+        <table>
+          <thead><tr><th>代码</th><th>状态</th><th>入场日</th><th>入场价</th><th>收益 pct</th><th>原因</th></tr></thead>
+          <tbody>{_paper_rows(paper_rows or [])}</tbody>
+        </table>
+      </section>
+    </div>
+  </details>
+    """
 
     return f"""<!doctype html>
 <html lang="zh-CN">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="aqsp-dashboard-entry" content="offline-archive">
   <title>{safe_title}</title>
   <link rel="icon" href="data:,">
   <style>
@@ -2144,8 +2916,129 @@ def render_dashboard(
     .fallback-warning {{ background: #ffe5c2; border-color: rgba(184,107,29,.46); color: #80480f; }}
     .degraded-warning {{ background: #ffd8d1; border-color: rgba(180,72,54,.42); color: #8f3426; }}
     .cold-warning {{ background: #ece7db; border-color: rgba(22,32,24,.20); color: #535f54; }}
+    .aqsp-static-two-column {{
+      display: grid;
+      grid-template-columns: minmax(260px, 0.32fr) minmax(0, 0.68fr);
+      gap: 22px;
+      align-items: start;
+      padding: 0 clamp(20px, 6vw, 80px) 24px;
+    }}
+    .static-rail-card {{
+      position: sticky;
+      top: 18px;
+      padding: 20px;
+      border-radius: 26px;
+      border: 1px solid var(--line);
+      background:
+        radial-gradient(circle at 88% 10%, rgba(31, 122, 77, .12), transparent 32%),
+        linear-gradient(180deg, rgba(255,255,252,.94), rgba(238,246,240,.92));
+      box-shadow: 0 24px 70px rgba(28, 45, 31, .10);
+    }}
+    .static-rail-card.waiting {{
+      background:
+        radial-gradient(circle at 88% 10%, rgba(184, 107, 29, .13), transparent 32%),
+        linear-gradient(180deg, rgba(255,255,252,.94), rgba(248,241,231,.92));
+    }}
+    .static-rail-kicker {{
+      color: var(--muted);
+      font-size: 12px;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+      font-weight: 800;
+    }}
+    .static-rail-date {{
+      margin-top: 4px;
+      color: var(--ink);
+      font-size: 24px;
+      font-weight: 900;
+      font-variant-numeric: tabular-nums;
+    }}
+    .static-rail-boundary {{
+      margin: 8px 0 14px;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.5;
+    }}
+    .static-unlock-box {{
+      padding: 14px;
+      border-radius: 18px;
+      background: rgba(255,255,255,.66);
+      box-shadow: inset 0 0 0 1px rgba(22,32,24,.08);
+      margin-bottom: 16px;
+    }}
+    .static-unlock-title {{
+      color: var(--ink);
+      font-size: 17px;
+      font-weight: 900;
+      margin-bottom: 8px;
+    }}
+    .static-unlock-line {{
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.5;
+      margin-top: 4px;
+    }}
+    .static-module-title {{
+      color: var(--ink);
+      font-size: 14px;
+      font-weight: 900;
+      margin: 12px 0 8px;
+    }}
+    .static-module {{
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 11px 12px;
+      border-radius: 15px;
+      background: rgba(255,255,255,.58);
+      box-shadow: inset 0 0 0 1px rgba(22,32,24,.08);
+      color: var(--muted);
+      font-size: 14px;
+      margin-top: 8px;
+      text-decoration: none;
+      transition: transform .18s ease, background .18s ease, color .18s ease;
+    }}
+    .static-module:hover {{
+      transform: translateX(3px);
+      background: rgba(255,255,255,.78);
+      color: var(--ink);
+    }}
+    .static-module.active {{
+      background: #17384f;
+      color: #fffdf7;
+      box-shadow: 0 14px 28px rgba(23,56,79,.18);
+    }}
+    .static-main-column {{
+      min-width: 0;
+    }}
+    .static-main-column .focus-candidates,
+    .static-main-column .grid {{
+      padding-left: 0;
+      padding-right: 0;
+    }}
+    .static-main-column .daily-digest-panel {{
+      margin-top: 0;
+    }}
     .stats, .grid {{ display: grid; gap: 16px; padding: 0 clamp(20px, 6vw, 80px) 24px; }}
     .stats {{ grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }}
+    .focus-candidates {{
+      padding: 0 clamp(20px, 6vw, 80px) 24px;
+    }}
+    .focus-candidates .section-heading {{
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: baseline;
+      margin: 0 0 14px;
+      font-weight: 800;
+    }}
+    .focus-candidates .section-heading small {{
+      color: var(--muted);
+      font-weight: 600;
+    }}
+    .focus-candidates .grid {{
+      padding: 0;
+    }}
     .stat, .card, .panel {{
       background: var(--card);
       border: 1px solid var(--line);
@@ -2244,6 +3137,26 @@ def render_dashboard(
     }}
     .card-details dt {{ color: var(--muted); }}
     .card-details dd {{ margin: 0; }}
+    .card-quick-lines {{
+      display: grid;
+      gap: 8px;
+      margin: 0 0 12px;
+    }}
+    .card-quick-lines p {{
+      margin: 0;
+      padding: 9px 11px;
+      border-radius: 14px;
+      background: rgba(22,32,24,.045);
+      color: var(--ink);
+      line-height: 1.55;
+      font-size: 14px;
+    }}
+    .card-quick-lines b {{
+      display: inline-block;
+      min-width: 46px;
+      color: var(--muted);
+      margin-right: 8px;
+    }}
     .card-footer {{
       margin-top: 14px;
       padding-top: 14px;
@@ -2318,6 +3231,16 @@ def render_dashboard(
       padding: 0 22px 22px;
       border-top: 1px solid var(--line);
     }}
+    .fold-body > .panel {{
+      margin: 16px 0;
+    }}
+    .fold-body > .stats {{
+      padding: 0;
+      margin: 16px 0;
+    }}
+    .supporting-panel {{
+      margin-top: 10px;
+    }}
     .source-head {{ display: flex; justify-content: space-between; gap: 18px; align-items: center; margin-bottom: 16px; }}
     .source-grid {{ display: grid; grid-template-columns: 72px 1fr 72px 1fr; gap: 10px 14px; margin: 0 0 14px; }}
     .source-grid dt {{ color: var(--muted); }}
@@ -2334,6 +3257,68 @@ def render_dashboard(
     table {{ width: 100%; border-collapse: collapse; }}
     th, td {{ padding: 12px; border-bottom: 1px solid var(--line); text-align: left; }}
     .empty {{ margin: 0 clamp(20px, 6vw, 80px); padding: 24px; border: 1px dashed var(--line); border-radius: 20px; }}
+
+    .frontdesk-agent-panel,
+    .daily-digest-panel {{
+      margin: 0 0 24px;
+      padding: 20px;
+      border-radius: 28px;
+      background: var(--card);
+      border: 1px solid var(--line);
+      box-shadow: 0 24px 70px rgba(28, 45, 31, .10);
+      backdrop-filter: blur(14px);
+    }}
+    .frontdesk-agent-panel .section-heading,
+    .daily-digest-panel .section-heading {{
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: baseline;
+      margin: 0 0 14px;
+      font-weight: 800;
+    }}
+    .frontdesk-agent-panel .section-heading small,
+    .daily-digest-panel .section-heading small {{
+      color: var(--muted);
+      font-weight: 600;
+    }}
+    .frontdesk-debate-grid {{
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 14px;
+    }}
+    .frontdesk-debate-card {{
+      padding: 16px;
+      border-radius: 20px;
+      background: rgba(255,255,255,.56);
+      border: 1px solid var(--line);
+    }}
+    .frontdesk-debate-card.bull {{ box-shadow: inset 4px 0 0 rgba(31,122,77,.55); }}
+    .frontdesk-debate-card.bear {{ box-shadow: inset 4px 0 0 rgba(180,72,54,.55); }}
+    .frontdesk-debate-card.neutral {{ box-shadow: inset 4px 0 0 rgba(104,117,104,.28); }}
+    .frontdesk-card-kicker {{
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      margin-bottom: 6px;
+    }}
+    .frontdesk-debate-card h3 {{
+      font-size: 19px;
+      margin-bottom: 10px;
+    }}
+    .frontdesk-debate-card ul,
+    .daily-digest-panel ul {{
+      margin: 0;
+      padding-left: 18px;
+      color: var(--ink);
+      line-height: 1.65;
+    }}
+    .frontdesk-debate-card li,
+    .daily-digest-panel li {{
+      margin: 6px 0;
+    }}
 
     .health-overview-panel {{
       margin-bottom: 24px;
@@ -2641,6 +3626,15 @@ def render_dashboard(
       padding: 18px;
       margin-bottom: 16px;
     }}
+    .debate-round summary {{
+      cursor: pointer;
+      font-weight: 700;
+      color: var(--amber);
+      list-style-position: inside;
+    }}
+    .debate-round[open] summary {{
+      margin-bottom: 12px;
+    }}
     .debate-round h4 {{
       margin: 0 0 12px;
       color: var(--amber);
@@ -2748,8 +3742,15 @@ def render_dashboard(
       margin-bottom: 6px;
       line-height: 1.5;
     }}
-    
     @media (max-width: 768px) {{
+      .aqsp-static-two-column {{
+        grid-template-columns: 1fr;
+        padding: 0 14px 20px;
+      }}
+      .static-rail-card {{
+        position: relative;
+        top: auto;
+      }}
       .opinions-grid {{
         grid-template-columns: 1fr;
       }}
@@ -2776,65 +3777,31 @@ def render_dashboard(
   <header>
     <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;">
       <div>
-        <h1>{safe_title}</h1>
-        <p class="sub">生成时间 {generated_at}。仅供研究复核 / 不连接券商 / 不触发真实委托。</p>
+        <h1>短线决策看板</h1>
+        <p class="sub">{safe_title} · 生成时间 {generated_at}。仅供研究复核 / 不连接券商 / 不触发真实委托。</p>
+        <p class="sub">离线归档 · 非生产首页；当前生产入口为 Vibe-Research {html.escape(public_dashboard_url())}。</p>
         <div class="meta">
           <span class="pill">最新信号日 {latest_date}</span>
           <span class="pill">候选数据日 {display_date}</span>
+          <span class="pill">候选来源 {candidate_source_label}</span>
           <span class="pill">阈值版本 {thresholds_version}</span>
           <span class="pill">候选数 {len(candidates)}</span>
           <span class="pill">通知级别 {notify_level}</span>
           <span class="pill">数据源 {source_health_label}</span>
         </div>
       </div>
-      <a href="agents.html" style="text-decoration:none;background:rgba(31,122,77,.12);border:1px solid rgba(31,122,77,.25);color:var(--green);padding:10px 16px;border-radius:12px;font-weight:600;display:inline-flex;align-items:center;gap:8px;transition:all .3s;">
+      <a href="#agent-discussion" style="text-decoration:none;background:rgba(31,122,77,.12);border:1px solid rgba(31,122,77,.25);color:var(--green);padding:10px 16px;border-radius:12px;font-weight:600;display:inline-flex;align-items:center;gap:8px;transition:all .3s;">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <circle cx="12" cy="12" r="3"/>
           <path d="M12 1v6m0 6v6m4.22-13.22l-4.24 4.24m0 4.24l4.24 4.24m-12.44-8.48l4.24 4.24m0 4.24l-4.24 4.24"/>
         </svg>
-        观点表现
+        Agent讨论
       </a>
     </div>
   </header>
   {warning_html}
-  {health_panel_html}
-  {_lifecycle_overview_panel(candidates)}
-  <!-- PANEL_STRATEGY_PERF -->
-  <section class="stats">
-    <div class="stat"><b>{stats.total}</b><span>ledger 总记录</span></div>
-    <div class="stat"><b>{stats.pending}</b><span>待验证信号</span></div>
-    <div class="stat"><b>{stats.validated}</b><span>已验证信号</span></div>
-    <div class="stat"><b>{stats.not_executable}</b><span>不可成交样本</span></div>
-    <div class="stat"><b>{_fmt_pct(stats.win_rate)}</b><span>已验证胜率</span></div>
-    <div class="stat"><b>{_fmt_num(stats.avg_return_pct)}</b><span>平均收益 pct</span></div>
-    <div class="stat"><b>{paper.open_positions}</b><span>纸面持有跟踪</span></div>
-    <div class="stat"><b>{paper.closed}</b><span>纸面退出记录</span></div>
-    <div class="stat"><b>{paper.not_executable}</b><span>纸面不可成交</span></div>
-    <div class="stat"><b>{paper.pending_entry}</b><span>等待入场数据</span></div>
-    <div class="stat"><b>{_fmt_num(paper.avg_return_pct)}</b><span>纸面平均收益 pct</span></div>
-  </section>
-  {_source_runtime_panel(stats)}
-  {render_source_health_panel(source_health_path)}
-  <!-- PANEL_KLINE -->
-  <!-- PANEL_MORNING_EVENING -->
-  {_research_panel(research_summary)}
-  <main class="grid">
-    {_candidate_cards(candidates, visible_debate_map)}
-  </main>
-  <section class="panel">
-    <h2>最近信号</h2>
-    <table>
-      <thead><tr><th>日期</th><th>代码</th><th>评分</th><th>状态</th><th>收益 pct</th></tr></thead>
-      <tbody>{_recent_rows(rows)}</tbody>
-    </table>
-  </section>
-  <section class="panel">
-    <h2>纸面记录</h2>
-    <table>
-      <thead><tr><th>代码</th><th>状态</th><th>入场日</th><th>入场价</th><th>收益 pct</th><th>原因</th></tr></thead>
-      <tbody>{_paper_rows(paper_rows or [])}</tbody>
-    </table>
-  </section>
+  {frontdesk_html}
+  {supporting_html}
   {debate_modals_html}
   <button class="theme-toggle" onclick="toggleTheme()" aria-label="切换深色模式" title="切换深色模式">
     <svg class="sun-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -3029,16 +3996,20 @@ def render_all_panels(
     paper_ledger_path: str = "data/paper_trades.jsonl",
     debate_path: str = "data/debate_results.jsonl",
     source_health_path: str | Path | None = None,
+    daily_digest_path: str | Path = "reports/daily_digest.md",
     title: str = "AQSP 量化选股面板",
 ) -> str:
     if candidates is None:
-        csv_path = Path("reports/close.csv")
-        candidates = read_candidates(csv_path)
+        candidates = read_preferred_candidates(
+            Path("reports/latest.csv"),
+            intraday_csv_path=Path("reports/intraday_latest.csv"),
+        ).candidates
 
     rows = read_ledger_rows(Path(ledger_path))
     paper_rows = read_paper_rows(Path(paper_ledger_path))
     debate_map = read_debate_results(Path(debate_path))
     research_summary = load_research_summary()
+    daily_digest_markdown = read_daily_digest(Path(daily_digest_path))
 
     base_html = render_dashboard(
         candidates,
@@ -3048,6 +4019,7 @@ def render_all_panels(
         research_summary,
         debate_map,
         source_health_path,
+        daily_digest_markdown,
     )
 
     strategy_panel = render_strategy_performance_panel(ledger_path)
@@ -3064,10 +4036,12 @@ def render_all_panels(
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--csv", default="reports/close.csv")
+    parser.add_argument("--csv", default="reports/latest.csv")
+    parser.add_argument("--intraday-csv", default="reports/intraday_latest.csv")
     parser.add_argument("--ledger", default="data/predictions.jsonl")
     parser.add_argument("--paper-ledger", default="data/paper_trades.jsonl")
     parser.add_argument("--debate", default="data/debate_results.jsonl")
+    parser.add_argument("--daily-digest", default="reports/daily_digest.md")
     parser.add_argument("--source-health", default="data/source_health.json")
     parser.add_argument("--output", default="dist/dashboard/index.html")
     parser.add_argument("--title", default="AQSP 量化选股面板")
@@ -3075,38 +4049,20 @@ def main() -> int:
 
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
-    # 从predictions.jsonl中提取最新的candidates
-    candidates = []
-    ledger_rows = read_ledger_rows(Path(args.ledger))
-    if ledger_rows:
-        # 取最新的一天的信号
-        last_date = None
-        for row in reversed(ledger_rows):
-            if row.get("signal_date"):
-                if last_date is None or row["signal_date"] > last_date:
-                    last_date = row["signal_date"]
-        if last_date:
-            candidates = [
-                {
-                    "symbol": row.get("symbol", ""),
-                    "name": row.get("name", ""),
-                    "score": row.get("score", 0),
-                    "rating": row.get("rating", ""),
-                    "strategies": row.get("strategies", ""),
-                    "thresholds_version": row.get("thresholds_version", ""),
-                }
-                for row in ledger_rows
-                if row.get("signal_date") == last_date
-            ]
+    selection = read_preferred_candidates(
+        Path(args.csv),
+        intraday_csv_path=Path(args.intraday_csv),
+    )
     html_text = render_all_panels(
-        candidates,
+        selection.candidates,
         args.ledger,
         args.paper_ledger,
         args.debate,
         args.source_health,
+        args.daily_digest,
         args.title,
     )
-    atomic_write_text(output, html_text)
+    write_dashboard_artifact(output, html_text)
     print(f"dashboard={output}")
     return 0
 

@@ -90,6 +90,215 @@ def test_build_config_prefers_env_source_when_cli_source_missing(monkeypatch) ->
     assert config.source == "eastmoney"
 
 
+def test_build_config_switches_historical_only_runtime_source_to_online_first(
+    monkeypatch,
+) -> None:
+    daily_pipeline = _load_daily_pipeline_module()
+    monkeypatch.setenv("AQSP_SOURCE", "sqlite_db")
+    monkeypatch.setenv("AQSP_ALLOW_ONLINE_FALLBACK", "true")
+
+    args = argparse.Namespace(
+        project_root="",
+        source="",
+        mode="",
+        limit=0,
+        max_universe=0,
+        min_avg_amount=0,
+        max_data_lag_days=0,
+        enable_online_factors=False,
+        ledger="",
+        report="",
+        csv="",
+        briefing="",
+        dashboard_html="",
+        dashboard_db="",
+        paper_ledger="",
+        closing_review="",
+        notify=False,
+        dry_run=False,
+        enable_debate=False,
+    )
+
+    config = daily_pipeline._build_config(args)
+
+    assert config.source == "online_first"
+    assert config.requested_source == "sqlite_db"
+    assert "sqlite_db" in config.source_override_reason
+    assert "live_short" in config.source_override_reason
+    assert "fit=avoid" in config.source_override_reason
+
+
+def test_build_config_switches_realtime_alias_to_online_first(monkeypatch) -> None:
+    daily_pipeline = _load_daily_pipeline_module()
+    monkeypatch.setenv("AQSP_SOURCE", "local_first")
+
+    args = argparse.Namespace(
+        project_root="",
+        source="",
+        mode="",
+        limit=0,
+        max_universe=0,
+        min_avg_amount=0,
+        max_data_lag_days=0,
+        enable_online_factors=False,
+        ledger="",
+        report="",
+        csv="",
+        briefing="",
+        dashboard_html="",
+        dashboard_db="",
+        paper_ledger="",
+        closing_review="",
+        notify=False,
+        dry_run=False,
+        enable_debate=False,
+    )
+
+    config = daily_pipeline._build_config(args)
+
+    assert config.source == "online_first"
+    assert config.requested_source == "local_first"
+    assert "local_first" in config.source_override_reason
+    assert "live_short" in config.source_override_reason
+    assert "本地历史源" in config.source_override_reason
+
+
+def test_build_config_caps_live_runtime_data_lag(monkeypatch) -> None:
+    daily_pipeline = _load_daily_pipeline_module()
+    monkeypatch.setenv("AQSP_SOURCE", "eastmoney")
+    monkeypatch.setenv("AQSP_MAX_DATA_LAG_DAYS", "3")
+
+    args = argparse.Namespace(
+        project_root="",
+        source="",
+        mode="",
+        limit=0,
+        max_universe=0,
+        min_avg_amount=0,
+        max_data_lag_days=0,
+        enable_online_factors=False,
+        ledger="",
+        report="",
+        csv="",
+        briefing="",
+        dashboard_html="",
+        dashboard_db="",
+        paper_ledger="",
+        closing_review="",
+        notify=False,
+        dry_run=False,
+        enable_debate=False,
+    )
+
+    config = daily_pipeline._build_config(args)
+
+    assert config.max_data_lag_days == 1
+
+
+def test_build_config_defaults_daily_universe_to_bounded_live_pool(
+    monkeypatch,
+) -> None:
+    daily_pipeline = _load_daily_pipeline_module()
+    monkeypatch.setenv("AQSP_SOURCE", "eastmoney")
+    monkeypatch.setenv("AQSP_MAX_UNIVERSE", "0")
+
+    args = argparse.Namespace(
+        project_root="",
+        source="",
+        mode="",
+        limit=0,
+        max_universe=0,
+        min_avg_amount=0,
+        max_data_lag_days=0,
+        enable_online_factors=False,
+        ledger="",
+        report="",
+        csv="",
+        briefing="",
+        dashboard_html="",
+        dashboard_db="",
+        paper_ledger="",
+        closing_review="",
+        notify=False,
+        dry_run=False,
+        enable_debate=False,
+    )
+
+    config = daily_pipeline._build_config(args)
+
+    assert config.max_universe == 300
+
+
+def test_build_config_allows_daily_universe_override(monkeypatch) -> None:
+    daily_pipeline = _load_daily_pipeline_module()
+    monkeypatch.setenv("AQSP_SOURCE", "eastmoney")
+    monkeypatch.setenv("AQSP_DAILY_MAX_UNIVERSE", "120")
+
+    args = argparse.Namespace(
+        project_root="",
+        source="",
+        mode="",
+        limit=0,
+        max_universe=0,
+        min_avg_amount=0,
+        max_data_lag_days=0,
+        enable_online_factors=False,
+        ledger="",
+        report="",
+        csv="",
+        briefing="",
+        dashboard_html="",
+        dashboard_db="",
+        paper_ledger="",
+        closing_review="",
+        notify=False,
+        dry_run=False,
+        enable_debate=False,
+    )
+
+    config = daily_pipeline._build_config(args)
+
+    assert config.max_universe == 120
+
+
+def test_build_config_switches_historical_only_runtime_source_to_online_first_without_online_fallback(
+    monkeypatch,
+) -> None:
+    daily_pipeline = _load_daily_pipeline_module()
+    monkeypatch.setenv("AQSP_SOURCE", "sqlite_db")
+    monkeypatch.setenv("AQSP_ALLOW_ONLINE_FALLBACK", "false")
+
+    args = argparse.Namespace(
+        project_root="",
+        source="",
+        mode="",
+        limit=0,
+        max_universe=0,
+        min_avg_amount=0,
+        max_data_lag_days=0,
+        enable_online_factors=False,
+        ledger="",
+        report="",
+        csv="",
+        briefing="",
+        dashboard_html="",
+        dashboard_db="",
+        paper_ledger="",
+        closing_review="",
+        notify=False,
+        dry_run=False,
+        enable_debate=False,
+    )
+
+    config = daily_pipeline._build_config(args)
+
+    assert config.source == "online_first"
+    assert config.requested_source == "sqlite_db"
+    assert "sqlite_db" in config.source_override_reason
+    assert "live_short" in config.source_override_reason
+    assert "fit=avoid" in config.source_override_reason
+
+
 def test_build_config_enables_debate_from_env(monkeypatch) -> None:
     daily_pipeline = _load_daily_pipeline_module()
     monkeypatch.setenv("AQSP_ENABLE_DEBATE", "true")
@@ -200,8 +409,8 @@ def test_morning_breakout_uses_runtime_symbols_without_sh300_override(
     monkeypatch.setattr("aqsp.cli.main", fake_main)
     monkeypatch.setattr(
         daily_pipeline,
-        "_resolve_symbols",
-        lambda _config, _logger: ["600519", "300750"],
+        "_explicit_runtime_symbols",
+        lambda: ["600519", "300750"],
     )
 
     config = _pipeline_config(daily_pipeline, Path.cwd())
@@ -623,6 +832,16 @@ def test_send_pipeline_digest_sends_summary_notification(
                 "position": "10%-30%",
                 "portfolio_action": "promote",
                 "candidate_status": "延续上升",
+                "cross_market_primary_theme": "AI算力外溢",
+                "cross_market_action": "优先复核",
+                "cross_market_priority_score": 3,
+                "cross_market_evidence_stack_summary": "同向 2 条｜反向 1 条",
+                "debate_research_verdict": "优先纸面复核",
+                "debate_support_points": "外盘算力链扩散；A股映射标的放量",
+                "debate_opposition_points": "若高开过猛则回撤风险放大",
+                "debate_watch_items": "先确认开盘承接是否持续",
+                "debate_primary_risk_gate": "高开低走且量能背离",
+                "debate_next_trigger": "竞价强于同板块均值",
             },
             {
                 "symbol": "300750",
@@ -720,10 +939,23 @@ def test_send_pipeline_digest_sends_summary_notification(
     assert "- 健康: fallback" in sent["content"]
     assert "- 路径: auto -> eastmoney" in sent["content"]
     assert "## 候选" in sent["content"]
+    assert "## 讨论" in sent["content"]
     assert "## 风险" in sent["content"]
     assert "## 结果" in sent["content"]
     assert "- 结论: " in sent["content"]
     assert "- PM: 上调 1 / 降级 1 / 维持 0" in sent["content"]
+    assert "- 讨论结论: 600519 贵州茅台 | 优先纸面复核" in sent["content"]
+    assert "- 执行触发: 600519 贵州茅台 | 竞价强于同板块均值" in sent["content"]
+    assert sent["content"].index("- 讨论结论:") < sent["content"].index("## 讨论")
+    assert sent["content"].index("- 执行触发:") < sent["content"].index("## 讨论")
+    assert "- 跨市主线: AI算力外溢关联证据：600519 贵州茅台" in sent["content"]
+    assert "- 讨论焦点: 600519 贵州茅台 | 优先纸面复核" in sent["content"]
+    assert "- 讨论支持: 600519 贵州茅台 | 外盘算力链扩散" in sent["content"]
+    assert "- 讨论反对: 600519 贵州茅台 | 若高开过猛则回撤风险放大" in sent["content"]
+    assert "- 讨论待确认: 600519 贵州茅台 | 先确认开盘承接是否持续" in sent["content"]
+    assert "讨论执行: 卡点 600519 贵州茅台 | 高开低走且量能背离" in sent["content"]
+    assert "触发 600519 贵州茅台 | 竞价强于同板块均值" in sent["content"]
+    assert "顺序 600519 贵州茅台 | 优先纸面复核" in sent["content"]
     assert "- 当前限制: " in sent["content"]
     assert "- 首要复核: 300750 宁德时代 | 中优先级 / 板块分化时" in sent["content"]
     assert (
@@ -759,6 +991,103 @@ def test_send_pipeline_digest_sends_summary_notification(
     assert not any(token in sent["content"] for token in forbidden)
     assert "运行侧写" not in sent["content"]
     assert "# 收盘总览" not in sent["content"]
+
+
+def test_send_pipeline_digest_writes_daily_digest_when_notify_disabled(
+    tmp_path: Path,
+) -> None:
+    daily_pipeline = _load_daily_pipeline_module()
+    reports_dir = tmp_path / "reports"
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(
+        [
+            {
+                "symbol": "600519",
+                "name": "贵州茅台",
+                "date": "2026-06-02",
+                "close": 1498.0,
+                "score": 71.0,
+                "rating": "strong_buy_candidate",
+                "portfolio_action": "promote",
+                "candidate_status": "延续上升",
+            }
+        ]
+    ).to_csv(reports_dir / "latest.csv", index=False)
+    config = _pipeline_config(daily_pipeline, tmp_path, notify=False)
+    config = daily_pipeline.PipelineConfig(
+        **{
+            **config.__dict__,
+            "source": "online_first",
+            "requested_source": "sqlite_db",
+            "source_override_reason": (
+                "数据源 sqlite_db 不适合 live_short（fit=avoid）。 推荐改用: "
+                "auto / local_first / online_first / eastmoney / sina / tencent"
+            ),
+        }
+    )
+    result = daily_pipeline.PipelineResult(
+        started_at="2026-06-02T18:00:00+08:00",
+        finished_at="2026-06-02T18:00:30+08:00",
+        duration_seconds=30.0,
+        steps=[
+            daily_pipeline.StepResult("策略运行", True, 2.0, details={"gate_ok": True})
+        ],
+        overall_success=True,
+        summary="ok",
+    )
+
+    daily_pipeline._send_pipeline_digest(config, result, logging.getLogger("test"))
+
+    digest_path = tmp_path / "reports" / "daily_digest.md"
+    digest_json_path = tmp_path / "reports" / "daily_digest.json"
+    payload = json.loads(digest_json_path.read_text(encoding="utf-8"))
+    assert result.notify_status == {
+        "mode": "summary",
+        "status": "skipped",
+        "reason": "notify_disabled",
+        "date": "2026-06-02",
+    }
+    assert "# 收盘总览-2026-06-02" in digest_path.read_text(encoding="utf-8")
+    assert "数据源改写: sqlite_db -> online_first" in payload["markdown"]
+    assert "sqlite_db 不适合 live_short" in payload["markdown"]
+    assert "600519 贵州茅台 | 纸面复核" in payload["markdown"]
+    assert payload["date"] == "2026-06-02"
+    assert payload["steps"][0]["name"] == "策略运行"
+
+
+def test_write_pipeline_digest_artifacts_writes_markdown_and_json_atomically(
+    monkeypatch, tmp_path: Path
+) -> None:
+    daily_pipeline = _load_daily_pipeline_module()
+    config = _pipeline_config(daily_pipeline, tmp_path, notify=False)
+    result = daily_pipeline.PipelineResult(
+        started_at="2026-06-02T18:00:00+08:00",
+        finished_at="2026-06-02T18:00:30+08:00",
+        duration_seconds=30.0,
+        steps=[daily_pipeline.StepResult("策略运行", True, 2.0)],
+        overall_success=True,
+        summary="ok",
+    )
+    written: list[Path] = []
+    original_atomic_write_text = daily_pipeline.atomic_write_text
+
+    def record_atomic_write(path: str | Path, text: str) -> None:
+        written.append(Path(path))
+        original_atomic_write_text(path, text)
+
+    monkeypatch.setattr(daily_pipeline, "atomic_write_text", record_atomic_write)
+
+    daily_pipeline._write_pipeline_digest_artifacts(
+        config,
+        run_date="2026-06-02",
+        digest="ok",
+        result=result,
+    )
+
+    assert written == [
+        tmp_path / "reports" / "daily_digest.md",
+        tmp_path / "reports" / "daily_digest.json",
+    ]
 
 
 def test_send_pipeline_digest_logs_channel_results(
@@ -1215,9 +1544,9 @@ def test_write_result_file_marks_circuit_breaker_run_as_successful_history(
 
     rows = [
         json.loads(line)
-        for line in (
-            tmp_path / "data" / "daily_run_history.jsonl"
-        ).read_text(encoding="utf-8").splitlines()
+        for line in (tmp_path / "data" / "daily_run_history.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
         if line.strip()
     ]
     assert rows[0]["success"] is True
@@ -1351,8 +1680,8 @@ def test_closing_premium_uses_explicit_symbols(monkeypatch) -> None:
     monkeypatch.setattr("aqsp.cli.main", fake_main)
     monkeypatch.setattr(
         daily_pipeline,
-        "_resolve_symbols",
-        lambda _config, _logger: ["000001", "601318"],
+        "_explicit_runtime_symbols",
+        lambda: ["000001", "601318"],
     )
 
     config = _pipeline_config(daily_pipeline, Path.cwd())
@@ -1475,6 +1804,92 @@ def test_run_pipeline_trims_writeback_steps_when_non_trade_day(monkeypatch) -> N
     assert "收盘复盘" not in executed
 
 
+def test_refresh_dashboard_prefers_intraday_candidates(
+    monkeypatch, tmp_path: Path
+) -> None:
+    daily_pipeline = _load_daily_pipeline_module()
+    selected_paths: dict[str, Path] = {}
+
+    render_dashboard = type(sys)("render_dashboard")
+    export_dashboard_db = type(sys)("export_dashboard_db")
+
+    def fake_read_preferred_candidates(csv_path: Path, *, intraday_csv_path: Path):
+        selected_paths["close"] = csv_path
+        selected_paths["intraday"] = intraday_csv_path
+        return SimpleNamespace(
+            candidates=[{"symbol": "002025", "name": "航天电器"}],
+            path=intraday_csv_path,
+        )
+
+    def fake_render_all_panels(*, candidates, ledger_path: str, paper_ledger_path: str):
+        assert candidates == [{"symbol": "002025", "name": "航天电器"}]
+        return "<html>候选来源 盘中实时</html>"
+
+    def fake_export_db(csv_path: Path, ledger_path: Path, db_path: Path) -> None:
+        selected_paths["export_csv"] = csv_path
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        db_path.write_text("db", encoding="utf-8")
+
+    render_dashboard.read_preferred_candidates = fake_read_preferred_candidates
+    render_dashboard.render_all_panels = fake_render_all_panels
+    export_dashboard_db.export_db = fake_export_db
+    monkeypatch.setitem(sys.modules, "render_dashboard", render_dashboard)
+    monkeypatch.setitem(sys.modules, "export_dashboard_db", export_dashboard_db)
+    monkeypatch.setattr(
+        daily_pipeline,
+        "_refresh_home_snapshot",
+        lambda _config, _logger: {"path": "snapshot.json"},
+    )
+
+    config = _pipeline_config(daily_pipeline, tmp_path)
+    logger = logging.getLogger("test-refresh-dashboard")
+    result = daily_pipeline._step_refresh_dashboard(config, logger)
+
+    assert result["exit_code"] == 0
+    assert selected_paths["close"] == tmp_path / "reports" / "latest.csv"
+    assert selected_paths["intraday"] == tmp_path / "reports" / "intraday_latest.csv"
+    assert selected_paths["export_csv"] == tmp_path / "reports" / "intraday_latest.csv"
+    assert (tmp_path / "dist" / "dashboard" / "archive.html").read_text(
+        encoding="utf-8"
+    ) == "<html>候选来源 盘中实时</html>"
+    entry = (tmp_path / "dist" / "dashboard" / "index.html").read_text(
+        encoding="utf-8"
+    )
+    assert 'content="canonical-research-surface"' in entry
+
+
+def test_refresh_dashboard_marks_home_snapshot_failure_as_pipeline_failure(
+    monkeypatch, tmp_path: Path
+) -> None:
+    daily_pipeline = _load_daily_pipeline_module()
+    render_dashboard = type(sys)("render_dashboard")
+    export_dashboard_db = type(sys)("export_dashboard_db")
+    render_dashboard.read_preferred_candidates = lambda *_args, **_kwargs: SimpleNamespace(
+        candidates=[], path=tmp_path / "reports" / "latest.csv"
+    )
+    render_dashboard.render_all_panels = lambda **_kwargs: "<html>ok</html>"
+
+    def fake_export_db(_csv_path: Path, _ledger_path: Path, db_path: Path) -> None:
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        db_path.write_text("db", encoding="utf-8")
+
+    export_dashboard_db.export_db = fake_export_db
+    monkeypatch.setitem(sys.modules, "render_dashboard", render_dashboard)
+    monkeypatch.setitem(sys.modules, "export_dashboard_db", export_dashboard_db)
+    monkeypatch.setattr(
+        daily_pipeline,
+        "_refresh_home_snapshot",
+        lambda _config, _logger: {"error": "snapshot write failed"},
+    )
+
+    result = daily_pipeline._step_refresh_dashboard(
+        _pipeline_config(daily_pipeline, tmp_path), logging.getLogger("test")
+    )
+
+    assert result["exit_code"] == 1
+    assert result["error"] == "首页快照刷新失败: snapshot write failed"
+
+
 def test_generate_report_suppresses_fanout_notify_when_non_trade_day(
     monkeypatch, tmp_path: Path
 ) -> None:
@@ -1566,8 +1981,8 @@ def test_step_run_strategy_uses_real_benchmark_for_regime(
     monkeypatch.setattr("aqsp.cli.main", fake_main)
     monkeypatch.setattr(
         daily_pipeline,
-        "_resolve_symbols",
-        lambda _config, _logger: ["000001", "000002"],
+        "_explicit_runtime_symbols",
+        lambda: ["000001", "000002"],
     )
     config = daily_pipeline.PipelineConfig(
         project_root=tmp_path,
@@ -1604,6 +2019,54 @@ def test_step_run_strategy_uses_real_benchmark_for_regime(
     assert "--notify" not in argv
 
 
+def test_step_run_strategy_leaves_symbols_empty_for_runtime_universe(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    daily_pipeline = _load_daily_pipeline_module()
+    seen: dict[str, list[str]] = {}
+
+    def fake_main(argv):
+        seen["argv"] = list(argv)
+        return 0
+
+    monkeypatch.setenv("AQSP_SYMBOLS", "")
+    monkeypatch.setattr("aqsp.cli.main", fake_main)
+    monkeypatch.setattr(daily_pipeline, "_explicit_runtime_symbols", lambda: [])
+    config = daily_pipeline.PipelineConfig(
+        project_root=tmp_path,
+        source="online_first",
+        mode="close",
+        limit=10,
+        max_universe=300,
+        min_avg_amount=50_000_000,
+        max_data_lag_days=1,
+        enable_online_factors=False,
+        allow_online_fallback=True,
+        ledger_path="data/predictions.jsonl",
+        report_path="reports/latest.md",
+        csv_path="reports/latest.csv",
+        briefing_path="reports/briefing.md",
+        paper_report_path="reports/paper.md",
+        dashboard_html="dist/dashboard/index.html",
+        dashboard_db="dist/dashboard/aqsp.db",
+        paper_ledger="data/paper_trades.jsonl",
+        closing_review_path="reports/closing_review.md",
+        notify=False,
+        notify_mode="summary",
+        dry_run=False,
+        enable_debate=False,
+        enable_auto_evolution=False,
+    )
+
+    result = daily_pipeline._step_run_strategy(config, logging.getLogger("test"))
+
+    assert result["exit_code"] == 0
+    argv = seen["argv"]
+    assert argv[argv.index("--symbols") + 1] == ""
+    assert argv[argv.index("--max-universe") + 1] == "300"
+
+
 def test_step_run_strategy_treats_circuit_breaker_as_controlled_result(
     monkeypatch,
     tmp_path: Path,
@@ -1616,8 +2079,8 @@ def test_step_run_strategy_treats_circuit_breaker_as_controlled_result(
     monkeypatch.setattr("aqsp.cli.main", lambda _argv: 2)
     monkeypatch.setattr(
         daily_pipeline,
-        "_resolve_symbols",
-        lambda _config, _logger: ["000001", "000002"],
+        "_explicit_runtime_symbols",
+        lambda: ["000001", "000002"],
     )
     config = daily_pipeline.PipelineConfig(
         project_root=tmp_path,
@@ -2118,6 +2581,71 @@ def test_resolve_symbols_returns_full_sqlite_db_available_universe(
         "000003",
     ]
 
+
+def test_resolve_symbols_filters_sqlite_db_universe_by_recent_coverage(
+    monkeypatch,
+) -> None:
+    from scripts import daily_pipeline
+
+    seen: dict[str, object] = {}
+
+    class FakeSource:
+        def get_available_symbols(self) -> list[str]:
+            return ["000001", "000002", "000003"]
+
+        def get_symbols_with_daily_coverage(
+            self,
+            symbols: list[str],
+            start,
+            end,
+            *,
+            min_rows: int | None = None,
+        ) -> list[str]:
+            seen["symbols"] = symbols
+            seen["min_rows"] = min_rows
+            return ["000001", "000003"]
+
+    monkeypatch.delenv("AQSP_SYMBOLS", raising=False)
+    monkeypatch.setattr(
+        daily_pipeline, "_build_data_source", lambda _config: FakeSource()
+    )
+
+    config = daily_pipeline.PipelineConfig(
+        project_root=Path.cwd(),
+        source="sqlite_db",
+        mode="close",
+        limit=10,
+        max_universe=0,
+        min_avg_amount=50_000_000,
+        max_data_lag_days=3,
+        enable_online_factors=False,
+        allow_online_fallback=True,
+        ledger_path="data/predictions.jsonl",
+        report_path="reports/latest.md",
+        csv_path="reports/latest.csv",
+        briefing_path="reports/briefing.md",
+        paper_report_path="reports/paper.md",
+        dashboard_html="dist/dashboard/index.html",
+        dashboard_db="dist/dashboard/aqsp.db",
+        paper_ledger="data/paper_trades.jsonl",
+        closing_review_path="reports/closing_review.md",
+        notify=False,
+        notify_mode="summary",
+        dry_run=False,
+        enable_debate=False,
+        enable_auto_evolution=False,
+    )
+
+    assert daily_pipeline._resolve_symbols(config, logging.getLogger("test")) == [
+        "000001",
+        "000003",
+    ]
+    assert seen == {
+        "symbols": ["000001", "000002", "000003"],
+        "min_rows": None,
+    }
+
+
 def test_resolve_symbols_truncates_sqlite_db_available_universe_when_max_universe_positive(
     monkeypatch,
 ) -> None:
@@ -2161,4 +2689,69 @@ def test_resolve_symbols_truncates_sqlite_db_available_universe_when_max_univers
     assert daily_pipeline._resolve_symbols(config, logging.getLogger("test")) == [
         "000001",
         "000002",
+    ]
+
+
+def test_resolve_symbols_falls_back_to_sqlite_pool_when_live_discovery_fails(
+    monkeypatch,
+) -> None:
+    from scripts import daily_pipeline
+
+    class LiveSource:
+        def get_liquid_symbols(self, *, limit: int, min_amount: float) -> list[str]:
+            raise daily_pipeline.DataError("live snapshot unavailable")
+
+        def get_available_symbols(self) -> list[str]:
+            raise daily_pipeline.DataError("live available unavailable")
+
+    class SqliteSource:
+        def get_liquid_symbols(self, *, limit: int, min_amount: float) -> list[str]:
+            return ["600000", "000001", "300750"]
+
+    def fake_build_data_source(config):
+        assert config.source == "online_first"
+        return LiveSource()
+
+    def fake_build_named_source(source_name: str):
+        if source_name == "sqlite_db":
+            return SqliteSource()
+        raise daily_pipeline.DataError(source_name)
+
+    monkeypatch.delenv("AQSP_SYMBOLS", raising=False)
+    monkeypatch.setenv("AQSP_RUNTIME_SYMBOL_CACHE", "/missing/symbols.json")
+    monkeypatch.setattr(daily_pipeline, "_build_data_source", fake_build_data_source)
+    monkeypatch.setattr(
+        "aqsp.data.source_factory.build_data_source",
+        fake_build_named_source,
+    )
+
+    config = daily_pipeline.PipelineConfig(
+        project_root=Path.cwd(),
+        source="online_first",
+        mode="close",
+        limit=10,
+        max_universe=2,
+        min_avg_amount=50_000_000,
+        max_data_lag_days=3,
+        enable_online_factors=False,
+        allow_online_fallback=True,
+        ledger_path="data/predictions.jsonl",
+        report_path="reports/latest.md",
+        csv_path="reports/latest.csv",
+        briefing_path="reports/briefing.md",
+        paper_report_path="reports/paper.md",
+        dashboard_html="dist/dashboard/index.html",
+        dashboard_db="dist/dashboard/aqsp.db",
+        paper_ledger="data/paper_trades.jsonl",
+        closing_review_path="reports/closing_review.md",
+        notify=False,
+        notify_mode="summary",
+        dry_run=False,
+        enable_debate=False,
+        enable_auto_evolution=False,
+    )
+
+    assert daily_pipeline._resolve_symbols(config, logging.getLogger("test")) == [
+        "600000",
+        "000001",
     ]

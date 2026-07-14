@@ -1,0 +1,57 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+from aqsp.web.entrypoint import (
+    public_dashboard_url,
+    render_legacy_redirect,
+    write_agent_archive_guard,
+    write_dashboard_artifact,
+)
+
+
+def test_public_dashboard_url_uses_configured_canonical_entry(monkeypatch) -> None:
+    monkeypatch.setenv("AQSP_DASHBOARD_PUBLIC_URL", "https://example.test/dashboard/")
+
+    assert public_dashboard_url() == "https://example.test/dashboard"
+
+
+def test_public_dashboard_url_rejects_relative_legacy_entry(monkeypatch) -> None:
+    monkeypatch.setenv("AQSP_DASHBOARD_PUBLIC_URL", "dist/dashboard/index.html")
+
+    try:
+        public_dashboard_url()
+    except ValueError as exc:
+        assert "http://" in str(exc)
+    else:
+        raise AssertionError("relative static dashboard entry must be rejected")
+
+
+def test_index_artifact_redirects_and_preserves_archive(tmp_path: Path) -> None:
+    index = tmp_path / "dist" / "dashboard" / "index.html"
+
+    archive = write_dashboard_artifact(index, "<main>archive</main>")
+
+    assert archive == index.with_name("archive.html")
+    assert archive.read_text(encoding="utf-8") == "<main>archive</main>"
+    entry = index.read_text(encoding="utf-8")
+    assert 'content="canonical-research-surface"' in entry
+    assert "https://lh.ifidy.cn" in entry
+    assert "archive" not in entry
+
+
+def test_agent_page_is_retired_to_canonical_entry(tmp_path: Path) -> None:
+    output = tmp_path / "agents.html"
+
+    write_agent_archive_guard(output)
+
+    html = output.read_text(encoding="utf-8")
+    assert "canonical-research-surface" in html
+    assert "https://lh.ifidy.cn" in html
+
+
+def test_redirect_supports_explicit_target() -> None:
+    html = render_legacy_redirect(target_url="https://example.test")
+
+    assert "https://example.test" in html
+    assert "canonical-research-surface" in html
