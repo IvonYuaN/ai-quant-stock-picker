@@ -293,6 +293,22 @@ def test_aqsp_bridge_rejects_message_published_at_without_timezone_or_iso_format
     assert response.status_code == 503
 
 
+def test_aqsp_bridge_normalizes_legacy_shanghai_message_timestamp(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    payload = _snapshot("2026-07-14")
+    payload["messages"][0]["published_at"] = "2026-07-14 09:00:00"
+    path = _write_single(tmp_path, payload)
+    monkeypatch.setenv("AQSP_RESEARCH_SURFACE_SNAPSHOT", str(path))
+
+    response = client.get("/api/aqsp/snapshot")
+
+    assert response.status_code == 200
+    assert response.json()["data"]["messages"][0]["published_at"] == (
+        "2026-07-14T09:00:00+08:00"
+    )
+
+
 @pytest.mark.parametrize(
     "route",
     [

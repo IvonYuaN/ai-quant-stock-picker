@@ -11,6 +11,7 @@ from datetime import date as CalendarDate
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from aqsp.core.time import now_shanghai
 
@@ -25,6 +26,8 @@ MAX_DEBATES = 3
 MAX_SUMMARIES = 3
 MAX_MESSAGES = 5
 MAX_CROSS_MARKET = 3
+LEGACY_MESSAGE_TIMESTAMP_FORMAT = "%Y-%m-%d %H:%M:%S"
+SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -539,8 +542,9 @@ def _parse_message(payload: object) -> AQSPMessage:
         {"title", "summary", "impact", "category", "source", "published_at"},
         "message",
     )
-    published_at = _text(item["published_at"], "message.published_at")
-    _timestamp(published_at, "message.published_at")
+    published_at = _normalize_message_timestamp(
+        _text(item["published_at"], "message.published_at")
+    )
     return AQSPMessage(
         title=_text(item["title"], "message.title"),
         summary=_text(item["summary"], "message.summary"),
@@ -720,6 +724,16 @@ def _timestamp(value: str, name: str) -> datetime:
     if parsed.tzinfo is None or parsed.utcoffset() is None:
         raise AQSPSnapshotUnavailable(f"{name} 必须包含时区偏移")
     return parsed
+
+
+def _normalize_message_timestamp(value: str) -> str:
+    """Normalize legacy local news timestamps without weakening API output."""
+    try:
+        legacy = datetime.strptime(value, LEGACY_MESSAGE_TIMESTAMP_FORMAT)
+    except ValueError:
+        _timestamp(value, "message.published_at")
+        return value
+    return legacy.replace(tzinfo=SHANGHAI_TZ).isoformat()
 
 
 def _validate_date(value: str, name: str, *, request: bool = False) -> str:

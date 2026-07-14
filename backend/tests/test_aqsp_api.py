@@ -356,3 +356,37 @@ def test_aqsp_api_rejects_message_published_at_without_timezone_or_iso_format(
     response = aqsp_client.get(SNAPSHOT_ROUTE)
 
     assert response.status_code == 503
+
+
+def test_aqsp_api_normalizes_legacy_shanghai_message_timestamp(
+    aqsp_client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    current = _snapshot(
+        "2026-07-14",
+        stale_after="2099-01-01T09:30:00+08:00",
+        messages=[
+            {
+                "title": "旧源消息",
+                "summary": "兼容旧版产出",
+                "impact": "中性",
+                "category": "市场",
+                "source": "fixture",
+                "published_at": "2026-07-14 09:00:00",
+            }
+        ],
+        debates=[],
+    )
+    _write_snapshot_files(tmp_path, current=current)
+    monkeypatch.setenv(
+        "AQSP_RESEARCH_SURFACE_SNAPSHOT",
+        str(tmp_path / "home_dashboard_snapshot.json"),
+    )
+
+    response = aqsp_client.get(SNAPSHOT_ROUTE)
+
+    assert response.status_code == 200
+    assert response.json()["data"]["messages"][0]["published_at"] == (
+        "2026-07-14T09:00:00+08:00"
+    )
