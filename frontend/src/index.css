@@ -107,7 +107,46 @@
 }
 
 @layer components {
-  /* 玻璃卡：半透明填充 + 发丝边框 + 柔投影 + 顶部内高光（EP26 高级感配方） */
+  .vr-shell {
+    display: flex;
+    min-height: 100vh;
+    gap: 0.75rem;
+    padding: 0.75rem;
+  }
+
+  .vr-sidebar {
+    position: sticky;
+    top: 0.75rem;
+    display: flex;
+    width: 16rem;
+    height: calc(100vh - 1.5rem);
+    flex-shrink: 0;
+    flex-direction: column;
+    overflow: hidden;
+    transition: width 180ms ease;
+  }
+
+  .vr-sidebar-collapsed { width: 3.5rem; }
+  .vr-brand { padding: 1rem; border-bottom: 1px solid hsl(var(--border) / 0.55); }
+  .vr-brand-mark { display: inline-flex; align-items: center; justify-content: center; width: 2rem; height: 2rem; border-radius: 0.65rem; color: hsl(var(--primary)); background: hsl(var(--primary) / 0.12); }
+  .vr-sidebar-scroll { flex: 1; overflow-y: auto; padding: 1rem 0.75rem; }
+  .vr-sidebar-section { padding: 0 0.25rem; }
+  .vr-sidebar-label { display: flex; align-items: center; justify-content: space-between; color: hsl(var(--muted-foreground) / 0.72); font-size: 0.65rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
+  .vr-nav-item { display: flex; align-items: center; gap: 0.65rem; min-height: 2.65rem; padding: 0.55rem 0.75rem; border-radius: 0.7rem; color: hsl(var(--muted-foreground)); font-size: 0.8rem; transition: background 140ms ease, color 140ms ease; }
+  .vr-nav-item:hover { color: hsl(var(--foreground)); background: hsl(var(--muted) / 0.6); }
+  .vr-nav-item-active { color: hsl(var(--foreground)); background: hsl(var(--primary) / 0.13); box-shadow: inset 2px 0 0 hsl(var(--primary)); }
+  .vr-date-item { display: flex; width: 100%; align-items: center; gap: 0.6rem; padding: 0.55rem 0.65rem; border: 1px solid transparent; border-radius: 0.65rem; color: hsl(var(--foreground) / 0.86); text-align: left; transition: background 140ms ease, border-color 140ms ease; }
+  .vr-date-item:hover { background: hsl(var(--muted) / 0.55); }
+  .vr-date-item-active { border-color: hsl(var(--primary) / 0.32); background: hsl(var(--primary) / 0.1); }
+  .vr-sidebar-footer { padding: 0.75rem; border-top: 1px solid hsl(var(--border) / 0.55); }
+  .vr-icon-button { display: inline-flex; align-items: center; gap: 0.35rem; border-radius: 0.45rem; padding: 0.35rem; color: hsl(var(--muted-foreground)); font-size: 0.7rem; transition: color 140ms ease, background 140ms ease; }
+  .vr-icon-button:hover { color: hsl(var(--foreground)); background: hsl(var(--muted) / 0.55); }
+  .vr-main { min-width: 0; flex: 1; overflow: auto; }
+  .vr-content { width: min(100%, 74rem); margin: 0 auto; padding: 1.5rem 1.5rem 2.5rem; }
+  .vr-kicker { color: hsl(var(--muted-foreground) / 0.78); font-size: 0.65rem; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; }
+  .vr-conclusion { border-left: 3px solid hsl(var(--primary)); padding: 0.9rem 1rem; background: hsl(var(--primary) / 0.07); }
+
+  /* 玻璃卡：半透明填充 + 发丝边框 + 柔投影，减少纯装饰性的光晕。 */
   .glass {
     background-image: linear-gradient(162deg, var(--glass-fill-top), var(--glass-fill-bot));
     border: 1px solid var(--glass-stroke);
@@ -118,7 +157,7 @@
   }
   .light .glass { box-shadow: 0 10px 26px rgba(30, 60, 100, 0.10), inset 0 1px 0 var(--glass-hi); }
 
-  /* 顶角暖橙光晕（配 .glass 用，装饰热点） */
+  /* 仅保留轻微层次，不让装饰抢过研究内容。 */
   .glass-glow { position: relative; overflow: hidden; }
   .glass-glow::before {
     content: "";
@@ -130,4 +169,17 @@
 
   /* 暖橙光文字 */
   .text-glow { text-shadow: 0 0 18px hsl(var(--primary) / 0.45); }
+}
+
+@media (max-width: 767px) {
+  .vr-shell { display: block; padding: 0.5rem; }
+  .vr-sidebar, .vr-sidebar-collapsed { position: static; width: 100%; height: auto; max-height: none; }
+  .vr-sidebar-scroll { overflow: visible; padding: 0.65rem; }
+  .vr-sidebar-scroll nav { display: flex; overflow-x: auto; gap: 0.35rem; padding-bottom: 0.1rem; }
+  .vr-nav-item { min-width: max-content; }
+  .vr-nav-item > span:last-child { display: none; }
+  .vr-sidebar-section { display: none; }
+  .vr-sidebar-footer { padding: 0.6rem 0.75rem; }
+  .vr-content { padding: 1.25rem 0.5rem 2rem; }
+  .vr-content h1 { font-size: 1.55rem; }
 }
