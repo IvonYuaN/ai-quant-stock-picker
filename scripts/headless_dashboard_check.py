@@ -16,15 +16,27 @@ import urllib.request
 from dataclasses import dataclass
 from collections.abc import Iterator
 from pathlib import Path
-from urllib.parse import urljoin
+
+from aqsp.web.entrypoint import (
+    CANONICAL_ENTRY_MARKERS,
+    LEGACY_HEALTH_PATH,
+    classify_entry_text,
+    classify_health_text,
+    public_research_health_url,
+)
 
 
 DEFAULT_URL = "https://lh.ifidy.cn"
+DEFAULT_EXPECTED_TEXT = CANONICAL_ENTRY_MARKERS
 DEFAULT_FORBIDDEN_TEXT = (
     "candidate_blocker",
     "next open",
     "数据滞后: - 天",
     "risks",
+    "新手看板",
+    "agents.html",
+    "dashboard_beginner.py",
+    "archive.html",
 )
 DEDICATED_BROWSER_ENV = "AQSP_HEADLESS_BROWSER"
 HEADLESS_LOCK_ENV = "AQSP_HEADLESS_LOCK"
@@ -35,6 +47,12 @@ DEFAULT_BROWSER_CANDIDATES = (
     "chromium",
     "chromium-browser",
     "/Applications/Chromium.app/Contents/MacOS/Chromium",
+)
+PLAYWRIGHT_BROWSER_PATTERNS = (
+    "chromium-*/chrome-linux*/chrome",
+    "chromium-*/chrome-mac*/Chromium.app/Contents/MacOS/Chromium",
+    "chromium-*/chrome-mac*/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
+    "chromium_headless_shell-*/chrome-headless-shell-linux*/chrome-headless-shell",
 )
 
 
@@ -47,6 +65,8 @@ class DashboardCheckResult:
     headless_lock_path: Path | None
     checked_bytes: int
     screenshot_path: Path | None
+    entry_kind: str
+    health_kind: str
     errors: tuple[str, ...]
     warnings: tuple[str, ...]
 
@@ -56,7 +76,7 @@ class DashboardCheckResult:
 
 
 def _derive_health_url(url: str) -> str:
-    return urljoin(url.rstrip("/") + "/", "_stcore/health")
+    return public_research_health_url(base_url=url)
 
 
 def fetch_text(url: str, *, timeout_seconds: float) -> str:
@@ -75,6 +95,21 @@ def _resolve_executable(candidate: str) -> str | None:
     if "/" in candidate:
         return candidate if Path(candidate).exists() else None
     return shutil.which(candidate)
+
+
+def _playwright_browser_candidates() -> tuple[str, ...]:
+    roots = (
+        Path.home() / ".cache" / "ms-playwright",
+        Path.home() / "Library" / "Caches" / "ms-playwright",
+    )
+    candidates: list[str] = []
+    for root in roots:
+        if not root.exists():
+            continue
+        for pattern in PLAYWRIGHT_BROWSER_PATTERNS:
+            for path in sorted(root.glob(pattern), reverse=True):
+                candidates.append(str(path))
+    return tuple(candidates)
 
 
 def resolve_headless_lock_path(explicit_lock_path: Path | None = None) -> Path:
@@ -112,7 +147,7 @@ def find_browser_executable(
     dedicated_browser = explicit_browser or os.getenv(DEDICATED_BROWSER_ENV, "")
     if dedicated_browser:
         return _resolve_executable(dedicated_browser)
-    for candidate in candidates:
+    for candidate in (*candidates, *_playwright_browser_candidates()):
         resolved = _resolve_executable(candidate)
         if resolved:
             return resolved
@@ -148,6 +183,8 @@ def build_headless_browser_command(
         f"--window-size={window_size}",
         f"--virtual-time-budget={virtual_time_budget_ms}",
     ]
+    if hasattr(os, "geteuid") and os.geteuid() == 0:
+        command.append("--no-sandbox")
     if dump_dom:
         command.append("--dump-dom")
     if screenshot_path is not None:
@@ -193,6 +230,104 @@ def run_headless_browser(
     return result.stdout
 
 
+def run_playwright_browser(
+    *,
+    browser: str,
+    url: str,
+    profile_dir: Path,
+    screenshot_path: Path | None,
+    timeout_seconds: float,
+    window_size: str,
+    virtual_time_budget_ms: int,
+    lock_path: Path | None = None,
+) -> str:
+    try:
+        from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+        from playwright.sync_api import sync_playwright
+    except ImportError as exc:
+        raise RuntimeError("playwright is unavailable") from exc
+
+    width_str, height_str = window_size.split(",", 1)
+    width = int(width_str)
+    height = int(height_str)
+    timeout_ms = max(1, int(timeout_seconds * 1000))
+    settle_ms = max(0, virtual_time_budget_ms)
+
+    with acquire_headless_browser_lock(lock_path):
+        with sync_playwright() as playwright:
+            context = playwright.chromium.launch_persistent_context(
+                user_data_dir=str(profile_dir),
+                executable_path=browser,
+                headless=True,
+                args=["--remote-debugging-port=0"],
+                viewport={"width": width, "height": height},
+                ignore_https_errors=True,
+            )
+            try:
+                page = context.pages[0] if context.pages else context.new_page()
+                page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
+                try:
+                    page.wait_for_load_state("networkidle", timeout=timeout_ms)
+                except PlaywrightTimeoutError:
+                    pass
+                if settle_ms > 0:
+                    page.wait_for_timeout(settle_ms)
+                if screenshot_path is not None:
+                    screenshot_path.parent.mkdir(parents=True, exist_ok=True)
+                    page.screenshot(path=str(screenshot_path), full_page=True)
+                locator = page.locator('[data-testid="stMainBlockContainer"]')
+                if locator.count():
+                    return locator.inner_text()
+                return page.locator("body").inner_text()
+            finally:
+                context.close()
+
+
+def run_browser_capture(
+    *,
+    browser: str,
+    url: str,
+    profile_dir: Path,
+    screenshot_path: Path | None,
+    timeout_seconds: float,
+    window_size: str,
+    virtual_time_budget_ms: int,
+    lock_path: Path | None = None,
+) -> str:
+    playwright_error: Exception | None = None
+    try:
+        return run_playwright_browser(
+            browser=browser,
+            url=url,
+            profile_dir=profile_dir,
+            screenshot_path=screenshot_path,
+            timeout_seconds=timeout_seconds,
+            window_size=window_size,
+            virtual_time_budget_ms=virtual_time_budget_ms,
+            lock_path=lock_path,
+        )
+    except (OSError, RuntimeError, ValueError) as exc:
+        playwright_error = exc
+
+    try:
+        return run_headless_browser(
+            browser=browser,
+            url=url,
+            profile_dir=profile_dir,
+            screenshot_path=screenshot_path,
+            timeout_seconds=timeout_seconds,
+            window_size=window_size,
+            virtual_time_budget_ms=virtual_time_budget_ms,
+            lock_path=lock_path,
+        )
+    except (OSError, RuntimeError, subprocess.TimeoutExpired) as exc:
+        if playwright_error is None:
+            raise
+        raise RuntimeError(
+            f"playwright failed: {playwright_error}; chrome fallback failed: {exc}"
+        ) from exc
+
+
 def check_text(
     text: str,
     *,
@@ -223,17 +358,29 @@ def run_check(
     virtual_time_budget_ms: int,
     browser_executable: str | None = None,
     lock_path: Path | None = None,
+    require_browser: bool = False,
+    require_canonical: bool = False,
 ) -> DashboardCheckResult:
     errors: list[str] = []
     warnings: list[str] = []
     browser: str | None = None
+    browser_rendered = False
     headless_lock_path: Path | None = None
     text = ""
+    health_text = ""
 
     try:
-        fetch_text(health_url, timeout_seconds=timeout_seconds)
+        health_text = fetch_text(health_url, timeout_seconds=timeout_seconds)
     except (OSError, RuntimeError, urllib.error.URLError) as exc:
         errors.append(f"health check failed: {exc}")
+
+    health_kind = classify_health_text(health_text)
+    if require_canonical and health_kind != "canonical":
+        legacy_hint = f" (legacy endpoint: {LEGACY_HEALTH_PATH})"
+        errors.append(
+            f"health endpoint identified as {health_kind}; expected canonical "
+            f"Vibe-Research /api/health{legacy_hint}"
+        )
 
     if mode in {"auto", "browser"}:
         browser = find_browser_executable(explicit_browser=browser_executable)
@@ -251,7 +398,7 @@ def run_check(
             headless_lock_path = resolve_headless_lock_path(lock_path)
             with tempfile.TemporaryDirectory(prefix="aqsp-headless-") as temp_dir:
                 try:
-                    text = run_headless_browser(
+                    text = run_browser_capture(
                         browser=browser,
                         url=url,
                         profile_dir=Path(temp_dir),
@@ -261,6 +408,7 @@ def run_check(
                         virtual_time_budget_ms=virtual_time_budget_ms,
                         lock_path=headless_lock_path,
                     )
+                    browser_rendered = True
                 except (OSError, RuntimeError, subprocess.TimeoutExpired) as exc:
                     if mode == "browser" or screenshot_path is not None:
                         errors.append(str(exc))
@@ -273,6 +421,19 @@ def run_check(
         except (OSError, RuntimeError, urllib.error.URLError) as exc:
             errors.append(f"dashboard fetch failed: {exc}")
 
+    actual_mode = "browser" if text and browser_rendered else "raw"
+    entry_kind = classify_entry_text(text)
+    if require_canonical and entry_kind != "canonical":
+        errors.append(
+            f"dashboard entry identified as {entry_kind}; expected canonical "
+            "Vibe-Research research entry"
+        )
+    if require_browser and actual_mode != "browser":
+        errors.append(
+            "browser render required but unavailable; use --mode browser or set "
+            f"{DEDICATED_BROWSER_ENV}/--browser to an isolated Chromium binary"
+        )
+
     errors.extend(
         check_text(
             text,
@@ -281,7 +442,6 @@ def run_check(
         )
     )
 
-    actual_mode = "browser" if text and browser else "raw"
     return DashboardCheckResult(
         url=url,
         health_url=health_url,
@@ -290,6 +450,8 @@ def run_check(
         headless_lock_path=headless_lock_path if actual_mode == "browser" else None,
         checked_bytes=len(text.encode("utf-8")),
         screenshot_path=screenshot_path,
+        entry_kind=entry_kind,
+        health_kind=health_kind,
         errors=tuple(errors),
         warnings=tuple(warnings),
     )
@@ -323,7 +485,7 @@ def main() -> int:
     parser.add_argument(
         "--expect",
         action="append",
-        default=[],
+        default=None,
         help="Expected text. Can be repeated or comma-separated.",
     )
     parser.add_argument("--screenshot", type=Path)
@@ -347,26 +509,52 @@ def main() -> int:
             f"${DEDICATED_BROWSER_ENV}, then Chromium only."
         ),
     )
+    parser.add_argument(
+        "--require-browser",
+        action="store_true",
+        help=(
+            "Fail unless an isolated headless browser actually renders the page. "
+            "Use this for deploy/UI acceptance; raw HTTP fallback is not enough."
+        ),
+    )
+    parser.add_argument(
+        "--allow-legacy",
+        action="store_true",
+        help=(
+            "Rollback/pre-cutover mode: report legacy Streamlit health and entry "
+            "instead of failing the canonical-entry gate."
+        ),
+    )
     args = parser.parse_args()
+
+    expected_values = (
+        _split_values(args.expect)
+        if args.expect is not None
+        else (() if args.allow_legacy else DEFAULT_EXPECTED_TEXT)
+    )
 
     result = run_check(
         url=args.url,
         health_url=args.health_url or _derive_health_url(args.url),
         mode=args.mode,
         forbidden_text=_split_values(args.forbid),
-        expected_text=_split_values(args.expect),
+        expected_text=expected_values,
         screenshot_path=args.screenshot,
         timeout_seconds=args.timeout,
         window_size=args.window_size,
         virtual_time_budget_ms=args.virtual_time_budget_ms,
         browser_executable=args.browser or None,
         lock_path=args.headless_lock,
+        require_browser=args.require_browser,
+        require_canonical=not args.allow_legacy,
     )
 
     print(f"status={'pass' if result.passed else 'fail'}")
     print(f"url={result.url}")
     print(f"health_url={result.health_url}")
     print(f"mode={result.mode}")
+    print(f"entry_kind={result.entry_kind}")
+    print(f"health_kind={result.health_kind}")
     print(f"browser={result.browser or '-'}")
     print(f"headless_lock={result.headless_lock_path or '-'}")
     print(f"checked_bytes={result.checked_bytes}")
