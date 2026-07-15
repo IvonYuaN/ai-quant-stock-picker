@@ -17,6 +17,13 @@ class RealtimeService:
         guard_message = workload_guard_message(source_name, "live_short")
         if guard_message:
             raise DataError(guard_message)
+        if (
+            source_name not in _COMPOSITE_SOURCES
+            and source_role_for_workload(source_name, "live_short") != "realtime"
+        ):
+            raise DataError(
+                f"数据源 {source_name} 仅可作为 observation 层，不能形成正式实时行情"
+            )
         self.source = source
         self._last_fetch: dict[str, datetime] = {}
         self._last_data: dict[str, dict] = {}
@@ -134,7 +141,9 @@ def _annotate_quote_provenance(
     fetched_at: datetime,
 ) -> dict:
     annotated = dict(quote)
-    source_name = str(annotated.get("source_name") or annotated.get("source") or "").strip()
+    source_name = str(
+        annotated.get("source_name") or annotated.get("source") or ""
+    ).strip()
     source_provenance = getattr(source, "last_used_sources", {})
     if not source_name and isinstance(source_provenance, dict):
         source_name = str(source_provenance.get(symbol, "") or "").strip()
@@ -147,7 +156,9 @@ def _annotate_quote_provenance(
 
     workload = str(annotated.get("workload") or "live_short").strip()
     if workload != "live_short":
-        raise DataError(f"实时行情标的 {symbol} workload 不匹配: {workload or 'unknown'}")
+        raise DataError(
+            f"实时行情标的 {symbol} workload 不匹配: {workload or 'unknown'}"
+        )
     timestamp_source = str(annotated.get("timestamp_source") or "").strip()
     if not timestamp_source:
         raise DataError(f"实时行情标的 {symbol} 缺少 timestamp_source，拒绝继续")

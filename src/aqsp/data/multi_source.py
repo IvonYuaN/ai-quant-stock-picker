@@ -175,6 +175,7 @@ class MultiSource(DataSource):
         expected_keys: list[str],
         workload: WorkloadId | None = None,
     ):
+        self._clear_last_used()
         effective_workload = workload or self._active_workload
         sources = [self.primary] + self.fallbacks
 
@@ -248,12 +249,16 @@ class MultiSource(DataSource):
 
         if primary_result is not None:
             if self.validate_consistency and fallback_result is not None:
-                self._validate_consistency(
-                    primary_result,
-                    fallback_result,
-                    primary_source_name=primary_source_name,
-                    fallback_source_name=fallback_source_name,
-                )
+                try:
+                    self._validate_consistency(
+                        primary_result,
+                        fallback_result,
+                        primary_source_name=primary_source_name,
+                        fallback_source_name=fallback_source_name,
+                    )
+                except Exception:
+                    self._clear_last_used()
+                    raise
             return primary_result
 
         merged_result = _merge_partial_results(partial_results, expected_keys)
@@ -262,9 +267,14 @@ class MultiSource(DataSource):
             self._last_used_source = "multi"
             return merged_result
 
+        self._clear_last_used()
         raise DataError(
             f"所有数据源获取{method_name}失败: {', '.join(f'{name}: {str(e)[:50]}' for name, e in exceptions)}"
         )
+
+    def _clear_last_used(self) -> None:
+        self._last_used_source = None
+        self._last_used_sources = {}
 
     def _call_source(self, source: DataSource, func, *, workload: WorkloadId | None):
         setter = getattr(source, "set_workload", None)
@@ -336,6 +346,7 @@ class MultiSource(DataSource):
         if not requested:
             raise DataError("未请求实时行情标的")
 
+        self._clear_last_used()
         unresolved = set(requested)
         accepted: dict[str, dict] = {}
         used_sources: set[str] = set()
@@ -430,6 +441,7 @@ class MultiSource(DataSource):
             f"{symbol}: {', '.join(errors[:3]) or '无有效结果'}"
             for symbol, errors in exceptions.items()
         )
+        self._clear_last_used()
         raise DataError("所有数据源获取fetch_realtime_quote失败: " + details)
 
 

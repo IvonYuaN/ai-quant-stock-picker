@@ -18,6 +18,7 @@ from aqsp.data.source import (
 from aqsp.data.cache import DataCache
 from aqsp.core.errors import DataError
 from aqsp.core.time import now_shanghai
+from aqsp.data.quote_metadata import parse_vendor_timestamp, quote_timestamp_metadata
 
 _logger = logging.getLogger("aqsp.data.akshare")
 
@@ -45,6 +46,28 @@ class AkshareSource(DataSource):
         self._realtime_cooldown_until = 0.0
         self._cached_realtime_snapshot: pd.DataFrame | None = None
         self._cached_realtime_snapshot_ts = 0.0
+        self._active_workload: str | None = None
+
+    def set_workload(self, workload: str | None) -> None:
+        """Set provenance context for cache-backed runtime fetches."""
+        self._active_workload = workload
+
+    def _cache_workload(self) -> str | None:
+        return getattr(self, "_active_workload", None)
+
+    def _annotate_frame(self, frame: pd.DataFrame) -> pd.DataFrame:
+        frame.attrs["source_name"] = self.name
+        frame.attrs["source"] = self.name
+        workload = self._cache_workload()
+        if workload:
+            frame.attrs["workload"] = workload
+            frame.attrs["fetched_at"] = str(
+                frame.attrs.get("fetched_at") or now_shanghai().isoformat()
+            )
+            frame.attrs["timestamp_source"] = str(
+                frame.attrs.get("timestamp_source") or "received_at"
+            )
+        return frame
 
     def fetch_daily(
         self,
@@ -59,7 +82,12 @@ class AkshareSource(DataSource):
             cached = None
             if use_cache:
                 cached = self.cache.get_ohlcv(
-                    symbol, start, end, price_mode=adjust or "raw"
+                    symbol,
+                    start,
+                    end,
+                    price_mode=adjust or "raw",
+                    source=self.name,
+                    workload=self._cache_workload(),
                 )
 
             if (
@@ -67,7 +95,7 @@ class AkshareSource(DataSource):
                 and not cached.empty
                 and self._cache_covers_range(cached, start, end)
             ):
-                out[symbol] = cached
+                out[symbol] = self._annotate_frame(cached)
                 continue
 
             try:
@@ -86,10 +114,14 @@ class AkshareSource(DataSource):
 
             if use_cache:
                 self.cache.set_ohlcv(
-                    symbol, validated, source="akshare", price_mode=adjust or "raw"
+                    symbol,
+                    validated,
+                    source=self.name,
+                    price_mode=adjust or "raw",
+                    workload=self._cache_workload(),
                 )
 
-            out[symbol] = validated
+            out[symbol] = self._annotate_frame(validated)
         require_non_empty_fetch_result(self.name, "日线", symbols, out)
         return out
 
@@ -135,13 +167,26 @@ class AkshareSource(DataSource):
             for symbol in symbols:
                 row = snapshot[snapshot["代码"] == symbol]
                 if not row.empty:
+                    raw = row.iloc[0]
+                    received_at = now_shanghai().isoformat()
+                    vendor_value = next(
+                        (
+                            raw.get(column)
+                            for column in ("更新时间", "时间", "日期")
+                            if column in raw.index
+                            and str(raw.get(column) or "").strip()
+                        ),
+                        "",
+                    )
                     quotes[symbol] = {
-                        "price": float(row.iloc[0]["最新价"]),
-                        "bid1": float(row.iloc[0]["买一价"]),
-                        "ask1": float(row.iloc[0]["卖一价"]),
-                        "volume": float(row.iloc[0]["成交量"]),
-                        "amount": float(row.iloc[0]["成交额"]),
-                        "ts": now_shanghai().isoformat(),
+                        "price": float(raw["最新价"]),
+                        "bid1": float(raw["买一价"]),
+                        "ask1": float(raw["卖一价"]),
+                        "volume": float(raw["成交量"]),
+                        "amount": float(raw["成交额"]),
+                        **quote_timestamp_metadata(
+                            parse_vendor_timestamp(vendor_value), received_at
+                        ),
                     }
                 else:
                     require_fetched_mapping(self.name, "实时行情", symbol, None)
@@ -176,6 +221,45 @@ class AkshareSource(DataSource):
         self._cached_realtime_snapshot_ts = now_ts
         return df.copy()
 
+    def get_available_symbols(self) -> list[str]:
+        snapshot = self._realtime_snapshot()
+        if snapshot.empty or "代码" not in snapshot.columns:
+            raise DataError("akshare 全市场实时快照未返回可用标的")
+        return self._normalized_snapshot_symbols(snapshot)
+
+    def get_liquid_symbols(self, *, limit: int, min_amount: float) -> list[str]:
+        snapshot = self._realtime_snapshot()
+        if snapshot.empty:
+            raise DataError("akshare 全市场实时快照为空，无法筛选高流动性标的")
+        required = {"代码", "成交额"}
+        if not required.issubset(snapshot.columns):
+            missing = sorted(required - set(snapshot.columns))
+            raise DataError(f"akshare 全市场实时快照缺少字段: {missing}")
+
+        frame = snapshot.copy()
+        frame["symbol"] = frame["代码"].astype(str).str.strip()
+        frame["amount"] = pd.to_numeric(frame["成交额"], errors="coerce").fillna(0.0)
+        if "名称" in frame.columns:
+            name_series = frame["名称"].astype(str)
+            frame = frame[~name_series.str.contains("ST", case=False, na=False)]
+        frame = frame[
+            frame["symbol"].str.fullmatch(r"\d{6}")
+            & (frame["amount"] >= max(float(min_amount or 0.0), 0.0))
+        ].sort_values("amount", ascending=False)
+        row_limit = max(int(limit or 0), 0)
+        if row_limit > 0:
+            frame = frame.head(row_limit)
+        return frame["symbol"].tolist()
+
+    @staticmethod
+    def _normalized_snapshot_symbols(snapshot: pd.DataFrame) -> list[str]:
+        frame = snapshot.copy()
+        frame["symbol"] = frame["代码"].astype(str).str.strip()
+        if "名称" in frame.columns:
+            name_series = frame["名称"].astype(str)
+            frame = frame[~name_series.str.contains("ST", case=False, na=False)]
+        return frame.loc[frame["symbol"].str.fullmatch(r"\d{6}"), "symbol"].tolist()
+
     def fetch_index(
         self,
         index_codes: list[str],
@@ -187,10 +271,16 @@ class AkshareSource(DataSource):
         for code in index_codes:
             cached = None
             if use_cache:
-                cached = self.cache.get_index(code, start, end)
+                cached = self.cache.get_index(
+                    code,
+                    start,
+                    end,
+                    source=self.name,
+                    workload=self._cache_workload(),
+                )
 
             if cached is not None and not cached.empty:
-                out[code] = cached
+                out[code] = self._annotate_frame(cached)
                 continue
 
             df = require_fetched_frame(
@@ -203,9 +293,14 @@ class AkshareSource(DataSource):
             validated = self._validate_ohlcv(df, code)
 
             if use_cache:
-                self.cache.set_index(code, validated, source="akshare")
+                self.cache.set_index(
+                    code,
+                    validated,
+                    source=self.name,
+                    workload=self._cache_workload(),
+                )
 
-            out[code] = validated
+            out[code] = self._annotate_frame(validated)
         require_non_empty_fetch_result(self.name, "指数", index_codes, out)
         return out
 

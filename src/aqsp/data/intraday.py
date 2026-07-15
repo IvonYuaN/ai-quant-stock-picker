@@ -75,6 +75,13 @@ class IntradayService:
         guard_message = workload_guard_message(source_name, "live_short")
         if guard_message:
             raise DataError(guard_message)
+        if (
+            source_name not in _COMPOSITE_SOURCES
+            and source_role_for_workload(source_name, "live_short") != "realtime"
+        ):
+            raise DataError(
+                f"数据源 {source_name} 仅可作为 observation 层，不能形成正式盘中数据"
+            )
         self.source = source
         self.allow_historical_replay = bool(allow_historical_replay)
 

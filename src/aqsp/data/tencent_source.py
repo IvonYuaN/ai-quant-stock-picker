@@ -18,6 +18,10 @@ from aqsp.data.source import (
 from aqsp.data.cache import DataCache
 from aqsp.core.errors import DataError
 from aqsp.core.time import now_shanghai
+from aqsp.data.quote_metadata import (
+    parse_legacy_quote_timestamp,
+    quote_timestamp_metadata,
+)
 
 _logger = logging.getLogger("aqsp.data.tencent")
 
@@ -33,8 +37,8 @@ _MAX_RETRIES = 3
 _BACKOFF_BASE = 2.0
 
 
-def _get_market_prefix(symbol: str) -> str:
-    if symbol.startswith("6"):
+def _get_market_prefix(symbol: str, *, is_index: bool = False) -> str:
+    if is_index or symbol.startswith("6"):
         return "sh"
     return "sz"
 
@@ -51,6 +55,28 @@ class TencentSource(DataSource):
         )
         self.cache = cache or DataCache()
         self._last_request_ts: float = 0.0
+        self._active_workload: str | None = None
+
+    def set_workload(self, workload: str | None) -> None:
+        """Set provenance context for cache-backed runtime fetches."""
+        self._active_workload = workload
+
+    def _cache_workload(self) -> str | None:
+        return getattr(self, "_active_workload", None)
+
+    def _annotate_frame(self, frame: pd.DataFrame) -> pd.DataFrame:
+        frame.attrs["source_name"] = self.name
+        frame.attrs["source"] = self.name
+        workload = self._cache_workload()
+        if workload:
+            frame.attrs["workload"] = workload
+            frame.attrs["fetched_at"] = str(
+                frame.attrs.get("fetched_at") or now_shanghai().isoformat()
+            )
+            frame.attrs["timestamp_source"] = str(
+                frame.attrs.get("timestamp_source") or "received_at"
+            )
+        return frame
 
     def _throttle(self) -> None:
         elapsed = time.monotonic() - self._last_request_ts
@@ -68,10 +94,15 @@ class TencentSource(DataSource):
         out: dict[str, OhlcvFrame] = {}
         for symbol in symbols:
             cached = self.cache.get_ohlcv(
-                symbol, start, end, price_mode=adjust or "raw"
+                symbol,
+                start,
+                end,
+                price_mode=adjust or "raw",
+                source=self.name,
+                workload=self._cache_workload(),
             )
             if cached is not None and not cached.empty:
-                out[symbol] = cached
+                out[symbol] = self._annotate_frame(cached)
                 continue
 
             df = require_fetched_frame(
@@ -83,9 +114,13 @@ class TencentSource(DataSource):
             df = self._normalize_tencent_df(df, symbol)
             validated = self._validate_ohlcv(df, symbol)
             self.cache.set_ohlcv(
-                symbol, validated, source="tencent", price_mode=adjust or "raw"
+                symbol,
+                validated,
+                source=self.name,
+                price_mode=adjust or "raw",
+                workload=self._cache_workload(),
             )
-            out[symbol] = validated
+            out[symbol] = self._annotate_frame(validated)
         require_non_empty_fetch_result(self.name, "日线", symbols, out)
         return out
 
@@ -103,6 +138,23 @@ class TencentSource(DataSource):
                 self._fetch_tencent_intraday(symbol, period),
             )
         require_non_empty_fetch_result(self.name, "分时", symbols, out)
+        return out
+
+    def fetch_index_intraday(
+        self,
+        index_codes: list[str],
+        period: Literal["1", "5", "15", "30", "60"] = "5",
+    ) -> dict[str, OhlcvFrame]:
+        out = {
+            code: require_fetched_frame(
+                self.name,
+                "指数分时",
+                code,
+                self._fetch_tencent_intraday(code, period, is_index=True),
+            )
+            for code in index_codes
+        }
+        require_non_empty_fetch_result(self.name, "指数分时", index_codes, out)
         return out
 
     def fetch_realtime_quote(
@@ -128,9 +180,15 @@ class TencentSource(DataSource):
     ) -> dict[str, OhlcvFrame]:
         out: dict[str, OhlcvFrame] = {}
         for code in index_codes:
-            cached = self.cache.get_index(code, start, end)
+            cached = self.cache.get_index(
+                code,
+                start,
+                end,
+                source=self.name,
+                workload=self._cache_workload(),
+            )
             if cached is not None and not cached.empty:
-                out[code] = cached
+                out[code] = self._annotate_frame(cached)
                 continue
 
             df = require_fetched_frame(
@@ -141,8 +199,13 @@ class TencentSource(DataSource):
             )
             df = self._normalize_tencent_df(df, code)
             validated = self._validate_ohlcv(df, code)
-            self.cache.set_index(code, validated, source="tencent")
-            out[code] = validated
+            self.cache.set_index(
+                code,
+                validated,
+                source=self.name,
+                workload=self._cache_workload(),
+            )
+            out[code] = self._annotate_frame(validated)
         require_non_empty_fetch_result(self.name, "指数", index_codes, out)
         return out
 
@@ -198,35 +261,64 @@ class TencentSource(DataSource):
                     raise DataError(f"tencent 日线获取失败: {symbol}") from exc
         return None
 
-    def _fetch_tencent_intraday(self, symbol: str, period: str) -> pd.DataFrame | None:
+    def _fetch_tencent_intraday(
+        self, symbol: str, period: str, *, is_index: bool = False
+    ) -> pd.DataFrame | None:
         for attempt in range(_MAX_RETRIES):
             try:
                 self._throttle()
-                market = _get_market_prefix(symbol)
-                url = f"http://web.ifzq.gtimg.cn/appstock/app/minute/query?code={market}{symbol}"
+                market = _get_market_prefix(symbol, is_index=is_index)
+                market_symbol = f"{market}{symbol}"
+                url = f"http://web.ifzq.gtimg.cn/appstock/app/minute/query?code={market_symbol}"
                 response = self._session.get(url, timeout=10)
                 data = response.json()
                 if not data.get("data"):
                     return None
-                stock_data = data["data"].get(symbol, {})
+                stock_data = data["data"].get(market_symbol) or data["data"].get(
+                    symbol, {}
+                )
                 if not stock_data:
                     return None
-                minutes = stock_data.get("data", [])
+                minute_payload = stock_data.get("data", {})
+                minutes = (
+                    minute_payload.get("data", [])
+                    if isinstance(minute_payload, dict)
+                    else minute_payload
+                )
                 if not minutes:
                     return None
+                trade_date = now_shanghai().date().isoformat()
                 rows = []
+                previous_price: float | None = None
+                previous_volume = 0.0
+                previous_amount = 0.0
                 for minute in minutes:
-                    if len(minute) >= 6:
-                        rows.append(
-                            {
-                                "date": minute[0],
-                                "open": float(minute[1]),
-                                "close": float(minute[2]),
-                                "high": float(minute[3]),
-                                "low": float(minute[4]),
-                                "volume": float(minute[5]),
-                            }
-                        )
+                    parts = str(minute).split()
+                    if len(parts) < 4:
+                        continue
+                    minute_time = parts[0]
+                    price = float(parts[1])
+                    cumulative_volume = float(parts[2])
+                    cumulative_amount = float(parts[3])
+                    bar_open = price if previous_price is None else previous_price
+                    volume = max(cumulative_volume - previous_volume, 0.0)
+                    amount = max(cumulative_amount - previous_amount, 0.0)
+                    rows.append(
+                        {
+                            "date": f"{trade_date} {minute_time[:2]}:{minute_time[2:]}",
+                            "open": bar_open,
+                            "close": price,
+                            "high": max(bar_open, price),
+                            "low": min(bar_open, price),
+                            "volume": volume,
+                            "amount": amount,
+                        }
+                    )
+                    previous_price = price
+                    previous_volume = cumulative_volume
+                    previous_amount = cumulative_amount
+                if not rows:
+                    return None
                 df = pd.DataFrame(rows)
                 df["symbol"] = symbol
                 df["name"] = symbol
@@ -270,6 +362,7 @@ class TencentSource(DataSource):
                     if parts[TENCENT_QUOTE_FIELD_LIMIT_DOWN]
                     else None
                 )
+                received_at = now_shanghai().isoformat()
                 return {
                     "price": price,
                     "bid1": bid1,
@@ -278,7 +371,9 @@ class TencentSource(DataSource):
                     "amount": amount,
                     "limit_up": limit_up,
                     "limit_down": limit_down,
-                    "ts": now_shanghai().isoformat(),
+                    **quote_timestamp_metadata(
+                        parse_legacy_quote_timestamp(parts), received_at
+                    ),
                 }
             except Exception as exc:
                 if attempt < _MAX_RETRIES - 1:

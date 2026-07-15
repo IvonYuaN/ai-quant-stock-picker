@@ -16,6 +16,10 @@ from aqsp.data.source import (
     require_non_empty_fetch_result,
 )
 from aqsp.data.cache import DataCache
+from aqsp.data.quote_metadata import (
+    parse_legacy_quote_timestamp,
+    quote_timestamp_metadata,
+)
 from aqsp.core.errors import DataError
 from aqsp.core.time import now_shanghai
 
@@ -39,6 +43,28 @@ class SinaSource(DataSource):
         )
         self.cache = cache or DataCache()
         self._last_request_ts: float = 0.0
+        self._active_workload: str | None = None
+
+    def set_workload(self, workload: str | None) -> None:
+        """Set provenance context for cache-backed runtime fetches."""
+        self._active_workload = workload
+
+    def _cache_workload(self) -> str | None:
+        return getattr(self, "_active_workload", None)
+
+    def _annotate_frame(self, frame: pd.DataFrame) -> pd.DataFrame:
+        frame.attrs["source_name"] = self.name
+        frame.attrs["source"] = self.name
+        workload = self._cache_workload()
+        if workload:
+            frame.attrs["workload"] = workload
+            frame.attrs["fetched_at"] = str(
+                frame.attrs.get("fetched_at") or now_shanghai().isoformat()
+            )
+            frame.attrs["timestamp_source"] = str(
+                frame.attrs.get("timestamp_source") or "received_at"
+            )
+        return frame
 
     def _throttle(self) -> None:
         elapsed = time.monotonic() - self._last_request_ts
@@ -56,10 +82,15 @@ class SinaSource(DataSource):
         out: dict[str, OhlcvFrame] = {}
         for symbol in symbols:
             cached = self.cache.get_ohlcv(
-                symbol, start, end, price_mode=adjust or "raw"
+                symbol,
+                start,
+                end,
+                price_mode=adjust or "raw",
+                source=self.name,
+                workload=self._cache_workload(),
             )
             if cached is not None and not cached.empty:
-                out[symbol] = cached
+                out[symbol] = self._annotate_frame(cached)
                 continue
 
             df = require_fetched_frame(
@@ -71,9 +102,13 @@ class SinaSource(DataSource):
             df = self._normalize_sina_df(df, symbol)
             validated = self._validate_ohlcv(df, symbol)
             self.cache.set_ohlcv(
-                symbol, validated, source="sina", price_mode=adjust or "raw"
+                symbol,
+                validated,
+                source=self.name,
+                price_mode=adjust or "raw",
+                workload=self._cache_workload(),
             )
-            out[symbol] = validated
+            out[symbol] = self._annotate_frame(validated)
         require_non_empty_fetch_result(self.name, "日线", symbols, out)
         return out
 
@@ -91,6 +126,23 @@ class SinaSource(DataSource):
                 self._fetch_sina_intraday(symbol, period),
             )
         require_non_empty_fetch_result(self.name, "分时", symbols, out)
+        return out
+
+    def fetch_index_intraday(
+        self,
+        index_codes: list[str],
+        period: Literal["1", "5", "15", "30", "60"] = "5",
+    ) -> dict[str, OhlcvFrame]:
+        out = {
+            code: require_fetched_frame(
+                self.name,
+                "指数分时",
+                code,
+                self._fetch_sina_intraday(code, period, is_index=True),
+            )
+            for code in index_codes
+        }
+        require_non_empty_fetch_result(self.name, "指数分时", index_codes, out)
         return out
 
     def fetch_realtime_quote(
@@ -116,9 +168,15 @@ class SinaSource(DataSource):
     ) -> dict[str, OhlcvFrame]:
         out: dict[str, OhlcvFrame] = {}
         for code in index_codes:
-            cached = self.cache.get_index(code, start, end)
+            cached = self.cache.get_index(
+                code,
+                start,
+                end,
+                source=self.name,
+                workload=self._cache_workload(),
+            )
             if cached is not None and not cached.empty:
-                out[code] = cached
+                out[code] = self._annotate_frame(cached)
                 continue
 
             df = require_fetched_frame(
@@ -129,8 +187,13 @@ class SinaSource(DataSource):
             )
             df = self._normalize_sina_df(df, code)
             validated = self._validate_ohlcv(df, code)
-            self.cache.set_index(code, validated, source="sina")
-            out[code] = validated
+            self.cache.set_index(
+                code,
+                validated,
+                source=self.name,
+                workload=self._cache_workload(),
+            )
+            out[code] = self._annotate_frame(validated)
         require_non_empty_fetch_result(self.name, "指数", index_codes, out)
         return out
 
@@ -177,11 +240,13 @@ class SinaSource(DataSource):
                     raise DataError(f"sina 日线获取失败: {symbol}") from exc
         return None
 
-    def _fetch_sina_intraday(self, symbol: str, period: str) -> pd.DataFrame | None:
+    def _fetch_sina_intraday(
+        self, symbol: str, period: str, *, is_index: bool = False
+    ) -> pd.DataFrame | None:
         for attempt in range(_MAX_RETRIES):
             try:
                 self._throttle()
-                market = "sh" if symbol.startswith("6") else "sz"
+                market = "sh" if is_index or symbol.startswith("6") else "sz"
                 url = "http://money.finance.sina.com.cn/quotes_service/api/json_v2.php/CN_MarketData.getKLineData"
                 scale_map = {
                     "1": "60",
@@ -234,13 +299,16 @@ class SinaSource(DataSource):
                 parts = content.split(",")
                 if len(parts) < 11:
                     return None
+                received_at = now_shanghai().isoformat()
                 return {
                     "price": float(parts[3]),
                     "bid1": float(parts[10]),
                     "ask1": float(parts[20]),
                     "volume": float(parts[8]),
                     "amount": float(parts[9]),
-                    "ts": now_shanghai().isoformat(),
+                    **quote_timestamp_metadata(
+                        parse_legacy_quote_timestamp(parts), received_at
+                    ),
                 }
             except Exception as exc:
                 if attempt < _MAX_RETRIES - 1:
