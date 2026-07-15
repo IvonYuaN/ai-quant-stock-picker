@@ -7,7 +7,7 @@
 set -euo pipefail
 
 PROJECT_ROOT="${AQSP_PROJECT_ROOT:-/opt/aqsp}"
-VENV_DIR="${PROJECT_ROOT}/.venv"
+VENV_DIR="${AQSP_INTRADAY_VENV_DIR:-${PROJECT_ROOT}/.venv}"
 PYTHON_BIN="${VENV_DIR}/bin/python3"
 LOG_DIR="${PROJECT_ROOT}/logs/intraday"
 RESULT_LOG="${LOG_DIR}/intraday-$(date +%Y-%m-%d).log"
