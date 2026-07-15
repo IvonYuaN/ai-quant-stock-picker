@@ -318,6 +318,7 @@ def write_home_dashboard_snapshot(
     if len(payload.encode("utf-8")) > MAX_HOME_SNAPSHOT_BYTES:
         raise ValueError("home snapshot exceeds the 64 KiB byte budget")
     atomic_write_text(path, payload)
+    _set_runtime_snapshot_mode(path)
 
 
 def write_home_snapshot_index(path: str | Path, index: HomeSnapshotIndex) -> None:
@@ -335,6 +336,17 @@ def write_home_snapshot_index(path: str | Path, index: HomeSnapshotIndex) -> Non
     if len(payload.encode("utf-8")) > MAX_HOME_SNAPSHOT_BYTES:
         raise ValueError("home snapshot index exceeds the 64 KiB byte budget")
     atomic_write_text(path, payload)
+    _set_runtime_snapshot_mode(path)
+
+
+def _set_runtime_snapshot_mode(path: str | Path) -> None:
+    """Keep atomically replaced dashboard files readable by the service group.
+
+    Production writes are performed by a different account than the read-only
+    Vibe-Research API. The runtime directory supplies the group ownership; the
+    file mode keeps the payload private from all other users.
+    """
+    Path(path).chmod(0o640)
 
 
 def load_home_dashboard_snapshot(path: str | Path) -> HomeDashboardSnapshot | None:

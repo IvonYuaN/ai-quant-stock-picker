@@ -94,6 +94,10 @@ SNAPSHOT_INDEX_PATH="$(dirname "$SNAPSHOT_PATH")/home_dashboard_snapshot_index.j
     || { echo "venv 和 EnvironmentFile 必须是绝对路径。" >&2; exit 1; }
 [[ "$SNAPSHOT_PATH" = /* ]] \
     || { echo "AQSP_RESEARCH_SURFACE_SNAPSHOT 必须是绝对路径: ${SNAPSHOT_PATH:-未设置}" >&2; exit 1; }
+SNAPSHOT_DIR="$(dirname "$SNAPSHOT_PATH")"
+install -d -o root -g "$SERVICE_GROUP" -m 2750 "$SNAPSHOT_DIR"
+chown root:"$SERVICE_GROUP" "$SNAPSHOT_DIR"
+chmod 2750 "$SNAPSHOT_DIR"
 [[ -f "$SNAPSHOT_PATH" && -r "$SNAPSHOT_PATH" ]] \
     || { echo "Vibe 用户不可读 AQSP 快照: ${SNAPSHOT_PATH}" >&2; exit 1; }
 

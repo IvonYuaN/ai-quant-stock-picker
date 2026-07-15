@@ -107,6 +107,14 @@ def test_home_snapshot_round_trips_bounded_home_payload(tmp_path) -> None:
     assert json.loads(source.read_text(encoding="utf-8"))["schema_version"] == "v1"
 
 
+def test_home_snapshot_writes_service_group_readable_mode(tmp_path) -> None:
+    source = tmp_path / "home.json"
+
+    write_home_dashboard_snapshot(source, _snapshot())
+
+    assert source.stat().st_mode & 0o777 == 0o640
+
+
 def test_home_snapshot_prefers_structured_news_artifact(monkeypatch, tmp_path) -> None:
     path = tmp_path / "news.json"
     report = CatalystReport(
@@ -396,6 +404,7 @@ def test_home_snapshot_write_uses_shared_atomic_writer(monkeypatch, tmp_path) ->
 
     monkeypatch.setattr(home_snapshot, "atomic_write_text", _atomic_write)
     target = tmp_path / "home.json"
+    target.touch()
 
     write_home_dashboard_snapshot(target, _snapshot())
 
