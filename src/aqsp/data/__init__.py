@@ -118,11 +118,12 @@ def fetch_with_source(
     days: int = 260,
     adjust: str = "",
     benchmark_symbol: str | None = None,
+    end_date: date | None = None,
 ) -> dict[str, pd.DataFrame]:
     """Fetch OHLCV using an arbitrary DataSource."""
-    end = today_shanghai()
+    end = end_date or today_shanghai()
     start = end - timedelta(days=max(days * 2, 365))
-    out = source.fetch_daily(symbols, start, end, adjust)
+    out = _fetch_daily_with_symbol_isolation(source, symbols, start, end, adjust)
     requested = {str(symbol) for symbol in symbols}
     returned = {
         str(symbol)
@@ -143,8 +144,63 @@ def fetch_with_source(
     )
     missing = sorted(requested - returned)
     if missing:
-        raise DataError(f"数据源 {source.name} 日线获取不完整: 缺少 {missing}")
+        _logger.warning(
+            "数据源 %s 日线获取不完整，跳过 %d/%d 个标的: %s",
+            source.name,
+            len(missing),
+            len(requested),
+            missing[:20],
+        )
     return out
+
+
+def _fetch_daily_with_symbol_isolation(
+    source: DataSource,
+    symbols: list[str],
+    start: date,
+    end: date,
+    adjust: str,
+) -> dict[str, pd.DataFrame]:
+    try:
+        out = source.fetch_daily(symbols, start, end, adjust)
+    except Exception as exc:
+        _logger.warning(
+            "数据源 %s 批量日线获取失败，改为逐标的隔离: %s",
+            source.name,
+            exc,
+        )
+        out = {}
+    missing = _missing_valid_daily_symbols(out, symbols)
+    if not missing:
+        return out
+
+    for symbol in missing:
+        try:
+            single = source.fetch_daily([symbol], start, end, adjust)
+        except Exception as exc:
+            _logger.warning(
+                "数据源 %s 日线跳过坏标的 %s: %s",
+                source.name,
+                symbol,
+                exc,
+            )
+            continue
+        frame = single.get(symbol)
+        if isinstance(frame, pd.DataFrame) and not frame.empty:
+            out[symbol] = frame
+    return out
+
+
+def _missing_valid_daily_symbols(
+    out: dict[str, pd.DataFrame],
+    symbols: list[str],
+) -> list[str]:
+    returned = {
+        str(symbol)
+        for symbol, frame in out.items()
+        if symbol and isinstance(frame, pd.DataFrame) and not frame.empty
+    }
+    return [str(symbol) for symbol in symbols if str(symbol) not in returned]
 
 
 __all__ = [
