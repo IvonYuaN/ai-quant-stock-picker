@@ -13,7 +13,9 @@ from aqsp.utils.jsonl_io import atomic_write_text
 DEFAULT_PUBLIC_DASHBOARD_URL = "https://lh.ifidy.cn"
 CANONICAL_HEALTH_PATH = "/api/health"
 LEGACY_HEALTH_PATH = "/_stcore/health"
-CANONICAL_ENTRY_MARKERS = ("Vibe-Research", "AQSP 研究工作台")
+# The static shell uses the full product title; the hydrated React page keeps
+# the product name and AQSP provenance in separate visible regions.
+CANONICAL_ENTRY_MARKERS = ("Vibe-Research", "AQSP")
 LEGACY_ENTRY_MARKERS = (
     "AQSP 日期任务研究台",
     "短线决策看板",
