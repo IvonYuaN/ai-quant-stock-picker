@@ -11,8 +11,31 @@ from aqsp.data.source_health import read_source_auth, record_source_auth
 from aqsp.utils.env import read_project_env_value
 
 WorkloadId = Literal["live_short", "walkforward", "pit"]
+SourceRole = Literal["realtime", "observation", "historical"]
+
+_COMPOSITE_SOURCE_IDS = frozenset({"auto", "local_first", "online_first", "multi"})
 
 _WORKLOAD_FIT: dict[str, dict[WorkloadId, str]] = {
+    "auto": {
+        "live_short": "candidate",
+        "walkforward": "avoid",
+        "pit": "avoid",
+    },
+    "local_first": {
+        "live_short": "candidate",
+        "walkforward": "avoid",
+        "pit": "avoid",
+    },
+    "online_first": {
+        "live_short": "primary",
+        "walkforward": "fallback_only",
+        "pit": "avoid",
+    },
+    "multi": {
+        "live_short": "candidate",
+        "walkforward": "candidate",
+        "pit": "avoid",
+    },
     "eastmoney": {
         "live_short": "primary",
         "walkforward": "fallback_only",
@@ -80,6 +103,14 @@ _WORKLOAD_FIT: dict[str, dict[WorkloadId, str]] = {
     },
 }
 
+_ALLOWED_WORKLOAD_FITS: dict[WorkloadId, frozenset[str]] = {
+    "live_short": frozenset({"primary", "fallback", "candidate", "future_primary"}),
+    "walkforward": frozenset(
+        {"primary", "fallback", "fallback_only", "candidate", "supplement"}
+    ),
+    "pit": frozenset({"primary", "candidate", "supplement"}),
+}
+
 
 @dataclass(frozen=True)
 class SourceReadinessSnapshot:
@@ -102,6 +133,50 @@ def workload_fit_for_source(source_id: str) -> dict[WorkloadId, str]:
                 "pit": "unknown",
             },
         )
+    )
+
+
+def source_supports_workload(source_id: str, workload: WorkloadId) -> bool:
+    fit = workload_fit_for_source(source_id).get(workload, "unknown")
+    return fit in _ALLOWED_WORKLOAD_FITS[workload]
+
+
+def source_role_for_workload(source_id: str, workload: WorkloadId) -> SourceRole | None:
+    """Return the role a source may play for one workload.
+
+    A ``candidate`` feed is useful for research and observation, but it is not
+    eligible to form a live_short recommendation until promoted by validation.
+    """
+    if source_id in _COMPOSITE_SOURCE_IDS:
+        return None
+    fit = workload_fit_for_source(source_id).get(workload, "unknown")
+    if fit not in _ALLOWED_WORKLOAD_FITS[workload]:
+        return None
+    if workload != "live_short":
+        return "historical"
+    if fit in {"primary", "fallback", "future_primary"}:
+        return "realtime"
+    if fit == "candidate":
+        return "observation"
+    return None
+
+
+def recommended_sources_for_workload(workload: WorkloadId) -> tuple[str, ...]:
+    allowed = _ALLOWED_WORKLOAD_FITS[workload]
+    return tuple(
+        source_id
+        for source_id, fits in _WORKLOAD_FIT.items()
+        if fits.get(workload, "unknown") in allowed
+    )
+
+
+def workload_guard_message(source_id: str, workload: WorkloadId) -> str:
+    fit = workload_fit_for_source(source_id).get(workload, "unknown")
+    if fit in _ALLOWED_WORKLOAD_FITS[workload]:
+        return ""
+    recommended = " / ".join(recommended_sources_for_workload(workload)[:6])
+    return (
+        f"数据源 {source_id} 不适合 {workload}（fit={fit}）。 推荐改用: {recommended}"
     )
 
 
