@@ -85,8 +85,10 @@ else
 fi
 rg -q 'StandardOutput=append:.*/api\.log' "${SYSTEMD_DIR}/aqsp-vibe-research-api.service"
 rg -q 'StandardOutput=append:.*/frontend\.log' "${SYSTEMD_DIR}/aqsp-vibe-research-preview.service"
-rg -q 'ExecStartPre=.*--port-guard' "${SYSTEMD_DIR}/aqsp-vibe-research-api.service"
-rg -q 'ExecStartPre=.*--port-guard' "${SYSTEMD_DIR}/aqsp-vibe-research-preview.service"
+rg -q 'ExecStartPre=/usr/bin/env VIBE_RESEARCH_PYTHON_BIN=.*--port-guard' \
+    "${SYSTEMD_DIR}/aqsp-vibe-research-api.service"
+rg -q 'ExecStartPre=/usr/bin/env VIBE_RESEARCH_PYTHON_BIN=.*VIBE_RESEARCH_NPM_BIN=.*--port-guard' \
+    "${SYSTEMD_DIR}/aqsp-vibe-research-preview.service"
 
 if rg -n '(^|[;&|[:space:]])nohup([[:space:]]|$)|pkill|killall|(^|[;&|[:space:]])ssh[[:space:]]' \
     "${PROJECT_ROOT}/scripts/health_vibe_research.sh" \

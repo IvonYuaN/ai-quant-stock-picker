@@ -89,6 +89,7 @@ set +a
 DATA_DIR="${VR_DATA_DIR:-$DATA_DIR}"
 install -d -o "$SERVICE_USER" -g "$SERVICE_GROUP" "$LOG_DIR" "$DATA_DIR"
 SNAPSHOT_PATH="${AQSP_RESEARCH_SURFACE_SNAPSHOT:-}"
+SNAPSHOT_INDEX_PATH="$(dirname "$SNAPSHOT_PATH")/home_dashboard_snapshot_index.json"
 [[ "$VENV_DIR" = /* && "$ENV_FILE" = /* ]] \
     || { echo "venv 和 EnvironmentFile 必须是绝对路径。" >&2; exit 1; }
 [[ "$SNAPSHOT_PATH" = /* ]] \
@@ -96,7 +97,10 @@ SNAPSHOT_PATH="${AQSP_RESEARCH_SURFACE_SNAPSHOT:-}"
 [[ -f "$SNAPSHOT_PATH" && -r "$SNAPSHOT_PATH" ]] \
     || { echo "Vibe 用户不可读 AQSP 快照: ${SNAPSHOT_PATH}" >&2; exit 1; }
 
-if ! runuser -u "$SERVICE_USER" -- test -r "$SNAPSHOT_PATH"; then
+if ! runuser -u "$SERVICE_USER" -- test -r "$SNAPSHOT_PATH" || {
+    [[ -f "$SNAPSHOT_INDEX_PATH" ]] &&
+    ! runuser -u "$SERVICE_USER" -- test -r "$SNAPSHOT_INDEX_PATH"
+}; then
     if ! command -v setfacl >/dev/null 2>&1; then
         echo "隔离用户无法读取 600 快照，且系统没有 setfacl: ${SNAPSHOT_PATH}" >&2
         echo "请安装 acl 后重试；需要 u:${SERVICE_USER}:r-- 文件 ACL 和父目录 --x ACL。" >&2
@@ -107,11 +111,16 @@ if ! runuser -u "$SERVICE_USER" -- test -r "$SNAPSHOT_PATH"; then
         setfacl -m "u:${SERVICE_USER}:--x" "$snapshot_dir"
         snapshot_dir="$(dirname "$snapshot_dir")"
     done
-    setfacl -m "d:u:${SERVICE_USER}:r--" "$(dirname "$SNAPSHOT_PATH")"
-    setfacl -m "u:${SERVICE_USER}:r--" "$SNAPSHOT_PATH"
-    runuser -u "$SERVICE_USER" -- test -r "$SNAPSHOT_PATH" \
+    setfacl -m "d:u:${SERVICE_USER}:r--,d:m:r--" "$(dirname "$SNAPSHOT_PATH")"
+    setfacl -m "u:${SERVICE_USER}:r--,m:r--" "$SNAPSHOT_PATH"
+    if [[ -f "$SNAPSHOT_INDEX_PATH" ]]; then
+        setfacl -m "u:${SERVICE_USER}:r--,m:r--" "$SNAPSHOT_INDEX_PATH"
+    fi
+    runuser -u "$SERVICE_USER" -- test -r "$SNAPSHOT_PATH" &&
+        { [[ ! -f "$SNAPSHOT_INDEX_PATH" ]] ||
+          runuser -u "$SERVICE_USER" -- test -r "$SNAPSHOT_INDEX_PATH"; } \
         || {
-            echo "已尝试 ACL，但隔离用户仍无法读取快照: ${SNAPSHOT_PATH}" >&2
+            echo "已尝试 ACL，但隔离用户仍无法读取快照或日期索引: ${SNAPSHOT_PATH}" >&2
             echo "请检查: getfacl ${SNAPSHOT_PATH}" >&2
             exit 1
         }
