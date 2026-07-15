@@ -1,4 +1,4 @@
-# AI 量化选股本地工作台
+# AQSP 量化选股研究工作台
 
 本项目是一个 **local-first A 股量化选股工作台**：代码放 GitHub 做版本同步，数据、账本、日志、Dashboard 和密钥留在本地或私有服务器。它不是交易机器人，也不接券商下单接口；它只负责把每天的候选股、证据链、风险提示、Portfolio Manager 裁决、复盘和通知稳定地产出给人决策。
 
@@ -12,6 +12,7 @@
 
 - 主运行环境：本地 Mac / 本地服务器
 - 主数据位置：本地私有数据目录、外部数据源、运行时缓存
+- 正式看板：AQSP React + FastAPI；前端监听 `127.0.0.1:5899`，API 监听 `127.0.0.1:8900`
 - GitHub 作用：备份代码、保存文档、可选跑 Actions
 - 不上传：本地大数据、账本、缓存、私钥、token、运行日志
 
@@ -46,11 +47,15 @@ python -m aqsp.cli screen --symbols 600519,300750 --mode close --limit 20
 python -m aqsp.cli screen --pool zz500 --mode close --limit 20
 ```
 
-如果要启动研究工作台版 Streamlit dashboard，先补 Web 依赖：
+如果要在本地启动 AQSP React + FastAPI 看板：
 
 ```bash
-pip install -e ".[web]"
+pip install -e ".[api]"
+(cd frontend && npm ci)
+bash scripts/start_vibe_research.sh
 ```
+
+默认地址为 `http://127.0.0.1:5899`。`start_vibe_research.sh` 是兼容历史内部命名的启动脚本，实际启动的是 AQSP FastAPI 与 React 看板；正式服务器使用对应的 systemd target。
 
 定时任务同款命令。本地有 TDX `private_data/tdx` 时，`AQSP_SYMBOLS` 留空会先按最新成交额从全市场预筛 `AQSP_MAX_UNIVERSE` 只，再进入策略评分；显式传 `--symbols` 则只跑指定小池。默认 100 只是为了本地每日定时稳定，手动研究可提高到 300/800/1500：
 
@@ -74,25 +79,7 @@ python -m aqsp.cli screen --csv data/sample_ohlcv.csv --mode close --limit 10
 python -m aqsp.cli screen --csv data/sample_ohlcv.csv --mode open --report reports/open.md
 ```
 
-启动当前 Streamlit 前端面板（固定端口 `127.0.0.1:8501`，默认不打开前台浏览器）：
-
-```bash
-python3 scripts/open_dashboard.py
-```
-
-人工要打开系统浏览器时必须显式授权：
-
-```bash
-AQSP_ALLOW_FOREGROUND_BROWSER=1 python3 scripts/open_dashboard.py --open-browser
-```
-
-只刷新页面文件、不启动服务：
-
-```bash
-python3 scripts/open_dashboard.py --render-only
-```
-
-页面会展示当天候选、消息汇总、委员会结果和按日期回看。默认地址固定为 `http://127.0.0.1:8501`；`--render-only` 仅用于生成被流水线读取的静态产物，`dist/` 已被忽略，不会上传 GitHub。
+页面会展示当天候选、消息汇总、多 Agent 讨论和按日期回看。生产域名只反代 AQSP React 与 FastAPI；离线归档产物不作为公网根入口。
 
 验证 Tushare PIT 接口：
 
@@ -163,7 +150,7 @@ python -m aqsp.cli pit --kind disclosure_dates --symbols 600519,300750 --start 2
 推荐把代码放 GitHub 备份，把每日结果留在你自己的机器或服务器:
 
 - GitHub Actions 定时跑 `aqsp run`。
-- `aqsp dashboard` 启动当前 Streamlit 看板；`aqsp dashboard-static` / `scripts/render_dashboard.py` 仅生成离线归档 `dist/dashboard/archive.html`，约定的 `dist/dashboard/index.html` 只负责跳转到当前公网 Dashboard。
+- `bash scripts/start_vibe_research.sh` 启动当前 AQSP React + FastAPI 看板；`aqsp dashboard-static` / `scripts/render_dashboard.py` 仅生成离线归档 `dist/dashboard/archive.html`，不作为公网根入口。
 - `scripts/export_dashboard_db.py` 生成 `dist/dashboard/aqsp.db`。
 - `scripts/deploy_dashboard.sh` 通过 SSH/rsync 发布到服务器。
 

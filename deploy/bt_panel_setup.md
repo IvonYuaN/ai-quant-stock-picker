@@ -15,8 +15,9 @@ AQSP 在服务器上的生产定时统一放在 **宝塔面板 -> 计划任务**
 - 代码目录：`/opt/aqsp`
 - 虚拟环境：`/opt/aqsp/.venv/bin/python3`
 - 私有配置：`/opt/aqsp/.env`
-- Dashboard：`aqsp-dashboard.service` 监听 `127.0.0.1:8501`
-- 公网入口：Nginx/宝塔反代到 `127.0.0.1:8501`
+- 正式看板：`aqsp-vibe-research.target`，包含 FastAPI `127.0.0.1:8900` 和 React/Vite `127.0.0.1:5899`
+- 公网入口：Nginx/宝塔只反代 AQSP React 与 FastAPI，不暴露应用端口
+- 历史回滚：旧 `aqsp-dashboard.service`/`127.0.0.1:8501` 仅在正式入口故障时临时恢复，不是默认生产路径
 
 ## 计划任务
 
@@ -117,4 +118,4 @@ tail -120 /opt/aqsp/logs/bt/bt-monitor-$(date +%Y-%m-%d).log
 - 不要在服务器直接开发受 Git 管理代码。
 - 不要把 `/opt/aqsp/.env`、`data/`、`logs/`、`reports/`、`dist/` 推回 GitHub。
 - 不要用 `daily_pipeline.sh` 替代 `bt_task.sh daily` 配到宝塔。
-- 不要把 Streamlit 端口直接暴露公网，只允许 Nginx/宝塔反代到 `127.0.0.1:8501`。
+- 不要把 AQSP 的 `5899`/`8900` 或历史 `8501` 端口直接暴露公网，只允许 Nginx/宝塔代理域名入口；`8501` 仅用于历史故障回滚。
