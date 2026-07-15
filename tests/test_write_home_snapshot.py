@@ -166,6 +166,50 @@ def test_write_home_snapshot_builds_bounded_advisory_only_payload(monkeypatch) -
     assert snapshot.stale_after == "2026-07-10T15:31:00+08:00"
 
 
+def test_write_home_snapshot_keeps_realtime_context_when_news_report_is_missing(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("AQSP_MARKET_CONTEXT_LIVE_SOURCE", "true")
+    monkeypatch.setattr(
+        write_home_snapshot,
+        "now_shanghai",
+        lambda: datetime(
+            2026,
+            7,
+            10,
+            15,
+            0,
+            tzinfo=ZoneInfo("Asia/Shanghai"),
+        ),
+    )
+    monkeypatch.setattr(
+        write_home_snapshot,
+        "_snapshot_realtime_cross_market",
+        lambda _task_id: {
+            "SPX": {
+                "value": 5500.0,
+                "change_pct": 0.8,
+                "observed_at": "2026-07-10T14:59:00+08:00",
+                "fetched_at": "2026-07-10T15:00:00+08:00",
+                "source": "test-feed",
+                "source_url": "https://example.test/spx",
+                "timestamp_source": "vendor",
+            }
+        },
+    )
+
+    snapshot = write_home_snapshot.build_home_snapshot(
+        _Provider(), signal_date="2026-07-10", task_id="intraday"
+    )
+
+    assert snapshot.market_context is not None
+    assert snapshot.market_context.cross_market == ()
+    assert any(
+        line.startswith("实时跨市:")
+        for line in snapshot.market_context.summary_lines
+    )
+
+
 def test_write_home_snapshot_normalizes_legacy_news_and_cross_market_timestamps(
     monkeypatch, tmp_path
 ) -> None:

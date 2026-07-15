@@ -807,19 +807,26 @@ def build_home_snapshot(
     message_status, messages, catalyst_report = _parse_news_report_payload(
         selected_date
     )
-    market_context = None
-    if catalyst_report is not None:
-        artifact = build_market_context_artifact(
-            catalyst_report=catalyst_report,
-            realtime_cross_market=_snapshot_realtime_cross_market(selected_task_id),
+    realtime_cross_market = _snapshot_realtime_cross_market(selected_task_id)
+    if catalyst_report is None:
+        # A failed or empty news feed must not erase independently fetched
+        # realtime macro observations from the intraday research surface.
+        catalyst_report = CatalystReport(
+            date=selected_date,
+            generated_at=generated_at,
+            events=(),
+            source_status="empty",
+            event_status="no_valid_news",
         )
-        market_context = _snapshot_market_context(
-            artifact,
-            status_override=(message_status if not artifact.catalyst_events else ""),
-        )
-        messages = _append_cross_market_messages(messages, artifact)
-    else:
-        market_context = _empty_snapshot_market_context(message_status)
+    artifact = build_market_context_artifact(
+        catalyst_report=catalyst_report,
+        realtime_cross_market=realtime_cross_market,
+    )
+    market_context = _snapshot_market_context(
+        artifact,
+        status_override=(message_status if not artifact.catalyst_events else ""),
+    )
+    messages = _append_cross_market_messages(messages, artifact)
     debate_missing = bool(getattr(payload, "debates", ()) or ()) and not debates
     summaries = _bounded_unique_text(
         (
