@@ -78,7 +78,8 @@ def test_intraday_service():
     assert "600000" in bars
     assert len(bars["600000"]) == 2
     assert bars["600000"].attrs["source"] == "eastmoney"
-    assert bars["600000"].attrs["workload"] == "live_short"
+    assert bars["600000"].attrs["workload"] == "walkforward"
+    assert bars["600000"].attrs["freshness"] == "historical"
     assert bars["600000"].attrs["timestamp_source"] == "bar_time"
     assert isinstance(bars["600000"].attrs["provenance"], FrameProvenance)
 

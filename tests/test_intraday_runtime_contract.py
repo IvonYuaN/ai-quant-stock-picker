@@ -78,6 +78,7 @@ def test_intraday_runtime_contract_uses_configured_benchmark_and_quality_gate() 
     )
     assert 'LOCK_INFO_FILE="${LOCK_DIR}/meta.env"' in script
     assert "lock_is_stale" in script
+    assert 'rm -f "$LOCK_INFO_FILE"' in script
     assert "历史源不得进入盘中主链" in script
     assert "DEBATE_BACKFILL_STALE_MINUTES" in script
     assert "DEBATE_LOCK_PID=%q" in script
@@ -191,6 +192,13 @@ if args[:2] == ["-m", "aqsp"]:
         "data_quality_status",
         "data_quality_alerts",
         "run_data_lag_days",
+        "run_requested_source",
+        "run_actual_source",
+        "run_source_coverage_tier",
+        "run_source_local_status",
+        "run_fallback_used",
+        "run_workload",
+        "run_data_latest_trade_date",
         "run_source_freshness_tier",
     ]
     csv_path.parent.mkdir(parents=True, exist_ok=True)
@@ -202,6 +210,13 @@ if args[:2] == ["-m", "aqsp"]:
                 "symbol": "__RUN__",
                 "name": "run_event",
                 "run_data_lag_days": "0",
+                "run_requested_source": "online_first",
+                "run_actual_source": "eastmoney",
+                "run_source_coverage_tier": "multi_dimensional",
+                "run_source_local_status": "not_required",
+                "run_fallback_used": "false",
+                "run_workload": "live_short",
+                "run_data_latest_trade_date": "2026-07-15",
                 "run_source_freshness_tier": ""
                 if os.getenv("AQSP_TEST_UNKNOWN_FRESHNESS")
                 else "realtime",
@@ -304,6 +319,51 @@ def _intraday_test_env(
     }
 
 
+def test_intraday_refresh_releases_lock_when_run_completes(tmp_path: Path) -> None:
+    venv_bin = tmp_path / ".venv" / "bin"
+    venv_bin.mkdir(parents=True)
+    utility_bin = tmp_path / "bin"
+    utility_bin.mkdir()
+    _write_timeout_stub(utility_bin / "timeout")
+    args_path = tmp_path / "cli_args.json"
+    _write_python_stub(venv_bin / "python3", PROJECT_ROOT, args_path)
+
+    env = os.environ.copy()
+    env.update(
+        {
+            "AQSP_PROJECT_ROOT": str(tmp_path),
+            "AQSP_TEST_REPO": str(PROJECT_ROOT),
+            "AQSP_TEST_ARGS": str(args_path),
+            "AQSP_INTRADAY_REQUIRE_MARKET_HOURS": "false",
+            "AQSP_INTRADAY_DEBATE_BACKFILL": "false",
+            "AQSP_HOME_SNAPSHOT_ENABLED": "false",
+            "PATH": f"{utility_bin}:{os.environ['PATH']}",
+        }
+    )
+
+    first = subprocess.run(
+        ["bash", str(SCRIPT_PATH)],
+        cwd=PROJECT_ROOT,
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=30,
+    )
+    second = subprocess.run(
+        ["bash", str(SCRIPT_PATH)],
+        cwd=PROJECT_ROOT,
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=30,
+    )
+
+    assert first.returncode == 0, first.stdout + first.stderr
+    assert second.returncode == 0, second.stdout + second.stderr
+    assert "已有盘中刷新任务在运行，跳过" not in second.stdout
+    assert not (tmp_path / ".locks" / "intraday-refresh.lock").exists()
+
+
 def test_intraday_runtime_quality_gate_downgrades_watch_candidate_and_records_state(
     tmp_path: Path,
 ) -> None:
@@ -392,6 +452,20 @@ def test_intraday_runtime_quality_gate_downgrades_watch_candidate_and_records_st
     assert status["quality_gate"]["status"] == "degraded"
     assert status["quality_gate"]["watch_count"] == 1
     assert status["quality_gate"]["blocked_count"] == 0
+    assert status["quality_gate"]["provenance_status"] == "verified"
+    assert status["provenance"]["actual_source"] == "eastmoney"
+    assert status["provenance"]["workload"] == "live_short"
+    assert status["source_provenance"] == {
+        "status": "available",
+        "requested_source": "online_first",
+        "actual_source": "eastmoney",
+        "source_freshness_tier": "realtime",
+        "source_coverage_tier": "multi_dimensional",
+        "source_local_status": "not_required",
+        "fallback_used": False,
+        "latest_trade_date": "2026-07-15",
+        "lag_days": 0,
+    }
 
 
 def test_intraday_runtime_production_env_disables_main_debate_and_falls_back_from_eastmoney(

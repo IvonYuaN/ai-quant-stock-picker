@@ -14,6 +14,7 @@ except ModuleNotFoundError:
 
 from aqsp.core.errors import DataError
 from aqsp.data.cache import DataCache
+from aqsp.data.pit_policy import PitTimestampPolicy, validate_point_in_time_frame
 from aqsp.data.source_health import record_source_auth
 from aqsp.data.tushare_pit import TusharePitClient, overlay_disclosure_dates
 
@@ -147,6 +148,13 @@ def merge_pit_financials(
             and not disclosure_data[symbol].empty
         ):
             fin = overlay_disclosure_dates(fin, disclosure_data[symbol])
+        fin = validate_point_in_time_frame(
+            fin,
+            PitTimestampPolicy(
+                artifact_type=f"{symbol} financials",
+                timestamp_columns=("pubDate",),
+            ),
+        )
         ohlcv = ohlcv.copy()
         ohlcv["date"] = pd.to_datetime(ohlcv["date"])
         fin["pubDate"] = pd.to_datetime(fin["pubDate"])

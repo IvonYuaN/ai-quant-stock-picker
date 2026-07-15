@@ -47,6 +47,19 @@ def fetch_frames_for_cli_with_metadata(
                 benchmark_symbol=benchmark_symbol,
                 end_date=end_date,
             )
+            if workload == "live_short":
+                missing = [
+                    str(symbol)
+                    for symbol in symbols
+                    if str(symbol) not in frames
+                    or not isinstance(frames.get(str(symbol)), pd.DataFrame)
+                    or frames[str(symbol)].empty
+                ]
+                if missing:
+                    raise DataError(
+                        "live_short 日线取数不完整，拒绝生成候选；缺少: "
+                        + ", ".join(missing[:20])
+                    )
             actual_source = str(
                 getattr(source, "last_used_source", None) or source.name
             )

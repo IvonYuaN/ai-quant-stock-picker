@@ -121,6 +121,7 @@ class IntradayService:
             )
         validated: dict[str, OhlcvFrame] = {}
         rejected_reasons: list[str] = []
+        replay = target_date is not None and target_date != now_shanghai().date()
         for symbol, frame in result.items():
             try:
                 _validate_live_bar_freshness(
@@ -134,6 +135,8 @@ class IntradayService:
                     frame,
                     source=self.source,
                     fetched_at=frame.attrs.get("fetched_at"),
+                    workload="walkforward" if replay else "live_short",
+                    freshness="historical" if replay else "fresh",
                 )
             except DataError as exc:
                 _logger.warning(
@@ -586,6 +589,8 @@ def _annotate_live_intraday_provenance(
     *,
     source: DataSource,
     fetched_at: object | None,
+    workload: Literal["live_short", "walkforward"] = "live_short",
+    freshness: str = "fresh",
 ) -> None:
     """Attach verifiable live provenance before any frame is copied or concatenated."""
     source_name = str(frame.attrs.get("source_name", "") or "").strip()
@@ -596,13 +601,22 @@ def _annotate_live_intraday_provenance(
         source_name = str(getattr(source, "name", "") or "").strip()
     if not source_name or source_name in _COMPOSITE_SOURCES:
         raise DataError(f"实时 workload 标的 {symbol} 缺少可验证 provenance，拒绝继续")
-    if source_role_for_workload(source_name, "live_short") != "realtime":
-        raise DataError(f"实时 workload 标的 {symbol} 来源 {source_name} 角色不可接受")
-
-    workload = str(frame.attrs.get("workload", "live_short") or "").strip()
-    if workload != "live_short":
+    expected_role = "realtime" if workload == "live_short" else "historical"
+    if source_role_for_workload(source_name, workload) != expected_role:
         raise DataError(
-            f"实时 workload 标的 {symbol} workload 不匹配: {workload or 'unknown'}"
+            f"{workload} workload 标的 {symbol} 来源 {source_name} 角色不可接受"
+        )
+
+    frame_workload = str(frame.attrs.get("workload", workload) or "").strip()
+    allowed_frame_workloads = {"", workload}
+    if workload == "walkforward":
+        # The fetch adapter is still invoked through the live bar API, so some
+        # adapters may attach the transport context before replay is relabeled.
+        allowed_frame_workloads.add("live_short")
+    if frame_workload not in allowed_frame_workloads:
+        raise DataError(
+            f"{workload} workload 标的 {symbol} workload 不匹配: "
+            f"{frame_workload or 'unknown'}"
         )
     fetched = _normalize_fetched_at(
         fetched_at or frame.attrs.get("fetched_at") or now_shanghai().isoformat(),
@@ -622,7 +636,7 @@ def _annotate_live_intraday_provenance(
             "workload": workload,
             "fetched_at": fetched,
             "timestamp_source": timestamp_source,
-            "freshness": "fresh",
+            "freshness": freshness,
         }
     )
     provenance = FrameProvenance(
@@ -630,7 +644,7 @@ def _annotate_live_intraday_provenance(
         workload=workload,
         fetched_at=fetched,
         timestamp_source=timestamp_source,
-        freshness="fresh",
+        freshness=freshness,
     )
     frame.attrs["provenance"] = provenance
     frame.attrs["typed_provenance"] = provenance

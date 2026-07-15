@@ -9,6 +9,8 @@ set -euo pipefail
 PROJECT_ROOT="${AQSP_PROJECT_ROOT:-/opt/aqsp}"
 VENV_DIR="${AQSP_INTRADAY_VENV_DIR:-${PROJECT_ROOT}/.venv}"
 PYTHON_BIN="${VENV_DIR}/bin/python3"
+INITIAL_PROJECT_ROOT="$PROJECT_ROOT"
+INITIAL_VENV_DIR="$VENV_DIR"
 LOG_DIR="${PROJECT_ROOT}/logs/intraday"
 RESULT_LOG="${LOG_DIR}/intraday-$(date +%Y-%m-%d).log"
 LOCK_DIR="${PROJECT_ROOT}/.locks/intraday-refresh.lock"
@@ -98,6 +100,11 @@ if [ -f "${PROJECT_ROOT}/.env" ]; then
     set -a
     source "${PROJECT_ROOT}/.env"
     set +a
+    # Runtime paths are resolved before loading project secrets/config. A .env
+    # file must not silently redirect an explicit release to another worktree.
+    PROJECT_ROOT="$INITIAL_PROJECT_ROOT"
+    VENV_DIR="$INITIAL_VENV_DIR"
+    PYTHON_BIN="${VENV_DIR}/bin/python3"
     log "已加载 .env 配置"
 fi
 
@@ -532,6 +539,32 @@ with csv_path.open("r", encoding="utf-8", newline="") as handle:
 
 run_rows = [row for row in rows if clean(row.get("symbol")) == "__RUN__"]
 run_row = run_rows[0] if run_rows else {}
+provenance = {
+    "requested_source": clean(run_row.get("run_requested_source")),
+    "actual_source": clean(run_row.get("run_actual_source")),
+    "workload": clean(run_row.get("run_workload")),
+    "latest_trade_date": clean(run_row.get("run_data_latest_trade_date")),
+    "freshness_tier": clean(run_row.get("run_source_freshness_tier")).lower(),
+    "coverage_tier": clean(run_row.get("run_source_coverage_tier")),
+    "local_status": clean(run_row.get("run_source_local_status")),
+}
+provenance_status = (
+    "verified"
+    if all(
+        provenance[key]
+        for key in (
+            "requested_source",
+            "actual_source",
+            "workload",
+            "latest_trade_date",
+            "freshness_tier",
+            "coverage_tier",
+            "local_status",
+        )
+    )
+    and provenance["workload"] == "live_short"
+    else "unknown"
+)
 try:
     lag_days = int(float(clean(run_row.get("run_data_lag_days")) or "0"))
 except ValueError:
@@ -539,7 +572,7 @@ except ValueError:
 source_tier = clean(run_row.get("run_source_freshness_tier")).lower()
 fresh_tiers = {"realtime", "terminal_realtime"}
 watch_tiers = {"delayed_realtime"}
-if lag_days < 0 or not source_tier:
+if lag_days < 0 or not source_tier or provenance_status != "verified":
     freshness_status = "unknown"
 elif lag_days > 0 or source_tier not in fresh_tiers | watch_tiers:
     freshness_status = "stale"
@@ -734,7 +767,7 @@ if report_path.is_file():
 
 summary = {
     "availability_status": "available"
-    if run_row and "symbol" in fieldnames
+    if run_row and "symbol" in fieldnames and provenance_status == "verified"
     else "unavailable",
     "status": (
         "blocked"
@@ -747,6 +780,8 @@ summary = {
     "freshness_status": freshness_status,
     "lag_days": lag_days,
     "source_freshness_tier": source_tier,
+    "provenance_status": provenance_status,
+    "provenance": provenance,
     "checked_count": len(candidate_rows),
     "watch_count": watch_count,
     "blocked_count": blocked_count,
@@ -983,11 +1018,59 @@ write_intraday_status() {
     INTRADAY_STATUS_NEWS_OUTPUT="$INTRADAY_NEWS_OUTPUT" \
     INTRADAY_STATUS_NEWS_JSON_OUTPUT="$INTRADAY_NEWS_JSON_OUTPUT" \
     "$PYTHON_BIN" - <<'AQSP_INTRADAY_STATUS_PY'
+import csv
 import json
 import os
 from pathlib import Path
 
 from aqsp.core.time import now_shanghai
+
+
+def clean(value: object) -> str:
+    return str(value or "").strip()
+
+
+def truthy(value: object) -> bool:
+    return clean(value).lower() in {"1", "true", "yes", "on"}
+
+
+runtime_metadata: dict[str, str] = {}
+csv_path_for_metadata = Path(os.environ["INTRADAY_STATUS_CSV"])
+try:
+    with csv_path_for_metadata.open("r", encoding="utf-8", newline="") as handle:
+        for row in csv.DictReader(handle):
+            if clean(row.get("symbol")) == "__RUN__":
+                runtime_metadata = {
+                    key: clean(row.get(key))
+                    for key in (
+                        "run_requested_source",
+                        "run_actual_source",
+                        "run_source_freshness_tier",
+                        "run_source_coverage_tier",
+                        "run_source_local_status",
+                        "run_fallback_used",
+                        "run_data_latest_trade_date",
+                        "run_data_lag_days",
+                    )
+                }
+                break
+except (OSError, csv.Error):
+    runtime_metadata = {}
+
+requested_source = runtime_metadata.get("run_requested_source") or os.environ[
+    "INTRADAY_STATUS_SOURCE"
+]
+actual_source = runtime_metadata.get("run_actual_source", "")
+source_freshness_tier = runtime_metadata.get("run_source_freshness_tier", "")
+source_coverage_tier = runtime_metadata.get("run_source_coverage_tier", "")
+source_local_status = runtime_metadata.get("run_source_local_status", "")
+latest_trade_date = runtime_metadata.get("run_data_latest_trade_date", "")
+metadata_lag_raw = runtime_metadata.get("run_data_lag_days", "")
+try:
+    metadata_lag_days = int(float(metadata_lag_raw))
+except (TypeError, ValueError):
+    metadata_lag_days = -1
+provenance_status = "available" if actual_source and source_freshness_tier else "unavailable"
 
 payload = {
     "status": os.environ["INTRADAY_STATUS_VALUE"],
@@ -995,6 +1078,17 @@ payload = {
     "reason": os.environ["INTRADAY_STATUS_REASON"],
     "exit_code": int(os.environ["INTRADAY_STATUS_EXIT_CODE"]),
     "source": os.environ["INTRADAY_STATUS_SOURCE"],
+    "source_provenance": {
+        "status": provenance_status,
+        "requested_source": requested_source,
+        "actual_source": actual_source,
+        "source_freshness_tier": source_freshness_tier,
+        "source_coverage_tier": source_coverage_tier,
+        "source_local_status": source_local_status,
+        "fallback_used": truthy(runtime_metadata.get("run_fallback_used")),
+        "latest_trade_date": latest_trade_date,
+        "lag_days": metadata_lag_days,
+    },
     "mode": os.environ["INTRADAY_STATUS_MODE"],
     "benchmark_symbol": os.environ["INTRADAY_STATUS_BENCHMARK"],
     "max_universe": int(os.environ["INTRADAY_STATUS_MAX_UNIVERSE"] or "0"),
@@ -1036,8 +1130,15 @@ payload["freshness"] = {
     ),
     "max_allowed_lag_days": int(os.environ["INTRADAY_STATUS_MAX_DATA_LAG"] or "0"),
     "source_freshness_tier": str(quality_gate.get("source_freshness_tier", "") or ""),
+    "latest_trade_date": str(
+        quality_gate.get("provenance", {}).get("latest_trade_date", "") or ""
+    ),
+    "provenance_status": str(
+        quality_gate.get("provenance_status", "unknown") or "unknown"
+    ),
 }
 payload["quality_gate"] = quality_gate
+payload["provenance"] = quality_gate.get("provenance", {})
 csv_path = Path(payload["csv_path"])
 report_path = Path(payload["report_path"])
 candidate_count = 0
@@ -1111,6 +1212,9 @@ AQSP_INTRADAY_STATUS_PY
 
 cleanup() {
     rm -rf "$TMP_DIR" 2>/dev/null || true
+    # The initial EXIT trap is replaced below, so remove the lock metadata
+    # explicitly before releasing the directory.
+    rm -f "$LOCK_INFO_FILE" 2>/dev/null || true
     rmdir "$LOCK_DIR" 2>/dev/null || true
 }
 trap cleanup EXIT

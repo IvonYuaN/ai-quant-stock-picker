@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import json
 import logging
 import os
@@ -21,6 +22,10 @@ from aqsp.presentation import (
 from aqsp.core.errors import DataError, FreshnessError
 from aqsp.core.time import now_shanghai, today_shanghai
 from aqsp.utils.jsonl_io import append_jsonl, atomic_write_text
+
+_DEFAULT_FETCH_HISTORY_DAYS = 260
+_DEFAULT_FETCH_LOOKBACK_DAYS = max(_DEFAULT_FETCH_HISTORY_DAYS * 2, 365)
+_DEFAULT_DAILY_MAX_UNIVERSE = 300
 
 
 def _runtime_path_env(
@@ -70,6 +75,10 @@ class PipelineConfig:
     dry_run: bool
     enable_debate: bool
     enable_auto_evolution: bool
+    requested_source: str = ""
+    source_override_reason: str = ""
+    daily_digest_path: str = "reports/daily_digest.md"
+    daily_digest_json_path: str = "reports/daily_digest.json"
 
 
 @dataclass
@@ -239,7 +248,26 @@ def _step_update_data(config: PipelineConfig, logger: logging.Logger) -> dict[st
 
     source = _build_data_source(config)
     symbols = _resolve_symbols(config, logger)
-    frames = fetch_with_source(source, symbols, days=260)
+    workload_setter = getattr(source, "set_workload", None)
+    if not callable(workload_setter):
+        raise DataError("生产日行情源缺少 live_short workload contract")
+    workload_setter("live_short")
+    try:
+        frames = fetch_with_source(source, symbols, days=260)
+    finally:
+        workload_setter(None)
+
+    missing_symbols = [
+        symbol
+        for symbol in symbols
+        if symbol not in frames
+        or not isinstance(frames.get(symbol), pd.DataFrame)
+        or frames[symbol].empty
+    ]
+    if missing_symbols:
+        raise DataError(
+            "生产日行情取数不完整，拒绝继续: " + ", ".join(missing_symbols[:20])
+        )
 
     fresh_count = sum(1 for df in frames.values() if df is not None and not df.empty)
     logger.info("  获取到 %d 只标的数据", fresh_count)
@@ -247,7 +275,10 @@ def _step_update_data(config: PipelineConfig, logger: logging.Logger) -> dict[st
     from aqsp.data.cache import DataCache
 
     cache = DataCache()
-    cleared = cache.clear_expired(max_age_hours=168)
+    cleared = cache.clear_expired(
+        max_age_hours=168,
+        workloads=("live_short",),
+    )
     if cleared > 0:
         logger.info("  清理过期缓存: %d 条", cleared)
 
@@ -266,6 +297,54 @@ def _build_resilient_history_source(config: PipelineConfig) -> Any:
     if config.source in {"auto", "local_first"}:
         return build_data_source("local_first")
     return build_data_source("online_first")
+
+
+def _resolve_live_runtime_source(
+    source_name: str,
+) -> tuple[str, str]:
+    from aqsp.data.source_readiness import (
+        source_role_for_workload,
+        workload_guard_message,
+    )
+
+    normalized = str(source_name or "auto").strip() or "auto"
+    if normalized in {"auto", "local_first"}:
+        return (
+            "online_first",
+            (
+                f"数据源 {normalized} 是实时运行别名，已改写为 online_first，"
+                "避免 live_short 链路先读取本地历史源。"
+            ),
+        )
+    if normalized in {"online_first", "multi"}:
+        return normalized, ""
+    if source_role_for_workload(normalized, "live_short") == "realtime":
+        return normalized, ""
+    guard = workload_guard_message(normalized, "live_short")
+    if not guard:
+        guard = (
+            f"数据源 {normalized} 仅可作为 observation 层，"
+            "不能形成正式 live_short 结果。"
+        )
+    return "online_first", guard
+
+
+def _live_runtime_max_data_lag_days(configured_days: int) -> int:
+    return min(max(0, int(configured_days)), 1)
+
+
+def _live_runtime_max_universe(cli_value: int, env_value: int) -> int:
+    if cli_value > 0:
+        return cli_value
+    raw_daily = str(os.getenv("AQSP_DAILY_MAX_UNIVERSE", "") or "").strip()
+    if raw_daily:
+        try:
+            return max(int(raw_daily), 1)
+        except ValueError:
+            return _DEFAULT_DAILY_MAX_UNIVERSE
+    if env_value > 0:
+        return env_value
+    return _DEFAULT_DAILY_MAX_UNIVERSE
 
 
 def _fetch_history_frames_resilient(
@@ -333,65 +412,59 @@ def _fetch_history_frames_resilient(
 
 def _resolve_symbols(config: PipelineConfig, logger: logging.Logger) -> list[str]:
     from aqsp.universe import DEFAULT_SYMBOLS
+    from aqsp.universe.runtime import resolve_run_symbols
 
-    symbols_str = ""
+    explicit_symbols = ",".join(_explicit_runtime_symbols())
+
+    def get_source(source_name: str) -> object:
+        if source_name == config.source:
+            return _build_data_source(config)
+        from aqsp.data.source_factory import build_data_source
+
+        return build_data_source(source_name)
+
+    symbols = resolve_run_symbols(
+        config.source,
+        explicit_symbols,
+        get_source_fn=get_source,
+        default_symbols=DEFAULT_SYMBOLS,
+        max_universe=config.max_universe,
+        min_avg_amount=config.min_avg_amount,
+    )
+    if explicit_symbols:
+        logger.info("  使用显式标的 %d 只", len(symbols))
+    elif len(symbols) <= len(DEFAULT_SYMBOLS):
+        logger.warning("  自动选取标的失败或不足，使用默认池 %d 只", len(symbols))
+    else:
+        logger.info("  自动选取 %d 只流动性标的", len(symbols))
+    return symbols
+
+
+def _explicit_runtime_symbols() -> list[str]:
     try:
         from aqsp.config import load_runtime_config
 
-        env = load_runtime_config()
-        symbols_str = ",".join(env.symbols)
+        return list(load_runtime_config().symbols)
     except Exception:
-        pass
-
-    if symbols_str:
-        return [s.strip() for s in symbols_str.split(",") if s.strip()]
-
-    try:
-        source = _build_data_source(config)
-        if config.source == "sqlite_db" and hasattr(source, "get_available_symbols"):
-            available = source.get_available_symbols()
-            if available:
-                selected = (
-                    available[: config.max_universe]
-                    if config.max_universe > 0
-                    else available
-                )
-                logger.info("  sqlite_db 全市场候选池 %d 只", len(selected))
-                return list(selected)
-        if hasattr(source, "get_liquid_symbols"):
-            liquid = source.get_liquid_symbols(
-                limit=config.max_universe,
-                min_amount=config.min_avg_amount,
-            )
-            if liquid:
-                logger.info("  自动选取 %d 只流动性标的", len(liquid))
-                return liquid
-        if hasattr(source, "get_available_symbols"):
-            available = source.get_available_symbols()
-            if available:
-                return (
-                    available[: config.max_universe]
-                    if config.max_universe > 0
-                    else available
-                )
-    except Exception as exc:
-        logger.warning("  自动选取标的失败, 使用默认池: %s", exc)
-
-    return list(DEFAULT_SYMBOLS)
+        return [
+            item.strip()
+            for item in os.getenv("AQSP_SYMBOLS", "").split(",")
+            if item.strip()
+        ]
 
 
 def _step_run_strategy(
     config: PipelineConfig, logger: logging.Logger
 ) -> dict[str, Any]:
     logger.info("  执行选股策略 (mode=%s, limit=%d)", config.mode, config.limit)
-    symbols = _resolve_symbols(config, logger)
+    explicit_symbols = _explicit_runtime_symbols()
 
     argv = [
         "run",
         "--source",
         config.source,
         "--symbols",
-        ",".join(symbols),
+        ",".join(explicit_symbols),
         "--mode",
         config.mode,
         "--limit",
@@ -453,14 +526,14 @@ def _step_morning_breakout(
     config: PipelineConfig, logger: logging.Logger
 ) -> dict[str, Any]:
     logger.info("  执行早盘打板策略")
-    symbols = _resolve_symbols(config, logger)
+    explicit_symbols = _explicit_runtime_symbols()
 
     argv = [
         "morning-breakout",
         "--source",
         config.source,
         "--symbols",
-        ",".join(symbols),
+        ",".join(explicit_symbols),
         "--max-universe",
         str(config.max_universe),
         "--benchmark-symbol",
@@ -482,14 +555,14 @@ def _step_closing_premium(
     config: PipelineConfig, logger: logging.Logger
 ) -> dict[str, Any]:
     logger.info("  执行尾盘溢价策略")
-    symbols = _resolve_symbols(config, logger)
+    explicit_symbols = _explicit_runtime_symbols()
 
     argv = [
         "closing-premium",
         "--source",
         config.source,
         "--symbols",
-        ",".join(symbols),
+        ",".join(explicit_symbols),
         "--max-universe",
         str(config.max_universe),
         "--benchmark-symbol",
@@ -893,32 +966,117 @@ def _step_refresh_dashboard(
     try:
         sys.path.insert(0, str(config.project_root / "scripts"))
         from export_dashboard_db import export_db
-        from render_dashboard import read_candidates, render_all_panels
+        from render_dashboard import read_preferred_candidates, render_all_panels
+        from aqsp.web.entrypoint import write_dashboard_artifact
 
         csv_path = config.project_root / config.csv_path
         ledger_path = config.project_root / config.ledger_path
         paper_ledger_path = config.project_root / config.paper_ledger
         output_path = config.project_root / config.dashboard_html
         db_path = config.project_root / config.dashboard_db
+        intraday_csv_path = config.project_root / "reports" / "intraday_latest.csv"
+        candidate_selection = read_preferred_candidates(
+            csv_path,
+            intraday_csv_path=intraday_csv_path,
+        )
 
         html = render_all_panels(
-            candidates=read_candidates(csv_path),
+            candidates=candidate_selection.candidates,
             ledger_path=str(ledger_path),
             paper_ledger_path=str(paper_ledger_path),
         )
-        atomic_write_text(output_path, html)
+        write_dashboard_artifact(output_path, html)
         db_path.parent.mkdir(parents=True, exist_ok=True)
-        export_db(csv_path, ledger_path, db_path)
+        export_db(candidate_selection.path, ledger_path, db_path)
         logger.info("  Dashboard 已保存: %s", config.dashboard_html)
         logger.info("  Dashboard 数据库已保存: %s", config.dashboard_db)
+        snapshot_result = _refresh_home_snapshot(config, logger)
+        if snapshot_result.get("error"):
+            return {
+                "exit_code": 1,
+                "error": f"首页快照刷新失败: {snapshot_result['error']}",
+                "home_snapshot": snapshot_result,
+            }
         return {
             "exit_code": 0,
             "html_size": len(html),
             "db_size": db_path.stat().st_size if db_path.exists() else 0,
+            "home_snapshot": snapshot_result,
         }
     except Exception as exc:
         logger.warning("  Dashboard 刷新失败(非致命): %s", exc)
         return {"exit_code": 1, "error": str(exc)}
+
+
+def _refresh_home_snapshot(
+    config: PipelineConfig, logger: logging.Logger
+) -> dict[str, Any]:
+    """Refresh the Streamlit home artifact from the same runtime inputs as daily."""
+    try:
+        sys.path.insert(0, str(config.project_root / "scripts"))
+        from write_home_snapshot import build_home_snapshot, build_home_snapshot_index
+        from aqsp.web.data_provider import DashboardDataProvider
+        from aqsp.web.home_snapshot import (
+            write_home_dashboard_snapshot,
+            write_home_snapshot_index,
+        )
+
+        snapshot_path_raw = str(
+            os.getenv(
+                "AQSP_HOME_SNAPSHOT_PATH",
+                "data/runtime/home_dashboard_snapshot.json",
+            )
+            or "data/runtime/home_dashboard_snapshot.json"
+        ).strip()
+        snapshot_path = Path(snapshot_path_raw).expanduser()
+        if not snapshot_path.is_absolute():
+            snapshot_path = config.project_root / snapshot_path
+        index_path = snapshot_path.with_name("home_dashboard_snapshot_index.json")
+        configured_index = os.getenv("AQSP_HOME_SNAPSHOT_INDEX_PATH", "").strip()
+        if configured_index:
+            index_path = Path(configured_index).expanduser()
+            if not index_path.is_absolute():
+                index_path = config.project_root / index_path
+
+        provider = DashboardDataProvider(
+            ledger_path=str(config.project_root / config.ledger_path),
+            paper_ledger_path=str(config.project_root / config.paper_ledger),
+            reports_dir=str(config.project_root / "reports"),
+            debate_results_path=str(
+                config.project_root / "data" / "debate_results.jsonl"
+            ),
+            intraday_ledger_path=str(
+                config.project_root / "data" / "intraday_predictions.jsonl"
+            ),
+            intraday_latest_path=str(
+                config.project_root / "reports" / "intraday_latest.csv"
+            ),
+        )
+        snapshot = build_home_snapshot(provider)
+        index = build_home_snapshot_index(
+            provider,
+            initial_snapshot=snapshot,
+        )
+        write_home_dashboard_snapshot(snapshot_path, snapshot)
+        write_home_snapshot_index(index_path, index)
+        logger.info(
+            "  首页快照已保存: %s (index=%s date=%s candidates=%d days=%d)",
+            snapshot_path,
+            index_path,
+            snapshot.selected_date,
+            len(snapshot.candidates),
+            len(index.days),
+        )
+        return {
+            "path": str(snapshot_path),
+            "index_path": str(index_path),
+            "date": snapshot.selected_date,
+            "candidate_count": len(snapshot.candidates),
+            "day_count": len(index.days),
+        }
+    except Exception as exc:
+        logger.warning("  首页快照刷新失败: %s", exc)
+        return {"error": str(exc)}
 
 
 def _step_cleanup(config: PipelineConfig, logger: logging.Logger) -> dict[str, Any]:
@@ -927,7 +1085,7 @@ def _step_cleanup(config: PipelineConfig, logger: logging.Logger) -> dict[str, A
     from aqsp.data.cache import DataCache
 
     cache = DataCache()
-    cleared = cache.clear_expired(max_age_hours=168)
+    cleared = cache.clear_expired(max_age_hours=168, workloads=("live_short",))
     logger.info("  清理缓存: %d 条", cleared)
 
     log_dir = config.project_root / "logs" / "daily"
@@ -957,6 +1115,10 @@ def run_pipeline(config: PipelineConfig) -> PipelineResult:
     logger.info("AI量化选股 - 每日跑批开始")
     logger.info("时间: %s", started.isoformat(timespec="seconds"))
     logger.info("模式: %s", "dry-run" if config.dry_run else "正式运行")
+    requested_source = config.requested_source or config.source
+    logger.info("数据源: requested=%s effective=%s", requested_source, config.source)
+    if config.source_override_reason:
+        logger.warning("数据源改写: %s", config.source_override_reason)
     logger.info("=" * 60)
 
     today = today_shanghai()
@@ -1096,6 +1258,83 @@ def _latest_portfolio_summary(config: PipelineConfig) -> Any | None:
         except (TypeError, ValueError):
             return 0.0
 
+    def _int(value: Any) -> int:
+        return int(_num(value))
+
+    def _text_tuple(value: Any) -> tuple[str, ...]:
+        if value is None:
+            return ()
+        if isinstance(value, (list, tuple)):
+            return tuple(str(item).strip() for item in value if str(item).strip())
+        if isinstance(value, float) and pd.isna(value):
+            return ()
+        text = str(value).strip()
+        if not text:
+            return ()
+        parsed: Any | None = None
+        if text[0:1] in ("[", "("):
+            for parser in (json.loads, ast.literal_eval):
+                try:
+                    parsed = parser(text)
+                    break
+                except (SyntaxError, ValueError, TypeError, json.JSONDecodeError):
+                    parsed = None
+        if isinstance(parsed, (list, tuple)):
+            return tuple(str(item).strip() for item in parsed if str(item).strip())
+        normalized = text.replace("\n", "；").replace(";", "；")
+        return tuple(part.strip() for part in normalized.split("；") if part.strip())
+
+    def _metrics_from_row(row: dict[str, Any], action: str) -> dict[str, Any]:
+        return {
+            "portfolio_action": action,
+            "cross_market_primary_theme": _text(row.get("cross_market_primary_theme")),
+            "cross_market_linkage_basis": _text(row.get("cross_market_linkage_basis")),
+            "cross_market_action": _text(row.get("cross_market_action")),
+            "cross_market_strength": _text(row.get("cross_market_strength")),
+            "cross_market_lead_window": _text(row.get("cross_market_lead_window")),
+            "cross_market_observation_window": _text(
+                row.get("cross_market_observation_window")
+            ),
+            "cross_market_priority_score": _int(row.get("cross_market_priority_score")),
+            "cross_market_validation_signals": _text_tuple(
+                row.get("cross_market_validation_signals")
+            ),
+            "cross_market_invalidation_signals": _text_tuple(
+                row.get("cross_market_invalidation_signals")
+            ),
+            "cross_market_support_event_count": _int(
+                row.get("cross_market_support_event_count")
+            ),
+            "cross_market_conflict_event_count": _int(
+                row.get("cross_market_conflict_event_count")
+            ),
+            "cross_market_evidence_stack_summary": _text(
+                row.get("cross_market_evidence_stack_summary")
+            ),
+            "debate_research_verdict": _text(row.get("debate_research_verdict")),
+            "debate_primary_risk_gate": _text(row.get("debate_primary_risk_gate")),
+            "debate_next_trigger": _text(row.get("debate_next_trigger")),
+            "debate_support_points": _text_tuple(row.get("debate_support_points"))
+            or _text_tuple(row.get("support_points")),
+            "debate_opposition_points": _text_tuple(row.get("debate_opposition_points"))
+            or _text_tuple(row.get("opposition_points")),
+            "debate_watch_items": _text_tuple(row.get("debate_watch_items"))
+            or _text_tuple(row.get("watch_items")),
+            "debate_role_reliability_lines": _text_tuple(
+                row.get("debate_role_reliability_lines")
+            )
+            or _text_tuple(row.get("role_reliability_lines")),
+            "debate_historical_context_note": _text(
+                row.get("debate_historical_context_note")
+            ),
+            "debate_historical_context_sample_count": _int(
+                row.get("debate_historical_context_sample_count")
+            ),
+            "debate_historical_context_accuracy": _num(
+                row.get("debate_historical_context_accuracy")
+            ),
+        }
+
     picks: list[PickResult] = []
     decisions: list[PortfolioDecision] = []
     for row in df.to_dict(orient="records"):
@@ -1116,7 +1355,7 @@ def _latest_portfolio_summary(config: PipelineConfig) -> Any | None:
                 strategies=tuple(),
                 reasons=tuple(),
                 risks=tuple(),
-                metrics={"portfolio_action": action},
+                metrics=_metrics_from_row(row, action),
             )
         )
         decisions.append(
@@ -1290,8 +1529,31 @@ def _build_pipeline_digest(
     ]
 
     core_lines = [f"- 结论: {conclusion}"]
+    if config.source_override_reason:
+        requested_source = config.requested_source or config.source
+        core_lines.append(
+            "- 数据源改写: "
+            f"{requested_source} -> {config.source} | "
+            f"{normalize_research_tone(config.source_override_reason)}"
+        )
     if portfolio_summary is not None and portfolio_summary.headline:
         core_lines.append(f"- PM: {portfolio_summary.headline}")
+    if portfolio_summary is not None and portfolio_summary.debate_focus:
+        core_lines.append(
+            "- 讨论结论: "
+            + "；".join(
+                normalize_research_tone(str(item))
+                for item in portfolio_summary.debate_focus[:2]
+            )
+        )
+    if portfolio_summary is not None and portfolio_summary.debate_next_triggers:
+        core_lines.append(
+            "- 执行触发: "
+            + "；".join(
+                normalize_research_tone(str(item))
+                for item in portfolio_summary.debate_next_triggers[:2]
+            )
+        )
     if gate_block_reason:
         core_lines.append(f"- 阻塞: {gate_block_reason}")
     if latest_signal_day:
@@ -1331,9 +1593,13 @@ def _build_pipeline_digest(
         if lead_meta:
             lead_line += f" | {lead_meta}"
         core_lines.append(lead_line)
-    core_lines.append(f"- 流程: {step_success}/{step_total} 成功 | {result.duration_seconds:.1f}s")
+    core_lines.append(
+        f"- 流程: {step_success}/{step_total} 成功 | {result.duration_seconds:.1f}s"
+    )
     if failed_steps:
-        core_lines.append("- 异常步骤: " + "、".join(step.name for step in failed_steps[:3]))
+        core_lines.append(
+            "- 异常步骤: " + "、".join(step.name for step in failed_steps[:3])
+        )
 
     main_chain_lines: list[str] = []
     if candidates:
@@ -1366,7 +1632,7 @@ def _build_pipeline_digest(
             )
         if portfolio_summary is not None and portfolio_summary.top_focus:
             main_chain_lines.append(
-                "- 先看顺序: " + " → ".join(portfolio_summary.top_focus[:2])
+                "- 先看顺序: " + " → ".join(portfolio_summary.top_focus[:3])
             )
         elif review_candidates:
             main_chain_lines.append("- 后续关注:")
@@ -1395,6 +1661,81 @@ def _build_pipeline_digest(
             )
     else:
         main_chain_lines.append("- 暂无可用候选输出")
+
+    discussion_lines: list[str] = []
+    if portfolio_summary is not None:
+        if portfolio_summary.cross_market_overview:
+            discussion_lines.append(
+                "- 跨市主线: "
+                + normalize_research_tone(portfolio_summary.cross_market_overview)
+            )
+        elif portfolio_summary.cross_market_focus:
+            discussion_lines.append(
+                "- 跨市焦点: "
+                + "；".join(
+                    normalize_research_tone(str(item))
+                    for item in portfolio_summary.cross_market_focus[:2]
+                )
+            )
+        if portfolio_summary.debate_focus:
+            discussion_lines.append(
+                "- 讨论焦点: "
+                + "；".join(
+                    normalize_research_tone(str(item))
+                    for item in portfolio_summary.debate_focus[:2]
+                )
+            )
+        if portfolio_summary.debate_support_points:
+            discussion_lines.append(
+                "- 讨论支持: "
+                + "；".join(
+                    normalize_research_tone(str(item))
+                    for item in portfolio_summary.debate_support_points[:2]
+                )
+            )
+        if portfolio_summary.debate_opposition_points:
+            discussion_lines.append(
+                "- 讨论反对: "
+                + "；".join(
+                    normalize_research_tone(str(item))
+                    for item in portfolio_summary.debate_opposition_points[:2]
+                )
+            )
+        if portfolio_summary.debate_watch_items:
+            discussion_lines.append(
+                "- 讨论待确认: "
+                + "；".join(
+                    normalize_research_tone(str(item))
+                    for item in portfolio_summary.debate_watch_items[:2]
+                )
+            )
+        execution_parts: list[str] = []
+        if portfolio_summary.debate_risk_gates:
+            execution_parts.append(
+                "卡点 "
+                + "；".join(
+                    normalize_research_tone(str(item))
+                    for item in portfolio_summary.debate_risk_gates[:1]
+                )
+            )
+        if portfolio_summary.debate_next_triggers:
+            execution_parts.append(
+                "触发 "
+                + "；".join(
+                    normalize_research_tone(str(item))
+                    for item in portfolio_summary.debate_next_triggers[:1]
+                )
+            )
+        if portfolio_summary.debate_priority_queue:
+            execution_parts.append(
+                "顺序 "
+                + "；".join(
+                    normalize_research_tone(str(item))
+                    for item in portfolio_summary.debate_priority_queue[:1]
+                )
+            )
+        if execution_parts:
+            discussion_lines.append("- 讨论执行: " + "；".join(execution_parts))
 
     risk_points: list[str] = []
     if portfolio_summary is not None and not portfolio_summary.top_focus:
@@ -1429,12 +1770,56 @@ def _build_pipeline_digest(
         "## 候选",
         *main_chain_lines,
         "",
+        *(
+            [
+                "## 讨论",
+                *discussion_lines,
+                "",
+            ]
+            if discussion_lines
+            else []
+        ),
         "## 风险",
         *risk_lines,
     ]
     from aqsp.notification_style import compact_notification_markdown
 
     return compact_notification_markdown("\n".join(lines))
+
+
+def _write_pipeline_digest_artifacts(
+    config: PipelineConfig,
+    *,
+    run_date: str,
+    digest: str,
+    result: PipelineResult,
+    gate_block_reason: str = "",
+) -> None:
+    markdown_path = config.project_root / config.daily_digest_path
+    json_path = config.project_root / config.daily_digest_json_path
+    markdown = f"# 收盘总览-{run_date}\n\n{digest}\n"
+    atomic_write_text(markdown_path, markdown)
+    payload = {
+        "date": run_date,
+        "generated_at": now_shanghai().isoformat(timespec="seconds"),
+        "overall_success": result.overall_success,
+        "gate_block_reason": gate_block_reason,
+        "steps": [
+            {
+                "name": step.name,
+                "success": step.success,
+                "duration_seconds": step.duration_seconds,
+                "message": step.message,
+            }
+            for step in result.steps
+        ],
+        "markdown_path": config.daily_digest_path,
+        "markdown": digest,
+    }
+    atomic_write_text(
+        json_path,
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+    )
 
 
 def _send_pipeline_digest(
@@ -1450,15 +1835,6 @@ def _send_pipeline_digest(
             **extra,
         }
 
-    if not config.notify:
-        set_status("skipped", "notify_disabled")
-        return
-    if config.notify_mode != "summary":
-        set_status("skipped", f"notify_mode={config.notify_mode}")
-        return
-    if config.dry_run:
-        set_status("skipped", "dry_run")
-        return
     run_date = (
         result.started_at[:10] if result.started_at else today_shanghai().isoformat()
     )
@@ -1474,6 +1850,37 @@ def _send_pipeline_digest(
     if not _pipeline_strategy_gate_ok(result):
         logger.info("收盘汇总通知降级：策略运行未明确通过双门 gate")
         gate_block_reason = "strategy_gate_not_confirmed"
+    digest = _build_pipeline_digest(
+        config,
+        result,
+        gate_block_reason=gate_block_reason,
+    )
+    try:
+        source_status = _latest_source_status_from_ledger(
+            config.project_root / config.ledger_path
+        )
+        if source_status:
+            from aqsp.notifier import prepend_source_status_banner
+
+            digest = prepend_source_status_banner(digest, source_status)
+        _write_pipeline_digest_artifacts(
+            config,
+            run_date=run_date,
+            digest=digest,
+            result=result,
+            gate_block_reason=gate_block_reason,
+        )
+    except Exception as exc:
+        logger.warning("收盘汇总产物写入失败(非致命): %s", exc)
+    if not config.notify:
+        set_status("skipped", "notify_disabled", date=run_date)
+        return
+    if config.notify_mode != "summary":
+        set_status("skipped", f"notify_mode={config.notify_mode}", date=run_date)
+        return
+    if config.dry_run:
+        set_status("skipped", "dry_run", date=run_date)
+        return
     if gate_block_reason and _gate_block_notification_already_recorded(
         config.project_root,
         run_date,
@@ -1483,18 +1890,8 @@ def _send_pipeline_digest(
         return
 
     try:
-        from aqsp.notifier import prepend_source_status_banner, send_notification
+        from aqsp.notifier import send_notification
 
-        digest = _build_pipeline_digest(
-            config,
-            result,
-            gate_block_reason=gate_block_reason,
-        )
-        source_status = _latest_source_status_from_ledger(
-            config.project_root / config.ledger_path
-        )
-        if source_status:
-            digest = prepend_source_status_banner(digest, source_status)
         from aqsp.notification_runtime import (
             mark_notification_sent,
             mark_notification_failed,
@@ -1608,6 +2005,10 @@ def _build_config(args: argparse.Namespace) -> PipelineConfig:
     from aqsp.config import load_runtime_config
 
     env = load_runtime_config()
+    requested_source = args.source or os.getenv("AQSP_SOURCE", "auto").strip() or "auto"
+    runtime_source, source_override_reason = _resolve_live_runtime_source(
+        requested_source
+    )
 
     project_root = (
         Path(args.project_root)
@@ -1617,12 +2018,14 @@ def _build_config(args: argparse.Namespace) -> PipelineConfig:
 
     return PipelineConfig(
         project_root=project_root,
-        source=args.source or os.getenv("AQSP_SOURCE", "auto").strip() or "auto",
+        source=runtime_source,
         mode=args.mode or env.mode,
         limit=args.limit or env.limit,
-        max_universe=args.max_universe or env.max_universe,
+        max_universe=_live_runtime_max_universe(args.max_universe, env.max_universe),
         min_avg_amount=args.min_avg_amount or env.min_avg_amount,
-        max_data_lag_days=args.max_data_lag_days or env.max_data_lag_days,
+        max_data_lag_days=_live_runtime_max_data_lag_days(
+            args.max_data_lag_days or env.max_data_lag_days
+        ),
         enable_online_factors=args.enable_online_factors or env.enable_online_factors,
         allow_online_fallback=env.allow_online_fallback,
         ledger_path=args.ledger
@@ -1649,6 +2052,8 @@ def _build_config(args: argparse.Namespace) -> PipelineConfig:
         dry_run=args.dry_run,
         enable_debate=args.enable_debate or env.enable_debate,
         enable_auto_evolution=env.enable_auto_evolution,
+        requested_source=requested_source,
+        source_override_reason=source_override_reason,
     )
 
 

@@ -13,6 +13,20 @@ class AnomalyAlert:
     detail: str
     value: float
     threshold: float
+    observed_date: str = ""
+
+
+def _observed_date(df: pd.DataFrame, index: object) -> str:
+    try:
+        row = df.loc[index]
+    except (KeyError, IndexError):
+        try:
+            row = df.iloc[int(index)]
+        except (ValueError, IndexError):
+            return ""
+    value = row.get("date", "") if hasattr(row, "get") else ""
+    parsed = pd.to_datetime(value, errors="coerce")
+    return "" if pd.isna(parsed) else parsed.date().isoformat()
 
 
 def detect_anomalies(frames: dict[str, pd.DataFrame]) -> list[AnomalyAlert]:
@@ -49,6 +63,7 @@ def _check_limit_moves(symbol: str, df: pd.DataFrame) -> list[AnomalyAlert]:
                     detail=f"{board_label}涨跌停: {val:+.2%}",
                     value=round(float(val), 4),
                     threshold=threshold,
+                    observed_date=_observed_date(df, idx),
                 )
             )
     return alerts
@@ -74,6 +89,7 @@ def _check_volume_spike(symbol: str, df: pd.DataFrame) -> list[AnomalyAlert]:
                     detail=f"成交量异常放大: {r:.1f}x 20日均量",
                     value=round(float(r), 2),
                     threshold=5.0,
+                    observed_date=_observed_date(df, idx),
                 )
             )
         elif r > 3.0:
@@ -85,6 +101,7 @@ def _check_volume_spike(symbol: str, df: pd.DataFrame) -> list[AnomalyAlert]:
                     detail=f"成交量放大: {r:.1f}x 20日均量",
                     value=round(float(r), 2),
                     threshold=3.0,
+                    observed_date=_observed_date(df, idx),
                 )
             )
     return alerts
@@ -108,6 +125,7 @@ def _check_price_gap(symbol: str, df: pd.DataFrame) -> list[AnomalyAlert]:
                     detail=f"开盘跳空: {val:+.2%}",
                     value=round(float(val), 4),
                     threshold=0.05,
+                    observed_date=_observed_date(df, idx),
                 )
             )
     return alerts

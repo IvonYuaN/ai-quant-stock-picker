@@ -288,6 +288,40 @@ def test_cache_clear_expired(tmp_path):
     assert deleted >= 1
 
 
+def test_cache_targeted_cleanup_preserves_historical_rows(tmp_path):
+    cache = DataCache(db_path=tmp_path / "test_cache.db")
+    frame = pd.DataFrame(
+        {
+            "date": ["2024-01-02"],
+            "open": [10.0],
+            "high": [10.5],
+            "low": [9.5],
+            "close": [10.2],
+            "volume": [1000],
+            "amount": [10000],
+            "suspended": [0],
+            "limit_up": [0.0],
+            "limit_down": [0.0],
+            "adj_factor": [1.0],
+        }
+    )
+    cache.set_ohlcv("600000", frame, source="eastmoney", workload="historical")
+    cache.set_ohlcv("600000", frame, source="eastmoney", workload="live_short")
+    deleted = cache.clear_expired(max_age_hours=0, workloads=("live_short",))
+
+    assert deleted == 1
+    assert cache.get_ohlcv(
+        "600000", date(2024, 1, 2), date(2024, 1, 2), source="eastmoney"
+    ) is not None
+    assert cache.get_ohlcv(
+        "600000",
+        date(2024, 1, 2),
+        date(2024, 1, 2),
+        source="eastmoney",
+        workload="live_short",
+    ) is None
+
+
 def test_adjustment_apply_qfq():
     df = pd.DataFrame(
         {

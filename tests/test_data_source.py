@@ -16,7 +16,7 @@ from aqsp.data.mootdx_source import MootdxSource
 from aqsp.data.sina_source import SinaSource
 from aqsp.data.sqlite_db_source import SqliteDbSource
 from aqsp.data.tencent_source import TencentSource
-from aqsp.data import fetch_with_source
+from aqsp.data import fetch_frames_for_cli_with_metadata, fetch_with_source
 from aqsp.core.errors import DataError
 
 try:
@@ -120,6 +120,33 @@ def test_eastmoney_fetch_daily_uses_turnover_amount_not_price_change(monkeypatch
 
     assert df is not None
     assert df["amount"].iloc[0] == pytest.approx(987654321.0)
+
+
+def test_eastmoney_get_liquid_symbols_uses_spot_snapshot(monkeypatch) -> None:
+    source = EastmoneySource.__new__(EastmoneySource)
+    source.name = "eastmoney"
+    monkeypatch.setattr(source, "_throttle", lambda: None)
+
+    pages = {
+        1: {
+            "data": {
+                "diff": [
+                    {"f12": "600000", "f14": "浦发银行", "f2": 10.0, "f5": 1, "f6": 80_000_000},
+                    {"f12": "000001", "f14": "平安银行", "f2": 10.0, "f5": 1, "f6": 120_000_000},
+                    {"f12": "000002", "f14": "ST测试", "f2": 3.0, "f5": 1, "f6": 200_000_000},
+                    {"f12": "300001", "f14": "特锐德", "f2": 20.0, "f5": 1, "f6": "-"},
+                ]
+            }
+        }
+    }
+
+    monkeypatch.setattr(source, "_fetch_eastmoney_spot_page", lambda page: pages[page])
+
+    assert source.get_liquid_symbols(limit=2, min_amount=50_000_000) == [
+        "000001",
+        "600000",
+    ]
+    assert source.get_available_symbols() == ["600000", "000001", "300001"]
 
 
 def test_public_fetch_methods_raise_data_error_when_eastmoney_returns_empty(
@@ -424,6 +451,40 @@ def test_akshare_realtime_snapshot_reuses_cache_within_interval(monkeypatch):
     assert calls["count"] == 1
 
 
+def test_akshare_get_liquid_symbols_uses_realtime_snapshot(monkeypatch):
+    calls = {"count": 0}
+
+    def fake_spot():
+        calls["count"] += 1
+        return pd.DataFrame(
+            [
+                {"代码": "600000", "名称": "浦发银行", "成交额": 80_000_000},
+                {"代码": "000001", "名称": "平安银行", "成交额": 120_000_000},
+                {"代码": "000002", "名称": "ST测试", "成交额": 200_000_000},
+                {"代码": "300001", "名称": "特锐德", "成交额": "-"},
+            ]
+        )
+
+    source = AkshareSource.__new__(AkshareSource)
+    source._ak = SimpleNamespace(stock_zh_a_spot_em=fake_spot)
+    source.cache = None
+    source._realtime_min_interval_sec = 30.0
+    source._realtime_failure_cooldown_sec = 180.0
+    source._last_realtime_fetch_ts = 0.0
+    source._realtime_cooldown_until = 0.0
+    source._cached_realtime_snapshot = None
+    source._cached_realtime_snapshot_ts = 0.0
+    source.name = "akshare"
+    monkeypatch.setattr("aqsp.data.akshare_source.time.monotonic", lambda: 100.0)
+
+    assert source.get_liquid_symbols(limit=2, min_amount=50_000_000) == [
+        "000001",
+        "600000",
+    ]
+    assert source.get_available_symbols() == ["600000", "000001", "300001"]
+    assert calls["count"] == 1
+
+
 def test_akshare_realtime_snapshot_enters_cooldown_after_failure(monkeypatch):
     calls = {"count": 0}
 
@@ -513,6 +574,119 @@ def test_fetch_with_source_uses_shanghai_today(monkeypatch):
     assert seen["start"] == date(2025, 6, 13)
 
 
+def test_fetch_with_source_uses_explicit_end_date_when_provided(monkeypatch):
+    import aqsp.data as data_mod
+
+    seen: dict[str, date] = {}
+
+    class DummySource:
+        name = "dummy"
+
+        def fetch_daily(self, symbols, start, end, adjust=""):
+            seen["start"] = start
+            seen["end"] = end
+            return {"600000": pd.DataFrame([{"date": "2026-07-06", "close": 10.1}])}
+
+    monkeypatch.setattr(data_mod, "today_shanghai", lambda: date(2026, 7, 7))
+
+    fetch_with_source(DummySource(), ["600000"], days=30, end_date=date(2026, 7, 6))
+
+    assert seen["end"] == date(2026, 7, 6)
+    assert seen["start"] == date(2025, 7, 6)
+
+
+def test_fetch_frames_for_cli_with_metadata_passes_explicit_end_date() -> None:
+    seen: dict[str, object] = {}
+
+    class DummySource:
+        name = "dummy"
+
+    def fake_fetch(source, symbols, **kwargs):
+        seen["source"] = source.name
+        seen["symbols"] = symbols
+        seen["end_date"] = kwargs["end_date"]
+        return {"600000": pd.DataFrame([{"date": "2026-07-06", "close": 10.1}])}
+
+    frames, actual_source = fetch_frames_for_cli_with_metadata(
+        "dummy",
+        ["600000"],
+        benchmark_symbol=None,
+        end_date=date(2026, 7, 6),
+        get_source_fn=lambda _source_name, *, cache=None: DummySource(),
+        fetch_with_source_fn=fake_fetch,
+        record_source_success_fn=lambda requested, actual: seen.update(
+            {"success": (requested, actual)}
+        ),
+        record_source_failure_fn=lambda *_args: None,
+    )
+
+    assert actual_source == "dummy"
+    assert list(frames) == ["600000"]
+    assert seen == {
+        "source": "dummy",
+        "symbols": ["600000"],
+        "end_date": date(2026, 7, 6),
+        "success": ("dummy", "dummy"),
+    }
+
+
+def test_fetch_frames_for_cli_with_metadata_blocks_history_source_for_live_short() -> (
+    None
+):
+    seen: dict[str, object] = {}
+
+    def fail_get_source(*_args, **_kwargs):
+        raise AssertionError("blocked live_short source must not be opened")
+
+    with pytest.raises(DataError, match="sqlite_db 不适合 live_short"):
+        fetch_frames_for_cli_with_metadata(
+            "sqlite_db",
+            ["600000"],
+            benchmark_symbol=None,
+            workload="live_short",
+            get_source_fn=fail_get_source,
+            fetch_with_source_fn=lambda *_args, **_kwargs: {},
+            record_source_success_fn=lambda *_args: None,
+            record_source_failure_fn=lambda requested, reason: seen.update(
+                {"failure": (requested, reason)}
+            ),
+        )
+
+    assert seen["failure"][0] == "sqlite_db"
+    assert "live_short" in seen["failure"][1]
+
+
+def test_fetch_frames_for_cli_with_metadata_blocks_actual_history_fallback_for_live_short() -> (
+    None
+):
+    seen: dict[str, object] = {}
+
+    class DummySource:
+        name = "online_first"
+        last_used_source = "sqlite_db"
+
+    def fake_fetch(_source, _symbols, **_kwargs):
+        return {"600000": pd.DataFrame([{"date": "2026-07-06", "close": 10.1}])}
+
+    with pytest.raises(DataError, match="实际落到 sqlite_db"):
+        fetch_frames_for_cli_with_metadata(
+            "online_first",
+            ["600000"],
+            benchmark_symbol=None,
+            workload="live_short",
+            get_source_fn=lambda _source_name, *, cache=None: DummySource(),
+            fetch_with_source_fn=fake_fetch,
+            record_source_success_fn=lambda *_args: seen.update({"success": True}),
+            record_source_failure_fn=lambda requested, reason: seen.update(
+                {"failure": (requested, reason)}
+            ),
+        )
+
+    assert "success" not in seen
+    assert seen["failure"][0] == "online_first"
+    assert "sqlite_db" in seen["failure"][1]
+
+
 def test_fetch_with_source_raises_when_source_returns_no_valid_frames() -> None:
     class DummySource:
         name = "dummy"
@@ -527,7 +701,9 @@ def test_fetch_with_source_raises_when_source_returns_no_valid_frames() -> None:
         fetch_with_source(DummySource(), ["600000"], days=30)
 
 
-def test_fetch_with_source_raises_when_source_returns_partial_daily_frames() -> None:
+def test_fetch_with_source_keeps_partial_daily_frames_when_some_symbols_missing(
+    caplog,
+) -> None:
     class DummySource:
         name = "dummy"
 
@@ -537,8 +713,64 @@ def test_fetch_with_source_raises_when_source_returns_partial_daily_frames() -> 
         def fetch_index(self, index_codes, start, end):
             return {}
 
-    with pytest.raises(DataError, match="日线获取不完整"):
-        fetch_with_source(DummySource(), ["600000", "000001"], days=30)
+    frames = fetch_with_source(DummySource(), ["600000", "000001"], days=30)
+
+    assert list(frames) == ["600000"]
+    assert "日线获取不完整" in caplog.text
+
+
+def test_live_short_fetch_rejects_partial_daily_frames_explicitly() -> None:
+    class DummySource:
+        name = "eastmoney"
+
+    failures: list[tuple[str, str]] = []
+
+    with pytest.raises(DataError, match="live_short 日线取数不完整"):
+        fetch_frames_for_cli_with_metadata(
+            "eastmoney",
+            ["600000", "000001"],
+            benchmark_symbol=None,
+            workload="live_short",
+            get_source_fn=lambda _name, *, cache=None: DummySource(),
+            fetch_with_source_fn=lambda *_args, **_kwargs: {
+                "600000": pd.DataFrame([{"date": "2026-07-15", "close": 10.0}])
+            },
+            record_source_success_fn=lambda *_args: pytest.fail(
+                "partial live_short result must not be recorded as success"
+            ),
+            record_source_failure_fn=lambda requested, reason: failures.append(
+                (requested, reason)
+            ),
+        )
+
+    assert failures
+    assert failures[0][0] == "eastmoney"
+    assert "000001" in failures[0][1]
+
+
+def test_fetch_with_source_skips_bad_symbol_when_other_symbols_succeed() -> None:
+    class DummySource:
+        name = "dummy"
+
+        def fetch_daily(self, symbols, start, end, adjust=""):
+            if len(symbols) > 1:
+                raise DataError("batch failed on bad symbol")
+            symbol = symbols[0]
+            if symbol == "000001":
+                raise DataError("bad symbol")
+            return {
+                symbol: pd.DataFrame(
+                    [{"date": "2026-06-13", "symbol": symbol, "close": 10.1}]
+                )
+            }
+
+        def fetch_index(self, index_codes, start, end):
+            return {}
+
+    frames = fetch_with_source(DummySource(), ["600000", "000001"], days=30)
+
+    assert list(frames) == ["600000"]
+    assert frames["600000"]["close"].iloc[-1] == 10.1
 
 
 def _make_sqlite_daily_db(path: Path, symbols: int = 3, days: int = 3) -> None:
@@ -608,6 +840,96 @@ def test_sqlite_db_source_fetch_daily_batches_symbols(
     ]
     assert result["600000"]["amount"].iloc[0] > 0
     assert result["600004"]["name"].iloc[0] == "600004.SH"
+
+
+def test_sqlite_db_source_get_liquid_symbols_uses_latest_available_day(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr("aqsp.data.sqlite_db_source._LIQUID_SYMBOL_MIN_HISTORY_ROWS", 3)
+    monkeypatch.setattr(
+        "aqsp.data.sqlite_db_source._LIQUID_SYMBOL_LOOKBACK_CALENDAR_DAYS", 2
+    )
+    db_path = tmp_path / "astocks_raw.db"
+    _make_sqlite_daily_db(db_path, symbols=5, days=3)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "UPDATE daily_qfq SET amount = 50000 WHERE ts_code = '600004.SH' AND trade_date = '20240103'"
+        )
+        conn.execute(
+            "UPDATE daily_qfq SET amount = 40000 WHERE ts_code = '600003.SZ' AND trade_date = '20240103'"
+        )
+    source = SqliteDbSource(db_path=db_path, cache=None)
+
+    assert source.get_liquid_symbols(limit=2, min_amount=1) == ["600004", "600003"]
+
+
+def test_sqlite_db_source_get_liquid_symbols_falls_back_when_amount_filter_empty(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr("aqsp.data.sqlite_db_source._LIQUID_SYMBOL_MIN_HISTORY_ROWS", 3)
+    monkeypatch.setattr(
+        "aqsp.data.sqlite_db_source._LIQUID_SYMBOL_LOOKBACK_CALENDAR_DAYS", 2
+    )
+    db_path = tmp_path / "astocks_raw.db"
+    _make_sqlite_daily_db(db_path, symbols=3, days=3)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "UPDATE daily_qfq SET amount = 50000 WHERE ts_code = '600002.SH' AND trade_date = '20240103'"
+        )
+        conn.execute(
+            "UPDATE daily_qfq SET amount = 40000 WHERE ts_code = '600001.SZ' AND trade_date = '20240103'"
+        )
+    source = SqliteDbSource(db_path=db_path, cache=None)
+
+    assert source.get_liquid_symbols(limit=2, min_amount=999_999_999) == [
+        "600002",
+        "600001",
+    ]
+
+
+def test_sqlite_db_source_get_liquid_symbols_excludes_short_history(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr("aqsp.data.sqlite_db_source._LIQUID_SYMBOL_MIN_HISTORY_ROWS", 3)
+    monkeypatch.setattr(
+        "aqsp.data.sqlite_db_source._LIQUID_SYMBOL_LOOKBACK_CALENDAR_DAYS", 2
+    )
+    db_path = tmp_path / "astocks_raw.db"
+    _make_sqlite_daily_db(db_path, symbols=3, days=3)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("DELETE FROM daily_qfq WHERE ts_code = '600002.SH'")
+        conn.execute(
+            """
+            INSERT INTO daily_qfq (
+                ts_code, trade_date, open, high, low, close,
+                open_qfq, high_qfq, low_qfq, close_qfq, volume, amount
+            ) VALUES ('600002.SH', '20240103', 10, 11, 9, 10, 8, 9, 7, 8, 1000, 99999)
+            """
+        )
+    source = SqliteDbSource(db_path=db_path, cache=None)
+
+    assert source.get_liquid_symbols(limit=3, min_amount=1) == ["600000", "600001"]
+
+
+def test_sqlite_db_source_get_liquid_symbols_excludes_late_start(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr("aqsp.data.sqlite_db_source._LIQUID_SYMBOL_MIN_HISTORY_ROWS", 2)
+    monkeypatch.setattr(
+        "aqsp.data.sqlite_db_source._LIQUID_SYMBOL_LOOKBACK_CALENDAR_DAYS", 2
+    )
+    db_path = tmp_path / "astocks_raw.db"
+    _make_sqlite_daily_db(db_path, symbols=3, days=3)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "DELETE FROM daily_qfq WHERE ts_code = '600002.SH' AND trade_date = '20240101'"
+        )
+        conn.execute(
+            "UPDATE daily_qfq SET amount = 99999 WHERE ts_code = '600002.SH' AND trade_date = '20240103'"
+        )
+    source = SqliteDbSource(db_path=db_path, cache=None)
+
+    assert "600002" not in source.get_liquid_symbols(limit=3, min_amount=1)
 
 
 def test_sqlite_daily_coverage_uses_batched_group_query(
@@ -685,11 +1007,15 @@ def test_sqlite_db_source_fetch_daily_uses_bulk_cache_paths(
 
     def fail_get_ohlcv(symbol, *_args, **_kwargs):
         get_calls.append(symbol)
-        raise AssertionError("fetch_daily should not fall back to per-symbol cache reads")
+        raise AssertionError(
+            "fetch_daily should not fall back to per-symbol cache reads"
+        )
 
     def fail_set_ohlcv(symbol, *_args, **_kwargs):
         set_calls.append(symbol)
-        raise AssertionError("fetch_daily should not fall back to per-symbol cache writes")
+        raise AssertionError(
+            "fetch_daily should not fall back to per-symbol cache writes"
+        )
 
     monkeypatch.setattr(cache, "get_ohlcv", fail_get_ohlcv)
     monkeypatch.setattr(cache, "set_ohlcv", fail_set_ohlcv)
@@ -872,6 +1198,49 @@ def test_sqlite_daily_coverage_requires_requested_start_and_end(
         )
         == []
     )
+
+
+def test_sqlite_daily_coverage_excludes_symbol_missing_target_day(
+    tmp_path: Path,
+) -> None:
+    db = tmp_path / "sqlite.db"
+    with sqlite3.connect(db) as conn:
+        conn.execute("create table stocks (ts_code text, name text)")
+        conn.execute("insert into stocks values ('600519.SH', '贵州茅台')")
+        conn.execute("insert into stocks values ('000001.SZ', '平安银行')")
+        conn.execute(
+            """
+            create table daily_qfq (
+                ts_code text,
+                trade_date text,
+                open real,
+                high real,
+                low real,
+                close real,
+                volume real,
+                amount real
+            )
+            """
+        )
+        for day in pd.date_range("2024-01-02", "2024-01-10", freq="B"):
+            conn.execute(
+                "insert into daily_qfq values (?, ?, 1, 1, 1, 1, 100, 100)",
+                ("600519.SH", day.strftime("%Y%m%d")),
+            )
+        for day in pd.date_range("2024-01-02", "2024-01-09", freq="B"):
+            conn.execute(
+                "insert into daily_qfq values (?, ?, 1, 1, 1, 1, 100, 100)",
+                ("000001.SZ", day.strftime("%Y%m%d")),
+            )
+
+    source = SqliteDbSource(db_path=db)
+
+    assert source.get_available_symbols() == ["600519", "000001"]
+    assert source.get_symbols_with_daily_coverage(
+        ["600519", "000001"],
+        date(2024, 1, 2),
+        date(2024, 1, 10),
+    ) == ["600519"]
 
 
 def test_sqlite_db_source_marks_qfq_database_price_mode(tmp_path: Path) -> None:
