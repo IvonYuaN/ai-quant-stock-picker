@@ -211,6 +211,8 @@ INTRADAY_OUTPUT_CSV="$(resolve_path "${AQSP_INTRADAY_OUTPUT_CSV:-reports/intrada
 INTRADAY_STATUS="$(resolve_path "${AQSP_INTRADAY_STATUS:-data/intraday_refresh_status.json}")"
 INTRADAY_DASHBOARD_HTML="$(resolve_path "${AQSP_INTRADAY_DASHBOARD_HTML:-dist/dashboard/index.html}")"
 INTRADAY_DASHBOARD_DB="$(resolve_path "${AQSP_INTRADAY_DASHBOARD_DB:-dist/dashboard/aqsp.db}")"
+HOME_SNAPSHOT_PATH="$(resolve_path "${AQSP_HOME_SNAPSHOT_PATH:-data/runtime/home_dashboard_snapshot.json}")"
+HOME_SNAPSHOT_INDEX_PATH="$(resolve_path "${AQSP_HOME_SNAPSHOT_INDEX_PATH:-data/runtime/home_dashboard_snapshot_index.json}")"
 PAPER_LEDGER="$(resolve_path "${AQSP_PAPER_LEDGER:-data/paper_trades.jsonl}")"
 INTRADAY_NEWS_SCRIPT="${AQSP_INTRADAY_NEWS_SCRIPT:-${PROJECT_ROOT}/scripts/news_catalysts.sh}"
 INTRADAY_NEWS_OUTPUT="$(resolve_path "${AQSP_INTRADAY_NEWS_OUTPUT:-${AQSP_NEWS_OUTPUT:-reports/news_catalysts.md}}")"
@@ -392,7 +394,9 @@ refresh_home_dashboard_snapshot() {
         return 0
     fi
     if "${PYTHON_BIN}" "${PROJECT_ROOT}/scripts/write_home_snapshot.py" \
-        --task-id "${AQSP_RUN_TASK_ID}" >>"${RESULT_LOG}" 2>&1; then
+        --task-id "${AQSP_RUN_TASK_ID}" \
+        --output "${HOME_SNAPSHOT_PATH}" \
+        --index-output "${HOME_SNAPSHOT_INDEX_PATH}" >>"${RESULT_LOG}" 2>&1; then
         log "首页快照已刷新"
         return 0
     else
