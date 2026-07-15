@@ -21,6 +21,11 @@ export default defineConfig(({ mode }) => {
         "/api": { target: apiTarget, changeOrigin: true },
       },
     },
+    preview: {
+      port: 5899,
+      strictPort: true,
+      allowedHosts: ["lh.ifidy.cn", "localhost", "127.0.0.1"],
+    },
     build: {
       rollupOptions: {
         output: {
