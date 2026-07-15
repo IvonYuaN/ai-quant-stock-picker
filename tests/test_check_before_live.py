@@ -6,6 +6,7 @@ import sqlite3
 from datetime import date, datetime
 from pathlib import Path
 
+from aqsp.core.time import SHANGHAI_TZ
 from scripts.check_before_live import (
     _check_strategy_executability_runtime_feedback,
     _check_strategy_weight_snapshot_audit,
@@ -68,7 +69,13 @@ def _touch_runtime_db(root: Path, name: str, *, mtime_day: date) -> str:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("sqlite placeholder\n", encoding="utf-8")
     timestamp = datetime(
-        mtime_day.year, mtime_day.month, mtime_day.day, 18, 0, 0
+        mtime_day.year,
+        mtime_day.month,
+        mtime_day.day,
+        18,
+        0,
+        0,
+        tzinfo=SHANGHAI_TZ,
     ).timestamp()
     os.utime(path, (timestamp, timestamp))
     return str(path.relative_to(root))

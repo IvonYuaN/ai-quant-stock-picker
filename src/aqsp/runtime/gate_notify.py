@@ -27,6 +27,10 @@ def _resolve_gate_state_path(state_path: str | Path) -> Path:
 
 def _is_unstable_state_path(path: Path) -> bool:
     volatile_roots = (Path("/tmp"), Path("/private/tmp"))
+    if os.getenv("PYTEST_CURRENT_TEST") and any(
+        part.startswith("pytest-of-") for part in path.parts
+    ):
+        return False
     return any(path == root or root in path.parents for root in volatile_roots)
 
 

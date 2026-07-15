@@ -44,7 +44,10 @@ class RepoBacklogItem:
 def load_repo_intake(paths: tuple[str | Path, ...]) -> tuple[RepoIntakeItem, ...]:
     merged: dict[str, RepoIntakeItem] = {}
     for path in paths:
-        for raw in _load_raw_repos(Path(path)):
+        source_path = Path(path)
+        if not source_path.exists():
+            continue
+        for raw in _load_raw_repos(source_path):
             item = classify_repo(raw)
             existing = merged.get(item.full_name)
             if existing is None or item.stars > existing.stars:

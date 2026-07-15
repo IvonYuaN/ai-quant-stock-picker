@@ -83,17 +83,27 @@ jobs:
           PYTEST_SHARD: ${{ matrix.shard }}
           PYTEST_TOTAL_SHARDS: 4
         run: |
-          python3 - <<'PY' > /tmp/aqsp-test-files.txt
+          python3 -m pytest --collect-only -q tests backend/tests > /tmp/aqsp-all-test-nodes.txt
+          python3 - <<'PY' > /tmp/aqsp-test-nodes.txt
           import os
           from pathlib import Path
 
           shard = int(os.environ["PYTEST_SHARD"])
           total = int(os.environ["PYTEST_TOTAL_SHARDS"])
-          paths = sorted(Path("tests").rglob("test_*.py"))
-          paths += sorted(Path("backend/tests").rglob("test_*.py"))
-          print("\n".join(str(path) for index, path in enumerate(paths) if index % total == shard))
+          lines = [
+              line.strip()
+              for line in Path("/tmp/aqsp-all-test-nodes.txt")
+              .read_text(encoding="utf-8")
+              .splitlines()
+              if "::" in line
+          ]
+          print("\n".join(line for index, line in enumerate(lines) if index % total == shard))
           PY
-          pytest -q -vv --durations=20 -o faulthandler_timeout=120 $(cat /tmp/aqsp-test-files.txt)
+          TEST_NODES=()
+          while IFS= read -r node; do
+            [[ -n "${node}" ]] && TEST_NODES+=("${node}")
+          done < /tmp/aqsp-test-nodes.txt
+          pytest -q -vv --durations=20 -o faulthandler_timeout=120 "${TEST_NODES[@]}"
 
       - name: Secret scan
         run: python3 scripts/check_no_secrets.py .
