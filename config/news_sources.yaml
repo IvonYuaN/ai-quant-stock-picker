@@ -1,0 +1,60 @@
+version: "2026.07.14"
+
+rss:
+  enabled: true
+  timeout_seconds: 6
+  # 单个 feed 的超时不应按 feed 数量累加到盘中主链。
+  max_concurrency: 4
+  max_items: 12
+  # 默认只启用当前可验证的官方/原生 RSS；国内政策、公告和 CCTV/新华社聚合
+  # 继续由 akshare 适配器提供，避免把失效公共 RSSHub 实例放入生产默认链路。
+  feeds:
+    - name: 美联储-FederalReserve
+      url: "https://www.federalreserve.gov/feeds/press_all.xml"
+      category: "global_macro"
+      region: international
+      enabled: true
+      keywords: ["rate", "inflation", "liquidity", "美元", "美债", "流动性"]
+      max_items: 8
+    - name: 美国SEC-PressReleases
+      url: "https://www.sec.gov/news/pressreleases.rss"
+      category: "global_regulation"
+      region: international
+      enabled: true
+      keywords: ["SEC", "regulation", "listing", "disclosure", "IPO", "上市", "监管"]
+      max_items: 8
+    - name: 欧洲央行-ECB
+      url: "https://www.ecb.europa.eu/rss/press.html"
+      category: "global_macro"
+      region: international
+      enabled: true
+      keywords: ["rate", "inflation", "euro", "liquidity", "欧元", "流动性"]
+      max_items: 8
+    - name: 英伟达-NVIDIADeveloper
+      url: "https://developer.nvidia.com/blog/feed/"
+      category: "global_tech"
+      region: international
+      enabled: true
+      keywords: ["NVIDIA", "Physical AI", "robotics", "机器人", "具身智能", "AI算力"]
+      max_items: 8
+    - name: NASA-NewsReleases
+      url: "https://www.nasa.gov/news-release/feed/"
+      category: "global_aerospace"
+      region: international
+      enabled: true
+      keywords: ["NASA", "SpaceX", "space", "satellite", "launch", "rocket", "commercial space", "商业航天", "卫星互联网"]
+      max_items: 8
+    - name: MarketWatch-RealTimeHeadlines
+      url: "https://feeds.content.dowjones.io/public/rss/mw_realtimeheadlines"
+      category: "global_risk_appetite"
+      region: international
+      enabled: true
+      keywords: ["Nasdaq", "S&P 500", "Dow", "stock futures", "rally", "risk-on", "tech stocks", "AI stocks", "美股", "纳斯达克", "风险偏好"]
+      max_items: 8
+    - name: MarketWatch-MarketPulse
+      url: "https://feeds.content.dowjones.io/public/rss/mw_marketpulse"
+      category: "global_cross_asset"
+      region: international
+      enabled: true
+      keywords: ["gold", "oil", "crude", "war", "attack", "Iran", "Middle East", "geopolitical", "defense", "SpaceX", "IPO", "satellite", "launch", "黄金", "原油", "战争", "地缘", "军工", "商业航天"]
+      max_items: 8
