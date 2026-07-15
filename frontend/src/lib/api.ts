@@ -151,6 +151,7 @@ export interface AqspCandidate {
   deterministic_reasons: string[];
   strategies: string[];
   evidence_status: string;
+  technical_metrics?: Array<{ key: string; label: string; value: string }>;
 }
 
 export interface AqspMessage {
@@ -294,7 +295,7 @@ export interface QaRow { company: string; question: string; answer: string | nul
 export interface IndustryRow { rank: number; name: string; change_pct: number; code: string; up_count: number; down_count: number }
 export interface IndustryData { top: IndustryRow[]; bottom: IndustryRow[]; total: number }
 
-// 全球市场（美股 / 港股，移植自 global-stock-data · 东财域内源）
+// 全球市场（美股 / 港股，使用东财域内公开行情源）
 export interface GlobalIndex {
   key: string; name: string; region: string;
   price: number | null; change_pct: number | null;
@@ -317,7 +318,8 @@ export interface GlobalStock {
 
 export const api = {
   health: () => get<{ ok: boolean }>("/health"),
-  aqspSnapshot: () => get<AqspSnapshot>("/aqsp/snapshot"),
+  aqspSnapshot: (date?: string) =>
+    get<AqspSnapshot>(date ? `/aqsp/snapshot?date=${encodeURIComponent(date)}` : "/aqsp/snapshot"),
   indices: () => get<IndexQuote[]>("/indices"),
   marketOverview: () => get<MarketOverview>("/market/overview"),
   emotion: () => get<ShortTermEmotion>("/market/emotion"),

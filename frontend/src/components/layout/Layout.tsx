@@ -3,43 +3,33 @@ import { Link, Outlet, useLocation } from "react-router-dom";
 import {
   Activity,
   CalendarDays,
-  ChevronsLeft,
-  ChevronsRight,
-  FileSearch,
-  Github,
   LineChart,
+  MessageSquareText,
   Moon,
-  Radar,
+  PanelLeftClose,
+  PanelLeftOpen,
   Sun,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useDarkMode } from "@/hooks/useDarkMode";
-import { useAqspSnapshot } from "@/components/aqsp/useAqspSnapshot";
-
-const APP_VERSION = "v0.1.3";
-const REPO_URL = "https://github.com/simonlin1212/Vibe-Research";
+import { AqspWorkspaceProvider, useAqspSnapshot } from "@/components/aqsp/useAqspSnapshot";
+import { formatResearchDate } from "@/lib/research-view";
 
 const NAV = [
-  { to: "/daily-review", icon: Activity, label: "今日研究", description: "结论与证据" },
-  { to: "/intel", icon: Radar, label: "消息核验", description: "来源与传导" },
-  { to: "/paper-research", icon: FileSearch, label: "纸面研究", description: "候选与复核" },
+  { to: "/daily-review#overview", icon: Activity, label: "研究总览", description: "当天结论" },
+  { to: "/daily-review#candidates", icon: LineChart, label: "候选", description: "观察对象" },
+  { to: "/daily-review#messages", icon: MessageSquareText, label: "消息与讨论", description: "证据链" },
 ];
 
-function formatDate(date: string): { day: string; weekday: string } {
-  const value = new Date(`${date}T00:00:00+08:00`);
-  if (Number.isNaN(value.getTime())) return { day: date, weekday: "" };
-  return {
-    day: new Intl.DateTimeFormat("zh-CN", { month: "2-digit", day: "2-digit" }).format(value),
-    weekday: new Intl.DateTimeFormat("zh-CN", { weekday: "short" }).format(value),
-  };
+export function Layout() {
+  return <AqspWorkspaceProvider><WorkspaceLayout /></AqspWorkspaceProvider>;
 }
 
-export function Layout() {
-  const { pathname } = useLocation();
+function WorkspaceLayout() {
+  const { pathname, hash } = useLocation();
   const { dark, toggle } = useDarkMode();
-  const { data, loading } = useAqspSnapshot();
+  const { data, loading, selectedDate, selectDate } = useAqspSnapshot();
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem("vr-sidebar") === "collapsed");
-  const [selectedDate, setSelectedDate] = useState(() => localStorage.getItem("vr-selected-date") || "");
 
   useEffect(() => {
     localStorage.setItem("vr-sidebar", collapsed ? "collapsed" : "expanded");
@@ -47,10 +37,9 @@ export function Layout() {
 
   useEffect(() => {
     if (data?.selected_date && !data.available_dates.includes(selectedDate)) {
-      setSelectedDate(data.selected_date);
-      localStorage.setItem("vr-selected-date", data.selected_date);
+      selectDate(data.selected_date);
     }
-  }, [data, selectedDate]);
+  }, [data, selectedDate, selectDate]);
 
   const dates = data?.available_dates ?? [];
   const activeDate = selectedDate || data?.selected_date || "";
@@ -59,10 +48,22 @@ export function Layout() {
     <div className="vr-shell">
       <aside className={cn("vr-sidebar glass", collapsed && "vr-sidebar-collapsed")}>
         <div className="vr-brand">
-          <Link to="/daily-review" className="flex min-w-0 items-center gap-2.5">
-            <span className="vr-brand-mark"><LineChart className="h-5 w-5" /></span>
-            {!collapsed && <span className="truncate text-base font-bold tracking-tight">Vibe-Research</span>}
-          </Link>
+          <div className="flex items-start justify-between gap-2">
+            <Link to="/daily-review" className="flex min-w-0 items-center gap-2.5">
+              <span className="vr-brand-mark"><LineChart className="h-5 w-5" /></span>
+              {!collapsed && <span className="truncate text-base font-bold tracking-tight">Vibe-Research</span>}
+            </Link>
+            <button
+              type="button"
+              onClick={() => setCollapsed((value) => !value)}
+              className="vr-icon-button shrink-0"
+              title={collapsed ? "展开侧栏" : "收起侧栏"}
+              aria-label={collapsed ? "展开侧栏" : "收起侧栏"}
+              aria-expanded={!collapsed}
+            >
+              {collapsed ? <PanelLeftOpen className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
+            </button>
+          </div>
           {!collapsed && <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">把当天研究收敛成可复核的工作台。</p>}
         </div>
 
@@ -74,7 +75,8 @@ export function Layout() {
           )}
           <nav className="space-y-1" aria-label="研究工作区">
             {NAV.map(({ to, icon: Icon, label, description }) => {
-              const active = pathname === to;
+              const [targetPath, targetHash] = to.split("#");
+              const active = pathname === targetPath && (targetHash ? hash === `#${targetHash}` : !hash);
               return (
                 <Link
                   key={to}
@@ -96,7 +98,7 @@ export function Layout() {
                 {loading && <div className="rounded-lg border border-border/50 px-3 py-2 text-xs text-muted-foreground">读取日期索引…</div>}
                 {!loading && dates.length === 0 && <div className="rounded-lg border border-dashed border-border/60 px-3 py-2 text-xs text-muted-foreground">暂无日期索引</div>}
                 {dates.map((date) => {
-                  const label = formatDate(date);
+                  const label = formatResearchDate(date);
                   const active = date === activeDate;
                   return (
                     <button
@@ -104,9 +106,7 @@ export function Layout() {
                       type="button"
                       className={cn("vr-date-item", active && "vr-date-item-active")}
                       onClick={() => {
-                        setSelectedDate(date);
-                        localStorage.setItem("vr-selected-date", date);
-                        window.dispatchEvent(new CustomEvent("vr-date-change", { detail: date }));
+                        selectDate(date);
                       }}
                       aria-pressed={active}
                     >
@@ -129,13 +129,13 @@ export function Layout() {
               {!collapsed && <span>{dark ? "亮色" : "暗色"}</span>}
             </button>
             <div className="flex items-center gap-1">
-              <a href={REPO_URL} target="_blank" rel="noreferrer" className="vr-icon-button" title="GitHub"><Github className="h-4 w-4" /></a>
-              <button onClick={() => setCollapsed((value) => !value)} className="vr-icon-button" title={collapsed ? "展开侧栏" : "收起侧栏"}>
-                {collapsed ? <ChevronsRight className="h-4 w-4" /> : <ChevronsLeft className="h-4 w-4" />}
-              </button>
+              <span className="vr-data-status" title="AQSP 数据状态">
+                <span className={cn("vr-data-status-dot", loading ? "vr-data-status-loading" : data ? "vr-data-status-ready" : "vr-data-status-empty")} />
+                {!collapsed && <span>{loading ? "读取中" : data ? "数据已接入" : "暂无数据"}</span>}
+              </span>
             </div>
           </div>
-          {!collapsed && <p className="mt-2 text-[10px] text-muted-foreground/55">{APP_VERSION} · 只读研究工作台</p>}
+          {!collapsed && <p className="mt-2 text-[10px] text-muted-foreground/55">AQSP · 只读研究</p>}
         </div>
       </aside>
 
