@@ -6,7 +6,16 @@ from typing import Any
 
 import pandas as pd
 
+from aqsp.briefing.conclusion import (
+    build_debate_conclusion_view,
+    cross_market_priority_digest,
+)
 from aqsp.core.types import RunMetadata
+from aqsp.ledger.base import run_metadata_fields
+from aqsp.market_context import (
+    format_pick_market_context_chain_summary,
+    format_pick_market_context_summary,
+)
 from aqsp.models import PickResult
 from aqsp.presentation import (
     describe_source_health,
@@ -83,16 +92,35 @@ def _review_priority_label(priority: str) -> str:
     return review_priority_label(priority)
 
 
+def _cross_market_summary(pick: PickResult) -> str:
+    return format_pick_market_context_summary(pick)
+
+
+def _cross_market_chain_summary(pick: PickResult) -> str:
+    return format_pick_market_context_chain_summary(pick)
+
+
 def _format_allocation_rationale(item: Any) -> str:
     rationale = tuple(getattr(item, "rationale", ()) or ())
     return "；".join(str(part) for part in rationale[:3])
+
+
+def _debate_adjustment_label(value: str) -> str:
+    clean = str(value).strip().lower()
+    return {
+        "raise": "偏积极",
+        "keep": "暂维持",
+        "lower": "偏谨慎",
+    }.get(clean, "继续观察")
 
 
 def _normalize_reason_text(reason: object) -> str:
     text = _safe_markdown_text(reason)
     if not text:
         return ""
-    for marker in ("与前序候选高相关", "多Agent辩论偏谨慎", "多Agent辩论支持"):
+    text = text.replace("多Agent", "多 Agent")
+    text = text.replace("多 Agent辩论", "多 Agent 辩论")
+    for marker in ("与前序候选高相关", "多 Agent 辩论偏谨慎", "多 Agent 辩论支持"):
         if marker in text and f"；{marker}" not in text and not text.startswith(marker):
             text = text.replace(marker, f"；{marker}", 1)
     return text
@@ -118,6 +146,8 @@ def _format_final_decision_board(
     picks: list[PickResult],
     decision_map: dict[str, Any],
     portfolio_summary: Any | None = None,
+    *,
+    observation_only: bool = False,
 ) -> list[str]:
     if not picks:
         return []
@@ -127,6 +157,11 @@ def _format_final_decision_board(
         if getattr(portfolio_summary, "regime_label", ""):
             lines.append(
                 f"- 当前市况: {_safe_markdown_text(portfolio_summary.regime_label)}"
+            )
+        if getattr(portfolio_summary, "cross_market_overview", ""):
+            lines.append(
+                "- 跨市主线: "
+                + _safe_markdown_text(portfolio_summary.cross_market_overview)
             )
         if getattr(portfolio_summary, "strategy_mix_name", ""):
             lines.append(
@@ -154,9 +189,13 @@ def _format_final_decision_board(
             )
         if getattr(portfolio_summary, "top_focus", ()):
             focus_label = (
-                "纸面复核"
-                if getattr(portfolio_summary, "allocations", ())
-                else "观察重点"
+                "观察重点"
+                if observation_only
+                else (
+                    "纸面复核"
+                    if getattr(portfolio_summary, "allocations", ())
+                    else "观察重点"
+                )
             )
             lines.append(
                 f"- {focus_label}: "
@@ -169,6 +208,70 @@ def _format_final_decision_board(
                 "- 观察名单: "
                 + "、".join(
                     _safe_markdown_text(item) for item in portfolio_summary.watchlist
+                )
+            )
+        if getattr(portfolio_summary, "cross_market_focus", ()):
+            lines.append(
+                "- 跨市焦点: "
+                + "；".join(
+                    _safe_markdown_text(item)
+                    for item in portfolio_summary.cross_market_focus[:2]
+                )
+            )
+        if getattr(portfolio_summary, "debate_focus", ()):
+            lines.append(
+                "- 讨论焦点: "
+                + "；".join(
+                    _safe_markdown_text(item)
+                    for item in portfolio_summary.debate_focus[:2]
+                )
+            )
+        if getattr(portfolio_summary, "debate_support_points", ()):
+            lines.append(
+                "- 讨论支持: "
+                + "；".join(
+                    _safe_markdown_text(item)
+                    for item in portfolio_summary.debate_support_points[:2]
+                )
+            )
+        if getattr(portfolio_summary, "debate_opposition_points", ()):
+            lines.append(
+                "- 讨论反对: "
+                + "；".join(
+                    _safe_markdown_text(item)
+                    for item in portfolio_summary.debate_opposition_points[:2]
+                )
+            )
+        if getattr(portfolio_summary, "debate_watch_items", ()):
+            lines.append(
+                "- 讨论待确认: "
+                + "；".join(
+                    _safe_markdown_text(item)
+                    for item in portfolio_summary.debate_watch_items[:2]
+                )
+            )
+        if getattr(portfolio_summary, "debate_risk_gates", ()):
+            lines.append(
+                "- 讨论卡点: "
+                + "；".join(
+                    _safe_markdown_text(item)
+                    for item in portfolio_summary.debate_risk_gates[:2]
+                )
+            )
+        if getattr(portfolio_summary, "debate_next_triggers", ()):
+            lines.append(
+                "- 讨论触发: "
+                + "；".join(
+                    _safe_markdown_text(item)
+                    for item in portfolio_summary.debate_next_triggers[:2]
+                )
+            )
+        if getattr(portfolio_summary, "debate_priority_queue", ()):
+            lines.append(
+                "- 讨论顺序: "
+                + "；".join(
+                    _safe_markdown_text(item)
+                    for item in portfolio_summary.debate_priority_queue[:2]
                 )
             )
         if getattr(portfolio_summary, "action_hotspots", ()):
@@ -198,17 +301,21 @@ def _format_final_decision_board(
                     )
                 )
         if getattr(portfolio_summary, "allocations", ()):
-            lines.append("- 仓位参考:")
+            lines.append("- 观察顺序:" if observation_only else "- 仓位参考:")
             for item in tuple(getattr(portfolio_summary, "allocations", ()))[:3]:
                 display = _safe_markdown_text(
                     format_symbol_name(item.symbol, item.name)
                 )
                 rationale = _format_allocation_rationale(item)
-                line = f"  - {display}: {item.weight:.0%}"
+                line = (
+                    f"  - {display}"
+                    if observation_only
+                    else f"  - {display}: {item.weight:.0%}"
+                )
                 if rationale:
                     line += f" | {_safe_markdown_text(rationale)}"
                 lines.append(line)
-            lead_allocations = tuple(getattr(portfolio_summary, "allocations", ()))[:2]
+            lead_allocations = tuple(getattr(portfolio_summary, "allocations", ()))[:3]
             if lead_allocations:
                 order = " → ".join(
                     _safe_markdown_text(format_symbol_name(item.symbol, item.name))
@@ -216,16 +323,18 @@ def _format_final_decision_board(
                 )
                 lines.append(f"- 先看顺序: {order}")
         cash_reserve = float(getattr(portfolio_summary, "cash_reserve", 0.0) or 0.0)
-        if cash_reserve > 0:
+        if cash_reserve > 0 and not observation_only:
             lines.append(f"- 现金留存: {cash_reserve:.0%}")
         allocation_note = str(getattr(portfolio_summary, "allocation_note", "") or "")
-        if allocation_note:
+        if allocation_note and not observation_only:
             lines.append(f"- 仓位约束: {_safe_markdown_text(allocation_note)}")
         lines.append("")
     for idx, pick in enumerate(picks[:3], 1):
         decision = decision_map.get(pick.symbol)
         pm_reasons = getattr(decision, "reasons", ()) if decision is not None else ()
         label = _resolve_display_decision_label(pick, decision)
+        if observation_only:
+            label = "仅观察" if str(pick.rating) == "avoid" else "盘中观察"
         status = _candidate_status(pick)
         blocker = _candidate_blocker(pick)
         next_step = _candidate_next_step(pick)
@@ -278,22 +387,43 @@ def _format_portfolio_decision(decision: Any) -> str:
 
 def _format_debate_result(result: Any) -> str:
     lines = []
+    symbol_name = format_symbol_name(result.symbol, result.name)
     lines.append("### 分歧摘要")
     lines.append(f"- 最终共识: {result.final_consensus}")
     lines.append(
-        f"- 结论倾向: {result.recommended_adjustment}（仅作补充，不改写系统评分）"
+        f"- 委员会结论: {_debate_adjustment_label(result.recommended_adjustment)}（仅作补充，不改写系统评分）"
     )
     if float(getattr(result, "adjusted_score", 0.0) or 0.0) > 0:
         lines.append(
-            f"- 参考分歧: runtime 原始分 {result.original_score:.1f}；附件参考分 {result.adjusted_score:.1f}"
+            f"- 参考分歧: 系统原始评分 {result.original_score:.1f}；附件参考分 {result.adjusted_score:.1f}"
         )
     lines.append(f"- 分歧: {result.disagreement_score:.0%}")
-    lines.append(f"- 讨论轮次: {len(result.rounds)}")
-
     bull_count = sum(1 for v in result.final_vote.values() if v == "bullish")
     bear_count = sum(1 for v in result.final_vote.values() if v == "bearish")
     if bull_count or bear_count:
         lines.append(f"- 投票结果: 看多 {bull_count} 票 / 看空 {bear_count} 票")
+    conclusion = build_debate_conclusion_view(
+        result,
+        language="zh-CN",
+        max_role_labels=5,
+    )
+    if (
+        conclusion.headline
+        and str(getattr(result, "research_verdict", "") or "").strip()
+    ):
+        lines.append(f"- 研究口径: {conclusion.headline}")
+    cross_market_digest = cross_market_priority_digest(
+        result,
+        focus_display=symbol_name,
+    )
+    if cross_market_digest:
+        lines.append(f"- 跨市判断: {cross_market_digest}")
+    if conclusion.risk_gate_line:
+        lines.append(f"- {conclusion.risk_gate_line}")
+    if conclusion.trigger_line:
+        lines.append(f"- {conclusion.trigger_line}")
+    if conclusion.historical_context_line:
+        lines.append(f"- {conclusion.historical_context_line}")
 
     if result.risk_warnings:
         lines.append("#### 风险提示")
@@ -317,10 +447,34 @@ def to_dataframe(picks: list[PickResult]) -> pd.DataFrame:
         row["risks"] = "；".join(pick.risks)
         row.update(pick.metrics)
         del row["metrics"]
+        row.setdefault("deterministic_score", float(pick.score))
+        row.setdefault("deterministic_score_unchanged", True)
+        row.setdefault("advisory_only", True)
         rows.append(row)
     if not rows:
         return pd.DataFrame(columns=RESULT_COLUMNS)
     return pd.DataFrame(rows)
+
+
+def to_intraday_dataframe(
+    picks: list[PickResult],
+    *,
+    metadata: RunMetadata,
+) -> pd.DataFrame:
+    """Return candidate rows plus one runtime metadata row for live consumers."""
+    table = to_dataframe(picks)
+    signal_date = metadata.data_latest_trade_date
+    run_row: dict[str, object] = {
+        "symbol": "__RUN__",
+        "name": "run_event",
+        "date": signal_date,
+        "signal_date": signal_date,
+        "status": "runtime_context",
+        "event_type": "runtime_context",
+        **run_metadata_fields(metadata),
+    }
+    run_row["run_market_context_lines"] = "；".join(metadata.market_context_lines)
+    return pd.concat([pd.DataFrame([run_row]), table], ignore_index=True, sort=False)
 
 
 def to_markdown(
@@ -344,7 +498,17 @@ def to_markdown(
         if portfolio_decisions
         else {}
     )
-    lines.extend(_format_final_decision_board(picks, decision_map, portfolio_summary))
+    observation_only = bool(
+        getattr(metadata, "circuit_breaker_triggered", False) if metadata else False
+    )
+    lines.extend(
+        _format_final_decision_board(
+            picks,
+            decision_map,
+            portfolio_summary,
+            observation_only=observation_only,
+        )
+    )
 
     for idx, pick in enumerate(picks, 1):
         display = _display_name(pick)
@@ -355,6 +519,8 @@ def to_markdown(
         review_priority = _review_priority_label(_candidate_review_priority(pick))
         decision = decision_map.get(pick.symbol)
         decision_text = _resolve_display_decision_label(pick, decision)
+        if observation_only:
+            decision_text = "仅观察" if str(pick.rating) == "avoid" else "盘中观察"
         if status:
             decision_text += f" | {status}"
         lines.extend(
@@ -365,17 +531,30 @@ def to_markdown(
                 f"- 收盘/参考价: {pick.close} / {pick.ideal_buy}",
                 f"- 策略入口: {_safe_markdown_text(pick.entry_type)}",
                 f"- 命中策略: {_format_reason_list(pick.strategies) or '无'}",
-                f"- 仓位参考: {pick.position}",
+                (
+                    f"- 观察标记: {pick.position}"
+                    if observation_only
+                    else f"- 仓位参考: {pick.position}"
+                ),
                 f"- 最多亏到/先看目标: {pick.stop_loss} / {pick.take_profit}",
                 f"- 理由: {_format_reason_list(pick.reasons) or '无'}",
                 f"- 风险提示: {_format_reason_list(pick.risks) or '无'}",
                 "",
             ]
         )
-        if blocker:
+        cross_market = _cross_market_summary(pick)
+        if cross_market:
             lines.insert(
-                len(lines) - 1, f"- 阻塞: {_safe_markdown_text(blocker)}"
+                len(lines) - 1, f"- 跨市场线索: {_safe_markdown_text(cross_market)}"
             )
+        cross_market_chain = _cross_market_chain_summary(pick)
+        if cross_market_chain:
+            lines.insert(
+                len(lines) - 1,
+                f"- 传导链条: {_safe_markdown_text(cross_market_chain)}",
+            )
+        if blocker:
+            lines.insert(len(lines) - 1, f"- 阻塞: {_safe_markdown_text(blocker)}")
         if next_step:
             lines.insert(
                 len(lines) - 1,
@@ -404,7 +583,7 @@ def _metadata_lines(metadata: RunMetadata) -> list[str]:
         metadata.requested_source,
         metadata.actual_source,
     )
-    return [
+    lines = [
         "## 数据与规则",
         f"- 数据来源: {source_text}",
         "- 数据完整度: "
@@ -443,3 +622,17 @@ def _metadata_lines(metadata: RunMetadata) -> list[str]:
         + humanize_runtime_snapshot_line(f"市场标签: {metadata.regime or 'unknown'}"),
         "",
     ]
+    if metadata.market_context_lines:
+        lines.extend(
+            [
+                "## 市场上下文",
+                *(
+                    [f"- 跨市主线: {metadata.market_context_overview}"]
+                    if metadata.market_context_overview
+                    else []
+                ),
+                *[f"- {line}" for line in metadata.market_context_lines],
+                "",
+            ]
+        )
+    return lines

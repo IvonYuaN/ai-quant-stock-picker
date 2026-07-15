@@ -10,6 +10,7 @@ import pandas as pd
 
 from aqsp.core.time import now_shanghai
 from aqsp.core.types import RunMetadata
+from aqsp.core.errors import DataError
 from aqsp.models import PickResult
 from aqsp.ratings import is_tradable_rating
 from aqsp.utils.jsonl_io import advisory_lock, atomic_write_text
@@ -21,6 +22,20 @@ TERMINAL_PREDICTION_STATUSES = frozenset(
         "not_executable",
         "watch_only",
         "closed",
+    }
+)
+
+FORMAL_LEDGER_WORKLOADS = frozenset(
+    {
+        "live_short",
+        "intraday",
+        "midday",
+        "daily",
+        "morning_breakout",
+        "closing_premium",
+        "closing_review",
+        "briefing",
+        "scheduled",
     }
 )
 
@@ -44,6 +59,23 @@ class ExecutionConfig:
     benchmark_symbol: str = "000300"
     limit_up_pct: float = 0.10
     limit_down_pct: float = 0.10
+
+
+def _normalize_strategies(raw: object) -> list[str]:
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        value = raw.strip()
+        if not value:
+            return []
+        try:
+            parsed = json.loads(value)
+        except (TypeError, json.JSONDecodeError):
+            parsed = None
+        raw = parsed if isinstance(parsed, list) else [value]
+    elif not isinstance(raw, (list, tuple, set)):
+        raw = [raw]
+    return [str(item).strip() for item in raw if str(item).strip()]
 
 
 def execution_config_from_thresholds(
@@ -115,6 +147,7 @@ def append_predictions(
     margin_balance_change_5d: float = 0.0,
     run_metadata: RunMetadata | None = None,
 ) -> None:
+    _validate_formal_run_metadata(run_metadata)
     with advisory_lock(path):
         execution = execution or execution_config_from_thresholds()
         rows = read_ledger(path)
@@ -134,6 +167,25 @@ def append_predictions(
                 "rating": pick.rating,
                 "position": pick.position,
                 "portfolio_action": str(pick.metrics.get("portfolio_action", "")),
+                "candidate_status": str(pick.metrics.get("candidate_status", "") or ""),
+                "candidate_blocker": str(
+                    pick.metrics.get("candidate_blocker", "") or ""
+                ),
+                "candidate_next_step": str(
+                    pick.metrics.get("candidate_next_step", "") or ""
+                ),
+                "candidate_review_window": str(
+                    pick.metrics.get("candidate_review_window", "") or ""
+                ),
+                "candidate_review_priority": str(
+                    pick.metrics.get("candidate_review_priority", "") or ""
+                ),
+                "data_quality_status": str(
+                    pick.metrics.get("data_quality_status", "") or ""
+                ),
+                "data_quality_alerts": list(
+                    pick.metrics.get("data_quality_alerts", ()) or ()
+                ),
                 "entry_type": pick.entry_type,
                 "ideal_buy": pick.ideal_buy,
                 "strategies": strategies,
@@ -145,6 +197,54 @@ def append_predictions(
                 "adjusted_score": pick.adjusted_score,
                 "recommended_adjustment": pick.recommended_adjustment,
                 "debate_consensus": pick.debate_consensus,
+                "debate_id": str(pick.metrics.get("debate_id", "") or ""),
+                "debate_disagreement_score": float(
+                    pick.metrics.get("debate_disagreement_score", 0.0) or 0.0
+                ),
+                "debate_final_vote": dict(
+                    pick.metrics.get("debate_final_vote", {}) or {}
+                ),
+                "debate_active_roles": list(
+                    pick.metrics.get("debate_active_roles", ()) or ()
+                ),
+                "debate_active_role_summary": str(
+                    pick.metrics.get("debate_active_role_summary", "") or ""
+                ),
+                "debate_role_selection_summary": str(
+                    pick.metrics.get("debate_role_selection_summary", "") or ""
+                ),
+                "debate_role_selection_plan": str(
+                    pick.metrics.get("debate_role_selection_plan", "") or ""
+                ),
+                "debate_research_verdict": str(
+                    pick.metrics.get("debate_research_verdict", "") or ""
+                ),
+                "debate_primary_risk_gate": str(
+                    pick.metrics.get("debate_primary_risk_gate", "") or ""
+                ),
+                "debate_next_trigger": str(
+                    pick.metrics.get("debate_next_trigger", "") or ""
+                ),
+                "support_points": list(pick.metrics.get("support_points", ()) or ()),
+                "opposition_points": list(
+                    pick.metrics.get("opposition_points", ()) or ()
+                ),
+                "watch_items": list(pick.metrics.get("watch_items", ()) or ()),
+                "role_reliability_lines": list(
+                    pick.metrics.get("role_reliability_lines", ()) or ()
+                ),
+                "debate_historical_context_note": str(
+                    pick.metrics.get("debate_historical_context_note", "") or ""
+                ),
+                "debate_historical_context_bucket": str(
+                    pick.metrics.get("debate_historical_context_bucket", "") or ""
+                ),
+                "debate_historical_context_sample_count": int(
+                    pick.metrics.get("debate_historical_context_sample_count", 0) or 0
+                ),
+                "debate_historical_context_accuracy": float(
+                    pick.metrics.get("debate_historical_context_accuracy", 0.0) or 0.0
+                ),
                 "confidence": pick.confidence,
                 "regime_score": pick.regime_score,
                 "strategy_weight_snapshot": pick.metrics.get(
@@ -160,8 +260,111 @@ def append_predictions(
                 "final_score_after_composite": pick.metrics.get(
                     "final_score_after_composite", pick.score
                 ),
+                "deterministic_score": float(
+                    pick.metrics.get("deterministic_score", pick.score) or pick.score
+                ),
+                "deterministic_score_unchanged": bool(
+                    pick.metrics.get("deterministic_score_unchanged", True)
+                ),
+                "advisory_only": bool(pick.metrics.get("advisory_only", True)),
                 "sector": str(pick.metrics.get("sector", "") or ""),
                 "industry": str(pick.metrics.get("industry", "") or ""),
+                "cross_market_primary_theme": str(
+                    pick.metrics.get("cross_market_primary_theme", "") or ""
+                ),
+                "cross_market_linkage_basis": str(
+                    pick.metrics.get("cross_market_linkage_basis", "") or ""
+                ),
+                "cross_market_action": str(
+                    pick.metrics.get("cross_market_action", "") or ""
+                ),
+                "cross_market_strength": str(
+                    pick.metrics.get("cross_market_strength", "") or ""
+                ),
+                "cross_market_lead_window": str(
+                    pick.metrics.get("cross_market_lead_window", "") or ""
+                ),
+                "cross_market_observation_window": str(
+                    pick.metrics.get("cross_market_observation_window", "") or ""
+                ),
+                "cross_market_priority_score": int(
+                    pick.metrics.get("cross_market_priority_score", 0) or 0
+                ),
+                "cross_market_themes": list(
+                    pick.metrics.get("cross_market_themes", ()) or ()
+                ),
+                "cross_market_rule_ids": list(
+                    pick.metrics.get("cross_market_rule_ids", ()) or ()
+                ),
+                "cross_market_first_order_targets": list(
+                    pick.metrics.get("cross_market_first_order_targets", ()) or ()
+                ),
+                "cross_market_second_order_targets": list(
+                    pick.metrics.get("cross_market_second_order_targets", ()) or ()
+                ),
+                "cross_market_pressure_targets": list(
+                    pick.metrics.get("cross_market_pressure_targets", ()) or ()
+                ),
+                "cross_market_execution_watchpoints": list(
+                    pick.metrics.get("cross_market_execution_watchpoints", ()) or ()
+                ),
+                "cross_market_transmission_path": list(
+                    pick.metrics.get("cross_market_transmission_path", ()) or ()
+                ),
+                "cross_market_validation_signals": list(
+                    pick.metrics.get("cross_market_validation_signals", ()) or ()
+                ),
+                "cross_market_invalidation_signals": list(
+                    pick.metrics.get("cross_market_invalidation_signals", ()) or ()
+                ),
+                "cross_market_chain_summary": str(
+                    pick.metrics.get("cross_market_chain_summary", "") or ""
+                ),
+                "cross_market_support_event_count": int(
+                    pick.metrics.get("cross_market_support_event_count", 0) or 0
+                ),
+                "cross_market_conflict_event_count": int(
+                    pick.metrics.get("cross_market_conflict_event_count", 0) or 0
+                ),
+                "cross_market_evidence_stack_summary": str(
+                    pick.metrics.get("cross_market_evidence_stack_summary", "") or ""
+                ),
+                "cross_market_summaries": list(
+                    pick.metrics.get("cross_market_summaries", ()) or ()
+                ),
+                "news_catalyst_judgement": str(
+                    pick.metrics.get("news_catalyst_judgement", "") or ""
+                ),
+                "news_catalyst_priority_score": int(
+                    pick.metrics.get("news_catalyst_priority_score", 0) or 0
+                ),
+                "news_catalyst_support_count": int(
+                    pick.metrics.get("news_catalyst_support_count", 0) or 0
+                ),
+                "news_catalyst_oppose_count": int(
+                    pick.metrics.get("news_catalyst_oppose_count", 0) or 0
+                ),
+                "news_catalyst_review_count": int(
+                    pick.metrics.get("news_catalyst_review_count", 0) or 0
+                ),
+                "news_catalyst_supports": list(
+                    pick.metrics.get("news_catalyst_supports", ()) or ()
+                ),
+                "news_catalyst_opposes": list(
+                    pick.metrics.get("news_catalyst_opposes", ()) or ()
+                ),
+                "news_catalyst_needs_review": list(
+                    pick.metrics.get("news_catalyst_needs_review", ()) or ()
+                ),
+                "news_catalyst_lead": str(
+                    pick.metrics.get("news_catalyst_lead", "") or ""
+                ),
+                "news_catalyst_source": str(
+                    pick.metrics.get("news_catalyst_source", "") or ""
+                ),
+                "news_catalyst_url": str(
+                    pick.metrics.get("news_catalyst_url", "") or ""
+                ),
                 "horizon_days": execution.horizon_days,
                 "fee_bps": execution.fee_bps,
                 "slippage_bps": execution.slippage_bps,
@@ -173,7 +376,7 @@ def append_predictions(
                 "signal_day_group": signal_day_group,
                 "northbound_flow_5d_z": northbound_flow_5d_z,
                 "margin_balance_change_5d": margin_balance_change_5d,
-                **_run_metadata_fields(run_metadata),
+                **run_metadata_fields(run_metadata),
             }
 
             existing_idx = row_index_by_key.get(row_key)
@@ -210,6 +413,7 @@ def append_run_event(
     run_metadata: RunMetadata | None = None,
     details: dict[str, object] | None = None,
 ) -> None:
+    _validate_formal_run_metadata(run_metadata)
     with advisory_lock(path):
         rows = read_ledger(path)
         row_key = (
@@ -242,13 +446,13 @@ def append_run_event(
                 "reason": reason,
                 "event_type": status,
                 **(details or {}),
-                **_run_metadata_fields(run_metadata),
+                **run_metadata_fields(run_metadata),
             }
         )
         write_ledger(path, rows)
 
 
-def _run_metadata_fields(metadata: RunMetadata | None) -> dict[str, object]:
+def run_metadata_fields(metadata: RunMetadata | None) -> dict[str, object]:
     if metadata is None:
         return {}
     return {
@@ -276,7 +480,44 @@ def _run_metadata_fields(metadata: RunMetadata | None) -> dict[str, object]:
         "run_data_lag_days": metadata.data_lag_days,
         "run_circuit_breaker_triggered": metadata.circuit_breaker_triggered,
         "run_circuit_breaker_reason": metadata.circuit_breaker_reason,
+        "run_market_context_overview": metadata.market_context_overview,
+        "run_market_context_lines": list(metadata.market_context_lines),
+        "run_intraday_coverage_status": metadata.intraday_coverage_status,
+        "run_intraday_missing_symbols": list(metadata.intraday_missing_symbols),
+        "thresholds_version": metadata.thresholds_version,
+        "run_workload": metadata.workload,
     }
+
+
+def _validate_formal_run_metadata(metadata: RunMetadata | None) -> None:
+    """Fail closed when a production workload lacks provenance evidence.
+
+    Historical/backtest callers intentionally omit metadata. Production callers
+    opt into this gate through ``RunMetadata.workload`` so old replay fixtures
+    remain readable without weakening the live ledger contract.
+    """
+    if metadata is None or metadata.workload not in FORMAL_LEDGER_WORKLOADS:
+        return
+
+    required = {
+        "requested_source": metadata.requested_source,
+        "actual_source": metadata.actual_source,
+        "source_freshness_tier": metadata.source_freshness_tier,
+        "source_coverage_tier": metadata.source_coverage_tier,
+        "source_local_status": metadata.source_local_status,
+        "source_health_label": metadata.source_health_label,
+        "thresholds_version": metadata.thresholds_version,
+        "data_latest_trade_date": metadata.data_latest_trade_date,
+    }
+    missing = tuple(name for name, value in required.items() if not str(value).strip())
+    if missing:
+        raise DataError(
+            "正式 ledger 缺少 provenance: "
+            + ", ".join(missing)
+            + f" (workload={metadata.workload})"
+        )
+    if metadata.data_lag_days < 0:
+        raise DataError("正式 ledger 的 data_lag_days 不能为负数")
 
 
 def _prediction_key(row: dict) -> tuple[str, str, str, str, str]:
@@ -403,11 +644,17 @@ def validate_predictions(
         if not is_tradable_rating(row.get("rating")):
             row["status"] = "watch_only"
             continue
-        strategies = [str(item) for item in row.get("strategies") or [] if str(item)]
+        strategies = _normalize_strategies(row.get("strategies"))
         symbol = str(row.get("symbol", ""))
         frame = frames.get(symbol)
         if frame is None or frame.empty:
             continue
+        missing_columns = {"date", "open", "close"} - set(frame.columns)
+        if missing_columns:
+            missing_text = ", ".join(sorted(missing_columns))
+            raise DataError(
+                f"账本校验数据缺少必需列: symbol={symbol}, columns={missing_text}"
+            )
         frame = frame.sort_values("date").reset_index(drop=True)
         signal_date = row.get("signal_date", row.get("pick_date", ""))
         future = frame[frame["date"] > signal_date]
@@ -493,15 +740,15 @@ def strategy_weights_from_ledger(
 ) -> dict[str, float]:
     groups: dict[str, dict[str, list[float]]] = {}
     for row in read_ledger(path):
-        if row.get("status") != "validated":
+        if str(row.get("status") or "").strip() != "validated":
             continue
         ret = float(
             row.get("excess_return_pct")
             if row.get("excess_return_pct") is not None
             else row.get("return_pct") or 0
         )
-        signal_date = row.get("signal_date", "")
-        for strategy in row.get("strategies") or []:
+        signal_date = row.get("signal_date") or row.get("signal_day_group") or ""
+        for strategy in _normalize_strategies(row.get("strategies")):
             groups.setdefault(strategy, {}).setdefault(signal_date, []).append(ret)
 
     weights: dict[str, float] = {}
