@@ -4,6 +4,8 @@ import sqlite3
 import struct
 from pathlib import Path
 
+import pytest
+
 from aqsp.data.tdx_vipdoc_source import TDX_DAY_RECORD
 from scripts.import_tdx_vipdoc_to_sqlite import import_vipdoc_to_sqlite
 
@@ -16,7 +18,10 @@ def _write_day_file(
     path.write_bytes(b"".join(struct.pack(TDX_DAY_RECORD.format, *row) for row in rows))
 
 
-def test_import_tdx_vipdoc_to_sqlite_builds_raw_database(tmp_path: Path) -> None:
+def test_import_tdx_vipdoc_to_sqlite_builds_raw_database(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AQSP_STOCK_NAME_DB_PATH", str(tmp_path / "missing-names.db"))
     vipdoc = tmp_path / "vipdoc"
     _write_day_file(
         vipdoc / "sh/lday/sh600519.day",

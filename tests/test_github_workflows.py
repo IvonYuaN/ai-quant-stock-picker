@@ -48,6 +48,9 @@ def test_ci_runs_upload_preflight_before_install() -> None:
     assert "npm ci --prefix frontend" in text
     assert "npm run build --prefix frontend" in text
     assert "timeout-minutes: 40" in text
+    assert "shard: [0, 1, 2, 3]" in text
+    assert "PYTEST_TOTAL_SHARDS: 4" in text
+    assert "$(cat /tmp/aqsp-test-files.txt)" in text
     assert "python3 -m scripts.preflight_upload" in text
     assert text.index("python3 -m scripts.preflight_upload") < text.index(
         "name: Install"
