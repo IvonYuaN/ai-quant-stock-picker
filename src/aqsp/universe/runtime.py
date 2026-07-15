@@ -79,7 +79,12 @@ def _resolve_symbols_from_source(
         try:
             # 收盘主链需要完整的流动性梯队再做确定性抽样；盘中任务沿用
             # bounded limit，避免把一次实时刷新变成全市场扫描。
-            source_limit = max_universe if _is_high_frequency_task() else 0
+            source_limit = (
+                0
+                if source_name in _LIVE_LIQUIDITY_SOURCES
+                and not _is_high_frequency_task()
+                else max_universe
+            )
             liquid_symbols = source.get_liquid_symbols(
                 limit=source_limit,
                 min_amount=min_avg_amount,
