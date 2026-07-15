@@ -4,9 +4,18 @@ from collections.abc import Sequence
 from typing import Literal
 
 from aqsp.briefing.closing_review import DailyReview, WeeklySummary
+from aqsp.briefing.conclusion import (
+    build_debate_conclusion_view,
+    cross_market_priority_digest,
+    debate_evidence_provenance,
+    debate_focus_parts,
+)
 from aqsp.briefing.generator import Briefing
 from aqsp.briefing.debate import DebateResult
 from aqsp.core.time import today_shanghai
+from aqsp.data.source_readiness import source_supports_workload, workload_fit_for_source
+from aqsp.goal_switches import goal_switch_runtime_summary, goal_switch_visibility_notes
+from aqsp.market_context import format_pick_market_context_summary
 from aqsp.monitor.checker import MonitorResult
 from aqsp.models import PickResult
 from aqsp.portfolio.manager import PortfolioDecisionSummary
@@ -55,6 +64,12 @@ def _source_safe_notification(
     )
 
 
+def _notification_news_summary(summary: str) -> str:
+    """Render news as a bounded annotation; it never participates in scoring."""
+    clean = normalize_research_tone(str(summary or "").replace("\n", " ").strip())
+    return clean[:240] + ("..." if len(clean) > 240 else "")
+
+
 def _dated_title(label: str, run_date: str = "") -> str:
     date_text = str(run_date or "").strip() or today_shanghai().isoformat()
     return f"{label}-{date_text}"
@@ -67,6 +82,28 @@ def _debate_adjustment_label(value: str) -> str:
         "keep": "暂维持",
         "lower": "偏谨慎",
     }.get(clean, "继续观察")
+
+
+def _notification_live_source_status_line(
+    *,
+    requested_source: str,
+    actual_source: str,
+    source_health_label: str,
+) -> str:
+    actual = str(actual_source or "").strip()
+    requested = str(requested_source or "").strip()
+    if not actual:
+        return ""
+    fit = workload_fit_for_source(actual).get("live_short", "unknown")
+    if source_supports_workload(actual, "live_short"):
+        if source_health_label == "fallback":
+            return f"数据链路: 备用实时源 {actual}（live_short={fit}）"
+        if source_health_label == "degraded":
+            return f"数据链路: 实时源 {actual} 已降级（live_short={fit}）"
+        if requested and requested != actual:
+            return f"数据链路: 实时源 {actual}（由 {requested} 切换，live_short={fit}）"
+        return f"数据链路: 实时源 {actual}（live_short={fit}）"
+    return f"数据链路: 当前实际源 {actual} 只适合历史验证（live_short={fit}）"
 
 
 def _closing_review_main_chain_line(line: str) -> str:
@@ -104,7 +141,7 @@ def build_briefing_notification(
             source_status=source_status,
         )
 
-    summary = briefing.generate_smart_summary().strip()
+    summary = _compact_briefing_summary(briefing.generate_smart_summary())
     sections = {
         _notification_section_title(section.title): section.content.strip()
         for section in briefing.sections
@@ -138,10 +175,14 @@ def build_briefing_notification(
     main_chain = _section("主链总览", "今日结论")
     if main_chain:
         body_parts.append("## 重点\n\n" + main_chain)
-    allocation_execution = _format_allocation_execution(briefing.portfolio_summary)
+    allocation_execution = _format_allocation_execution(
+        briefing.portfolio_summary,
+        debate_results=briefing.debate_results,
+        include_cross_market=False,
+    )
     if allocation_execution:
         body_parts.append("## 纸面\n\n" + allocation_execution)
-    debate = _format_debate_summary(briefing.debate_results)
+    debate = _format_debate_summary(briefing.debate_results, compact=True)
     if debate:
         body_parts.append("## 分歧\n\n" + debate)
     research = _format_research_radar(_section("研究吸收", "研究进展"))
@@ -176,6 +217,21 @@ def _notification_section_title(title: str) -> str:
     if clean in {"候选来龙去脉", "候选证据链"}:
         return "候选说明"
     return clean
+
+
+def _compact_briefing_summary(summary: str) -> str:
+    hidden_prefixes = (
+        "- 委员会覆盖:",
+        "- 讨论视角:",
+        "- 选角理由:",
+        "- 角色分工:",
+    )
+    kept_lines = [
+        line
+        for line in str(summary or "").strip().splitlines()
+        if not line.strip().startswith(hidden_prefixes)
+    ]
+    return "\n".join(kept_lines).strip()
 
 
 def _format_research_radar(section: str) -> str:
@@ -225,6 +281,79 @@ def _rewrite_research_radar_line(line: str) -> str:
     return clean
 
 
+def _cross_market_focus_display(
+    portfolio_summary: PortfolioDecisionSummary | None,
+    debate_results: Sequence[DebateResult],
+) -> str:
+    if portfolio_summary is not None and portfolio_summary.cross_market_focus:
+        focus_line = str(portfolio_summary.cross_market_focus[0]).strip()
+        if " | " in focus_line:
+            return focus_line.split(" | ", 1)[0].strip()
+        return focus_line
+    if debate_results:
+        lead = debate_results[0]
+        symbol = str(getattr(lead, "symbol", "") or "").strip()
+        name = str(getattr(lead, "name", "") or "").strip()
+        return format_symbol_name(symbol, name)
+    return ""
+
+
+def _debate_coverage_line(
+    debate_results: Sequence[DebateResult],
+    candidates: Sequence[PickResult],
+) -> str:
+    if not debate_results or not candidates:
+        return ""
+    analyzed = {result.symbol for result in debate_results}
+    missing = [pick.symbol for pick in candidates if pick.symbol not in analyzed]
+    line = f"讨论覆盖: {len(analyzed)}/{len(candidates)} 个候选"
+    if missing:
+        line += "；未完成 " + "、".join(missing[:3])
+    return line
+
+
+def _cross_market_priority_digest_for_notification(
+    portfolio_summary: PortfolioDecisionSummary | None,
+    debate_results: Sequence[DebateResult],
+) -> str:
+    lead_result = debate_results[0] if debate_results else None
+    return cross_market_priority_digest(
+        lead_result,
+        overview=(
+            str(getattr(portfolio_summary, "cross_market_overview", "") or "").strip()
+            if portfolio_summary is not None
+            else ""
+        ),
+        focus_display=_cross_market_focus_display(portfolio_summary, debate_results),
+    )
+
+
+def _pick_cross_market_priority_digest(pick: PickResult) -> str:
+    metrics = pick.metrics or {}
+    theme = format_pick_market_context_summary(pick, compact=True)
+    validation_signals = tuple(
+        str(item).strip()
+        for item in (metrics.get("cross_market_validation_signals") or ())
+        if str(item).strip()
+    )
+    invalidation_signals = tuple(
+        str(item).strip()
+        for item in (metrics.get("cross_market_invalidation_signals") or ())
+        if str(item).strip()
+    )
+    if not theme and not validation_signals and not invalidation_signals:
+        return ""
+    parts = []
+    if theme:
+        parts.append(theme)
+    parts.append(f"先看 {format_symbol_name(pick.symbol, pick.name)}")
+    if validation_signals:
+        parts.append(f"确认 {validation_signals[0]}")
+    if invalidation_signals:
+        parts.append(f"失效 {invalidation_signals[0]}")
+    return " | ".join(parts)
+
+
 def build_daily_run_notification(
     *,
     run_date: str,
@@ -242,9 +371,11 @@ def build_daily_run_notification(
     circuit_breaker_reason: str = "",
     snapshot_diff: SnapshotDiff | None = None,
     validation_summary: dict[str, object] | None = None,
+    news_summary: str = "",
     mode: str = "summary",
     title_label: str = "收盘研究日报",
 ) -> str:
+    is_full_mode = _safe_mode(mode) == "full"
     lead_conclusion = _daily_lead_conclusion(
         tradable=tradable,
         candidates=candidates,
@@ -259,11 +390,28 @@ def build_daily_run_notification(
         f"- 日期: {run_date}",
         f"- 结论: {lead_conclusion}",
     ]
+    news_line = _notification_news_summary(news_summary)
+    if news_line:
+        lines.append(f"- 消息摘要: {news_line}")
+    source_status_line = _notification_live_source_status_line(
+        requested_source=requested_source,
+        actual_source=actual_source,
+        source_health_label=source_health_label,
+    )
+    if source_status_line:
+        lines.append(f"- {source_status_line}")
+    runtime_summary_line = goal_switch_runtime_summary()
+    if runtime_summary_line:
+        lines.append(f"- {runtime_summary_line}")
+    for note in goal_switch_visibility_notes(limit=2):
+        lines.append(f"- 说明: {note}")
     if circuit_breaker_reason:
         lines.append(f"- 风控: {circuit_breaker_reason}")
     elif tradable:
         lines.append(f"- 重点数量: {len(tradable)}")
-        lines.append(f"- 首位: {_format_daily_pick(tradable[0])}")
+        lines.append(
+            f"- 首位: {_format_daily_pick(tradable[0], include_cross_market=False)}"
+        )
     elif portfolio_summary is not None and portfolio_summary.allocations:
         lead = portfolio_summary.allocations[0]
         lines.append(f"- 重点数量: {len(portfolio_summary.allocations)}")
@@ -275,6 +423,49 @@ def build_daily_run_notification(
         lines.append(f"- 冷启动: {cold_start_days}/{cold_start_min_days}")
     if portfolio_summary is not None and portfolio_summary.regime_label:
         lines.append(f"- 市况: {portfolio_summary.regime_label}")
+    if (
+        is_full_mode
+        and portfolio_summary is not None
+        and portfolio_summary.cross_market_overview
+    ):
+        lines.append(f"- 跨市主线: {portfolio_summary.cross_market_overview}")
+    debate_coverage = _debate_coverage_line(debate_results, candidates)
+    if debate_coverage:
+        lines.append(f"- {debate_coverage}")
+    cross_market_priority = _cross_market_priority_digest_for_notification(
+        portfolio_summary,
+        debate_results,
+    )
+    if not cross_market_priority:
+        lead_pick = next(iter(tuple(tradable) + tuple(candidates)), None)
+        if lead_pick is not None:
+            cross_market_priority = _pick_cross_market_priority_digest(lead_pick)
+    if cross_market_priority:
+        lines.append(f"- 跨市主线: {cross_market_priority}")
+    if (
+        is_full_mode
+        and portfolio_summary is not None
+        and portfolio_summary.debate_support_points
+    ):
+        lines.append(
+            "- 讨论支持: " + "；".join(portfolio_summary.debate_support_points[:2])
+        )
+    if (
+        is_full_mode
+        and portfolio_summary is not None
+        and portfolio_summary.debate_opposition_points
+    ):
+        lines.append(
+            "- 讨论反对: " + "；".join(portfolio_summary.debate_opposition_points[:2])
+        )
+    if (
+        is_full_mode
+        and portfolio_summary is not None
+        and portfolio_summary.debate_watch_items
+    ):
+        lines.append(
+            "- 讨论待确认: " + "；".join(portfolio_summary.debate_watch_items[:2])
+        )
     if portfolio_summary is not None and portfolio_summary.strategy_mix_name:
         lines.append(
             "- 风格: "
@@ -287,6 +478,44 @@ def build_daily_run_notification(
         )
     if portfolio_summary is not None and portfolio_summary.strategy_focus:
         lines.append("- 方向: " + "、".join(portfolio_summary.strategy_focus[:3]))
+    if (
+        is_full_mode
+        and portfolio_summary is not None
+        and portfolio_summary.cross_market_focus
+    ):
+        lines.append(
+            "- 跨市焦点: " + "；".join(portfolio_summary.cross_market_focus[:2])
+        )
+    if (
+        is_full_mode
+        and portfolio_summary is not None
+        and portfolio_summary.debate_focus
+    ):
+        lines.append("- 讨论焦点: " + "；".join(portfolio_summary.debate_focus[:2]))
+    if (
+        is_full_mode
+        and portfolio_summary is not None
+        and portfolio_summary.debate_risk_gates
+    ):
+        lines.append(
+            "- 讨论卡点: " + "；".join(portfolio_summary.debate_risk_gates[:2])
+        )
+    if (
+        is_full_mode
+        and portfolio_summary is not None
+        and portfolio_summary.debate_next_triggers
+    ):
+        lines.append(
+            "- 讨论触发: " + "；".join(portfolio_summary.debate_next_triggers[:2])
+        )
+    if (
+        is_full_mode
+        and portfolio_summary is not None
+        and portfolio_summary.debate_priority_queue
+    ):
+        lines.append(
+            "- 讨论顺序: " + "；".join(portfolio_summary.debate_priority_queue[:2])
+        )
     if portfolio_summary is not None and portfolio_summary.action_hotspots:
         lines.append("- 关注点: " + "；".join(portfolio_summary.action_hotspots[:2]))
     if portfolio_summary is not None and portfolio_summary.allocations:
@@ -328,12 +557,19 @@ def build_daily_run_notification(
                 parts.append(f"不可成交跳过 {skipped} 条")
             lines.append("- 自检: " + " / ".join(parts))
     if debate_results:
-        lead = debate_results[0]
-        consensus = lead.final_consensus or lead.adjustment_reason or "无共识"
-        lines.append(
-            f"- 分歧: {lead.symbol} {lead.name} | "
-            f"{_debate_adjustment_label(lead.recommended_adjustment)} | {consensus}"
-        )
+        if len(debate_results) > 1:
+            summary = "；".join(
+                f"{format_symbol_name(item.symbol, item.name)} {_debate_adjustment_label(item.recommended_adjustment)}"
+                for item in debate_results[:3]
+            )
+            lines.append(f"- 分歧覆盖: {summary}")
+        else:
+            lead = debate_results[0]
+            consensus = lead.final_consensus or lead.adjustment_reason or "无共识"
+            lines.append(
+                f"- 分歧: {lead.symbol} {lead.name} | "
+                f"{_debate_adjustment_label(lead.recommended_adjustment)} | {consensus}"
+            )
 
     risk_lines = _daily_risk_summary_lines(
         tradable=tradable,
@@ -365,7 +601,11 @@ def build_daily_run_notification(
             mode=mode,
         )
     )
-    allocation_execution = _format_allocation_execution(portfolio_summary)
+    allocation_execution = _format_allocation_execution(
+        portfolio_summary,
+        debate_results=debate_results,
+        include_cross_market=is_full_mode,
+    )
     if allocation_execution:
         lines.extend(["", "## 纸面", ""])
         lines.append(
@@ -375,7 +615,10 @@ def build_daily_run_notification(
             + _daily_snapshot_paper_focus(portfolio_summary)
         )
         lines.extend(["", allocation_execution])
-    debate = _format_debate_summary(debate_results[:2])
+    debate = _format_debate_summary(
+        debate_results[:2],
+        compact=True,
+    )
     if debate:
         lines.extend(["", "## 分歧", "", debate])
     if snapshot_diff is not None and snapshot_diff.has_changes:
@@ -840,13 +1083,25 @@ def _daily_snapshot_risk_focus(
 
 def _daily_snapshot_debate_state(results: Sequence[DebateResult]) -> str:
     lead = sorted(results, key=lambda item: item.disagreement_score, reverse=True)[0]
-    return f"最高分歧 {lead.disagreement_score:.0%}"
+    return (
+        f"{format_symbol_name(lead.symbol, lead.name)} "
+        f"{_debate_adjustment_label(lead.recommended_adjustment)} "
+        f"/ 分歧 {lead.disagreement_score:.0%}"
+    )
 
 
 def _daily_snapshot_debate_focus(results: Sequence[DebateResult]) -> str:
     lead = sorted(results, key=lambda item: item.disagreement_score, reverse=True)[0]
-    consensus = lead.final_consensus or lead.adjustment_reason or "看分歧地图"
-    return f"{format_symbol_name(lead.symbol, lead.name)}：{consensus}"
+    parts = debate_focus_parts(
+        lead,
+        focus_display=format_symbol_name(lead.symbol, lead.name),
+        language="zh-CN",
+        max_role_labels=3,
+    )
+    filtered = [
+        part for part in parts if not part.startswith(("选角 ", "分工 ", "视角 "))
+    ]
+    return " | ".join(filtered[:2] or parts[:1])
 
 
 def _daily_candidate_table(
@@ -978,6 +1233,9 @@ def _daily_candidate_table_row(
     review_meta = " / ".join(part for part in (review_priority, review_window) if part)
     if review_meta:
         key = f"{key}；复核 {review_meta}"
+    cross_market_digest = _pick_cross_market_priority_digest(pick)
+    if cross_market_digest:
+        key = f"{key}；跨市判断 {cross_market_digest}"
 
     return (
         f"| {index} | {symbol_name} | {status} | {pick.score:.0f} | {action} | {key} |"
@@ -1170,9 +1428,7 @@ def build_closing_review_notification(
             (
                 item.split(": ", 1)[1]
                 for item in review.main_chain_summary
-                if item.startswith(
-                    ("当前卡点: ", "纸面阻塞: ", "执行阻塞: ", "阻塞: ")
-                )
+                if item.startswith(("当前卡点: ", "纸面阻塞: ", "执行阻塞: ", "阻塞: "))
             ),
             "",
         )
@@ -1220,27 +1476,122 @@ def _build_weekly_review_notification(
     )
 
 
-def _format_debate_summary(results: Sequence[DebateResult]) -> str:
+def _format_debate_summary(
+    results: Sequence[DebateResult],
+    *,
+    compact: bool = False,
+) -> str:
     if not results:
         return ""
     lines: list[str] = []
-    for result in results[:3]:
+    max_results = 3 if compact else 5
+    for result in results[:max_results]:
         symbol_name = format_symbol_name(result.symbol, result.name)
-        consensus = result.final_consensus or result.adjustment_reason or "暂无共识摘要"
-        line = (
-            f"- {symbol_name}: {_debate_adjustment_label(result.recommended_adjustment)} | "
-            f"分歧 {result.disagreement_score:.0%} | {consensus}"
+        conclusion = build_debate_conclusion_view(
+            result,
+            language="zh-CN",
+            max_role_labels=4,
         )
-        if result.risk_warnings:
-            line += f" | 风险: {result.risk_warnings[0]}"
-        elif result.opportunity_highlights:
-            line += f" | 机会: {result.opportunity_highlights[0]}"
+        lead = conclusion.headline
+        if compact:
+            watch_or_risk = (
+                conclusion.watch_line.replace("待确认: ", "待确认 ")
+                if conclusion.watch_line
+                else (
+                    conclusion.opposition_line.replace("反对观点: ", "反对 ")
+                    if conclusion.opposition_line
+                    else conclusion.risk_gate_line.replace("核心卡点: ", "卡点 ")
+                )
+            )
+            parts = [
+                f"{_debate_adjustment_label(result.recommended_adjustment)} / 分歧 {result.disagreement_score:.0%}",
+                lead,
+            ]
+            if watch_or_risk:
+                parts.append(watch_or_risk)
+            provenance = debate_evidence_provenance(result)
+            parts.append(
+                "真实消息 "
+                + ("；".join(provenance.real_messages) if provenance.real_messages else "无")
+                + " / 规则传导 "
+                + (
+                    "；".join(provenance.rule_transmissions)
+                    if provenance.rule_transmissions
+                    else "无"
+                )
+                + " / 待确认 "
+                + (
+                    "；".join(provenance.pending_confirmations)
+                    if provenance.pending_confirmations
+                    else "等待实时量价确认"
+                )
+            )
+            lines.append(
+                f"- {symbol_name}: "
+                + " | ".join(part for part in parts if part.strip())
+            )
+            continue
+        cross_market_digest = cross_market_priority_digest(
+            result,
+            focus_display=symbol_name,
+        )
+        support_or_context = (
+            f"跨市判断 {cross_market_digest}"
+            if cross_market_digest
+            else (
+                conclusion.support_line.replace("支持观点: ", "支持 ")
+                if conclusion.support_line
+                else conclusion.active_roles_line.replace("讨论视角: ", "视角 ")
+            )
+        )
+        watch_or_risk = (
+            conclusion.watch_line.replace("待确认: ", "待确认 ")
+            if conclusion.watch_line
+            else (
+                conclusion.opposition_line.replace("反对观点: ", "反对 ")
+                if conclusion.opposition_line
+                else (
+                    conclusion.risk_gate_line.replace("核心卡点: ", "卡点 ")
+                    if conclusion.risk_gate_line
+                    else conclusion.trigger_line.replace("下一触发: ", "触发 ")
+                )
+            )
+        )
+        parts = [
+            f"{_debate_adjustment_label(result.recommended_adjustment)} / 分歧 {result.disagreement_score:.0%}",
+            lead,
+        ]
+        if support_or_context:
+            parts.append(support_or_context)
+        if watch_or_risk:
+            parts.append(watch_or_risk)
+        provenance = debate_evidence_provenance(result)
+        parts.append(
+            "真实消息 "
+            + ("；".join(provenance.real_messages) if provenance.real_messages else "无")
+            + " / 规则传导 "
+            + (
+                "；".join(provenance.rule_transmissions)
+                if provenance.rule_transmissions
+                else "无"
+            )
+            + " / 待确认 "
+            + (
+                "；".join(provenance.pending_confirmations)
+                if provenance.pending_confirmations
+                else "等待实时量价确认"
+            )
+        )
+        line = f"- {symbol_name}: " + " | ".join(part for part in parts if part.strip())
         lines.append(line)
     return "\n".join(lines)
 
 
 def _format_allocation_execution(
     portfolio_summary: PortfolioDecisionSummary | None,
+    *,
+    debate_results: Sequence[DebateResult] = (),
+    include_cross_market: bool = True,
 ) -> str:
     if portfolio_summary is None:
         return ""
@@ -1257,6 +1608,14 @@ def _format_allocation_execution(
         lines.append("- 暂无纸面复核主线，观察名单：")
         for item in portfolio_summary.watchlist[:3]:
             lines.append(f"  - {item}")
+    cross_market_priority = ""
+    if include_cross_market:
+        cross_market_priority = _cross_market_priority_digest_for_notification(
+            portfolio_summary,
+            debate_results,
+        )
+    if cross_market_priority:
+        lines.append(f"- 纸面判断: {cross_market_priority}")
     if portfolio_summary.watch_reviews:
         lines.append("- 后续关注:")
         for item in portfolio_summary.watch_reviews[:2]:
@@ -1274,9 +1633,7 @@ def _format_allocation_execution(
     if portfolio_summary.allocation_note:
         lines.append(f"- 纸面约束: {portfolio_summary.allocation_note}")
     if portfolio_summary.execution_blockers:
-        lines.append(
-            "- 阻塞: " + "；".join(portfolio_summary.execution_blockers[:2])
-        )
+        lines.append("- 阻塞: " + "；".join(portfolio_summary.execution_blockers[:2]))
     return "\n".join(lines)
 
 
@@ -1446,7 +1803,11 @@ def _format_premium_signal_table_row(signal: PremiumSignal, *, index: int) -> li
     return lines
 
 
-def _format_daily_pick(pick: PickResult) -> str:
+def _format_daily_pick(
+    pick: PickResult,
+    *,
+    include_cross_market: bool = True,
+) -> str:
     symbol_name = format_symbol_name(pick.symbol, pick.name)
     status = str(pick.metrics.get("candidate_status", "") or "")
     parts = [symbol_name]
@@ -1456,10 +1817,19 @@ def _format_daily_pick(pick: PickResult) -> str:
     parts.append(
         f"参考 {pick.ideal_buy:g} / 最多亏到 {pick.stop_loss:g} / 先看目标 {pick.take_profit:g}"
     )
+    cross_market_digest = (
+        _pick_cross_market_priority_digest(pick) if include_cross_market else ""
+    )
+    if cross_market_digest:
+        parts.append(f"跨市判断 {cross_market_digest}")
     return " | ".join(parts)
 
 
-def _format_watch_pick(pick: PickResult) -> str:
+def _format_watch_pick(
+    pick: PickResult,
+    *,
+    include_cross_market: bool = True,
+) -> str:
     symbol_name = format_symbol_name(pick.symbol, pick.name)
     status = str(pick.metrics.get("candidate_status", "") or "")
     lead_reason = pick.reasons[0] if pick.reasons else "等待更强确认"
@@ -1475,4 +1845,9 @@ def _format_watch_pick(pick: PickResult) -> str:
     review_meta = " / ".join(part for part in (review_priority, review_window) if part)
     if review_meta:
         parts.append(f"复核: {review_meta}")
+    cross_market_digest = (
+        _pick_cross_market_priority_digest(pick) if include_cross_market else ""
+    )
+    if cross_market_digest:
+        parts.append(f"跨市判断: {cross_market_digest}")
     return " | ".join(parts)

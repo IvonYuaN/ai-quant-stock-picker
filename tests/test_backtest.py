@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import date, timedelta
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -268,6 +270,90 @@ class TestComputeBacktestMetrics:
 
 
 class TestWalkForwardDataOps:
+    def test_resolve_market_regime_uses_training_cutoff_context(
+        self, monkeypatch
+    ) -> None:
+        import aqsp.backtest.walk_forward as walk_forward
+        from aqsp.regime.runtime import RuntimeRegimeContext
+
+        seen: dict[str, object] = {}
+
+        def fake_detect(frames, *, benchmark_symbol, thresholds):
+            seen["latest"] = max(
+                str(value["date"].max()) for value in frames.values()
+            )
+            seen["benchmark"] = benchmark_symbol
+            return RuntimeRegimeContext(
+                regime="volatile_bull",
+                hmm_regime="bull",
+                confidence=0.8,
+                annualized_volatility=0.35,
+                detector="test",
+            )
+
+        monkeypatch.setattr(
+            walk_forward, "detect_runtime_regime_context", fake_detect
+        )
+        tester = WalkForwardTester(strategy=object(), benchmark_symbol="000300")
+        frame = pd.DataFrame(
+            {
+                "date": ["2026-06-25", "2026-06-26"],
+                "close": [100.0, 101.0],
+            }
+        )
+
+        regime, blocked = tester._resolve_market_regime({"000300": frame})
+
+        assert regime == "volatile_bull"
+        assert blocked is False
+        assert seen == {"latest": "2026-06-26", "benchmark": "000300"}
+
+    def test_walkforward_excludes_benchmark_from_strategy_selection(self, monkeypatch):
+        import aqsp.backtest.walk_forward as walk_forward
+        from aqsp.regime.runtime import RuntimeRegimeContext
+
+        selected_inputs: list[tuple[str, ...]] = []
+
+        class Strategy:
+            def select_stocks(self, data, n=10):
+                selected_inputs.append(tuple(sorted(data)))
+                return ["600519"]
+
+        monkeypatch.setattr(
+            walk_forward,
+            "detect_runtime_regime_context",
+            lambda *_args, **_kwargs: RuntimeRegimeContext(
+                regime="stable_bull",
+                hmm_regime="bull",
+                confidence=0.8,
+                annualized_volatility=0.1,
+                detector="test",
+            ),
+        )
+        dates = pd.date_range("2026-01-01", periods=25, freq="B").strftime(
+            "%Y-%m-%d"
+        ).tolist()
+        next_date = pd.date_range("2026-01-01", periods=26, freq="B")[-1]
+        tester = WalkForwardTester(strategy=Strategy(), benchmark_symbol="000300")
+
+        tester._run_single_period(
+            {
+                "000300": _make_ohlcv("000300", dates, [100.0] * 25, [101.0] * 25),
+                "600519": _make_ohlcv("600519", dates, [10.0] * 25, [10.1] * 25),
+            },
+            {
+                "600519": _make_ohlcv(
+                    "600519",
+                    [next_date.strftime("%Y-%m-%d")],
+                    [10.1],
+                    [10.2],
+                )
+            },
+            dates[-1],
+        )
+
+        assert selected_inputs == [("600519",)]
+
     def test_collect_all_dates(self) -> None:
         strategy = _StubStrategy()
         tester = WalkForwardTester(strategy)
@@ -330,7 +416,9 @@ class TestWalkForwardRun:
     def _build_multi_period_data(
         n_days: int = 60, symbols: int = 3
     ) -> dict[str, pd.DataFrame]:
-        dates = [f"2026-01-{d:02d}" for d in range(1, n_days + 1)]
+        dates = pd.date_range("2026-01-01", periods=n_days, freq="B").strftime(
+            "%Y-%m-%d"
+        ).tolist()
         data: dict[str, pd.DataFrame] = {}
         rng = np.random.RandomState(42)
         for i in range(symbols):
@@ -514,7 +602,9 @@ class TestWalkForwardRun:
 
     def test_purge_gap_between_train_and_test(self) -> None:
         n = 60
-        dates = [f"2026-01-{d:02d}" for d in range(1, n + 1)]
+        dates = pd.date_range("2026-01-01", periods=n, freq="B").strftime(
+            "%Y-%m-%d"
+        ).tolist()
         closes = [10.0 + i * 0.05 for i in range(n)]
         opens = closes[:]
         data = {
@@ -848,7 +938,19 @@ def test_walkforward_keeps_zero_trade_periods_for_cscv_stability(monkeypatch) ->
         test_period_days=20,
         purge_days=3,
     )
-    data = {"600519": pd.DataFrame([{"date": "2024-01-01", "close": 10.0}])}
+    data = {
+        "600519": pd.DataFrame(
+            [
+                {
+                    "date": "2024-01-01",
+                    "open": 10.0,
+                    "high": 10.1,
+                    "low": 9.9,
+                    "close": 10.0,
+                }
+            ]
+        )
+    }
 
     monkeypatch.setattr(
         tester,
@@ -905,3 +1007,152 @@ def test_walkforward_planned_period_count_matches_window_math() -> None:
     )
 
     assert tester._planned_period_count(0, 707) == 19
+
+
+def test_walkforward_streaming_matches_full_run_when_data_is_loaded_in_batches() -> None:
+    dates = [
+        (date(2024, 1, 1) + timedelta(days=day)).isoformat()
+        for day in range(40)
+    ]
+    frames = {
+        symbol: _make_ohlcv(
+            symbol,
+            dates,
+            [10.0 + offset + day * 0.01 for day in range(40)],
+            [10.1 + offset + day * 0.01 for day in range(40)],
+        )
+        for offset, symbol in enumerate(("000001", "000002", "000003", "000004"))
+    }
+
+    class _PriceRankStrategy:
+        name = "price_rank"
+
+        def select_stocks(
+            self,
+            data: dict[str, pd.DataFrame],
+            n: int = 2,
+            regime: str = "unknown",
+        ) -> list[str]:
+            del regime
+            return sorted(
+                data,
+                key=lambda symbol: float(data[symbol].iloc[-1]["close"]),
+                reverse=True,
+            )[:n]
+
+    full_tester = WalkForwardTester(
+        _PriceRankStrategy(),
+        train_period_days=10,
+        test_period_days=5,
+        purge_days=2,
+        horizon_days=2,
+        top_n=2,
+        n_variants=3,
+    )
+    streaming_tester = WalkForwardTester(
+        _PriceRankStrategy(),
+        train_period_days=10,
+        test_period_days=5,
+        purge_days=2,
+        horizon_days=2,
+        top_n=2,
+        n_variants=3,
+    )
+    full = full_tester.run(frames, start_date=dates[0], end_date=dates[-1])
+
+    calls: list[int] = []
+
+    def load_batch(
+        symbols: list[str], start: str, end: str
+    ) -> dict[str, pd.DataFrame]:
+        calls.append(len(symbols))
+        return {
+            symbol: frames[symbol].loc[
+                (frames[symbol]["date"] >= start) & (frames[symbol]["date"] <= end)
+            ].copy()
+            for symbol in symbols
+        }
+
+    streamed = streaming_tester.run_streaming(
+        list(frames),
+        load_batch,
+        dates,
+        start_date=dates[0],
+        end_date=dates[-1],
+        batch_size=2,
+        min_frame_rows=1,
+    )
+
+    assert calls
+    assert max(calls) <= 2
+    assert streamed.periods == full.periods
+    assert streamed.overall == full.overall
+    assert streamed.deflated_sharpe == full.deflated_sharpe
+    assert streamed.pbo == full.pbo
+    assert streamed.diagnostics == full.diagnostics
+
+
+def test_walkforward_streaming_uses_fixed_benchmark_for_regime_detection(
+    monkeypatch,
+) -> None:
+    dates = [
+        (date(2024, 1, 1) + timedelta(days=day)).isoformat()
+        for day in range(20)
+    ]
+    frames = {
+        symbol: _make_ohlcv(
+            symbol,
+            dates,
+            [10.0 + offset] * 20,
+            [10.1 + offset] * 20,
+        )
+        for offset, symbol in enumerate(("000001", "000002"))
+    }
+    benchmark = _make_ohlcv(
+        "000300",
+        dates,
+        [100.0] * 20,
+        [100.1] * 20,
+    )
+
+    class _Strategy:
+        def select_stocks(
+            self,
+            data: dict[str, pd.DataFrame],
+            n: int = 1,
+            regime: str = "unknown",
+        ) -> list[str]:
+            del regime
+            return list(data)[:n]
+
+    tester = WalkForwardTester(
+        _Strategy(),
+        train_period_days=5,
+        test_period_days=3,
+        purge_days=1,
+        horizon_days=2,
+        top_n=1,
+        benchmark_symbol="000300",
+    )
+    seen: list[set[str]] = []
+
+    def resolve_regime(data, *, as_of=None):
+        del as_of
+        seen.append(set(data))
+        return "aggressive_bull", False
+
+    monkeypatch.setattr(tester, "_resolve_market_regime", resolve_regime)
+
+    tester.run_streaming(
+        list(frames),
+        lambda symbols, _start, _end: {symbol: frames[symbol] for symbol in symbols},
+        dates,
+        start_date=dates[0],
+        end_date=dates[-1],
+        fixed_frames={"000300": benchmark},
+        batch_size=1,
+        min_frame_rows=1,
+    )
+
+    assert seen
+    assert all(symbols == {"000300"} for symbols in seen)

@@ -10,6 +10,7 @@ before-live evidence.
 from __future__ import annotations
 
 import argparse
+import ctypes
 import json
 import os
 import socket
@@ -37,8 +38,13 @@ DEFAULT_RAW_DB = Path("/opt/market-data/astocks_raw.db")
 MIN_COVERAGE_RATIO = 0.8
 DEFAULT_STATUS_PATH = "data/walkforward_production_status.json"
 DEFAULT_SYMBOL_CACHE_PATH = "data/walkforward_production_symbols.json"
+DEFAULT_LOCK_PATH = ".locks/walkforward-production.lock"
 DEFAULT_COVERAGE_MODE = "auto_recent_window"
 DEFAULT_LOOKBACK_YEARS = 3
+PRODUCTION_TIMEOUT_FLOOR_SECONDS = 7200
+PRODUCTION_TIMEOUT_SECONDS_PER_SYMBOL = 2
+MIN_PRODUCTION_MEMORY_GIB = 4.0
+DEFAULT_STREAM_BATCH_SIZE = 200
 
 
 @dataclass(frozen=True)
@@ -135,6 +141,12 @@ def _write_status(
         "gate_path": str(args.gate_path),
         "log_path": str(args.log),
         "timeout_seconds": args.timeout_seconds,
+        "memory_mode": "full_materialization"
+        if bool(getattr(args, "no_streaming", False))
+        else "streaming",
+        "stream_batch_size": int(
+            getattr(args, "stream_batch_size", DEFAULT_STREAM_BATCH_SIZE)
+        ),
     }
     if detail:
         payload["detail"] = detail
@@ -168,6 +180,9 @@ def _write_status(
         payload["child_exit_code"] = child_exit_code
     if child_pid is not None:
         payload["child_pid"] = child_pid
+    peak_rss_kib = getattr(args, "_peak_rss_kib", None)
+    if isinstance(peak_rss_kib, int) and peak_rss_kib > 0:
+        payload["child_peak_rss_kib"] = peak_rss_kib
     atomic_write_text(path, json.dumps(payload, indent=2, ensure_ascii=False) + "\n")
 
 
@@ -183,6 +198,97 @@ def _write_preflight_status(
         status=status,
         args=args,
         detail=detail,
+    )
+
+
+def _effective_timeout_seconds(
+    requested_timeout_seconds: int,
+    *,
+    effective_symbols: int,
+    min_production_symbols: int,
+) -> int:
+    requested = int(requested_timeout_seconds or 0)
+    if requested <= 0 or effective_symbols < min_production_symbols:
+        return requested
+    scaled_floor = max(
+        PRODUCTION_TIMEOUT_FLOOR_SECONDS,
+        int(effective_symbols) * PRODUCTION_TIMEOUT_SECONDS_PER_SYMBOL,
+    )
+    return max(requested, scaled_floor)
+
+
+def _timeout_guard_detail(
+    requested_timeout_seconds: int,
+    effective_timeout_seconds: int,
+) -> str:
+    if (
+        requested_timeout_seconds > 0
+        and effective_timeout_seconds > requested_timeout_seconds
+    ):
+        return (
+            f"timeout auto-raised from {requested_timeout_seconds}s "
+            f"to {effective_timeout_seconds}s for production coverage"
+        )
+    return ""
+
+
+def _total_memory_gib() -> float | None:
+    meminfo = Path("/proc/meminfo")
+    if meminfo.exists():
+        try:
+            for line in meminfo.read_text(encoding="utf-8").splitlines():
+                if line.startswith("MemTotal:"):
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        return int(parts[1]) / 1024 / 1024
+        except (OSError, ValueError):
+            pass
+
+    try:
+        pages = int(os.sysconf("SC_PHYS_PAGES"))
+        page_size = int(os.sysconf("SC_PAGE_SIZE"))
+        if pages > 0 and page_size > 0:
+            return pages * page_size / 1024**3
+    except (AttributeError, OSError, ValueError):
+        pass
+
+    if os.name == "nt":
+        try:
+
+            class _MemoryStatusEx(ctypes.Structure):
+                _fields_ = [
+                    ("dwLength", ctypes.c_ulong),
+                    ("dwMemoryLoad", ctypes.c_ulong),
+                    ("ullTotalPhys", ctypes.c_ulonglong),
+                    ("ullAvailPhys", ctypes.c_ulonglong),
+                    ("ullTotalPageFile", ctypes.c_ulonglong),
+                    ("ullAvailPageFile", ctypes.c_ulonglong),
+                    ("ullTotalVirtual", ctypes.c_ulonglong),
+                    ("ullAvailVirtual", ctypes.c_ulonglong),
+                    ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
+                ]
+
+            status = _MemoryStatusEx()
+            status.dwLength = ctypes.sizeof(_MemoryStatusEx)
+            if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
+                return status.ullTotalPhys / 1024**3
+        except (AttributeError, OSError, TypeError):
+            pass
+    return None
+
+
+def _low_memory_blocker(min_memory_gib: float) -> str:
+    total_gib = _total_memory_gib()
+    if total_gib is None:
+        return (
+            "server total memory could not be detected; refusing to start production "
+            "walk-forward (fail-closed). Run on a host with readable memory metadata"
+        )
+    if total_gib >= float(min_memory_gib):
+        return ""
+    return (
+        f"server memory {total_gib:.1f}GiB < required {float(min_memory_gib):.1f}GiB; "
+        "run production walk-forward on a larger host or use the bounded streaming workflow"
     )
 
 
@@ -205,6 +311,7 @@ def _execute_child_walkforward(
         start_new_session=True,
     )
     child_pid = process.pid
+    args._peak_rss_kib = 0
     started_monotonic = time.monotonic()
     _write_status(
         status_path,
@@ -235,8 +342,15 @@ def _execute_child_walkforward(
             else min(float(heartbeat_seconds), remaining_seconds)
         )
         try:
-            return process.wait(timeout=max(0.1, wait_timeout)), child_pid
+            exit_code = process.wait(timeout=max(0.1, wait_timeout))
+            peak = _process_peak_rss_kib(child_pid)
+            if peak is not None:
+                args._peak_rss_kib = max(int(args._peak_rss_kib), peak)
+            return exit_code, child_pid
         except subprocess.TimeoutExpired:
+            peak = _process_peak_rss_kib(child_pid)
+            if peak is not None:
+                args._peak_rss_kib = max(int(args._peak_rss_kib), peak)
             _write_status(
                 status_path,
                 status="running",
@@ -269,6 +383,158 @@ def _pid_active(pid_value: object) -> bool:
     return True
 
 
+def _pid_cmdline(pid_value: object) -> tuple[str, ...]:
+    if isinstance(pid_value, bool) or not isinstance(pid_value, int) or pid_value <= 0:
+        return ()
+    cmdline_path = Path("/proc") / str(pid_value) / "cmdline"
+    try:
+        raw = cmdline_path.read_bytes()
+    except OSError:
+        return ()
+    return tuple(
+        part.decode("utf-8", errors="replace") for part in raw.split(b"\0") if part
+    )
+
+
+def _process_peak_rss_kib(pid_value: int | None) -> int | None:
+    if not isinstance(pid_value, int) or pid_value <= 0:
+        return None
+    try:
+        status_text = Path(f"/proc/{pid_value}/status").read_text(encoding="utf-8")
+    except OSError:
+        return None
+    for line in status_text.splitlines():
+        if line.startswith("VmHWM:"):
+            parts = line.split()
+            if len(parts) >= 2 and parts[1].isdigit():
+                return int(parts[1])
+    return None
+
+
+def _production_wrapper_cmdline_matches(cmdline: tuple[str, ...]) -> bool:
+    joined = " ".join(cmdline)
+    if "--dry-run" in cmdline or "--repair-only" in cmdline:
+        return False
+    return "scripts/run_production_walkforward_gate.py" in joined
+
+
+def _production_child_cmdline_matches(cmdline: tuple[str, ...]) -> bool:
+    joined = " ".join(cmdline)
+    required = (
+        "-m aqsp walkforward",
+        "--source sqlite_db",
+        "--pool all",
+        "--grid-cscv",
+        "--symbols-file",
+    )
+    return all(needle in joined for needle in required)
+
+
+def _active_running_production_detail(payload: dict[str, object]) -> str:
+    if str(payload.get("status") or "").strip() not in {"running", "blocked_running"}:
+        return ""
+    child_pid = payload.get("child_pid")
+    if _pid_active(child_pid) and _production_child_cmdline_matches(
+        _pid_cmdline(child_pid)
+    ):
+        return f"active production walk-forward child already running: pid={child_pid}"
+    pid = payload.get("pid")
+    if _pid_active(pid) and _production_wrapper_cmdline_matches(_pid_cmdline(pid)):
+        return f"active production walk-forward wrapper already running: pid={pid}"
+    return ""
+
+
+def _write_blocked_running_status(
+    path: Path,
+    *,
+    payload: dict[str, object],
+    detail: str,
+) -> None:
+    blocked_payload = dict(payload)
+    blocked_payload["status"] = "blocked_running"
+    blocked_payload["detail"] = detail
+    blocked_payload["blocked_by_pid"] = os.getpid()
+    blocked_payload["updated_at"] = now_shanghai().isoformat(timespec="seconds")
+    atomic_write_text(
+        path, json.dumps(blocked_payload, indent=2, ensure_ascii=False) + "\n"
+    )
+
+
+def _lock_path(raw_path: str | Path) -> Path:
+    path = Path(raw_path)
+    return path if path.is_absolute() else PROJECT_ROOT / path
+
+
+def _lock_meta_path(lock_path: Path) -> Path:
+    return lock_path / "meta.json"
+
+
+def _write_lock_meta(lock_path: Path) -> None:
+    payload = {
+        "pid": os.getpid(),
+        "cmdline": sys.argv,
+        "started_at": now_shanghai().isoformat(timespec="seconds"),
+    }
+    atomic_write_text(
+        _lock_meta_path(lock_path),
+        json.dumps(payload, indent=2, ensure_ascii=False) + "\n",
+    )
+
+
+def _read_lock_meta(lock_path: Path) -> dict[str, object]:
+    meta_path = _lock_meta_path(lock_path)
+    try:
+        payload = json.loads(meta_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _production_lock_active_detail(lock_path: Path) -> str:
+    payload = _read_lock_meta(lock_path)
+    pid = payload.get("pid")
+    if _pid_active(pid) and _production_wrapper_cmdline_matches(_pid_cmdline(pid)):
+        return f"active production walk-forward lock already held: pid={pid}"
+    return ""
+
+
+def _acquire_production_lock(lock_path: Path) -> tuple[bool, str]:
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        lock_path.mkdir()
+    except FileExistsError:
+        active_detail = _production_lock_active_detail(lock_path)
+        if active_detail:
+            return False, active_detail
+        try:
+            _lock_meta_path(lock_path).unlink()
+        except FileNotFoundError:
+            pass
+        except OSError:
+            return False, f"production walk-forward lock exists: {lock_path}"
+        try:
+            lock_path.rmdir()
+        except OSError:
+            return False, f"production walk-forward lock exists: {lock_path}"
+        try:
+            lock_path.mkdir()
+        except FileExistsError:
+            return False, f"production walk-forward lock exists: {lock_path}"
+    _write_lock_meta(lock_path)
+    return True, ""
+
+
+def _release_production_lock(lock_path: Path) -> None:
+    try:
+        payload = _read_lock_meta(lock_path)
+        if payload.get("pid") != os.getpid():
+            return
+        _lock_meta_path(lock_path).unlink(missing_ok=True)
+        lock_path.rmdir()
+    except OSError:
+        return
+
+
 def _status_updated_at(payload: dict[str, object]) -> datetime | None:
     raw = str(payload.get("updated_at") or "").strip()
     if not raw:
@@ -288,7 +554,7 @@ def _running_status_is_stale(payload: dict[str, object]) -> bool:
     parent_active = _pid_active(pid)
     if isinstance(child_pid, int) and child_pid > 0:
         if child_active:
-            return False
+            return not _production_child_cmdline_matches(_pid_cmdline(child_pid))
         return True
     updated_at = _status_updated_at(payload)
     timeout_seconds = payload.get("timeout_seconds")
@@ -302,6 +568,8 @@ def _running_status_is_stale(payload: dict[str, object]) -> bool:
         if age_seconds > timeout_value:
             return True
     if isinstance(pid, int) and pid > 0:
+        if parent_active:
+            return not _production_wrapper_cmdline_matches(_pid_cmdline(pid))
         return not parent_active
     return True
 
@@ -324,7 +592,9 @@ def repair_stale_running_status(
     detail = str(payload.get("detail") or "").strip()
     stale_detail = "stale running status auto-repaired"
     payload["detail"] = (
-        f"{detail}; {stale_detail}" if detail and stale_detail not in detail else stale_detail
+        f"{detail}; {stale_detail}"
+        if detail and stale_detail not in detail
+        else stale_detail
     )
     payload["updated_at"] = now_shanghai().isoformat(timespec="seconds")
     if args is not None:
@@ -367,7 +637,9 @@ def _default_production_end() -> str:
 
 def _default_production_start(*, end: str, lookback_years: int) -> str:
     end_day = date.fromisoformat(end)
-    return (_shift_years(end_day, max(int(lookback_years), 1)) + timedelta(days=1)).isoformat()
+    return (
+        _shift_years(end_day, max(int(lookback_years), 1)) + timedelta(days=1)
+    ).isoformat()
 
 
 def _normalize_coverage_mode(raw: str) -> str:
@@ -580,7 +852,13 @@ def inspect_raw_coverage_window_with_symbols(
     covered: list[str] = []
     if first_market_day and last_market_day and market_days:
         market_end_index = len(market_days) - 1
-        for ts_code, first_any, first_window, last_window, count_window in coverage_rows:
+        for (
+            ts_code,
+            first_any,
+            first_window,
+            last_window,
+            count_window,
+        ) in coverage_rows:
             first_any_text = str(first_any or "")
             first_window_text = str(first_window or "")
             last_window_text = str(last_window or "")
@@ -622,6 +900,118 @@ def _db_mtime_epoch(db_path: Path) -> int:
     return int(db_path.stat().st_mtime)
 
 
+def _canonical_path(path: Path) -> str:
+    return str(path.expanduser().resolve(strict=False))
+
+
+def _raw_sqlite_max_trade_date(db_path: Path) -> str | None:
+    try:
+        with sqlite3.connect(db_path) as conn:
+            row = conn.execute("SELECT MAX(trade_date) FROM daily_qfq").fetchone()
+    except sqlite3.Error:
+        return None
+    raw_date = str(row[0] or "").strip() if row else ""
+    parsed = _parse_db_day(raw_date)
+    return parsed.isoformat() if parsed is not None else None
+
+
+def _raw_sqlite_has_daily_table(db_path: Path) -> bool:
+    try:
+        with sqlite3.connect(db_path) as conn:
+            row = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='daily_qfq'"
+            ).fetchone()
+    except sqlite3.Error:
+        return False
+    return row is not None
+
+
+def _read_json_object(path: Path) -> dict[str, object] | None:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def validate_production_cutoff_consistency(
+    *,
+    db_path: Path,
+    requested_end: str,
+    gate_path: Path,
+    raw_max_trade_date: str | None = None,
+    coverage_last_trade_date: str | None = None,
+) -> str:
+    """Reject evidence that claims a date beyond the raw database cutoff."""
+    raw_max = raw_max_trade_date or _raw_sqlite_max_trade_date(db_path)
+    if raw_max is None:
+        return "raw sqlite MAX(trade_date) is missing/invalid; refusing production evidence"
+    raw_max_day = _parse_db_day(raw_max)
+    requested_day = _parse_db_day(requested_end)
+    if raw_max_day is None or requested_day is None:
+        return (
+            "raw sqlite cutoff or requested end is malformed: "
+            f"raw_max={raw_max!r} requested_end={requested_end!r}"
+        )
+    if requested_day > raw_max_day:
+        return (
+            f"requested end={requested_day.isoformat()} exceeds raw sqlite "
+            f"MAX(trade_date)={raw_max_day.isoformat()}"
+        )
+
+    if coverage_last_trade_date:
+        coverage_day = _parse_db_day(coverage_last_trade_date)
+        if coverage_day is None or coverage_day > raw_max_day:
+            return (
+                "coverage last_trade_date exceeds raw sqlite cutoff: "
+                f"coverage={coverage_last_trade_date!r} "
+                f"raw_max={raw_max_day.isoformat()}"
+            )
+
+    if not gate_path.exists():
+        return ""
+    payload = _read_json_object(gate_path)
+    if payload is None:
+        return f"production gate sidecar is missing/invalid: {gate_path}"
+
+    sidecar_db = str(payload.get("sqlite_db_path") or "").strip()
+    if sidecar_db and _canonical_path(Path(sidecar_db)) != _canonical_path(db_path):
+        return (
+            "production gate sidecar sqlite_db_path mismatch: "
+            f"sidecar={sidecar_db!r} requested={_canonical_path(db_path)!r}"
+        )
+
+    raw_sidecar_end = payload.get("data_end")
+    if raw_sidecar_end not in (None, ""):
+        sidecar_day = _parse_db_day(str(raw_sidecar_end))
+        if sidecar_day is None:
+            return f"production gate sidecar data_end malformed: {raw_sidecar_end!r}"
+        if sidecar_day != requested_day:
+            return (
+                "production gate sidecar cutoff mismatch: "
+                f"data_end={sidecar_day.isoformat()} "
+                f"requested_end={requested_day.isoformat()}"
+            )
+        if sidecar_day > raw_max_day:
+            return (
+                "production gate sidecar data_end exceeds raw sqlite cutoff: "
+                f"data_end={sidecar_day.isoformat()} "
+                f"raw_max={raw_max_day.isoformat()}"
+            )
+
+    coverage_payload = payload.get("production_gate_coverage")
+    if isinstance(coverage_payload, dict):
+        sidecar_last = coverage_payload.get("last_trade_date")
+        if sidecar_last:
+            sidecar_last_day = _parse_db_day(str(sidecar_last))
+            if sidecar_last_day is None or sidecar_last_day > raw_max_day:
+                return (
+                    "production gate coverage last_trade_date exceeds raw sqlite cutoff: "
+                    f"coverage={sidecar_last!r} raw_max={raw_max_day.isoformat()}"
+                )
+    return ""
+
+
 def load_cached_coverage_symbols(
     cache_path: Path,
     *,
@@ -631,6 +1021,7 @@ def load_cached_coverage_symbols(
     min_symbols: int,
     coverage_mode: str,
     lookback_years: int,
+    raw_max_trade_date: str | None = None,
 ) -> CoverageInspection | None:
     if not cache_path.exists():
         return None
@@ -641,7 +1032,8 @@ def load_cached_coverage_symbols(
     if not isinstance(payload, dict):
         return None
     expected = {
-        "db_path": str(db_path),
+        "cache_path": _canonical_path(cache_path),
+        "db_path": _canonical_path(db_path),
         "db_mtime_epoch": _db_mtime_epoch(db_path),
         "start": start,
         "end": end,
@@ -652,6 +1044,11 @@ def load_cached_coverage_symbols(
     for key, value in expected.items():
         if payload.get(key) != value:
             return None
+    if (
+        raw_max_trade_date is not None
+        and payload.get("raw_max_trade_date") != raw_max_trade_date
+    ):
+        return None
     summary_raw = payload.get("summary")
     covered_symbols = payload.get("covered_symbols")
     if not isinstance(summary_raw, dict) or not isinstance(covered_symbols, list):
@@ -680,7 +1077,9 @@ def load_cached_coverage_symbols(
         )
     except (KeyError, TypeError, ValueError):
         return None
-    normalized_symbols = [str(symbol).strip() for symbol in covered_symbols if str(symbol).strip()]
+    normalized_symbols = [
+        str(symbol).strip() for symbol in covered_symbols if str(symbol).strip()
+    ]
     if len(normalized_symbols) != summary.covered_symbols:
         return None
     return CoverageInspection(summary=summary, covered_symbols=normalized_symbols)
@@ -696,7 +1095,8 @@ def write_cached_coverage_symbols(
     inspection: CoverageInspection,
 ) -> None:
     payload = {
-        "db_path": str(db_path),
+        "cache_path": _canonical_path(cache_path),
+        "db_path": _canonical_path(db_path),
         "db_mtime_epoch": _db_mtime_epoch(db_path),
         "start": start,
         "end": end,
@@ -710,6 +1110,7 @@ def write_cached_coverage_symbols(
             "expected_trade_days": inspection.summary.expected_trade_days,
         },
         "updated_at": now_shanghai().isoformat(timespec="seconds"),
+        "raw_max_trade_date": _raw_sqlite_max_trade_date(db_path),
         "summary": {
             "stock_symbols": inspection.summary.stock_symbols,
             "covered_symbols": inspection.summary.covered_symbols,
@@ -732,7 +1133,7 @@ def write_cached_coverage_symbols(
 
 
 def build_walkforward_command(args: argparse.Namespace) -> list[str]:
-    return [
+    command = [
         sys.executable,
         "-m",
         "aqsp",
@@ -766,6 +1167,15 @@ def build_walkforward_command(args: argparse.Namespace) -> list[str]:
         "--log",
         args.log,
     ]
+    if not bool(getattr(args, "no_streaming", False)):
+        command[command.index("--skip-pit-financials") : command.index("--skip-pit-financials")] = [
+            "--engine",
+            "builtin",
+            "--streaming",
+            "--stream-batch-size",
+            str(getattr(args, "stream_batch_size", DEFAULT_STREAM_BATCH_SIZE)),
+        ]
+    return command
 
 
 def annotate_production_gate_metadata(
@@ -842,7 +1252,9 @@ def annotate_production_gate_metadata(
     return child_effective_symbols
 
 
-def _coverage_summary_from_status_payload(payload: dict[str, object]) -> CoverageSummary | None:
+def _coverage_summary_from_status_payload(
+    payload: dict[str, object],
+) -> CoverageSummary | None:
     raw = payload.get("coverage")
     if not isinstance(raw, dict):
         return None
@@ -880,8 +1292,10 @@ def repair_status_backed_production_metadata(
         return False
     coverage = _coverage_summary_from_status_payload(payload)
     effective_symbols = payload.get("effective_symbols")
-    if coverage is None or isinstance(effective_symbols, bool) or not isinstance(
-        effective_symbols, int
+    if (
+        coverage is None
+        or isinstance(effective_symbols, bool)
+        or not isinstance(effective_symbols, int)
     ):
         return False
     final_effective_symbols = annotate_production_gate_metadata(
@@ -896,7 +1310,9 @@ def repair_status_backed_production_metadata(
         args=args,
         coverage=coverage,
         effective_symbols=final_effective_symbols,
-        command=payload.get("command") if isinstance(payload.get("command"), list) else None,
+        command=payload.get("command")
+        if isinstance(payload.get("command"), list)
+        else None,
         child_exit_code=(
             int(payload["child_exit_code"])
             if isinstance(payload.get("child_exit_code"), int)
@@ -1052,9 +1468,7 @@ def preserve_formal_report_snapshot(report_path: Path) -> None:
         return
     backup_path = formal_report_backup_path(report_path)
     try:
-        atomic_write_text(
-            backup_path, report_path.read_text(encoding="utf-8")
-        )
+        atomic_write_text(backup_path, report_path.read_text(encoding="utf-8"))
     except OSError:
         return
 
@@ -1235,9 +1649,8 @@ def repair_production_gate_metadata(
     if not isinstance(coverage, dict):
         coverage = {}
     coverage_changed = False
-    if (
-        "selected_symbols" not in coverage
-        and isinstance(payload.get("effective_symbols"), int)
+    if "selected_symbols" not in coverage and isinstance(
+        payload.get("effective_symbols"), int
     ):
         coverage["selected_symbols"] = int(payload["effective_symbols"])
         coverage_changed = True
@@ -1247,7 +1660,17 @@ def repair_production_gate_metadata(
         value = _extract_report_value(report_text, key)
         if not value:
             continue
-        if key in {"stock_symbols", "covered_symbols", "rows", "lookback_years", "expected_trade_days"} and value.isdigit():
+        if (
+            key
+            in {
+                "stock_symbols",
+                "covered_symbols",
+                "rows",
+                "lookback_years",
+                "expected_trade_days",
+            }
+            and value.isdigit()
+        ):
             coverage[key] = int(value)
         elif key == "listing_aware":
             coverage[key] = value.lower() == "true"
@@ -1259,7 +1682,9 @@ def repair_production_gate_metadata(
         changed = True
     if not changed:
         return False
-    atomic_write_text(gate_path, json.dumps(payload, indent=2, ensure_ascii=False) + "\n")
+    atomic_write_text(
+        gate_path, json.dumps(payload, indent=2, ensure_ascii=False) + "\n"
+    )
     return True
 
 
@@ -1285,6 +1710,11 @@ def main() -> int:
         "--status-path",
         default=DEFAULT_STATUS_PATH,
         help="write production walkforward wrapper status for remote diagnosis",
+    )
+    parser.add_argument(
+        "--lock-path",
+        default=DEFAULT_LOCK_PATH,
+        help="atomic production child lock; prevents concurrent heavy walk-forward runs",
     )
     parser.add_argument(
         "--timeout-seconds",
@@ -1315,7 +1745,26 @@ def main() -> int:
         default=60,
         help="status heartbeat interval while the child walkforward process is still running",
     )
+    parser.add_argument(
+        "--min-memory-gib",
+        type=float,
+        default=MIN_PRODUCTION_MEMORY_GIB,
+        help="minimum host memory for launching the child production walk-forward",
+    )
+    parser.add_argument(
+        "--stream-batch-size",
+        type=int,
+        default=DEFAULT_STREAM_BATCH_SIZE,
+        help="bounded production streaming batch size; does not reduce coverage or gate thresholds",
+    )
+    parser.add_argument(
+        "--no-streaming",
+        action="store_true",
+        help="disable the bounded production workflow; low-memory hosts will fail closed",
+    )
     args = parser.parse_args()
+    if args.stream_batch_size <= 0:
+        parser.error("--stream-batch-size must be positive")
     args.coverage_mode = _normalize_coverage_mode(args.coverage_mode)
     if not str(args.end or "").strip():
         args.end = _default_production_end()
@@ -1327,6 +1776,47 @@ def main() -> int:
     status_path = _status_path(args.status_path)
     symbols_cache_path = _symbol_cache_path(args.symbols_cache_path)
     repair_stale_running_status(status_path, args=args)
+    active_payload = _read_status(status_path)
+    active_detail = _active_running_production_detail(active_payload)
+    if active_detail and not args.repair_only:
+        _write_blocked_running_status(
+            status_path,
+            payload=active_payload,
+            detail=active_detail,
+        )
+        print(f"BLOCK: {active_detail}")
+        return 2
+
+    resource_blocker = _low_memory_blocker(args.min_memory_gib)
+    if (
+        resource_blocker
+        and _total_memory_gib() is None
+        and not args.dry_run
+        and not args.repair_only
+    ):
+        _write_preflight_status(
+            status_path,
+            args=args,
+            status="blocked_resources",
+            detail=resource_blocker,
+        )
+        print(f"BLOCK: {resource_blocker}")
+        return 2
+    if resource_blocker and args.no_streaming and not args.dry_run and not args.repair_only:
+        _write_preflight_status(
+            status_path,
+            args=args,
+            status="blocked_resources",
+            detail=f"{resource_blocker}; bounded streaming workflow was disabled",
+        )
+        print(f"BLOCK: {resource_blocker}; bounded streaming workflow was disabled")
+        return 2
+    if resource_blocker and not args.no_streaming and not args.dry_run and not args.repair_only:
+        print(
+            "INFO: host is below the full-materialization memory floor; "
+            f"using bounded streaming batches of {args.stream_batch_size} symbols "
+            "without lowering any production gate."
+        )
 
     if args.repair_only:
         stale_repaired = repair_stale_running_status(status_path, args=args)
@@ -1377,6 +1867,33 @@ def main() -> int:
         status="inspecting_coverage",
         detail="inspecting raw sqlite full-market coverage",
     )
+    if not args.db.exists():
+        _write_preflight_status(
+            status_path,
+            args=args,
+            status="blocked_db",
+            detail=f"raw sqlite db missing: {args.db}",
+        )
+        print(f"BLOCK: raw sqlite db missing: {args.db}")
+        return 2
+    raw_max_trade_date = None
+    if _raw_sqlite_has_daily_table(args.db):
+        raw_max_trade_date = _raw_sqlite_max_trade_date(args.db)
+        cutoff_blocker = validate_production_cutoff_consistency(
+            db_path=args.db,
+            requested_end=args.end,
+            gate_path=Path(args.gate_path),
+            raw_max_trade_date=raw_max_trade_date,
+        )
+        if cutoff_blocker:
+            _write_preflight_status(
+                status_path,
+                args=args,
+                status="blocked_cutoff",
+                detail=cutoff_blocker,
+            )
+            print(f"BLOCK: {cutoff_blocker}")
+            return 2
     inspection = load_cached_coverage_symbols(
         symbols_cache_path,
         db_path=args.db,
@@ -1385,6 +1902,7 @@ def main() -> int:
         min_symbols=args.min_symbols,
         coverage_mode=args.coverage_mode,
         lookback_years=args.lookback_years,
+        raw_max_trade_date=raw_max_trade_date,
     )
     if inspection is None:
         inspection = inspect_raw_coverage_with_symbols(
@@ -1420,6 +1938,25 @@ def main() -> int:
         )
         print(f"production gate symbols cache hit: {symbols_cache_path}")
     coverage = inspection.summary
+    if raw_max_trade_date is not None:
+        cutoff_blocker = validate_production_cutoff_consistency(
+            db_path=args.db,
+            requested_end=args.end,
+            gate_path=Path(args.gate_path),
+            raw_max_trade_date=raw_max_trade_date,
+            coverage_last_trade_date=coverage.last_trade_date,
+        )
+        if cutoff_blocker:
+            _write_status(
+                status_path,
+                status="blocked_cutoff",
+                args=args,
+                coverage=coverage,
+                effective_symbols=coverage.covered_symbols,
+                detail=cutoff_blocker,
+            )
+            print(f"BLOCK: {cutoff_blocker}")
+            return 2
     print(
         "production gate raw coverage: "
         f"stocks={coverage.stock_symbols} covered={coverage.covered_symbols} "
@@ -1466,31 +2003,9 @@ def main() -> int:
         )
         return 2
 
-    tmp_symbols_path: Path | None = None
-    if not args.dry_run:
-        with tempfile.NamedTemporaryFile(
-            "w",
-            encoding="utf-8",
-            prefix="aqsp-walkforward-symbols-",
-            suffix=".txt",
-            delete=False,
-        ) as tmp_symbols:
-            tmp_symbols.write("\n".join(covered_symbols) + "\n")
-            tmp_symbols_path = Path(tmp_symbols.name)
-        args.symbols_file = str(tmp_symbols_path)
-        print(f"production gate selected symbols: {len(covered_symbols)}")
-        _write_status(
-            status_path,
-            status="preparing_child",
-            args=args,
-            coverage=coverage,
-            effective_symbols=len(covered_symbols),
-            detail="selected covered symbols; preparing child walkforward",
-        )
-
-    command = build_walkforward_command(args)
-    print("production gate command:", " ".join(command))
     if args.dry_run:
+        command = build_walkforward_command(args)
+        print("production gate command:", " ".join(command))
         _write_status(
             status_path,
             status="dry_run",
@@ -1501,23 +2016,125 @@ def main() -> int:
             detail="dry-run only; child walkforward not started",
         )
         return 0
-    env = os.environ.copy()
-    env["AQSP_SQLITE_DB_PATH"] = str(args.db)
-    env["AQSP_SQLITE_PREFILTERED_SYMBOLS"] = "1"
-    warn_if_report_path_not_writable(Path(args.report))
-    preserve_formal_report_snapshot(Path(args.report))
-    try:
-        child_exit_code, child_pid = _execute_child_walkforward(
-            command=command,
-            env=env,
-            cwd=PROJECT_ROOT,
-            timeout_seconds=args.timeout_seconds,
-            status_path=status_path,
-            args=args,
-            coverage=coverage,
-            effective_symbols=len(covered_symbols),
+
+    lock_path = _lock_path(args.lock_path)
+    lock_acquired, lock_detail = _acquire_production_lock(lock_path)
+    if not lock_acquired:
+        _write_blocked_running_status(
+            status_path,
+            payload=_read_status(status_path),
+            detail=lock_detail,
         )
-        if child_exit_code != 0:
+        print(f"BLOCK: {lock_detail}")
+        return 2
+
+    tmp_symbols_path: Path | None = None
+    with tempfile.NamedTemporaryFile(
+        "w",
+        encoding="utf-8",
+        prefix="aqsp-walkforward-symbols-",
+        suffix=".txt",
+        delete=False,
+    ) as tmp_symbols:
+        tmp_symbols.write("\n".join(covered_symbols) + "\n")
+        tmp_symbols_path = Path(tmp_symbols.name)
+    args.symbols_file = str(tmp_symbols_path)
+    print(f"production gate selected symbols: {len(covered_symbols)}")
+    _write_status(
+        status_path,
+        status="preparing_child",
+        args=args,
+        coverage=coverage,
+        effective_symbols=len(covered_symbols),
+        detail="selected covered symbols; preparing child walkforward",
+    )
+
+    command = build_walkforward_command(args)
+    print("production gate command:", " ".join(command))
+    env = os.environ.copy()
+    try:
+        env["AQSP_SQLITE_DB_PATH"] = str(args.db)
+        env["AQSP_SQLITE_PREFILTERED_SYMBOLS"] = "1"
+        warn_if_report_path_not_writable(Path(args.report))
+        preserve_formal_report_snapshot(Path(args.report))
+        requested_timeout_seconds = int(args.timeout_seconds or 0)
+        effective_timeout_seconds = _effective_timeout_seconds(
+            requested_timeout_seconds,
+            effective_symbols=len(covered_symbols),
+            min_production_symbols=args.min_symbols,
+        )
+        if effective_timeout_seconds != requested_timeout_seconds:
+            args.timeout_seconds = effective_timeout_seconds
+            print(
+                "production gate timeout auto-raised: "
+                f"{requested_timeout_seconds}s -> {effective_timeout_seconds}s "
+                f"for {len(covered_symbols)} symbols"
+            )
+        try:
+            child_exit_code, child_pid = _execute_child_walkforward(
+                command=command,
+                env=env,
+                cwd=PROJECT_ROOT,
+                timeout_seconds=effective_timeout_seconds,
+                status_path=status_path,
+                args=args,
+                coverage=coverage,
+                effective_symbols=len(covered_symbols),
+            )
+            if child_exit_code != 0:
+                diagnostic_path = diagnostic_report_path(Path(args.report))
+                if write_minimal_pbo_diagnostics(
+                    gate_path=Path(args.gate_path),
+                    report_path=diagnostic_path,
+                    coverage=coverage,
+                    overwrite=True,
+                ):
+                    print(
+                        f"production gate diagnostic report written: {diagnostic_path}"
+                    )
+                _write_status(
+                    status_path,
+                    status="failed",
+                    args=args,
+                    coverage=coverage,
+                    effective_symbols=len(covered_symbols),
+                    command=command,
+                    child_exit_code=child_exit_code,
+                    child_pid=child_pid,
+                    detail="child walkforward returned non-zero",
+                )
+                return child_exit_code
+            try:
+                if raw_max_trade_date is not None:
+                    cutoff_blocker = validate_production_cutoff_consistency(
+                        db_path=args.db,
+                        requested_end=args.end,
+                        gate_path=Path(args.gate_path),
+                        raw_max_trade_date=raw_max_trade_date,
+                        coverage_last_trade_date=coverage.last_trade_date,
+                    )
+                    if cutoff_blocker:
+                        raise SystemExit(cutoff_blocker)
+                final_effective_symbols = annotate_production_gate_metadata(
+                    gate_path=Path(args.gate_path),
+                    db_path=args.db,
+                    coverage=coverage,
+                    effective_symbols=len(covered_symbols),
+                )
+            except (json.JSONDecodeError, OSError, SystemExit) as exc:
+                _write_status(
+                    status_path,
+                    status="failed_metadata",
+                    args=args,
+                    coverage=coverage,
+                    effective_symbols=len(covered_symbols),
+                    command=command,
+                    child_exit_code=child_exit_code,
+                    child_pid=child_pid,
+                    detail=str(exc),
+                )
+                print(f"BLOCK: failed to stamp production gate metadata: {exc}")
+                return 2
             diagnostic_path = diagnostic_report_path(Path(args.report))
             if write_minimal_pbo_diagnostics(
                 gate_path=Path(args.gate_path),
@@ -1528,75 +2145,35 @@ def main() -> int:
                 print(f"production gate diagnostic report written: {diagnostic_path}")
             _write_status(
                 status_path,
-                status="failed",
+                status="completed",
                 args=args,
                 coverage=coverage,
-                effective_symbols=len(covered_symbols),
+                effective_symbols=final_effective_symbols,
                 command=command,
                 child_exit_code=child_exit_code,
                 child_pid=child_pid,
-                detail="child walkforward returned non-zero",
+                detail="child walkforward completed",
             )
-            return child_exit_code
-        try:
-            final_effective_symbols = annotate_production_gate_metadata(
-                gate_path=Path(args.gate_path),
-                db_path=args.db,
-                coverage=coverage,
-                effective_symbols=len(covered_symbols),
-            )
-        except (json.JSONDecodeError, OSError, SystemExit) as exc:
+            return 0
+        except subprocess.TimeoutExpired:
             _write_status(
                 status_path,
-                status="failed_metadata",
+                status="timeout",
                 args=args,
                 coverage=coverage,
                 effective_symbols=len(covered_symbols),
                 command=command,
-                child_exit_code=child_exit_code,
-                child_pid=child_pid,
-                detail=str(exc),
+                child_exit_code=124,
+                detail="child walkforward timed out",
             )
-            print(f"BLOCK: failed to stamp production gate metadata: {exc}")
-            return 2
-        diagnostic_path = diagnostic_report_path(Path(args.report))
-        if write_minimal_pbo_diagnostics(
-            gate_path=Path(args.gate_path),
-            report_path=diagnostic_path,
-            coverage=coverage,
-            overwrite=True,
-        ):
-            print(f"production gate diagnostic report written: {diagnostic_path}")
-        _write_status(
-            status_path,
-            status="completed",
-            args=args,
-            coverage=coverage,
-            effective_symbols=final_effective_symbols,
-            command=command,
-            child_exit_code=child_exit_code,
-            child_pid=child_pid,
-            detail="child walkforward completed",
-        )
-        return 0
-    except subprocess.TimeoutExpired:
-        _write_status(
-            status_path,
-            status="timeout",
-            args=args,
-            coverage=coverage,
-            effective_symbols=len(covered_symbols),
-            command=command,
-            child_exit_code=124,
-            detail="child walkforward timed out",
-        )
-        print(
-            "BLOCK: production walk-forward timed out; "
-            f"timeout_seconds={args.timeout_seconds}. "
-            "Reduce the covered symbol batch or inspect sqlite fetch performance."
-        )
-        return 124
+            print(
+                "BLOCK: production walk-forward timed out; "
+                f"timeout_seconds={effective_timeout_seconds}. "
+                "Reduce the covered symbol batch or inspect sqlite fetch performance."
+            )
+            return 124
     finally:
+        _release_production_lock(lock_path)
         if tmp_symbols_path is not None:
             tmp_symbols_path.unlink(missing_ok=True)
 

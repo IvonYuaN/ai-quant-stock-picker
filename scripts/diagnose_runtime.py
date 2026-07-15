@@ -16,8 +16,10 @@ from typing import Any
 
 from aqsp.data.source_health import notification_level_for_health_label
 from aqsp.data.registry import list_registry_entries, local_data_status
+from aqsp.data.source_readiness import source_supports_workload, workload_fit_for_source
 from aqsp.data.tdx_vipdoc_source import TDX_DAY_RECORD_SIZE
 from aqsp.cli import WALKFORWARD_GATE_PATH, _check_notification_gate
+from aqsp.config import load_debate_runtime_config
 from aqsp.ledger.runtime import (
     REAL_SIGNAL_STATUSES,
     cold_start_min_days,
@@ -28,12 +30,34 @@ from aqsp.ledger.runtime import (
     latest_independent_signal_day,
 )
 from aqsp.core.time import now_shanghai
+from aqsp.market_context import cross_market_rule_runtime_lines
 from aqsp.notifier import configured_notification_channels
 from aqsp.research.summary import load_research_summary, research_findings_display
 from aqsp.runtime.gate_notify import gate_reason_fingerprint
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+GATE_REASON_FINGERPRINT_TOKENS = frozenset(
+    {
+        "blocked_unknown",
+        "cold_start",
+        "dsr",
+        "pbo",
+        "sidecar_missing",
+        "sidecar_parse_failed",
+        "run_date_invalid",
+        "gate_stale",
+        "n_periods_invalid",
+        "data_end_invalid",
+        "heldout_contaminated",
+        "market_coverage_missing",
+        "market_coverage_insufficient",
+        "dsr_flag_invalid",
+        "pbo_flag_invalid",
+        "pbo_valid_flag_invalid",
+        "both_pass_flag_invalid",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -96,6 +120,41 @@ def _runtime_paths() -> RuntimePaths:
     )
 
 
+def _debate_runtime_lines() -> list[str]:
+    from aqsp.briefing.agent_roles import DEFAULT_RUNTIME_AGENT_ROLE_NAMES
+
+    cfg = load_debate_runtime_config()
+    default_roles = tuple(DEFAULT_RUNTIME_AGENT_ROLE_NAMES)
+    missing_roles = tuple(role for role in default_roles if role not in cfg.roles)
+    coverage = (
+        "partial_explicit"
+        if cfg.explicit_roles and missing_roles
+        else ("partial_disabled" if missing_roles else "full")
+    )
+    return [
+        "## Debate Runtime",
+        f"- debate_enabled: {cfg.enabled}",
+        f"- debate_task_id: {cfg.task_id or '-'}",
+        f"- debate_enable_llm: {cfg.enable_llm}",
+        f"- debate_max_rounds: {cfg.max_rounds}",
+        f"- debate_max_candidates: {cfg.max_candidates}",
+        f"- debate_language: {cfg.language}",
+        f"- debate_explicit_roles: {cfg.explicit_roles}",
+        f"- debate_context_roles_locked: {cfg.context_roles_locked}",
+        f"- debate_requested_roles: {','.join(cfg.requested_roles) or '-'}",
+        f"- debate_focus_roles: {','.join(cfg.focus_roles) or '-'}",
+        f"- debate_disabled_roles: {','.join(cfg.disabled_roles) or '-'}",
+        f"- debate_effective_roles: {','.join(cfg.roles) or '-'}",
+        f"- debate_role_count: {len(cfg.roles)}",
+        f"- debate_discussion_capacity: roles={len(cfg.roles)} rounds={cfg.max_rounds} candidates<={cfg.max_candidates}",
+        f"- debate_llm_role_count: {sum(1 for role in cfg.role_runtime if role.enable_llm)}",
+        f"- debate_llm_roles: {','.join(role.role for role in cfg.role_runtime if role.enable_llm) or '-'}",
+        f"- debate_role_coverage: {coverage}",
+        f"- debate_missing_roles: {','.join(missing_roles) or '-'}",
+        "",
+    ]
+
+
 def _default_runtime_path(default: str) -> Path:
     path = Path(default).expanduser()
     return path if path.is_absolute() else PROJECT_ROOT / path
@@ -154,11 +213,16 @@ def _read_daily_log_history(root: Path) -> list[dict[str, Any]]:
         for segment in segments:
             if not segment.startswith("=== aqsp run @ "):
                 continue
-            match = re.match(r"^=== aqsp run @ (.+?) ===$", segment.splitlines()[0].strip())
+            match = re.match(
+                r"^=== aqsp run @ (.+?) ===$", segment.splitlines()[0].strip()
+            )
             run_date = _daily_log_segment_date(match.group(1) if match else "")
             if not run_date:
                 continue
-            if "=== outputs ===" not in segment and "=== aqsp dashboard @" not in segment:
+            if (
+                "=== outputs ===" not in segment
+                and "=== aqsp dashboard @" not in segment
+            ):
                 continue
             if "aqsp run failed:" in segment:
                 continue
@@ -171,7 +235,9 @@ def _daily_log_segment_date(header: str) -> str:
     if len(tokens) >= 6:
         candidate = " ".join(tokens[:4] + tokens[5:6])
         try:
-            return datetime.strptime(candidate, "%a %b %d %H:%M:%S %Y").date().isoformat()
+            return (
+                datetime.strptime(candidate, "%a %b %d %H:%M:%S %Y").date().isoformat()
+            )
         except ValueError:
             return ""
     return ""
@@ -184,7 +250,9 @@ def _file_status(path: Path) -> str:
 
 
 def _successful_run_history_summary(root: Path) -> dict[str, Any]:
-    history_path = _runtime_path("AQSP_DAILY_RUN_HISTORY", "data/daily_run_history.jsonl")
+    history_path = _runtime_path(
+        "AQSP_DAILY_RUN_HISTORY", "data/daily_run_history.jsonl"
+    )
     history_rows = _read_jsonl(history_path)
     pipeline_rows = _read_pipeline_history(root)
     daily_log_rows = _read_daily_log_history(root)
@@ -238,6 +306,15 @@ def _count_log_occurrences(path: Path, marker: str) -> int:
     return text.count(marker)
 
 
+def _read_text_or_empty(path: Path) -> str:
+    if not path.exists():
+        return ""
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+
+
 def _runtime_cadence_summary(root: Path) -> dict[str, int]:
     today = now_shanghai().date().isoformat()
     return {
@@ -253,6 +330,70 @@ def _runtime_cadence_summary(root: Path) -> dict[str, int]:
             root / "logs" / "monitor" / f"monitor-{today}.log",
             "AQSP 服务器监控开始",
         ),
+        "coldstart_runs": _count_log_occurrences(
+            root / "logs" / "coldstart" / f"coldstart-{today}.log",
+            "冷启动日跑开始",
+        ),
+    }
+
+
+def _coldstart_ready_next_blocker(gate_state: dict[str, object]) -> str:
+    fingerprint = str(gate_state.get("latest_fingerprint") or "")
+    parts = {item for item in fingerprint.split("|") if item}
+    if {"dsr", "pbo"} & parts:
+        return "冷启动样本门已达标；当前后续阻塞是 DSR/PBO 双门质量门或组合保护冷却"
+    return "冷启动样本门已达标；后续看 walk-forward 双门 gate 与组合保护状态，不再追加冷启动样本"
+
+
+def _coldstart_runtime_summary(root: Path) -> dict[str, Any]:
+    today = now_shanghai().date().isoformat()
+    candidates = [
+        root / "logs" / "coldstart" / f"coldstart-{today}.log",
+        root / "logs" / "bt" / f"bt-coldstart-{today}.log",
+        root / "logs" / "bt" / f"bt-status-{today}.log",
+    ]
+    sections: list[tuple[float, Path, str]] = []
+    for path in candidates:
+        text = _read_text_or_empty(path)
+        if not text:
+            continue
+        parts = text.split("冷启动日跑开始")
+        if len(parts) > 1:
+            sections.append((path.stat().st_mtime, path, "冷启动日跑开始" + parts[-1]))
+    if not sections:
+        return {
+            "latest_log": "-",
+            "latest_status": "missing",
+            "latest_progress": "-",
+            "latest_blocker": "-",
+        }
+    _mtime, latest_path, latest_section = sorted(sections)[-1]
+    status = "running_or_interrupted"
+    if "冷启动日跑完成" in latest_section:
+        status = "completed"
+    if "[ERROR]" in latest_section or "数据错误:" in latest_section:
+        status = "failed"
+    if (
+        "冷启动筛选被组合保护正常阻塞" in latest_section
+        or "组合保护已触发" in latest_section
+    ):
+        status = "blocked_by_circuit_breaker"
+    progress = "-"
+    for match in re.finditer(r"冷启动:\s*(\d+/\d+)", latest_section):
+        progress = match.group(1)
+    blocker = "-"
+    for line in latest_section.splitlines():
+        if "冷启动筛选被组合保护正常阻塞" in line or "组合保护已触发" in line:
+            blocker = line.strip()
+    if blocker == "-":
+        for line in latest_section.splitlines():
+            if "[ERROR]" in line or "数据错误:" in line:
+                blocker = line.strip()[:240]
+    return {
+        "latest_log": str(latest_path),
+        "latest_status": status,
+        "latest_progress": progress,
+        "latest_blocker": blocker,
     }
 
 
@@ -279,7 +420,9 @@ def _real_signal_row_count(rows: list[dict[str, Any]]) -> int:
 
 def _latest_real_signal_day(rows: list[dict[str, Any]]) -> str:
     del rows
-    return latest_independent_signal_day(str(_runtime_path("AQSP_LEDGER", "data/predictions.jsonl")))
+    return latest_independent_signal_day(
+        str(_runtime_path("AQSP_LEDGER", "data/predictions.jsonl"))
+    )
 
 
 def _state_count(value: object) -> int:
@@ -311,9 +454,22 @@ def _gate_state_summary(path: Path) -> dict[str, Any]:
         "latest_date": latest_date,
         "latest_status": latest_status,
         "latest_fingerprint": latest_fingerprint,
+        "latest_kind": _gate_fingerprint_kind(latest_fingerprint),
         "legacy_format": legacy_format,
         "state_updated_at": str(payload.get("updated_at", "") or ""),
     }
+
+
+def _gate_fingerprint_kind(fingerprint: str) -> str:
+    text = str(fingerprint or "").strip()
+    if not text:
+        return "missing"
+    if "组合保护" in text or "冷却期" in text:
+        return "circuit_breaker"
+    tokens = [token for token in text.split("|") if token]
+    if tokens and all(token in GATE_REASON_FINGERPRINT_TOKENS for token in tokens):
+        return "gate_reasons"
+    return "other"
 
 
 def _current_gate_expectation(signal_days: int) -> dict[str, Any]:
@@ -388,11 +544,15 @@ def _walkforward_production_status_summary(path: Path) -> dict[str, Any]:
                 ).total_seconds() > timeout_seconds
         except ValueError:
             timed_out = False
-        if (isinstance(child_pid, int) and child_pid > 0 and not child_active) or (
-            not child_active and not pid_active
-        ) or (not child_active and timed_out):
+        if (
+            (isinstance(child_pid, int) and child_pid > 0 and not child_active)
+            or (not child_active and not pid_active)
+            or (not child_active and timed_out)
+        ):
             status = "timeout"
-            child_exit_code = 124 if not isinstance(child_exit_code, int) else child_exit_code
+            child_exit_code = (
+                124 if not isinstance(child_exit_code, int) else child_exit_code
+            )
     return {
         "path": str(path),
         "present": path.exists(),
@@ -413,7 +573,9 @@ def _scheduler_runtime_lines(system_name: str | None = None) -> list[str]:
     if system == "Darwin":
         wrapper = Path.home() / ".aqsp/aqsp_daily_run_wrapper.sh"
         launch_agent = Path.home() / "Library/LaunchAgents/com.aqsp.daily.plist"
-        repo_wrapper = PROJECT_ROOT / "scripts" / "launchd" / "aqsp_daily_run_wrapper.sh"
+        repo_wrapper = (
+            PROJECT_ROOT / "scripts" / "launchd" / "aqsp_daily_run_wrapper.sh"
+        )
         return [
             "- scheduler: launchd",
             f"- launchd_wrapper: {_file_status(wrapper)}",
@@ -498,13 +660,30 @@ def _latest_run_source_runtime(rows: list[dict[str, Any]]) -> dict[str, Any]:
         {},
     )
     label = str(latest.get("run_source_health_label", "") or "")
+    actual_source = str(latest.get("run_actual_source", "") or "")
+    live_short_fit = workload_fit_for_source(actual_source).get("live_short", "unknown")
+    live_short_supported = (
+        source_supports_workload(actual_source, "live_short")
+        if actual_source
+        else False
+    )
+    live_short_boundary = (
+        f"ok actual_source={actual_source} live_short={live_short_fit}"
+        if live_short_supported
+        else (
+            f"violation actual_source={actual_source or '-'} live_short={live_short_fit}"
+        )
+    )
     return {
         "requested_source": str(latest.get("run_requested_source", "") or ""),
-        "actual_source": str(latest.get("run_actual_source", "") or ""),
+        "actual_source": actual_source,
         "health_label": label or "unknown",
         "health_message": str(latest.get("run_source_health_message", "") or ""),
         "fallback_used": bool(latest.get("run_fallback_used", False)),
         "notify_level": notification_level_for_health_label(label),
+        "actual_live_short_fit": live_short_fit,
+        "actual_live_short_supported": live_short_supported,
+        "live_short_boundary": live_short_boundary,
     }
 
 
@@ -552,8 +731,10 @@ def _ready_source_lines() -> list[str]:
     for entry in list_registry_entries():
         if not entry.runtime_ready:
             continue
+        workload_fit = workload_fit_for_source(entry.id)
         lines.append(
             f"- {entry.id}: local_data={local_data_status(entry)} "
+            f"live_short={workload_fit.get('live_short', 'unknown')} "
             f"daily={'yes' if entry.supports_daily else 'no'} "
             f"intraday={'yes' if entry.supports_intraday else 'no'} "
             f"realtime={'yes' if entry.supports_realtime else 'no'}"
@@ -649,6 +830,8 @@ def main() -> int:
             f"- notify_level: {runtime_source['notify_level']}",
             f"- source_health_label: {runtime_source['health_label']}",
             f"- source_route: {source_route}",
+            f"- live_short_boundary: {runtime_source['live_short_boundary']}",
+            f"- actual_source_live_short_fit: {runtime_source['actual_live_short_fit']}",
             f"- fallback_used: {runtime_source['fallback_used']}",
             f"- source_message: {runtime_source['health_message'] or '-'}",
             "",
@@ -664,6 +847,14 @@ def main() -> int:
     monitor_state = _notify_state_summary(paths.monitor_notify_state)
     run_history = _successful_run_history_summary(PROJECT_ROOT)
     cadence = _runtime_cadence_summary(PROJECT_ROOT)
+    coldstart = _coldstart_runtime_summary(PROJECT_ROOT)
+    if coldstart["latest_status"] == "missing" and signal_days >= cold_start_target:
+        coldstart = {
+            **coldstart,
+            "latest_status": "completed",
+            "latest_progress": f"{signal_days}/{cold_start_target}",
+            "latest_blocker": _coldstart_ready_next_blocker(gate_state),
+        }
     notify_warnings: list[str] = []
     default_ledger = _default_runtime_path("data/predictions.jsonl")
     default_paper_ledger = _default_runtime_path("data/paper_trades.jsonl")
@@ -671,9 +862,8 @@ def main() -> int:
         notify_warnings.append(
             f"- warning_ledger_path_drift: AQSP_LEDGER={paths.ledger} (expected {default_ledger})"
         )
-    if (
-        paths.paper_ledger.resolve(strict=False)
-        != default_paper_ledger.resolve(strict=False)
+    if paths.paper_ledger.resolve(strict=False) != default_paper_ledger.resolve(
+        strict=False
     ):
         notify_warnings.append(
             f"- warning_paper_ledger_path_drift: AQSP_PAPER_LEDGER={paths.paper_ledger} (expected {default_paper_ledger})"
@@ -700,6 +890,7 @@ def main() -> int:
     if (
         (not gate_expected["ok"])
         and gate_state["present"]
+        and gate_state["latest_kind"] == "gate_reasons"
         and gate_state["latest_fingerprint"] != gate_expected["fingerprint"]
     ):
         notify_warnings.append(
@@ -738,6 +929,7 @@ def main() -> int:
             f"- gate_days: {gate_state['days']} latest={gate_state['latest_date'] or '-'}",
             f"- gate_latest_status: {gate_state['latest_status'] or '-'}",
             f"- gate_latest_fingerprint: {gate_state['latest_fingerprint'] or '-'}",
+            f"- gate_latest_kind: {gate_state['latest_kind']}",
             f"- gate_expected_ok: {gate_expected['ok']}",
             f"- gate_expected_fingerprint: {gate_expected['fingerprint'] or '-'}",
             f"- gate_legacy_format: {gate_state['legacy_format']}",
@@ -748,9 +940,17 @@ def main() -> int:
             f"- monitor_notify_state: {_file_status(paths.monitor_notify_state)}",
             f"- monitor_counts: sent={monitor_state['sent']} pending={monitor_state['pending']} failed={monitor_state['failed']}",
             f"- monitor_updated_at: {monitor_state['updated_at'] or '-'}",
+            f"- coldstart_latest_status: {coldstart['latest_status']}",
+            f"- coldstart_latest_progress: {coldstart['latest_progress']}",
+            f"- coldstart_latest_blocker: {coldstart['latest_blocker']}",
+            f"- coldstart_latest_log: {coldstart['latest_log']}",
             f"- successful_run_days: {run_history['count']} latest={run_history['latest'] or '-'} source={run_history['source']}",
-            f"- cadence_today: daily={cadence['daily_runs']} news={cadence['news_runs']} monitor={cadence['monitor_runs']}",
+            f"- cadence_today: daily={cadence['daily_runs']} coldstart={cadence['coldstart_runs']} news={cadence['news_runs']} monitor={cadence['monitor_runs']}",
             *notify_warnings,
+            "",
+            *_debate_runtime_lines(),
+            "## Market Context Runtime",
+            *cross_market_rule_runtime_lines(),
             "",
             "## Research Runtime",
         ]

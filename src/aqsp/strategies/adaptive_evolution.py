@@ -24,6 +24,11 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 
 from aqsp.core.time import now_shanghai, today_shanghai
+from aqsp.regime.strategy_mixer import (
+    STRATEGY_MIXES,
+    StrategyMix,
+    StrategyMixAdaptor,
+)
 from aqsp.utils.jsonl_io import atomic_write_text
 
 
@@ -164,119 +169,6 @@ class FactorWeightAdaptor:
 # ============================================================
 # Layer 3: 策略组合自适应（市场制度联动）
 # ============================================================
-
-
-@dataclass(frozen=True)
-class StrategyMix:
-    """策略组合配置。"""
-
-    name: str
-    description: str
-    enabled_strategies: List[str]
-    weights: Dict[str, float]
-    suitable_regimes: List[str]
-    expected_sharpe: float
-
-
-# 预定义的策略组合（针对不同市场制度）
-STRATEGY_MIXES = {
-    "aggressive_bull": StrategyMix(
-        name="进攻牛市",
-        description="稳定上涨期，重仓动量+涨停板",
-        enabled_strategies=[
-            "momentum",
-            "limit_up_ladder",
-            "morning_breakout",
-            "sector_rotation",
-        ],
-        weights={
-            "momentum": 0.30,
-            "limit_up_ladder": 0.30,
-            "morning_breakout": 0.20,
-            "sector_rotation": 0.20,
-        },
-        suitable_regimes=["stable_bull"],
-        expected_sharpe=2.5,
-    ),
-    "volatile_bull": StrategyMix(
-        name="波动牛市",
-        description="波动牛市，平衡进攻和防守",
-        enabled_strategies=[
-            "momentum",
-            "triple_rise",
-            "intraday_trade",
-            "sector_rotation",
-        ],
-        weights={
-            "momentum": 0.25,
-            "triple_rise": 0.25,
-            "intraday_trade": 0.25,
-            "sector_rotation": 0.25,
-        },
-        suitable_regimes=["volatile_bull"],
-        expected_sharpe=2.0,
-    ),
-    "defensive_bear": StrategyMix(
-        name="防守熊市",
-        description="熊市防守，质量+均值回归",
-        enabled_strategies=[
-            "quality",
-            "value",
-            "mean_reversion",
-        ],
-        weights={
-            "quality": 0.40,
-            "value": 0.30,
-            "mean_reversion": 0.30,
-        },
-        suitable_regimes=["stable_bear", "volatile_bear"],
-        expected_sharpe=1.0,
-    ),
-    "rotation_sideways": StrategyMix(
-        name="震荡轮动",
-        description="震荡市，多因子轮动",
-        enabled_strategies=[
-            "momentum",
-            "mean_reversion",
-            "sector_rotation",
-            "intraday_trade",
-        ],
-        weights={
-            "momentum": 0.20,
-            "mean_reversion": 0.30,
-            "sector_rotation": 0.30,
-            "intraday_trade": 0.20,
-        },
-        suitable_regimes=["stable_sideways", "volatile_sideways"],
-        expected_sharpe=1.5,
-    ),
-    "emergency_defensive": StrategyMix(
-        name="紧急防守",
-        description="系统风险触发，仅持有现金等价物",
-        enabled_strategies=["quality"],
-        weights={"quality": 1.0},
-        suitable_regimes=[],
-        expected_sharpe=0.5,
-    ),
-}
-
-
-class StrategyMixAdaptor:
-    """策略组合自适应。
-
-    根据当前市场制度，自动切换最适合的策略组合。
-    """
-
-    def select_mix(self, regime: str) -> StrategyMix:
-        """根据市场制度选择策略组合。"""
-        for mix in STRATEGY_MIXES.values():
-            if regime in mix.suitable_regimes:
-                return mix
-        # 默认震荡市
-        return STRATEGY_MIXES["rotation_sideways"]
-
-    def get_mix_by_name(self, name: str) -> Optional[StrategyMix]:
-        return STRATEGY_MIXES.get(name)
 
 
 # ============================================================

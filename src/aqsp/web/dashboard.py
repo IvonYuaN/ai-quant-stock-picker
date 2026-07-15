@@ -2,16 +2,22 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+import os
 import re
 from dataclasses import dataclass
 from html import escape
+from pathlib import Path
 
 import streamlit as st
 
+from aqsp.config import load_debate_runtime_config
 from aqsp.core.time import now_shanghai
+from aqsp.data.source_readiness import source_supports_workload, workload_fit_for_source
+from aqsp.goal_switches import GoalSwitchMatrix, load_goal_switches
+from aqsp.presentation import normalize_research_tone
 from aqsp.research.summary import (
     ResearchSummary,
-    load_research_summary,
     research_findings_display,
     research_findings_metric,
 )
@@ -21,14 +27,40 @@ from aqsp.web.data_provider import (
     DashboardCandidateCard,
     DashboardCandidateJourneyStep,
     DashboardCandidateSpotlight,
+    DashboardDebateAgentView,
+    DashboardDebateConclusion,
     DashboardDebateSummary,
     DashboardDateOverview,
     DashboardDataProvider,
+    DashboardHomeStatus,
+    DashboardHomeDigestPayload,
     DashboardPaperSummary,
     DashboardSameDayTaskRow,
+    DashboardTimelineRow,
     DashboardTaskSnapshot,
     MISSING_BLOCKER_TEXT,
+    build_debate_conclusion,
+    debate_summary_chain_line,
+    debate_summary_cross_market_line,
+    debate_summary_evidence_line,
+    debate_summary_signal_value_tier,
 )
+from aqsp.web.home_snapshot import (
+    HomeDashboardSnapshot,
+    HomeSnapshotIndex,
+    is_home_recommendation,
+    load_home_dashboard_snapshot,
+    load_home_snapshot_index,
+)
+
+
+@dataclass(frozen=True)
+class _SameDayDigestEvent:
+    event_type: str
+    line: str
+    time_key: str = ""
+    type_priority: int = 0
+    content_priority: tuple[int, ...] = ()
 
 
 st.set_page_config(
@@ -36,6 +68,57 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="collapsed",
 )
+
+_RUNTIME_DEBATE_ROLE_LABELS = {
+    "bull": "技术多头",
+    "bear": "基本面空头",
+    "risk_control": "风控",
+    "sector_leader": "板块轮动",
+    "cross_market": "跨市传导",
+    "policy_sensitive": "政策敏感",
+    "margin_trading": "融资融券",
+    "northbound": "北向资金",
+    "retail_mood": "散户情绪",
+}
+
+_GOAL_TRACK_PRIORITY_LABELS = {
+    "p0": "P0",
+    "p1": "P1",
+    "p2": "P2",
+    "p3": "P3",
+}
+
+_DEFAULT_HOME_SNAPSHOT_PATH = "data/runtime/home_dashboard_snapshot.json"
+
+
+def _runtime_role_labels(role_names: tuple[str, ...], *, limit: int = 3) -> str:
+    labels = tuple(
+        _RUNTIME_DEBATE_ROLE_LABELS.get(role, role)
+        for role in role_names
+        if str(role).strip()
+    )
+    if not labels:
+        return ""
+    preview = "、".join(labels[:limit])
+    if len(labels) > limit:
+        return f"{preview} 等"
+    return preview
+
+
+def _task_view_signal_date(task_view) -> str:
+    return str(
+        getattr(task_view, "selected_date", "") or getattr(task_view, "latest_date", "")
+    ).strip()
+
+
+def _candidate_card_source_key(card: DashboardCandidateCard | None) -> str:
+    if card is None:
+        return ""
+    if card.rank_label == "同日联动":
+        return "spotlight"
+    if card.rank_label == "辩论主结论":
+        return "debate"
+    return "card"
 
 
 @dataclass(frozen=True)
@@ -48,6 +131,12 @@ class _HomeActionRailItem:
     card: DashboardCandidateCard | None
     summary: str
     lines: tuple[str, ...]
+    signal_date: str = ""
+    task_id: str = ""
+    task_label: str = ""
+    focus_kind: str = ""
+    debate_id: str = ""
+    decision_source: str = ""
     visible: bool = True
 
 
@@ -99,6 +188,21 @@ class _WorkspaceNavItem:
 
 
 @dataclass(frozen=True)
+class _WorkspaceHandoff:
+    target_workspace: str
+    source_workspace: str
+    title: str
+    lines: tuple[str, ...]
+    symbol: str = ""
+    signal_date: str = ""
+    task_id: str = ""
+    task_label: str = ""
+    focus_kind: str = ""
+    debate_id: str = ""
+    decision_source: str = ""
+
+
+@dataclass(frozen=True)
 class _TwoLineNavLabel:
     code: str
     name: str
@@ -114,6 +218,22 @@ def _inject_dashboard_styles() -> None:
     st.markdown(
         """
         <style>
+        #MainMenu,
+        footer,
+        header,
+        [data-testid="stToolbar"],
+        [data-testid="stHeader"],
+        [data-testid="stActionButton"],
+        [data-testid="baseButton-header"],
+        [data-testid="stMainMenu"],
+        [data-testid="stDecoration"],
+        [data-testid="stStatusWidget"],
+        [data-testid="manage-app-button"],
+        .stDeployButton {
+            display: none !important;
+            visibility: hidden !important;
+            pointer-events: none !important;
+        }
         .block-container {
             padding-top: 1rem;
             padding-bottom: 1.4rem;
@@ -246,6 +366,57 @@ def _inject_dashboard_styles() -> None:
             font-size: 0.88rem;
             color: #3b4a58;
             line-height: 1.55;
+        }
+        .aqsp-runtime-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 0.65rem;
+            margin: 0.3rem 0 0.85rem 0;
+        }
+        .aqsp-runtime-card {
+            padding: 0.75rem 0.85rem;
+            border-radius: 14px;
+            border: 1px solid rgba(26, 71, 102, 0.11);
+            background: #fbfbf8;
+            box-shadow: 0 8px 20px rgba(33, 46, 56, 0.045);
+        }
+        .aqsp-runtime-top {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 0.45rem;
+            margin-bottom: 0.38rem;
+        }
+        .aqsp-runtime-title {
+            font-size: 0.9rem;
+            font-weight: 750;
+            color: #163247;
+        }
+        .aqsp-runtime-status {
+            padding: 0.12rem 0.46rem;
+            border-radius: 999px;
+            background: #e7f0e8;
+            color: #2e5d3f;
+            font-size: 0.72rem;
+            font-weight: 750;
+            white-space: nowrap;
+        }
+        .aqsp-runtime-status.risk {
+            background: #fff0d6;
+            color: #8a5a00;
+        }
+        .aqsp-runtime-status.error {
+            background: #ffe0df;
+            color: #9b2d25;
+        }
+        .aqsp-runtime-status.skip {
+            background: #e8edf2;
+            color: #526371;
+        }
+        .aqsp-runtime-line {
+            font-size: 0.8rem;
+            color: #4a5e6f;
+            line-height: 1.42;
         }
         .aqsp-nav-note {
             font-size: 0.84rem;
@@ -719,6 +890,452 @@ def _inject_dashboard_styles() -> None:
             color: #3b4a58;
             line-height: 1.52;
         }
+        .aqsp-simple-board-title {
+            margin: 0.15rem 0 0.75rem 0;
+            padding: 0.72rem 0.9rem;
+            border-radius: 16px;
+            border: 1px solid rgba(26, 71, 102, 0.12);
+            background: linear-gradient(135deg, #fffdf6 0%, #f2f7fb 54%, #eef6f3 100%);
+            color: #163247;
+            font-size: 1.02rem;
+            font-weight: 760;
+        }
+        .aqsp-simple-topbar {
+            display: flex;
+            align-items: end;
+            justify-content: space-between;
+            gap: 1rem;
+            margin: 0.35rem 0 1.1rem;
+            padding: 0.9rem 1.05rem;
+            border-radius: 20px;
+            background:
+                linear-gradient(135deg, rgba(255, 253, 247, 0.96) 0%, rgba(240, 246, 248, 0.9) 100%);
+            box-shadow: 0 14px 34px rgba(30, 51, 65, 0.07);
+            border: 1px solid rgba(26, 71, 102, 0.1);
+        }
+        .aqsp-simple-brand {
+            color: #152a3a;
+            font-size: 1.28rem;
+            font-weight: 850;
+            letter-spacing: -0.02em;
+        }
+        .aqsp-simple-updated {
+            color: #687986;
+            font-size: 0.82rem;
+            font-variant-numeric: tabular-nums;
+            text-align: right;
+        }
+        .aqsp-simple-shell {
+            margin-top: 0.25rem;
+        }
+        .aqsp-simple-rail {
+            position: sticky;
+            top: 0.9rem;
+            padding: 1.05rem;
+            border-radius: 22px;
+            background:
+                radial-gradient(circle at 12% 8%, rgba(31, 97, 141, 0.12), transparent 34%),
+                linear-gradient(180deg, #fffdf7 0%, #eef5f7 100%);
+            box-shadow: 0 18px 42px rgba(30, 51, 65, 0.08);
+            border: 1px solid rgba(26, 71, 102, 0.12);
+        }
+        .aqsp-simple-date-label {
+            color: #6b7884;
+            font-size: 0.74rem;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            margin-bottom: 0.25rem;
+        }
+        .aqsp-simple-date {
+            color: #163247;
+            font-size: 1.22rem;
+            font-weight: 820;
+            font-variant-numeric: tabular-nums;
+            margin-bottom: 0.25rem;
+        }
+        .aqsp-simple-boundary {
+            color: #5c6d79;
+            font-size: 0.82rem;
+            line-height: 1.45;
+            text-wrap: pretty;
+            margin-bottom: 0.75rem;
+        }
+        .aqsp-simple-unlock {
+            margin: 0.72rem 0 0.82rem;
+            padding: 0.72rem 0.78rem;
+            border-radius: 15px;
+            border: 1px solid rgba(26, 71, 102, 0.1);
+            background:
+                radial-gradient(circle at 92% 12%, rgba(60, 129, 101, 0.14), transparent 34%),
+                linear-gradient(135deg, #fffdf7 0%, #eef7f0 100%);
+            box-shadow: 0 10px 22px rgba(31, 83, 62, 0.07);
+        }
+        .aqsp-simple-unlock.waiting {
+            background:
+                radial-gradient(circle at 92% 12%, rgba(176, 111, 59, 0.13), transparent 34%),
+                linear-gradient(135deg, #fffdf7 0%, #f8f1e7 100%);
+        }
+        .aqsp-simple-unlock-title {
+            color: #17384f;
+            font-size: 0.9rem;
+            font-weight: 820;
+            margin-bottom: 0.34rem;
+        }
+        .aqsp-simple-unlock-line {
+            color: #506575;
+            font-size: 0.77rem;
+            line-height: 1.45;
+            text-wrap: pretty;
+            margin-top: 0.16rem;
+        }
+        .aqsp-simple-status-card {
+            display: grid;
+            gap: 0.24rem;
+            margin: 0.62rem 0 0.82rem;
+            padding: 0.62rem 0.7rem;
+            border-radius: 14px;
+            background: rgba(255, 255, 255, 0.62);
+            box-shadow: inset 0 0 0 1px rgba(26, 71, 102, 0.08);
+        }
+        .aqsp-simple-status-line {
+            color: #506575;
+            font-size: 0.76rem;
+            line-height: 1.36;
+            font-variant-numeric: tabular-nums;
+            overflow-wrap: anywhere;
+        }
+        .aqsp-simple-chip-grid {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 0.42rem;
+            margin: 0.72rem 0 0.88rem;
+        }
+        .aqsp-simple-chip {
+            padding: 0.46rem 0.48rem;
+            border-radius: 12px;
+            background: rgba(255, 255, 255, 0.68);
+            box-shadow: inset 0 0 0 1px rgba(26, 71, 102, 0.08);
+        }
+        .aqsp-simple-chip-value {
+            color: #17384f;
+            font-size: 1rem;
+            font-weight: 780;
+            font-variant-numeric: tabular-nums;
+            line-height: 1.1;
+        }
+        .aqsp-simple-chip-label {
+            color: #687986;
+            font-size: 0.7rem;
+            margin-top: 0.14rem;
+        }
+        .aqsp-simple-nav-title {
+            color: #17384f;
+            font-size: 0.85rem;
+            font-weight: 760;
+            margin: 0.65rem 0 0.45rem;
+        }
+        .aqsp-simple-nav-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 0.7rem;
+            min-height: 44px;
+            margin: 0.38rem 0 0.18rem;
+            padding: 0.68rem 0.78rem;
+            border-radius: 15px;
+            background: rgba(255, 255, 255, 0.64);
+            box-shadow: inset 0 0 0 1px rgba(26, 71, 102, 0.08);
+        }
+        .aqsp-simple-nav-item.active {
+            background: #17384f;
+            box-shadow: 0 12px 24px rgba(23, 56, 79, 0.16);
+        }
+        .aqsp-simple-nav-name {
+            color: #17384f;
+            font-size: 0.9rem;
+            font-weight: 780;
+        }
+        .aqsp-simple-nav-sub {
+            color: #657584;
+            font-size: 0.73rem;
+            line-height: 1.32;
+            margin-top: 0.1rem;
+        }
+        .aqsp-simple-nav-item.active .aqsp-simple-nav-name,
+        .aqsp-simple-nav-item.active .aqsp-simple-nav-sub {
+            color: #fffdf7;
+        }
+        .aqsp-simple-nav-count {
+            color: #17384f;
+            font-size: 0.82rem;
+            font-weight: 800;
+            font-variant-numeric: tabular-nums;
+        }
+        .aqsp-simple-nav-item.active .aqsp-simple-nav-count {
+            color: #fffdf7;
+        }
+        .aqsp-simple-date-list {
+            display: grid;
+            gap: 0.34rem;
+            margin-top: 0.42rem;
+        }
+        .aqsp-simple-date-pill {
+            padding: 0.5rem 0.62rem;
+            border-radius: 13px;
+            color: #17384f;
+            background: rgba(255, 255, 255, 0.58);
+            box-shadow: inset 0 0 0 1px rgba(26, 71, 102, 0.08);
+            font-size: 0.8rem;
+            font-weight: 740;
+            font-variant-numeric: tabular-nums;
+        }
+        .aqsp-simple-date-pill-meta {
+            color: #687986;
+            font-size: 0.7rem;
+            line-height: 1.25;
+            margin: 0.42rem 0 -0.18rem;
+            font-variant-numeric: tabular-nums;
+        }
+        .aqsp-simple-date-pill.active {
+            color: #fffdf7;
+            background: #2f6f7c;
+            box-shadow: 0 10px 20px rgba(47, 111, 124, 0.15);
+        }
+        .aqsp-simple-nav-note {
+            color: #6a7a86;
+            font-size: 0.78rem;
+            line-height: 1.42;
+            margin-top: 0.48rem;
+            text-wrap: pretty;
+        }
+        div[role="radiogroup"] {
+            gap: 0.45rem;
+        }
+        div[role="radiogroup"] label {
+            min-height: 42px;
+            padding: 0.45rem 0.58rem;
+            border-radius: 14px;
+            background: rgba(255, 255, 255, 0.62);
+            box-shadow: inset 0 0 0 1px rgba(26, 71, 102, 0.09);
+        }
+        div[role="radiogroup"] label:has(input:checked) {
+            background: #17384f;
+            box-shadow: 0 10px 22px rgba(23, 56, 79, 0.16);
+        }
+        div[role="radiogroup"] label:has(input:checked) p {
+            color: #fffdf7;
+            font-weight: 760;
+        }
+        .aqsp-simple-panel-head {
+            margin-bottom: 0.62rem;
+            padding: 0.05rem 0 0.5rem;
+            border-bottom: 1px solid rgba(26, 71, 102, 0.1);
+        }
+        .aqsp-simple-panel-kicker {
+            color: #6b7884;
+            font-size: 0.74rem;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            margin-bottom: 0.22rem;
+        }
+        .aqsp-simple-panel-title {
+            color: #163247;
+            font-size: 1.2rem;
+            font-weight: 820;
+            line-height: 1.2;
+            text-wrap: balance;
+        }
+        .aqsp-simple-panel-note {
+            color: #5d6f7f;
+            font-size: 0.88rem;
+            line-height: 1.5;
+            margin-top: 0.34rem;
+            text-wrap: pretty;
+        }
+        .aqsp-simple-shell .aqsp-cockpit-card {
+            min-height: 0;
+            padding: 0.85rem 0.95rem;
+            margin-bottom: 0.7rem;
+        }
+        .aqsp-simple-summary-strip {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto;
+            gap: 0.8rem;
+            align-items: center;
+            margin: 0 0 0.7rem;
+            padding: 0.7rem 0.85rem;
+            border-radius: 16px;
+            background: linear-gradient(135deg, #143347 0%, #1c4d5a 100%);
+            box-shadow: 0 12px 28px rgba(20, 51, 71, 0.14);
+        }
+        .aqsp-simple-summary-title {
+            color: #fffdf7;
+            font-size: 0.96rem;
+            font-weight: 820;
+            line-height: 1.3;
+        }
+        .aqsp-simple-summary-line {
+            color: rgba(255, 253, 247, 0.78);
+            font-size: 0.78rem;
+            line-height: 1.4;
+            margin-top: 0.14rem;
+            text-wrap: pretty;
+        }
+        .aqsp-simple-summary-counts {
+            color: rgba(255, 253, 247, 0.86);
+            font-size: 0.78rem;
+            line-height: 1.45;
+            text-align: right;
+            font-variant-numeric: tabular-nums;
+            white-space: nowrap;
+        }
+        .aqsp-simple-candidate-grid {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 0.62rem;
+            margin: 0.35rem 0 0.82rem;
+        }
+        .aqsp-simple-candidate-card {
+            min-height: 150px;
+            padding: 0.78rem 0.84rem;
+            border-radius: 16px;
+            border: 1px solid rgba(57, 121, 92, 0.2);
+            background: linear-gradient(155deg, #fffdf6 0%, #f0f8f2 100%);
+            box-shadow: 0 10px 20px rgba(33, 46, 56, 0.045);
+        }
+        .aqsp-simple-candidate-card.watch {
+            border-color: rgba(25, 92, 138, 0.17);
+            background: linear-gradient(155deg, #fffdf8 0%, #f2f7fb 100%);
+        }
+        .aqsp-simple-candidate-card.blocked {
+            border-color: rgba(176, 90, 74, 0.2);
+            background: linear-gradient(155deg, #fffaf8 0%, #f8f4f3 100%);
+        }
+        .aqsp-simple-candidate-top {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 0.45rem;
+            margin-bottom: 0.42rem;
+        }
+        .aqsp-simple-candidate-name {
+            color: #153246;
+            font-size: 0.94rem;
+            font-weight: 800;
+            line-height: 1.3;
+            text-wrap: balance;
+        }
+        .aqsp-simple-candidate-score {
+            color: #17384f;
+            font-size: 0.78rem;
+            font-weight: 820;
+            font-variant-numeric: tabular-nums;
+            white-space: nowrap;
+        }
+        .aqsp-simple-candidate-status {
+            color: #5a6d7a;
+            font-size: 0.76rem;
+            line-height: 1.35;
+            margin-bottom: 0.34rem;
+        }
+        .aqsp-simple-candidate-line {
+            color: #324b5c;
+            font-size: 0.78rem;
+            line-height: 1.4;
+            margin-top: 0.16rem;
+            text-wrap: pretty;
+            overflow-wrap: anywhere;
+        }
+        @media (max-width: 980px) {
+            .aqsp-simple-candidate-grid {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+        }
+        @media (max-width: 620px) {
+            .aqsp-simple-summary-strip,
+            .aqsp-simple-candidate-grid {
+                grid-template-columns: 1fr;
+            }
+            .aqsp-simple-summary-counts {
+                text-align: left;
+            }
+        }
+        .aqsp-decision-hero {
+            padding: 1rem 1.1rem;
+            border-radius: 20px;
+            background:
+                radial-gradient(circle at 95% 10%, rgba(33, 91, 124, 0.14), transparent 32%),
+                linear-gradient(135deg, #143347 0%, #1c4d5a 100%);
+            color: #fffdf7;
+            box-shadow: 0 20px 42px rgba(20, 51, 71, 0.18);
+            margin-bottom: 0.8rem;
+        }
+        .aqsp-decision-kicker {
+            font-size: 0.72rem;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            color: rgba(255, 253, 247, 0.68);
+            margin-bottom: 0.35rem;
+        }
+        .aqsp-decision-title {
+            font-size: 1.25rem;
+            font-weight: 850;
+            letter-spacing: -0.02em;
+            margin-bottom: 0.42rem;
+        }
+        .aqsp-decision-line {
+            font-size: 0.88rem;
+            line-height: 1.5;
+            color: rgba(255, 253, 247, 0.84);
+            text-wrap: pretty;
+        }
+        .aqsp-observation-table {
+            display: grid;
+            gap: 0.55rem;
+            margin-top: 0.55rem;
+        }
+        .aqsp-observation-row {
+            display: grid;
+            grid-template-columns: minmax(126px, 1fr) 0.34fr minmax(220px, 1.45fr);
+            gap: 0.8rem;
+            align-items: start;
+            padding: 0.78rem 0.85rem;
+            border-radius: 16px;
+            background: linear-gradient(180deg, #fbfcff 0%, #f2f7fb 100%);
+            border: 1px solid rgba(26, 71, 102, 0.1);
+            box-shadow: 0 10px 22px rgba(30, 51, 65, 0.045);
+        }
+        .aqsp-observation-name {
+            color: #153246;
+            font-size: 0.92rem;
+            font-weight: 780;
+        }
+        .aqsp-observation-meta {
+            color: #607383;
+            font-size: 0.78rem;
+            line-height: 1.45;
+            font-variant-numeric: tabular-nums;
+        }
+        .aqsp-observation-reason {
+            color: #263f52;
+            font-size: 0.82rem;
+            line-height: 1.48;
+            text-wrap: pretty;
+            overflow-wrap: anywhere;
+        }
+        .aqsp-board-section {
+            margin: 0.1rem 0 0.55rem 0;
+            color: #17384f;
+            font-size: 1.08rem;
+            font-weight: 780;
+            letter-spacing: 0.01em;
+        }
+        .aqsp-board-section-note {
+            margin: -0.28rem 0 0.72rem 0;
+            color: #5d6f7f;
+            font-size: 0.84rem;
+            line-height: 1.45;
+        }
         .aqsp-compact-grid {
             display: grid;
             grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1007,7 +1624,7 @@ def _inject_dashboard_styles() -> None:
             background: linear-gradient(135deg, #1e6fff 0%, #00c2ff 100%);
             border: none;
             box-shadow: 0 4px 12px rgba(30, 111, 255, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.2);
-            transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+            transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.3s ease;
         }
         div[data-testid="stButton"] button[kind="primary"]:hover {
             box-shadow: 0 6px 20px rgba(30, 111, 255, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.3);
@@ -1018,7 +1635,7 @@ def _inject_dashboard_styles() -> None:
             background: rgba(255, 255, 255, 0.6);
             backdrop-filter: blur(8px);
             color: #1e6fff;
-            transition: all 0.25s ease;
+            transition: border-color 0.25s ease, background-color 0.25s ease, box-shadow 0.25s ease;
         }
         div[data-testid="stButton"] button[kind="secondary"]:hover {
             border-color: rgba(30, 111, 255, 0.6);
@@ -1062,6 +1679,7 @@ def _inject_dashboard_styles() -> None:
     )
 
 
+@st.cache_resource
 def get_provider() -> DashboardDataProvider:
     return DashboardDataProvider()
 
@@ -1119,17 +1737,20 @@ def _render_source_status(source_status: dict[str, str]) -> None:
     health_message = source_status.get("health_message", "") or "无"
     latest_trade_date = source_status.get("data_latest_trade_date", "") or "-"
     lag_display = _source_lag_display(source_status.get("lag_days", ""))
+    verdict_line = _source_status_verdict_line(source_status)
 
     st.markdown(
         "\n".join(
-            [
-                f"- 请求源: `{requested}`",
-                f"- 实际源: `{actual}`",
+            line
+            for line in (
+                f"- 链路结论: {verdict_line}" if verdict_line else "",
+                f"- 原始链路: `{requested}` -> `{actual}`",
                 f"- 健康度: `{health_label}`",
                 f"- 最新交易日: `{latest_trade_date}`",
                 f"- 数据滞后: `{lag_display}`",
                 f"- 说明: {health_message}",
-            ]
+            )
+            if line
         )
     )
 
@@ -1157,6 +1778,20 @@ def _review_meta_line(label: str, value: str) -> str:
     return f"{label}: {value.strip()}" if _has_review_meta(value) else ""
 
 
+def _committee_supplement_label() -> str:
+    return "委员会补充结论"
+
+
+def _task_scope_summary(task_labels: tuple[str, ...]) -> str:
+    labels = tuple(label.strip() for label in task_labels if label.strip())
+    return "、".join(labels) if labels else "仅当前任务"
+
+
+def _task_scope_line(task_summary: str) -> str:
+    summary = task_summary.strip() or "仅当前任务"
+    return f"涉及任务: {summary}"
+
+
 def _render_frame(title: str, frame) -> None:
     st.subheader(title)
     if frame.empty:
@@ -1169,6 +1804,21 @@ def _stretch_button(label: str, **kwargs) -> bool:
     """Render full-width buttons with the current Streamlit width API."""
     kwargs.setdefault("width", "stretch")
     return bool(st.button(label, **kwargs))
+
+
+def _lazy_home_section_requested(
+    *,
+    button_label: str,
+    state_key: str,
+    idle_hint: str,
+) -> bool:
+    if bool(st.session_state.get(state_key)):
+        return True
+    st.caption(idle_hint)
+    if _stretch_button(button_label, key=f"{state_key}_button"):
+        st.session_state[state_key] = True
+        st.rerun()
+    return False
 
 
 def _render_two_line_nav_label(
@@ -1258,6 +1908,45 @@ def _research_task_id_for_review_card(
     return journey_steps[-1].task_id
 
 
+def _spotlight_decision_note(spotlight: DashboardCandidateSpotlight) -> str:
+    lines = _unique_lines(
+        (
+            (
+                f"跨市线索 {spotlight.cross_market_summary}"
+                if spotlight.cross_market_summary
+                else ""
+            ),
+            (
+                f"讨论支持: {spotlight.support_points[0]}"
+                if spotlight.support_points
+                else ""
+            ),
+            (
+                f"讨论反对: {spotlight.opposition_points[0]}"
+                if spotlight.opposition_points
+                else ""
+            ),
+            (
+                f"讨论待确认: {spotlight.watch_items[0]}"
+                if spotlight.watch_items
+                else ""
+            ),
+        )
+    )
+    if lines:
+        return "；".join(lines)
+    return "当前仅列入观察池，等待下一次刷新确认量能、价格和风险卡点。"
+
+
+def _spotlight_has_structured_summary(spotlight: DashboardCandidateSpotlight) -> bool:
+    return bool(
+        spotlight.cross_market_summary
+        or spotlight.support_points
+        or spotlight.opposition_points
+        or spotlight.watch_items
+    )
+
+
 def _spotlight_as_candidate_card(
     spotlight: DashboardCandidateSpotlight,
 ) -> DashboardCandidateCard:
@@ -1270,7 +1959,7 @@ def _spotlight_as_candidate_card(
         score=spotlight.score,
         action_label=spotlight.action_label,
         status_label=spotlight.status_label,
-        decision_note="该标的当前未在本任务独立落盘，以下复盘来自同日联动聚合与纸面验证记录。",
+        decision_note=_spotlight_decision_note(spotlight),
         next_step=spotlight.next_step,
         blocker=spotlight.blocker,
         review_meta=spotlight.review_meta,
@@ -1278,6 +1967,11 @@ def _spotlight_as_candidate_card(
         risks=spotlight.risks,
         strategies=(),
         data_source="同日联动",
+        news_catalyst_summary=spotlight.news_catalyst_summary,
+        cross_market_summary=spotlight.cross_market_summary,
+        cross_market_chain_summary=spotlight.cross_market_chain_summary,
+        cross_market_validation_summary=spotlight.cross_market_validation_summary,
+        cross_market_invalidation_summary=spotlight.cross_market_invalidation_summary,
     )
 
 
@@ -1305,25 +1999,34 @@ def _debate_as_candidate_card(
         name=remainder or debate_summary.display_name,
         display_name=debate_summary.display_name,
         rank_label="辩论主结论",
+        # This score is displayed only in the review workspace as an advisory
+        # adjustment; the rank label keeps it out of deterministic queues.
         score=debate_summary.adjusted_score,
         action_label=debate_summary.recommended_adjustment_label,
         status_label=debate_summary.consensus
         or debate_summary.recommended_adjustment_label,
-        decision_note="该标的当前没有独立候选卡，以下仅保留同日多视角补充结论，不替代选股评分。",
+        decision_note=(
+            debate_summary.research_verdict
+            or "该标的当前没有独立候选卡，以下仅保留同日多 Agent 补充结论，不替代选股评分。"
+        ),
         next_step=(
-            debate_summary.adjustment_reason
+            debate_summary.next_trigger
+            or debate_summary.adjustment_reason
             or (
                 debate_summary.opportunity_highlights[0]
                 if debate_summary.opportunity_highlights
                 else ""
             )
         ),
-        blocker=debate_summary.risk_warnings[0] if debate_summary.risk_warnings else "",
+        blocker=(
+            debate_summary.primary_risk_gate
+            or (debate_summary.risk_warnings[0] if debate_summary.risk_warnings else "")
+        ),
         review_meta="补充结论 / 待复核",
         reasons=debate_summary.opportunity_highlights,
         risks=debate_summary.risk_warnings,
         strategies=(),
-        data_source=debate_summary.data_source or "多视角补充",
+        data_source=debate_summary.data_source or "多 Agent 补充",
     )
 
 
@@ -1379,11 +2082,13 @@ def _debate_overview_lines(
     if debate_summary is None:
         return ()
     vote_line = (
-        f"分歧来源: 看多 {debate_summary.bull_count}"
+        f"票数分布: 看多 {debate_summary.bull_count}"
         f" / 看空 {debate_summary.bear_count}"
         f" / 中性 {debate_summary.neutral_count}"
     )
-    if debate_summary.risk_warnings:
+    if debate_summary.research_verdict:
+        review_line = f"研究口径: {debate_summary.research_verdict}"
+    elif debate_summary.risk_warnings:
         review_line = "待核对风险: " + "；".join(debate_summary.risk_warnings[:2])
     elif debate_summary.adjustment_reason:
         review_line = f"待核对原因: {debate_summary.adjustment_reason}"
@@ -1393,6 +2098,16 @@ def _debate_overview_lines(
         )
     else:
         review_line = "待补原因: 当前讨论未给出明确风险或机会，先回候选来龙去脉复核。"
+    gate_line = (
+        f"核心卡点: {debate_summary.primary_risk_gate}"
+        if debate_summary.primary_risk_gate
+        else ""
+    )
+    trigger_line = (
+        f"下一触发: {debate_summary.next_trigger}"
+        if debate_summary.next_trigger
+        else ""
+    )
     agent_lines = tuple(
         line
         for line in (
@@ -1418,6 +2133,8 @@ def _debate_overview_lines(
             ),
             vote_line,
             review_line,
+            gate_line,
+            trigger_line,
         ),
         agent_lines,
     )
@@ -1588,17 +2305,7 @@ def _debate_agent_focus_lines(
 def _debate_evidence_composition_line(
     debate_summary: DashboardDebateSummary | None,
 ) -> str:
-    if debate_summary is None:
-        return ""
-    parts = [
-        f"{debate_summary.round_count} 轮讨论",
-        f"{len(debate_summary.agent_views)} 个观点",
-    ]
-    if debate_summary.data_source:
-        parts.append(f"数据源 {debate_summary.data_source}")
-    if debate_summary.thresholds_version:
-        parts.append(f"阈值 {debate_summary.thresholds_version}")
-    return f"证据构成: {' / '.join(parts)}"
+    return debate_summary_evidence_line(debate_summary)
 
 
 def _debate_primary_takeaways(
@@ -1606,33 +2313,27 @@ def _debate_primary_takeaways(
 ) -> tuple[str, ...]:
     if debate_summary is None:
         return ()
+    conclusion = _debate_conclusion_summary(debate_summary)
     return tuple(
         line
         for line in (
-            (
-                f"补充结论: {debate_summary.recommended_adjustment_label}"
-                f" / 分歧 {debate_summary.disagreement_score:.2f}"
-            ),
-            (
-                f"结论共识: {debate_summary.consensus}"
-                if debate_summary.consensus
-                else ""
-            ),
+            conclusion.decision_line,
+            conclusion.cross_market_line,
+            conclusion.chain_or_trigger_line,
+            conclusion.validation_line,
+            conclusion.invalidation_line,
+            conclusion.consensus_line,
+            conclusion.active_roles_line,
             (
                 f"修正原因: {debate_summary.adjustment_reason}"
                 if debate_summary.adjustment_reason
                 else ""
             ),
-            (
-                f"补充风险: {'；'.join(debate_summary.risk_warnings[:2])}"
-                if debate_summary.risk_warnings
-                else ""
-            ),
-            (
-                f"补充机会: {'；'.join(debate_summary.opportunity_highlights[:2])}"
-                if debate_summary.opportunity_highlights
-                else ""
-            ),
+            conclusion.history_line,
+            conclusion.reliability_line,
+            conclusion.support_line,
+            conclusion.opposition_line,
+            conclusion.watch_line,
         )
         if line
     )
@@ -1723,13 +2424,20 @@ def _archive_conclusion_context(
             for line in (
                 *_debate_primary_takeaways(debate_summary)[:2],
                 (
+                    f"跨市传导: {selected_spotlight.cross_market_summary}"
+                    if selected_spotlight.cross_market_summary
+                    else ""
+                ),
+                (
                     f"当前重点: {_safe_current_research_line(selected_spotlight.blocker or selected_spotlight.next_step)}"
                     if selected_spotlight.blocker or selected_spotlight.next_step
                     else ""
                 ),
                 _review_meta_line("统一复核", selected_spotlight.review_meta),
                 (
-                    f"来源任务: {'、'.join(selected_spotlight.task_labels)}"
+                    _task_scope_line(
+                        _task_scope_summary(selected_spotlight.task_labels)
+                    )
                     if selected_spotlight.task_labels
                     else ""
                 ),
@@ -1807,11 +2515,47 @@ def _archive_debate_evidence_lines(
     )
 
 
+def _archive_debate_summary_lines(
+    debate_summary: DashboardDebateSummary | None,
+) -> tuple[str, ...]:
+    if debate_summary is None:
+        return ()
+    conclusion = _debate_conclusion_summary(debate_summary)
+    compact_cross_market_line = _focus_cross_market_digest_line(
+        debate_summary=debate_summary,
+        focus_display=debate_summary.display_name,
+    )
+    context_line = (
+        compact_cross_market_line
+        or conclusion.support_line
+        or conclusion.opposition_line
+        or conclusion.cross_market_line
+    )
+    followup_line = _compact_debate_followup_line(
+        debate_summary,
+        conclusion=conclusion,
+    )
+    reason_line = (
+        f"修正原因: {debate_summary.adjustment_reason}"
+        if debate_summary.adjustment_reason
+        else ""
+    )
+    return _unique_lines(
+        (
+            conclusion.decision_line.replace("当前结论: ", "委员会结论: "),
+            context_line,
+            followup_line,
+            reason_line,
+            conclusion.history_line,
+        )
+    )
+
+
 def _render_debate_cockpit(
     *,
     debate_summary: DashboardDebateSummary | None,
     empty_text: str,
-    kicker: str = "多视角补充",
+    kicker: str = "多 Agent 补充",
     tone: str = "archive",
 ) -> None:
     if debate_summary is None:
@@ -1981,9 +2725,34 @@ def _debate_vote_snapshot_lines(
     ]
     top_agents = tuple(
         f"{view.role_label}: {view.stance_label} / 置信 {view.confidence:.0%}"
-        for view in debate_summary.agent_views[:2]
+        for view in _debate_snapshot_agent_views(debate_summary)
     )
     return _unique_lines(tuple(lines), top_agents)
+
+
+def _debate_snapshot_agent_views(
+    debate_summary: DashboardDebateSummary,
+) -> tuple[DashboardDebateAgentView, ...]:
+    ordered = tuple(
+        sorted(
+            debate_summary.agent_views,
+            key=lambda item: item.confidence,
+            reverse=True,
+        )
+    )
+    bullish = next((view for view in ordered if view.stance == "bullish"), None)
+    bearish = next((view for view in ordered if view.stance == "bearish"), None)
+    selected: list[DashboardDebateAgentView] = []
+    if bullish is not None:
+        selected.append(bullish)
+    if bearish is not None and bearish not in selected:
+        selected.append(bearish)
+    for view in ordered:
+        if view not in selected:
+            selected.append(view)
+        if len(selected) >= 2:
+            break
+    return tuple(selected[:2])
 
 
 def _debate_brief_cards(
@@ -2004,8 +2773,20 @@ def _debate_brief_cards(
             reverse=True,
         )[:2]
     )
+    conclusion = build_debate_conclusion(debate_summary)
     review_lines = _unique_lines(
         (
+            conclusion.chain_or_trigger_line,
+            conclusion.watch_line,
+            conclusion.opposition_line,
+            conclusion.invalidation_line,
+            (
+                f"核心卡点: {debate_summary.primary_risk_gate}"
+                if debate_summary.primary_risk_gate
+                else ""
+            ),
+            conclusion.support_line,
+            conclusion.validation_line,
             (
                 f"先核对风险: {'；'.join(debate_summary.risk_warnings[:2])}"
                 if debate_summary.risk_warnings
@@ -2052,9 +2833,15 @@ def _debate_brief_cards(
         ),
         _DebateBriefCard(
             kicker="接下来做什么",
-            title="先回原始记录核对",
+            title="核对触发与失效",
             lines=review_lines,
-            tone="pressure" if debate_summary.risk_warnings else "archive",
+            tone=(
+                "pressure"
+                if debate_summary.primary_risk_gate
+                or debate_summary.opposition_points
+                or debate_summary.risk_warnings
+                else "archive"
+            ),
         ),
     )
 
@@ -2123,13 +2910,11 @@ def _classify_candidate_queues(
     watch: list[DashboardCandidateCard] = []
     blocked: list[DashboardCandidateCard] = []
     for card in cards:
-        if card.blocker or "阻塞" in card.rank_label:
+        bucket = _candidate_status_bucket(card)
+        if bucket == "阻塞":
             blocked.append(card)
             continue
-        if (
-            card.rank_label in {"第一顺位", "第二顺位", "后续顺位"}
-            or card.action_label == "上调优先级"
-        ):
+        if bucket == "推荐":
             recommend.append(card)
             continue
         watch.append(card)
@@ -2138,7 +2923,7 @@ def _classify_candidate_queues(
 
 def _queue_item_meta(card: DashboardCandidateCard, emphasis: str) -> str:
     meta_parts = [
-        f"研究状态: {escape(_action_status_label(card.action_label, card.status_label))}"
+        f"当前结论: {escape(_action_status_label(card.action_label, card.status_label))}"
     ]
     if _has_review_meta(card.review_meta):
         meta_parts.append(f"复核: {escape(card.review_meta)}")
@@ -2258,7 +3043,7 @@ def _home_action_cards(
     task_view,
     spotlights: tuple[DashboardCandidateSpotlight, ...],
 ) -> tuple[DashboardCandidateCard, ...]:
-    cards = list(task_view.detail_cards)
+    cards = list(getattr(task_view, "detail_cards", ()) or ())
     existing_symbols = {card.symbol for card in cards}
     for spotlight in spotlights:
         if spotlight.symbol in existing_symbols:
@@ -2289,18 +3074,191 @@ def _home_primary_focus_card(
     return _home_blocked_focus_card(blocked_cards)
 
 
-def _home_action_item_lines(card: DashboardCandidateCard) -> tuple[str, ...]:
-    emphasis = _card_emphasis(card)
-    return tuple(
-        line
-        for line in (
-            f"研究入口: {_review_source_label(card)}",
-            f"研究状态: {_action_status_label(card.action_label, card.status_label)}",
-            f"当前重点: {emphasis}",
-            _review_meta_line("复核节奏", card.review_meta),
-        )
-        if line
+def _debate_cross_market_line(
+    debate_summary: DashboardDebateSummary,
+) -> str:
+    return debate_summary_cross_market_line(debate_summary)
+
+
+def _cross_market_chain_line(
+    *,
+    spotlight: DashboardCandidateSpotlight | None = None,
+    debate_summary: DashboardDebateSummary | None = None,
+) -> str:
+    return debate_summary_chain_line(
+        debate_summary,
+        spotlight=spotlight,
     )
+
+
+def _debate_conclusion_summary(
+    debate_summary: DashboardDebateSummary | None,
+    *,
+    spotlight: DashboardCandidateSpotlight | None = None,
+    focus_card: DashboardCandidateCard | None = None,
+) -> DashboardDebateConclusion:
+    fallback_verdict = (
+        _action_status_label(
+            focus_card.action_label,
+            focus_card.status_label,
+        )
+        if focus_card is not None
+        else ""
+    )
+    return build_debate_conclusion(
+        debate_summary,
+        spotlight=spotlight,
+        fallback_verdict=fallback_verdict,
+    )
+
+
+def _home_focus_discussion_lines(
+    *,
+    spotlight: DashboardCandidateSpotlight | None = None,
+    debate_summary: DashboardDebateSummary | None = None,
+) -> tuple[str, ...]:
+    debate_cross_market_line = (
+        _debate_cross_market_line(debate_summary) if debate_summary is not None else ""
+    )
+    if spotlight is not None:
+        lines = (
+            (
+                debate_cross_market_line
+                or _focus_cross_market_digest_line(
+                    selected_spotlight=spotlight,
+                    focus_display=spotlight.display_name,
+                )
+            ),
+            (
+                f"讨论支持: {spotlight.support_points[0]}"
+                if spotlight.support_points
+                else ""
+            ),
+            (
+                f"讨论反对: {spotlight.opposition_points[0]}"
+                if spotlight.opposition_points
+                else ""
+            ),
+            (
+                f"讨论待确认: {spotlight.watch_items[0]}"
+                if spotlight.watch_items
+                else ""
+            ),
+            _cross_market_chain_line(spotlight=spotlight),
+        )
+        if any(lines):
+            return _unique_lines(lines)
+
+    if debate_summary is not None:
+        lines = (
+            debate_cross_market_line
+            or _focus_cross_market_digest_line(
+                debate_summary=debate_summary,
+                focus_display=debate_summary.display_name,
+            ),
+            (
+                f"讨论支持: {debate_summary.support_points[0]}"
+                if debate_summary.support_points
+                else ""
+            ),
+            (
+                f"讨论反对: {debate_summary.opposition_points[0]}"
+                if debate_summary.opposition_points
+                else ""
+            ),
+            (
+                f"讨论待确认: {debate_summary.watch_items[0]}"
+                if debate_summary.watch_items
+                else ""
+            ),
+            _cross_market_chain_line(debate_summary=debate_summary),
+        )
+        if any(lines):
+            return tuple(line for line in lines if line)
+
+    return ()
+
+
+def _home_focus_conclusion_lines(
+    *,
+    focus_card: DashboardCandidateCard | None = None,
+    spotlight: DashboardCandidateSpotlight | None = None,
+    debate_summary: DashboardDebateSummary | None = None,
+) -> tuple[str, ...]:
+    if debate_summary is None:
+        return _home_focus_discussion_lines(
+            spotlight=spotlight,
+            debate_summary=debate_summary,
+        )
+    conclusion = _debate_conclusion_summary(
+        debate_summary,
+        spotlight=spotlight,
+        focus_card=focus_card,
+    )
+    compact_cross_market_line = _focus_cross_market_digest_line(
+        debate_summary=debate_summary,
+        focus_display=(
+            focus_card.display_name
+            if focus_card is not None
+            else (
+                spotlight.display_name
+                if spotlight is not None
+                else debate_summary.display_name
+            )
+        ),
+    )
+    return _unique_lines(
+        (
+            conclusion.decision_line,
+            compact_cross_market_line or conclusion.cross_market_line,
+            _compact_debate_followup_line(debate_summary, conclusion=conclusion),
+        )
+    )
+
+
+def _compact_debate_followup_line(
+    debate_summary: DashboardDebateSummary,
+    *,
+    conclusion: DashboardDebateConclusion | None = None,
+) -> str:
+    conclusion = conclusion or _debate_conclusion_summary(debate_summary)
+    if debate_summary.next_trigger.strip():
+        return f"下一触发: {debate_summary.next_trigger.strip()}"
+    if conclusion.watch_line:
+        return conclusion.watch_line
+    if conclusion.support_line:
+        return conclusion.support_line
+    if conclusion.opposition_line:
+        return conclusion.opposition_line
+    return ""
+
+
+def _home_action_item_lines(card: DashboardCandidateCard) -> tuple[str, ...]:
+    verdict = _action_status_label(card.action_label, card.status_label)
+    blocker = _card_primary_blocker(card)
+    next_action = _card_next_action(card)
+    decision_note = _safe_current_research_line(card.decision_note)
+    lines = [f"当前结论: {verdict}"]
+
+    if blocker:
+        lines.append(f"当前卡点: {blocker}")
+    elif decision_note and decision_note not in {
+        verdict,
+        next_action,
+        "按当前顺位继续跟踪",
+    }:
+        lines.append(f"主线判断: {decision_note}")
+
+    if next_action != "-":
+        lines.append(f"下一步: {next_action}")
+
+    review_line = _review_meta_line("复核窗口", card.review_meta)
+    if review_line:
+        lines.append(review_line)
+    else:
+        lines.append(f"来源: {_review_source_label(card)}")
+
+    return _unique_lines(tuple(line for line in lines if line))
 
 
 def _singleton_lines(text: str) -> tuple[str, ...]:
@@ -2308,13 +3266,72 @@ def _singleton_lines(text: str) -> tuple[str, ...]:
 
 
 def _home_debate_item_lines(debate_summary: DashboardDebateSummary) -> tuple[str, ...]:
-    return _unique_lines(
-        _debate_primary_takeaways(debate_summary)[:4],
-        (
-            "研究入口: 辩论主结论",
-            "先看分歧来源，再决定是否回到候选来龙去脉。",
-        ),
+    conclusion = _debate_conclusion_summary(debate_summary)
+    compact_cross_market_line = _focus_cross_market_digest_line(
+        debate_summary=debate_summary,
+        focus_display=debate_summary.display_name,
+    ).replace(f" | 先看 {debate_summary.display_name}", "", 1)
+    followup_line = _debate_watch_focus_line(debate_summary)
+    if followup_line.startswith("下一触发: "):
+        followup_line = followup_line.replace("下一触发: ", "触发 ", 1)
+    elif followup_line.startswith("确认信号: "):
+        followup_line = followup_line.replace("确认信号: ", "确认 ", 1)
+    elif followup_line.startswith("失效信号: "):
+        followup_line = followup_line.replace("失效信号: ", "失效 ", 1)
+    if compact_cross_market_line:
+        if followup_line and followup_line in compact_cross_market_line:
+            followup_line = ""
+        if not followup_line and conclusion.watch_line:
+            followup_line = conclusion.watch_line.replace("讨论待确认: ", "待确认 ")
+        return _unique_lines(
+            (
+                conclusion.decision_line,
+                compact_cross_market_line,
+                followup_line or conclusion.opposition_line or conclusion.support_line,
+            )
+        )[:3]
+    lead_view_line = (
+        _debate_top_view_line(
+            debate_summary,
+            stance="bullish",
+            prefix="支持方",
+        )
+        or _debate_top_view_line(
+            debate_summary,
+            stance="neutral",
+            prefix="主导视角",
+        )
+        or _focus_cross_market_digest_line(
+            debate_summary=debate_summary,
+            focus_display=debate_summary.display_name,
+        )
+        or (
+            f"分歧焦点: {debate_summary.adjustment_reason}"
+            if debate_summary.adjustment_reason
+            else ""
+        )
     )
+    counter_view_line = (
+        _debate_top_view_line(
+            debate_summary,
+            stance="bearish",
+            prefix="反对方",
+        )
+        or _debate_watch_focus_line(debate_summary)
+        or _compact_debate_followup_line(debate_summary, conclusion=conclusion)
+    )
+    return _unique_lines(
+        (
+            conclusion.decision_line,
+            lead_view_line,
+            counter_view_line,
+            (
+                f"分歧焦点: {debate_summary.adjustment_reason}"
+                if debate_summary.adjustment_reason
+                else ""
+            ),
+        )
+    )[:3]
 
 
 def _home_action_rail_items(
@@ -2327,10 +3344,20 @@ def _home_action_rail_items(
         merged_cards
     )
     blocked_focus = _home_blocked_focus_card(blocked_cards)
+    signal_date = _task_view_signal_date(task_view)
+    task_id = str(getattr(task_view, "task_id", "") or "").strip()
+    task_label = str(getattr(task_view, "task_label", "") or "").strip()
+    recommend_source = (
+        _candidate_card_source_key(recommend_cards[0]) if recommend_cards else ""
+    )
+    watch_source = _candidate_card_source_key(watch_cards[0]) if watch_cards else ""
+    blocked_source = (
+        _candidate_card_source_key(blocked_focus) if blocked_focus is not None else ""
+    )
     rail_items: list[_HomeActionRailItem] = [
         _HomeActionRailItem(
             lane_id="recommend",
-            lane_label="优先再看",
+            lane_label="今日先看",
             tone="focus",
             button_label="去复盘",
             target_workspace="候选复盘",
@@ -2346,6 +3373,11 @@ def _home_action_rail_items(
                     blocked_focus=blocked_focus,
                 )
             ),
+            signal_date=signal_date,
+            task_id=task_id if recommend_source == "card" else "",
+            task_label=task_label if recommend_source == "card" else "",
+            focus_kind=recommend_source,
+            decision_source=recommend_source,
             visible=bool(recommend_cards or task_view.recommendation_lines),
         ),
         _HomeActionRailItem(
@@ -2364,13 +3396,18 @@ def _home_action_rail_items(
                     blocked_focus=blocked_focus,
                 )
             ),
+            signal_date=signal_date,
+            task_id=task_id if watch_source == "card" else "",
+            task_label=task_label if watch_source == "card" else "",
+            focus_kind=watch_source,
+            decision_source=watch_source,
             visible=bool(
                 watch_cards or task_view.watchlist_lines or task_view.review_lines
             ),
         ),
         _HomeActionRailItem(
             lane_id="blocked",
-            lane_label="核对卡点",
+            lane_label="先解卡点",
             tone="blocked",
             button_label="查看卡点",
             target_workspace="候选复盘",
@@ -2389,20 +3426,21 @@ def _home_action_rail_items(
                     else "当前节奏相对顺畅，可按候选优先级推进。"
                 )
             ),
+            signal_date=signal_date,
+            task_id=task_id if blocked_source == "card" else "",
+            task_label=task_label if blocked_source == "card" else "",
+            focus_kind=blocked_source,
+            decision_source=blocked_source,
             visible=bool(blocked_focus is not None or task_view.blocker_lines),
         ),
     ]
-    if debates:
-        debate_focus = sorted(
-            debates,
-            key=lambda item: (item.disagreement_score, item.adjusted_score),
-            reverse=True,
-        )[0]
+    if debates and not any(item.visible for item in rail_items):
+        debate_focus = _ordered_home_debates(debates)[0]
         rail_items.insert(
             2,
             _HomeActionRailItem(
                 lane_id="debate",
-                lane_label="分歧复核",
+                lane_label="委员会分歧",
                 tone="pressure"
                 if debate_focus.disagreement_score >= 0.35
                 else "archive",
@@ -2411,10 +3449,69 @@ def _home_action_rail_items(
                 card=_debate_as_candidate_card(debate_focus),
                 summary=debate_focus.display_name,
                 lines=_home_debate_item_lines(debate_focus),
+                signal_date=debate_focus.signal_date,
+                focus_kind="debate",
+                debate_id=debate_focus.debate_id,
+                decision_source="debate",
                 visible=True,
             ),
         )
     return tuple(rail_items)
+
+
+def _queue_home_action_rail_handoff(item: _HomeActionRailItem) -> None:
+    if item.card is None:
+        return
+    _queue_workspace_handoff(
+        target_workspace=item.target_workspace,
+        source_workspace="决策首页",
+        symbol=item.card.symbol,
+        signal_date=item.signal_date,
+        task_id=item.task_id,
+        task_label=item.task_label,
+        focus_kind=item.focus_kind,
+        debate_id=item.debate_id,
+        decision_source=item.decision_source,
+        title=f"带着{item.lane_label}结论去看{item.target_workspace}",
+        lines=item.lines,
+    )
+
+
+def _queue_home_spotlight_handoff(
+    *,
+    workspace: str,
+    spotlight: DashboardCandidateSpotlight,
+    signal_date: str,
+) -> None:
+    _queue_workspace_handoff(
+        target_workspace=workspace,
+        source_workspace="决策首页",
+        symbol=spotlight.symbol,
+        signal_date=signal_date,
+        focus_kind="spotlight",
+        decision_source="spotlight",
+        title=f"带着同日联动结论去看{workspace}",
+        lines=_home_spotlight_lines(spotlight),
+    )
+
+
+def _queue_home_debate_handoff(
+    *,
+    debate_summary: DashboardDebateSummary,
+    title: str,
+    lines: tuple[str, ...],
+) -> None:
+    _queue_workspace_handoff(
+        target_workspace="候选复盘",
+        source_workspace="决策首页",
+        symbol=debate_summary.symbol,
+        signal_date=debate_summary.signal_date,
+        focus_kind="debate",
+        debate_id=debate_summary.debate_id,
+        decision_source="debate",
+        title=title,
+        lines=lines,
+    )
 
 
 def _render_home_action_rail(
@@ -2447,7 +3544,7 @@ def _render_home_action_rail(
                 item.button_label,
                 key=f"home-action-rail-{item.lane_id}-{item.card.symbol}",
             ):
-                _queue_workspace_jump(item.target_workspace, item.card.symbol)
+                _queue_home_action_rail_handoff(item)
                 st.rerun()
         return
     columns = st.columns(len(rail_items))
@@ -2463,7 +3560,7 @@ def _render_home_action_rail(
                 item.button_label,
                 key=f"home-action-rail-{item.lane_id}-{item.card.symbol}",
             ):
-                _queue_workspace_jump(item.target_workspace, item.card.symbol)
+                _queue_home_action_rail_handoff(item)
                 st.rerun()
 
 
@@ -2519,7 +3616,7 @@ def _render_operation_overview(overview: DashboardDateOverview) -> None:
               <div class="aqsp-ops-kicker">日期总览</div>
               <div class="aqsp-ops-title">{overview.signal_date}</div>
               <div class="aqsp-ops-summary">
-                覆盖任务 {overview.task_count} 个<br/>
+                涉及任务 {overview.task_count} 个<br/>
                 待复核 {overview.actionable_total} / 观察 {overview.watch_total} / 阻塞 {overview.blocked_total}
               </div>
             </div>
@@ -2724,9 +3821,14 @@ def _render_daily_workflow(
                     "切到这段",
                     key=f"workflow-task-{row.task_id}-{row.signal_date}",
                 ):
-                    _set_dashboard_selection(
-                        task_id=row.task_id,
+                    _queue_home_selection_handoff(
                         signal_date=row.signal_date,
+                        task_id=row.task_id,
+                        task_label=row.task_label,
+                        title=f"切到 {row.phase_label} 看这段结论",
+                        lines=(
+                            f"切到这段先看: {row.headline or row.phase_summary or row.task_label}",
+                        ),
                     )
                     st.rerun()
     hidden_rows = rows[3:]
@@ -2761,9 +3863,14 @@ def _render_daily_workflow(
                         "切到这段",
                         key=f"workflow-extra-task-{row.task_id}-{row.signal_date}",
                     ):
-                        _set_dashboard_selection(
-                            task_id=row.task_id,
+                        _queue_home_selection_handoff(
                             signal_date=row.signal_date,
+                            task_id=row.task_id,
+                            task_label=row.task_label,
+                            title=f"切到 {row.phase_label} 看这段结论",
+                            lines=(
+                                f"切到这段先看: {row.headline or row.phase_summary or row.task_label}",
+                            ),
                         )
                         st.rerun()
 
@@ -2801,7 +3908,7 @@ def _render_trading_cockpit(
         "<br/>".join(
             line
             for line in [
-                f"研究状态: {escape(_action_status_label(focus_card.action_label, focus_card.status_label))}",
+                f"当前结论: {escape(_action_status_label(focus_card.action_label, focus_card.status_label))}",
                 (
                     f"评分 {focus_card.score:.1f} / 复核 {escape(focus_card.review_meta)}"
                     if _has_review_meta(focus_card.review_meta)
@@ -3103,6 +4210,1239 @@ def _render_day_replay_digest(
     )
 
 
+def _task_message_summary(task_view) -> str:
+    for line in (
+        *task_view.report_summary_lines[:1],
+        *task_view.summary_lines[:1],
+        task_view.headline,
+    ):
+        if line and line.strip():
+            return _safe_current_research_line(line)
+    return "当前任务还没有可扫读摘要。"
+
+
+def _same_day_message_tone(row: DashboardSameDayTaskRow) -> str:
+    if row.task_id == "intraday":
+        return "archive"
+    if row.blocked_count > 0:
+        return "blocked"
+    if row.actionable_count > 0:
+        return "focus"
+    if row.watch_count > 0:
+        return "pressure"
+    return "archive"
+
+
+def _same_day_debate_time_prefix(debate_summary: DashboardDebateSummary | None) -> str:
+    if debate_summary is None:
+        return ""
+    raw = str(debate_summary.created_at or "").strip()
+    if not raw:
+        return ""
+    try:
+        parsed = datetime.fromisoformat(raw)
+    except ValueError:
+        return ""
+    return f"{parsed.strftime('%H:%M')} 更新 | "
+
+
+def _same_day_task_time_prefix(row: DashboardSameDayTaskRow | None) -> str:
+    if row is None:
+        return ""
+    raw = str(row.created_at or "").strip()
+    if not raw:
+        return ""
+    try:
+        parsed = datetime.fromisoformat(raw)
+    except ValueError:
+        return ""
+    return f"{parsed.strftime('%H:%M')} 更新 | "
+
+
+def _same_day_time_sort_key(raw: str) -> int:
+    normalized = raw.strip()
+    if not normalized:
+        return 0
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return 0
+    return int(parsed.strftime("%Y%m%d%H%M%S"))
+
+
+def _same_day_digest_debate_lines(
+    debate_summary: DashboardDebateSummary,
+) -> tuple[str, ...]:
+    time_prefix = _same_day_debate_time_prefix(debate_summary)
+    line = (
+        "讨论结果: "
+        + time_prefix
+        + _timeline_debate_result_line(debate_summary).removeprefix("- ").strip()
+    )
+    return (line,) if line.strip() else ()
+
+
+def _same_day_digest_events(
+    *,
+    ordered_rows: tuple[tuple[DashboardSameDayTaskRow, object], ...],
+    task_limit: int,
+    debates: tuple[DashboardDebateSummary, ...],
+) -> tuple[_SameDayDigestEvent, ...]:
+    events: list[_SameDayDigestEvent] = []
+    for debate_summary in _salient_home_debates(debates)[:1]:
+        debate_priority = _home_debate_priority_key(debate_summary)
+        debate_lines = _same_day_digest_debate_lines(debate_summary)
+        if debate_lines:
+            events.append(
+                _SameDayDigestEvent(
+                    event_type="debate_result",
+                    line=debate_lines[0],
+                    time_key=str(debate_summary.created_at or ""),
+                    type_priority=2,
+                    content_priority=debate_priority,
+                )
+            )
+    for row, task_view in ordered_rows[:task_limit]:
+        events.append(
+            _SameDayDigestEvent(
+                event_type="task",
+                line=_timeline_task_digest_line(task_view, row)
+                .removeprefix("- ")
+                .strip(),
+                time_key=str(row.created_at or ""),
+                type_priority=0,
+                content_priority=_same_day_message_priority_key(task_view, row),
+            )
+        )
+
+    return tuple(
+        sorted(
+            (event for event in events if event.line.strip()),
+            key=lambda event: (
+                int(bool(event.time_key)),
+                event.time_key,
+                event.type_priority,
+                event.content_priority,
+            ),
+            reverse=True,
+        )
+    )
+
+
+def _same_day_summary_row_priority_key(
+    row: DashboardSameDayTaskRow,
+) -> tuple[int, ...]:
+    return (
+        int(row.blocked_count > 0),
+        int(row.actionable_count > 0),
+        int(row.watch_count > 0),
+        row.blocked_count,
+        row.actionable_count,
+        row.watch_count,
+        _same_day_time_sort_key(str(row.created_at or "")),
+        -row.phase_order,
+    )
+
+
+def _ordered_same_day_summary_rows(
+    rows: tuple[DashboardSameDayTaskRow, ...],
+) -> tuple[DashboardSameDayTaskRow, ...]:
+    return tuple(sorted(rows, key=_same_day_summary_row_priority_key, reverse=True))
+
+
+def _timeline_task_row_digest_line(row: DashboardSameDayTaskRow) -> str:
+    time_prefix = _same_day_task_time_prefix(row)
+    if row.blocked_count > 0:
+        message = f"有 {row.blocked_count} 个阻塞对象待复核。"
+    elif row.actionable_count > 0:
+        message = f"有 {row.actionable_count} 个待复核对象已落盘。"
+    elif row.watch_count > 0:
+        message = f"有 {row.watch_count} 个观察对象待继续确认。"
+    else:
+        message = _clean_task_message_judgment(row.phase_summary) or (
+            _clean_task_message_judgment(row.headline) or "阶段结论已落盘。"
+        )
+    return f"{row.task_label}: {time_prefix}{message}"
+
+
+def _same_day_digest_summary_events(
+    *,
+    ordered_rows: tuple[DashboardSameDayTaskRow, ...],
+    task_limit: int,
+    debates: tuple[DashboardDebateSummary, ...],
+) -> tuple[_SameDayDigestEvent, ...]:
+    events: list[_SameDayDigestEvent] = []
+    for debate_summary in _salient_home_debates(debates)[:1]:
+        debate_priority = _home_debate_priority_key(debate_summary)
+        debate_lines = _same_day_digest_debate_lines(debate_summary)
+        if debate_lines:
+            events.append(
+                _SameDayDigestEvent(
+                    event_type="debate_result",
+                    line=debate_lines[0],
+                    time_key=str(debate_summary.created_at or ""),
+                    type_priority=2,
+                    content_priority=debate_priority,
+                )
+            )
+
+    for row in ordered_rows[:task_limit]:
+        events.append(
+            _SameDayDigestEvent(
+                event_type="task",
+                line=_timeline_task_row_digest_line(row),
+                time_key=str(row.created_at or ""),
+                type_priority=0,
+                content_priority=_same_day_summary_row_priority_key(row),
+            )
+        )
+
+    return tuple(
+        sorted(
+            (event for event in events if event.line.strip()),
+            key=lambda event: (
+                int(bool(event.time_key)),
+                event.time_key,
+                event.type_priority,
+                event.content_priority,
+            ),
+            reverse=True,
+        )
+    )
+
+
+def _same_day_summary_card_lines(
+    *,
+    overview: DashboardDateOverview,
+    digest_lines: tuple[str, ...],
+    debates: tuple[DashboardDebateSummary, ...],
+    task_view,
+) -> tuple[str, ...]:
+    lead_debate = next(iter(_salient_home_debates(debates)), None)
+    source_line = next(
+        (line for line in digest_lines if line.startswith("数据链路: ")),
+        "",
+    )
+    market_line = next(
+        (line for line in digest_lines if line.startswith("跨市主线: ")),
+        "",
+    )
+    if lead_debate is None:
+        summary_lines = _same_day_digest_conclusion_lines(digest_lines) or digest_lines
+        if source_line and any(
+            marker in source_line for marker in ("只适合历史验证", "已降级")
+        ):
+            return _unique_lines((source_line,), summary_lines)[:4]
+        return summary_lines[:4]
+
+    conclusion = _debate_conclusion_summary(lead_debate)
+    committee_line = (
+        conclusion.decision_line.replace("研究口径: ", "委员会结论: ", 1).replace(
+            "当前结论: ", "委员会结论: ", 1
+        )
+        if conclusion.decision_line
+        else ""
+    )
+    time_prefix = _same_day_debate_time_prefix(lead_debate)
+    primary_line = (
+        f"{time_prefix}{committee_line}".strip()
+        if committee_line
+        else f"当前结论: {overview.focus_headline or overview.top_headline or task_view.headline}"
+    )
+    caution_source_line = (
+        source_line
+        if source_line
+        and any(marker in source_line for marker in ("只适合历史验证", "已降级"))
+        else ""
+    )
+    gate_line = (
+        f"当前卡点: {lead_debate.primary_risk_gate}"
+        if lead_debate.primary_risk_gate
+        else (
+            f"当前卡点: {overview.blocker_headline}"
+            if overview.blocker_headline
+            else ""
+        )
+    )
+    trigger_line = (
+        f"下一触发: {lead_debate.next_trigger}"
+        if lead_debate.next_trigger
+        else (
+            conclusion.watch_line.replace("讨论待确认: ", "下一触发: ", 1)
+            if conclusion.watch_line
+            else ""
+        )
+    )
+    return _unique_lines(
+        (
+            primary_line,
+            market_line or conclusion.cross_market_line,
+            caution_source_line,
+            gate_line,
+            trigger_line,
+        )
+    )[:4]
+
+
+def _same_day_summary_focus_context(
+    *,
+    task_view,
+    spotlights: tuple[DashboardCandidateSpotlight, ...],
+    debates: tuple[DashboardDebateSummary, ...],
+) -> tuple[
+    DashboardCandidateCard | None,
+    DashboardCandidateSpotlight | None,
+    DashboardDebateSummary | None,
+]:
+    merged_cards = _home_action_cards(task_view, spotlights)
+    recommend_cards, watch_cards, blocked_cards = _classify_candidate_queues(
+        merged_cards
+    )
+    focus_card = _home_primary_focus_card(recommend_cards, watch_cards, blocked_cards)
+    focus_symbol = focus_card.symbol if focus_card is not None else ""
+    if not focus_symbol and debates:
+        focus_symbol = _salient_home_debates(debates)[0].symbol
+    if not focus_symbol:
+        return (None, None, None)
+    selected_card, selected_spotlight, debate_summary, _ = _review_context_for_symbol(
+        symbol=focus_symbol,
+        cards=tuple(getattr(task_view, "detail_cards", ()) or ()),
+        spotlights=spotlights,
+        debates=debates,
+    )
+    return (selected_card, selected_spotlight, debate_summary)
+
+
+def _same_day_summary_handoff_lines(
+    *,
+    workspace: str,
+    selected_card: DashboardCandidateCard | None,
+    selected_spotlight: DashboardCandidateSpotlight | None,
+    debate_summary: DashboardDebateSummary | None,
+) -> tuple[str, ...]:
+    display_name = (
+        selected_card.display_name
+        if selected_card is not None
+        else (
+            selected_spotlight.display_name
+            if selected_spotlight is not None
+            else (debate_summary.display_name if debate_summary is not None else "")
+        )
+    )
+    next_focus = ""
+    if selected_card is not None:
+        next_focus = _card_primary_blocker(selected_card) or _card_next_action(
+            selected_card
+        )
+    if not next_focus and selected_spotlight is not None:
+        next_focus = _safe_current_research_line(
+            selected_spotlight.blocker or selected_spotlight.next_step
+        )
+    if not next_focus and debate_summary is not None:
+        next_focus = (
+            debate_summary.primary_risk_gate
+            or debate_summary.next_trigger
+            or debate_summary.adjustment_reason
+        )
+    prefix = {
+        "候选复盘": "切到复盘先看",
+        "虚拟盘跟踪": "切到纸面先看",
+        "归档回看": "切到归档先看",
+    }.get(workspace, "切到这里先看")
+    return tuple(
+        line
+        for line in (
+            (f"当前标的: {display_name}" if display_name else ""),
+            _candidate_effective_decision_line(
+                selected_card=selected_card,
+                spotlight=selected_spotlight,
+                debate_summary=debate_summary,
+            ),
+            (
+                f"{prefix}: {next_focus}"
+                if next_focus
+                else f"{prefix}: 先核对当前结论、阻塞与下一触发。"
+            ),
+        )
+        if line
+    )
+
+
+def _queue_same_day_summary_handoff(
+    *,
+    workspace: str,
+    signal_date: str,
+    task_view,
+    spotlights: tuple[DashboardCandidateSpotlight, ...],
+    debates: tuple[DashboardDebateSummary, ...],
+) -> None:
+    selected_card, selected_spotlight, debate_summary = _same_day_summary_focus_context(
+        task_view=task_view,
+        spotlights=spotlights,
+        debates=debates,
+    )
+    source_key = _candidate_effective_decision_source_key(
+        selected_card=selected_card,
+        spotlight=selected_spotlight,
+        debate_summary=debate_summary,
+    )
+    symbol = (
+        selected_card.symbol
+        if selected_card is not None
+        else (
+            selected_spotlight.symbol
+            if selected_spotlight is not None
+            else (debate_summary.symbol if debate_summary is not None else "")
+        )
+    )
+    _queue_workspace_handoff(
+        target_workspace=workspace,
+        source_workspace="决策首页",
+        symbol=symbol,
+        signal_date=signal_date,
+        task_id=str(getattr(task_view, "task_id", "") or ""),
+        task_label=str(getattr(task_view, "task_label", "") or ""),
+        focus_kind=source_key,
+        debate_id=debate_summary.debate_id if debate_summary is not None else "",
+        decision_source=source_key,
+        title=f"带着当天总控去看{workspace}",
+        lines=_same_day_summary_handoff_lines(
+            workspace=workspace,
+            selected_card=selected_card,
+            selected_spotlight=selected_spotlight,
+            debate_summary=debate_summary,
+        ),
+    )
+
+
+def _render_same_day_message_digest(
+    *,
+    provider: DashboardDataProvider,
+    signal_date: str,
+    rows: tuple[DashboardSameDayTaskRow, ...],
+    task_view,
+    overview: DashboardDateOverview,
+    paper_summary: DashboardPaperSummary,
+    spotlights: tuple[DashboardCandidateSpotlight, ...],
+    debates: tuple[DashboardDebateSummary, ...],
+    show_reading_order: bool = True,
+    show_detail_loader: bool = True,
+) -> None:
+    st.subheader("同日速读")
+    st.caption("只保留今天最重要的结论、卡点和少量阶段证据。")
+    if not rows:
+        fallback_lines = tuple(
+            getattr(provider, "runtime_fallback_digest_lines", lambda _: ())(
+                signal_date
+            )
+            or ()
+        )
+        if fallback_lines:
+            _render_cockpit_card(
+                kicker="运行状态",
+                title=fallback_lines[0].replace("结论: ", "", 1),
+                lines=fallback_lines[1:] or ("当前日期暂无结构化同日速读。",),
+                tone=_runtime_frontdesk_tone(fallback_lines),
+            )
+        else:
+            st.info("当前日期暂无结构化同日速读。")
+        return
+
+    digest_lines = _same_day_digest_snapshot_lines(
+        provider,
+        signal_date,
+        rows,
+        debates,
+        spotlights=spotlights,
+        source_task_view=task_view,
+    )
+    if show_reading_order:
+        _render_home_reading_order(
+            task_view=task_view,
+            overview=overview,
+            paper_summary=paper_summary,
+            spotlights=spotlights,
+            debates=debates,
+        )
+    if digest_lines:
+        digest_card_lines = _same_day_summary_card_lines(
+            overview=overview,
+            digest_lines=digest_lines,
+            debates=debates,
+            task_view=task_view,
+        )
+        digest_tone = (
+            "blocked"
+            if overview.blocked_total
+            else ("focus" if overview.actionable_total else "archive")
+        )
+        _render_cockpit_card(
+            kicker="当天总控",
+            title=overview.focus_headline or overview.top_headline or "今天先看这几条",
+            lines=digest_card_lines,
+            tone=digest_tone,
+        )
+        selected_card, selected_spotlight, debate_summary = (
+            _same_day_summary_focus_context(
+                task_view=task_view,
+                spotlights=spotlights,
+                debates=debates,
+            )
+        )
+        if any(
+            item is not None
+            for item in (selected_card, selected_spotlight, debate_summary)
+        ):
+            action_cols = st.columns(len(_home_focus_action_targets()))
+            for action_col, (label, workspace) in zip(
+                action_cols,
+                _home_focus_action_targets(),
+            ):
+                with action_col:
+                    if _stretch_button(
+                        label,
+                        key=f"same-day-summary-{workspace}-{signal_date}",
+                    ):
+                        _queue_same_day_summary_handoff(
+                            workspace=workspace,
+                            signal_date=signal_date,
+                            task_view=task_view,
+                            spotlights=spotlights,
+                            debates=debates,
+                        )
+                        st.rerun()
+
+    summary_rows = tuple(
+        sorted(rows, key=_same_day_summary_row_priority_key, reverse=True)
+    )[:2]
+    if summary_rows:
+        for start in range(0, len(summary_rows), 3):
+            batch = summary_rows[start : start + 3]
+            columns = st.columns(min(len(batch), 3))
+            for column, row in zip(columns, batch):
+                lines = _same_day_message_lite_lines(row)
+                with column:
+                    _render_cockpit_card(
+                        kicker=f"{row.phase_label} · {row.task_label}",
+                        title=f"{_same_day_task_time_prefix(row)}{row.status_label or '已落盘'}",
+                        lines=lines,
+                        tone=_same_day_message_tone(row),
+                    )
+                    if _stretch_button(
+                        "看这段",
+                        key=f"same-day-message-lite-{row.task_id}-{row.signal_date}",
+                    ):
+                        _queue_home_selection_handoff(
+                            signal_date=row.signal_date,
+                            task_id=row.task_id,
+                            task_label=row.task_label,
+                            title=f"切到 {row.phase_label} 看这段结论",
+                            lines=lines,
+                        )
+                        st.rerun()
+
+    if not show_detail_loader:
+        return
+
+    if not _lazy_home_section_requested(
+        button_label="加载同日任务明细",
+        state_key=f"dashboard_same_day_detail_loaded_{signal_date}",
+        idle_hint="同日任务明细按需加载；默认只看当天总控，减少首页首屏卡顿。",
+    ):
+        return
+
+    ordered_rows = _ordered_same_day_message_rows(provider, signal_date, rows)
+    visible_rows = ordered_rows[:4]
+    if visible_rows:
+        for start in range(0, len(visible_rows), 2):
+            batch = visible_rows[start : start + 2]
+            columns = st.columns(min(len(batch), 2))
+            for column, (row, row_task_view) in zip(columns, batch):
+                with column:
+                    _render_cockpit_card(
+                        kicker=f"{row.phase_label} · {row.task_label}",
+                        title=f"{_same_day_task_time_prefix(row)}{row.status_label or '已落盘'}",
+                        lines=_same_day_message_lines(row_task_view, row),
+                        tone=_same_day_message_tone(row),
+                    )
+                    if _stretch_button(
+                        "看这段",
+                        key=f"same-day-message-{row.task_id}-{row.signal_date}",
+                    ):
+                        _queue_home_selection_handoff(
+                            signal_date=row.signal_date,
+                            task_id=row.task_id,
+                            task_label=row.task_label,
+                            title=f"切到 {row.phase_label} 看这段结论",
+                            lines=_same_day_message_lines(row_task_view, row),
+                        )
+                        st.rerun()
+    hidden_count = len(ordered_rows) - len(visible_rows)
+    if hidden_count > 0:
+        st.caption(f"其余 {hidden_count} 条同日消息已省略，保持首页只看最重要卡片。")
+
+
+def _render_home_runtime_truth(
+    provider: DashboardDataProvider,
+    *,
+    signal_date: str,
+) -> None:
+    runtime_overview = getattr(provider, "runtime_overview", lambda _: None)(
+        signal_date
+    )
+    fallback_lines = tuple(
+        getattr(provider, "runtime_fallback_digest_lines", lambda _: ())(signal_date)
+        or ()
+    )
+    runs: tuple = ()
+    if runtime_overview is None and not fallback_lines:
+        load_runs = getattr(provider, "runtime_task_runs", None)
+        runs = tuple(load_runs(signal_date) if callable(load_runs) else ())[:2]
+
+    if runtime_overview is None and not fallback_lines and not runs:
+        return
+
+    if runtime_overview is not None and runtime_overview.conclusion:
+        title = runtime_overview.conclusion
+    elif fallback_lines:
+        title = fallback_lines[0].replace("结论: ", "", 1)
+    else:
+        title = f"最近任务: {runs[0].task_label} / {runs[0].status_label}"
+
+    lines: list[str] = []
+    if runtime_overview is not None:
+        status_parts = []
+        if runtime_overview.task_label:
+            status_parts.append(runtime_overview.task_label)
+        if runtime_overview.signal_date:
+            status_parts.append(runtime_overview.signal_date)
+        if runtime_overview.run_status:
+            status_parts.append(runtime_overview.run_status)
+        if status_parts:
+            lines.append("运行状态: " + " / ".join(status_parts))
+
+        source = runtime_overview.effective_source or runtime_overview.requested_source
+        data_parts = []
+        if source:
+            data_parts.append(_dashboard_source_boundary_label(source))
+        if runtime_overview.data_latest_trade_date:
+            data_parts.append(f"数据日 {runtime_overview.data_latest_trade_date}")
+        if runtime_overview.lag_days:
+            data_parts.append(f"延迟 {runtime_overview.lag_days} 天")
+        if data_parts:
+            lines.append("数据: " + " / ".join(data_parts))
+        elif runtime_overview.source_reason:
+            lines.append("数据: " + runtime_overview.source_reason)
+
+        if runtime_overview.risk_reason:
+            lines.append(f"风险/阻塞: {runtime_overview.risk_reason}")
+        if runtime_overview.cooldown_until:
+            lines.append(
+                "后续安排: "
+                f"组合保护解除日 {runtime_overview.cooldown_until}，"
+                "解除日前不追加新增候选；解除后恢复收盘主链复核。"
+            )
+        if runtime_overview.coldstart_progress:
+            coldstart_line = f"冷启动: {runtime_overview.coldstart_progress}"
+            if _coldstart_progress_ready(runtime_overview.coldstart_progress):
+                gate_blocker = str(
+                    getattr(runtime_overview, "gate_blocker_line", "") or ""
+                ).strip()
+                coldstart_line += (
+                    "，样本门已达标；"
+                    + (
+                        f"{gate_blocker}；"
+                        if gate_blocker
+                        else "后续看双门 gate 与组合保护状态，"
+                    )
+                    + "不再追加冷启动样本。"
+                )
+            lines.append(coldstart_line)
+        elif getattr(runtime_overview, "gate_blocker_line", ""):
+            lines.append(str(runtime_overview.gate_blocker_line))
+        coldstart_handoff_line = str(
+            getattr(runtime_overview, "coldstart_handoff_line", "") or ""
+        ).strip()
+        if coldstart_handoff_line:
+            lines.append(coldstart_handoff_line)
+        walkforward_line = str(
+            getattr(runtime_overview, "walkforward_runtime_line", "") or ""
+        ).strip()
+        if walkforward_line:
+            lines.append(walkforward_line)
+        intraday_line = str(
+            getattr(runtime_overview, "intraday_runtime_line", "") or ""
+        ).strip()
+        if intraday_line:
+            lines.append(intraday_line)
+        market_context_line = str(
+            getattr(runtime_overview, "market_context_runtime_line", "") or ""
+        ).strip()
+        if market_context_line:
+            lines.append(market_context_line)
+
+    if not lines:
+        lines = list(fallback_lines[1:4])
+    for run in runs:
+        if run.action == "coldstart":
+            lines.append(f"冷启动任务: {run.status_label} / {run.headline}")
+            lines.extend(
+                line for line in run.detail_lines if line.startswith("冷启动:")
+            )
+            break
+    if not lines and runs:
+        lines.append(f"{runs[0].task_label}: {runs[0].headline}")
+    if len(lines) > 5 and any(
+        line.startswith(("跨市规则:", "生产 gate:")) for line in lines
+    ):
+        lines = [line for line in lines if not line.startswith("后续安排:")]
+    if len(lines) > 5 and any(
+        line.startswith(("跨市规则:", "生产 gate:")) for line in lines
+    ):
+        lines = [line for line in lines if not line.startswith("数据:")]
+
+    tone = _runtime_frontdesk_tone((title, *lines))
+    _render_cockpit_card(
+        kicker="运行真相",
+        title=title,
+        lines=tuple(lines[:5]),
+        tone=tone,
+    )
+
+
+def _runtime_frontdesk_tone(lines: tuple[str, ...]) -> str:
+    blocking_markers = (
+        "阻塞",
+        "组合保护",
+        "盘中短线不可用",
+        "只适合历史验证",
+        "已降级",
+        "资源不足",
+        "超时",
+    )
+    return (
+        "blocked"
+        if any(marker in line for line in lines for marker in blocking_markers)
+        else "archive"
+    )
+
+
+def _coldstart_progress_ready(progress: str) -> bool:
+    match = re.fullmatch(r"(\d+)/(\d+)", str(progress or "").strip())
+    if not match:
+        return False
+    current, target = (int(match.group(1)), int(match.group(2)))
+    return target > 0 and current >= target
+
+
+def _ordered_same_day_message_rows(
+    provider: DashboardDataProvider,
+    signal_date: str,
+    rows: tuple[DashboardSameDayTaskRow, ...],
+) -> tuple[tuple[DashboardSameDayTaskRow, object], ...]:
+    build_digest_view = _provider_build_task_digest_view(provider)
+    ordered = [
+        (row, build_digest_view(row.task_id, signal_date=signal_date)) for row in rows
+    ]
+    ordered.sort(key=lambda item: item[0].phase_order)
+    ordered.sort(
+        key=lambda item: _same_day_message_priority_key(item[1], item[0]),
+        reverse=True,
+    )
+    return tuple(ordered)
+
+
+def _provider_build_task_digest_view(provider: DashboardDataProvider):
+    build_digest_view = getattr(provider, "build_task_digest_view", None)
+    if callable(build_digest_view):
+        return build_digest_view
+    return provider.build_task_view
+
+
+def _same_day_message_priority_key(
+    task_view,
+    row: DashboardSameDayTaskRow,
+) -> tuple[int, ...]:
+    detail_cards = tuple(getattr(task_view, "detail_cards", ()) or ())
+    lead_card = detail_cards[0] if detail_cards else None
+    structured_focus = _structured_task_message_focus_line(task_view)
+    return (
+        int(bool(structured_focus)),
+        int(bool(lead_card and lead_card.review_meta)),
+        int(bool(lead_card and lead_card.blocker)),
+        int(row.actionable_count > 0),
+        int(row.blocked_count > 0),
+        int(row.watch_count > 0),
+        row.actionable_count,
+        row.blocked_count,
+        row.watch_count,
+        _same_day_time_sort_key(str(row.created_at or "")),
+        -row.phase_order,
+    )
+
+
+def _same_day_message_lite_lines(row: DashboardSameDayTaskRow) -> tuple[str, ...]:
+    metrics = (
+        f"待复核 {row.actionable_count}"
+        f" / 观察 {row.watch_count}"
+        f" / 阻塞 {row.blocked_count}"
+    )
+    focus = _clean_task_message_judgment(row.phase_summary or row.headline)
+    next_line = _safe_current_research_line(
+        row.headline or row.phase_label or row.task_label or "对应任务的复核与阻塞记录"
+    )
+    return _unique_lines(
+        (
+            f"这一段: {focus}" if focus else "",
+            f"数量: {metrics}",
+            f"切到这段看: {next_line}",
+        )
+    )
+
+
+def _same_day_message_lines(
+    task_view,
+    row: DashboardSameDayTaskRow,
+) -> tuple[str, ...]:
+    next_line = _safe_current_research_line(
+        row.headline or row.phase_label or row.task_label or "对应任务的复核与阻塞记录"
+    )
+    return _unique_lines(
+        (
+            _same_day_message_delta_line(task_view, row),
+            _same_day_message_focus_line(task_view, row),
+            f"切到这段看: {next_line}",
+        )
+    )
+
+
+def _same_day_message_delta_line(
+    task_view,
+    row: DashboardSameDayTaskRow,
+) -> str:
+    structured_focus = _structured_task_message_focus_line(task_view)
+    if structured_focus:
+        return f"这一段新增: {structured_focus}"
+
+    candidate_lines = (
+        row.phase_summary,
+        *(getattr(task_view, "review_lines", ())[:1]),
+        *(getattr(task_view, "agenda_lines", ())[:1]),
+        row.headline,
+    )
+    for line in candidate_lines:
+        cleaned = _clean_task_message_judgment(str(line or ""))
+        if cleaned:
+            return f"这一段新增: {cleaned}"
+    return "这一段新增: 切到对应任务看这一阶段的新增结论。"
+
+
+def _same_day_message_focus_line(
+    task_view,
+    row: DashboardSameDayTaskRow,
+) -> str:
+    review_lines = tuple(getattr(task_view, "review_lines", ())[:1])
+    recommendation_lines = tuple(getattr(task_view, "recommendation_lines", ())[:1])
+    agenda_lines = tuple(getattr(task_view, "agenda_lines", ())[:1])
+    watchlist_lines = tuple(getattr(task_view, "watchlist_lines", ())[:1])
+    blocker_lines = tuple(getattr(task_view, "blocker_lines", ())[:1])
+    next_day_focus_lines = tuple(getattr(task_view, "next_day_focus_lines", ())[:1])
+
+    if row.blocked_count > 0:
+        for line in blocker_lines + review_lines + agenda_lines:
+            cleaned = _clean_task_message_judgment(line)
+            if cleaned:
+                return f"本段卡点: {cleaned}"
+        return f"本段卡点: 有 {row.blocked_count} 个阻塞对象待复核。"
+
+    for line in (
+        review_lines
+        + recommendation_lines
+        + watchlist_lines
+        + agenda_lines
+        + next_day_focus_lines
+    ):
+        cleaned = _clean_task_message_judgment(line)
+        if cleaned:
+            return f"本段焦点: {cleaned}"
+
+    if row.actionable_count > 0:
+        return f"本段焦点: 有 {row.actionable_count} 个待复核对象已落盘。"
+    if row.watch_count > 0:
+        return f"本段焦点: 有 {row.watch_count} 个观察对象待继续确认。"
+    return "本段焦点: 这段以阶段复核与阻塞整理为主。"
+
+
+def _same_day_cross_market_digest_line(
+    *,
+    spotlights: tuple[DashboardCandidateSpotlight, ...] = (),
+    debates: tuple[DashboardDebateSummary, ...] = (),
+) -> str:
+    lead_spotlight = next(
+        (
+            item
+            for item in spotlights
+            if (
+                item.cross_market_summary
+                or item.cross_market_chain_summary
+                or item.cross_market_validation_summary
+                or item.cross_market_invalidation_summary
+            )
+        ),
+        None,
+    )
+    if lead_spotlight is not None:
+        return _focus_cross_market_digest_line(
+            selected_spotlight=lead_spotlight,
+            focus_display=lead_spotlight.display_name,
+        )
+
+    lead_debate = next(
+        (
+            item
+            for item in _ordered_home_debates(debates)
+            if (
+                item.cross_market_summary
+                or item.cross_market_chain_summary
+                or item.cross_market_validation_summary
+                or item.cross_market_invalidation_summary
+            )
+        ),
+        None,
+    )
+    if lead_debate is None:
+        return ""
+    return _focus_cross_market_digest_line(
+        debate_summary=lead_debate,
+        focus_display=lead_debate.display_name,
+    )
+
+
+def _source_status_verdict_line(source_status: dict[str, str]) -> str:
+    source_status = dict(source_status or {})
+    actual = str(source_status.get("actual_source", "") or "").strip()
+    if not actual:
+        return ""
+    fit = workload_fit_for_source(actual).get("live_short", "unknown")
+    health_label = str(source_status.get("health_label", "") or "").strip()
+    lag_days = str(source_status.get("lag_days", "") or "").strip()
+    lag_suffix = ""
+    if lag_days and lag_days not in {"-", "未记录", "None", "nan"}:
+        lag_suffix = f"；滞后 {lag_days} 天"
+    if source_supports_workload(actual, "live_short"):
+        if health_label == "fallback":
+            return f"数据链路: 备用实时源 {actual}（live_short={fit}）{lag_suffix}"
+        if health_label == "degraded":
+            return f"数据链路: 实时源 {actual} 已降级（live_short={fit}）{lag_suffix}"
+        return f"数据链路: 实时源 {actual}（live_short={fit}）{lag_suffix}"
+    return f"数据链路: 当前实际源 {actual} 只适合历史验证，盘中短线不可用（live_short={fit}）{lag_suffix}"
+
+
+def _same_day_source_status_digest_line(task_view) -> str:
+    source_status = dict(getattr(task_view, "source_status", {}) or {})
+    return _source_status_verdict_line(source_status)
+
+
+def _same_day_digest_decision_line(
+    *,
+    rows: tuple[DashboardSameDayTaskRow, ...],
+    spotlights: tuple[DashboardCandidateSpotlight, ...] = (),
+    debates: tuple[DashboardDebateSummary, ...] = (),
+) -> str:
+    has_tasks = bool(rows)
+    has_spotlights = bool(spotlights)
+    has_debates = bool(debates)
+    if has_spotlights:
+        if has_debates:
+            return (
+                "当前采用口径: 同日跨任务联动；先看跨任务共振，再回到各任务落盘，"
+                "委员会只补充分歧与风险。"
+            )
+        return "当前采用口径: 同日跨任务联动；先看跨任务共振，再回到各任务落盘。"
+    if has_tasks:
+        if has_debates:
+            return (
+                "当前采用口径: 当天任务落盘；当天以各任务已落盘结论为主，"
+                "委员会只补充分歧、风险与触发。"
+            )
+        return "当前采用口径: 当天任务落盘；当天以各任务已落盘结论为主。"
+    if has_debates:
+        return "当前采用口径: 委员会补充结论；当天没有独立任务结论，委员会只作解释，不改写评分。"
+    return ""
+
+
+def _same_day_digest_snapshot_lines(
+    provider: DashboardDataProvider,
+    signal_date: str,
+    rows: tuple[DashboardSameDayTaskRow, ...],
+    debates: tuple[DashboardDebateSummary, ...],
+    *,
+    spotlights: tuple[DashboardCandidateSpotlight, ...] = (),
+    source_task_view=None,
+) -> tuple[str, ...]:
+    del provider, signal_date
+    ordered_rows = _ordered_same_day_summary_rows(rows)
+    task_limit = 2 if debates else 3
+    source_line = (
+        _same_day_source_status_digest_line(source_task_view)
+        if source_task_view is not None
+        else ""
+    )
+    market_line = _same_day_cross_market_digest_line(
+        spotlights=spotlights,
+        debates=debates,
+    )
+    decision_line = _same_day_digest_decision_line(
+        rows=rows,
+        spotlights=spotlights,
+        debates=debates,
+    )
+    event_lines = tuple(
+        event.line
+        for event in _same_day_digest_summary_events(
+            ordered_rows=ordered_rows,
+            task_limit=task_limit,
+            debates=debates,
+        )
+        if not event.line.startswith("讨论过程:")
+    )
+    return _unique_lines(
+        ((source_line,) if source_line else ()),
+        ((market_line,) if market_line else ()),
+        ((decision_line,) if decision_line else ()),
+        event_lines,
+    )
+
+
+def _same_day_digest_conclusion_lines(lines: tuple[str, ...]) -> tuple[str, ...]:
+    return tuple(
+        line
+        for line in lines
+        if not (line.startswith("讨论过程:") or line.startswith("讨论结果:"))
+    )
+
+
+def _task_message_judgment_line(
+    task_view,
+    row: DashboardSameDayTaskRow,
+) -> str:
+    structured_focus = _structured_task_message_focus_line(task_view)
+    if structured_focus:
+        return f"关键判断: {structured_focus}"
+
+    review_lines = tuple(getattr(task_view, "review_lines", ())[:1])
+    recommendation_lines = tuple(getattr(task_view, "recommendation_lines", ())[:1])
+    agenda_lines = tuple(getattr(task_view, "agenda_lines", ())[:1])
+    watchlist_lines = tuple(getattr(task_view, "watchlist_lines", ())[:1])
+    blocker_lines = tuple(getattr(task_view, "blocker_lines", ())[:1])
+    next_day_focus_lines = tuple(getattr(task_view, "next_day_focus_lines", ())[:1])
+    candidate_lines: tuple[str, ...]
+    if row.blocked_count > 0:
+        candidate_lines = blocker_lines + review_lines
+    elif row.actionable_count > 0:
+        candidate_lines = review_lines + recommendation_lines + agenda_lines
+    elif row.watch_count > 0:
+        candidate_lines = review_lines + watchlist_lines + agenda_lines
+    else:
+        candidate_lines = review_lines + agenda_lines + next_day_focus_lines
+
+    for line in candidate_lines:
+        cleaned = _clean_task_message_judgment(line)
+        if cleaned:
+            return f"关键判断: {cleaned}"
+
+    if row.blocked_count > 0:
+        return f"关键判断: 有 {row.blocked_count} 个阻塞对象待复核。"
+    if row.actionable_count > 0:
+        return f"关键判断: 有 {row.actionable_count} 个待复核对象已落盘。"
+    if row.watch_count > 0:
+        return f"关键判断: 有 {row.watch_count} 个观察对象待继续确认。"
+    return "关键判断: 这是当天阶段结论的落盘摘要。"
+
+
+def _structured_task_message_focus_line(task_view) -> str:
+    detail_cards = tuple(getattr(task_view, "detail_cards", ()) or ())
+    if not detail_cards:
+        return ""
+    lead_card = detail_cards[0]
+    note = _safe_current_research_line(
+        lead_card.decision_note or lead_card.blocker or lead_card.next_step
+    ).strip()
+    if not note:
+        return ""
+    structured_markers = (
+        "倾向优先纸面复核",
+        "但先卡住",
+        "跨市线索",
+        "历史校验",
+        "讨论视角",
+        "同向 ",
+        "反向 ",
+    )
+    if not any(marker in note for marker in structured_markers):
+        return ""
+    parts = [lead_card.display_name]
+    if lead_card.review_meta:
+        parts.append(lead_card.review_meta)
+    parts.append(note)
+    return " | ".join(part for part in parts if part)
+
+
+def _clean_task_message_judgment(line: str) -> str:
+    cleaned = _safe_current_research_line(line).strip()
+    if not cleaned:
+        return ""
+    prefixes = (
+        "先看推荐: ",
+        "先核对卡点: ",
+        "安排复核: ",
+        "明日重点: ",
+    )
+    for prefix in prefixes:
+        if cleaned.startswith(prefix):
+            return cleaned[len(prefix) :].strip()
+    return cleaned
+
+
+def _timeline_task_digest_line(task_view, row: DashboardSameDayTaskRow) -> str:
+    time_prefix = _same_day_task_time_prefix(row)
+    judgment = _task_message_judgment_line(task_view, row)
+    if judgment.startswith("关键判断: "):
+        return f"- {row.task_label}: {time_prefix}{judgment[len('关键判断: ') :]}"
+    summary = _task_message_summary(task_view)
+    return f"- {row.task_label}: {time_prefix}{summary}"
+
+
+def _timeline_debate_process_line(
+    debate_summary: DashboardDebateSummary,
+) -> str:
+    parts = []
+    round_flow_line = _debate_round_flow_line(debate_summary).replace(
+        "过程主线: ", "过程主线 ", 1
+    )
+    if round_flow_line:
+        parts.append(round_flow_line)
+    bullish_line = _debate_top_view_line(
+        debate_summary,
+        stance="bullish",
+        prefix="关键支持",
+    )
+    bearish_line = _debate_top_view_line(
+        debate_summary,
+        stance="bearish",
+        prefix="关键反对",
+    )
+    watch_line = _debate_watch_focus_line(debate_summary)
+    if watch_line.startswith("下一触发: "):
+        watch_line = watch_line.replace("下一触发: ", "触发 ", 1)
+    if bullish_line and bearish_line:
+        parts.append(
+            "过程对照: "
+            + bullish_line.replace("关键支持: ", "支持 ", 1)
+            + " | "
+            + bearish_line.replace("关键反对: ", "反对 ", 1)
+        )
+    elif bullish_line:
+        parts.append(bullish_line)
+    elif bearish_line:
+        parts.append(bearish_line)
+    elif watch_line:
+        parts.append(watch_line)
+    if watch_line and (bullish_line or bearish_line):
+        parts.append(watch_line)
+    elif not (bullish_line or bearish_line or watch_line):
+        parts.append(
+            (
+                f"投票 看多 {debate_summary.bull_count}"
+                f" / 看空 {debate_summary.bear_count}"
+                f" / 中性 {debate_summary.neutral_count}"
+            )
+        )
+    return f"- {debate_summary.display_name}: {' | '.join(parts[:3])}"
+
+
+def _timeline_debate_result_line(
+    debate_summary: DashboardDebateSummary,
+) -> str:
+    conclusion = _debate_conclusion_summary(debate_summary)
+    has_bear_view = bool(
+        _debate_top_view_line(
+            debate_summary,
+            stance="bearish",
+            prefix="反对方",
+        )
+    )
+    lead = (
+        conclusion.decision_line.replace("研究口径: ", "")
+        .replace("当前结论: ", "")
+        .replace("核心卡点: ", "卡点 ")
+        or debate_summary.recommended_adjustment_label
+    )
+    parts = [lead]
+    compact_cross_market_line = _focus_cross_market_digest_line(
+        debate_summary=debate_summary,
+        focus_display=debate_summary.display_name,
+    )
+    if compact_cross_market_line:
+        parts.append(compact_cross_market_line)
+    elif conclusion.opposition_line and not has_bear_view:
+        parts.append(conclusion.opposition_line.replace("讨论反对: ", "反对 "))
+    followup_line = _compact_debate_followup_line(
+        debate_summary,
+        conclusion=conclusion,
+    )
+    if followup_line:
+        parts.append(
+            followup_line.replace("下一触发: ", "触发 ").replace(
+                "讨论待确认: ", "待确认 "
+            )
+        )
+    return f"- {debate_summary.display_name}: {' | '.join(parts[:3])}"
+
+
+def _timeline_debate_conclusion_lines(
+    debate_summary: DashboardDebateSummary,
+) -> tuple[str, ...]:
+    conclusion = _debate_conclusion_summary(debate_summary)
+    watch_line = _debate_watch_focus_line(debate_summary)
+    if watch_line.startswith("下一触发: "):
+        watch_line = watch_line.replace("下一触发: ", "触发 ", 1)
+    lead_view_line = _debate_top_view_line(
+        debate_summary,
+        stance="bullish",
+        prefix="支持方",
+    ) or _debate_top_view_line(
+        debate_summary,
+        stance="neutral",
+        prefix="主导视角",
+    )
+    counter_view_line = _debate_top_view_line(
+        debate_summary,
+        stance="bearish",
+        prefix="反对方",
+    )
+    stance_line = ""
+    if lead_view_line and counter_view_line:
+        stance_line = (
+            "讨论站位: "
+            + lead_view_line.replace("支持方: ", "支持 ", 1)
+            + " | "
+            + counter_view_line.replace("反对方: ", "反对 ", 1)
+        )
+    elif lead_view_line:
+        stance_line = lead_view_line
+    elif counter_view_line:
+        stance_line = counter_view_line
+    return _unique_lines(
+        (
+            _timeline_debate_result_line(debate_summary).removeprefix("- ").strip(),
+            stance_line,
+            conclusion.opposition_line if not counter_view_line else "",
+            watch_line,
+        )
+    )
+
+
 def _render_command_center(
     task_view,
     overview: DashboardDateOverview,
@@ -3139,10 +5479,10 @@ def _render_command_center(
     overview_lines = tuple(
         line
         for line in (
-            f"研究入口: {task_view.task_label} · {_current_mode_label(task_view)}",
+            f"当前任务: {task_view.task_label} · {_current_mode_label(task_view)}",
             f"回看日期: {review_date_label(task_view)}",
             (
-                f"覆盖任务 {overview.task_count} / 待复核 {overview.actionable_total} / 观察 {overview.watch_total} / 阻塞 {overview.blocked_total}"
+                f"涉及任务 {overview.task_count} / 待复核 {overview.actionable_total} / 观察 {overview.watch_total} / 阻塞 {overview.blocked_total}"
                 if overview.signal_date
                 else f"待复核 {task_view.actionable_count} / 观察 {task_view.watch_count} / 阻塞 {task_view.blocked_count}"
             ),
@@ -3253,6 +5593,7 @@ def _render_decision_flow(
     if not home_spotlights:
         return
     st.subheader("焦点候选")
+    signal_date = _task_view_signal_date(task_view)
 
     for start in range(0, min(len(home_spotlights), 4), 2):
         columns = st.columns(min(len(home_spotlights[start : start + 2]), 2))
@@ -3274,7 +5615,11 @@ def _render_decision_flow(
                             label,
                             key=f"home-{workspace}-{item.symbol}-{start}",
                         ):
-                            _queue_workspace_jump(workspace, item.symbol)
+                            _queue_home_spotlight_handoff(
+                                workspace=workspace,
+                                spotlight=item,
+                                signal_date=signal_date,
+                            )
                             st.rerun()
 
 
@@ -3292,29 +5637,158 @@ def _home_focus_spotlights(
     return tuple(item for item in spotlights if len(item.task_labels) > 1)
 
 
-def _home_spotlight_lines(
+def _spotlight_discussion_or_evidence_lines(
     spotlight: DashboardCandidateSpotlight,
+    *,
+    reason_label: str,
+    risk_label: str,
 ) -> tuple[str, ...]:
+    discussion_lines = tuple(
+        line
+        for line in (
+            (
+                f"讨论支持: {spotlight.support_points[0]}"
+                if spotlight.support_points
+                else ""
+            ),
+            (
+                f"讨论反对: {spotlight.opposition_points[0]}"
+                if spotlight.opposition_points
+                else ""
+            ),
+            (
+                f"讨论待确认: {spotlight.watch_items[0]}"
+                if spotlight.watch_items
+                else ""
+            ),
+        )
+        if line
+    )
+    if discussion_lines:
+        return discussion_lines
     return tuple(
         line
         for line in (
-            f"覆盖任务: {'、'.join(spotlight.task_labels)}",
-            f"联动状态: {_action_status_label(spotlight.action_label, spotlight.status_label)}",
             (
-                f"汇总理由: {'；'.join(spotlight.reasons[:2])}"
+                f"{reason_label}: {'；'.join(spotlight.reasons[:2])}"
                 if spotlight.reasons
                 else ""
             ),
-            (f"汇总风险: {'；'.join(spotlight.risks[:2])}" if spotlight.risks else ""),
+            (
+                f"{risk_label}: {'；'.join(spotlight.risks[:2])}"
+                if spotlight.risks
+                else ""
+            ),
         )
         if line
     )
 
 
+def _spotlight_global_view_lines(
+    spotlight: DashboardCandidateSpotlight,
+    *,
+    reason_label: str,
+    risk_label: str,
+) -> tuple[str, ...]:
+    return tuple(
+        line
+        for line in (
+            (
+                f"跨市传导: {spotlight.cross_market_summary}"
+                if spotlight.cross_market_summary
+                else ""
+            ),
+            (
+                f"传导链: {spotlight.cross_market_chain_summary}"
+                if spotlight.cross_market_chain_summary
+                else ""
+            ),
+            (
+                f"确认信号: {spotlight.cross_market_validation_summary}"
+                if spotlight.cross_market_validation_summary
+                else ""
+            ),
+            (
+                f"失效信号: {spotlight.cross_market_invalidation_summary}"
+                if spotlight.cross_market_invalidation_summary
+                else ""
+            ),
+            *_spotlight_discussion_or_evidence_lines(
+                spotlight,
+                reason_label=reason_label,
+                risk_label=risk_label,
+            ),
+        )
+        if line
+    )
+
+
+def _home_spotlight_lines(
+    spotlight: DashboardCandidateSpotlight,
+) -> tuple[str, ...]:
+    return _same_day_spotlight_card_lines(spotlight)
+
+
+def _same_day_spotlight_card_lines(
+    spotlight: DashboardCandidateSpotlight,
+) -> tuple[str, ...]:
+    conclusion_line = f"当前结论: {_action_status_label(spotlight.action_label, spotlight.status_label)}"
+    cross_market_line = (
+        f"跨市主线: {spotlight.cross_market_summary}"
+        if spotlight.cross_market_summary
+        else (
+            f"讨论支持: {spotlight.support_points[0]}"
+            if spotlight.support_points
+            else (
+                f"当前理由: {'；'.join(spotlight.reasons[:2])}"
+                if spotlight.reasons
+                else ""
+            )
+        )
+    )
+    blocker_or_followup_line = ""
+    if spotlight.blocker:
+        blocker_or_followup_line = f"当前卡点: {spotlight.blocker}"
+    elif spotlight.watch_items:
+        blocker_or_followup_line = f"讨论待确认: {spotlight.watch_items[0]}"
+    elif spotlight.opposition_points:
+        blocker_or_followup_line = f"讨论反对: {spotlight.opposition_points[0]}"
+    elif spotlight.next_step:
+        blocker_or_followup_line = f"下一步: {spotlight.next_step}"
+    meta_line = _join_display_parts(
+        _task_scope_line(_task_scope_summary(spotlight.task_labels)),
+        _review_meta_line("复核", spotlight.review_meta),
+        separator=" / ",
+    )
+    return _unique_lines(
+        (
+            conclusion_line,
+            cross_market_line,
+            blocker_or_followup_line,
+            meta_line,
+        )
+    )
+
+
+def _same_day_spotlight_card_tone(
+    spotlight: DashboardCandidateSpotlight,
+) -> str:
+    if spotlight.blocker:
+        return "blocked"
+    if spotlight.cross_market_summary or spotlight.support_points:
+        return "focus"
+    if spotlight.watch_items or spotlight.opposition_points:
+        return "pressure"
+    return "archive"
+
+
 def _render_same_day_candidate_spotlights(
     spotlights: tuple[DashboardCandidateSpotlight, ...],
+    *,
+    signal_date: str = "",
 ) -> None:
-    st.subheader("同日全局候选总览")
+    st.subheader("同日联动焦点")
+    st.caption("这里只保留跨任务共振、当前卡点和下一步，不再重复铺开长摘要。")
     if not spotlights:
         st.info("当前日期暂无跨任务候选总览。")
         return
@@ -3323,24 +5797,198 @@ def _render_same_day_candidate_spotlights(
         columns = st.columns(min(len(spotlights[start : start + 2]), 2))
         for column, item in zip(columns, spotlights[start : start + 2]):
             with column:
-                summary_bits = [
-                    f"来源任务: {'、'.join(item.task_labels)}",
-                    f"研究状态: {_action_status_label(item.action_label, item.status_label)}",
-                ]
-                if review_line := _review_meta_line("复核", item.review_meta):
-                    summary_bits.append(review_line)
-                emphasis = item.blocker or item.next_step or "继续跟踪"
-                notes = [
-                    f"### {item.display_name}",
-                    f"- 评分: `{item.score:.1f}`",
-                    f"- {' / '.join(summary_bits)}",
-                    f"- 当前重点: {emphasis}",
-                ]
-                if item.reasons:
-                    notes.append(f"- 理由: {'；'.join(item.reasons[:2])}")
-                if item.risks:
-                    notes.append(f"- 风险: {'；'.join(item.risks[:2])}")
-                st.markdown("\n".join(notes))
+                _render_cockpit_card(
+                    kicker=f"同日联动 · {item.score:.1f}分",
+                    title=item.display_name,
+                    lines=_same_day_spotlight_card_lines(item),
+                    tone=_same_day_spotlight_card_tone(item),
+                )
+                action_cols = st.columns(len(_home_focus_action_targets()))
+                for action_col, (label, workspace) in zip(
+                    action_cols,
+                    _home_focus_action_targets(),
+                ):
+                    with action_col:
+                        if _stretch_button(
+                            label,
+                            key=f"same-day-spotlight-{workspace}-{item.symbol}-{start}",
+                        ):
+                            _queue_home_spotlight_handoff(
+                                workspace=workspace,
+                                spotlight=item,
+                                signal_date=signal_date,
+                            )
+                            st.rerun()
+
+
+def _provider_same_day_spotlights(
+    provider: DashboardDataProvider,
+    signal_date: str,
+) -> tuple[DashboardCandidateSpotlight, ...]:
+    loader = getattr(provider, "same_day_candidate_spotlights", None)
+    if callable(loader):
+        return tuple(loader(signal_date) or ())
+    return ()
+
+
+def _provider_same_day_candidate_journey(
+    provider: DashboardDataProvider,
+    signal_date: str,
+    symbol: str,
+) -> tuple[DashboardCandidateJourneyStep, ...]:
+    loader = getattr(provider, "same_day_candidate_journey", None)
+    if callable(loader):
+        return tuple(loader(signal_date, symbol) or ())
+    return ()
+
+
+def _provider_date_overview(
+    provider: DashboardDataProvider,
+    signal_date: str,
+    *,
+    spotlights: tuple[DashboardCandidateSpotlight, ...] | None = None,
+    debates: tuple[DashboardDebateSummary, ...] | None = None,
+) -> DashboardDateOverview | None:
+    loader = getattr(provider, "date_overview", None)
+    if callable(loader):
+        try:
+            return loader(signal_date, spotlights=spotlights, debates=debates)
+        except TypeError:
+            return loader(signal_date)
+    return None
+
+
+def _timeline_overview_card_lines(
+    row: DashboardTimelineRow,
+    digest_conclusion_lines: tuple[str, ...],
+    progress_lines: tuple[str, ...],
+) -> tuple[str, ...]:
+    context_lines = tuple(
+        line
+        for line in digest_conclusion_lines
+        if line.startswith("数据链路: ") or line.startswith("跨市主线: ")
+    )
+    fallback_line = ""
+    if not context_lines:
+        fallback_line = next(
+            (
+                line
+                for line in digest_conclusion_lines
+                if (
+                    line.strip()
+                    and line.strip() != row.headline.strip()
+                    and line.strip() not in progress_lines
+                )
+            ),
+            "",
+        )
+    return _unique_lines(
+        (
+            _task_scope_line(_task_scope_summary(row.task_labels)),
+            *context_lines,
+            fallback_line,
+        )
+    )
+
+
+def _timeline_progress_card_lines(
+    provider: DashboardDataProvider,
+    signal_date: str,
+    rows: tuple[DashboardSameDayTaskRow, ...],
+) -> tuple[str, ...]:
+    return _unique_lines(
+        tuple(
+            _timeline_task_digest_line(
+                provider.build_task_view(task_row.task_id, signal_date=signal_date),
+                task_row,
+            )
+            .removeprefix("- ")
+            .strip()
+            for task_row in rows[:3]
+        )
+    )
+
+
+def _timeline_candidate_journey_lines(
+    journey_steps: tuple[DashboardCandidateJourneyStep, ...],
+) -> tuple[str, ...]:
+    return _unique_lines(
+        tuple(
+            " | ".join(
+                part
+                for part in (
+                    f"{step.phase_label}: {_action_status_label(step.action_label, step.status_label)}",
+                    step.review_meta.strip(),
+                    (step.blocker or step.next_step or "继续跟踪").strip(),
+                )
+                if part
+            )
+            for step in journey_steps[:3]
+        )
+    )
+
+
+def _timeline_debate_card_lines(
+    debate_summary: DashboardDebateSummary,
+) -> tuple[str, ...]:
+    prefix = f"- {debate_summary.display_name}: "
+    conclusion_lines = _timeline_debate_conclusion_lines(debate_summary)
+    decision_line = (
+        conclusion_lines[0].removeprefix(f"{debate_summary.display_name}: ").strip()
+        if conclusion_lines
+        else ""
+    )
+    decision_line = decision_line.replace(
+        f" | 先看 {debate_summary.display_name}",
+        "",
+    )
+    process_line = (
+        _timeline_debate_process_line(debate_summary).removeprefix(prefix).strip()
+    )
+    round_flow_line = _debate_round_flow_line(debate_summary).replace(
+        "过程主线: ", "过程主线 ", 1
+    )
+    watch_line = _debate_watch_focus_line(debate_summary)
+    if watch_line.startswith("下一触发: "):
+        watch_line = watch_line.replace("下一触发: ", "触发 ", 1)
+    normalized_decision_line = decision_line.strip().rstrip("。；;,.，、")
+    normalized_watch_line = watch_line.strip().rstrip("。；;,.，、")
+    if normalized_watch_line and normalized_watch_line in normalized_decision_line:
+        watch_line = ""
+    compact_process_line = process_line
+    if round_flow_line and watch_line:
+        compact_process_line = f"{round_flow_line} | {watch_line}"
+    elif round_flow_line:
+        compact_process_line = round_flow_line
+    stance_line = conclusion_lines[1] if len(conclusion_lines) > 1 else ""
+    if (
+        stance_line.startswith(("支持方: ", "主导视角: ", "反对方: "))
+        and " | " in stance_line
+    ):
+        stance_prefix, _, stance_detail = stance_line.partition(" | ")
+        normalized_stance_detail = stance_detail.strip().rstrip("。；;,.，、")
+        if (
+            normalized_stance_detail
+            and normalized_stance_detail in normalized_decision_line
+        ):
+            stance_line = stance_prefix
+    return _unique_lines(
+        (
+            decision_line,
+            stance_line,
+            compact_process_line,
+        )
+    )
+
+
+def _timeline_debate_card_tone(
+    debate_summary: DashboardDebateSummary,
+) -> str:
+    if debate_summary.recommended_adjustment == "lower":
+        return "blocked"
+    if debate_summary.disagreement_score >= 0.35:
+        return "pressure"
+    return "focus"
 
 
 def _render_date_timeline_cards(
@@ -3348,50 +5996,141 @@ def _render_date_timeline_cards(
     selected_date: str,
     current_task_id: str,
 ) -> None:
-    timeline_rows = provider.timeline_rows(limit=8)
+    timeline_rows = provider.timeline_rows(limit=6)
     if not timeline_rows:
         return
-    st.subheader("日期时间线")
-    for start in range(0, len(timeline_rows), 4):
-        columns = st.columns(min(len(timeline_rows[start : start + 4]), 4))
-        for column, row in zip(columns, timeline_rows[start : start + 4]):
-            is_active = row.signal_date == selected_date
-            resolution = _resolve_task_for_date_with_reason(
-                provider=provider,
-                current_task_id=current_task_id,
-                signal_date=row.signal_date,
-            )
-            secondary_label = _date_jump_secondary_label(
-                provider,
-                current_task_id,
-                row.signal_date,
-                resolution=resolution,
-            )
+    st.subheader("按日期展开")
+    st.caption("历史只保留压缩卡片，直接扫读；需要深入时再切到那一天。")
+    selected_key = "dashboard_home_timeline_date"
+    available_dates = tuple(row.signal_date for row in timeline_rows if row.signal_date)
+    selected_timeline_date = (
+        str(st.session_state.get(selected_key, "") or "").strip()
+        if available_dates
+        else ""
+    )
+    if selected_timeline_date not in available_dates:
+        selected_timeline_date = (
+            selected_date if selected_date in available_dates else available_dates[0]
+        )
+        st.session_state[selected_key] = selected_timeline_date
+
+    if len(available_dates) > 1:
+        st.caption("点击日期切换，只展开当天详情。")
+        date_columns = st.columns(len(available_dates))
+        for column, timeline_date in zip(date_columns, available_dates):
             with column:
-                st.markdown(
-                    f"""
-                    <div class="aqsp-date-card {"active" if is_active else ""}">
-                      <div class="aqsp-date-title">{row.signal_date}</div>
-                      <div class="aqsp-date-meta">{secondary_label}</div>
-                      <div class="aqsp-date-summary">
-                        待复核 {row.actionable_total} / 观察 {row.watch_total} / 阻塞 {row.blocked_total}<br/>
-                        {row.headline}
-                      </div>
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
                 if _stretch_button(
-                    "切到这天",
-                    key=f"timeline-date-{row.signal_date}",
+                    timeline_date,
+                    key=f"timeline-select-{timeline_date}",
+                    type="primary"
+                    if timeline_date == selected_timeline_date
+                    else "secondary",
                 ):
-                    _set_dashboard_selection(
-                        task_id=resolution.task_id,
-                        signal_date=row.signal_date,
-                    )
+                    st.session_state[selected_key] = timeline_date
                     st.rerun()
-                if resolution.reason:
-                    st.caption(resolution.reason)
+
+    row = next(
+        (item for item in timeline_rows if item.signal_date == selected_timeline_date),
+        timeline_rows[0],
+    )
+    resolution = _resolve_task_for_date_with_reason(
+        provider=provider,
+        current_task_id=current_task_id,
+        signal_date=row.signal_date,
+    )
+    secondary_label = _date_jump_secondary_label(
+        provider,
+        current_task_id,
+        row.signal_date,
+        resolution=resolution,
+    )
+    date_overview = _provider_date_overview(provider, row.signal_date)
+    debate_summaries = _provider_prioritized_debates(provider, row.signal_date)[:1]
+    same_day_rows = provider.same_day_task_rows(row.signal_date)
+    digest_lines = _same_day_digest_snapshot_lines(
+        provider,
+        row.signal_date,
+        same_day_rows,
+        debate_summaries,
+    )
+    digest_conclusion_lines = _same_day_digest_conclusion_lines(digest_lines)
+    progress_lines = _timeline_progress_card_lines(
+        provider,
+        row.signal_date,
+        same_day_rows,
+    )
+    overview_tone = (
+        "blocked"
+        if row.blocked_total
+        else ("focus" if row.actionable_total else "archive")
+    )
+    overview_col, detail_col = st.columns(2)
+    with overview_col:
+        _render_cockpit_card(
+            kicker=row.signal_date,
+            title=(
+                (
+                    date_overview.focus_headline.strip()
+                    if date_overview is not None
+                    else ""
+                )
+                or row.headline
+                or "这天先看这里"
+            ),
+            lines=_timeline_overview_card_lines(
+                row,
+                digest_conclusion_lines,
+                progress_lines,
+            ),
+            tone=overview_tone,
+        )
+    with detail_col:
+        if debate_summaries:
+            debate_summary = debate_summaries[0]
+            _render_cockpit_card(
+                kicker="多 Agent",
+                title=debate_summary.display_name,
+                lines=_timeline_debate_card_lines(debate_summary),
+                tone=_timeline_debate_card_tone(debate_summary),
+            )
+        elif progress_lines:
+            _render_cockpit_card(
+                kicker="任务进展",
+                title=secondary_label or "按阶段推进",
+                lines=progress_lines,
+                tone=overview_tone,
+            )
+        else:
+            _render_cockpit_card(
+                kicker="任务进展",
+                title=secondary_label or "当日压缩",
+                lines=("当天没有额外结构化讨论，先看总览卡片。",),
+                tone="archive",
+            )
+    if _stretch_button("切到这天", key=f"timeline-date-{row.signal_date}"):
+        _queue_home_selection_handoff(
+            signal_date=row.signal_date,
+            task_id=resolution.task_id,
+            task_label=(
+                next(
+                    (
+                        item.task_label
+                        for item in same_day_rows
+                        if item.task_id == resolution.task_id
+                    ),
+                    resolution.task_id,
+                )
+            ),
+            title=f"切到 {row.signal_date} 看这天总控",
+            lines=_timeline_overview_card_lines(
+                row,
+                digest_conclusion_lines,
+                progress_lines,
+            ),
+        )
+        st.rerun()
+    if resolution.reason:
+        st.caption(resolution.reason)
 
 
 def _render_same_day_task_matrix(
@@ -3430,16 +6169,54 @@ def _render_same_day_task_matrix(
                     f"切到{row.task_label}",
                     key=f"same-day-task-{row.task_id}-{row.signal_date}",
                 ):
-                    _set_dashboard_selection(
-                        task_id=row.task_id,
+                    _queue_home_selection_handoff(
                         signal_date=row.signal_date,
+                        task_id=row.task_id,
+                        task_label=row.task_label,
+                        title=f"切到 {row.phase_label} 看这段结论",
+                        lines=(
+                            f"切到这段先看: {row.headline or row.phase_summary or row.task_label}",
+                        ),
                     )
                     st.rerun()
 
 
-def _set_dashboard_latest_task(task_id: str, *, signal_date: str = "最新") -> None:
-    st.session_state["dashboard_pending_task_id"] = task_id
-    st.session_state["dashboard_pending_selected_date"] = signal_date
+def _task_workbench_handoff_lines(
+    snapshot: DashboardTaskSnapshot,
+    *,
+    signal_date: str,
+) -> tuple[str, ...]:
+    headline = snapshot.headline or snapshot.task_label
+    latest_date_line = (
+        f"最近独立结果日: {snapshot.latest_date}"
+        if snapshot.latest_date and snapshot.latest_date != signal_date
+        else ""
+    )
+    return tuple(
+        line
+        for line in (
+            f"切过去先看: {headline}",
+            f"当前状态: {snapshot.status_label}",
+            latest_date_line,
+        )
+        if line
+    )
+
+
+def _queue_task_workbench_handoff(
+    snapshot: DashboardTaskSnapshot,
+    *,
+    signal_date: str,
+) -> None:
+    _queue_home_selection_handoff(
+        signal_date=signal_date or "最新",
+        task_id=snapshot.task_id,
+        task_label=snapshot.task_label,
+        title=f"切到 {snapshot.task_label} 看任务快照",
+        lines=_task_workbench_handoff_lines(
+            snapshot, signal_date=signal_date or "最新"
+        ),
+    )
 
 
 def _render_task_workbench(
@@ -3492,8 +6269,8 @@ def _render_task_workbench(
                 "打开任务",
                 key=f"task-switch-{snapshot.task_id}",
             ):
-                _set_dashboard_latest_task(
-                    snapshot.task_id,
+                _queue_task_workbench_handoff(
+                    snapshot,
                     signal_date=signal_date or "最新",
                 )
                 st.rerun()
@@ -3532,8 +6309,8 @@ def _render_task_workbench(
                         "打开任务",
                         key=f"task-switch-hidden-{snapshot.task_id}-{signal_date or 'latest'}",
                     ):
-                        _set_dashboard_latest_task(
-                            snapshot.task_id,
+                        _queue_task_workbench_handoff(
+                            snapshot,
                             signal_date=signal_date or "最新",
                         )
                         st.rerun()
@@ -3720,6 +6497,1966 @@ def _render_home_execution_snapshot(
         )
 
 
+def _debate_active_roles_line(
+    debate_summary: DashboardDebateSummary,
+) -> str:
+    labels = _unique_lines(
+        tuple(view.role_label for view in debate_summary.agent_views if view.role_label)
+    )
+    if not labels:
+        return ""
+    if len(labels) <= 5:
+        return "讨论视角: " + "、".join(labels)
+    return "讨论视角: " + "、".join(labels[:5]) + f" 等 {len(labels)} 个角色"
+
+
+def _ordered_debate_agent_views(
+    debate_summary: DashboardDebateSummary,
+) -> tuple:
+    return tuple(
+        sorted(
+            debate_summary.agent_views,
+            key=lambda item: item.confidence,
+            reverse=True,
+        )
+    )
+
+
+def _debate_view_focus_text(view) -> str:
+    if view.stance == "bearish":
+        return (
+            view.key_risk
+            or view.key_argument
+            or view.key_opportunity
+            or "未补充核心观点"
+        )
+    if view.stance == "bullish":
+        return (
+            view.key_argument
+            or view.key_opportunity
+            or view.key_risk
+            or "未补充核心观点"
+        )
+    return (
+        view.key_argument or view.key_risk or view.key_opportunity or "未补充核心观点"
+    )
+
+
+def _debate_top_view_line(
+    debate_summary: DashboardDebateSummary,
+    *,
+    stance: str,
+    prefix: str,
+) -> str:
+    ordered_views = _ordered_debate_agent_views(debate_summary)
+    top_view = next((view for view in ordered_views if view.stance == stance), None)
+    if top_view is None:
+        return ""
+    return (
+        f"{prefix}: {top_view.role_label} {top_view.stance_label}"
+        f" / 置信 {top_view.confidence:.0%} | {_debate_view_focus_text(top_view)}"
+    )
+
+
+def _debate_watch_focus_line(
+    debate_summary: DashboardDebateSummary,
+) -> str:
+    conclusion = _debate_conclusion_summary(debate_summary)
+    for line in (
+        conclusion.validation_line,
+        conclusion.invalidation_line,
+        conclusion.watch_line,
+        conclusion.chain_or_trigger_line,
+    ):
+        if line:
+            return line
+    return ""
+
+
+def _debate_process_title(
+    debate_summary: DashboardDebateSummary,
+) -> str:
+    for line in (
+        debate_summary.adjustment_reason,
+        debate_summary.consensus,
+        debate_summary.primary_risk_gate,
+        debate_summary.next_trigger,
+    ):
+        cleaned = _safe_current_research_line(line).strip()
+        if cleaned:
+            return cleaned
+    return "为什么继续看"
+
+
+def _debate_process_outcome_line(
+    debate_summary: DashboardDebateSummary,
+) -> str:
+    conclusion = _debate_conclusion_summary(debate_summary)
+    decision_line = (
+        conclusion.decision_line.replace("研究口径: ", "")
+        .replace("当前结论: ", "")
+        .strip()
+    )
+    if decision_line:
+        return f"当前结论: {decision_line}"
+    process_title = _debate_process_title(debate_summary)
+    return f"当前结论: {process_title}" if process_title else ""
+
+
+def _debate_round_flow_line(
+    debate_summary: DashboardDebateSummary,
+) -> str:
+    rounds = tuple(
+        f"第 {index} 轮 {summary}"
+        for index, summary in enumerate(debate_summary.round_summaries[:2], start=1)
+        if str(summary).strip()
+    )
+    if not rounds:
+        return ""
+    return "过程主线: " + " → ".join(rounds)
+
+
+def _debate_process_lines(
+    debate_summary: DashboardDebateSummary,
+) -> tuple[str, ...]:
+    outcome_line = _debate_process_outcome_line(debate_summary)
+    round_flow_line = _debate_round_flow_line(debate_summary)
+    bullish_line = _debate_top_view_line(
+        debate_summary,
+        stance="bullish",
+        prefix="关键支持",
+    )
+    secondary_focus_line = (
+        _debate_top_view_line(
+            debate_summary,
+            stance="bearish",
+            prefix="关键反对",
+        )
+        or _debate_watch_focus_line(debate_summary)
+        or (
+            f"投票分布: 看多 {debate_summary.bull_count} / 看空 {debate_summary.bear_count}"
+            f" / 中性 {debate_summary.neutral_count}"
+        )
+    )
+    role_selection_line = (
+        f"选角理由: {debate_summary.role_selection_summary}"
+        if debate_summary.role_selection_summary
+        else ""
+    )
+    return _unique_lines(
+        (
+            outcome_line,
+            round_flow_line,
+            bullish_line,
+            role_selection_line,
+            secondary_focus_line,
+        ),
+    )
+
+
+def _home_debate_process_card_lines(
+    debate_summary: DashboardDebateSummary,
+) -> tuple[str, ...]:
+    lines = _debate_process_lines(debate_summary)
+    trimmed = lines[1:] if lines and lines[0].startswith("当前结论: ") else lines
+    plan_line = (
+        f"角色分工: {debate_summary.role_selection_plan}"
+        if debate_summary.role_selection_plan
+        else ""
+    )
+    if plan_line and len(trimmed) >= 2:
+        return _unique_lines((trimmed[0], trimmed[1], plan_line))
+    return trimmed[:3]
+
+
+def _home_debate_priority_key(
+    debate_summary: DashboardDebateSummary,
+) -> tuple[int, ...] | tuple[int, ... | str]:
+    verdict = debate_summary.research_verdict.strip()
+    verdict_rank = 0
+    if verdict:
+        if "优先" in verdict and ("复核" in verdict or "跟踪" in verdict):
+            verdict_rank = 3
+        elif any(
+            keyword in verdict
+            for keyword in ("纸面复核", "纸面跟踪", "重点跟踪", "重点观察")
+        ):
+            verdict_rank = 2
+        else:
+            verdict_rank = 1
+    cross_market_present = int(
+        any(view.role_id == "cross_market" for view in debate_summary.agent_views)
+    )
+    structure_count = sum(
+        1
+        for value in (
+            debate_summary.primary_risk_gate,
+            debate_summary.next_trigger,
+            debate_summary.historical_context_note,
+            debate_summary.role_reliability_lines,
+            debate_summary.support_points,
+            debate_summary.opposition_points,
+            debate_summary.watch_items,
+        )
+        if value
+    )
+    return (
+        verdict_rank,
+        int(bool(debate_summary.next_trigger)),
+        int(bool(debate_summary.primary_risk_gate)),
+        int(bool(debate_summary.historical_context_note)),
+        int(bool(debate_summary.role_reliability_lines)),
+        cross_market_present,
+        structure_count,
+        int(debate_summary.disagreement_score * 100),
+        debate_summary.round_count,
+        int(debate_summary.adjusted_score * 100),
+        debate_summary.created_at,
+    )
+
+
+def _salient_home_debates(
+    debates: tuple[DashboardDebateSummary, ...],
+) -> tuple[DashboardDebateSummary, ...]:
+    ordered = _ordered_home_debates(debates)
+    prioritized = tuple(
+        debate_summary
+        for debate_summary in ordered
+        if debate_summary_signal_value_tier(debate_summary) != "low"
+    )
+    if prioritized:
+        return prioritized
+    return ordered[:1]
+
+
+def _debate_signal_value_tier(
+    debate_summary: DashboardDebateSummary,
+) -> str:
+    return debate_summary_signal_value_tier(debate_summary)
+
+
+def _ordered_home_debates(
+    debates: tuple[DashboardDebateSummary, ...],
+) -> tuple[DashboardDebateSummary, ...]:
+    return tuple(
+        sorted(
+            debates,
+            key=_home_debate_priority_key,
+            reverse=True,
+        )
+    )
+
+
+def _provider_prioritized_debates(
+    provider: DashboardDataProvider,
+    signal_date: str,
+    *,
+    limit: int = 8,
+) -> tuple[DashboardDebateSummary, ...]:
+    prioritized = getattr(provider, "prioritized_debate_summaries", None)
+    if callable(prioritized):
+        try:
+            return prioritized(signal_date, limit=limit, salient_only=True)
+        except TypeError:
+            return prioritized(signal_date, salient_only=True)
+    try:
+        return _salient_home_debates(
+            provider.debate_summaries(signal_date, limit=limit)
+        )
+    except TypeError:
+        return _salient_home_debates(provider.debate_summaries(signal_date))[:limit]
+
+
+def _provider_same_day_task_rows(
+    provider: DashboardDataProvider,
+    signal_date: str,
+    *,
+    include_report_insights: bool = True,
+) -> tuple[DashboardSameDayTaskRow, ...]:
+    try:
+        return provider.same_day_task_rows(
+            signal_date,
+            include_report_insights=include_report_insights,
+        )
+    except TypeError:
+        return provider.same_day_task_rows(signal_date)
+
+
+def _empty_home_overview(signal_date: str) -> DashboardDateOverview:
+    return DashboardDateOverview(
+        signal_date=signal_date,
+        task_count=0,
+        actionable_total=0,
+        watch_total=0,
+        blocked_total=0,
+        top_task_label="",
+        top_headline="",
+        blocker_headline="",
+        focus_headline="",
+        workflow_summary="",
+        archive_summary="",
+    )
+
+
+def _empty_home_paper_summary(signal_date: str) -> DashboardPaperSummary:
+    return DashboardPaperSummary(
+        signal_date=signal_date,
+        open_positions=0,
+        pending_entries=0,
+        not_executable=0,
+        closed_trades=0,
+        open_position_lines=(),
+        event_lines=(),
+        action_summary_lines=(),
+    )
+
+
+def _provider_home_digest_payload(
+    provider: DashboardDataProvider,
+    task_id: str,
+    signal_date: str,
+) -> DashboardHomeDigestPayload:
+    loader = getattr(provider, "home_digest_payload", None)
+    if callable(loader):
+        return loader(task_id, signal_date=signal_date)
+
+    task_view = _provider_build_task_digest_view(provider)(
+        task_id,
+        signal_date=signal_date,
+    )
+    review_date = _task_view_signal_date(task_view) or signal_date
+    rows = _provider_same_day_task_rows(
+        provider,
+        review_date,
+        include_report_insights=False,
+    )
+    debates: tuple[DashboardDebateSummary, ...] = ()
+    if rows:
+        spotlights = provider.same_day_candidate_spotlights(review_date, limit=3)
+        try:
+            overview = provider.date_overview(
+                review_date,
+                rows=rows,
+                spotlights=spotlights,
+                debates=debates,
+            )
+        except TypeError:
+            overview = _provider_date_overview(
+                provider,
+                review_date,
+                spotlights=spotlights,
+                debates=debates,
+            )
+        if overview is None:
+            overview = _empty_home_overview(review_date)
+        paper_summary = provider.paper_summary(review_date)
+    else:
+        spotlights = ()
+        overview = _empty_home_overview(review_date)
+        paper_summary = _empty_home_paper_summary(review_date)
+    return DashboardHomeDigestPayload(
+        task_view=task_view,
+        same_day_rows=rows,
+        spotlights=spotlights,
+        debates=debates,
+        overview=overview,
+        paper_summary=paper_summary,
+    )
+
+
+def _compact_home_digest_part(value: str, *, limit: int = 56) -> str:
+    text = normalize_research_tone(value).strip()
+    if len(text) <= limit:
+        return text
+    return f"{text[:limit].rstrip()}..."
+
+
+def _debate_priority_digest_lines(
+    debates: tuple[DashboardDebateSummary, ...],
+) -> tuple[str, ...]:
+    ordered = _ordered_home_debates(debates)[:3]
+    lines: list[str] = []
+    for index, debate_summary in enumerate(ordered, start=1):
+        conclusion = _debate_conclusion_summary(debate_summary)
+        lead = (
+            debate_summary.research_verdict.strip()
+            or conclusion.cross_market_line.replace("跨市传导: ", "").strip()
+            or debate_summary.next_trigger.strip()
+            or debate_summary.primary_risk_gate.strip()
+            or "先看讨论分歧来源。"
+        )
+        compact_cross_market_line = _focus_cross_market_digest_line(
+            debate_summary=debate_summary,
+            focus_display=debate_summary.display_name,
+        ).replace(f" | 先看 {debate_summary.display_name}", "", 1)
+        compact_context_parts = tuple(
+            part.strip()
+            for part in compact_cross_market_line.split(" | ")
+            if part.strip()
+        )
+        support_or_context = (
+            conclusion.support_line.replace("讨论支持: ", "支持 ")
+            if conclusion.support_line
+            else conclusion.cross_market_line.replace("跨市传导: ", "传导 ")
+        )
+        watch_or_risk = ""
+        if conclusion.watch_line:
+            watch_or_risk = conclusion.watch_line.replace("讨论待确认: ", "待确认 ")
+        elif conclusion.opposition_line:
+            watch_or_risk = conclusion.opposition_line.replace("讨论反对: ", "反对 ")
+        elif conclusion.validation_line:
+            watch_or_risk = conclusion.validation_line.replace("确认信号: ", "确认 ")
+        elif conclusion.invalidation_line:
+            watch_or_risk = conclusion.invalidation_line.replace("失效信号: ", "失效 ")
+        elif debate_summary.next_trigger.strip():
+            watch_or_risk = f"触发 {debate_summary.next_trigger.strip()}"
+        elif debate_summary.primary_risk_gate.strip():
+            watch_or_risk = f"卡点 {debate_summary.primary_risk_gate.strip()}"
+        if compact_cross_market_line and watch_or_risk:
+            normalized_watch = watch_or_risk.strip()
+            if normalized_watch in compact_cross_market_line:
+                watch_or_risk = ""
+        parts = [_compact_home_digest_part(lead)]
+        parts.extend(
+            _compact_home_digest_part(part) for part in compact_context_parts[:2]
+        )
+        if len(parts) < 3 and support_or_context:
+            parts.append(_compact_home_digest_part(support_or_context))
+        if len(parts) < 3 and watch_or_risk:
+            parts.append(_compact_home_digest_part(watch_or_risk))
+        lines.append(
+            f"{index}. {debate_summary.display_name}: "
+            f"{' | '.join(part for part in parts[:3] if part)}"
+        )
+    return tuple(lines)
+
+
+def _debate_result_lines(
+    debate_summary: DashboardDebateSummary,
+) -> tuple[str, ...]:
+    conclusion = _debate_conclusion_summary(debate_summary)
+    return _unique_lines(
+        (
+            f"结论: {debate_summary.recommended_adjustment_label}",
+            (
+                f"共识: {debate_summary.consensus}"
+                if debate_summary.consensus
+                else "共识: 当前仍未形成明确一致结论。"
+            ),
+            conclusion.decision_line,
+            conclusion.active_roles_line,
+            conclusion.cross_market_line,
+            conclusion.chain_or_trigger_line,
+            conclusion.validation_line,
+            conclusion.invalidation_line,
+            conclusion.support_line,
+            conclusion.opposition_line,
+            conclusion.watch_line,
+            f"分歧分数: {debate_summary.disagreement_score:.2f}",
+            conclusion.evidence_line,
+            conclusion.history_line,
+            conclusion.reliability_line,
+        ),
+    )
+
+
+def _home_debate_result_card_lines(
+    debate_summary: DashboardDebateSummary,
+) -> tuple[str, ...]:
+    conclusion = _debate_conclusion_summary(debate_summary)
+    has_structured_evidence = any(
+        (
+            debate_summary.agent_views,
+            debate_summary.support_points,
+            debate_summary.opposition_points,
+            debate_summary.watch_items,
+            debate_summary.cross_market_summary,
+            debate_summary.cross_market_chain_summary,
+            debate_summary.cross_market_validation_summary,
+            debate_summary.cross_market_invalidation_summary,
+            debate_summary.research_verdict,
+            debate_summary.primary_risk_gate,
+            debate_summary.next_trigger,
+            debate_summary.historical_context_note,
+            debate_summary.role_reliability_lines,
+        )
+    )
+    if not has_structured_evidence:
+        return (
+            f"投票: 看多 {debate_summary.bull_count}"
+            f" / 看空 {debate_summary.bear_count}"
+            f" / 中性 {debate_summary.neutral_count}",
+        )
+    decision_line = (
+        conclusion.decision_line.replace("研究口径: ", "委员会结论: ", 1)
+        .replace("当前结论: ", "委员会结论: ", 1)
+        .replace("核心卡点: ", "委员会卡点: ", 1)
+    )
+    gate_line = (
+        f"当前卡点: {debate_summary.primary_risk_gate.strip()}"
+        if debate_summary.primary_risk_gate.strip()
+        else ""
+    )
+    trigger_line = (
+        f"下一触发: {debate_summary.next_trigger.strip()}"
+        if debate_summary.next_trigger.strip()
+        else ""
+    )
+    return _unique_lines(
+        (
+            decision_line,
+            gate_line,
+            trigger_line or conclusion.watch_line or conclusion.validation_line,
+        )
+    )[:3]
+
+
+def _home_debate_result_card_title(
+    debate_summary: DashboardDebateSummary,
+) -> str:
+    return (
+        debate_summary.recommended_adjustment_label.strip()
+        or debate_summary.research_verdict.strip()
+        or debate_summary.consensus.strip()
+        or "等待补齐委员会结论"
+    )
+
+
+def _debate_lane_status_context(
+    task_view,
+    debates: tuple[DashboardDebateSummary, ...],
+) -> tuple[str, tuple[str, ...], str]:
+    debate_runtime = load_debate_runtime_config(getattr(task_view, "task_id", ""))
+    configured_roles = tuple(debate_runtime.roles)
+    configured_labels = tuple(
+        _RUNTIME_DEBATE_ROLE_LABELS.get(role, role) for role in configured_roles
+    )
+    triggered_role_ids = {
+        view.role_id
+        for debate_summary in debates
+        for view in debate_summary.agent_views
+    }
+    triggered_labels = tuple(
+        _RUNTIME_DEBATE_ROLE_LABELS.get(role, role)
+        for role in configured_roles
+        if role in triggered_role_ids
+    )
+    missing_labels = tuple(
+        _RUNTIME_DEBATE_ROLE_LABELS.get(role, role)
+        for role in configured_roles
+        if role not in triggered_role_ids
+    )
+    symbol_count = len(
+        {debate_summary.symbol for debate_summary in debates if debate_summary.symbol}
+    )
+    disagreement_focus = tuple(
+        debate_summary.display_name
+        for debate_summary in _ordered_home_debates(debates)
+        if debate_summary.disagreement_score >= 0.35
+    )
+    salient_debates = _salient_home_debates(debates)
+    background_count = max(0, len(debates) - len(salient_debates))
+
+    if debate_runtime.enabled:
+        title = f"{len(configured_roles)} 轨道待命 / {len(triggered_labels)} 已出场"
+    elif configured_roles:
+        title = "讨论执行关闭"
+    else:
+        title = "讨论轨道未配置"
+
+    if not configured_roles:
+        lines = ("当前任务没有可用讨论角色，先回到候选与纸面证据。",)
+        return title, lines, "pressure"
+
+    role_preview = "、".join(configured_labels[:4])
+    if len(configured_labels) > 4:
+        role_preview = f"{role_preview} 等 {len(configured_labels)} 个角色"
+    default_line = f"默认轨道: {role_preview}"
+    tuning_line = _runtime_debate_tuning_line(debate_runtime)
+
+    if debates:
+        activity_line = f"今日讨论: {len(debates)} 场 / 覆盖 {symbol_count} 个标的 / 已出场 {len(triggered_labels)} 个角色"
+    elif debate_runtime.enabled:
+        activity_line = "今日讨论: 当前还没触发同日讨论，角色轨道已待命。"
+    else:
+        activity_line = "今日讨论: 当前关闭执行，只保留角色编排供后续启用。"
+
+    if triggered_labels:
+        triggered_preview = "、".join(triggered_labels[:4])
+        if len(triggered_labels) > 4:
+            triggered_preview = f"{triggered_preview} 等 {len(triggered_labels)} 个角色"
+        triggered_line = f"实际出场: {triggered_preview}"
+    else:
+        triggered_line = "实际出场: 当前还没有角色发言记录。"
+
+    if debates:
+        coverage_summary_line = (
+            f"价值分层: 高价值 {len(salient_debates)} / 背景 {background_count}"
+        )
+    else:
+        coverage_summary_line = ""
+
+    if missing_labels:
+        missing_preview = "、".join(missing_labels[:4])
+        if len(missing_labels) > 4:
+            missing_preview = f"{missing_preview} 等 {len(missing_labels)} 个角色"
+        coverage_line = f"待补轨道: {missing_preview}"
+    else:
+        coverage_line = "轨道覆盖: 当前默认角色已全部出场。"
+
+    disagreement_line = (
+        f"高分歧焦点: {'、'.join(disagreement_focus[:2])}"
+        if disagreement_focus
+        else "高分歧焦点: 当前没有高分歧标的，优先看共识结论。"
+    )
+    tone = (
+        "pressure"
+        if not debate_runtime.enabled or disagreement_focus
+        else ("focus" if debates else "archive")
+    )
+    return (
+        title,
+        _unique_lines(
+            (
+                default_line,
+                tuning_line,
+                activity_line,
+                triggered_line,
+                coverage_summary_line,
+                coverage_line,
+                disagreement_line,
+            )
+        )[:4],
+        tone,
+    )
+
+
+def _render_home_debate_process(
+    task_view,
+    debates: tuple[DashboardDebateSummary, ...],
+) -> None:
+    st.subheader("多 Agent 讨论过程")
+    st.caption("看完委员会裁决后，再回头看为什么会吵起来，只保留影响复核顺序的过程。")
+    lane_title, lane_lines, lane_tone = _debate_lane_status_context(task_view, debates)
+    _render_cockpit_card(
+        kicker="当前轨道",
+        title=lane_title,
+        lines=lane_lines,
+        tone=lane_tone,
+    )
+    if not debates:
+        st.info("当天没有多 Agent 讨论过程。")
+        return
+
+    ordered = _salient_home_debates(debates)[:3]
+    for start in range(0, len(ordered), 2):
+        columns = st.columns(min(len(ordered[start : start + 2]), 2))
+        for column, debate_summary in zip(columns, ordered[start : start + 2]):
+            with column:
+                _render_cockpit_card(
+                    kicker=f"{debate_summary.display_name} · {debate_summary.round_count} 轮讨论",
+                    title=_debate_process_title(debate_summary),
+                    lines=_home_debate_process_card_lines(debate_summary),
+                    tone="pressure"
+                    if debate_summary.disagreement_score >= 0.35
+                    else "archive",
+                )
+                if _stretch_button(
+                    "看讨论",
+                    key=f"home-debate-process-{debate_summary.symbol}",
+                ):
+                    _queue_home_debate_handoff(
+                        debate_summary=debate_summary,
+                        title="带着多 Agent 讨论过程去看候选复盘",
+                        lines=_home_debate_process_card_lines(debate_summary),
+                    )
+                    st.rerun()
+
+
+def _render_home_debate_results(
+    debates: tuple[DashboardDebateSummary, ...],
+) -> None:
+    st.subheader("多 Agent 讨论结果")
+    st.caption("这里只保留结论、支持/反对和待确认，不把原始辩词堆回首屏。")
+    if not debates:
+        st.info("候选已更新，讨论回填中；多 Agent 不阻塞盘中候选落盘。")
+        return
+
+    ordered = _salient_home_debates(debates)
+    _render_cockpit_card(
+        kicker="先看顺序",
+        title=ordered[0].display_name,
+        lines=_debate_priority_digest_lines(ordered),
+        tone="focus",
+    )
+    ordered = ordered[:1]
+    for start in range(0, len(ordered), 2):
+        columns = st.columns(min(len(ordered[start : start + 2]), 2))
+        for column, debate_summary in zip(columns, ordered[start : start + 2]):
+            with column:
+                _render_cockpit_card(
+                    kicker=debate_summary.display_name,
+                    title=_home_debate_result_card_title(debate_summary),
+                    lines=_home_debate_result_card_lines(debate_summary),
+                    tone="blocked"
+                    if debate_summary.recommended_adjustment == "lower"
+                    else (
+                        "pressure"
+                        if debate_summary.disagreement_score >= 0.35
+                        else "focus"
+                    ),
+                )
+                if _stretch_button(
+                    "看结果",
+                    key=f"home-debate-result-{debate_summary.symbol}",
+                ):
+                    _queue_home_debate_handoff(
+                        debate_summary=debate_summary,
+                        title="带着多 Agent 讨论结果去看候选复盘",
+                        lines=_home_debate_result_card_lines(debate_summary),
+                    )
+                    st.rerun()
+
+
+def _simple_candidate_card_lines(card: DashboardCandidateCard) -> tuple[str, ...]:
+    return _unique_lines(
+        (
+            (
+                f"催化: {card.news_catalyst_summary}"
+                if card.news_catalyst_summary
+                else ""
+            ),
+            (
+                f"跨市主线: {card.cross_market_summary}"
+                if card.cross_market_summary
+                else ""
+            ),
+            (
+                f"传导: {_cross_market_chain_lead_summary(card.cross_market_chain_summary)}"
+                if card.cross_market_chain_summary
+                else ""
+            ),
+            (
+                f"确认: {card.cross_market_validation_summary}"
+                if card.cross_market_validation_summary
+                else ""
+            ),
+            (
+                f"失效: {card.cross_market_invalidation_summary}"
+                if card.cross_market_invalidation_summary
+                else ""
+            ),
+            f"状态: {_action_status_label(card.action_label, card.status_label)}",
+            (f"下一步: {_card_next_action(card)}" if _card_next_action(card) else ""),
+            (
+                f"卡点: {_card_primary_blocker(card)}"
+                if _card_primary_blocker(card)
+                else ""
+            ),
+        )
+    )[:5]
+
+
+def _simple_candidate_bucket(
+    card: DashboardCandidateCard,
+    *,
+    cooldown_until: str,
+) -> str:
+    if cooldown_until:
+        return "风控压制"
+    if _card_primary_blocker(card):
+        return "PM/风控阻塞"
+    return "盘中观察"
+
+
+def _simple_candidate_card_tone(
+    card: DashboardCandidateCard,
+    *,
+    cooldown_until: str,
+) -> str:
+    if _card_primary_blocker(card):
+        return "blocked"
+    if (
+        cooldown_until
+        or _action_status_label(card.action_label, card.status_label) != "纸面复核"
+    ):
+        return "watch"
+    return "focus"
+
+
+_HOME_STATUS_FILTERS = ("全部", "推荐", "观察", "阻塞")
+
+
+def _home_status_filter() -> str:
+    value = str(st.session_state.get("dashboard_home_status_filter", "全部") or "")
+    return value if value in _HOME_STATUS_FILTERS else "全部"
+
+
+def _set_home_status_filter(value: str) -> None:
+    if value in _HOME_STATUS_FILTERS:
+        st.session_state["dashboard_home_status_filter"] = value
+
+
+def _candidate_status_bucket(card: DashboardCandidateCard) -> str:
+    status = _action_status_label(card.action_label, card.status_label)
+    if _card_primary_blocker(card) or "阻塞" in status:
+        return "阻塞"
+    if (
+        status == "纸面复核"
+        or "推荐" in card.rank_label
+        or "顺位" in card.rank_label
+        or card.action_label in {"纸面复核", "优先复核", "上调优先级"}
+        or "纸面复核" in card.action_label
+        or "优先复核" in card.action_label
+    ):
+        return "推荐"
+    return "观察"
+
+
+def _snapshot_status_bucket(candidate) -> str:
+    status = str(candidate.research_status or "").strip()
+    if "阻塞" in status or "不可" in status or "过期" in status:
+        return "阻塞"
+    if is_home_recommendation(candidate):
+        return "推荐"
+    return "观察"
+
+
+def _status_filter_matches(bucket: str, status_filter: str) -> bool:
+    return status_filter == "全部" or bucket == status_filter
+
+
+def _render_home_status_switch(
+    *,
+    counts: tuple[int, int, int],
+    key_prefix: str,
+) -> str:
+    """Render a small, explicit status filter instead of hiding cards in accordions."""
+    current = _home_status_filter()
+    labels = (
+        ("全部", sum(counts)),
+        ("推荐", counts[0]),
+        ("观察", counts[1]),
+        ("阻塞", counts[2]),
+    )
+    st.markdown('<div class="aqsp-simple-nav-title">状态</div>', unsafe_allow_html=True)
+    for label, count in labels:
+        button_label = f"{label}  {count}"
+        if _stretch_button(
+            button_label,
+            key=f"{key_prefix}-{label}",
+            type="primary" if label == current else "secondary",
+        ):
+            _set_home_status_filter(label)
+            st.rerun()
+    return current
+
+
+def _historical_home_label(signal_date: str, latest_date: str) -> str:
+    selected = signal_date.strip()
+    latest = latest_date.strip()
+    return "历史回看" if selected and latest and selected != latest else "当前日"
+
+
+def _simple_candidate_grid(
+    cards: tuple[DashboardCandidateCard, ...],
+    *,
+    cooldown_until: str,
+    status_filter: str = "全部",
+) -> str:
+    rendered_cards: list[str] = []
+    for card in cards:
+        if not _status_filter_matches(_candidate_status_bucket(card), status_filter):
+            continue
+        status = _action_status_label(card.action_label, card.status_label)
+        bucket = _simple_candidate_bucket(card, cooldown_until=cooldown_until)
+        next_step = _card_next_action(card) or "等待下一次实时刷新"
+        context = next(
+            (
+                line
+                for line in (
+                    (
+                        f"跨市 {card.cross_market_summary}"
+                        if card.cross_market_summary
+                        else ""
+                    ),
+                    (
+                        f"催化 {card.news_catalyst_summary}"
+                        if card.news_catalyst_summary
+                        else ""
+                    ),
+                    "；".join(card.reasons[:2]),
+                    card.decision_note,
+                )
+                if line
+            ),
+            "暂无新增消息，按量价确认复核。",
+        )
+        rendered_cards.append(
+            f'<div class="aqsp-simple-candidate-card '
+            f'{_simple_candidate_card_tone(card, cooldown_until=cooldown_until)}">'
+            '<div class="aqsp-simple-candidate-top">'
+            f'<div class="aqsp-simple-candidate-name">{escape(card.display_name)}</div>'
+            f'<div class="aqsp-simple-candidate-score">{card.score:.2f}</div>'
+            "</div>"
+            f'<div class="aqsp-simple-candidate-status">{escape(bucket)} / {escape(status)}</div>'
+            f'<div class="aqsp-simple-candidate-line">下一步: {escape(next_step)}</div>'
+            f'<div class="aqsp-simple-candidate-line">{escape(context)}</div>'
+            "</div>"
+        )
+    return (
+        '<div class="aqsp-simple-candidate-grid">' + "".join(rendered_cards) + "</div>"
+    )
+
+
+def _provider_home_history_label(
+    provider: DashboardDataProvider,
+    signal_date: str,
+) -> str:
+    dates = tuple(getattr(provider, "dashboard_dates", lambda: ())() or ())
+    latest = dates[0] if dates else signal_date
+    return _historical_home_label(signal_date, latest)
+
+
+def _render_simple_recommendation_panel(
+    *,
+    provider: DashboardDataProvider,
+    signal_date: str,
+    task_view,
+    spotlights: tuple[DashboardCandidateSpotlight, ...],
+    overview: DashboardDateOverview,
+) -> None:
+    cards = _home_action_cards(task_view, spotlights)
+    recommend_cards, watch_cards, blocked_cards = _classify_candidate_queues(cards)
+    status_filter = _home_status_filter()
+    history_label = _provider_home_history_label(provider, signal_date)
+    runtime_overview = getattr(provider, "runtime_overview", lambda _: None)(
+        signal_date
+    )
+    cooldown = str(getattr(runtime_overview, "cooldown_until", "") or "").strip()
+    risk_reason = str(getattr(runtime_overview, "risk_reason", "") or "").strip()
+    all_candidates = tuple((*recommend_cards, *watch_cards, *blocked_cards))
+    visible_candidates = tuple(
+        card
+        for card in all_candidates
+        if _status_filter_matches(_candidate_status_bucket(card), status_filter)
+    )[:5]
+    candidate_count = len(recommend_cards) + len(watch_cards) + len(blocked_cards)
+    blocker_line = (
+        f"原因: 组合保护解除日 {cooldown}"
+        if cooldown
+        else (f"原因: {risk_reason}" if risk_reason else "原因: 今日条件未到复核档")
+    )
+    if cooldown and candidate_count > 0:
+        hero_title = "今日候选已产生，组合保护中"
+    elif recommend_cards:
+        hero_title = "今日候选已产生"
+    else:
+        hero_title = "今日无可纸面复核候选"
+    st.markdown(
+        f'<div class="aqsp-board-section">当天结论 · {escape(history_label)}</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        f"""
+        <div class="aqsp-simple-summary-strip">
+          <div>
+            <div class="aqsp-simple-summary-title">{escape(hero_title)}</div>
+            <div class="aqsp-simple-summary-line">{escape(blocker_line)}</div>
+          </div>
+          <div class="aqsp-simple-summary-counts">候选 {candidate_count}<br>纸面 {len(recommend_cards)} / 观察 {max(len(watch_cards), overview.watch_total)}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        f'<div class="aqsp-board-section">候选卡</div>'
+        f'<div class="aqsp-board-section-note">当前筛选: {escape(status_filter)} · '
+        f'{escape(history_label)}只作回看 · 直接展示，不折叠。</div>',
+        unsafe_allow_html=True,
+    )
+    if visible_candidates:
+        st.markdown(
+            _simple_candidate_grid(
+                visible_candidates,
+                cooldown_until=cooldown,
+                status_filter=status_filter,
+            ),
+            unsafe_allow_html=True,
+        )
+    elif all_candidates:
+        _render_cockpit_card(
+            kicker="候选卡",
+            title=f"当前没有“{status_filter}”状态的候选",
+            lines=("左侧切换状态可查看其他候选。",),
+            tone="archive",
+        )
+    else:
+        _render_cockpit_card(
+            kicker="候选卡",
+            title="当天暂无候选",
+            lines=("实时任务尚未产出可展示的候选卡。",),
+            tone="archive",
+        )
+
+
+def _render_simple_agent_panel(
+    *,
+    provider: DashboardDataProvider,
+    signal_date: str,
+    debates: tuple[DashboardDebateSummary, ...],
+) -> None:
+    history_label = _provider_home_history_label(provider, signal_date)
+    st.markdown(
+        f'<div class="aqsp-board-section">'
+        f'{escape("历史 Agent 讨论" if history_label == "历史回看" else "Agent 讨论结果")}</div>',
+        unsafe_allow_html=True,
+    )
+    if not debates:
+        runtime_overview = getattr(provider, "runtime_overview", lambda _: None)(
+            signal_date
+        )
+        cooldown = str(getattr(runtime_overview, "cooldown_until", "") or "").strip()
+        risk_reason = str(getattr(runtime_overview, "risk_reason", "") or "").strip()
+        lines = (
+            (
+                f"今日没有新的委员会结论；组合保护解除日 {cooldown}。"
+                if cooldown
+                else "今日没有新的委员会结论。"
+            ),
+            (
+                f"当前卡点: {risk_reason}"
+                if risk_reason
+                else "最近一次讨论可在归档回看。"
+            ),
+        )
+        _render_cockpit_card(
+            kicker="委员会",
+            title=(
+                "历史无 Agent 讨论记录"
+                if history_label == "历史回看"
+                else "当天无 Agent 讨论结论"
+            ),
+            lines=lines,
+            tone="blocked" if cooldown else "archive",
+        )
+        return
+
+    for debate_summary in debates[:1]:
+        _render_cockpit_card(
+            kicker=debate_summary.display_name,
+            title=_home_debate_result_card_title(debate_summary),
+            lines=_home_debate_result_card_lines(debate_summary),
+            tone=(
+                "blocked"
+                if debate_summary.recommended_adjustment == "lower"
+                else (
+                    "pressure" if debate_summary.disagreement_score >= 0.35 else "focus"
+                )
+            ),
+        )
+
+
+def _render_simple_today_digest(
+    *,
+    provider: DashboardDataProvider,
+    signal_date: str,
+    rows: tuple[DashboardSameDayTaskRow, ...],
+    task_view,
+    overview: DashboardDateOverview,
+    spotlights: tuple[DashboardCandidateSpotlight, ...],
+    debates: tuple[DashboardDebateSummary, ...],
+) -> None:
+    """Keep the homepage summary to one compact card; detail belongs in review."""
+    history_label = _provider_home_history_label(provider, signal_date)
+    st.markdown(
+        f'<div class="aqsp-board-section">'
+        f'{escape("历史消息汇总" if history_label == "历史回看" else "消息汇总")}</div>',
+        unsafe_allow_html=True,
+    )
+    digest_lines = _same_day_digest_snapshot_lines(
+        provider,
+        signal_date,
+        rows,
+        debates,
+        spotlights=spotlights,
+        source_task_view=task_view,
+    )
+    message_lines = tuple(
+        line for line in digest_lines if not line.startswith("讨论结果:")
+    )
+    visible_lines = message_lines or digest_lines
+    if visible_lines:
+        _render_cockpit_card(
+            kicker="同日速读",
+            title=overview.focus_headline or overview.top_headline or "今天先看这几条",
+            lines=_unique_lines(visible_lines)[:3],
+            tone=(
+                "blocked"
+                if overview.blocked_total
+                else ("focus" if overview.actionable_total else "archive")
+            ),
+        )
+        return
+
+    fallback_lines = tuple(
+        getattr(provider, "runtime_fallback_digest_lines", lambda _: ())(signal_date)
+        or ()
+    )
+    _render_cockpit_card(
+        kicker="运行状态",
+        title=(
+            fallback_lines[0].replace("结论: ", "", 1)
+            if fallback_lines
+            else "等待当日摘要"
+        ),
+        lines=(
+            fallback_lines[1:4]
+            if fallback_lines
+            else ("候选与委员会结论会在下一次刷新后汇总。",)
+        ),
+        tone=_runtime_frontdesk_tone(fallback_lines),
+    )
+
+
+def _set_simple_home_date(provider: DashboardDataProvider, signal_date: str) -> None:
+    st.session_state["dashboard_selected_date"] = signal_date
+    st.session_state["dashboard_task_id"] = provider.preferred_task_for_date(
+        signal_date
+    )
+
+
+def _render_simple_home_date_picker(
+    *,
+    provider: DashboardDataProvider,
+    signal_date: str,
+) -> None:
+    dates = tuple(provider.dashboard_dates())[:4]
+    if not dates:
+        return
+    st.markdown('<div class="aqsp-simple-nav-title">日期</div>', unsafe_allow_html=True)
+    latest_date = dates[0]
+    for date_value in dates:
+        marker = "当前日" if date_value == latest_date else "历史回看"
+        st.markdown(
+            f'<div class="aqsp-simple-date-pill-meta">{escape(marker)} · '
+            f'{escape(date_value)}</div>',
+            unsafe_allow_html=True,
+        )
+        if _stretch_button(
+            date_value,
+            key=f"simple-home-date-{date_value}",
+            type="primary" if date_value == signal_date else "secondary",
+        ):
+            _set_simple_home_date(provider, date_value)
+            st.rerun()
+
+
+def _simple_research_unlock_context(
+    *,
+    provider: DashboardDataProvider,
+    signal_date: str,
+    overview: DashboardDateOverview,
+    queue_counts: tuple[int, int, int] | None = None,
+) -> tuple[str, tuple[str, ...], str]:
+    runtime_overview = getattr(provider, "runtime_overview", lambda _: None)(
+        signal_date
+    )
+    if queue_counts is None:
+        actionable_total = overview.actionable_total
+        watch_total = overview.watch_total
+        blocked_total = overview.blocked_total
+    else:
+        actionable_total, watch_total, blocked_total = queue_counts
+    candidate_total = actionable_total + watch_total + blocked_total
+    if candidate_total > 0:
+        title = "研究候选已解锁"
+        candidate_line = (
+            f"今日 {candidate_total} 张候选卡片可看："
+            f"纸面 {actionable_total} / 观察 {watch_total} / 阻塞 {blocked_total}。"
+        )
+        tone = "unlocked"
+    else:
+        title = "等待当日候选"
+        candidate_line = "当前没有同日候选卡片，先看运行状态和消息雷达。"
+        tone = "waiting"
+
+    coldstart_line = ""
+    gate_line = ""
+    if runtime_overview is not None:
+        if getattr(runtime_overview, "coldstart_progress", ""):
+            progress = str(runtime_overview.coldstart_progress)
+            ready_label = "已达标" if _coldstart_progress_ready(progress) else "积累中"
+            coldstart_line = f"冷启动样本 {progress} / {ready_label}"
+        gate_detail = (
+            str(getattr(runtime_overview, "gate_blocker_line", "") or "").strip()
+            or str(
+                getattr(runtime_overview, "walkforward_runtime_line", "") or ""
+            ).strip()
+        )
+        if gate_detail:
+            gate_line = normalize_research_tone(gate_detail)
+            if gate_line.startswith("生产 gate:"):
+                gate_line = "生产 gate 未放行:" + gate_line.split(":", 1)[1]
+
+    return (
+        title,
+        tuple(line for line in (candidate_line, coldstart_line, gate_line) if line),
+        tone,
+    )
+
+
+def _simple_runtime_status_lines(
+    *,
+    provider: DashboardDataProvider,
+    signal_date: str,
+) -> tuple[str, ...]:
+    runtime_overview = getattr(provider, "runtime_overview", lambda _: None)(
+        signal_date
+    )
+    if runtime_overview is None:
+        return ("运行状态: 暂无",)
+
+    source = (
+        str(getattr(runtime_overview, "effective_source", "") or "").strip()
+        or str(getattr(runtime_overview, "requested_source", "") or "").strip()
+        or "-"
+    )
+    data_day = str(
+        getattr(runtime_overview, "data_latest_trade_date", "") or ""
+    ).strip()
+    coldstart = str(getattr(runtime_overview, "coldstart_progress", "") or "").strip()
+    cooldown = str(getattr(runtime_overview, "cooldown_until", "") or "").strip()
+    lines = [
+        f"实时源: {_dashboard_source_boundary_label(source) if source != '-' else '-'}",
+        f"数据日: {data_day or signal_date or '-'}",
+    ]
+    if coldstart:
+        ready = "已完成" if _coldstart_progress_ready(coldstart) else "积累中"
+        lines.append(f"冷启动: {coldstart} / {ready}")
+    if cooldown:
+        lines.append(f"组合保护: 至 {cooldown}")
+    return tuple(lines[:4])
+
+
+def _render_simple_home_rail(
+    *,
+    provider: DashboardDataProvider,
+    signal_date: str,
+    overview: DashboardDateOverview,
+    debates: tuple[DashboardDebateSummary, ...],
+    queue_counts: tuple[int, int, int] | None = None,
+) -> str:
+    actionable_total, watch_total, _blocked_total = queue_counts or (
+        overview.actionable_total,
+        overview.watch_total,
+        overview.blocked_total,
+    )
+    home_status = getattr(provider, "home_status", None)
+    if callable(home_status):
+        status = home_status(signal_date, overview=overview)
+    else:
+        runtime = getattr(provider, "runtime_overview", lambda _: None)(signal_date)
+        source = (
+            str(getattr(runtime, "effective_source", "") or "").strip()
+            or "未记录"
+        )
+        status = DashboardHomeStatus(
+            label=(
+                "阻塞"
+                if overview.blocked_total or getattr(runtime, "cooldown_until", "")
+                else "实时推荐"
+                if overview.actionable_total
+                else "观察"
+                if overview.watch_total
+                else "等待刷新"
+            ),
+            detail=(
+                f"数据日 {getattr(runtime, 'data_latest_trade_date', '') or signal_date} · "
+                f"推荐 {overview.actionable_total} / 观察 {overview.watch_total} / "
+                f"阻塞 {overview.blocked_total}"
+            ),
+            tone="blocked" if overview.blocked_total else "focus",
+            actionable_count=overview.actionable_total,
+            watch_count=overview.watch_total,
+            blocked_count=overview.blocked_total,
+            source_label=_dashboard_source_boundary_label(source),
+        )
+    with st.container(border=True):
+        st.markdown(
+            f"""
+            <div class="aqsp-simple-date-label">DATE</div>
+            <div class="aqsp-simple-date">{escape(signal_date or "-")}</div>
+            <div class="aqsp-simple-boundary">研究复核 · 历史日期仅作回看</div>
+            <div class="aqsp-simple-status-card">
+              <div class="aqsp-simple-status-line"><strong>{escape(status.label)}</strong></div>
+              <div class="aqsp-simple-status-line">{escape(status.detail)}</div>
+              <div class="aqsp-simple-status-line">{escape(status.source_label)}</div>
+            </div>
+            <div class="aqsp-simple-chip-grid">
+              <div class="aqsp-simple-chip">
+                <div class="aqsp-simple-chip-value">{status.actionable_count}</div>
+                <div class="aqsp-simple-chip-label">推荐</div>
+              </div>
+              <div class="aqsp-simple-chip">
+                <div class="aqsp-simple-chip-value">{status.watch_count}</div>
+                <div class="aqsp-simple-chip-label">观察</div>
+              </div>
+              <div class="aqsp-simple-chip">
+                <div class="aqsp-simple-chip-value">{status.blocked_count}</div>
+                <div class="aqsp-simple-chip-label">阻塞</div>
+              </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        _render_simple_home_date_picker(provider=provider, signal_date=signal_date)
+        _render_home_status_switch(
+            counts=(actionable_total, watch_total, _blocked_total),
+            key_prefix="simple-home-status",
+        )
+    return "home"
+
+
+def _render_simple_app_header(*, updated_at: str) -> None:
+    st.markdown(
+        f"""
+        <div class="aqsp-simple-topbar">
+          <div>
+            <div class="aqsp-simple-date-label">AQSP</div>
+            <div class="aqsp-simple-brand">短线决策看板</div>
+          </div>
+          <div class="aqsp-simple-updated">
+            更新时间 {escape(updated_at)}<br>
+            纸面观察 / 非交易指令
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _render_simple_panel_header() -> None:
+    st.markdown(
+        """
+        <div class="aqsp-simple-panel-head">
+            <div class="aqsp-simple-panel-kicker">当天关键结果</div>
+          <div class="aqsp-simple-panel-title">结论 · 候选 · 消息汇总 · Agent 讨论结果</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _render_simple_workspace_shortcuts() -> None:
+    for label, workspace in zip(
+        ("候选复盘", "纸面跟踪", "归档回看"),
+        ("候选复盘", "虚拟盘跟踪", "归档回看"),
+    ):
+        if _stretch_button(label, key=f"simple-home-shortcut-{workspace}"):
+            _set_dashboard_workspace(workspace)
+            st.rerun()
+
+
+def _home_snapshot_path() -> str:
+    """Return the runtime-owned home snapshot path without touching the provider."""
+    return os.environ.get("AQSP_HOME_SNAPSHOT_PATH", _DEFAULT_HOME_SNAPSHOT_PATH)
+
+
+def _home_snapshot_index_path(snapshot_path: str) -> str:
+    """Resolve the optional exact-date index beside the single snapshot file."""
+    configured = os.environ.get("AQSP_HOME_SNAPSHOT_INDEX_PATH", "").strip()
+    if configured:
+        return configured
+    return str(
+        Path(snapshot_path).expanduser().with_name("home_dashboard_snapshot_index.json")
+    )
+
+
+def _snapshot_candidate_queue_counts(
+    snapshot: HomeDashboardSnapshot,
+) -> tuple[int, int, int]:
+    """Classify bounded snapshot cards only for the left-rail count display."""
+    paper = 0
+    watch = 0
+    blocked = 0
+    for candidate in snapshot.candidates:
+        bucket = _snapshot_status_bucket(candidate)
+        if bucket == "阻塞":
+            blocked += 1
+        elif bucket == "观察":
+            watch += 1
+        else:
+            paper += 1
+    return paper, watch, blocked
+
+
+def _snapshot_candidate_grid(
+    snapshot: HomeDashboardSnapshot,
+    *,
+    status_filter: str = "全部",
+) -> str:
+    """Render the already bounded candidate cards without recreating task views."""
+    cards: list[str] = []
+    for candidate in snapshot.candidates:
+        if _snapshot_status_bucket(candidate) != "推荐":
+            continue
+        if not _status_filter_matches("推荐", status_filter):
+            continue
+        cards.append(
+            '<article class="aqsp-simple-candidate-card">'
+            f'<div class="aqsp-simple-candidate-rank">{escape(_compact_snapshot_text(candidate.research_status))}</div>'
+            f'<div class="aqsp-simple-candidate-name">{escape(_compact_snapshot_text(candidate.display_name))}</div>'
+            f'<div class="aqsp-simple-candidate-score">{candidate.score:.1f}</div>'
+            f'<div class="aqsp-simple-candidate-line">{escape(_compact_snapshot_text(candidate.context))}</div>'
+            f'<div class="aqsp-simple-candidate-line">下一步: {escape(_compact_snapshot_text(candidate.next_step))}</div>'
+            "</article>"
+        )
+    return '<div class="aqsp-simple-candidate-grid">' + "".join(cards) + "</div>"
+
+
+def _snapshot_observation_grid(
+    snapshot: HomeDashboardSnapshot,
+    *,
+    status_filter: str = "全部",
+) -> str:
+    """Show bounded live observations when protection blocks recommendations."""
+    cards: list[str] = []
+    for candidate in snapshot.candidates:
+        bucket = _snapshot_status_bucket(candidate)
+        if bucket == "推荐" or not _status_filter_matches(bucket, status_filter):
+            continue
+        cards.append(
+            '<article class="aqsp-simple-candidate-card aqsp-observation-card">'
+            f'<div class="aqsp-simple-candidate-rank">{escape(_compact_snapshot_text(candidate.research_status))}</div>'
+            f'<div class="aqsp-simple-candidate-name">{escape(_compact_snapshot_text(candidate.display_name))}</div>'
+            f'<div class="aqsp-simple-candidate-score">{candidate.score:.1f}</div>'
+            f'<div class="aqsp-simple-candidate-line">{escape(_compact_snapshot_text(candidate.context))}</div>'
+            f'<div class="aqsp-simple-candidate-line">下一步: {escape(_compact_snapshot_text(candidate.next_step))}</div>'
+            "</article>"
+        )
+    return '<div class="aqsp-simple-candidate-grid">' + "".join(cards) + "</div>"
+
+
+def _snapshot_message_status_label(status: str) -> str:
+    return {
+        "ok": "可用",
+        "empty": "无高影响消息",
+        "partial": "部分可用",
+        "timeout": "超时",
+        "failed": "失败",
+        "未产出": "未产出",
+    }.get(str(status or "").strip(), str(status or "未产出").strip() or "未产出")
+
+
+def _snapshot_market_context_lines(snapshot: HomeDashboardSnapshot) -> tuple[str, ...]:
+    """Keep structured domestic/global transmission evidence visible and compact."""
+    context = snapshot.market_context
+    if context is None:
+        return ()
+    lines: list[str] = []
+    if context.overview:
+        lines.append(f"跨市综述: {_compact_snapshot_text(context.overview)}")
+    for item in context.cross_market[:2]:
+        parts = tuple(
+            part
+            for part in (
+                (
+                    f"{_compact_snapshot_text(item.theme)} · "
+                    f"{_compact_snapshot_text(item.action)}"
+                    if item.theme
+                    else _compact_snapshot_text(item.action)
+                ),
+                _compact_snapshot_text(item.summary),
+                f"来源: {_compact_snapshot_text(item.source_region)}"
+                if item.source_region
+                else "",
+            )
+            if part
+        )
+        if parts:
+            lines.append("跨市传导: " + " · ".join(parts))
+    if not lines and context.status:
+        lines.append(f"传导状态: {context.status}")
+    return tuple(lines[:3])
+
+
+def _compact_snapshot_text(value: object, *, limit: int = 72) -> str:
+    """Keep generated snapshot copy scannable without changing source data."""
+    text = normalize_research_tone(str(value or "").strip())
+    if len(text) <= limit:
+        return text
+    return f"{text[: limit - 1].rstrip('，。；、 ')}…"
+
+
+def _snapshot_selected_date(
+    snapshot: HomeDashboardSnapshot,
+    available_dates: tuple[str, ...] | None = None,
+) -> str:
+    """Read the UI-selected date without changing the file-only snapshot contract."""
+    date_options = available_dates or snapshot.available_dates
+    selected = str(
+        st.session_state.get("dashboard_snapshot_selected_date", "") or ""
+    ).strip()
+    if selected in date_options:
+        return selected
+    return snapshot.selected_date
+
+
+def _snapshot_index_selected_date(index: HomeSnapshotIndex) -> str:
+    """Resolve a session date against the bounded index without blanking home."""
+    available_dates = index.available_dates
+    requested = str(
+        st.session_state.get("dashboard_snapshot_selected_date", "") or ""
+    ).strip()
+    if requested in available_dates:
+        return requested
+    selected = index.selected_date.strip()
+    resolved = (
+        selected
+        if selected in available_dates
+        else available_dates[0]
+        if available_dates
+        else ""
+    )
+    if resolved and resolved != requested:
+        st.session_state["dashboard_snapshot_selected_date"] = resolved
+        st.session_state["dashboard_selected_date"] = resolved
+    return resolved
+
+
+def _set_snapshot_home_date(
+    snapshot: HomeDashboardSnapshot,
+    signal_date: str,
+    *,
+    available_dates: tuple[str, ...] | None = None,
+) -> None:
+    """Persist a bounded date selection; content remains file-only until refresh."""
+    date_options = available_dates or snapshot.available_dates
+    if signal_date not in date_options:
+        return
+    st.session_state["dashboard_snapshot_selected_date"] = signal_date
+    st.session_state["dashboard_selected_date"] = signal_date
+
+
+def _snapshot_is_expired(
+    snapshot: HomeDashboardSnapshot,
+    *,
+    historical: bool = False,
+) -> bool:
+    """Block stale live data, but keep exact historical snapshots reviewable."""
+    if historical:
+        return False
+    if snapshot.stale_after:
+        try:
+            if snapshot.is_stale():
+                return True
+        except ValueError:
+            return True
+    status = snapshot.source.status.strip().lower()
+    stale_markers = (
+        "过期",
+        "待刷新",
+        "等待刷新",
+        "stale",
+        "expired",
+        "unavailable",
+        "error",
+        "failed",
+        "失败",
+    )
+    return snapshot.source.lag_days > 0 or any(
+        marker in status for marker in stale_markers
+    )
+
+
+def _snapshot_freshness_line(
+    snapshot: HomeDashboardSnapshot,
+    *,
+    historical: bool = False,
+) -> str:
+    """Keep freshness as one compact, user-facing line on the left rail."""
+    if _snapshot_is_expired(snapshot, historical=historical):
+        return "数据快照已过期/等待刷新"
+    source = snapshot.source.effective or "未记录"
+    status = snapshot.source.status or "未记录"
+    latest = snapshot.source.latest_trade_date or "未记录"
+    if historical:
+        return f"历史快照 · 源 {source} · 数据日 {latest} · 滞后 {snapshot.source.lag_days} 天"
+    return (
+        f"新鲜度: {status} · 源 {source} · 数据日 {latest} · "
+        f"滞后 {snapshot.source.lag_days} 天"
+    )
+
+
+def _render_snapshot_home_rail(
+    snapshot: HomeDashboardSnapshot,
+    *,
+    available_dates: tuple[str, ...] | None = None,
+) -> None:
+    """Render snapshot-only date, runtime status, and workspace entry controls."""
+    date_options = available_dates or snapshot.available_dates
+    selected_date = _snapshot_selected_date(snapshot, date_options)
+    latest_date = date_options[0] if date_options else snapshot.selected_date
+    historical = _historical_home_label(selected_date, latest_date) == "历史回看"
+    queue_counts = _snapshot_candidate_queue_counts(snapshot)
+    status_label = (
+        "阻塞"
+        if queue_counts[2] or _snapshot_is_expired(snapshot, historical=historical)
+        else "实时推荐"
+        if queue_counts[0]
+        else "观察"
+        if queue_counts[1]
+        else "等待刷新"
+    )
+    history_label = _historical_home_label(selected_date, latest_date)
+    st.markdown(
+        f"""
+        <div class="aqsp-simple-date-label">DATE</div>
+        <div class="aqsp-simple-date">{escape(selected_date)}</div>
+        <div class="aqsp-simple-boundary">{escape(history_label)} · 研究复核</div>
+        <div class="aqsp-simple-status-card">
+          <div class="aqsp-simple-status-line"><strong>{escape(status_label)}</strong></div>
+          <div class="aqsp-simple-status-line">{escape(_snapshot_freshness_line(snapshot, historical=historical))}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.markdown('<div class="aqsp-simple-nav-title">日期</div>', unsafe_allow_html=True)
+    for date_value in date_options:
+        if _stretch_button(
+            date_value,
+            key=f"snapshot-home-date-{date_value}",
+            type="primary" if date_value == selected_date else "secondary",
+        ):
+            _set_snapshot_home_date(
+                snapshot,
+                date_value,
+                available_dates=date_options,
+            )
+            st.rerun()
+    _render_home_status_switch(
+        counts=queue_counts,
+        key_prefix="snapshot-home-status",
+    )
+
+
+def _render_snapshot_waiting_card(title: str = "数据快照已过期/等待刷新") -> None:
+    """Render a loud stop state without falling through to historical aggregation."""
+    _render_cockpit_card(
+        kicker="快照状态",
+        title=title,
+        lines=("首页不会静默回退到全量历史聚合。",),
+        tone="blocked",
+    )
+
+
+def _render_snapshot_unavailable_home() -> None:
+    """Keep a present-but-invalid snapshot from silently opening the history home."""
+    st.markdown('<div class="aqsp-simple-shell">', unsafe_allow_html=True)
+    rail_col, content_col = st.columns((0.28, 0.72), gap="large")
+    with rail_col:
+        st.markdown(
+            """
+            <div class="aqsp-simple-date-label">DATE</div>
+            <div class="aqsp-simple-date">-</div>
+            <div class="aqsp-simple-status-card">
+              <div class="aqsp-simple-status-line">数据快照已过期/等待刷新</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    with content_col:
+        _render_simple_panel_header()
+        _render_snapshot_waiting_card()
+    st.markdown("</div>", unsafe_allow_html=True)
+
+
+def _render_snapshot_home_board(
+    snapshot: HomeDashboardSnapshot,
+    *,
+    available_dates: tuple[str, ...] | None = None,
+) -> None:
+    """Render the home page from one bounded runtime snapshot file only."""
+    st.markdown('<div class="aqsp-simple-shell">', unsafe_allow_html=True)
+    rail_col, content_col = st.columns((0.28, 0.72), gap="large")
+    with rail_col:
+        if available_dates is None:
+            _render_snapshot_home_rail(snapshot)
+        else:
+            _render_snapshot_home_rail(snapshot, available_dates=available_dates)
+    with content_col:
+        _render_simple_panel_header()
+        selected_date = _snapshot_selected_date(snapshot, available_dates)
+        date_options = available_dates or snapshot.available_dates
+        latest_date = date_options[0] if date_options else snapshot.selected_date
+        history_label = _historical_home_label(selected_date, latest_date)
+        historical = history_label == "历史回看"
+        status_filter = _home_status_filter()
+        if _snapshot_is_expired(snapshot, historical=historical):
+            _render_snapshot_waiting_card()
+        elif selected_date != snapshot.selected_date:
+            _render_snapshot_waiting_card(
+                f"已选择 {selected_date}，等待该日期快照刷新"
+            )
+        else:
+            message_status_label = _snapshot_message_status_label(
+                snapshot.message_status
+            )
+            recommend_candidates = tuple(
+                candidate
+                for candidate in snapshot.candidates
+                if _snapshot_status_bucket(candidate) == "推荐"
+                and _status_filter_matches("推荐", status_filter)
+            )
+            non_recommend_candidates = tuple(
+                candidate
+                for candidate in snapshot.candidates
+                if _snapshot_status_bucket(candidate) != "推荐"
+                and _status_filter_matches(
+                    _snapshot_status_bucket(candidate), status_filter
+                )
+            )
+            if snapshot.summaries:
+                conclusion_title = _compact_snapshot_text(snapshot.summaries[0])
+            elif recommend_candidates:
+                conclusion_title = f"当天有 {len(recommend_candidates)} 个实时候选"
+            elif non_recommend_candidates:
+                conclusion_title = "当前无实时推荐，保留观察对象"
+            else:
+                conclusion_title = "当天暂无推荐"
+            conclusion_lines = tuple(
+                line
+                for line in (
+                    f"状态: {history_label} · 筛选 {status_filter}",
+                    f"数据: {_snapshot_freshness_line(snapshot, historical=historical)}",
+                    *(_compact_snapshot_text(line) for line in snapshot.summaries[1:3]),
+                )
+                if line
+            )[:4]
+            st.markdown(
+                f'<div class="aqsp-board-section">当天结论 · {escape(history_label)}</div>',
+                unsafe_allow_html=True,
+            )
+            _render_cockpit_card(
+                kicker="当天结论",
+                title=conclusion_title,
+                lines=conclusion_lines or ("等待下一次实时刷新。",),
+                tone=(
+                    "blocked"
+                    if not recommend_candidates and non_recommend_candidates
+                    else "focus"
+                    if recommend_candidates
+                    else "archive"
+                ),
+            )
+
+            st.markdown(
+                f'<div class="aqsp-board-section">候选卡</div>'
+                f'<div class="aqsp-board-section-note">当前筛选: {escape(status_filter)}</div>',
+                unsafe_allow_html=True,
+            )
+            if recommend_candidates:
+                st.markdown(
+                    _snapshot_candidate_grid(
+                        snapshot,
+                        status_filter=status_filter,
+                    ),
+                    unsafe_allow_html=True,
+                )
+            if non_recommend_candidates:
+                st.markdown(
+                    '<div class="aqsp-board-section-note">观察 / 阻塞对象</div>',
+                    unsafe_allow_html=True,
+                )
+                st.markdown(
+                    _snapshot_observation_grid(
+                        snapshot,
+                        status_filter=status_filter,
+                    ),
+                    unsafe_allow_html=True,
+                )
+            if not recommend_candidates and not non_recommend_candidates:
+                _render_cockpit_card(
+                    kicker="候选卡",
+                    title=(
+                        "当前筛选没有候选"
+                        if snapshot.candidates
+                        else "当天暂无候选卡"
+                    ),
+                    lines=(
+                        "左侧切换状态查看观察或阻塞对象。"
+                        if snapshot.candidates
+                        else "实时任务尚未产出候选。"
+                    ,),
+                    tone="archive",
+                )
+
+            market_context_lines = _snapshot_market_context_lines(snapshot)
+            if snapshot.messages:
+                news_lines = tuple(
+                    " · ".join(
+                        part
+                        for part in (
+                            _compact_snapshot_text(message.impact),
+                            _compact_snapshot_text(message.title),
+                            _compact_snapshot_text(message.summary),
+                            _compact_snapshot_text(message.source),
+                        )
+                        if part
+                    )
+                    for message in snapshot.messages[:3]
+                )
+            else:
+                message_empty_line = (
+                    "消息源已返回，但当前没有筛出高影响事件。"
+                    if message_status_label not in {"未产出", "失败", "超时"}
+                    else "等待消息雷达产出当前交易日结果。"
+                )
+                news_lines = (message_empty_line,)
+            news_lines = tuple((*market_context_lines, *news_lines)[:5])
+
+            snapshot_debates = tuple(snapshot.debates)
+            if not snapshot_debates:
+                debate_title = (
+                    "历史无 Agent 讨论记录"
+                    if history_label == "历史回看"
+                    else "当天无 Agent 讨论结论"
+                )
+                debate_lines = (
+                    "该日期没有落盘讨论结果。"
+                    if history_label == "历史回看"
+                    else "下一次实时任务完成后更新。",
+                )
+                debate_kicker = "Agent 讨论"
+                debate_tone = "archive"
+            else:
+                debate_lines = tuple(
+                    " | ".join(
+                        part
+                        for part in (
+                            _compact_snapshot_text(debate.display_name),
+                            _compact_snapshot_text(debate.conclusion),
+                            (
+                                f"卡点: {_compact_snapshot_text(debate.primary_risk_gate)}"
+                                if debate.primary_risk_gate
+                                else ""
+                            ),
+                            (
+                                f"下一触发: {_compact_snapshot_text(debate.next_trigger)}"
+                                if debate.next_trigger
+                                else ""
+                            ),
+                            (
+                                f"{debate.process_summary}"
+                                if debate.process_summary
+                                else (
+                                    f"轮次 {debate.round_count} · 角色 "
+                                    + "、".join(debate.active_roles[:3])
+                                    if debate.round_count or debate.active_roles
+                                    else ""
+                                )
+                            ),
+                        )
+                        if part
+                    )
+                    for debate in snapshot_debates[:3]
+                )
+                debate_title = f"{len(snapshot_debates)} 个候选完成多 Agent 讨论"
+                debate_kicker = "Agent 讨论结果"
+                debate_tone = (
+                    "pressure"
+                    if any(debate.primary_risk_gate for debate in snapshot_debates)
+                    else "focus"
+                )
+
+            message_title = (
+                "历史消息汇总"
+                if history_label == "历史回看"
+                else "当天消息汇总"
+            ) if snapshot.messages else (
+                "历史暂无有效消息事件"
+                if history_label == "历史回看"
+                else "当天暂无有效消息事件"
+            )
+            message_tone = (
+                "focus"
+                if snapshot.messages and message_status_label in {"可用", "部分可用"}
+                else "pressure"
+                if snapshot.messages
+                else "archive"
+            )
+            message_col, agent_col = st.columns(2, gap="medium")
+            with message_col:
+                _render_cockpit_card(
+                    kicker=f"消息与传导 · {message_status_label}",
+                    title=message_title,
+                    lines=news_lines,
+                    tone=message_tone,
+                )
+            with agent_col:
+                _render_cockpit_card(
+                    kicker=debate_kicker,
+                    title=debate_title,
+                    lines=debate_lines,
+                    tone=debate_tone,
+                )
+    st.markdown("</div>", unsafe_allow_html=True)
+
+
+def _render_simple_home_board(
+    *,
+    provider: DashboardDataProvider,
+    signal_date: str,
+    task_view,
+    same_day_rows: tuple[DashboardSameDayTaskRow, ...],
+    same_day_spotlights: tuple[DashboardCandidateSpotlight, ...],
+    same_day_debates: tuple[DashboardDebateSummary, ...],
+    overview: DashboardDateOverview,
+    paper_summary: DashboardPaperSummary,
+) -> None:
+    st.markdown('<div class="aqsp-simple-shell">', unsafe_allow_html=True)
+    cards = _home_action_cards(task_view, same_day_spotlights)
+    recommend_cards, watch_cards, blocked_cards = _classify_candidate_queues(cards)
+    queue_counts = (len(recommend_cards), len(watch_cards), len(blocked_cards))
+    rail_col, content_col = st.columns((0.28, 0.72), gap="large")
+    with rail_col:
+        _render_simple_home_rail(
+            provider=provider,
+            signal_date=signal_date,
+            overview=overview,
+            debates=same_day_debates,
+            queue_counts=queue_counts,
+        )
+    with content_col:
+        _render_simple_panel_header()
+        _render_simple_recommendation_panel(
+            provider=provider,
+            signal_date=signal_date,
+            task_view=task_view,
+            spotlights=same_day_spotlights,
+            overview=overview,
+        )
+        committee_col, digest_col = st.columns(2, gap="medium")
+        with committee_col:
+            _render_simple_agent_panel(
+                provider=provider,
+                signal_date=signal_date,
+                debates=same_day_debates,
+            )
+        with digest_col:
+            _render_simple_today_digest(
+                provider=provider,
+                signal_date=signal_date,
+                rows=same_day_rows,
+                task_view=task_view,
+                overview=overview,
+                spotlights=same_day_spotlights,
+                debates=same_day_debates,
+            )
+    st.markdown("</div>", unsafe_allow_html=True)
+
+
 def _home_reading_order_lines(
     *,
     task_view,
@@ -3761,25 +8498,39 @@ def _home_reading_order_lines(
 
     if focus_card is not None:
         focus_line = _join_display_parts(
-            "🧭 再看候选来龙去脉",
+            "🎯 主看候选",
             focus_card.display_name,
             _action_status_label(focus_card.action_label, focus_card.status_label),
-            _card_emphasis(focus_card),
+            _card_primary_blocker(focus_card) or _card_next_action(focus_card),
         )
     elif debates:
-        debate_focus = sorted(
-            debates,
-            key=lambda item: (item.disagreement_score, item.adjusted_score),
-            reverse=True,
-        )[0]
+        debate_focus = _ordered_home_debates(debates)[0]
+        followup_line = _debate_watch_focus_line(debate_focus)
+        if followup_line.startswith("确认信号: ") or followup_line.startswith(
+            "失效信号: "
+        ):
+            followup_line = (
+                _debate_conclusion_summary(debate_focus).watch_line
+                or _debate_conclusion_summary(debate_focus).trigger_line
+            )
+        followup_line = (
+            followup_line.replace("确认信号: ", "确认 ")
+            .replace("失效信号: ", "失效 ")
+            .replace("下一触发: ", "触发 ")
+            .replace("讨论待确认: ", "待确认 ")
+        )
         focus_line = _join_display_parts(
-            "🧭 再看分歧来龙去脉",
+            "🎯 主看分歧",
             debate_focus.display_name,
-            f"{debate_focus.recommended_adjustment_label} / 分歧 {debate_focus.disagreement_score:.2f}",
+            debate_focus.primary_risk_gate
+            or followup_line
+            or _safe_current_research_line(
+                debate_focus.next_trigger or debate_focus.adjustment_reason
+            ),
         )
     else:
         focus_line = _join_display_parts(
-            "🧭 再看研究来龙去脉",
+            "🎯 主看研究结论",
             overview.focus_headline
             or overview.top_headline
             or task_view.headline
@@ -3794,7 +8545,7 @@ def _home_reading_order_lines(
         )
     elif _report_archive_status(task_view) != "无归档":
         close_line = _join_display_parts(
-            "📚 最后回看归档",
+            "📚 收盘后回看归档",
             _safe_research_hint_line(
                 task_view.next_day_focus_lines[0]
                 if task_view.next_day_focus_lines
@@ -3806,9 +8557,151 @@ def _home_reading_order_lines(
             ),
         )
     else:
-        close_line = "📚 归档待补: 当前先按研究证据走，等收盘复盘补齐历史记录。"
+        close_line = "📚 收盘后补归档: 当前先按研究证据走，等收盘复盘补齐历史记录。"
 
     return _unique_lines((paper_line, focus_line, close_line))
+
+
+def _runtime_boundary_card_context(task_view) -> tuple[str, tuple[str, ...], str]:
+    goal_switches = load_goal_switches()
+    debate_runtime = load_debate_runtime_config(getattr(task_view, "task_id", ""))
+    live_short_enabled = goal_switches.switch_enabled(
+        "live_short_runtime", default=True
+    )
+    historical_validation_only = goal_switches.switch_enabled(
+        "historical_validation_only",
+        default=True,
+    )
+    boundary_guard_enabled = goal_switches.switch_enabled(
+        "enforce_live_vs_history_boundary",
+        default=True,
+    )
+    auto_optimization_enabled = goal_switches.switch_enabled(
+        "auto_optimization_proposals",
+        default=True,
+    )
+    auto_apply_enabled = goal_switches.switch_enabled(
+        "auto_optimization_apply_runtime",
+        default=False,
+    )
+    runtime_switch_line = _goal_switch_runtime_line(goal_switches)
+
+    if live_short_enabled and historical_validation_only:
+        realtime_line = (
+            "实时链路: 盘中任务优先实时数据；历史链路只做回测、验证和阈值冻结。"
+        )
+    elif live_short_enabled:
+        realtime_line = "实时链路: 当前仍以实时任务为主，但历史边界声明不完整。"
+    else:
+        realtime_line = "实时链路: 当前未显式强调实时优先，需回看运行配置。"
+
+    role_summary = _runtime_role_labels(debate_runtime.roles)
+    if debate_runtime.enabled and debate_runtime.roles:
+        debate_line = (
+            f"讨论层: 已启用 {len(debate_runtime.roles)} 个角色，"
+            f"当前任务默认 {role_summary}；结论仅供复核，不改写候选排序。"
+        )
+    elif debate_runtime.roles:
+        debate_line = (
+            f"讨论层: 当前关闭执行；仍保留 {len(debate_runtime.roles)} 个角色编排，"
+            f"默认 {role_summary}；结论仅供复核，不改写候选排序。"
+        )
+    else:
+        debate_line = "讨论层: 当前未配置可用角色；候选排序仅使用确定性评分。"
+    debate_tuning_line = _runtime_debate_tuning_line(debate_runtime)
+
+    if auto_apply_enabled:
+        optimization_line = "优化层: 结果已允许接近运行参数，需优先核对冻结与验证边界。"
+    elif auto_optimization_enabled:
+        optimization_line = "优化层: 只产出 proposal，不直接写回运行参数。"
+    else:
+        optimization_line = "优化层: 当前关闭自动优化提案，先维持冻结参数运行。"
+
+    track_line = _goal_track_focus_line(goal_switches)
+
+    tone = "archive"
+    title = "实时优先 / 研究增强"
+    if not boundary_guard_enabled or auto_apply_enabled:
+        tone = "pressure"
+        title = "本地实验边界"
+    elif not debate_runtime.enabled:
+        title = "实时优先 / 讨论层待启用"
+    else:
+        tone = "focus"
+
+    return (
+        title,
+        (
+            realtime_line,
+            runtime_switch_line,
+            debate_line,
+            debate_tuning_line or optimization_line,
+            optimization_line if debate_tuning_line else track_line,
+            track_line if debate_tuning_line else "",
+        ),
+        tone,
+    )
+
+
+def _runtime_debate_tuning_line(debate_runtime) -> str:
+    parts: list[str] = []
+    if getattr(debate_runtime, "explicit_roles", False):
+        requested = _runtime_role_labels(getattr(debate_runtime, "requested_roles", ()))
+        if requested:
+            parts.append(f"显式轨道 {requested}")
+    focus_summary = _runtime_role_labels(getattr(debate_runtime, "focus_roles", ()))
+    if focus_summary:
+        parts.append(f"聚焦 {focus_summary}")
+    disabled_summary = _runtime_role_labels(
+        getattr(debate_runtime, "disabled_roles", ())
+    )
+    if disabled_summary:
+        parts.append(f"停用 {disabled_summary}")
+    if not parts:
+        return ""
+    return "轨道裁剪: " + " / ".join(parts) + "。"
+
+
+def _goal_switch_runtime_line(goal_switches: GoalSwitchMatrix) -> str:
+    boundary_guard_enabled = goal_switches.switch_enabled(
+        "enforce_live_vs_history_boundary",
+        default=True,
+    )
+    fallback_chain_enabled = goal_switches.switch_enabled(
+        "realtime_fallback_chain",
+        default=True,
+    )
+    domestic_enabled = goal_switches.switch_enabled(
+        "domestic_market_intelligence",
+        default=True,
+    )
+    global_enabled = goal_switches.switch_enabled(
+        "global_market_intelligence",
+        default=True,
+    )
+    guard_label = "开" if boundary_guard_enabled else "关(仅本地实验)"
+    fallback_label = "开" if fallback_chain_enabled else "关"
+    domestic_label = "开" if domestic_enabled else "关"
+    global_label = "开" if global_enabled else "关"
+    return (
+        "运行开关: "
+        f"守卫 {guard_label} / 回退链 {fallback_label} / "
+        f"国内情报 {domestic_label} / 海外情报 {global_label}。"
+    )
+
+
+def _goal_track_focus_line(goal_switches: GoalSwitchMatrix) -> str:
+    tracks = goal_switches.prioritized_tracks(limit=3)
+    if not tracks:
+        return "推进主线: 当前未显式配置主线轨道，需回看 goal switches。"
+    parts = []
+    for item in tracks:
+        priority = _GOAL_TRACK_PRIORITY_LABELS.get(
+            item.priority.lower(), item.priority.upper()
+        )
+        label = item.label.strip() or item.track_id
+        parts.append(f"{priority} {label}")
+    return "推进主线: " + "；".join(parts) + "。"
 
 
 def _home_brief_cards(
@@ -3830,44 +8723,85 @@ def _home_brief_cards(
 
     if focus_card is not None:
         focus_title = focus_card.display_name
-        focus_lines = _unique_lines(
-            (
-                _join_display_parts(
-                    "状态",
-                    _action_status_label(
-                        focus_card.action_label,
-                        focus_card.status_label,
-                    ),
-                    separator=": ",
-                ),
-                (
-                    f"复核: {focus_card.review_meta}"
-                    if _has_review_meta(focus_card.review_meta)
-                    else ""
-                ),
-                f"复核线索: {_card_next_action(focus_card)}",
-            )
+        focus_spotlight = next(
+            (item for item in spotlights if item.symbol == focus_card.symbol),
+            None,
         )
-    elif debates:
-        debate_focus = sorted(
-            debates,
-            key=lambda item: (item.disagreement_score, item.adjusted_score),
-            reverse=True,
-        )[0]
-        focus_title = debate_focus.display_name
-        focus_lines = _unique_lines(
+        focus_debate = next(
             (
-                f"多视角: {debate_focus.recommended_adjustment_label} / 分歧 {debate_focus.disagreement_score:.2f}",
+                item
+                for item in _ordered_home_debates(debates)
+                if item.symbol == focus_card.symbol
+            ),
+            None,
+        )
+        discussion_lines = _home_focus_discussion_lines(
+            spotlight=focus_spotlight,
+            debate_summary=focus_debate,
+        )
+        conclusion_lines = _home_focus_conclusion_lines(
+            focus_card=focus_card,
+            spotlight=focus_spotlight,
+            debate_summary=focus_debate,
+        )
+        if conclusion_lines:
+            focus_lines = conclusion_lines[:3]
+        elif len(discussion_lines) >= 3:
+            focus_lines = discussion_lines[:3]
+        elif discussion_lines:
+            focus_lines = _unique_lines(
                 (
-                    f"共识: {debate_focus.consensus}"
-                    if debate_focus.consensus
-                    else "共识: 当前补充结论只作解释，不替代评分。"
+                    _join_display_parts(
+                        "状态",
+                        _action_status_label(
+                            focus_card.action_label,
+                            focus_card.status_label,
+                        ),
+                        separator=": ",
+                    ),
                 ),
+                discussion_lines,
+            )
+        else:
+            focus_lines = _unique_lines(
                 (
-                    f"待核对: {debate_focus.risk_warnings[0]}"
-                    if debate_focus.risk_warnings
-                    else "待核对: 回到候选来龙去脉。"
-                ),
+                    _join_display_parts(
+                        "状态",
+                        _action_status_label(
+                            focus_card.action_label,
+                            focus_card.status_label,
+                        ),
+                        separator=": ",
+                    ),
+                    (
+                        f"复核: {focus_card.review_meta}"
+                        if _has_review_meta(focus_card.review_meta)
+                        else ""
+                    ),
+                    f"复核线索: {_card_next_action(focus_card)}",
+                )
+            )
+    elif debates:
+        debate_focus = _ordered_home_debates(debates)[0]
+        focus_title = debate_focus.display_name
+        discussion_lines = _home_focus_conclusion_lines(debate_summary=debate_focus)
+        focus_lines = (
+            discussion_lines[:3]
+            if discussion_lines
+            else _unique_lines(
+                (
+                    f"多 Agent: {debate_focus.recommended_adjustment_label} / 分歧 {debate_focus.disagreement_score:.2f}",
+                    (
+                        f"共识: {debate_focus.consensus}"
+                        if debate_focus.consensus
+                        else "共识: 当前补充结论只作解释，不替代评分。"
+                    ),
+                    (
+                        f"待核对: {debate_focus.risk_warnings[0]}"
+                        if debate_focus.risk_warnings
+                        else "待核对: 回到候选来龙去脉。"
+                    ),
+                )
             )
         )
     else:
@@ -4087,21 +9021,33 @@ def _render_home_reading_order(
         spotlights=spotlights,
         debates=debates,
     )
-    st.markdown(
-        "\n".join(
-            [
-                '<div class="aqsp-reading-card">',
-                '<div class="aqsp-reading-title">先看顺序</div>',
-                '<div class="aqsp-reading-main">今天先这样看</div>',
-                *[
-                    f'<div class="aqsp-reading-line">{escape(line)}</div>'
-                    for line in lines
-                ],
-                "</div>",
-            ]
-        ),
-        unsafe_allow_html=True,
+    boundary_title, boundary_lines, boundary_tone = _runtime_boundary_card_context(
+        task_view
     )
+    reading_col, boundary_col = st.columns((1.15, 0.85))
+    with reading_col:
+        st.markdown(
+            "\n".join(
+                [
+                    '<div class="aqsp-reading-card">',
+                    '<div class="aqsp-reading-title">先看顺序</div>',
+                    '<div class="aqsp-reading-main">今天先这样看</div>',
+                    *[
+                        f'<div class="aqsp-reading-line">{escape(line)}</div>'
+                        for line in lines
+                    ],
+                    "</div>",
+                ]
+            ),
+            unsafe_allow_html=True,
+        )
+    with boundary_col:
+        _render_cockpit_card(
+            kicker="当前运行边界",
+            title=boundary_title,
+            lines=boundary_lines,
+            tone=boundary_tone,
+        )
 
 
 def _render_research_radar(summary: ResearchSummary | None) -> None:
@@ -4182,6 +9128,25 @@ def _set_dashboard_selection(*, task_id: str, signal_date: str) -> None:
     st.session_state["dashboard_pending_selected_date"] = signal_date
 
 
+def _queue_home_selection_handoff(
+    *,
+    signal_date: str,
+    task_id: str,
+    task_label: str,
+    title: str,
+    lines: tuple[str, ...] = (),
+) -> None:
+    _queue_workspace_handoff(
+        target_workspace="决策首页",
+        source_workspace="决策首页",
+        signal_date=signal_date,
+        task_id=task_id,
+        task_label=task_label,
+        title=title,
+        lines=lines,
+    )
+
+
 def _set_dashboard_workspace(workspace: str) -> None:
     st.session_state["dashboard_pending_workspace"] = workspace
 
@@ -4201,17 +9166,56 @@ def _workspace_handoff_payload(
     source_workspace: str,
     title: str,
     lines: tuple[str, ...],
+    symbol: str = "",
+    signal_date: str = "",
+    task_id: str = "",
+    task_label: str = "",
+    focus_kind: str = "",
+    debate_id: str = "",
+    decision_source: str = "",
 ) -> dict[str, str | tuple[str, ...]]:
     clean_title = title.strip()
     clean_lines = tuple(line.strip() for line in lines if line and line.strip())
-    if not clean_title and not clean_lines:
+    clean_symbol = symbol.strip()
+    clean_signal_date = signal_date.strip()
+    clean_task_id = task_id.strip()
+    clean_task_label = task_label.strip()
+    clean_focus_kind = focus_kind.strip()
+    clean_debate_id = debate_id.strip()
+    clean_decision_source = decision_source.strip()
+    if not (
+        clean_title
+        or clean_lines
+        or clean_symbol
+        or clean_signal_date
+        or clean_task_id
+        or clean_task_label
+        or clean_focus_kind
+        or clean_debate_id
+        or clean_decision_source
+    ):
         return {}
-    return {
+    payload: dict[str, str | tuple[str, ...]] = {
         "dashboard_pending_handoff_target": target_workspace,
         "dashboard_pending_handoff_source": source_workspace,
         "dashboard_pending_handoff_title": clean_title,
         "dashboard_pending_handoff_lines": clean_lines,
     }
+    if clean_symbol:
+        payload["dashboard_pending_handoff_symbol"] = clean_symbol
+    if clean_signal_date:
+        payload["dashboard_pending_handoff_signal_date"] = clean_signal_date
+    if clean_task_id:
+        payload["dashboard_pending_handoff_task_id"] = clean_task_id
+    if clean_task_label:
+        payload["dashboard_pending_handoff_task_label"] = clean_task_label
+    if clean_focus_kind:
+        payload["dashboard_pending_handoff_focus_kind"] = clean_focus_kind
+    if clean_debate_id:
+        payload["dashboard_pending_handoff_debate_id"] = clean_debate_id
+    if clean_decision_source:
+        payload["dashboard_pending_handoff_decision_source"] = clean_decision_source
+    return payload
 
 
 def _workspace_jump_state(workspace: str, symbol: str) -> dict[str, str]:
@@ -4240,20 +9244,37 @@ def _queue_workspace_handoff(
     symbol: str = "",
     title: str = "",
     lines: tuple[str, ...] = (),
+    signal_date: str = "",
+    task_id: str = "",
+    task_label: str = "",
+    focus_kind: str = "",
+    debate_id: str = "",
+    decision_source: str = "",
 ) -> None:
     _queue_workspace_jump(target_workspace, symbol)
+    if signal_date:
+        st.session_state["dashboard_pending_selected_date"] = signal_date
+    if task_id:
+        st.session_state["dashboard_pending_task_id"] = task_id
     for key, value in _workspace_handoff_payload(
         target_workspace=target_workspace,
         source_workspace=source_workspace,
         title=title,
         lines=lines,
+        symbol=symbol,
+        signal_date=signal_date,
+        task_id=task_id,
+        task_label=task_label,
+        focus_kind=focus_kind,
+        debate_id=debate_id,
+        decision_source=decision_source,
     ).items():
         st.session_state[key] = value
 
 
 def _consume_workspace_handoff(
     target_workspace: str,
-) -> tuple[str, str, tuple[str, ...]] | None:
+) -> _WorkspaceHandoff | None:
     pending_target = st.session_state.get("dashboard_pending_handoff_target")
     if pending_target != target_workspace:
         return None
@@ -4262,9 +9283,75 @@ def _consume_workspace_handoff(
     )
     title = str(st.session_state.pop("dashboard_pending_handoff_title", "") or "")
     raw_lines = st.session_state.pop("dashboard_pending_handoff_lines", ())
+    symbol = str(st.session_state.pop("dashboard_pending_handoff_symbol", "") or "")
+    signal_date = str(
+        st.session_state.pop("dashboard_pending_handoff_signal_date", "") or ""
+    )
+    task_id = str(st.session_state.pop("dashboard_pending_handoff_task_id", "") or "")
+    task_label = str(
+        st.session_state.pop("dashboard_pending_handoff_task_label", "") or ""
+    )
+    focus_kind = str(
+        st.session_state.pop("dashboard_pending_handoff_focus_kind", "") or ""
+    )
+    debate_id = str(
+        st.session_state.pop("dashboard_pending_handoff_debate_id", "") or ""
+    )
+    decision_source = str(
+        st.session_state.pop("dashboard_pending_handoff_decision_source", "") or ""
+    )
     st.session_state.pop("dashboard_pending_handoff_target", None)
     lines = tuple(str(line).strip() for line in raw_lines if str(line).strip())
-    return (source_workspace, title, lines)
+    return _WorkspaceHandoff(
+        target_workspace=target_workspace,
+        source_workspace=source_workspace,
+        title=title,
+        lines=lines,
+        symbol=symbol,
+        signal_date=signal_date,
+        task_id=task_id,
+        task_label=task_label,
+        focus_kind=focus_kind,
+        debate_id=debate_id,
+        decision_source=decision_source,
+    )
+
+
+def _workspace_handoff_focus_label(focus_kind: str) -> str:
+    return {
+        "card": "研究候选卡",
+        "spotlight": "同日跨任务联动",
+        "debate": "委员会补充结论",
+    }.get(focus_kind.strip(), "")
+
+
+def _workspace_handoff_notice_lines(
+    handoff: _WorkspaceHandoff,
+) -> tuple[str, ...]:
+    meta_parts = tuple(
+        part
+        for part in (
+            handoff.signal_date,
+            handoff.task_label or handoff.task_id,
+            _workspace_handoff_focus_label(handoff.focus_kind),
+        )
+        if part
+    )
+    detail_lines = tuple(
+        line
+        for line in (
+            (f"交接焦点: {' / '.join(meta_parts)}" if meta_parts else ""),
+            (
+                f"当前采用口径: {_workspace_handoff_focus_label(handoff.decision_source)}"
+                if _workspace_handoff_focus_label(handoff.decision_source)
+                else ""
+            ),
+            (f"讨论批次: {handoff.debate_id}" if handoff.debate_id else ""),
+            *handoff.lines,
+        )
+        if line
+    )
+    return _unique_lines(detail_lines)
 
 
 def _render_workspace_handoff_notice(
@@ -4274,16 +9361,15 @@ def _render_workspace_handoff_notice(
     handoff = _consume_workspace_handoff(target_workspace)
     if handoff is None:
         return
-    source_workspace, title, lines = handoff
     kicker = (
-        f"{source_workspace} -> {target_workspace}"
-        if source_workspace
+        f"{handoff.source_workspace} -> {target_workspace}"
+        if handoff.source_workspace
         else target_workspace
     )
     _render_cockpit_card(
         kicker=kicker,
-        title=title or "沿上一个工作区继续回放",
-        lines=lines or ("当前没有额外交接说明。",),
+        title=handoff.title or "沿上一个工作区继续回放",
+        lines=_workspace_handoff_notice_lines(handoff) or ("当前没有额外交接说明。",),
         tone="archive",
     )
 
@@ -4291,12 +9377,18 @@ def _render_workspace_handoff_notice(
 def _review_to_archive_handoff_lines(
     *,
     selected_card: DashboardCandidateCard,
+    spotlight: DashboardCandidateSpotlight | None = None,
     debate_summary: DashboardDebateSummary | None,
 ) -> tuple[str, ...]:
     return tuple(
         line
         for line in (
             f"当前标的: {selected_card.display_name}",
+            _candidate_effective_decision_line(
+                selected_card=selected_card,
+                spotlight=spotlight,
+                debate_summary=debate_summary,
+            ),
             (
                 f"当前结论: {debate_summary.recommended_adjustment_label} / 分歧 {debate_summary.disagreement_score:.2f}"
                 if debate_summary is not None
@@ -4307,6 +9399,89 @@ def _review_to_archive_handoff_lines(
                 if _card_primary_blocker(selected_card)
                 else f"归档时重点看: {_card_next_action(selected_card)}"
             ),
+        )
+        if line
+    )
+
+
+def _execution_to_review_handoff_lines(
+    *,
+    selected_symbol: str,
+    selected_card: DashboardCandidateCard | None,
+    selected_spotlight: DashboardCandidateSpotlight | None,
+    debate_summary: DashboardDebateSummary | None,
+    review_card: DashboardCandidateCard | None = None,
+    execution_focus=None,
+) -> tuple[str, ...]:
+    symbol_line = (
+        review_card.display_name
+        if review_card is not None
+        else (
+            selected_card.display_name if selected_card is not None else selected_symbol
+        )
+    )
+    paper_line = ""
+    if execution_focus is not None:
+        paper_line = (
+            str(getattr(execution_focus, "execution_status", "") or "").strip()
+            or str(getattr(execution_focus, "readiness_status", "") or "").strip()
+            or str(getattr(execution_focus, "research_status", "") or "").strip()
+        )
+    fallback_card = review_card or selected_card
+    review_focus_line = ""
+    if fallback_card is not None:
+        review_focus_line = _card_primary_blocker(fallback_card) or _card_next_action(
+            fallback_card
+        )
+    return tuple(
+        line
+        for line in (
+            f"当前标的: {symbol_line}",
+            _candidate_effective_decision_line(
+                selected_card=selected_card,
+                spotlight=selected_spotlight,
+                debate_summary=debate_summary,
+            ),
+            (f"当前纸面: {paper_line}" if paper_line else ""),
+            (
+                f"回到复盘先看: {review_focus_line}"
+                if review_focus_line
+                else "回到复盘先看: 当前研究结论与纸面记录是否一致。"
+            ),
+        )
+        if line
+    )
+
+
+def _execution_to_archive_handoff_lines(
+    *,
+    selected_symbol: str,
+    selected_card: DashboardCandidateCard | None,
+    selected_spotlight: DashboardCandidateSpotlight | None,
+    debate_summary: DashboardDebateSummary | None,
+    execution_focus=None,
+) -> tuple[str, ...]:
+    symbol_line = (
+        selected_card.display_name if selected_card is not None else selected_symbol
+    )
+    paper_line = ""
+    if execution_focus is not None:
+        paper_line = (
+            str(getattr(execution_focus, "execution_status", "") or "").strip()
+            or str(getattr(execution_focus, "holding_status", "") or "").strip()
+            or str(getattr(execution_focus, "research_status", "") or "").strip()
+        )
+    return tuple(
+        line
+        for line in (
+            f"当前标的: {symbol_line}",
+            _candidate_effective_decision_line(
+                selected_card=selected_card,
+                spotlight=selected_spotlight,
+                debate_summary=debate_summary,
+            ),
+            (f"当前纸面: {paper_line}" if paper_line else ""),
+            "归档先看: 纸面验证是否支持当前研究结论与后续回看重点。",
         )
         if line
     )
@@ -4339,6 +9514,180 @@ def _archive_to_review_handoff_lines(
     )
 
 
+def _review_to_execution_handoff_lines(
+    *,
+    selected_card: DashboardCandidateCard,
+    spotlight: DashboardCandidateSpotlight | None = None,
+    debate_summary: DashboardDebateSummary | None,
+) -> tuple[str, ...]:
+    return tuple(
+        line
+        for line in (
+            f"当前标的: {selected_card.display_name}",
+            _candidate_effective_decision_line(
+                selected_card=selected_card,
+                spotlight=spotlight,
+                debate_summary=debate_summary,
+            ),
+            f"纸面先看: {_card_next_action(selected_card)}",
+            (
+                f"当前限制: {_card_primary_blocker(selected_card)}"
+                if _card_primary_blocker(selected_card)
+                else ""
+            ),
+        )
+        if line
+    )
+
+
+def _archive_to_execution_handoff_lines(
+    *,
+    task_view,
+    selected_symbol: str,
+    selected_card: DashboardCandidateCard | None,
+    spotlight: DashboardCandidateSpotlight | None = None,
+    debate_summary: DashboardDebateSummary | None,
+    review_card: DashboardCandidateCard | None = None,
+) -> tuple[str, ...]:
+    archive_lines = _archive_next_action_lines(
+        task_view=task_view,
+        selected_symbol=selected_symbol,
+        selected_card=selected_card,
+        review_card=review_card,
+    )
+    lead_line = (
+        archive_lines[0] if archive_lines else "先核对归档结论与纸面验证是否一致。"
+    )
+    return tuple(
+        line
+        for line in (
+            f"当前标的: {selected_symbol}",
+            _candidate_effective_decision_line(
+                selected_card=selected_card,
+                spotlight=spotlight,
+                debate_summary=debate_summary,
+            ),
+            f"归档状态: {_report_archive_status(task_view)}",
+            f"纸面先看: {lead_line}",
+        )
+        if line
+    )
+
+
+def _workspace_symbol_handoff_title(workspace: str) -> str:
+    return {
+        "候选复盘": "切到这个标的继续复盘",
+        "虚拟盘跟踪": "切到这个标的继续看纸面验证",
+        "归档回看": "切到这个标的继续看归档",
+    }.get(workspace, "切到这个标的继续回看")
+
+
+def _workspace_symbol_handoff_lines(
+    *,
+    workspace: str,
+    symbol: str,
+    cards: tuple[DashboardCandidateCard, ...],
+    spotlights: tuple[DashboardCandidateSpotlight, ...] = (),
+    debates: tuple[DashboardDebateSummary, ...] = (),
+) -> tuple[str, ...]:
+    selected_card, selected_spotlight, debate_summary, review_card = (
+        _review_context_for_symbol(
+            symbol=symbol,
+            cards=cards,
+            spotlights=spotlights,
+            debates=debates,
+        )
+    )
+    focus_card = review_card or selected_card
+    display_name = (
+        focus_card.display_name
+        if focus_card is not None
+        else (
+            selected_spotlight.display_name
+            if selected_spotlight is not None
+            else (debate_summary.display_name if debate_summary is not None else symbol)
+        )
+    )
+    next_focus = ""
+    if focus_card is not None:
+        next_focus = _card_primary_blocker(focus_card) or _card_next_action(focus_card)
+    if not next_focus and selected_spotlight is not None:
+        next_focus = _safe_current_research_line(
+            selected_spotlight.blocker or selected_spotlight.next_step
+        )
+    if not next_focus and debate_summary is not None:
+        next_focus = (
+            debate_summary.primary_risk_gate
+            or debate_summary.next_trigger
+            or debate_summary.adjustment_reason
+        )
+    prefix = {
+        "候选复盘": "切到复盘先看",
+        "虚拟盘跟踪": "切到纸面先看",
+        "归档回看": "切到归档先看",
+    }.get(workspace, "切到这里先看")
+    return tuple(
+        line
+        for line in (
+            f"当前标的: {display_name}",
+            _candidate_effective_decision_line(
+                selected_card=selected_card,
+                spotlight=selected_spotlight,
+                debate_summary=debate_summary,
+            ),
+            (
+                f"{prefix}: {next_focus}"
+                if next_focus
+                else f"{prefix}: 先核对当前结论、阻塞与下一触发。"
+            ),
+        )
+        if line
+    )
+
+
+def _queue_workspace_symbol_handoff(
+    *,
+    workspace: str,
+    symbol: str,
+    cards: tuple[DashboardCandidateCard, ...],
+    spotlights: tuple[DashboardCandidateSpotlight, ...] = (),
+    debates: tuple[DashboardDebateSummary, ...] = (),
+    signal_date: str = "",
+    task_id: str = "",
+    task_label: str = "",
+) -> None:
+    selected_card, selected_spotlight, debate_summary, _ = _review_context_for_symbol(
+        symbol=symbol,
+        cards=cards,
+        spotlights=spotlights,
+        debates=debates,
+    )
+    source_key = _candidate_effective_decision_source_key(
+        selected_card=selected_card,
+        spotlight=selected_spotlight,
+        debate_summary=debate_summary,
+    )
+    _queue_workspace_handoff(
+        target_workspace=workspace,
+        source_workspace=workspace,
+        symbol=symbol,
+        signal_date=signal_date,
+        task_id=task_id,
+        task_label=task_label,
+        focus_kind=source_key,
+        debate_id=debate_summary.debate_id if debate_summary is not None else "",
+        decision_source=source_key,
+        title=_workspace_symbol_handoff_title(workspace),
+        lines=_workspace_symbol_handoff_lines(
+            workspace=workspace,
+            symbol=symbol,
+            cards=cards,
+            spotlights=spotlights,
+            debates=debates,
+        ),
+    )
+
+
 def _workspace_widget_state(
     *,
     pending_workspace: str | None,
@@ -4352,10 +9701,9 @@ def _workspace_widget_state(
     return workspace_options[0]
 
 
-def _render_workspace_navigation() -> str:
+def _render_workspace_navigation(*, pending_workspace: str | None = None) -> str:
     nav_items = _workspace_nav_items()
     workspace_options = [item.name for item in nav_items]
-    pending_workspace = st.session_state.pop("dashboard_pending_workspace", None)
     widget_key = "dashboard_workspace_widget"
     current_workspace = _workspace_widget_state(
         pending_workspace=pending_workspace,
@@ -4410,9 +9758,40 @@ def _render_date_jump_bar(
                     key=f"date-jump-{signal_date}",
                     type="primary" if is_active else "secondary",
                 ):
-                    _set_dashboard_selection(
-                        task_id=resolution.task_id,
+                    same_day_rows = provider.same_day_task_rows(signal_date)
+                    selected_row = next(
+                        (
+                            row
+                            for row in same_day_rows
+                            if row.task_id == resolution.task_id
+                        ),
+                        None,
+                    )
+                    _queue_home_selection_handoff(
                         signal_date=signal_date,
+                        task_id=resolution.task_id,
+                        task_label=(
+                            selected_row.task_label
+                            if selected_row is not None
+                            else resolution.task_id
+                        ),
+                        title=f"切到 {signal_date} 看这天总控",
+                        lines=tuple(
+                            line
+                            for line in (
+                                (
+                                    f"切到这天先看: {selected_row.headline or selected_row.phase_summary or selected_row.task_label}"
+                                    if selected_row is not None
+                                    else ""
+                                ),
+                                (
+                                    f"当前说明: {resolution.reason}"
+                                    if resolution.reason
+                                    else ""
+                                ),
+                            )
+                            if line
+                        ),
                     )
                     st.rerun()
                 # 日期按钮后显示次要标签（如"主链推荐"）用caption
@@ -4450,7 +9829,7 @@ def _render_execution_focus(
     st.subheader("虚拟盘跟踪")
     signal_date = task_view.selected_date or task_view.latest_date
     same_day_spotlights = provider.same_day_candidate_spotlights(signal_date)
-    same_day_debates = provider.debate_summaries(signal_date)
+    same_day_debates = _provider_prioritized_debates(provider, signal_date)
     same_day_task_count = len(provider.same_day_task_rows(signal_date))
     open_positions_frame = provider.open_positions_frame(signal_date=signal_date)
     paper_events_frame = provider.paper_events_frame(limit=50, signal_date=signal_date)
@@ -4484,6 +9863,9 @@ def _render_execution_focus(
         cards=task_view.detail_cards,
         spotlights=same_day_spotlights,
         debates=same_day_debates,
+        signal_date=signal_date,
+        task_id=task_view.task_id,
+        task_label=str(getattr(task_view, "task_label", "") or ""),
     )
 
     selected_card, selected_spotlight, debate_summary, review_card = (
@@ -4556,14 +9938,65 @@ def _render_execution_focus(
             key=f"execution-to-review-{selected_symbol}-{task_view.task_id}-{signal_date}",
             disabled=review_card is None,
         ):
-            _queue_workspace_jump("候选复盘", selected_symbol)
+            source_key = _candidate_effective_decision_source_key(
+                selected_card=selected_card,
+                spotlight=selected_spotlight,
+                debate_summary=debate_summary,
+            )
+            _queue_workspace_handoff(
+                target_workspace="候选复盘",
+                source_workspace="虚拟盘跟踪",
+                symbol=selected_symbol,
+                signal_date=signal_date,
+                task_id=task_view.task_id,
+                task_label=task_view.task_label,
+                focus_kind=source_key,
+                debate_id=debate_summary.debate_id
+                if debate_summary is not None
+                else "",
+                decision_source=source_key,
+                title="带着纸面验证回看研究结论",
+                lines=_execution_to_review_handoff_lines(
+                    selected_symbol=selected_symbol,
+                    selected_card=selected_card,
+                    selected_spotlight=selected_spotlight,
+                    debate_summary=debate_summary,
+                    review_card=review_card,
+                    execution_focus=execution_focus,
+                ),
+            )
             st.rerun()
     with nav_col2:
         if _stretch_button(
             "归档",
             key=f"execution-to-archive-{selected_symbol}-{task_view.task_id}-{signal_date}",
         ):
-            _queue_workspace_jump("归档回看", selected_symbol)
+            source_key = _candidate_effective_decision_source_key(
+                selected_card=selected_card,
+                spotlight=selected_spotlight,
+                debate_summary=debate_summary,
+            )
+            _queue_workspace_handoff(
+                target_workspace="归档回看",
+                source_workspace="虚拟盘跟踪",
+                symbol=selected_symbol,
+                signal_date=signal_date,
+                task_id=task_view.task_id,
+                task_label=task_view.task_label,
+                focus_kind=source_key,
+                debate_id=debate_summary.debate_id
+                if debate_summary is not None
+                else "",
+                decision_source=source_key,
+                title="带着纸面验证去看归档结论",
+                lines=_execution_to_archive_handoff_lines(
+                    selected_symbol=selected_symbol,
+                    selected_card=selected_card,
+                    selected_spotlight=selected_spotlight,
+                    debate_summary=debate_summary,
+                    execution_focus=execution_focus,
+                ),
+            )
             st.rerun()
     with nav_col3:
         if _stretch_button(
@@ -4662,7 +10095,7 @@ def _render_execution_focus(
         with debate_col:
             _render_debate_cockpit(
                 debate_summary=debate_summary,
-                empty_text="当前标的没有同日多视角记录，纸面验证暂以研究结论和虚拟盘记录为主。",
+                empty_text="当前标的没有同日多 Agent 记录，纸面验证暂以研究结论和虚拟盘记录为主。",
                 tone="pressure" if debate_summary is not None else "archive",
             )
 
@@ -4722,38 +10155,24 @@ def _top_navigation_context(
     row_map = {row.task_id: row for row in same_day_rows}
     selected_row = row_map.get(selected_task_id)
     if selected_row is not None:
-        action_label, watch_label, blocked_label = _task_metric_labels(
-            selected_row.task_id
-        )
         return (
             f"{selected_date} · {selected_row.phase_label}",
             (
-                f"{selected_row.task_label} / {selected_row.status_label}",
-                (
-                    f"队列: {action_label} {selected_row.actionable_count} / "
-                    f"{watch_label} {selected_row.watch_count} / "
-                    f"{blocked_label} {selected_row.blocked_count}"
-                ),
-                f"焦点: {selected_row.headline}",
+                f"当前位置: {selected_row.task_label} / {selected_row.status_label}",
+                f"阅读顺序: 先看当天总控，再展开 {selected_row.phase_label}",
+                f"当前焦点: {selected_row.headline}",
             ),
         )
 
     snapshot_map = {snapshot.task_id: snapshot for snapshot in snapshots}
     selected_snapshot = snapshot_map.get(selected_task_id)
     if selected_snapshot is not None:
-        action_label, watch_label, blocked_label = _task_metric_labels(
-            selected_snapshot.task_id
-        )
         return (
             f"{selected_date or '最新'} · {selected_snapshot.task_label}",
             (
-                f"{selected_snapshot.task_label} / {selected_snapshot.status_label}",
-                (
-                    f"队列: {action_label} {selected_snapshot.actionable_count} / "
-                    f"{watch_label} {selected_snapshot.watch_count} / "
-                    f"{blocked_label} {selected_snapshot.blocked_count}"
-                ),
-                f"焦点: {selected_snapshot.headline}",
+                f"当前位置: {selected_snapshot.task_label} / {selected_snapshot.status_label}",
+                f"阅读顺序: 先看当天总控，再展开 {selected_snapshot.task_label}",
+                f"当前焦点: {selected_snapshot.headline}",
             ),
         )
 
@@ -4783,7 +10202,15 @@ def _render_same_day_phase_jump_bar(
                 key=f"phase-jump-{row.task_id}-{signal_date}",
                 type="primary" if is_active else "secondary",
             ):
-                _set_dashboard_selection(task_id=row.task_id, signal_date=signal_date)
+                _queue_home_selection_handoff(
+                    signal_date=signal_date,
+                    task_id=row.task_id,
+                    task_label=row.task_label,
+                    title=f"切到 {row.phase_label} 看这段结论",
+                    lines=(
+                        f"切到这段先看: {row.headline or row.phase_summary or row.task_label}",
+                    ),
+                )
                 st.rerun()
             # 阶段按钮已显示phase_label，删除冗余的two_line_label
 
@@ -4804,11 +10231,74 @@ def _render_top_navigation_banner(
     st.markdown(
         f"""
         <div class="aqsp-banner">
-          <div class="aqsp-banner-title">导航</div>
+          <div class="aqsp-banner-title">当前入口</div>
           <div class="aqsp-banner-main">{escape(title)}</div>
           <div class="aqsp-banner-meta">{"<br/>".join(escape(line) for line in lines if line.strip())}</div>
         </div>
         """,
+        unsafe_allow_html=True,
+    )
+
+
+def _runtime_status_class(status_label: str) -> str:
+    if status_label == "风控阻塞":
+        return "risk"
+    if status_label == "失败":
+        return "error"
+    if status_label == "正常跳过":
+        return "skip"
+    return ""
+
+
+def _dashboard_source_boundary_label(source_id: str) -> str:
+    source = str(source_id or "").strip()
+    if not source:
+        return ""
+    fit = workload_fit_for_source(source).get("live_short", "unknown")
+    if source_supports_workload(source, "live_short"):
+        return f"实时源 {source}（live_short={fit}）"
+    return f"当前实际源 {source} 只适合历史验证，盘中短线不可用（live_short={fit}）"
+
+
+def _render_runtime_task_runs(
+    provider: DashboardDataProvider,
+    *,
+    log_date: str,
+    limit: int = 5,
+) -> None:
+    load_runs = getattr(provider, "runtime_task_runs", None)
+    if not callable(load_runs):
+        return
+    try:
+        runs = load_runs(log_date, limit=limit)
+    except TypeError:
+        runs = load_runs(log_date)[:limit]
+    if not runs:
+        return
+    st.markdown("#### 最近宝塔任务")
+    cards: list[str] = []
+    for run in runs:
+        details = tuple(line for line in run.detail_lines if line.strip())[:2]
+        lines = (run.headline, *details)
+        body = "".join(
+            f'<div class="aqsp-runtime-line">{escape(line)}</div>'
+            for line in lines
+            if line.strip()
+        )
+        status_class = _runtime_status_class(run.status_label)
+        cards.append(
+            f"""
+            <div class="aqsp-runtime-card">
+              <div class="aqsp-runtime-top">
+                <div class="aqsp-runtime-title">{escape(run.task_label)}</div>
+                <div class="aqsp-runtime-status {escape(status_class)}">{escape(run.status_label)}</div>
+              </div>
+              {body}
+            </div>
+            """
+        )
+    st.markdown(
+        '<div class="aqsp-runtime-grid">' + "".join(cards) + "</div>",
         unsafe_allow_html=True,
     )
 
@@ -4818,11 +10308,14 @@ def _render_top_navigation(
     options: tuple,
     snapshots: tuple[DashboardTaskSnapshot, ...],
     provider: DashboardDataProvider,
+    render_controls: bool = True,
 ) -> tuple[str, str]:
-    st.markdown(
-        '<div class="aqsp-nav-note">先选日期，再看当天哪一段。</div>',
-        unsafe_allow_html=True,
-    )
+    """Resolve date/task state and optionally render the legacy top controls.
+
+    Workspace pages use the same state resolver but render their own compact
+    workspace navigation. Keeping the resolver here prevents button handoffs
+    from resetting the selected date or phase.
+    """
     pending_date = st.session_state.pop("dashboard_pending_selected_date", None)
     pending_task_id = st.session_state.pop("dashboard_pending_task_id", None)
     if pending_date is not None:
@@ -4832,6 +10325,36 @@ def _render_top_navigation(
     if pending_task_id is not None:
         st.session_state["dashboard_task_id"] = pending_task_id
         st.session_state["dashboard_task_id_select"] = pending_task_id
+
+    if not render_controls:
+        all_dates = provider.dashboard_dates()
+        selected_date_state = str(
+            st.session_state.get("dashboard_selected_date", "最新") or "最新"
+        )
+        selected_date = (
+            all_dates[0]
+            if all_dates and selected_date_state == "最新"
+            else selected_date_state
+            if selected_date_state in all_dates
+            else (all_dates[0] if all_dates else "")
+        )
+        same_day_rows = provider.same_day_task_rows(selected_date)
+        available_task_ids = [row.task_id for row in same_day_rows]
+        if not available_task_ids:
+            available_task_ids = [option.task_id for option in options]
+        selected_task_id = str(
+            st.session_state.get("dashboard_task_id", "") or ""
+        )
+        if selected_task_id not in available_task_ids:
+            selected_task_id = provider.preferred_task_for_date(selected_date)
+        st.session_state["dashboard_selected_date"] = selected_date or "最新"
+        st.session_state["dashboard_task_id"] = selected_task_id
+        return selected_task_id, selected_date
+
+    st.markdown(
+        '<div class="aqsp-nav-note">先看当天总控，再按日期和阶段展开。</div>',
+        unsafe_allow_html=True,
+    )
 
     all_dates = provider.dashboard_dates()
     if not all_dates:
@@ -4854,6 +10377,7 @@ def _render_top_navigation(
     date_options = ["最新", *all_dates]
     if st.session_state.get("dashboard_selected_date_select") != selected_date_state:
         st.session_state["dashboard_selected_date_select"] = selected_date_state
+    previous_date_label = selected_date_state
     date_col, task_col = st.columns([1.15, 1.35])
     with date_col:
         selected_date_label = st.selectbox(
@@ -4886,6 +10410,7 @@ def _render_top_navigation(
         st.session_state["dashboard_task_id"] = current_task_id
     if st.session_state.get("dashboard_task_id_select") != current_task_id:
         st.session_state["dashboard_task_id_select"] = current_task_id
+    previous_task_id = current_task_id
 
     row_map = {row.task_id: row for row in same_day_rows}
     with task_col:
@@ -4900,6 +10425,53 @@ def _render_top_navigation(
             key="dashboard_task_id_select",
         )
     st.session_state["dashboard_task_id"] = selected_task_id
+    if (
+        selected_date_label != previous_date_label
+        or selected_task_id != previous_task_id
+    ):
+        selected_row = row_map.get(selected_task_id)
+        selected_snapshot = next(
+            (
+                snapshot
+                for snapshot in snapshots
+                if snapshot.task_id == selected_task_id
+            ),
+            None,
+        )
+        _queue_home_selection_handoff(
+            signal_date=selected_date,
+            task_id=selected_task_id,
+            task_label=(
+                selected_row.task_label
+                if selected_row is not None
+                else (
+                    selected_snapshot.task_label
+                    if selected_snapshot is not None
+                    else selected_task_id
+                )
+            ),
+            title=(
+                f"切到 {selected_row.phase_label} 看这段结论"
+                if selected_row is not None
+                else f"切到 {selected_date} 看这天总控"
+            ),
+            lines=tuple(
+                line
+                for line in (
+                    (
+                        f"切到这段先看: {selected_row.headline or selected_row.phase_summary or selected_row.task_label}"
+                        if selected_row is not None
+                        else ""
+                    ),
+                    (
+                        f"切到这天先看: {selected_snapshot.headline}"
+                        if selected_row is None and selected_snapshot is not None
+                        else ""
+                    ),
+                )
+                if line
+            ),
+        )
     _render_same_day_phase_jump_bar(
         signal_date=selected_date,
         rows=same_day_rows,
@@ -4912,6 +10484,26 @@ def _render_top_navigation(
         snapshots=snapshots,
     )
 
+    return selected_task_id, selected_date
+
+
+def _default_home_selection(provider: DashboardDataProvider) -> tuple[str, str]:
+    all_dates = provider.dashboard_dates()
+    selected_date_state = str(
+        st.session_state.get("dashboard_selected_date", "最新") or "最新"
+    )
+    selected_date = (
+        selected_date_state
+        if selected_date_state != "最新" and selected_date_state in all_dates
+        else (all_dates[0] if all_dates else "")
+    )
+    selected_task_id = (
+        provider.preferred_task_for_date(selected_date)
+        if selected_date
+        else provider.default_task_id()
+    )
+    st.session_state["dashboard_selected_date"] = selected_date or "最新"
+    st.session_state["dashboard_task_id"] = selected_task_id
     return selected_task_id, selected_date
 
 
@@ -4990,8 +10582,13 @@ def _focus_summary_lines(
         return tuple(
             line
             for line in (
-                f"研究状态: {_action_status_label(selected_card.action_label, selected_card.status_label)}",
+                f"当前结论: {_action_status_label(selected_card.action_label, selected_card.status_label)}",
                 _candidate_score_context_line(selected_card),
+                _focus_cross_market_digest_line(
+                    selected_spotlight=selected_spotlight,
+                    focus_display=selected_card.display_name,
+                )
+                or _focus_candidate_summary_line(selected_card),
                 (
                     f"下一步: {_card_next_action(selected_card)}"
                     if _card_next_action(selected_card)
@@ -5010,8 +10607,12 @@ def _focus_summary_lines(
         return tuple(
             line
             for line in (
-                f"来源任务: {'、'.join(selected_spotlight.task_labels)}",
-                f"研究状态: {_action_status_label(selected_spotlight.action_label, selected_spotlight.status_label)}",
+                _focus_cross_market_digest_line(
+                    selected_spotlight=selected_spotlight,
+                    focus_display=selected_spotlight.display_name,
+                ),
+                _task_scope_line(_task_scope_summary(selected_spotlight.task_labels)),
+                f"当前结论: {_action_status_label(selected_spotlight.action_label, selected_spotlight.status_label)}",
                 (
                     f"当前重点: {_safe_current_research_line(selected_spotlight.blocker or selected_spotlight.next_step)}"
                     if selected_spotlight.blocker or selected_spotlight.next_step
@@ -5022,6 +10623,120 @@ def _focus_summary_lines(
             if line
         )
     return tuple(line for line in execution_focus.research_lines[:3] if line)
+
+
+def _focus_cross_market_digest_line(
+    *,
+    selected_spotlight: DashboardCandidateSpotlight | None = None,
+    debate_summary: DashboardDebateSummary | None = None,
+    focus_display: str = "",
+) -> str:
+    if selected_spotlight is not None:
+        theme = (
+            selected_spotlight.cross_market_summary.strip()
+            or _cross_market_chain_lead_summary(
+                selected_spotlight.cross_market_chain_summary.strip()
+            )
+        )
+        validation = selected_spotlight.cross_market_validation_summary.strip() or (
+            _extract_cross_market_chain_marker(
+                selected_spotlight.cross_market_chain_summary.strip(),
+                "确认",
+            )
+        )
+        invalidation = (
+            selected_spotlight.cross_market_invalidation_summary.strip()
+            or _extract_cross_market_chain_marker(
+                selected_spotlight.cross_market_chain_summary.strip(),
+                "失效",
+            )
+        )
+        if theme or validation or invalidation:
+            parts = []
+            if theme:
+                parts.append(f"跨市主线: {theme}")
+            if focus_display.strip():
+                parts.append(f"先看 {focus_display.strip()}")
+            if validation:
+                parts.append(f"确认 {validation}")
+            if invalidation:
+                parts.append(f"失效 {invalidation}")
+            return " | ".join(parts)
+
+    if debate_summary is not None:
+        conclusion = _debate_conclusion_summary(debate_summary)
+        theme = conclusion.cross_market_line.replace(
+            "跨市传导: ", ""
+        ).strip() or _cross_market_chain_lead_summary(
+            debate_summary.cross_market_chain_summary.strip()
+        )
+        validation = conclusion.validation_line.replace(
+            "确认信号: ", ""
+        ).strip() or _extract_cross_market_chain_marker(
+            debate_summary.cross_market_chain_summary.strip(),
+            "确认",
+        )
+        invalidation = conclusion.invalidation_line.replace(
+            "失效信号: ", ""
+        ).strip() or _extract_cross_market_chain_marker(
+            debate_summary.cross_market_chain_summary.strip(),
+            "失效",
+        )
+        display = focus_display.strip() or debate_summary.display_name
+        if theme or validation or invalidation:
+            parts = []
+            if theme:
+                parts.append(f"跨市主线: {theme}")
+            if display:
+                parts.append(f"先看 {display}")
+            if validation:
+                parts.append(f"确认 {validation}")
+            if invalidation:
+                parts.append(f"失效 {invalidation}")
+            return " | ".join(parts)
+
+    return ""
+
+
+def _cross_market_chain_lead_summary(chain_summary: str) -> str:
+    normalized = chain_summary.strip()
+    if not normalized:
+        return ""
+    parts = tuple(
+        segment.strip()
+        for segment in normalized.split("｜")
+        if segment.strip()
+        and not segment.strip().startswith(("确认 ", "失效 ", "同向 ", "反向 "))
+    )
+    return "｜".join(parts[:3])
+
+
+def _extract_cross_market_chain_marker(chain_summary: str, marker: str) -> str:
+    normalized = chain_summary.strip()
+    if not normalized:
+        return ""
+    prefix = f"{marker} "
+    for segment in normalized.split("｜"):
+        clean = segment.strip()
+        if clean.startswith(prefix):
+            return clean[len(prefix) :].strip()
+    return ""
+
+
+def _focus_candidate_summary_line(card: DashboardCandidateCard) -> str:
+    note = _safe_current_research_line(card.decision_note)
+    if not note:
+        return ""
+    if note == _card_primary_blocker(card):
+        return ""
+    if note == _card_next_action(card):
+        return ""
+    if not any(
+        marker in note
+        for marker in ("跨市线索", "证据堆栈", "倾向优先纸面复核", "优先纸面复核")
+    ):
+        return ""
+    return f"候选摘要: {note}"
 
 
 def _workspace_focus_title(
@@ -5101,7 +10816,7 @@ def _workspace_research_status(
     if selected_spotlight is not None and review_card is not None:
         return "同日联动已补齐"
     if review_card is not None:
-        return "辩论主结论已补齐"
+        return f"{_committee_supplement_label()}已补齐"
     return execution_focus.research_status
 
 
@@ -5118,7 +10833,7 @@ def _workspace_reality_lines(
         line
         for line in (
             f"回看日期: {selected_date or '-'}",
-            f"研究状态: {research_status}",
+            f"当前阶段: {research_status}",
             f"纸面记录: 事件 {event_count} / 日志 {log_count} / 纸面持有 {open_position_count}",
             f"归档状态: {archive_status}" if archive_status else "",
         )
@@ -5153,7 +10868,7 @@ def _review_source_label(review_card: DashboardCandidateCard | None) -> str:
     if review_card is None:
         return "纸面记录"
     if review_card.rank_label == "辩论主结论":
-        return "辩论主结论"
+        return _committee_supplement_label()
     if review_card.rank_label == "同日联动":
         return "同日联动"
     return "研究候选卡"
@@ -5207,16 +10922,28 @@ def _workspace_context_brief(
         )
     if selected_card is None and selected_spotlight is None:
         return (
-            "辩论主结论回看",
-            ("当前判断主要由辩论主结论补齐。", "先看辩论共识、修正原因和风险分歧。"),
+            f"{_committee_supplement_label()}回看",
+            (
+                f"当前判断主要由{_committee_supplement_label()}补齐。",
+                "先看委员会结论、修正原因和风险分歧。",
+            ),
             "focus",
         )
     if selected_card is None:
+        cross_market_line = (
+            f"跨市传导: {selected_spotlight.cross_market_summary}"
+            if selected_spotlight is not None
+            and selected_spotlight.cross_market_summary
+            else ""
+        )
         return (
             "跨任务联动回看",
-            (
-                "当前判断主要来自同日一起出现的信息。",
-                "先核对跨任务结论，再回到单任务原始记录。",
+            _unique_lines(
+                (
+                    "当前判断主要来自同日一起出现的信息。",
+                    cross_market_line,
+                    "先核对跨任务结论，再回到单任务原始记录。",
+                )
             ),
             "archive",
         )
@@ -5268,6 +10995,12 @@ def _research_path_review_step(
         if selected_spotlight is not None and selected_spotlight.task_labels
         else source
     )
+    spotlight_summary_line = (
+        f"候选摘要: {_spotlight_decision_note(selected_spotlight)}"
+        if selected_spotlight is not None
+        and _spotlight_has_structured_summary(selected_spotlight)
+        else _focus_candidate_summary_line(review_card)
+    )
     return _ResearchPathStep(
         icon="🧭",
         title="研究结论",
@@ -5278,13 +11011,14 @@ def _research_path_review_step(
         ),
         lines=_unique_lines(
             (_candidate_score_context_line(review_card),),
+            (spotlight_summary_line,),
             (source_hint,),
             (
                 f"卡点: {_card_primary_blocker(review_card)}"
                 if _card_primary_blocker(review_card)
                 else ""
             ),
-        )[:2],
+        )[:3],
         tone="blocked" if _card_primary_blocker(review_card) else "focus",
     )
 
@@ -5464,11 +11198,7 @@ def _quick_bar_symbols(
 ) -> list[str]:
     quick_symbols = symbol_order[:limit]
     if workspace == "候选复盘" and debates and quick_symbols:
-        debate_focus = sorted(
-            debates,
-            key=lambda item: (item.disagreement_score, item.adjusted_score),
-            reverse=True,
-        )[0]
+        debate_focus = _salient_home_debates(debates)[0]
         if (
             debate_focus.symbol in symbol_order
             and debate_focus.symbol not in quick_symbols
@@ -5493,6 +11223,9 @@ def _render_symbol_quick_bar(
     cards: tuple[DashboardCandidateCard, ...],
     spotlights: tuple[DashboardCandidateSpotlight, ...] = (),
     debates: tuple[DashboardDebateSummary, ...] = (),
+    signal_date: str = "",
+    task_id: str = "",
+    task_label: str = "",
     limit: int = 6,
 ) -> None:
     quick_symbols = _quick_bar_symbols(
@@ -5521,7 +11254,16 @@ def _render_symbol_quick_bar(
                 key=f"{workspace}-quick-symbol-{symbol}",
                 type="primary" if is_active else "secondary",
             ):
-                _queue_workspace_jump(workspace, symbol)
+                _queue_workspace_symbol_handoff(
+                    workspace=workspace,
+                    symbol=symbol,
+                    cards=cards,
+                    spotlights=spotlights,
+                    debates=debates,
+                    signal_date=signal_date,
+                    task_id=task_id,
+                    task_label=task_label,
+                )
                 st.rerun()
             st.markdown(
                 f'<div class="aqsp-quick-symbol-name{" active" if is_active else ""}">{escape(name_label)}</div>',
@@ -5553,6 +11295,18 @@ def _render_candidate_evidence_drawers(
                 review_card=review_card,
                 spotlight=spotlight,
                 debate_summary=debate_summary,
+            )
+    if debate_summary is not None:
+        with st.expander("多 Agent 摘要与证据", expanded=False):
+            _render_line_block(
+                "委员会摘要",
+                _candidate_debate_evidence_lines(debate_summary),
+                "当前没有可回看的委员会摘要。",
+            )
+            _render_line_block(
+                "过程细节",
+                _candidate_debate_detail_lines(debate_summary),
+                "当前没有需要展开的讨论过程。",
             )
     with st.expander("原始记录", expanded=False):
         _render_candidate_research_stream(
@@ -5614,6 +11368,9 @@ def _render_workspace_symbol_selector(
     cards: tuple[DashboardCandidateCard, ...],
     spotlights: tuple[DashboardCandidateSpotlight, ...] = (),
     debates: tuple[DashboardDebateSummary, ...] = (),
+    signal_date: str = "",
+    task_id: str = "",
+    task_label: str = "",
 ) -> str:
     symbol_order = _include_pending_symbol(symbol_order, pending_symbol)
     default_symbol = _resolve_workspace_symbol(
@@ -5642,6 +11399,9 @@ def _render_workspace_symbol_selector(
         cards=cards,
         spotlights=spotlights,
         debates=debates,
+        signal_date=signal_date,
+        task_id=task_id,
+        task_label=task_label,
     )
     return selected_symbol
 
@@ -5697,6 +11457,9 @@ def _render_review_phase_bar(
     same_day_rows: tuple[DashboardSameDayTaskRow, ...],
     journey_steps: tuple[DashboardCandidateJourneyStep, ...],
     research_task_id: str = "",
+    selected_card: DashboardCandidateCard | None = None,
+    selected_spotlight: DashboardCandidateSpotlight | None = None,
+    debate_summary: DashboardDebateSummary | None = None,
 ) -> None:
     phase_rows = _review_phase_switch_rows(
         same_day_rows=same_day_rows,
@@ -5718,11 +11481,42 @@ def _render_review_phase_bar(
                 key=f"review-phase-{selected_symbol}-{row.task_id}-{signal_date}",
                 type="primary" if is_active else "secondary",
             ):
+                source_key = _candidate_effective_decision_source_key(
+                    selected_card=selected_card,
+                    spotlight=selected_spotlight,
+                    debate_summary=debate_summary,
+                )
+                _queue_workspace_handoff(
+                    target_workspace="候选复盘",
+                    source_workspace="候选复盘",
+                    symbol=selected_symbol,
+                    signal_date=signal_date,
+                    task_id=row.task_id,
+                    task_label=row.task_label,
+                    focus_kind=source_key,
+                    debate_id=debate_summary.debate_id
+                    if debate_summary is not None
+                    else "",
+                    decision_source=source_key,
+                    title=f"切到 {row.phase_label} 看这段结论",
+                    lines=tuple(
+                        line
+                        for line in (
+                            f"当前标的: {selected_symbol}",
+                            _candidate_effective_decision_line(
+                                selected_card=selected_card,
+                                spotlight=selected_spotlight,
+                                debate_summary=debate_summary,
+                            ),
+                            f"切到这段先看: {row.headline or row.phase_summary or row.task_label}",
+                        )
+                        if line
+                    ),
+                )
                 _set_dashboard_selection(
                     task_id=row.task_id,
                     signal_date=signal_date,
                 )
-                _queue_workspace_jump("候选复盘", selected_symbol)
                 st.rerun()
             # 候选阶段按钮已显示phase_label，删除冗余的two_line_label
 
@@ -5745,6 +11539,12 @@ def _execution_research_context_lines(
         and selected_spotlight is None
     ):
         return _unique_lines(
+            (
+                _focus_cross_market_digest_line(
+                    debate_summary=debate_summary,
+                    focus_display=debate_summary.display_name,
+                ),
+            ),
             _debate_primary_takeaways(debate_summary)[:2],
             ("当前没有研究候选卡，当前判断主要由同日多方讨论补齐。",),
         ) or ("当前没有结构化研究结论。",)
@@ -5757,6 +11557,21 @@ def _execution_research_context_lines(
         )[:2]
     return (
         _unique_lines(
+            (
+                _focus_cross_market_digest_line(
+                    selected_spotlight=selected_spotlight,
+                    debate_summary=debate_summary,
+                    focus_display=(
+                        selected_card.display_name
+                        if selected_card is not None
+                        else (
+                            selected_spotlight.display_name
+                            if selected_spotlight is not None
+                            else ""
+                        )
+                    ),
+                ),
+            ),
             _debate_primary_takeaways(debate_summary)[:2],
             research_seed,
         )
@@ -5787,6 +11602,21 @@ def _execution_path_context_lines(
         blocker and not any(blocker in line for line in readiness_lines)
     )
     return _unique_lines(
+        (
+            _focus_cross_market_digest_line(
+                selected_spotlight=selected_spotlight,
+                debate_summary=debate_summary,
+                focus_display=(
+                    review_card.display_name
+                    if review_card is not None
+                    else (
+                        selected_spotlight.display_name
+                        if selected_spotlight is not None
+                        else ""
+                    )
+                ),
+            ),
+        ),
         _debate_primary_takeaways(debate_summary)[2:4],
         tuple(
             line
@@ -5984,6 +11814,13 @@ def _prioritized_research_lines(lines: tuple[str, ...]) -> tuple[str, ...]:
         "当前卡点:",
         "再看时间:",
         "复核节奏:",
+        "跨市逻辑:",
+        "确认信号:",
+        "失效信号:",
+        "支持观点:",
+        "反对观点:",
+        "待确认:",
+        "角色可信度:",
     ):
         for line in lines:
             if line.startswith(prefix) and line not in prioritized:
@@ -6069,29 +11906,52 @@ def _candidate_research_context_lines(
         )
     )
     if review_card.rank_label == "辩论主结论" and debate_summary is not None:
+        conclusion = _debate_conclusion_summary(
+            debate_summary,
+            spotlight=spotlight,
+            focus_card=review_card,
+        )
         context_lines = tuple(
             line
             for line in (
+                conclusion.decision_line.replace(
+                    "研究口径: ",
+                    "委员会结论: ",
+                    1,
+                ).replace("当前结论: ", "委员会结论: ", 1),
                 (
                     f"监控焦点: {_card_primary_blocker(review_card)}"
                     if _card_primary_blocker(review_card)
                     else "监控焦点: 当前只在本任务中出现，优先等待下一次任务验证。"
                 ),
+                (
+                    f"下一触发: {debate_summary.next_trigger.strip()}"
+                    if debate_summary.next_trigger.strip()
+                    else ""
+                ),
+                conclusion.support_line,
+                conclusion.opposition_line or conclusion.invalidation_line,
+                conclusion.watch_line or conclusion.validation_line,
                 "验证动作: 等待下一次任务或纸面验证记录补充独立依据。",
             )
             if line
         )
     else:
+        cross_market_digest_line = _focus_cross_market_digest_line(
+            selected_spotlight=spotlight,
+            focus_display=review_card.display_name,
+        )
         context_lines = tuple(
             line
             for line in (
-                f"研究入口: {_review_source_label(review_card)}",
-                f"研究状态: {_action_status_label(review_card.action_label, review_card.status_label)}",
+                f"当前来源: {_review_source_label(review_card)}",
+                f"当前结论: {_action_status_label(review_card.action_label, review_card.status_label)}",
                 (
                     f"再看时间: {review_card.review_meta}"
                     if _has_review_meta(review_card.review_meta)
                     else ""
                 ),
+                cross_market_digest_line,
                 (
                     f"核心理由: {'；'.join(review_card.reasons[:2])}"
                     if review_card.reasons
@@ -6125,6 +11985,58 @@ def _candidate_research_context_lines(
     return title, execution_lines, context_lines, tone
 
 
+def _candidate_debate_evidence_lines(
+    debate_summary: DashboardDebateSummary | None,
+) -> tuple[str, ...]:
+    if debate_summary is None:
+        return ()
+    summary_title, summary_lines, _ = _candidate_discussion_snapshot_context(
+        None,
+        debate_summary,
+    )
+    return _unique_lines((f"摘要标题: {summary_title}",), summary_lines)
+
+
+def _candidate_debate_detail_lines(
+    debate_summary: DashboardDebateSummary | None,
+) -> tuple[str, ...]:
+    if debate_summary is None:
+        return ()
+    conclusion = _debate_conclusion_summary(debate_summary)
+    process_line = (
+        "讨论过程: "
+        + _timeline_debate_process_line(debate_summary)
+        .removeprefix("- ")
+        .replace(f"{debate_summary.display_name}: ", "", 1)
+        .strip()
+    )
+    round_lines = tuple(
+        f"轮次摘要: 第{index + 1}轮 {line}"
+        for index, line in enumerate(debate_summary.round_summaries[:2])
+        if str(line).strip()
+    )
+    detail_lines = tuple(
+        line
+        for line in (
+            conclusion.cross_market_line,
+            conclusion.active_roles_line,
+            conclusion.history_line,
+            conclusion.reliability_line,
+            conclusion.support_line,
+            conclusion.opposition_line,
+            conclusion.watch_line,
+            _debate_evidence_composition_line(debate_summary),
+        )
+        if line
+    )
+    return _unique_lines(
+        ((process_line,) if process_line.strip() else ()),
+        round_lines,
+        _debate_agent_focus_lines(debate_summary),
+        detail_lines,
+    )
+
+
 def _render_candidate_research_stream(
     *,
     review_card: DashboardCandidateCard,
@@ -6144,25 +12056,33 @@ def _render_candidate_research_stream(
             _render_frame(evidence_title, signal_frame)
         elif debate_summary is not None and spotlight is None:
             _render_cockpit_card(
-                kicker="辩论补齐证据",
+                kicker="研究证据状态",
                 title="当前没有独立任务信号表",
-                lines=_unique_lines(
-                    ("结论来源: 同日多 Agent 辩论补齐",),
-                    _debate_agent_focus_lines(debate_summary),
-                    (_debate_evidence_composition_line(debate_summary),),
+                lines=(
+                    "当前标的主要依赖同日多 Agent 讨论补齐；原始讨论已单独放在上方抽屉。",
+                    "如果后续补到任务信号或纸面记录，再回到这里交叉验证。",
                 ),
                 tone="archive",
             )
         if not task_frame.empty:
             _render_frame("任务明细", task_frame)
         if spotlight is not None:
+            global_view_lines = _spotlight_global_view_lines(
+                spotlight,
+                reason_label="汇总理由",
+                risk_label="汇总风险",
+            )
             st.markdown(
                 "\n".join(
                     [
                         "#### 同日全局视角",
-                        f"- 任务覆盖: {'、'.join(spotlight.task_labels)}",
-                        f"- 汇总理由: {'；'.join(spotlight.reasons[:3]) if spotlight.reasons else '-'}",
-                        f"- 汇总风险: {'；'.join(spotlight.risks[:3]) if spotlight.risks else '-'}",
+                        f"- {_task_scope_line(_task_scope_summary(spotlight.task_labels))}",
+                        *(
+                            f"- {line}"
+                            for line in (
+                                global_view_lines or ("当前还没有提炼出同日联动摘要。",)
+                            )
+                        ),
                     ]
                 )
             )
@@ -6217,6 +12137,10 @@ def _candidate_focus_spotlight_lines(
     spotlight: DashboardCandidateSpotlight,
 ) -> tuple[str, ...]:
     focus_detail = spotlight.blocker or spotlight.next_step or "继续跟踪"
+    cross_market_digest_line = _focus_cross_market_digest_line(
+        selected_spotlight=spotlight,
+        focus_display=card.display_name,
+    )
     duplicate_hints = {
         primary
         for primary in (
@@ -6226,7 +12150,8 @@ def _candidate_focus_spotlight_lines(
         if primary
     }
     lines = [
-        f"来源任务: {'、'.join(spotlight.task_labels)}",
+        *([cross_market_digest_line] if cross_market_digest_line else []),
+        _task_scope_line(_task_scope_summary(spotlight.task_labels)),
         f"跨任务结论: {_action_status_label(spotlight.action_label, spotlight.status_label)}",
     ]
     if focus_detail not in duplicate_hints:
@@ -6236,23 +12161,119 @@ def _candidate_focus_spotlight_lines(
     return tuple(_unique_lines(tuple(lines)))
 
 
+def _candidate_effective_decision_source_key(
+    *,
+    selected_card: DashboardCandidateCard | None,
+    spotlight: DashboardCandidateSpotlight | None,
+    debate_summary: DashboardDebateSummary | None,
+) -> str:
+    if selected_card is not None:
+        if selected_card.rank_label == "辩论主结论" and debate_summary is not None:
+            return "debate"
+        return "card"
+    if spotlight is not None:
+        return "spotlight"
+    if debate_summary is not None:
+        return "debate"
+    return ""
+
+
+def _candidate_effective_decision_source_label(source_key: str) -> str:
+    return {
+        "card": "研究候选卡",
+        "spotlight": "同日跨任务联动",
+        "debate": "委员会补充结论",
+    }.get(source_key, "当前上下文")
+
+
+def _candidate_effective_decision_line(
+    *,
+    selected_card: DashboardCandidateCard | None,
+    spotlight: DashboardCandidateSpotlight | None,
+    debate_summary: DashboardDebateSummary | None,
+) -> str:
+    source_key = _candidate_effective_decision_source_key(
+        selected_card=selected_card,
+        spotlight=spotlight,
+        debate_summary=debate_summary,
+    )
+    if not source_key:
+        return ""
+    label = _candidate_effective_decision_source_label(source_key)
+    if source_key == "card":
+        if (
+            selected_card is not None
+            and _card_primary_blocker(selected_card)
+            and debate_summary is not None
+        ):
+            reason = "主链卡点优先，委员会结论只补充分歧与下一触发。"
+        elif spotlight is not None and debate_summary is not None:
+            reason = "跨任务联动和委员会结论都只作补充，不替代评分。"
+        elif debate_summary is not None:
+            reason = "委员会结论只作补充，不替代评分。"
+        elif spotlight is not None:
+            reason = "跨任务联动只作一起参考，不替代当前任务结论。"
+        else:
+            reason = "当前判断以本任务研究结论为主。"
+    elif source_key == "spotlight":
+        if debate_summary is not None:
+            reason = "先核对跨任务结论，委员会只补充分歧和风险。"
+        else:
+            reason = "先核对跨任务结论，再回到单任务原始记录。"
+    else:
+        reason = "当前没有独立候选卡，委员会结论只作解释，不改写评分。"
+    return f"当前采用口径: {label}；{reason}"
+
+
 def _candidate_review_path_lines(
     *,
     selected_card: DashboardCandidateCard,
     spotlight: DashboardCandidateSpotlight | None,
     debate_summary: DashboardDebateSummary | None,
 ) -> tuple[str, ...]:
+    spotlight_summary = (
+        f"候选摘要: {_spotlight_decision_note(spotlight)}"
+        if spotlight is not None and _spotlight_has_structured_summary(spotlight)
+        else ""
+    )
+    compact_cross_market_line = ""
+    debate_followup_line = ""
+    if debate_summary is not None:
+        compact_cross_market_line = _focus_cross_market_digest_line(
+            selected_spotlight=spotlight,
+            debate_summary=debate_summary,
+            focus_display=selected_card.display_name,
+        ).replace(f" | 先看 {selected_card.display_name}", "", 1)
+        conclusion = _debate_conclusion_summary(
+            debate_summary,
+            spotlight=spotlight,
+            focus_card=selected_card,
+        )
+        debate_followup_line = (
+            conclusion.watch_line
+            or conclusion.chain_or_trigger_line
+            or conclusion.opposition_line
+            or conclusion.support_line
+        )
     return tuple(
         line
         for line in (
+            _candidate_effective_decision_line(
+                selected_card=selected_card,
+                spotlight=spotlight,
+                debate_summary=debate_summary,
+            ),
+            compact_cross_market_line,
+            debate_followup_line,
             *_debate_vote_snapshot_lines(debate_summary),
             (
                 f"修正原因: {debate_summary.adjustment_reason}"
                 if debate_summary is not None and debate_summary.adjustment_reason
                 else ""
             ),
+            spotlight_summary,
             (
-                f"来源任务: {'、'.join(spotlight.task_labels)}"
+                _task_scope_line(_task_scope_summary(spotlight.task_labels))
                 if spotlight is not None and len(spotlight.task_labels) > 1
                 else ""
             ),
@@ -6309,7 +12330,7 @@ def _render_candidate_journey(
                         f"### {step.phase_label}",
                         f"- 任务: {step.task_label}",
                         f"- 评分: `{step.score:.1f}`",
-                        f"- 研究状态: {_action_status_label(step.action_label, step.status_label)}",
+                        f"- 当前结论: {_action_status_label(step.action_label, step.status_label)}",
                         (
                             f"- {_review_meta_line('复核节奏', step.review_meta)}"
                             if _review_meta_line("复核节奏", step.review_meta)
@@ -6339,13 +12360,13 @@ def _candidate_empty_journey_message(
     debate_summary: DashboardDebateSummary | None,
 ) -> str:
     if debate_summary is not None and review_card is not None:
-        return "该标的在当前回看日没有独立候选来龙去脉，当前判断主要由同日多 Agent 讨论补齐。"
+        return "该标的当前只有讨论结论可参考，先等下一次行情刷新给出独立候选证据。"
     if (
         spotlight is not None
         and review_card is not None
         and review_card.rank_label == "同日联动"
     ):
-        return "该标的在当前回看日没有独立候选来龙去脉，当前判断主要来自同日联动聚合。"
+        return "该标的当前只有同日观察线索，先等下一次刷新确认是否进入复核。"
     return "该标的在当前回看日只有单任务记录，暂无跨阶段来龙去脉。"
 
 
@@ -6356,22 +12377,18 @@ def _candidate_linkage_context(
     task_summary: str,
 ) -> tuple[str, tuple[str, ...], str]:
     if spotlight is not None and len(spotlight.task_labels) > 1:
+        linkage_lines = _spotlight_global_view_lines(
+            spotlight,
+            reason_label="汇总理由",
+            risk_label="汇总风险",
+        )
         return (
             "跨任务视角",
             tuple(
                 line
                 for line in (
-                    f"任务覆盖: {task_summary}",
-                    (
-                        f"汇总理由: {'；'.join(spotlight.reasons[:2])}"
-                        if spotlight.reasons
-                        else ""
-                    ),
-                    (
-                        f"汇总风险: {'；'.join(spotlight.risks[:2])}"
-                        if spotlight.risks
-                        else ""
-                    ),
+                    _task_scope_line(task_summary),
+                    *linkage_lines,
                 )
                 if line
             )
@@ -6379,27 +12396,23 @@ def _candidate_linkage_context(
             "archive",
         )
     if spotlight is not None:
+        linkage_lines = _spotlight_global_view_lines(
+            spotlight,
+            reason_label="同日摘要",
+            risk_label="主要风险",
+        )
         return (
             "单任务证据",
             tuple(
                 line
                 for line in (
-                    f"任务覆盖: {task_summary}",
-                    (
-                        f"同日摘要: {'；'.join(spotlight.reasons[:2])}"
-                        if spotlight.reasons
-                        else ""
-                    ),
-                    (
-                        f"主要风险: {'；'.join(spotlight.risks[:2])}"
-                        if spotlight.risks
-                        else ""
-                    ),
+                    _task_scope_line(task_summary),
+                    *linkage_lines,
                 )
                 if line
             )
             or (
-                f"任务覆盖: {task_summary}",
+                _task_scope_line(task_summary),
                 "当前只在本任务中出现，没有额外同日参考信息。",
             ),
             "archive",
@@ -6418,7 +12431,7 @@ def _candidate_linkage_context(
                     if debate_summary.risk_warnings
                     else ""
                 ),
-                f"当前覆盖: {task_summary}",
+                _task_scope_line(task_summary),
             )
             if line
         )
@@ -6426,29 +12439,94 @@ def _candidate_linkage_context(
             "风险与机会",
             debate_lines
             or (
-                "当前判断来自多 Agent 辩论补齐。",
-                f"当前覆盖: {task_summary}",
+                "当前判断来自多 Agent 委员会补齐。",
+                _task_scope_line(task_summary),
             ),
             "archive",
         )
     return (
         "单任务证据",
         (
-            f"任务覆盖: {task_summary}",
+            _task_scope_line(task_summary),
             "当前只在本任务中出现，没有额外同日参考信息。",
         ),
         "archive",
     )
 
 
+def _candidate_discussion_snapshot_context(
+    selected_card: DashboardCandidateCard | None,
+    debate_summary: DashboardDebateSummary | None,
+    spotlight: DashboardCandidateSpotlight | None = None,
+) -> tuple[str, tuple[str, ...], str]:
+    if debate_summary is None:
+        return ("多 Agent 摘要", (), "archive")
+    conclusion = _debate_conclusion_summary(debate_summary)
+    result_line = (
+        conclusion.decision_line.replace("研究口径: ", "")
+        .replace("当前结论: ", "")
+        .strip()
+        or debate_summary.recommended_adjustment_label
+    )
+    compact_cross_market_line = _focus_cross_market_digest_line(
+        selected_spotlight=spotlight,
+        debate_summary=debate_summary,
+        focus_display=(
+            selected_card.display_name
+            if selected_card is not None
+            else debate_summary.display_name
+        ),
+    ).replace(
+        f" | 先看 {selected_card.display_name if selected_card is not None else debate_summary.display_name}",
+        "",
+        1,
+    )
+    watch_line = conclusion.watch_line or conclusion.chain_or_trigger_line
+    trigger_line = (
+        conclusion.chain_or_trigger_line
+        if conclusion.chain_or_trigger_line != watch_line
+        else ""
+    )
+    lines = _unique_lines(
+        (
+            f"委员会结论: {result_line}",
+            _candidate_effective_decision_line(
+                selected_card=selected_card,
+                spotlight=spotlight,
+                debate_summary=debate_summary,
+            ),
+            compact_cross_market_line,
+            trigger_line,
+            watch_line,
+        )
+    )[:5]
+    tone = (
+        "blocked"
+        if debate_summary.recommended_adjustment == "lower"
+        else ("pressure" if debate_summary.disagreement_score >= 0.35 else "focus")
+    )
+    title = (
+        f"{debate_summary.recommended_adjustment_label}"
+        f" / 分歧 {debate_summary.disagreement_score:.2f}"
+    )
+    return title, lines, tone
+
+
 def _render_candidate_review_snapshot(
     selected_card: DashboardCandidateCard,
     spotlight: DashboardCandidateSpotlight | None,
     debate_summary: DashboardDebateSummary | None,
-    journey_steps: tuple[DashboardCandidateJourneyStep, ...],
-    paper_frame,
-    execution_frame,
+    task_id: str = "",
+    task_label: str = "",
+    signal_date: str = "",
+    journey_steps: tuple[DashboardCandidateJourneyStep, ...] = (),
+    paper_frame=None,
+    execution_frame=None,
 ) -> None:
+    paper_empty = bool(getattr(paper_frame, "empty", True))
+    execution_empty = bool(getattr(execution_frame, "empty", True))
+    paper_event_count = len(getattr(paper_frame, "index", ()))
+    execution_event_count = len(getattr(execution_frame, "index", ()))
     path_summary = (
         " -> ".join(step.phase_label for step in journey_steps)
         if journey_steps
@@ -6463,8 +12541,8 @@ def _render_candidate_review_snapshot(
         "、".join(spotlight.task_labels) if spotlight is not None else "仅当前任务"
     )
     execution_summary = (
-        f"虚拟盘事件 {len(paper_frame.index)} / 纸面日志 {len(execution_frame.index)}"
-        if not paper_frame.empty or not execution_frame.empty
+        f"虚拟盘事件 {paper_event_count} / 纸面日志 {execution_event_count}"
+        if not paper_empty or not execution_empty
         else (
             "当前仍处研究阻塞阶段，尚未进入纸面动作"
             if _card_primary_blocker(selected_card)
@@ -6476,7 +12554,7 @@ def _render_candidate_review_snapshot(
         debate_summary=debate_summary,
         task_summary=task_summary,
     )
-    has_execution_activity = not paper_frame.empty or not execution_frame.empty
+    has_execution_activity = not paper_empty or not execution_empty
     has_blocker = bool(_card_primary_blocker(selected_card))
     compact_mode = (
         not has_execution_activity and debate_summary is None and not has_expanded_path
@@ -6496,12 +12574,13 @@ def _render_candidate_review_snapshot(
         f"{selected_card.score:.1f}",
     )
     metric_col2.metric(
-        "覆盖任务", len(spotlight.task_labels) if spotlight is not None else 1
+        "涉及任务", len(spotlight.task_labels) if spotlight is not None else 1
     )
-    metric_col3.metric("虚拟盘事件", len(paper_frame.index))
-    metric_col4.metric("纸面日志", len(execution_frame.index))
+    metric_col3.metric("虚拟盘事件", paper_event_count)
+    metric_col4.metric("纸面日志", execution_event_count)
 
-    _render_debate_brief(debate_summary)
+    if not debate_compact_mode:
+        _render_debate_brief(debate_summary)
 
     summary_col, status_col = st.columns(2)
     with summary_col:
@@ -6511,22 +12590,14 @@ def _render_candidate_review_snapshot(
         )
         if debate_compact_mode:
             summary_lines = [
-                f"- 结论: {debate_summary.recommended_adjustment_label} / 分歧 {debate_summary.disagreement_score:.2f}",
-                "- 来源: 同日多 Agent 辩论主结论",
-                "- 性质: 辩论调整分，非选股评分，待独立验证",
+                f"- 当前定位: {_committee_supplement_label()}",
+                "- 使用边界: 辩论调整分，非主选股评分",
+                "- 下一步: 等待独立候选路径或纸面记录补足依据。",
             ]
         else:
-            review_source = (
-                "辩论主结论"
-                if selected_card.rank_label == "辩论主结论"
-                else (
-                    "同日联动"
-                    if selected_card.rank_label == "同日联动"
-                    else "研究候选卡"
-                )
-            )
+            review_source = _review_source_label(selected_card)
             summary_lines = [
-                f"- 研究入口: {review_source}",
+                f"- 当前来源: {review_source}",
                 (
                     f"- 当日经过: {path_summary}"
                     if has_expanded_path
@@ -6536,11 +12607,24 @@ def _render_candidate_review_snapshot(
             ]
         st.markdown("\n".join(summary_lines))
     with status_col:
+        status_title = linkage_title
+        status_lines = linkage_lines
+        status_tone = linkage_tone
+        if debate_summary is not None and spotlight is None:
+            status_title, status_lines, status_tone = (
+                _candidate_discussion_snapshot_context(
+                    selected_card,
+                    debate_summary,
+                    spotlight,
+                )
+            )
         _render_cockpit_card(
-            kicker="证据落点",
-            title=linkage_title,
-            lines=linkage_lines,
-            tone=linkage_tone,
+            kicker="多 Agent 摘要"
+            if debate_summary is not None and spotlight is None
+            else "证据落点",
+            title=status_title,
+            lines=status_lines,
+            tone=status_tone,
         )
 
     research_lines = _candidate_research_lines(
@@ -6583,7 +12667,7 @@ def _render_candidate_review_snapshot(
         with path_col:
             _render_cockpit_card(
                 kicker="当天怎么串起来",
-                title="多方怎么看" if debate_summary is not None else path_summary,
+                title="委员会怎么看" if debate_summary is not None else path_summary,
                 lines=path_lines,
                 tone="archive",
             )
@@ -6600,13 +12684,13 @@ def _render_candidate_review_snapshot(
                     if has_blocker
                     else ""
                 ),
-                "当前尚未进入纸面动作，优先等待下一次任务验证。",
+                "当前状态: 尚未进入纸面动作，先等独立验证。",
             )
             if line
         )
         _render_cockpit_card(
-            kicker="现在是什么状态",
-            title="等待独立验证",
+            kicker="下一步怎么核",
+            title="先等独立依据",
             lines=debate_action_lines,
             tone="blocked" if has_blocker else "archive",
         )
@@ -6643,20 +12727,57 @@ def _render_candidate_review_snapshot(
             "虚拟盘",
             key=f"review-to-execution-{selected_card.symbol}",
         ):
-            _queue_workspace_jump("虚拟盘跟踪", selected_card.symbol)
+            source_key = _candidate_effective_decision_source_key(
+                selected_card=selected_card,
+                spotlight=spotlight,
+                debate_summary=debate_summary,
+            )
+            _queue_workspace_handoff(
+                target_workspace="虚拟盘跟踪",
+                source_workspace="候选复盘",
+                symbol=selected_card.symbol,
+                signal_date=signal_date,
+                task_id=task_id,
+                task_label=task_label,
+                focus_kind=source_key,
+                debate_id=debate_summary.debate_id
+                if debate_summary is not None
+                else "",
+                decision_source=source_key,
+                title="带着研究结论去看纸面验证",
+                lines=_review_to_execution_handoff_lines(
+                    selected_card=selected_card,
+                    spotlight=spotlight,
+                    debate_summary=debate_summary,
+                ),
+            )
             st.rerun()
     with nav_col2:
         if _stretch_button(
             "归档",
             key=f"review-to-report-{selected_card.symbol}",
         ):
+            source_key = _candidate_effective_decision_source_key(
+                selected_card=selected_card,
+                spotlight=spotlight,
+                debate_summary=debate_summary,
+            )
             _queue_workspace_handoff(
                 target_workspace="归档回看",
                 source_workspace="候选复盘",
                 symbol=selected_card.symbol,
+                signal_date=signal_date,
+                task_id=task_id,
+                task_label=task_label,
+                focus_kind=source_key,
+                debate_id=debate_summary.debate_id
+                if debate_summary is not None
+                else "",
+                decision_source=source_key,
                 title="带着当前判断去看归档",
                 lines=_review_to_archive_handoff_lines(
                     selected_card=selected_card,
+                    spotlight=spotlight,
                     debate_summary=debate_summary,
                 ),
             )
@@ -6680,7 +12801,7 @@ def _render_candidate_deep_dive(
     st.subheader("候选复盘")
     _render_workspace_handoff_notice(target_workspace="候选复盘")
     signal_date = task_view.selected_date or task_view.latest_date
-    same_day_debates = provider.debate_summaries(signal_date)
+    same_day_debates = _provider_prioritized_debates(provider, signal_date)
     review_cards = provider.candidate_review_cards(signal_date)
     symbol_order = _candidate_symbol_order(
         review_cards,
@@ -6702,6 +12823,9 @@ def _render_candidate_deep_dive(
         cards=review_cards,
         spotlights=same_day_spotlights,
         debates=same_day_debates,
+        signal_date=signal_date,
+        task_id=task_id,
+        task_label=str(getattr(task_view, "task_label", "") or ""),
     )
     selected_card, spotlight, debate_summary, review_card = _review_context_for_symbol(
         symbol=selected_symbol,
@@ -6740,6 +12864,9 @@ def _render_candidate_deep_dive(
         same_day_rows=same_day_rows,
         journey_steps=journey_steps,
         research_task_id=signal_task_id,
+        selected_card=selected_card,
+        selected_spotlight=spotlight,
+        debate_summary=debate_summary,
     )
     signal_frame = provider.latest_signal_frame(
         limit=30,
@@ -6801,6 +12928,9 @@ def _render_candidate_deep_dive(
         review_card,
         spotlight,
         debate_summary,
+        task_id,
+        task_view.task_label,
+        signal_date,
         journey_steps,
         paper_frame,
         execution_frame,
@@ -7016,6 +13146,8 @@ def _action_status_label(action_label: str, status_label: str) -> str:
     if action and status:
         if action == status:
             return action
+        if action in {"继续观察", "继续观察名单"} and status == "结果不变":
+            return status
         return f"{action} / {status}"
     return action or status or "-"
 
@@ -7048,11 +13180,27 @@ def _candidate_research_lines(
     debate_summary: DashboardDebateSummary | None,
     compact_mode: bool,
 ) -> tuple[str, ...]:
-    debate_lines = (
-        _debate_primary_takeaways(debate_summary)[1:3]
-        if compact_mode
-        else _debate_primary_takeaways(debate_summary)[:2]
-    )
+    if debate_summary is not None:
+        conclusion = _debate_conclusion_summary(
+            debate_summary,
+            focus_card=selected_card,
+        )
+        compact_cross_market_line = _focus_cross_market_digest_line(
+            debate_summary=debate_summary,
+            focus_display=selected_card.display_name,
+        )
+        debate_lines = (
+            conclusion.decision_line,
+            compact_cross_market_line or conclusion.cross_market_line,
+            ""
+            if compact_mode
+            else _compact_debate_followup_line(
+                debate_summary,
+                conclusion=conclusion,
+            ),
+        )
+    else:
+        debate_lines = ()
     return tuple(
         line
         for line in (
@@ -7236,7 +13384,7 @@ def _archive_brief_cards(
         )
         if line
     )
-    debate_lines = _archive_debate_evidence_lines(debate_summary)[:3]
+    debate_lines = _archive_debate_summary_lines(debate_summary)[:3]
     return (
         _ArchiveBriefCard(
             kicker="归档结论",
@@ -7260,7 +13408,7 @@ def _archive_brief_cards(
             tone="pressure" if has_execution_activity else "archive",
         ),
         _ArchiveBriefCard(
-            kicker="多方怎么看",
+            kicker="委员会怎么看",
             title=(
                 f"{debate_summary.recommended_adjustment_label} / 分歧 {debate_summary.disagreement_score:.2f}"
                 if debate_summary is not None
@@ -7391,13 +13539,13 @@ def _render_archive_focus_brief(
         )
     with debate_col:
         _render_cockpit_card(
-            kicker="多方怎么看",
+            kicker="委员会怎么看",
             title=(
                 f"{debate_summary.recommended_adjustment_label} / 分歧 {debate_summary.disagreement_score:.2f}"
                 if debate_summary is not None
                 else "当日未触发"
             ),
-            lines=_archive_debate_evidence_lines(debate_summary)
+            lines=_archive_debate_summary_lines(debate_summary)
             or ("当前标的没有同日多 Agent 讨论归档，先按研究结论与纸面记录复盘。",),
             tone="archive",
         )
@@ -7414,7 +13562,7 @@ def _render_archive_workbench(
     st.subheader("归档回看")
     _render_workspace_handoff_notice(target_workspace="归档回看")
     status = _report_archive_status(task_view)
-    same_day_debates = provider.debate_summaries(review_date)
+    same_day_debates = _provider_prioritized_debates(provider, review_date)
     review_cards = provider.candidate_review_cards(review_date)
     open_positions_frame = provider.open_positions_frame(signal_date=review_date)
     paper_events_frame = provider.paper_events_frame(limit=50, signal_date=review_date)
@@ -7461,6 +13609,9 @@ def _render_archive_workbench(
         cards=review_cards,
         spotlights=same_day_spotlights,
         debates=same_day_debates,
+        signal_date=review_date,
+        task_id=task_view.task_id,
+        task_label=str(getattr(task_view, "task_label", "") or ""),
     )
 
     selected_card, selected_spotlight, debate_summary, review_card = (
@@ -7556,10 +13707,23 @@ def _render_archive_workbench(
             key=f"archive-to-review-{selected_symbol}-{task_view.task_id}-{review_date}",
             disabled=review_card is None,
         ):
+            source_key = _candidate_effective_decision_source_key(
+                selected_card=selected_card,
+                spotlight=selected_spotlight,
+                debate_summary=debate_summary,
+            )
             _queue_workspace_handoff(
                 target_workspace="候选复盘",
                 source_workspace="归档回看",
                 symbol=selected_symbol,
+                signal_date=review_date,
+                task_id=task_view.task_id,
+                task_label=task_view.task_label,
+                focus_kind=source_key,
+                debate_id=debate_summary.debate_id
+                if debate_summary is not None
+                else "",
+                decision_source=source_key,
                 title="带着归档结论回看已有判断",
                 lines=_archive_to_review_handoff_lines(
                     task_view=task_view,
@@ -7574,7 +13738,33 @@ def _render_archive_workbench(
             "虚拟盘",
             key=f"archive-to-execution-{selected_symbol}-{task_view.task_id}-{review_date}",
         ):
-            _queue_workspace_jump("虚拟盘跟踪", selected_symbol)
+            source_key = _candidate_effective_decision_source_key(
+                selected_card=selected_card,
+                spotlight=selected_spotlight,
+                debate_summary=debate_summary,
+            )
+            _queue_workspace_handoff(
+                target_workspace="虚拟盘跟踪",
+                source_workspace="归档回看",
+                symbol=selected_symbol,
+                signal_date=review_date,
+                task_id=task_view.task_id,
+                task_label=task_view.task_label,
+                focus_kind=source_key,
+                debate_id=debate_summary.debate_id
+                if debate_summary is not None
+                else "",
+                decision_source=source_key,
+                title="带着归档结论去看纸面验证",
+                lines=_archive_to_execution_handoff_lines(
+                    task_view=task_view,
+                    selected_symbol=selected_symbol,
+                    selected_card=selected_card,
+                    spotlight=selected_spotlight,
+                    debate_summary=debate_summary,
+                    review_card=review_card,
+                ),
+            )
             st.rerun()
 
     with st.expander("归档证据", expanded=False):
@@ -7737,152 +13927,113 @@ def _render_raw_report(task_view) -> None:
 
 
 def main() -> None:
-    provider = get_provider()
-    summary = provider.summarize()
-    latest_task_snapshots = provider.task_snapshots()
     updated_at = now_shanghai().strftime("%Y-%m-%d %H:%M:%S %z")
     _inject_dashboard_styles()
 
-    st.title("AQSP 日期任务研究台")
-    st.caption(f"更新时间: {updated_at}")
-    st.caption("非交易指令 / 不自动交易 / 只做纸面观察与复核。仅展示落盘结果。")
+    _render_simple_app_header(updated_at=updated_at)
 
-    options = provider.task_options()
-    selected_task_id, selected_date = _render_top_navigation(
-        options=options,
-        snapshots=latest_task_snapshots,
-        provider=provider,
+    workspace_options = tuple(item.name for item in _workspace_nav_items())
+    pending_workspace = st.session_state.pop("dashboard_pending_workspace", None)
+    workspace = _workspace_widget_state(
+        pending_workspace=pending_workspace,
+        current_workspace=st.session_state.get("dashboard_workspace_widget"),
+        workspace_options=workspace_options,
     )
-
-    task_view = provider.build_task_view(
-        selected_task_id,
-        signal_date=selected_date,
-    )
-    review_date = task_view.selected_date or task_view.latest_date
-    same_day_rows = provider.same_day_task_rows(review_date)
-    same_day_spotlights = provider.same_day_candidate_spotlights(review_date)
-    same_day_debates = provider.debate_summaries(review_date)
-    date_overview = provider.date_overview(review_date)
-    task_snapshots = provider.task_snapshots(review_date)
-    paper_summary = provider.paper_summary(review_date)
-    research_summary = load_research_summary()
-
-    st.markdown('<div class="aqsp-workspace-shell">', unsafe_allow_html=True)
-    st.markdown(
-        '<div class="aqsp-workspace-label">工作台视角</div>', unsafe_allow_html=True
-    )
-    workspace = _render_workspace_navigation()
-    st.markdown("</div>", unsafe_allow_html=True)
+    st.session_state["dashboard_workspace_widget"] = workspace
 
     if workspace == "决策首页":
-        _render_day_replay_digest(
+        _render_workspace_navigation()
+        snapshot_path = _home_snapshot_path()
+        index_path = _home_snapshot_index_path(snapshot_path)
+        snapshot_index = load_home_snapshot_index(index_path)
+        if snapshot_index is not None:
+            selected_date = _snapshot_index_selected_date(snapshot_index)
+            indexed_snapshot = snapshot_index.snapshot_for_date(selected_date)
+            if indexed_snapshot is not None:
+                _render_snapshot_home_board(
+                    indexed_snapshot,
+                    available_dates=snapshot_index.available_dates,
+                )
+            elif snapshot_index.days:
+                _render_snapshot_unavailable_home()
+            else:
+                _render_snapshot_unavailable_home()
+            return
+        if Path(index_path).expanduser().is_file():
+            _render_snapshot_unavailable_home()
+            return
+
+        snapshot = load_home_dashboard_snapshot(snapshot_path)
+        if snapshot is not None:
+            _render_snapshot_home_board(snapshot)
+            return
+        if Path(snapshot_path).expanduser().is_file():
+            _render_snapshot_unavailable_home()
+            return
+
+    provider = get_provider()
+    if workspace == "决策首页":
+        selected_task_id, selected_date = _default_home_selection(provider)
+    else:
+        latest_task_snapshots = provider.task_snapshots()
+        options = provider.task_options()
+        selected_task_id, selected_date = _render_top_navigation(
+            options=options,
+            snapshots=latest_task_snapshots,
+            provider=provider,
+            render_controls=False,
+        )
+        st.markdown('<div class="aqsp-workspace-shell">', unsafe_allow_html=True)
+        st.markdown(
+            '<div class="aqsp-workspace-label">工作台视角</div>',
+            unsafe_allow_html=True,
+        )
+        workspace = _render_workspace_navigation(pending_workspace=workspace)
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    home_payload = None
+    if workspace == "决策首页":
+        home_payload = _provider_home_digest_payload(
+            provider,
+            selected_task_id,
+            selected_date,
+        )
+        task_view = home_payload.task_view
+    else:
+        task_view = provider.build_task_view(
+            selected_task_id,
+            signal_date=selected_date,
+        )
+    review_date = task_view.selected_date or task_view.latest_date or selected_date
+
+    if workspace == "决策首页":
+        same_day_rows = home_payload.same_day_rows if home_payload else ()
+        same_day_spotlights = home_payload.spotlights if home_payload else ()
+        same_day_debates = (
+            home_payload.debates
+            if home_payload and home_payload.debates
+            else _provider_prioritized_debates(provider, review_date, limit=3)
+        )
+        date_overview = (
+            home_payload.overview if home_payload else _empty_home_overview(review_date)
+        )
+        paper_summary = (
+            home_payload.paper_summary
+            if home_payload
+            else _empty_home_paper_summary(review_date)
+        )
+        _render_simple_home_board(
+            provider=provider,
+            signal_date=review_date,
             task_view=task_view,
-            overview=date_overview,
-            paper_summary=paper_summary,
             same_day_rows=same_day_rows,
-        )
-        _render_home_reading_order(
-            task_view=task_view,
+            same_day_spotlights=same_day_spotlights,
+            same_day_debates=same_day_debates,
             overview=date_overview,
             paper_summary=paper_summary,
-            spotlights=same_day_spotlights,
-            debates=same_day_debates,
         )
-        with st.expander("展开推进细节", expanded=False):
-            _render_command_center(task_view, date_overview, task_view.summary_lines)
-        with st.expander("证据卡片", expanded=False):
-            _render_home_evidence_entry(
-                task_view=task_view,
-                overview=date_overview,
-                paper_summary=paper_summary,
-                research_summary=research_summary,
-            )
-            _render_home_brief(
-                task_view=task_view,
-                overview=date_overview,
-                paper_summary=paper_summary,
-                research_summary=research_summary,
-                spotlights=same_day_spotlights,
-                debates=same_day_debates,
-            )
-            _render_research_radar(research_summary)
-        with st.expander("阶段任务板", expanded=False):
-            _render_home_task_board(
-                rows=same_day_rows,
-                current_task_id=task_view.task_id,
-                task_view=task_view,
-                spotlights=same_day_spotlights,
-                debates=same_day_debates,
-                paper_summary=paper_summary,
-                overview=date_overview,
-            )
-            _render_decision_flow(task_view, same_day_spotlights)
-        with st.expander("状态与快照", expanded=False):
-            _render_top_overview_strip(
-                review_date=review_date,
-                date_overview=date_overview,
-                summary=summary,
-            )
-            _render_task_workbench(task_snapshots, signal_date=review_date)
-
-        with st.expander("日期时间线", expanded=False):
-            _render_date_timeline_cards(
-                provider,
-                review_date,
-                task_view.task_id,
-            )
-
-        with st.expander("任务矩阵", expanded=False):
-            _render_same_day_task_matrix(same_day_rows, task_view.task_id)
-
-        with st.expander("证据与历史", expanded=False):
-            _render_operation_overview(date_overview)
-            _render_day_archive_summary(date_overview)
-            st.subheader("研究摘要")
-            st.info(task_view.headline)
-
-            show_summary_lines = task_view.summary_lines
-            if task_view.task_id == "briefing":
-                show_summary_lines = tuple(
-                    line
-                    for line in task_view.summary_lines
-                    if "任务:" not in line and "数据源:" not in line
-                )
-
-            summary_col, agenda_col = st.columns(2)
-            with summary_col:
-                _render_summary_cards(task_view)
-                _render_focus_block(task_view)
-                _render_lifecycle_overview(task_view)
-            with agenda_col:
-                _render_line_block(
-                    "今日待办",
-                    task_view.agenda_lines,
-                    "当前暂无明确待办。",
-                )
-                _render_line_block(
-                    "原始摘要",
-                    show_summary_lines,
-                    "当前暂无原始摘要。",
-                )
-                _render_line_block(
-                    "阻塞原因",
-                    task_view.blocker_lines,
-                    "当前日期暂无明显阻塞项。",
-                )
-                _render_line_block(
-                    "复核动作",
-                    task_view.review_lines,
-                    "当前日期暂无额外复核动作。",
-                )
-
-            _render_same_day_candidate_spotlights(same_day_spotlights)
-            _render_history_overview(task_view, provider)
-            _render_timeline_overview(task_view, provider)
-
-        st.divider()
-        _render_source_status(task_view.source_status)
     elif workspace == "候选复盘":
+        same_day_spotlights = provider.same_day_candidate_spotlights(review_date)
         _render_candidate_deep_dive(
             provider=provider,
             task_view=task_view,
@@ -7901,6 +14052,7 @@ def main() -> None:
             task_view=task_view,
         )
         with st.expander("纸面验证总览", expanded=False):
+            paper_summary = provider.paper_summary(review_date)
             _render_paper_summary(paper_summary)
             data_col, paper_col = st.columns(2)
             with data_col:
@@ -7924,6 +14076,8 @@ def main() -> None:
                 ),
             )
     else:
+        same_day_rows = provider.same_day_task_rows(review_date)
+        same_day_spotlights = provider.same_day_candidate_spotlights(review_date)
         _render_archive_workbench(
             provider=provider,
             task_view=task_view,

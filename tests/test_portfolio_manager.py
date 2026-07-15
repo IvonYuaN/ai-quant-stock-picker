@@ -12,7 +12,11 @@ from aqsp.strategies.thresholds import RiskThresholds, Thresholds
 
 
 def _pick(
-    symbol: str, score: float, *, recommended_adjustment: str = "keep"
+    symbol: str,
+    score: float,
+    *,
+    recommended_adjustment: str = "keep",
+    metrics: dict[str, object] | None = None,
 ) -> PickResult:
     return PickResult(
         symbol=symbol,
@@ -28,10 +32,44 @@ def _pick(
         position="10%-30%",
         recommended_adjustment=recommended_adjustment,
         adjusted_score=score - 3 if recommended_adjustment == "lower" else score + 3,
+        metrics=metrics or {},
     )
 
 
-def test_apply_portfolio_manager_downgrades_when_debate_and_correlation_stack() -> None:
+def test_apply_portfolio_manager_keeps_score_when_debate_override_disabled() -> None:
+    picks = [_pick("600036", 42, recommended_adjustment="lower")]
+
+    bundle = apply_portfolio_manager(picks)
+
+    assert bundle.picks[0].score == 42
+    assert bundle.picks[0].rating == "buy_candidate"
+    assert bundle.decisions[0].action == "keep"
+    assert bundle.decisions[0].score_delta == 0.0
+    assert any("仅作为复核提示" in reason for reason in bundle.decisions[0].reasons)
+
+
+def test_apply_portfolio_manager_keeps_deterministic_order_when_debate_raises() -> None:
+    picks = [
+        _pick("300750", 66, recommended_adjustment="raise"),
+        _pick("600036", 68),
+    ]
+
+    bundle = apply_portfolio_manager(picks)
+    decisions = {item.symbol: item for item in bundle.decisions}
+
+    assert [pick.symbol for pick in bundle.picks] == ["600036", "300750"]
+    assert bundle.picks[1].score == 66
+    assert bundle.picks[0].rating == "buy_candidate"
+    assert decisions["300750"].action == "keep"
+    assert decisions["300750"].score_delta == 0.0
+    assert decisions["300750"].priority_delta == 0.0
+    assert any("仅作为复核提示" in reason for reason in decisions["300750"].reasons)
+
+
+def test_apply_portfolio_manager_uses_risk_controls_not_debate_override(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("AQSP_GOAL_SWITCH_MULTI_AGENT_RUNTIME_OVERRIDE", "true")
     picks = [
         _pick("600036", 42, recommended_adjustment="lower"),
         _pick("000001", 38),
@@ -64,14 +102,17 @@ def test_apply_portfolio_manager_downgrades_when_debate_and_correlation_stack() 
         picks,
         concentration=concentration,
         correlation_result=correlation,
+        sector_map={"600036": "银行", "000001": "银行"},
     )
 
     by_symbol = {item.symbol: item for item in bundle.picks}
     decisions = {item.symbol: item for item in bundle.decisions}
 
-    assert by_symbol["600036"].rating == "avoid"
+    assert by_symbol["600036"].rating == "buy_candidate"
     assert decisions["600036"].action == "downgrade"
-    assert any("多Agent辩论偏谨慎" in reason for reason in decisions["600036"].reasons)
+    assert by_symbol["600036"].score == 42.0
+    assert any("板块集中度过高" in reason for reason in decisions["600036"].reasons)
+    assert any("仅作为复核提示" in reason for reason in decisions["600036"].reasons)
     assert bundle.summary.downgrade_count == 2
     assert bundle.summary.promote_count == 0
     assert bundle.summary.headline == "上调 0 / 降级 2 / 维持 0"
@@ -81,25 +122,132 @@ def test_apply_portfolio_manager_downgrades_when_debate_and_correlation_stack() 
     assert bundle.summary.allocations == ()
     assert bundle.summary.cash_reserve == 1.0
     assert "保留现金" in bundle.summary.allocation_note
+    assert any("组合集中度 HHI" in line for line in bundle.summary.portfolio_risk_lines)
+    assert any("高相关候选对" in line for line in bundle.summary.portfolio_risk_lines)
 
 
-def test_apply_portfolio_manager_promotes_when_debate_supports_buy_candidate() -> None:
-    picks = [_pick("300750", 66, recommended_adjustment="raise")]
+def test_apply_portfolio_manager_does_not_promote_when_debate_supports_buy_candidate(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("AQSP_GOAL_SWITCH_MULTI_AGENT_RUNTIME_OVERRIDE", "true")
+    picks = [
+        _pick(
+            "300750",
+            66,
+            recommended_adjustment="raise",
+            metrics={
+                "debate_research_verdict": "倾向优先纸面复核，主因 技术面强势",
+                "debate_primary_risk_gate": "追高回撤风险",
+                "debate_next_trigger": "先确认开盘承接与量价延续",
+                "debate_historical_context_note": "历史校验: 强证据 2/3 (67%)；冲突主导 1/3",
+                "debate_historical_context_sample_count": 3,
+                "debate_historical_context_accuracy": 2 / 3,
+                "role_reliability_lines": ("跨市场: 近21天 7/10 (70%)｜当前权重 0.18",),
+                "support_points": ("技术面强势且量价共振。",),
+                "opposition_points": ("若高开过猛，追高回撤风险会放大。",),
+                "watch_items": ("观察次日承接是否继续。",),
+                "cross_market_evidence_stack_summary": "同向 2 条｜反向 1 条",
+                "cross_market_support_event_count": 2,
+                "cross_market_conflict_event_count": 1,
+            },
+        )
+    ]
 
     bundle = apply_portfolio_manager(picks, regime="stable_bull")
 
-    assert bundle.picks[0].rating == "strong_buy_candidate"
-    assert bundle.decisions[0].action == "promote"
-    assert bundle.summary.promote_count == 1
+    assert bundle.picks[0].rating == "buy_candidate"
+    assert bundle.decisions[0].action == "keep"
+    assert bundle.summary.promote_count == 0
     assert bundle.summary.top_focus == ("300750",)
     assert bundle.summary.allocations[0].symbol == "300750"
     assert 0 < bundle.summary.allocations[0].weight <= 0.30
+    assert bundle.summary.portfolio_risk_lines
     assert bundle.summary.regime_label == "稳定上涨"
-    assert bundle.summary.strategy_mix_name == "配置化策略权重"
-    assert "动量趋势" in bundle.summary.strategy_focus
+    assert bundle.summary.strategy_mix_name == "进攻牛市"
+    assert bundle.summary.strategy_mix_description == "稳定上涨期，重仓动量+涨停板"
+    assert "RPS 动量" in bundle.summary.strategy_focus
     assert any(
-        strategy_id == "momentum" and weight == 1.2
+        strategy_id == "rps_momentum" and round(weight, 2) == 1.06
         for strategy_id, weight in bundle.summary.strategy_weights
+    )
+    assert bundle.summary.debate_focus == (
+        "300750 | 倾向优先纸面复核，主因 技术面强势 | 跨市证据 同向 2 条｜反向 1 条 | 历史校验: 强证据 2/3 (67%)；冲突主导 1/3",
+    )
+    assert bundle.summary.debate_support_points == ("300750 | 技术面强势且量价共振。",)
+    assert bundle.summary.debate_opposition_points == (
+        "300750 | 若高开过猛，追高回撤风险会放大。",
+    )
+    assert bundle.summary.debate_watch_items == ("300750 | 观察次日承接是否继续。",)
+    assert bundle.summary.debate_risk_gates == ("300750 | 追高回撤风险",)
+    assert bundle.summary.debate_next_triggers == ("300750 | 先确认开盘承接与量价延续",)
+    assert bundle.summary.debate_priority_queue == (
+        "300750 | 倾向优先纸面复核，主因 技术面强势 | 先确认开盘承接与量价延续 | 卡点 追高回撤风险 | 历史校验: 强证据 2/3 (67%)；冲突主导 1/3 | 角色可信度 跨市场: 近21天 7/10 (70%)｜当前权重 0.18 | 待确认 观察次日承接是否继续。 | 跨市证据 同向 2 条｜反向 1 条",
+    )
+
+
+def test_apply_portfolio_manager_includes_cross_market_evidence_in_focus_lines() -> (
+    None
+):
+    picks = [
+        _pick(
+            "688981",
+            70,
+            metrics={
+                "cross_market_primary_theme": "海外物理AI叙事升温",
+                "cross_market_action": "重点跟踪",
+                "cross_market_priority_score": 2,
+                "cross_market_evidence_stack_summary": "同向 2 条｜反向 1 条",
+                "debate_research_verdict": "倾向优先纸面复核",
+            },
+        ),
+    ]
+
+    bundle = apply_portfolio_manager(picks)
+
+    assert bundle.summary.cross_market_focus == (
+        "688981 | 海外物理AI叙事升温(重点跟踪) | 同向 2 条｜反向 1 条",
+    )
+    assert bundle.summary.debate_focus == (
+        "688981 | 倾向优先纸面复核 | 跨市证据 同向 2 条｜反向 1 条",
+    )
+
+
+def test_apply_portfolio_manager_keeps_structured_debate_notes_in_runtime_order() -> (
+    None
+):
+    picks = [
+        _pick(
+            "300750",
+            72,
+            metrics={
+                "debate_research_verdict": "倾向优先纸面复核",
+                "debate_primary_risk_gate": "高位分歧仍需消化",
+                "debate_next_trigger": "先确认量价延续",
+                "debate_historical_context_note": "历史校验: 强证据 4/5 (80%)",
+                "debate_historical_context_sample_count": 5,
+                "debate_historical_context_accuracy": 0.8,
+                "role_reliability_lines": ("跨市场: 近21天 7/10 (70%)",),
+                "support_points": ("海外主线仍在扩散。",),
+                "watch_items": ("观察次日承接。",),
+                "cross_market_evidence_stack_summary": "同向 2 条｜反向 0 条",
+                "cross_market_support_event_count": 2,
+                "cross_market_conflict_event_count": 0,
+            },
+        ),
+        _pick(
+            "600036",
+            88,
+            metrics={
+                "debate_research_verdict": "观点仍有分歧",
+            },
+        ),
+    ]
+
+    bundle = apply_portfolio_manager(picks)
+
+    assert bundle.summary.debate_priority_queue[0] == "600036 | 观点仍有分歧"
+    assert bundle.summary.debate_priority_queue[1].startswith(
+        "300750 | 倾向优先纸面复核"
     )
 
 
@@ -129,7 +277,8 @@ def test_apply_portfolio_manager_uses_configured_correlation_threshold() -> None
     assert any(item.action == "downgrade" for item in strict.decisions)
 
 
-def test_apply_portfolio_manager_uses_configured_allocation_limits() -> None:
+def test_apply_portfolio_manager_uses_configured_allocation_limits(monkeypatch) -> None:
+    monkeypatch.setenv("AQSP_GOAL_SWITCH_MULTI_AGENT_RUNTIME_OVERRIDE", "true")
     picks = [_pick("300750", 85, recommended_adjustment="raise")]
 
     bundle = apply_portfolio_manager(
@@ -189,6 +338,29 @@ def test_portfolio_optimizer_uses_configured_weight_multipliers() -> None:
     assert weights["300750"] > weights["000001"]
 
 
+def test_portfolio_optimizer_uses_best_base_score_after_context_reordering() -> None:
+    context_first = _pick("688981", 70)
+    base_stronger = _pick("600036", 85)
+
+    result = optimize_portfolio_allocations_from_risk(
+        [context_first, base_stronger],
+        {},
+        risk=RiskThresholds(
+            max_positions=2,
+            max_single_position_pct=1.0,
+            min_cash_reserve=0.0,
+            allocation_score_strong=80.0,
+            allocation_score_mid=75.0,
+            allocation_invested_strong=0.60,
+            allocation_invested_mid=0.35,
+            allocation_adjustment_step=0.0,
+            allocation_floor_pct=0.10,
+        ),
+    )
+
+    assert result.invested_ratio == 0.60
+
+
 def test_apply_portfolio_manager_excludes_downgraded_tradable_from_allocations() -> (
     None
 ):
@@ -216,6 +388,139 @@ def test_apply_portfolio_manager_excludes_downgraded_tradable_from_allocations()
     assert bundle.summary.allocations == ()
     assert bundle.summary.cash_reserve == 1.0
     assert "无可执行主链" in bundle.summary.allocation_note
+
+
+def test_apply_portfolio_manager_keeps_score_order_when_cross_market_medium_matches() -> (
+    None
+):
+    picks = [
+        _pick(
+            "688981",
+            70,
+            metrics={
+                "cross_market_primary_theme": "海外物理AI叙事升温",
+                "cross_market_action": "重点跟踪",
+                "cross_market_priority_score": 2,
+                "cross_market_rule_ids": ("physical_ai",),
+                "cross_market_score_adjustment_allowed": True,
+                "cross_market_priority_boost": True,
+                "cross_market_context_only": False,
+            },
+        ),
+        _pick("600036", 71),
+    ]
+
+    bundle = apply_portfolio_manager(picks)
+    decisions = {item.symbol: item for item in bundle.decisions}
+
+    assert [pick.symbol for pick in bundle.picks] == ["600036", "688981"]
+    assert bundle.picks[1].score == 70
+    assert bundle.picks[1].rating == "buy_candidate"
+    assert bundle.picks[1].metrics["context_priority_score"] == 70.0
+    assert bundle.picks[1].metrics["context_priority_delta"] == 0.0
+    assert decisions["688981"].action == "keep"
+    assert decisions["688981"].score_delta == 0.0
+    assert decisions["688981"].priority_delta == 0.0
+    assert any("跨市证据仅进入复核" in reason for reason in decisions["688981"].reasons)
+    assert bundle.summary.cross_market_overview == "海外物理AI叙事升温关联证据：688981"
+    assert bundle.summary.cross_market_focus == (
+        "688981 | 海外物理AI叙事升温(重点跟踪)",
+    )
+
+
+def test_apply_portfolio_manager_keeps_score_when_cross_market_strong_matches() -> None:
+    picks = [
+        _pick(
+            "300750",
+            66,
+            metrics={
+                "cross_market_primary_theme": "海外物理AI叙事升温",
+                "cross_market_action": "优先复核",
+                "cross_market_priority_score": 3,
+                "cross_market_rule_ids": ("physical_ai",),
+                "cross_market_score_adjustment_allowed": True,
+                "cross_market_priority_boost": True,
+                "cross_market_context_only": False,
+            },
+        )
+    ]
+
+    bundle = apply_portfolio_manager(picks)
+
+    assert bundle.picks[0].score == 66
+    assert bundle.picks[0].rating == "buy_candidate"
+    assert bundle.picks[0].metrics["context_priority_score"] == 66.0
+    assert bundle.picks[0].metrics["context_priority_delta"] == 0.0
+    assert bundle.picks[0].metrics["portfolio_action"] == "keep"
+    assert bundle.decisions[0].action == "keep"
+    assert bundle.decisions[0].score_delta == 0.0
+    assert bundle.decisions[0].priority_delta == 0.0
+    assert bundle.summary.promote_count == 0
+    assert any("跨市证据仅进入复核" in reason for reason in bundle.decisions[0].reasons)
+    assert not any("跨市场催化匹配" in item for item in bundle.summary.action_hotspots)
+    assert bundle.summary.cross_market_overview == "海外物理AI叙事升温关联证据：300750"
+    assert bundle.summary.cross_market_focus == (
+        "300750 | 海外物理AI叙事升温(优先复核)",
+    )
+    assert not any(
+        "跨市场传导匹配提升优先级" in reason
+        for reason in bundle.summary.allocations[0].rationale
+    )
+
+
+def test_apply_portfolio_manager_keeps_direct_news_context_from_changing_score() -> (
+    None
+):
+    picks = [
+        _pick(
+            "300750",
+            70,
+            metrics={
+                "cross_market_primary_theme": "消息面直接催化",
+                "cross_market_linkage_basis": "新闻催化",
+                "cross_market_action": "优先复核",
+                "cross_market_priority_score": 3,
+                "cross_market_score_adjustment_allowed": False,
+                "cross_market_context_only": True,
+                "news_catalyst_judgement": "supports",
+            },
+        ),
+        _pick("600036", 71),
+    ]
+
+    bundle = apply_portfolio_manager(picks)
+    decisions = {item.symbol: item for item in bundle.decisions}
+
+    assert decisions["300750"].score_delta == 0.0
+    assert decisions["300750"].action == "keep"
+    assert bundle.picks[0].symbol == "600036"
+    assert not any("跨市场催化匹配" in reason for reason in decisions["300750"].reasons)
+
+
+def test_apply_portfolio_manager_keeps_negative_direct_news_from_changing_score() -> (
+    None
+):
+    picks = [
+        _pick(
+            "300750",
+            70,
+            metrics={
+                "cross_market_primary_theme": "消息面直接催化",
+                "cross_market_linkage_basis": "新闻催化",
+                "cross_market_action": "风险复核",
+                "cross_market_priority_score": 2,
+                "cross_market_score_adjustment_allowed": False,
+                "cross_market_context_only": True,
+                "news_catalyst_judgement": "opposes",
+            },
+        )
+    ]
+
+    bundle = apply_portfolio_manager(picks)
+
+    assert bundle.picks[0].score == 70
+    assert bundle.decisions[0].score_delta == 0.0
+    assert bundle.decisions[0].action == "keep"
 
 
 def test_apply_portfolio_manager_keeps_action_when_no_incremental_override() -> None:

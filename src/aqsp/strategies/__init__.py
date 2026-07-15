@@ -47,6 +47,11 @@ from aqsp.strategies.n_rebound import (
     detect_n_rebound_signal,
 )
 from aqsp.strategies.thresholds import Thresholds, load_thresholds
+from aqsp.strategies.catalog import (
+    StrategyCatalog,
+    StrategyCatalogEntry,
+    load_strategy_catalog,
+)
 
 __all__ = [
     "BaseStrategy",
@@ -83,4 +88,7 @@ __all__ = [
     "detect_n_rebound_signal",
     "Thresholds",
     "load_thresholds",
+    "StrategyCatalog",
+    "StrategyCatalogEntry",
+    "load_strategy_catalog",
 ]

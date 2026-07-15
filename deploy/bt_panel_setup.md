@@ -24,7 +24,7 @@ AQSP 在服务器上的生产定时统一放在 **宝塔面板 -> 计划任务**
 
 | 任务名 | 周期/时间 | 脚本内容 |
 |---|---|---|
-| `AQSP-盘中刷新` | 工作日 `09:40-11:30`、`13:10-14:55` 每 10 分钟 | `/bin/bash /opt/aqsp/scripts/bt_task.sh intraday` |
+| `AQSP-盘中刷新` | 工作日每 10 分钟触发；由 `bt_task.sh` 精确门控 `09:35-11:30`、`13:05-14:57` | `/bin/bash /opt/aqsp/scripts/bt_task.sh intraday` |
 | `AQSP-午盘分析` | 工作日 `12:05` | `/bin/bash /opt/aqsp/scripts/bt_task.sh midday` |
 | `AQSP-消息面雷达` | 工作日 `08:45` | `/bin/bash /opt/aqsp/scripts/bt_task.sh news` |
 | `AQSP-周末消息雷达` | 周六、周日 `10:00` | `/bin/bash /opt/aqsp/scripts/bt_task.sh news` |

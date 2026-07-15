@@ -5,12 +5,15 @@ import importlib.util
 import os
 from collections import defaultdict
 from dataclasses import dataclass
+from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any, Protocol
 
 import pandas as pd
 
 from aqsp.backtest.walk_forward import (
     BacktestResult,
+    DEFAULT_STREAM_BATCH_SIZE,
+    FrameBatchLoader,
     TradeResult,
     WalkForwardResult,
     _check_executable,
@@ -34,6 +37,7 @@ class WalkForwardEngineConfig:
     top_n: int = 10
     use_tiered_stop: bool = False
     n_variants: int = 1
+    benchmark_symbol: str | None = None
 
 
 @dataclass(frozen=True)
@@ -73,6 +77,30 @@ class BuiltinWalkForwardEngine:
         tester = _build_tester(strategy, config)
         return tester.run(data, start_date=start_date, end_date=end_date)
 
+    def run_streaming(
+        self,
+        strategy: object,
+        symbols: Sequence[str],
+        load_batch: FrameBatchLoader,
+        all_dates: Sequence[str],
+        *,
+        start_date: str | None,
+        end_date: str | None,
+        config: WalkForwardEngineConfig,
+        fixed_frames: Mapping[str, pd.DataFrame] | None = None,
+        batch_size: int = DEFAULT_STREAM_BATCH_SIZE,
+    ) -> WalkForwardResult:
+        tester = _build_tester(strategy, config)
+        return tester.run_streaming(
+            symbols,
+            load_batch,
+            all_dates,
+            start_date=start_date,
+            end_date=end_date,
+            fixed_frames=fixed_frames,
+            batch_size=batch_size,
+        )
+
 
 class AkquantWalkForwardEngine:
     engine_id = "akquant"
@@ -104,8 +132,9 @@ class AkquantWalkForwardEngine:
 
         akquant = _import_akquant_module()
         tester = _build_tester(strategy, config)
+        normalized_data = tester._prepare_data_views(data)
 
-        all_dates = tester._collect_all_dates(data)
+        all_dates = tester._collect_all_dates(normalized_data)
         if not all_dates:
             raise ValueError("No data available")
 
@@ -134,8 +163,8 @@ class AkquantWalkForwardEngine:
             test_start = all_dates[cursor]
             test_end = all_dates[min(cursor + step - 1, end_idx)]
 
-            train_data = tester._slice_data(data, train_start, train_end)
-            test_data = tester._slice_data(data, test_start, test_end)
+            train_data = tester._slice_data(normalized_data, train_start, train_end)
+            test_data = tester._slice_data(normalized_data, test_start, test_end)
             trades = self._run_single_period(
                 akquant=akquant,
                 tester=tester,
@@ -183,11 +212,17 @@ class AkquantWalkForwardEngine:
         if not signal_data:
             return trades
 
-        market_regime = _resolve_market_regime(signal_data)
-        if market_regime == "bear_filter":
+        market_regime, regime_is_bear_filter = tester._resolve_market_regime(
+            signal_data
+        )
+        if regime_is_bear_filter:
             return trades
 
-        selected = list(strategy.select_stocks(signal_data, n=tester.top_n))
+        selected = list(
+            strategy.select_stocks(
+                tester._screening_data(signal_data), n=tester.top_n
+            )
+        )
         executable_data: dict[str, pd.DataFrame] = {}
 
         for symbol in selected:
@@ -341,6 +376,7 @@ def _build_tester(
         top_n=config.top_n,
         use_tiered_stop=config.use_tiered_stop,
         n_variants=config.n_variants,
+        benchmark_symbol=config.benchmark_symbol,
     )
 
 
@@ -374,28 +410,6 @@ def _assemble_walkforward_result(
         pbo=tester._calculate_pbo(periods),
         regime_winrates=regime_winrates,
     )
-
-
-def _resolve_market_regime(signal_data: dict[str, pd.DataFrame]) -> str:
-    market_returns: list[float] = []
-    for df in signal_data.values():
-        if len(df) < 20:
-            continue
-        recent = df.sort_values("date").tail(20)
-        prices = recent["close"].values
-        market_returns.append((float(prices[-1]) - float(prices[0])) / float(prices[0]))
-
-    if not market_returns:
-        return "unknown"
-
-    avg_market_return = sum(market_returns) / len(market_returns)
-    if avg_market_return < -0.02:
-        return "bear_filter"
-    if avg_market_return < -0.005:
-        return "mild_bear"
-    if avg_market_return < 0.005:
-        return "sideways"
-    return "bull_trend"
 
 
 def _prepare_akquant_frame(frame: pd.DataFrame, symbol: str) -> pd.DataFrame:

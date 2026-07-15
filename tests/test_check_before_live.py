@@ -7,6 +7,9 @@ from datetime import date, datetime
 from pathlib import Path
 
 from scripts.check_before_live import (
+    _check_strategy_executability_runtime_feedback,
+    _check_strategy_weight_snapshot_audit,
+    _schedule_matches_bt_action,
     _strategy_threshold_consistency_blockers,
     check_before_live,
 )
@@ -203,7 +206,9 @@ def test_check_before_live_blocks_missing_critical_trading_holiday(
         today=date(2026, 6, 14),
     )
 
-    finding = next(item for item in findings if item.gate == "trading_calendar_coverage")
+    finding = next(
+        item for item in findings if item.gate == "trading_calendar_coverage"
+    )
     assert finding.ok is False
     assert "2026-02-16" in finding.detail
     assert "2026-06-19" in finding.detail
@@ -320,6 +325,34 @@ def test_check_before_live_blocks_runtime_synthetic_regime_scoring(
     )
     assert finding.ok is False
     assert "benchmark data is missing" in finding.detail
+
+
+def test_check_before_live_accepts_context_runtime_regime_fail_closed(
+    tmp_path: Path,
+) -> None:
+    _prepare_ready_runtime(tmp_path)
+    path = tmp_path / "src/aqsp/regime/runtime.py"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "def detect_runtime_regime(frames, *, benchmark_symbol):\n"
+        "    return detect_runtime_regime_context(frames, benchmark_symbol=benchmark_symbol).regime\n"
+        "def detect_runtime_regime_context(frames, *, benchmark_symbol):\n"
+        "    if not benchmark_symbol:\n"
+        '        return RuntimeRegimeContext("", "", 0.0, 0.0, "missing_benchmark")\n'
+        "    bench_frame = frames.get(benchmark_symbol)\n"
+        "    if bench_frame is None or bench_frame.empty:\n"
+        '        return RuntimeRegimeContext("", "", 0.0, 0.0, "missing_benchmark")\n'
+        '    return RuntimeRegimeContext("stable_bull", "bull", 0.72, 0.1, "hmm")\n',
+        encoding="utf-8",
+    )
+
+    findings = check_before_live(root=tmp_path, today=date(2026, 6, 14))
+
+    finding = next(
+        item for item in findings if item.gate == "runtime_regime_requires_benchmark"
+    )
+    assert finding.ok is True
+    assert finding.detail == "ok"
 
 
 def test_check_before_live_blocks_small_runtime_universe_cap(
@@ -517,7 +550,7 @@ def test_check_before_live_blocks_missing_executability_runtime_feedback(
     assert "not_executable" in finding.detail
 
 
-def test_check_before_live_allows_executability_feedback_applied_to_weights(
+def test_check_before_live_blocks_executability_feedback_applied_to_weights(
     tmp_path: Path,
 ) -> None:
     _prepare_ready_runtime(tmp_path)
@@ -552,10 +585,11 @@ def test_check_before_live_allows_executability_feedback_applied_to_weights(
         for item in findings
         if item.gate == "strategy_executability_runtime_feedback"
     )
-    assert finding.ok is True
+    assert finding.ok is False
+    assert "deterministic" in finding.detail
 
 
-def test_check_before_live_allows_executability_feedback_with_formal_runtime_ledger(
+def test_check_before_live_blocks_executability_feedback_with_formal_runtime_ledger(
     tmp_path: Path,
 ) -> None:
     _prepare_ready_runtime(tmp_path)
@@ -590,7 +624,67 @@ def test_check_before_live_allows_executability_feedback_with_formal_runtime_led
         for item in findings
         if item.gate == "strategy_executability_runtime_feedback"
     )
+    assert finding.ok is False
+    assert "deterministic" in finding.detail
+
+
+def test_strategy_executability_runtime_feedback_accepts_current_runtime_contract(
+    tmp_path: Path,
+) -> None:
+    cli_path = tmp_path / "src/aqsp/cli.py"
+    runtime_path = tmp_path / "src/aqsp/ledger/runtime.py"
+    cli_path.parent.mkdir(parents=True, exist_ok=True)
+    runtime_path.parent.mkdir(parents=True, exist_ok=True)
+    cli_path.write_text(
+        "def _run_scheduled_legacy(args):\n"
+        "    weights = _runtime_strategy_weights(thresholds, regime)\n"
+        "    config = ScreeningConfig(strategy_weights=weights)\n",
+        encoding="utf-8",
+    )
+    runtime_path.write_text(
+        "def strategy_executability_weight_adjustments(path):\n    return {}, {}\n",
+        encoding="utf-8",
+    )
+
+    finding = _check_strategy_executability_runtime_feedback(tmp_path)
+
     assert finding.ok is True
+    assert finding.detail == "ok"
+
+
+def test_strategy_weight_snapshot_audit_accepts_current_runtime_fields(
+    tmp_path: Path,
+) -> None:
+    cli_path = tmp_path / "src/aqsp/cli.py"
+    ledger_path = tmp_path / "src/aqsp/ledger/base.py"
+    cli_path.parent.mkdir(parents=True, exist_ok=True)
+    ledger_path.parent.mkdir(parents=True, exist_ok=True)
+    cli_path.write_text(
+        "def _runtime_weight_snapshot():\n    return {}\n\n"
+        "def _attach_runtime_weight_snapshot(picks):\n"
+        "    snapshot = _runtime_weight_snapshot()\n"
+        '    return [{"strategy_weight_snapshot": snapshot}]\n\n'
+        "def _run_scheduled_legacy(args):\n"
+        "    screened_picks = _attach_runtime_weight_snapshot(\n"
+        "        screened_picks, strategy_weights=weights\n"
+        "    )\n",
+        encoding="utf-8",
+    )
+    ledger_path.write_text(
+        "prediction_fields = {\n"
+        '    "strategy_weight_snapshot": pick.metrics.get("strategy_weight_snapshot", {}),\n'
+        '    "composite_score_raw": pick.metrics.get("composite_score_raw", 0.0),\n'
+        '    "composite_score_normalized": pick.metrics.get("composite_score_normalized", 0.0),\n'
+        '    "base_score_before_composite": pick.metrics.get("base_score_before_composite", 0.0),\n'
+        '    "final_score_after_composite": pick.metrics.get("final_score_after_composite", pick.score),\n'
+        "}\n",
+        encoding="utf-8",
+    )
+
+    finding = _check_strategy_weight_snapshot_audit(tmp_path)
+
+    assert finding.ok is True
+    assert finding.detail == "ok"
 
 
 def test_check_before_live_blocks_small_symbol_walkforward_gate(
@@ -854,6 +948,47 @@ def test_check_before_live_blocks_when_walkforward_gate_failed(tmp_path: Path) -
     )
 
 
+def test_check_before_live_distinguishes_failed_gate_from_timeout_rerun(
+    tmp_path: Path,
+) -> None:
+    _prepare_ready_runtime(tmp_path)
+    _write_json(
+        tmp_path / "data/walkforward_gate.json",
+        {
+            "run_date": "2026-06-10",
+            "deflated_sharpe": 0.8275,
+            "pbo": 0.7778,
+            "pbo_valid": True,
+            "dsr_pass": False,
+            "pbo_pass": False,
+            "both_pass": False,
+            "n_periods": 28,
+            "effective_symbols": 5000,
+        },
+    )
+    _write_json(
+        tmp_path / "data/walkforward_production_status.json",
+        {
+            "status": "timeout",
+            "updated_at": "2026-06-30T13:56:09+08:00",
+            "child_exit_code": 124,
+            "timeout_seconds": 1500,
+        },
+    )
+
+    findings = check_before_live(root=tmp_path, today=date(2026, 6, 14))
+    finding = next(item for item in findings if item.gate == "walkforward_gate")
+
+    assert finding.ok is False
+    assert "DSR=0.8275 <= 1.0" in finding.detail
+    assert "production_status: status=timeout" in finding.detail
+    assert (
+        "production rerun timed out before producing new DSR/PBO evidence"
+        in finding.detail
+    )
+    assert "keeping previous failed gate active" in finding.detail
+
+
 def test_check_before_live_blocks_when_walkforward_metrics_are_invalid(
     tmp_path: Path,
 ) -> None:
@@ -1097,7 +1232,10 @@ def test_check_before_live_counts_runtime_signal_date_aliases(tmp_path: Path) ->
 
     finding = next(item for item in findings if item.gate == "signal_sample_size")
     assert finding.ok is True
-    assert finding.detail == "30/30 real independent signal days; latest real signal day=2026-05-30"
+    assert (
+        finding.detail
+        == "30/30 real independent signal days; latest real signal day=2026-05-30"
+    )
 
 
 def test_check_before_live_excludes_not_executable_from_signal_sample_size(
@@ -1125,7 +1263,10 @@ def test_check_before_live_excludes_not_executable_from_signal_sample_size(
 
     finding = next(item for item in findings if item.gate == "signal_sample_size")
     assert finding.ok is False
-    assert finding.detail == "29/30 real independent signal days; latest real signal day=2026-05-29"
+    assert (
+        finding.detail
+        == "29/30 real independent signal days; latest real signal day=2026-05-29"
+    )
 
 
 def test_check_before_live_blocks_when_gate_notify_state_missing_after_cold_start_ready(
@@ -1299,7 +1440,10 @@ def test_check_before_live_blocks_when_paper_tracking_samples_are_too_small(
         item for item in findings if item.gate == "paper_tracking_sample_size"
     )
     assert finding.ok is False
-    assert finding.detail == "9/30 real paper tracking days; no additional tradable signal days available yet"
+    assert (
+        finding.detail
+        == "9/30 real paper tracking days; no additional tradable signal days available yet"
+    )
 
 
 def test_check_before_live_counts_real_paper_tracking_statuses(
@@ -1732,7 +1876,9 @@ def test_check_before_live_dedupes_ledger_run_events_against_daily_logs(
 
     finding = next(item for item in findings if item.gate == "successful_daily_runs")
     assert finding.ok is False
-    assert finding.detail == "3/5 successful daily run days (daily_logs+ledger_run_events)"
+    assert (
+        finding.detail == "3/5 successful daily run days (daily_logs+ledger_run_events)"
+    )
 
 
 def test_check_before_live_blocks_when_dashboard_output_is_missing(
@@ -1808,6 +1954,19 @@ def test_check_before_live_allows_intraday_without_notify(
 
     finding = next(item for item in findings if item.gate == "scheduler_notify_cadence")
     assert finding.ok is True
+
+
+def test_scheduler_rejects_all_day_bt_runtime_tasks() -> None:
+    assert _schedule_matches_bt_action(schedule="*/10 9-11 * * 1-5", action="intraday")
+    assert _schedule_matches_bt_action(schedule="*/15 * * * 1-5", action="monitor")
+    assert _schedule_matches_bt_action(schedule="0 18 * * 1-5", action="daily")
+    assert _schedule_matches_bt_action(schedule="5 12 * * 1-5", action="midday")
+    assert _schedule_matches_bt_action(schedule="40 19 * * 1-5", action="coldstart")
+
+    assert not _schedule_matches_bt_action(schedule="*/15 * * * *", action="monitor")
+    assert not _schedule_matches_bt_action(schedule="0 18 * * *", action="daily")
+    assert not _schedule_matches_bt_action(schedule="5 12 * * *", action="midday")
+    assert not _schedule_matches_bt_action(schedule="40 19 * * *", action="coldstart")
 
 
 def test_check_before_live_blocks_system_cron_installer_without_noop_guard(
@@ -2559,7 +2718,9 @@ def test_check_before_live_blocks_bt_wrapper_with_unexpected_live_cron_cadence(
     )
     monkeypatch.setattr(
         "scripts.check_before_live._load_live_crontab_text",
-        lambda: "*/5 * * * * flock -xn /www/server/cron/aqsp-news.lock -c /www/server/cron/aqsp-news\n",
+        lambda: (
+            "*/5 * * * * flock -xn /www/server/cron/aqsp-news.lock -c /www/server/cron/aqsp-news\n"
+        ),
     )
 
     findings = check_before_live(
@@ -2588,7 +2749,9 @@ def test_check_before_live_blocks_legacy_all_day_news_polling(
     )
     monkeypatch.setattr(
         "scripts.check_before_live._load_live_crontab_text",
-        lambda: "*/5 * * * * flock -xn /www/server/cron/aqsp-news.lock -c /www/server/cron/aqsp-news\n",
+        lambda: (
+            "*/5 * * * * flock -xn /www/server/cron/aqsp-news.lock -c /www/server/cron/aqsp-news\n"
+        ),
     )
 
     findings = check_before_live(
@@ -2620,7 +2783,9 @@ def test_check_before_live_allows_news_wrapper_with_time_gate_even_if_cron_polls
     )
     monkeypatch.setattr(
         "scripts.check_before_live._load_live_crontab_text",
-        lambda: "*/5 * * * * flock -xn /www/server/cron/aqsp-news.lock -c /www/server/cron/aqsp-news\n",
+        lambda: (
+            "*/5 * * * * flock -xn /www/server/cron/aqsp-news.lock -c /www/server/cron/aqsp-news\n"
+        ),
     )
 
     findings = check_before_live(

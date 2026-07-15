@@ -38,6 +38,18 @@ def test_ci_workflow_limits_paths_and_sets_concurrency() -> None:
     assert '".github/workflows/ci.yml"' not in text
 
 
+def test_ci_runs_upload_preflight_before_install() -> None:
+    text = (PROJECT_ROOT / ".github" / "workflows" / "ci.yml").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'pip install -e ".[data,dev,web,api]"' in text
+    assert "python3 -m scripts.preflight_upload" in text
+    assert text.index("python3 -m scripts.preflight_upload") < text.index(
+        "name: Install"
+    )
+
+
 def test_github_workflows_define_common_runtime_controls() -> None:
     offenders: list[str] = []
 

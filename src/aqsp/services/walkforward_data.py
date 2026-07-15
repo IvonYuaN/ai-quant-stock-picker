@@ -23,12 +23,31 @@ class WalkforwardFetchRequest:
     end: str
     cache_path: str | None = None
     skip_pit_financials: bool = False
+    benchmark_symbol: str | None = None
 
 
 @dataclass(frozen=True)
 class WalkforwardFetchResult:
     frames: dict[str, pd.DataFrame]
     symbols: list[str]
+
+
+def _attach_benchmark_frame(
+    frames: dict[str, pd.DataFrame],
+    source: Any,
+    benchmark_symbol: str | None,
+    start: date,
+    end: date,
+) -> None:
+    if not benchmark_symbol or not hasattr(source, "fetch_index"):
+        return
+    try:
+        benchmark_frames = source.fetch_index([benchmark_symbol], start, end)
+    except Exception:
+        return
+    benchmark_frame = benchmark_frames.get(benchmark_symbol)
+    if isinstance(benchmark_frame, pd.DataFrame) and not benchmark_frame.empty:
+        frames[benchmark_symbol] = benchmark_frame
 
 
 def _get_source_with_optional_cache(
@@ -76,6 +95,7 @@ def fetch_walkforward_frames(
 ) -> WalkforwardFetchResult:
     source = request.source
     symbols = list(request.symbols)
+    benchmark_symbol = str(request.benchmark_symbol or "").strip() or None
     start_d = date.fromisoformat(request.start)
     end_d = date.fromisoformat(request.end)
 
@@ -83,7 +103,7 @@ def fetch_walkforward_frames(
         frames = fetch_frames_for_cli_fn(
             source,
             symbols,
-            benchmark_symbol=None,
+            benchmark_symbol=benchmark_symbol,
             cache_path=request.cache_path or None,
             days=fetch_days_fn(request.start, request.end),
         )
@@ -92,11 +112,13 @@ def fetch_walkforward_frames(
     if source == "mootdx":
         src = get_source_fn("mootdx")
         frames = src.fetch_daily(symbols, start_d, end_d, adjust="", count=2000)
+        _attach_benchmark_frame(frames, src, benchmark_symbol, start_d, end_d)
         return WalkforwardFetchResult(frames=frames, symbols=symbols)
 
     if source == "sina":
         src = get_source_fn("sina")
         frames = src.fetch_daily(symbols, start_d, end_d, adjust="")
+        _attach_benchmark_frame(frames, src, benchmark_symbol, start_d, end_d)
         return WalkforwardFetchResult(frames=frames, symbols=symbols)
 
     if source in {"baostock", "sqlite_db"}:
@@ -126,6 +148,7 @@ def fetch_walkforward_frames(
                 )
             print_fn(f"SQLite 数据库中可用且覆盖区间的标的: {len(symbols)} 只")
         frames = src.fetch_daily(symbols, start_d, end_d, adjust="")
+        _attach_benchmark_frame(frames, src, benchmark_symbol, start_d, end_d)
         if request.skip_pit_financials:
             print_fn("已跳过 point-in-time 财务补充，仅使用价格数据跑 gate")
             return WalkforwardFetchResult(frames=frames, symbols=symbols)

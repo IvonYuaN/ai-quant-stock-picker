@@ -47,6 +47,14 @@ class StrategyPerformance:
     regime_weights: dict[str, float] | None = None
 
 
+def _validated_rows(df: pd.DataFrame) -> pd.DataFrame:
+    """Return settled outcome rows; unresolved rows are not learning samples."""
+    if df.empty or "status" not in df.columns:
+        return df.iloc[0:0].copy()
+    status = df["status"].fillna("").astype(str).str.strip()
+    return df.loc[status == "validated"].copy()
+
+
 def _explode_strategies(df: pd.DataFrame) -> pd.DataFrame:
     if "strategies" not in df.columns:
         return df
@@ -143,7 +151,7 @@ class PerformanceLearner:
         if ledger_df.empty:
             return {}
 
-        df = ledger_df[ledger_df["status"] != "not_executable"].copy()
+        df = _validated_rows(ledger_df)
         if df.empty:
             return {}
 
@@ -406,7 +414,7 @@ class StrategyDecayDetector:
         if ledger_df.empty:
             return []
 
-        df = ledger_df[ledger_df["status"] != "not_executable"].copy()
+        df = _validated_rows(ledger_df)
         if df.empty:
             return []
 
@@ -418,7 +426,9 @@ class StrategyDecayDetector:
         df["signal_date"] = pd.to_datetime(df["signal_date"], errors="coerce").dt.date
         df = df.dropna(subset=["signal_date"])
 
-        cutoff = today_shanghai() - timedelta(days=self.lookback_days)
+        latest_signal_date = df["signal_date"].max()
+        anchor_date = min(today_shanghai(), latest_signal_date)
+        cutoff = anchor_date - timedelta(days=self.lookback_days)
         recent = df[df["signal_date"] >= cutoff]
         if recent.empty:
             return []

@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import csv
 import json
+from types import SimpleNamespace
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from scripts import backfill_intraday_debate
 from scripts.generate_sample_debate import generate_sample_debate_data
 from scripts.generate_cold_start_signals import generate_mock_signal
 from scripts.manage_data_lifecycle import analyze_debate_file, clean_old_debates
@@ -12,6 +15,243 @@ from scripts.merge_server_ledgers import merge_ledgers
 from scripts import cleanup_ledger
 
 SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
+
+
+def test_backfill_intraday_debate_default_coverage_matches_runtime_limit() -> None:
+    assert backfill_intraday_debate.DEFAULT_MAX_CANDIDATES == 5
+
+
+def test_backfill_intraday_debate_writes_current_task_records(
+    tmp_path, monkeypatch
+) -> None:
+    fixed_now = datetime(2026, 7, 10, 14, 30, 0, tzinfo=SHANGHAI_TZ)
+    input_csv = tmp_path / "intraday_latest.csv"
+    output_path = tmp_path / "debate_results.jsonl"
+    fieldnames = [
+        "symbol",
+        "name",
+        "date",
+        "close",
+        "score",
+        "rating",
+        "entry_type",
+        "ideal_buy",
+        "stop_loss",
+        "take_profit",
+        "position",
+        "strategies",
+        "reasons",
+        "risks",
+        "run_market_context_overview",
+        "run_market_context_lines",
+        "cross_market_primary_theme",
+        "cross_market_action",
+        "cross_market_chain_summary",
+        "cross_market_validation_signals",
+        "cross_market_invalidation_signals",
+        "cross_market_summaries",
+        "cross_market_evidence_stack_summary",
+        "news_catalyst_lead",
+    ]
+    with input_csv.open("w", encoding="utf-8", newline="") as file:
+        writer = csv.DictWriter(file, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerow(
+            {
+                "symbol": "__RUN__",
+                "run_market_context_overview": "美股科技风险偏好修复",
+                "run_market_context_lines": "海外风险: 纳指期货走强；北向资金: 近5日偏强",
+            }
+        )
+        writer.writerow(
+            {
+                "symbol": "603019",
+                "name": "中科曙光",
+                "date": "2026-07-10",
+                "close": "109.55",
+                "score": "71.57",
+                "rating": "strong_buy_candidate",
+                "entry_type": "relative_strength",
+                "ideal_buy": "109.55",
+                "stop_loss": "91.326",
+                "take_profit": "142.354",
+                "position": "30%-30%",
+                "strategies": "rps_momentum",
+                "reasons": "MA多头排列",
+                "risks": "前一交易日振幅过大",
+                "cross_market_primary_theme": "海外AI算力映射",
+                "cross_market_action": "优先复核",
+                "cross_market_chain_summary": "英伟达走强｜确认 算力链竞价承接｜失效 高开低走",
+                "cross_market_validation_signals": "算力链竞价承接；成交额放大",
+                "cross_market_invalidation_signals": "高开低走；板块无扩散",
+                "cross_market_summaries": "传导推演[海外AI算力映射]: 英伟达走强传导A股算力链",
+                "cross_market_evidence_stack_summary": "同向 2 条｜反向 0 条",
+                "news_catalyst_lead": "603019 中科曙光 偏多｜AI算力｜海外龙头上行",
+            }
+        )
+    output_path.write_text(
+        "\n".join(
+            (
+                json.dumps(
+                    {
+                        "debate_id": "main-chain-recent",
+                        "symbol": "000938",
+                        "related_signal_date": "2026-07-09",
+                        "debate_date": "2026-07-09",
+                        "task_id": "main_chain",
+                        "candidate_fingerprint": "main-chain-fingerprint",
+                        "created_at": "2026-07-09T18:00:00+08:00",
+                    },
+                    ensure_ascii=False,
+                ),
+                json.dumps(
+                    {
+                        "debate_id": "expired",
+                        "symbol": "000001",
+                        "related_signal_date": "2026-06-01",
+                        "debate_date": "2026-06-01",
+                        "task_id": "main_chain",
+                        "candidate_fingerprint": "expired-fingerprint",
+                        "created_at": "2026-06-01T18:00:00+08:00",
+                    },
+                    ensure_ascii=False,
+                ),
+            )
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(backfill_intraday_debate, "now_shanghai", lambda: fixed_now)
+    monkeypatch.setattr(
+        backfill_intraday_debate,
+        "load_debate_runtime_config",
+        lambda task_id: SimpleNamespace(
+            enabled=False,
+            enable_llm=False,
+            max_rounds=1,
+            max_candidates=3,
+            language="zh-CN",
+            roles=("bull", "risk_control", "cross_market"),
+            role_runtime=(),
+        ),
+    )
+    monkeypatch.setattr(
+        backfill_intraday_debate,
+        "load_thresholds",
+        lambda: SimpleNamespace(version="test-thresholds"),
+    )
+    captured: dict[str, tuple[str, ...]] = {}
+
+    def _resolve_roles(runtime, *, pick, market_context_lines):
+        captured["resolved_context"] = tuple(market_context_lines)
+        return tuple(runtime.roles)
+
+    monkeypatch.setattr(
+        backfill_intraday_debate,
+        "_resolve_pick_debate_roles",
+        _resolve_roles,
+    )
+
+    class _Coordinator:
+        def run_debate(self, pick, df, signal_date, *, market_context_lines=()):
+            captured["debate_context"] = tuple(market_context_lines)
+            return SimpleNamespace(
+                debate_id="debate-1",
+                symbol=pick.symbol,
+                name=pick.name,
+                original_score=pick.score,
+                rating=pick.rating,
+                recommended_adjustment="keep",
+                disagreement_score=0.2,
+            )
+
+    monkeypatch.setattr(
+        backfill_intraday_debate,
+        "_build_debate_coordinator",
+        lambda *args, **kwargs: _Coordinator(),
+    )
+    monkeypatch.setattr(
+        backfill_intraday_debate,
+        "serialize_debate_result",
+        lambda result: {
+            "debate_id": result.debate_id,
+            "symbol": result.symbol,
+            "name": result.name,
+            "original_score": result.original_score,
+            "rating": result.rating,
+            "recommended_adjustment": result.recommended_adjustment,
+            "disagreement_score": result.disagreement_score,
+            "rounds": [
+                {
+                    "round_num": 1,
+                    "opinions": [
+                        {
+                            "role": "bull",
+                            "stance": "neutral",
+                            "confidence": 0.7,
+                            "arguments": ["先观察承接。"],
+                        }
+                    ],
+                }
+            ],
+            "final_vote": {"bull": "neutral"},
+        },
+    )
+
+    count = backfill_intraday_debate.run_backfill(
+        input_csv=input_csv,
+        output_path=output_path,
+        task_id="intraday",
+        max_candidates=3,
+        force=True,
+    )
+
+    rows = [
+        json.loads(line)
+        for line in output_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert count == 1
+    rows_by_symbol = {row["symbol"]: row for row in rows}
+    current_row = rows_by_symbol["603019"]
+    assert set(rows_by_symbol) == {"000938", "603019"}
+    assert current_row["task_id"] == "intraday"
+    assert current_row["related_signal_date"] == "2026-07-10"
+    assert current_row["candidate_signal_date"] == "2026-07-10"
+    assert current_row["candidate_fingerprint"]
+    assert current_row["created_at"] == "2026-07-10T14:30:00+08:00"
+    assert current_row["debate_context_quality"] == "structured_context"
+    assert current_row["debate_data_context"] == "synthetic_context"
+    assert "缺少完整盘中 OHLCV" in current_row["debate_data_context_warning"]
+    assert "debate_context_warning" not in current_row
+    assert any("海外AI算力映射" in line for line in current_row["market_context_lines"])
+    assert any("消息催化" in line for line in current_row["market_context_lines"])
+    assert captured["resolved_context"] == captured["debate_context"]
+    assert captured["debate_context"]
+
+
+def test_backfill_intraday_debate_restores_tuple_metrics_from_csv() -> None:
+    pick = backfill_intraday_debate._pick_from_row(
+        {
+            "symbol": "603019",
+            "name": "中科曙光",
+            "date": "2026-07-10",
+            "close": "109.55",
+            "score": "71.57",
+            "cross_market_validation_signals": "算力链竞价承接；成交额放大",
+            "cross_market_rule_ids": "['ai_compute', 'risk_on']",
+            "news_catalyst_supports": "海外龙头上行|政策支持",
+            "cross_market_support_event_count": "2",
+        }
+    )
+
+    assert pick.metrics["cross_market_validation_signals"] == (
+        "算力链竞价承接",
+        "成交额放大",
+    )
+    assert pick.metrics["cross_market_rule_ids"] == ("ai_compute", "risk_on")
+    assert pick.metrics["news_catalyst_supports"] == ("海外龙头上行", "政策支持")
+    assert pick.metrics["cross_market_support_event_count"] == 2
 
 
 def test_generate_sample_debate_data_uses_research_safe_wording_and_timezone(
@@ -125,7 +365,11 @@ def test_runtime_output_scripts_use_atomic_writes() -> None:
 
     for path in script_paths:
         text = path.read_text(encoding="utf-8")
-        assert "atomic_write_text" in text
+        # Dashboard output delegates the atomic write to the canonical entrypoint.
+        assert "atomic_write_text" in text or (
+            path.name == "render_dashboard.py"
+            and "write_dashboard_artifact" in text
+        )
         assert ".write_text(" not in text
 
 
@@ -146,7 +390,13 @@ def test_cleanup_ledger_simulated_only_keeps_expired_real_rows(
     ledger.write_text(
         "\n".join(
             [
-                json.dumps({"signal_date": "2026-01-01", "symbol": "600000", "status": "pending"}),
+                json.dumps(
+                    {
+                        "signal_date": "2026-01-01",
+                        "symbol": "600000",
+                        "status": "pending",
+                    }
+                ),
                 json.dumps(
                     {
                         "signal_date": "2026-06-01",

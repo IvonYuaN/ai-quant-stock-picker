@@ -10,6 +10,7 @@ import pytest
 
 from aqsp.core.time import today_shanghai
 from aqsp.core.types import PickResult
+from aqsp.strategies.thresholds import load_thresholds
 
 
 @pytest.fixture(autouse=True)
@@ -27,6 +28,7 @@ def test_run_scheduled_persists_decision_audit_log(
     import aqsp.cli as cli_mod
 
     latest = today_shanghai().isoformat()
+    monkeypatch.chdir(tmp_path)
     frames = {
         "600519": pd.DataFrame(
             [
@@ -67,6 +69,7 @@ def test_run_scheduled_persists_decision_audit_log(
     }
 
     monkeypatch.setenv("AQSP_TRADE_LOG_DIR", str(tmp_path / "logs" / "trades"))
+    monkeypatch.setattr("aqsp.core.time.is_trading_day", lambda _day: True)
     monkeypatch.setattr(
         cli_mod,
         "_check_notification_gate",
@@ -159,6 +162,11 @@ def test_run_scheduled_persists_decision_audit_log(
         "describe_source_health",
         lambda *_args, **_kwargs: ("healthy", "eastmoney 健康", False),
     )
+    monkeypatch.setattr(
+        cli_mod,
+        "_resolve_audit_action",
+        lambda *_args, **_kwargs: "PAPER_REVIEW",
+    )
     monkeypatch.setattr(cli_mod, "notify_markdown", lambda markdown: [])
 
     args = Namespace(
@@ -200,8 +208,23 @@ def test_run_scheduled_persists_decision_audit_log(
     assert record["symbol"] == "600519"
     assert record["action"] == "PAPER_REVIEW"
     assert record["risk_check_passed"] is True
-    assert record["context"]["thresholds_version"] == "1.1.13"
+    assert record["context"]["thresholds_version"] == load_thresholds().version
     assert record["context"]["actual_source"] == "eastmoney"
     assert record["context"]["portfolio_action"] == "keep"
     assert record["context"]["paper_execution_preview"]["board_lot_shares"] == 100
     assert record["context"]["paper_execution_preview"]["plan_valid"] is True
+    chain_file = tmp_path / "data" / "audit" / "decision-chain.jsonl"
+    assert chain_file.exists()
+    chain_record = json.loads(chain_file.read_text(encoding="utf-8"))
+    assert chain_record["candidates"] == [
+        {
+            "advisory_only": True,
+            "deterministic_score": 71.0,
+            "deterministic_score_unchanged": True,
+            "position": "10%-30%",
+            "rating": "buy_candidate",
+            "score": 71.0,
+            "strategies": ["ma_pullback"],
+            "symbol": "600519",
+        }
+    ]

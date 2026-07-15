@@ -34,6 +34,7 @@ class DebateEvidenceProvenance:
     """Evidence buckets kept separate so rules are not presented as news."""
 
     real_messages: tuple[str, ...] = ()
+    cross_market_evidence: tuple[str, ...] = ()
     rule_transmissions: tuple[str, ...] = ()
     pending_confirmations: tuple[str, ...] = ()
 
@@ -44,9 +45,9 @@ def debate_evidence_provenance(result: Any) -> DebateEvidenceProvenance:
 
     def values(name: str) -> tuple[str, ...]:
         return tuple(
-            str(item).strip()
+            text
             for item in (getattr(result, name, ()) or ())
-            if str(item).strip()
+            if (text := str(item).strip()) and not _is_non_evidence_text(text)
         )
 
     messages = values("real_message_evidence")
@@ -54,7 +55,19 @@ def debate_evidence_provenance(result: Any) -> DebateEvidenceProvenance:
         messages = tuple(
             line[len("候选消息:") :].strip()
             for line in lines
-            if line.startswith("候选消息:") and line[len("候选消息:") :].strip()
+            if line.startswith("候选消息:")
+            and line[len("候选消息:") :].strip()
+            and not _is_non_evidence_text(line[len("候选消息:") :].strip())
+        )
+
+    cross_market = values("cross_market_evidence")
+    if not cross_market:
+        cross_market = tuple(
+            line[len("跨市证据:") :].strip()
+            for line in lines
+            if line.startswith("跨市证据:")
+            and line[len("跨市证据:") :].strip()
+            and not _is_non_evidence_text(line[len("跨市证据:") :].strip())
         )
 
     rules = values("rule_transmission_evidence")
@@ -63,6 +76,7 @@ def debate_evidence_provenance(result: Any) -> DebateEvidenceProvenance:
             line
             for line in lines
             if line.startswith(("传导推演[", "候选传导:", "传导链:"))
+            and not _is_non_evidence_text(line)
         )
 
     pending = values("pending_confirmations")
@@ -72,9 +86,28 @@ def debate_evidence_provenance(result: Any) -> DebateEvidenceProvenance:
         )
     return DebateEvidenceProvenance(
         real_messages=tuple(dict.fromkeys(messages)),
+        cross_market_evidence=tuple(dict.fromkeys(cross_market)),
         rule_transmissions=tuple(dict.fromkeys(rules)),
         pending_confirmations=tuple(dict.fromkeys(pending)),
     )
+
+
+_PROVENANCE_GAP_MARKERS = (
+    "输入未提供",
+    "无可用",
+    "尚未形成",
+    "等待更多确认",
+    "等待新证据",
+    "不能确认",
+    "无法确认",
+    "暂不确认",
+    "不据此形成判断",
+)
+
+
+def _is_non_evidence_text(value: object) -> bool:
+    text = str(value or "").strip()
+    return not text or any(marker in text for marker in _PROVENANCE_GAP_MARKERS)
 
 
 def _market_context_lines(result: Any) -> tuple[str, ...]:
@@ -105,6 +138,13 @@ def _context_line_value(
 
 
 def _selected_roles(result: Any) -> tuple[AgentRole | str, ...]:
+    configured_roles = tuple(
+        str(role).strip()
+        for role in (getattr(result, "expected_roles", ()) or ())
+        if str(role).strip()
+    )
+    if configured_roles:
+        return configured_roles
     roles: list[AgentRole | str] = []
     for role in getattr(result, "final_vote", {}) or {}:
         if role not in roles:
@@ -165,7 +205,13 @@ def _legacy_conclusion_is_compatible(
     audit: DebateQualityAudit,
 ) -> bool:
     """Allow old conclusion-only results without weakening the new audit."""
-    if not audit.candidate_mapped or getattr(result, "rounds", ()):
+    # Old reports may omit rounds, but they must not bypass the live-data gate.
+    if (
+        not audit.candidate_mapped
+        or getattr(result, "rounds", ())
+        or str(getattr(result, "data_status", "available") or "available")
+        != "available"
+    ):
         return False
     if int(getattr(result, "debate_rounds_requested", 0) or 0) > 0:
         return False
@@ -173,6 +219,7 @@ def _legacy_conclusion_is_compatible(
         getattr(result, field_name, ())
         for field_name in (
             "real_message_evidence",
+            "cross_market_evidence",
             "rule_transmission_evidence",
             "pending_confirmations",
             "cross_market_evidence_stack_summary",
@@ -195,6 +242,8 @@ def _legacy_conclusion_is_compatible(
 
 
 def _quality_block_headline(audit: DebateQualityAudit) -> str:
+    if "empty_market_data" in audit.issues:
+        return "结论已阻断：行情数据为空"
     if "no_substantive_evidence" in audit.issues:
         return "结论已阻断：缺少可核验证据"
     if "non_interactive_round" in audit.issues:
@@ -439,7 +488,7 @@ def debate_consensus_point(
     name = str(getattr(result, "name", "") or "").strip()
     display = f"{name}({symbol})" if name or symbol else "未知标的"
     if view.quality_audit is not None and not view.quality_audit.passed:
-        return f"🤖 委员会阻塞: {display} {view.headline}"
+        return f"委员会阻塞: {display} {view.headline}"
     recommendation = str(getattr(result, "recommended_adjustment", "") or "").strip()
     disagreement_score = float(getattr(result, "disagreement_score", 0.0) or 0.0)
     adjusted_score = float(getattr(result, "adjusted_score", 0.0) or 0.0)
@@ -447,13 +496,13 @@ def debate_consensus_point(
     if recommendation == "raise":
         headline = view.headline if view.headline != "暂无共识摘要" else "倾向上调"
         point = (
-            f"🤖 委员会结论: {display} {headline}；"
+            f"委员会结论: {display} {headline}；"
             f"附件参考分{adjusted_score:.1f}，不改写系统评分"
         )
     elif recommendation == "lower":
         headline = view.headline if view.headline != "暂无共识摘要" else "倾向下调"
         point = (
-            f"🤖 委员会结论: {display} {headline}；"
+            f"委员会结论: {display} {headline}；"
             f"附件参考分{adjusted_score:.1f}，不改写系统评分"
         )
     elif disagreement_score > 0.5:
@@ -462,9 +511,9 @@ def debate_consensus_point(
             if view.headline != "暂无共识摘要"
             else f"多空分歧{disagreement_score:.0%}"
         )
-        point = f"🤖 委员会分歧: {display} {headline}"
+        point = f"委员会分歧: {display} {headline}"
     elif bool(getattr(result, "realtime_blocked", False)):
-        point = f"🤖 委员会阻塞观察: {display} {view.headline}"
+        point = f"委员会阻塞观察: {display} {view.headline}"
     else:
         return ""
 

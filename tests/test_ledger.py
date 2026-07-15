@@ -9,6 +9,7 @@ import pytest
 
 from aqsp.core.time import now_shanghai
 from aqsp.core.types import RunMetadata
+from aqsp.core.errors import DataError
 from aqsp.ledger import (
     ExecutionConfig,
     execution_config_from_thresholds,
@@ -399,6 +400,34 @@ def test_strategy_weights_rejects_insufficient_signal_days(tmp_path) -> None:
     assert "volume_breakout" not in weights
 
 
+def test_strategy_weights_ignore_not_executable_rows_and_string_strategies(
+    tmp_path,
+) -> None:
+    ledger = tmp_path / "predictions.jsonl"
+    rows = [
+        {
+            "status": "validated",
+            "signal_date": f"2026-01-{day:02d}",
+            "return_pct": 2.0,
+            "strategies": "volume_breakout",
+        }
+        for day in range(1, 31)
+    ]
+    rows.append(
+        {
+            "status": "not_executable",
+            "signal_date": "2026-02-01",
+            "return_pct": -99.0,
+            "strategies": "volume_breakout",
+        }
+    )
+    write_ledger(ledger, rows)
+
+    weights = strategy_weights_from_ledger(ledger)
+
+    assert weights["volume_breakout"] > 1.0
+
+
 def test_performance_learner_defaults_to_30_independent_signal_days() -> None:
     assert LearnerConfig().min_independent_signal_days == 30
 
@@ -428,6 +457,133 @@ def test_learner_filters_not_executable(tmp_path) -> None:
     perf = result["volume_breakout"]
     assert perf.recent_performance.total_picks == 25
     assert perf.recent_performance.win_rate == 1.0
+
+
+def test_learner_ignores_unresolved_rows_and_not_executable_rows_when_learning(
+    tmp_path,
+) -> None:
+    rows = [
+        {
+            "status": "validated",
+            "signal_date": f"2026-01-{day:02d}",
+            "return_pct": 2.0,
+            "strategies": ["volume_breakout"],
+        }
+        for day in range(1, 31)
+    ]
+    rows.extend(
+        [
+            {
+                "status": "pending",
+                "signal_date": "2026-02-01",
+                "return_pct": -99.0,
+                "strategies": ["volume_breakout"],
+            },
+            {
+                "status": "not_executable",
+                "signal_date": "2026-02-02",
+                "return_pct": -99.0,
+                "strategies": ["volume_breakout"],
+            },
+        ]
+    )
+
+    learner = PerformanceLearner(
+        config=LearnerConfig(min_independent_signal_days=30),
+        weight_history_path=tmp_path / "weight_history.jsonl",
+    )
+
+    performance = learner.learn_from_ledger(pd.DataFrame(rows))["volume_breakout"]
+
+    assert performance.recent_performance.independent_signal_days == 30
+    assert performance.recent_performance.total_picks == 30
+    assert performance.recent_performance.win_rate == 1.0
+
+
+def test_validation_keeps_string_strategies_in_independent_execution_feedback(
+    tmp_path,
+) -> None:
+    ledger = tmp_path / "predictions.jsonl"
+    write_ledger(
+        ledger,
+        [
+            {
+                "status": "pending",
+                "symbol": "600000",
+                "signal_date": "2026-01-02",
+                "rating": "buy_candidate",
+                "signal_close": 10.0,
+                "strategies": "volume_breakout",
+            }
+        ],
+    )
+
+    summary = validate_predictions(
+        ledger,
+        {
+            "600000": pd.DataFrame(
+                [
+                    {
+                        "date": "2026-01-02",
+                        "open": 10.0,
+                        "high": 10.0,
+                        "low": 10.0,
+                        "close": 10.0,
+                    },
+                    {
+                        "date": "2026-01-03",
+                        "open": 11.0,
+                        "high": 11.0,
+                        "low": 11.0,
+                        "close": 11.0,
+                    },
+                ]
+            )
+        },
+    )
+
+    assert summary.checked == 0
+    assert summary.strategy_not_executable_rates == {"volume_breakout": 1.0}
+
+
+def test_validation_rejects_missing_close_with_explainable_data_error(tmp_path) -> None:
+    ledger = tmp_path / "predictions.jsonl"
+    write_ledger(
+        ledger,
+        [
+            {
+                "status": "pending",
+                "symbol": "600000",
+                "signal_date": "2026-01-02",
+                "rating": "buy_candidate",
+                "signal_close": 10.0,
+                "strategies": ["volume_breakout"],
+            }
+        ],
+    )
+
+    with pytest.raises(DataError, match=r"symbol=600000.*close"):
+        validate_predictions(
+            ledger,
+            {
+                "600000": pd.DataFrame(
+                    [
+                        {
+                            "date": "2026-01-02",
+                            "open": 10.0,
+                            "high": 10.0,
+                            "low": 10.0,
+                        },
+                        {
+                            "date": "2026-01-03",
+                            "open": 11.0,
+                            "high": 11.0,
+                            "low": 11.0,
+                        },
+                    ]
+                )
+            },
+        )
 
 
 def test_learner_aggregates_per_signal_day(tmp_path) -> None:
@@ -872,6 +1028,8 @@ def test_append_predictions_writes_run_metadata_when_provided(tmp_path) -> None:
         max_universe=100,
         circuit_breaker_triggered=True,
         circuit_breaker_reason="单日亏损触发",
+        market_context_overview="海外风险偏好改善",
+        market_context_lines=("运行判定: HMM stable_bull", "跨市主线: AI 算力"),
     )
 
     append_predictions(
@@ -899,6 +1057,105 @@ def test_append_predictions_writes_run_metadata_when_provided(tmp_path) -> None:
     assert row["run_data_lag_days"] == 0
     assert row["run_circuit_breaker_triggered"] is True
     assert row["run_circuit_breaker_reason"] == "单日亏损触发"
+    assert row["run_market_context_overview"] == "海外风险偏好改善"
+    assert row["run_market_context_lines"] == [
+        "运行判定: HMM stable_bull",
+        "跨市主线: AI 算力",
+    ]
+    assert row["thresholds_version"] == "1.0.0"
+
+
+def test_formal_ledger_rejects_missing_provenance_when_workload_is_live_short(
+    tmp_path,
+) -> None:
+    ledger = tmp_path / "predictions.jsonl"
+    pick = PickResult(
+        symbol="600000",
+        name="测试",
+        date="2026-07-13",
+        close=10,
+        score=70,
+        rating="buy_candidate",
+        entry_type="volume_breakout",
+        ideal_buy=10,
+        stop_loss=9.5,
+        take_profit=11,
+        position="10%-30%",
+    )
+    metadata = RunMetadata(
+        requested_source="online_first",
+        actual_source="eastmoney",
+        source_freshness_tier="realtime",
+        source_coverage_tier="multi_dimensional",
+        source_local_status="present",
+        source_health_label="healthy",
+        source_health_message="ok",
+        fallback_used=False,
+        explicit_symbol_count=1,
+        resolved_symbol_count=1,
+        fetched_frame_count=1,
+        screened_count=1,
+        final_count=1,
+        min_price=1,
+        max_price=1000,
+        min_avg_amount=1,
+        online_factors_enabled=False,
+        thresholds_version="2026.07.13",
+        data_latest_trade_date="2026-07-13",
+        data_lag_days=0,
+        workload="live_short",
+    )
+    with pytest.raises(DataError, match="source_health_label"):
+        metadata = RunMetadata(
+            **{
+                **metadata.__dict__,
+                "source_health_label": "",
+            }
+        )
+        append_predictions(ledger, [pick], run_metadata=metadata)
+
+
+def test_formal_ledger_persists_workload_provenance(tmp_path) -> None:
+    ledger = tmp_path / "predictions.jsonl"
+    pick = PickResult(
+        symbol="600000",
+        name="测试",
+        date="2026-07-13",
+        close=10,
+        score=70,
+        rating="buy_candidate",
+        entry_type="volume_breakout",
+        ideal_buy=10,
+        stop_loss=9.5,
+        take_profit=11,
+        position="10%-30%",
+    )
+    metadata = RunMetadata(
+        requested_source="online_first",
+        actual_source="eastmoney",
+        source_freshness_tier="realtime",
+        source_coverage_tier="multi_dimensional",
+        source_local_status="present",
+        source_health_label="healthy",
+        source_health_message="ok",
+        fallback_used=False,
+        explicit_symbol_count=1,
+        resolved_symbol_count=1,
+        fetched_frame_count=1,
+        screened_count=1,
+        final_count=1,
+        min_price=1,
+        max_price=1000,
+        min_avg_amount=1,
+        online_factors_enabled=False,
+        thresholds_version="2026.07.13",
+        data_latest_trade_date="2026-07-13",
+        data_lag_days=0,
+        task_id="intraday",
+        workload="live_short",
+    )
+    append_predictions(ledger, [pick], run_metadata=metadata)
+    assert read_ledger(ledger)[0]["run_workload"] == "live_short"
 
 
 def test_append_run_event_records_circuit_breaker_without_signal_payload(
@@ -931,6 +1188,8 @@ def test_append_run_event_records_circuit_breaker_without_signal_payload(
         task_id="daily",
         circuit_breaker_triggered=True,
         circuit_breaker_reason="单日亏损触发",
+        market_context_overview="组合保护期只观察",
+        market_context_lines=("运行判定: HMM bear",),
     )
 
     append_run_event(
@@ -959,6 +1218,8 @@ def test_append_run_event_records_circuit_breaker_without_signal_payload(
     assert row["daily_pnl_pct"] == -8.2
     assert row["run_circuit_breaker_triggered"] is True
     assert row["run_resolved_symbol_count"] == 5000
+    assert row["run_market_context_overview"] == "组合保护期只观察"
+    assert row["run_market_context_lines"] == ["运行判定: HMM bear"]
 
 
 def test_append_predictions_persists_portfolio_and_debate_fields(tmp_path) -> None:
@@ -978,6 +1239,13 @@ def test_append_predictions_persists_portfolio_and_debate_fields(tmp_path) -> No
         strategies=("rps_relative_strength",),
         metrics={
             "portfolio_action": "promote",
+            "candidate_status": "延续上升",
+            "candidate_blocker": "",
+            "candidate_next_step": "先复核数据质量: 最新日期延迟4天",
+            "candidate_review_window": "盘中确认后",
+            "candidate_review_priority": "high",
+            "data_quality_status": "critical",
+            "data_quality_alerts": ("最新日期延迟4天", "开盘跳空: +12.00%"),
             "stop_method": "atr_trailing",
             "sector": "公用事业",
             "industry": "电力",
@@ -991,6 +1259,70 @@ def test_append_predictions_persists_portfolio_and_debate_fields(tmp_path) -> No
             "composite_score_normalized": 91.2345,
             "base_score_before_composite": 72.0,
             "final_score_after_composite": 77.77,
+            "debate_id": "debate-600900-20260529",
+            "debate_disagreement_score": 0.42,
+            "debate_final_vote": {
+                "bull": "bullish",
+                "risk_control": "neutral",
+                "cross_market": "bullish",
+            },
+            "debate_active_roles": ("bull", "risk_control", "cross_market"),
+            "debate_active_role_summary": "技术多头、风控、跨市传导",
+            "debate_role_selection_summary": "因外盘风险偏好修复加入跨市传导",
+            "debate_role_selection_plan": "多头看技术，风控看回撤，跨市看传导链",
+            "debate_research_verdict": "倾向优先纸面复核",
+            "debate_primary_risk_gate": "需确认电力防御持续性",
+            "debate_next_trigger": "先确认高开后承接",
+            "support_points": ("外盘风险偏好改善，对权重修复形成支撑",),
+            "opposition_points": ("若只是单日脉冲，次日承接可能不足",),
+            "watch_items": ("观察次日竞价是否继续强化权重修复",),
+            "role_reliability_lines": ("跨市场: 近21天 7/10 (70%)｜当前权重 0.18",),
+            "debate_historical_context_note": "历史校验: 强证据 2/3 (67%)；冲突主导 1/3",
+            "debate_historical_context_bucket": "strong_supportive",
+            "debate_historical_context_sample_count": 3,
+            "debate_historical_context_accuracy": 2 / 3,
+            "cross_market_primary_theme": "外盘风险偏好修复",
+            "cross_market_linkage_basis": "风险偏好映射",
+            "cross_market_action": "重点跟踪",
+            "cross_market_strength": "中",
+            "cross_market_lead_window": "次日竞价-1日",
+            "cross_market_observation_window": "次日-3日",
+            "cross_market_priority_score": 2,
+            "cross_market_themes": ("外盘风险偏好修复",),
+            "cross_market_rule_ids": ("us_risk_on",),
+            "cross_market_first_order_targets": (
+                "AI链高弹性",
+                "算力/芯片",
+                "机器人成长",
+            ),
+            "cross_market_second_order_targets": (
+                "软件",
+                "半导体设备",
+                "科创弹性标的",
+            ),
+            "cross_market_pressure_targets": ("高股息防御",),
+            "cross_market_execution_watchpoints": ("次日竞价成长方向是否强于防御",),
+            "cross_market_transmission_path": (
+                "美股科技与风险资产先修复风险偏好",
+                "A股高弹性成长与AI链在竞价和早盘先反馈",
+            ),
+            "cross_market_validation_signals": ("次日竞价高弹性方向明显强于防御方向",),
+            "cross_market_invalidation_signals": ("美股强但A股竞价无明显风险偏好跟随",),
+            "cross_market_chain_summary": "风险偏好映射｜领先窗 次日竞价-1日｜确认 次日竞价高弹性方向明显强于防御方向｜失效 美股强但A股竞价无明显风险偏好跟随",
+            "cross_market_support_event_count": 2,
+            "cross_market_conflict_event_count": 1,
+            "cross_market_evidence_stack_summary": "同向 2 条｜反向 1 条",
+            "news_catalyst_judgement": "supports",
+            "news_catalyst_priority_score": 3,
+            "news_catalyst_support_count": 1,
+            "news_catalyst_oppose_count": 0,
+            "news_catalyst_review_count": 1,
+            "news_catalyst_supports": ("英伟达 Physical AI 平台发布",),
+            "news_catalyst_opposes": (),
+            "news_catalyst_needs_review": ("海外映射需要A股竞价确认",),
+            "news_catalyst_lead": "600900 长江电力 偏多｜风险偏好修复｜美股科技大涨",
+            "news_catalyst_source": "Reuters",
+            "news_catalyst_url": "https://example.com/news",
         },
         adjusted_score=75.5,
         recommended_adjustment="raise",
@@ -1008,10 +1340,70 @@ def test_append_predictions_persists_portfolio_and_debate_fields(tmp_path) -> No
 
     row = read_ledger(ledger)[0]
     assert row["portfolio_action"] == "promote"
+    assert row["candidate_status"] == "延续上升"
+    assert row["candidate_next_step"] == "先复核数据质量: 最新日期延迟4天"
+    assert row["candidate_review_window"] == "盘中确认后"
+    assert row["candidate_review_priority"] == "high"
+    assert row["data_quality_status"] == "critical"
+    assert row["data_quality_alerts"] == ["最新日期延迟4天", "开盘跳空: +12.00%"]
     assert row["stop_method"] == "atr_trailing"
     assert row["adjusted_score"] == 75.5
     assert row["recommended_adjustment"] == "raise"
     assert row["debate_consensus"] == "bullish"
+    assert row["debate_id"] == "debate-600900-20260529"
+    assert row["debate_disagreement_score"] == 0.42
+    assert row["debate_final_vote"] == {
+        "bull": "bullish",
+        "risk_control": "neutral",
+        "cross_market": "bullish",
+    }
+    assert row["debate_active_roles"] == ["bull", "risk_control", "cross_market"]
+    assert row["debate_active_role_summary"] == "技术多头、风控、跨市传导"
+    assert row["debate_role_selection_summary"] == "因外盘风险偏好修复加入跨市传导"
+    assert row["debate_role_selection_plan"] == "多头看技术，风控看回撤，跨市看传导链"
+    assert row["debate_research_verdict"] == "倾向优先纸面复核"
+    assert row["debate_primary_risk_gate"] == "需确认电力防御持续性"
+    assert row["debate_next_trigger"] == "先确认高开后承接"
+    assert row["support_points"] == ["外盘风险偏好改善，对权重修复形成支撑"]
+    assert row["opposition_points"] == ["若只是单日脉冲，次日承接可能不足"]
+    assert row["watch_items"] == ["观察次日竞价是否继续强化权重修复"]
+    assert row["role_reliability_lines"] == ["跨市场: 近21天 7/10 (70%)｜当前权重 0.18"]
+    assert (
+        row["debate_historical_context_note"]
+        == "历史校验: 强证据 2/3 (67%)；冲突主导 1/3"
+    )
+    assert row["debate_historical_context_bucket"] == "strong_supportive"
+    assert row["debate_historical_context_sample_count"] == 3
+    assert row["debate_historical_context_accuracy"] == 2 / 3
+    assert row["cross_market_primary_theme"] == "外盘风险偏好修复"
+    assert row["cross_market_linkage_basis"] == "风险偏好映射"
+    assert row["cross_market_action"] == "重点跟踪"
+    assert row["cross_market_lead_window"] == "次日竞价-1日"
+    assert row["cross_market_first_order_targets"] == [
+        "AI链高弹性",
+        "算力/芯片",
+        "机器人成长",
+    ]
+    assert row["cross_market_pressure_targets"] == ["高股息防御"]
+    assert row["cross_market_validation_signals"] == [
+        "次日竞价高弹性方向明显强于防御方向"
+    ]
+    assert row["cross_market_invalidation_signals"] == [
+        "美股强但A股竞价无明显风险偏好跟随"
+    ]
+    assert row["cross_market_support_event_count"] == 2
+    assert row["cross_market_conflict_event_count"] == 1
+    assert row["cross_market_evidence_stack_summary"] == "同向 2 条｜反向 1 条"
+    assert row["news_catalyst_judgement"] == "supports"
+    assert row["news_catalyst_priority_score"] == 3
+    assert row["news_catalyst_support_count"] == 1
+    assert row["news_catalyst_supports"] == ["英伟达 Physical AI 平台发布"]
+    assert row["news_catalyst_needs_review"] == ["海外映射需要A股竞价确认"]
+    assert (
+        row["news_catalyst_lead"] == "600900 长江电力 偏多｜风险偏好修复｜美股科技大涨"
+    )
+    assert row["news_catalyst_source"] == "Reuters"
+    assert row["news_catalyst_url"] == "https://example.com/news"
     assert row["confidence"] == 83.0
     assert row["strategy_weight_snapshot"]["strategy_weights"] == {
         "volume_breakout": 1.2

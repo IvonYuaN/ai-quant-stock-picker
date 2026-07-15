@@ -1608,7 +1608,7 @@ class TestGenerateSmartSummary:
         )
 
         assert data.debate_points == [
-            "🤖 委员会阻塞: 宁德时代(300750) 结论已阻断：缺少可核验证据"
+            "委员会阻塞: 宁德时代(300750) 结论已阻断：缺少可核验证据"
         ]
 
     def test_briefing_to_markdown_uses_committee_heading_for_debate_section(self):
@@ -2409,9 +2409,14 @@ switches:
         gen = BriefingGenerator(enable_debate=True)
         briefing = gen.generate(picks=[_make_pick(symbol="300750")], frames={})
 
-        assert briefing.debate_results == []
+        assert len(briefing.debate_results) == 1
+        blocked = briefing.debate_results[0]
+        assert blocked.data_status == "empty"
+        assert blocked.research_verdict == "结论阻断：行情数据为空，仅记录待补行情。"
+        assert "empty_market_data" in blocked.failure
         assert briefing.debate_failed_symbols == ("300750(缺少有效行情帧)",)
         assert "讨论失败或缺失: 300750(缺少有效行情帧)" in briefing.to_markdown()
+        assert "结论已阻断：行情数据为空" in briefing.to_markdown()
 
     def test_briefing_does_not_repeat_same_candidate_debate_in_one_run(
         self, monkeypatch

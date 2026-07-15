@@ -1,3 +1,4 @@
+version: "1.1.16"
 composite:
   base_blend_weight: 0.7
   min_total_score: 0.4
@@ -8,7 +9,7 @@ composite:
   volume_weight: 0.0
   mean_reversion_weight: 0.0
   triple_rise_weight: 0.3
-description: "策略阈值配置 — v1.1.13：组合权重只保留已启用且有验证证据的子策略"
+description: "策略阈值配置 — v1.1.16：上调跨市场中等强度主线的截断前重排权重"
 effective_from: '2026-06-17'
 execution:
   commission_rate: 0.0003
@@ -154,6 +155,12 @@ risk:
   allocation_downgrade_multiplier: 0.75
   allocation_high_corr_multiplier: 0.88
   allocation_sector_concentration_multiplier: 0.92
+  cross_market_priority_min_score: 2
+  cross_market_medium_bonus: 1.5
+  cross_market_strong_bonus: 4.0
+  cross_market_promote_min_delta: 3.0
+  cross_market_prelimit_medium_bonus: 1.2
+  cross_market_prelimit_strong_bonus: 2.0
   profit_take_reduce_multiplier: 0.50
   cash_low_new_position_multiplier: 0.50
   market_crash_threshold: -0.05
@@ -439,4 +446,4 @@ internet_strategy:
   low_vol_amplitude_max: 5.5
   low_vol_volume_max: 1.8
   low_vol_score: 10.0
-version: 1.1.13
+version: 1.1.16

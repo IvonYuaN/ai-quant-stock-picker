@@ -3,7 +3,9 @@ from __future__ import annotations
 from datetime import date
 
 import pandas as pd
+import pytest
 
+from aqsp.core.errors import DataError
 from aqsp.data.pit_financial import (
     fetch_pit_financials,
     enrich_ohlcv_with_pit_financials,
@@ -80,6 +82,46 @@ def test_merge_pit_financials_when_disclosure_overrides_pubdate() -> None:
 
     assert pd.isna(merged["600519"]["roe"].iloc[0])
     assert merged["600519"]["roe"].iloc[1] == 0.2
+
+
+def test_merge_pit_financials_fails_when_pubdate_missing() -> None:
+    ohlcv = {
+        "600519": pd.DataFrame(
+            [
+                {
+                    "date": "2026-04-30",
+                    "symbol": "600519",
+                    "name": "贵州茅台",
+                    "open": 1.0,
+                    "high": 1.0,
+                    "low": 1.0,
+                    "close": 1.0,
+                    "volume": 1.0,
+                    "amount": 1.0,
+                    "suspended": False,
+                    "limit_up": 1.1,
+                    "limit_down": 0.9,
+                }
+            ]
+        )
+    }
+    financials = {
+        "600519": pd.DataFrame(
+            [
+                {
+                    "symbol": "600519",
+                    "statDate": "2026-03-31",
+                    "roeAvg": 0.2,
+                    "gpMargin": 0.3,
+                    "epsTTM": 10.0,
+                    "totalShare": 1000.0,
+                }
+            ]
+        )
+    }
+
+    with pytest.raises(DataError, match="缺少 point-in-time 时间列"):
+        merge_pit_financials(ohlcv, financials)
 
 
 def test_load_optional_disclosure_data_when_client_returns_rows() -> None:

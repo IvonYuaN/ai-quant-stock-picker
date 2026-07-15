@@ -1,6 +1,6 @@
 # 新手看板说明
 
-`src/aqsp/web/dashboard_beginner.py` 是面向新手的 Streamlit 看板。它不再使用示例账户或示例持仓，只读取现有 `DashboardDataProvider` 的真实落盘数据。
+`src/aqsp/web/dashboard_beginner.py` 现在只是兼容入口，不再渲染旧的新手看板。它会转到唯一的生产入口 `src/aqsp/web/dashboard.py`，避免接口或历史链接打开第二套旧系统。
 
 ## 数据来源
 
@@ -12,6 +12,8 @@
 看板没有接入券商账户，所以不会展示“真实总资产”“真实现金”“真实今日盈亏”。它只展示系统已经落盘并可审计的纸面状态。
 
 ## 顶部导航
+
+所有入口统一使用主 Dashboard 的左右两栏、日期切换和当前日决策卡片。旧模块中的数据辅助函数仍保留给历史调用和测试，但不会再作为独立页面渲染。
 
 顶部固定按一天的使用节奏展示：
 
@@ -29,8 +31,10 @@
 ## 运行
 
 ```bash
-python3 -m streamlit run src/aqsp/web/dashboard_beginner.py --server.address 127.0.0.1 --server.port 8502
+python3 scripts/open_dashboard.py
 ```
+
+如果历史脚本仍执行 `dashboard_beginner.py`，它也会进入同一个主 Dashboard，不需要再维护 `8502` 端口。
 
 服务器生产看板仍建议使用宝塔反向代理到 Streamlit 服务；调试时不要使用用户前台浏览器，优先使用 `scripts/headless_dashboard_check.py` 或 `curl`。
 

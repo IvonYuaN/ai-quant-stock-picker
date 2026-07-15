@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import json
 
-from aqsp.cli import _check_notification_gate, HELDOUT_TRAIN_CUTOFF
+from aqsp.cli import (
+    _check_notification_gate,
+    _notification_gate_actions,
+    HELDOUT_TRAIN_CUTOFF,
+)
 
 
 def _write_gate(tmp_path, **overrides):
@@ -84,6 +88,19 @@ def test_pbo_fail_blocks(tmp_path, monkeypatch):
     )
     assert ok is False
     assert any("PBO" in r for r in reasons)
+
+
+def test_gate_actions_clarify_ready_coldstart_when_quality_gate_blocks():
+    actions = _notification_gate_actions(
+        ["DSR 未过门: -1.27（需 >1.0）", "PBO 未过门: 100.0%（需 <50%）"],
+        cold_start_days=30,
+    )
+
+    assert (
+        "冷启动样本门已达标；当前不是冷启动卡住，是 walk-forward 双门质量门未过。"
+        in actions
+    )
+    assert any("保留观察模式" in action for action in actions)
 
 
 def test_small_symbol_smoke_gate_blocks_notification(tmp_path, monkeypatch):

@@ -151,7 +151,7 @@ bash /opt/aqsp/scripts/server_sync_and_run.sh
 | `AQSP-服务器监控` | 工作日每 `15` 分钟 | `/bin/bash /opt/aqsp/scripts/bt_task.sh monitor` | 检查数据、运行态、通知通道；默认只推关键异常 |
 | `AQSP-状态自检` | 不建议定时，手动点运行即可 | `/bin/bash /opt/aqsp/scripts/bt_task.sh status` | 临时查看 Git、产物、日志、运行态 |
 
-如果宝塔的“每 N 分钟”不能限制交易时段，也可以让 `intraday` 工作日每 10 分钟跑。`scripts/intraday_refresh.sh` 内部会判断交易时段，非交易时段只记“跳过”，不会污染结果。
+如果宝塔的“每 N 分钟”不能限制交易时段，也可以让 `intraday` 工作日每 10 分钟跑。宝塔外层不要再写第二套时间判断或无条件打印“Successful”；`bt_task.sh` 和 `scripts/intraday_refresh.sh` 会统一判断交易日/交易时段，并把真实失败码返回给调度器，非交易时段只记“跳过”，不会污染结果。
 
 `daily` 和 `coldstart` 会共用主锁。如果你在 `daily` 还没跑完时手动触发 `coldstart`，日志出现“正常跳过；这是互斥保护，不是失败”是预期行为。生产建议把 `coldstart` 放到 `19:40`，不要放在 `daily` 附近。
 
@@ -246,13 +246,14 @@ bash scripts/install_coldstart_cron.sh
 - `merge_server_ledgers.py`：把服务器本地 `data/ledger.jsonl` 合并进正式 `data/predictions.jsonl`，按 `(signal_date, symbol, thresholds_version, regime, intended_entry)` 去重，并自动补齐 `signal_day_group`。
 - `install_coldstart_cron.sh`：旧的独立冷启动安装器。当前生产推荐直接在宝塔里建 `AQSP-冷启动补样本`，时间放到 `19:40`，避免和 `daily` 互斥。
 
-`coldstart_daily.sh` 会按下面顺序寻找 `update_daily.py`：
+`coldstart_daily.sh` 会按下面顺序寻找历史库更新脚本：
 
 1. `AQSP_COLDSTART_UPDATE_SCRIPT`
-2. `AQSP_SQLITE_DB_PATH` 同目录下的 `update_daily.py`
-3. 仓库内 `A股量化分析数据/update_daily.py`
+2. 仓库内 `scripts/update_sqlite_daily.py`
+3. `AQSP_SQLITE_DB_PATH` 同目录下的 `update_daily.py`
+4. 仓库内 `A股量化分析数据/update_daily.py`
 
-所以像服务器这种 `AQSP_SQLITE_DB_PATH=/opt/market-data/astocks_raw.db` 场景，会自动尝试 `/opt/market-data/update_daily.py`。
+所以像服务器这种 `AQSP_SQLITE_DB_PATH=/opt/market-data/astocks_raw.db` 场景，会默认使用仓库内受测的 `scripts/update_sqlite_daily.py`；只有显式覆盖或仓库脚本不存在时，才会回退到 `/opt/market-data/update_daily.py`。
 
 如果服务器不是北京时间，可覆盖 cron 时间：
 

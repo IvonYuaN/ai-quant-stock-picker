@@ -7,9 +7,10 @@ import json
 import pandas as pd
 import pytest
 
-from aqsp.core.time import today_shanghai
 from aqsp.strategies.composite import CompositeStrategy
 from aqsp.strategies.thresholds import load_thresholds
+
+TEST_TRADE_DAY = date(2026, 6, 26)
 
 
 @pytest.fixture(autouse=True)
@@ -18,6 +19,11 @@ def _isolate_walkforward_gate(monkeypatch, tmp_path):
         "aqsp.cli.WALKFORWARD_GATE_PATH",
         str(tmp_path / "data" / "walkforward_gate.json"),
     )
+    monkeypatch.setenv(
+        "AQSP_RUNTIME_SYMBOL_CACHE", str(tmp_path / "missing-cache.json")
+    )
+    monkeypatch.setattr("aqsp.cli.today_shanghai", lambda: TEST_TRADE_DAY)
+    monkeypatch.setattr("aqsp.universe.runtime.today_shanghai", lambda: TEST_TRADE_DAY)
 
 
 def _make_sample_data(n_days: int = 200) -> pd.DataFrame:
@@ -357,6 +363,30 @@ class TestCLIMinScoreParam:
                 "walkforward",
                 "--engine",
                 "akquant",
+                "--symbols",
+                "600519",
+                "--start",
+                "2024-01-01",
+                "--end",
+                "2024-06-30",
+            ]
+        )
+        assert result == 0
+
+    def test_walkforward_parser_reads_benchmark_symbol(self, monkeypatch):
+        from aqsp.cli import main
+        import aqsp.cli as cli_mod
+
+        def mock_run_walkforward(args):
+            assert args.benchmark_symbol == "399001"
+            return 0
+
+        monkeypatch.setattr(cli_mod, "run_walkforward", mock_run_walkforward)
+        result = main(
+            [
+                "walkforward",
+                "--benchmark-symbol",
+                "399001",
                 "--symbols",
                 "600519",
                 "--start",
@@ -1110,7 +1140,12 @@ class TestCLIPoolSelection:
                 )
 
         def mock_fetch_frames(
-            source_name, symbols, benchmark_symbol=None, cache_path=None, days=0
+            source_name,
+            symbols,
+            benchmark_symbol=None,
+            cache_path=None,
+            days=0,
+            workload=None,
         ):
             seen["symbols"] = list(symbols)
             dates = pd.date_range(start="2024-01-01", periods=140, freq="B")
@@ -1576,10 +1611,15 @@ class TestCLIPoolSelection:
                 return ["000001", "600519"]
 
         def mock_fetch_frames(
-            source_name, symbols, benchmark_symbol=None, cache_path=None, days=0
+            source_name,
+            symbols,
+            benchmark_symbol=None,
+            cache_path=None,
+            days=0,
+            workload=None,
         ):
             seen["symbols"] = list(symbols)
-            latest = "2026-06-01"
+            latest = TEST_TRADE_DAY.isoformat()
             frame = pd.DataFrame(
                 [
                     {
@@ -1601,7 +1641,7 @@ class TestCLIPoolSelection:
             return {
                 "000001": frame.copy(),
                 "600519": frame.assign(symbol="600519", name="贵州茅台"),
-            }, "akshare"
+            }, "eastmoney"
 
         monkeypatch.setattr(
             "aqsp.universe.pool.UniversePool.from_default",
@@ -1612,11 +1652,15 @@ class TestCLIPoolSelection:
             mock_fetch_frames,
         )
         monkeypatch.setattr("aqsp.cli.screen_universe", lambda *_args, **_kwargs: [])
+        monkeypatch.setattr(
+            "aqsp.freshness.today_shanghai",
+            lambda: TEST_TRADE_DAY,
+        )
 
         result = main(["screen", "--pool", "zz500"])
 
         assert result == 0
-        assert seen["pool_as_of"] == today_shanghai().isoformat()
+        assert seen["pool_as_of"] == TEST_TRADE_DAY.isoformat()
         assert seen["symbols"] == ["000001", "600519"]
 
     def test_main_returns_config_error_when_pool_resolution_fails(self, monkeypatch):
@@ -1851,9 +1895,7 @@ def test_walkforward_sqlite_main_passes_cache_path_to_sqlite_source(
     assert seen == {"cache_path": str(cache_path)}
 
 
-def test_walkforward_defaults_to_recent_window_dates(
-    monkeypatch, tmp_path
-) -> None:
+def test_walkforward_defaults_to_recent_window_dates(monkeypatch, tmp_path) -> None:
     import aqsp.cli as cli_mod
 
     seen: dict[str, str] = {}
@@ -1889,6 +1931,7 @@ def test_walkforward_defaults_to_recent_window_dates(
         def run(self, strategy, filtered, start_date=None, end_date=None, config=None):
             seen["run_start"] = str(start_date)
             seen["run_end"] = str(end_date)
+            seen["benchmark_symbol"] = config.benchmark_symbol
             return SimpleNamespace(
                 overall=SimpleNamespace(
                     total_return=0.1,
@@ -1957,6 +2000,7 @@ def test_walkforward_defaults_to_recent_window_dates(
     assert seen["end"] == "2026-06-20"
     assert seen["run_start"] == "2023-06-21"
     assert seen["run_end"] == "2026-06-20"
+    assert seen["benchmark_symbol"] == "000300"
 
 
 def test_sqlite_fetch_daily_skips_duplicate_coverage_check_when_prefiltered(
@@ -1984,9 +2028,7 @@ def test_sqlite_fetch_daily_skips_duplicate_coverage_check_when_prefiltered(
             )
             """
         )
-        conn.execute(
-            "INSERT INTO stocks(ts_code, name) VALUES('600519.SH', 'demo')"
-        )
+        conn.execute("INSERT INTO stocks(ts_code, name) VALUES('600519.SH', 'demo')")
         for trade_date in ("20240102", "20240115", "20240131"):
             conn.execute(
                 """
@@ -2038,9 +2080,7 @@ def test_sqlite_fetch_daily_reuses_service_prefilter_snapshot_without_env(
             )
             """
         )
-        conn.execute(
-            "INSERT INTO stocks(ts_code, name) VALUES('600519.SH', 'demo')"
-        )
+        conn.execute("INSERT INTO stocks(ts_code, name) VALUES('600519.SH', 'demo')")
         for trade_date in ("20240102", "20240115", "20240131"):
             conn.execute(
                 """
@@ -2261,7 +2301,9 @@ def test_walkforward_grid_dsr_uses_period_level_observation_count(
 
     class DummyEngine:
         def run(self, strategy, data, *, start_date=None, end_date=None, config=None):
-            raise AssertionError("engine.run should be monkeypatched per variant result")
+            raise AssertionError(
+                "engine.run should be monkeypatched per variant result"
+            )
 
     variant_results = [
         SimpleNamespace(
@@ -2296,8 +2338,14 @@ def test_walkforward_grid_dsr_uses_period_level_observation_count(
         return variant_results[idx]
 
     monkeypatch.setattr(DummyEngine, "run", fake_engine_run)
-    monkeypatch.setattr(cli_mod, "_walkforward_grid_variants", lambda _profile: variants)
-    monkeypatch.setattr(cli_mod, "_apply_walkforward_grid_variant", lambda thresholds, variant: thresholds)
+    monkeypatch.setattr(
+        cli_mod, "_walkforward_grid_variants", lambda _profile: variants
+    )
+    monkeypatch.setattr(
+        cli_mod,
+        "_apply_walkforward_grid_variant",
+        lambda thresholds, variant: thresholds,
+    )
     monkeypatch.setattr(
         "aqsp.cli._execution_cost_bps_from_thresholds",
         lambda thresholds: (3.0, 20.0),
@@ -2306,12 +2354,21 @@ def test_walkforward_grid_dsr_uses_period_level_observation_count(
         "aqsp.backtest.walk_forward.WalkForwardTester.calculate_cscv_pbo",
         lambda returns_matrix, s=2: (
             0.25,
-            {"n_combos": 1, "n_lambda_le_0": 0, "lambda_median": 0.1, "lambda_mean": 0.1, "s": s, "block_size": 2},
+            {
+                "n_combos": 1,
+                "n_lambda_le_0": 0,
+                "lambda_median": 0.1,
+                "lambda_mean": 0.1,
+                "s": s,
+                "block_size": 2,
+            },
         ),
     )
     monkeypatch.setattr(
         "aqsp.backtest.walk_forward.WalkForwardTester._calculate_deflated_sharpe",
-        lambda sharpe, n_trials, n_obs, **_kwargs: captured.setdefault("n_obs", n_obs) or 1.23,
+        lambda sharpe, n_trials, n_obs, **_kwargs: (
+            captured.setdefault("n_obs", n_obs) or 1.23
+        ),
     )
 
     dsr, pbo, min_periods, _rows, _details = cli_mod._run_walkforward_grid_cscv(

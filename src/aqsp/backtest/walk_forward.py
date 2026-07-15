@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import bisect
+import inspect
 import os
 from dataclasses import dataclass
+from collections.abc import Callable, Mapping, Sequence
 from typing import Dict, List, Optional
 
 import numpy as np
@@ -16,7 +18,20 @@ except (
     _scipy_stats = None
 
 from aqsp.ledger.base import _check_executable as _ledger_check_executable
+from aqsp.backtest.audit import validate_backtest_frame
+from aqsp.regime.runtime import detect_runtime_regime_context
+from aqsp.regime.strategy_mixer import canonicalize_regime
 from aqsp.strategies.composite import CompositeStrategy
+from aqsp.strategies.thresholds import RiskThresholds
+
+
+DEFAULT_STREAM_BATCH_SIZE = 200
+MIN_STREAM_FRAME_ROWS = 100
+FrameBatchLoader = Callable[[list[str], str, str], Mapping[str, pd.DataFrame]]
+
+
+def _chunks(items: Sequence[str], size: int) -> list[list[str]]:
+    return [list(items[index : index + size]) for index in range(0, len(items), size)]
 
 
 def _norm_cdf(x: float) -> float:
@@ -157,10 +172,12 @@ class WalkForwardTester:
         fee_bps: float = 3.0,
         slippage_bps: float = 20.0,
         top_n: int = 10,
-        stop_loss_pct: float = 0.05,
-        take_profit_pct: float = 0.10,
+        stop_loss_pct: float | None = None,
+        take_profit_pct: float | None = None,
+        atr_stop_multiplier: float | None = None,
         use_tiered_stop: bool = False,
         n_variants: int = 1,
+        benchmark_symbol: str | None = None,
     ):
         self.strategy = strategy
         self.train_period_days = train_period_days
@@ -172,8 +189,10 @@ class WalkForwardTester:
         self.top_n = top_n
         self.stop_loss_pct = stop_loss_pct
         self.take_profit_pct = take_profit_pct
+        self.atr_stop_multiplier = atr_stop_multiplier
         self.use_tiered_stop = use_tiered_stop
         self.n_variants = n_variants
+        self.benchmark_symbol = benchmark_symbol
 
     def run(
         self,
@@ -272,6 +291,234 @@ class WalkForwardTester:
             diagnostics=self._build_diagnostics(all_trades),
         )
 
+    def run_streaming(
+        self,
+        symbols: Sequence[str],
+        load_batch: FrameBatchLoader,
+        all_dates: Sequence[str],
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        *,
+        fixed_frames: Mapping[str, pd.DataFrame] | None = None,
+        batch_size: int = DEFAULT_STREAM_BATCH_SIZE,
+        min_frame_rows: int = MIN_STREAM_FRAME_ROWS,
+    ) -> WalkForwardResult:
+        """Run walk-forward without retaining the full market in memory.
+
+        ``load_batch`` must return raw, point-in-time-safe frames for exactly the
+        requested symbols. Each batch is scored independently and only its local
+        top-N frames are retained; the final selection is then reranked across
+        that bounded candidate set. This is equivalent to a global top-N for
+        per-symbol scoring strategies while keeping the memory bound independent
+        of the market size.
+        """
+        if not symbols:
+            raise ValueError("No symbols available for streaming walk-forward")
+        if batch_size <= 0:
+            raise ValueError("batch_size must be positive")
+        if min_frame_rows <= 0:
+            raise ValueError("min_frame_rows must be positive")
+
+        normalized_dates = sorted({str(value)[:10] for value in all_dates if value})
+        if not normalized_dates:
+            raise ValueError("No dates available for streaming walk-forward")
+        start_idx = (
+            0
+            if start_date is None
+            else self._find_date_idx(normalized_dates, str(start_date)[:10])
+        )
+        end_idx = (
+            len(normalized_dates) - 1
+            if end_date is None
+            else self._find_date_idx(normalized_dates, str(end_date)[:10])
+        )
+        if end_idx <= start_idx:
+            raise ValueError("Streaming walk-forward date range is empty")
+
+        fixed_data = self._prepare_data_views(dict(fixed_frames or {}))
+        ordered_symbols = list(dict.fromkeys(str(symbol) for symbol in symbols))
+        if self.benchmark_symbol:
+            ordered_symbols = [
+                symbol
+                for symbol in ordered_symbols
+                if symbol != self.benchmark_symbol
+            ]
+        if not ordered_symbols:
+            raise ValueError("No non-benchmark symbols available for streaming run")
+
+        periods: list[BacktestResult] = []
+        all_trades: list[TradeResult] = []
+        step = self.test_period_days
+        cursor = start_idx + self.train_period_days + self.purge_days
+        total_periods = self._planned_period_count(start_idx, end_idx)
+        progress_enabled = str(
+            os.getenv("AQSP_WALKFORWARD_PROGRESS", "true")
+        ).strip().lower() in {"1", "true", "yes", "on"}
+        period_index = 0
+
+        while cursor + step <= end_idx:
+            train_end_idx = cursor - self.purge_days - 1
+            if train_end_idx < start_idx:
+                cursor += step
+                continue
+            period_index += 1
+            train_start = normalized_dates[start_idx]
+            train_end = normalized_dates[train_end_idx]
+            test_start = normalized_dates[cursor]
+            test_end = normalized_dates[min(cursor + step - 1, end_idx)]
+            if progress_enabled:
+                print(
+                    f"walkforward streaming period {period_index}/{total_periods}: "
+                    f"train={train_start}..{train_end} test={test_start}..{test_end}"
+                )
+
+            fixed_signal = self._slice_data(fixed_data, train_start, train_end)
+            if fixed_signal:
+                market_regime, regime_is_bear_filter = self._resolve_market_regime(
+                    fixed_signal,
+                    as_of=train_end,
+                )
+            else:
+                market_returns: list[float] = []
+                for chunk in _chunks(ordered_symbols, batch_size):
+                    batch = self._prepare_stream_batch(
+                        load_batch(chunk, train_start, test_end),
+                        min_frame_rows=min_frame_rows,
+                    )
+                    signal_batch = self._screening_data(
+                        self._slice_data(batch, train_start, train_end)
+                    )
+                    market_returns.extend(
+                        self._market_returns_from_frames(signal_batch)
+                    )
+                market_regime, regime_is_bear_filter = (
+                    self._fallback_market_regime_from_returns(market_returns)
+                )
+
+            candidate_train: dict[str, pd.DataFrame] = {}
+            candidate_test: dict[str, pd.DataFrame] = {}
+            candidate_signal: dict[str, pd.DataFrame] = {}
+            if not regime_is_bear_filter:
+                for chunk in _chunks(ordered_symbols, batch_size):
+                    batch = self._prepare_stream_batch(
+                        load_batch(chunk, train_start, test_end),
+                        min_frame_rows=min_frame_rows,
+                    )
+                    train_batch = self._slice_data(batch, train_start, train_end)
+                    test_batch = self._slice_data(batch, test_start, test_end)
+                    signal_batch = self._screening_data(train_batch)
+                    if not signal_batch:
+                        continue
+                    local_selected = self._select_stocks(
+                        signal_batch,
+                        regime=market_regime,
+                    )
+                    for symbol in local_selected:
+                        if symbol not in signal_batch or symbol not in test_batch:
+                            continue
+                        candidate_signal[symbol] = signal_batch[symbol]
+                        candidate_train[symbol] = train_batch[symbol]
+                        candidate_test[symbol] = test_batch[symbol]
+
+                selected = self._select_stocks(
+                    candidate_signal,
+                    regime=market_regime,
+                ) if candidate_signal else []
+                trades = self._run_selected_trades(
+                    candidate_train,
+                    candidate_test,
+                    signal_date=train_end,
+                    selected=selected,
+                    market_regime=market_regime,
+                )
+            else:
+                trades = []
+
+            all_trades.extend(trades)
+            executable = [trade for trade in trades if trade.executable]
+            periods.append(
+                _compute_backtest_metrics(
+                    [trade.return_pct for trade in executable],
+                    f"{test_start} to {test_end}",
+                    len(trades) - len(executable),
+                )
+            )
+            cursor += step
+
+        all_executable = [trade for trade in all_trades if trade.executable]
+        all_returns = [trade.return_pct for trade in all_executable]
+        overall = _compute_backtest_metrics(
+            all_returns,
+            "Overall",
+            sum(1 for trade in all_trades if not trade.executable),
+        )
+        regime_winrates: dict[str, list[float]] = {}
+        for trade in all_executable:
+            regime_winrates.setdefault(trade.market_regime, []).append(
+                1.0 if trade.return_pct > 0 else 0.0
+            )
+        return WalkForwardResult(
+            periods=periods,
+            overall=overall,
+            robustness_score=self._calculate_robustness(periods),
+            parameter_std=self._calculate_parameter_std(periods),
+            deflated_sharpe=self._calculate_deflated_sharpe(
+                overall.sharpe_ratio,
+                self.n_variants,
+                len(all_returns),
+            ),
+            pbo=self._calculate_pbo(periods),
+            regime_winrates={
+                regime: sum(values) / len(values)
+                for regime, values in sorted(regime_winrates.items())
+            },
+            diagnostics=self._build_diagnostics(all_trades),
+        )
+
+    def _prepare_stream_batch(
+        self,
+        data: Mapping[str, pd.DataFrame],
+        *,
+        min_frame_rows: int,
+    ) -> dict[str, pd.DataFrame]:
+        normalized = self._prepare_data_views(dict(data))
+        prepared: dict[str, pd.DataFrame] = {}
+        for symbol, frame in normalized.items():
+            if frame is None or frame.empty or len(frame) < min_frame_rows:
+                continue
+            prepared[str(symbol)] = frame
+        return prepared
+
+    @staticmethod
+    def _market_returns_from_frames(
+        data: Mapping[str, pd.DataFrame],
+    ) -> list[float]:
+        returns: list[float] = []
+        for frame in data.values():
+            if len(frame) < 20:
+                continue
+            recent = frame.tail(20)
+            first = float(recent.iloc[0]["close"])
+            last = float(recent.iloc[-1]["close"])
+            if first > 0:
+                returns.append((last - first) / first)
+        return returns
+
+    @staticmethod
+    def _fallback_market_regime_from_returns(
+        market_returns: Sequence[float],
+    ) -> tuple[str, bool]:
+        if not market_returns:
+            return "unknown", False
+        average = sum(market_returns) / len(market_returns)
+        if average < -0.02:
+            return "defensive_bear", True
+        if average < -0.005:
+            return "defensive_bear", False
+        if average < 0.005:
+            return "rotation_sideways", False
+        return "aggressive_bull", False
+
     def _planned_period_count(self, start_idx: int, end_idx: int) -> int:
         step = self.test_period_days
         cursor = start_idx + self.train_period_days + self.purge_days
@@ -289,6 +536,9 @@ class WalkForwardTester:
         for symbol, df in data.items():
             if df is None or df.empty:
                 continue
+            audit = validate_backtest_frame(df, symbol=str(symbol))
+            if not audit.ok:
+                raise ValueError("; ".join(audit.blockers))
             ordered = df.sort_values("date").reset_index(drop=True).copy()
             ordered.attrs["_aqsp_date_keys"] = ordered["date"].astype(str).tolist()
             prepared[symbol] = ordered
@@ -339,29 +589,37 @@ class WalkForwardTester:
         if not signal_data:
             return trades
 
-        # Regime filter: skip trading if market breadth is negative
-        market_returns = []
-        for symbol, df in signal_data.items():
-            if len(df) >= 20:
-                recent = df.tail(20)
-                prices = recent["close"].values
-                ret = (prices[-1] - prices[0]) / prices[0]
-                market_returns.append(ret)
-        market_regime = "unknown"
-        if market_returns:
-            avg_market_return = sum(market_returns) / len(market_returns)
-            if avg_market_return < -0.02:
-                market_regime = "bear_filter"
-                return trades
-            elif avg_market_return < -0.005:
-                market_regime = "mild_bear"
-            elif avg_market_return < 0.005:
-                market_regime = "sideways"
-            else:
-                market_regime = "bull_trend"
+        market_regime, regime_is_bear_filter = self._resolve_market_regime(
+            signal_data, as_of=signal_date
+        )
+        # Keep the historical safety filter, but label the trade with the same
+        # canonical regime used by the live runtime whenever a benchmark exists.
+        if regime_is_bear_filter:
+            return trades
 
-        selected = self.strategy.select_stocks(signal_data, n=self.top_n)
+        selected = self._select_stocks(
+            self._screening_data(signal_data),
+            regime=market_regime,
+        )
 
+        return self._run_selected_trades(
+            train_data,
+            test_data,
+            signal_date=signal_date,
+            selected=selected,
+            market_regime=market_regime,
+        )
+
+    def _run_selected_trades(
+        self,
+        train_data: Mapping[str, pd.DataFrame],
+        test_data: Mapping[str, pd.DataFrame],
+        *,
+        signal_date: str,
+        selected: Sequence[str],
+        market_regime: str,
+    ) -> list[TradeResult]:
+        trades: list[TradeResult] = []
         for symbol in selected:
             if symbol not in test_data:
                 continue
@@ -400,13 +658,16 @@ class WalkForwardTester:
 
             entry_price = float(entry_bar["open"]) * (1 + self.slippage_bps / 10000)
 
-            stop_loss = entry_price * (1 - self.stop_loss_pct)
-            take_profit = entry_price * (1 + self.take_profit_pct)
+            stop_pct, take_profit_pct = self._resolve_exit_parameters(
+                prev_rows, entry_price
+            )
+            stop_loss = entry_price * (1 - stop_pct)
+            take_profit = entry_price * (1 + take_profit_pct)
 
             horizon_df = test_df.iloc[: self.horizon_days]
             if self.use_tiered_stop:
                 exit_bar, exit_price, exit_reason = _resolve_exit_tiered(
-                    horizon_df, entry_price, self.stop_loss_pct, self.slippage_bps
+                    horizon_df, entry_price, stop_pct, self.slippage_bps
                 )
             else:
                 exit_bar, exit_price, exit_reason = _resolve_exit(
@@ -432,6 +693,107 @@ class WalkForwardTester:
             )
 
         return trades
+
+    def _resolve_market_regime(
+        self,
+        signal_data: Dict[str, pd.DataFrame],
+        *,
+        as_of: str | None = None,
+    ) -> tuple[str, bool]:
+        """Resolve regime from data available at the signal cutoff only."""
+        benchmark = self._benchmark_symbol_for(signal_data)
+        if benchmark:
+            try:
+                detect_kwargs = {
+                    "benchmark_symbol": benchmark,
+                    "thresholds": getattr(self.strategy, "thresholds", None),
+                }
+                if "as_of" in inspect.signature(
+                    detect_runtime_regime_context
+                ).parameters:
+                    detect_kwargs["as_of"] = as_of
+                context = detect_runtime_regime_context(signal_data, **detect_kwargs)
+                regime = canonicalize_regime(str(context.regime or "unknown"))
+                return regime, False
+            except Exception:
+                # A malformed historical benchmark falls back to breadth rather
+                # than silently using data outside the training cutoff.
+                pass
+        return self._fallback_market_regime(signal_data)
+
+    def _select_stocks(
+        self,
+        data: Dict[str, pd.DataFrame],
+        *,
+        regime: str,
+    ) -> list[str]:
+        """Pass the cutoff regime without breaking legacy strategy adapters."""
+        selector = self.strategy.select_stocks
+        try:
+            parameters = inspect.signature(selector).parameters
+        except (TypeError, ValueError):
+            parameters = {}
+        if "regime" in parameters:
+            return list(selector(data, n=self.top_n, regime=regime))
+        return list(selector(data, n=self.top_n))
+
+    def _risk_thresholds(self) -> RiskThresholds:
+        thresholds = getattr(self.strategy, "thresholds", None)
+        risk = getattr(thresholds, "risk", None)
+        return risk if isinstance(risk, RiskThresholds) else RiskThresholds()
+
+    def _resolve_exit_parameters(
+        self,
+        signal_frame: pd.DataFrame,
+        entry_price: float,
+    ) -> tuple[float, float]:
+        risk = self._risk_thresholds()
+        if self.stop_loss_pct is not None:
+            stop_pct = float(self.stop_loss_pct)
+        else:
+            atr = _compute_atr(signal_frame, period=risk.dynamic_stop_atr_period)
+            multiplier = (
+                float(self.atr_stop_multiplier)
+                if self.atr_stop_multiplier is not None
+                else float(risk.dynamic_stop_atr_multiplier)
+            )
+            atr_pct = atr * multiplier / entry_price if entry_price > 0 else 0.0
+            stop_pct = atr_pct if atr_pct > 0 else float(risk.dynamic_stop_fallback_pct)
+            stop_pct = min(stop_pct, float(risk.single_stock_stop_pct))
+        take_profit_pct = (
+            float(self.take_profit_pct)
+            if self.take_profit_pct is not None
+            else float(risk.profit_take_threshold_pct)
+        )
+        return max(0.0, stop_pct), max(0.0, take_profit_pct)
+
+    def _benchmark_symbol_for(
+        self, signal_data: Dict[str, pd.DataFrame]
+    ) -> str | None:
+        benchmark = self.benchmark_symbol
+        if benchmark is None and "000300" in signal_data:
+            benchmark = "000300"
+        return benchmark if benchmark and benchmark in signal_data else None
+
+    def _screening_data(
+        self, signal_data: Dict[str, pd.DataFrame]
+    ) -> Dict[str, pd.DataFrame]:
+        benchmark = self._benchmark_symbol_for(signal_data)
+        if benchmark is None:
+            return signal_data
+        return {
+            symbol: frame
+            for symbol, frame in signal_data.items()
+            if symbol != benchmark
+        }
+
+    @staticmethod
+    def _fallback_market_regime(
+        signal_data: Dict[str, pd.DataFrame],
+    ) -> tuple[str, bool]:
+        return WalkForwardTester._fallback_market_regime_from_returns(
+            WalkForwardTester._market_returns_from_frames(signal_data)
+        )
 
     @staticmethod
     def _date_keys(df: pd.DataFrame) -> list[str]:
@@ -705,6 +1067,26 @@ def _resolve_exit(
             return pd.Series(bar._asdict()), take_profit * (1 - slippage), "take_profit"
     last = window.iloc[-1]
     return last, float(last["close"]) * (1 - slippage), "hold_period_close"
+
+
+def _compute_atr(frame: pd.DataFrame, *, period: int) -> float:
+    """Compute ATR using only bars available at the signal cutoff."""
+    if frame.empty or not {"high", "low", "close"}.issubset(frame.columns):
+        return 0.0
+    ordered = frame.sort_values("date")
+    high = pd.to_numeric(ordered["high"], errors="coerce")
+    low = pd.to_numeric(ordered["low"], errors="coerce")
+    close = pd.to_numeric(ordered["close"], errors="coerce")
+    previous_close = close.shift(1)
+    true_range = pd.concat(
+        [high - low, (high - previous_close).abs(), (low - previous_close).abs()],
+        axis=1,
+    ).max(axis=1)
+    true_range = true_range.dropna()
+    if true_range.empty:
+        return 0.0
+    window = max(1, int(period))
+    return float(true_range.tail(window).mean())
 
 
 def _resolve_exit_tiered(

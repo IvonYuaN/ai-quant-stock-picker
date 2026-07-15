@@ -27,6 +27,9 @@ if __package__ in {None, ""}:
 
 from aqsp.core.time import get_previous_trading_day, is_trading_day, today_shanghai
 
+_QUERY_RETRY_LIMIT = 2
+_QUERY_RETRY_BASE_SLEEP_SECONDS = 0.2
+
 
 @dataclass(frozen=True)
 class UpdateSummary:
@@ -37,6 +40,8 @@ class UpdateSummary:
     price_mode: str
     target_day_symbol_count: int
     total_symbols: int
+    raw_max_trade_date: date | None = None
+    coverage_error: str | None = None
 
 
 def _parse_trade_date(raw: object) -> date | None:
@@ -98,6 +103,72 @@ def _load_baostock() -> Any:
     except ImportError as exc:  # pragma: no cover - depends on server env
         raise SystemExit("baostock is required for sqlite daily update") from exc
     return bs
+
+
+def _login_baostock_session(bs: Any) -> None:
+    login = bs.login()
+    if str(getattr(login, "error_code", "")) != "0":
+        raise SystemExit(f"Baostock login failed: {getattr(login, 'error_msg', '')}")
+
+
+def _logout_baostock_session(bs: Any) -> None:
+    try:
+        bs.logout()
+    except Exception:
+        return None
+    return None
+
+
+def _exception_supports_retry(exc: Exception) -> bool:
+    if isinstance(exc, (TimeoutError, BrokenPipeError, ConnectionError)):
+        return True
+    if not isinstance(exc, OSError):
+        return False
+    text = str(exc).lower()
+    return "broken pipe" in text or "connection reset" in text or "timed out" in text
+
+
+def _query_history_rows_with_retry(
+    *,
+    bs: Any,
+    ts_code: str,
+    fetch_start_day: date,
+    target_day: date,
+    price_mode: str,
+    timeout_seconds: float,
+    retry_limit: int = _QUERY_RETRY_LIMIT,
+    retry_sleep_seconds: float = _QUERY_RETRY_BASE_SLEEP_SECONDS,
+) -> tuple[str, list[list[str]]]:
+    attempts = max(1, retry_limit + 1)
+    for attempt in range(1, attempts + 1):
+        try:
+            error_code, rows = _query_history_rows(
+                bs=bs,
+                ts_code=ts_code,
+                fetch_start_day=fetch_start_day,
+                target_day=target_day,
+                price_mode=price_mode,
+                timeout_seconds=timeout_seconds,
+            )
+        except Exception as exc:
+            if not _exception_supports_retry(exc) or attempt >= attempts:
+                if _exception_supports_retry(exc):
+                    return "exception", []
+                raise
+            _logout_baostock_session(bs)
+            _login_baostock_session(bs)
+            if retry_sleep_seconds > 0:
+                time.sleep(retry_sleep_seconds * attempt)
+            continue
+        if error_code == "0":
+            return error_code, rows
+        if attempt >= attempts:
+            return error_code, rows
+        _logout_baostock_session(bs)
+        _login_baostock_session(bs)
+        if retry_sleep_seconds > 0:
+            time.sleep(retry_sleep_seconds * attempt)
+    return "exception", []
 
 
 def ensure_schema(conn: sqlite3.Connection) -> None:
@@ -321,6 +392,47 @@ def _count_target_day_symbols(conn: sqlite3.Connection, target_day: date) -> int
     return int(row[0] or 0) if row else 0
 
 
+def _raw_max_trade_date(conn: sqlite3.Connection) -> date | None:
+    row = conn.execute(
+        """
+        SELECT MAX(CAST(trade_date AS TEXT))
+        FROM daily_qfq
+        WHERE trade_date != 'SKIP'
+        """
+    ).fetchone()
+    return _parse_trade_date(row[0]) if row and row[0] else None
+
+
+def _target_coverage_error(
+    *,
+    target_day: date,
+    target_day_symbol_count: int,
+    total_symbols: int,
+    raw_max_trade_date: date | None,
+) -> str | None:
+    if total_symbols <= 0:
+        return None
+    if raw_max_trade_date is None:
+        return (
+            "raw sqlite has no valid trade_date after update; "
+            f"target={target_day.isoformat()} coverage=0/{total_symbols}"
+        )
+    if raw_max_trade_date < target_day:
+        return (
+            f"target={target_day.isoformat()} exceeds raw "
+            "MAX(trade_date)="
+            f"{raw_max_trade_date.isoformat()}; "
+            f"coverage={target_day_symbol_count}/{total_symbols}"
+        )
+    if target_day_symbol_count == 0:
+        return (
+            f"target={target_day.isoformat()} has no rows after update; "
+            f"raw MAX(trade_date)={raw_max_trade_date.isoformat()} "
+            f"coverage=0/{total_symbols}"
+        )
+    return None
+
+
 def update_sqlite_daily(
     db_path: Path,
     *,
@@ -335,9 +447,7 @@ def update_sqlite_daily(
     query_timeout_seconds: float = 15.0,
 ) -> UpdateSummary:
     bs = _load_baostock()
-    login = bs.login()
-    if login.error_code != "0":
-        raise SystemExit(f"Baostock login failed: {login.error_msg}")
+    _login_baostock_session(bs)
 
     updated_rows = 0
     skipped = 0
@@ -376,18 +486,14 @@ def update_sqlite_daily(
                 if fetch_start_day > target_day:
                     skipped += 1
                     continue
-                try:
-                    error_code, rows = _query_history_rows(
-                        bs=bs,
-                        ts_code=ts_code,
-                        fetch_start_day=fetch_start_day,
-                        target_day=target_day,
-                        price_mode=price_mode,
-                        timeout_seconds=query_timeout_seconds,
-                    )
-                except TimeoutError:
-                    failed += 1
-                    continue
+                error_code, rows = _query_history_rows_with_retry(
+                    bs=bs,
+                    ts_code=ts_code,
+                    fetch_start_day=fetch_start_day,
+                    target_day=target_day,
+                    price_mode=price_mode,
+                    timeout_seconds=query_timeout_seconds,
+                )
                 if error_code != "0":
                     failed += 1
                     continue
@@ -409,8 +515,17 @@ def update_sqlite_daily(
                     time.sleep(sleep_seconds)
             conn.commit()
             target_day_symbol_count = _count_target_day_symbols(conn, target_day)
+            raw_max_trade_date = _raw_max_trade_date(conn)
+            coverage_error = _target_coverage_error(
+                target_day=target_day,
+                target_day_symbol_count=target_day_symbol_count,
+                total_symbols=total_symbols,
+                raw_max_trade_date=raw_max_trade_date,
+            )
+            if coverage_error:
+                print(f"[ERROR] {coverage_error}", flush=True)
     finally:
-        bs.logout()
+        _logout_baostock_session(bs)
     return UpdateSummary(
         updated_rows=updated_rows,
         skipped_symbols=skipped,
@@ -419,6 +534,8 @@ def update_sqlite_daily(
         price_mode=price_mode,
         target_day_symbol_count=target_day_symbol_count,
         total_symbols=total_symbols,
+        raw_max_trade_date=raw_max_trade_date,
+        coverage_error=coverage_error,
     )
 
 
@@ -457,8 +574,8 @@ def main() -> int:
     parser.add_argument(
         "--price-mode",
         choices=("qfq", "raw"),
-        default="qfq",
-        help="baostock adjustment mode: qfq keeps legacy behavior; raw writes unadjusted prices",
+        default="raw",
+        help="baostock adjustment mode: raw is required for validation; qfq is legacy-only",
     )
     parser.add_argument(
         "--query-timeout-seconds",
@@ -503,9 +620,12 @@ def main() -> int:
         f"failed_symbols={summary.failed_symbols} "
         f"target={summary.target_day.isoformat()} "
         f"price_mode={summary.price_mode} "
-        f"target_day_symbols={summary.target_day_symbol_count}/{summary.total_symbols}"
+        f"target_day_symbols={summary.target_day_symbol_count}/{summary.total_symbols} "
+        f"raw_max={summary.raw_max_trade_date.isoformat() if summary.raw_max_trade_date else '-'}"
     )
-    return 1 if summary.failed_symbols else 0
+    if summary.coverage_error:
+        print(f"sqlite daily backfill blocked: {summary.coverage_error}")
+    return 1 if summary.failed_symbols or summary.coverage_error else 0
 
 
 if __name__ == "__main__":

@@ -9,6 +9,11 @@ from typing import Any
 import yaml
 
 from aqsp.data.registry import get_registry_entry
+from aqsp.research.repo_intake import (
+    build_repo_backlog,
+    load_repo_intake,
+    summarize_repo_intake,
+)
 
 
 @dataclass(frozen=True)
@@ -64,6 +69,22 @@ class ResearchPrereqItem:
 
 
 @dataclass(frozen=True)
+class ResearchRepoLaneSummary:
+    lane: str
+    count: int
+
+
+@dataclass(frozen=True)
+class ResearchRepoBacklogItem:
+    repo: str
+    lane: str
+    priority: str
+    landing: str
+    next_action: str
+    url: str
+
+
+@dataclass(frozen=True)
 class ResearchSummary:
     generated_at: str
     total_findings: int
@@ -75,12 +96,23 @@ class ResearchSummary:
     implemented_family_count: int
     report_only_family_count: int
     gated_family_count: int
+    repo_intake_total: int = 0
+    repo_substrate_candidate_count: int = 0
+    repo_reject_boundary_count: int = 0
+    repo_report_only_count: int = 0
+    repo_lane_summaries: tuple[ResearchRepoLaneSummary, ...] = ()
+    repo_backlog: tuple[ResearchRepoBacklogItem, ...] = ()
 
 
 def research_findings_display(summary: ResearchSummary) -> str:
     if summary.total_findings > 0:
         return f"{summary.total_findings} 条"
-    if summary.absorbed_families or summary.next_actions or summary.source_candidates:
+    if (
+        summary.absorbed_families
+        or summary.next_actions
+        or summary.source_candidates
+        or summary.repo_intake_total > 0
+    ):
         return "未落盘（按配置吸收队列展示）"
     return "暂无"
 
@@ -88,7 +120,12 @@ def research_findings_display(summary: ResearchSummary) -> str:
 def research_findings_metric(summary: ResearchSummary) -> str:
     if summary.total_findings > 0:
         return str(summary.total_findings)
-    if summary.absorbed_families or summary.next_actions or summary.source_candidates:
+    if (
+        summary.absorbed_families
+        or summary.next_actions
+        or summary.source_candidates
+        or summary.repo_intake_total > 0
+    ):
         return "配置队列"
     return "-"
 
@@ -96,7 +133,12 @@ def research_findings_metric(summary: ResearchSummary) -> str:
 def research_findings_badge(summary: ResearchSummary) -> str:
     if summary.total_findings > 0:
         return f"{summary.total_findings} findings"
-    if summary.absorbed_families or summary.next_actions or summary.source_candidates:
+    if (
+        summary.absorbed_families
+        or summary.next_actions
+        or summary.source_candidates
+        or summary.repo_intake_total > 0
+    ):
         return "config-backed"
     return "empty"
 
@@ -105,6 +147,10 @@ def load_research_summary(
     absorption_path: str | Path = "docs/research_absorption.json",
     strategy_sources_path: str | Path = "config/strategy_sources.yaml",
     data_sources_path: str | Path = "config/data_sources.yaml",
+    repo_intake_paths: tuple[str | Path, ...] = (
+        "docs/research/repo_radar_raw.json",
+        "_external/archive/repo-scout-2026-06-04/recent_repos_manifest_2026-06-04.json",
+    ),
 ) -> ResearchSummary | None:
     absorption_file = Path(absorption_path)
     strategy_sources_file = Path(strategy_sources_path)
@@ -195,6 +241,7 @@ def load_research_summary(
 
     next_actions = _build_next_actions(strategy_config, data_config)
     prereq_items = _build_prereq_items(next_actions)
+    repo_intake = _load_repo_intake_summary(repo_intake_paths)
 
     generated_at = ""
     if findings and isinstance(findings[0], dict):
@@ -211,7 +258,54 @@ def load_research_summary(
         implemented_family_count=implemented_family_count,
         report_only_family_count=report_only_family_count,
         gated_family_count=gated_family_count,
+        repo_intake_total=repo_intake["total"],
+        repo_substrate_candidate_count=repo_intake["substrate_candidate"],
+        repo_reject_boundary_count=repo_intake["reject_boundary"],
+        repo_report_only_count=repo_intake["report_only"],
+        repo_lane_summaries=repo_intake["lane_summaries"],
+        repo_backlog=repo_intake["backlog"],
     )
+
+
+def _load_repo_intake_summary(
+    repo_intake_paths: tuple[str | Path, ...],
+) -> dict[str, Any]:
+    existing_paths = tuple(
+        Path(path) for path in repo_intake_paths if Path(path).exists()
+    )
+    if not existing_paths:
+        return {
+            "total": 0,
+            "substrate_candidate": 0,
+            "reject_boundary": 0,
+            "report_only": 0,
+            "lane_summaries": (),
+            "backlog": (),
+        }
+    items = load_repo_intake(existing_paths)
+    summary = summarize_repo_intake(items)
+    backlog = build_repo_backlog(items, limit_per_lane=3)
+    return {
+        "total": summary.total,
+        "substrate_candidate": summary.stage_counts.get("substrate_candidate", 0),
+        "reject_boundary": summary.stage_counts.get("reject_boundary", 0),
+        "report_only": summary.stage_counts.get("report_only", 0),
+        "lane_summaries": tuple(
+            ResearchRepoLaneSummary(lane=lane, count=count)
+            for lane, count in summary.lane_counts.items()
+        ),
+        "backlog": tuple(
+            ResearchRepoBacklogItem(
+                repo=item.repo,
+                lane=item.lane,
+                priority=item.priority,
+                landing=item.landing,
+                next_action=item.next_action,
+                url=item.url,
+            )
+            for item in backlog
+        ),
+    }
 
 
 def _runtime_stage_for_family(family: dict[str, Any]) -> str:

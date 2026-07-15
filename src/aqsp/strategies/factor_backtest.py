@@ -5,6 +5,8 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
+from aqsp.research.factor_expression import FactorExpression, compile_factor_expression
+
 
 @dataclass(frozen=True)
 class FactorBacktestResult:
@@ -46,6 +48,30 @@ class FactorBacktester:
         raise ValueError(
             "factor backtest requires a (date, symbol) MultiIndex for point-in-time "
             "cross-sectional validation"
+        )
+
+    def backtest_expression(
+        self,
+        expression: str,
+        factor_frame: pd.DataFrame,
+        returns: pd.Series,
+        quantile: int = 5,
+        holding_days: int = 5,
+    ) -> FactorBacktestResult:
+        if not _is_date_symbol_multiindex(factor_frame.index) or not (
+            _is_date_symbol_multiindex(returns.index)
+        ):
+            raise ValueError(
+                "factor expression backtest requires (date, symbol) MultiIndex inputs"
+            )
+        compiled = compile_factor_expression(expression)
+        factor_values = _evaluate_expression_by_symbol(compiled, factor_frame)
+        return self._backtest_cross_sectional_factor(
+            factor_values,
+            returns,
+            quantile=quantile,
+            holding_days=holding_days,
+            factor_name=compiled.expression,
         )
 
     def backtest_factor_combination(
@@ -263,3 +289,23 @@ class FactorBacktester:
 
 def _is_date_symbol_multiindex(index: pd.Index) -> bool:
     return isinstance(index, pd.MultiIndex) and index.nlevels >= 2
+
+
+def _evaluate_expression_by_symbol(
+    compiled: FactorExpression,
+    frame: pd.DataFrame,
+) -> pd.Series:
+    symbol_level = (
+        frame.index.names.index("symbol") if "symbol" in frame.index.names else 1
+    )
+    parts: list[pd.Series] = []
+    for _symbol, group in frame.sort_index().groupby(
+        level=symbol_level,
+        sort=False,
+    ):
+        evaluated = compiled.evaluate(group)
+        evaluated.index = group.index
+        parts.append(evaluated)
+    if not parts:
+        return pd.Series(dtype=float, index=frame.index)
+    return pd.concat(parts).sort_index()

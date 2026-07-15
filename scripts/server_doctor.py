@@ -125,8 +125,29 @@ def _dashboard_ingress_checks() -> list[DoctorCheck]:
     except OSError as exc:
         return [DoctorCheck("ingress:nginx_site", "unknown", str(exc))]
 
-    active_text = site_text or bt_text
-    active_label = str(site_path if site_text else bt_vhost_path)
+    proxy_text = ""
+    if bt_text:
+        proxy_roots = (
+            Path("/www/server/panel/vhost/nginx/proxy"),
+            Path("/www/server/panel/vhost/proxy"),
+        )
+        proxy_dir = next(
+            (
+                root / bt_vhost_path.stem
+                for root in proxy_roots
+                if (root / bt_vhost_path.stem).is_dir()
+            ),
+            None,
+        )
+        if proxy_dir is not None:
+            proxy_text = "\n".join(
+                path.read_text(encoding="utf-8")
+                for path in sorted(proxy_dir.glob("*.conf"))
+            )
+    # Prefer the configured public BaoTa vhost when both a local-only helper
+    # site and the public vhost exist on the same server.
+    active_text = f"{bt_text}\n{proxy_text}" if bt_text else site_text
+    active_label = str(bt_vhost_path if bt_text else site_path)
 
     listens = [
         match.group(1).strip().rstrip(";")
@@ -202,7 +223,11 @@ def _dashboard_ingress_checks() -> list[DoctorCheck]:
         )
     if bt_text:
         try:
-            loaded = _run_subprocess(["nginx", "-T"], timeout=8).stdout
+            baota_nginx = Path("/www/server/nginx/sbin/nginx")
+            nginx_command = (
+                str(baota_nginx) if baota_nginx.exists() else "nginx"
+            )
+            loaded = _run_subprocess([nginx_command, "-T"], timeout=8).stdout
         except (OSError, subprocess.SubprocessError) as exc:
             checks.append(
                 DoctorCheck("ingress:bt_vhost_loaded", "unknown", str(exc))

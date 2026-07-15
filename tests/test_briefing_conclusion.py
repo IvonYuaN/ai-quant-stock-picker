@@ -7,6 +7,7 @@ from aqsp.briefing.conclusion import (
     debate_summary_segments,
 )
 from aqsp.briefing.debate import AgentOpinion, DebateResult, DebateRound
+from aqsp.briefing.schema import CommitteeConclusion
 
 
 def _real_rounds() -> list[DebateRound]:
@@ -107,10 +108,15 @@ def test_briefing_conclusion_view_builds_structured_lines_from_debate_result() -
         support_points=("量价共振且跨市主线仍在扩散",),
         opposition_points=("若高开过猛则追高回撤风险放大",),
         watch_items=("先确认开盘承接与量价延续",),
+        real_message_evidence=("海外物理AI主题公开披露",),
+        cross_market_evidence=("海外机器人订单公开披露",),
+        rule_transmission_evidence=("传导假设: 海外主题 -> A股机器人",),
+        pending_confirmations=("确认: A股板块同步放量",),
     )
 
     view = build_debate_conclusion_view(result)
     segments = debate_summary_segments(result)
+    projection = CommitteeConclusion.from_debate_result(result)
 
     assert view.headline == "倾向继续观察，等待开盘承接确认"
     assert view.active_roles_line == "讨论视角: 技术多头、风险控制、跨市传导"
@@ -130,6 +136,10 @@ def test_briefing_conclusion_view_builds_structured_lines_from_debate_result() -
     assert view.quality_audit is not None
     assert view.quality_audit.historical_evaluation_only
     assert view.reliability_line == "角色可信度: 技术多头: 近21天 7/10 (70%)"
+    assert projection.event_evidence == ("海外物理AI主题公开披露",)
+    assert projection.cross_market_evidence == ("海外机器人订单公开披露",)
+    assert projection.transmission_points == ("传导假设: 海外主题 -> A股机器人",)
+    assert projection.pending_confirmations == ("确认: A股板块同步放量",)
     assert segments == (
         "倾向继续观察，等待开盘承接确认",
         "视角: 技术多头、风险控制、跨市传导",
@@ -172,7 +182,7 @@ def test_debate_consensus_point_reuses_structured_lines_for_raise_result() -> No
     )
 
     assert debate_consensus_point(result) == (
-        "🤖 委员会结论: 宁德时代(300750) 倾向继续观察，等待开盘承接确认；"
+        "委员会结论: 宁德时代(300750) 倾向继续观察，等待开盘承接确认；"
         "附件参考分78.0，不改写系统评分｜"
         "支持 量价共振｜"
         "反对 高开过猛则回撤风险放大｜"
@@ -219,6 +229,32 @@ def test_briefing_conclusion_blocks_candidate_symbol_mismatch() -> None:
     assert "candidate_unmapped" in view.quality_audit.issues
 
 
+def test_briefing_conclusion_blocks_empty_data_even_for_legacy_payload() -> None:
+    result = DebateResult(
+        debate_id="empty-legacy",
+        symbol="300750",
+        name="宁德时代",
+        original_score=72.0,
+        adjusted_score=80.0,
+        rating="buy_candidate",
+        data_status="empty",
+        data_note="行情数据为空",
+        final_consensus="bullish",
+        final_vote={AgentRole.BULL: "bullish", AgentRole.RISK_CONTROL: "neutral"},
+        support_points=("量价共振",),
+        opposition_points=("高位波动",),
+        risk_warnings=["高位波动"],
+        next_trigger="确认开盘承接",
+    )
+
+    view = build_debate_conclusion_view(result)
+
+    assert view.quality_audit is not None
+    assert not view.quality_audit.passed
+    assert "empty_market_data" in view.quality_audit.issues
+    assert view.headline == "结论已阻断：行情数据为空"
+
+
 def test_briefing_conclusion_blocks_evidence_free_result_instead_of_rendering_consensus() -> (
     None
 ):
@@ -247,4 +283,27 @@ def test_briefing_conclusion_blocks_evidence_free_result_instead_of_rendering_co
     assert view.headline == "结论已阻断：缺少可核验证据"
     assert view.quality_audit is not None
     assert "no_substantive_evidence" in view.quality_audit.issues
-    assert debate_consensus_point(result).startswith("🤖 委员会阻塞:")
+    assert debate_consensus_point(result).startswith("委员会阻塞:")
+
+
+def test_briefing_conclusion_does_not_legacy_bypass_empty_market_data() -> None:
+    result = DebateResult(
+        debate_id="legacy-empty",
+        symbol="300750",
+        name="宁德时代",
+        original_score=72.0,
+        rating="watch",
+        data_status="empty",
+        final_consensus="bullish",
+        final_vote={AgentRole.BULL: "bullish", AgentRole.RISK_CONTROL: "neutral"},
+        support_points=("量价结构",),
+        opposition_points=("等待风险确认",),
+        risk_warnings=["行情数据为空"],
+        next_trigger="补齐行情后复核",
+    )
+
+    view = build_debate_conclusion_view(result)
+
+    assert view.headline == "结论已阻断：行情数据为空"
+    assert view.quality_audit is not None
+    assert "empty_market_data" in view.quality_audit.issues

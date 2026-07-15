@@ -44,7 +44,9 @@ def _frame(symbol: str, drift: float, volume_boost: float = 1.0) -> pd.DataFrame
                 "amount": close * volume * 100,
             }
         )
-    return pd.DataFrame(rows)
+    frame = pd.DataFrame(rows)
+    frame.attrs.update({"source_name": "synthetic", "workload": "walkforward"})
+    return frame
 
 
 def _n_rebound_frame() -> pd.DataFrame:
@@ -101,7 +103,7 @@ def _n_rebound_frame() -> pd.DataFrame:
         780_000,
     ]
     volumes = base_volumes + pattern_volumes
-    return pd.DataFrame(
+    frame = pd.DataFrame(
         {
             "date": dates,
             "symbol": "NREB",
@@ -114,6 +116,8 @@ def _n_rebound_frame() -> pd.DataFrame:
             "amount": [price * volume * 100 for price, volume in zip(closes, volumes)],
         }
     )
+    frame.attrs.update({"source_name": "synthetic", "workload": "walkforward"})
+    return frame
 
 
 def test_screen_prefers_strong_trend() -> None:
@@ -132,6 +136,34 @@ def test_low_liquidity_penalty() -> None:
     picks = screen_universe(frames, ScreeningConfig(min_avg_amount=10**12))
     assert picks[0].score < 55
     assert any("流动性" in risk for risk in picks[0].risks)
+
+
+def test_score_symbol_rejects_missing_source_provenance() -> None:
+    frame = _frame("UNVERIFIED", 0.004, 1.8)
+    frame.attrs.clear()
+
+    pick = score_symbol(
+        "UNVERIFIED",
+        frame,
+        ScreeningConfig(min_avg_amount=1),
+        ScoringThresholds(),
+    )
+
+    assert pick is None
+
+
+def test_score_symbol_rejects_stale_realtime_source() -> None:
+    frame = _frame("STALE", 0.004, 1.8)
+    frame.attrs.update({"source_name": "eastmoney", "workload": "live_short"})
+
+    pick = score_symbol(
+        "STALE",
+        frame,
+        ScreeningConfig(min_avg_amount=1),
+        ScoringThresholds(),
+    )
+
+    assert pick is None
 
 
 def test_liquidity_penalty_uses_scoring_threshold() -> None:

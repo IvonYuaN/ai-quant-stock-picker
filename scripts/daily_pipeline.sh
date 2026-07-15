@@ -143,7 +143,7 @@ set +e
     --project-root "${PROJECT_ROOT}" \
     --source "${AQSP_SOURCE:-auto}" \
     "${PIPELINE_ARGS[@]}" 2>&1 | tee -a "$RESULT_LOG"
-PIPELINE_EXIT_CODE=${PIPELINE_EXIT_CODE:-$?}
+PIPELINE_EXIT_CODE="${PIPESTATUS[0]}"
 set -e
 
 # 记录结束时间

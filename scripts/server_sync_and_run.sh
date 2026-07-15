@@ -24,6 +24,7 @@ RUNNER_TIMEOUT_SECONDS="${AQSP_RUNNER_TIMEOUT_SECONDS:-0}"
 RUN_RESULT_FILE="${AQSP_SYNC_RESULT_FILE:-}"
 STATE_DIR="${PROJECT_ROOT}/.state"
 DIRTY_STATE_FILE="${STATE_DIR}/server-sync-dirty.env"
+RUNTIME_OVERLAY_MANIFEST="${AQSP_RUNTIME_OVERLAY_MANIFEST:-${STATE_DIR}/runtime-sync-overlay.json}"
 
 log() {
     mkdir -p "$LOG_DIR"
@@ -31,9 +32,17 @@ log() {
 }
 
 write_result() {
+    local status="$1"
+    local exit_code="${2:-}"
     if [ -n "$RUN_RESULT_FILE" ]; then
         mkdir -p "$(dirname "$RUN_RESULT_FILE")"
-        printf 'status=%s\nrunner=%s\n' "$1" "$RUNNER_SCRIPT" > "$RUN_RESULT_FILE"
+        {
+            printf 'status=%s\n' "$status"
+            printf 'runner=%s\n' "$RUNNER_SCRIPT"
+            if [ -n "$exit_code" ]; then
+                printf 'exit_code=%s\n' "$exit_code"
+            fi
+        } >"$RUN_RESULT_FILE"
     fi
 }
 
@@ -67,6 +76,85 @@ write_dirty_state() {
         printf 'PREV_DIRTY_COUNT=%q\n' "$2"
         printf 'PREV_DIRTY_UPDATED_AT=%q\n' "$(date '+%Y-%m-%d %H:%M:%S')"
     } >"$DIRTY_STATE_FILE"
+}
+
+managed_overlay_allows_dirty_state() {
+    local dirty_tracked="$1"
+    DIRTY_TRACKED_TEXT="$dirty_tracked" \
+    RUNTIME_OVERLAY_MANIFEST_PATH="$RUNTIME_OVERLAY_MANIFEST" \
+    python3 - <<'PY'
+from __future__ import annotations
+
+import json
+import os
+import hashlib
+from pathlib import Path
+
+project_root = Path.cwd().resolve()
+manifest_path = Path(os.environ["RUNTIME_OVERLAY_MANIFEST_PATH"]).resolve()
+if not manifest_path.exists():
+    raise SystemExit(1)
+
+try:
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+except Exception:
+    raise SystemExit(1)
+
+managed_raw = manifest.get("managed_files")
+expected_hashes = manifest.get("file_hashes")
+if not isinstance(managed_raw, list) or not managed_raw:
+    raise SystemExit(1)
+if not isinstance(expected_hashes, dict):
+    raise SystemExit(1)
+
+managed = set()
+for raw_path in managed_raw:
+    if not isinstance(raw_path, str) or not raw_path.strip():
+        raise SystemExit(1)
+    relative = Path(raw_path)
+    if relative.is_absolute() or ".." in relative.parts:
+        raise SystemExit(1)
+    if relative.as_posix() != raw_path:
+        raise SystemExit(1)
+    managed.add(raw_path)
+
+dirty_lines = [
+    line.rstrip("\n")
+    for line in os.environ.get("DIRTY_TRACKED_TEXT", "").splitlines()
+    if line.strip()
+]
+if not dirty_lines:
+    raise SystemExit(1)
+
+for line in dirty_lines:
+    if len(line) < 4:
+        raise SystemExit(1)
+    status = line[:2]
+    path = line[3:].strip()
+    if path not in managed:
+        raise SystemExit(1)
+    if not any(ch == "M" for ch in status) or any(
+        ch not in {" ", "M"} for ch in status
+    ):
+        raise SystemExit(1)
+    expected_hash = str(expected_hashes.get(path) or "").strip()
+    if len(expected_hash) != 64 or any(
+        ch not in "0123456789abcdefABCDEF" for ch in expected_hash
+    ):
+        raise SystemExit(1)
+    file_path = (project_root / path).resolve()
+    try:
+        file_path.relative_to(project_root)
+    except ValueError:
+        raise SystemExit(1)
+    if not file_path.is_file():
+        raise SystemExit(1)
+    actual_hash = hashlib.sha256(file_path.read_bytes()).hexdigest()
+    if actual_hash != expected_hash:
+        raise SystemExit(1)
+
+print(len(dirty_lines))
+PY
 }
 
 release_git_sync_lock() {
@@ -206,37 +294,68 @@ trap 'rm -f "$LOCK_INFO_FILE"; rmdir "$LOCK_FILE"' EXIT
 
 log "开始同步代码: ${REMOTE}/${BRANCH}"
 
-acquire_git_sync_lock || exit 1
+if ! acquire_git_sync_lock; then
+    log "无法取得 Git 同步锁，本次任务阻断"
+    write_result "sync_lock_failed" 1
+    exit 1
+fi
 trap 'release_git_sync_lock; rm -f "$LOCK_INFO_FILE"; rmdir "$LOCK_FILE"' EXIT
 
 git update-index --refresh >/dev/null 2>&1 || true
 
 DIRTY_TRACKED="$(git status --porcelain --untracked-files=no)"
+SKIP_GIT_SYNC="false"
 if [ -n "$DIRTY_TRACKED" ]; then
     DIRTY_HASH="$(dirty_state_hash "$DIRTY_TRACKED")"
     DIRTY_COUNT_NOW="$(dirty_state_count "$DIRTY_TRACKED")"
     load_dirty_state
-    if [ "${DIRTY_HASH:-}" = "${PREV_DIRTY_HASH:-}" ]; then
+    if OVERLAY_MATCH_COUNT="$(managed_overlay_allows_dirty_state "$DIRTY_TRACKED" 2>/dev/null)"; then
+        log "检测到受控 runtime overlay，跳过 Git 同步后继续运行 count=${OVERLAY_MATCH_COUNT} manifest=${RUNTIME_OVERLAY_MANIFEST}"
+        write_dirty_state "$DIRTY_HASH" "$DIRTY_COUNT_NOW"
+        SKIP_GIT_SYNC="true"
+    elif [ "${DIRTY_HASH:-}" = "${PREV_DIRTY_HASH:-}" ]; then
         log "检测到受 Git 管理的本地修改，仍未清理；明细未变化 count=${DIRTY_COUNT_NOW} hash=${DIRTY_HASH}"
+        write_result "blocked_dirty" 1
+        exit 1
     else
         log "检测到受 Git 管理的本地修改，拒绝自动覆盖："
         printf '%s\n' "$DIRTY_TRACKED" | tee -a "$RUN_LOG"
         write_dirty_state "$DIRTY_HASH" "$DIRTY_COUNT_NOW"
+        write_result "blocked_dirty" 1
+        exit 1
     fi
-    write_result "blocked_dirty"
-    exit 1
 fi
-rm -f "$DIRTY_STATE_FILE"
-
-git fetch "$REMOTE" "$BRANCH" 2>&1 | tee -a "$RUN_LOG"
-LOCAL_HEAD="$(git rev-parse HEAD)"
-REMOTE_HEAD="$(git rev-parse "${REMOTE}/${BRANCH}")"
-
-if [ "$LOCAL_HEAD" != "$REMOTE_HEAD" ]; then
-    log "发现新提交，执行快进更新"
-    git pull --ff-only "$REMOTE" "$BRANCH" 2>&1 | tee -a "$RUN_LOG"
+if [ "${SKIP_GIT_SYNC}" = "true" ]; then
+    log "本次跳过 Git fetch/pull；等待仓库回归 clean 后再恢复自动同步"
 else
-    log "代码已是最新，无需更新"
+    rm -f "$DIRTY_STATE_FILE"
+
+    set +e
+    git fetch "$REMOTE" "$BRANCH" 2>&1 | tee -a "$RUN_LOG"
+    GIT_FETCH_EXIT_CODE=${PIPESTATUS[0]}
+    set -e
+    if [ "$GIT_FETCH_EXIT_CODE" -ne 0 ]; then
+        log "Git fetch 失败，退出码: ${GIT_FETCH_EXIT_CODE}"
+        write_result "sync_failed" "$GIT_FETCH_EXIT_CODE"
+        exit "$GIT_FETCH_EXIT_CODE"
+    fi
+    LOCAL_HEAD="$(git rev-parse HEAD)"
+    REMOTE_HEAD="$(git rev-parse "${REMOTE}/${BRANCH}")"
+
+    if [ "$LOCAL_HEAD" != "$REMOTE_HEAD" ]; then
+        log "发现新提交，执行快进更新"
+        set +e
+        git pull --ff-only "$REMOTE" "$BRANCH" 2>&1 | tee -a "$RUN_LOG"
+        GIT_PULL_EXIT_CODE=${PIPESTATUS[0]}
+        set -e
+        if [ "$GIT_PULL_EXIT_CODE" -ne 0 ]; then
+            log "Git pull 失败，退出码: ${GIT_PULL_EXIT_CODE}"
+            write_result "sync_failed" "$GIT_PULL_EXIT_CODE"
+            exit "$GIT_PULL_EXIT_CODE"
+        fi
+    else
+        log "代码已是最新，无需更新"
+    fi
 fi
 
 release_git_sync_lock
@@ -251,26 +370,32 @@ fi
 log "开始运行任务: ${RUNNER_PATH}"
 if [ "${RUNNER_TIMEOUT_SECONDS}" -gt 0 ] && command -v timeout >/dev/null 2>&1; then
     log "启用主链路超时保护: ${RUNNER_TIMEOUT_SECONDS}s"
+    set +e
     timeout --foreground "${RUNNER_TIMEOUT_SECONDS}" bash "${RUNNER_PATH}" 2>&1 | tee -a "$RUN_LOG"
     RUNNER_EXIT_CODE=${PIPESTATUS[0]}
+    set -e
 elif [ "${RUNNER_TIMEOUT_SECONDS}" -gt 0 ]; then
     log "系统缺少 timeout 命令，跳过主链路超时保护"
+    set +e
     bash "${RUNNER_PATH}" 2>&1 | tee -a "$RUN_LOG"
     RUNNER_EXIT_CODE=${PIPESTATUS[0]}
+    set -e
 else
+    set +e
     bash "${RUNNER_PATH}" 2>&1 | tee -a "$RUN_LOG"
     RUNNER_EXIT_CODE=${PIPESTATUS[0]}
+    set -e
 fi
 
 if [ "${RUNNER_EXIT_CODE}" -eq 124 ]; then
     log "主链路执行超时，被保护性终止: ${RUNNER_TIMEOUT_SECONDS}s"
-    write_result "timeout"
+    write_result "timeout" "$RUNNER_EXIT_CODE"
     exit "${RUNNER_EXIT_CODE}"
 fi
 if [ "${RUNNER_EXIT_CODE}" -ne 0 ]; then
     log "主链路执行失败，退出码: ${RUNNER_EXIT_CODE}"
-    write_result "failed"
+    write_result "failed" "$RUNNER_EXIT_CODE"
     exit "${RUNNER_EXIT_CODE}"
 fi
 log "同步与跑批完成"
-write_result "completed"
+write_result "completed" 0

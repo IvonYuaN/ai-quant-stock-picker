@@ -1,19 +1,43 @@
 from __future__ import annotations
 
+from datetime import date, datetime, timedelta
+import json
+from pathlib import Path
 import time
 from types import SimpleNamespace
 
 import pandas as pd
 import pytest
+import requests
 
+import aqsp.data.news_source as news_source
 from aqsp.core.errors import DataError
-from aqsp.data.news_source import AkshareNewsSource
+from aqsp.core.time import now_shanghai, today_shanghai
+from aqsp.data.news_source import (
+    AkshareNewsSource,
+    NewsSource,
+    NewsSourceHealth,
+    RssFeedConfig,
+    RssNewsSource,
+    build_default_news_source,
+    build_rss_news_source_from_config,
+    rss_news_runtime_summary,
+)
 from aqsp.news.catalysts import (
+    CatalystReport,
     NewsCatalystConfig,
+    _classify_title,
     build_catalyst_report,
     format_catalyst_notification,
     _akshare_global_news,
+    load_catalyst_report_artifact,
+    serialize_catalyst_report,
 )
+from aqsp.market_context import build_market_context_artifact
+
+
+_RECENT_NEWS_TIME = (now_shanghai() - timedelta(minutes=10)).strftime("%Y-%m-%d %H:%M")
+_RECENT_NEWS_DATE = today_shanghai().isoformat()
 
 
 def test_news_catalyst_report_prioritizes_verified_price_hike_events() -> None:
@@ -23,13 +47,13 @@ def test_news_catalyst_report_prioritizes_verified_price_hike_events() -> None:
                 {
                     "新闻标题": "MLCC 行业报价上调，龙头排产紧张",
                     "文章来源": "证券报",
-                    "发布时间": "2026-06-11 08:30",
+                    "发布时间": _RECENT_NEWS_TIME,
                     "新闻链接": "https://example.com/a",
                 },
                 {
                     "新闻标题": "网传 MLCC 涨价，尚未获得公司确认",
                     "文章来源": "自媒体",
-                    "发布时间": "2026-06-11 08:40",
+                    "发布时间": _RECENT_NEWS_TIME,
                 },
             ]
         )
@@ -40,12 +64,12 @@ def test_news_catalyst_report_prioritizes_verified_price_hike_events() -> None:
                 {
                     "标题": "MLCC 行业报价上调，龙头排产紧张",
                     "来源": "财联社",
-                    "时间": "2026-06-11 08:32",
+                    "时间": _RECENT_NEWS_TIME,
                 },
                 {
                     "标题": "某公司被立案调查",
                     "来源": "公告",
-                    "时间": "2026-06-11 09:00",
+                    "时间": _RECENT_NEWS_TIME,
                 },
             ]
         )
@@ -62,12 +86,14 @@ def test_news_catalyst_report_prioritizes_verified_price_hike_events() -> None:
     assert report.events[0].category == "涨价/供需催化"
     assert report.events[0].source_count == 2
     assert report.events[0].verification == "多源交叉"
+    assert report.events[0].source_quality_label == "多源/权威媒体"
+    assert report.events[0].source_quality_score >= 3
     assert report.events[0].confidence >= 0.6
     assert any(event.impact == "negative" for event in report.events)
 
     markdown = format_catalyst_notification(report)
     assert "来源: 证券报、财联社" in markdown
-    assert "时间: 2026-06-11 08:30" in markdown
+    assert f"时间: {_RECENT_NEWS_TIME}" in markdown
     assert "原文: https://example.com/a" in markdown
     assert "不要做:" not in markdown
     assert "怎么验证:" not in markdown
@@ -116,7 +142,7 @@ def test_news_catalyst_filters_undated_event_by_default() -> None:
                 {
                     "标题": "MLCC 行业报价上调，龙头排产紧张",
                     "来源": "证券报",
-                    "时间": "2026-06-11 08:30",
+                    "时间": _RECENT_NEWS_TIME,
                 },
             ]
         ),
@@ -128,7 +154,9 @@ def test_news_catalyst_filters_undated_event_by_default() -> None:
     assert any("已过滤 1 条无日期消息" in warning for warning in report.warnings)
 
 
-def test_news_catalyst_prefers_dated_recent_event_over_undated_event_when_enabled() -> None:
+def test_news_catalyst_prefers_dated_recent_event_over_undated_event_when_enabled() -> (
+    None
+):
     report = build_catalyst_report(
         fetch_global_news=lambda _limit: pd.DataFrame(
             [
@@ -136,7 +164,7 @@ def test_news_catalyst_prefers_dated_recent_event_over_undated_event_when_enable
                 {
                     "标题": "MLCC 行业报价上调，龙头排产紧张",
                     "来源": "证券报",
-                    "时间": "2026-06-11 08:30",
+                    "时间": _RECENT_NEWS_TIME,
                 },
             ]
         ),
@@ -154,8 +182,16 @@ def test_news_catalyst_filters_stale_history_news() -> None:
     report = build_catalyst_report(
         fetch_global_news=lambda _limit: pd.DataFrame(
             [
-                {"标题": "政策支持半导体材料国产替代", "来源": "新华社", "时间": "2016-06-10 08:00"},
-                {"标题": "MLCC 行业报价上调，龙头排产紧张", "来源": "证券报", "时间": "2026-06-11 08:30"},
+                {
+                    "标题": "政策支持半导体材料国产替代",
+                    "来源": "新华社",
+                    "时间": "2016-06-10 08:00",
+                },
+                {
+                    "标题": "MLCC 行业报价上调，龙头排产紧张",
+                    "来源": "证券报",
+                    "时间": _RECENT_NEWS_TIME,
+                },
             ]
         ),
     )
@@ -166,7 +202,166 @@ def test_news_catalyst_filters_stale_history_news() -> None:
     assert any("已过滤 1 条过期消息" in warning for warning in report.warnings)
 
 
-def test_news_catalyst_filters_stale_history_news_when_only_title_contains_date() -> None:
+def test_news_catalyst_max_age_zero_keeps_only_today_news() -> None:
+    today = today_shanghai()
+    report = build_catalyst_report(
+        fetch_global_news=lambda _limit: pd.DataFrame(
+            [
+                {
+                    "标题": "今日政策支持半导体材料国产替代",
+                    "来源": "新华社",
+                    "时间": today.isoformat(),
+                },
+                {
+                    "标题": "昨日政策支持半导体材料国产替代",
+                    "来源": "新华社",
+                    "时间": (today - timedelta(days=1)).isoformat(),
+                },
+                {
+                    "标题": "未来政策支持半导体材料国产替代",
+                    "来源": "新华社",
+                    "时间": (today + timedelta(days=1)).isoformat(),
+                },
+            ]
+        ),
+        config=NewsCatalystConfig(max_news_age_days=0),
+    )
+
+    assert tuple(event.title for event in report.events) == (
+        "今日政策支持半导体材料国产替代",
+    )
+    assert report.stale_news_count == 2
+
+
+def test_news_catalyst_rejects_same_day_future_timestamp_with_auditable_status(
+    monkeypatch,
+) -> None:
+    observed_at = datetime.fromisoformat("2026-07-14T10:00:00+08:00")
+    monkeypatch.setattr("aqsp.news.catalysts.today_shanghai", lambda: date(2026, 7, 14))
+    monkeypatch.setattr("aqsp.news.catalysts.now_shanghai", lambda: observed_at)
+
+    report = build_catalyst_report(
+        fetch_global_news=lambda _limit: pd.DataFrame(
+            [
+                {
+                    "标题": "未来政策支持半导体材料国产替代",
+                    "来源": "新华社",
+                    "时间": "2026-07-14 10:05:00+08:00",
+                }
+            ]
+        )
+    )
+
+    assert report.events == ()
+    assert report.future_news_count == 1
+    assert report.news_status == "stale_only"
+    assert any("未来时间戳消息" in warning for warning in report.warnings)
+
+
+def test_news_catalyst_treats_utc_news_as_shanghai_calendar_day(monkeypatch) -> None:
+    fixed_day = date(2026, 7, 13)
+    monkeypatch.setattr("aqsp.news.catalysts.today_shanghai", lambda: fixed_day)
+    monkeypatch.setattr(
+        "aqsp.news.catalysts.now_shanghai",
+        lambda: datetime.fromisoformat("2026-07-13T10:00:00+08:00"),
+    )
+
+    report = build_catalyst_report(
+        fetch_global_news=lambda _limit: pd.DataFrame(
+            [
+                {
+                    "标题": "隔夜政策支持半导体材料国产替代",
+                    "来源": "新华社",
+                    "时间": "2026-07-12T16:30:00Z",
+                }
+            ]
+        ),
+        config=NewsCatalystConfig(max_news_age_days=0),
+    )
+
+    assert report.events
+    assert report.stale_news_count == 0
+
+
+def test_news_catalyst_does_not_cache_empty_result(
+    tmp_path,
+) -> None:
+    calls = {"count": 0}
+    config = NewsCatalystConfig(
+        cache_path=str(tmp_path / "catalyst_cache.json"),
+        cache_ttl_seconds=120.0,
+    )
+
+    def fetch_global_news(_limit: int) -> pd.DataFrame:
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return pd.DataFrame()
+        return pd.DataFrame(
+            [
+                {
+                    "标题": "今日政策支持半导体材料国产替代",
+                    "来源": "新华社",
+                    "时间": _RECENT_NEWS_TIME,
+                }
+            ]
+        )
+
+    empty = build_catalyst_report(fetch_global_news=fetch_global_news, config=config)
+    current = build_catalyst_report(fetch_global_news=fetch_global_news, config=config)
+
+    assert empty.source_status == "empty"
+    assert current.events
+    assert calls["count"] == 2
+
+
+def test_news_catalyst_does_not_promote_same_source_duplicates_to_multi_source() -> (
+    None
+):
+    report = build_catalyst_report(
+        fetch_global_news=lambda _limit: pd.DataFrame(
+            [
+                {
+                    "标题": "机器人订单需求放量",
+                    "来源": "新华社",
+                    "时间": _RECENT_NEWS_TIME,
+                },
+                {
+                    "标题": "机器人订单需求放量",
+                    "来源": "新华社",
+                    "时间": _RECENT_NEWS_TIME,
+                },
+            ]
+        ),
+        config=NewsCatalystConfig(min_confidence=0.3),
+    )
+
+    assert report.events
+    assert report.events[0].source_count == 1
+    assert report.events[0].verification == "媒体来源"
+
+
+def test_news_catalyst_infers_international_quality_from_known_url() -> None:
+    report = build_catalyst_report(
+        fetch_global_news=lambda _limit: pd.DataFrame(
+            [
+                {
+                    "标题": "美联储政策支持流动性改善",
+                    "链接": "https://www.federalreserve.gov/newsevents/pressreleases.htm",
+                    "时间": _RECENT_NEWS_TIME,
+                }
+            ]
+        )
+    )
+
+    assert report.events
+    assert report.events[0].source == "Federal Reserve"
+    assert report.events[0].source_region == "international"
+    assert report.events[0].source_quality_score == 4
+
+
+def test_news_catalyst_filters_stale_history_news_when_only_title_contains_date() -> (
+    None
+):
     report = build_catalyst_report(
         fetch_global_news=lambda _limit: pd.DataFrame(
             [
@@ -176,7 +371,7 @@ def test_news_catalyst_filters_stale_history_news_when_only_title_contains_date(
                     "时间": "",
                 },
                 {
-                    "标题": "2026-06-11 MLCC 行业报价上调，龙头排产紧张",
+                    "标题": f"{_RECENT_NEWS_DATE} MLCC 行业报价上调，龙头排产紧张",
                     "来源": "证券报",
                     "时间": "",
                 },
@@ -185,7 +380,7 @@ def test_news_catalyst_filters_stale_history_news_when_only_title_contains_date(
     )
 
     titles = tuple(event.title for event in report.events)
-    assert "2026-06-11 MLCC 行业报价上调，龙头排产紧张" in titles
+    assert f"{_RECENT_NEWS_DATE} MLCC 行业报价上调，龙头排产紧张" in titles
     assert "2016-06-10 政策支持半导体材料国产替代" not in titles
     assert any("已过滤 1 条过期消息" in warning for warning in report.warnings)
 
@@ -204,7 +399,7 @@ def test_news_catalyst_filters_stale_history_news_when_only_url_contains_date() 
                     "标题": "MLCC 行业报价上调，龙头排产紧张",
                     "来源": "证券报",
                     "时间": "",
-                    "链接": "https://example.com/20260611/b.html",
+                    "链接": f"https://example.com/{_RECENT_NEWS_DATE.replace('-', '')}/b.html",
                 },
             ]
         ),
@@ -297,10 +492,10 @@ def test_news_catalyst_report_surfaces_source_warnings() -> None:
 
     report = build_catalyst_report(fetch_global_news=lambda _limit: df)
 
-    assert report.source_status == "failed"
+    assert report.source_status == "timeout"
     assert report.warnings == ("全市场快讯: source timeout",)
     markdown = format_catalyst_notification(report)
-    assert "无有效结论：消息源失败" in markdown
+    assert "无有效结论：消息源超时" in markdown
 
 
 def test_news_catalyst_report_fails_when_all_attempted_sources_warn_empty() -> None:
@@ -315,7 +510,7 @@ def test_news_catalyst_report_fails_when_all_attempted_sources_warn_empty() -> N
         fetch_global_news=lambda _limit: global_df,
     )
 
-    assert report.source_status == "failed"
+    assert report.source_status == "timeout"
     assert report.events == ()
     assert report.warnings == (
         "300001 个股新闻: symbol timeout",
@@ -330,7 +525,7 @@ def test_news_catalyst_report_fails_when_all_attempted_sources_are_empty() -> No
         fetch_global_news=lambda _limit: pd.DataFrame(),
     )
 
-    assert report.source_status == "failed"
+    assert report.source_status == "empty"
     assert report.events == ()
 
 
@@ -339,7 +534,7 @@ def test_news_catalyst_report_fails_when_fetcher_returns_none() -> None:
         fetch_global_news=lambda _limit: None,  # type: ignore[return-value]
     )
 
-    assert report.source_status == "failed"
+    assert report.source_status == "empty"
     assert report.events == ()
 
 
@@ -427,6 +622,29 @@ def test_news_catalyst_merges_same_company_event_across_sources() -> None:
     assert "来源: 同花顺、富途" in markdown
 
 
+def test_news_catalyst_merges_english_cross_source_duplicates() -> None:
+    report = build_catalyst_report(
+        fetch_global_news=lambda _limit: pd.DataFrame(
+            [
+                {
+                    "标题": "NVIDIA announces Physical AI robotics platform",
+                    "来源": "NVIDIA",
+                    "时间": "2026-07-13 09:30:00+08:00",
+                },
+                {
+                    "标题": "NVIDIA announces Physical AI robotics platform",
+                    "来源": "Reuters",
+                    "时间": "2026-07-13 09:31:00+08:00",
+                },
+            ]
+        )
+    )
+
+    assert len(report.events) == 1
+    assert report.events[0].source_count == 2
+    assert report.events[0].source == "NVIDIA、Reuters"
+
+
 def test_news_catalyst_downgrades_unverified_source_tips() -> None:
     report = build_catalyst_report(
         fetch_global_news=lambda _limit: pd.DataFrame(
@@ -439,7 +657,7 @@ def test_news_catalyst_downgrades_unverified_source_tips() -> None:
         ),
     )
 
-    assert report.source_status == "partial"
+    assert report.source_status == "ok"
     assert not report.events
     assert any("已过滤 1 条无日期消息" in warning for warning in report.warnings)
 
@@ -450,8 +668,8 @@ def test_news_catalyst_infers_source_from_known_url() -> None:
             [
                 {
                     "标题": "中国西电：中标国家电网特高压项目，金额18.99亿元",
-                    "链接": "https://news.10jqka.com.cn/20260612/c677419676.shtml",
-                    "时间": "2026-06-12 15:33:16",
+                    "链接": f"https://news.10jqka.com.cn/{_RECENT_NEWS_DATE.replace('-', '')}/c677419676.shtml",
+                    "时间": f"{_RECENT_NEWS_TIME}:16",
                 }
             ]
         ),
@@ -461,6 +679,7 @@ def test_news_catalyst_infers_source_from_known_url() -> None:
     assert report.events[0].source == "同花顺"
     assert report.events[0].name == "中国西电"
     assert report.events[0].verification == "媒体来源"
+    assert report.events[0].source_quality_label == "主流媒体"
     assert report.events[0].confidence >= 0.5
     markdown = format_catalyst_notification(report)
     assert "中国西电 交易催化明确，短线偏强。" in markdown
@@ -487,6 +706,34 @@ def test_news_catalyst_does_not_treat_wire_prefix_as_target_name() -> None:
     markdown = format_catalyst_notification(report)
     assert "据伊朗迈赫尔通讯社**" not in markdown
     assert "来源: 富途" in markdown
+
+
+def test_news_catalyst_prioritizes_higher_quality_source_when_weight_and_time_match() -> (
+    None
+):
+    report = build_catalyst_report(
+        fetch_global_news=lambda _limit: pd.DataFrame(
+            [
+                {
+                    "标题": "机器人订单需求放量",
+                    "来源": "自媒体",
+                    "时间": "2026-07-03 09:30",
+                },
+                {
+                    "标题": "机器人订单需求放量",
+                    "来源": "新华社",
+                    "时间": "2026-07-03 09:30",
+                },
+            ]
+        ),
+        config=NewsCatalystConfig(allow_undated_news=True, min_confidence=0.3),
+    )
+
+    assert report.events
+    assert report.events[0].source == "自媒体、新华社"
+    assert report.events[0].verification == "多源交叉"
+    assert report.events[0].source_quality_label == "多源/权威媒体"
+    assert report.events[0].source_quality_score >= 3
 
 
 def test_news_catalyst_filters_non_actionable_discipline_news() -> None:
@@ -521,9 +768,184 @@ def test_news_catalyst_report_degrades_when_source_times_out() -> None:
         config=NewsCatalystConfig(source_timeout_seconds=0.01),
     )
 
-    assert report.source_status == "failed"
+    assert report.source_status == "timeout"
     assert not report.events
     assert "超过 0.0s 未返回" in report.warnings[0]
+
+
+def test_news_catalyst_report_uses_fresh_cache_before_refetch(
+    tmp_path,
+) -> None:
+    calls = {"count": 0}
+
+    def global_news(_limit: int) -> pd.DataFrame:
+        calls["count"] += 1
+        return pd.DataFrame(
+            [
+                {
+                    "标题": "MLCC 行业报价上调",
+                    "来源": "证券报",
+                    "时间": "2026-07-03 09:30",
+                }
+            ]
+        )
+
+    config = NewsCatalystConfig(
+        cache_path=str(tmp_path / "catalyst_cache.json"),
+        cache_ttl_seconds=120.0,
+    )
+
+    first = build_catalyst_report(fetch_global_news=global_news, config=config)
+    second = build_catalyst_report(
+        fetch_global_news=lambda _limit: (_ for _ in ()).throw(
+            AssertionError("fresh cache should skip refetch")
+        ),
+        config=config,
+    )
+
+    assert calls["count"] == 1
+    assert first.events == second.events
+    assert second.source_status == "ok"
+
+
+def test_news_catalyst_report_falls_back_to_stale_cache_when_fetch_fails(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    cache_path = tmp_path / "catalyst_cache.json"
+    config = NewsCatalystConfig(
+        cache_path=str(cache_path),
+        cache_ttl_seconds=30.0,
+        allow_stale_cache_on_failure=True,
+    )
+
+    monkeypatch.setattr(
+        "aqsp.news.catalysts.now_shanghai",
+        lambda: datetime.fromisoformat("2026-07-03T10:00:00+08:00"),
+    )
+    cached = build_catalyst_report(
+        fetch_global_news=lambda _limit: pd.DataFrame(
+            [
+                {
+                    "标题": "MLCC 行业报价上调",
+                    "来源": "证券报",
+                    "时间": "2026-07-03 09:30",
+                }
+            ]
+        ),
+        config=config,
+    )
+
+    monkeypatch.setattr(
+        "aqsp.news.catalysts.now_shanghai",
+        lambda: datetime.fromisoformat("2026-07-03T10:05:00+08:00"),
+    )
+    fallback = build_catalyst_report(
+        fetch_global_news=lambda _limit: (_ for _ in ()).throw(
+            DataError("source down")
+        ),
+        config=config,
+    )
+
+    assert cached.events == fallback.events
+    assert fallback.source_status == "partial"
+    assert fallback.generated_at == "2026-07-03T10:05:00+08:00"
+    assert any("消息缓存回退" in warning for warning in fallback.warnings)
+    assert any("source down" in warning for warning in fallback.warnings)
+
+
+def test_news_catalyst_report_rejects_too_old_stale_cache_when_fetch_fails(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    cache_path = tmp_path / "catalyst_cache.json"
+    config = NewsCatalystConfig(
+        cache_path=str(cache_path),
+        cache_ttl_seconds=30.0,
+        allow_stale_cache_on_failure=True,
+        max_stale_cache_age_seconds=30 * 60,
+    )
+
+    monkeypatch.setattr(
+        "aqsp.news.catalysts.now_shanghai",
+        lambda: datetime.fromisoformat("2026-07-03T10:00:00+08:00"),
+    )
+    cached = build_catalyst_report(
+        fetch_global_news=lambda _limit: pd.DataFrame(
+            [
+                {
+                    "标题": "MLCC 行业报价上调",
+                    "来源": "证券报",
+                    "时间": "2026-07-03 09:30",
+                }
+            ]
+        ),
+        config=config,
+    )
+
+    monkeypatch.setattr(
+        "aqsp.news.catalysts.now_shanghai",
+        lambda: datetime.fromisoformat("2026-07-03T12:00:00+08:00"),
+    )
+    rejected = build_catalyst_report(
+        fetch_global_news=lambda _limit: (_ for _ in ()).throw(
+            DataError("source down")
+        ),
+        config=config,
+    )
+
+    assert cached.events
+    assert rejected.events == ()
+    assert rejected.source_status == "failed"
+    assert any("消息缓存过期" in warning for warning in rejected.warnings)
+
+
+def test_news_catalyst_report_rejects_cross_day_stale_cache_when_fetch_fails(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    cache_path = tmp_path / "catalyst_cache.json"
+    config = NewsCatalystConfig(
+        cache_path=str(cache_path),
+        cache_ttl_seconds=30.0,
+        allow_stale_cache_on_failure=True,
+        max_stale_cache_age_seconds=30 * 60,
+    )
+
+    monkeypatch.setattr("aqsp.news.catalysts.today_shanghai", lambda: date(2026, 7, 13))
+    monkeypatch.setattr(
+        "aqsp.news.catalysts.now_shanghai",
+        lambda: datetime.fromisoformat("2026-07-13T23:55:00+08:00"),
+    )
+    cached = build_catalyst_report(
+        fetch_global_news=lambda _limit: pd.DataFrame(
+            [
+                {
+                    "标题": "MLCC 行业报价上调",
+                    "来源": "证券报",
+                    "时间": "2026-07-13 23:40",
+                }
+            ]
+        ),
+        config=config,
+    )
+
+    monkeypatch.setattr("aqsp.news.catalysts.today_shanghai", lambda: date(2026, 7, 14))
+    monkeypatch.setattr(
+        "aqsp.news.catalysts.now_shanghai",
+        lambda: datetime.fromisoformat("2026-07-14T00:05:00+08:00"),
+    )
+    rejected = build_catalyst_report(
+        fetch_global_news=lambda _limit: (_ for _ in ()).throw(
+            DataError("source down")
+        ),
+        config=config,
+    )
+
+    assert cached.events
+    assert rejected.events == ()
+    assert rejected.source_status == "failed"
+    assert any("跨自然日缓存" in warning for warning in rejected.warnings)
 
 
 def test_news_catalyst_llm_review_is_bounded(monkeypatch) -> None:
@@ -562,6 +984,11 @@ def test_news_catalyst_llm_review_is_bounded(monkeypatch) -> None:
 
     assert len(calls) == 1
     assert all("模型复核" not in event.verification for event in report.events)
+    reviewed = next(event for event in report.events if event.llm_review)
+    assert reviewed.title == "某公司被立案调查"
+    assert reviewed.confidence == pytest.approx(0.66)
+    assert reviewed.category == "监管/合规风险"
+    assert reviewed.weight == 5
     markdown = format_catalyst_notification(report)
     assert "模型复核" not in markdown
     assert "降级判断" not in markdown
@@ -657,6 +1084,52 @@ def test_akshare_news_source_surfaces_partial_fetch_warnings() -> None:
     assert "stock_info_global_em: empty" in frames[0].attrs["aqsp_warnings"]
 
 
+def test_akshare_symbol_news_bypasses_broken_jsonp_and_passes_security(
+    monkeypatch,
+) -> None:
+    calls: list[object] = []
+
+    class Response:
+        text = (
+            'aqsp_callback({"result":{"cmsArticleWebOld":[{"title":"'
+            '商业航天订单落地","content":"","date":"2026-07-14 09:10:00",'
+            '"mediaName":"东财","code":"A202607140001"}]}});'
+        )
+
+        def raise_for_status(self) -> None:
+            return None
+
+    def get(*_args: object, **_kwargs: object) -> Response:
+        return Response()
+
+    monkeypatch.setattr(news_source.requests, "get", get)
+
+    def broken_stock_news_em(**_kwargs: object) -> pd.DataFrame:
+        raise RuntimeError("Invalid regular expression: invalid escape sequence: \\u")
+
+    def notice(*, security: str) -> pd.DataFrame:
+        calls.append(security)
+        return pd.DataFrame()
+
+    source = AkshareNewsSource.__new__(AkshareNewsSource)
+    source._ak = SimpleNamespace(
+        stock_news_em=broken_stock_news_em,
+        stock_individual_notice_report=notice,
+        stock_research_report_em=lambda **_kwargs: pd.DataFrame(),
+    )
+
+    frames = source.fetch_symbol_news("002084")
+
+    assert calls == ["002084"]
+    assert len(frames) == 1
+    assert frames[0].iloc[0]["新闻标题"] == "商业航天订单落地"
+    assert frames[0].attrs["aqsp_fetched_at"]
+    health = {item.name: item for item in source.last_health}
+    assert health["stock_news_em"].status == "ok"
+    assert health["stock_news_em"].fetched_at
+    assert health["stock_individual_notice_report"].status == "empty"
+
+
 def test_akshare_global_news_preserves_adapter_warnings(monkeypatch) -> None:
     frame = pd.DataFrame([{"标题": "政策支持半导体材料国产替代", "来源": "新华社"}])
     frame.attrs["aqsp_warnings"] = ("stock_info_global_em: empty",)
@@ -669,3 +1142,580 @@ def test_akshare_global_news_preserves_adapter_warnings(monkeypatch) -> None:
     df = _akshare_global_news(limit=3)
 
     assert df.attrs["aqsp_warnings"] == ("stock_info_global_em: empty",)
+
+
+def test_rss_news_source_parses_feed_items(monkeypatch) -> None:
+    class Response:
+        content = """<?xml version="1.0" encoding="utf-8"?>
+        <rss><channel>
+          <item>
+            <title>300750 宁德时代中标储能大单</title>
+            <link>https://example.com/catl</link>
+            <pubDate>Tue, 07 Jul 2026 01:30:00 GMT</pubDate>
+          </item>
+        </channel></rss>""".encode()
+
+        def raise_for_status(self) -> None:
+            return None
+
+    monkeypatch.setattr(
+        "aqsp.data.news_source.requests.get",
+        lambda *_args, **_kwargs: Response(),
+    )
+
+    source = RssNewsSource(
+        (
+            RssFeedConfig(
+                name="RSSHub-财经",
+                url="https://rsshub.example.com/finance",
+                category="stock",
+                symbols=("300750",),
+            ),
+        )
+    )
+
+    frames = source.fetch_global_news()
+    assert len(frames) == 1
+    assert frames[0].iloc[0]["标题"] == "300750 宁德时代中标储能大单"
+    assert frames[0].iloc[0]["来源"] == "RSSHub-财经"
+    assert frames[0].iloc[0]["source_group"] == "rss"
+    assert frames[0].iloc[0]["title"] == frames[0].iloc[0]["标题"]
+    assert frames[0].iloc[0]["source"] == frames[0].iloc[0]["来源"]
+    assert frames[0].iloc[0]["published_at"] == frames[0].iloc[0]["时间"]
+    assert frames[0].iloc[0]["url"] == "https://example.com/catl"
+
+    symbol_frames = source.fetch_symbol_news("300750")
+    assert len(symbol_frames) == 1
+    assert "宁德时代中标储能大单" in symbol_frames[0].iloc[0]["标题"]
+
+
+def test_rss_symbol_news_ignores_feed_level_symbol_metadata(monkeypatch) -> None:
+    class Response:
+        content = """<?xml version="1.0" encoding="utf-8"?>
+        <rss><channel>
+          <item>
+            <title>宏观流动性观察</title>
+            <link>https://example.com/macro</link>
+            <description>没有个股代码</description>
+            <pubDate>Tue, 07 Jul 2026 01:30:00 GMT</pubDate>
+          </item>
+        </channel></rss>""".encode()
+
+        def raise_for_status(self) -> None:
+            return None
+
+    monkeypatch.setattr(
+        "aqsp.data.news_source.requests.get",
+        lambda *_args, **_kwargs: Response(),
+    )
+    source = RssNewsSource(
+        (
+            RssFeedConfig(
+                name="RSS-宏观",
+                url="https://rsshub.example.com/macro",
+                symbols=("300750",),
+            ),
+        )
+    )
+
+    assert source.fetch_symbol_news("300750") == []
+
+
+def test_rss_news_source_filters_items_by_keywords(monkeypatch) -> None:
+    class Response:
+        content = """<?xml version="1.0" encoding="utf-8"?>
+        <rss><channel>
+          <item>
+            <title>Celebrity lifestyle newsletter</title>
+            <link>https://example.com/lifestyle</link>
+            <description>no market signal</description>
+            <pubDate>Tue, 07 Jul 2026 01:20:00 GMT</pubDate>
+          </item>
+          <item>
+            <title>Early Career Faculty (ECF) 2025 Awards</title>
+            <link>https://www.nasa.gov/news-release/early-career-faculty-awards/</link>
+            <description>Faculty recognition and education awards</description>
+            <pubDate>Tue, 07 Jul 2026 01:25:00 GMT</pubDate>
+          </item>
+          <item>
+            <title>Nasdaq futures rally as AI stocks rebound</title>
+            <link>https://example.com/markets</link>
+            <description>risk-on tone returns before the open</description>
+            <pubDate>Tue, 07 Jul 2026 01:30:00 GMT</pubDate>
+          </item>
+        </channel></rss>""".encode()
+
+        def raise_for_status(self) -> None:
+            return None
+
+    monkeypatch.setattr(
+        "aqsp.data.news_source.requests.get",
+        lambda *_args, **_kwargs: Response(),
+    )
+
+    source = RssNewsSource(
+        (
+            RssFeedConfig(
+                name="MarketWatch-RealTimeHeadlines",
+                url="https://feeds.content.dowjones.io/public/rss/mw_realtimeheadlines",
+                category="global_risk_appetite",
+                keywords=("Nasdaq", "risk-on", "AI stocks"),
+            ),
+        )
+    )
+
+    frames = source.fetch_global_news()
+
+    assert len(frames) == 1
+    assert list(frames[0]["标题"]) == ["Nasdaq futures rally as AI stocks rebound"]
+    assert frames[0].iloc[0]["keyword_matched"] == "Nasdaq,risk-on,AI stocks"
+
+
+def test_rss_news_source_loads_from_yaml_config(tmp_path) -> None:
+    config_path = tmp_path / "news_sources.yaml"
+    config_path.write_text(
+        """
+rss:
+  enabled: true
+  timeout_seconds: 2
+  feeds:
+    - name: 财经雷达
+      url: https://rsshub.example.com/cls
+      category: macro
+      enabled: true
+      keywords: [政策, 订单]
+""",
+        encoding="utf-8",
+    )
+
+    source = build_rss_news_source_from_config(str(config_path))
+
+    assert source is not None
+    assert source.name == "rss_news"
+
+
+def test_build_default_news_source_returns_rss_when_akshare_is_not_installed(
+    monkeypatch,
+) -> None:
+    rss_source = RssNewsSource(
+        (RssFeedConfig(name="财经雷达", url="https://example.com/rss"),)
+    )
+
+    def missing_akshare() -> NewsSource:
+        raise news_source._AkshareOptionalDependencyError("akshare not installed")
+
+    monkeypatch.setattr(news_source, "AkshareNewsSource", missing_akshare)
+    monkeypatch.setattr(
+        news_source,
+        "build_rss_news_source_from_config",
+        lambda: rss_source,
+    )
+
+    source = build_default_news_source()
+
+    assert source is rss_source
+
+
+def test_build_default_news_source_propagates_unexpected_akshare_error(
+    monkeypatch,
+) -> None:
+    def broken_akshare() -> NewsSource:
+        raise RuntimeError("akshare initialization failed")
+
+    monkeypatch.setattr(news_source, "AkshareNewsSource", broken_akshare)
+    monkeypatch.setattr(
+        news_source,
+        "build_rss_news_source_from_config",
+        lambda: RssNewsSource(
+            (RssFeedConfig(name="财经雷达", url="https://example.com/rss"),)
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="akshare initialization failed"):
+        build_default_news_source()
+
+
+def test_build_catalyst_report_uses_rss_when_akshare_is_not_installed(
+    monkeypatch,
+) -> None:
+    class Response:
+        content = """<?xml version="1.0" encoding="utf-8"?>
+        <rss><channel><item>
+          <title>NVIDIA announces Physical AI robotics platform</title>
+          <link>https://example.com/physical-ai</link>
+          <pubDate>Sat, 11 Jul 2026 01:30:00 GMT</pubDate>
+        </item></channel></rss>""".encode()
+
+        def raise_for_status(self) -> None:
+            return None
+
+    def missing_akshare() -> NewsSource:
+        raise news_source._AkshareOptionalDependencyError("akshare not installed")
+
+    rss_source = RssNewsSource(
+        (
+            RssFeedConfig(
+                name="英伟达-NVIDIADeveloper",
+                url="https://example.com/rss",
+                keywords=("NVIDIA", "Physical AI", "robotics"),
+            ),
+        )
+    )
+    monkeypatch.setattr(news_source, "AkshareNewsSource", missing_akshare)
+    monkeypatch.setattr(
+        news_source,
+        "build_rss_news_source_from_config",
+        lambda: rss_source,
+    )
+    monkeypatch.setattr(
+        "aqsp.data.news_source.requests.get",
+        lambda *_args, **_kwargs: Response(),
+    )
+    monkeypatch.setattr("aqsp.news.catalysts._AKSHARE_NEWS", None)
+    monkeypatch.setattr(
+        "aqsp.news.catalysts.now_shanghai",
+        lambda: datetime.fromisoformat("2026-07-11T10:00:00+08:00"),
+    )
+
+    report = build_catalyst_report(
+        config=NewsCatalystConfig(allow_undated_news=False),
+    )
+
+    assert report.source_status != "failed"
+    assert any("Physical AI" in event.title for event in report.events)
+
+
+def test_build_default_news_source_raises_data_error_when_no_source_is_available(
+    monkeypatch,
+) -> None:
+    def missing_akshare() -> NewsSource:
+        raise news_source._AkshareOptionalDependencyError("akshare not installed")
+
+    monkeypatch.setattr(news_source, "AkshareNewsSource", missing_akshare)
+    monkeypatch.setattr(
+        news_source,
+        "build_rss_news_source_from_config",
+        lambda: None,
+    )
+
+    with pytest.raises(DataError, match="未配置可用新闻源"):
+        build_default_news_source()
+
+
+def test_default_news_source_config_enables_official_rss_feeds() -> None:
+    source = build_rss_news_source_from_config("config/news_sources.yaml")
+
+    assert source is not None
+    feeds = tuple(source._feeds)
+    feed_names = {feed.name for feed in feeds}
+    assert {
+        "美联储-FederalReserve",
+        "美国SEC-PressReleases",
+        "欧洲央行-ECB",
+        "英伟达-NVIDIADeveloper",
+        "NASA-NewsReleases",
+        "MarketWatch-RealTimeHeadlines",
+        "MarketWatch-MarketPulse",
+    }.issubset(feed_names)
+    assert all(feed.url.startswith("https://") for feed in feeds)
+    assert all("rsshub.example.com" not in feed.url for feed in feeds)
+    assert source._max_concurrency == 4
+    assert Path("config/news_sources.yaml").exists()
+
+
+def test_default_news_source_config_covers_core_cross_market_triggers() -> None:
+    source = build_rss_news_source_from_config("config/news_sources.yaml")
+
+    assert source is not None
+    keyword_blob_by_feed = {
+        feed.name: " ".join(feed.keywords).casefold() for feed in source._feeds
+    }
+    all_keywords = " ".join(keyword_blob_by_feed.values())
+    assert "physical ai" in all_keywords
+    assert "spacex" in all_keywords
+    assert "nasdaq" in all_keywords
+    assert "risk-on" in all_keywords
+    assert "gold" in all_keywords
+    assert "oil" in all_keywords
+    assert "crude" in all_keywords
+    assert "war" in all_keywords
+    assert "军工" in all_keywords
+
+
+def test_rss_news_runtime_summary_reports_core_trigger_coverage() -> None:
+    summary = rss_news_runtime_summary("config/news_sources.yaml")
+
+    assert summary.enabled is True
+    assert summary.feed_count >= 7
+    assert summary.keyword_gated_feeds == summary.feed_count
+    assert summary.all_core_triggers_covered is True
+    assert summary.covered_triggers == (
+        "commercial_space",
+        "physical_ai",
+        "us_risk_on",
+        "geopolitics",
+        "oil_price_shock",
+    )
+    assert summary.missing_triggers == ()
+
+
+def test_rss_cross_market_events_reach_catalyst_and_market_context(
+    monkeypatch,
+) -> None:
+    class Response:
+        content = """<?xml version="1.0" encoding="utf-8"?>
+        <rss><channel>
+          <item>
+            <title>NVIDIA announces Physical AI robotics platform</title>
+            <link>https://developer.nvidia.com/blog/physical-ai</link>
+            <pubDate>Wed, 08 Jul 2026 10:30:00 GMT</pubDate>
+          </item>
+          <item>
+            <title>SpaceX evaluates IPO for satellite launch network</title>
+            <link>https://www.nasa.gov/news-release/spacex</link>
+            <pubDate>Wed, 08 Jul 2026 10:35:00 GMT</pubDate>
+          </item>
+          <item>
+            <title>Nasdaq rallies as tech stocks lead a risk-on session</title>
+            <link>https://www.marketwatch.com/story/nasdaq-risk-on</link>
+            <pubDate>Wed, 08 Jul 2026 10:40:00 GMT</pubDate>
+          </item>
+          <item>
+            <title>Middle East attack lifts gold and defense stocks</title>
+            <link>https://www.marketwatch.com/story/geopolitical-attack</link>
+            <pubDate>Wed, 08 Jul 2026 10:45:00 GMT</pubDate>
+          </item>
+          <item>
+            <title>Crude oil jumps after OPEC signals deeper supply cuts</title>
+            <link>https://www.marketwatch.com/story/crude-oil-opec-cuts</link>
+            <pubDate>Wed, 08 Jul 2026 10:50:00 GMT</pubDate>
+          </item>
+        </channel></rss>""".encode()
+
+        def raise_for_status(self) -> None:
+            return None
+
+    monkeypatch.setattr(
+        "aqsp.data.news_source.requests.get",
+        lambda *_args, **_kwargs: Response(),
+    )
+    monkeypatch.setattr(
+        "aqsp.news.catalysts.now_shanghai",
+        lambda: datetime.fromisoformat("2026-07-08T19:00:00+08:00"),
+    )
+    source = RssNewsSource(
+        (
+            RssFeedConfig(
+                name="MarketWatch-MarketPulse",
+                url="https://feeds.content.dowjones.io/public/rss/mw_marketpulse",
+                category="global_tech",
+                keywords=(
+                    "NVIDIA",
+                    "Physical AI",
+                    "robotics",
+                    "SpaceX",
+                    "IPO",
+                    "Nasdaq",
+                    "risk-on",
+                    "attack",
+                    "gold",
+                    "defense",
+                    "crude oil",
+                    "OPEC",
+                ),
+            ),
+        )
+    )
+
+    def rss_global_news(_limit: int) -> pd.DataFrame:
+        return pd.concat(source.fetch_global_news(), ignore_index=True)
+
+    report = build_catalyst_report(
+        fetch_global_news=rss_global_news,
+        config=NewsCatalystConfig(allow_undated_news=False, max_events=8),
+    )
+    artifact = build_market_context_artifact(catalyst_report=report)
+
+    titles = tuple(event.title for event in report.events)
+    assert "NVIDIA announces Physical AI robotics platform" in titles
+    assert "SpaceX evaluates IPO for satellite launch network" in titles
+    assert "Nasdaq rallies as tech stocks lead a risk-on session" in titles
+    assert "Middle East attack lifts gold and defense stocks" in titles
+    assert "Crude oil jumps after OPEC signals deeper supply cuts" in titles
+    assert {event.source for event in report.events} == {"MarketWatch-MarketPulse"}
+    rule_ids = tuple(item.rule_id for item in artifact.cross_market_implications)
+    assert "physical_ai" in rule_ids
+    assert "commercial_space" in rule_ids
+    assert "us_risk_on" in rule_ids
+    assert "geopolitics" in rule_ids
+    assert "oil_price_shock" in rule_ids
+
+
+def test_news_catalyst_does_not_classify_awards_as_war() -> None:
+    assert _classify_title("Early Career Faculty (ECF) 2025 Awards") is None
+    assert _classify_title("War escalates in the Middle East") is not None
+
+
+def test_rss_news_source_distinguishes_domestic_international_empty_and_timeout(
+    monkeypatch,
+) -> None:
+    class Response:
+        def __init__(self, content: bytes) -> None:
+            self.content = content
+
+        def raise_for_status(self) -> None:
+            return None
+
+    good = """<?xml version="1.0"?><rss><channel><item>
+      <title>国内政策支持设备更新</title><pubDate>Tue, 07 Jul 2026 01:30:00 GMT</pubDate>
+    </item></channel></rss>""".encode()
+    empty = b"""<?xml version="1.0"?><rss><channel></channel></rss>"""
+
+    def get(url: str, **_kwargs: object) -> Response:
+        if url.endswith("/timeout"):
+            raise requests.exceptions.Timeout("read timed out")
+        if url.endswith("/empty"):
+            return Response(empty)
+        return Response(good)
+
+    monkeypatch.setattr("aqsp.data.news_source.requests.get", get)
+    source = RssNewsSource(
+        (
+            RssFeedConfig(name="国内政策", url="https://example/ok", region="domestic"),
+            RssFeedConfig(
+                name="海外市场", url="https://example/empty", region="international"
+            ),
+            RssFeedConfig(
+                name="海外快讯", url="https://example/timeout", region="international"
+            ),
+        )
+    )
+
+    frames = source.fetch_global_news()
+
+    assert len(frames) == 1
+    health = {(item.name, item.region): item.status for item in source.last_health}
+    assert health == {
+        ("国内政策", "domestic"): "ok",
+        ("海外市场", "international"): "empty",
+        ("海外快讯", "international"): "timeout",
+    }
+    assert frames[0].attrs["aqsp_source_status"] == "partial"
+    assert frames[0].iloc[0]["source_region"] == "domestic"
+
+
+def test_news_catalyst_marks_successful_no_event_run_as_ok_not_waiting() -> None:
+    report = build_catalyst_report(
+        fetch_global_news=lambda _limit: pd.DataFrame(
+            [{"标题": "今日市场平稳运行", "来源": "新华社", "时间": _RECENT_NEWS_TIME}]
+        )
+    )
+
+    markdown = format_catalyst_notification(report)
+
+    assert report.source_status == "ok"
+    assert report.events == ()
+    assert "未筛出高影响消息" in markdown
+    assert "等待" not in markdown
+
+
+def test_news_catalyst_keeps_source_health_quality_and_publish_time_traceable() -> None:
+    frame = pd.DataFrame(
+        [
+            {
+                "标题": "政策支持半导体材料国产替代",
+                "来源": "欧洲央行-ECB",
+                "时间": "2026-07-13 09:15:00+08:00",
+                "source_region": "international",
+                "链接": "https://example.com/news",
+            }
+        ]
+    )
+    frame.attrs["aqsp_source_health"] = (
+        NewsSourceHealth(
+            name="欧洲央行-ECB",
+            region="international",
+            status="ok",
+            successful=1,
+            row_count=1,
+        ),
+    )
+
+    report = build_catalyst_report(fetch_global_news=lambda _limit: frame)
+    markdown = format_catalyst_notification(report)
+
+    assert report.source_statuses[0].region == "international"
+    assert report.events[0].source_quality_score == 4
+    assert report.events[0].published_at == "2026-07-13 09:15:00+08:00"
+    assert "质量 高价值来源（4/4）" in markdown
+    assert "区域 international" in markdown
+    assert "时间: 2026-07-13 09:15:00+08:00" in markdown
+
+
+def test_news_catalyst_cross_source_merge_keeps_newest_publication_and_fetch_time() -> (
+    None
+):
+    old_frame = pd.DataFrame(
+        [
+            {
+                "标题": "样本电子签订机器人订单合同",
+                "来源": "财联社",
+                "时间": "2026-07-13 09:00:00+08:00",
+            }
+        ]
+    )
+    old_frame.attrs["aqsp_fetched_at"] = "2026-07-13T09:05:00+08:00"
+    new_frame = pd.DataFrame(
+        [
+            {
+                "标题": "样本电子签订机器人订单合同",
+                "来源": "公司公告",
+                "时间": "2026-07-13 10:00:00+08:00",
+            }
+        ]
+    )
+    new_frame.attrs["aqsp_fetched_at"] = "2026-07-13T10:05:00+08:00"
+
+    report = build_catalyst_report(
+        symbols=("300001",),
+        fetch_symbol_news=lambda _symbol, _limit: old_frame,
+        fetch_global_news=lambda _limit: new_frame,
+    )
+
+    assert len(report.events) == 1
+    assert report.events[0].published_at == "2026-07-13 10:00:00+08:00"
+    assert report.events[0].source_fetched_at == "2026-07-13T10:05:00+08:00"
+
+
+def test_catalyst_report_artifact_round_trips_with_date_and_freshness_gate(
+    tmp_path: Path,
+) -> None:
+    report = CatalystReport(
+        date=today_shanghai().isoformat(),
+        generated_at=now_shanghai().isoformat(timespec="seconds"),
+        events=(),
+        source_status="partial",
+        warnings=("国际源超时，已降级",),
+        event_status="no_valid_news",
+    )
+    path = tmp_path / "news.json"
+    path.write_text(
+        json.dumps(serialize_catalyst_report(report), ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    loaded = load_catalyst_report_artifact(
+        path,
+        expected_date=report.date,
+        max_age_seconds=60,
+    )
+
+    assert loaded == report
+    assert (
+        load_catalyst_report_artifact(
+            path,
+            expected_date="2026-01-01",
+            max_age_seconds=60,
+        )
+        is None
+    )

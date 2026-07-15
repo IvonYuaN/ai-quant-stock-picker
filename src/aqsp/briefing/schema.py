@@ -12,6 +12,7 @@ from typing import Any
 
 from aqsp.briefing.conclusion import (
     build_debate_conclusion_view,
+    debate_evidence_provenance,
     debate_consensus_point,
 )
 from aqsp.core.types import PickResult
@@ -123,10 +124,16 @@ class CommitteeConclusion:
     opposition_points: tuple[str, ...] = field(default_factory=tuple)
     risk_points: tuple[str, ...] = field(default_factory=tuple)
     failure_conditions: tuple[str, ...] = field(default_factory=tuple)
+    event_evidence: tuple[str, ...] = field(default_factory=tuple)
+    cross_market_evidence: tuple[str, ...] = field(default_factory=tuple)
+    transmission_points: tuple[str, ...] = field(default_factory=tuple)
     round_count: int = 0
     active_roles: tuple[str, ...] = field(default_factory=tuple)
     llm_advisory_count: int = 0
     advisory_only: bool = True
+    data_status: str = "available"
+    data_note: str = ""
+    pending_confirmations: tuple[str, ...] = field(default_factory=tuple)
 
     @classmethod
     def from_debate_result(cls, result: DebateResult) -> CommitteeConclusion:
@@ -165,6 +172,7 @@ class CommitteeConclusion:
             for round_data in result.rounds
             for opinion in round_data.opinions
         )
+        provenance = debate_evidence_provenance(result)
         return cls(
             symbol=result.symbol,
             name=result.name,
@@ -178,10 +186,16 @@ class CommitteeConclusion:
             opposition_points=opposition_points,
             risk_points=risk_points,
             failure_conditions=failure_conditions,
+            event_evidence=provenance.real_messages,
+            cross_market_evidence=provenance.cross_market_evidence,
+            transmission_points=provenance.rule_transmissions,
             round_count=len(result.rounds),
             active_roles=active_roles,
             llm_advisory_count=llm_advisory_count,
             advisory_only=bool(result.advisory_only),
+            data_status=str(getattr(result, "data_status", "available") or "available"),
+            data_note=str(getattr(result, "data_note", "") or ""),
+            pending_confirmations=provenance.pending_confirmations,
         )
 
 

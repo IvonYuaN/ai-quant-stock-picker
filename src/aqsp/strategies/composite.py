@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Dict, List
 import pandas as pd
 
+from aqsp.regime.strategy_mixer import canonicalize_regime
 from aqsp.strategies.base import BaseStrategy, StrategyConfig
 from aqsp.strategies.momentum import MomentumStrategy
 from aqsp.strategies.quality import QualityStrategy
@@ -97,7 +98,17 @@ class CompositeStrategy(BaseStrategy):
     ) -> tuple[float, float, float, float, float, float]:
         """根据市场状态调整策略权重"""
         base = self.thresholds.composite
-        adjustment = self.thresholds.regime.strategy_weights.get(regime)
+        canonical_regime = canonicalize_regime(regime)
+        adjustment = self.thresholds.regime.strategy_weights.get(canonical_regime)
+        if adjustment is None:
+            legacy_regime = {
+                "aggressive_bull": "stable_bull",
+                "volatile_bull": "volatile_bull",
+                "defensive_bear": "volatile_bear",
+                "rotation_sideways": "stable_sideways",
+            }.get(canonical_regime)
+            if legacy_regime:
+                adjustment = self.thresholds.regime.strategy_weights.get(legacy_regime)
 
         if adjustment is None:
             return (

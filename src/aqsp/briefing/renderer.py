@@ -133,6 +133,12 @@ class MarkdownRenderer:
                 [
                     f"### 多 Agent 结论 - {conclusion.symbol} {conclusion.name}",
                     f"- 信号日期: {signal_date}（{date_note}）",
+                    "- 数据状态: "
+                    + (
+                        "可用"
+                        if conclusion.data_status == "available"
+                        else f"空数据，{conclusion.data_note or '不形成证据结论'}"
+                    ),
                     f"- 结论: **{conclusion.headline}**",
                     f"- 委员会置信度: **{confidence}**",
                     "- 投票: "
@@ -141,12 +147,23 @@ class MarkdownRenderer:
                     f"中性 {conclusion.neutral_votes}",
                     "- 支持理由: "
                     + _join_or_default(conclusion.support_points, "未记录"),
+                    "- 事件证据: "
+                    + _join_or_default(conclusion.event_evidence, "未记录"),
+                    "- 跨市证据: "
+                    + _join_or_default(conclusion.cross_market_evidence, "未记录"),
+                    "- 传导链: "
+                    + _join_or_default(conclusion.transmission_points, "未记录"),
                     "- 反对理由: "
                     + _join_or_default(conclusion.opposition_points, "未记录"),
                     "- 风险: " + _join_or_default(conclusion.risk_points, "未记录"),
                     "- 失效条件: "
                     + _join_or_default(
                         conclusion.failure_conditions,
+                        "未记录，需补充实时验证",
+                    ),
+                    "- 待确认: "
+                    + _join_or_default(
+                        conclusion.pending_confirmations,
                         "未记录，需补充实时验证",
                     ),
                     "- 评分边界: 确定性评分保持不变；委员会结果仅作 advisory-only 附件",

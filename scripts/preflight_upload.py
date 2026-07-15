@@ -8,6 +8,7 @@ import sys
 from dataclasses import dataclass
 from fnmatch import fnmatch
 from pathlib import Path
+from collections.abc import Iterable
 
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -54,6 +55,8 @@ FORBIDDEN_PATTERNS = (
     "reports/*.md",
     "reports/*.txt",
 )
+RUNTIME_PATH_PREFIXES = ("src/aqsp/", "scripts/")
+RUNTIME_FILE_SUFFIXES = (".py", ".sh")
 
 
 @dataclass(frozen=True)
@@ -77,6 +80,30 @@ def upload_candidate_paths() -> list[str]:
     tracked = _git_lines(["ls-files"])
     untracked = _git_lines(["ls-files", "--others", "--exclude-standard"])
     return sorted(set(tracked + untracked))
+
+
+def find_untracked_runtime_paths(
+    tracked_paths: Iterable[str], candidate_paths: Iterable[str]
+) -> list[str]:
+    """Return runtime files present locally but absent from the Git index."""
+    tracked = {str(path) for path in tracked_paths}
+    return sorted(
+        {
+            str(path)
+            for path in candidate_paths
+            if str(path) not in tracked
+            and str(path).startswith(RUNTIME_PATH_PREFIXES)
+            and str(path).endswith(RUNTIME_FILE_SUFFIXES)
+        }
+    )
+
+
+def untracked_runtime_paths() -> list[str]:
+    """Read the repository state and find untracked runtime files."""
+    return find_untracked_runtime_paths(
+        _git_lines(["ls-files"]),
+        _git_lines(["ls-files", "--others", "--exclude-standard"]),
+    )
 
 
 def check_upload_candidates(paths: list[str]) -> list[UploadFinding]:
@@ -110,7 +137,12 @@ def check_upload_candidates(paths: list[str]) -> list[UploadFinding]:
 
 
 def main() -> int:
-    findings = check_upload_candidates(upload_candidate_paths())
+    findings = [
+        UploadFinding(path, "untracked runtime file; add it before release")
+        for path in untracked_runtime_paths()
+    ]
+    findings.extend(check_upload_candidates(upload_candidate_paths()))
+    findings.sort(key=lambda finding: (finding.path, finding.reason))
     if findings:
         print("Upload preflight failed:")
         for finding in findings:

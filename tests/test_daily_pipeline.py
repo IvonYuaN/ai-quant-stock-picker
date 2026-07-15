@@ -163,6 +163,41 @@ def test_build_config_switches_realtime_alias_to_online_first(monkeypatch) -> No
     assert "本地历史源" in config.source_override_reason
 
 
+def test_build_config_switches_observation_only_source_to_online_first(
+    monkeypatch,
+) -> None:
+    daily_pipeline = _load_daily_pipeline_module()
+    monkeypatch.setenv("AQSP_SOURCE", "akshare")
+
+    args = argparse.Namespace(
+        project_root="",
+        source="",
+        mode="",
+        limit=0,
+        max_universe=0,
+        min_avg_amount=0,
+        max_data_lag_days=0,
+        enable_online_factors=False,
+        ledger="",
+        report="",
+        csv="",
+        briefing="",
+        dashboard_html="",
+        dashboard_db="",
+        paper_ledger="",
+        closing_review="",
+        notify=False,
+        dry_run=False,
+        enable_debate=False,
+    )
+
+    config = daily_pipeline._build_config(args)
+
+    assert config.source == "online_first"
+    assert config.requested_source == "akshare"
+    assert "observation" in config.source_override_reason
+
+
 def test_build_config_caps_live_runtime_data_lag(monkeypatch) -> None:
     daily_pipeline = _load_daily_pipeline_module()
     monkeypatch.setenv("AQSP_SOURCE", "eastmoney")
@@ -1852,9 +1887,7 @@ def test_refresh_dashboard_prefers_intraday_candidates(
     assert (tmp_path / "dist" / "dashboard" / "archive.html").read_text(
         encoding="utf-8"
     ) == "<html>候选来源 盘中实时</html>"
-    entry = (tmp_path / "dist" / "dashboard" / "index.html").read_text(
-        encoding="utf-8"
-    )
+    entry = (tmp_path / "dist" / "dashboard" / "index.html").read_text(encoding="utf-8")
     assert 'content="canonical-research-surface"' in entry
 
 
@@ -1864,8 +1897,8 @@ def test_refresh_dashboard_marks_home_snapshot_failure_as_pipeline_failure(
     daily_pipeline = _load_daily_pipeline_module()
     render_dashboard = type(sys)("render_dashboard")
     export_dashboard_db = type(sys)("export_dashboard_db")
-    render_dashboard.read_preferred_candidates = lambda *_args, **_kwargs: SimpleNamespace(
-        candidates=[], path=tmp_path / "reports" / "latest.csv"
+    render_dashboard.read_preferred_candidates = lambda *_args, **_kwargs: (
+        SimpleNamespace(candidates=[], path=tmp_path / "reports" / "latest.csv")
     )
     render_dashboard.render_all_panels = lambda **_kwargs: "<html>ok</html>"
 
@@ -2065,6 +2098,78 @@ def test_step_run_strategy_leaves_symbols_empty_for_runtime_universe(
     argv = seen["argv"]
     assert argv[argv.index("--symbols") + 1] == ""
     assert argv[argv.index("--max-universe") + 1] == "300"
+
+
+def test_daily_pipeline_cleanup_only_removes_live_short_cache_rows(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    daily_pipeline = _load_daily_pipeline_module()
+    seen: list[dict[str, object]] = []
+    source_workloads: list[str | None] = []
+
+    class FakeSource:
+        def set_workload(self, workload: str | None) -> None:
+            source_workloads.append(workload)
+
+    class FakeCache:
+        def clear_expired(self, **kwargs):
+            seen.append(kwargs)
+            return 0
+
+    monkeypatch.setattr("aqsp.data.cache.DataCache", FakeCache)
+    monkeypatch.setattr(
+        daily_pipeline, "_build_data_source", lambda _config: FakeSource()
+    )
+    monkeypatch.setattr(
+        daily_pipeline,
+        "_resolve_symbols",
+        lambda _config, _logger: ["600000"],
+    )
+    monkeypatch.setattr(
+        "aqsp.data.fetch_with_source",
+        lambda *_args, **_kwargs: {"600000": pd.DataFrame([{"date": "2026-07-15"}])},
+    )
+    config = _pipeline_config(daily_pipeline, tmp_path)
+
+    daily_pipeline._step_update_data(config, logging.getLogger("test"))
+    daily_pipeline._step_cleanup(config, logging.getLogger("test"))
+
+    assert seen == [
+        {"max_age_hours": 168, "workloads": ("live_short",)},
+        {"max_age_hours": 168, "workloads": ("live_short",)},
+    ]
+    assert source_workloads == ["live_short", None]
+
+
+def test_daily_pipeline_update_fails_when_live_snapshot_is_incomplete(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    daily_pipeline = _load_daily_pipeline_module()
+
+    class FakeSource:
+        def set_workload(self, _workload: str | None) -> None:
+            pass
+
+    monkeypatch.setattr(
+        daily_pipeline, "_build_data_source", lambda _config: FakeSource()
+    )
+    monkeypatch.setattr(
+        daily_pipeline,
+        "_resolve_symbols",
+        lambda _config, _logger: ["600000", "000001"],
+    )
+    monkeypatch.setattr(
+        "aqsp.data.fetch_with_source",
+        lambda *_args, **_kwargs: {"600000": pd.DataFrame([{"date": "2026-07-15"}])},
+    )
+
+    with pytest.raises(daily_pipeline.DataError, match="取数不完整"):
+        daily_pipeline._step_update_data(
+            _pipeline_config(daily_pipeline, tmp_path),
+            logging.getLogger("test"),
+        )
 
 
 def test_step_run_strategy_treats_circuit_breaker_as_controlled_result(

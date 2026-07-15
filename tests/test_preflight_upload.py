@@ -1,7 +1,12 @@
 from __future__ import annotations
 
 from scripts import preflight_upload
-from scripts.preflight_upload import UploadFinding, check_upload_candidates, _git_lines
+from scripts.preflight_upload import (
+    UploadFinding,
+    _git_lines,
+    check_upload_candidates,
+    find_untracked_runtime_paths,
+)
 
 
 def test_preflight_blocks_runtime_private_artifacts() -> None:
@@ -60,6 +65,18 @@ def test_preflight_blocks_runtime_private_artifacts() -> None:
 
 def test_preflight_allows_research_registry() -> None:
     assert check_upload_candidates(["data/open_source_research.jsonl"]) == []
+
+
+def test_preflight_blocks_untracked_runtime_files_but_ignores_tests_and_docs() -> None:
+    assert find_untracked_runtime_paths(
+        ["src/aqsp/cli.py"],
+        [
+            "src/aqsp/new_runtime.py",
+            "scripts/new_runtime.sh",
+            "tests/test_new_runtime.py",
+            "docs/runtime-notes.md",
+        ],
+    ) == ["scripts/new_runtime.sh", "src/aqsp/new_runtime.py"]
 
 
 def test_preflight_reuses_secret_assignment_scan_for_shell_scripts(

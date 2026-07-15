@@ -13,6 +13,7 @@
 - `model-handoff.md`: 给后续模型/agent 的项目接手说明、已实现内容、计划内容和 bug 记录
 - `momentum-diagnosis.md`: 动量诊断说明
 - `open_source_research.md`: 开源研究整理
+- `short-term-realtime-roadmap.md`: 当前短线实时目标、边界、并行主线和控偏入口
 - `secret-and-upload-policy.md`: 上传与密钥策略
 - `server-dashboard-deployment.md`: 服务器前端部署
 - `simple-server-mode.md`: 最简单的 GitHub -> 云服务器自动更新运行模式

@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import os
 import re
 from collections import Counter
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from html import escape
 from pathlib import Path
 
@@ -11,6 +12,10 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from aqsp.core.time import now_shanghai
 from aqsp.core.types import PickResult
+from aqsp.market_context import (
+    format_pick_market_context_chain_summary,
+    format_pick_market_context_summary,
+)
 from aqsp.portfolio.manager import (
     PortfolioDecision,
     PortfolioDecisionSummary,
@@ -26,13 +31,25 @@ from aqsp.presentation import (
     review_priority_label,
 )
 from aqsp.research.summary import ResearchSummary, research_findings_display
+from aqsp.research.price_path import summarize_price_path
 from aqsp.ratings import rating_label
 from aqsp.config import load_debate_runtime_config
+from aqsp.goal_switches import (
+    goal_switch_enabled,
+    goal_switch_runtime_summary,
+    goal_switch_visibility_notes,
+)
 from aqsp.briefing.debate import (
     AShareDebateCoordinator,
     DebateResult,
+    debate_active_role_summary,
     format_debate_result,
     parse_agent_roles,
+)
+from aqsp.briefing.conclusion import (
+    build_debate_conclusion_view,
+    cross_market_priority_digest,
+    debate_consensus_point,
 )
 from aqsp.ratings import is_tradable_rating, portfolio_action_label
 
@@ -67,6 +84,138 @@ _PIPELINE_LABELS = {
     "signal": "信号",
     "presentation": "展示",
 }
+
+
+def _runtime_market_context_lines(
+    market_context_lines: tuple[str, ...],
+) -> tuple[str, ...]:
+    return tuple(
+        line for line in market_context_lines if str(line).startswith("运行判定:")
+    )
+
+
+_REALTIME_TASK_IDS = frozenset({"intraday", "midday", "live_short", "morning_breakout"})
+_REALTIME_REQUIRED_ROLES = (
+    "bull",
+    "bear",
+    "risk_control",
+    "cross_market",
+)
+_HISTORICAL_ONLY_SOURCES = frozenset(
+    {"sqlite_db", "tdx_vipdoc", "baostock", "tushare", "qstock", "adata"}
+)
+_REALTIME_FRESHNESS_TIERS = frozenset(
+    {"terminal_realtime", "realtime", "delayed_realtime"}
+)
+
+
+def _is_realtime_task(task_id: str = "") -> bool:
+    value = str(task_id or os.getenv("AQSP_RUN_TASK_ID", "") or "").strip().lower()
+    return value in _REALTIME_TASK_IDS or value == "live-short"
+
+
+def _ensure_realtime_roles(
+    role_names: tuple[str, ...],
+    *,
+    disabled_roles: tuple[str, ...] = (),
+) -> tuple[str, ...]:
+    """Keep a live discussion multi-role even when an env override is too narrow."""
+    selected = [str(item).strip().lower() for item in role_names if str(item).strip()]
+    disabled = {
+        str(item).strip().lower() for item in disabled_roles if str(item).strip()
+    }
+    for required in _REALTIME_REQUIRED_ROLES:
+        if required not in selected and required not in disabled:
+            selected.append(required)
+    return tuple(dict.fromkeys(selected))
+
+
+def _live_short_block_reason(
+    source_status: dict[str, str | bool] | None,
+    *,
+    realtime_task: bool,
+) -> str:
+    if not realtime_task or not source_status:
+        return ""
+    if source_status.get("live_short_allowed") is False:
+        return str(
+            source_status.get("live_short_reason")
+            or source_status.get("health_message")
+            or "实时数据源未获 live_short 放行"
+        ).strip()
+
+    requested = str(source_status.get("requested_source", "") or "").strip().lower()
+    actual = str(source_status.get("actual_source", "") or requested).strip().lower()
+    freshness = str(source_status.get("freshness_tier", "") or "").strip().lower()
+    health = str(source_status.get("health_label", "") or "").strip().lower()
+    message = str(source_status.get("health_message", "") or "").strip()
+    fit = (
+        str(
+            source_status.get("live_short_fit")
+            or source_status.get("workload_fit_live_short")
+            or ""
+        )
+        .strip()
+        .lower()
+    )
+    if fit in {"avoid", "unknown", "history_only"}:
+        return f"数据源 {actual or requested or 'unknown'} 不适合 live_short"
+    if actual in _HISTORICAL_ONLY_SOURCES:
+        return f"当前实际源 {actual} 只适合历史验证"
+    if freshness not in _REALTIME_FRESHNESS_TIERS:
+        return f"数据时效层级 {freshness or 'unknown'} 未通过实时校验"
+    try:
+        lag_days = int(str(source_status.get("data_lag_days", "") or "").strip())
+    except ValueError:
+        lag_days = 0
+    if lag_days > 0:
+        return f"实时数据延迟 {lag_days} 个交易日"
+    if health in {"failed", "error", "blocked"}:
+        return message or f"数据源状态 {health}"
+    if any(token in message.lower() for token in ("失败", "超时", "不可用", "history")):
+        return message
+    return ""
+
+
+def _build_pick_debate_context(
+    pick: PickResult,
+    market_context_lines: tuple[str, ...],
+    source_status: dict[str, str | bool] | None,
+    *,
+    realtime_blocker: str = "",
+) -> tuple[str, ...]:
+    """Merge global, candidate news, cross-market and freshness evidence."""
+    lines = [str(line).strip() for line in market_context_lines if str(line).strip()]
+    news_line = _format_pick_news_catalyst_line(pick)
+    if news_line:
+        lines.append(f"候选消息: {news_line}")
+    cross_market = format_pick_market_context_summary(pick)
+    if cross_market:
+        lines.append(f"候选跨市: {cross_market}")
+    cross_market_chain = format_pick_market_context_chain_summary(pick)
+    if cross_market_chain:
+        lines.append(f"候选传导: {cross_market_chain}")
+    if source_status:
+        route = str(
+            source_status.get("actual_source")
+            or source_status.get("requested_source")
+            or "unknown"
+        ).strip()
+        freshness = str(source_status.get("freshness_tier", "unknown") or "unknown")
+        health = str(source_status.get("health_label", "unknown") or "unknown")
+        lines.append(f"实时数据状态: {route} / freshness={freshness} / health={health}")
+    if realtime_blocker:
+        lines.append(f"实时数据门控: 阻塞｜{realtime_blocker}")
+    return tuple(dict.fromkeys(lines))
+
+
+def _debate_adjustment_label(value: str) -> str:
+    clean = str(value).strip().lower()
+    return {
+        "raise": "偏积极",
+        "keep": "暂维持",
+        "lower": "偏谨慎",
+    }.get(clean, "继续观察")
 
 
 def _candidate_status_label(pick: PickResult) -> str:
@@ -108,6 +257,68 @@ def _format_pick_with_status(
     return display
 
 
+def _format_pick_news_catalyst_line(pick: PickResult) -> str:
+    metrics = pick.metrics or {}
+    judgement = str(metrics.get("news_catalyst_judgement", "") or "").strip()
+    if not judgement:
+        return ""
+    label = {
+        "supports": "消息支持",
+        "opposes": "消息反对",
+        "mixed": "消息分歧",
+        "needs_review": "消息待复核",
+    }.get(judgement, "消息观察")
+    lead = str(metrics.get("news_catalyst_lead", "") or "").strip()
+    if not lead:
+        supports = metrics.get("news_catalyst_supports") or ()
+        opposes = metrics.get("news_catalyst_opposes") or ()
+        needs_review = metrics.get("news_catalyst_needs_review") or ()
+        for values in (opposes, supports, needs_review):
+            if values:
+                lead = str(tuple(values)[0]).strip()
+                break
+    return f"{label}: {lead}" if lead else label
+
+
+def _format_decision_context_lines(pick: PickResult) -> tuple[str, ...]:
+    metrics = pick.metrics or {}
+    lines: list[str] = []
+    news_line = _format_pick_news_catalyst_line(pick)
+    if news_line:
+        lines.append(f"消息 {news_line}")
+    cross_market = format_pick_market_context_summary(pick)
+    if cross_market:
+        lines.append(f"跨市 {cross_market}")
+    debate = str(metrics.get("debate_research_verdict", "") or "").strip()
+    if debate:
+        lines.append(f"讨论 {debate}")
+    runtime_blocker = str(metrics.get("debate_runtime_blocker", "") or "").strip()
+    if runtime_blocker:
+        lines.append(f"实时阻塞 {runtime_blocker}")
+    blocker = _candidate_blocker_label(pick)
+    if blocker:
+        lines.append(f"风险 {blocker}")
+    next_step = _candidate_next_step_label(pick)
+    if next_step:
+        lines.append(f"下一步 {next_step}")
+    return tuple(lines)
+
+
+def _format_price_path_context(frame: pd.DataFrame) -> str:
+    if frame.empty:
+        return ""
+    try:
+        summaries = summarize_price_path(frame, windows=(5, 20))
+    except Exception:
+        return ""
+    parts: list[str] = []
+    for item in summaries:
+        parts.append(
+            f"{item.window}日收益 {item.return_pct:.1f}% / 回撤 {item.max_drawdown_pct:.1f}% / 量比 {item.volume_ratio:.2f}"
+        )
+    return "；".join(parts)
+
+
 def _safe_markdown_text(value: object) -> str:
     return escape(normalize_research_tone(str(value).strip()), quote=False)
 
@@ -135,8 +346,233 @@ def _dedupe_watchlist_against_focus(
     return tuple(filtered)
 
 
+def _unique_debate_picks(picks: list[PickResult]) -> tuple[PickResult, ...]:
+    """Avoid debating the same candidate twice in one briefing run."""
+    seen: set[tuple[str, str]] = set()
+    unique: list[PickResult] = []
+    for pick in picks:
+        key = (str(pick.symbol).strip(), str(pick.date).strip())
+        if not key[0] or key in seen:
+            continue
+        seen.add(key)
+        unique.append(pick)
+    return tuple(unique)
+
+
 def _pick_symbol_from_display(display: str) -> str:
     return str(display).split(" ", 1)[0].strip()
+
+
+def _cross_market_focus_display(
+    portfolio_summary: PortfolioDecisionSummary | None,
+    debate_results: list[DebateResult],
+) -> str:
+    if portfolio_summary is not None and portfolio_summary.cross_market_focus:
+        focus_line = str(portfolio_summary.cross_market_focus[0]).strip()
+        if " | " in focus_line:
+            return focus_line.split(" | ", 1)[0].strip()
+        return focus_line
+    if debate_results:
+        lead = debate_results[0]
+        return format_symbol_name(lead.symbol, lead.name)
+    return ""
+
+
+def _clean_text(value: object) -> str:
+    return str(value or "").strip()
+
+
+def _debate_is_publishable(result: DebateResult) -> bool:
+    audit = build_debate_conclusion_view(result).quality_audit
+    return bool(audit is not None and audit.passed)
+
+
+def _debate_metrics(result: DebateResult) -> dict[str, object]:
+    quality = build_debate_conclusion_view(result).quality_audit
+    metrics: dict[str, object] = {
+        "debate_id": result.debate_id,
+        "debate_round_count": len(result.rounds),
+        "debate_process_recorded": bool(quality and quality.process_recorded),
+        "debate_conclusion_recorded": bool(quality and quality.conclusion_recorded),
+        "debate_quality_issues": () if quality is None else quality.issues,
+        "debate_evidence_sufficient": bool(quality and quality.evidence_sufficient),
+        "debate_data_status": result.data_status,
+        "debate_data_note": result.data_note,
+        "debate_advisory_only": bool(result.advisory_only),
+        "debate_deterministic_score": result.deterministic_score,
+        "debate_adjusted_score_advisory": result.adjusted_score,
+    }
+    text_fields = {
+        "debate_research_verdict": result.research_verdict
+        or result.final_consensus
+        or result.adjustment_reason,
+        "debate_primary_risk_gate": result.primary_risk_gate,
+        "debate_next_trigger": result.next_trigger,
+        "debate_historical_context_note": result.historical_context_note,
+        "cross_market_evidence_stack_summary": result.cross_market_evidence_stack_summary,
+        "debate_runtime_status": result.runtime_status,
+        "debate_runtime_blocker": result.runtime_blocker,
+    }
+    for key, value in text_fields.items():
+        clean = _clean_text(value)
+        if clean:
+            metrics[key] = clean
+
+    evidence_fields = {
+        "debate_real_message_evidence": result.real_message_evidence,
+        "debate_cross_market_evidence": result.cross_market_evidence,
+        "debate_rule_transmission_evidence": result.rule_transmission_evidence,
+        "debate_pending_confirmations": result.pending_confirmations,
+    }
+    for key, value in evidence_fields.items():
+        cleaned = tuple(_clean_text(item) for item in value if _clean_text(item))
+        if cleaned:
+            metrics[key] = cleaned
+
+    tuple_fields = {
+        "debate_support_points": result.support_points,
+        "debate_opposition_points": result.opposition_points,
+        "debate_watch_items": result.watch_items,
+        "debate_role_reliability_lines": result.role_reliability_lines,
+    }
+    for key, value in tuple_fields.items():
+        cleaned = tuple(_clean_text(item) for item in value if _clean_text(item))
+        if cleaned:
+            metrics[key] = cleaned
+
+    if result.historical_context_sample_count > 0:
+        metrics["debate_historical_context_sample_count"] = (
+            result.historical_context_sample_count
+        )
+        metrics["debate_historical_context_accuracy"] = (
+            result.historical_context_accuracy
+        )
+    if result.cross_market_support_event_count > 0:
+        metrics["cross_market_support_event_count"] = (
+            result.cross_market_support_event_count
+        )
+    if result.cross_market_conflict_event_count > 0:
+        metrics["cross_market_conflict_event_count"] = (
+            result.cross_market_conflict_event_count
+        )
+    if result.realtime_blocked:
+        metrics["debate_realtime_blocked"] = True
+    metrics["debate_deterministic_score_unchanged"] = (
+        result.deterministic_score_unchanged
+    )
+    return metrics
+
+
+def _apply_debate_results_to_picks(
+    picks: list[PickResult],
+    debate_results: list[DebateResult],
+) -> list[PickResult]:
+    historical_narrative_keys = {
+        "debate_research_verdict",
+        "debate_primary_risk_gate",
+        "debate_next_trigger",
+        "debate_support_points",
+        "debate_opposition_points",
+        "debate_watch_items",
+        "debate_role_reliability_lines",
+    }
+    today = now_shanghai().date().isoformat()
+    result_by_symbol = {result.symbol: result for result in debate_results}
+    enriched: list[PickResult] = []
+    for pick in picks:
+        result = result_by_symbol.get(pick.symbol)
+        if result is None:
+            enriched.append(pick)
+            continue
+        debate_metrics = _debate_metrics(result)
+        metrics = {**pick.metrics, **debate_metrics}
+        signal_date = str(pick.date or "").strip()[:10]
+        if result.data_status == "empty" and signal_date and signal_date < today:
+            # Historical reports may have a persisted advisory summary but no
+            # current frame. Keep that archive text while publishing the new
+            # empty-data gate fields above; the DebateResult itself remains
+            # blocked and non-publishable.
+            metrics.update(
+                {
+                    key: pick.metrics[key]
+                    for key in historical_narrative_keys
+                    if key in pick.metrics
+                }
+            )
+        enriched.append(replace(pick, metrics=metrics))
+    return enriched
+
+
+def _apply_runtime_block_to_result(
+    result: DebateResult,
+    blocker: str,
+) -> DebateResult:
+    """Apply the live-data gate even to injected/test coordinators."""
+    reason = str(blocker or "实时数据未通过时效或来源校验").strip()
+    return replace(
+        result,
+        runtime_status="blocked",
+        realtime_blocked=True,
+        runtime_blocker=reason,
+        recommended_adjustment="keep",
+        adjustment_weight=0.0,
+        adjusted_score=result.original_score,
+        deterministic_score_unchanged=True,
+        adjustment_reason=(
+            f"实时数据阻塞：{reason}；当前仅观察，不形成推荐；"
+            "deterministic score 保持不变"
+        ),
+        primary_risk_gate=f"实时数据阻塞: {reason}",
+        research_verdict=f"实时数据阻塞，当前仅观察/阻塞：{reason}",
+        next_trigger="实时数据恢复并通过 freshness 校验后，重新运行多 Agent 讨论。",
+    )
+
+
+def _apply_empty_market_block_to_result(result: DebateResult) -> DebateResult:
+    """Turn a missing frame into an explicit non-publishable debate record."""
+    blocked = replace(
+        result,
+        data_status="empty",
+        data_note="行情数据为空，讨论只保留阻塞记录，不形成证据结论。",
+        runtime_status="blocked",
+        realtime_blocked=True,
+        runtime_blocker="行情数据为空",
+        recommended_adjustment="keep",
+        adjustment_weight=0.0,
+        adjusted_score=result.original_score,
+        deterministic_score=result.original_score,
+        deterministic_score_unchanged=True,
+        adjustment_reason="行情数据为空；当前仅观察，不形成推荐；deterministic score 保持不变",
+        primary_risk_gate="行情数据为空",
+        research_verdict="结论阻断：行情数据为空，仅记录待补行情。",
+        next_trigger="行情数据恢复并通过 freshness 校验后，重新运行多 Agent 讨论。",
+    )
+    audit = build_debate_conclusion_view(blocked).quality_audit
+    failure = "讨论链路未通过审计"
+    if audit is not None and audit.issues:
+        failure += ": " + "、".join(audit.issues)
+    return replace(blocked, failure=failure)
+
+
+def _refresh_summary_debate_fields(
+    base: PortfolioDecisionSummary,
+    fresh: PortfolioDecisionSummary | None,
+) -> PortfolioDecisionSummary:
+    if fresh is None:
+        return base
+    return replace(
+        base,
+        cross_market_overview=fresh.cross_market_overview or base.cross_market_overview,
+        cross_market_focus=fresh.cross_market_focus or base.cross_market_focus,
+        debate_focus=fresh.debate_focus or base.debate_focus,
+        debate_support_points=fresh.debate_support_points or base.debate_support_points,
+        debate_opposition_points=fresh.debate_opposition_points
+        or base.debate_opposition_points,
+        debate_watch_items=fresh.debate_watch_items or base.debate_watch_items,
+        debate_risk_gates=fresh.debate_risk_gates or base.debate_risk_gates,
+        debate_next_triggers=fresh.debate_next_triggers or base.debate_next_triggers,
+        debate_priority_queue=fresh.debate_priority_queue or base.debate_priority_queue,
+    )
 
 
 @dataclass(frozen=True)
@@ -152,6 +588,8 @@ class Briefing:
     picks: list[PickResult] = field(default_factory=list)
     debate_results: list[DebateResult] = field(default_factory=list)
     portfolio_summary: PortfolioDecisionSummary | None = None
+    debate_requested_symbols: tuple[str, ...] = field(default_factory=tuple)
+    debate_failed_symbols: tuple[str, ...] = field(default_factory=tuple)
 
     def to_markdown(self) -> str:
         lines = [f"# 每日研究复盘-{_safe_markdown_text(self.date)}", ""]
@@ -166,14 +604,26 @@ class Briefing:
 
         # 添加辩论结果
         if self.debate_results:
-            lines.append("## 不同看法")
+            lines.append("## 多 Agent 结论")
             lines.append("")
-            lines.append("不同看法结论：")
+            lines.append("委员会结论摘要：")
             lines.append("")
             for result in self.debate_results[:3]:
                 lines.append(_safe_markdown_text(format_debate_result(result)))
                 lines.append("---")
                 lines.append("")
+
+        if self.debate_requested_symbols:
+            lines.append("## 讨论完整性")
+            lines.append("")
+            lines.append(
+                f"- 委员会覆盖: {len(self.debate_results)}/{len(self.debate_requested_symbols)}"
+            )
+            if self.debate_failed_symbols:
+                lines.append(
+                    "- 讨论失败或缺失: " + "、".join(self.debate_failed_symbols)
+                )
+                lines.append("- 空数据状态: 缺少有效行情帧的标的未形成讨论结论")
 
         return "\n".join(lines)
 
@@ -279,6 +729,10 @@ class Briefing:
             items.append(f"- 今日结论: {self.portfolio_summary.headline}")
             if self.portfolio_summary.regime_label:
                 items.append(f"- 当前市况: {self.portfolio_summary.regime_label}")
+            if self.portfolio_summary.cross_market_overview:
+                items.append(
+                    f"- 跨市主线: {self.portfolio_summary.cross_market_overview}"
+                )
             if self.portfolio_summary.strategy_mix_name:
                 items.append(f"- 策略偏向: {self.portfolio_summary.strategy_mix_name}")
             if self.portfolio_summary.top_focus:
@@ -287,10 +741,48 @@ class Briefing:
                 )
             if watchlist:
                 items.append("- 观察名单: " + "、".join(watchlist))
+            if self.portfolio_summary.cross_market_focus:
+                items.append(
+                    "- 跨市焦点: "
+                    + "；".join(self.portfolio_summary.cross_market_focus[:2])
+                )
+            if self.portfolio_summary.debate_focus:
+                items.append(
+                    "- 讨论焦点: " + "；".join(self.portfolio_summary.debate_focus[:2])
+                )
+            if self.portfolio_summary.debate_support_points:
+                items.append(
+                    "- 讨论支持: "
+                    + "；".join(self.portfolio_summary.debate_support_points[:2])
+                )
+            if self.portfolio_summary.debate_opposition_points:
+                items.append(
+                    "- 讨论反对: "
+                    + "；".join(self.portfolio_summary.debate_opposition_points[:2])
+                )
+            if self.portfolio_summary.debate_watch_items:
+                items.append(
+                    "- 讨论待确认: "
+                    + "；".join(self.portfolio_summary.debate_watch_items[:2])
+                )
+            if self.portfolio_summary.debate_risk_gates:
+                items.append(
+                    "- 讨论卡点: "
+                    + "；".join(self.portfolio_summary.debate_risk_gates[:2])
+                )
+            if self.portfolio_summary.debate_next_triggers:
+                items.append(
+                    "- 讨论触发: "
+                    + "；".join(self.portfolio_summary.debate_next_triggers[:2])
+                )
+            if self.portfolio_summary.debate_priority_queue:
+                items.append(
+                    "- 讨论顺序: "
+                    + "；".join(self.portfolio_summary.debate_priority_queue[:2])
+                )
             if self.portfolio_summary.action_hotspots:
                 items.append(
-                    "- 待确认: "
-                    + "；".join(self.portfolio_summary.action_hotspots[:2])
+                    "- 待确认: " + "；".join(self.portfolio_summary.action_hotspots[:2])
                 )
             if self.portfolio_summary.allocations:
                 top_alloc = "、".join(
@@ -306,13 +798,73 @@ class Briefing:
                     )
             if self.portfolio_summary.cash_reserve > 0:
                 items.append(f"- 现金留存: {self.portfolio_summary.cash_reserve:.0%}")
-        if self.debate_results:
+        if self.debate_requested_symbols:
+            requested_count = len(self.debate_requested_symbols)
             items.append(
-                f"- 不同看法: 已分析 {len(self.debate_results[:3])} 只重点候选"
+                f"- 委员会覆盖: 已分析 {len(self.debate_results)}/{requested_count} 只重点候选"
             )
+            if self.debate_failed_symbols:
+                items.append(
+                    "- 讨论未完成: " + "、".join(self.debate_failed_symbols[:3])
+                )
+        elif self.debate_results:
+            items.append(f"- 委员会覆盖: 已分析 {len(self.debate_results)} 只重点候选")
         else:
-            items.append("- 不同看法: 今日无重点候选或仍在观察阶段")
+            items.append("- 委员会覆盖: 今日无重点候选或仍在观察阶段")
+        active_role_summary = self._smart_summary_debate_role_summary()
+        if active_role_summary:
+            items.append(f"- 讨论视角: {active_role_summary}")
+        role_selection_summary = self._smart_summary_debate_role_selection()
+        if role_selection_summary:
+            items.append(f"- 选角理由: {role_selection_summary}")
+        role_selection_plan = self._smart_summary_debate_role_plan()
+        if role_selection_plan:
+            items.append(f"- 角色分工: {role_selection_plan}")
         return items
+
+    def _smart_summary_debate_role_summary(self) -> str:
+        publishable = [
+            item for item in self.debate_results if _debate_is_publishable(item)
+        ]
+        if not publishable:
+            return ""
+        if len(publishable) > 1:
+            return self._debate_role_coverage_summary(publishable)
+        return debate_active_role_summary(
+            publishable[0],
+            language="zh-CN",
+            max_labels=5,
+        )
+
+    def _smart_summary_debate_role_selection(self) -> str:
+        publishable = [
+            item for item in self.debate_results if _debate_is_publishable(item)
+        ]
+        if not publishable:
+            return ""
+        if len(publishable) > 1:
+            return "各候选按自身证据分别选角，详见候选讨论"
+        return str(publishable[0].role_selection_summary or "").strip()
+
+    def _smart_summary_debate_role_plan(self) -> str:
+        publishable = [
+            item for item in self.debate_results if _debate_is_publishable(item)
+        ]
+        if not publishable:
+            return ""
+        if len(publishable) > 1:
+            return "各候选分别记录角色分工，不用首个候选代表全部候选"
+        return str(publishable[0].role_selection_plan or "").strip()
+
+    def _debate_role_coverage_summary(
+        self, debate_results: list[DebateResult] | None = None
+    ) -> str:
+        parts: list[str] = []
+        for result in (debate_results or self.debate_results)[:3]:
+            roles = debate_active_role_summary(result, language="zh-CN", max_labels=3)
+            display = format_symbol_name(result.symbol, result.name)
+            parts.append(f"{display}: {roles or '无完整角色记录'}")
+        return "；".join(parts)
 
     def _build_data_items(
         self,
@@ -380,14 +932,13 @@ class Briefing:
             )
         if debate_points:
             items.append(
-                f"- 多个观点说: {self._strip_leading_markers(debate_points[0])}"
+                f"- 委员会摘要: {self._strip_leading_markers(debate_points[0])}"
             )
         if self.portfolio_summary and self.portfolio_summary.allocation_note:
             items.append(f"- 跟踪约束: {self.portfolio_summary.allocation_note}")
         if self.portfolio_summary and self.portfolio_summary.execution_blockers:
             items.append(
-                "- 阻塞: "
-                + "；".join(self.portfolio_summary.execution_blockers[:2])
+                "- 阻塞: " + "；".join(self.portfolio_summary.execution_blockers[:2])
             )
         if self.picks:
             lead_pick = self.picks[0]
@@ -455,21 +1006,13 @@ class Briefing:
             return []
         points: list[str] = []
         for result in self.debate_results[:2]:
-            if result.recommended_adjustment == "lower":
-                points.append(
-                    f"🤖 辩论共识: {result.name}({result.symbol}) "
-                    f"倾向下调；附件参考分{result.adjusted_score:.1f}，不改写系统评分"
-                )
-            elif result.recommended_adjustment == "raise":
-                points.append(
-                    f"🤖 辩论共识: {result.name}({result.symbol}) "
-                    f"倾向上调；附件参考分{result.adjusted_score:.1f}，不改写系统评分"
-                )
-            elif result.disagreement_score > 0.5:
-                points.append(
-                    f"🤖 讨论分歧较大: {result.name}({result.symbol}) "
-                    f"多空分歧{result.disagreement_score:.0%}"
-                )
+            point = debate_consensus_point(
+                result,
+                language="zh-CN",
+                max_role_labels=4,
+            )
+            if point:
+                points.append(point)
         return points
 
     def _extract_source_health_points(self) -> list[str]:
@@ -532,14 +1075,79 @@ class Briefing:
 
 class BriefingGenerator:
     def __init__(self, enable_debate: bool = False):
-        debate_runtime = load_debate_runtime_config()
-        self.enable_debate = enable_debate or debate_runtime.enabled
-        self.debate_coordinator = AShareDebateCoordinator(
-            enable_llm=debate_runtime.enable_llm,
-            max_rounds=debate_runtime.max_rounds,
-            language=debate_runtime.language,
-            roles=parse_agent_roles(debate_runtime.roles),
-            role_runtime=debate_runtime.role_runtime,
+        debate_runtime = load_debate_runtime_config(
+            task_id=str(os.getenv("AQSP_RUN_TASK_ID", "") or "").strip()
+        )
+        self._debate_runtime = debate_runtime
+        self._realtime_task = _is_realtime_task(debate_runtime.task_id)
+        self.enable_debate = goal_switch_enabled(
+            "multi_agent_advisory_layer",
+            default=True,
+        ) and (enable_debate or debate_runtime.enabled)
+        self.debate_coordinator = self._build_debate_coordinator()
+
+    def _build_debate_coordinator(
+        self,
+        roles_override: tuple[str, ...] | None = None,
+    ) -> AShareDebateCoordinator:
+        role_names = roles_override or self._debate_runtime.roles
+        if self._realtime_task:
+            role_names = _ensure_realtime_roles(
+                tuple(role_names),
+                disabled_roles=self._debate_runtime.disabled_roles,
+            )
+        active_roles = parse_agent_roles(role_names)
+        active_role_names = {role.value for role in active_roles}
+        role_runtime = tuple(
+            item
+            for item in self._debate_runtime.role_runtime
+            if item.role in active_role_names
+        )
+        return AShareDebateCoordinator(
+            enable_llm=self._debate_runtime.enable_llm,
+            max_rounds=max(2, self._debate_runtime.max_rounds)
+            if self._realtime_task
+            else self._debate_runtime.max_rounds,
+            language=self._debate_runtime.language,
+            roles=active_roles,
+            role_runtime=role_runtime,
+        )
+
+    def _resolve_pick_debate_roles(
+        self,
+        pick: PickResult,
+        *,
+        market_context_lines: tuple[str, ...],
+    ) -> tuple[str, ...]:
+        if self._debate_runtime.context_roles_locked:
+            roles = tuple(self._debate_runtime.roles)
+            return (
+                _ensure_realtime_roles(
+                    roles,
+                    disabled_roles=self._debate_runtime.disabled_roles,
+                )
+                if self._realtime_task
+                else roles
+            )
+
+        from aqsp.briefing.agent_roles import infer_context_agent_roles
+
+        roles = tuple(
+            role.value
+            for role in infer_context_agent_roles(
+                pick,
+                base_roles=self._debate_runtime.roles,
+                market_context_lines=market_context_lines,
+                disabled_roles=self._debate_runtime.disabled_roles,
+            )
+        )
+        return (
+            _ensure_realtime_roles(
+                roles,
+                disabled_roles=self._debate_runtime.disabled_roles,
+            )
+            if self._realtime_task
+            else roles
         )
 
     def generate(
@@ -552,6 +1160,7 @@ class BriefingGenerator:
         source_status: dict[str, str | bool] | None = None,
         research_summary: ResearchSummary | None = None,
         portfolio_summary: PortfolioDecisionSummary | None = None,
+        market_context_lines: tuple[str, ...] = (),
     ) -> Briefing:
         """Build a research briefing from ranked picks and runtime context.
 
@@ -572,30 +1181,102 @@ class BriefingGenerator:
         """
         date_str = now_shanghai().strftime("%Y-%m-%d %H:%M")
         ordered_picks = sorted(picks, key=lambda item: item.score, reverse=True)
+        realtime_blocker = _live_short_block_reason(
+            source_status,
+            realtime_task=self._realtime_task,
+        )
         summary = portfolio_summary or self._build_portfolio_summary(
             ordered_picks,
             regime=regime,
         )
+        summary_was_supplied = portfolio_summary is not None
         debate_results: list[DebateResult] = []
+        debate_requested_symbols: tuple[str, ...] = ()
+        debate_failed_symbols: list[str] = []
         if self.enable_debate and ordered_picks:
-            # 对评分最高的前3只股票进行辩论
-            for pick in ordered_picks[:3]:
+            default_roles = tuple(self._debate_runtime.roles)
+            max_candidates = max(1, int(self._debate_runtime.max_candidates))
+            debate_targets = _unique_debate_picks(ordered_picks)[:max_candidates]
+            debate_requested_symbols = tuple(pick.symbol for pick in debate_targets)
+            for pick in debate_targets:
                 df = frames.get(pick.symbol, pd.DataFrame())
-                if not df.empty:
-                    try:
-                        result = self.debate_coordinator.run_debate(pick, df)
-                        debate_results.append(result)
-                    except Exception as e:
-                        import logging
+                if df.empty:
+                    # Historical briefings may only have ledger context. Do not
+                    # overwrite an archived conclusion with a new empty-frame
+                    # record; live runs must retain the explicit block below.
+                    if not self._realtime_task:
+                        continue
+                    debate_failed_symbols.append(f"{pick.symbol}(缺少有效行情帧)")
+                try:
+                    coordinator = self.debate_coordinator
+                    debate_context = _build_pick_debate_context(
+                        pick,
+                        market_context_lines,
+                        source_status,
+                        realtime_blocker=realtime_blocker,
+                    )
+                    if isinstance(self.debate_coordinator, AShareDebateCoordinator):
+                        pick_debate_roles = self._resolve_pick_debate_roles(
+                            pick,
+                            market_context_lines=debate_context,
+                        )
+                        coordinator = (
+                            self.debate_coordinator
+                            if pick_debate_roles == default_roles
+                            and not self._realtime_task
+                            else self._build_debate_coordinator(
+                                roles_override=pick_debate_roles
+                            )
+                        )
+                    debate_kwargs = {
+                        "signal_date": str(pick.date or ""),
+                        "market_context_lines": debate_context,
+                    }
+                    if isinstance(coordinator, AShareDebateCoordinator):
+                        debate_kwargs.update(
+                            runtime_blocked=bool(realtime_blocker),
+                            runtime_blocker=realtime_blocker,
+                        )
+                    result = coordinator.run_debate(pick, df, **debate_kwargs)
+                    if df.empty and isinstance(result, DebateResult):
+                        result = _apply_empty_market_block_to_result(result)
+                    if realtime_blocker:
+                        result = _apply_runtime_block_to_result(
+                            result,
+                            realtime_blocker,
+                        )
+                    debate_results.append(result)
+                except Exception as e:
+                    import logging
 
-                        logger = logging.getLogger(__name__)
-                        logger.warning(f"辩论失败 {pick.symbol}: {e}")
+                    logger = logging.getLogger(__name__)
+                    logger.warning(f"辩论失败 {pick.symbol}: {e}")
+                    debate_failed_symbols.append(f"{pick.symbol}({type(e).__name__})")
+        if debate_results:
+            ordered_picks = _apply_debate_results_to_picks(
+                ordered_picks,
+                debate_results,
+            )
+            fresh_summary = self._build_portfolio_summary(
+                ordered_picks,
+                regime=regime,
+            )
+            summary = (
+                _refresh_summary_debate_fields(summary, fresh_summary)
+                if summary_was_supplied and summary is not None
+                else fresh_summary
+            )
         sections = [
-            self._build_main_chain_section(ordered_picks, summary, debate_results),
+            self._build_main_chain_section(
+                ordered_picks,
+                summary,
+                debate_results,
+                market_context_lines=market_context_lines,
+            ),
             self._build_regime_section(regime, circuit_breaker_status),
             self._build_source_section(source_status),
             self._build_research_section(research_summary),
-            self._build_evidence_section(ordered_picks),
+            self._build_evidence_section(ordered_picks, frames),
             self._build_theme_section(ordered_picks),
             self._build_next_day_section(ordered_picks, frames),
         ]
@@ -606,6 +1287,8 @@ class BriefingGenerator:
             picks=ordered_picks,
             debate_results=debate_results,
             portfolio_summary=summary,
+            debate_requested_symbols=debate_requested_symbols,
+            debate_failed_symbols=tuple(debate_failed_symbols),
         )
 
     def _build_main_chain_section(
@@ -613,6 +1296,8 @@ class BriefingGenerator:
         picks: list[PickResult],
         portfolio_summary: PortfolioDecisionSummary | None,
         debate_results: list[DebateResult],
+        *,
+        market_context_lines: tuple[str, ...] = (),
     ) -> BriefingSection:
         if not picks or portfolio_summary is None:
             return BriefingSection(
@@ -628,12 +1313,81 @@ class BriefingGenerator:
         )
         if signal_date:
             lines.append(f"- 信号日期: {signal_date}")
-        if portfolio_summary.top_focus:
+        runtime_summary = goal_switch_runtime_summary()
+        if runtime_summary:
+            lines.append(f"- {runtime_summary}")
+        if portfolio_summary.cross_market_overview:
+            lines.append(f"- 跨市主线: {portfolio_summary.cross_market_overview}")
+        if portfolio_summary.portfolio_risk_lines:
             lines.append(
-                "- 主看名单: " + "、".join(portfolio_summary.top_focus[:3])
+                "- 组合风险: " + "；".join(portfolio_summary.portfolio_risk_lines[:2])
             )
+        cross_market_priority = cross_market_priority_digest(
+            debate_results[0] if debate_results else None,
+            overview=portfolio_summary.cross_market_overview,
+            focus_display=_cross_market_focus_display(
+                portfolio_summary,
+                debate_results,
+            ),
+        )
+        if cross_market_priority:
+            lines.append(f"- 跨市判断: {cross_market_priority}")
+        if portfolio_summary.top_focus:
+            lines.append("- 主看名单: " + "、".join(portfolio_summary.top_focus[:3]))
         if display_watchlist:
             lines.append("- 观察名单: " + "、".join(display_watchlist[:3]))
+        if portfolio_summary.cross_market_focus:
+            lines.append(
+                "- 跨市焦点: " + "；".join(portfolio_summary.cross_market_focus[:2])
+            )
+        publishable_debates = [
+            item for item in debate_results if _debate_is_publishable(item)
+        ]
+        if publishable_debates:
+            active_role_summary = (
+                "；".join(
+                    f"{format_symbol_name(item.symbol, item.name)}: "
+                    f"{debate_active_role_summary(item, language='zh-CN', max_labels=3) or '无完整角色记录'}"
+                    for item in publishable_debates[:3]
+                )
+                if len(publishable_debates) > 1
+                else debate_active_role_summary(
+                    publishable_debates[0],
+                    language="zh-CN",
+                )
+            )
+            if active_role_summary:
+                lines.append(f"- 讨论视角: {active_role_summary}")
+            role_selection_summary = (
+                "各候选按自身证据分别选角，详见候选讨论"
+                if len(publishable_debates) > 1
+                else str(publishable_debates[0].role_selection_summary or "").strip()
+            )
+            if role_selection_summary:
+                lines.append(f"- 选角理由: {role_selection_summary}")
+            role_selection_plan = (
+                "各候选分别记录角色分工，不用首个候选代表全部候选"
+                if len(publishable_debates) > 1
+                else str(publishable_debates[0].role_selection_plan or "").strip()
+            )
+            if role_selection_plan:
+                lines.append(f"- 角色分工: {role_selection_plan}")
+        if portfolio_summary.debate_focus:
+            lines.append("- 讨论焦点: " + "；".join(portfolio_summary.debate_focus[:2]))
+        if portfolio_summary.debate_risk_gates:
+            lines.append(
+                "- 讨论卡点: " + "；".join(portfolio_summary.debate_risk_gates[:2])
+            )
+        if portfolio_summary.debate_next_triggers:
+            lines.append(
+                "- 讨论触发: " + "；".join(portfolio_summary.debate_next_triggers[:2])
+            )
+        if portfolio_summary.debate_priority_queue:
+            lines.append(
+                "- 讨论顺序: " + "；".join(portfolio_summary.debate_priority_queue[:2])
+            )
+        for note in goal_switch_visibility_notes(limit=2):
+            lines.append(f"- 运行说明: {note}")
         if portfolio_summary.watch_reviews:
             lines.append("- 后续关注:")
             for item in portfolio_summary.watch_reviews[:2]:
@@ -660,6 +1414,8 @@ class BriefingGenerator:
             lines.append(
                 f"- 策略偏向: {portfolio_summary.strategy_mix_name} | {portfolio_summary.strategy_mix_description}"
             )
+        for runtime_line in _runtime_market_context_lines(market_context_lines)[:1]:
+            lines.append(f"- {runtime_line}")
         if portfolio_summary.strategy_focus:
             lines.append(
                 "- 更偏好这些方向: " + "、".join(portfolio_summary.strategy_focus[:4])
@@ -686,15 +1442,28 @@ class BriefingGenerator:
         if portfolio_summary.allocation_note:
             lines.append(f"- 跟踪约束: {portfolio_summary.allocation_note}")
         if debate_results:
-            lines.append("- 不同看法:")
+            lines.append("- 委员会结论:")
             for result in debate_results[:2]:
                 display = format_symbol_name(result.symbol, result.name)
+                conclusion_view = build_debate_conclusion_view(result)
+                if (
+                    conclusion_view.quality_audit is not None
+                    and not conclusion_view.quality_audit.passed
+                ):
+                    lines.append(f"  - {display}: {conclusion_view.headline}")
+                    continue
                 consensus = (
                     result.final_consensus or result.adjustment_reason or "暂无总结"
                 )
+                if result.realtime_blocked:
+                    lines.append(
+                        "  - "
+                        f"{display}: 阻塞观察 / {result.runtime_blocker or '实时数据未通过校验'}"
+                    )
+                    continue
                 lines.append(
                     "  - "
-                    f"{display}: {result.recommended_adjustment.upper()} / "
+                    f"{display}: {_debate_adjustment_label(result.recommended_adjustment)} / "
                     f"分歧 {result.disagreement_score:.0%} / {consensus}"
                 )
 
@@ -796,12 +1565,16 @@ class BriefingGenerator:
         label = str(source_status.get("health_label", "") or "unknown")
         message = str(source_status.get("health_message", "") or "暂无说明")
         fallback_used = bool(source_status.get("fallback_used", False))
+        data_latest = str(source_status.get("data_latest_trade_date", "") or "")
+        data_lag = str(source_status.get("data_lag_days", "") or "")
         route = actual or requested or "unknown"
         if requested and actual and requested != actual:
             route = format_source_route(requested, actual)
         lines = [
             f"- 数据来源: **{route}**",
             f"- 数据完整度: {describe_source_layers(freshness, coverage)}",
+            f"- 数据时效: 最新交易日 {data_latest or '未记录'}"
+            + (f" / 延迟 {data_lag} 天" if data_lag else ""),
             f"- 数据状态: **{describe_source_health(label, message)}**",
             f"- 是否启用备用源: {'是' if fallback_used else '否'}",
         ]
@@ -827,6 +1600,25 @@ class BriefingGenerator:
             f"- 仅写进研究记录: **{research_summary.report_only_family_count}**",
             f"- 需满足条件后启用: **{research_summary.gated_family_count}**",
         ]
+        if research_summary.repo_intake_total:
+            lines.append(
+                "- 开源扫描池: "
+                f"共 {research_summary.repo_intake_total} 项 / "
+                f"底座候选 {research_summary.repo_substrate_candidate_count} / "
+                f"执行红线 {research_summary.repo_reject_boundary_count} / "
+                f"仅记录 {research_summary.repo_report_only_count}"
+            )
+        if research_summary.repo_lane_summaries:
+            lanes = "、".join(
+                f"{item.lane} {item.count}"
+                for item in research_summary.repo_lane_summaries[:4]
+            )
+            lines.append(f"- 扫描分类: {lanes}")
+        if research_summary.repo_backlog:
+            item = research_summary.repo_backlog[0]
+            lines.append(
+                f"- 开源接入队列: {item.repo} [{item.priority}/{item.lane}] -> {item.landing}"
+            )
         top_pipelines = list(research_summary.pipeline_summaries[:3])
         if top_pipelines:
             for item in top_pipelines:
@@ -843,7 +1635,7 @@ class BriefingGenerator:
         if research_summary.next_actions:
             next_item = research_summary.next_actions[0]
             lines.append(
-                f"- 下一接入重点: {next_item.kind}/{next_item.item_id} [{next_item.priority}] - {next_item.blocker or '还缺前置条件'}"
+                f"- 门控候选主题: {next_item.kind}/{next_item.item_id} [{next_item.priority}] - {next_item.blocker or '还缺前置条件'}"
             )
         prereq_item = next(
             (item for item in research_summary.prereq_items if item.status != "ready"),
@@ -857,7 +1649,11 @@ class BriefingGenerator:
         lines.append("- 原则: 研究内容只做候选和解释，不直接改写系统评分。")
         return BriefingSection(title="研究吸收", content=_section_text(lines))
 
-    def _build_evidence_section(self, picks: list[PickResult]) -> BriefingSection:
+    def _build_evidence_section(
+        self,
+        picks: list[PickResult],
+        frames: dict[str, pd.DataFrame] | None = None,
+    ) -> BriefingSection:
         lines: list[str] = []
         if not picks:
             lines.append("今天无候选标的。")
@@ -885,6 +1681,23 @@ class BriefingGenerator:
             lines.append(headline)
             if pick.strategies:
                 lines.append(f"- 用了这些方法: {', '.join(pick.strategies)}")
+            cross_market = format_pick_market_context_summary(pick)
+            if cross_market:
+                lines.append(f"- 跨市场线索: {cross_market}")
+            cross_market_chain = format_pick_market_context_chain_summary(pick)
+            if cross_market_chain:
+                lines.append(f"- 传导链条: {cross_market_chain}")
+            news_line = _format_pick_news_catalyst_line(pick)
+            if news_line:
+                lines.append(f"- 消息判断: {news_line}")
+            price_path = _format_price_path_context(
+                (frames or {}).get(pick.symbol, pd.DataFrame())
+            )
+            if price_path:
+                lines.append(f"- 量价路径: {price_path}")
+            context_lines = _format_decision_context_lines(pick)
+            if context_lines:
+                lines.append(f"- 上下文卡: {'；'.join(context_lines[:4])}")
             for reason in pick.reasons:
                 lines.append(f"- {reason}")
             if blocker:

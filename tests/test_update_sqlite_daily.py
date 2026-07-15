@@ -22,6 +22,7 @@ def test_update_sqlite_daily_cli_exposes_historical_backfill_flags() -> None:
     assert "fill_history_gaps=args.fill_history_gaps" in text
     assert "force_from_start=args.force_from_start" in text
     assert "price_mode=args.price_mode" in text
+    assert 'default="raw"' in text
 
 
 def test_update_sqlite_daily_requires_start_date_when_force_enabled(
@@ -112,7 +113,9 @@ def test_update_sqlite_daily_creates_raw_database_schema_when_missing(
     assert {"stocks", "daily_qfq"}.issubset(tables)
 
 
-def test_update_sqlite_daily_counts_target_day_coverage(monkeypatch, tmp_path: Path) -> None:
+def test_update_sqlite_daily_counts_target_day_coverage(
+    monkeypatch, tmp_path: Path
+) -> None:
     class FakeBaostock:
         def login(self):
             return type("Login", (), {"error_code": "0", "error_msg": ""})()
@@ -160,6 +163,189 @@ def test_update_sqlite_daily_counts_target_day_coverage(monkeypatch, tmp_path: P
     assert summary.updated_rows == 1
     assert summary.target_day_symbol_count == 1
     assert summary.total_symbols == 2
+    assert summary.raw_max_trade_date == date(2026, 6, 18)
+    assert summary.coverage_error is None
+
+
+def test_update_sqlite_daily_fails_closed_when_target_is_beyond_raw_cutoff(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    class FakeBaostock:
+        def login(self):
+            return type("Login", (), {"error_code": "0", "error_msg": ""})()
+
+        def logout(self) -> None:
+            return None
+
+    db = tmp_path / "astocks_raw.db"
+    monkeypatch.setattr(update_sqlite_daily, "_load_baostock", FakeBaostock)
+    monkeypatch.setattr(
+        update_sqlite_daily,
+        "_sync_stock_list_compat",
+        lambda conn, _bs, preserve_existing=True: ["600000.SH"],
+    )
+    monkeypatch.setattr(
+        update_sqlite_daily,
+        "_query_history_rows",
+        lambda **_kwargs: ("0", []),
+    )
+
+    summary = update_sqlite_daily.update_sqlite_daily(
+        db,
+        target_day=date(2026, 6, 18),
+        sleep_seconds=0.0,
+        limit=0,
+        price_mode="raw",
+    )
+
+    assert summary.target_day_symbol_count == 0
+    assert summary.raw_max_trade_date is None
+    assert summary.coverage_error == (
+        "raw sqlite has no valid trade_date after update; "
+        "target=2026-06-18 coverage=0/1"
+    )
+
+
+def test_target_coverage_error_reports_stale_raw_cutoff() -> None:
+    detail = update_sqlite_daily._target_coverage_error(
+        target_day=date(2026, 6, 18),
+        target_day_symbol_count=0,
+        total_symbols=10,
+        raw_max_trade_date=date(2026, 6, 17),
+    )
+
+    assert detail == (
+        "target=2026-06-18 exceeds raw MAX(trade_date)=2026-06-17; coverage=0/10"
+    )
+
+
+def test_update_sqlite_daily_cli_returns_nonzero_for_coverage_error(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    db = tmp_path / "astocks_raw.db"
+    db.touch()
+    monkeypatch.setattr(
+        update_sqlite_daily,
+        "_target_trade_day",
+        lambda _raw: date(2026, 6, 18),
+    )
+    monkeypatch.setattr(
+        update_sqlite_daily,
+        "update_sqlite_daily",
+        lambda *args, **kwargs: update_sqlite_daily.UpdateSummary(
+            updated_rows=0,
+            skipped_symbols=1,
+            failed_symbols=0,
+            target_day=date(2026, 6, 18),
+            price_mode="raw",
+            target_day_symbol_count=0,
+            total_symbols=1,
+            coverage_error="target coverage unavailable",
+        ),
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["update_sqlite_daily.py", str(db), "--price-mode", "raw"],
+    )
+
+    assert update_sqlite_daily.main() == 1
+
+
+def test_update_sqlite_daily_retries_broken_pipe_and_relogs(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    class FakeBaostock:
+        def __init__(self) -> None:
+            self.login_calls = 0
+            self.logout_calls = 0
+
+        def login(self):
+            self.login_calls += 1
+            return type("Login", (), {"error_code": "0", "error_msg": ""})()
+
+        def logout(self) -> None:
+            self.logout_calls += 1
+
+    fake_bs = FakeBaostock()
+    db = tmp_path / "astocks_raw.db"
+    monkeypatch.setattr(update_sqlite_daily, "_load_baostock", lambda: fake_bs)
+    monkeypatch.setattr(
+        update_sqlite_daily,
+        "_sync_stock_list_compat",
+        lambda conn, _bs, preserve_existing=True: ["600000.SH"],
+    )
+    monkeypatch.setattr(update_sqlite_daily.time, "sleep", lambda _seconds: None)
+    calls = {"count": 0}
+
+    def fake_query(**_kwargs):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise OSError(32, "Broken pipe")
+        return "0", [["2026-06-18", "1", "2", "0.5", "1.5", "100", "200"]]
+
+    monkeypatch.setattr(update_sqlite_daily, "_query_history_rows", fake_query)
+
+    summary = update_sqlite_daily.update_sqlite_daily(
+        db,
+        target_day=date(2026, 6, 18),
+        sleep_seconds=0.0,
+        limit=0,
+        price_mode="raw",
+    )
+
+    assert summary.updated_rows == 1
+    assert summary.failed_symbols == 0
+    assert fake_bs.login_calls == 2
+    assert fake_bs.logout_calls == 2
+
+
+def test_update_sqlite_daily_marks_symbol_failed_after_retry_exhausted(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    class FakeBaostock:
+        def __init__(self) -> None:
+            self.login_calls = 0
+            self.logout_calls = 0
+
+        def login(self):
+            self.login_calls += 1
+            return type("Login", (), {"error_code": "0", "error_msg": ""})()
+
+        def logout(self) -> None:
+            self.logout_calls += 1
+
+    fake_bs = FakeBaostock()
+    db = tmp_path / "astocks_raw.db"
+    monkeypatch.setattr(update_sqlite_daily, "_load_baostock", lambda: fake_bs)
+    monkeypatch.setattr(
+        update_sqlite_daily,
+        "_sync_stock_list_compat",
+        lambda conn, _bs, preserve_existing=True: ["600000.SH"],
+    )
+    monkeypatch.setattr(update_sqlite_daily.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(
+        update_sqlite_daily,
+        "_query_history_rows",
+        lambda **_kwargs: (_ for _ in ()).throw(OSError(32, "Broken pipe")),
+    )
+
+    summary = update_sqlite_daily.update_sqlite_daily(
+        db,
+        target_day=date(2026, 6, 18),
+        sleep_seconds=0.0,
+        limit=0,
+        price_mode="raw",
+    )
+
+    assert summary.updated_rows == 0
+    assert summary.failed_symbols == 1
+    assert fake_bs.login_calls == 3
+    assert fake_bs.logout_calls == 3
 
 
 def test_sync_stock_list_preserves_existing_historical_symbols_by_default(
@@ -202,7 +388,9 @@ def test_sync_stock_list_preserves_existing_historical_symbols_by_default(
             conn, FakeBaostock(), preserve_existing=True
         )
         stocks = conn.execute("SELECT ts_code FROM stocks ORDER BY ts_code").fetchall()
-        rows = conn.execute("SELECT COUNT(*) FROM daily_qfq WHERE ts_code='000001.SZ'").fetchone()[0]
+        rows = conn.execute(
+            "SELECT COUNT(*) FROM daily_qfq WHERE ts_code='000001.SZ'"
+        ).fetchone()[0]
 
     assert symbols == ["000001.SZ", "600000.SH"]
     assert stocks == [("000001.SZ",), ("600000.SH",)]
@@ -249,7 +437,9 @@ def test_sync_stock_list_can_drop_missing_symbols_when_explicitly_disabled(
             conn, FakeBaostock(), preserve_existing=False
         )
         stocks = conn.execute("SELECT ts_code FROM stocks ORDER BY ts_code").fetchall()
-        rows = conn.execute("SELECT COUNT(*) FROM daily_qfq WHERE ts_code='000001.SZ'").fetchone()[0]
+        rows = conn.execute(
+            "SELECT COUNT(*) FROM daily_qfq WHERE ts_code='000001.SZ'"
+        ).fetchone()[0]
 
     assert symbols == ["600000.SH"]
     assert stocks == [("600000.SH",)]

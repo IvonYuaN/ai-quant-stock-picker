@@ -230,7 +230,7 @@ class TestCLIIntegration:
 
         assert result == 1
 
-    def test_circuit_breaker_exits_code_2(self, tmp_path):
+    def test_csv_run_is_rejected_before_circuit_breaker(self, tmp_path):
         from aqsp.cli import main
         from aqsp.risk.circuit_breaker import CircuitBreakerConfig
 
@@ -266,7 +266,9 @@ class TestCLIIntegration:
                         "--skip-validation",
                     ]
                 )
-            assert result == 2
+            # CSV is historical-only and must fail the live_short boundary
+            # before any circuit-breaker state is consulted.
+            assert result == 1
 
 
 def test_circuit_breaker_config_from_thresholds() -> None:

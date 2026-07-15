@@ -107,12 +107,14 @@ def test_builtin_walkforward_engine_runs_existing_tester(monkeypatch) -> None:
             test_days=30,
             purge_days=5,
             horizon_days=3,
+            benchmark_symbol="000300",
         ),
     )
 
     assert result == "ok"
     assert captured["train_period_days"] == 120
     assert captured["test_period_days"] == 30
+    assert captured["benchmark_symbol"] == "000300"
 
 
 def test_akquant_walkforward_engine_runs_native_bridge(monkeypatch) -> None:

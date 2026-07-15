@@ -92,7 +92,7 @@
 - CSV 输出：`reports/latest.csv`。
 - 每日简报：`reports/briefing.md`。
 - 收盘复盘：`reports/closing_review.md`。
-- Dashboard：`dist/dashboard/index.html` 和 `dist/dashboard/aqsp.db`。
+- 当前 Dashboard：Streamlit `src/aqsp/web/dashboard.py`（本地 `8501`，生产由 Nginx 反代）。`dist/dashboard/index.html` 和 `aqsp.db` 仅是离线归档产物。
 - 通知：
   - Server 酱：`SERVERCHAN_SENDKEY`。
   - Telegram / 企业微信 / 飞书 / 通用 Webhook。
@@ -138,7 +138,8 @@
 
 主要脚本：
 
-- `scripts/server_sync_and_run.sh`：服务器自动 `git pull --ff-only` 后跑指定 runner。
+- `scripts/server_sync_and_run.sh`：服务器在 clean checkout 时执行 fast-forward 同步；检测到受控 runtime overlay 时只运行任务，不覆盖服务器改动。
+- `scripts/sync_runtime_files_to_server.py`：只同步显式文件批次，先备份、校验 SHA256，失败只回滚本批文件，并维护 overlay 来源元数据。
 - `scripts/daily_pipeline.sh`：完整收盘跑批。
 - `scripts/intraday_refresh.sh`：盘中轻量刷新。
 - `scripts/install_server_cron.sh`：安装/去重 cron。
@@ -188,11 +189,28 @@ AGNES_MODEL=agnes-2.0-flash
 GLM_MODEL=glm-4.7-flash
 ```
 
-服务器验证命令：
+服务器验证命令（不覆盖服务器改动）：
 
 ```bash
-cd /opt/aqsp && git pull --ff-only origin main && bash /opt/aqsp/scripts/server_sync_and_run.sh; code=$?; echo "PIPELINE_EXIT_CODE=$code"
+cd /opt/aqsp
+git status --short --branch --untracked-files=all
+.venv/bin/python scripts/sync_runtime_files_to_server.py --verify-overlay
+bash scripts/server_sync_and_run.sh; code=$?; echo "PIPELINE_EXIT_CODE=$code"
 ```
+
+### 1.8 服务器版本收敛责任
+
+`origin/main` 是提交代码的唯一版本源；服务器 `/opt/aqsp/.state/runtime-sync-overlay.json` 只是受控的显式文件 overlay，不是第二个开发分支。任何 overlay 都必须能回答四个问题：来自哪个 `commit`、同步时 worktree 是否 dirty、对应哪个 `sync_id`、失败时恢复哪个 `backup_path`。
+
+分批收敛顺序：
+
+1. **冻结与盘点**：只读记录本地和服务器 `HEAD`、`git status`、overlay 文件数/更新时间/哈希漂移；不执行 `reset`、`checkout`、`clean`，不删除服务器数据。
+2. **运行时产物隔离**：`.env`、`.venv`、数据库、ledger、reports、logs、`.state` 和 `runtime-backups` 不进入代码同步批次；服务器既有 dirty 文件逐项归类，未知项先阻断。
+3. **小批同步**：每批只传一个可回滚的功能闭包，使用 `scripts/sync_runtime_files_to_server.py` 的显式文件参数；不要把当前本地 worktree 全量打包上传。
+4. **验证与放行**：先看备份路径和 SHA256，再运行 `--verify-overlay`；验证未通过时保持任务阻断，不把“runner 能启动”当作版本收敛完成。
+5. **回滚**：以该批次 manifest 的 `backup_path` 和 `managed_files` 为边界恢复，恢复后再次做 overlay 校验；不要用全仓库 `git reset --hard` 或 `git clean` 代替回滚。
+
+2026-07-13 审计基线：服务器 `HEAD` 与 `origin/main` 均为 `eb0166b`，overlay 管理 101 个文件且远端文件哈希与 manifest 一致；但旧 manifest 只有 `managed_files`、`file_hashes`、`updated_at`，缺少来源 commit、同步 ID 和备份指针。首次收敛批次必须重写该 manifest；在此之前，overlay 只能证明“文件相同”，不能证明“来源单一”。
 
 自检命令：
 
@@ -303,7 +321,10 @@ python3 -m pytest -q
 ### 第二步：服务器验证
 
 ```bash
-cd /opt/aqsp && git pull --ff-only origin main && bash /opt/aqsp/scripts/server_sync_and_run.sh; code=$?; echo "PIPELINE_EXIT_CODE=$code"
+cd /opt/aqsp
+git status --short --branch --untracked-files=all
+.venv/bin/python scripts/sync_runtime_files_to_server.py --verify-overlay
+bash scripts/server_sync_and_run.sh; code=$?; echo "PIPELINE_EXIT_CODE=$code"
 ```
 
 必须检查：

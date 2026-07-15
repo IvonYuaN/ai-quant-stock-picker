@@ -5,6 +5,7 @@ from datetime import date
 from aqsp.walkforward_gate import (
     MIN_PRODUCTION_GATE_COVERAGE_RATIO,
     MIN_PRODUCTION_GATE_SYMBOLS,
+    build_walkforward_gate_evidence,
     build_walkforward_gate_payload,
     validate_walkforward_gate_payload,
     validate_walkforward_market_coverage,
@@ -33,6 +34,76 @@ def test_walkforward_gate_validates_pass_when_payload_is_strict_and_clean() -> N
 
     assert result.ok is True
     assert result.blockers == ()
+
+
+def test_walkforward_gate_evidence_preserves_real_dsr_and_pbo_failures() -> None:
+    evidence = build_walkforward_gate_evidence(
+        build_walkforward_gate_payload(
+            dsr=-1.2794,
+            pbo=1.0,
+            run_date="2026-06-30",
+            start="2023-06-30",
+            end="2026-06-29",
+            n_periods=19,
+        ),
+        today=date(2026, 7, 13),
+    )
+
+    assert evidence.ok is False
+    assert evidence.status == "fail"
+    assert evidence.dsr == -1.2794
+    assert evidence.pbo == 1.0
+    assert evidence.n_periods == 19
+    assert any(item.startswith("DSR=") for item in evidence.reasons)
+    assert any(item.startswith("PBO=") for item in evidence.reasons)
+
+
+def test_walkforward_gate_rejects_threshold_version_mismatch_for_proposal() -> None:
+    result = validate_walkforward_gate_payload(
+        _valid_payload(thresholds_version="old"),
+        today=date(2026, 6, 14),
+        expected_thresholds_version="current",
+    )
+
+    assert result.ok is False
+    assert result.thresholds_version == "old"
+    assert any("thresholds_version mismatch" in item for item in result.blockers)
+
+
+def test_walkforward_gate_requires_assumption_audit_for_proposal_evidence() -> None:
+    evidence = build_walkforward_gate_evidence(
+        _valid_payload(thresholds_version="current"),
+        today=date(2026, 6, 14),
+        expected_thresholds_version="current",
+        require_assumption_audit=True,
+    )
+
+    assert evidence.ok is False
+    assert "assumption_audit missing/invalid" in evidence.reasons
+
+
+def test_walkforward_gate_accepts_matching_version_and_clean_assumptions() -> None:
+    evidence = build_walkforward_gate_evidence(
+        _valid_payload(
+            thresholds_version="current",
+            backtest_assumptions={
+                "uses_raw_prices": True,
+                "uses_point_in_time_data": True,
+                "train_test_separated": True,
+                "has_purge_window": True,
+                "includes_transaction_costs": True,
+                "includes_slippage": True,
+                "excludes_not_executable": True,
+                "cost_model": "fee+slippage from thresholds",
+            },
+        ),
+        today=date(2026, 6, 14),
+        expected_thresholds_version="current",
+        require_assumption_audit=True,
+    )
+
+    assert evidence.ok is True
+    assert evidence.thresholds_version == "current"
 
 
 def test_walkforward_gate_rejects_string_booleans_and_string_metrics() -> None:
@@ -171,3 +242,50 @@ def test_walkforward_gate_allows_recent_window_beyond_heldout_cutoff() -> None:
     )
 
     assert result.ok is True
+
+
+def test_walkforward_gate_blocks_when_assumption_audit_fails() -> None:
+    result = validate_walkforward_gate_payload(
+        _valid_payload(
+            backtest_assumptions={
+                "uses_raw_prices": False,
+                "uses_point_in_time_data": True,
+                "train_test_separated": True,
+                "has_purge_window": True,
+                "includes_transaction_costs": True,
+                "includes_slippage": False,
+                "excludes_not_executable": True,
+                "cost_model": "",
+            }
+        ),
+        today=date(2026, 6, 14),
+    )
+
+    assert result.ok is False
+    assert result.assumption_audit_ok is False
+    assert any("uses_raw_prices" in item for item in result.assumption_audit_blockers)
+    assert any(
+        "assumption_audit: includes_slippage" in item for item in result.blockers
+    )
+
+
+def test_walkforward_gate_accepts_clean_assumption_audit() -> None:
+    result = validate_walkforward_gate_payload(
+        _valid_payload(
+            backtest_assumptions={
+                "uses_raw_prices": True,
+                "uses_point_in_time_data": True,
+                "train_test_separated": True,
+                "has_purge_window": True,
+                "includes_transaction_costs": True,
+                "includes_slippage": True,
+                "excludes_not_executable": True,
+                "cost_model": "fee+slippage from thresholds",
+            }
+        ),
+        today=date(2026, 6, 14),
+    )
+
+    assert result.ok is True
+    assert result.assumption_audit_ok is True
+    assert result.assumption_audit_blockers == ()

@@ -5,11 +5,15 @@ import logging
 
 import pandas as pd
 
+from aqsp.core.errors import FreshnessError
+from aqsp.data.source_readiness import source_role_for_workload
 from aqsp.data.validation import DataValidator
 from aqsp.data.filters import TradabilityFilter
+from aqsp.freshness import assert_live_short_fresh_data
 from aqsp.indicators import enrich_indicators
 from aqsp.internet_strategies import evaluate_strategy_signals
 from aqsp.models import PickResult, ScreeningConfig
+from aqsp.regime.strategy_mixer import canonicalize_regime
 from aqsp.strategies.thresholds import (
     InternetStrategyThresholds,
     RegimeStrategyWeights,
@@ -19,6 +23,8 @@ from aqsp.strategies.thresholds import (
 )
 
 _logger = logging.getLogger(__name__)
+
+_HISTORICAL_WORKLOADS = frozenset({"walkforward", "pit"})
 
 _INTERNET_STRATEGY_REGIME_BUCKETS: dict[str, str] = {
     "rps_momentum": "momentum",
@@ -37,7 +43,17 @@ def strategy_weights_for_regime(
     """Map regime strategy buckets onto concrete screening strategy ids."""
     if not regime:
         return {}
-    regime_weights = thresholds.regime.strategy_weights.get(regime)
+    canonical_regime = canonicalize_regime(regime)
+    regime_weights = thresholds.regime.strategy_weights.get(canonical_regime)
+    if regime_weights is None:
+        legacy_regime = {
+            "aggressive_bull": "stable_bull",
+            "volatile_bull": "volatile_bull",
+            "defensive_bear": "volatile_bear",
+            "rotation_sideways": "stable_sideways",
+        }.get(canonical_regime)
+        if legacy_regime:
+            regime_weights = thresholds.regime.strategy_weights.get(legacy_regime)
     if regime_weights is None:
         return {}
     enabled_buckets = _enabled_strategy_buckets(thresholds)
@@ -94,6 +110,10 @@ def screen_universe(
         if frame.empty:
             _logger.warning("跳过空数据: %s", symbol)
             continue
+        guard_reason = _strategy_frame_guard_reason(symbol, frame)
+        if guard_reason:
+            _logger.warning("跳过未通过策略数据门禁 %s: %s", symbol, guard_reason)
+            continue
         validation = validator.validate_ohlc(frame, symbol=symbol)
         nonfatal_errors = [
             error for error in validation.errors if not error.startswith("日涨跌幅超限")
@@ -148,6 +168,8 @@ def score_symbol(
     scoring: ScoringThresholds,
     internet_strategy: InternetStrategyThresholds | Thresholds | None = None,
 ) -> PickResult | None:
+    if _strategy_frame_guard_reason(symbol, frame):
+        return None
     df = enrich_indicators(frame)
     if len(df) < config.min_bars:
         return None
@@ -334,6 +356,29 @@ def score_symbol(
     )
 
 
+def _strategy_frame_guard_reason(symbol: str, frame: pd.DataFrame) -> str:
+    """Reject unprovenance data before it can become a strategy pick."""
+    source_name = _text(frame.attrs.get("source_name"))
+    if not source_name:
+        return "缺少 source_name provenance"
+
+    workload = _text(frame.attrs.get("workload"))
+    if workload in _HISTORICAL_WORKLOADS:
+        return ""
+
+    source_role = source_role_for_workload(source_name, "live_short")
+    if workload and workload != "live_short":
+        return f"未知 workload={workload}"
+    if source_role != "realtime":
+        return f"来源 {source_name} 未验证为实时来源"
+
+    try:
+        assert_live_short_fresh_data({symbol: frame})
+    except FreshnessError as exc:
+        return f"实时数据新鲜度校验失败: {exc}"
+    return ""
+
+
 def _compute_confidence(
     strategy_count: int,
     score: float,
@@ -404,6 +449,21 @@ def _position(
     return "watch"
 
 
+def position_for_score(
+    score: float,
+    risks: list[str],
+    scoring: ScoringThresholds,
+    *,
+    max_position_pct: float = 1.0,
+) -> str:
+    return _position(
+        score,
+        risks,
+        scoring,
+        max_position_pct=max_position_pct,
+    )
+
+
 def _position_range(
     *,
     lower_pct: float,
@@ -423,6 +483,10 @@ def _rating(score: float, scoring: ScoringThresholds) -> str:
     if score >= scoring.rating_watch:
         return "watch"
     return "avoid"
+
+
+def rating_for_score(score: float, scoring: ScoringThresholds) -> str:
+    return _rating(score, scoring)
 
 
 def _num(value: object, default: float = 0.0) -> float:

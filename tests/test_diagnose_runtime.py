@@ -15,6 +15,8 @@ from aqsp.data.tdx_vipdoc_source import TDX_DAY_RECORD
 from aqsp.core.time import now_shanghai
 from scripts.diagnose_runtime import (
     PROJECT_ROOT,
+    _coldstart_runtime_summary,
+    _gate_fingerprint_kind,
     _large_return_rows,
     _latest_run_source_runtime,
     _load_dotenv_defaults,
@@ -80,7 +82,10 @@ def test_runtime_paths_follow_daily_run_environment(tmp_path, monkeypatch) -> No
 def test_default_runtime_path_is_project_relative() -> None:
     from scripts.diagnose_runtime import _default_runtime_path
 
-    assert _default_runtime_path("data/predictions.jsonl") == PROJECT_ROOT / "data/predictions.jsonl"
+    assert (
+        _default_runtime_path("data/predictions.jsonl")
+        == PROJECT_ROOT / "data/predictions.jsonl"
+    )
 
 
 def test_load_dotenv_defaults_does_not_override_explicit_env(
@@ -123,6 +128,40 @@ def test_latest_run_source_runtime_derives_notify_level() -> None:
     assert result["notify_level"] == "warning"
     assert result["health_label"] == "fallback"
     assert result["fallback_used"] is True
+    assert result["actual_live_short_fit"] == "primary"
+    assert result["actual_live_short_supported"] is True
+    assert (
+        result["live_short_boundary"] == "ok actual_source=eastmoney live_short=primary"
+    )
+
+
+def test_latest_run_source_runtime_flags_history_source_for_live_short() -> None:
+    rows = [
+        {
+            "signal_date": "2026-05-20",
+            "run_requested_source": "auto",
+            "run_actual_source": "sqlite_db",
+            "run_source_health_label": "healthy",
+            "run_source_health_message": "actual historical source",
+        }
+    ]
+
+    result = _latest_run_source_runtime(rows)
+
+    assert result["actual_live_short_fit"] == "avoid"
+    assert result["actual_live_short_supported"] is False
+    assert (
+        result["live_short_boundary"]
+        == "violation actual_source=sqlite_db live_short=avoid"
+    )
+
+
+def test_gate_fingerprint_kind_classifies_gate_and_circuit_breaker() -> None:
+    assert _gate_fingerprint_kind("dsr|pbo") == "gate_reasons"
+    assert _gate_fingerprint_kind("组合保护冷却期中，至 2026-07-12 解除") == (
+        "circuit_breaker"
+    )
+    assert _gate_fingerprint_kind("custom human reason") == "other"
 
 
 def test_scheduler_runtime_lines_are_platform_specific() -> None:
@@ -223,6 +262,11 @@ def test_diagnose_runtime_main_reports_research_runtime(
 
     assert exit_code == 0
     assert "## Research Runtime" in output
+    assert "## Market Context Runtime" in output
+    assert "- market_context_global_enabled: True" in output
+    assert "- cross_market_rule_count:" in output
+    assert "commercial_space,physical_ai,geopolitics" in output
+    assert "- cross_market_boundary: deterministic_context_priority_only" in output
     assert "- total_findings: 113" in output
     assert "- findings_display: 113 条" in output
     assert "- report_only_families: 1" in output
@@ -234,12 +278,91 @@ def test_diagnose_runtime_main_reports_research_runtime(
     )
 
 
+def test_diagnose_runtime_main_reports_debate_runtime_roles(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    from scripts import diagnose_runtime
+
+    ledger = tmp_path / "predictions.jsonl"
+    paper = tmp_path / "paper.jsonl"
+    ledger.write_text("", encoding="utf-8")
+    paper.write_text("", encoding="utf-8")
+    monkeypatch.setenv("AQSP_LEDGER", str(ledger))
+    monkeypatch.setenv("AQSP_PAPER_LEDGER", str(paper))
+    monkeypatch.delenv("AQSP_DEBATE_ROLES", raising=False)
+    monkeypatch.setenv("AQSP_DEBATE_FOCUS_ROLES", "cross_market,risk_control")
+    monkeypatch.setenv("AQSP_DEBATE_DISABLED_ROLES", "northbound")
+    monkeypatch.setenv("AQSP_DEBATE_ENABLE_LLM", "true")
+    monkeypatch.setenv("AQSP_DEBATE_MAX_ROUNDS", "3")
+    monkeypatch.setenv("AQSP_DEBATE_MAX_CANDIDATES", "4")
+    monkeypatch.setenv("AQSP_DEBATE_LANGUAGE", "zh-CN")
+    monkeypatch.setenv("AQSP_DEBATE_ROLE_LLM", "risk_control:false")
+    monkeypatch.setenv("AQSP_RUN_TASK_ID", "intraday")
+    monkeypatch.setattr("scripts.diagnose_runtime.load_research_summary", lambda: None)
+
+    exit_code = diagnose_runtime.main()
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "## Debate Runtime" in output
+    assert "- debate_task_id: intraday" in output
+    assert "- debate_enable_llm: True" in output
+    assert "- debate_max_rounds: 3" in output
+    assert "- debate_max_candidates: 4" in output
+    assert "- debate_language: zh-CN" in output
+    assert "- debate_explicit_roles: False" in output
+    assert "- debate_context_roles_locked: False" in output
+    assert "- debate_focus_roles: cross_market,risk_control" in output
+    assert "- debate_disabled_roles: northbound" in output
+    assert (
+        "- debate_effective_roles: cross_market,risk_control,bull,bear,sector_leader,policy_sensitive,margin_trading,retail_mood"
+        in output
+    )
+    assert "- debate_role_count: 8" in output
+    assert "- debate_discussion_capacity: roles=8 rounds=3 candidates<=4" in output
+    assert "- debate_llm_role_count: 7" in output
+    assert (
+        "- debate_llm_roles: cross_market,bull,bear,sector_leader,policy_sensitive,margin_trading,retail_mood"
+        in output
+    )
+    assert "- debate_role_coverage: partial_disabled" in output
+    assert "- debate_missing_roles: northbound" in output
+
+
+def test_diagnose_runtime_main_flags_partial_explicit_debate_roles(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    from scripts import diagnose_runtime
+
+    ledger = tmp_path / "predictions.jsonl"
+    paper = tmp_path / "paper.jsonl"
+    ledger.write_text("", encoding="utf-8")
+    paper.write_text("", encoding="utf-8")
+    monkeypatch.setenv("AQSP_LEDGER", str(ledger))
+    monkeypatch.setenv("AQSP_PAPER_LEDGER", str(paper))
+    monkeypatch.setenv("AQSP_DEBATE_ROLES", "bull,risk_control,cross_market")
+    monkeypatch.setattr("scripts.diagnose_runtime.load_research_summary", lambda: None)
+
+    exit_code = diagnose_runtime.main()
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "- debate_explicit_roles: True" in output
+    assert "- debate_role_coverage: partial_explicit" in output
+    assert (
+        "- debate_missing_roles: bear,sector_leader,policy_sensitive,margin_trading,northbound,retail_mood"
+        in output
+    )
+
+
 def test_runtime_cadence_summary_counts_today_runs(tmp_path) -> None:
     today = now_shanghai().date().isoformat()
     daily_log = tmp_path / "logs" / "daily" / f"run-{today}.log"
+    coldstart_log = tmp_path / "logs" / "coldstart" / f"coldstart-{today}.log"
     news_log = tmp_path / "logs" / "news" / f"news-{today}.log"
     monitor_log = tmp_path / "logs" / "monitor" / f"monitor-{today}.log"
     daily_log.parent.mkdir(parents=True, exist_ok=True)
+    coldstart_log.parent.mkdir(parents=True, exist_ok=True)
     news_log.parent.mkdir(parents=True, exist_ok=True)
     monitor_log.parent.mkdir(parents=True, exist_ok=True)
     daily_log.write_text(
@@ -247,12 +370,44 @@ def test_runtime_cadence_summary_counts_today_runs(tmp_path) -> None:
         "=== aqsp run @ Mon Jun 29 18:10:00 CST 2026 ===\n",
         encoding="utf-8",
     )
+    coldstart_log.write_text("冷启动日跑开始\n冷启动日跑完成\n", encoding="utf-8")
     news_log.write_text("开始消息面雷达\n开始消息面雷达\n", encoding="utf-8")
     monitor_log.write_text("AQSP 服务器监控开始\n", encoding="utf-8")
 
     result = _runtime_cadence_summary(tmp_path)
 
-    assert result == {"daily_runs": 2, "news_runs": 2, "monitor_runs": 1}
+    assert result == {
+        "daily_runs": 2,
+        "coldstart_runs": 1,
+        "news_runs": 2,
+        "monitor_runs": 1,
+    }
+
+
+def test_coldstart_runtime_summary_reports_progress_and_circuit_blocker(
+    tmp_path,
+) -> None:
+    today = now_shanghai().date().isoformat()
+    coldstart_log = tmp_path / "logs" / "coldstart" / f"coldstart-{today}.log"
+    coldstart_log.parent.mkdir(parents=True, exist_ok=True)
+    coldstart_log.write_text(
+        "\n".join(
+            [
+                "[2026-07-07 12:26:45] 冷启动日跑开始",
+                "🛡️ 组合保护已触发，停止新增候选生成: 组合保护冷却期中，至 2026-07-12 解除",
+                "[2026-07-07 12:34:56] 冷启动筛选被组合保护正常阻塞；历史库已更新，本次不追加新增候选",
+                "冷启动: 34/30",
+                "[2026-07-07 12:34:57] 冷启动日跑完成",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    result = _coldstart_runtime_summary(tmp_path)
+
+    assert result["latest_status"] == "blocked_by_circuit_breaker"
+    assert result["latest_progress"] == "34/30"
+    assert result["latest_blocker"].endswith("本次不追加新增候选")
 
 
 def test_diagnose_runtime_main_labels_config_backed_research_queue(
@@ -314,7 +469,7 @@ def test_diagnose_runtime_main_reports_signal_and_notify_state(
         "\n".join(
             [
                 '{"signal_date":"2026-06-20","symbol":"600000","status":"pending","thresholds_version":"v1"}',
-                '{"signal_date":"2026-06-21","symbol":"__RUN__","status":"run_completed_no_picks"}',
+                '{"signal_date":"2026-06-21","symbol":"__RUN__","status":"run_completed_no_picks","run_requested_source":"auto","run_actual_source":"sqlite_db","run_source_health_label":"healthy","run_source_health_message":"actual historical source"}',
             ]
         )
         + "\n",
@@ -344,10 +499,10 @@ def test_diagnose_runtime_main_reports_signal_and_notify_state(
     monkeypatch.setenv("AQSP_LEDGER", str(ledger))
     monkeypatch.setenv("AQSP_PAPER_LEDGER", str(paper))
     monkeypatch.setenv("SERVERCHAN_SENDKEY", "test_key")
+    monkeypatch.setenv("AQSP_WALKFORWARD_PRODUCTION_STATUS", str(walkforward_status))
     monkeypatch.setenv(
-        "AQSP_WALKFORWARD_PRODUCTION_STATUS", str(walkforward_status)
+        "AQSP_WALKFORWARD_GATE_PATH", str(tmp_path / "missing_gate.json")
     )
-    monkeypatch.setenv("AQSP_WALKFORWARD_GATE_PATH", str(tmp_path / "missing_gate.json"))
     monkeypatch.setenv("AQSP_GATE_NOTIFY_STATE_PATH", str(gate_state))
     monkeypatch.setenv("AQSP_NOTIFY_STATE_PATH", str(notify_state))
     monkeypatch.setenv("AQSP_MONITOR_NOTIFY_STATE_PATH", str(monitor_state))
@@ -363,7 +518,10 @@ def test_diagnose_runtime_main_reports_signal_and_notify_state(
     assert "- signal_days: 2/30" in output
     assert "- simulated_signal_days: 0" in output
     assert "- paper_days: 1/30" in output
-    assert "- walkforward_production_status: timeout updated=2026-06-21T18:10:00+08:00" in output
+    assert (
+        "- walkforward_production_status: timeout updated=2026-06-21T18:10:00+08:00"
+        in output
+    )
     assert "- walkforward_production_child_exit: 124" in output
     assert "- configured_notify_channels: serverchan" in output
     assert "- gate_days: 1 latest=2026-06-21" in output
@@ -375,6 +533,12 @@ def test_diagnose_runtime_main_reports_signal_and_notify_state(
     assert "- gate_updated_at: -" in output
     assert "- notify_counts: sent=1 pending=0 failed=0" in output
     assert "- monitor_counts: sent=0 pending=1 failed=0" in output
+    assert "- source_route: auto -> sqlite_db" in output
+    assert (
+        "- live_short_boundary: violation actual_source=sqlite_db live_short=avoid"
+        in output
+    )
+    assert "- actual_source_live_short_fit: avoid" in output
 
 
 def test_diagnose_runtime_marks_legacy_gate_state_format(
@@ -448,6 +612,12 @@ def test_diagnose_runtime_warns_when_gate_state_missing_after_cold_start_target(
 
     assert exit_code == 0
     assert "- signal_days: 30/30" in output
+    assert "- coldstart_latest_status: completed" in output
+    assert "- coldstart_latest_progress: 30/30" in output
+    assert (
+        "- coldstart_latest_blocker: 冷启动样本门已达标；后续看 walk-forward 双门 gate 与组合保护状态，不再追加冷启动样本"
+        in output
+    )
     assert "- warning_gate_state_missing: signal_days=30/30" in output
     assert "- gate_expected_ok: False" in output
     assert "- configured_notify_enabled: False" in output
@@ -487,9 +657,7 @@ def test_diagnose_runtime_marks_timeout_when_child_pid_is_dead_but_parent_pid_al
 
     monkeypatch.setenv("AQSP_LEDGER", str(ledger))
     monkeypatch.setenv("AQSP_PAPER_LEDGER", str(paper))
-    monkeypatch.setenv(
-        "AQSP_WALKFORWARD_PRODUCTION_STATUS", str(walkforward_status)
-    )
+    monkeypatch.setenv("AQSP_WALKFORWARD_PRODUCTION_STATUS", str(walkforward_status))
     monkeypatch.setattr("scripts.diagnose_runtime.os.kill", fake_kill)
     monkeypatch.setattr("scripts.diagnose_runtime.PROJECT_ROOT", tmp_path)
     monkeypatch.setattr(
@@ -501,7 +669,10 @@ def test_diagnose_runtime_marks_timeout_when_child_pid_is_dead_but_parent_pid_al
     output = capsys.readouterr().out
 
     assert exit_code == 0
-    assert "- walkforward_production_status: timeout updated=2026-06-21T18:10:00+08:00" in output
+    assert (
+        "- walkforward_production_status: timeout updated=2026-06-21T18:10:00+08:00"
+        in output
+    )
     assert "- walkforward_production_child_exit: 124" in output
 
 
@@ -545,7 +716,53 @@ def test_diagnose_runtime_warns_when_gate_state_fingerprint_drifted(
     assert exit_code == 0
     assert "- gate_expected_ok: False" in output
     assert "- gate_expected_fingerprint: dsr|pbo" in output
-    assert "- warning_gate_state_drift: state=dsr|pbo|market_coverage_insufficient expected=dsr|pbo" in output
+    assert (
+        "- warning_gate_state_drift: state=dsr|pbo|market_coverage_insufficient expected=dsr|pbo"
+        in output
+    )
+
+
+def test_diagnose_runtime_does_not_treat_circuit_breaker_as_gate_drift(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    from scripts import diagnose_runtime
+
+    ledger = tmp_path / "predictions.jsonl"
+    paper = tmp_path / "paper.jsonl"
+    gate_state = tmp_path / "gate_notify_state.json"
+    walkforward_gate = tmp_path / "walkforward_gate.json"
+    rows = [
+        f'{{"signal_date":"2026-05-{day:02d}","symbol":"600000","status":"pending","thresholds_version":"v1"}}'
+        for day in range(1, 31)
+    ]
+    ledger.write_text("\n".join(rows) + "\n", encoding="utf-8")
+    paper.write_text("", encoding="utf-8")
+    gate_state.write_text(
+        '{"sent_by_date":{"2026-07-07":{"fingerprint":"组合保护冷却期中，至 2026-07-12 解除","status":"suppressed","updated_at":"2026-07-07T18:00:00+08:00"}}}\n',
+        encoding="utf-8",
+    )
+    walkforward_gate.write_text(
+        '{"run_date":"2026-07-07","deflated_sharpe":0.82,"pbo":0.7778,"pbo_valid":true,"dsr_pass":false,"pbo_pass":false,"both_pass":false,"n_periods":19,"effective_symbols":5209,"data_end":"2026-07-06"}\n',
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("AQSP_LEDGER", str(ledger))
+    monkeypatch.setenv("AQSP_PAPER_LEDGER", str(paper))
+    monkeypatch.setenv("AQSP_GATE_NOTIFY_STATE_PATH", str(gate_state))
+    monkeypatch.setenv("AQSP_WALKFORWARD_GATE_PATH", str(walkforward_gate))
+    monkeypatch.setattr("scripts.diagnose_runtime.PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(
+        "scripts.diagnose_runtime.load_research_summary",
+        lambda: None,
+    )
+
+    exit_code = diagnose_runtime.main()
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "- gate_expected_fingerprint: dsr|pbo" in output
+    assert "- gate_latest_kind: circuit_breaker" in output
+    assert "- warning_gate_state_drift:" not in output
 
 
 def test_diagnose_runtime_warns_when_runtime_ledger_paths_drift(
@@ -591,9 +808,7 @@ def test_diagnose_runtime_treats_stale_running_walkforward_status_as_timeout(
 
     monkeypatch.setenv("AQSP_LEDGER", str(ledger))
     monkeypatch.setenv("AQSP_PAPER_LEDGER", str(paper))
-    monkeypatch.setenv(
-        "AQSP_WALKFORWARD_PRODUCTION_STATUS", str(walkforward_status)
-    )
+    monkeypatch.setenv("AQSP_WALKFORWARD_PRODUCTION_STATUS", str(walkforward_status))
     monkeypatch.setattr(
         "scripts.diagnose_runtime.os.kill",
         lambda *_args: (_ for _ in ()).throw(OSError("missing pid")),
@@ -607,7 +822,10 @@ def test_diagnose_runtime_treats_stale_running_walkforward_status_as_timeout(
     output = capsys.readouterr().out
 
     assert exit_code == 0
-    assert "- walkforward_production_status: timeout updated=2026-06-21T18:10:00+08:00" in output
+    assert (
+        "- walkforward_production_status: timeout updated=2026-06-21T18:10:00+08:00"
+        in output
+    )
     assert "- walkforward_production_child_exit: 124" in output
 
 
@@ -720,7 +938,9 @@ def test_diagnose_runtime_counts_ledger_run_events_as_successful_run_days(
     assert exit_code == 0
     assert "- latest_real_signal_day: 2026-06-21" in output
     assert "- blocked_runtime_days: 1" in output
-    assert "- successful_run_days: 2 latest=2026-06-21 source=ledger_run_events" in output
+    assert (
+        "- successful_run_days: 2 latest=2026-06-21 source=ledger_run_events" in output
+    )
 
 
 def test_diagnose_runtime_ignores_failed_legacy_daily_log_segments(

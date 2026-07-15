@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from argparse import Namespace
 from datetime import date
+import json
 import sqlite3
 from pathlib import Path
 
@@ -9,13 +10,14 @@ import pandas as pd
 import pytest
 from unittest.mock import MagicMock
 
-from aqsp.core.time import today_shanghai
 from aqsp.core.types import PickResult
 from aqsp.briefing.agent_roles import AgentRole
 from aqsp.briefing.debate import DebateResult
 from aqsp.portfolio.manager import PortfolioDecisionSummary
 from aqsp.portfolio.optimizer import PortfolioAllocation
 from aqsp.portfolio.snapshot import PickSnapshot, SnapshotDiff
+
+TEST_TRADE_DAY = date(2026, 6, 26)
 
 
 @pytest.fixture(autouse=True)
@@ -30,8 +32,9 @@ def _isolated_notify_state(monkeypatch, tmp_path: Path) -> None:
 def _force_trading_day(monkeypatch) -> None:
     import aqsp.cli as cli_mod
 
-    monkeypatch.setattr(cli_mod, "today_shanghai", lambda: date(2026, 6, 26))
-    monkeypatch.setattr("aqsp.core.time.today_shanghai", lambda: date(2026, 6, 26))
+    monkeypatch.setattr(cli_mod, "today_shanghai", lambda: TEST_TRADE_DAY)
+    monkeypatch.setattr("aqsp.core.time.today_shanghai", lambda: TEST_TRADE_DAY)
+    monkeypatch.setattr("aqsp.freshness.today_shanghai", lambda: TEST_TRADE_DAY)
     monkeypatch.setattr("aqsp.core.time.is_trading_day", lambda _day: True)
 
 
@@ -194,6 +197,40 @@ def test_news_catalysts_cli_suppresses_notification_when_sources_failed(
     assert sent == []
 
 
+def test_news_catalysts_cli_writes_structured_runtime_artifact(
+    monkeypatch, tmp_path: Path
+) -> None:
+    import aqsp.cli as cli_mod
+    from aqsp.news.catalysts import CatalystReport
+
+    report = CatalystReport(
+        date="2026-06-11",
+        generated_at="2026-06-11T08:40:00+08:00",
+        events=(),
+        source_status="partial",
+        warnings=("国际源超时",),
+        event_status="no_valid_news",
+    )
+    monkeypatch.setattr(
+        "aqsp.news.build_catalyst_report", lambda **_kwargs: report
+    )
+    output = tmp_path / "news.json"
+
+    assert (
+        cli_mod.main(
+            [
+                "news-catalysts",
+                "--json-output",
+                str(output),
+            ]
+        )
+        == 0
+    )
+    payload = json.loads(output.read_text(encoding="utf-8"))
+    assert payload["source_status"] == "partial"
+    assert payload["warnings"] == ["国际源超时"]
+
+
 def test_run_briefing_prints_notify_channel_results(
     monkeypatch, tmp_path: Path, capsys
 ) -> None:
@@ -278,6 +315,184 @@ def test_run_briefing_dedupes_same_date_notification(
     output_text = capsys.readouterr().out
     assert len(calls) == 1
     assert "briefing notify: skipped duplicate" in output_text
+
+
+def test_run_briefing_rehydrates_debate_summary_metrics_from_ledger(
+    monkeypatch, tmp_path: Path
+) -> None:
+    import aqsp.cli as cli_mod
+
+    ledger = tmp_path / "predictions.jsonl"
+    output = tmp_path / "briefing.md"
+    ledger.write_text(
+        '{"signal_date":"2026-06-12","status":"watch_only","symbol":"600000",'
+        '"name":"浦发银行","signal_close":10.0,"score":55,"rating":"watch",'
+        '"cross_market_primary_theme":"外盘风险偏好修复",'
+        '"cross_market_linkage_basis":"风险偏好映射",'
+        '"cross_market_action":"重点跟踪",'
+        '"cross_market_lead_window":"次日竞价-1日",'
+        '"cross_market_observation_window":"次日-3日",'
+        '"cross_market_validation_signals":["次日竞价高弹性方向明显强于防御方向"],'
+        '"cross_market_invalidation_signals":["美股强但A股竞价无明显风险偏好跟随"],'
+        '"portfolio_action":"keep","debate_research_verdict":"倾向优先纸面复核",'
+        '"debate_primary_risk_gate":"先确认银行板块承接",'
+        '"debate_next_trigger":"先确认次日成交质量",'
+        '"support_points":["外盘风险偏好改善，对银行权重形成支撑"],'
+        '"opposition_points":["若只是单日脉冲，次日承接可能不足"],'
+        '"watch_items":["观察北向强弱是否在次日延续"],'
+        '"role_reliability_lines":["跨市场: 近21天 7/10 (70%)｜当前权重 0.18"]}\n',
+        encoding="utf-8",
+    )
+
+    captured: dict[str, object] = {}
+
+    def _capture_briefing(briefing, enable_llm):
+        captured["briefing"] = briefing
+        return briefing
+
+    monkeypatch.setattr("aqsp.briefing.enhance_briefing", _capture_briefing)
+    monkeypatch.setattr(
+        "aqsp.briefing.notifier.send_smart_summary_card", lambda briefing: None
+    )
+
+    exit_code = cli_mod.run_briefing(
+        Namespace(
+            ledger=str(ledger),
+            output=str(output),
+            enable_llm=False,
+            notify=False,
+            email=False,
+        )
+    )
+
+    briefing = captured["briefing"]
+    assert exit_code == 0
+    assert briefing.picks[0].metrics["cross_market_primary_theme"] == "外盘风险偏好修复"
+    assert briefing.picks[0].metrics["cross_market_linkage_basis"] == "风险偏好映射"
+    assert briefing.picks[0].metrics["cross_market_validation_signals"] == (
+        "次日竞价高弹性方向明显强于防御方向",
+    )
+    assert briefing.picks[0].metrics["debate_research_verdict"] == "倾向优先纸面复核"
+    assert briefing.picks[0].metrics["debate_primary_risk_gate"] == "先确认银行板块承接"
+    assert briefing.picks[0].metrics["debate_next_trigger"] == "先确认次日成交质量"
+    assert briefing.picks[0].metrics["support_points"] == (
+        "外盘风险偏好改善，对银行权重形成支撑",
+    )
+    assert briefing.picks[0].metrics["opposition_points"] == (
+        "若只是单日脉冲，次日承接可能不足",
+    )
+    assert briefing.picks[0].metrics["watch_items"] == ("观察北向强弱是否在次日延续",)
+    assert briefing.picks[0].metrics["role_reliability_lines"] == (
+        "跨市场: 近21天 7/10 (70%)｜当前权重 0.18",
+    )
+    assert briefing.portfolio_summary is not None
+    assert briefing.portfolio_summary.debate_focus == (
+        "600000 浦发银行 | 倾向优先纸面复核",
+    )
+    assert briefing.portfolio_summary.debate_risk_gates == (
+        "600000 浦发银行 | 先确认银行板块承接",
+    )
+    assert briefing.portfolio_summary.debate_next_triggers == (
+        "600000 浦发银行 | 先确认次日成交质量",
+    )
+
+
+def test_run_briefing_ignores_stale_source_metadata_from_previous_date(
+    monkeypatch, tmp_path: Path
+) -> None:
+    import aqsp.cli as cli_mod
+
+    ledger = tmp_path / "predictions.jsonl"
+    output = tmp_path / "briefing.md"
+    ledger.write_text(
+        "\n".join(
+            [
+                '{"signal_date":"2026-07-07","status":"run_completed_no_picks","symbol":"__RUN__",'
+                '"run_requested_source":"auto","run_actual_source":"eastmoney",'
+                '"run_source_freshness_tier":"realtime","run_source_coverage_tier":"multi_dimensional",'
+                '"run_source_health_label":"healthy","run_source_health_message":"old ok",'
+                '"run_data_latest_trade_date":"2026-07-07","run_data_lag_days":0}',
+                '{"signal_date":"2026-07-08","status":"watch_only","symbol":"600000",'
+                '"name":"浦发银行","signal_close":10.0,"score":55,"rating":"watch",'
+                '"portfolio_action":"keep","strategies":["ma_pullback"],"reasons":["趋势回踩"],"risks":[]}',
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        "aqsp.briefing.enhance_briefing", lambda briefing, enable_llm: briefing
+    )
+    monkeypatch.setattr(
+        "aqsp.briefing.notifier.send_smart_summary_card", lambda briefing: None
+    )
+
+    exit_code = cli_mod.run_briefing(
+        Namespace(
+            ledger=str(ledger),
+            output=str(output),
+            enable_llm=False,
+            notify=False,
+            email=False,
+        )
+    )
+
+    text = output.read_text(encoding="utf-8")
+    assert exit_code == 0
+    assert "暂无最近一次运行的数据源状态记录" in text
+    assert "eastmoney" not in text
+    assert "old ok" not in text
+
+
+def test_run_briefing_rehydrates_market_context_from_ledger(
+    monkeypatch, tmp_path: Path
+) -> None:
+    import aqsp.cli as cli_mod
+
+    ledger = tmp_path / "predictions.jsonl"
+    output = tmp_path / "briefing.md"
+    ledger.write_text(
+        "\n".join(
+            [
+                '{"signal_date":"2026-07-08","status":"watch_only","symbol":"600000",'
+                '"name":"浦发银行","signal_close":10.0,"score":55,"rating":"watch",'
+                '"portfolio_action":"keep","strategies":["ma_pullback"],"reasons":["趋势回踩"],"risks":[],'
+                '"regime_at_signal":"stable_bull",'
+                '"run_requested_source":"auto","run_actual_source":"sina",'
+                '"run_source_freshness_tier":"realtime","run_source_coverage_tier":"multi_dimensional",'
+                '"run_source_health_label":"fallback","run_source_health_message":"fallback 到 sina",'
+                '"run_data_latest_trade_date":"2026-07-08","run_data_lag_days":0,'
+                '"run_market_context_overview":"AI 算力跨市主线",'
+                '"run_market_context_lines":["运行判定: HMM stable_bull","跨市主线: AI 算力"]}',
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        "aqsp.briefing.enhance_briefing", lambda briefing, enable_llm: briefing
+    )
+    monkeypatch.setattr(
+        "aqsp.briefing.notifier.send_smart_summary_card", lambda briefing: None
+    )
+
+    exit_code = cli_mod.run_briefing(
+        Namespace(
+            ledger=str(ledger),
+            output=str(output),
+            enable_llm=False,
+            notify=False,
+            email=False,
+        )
+    )
+
+    text = output.read_text(encoding="utf-8")
+    assert exit_code == 0
+    assert "AI 算力跨市主线" in text
+    assert "运行判定: HMM stable_bull" in text
+    assert "最新交易日 2026-07-08 / 延迟 0 天" in text
 
 
 def test_dispatch_notification_once_dedupes_when_notifier_is_patched(
@@ -403,7 +618,7 @@ def test_run_scheduled_notify_prepends_source_status_banner(
 ) -> None:
     import aqsp.cli as cli_mod
 
-    latest = today_shanghai().isoformat()
+    latest = TEST_TRADE_DAY.isoformat()
     frames = {
         "600519": pd.DataFrame(
             [
@@ -453,6 +668,11 @@ def test_run_scheduled_notify_prepends_source_status_banner(
     monkeypatch.setattr(
         cli_mod,
         "_fetch_frames_for_cli_with_metadata",
+        lambda *args, **kwargs: (frames, "eastmoney"),
+    )
+    monkeypatch.setattr(
+        cli_mod,
+        "_fetch_special_strategy_frames",
         lambda *args, **kwargs: (frames, "eastmoney"),
     )
     monkeypatch.setattr(
@@ -562,7 +782,7 @@ def test_run_scheduled_enriches_pick_name_from_symbol_map(
 ) -> None:
     import aqsp.cli as cli_mod
 
-    latest = today_shanghai().isoformat()
+    latest = TEST_TRADE_DAY.isoformat()
     frames = {
         "300750": pd.DataFrame(
             [
@@ -610,6 +830,11 @@ def test_run_scheduled_enriches_pick_name_from_symbol_map(
     monkeypatch.setattr(
         cli_mod,
         "_fetch_frames_for_cli_with_metadata",
+        lambda *args, **kwargs: (frames, "eastmoney"),
+    )
+    monkeypatch.setattr(
+        cli_mod,
+        "_fetch_special_strategy_frames",
         lambda *args, **kwargs: (frames, "eastmoney"),
     )
     monkeypatch.setattr(
@@ -733,7 +958,7 @@ def test_run_scheduled_sends_gate_block_alert_when_notify_is_disabled_by_gate(
         "AQSP_GATE_NOTIFY_STATE_PATH", str(tmp_path / "gate_notify_state.json")
     )
 
-    latest = today_shanghai().isoformat()
+    latest = TEST_TRADE_DAY.isoformat()
     frames = {
         "600519": pd.DataFrame(
             [
@@ -891,7 +1116,7 @@ def test_run_scheduled_uses_env_notify_when_cli_notify_is_false(
         "AQSP_GATE_NOTIFY_STATE_PATH", str(tmp_path / "gate_notify_state.json")
     )
 
-    latest = today_shanghai().isoformat()
+    latest = TEST_TRADE_DAY.isoformat()
     frame = pd.DataFrame(
         [
             {
@@ -1011,7 +1236,7 @@ def test_run_scheduled_ignores_env_notify_without_daily_task_id(
         "AQSP_GATE_NOTIFY_STATE_PATH", str(tmp_path / "gate_notify_state.json")
     )
 
-    latest = today_shanghai().isoformat()
+    latest = TEST_TRADE_DAY.isoformat()
     frame = pd.DataFrame(
         [
             {
@@ -1159,15 +1384,15 @@ def test_run_monitor_notifies_warning_when_warning_notify_enabled(
 def test_run_scheduled_debate_writes_back_adjustment_keeps_runtime_score(
     monkeypatch, tmp_path
 ) -> None:
-    """辩论结论回写到 pick 供 PM 使用，但不改写 runtime 原始评分与顺序。
+    """辩论结论回写到解释层，但不改写 runtime 候选结论。
 
-    B 方案契约：
+    委员会附件契约：
     - pick.score（runtime 原始分）与顺序保持不变，用于溯源。
-    - pick.recommended_adjustment / adjusted_score 被辩论结论覆盖，PM 据此调整优先级。
+    - Agent 的调整分与建议不写回 PickResult，只保留讨论证据。
     """
     import aqsp.cli as cli_mod
 
-    latest = today_shanghai().isoformat()
+    latest = TEST_TRADE_DAY.isoformat()
     frames = {
         symbol: pd.DataFrame(
             [
@@ -1295,12 +1520,24 @@ def test_run_scheduled_debate_writes_back_adjustment_keeps_runtime_score(
         lambda *_args, **_kwargs: ("healthy", "eastmoney 健康", False),
     )
 
+    captured_roles: dict[str, tuple[str, ...]] = {}
+
     class DummyDebateCoordinator:
         def __init__(self, *_args, **_kwargs):
-            pass
+            captured_roles["roles"] = tuple(
+                role.value for role in _kwargs.get("roles", ())
+            )
 
-        def run_debate(self, pick, _df, *, signal_date: str):
+        def run_debate(
+            self,
+            pick,
+            _df,
+            *,
+            signal_date: str,
+            market_context_lines=(),
+        ):
             adjusted_score = 95.0 if pick.symbol == "300750" else 10.0
+            disagreement_score = 0.1 if pick.symbol == "300750" else 0.8
             return DebateResult(
                 debate_id=f"debate-{pick.symbol}",
                 symbol=pick.symbol,
@@ -1311,11 +1548,24 @@ def test_run_scheduled_debate_writes_back_adjustment_keeps_runtime_score(
                 related_signal_date=signal_date,
                 final_consensus="bullish",
                 final_vote={AgentRole.BULL: "bullish"},
-                disagreement_score=0.8,
+                disagreement_score=disagreement_score,
                 adjustment_weight=0.7,
                 adjusted_score=adjusted_score,
                 recommended_adjustment="raise",
                 adjustment_reason="测试：低分票被建议上调",
+                research_verdict=f"{pick.symbol} 倾向优先纸面复核",
+                primary_risk_gate=f"{pick.symbol} 先卡住追高回撤",
+                next_trigger=f"{pick.symbol} 先确认次日成交质量",
+                support_points=(f"{pick.symbol} 支持观点",),
+                opposition_points=(f"{pick.symbol} 反对观点",),
+                watch_items=(f"{pick.symbol} 待确认事项",),
+                role_selection_summary=f"{pick.symbol} 选角: 技术多头 + 跨市传导",
+                role_selection_plan=f"{pick.symbol} 角色分工: 多头看技术，跨市看传导",
+                role_reliability_lines=(f"{pick.symbol} 角色可信度 7/10",),
+                cross_market_support_event_count=2,
+                cross_market_conflict_event_count=1,
+                cross_market_evidence_stack_summary=f"{pick.symbol} 同向 2 条｜反向 1 条",
+                market_context_lines=tuple(market_context_lines),
             )
 
     monkeypatch.setattr(cli_mod, "AShareDebateCoordinator", DummyDebateCoordinator)
@@ -1382,6 +1632,7 @@ def test_run_scheduled_debate_writes_back_adjustment_keeps_runtime_score(
         enable_debate=True,
         pool="",
     )
+    monkeypatch.setenv("AQSP_RUN_TASK_ID", "closing")
 
     exit_code = cli_mod.run_scheduled(args)
     debate_rows = [
@@ -1393,14 +1644,231 @@ def test_run_scheduled_debate_writes_back_adjustment_keeps_runtime_score(
     ]
 
     assert exit_code == 0
+    assert "bull" in captured_roles["roles"]
+    assert "bear" in captured_roles["roles"]
     assert [pick.symbol for pick in captured] == ["600519", "300750"]
     # runtime 原始评分与顺序保持不变（溯源用）
     assert [pick.score for pick in captured] == [80.0, 40.0]
-    # 辩论结论已回写，供 PM 调整优先级（DummyDebateCoordinator 对两只都给 raise）
-    assert [pick.recommended_adjustment for pick in captured] == ["raise", "raise"]
-    # adjusted_score 来自辩论桩：600519=10.0, 300750=95.0
-    assert [pick.adjusted_score for pick in captured] == [10.0, 95.0]
+    assert [pick.recommended_adjustment for pick in captured] == ["keep", "keep"]
+    assert [pick.adjusted_score for pick in captured] == [0.0, 0.0]
+    assert captured[0].metrics["debate_id"] == "debate-600519"
+    assert captured[0].metrics["debate_disagreement_score"] == 0.8
+    assert captured[0].metrics["debate_final_vote"] == {"bull": "bullish"}
+    assert captured[0].metrics["debate_active_roles"] == ["bull"]
+    assert captured[0].metrics["debate_active_role_summary"] == "技术多头"
+    assert captured[0].metrics["debate_research_verdict"] == "600519 倾向优先纸面复核"
+    assert captured[0].metrics["debate_primary_risk_gate"] == "600519 先卡住追高回撤"
+    assert captured[0].metrics["debate_next_trigger"] == "600519 先确认次日成交质量"
+    assert (
+        captured[0].metrics["debate_role_selection_summary"]
+        == "600519 选角: 技术多头 + 跨市传导"
+    )
+    assert (
+        captured[0].metrics["debate_role_selection_plan"]
+        == "600519 角色分工: 多头看技术，跨市看传导"
+    )
+    assert captured[0].metrics["support_points"] == ["600519 支持观点"]
+    assert captured[0].metrics["opposition_points"] == ["600519 反对观点"]
+    assert captured[0].metrics["watch_items"] == ["600519 待确认事项"]
+    assert captured[0].metrics["role_reliability_lines"] == ["600519 角色可信度 7/10"]
+    assert captured[0].metrics["cross_market_support_event_count"] == 2
+    assert captured[0].metrics["cross_market_conflict_event_count"] == 1
+    assert (
+        captured[0].metrics["cross_market_evidence_stack_summary"]
+        == "600519 同向 2 条｜反向 1 条"
+    )
+    assert captured[1].metrics["debate_research_verdict"] == "300750 倾向优先纸面复核"
     assert len(debate_rows) == 2
+    serialized_rows = [json.loads(row) for row in debate_rows]
+    assert {row["symbol"] for row in serialized_rows} == {"600519", "300750"}
+    assert {row["related_signal_date"] for row in serialized_rows} == {latest}
+    assert {row["candidate_signal_date"] for row in serialized_rows} == {latest}
+    assert all(row["candidate_fingerprint"] for row in serialized_rows)
+    assert any(
+        row["symbol"] == "300750" and row["disagreement_score"] == 0.1
+        for row in serialized_rows
+    )
+
+
+def test_debate_record_merge_keeps_same_symbol_date_distinct_candidates() -> None:
+    import aqsp.cli as cli_mod
+
+    retained: dict[str, dict] = {}
+    cli_mod._merge_debate_records(
+        retained,
+        {
+            "old": {
+                "symbol": "600519",
+                "related_signal_date": "2026-06-05",
+                "task_id": "main_chain",
+                "candidate_fingerprint": "fp-a",
+                "created_at": "2026-06-05T09:40:00+08:00",
+            },
+            "new": {
+                "symbol": "600519",
+                "related_signal_date": "2026-06-05",
+                "task_id": "closing_premium",
+                "candidate_fingerprint": "fp-b",
+                "created_at": "2026-06-05T15:10:00+08:00",
+            },
+        },
+    )
+
+    assert len(retained) == 2
+    assert {row["candidate_fingerprint"] for row in retained.values()} == {
+        "fp-a",
+        "fp-b",
+    }
+
+
+def test_serialize_debate_result_includes_market_context_lines() -> None:
+    import aqsp.cli as cli_mod
+
+    result = DebateResult(
+        debate_id="debate-ctx",
+        symbol="300750",
+        name="宁德时代",
+        original_score=72.0,
+        rating="buy_candidate",
+        market_context_lines=(
+            "北向资金: 偏强（5日 z=1.20），外资风险偏好改善。",
+            "全局雷达: 全市场 偏空｜宏观风险｜海外风险偏好回落。",
+        ),
+    )
+
+    payload = cli_mod.serialize_debate_result(result)
+
+    assert payload["market_context_lines"] == [
+        "北向资金: 偏强（5日 z=1.20），外资风险偏好改善。",
+        "全局雷达: 全市场 偏空｜宏观风险｜海外风险偏好回落。",
+    ]
+    assert payload["support_points"] == []
+    assert payload["opposition_points"] == []
+    assert payload["watch_items"] == []
+    assert payload["research_verdict"] == ""
+    assert payload["primary_risk_gate"] == ""
+    assert payload["next_trigger"] == ""
+    assert payload["role_reliability_lines"] == []
+    assert payload["cross_market_support_event_count"] == 0
+    assert payload["cross_market_conflict_event_count"] == 0
+    assert payload["cross_market_evidence_stack_summary"] == ""
+    assert payload["deterministic_score"] == result.original_score
+    assert payload["deterministic_score_unchanged"] is True
+    assert payload["advisory_only"] is True
+    assert payload["realtime_blocked"] is False
+
+
+def test_serialize_debate_result_preserves_discussion_rounds() -> None:
+    import aqsp.cli as cli_mod
+    from aqsp.briefing.debate import AgentOpinion, DebateRound
+
+    result = DebateResult(
+        debate_id="debate-rounds",
+        symbol="300750",
+        name="宁德时代",
+        original_score=72.0,
+        rating="buy_candidate",
+        rounds=[
+            DebateRound(
+                round_num=1,
+                summary="首轮观点",
+                opinions=[
+                    AgentOpinion(
+                        agent_id="bull-1",
+                        role=AgentRole.BULL,
+                        stance="bullish",
+                        confidence=0.7,
+                        arguments=["趋势仍在"],
+                    )
+                ],
+            ),
+            DebateRound(
+                round_num=2,
+                summary="二轮复核",
+                opinions=[
+                    AgentOpinion(
+                        agent_id="bull-1",
+                        role=AgentRole.BULL,
+                        stance="neutral",
+                        confidence=0.6,
+                        arguments=["等待承接"],
+                        counterarguments=["量能尚未确认"],
+                    )
+                ],
+            ),
+        ],
+    )
+
+    payload = cli_mod.serialize_debate_result(result)
+
+    assert [item["round_num"] for item in payload["rounds"]] == [1, 2]
+    assert payload["rounds"][1]["opinions"][0]["counterarguments"] == [
+        "量能尚未确认"
+    ]
+
+
+def test_resolve_pick_debate_roles_adds_policy_role_for_event_context(
+    monkeypatch,
+) -> None:
+    import aqsp.cli as cli_mod
+
+    monkeypatch.delenv("AQSP_DEBATE_ROLES", raising=False)
+    monkeypatch.delenv("AQSP_DEBATE_FOCUS_ROLES", raising=False)
+    monkeypatch.delenv("AQSP_DEBATE_DISABLED_ROLES", raising=False)
+
+    pick = PickResult(
+        symbol="300750",
+        name="宁德时代",
+        date="2026-06-26",
+        close=430.0,
+        score=82.0,
+        rating="buy_candidate",
+        entry_type="next_open",
+        ideal_buy=430.0,
+        stop_loss=418.0,
+        take_profit=455.0,
+        position="watch",
+        metrics={
+            "cross_market_primary_theme": "海外物理AI叙事升温",
+            "cross_market_action": "优先复核",
+            "cross_market_priority_score": 3,
+            "cross_market_support_event_count": 2,
+            "cross_market_conflict_event_count": 0,
+        },
+    )
+    runtime = type(
+        "Runtime",
+        (),
+        {
+            "roles": (
+                "risk_control",
+                "sector_leader",
+                "cross_market",
+                "northbound",
+                "retail_mood",
+            ),
+            "role_runtime": (),
+        },
+    )()
+
+    roles = cli_mod._resolve_pick_debate_roles(
+        runtime,
+        pick=pick,
+        market_context_lines=(
+            "传导推演[海外物理AI叙事升温]: 动作 优先复核。",
+            "政策跟踪: 工信部继续强调机器人产业链支持。",
+        ),
+    )
+
+    assert roles == (
+        "risk_control",
+        "cross_market",
+        "sector_leader",
+        "bull",
+        "policy_sensitive",
+        "northbound",
+        "retail_mood",
+    )
 
 
 def test_run_scheduled_report_omits_low_signal_control_sections(
@@ -1408,7 +1876,7 @@ def test_run_scheduled_report_omits_low_signal_control_sections(
 ) -> None:
     import aqsp.cli as cli_mod
 
-    latest = today_shanghai().isoformat()
+    latest = TEST_TRADE_DAY.isoformat()
     frames = {
         "600519": pd.DataFrame(
             [
@@ -1585,7 +2053,7 @@ def test_run_scheduled_notify_continues_when_benchmark_frame_missing(
 ) -> None:
     import aqsp.cli as cli_mod
 
-    latest = today_shanghai().isoformat()
+    latest = TEST_TRADE_DAY.isoformat()
     frames = {
         "600519": pd.DataFrame(
             [
@@ -1748,7 +2216,7 @@ def test_run_scheduled_gate_block_adds_actionable_unlock_guidance(
 
     monkeypatch.setenv("AQSP_RUN_TASK_ID", "daily")
 
-    latest = today_shanghai().isoformat()
+    latest = TEST_TRADE_DAY.isoformat()
     frames = {
         "600519": pd.DataFrame(
             [
@@ -1909,7 +2377,7 @@ def test_run_scheduled_fails_closed_on_regime_when_benchmark_missing(
 
     monkeypatch.setattr(cli_mod, "today_shanghai", lambda: date(2026, 6, 23))
     monkeypatch.setattr("aqsp.freshness.today_shanghai", lambda: date(2026, 6, 23))
-    dates = pd.date_range("2026-03-01", periods=80, freq="B")
+    dates = pd.date_range(end="2026-06-23", periods=80, freq="B")
 
     def make_frame(symbol: str, start_close: float) -> pd.DataFrame:
         closes = [start_close + idx * 0.8 for idx in range(len(dates))]
@@ -2217,7 +2685,7 @@ def test_run_scheduled_surfaces_t1_blockers_in_report_and_notification(
 ) -> None:
     import aqsp.cli as cli_mod
 
-    latest = today_shanghai().isoformat()
+    latest = TEST_TRADE_DAY.isoformat()
     frames = {
         "600519": pd.DataFrame(
             [
@@ -2438,7 +2906,7 @@ def test_run_scheduled_surfaces_snapshot_lifecycle_in_summary_and_notification(
 ) -> None:
     import aqsp.cli as cli_mod
 
-    latest = today_shanghai().isoformat()
+    latest = TEST_TRADE_DAY.isoformat()
     frames = {
         "688981": pd.DataFrame(
             [
@@ -2676,7 +3144,7 @@ def test_run_scheduled_annotates_candidate_status_in_report_and_notify(
 ) -> None:
     import aqsp.cli as cli_mod
 
-    latest = today_shanghai().isoformat()
+    latest = TEST_TRADE_DAY.isoformat()
     frames = {
         "688981": pd.DataFrame(
             [
@@ -2935,9 +3403,7 @@ def test_run_scheduled_annotates_candidate_status_in_report_and_notify(
         in seen[0]
     )
     assert "- 暂无纸面复核主线，观察名单：" in seen[0]
-    assert (
-        "- 688981 中芯国际" in seen[0]
-    )
+    assert "- 688981 中芯国际" in seen[0]
     assert "复核: 高优先级 / 盘中走强后" in seen[0]
     assert "- 2. 000001 平安银行 | 继续观察 | -18 | 继续观察: 估值防守" in seen[0]
     assert "## 📋" not in seen[0]
@@ -2952,7 +3418,7 @@ def test_run_scheduled_skips_gate_for_intraday_task(
 ) -> None:
     import aqsp.cli as cli_mod
 
-    latest = today_shanghai().isoformat()
+    latest = TEST_TRADE_DAY.isoformat()
     frames = {
         "600519": pd.DataFrame(
             [
@@ -2977,6 +3443,11 @@ def test_run_scheduled_skips_gate_for_intraday_task(
     monkeypatch.setenv("AQSP_RUN_TASK_ID", "intraday")
     monkeypatch.setattr(
         cli_mod,
+        "_fetch_special_strategy_frames",
+        lambda *args, **kwargs: (frames, "eastmoney"),
+    )
+    monkeypatch.setattr(
+        cli_mod,
         "_fetch_frames_for_cli_with_metadata",
         lambda *args, **kwargs: (frames, "eastmoney"),
     )
@@ -2993,7 +3464,9 @@ def test_run_scheduled_skips_gate_for_intraday_task(
     monkeypatch.setattr(cli_mod, "validate_predictions", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(cli_mod, "append_predictions", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(cli_mod, "append_run_event", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(cli_mod, "_count_independent_signal_days", lambda *_args, **_kwargs: 0)
+    monkeypatch.setattr(
+        cli_mod, "_count_independent_signal_days", lambda *_args, **_kwargs: 0
+    )
     monkeypatch.setattr(cli_mod, "screen_universe", lambda *_args, **_kwargs: [])
     monkeypatch.setattr(
         "aqsp.data.anomaly.detect_anomalies",
@@ -3058,7 +3531,7 @@ def test_run_scheduled_intraday_uses_formal_ledger_for_runtime_stats_and_compact
 ) -> None:
     import aqsp.cli as cli_mod
 
-    latest = today_shanghai().isoformat()
+    latest = TEST_TRADE_DAY.isoformat()
     frames = {
         "600519": pd.DataFrame(
             [
@@ -3085,6 +3558,11 @@ def test_run_scheduled_intraday_uses_formal_ledger_for_runtime_stats_and_compact
 
     monkeypatch.setenv("AQSP_RUN_TASK_ID", "intraday")
     monkeypatch.setenv("AQSP_LEDGER", str(formal_ledger))
+    monkeypatch.setattr(
+        cli_mod,
+        "_fetch_special_strategy_frames",
+        lambda *args, **kwargs: (frames, "eastmoney"),
+    )
     monkeypatch.setattr(
         cli_mod,
         "_fetch_frames_for_cli_with_metadata",
@@ -3129,7 +3607,9 @@ def test_run_scheduled_intraday_uses_formal_ledger_for_runtime_stats_and_compact
         "_count_independent_signal_days",
         lambda ledger_path: seen.__setitem__("cold_start_ledger", ledger_path) or 34,
     )
-    monkeypatch.setattr(cli_mod, "_detect_runtime_regime", lambda *_args, **_kwargs: "stable_bull")
+    monkeypatch.setattr(
+        cli_mod, "_detect_runtime_regime", lambda *_args, **_kwargs: "stable_bull"
+    )
     monkeypatch.setattr("aqsp.data.anomaly.detect_anomalies", lambda _frames: [])
     monkeypatch.setattr("aqsp.data.freshness.check_freshness", lambda _frames: [])
     monkeypatch.setattr(
@@ -3220,3 +3700,138 @@ def test_run_scheduled_intraday_uses_formal_ledger_for_runtime_stats_and_compact
     assert "冷启动期:" not in report
     assert "## 失败模式分析" not in report
     assert "## 1." not in report
+
+
+def test_run_scheduled_intraday_writes_provisional_outputs_before_late_failure(
+    monkeypatch, tmp_path: Path
+) -> None:
+    import aqsp.cli as cli_mod
+
+    latest = TEST_TRADE_DAY.isoformat()
+    frames = {
+        "600519": pd.DataFrame(
+            [
+                {
+                    "date": latest,
+                    "symbol": "600519",
+                    "name": "贵州茅台",
+                    "open": 1500.0,
+                    "high": 1510.0,
+                    "low": 1490.0,
+                    "close": 1505.0,
+                    "volume": 1000,
+                    "amount": 150500000.0,
+                    "suspended": False,
+                    "limit_up": 1655.5,
+                    "limit_down": 1354.5,
+                }
+            ]
+        )
+    }
+    report_path = tmp_path / "intraday.md"
+    csv_path = tmp_path / "intraday.csv"
+    mirror_report_path = tmp_path / "public_intraday.md"
+    mirror_csv_path = tmp_path / "public_intraday.csv"
+
+    monkeypatch.setenv("AQSP_RUN_TASK_ID", "intraday")
+    monkeypatch.setenv("AQSP_LEDGER", str(tmp_path / "formal.jsonl"))
+    monkeypatch.setenv("AQSP_PROVISIONAL_REPORT", str(mirror_report_path))
+    monkeypatch.setenv("AQSP_PROVISIONAL_OUTPUT_CSV", str(mirror_csv_path))
+    monkeypatch.setattr(
+        cli_mod, "_resolve_run_symbols", lambda *args, **kwargs: ["600519"]
+    )
+    monkeypatch.setattr(
+        cli_mod,
+        "_fetch_special_strategy_frames",
+        lambda *args, **kwargs: (frames, "tencent"),
+    )
+    monkeypatch.setattr(
+        cli_mod, "_compute_real_pnl", lambda *_args, **_kwargs: (0.0, 0.0, 0.0)
+    )
+    monkeypatch.setattr(cli_mod, "_count_independent_signal_days", lambda _path: 34)
+    monkeypatch.setattr(
+        cli_mod, "_detect_runtime_regime", lambda *_args, **_kwargs: "stable_bull"
+    )
+    monkeypatch.setattr(cli_mod, "_should_build_market_context", lambda _task_id: False)
+    monkeypatch.setattr(
+        cli_mod,
+        "LethalFilterPipeline",
+        lambda: type("P", (), {"run": lambda self, *_args, **_kwargs: (True, "")})(),
+    )
+    monkeypatch.setattr(
+        "aqsp.universe.t1_filter.filter_t1_held",
+        lambda candidates, **_kwargs: (candidates, []),
+    )
+
+    class CompositeAfterSnapshot:
+        def __init__(self, thresholds=None):
+            assert report_path.exists()
+            assert csv_path.exists()
+            assert mirror_report_path.exists()
+            assert mirror_csv_path.exists()
+
+        def calculate_score(self, *_args, **_kwargs):
+            return {}
+
+    monkeypatch.setattr(
+        "aqsp.strategies.composite.CompositeStrategy",
+        CompositeAfterSnapshot,
+    )
+    monkeypatch.setattr(
+        cli_mod,
+        "screen_universe",
+        lambda *_args, **_kwargs: [
+            PickResult(
+                symbol="600519",
+                name="贵州茅台",
+                date=latest,
+                close=1505.0,
+                score=88.0,
+                rating="buy_candidate",
+                entry_type="watch",
+                ideal_buy=1500.0,
+                stop_loss=1450.0,
+                take_profit=1580.0,
+                position="watch",
+            )
+        ],
+    )
+    monkeypatch.setattr(
+        "aqsp.data.anomaly.detect_anomalies",
+        lambda _frames: (_ for _ in ()).throw(RuntimeError("late diagnostics failed")),
+    )
+
+    args = Namespace(
+        mode="open",
+        symbols="600519",
+        csv="",
+        source="online_first",
+        limit=1,
+        max_universe=1,
+        min_avg_amount=50_000_000,
+        max_data_lag_days=1,
+        enable_online_factors=False,
+        report=str(report_path),
+        output_csv=str(csv_path),
+        ledger=str(tmp_path / "intraday.jsonl"),
+        horizon_days=3,
+        fee_bps=8.0,
+        slippage_bps=5.0,
+        benchmark_symbol="",
+        skip_validation=True,
+        notify=False,
+        enable_debate=False,
+        pool="",
+    )
+
+    with pytest.raises(RuntimeError, match="late diagnostics failed"):
+        cli_mod.run_scheduled(args)
+
+    assert report_path.exists()
+    assert csv_path.exists()
+    assert mirror_report_path.exists()
+    assert mirror_csv_path.exists()
+    assert "盘中快照" in report_path.read_text(encoding="utf-8")
+    assert "600519" in csv_path.read_text(encoding="utf-8")
+    assert "盘中快照" in mirror_report_path.read_text(encoding="utf-8")
+    assert "600519" in mirror_csv_path.read_text(encoding="utf-8")

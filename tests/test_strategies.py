@@ -20,7 +20,7 @@ from aqsp.strategies.thresholds import load_thresholds
 
 def test_load_thresholds():
     thresholds = load_thresholds()
-    assert thresholds.version == "1.1.13"
+    assert thresholds.version == "1.1.16"
     assert thresholds.last_walkforward_run == "2026-05-30"
     assert thresholds.momentum.lookback_days == 60
     assert thresholds.momentum.weights.momentum == 0.4
@@ -60,6 +60,24 @@ def test_load_thresholds():
     assert thresholds.scoring.max_bias20 == 18
 
 
+def test_thresholds_with_overrides_keeps_runtime_snapshot_frozen():
+    from aqsp.strategies.thresholds import CompositeThresholds, Thresholds
+
+    base = Thresholds(
+        version="v1",
+        composite=CompositeThresholds(momentum_weight=0.3),
+    )
+    candidate = base.with_overrides(
+        "composite",
+        {"momentum_weight": 0.4, "unknown_research_field": 99},
+    )
+
+    assert base.composite.momentum_weight == 0.3
+    assert candidate.composite.momentum_weight == 0.4
+    assert candidate.version == base.version == "v1"
+    assert candidate is not base
+
+
 def test_momentum_strategy():
     dates = pd.date_range("2026-01-01", periods=60, freq="D")
     prices = np.linspace(10, 15, 60)
@@ -79,7 +97,7 @@ def test_momentum_strategy():
     strategy = MomentumStrategy(config)
 
     assert strategy.id == "momentum"
-    assert strategy.version == "1.1.13"
+    assert strategy.version == load_thresholds().version
     assert strategy.hypothesis != ""
 
     scores = strategy.calculate_score({"600000": df})
@@ -530,7 +548,7 @@ def test_closing_premium_strategy_init():
 
     assert strategy.id == "closing_premium"
     assert strategy.name == "closing_premium"
-    assert strategy.version == "1.1.13"
+    assert strategy.version == load_thresholds().version
     assert strategy.hypothesis == "尾盘异动股票往往有资金介入，次日有溢价空间"
     assert "stable_bull" in strategy.regime_required
     assert "stable_sideways" in strategy.regime_required

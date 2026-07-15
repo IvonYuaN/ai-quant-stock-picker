@@ -5,7 +5,10 @@ from aqsp.news.catalysts import (
     CatalystReport,
     NewsCatalystConfig,
     build_catalyst_report,
+    deserialize_catalyst_report,
     format_catalyst_notification,
+    load_catalyst_report_artifact,
+    serialize_catalyst_report,
 )
 
 __all__ = [
@@ -13,5 +16,8 @@ __all__ = [
     "CatalystReport",
     "NewsCatalystConfig",
     "build_catalyst_report",
+    "deserialize_catalyst_report",
     "format_catalyst_notification",
+    "load_catalyst_report_artifact",
+    "serialize_catalyst_report",
 ]

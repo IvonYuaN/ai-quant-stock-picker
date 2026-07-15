@@ -152,6 +152,47 @@ def test_tencent_daily_request_does_not_use_qfq(monkeypatch, tencent_source):
     assert "qfq" not in captured["params"]["param"]
 
 
+def test_tencent_intraday_reads_market_prefixed_payload_key(monkeypatch):
+    class FakeResponse:
+        def json(self):
+            return {
+                "data": {
+                    "sh600519": {
+                        "data": {
+                            "data": [
+                                "0930 1182.20 100 118220.00",
+                                "0931 1181.00 140 165460.00",
+                            ]
+                        }
+                    }
+                }
+            }
+
+    class FakeSession:
+        def get(self, url, **_kwargs):
+            assert "code=sh600519" in url
+            return FakeResponse()
+
+    class FixedNow:
+        def date(self):
+            return date(2026, 7, 10)
+
+    source = TencentSource.__new__(TencentSource)
+    source._session = FakeSession()
+    source._last_request_ts = 0.0
+    monkeypatch.setattr(source, "_throttle", lambda: None)
+    monkeypatch.setattr("aqsp.data.tencent_source.now_shanghai", lambda: FixedNow())
+
+    frame = source._fetch_tencent_intraday("600519", "5")
+
+    assert frame is not None
+    assert frame["date"].tolist() == ["2026-07-10 09:30", "2026-07-10 09:31"]
+    assert frame["open"].tolist() == [1182.20, 1182.20]
+    assert frame["close"].tolist() == [1182.20, 1181.00]
+    assert frame["volume"].tolist() == [100.0, 40.0]
+    assert frame["amount"].tolist() == [118220.0, 47240.0]
+
+
 def test_fetch_intraday_returns_dict(tencent_source):
     try:
         result = tencent_source.fetch_intraday(

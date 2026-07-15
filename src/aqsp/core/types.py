@@ -78,6 +78,11 @@ class RunMetadata:
     task_id: str = ""
     circuit_breaker_triggered: bool = False
     circuit_breaker_reason: str = ""
+    market_context_overview: str = ""
+    market_context_lines: tuple[str, ...] = field(default_factory=tuple)
+    workload: str = ""
+    intraday_coverage_status: str = "not_applicable"
+    intraday_missing_symbols: tuple[str, ...] = field(default_factory=tuple)
 
 
 @dataclass(frozen=True)

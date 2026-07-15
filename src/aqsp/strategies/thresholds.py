@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field, fields
-from typing import Dict
+from dataclasses import dataclass, field, fields, replace
+from typing import Dict, Mapping
 import yaml
 from pathlib import Path
 
@@ -136,6 +136,12 @@ class RiskThresholds:
     allocation_downgrade_multiplier: float = 0.75
     allocation_high_corr_multiplier: float = 0.88
     allocation_sector_concentration_multiplier: float = 0.92
+    cross_market_priority_min_score: int = 2
+    cross_market_medium_bonus: float = 1.5
+    cross_market_strong_bonus: float = 4.0
+    cross_market_promote_min_delta: float = 3.0
+    cross_market_prelimit_medium_bonus: float = 1.2
+    cross_market_prelimit_strong_bonus: float = 2.0
     profit_take_reduce_multiplier: float = 0.50
     cash_low_new_position_multiplier: float = 0.50
     market_crash_threshold: float = -0.05
@@ -582,6 +588,31 @@ class Thresholds:
         default_factory=ClosingPremiumThresholds
     )
     n_rebound: NReboundThresholds = field(default_factory=NReboundThresholds)
+
+    def with_overrides(
+        self,
+        section: str,
+        overrides: Mapping[str, object],
+    ) -> "Thresholds":
+        """Return an immutable research snapshot with supported overrides.
+
+        Runtime scoring keeps using the original snapshot. Unknown fields are
+        ignored so legacy research configs cannot accidentally mutate or
+        replace the live threshold contract.
+        """
+        target = getattr(self, section, None)
+        if target is None or not hasattr(target, "__dataclass_fields__"):
+            raise ValueError(f"unknown threshold section: {section}")
+
+        allowed = {item.name for item in fields(target)}
+        supported = {
+            str(key): value
+            for key, value in overrides.items()
+            if str(key) in allowed
+        }
+        if not supported:
+            return self
+        return replace(self, **{section: replace(target, **supported)})
 
 
 def _as_dict(data: object) -> dict:

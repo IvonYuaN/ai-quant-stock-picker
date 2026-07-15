@@ -1,4 +1,4 @@
-version: "2026-05-28"
+version: "2026-07-14"
 default_policy: local_first
 freshness_gate:
   stale_data: fail_closed
@@ -320,3 +320,72 @@ sources:
       - 测试必须证明没有交易接口被导入或调用
       - 仅作为本地可选数据源，不进 GitHub Actions 默认流程
     reference: "https://github.com/CodeBang06/miniqmt-xtquant-Ashare"
+
+  - id: vibe_research_astock_data
+    name: Vibe-Research AStockData reference
+    category: data_source_design_reference
+    markets: [a_share]
+    access: open_source_toolkit
+    cost: free
+    runtime_ready: false
+    research_status: design_absorbed
+    absorbed_from:
+      - "simonlin1212/Vibe-Research@352d0a4"
+      - "simonlin1212/a-stock-data"
+    strengths:
+      - 按行情、研报、估值、财报、公告、资金和情绪分层，适合作为 A 股 adapter 覆盖清单
+      - 将数据工具与前端展示解耦，适合补齐 AQSP 的 report-only 数据面
+    risks:
+      - 上游公开网页接口会漂移，不能绕过 AQSP DataSource、schema 和 freshness gate
+      - 端点数量多，不能把全量抓取塞进盘中主链
+    adoption_gate:
+      - 先映射到现有 DataSource/service，不直接复制运行时代码
+      - 行情端点必须区分 live_short 与历史验证；公告/财报必须保留披露时间
+      - 新端点先 report-only/shadow，补齐 fixture 后才可进入上下文层
+    reference: "https://github.com/simonlin1212/Vibe-Research"
+
+  - id: vibe_research_global_stock_data
+    name: Vibe-Research GlobalStockData reference
+    category: cross_market_data_reference
+    markets: [us, hk, kr]
+    access: open_source_toolkit
+    cost: free
+    runtime_ready: false
+    research_status: research_candidate
+    absorbed_from:
+      - "simonlin1212/Vibe-Research@352d0a4"
+      - "simonlin1212/global-stock-data"
+    strengths:
+      - 提供美股、港股和韩股行情/财务/指数的统一入口思路
+      - 适合支持跨市场事件传导的事实输入
+    risks:
+      - 全球市场交易时区和披露时间不能直接套用 A 股 freshness 规则
+      - 不得把海外行情直接变成 A 股评分或交易信号
+    adoption_gate:
+      - 先接入 market_context report-only，记录 market、timezone、published_at 和 fetched_at
+      - 缺少时区或披露时间时 fail loud，不用当前时间补齐
+      - 通过跨市场传导规则和当前日验证后，才允许影响候选复核优先级
+    reference: "https://github.com/simonlin1212/Vibe-Research"
+
+  - id: vibe_research_investment_news
+    name: Vibe-Research InvestmentNews reference
+    category: news_source_design_reference
+    markets: [a_share, us, hk, macro]
+    access: public_rss
+    cost: free
+    runtime_ready: false
+    research_status: design_absorbed
+    absorbed_from:
+      - "simonlin1212/Vibe-Research@352d0a4"
+      - "simonlin1212/investment-news"
+    strengths:
+      - 以赛道分组、源级失败统计、近 N 日过滤和原子新闻记录组织资讯雷达
+      - 客观资讯与 AI 提炼分离，符合 AQSP 的 advisory-only 边界
+    risks:
+      - 108 个公开源不能无条件并发接入盘中任务，会放大超时和反爬风险
+      - 资讯只允许进入 market_context/briefing，不能覆盖 deterministic score
+    adoption_gate:
+      - 吸收源级 health、成功数、失败数、发布时间和 URL 字段，不复制默认源清单
+      - 盘中按超时、当天和当前任务隔离；旧缓存不得跨自然日回退
+      - 先以 shadow/report-only 观察源质量，再按来源质量配置进入传导规则
+    reference: "https://github.com/simonlin1212/Vibe-Research"

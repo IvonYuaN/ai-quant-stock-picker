@@ -54,6 +54,7 @@ class DebateQualityAudit:
     issues: tuple[str, ...]
     evidence_sufficient: bool = False
     advisory_boundary_ok: bool = True
+    data_status: str = "available"
 
     @property
     def passed(self) -> bool:
@@ -165,6 +166,10 @@ def audit_debate_quality(
     )
     next_trigger_recorded = bool(_clean_text(_field(result, "next_trigger", "")))
     evidence_sufficient = _has_substantive_evidence(result, rounds)
+    data_status = _clean_text(_field(result, "data_status", "available")) or "available"
+    if data_status != "available":
+        process_recorded = False
+        evidence_sufficient = False
     advisory_boundary_ok = _advisory_boundary_is_intact(result)
     support_recorded = bool(
         _substantive_values(_field(result, "support_points", ()))
@@ -234,6 +239,8 @@ def audit_debate_quality(
         issues.append("missing_cross_market_viewpoint")
     if not evidence_sufficient:
         issues.append("no_substantive_evidence")
+    if data_status != "available":
+        issues.append("empty_market_data")
     if not advisory_boundary_ok:
         issues.append("advisory_boundary_violation")
 
@@ -258,6 +265,7 @@ def audit_debate_quality(
         issues=tuple(dict.fromkeys(issues)),
         evidence_sufficient=evidence_sufficient,
         advisory_boundary_ok=advisory_boundary_ok,
+        data_status=data_status,
     )
 
 
@@ -302,12 +310,15 @@ def _has_substantive_text(value: Any) -> bool:
 
 
 def _substantive_values(values: Any) -> bool:
+    if isinstance(values, str):
+        values = (values,)
     return any(_has_substantive_text(item) for item in (values or ()))
 
 
 def _has_substantive_evidence(result: Any, rounds: tuple[Any, ...]) -> bool:
     for field_name in (
         "real_message_evidence",
+        "cross_market_evidence",
         "rule_transmission_evidence",
         "support_points",
         "opposition_points",

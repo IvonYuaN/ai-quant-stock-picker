@@ -9,7 +9,7 @@ import re
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import pandas as pd
 
@@ -17,6 +17,8 @@ from aqsp.audit.trade_logger import TradeLogger
 from aqsp.briefing.closing_review import ClosingReviewer
 from aqsp.core.time import SHANGHAI_TZ, now_shanghai, today_shanghai, to_iso8601
 from aqsp.ledger.base import read_ledger
+from aqsp.ledger.runtime import cold_start_min_days
+from aqsp.market_context import cross_market_rule_runtime_summary
 from aqsp.paper import read_paper_trades
 from aqsp.presentation import (
     format_review_meta,
@@ -25,9 +27,28 @@ from aqsp.presentation import (
     normalize_research_tone,
 )
 from aqsp.ratings import is_tradable_rating, portfolio_action_label, rating_label
+from aqsp.strategies.thresholds import load_thresholds
+from aqsp.strategy import rating_for_score
+from aqsp.data.source_readiness import source_supports_workload, workload_fit_for_source
 from aqsp.web.archive_safety import sanitize_research_lines
+from aqsp.web.live_candidate_view import (
+    LiveArtifactMetadata,
+    LiveCandidateView,
+    build_live_candidate_view,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def _rating_rank(rating: object) -> int:
+    ranks = {
+        "avoid": 0,
+        "watch": 1,
+        "buy_candidate": 2,
+        "strong_buy_candidate": 3,
+    }
+    return ranks.get(str(rating or "").strip(), -1)
+
 
 _TASK_LABELS = {
     "main_chain": "主链推荐",
@@ -42,14 +63,25 @@ _SIGNAL_TASK_IDS = ("main_chain", "morning_breakout", "closing_premium")
 _OBSERVATION_TASK_IDS = ("intraday",)
 _TASK_PHASE_META: dict[str, tuple[int, str, str]] = {
     "main_chain": (1, "盘前主链", "先确认当日主推候选与纸面复核优先级"),
-    "intraday": (2, "盘中观察", "未收盘快照，只作观察，不进入正式待复核"),
+    "intraday": (2, "盘中观察", "未收盘快照，可纸面复核，不进入正式 ledger"),
     "morning_breakout": (3, "早盘观察", "开盘后核对强势突破是否成立"),
     "closing_premium": (4, "尾盘确认", "收盘前评估溢价承接与隔夜价值"),
     "closing_review": (5, "收盘复盘", "核对执行结果与失效样本"),
     "briefing": (6, "次日预案", "整理明日重点与待跟踪事项"),
 }
+_RUNTIME_TASK_LABELS = {
+    "news": "消息雷达",
+    "intraday": "盘中观察",
+    "midday": "午间快照",
+    "daily": "收盘主链",
+    "coldstart": "冷启动",
+    "walkforward-gate": "生产回测 gate",
+    "monitor": "运行监控",
+}
+_RUNTIME_TASK_ORDER = tuple(_RUNTIME_TASK_LABELS)
+_RUNTIME_LOG_TAIL_BYTES = 65536
 _TASK_METRIC_LABELS: dict[str, tuple[str, str, str]] = {
-    "intraday": ("正式待复核", "盘中观察", "盘中阻塞"),
+    "intraday": ("纸面复核", "盘中观察", "盘中阻塞"),
     "closing_review": ("已验证", "待复盘", "复盘阻塞"),
     "briefing": ("已落盘", "待跟踪", "待补档"),
 }
@@ -58,6 +90,7 @@ _DEBATE_ROLE_ORDER = (
     "bear",
     "risk_control",
     "sector_leader",
+    "cross_market",
     "policy_sensitive",
     "margin_trading",
     "northbound",
@@ -68,6 +101,7 @@ _DEBATE_ROLE_LABELS = {
     "bear": "基本面空头",
     "risk_control": "风控",
     "sector_leader": "板块轮动",
+    "cross_market": "跨市传导",
     "policy_sensitive": "政策敏感",
     "margin_trading": "融资融券",
     "northbound": "北向资金",
@@ -83,6 +117,78 @@ _DEBATE_ADJUSTMENT_LABELS = {
     "lower": "辩论倾向下调",
     "keep": "辩论倾向维持",
 }
+_DEBATE_BACKFILL_FIELDS = frozenset(
+    {
+        "debate_research_verdict",
+        "debate_primary_risk_gate",
+        "debate_next_trigger",
+        "debate_active_role_summary",
+        "support_points",
+        "opposition_points",
+        "watch_items",
+        "role_reliability_lines",
+        "debate_historical_context_note",
+        "debate_historical_context_bucket",
+        "debate_historical_context_sample_count",
+        "debate_historical_context_accuracy",
+    }
+)
+
+
+def _runtime_float(value: Any) -> float | None:
+    try:
+        if value in ("", None):
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _runtime_pct(value: Any) -> str:
+    number = _runtime_float(value)
+    return "-" if number is None else f"{number:.2f}%"
+
+
+def _runtime_live_source_boundary_label(source_id: str) -> str:
+    source = str(source_id or "").strip()
+    if not source:
+        return ""
+    fit = workload_fit_for_source(source).get("live_short", "unknown")
+    if source_supports_workload(source, "live_short"):
+        return f"实时源 {source}（live_short={fit}）"
+    return f"当前实际源 {source} 只适合历史验证，盘中短线不可用（live_short={fit}）"
+
+
+def _market_context_runtime_line() -> str:
+    summary = cross_market_rule_runtime_summary()
+    if not summary.global_enabled:
+        return "跨市规则: 全球信息规则已关闭；仅保留本地确定性链路"
+    themes = " / ".join(summary.rule_themes[:3])
+    if len(summary.rule_themes) > 3:
+        themes += " 等"
+    boundary = (
+        "确定性上下文优先级增强"
+        if summary.advisory_boundary == "deterministic_context_priority_only"
+        else summary.advisory_boundary
+    )
+    source_line = ""
+    try:
+        from aqsp.data.news_source import rss_news_runtime_summary
+
+        rss_summary = rss_news_runtime_summary()
+    except Exception:
+        rss_summary = None
+    if rss_summary is not None:
+        source_line = (
+            f" | RSS源: {rss_summary.feed_count} 个 / "
+            f"覆盖 {len(rss_summary.covered_triggers)}/4 类"
+        )
+        if rss_summary.missing_triggers:
+            source_line += f" / 缺 {','.join(rss_summary.missing_triggers)}"
+    return (
+        f"跨市规则: {summary.rule_count} 条在线 | "
+        f"{themes or '未配置核心主题'} | 边界: {boundary}{source_line}"
+    )
 
 
 @dataclass(frozen=True)
@@ -112,6 +218,51 @@ class DashboardTaskSnapshot:
     actionable_count: int
     watch_count: int
     blocked_count: int
+
+
+@dataclass(frozen=True)
+class DashboardTaskLiteSummary:
+    status_label: str
+    headline: str
+    phase_summary: str
+    candidate_count: int
+    actionable_count: int
+    watch_count: int
+    blocked_count: int
+    created_at: str = ""
+
+
+@dataclass(frozen=True)
+class DashboardRuntimeTaskRun:
+    action: str
+    task_label: str
+    log_date: str
+    log_mtime: str
+    status_label: str
+    headline: str
+    detail_lines: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class DashboardRuntimeOverview:
+    signal_date: str
+    conclusion: str
+    task_id: str
+    task_label: str
+    run_status: str
+    requested_source: str
+    effective_source: str
+    source_reason: str
+    data_latest_trade_date: str
+    lag_days: str
+    risk_reason: str
+    cooldown_until: str
+    coldstart_progress: str
+    gate_blocker_line: str = ""
+    coldstart_handoff_line: str = ""
+    market_context_runtime_line: str = ""
+    walkforward_runtime_line: str = ""
+    intraday_runtime_line: str = ""
 
 
 @dataclass(frozen=True)
@@ -148,6 +299,7 @@ class DashboardSameDayTaskRow:
     actionable_count: int
     watch_count: int
     blocked_count: int
+    created_at: str = ""
 
 
 @dataclass(frozen=True)
@@ -166,6 +318,19 @@ class DashboardDateOverview:
 
 
 @dataclass(frozen=True)
+class DashboardHomeStatus:
+    """Small read-only status contract used by the two-column home board."""
+
+    label: str
+    detail: str
+    tone: str
+    actionable_count: int
+    watch_count: int
+    blocked_count: int
+    source_label: str
+
+
+@dataclass(frozen=True)
 class DashboardCandidateSpotlight:
     symbol: str
     display_name: str
@@ -178,6 +343,19 @@ class DashboardCandidateSpotlight:
     task_labels: tuple[str, ...]
     reasons: tuple[str, ...]
     risks: tuple[str, ...]
+    strategies: tuple[str, ...] = ()
+    cross_market_summary: str = ""
+    news_catalyst_summary: str = ""
+    cross_market_chain_summary: str = ""
+    cross_market_validation_summary: str = ""
+    cross_market_invalidation_summary: str = ""
+    support_points: tuple[str, ...] = ()
+    opposition_points: tuple[str, ...] = ()
+    watch_items: tuple[str, ...] = ()
+    freshness_label: str = ""
+    evidence_quality_label: str = ""
+    artifact_date: str = ""
+    updated_at: str = ""
 
 
 @dataclass(frozen=True)
@@ -205,6 +383,16 @@ class DashboardPaperSummary:
     open_position_lines: tuple[str, ...]
     event_lines: tuple[str, ...]
     action_summary_lines: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class DashboardHomeDigestPayload:
+    task_view: DashboardTaskView
+    same_day_rows: tuple[DashboardSameDayTaskRow, ...]
+    spotlights: tuple[DashboardCandidateSpotlight, ...]
+    debates: tuple[DashboardDebateSummary, ...]
+    overview: DashboardDateOverview
+    paper_summary: DashboardPaperSummary
 
 
 @dataclass(frozen=True)
@@ -259,6 +447,305 @@ class DashboardDebateSummary:
     risk_warnings: tuple[str, ...]
     opportunity_highlights: tuple[str, ...]
     agent_views: tuple[DashboardDebateAgentView, ...]
+    cross_market_summary: str = ""
+    cross_market_chain_summary: str = ""
+    cross_market_validation_summary: str = ""
+    cross_market_invalidation_summary: str = ""
+    research_verdict: str = ""
+    primary_risk_gate: str = ""
+    next_trigger: str = ""
+    historical_context_note: str = ""
+    role_reliability_lines: tuple[str, ...] = ()
+    role_selection_summary: str = ""
+    role_selection_plan: str = ""
+    support_points: tuple[str, ...] = ()
+    opposition_points: tuple[str, ...] = ()
+    watch_items: tuple[str, ...] = ()
+    created_at: str = ""
+
+
+@dataclass(frozen=True)
+class DashboardDebateConclusion:
+    decision_line: str = ""
+    consensus_line: str = ""
+    cross_market_line: str = ""
+    chain_or_trigger_line: str = ""
+    validation_line: str = ""
+    invalidation_line: str = ""
+    active_roles_line: str = ""
+    history_line: str = ""
+    reliability_line: str = ""
+    support_line: str = ""
+    opposition_line: str = ""
+    watch_line: str = ""
+    evidence_line: str = ""
+
+
+def debate_summary_cross_market_line(
+    summary: DashboardDebateSummary,
+) -> str:
+    cross_market_view = next(
+        (view for view in summary.agent_views if view.role_id == "cross_market"),
+        None,
+    )
+    if cross_market_view is None:
+        return (
+            f"跨市传导: {summary.cross_market_summary}"
+            if summary.cross_market_summary
+            else ""
+        )
+    lead_argument = (
+        cross_market_view.key_argument
+        or cross_market_view.key_opportunity
+        or cross_market_view.key_risk
+        or ""
+    ).strip()
+    if not lead_argument:
+        return (
+            f"跨市传导: {summary.cross_market_summary}"
+            if summary.cross_market_summary
+            else ""
+        )
+    return f"跨市传导: {lead_argument}"
+
+
+def debate_summary_chain_line(
+    summary: DashboardDebateSummary | None = None,
+    *,
+    spotlight: DashboardCandidateSpotlight | None = None,
+) -> str:
+    chain_summary = ""
+    if spotlight is not None:
+        chain_summary = spotlight.cross_market_chain_summary
+    elif summary is not None:
+        chain_summary = summary.cross_market_chain_summary
+    if not chain_summary:
+        return ""
+    return f"传导链: {chain_summary}"
+
+
+def debate_summary_evidence_line(
+    summary: DashboardDebateSummary | None,
+) -> str:
+    if summary is None:
+        return ""
+    parts = [
+        f"{summary.round_count} 轮讨论",
+        f"{len(summary.agent_views)} 个观点",
+    ]
+    if summary.data_source:
+        parts.append(f"数据源 {summary.data_source}")
+    if summary.thresholds_version:
+        parts.append(f"阈值 {summary.thresholds_version}")
+    return f"证据构成: {' / '.join(parts)}"
+
+
+def debate_summary_active_roles_line(
+    summary: DashboardDebateSummary | None,
+) -> str:
+    if summary is None:
+        return ""
+    labels = tuple(
+        dict.fromkeys(
+            view.role_label for view in summary.agent_views if view.role_label
+        )
+    )
+    if not labels:
+        return ""
+    if len(labels) <= 5:
+        return "讨论视角: " + "、".join(labels)
+    return "讨论视角: " + "、".join(labels[:5]) + f" 等 {len(labels)} 个角色"
+
+
+def build_debate_conclusion(
+    summary: DashboardDebateSummary | None,
+    *,
+    spotlight: DashboardCandidateSpotlight | None = None,
+    fallback_verdict: str = "",
+) -> DashboardDebateConclusion:
+    if summary is None:
+        return DashboardDebateConclusion()
+
+    verdict = summary.research_verdict.strip() or fallback_verdict.strip()
+    if verdict:
+        decision_line = (
+            f"研究口径: {verdict}；卡点 {summary.primary_risk_gate}"
+            if summary.primary_risk_gate
+            else f"研究口径: {verdict}"
+        )
+    elif summary.primary_risk_gate:
+        decision_line = f"核心卡点: {summary.primary_risk_gate}"
+    else:
+        fallback_conclusion = summary.consensus or summary.recommended_adjustment_label
+        decision_line = (
+            f"当前结论: {fallback_conclusion}" if fallback_conclusion else ""
+        )
+
+    cross_market_line = debate_summary_cross_market_line(summary)
+    if (
+        not cross_market_line
+        and spotlight is not None
+        and spotlight.cross_market_summary
+    ):
+        cross_market_line = f"跨市传导: {spotlight.cross_market_summary}"
+
+    chain_line = debate_summary_chain_line(summary, spotlight=spotlight)
+    trigger_line = f"触发 {summary.next_trigger}" if summary.next_trigger else ""
+    if chain_line and trigger_line:
+        chain_or_trigger_line = f"{chain_line}；{trigger_line}"
+    elif chain_line:
+        chain_or_trigger_line = chain_line
+    elif trigger_line:
+        chain_or_trigger_line = f"下一触发: {summary.next_trigger}"
+    elif summary.support_points:
+        chain_or_trigger_line = f"讨论支持: {summary.support_points[0]}"
+    elif summary.opposition_points:
+        chain_or_trigger_line = f"讨论反对: {summary.opposition_points[0]}"
+    else:
+        chain_or_trigger_line = ""
+
+    validation_line = ""
+    invalidation_line = ""
+    validation_summary = (
+        summary.cross_market_validation_summary
+        or (spotlight.cross_market_validation_summary if spotlight is not None else "")
+    ).strip()
+    invalidation_summary = (
+        summary.cross_market_invalidation_summary
+        or (
+            spotlight.cross_market_invalidation_summary if spotlight is not None else ""
+        )
+    ).strip()
+    if validation_summary:
+        validation_line = f"确认信号: {validation_summary}"
+    if invalidation_summary:
+        invalidation_line = f"失效信号: {invalidation_summary}"
+
+    return DashboardDebateConclusion(
+        decision_line=decision_line,
+        consensus_line=f"结论共识: {summary.consensus}" if summary.consensus else "",
+        cross_market_line=cross_market_line,
+        chain_or_trigger_line=chain_or_trigger_line,
+        validation_line=validation_line,
+        invalidation_line=invalidation_line,
+        active_roles_line=debate_summary_active_roles_line(summary),
+        history_line=(
+            f"历史校验: {summary.historical_context_note}"
+            if summary.historical_context_note
+            else ""
+        ),
+        reliability_line=(
+            f"角色可信度: {summary.role_reliability_lines[0]}"
+            if summary.role_reliability_lines
+            else ""
+        ),
+        support_line=(
+            f"讨论支持: {summary.support_points[0]}" if summary.support_points else ""
+        ),
+        opposition_line=(
+            f"讨论反对: {summary.opposition_points[0]}"
+            if summary.opposition_points
+            else ""
+        ),
+        watch_line=(
+            f"讨论待确认: {summary.watch_items[0]}" if summary.watch_items else ""
+        ),
+        evidence_line=debate_summary_evidence_line(summary),
+    )
+
+
+def debate_summary_priority_key(
+    summary: DashboardDebateSummary,
+) -> tuple[int, ...] | tuple[int, ... | str]:
+    verdict = summary.research_verdict.strip()
+    verdict_rank = 0
+    if verdict:
+        if "优先" in verdict and ("复核" in verdict or "跟踪" in verdict):
+            verdict_rank = 3
+        elif any(
+            keyword in verdict
+            for keyword in ("纸面复核", "纸面跟踪", "重点跟踪", "重点观察")
+        ):
+            verdict_rank = 2
+        else:
+            verdict_rank = 1
+    cross_market_present = int(
+        any(view.role_id == "cross_market" for view in summary.agent_views)
+    )
+    structure_count = sum(
+        1
+        for value in (
+            summary.primary_risk_gate,
+            summary.next_trigger,
+            summary.historical_context_note,
+            summary.role_reliability_lines,
+            summary.support_points,
+            summary.opposition_points,
+            summary.watch_items,
+        )
+        if value
+    )
+    return (
+        verdict_rank,
+        int(bool(summary.next_trigger)),
+        int(bool(summary.primary_risk_gate)),
+        int(bool(summary.historical_context_note)),
+        int(bool(summary.role_reliability_lines)),
+        cross_market_present,
+        structure_count,
+        int(summary.disagreement_score * 100),
+        summary.round_count,
+        int(summary.adjusted_score * 100),
+        summary.created_at,
+    )
+
+
+def debate_summary_signal_value_tier(
+    summary: DashboardDebateSummary,
+) -> str:
+    verdict = summary.research_verdict.strip()
+    has_priority_verdict = bool(
+        verdict
+        and (
+            ("优先" in verdict and ("复核" in verdict or "跟踪" in verdict))
+            or any(
+                keyword in verdict
+                for keyword in ("纸面复核", "纸面跟踪", "重点跟踪", "重点观察")
+            )
+        )
+    )
+    has_cross_market = any(
+        view.role_id == "cross_market" for view in summary.agent_views
+    )
+    structure_count = sum(
+        1
+        for value in (
+            summary.primary_risk_gate,
+            summary.next_trigger,
+            summary.historical_context_note,
+            summary.role_reliability_lines,
+            summary.support_points,
+            summary.opposition_points,
+            summary.watch_items,
+        )
+        if value
+    )
+    if has_priority_verdict and (
+        summary.next_trigger
+        or summary.primary_risk_gate
+        or summary.historical_context_note
+        or has_cross_market
+        or structure_count >= 4
+    ):
+        return "high"
+    if (
+        has_priority_verdict
+        or has_cross_market
+        or structure_count >= 3
+        or summary.disagreement_score >= 0.35
+    ):
+        return "medium"
+    return "low"
 
 
 @dataclass(frozen=True)
@@ -315,6 +802,15 @@ class DashboardCandidateCard:
     risks: tuple[str, ...]
     strategies: tuple[str, ...]
     data_source: str
+    news_catalyst_summary: str = ""
+    cross_market_summary: str = ""
+    cross_market_chain_summary: str = ""
+    cross_market_validation_summary: str = ""
+    cross_market_invalidation_summary: str = ""
+    freshness_label: str = ""
+    evidence_quality_label: str = ""
+    artifact_date: str = ""
+    updated_at: str = ""
 
 
 @dataclass(frozen=True)
@@ -358,6 +854,9 @@ class DashboardDataProvider:
         logs_path: str = "",
         reports_dir: str = "",
         debate_results_path: str = "",
+        bt_logs_dir: str = "",
+        intraday_ledger_path: str = "",
+        intraday_latest_path: str = "",
     ) -> None:
         resolved_ledger = (
             ledger_path.strip()
@@ -370,43 +869,322 @@ class DashboardDataProvider:
             or "data/paper_trades.jsonl"
         )
         resolved_logs = logs_path.strip() or "logs/trades"
+        resolved_bt_logs = (
+            bt_logs_dir.strip()
+            or os.getenv("AQSP_BT_LOGS_DIR", "").strip()
+            or "logs/bt"
+        )
         resolved_reports = reports_dir.strip() or "reports"
         resolved_debate_results = (
             debate_results_path.strip()
             or os.getenv("AQSP_DEBATE_RESULTS", "").strip()
             or "data/debate_results.jsonl"
         )
+        resolved_intraday_ledger = (
+            intraday_ledger_path.strip()
+            or os.getenv("AQSP_INTRADAY_LEDGER", "").strip()
+            or "data/intraday_predictions.jsonl"
+        )
+        resolved_intraday_latest = (
+            intraday_latest_path.strip()
+            or os.getenv("AQSP_INTRADAY_LATEST_CSV", "").strip()
+            or os.getenv("AQSP_INTRADAY_OUTPUT_CSV", "").strip()
+            or "reports/intraday_latest.csv"
+        )
 
         self.ledger_path = Path(resolved_ledger)
         self.paper_ledger_path = Path(resolved_paper_ledger)
         self.logs_path = Path(resolved_logs)
+        self.bt_logs_path = Path(resolved_bt_logs)
         self.reports_dir = Path(resolved_reports)
         self.debate_results_path = Path(resolved_debate_results)
+        self.intraday_ledger_path = Path(resolved_intraday_ledger)
+        self.intraday_latest_path = Path(resolved_intraday_latest)
         self.logger = TradeLogger(str(self.logs_path))
+        self._runtime_cache: dict[str, dict[object, Any]] = {}
+        self._runtime_cache_source_signature = self._source_signature()
+
+    def _source_signature(self) -> tuple[tuple[str, int, int], ...]:
+        paths = tuple(
+            path
+            for path in (
+                getattr(self, "ledger_path", None),
+                getattr(self, "paper_ledger_path", None),
+                getattr(self, "debate_results_path", None),
+                getattr(self, "intraday_ledger_path", None),
+                getattr(self, "intraday_latest_path", None),
+            )
+            if isinstance(path, Path)
+        )
+        signature: list[tuple[str, int, int]] = []
+        for path in paths:
+            try:
+                stat = path.stat()
+            except OSError:
+                signature.append((str(path), -1, -1))
+            else:
+                signature.append((str(path), stat.st_mtime_ns, stat.st_size))
+        return tuple(signature)
+
+    def _invalidate_cache_when_sources_change(self) -> None:
+        signature = self._source_signature()
+        if signature == getattr(self, "_runtime_cache_source_signature", None):
+            return
+        runtime_cache = getattr(self, "_runtime_cache", None)
+        if isinstance(runtime_cache, dict):
+            runtime_cache.clear()
+        self._runtime_cache_source_signature = signature
+
+    def _cache_bucket(self, name: str) -> dict[object, Any]:
+        runtime_cache = getattr(self, "_runtime_cache", None)
+        if not isinstance(runtime_cache, dict):
+            runtime_cache = {}
+            setattr(self, "_runtime_cache", runtime_cache)
+        bucket = runtime_cache.get(name)
+        if not isinstance(bucket, dict):
+            bucket = {}
+            runtime_cache[name] = bucket
+        return bucket
+
+    def _cache_value(
+        self,
+        bucket_name: str,
+        key: object,
+        loader: Callable[[], Any],
+    ) -> Any:
+        self._invalidate_cache_when_sources_change()
+        bucket = self._cache_bucket(bucket_name)
+        if key not in bucket:
+            bucket[key] = loader()
+        return bucket[key]
 
     def load_signal_rows(self) -> list[dict[str, Any]]:
+        def _load() -> list[dict[str, Any]]:
+            try:
+                rows = read_ledger(self.ledger_path)
+            except Exception as exc:
+                logger.error("加载 signal ledger 失败: %s", exc)
+                return []
+            normalized: list[dict[str, Any]] = []
+            for row in rows:
+                if isinstance(row, dict):
+                    normalized.append(dict(row))
+            normalized.extend(self._load_intraday_rows())
+            return normalized
+
+        return self._cache_value("load_signal_rows", "all", _load)
+
+    def _load_intraday_rows(self) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        csv_loaded = False
+        if self.intraday_latest_path.exists():
+            try:
+                frame = pd.read_csv(self.intraday_latest_path, dtype=str)
+            except Exception as exc:
+                logger.error("加载 intraday latest csv 失败: %s", exc)
+            else:
+                csv_loaded = True
+                try:
+                    mtime = datetime.fromtimestamp(
+                        self.intraday_latest_path.stat().st_mtime,
+                        tz=SHANGHAI_TZ,
+                    ).isoformat()
+                except OSError:
+                    mtime = ""
+                for raw_row in frame.to_dict(orient="records"):
+                    symbol = str(raw_row.get("symbol", "") or "").strip()
+                    if not symbol:
+                        continue
+                    normalized = {
+                        key: "" if pd.isna(value) else value
+                        for key, value in raw_row.items()
+                    }
+                    normalized["symbol"] = (
+                        "__RUN__"
+                        if symbol == "__RUN__"
+                        else self._canonical_symbol(symbol)
+                    )
+                    normalized["signal_date"] = str(
+                        normalized.get("signal_date") or normalized.get("date") or ""
+                    ).strip()
+                    normalized["task_id"] = "intraday"
+                    normalized["run_task_id"] = "intraday"
+                    normalized.setdefault("created_at", mtime)
+                    normalized["_artifact_source"] = "intraday_csv"
+                    normalized["_artifact_updated_at"] = mtime
+                    rows.append(
+                        normalized
+                        if symbol == "__RUN__"
+                        else self._normalize_intraday_runtime_row(normalized)
+                    )
+
+        if self.intraday_ledger_path.exists():
+            try:
+                intraday_rows = read_ledger(self.intraday_ledger_path)
+            except Exception as exc:
+                logger.error("加载 intraday ledger 失败: %s", exc)
+                intraday_rows = []
+            for row in intraday_rows:
+                if not isinstance(row, dict):
+                    continue
+                if csv_loaded and not self._is_runtime_event_row(row):
+                    continue
+                normalized = dict(row)
+                normalized.setdefault("task_id", "intraday")
+                normalized.setdefault("run_task_id", "intraday")
+                rows.append(self._normalize_intraday_runtime_row(normalized))
+        return rows
+
+    def live_candidate_view(
+        self,
+        *,
+        signal_date: str = "",
+        now: datetime | None = None,
+    ) -> LiveCandidateView:
+        """Return the latest intraday CSV as a bounded, freshness-aware view."""
+        current_time = now or now_shanghai()
+        selected_date = signal_date.strip()
+
+        def _build() -> LiveCandidateView:
+            csv_rows = [
+                row
+                for row in self.load_signal_rows()
+                if row.get("_artifact_source") == "intraday_csv"
+                and not self._is_runtime_event_row(row)
+            ]
+            try:
+                updated_at = datetime.fromtimestamp(
+                    self.intraday_latest_path.stat().st_mtime,
+                    tz=SHANGHAI_TZ,
+                ).isoformat()
+            except OSError:
+                updated_at = ""
+            artifact_dates = {
+                str(row.get("signal_date") or row.get("date") or "").strip()
+                for row in csv_rows
+                if str(row.get("signal_date") or row.get("date") or "").strip()
+            }
+            artifact_date = max(artifact_dates, default="")
+            metadata = LiveArtifactMetadata(
+                artifact_date=artifact_date,
+                updated_at=updated_at,
+            )
+            return build_live_candidate_view(
+                csv_rows,
+                metadata=metadata,
+                now=current_time,
+                requested_date=selected_date,
+            )
+
+        cache_key = (selected_date, current_time.isoformat(timespec="minutes"))
+        return self._cache_value("live_candidate_view", cache_key, _build)
+
+    def live_candidate_spotlights(
+        self,
+        *,
+        signal_date: str = "",
+        now: datetime | None = None,
+    ) -> tuple[DashboardCandidateSpotlight, ...]:
+        """Convert the bounded live view into the existing home-card contract."""
+        live_view = self.live_candidate_view(signal_date=signal_date, now=now)
+        spotlights: list[DashboardCandidateSpotlight] = []
+        for candidate in live_view.candidates:
+            merged_row = self._same_day_merged_row(dict(candidate.row), ())
+            blocker = candidate.blocker or self._candidate_blocker_text(merged_row)
+            if live_view.status == "stale":
+                stale_blocker = live_view.stale_reason or "盘中产物已过期"
+                blocker = f"{blocker}；{stale_blocker}" if blocker else stale_blocker
+                action_label = "数据过期"
+                status_label = "数据已过期"
+            elif live_view.status != "fresh":
+                blocker = blocker or "盘中产物不可用"
+                action_label = "数据不可用"
+                status_label = "数据不可用"
+            else:
+                action_label, status_label = {
+                    "actionable": ("纸面复核", "纸面复核"),
+                    "watch": ("继续观察", "继续观察"),
+                    "blocked": ("阻塞观察", "阻塞观察"),
+                }.get(candidate.status, ("继续观察", "继续观察"))
+            review_meta = self._review_meta(merged_row)
+            live_meta = (
+                f"新鲜度: {candidate.freshness_label}（更新 {candidate.updated_at}）"
+                f" / 证据质量: {candidate.evidence_quality_label}"
+            )
+            review_meta = " / ".join(part for part in (review_meta, live_meta) if part)
+            spotlights.append(
+                DashboardCandidateSpotlight(
+                    symbol=candidate.symbol,
+                    display_name=self._symbol_name(merged_row),
+                    score=candidate.score,
+                    action_label=action_label,
+                    status_label=status_label,
+                    blocker=blocker,
+                    next_step=candidate.next_step or self._next_step_text(merged_row),
+                    review_meta=review_meta,
+                    task_labels=("盘中观察",),
+                    reasons=self._as_text_tuple(merged_row.get("reasons"))
+                    or candidate.reasons,
+                    risks=self._as_text_tuple(merged_row.get("risks")) or candidate.risks,
+                    strategies=self._strategy_tuple(merged_row.get("strategies")),
+                    cross_market_summary=self._spotlight_cross_market_summary(
+                        merged_row
+                    ),
+                    news_catalyst_summary=self._spotlight_news_catalyst_summary(
+                        merged_row
+                    ),
+                    cross_market_chain_summary=self._spotlight_cross_market_chain_summary(
+                        merged_row
+                    ),
+                    cross_market_validation_summary=(
+                        self._spotlight_cross_market_validation_summary(merged_row)
+                    ),
+                    cross_market_invalidation_summary=(
+                        self._spotlight_cross_market_invalidation_summary(merged_row)
+                    ),
+                    support_points=self._as_text_tuple(merged_row.get("support_points")),
+                    opposition_points=self._as_text_tuple(
+                        merged_row.get("opposition_points")
+                    ),
+                    watch_items=self._as_text_tuple(merged_row.get("watch_items")),
+                    freshness_label=candidate.freshness_label,
+                    evidence_quality_label=candidate.evidence_quality_label,
+                    artifact_date=candidate.artifact_date,
+                    updated_at=candidate.updated_at,
+                )
+            )
+        return tuple(spotlights)
+
+    def _normalize_intraday_runtime_row(self, row: dict[str, Any]) -> dict[str, Any]:
+        normalized = dict(row)
+        normalized["symbol"] = self._canonical_symbol(
+            str(normalized.get("symbol", "") or "")
+        )
+        current_rating = str(normalized.get("rating", "") or "").strip()
         try:
-            rows = read_ledger(self.ledger_path)
-        except Exception as exc:
-            logger.error("加载 signal ledger 失败: %s", exc)
-            return []
-        normalized: list[dict[str, Any]] = []
-        for row in rows:
-            if isinstance(row, dict):
-                normalized.append(dict(row))
+            score = float(normalized.get("score") or 0.0)
+            score_rating = rating_for_score(score, load_thresholds().scoring)
+        except Exception:
+            return normalized
+        if _rating_rank(score_rating) > _rating_rank(current_rating):
+            normalized["rating"] = score_rating
+            normalized["display_rating_corrected_from_score"] = True
         return normalized
 
     def load_paper_rows(self) -> list[dict[str, Any]]:
-        try:
-            rows = read_paper_trades(self.paper_ledger_path)
-        except Exception as exc:
-            logger.error("加载 paper ledger 失败: %s", exc)
-            return []
-        normalized: list[dict[str, Any]] = []
-        for row in rows:
-            if isinstance(row, dict):
-                normalized.append(dict(row))
-        return normalized
+        def _load() -> list[dict[str, Any]]:
+            try:
+                rows = read_paper_trades(self.paper_ledger_path)
+            except Exception as exc:
+                logger.error("加载 paper ledger 失败: %s", exc)
+                return []
+            normalized: list[dict[str, Any]] = []
+            for row in rows:
+                if isinstance(row, dict):
+                    normalized.append(dict(row))
+            return normalized
+
+        return self._cache_value("load_paper_rows", "all", _load)
 
     def debate_summary(
         self,
@@ -420,16 +1198,25 @@ class DashboardDataProvider:
         if not selected_date or not selected_symbol:
             return None
 
-        matches = [
-            row
-            for row in self._dedupe_debate_rows(self._load_debate_rows())
-            if self._debate_signal_date(row) == selected_date
-            and str(row.get("symbol", "") or "").strip() == selected_symbol
-            and self._has_debate_evidence(row)
-        ]
-        if not matches:
-            return None
-        return self._build_debate_summary(max(matches, key=self._debate_row_key))
+        def _build() -> DashboardDebateSummary | None:
+            matches = [
+                row
+                for row in self._dedupe_debate_rows(self._load_debate_rows())
+                if self._debate_signal_date(row) == selected_date
+                and str(row.get("symbol", "") or "").strip() == selected_symbol
+                and self._has_debate_evidence(row)
+            ]
+            if not matches:
+                return None
+            return self._build_debate_summary(
+                max(matches, key=self._debate_quality_key)
+            )
+
+        return self._cache_value(
+            "debate_summary",
+            (selected_date, selected_symbol),
+            _build,
+        )
 
     def debate_summaries(
         self,
@@ -442,21 +1229,77 @@ class DashboardDataProvider:
         if not selected_date:
             return ()
 
-        summaries = [
-            self._build_debate_summary(row)
-            for row in self._dedupe_debate_rows(self._load_debate_rows())
-            if self._debate_signal_date(row) == selected_date
-            and self._has_debate_evidence(row)
-        ]
-        summaries.sort(
-            key=lambda item: (
-                item.adjusted_score,
-                item.disagreement_score,
-                item.display_name,
-            ),
-            reverse=True,
+        def _build() -> tuple[DashboardDebateSummary, ...]:
+            summaries = [
+                self._build_debate_summary(row)
+                for row in self._dedupe_debate_rows(self._load_debate_rows())
+                if self._debate_signal_date(row) == selected_date
+                and self._has_debate_evidence(row)
+            ]
+            summaries.sort(
+                key=lambda item: (
+                    item.adjusted_score,
+                    item.disagreement_score,
+                    item.display_name,
+                ),
+                reverse=True,
+            )
+            return tuple(summaries[:limit])
+
+        return self._cache_value(
+            "debate_summaries",
+            (selected_date, limit),
+            _build,
         )
-        return tuple(summaries[:limit])
+
+    def prioritized_debate_summaries(
+        self,
+        signal_date: str,
+        *,
+        limit: int = 8,
+        salient_only: bool = False,
+        task_id: str = "",
+    ) -> tuple[DashboardDebateSummary, ...]:
+        """返回某日所有结构化辩论摘要，按研究优先级而非单纯分数排序。"""
+        selected_date = signal_date.strip()
+        if not selected_date:
+            return ()
+
+        def _build() -> tuple[DashboardDebateSummary, ...]:
+            raw_rows = self._load_debate_rows()
+            normalized_task = task_id.strip()
+            if normalized_task:
+                task_rows = [
+                    row
+                    for row in raw_rows
+                    if str(row.get("task_id", "") or "").strip() == normalized_task
+                ]
+                raw_rows = task_rows or [
+                    row
+                    for row in raw_rows
+                    if not str(row.get("task_id", "") or "").strip()
+                ]
+            summaries = [
+                self._build_debate_summary(row)
+                for row in self._dedupe_debate_rows(raw_rows)
+                if self._debate_signal_date(row) == selected_date
+                and self._has_debate_evidence(row)
+            ]
+            summaries.sort(key=debate_summary_priority_key, reverse=True)
+            if salient_only:
+                salient = tuple(
+                    item
+                    for item in summaries
+                    if debate_summary_signal_value_tier(item) != "low"
+                )
+                return salient[:limit]
+            return tuple(summaries[:limit])
+
+        return self._cache_value(
+            "prioritized_debate_summaries",
+            (selected_date, limit, salient_only, task_id.strip()),
+            _build,
+        )
 
     def candidate_research_context(
         self,
@@ -514,30 +1357,41 @@ class DashboardDataProvider:
                 item[1],
             )
         )
-        return matched_rows[0][2]
+        selected = dict(matched_rows[0][2])
+        selected["row"] = self._same_day_merged_row(
+            selected["row"],
+            [
+                {"row": item[2]["row"], "task_id": item[2]["task_id"]}
+                for item in matched_rows
+            ],
+        )
+        return selected
 
     def _load_debate_rows(self) -> list[dict[str, Any]]:
-        if not self.debate_results_path.exists():
-            return []
-        try:
-            raw_text = self.debate_results_path.read_text(encoding="utf-8")
-        except Exception as exc:
-            logger.error("加载 debate results 失败: %s", exc)
-            return []
-
-        normalized: list[dict[str, Any]] = []
-        for line in raw_text.splitlines():
-            stripped = line.strip()
-            if not stripped:
-                continue
+        def _load() -> list[dict[str, Any]]:
+            if not self.debate_results_path.exists():
+                return []
             try:
-                payload = json.loads(stripped)
-            except json.JSONDecodeError as exc:
-                logger.warning("解析 debate results 失败: %s", exc)
-                continue
-            if isinstance(payload, dict):
-                normalized.append(payload)
-        return normalized
+                raw_text = self.debate_results_path.read_text(encoding="utf-8")
+            except Exception as exc:
+                logger.error("加载 debate results 失败: %s", exc)
+                return []
+
+            normalized: list[dict[str, Any]] = []
+            for line in raw_text.splitlines():
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                try:
+                    payload = json.loads(stripped)
+                except json.JSONDecodeError as exc:
+                    logger.warning("解析 debate results 失败: %s", exc)
+                    continue
+                if isinstance(payload, dict):
+                    normalized.append(payload)
+            return normalized
+
+        return self._cache_value("load_debate_rows", "all", _load)
 
     def summarize(self) -> DashboardSummary:
         signal_rows = self.load_signal_rows()
@@ -564,28 +1418,632 @@ class DashboardDataProvider:
             for task_id, label in _TASK_LABELS.items()
         )
 
+    def runtime_task_runs(
+        self,
+        log_date: str = "",
+        limit: int | None = None,
+    ) -> tuple[DashboardRuntimeTaskRun, ...]:
+        selected_date = log_date.strip()
+        normalized_limit = limit if isinstance(limit, int) and limit > 0 else None
+
+        def _build() -> tuple[DashboardRuntimeTaskRun, ...]:
+            runs: list[DashboardRuntimeTaskRun] = []
+            for action, path in self._runtime_task_log_candidates(
+                selected_date,
+                limit=normalized_limit,
+            ):
+                run = self._parse_runtime_task_log(action, path)
+                if run is not None:
+                    runs.append(run)
+            runs.sort(key=lambda item: item.log_mtime, reverse=True)
+            return tuple(runs)
+
+        return self._cache_value(
+            "runtime_task_runs",
+            (selected_date, normalized_limit),
+            _build,
+        )
+
+    def runtime_overview(self, signal_date: str = "") -> DashboardRuntimeOverview:
+        selected_date = signal_date.strip()
+
+        def _build() -> DashboardRuntimeOverview:
+            run = self._latest_run_event(selected_date) or {}
+            runs = self.runtime_task_runs(selected_date, limit=4)
+            coldstart_run = next(
+                (item for item in runs if item.action == "coldstart"),
+                None,
+            )
+            coldstart_handoff = self._read_coldstart_handoff_state()
+            handoff_progress = self._coldstart_handoff_progress(coldstart_handoff)
+            handoff_line = self._coldstart_handoff_line_from_state(coldstart_handoff)
+            risk_state = self._read_runtime_risk_state()
+            gate_blocker_line = self._runtime_gate_blocker_line(selected_date)
+            progress = ""
+            if coldstart_run is not None:
+                progress = self._coldstart_progress_from_lines(
+                    coldstart_run.detail_lines
+                )
+            if not progress:
+                progress = handoff_progress
+            if not progress and (
+                gate_blocker_line or str(risk_state.get("cooldown_until") or "").strip()
+            ):
+                progress = self._coldstart_progress_from_ledger()
+            coldstart_ready = self._coldstart_progress_ready(progress)
+
+            status = str(run.get("status") or "").strip()
+            triggered = bool(run.get("run_circuit_breaker_triggered"))
+            final_count = _runtime_float(run.get("run_final_count"))
+            if (status == "blocked_by_circuit_breaker" or triggered) and (
+                coldstart_ready and str(risk_state.get("cooldown_until") or "").strip()
+            ):
+                conclusion = "冷启动样本已达标，等待组合保护冷却"
+            elif status == "blocked_by_circuit_breaker" or triggered:
+                conclusion = "组合保护生效，暂停新增纸面复核"
+            elif (
+                coldstart_ready and str(risk_state.get("cooldown_until") or "").strip()
+            ):
+                conclusion = "冷启动样本已达标，等待组合保护冷却"
+            elif coldstart_ready:
+                conclusion = "冷启动样本已达标，等待生产 walk-forward gate"
+            elif final_count == 0:
+                conclusion = "最近运行无新增候选，先看阻塞与数据状态"
+            elif run:
+                conclusion = "最近运行已落盘，等待完整收盘摘要"
+            elif coldstart_run is not None:
+                conclusion = f"{coldstart_run.task_label}: {coldstart_run.status_label}"
+            else:
+                conclusion = ""
+
+            task_id = str(run.get("run_task_id") or run.get("task_id") or "").strip()
+            task_label = _RUNTIME_TASK_LABELS.get(task_id, task_id)
+            if not task_id and coldstart_run is not None:
+                task_id = coldstart_run.action
+                task_label = coldstart_run.task_label
+
+            requested_source = str(run.get("run_requested_source") or "").strip()
+            effective_source = str(run.get("run_actual_source") or "").strip()
+            source_for_reason = effective_source or requested_source
+            source_reason = str(run.get("run_source_health_message") or "").strip()
+            if source_for_reason and not source_supports_workload(
+                source_for_reason,
+                "live_short",
+            ):
+                boundary_reason = _runtime_live_source_boundary_label(source_for_reason)
+                source_reason = " / ".join(
+                    item for item in (boundary_reason, source_reason) if item
+                )
+
+            risk_reason = str(
+                run.get("run_circuit_breaker_reason") or run.get("reason") or ""
+            ).strip()
+            return DashboardRuntimeOverview(
+                signal_date=str(
+                    run.get("signal_date")
+                    or run.get("signal_day_group")
+                    or selected_date
+                )[:10],
+                conclusion=conclusion,
+                task_id=task_id,
+                task_label=task_label,
+                run_status=status
+                or (coldstart_run.status_label if coldstart_run else ""),
+                requested_source=requested_source,
+                effective_source=effective_source,
+                source_reason=source_reason,
+                data_latest_trade_date=str(
+                    run.get("run_data_latest_trade_date") or ""
+                ).strip(),
+                lag_days=(
+                    ""
+                    if run.get("run_data_lag_days") in ("", None)
+                    else str(run.get("run_data_lag_days"))
+                ),
+                risk_reason=normalize_research_tone(risk_reason),
+                cooldown_until=str(risk_state.get("cooldown_until") or "").strip(),
+                coldstart_progress=progress,
+                gate_blocker_line=gate_blocker_line,
+                coldstart_handoff_line=handoff_line,
+                market_context_runtime_line=_market_context_runtime_line(),
+                walkforward_runtime_line=self._walkforward_runtime_line(),
+                intraday_runtime_line=self._intraday_runtime_line(),
+            )
+
+        return self._cache_value("runtime_overview", selected_date, _build)
+
+    def runtime_fallback_digest_lines(
+        self,
+        signal_date: str = "",
+    ) -> tuple[str, ...]:
+        selected_date = signal_date.strip()
+
+        def _build() -> tuple[str, ...]:
+            run = self._latest_run_event(selected_date)
+            if run is None:
+                return ()
+
+            status = str(run.get("status") or "").strip()
+            reason = str(
+                run.get("run_circuit_breaker_reason") or run.get("reason") or ""
+            ).strip()
+            triggered = bool(run.get("run_circuit_breaker_triggered"))
+            final_count = _runtime_float(run.get("run_final_count"))
+            screened_count = _runtime_float(run.get("run_screened_count"))
+            fetched_count = _runtime_float(run.get("run_fetched_frame_count"))
+
+            if status == "blocked_by_circuit_breaker" or triggered:
+                conclusion = "组合保护生效，暂停新增纸面复核"
+            elif final_count == 0:
+                conclusion = "最近运行无新增候选，先看阻塞与数据状态"
+            else:
+                conclusion = "最近运行已落盘，等待完整收盘摘要"
+
+            lines = [f"结论: {conclusion}"]
+            task_id = str(run.get("run_task_id") or run.get("task_id") or "").strip()
+            run_date = str(
+                run.get("signal_date") or run.get("signal_day_group") or selected_date
+            ).strip()
+            status_parts = []
+            if task_id:
+                status_parts.append(f"任务 {task_id}")
+            if run_date:
+                status_parts.append(f"日期 {run_date[:10]}")
+            if status_parts:
+                lines.append("运行状态: " + " / ".join(status_parts))
+
+            source = str(
+                run.get("run_actual_source") or run.get("run_requested_source") or ""
+            ).strip()
+            data_date = str(run.get("run_data_latest_trade_date") or "").strip()
+            lag_value = run.get("run_data_lag_days")
+            lag = "" if lag_value in ("", None) else str(lag_value)
+            data_parts = []
+            if source:
+                data_parts.append(_runtime_live_source_boundary_label(source))
+            if data_date:
+                data_parts.append(f"数据日 {data_date}")
+            if lag:
+                data_parts.append(f"延迟 {lag} 天")
+            if data_parts:
+                lines.append("数据: " + " / ".join(data_parts))
+
+            if reason:
+                lines.append(f"风险/阻塞: {normalize_research_tone(reason)}")
+            if any(
+                run.get(key) is not None for key in ("daily_pnl_pct", "monthly_pnl_pct")
+            ):
+                lines.append(
+                    "风控读数: "
+                    f"日 {_runtime_pct(run.get('daily_pnl_pct'))} / "
+                    f"月 {_runtime_pct(run.get('monthly_pnl_pct'))}"
+                )
+            elif any(
+                value is not None
+                for value in (fetched_count, screened_count, final_count)
+            ):
+                count_parts = []
+                if fetched_count is not None:
+                    count_parts.append(f"获取 {int(fetched_count)}")
+                if screened_count is not None:
+                    count_parts.append(f"筛选 {int(screened_count)}")
+                if final_count is not None:
+                    count_parts.append(f"候选 {int(final_count)}")
+                if count_parts:
+                    lines.append("流程: " + " / ".join(count_parts))
+            return tuple(lines[:5])
+
+        return self._cache_value("runtime_fallback_digest_lines", selected_date, _build)
+
+    def _latest_run_event(self, signal_date: str = "") -> dict[str, Any] | None:
+        rows = [
+            row for row in self.load_signal_rows() if self._is_runtime_event_row(row)
+        ]
+        selected_date = signal_date.strip()
+        if selected_date:
+            dated = [
+                row
+                for row in rows
+                if str(row.get("signal_date") or row.get("signal_day_group") or "")[:10]
+                == selected_date[:10]
+            ]
+            if dated:
+                rows = dated
+        if not rows:
+            return None
+        return rows[-1]
+
+    def _read_runtime_risk_state(self) -> dict[str, Any]:
+        def _load() -> dict[str, Any]:
+            candidates = (
+                self.ledger_path.parent / "risk_state.json",
+                Path("data/risk_state.json"),
+            )
+            for path in candidates:
+                if not path.exists():
+                    continue
+                try:
+                    payload = json.loads(path.read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError):
+                    continue
+                if isinstance(payload, dict):
+                    return payload
+            return {}
+
+        return self._cache_value("runtime_risk_state", "all", _load)
+
+    def _read_coldstart_handoff_state(self) -> dict[str, Any]:
+        return self._read_runtime_json_state(
+            env_name="AQSP_COLDSTART_HANDOFF_STATUS_PATH",
+            filename="coldstart_handoff_status.json",
+            bucket_name="coldstart_handoff_status",
+        )
+
+    def _read_runtime_json_state(
+        self,
+        *,
+        env_name: str,
+        filename: str,
+        bucket_name: str,
+    ) -> dict[str, Any]:
+        def _load() -> dict[str, Any]:
+            candidates: list[Path] = []
+            env_path = os.getenv(env_name, "").strip()
+            if env_path:
+                candidates.append(Path(env_path))
+            candidates.extend(
+                (self.ledger_path.parent / filename, Path("data") / filename)
+            )
+            for path in candidates:
+                if not path.exists():
+                    continue
+                try:
+                    payload = json.loads(path.read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError):
+                    continue
+                if isinstance(payload, dict):
+                    return payload
+            return {}
+
+        return self._cache_value(bucket_name, "all", _load)
+
+    def _walkforward_runtime_line(self) -> str:
+        status = self._read_runtime_json_state(
+            env_name="AQSP_WALKFORWARD_PRODUCTION_STATUS",
+            filename="walkforward_production_status.json",
+            bucket_name="walkforward_production_status",
+        )
+        gate = self._read_runtime_json_state(
+            env_name="AQSP_WALKFORWARD_GATE_PATH",
+            filename="walkforward_gate.json",
+            bucket_name="walkforward_gate",
+        )
+        return self._walkforward_runtime_line_from_state(status, gate)
+
+    def _intraday_runtime_line(self) -> str:
+        state = self._read_runtime_json_state(
+            env_name="AQSP_INTRADAY_STATUS",
+            filename="intraday_refresh_status.json",
+            bucket_name="intraday_refresh_status",
+        )
+        return self._intraday_runtime_line_from_state(state)
+
+    @staticmethod
+    def _intraday_runtime_line_from_state(state: dict[str, Any]) -> str:
+        status = str(state.get("status") or "").strip()
+        if not status:
+            return ""
+        status_label = {
+            "completed": "已刷新",
+            "failed": "失败保留上一版",
+            "skipped": "已跳过",
+        }.get(status, status)
+        source = str(state.get("source") or "").strip()
+        updated_at = str(state.get("updated_at") or "").strip()[:16]
+        max_universe = state.get("max_universe")
+        reason = normalize_research_tone(str(state.get("reason") or "").strip())
+        parts = [f"盘中刷新: {status_label}"]
+        if source:
+            parts.append(f"源 {source}")
+        if max_universe not in ("", None):
+            parts.append(f"候选池 {max_universe}")
+        candidate_count = state.get("candidate_count")
+        actionable_count = state.get(
+            "paper_review_count", state.get("actionable_count")
+        )
+        focus_count = state.get("focus_count")
+        watch_count = state.get("watch_count")
+        blocked_count = state.get("blocked_count")
+        protection_blocked = bool(state.get("protection_blocked"))
+        if candidate_count not in ("", None):
+            count_parts = [f"输出 {candidate_count}"]
+            if focus_count not in ("", None):
+                count_parts.append(f"强候选 {focus_count}")
+            if actionable_count not in ("", None):
+                count_parts.append(f"纸面复核 {actionable_count}")
+            if watch_count not in ("", None):
+                count_parts.append(f"观察 {watch_count}")
+            if blocked_count not in ("", None):
+                count_parts.append(f"阻塞 {blocked_count}")
+            if protection_blocked:
+                count_parts.append("组合保护")
+            parts.append(" / ".join(count_parts))
+        if updated_at:
+            parts.append(f"更新 {updated_at}")
+        if reason:
+            parts.append(reason)
+        return " / ".join(parts)
+
+    @staticmethod
+    def _walkforward_runtime_line_from_state(
+        status: dict[str, Any],
+        gate: dict[str, Any],
+    ) -> str:
+        status_value = str(status.get("status") or "").strip()
+        updated_at = str(status.get("updated_at") or "").strip()[:10]
+        effective_symbols = status.get("effective_symbols")
+        gate_data_end = str(gate.get("data_end") or "").strip()
+        both_pass = gate.get("both_pass")
+        has_gate_sidecar = bool(gate)
+        gate_label = (
+            "双门已过"
+            if both_pass is True
+            else "DSR/PBO 未过门"
+            if both_pass is False
+            else "gate 未确认"
+        )
+        if not status_value and not gate:
+            return ""
+        status_label = {
+            "blocked_resources": "资源不足阻塞",
+            "timeout": "超时",
+            "failed": "失败",
+            "error": "错误",
+            "running": "运行中",
+            "blocked_running": "已有生产回测运行中",
+            "dry_run": "预检完成",
+            "blocked_db": "历史库缺失阻塞",
+            "completed": "完成",
+            "inspecting_coverage": "检查覆盖中",
+            "preparing_child": "准备生产子进程",
+        }.get(status_value, status_value)
+        status_uses_existing_sidecar = status_value not in {"", "completed"}
+        parts: list[str] = []
+        if status_label:
+            parts.append(f"生产回测 {status_label}")
+        if updated_at:
+            parts.append(f"更新 {updated_at}")
+        if isinstance(effective_symbols, int):
+            parts.append(f"覆盖 {effective_symbols} 标的")
+        if status_uses_existing_sidecar and has_gate_sidecar:
+            parts.append(f"沿用既有 gate sidecar: {gate_label}")
+        else:
+            parts.append(gate_label)
+        if gate_data_end:
+            parts.append(f"gate 数据至 {gate_data_end}")
+        if status_value == "blocked_resources":
+            parts.append("后续换更大机器或显式放行后再跑")
+        elif status_value in {"timeout", "failed", "error", "blocked_running"}:
+            parts.append("后续需重跑生产 walk-forward")
+        elif both_pass is False:
+            parts.append("后续看质量门修复")
+        return "生产 gate: " + " / ".join(parts)
+
+    def _runtime_gate_blocker_line(self, signal_date: str = "") -> str:
+        selected_date = signal_date.strip()[:10]
+
+        def _load() -> str:
+            candidates: list[Path] = []
+            env_path = os.getenv("AQSP_GATE_NOTIFY_STATE_PATH", "").strip()
+            if env_path:
+                candidates.append(Path(env_path))
+            candidates.extend(
+                (
+                    self.ledger_path.parent / "gate_notify_state.json",
+                    Path("data/gate_notify_state.json"),
+                )
+            )
+            for path in candidates:
+                if not path.exists():
+                    continue
+                try:
+                    payload = json.loads(path.read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError):
+                    continue
+                if not isinstance(payload, dict):
+                    continue
+                run_date = str(payload.get("run_date") or "").strip()[:10]
+                if selected_date and run_date and run_date != selected_date:
+                    continue
+                line = self._gate_blocker_line_from_state(
+                    payload,
+                    signal_date=selected_date,
+                )
+                if line:
+                    return line
+            return ""
+
+        return self._cache_value("runtime_gate_blocker_line", selected_date, _load)
+
+    @staticmethod
+    def _gate_blocker_line_from_state(
+        payload: dict[str, Any],
+        *,
+        signal_date: str,
+    ) -> str:
+        fingerprint = ""
+        sent_by_date = payload.get("sent_by_date")
+        if isinstance(sent_by_date, dict) and sent_by_date:
+            entry: object | None = None
+            if signal_date:
+                entry = sent_by_date.get(signal_date)
+                if entry is None:
+                    return ""
+            if entry is None:
+                latest_key = max(str(key) for key in sent_by_date)
+                entry = sent_by_date.get(latest_key)
+            if isinstance(entry, dict):
+                fingerprint = str(entry.get("fingerprint") or "").strip()
+            elif isinstance(entry, str):
+                fingerprint = entry.strip()
+        if not fingerprint:
+            fingerprint = str(payload.get("fingerprint") or "").strip()
+        labels = DashboardDataProvider._gate_fingerprint_labels(fingerprint)
+        if not labels and isinstance(sent_by_date, dict):
+            for key in sorted((str(item) for item in sent_by_date), reverse=True):
+                entry = sent_by_date.get(key)
+                candidate = ""
+                if isinstance(entry, dict):
+                    candidate = str(entry.get("fingerprint") or "").strip()
+                elif isinstance(entry, str):
+                    candidate = entry.strip()
+                labels = DashboardDataProvider._gate_fingerprint_labels(candidate)
+                if labels:
+                    break
+        if not labels:
+            return ""
+        return "双门 gate: " + " / ".join(dict.fromkeys(labels))
+
+    @staticmethod
+    def _gate_fingerprint_labels(fingerprint: str) -> tuple[str, ...]:
+        return tuple(
+            label
+            for label in (
+                DashboardDataProvider._gate_fingerprint_label(token)
+                for token in fingerprint.split("|")
+            )
+            if label
+        )
+
+    @staticmethod
+    def _gate_fingerprint_label(token: str) -> str:
+        labels = {
+            "cold_start": "冷启动样本未满",
+            "dsr": "DSR 未过门",
+            "pbo": "PBO 未过门",
+            "sidecar_missing": "双门 sidecar 缺失",
+            "sidecar_parse_failed": "双门 sidecar 解析失败",
+            "run_date_invalid": "双门日期异常",
+            "gate_stale": "双门结果过期",
+            "n_periods_invalid": "有效回测周期不足",
+            "data_end_invalid": "双门 data_end 异常",
+            "heldout_contaminated": "held-out 边界污染",
+            "market_coverage_missing": "全市场覆盖缺失",
+            "market_coverage_insufficient": "全市场覆盖不足",
+            "dsr_flag_invalid": "DSR 标志异常",
+            "pbo_flag_invalid": "PBO 标志异常",
+            "pbo_valid_flag_invalid": "PBO 有效性异常",
+            "both_pass_flag_invalid": "双门总标志异常",
+            "blocked_unknown": "质量门未放行",
+        }
+        return labels.get(str(token or "").strip(), "")
+
+    def _coldstart_progress_from_ledger(self) -> str:
+        signal_days = len(
+            self._signal_dates(
+                [
+                    row
+                    for row in self.load_signal_rows()
+                    if not self._is_runtime_event_row(row)
+                ]
+            )
+        )
+        if signal_days <= 0:
+            return ""
+        return f"{signal_days}/{cold_start_min_days()}"
+
+    @staticmethod
+    def _coldstart_progress_from_lines(lines: tuple[str, ...]) -> str:
+        for line in lines:
+            match = re.search(r"冷启动[:：]\s*(\d+\s*/\s*\d+)", str(line))
+            if match:
+                return match.group(1).replace(" ", "")
+        return ""
+
+    @staticmethod
+    def _coldstart_handoff_progress(state: dict[str, Any]) -> str:
+        progress = str(state.get("progress") or "").strip().replace(" ", "")
+        return progress if re.fullmatch(r"\d+/\d+", progress) else ""
+
+    @staticmethod
+    def _coldstart_handoff_line_from_state(state: dict[str, Any]) -> str:
+        if str(state.get("status") or "").strip() != "ready":
+            return ""
+        progress = DashboardDataProvider._coldstart_handoff_progress(state)
+        next_step = str(state.get("next_step") or "").strip()
+        next_command = str(state.get("next_command") or "").strip()
+        blocker = str(state.get("blocker") or "").strip()
+        updated_at = str(state.get("updated_at") or "").strip()[:10]
+        parts = ["冷启动交接: 样本门已达标"]
+        if progress:
+            parts.append(progress)
+        if next_step:
+            parts.append(f"下一步 {next_step}")
+        if next_command:
+            parts.append(f"入口 {next_command}")
+        if blocker:
+            parts.append(blocker)
+        if updated_at:
+            parts.append(f"更新 {updated_at}")
+        return " / ".join(parts)
+
+    @staticmethod
+    def _coldstart_progress_ready(progress: str) -> bool:
+        match = re.fullmatch(r"(\d+)/(\d+)", str(progress or "").strip())
+        if not match:
+            return False
+        current, target = (int(match.group(1)), int(match.group(2)))
+        return target > 0 and current >= target
+
+    @staticmethod
+    def _is_runtime_event_row(row: dict[str, Any]) -> bool:
+        return (
+            str(row.get("symbol", "") or "") == "__RUN__"
+            or str(row.get("name", "") or "") == "run_event"
+            or bool(row.get("event_type"))
+        )
+
     def task_snapshots(
         self, signal_date: str = ""
     ) -> tuple[DashboardTaskSnapshot, ...]:
         selected_date = signal_date.strip()
-        snapshots: list[DashboardTaskSnapshot] = []
-        for task_id, label in _TASK_LABELS.items():
-            available_dates = self.task_dates(task_id)
-            latest_date = available_dates[0] if available_dates else ""
-            if selected_date:
-                if selected_date in available_dates:
-                    view = self.build_task_view(task_id, signal_date=selected_date)
-                    status_label = self._snapshot_status_label(task_id, view)
+
+        def _build() -> tuple[DashboardTaskSnapshot, ...]:
+            snapshots: list[DashboardTaskSnapshot] = []
+            for task_id, label in _TASK_LABELS.items():
+                available_dates = self.task_dates(task_id)
+                latest_date = available_dates[0] if available_dates else ""
+                if selected_date:
+                    if selected_date in available_dates:
+                        snapshots.append(
+                            self._lightweight_task_snapshot(
+                                task_id=task_id,
+                                task_label=label,
+                                snapshot_date=selected_date,
+                                latest_date=selected_date,
+                            )
+                        )
+                        continue
                     snapshots.append(
                         DashboardTaskSnapshot(
                             task_id=task_id,
                             task_label=label,
                             latest_date=selected_date,
-                            status_label=status_label,
-                            headline=view.headline,
-                            actionable_count=view.actionable_count,
-                            watch_count=view.watch_count,
-                            blocked_count=view.blocked_count,
+                            status_label="该日未产出",
+                            headline=f"{label} {selected_date}: 该日没有独立落盘结果",
+                            actionable_count=0,
+                            watch_count=0,
+                            blocked_count=0,
+                        )
+                    )
+                    continue
+                if latest_date:
+                    snapshots.append(
+                        self._lightweight_task_snapshot(
+                            task_id=task_id,
+                            task_label=label,
+                            snapshot_date=latest_date,
+                            latest_date=latest_date,
                         )
                     )
                     continue
@@ -593,47 +2051,491 @@ class DashboardDataProvider:
                     DashboardTaskSnapshot(
                         task_id=task_id,
                         task_label=label,
-                        latest_date=selected_date,
-                        status_label="该日未产出",
-                        headline=f"{label} {selected_date}: 该日没有独立落盘结果",
+                        latest_date="",
+                        status_label="未产出",
+                        headline=f"{label}: 还没有真实落盘结果",
                         actionable_count=0,
                         watch_count=0,
                         blocked_count=0,
                     )
                 )
-                continue
-            if latest_date:
-                view = self.build_task_view(task_id, signal_date=latest_date)
-                status_label = self._snapshot_status_label(task_id, view)
-                snapshots.append(
-                    DashboardTaskSnapshot(
-                        task_id=task_id,
-                        task_label=label,
-                        latest_date=latest_date,
-                        status_label=status_label,
-                        headline=view.headline,
-                        actionable_count=view.actionable_count,
-                        watch_count=view.watch_count,
-                        blocked_count=view.blocked_count,
-                    )
+            return tuple(snapshots)
+
+        return self._cache_value("task_snapshots", selected_date, _build)
+
+    def _lightweight_task_snapshot(
+        self,
+        *,
+        task_id: str,
+        task_label: str,
+        snapshot_date: str,
+        latest_date: str,
+    ) -> DashboardTaskSnapshot:
+        summary = self._lightweight_task_summary(task_id, snapshot_date)
+        return DashboardTaskSnapshot(
+            task_id=task_id,
+            task_label=task_label,
+            latest_date=latest_date,
+            status_label=summary.status_label,
+            headline=summary.headline,
+            actionable_count=summary.actionable_count,
+            watch_count=summary.watch_count,
+            blocked_count=summary.blocked_count,
+        )
+
+    def _lightweight_task_summary(
+        self,
+        task_id: str,
+        signal_date: str,
+        *,
+        include_report_insights: bool = True,
+    ) -> DashboardTaskLiteSummary:
+        selected_date = signal_date.strip()
+
+        def _build() -> DashboardTaskLiteSummary:
+            if task_id == "briefing":
+                return self._lightweight_briefing_summary(
+                    selected_date,
+                    include_report_insights=include_report_insights,
                 )
-                continue
-            snapshots.append(
-                DashboardTaskSnapshot(
-                    task_id=task_id,
-                    task_label=label,
-                    latest_date="",
-                    status_label="未产出",
-                    headline=f"{label}: 还没有真实落盘结果",
-                    actionable_count=0,
-                    watch_count=0,
-                    blocked_count=0,
+            if task_id == "closing_review":
+                return self._lightweight_closing_review_summary(
+                    selected_date,
+                    include_report_insights=include_report_insights,
                 )
+            return self._lightweight_signal_task_summary(task_id, selected_date)
+
+        return self._cache_value(
+            "lightweight_task_summary",
+            (task_id, selected_date, include_report_insights),
+            _build,
+        )
+
+    def _lightweight_signal_task_summary(
+        self,
+        task_id: str,
+        signal_date: str,
+    ) -> DashboardTaskLiteSummary:
+        rows = self._signal_task_rows_for_date(task_id, signal_date)
+        actionable_rows = [
+            row for row in rows if self._is_actionable(row, task_id=task_id)
+        ]
+        blocked_rows = [row for row in rows if self._is_blocked(row)]
+        watch_rows = [row for row in rows if self._is_watch_only(row, task_id=task_id)]
+        candidate_count = len(rows)
+        actionable_count = len(actionable_rows)
+        watch_count = len(watch_rows)
+        blocked_count = len(blocked_rows)
+        status_label = self._snapshot_status_label_from_counts(
+            task_id=task_id,
+            candidate_count=candidate_count,
+            actionable_count=actionable_count,
+            watch_count=watch_count,
+            blocked_count=blocked_count,
+        )
+        headline = self._headline_for_signal_task(
+            task_id=task_id,
+            signal_date=signal_date,
+            actionable_rows=actionable_rows,
+            watch_rows=watch_rows,
+            blocked_rows=blocked_rows,
+        )
+        return DashboardTaskLiteSummary(
+            status_label=status_label,
+            headline=normalize_research_tone(headline),
+            phase_summary=self._task_phase_summary_from_counts(
+                task_id=task_id,
+                candidate_count=candidate_count,
+                actionable_count=actionable_count,
+                watch_count=watch_count,
+                blocked_count=blocked_count,
+            ),
+            candidate_count=candidate_count,
+            actionable_count=actionable_count,
+            watch_count=watch_count,
+            blocked_count=blocked_count,
+            created_at=self._latest_created_at(rows),
+        )
+
+    def _lightweight_briefing_summary(
+        self,
+        signal_date: str,
+        *,
+        include_report_insights: bool = True,
+    ) -> DashboardTaskLiteSummary:
+        base = self._lightweight_signal_task_summary("main_chain", signal_date)
+        if not include_report_insights:
+            path = self.reports_dir / f"briefing-{signal_date}.md"
+            mtime = self._report_file_mtime(path)
+            status_label = "已产出" if mtime else "未产出"
+            headline = (
+                f"{_TASK_LABELS['briefing']} {signal_date}: 已归档"
+                if mtime
+                else f"{_TASK_LABELS['briefing']} {signal_date}: 还没有真实落盘结果"
             )
-        return tuple(snapshots)
+            return DashboardTaskLiteSummary(
+                status_label=status_label,
+                headline=normalize_research_tone(headline),
+                phase_summary=self._task_phase_summary_from_counts(
+                    task_id="briefing",
+                    candidate_count=base.candidate_count,
+                    actionable_count=base.actionable_count,
+                    watch_count=base.watch_count,
+                    blocked_count=base.blocked_count,
+                ),
+                candidate_count=base.candidate_count,
+                actionable_count=base.actionable_count,
+                watch_count=base.watch_count,
+                blocked_count=base.blocked_count,
+                created_at=mtime or base.created_at,
+            )
+
+        document = self._read_briefing_document(signal_date)
+        insights = self._extract_report_insights(document.markdown)
+        if insights.next_day_focus_lines:
+            status_label = "待跟踪"
+        elif document.markdown.strip():
+            status_label = "已产出"
+        else:
+            status_label = "未产出"
+        headline = f"{_TASK_LABELS['briefing']} {signal_date}".strip()
+        if insights.next_day_focus_lines:
+            headline = insights.next_day_focus_lines[0]
+        return DashboardTaskLiteSummary(
+            status_label=status_label,
+            headline=normalize_research_tone(headline),
+            phase_summary=self._task_phase_summary_from_counts(
+                task_id="briefing",
+                candidate_count=base.candidate_count,
+                actionable_count=base.actionable_count,
+                watch_count=base.watch_count,
+                blocked_count=base.blocked_count,
+            ),
+            candidate_count=base.candidate_count,
+            actionable_count=base.actionable_count,
+            watch_count=base.watch_count,
+            blocked_count=base.blocked_count,
+            created_at=document.mtime or base.created_at,
+        )
+
+    def _lightweight_closing_review_summary(
+        self,
+        signal_date: str,
+        *,
+        include_report_insights: bool = True,
+    ) -> DashboardTaskLiteSummary:
+        document = (
+            self._read_closing_review_document(signal_date)
+            if include_report_insights
+            else self._empty_report_document()
+        )
+        signal_rows = self._same_day_unique_rows(signal_date)
+        paper_rows = [
+            row
+            for row in self.load_paper_rows()
+            if str(row.get("signal_date", "") or "").strip() == signal_date
+        ]
+        closed_count = sum(1 for row in paper_rows if row.get("status") == "closed")
+        blocked_count = sum(
+            1 for row in paper_rows if row.get("status") == "not_executable"
+        )
+        candidate_count = len(signal_rows)
+        watch_count = max(candidate_count - closed_count - blocked_count, 0)
+        fast_report_mtime = ""
+        if not include_report_insights:
+            fast_report_mtime = self._closing_review_dated_report_mtime(signal_date)
+        if document.markdown.strip() or fast_report_mtime:
+            status_label = "已复盘"
+            headline = f"{_TASK_LABELS['closing_review']} {signal_date}: 已归档"
+        elif closed_count > 0 or blocked_count > 0:
+            status_label = "已验证未归档"
+            headline = f"{_TASK_LABELS['closing_review']} {signal_date}: 已验证未归档"
+        elif candidate_count > 0:
+            status_label = "待复盘"
+            headline = f"{_TASK_LABELS['closing_review']} {signal_date}: 待复盘"
+        else:
+            status_label = "未产出"
+            headline = (
+                f"{_TASK_LABELS['closing_review']} {signal_date}: 还没有真实落盘结果"
+            )
+        return DashboardTaskLiteSummary(
+            status_label=status_label,
+            headline=normalize_research_tone(headline),
+            phase_summary=self._task_phase_summary_from_counts(
+                task_id="closing_review",
+                candidate_count=candidate_count,
+                actionable_count=closed_count,
+                watch_count=watch_count,
+                blocked_count=blocked_count,
+            ),
+            candidate_count=candidate_count,
+            actionable_count=closed_count,
+            watch_count=watch_count,
+            blocked_count=blocked_count,
+            created_at=document.mtime
+            or fast_report_mtime
+            or self._latest_created_at([dict(row) for row in signal_rows]),
+        )
+
+    def _signal_task_rows_for_date(
+        self,
+        task_id: str,
+        signal_date: str,
+    ) -> list[dict[str, Any]]:
+        return self._dedupe_rows(
+            [
+                row
+                for row in self._task_signal_rows(task_id)
+                if str(row.get("signal_date", "") or "").strip() == signal_date
+            ]
+        )
+
+    def _runtime_task_log_path(self, action: str, log_date: str) -> Path | None:
+        if log_date:
+            path = self.bt_logs_path / f"bt-{action}-{log_date}.log"
+            return path if path.exists() else None
+        matches = sorted(self.bt_logs_path.glob(f"bt-{action}-*.log"))
+        if not matches:
+            return None
+        return max(matches, key=lambda path: (path.stat().st_mtime, path.name))
+
+    def _runtime_task_log_candidates(
+        self,
+        log_date: str,
+        *,
+        limit: int | None,
+    ) -> tuple[tuple[str, Path], ...]:
+        candidates: list[tuple[str, Path, float]] = []
+        for action in _RUNTIME_TASK_ORDER:
+            path = self._runtime_task_log_path(action, log_date)
+            if path is None:
+                continue
+            try:
+                mtime = path.stat().st_mtime
+            except OSError as exc:
+                logger.warning("读取 BT 任务日志状态失败: %s", exc)
+                continue
+            candidates.append((action, path, mtime))
+        candidates.sort(key=lambda item: (item[2], item[1].name), reverse=True)
+        if limit is not None:
+            candidates = candidates[:limit]
+        return tuple((action, path) for action, path, _mtime in candidates)
+
+    def _parse_runtime_task_log(
+        self,
+        action: str,
+        path: Path,
+    ) -> DashboardRuntimeTaskRun | None:
+        raw_lines = self._read_runtime_task_log_tail(path)
+        if not raw_lines:
+            return None
+        lines = self._latest_runtime_run_segment(raw_lines)
+        status_label = self._runtime_run_status_label(lines)
+        headline = self._runtime_run_headline(lines, status_label=status_label)
+        detail_lines = self._runtime_run_detail_lines(lines, headline=headline)
+        return DashboardRuntimeTaskRun(
+            action=action,
+            task_label=_RUNTIME_TASK_LABELS.get(action, action),
+            log_date=self._runtime_log_date_from_path(path),
+            log_mtime=to_iso8601(
+                datetime.fromtimestamp(path.stat().st_mtime, tz=SHANGHAI_TZ)
+            ),
+            status_label=status_label,
+            headline=headline,
+            detail_lines=detail_lines,
+        )
+
+    @staticmethod
+    def _read_runtime_task_log_tail(
+        path: Path,
+        *,
+        max_bytes: int = _RUNTIME_LOG_TAIL_BYTES,
+    ) -> list[str]:
+        try:
+            size = path.stat().st_size
+            with path.open("rb") as handle:
+                if size > max_bytes:
+                    handle.seek(-max_bytes, os.SEEK_END)
+                    handle.readline()
+                raw = handle.read()
+        except Exception as exc:
+            logger.warning("读取 BT 任务日志失败: %s", exc)
+            return []
+        return raw.decode("utf-8", errors="replace").splitlines()
+
+    @staticmethod
+    def _latest_runtime_run_segment(lines: list[str]) -> tuple[str, ...]:
+        start_index = 0
+        markers = ("开始同步代码", "开始运行:", "冷启动日跑开始", "开始消息面雷达")
+        for index, line in enumerate(lines):
+            if any(marker in line for marker in markers):
+                start_index = index
+        return tuple(lines[start_index:])
+
+    @staticmethod
+    def _runtime_log_date_from_path(path: Path) -> str:
+        match = re.search(r"bt-[^-]+-(\d{4}-\d{2}-\d{2})\.log$", path.name)
+        return match.group(1) if match else ""
+
+    def _runtime_run_status_label(self, lines: tuple[str, ...]) -> str:
+        text = "\n".join(lines)
+        if "组合保护" in text or "熔断器触发" in text:
+            return "风控阻塞"
+        if any(
+            marker in text
+            for marker in (
+                "正常跳过",
+                "周末跳过",
+                "今日非交易日",
+                "当前仍在收盘前",
+                "未真实执行",
+            )
+        ):
+            return "正常跳过"
+        if any(
+            marker in text for marker in ("[ERROR]", "数据错误:", "失败", "异常终止")
+        ):
+            return "失败"
+        if any(
+            marker in text
+            for marker in (
+                "冷启动日跑完成",
+                "同步与跑批完成",
+                "消息面雷达完成",
+                "服务器监控结束",
+                "✓ 跑批成功完成",
+                "跑批成功完成",
+            )
+        ):
+            return "完成"
+        return "运行中或无结论"
+
+    def _runtime_run_headline(
+        self,
+        lines: tuple[str, ...],
+        *,
+        status_label: str,
+    ) -> str:
+        preferred_keywords = {
+            "风控阻塞": ("组合保护", "正常阻塞", "熔断器触发"),
+            "正常跳过": ("正常跳过", "跳过"),
+            "失败": ("[ERROR]", "数据错误:", "失败", "异常终止"),
+            "完成": ("完成", "结束", "冷启动:", "同步与跑批完成"),
+        }.get(status_label, ())
+        cleaned = [
+            self._clean_runtime_log_line(line)
+            for line in lines
+            if self._clean_runtime_log_line(line)
+        ]
+        if preferred_keywords:
+            for line in reversed(cleaned):
+                if any(keyword in line for keyword in preferred_keywords):
+                    return line
+        return cleaned[-1] if cleaned else "日志存在，但没有可读结论"
+
+    def _runtime_run_detail_lines(
+        self,
+        lines: tuple[str, ...],
+        *,
+        headline: str,
+        limit: int = 3,
+    ) -> tuple[str, ...]:
+        keywords = (
+            "冷启动:",
+            "target_day_symbols=",
+            "跳过重复历史库更新",
+            "组合保护",
+            "正常跳过",
+            "完成",
+            "[ERROR]",
+            "数据错误:",
+        )
+        details: list[str] = []
+        for raw_line in reversed(lines):
+            line = self._clean_runtime_log_line(raw_line)
+            if not line or line == headline:
+                continue
+            if any(keyword in line for keyword in keywords) and line not in details:
+                details.append(line)
+            if len(details) >= limit:
+                break
+        details.reverse()
+        return tuple(details)
+
+    @staticmethod
+    def _clean_runtime_log_line(line: str) -> str:
+        text = re.sub(r"^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\]\s*", "", line)
+        text = text.strip()
+        if not text or set(text) <= {"=", "-", " "}:
+            return ""
+        return text
 
     def dashboard_dates(self) -> tuple[str, ...]:
         return self._all_dashboard_dates()
+
+    def home_status(
+        self,
+        signal_date: str,
+        *,
+        overview: DashboardDateOverview | None = None,
+    ) -> DashboardHomeStatus:
+        """Return the compact status shown in the homepage left rail.
+
+        This is presentation metadata only. It reads the existing overview and
+        runtime freshness state; it never changes candidate scores or ratings.
+        """
+        selected_date = signal_date.strip()
+        date_overview = overview or self.date_overview(selected_date)
+        runtime = self.runtime_overview(selected_date)
+        source = (
+            str(runtime.effective_source or runtime.requested_source or "").strip()
+            or "未记录"
+        )
+        source_missing = source == "未记录"
+        source_label = (
+            "实时源未记录"
+            if source_missing
+            else _runtime_live_source_boundary_label(source)
+        )
+        stale_source = not source_missing and not source_supports_workload(
+            source, "live_short"
+        )
+        blocked = bool(
+            date_overview.blocked_total
+            or runtime.cooldown_until
+            or runtime.gate_blocker_line
+            or stale_source
+        )
+        if blocked:
+            label = "阻塞"
+            tone = "blocked"
+        elif date_overview.actionable_total:
+            label = "实时推荐"
+            tone = "focus"
+        elif date_overview.watch_total:
+            label = "观察"
+            tone = "watch"
+        else:
+            label = "等待刷新"
+            tone = "waiting"
+        data_day = runtime.data_latest_trade_date.strip() or selected_date or "未记录"
+        lag = runtime.lag_days.strip()
+        freshness = f"数据日 {data_day}"
+        if lag:
+            freshness += f" · 滞后 {lag} 天"
+        detail = (
+            f"{freshness} · 推荐 {date_overview.actionable_total} / "
+            f"观察 {date_overview.watch_total} / 阻塞 {date_overview.blocked_total}"
+        )
+        return DashboardHomeStatus(
+            label=label,
+            detail=detail,
+            tone=tone,
+            actionable_count=date_overview.actionable_total,
+            watch_count=date_overview.watch_total,
+            blocked_count=date_overview.blocked_total,
+            source_label=source_label,
+        )
 
     def task_history_frame(self, task_id: str, limit: int = 8) -> pd.DataFrame:
         rows = self.task_history_rows(task_id, limit=limit)
@@ -680,30 +2582,35 @@ class DashboardDataProvider:
         return tuple(history)
 
     def timeline_rows(self, limit: int = 12) -> tuple[DashboardTimelineRow, ...]:
-        all_dates = self._all_dashboard_dates()
-        rows: list[DashboardTimelineRow] = []
-        for signal_date in all_dates[:limit]:
-            same_day_rows = self.same_day_task_rows(signal_date)
-            if not same_day_rows:
-                continue
-            task_labels = tuple(row.task_label for row in same_day_rows)
-            headline = "；".join(
-                f"{row.task_label}: {row.status_label}" for row in same_day_rows[:3]
-            )
-            actionable_total, watch_total, blocked_total = self._same_day_unique_counts(
-                signal_date
-            )
-            rows.append(
-                DashboardTimelineRow(
-                    signal_date=signal_date,
-                    task_labels=task_labels,
-                    actionable_total=actionable_total,
-                    watch_total=watch_total,
-                    blocked_total=blocked_total,
-                    headline=headline,
+        def _build() -> tuple[DashboardTimelineRow, ...]:
+            all_dates = self._all_dashboard_dates()
+            rows: list[DashboardTimelineRow] = []
+            for signal_date in all_dates:
+                same_day_rows = self.same_day_task_rows(signal_date)
+                if not same_day_rows:
+                    continue
+                task_labels = tuple(row.task_label for row in same_day_rows)
+                headline = "；".join(
+                    f"{row.task_label}: {row.status_label}" for row in same_day_rows[:3]
                 )
-            )
-        return tuple(rows)
+                actionable_total, watch_total, blocked_total = (
+                    self._same_day_unique_counts(signal_date)
+                )
+                rows.append(
+                    DashboardTimelineRow(
+                        signal_date=signal_date,
+                        task_labels=task_labels,
+                        actionable_total=actionable_total,
+                        watch_total=watch_total,
+                        blocked_total=blocked_total,
+                        headline=headline,
+                    )
+                )
+                if len(rows) >= limit:
+                    break
+            return tuple(rows)
+
+        return self._cache_value("timeline_rows", limit, _build)
 
     def timeline_frame(self, limit: int = 12) -> pd.DataFrame:
         rows = self.timeline_rows(limit=limit)
@@ -726,37 +2633,48 @@ class DashboardDataProvider:
     def same_day_task_rows(
         self,
         signal_date: str,
+        *,
+        include_report_insights: bool = True,
     ) -> tuple[DashboardSameDayTaskRow, ...]:
         selected_date = signal_date.strip()
         if not selected_date:
             return ()
-        rows: list[DashboardSameDayTaskRow] = []
-        for task_id, task_label in _TASK_LABELS.items():
-            if selected_date not in self.task_dates(task_id):
-                continue
-            view = self._build_task_view_core(
-                task_id,
-                signal_date=selected_date,
-                include_deltas=False,
-            )
-            rows.append(
-                DashboardSameDayTaskRow(
-                    signal_date=selected_date,
-                    task_id=task_id,
-                    task_label=task_label,
-                    phase_order=self._task_phase_order(task_id),
-                    phase_label=self._task_phase_label(task_id),
-                    phase_summary=self._task_phase_summary(task_id, view),
-                    status_label=self._snapshot_status_label(task_id, view),
-                    headline=view.headline,
-                    candidate_count=view.candidate_count,
-                    actionable_count=view.actionable_count,
-                    watch_count=view.watch_count,
-                    blocked_count=view.blocked_count,
+
+        def _build() -> tuple[DashboardSameDayTaskRow, ...]:
+            rows: list[DashboardSameDayTaskRow] = []
+            for task_id, task_label in _TASK_LABELS.items():
+                if selected_date not in self.task_dates(task_id):
+                    continue
+                summary = self._lightweight_task_summary(
+                    task_id,
+                    selected_date,
+                    include_report_insights=include_report_insights,
                 )
-            )
-        rows.sort(key=lambda row: (row.phase_order, row.task_label))
-        return tuple(rows)
+                rows.append(
+                    DashboardSameDayTaskRow(
+                        signal_date=selected_date,
+                        task_id=task_id,
+                        task_label=task_label,
+                        phase_order=self._task_phase_order(task_id),
+                        phase_label=self._task_phase_label(task_id),
+                        phase_summary=summary.phase_summary,
+                        status_label=summary.status_label,
+                        headline=summary.headline,
+                        candidate_count=summary.candidate_count,
+                        actionable_count=summary.actionable_count,
+                        watch_count=summary.watch_count,
+                        blocked_count=summary.blocked_count,
+                        created_at=summary.created_at,
+                    )
+                )
+            rows.sort(key=lambda row: (row.phase_order, row.task_label))
+            return tuple(rows)
+
+        return self._cache_value(
+            "same_day_task_rows",
+            (selected_date, include_report_insights),
+            _build,
+        )
 
     def same_day_task_frame(self, signal_date: str) -> pd.DataFrame:
         rows = self.same_day_task_rows(signal_date)
@@ -787,53 +2705,66 @@ class DashboardDataProvider:
         if not selected_date:
             return ()
 
-        grouped: dict[str, dict[str, Any]] = {}
-        for task_id in ("main_chain", "morning_breakout", "closing_premium"):
-            rows = [
-                row
-                for row in self._dedupe_rows(self._task_signal_rows(task_id))
-                if str(row.get("signal_date", "") or "") == selected_date
-            ]
-            for row in rows:
-                symbol = str(row.get("symbol", "") or "").strip()
-                if not symbol:
-                    continue
-                existing = grouped.get(symbol)
-                if existing is None:
-                    grouped[symbol] = {
-                        "row": row,
-                        "task_id": task_id,
-                        "task_labels": [self._task_label(task_id)],
-                        "entries": [{"row": row, "task_id": task_id}],
-                    }
-                    continue
-                existing["entries"].append({"row": row, "task_id": task_id})
-                if self._same_day_spotlight_key(
-                    row,
-                    task_id,
-                ) > self._same_day_spotlight_key(
-                    existing["row"],
-                    str(existing.get("task_id", "") or ""),
-                ):
-                    existing["row"] = row
-                    existing["task_id"] = task_id
-                task_label = self._task_label(task_id)
-                if task_label not in existing["task_labels"]:
-                    existing["task_labels"].append(task_label)
+        def _build() -> tuple[DashboardCandidateSpotlight, ...]:
+            grouped: dict[str, dict[str, Any]] = {}
+            for task_id in (*_SIGNAL_TASK_IDS, *_OBSERVATION_TASK_IDS):
+                rows = [
+                    row
+                    for row in self._dedupe_rows(self._task_signal_rows(task_id))
+                    if str(row.get("signal_date", "") or "") == selected_date
+                ]
+                for row in rows:
+                    symbol = str(row.get("symbol", "") or "").strip()
+                    if not symbol:
+                        continue
+                    existing = grouped.get(symbol)
+                    if existing is None:
+                        grouped[symbol] = {
+                            "row": row,
+                            "task_id": task_id,
+                            "task_labels": [self._task_label(task_id)],
+                            "entries": [{"row": row, "task_id": task_id}],
+                        }
+                        continue
+                    existing["entries"].append({"row": row, "task_id": task_id})
+                    if self._same_day_spotlight_key(
+                        row,
+                        task_id,
+                    ) > self._same_day_spotlight_key(
+                        existing["row"],
+                        str(existing.get("task_id", "") or ""),
+                    ):
+                        existing["row"] = row
+                        existing["task_id"] = task_id
+                    task_label = self._task_label(task_id)
+                    if task_label not in existing["task_labels"]:
+                        existing["task_labels"].append(task_label)
 
-        spotlights = [
-            self._build_same_day_spotlight(symbol, payload)
-            for symbol, payload in grouped.items()
-        ]
-        spotlights.sort(
-            key=lambda item: (
-                self._spotlight_priority_rank(item),
-                -item.score,
-                -len(item.task_labels),
-                item.display_name,
+            spotlight_payloads = [
+                {
+                    "spotlight": self._build_same_day_spotlight(symbol, payload),
+                    "merged_row": self._same_day_merged_row(
+                        payload["row"],
+                        payload.get("entries", ()),
+                    ),
+                }
+                for symbol, payload in grouped.items()
+            ]
+            spotlight_payloads.sort(key=lambda item: item["spotlight"].display_name)
+            spotlight_payloads.sort(
+                key=lambda item: (
+                    self._candidate_sort_key(item["merged_row"]),
+                    len(item["spotlight"].task_labels),
+                ),
+                reverse=True,
             )
+            return tuple(item["spotlight"] for item in spotlight_payloads[:limit])
+
+        return self._cache_value(
+            "same_day_candidate_spotlights",
+            (selected_date, limit),
+            _build,
         )
-        return tuple(spotlights[:limit])
 
     def candidate_review_cards(
         self,
@@ -857,97 +2788,205 @@ class DashboardDataProvider:
         if not selected_date or not selected_symbol:
             return ()
 
-        steps: list[DashboardCandidateJourneyStep] = []
-        for task_id in ("main_chain", "morning_breakout", "closing_premium"):
-            rows = [
-                row
-                for row in self._dedupe_rows(self._task_signal_rows(task_id))
-                if str(row.get("signal_date", "") or "") == selected_date
-                and str(row.get("symbol", "") or "").strip() == selected_symbol
-            ]
-            if not rows:
-                continue
-            row = max(rows, key=self._row_meta_key)
-            steps.append(
-                DashboardCandidateJourneyStep(
-                    task_id=task_id,
-                    task_label=self._task_label(task_id),
-                    phase_label=self._task_phase_label(task_id),
-                    score=float(row.get("score") or 0.0),
-                    action_label=self._action_label(row),
-                    status_label=self._candidate_status(row),
-                    blocker=self._candidate_blocker_text(row),
-                    next_step=str(row.get("candidate_next_step", "") or "").strip(),
-                    review_meta=self._review_meta(row),
-                    reasons=self._as_text_tuple(row.get("reasons")),
-                    risks=self._as_text_tuple(row.get("risks")),
+        def _build() -> tuple[DashboardCandidateJourneyStep, ...]:
+            steps: list[DashboardCandidateJourneyStep] = []
+            for task_id in ("main_chain", "morning_breakout", "closing_premium"):
+                rows = [
+                    row
+                    for row in self._dedupe_rows(self._task_signal_rows(task_id))
+                    if str(row.get("signal_date", "") or "") == selected_date
+                    and str(row.get("symbol", "") or "").strip() == selected_symbol
+                ]
+                if not rows:
+                    continue
+                row = max(rows, key=self._row_meta_key)
+                steps.append(
+                    DashboardCandidateJourneyStep(
+                        task_id=task_id,
+                        task_label=self._task_label(task_id),
+                        phase_label=self._task_phase_label(task_id),
+                        score=float(row.get("score") or 0.0),
+                        action_label=self._action_label(row),
+                        status_label=self._candidate_status(row),
+                        blocker=self._candidate_blocker_text(row),
+                        next_step=str(row.get("candidate_next_step", "") or "").strip(),
+                        review_meta=self._review_meta(row),
+                        reasons=self._as_text_tuple(row.get("reasons")),
+                        risks=self._as_text_tuple(row.get("risks")),
+                    )
+                )
+            return tuple(steps)
+
+        return self._cache_value(
+            "same_day_candidate_journey",
+            (selected_date, selected_symbol),
+            _build,
+        )
+
+    def date_overview(
+        self,
+        signal_date: str,
+        *,
+        rows: tuple[DashboardSameDayTaskRow, ...] | None = None,
+        spotlights: tuple[DashboardCandidateSpotlight, ...] | None = None,
+        debates: tuple[DashboardDebateSummary, ...] | None = None,
+    ) -> DashboardDateOverview:
+        selected_date = signal_date.strip()
+
+        def _build() -> DashboardDateOverview:
+            same_day_rows = (
+                rows if rows is not None else self.same_day_task_rows(selected_date)
+            )
+            if not same_day_rows:
+                return DashboardDateOverview(
+                    signal_date=selected_date,
+                    task_count=0,
+                    actionable_total=0,
+                    watch_total=0,
+                    blocked_total=0,
+                    top_task_label="",
+                    top_headline="",
+                    blocker_headline="",
+                    focus_headline="",
+                    workflow_summary="",
+                    archive_summary="",
+                )
+
+            focus_debates = (
+                debates[:1]
+                if debates is not None
+                else self.prioritized_debate_summaries(
+                    selected_date,
+                    limit=1,
+                    salient_only=True,
                 )
             )
-        return tuple(steps)
-
-    def date_overview(self, signal_date: str) -> DashboardDateOverview:
-        rows = self.same_day_task_rows(signal_date)
-        if not rows:
+            focus_spotlights = (
+                spotlights[:1]
+                if spotlights is not None
+                else self.same_day_candidate_spotlights(selected_date, limit=1)
+            )
+            ordered_rows = sorted(
+                same_day_rows,
+                key=lambda row: (
+                    row.actionable_count > 0,
+                    row.blocked_count > 0,
+                    row.watch_count > 0,
+                    row.actionable_count,
+                    row.blocked_count,
+                    row.watch_count,
+                    -row.phase_order,
+                ),
+                reverse=True,
+            )
+            top_row = ordered_rows[0]
+            blocker_row = next(
+                (row for row in same_day_rows if row.blocked_count > 0), None
+            )
+            signal_rows = tuple(
+                row for row in same_day_rows if row.task_id in _SIGNAL_TASK_IDS
+            )
+            focus_candidates = signal_rows or same_day_rows
+            focus_row = next(
+                (row for row in focus_candidates if row.actionable_count > 0),
+                next(
+                    (row for row in focus_candidates if row.blocked_count > 0),
+                    next(
+                        (row for row in focus_candidates if row.watch_count > 0),
+                        top_row,
+                    ),
+                ),
+            )
+            actionable_total, watch_total, blocked_total = self._same_day_unique_counts(
+                selected_date
+            )
+            focus_headline = focus_row.headline
+            if focus_debates:
+                lead_debate = focus_debates[0]
+                debate_lead = (
+                    lead_debate.research_verdict.strip()
+                    or lead_debate.consensus.strip()
+                    or lead_debate.primary_risk_gate.strip()
+                    or lead_debate.next_trigger.strip()
+                    or lead_debate.recommended_adjustment_label.strip()
+                )
+                debate_followup = (
+                    lead_debate.next_trigger.strip()
+                    or lead_debate.primary_risk_gate.strip()
+                )
+                focus_headline = " | ".join(
+                    part
+                    for part in (
+                        lead_debate.display_name,
+                        normalize_research_tone(debate_lead),
+                        (
+                            normalize_research_tone(debate_followup)
+                            if debate_followup and debate_followup != debate_lead
+                            else ""
+                        ),
+                    )
+                    if part
+                )
+            elif focus_spotlights:
+                lead_spotlight = focus_spotlights[0]
+                spotlight_lead = (
+                    lead_spotlight.cross_market_summary.strip()
+                    or " / ".join(
+                        part
+                        for part in (
+                            lead_spotlight.action_label.strip(),
+                            lead_spotlight.status_label.strip(),
+                        )
+                        if part
+                    )
+                    or lead_spotlight.blocker.strip()
+                    or lead_spotlight.next_step.strip()
+                )
+                spotlight_followup = (
+                    lead_spotlight.blocker.strip() or lead_spotlight.next_step.strip()
+                )
+                focus_headline = " | ".join(
+                    part
+                    for part in (
+                        lead_spotlight.display_name,
+                        normalize_research_tone(spotlight_lead),
+                        (
+                            normalize_research_tone(spotlight_followup)
+                            if spotlight_followup
+                            and spotlight_followup != spotlight_lead
+                            else ""
+                        ),
+                    )
+                    if part
+                )
             return DashboardDateOverview(
-                signal_date=signal_date.strip(),
-                task_count=0,
-                actionable_total=0,
-                watch_total=0,
-                blocked_total=0,
-                top_task_label="",
-                top_headline="",
-                blocker_headline="",
-                focus_headline="",
-                workflow_summary="",
-                archive_summary="",
+                signal_date=selected_date,
+                task_count=len(same_day_rows),
+                actionable_total=actionable_total,
+                watch_total=watch_total,
+                blocked_total=blocked_total,
+                top_task_label=top_row.task_label,
+                top_headline=top_row.headline,
+                blocker_headline=blocker_row.headline
+                if blocker_row is not None
+                else "",
+                focus_headline=focus_headline,
+                workflow_summary=self._workflow_summary(same_day_rows),
+                archive_summary=self._archive_summary(
+                    same_day_rows, focus_row, blocker_row
+                ),
             )
 
-        ordered_rows = sorted(
-            rows,
-            key=lambda row: (
-                row.actionable_count > 0,
-                row.blocked_count > 0,
-                row.watch_count > 0,
-                row.actionable_count,
-                row.blocked_count,
-                row.watch_count,
-                -row.phase_order,
-            ),
-            reverse=True,
-        )
-        top_row = ordered_rows[0]
-        blocker_row = next((row for row in rows if row.blocked_count > 0), None)
-        signal_rows = tuple(row for row in rows if row.task_id in _SIGNAL_TASK_IDS)
-        focus_candidates = signal_rows or rows
-        focus_row = next(
-            (row for row in focus_candidates if row.actionable_count > 0),
-            next(
-                (row for row in focus_candidates if row.blocked_count > 0),
-                next((row for row in focus_candidates if row.watch_count > 0), top_row),
-            ),
-        )
-        actionable_total, watch_total, blocked_total = self._same_day_unique_counts(
-            signal_date.strip()
-        )
-        return DashboardDateOverview(
-            signal_date=signal_date.strip(),
-            task_count=len(rows),
-            actionable_total=actionable_total,
-            watch_total=watch_total,
-            blocked_total=blocked_total,
-            top_task_label=top_row.task_label,
-            top_headline=top_row.headline,
-            blocker_headline=blocker_row.headline if blocker_row is not None else "",
-            focus_headline=focus_row.headline,
-            workflow_summary=self._workflow_summary(rows),
-            archive_summary=self._archive_summary(rows, focus_row, blocker_row),
-        )
+        if rows is None and spotlights is None and debates is None:
+            return self._cache_value("date_overview", selected_date, _build)
+        return _build()
 
     def preferred_task_for_date(self, signal_date: str) -> str:
         same_day_rows = self.same_day_task_rows(signal_date)
         if not same_day_rows:
             return self.default_task_id()
         for preferred_task_id in (
+            "intraday",
             "main_chain",
             "morning_breakout",
             "closing_premium",
@@ -1171,6 +3210,28 @@ class DashboardDataProvider:
                 research_lines.append(f"研究下一步: {next_step}")
             elif blocker:
                 research_lines.append(normalize_research_tone(f"当前限制: {blocker}"))
+            research_lines.extend(self._execution_focus_cross_market_lines(context_row))
+            debate_active_role_summary = str(
+                context_row.get("debate_active_role_summary", "") or ""
+            ).strip()
+            support_points = self._as_text_tuple(context_row.get("support_points"))
+            opposition_points = self._as_text_tuple(
+                context_row.get("opposition_points")
+            )
+            watch_items = self._as_text_tuple(context_row.get("watch_items"))
+            role_reliability_lines = self._as_text_tuple(
+                context_row.get("role_reliability_lines")
+            )
+            if debate_active_role_summary:
+                research_lines.append(f"讨论视角: {debate_active_role_summary}")
+            if support_points:
+                research_lines.append(f"支持观点: {support_points[0]}")
+            if opposition_points:
+                research_lines.append(f"反对观点: {opposition_points[0]}")
+            if watch_items:
+                research_lines.append(f"待确认: {watch_items[0]}")
+            if role_reliability_lines:
+                research_lines.append(f"角色可信度: {role_reliability_lines[0]}")
         else:
             research_lines.append("该标的当前不在研究候选中，主要从纸面记录回看。")
 
@@ -1296,14 +3357,25 @@ class DashboardDataProvider:
         return "main_chain"
 
     def task_dates(self, task_id: str) -> tuple[str, ...]:
-        if task_id == "briefing":
-            return self._briefing_dates()
-        if task_id == "closing_review":
-            return self._closing_review_dates()
-        return self._signal_dates(self._task_signal_rows(task_id))
+        def _build() -> tuple[str, ...]:
+            if task_id == "briefing":
+                return self._briefing_dates()
+            if task_id == "closing_review":
+                return self._closing_review_dates()
+            return self._signal_dates(self._task_signal_rows(task_id))
+
+        return self._cache_value("task_dates", task_id, _build)
 
     def _closing_review_dates(self) -> tuple[str, ...]:
-        dates = set(self._signal_dates(self.load_signal_rows()))
+        dates = set(
+            self._signal_dates(
+                [
+                    row
+                    for row in self.load_signal_rows()
+                    if not self._is_runtime_event_row(row)
+                ]
+            )
+        )
         if self.reports_dir.exists():
             patterns = (
                 "closing_review-*.md",
@@ -1324,6 +3396,266 @@ class DashboardDataProvider:
             include_deltas=True,
         )
 
+    def home_digest_payload(
+        self,
+        task_id: str,
+        signal_date: str = "",
+    ) -> DashboardHomeDigestPayload:
+        """Build the homepage payload once so first paint does not fan out reads."""
+        normalized_task = task_id if task_id in _TASK_LABELS else self.default_task_id()
+        normalized_signal_date = signal_date.strip()
+
+        def _build() -> DashboardHomeDigestPayload:
+            task_view = self.build_task_digest_view(
+                normalized_task,
+                signal_date=normalized_signal_date,
+            )
+            review_date = (
+                task_view.selected_date
+                or task_view.latest_date
+                or normalized_signal_date
+            )
+            rows = self.same_day_task_rows(
+                review_date,
+                include_report_insights=False,
+            )
+            live_view = self.live_candidate_view(signal_date=review_date)
+            use_live_view = bool(
+                live_view.candidates
+                and (
+                    normalized_task == "intraday"
+                    or (
+                        not normalized_signal_date
+                        and live_view.artifact_date == review_date
+                    )
+                )
+            )
+            spotlights = (
+                self.live_candidate_spotlights(signal_date=review_date)
+                if use_live_view
+                else self.same_day_candidate_spotlights(review_date, limit=3)
+            )
+            debates = self.prioritized_debate_summaries(
+                review_date,
+                limit=3,
+                salient_only=True,
+                task_id=normalized_task,
+            )
+            candidate_symbols = tuple(
+                str(getattr(card, "symbol", "") or "").strip()
+                for card in getattr(task_view, "detail_cards", ())
+            ) + tuple(
+                str(getattr(spotlight, "symbol", "") or "").strip()
+                for spotlight in spotlights
+            )
+            candidate_symbol_set = {symbol for symbol in candidate_symbols if symbol}
+            current_debate_symbols = {
+                item.symbol for item in debates if item.symbol in candidate_symbol_set
+            }
+            if debates and candidate_symbol_set and len(current_debate_symbols) < min(
+                3, len(candidate_symbol_set)
+            ):
+                # The first priority slice may contain stale/non-focus symbols;
+                # widen whenever it does not cover the current candidate set.
+                debates = self.prioritized_debate_summaries(
+                    review_date,
+                    limit=max(20, len(candidate_symbols) * 3),
+                    salient_only=True,
+                    task_id=normalized_task,
+                )
+            debates = self._prioritize_debates_for_candidate_symbols(
+                debates,
+                candidate_symbols=candidate_symbols,
+                limit=3,
+            )
+            if rows:
+                overview = self.date_overview(
+                    review_date,
+                    rows=rows,
+                    spotlights=spotlights,
+                    debates=debates,
+                )
+                paper_summary = self.paper_summary(review_date)
+            else:
+                spotlights = ()
+                overview = DashboardDateOverview(
+                    signal_date=review_date,
+                    task_count=0,
+                    actionable_total=0,
+                    watch_total=0,
+                    blocked_total=0,
+                    top_task_label="",
+                    top_headline="",
+                    blocker_headline="",
+                    focus_headline="",
+                    workflow_summary="",
+                    archive_summary="",
+                )
+                paper_summary = DashboardPaperSummary(
+                    signal_date=review_date,
+                    open_positions=0,
+                    pending_entries=0,
+                    not_executable=0,
+                    closed_trades=0,
+                    open_position_lines=(),
+                    event_lines=(),
+                    action_summary_lines=(),
+                )
+            return DashboardHomeDigestPayload(
+                task_view=task_view,
+                same_day_rows=rows,
+                spotlights=spotlights,
+                debates=debates,
+                overview=overview,
+                paper_summary=paper_summary,
+            )
+
+        return self._cache_value(
+            "home_digest_payload",
+            (normalized_task, normalized_signal_date),
+            _build,
+        )
+
+    @staticmethod
+    def _prioritize_debates_for_candidate_symbols(
+        debates: tuple[DashboardDebateSummary, ...],
+        *,
+        candidate_symbols: tuple[str, ...],
+        limit: int,
+    ) -> tuple[DashboardDebateSummary, ...]:
+        candidate_order = {
+            symbol: index for index, symbol in enumerate(candidate_symbols) if symbol
+        }
+        ordered = sorted(
+            enumerate(debates),
+            key=lambda item: (
+                candidate_order.get(item[1].symbol, len(candidate_order)),
+                item[0],
+            ),
+        )
+        return tuple(item for _, item in ordered[:limit])
+
+    def build_task_digest_view(
+        self,
+        task_id: str,
+        signal_date: str = "",
+    ) -> DashboardTaskView:
+        normalized_task = task_id if task_id in _TASK_LABELS else self.default_task_id()
+        normalized_signal_date = signal_date.strip()
+
+        def _build() -> DashboardTaskView:
+            available_dates = self.task_dates(normalized_task)
+            selected_date = normalized_signal_date or (
+                available_dates[0] if available_dates else ""
+            )
+            previous_date = self._previous_date(
+                available_dates=available_dates,
+                selected_date=selected_date,
+            )
+            summary = self._lightweight_task_summary(
+                normalized_task,
+                selected_date,
+                include_report_insights=False,
+            )
+            rows = (
+                self._signal_task_rows_for_date(normalized_task, selected_date)
+                if normalized_task in (*_SIGNAL_TASK_IDS, *_OBSERVATION_TASK_IDS)
+                else []
+            )
+            actionable_rows = [
+                row for row in rows if self._is_actionable(row, task_id=normalized_task)
+            ]
+            blocked_rows = [row for row in rows if self._is_blocked(row)]
+            watch_rows = [
+                row for row in rows if self._is_watch_only(row, task_id=normalized_task)
+            ]
+            recommendation_lines = tuple(
+                self._recommendation_line(row) for row in actionable_rows[:3]
+            )
+            watchlist_lines = tuple(self._watch_line(row) for row in watch_rows[:3])
+            blocker_lines = tuple(self._blocker_line(row) for row in blocked_rows[:3])
+            review_lines = tuple(
+                self._review_line(row) for row in rows[:3] if self._review_line(row)
+            )
+            agenda_lines = self._build_agenda_lines(
+                recommendation_lines=recommendation_lines,
+                blocker_lines=blocker_lines,
+                review_lines=review_lines,
+                focus_lines=(),
+            )
+            runtime_lines = (
+                self._ledger_market_context_runtime_lines(
+                    task_id=normalized_task,
+                    signal_date=selected_date,
+                )
+                if normalized_task in (*_SIGNAL_TASK_IDS, *_OBSERVATION_TASK_IDS)
+                else ()
+            )
+            return DashboardTaskView(
+                task_id=normalized_task,
+                task_label=_TASK_LABELS[normalized_task],
+                selected_date=selected_date,
+                latest_date=available_dates[0] if available_dates else "",
+                previous_date=previous_date,
+                available_dates=available_dates,
+                headline=normalize_research_tone(summary.headline),
+                summary_lines=(
+                    (normalize_research_tone(summary.phase_summary),)
+                    if summary.phase_summary
+                    else ()
+                ),
+                lifecycle_lines=(),
+                unlock_lines=(),
+                report_summary_lines=(),
+                runtime_lines=tuple(
+                    normalize_research_tone(line) for line in runtime_lines
+                ),
+                delta_lines=(),
+                agenda_lines=tuple(
+                    normalize_research_tone(line) for line in agenda_lines
+                ),
+                recommendation_lines=tuple(
+                    normalize_research_tone(line) for line in recommendation_lines
+                ),
+                watchlist_lines=tuple(
+                    normalize_research_tone(line) for line in watchlist_lines
+                ),
+                blocker_lines=tuple(
+                    normalize_research_tone(line) for line in blocker_lines
+                ),
+                review_lines=tuple(
+                    normalize_research_tone(line) for line in review_lines
+                ),
+                next_day_focus_lines=(),
+                report_markdown="",
+                report_source="",
+                report_mtime="",
+                source_status=(
+                    self.latest_source_status(
+                        task_id=normalized_task,
+                        signal_date=selected_date,
+                    )
+                    if normalized_task in (*_SIGNAL_TASK_IDS, *_OBSERVATION_TASK_IDS)
+                    else {}
+                ),
+                candidate_count=summary.candidate_count,
+                actionable_count=summary.actionable_count,
+                watch_count=summary.watch_count,
+                blocked_count=summary.blocked_count,
+                detail_cards=(),
+                ranking_lines=(),
+                market_environment="",
+                strategy_breakdown_lines=(),
+                lesson_lines=(),
+                improvement_lines=(),
+            )
+
+        return self._cache_value(
+            "build_task_digest_view",
+            (normalized_task, normalized_signal_date),
+            _build,
+        )
+
     def _build_task_view_core(
         self,
         task_id: str,
@@ -1332,28 +3664,37 @@ class DashboardDataProvider:
         include_deltas: bool,
     ) -> DashboardTaskView:
         normalized_task = task_id if task_id in _TASK_LABELS else self.default_task_id()
-        available_dates = self.task_dates(normalized_task)
-        selected_date = signal_date.strip() or (
-            available_dates[0] if available_dates else ""
-        )
+        normalized_signal_date = signal_date.strip()
 
-        if normalized_task == "closing_review":
-            return self._build_closing_review_view(
+        def _build() -> DashboardTaskView:
+            available_dates = self.task_dates(normalized_task)
+            selected_date = normalized_signal_date or (
+                available_dates[0] if available_dates else ""
+            )
+
+            if normalized_task == "closing_review":
+                return self._build_closing_review_view(
+                    selected_date=selected_date,
+                    available_dates=available_dates,
+                    include_deltas=include_deltas,
+                )
+            if normalized_task == "briefing":
+                return self._build_briefing_view(
+                    selected_date=selected_date,
+                    available_dates=available_dates,
+                    include_deltas=include_deltas,
+                )
+            return self._build_signal_task_view(
+                task_id=normalized_task,
                 selected_date=selected_date,
                 available_dates=available_dates,
                 include_deltas=include_deltas,
             )
-        if normalized_task == "briefing":
-            return self._build_briefing_view(
-                selected_date=selected_date,
-                available_dates=available_dates,
-                include_deltas=include_deltas,
-            )
-        return self._build_signal_task_view(
-            task_id=normalized_task,
-            selected_date=selected_date,
-            available_dates=available_dates,
-            include_deltas=include_deltas,
+
+        return self._cache_value(
+            "build_task_view_core",
+            (normalized_task, normalized_signal_date, include_deltas),
+            _build,
         )
 
     def latest_signal_frame(
@@ -1454,20 +3795,30 @@ class DashboardDataProvider:
         return pd.DataFrame(table[::-1])
 
     def get_recent_execution_logs(self, days: int = 7) -> list[dict[str, Any]]:
-        start_date = today_shanghai() - timedelta(days=days)
-        try:
-            rows = self.logger.query_logs(
-                start_date=start_date,
-                end_date=today_shanghai(),
-            )
-        except Exception as exc:
-            logger.error("加载执行日志失败: %s", exc)
-            return []
-        return [
-            self._normalize_execution_log_row(row)
-            for row in rows
-            if row.get("type") in ("paper_execution", "execution")
-        ]
+        normalized_days = max(0, int(days))
+
+        def _load() -> list[dict[str, Any]]:
+            end_date = today_shanghai()
+            start_date = end_date - timedelta(days=normalized_days)
+            try:
+                rows = self.logger.query_logs(
+                    start_date=start_date,
+                    end_date=end_date,
+                )
+            except Exception as exc:
+                logger.error("加载执行日志失败: %s", exc)
+                return []
+            return [
+                self._normalize_execution_log_row(row)
+                for row in rows
+                if row.get("type") in ("paper_execution", "execution")
+            ]
+
+        return self._cache_value(
+            "get_recent_execution_logs",
+            normalized_days,
+            _load,
+        )
 
     def execution_logs_for_date(self, signal_date: str) -> list[dict[str, Any]]:
         selected_date = signal_date.strip()
@@ -1478,20 +3829,28 @@ class DashboardDataProvider:
         except ValueError:
             logger.warning("执行日志日期格式无效: %s", signal_date)
             return []
-        try:
-            rows = self.logger.query_logs(
-                start_date=target_date,
-                end_date=target_date,
-            )
-        except Exception as exc:
-            logger.error("加载 %s 执行日志失败: %s", selected_date, exc)
-            return []
-        return [
-            self._normalize_execution_log_row(row)
-            for row in rows
-            if row.get("type") in ("paper_execution", "execution")
-            and str(row.get("timestamp", "") or "").startswith(selected_date)
-        ]
+
+        def _load() -> list[dict[str, Any]]:
+            try:
+                rows = self.logger.query_logs(
+                    start_date=target_date,
+                    end_date=target_date,
+                )
+            except Exception as exc:
+                logger.error("加载 %s 执行日志失败: %s", selected_date, exc)
+                return []
+            return [
+                self._normalize_execution_log_row(row)
+                for row in rows
+                if row.get("type") in ("paper_execution", "execution")
+                and str(row.get("timestamp", "") or "").startswith(selected_date)
+            ]
+
+        return self._cache_value(
+            "execution_logs_for_date",
+            selected_date,
+            _load,
+        )
 
     def _execution_logs_for_signal_context(
         self,
@@ -1597,6 +3956,12 @@ class DashboardDataProvider:
                 if str(row.get("signal_date", "") or "") == signal_date.strip()
             ]
         if not rows:
+            run_row = self._latest_source_run_event_row(
+                task_id=task_id,
+                signal_date=signal_date,
+            )
+            if run_row is not None:
+                return self._source_status_from_row(run_row)
             return {}
         latest_row = max(
             rows,
@@ -1606,9 +3971,12 @@ class DashboardDataProvider:
             ),
         )
         if self._source_meta_score(latest_row) == 0:
-            fallback_date = signal_date.strip() or str(
-                latest_row.get("signal_date", "") or ""
+            run_row = self._latest_source_run_event_row(
+                task_id=task_id,
+                signal_date=signal_date,
             )
+            if run_row is not None:
+                return self._source_status_from_row(run_row)
             return {
                 "requested_source": "未记录",
                 "actual_source": "未记录",
@@ -1616,7 +3984,7 @@ class DashboardDataProvider:
                 "health_message": (
                     "该日历史记录未写入数据源元信息，无法还原当时的数据源健康度。"
                 ),
-                "data_latest_trade_date": fallback_date or "未记录",
+                "data_latest_trade_date": "未记录",
                 "lag_days": "未记录",
                 "updated_at": now_shanghai().isoformat(timespec="seconds"),
             }
@@ -1690,6 +4058,13 @@ class DashboardDataProvider:
             review_lines=review_lines,
             focus_lines=report_insights.next_day_focus_lines,
         )
+        runtime_lines = self._merge_runtime_lines(
+            report_insights.runtime_lines,
+            self._ledger_market_context_runtime_lines(
+                task_id=task_id,
+                signal_date=selected_date,
+            ),
+        )
         return DashboardTaskView(
             task_id=task_id,
             task_label=_TASK_LABELS[task_id],
@@ -1713,7 +4088,7 @@ class DashboardDataProvider:
                 )
             ),
             report_summary_lines=report_insights.report_summary_lines,
-            runtime_lines=report_insights.runtime_lines,
+            runtime_lines=runtime_lines,
             delta_lines=tuple(normalize_research_tone(line) for line in delta_lines),
             agenda_lines=tuple(normalize_research_tone(line) for line in agenda_lines),
             recommendation_lines=tuple(
@@ -1763,6 +4138,13 @@ class DashboardDataProvider:
             signal_date=selected_date,
             include_deltas=include_deltas,
         )
+        runtime_lines = self._merge_runtime_lines(
+            report_insights.runtime_lines,
+            self._ledger_market_context_runtime_lines(
+                task_id="main_chain",
+                signal_date=selected_date,
+            ),
+        )
         return DashboardTaskView(
             task_id="briefing",
             task_label=_TASK_LABELS["briefing"],
@@ -1777,7 +4159,7 @@ class DashboardDataProvider:
             lifecycle_lines=base_view.lifecycle_lines,
             unlock_lines=base_view.unlock_lines,
             report_summary_lines=report_insights.report_summary_lines,
-            runtime_lines=report_insights.runtime_lines,
+            runtime_lines=runtime_lines,
             delta_lines=base_view.delta_lines if include_deltas else (),
             agenda_lines=self._build_agenda_lines(
                 recommendation_lines=base_view.recommendation_lines,
@@ -2154,16 +4536,27 @@ class DashboardDataProvider:
             return default
 
     def _task_signal_rows(self, task_id: str) -> list[dict[str, Any]]:
-        rows = self.load_signal_rows()
-        if task_id == "intraday":
-            return [row for row in rows if self._row_task_id(row) == "intraday"]
-        if task_id == "morning_breakout":
-            return [row for row in rows if self._row_task_id(row) == "morning_breakout"]
-        if task_id == "closing_premium":
-            return [row for row in rows if self._row_task_id(row) == "closing_premium"]
-        if task_id == "main_chain":
-            return [row for row in rows if self._row_task_id(row) == "main_chain"]
-        return rows
+        def _build() -> list[dict[str, Any]]:
+            rows = [
+                row
+                for row in self.load_signal_rows()
+                if not self._is_runtime_event_row(row)
+            ]
+            if task_id == "intraday":
+                return [row for row in rows if self._row_task_id(row) == "intraday"]
+            if task_id == "morning_breakout":
+                return [
+                    row for row in rows if self._row_task_id(row) == "morning_breakout"
+                ]
+            if task_id == "closing_premium":
+                return [
+                    row for row in rows if self._row_task_id(row) == "closing_premium"
+                ]
+            if task_id == "main_chain":
+                return [row for row in rows if self._row_task_id(row) == "main_chain"]
+            return rows
+
+        return self._cache_value("task_signal_rows", task_id, _build)
 
     def _row_task_id(self, row: dict[str, Any]) -> str:
         for key in ("task_id", "run_task_id", "source_task_id"):
@@ -2205,6 +4598,34 @@ class DashboardDataProvider:
 
     def _empty_report_document(self) -> DashboardReportDocument:
         return DashboardReportDocument(markdown="", source="", mtime="")
+
+    def _report_file_mtime(self, path: Path) -> str:
+        if not path.exists():
+            return ""
+        try:
+            return to_iso8601(
+                datetime.fromtimestamp(path.stat().st_mtime, tz=SHANGHAI_TZ)
+            )
+        except OSError as exc:
+            logger.warning("读取报告 mtime 失败 %s: %s", path, exc)
+            return ""
+
+    def _closing_review_dated_report_mtime(self, signal_date: str) -> str:
+        normalized_date = signal_date.strip()
+        if not normalized_date:
+            return ""
+        candidate_paths = [
+            self.reports_dir / f"closing_review-{normalized_date}.md",
+            self.reports_dir / f"closing-review-{normalized_date}.md",
+            self.reports_dir / f"daily-review-{normalized_date}.md",
+        ]
+        if normalized_date == self._max_signal_date(self.load_signal_rows()):
+            candidate_paths.append(self.reports_dir / "closing_review.md")
+        for path in candidate_paths:
+            mtime = self._report_file_mtime(path)
+            if mtime:
+                return mtime
+        return ""
 
     def _read_report_document(
         self,
@@ -2269,17 +4690,26 @@ class DashboardDataProvider:
         return dates[0] if dates else ""
 
     def _all_dashboard_dates(self) -> tuple[str, ...]:
-        dates: set[str] = set()
-        for task_id in _TASK_LABELS:
-            dates.update(self.task_dates(task_id))
-        return tuple(sorted((date for date in dates if date), reverse=True))
+        def _build() -> tuple[str, ...]:
+            dates: set[str] = set()
+            for task_id in _TASK_LABELS:
+                dates.update(self.task_dates(task_id))
+            dates.update(
+                self._debate_signal_date(row)
+                for row in self._load_debate_rows()
+                if self._has_debate_evidence(row)
+            )
+            return tuple(sorted((date for date in dates if date), reverse=True))
+
+        return self._cache_value("all_dashboard_dates", "all", _build)
 
     def _dedupe_rows(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        grouped: dict[tuple[str, str], dict[str, Any]] = {}
+        grouped: dict[tuple[str, str, str], dict[str, Any]] = {}
         for row in rows:
             key = (
                 str(row.get("signal_date", "") or ""),
-                str(row.get("symbol", "") or ""),
+                self._row_task_id(row),
+                self._symbol_key(row),
             )
             existing = grouped.get(key)
             if existing is None:
@@ -2293,6 +4723,16 @@ class DashboardDataProvider:
                     grouped[key] = row
         return list(grouped.values())
 
+    @staticmethod
+    def _canonical_symbol(symbol: str) -> str:
+        value = str(symbol or "").strip()
+        if value.isdigit() and len(value) < 6:
+            return value.zfill(6)
+        return value
+
+    def _symbol_key(self, row: dict[str, Any]) -> str:
+        return self._canonical_symbol(str(row.get("symbol", "") or ""))
+
     def _row_meta_key(self, row: dict[str, Any]) -> tuple[str, str, float]:
         return (
             str(row.get("signal_date", "") or ""),
@@ -2302,6 +4742,33 @@ class DashboardDataProvider:
 
     def _sort_key(self, row: dict[str, Any]) -> tuple[float, str]:
         return (float(row.get("score") or 0.0), str(row.get("created_at", "") or ""))
+
+    def _latest_created_at(self, rows: list[dict[str, Any]]) -> str:
+        if not rows:
+            return ""
+        return max(str(row.get("created_at", "") or "").strip() for row in rows)
+
+    def _task_row_created_at(
+        self,
+        *,
+        task_id: str,
+        signal_date: str,
+        view: DashboardTaskView,
+    ) -> str:
+        if task_id in {"briefing", "closing_review"} and view.report_mtime:
+            return view.report_mtime
+        if task_id == "briefing":
+            source_task_id = "main_chain"
+        elif task_id == "closing_review":
+            source_task_id = "main_chain"
+        else:
+            source_task_id = task_id
+        rows = [
+            row
+            for row in self._dedupe_rows(self._task_signal_rows(source_task_id))
+            if str(row.get("signal_date", "") or "").strip() == signal_date
+        ]
+        return self._latest_created_at(rows)
 
     def _task_label(self, task_id: str) -> str:
         return normalize_research_tone(_TASK_LABELS.get(task_id, task_id))
@@ -2323,15 +4790,32 @@ class DashboardDataProvider:
         return _TASK_METRIC_LABELS.get(task_id, ("待复核", "观察", "阻塞"))
 
     def _task_phase_summary(self, task_id: str, view: DashboardTaskView) -> str:
+        return self._task_phase_summary_from_counts(
+            task_id=task_id,
+            candidate_count=view.candidate_count,
+            actionable_count=view.actionable_count,
+            watch_count=view.watch_count,
+            blocked_count=view.blocked_count,
+        )
+
+    def _task_phase_summary_from_counts(
+        self,
+        *,
+        task_id: str,
+        candidate_count: int,
+        actionable_count: int,
+        watch_count: int,
+        blocked_count: int,
+    ) -> str:
         note = self._task_phase_note(task_id)
         action_label, watch_label, blocked_label = self._task_metric_labels(task_id)
-        if view.actionable_count > 0:
-            return f"{note}；当前{action_label} {view.actionable_count} 只。"
-        if view.blocked_count > 0:
-            return f"{note}；当前{blocked_label} {view.blocked_count} 只。"
-        if view.watch_count > 0:
-            return f"{note}；当前{watch_label} {view.watch_count} 只。"
-        if view.candidate_count > 0:
+        if actionable_count > 0:
+            return f"{note}；当前{action_label} {actionable_count} 只。"
+        if blocked_count > 0:
+            return f"{note}；当前{blocked_label} {blocked_count} 只。"
+        if watch_count > 0:
+            return f"{note}；当前{watch_label} {watch_count} 只。"
+        if candidate_count > 0:
             return f"{note}；当前已有结果待回看。"
         return f"{note}；当前还没有有效结果，先确认对应任务是否已跑完。"
 
@@ -2390,11 +4874,26 @@ class DashboardDataProvider:
             action_label=self._action_label(merged_row),
             status_label=self._candidate_status(merged_row),
             blocker=self._candidate_blocker_text(merged_row),
-            next_step=str(merged_row.get("candidate_next_step", "") or "").strip(),
+            next_step=self._next_step_text(merged_row),
             review_meta=self._review_meta(merged_row),
             task_labels=tuple(payload["task_labels"]),
             reasons=self._as_text_tuple(merged_row.get("reasons")),
             risks=self._as_text_tuple(merged_row.get("risks")),
+            strategies=self._strategy_tuple(merged_row.get("strategies")),
+            cross_market_summary=self._spotlight_cross_market_summary(merged_row),
+            news_catalyst_summary=self._spotlight_news_catalyst_summary(merged_row),
+            cross_market_chain_summary=self._spotlight_cross_market_chain_summary(
+                merged_row
+            ),
+            cross_market_validation_summary=(
+                self._spotlight_cross_market_validation_summary(merged_row)
+            ),
+            cross_market_invalidation_summary=(
+                self._spotlight_cross_market_invalidation_summary(merged_row)
+            ),
+            support_points=self._as_text_tuple(merged_row.get("support_points")),
+            opposition_points=self._as_text_tuple(merged_row.get("opposition_points")),
+            watch_items=self._as_text_tuple(merged_row.get("watch_items")),
         )
 
     def _same_day_merged_row(
@@ -2410,6 +4909,45 @@ class DashboardDataProvider:
             "candidate_next_step",
             "candidate_review_priority",
             "candidate_review_window",
+            "news_catalyst_judgement",
+            "news_catalyst_priority_score",
+            "news_catalyst_support_count",
+            "news_catalyst_oppose_count",
+            "news_catalyst_review_count",
+            "news_catalyst_supports",
+            "news_catalyst_opposes",
+            "news_catalyst_needs_review",
+            "news_catalyst_lead",
+            "news_catalyst_source",
+            "cross_market_primary_theme",
+            "cross_market_linkage_basis",
+            "cross_market_action",
+            "cross_market_strength",
+            "cross_market_lead_window",
+            "cross_market_observation_window",
+            "cross_market_priority_score",
+            "cross_market_themes",
+            "cross_market_rule_ids",
+            "cross_market_transmission_path",
+            "cross_market_validation_signals",
+            "cross_market_invalidation_signals",
+            "cross_market_chain_summary",
+            "cross_market_support_event_count",
+            "cross_market_conflict_event_count",
+            "cross_market_evidence_stack_summary",
+            "cross_market_summaries",
+            "debate_research_verdict",
+            "debate_primary_risk_gate",
+            "debate_next_trigger",
+            "debate_active_role_summary",
+            "support_points",
+            "opposition_points",
+            "watch_items",
+            "role_reliability_lines",
+            "debate_historical_context_note",
+            "debate_historical_context_bucket",
+            "debate_historical_context_sample_count",
+            "debate_historical_context_accuracy",
         ):
             if self._row_field_has_value(merged.get(field)):
                 continue
@@ -2421,6 +4959,13 @@ class DashboardDataProvider:
             if value is not None:
                 merged[field] = value
 
+        if not self._row_field_has_value(merged.get("debate_active_role_summary")):
+            debate_active_role_summary = self._debate_active_role_summary_for_row(
+                final_row
+            )
+            if debate_active_role_summary:
+                merged["debate_active_role_summary"] = debate_active_role_summary
+
         if self._is_blocked(final_row) and not self._row_field_has_value(
             merged.get("candidate_blocker")
         ):
@@ -2431,6 +4976,55 @@ class DashboardDataProvider:
             )
             if blocker is not None:
                 merged["candidate_blocker"] = blocker
+        return self._merge_debate_evidence(merged)
+
+    def _merge_debate_evidence(self, row: dict[str, Any]) -> dict[str, Any]:
+        signal_date = str(
+            row.get("signal_date", "") or row.get("date", "") or ""
+        ).strip()
+        symbol = str(row.get("symbol", "") or "").strip()
+        if not signal_date or not symbol or symbol == "__RUN__":
+            return dict(row)
+        matches = [
+            debate_row
+            for debate_row in self._dedupe_debate_rows(self._load_debate_rows())
+            if self._debate_signal_date(debate_row) == signal_date
+            and str(debate_row.get("symbol", "") or "").strip() == symbol
+            and self._has_debate_evidence(debate_row)
+        ]
+        if not matches:
+            return dict(row)
+
+        debate_row = max(matches, key=self._debate_quality_key)
+        merged = dict(row)
+        field_sources = {
+            "debate_research_verdict": "research_verdict",
+            "debate_primary_risk_gate": "primary_risk_gate",
+            "debate_next_trigger": "next_trigger",
+            "debate_context_quality": "debate_context_quality",
+            "market_context_lines": "market_context_lines",
+            "cross_market_chain_summary": "cross_market_chain_summary",
+            "cross_market_validation_signals": "cross_market_validation_summary",
+            "cross_market_invalidation_signals": "cross_market_invalidation_summary",
+            "support_points": "support_points",
+            "opposition_points": "opposition_points",
+            "watch_items": "watch_items",
+        }
+        for target, source in field_sources.items():
+            if self._row_field_has_value(merged.get(target)):
+                continue
+            value = debate_row.get(source)
+            if self._row_field_has_value(value):
+                merged[target] = value
+
+        if not self._row_field_has_value(merged.get("cross_market_primary_theme")):
+            cross_market_summary = debate_row.get("cross_market_summary")
+            if self._row_field_has_value(cross_market_summary):
+                merged["cross_market_primary_theme"] = cross_market_summary
+        if not self._row_field_has_value(merged.get("support_points")):
+            merged["support_points"] = debate_row.get("opportunity_highlights") or ()
+        if not self._row_field_has_value(merged.get("opposition_points")):
+            merged["opposition_points"] = debate_row.get("risk_warnings") or ()
         return merged
 
     def _same_day_evidence_entries(
@@ -2481,11 +5075,55 @@ class DashboardDataProvider:
                 continue
             value = row.get(field)
             if self._row_field_has_value(value):
+                if not self._can_backfill_field_from_entry(
+                    row,
+                    field,
+                    final_row=final_row,
+                ):
+                    continue
                 if row is final_row:
                     return value
                 task_id = str(entry.get("task_id", "") or "")
                 return self._label_backfilled_evidence(value, task_id)
         return None
+
+    def _can_backfill_field_from_entry(
+        self,
+        source_row: dict[str, Any],
+        field: str,
+        *,
+        final_row: dict[str, Any],
+    ) -> bool:
+        if source_row is final_row or field not in _DEBATE_BACKFILL_FIELDS:
+            return True
+        source_fingerprint = self._candidate_fingerprint_for_row(source_row)
+        final_fingerprint = self._candidate_fingerprint_for_row(final_row)
+        if source_fingerprint and source_fingerprint == final_fingerprint:
+            return True
+        source_created_at = self._row_created_at(source_row)
+        final_created_at = self._row_created_at(final_row)
+        return bool(
+            source_created_at
+            and final_created_at
+            and source_created_at >= final_created_at
+        )
+
+    def _candidate_fingerprint_for_row(self, row: dict[str, Any]) -> str:
+        metrics = row.get("metrics")
+        if not isinstance(metrics, dict):
+            metrics = {}
+        return str(
+            row.get("candidate_fingerprint")
+            or row.get("debate_candidate_fingerprint")
+            or metrics.get("candidate_fingerprint")
+            or metrics.get("debate_candidate_fingerprint")
+            or ""
+        ).strip()
+
+    def _row_created_at(self, row: dict[str, Any]) -> str:
+        return str(
+            row.get("candidate_created_at") or row.get("created_at") or ""
+        ).strip()
 
     def _label_backfilled_evidence(self, value: Any, task_id: str) -> Any:
         source = self._task_phase_label(task_id) if task_id else "同日阶段"
@@ -2501,39 +5139,43 @@ class DashboardDataProvider:
         selected_date = signal_date.strip()
         if not selected_date:
             return ()
-        grouped: dict[str, dict[str, Any]] = {}
-        for task_id in _SIGNAL_TASK_IDS:
-            rows = [
-                row
-                for row in self._dedupe_rows(self._task_signal_rows(task_id))
-                if str(row.get("signal_date", "") or "") == selected_date
-            ]
-            for row in rows:
-                symbol = str(row.get("symbol", "") or "").strip()
-                if not symbol:
-                    continue
-                payload = grouped.get(symbol)
-                if payload is None:
-                    grouped[symbol] = {
-                        "row": row,
-                        "task_id": task_id,
-                        "entries": [{"row": row, "task_id": task_id}],
-                    }
-                    continue
-                payload["entries"].append({"row": row, "task_id": task_id})
-                if self._same_day_spotlight_key(
-                    row,
-                    task_id,
-                ) > self._same_day_spotlight_key(
-                    payload["row"],
-                    str(payload.get("task_id", "") or ""),
-                ):
-                    payload["row"] = row
-                    payload["task_id"] = task_id
-        return tuple(
-            self._same_day_merged_row(payload["row"], payload.get("entries", ()))
-            for payload in grouped.values()
-        )
+
+        def _build() -> tuple[dict[str, Any], ...]:
+            grouped: dict[str, dict[str, Any]] = {}
+            for task_id in (*_SIGNAL_TASK_IDS, *_OBSERVATION_TASK_IDS):
+                rows = [
+                    row
+                    for row in self._dedupe_rows(self._task_signal_rows(task_id))
+                    if str(row.get("signal_date", "") or "") == selected_date
+                ]
+                for row in rows:
+                    symbol = str(row.get("symbol", "") or "").strip()
+                    if not symbol:
+                        continue
+                    payload = grouped.get(symbol)
+                    if payload is None:
+                        grouped[symbol] = {
+                            "row": row,
+                            "task_id": task_id,
+                            "entries": [{"row": row, "task_id": task_id}],
+                        }
+                        continue
+                    payload["entries"].append({"row": row, "task_id": task_id})
+                    if self._same_day_spotlight_key(
+                        row,
+                        task_id,
+                    ) > self._same_day_spotlight_key(
+                        payload["row"],
+                        str(payload.get("task_id", "") or ""),
+                    ):
+                        payload["row"] = row
+                        payload["task_id"] = task_id
+            return tuple(
+                self._same_day_merged_row(payload["row"], payload.get("entries", ()))
+                for payload in grouped.values()
+            )
+
+        return self._cache_value("same_day_unique_rows", selected_date, _build)
 
     def _same_day_unique_counts(self, signal_date: str) -> tuple[int, int, int]:
         unique_rows = self._same_day_unique_rows(signal_date)
@@ -2567,11 +5209,124 @@ class DashboardDataProvider:
             return 4
         return 5
 
+    def _candidate_sort_key(
+        self, row: dict[str, Any]
+    ) -> tuple[int, tuple[int, ...], float, str]:
+        return (
+            -self._priority_bucket(row),
+            self._discussion_priority_key(row),
+            float(row.get("score") or 0.0),
+            str(row.get("created_at", "") or ""),
+        )
+
+    def _discussion_priority_key(self, row: dict[str, Any]) -> tuple[int, ...]:
+        verdict_source, verdict = self._split_backfilled_evidence_text(
+            str(row.get("debate_research_verdict", "") or "")
+        )
+        risk_source, risk_gate = self._split_backfilled_evidence_text(
+            str(row.get("debate_primary_risk_gate", "") or "")
+        )
+        trigger_source, next_trigger = self._split_backfilled_evidence_text(
+            str(row.get("debate_next_trigger", "") or "")
+        )
+        history_source, history_note = self._split_backfilled_evidence_text(
+            str(row.get("debate_historical_context_note", "") or "")
+        )
+        chain_source, chain_summary = self._split_backfilled_evidence_text(
+            str(row.get("cross_market_chain_summary", "") or "")
+        )
+        linkage_source, linkage_basis = self._split_backfilled_evidence_text(
+            str(row.get("cross_market_linkage_basis", "") or "")
+        )
+        lead_window_source, lead_window = self._split_backfilled_evidence_text(
+            str(row.get("cross_market_lead_window", "") or "")
+        )
+        transmission_source, transmission_path = self._split_backfilled_evidence_text(
+            str(row.get("cross_market_transmission_path", "") or "")
+        )
+        validation_signals = self._as_text_tuple(
+            row.get("cross_market_validation_signals")
+        )
+        invalidation_signals = self._as_text_tuple(
+            row.get("cross_market_invalidation_signals")
+        )
+        cross_market_theme = str(
+            row.get("cross_market_primary_theme", "") or ""
+        ).strip()
+        cross_market_action = str(row.get("cross_market_action", "") or "").strip()
+        discussion_sources = {
+            source
+            for source in (
+                verdict_source,
+                risk_source,
+                trigger_source,
+                history_source,
+                chain_source,
+                linkage_source,
+                lead_window_source,
+                transmission_source,
+            )
+            if source
+        }
+        structure_count = (
+            sum(
+                1
+                for value in (
+                    risk_gate,
+                    next_trigger,
+                    history_note,
+                    chain_summary,
+                    linkage_basis,
+                    lead_window,
+                    transmission_path,
+                    cross_market_theme,
+                    cross_market_action,
+                )
+                if value
+            )
+            + int(bool(validation_signals))
+            + int(bool(invalidation_signals))
+        )
+        return (
+            self._discussion_verdict_rank(verdict),
+            structure_count,
+            int(bool(next_trigger)),
+            int(bool(risk_gate)),
+            int(bool(validation_signals)),
+            int(bool(invalidation_signals)),
+            int(bool(cross_market_theme or chain_summary or linkage_basis)),
+            int(bool(cross_market_action)),
+            len(discussion_sources),
+            int(float(row.get("cross_market_priority_score") or 0.0) * 100),
+            self._discussion_history_bucket_rank(row),
+            self._discussion_history_accuracy_score(row),
+            int(bool(history_note)),
+        )
+
+    def _discussion_verdict_rank(self, verdict: str) -> int:
+        text = verdict.strip()
+        if not text:
+            return 0
+        if "优先" in text and ("复核" in text or "跟踪" in text):
+            return 3
+        if any(
+            keyword in text
+            for keyword in ("纸面复核", "纸面跟踪", "重点跟踪", "重点观察")
+        ):
+            return 2
+        return 1
+
     def _action_label(self, row: dict[str, Any]) -> str:
         action = str(row.get("portfolio_action", "") or "").strip()
+        rating = str(row.get("rating", "") or "").strip()
+        if action and action != "keep":
+            return normalize_research_tone(portfolio_action_label(action))
+        if self._is_intraday_row(row) and self._is_actionable(row):
+            return "纸面复核"
+        if rating:
+            return normalize_research_tone(rating_label(rating))
         if action:
             return normalize_research_tone(portfolio_action_label(action))
-        rating = str(row.get("rating", "") or "").strip()
         return normalize_research_tone(rating_label(rating))
 
     def _action_status_text(self, row: dict[str, Any]) -> str:
@@ -2580,6 +5335,8 @@ class DashboardDataProvider:
         if action and status:
             if action == status:
                 return action
+            if action in {"继续观察", "继续观察名单"} and status == "结果不变":
+                return status
             return f"{action} / {status}"
         return action or status or "-"
 
@@ -2616,8 +5373,6 @@ class DashboardDataProvider:
         return task_id == "intraday" or self._row_task_id(row) == "intraday"
 
     def _is_actionable(self, row: dict[str, Any], task_id: str = "") -> bool:
-        if self._is_intraday_row(row, task_id=task_id):
-            return False
         if self._is_blocked(row):
             return False
         action = str(row.get("portfolio_action", "") or "").strip()
@@ -2628,8 +5383,6 @@ class DashboardDataProvider:
         return is_tradable_rating(row.get("rating"))
 
     def _is_watch_candidate(self, row: dict[str, Any], task_id: str = "") -> bool:
-        if self._is_intraday_row(row, task_id=task_id):
-            return True
         rating = str(row.get("rating", "") or "").strip()
         action = str(row.get("portfolio_action", "") or "").strip()
         return rating in {"watch", "avoid"} or action in {"downgrade", "keep"}
@@ -2658,6 +5411,27 @@ class DashboardDataProvider:
             return risks[0]
         return MISSING_BLOCKER_TEXT
 
+    def _next_step_text(self, row: dict[str, Any]) -> str:
+        next_step = str(row.get("candidate_next_step", "") or "").strip()
+        if next_step:
+            return normalize_research_tone(next_step)
+        debate_next_trigger = str(row.get("debate_next_trigger", "") or "").strip()
+        if debate_next_trigger:
+            return normalize_research_tone(debate_next_trigger)
+        return ""
+
+    def _split_backfilled_evidence_text(self, text: str) -> tuple[str, str]:
+        value = text.strip()
+        for task_id in (*_SIGNAL_TASK_IDS, *_OBSERVATION_TASK_IDS):
+            source = self._task_phase_label(task_id)
+            prefix = f"{source}: "
+            if value.startswith(prefix):
+                return source, value[len(prefix) :].strip()
+        prefix = "同日阶段: "
+        if value.startswith(prefix):
+            return "同日阶段", value[len(prefix) :].strip()
+        return "", value
+
     def _review_meta(self, row: dict[str, Any]) -> str:
         return normalize_research_tone(
             format_review_meta(
@@ -2678,21 +5452,107 @@ class DashboardDataProvider:
             )
         return ()
 
+    def _strategy_tuple(self, value: Any) -> tuple[str, ...]:
+        """Normalize strategy names from CSV strings and structured rows."""
+        if isinstance(value, str):
+            values: tuple[Any, ...] = tuple(
+                part.strip()
+                for part in value.replace("；", ",").replace(";", ",").split(",")
+            )
+        elif isinstance(value, (list, tuple)):
+            values = tuple(value)
+        else:
+            return ()
+        return tuple(
+            normalize_research_tone(str(item).strip())
+            for item in values
+            if str(item).strip()
+        )
+
     def _dedupe_debate_rows(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Keep one newest same-day conclusion per symbol for display consumers.
+
+        A symbol can have intraday and midday debate rows.  Those are runtime
+        attempts, not separate candidates; displaying both made one candidate
+        occupy multiple committee cards and pushed other candidates out.
+        """
         grouped: dict[tuple[str, str], dict[str, Any]] = {}
         for row in rows:
             key = (
                 self._debate_signal_date(row),
                 str(row.get("symbol", "") or "").strip(),
             )
-            if not all(key):
+            if not key[0] or not key[1]:
                 continue
             existing = grouped.get(key)
-            if existing is None or self._debate_quality_key(
-                row
-            ) > self._debate_quality_key(existing):
+            if existing is None:
+                grouped[key] = row
+                continue
+            row_has_evidence = self._has_debate_evidence(row)
+            existing_has_evidence = self._has_debate_evidence(existing)
+            if row_has_evidence != existing_has_evidence:
+                if row_has_evidence:
+                    grouped[key] = row
+                continue
+            if self._debate_recency_key(row) > self._debate_recency_key(existing):
+                grouped[key] = row
+                continue
+            if self._debate_recency_key(row) == self._debate_recency_key(
+                existing
+            ) and self._debate_quality_key(row) > self._debate_quality_key(existing):
                 grouped[key] = row
         return list(grouped.values())
+
+    def _debate_has_cross_market_evidence(self, row: dict[str, Any]) -> bool:
+        """Return whether a stored debate has attributable cross-market evidence."""
+        context_lines = self._as_text_tuple(row.get("market_context_lines"))
+        if any(
+            marker in line
+            for line in context_lines
+            for marker in ("消息结果: 无可用新闻记录", "无可用新闻记录")
+        ):
+            return False
+        if any(
+            self._as_text_tuple(row.get(field))
+            for field in ("real_message_evidence", "rule_transmission_evidence")
+        ):
+            return True
+        if int(row.get("cross_market_support_event_count") or 0) > 0:
+            return True
+        if int(row.get("cross_market_conflict_event_count") or 0) > 0:
+            return True
+        if str(row.get("cross_market_evidence_stack_summary", "") or "").strip():
+            return True
+        return any(
+            str(row.get(field, "") or "").strip()
+            for field in (
+                "cross_market_primary_theme",
+                "cross_market_linkage_basis",
+                "cross_market_transmission_hypothesis",
+                "cross_market_chain_summary",
+            )
+        )
+
+    @staticmethod
+    def _sanitize_unsupported_cross_market_text(
+        value: str,
+        *,
+        has_evidence: bool,
+    ) -> str:
+        """Remove legacy overseas claims when the row carries no evidence."""
+        text = str(value or "").strip()
+        if has_evidence or not text:
+            return text
+        for phrase in (
+            "跨市传导: ⚠️ 海外叙事未必立刻传到A股，需确认板块共振",
+            "跨市传导: 海外叙事未必立刻传到A股，需确认板块共振",
+            "跨市传导: 跨市场线索存在，但仍需确认是否形成A股主线接力",
+            "核对海外风险线索是否延续，避免隔夜外盘噪音误导。",
+        ):
+            text = text.replace("，但卡点是 " + phrase, "")
+            text = text.replace("，卡点是 " + phrase, "")
+            text = text.replace(phrase, "")
+        return text.strip(" ，；")
 
     def _debate_signal_date(self, row: dict[str, Any]) -> str:
         return (
@@ -2705,7 +5565,37 @@ class DashboardDataProvider:
             return False
         if not str(row.get("symbol", "") or "").strip():
             return False
-        return self._debate_evidence_score(row) > 0
+        task_id = str(row.get("task_id", "") or "").strip()
+        if not task_id:
+            # Legacy records predate task metadata; keep their established display
+            # contract while new task-scoped records use the stricter gate below.
+            return self._debate_evidence_score(row) > 0
+
+        rounds = self._debate_round_dicts(row)
+        has_opinions = any(
+            isinstance(round_data.get("opinions"), list)
+            and any(isinstance(item, dict) for item in round_data["opinions"])
+            for round_data in rounds
+        )
+        has_round_summary = any(
+            str(round_data.get("summary", "") or "").strip()
+            for round_data in rounds
+        )
+        has_conclusion = any(
+            str(row.get(field, "") or "").strip()
+            for field in (
+                "research_verdict",
+                "final_consensus",
+                "primary_risk_gate",
+                "next_trigger",
+            )
+        )
+        return bool(
+            self._debate_vote_map(row)
+            and rounds
+            and (has_opinions or has_round_summary)
+            and has_conclusion
+        )
 
     def _debate_evidence_score(self, row: dict[str, Any]) -> int:
         return sum(
@@ -2719,12 +5609,28 @@ class DashboardDataProvider:
             )
         )
 
-    def _debate_quality_key(self, row: dict[str, Any]) -> tuple[int, str, str, float]:
+    def _debate_quality_key(
+        self, row: dict[str, Any]
+    ) -> tuple[int, int, str, str, float]:
+        context_quality = str(row.get("debate_context_quality", "") or "").strip()
+        context_rank = {
+            "structured_context": 2,
+            "": 1,
+            "thin_context": 0,
+        }.get(context_quality, 1)
         return (
+            context_rank,
             self._debate_evidence_score(row),
             self._debate_signal_date(row),
             str(row.get("created_at", "") or "").strip(),
             float(row.get("adjusted_score") or row.get("original_score") or 0.0),
+        )
+
+    @staticmethod
+    def _debate_recency_key(row: dict[str, Any]) -> tuple[str, str]:
+        return (
+            str(row.get("created_at", "") or "").strip(),
+            str(row.get("debate_id", "") or "").strip(),
         )
 
     def _debate_row_key(self, row: dict[str, Any]) -> tuple[str, str, float]:
@@ -2738,6 +5644,7 @@ class DashboardDataProvider:
         self,
         row: dict[str, Any],
     ) -> DashboardDebateSummary:
+        has_cross_market_evidence = self._debate_has_cross_market_evidence(row)
         vote_map = self._debate_vote_map(row)
         bull_count = sum(1 for stance in vote_map.values() if stance == "bullish")
         bear_count = sum(1 for stance in vote_map.values() if stance == "bearish")
@@ -2745,7 +5652,34 @@ class DashboardDataProvider:
         round_summaries = self._debate_round_summaries(row)
         risk_warnings = self._as_text_tuple(row.get("risk_warnings"))
         opportunity_highlights = self._as_text_tuple(row.get("opportunity_highlights"))
-        agent_views = self._debate_agent_views(row, vote_map=vote_map)
+        agent_views = self._debate_agent_views(
+            row,
+            vote_map=vote_map,
+            has_cross_market_evidence=has_cross_market_evidence,
+        )
+        support_points = tuple(
+            self._sanitize_unsupported_cross_market_text(
+                item,
+                has_evidence=has_cross_market_evidence,
+            )
+            for item in self._as_text_tuple(row.get("support_points"))
+            if self._sanitize_unsupported_cross_market_text(
+                item,
+                has_evidence=has_cross_market_evidence,
+            )
+        )
+        opposition_points = tuple(
+            self._sanitize_unsupported_cross_market_text(
+                item,
+                has_evidence=has_cross_market_evidence,
+            )
+            for item in self._as_text_tuple(row.get("opposition_points"))
+            if self._sanitize_unsupported_cross_market_text(
+                item,
+                has_evidence=has_cross_market_evidence,
+            )
+        )
+        watch_items = self._as_text_tuple(row.get("watch_items"))
         recommended_adjustment = str(
             row.get("recommended_adjustment", "") or ""
         ).strip()
@@ -2760,6 +5694,8 @@ class DashboardDataProvider:
             neutral_count=neutral_count,
             risk_warnings=risk_warnings,
             opportunity_highlights=opportunity_highlights,
+            agent_views=agent_views,
+            has_cross_market_evidence=has_cross_market_evidence,
         )
         return DashboardDebateSummary(
             signal_date=self._debate_signal_date(row),
@@ -2791,6 +5727,62 @@ class DashboardDataProvider:
             risk_warnings=risk_warnings,
             opportunity_highlights=opportunity_highlights,
             agent_views=agent_views,
+            cross_market_summary=(
+                self._spotlight_cross_market_summary(row)
+                if has_cross_market_evidence
+                else ""
+            ),
+            cross_market_chain_summary=(
+                self._spotlight_cross_market_chain_summary(row)
+                if has_cross_market_evidence
+                else ""
+            ),
+            cross_market_validation_summary=(
+                self._spotlight_cross_market_validation_summary(row)
+                if has_cross_market_evidence
+                else ""
+            ),
+            cross_market_invalidation_summary=(
+                self._spotlight_cross_market_invalidation_summary(row)
+                if has_cross_market_evidence
+                else ""
+            ),
+            research_verdict=self._sanitize_unsupported_cross_market_text(
+                str(row.get("research_verdict", "") or ""),
+                has_evidence=has_cross_market_evidence,
+            ),
+            primary_risk_gate=(
+                self._sanitize_unsupported_cross_market_text(
+                    str(row.get("primary_risk_gate", "") or ""),
+                    has_evidence=has_cross_market_evidence,
+                )
+                or (
+                    "消息或规则传导证据缺失，跨市视角不形成结论。"
+                    if not has_cross_market_evidence
+                    else ""
+                )
+            ),
+            next_trigger=(
+                self._sanitize_unsupported_cross_market_text(
+                    str(row.get("next_trigger", "") or ""),
+                    has_evidence=has_cross_market_evidence,
+                )
+                or "等待实时量价与消息证据确认。"
+            ),
+            historical_context_note=str(
+                row.get("historical_context_note", "") or ""
+            ).strip(),
+            role_reliability_lines=self._as_text_tuple(
+                row.get("role_reliability_lines")
+            ),
+            role_selection_summary=str(
+                row.get("role_selection_summary", "") or ""
+            ).strip(),
+            role_selection_plan=str(row.get("role_selection_plan", "") or "").strip(),
+            support_points=support_points,
+            opposition_points=opposition_points,
+            watch_items=watch_items,
+            created_at=str(row.get("created_at", "") or "").strip(),
         )
 
     def _debate_vote_map(self, row: dict[str, Any]) -> dict[str, str]:
@@ -2855,6 +5847,7 @@ class DashboardDataProvider:
         row: dict[str, Any],
         *,
         vote_map: dict[str, str],
+        has_cross_market_evidence: bool = True,
     ) -> tuple[DashboardDebateAgentView, ...]:
         opinion_map: dict[str, dict[str, Any]] = {}
         for opinion in self._debate_final_round_opinions(row):
@@ -2883,6 +5876,8 @@ class DashboardDataProvider:
             opportunities = self._as_text_tuple(opinion.get("opportunity_factors"))
             stance_label = self._debate_stance_label(stance)
             key_argument = arguments[0] if arguments else ""
+            key_risk = risks[0] if risks else ""
+            key_opportunity = opportunities[0] if opportunities else ""
             if vote_stance and opinion_stance and vote_stance != opinion_stance:
                 stance_label = f"{stance_label}（发言冲突）"
                 key_argument = (
@@ -2890,6 +5885,10 @@ class DashboardDataProvider:
                     f"投票{self._debate_stance_label(vote_stance)}，"
                     f"发言{self._debate_stance_label(opinion_stance)}，需人工复核"
                 )
+            if role_id == "cross_market" and not has_cross_market_evidence:
+                key_argument = ""
+                key_risk = ""
+                key_opportunity = ""
             agent_views.append(
                 DashboardDebateAgentView(
                     role_id=role_id,
@@ -2898,8 +5897,8 @@ class DashboardDataProvider:
                     stance_label=stance_label,
                     confidence=float(opinion.get("confidence") or 0.0),
                     key_argument=key_argument,
-                    key_risk=risks[0] if risks else "",
-                    key_opportunity=opportunities[0] if opportunities else "",
+                    key_risk=key_risk,
+                    key_opportunity=key_opportunity,
                 )
             )
         return tuple(agent_views)
@@ -2913,6 +5912,8 @@ class DashboardDataProvider:
         neutral_count: int,
         risk_warnings: tuple[str, ...],
         opportunity_highlights: tuple[str, ...],
+        agent_views: tuple[DashboardDebateAgentView, ...],
+        has_cross_market_evidence: bool = True,
     ) -> tuple[str, ...]:
         recommended_adjustment = str(
             row.get("recommended_adjustment", "") or ""
@@ -2938,21 +5939,77 @@ class DashboardDataProvider:
                     f"辩论倾向: {self._debate_adjustment_label(recommended_adjustment)}；不覆盖runtime打分"
                 )
             )
+        market_context = self._as_text_tuple(row.get("market_context_lines"))
+        if market_context:
+            lines.append(normalize_research_tone(f"市场上下文: {market_context[0]}"))
+        active_role_summary = self._debate_active_role_summary(agent_views)
+        if active_role_summary:
+            lines.append(f"讨论视角: {active_role_summary}")
         if bull_count + bear_count + neutral_count:
             lines.append(
                 f"投票分布: 看多 {bull_count} / 看空 {bear_count} / 中性 {neutral_count}"
             )
-        consensus = str(row.get("final_consensus", "") or "").strip()
+        consensus = self._sanitize_unsupported_cross_market_text(
+            str(row.get("final_consensus", "") or ""),
+            has_evidence=has_cross_market_evidence,
+        )
         adjustment_reason = str(row.get("adjustment_reason", "") or "").strip()
+        research_verdict = self._sanitize_unsupported_cross_market_text(
+            str(row.get("research_verdict", "") or ""),
+            has_evidence=has_cross_market_evidence,
+        )
+        primary_risk_gate = self._sanitize_unsupported_cross_market_text(
+            str(row.get("primary_risk_gate", "") or ""),
+            has_evidence=has_cross_market_evidence,
+        )
+        next_trigger = self._sanitize_unsupported_cross_market_text(
+            str(row.get("next_trigger", "") or ""),
+            has_evidence=has_cross_market_evidence,
+        )
+        role_reliability_lines = self._as_text_tuple(row.get("role_reliability_lines"))
+        if research_verdict:
+            lines.append(f"研究口径: {research_verdict}")
+        if primary_risk_gate:
+            lines.append(f"核心卡点: {primary_risk_gate}")
+        elif not has_cross_market_evidence:
+            lines.append("核心卡点: 消息或规则传导证据缺失，跨市视角不形成结论。")
+        if next_trigger:
+            lines.append(f"下一触发: {next_trigger}")
+        if role_reliability_lines:
+            lines.append(f"角色可信度: {role_reliability_lines[0]}")
         if consensus:
-            lines.append(f"辩论共识: {consensus}")
+            lines.append(f"委员会共识: {consensus}")
         if adjustment_reason and adjustment_reason != consensus:
             lines.append(f"复核原因: {adjustment_reason}")
+        support_points = self._as_text_tuple(row.get("support_points"))
+        opposition_points = self._as_text_tuple(row.get("opposition_points"))
+        watch_items = self._as_text_tuple(row.get("watch_items"))
+        if support_points:
+            lines.append(f"支持观点: {support_points[0]}")
+        if opposition_points:
+            lines.append(f"反对观点: {opposition_points[0]}")
+        if watch_items:
+            lines.append(f"待确认: {watch_items[0]}")
         if risk_warnings:
             lines.append(f"核心风险: {risk_warnings[0]}")
         if opportunity_highlights:
             lines.append(f"机会线索: {opportunity_highlights[0]}")
         return tuple(lines[:5])
+
+    def _debate_active_role_summary(
+        self,
+        agent_views: tuple[DashboardDebateAgentView, ...],
+    ) -> str:
+        labels: list[str] = []
+        for view in agent_views:
+            label = str(view.role_label or "").strip()
+            if label and label not in labels:
+                labels.append(label)
+        if not labels:
+            return ""
+        if len(labels) <= 5:
+            return "、".join(labels)
+        return "、".join(labels[:5]) + f" 等 {len(labels)} 个角色"
 
     def _debate_role_sort_index(self, role_id: str) -> int:
         try:
@@ -2977,22 +6034,15 @@ class DashboardDataProvider:
         self,
         rows: list[dict[str, Any]],
         *,
-        limit: int | None = 6,
+        limit: int | None = 10,
         task_id: str = "",
     ) -> tuple[DashboardCandidateCard, ...]:
-        ordered = sorted(
-            rows,
-            key=lambda row: (
-                -self._priority_bucket(row),
-                float(row.get("score") or 0.0),
-                str(row.get("created_at", "") or ""),
-            ),
-            reverse=True,
-        )
+        ordered = sorted(rows, key=self._candidate_sort_key, reverse=True)
         if limit is not None:
             ordered = ordered[:limit]
         cards: list[DashboardCandidateCard] = []
         for index, row in enumerate(ordered, start=1):
+            row = self._merge_debate_evidence(row)
             strategies = row.get("strategies") or []
             if isinstance(strategies, str):
                 strategies_tuple = tuple(
@@ -3012,13 +6062,24 @@ class DashboardDataProvider:
                     action_label=self._action_label(row),
                     status_label=self._candidate_status(row),
                     decision_note=self._decision_note(row),
-                    next_step=str(row.get("candidate_next_step", "") or "").strip(),
+                    next_step=self._next_step_text(row),
                     blocker=self._candidate_blocker_text(row),
                     review_meta=self._review_meta(row),
                     reasons=self._as_text_tuple(row.get("reasons")),
                     risks=self._as_text_tuple(row.get("risks")),
                     strategies=strategies_tuple,
                     data_source=str(row.get("run_actual_source", "") or ""),
+                    news_catalyst_summary=self._spotlight_news_catalyst_summary(row),
+                    cross_market_summary=self._spotlight_cross_market_summary(row),
+                    cross_market_chain_summary=(
+                        self._spotlight_cross_market_chain_summary(row)
+                    ),
+                    cross_market_validation_summary=(
+                        self._spotlight_cross_market_validation_summary(row)
+                    ),
+                    cross_market_invalidation_summary=(
+                        self._spotlight_cross_market_invalidation_summary(row)
+                    ),
                 )
             )
         return tuple(cards)
@@ -3036,17 +6097,314 @@ class DashboardDataProvider:
 
     def _decision_note(self, row: dict[str, Any]) -> str:
         blocker = self._candidate_blocker_text(row)
-        next_step = str(row.get("candidate_next_step", "") or "").strip()
+        next_step = self._next_step_text(row)
         action = str(row.get("portfolio_action", "") or "").strip()
+        cross_market = self._spotlight_cross_market_summary(row)
+        cross_market_chain = self._spotlight_cross_market_chain_summary(row)
+        cross_market_validation = self._spotlight_cross_market_validation_summary(row)
+        cross_market_invalidation = self._spotlight_cross_market_invalidation_summary(
+            row
+        )
+        history_note = self._discussion_history_note(row)
+        active_role_summary = str(
+            row.get("debate_active_role_summary", "") or ""
+        ).strip()
+        verdict_source, debate_verdict = self._split_backfilled_evidence_text(
+            str(row.get("debate_research_verdict", "") or "")
+        )
+        risk_source, debate_risk_gate = self._split_backfilled_evidence_text(
+            str(row.get("debate_primary_risk_gate", "") or "")
+        )
+        debate_source = verdict_source or risk_source
+        context_warning = (
+            "讨论上下文较薄，结论仅作低置信度观察"
+            if str(row.get("debate_context_quality", "") or "").strip()
+            == "thin_context"
+            else ""
+        )
+        mapping_parts = tuple(
+            part
+            for part in (
+                (f"跨市线索 {cross_market}" if cross_market else ""),
+                (f"传导链 {cross_market_chain}" if cross_market_chain else ""),
+                (
+                    f"确认信号 {cross_market_validation}"
+                    if cross_market_validation
+                    else ""
+                ),
+                (
+                    f"失效信号 {cross_market_invalidation}"
+                    if cross_market_invalidation
+                    else ""
+                ),
+                context_warning,
+            )
+            if part
+        )
+        if debate_verdict and debate_risk_gate:
+            note = f"{debate_verdict}，但先卡住 {debate_risk_gate}"
+            if debate_source:
+                note = f"{debate_source}: {note}"
+            if mapping_parts:
+                note += "；" + "；".join(mapping_parts)
+            if active_role_summary:
+                note += f"；讨论视角 {active_role_summary}"
+            if history_note:
+                note += f"；{history_note}"
+            return normalize_research_tone(note)
         if blocker:
             return blocker
+        if debate_risk_gate:
+            note = (
+                f"{debate_source}: {debate_risk_gate}"
+                if debate_source
+                else debate_risk_gate
+            )
+            return normalize_research_tone(note)
+        if debate_verdict:
+            note = debate_verdict
+            if debate_source:
+                note = f"{debate_source}: {note}"
+            if mapping_parts:
+                note += "；" + "；".join(mapping_parts)
+            if active_role_summary:
+                note += f"；讨论视角 {active_role_summary}"
+            if history_note:
+                note += f"；{history_note}"
+            return normalize_research_tone(note)
         if action == "promote":
-            return normalize_research_tone("PM 已上调优先级，进入优先跟踪序列")
+            note = "PM 已上调优先级，进入优先跟踪序列"
+            if mapping_parts:
+                note += "；" + "；".join(mapping_parts)
+            if history_note:
+                note += f"；{history_note}"
+            return normalize_research_tone(note)
         if action == "keep":
-            return normalize_research_tone("维持顺位，等待更强确认")
+            note = "维持顺位，等待更强确认"
+            if mapping_parts:
+                note += "；" + "；".join(mapping_parts)
+            if history_note:
+                note += f"；{history_note}"
+            return normalize_research_tone(note)
         if next_step:
+            if mapping_parts:
+                note = "；".join((*mapping_parts, next_step))
+                if history_note:
+                    note += f"；{history_note}"
+                return normalize_research_tone(note)
+            if history_note:
+                return normalize_research_tone(f"{next_step}；{history_note}")
             return normalize_research_tone(next_step)
+        if mapping_parts:
+            note = "；".join(mapping_parts)
+            if history_note:
+                note += f"；{history_note}"
+            return normalize_research_tone(note)
+        if history_note:
+            return normalize_research_tone(history_note)
         return normalize_research_tone("按当前顺位继续跟踪")
+
+    def _cross_market_summary(self, row: dict[str, Any]) -> str:
+        theme = str(row.get("cross_market_primary_theme", "") or "").strip()
+        action = str(row.get("cross_market_action", "") or "").strip()
+        evidence_stack = str(
+            row.get("cross_market_evidence_stack_summary", "") or ""
+        ).strip()
+        if not theme:
+            return ""
+        stack_suffix = f"｜{evidence_stack}" if evidence_stack else ""
+        if action:
+            return normalize_research_tone(f"{theme}({action}){stack_suffix}")
+        return normalize_research_tone(f"{theme}{stack_suffix}")
+
+    def _spotlight_cross_market_summary(self, row: dict[str, Any]) -> str:
+        _, theme = self._split_backfilled_evidence_text(
+            str(row.get("cross_market_primary_theme", "") or "")
+        )
+        _, action = self._split_backfilled_evidence_text(
+            str(row.get("cross_market_action", "") or "")
+        )
+        _, evidence_stack = self._split_backfilled_evidence_text(
+            str(row.get("cross_market_evidence_stack_summary", "") or "")
+        )
+        if not theme:
+            return ""
+        stack_suffix = f"｜{evidence_stack}" if evidence_stack else ""
+        if action:
+            return normalize_research_tone(f"{theme}({action}){stack_suffix}")
+        return normalize_research_tone(f"{theme}{stack_suffix}")
+
+    def _spotlight_news_catalyst_summary(self, row: dict[str, Any]) -> str:
+        judgement = str(row.get("news_catalyst_judgement", "") or "").strip()
+        if not judgement:
+            return ""
+        label = {
+            "supports": "消息支持",
+            "opposes": "消息反对",
+            "mixed": "消息分歧",
+            "needs_review": "消息待复核",
+        }.get(judgement, "消息观察")
+        lead = str(row.get("news_catalyst_lead", "") or "").strip()
+        if not lead:
+            for field in (
+                "news_catalyst_opposes",
+                "news_catalyst_supports",
+                "news_catalyst_needs_review",
+            ):
+                values = self._as_text_tuple(row.get(field))
+                if values:
+                    lead = values[0]
+                    break
+        source = str(row.get("news_catalyst_source", "") or "").strip()
+        source_suffix = f"｜{source}" if source and source not in lead else ""
+        summary = f"{label}: {lead}{source_suffix}" if lead else label
+        return normalize_research_tone(summary)
+
+    def _spotlight_cross_market_chain_summary(self, row: dict[str, Any]) -> str:
+        _, chain_summary = self._split_backfilled_evidence_text(
+            str(row.get("cross_market_chain_summary", "") or "")
+        )
+        return normalize_research_tone(chain_summary) if chain_summary else ""
+
+    def _cross_market_reason_summary(self, row: dict[str, Any]) -> str:
+        chain_summary = self._spotlight_cross_market_chain_summary(row)
+        if chain_summary:
+            kept_segments = tuple(
+                segment.strip()
+                for segment in chain_summary.split("｜")
+                if segment.strip()
+                and not segment.strip().startswith(
+                    ("确认 ", "失效 ", "同向 ", "反向 ", "触发 ")
+                )
+            )
+            if kept_segments:
+                return normalize_research_tone("｜".join(kept_segments[:3]))
+        _, linkage_basis = self._split_backfilled_evidence_text(
+            str(row.get("cross_market_linkage_basis", "") or "")
+        )
+        if linkage_basis:
+            return normalize_research_tone(linkage_basis)
+        transmission_path = self._as_text_tuple(
+            row.get("cross_market_transmission_path")
+        )
+        if transmission_path:
+            return normalize_research_tone(transmission_path[0])
+        return ""
+
+    def _execution_focus_cross_market_lines(
+        self,
+        row: dict[str, Any],
+    ) -> tuple[str, ...]:
+        summary = self._spotlight_cross_market_summary(
+            row
+        ) or self._cross_market_summary(row)
+        reason_summary = self._cross_market_reason_summary(row)
+        validation_summary = self._spotlight_cross_market_validation_summary(row)
+        invalidation_summary = self._spotlight_cross_market_invalidation_summary(row)
+        logic_parts = tuple(
+            part
+            for part in (
+                summary,
+                f"映射 {reason_summary}" if reason_summary else "",
+            )
+            if part
+        )
+        return tuple(
+            line
+            for line in (
+                ("跨市逻辑: " + " | ".join(logic_parts) if logic_parts else ""),
+                (f"确认信号: {validation_summary}" if validation_summary else ""),
+                (f"失效信号: {invalidation_summary}" if invalidation_summary else ""),
+            )
+            if line
+        )
+
+    def _extract_chain_marker_summary(self, chain_summary: str, marker: str) -> str:
+        normalized_chain = normalize_research_tone(chain_summary).strip()
+        if not normalized_chain:
+            return ""
+        prefix = f"{marker} "
+        for segment in normalized_chain.split("｜"):
+            clean_segment = segment.strip()
+            if clean_segment.startswith(prefix):
+                return clean_segment[len(prefix) :].strip()
+        return ""
+
+    def _spotlight_cross_market_validation_summary(self, row: dict[str, Any]) -> str:
+        signals = self._as_text_tuple(row.get("cross_market_validation_signals"))
+        if not signals:
+            return self._extract_chain_marker_summary(
+                self._spotlight_cross_market_chain_summary(row),
+                "确认",
+            )
+        _, summary = self._split_backfilled_evidence_text(str(signals[0]))
+        return normalize_research_tone(summary) if summary else ""
+
+    def _spotlight_cross_market_invalidation_summary(self, row: dict[str, Any]) -> str:
+        signals = self._as_text_tuple(row.get("cross_market_invalidation_signals"))
+        if not signals:
+            return self._extract_chain_marker_summary(
+                self._spotlight_cross_market_chain_summary(row),
+                "失效",
+            )
+        _, summary = self._split_backfilled_evidence_text(str(signals[0]))
+        return normalize_research_tone(summary) if summary else ""
+
+    def _discussion_history_note(self, row: dict[str, Any]) -> str:
+        _, note = self._split_backfilled_evidence_text(
+            str(row.get("debate_historical_context_note", "") or "")
+        )
+        sample_count = int(row.get("debate_historical_context_sample_count", 0) or 0)
+        if not note or sample_count <= 0:
+            return ""
+        return normalize_research_tone(note)
+
+    def _discussion_history_bucket_rank(self, row: dict[str, Any]) -> int:
+        bucket = str(row.get("debate_historical_context_bucket", "") or "").strip()
+        sample_count = int(row.get("debate_historical_context_sample_count", 0) or 0)
+        if sample_count <= 0:
+            return 0
+        return {
+            "strong_supportive": 5,
+            "supportive": 4,
+            "conflicted": 3,
+            "unknown": 2,
+            "conflicts_dominate": 1,
+        }.get(bucket, 1)
+
+    def _discussion_history_accuracy_score(self, row: dict[str, Any]) -> int:
+        sample_count = int(row.get("debate_historical_context_sample_count", 0) or 0)
+        accuracy = float(row.get("debate_historical_context_accuracy", 0.0) or 0.0)
+        if sample_count < 3:
+            return 0
+        return int(accuracy * 1000)
+
+    def _debate_active_role_summary_for_row(self, row: dict[str, Any]) -> str:
+        signal_date = str(row.get("signal_date", "") or "").strip()
+        symbol = str(row.get("symbol", "") or "").strip()
+        if not signal_date or not symbol:
+            return ""
+        fingerprint = self._candidate_fingerprint_for_row(row)
+        if fingerprint:
+            matches = [
+                debate_row
+                for debate_row in self._dedupe_debate_rows(self._load_debate_rows())
+                if self._debate_signal_date(debate_row) == signal_date
+                and str(debate_row.get("symbol", "") or "").strip() == symbol
+                and str(debate_row.get("candidate_fingerprint", "") or "").strip()
+                == fingerprint
+                and self._has_debate_evidence(debate_row)
+            ]
+            debate_summary = (
+                self._build_debate_summary(max(matches, key=self._debate_quality_key))
+                if matches
+                else None
+            )
+        else:
+            debate_summary = self.debate_summary(signal_date=signal_date, symbol=symbol)
+        if debate_summary is None:
+            return ""
+        return self._debate_active_role_summary(debate_summary.agent_views)
 
     def _build_ranking_lines(
         self,
@@ -3054,15 +6412,7 @@ class DashboardDataProvider:
         *,
         limit: int = 3,
     ) -> tuple[str, ...]:
-        ordered = sorted(
-            rows,
-            key=lambda row: (
-                -self._priority_bucket(row),
-                float(row.get("score") or 0.0),
-                str(row.get("created_at", "") or ""),
-            ),
-            reverse=True,
-        )[:limit]
+        ordered = sorted(rows, key=self._candidate_sort_key, reverse=True)[:limit]
         lines: list[str] = []
         for index, row in enumerate(ordered, start=1):
             rank_label = self._rank_label(index, row)
@@ -3079,15 +6429,7 @@ class DashboardDataProvider:
         *,
         limit: int = 5,
     ) -> tuple[str, ...]:
-        ordered = sorted(
-            rows,
-            key=lambda row: (
-                -self._priority_bucket(row),
-                float(row.get("score") or 0.0),
-                str(row.get("created_at", "") or ""),
-            ),
-            reverse=True,
-        )[:limit]
+        ordered = sorted(rows, key=self._candidate_sort_key, reverse=True)[:limit]
         lines: list[str] = []
         for row in ordered:
             parts = [
@@ -3113,7 +6455,7 @@ class DashboardDataProvider:
     ) -> tuple[str, ...]:
         lines: list[str] = []
         for row in blocked_rows[:limit]:
-            next_step = str(row.get("candidate_next_step", "") or "").strip()
+            next_step = self._next_step_text(row)
             blocker = self._candidate_blocker_text(row) or "等待条件解除"
             line = normalize_research_tone(
                 f"{self._symbol_name(row)} | 当前限制: {blocker}"
@@ -3127,7 +6469,7 @@ class DashboardDataProvider:
         for row in watch_rows[:remaining_slots]:
             if row in blocked_rows:
                 continue
-            next_step = str(row.get("candidate_next_step", "") or "").strip()
+            next_step = self._next_step_text(row)
             meta = self._review_meta(row)
             line = f"{self._symbol_name(row)} | 继续观察"
             if next_step:
@@ -3165,7 +6507,7 @@ class DashboardDataProvider:
             f"{self._symbol_name(row)} | {self._candidate_status(row)}"
             f" | 评分 {float(row.get('score') or 0.0):.1f}"
         )
-        next_step = str(row.get("candidate_next_step", "") or "").strip()
+        next_step = self._next_step_text(row)
         if next_step:
             line += f" | {next_step}"
         return line
@@ -3182,7 +6524,7 @@ class DashboardDataProvider:
         return f"{self._symbol_name(row)} | {blocker}"
 
     def _review_line(self, row: dict[str, Any]) -> str:
-        next_step = str(row.get("candidate_next_step", "") or "").strip()
+        next_step = self._next_step_text(row)
         meta = self._review_meta(row)
         if not next_step and not meta:
             return ""
@@ -3204,6 +6546,12 @@ class DashboardDataProvider:
     ) -> str:
         label = _TASK_LABELS[task_id]
         if task_id == "intraday":
+            if actionable_rows:
+                names = "、".join(self._symbol_name(row) for row in actionable_rows[:3])
+                return (
+                    f"{label} {signal_date}: 未收盘快照，纸面复核 {len(actionable_rows)} 只，"
+                    f"先看 {names}"
+                )
             if watch_rows:
                 names = "、".join(self._symbol_name(row) for row in watch_rows[:3])
                 return (
@@ -3246,7 +6594,7 @@ class DashboardDataProvider:
             f"任务: {_TASK_LABELS[task_id]} / 候选 {len(rows)} / {action_label} {len(actionable_rows)} / {watch_label} {len(watch_rows)}"
         ]
         if task_id == "intraday":
-            lines.append("盘中快照未收盘，只作观察，不进入正式主链待复核。")
+            lines.append("盘中快照未收盘，只做纸面复核与观察，不进入正式 ledger。")
         if blocked_rows:
             lines.append(f"阻塞 {len(blocked_rows)} 只，优先核对卡点与复核条件。")
         source_status = (
@@ -3255,12 +6603,34 @@ class DashboardDataProvider:
             else {}
         )
         if source_status:
-            lines.append(
-                f"数据源: {source_status.get('requested_source', '-')}"
-                f" -> {source_status.get('actual_source', '-')}"
-                f" / {source_status.get('health_label', '-')}"
-            )
+            source_line = self._source_status_summary_line(source_status)
+            if source_line:
+                lines.append(source_line)
         return tuple(lines)
+
+    def _source_status_summary_line(self, source_status: dict[str, str]) -> str:
+        source_status = dict(source_status or {})
+        actual = str(source_status.get("actual_source", "") or "").strip()
+        if not actual:
+            return ""
+        fit = workload_fit_for_source(actual).get("live_short", "unknown")
+        health_label = str(source_status.get("health_label", "") or "").strip()
+        lag_days = str(source_status.get("lag_days", "") or "").strip()
+        lag_suffix = ""
+        if lag_days and lag_days not in {"-", "未记录", "None", "nan"}:
+            lag_suffix = f"；滞后 {lag_days} 天"
+        if source_supports_workload(actual, "live_short"):
+            if health_label == "fallback":
+                return f"数据链路: 备用实时源 {actual}（live_short={fit}）{lag_suffix}"
+            if health_label == "degraded":
+                return (
+                    f"数据链路: 实时源 {actual} 已降级（live_short={fit}）{lag_suffix}"
+                )
+            return f"数据链路: 实时源 {actual}（live_short={fit}）{lag_suffix}"
+        return (
+            f"数据链路: 当前实际源 {actual} 只适合历史验证，盘中短线不可用（live_short={fit}）"
+            f"{lag_suffix}"
+        )
 
     def _previous_date(
         self,
@@ -3330,6 +6700,7 @@ class DashboardDataProvider:
         return tuple(agenda[:4])
 
     def _source_status_from_row(self, row: dict[str, Any]) -> dict[str, str]:
+        lag_days = row.get("run_data_lag_days", "")
         return {
             "requested_source": str(row.get("run_requested_source", "") or ""),
             "actual_source": str(row.get("run_actual_source", "") or ""),
@@ -3338,9 +6709,72 @@ class DashboardDataProvider:
             "data_latest_trade_date": str(
                 row.get("run_data_latest_trade_date", "") or ""
             ),
-            "lag_days": str(row.get("run_data_lag_days", "") or ""),
+            "lag_days": "" if lag_days in ("", None) else str(lag_days),
             "updated_at": now_shanghai().isoformat(timespec="seconds"),
         }
+
+    def _latest_source_run_event_row(
+        self,
+        *,
+        task_id: str,
+        signal_date: str,
+    ) -> dict[str, Any] | None:
+        if task_id != "main_chain":
+            return None
+        selected_date = signal_date.strip()
+        rows = [
+            row
+            for row in self.load_signal_rows()
+            if self._is_runtime_event_row(row)
+            and (
+                not selected_date
+                or str(row.get("signal_date", "") or "") == selected_date
+            )
+            and self._source_meta_score(row) > 0
+        ]
+        if not rows:
+            return None
+        return max(rows, key=self._row_meta_key)
+
+    def _ledger_market_context_runtime_lines(
+        self,
+        *,
+        task_id: str,
+        signal_date: str,
+    ) -> tuple[str, ...]:
+        selected_date = signal_date.strip()
+        if not selected_date:
+            return ()
+        rows = [
+            row
+            for row in self._task_signal_rows(task_id)
+            if str(row.get("signal_date", "") or "").strip() == selected_date
+            and self._as_text_tuple(row.get("run_market_context_lines"))
+        ]
+        if not rows:
+            return ()
+        latest_row = max(rows, key=self._row_meta_key)
+        return tuple(
+            f"市场上下文: {line}"
+            for line in self._as_text_tuple(latest_row.get("run_market_context_lines"))[
+                :3
+            ]
+        )
+
+    def _merge_runtime_lines(
+        self,
+        *line_groups: tuple[str, ...],
+    ) -> tuple[str, ...]:
+        merged: list[str] = []
+        seen: set[str] = set()
+        for lines in line_groups:
+            for line in lines:
+                normalized = normalize_research_tone(str(line).strip())
+                if not normalized or normalized in seen:
+                    continue
+                merged.append(normalized)
+                seen.add(normalized)
+        return tuple(merged[:8])
 
     def _source_meta_score(self, row: dict[str, Any]) -> int:
         fields = (
@@ -3351,9 +6785,28 @@ class DashboardDataProvider:
             "run_data_latest_trade_date",
             "run_data_lag_days",
         )
-        return sum(1 for field in fields if str(row.get(field, "") or "").strip())
+        return sum(
+            1
+            for field in fields
+            if row.get(field, "") not in ("", None) and str(row.get(field, "")).strip()
+        )
 
     def _snapshot_status_label(
+        self,
+        task_id: str,
+        view: DashboardTaskView,
+    ) -> str:
+        if task_id in {"briefing", "closing_review"}:
+            return self._snapshot_status_label_from_report_view(task_id, view)
+        return self._snapshot_status_label_from_counts(
+            task_id=task_id,
+            candidate_count=view.candidate_count,
+            actionable_count=view.actionable_count,
+            watch_count=view.watch_count,
+            blocked_count=view.blocked_count,
+        )
+
+    def _snapshot_status_label_from_report_view(
         self,
         task_id: str,
         view: DashboardTaskView,
@@ -3372,13 +6825,30 @@ class DashboardDataProvider:
             if view.candidate_count > 0:
                 return "待复盘"
             return "未产出"
-        if view.actionable_count > 0:
+        return self._snapshot_status_label_from_counts(
+            task_id=task_id,
+            candidate_count=view.candidate_count,
+            actionable_count=view.actionable_count,
+            watch_count=view.watch_count,
+            blocked_count=view.blocked_count,
+        )
+
+    def _snapshot_status_label_from_counts(
+        self,
+        *,
+        task_id: str,
+        candidate_count: int,
+        actionable_count: int,
+        watch_count: int,
+        blocked_count: int,
+    ) -> str:
+        if actionable_count > 0:
             return "有推荐"
-        if view.blocked_count > 0:
+        if blocked_count > 0:
             return "待核对"
-        if view.watch_count > 0:
+        if watch_count > 0:
             return "观察中"
-        if view.candidate_count > 0:
+        if candidate_count > 0:
             return "已产出"
         return "未产出"
 

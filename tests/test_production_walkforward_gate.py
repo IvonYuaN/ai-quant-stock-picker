@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import sys
 from pathlib import Path
 
 from scripts.run_production_walkforward_gate import (
@@ -19,6 +20,103 @@ from scripts.run_production_walkforward_gate import (
     warn_if_report_path_not_writable,
     write_minimal_pbo_diagnostics,
 )
+
+
+def test_main_blocks_child_walkforward_on_low_memory_host(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    import scripts.run_production_walkforward_gate as gate
+
+    status_path = tmp_path / "walkforward_production_status.json"
+    monkeypatch.setattr(gate, "_total_memory_gib", lambda: 1.6)
+    monkeypatch.delenv("AQSP_ALLOW_LOW_MEMORY_WALKFORWARD", raising=False)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_production_walkforward_gate.py",
+            "--status-path",
+            str(status_path),
+            "--min-memory-gib",
+            "4",
+            "--no-streaming",
+        ],
+    )
+
+    assert gate.main() == 2
+    output = capsys.readouterr().out
+    payload = json.loads(status_path.read_text(encoding="utf-8"))
+
+    assert "server memory 1.6GiB < required 4.0GiB" in output
+    assert "bounded streaming workflow was disabled" in output
+    assert payload["status"] == "blocked_resources"
+    assert "bounded streaming workflow was disabled" in payload["detail"]
+
+
+def test_low_memory_guard_blocks_when_memory_detection_is_unavailable(
+    monkeypatch,
+) -> None:
+    import scripts.run_production_walkforward_gate as gate
+
+    monkeypatch.setattr(gate, "_total_memory_gib", lambda: None)
+
+    detail = gate._low_memory_blocker(4.0)
+
+    assert "could not be detected" in detail
+    assert "fail-closed" in detail
+
+
+def test_total_memory_uses_sysconf_when_proc_meminfo_is_missing(monkeypatch) -> None:
+    import scripts.run_production_walkforward_gate as gate
+
+    class _MissingProcPath:
+        def __init__(self, _value: str) -> None:
+            pass
+
+        def exists(self) -> bool:
+            return False
+
+    monkeypatch.setattr(gate, "Path", _MissingProcPath)
+    monkeypatch.setattr(
+        gate.os,
+        "sysconf",
+        lambda key: {"SC_PHYS_PAGES": 1024, "SC_PAGE_SIZE": 1024**2}[key],
+    )
+
+    assert gate._total_memory_gib() == 1.0
+
+
+def test_main_reports_missing_db_before_coverage_cache(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    import scripts.run_production_walkforward_gate as gate
+
+    status_path = tmp_path / "walkforward_production_status.json"
+    missing_db = tmp_path / "missing_raw.db"
+    monkeypatch.setattr(gate, "_total_memory_gib", lambda: 8.0)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_production_walkforward_gate.py",
+            "--dry-run",
+            "--db",
+            str(missing_db),
+            "--status-path",
+            str(status_path),
+        ],
+    )
+
+    assert gate.main() == 2
+    output = capsys.readouterr().out
+    payload = json.loads(status_path.read_text(encoding="utf-8"))
+
+    assert f"raw sqlite db missing: {missing_db}" in output
+    assert payload["status"] == "blocked_db"
 
 
 def _make_raw_db(path: Path, symbols: int = 3) -> None:
@@ -53,6 +151,72 @@ def _make_raw_db(path: Path, symbols: int = 3) -> None:
                     (code, f"202401{day:02d}"),
                 )
         conn.commit()
+
+
+def test_production_cutoff_guard_rejects_sidecar_beyond_raw_database(
+    tmp_path: Path,
+) -> None:
+    import scripts.run_production_walkforward_gate as gate
+
+    db = tmp_path / "raw.db"
+    _make_raw_db(db, symbols=1)
+    gate_path = tmp_path / "walkforward_gate.json"
+    gate_path.write_text(
+        json.dumps({"data_end": "2024-02-01"}),
+        encoding="utf-8",
+    )
+
+    detail = gate.validate_production_cutoff_consistency(
+        db_path=db,
+        requested_end="2024-02-01",
+        gate_path=gate_path,
+    )
+
+    assert "exceeds raw sqlite MAX(trade_date)=2024-01-30" in detail
+
+
+def test_cached_symbols_require_the_configured_cache_path(tmp_path: Path) -> None:
+    import scripts.run_production_walkforward_gate as gate
+
+    db = tmp_path / "raw.db"
+    db.write_text("", encoding="utf-8")
+    cache_path = tmp_path / "symbols-cache.json"
+    cache_path.write_text(
+        json.dumps(
+            {
+                "cache_path": str(tmp_path / "pytest-other-cache.json"),
+                "db_path": str(db),
+                "db_mtime_epoch": int(db.stat().st_mtime),
+                "start": "2024-01-01",
+                "end": "2024-01-30",
+                "min_symbols": 1,
+                "coverage_mode": "auto_recent_window",
+                "lookback_years": 3,
+                "summary": {
+                    "stock_symbols": 1,
+                    "covered_symbols": 1,
+                    "rows": 1,
+                    "first_trade_date": "20240101",
+                    "last_trade_date": "20240130",
+                },
+                "covered_symbols": ["600000"],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert (
+        gate.load_cached_coverage_symbols(
+            cache_path,
+            db_path=db,
+            start="2024-01-01",
+            end="2024-01-30",
+            min_symbols=1,
+            coverage_mode="auto_recent_window",
+            lookback_years=3,
+        )
+        is None
+    )
 
 
 def test_inspect_raw_coverage_counts_covered_symbols(tmp_path: Path) -> None:
@@ -130,7 +294,9 @@ def test_select_covered_symbols_returns_full_eligible_market(tmp_path: Path) -> 
 def test_inspect_raw_coverage_listing_aware_recent_window_keeps_recent_ipo(
     tmp_path: Path,
 ) -> None:
-    from scripts.run_production_walkforward_gate import inspect_raw_coverage_window_with_symbols
+    from scripts.run_production_walkforward_gate import (
+        inspect_raw_coverage_window_with_symbols,
+    )
 
     db = tmp_path / "astocks_raw.db"
     with sqlite3.connect(db) as conn:
@@ -191,8 +357,12 @@ def test_inspect_raw_coverage_listing_aware_recent_window_keeps_recent_ipo(
     assert inspection.summary.listing_aware is True
 
 
-def test_inspect_raw_coverage_legacy_full_span_excludes_recent_ipo(tmp_path: Path) -> None:
-    from scripts.run_production_walkforward_gate import inspect_raw_coverage_window_with_symbols
+def test_inspect_raw_coverage_legacy_full_span_excludes_recent_ipo(
+    tmp_path: Path,
+) -> None:
+    from scripts.run_production_walkforward_gate import (
+        inspect_raw_coverage_window_with_symbols,
+    )
 
     db = tmp_path / "astocks_raw.db"
     with sqlite3.connect(db) as conn:
@@ -270,6 +440,9 @@ def test_build_walkforward_command_uses_full_market_raw_gate() -> None:
     assert "--grid-cscv" in command
     assert "--grid-profile" in command
     assert "stable" in command
+    assert "--streaming" in command
+    assert "--engine" in command
+    assert "builtin" in command
     assert "--skip-pit-financials" in command
     assert "--gate-path" in command
     assert "data/prod_gate.json" in command
@@ -362,6 +535,32 @@ def test_production_walkforward_gate_sets_prefiltered_symbols_env(
     assert seen["db"] == str(db)
 
 
+def test_effective_timeout_seconds_raises_short_full_market_timeout() -> None:
+    import scripts.run_production_walkforward_gate as gate
+
+    assert (
+        gate._effective_timeout_seconds(
+            1500,
+            effective_symbols=5209,
+            min_production_symbols=3000,
+        )
+        == 10418
+    )
+
+
+def test_effective_timeout_seconds_keeps_small_smoke_timeout() -> None:
+    import scripts.run_production_walkforward_gate as gate
+
+    assert (
+        gate._effective_timeout_seconds(
+            1,
+            effective_symbols=5,
+            min_production_symbols=3000,
+        )
+        == 1
+    )
+
+
 def test_annotate_production_gate_metadata_preserves_gate_result(
     tmp_path: Path,
 ) -> None:
@@ -450,16 +649,16 @@ def test_annotate_production_gate_metadata_rejects_child_universe_mismatch(
         annotate_production_gate_metadata(
             gate_path=gate_path,
             db_path=tmp_path / "astocks_raw.db",
-        coverage=CoverageSummary(
-            stock_symbols=5533,
-            covered_symbols=3200,
-            rows=123456,
-            first_trade_date="20180102",
-            last_trade_date="20241231",
-            coverage_mode="legacy_full_span",
-        ),
-        effective_symbols=3200,
-    )
+            coverage=CoverageSummary(
+                stock_symbols=5533,
+                covered_symbols=3200,
+                rows=123456,
+                first_trade_date="20180102",
+                last_trade_date="20241231",
+                coverage_mode="legacy_full_span",
+            ),
+            effective_symbols=3200,
+        )
     except SystemExit as exc:
         assert "require child <= wrapper" in str(exc)
     else:
@@ -720,7 +919,9 @@ def test_warn_if_report_path_not_writable_prints_hint(
 ) -> None:
     report_path = tmp_path / "walkforward-grid-raw-production-latest.md"
     report_path.write_text("# formal report\n", encoding="utf-8")
-    monkeypatch.setattr("scripts.run_production_walkforward_gate.os.access", lambda *_args: False)
+    monkeypatch.setattr(
+        "scripts.run_production_walkforward_gate.os.access", lambda *_args: False
+    )
 
     warn_if_report_path_not_writable(report_path)
 
@@ -881,7 +1082,9 @@ def test_production_walkforward_gate_passes_raw_db_to_child_process(
         seen["effective_symbols"] = effective_symbols
         return 0, 43210
 
-    monkeypatch.setattr(gate, "_execute_child_walkforward", fake_execute_child_walkforward)
+    monkeypatch.setattr(
+        gate, "_execute_child_walkforward", fake_execute_child_walkforward
+    )
     monkeypatch.setattr(
         gate.sys,
         "argv",
@@ -1025,7 +1228,9 @@ def test_production_walkforward_gate_passes_selected_symbols_file(
         seen["timeout"] = timeout_seconds
         return 0, 43210
 
-    monkeypatch.setattr(gate, "_execute_child_walkforward", fake_execute_child_walkforward)
+    monkeypatch.setattr(
+        gate, "_execute_child_walkforward", fake_execute_child_walkforward
+    )
     monkeypatch.setattr(
         gate.sys,
         "argv",
@@ -1066,6 +1271,7 @@ def test_production_walkforward_gate_reuses_cached_symbols(
     cache_path.write_text(
         json.dumps(
             {
+                "cache_path": str(cache_path.resolve()),
                 "db_path": str(db),
                 "db_mtime_epoch": int(db.stat().st_mtime),
                 "start": "2018-01-01",
@@ -1246,7 +1452,9 @@ def test_production_walkforward_gate_returns_timeout_code(
     def fake_execute_child_walkforward(**_kwargs):
         raise subprocess.TimeoutExpired(cmd=["python"], timeout=1)
 
-    monkeypatch.setattr(gate, "_execute_child_walkforward", fake_execute_child_walkforward)
+    monkeypatch.setattr(
+        gate, "_execute_child_walkforward", fake_execute_child_walkforward
+    )
     monkeypatch.setattr(
         gate.sys,
         "argv",
@@ -1335,7 +1543,11 @@ def test_production_walkforward_gate_writes_inspecting_status_before_coverage_sc
             covered_symbols=[f"600{idx:03d}" for idx in range(3200)],
         )
 
-    monkeypatch.setattr(gate, "inspect_raw_coverage_with_symbols", fake_inspect_raw_coverage_with_symbols)
+    monkeypatch.setattr(
+        gate,
+        "inspect_raw_coverage_with_symbols",
+        fake_inspect_raw_coverage_with_symbols,
+    )
     monkeypatch.setattr(gate, "build_walkforward_command", lambda _args: ["python"])
     monkeypatch.setattr(
         gate.sys,
@@ -1353,6 +1565,255 @@ def test_production_walkforward_gate_writes_inspecting_status_before_coverage_sc
     assert gate.main() == 0
     payload = json.loads(status_path.read_text(encoding="utf-8"))
     assert payload["status"] == "dry_run"
+
+
+def test_production_walkforward_gate_blocks_second_active_production_run_before_scan(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
+    import scripts.run_production_walkforward_gate as gate
+
+    status_path = tmp_path / "status.json"
+    status_path.write_text(
+        json.dumps(
+            {
+                "status": "running",
+                "updated_at": "2026-07-09T10:00:00+08:00",
+                "pid": 11111,
+                "child_pid": 22222,
+                "timeout_seconds": 14400,
+                "detail": "child walkforward running; elapsed=60s",
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(gate, "_pid_active", lambda value: value in {11111, 22222})
+    monkeypatch.setattr(
+        gate,
+        "_pid_cmdline",
+        lambda value: (
+            (
+                "python",
+                "-m",
+                "aqsp",
+                "walkforward",
+                "--source",
+                "sqlite_db",
+                "--pool",
+                "all",
+                "--grid-cscv",
+                "--symbols-file",
+                "/tmp/symbols.txt",
+            )
+            if value == 22222
+            else ("python", "scripts/run_production_walkforward_gate.py")
+        ),
+    )
+    monkeypatch.setattr(
+        gate,
+        "inspect_raw_coverage_with_symbols",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("active run guard should block before coverage scan")
+        ),
+    )
+    monkeypatch.setattr(
+        gate.sys,
+        "argv",
+        [
+            "run_production_walkforward_gate.py",
+            "--status-path",
+            str(status_path),
+        ],
+    )
+
+    assert gate.main() == 2
+    output = capsys.readouterr().out
+    payload = json.loads(status_path.read_text(encoding="utf-8"))
+    assert "already running" in output
+    assert payload["status"] == "blocked_running"
+    assert payload["child_pid"] == 22222
+    assert payload["blocked_by_pid"] > 0
+
+
+def test_production_walkforward_gate_blocks_repeated_probe_after_blocked_running_status(
+    monkeypatch, tmp_path: Path
+) -> None:
+    import scripts.run_production_walkforward_gate as gate
+
+    status_path = tmp_path / "status.json"
+    status_path.write_text(
+        json.dumps(
+            {
+                "status": "blocked_running",
+                "updated_at": "2026-07-09T10:01:00+08:00",
+                "pid": 11111,
+                "child_pid": 22222,
+                "detail": "active production walk-forward child already running: pid=22222",
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(gate, "_pid_active", lambda value: value == 22222)
+    monkeypatch.setattr(
+        gate,
+        "_pid_cmdline",
+        lambda _value: (
+            "python",
+            "-m",
+            "aqsp",
+            "walkforward",
+            "--source",
+            "sqlite_db",
+            "--pool",
+            "all",
+            "--grid-cscv",
+            "--symbols-file",
+            "/tmp/symbols.txt",
+        ),
+    )
+    monkeypatch.setattr(
+        gate,
+        "inspect_raw_coverage_with_symbols",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("blocked_running should still block repeated probes")
+        ),
+    )
+    monkeypatch.setattr(
+        gate.sys,
+        "argv",
+        [
+            "run_production_walkforward_gate.py",
+            "--status-path",
+            str(status_path),
+        ],
+    )
+
+    assert gate.main() == 2
+    payload = json.loads(status_path.read_text(encoding="utf-8"))
+    assert payload["status"] == "blocked_running"
+    assert payload["child_pid"] == 22222
+
+
+def test_production_walkforward_gate_blocks_when_atomic_lock_is_active(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
+    import scripts.run_production_walkforward_gate as gate
+
+    db = tmp_path / "raw.db"
+    db.write_text("", encoding="utf-8")
+    status_path = tmp_path / "status.json"
+    lock_path = tmp_path / "walkforward-production.lock"
+    lock_path.mkdir()
+    (lock_path / "meta.json").write_text(
+        json.dumps({"pid": 33333, "cmdline": ["python"]}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(gate, "_total_memory_gib", lambda: 8.0)
+    monkeypatch.setattr(gate, "_pid_active", lambda value: value == 33333)
+    monkeypatch.setattr(
+        gate,
+        "_pid_cmdline",
+        lambda _value: ("python", "scripts/run_production_walkforward_gate.py"),
+    )
+    monkeypatch.setattr(
+        gate,
+        "inspect_raw_coverage_with_symbols",
+        lambda *_args, **_kwargs: gate.CoverageInspection(
+            summary=gate.CoverageSummary(
+                stock_symbols=5533,
+                covered_symbols=3200,
+                rows=1,
+                first_trade_date="20180102",
+                last_trade_date="20241231",
+            ),
+            covered_symbols=[f"600{idx:03d}" for idx in range(3200)],
+        ),
+    )
+    monkeypatch.setattr(
+        gate,
+        "build_walkforward_command",
+        lambda _args: (_ for _ in ()).throw(
+            AssertionError("active lock should block before child command")
+        ),
+    )
+    monkeypatch.setattr(
+        gate.sys,
+        "argv",
+        [
+            "run_production_walkforward_gate.py",
+            "--db",
+            str(db),
+            "--status-path",
+            str(status_path),
+            "--lock-path",
+            str(lock_path),
+        ],
+    )
+
+    assert gate.main() == 2
+    output = capsys.readouterr().out
+    payload = json.loads(status_path.read_text(encoding="utf-8"))
+    assert "lock already held" in output
+    assert payload["status"] == "blocked_running"
+    assert payload["blocked_by_pid"] > 0
+
+
+def test_production_walkforward_gate_recycles_stale_atomic_lock(
+    monkeypatch, tmp_path: Path
+) -> None:
+    import scripts.run_production_walkforward_gate as gate
+
+    db = tmp_path / "raw.db"
+    db.write_text("", encoding="utf-8")
+    gate_path = tmp_path / "gate.json"
+    gate_path.write_text(json.dumps({"effective_symbols": 3200}), encoding="utf-8")
+    status_path = tmp_path / "status.json"
+    lock_path = tmp_path / "walkforward-production.lock"
+    lock_path.mkdir()
+    (lock_path / "meta.json").write_text(
+        json.dumps({"pid": 33333, "cmdline": ["python"]}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(gate, "_total_memory_gib", lambda: 8.0)
+    monkeypatch.setattr(gate, "_pid_active", lambda _value: False)
+    monkeypatch.setattr(
+        gate,
+        "inspect_raw_coverage_with_symbols",
+        lambda *_args, **_kwargs: gate.CoverageInspection(
+            summary=gate.CoverageSummary(
+                stock_symbols=5533,
+                covered_symbols=3200,
+                rows=1,
+                first_trade_date="20180102",
+                last_trade_date="20241231",
+            ),
+            covered_symbols=[f"600{idx:03d}" for idx in range(3200)],
+        ),
+    )
+    monkeypatch.setattr(gate, "build_walkforward_command", lambda _args: ["python"])
+    monkeypatch.setattr(gate, "_execute_child_walkforward", lambda **_kwargs: (0, 42))
+    monkeypatch.setattr(
+        gate, "annotate_production_gate_metadata", lambda **_kwargs: 3200
+    )
+    monkeypatch.setattr(
+        gate.sys,
+        "argv",
+        [
+            "run_production_walkforward_gate.py",
+            "--db",
+            str(db),
+            "--gate-path",
+            str(gate_path),
+            "--status-path",
+            str(status_path),
+            "--lock-path",
+            str(lock_path),
+        ],
+    )
+
+    assert gate.main() == 0
+    payload = json.loads(status_path.read_text(encoding="utf-8"))
+    assert payload["status"] == "completed"
+    assert not lock_path.exists()
 
 
 def test_production_walkforward_gate_blocked_coverage_writes_status(
@@ -1432,8 +1893,12 @@ def test_production_walkforward_gate_writes_preparing_child_status_before_child_
         observed["effective_symbols"] = payload["effective_symbols"]
         return 0, 43210
 
-    monkeypatch.setattr(gate, "_execute_child_walkforward", fake_execute_child_walkforward)
-    monkeypatch.setattr(gate, "annotate_production_gate_metadata", lambda **_kwargs: 3200)
+    monkeypatch.setattr(
+        gate, "_execute_child_walkforward", fake_execute_child_walkforward
+    )
+    monkeypatch.setattr(
+        gate, "annotate_production_gate_metadata", lambda **_kwargs: 3200
+    )
     monkeypatch.setattr(
         gate.sys,
         "argv",
@@ -1486,7 +1951,9 @@ def test_production_walkforward_gate_completed_writes_status(
         "_execute_child_walkforward",
         lambda **_kwargs: (0, 43210),
     )
-    monkeypatch.setattr(gate, "annotate_production_gate_metadata", lambda **_kwargs: None)
+    monkeypatch.setattr(
+        gate, "annotate_production_gate_metadata", lambda **_kwargs: None
+    )
     monkeypatch.setattr(
         gate.sys,
         "argv",
@@ -1605,6 +2072,39 @@ def test_repair_stale_running_status_prefers_dead_child_pid_over_reused_parent_p
         gate,
         "_pid_active",
         lambda value: bool(value == 12345),
+    )
+
+    repaired = gate.repair_stale_running_status(status_path)
+
+    payload = json.loads(status_path.read_text(encoding="utf-8"))
+    assert repaired is True
+    assert payload["status"] == "timeout"
+    assert payload["child_exit_code"] == 124
+
+
+def test_repair_stale_running_status_rejects_reused_child_pid_cmdline(
+    monkeypatch, tmp_path: Path
+) -> None:
+    import scripts.run_production_walkforward_gate as gate
+
+    status_path = tmp_path / "walkforward_production_status.json"
+    status_path.write_text(
+        json.dumps(
+            {
+                "status": "running",
+                "updated_at": "2026-07-09T10:00:00+08:00",
+                "pid": 12345,
+                "child_pid": 67890,
+                "timeout_seconds": 14400,
+                "detail": "child walkforward running; elapsed=0s",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(gate, "_pid_active", lambda value: value == 67890)
+    monkeypatch.setattr(
+        gate, "_pid_cmdline", lambda _value: ("python", "-m", "http.server")
     )
 
     repaired = gate.repair_stale_running_status(status_path)

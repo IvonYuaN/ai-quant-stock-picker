@@ -22,6 +22,69 @@ is_truthy() {
     [[ "$value" =~ ^(1|true|yes|on)$ ]]
 }
 
+write_failed_json() {
+    local reason="$1"
+    local source_status="${2:-failed}"
+    mkdir -p "$(dirname "$JSON_OUTPUT")"
+    NEWS_FAILURE_OUTPUT="$JSON_OUTPUT" \
+    NEWS_FAILURE_REASON="$reason" \
+    NEWS_FAILURE_SOURCE_STATUS="$source_status" \
+    "$PYTHON_BIN" - <<'AQSP_NEWS_FAILURE_JSON'
+import json
+import os
+from pathlib import Path
+
+from aqsp.core.time import now_shanghai
+
+path = Path(os.environ["NEWS_FAILURE_OUTPUT"])
+generated_at = now_shanghai().isoformat(timespec="seconds")
+payload = {
+    "date": generated_at[:10],
+    "generated_at": generated_at,
+    "source_status": os.environ["NEWS_FAILURE_SOURCE_STATUS"],
+    "event_status": "source_failed",
+    "raw_news_count": 0,
+    "stale_news_count": 0,
+    "undated_news_count": 0,
+    "events": [],
+    "warnings": [os.environ["NEWS_FAILURE_REASON"]],
+    "source_statuses": [],
+}
+tmp = path.with_suffix(path.suffix + ".tmp")
+tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+tmp.replace(path)
+AQSP_NEWS_FAILURE_JSON
+}
+
+write_failed_report() {
+    local reason="$1"
+    local report_dir
+    local tmp_report
+    report_dir="$(dirname "$OUTPUT")"
+    mkdir -p "$report_dir"
+    tmp_report="${OUTPUT}.tmp.$$"
+    {
+        echo "# 消息面雷达-$(date +%F)"
+        echo
+        echo "## 结论"
+        echo
+        echo "- 无有效结论：消息源失败"
+        echo "- 数据状态: 失败"
+        echo
+        echo "## 事件"
+        echo
+        echo "- 无可靠消息面结果"
+        echo
+        echo "## 状态"
+        echo
+        echo "- 状态: failed"
+        echo "- 高影响事件: 0"
+        echo "- 原因: ${reason}"
+        echo "- 告警: 有"
+    } >"$tmp_report"
+    mv -f "$tmp_report" "$OUTPUT"
+}
+
 if [ -f "${PROJECT_ROOT}/.env" ]; then
     set -a
     source "${PROJECT_ROOT}/.env"
@@ -42,6 +105,7 @@ LLM_TIMEOUT_SECONDS="${AQSP_NEWS_LLM_TIMEOUT_SECONDS:-8}"
 MAX_LLM_REVIEW_EVENTS="${AQSP_NEWS_MAX_LLM_REVIEW_EVENTS:-1}"
 TASK_TIMEOUT_SECONDS="${AQSP_NEWS_TASK_TIMEOUT_SECONDS:-300}"
 OUTPUT="${AQSP_NEWS_OUTPUT:-reports/news_catalysts.md}"
+JSON_OUTPUT="${AQSP_NEWS_JSON_OUTPUT:-data/runtime/news_catalysts_latest.json}"
 ENABLE_LLM_REVIEW="${AQSP_NEWS_ENABLE_LLM_REVIEW:-false}"
 ALLOW_NON_TRADING_NOTIFY="${AQSP_ALLOW_NON_TRADING_NEWS_NOTIFY:-false}"
 
@@ -83,9 +147,14 @@ NEWS_CMD=(
     --llm-timeout-seconds "$LLM_TIMEOUT_SECONDS" \
     --max-llm-review-events "$MAX_LLM_REVIEW_EVENTS" \
     --output "$OUTPUT" \
-    "${NOTIFY_ARGS[@]}" \
-    "${LLM_ARGS[@]}"
+    --json-output "$JSON_OUTPUT"
 )
+if [ "${#NOTIFY_ARGS[@]}" -gt 0 ]; then
+    NEWS_CMD+=("${NOTIFY_ARGS[@]}")
+fi
+if [ "${#LLM_ARGS[@]}" -gt 0 ]; then
+    NEWS_CMD+=("${LLM_ARGS[@]}")
+fi
 
 set +e
 if command -v timeout >/dev/null 2>&1; then
@@ -98,27 +167,20 @@ fi
 set -e
 
 if [ "$NEWS_EXIT" -eq 124 ]; then
-    mkdir -p "$(dirname "$OUTPUT")"
-    {
-        echo "# 消息面雷达-$(date +%F)"
-        echo
-        echo "## 结论"
-        echo
-        echo "- 无有效结论：消息源超时"
-        echo "- 数据状态: 失败"
-        echo
-        echo "## 事件"
-        echo
-        echo "- 无可靠消息面结果"
-        echo
-        echo "## 状态"
-        echo
-        echo "- 状态: failed"
-        echo "- 高影响事件: 0"
-        echo "- 告警: 有"
-    } > "$OUTPUT"
+    if ! write_failed_report "消息源超时"; then
+        log "[WARN] 超时失败报告写入失败: ${OUTPUT}"
+    fi
+    if ! write_failed_json "消息源超时" "timeout"; then
+        log "[WARN] 超时失败 JSON 写入失败: ${JSON_OUTPUT}"
+    fi
     log "消息面雷达超时: ${OUTPUT}"
 elif [ "$NEWS_EXIT" -ne 0 ]; then
+    if ! write_failed_report "消息面雷达命令失败: exit=${NEWS_EXIT}"; then
+        log "[WARN] 失败报告写入失败: ${OUTPUT}"
+    fi
+    if ! write_failed_json "消息面雷达命令失败: exit=${NEWS_EXIT}" "failed"; then
+        log "[WARN] 失败 JSON 写入失败: ${JSON_OUTPUT}"
+    fi
     log "[ERROR] 消息面雷达失败: exit=${NEWS_EXIT}"
     exit "$NEWS_EXIT"
 fi

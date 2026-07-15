@@ -5,7 +5,15 @@ from pathlib import Path
 from typing import Iterable
 from uuid import uuid4
 
-from aqsp.ledger.base import ExecutionConfig, read_ledger, write_ledger
+from aqsp.core.errors import DataError
+from aqsp.core.types import RunMetadata
+from aqsp.ledger.base import (
+    FORMAL_LEDGER_WORKLOADS,
+    ExecutionConfig,
+    read_ledger,
+    run_metadata_fields,
+    write_ledger,
+)
 from aqsp.utils.jsonl_io import advisory_lock
 
 
@@ -36,7 +44,10 @@ def append_special_strategy_signals(
     thresholds_version: str,
     regime: str = "",
     execution: ExecutionConfig | None = None,
+    workload: str = "",
+    run_metadata: RunMetadata | None = None,
 ) -> None:
+    _validate_special_run_metadata(run_metadata, workload=workload)
     execution = execution or ExecutionConfig()
     with advisory_lock(path):
         rows = read_ledger(path)
@@ -82,6 +93,7 @@ def append_special_strategy_signals(
                 "thresholds_version": thresholds_version,
                 "regime_at_signal": regime,
                 "signal_day_group": signal_day_group,
+                **run_metadata_fields(run_metadata),
             }
 
             existing_idx = row_index_by_key.get(row_key)
@@ -121,3 +133,46 @@ def _special_signal_key(row: dict) -> tuple[str, str, str, str, str, str, str]:
         strategy_id,
         str(row.get("sub_strategy", "")),
     )
+
+
+def _validate_special_run_metadata(
+    metadata: RunMetadata | None,
+    *,
+    workload: str,
+) -> None:
+    """Reject incomplete provenance before a formal special signal is written."""
+    requested_workload = workload.strip()
+    metadata_workload = metadata.workload.strip() if metadata else ""
+    if requested_workload and metadata is None:
+        raise DataError(
+            "特殊策略 ledger 声明 workload 时必须提供 run_metadata: "
+            f"workload={requested_workload}"
+        )
+    if requested_workload and requested_workload != metadata_workload:
+        raise DataError(
+            "特殊策略 ledger 的 workload 与 run_metadata 不一致: "
+            f"workload={requested_workload}, metadata={metadata_workload}"
+        )
+    effective_workload = requested_workload or metadata_workload
+    if metadata is None or effective_workload not in FORMAL_LEDGER_WORKLOADS:
+        return
+
+    required = {
+        "requested_source": metadata.requested_source,
+        "actual_source": metadata.actual_source,
+        "source_freshness_tier": metadata.source_freshness_tier,
+        "source_coverage_tier": metadata.source_coverage_tier,
+        "source_local_status": metadata.source_local_status,
+        "source_health_label": metadata.source_health_label,
+        "thresholds_version": metadata.thresholds_version,
+        "data_latest_trade_date": metadata.data_latest_trade_date,
+    }
+    missing = tuple(name for name, value in required.items() if not str(value).strip())
+    if missing:
+        raise DataError(
+            "正式特殊策略 ledger 缺少 provenance: "
+            + ", ".join(missing)
+            + f" (workload={effective_workload})"
+        )
+    if metadata.data_lag_days < 0:
+        raise DataError("正式特殊策略 ledger 的 data_lag_days 不能为负数")

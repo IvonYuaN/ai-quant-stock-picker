@@ -1,18 +1,36 @@
 from __future__ import annotations
 
 import json
+import hashlib
+import logging
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 
 import numpy as np
 import pandas as pd
 import yaml
 
 from aqsp.core.time import now_shanghai
+from aqsp.regime.hmm_detector import HMMRegimeDetector
+from aqsp.regime.strategy_mixer import canonical_regime_from_hmm
 from aqsp.strategies.thresholds import load_thresholds
 from aqsp.utils.jsonl_io import append_jsonl
+from aqsp.walkforward_gate import build_walkforward_gate_evidence
+
+
+_LOGGER = logging.getLogger(__name__)
+
+
+PROPOSAL_STATUS = "proposal_only"
+BLOCKED_PROPOSAL_STATUS = "blocked_proposal"
+PROPOSAL_VALIDATION_REQUIREMENTS = (
+    "重新运行 Purged + Embargoed Walk-Forward，使用不复权价格和 point-in-time 数据",
+    "DSR > 1.0",
+    "0 < PBO < 0.5，且 PBO 来自多变体 CSCV 证据",
+    "通过独立 held-out 验证和人工审核后，才可单独提交 thresholds.yaml",
+)
 
 
 @dataclass(frozen=True)
@@ -56,10 +74,21 @@ class EvolutionResult:
     strategy_name: str
     old_params: Dict[str, float]
     new_params: Dict[str, float]
+    # Kept for API compatibility; this is a research-score delta, not forward return.
     performance_improvement: float
     confidence: float
     timestamp: datetime
     reason: str
+    sample_count: int = 0
+    cooldown_days: int = 0
+    eligible_after: str | None = None
+    validation_requirements: tuple[str, ...] = PROPOSAL_VALIDATION_REQUIREMENTS
+    gate_evidence: Dict[str, Any] = field(default_factory=dict)
+    thresholds_version: str | None = None
+    status: str = PROPOSAL_STATUS
+    applied: bool = False
+    runtime_writeback: bool = False
+    forward_performance_validated: bool = False
 
 
 class AutoEvolution:
@@ -68,16 +97,18 @@ class AutoEvolution:
         config_path: str = "config/evolution_config.yaml",
         thresholds_path: str = "config/thresholds.yaml",
         data_dir: str = "data/evolution",
+        walkforward_gate_path: str = "data/walkforward_gate.json",
     ) -> None:
         self.config_path = Path(config_path)
         self.thresholds_path = Path(thresholds_path)
         self.data_dir = Path(data_dir)
+        self.walkforward_gate_path = Path(walkforward_gate_path)
         self.data_dir.mkdir(parents=True, exist_ok=True)
 
         self.config = self._load_config()
         self.thresholds = load_thresholds(str(self.thresholds_path))
         self.evolution_history: List[EvolutionResult] = []
-        self._last_evolution_time: Optional[datetime] = None
+        self._last_evolution_time: Optional[datetime] = self._load_last_evolution_time()
 
     def _load_config(self) -> EvolutionConfig:
         if not self.config_path.exists():
@@ -143,8 +174,16 @@ class AutoEvolution:
         if pd.notna(ma20_last) and pd.notna(ma60_last) and ma60_last != 0:
             trend_strength = float((ma20_last - ma60_last) / ma60_last)
 
-        regime = self._classify_regime(volatility, trend_strength, momentum)
-        confidence = self._calculate_confidence(volatility, trend_strength, momentum)
+        hmm_result = HMMRegimeDetector(
+            lookback_days=lookback_days,
+            min_data_points=max(20, self.thresholds.regime.min_sample_size),
+        ).detect_regime(df)
+        regime = canonical_regime_from_hmm(
+            str(hmm_result.regime),
+            annualized_volatility=volatility,
+            volatility_high=float(self.thresholds.regime.volatility_high),
+        )
+        confidence = float(hmm_result.confidence)
 
         return MarketRegimeAnalysis(
             regime=regime,
@@ -230,26 +269,36 @@ class AutoEvolution:
     def update_params_from_performance(
         self,
         performance: Dict[str, float],
+        *,
+        sample_count: int | None = None,
     ) -> bool:
         if not self.config.enabled:
             return False
 
-        if self._last_evolution_time is not None:
-            elapsed = now_shanghai() - self._last_evolution_time
-            if elapsed.days < self.config.check_interval_days:
-                return False
+        if not self._has_minimum_samples(sample_count):
+            return False
 
-        return True
+        return self._cooldown_days_remaining() == 0
 
     def should_evolve(
         self,
         current_performance: Dict[str, float],
-        threshold: float = 0.05,
+        threshold: float | None = None,
+        sample_count: int | None = None,
     ) -> bool:
         if not self.config.enabled:
             return False
 
-        if len(current_performance) < self.config.min_samples:
+        observed_samples = sample_count
+        if observed_samples is None:
+            raw_sample_count = current_performance.get("sample_count")
+            if isinstance(raw_sample_count, int) and not isinstance(
+                raw_sample_count, bool
+            ):
+                observed_samples = raw_sample_count
+        if observed_samples is None or observed_samples < self.config.min_samples:
+            return False
+        if self._cooldown_days_remaining() > 0:
             return False
 
         recent_performance = self._get_recent_performance()
@@ -259,7 +308,10 @@ class AutoEvolution:
         improvement = current_performance.get(
             "sharpe_ratio", 0
         ) - recent_performance.get("sharpe_ratio", 0)
-        return improvement < -threshold
+        effective_threshold = (
+            self.config.performance_threshold if threshold is None else threshold
+        )
+        return improvement < -effective_threshold
 
     def _get_recent_performance(self) -> Optional[Dict[str, float]]:
         history_file = self.data_dir / "performance_history.jsonl"
@@ -279,21 +331,41 @@ class AutoEvolution:
         self,
         strategy_name: str,
         data: Dict[str, pd.DataFrame],
+        *,
+        sample_count: int | None = None,
+        walkforward_payload: Mapping[str, object] | None = None,
     ) -> EvolutionResult | None:
         if not self.config.enabled:
             return None
 
+        effective_sample_count = self._resolve_sample_count(data, sample_count)
+        if not self._has_minimum_samples(effective_sample_count):
+            return None
+
+        if self._cooldown_days_remaining() > 0:
+            return None
+
         current_params = self._get_base_params(strategy_name)
-        current_performance = self._evaluate_params(current_params, data, strategy_name)
+        try:
+            current_performance = self._evaluate_params(
+                current_params, data, strategy_name
+            )
+        except Exception as exc:  # noqa: BLE001
+            _LOGGER.warning("自动优化基线评估失败，按无提案继续: %s", exc)
+            return None
 
         candidates = self._generate_candidates(strategy_name, current_params)
         best_params = current_params
         best_score = current_performance.get("research_score", 0)
 
         for candidate in candidates:
-            score = self._evaluate_params(candidate, data, strategy_name).get(
-                "research_score", 0
-            )
+            try:
+                score = self._evaluate_params(candidate, data, strategy_name).get(
+                    "research_score", 0
+                )
+            except Exception as exc:  # noqa: BLE001
+                _LOGGER.warning("自动优化候选评估失败，跳过候选: %s", exc)
+                continue
             if score > best_score:
                 best_score = score
                 best_params = candidate
@@ -305,9 +377,12 @@ class AutoEvolution:
                 current_params,
                 best_params,
                 improvement,
-                "performance_improvement",
+                "research_score_improvement",
+                sample_count=effective_sample_count,
+                walkforward_payload=walkforward_payload,
             )
-            self._last_evolution_time = now_shanghai()
+            self._last_evolution_time = result.timestamp
+            self._write_proposal(result)
             return result
 
         return None
@@ -347,7 +422,10 @@ class AutoEvolution:
         # This is a proposal-only score from current deterministic rules. It is
         # intentionally not labelled Sharpe because it does not validate forward
         # returns or apply candidate params through a walk-forward engine.
-        strategy = CompositeStrategy(thresholds=self.thresholds)
+        research_thresholds = self.thresholds.with_overrides(
+            self._threshold_section(strategy_name), params
+        )
+        strategy = CompositeStrategy(thresholds=research_thresholds)
         scores = strategy.calculate_score(data)
 
         if not scores:
@@ -368,15 +446,30 @@ class AutoEvolution:
         new_params: Dict[str, float],
         improvement: float,
         reason: str,
+        *,
+        sample_count: int = 0,
+        walkforward_payload: Mapping[str, object] | None = None,
     ) -> EvolutionResult:
+        timestamp = now_shanghai()
+        gate_evidence = self._build_gate_evidence(walkforward_payload)
+        cooldown_days = self.config.check_interval_days
         result = EvolutionResult(
             strategy_name=strategy_name,
             old_params=old_params,
             new_params=new_params,
             performance_improvement=improvement,
             confidence=0.8,
-            timestamp=now_shanghai(),
+            timestamp=timestamp,
             reason=reason,
+            sample_count=sample_count,
+            cooldown_days=cooldown_days,
+            eligible_after=(timestamp + timedelta(days=cooldown_days)).isoformat(
+                timespec="seconds"
+            ),
+            gate_evidence=gate_evidence,
+            thresholds_version=getattr(self.thresholds, "version", None),
+            status=self._proposal_status(gate_evidence),
+            forward_performance_validated=False,
         )
 
         self.evolution_history.append(result)
@@ -387,35 +480,256 @@ class AutoEvolution:
             "strategy_name": result.strategy_name,
             "old_params": result.old_params,
             "new_params": result.new_params,
-            "performance_improvement": result.performance_improvement,
+            "research_score_improvement": result.performance_improvement,
             "confidence": result.confidence,
             "reason": result.reason,
+            "sample_count": result.sample_count,
+            "cooldown_days": result.cooldown_days,
+            "eligible_after": result.eligible_after,
+            "thresholds_version": result.thresholds_version,
+            "status": result.status,
+            "applied": result.applied,
+            "runtime_writeback": result.runtime_writeback,
+            "forward_performance_validated": result.forward_performance_validated,
+            "gate_evidence": result.gate_evidence,
         }
 
         append_jsonl(history_file, entry)
         return result
 
     def _apply_evolution(self, result: EvolutionResult) -> None:
+        """Compatibility shim: serialize a proposal, never apply runtime state."""
+        # This explicit legacy API records the caller-supplied research object;
+        # automatic evolution still enforces the sample gate before calling it.
+        self._write_proposal(result, enforce_sample_gate=False)
+
+    def _write_proposal(
+        self,
+        result: EvolutionResult,
+        *,
+        enforce_sample_gate: bool = True,
+    ) -> None:
         if not result.new_params:
+            return
+        if enforce_sample_gate and result.sample_count < self.config.min_samples:
+            _LOGGER.warning(
+                "拒绝写入自动优化提案：独立信号日不足 (%s/%s)",
+                result.sample_count,
+                self.config.min_samples,
+            )
             return
 
         proposal_file = self.data_dir / "threshold_proposals.jsonl"
+        gate_evidence = dict(result.gate_evidence)
+        gate_status = str(gate_evidence.get("status", "missing"))
+        proposal_status = (
+            str(result.status or PROPOSAL_STATUS)
+            if not enforce_sample_gate
+            else self._proposal_status(gate_evidence)
+        )
+        gate_reasons = gate_evidence.get("reasons")
+        if not isinstance(gate_reasons, list) or not gate_reasons:
+            gate_reasons = ["walkforward gate evidence missing"]
+        cooldown_days = result.cooldown_days or self.config.check_interval_days
+        eligible_after = result.eligible_after or (
+            result.timestamp + timedelta(days=cooldown_days)
+        ).isoformat(timespec="seconds")
+        proposal_id = self._proposal_id(result)
+        if self._proposal_exists(proposal_file, proposal_id):
+            return
         append_jsonl(
             proposal_file,
             {
+                "proposal_id": proposal_id,
                 "timestamp": now_shanghai().isoformat(timespec="seconds"),
                 "strategy_name": result.strategy_name,
                 "old_params": result.old_params,
                 "new_params": result.new_params,
                 "confidence": result.confidence,
-                "performance_improvement": result.performance_improvement,
+                "research_score_improvement": result.performance_improvement,
+                "performance_metric": "research_score",
+                "forward_performance_validated": False,
                 "reason": result.reason,
-                "status": "proposal_only",
+                "sample_count": result.sample_count,
+                "min_samples": self.config.min_samples,
+                "sample_unit": "independent_signal_days",
+                "cooldown_days": cooldown_days,
+                "eligible_after": eligible_after,
+                "validation_requirements": list(result.validation_requirements),
+                "gate_status": gate_status,
+                "gate_reasons": gate_reasons,
+                "gate_evidence": gate_evidence,
+                "thresholds_version": result.thresholds_version
+                or getattr(self.thresholds, "version", None),
+                "status": proposal_status,
                 "applied": False,
+                "proposal_only": True,
+                "runtime_writeback": False,
                 "thresholds_path": str(self.thresholds_path),
             },
         )
-        self.thresholds = load_thresholds(str(self.thresholds_path))
+
+    @staticmethod
+    def _proposal_status(gate_evidence: Mapping[str, object]) -> str:
+        """Require a passing gate before a proposal can leave blocked state."""
+        return (
+            PROPOSAL_STATUS
+            if gate_evidence.get("status") == "pass"
+            else BLOCKED_PROPOSAL_STATUS
+        )
+
+    def _build_gate_evidence(
+        self, payload: Mapping[str, object] | None
+    ) -> Dict[str, Any]:
+        if payload is None:
+            payload = self._load_walkforward_payload()
+        if payload is None:
+            return {
+                "status": "missing",
+                "reasons": ["walkforward gate evidence missing"],
+            }
+
+        evidence = build_walkforward_gate_evidence(
+            payload,
+            today=now_shanghai().date(),
+            expected_thresholds_version=getattr(self.thresholds, "version", None),
+            require_assumption_audit=True,
+        )
+        return {
+            "ok": evidence.ok,
+            "status": evidence.status,
+            "dsr": evidence.dsr,
+            "pbo": evidence.pbo,
+            "n_periods": evidence.n_periods,
+            "run_date": evidence.run_date.isoformat()
+            if evidence.run_date is not None
+            else None,
+            "data_end": evidence.data_end.isoformat()
+            if evidence.data_end is not None
+            else None,
+            "thresholds_version": evidence.thresholds_version,
+            "reasons": list(evidence.reasons),
+        }
+
+    def _load_walkforward_payload(self) -> Mapping[str, object] | None:
+        gate_path = self.walkforward_gate_path
+        if not gate_path.exists():
+            return None
+        try:
+            payload = json.loads(gate_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+        return payload if isinstance(payload, Mapping) else None
+
+    def _load_last_evolution_time(self) -> datetime | None:
+        history_file = self.data_dir / "evolution_history.jsonl"
+        if not history_file.exists():
+            return None
+        try:
+            lines = history_file.read_text(encoding="utf-8").splitlines()
+            if not lines:
+                return None
+            payload = json.loads(lines[-1])
+            timestamp = payload.get("timestamp")
+            if not timestamp:
+                return None
+            parsed = datetime.fromisoformat(timestamp)
+            return parsed if parsed.tzinfo is not None else None
+        except (OSError, TypeError, ValueError, json.JSONDecodeError):
+            return None
+
+    @staticmethod
+    def _count_data_samples(data: Mapping[str, object]) -> int:
+        """Count independent executable signal dates across all symbols."""
+        signal_days: set[str] = set()
+        for frame in data.values():
+            if not isinstance(frame, pd.DataFrame) or frame.empty:
+                continue
+            valid = frame
+            if "status" in valid.columns:
+                status = valid["status"].astype(str).str.strip().str.lower()
+                valid = valid[status != "not_executable"]
+            if "executable" in valid.columns:
+                executable = valid["executable"]
+                executable = executable.map(
+                    lambda value: str(value).strip().lower()
+                    not in {"false", "0", "no", "not_executable"}
+                )
+                valid = valid[executable]
+            if valid.empty:
+                continue
+
+            if "date" in valid.columns:
+                dates = pd.to_datetime(valid["date"], errors="coerce")
+            elif isinstance(valid.index, pd.DatetimeIndex):
+                dates = pd.Series(valid.index, index=valid.index)
+            else:
+                continue
+            signal_days.update(
+                dates.dropna().dt.strftime("%Y-%m-%d").tolist()
+            )
+        return len(signal_days)
+
+    @classmethod
+    def _resolve_sample_count(
+        cls,
+        data: Mapping[str, object],
+        sample_count: int | None,
+    ) -> int:
+        if sample_count is None:
+            return cls._count_data_samples(data)
+        if isinstance(sample_count, bool) or not isinstance(sample_count, int):
+            return 0
+        return max(0, sample_count)
+
+    def _has_minimum_samples(self, sample_count: int | None) -> bool:
+        return (
+            sample_count is not None
+            and not isinstance(sample_count, bool)
+            and isinstance(sample_count, int)
+            and sample_count >= self.config.min_samples
+        )
+
+    def _cooldown_days_remaining(self) -> int:
+        if self._last_evolution_time is None:
+            return 0
+        elapsed = now_shanghai() - self._last_evolution_time
+        remaining = timedelta(days=self.config.check_interval_days) - elapsed
+        return max(0, int(np.ceil(remaining.total_seconds() / 86400)))
+
+    @staticmethod
+    def _threshold_section(strategy_name: str) -> str:
+        return {
+            "composite": "composite",
+            "momentum": "momentum",
+            "volume": "volume",
+            "scoring": "scoring",
+        }.get(strategy_name, strategy_name)
+
+    @staticmethod
+    def _proposal_id(result: EvolutionResult) -> str:
+        payload = {
+            "strategy_name": result.strategy_name,
+            "old_params": result.old_params,
+            "new_params": result.new_params,
+            "timestamp": result.timestamp.isoformat(timespec="seconds"),
+            "thresholds_version": result.thresholds_version,
+        }
+        encoded = json.dumps(payload, sort_keys=True, ensure_ascii=False).encode()
+        return hashlib.sha256(encoded).hexdigest()[:16]
+
+    @staticmethod
+    def _proposal_exists(proposal_file: Path, proposal_id: str) -> bool:
+        if not proposal_file.exists():
+            return False
+        try:
+            for line in proposal_file.read_text(encoding="utf-8").splitlines():
+                payload = json.loads(line)
+                if isinstance(payload, dict) and payload.get("proposal_id") == proposal_id:
+                    return True
+        except (OSError, TypeError, ValueError, json.JSONDecodeError):
+            return False
+        return False
 
     def save_evolution_history(self, output_path: str) -> None:
         output_file = Path(output_path)
@@ -429,9 +743,19 @@ class AutoEvolution:
                     "strategy_name": result.strategy_name,
                     "old_params": result.old_params,
                     "new_params": result.new_params,
-                    "performance_improvement": result.performance_improvement,
+                    "research_score_improvement": result.performance_improvement,
                     "confidence": result.confidence,
                     "reason": result.reason,
+                    "sample_count": result.sample_count,
+                    "cooldown_days": result.cooldown_days,
+                    "eligible_after": result.eligible_after,
+                    "validation_requirements": list(result.validation_requirements),
+                    "gate_evidence": result.gate_evidence,
+                    "thresholds_version": result.thresholds_version,
+                    "status": result.status,
+                    "applied": result.applied,
+                    "runtime_writeback": result.runtime_writeback,
+                    "forward_performance_validated": result.forward_performance_validated,
                 }
             )
 

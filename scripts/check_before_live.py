@@ -145,11 +145,16 @@ def _read_daily_log_history(root: Path) -> list[dict[str, Any]]:
         for segment in segments:
             if not segment.startswith("=== aqsp run @ "):
                 continue
-            match = re.match(r"^=== aqsp run @ (.+?) ===$", segment.splitlines()[0].strip())
+            match = re.match(
+                r"^=== aqsp run @ (.+?) ===$", segment.splitlines()[0].strip()
+            )
             run_date = _daily_log_segment_date(match.group(1) if match else "")
             if not run_date or run_date in seen_dates:
                 continue
-            if "=== outputs ===" not in segment and "=== aqsp dashboard @" not in segment:
+            if (
+                "=== outputs ===" not in segment
+                and "=== aqsp dashboard @" not in segment
+            ):
                 continue
             if "aqsp run failed:" in segment:
                 continue
@@ -192,7 +197,9 @@ def _daily_log_segment_date(header: str) -> str:
     if len(tokens) >= 6:
         candidate = " ".join(tokens[:4] + tokens[5:6])
         try:
-            return datetime.strptime(candidate, "%a %b %d %H:%M:%S %Y").date().isoformat()
+            return (
+                datetime.strptime(candidate, "%a %b %d %H:%M:%S %Y").date().isoformat()
+            )
         except ValueError:
             return ""
     return ""
@@ -361,6 +368,11 @@ def _check_walkforward_gate(path: Path, today: date) -> ReadinessFinding:
         )
         if extra:
             detail = f"{detail}; production_status: {extra}"
+        if status == "timeout":
+            detail = (
+                f"{detail}; production rerun timed out before producing new "
+                "DSR/PBO evidence; keeping previous failed gate active"
+            )
     return ReadinessFinding(
         "walkforward_gate",
         validation.ok,
@@ -453,9 +465,9 @@ def _check_walkforward_market_coverage(
                 coverage_payload["effective_symbols"] = covered
                 effective_symbols = covered
         if (
-            (not isinstance(effective_symbols, int) or isinstance(effective_symbols, bool))
-            and status_payload
-        ):
+            not isinstance(effective_symbols, int)
+            or isinstance(effective_symbols, bool)
+        ) and status_payload:
             status_coverage = status_payload.get("coverage")
             if isinstance(status_coverage, dict):
                 covered = status_coverage.get("covered_symbols")
@@ -965,10 +977,17 @@ def _check_runtime_regime_requires_benchmark(root: Path) -> ReadinessFinding:
         )
     text = path.read_text(encoding="utf-8")
     block = _cli_function_block(text, "detect_runtime_regime")
+    context_block = _cli_function_block(text, "detect_runtime_regime_context")
     ok = (
         "build_synthetic_regime_frame(" not in block
+        and "build_synthetic_regime_frame(" not in context_block
         and '"synthetic_market"' not in block
-        and "return \"\"" in block
+        and '"synthetic_market"' not in context_block
+        and (
+            'return ""' in block
+            or 'RuntimeRegimeContext("", "", 0.0, 0.0, "missing_benchmark")'
+            in context_block
+        )
     )
     return ReadinessFinding(
         "runtime_regime_requires_benchmark",
@@ -1082,11 +1101,7 @@ def _check_trading_calendar_coverage(root: Path, today: date) -> ReadinessFindin
         else "; ".join(
             part
             for part in (
-                (
-                    "missing years: " + ", ".join(map(str, missing))
-                    if missing
-                    else ""
-                ),
+                ("missing years: " + ", ".join(map(str, missing)) if missing else ""),
                 (
                     "missing critical holidays: " + ", ".join(critical_missing)
                     if critical_missing
@@ -1207,7 +1222,11 @@ def _check_gate_cold_start_alignment(root: Path, ledger_path: Path) -> Readiness
                 f"{latest_fingerprint or '-'}"
             ),
         )
-    if (not gate_ok) and expected_fingerprint and latest_fingerprint != expected_fingerprint:
+    if (
+        (not gate_ok)
+        and expected_fingerprint
+        and latest_fingerprint != expected_fingerprint
+    ):
         return ReadinessFinding(
             "gate_cold_start_alignment",
             False,
@@ -1246,7 +1265,9 @@ def _check_paper_tracking_sample_size(path: Path) -> ReadinessFinding:
         preview = ", ".join(missing_tradable_days[:5])
         if len(missing_tradable_days) > 5:
             preview += ", ..."
-        detail += f"; missing tradable signal days={len(missing_tradable_days)} [{preview}]"
+        detail += (
+            f"; missing tradable signal days={len(missing_tradable_days)} [{preview}]"
+        )
     elif (
         ceiling_active
         and effective_target < MIN_INDEPENDENT_SIGNAL_DAYS
@@ -1372,26 +1393,33 @@ def _check_strategy_executability_runtime_feedback(root: Path) -> ReadinessFindi
             "source tree unavailable; skipped",
         )
     cli_text = cli_path.read_text(encoding="utf-8")
-    runtime_text = runtime_path.read_text(encoding="utf-8")
     block = _cli_function_block(cli_text, "_run_scheduled_legacy")
-    adjustment_call_present = (
-        "strategy_executability_weight_adjustments(args.ledger)" in cli_text
-        or "strategy_executability_weight_adjustments(formal_ledger_path)" in cli_text
-    )
-    ok = (
-        "strategy_executability_weight_adjustments" in runtime_text
-        and adjustment_call_present
-        and "weights[strategy_id]" in block
-        and "strategy_weight_reasons[strategy_id] = reason" in block
-        and "float(weights[strategy_id]) * float(multiplier)" in block
-        and "不可成交反馈降权:" in block
-    )
+    missing = []
+    if "weights = _runtime_strategy_weights(thresholds, regime)" not in block:
+        missing.append("runtime weight resolver")
+
+    forbidden = []
+    if "strategy_executability_weight_adjustments" in block:
+        forbidden.append("strategy_executability_weight_adjustments call")
+    if re.search(r"\bweights\s*\[", block):
+        forbidden.append("runtime weight mutation")
+    if "不可成交反馈降权:" in block:
+        forbidden.append("not_executable downweight output")
+
+    ok = not missing and not forbidden
+    detail = "ok"
+    if not ok:
+        problems = [f"missing {item}" for item in missing] + [
+            f"forbidden {item}" for item in forbidden
+        ]
+        detail = (
+            "runtime strategy weights must be deterministic and independent of not_executable history: "
+            + ", ".join(problems)
+        )
     return ReadinessFinding(
         "strategy_executability_runtime_feedback",
         ok,
-        "ok"
-        if ok
-        else "not_executable strategy feedback must apply conservative runtime downweights and record reasons",
+        detail,
     )
 
 
@@ -1406,24 +1434,40 @@ def _check_strategy_weight_snapshot_audit(root: Path) -> ReadinessFinding:
         )
     cli_text = cli_path.read_text(encoding="utf-8")
     ledger_text = ledger_path.read_text(encoding="utf-8")
-    required_cli = (
+    required_cli_helpers = (
         "_runtime_weight_snapshot(",
-        '"strategy_weight_snapshot": weight_snapshot',
-        '"composite_score_raw"',
-        '"composite_score_normalized"',
-        '"base_score_before_composite"',
-        '"final_score_after_composite"',
+        "def _attach_runtime_weight_snapshot(",
+        '"strategy_weight_snapshot": snapshot',
     )
-    required_ledger = (
-        '"strategy_weight_snapshot"',
-        '"composite_score_raw"',
-        '"composite_score_normalized"',
-        '"base_score_before_composite"',
-        '"final_score_after_composite"',
+    scheduled_block = _cli_function_block(cli_text, "_run_scheduled_legacy")
+    required_scheduled = (
+        "screened_picks = _attach_runtime_weight_snapshot(",
+        "strategy_weights=weights",
     )
-    missing = [f"cli:{token}" for token in required_cli if token not in cli_text] + [
-        f"ledger:{token}" for token in required_ledger if token not in ledger_text
+    required_ledger_fields = (
+        "strategy_weight_snapshot",
+        "composite_score_raw",
+        "composite_score_normalized",
+        "base_score_before_composite",
+        "final_score_after_composite",
+    )
+    missing = [
+        f"cli:{token}" for token in required_cli_helpers if token not in cli_text
     ]
+    missing.extend(
+        f"scheduled:{token}"
+        for token in required_scheduled
+        if token not in scheduled_block
+    )
+    missing.extend(
+        f"ledger:{field}"
+        for field in required_ledger_fields
+        if not re.search(
+            rf'"{re.escape(field)}"\s*:\s*pick\.metrics\.get\s*\(\s*"{re.escape(field)}"',
+            ledger_text,
+            flags=re.DOTALL,
+        )
+    )
     return ReadinessFinding(
         "strategy_weight_snapshot_audit",
         not missing,
@@ -1439,31 +1483,36 @@ def _check_successful_runs(path: Path, *, root: Path) -> ReadinessFinding:
     pipeline_rows = _read_pipeline_history(root)
     daily_log_rows = _read_daily_log_history(root)
     ledger_run_rows = _read_ledger_run_history(root)
-    rows = history_rows + [
-        row
-        for row in pipeline_rows
-        if str(row.get("date") or "").strip()
-        not in {
-            str(item.get("date") or item.get("run_date") or "").strip()
-            for item in history_rows
-        }
-    ] + [
-        row
-        for row in daily_log_rows
-        if str(row.get("date") or row.get("run_date") or "").strip()
-        not in {
-            str(item.get("date") or item.get("run_date") or "").strip()
-            for item in history_rows + pipeline_rows
-        }
-    ] + [
-        row
-        for row in ledger_run_rows
-        if str(row.get("date") or row.get("run_date") or "").strip()
-        not in {
-            str(item.get("date") or item.get("run_date") or "").strip()
-            for item in history_rows + pipeline_rows + daily_log_rows
-        }
-    ]
+    rows = (
+        history_rows
+        + [
+            row
+            for row in pipeline_rows
+            if str(row.get("date") or "").strip()
+            not in {
+                str(item.get("date") or item.get("run_date") or "").strip()
+                for item in history_rows
+            }
+        ]
+        + [
+            row
+            for row in daily_log_rows
+            if str(row.get("date") or row.get("run_date") or "").strip()
+            not in {
+                str(item.get("date") or item.get("run_date") or "").strip()
+                for item in history_rows + pipeline_rows
+            }
+        ]
+        + [
+            row
+            for row in ledger_run_rows
+            if str(row.get("date") or row.get("run_date") or "").strip()
+            not in {
+                str(item.get("date") or item.get("run_date") or "").strip()
+                for item in history_rows + pipeline_rows + daily_log_rows
+            }
+        ]
+    )
     source_parts: list[str] = []
     if history_rows:
         source_parts.append("daily_run_history")
@@ -1731,10 +1780,7 @@ def _cron_wrapper_schedule_blocker(
     if not bad_schedules:
         return ""
     preview = ", ".join(bad_schedules[:2])
-    return (
-        f"{label}: unexpected wrapper cadence for {action} "
-        f'(cron="{preview}")'
-    )
+    return f'{label}: unexpected wrapper cadence for {action} (cron="{preview}")'
 
 
 def _cron_wrapper_legacy_frequency_blocker(
@@ -1759,10 +1805,7 @@ def _cron_wrapper_legacy_frequency_blocker(
         minute, hour, _dom, _month, weekday = fields
         weekday_normalized = weekday.replace("7", "0")
         if minute == "*/5" and hour == "*" and weekday_normalized == "*":
-            return (
-                f"{label}: legacy all-day */5 cadence for news "
-                f'(cron="{schedule}")'
-            )
+            return f'{label}: legacy all-day */5 cadence for news (cron="{schedule}")'
     return ""
 
 
@@ -1781,18 +1824,19 @@ def _schedule_matches_bt_action(*, schedule: str, action: str) -> bool:
         return True
     minute, hour, _dom, _month, weekday = fields
     normalized_action = action.strip().lower()
+    weekday_normalized = weekday.replace("7", "0")
+    weekday_only = weekday_normalized in {"1-5", "1,2,3,4,5"}
     if normalized_action == "intraday":
-        return minute == "*/10"
+        return minute == "*/10" and weekday_only
     if normalized_action == "monitor":
-        return minute == "*/15"
+        return minute == "*/15" and weekday_only
     if normalized_action == "daily":
-        return minute in {"0", "00"} and hour == "18"
+        return minute in {"0", "00"} and hour == "18" and weekday_only
     if normalized_action == "midday":
-        return minute in {"5", "05"} and hour == "12"
+        return minute in {"5", "05"} and hour == "12" and weekday_only
     if normalized_action == "coldstart":
-        return minute == "40" and hour == "19"
+        return minute == "40" and hour == "19" and weekday_only
     if normalized_action == "news":
-        weekday_normalized = weekday.replace("7", "0")
         is_weekday_run = (
             minute == "35"
             and hour == "8"
@@ -1814,12 +1858,8 @@ def _wrapper_time_gate_matches_action(*, text: str, action: str) -> bool:
     lowered = text.lower()
     if "time_check.py" not in lowered:
         return False
-    weekday_gate = (
-        'special_time=08:35' in text and 'time_list=1,2,3,4,5' in text
-    )
-    weekend_gate = (
-        'special_time=09:05' in text and 'time_list=6,7' in text
-    )
+    weekday_gate = "special_time=08:35" in text and "time_list=1,2,3,4,5" in text
+    weekend_gate = "special_time=09:05" in text and "time_list=6,7" in text
     return weekday_gate or weekend_gate
 
 
@@ -1882,10 +1922,9 @@ def _check_notify_state_paths(root: Path) -> list[ReadinessFinding]:
 
 def _check_notify_channels(root: Path) -> ReadinessFinding:
     env_path = root / ".env"
-    notify_enabled = (
-        str(read_env_value(env_path, "AQSP_NOTIFY") or "").strip().lower()
-        in {"1", "true", "yes", "on"}
-    )
+    notify_enabled = str(
+        read_env_value(env_path, "AQSP_NOTIFY") or ""
+    ).strip().lower() in {"1", "true", "yes", "on"}
     channel_keys = (
         "SERVERCHAN_SENDKEY",
         "WECHAT_WEBHOOK_URL",
@@ -2429,7 +2468,8 @@ def _check_special_strategy_ledger_guards(root: Path) -> ReadinessFinding:
     ok = (
         "with advisory_lock(path):" in ledger_text
         and "is_trading_day(today)" in helper
-        and "assert_fresh_data(frames, max_data_lag_days)" in helper
+        and "assert_fresh_data(" in helper
+        and 'workload="live_short"' in helper
         and "_special_strategy_ledger_write_allowed(" in morning_block
         and "_special_strategy_ledger_write_allowed(" in closing_block
         and "_fetch_special_strategy_frames(" in morning_block

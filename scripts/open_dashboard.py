@@ -1,11 +1,16 @@
 #!/usr/bin/env python3
-"""Render and serve the local AQSP dashboard without stealing focus."""
+"""Refresh artifacts and open the current Streamlit dashboard.
+
+Static HTML remains available through ``--render-only`` for pipeline artifacts;
+the normal local entry must use the same Streamlit app as production.
+"""
 # ruff: noqa: E402
 
 from __future__ import annotations
 
 import argparse
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -13,6 +18,7 @@ import urllib.request
 import webbrowser
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -20,17 +26,24 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from scripts.export_dashboard_db import export_db  # noqa: E402
 from scripts.render_dashboard import (
-    read_candidates,
+    read_debate_results,
+    read_preferred_candidates,
     read_ledger_rows,
     read_paper_rows,
     render_dashboard,
 )  # noqa: E402
 from aqsp.research.summary import load_research_summary  # noqa: E402
-from aqsp.utils.jsonl_io import atomic_write_text  # noqa: E402
+from aqsp.web.entrypoint import write_dashboard_artifact  # noqa: E402
 
 DEFAULT_HOST = "127.0.0.1"
-DEFAULT_PORT = 9876
+DEFAULT_PORT = 8501
 ALLOW_FOREGROUND_BROWSER_ENV = "AQSP_ALLOW_FOREGROUND_BROWSER"
+STREAMLIT_APP = PROJECT_ROOT / "src" / "aqsp" / "web" / "dashboard.py"
+CURRENT_DASHBOARD_MARKERS = (
+    "AQSP 日期任务研究台",
+    "短线决策看板",
+)
+DashboardPortStatus = Literal["free", "current", "occupied"]
 
 
 @dataclass(frozen=True)
@@ -43,6 +56,12 @@ class DashboardLaunchResult:
     browser_opened: bool
 
 
+@dataclass(frozen=True)
+class DashboardPortProbe:
+    status: DashboardPortStatus
+    detail: str
+
+
 def render_dashboard_bundle(
     *,
     csv_path: Path,
@@ -51,29 +70,123 @@ def render_dashboard_bundle(
     output_path: Path,
     db_path: Path,
     title: str,
+    intraday_csv_path: Path | None = None,
+    debate_path: Path = Path("data/debate_results.jsonl"),
 ) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    candidate_selection = read_preferred_candidates(
+        csv_path,
+        intraday_csv_path=intraday_csv_path,
+    )
     html_text = render_dashboard(
-        read_candidates(csv_path),
+        candidate_selection.candidates,
         read_ledger_rows(ledger_path),
         title,
         read_paper_rows(paper_ledger_path),
         load_research_summary(),
+        read_debate_results(debate_path),
     )
-    atomic_write_text(output_path, html_text)
-    export_db(csv_path, ledger_path, db_path)
+    write_dashboard_artifact(output_path, html_text)
+    export_db(candidate_selection.path, ledger_path, db_path)
 
 
 def _dashboard_url(host: str, port: int) -> str:
     return f"http://{host}:{port}"
 
 
-def _url_reachable(url: str) -> bool:
+def _read_url_text(url: str) -> str | None:
     try:
-        with urllib.request.urlopen(url, timeout=1.0) as response:
-            return 200 <= response.status < 500
+        request = urllib.request.Request(
+            url,
+            headers={"User-Agent": "aqsp-dashboard-launcher/1.0"},
+        )
+        with urllib.request.urlopen(request, timeout=1.0) as response:
+            return response.read().decode("utf-8", errors="replace")
     except Exception:
+        return None
+
+
+def _url_reachable(url: str) -> bool:
+    return _read_url_text(url) is not None
+
+
+def _tcp_port_reachable(host: str, port: int) -> bool:
+    import socket
+
+    probe_host = "127.0.0.1" if host in {"0.0.0.0", "::"} else host
+    try:
+        with socket.create_connection((probe_host, port), timeout=0.25):
+            return True
+    except OSError:
         return False
+
+
+def _listener_command(port: int) -> str:
+    """Return the command listening on a local TCP port when lsof is available."""
+    lsof = shutil.which("lsof")
+    if lsof is None:
+        return ""
+    try:
+        result = subprocess.run(
+            [lsof, "-nP", "-a", f"-iTCP:{port}", "-sTCP:LISTEN", "-Fp"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=1.0,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    pids = [line[1:] for line in result.stdout.splitlines() if line.startswith("p")]
+    commands: list[str] = []
+    for pid in pids:
+        try:
+            process = subprocess.run(
+                ["ps", "-p", pid, "-o", "command="],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=1.0,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        command = process.stdout.strip()
+        if command:
+            commands.append(command)
+    return "\n".join(commands)
+
+
+def probe_dashboard_port(host: str, port: int) -> DashboardPortProbe:
+    """Identify whether a port is free, current AQSP, or another application."""
+    url = _dashboard_url(host, port)
+    page = _read_url_text(url)
+    if page is not None:
+        if any(marker in page for marker in CURRENT_DASHBOARD_MARKERS):
+            return DashboardPortProbe("current", "current AQSP Streamlit dashboard")
+        health = _read_url_text(f"{url.rstrip('/')}/_stcore/health")
+        listener = _listener_command(port)
+        if health is not None and any(
+            token in listener
+            for token in (str(STREAMLIT_APP), "src/aqsp/web/dashboard.py")
+        ):
+            return DashboardPortProbe("current", "current AQSP Streamlit dashboard")
+        if health is not None:
+            return DashboardPortProbe("occupied", "another Streamlit application")
+        return DashboardPortProbe("occupied", "another HTTP application")
+    if _tcp_port_reachable(host, port):
+        return DashboardPortProbe(
+            "occupied", "an application accepting TCP connections"
+        )
+    return DashboardPortProbe("free", "no application is listening")
+
+
+def _port_conflict_error(host: str, port: int, detail: str) -> RuntimeError:
+    return RuntimeError(
+        f"dashboard port {host}:{port} is occupied by {detail}, not the current "
+        f"production app ({STREAMLIT_APP}). AQSP will not silently reuse it. "
+        f"Stop the old app or explicitly switch ports with "
+        f"`python3 scripts/open_dashboard.py --port 8502` or "
+        f"`DASHBOARD_PORT=8502 bash scripts/start_dashboard.sh`."
+    )
 
 
 def foreground_browser_allowed() -> bool:
@@ -90,31 +203,52 @@ def ensure_dashboard_server(
     log_path: Path,
 ) -> tuple[bool, int | None]:
     url = _dashboard_url(host, port)
-    if _url_reachable(url):
+    initial_probe = probe_dashboard_port(host, port)
+    if initial_probe.status == "current":
         return False, None
+    if initial_probe.status == "occupied":
+        raise _port_conflict_error(host, port, initial_probe.detail)
 
     log_path.parent.mkdir(parents=True, exist_ok=True)
+    if not STREAMLIT_APP.is_file():
+        raise RuntimeError(f"current Streamlit dashboard is missing: {STREAMLIT_APP}")
+
+    env = os.environ.copy()
+    python_path = [str(PROJECT_ROOT / "src"), str(PROJECT_ROOT)]
+    if env.get("PYTHONPATH"):
+        python_path.append(env["PYTHONPATH"])
+    env["PYTHONPATH"] = os.pathsep.join(python_path)
     with log_path.open("ab") as log_file:
         process = subprocess.Popen(
             [
                 sys.executable,
                 "-m",
-                "http.server",
-                str(port),
-                "--bind",
+                "streamlit",
+                "run",
+                str(STREAMLIT_APP),
+                "--server.address",
                 host,
-                "-d",
-                str(directory),
+                "--server.port",
+                str(port),
+                "--server.headless",
+                "true",
             ],
             stdout=log_file,
             stderr=log_file,
+            cwd=str(PROJECT_ROOT),
+            env=env,
             start_new_session=True,
         )
 
     for _ in range(20):
         time.sleep(0.25)
-        if _url_reachable(url):
+        probe = probe_dashboard_port(host, port)
+        if probe.status == "current":
             return True, process.pid
+        if probe.status == "occupied":
+            process.terminate()
+            process.wait(timeout=2)
+            raise _port_conflict_error(host, port, probe.detail)
 
     process.terminate()
     try:
@@ -132,21 +266,27 @@ def open_dashboard(
     paper_ledger_path: Path,
     output_path: Path,
     db_path: Path,
+    intraday_csv_path: Path | None = None,
+    debate_path: Path = Path("data/debate_results.jsonl"),
     host: str = DEFAULT_HOST,
     port: int = DEFAULT_PORT,
     title: str = "AQSP 量化选股面板",
     open_browser: bool = False,
     render_only: bool = False,
+    render_static_artifact: bool = False,
     log_path: Path | None = None,
 ) -> DashboardLaunchResult:
-    render_dashboard_bundle(
-        csv_path=csv_path,
-        ledger_path=ledger_path,
-        paper_ledger_path=paper_ledger_path,
-        output_path=output_path,
-        db_path=db_path,
-        title=title,
-    )
+    if render_only or render_static_artifact:
+        render_dashboard_bundle(
+            csv_path=csv_path,
+            ledger_path=ledger_path,
+            paper_ledger_path=paper_ledger_path,
+            intraday_csv_path=intraday_csv_path,
+            output_path=output_path,
+            db_path=db_path,
+            title=title,
+            debate_path=debate_path,
+        )
 
     pid: int | None = None
     server_started = False
@@ -178,6 +318,8 @@ def main() -> int:
     parser.add_argument("--csv", default="reports/latest.csv")
     parser.add_argument("--ledger", default="data/predictions.jsonl")
     parser.add_argument("--paper-ledger", default="data/paper_trades.jsonl")
+    parser.add_argument("--intraday-csv", default="reports/intraday_latest.csv")
+    parser.add_argument("--debate", default="data/debate_results.jsonl")
     parser.add_argument("--output", default="dist/dashboard/index.html")
     parser.add_argument("--db", default="dist/dashboard/aqsp.db")
     parser.add_argument("--title", default="AQSP 量化选股面板")
@@ -185,6 +327,11 @@ def main() -> int:
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument("--log", default="logs/dashboard/server.log")
     parser.add_argument("--render-only", action="store_true")
+    parser.add_argument(
+        "--check-port",
+        action="store_true",
+        help="Check the port identity without rendering or starting a server.",
+    )
     browser_group = parser.add_mutually_exclusive_group()
     browser_group.add_argument(
         "--open-browser",
@@ -201,21 +348,40 @@ def main() -> int:
     parser.set_defaults(open_browser=False)
     args = parser.parse_args()
 
-    result = open_dashboard(
-        csv_path=Path(args.csv),
-        ledger_path=Path(args.ledger),
-        paper_ledger_path=Path(args.paper_ledger),
-        output_path=Path(args.output),
-        db_path=Path(args.db),
-        host=args.host,
-        port=args.port,
-        title=args.title,
-        open_browser=args.open_browser,
-        render_only=args.render_only,
-        log_path=Path(args.log),
-    )
-    print(f"dashboard={result.output_path}")
-    print(f"dashboard_db={result.db_path}")
+    if args.check_port:
+        probe = probe_dashboard_port(args.host, args.port)
+        if probe.status == "occupied":
+            print(
+                f"error={_port_conflict_error(args.host, args.port, probe.detail)}",
+                file=sys.stderr,
+            )
+            return 2
+        print(f"port_status={probe.status}")
+        return 0
+
+    try:
+        result = open_dashboard(
+            csv_path=Path(args.csv),
+            ledger_path=Path(args.ledger),
+            paper_ledger_path=Path(args.paper_ledger),
+            intraday_csv_path=Path(args.intraday_csv),
+            output_path=Path(args.output),
+            db_path=Path(args.db),
+            debate_path=Path(args.debate),
+            host=args.host,
+            port=args.port,
+            title=args.title,
+            open_browser=args.open_browser,
+            render_only=args.render_only,
+            render_static_artifact=args.render_only,
+            log_path=Path(args.log),
+        )
+    except RuntimeError as exc:
+        print(f"error={exc}", file=sys.stderr)
+        return 2
+    if args.render_only:
+        print(f"dashboard={result.output_path}")
+        print(f"dashboard_db={result.db_path}")
     if not args.render_only:
         print(f"url={result.url}")
         if result.server_started:

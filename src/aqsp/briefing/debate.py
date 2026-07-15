@@ -17,7 +17,6 @@ from aqsp.briefing.agent_roles import (
     DEFAULT_AGENT_ROLE_ORDER,
     agent_role_challenge_style,
     agent_role_description,
-    agent_role_emoji,
     agent_role_focus,
     agent_role_label,
     parse_agent_roles as _parse_agent_roles,
@@ -64,6 +63,7 @@ class DebateRound:
     opinions: list[AgentOpinion]
     summary: str = ""
     cross_opinions: dict[str, list[str]] = field(default_factory=dict)  # 跨角色观点
+    interaction_pairs: tuple[tuple[str, str], ...] = field(default_factory=tuple)
 
 
 @dataclass
@@ -112,6 +112,9 @@ class DebateResult:
     rating: str
     rounds: list[DebateRound] = field(default_factory=list)
     debate_rounds_requested: int = 0
+    expected_roles: tuple[str, ...] = field(default_factory=tuple)
+    data_status: Literal["available", "empty"] = "available"
+    data_note: str = ""
 
     # 溯源信息
     thresholds_version: str = ""
@@ -154,6 +157,7 @@ class DebateResult:
     cross_market_conflict_event_count: int = 0
     cross_market_evidence_stack_summary: str = ""
     real_message_evidence: tuple[str, ...] = field(default_factory=tuple)
+    cross_market_evidence: tuple[str, ...] = field(default_factory=tuple)
     rule_transmission_evidence: tuple[str, ...] = field(default_factory=tuple)
     pending_confirmations: tuple[str, ...] = field(default_factory=tuple)
 
@@ -217,6 +221,9 @@ class DebateResult:
                         for opinion in round_data.opinions
                     ],
                     "cross_opinions": round_data.cross_opinions,
+                    "interaction_pairs": [
+                        list(pair) for pair in round_data.interaction_pairs
+                    ],
                 }
                 for round_data in self.rounds
             ],
@@ -224,6 +231,9 @@ class DebateResult:
             "regime": self.regime,
             "data_source": self.data_source,
             "related_signal_date": self.related_signal_date,
+            "expected_roles": list(self.expected_roles),
+            "data_status": self.data_status,
+            "data_note": self.data_note,
             "candidate_fingerprint": self.candidate_fingerprint,
             "market_context_lines": list(self.market_context_lines),
             "disagreement_score": self.disagreement_score,
@@ -252,6 +262,7 @@ class DebateResult:
             "cross_market_conflict_event_count": self.cross_market_conflict_event_count,
             "cross_market_evidence_stack_summary": self.cross_market_evidence_stack_summary,
             "real_message_evidence": list(self.real_message_evidence),
+            "cross_market_evidence": list(self.cross_market_evidence),
             "rule_transmission_evidence": list(self.rule_transmission_evidence),
             "pending_confirmations": list(self.pending_confirmations),
             "runtime_status": self.runtime_status,
@@ -283,6 +294,12 @@ class DebateResult:
             },
             "advisory_adjusted_score": self.adjusted_score,
             "adjusted_score_is_advisory": self.advisory_only,
+            "score_boundary": {
+                "deterministic_score": deterministic_score,
+                "original_score": self.original_score,
+                "unchanged": self.deterministic_score_unchanged,
+                "advisory_only": self.advisory_only,
+            },
         }
 
 
@@ -1109,11 +1126,15 @@ class AShareDebateAgent:
 
     @staticmethod
     def _cross_market_support_event_count(pick: PickResult) -> int:
-        return int(pick.metrics.get("cross_market_support_event_count", 0) or 0)
+        return _nonnegative_int(
+            (pick.metrics or {}).get("cross_market_support_event_count", 0)
+        )
 
     @staticmethod
     def _cross_market_conflict_event_count(pick: PickResult) -> int:
-        return int(pick.metrics.get("cross_market_conflict_event_count", 0) or 0)
+        return _nonnegative_int(
+            (pick.metrics or {}).get("cross_market_conflict_event_count", 0)
+        )
 
     @classmethod
     def _cross_market_evidence_counts(
@@ -1230,11 +1251,7 @@ class AShareDebateAgent:
         pick: PickResult,
         field: str,
     ) -> tuple[str, ...]:
-        return tuple(
-            str(item).strip()
-            for item in (pick.metrics.get(field) or ())
-            if str(item).strip()
-        )
+        return _text_items((pick.metrics or {}).get(field))
 
     @staticmethod
     def _parse_cross_market_evidence_stack_summary(summary: str) -> tuple[int, int]:
@@ -1312,11 +1329,8 @@ class AShareDebateAgent:
         return updated_opinion
 
     def _generate_peer_review(self, other: AgentOpinion, peer_point: str) -> str:
-        """Record a review of a concrete peer point without inventing facts."""
-        return (
-            f"【复核{agent_role_label(other.role, self.language)}】"
-            f"已核对其观点“{peer_point}”，本轮将其保留为待确认项。"
-        )
+        """Record a structured review of a concrete peer point."""
+        return f"复核对象={other.role.value}; 证据={peer_point}"
 
     @staticmethod
     def _first_meaningful_point(points: list[str]) -> str:
@@ -1351,43 +1365,12 @@ class AShareDebateAgent:
         other: AgentOpinion,
         my_opinion: AgentOpinion,
     ) -> str:
-        """生成针对性质疑"""
-        if self.role == AgentRole.BULL:
-            if other.role == AgentRole.BEAR:
-                return "【反驳Bear】短期波动不改中期趋势"
-            elif other.role == AgentRole.RISK_CONTROL:
-                return "【反驳风控】风险已在评分中体现"
-        elif self.role == AgentRole.BEAR:
-            if other.role == AgentRole.BULL:
-                return "【反驳Bull】基本面未好转前需谨慎"
-        elif self.role == AgentRole.RISK_CONTROL:
-            if other.role == AgentRole.BULL:
-                return "【风控提醒】需设置更严格的止损位"
-        elif self.role == AgentRole.SECTOR_LEADER:
-            if other.role == AgentRole.BULL:
-                return "【板块提醒】热点切换可能影响持续性"
-        elif self.role == AgentRole.POLICY_SENSITIVE:
-            if other.role == AgentRole.BULL:
-                return "【政策提醒】需持续关注监管动态"
-        elif self.role == AgentRole.CROSS_MARKET:
-            if other.role == AgentRole.BULL:
-                return "【跨市传导】先确认A股板块是否真的接力，不只看海外叙事"
-            if other.role == AgentRole.SECTOR_LEADER:
-                return "【跨市传导】板块共振若不扩散，题材映射持续性有限"
-        elif self.role == AgentRole.MARGIN_TRADING:
-            if other.role == AgentRole.BULL:
-                return "【融资提醒】杠杆资金动向需关注"
-        elif self.role == AgentRole.NORTHBOUND:
-            if other.role == AgentRole.BULL:
-                return "【外资提醒】北向资金持续性待观察"
-        elif self.role == AgentRole.RETAIL_MOOD:
-            if other.role == AgentRole.BULL:
-                return "【情绪提醒】警惕情绪过热后的回调"
-
         peer_point = self._first_meaningful_point(
             other.arguments or other.risk_factors or other.opportunity_factors
         )
-        return f"【{other.role.value}】{peer_point}" if peer_point else ""
+        if not peer_point:
+            return ""
+        return f"质询对象={other.role.value}; 待核对证据={peer_point}"
 
 
 class AShareDebateCoordinator:
@@ -1457,6 +1440,11 @@ class AShareDebateCoordinator:
             original_score=pick.score,
             rating=pick.rating,
             debate_rounds_requested=self.max_rounds,
+            expected_roles=tuple(agent.role.value for agent in self.agents),
+            data_status="empty" if df.empty else "available",
+            data_note=(
+                "行情数据为空，讨论只保留阻塞记录，不形成证据结论。" if df.empty else ""
+            ),
             thresholds_version=self.thresholds_version,
             regime=self.regime,
             data_source=self.data_source,
@@ -1475,6 +1463,10 @@ class AShareDebateCoordinator:
             result.rule_transmission_evidence,
             result.pending_confirmations,
         ) = self._extract_evidence_provenance(pick, result.market_context_lines)
+        result.cross_market_evidence = self._extract_cross_market_evidence(
+            pick,
+            result.market_context_lines,
+        )
         result.role_selection_summary = summarize_context_agent_roles(
             pick,
             selected_roles=tuple(agent.role for agent in self.agents),
@@ -1492,6 +1484,34 @@ class AShareDebateCoordinator:
             result.cross_market_conflict_event_count,
             result.cross_market_evidence_stack_summary,
         ) = self._extract_cross_market_evidence_context(result.market_context_lines)
+        if not result.cross_market_evidence_stack_summary:
+            metrics = pick.metrics or {}
+            result.cross_market_support_event_count = _nonnegative_int(
+                metrics.get("cross_market_support_event_count", 0)
+            )
+            result.cross_market_conflict_event_count = _nonnegative_int(
+                metrics.get("cross_market_conflict_event_count", 0)
+            )
+            result.cross_market_evidence_stack_summary = str(
+                metrics.get("cross_market_evidence_stack_summary", "") or ""
+            ).strip()
+
+        if df.empty:
+            result.runtime_status = "blocked"
+            result.realtime_blocked = True
+            result.runtime_blocker = "行情数据为空"
+            result.recommended_adjustment = "keep"
+            result.adjustment_weight = 0.0
+            result.adjusted_score = result.original_score
+            result.deterministic_score_unchanged = True
+            result.primary_risk_gate = "行情数据为空"
+            result.research_verdict = "结论阻断：行情数据为空，仅记录待补行情。"
+            result.next_trigger = (
+                "行情数据恢复并通过 freshness 校验后，重新运行多 Agent 讨论。"
+            )
+            quality = _audit_result_quality(result)
+            result.failure = "讨论链路未通过审计: " + "、".join(quality.issues)
+            return result
 
         if not self.agents:
             result.failure = "未配置可用讨论角色"
@@ -1573,9 +1593,9 @@ class AShareDebateCoordinator:
             "news_catalyst_supporting_evidence",
             "news_catalyst_contradicting_evidence",
         ):
-            for item in metrics.get(field_name) or ():
-                text = str(item).strip()
-                if text:
+            for item in _text_items(metrics.get(field_name)):
+                if not _is_non_evidence_text(item):
+                    text = item
                     messages.append(text)
         if not messages:
             for raw in market_context_lines:
@@ -1591,8 +1611,15 @@ class AShareDebateCoordinator:
             or metrics.get("news_catalyst_transmission_hypothesis", "")
             or ""
         ).strip()
-        if hypothesis:
+        if hypothesis and not _is_non_evidence_text(hypothesis):
             rules.append(f"传导假设: {hypothesis}")
+        for field_name, label in (
+            ("cross_market_transmission_path", "传导路径"),
+            ("cross_market_chain_summary", "传导链"),
+        ):
+            for item in _text_items(metrics.get(field_name)):
+                if not _is_non_evidence_text(item):
+                    rules.append(f"{label}: {item}")
         for raw in market_context_lines:
             text = str(raw).strip()
             if text.startswith(
@@ -1606,9 +1633,9 @@ class AShareDebateCoordinator:
             ("cross_market_invalidation_signals", "失效"),
             ("cross_market_execution_watchpoints", "盘中观察"),
         ):
-            for item in metrics.get(field_name) or ():
-                text = str(item).strip()
-                if text:
+            for item in _text_items(metrics.get(field_name)):
+                if not _is_non_evidence_text(item):
+                    text = item
                     pending.append(f"{label}: {text}")
         for raw in market_context_lines:
             text = str(raw).strip()
@@ -1619,6 +1646,32 @@ class AShareDebateCoordinator:
             return tuple(dict.fromkeys(item for item in values if item))
 
         return dedupe(messages), dedupe(rules), dedupe(pending)
+
+    @staticmethod
+    def _extract_cross_market_evidence(
+        pick: PickResult,
+        market_context_lines: tuple[str, ...],
+    ) -> tuple[str, ...]:
+        """Keep sourced cross-market evidence separate from its transmission rule."""
+        metrics = pick.metrics or {}
+        values: list[str] = []
+        for field_name in (
+            "cross_market_supporting_evidence",
+            "cross_market_contradicting_evidence",
+            "cross_market_evidence_points",
+        ):
+            values.extend(
+                item
+                for item in _text_items(metrics.get(field_name))
+                if not _is_non_evidence_text(item)
+            )
+        for raw in market_context_lines:
+            text = str(raw).strip()
+            if text.startswith("跨市证据:"):
+                value = text[len("跨市证据:") :].strip()
+                if value and not _is_non_evidence_text(value):
+                    values.append(value)
+        return tuple(dict.fromkeys(values))
 
     @staticmethod
     def _apply_runtime_block(result: DebateResult, blocker: str) -> None:
@@ -1665,6 +1718,7 @@ class AShareDebateCoordinator:
                 opinions=round1_opinions,
                 summary=self._summarize_round(round1_opinions),
                 cross_opinions=self._collect_cross_opinions(round1_opinions),
+                interaction_pairs=(),
             )
         )
 
@@ -1694,6 +1748,7 @@ class AShareDebateCoordinator:
                     opinions=current_opinions,
                     summary=self._summarize_round(current_opinions),
                     cross_opinions=self._collect_cross_opinions(current_opinions),
+                    interaction_pairs=self._collect_interaction_pairs(current_opinions),
                 )
             )
 
@@ -1744,6 +1799,22 @@ class AShareDebateCoordinator:
             parts.append(f"交锋焦点: {clash_line}")
         return "；".join(parts)
 
+    @staticmethod
+    def _collect_interaction_pairs(
+        opinions: list[AgentOpinion],
+    ) -> tuple[tuple[str, str], ...]:
+        pairs: list[tuple[str, str]] = []
+        for opinion in opinions:
+            source = opinion.role.value
+            for target in (
+                *opinion.counterargument_roles,
+                *opinion.peer_reviewed_roles,
+            ):
+                pair = (source, str(target).strip())
+                if pair[1] and pair not in pairs:
+                    pairs.append(pair)
+        return tuple(pairs)
+
     def _collect_cross_opinions(
         self,
         opinions: list[AgentOpinion],
@@ -1785,7 +1856,16 @@ class AShareDebateCoordinator:
             counter = self._first_meaningful_point(opinion.counterarguments)
             if not counter:
                 continue
-            items.append(f"{agent_role_label(opinion.role, self.language)} {counter}")
+            targets = tuple(
+                dict.fromkeys(
+                    (*opinion.counterargument_roles, *opinion.peer_reviewed_roles)
+                )
+            )
+            if targets:
+                items.append(
+                    f"{agent_role_label(opinion.role, self.language)}质询"
+                    f"{'、'.join(targets[:3])}"
+                )
             if len(items) >= 2:
                 break
         return "；".join(items)
@@ -2041,9 +2121,16 @@ class AShareDebateCoordinator:
         for opinion in final_opinions:
             counter = self._first_meaningful_point(opinion.counterarguments)
             if counter:
-                points.append(
-                    f"{agent_role_label(opinion.role, self.language)}关注: {counter}"
+                targets = tuple(
+                    dict.fromkeys(
+                        (*opinion.counterargument_roles, *opinion.peer_reviewed_roles)
+                    )
                 )
+                if targets:
+                    points.append(
+                        f"{agent_role_label(opinion.role, self.language)}已质询: "
+                        f"{'、'.join(targets[:3])}"
+                    )
         return self._dedupe_points(points, limit=3)
 
     def _build_primary_risk_gate(self, result: DebateResult) -> str:
@@ -2299,14 +2386,36 @@ _NON_EVIDENCE_PHRASES = (
 )
 
 
+def _text_items(value: object) -> tuple[str, ...]:
+    """Normalize scalar/list evidence fields without splitting strings into chars."""
+    if isinstance(value, str):
+        text = value.strip()
+        return (text,) if text else ()
+    if isinstance(value, (set, frozenset)):
+        value = sorted(value, key=str)
+    if isinstance(value, (list, tuple)):
+        return tuple(text for item in value if (text := str(item).strip()))
+    return ()
+
+
+def _nonnegative_int(value: object) -> int:
+    try:
+        return max(0, int(value or 0))
+    except (TypeError, ValueError, OverflowError):
+        return 0
+
+
 def _is_non_evidence_text(value: object) -> bool:
     text = str(value or "").strip()
     return not text or any(marker in text for marker in _NON_EVIDENCE_PHRASES)
 
 
 def _has_substantive_debate_evidence(result: DebateResult) -> bool:
+    if result.data_status != "available":
+        return False
     values: list[str] = []
     values.extend(result.real_message_evidence)
+    values.extend(result.cross_market_evidence)
     values.extend(result.rule_transmission_evidence)
     for round_data in result.rounds:
         for opinion in round_data.opinions:
@@ -2349,7 +2458,7 @@ def _audit_result_quality(result: DebateResult):
 
     return audit_debate_quality(
         result,
-        expected_roles=debate_active_roles(result),
+        expected_roles=(result.expected_roles or debate_active_roles(result)),
     )
 
 
@@ -2400,6 +2509,7 @@ def format_debate_result(result: DebateResult) -> str:
         f"- 原始评分: **{result.original_score}** ({result.rating})",
         f"- 最终共识: **{result.final_consensus}**",
         f"- 纸面复核口径: **{_debate_adjustment_label(result.recommended_adjustment)}**",
+        "- 结论边界: advisory-only；确定性评分保持不变",
         "",
     ]
 
@@ -2447,6 +2557,13 @@ def format_debate_result(result: DebateResult) -> str:
             lines.append(f"- {line}")
         lines.append("")
 
+    lines.append("## 数据状态")
+    if result.data_status == "available":
+        lines.append("- 行情数据: 可用")
+    else:
+        lines.append(f"- 行情数据: 空数据，{result.data_note or '不形成证据结论'}")
+    lines.append("")
+
     provenance = debate_evidence_provenance(result)
     lines.append("## 证据分层")
     lines.append(
@@ -2455,6 +2572,14 @@ def format_debate_result(result: DebateResult) -> str:
             "；".join(provenance.real_messages)
             if provenance.real_messages
             else "无可用消息证据"
+        )
+    )
+    lines.append(
+        "- 跨市证据: "
+        + (
+            "；".join(provenance.cross_market_evidence)
+            if provenance.cross_market_evidence
+            else "无可用跨市证据"
         )
     )
     lines.append(
@@ -2528,24 +2653,18 @@ def format_debate_result(result: DebateResult) -> str:
     bearish_count = sum(1 for v in result.final_vote.values() if v == "bearish")
     neutral_count = sum(1 for v in result.final_vote.values() if v == "neutral")
 
-    lines.append(f"- 🐂 看多: {bullish_count} 票")
-    lines.append(f"- 🐻 看空: {bearish_count} 票")
-    lines.append(f"- ⚖️ 中性: {neutral_count} 票")
+    lines.append(f"- 看多: {bullish_count} 票")
+    lines.append(f"- 看空: {bearish_count} 票")
+    lines.append(f"- 中性: {neutral_count} 票")
     lines.append("")
 
-    # 各 Agent 观点
-    lines.append("## 各Agent观点")
+    # 只输出结构化角色状态和交锋对象，不输出原始模型话术。
+    lines.append("## 各角色状态")
     for opinion in result.final_vote.keys():
-        emoji = agent_role_emoji(opinion)
         name = agent_role_label(opinion, language="zh-CN")
         stance = result.final_vote[opinion]
-        stance_emoji = {"bullish": "🐂", "bearish": "🐻", "neutral": "⚖️"}.get(
-            stance, ""
-        )
+        lines.append(f"- {name}: {stance}")
 
-        lines.append(f"\n### {emoji} {name} {stance_emoji}")
-
-        # 找对应的观点详情
         final_round = result.rounds[-1] if result.rounds else None
         if final_round:
             detail = next(
@@ -2553,19 +2672,13 @@ def format_debate_result(result: DebateResult) -> str:
                 None,
             )
             if detail:
-                lines.append(f"**立场**: {stance}")
-                if detail.risk_factors:
-                    lines.append("**风险因素**:")
-                    for rf in detail.risk_factors[:2]:
-                        lines.append(f"- {rf}")
-                if detail.opportunity_factors:
-                    lines.append("**机会因素**:")
-                    for of in detail.opportunity_factors[:2]:
-                        lines.append(f"- {of}")
-                if detail.counterarguments:
-                    lines.append("**反驳意见**:")
-                    for ca in detail.counterarguments[:2]:
-                        lines.append(f"- {ca}")
+                targets = tuple(
+                    dict.fromkeys(
+                        (*detail.counterargument_roles, *detail.peer_reviewed_roles)
+                    )
+                )
+                if targets:
+                    lines.append(f"  - 质询/复核对象: {'、'.join(targets[:4])}")
 
     lines.append("")
     return "\n".join(lines)

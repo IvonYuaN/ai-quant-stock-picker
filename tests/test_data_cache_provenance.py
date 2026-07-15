@@ -178,7 +178,9 @@ def test_cache_migrates_legacy_tables_to_workload_partitioned_keys(
     with sqlite3.connect(path) as conn:
         ohlcv_pk = [
             row[1]
-            for row in sorted(conn.execute("PRAGMA table_info(ohlcv)"), key=lambda row: row[5])
+            for row in sorted(
+                conn.execute("PRAGMA table_info(ohlcv)"), key=lambda row: row[5]
+            )
             if row[5]
         ]
         index_pk = [
@@ -192,17 +194,37 @@ def test_cache_migrates_legacy_tables_to_workload_partitioned_keys(
     assert ohlcv_pk == ["symbol", "date", "price_mode", "workload"]
     assert index_pk == ["code", "date", "workload"]
     cache.set_ohlcv(
-        "600000", _ohlcv_frame(date(2024, 1, 2)), source="eastmoney", workload="historical"
+        "600000",
+        _ohlcv_frame(date(2024, 1, 2)),
+        source="eastmoney",
+        workload="historical",
     )
     cache.set_ohlcv(
-        "600000", _ohlcv_frame(date(2024, 1, 2)), source="eastmoney", workload="live_short"
+        "600000",
+        _ohlcv_frame(date(2024, 1, 2)),
+        source="eastmoney",
+        workload="live_short",
     )
-    assert cache.get_ohlcv(
-        "600000", date(2024, 1, 2), date(2024, 1, 2), source="eastmoney", workload="historical"
-    ) is not None
-    assert cache.get_ohlcv(
-        "600000", date(2024, 1, 2), date(2024, 1, 2), source="eastmoney", workload="live_short"
-    ) is not None
+    assert (
+        cache.get_ohlcv(
+            "600000",
+            date(2024, 1, 2),
+            date(2024, 1, 2),
+            source="eastmoney",
+            workload="historical",
+        )
+        is not None
+    )
+    assert (
+        cache.get_ohlcv(
+            "600000",
+            date(2024, 1, 2),
+            date(2024, 1, 2),
+            source="eastmoney",
+            workload="live_short",
+        )
+        is not None
+    )
 
 
 def test_cache_without_provenance_fails_closed_for_live_short_but_history_works(

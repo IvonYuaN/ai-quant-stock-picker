@@ -5,6 +5,7 @@
 #   /bin/bash /opt/aqsp/scripts/bt_task.sh intraday
 #   /bin/bash /opt/aqsp/scripts/bt_task.sh midday
 #   /bin/bash /opt/aqsp/scripts/bt_task.sh coldstart
+#   /bin/bash /opt/aqsp/scripts/bt_task.sh walkforward-gate
 #   /bin/bash /opt/aqsp/scripts/bt_task.sh monitor
 #   /bin/bash /opt/aqsp/scripts/bt_task.sh news
 #   /bin/bash /opt/aqsp/scripts/bt_task.sh status
@@ -30,13 +31,14 @@ log() {
 
 usage() {
     cat <<'EOF'
-Usage: bt_task.sh <daily|intraday|midday|coldstart|monitor|news|status>
+Usage: bt_task.sh <daily|intraday|midday|coldstart|walkforward-gate|monitor|news|status>
 
 BT panel examples:
   /bin/bash /opt/aqsp/scripts/bt_task.sh intraday
   /bin/bash /opt/aqsp/scripts/bt_task.sh daily
   /bin/bash /opt/aqsp/scripts/bt_task.sh midday
   /bin/bash /opt/aqsp/scripts/bt_task.sh coldstart
+  /bin/bash /opt/aqsp/scripts/bt_task.sh walkforward-gate
   /bin/bash /opt/aqsp/scripts/bt_task.sh monitor
   /bin/bash /opt/aqsp/scripts/bt_task.sh news
 
@@ -46,6 +48,7 @@ Recommended BT schedule (Asia/Shanghai):
   midday    12:05 Mon-Fri
   daily     18:00 Mon-Fri
   coldstart 19:40 Mon-Fri
+  walkforward-gate manual/controlled after coldstart reaches 30/30
   monitor   every 15 min
   status    manual only
 
@@ -131,6 +134,84 @@ sync_code_only() {
             return 0
         }
 
+managed_overlay_allows_dirty_state() {
+            local dirty_tracked="$1"
+            DIRTY_TRACKED_TEXT="$dirty_tracked" \
+            RUNTIME_OVERLAY_MANIFEST_PATH="${AQSP_RUNTIME_OVERLAY_MANIFEST:-${PROJECT_ROOT}/.state/runtime-sync-overlay.json}" \
+            python3 - <<'PY'
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+from pathlib import Path
+
+project_root = Path.cwd().resolve()
+manifest_path = Path(os.environ["RUNTIME_OVERLAY_MANIFEST_PATH"]).resolve()
+if not manifest_path.exists():
+    raise SystemExit(1)
+
+try:
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+except Exception:
+    raise SystemExit(1)
+
+managed_raw = manifest.get("managed_files")
+expected_hashes = manifest.get("file_hashes")
+if not isinstance(managed_raw, list) or not managed_raw:
+    raise SystemExit(1)
+if not isinstance(expected_hashes, dict):
+    raise SystemExit(1)
+
+managed = set()
+for raw_path in managed_raw:
+    if not isinstance(raw_path, str) or not raw_path.strip():
+        raise SystemExit(1)
+    relative = Path(raw_path)
+    if relative.is_absolute() or ".." in relative.parts:
+        raise SystemExit(1)
+    if relative.as_posix() != raw_path:
+        raise SystemExit(1)
+    managed.add(raw_path)
+
+dirty_lines = [
+    line.rstrip("\n")
+    for line in os.environ.get("DIRTY_TRACKED_TEXT", "").splitlines()
+    if line.strip()
+]
+if not dirty_lines:
+    raise SystemExit(1)
+
+for line in dirty_lines:
+    if len(line) < 4:
+        raise SystemExit(1)
+    status = line[:2]
+    path = line[3:].strip()
+    if path not in managed:
+        raise SystemExit(1)
+    if not any(ch == "M" for ch in status) or any(
+        ch not in {" ", "M"} for ch in status
+    ):
+        raise SystemExit(1)
+    expected_hash = str(expected_hashes.get(path) or "").strip()
+    if len(expected_hash) != 64 or any(
+        ch not in "0123456789abcdefABCDEF" for ch in expected_hash
+    ):
+        raise SystemExit(1)
+    file_path = (project_root / path).resolve()
+    try:
+        file_path.relative_to(project_root)
+    except ValueError:
+        raise SystemExit(1)
+    if not file_path.is_file():
+        raise SystemExit(1)
+    if hashlib.sha256(file_path.read_bytes()).hexdigest() != expected_hash:
+        raise SystemExit(1)
+
+print(len(dirty_lines))
+PY
+        }
+
         acquire_git_sync_lock || exit 1
         trap 'release_git_sync_lock' EXIT
 
@@ -140,16 +221,35 @@ sync_code_only() {
         git update-index --refresh >/dev/null 2>&1 || true
         dirty_tracked="$(git status --porcelain --untracked-files=no)"
         if [ -n "$dirty_tracked" ]; then
+            if overlay_match_count="$(managed_overlay_allows_dirty_state "$dirty_tracked" 2>/dev/null)"; then
+                log "检测到受控 runtime overlay，跳过 Git 同步后继续运行 count=${overlay_match_count}"
+                log "本次跳过 Git fetch/pull；等待仓库回归 clean 后再恢复自动同步"
+                return 0
+            fi
             log "检测到受 Git 管理的本地修改，拒绝自动覆盖："
             printf '%s\n' "$dirty_tracked" | tee -a "$RUN_LOG"
             exit 1
         fi
 
+        set +e
         git fetch "$REMOTE" "$BRANCH" 2>&1 | tee -a "$RUN_LOG"
+        git_fetch_exit_code=${PIPESTATUS[0]}
+        set -e
+        if [ "$git_fetch_exit_code" -ne 0 ]; then
+            log "Git fetch 失败，退出码: ${git_fetch_exit_code}"
+            exit "$git_fetch_exit_code"
+        fi
         local_head="$(git rev-parse HEAD)"
         remote_head="$(git rev-parse "${REMOTE}/${BRANCH}")"
         if [ "$local_head" != "$remote_head" ]; then
+            set +e
             git pull --ff-only "$REMOTE" "$BRANCH" 2>&1 | tee -a "$RUN_LOG"
+            git_pull_exit_code=${PIPESTATUS[0]}
+            set -e
+            if [ "$git_pull_exit_code" -ne 0 ]; then
+                log "Git pull 失败，退出码: ${git_pull_exit_code}"
+                exit "$git_pull_exit_code"
+            fi
         else
             log "代码已是最新"
         fi
@@ -157,7 +257,9 @@ sync_code_only() {
 }
 
 is_truthy() {
-    [[ "${1,,}" =~ ^(1|true|yes|on)$ ]]
+    local value
+    value="$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')"
+    [[ "$value" =~ ^(1|true|yes|on)$ ]]
 }
 
 is_market_trading_day() {
@@ -242,23 +344,69 @@ run_script() {
         exit 1
     fi
     log "开始运行: $script_path $*"
+    set +e
     /bin/bash "$script_path" "$@" 2>&1 | tee -a "$RUN_LOG"
+    local runner_exit_code=${PIPESTATUS[0]}
+    set -e
+    if [ "$runner_exit_code" -ne 0 ]; then
+        log "任务执行失败，退出码: ${runner_exit_code}: ${script_path}"
+    fi
+    return "$runner_exit_code"
+}
+
+run_python_script() {
+    local script_path="$1"
+    shift || true
+    if [ ! -f "$script_path" ]; then
+        log "[ERROR] 脚本不存在: $script_path"
+        exit 1
+    fi
+    local python_bin="${AQSP_PYTHON:-${PROJECT_ROOT}/.venv/bin/python3}"
+    if [ ! -x "$python_bin" ]; then
+        python_bin="${AQSP_PYTHON:-python3}"
+    fi
+    log "开始运行: ${python_bin} ${script_path} $*"
+    set +e
+    "$python_bin" "$script_path" "$@" 2>&1 | tee -a "$RUN_LOG"
+    local runner_exit_code=${PIPESTATUS[0]}
+    set -e
+    if [ "$runner_exit_code" -ne 0 ]; then
+        log "任务执行失败，退出码: ${runner_exit_code}: ${script_path}"
+    fi
+    return "$runner_exit_code"
 }
 
 run_synced_task_with_result() {
     local result_file="${PROJECT_ROOT}/.state/sync-${ACTION}-$(date +%Y%m%d%H%M%S)-$$.env"
     rm -f "$result_file"
+    SYNC_TASK_STATUS="unknown"
+    SYNC_TASK_SKIPPED="false"
     export AQSP_SYNC_RESULT_FILE="$result_file"
-    run_script "${PROJECT_ROOT}/scripts/server_sync_and_run.sh"
+    local sync_exit_code=0
+    run_script "${PROJECT_ROOT}/scripts/server_sync_and_run.sh" || sync_exit_code=$?
     unset AQSP_SYNC_RESULT_FILE
+    local status="unknown"
+    local result_exit_code=""
     if [ -f "$result_file" ]; then
         # shellcheck disable=SC1090
         . "$result_file"
+        result_exit_code="${exit_code:-}"
         rm -f "$result_file"
-    else
-        status="unknown"
     fi
-    [ "${status:-unknown}" = "completed" ]
+    SYNC_TASK_STATUS="$status"
+    if [ "$sync_exit_code" -eq 0 ] && [ "$status" = "completed" ]; then
+        return 0
+    fi
+    if [ "$sync_exit_code" -eq 0 ] && [ "$status" = "skipped_lock" ]; then
+        SYNC_TASK_SKIPPED="true"
+        log "同步任务因主链路互斥正常跳过，不写入完成标记"
+        return 0
+    fi
+    log "同步任务未成功完成 status=${status} exit_code=${result_exit_code:-${sync_exit_code:-1}}"
+    if [ "$sync_exit_code" -ne 0 ]; then
+        return "$sync_exit_code"
+    fi
+    return 1
 }
 
 if [ ! -d "${PROJECT_ROOT}/.git" ]; then
@@ -289,15 +437,21 @@ case "$ACTION" in
             export AQSP_INTRADAY_NOTIFY="${AQSP_INTRADAY_NOTIFY:-false}"
             export AQSP_RUNNER_SCRIPT=scripts/midday_refresh.sh
             if run_synced_task_with_result; then
-                touch "$AQSP_MIDDAY_MARKER_FILE"
-                log "午盘桥接已完成，今日不再重复触发"
+                if [ "$SYNC_TASK_SKIPPED" = "true" ]; then
+                    log "午盘桥接因已有主链路运行而跳过，不写完成标记；后续定时仍可重试"
+                    exit 0
+                else
+                    touch "$AQSP_MIDDAY_MARKER_FILE"
+                    log "午盘桥接已完成，今日不再重复触发"
+                    exit 0
+                fi
             else
                 log "午盘桥接未真实执行，不写完成标记；后续定时仍可重试"
+                exit 1
             fi
-            exit 0
         fi
         export AQSP_RUNNER_SCRIPT=scripts/intraday_refresh.sh
-        run_synced_task_with_result || true
+        run_synced_task_with_result
         ;;
     midday)
         skip_non_trading_day
@@ -307,11 +461,16 @@ case "$ACTION" in
         export AQSP_INTRADAY_NOTIFY="${AQSP_INTRADAY_NOTIFY:-false}"
         export AQSP_RUNNER_SCRIPT=scripts/midday_refresh.sh
         if run_synced_task_with_result; then
-            marker_file="${AQSP_MIDDAY_MARKER_FILE:-${PROJECT_ROOT}/.state/midday-$(date +%Y-%m-%d).done}"
-            mkdir -p "$(dirname "$marker_file")"
-            touch "$marker_file"
+            if [ "$SYNC_TASK_SKIPPED" = "true" ]; then
+                log "午盘任务因已有主链路运行而跳过，不写完成标记；后续定时仍可重试"
+            else
+                marker_file="${AQSP_MIDDAY_MARKER_FILE:-${PROJECT_ROOT}/.state/midday-$(date +%Y-%m-%d).done}"
+                mkdir -p "$(dirname "$marker_file")"
+                touch "$marker_file"
+            fi
         else
             log "午盘任务未真实执行，不写完成标记；后续定时仍可重试"
+            exit 1
         fi
         ;;
     coldstart)
@@ -321,6 +480,13 @@ case "$ACTION" in
         export AQSP_GATE_NOTIFY="false"
         sync_code_only
         run_script "${PROJECT_ROOT}/scripts/coldstart_daily.sh"
+        ;;
+    walkforward-gate)
+        export AQSP_RUN_TASK_ID="walkforward_gate"
+        export AQSP_NOTIFY="false"
+        export AQSP_GATE_NOTIFY="${AQSP_WALKFORWARD_GATE_NOTIFY:-false}"
+        sync_code_only
+        run_python_script "${PROJECT_ROOT}/scripts/run_production_walkforward_gate.py" "${@:2}"
         ;;
     monitor)
         skip_weekday_market_holiday

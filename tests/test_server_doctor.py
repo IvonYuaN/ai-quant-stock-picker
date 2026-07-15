@@ -221,3 +221,51 @@ def test_server_doctor_flags_localhost_only_ingress(tmp_path, monkeypatch) -> No
     assert by_name["ingress:public_listener"].status == "failed"
     assert "localhost" in by_name["ingress:public_listener"].detail
     assert by_name["ingress:upstream"].status == "failed"
+
+
+def test_server_doctor_prefers_public_baota_vhost_when_local_helper_exists(
+    tmp_path, monkeypatch
+) -> None:
+    site_path = tmp_path / "etc/nginx/sites-enabled/aqsp"
+    site_path.parent.mkdir(parents=True)
+    site_path.write_text(
+        "server { listen 127.0.0.1:8080; root /opt/aqsp/dist/dashboard; }\n",
+        encoding="utf-8",
+    )
+    bt_path = tmp_path / "www/server/panel/vhost/nginx/lh.ifidy.cn.conf"
+    bt_path.parent.mkdir(parents=True)
+    bt_path.write_text(
+        "server {\n    listen 443 ssl;\n    server_name lh.ifidy.cn;\n}\n",
+        encoding="utf-8",
+    )
+    proxy_dir = tmp_path / "www/server/panel/vhost/nginx/proxy/lh.ifidy.cn"
+    proxy_dir.mkdir(parents=True)
+    (proxy_dir / "aqsp.conf").write_text(
+        "location / { proxy_pass http://127.0.0.1:8501; }\n",
+        encoding="utf-8",
+    )
+
+    real_path = server_doctor.Path
+
+    def fake_path(raw: str) -> server_doctor.Path:
+        replacements = {
+            "/etc/nginx/sites-enabled/aqsp": site_path,
+            "/www/server/panel/vhost/nginx/lh.ifidy.cn.conf": bt_path,
+            "/www/server/panel/vhost/nginx/proxy": tmp_path
+            / "www/server/panel/vhost/nginx/proxy",
+            "/www/server/panel/vhost/proxy": tmp_path / "www/server/panel/vhost/proxy",
+        }
+        return real_path(replacements.get(raw, raw))
+
+    monkeypatch.setattr(server_doctor, "Path", fake_path)
+    monkeypatch.setattr(
+        server_doctor,
+        "_run_subprocess",
+        lambda *args, **kwargs: type("Result", (), {"stdout": str(bt_path)})(),
+    )
+
+    checks = server_doctor._dashboard_ingress_checks()
+    by_name = {item.name: item for item in checks}
+
+    assert by_name["ingress:public_listener"].status == "ok"
+    assert by_name["ingress:upstream"].status == "ok"

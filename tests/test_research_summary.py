@@ -16,6 +16,7 @@ def test_load_research_summary_uses_config_when_absorption_json_missing(
 ) -> None:
     strategy_sources = tmp_path / "strategy_sources.yaml"
     data_sources = tmp_path / "data_sources.yaml"
+    repo_intake = tmp_path / "repo_radar_raw.json"
     strategy_sources.write_text(
         """
 version: "test"
@@ -45,12 +46,31 @@ sources:
 """,
         encoding="utf-8",
     )
+    repo_intake.write_text(
+        """
+[
+  {
+    "fullName": "OpenBB-finance/OpenBB",
+    "description": "Financial data platform for analysts",
+    "stargazersCount": 70000,
+    "url": "https://github.com/OpenBB-finance/OpenBB"
+  },
+  {
+    "fullName": "freqtrade/freqtrade",
+    "description": "crypto trading bot with live trading",
+    "stargazersCount": 50000
+  }
+]
+""".strip(),
+        encoding="utf-8",
+    )
     monkeypatch.delenv("TUSHARE_TOKEN", raising=False)
 
     summary = load_research_summary(
         absorption_path=tmp_path / "missing_research_absorption.json",
         strategy_sources_path=strategy_sources,
         data_sources_path=data_sources,
+        repo_intake_paths=(repo_intake,),
     )
 
     assert summary is not None
@@ -65,6 +85,10 @@ sources:
     assert summary.next_actions[0].item_id == "tushare"
     assert summary.prereq_items[0].status == "needs_env"
     assert summary.prereq_items[0].missing_env_vars == ("TUSHARE_TOKEN",)
+    assert summary.repo_intake_total == 2
+    assert summary.repo_substrate_candidate_count == 1
+    assert summary.repo_reject_boundary_count == 1
+    assert summary.repo_backlog[0].repo == "OpenBB-finance/OpenBB"
 
 
 def test_load_research_summary_returns_none_when_core_configs_missing(

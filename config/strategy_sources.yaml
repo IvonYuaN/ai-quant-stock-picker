@@ -234,3 +234,26 @@ families:
       - 外部自动交易项目中的下单、撤单、跟单接口一律不得进入本仓库
     references:
       - "architecture.md §5.3 Execution 判定"
+
+  - id: wyckoff_volume_price_context
+    name: Wyckoff 量价结构上下文
+    hypothesis: "吸筹/派发/缩量回踩/放量突破等量价结构能帮助解释短线候选，但主观阶段识别噪音较大，必须先作为上下文和复核提示。"
+    current_status: research_absorbed
+    absorbed_from:
+      - "YoungCan-Wang/WyckoffTradingAgent"
+      - "ZhuLinsen/alphasift"
+    signals:
+      - 多窗口价格路径收益、回撤、波动和收盘位置
+      - 量能相对前序窗口变化
+      - Wyckoff 阶段只作人工复核标签，不直接入分
+    validation_required:
+      - 先用不复权 OHLCV 做 report-only 对照
+      - 不能复制 AGPL 实现，只吸收公开理论和产品形态
+      - 至少 60 个独立信号日验证上下文标签是否提升复核效率
+    runtime_gate:
+      - 当前只接 `research.price_path` 多窗口摘要，不生成买卖信号
+      - 阶段识别进入评分前必须转成纯函数、阈值配置化、walk-forward 通过
+      - LLM 只能解释量价上下文，不能给 PickResult.score 加权
+    references:
+      - "WyckoffTradingAgent README: volume-price analysis and AI stock screener"
+      - "alphasift: multi-window price-path analysis"

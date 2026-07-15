@@ -74,7 +74,7 @@ python -m aqsp.cli screen --csv data/sample_ohlcv.csv --mode close --limit 10
 python -m aqsp.cli screen --csv data/sample_ohlcv.csv --mode open --report reports/open.md
 ```
 
-生成并启动/复用本地前端面板（固定端口 `127.0.0.1:9876`，默认不打开前台浏览器）：
+启动当前 Streamlit 前端面板（固定端口 `127.0.0.1:8501`，默认不打开前台浏览器）：
 
 ```bash
 python3 scripts/open_dashboard.py
@@ -92,7 +92,7 @@ AQSP_ALLOW_FOREGROUND_BROWSER=1 python3 scripts/open_dashboard.py --open-browser
 python3 scripts/open_dashboard.py --render-only
 ```
 
-页面会展示候选股、评分、策略依据、风险、参考买点/止损/止盈、ledger 统计和最近信号。默认地址固定为 `http://127.0.0.1:9876`，`dist/` 已被忽略，不会上传 GitHub。
+页面会展示当天候选、消息汇总、委员会结果和按日期回看。默认地址固定为 `http://127.0.0.1:8501`；`--render-only` 仅用于生成被流水线读取的静态产物，`dist/` 已被忽略，不会上传 GitHub。
 
 验证 Tushare PIT 接口：
 
@@ -163,7 +163,7 @@ python -m aqsp.cli pit --kind disclosure_dates --symbols 600519,300750 --start 2
 推荐把代码放 GitHub 备份，把每日结果留在你自己的机器或服务器:
 
 - GitHub Actions 定时跑 `aqsp run`。
-- `aqsp dashboard` / `scripts/render_dashboard.py` 生成 `dist/dashboard/index.html`。
+- `aqsp dashboard` 启动当前 Streamlit 看板；`aqsp dashboard-static` / `scripts/render_dashboard.py` 仅生成离线归档 `dist/dashboard/archive.html`，约定的 `dist/dashboard/index.html` 只负责跳转到当前公网 Dashboard。
 - `scripts/export_dashboard_db.py` 生成 `dist/dashboard/aqsp.db`。
 - `scripts/deploy_dashboard.sh` 通过 SSH/rsync 发布到服务器。
 
