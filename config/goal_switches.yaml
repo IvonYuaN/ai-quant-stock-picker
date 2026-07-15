@@ -1,0 +1,85 @@
+version: "2026-06-30"
+mode: short_term_realtime
+notes: "面向短线实时决策研究的执行开关矩阵。盘中链路优先，历史链路只负责验证、回测、阈值冻结和 agent 评估。"
+
+principles:
+  realtime_priority: true
+  historical_runtime_override_forbidden: true
+  no_auto_ordering: true
+  llm_may_not_override_deterministic_score: true
+  optimization_must_be_proposal_first: true
+
+switches:
+  live_short_runtime:
+    enabled: true
+    purpose: "盘中实时候选、观察、纸面执行支持"
+  historical_validation_only:
+    enabled: true
+    purpose: "历史数据只服务 walkforward/PIT/阈值冻结/复盘"
+  enforce_live_vs_history_boundary:
+    enabled: true
+    purpose: "实时链路禁止误接 sqlite/raw 历史源充当实时决策源"
+  realtime_fallback_chain:
+    enabled: true
+    purpose: "允许 eastmoney/sina/tencent/akshare/mootdx 等短线适配源做降级"
+  domestic_market_intelligence:
+    enabled: true
+    purpose: "个股/板块/政策/资金/情绪进入建议上下文"
+  global_market_intelligence:
+    enabled: true
+    purpose: "海外风险偏好、宏观和跨市场信息进入风控上下文"
+  multi_agent_advisory_layer:
+    enabled: true
+    purpose: "多 agent 辩论、质疑、汇总和解释增强"
+  auto_optimization_proposals:
+    enabled: true
+    purpose: "自动优化默认只产出 proposal、报告、候选阈值"
+  auto_optimization_apply_runtime:
+    enabled: false
+    purpose: "未经验证与冻结前，禁止直接写回运行参数"
+  pit_enrichment_runtime_required:
+    enabled: false
+    purpose: "PIT 默认不阻塞盘中短线任务，只进入历史验证链路"
+
+tracks:
+  - id: realtime_data_guardrails
+    label: "实时数据守卫"
+    enabled: true
+    priority: p0
+    owner_lens: "Real-Time Data Reliability"
+    deliverables:
+      - "盘中任务与 live_short 数据源适配 guardrail"
+      - "分时/日线/quote 责任边界说明"
+      - "实时新鲜度失败时的 fail loud 行为"
+  - id: historical_validation_boundary
+    label: "历史验证边界"
+    enabled: true
+    priority: p0
+    owner_lens: "Historical Validation"
+    deliverables:
+      - "walkforward/PIT/source 边界持续守卫"
+      - "历史证据不反向污染盘中运行"
+  - id: market_intelligence_fusion
+    label: "信息融合"
+    enabled: true
+    priority: p1
+    owner_lens: "Market Intelligence"
+    deliverables:
+      - "国内外高价值信息源清单"
+      - "进入候选建议的排序与降噪规则"
+  - id: multi_agent_governance
+    label: "多 Agent 治理"
+    enabled: true
+    priority: p1
+    owner_lens: "Multi-Agent Decision"
+    deliverables:
+      - "角色职责与投票边界"
+      - "agent 历史表现只进评估层"
+  - id: controlled_auto_optimization
+    label: "受控自动优化"
+    enabled: true
+    priority: p2
+    owner_lens: "Quant Research"
+    deliverables:
+      - "优化 proposal 与 runtime 参数隔离"
+      - "冻结/生效条件清单"
