@@ -28,6 +28,14 @@ def _candidate(symbol: str, score: float) -> SimpleNamespace:
         news_catalyst_summary=f"{symbol} 消息催化",
         cross_market_summary="不应取用",
         adjusted_score=99.0,
+        close=12.34,
+        ret5_pct=4.5,
+        ret20_pct=12.75,
+        volume_ratio=1.6,
+        rsi12=64.2,
+        bias20_pct=2.1,
+        stop_loss=11.1,
+        take_profit=14.8,
     )
 
 
@@ -153,6 +161,16 @@ def test_write_home_snapshot_builds_bounded_advisory_only_payload(monkeypatch) -
     assert snapshot.candidates[0].deterministic_reasons == ("MA20 斜率向上",)
     assert snapshot.candidates[0].strategies == ("ma_pullback",)
     assert snapshot.candidates[0].evidence_status == "有独立规则证据"
+    assert [(item.label, item.value) for item in snapshot.candidates[0].technical_metrics] == [
+        ("现价", "12.34"),
+        ("5日动能", "+4.50%"),
+        ("20日动能", "+12.75%"),
+        ("量比", "1.60x"),
+        ("RSI12", "64.2"),
+        ("MA20偏离", "+2.10%"),
+        ("纸面止损", "11.10"),
+        ("纸面止盈", "14.80"),
+    ]
     assert snapshot.debate is not None
     assert snapshot.debate.symbol == "600003"
     assert snapshot.debate.conclusion == "委员会建议复核"

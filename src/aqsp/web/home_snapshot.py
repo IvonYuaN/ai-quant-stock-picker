@@ -18,6 +18,7 @@ HOME_SNAPSHOT_SCHEMA_VERSION = "v1"
 MAX_HOME_SNAPSHOT_BYTES = 64 * 1024
 MAX_HOME_SNAPSHOT_DATES = 4
 MAX_HOME_SNAPSHOT_CANDIDATES = 5
+MAX_HOME_SNAPSHOT_TECHNICAL_METRICS = 8
 MAX_HOME_SNAPSHOT_DEBATES = 3
 MAX_HOME_SNAPSHOT_SUMMARIES = 3
 MAX_HOME_SNAPSHOT_MESSAGES = 5
@@ -29,6 +30,15 @@ HOME_SNAPSHOT_DEFAULT_TTL = timedelta(hours=24)
 HOME_SNAPSHOT_INTRADAY_TTL = timedelta(minutes=30)
 HOME_SNAPSHOT_CLOSE_TTL = timedelta(hours=18)
 _INTRADAY_TASK_IDS = frozenset({"intraday", "midday"})
+
+
+@dataclass(frozen=True)
+class HomeSnapshotTechnicalMetric:
+    """One bounded, deterministic short-term technical metric."""
+
+    key: str
+    label: str
+    value: str
 
 
 @dataclass(frozen=True)
@@ -44,6 +54,7 @@ class HomeSnapshotCandidate:
     deterministic_reasons: tuple[str, ...] = ()
     strategies: tuple[str, ...] = ()
     evidence_status: str = "证据不足"
+    technical_metrics: tuple[HomeSnapshotTechnicalMetric, ...] = ()
 
     @property
     def has_deterministic_evidence(self) -> bool:
@@ -593,7 +604,12 @@ def _candidate_from_dict(payload: object) -> HomeSnapshotCandidate:
         mapping,
         {"symbol", "display_name", "score", "research_status", "next_step", "context"},
         "candidate",
-        optional={"deterministic_reasons", "strategies", "evidence_status"},
+        optional={
+            "deterministic_reasons",
+            "strategies",
+            "evidence_status",
+            "technical_metrics",
+        },
     )
     return HomeSnapshotCandidate(
         symbol=_text(mapping["symbol"], "candidate.symbol"),
@@ -614,6 +630,22 @@ def _candidate_from_dict(payload: object) -> HomeSnapshotCandidate:
             mapping.get("evidence_status"), "candidate.evidence_status"
         )
         or "证据不足",
+        technical_metrics=tuple(
+            _technical_metric_from_dict(item)
+            for item in _list(
+                mapping.get("technical_metrics", ()), "candidate.technical_metrics"
+            )
+        ),
+    )
+
+
+def _technical_metric_from_dict(payload: object) -> HomeSnapshotTechnicalMetric:
+    mapping = _mapping(payload, "technical metric")
+    _require_keys(mapping, {"key", "label", "value"}, "technical metric")
+    return HomeSnapshotTechnicalMetric(
+        key=_text(mapping["key"], "technical metric.key"),
+        label=_text(mapping["label"], "technical metric.label"),
+        value=_text(mapping["value"], "technical metric.value"),
     )
 
 

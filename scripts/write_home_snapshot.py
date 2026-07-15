@@ -42,6 +42,8 @@ from aqsp.web.home_snapshot import (
     HomeSnapshotMarketContext,
     HomeSnapshotMessage,
     HomeSnapshotSource,
+    HomeSnapshotTechnicalMetric,
+    MAX_HOME_SNAPSHOT_TECHNICAL_METRICS,
     is_home_recommendation,
     stale_after_for_task,
     write_home_dashboard_snapshot,
@@ -207,6 +209,37 @@ def _candidate_strategies(candidate: Any) -> tuple[str, ...]:
     return _bounded_unique_text(raw, 6)
 
 
+def _candidate_technical_metrics(
+    candidate: Any,
+) -> tuple[HomeSnapshotTechnicalMetric, ...]:
+    """Expose only deterministic short-term fields already present in the card."""
+    specifications = (
+        ("close", "现价", "{:.2f}"),
+        ("ret5_pct", "5日动能", "{:+.2f}%"),
+        ("ret20_pct", "20日动能", "{:+.2f}%"),
+        ("volume_ratio", "量比", "{:.2f}x"),
+        ("rsi12", "RSI12", "{:.1f}"),
+        ("bias20_pct", "MA20偏离", "{:+.2f}%"),
+        ("stop_loss", "纸面止损", "{:.2f}"),
+        ("take_profit", "纸面止盈", "{:.2f}"),
+    )
+    metrics: list[HomeSnapshotTechnicalMetric] = []
+    for key, label, template in specifications:
+        raw = getattr(candidate, key, None)
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            continue
+        if not math.isfinite(value):
+            continue
+        metrics.append(
+            HomeSnapshotTechnicalMetric(key=key, label=label, value=template.format(value))
+        )
+        if len(metrics) == MAX_HOME_SNAPSHOT_TECHNICAL_METRICS:
+            break
+    return tuple(metrics)
+
+
 def _has_candidate_deterministic_evidence(candidate: Any) -> bool:
     try:
         score = float(getattr(candidate, "score", 0.0) or 0.0)
@@ -238,6 +271,7 @@ def _snapshot_candidate(candidate: Any) -> HomeSnapshotCandidate | None:
         deterministic_reasons=reasons,
         strategies=strategies,
         evidence_status=("有独立规则证据" if reasons else "证据不足"),
+        technical_metrics=_candidate_technical_metrics(candidate),
     )
 
 

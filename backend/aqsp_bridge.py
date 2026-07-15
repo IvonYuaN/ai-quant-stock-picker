@@ -56,6 +56,13 @@ class AQSPSnapshotStale(AQSPBridgeError):
 
 
 @dataclass(frozen=True)
+class AQSPTechnicalMetric:
+    key: str
+    label: str
+    value: str
+
+
+@dataclass(frozen=True)
 class AQSPCandidate:
     symbol: str
     display_name: str
@@ -66,6 +73,7 @@ class AQSPCandidate:
     deterministic_reasons: tuple[str, ...] = ()
     strategies: tuple[str, ...] = ()
     evidence_status: str = "证据不足"
+    technical_metrics: tuple[AQSPTechnicalMetric, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -440,7 +448,7 @@ def _parse_candidate(payload: object) -> AQSPCandidate:
         item,
         {"symbol", "display_name", "score", "research_status", "next_step", "context"},
         "candidate",
-        {"deterministic_reasons", "strategies", "evidence_status"},
+        {"deterministic_reasons", "strategies", "evidence_status", "technical_metrics"},
     )
     return AQSPCandidate(
         symbol=_validate_symbol(_text(item["symbol"], "candidate.symbol")),
@@ -461,6 +469,20 @@ def _parse_candidate(payload: object) -> AQSPCandidate:
             item.get("evidence_status"), "candidate.evidence_status"
         )
         or "证据不足",
+        technical_metrics=tuple(
+            _parse_technical_metric(value)
+            for value in _list(item.get("technical_metrics", []), "candidate.technical_metrics")
+        ),
+    )
+
+
+def _parse_technical_metric(payload: object) -> AQSPTechnicalMetric:
+    item = _object(payload, "technical metric")
+    _check_keys(item, {"key", "label", "value"}, "technical metric")
+    return AQSPTechnicalMetric(
+        key=_text(item["key"], "technical metric.key"),
+        label=_text(item["label"], "technical metric.label"),
+        value=_text(item["value"], "technical metric.value"),
     )
 
 
