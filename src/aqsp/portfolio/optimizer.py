@@ -6,6 +6,7 @@ from aqsp.core.types import PickResult
 from aqsp.portfolio.correlation import CorrelationResult
 from aqsp.portfolio.sector_check import ConcentrationResult
 from aqsp.ratings import is_tradable_rating
+from aqsp.regime.strategy_mixer import canonicalize_regime
 from aqsp.strategies.thresholds import RiskThresholds
 
 
@@ -38,8 +39,15 @@ def optimize_portfolio_allocations(
     max_single_weight: float = 0.20,
     min_cash_reserve: float = 0.15,
     risk: RiskThresholds | None = None,
+    regime: str = "",
 ) -> PortfolioOptimizationResult:
     risk = risk or RiskThresholds()
+    if canonicalize_regime(regime) == "emergency_defensive":
+        return PortfolioOptimizationResult(
+            allocations=(),
+            cash_reserve=1.0,
+            note="紧急防守状态：组合分配已停止，仅保留观察与复核。",
+        )
     tradable = [
         pick
         for pick in picks
@@ -107,6 +115,7 @@ def optimize_portfolio_allocations_from_risk(
     risk: RiskThresholds,
     concentration: ConcentrationResult | None = None,
     correlation_result: CorrelationResult | None = None,
+    regime: str = "",
 ) -> PortfolioOptimizationResult:
     return optimize_portfolio_allocations(
         picks,
@@ -117,6 +126,7 @@ def optimize_portfolio_allocations_from_risk(
         max_single_weight=float(risk.max_single_position_pct),
         min_cash_reserve=float(risk.min_cash_reserve),
         risk=risk,
+        regime=regime,
     )
 
 
@@ -129,7 +139,7 @@ def _target_invested_ratio(
     min_cash_reserve: float,
     risk: RiskThresholds,
 ) -> float:
-    top_score = tradable[0].score if tradable else 0.0
+    top_score = max((pick.score for pick in tradable), default=0.0)
     strong_count = sum(1 for pick in tradable if pick.rating == "strong_buy_candidate")
     promote_count = sum(
         1
@@ -210,6 +220,10 @@ def _build_rationale(
             reasons.append("PM 上调优先级")
         elif action == "downgrade":
             reasons.append("PM 降级后仅保留跟踪仓")
+        for reason in tuple(getattr(decision, "reasons", ()) or ()):
+            if "跨市场催化匹配" in reason:
+                reasons.append("跨市场传导匹配提升优先级")
+                break
         for reason in tuple(getattr(decision, "reasons", ()) or ()):
             if "高相关" in reason:
                 reasons.append("相关性约束压缩权重")
