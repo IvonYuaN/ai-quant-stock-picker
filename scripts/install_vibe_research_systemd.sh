@@ -151,6 +151,15 @@ fi
 [[ -f "${PROJECT_ROOT}/frontend/dist/index.html" ]] \
     || { echo "缺少 frontend/dist/index.html，请移除 --skip-build 重试。" >&2; exit 1; }
 
+# npm ci/build usually runs as root during provisioning, while Vite preview
+# runs as the isolated service user and needs a writable config cache.
+if [[ -d "${PROJECT_ROOT}/frontend/node_modules" ]]; then
+    chown -R "$SERVICE_USER:$SERVICE_GROUP" "${PROJECT_ROOT}/frontend/node_modules"
+fi
+if [[ -d "${PROJECT_ROOT}/frontend/dist" ]]; then
+    chown -R "$SERVICE_USER:$SERVICE_GROUP" "${PROJECT_ROOT}/frontend/dist"
+fi
+
 runuser -u "$SERVICE_USER" -- env \
     PYTHONPATH="${PROJECT_ROOT}/src:${PROJECT_ROOT}/backend" \
     "${VENV_DIR}/bin/python" -c 'import aqsp, aqsp_bridge, fastapi, uvicorn'

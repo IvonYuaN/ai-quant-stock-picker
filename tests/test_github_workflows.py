@@ -44,6 +44,10 @@ def test_ci_runs_upload_preflight_before_install() -> None:
     )
 
     assert 'pip install -e ".[data,dev,web,api]"' in text
+    assert "actions/setup-node@v4" in text
+    assert "npm ci --prefix frontend" in text
+    assert "npm run build --prefix frontend" in text
+    assert "timeout-minutes: 40" in text
     assert "python3 -m scripts.preflight_upload" in text
     assert text.index("python3 -m scripts.preflight_upload") < text.index(
         "name: Install"
@@ -89,6 +93,7 @@ def test_github_workflows_only_use_allowlisted_actions() -> None:
     allowed_prefixes = (
         "actions/checkout@",
         "actions/setup-python@",
+        "actions/setup-node@",
     )
     offenders: list[str] = []
 
