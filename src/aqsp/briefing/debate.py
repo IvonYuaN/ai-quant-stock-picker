@@ -1448,7 +1448,16 @@ class AShareDebateCoordinator:
             thresholds_version=self.thresholds_version,
             regime=self.regime,
             data_source=self.data_source,
-            related_signal_date=signal_date or now_shanghai().date().isoformat(),
+            related_signal_date=(
+                signal_date
+                or str(pick.date or "").strip()
+                or now_shanghai().date().isoformat()
+            ),
+            candidate_fingerprint=str(
+                (pick.metrics or {}).get("candidate_fingerprint")
+                or (pick.metrics or {}).get("debate_candidate_fingerprint")
+                or ""
+            ).strip(),
             market_context_lines=tuple(
                 str(line).strip() for line in market_context_lines if str(line).strip()
             ),

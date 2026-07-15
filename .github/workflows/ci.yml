@@ -8,6 +8,9 @@ on:
       - "tests/**"
       - "backend/**"
       - "frontend/**"
+      - "deploy/baota/**"
+      - "deploy/nginx/**"
+      - "deploy/systemd/**"
       - "pyproject.toml"
       - ".github/workflows/**"
   push:
@@ -23,6 +26,9 @@ on:
       - "tests/**"
       - "backend/**"
       - "frontend/**"
+      - "deploy/baota/**"
+      - "deploy/nginx/**"
+      - "deploy/systemd/**"
       - "pyproject.toml"
       - ".github/workflows/**"
 
@@ -76,6 +82,33 @@ jobs:
         run: |
           npm ci --prefix frontend
           npm run build --prefix frontend
+
+      - name: Check AQSP deployment bundle
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          root = Path.cwd()
+          bundle = root / "frontend" / "dist" / "index.html"
+          html = bundle.read_text(encoding="utf-8")
+          assert "AQSP" in html, "frontend bundle is missing the AQSP entry"
+          assert any((bundle.parent / "assets").iterdir()), "frontend bundle has no assets"
+
+          api_service = (root / "deploy/systemd/aqsp-vibe-research-api.service").read_text(encoding="utf-8")
+          preview_service = (root / "deploy/systemd/aqsp-vibe-research-preview.service").read_text(encoding="utf-8")
+          nginx = (root / "deploy/nginx/vibe-research-mainline.conf").read_text(encoding="utf-8")
+          env = (root / "deploy/systemd/aqsp-vibe-research.env.example").read_text(encoding="utf-8")
+
+          assert "-m uvicorn app:app --host 127.0.0.1 --port 8900" in api_service
+          assert "run preview -- --host 127.0.0.1 --port 5899 --strictPort" in preview_service
+          assert "VIBE_RESEARCH_BACKEND_PORT=8900" in env
+          assert "VIBE_RESEARCH_FRONTEND_PORT=5899" in env
+          assert "proxy_pass http://127.0.0.1:8900" in nginx
+          assert "proxy_pass http://127.0.0.1:5899" in nginx
+          assert "location = /api/health" in nginx
+          print(f"validated static entry: {bundle}")
+          print("validated AQSP API 127.0.0.1:8900 and frontend 127.0.0.1:5899")
+          PY
 
       - name: Tests
         env:

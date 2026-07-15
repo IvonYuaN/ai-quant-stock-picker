@@ -379,7 +379,7 @@ def run_check(
         legacy_hint = f" (legacy endpoint: {LEGACY_HEALTH_PATH})"
         errors.append(
             f"health endpoint identified as {health_kind}; expected canonical "
-            f"Vibe-Research /api/health{legacy_hint}"
+            f"AQSP /api/health{legacy_hint}"
         )
 
     if mode in {"auto", "browser"}:
@@ -426,7 +426,7 @@ def run_check(
     if require_canonical and entry_kind != "canonical":
         errors.append(
             f"dashboard entry identified as {entry_kind}; expected canonical "
-            "Vibe-Research research entry"
+            "AQSP research entry"
         )
     if require_browser and actual_mode != "browser":
         errors.append(

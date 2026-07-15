@@ -307,3 +307,20 @@ def test_briefing_conclusion_does_not_legacy_bypass_empty_market_data() -> None:
     assert view.headline == "结论已阻断：行情数据为空"
     assert view.quality_audit is not None
     assert "empty_market_data" in view.quality_audit.issues
+
+
+def test_briefing_conclusion_does_not_legacy_bypass_explicit_incomplete_dict() -> None:
+    payload = {
+        "symbol": "300750",
+        "name": "宁德时代",
+        "final_consensus": "bullish",
+        "final_vote": {"bull": "bullish"},
+        "process_recorded": False,
+        "conclusion_recorded": True,
+    }
+
+    view = build_debate_conclusion_view(payload)
+
+    assert view.quality_audit is not None
+    assert not view.quality_audit.passed
+    assert "empty_discussion" in view.quality_audit.issues

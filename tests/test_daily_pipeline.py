@@ -2640,6 +2640,58 @@ def test_resolve_symbols_truncates_available_universe_when_max_universe_positive
     ]
 
 
+def test_resolve_symbols_samples_live_liquid_universe_across_turnover_ladder(
+    monkeypatch,
+) -> None:
+    from scripts import daily_pipeline
+
+    seen: dict[str, object] = {}
+
+    class FakeSource:
+        def get_liquid_symbols(self, *, limit: int, min_amount: float) -> list[str]:
+            seen["limit"] = limit
+            seen["min_amount"] = min_amount
+            return ["600000", "000001", "300750", "002594", "688981"]
+
+    monkeypatch.delenv("AQSP_SYMBOLS", raising=False)
+    monkeypatch.setattr(
+        daily_pipeline, "_build_data_source", lambda _config: FakeSource()
+    )
+
+    config = daily_pipeline.PipelineConfig(
+        project_root=Path.cwd(),
+        source="eastmoney",
+        mode="close",
+        limit=10,
+        max_universe=3,
+        min_avg_amount=50_000_000,
+        max_data_lag_days=3,
+        enable_online_factors=False,
+        allow_online_fallback=True,
+        ledger_path="data/predictions.jsonl",
+        report_path="reports/latest.md",
+        csv_path="reports/latest.csv",
+        briefing_path="reports/briefing.md",
+        paper_report_path="reports/paper.md",
+        dashboard_html="dist/dashboard/index.html",
+        dashboard_db="dist/dashboard/aqsp.db",
+        paper_ledger="data/paper_trades.jsonl",
+        closing_review_path="reports/closing_review.md",
+        notify=False,
+        notify_mode="summary",
+        dry_run=False,
+        enable_debate=False,
+        enable_auto_evolution=False,
+    )
+
+    assert daily_pipeline._resolve_symbols(config, logging.getLogger("test")) == [
+        "600000",
+        "300750",
+        "688981",
+    ]
+    assert seen == {"limit": 0, "min_amount": 50_000_000}
+
+
 def test_resolve_symbols_returns_full_sqlite_db_available_universe(
     monkeypatch,
 ) -> None:
@@ -2860,3 +2912,60 @@ def test_resolve_symbols_falls_back_to_sqlite_pool_when_live_discovery_fails(
         "600000",
         "000001",
     ]
+
+
+def test_resolve_symbols_rejects_default_large_cap_pool_when_live_universe_missing(
+    monkeypatch,
+) -> None:
+    from scripts import daily_pipeline
+
+    class LiveSource:
+        def get_liquid_symbols(self, *, limit: int, min_amount: float) -> list[str]:
+            raise daily_pipeline.DataError("live snapshot unavailable")
+
+        def get_available_symbols(self) -> list[str]:
+            raise daily_pipeline.DataError("live available unavailable")
+
+    def fake_build_data_source(config):
+        assert config.source == "eastmoney"
+        return LiveSource()
+
+    def fake_build_named_source(source_name: str):
+        raise daily_pipeline.DataError(source_name)
+
+    monkeypatch.delenv("AQSP_SYMBOLS", raising=False)
+    monkeypatch.setenv("AQSP_RUNTIME_SYMBOL_CACHE", "/missing/symbols.json")
+    monkeypatch.setattr(daily_pipeline, "_build_data_source", fake_build_data_source)
+    monkeypatch.setattr(
+        "aqsp.data.source_factory.build_data_source",
+        fake_build_named_source,
+    )
+
+    config = daily_pipeline.PipelineConfig(
+        project_root=Path.cwd(),
+        source="eastmoney",
+        mode="close",
+        limit=10,
+        max_universe=2,
+        min_avg_amount=50_000_000,
+        max_data_lag_days=3,
+        enable_online_factors=False,
+        allow_online_fallback=True,
+        ledger_path="data/predictions.jsonl",
+        report_path="reports/latest.md",
+        csv_path="reports/latest.csv",
+        briefing_path="reports/briefing.md",
+        paper_report_path="reports/paper.md",
+        dashboard_html="dist/dashboard/index.html",
+        dashboard_db="dist/dashboard/aqsp.db",
+        paper_ledger="data/paper_trades.jsonl",
+        closing_review_path="reports/closing_review.md",
+        notify=False,
+        notify_mode="summary",
+        dry_run=False,
+        enable_debate=False,
+        enable_auto_evolution=False,
+    )
+
+    with pytest.raises(daily_pipeline.DataError, match="拒绝退回默认大盘池"):
+        daily_pipeline._resolve_symbols(config, logging.getLogger("test"))

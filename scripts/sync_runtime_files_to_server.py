@@ -27,6 +27,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_REMOTE_ROOT = "/opt/aqsp"
 DEFAULT_BACKUP_DIR = "/opt/aqsp/runtime-backups"
 DEFAULT_REMOTE_OVERLAY_STATE = ".state/runtime-sync-overlay.json"
+DEFAULT_REMOTE_RUNTIME_LOCK = ".locks/server-runtime.lock"
 RUNTIME_SYNC_DEPENDENCIES: dict[str, tuple[str, ...]] = {
     "scripts/smoke_market_context_runtime.py": (
         "src/aqsp/market_context.py",
@@ -337,6 +338,38 @@ def _source_metadata() -> dict[str, object]:
 
 def _ssh(ssh_target: str, remote_command: str) -> subprocess.CompletedProcess[str]:
     return _run(["ssh", ssh_target, remote_command])
+
+
+def _remote_runtime_lock_path(remote_root: str) -> str:
+    root = str(remote_root or "").rstrip("/") or DEFAULT_REMOTE_ROOT
+    return f"{root}/{DEFAULT_REMOTE_RUNTIME_LOCK}"
+
+
+def _acquire_remote_runtime_lock(plan: SyncPlan) -> None:
+    """Acquire the server lock shared with server_sync_and_run.sh."""
+    lock_path = _remote_runtime_lock_path(plan.remote_root)
+    lock_info_path = f"{lock_path}/meta.env"
+    command = (
+        f"mkdir -p {shlex.quote(str(Path(lock_path).parent))} && "
+        f"if ! mkdir {shlex.quote(lock_path)}; then "
+        "echo 'remote runtime lock is busy' >&2; exit 75; fi && "
+        f"printf 'LOCK_RUNNER=runtime-sync\\nLOCK_STARTED_AT=%s\\n' "
+        f"\"$(date '+%Y-%m-%d %H:%M:%S')\" > {shlex.quote(lock_info_path)}"
+    )
+    try:
+        _ssh(plan.ssh_target, command)
+    except subprocess.CalledProcessError as exc:
+        detail = (exc.stderr or exc.stdout or "remote runtime lock is busy").strip()
+        raise SystemExit(f"remote runtime lock unavailable: {detail}") from exc
+
+
+def _release_remote_runtime_lock(plan: SyncPlan) -> None:
+    lock_path = _remote_runtime_lock_path(plan.remote_root)
+    command = (
+        f"rm -f {shlex.quote(lock_path + '/meta.env')} && "
+        f"rmdir {shlex.quote(lock_path)} 2>/dev/null || true"
+    )
+    _ssh(plan.ssh_target, command)
 
 
 def _create_local_archive(project_root: Path, files: tuple[str, ...]) -> Path:
@@ -666,15 +699,9 @@ def _merge_overlay_manifest(
     backup_path: str = "",
     sync_id: str = "",
 ) -> dict[str, object]:
-    current = dict(existing or {})
-    file_hashes = dict(current.get("file_hashes") or {})
-    managed_files = list(current.get("managed_files") or [])
-    for relative in files:
-        digest = hashes[relative]
-        file_hashes[relative] = digest
-        if relative not in managed_files:
-            managed_files.append(relative)
-    managed_files = sorted(managed_files)
+    del existing
+    managed_files = sorted(set(files))
+    file_hashes = {relative: hashes[relative] for relative in managed_files}
     merged: dict[str, object] = {
         "managed_files": managed_files,
         "file_hashes": file_hashes,
@@ -724,21 +751,14 @@ def _write_remote_overlay_manifest(
         "    except Exception:\n"
         "        existing = {}\n"
         f"payload = json.loads({json.dumps(json.dumps(payload, ensure_ascii=False))})\n"
-        "merged_files = list(existing.get('managed_files') or [])\n"
-        "merged_hashes = dict(existing.get('file_hashes') or {})\n"
-        "for item in payload.get('managed_files', []):\n"
-        "    if item not in merged_files:\n"
-        "        merged_files.append(item)\n"
-        "for key, value in (payload.get('file_hashes') or {}).items():\n"
-        "    merged_hashes[key] = value\n"
         "previous = {\n"
         "    key: existing[key]\n"
         "    for key in ('sync_id', 'source', 'backup_path')\n"
         "    if key in existing\n"
         "}\n"
         "manifest = {\n"
-        "    'managed_files': sorted(merged_files),\n"
-        "    'file_hashes': merged_hashes,\n"
+        "    'managed_files': payload.get('managed_files', []),\n"
+        "    'file_hashes': payload.get('file_hashes', {}),\n"
         "    'updated_at': payload.get('updated_at', ''),\n"
         "}\n"
         "for key in ('source', 'backup_path', 'sync_id'):\n"
@@ -762,7 +782,13 @@ def _write_remote_overlay_manifest(
 def sync_files(plan: SyncPlan) -> dict[str, object]:
     archive_path = _create_local_archive(PROJECT_ROOT, plan.files)
     backup_path = ""
+    imported_modules: tuple[str, ...] = ()
+    overlay_manifest = ""
+    mismatches: dict[str, dict[str, str]] = {}
+    lock_acquired = False
     try:
+        _acquire_remote_runtime_lock(plan)
+        lock_acquired = True
         existing_files = _remote_existing_files(plan)
         backup_path = _backup_remote_files(plan, existing_files)
         try:
@@ -789,6 +815,8 @@ def sync_files(plan: SyncPlan) -> dict[str, object]:
             _restore_remote_backup(plan, backup_path)
             raise
     finally:
+        if lock_acquired:
+            _release_remote_runtime_lock(plan)
         archive_path.unlink(missing_ok=True)
     return {
         "ssh_target": plan.ssh_target,

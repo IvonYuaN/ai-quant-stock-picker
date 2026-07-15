@@ -71,4 +71,4 @@ if ! "${PROJECT_ROOT}/scripts/health_vibe_research.sh" \
     exit 1
 fi
 
-echo "Vibe-Research 已回滚到 ${TARGET_REF}。"
+echo "AQSP 已回滚到 ${TARGET_REF}。"

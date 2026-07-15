@@ -13,6 +13,7 @@ RUNNER_SCRIPT="${AQSP_RUNNER_SCRIPT:-}"
 LOG_DIR="${PROJECT_ROOT}/logs/deploy"
 RUN_LOG="${LOG_DIR}/sync-$(date +%Y-%m-%d).log"
 LOCK_DIR="${PROJECT_ROOT}/.locks"
+# This lock is also used by sync_runtime_files_to_server.py; keep the path shared.
 LOCK_FILE="${LOCK_DIR}/server-runtime.lock"
 LOCK_INFO_FILE="${LOCK_FILE}/meta.env"
 GIT_SYNC_LOCK_FILE="${LOCK_DIR}/server-git-sync.lock"

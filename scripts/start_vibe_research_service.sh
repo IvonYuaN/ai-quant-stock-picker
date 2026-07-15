@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Start the persistent Vibe-Research systemd target; never daemonize with nohup.
+# Start the persistent AQSP systemd target; never daemonize with nohup.
 set -euo pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

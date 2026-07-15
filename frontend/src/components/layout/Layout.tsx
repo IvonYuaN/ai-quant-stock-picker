@@ -4,11 +4,12 @@ import {
   Activity,
   CalendarDays,
   LineChart,
-  MessageSquareText,
   Moon,
   PanelLeftClose,
   PanelLeftOpen,
+  ScrollText,
   Sun,
+  UsersRound,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useDarkMode } from "@/hooks/useDarkMode";
@@ -16,9 +17,10 @@ import { AqspWorkspaceProvider, useAqspSnapshot } from "@/components/aqsp/useAqs
 import { formatResearchDate } from "@/lib/research-view";
 
 const NAV = [
-  { to: "/daily-review#overview", icon: Activity, label: "研究总览", description: "当天结论" },
-  { to: "/daily-review#candidates", icon: LineChart, label: "候选", description: "观察对象" },
-  { to: "/daily-review#messages", icon: MessageSquareText, label: "消息与讨论", description: "证据链" },
+  { hash: "overview", icon: Activity, label: "今日总览", description: "结论与状态" },
+  { hash: "candidates", icon: LineChart, label: "候选研究", description: "评分与依据" },
+  { hash: "messages", icon: ScrollText, label: "消息证据", description: "来源与影响" },
+  { hash: "discussion", icon: UsersRound, label: "讨论复核", description: "分歧与风险" },
 ];
 
 export function Layout() {
@@ -29,10 +31,10 @@ function WorkspaceLayout() {
   const { pathname, hash } = useLocation();
   const { dark, toggle } = useDarkMode();
   const { data, loading, selectedDate, selectDate } = useAqspSnapshot();
-  const [collapsed, setCollapsed] = useState(() => localStorage.getItem("vr-sidebar") === "collapsed");
+  const [collapsed, setCollapsed] = useState(() => localStorage.getItem("aqsp-sidebar") === "collapsed");
 
   useEffect(() => {
-    localStorage.setItem("vr-sidebar", collapsed ? "collapsed" : "expanded");
+    localStorage.setItem("aqsp-sidebar", collapsed ? "collapsed" : "expanded");
   }, [collapsed]);
 
   useEffect(() => {
@@ -40,6 +42,14 @@ function WorkspaceLayout() {
       selectDate(data.selected_date);
     }
   }, [data, selectedDate, selectDate]);
+
+  useEffect(() => {
+    const sectionId = hash.slice(1) || "overview";
+    const frame = window.requestAnimationFrame(() => {
+      document.getElementById(sectionId)?.scrollIntoView({ block: "start" });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [hash, loading, data?.selected_date]);
 
   const dates = data?.available_dates ?? [];
   const activeDate = selectedDate || data?.selected_date || "";
@@ -49,9 +59,9 @@ function WorkspaceLayout() {
       <aside className={cn("vr-sidebar glass", collapsed && "vr-sidebar-collapsed")}>
         <div className="vr-brand">
           <div className="flex items-start justify-between gap-2">
-            <Link to="/daily-review" className="flex min-w-0 items-center gap-2.5">
+            <Link to="/daily-review#overview" className="flex min-w-0 items-center gap-2.5">
               <span className="vr-brand-mark"><LineChart className="h-5 w-5" /></span>
-              {!collapsed && <span className="truncate text-base font-bold tracking-tight">Vibe-Research</span>}
+              {!collapsed && <span className="truncate text-base font-bold">AQSP</span>}
             </Link>
             <button
               type="button"
@@ -70,17 +80,22 @@ function WorkspaceLayout() {
         <div className={cn("vr-sidebar-scroll", collapsed && "px-1.5")}>
           {!collapsed && (
             <div className="vr-sidebar-section">
-              <div className="vr-sidebar-label"><span>工作区</span><span className="text-muted-foreground/50">3</span></div>
+              <div className="vr-sidebar-label"><span>研究工作区</span><span className="text-muted-foreground/50">4</span></div>
             </div>
           )}
           <nav className="space-y-1" aria-label="研究工作区">
-            {NAV.map(({ to, icon: Icon, label, description }) => {
-              const [targetPath, targetHash] = to.split("#");
-              const active = pathname === targetPath && (targetHash ? hash === `#${targetHash}` : !hash);
+            {NAV.map(({ hash: targetHash, icon: Icon, label, description }) => {
+              const to = `/daily-review#${targetHash}`;
+              const active = pathname === "/daily-review" && (hash === `#${targetHash}` || (!hash && targetHash === "overview"));
               return (
                 <Link
                   key={to}
                   to={to}
+                  onClick={() => {
+                    window.requestAnimationFrame(() => {
+                      document.getElementById(targetHash)?.scrollIntoView({ behavior: "smooth", block: "start" });
+                    });
+                  }}
                   title={collapsed ? `${label} · ${description}` : undefined}
                   className={cn("vr-nav-item", active && "vr-nav-item-active", collapsed && "justify-center px-2")}
                 >

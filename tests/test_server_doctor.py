@@ -179,7 +179,9 @@ def test_server_doctor_reports_dirty_worktree(monkeypatch) -> None:
         lambda *args, **kwargs: type(
             "Result",
             (),
-            {"stdout": " M src/aqsp/cli.py\n M scripts/run_production_walkforward_gate.py\n"},
+            {
+                "stdout": " M src/aqsp/cli.py\n M scripts/run_production_walkforward_gate.py\n"
+            },
         )(),
     )
 
@@ -241,7 +243,8 @@ def test_server_doctor_prefers_public_baota_vhost_when_local_helper_exists(
     proxy_dir = tmp_path / "www/server/panel/vhost/nginx/proxy/lh.ifidy.cn"
     proxy_dir.mkdir(parents=True)
     (proxy_dir / "aqsp.conf").write_text(
-        "location / { proxy_pass http://127.0.0.1:8501; }\n",
+        "location / { proxy_pass http://127.0.0.1:5899; }\n"
+        "location /api/ { proxy_pass http://127.0.0.1:8900; }\n",
         encoding="utf-8",
     )
 

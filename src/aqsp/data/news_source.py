@@ -394,6 +394,21 @@ class AkshareNewsSource:
         for name, fetch in fetchers:
             try:
                 frame = fetch()
+            except TimeoutError as exc:
+                # The caller's bounded timeout is fail-fast for this batch. Continuing
+                # through more AkShare endpoints only multiplies a blocked network call.
+                warning = f"{name}: {exc}"
+                errors.append(warning)
+                health.append(
+                    NewsSourceHealth(
+                        name=name,
+                        region=_region_for_source_name(name),
+                        status="timeout",
+                        fetched_at=_source_fetched_at(),
+                        warnings=(warning,),
+                    )
+                )
+                break
             except Exception as exc:
                 warning = f"{name}: {exc}"
                 errors.append(warning)
@@ -486,7 +501,7 @@ def _fetch_eastmoney_stock_news_compat(symbol: str) -> pd.DataFrame:
         elif text.endswith(")"):
             text = text[:-1]
     payload = json.loads(text)
-    rows = ((payload.get("result") or {}).get("cmsArticleWebOld") or [])
+    rows = (payload.get("result") or {}).get("cmsArticleWebOld") or []
     if not isinstance(rows, list) or not rows:
         raise DataError(f"eastmoney 个股新闻无结果: {symbol}")
     frame = pd.DataFrame(rows)
@@ -494,7 +509,9 @@ def _fetch_eastmoney_stock_news_compat(symbol: str) -> pd.DataFrame:
     frame["新闻内容"] = frame.get("content", "")
     frame["发布时间"] = frame.get("date", "")
     frame["文章来源"] = frame.get("mediaName", "")
-    codes = frame["code"] if "code" in frame.columns else pd.Series("", index=frame.index)
+    codes = (
+        frame["code"] if "code" in frame.columns else pd.Series("", index=frame.index)
+    )
     frame["新闻链接"] = [
         f"https://finance.eastmoney.com/a/{code}.html" if code else ""
         for code in codes.fillna("").astype(str)

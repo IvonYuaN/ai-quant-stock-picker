@@ -4,7 +4,7 @@
 
 @layer base {
   /* ============================================================
-     Vibe-Research · 科技玻璃暖橙主题
+     AQSP · 量化研究工作台主题
      默认呈现 = 暗色暖橙（数据密集、长时间看，暗底最护眼；橙红＝A股红盘气质，避开近绿的青色）。
      .light 提供亮色备选。HSL 变量沿用 4 级 surface 架构。
      ============================================================ */
@@ -87,6 +87,8 @@
       radial-gradient(1100px 620px at 12% -12%, hsl(15 89% 56% / 0.11), transparent 60%),
       radial-gradient(980px 720px at 108% 112%, hsl(220 60% 45% / 0.08), transparent 55%);
     background-attachment: fixed;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
   }
 
   .light body {
@@ -123,7 +125,7 @@
     flex-shrink: 0;
     flex-direction: column;
     overflow: hidden;
-    transition: width 180ms ease;
+    transition: width 180ms ease, box-shadow 180ms ease;
   }
 
   .vr-sidebar-collapsed { width: 3.5rem; }
@@ -133,7 +135,7 @@
   .vr-brand-mark { display: inline-flex; align-items: center; justify-content: center; width: 2rem; height: 2rem; border-radius: 0.65rem; color: hsl(var(--primary)); background: hsl(var(--primary) / 0.12); }
   .vr-sidebar-scroll { flex: 1; overflow-y: auto; padding: 1rem 0.75rem; }
   .vr-sidebar-section { padding: 0 0.25rem; }
-  .vr-sidebar-label { display: flex; align-items: center; justify-content: space-between; color: hsl(var(--muted-foreground) / 0.72); font-size: 0.65rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
+  .vr-sidebar-label { display: flex; align-items: center; justify-content: space-between; color: hsl(var(--muted-foreground) / 0.72); font-size: 0.65rem; font-weight: 700; }
   .vr-nav-item { display: flex; align-items: center; gap: 0.65rem; min-height: 2.65rem; padding: 0.55rem 0.75rem; border-radius: 0.7rem; color: hsl(var(--muted-foreground)); font-size: 0.8rem; transition: background 140ms ease, color 140ms ease; }
   .vr-nav-item:hover { color: hsl(var(--foreground)); background: hsl(var(--muted) / 0.6); }
   .vr-nav-item-active { color: hsl(var(--foreground)); background: hsl(var(--primary) / 0.13); box-shadow: inset 2px 0 0 hsl(var(--primary)); }
@@ -145,7 +147,7 @@
   .vr-icon-button:hover { color: hsl(var(--foreground)); background: hsl(var(--muted) / 0.55); }
   .vr-main { min-width: 0; flex: 1; overflow: auto; }
   .vr-content { width: min(100%, 74rem); margin: 0 auto; padding: 1.5rem 1.5rem 2.5rem; }
-  .vr-kicker { color: hsl(var(--muted-foreground) / 0.78); font-size: 0.65rem; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; }
+  .vr-kicker { color: hsl(var(--muted-foreground) / 0.78); font-size: 0.65rem; font-weight: 700; }
   .vr-conclusion { border-left: 3px solid hsl(var(--primary)); padding: 0.9rem 1rem; background: hsl(var(--primary) / 0.07); }
 
   /* 玻璃卡：半透明填充 + 发丝边框 + 柔投影，减少纯装饰性的光晕。 */
@@ -189,7 +191,7 @@
   .vr-board-grid { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(19rem, 0.85fr); gap: 1.75rem; align-items: start; }
   .vr-board-section { min-width: 0; scroll-margin-top: 1.25rem; }
   .vr-section-heading { display: flex; align-items: end; justify-content: space-between; gap: 1rem; margin-bottom: 0.8rem; }
-  .vr-section-heading h2 { margin-top: 0.25rem; font-size: 1.05rem; font-weight: 650; letter-spacing: -0.01em; }
+  .vr-section-heading h2 { margin-top: 0.25rem; font-size: 1.05rem; font-weight: 650; }
   .vr-count { color: hsl(var(--muted-foreground)); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.68rem; font-variant-numeric: tabular-nums; }
   .vr-candidate-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); gap: 0.75rem; }
   .vr-research-card, .vr-debate-card { border: 1px solid hsl(var(--border) / 0.72); border-radius: 0.75rem; background: hsl(var(--card) / 0.62); padding: 1rem; transition: border-color 140ms ease, transform 140ms ease, background 140ms ease; }
@@ -225,9 +227,9 @@
   .vr-shell { display: block; padding: 0.5rem; }
   .vr-sidebar, .vr-sidebar-collapsed { position: static; width: 100%; height: auto; max-height: none; }
   .vr-sidebar-scroll { overflow: visible; padding: 0.65rem; }
-  .vr-sidebar-scroll nav { display: flex; overflow-x: auto; gap: 0.35rem; padding-bottom: 0.1rem; }
-  .vr-nav-item { min-width: max-content; }
-  .vr-nav-item > span:last-child { display: none; }
+  .vr-sidebar-scroll nav { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.35rem; }
+  .vr-nav-item { min-width: 0; }
+  .vr-nav-item > span:last-child span:last-child { display: none; }
   .vr-sidebar-section { display: none; }
   .vr-sidebar-footer { padding: 0.6rem 0.75rem; }
   .vr-content { padding: 1.25rem 0.5rem 2rem; }

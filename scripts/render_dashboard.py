@@ -3779,7 +3779,7 @@ def render_dashboard(
       <div>
         <h1>短线决策看板</h1>
         <p class="sub">{safe_title} · 生成时间 {generated_at}。仅供研究复核 / 不连接券商 / 不触发真实委托。</p>
-        <p class="sub">离线归档 · 非生产首页；当前生产入口为 Vibe-Research {html.escape(public_dashboard_url())}。</p>
+        <p class="sub">离线归档 · 非生产首页；当前生产入口为 AQSP {html.escape(public_dashboard_url())}。</p>
         <div class="meta">
           <span class="pill">最新信号日 {latest_date}</span>
           <span class="pill">候选数据日 {display_date}</span>

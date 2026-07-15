@@ -188,9 +188,9 @@ export function AqspResearchWorkspace() {
     <div className="vr-research-page">
       <header className="vr-page-topline" id="overview">
         <div>
-          <p className="vr-kicker text-primary">VIBE-RESEARCH / SHORT-TERM</p>
+          <p className="vr-kicker text-primary">AQSP / DAILY RESEARCH</p>
           <div className="mt-2 flex flex-wrap items-end gap-x-3 gap-y-1">
-            <h1 className="text-2xl font-semibold tracking-tight">短线研究台</h1>
+            <h1 className="text-2xl font-semibold">AQSP 研究工作台</h1>
             <span className="text-sm text-muted-foreground">{data.selected_date || "日期未记录"}</span>
           </div>
           <div className="mt-2"><SnapshotMeta snapshot={data} /></div>
@@ -207,7 +207,7 @@ export function AqspResearchWorkspace() {
         <div className="flex items-start gap-3">
           <span className="vr-section-icon"><Sparkles className="h-4 w-4" /></span>
           <div className="min-w-0">
-            <p className="vr-kicker text-primary">今日判断</p>
+            <p className="vr-kicker text-primary">研究结论</p>
             <h2 id="conclusion-title" className="mt-2 text-lg font-semibold leading-relaxed">{conclusion || "今日结论未记录"}</h2>
             {data.summaries.length > 1 && <div className="mt-3 space-y-1 text-xs leading-relaxed text-muted-foreground">{data.summaries.slice(1, 3).map((line) => <p key={line}>· {line}</p>)}</div>}
           </div>
@@ -222,18 +222,18 @@ export function AqspResearchWorkspace() {
 
       <div className="vr-board-grid">
         <section id="candidates" className="vr-board-section">
-          <div className="vr-section-heading"><div><p className="vr-kicker">观察对象</p><h2>当天候选</h2></div><span className="vr-count">{data.candidates.length} 条</span></div>
+          <div className="vr-section-heading"><div><p className="vr-kicker">评分与依据</p><h2>候选研究</h2></div><span className="vr-count">{data.candidates.length} 条</span></div>
           {data.candidates.length === 0 ? <EmptyState title="当前没有候选" detail="可能是研究 gate 阻塞，或当天数据尚未产出。" /> : <div className="vr-candidate-grid">{data.candidates.map((candidate) => <CandidateCard key={candidate.symbol} candidate={candidate} />)}</div>}
         </section>
 
         <section id="messages" className="vr-board-section vr-messages-section">
-          <div className="vr-section-heading"><div><p className="vr-kicker">证据摘要</p><h2>当天消息</h2></div><span className="vr-count">{data.message_status || `${data.messages.length} 条`}</span></div>
+          <div className="vr-section-heading"><div><p className="vr-kicker">来源与影响</p><h2>消息证据</h2></div><span className="vr-count">{data.message_status || `${data.messages.length} 条`}</span></div>
           {data.messages.length === 0 ? <EmptyState title="当前没有消息摘要" detail="快照未记录可核验消息，不在界面中补充推断。" /> : <div className="vr-message-list">{data.messages.slice(0, 5).map((message) => <MessageCard key={`${message.title}-${message.published_at}`} message={message} />)}</div>}
         </section>
       </div>
 
       <section id="discussion" className="vr-board-section vr-discussion-section">
-        <div className="vr-section-heading"><div><p className="vr-kicker">过程与结论</p><h2>多 Agent 讨论</h2></div><span className="vr-count">{data.debates.length} 条</span></div>
+        <div className="vr-section-heading"><div><p className="vr-kicker">分歧与风险</p><h2>讨论复核</h2></div><span className="vr-count">{data.debates.length} 条</span></div>
         {data.debates.length === 0 ? <EmptyState title="暂无讨论记录" detail="当前快照没有多 Agent 讨论结果，保留确定性研究数据。" /> : <div className="grid gap-3 xl:grid-cols-2">{data.debates.map((result) => <DebateCard key={result.symbol} result={result} />)}</div>}
         <div className="mt-5 flex items-start gap-2 border-t border-border/50 pt-3 text-[11px] leading-relaxed text-muted-foreground/70"><ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" />讨论仅作为研究补充，确定性评分和原始证据保持独立。</div>
       </section>

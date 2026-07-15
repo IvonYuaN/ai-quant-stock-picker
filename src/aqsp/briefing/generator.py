@@ -387,6 +387,64 @@ def _debate_is_publishable(result: DebateResult) -> bool:
     return bool(audit is not None and audit.passed)
 
 
+def _pick_candidate_fingerprint(pick: PickResult) -> str:
+    metrics = pick.metrics or {}
+    return str(
+        metrics.get("candidate_fingerprint")
+        or metrics.get("debate_candidate_fingerprint")
+        or ""
+    ).strip()
+
+
+def _debate_candidate_fingerprint(result: DebateResult) -> str:
+    return str(
+        result.candidate_fingerprint
+        or getattr(result, "debate_candidate_fingerprint", "")
+        or ""
+    ).strip()
+
+
+def _debate_matches_pick(result: DebateResult, pick: PickResult) -> bool:
+    if str(result.symbol).strip() != str(pick.symbol).strip():
+        return False
+    pick_date = str(pick.date or "").strip()[:10]
+    result_date = str(result.related_signal_date or "").strip()[:10]
+    if pick_date and result_date and pick_date != result_date:
+        return False
+    pick_fingerprint = _pick_candidate_fingerprint(pick)
+    result_fingerprint = _debate_candidate_fingerprint(result)
+    return not (
+        pick_fingerprint
+        and result_fingerprint
+        and pick_fingerprint != result_fingerprint
+    )
+
+
+def _find_debate_for_pick(
+    pick: PickResult,
+    results: list[DebateResult],
+) -> DebateResult | None:
+    matches = [result for result in results if _debate_matches_pick(result, pick)]
+    pick_fingerprint = _pick_candidate_fingerprint(pick)
+    if pick_fingerprint:
+        matches = [
+            result
+            for result in matches
+            if _debate_candidate_fingerprint(result) == pick_fingerprint
+        ]
+    else:
+        fingerprints = {
+            _debate_candidate_fingerprint(result)
+            for result in matches
+            if _debate_candidate_fingerprint(result)
+        }
+        if len(fingerprints) > 1:
+            return None
+    if len(matches) != 1:
+        return matches[-1] if len(matches) == 1 else None
+    return matches[0]
+
+
 def _debate_metrics(result: DebateResult) -> dict[str, object]:
     quality = build_debate_conclusion_view(result).quality_audit
     metrics: dict[str, object] = {
@@ -477,10 +535,9 @@ def _apply_debate_results_to_picks(
         "debate_role_reliability_lines",
     }
     today = now_shanghai().date().isoformat()
-    result_by_symbol = {result.symbol: result for result in debate_results}
     enriched: list[PickResult] = []
     for pick in picks:
-        result = result_by_symbol.get(pick.symbol)
+        result = _find_debate_for_pick(pick, debate_results)
         if result is None:
             enriched.append(pick)
             continue

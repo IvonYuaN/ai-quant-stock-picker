@@ -1060,6 +1060,36 @@ def test_akshare_news_source_raises_data_error_when_all_global_sources_fail() ->
         source.fetch_global_news()
 
 
+def test_akshare_news_source_stops_global_batch_after_timeout() -> None:
+    called: list[str] = []
+
+    def timeout() -> pd.DataFrame:
+        called.append("timeout")
+        raise TimeoutError("source deadline")
+
+    def should_not_run() -> pd.DataFrame:
+        called.append("after-timeout")
+        return pd.DataFrame([{"标题": "不应请求"}])
+
+    source = AkshareNewsSource.__new__(AkshareNewsSource)
+    source._ak = SimpleNamespace(
+        stock_info_global_cls=timeout,
+        stock_info_global_em=should_not_run,
+        stock_info_global_ths=should_not_run,
+        stock_info_global_futu=should_not_run,
+        stock_info_global_sina=should_not_run,
+        news_cctv=should_not_run,
+        news_economic_baidu=should_not_run,
+        stock_notice_report=should_not_run,
+    )
+
+    with pytest.raises(DataError, match="akshare 全市场新闻获取失败"):
+        source.fetch_global_news()
+
+    assert called == ["timeout"]
+    assert source.last_health[0].status == "timeout"
+
+
 def test_akshare_news_source_surfaces_partial_fetch_warnings() -> None:
     def empty() -> pd.DataFrame:
         return pd.DataFrame()

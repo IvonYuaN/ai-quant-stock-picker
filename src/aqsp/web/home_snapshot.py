@@ -354,7 +354,7 @@ def _set_runtime_snapshot_mode(path: str | Path) -> None:
     """Keep atomically replaced dashboard files readable by the service group.
 
     Production writes are performed by a different account than the read-only
-    Vibe-Research API. The runtime directory supplies the group ownership; the
+    AQSP research API. The runtime directory supplies the group ownership; the
     file mode keeps the payload private from all other users.
     """
     Path(path).chmod(0o640)

@@ -1,56 +1,40 @@
-/** Stable read-only response shape for the AQSP -> Vibe-Research bridge. */
+import type { AqspSnapshotEnvelope } from "@/types/aqsp";
 
-export interface AqspCandidate {
-  symbol: string;
-  display_name: string;
-  score: number;
-  research_status: string;
-  next_step: string;
-  context: string;
-  deterministic_reasons: readonly string[];
-  strategies: readonly string[];
-  evidence_status: string;
-}
+export type { AqspSnapshotEnvelope } from "@/types/aqsp";
 
-export interface AqspMessage {
-  title: string;
-  summary: string;
-  impact: string;
-  category: string;
-  source: string;
-  published_at: string;
-}
+// Compile-time fixtures keep the bridge contract checked without adding a test runner.
+export const aqspContractFixture = {
+  data: {
+    schema_version: "v1",
+    generated_at: "2026-07-14T09:30:00+08:00",
+    selected_date: "2026-07-14",
+    available_dates: ["2026-07-14"],
+    candidates: [],
+    debates: [],
+    summaries: [],
+    source: {
+      effective: "fixture",
+      latest_trade_date: "2026-07-14",
+      lag_days: 0,
+      status: "fresh",
+    },
+    coldstart: { status: "完成", detail: "" },
+    stale_after: "2026-07-15T09:30:00+08:00",
+    message_status: "未产出",
+    messages: [],
+    market_context: null,
+  },
+  meta: { historical: false, stale: false },
+} satisfies AqspSnapshotEnvelope;
 
-export interface AqspAgentDiscussion {
-  symbol: string;
-  display_name: string;
-  conclusion: string;
-  primary_risk_gate: string;
-  next_trigger: string;
-  active_roles: readonly string[];
-}
+export const aqspEmptyStateIsRepresentable =
+  aqspContractFixture.data.messages.length === 0 &&
+  aqspContractFixture.data.debates.length === 0;
 
-export interface AqspSnapshot {
-  schema_version: string;
-  generated_at: string;
-  selected_date: string;
-  available_dates: readonly string[];
-  candidates: readonly AqspCandidate[];
-  debates: readonly AqspAgentDiscussion[];
-  summaries: readonly string[];
-  source: {
-    effective: string;
-    latest_trade_date: string;
-    lag_days: number;
-    status: string;
-  };
-  coldstart: { status: string; detail: string };
-  stale_after: string;
-  message_status: string;
-  messages: readonly AqspMessage[];
-}
+export const aqspEnvelopeMetadataIsRepresentable =
+  aqspContractFixture.meta.historical === false && aqspContractFixture.meta.stale === false;
 
-export interface AqspSnapshotEnvelope {
-  data: AqspSnapshot;
-  meta: { historical: boolean; stale: boolean };
-}
+export const aqspHistoricalContractFixture = {
+  ...aqspContractFixture,
+  meta: { historical: true, stale: true },
+} satisfies AqspSnapshotEnvelope;

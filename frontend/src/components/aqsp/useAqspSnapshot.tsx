@@ -86,6 +86,7 @@ export function useAqspSnapshot(): AqspSnapshotState {
 }
 
 export function isAqspSnapshotStale(snapshot: AqspSnapshot): boolean {
+  if (snapshot.meta) return snapshot.meta.historical || snapshot.meta.stale;
   if (!snapshot.stale_after) return true;
   const deadline = Date.parse(snapshot.stale_after);
   return Number.isNaN(deadline) || Date.now() >= deadline;

@@ -1,4 +1,4 @@
-"""Read-only bridge from AQSP runtime snapshots to the Vibe-Research API."""
+"""Read-only bridge from AQSP runtime snapshots to the AQSP research API."""
 
 from __future__ import annotations
 

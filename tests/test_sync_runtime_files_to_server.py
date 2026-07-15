@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -219,6 +220,95 @@ def test_backup_name_contains_hash_suffix() -> None:
     assert len(name.split("-")[-1].split(".")[0]) == 12
 
 
+def test_remote_runtime_lock_uses_server_sync_lock_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    commands: list[str] = []
+    monkeypatch.setattr(
+        sync_mod,
+        "_ssh",
+        lambda _target, command: commands.append(command) or SimpleNamespace(),
+    )
+    plan = sync_mod.SyncPlan(
+        ssh_target="aqsp-server",
+        remote_root="/opt/aqsp",
+        backup_dir="/opt/aqsp/runtime-backups",
+        files=("scripts/a.py",),
+    )
+
+    sync_mod._acquire_remote_runtime_lock(plan)
+    sync_mod._release_remote_runtime_lock(plan)
+
+    assert ".locks/server-runtime.lock" in commands[0]
+    assert "mkdir" in commands[0]
+    assert "rmdir" in commands[1]
+
+
+def test_sync_files_holds_remote_lock_across_full_transaction(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    calls: list[str] = []
+    plan = sync_mod.SyncPlan(
+        ssh_target="aqsp-server",
+        remote_root="/opt/aqsp",
+        backup_dir="/opt/aqsp/runtime-backups",
+        files=("scripts/a.py",),
+    )
+    monkeypatch.setattr(
+        sync_mod, "_create_local_archive", lambda *_args: tmp_path / "archive"
+    )
+    monkeypatch.setattr(
+        sync_mod, "_acquire_remote_runtime_lock", lambda _plan: calls.append("acquire")
+    )
+    monkeypatch.setattr(
+        sync_mod, "_release_remote_runtime_lock", lambda _plan: calls.append("release")
+    )
+    monkeypatch.setattr(
+        sync_mod, "_remote_existing_files", lambda _plan: calls.append("existing") or []
+    )
+    monkeypatch.setattr(
+        sync_mod,
+        "_backup_remote_files",
+        lambda _plan, _files: calls.append("backup") or "backup.tar.gz",
+    )
+    monkeypatch.setattr(
+        sync_mod, "_upload_and_extract", lambda *_args: calls.append("upload")
+    )
+    monkeypatch.setattr(
+        sync_mod,
+        "_local_hashes",
+        lambda _root, _files: {"scripts/a.py": "a"},
+    )
+    monkeypatch.setattr(
+        sync_mod,
+        "_remote_hashes",
+        lambda _plan: calls.append("hashes") or {"scripts/a.py": "a"},
+    )
+    monkeypatch.setattr(
+        sync_mod, "_remote_import_smoke", lambda _plan: calls.append("smoke") or ()
+    )
+    monkeypatch.setattr(
+        sync_mod,
+        "_write_remote_overlay_manifest",
+        lambda _plan, **_kwargs: calls.append("manifest") or "manifest.json",
+    )
+
+    result = sync_mod.sync_files(plan)
+
+    assert result["verified"] is True
+    assert calls == [
+        "acquire",
+        "existing",
+        "backup",
+        "upload",
+        "hashes",
+        "smoke",
+        "manifest",
+        "release",
+    ]
+
+
 def test_overlay_manifest_remote_path_defaults_under_state_dir() -> None:
     assert (
         sync_mod._overlay_manifest_remote_path("/opt/aqsp")
@@ -291,26 +381,22 @@ def test_build_plan_allows_empty_files_for_verify_overlay() -> None:
     assert plan.files == ()
 
 
-def test_merge_overlay_manifest_unions_files_and_updates_hashes() -> None:
+def test_merge_overlay_manifest_replaces_stale_files_and_updates_hashes() -> None:
     merged = sync_mod._merge_overlay_manifest(
         {
             "managed_files": ["scripts/a.sh"],
             "file_hashes": {"scripts/a.sh": "old"},
             "updated_at": "2026-07-06T18:00:00+08:00",
         },
-        files=("scripts/a.sh", "src/aqsp/config.py"),
+        files=("src/aqsp/config.py",),
         hashes={
-            "scripts/a.sh": "new-a",
             "src/aqsp/config.py": "new-config",
         },
         synced_at="2026-07-07T09:00:00+08:00",
     )
 
-    assert merged["managed_files"] == ["scripts/a.sh", "src/aqsp/config.py"]
-    assert merged["file_hashes"] == {
-        "scripts/a.sh": "new-a",
-        "src/aqsp/config.py": "new-config",
-    }
+    assert merged["managed_files"] == ["src/aqsp/config.py"]
+    assert merged["file_hashes"] == {"src/aqsp/config.py": "new-config"}
     assert merged["updated_at"] == "2026-07-07T09:00:00+08:00"
 
 

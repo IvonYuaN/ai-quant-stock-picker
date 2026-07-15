@@ -147,6 +147,18 @@ def audit_debate_quality(
     candidate_mapped = bool(result_symbol) and (
         not candidate_symbol or result_symbol == candidate_symbol
     )
+    result_date = _normal_date(
+        _field(result, "related_signal_date", _field(result, "signal_date", ""))
+    )
+    candidate_date = _normal_date(
+        _field(candidate, "date", _field(candidate, "signal_date", ""))
+    )
+    if candidate_mapped and result_date and candidate_date:
+        candidate_mapped = result_date == candidate_date
+    result_fingerprint = _result_fingerprint(result)
+    candidate_fingerprint = _candidate_fingerprint(candidate)
+    if candidate_mapped and result_fingerprint and candidate_fingerprint:
+        candidate_mapped = result_fingerprint == candidate_fingerprint
     round_count = len(rounds)
     expected_sequence = tuple(range(1, round_count + 1))
     valid_round_sequence = tuple(round_numbers) == expected_sequence
@@ -372,6 +384,39 @@ def _candidate_symbol(candidate: Any | None) -> str:
     if isinstance(candidate, dict):
         return _clean_text(candidate.get("symbol"))
     return _clean_text(getattr(candidate, "symbol", ""))
+
+
+def _normal_date(value: Any) -> str:
+    return _clean_text(value)[:10]
+
+
+def _candidate_fingerprint(candidate: Any | None) -> str:
+    if candidate is None:
+        return ""
+    if isinstance(candidate, Mapping):
+        metrics = candidate.get("metrics")
+        metrics = metrics if isinstance(metrics, Mapping) else {}
+        return _clean_text(
+            candidate.get("candidate_fingerprint")
+            or candidate.get("debate_candidate_fingerprint")
+            or metrics.get("candidate_fingerprint")
+            or metrics.get("debate_candidate_fingerprint")
+        )
+    metrics = getattr(candidate, "metrics", {})
+    metrics = metrics if isinstance(metrics, Mapping) else {}
+    return _clean_text(
+        getattr(candidate, "candidate_fingerprint", "")
+        or getattr(candidate, "debate_candidate_fingerprint", "")
+        or metrics.get("candidate_fingerprint")
+        or metrics.get("debate_candidate_fingerprint")
+    )
+
+
+def _result_fingerprint(result: Any) -> str:
+    return _clean_text(
+        _field(result, "candidate_fingerprint", "")
+        or _field(result, "debate_candidate_fingerprint", "")
+    )
 
 
 def _round_has_valid_opinions(round_data: Any) -> bool:

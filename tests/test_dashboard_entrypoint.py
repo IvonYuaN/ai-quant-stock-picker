@@ -51,7 +51,7 @@ def test_public_dashboard_url_rejects_embedded_credentials(monkeypatch) -> None:
 def test_entrypoint_classification_distinguishes_canonical_legacy_and_redirect() -> (
     None
 ):
-    assert classify_entry_text("Vibe-Research AQSP 研究工作台") == "canonical"
+    assert classify_entry_text("AQSP · 量化选股研究工作台") == "canonical"
     assert classify_entry_text("<div>AQSP 日期任务研究台</div>") == "legacy"
     assert (
         classify_entry_text(
@@ -63,7 +63,7 @@ def test_entrypoint_classification_distinguishes_canonical_legacy_and_redirect()
 
 
 def test_health_classification_distinguishes_vibe_api_and_streamlit() -> None:
-    assert classify_health_text('{"ok": true, "service": "vibe-research-api"}') == (
+    assert classify_health_text('{"ok": true, "service": "aqsp-api"}') == (
         "canonical"
     )
     assert classify_health_text("ok") == "legacy"

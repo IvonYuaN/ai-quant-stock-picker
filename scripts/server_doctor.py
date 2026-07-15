@@ -80,7 +80,9 @@ def _artifact_checks() -> list[DoctorCheck]:
     return checks
 
 
-def _run_subprocess(command: list[str], *, timeout: int = 5) -> subprocess.CompletedProcess[str]:
+def _run_subprocess(
+    command: list[str], *, timeout: int = 5
+) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         command,
         cwd=PROJECT_ROOT,
@@ -113,7 +115,11 @@ def _dashboard_ingress_checks() -> list[DoctorCheck]:
     site_path = Path("/etc/nginx/sites-enabled/aqsp")
     bt_vhost_path = Path("/www/server/panel/vhost/nginx/lh.ifidy.cn.conf")
     if not site_path.exists() and not bt_vhost_path.exists():
-        return [DoctorCheck("ingress:nginx_site", "missing", f"{site_path} / {bt_vhost_path}")]
+        return [
+            DoctorCheck(
+                "ingress:nginx_site", "missing", f"{site_path} / {bt_vhost_path}"
+            )
+        ]
 
     site_text = ""
     bt_text = ""
@@ -151,7 +157,9 @@ def _dashboard_ingress_checks() -> list[DoctorCheck]:
 
     listens = [
         match.group(1).strip().rstrip(";")
-        for match in re.finditer(r"^\s*listen\s+(.+?);", active_text, flags=re.MULTILINE)
+        for match in re.finditer(
+            r"^\s*listen\s+(.+?);", active_text, flags=re.MULTILINE
+        )
     ]
     checks: list[DoctorCheck] = [
         DoctorCheck(
@@ -197,12 +205,20 @@ def _dashboard_ingress_checks() -> list[DoctorCheck]:
             )
         )
 
-    if "127.0.0.1:8501" in active_text:
+    if "127.0.0.1:5899" in active_text and "127.0.0.1:8900" in active_text:
         checks.append(
             DoctorCheck(
                 "ingress:upstream",
                 "ok",
-                "reverse proxy to 127.0.0.1:8501",
+                "AQSP reverse proxy to 127.0.0.1:5899 with API 127.0.0.1:8900",
+            )
+        )
+    elif "127.0.0.1:8501" in active_text:
+        checks.append(
+            DoctorCheck(
+                "ingress:upstream",
+                "failed",
+                "legacy dashboard reverse proxy to 127.0.0.1:8501; expected AQSP 5899/8900",
             )
         )
     elif "/opt/aqsp/dist/dashboard" in active_text:
@@ -210,7 +226,7 @@ def _dashboard_ingress_checks() -> list[DoctorCheck]:
             DoctorCheck(
                 "ingress:upstream",
                 "failed",
-                "serving dist/dashboard only; expected reverse proxy to 127.0.0.1:8501",
+                "serving dist/dashboard only; expected AQSP reverse proxy to 5899/8900",
             )
         )
     else:
@@ -218,20 +234,16 @@ def _dashboard_ingress_checks() -> list[DoctorCheck]:
             DoctorCheck(
                 "ingress:upstream",
                 "unknown",
-                "unable to confirm 127.0.0.1:8501 reverse proxy",
+                "unable to confirm AQSP reverse proxy to 5899/8900",
             )
         )
     if bt_text:
         try:
             baota_nginx = Path("/www/server/nginx/sbin/nginx")
-            nginx_command = (
-                str(baota_nginx) if baota_nginx.exists() else "nginx"
-            )
+            nginx_command = str(baota_nginx) if baota_nginx.exists() else "nginx"
             loaded = _run_subprocess([nginx_command, "-T"], timeout=8).stdout
         except (OSError, subprocess.SubprocessError) as exc:
-            checks.append(
-                DoctorCheck("ingress:bt_vhost_loaded", "unknown", str(exc))
-            )
+            checks.append(DoctorCheck("ingress:bt_vhost_loaded", "unknown", str(exc)))
         else:
             if str(bt_vhost_path) in loaded:
                 checks.append(
@@ -442,9 +454,13 @@ def main(argv: list[str] | None = None) -> int:
     lines.extend(_format_section("Notify", notify_checks))
     print("\n".join(lines).rstrip())
 
-    return 1 if _has_hard_failures(
-        artifact_checks + git_checks + ingress_checks + source_checks + llm_checks
-    ) else 0
+    return (
+        1
+        if _has_hard_failures(
+            artifact_checks + git_checks + ingress_checks + source_checks + llm_checks
+        )
+        else 0
+    )
 
 
 if __name__ == "__main__":

@@ -41,6 +41,7 @@ class RuntimeSnapshotCandidate:
     debate_round_count: int = 0
     debate_roles: tuple[str, ...] = ()
     debate_status: str = "not_requested"
+    candidate_fingerprint: str = ""
 
 
 @dataclass(frozen=True)
@@ -68,6 +69,7 @@ class RuntimeSnapshotDebate:
     quality_issues: tuple[str, ...] = ()
     evidence_sufficient: bool = False
     advisory_boundary_ok: bool = True
+    candidate_fingerprint: str = ""
 
 
 @dataclass(frozen=True)
@@ -200,9 +202,24 @@ def _snapshot_candidates(
         for spotlight in (_get(payload, "spotlights", ()) or ())
         if _candidate_symbol(spotlight) not in known_symbols
     )
-    debate_by_symbol = {item.symbol: item for item in debates if item.symbol}
+    debate_by_key = {
+        (item.symbol, item.candidate_fingerprint): item
+        for item in debates
+        if item.symbol and item.candidate_fingerprint
+    }
+    debates_by_symbol = {}
+    for item in debates:
+        if item.symbol:
+            debates_by_symbol.setdefault(item.symbol, []).append(item)
     return tuple(
-        _snapshot_candidate(card, debate_by_symbol.get(_candidate_symbol(card)))
+        _snapshot_candidate(
+            card,
+            _debate_for_candidate(
+                card,
+                debate_by_key=debate_by_key,
+                debates_by_symbol=debates_by_symbol,
+            ),
+        )
         for card in cards
         if _candidate_symbol(card)
     )
@@ -248,6 +265,7 @@ def _snapshot_candidate(
                 else ("recorded" if debate.process_recorded else "incomplete")
             )
         ),
+        candidate_fingerprint=_candidate_fingerprint(candidate),
     )
 
 
@@ -293,6 +311,11 @@ def _snapshot_debates(debates: Any) -> tuple[RuntimeSnapshotDebate, ...]:
             failure=str(_get(item, "failure", "") or "").strip(),
             round_count=max(len(rounds), int(_get(item, "round_count", 0) or 0)),
             final_vote=final_vote,
+            candidate_fingerprint=str(
+                _get(item, "candidate_fingerprint", "")
+                or _get(item, "debate_candidate_fingerprint", "")
+                or ""
+            ).strip(),
         )
         audit = audit_debate_quality(
             normalized,
@@ -425,6 +448,32 @@ def _snapshot_guardrails(runtime: Any) -> tuple[str, ...]:
 
 def _candidate_symbol(candidate: Any) -> str:
     return str(_get(candidate, "symbol", "") or "").strip()
+
+
+def _candidate_fingerprint(candidate: Any) -> str:
+    metrics = _get(candidate, "metrics", {})
+    metrics = metrics if isinstance(metrics, Mapping) else {}
+    return str(
+        _get(candidate, "candidate_fingerprint", "")
+        or _get(candidate, "debate_candidate_fingerprint", "")
+        or metrics.get("candidate_fingerprint", "")
+        or metrics.get("debate_candidate_fingerprint", "")
+        or ""
+    ).strip()
+
+
+def _debate_for_candidate(
+    candidate: Any,
+    *,
+    debate_by_key: dict[tuple[str, str], RuntimeSnapshotDebate],
+    debates_by_symbol: dict[str, list[RuntimeSnapshotDebate]],
+) -> RuntimeSnapshotDebate | None:
+    symbol = _candidate_symbol(candidate)
+    fingerprint = _candidate_fingerprint(candidate)
+    if fingerprint:
+        return debate_by_key.get((symbol, fingerprint))
+    matches = debates_by_symbol.get(symbol, [])
+    return matches[0] if len(matches) == 1 else None
 
 
 def _get(value: Any, key: str, default: Any = None) -> Any:

@@ -1498,6 +1498,91 @@ def test_dashboard_data_provider_debate_summary_keeps_rich_row_over_newer_score_
     assert summary.adjusted_score == 81.0
 
 
+def test_dashboard_data_provider_backfills_only_matching_candidate_fingerprint(
+    tmp_path: Path,
+) -> None:
+    ledger_path = tmp_path / "predictions.jsonl"
+    debate_path = tmp_path / "debates.jsonl"
+    ledger_path.write_text(
+        json.dumps(
+            {
+                "signal_date": "2026-07-14",
+                "created_at": "2026-07-14T14:00:00+08:00",
+                "symbol": "300750",
+                "name": "宁德时代",
+                "task_id": "intraday",
+                "candidate_fingerprint": "candidate-a",
+                "score": 72.0,
+                "rating": "buy_candidate",
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    rows = []
+    for fingerprint, verdict in (
+        ("candidate-b", "错误批次，不应回填"),
+        ("candidate-a", "正确批次，应回填"),
+    ):
+        rows.append(
+            {
+                "debate_id": fingerprint,
+                "symbol": "300750",
+                "related_signal_date": "2026-07-14",
+                "candidate_fingerprint": fingerprint,
+                "task_id": "intraday",
+                "final_vote": {"bull": "bullish"},
+                "final_consensus": verdict,
+                "research_verdict": verdict,
+                "rounds": [{"round_num": 1, "opinions": [{"role": "bull"}]}],
+            }
+        )
+    debate_path.write_text(
+        "\n".join(json.dumps(row, ensure_ascii=False) for row in rows) + "\n",
+        encoding="utf-8",
+    )
+    provider = DashboardDataProvider(
+        ledger_path=str(ledger_path),
+        paper_ledger_path=str(tmp_path / "paper.jsonl"),
+        debate_results_path=str(debate_path),
+    )
+
+    row = provider._same_day_unique_rows("2026-07-14")[0]
+
+    assert row["debate_research_verdict"] == "正确批次，应回填"
+
+
+def test_dashboard_data_provider_drops_explicitly_incomplete_debate_metadata(
+    tmp_path: Path,
+) -> None:
+    debate_path = tmp_path / "debates.jsonl"
+    debate_path.write_text(
+        json.dumps(
+            {
+                "debate_id": "incomplete",
+                "symbol": "300750",
+                "related_signal_date": "2026-07-14",
+                "final_vote": {"bull": "bullish"},
+                "final_consensus": "看多",
+                "process_recorded": False,
+                "conclusion_recorded": True,
+                "rounds": [{"round_num": 1, "opinions": [{"role": "bull"}]}],
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    provider = DashboardDataProvider(
+        ledger_path=str(tmp_path / "ledger.jsonl"),
+        paper_ledger_path=str(tmp_path / "paper.jsonl"),
+        debate_results_path=str(debate_path),
+    )
+
+    assert provider.debate_summary(signal_date="2026-07-14", symbol="300750") is None
+
+
 def test_dashboard_data_provider_build_debate_conclusion_prefers_structured_chain_and_gate() -> (
     None
 ):
@@ -1870,7 +1955,9 @@ def test_dashboard_data_provider_dedupes_same_symbol_across_runtime_tasks_and_sa
     assert summaries[0].original_score == 80
     assert summaries[0].cross_market_summary == ""
     assert summaries[0].research_verdict == "倾向继续观察，机会在 技术多头: 技术面强势"
-    assert summaries[0].primary_risk_gate == "消息或规则传导证据缺失，跨市视角不形成结论。"
+    assert (
+        summaries[0].primary_risk_gate == "消息或规则传导证据缺失，跨市视角不形成结论。"
+    )
     cross_market_view = next(
         view for view in summaries[0].agent_views if view.role_id == "cross_market"
     )
@@ -1893,18 +1980,28 @@ def test_dashboard_data_provider_home_digest_expands_partial_debate_coverage(
         available_dates=("2026-07-14",),
         detail_cards=(),
     )
-    spotlights = tuple(SimpleNamespace(symbol=symbol) for symbol in ("002084", "300604", "688981"))
+    spotlights = tuple(
+        SimpleNamespace(symbol=symbol) for symbol in ("002084", "300604", "688981")
+    )
     stale = SimpleNamespace(symbol="002055")
-    current = tuple(SimpleNamespace(symbol=symbol) for symbol in ("002084", "300604", "688981"))
+    current = tuple(
+        SimpleNamespace(symbol=symbol) for symbol in ("002084", "300604", "688981")
+    )
 
-    monkeypatch.setattr(provider, "build_task_digest_view", lambda *_args, **_kwargs: task_view)
-    monkeypatch.setattr(provider, "same_day_task_rows", lambda *_args, **_kwargs: (SimpleNamespace(),))
+    monkeypatch.setattr(
+        provider, "build_task_digest_view", lambda *_args, **_kwargs: task_view
+    )
+    monkeypatch.setattr(
+        provider, "same_day_task_rows", lambda *_args, **_kwargs: (SimpleNamespace(),)
+    )
     monkeypatch.setattr(
         provider,
         "live_candidate_view",
         lambda **_kwargs: SimpleNamespace(candidates=(), artifact_date=""),
     )
-    monkeypatch.setattr(provider, "same_day_candidate_spotlights", lambda *_args, **_kwargs: spotlights)
+    monkeypatch.setattr(
+        provider, "same_day_candidate_spotlights", lambda *_args, **_kwargs: spotlights
+    )
     calls: list[int] = []
 
     def prioritized(*_args, limit: int, **_kwargs):
@@ -1912,13 +2009,19 @@ def test_dashboard_data_provider_home_digest_expands_partial_debate_coverage(
         return (stale, current[0], current[1]) if limit == 3 else current
 
     monkeypatch.setattr(provider, "prioritized_debate_summaries", prioritized)
-    monkeypatch.setattr(provider, "date_overview", lambda *_args, **_kwargs: SimpleNamespace())
-    monkeypatch.setattr(provider, "paper_summary", lambda *_args, **_kwargs: SimpleNamespace())
+    monkeypatch.setattr(
+        provider, "date_overview", lambda *_args, **_kwargs: SimpleNamespace()
+    )
+    monkeypatch.setattr(
+        provider, "paper_summary", lambda *_args, **_kwargs: SimpleNamespace()
+    )
 
     payload = provider.home_digest_payload("intraday", signal_date="2026-07-14")
 
-    assert calls == [3, 20]
-    assert [item.symbol for item in payload.debates] == ["002084", "300604", "688981"]
+    # Without a fresh intraday artifact, historical same-day spotlights are
+    # intentionally not used to expand the live debate coverage.
+    assert calls == []
+    assert payload.debates == ()
 
 
 def test_dashboard_data_provider_splits_strategy_csv_values_for_home_cards(
@@ -2090,6 +2193,41 @@ def test_dashboard_data_provider_surfaces_intraday_paper_review_without_formal_l
     assert same_day_map["intraday"].watch_count == 0
     assert timeline.actionable_total == 2
     assert timeline.watch_total == 0
+
+
+def test_dashboard_data_provider_does_not_fallback_to_main_chain_for_current_intraday(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(
+        "aqsp.web.data_provider.today_shanghai",
+        lambda: date(2026, 7, 14),
+    )
+    ledger_path = tmp_path / "predictions.jsonl"
+    ledger_path.write_text(
+        json.dumps(
+            {
+                "signal_date": "2026-07-14",
+                "symbol": "600519",
+                "name": "贵州茅台",
+                "task_id": "main_chain",
+                "score": 90,
+                "rating": "buy_candidate",
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    provider = DashboardDataProvider(
+        ledger_path=str(ledger_path),
+        paper_ledger_path=str(tmp_path / "paper.jsonl"),
+        intraday_latest_path=str(tmp_path / "missing-intraday.csv"),
+    )
+
+    payload = provider.home_digest_payload("intraday", signal_date="2026-07-14")
+
+    assert payload.spotlights == ()
+    assert payload.debates == ()
 
 
 def test_dashboard_data_provider_blocked_candidate_without_reason_surfaces_missing_evidence(
@@ -5560,7 +5698,9 @@ def test_live_candidate_view_dedupes_and_orders_actionable_watch_blocked() -> No
     assert view.blocked_count == 1
 
 
-def test_live_candidate_view_marks_old_artifact_stale_without_relabeling_score() -> None:
+def test_live_candidate_view_marks_old_artifact_stale_without_relabeling_score() -> (
+    None
+):
     view = build_live_candidate_view(
         (
             {

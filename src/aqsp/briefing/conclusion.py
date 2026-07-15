@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from typing import Any
 
@@ -211,6 +212,28 @@ def _legacy_conclusion_is_compatible(
         or getattr(result, "rounds", ())
         or str(getattr(result, "data_status", "available") or "available")
         != "available"
+    ):
+        return False
+    # Once a producer writes quality metadata, a consumer must not downgrade
+    # an explicit failed/incomplete audit into a legacy conclusion.
+    if isinstance(result, Mapping) and any(
+        field_name in result
+        for field_name in (
+            "process_recorded",
+            "conclusion_recorded",
+            "debate_quality_issues",
+            "evidence_sufficient",
+        )
+    ):
+        return False
+    if any(
+        hasattr(result, field_name)
+        for field_name in (
+            "process_recorded",
+            "conclusion_recorded",
+            "debate_quality_issues",
+            "evidence_sufficient",
+        )
     ):
         return False
     if int(getattr(result, "debate_rounds_requested", 0) or 0) > 0:

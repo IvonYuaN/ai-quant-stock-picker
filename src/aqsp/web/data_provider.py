@@ -356,6 +356,7 @@ class DashboardCandidateSpotlight:
     evidence_quality_label: str = ""
     artifact_date: str = ""
     updated_at: str = ""
+    candidate_fingerprint: str = ""
 
 
 @dataclass(frozen=True)
@@ -462,6 +463,7 @@ class DashboardDebateSummary:
     opposition_points: tuple[str, ...] = ()
     watch_items: tuple[str, ...] = ()
     created_at: str = ""
+    candidate_fingerprint: str = ""
 
 
 @dataclass(frozen=True)
@@ -811,6 +813,7 @@ class DashboardCandidateCard:
     evidence_quality_label: str = ""
     artifact_date: str = ""
     updated_at: str = ""
+    candidate_fingerprint: str = ""
 
 
 @dataclass(frozen=True)
@@ -1068,6 +1071,8 @@ class DashboardDataProvider:
             metadata = LiveArtifactMetadata(
                 artifact_date=artifact_date,
                 updated_at=updated_at,
+                freshness_status=self._intraday_artifact_freshness_status(),
+                source_reason=self._intraday_artifact_status_reason(),
             )
             return build_live_candidate_view(
                 csv_rows,
@@ -1078,6 +1083,23 @@ class DashboardDataProvider:
 
         cache_key = (selected_date, current_time.isoformat(timespec="minutes"))
         return self._cache_value("live_candidate_view", cache_key, _build)
+
+    def _intraday_artifact_state(self) -> dict[str, Any]:
+        return self._read_runtime_json_state(
+            env_name="AQSP_INTRADAY_STATUS",
+            filename="intraday_refresh_status.json",
+            bucket_name="intraday_refresh_status",
+        )
+
+    def _intraday_artifact_freshness_status(self) -> str:
+        status = str(self._intraday_artifact_state().get("status") or "").strip()
+        if not status or status == "completed":
+            return ""
+        return "failed" if status in {"failed", "error"} else "unknown"
+
+    def _intraday_artifact_status_reason(self) -> str:
+        state = self._intraday_artifact_state()
+        return str(state.get("reason") or state.get("detail") or "").strip()
 
     def live_candidate_spotlights(
         self,
@@ -1125,7 +1147,8 @@ class DashboardDataProvider:
                     task_labels=("盘中观察",),
                     reasons=self._as_text_tuple(merged_row.get("reasons"))
                     or candidate.reasons,
-                    risks=self._as_text_tuple(merged_row.get("risks")) or candidate.risks,
+                    risks=self._as_text_tuple(merged_row.get("risks"))
+                    or candidate.risks,
                     strategies=self._strategy_tuple(merged_row.get("strategies")),
                     cross_market_summary=self._spotlight_cross_market_summary(
                         merged_row
@@ -1142,7 +1165,9 @@ class DashboardDataProvider:
                     cross_market_invalidation_summary=(
                         self._spotlight_cross_market_invalidation_summary(merged_row)
                     ),
-                    support_points=self._as_text_tuple(merged_row.get("support_points")),
+                    support_points=self._as_text_tuple(
+                        merged_row.get("support_points")
+                    ),
                     opposition_points=self._as_text_tuple(
                         merged_row.get("opposition_points")
                     ),
@@ -1151,6 +1176,9 @@ class DashboardDataProvider:
                     evidence_quality_label=candidate.evidence_quality_label,
                     artifact_date=candidate.artifact_date,
                     updated_at=candidate.updated_at,
+                    candidate_fingerprint=self._candidate_fingerprint_for_row(
+                        merged_row
+                    ),
                 )
             )
         return tuple(spotlights)
@@ -1191,6 +1219,8 @@ class DashboardDataProvider:
         *,
         signal_date: str,
         symbol: str,
+        candidate_fingerprint: str = "",
+        task_id: str = "",
     ) -> DashboardDebateSummary | None:
         """按 signal_date + symbol 返回结构化辩论摘要；缺失时返回 None。"""
         selected_date = signal_date.strip()
@@ -1199,11 +1229,19 @@ class DashboardDataProvider:
             return None
 
         def _build() -> DashboardDebateSummary | None:
+            debate_rows = self._load_debate_rows()
+            if not candidate_fingerprint:
+                debate_rows = self._dedupe_debate_rows(debate_rows)
             matches = [
                 row
-                for row in self._dedupe_debate_rows(self._load_debate_rows())
+                for row in debate_rows
                 if self._debate_signal_date(row) == selected_date
                 and str(row.get("symbol", "") or "").strip() == selected_symbol
+                and self._debate_matches_context(
+                    row,
+                    candidate_fingerprint=candidate_fingerprint,
+                    task_id=task_id,
+                )
                 and self._has_debate_evidence(row)
             ]
             if not matches:
@@ -1214,7 +1252,7 @@ class DashboardDataProvider:
 
         return self._cache_value(
             "debate_summary",
-            (selected_date, selected_symbol),
+            (selected_date, selected_symbol, candidate_fingerprint, task_id),
             _build,
         )
 
@@ -2157,6 +2195,16 @@ class DashboardDataProvider:
             created_at=self._latest_created_at(rows),
         )
 
+    def _intraday_live_ready(self, signal_date: str) -> bool:
+        """Only a fresh intraday artifact may populate the live task lane."""
+        selected_date = str(signal_date or "").strip()[:10]
+        if selected_date and selected_date != today_shanghai().isoformat():
+            # Explicit historical dates remain readable as archive records; the
+            # homepage live lane is still gated separately below.
+            return True
+        live_view = self.live_candidate_view(signal_date=signal_date)
+        return live_view.status == "fresh" and bool(live_view.candidates)
+
     def _lightweight_briefing_summary(
         self,
         signal_date: str,
@@ -2282,6 +2330,8 @@ class DashboardDataProvider:
         task_id: str,
         signal_date: str,
     ) -> list[dict[str, Any]]:
+        if task_id == "intraday" and not self._intraday_live_ready(signal_date):
+            return []
         return self._dedupe_rows(
             [
                 row
@@ -3420,26 +3470,41 @@ class DashboardDataProvider:
                 include_report_insights=False,
             )
             live_view = self.live_candidate_view(signal_date=review_date)
-            use_live_view = bool(
-                live_view.candidates
-                and (
-                    normalized_task == "intraday"
-                    or (
-                        not normalized_signal_date
-                        and live_view.artifact_date == review_date
+            if normalized_task == "intraday":
+                # A missing/expired live artifact is an observation/block state;
+                # never substitute a historical main-chain candidate here.
+                if getattr(live_view, "status", "unknown") != "fresh":
+                    rows = tuple(
+                        row
+                        for row in rows
+                        if str(getattr(row, "task_id", "") or "") == "intraday"
                     )
+                spotlights = (
+                    self.live_candidate_spotlights(signal_date=review_date)
+                    if live_view.candidates
+                    else ()
                 )
-            )
-            spotlights = (
-                self.live_candidate_spotlights(signal_date=review_date)
-                if use_live_view
-                else self.same_day_candidate_spotlights(review_date, limit=3)
-            )
-            debates = self.prioritized_debate_summaries(
-                review_date,
-                limit=3,
-                salient_only=True,
-                task_id=normalized_task,
+            else:
+                use_live_view = bool(
+                    live_view.candidates
+                    and not normalized_signal_date
+                    and live_view.artifact_date == review_date
+                )
+                spotlights = (
+                    self.live_candidate_spotlights(signal_date=review_date)
+                    if use_live_view
+                    else self.same_day_candidate_spotlights(review_date, limit=3)
+                )
+            debates = (
+                ()
+                if normalized_task == "intraday"
+                and getattr(live_view, "status", "unknown") != "fresh"
+                else self.prioritized_debate_summaries(
+                    review_date,
+                    limit=3,
+                    salient_only=True,
+                    task_id=normalized_task,
+                )
             )
             candidate_symbols = tuple(
                 str(getattr(card, "symbol", "") or "").strip()
@@ -3452,8 +3517,10 @@ class DashboardDataProvider:
             current_debate_symbols = {
                 item.symbol for item in debates if item.symbol in candidate_symbol_set
             }
-            if debates and candidate_symbol_set and len(current_debate_symbols) < min(
-                3, len(candidate_symbol_set)
+            if (
+                debates
+                and candidate_symbol_set
+                and len(current_debate_symbols) < min(3, len(candidate_symbol_set))
             ):
                 # The first priority slice may contain stale/non-focus symbols;
                 # widen whenever it does not cover the current candidate set.
@@ -4005,14 +4072,7 @@ class DashboardDataProvider:
             available_dates=available_dates,
             selected_date=selected_date,
         )
-        rows = self._task_signal_rows(task_id)
-        if selected_date:
-            rows = [
-                row
-                for row in rows
-                if str(row.get("signal_date", "") or "") == selected_date
-            ]
-        deduped = self._dedupe_rows(rows)
+        deduped = self._signal_task_rows_for_date(task_id, selected_date)
         actionable_rows = [
             row for row in deduped if self._is_actionable(row, task_id=task_id)
         ]
@@ -4894,6 +4954,7 @@ class DashboardDataProvider:
             support_points=self._as_text_tuple(merged_row.get("support_points")),
             opposition_points=self._as_text_tuple(merged_row.get("opposition_points")),
             watch_items=self._as_text_tuple(merged_row.get("watch_items")),
+            candidate_fingerprint=self._candidate_fingerprint_for_row(merged_row),
         )
 
     def _same_day_merged_row(
@@ -4987,11 +5048,20 @@ class DashboardDataProvider:
             return dict(row)
         matches = [
             debate_row
-            for debate_row in self._dedupe_debate_rows(self._load_debate_rows())
+            for debate_row in self._load_debate_rows()
             if self._debate_signal_date(debate_row) == signal_date
             and str(debate_row.get("symbol", "") or "").strip() == symbol
+            and self._debate_matches_candidate_row(debate_row, row)
             and self._has_debate_evidence(debate_row)
         ]
+        if not self._candidate_fingerprint_for_row(row):
+            debate_fingerprints = {
+                str(item.get("candidate_fingerprint", "") or "").strip()
+                for item in matches
+                if str(item.get("candidate_fingerprint", "") or "").strip()
+            }
+            if len(debate_fingerprints) > 1:
+                return dict(row)
         if not matches:
             return dict(row)
 
@@ -5098,8 +5168,8 @@ class DashboardDataProvider:
             return True
         source_fingerprint = self._candidate_fingerprint_for_row(source_row)
         final_fingerprint = self._candidate_fingerprint_for_row(final_row)
-        if source_fingerprint and source_fingerprint == final_fingerprint:
-            return True
+        if source_fingerprint or final_fingerprint:
+            return bool(source_fingerprint and source_fingerprint == final_fingerprint)
         source_created_at = self._row_created_at(source_row)
         final_created_at = self._row_created_at(final_row)
         return bool(
@@ -5119,6 +5189,41 @@ class DashboardDataProvider:
             or metrics.get("debate_candidate_fingerprint")
             or ""
         ).strip()
+
+    def _debate_matches_context(
+        self,
+        row: dict[str, Any],
+        *,
+        candidate_fingerprint: str = "",
+        task_id: str = "",
+    ) -> bool:
+        expected_fingerprint = str(candidate_fingerprint or "").strip()
+        row_fingerprint = self._candidate_fingerprint_for_row(row)
+        if expected_fingerprint:
+            return bool(row_fingerprint) and expected_fingerprint == row_fingerprint
+        expected_task = str(task_id or "").strip()
+        row_task = str(row.get("task_id", "") or "").strip()
+        return not (expected_task and row_task and expected_task != row_task)
+
+    def _debate_matches_candidate_row(
+        self,
+        debate_row: dict[str, Any],
+        candidate_row: dict[str, Any],
+    ) -> bool:
+        candidate_fingerprint = self._candidate_fingerprint_for_row(candidate_row)
+        debate_fingerprint = str(
+            self._candidate_fingerprint_for_row(debate_row) or ""
+        ).strip()
+        if candidate_fingerprint and debate_fingerprint:
+            return candidate_fingerprint == debate_fingerprint
+        if candidate_fingerprint and not debate_fingerprint:
+            return False
+
+        candidate_task = self._row_task_id(candidate_row)
+        debate_task = str(debate_row.get("task_id", "") or "").strip()
+        if candidate_task and debate_task and candidate_task == debate_task:
+            return True
+        return not debate_task
 
     def _row_created_at(self, row: dict[str, Any]) -> str:
         return str(
@@ -5565,6 +5670,17 @@ class DashboardDataProvider:
             return False
         if not str(row.get("symbol", "") or "").strip():
             return False
+        if self._explicit_false(row.get("process_recorded")):
+            return False
+        if self._explicit_false(row.get("conclusion_recorded")):
+            return False
+        if self._explicit_false(row.get("advisory_boundary_ok")):
+            return False
+        if self._explicit_false(row.get("evidence_sufficient")):
+            return False
+        quality_issues = self._as_text_tuple(row.get("debate_quality_issues"))
+        if quality_issues:
+            return False
         task_id = str(row.get("task_id", "") or "").strip()
         if not task_id:
             # Legacy records predate task metadata; keep their established display
@@ -5578,8 +5694,7 @@ class DashboardDataProvider:
             for round_data in rounds
         )
         has_round_summary = any(
-            str(round_data.get("summary", "") or "").strip()
-            for round_data in rounds
+            str(round_data.get("summary", "") or "").strip() for round_data in rounds
         )
         has_conclusion = any(
             str(row.get(field, "") or "").strip()
@@ -5596,6 +5711,14 @@ class DashboardDataProvider:
             and (has_opinions or has_round_summary)
             and has_conclusion
         )
+
+    @staticmethod
+    def _explicit_false(value: Any) -> bool:
+        return value is False or str(value or "").strip().lower() in {
+            "0",
+            "false",
+            "no",
+        }
 
     def _debate_evidence_score(self, row: dict[str, Any]) -> int:
         return sum(
@@ -5783,6 +5906,9 @@ class DashboardDataProvider:
             opposition_points=opposition_points,
             watch_items=watch_items,
             created_at=str(row.get("created_at", "") or "").strip(),
+            candidate_fingerprint=str(
+                self._candidate_fingerprint_for_row(row) or ""
+            ).strip(),
         )
 
     def _debate_vote_map(self, row: dict[str, Any]) -> dict[str, str]:
@@ -6069,6 +6195,7 @@ class DashboardDataProvider:
                     risks=self._as_text_tuple(row.get("risks")),
                     strategies=strategies_tuple,
                     data_source=str(row.get("run_actual_source", "") or ""),
+                    candidate_fingerprint=self._candidate_fingerprint_for_row(row),
                     news_catalyst_summary=self._spotlight_news_catalyst_summary(row),
                     cross_market_summary=self._spotlight_cross_market_summary(row),
                     cross_market_chain_summary=(
@@ -6388,11 +6515,10 @@ class DashboardDataProvider:
         if fingerprint:
             matches = [
                 debate_row
-                for debate_row in self._dedupe_debate_rows(self._load_debate_rows())
+                for debate_row in self._load_debate_rows()
                 if self._debate_signal_date(debate_row) == signal_date
                 and str(debate_row.get("symbol", "") or "").strip() == symbol
-                and str(debate_row.get("candidate_fingerprint", "") or "").strip()
-                == fingerprint
+                and self._candidate_fingerprint_for_row(debate_row) == fingerprint
                 and self._has_debate_evidence(debate_row)
             ]
             debate_summary = (

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Stop only the Vibe-Research systemd target; do not kill by port or process name.
+# Stop only the AQSP systemd target; do not kill by port or process name.
 set -euo pipefail
 
 SYSTEMCTL_BIN="${SYSTEMCTL_BIN:-systemctl}"
@@ -12,7 +12,7 @@ usage() {
     cat <<'EOF'
 用法: scripts/stop_vibe_research_service.sh [--disable]
 
-停止 Vibe-Research systemd target。默认保留开机启动配置；--disable 同时取消开机启动。
+停止 AQSP systemd target。默认保留开机启动配置；--disable 同时取消开机启动。
 EOF
 }
 

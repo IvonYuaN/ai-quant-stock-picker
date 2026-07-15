@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Verify the local Vibe-Research frontend/API/AQSP deployment chain.
+# Verify the local AQSP frontend/API deployment chain.
 set -euo pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -56,11 +56,11 @@ assert_contains() {
 }
 
 frontend_body="$(fetch "${FRONTEND_URL%/}/")"
-assert_contains "frontend root" "$frontend_body" "Vibe-Research"
+assert_contains "frontend root" "$frontend_body" "AQSP"
 
 backend_health="$(fetch "${BACKEND_URL%/}/api/health")"
 assert_contains "backend health" "$backend_health" '"ok":true'
-assert_contains "backend service" "$backend_health" 'vibe-research-api'
+assert_contains "backend service" "$backend_health" 'aqsp-api'
 
 frontend_api_health="$(fetch "${FRONTEND_URL%/}/api/health")"
 assert_contains "frontend /api proxy" "$frontend_api_health" '"ok":true'
@@ -78,4 +78,4 @@ else
     echo "SKIP AQSP snapshot"
 fi
 
-echo "Vibe-Research local health check passed."
+echo "AQSP local health check passed."

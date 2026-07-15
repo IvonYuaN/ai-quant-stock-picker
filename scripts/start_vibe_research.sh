@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Start the Vibe-Research rehearsal without touching an already healthy service.
+# Start the AQSP rehearsal without touching an already healthy service.
 set -euo pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -151,7 +151,7 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-if ! assert_port_available_or_expected "FastAPI" "$BACKEND_HOST" "$BACKEND_PORT" "${backend_url}/api/health" "vibe-research-api"; then
+if ! assert_port_available_or_expected "FastAPI" "$BACKEND_HOST" "$BACKEND_PORT" "${backend_url}/api/health" "aqsp-api"; then
     mkdir -p "$LOG_DIR"
     echo "启动 FastAPI: ${backend_url}"
     (
@@ -167,7 +167,7 @@ if ! assert_port_available_or_expected "FastAPI" "$BACKEND_HOST" "$BACKEND_PORT"
     wait_for_http "FastAPI" "${backend_url}/api/health"
 fi
 
-if ! assert_port_available_or_expected "Vite preview" "$FRONTEND_HOST" "$FRONTEND_PORT" "${frontend_url}/" "Vibe-Research"; then
+if ! assert_port_available_or_expected "Vite preview" "$FRONTEND_HOST" "$FRONTEND_PORT" "${frontend_url}/" "AQSP"; then
     mkdir -p "$LOG_DIR"
     echo "启动 Vite preview: ${frontend_url}"
     (
@@ -189,9 +189,9 @@ AQSP_RESEARCH_SURFACE_SNAPSHOT="$SNAPSHOT_PATH" \
     --snapshot "$SNAPSHOT_PATH"
 
 if [[ "$started_backend" == "false" && "$started_frontend" == "false" ]]; then
-    echo "All Vibe-Research services were already healthy; nothing was restarted."
+    echo "All AQSP services were already healthy; nothing was restarted."
     exit 0
 fi
 
-echo "Vibe-Research rehearsal is running; press Ctrl-C to stop only processes started by this script."
+echo "AQSP rehearsal is running; press Ctrl-C to stop only processes started by this script."
 wait

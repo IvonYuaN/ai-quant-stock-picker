@@ -74,10 +74,14 @@ def _resolve_symbols_from_source(
     max_universe: int,
     min_avg_amount: float,
 ) -> list[str]:
+    needs_live_liquidity = _requires_liquid_universe(source_name, min_avg_amount)
     if hasattr(source, "get_liquid_symbols"):
         try:
+            # 收盘主链需要完整的流动性梯队再做确定性抽样；盘中任务沿用
+            # bounded limit，避免把一次实时刷新变成全市场扫描。
+            source_limit = max_universe if _is_high_frequency_task() else 0
             liquid_symbols = source.get_liquid_symbols(
-                limit=max_universe,
+                limit=source_limit,
                 min_amount=min_avg_amount,
             )
         except DataError:
@@ -89,8 +93,12 @@ def _resolve_symbols_from_source(
                 target_day=target_day,
                 strict=source_name == "sqlite_db",
             )
-            return list(covered[:max_universe] if max_universe > 0 else covered)
-    if _requires_liquid_universe(source_name, min_avg_amount):
+            return _limit_resolved_symbols(
+                covered,
+                max_universe=max_universe,
+                stratified=needs_live_liquidity,
+            )
+    if needs_live_liquidity:
         return []
     if hasattr(source, "get_available_symbols"):
         try:
@@ -104,8 +112,49 @@ def _resolve_symbols_from_source(
                 target_day=target_day,
                 strict=source_name == "sqlite_db",
             )
-            return list(covered[:max_universe] if max_universe > 0 else covered)
+            return _limit_resolved_symbols(
+                covered,
+                max_universe=max_universe,
+                stratified=False,
+            )
     return []
+
+
+def _limit_resolved_symbols(
+    symbols: list[str],
+    *,
+    max_universe: int,
+    stratified: bool,
+) -> list[str]:
+    if max_universe <= 0 or len(symbols) <= max_universe:
+        return list(symbols)
+    if not stratified:
+        return list(symbols[:max_universe])
+    return _stratified_symbol_sample(symbols, max_universe=max_universe)
+
+
+def _stratified_symbol_sample(symbols: list[str], *, max_universe: int) -> list[str]:
+    """Pick a deterministic spread from a liquidity-ranked list.
+
+    Live quote sources return liquid symbols sorted by turnover. Taking the head turns
+    the runtime universe into a large-cap proxy, so sample across the full eligible
+    liquidity ladder while preserving source order inside the selected points.
+    """
+    if max_universe <= 0 or len(symbols) <= max_universe:
+        return list(symbols)
+    if max_universe == 1:
+        return [symbols[0]]
+    last_index = len(symbols) - 1
+    selected: list[str] = []
+    seen: set[str] = set()
+    for slot in range(max_universe):
+        index = round(slot * last_index / (max_universe - 1))
+        symbol = symbols[index]
+        if symbol in seen:
+            continue
+        seen.add(symbol)
+        selected.append(symbol)
+    return selected
 
 
 def _load_cached_symbol_pool_from_path(
@@ -313,5 +362,8 @@ def resolve_run_symbols(
             )
             if resolved:
                 return resolved
+
+    if _requires_liquid_universe(source_name, min_avg_amount):
+        raise DataError(f"{source_name} 未能解析实时流动性标的池，拒绝退回默认大盘池")
 
     return list(default_symbols[:max_universe] if max_universe > 0 else default_symbols)

@@ -14,6 +14,7 @@ from aqsp.briefing import (
     send_briefing,
 )
 from aqsp.briefing.renderer import MarkdownRenderer
+from aqsp.briefing.generator import _apply_debate_results_to_picks
 from aqsp.briefing.agent_roles import AgentRole
 from aqsp.briefing.debate import (
     AShareDebateAgent,
@@ -44,6 +45,49 @@ def _make_pick(**overrides) -> PickResult:
     )
     defaults.update(overrides)
     return PickResult(**defaults)
+
+
+def test_apply_debate_results_matches_same_day_symbol_by_candidate_fingerprint() -> (
+    None
+):
+    first = _make_pick(
+        score=82.0,
+        metrics={"candidate_fingerprint": "candidate-first"},
+    )
+    second = _make_pick(
+        score=61.0,
+        metrics={"candidate_fingerprint": "candidate-second"},
+    )
+    first_result = DebateResult(
+        debate_id="debate-first",
+        symbol=first.symbol,
+        name=first.name,
+        original_score=first.score,
+        rating=first.rating,
+        related_signal_date=first.date,
+        candidate_fingerprint="candidate-first",
+        research_verdict="第一批讨论",
+    )
+    second_result = DebateResult(
+        debate_id="debate-second",
+        symbol=second.symbol,
+        name=second.name,
+        original_score=second.score,
+        rating=second.rating,
+        related_signal_date=second.date,
+        candidate_fingerprint="candidate-second",
+        research_verdict="第二批讨论",
+    )
+
+    enriched = _apply_debate_results_to_picks(
+        [first, second], [second_result, first_result]
+    )
+
+    assert [pick.score for pick in enriched] == [82.0, 61.0]
+    assert [pick.metrics["debate_research_verdict"] for pick in enriched] == [
+        "第一批讨论",
+        "第二批讨论",
+    ]
 
 
 class TestBriefingSection:

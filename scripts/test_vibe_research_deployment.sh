@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Static validation for the Vibe-Research systemd deployment bundle.
+# Static validation for the AQSP systemd deployment bundle.
 set -euo pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

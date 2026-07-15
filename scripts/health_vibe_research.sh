@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Health and preflight checks for the persistent Vibe-Research services.
+# Health and preflight checks for the persistent AQSP services.
 set -euo pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -153,7 +153,7 @@ check_live() {
     if [[ "$COMPONENT" == "api" || "$COMPONENT" == "all" ]]; then
         api_body="$(curl --silent --show-error --fail --max-time 8 "${API_URL%/}/api/health")" \
             || fail "API 健康检查失败: ${API_URL}"
-        [[ "$api_body" == *'"ok":true'* && "$api_body" == *'vibe-research-api'* ]] \
+        [[ "$api_body" == *'"ok":true'* && "$api_body" == *'aqsp-api'* ]] \
             || fail "API 健康响应不符合契约: ${api_body}"
         echo "PASS API health: ${API_URL}"
 
@@ -171,8 +171,8 @@ check_live() {
     if [[ "$COMPONENT" == "frontend" || "$COMPONENT" == "all" ]]; then
         frontend_body="$(curl --silent --show-error --fail --max-time 8 "${FRONTEND_URL%/}/")" \
             || fail "Vite preview 健康检查失败: ${FRONTEND_URL}"
-        [[ "$frontend_body" == *"Vibe-Research"* ]] \
-            || fail "前端首页不是 Vibe-Research 构建产物"
+        [[ "$frontend_body" == *"AQSP"* ]] \
+            || fail "前端首页不是 AQSP 构建产物"
         echo "PASS frontend health: ${FRONTEND_URL}"
     fi
 }
@@ -185,7 +185,7 @@ if [[ "$COMPONENT" == "frontend" || "$COMPONENT" == "all" ]]; then
 fi
 
 if [[ "$PREFLIGHT_ONLY" == "true" ]]; then
-    echo "Vibe-Research preflight passed."
+    echo "AQSP preflight passed."
     exit 0
 fi
 
@@ -197,4 +197,4 @@ if [[ -n "$SYSTEMD_UNIT" ]]; then
     echo "PASS systemd: ${SYSTEMD_UNIT}"
 fi
 check_live
-echo "Vibe-Research health check passed."
+echo "AQSP health check passed."

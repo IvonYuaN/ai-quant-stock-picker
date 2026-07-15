@@ -32,6 +32,10 @@ def test_ci_workflow_limits_paths_and_sets_concurrency() -> None:
     assert "paths:" in text
     assert "group: ci-${{ github.workflow }}-${{ github.ref }}" in text
     assert '"src/**"' in text
+    assert '"backend/**"' in text
+    assert '"deploy/baota/**"' in text
+    assert '"deploy/nginx/**"' in text
+    assert '"deploy/systemd/**"' in text
     assert '"tests/**"' in text
     assert '"test/**"' in text
     assert '".github/workflows/**"' in text
@@ -57,6 +61,21 @@ def test_ci_runs_upload_preflight_before_install() -> None:
     assert text.index("python3 -m scripts.preflight_upload") < text.index(
         "name: Install"
     )
+
+
+def test_ci_checks_vibe_research_static_deployment_bundle() -> None:
+    text = (PROJECT_ROOT / ".github" / "workflows" / "ci.yml").read_text(
+        encoding="utf-8"
+    )
+
+    assert "name: Check AQSP deployment bundle" in text
+    assert 'frontend" / "dist" / "index.html"' in text
+    assert "AQSP" in text
+    assert "127.0.0.1:8900" in text
+    assert "127.0.0.1:5899" in text
+    assert "location = /api/health" in text
+    assert "uvicorn app:app" in text
+    assert "run preview -- --host 127.0.0.1 --port 5899 --strictPort" in text
 
 
 def test_github_workflows_define_common_runtime_controls() -> None:

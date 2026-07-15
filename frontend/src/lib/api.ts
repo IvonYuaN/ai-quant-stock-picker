@@ -1,5 +1,20 @@
-// Vibe-Research 后端 API 客户端。/api → vite 代理到本地 FastAPI（默认 8900）。
+// AQSP 后端 API 客户端。/api → vite 代理到本地 FastAPI（默认 8900）。
 // 后端未启动或数据源异常时抛 ApiError，页面据此优雅降级。
+import type { AqspSnapshotEnvelope, AqspSnapshotView } from "@/types/aqsp";
+
+export type {
+  AqspAgentDiscussion,
+  AqspAgentResult,
+  AqspCandidate,
+  AqspCrossMarket,
+  AqspMarketContext,
+  AqspMessage,
+  AqspSnapshot,
+  AqspSnapshotEnvelope,
+  AqspSnapshotMeta,
+  AqspSnapshotView,
+  AqspSourceHealth,
+} from "@/types/aqsp";
 
 export class ApiError extends Error {
   constructor(message: string, readonly status: number) {
@@ -51,7 +66,16 @@ export async function downloadReport(id: string, name: string): Promise<void> {
   URL.revokeObjectURL(url);
 }
 
-async function request<T>(path: string, method: "GET" | "POST" | "DELETE" = "GET", body?: unknown): Promise<T> {
+function hasDataField(payload: unknown): payload is { data: unknown } {
+  return typeof payload === "object" && payload !== null && "data" in payload;
+}
+
+function errorDetail(payload: unknown): string | undefined {
+  if (typeof payload !== "object" || payload === null || !("detail" in payload)) return undefined;
+  return typeof payload.detail === "string" ? payload.detail : undefined;
+}
+
+async function requestPayload(path: string, method: "GET" | "POST" | "DELETE" = "GET", body?: unknown): Promise<unknown> {
   let resp: Response;
   const headers: Record<string, string> = { ...authHeaders() };
   const opts: RequestInit = { method };
@@ -65,7 +89,7 @@ async function request<T>(path: string, method: "GET" | "POST" | "DELETE" = "GET
   } catch {
     throw new ApiError("连接不到后端，请先启动 backend（uvicorn app:app --port 8900）", 0);
   }
-  let payload: any = null;
+  let payload: unknown = null;
   try {
     payload = await resp.json();
   } catch {
@@ -75,12 +99,18 @@ async function request<T>(path: string, method: "GET" | "POST" | "DELETE" = "GET
     if (resp.status === 401) {
       throw new ApiError("后端开启了访问鉴权（VR_API_KEY）：请在「接入 AI」页底部填写后端访问密钥", 401);
     }
-    throw new ApiError(payload?.detail || `HTTP ${resp.status}`, resp.status);
+    throw new ApiError(errorDetail(payload) || `HTTP ${resp.status}`, resp.status);
   }
-  return (payload?.data ?? payload) as T;
+  return payload;
+}
+
+async function request<T>(path: string, method: "GET" | "POST" | "DELETE" = "GET", body?: unknown): Promise<T> {
+  const payload = await requestPayload(path, method, body);
+  return (hasDataField(payload) && payload.data != null ? payload.data : payload) as T;
 }
 
 const get = <T>(path: string) => request<T>(path, "GET");
+const getEnvelope = <T>(path: string): Promise<T> => requestPayload(path, "GET") as Promise<T>;
 
 export interface Quote {
   name: string; price: number; last_close: number; change_pct: number;
@@ -138,89 +168,6 @@ export interface SectorFlow {
 }
 export interface MarketOverview {
   sentiment: MarketSentiment; sectors: SectorFlow[]; updated: string;
-}
-
-// AQSP v1 home snapshot：只读研究快照，不包含交易或 portfolio 写接口。
-export interface AqspCandidate {
-  symbol: string;
-  display_name: string;
-  score: number;
-  research_status: string;
-  next_step: string;
-  context: string;
-  deterministic_reasons: string[];
-  strategies: string[];
-  evidence_status: string;
-  technical_metrics?: Array<{ key: string; label: string; value: string }>;
-}
-
-export interface AqspMessage {
-  title: string;
-  summary: string;
-  impact: string;
-  category: string;
-  source: string;
-  published_at: string;
-}
-
-export interface AqspCrossMarket {
-  rule_id: string;
-  theme: string;
-  strength: string;
-  action: string;
-  source_title: string;
-  source_region: string;
-  source_published_at: string;
-  affected_sectors: string[];
-  transmission_path: string[];
-  validation_signals: string[];
-  invalidation_signals: string[];
-  summary: string;
-}
-
-export interface AqspMarketContext {
-  status: string;
-  overview: string;
-  summary_lines: string[];
-  cross_market: AqspCrossMarket[];
-  warnings: string[];
-}
-
-export interface AqspAgentResult {
-  symbol: string;
-  display_name: string;
-  conclusion: string;
-  primary_risk_gate: string;
-  next_trigger: string;
-  active_roles: string[];
-  round_count: number;
-  bull_count: number;
-  bear_count: number;
-  neutral_count: number;
-  process_summary: string;
-}
-
-export interface AqspSourceHealth {
-  effective: string;
-  latest_trade_date: string;
-  lag_days: number;
-  status: string;
-}
-
-export interface AqspSnapshot {
-  schema_version: string;
-  generated_at: string;
-  selected_date: string;
-  available_dates: string[];
-  candidates: AqspCandidate[];
-  debates: AqspAgentResult[];
-  summaries: string[];
-  source: AqspSourceHealth;
-  coldstart: { status: string; detail: string };
-  stale_after: string;
-  message_status: string;
-  messages: AqspMessage[];
-  market_context: AqspMarketContext | null;
 }
 
 // 短线情绪：连板梯队 / 最高连板 / 炸板率 / 封板率 / 晋级率 / 涨跌停家数 + 连板股清单（客观公开榜单）
@@ -318,8 +265,9 @@ export interface GlobalStock {
 
 export const api = {
   health: () => get<{ ok: boolean }>("/health"),
-  aqspSnapshot: (date?: string) =>
-    get<AqspSnapshot>(date ? `/aqsp/snapshot?date=${encodeURIComponent(date)}` : "/aqsp/snapshot"),
+  aqspSnapshot: (date?: string): Promise<AqspSnapshotView> =>
+    getEnvelope<AqspSnapshotEnvelope>(date ? `/aqsp/snapshot?date=${encodeURIComponent(date)}` : "/aqsp/snapshot")
+      .then(({ data, meta }) => ({ ...data, meta })),
   indices: () => get<IndexQuote[]>("/indices"),
   marketOverview: () => get<MarketOverview>("/market/overview"),
   emotion: () => get<ShortTermEmotion>("/market/emotion"),

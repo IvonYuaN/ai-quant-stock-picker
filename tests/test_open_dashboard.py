@@ -228,7 +228,7 @@ def test_dashboard_entry_scripts_do_not_point_at_legacy_homepages() -> None:
     for text in (start_script, open_script):
         assert "dashboard_beginner" not in text
         assert "agents.html" not in text
-    assert "src/aqsp/web/dashboard.py" in start_script
+    assert "start_vibe_research.sh" in start_script
     assert "STREAMLIT_APP" in open_script
 
 

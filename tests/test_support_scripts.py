@@ -367,10 +367,16 @@ def test_runtime_output_scripts_use_atomic_writes() -> None:
         text = path.read_text(encoding="utf-8")
         # Dashboard output delegates the atomic write to the canonical entrypoint.
         assert "atomic_write_text" in text or (
-            path.name == "render_dashboard.py"
-            and "write_dashboard_artifact" in text
+            path.name == "render_dashboard.py" and "write_dashboard_artifact" in text
         )
         assert ".write_text(" not in text
+
+
+def test_server_sync_and_runtime_publish_share_the_server_runtime_lock() -> None:
+    script = Path("scripts/server_sync_and_run.sh").read_text(encoding="utf-8")
+
+    assert "sync_runtime_files_to_server.py" in script
+    assert 'LOCK_FILE="${LOCK_DIR}/server-runtime.lock"' in script
 
 
 def test_runtime_maintenance_scripts_default_to_predictions_ledger() -> None:

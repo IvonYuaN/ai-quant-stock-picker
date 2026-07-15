@@ -1,4 +1,4 @@
-"""Vibe-Research MCP server —— 把 A股数据工具暴露给 Claude Code 等 agent。
+"""AQSP MCP server —— 把 A股数据工具暴露给 Claude Code 等 agent。
 
 零第三方依赖（纯标准库 JSON-RPC over stdio），复用 astock 数据层 +
 chat.py 里的工具定义。给「订阅接入 / 高手」通道用：agent 用自己的

@@ -5,7 +5,66 @@ import json
 from types import SimpleNamespace
 
 from aqsp import cli
-from aqsp.runtime_snapshot import build_runtime_research_snapshot
+from aqsp.runtime_snapshot import (
+    RuntimeSnapshotDebate,
+    _snapshot_candidates,
+    build_runtime_research_snapshot,
+)
+
+
+def test_runtime_snapshot_maps_same_symbol_debates_by_candidate_fingerprint() -> None:
+    cards = tuple(
+        SimpleNamespace(
+            symbol="300750",
+            candidate_fingerprint=fingerprint,
+            display_name="300750 宁德时代",
+            score=score,
+            rank_label="观察",
+            action_label="继续观察",
+            status_label="",
+            next_step="",
+            blocker="",
+            reasons=(),
+            risks=(),
+            news_catalyst_summary="",
+            cross_market_summary="",
+            decision_note=fingerprint,
+        )
+        for fingerprint, score in (("candidate-a", 80.0), ("candidate-b", 60.0))
+    )
+    debates = tuple(
+        RuntimeSnapshotDebate(
+            symbol="300750",
+            display_name="300750 宁德时代",
+            conclusion=fingerprint,
+            recommended_adjustment="keep",
+            disagreement_score=0.0,
+            primary_risk_gate="",
+            next_trigger="",
+            active_roles=(),
+            support_points=(),
+            opposition_points=(),
+            watch_items=(),
+            process_recorded=True,
+            conclusion_recorded=True,
+            candidate_fingerprint=fingerprint,
+        )
+        for fingerprint in ("candidate-b", "candidate-a")
+    )
+
+    candidates = _snapshot_candidates(
+        SimpleNamespace(
+            task_view=SimpleNamespace(detail_cards=cards),
+            spotlights=(),
+        ),
+        debates,
+    )
+
+    assert [item.decision_note for item in candidates] == [
+        "candidate-a",
+        "candidate-b",
+    ]
+    assert [item.debate_status for item in candidates] == ["recorded", "recorded"]
 
 
 def test_runtime_snapshot_builds_shared_agent_payload_from_one_home_digest() -> None:

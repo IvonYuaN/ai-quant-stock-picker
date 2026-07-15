@@ -1,4 +1,4 @@
-"""Vibe-Research 后端 —— A股数据层 HTTP 接口（FastAPI）。
+"""AQSP 后端 —— A股数据层 HTTP 接口（FastAPI）。
 
 端点全部在 /api 下，前端 vite 代理 /api → localhost:8900。
 行情接口按用户传入代码返回客观数据；持仓、研报和 RSS 缓存保存在本地。不预置标的、不下单、不建议。
@@ -28,7 +28,7 @@ import portfolio as pf
 import market
 import myreports as mr
 
-app = FastAPI(title="Vibe-Research API", version="0.1.3")
+app = FastAPI(title="AQSP API", version="0.1.3")
 
 # 每半小时后台刷新持仓数据
 pf.start_scheduler(1800)
@@ -96,7 +96,7 @@ def _validate(code: str) -> str:
 
 @app.get("/api/health")
 def health():
-    return {"ok": True, "service": "vibe-research-api", "version": "0.1.3"}
+    return {"ok": True, "service": "aqsp-api", "version": "0.1.3"}
 
 
 class LLMConfig(BaseModel):

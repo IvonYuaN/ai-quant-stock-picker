@@ -741,6 +741,30 @@ def test_audit_debate_quality_rejects_empty_discussion() -> None:
     assert "missing_next_trigger" in audit.issues
 
 
+def test_audit_debate_quality_rejects_same_symbol_when_date_or_fingerprint_mismatch() -> (
+    None
+):
+    result = DebateResult(
+        debate_id="wrong-candidate",
+        symbol="300750",
+        name="宁德时代",
+        original_score=72.0,
+        related_signal_date="2026-07-14",
+        candidate_fingerprint="candidate-b",
+        rating="watch",
+    )
+    candidate = _make_pick(
+        symbol="300750",
+        date="2026-07-15",
+        metrics={"candidate_fingerprint": "candidate-a"},
+    )
+
+    audit = audit_debate_quality(result, candidate=candidate)
+
+    assert not audit.candidate_mapped
+    assert "candidate_unmapped" in audit.issues
+
+
 def test_audit_debate_quality_rejects_generic_second_round_without_peer_reference() -> (
     None
 ):

@@ -1,4 +1,4 @@
-"""Canonical Vibe-Research entrypoint and legacy static-page guardrails."""
+"""Canonical AQSP entrypoint and legacy static-page guardrails."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ CANONICAL_HEALTH_PATH = "/api/health"
 LEGACY_HEALTH_PATH = "/_stcore/health"
 # The static shell uses the full product title; the hydrated React page keeps
 # the product name and AQSP provenance in separate visible regions.
-CANONICAL_ENTRY_MARKERS = ("Vibe-Research", "AQSP")
+CANONICAL_ENTRY_MARKERS = ("AQSP", "研究工作台")
 LEGACY_ENTRY_MARKERS = (
     "AQSP 日期任务研究台",
     "短线决策看板",
@@ -50,7 +50,7 @@ def public_dashboard_url() -> str:
 
 
 def public_research_health_url(*, base_url: str | None = None) -> str:
-    """Return the canonical Vibe-Research health endpoint for the public entry."""
+    """Return the canonical AQSP health endpoint for the public entry."""
     base = _validate_url(
         base_url or public_dashboard_url(),
         setting_name="AQSP_DASHBOARD_PUBLIC_URL",
@@ -74,9 +74,9 @@ def classify_entry_text(text: str) -> EntryKind:
 
 
 def classify_health_text(text: str) -> HealthKind:
-    """Distinguish the Vibe API health contract from Streamlit's plain ``ok``."""
+    """Distinguish the AQSP API health contract from Streamlit's plain ``ok``."""
     compact = "".join(text.casefold().split())
-    if '"ok":true' in compact and "vibe-research-api" in compact:
+    if '"ok":true' in compact and "aqsp-api" in compact:
         return "canonical"
     if compact == "ok" or "_stcore" in compact or "streamlit" in compact:
         return "legacy"
@@ -101,7 +101,7 @@ def render_legacy_redirect(*, target_url: str | None = None) -> str:
 </head>
 <body>
   <p>AQSP Dashboard 已迁移到当前实时研究看板。</p>
-  <p><a href="{safe_target}">进入 Vibe-Research 研究看板</a></p>
+  <p><a href="{safe_target}">进入 AQSP 研究工作台</a></p>
   <script>window.location.replace({target!r});</script>
 </body>
 </html>

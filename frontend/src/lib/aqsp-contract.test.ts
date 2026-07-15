@@ -20,6 +20,7 @@ export const aqspContractFixture = {
     stale_after: "2026-07-15T09:30:00+08:00",
     message_status: "未产出",
     messages: [],
+    market_context: null,
   },
   meta: { historical: false, stale: false },
 } satisfies AqspSnapshotEnvelope;

@@ -1,4 +1,4 @@
-"""AQSP -> Vibe-Research migration contract tests.
+"""AQSP research API contract tests.
 
 These tests intentionally exercise the HTTP boundary only. The bridge remains
 the implementation owner; this file defines the behaviour it must expose.
