@@ -524,9 +524,9 @@ def _normalize_stock_volume_to_shares(df: pd.DataFrame) -> pd.DataFrame:
     close = pd.to_numeric(normalized.get("close", empty), errors="coerce")
     amount = pd.to_numeric(normalized.get("amount", empty), errors="coerce")
     valid = (volume > 0) & (close > 0) & (amount > 0)
-    implied_unit = (amount[valid] / (close[valid] * volume[valid])).median()
-    if pd.notna(implied_unit) and 20.0 <= float(implied_unit) <= 200.0:
-        normalized["volume"] = volume * 100.0
+    implied_unit = amount / (close * volume)
+    lots_mask = valid & implied_unit.between(20.0, 200.0)
+    normalized["volume"] = volume.where(~lots_mask, volume * 100.0)
     normalized.attrs.update(df.attrs)
     normalized.attrs["volume_unit"] = "shares"
     return normalized
