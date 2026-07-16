@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
+from pathlib import Path
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
@@ -161,7 +162,9 @@ def test_write_home_snapshot_builds_bounded_advisory_only_payload(monkeypatch) -
     assert snapshot.candidates[0].deterministic_reasons == ("MA20 斜率向上",)
     assert snapshot.candidates[0].strategies == ("ma_pullback",)
     assert snapshot.candidates[0].evidence_status == "有独立规则证据"
-    assert [(item.label, item.value) for item in snapshot.candidates[0].technical_metrics] == [
+    assert [
+        (item.label, item.value) for item in snapshot.candidates[0].technical_metrics
+    ] == [
         ("现价", "12.34"),
         ("5日动能", "+4.50%"),
         ("20日动能", "+12.75%"),
@@ -182,6 +185,31 @@ def test_write_home_snapshot_builds_bounded_advisory_only_payload(monkeypatch) -
         "量能阻塞待解除",
     )
     assert snapshot.stale_after == "2026-07-10T15:31:00+08:00"
+
+
+def test_snapshot_realtime_cross_market_reads_sidecar_without_network(
+    monkeypatch, tmp_path: Path
+) -> None:
+    sidecar = tmp_path / "realtime_cross_market_context.json"
+    payload = {
+        "SPX": {
+            "value": 5500.0,
+            "change_pct": 0.8,
+            "observed_at": "2026-07-10T14:59:00+08:00",
+            "source": "test",
+        }
+    }
+    sidecar.write_text(
+        json.dumps({"schema_version": "v1", "status": "fresh", "payload": payload}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AQSP_REALTIME_CROSS_MARKET_PATH", str(sidecar))
+
+    assert write_home_snapshot._snapshot_realtime_cross_market("intraday") == payload
+    assert write_home_snapshot._snapshot_realtime_cross_market("daily") is None
+
+    sidecar.write_text("not-json", encoding="utf-8")
+    assert write_home_snapshot._snapshot_realtime_cross_market("intraday") is None
 
 
 def test_write_home_snapshot_keeps_realtime_context_when_news_report_is_missing(
@@ -223,8 +251,7 @@ def test_write_home_snapshot_keeps_realtime_context_when_news_report_is_missing(
     assert snapshot.market_context is not None
     assert snapshot.market_context.cross_market == ()
     assert any(
-        line.startswith("实时跨市:")
-        for line in snapshot.market_context.summary_lines
+        line.startswith("实时跨市:") for line in snapshot.market_context.summary_lines
     )
 
 

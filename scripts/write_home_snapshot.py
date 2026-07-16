@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import math
 import os
 import re
@@ -171,19 +172,26 @@ def _snapshot_task_id(task_id: str) -> str:
 
 
 def _snapshot_realtime_cross_market(task_id: str) -> dict | None:
-    """Fetch live macro context for an explicitly enabled intraday snapshot."""
+    """Read the bounded sidecar; snapshot generation never performs network I/O."""
     if task_id.strip().lower() not in {"intraday", "live_short"}:
         return None
-    enabled = str(os.getenv("AQSP_MARKET_CONTEXT_LIVE_SOURCE", "false")).strip().lower()
-    if enabled not in {"1", "true", "yes", "on"}:
-        return None
+    configured = str(os.getenv("AQSP_REALTIME_CROSS_MARKET_PATH", "")).strip()
+    path = (
+        Path(configured).expanduser()
+        if configured
+        else PROJECT_ROOT / "data/runtime/realtime_cross_market_context.json"
+    )
+    if not path.is_absolute():
+        path = PROJECT_ROOT / path
     try:
-        from aqsp.data.market_context_source import fetch_live_market_context_payload
-
-        return fetch_live_market_context_payload(timeout_seconds=1.0)
-    except Exception as exc:
-        print(f"实时跨市场上下文获取失败，保留不可用状态: {exc}", file=sys.stderr)
+        artifact = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
         return None
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"实时跨市场 sidecar 不可读，保留不可用状态: {exc}", file=sys.stderr)
+        return None
+    payload = artifact.get("payload") if isinstance(artifact, dict) else None
+    return payload if isinstance(payload, dict) else None
 
 
 def _candidate_context(candidate: Any) -> str:
@@ -233,7 +241,9 @@ def _candidate_technical_metrics(
         if not math.isfinite(value):
             continue
         metrics.append(
-            HomeSnapshotTechnicalMetric(key=key, label=label, value=template.format(value))
+            HomeSnapshotTechnicalMetric(
+                key=key, label=label, value=template.format(value)
+            )
         )
         if len(metrics) == MAX_HOME_SNAPSHOT_TECHNICAL_METRICS:
             break

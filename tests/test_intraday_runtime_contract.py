@@ -62,6 +62,8 @@ def test_intraday_runtime_contract_uses_configured_benchmark_and_quality_gate() 
     assert 'INTRADAY_NEWS_MAX_EVENTS="${AQSP_INTRADAY_NEWS_MAX_EVENTS:-3}"' in script
     assert 'INTRADAY_NEWS_MAX_SYMBOLS="${AQSP_INTRADAY_NEWS_MAX_SYMBOLS:-3}"' in script
     assert "count < limit && seen[$symbol_column]++ == 0" in script
+    assert 'export AQSP_MARKET_CONTEXT_LIVE_SOURCE="false"' in script
+    assert "refresh_realtime_cross_market_context" in script
     assert (
         'INTRADAY_NEWS_MAX_NEWS_AGE_DAYS="${AQSP_INTRADAY_NEWS_MAX_NEWS_AGE_DAYS:-0}"'
         in script
@@ -73,9 +75,7 @@ def test_intraday_runtime_contract_uses_configured_benchmark_and_quality_gate() 
     assert 'bash "$INTRADAY_NEWS_SCRIPT"' in script
     assert 'NEWS_CATALYST_STATUS="warning"' in script
     assert "继续首页快照" in script
-    assert script.index(
-        'refresh_intraday_news_catalysts\nif [ "$NEWS_CATALYST_STATUS" = "warning" ]'
-    ) > script.index(
+    assert script.index("refresh_intraday_news_catalysts\n") > script.index(
         'replace_intraday_artifact "$TMP_INTRADAY_OUTPUT_CSV" "$INTRADAY_OUTPUT_CSV"'
     )
     assert 'LOCK_INFO_FILE="${LOCK_DIR}/meta.env"' in script
@@ -821,13 +821,22 @@ def test_intraday_runtime_publishes_candidates_before_slow_sidecars() -> None:
     script = SCRIPT_PATH.read_text(encoding="utf-8")
 
     early_publish = script.index("盘中候选首页已先行刷新")
+    market_context_start = script.index(
+        "refresh_realtime_cross_market_context", early_publish
+    )
     news_start = script.index("refresh_intraday_news_catalysts", early_publish)
     sidecar_start = script.index('if [ "$OBSERVATION_ONLY" = "true" ]', early_publish)
     final_publish = script.index(
         "if ! refresh_home_dashboard_snapshot; then", sidecar_start
     )
 
-    assert early_publish < news_start < sidecar_start < final_publish
+    assert (
+        early_publish
+        < market_context_start
+        < news_start
+        < sidecar_start
+        < final_publish
+    )
 
 
 def test_intraday_runtime_unknown_freshness_keeps_previous_artifacts(

@@ -117,8 +117,8 @@ export AQSP_NOTIFY="false"
 export AQSP_GATE_NOTIFY="false"
 # live_short 不能在消息源失败时复用上一交易日的催化缓存。
 export AQSP_CATALYST_REPORT_ALLOW_STALE_CACHE="false"
-# 盘中主链显式抓取海外指数/宏观上下文；失败只标记 unavailable，不阻塞候选。
-export AQSP_MARKET_CONTEXT_LIVE_SOURCE="${AQSP_MARKET_CONTEXT_LIVE_SOURCE:-true}"
+# 实时跨市场网络采集在候选发布后的 sidecar 执行，主选股链禁止等待网络。
+export AQSP_MARKET_CONTEXT_LIVE_SOURCE="false"
 if [ -n "$PRESET_AQSP_INTRADAY_ENABLE_DEBATE" ]; then
     export AQSP_INTRADAY_ENABLE_DEBATE="$PRESET_AQSP_INTRADAY_ENABLE_DEBATE"
 fi
@@ -232,6 +232,10 @@ INTRADAY_NEWS_MAX_NEWS_AGE_DAYS="${AQSP_INTRADAY_NEWS_MAX_NEWS_AGE_DAYS:-0}"
 if ! [[ "$INTRADAY_NEWS_MAX_SYMBOLS" =~ ^[0-9]+$ ]] || [ "$INTRADAY_NEWS_MAX_SYMBOLS" -le 0 ]; then
     INTRADAY_NEWS_MAX_SYMBOLS="3"
 fi
+REALTIME_CROSS_MARKET_SCRIPT="${AQSP_REALTIME_CROSS_MARKET_SCRIPT:-${PROJECT_ROOT}/scripts/collect_realtime_cross_market.py}"
+REALTIME_CROSS_MARKET_PATH="$(resolve_path "${AQSP_REALTIME_CROSS_MARKET_PATH:-data/runtime/realtime_cross_market_context.json}")"
+REALTIME_CROSS_MARKET_TIMEOUT_SECONDS="${AQSP_REALTIME_CROSS_MARKET_TIMEOUT_SECONDS:-8}"
+REALTIME_CROSS_MARKET_SOURCE_TIMEOUT_SECONDS="${AQSP_REALTIME_CROSS_MARKET_SOURCE_TIMEOUT_SECONDS:-0.75}"
 DEBATE_RESULTS="$(resolve_path "${AQSP_DEBATE_RESULTS:-data/debate_results.jsonl}")"
 DEBATE_BACKFILL_LOG="${LOG_DIR}/debate-backfill-$(date +%Y-%m-%d).log"
 DEBATE_BACKFILL_LOCK="${PROJECT_ROOT}/.locks/intraday-debate-backfill.lock"
@@ -255,6 +259,7 @@ mkdir -p \
     "$(dirname "$INTRADAY_DASHBOARD_DB")" \
     "$(dirname "$INTRADAY_NEWS_OUTPUT")" \
     "$(dirname "$INTRADAY_NEWS_JSON_OUTPUT")" \
+    "$(dirname "$REALTIME_CROSS_MARKET_PATH")" \
     "$(dirname "$DEBATE_RESULTS")"
 
 TMP_ROOT="${PROJECT_ROOT}/.tmp"
@@ -499,6 +504,31 @@ refresh_intraday_news_catalysts() {
         log "[WARN] ${NEWS_CATALYST_WARNING}，退出码: ${news_exit_code}"
     fi
     return 0
+}
+
+refresh_realtime_cross_market_context() {
+    if ! is_truthy "${AQSP_INTRADAY_MARKET_CONTEXT_REFRESH:-true}"; then
+        log "盘中跨市场 sidecar 已关闭"
+        return 0
+    fi
+    if [ ! -f "$REALTIME_CROSS_MARKET_SCRIPT" ]; then
+        log "[WARN] 实时跨市场 sidecar 不存在，保留候选"
+        return 0
+    fi
+    set +e
+    timeout --signal=TERM --kill-after=2s \
+        "${REALTIME_CROSS_MARKET_TIMEOUT_SECONDS}s" \
+        "$PYTHON_BIN" "$REALTIME_CROSS_MARKET_SCRIPT" \
+        --output "$REALTIME_CROSS_MARKET_PATH" \
+        --timeout-seconds "$REALTIME_CROSS_MARKET_SOURCE_TIMEOUT_SECONDS" \
+        >>"$RESULT_LOG" 2>&1
+    local exit_code=$?
+    set -e
+    if [ "$exit_code" -ne 0 ]; then
+        log "[WARN] 实时跨市场 sidecar 失败(${exit_code})，候选保持可用"
+        return 0
+    fi
+    log "实时跨市场 sidecar 已刷新"
 }
 
 apply_intraday_quality_gate() {
@@ -1386,6 +1416,7 @@ else
     write_intraday_status "partial_failed" "盘中候选已刷新，但首页先行刷新失败" "$SCRIPT_EXIT_CODE"
 fi
 
+refresh_realtime_cross_market_context
 refresh_intraday_news_catalysts
 if [ "$NEWS_CATALYST_STATUS" = "warning" ]; then
     # News is advisory-only. Preserve its warning in the status artifact, but
