@@ -103,39 +103,10 @@ class CompositeNewsSource:
         return self._last_health
 
     def fetch_symbol_news(self, symbol: str) -> list[pd.DataFrame]:
-        frames: list[pd.DataFrame] = []
-        errors: list[str] = []
-        health: list[NewsSourceHealth] = []
-        for source in self._sources:
-            try:
-                source_frames = source.fetch_symbol_news(symbol)
-                frames.extend(source_frames)
-                health.extend(getattr(source, "last_health", ()))
-            except TimeoutError as exc:
-                errors.append(f"{source.name}: {exc}")
-                health.append(
-                    NewsSourceHealth(
-                        name=source.name,
-                        region=_normalize_region(getattr(source, "region", "mixed")),
-                        status="timeout",
-                        fetched_at=_source_fetched_at(),
-                        warnings=(f"{source.name}: {exc}",),
-                    )
-                )
-                if not frames:
-                    raise
-                break
-            except Exception as exc:
-                errors.append(f"{source.name}: {exc}")
-                health.append(
-                    NewsSourceHealth(
-                        name=source.name,
-                        region=_normalize_region(getattr(source, "region", "mixed")),
-                        status=_status_from_exception(exc),
-                        fetched_at=_source_fetched_at(),
-                        warnings=(f"{source.name}: {exc}",),
-                    )
-                )
+        frames, errors, health = _collect_composite_news(
+            self._sources,
+            lambda source: source.fetch_symbol_news(symbol),
+        )
         self._last_health = tuple(health)
         if frames:
             _attach_source_warnings(frames, errors)
@@ -146,39 +117,10 @@ class CompositeNewsSource:
         raise DataError(f"组合个股新闻无结果且无来源状态: {symbol}")
 
     def fetch_global_news(self) -> list[pd.DataFrame]:
-        frames: list[pd.DataFrame] = []
-        errors: list[str] = []
-        health: list[NewsSourceHealth] = []
-        for source in self._sources:
-            try:
-                source_frames = source.fetch_global_news()
-                frames.extend(source_frames)
-                health.extend(getattr(source, "last_health", ()))
-            except TimeoutError as exc:
-                errors.append(f"{source.name}: {exc}")
-                health.append(
-                    NewsSourceHealth(
-                        name=source.name,
-                        region=_normalize_region(getattr(source, "region", "mixed")),
-                        status="timeout",
-                        fetched_at=_source_fetched_at(),
-                        warnings=(f"{source.name}: {exc}",),
-                    )
-                )
-                if not frames:
-                    raise
-                break
-            except Exception as exc:
-                errors.append(f"{source.name}: {exc}")
-                health.append(
-                    NewsSourceHealth(
-                        name=source.name,
-                        region=_normalize_region(getattr(source, "region", "mixed")),
-                        status=_status_from_exception(exc),
-                        fetched_at=_source_fetched_at(),
-                        warnings=(f"{source.name}: {exc}",),
-                    )
-                )
+        frames, errors, health = _collect_composite_news(
+            self._sources,
+            lambda source: source.fetch_global_news(),
+        )
         self._last_health = tuple(health)
         if frames:
             _attach_source_warnings(frames, errors)
@@ -187,6 +129,80 @@ class CompositeNewsSource:
         if errors:
             raise DataError(f"组合全市场新闻获取失败: {'; '.join(errors)}")
         raise DataError("组合全市场新闻无结果且无来源状态")
+
+
+def _collect_composite_news(
+    sources: Sequence[NewsSource],
+    fetch: Callable[[NewsSource], list[pd.DataFrame]],
+) -> tuple[list[pd.DataFrame], list[str], list[NewsSourceHealth]]:
+    """Collect source results concurrently and retain partial success.
+
+    Composite news used to call RSS and AkShare serially.  A slow optional
+    source could consume the shared deadline after RSS had already succeeded,
+    causing the caller to lose valid international or domestic evidence.
+    """
+
+    results: dict[int, tuple[list[pd.DataFrame], BaseException | None]] = {}
+    results_lock = threading.Lock()
+    timeout_seconds = max(
+        [float(getattr(source, "_timeout_seconds", 0.0) or 0.0) for source in sources]
+        + [6.0]
+    )
+
+    def fetch_one(index: int, source: NewsSource) -> None:
+        try:
+            source_frames = fetch(source)
+        except BaseException as exc:
+            source_frames = []
+            error: BaseException | None = exc
+        else:
+            error = None
+        with results_lock:
+            results[index] = (source_frames, error)
+
+    workers = [
+        threading.Thread(
+            target=fetch_one,
+            args=(index, source),
+            name=f"aqsp-composite-news-{index}",
+            daemon=True,
+        )
+        for index, source in enumerate(sources)
+    ]
+    for worker in workers:
+        worker.start()
+    deadline = monotonic() + timeout_seconds
+    for worker in workers:
+        worker.join(max(0.0, deadline - monotonic()))
+
+    frames: list[pd.DataFrame] = []
+    errors: list[str] = []
+    health: list[NewsSourceHealth] = []
+    for index, source in enumerate(sources):
+        if index not in results:
+            source_frames: list[pd.DataFrame] = []
+            error: BaseException | None = TimeoutError(
+                f"{source.name} 超过 {timeout_seconds:.1f}s 未返回"
+            )
+        else:
+            source_frames, error = results[index]
+        source_name = str(getattr(source, "name", "unknown") or "unknown")
+        if error is not None:
+            warning = f"{source_name}: {error}"
+            errors.append(warning)
+            health.append(
+                NewsSourceHealth(
+                    name=source_name,
+                    region=_normalize_region(getattr(source, "region", "mixed")),
+                    status=_status_from_exception(error),
+                    fetched_at=_source_fetched_at(),
+                    warnings=(warning,),
+                )
+            )
+            continue
+        frames.extend(source_frames)
+        health.extend(getattr(source, "last_health", ()))
+    return frames, errors, health
 
 
 class RssNewsSource:
