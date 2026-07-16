@@ -1347,6 +1347,7 @@ class DashboardDataProvider:
         limit: int = 8,
         salient_only: bool = False,
         task_id: str = "",
+        symbols: tuple[str, ...] = (),
     ) -> tuple[DashboardDebateSummary, ...]:
         """返回某日所有结构化辩论摘要，按研究优先级而非单纯分数排序。"""
         selected_date = signal_date.strip()
@@ -1373,6 +1374,9 @@ class DashboardDataProvider:
                 if self._debate_signal_date(row) == selected_date
                 and self._has_debate_evidence(row)
             ]
+            symbol_set = {symbol.strip() for symbol in symbols if symbol.strip()}
+            if symbol_set:
+                summaries = [item for item in summaries if item.symbol in symbol_set]
             summaries.sort(key=debate_summary_priority_key, reverse=True)
             if salient_only:
                 salient = tuple(
@@ -1385,7 +1389,7 @@ class DashboardDataProvider:
 
         return self._cache_value(
             "prioritized_debate_summaries",
-            (selected_date, limit, salient_only, task_id.strip()),
+            (selected_date, limit, salient_only, task_id.strip(), symbols),
             _build,
         )
 
@@ -3545,6 +3549,13 @@ class DashboardDataProvider:
                     if use_live_view
                     else self.same_day_candidate_spotlights(review_date, limit=3)
                 )
+            candidate_symbols = tuple(
+                str(getattr(card, "symbol", "") or "").strip()
+                for card in getattr(task_view, "detail_cards", ())
+            ) + tuple(
+                str(getattr(spotlight, "symbol", "") or "").strip()
+                for spotlight in spotlights
+            )
             debates = (
                 ()
                 if normalized_task == "intraday"
@@ -3554,30 +3565,9 @@ class DashboardDataProvider:
                     limit=3,
                     salient_only=False,
                     task_id=normalized_task,
+                    symbols=candidate_symbols,
                 )
             )
-            candidate_symbols = tuple(
-                str(getattr(card, "symbol", "") or "").strip()
-                for card in getattr(task_view, "detail_cards", ())
-            ) + tuple(
-                str(getattr(spotlight, "symbol", "") or "").strip()
-                for spotlight in spotlights
-            )
-            candidate_symbol_set = {symbol for symbol in candidate_symbols if symbol}
-            current_debate_symbols = {
-                item.symbol for item in debates if item.symbol in candidate_symbol_set
-            }
-            if candidate_symbol_set and len(current_debate_symbols) < min(
-                3, len(candidate_symbol_set)
-            ):
-                # The first priority slice may contain stale/non-focus symbols;
-                # widen whenever it does not cover the current candidate set.
-                debates = self.prioritized_debate_summaries(
-                    review_date,
-                    limit=max(20, len(candidate_symbols) * 3),
-                    salient_only=False,
-                    task_id=normalized_task,
-                )
             debates = self._prioritize_debates_for_candidate_symbols(
                 debates,
                 candidate_symbols=candidate_symbols,

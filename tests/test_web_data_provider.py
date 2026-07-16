@@ -1983,7 +1983,6 @@ def test_dashboard_data_provider_home_digest_expands_partial_debate_coverage(
     spotlights = tuple(
         SimpleNamespace(symbol=symbol) for symbol in ("002084", "300604", "688981")
     )
-    stale = SimpleNamespace(symbol="002055")
     current = tuple(
         SimpleNamespace(symbol=symbol) for symbol in ("002084", "300604", "688981")
     )
@@ -2004,11 +2003,11 @@ def test_dashboard_data_provider_home_digest_expands_partial_debate_coverage(
     monkeypatch.setattr(
         provider, "live_candidate_spotlights", lambda *_args, **_kwargs: spotlights
     )
-    calls: list[int] = []
+    calls: list[tuple[int, tuple[str, ...]]] = []
 
-    def prioritized(*_args, limit: int, **_kwargs):
-        calls.append(limit)
-        return (stale, current[0], current[1]) if limit == 3 else current
+    def prioritized(*_args, limit: int, symbols: tuple[str, ...], **_kwargs):
+        calls.append((limit, symbols))
+        return tuple(item for item in current if item.symbol in symbols)
 
     monkeypatch.setattr(provider, "prioritized_debate_summaries", prioritized)
     monkeypatch.setattr(
@@ -2020,7 +2019,7 @@ def test_dashboard_data_provider_home_digest_expands_partial_debate_coverage(
 
     payload = provider.home_digest_payload("intraday", signal_date="2026-07-14")
 
-    assert calls == [3, 20]
+    assert calls == [(3, ("002084", "300604", "688981"))]
     assert payload.debates == current
 
 
