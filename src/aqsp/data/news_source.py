@@ -29,6 +29,8 @@ _RSS_CORE_TRIGGER_KEYWORDS: dict[str, tuple[str, ...]] = {
 }
 _SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
 _DIRECT_STOCK_NEWS_TIMEOUT_SECONDS = 8.0
+_DEFAULT_NEWS_SOURCE_TIMEOUT_SECONDS = 8.0
+_COMPOSITE_TIMEOUT_MARGIN_SECONDS = 0.25
 
 NewsSourceStatus = Literal["ok", "empty", "timeout", "partial", "failed"]
 NewsSourceRegion = Literal["domestic", "international", "mixed"]
@@ -90,12 +92,73 @@ class RssNewsRuntimeSummary:
         return self.enabled and self.feed_count > 0 and not self.missing_triggers
 
 
+def _configured_news_source_timeout_seconds() -> float | None:
+    raw = str(os.getenv("AQSP_NEWS_SOURCE_TIMEOUT_SECONDS", "") or "").strip()
+    if not raw:
+        return None
+    try:
+        value = float(raw)
+    except ValueError:
+        return None
+    return value if value > 0 else None
+
+
+def _composite_timeout_seconds(sources: Sequence[NewsSource]) -> float:
+    configured = _configured_news_source_timeout_seconds()
+    budgets = [
+        float(getattr(source, "_timeout_seconds", 0.0) or 0.0)
+        for source in sources
+        if float(getattr(source, "_timeout_seconds", 0.0) or 0.0) > 0
+    ]
+    if configured is not None:
+        budgets.append(configured)
+    budget = min(budgets) if budgets else _DEFAULT_NEWS_SOURCE_TIMEOUT_SECONDS
+    return max(0.1, budget - _COMPOSITE_TIMEOUT_MARGIN_SECONDS)
+
+
+def _run_callable_with_timeout(fetch: Callable[[], object], timeout_seconds: float) -> object:
+    """Run an optional third-party call without letting it block the news chain."""
+
+    result: dict[str, object] = {}
+    lock = threading.Lock()
+
+    def run() -> None:
+        try:
+            value = fetch()
+        except BaseException as exc:
+            with lock:
+                result["error"] = exc
+        else:
+            with lock:
+                result["value"] = value
+
+    worker = threading.Thread(target=run, name="aqsp-news-endpoint", daemon=True)
+    worker.start()
+    worker.join(max(0.0, float(timeout_seconds)))
+    with lock:
+        if "error" in result:
+            raise result["error"]  # type: ignore[misc]
+        if "value" in result:
+            return result["value"]
+    raise TimeoutError(f"新闻端点超过 {float(timeout_seconds):.1f}s 未返回")
+
+
 class CompositeNewsSource:
     name = "composite_news"
     region: NewsSourceRegion = "mixed"
 
-    def __init__(self, sources: tuple[NewsSource, ...]) -> None:
+    def __init__(
+        self,
+        sources: tuple[NewsSource, ...],
+        *,
+        timeout_seconds: float | None = None,
+    ) -> None:
         self._sources = sources
+        self._timeout_seconds = (
+            _composite_timeout_seconds(sources)
+            if timeout_seconds is None
+            else max(0.1, float(timeout_seconds) - _COMPOSITE_TIMEOUT_MARGIN_SECONDS)
+        )
         self._last_health: tuple[NewsSourceHealth, ...] = ()
 
     @property
@@ -106,6 +169,7 @@ class CompositeNewsSource:
         frames, errors, health = _collect_composite_news(
             self._sources,
             lambda source: source.fetch_symbol_news(symbol),
+            timeout_seconds=self._timeout_seconds,
         )
         self._last_health = tuple(health)
         if frames:
@@ -120,6 +184,7 @@ class CompositeNewsSource:
         frames, errors, health = _collect_composite_news(
             self._sources,
             lambda source: source.fetch_global_news(),
+            timeout_seconds=self._timeout_seconds,
         )
         self._last_health = tuple(health)
         if frames:
@@ -134,6 +199,8 @@ class CompositeNewsSource:
 def _collect_composite_news(
     sources: Sequence[NewsSource],
     fetch: Callable[[NewsSource], list[pd.DataFrame]],
+    *,
+    timeout_seconds: float | None = None,
 ) -> tuple[list[pd.DataFrame], list[str], list[NewsSourceHealth]]:
     """Collect source results concurrently and retain partial success.
 
@@ -144,13 +211,16 @@ def _collect_composite_news(
 
     results: dict[int, tuple[list[pd.DataFrame], BaseException | None]] = {}
     results_lock = threading.Lock()
-    source_timeout_seconds = max(
-        [float(getattr(source, "_timeout_seconds", 0.0) or 0.0) for source in sources]
-        + [6.0]
+    # The composite deadline is owned by CompositeNewsSource.  This helper is
+    # also kept usable in isolation for tests and small adapters.
+    timeout_seconds = max(
+        0.1,
+        float(
+            timeout_seconds
+            if timeout_seconds is not None
+            else _composite_timeout_seconds(sources)
+        ),
     )
-    # Leave room for the outer catalyst deadline to collect this result and
-    # merge its provenance before it marks the composite source as timed out.
-    timeout_seconds = max(0.5, source_timeout_seconds - 0.5)
 
     def fetch_one(index: int, source: NewsSource) -> None:
         try:
@@ -203,8 +273,34 @@ def _collect_composite_news(
                 )
             )
             continue
-        frames.extend(source_frames)
-        health.extend(getattr(source, "last_health", ()))
+        source_health = tuple(getattr(source, "last_health", ()))
+        if source_frames:
+            frames.extend(source_frames)
+            if source_health:
+                health.extend(source_health)
+            else:
+                health.append(
+                    NewsSourceHealth(
+                        name=source_name,
+                        region=_normalize_region(getattr(source, "region", "mixed")),
+                        status="ok",
+                        successful=1,
+                        row_count=sum(len(frame) for frame in source_frames),
+                        fetched_at=_source_fetched_at(),
+                    )
+                )
+        else:
+            warning = f"{source_name}: empty"
+            errors.append(warning)
+            health.append(
+                NewsSourceHealth(
+                    name=source_name,
+                    region=_normalize_region(getattr(source, "region", "mixed")),
+                    status="empty",
+                    fetched_at=_source_fetched_at(),
+                    warnings=(warning,),
+                )
+            )
     return frames, errors, health
 
 
@@ -374,12 +470,17 @@ class AkshareNewsSource:
     name = "akshare_news"
     region: NewsSourceRegion = "mixed"
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        timeout_seconds: float = _DEFAULT_NEWS_SOURCE_TIMEOUT_SECONDS,
+    ) -> None:
         try:
             import akshare as ak
         except ImportError as exc:
             raise _AkshareOptionalDependencyError("akshare not installed") from exc
         self._ak = ak
+        self._timeout_seconds = max(0.1, float(timeout_seconds))
         self._last_health: tuple[NewsSourceHealth, ...] = ()
 
     @property
@@ -451,9 +552,34 @@ class AkshareNewsSource:
         frames: list[pd.DataFrame] = []
         errors: list[str] = []
         health: list[NewsSourceHealth] = []
+        deadline = monotonic() + max(
+            0.1,
+            float(
+                getattr(
+                    self,
+                    "_timeout_seconds",
+                    _DEFAULT_NEWS_SOURCE_TIMEOUT_SECONDS,
+                )
+            ),
+        )
         for name, fetch in fetchers:
+            remaining = deadline - monotonic()
+            if remaining <= 0:
+                error: BaseException = TimeoutError("akshare 批次超过截止时间")
+                warning = f"{name}: {error}"
+                errors.append(warning)
+                health.append(
+                    NewsSourceHealth(
+                        name=name,
+                        region=_region_for_source_name(name),
+                        status="timeout",
+                        fetched_at=_source_fetched_at(),
+                        warnings=(warning,),
+                    )
+                )
+                break
             try:
-                frame = fetch()
+                frame = _run_callable_with_timeout(fetch, remaining)
             except TimeoutError as exc:
                 # The caller's bounded timeout is fail-fast for this batch. Continuing
                 # through more AkShare endpoints only multiplies a blocked network call.
@@ -584,7 +710,11 @@ def _fetch_eastmoney_stock_news_compat(symbol: str) -> pd.DataFrame:
 def build_default_news_source() -> NewsSource:
     rss_source = build_rss_news_source_from_config()
     try:
-        akshare_source: NewsSource | None = AkshareNewsSource()
+        configured_timeout = _configured_news_source_timeout_seconds()
+        if configured_timeout is None:
+            akshare_source: NewsSource | None = AkshareNewsSource()
+        else:
+            akshare_source = AkshareNewsSource(timeout_seconds=configured_timeout)
     except _AkshareOptionalDependencyError:
         akshare_source = None
 
@@ -597,7 +727,10 @@ def build_default_news_source() -> NewsSource:
         raise DataError("未配置可用新闻源: akshare 未安装且 RSS 未启用或无有效订阅源")
     if len(sources) == 1:
         return sources[0]
-    return CompositeNewsSource(tuple(sources))
+    return CompositeNewsSource(
+        tuple(sources),
+        timeout_seconds=_configured_news_source_timeout_seconds(),
+    )
 
 
 def build_rss_news_source_from_config(path: str | None = None) -> RssNewsSource | None:

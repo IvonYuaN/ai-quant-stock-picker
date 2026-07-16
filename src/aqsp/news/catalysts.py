@@ -604,14 +604,18 @@ def _report_from_stale_cache(
 
 POSITIVE_PATTERNS: tuple[tuple[str, str, int], ...] = (
     (
-        "pcb|覆铜板|铜箔|玻纤布|树脂|基材.*(涨价|缺货)|"
-        "涨价.*(pcb|覆铜板|铜箔|玻纤布)|缺货.*(pcb|芯片|半导体)",
+        "(?:pcb|覆铜板|铜箔|玻纤布|树脂|基材|电子材料).*(?:涨价|提价|"
+        "价格上调|报价上调|缺货|供不应求|供应紧张)|"
+        "(?:涨价|提价|价格上调|报价上调|缺货|供不应求|供应紧张).*"
+        "(?:pcb|覆铜板|铜箔|玻纤布|树脂|基材|电子材料)",
         "电子材料涨价/缺货",
         5,
     ),
     (
-        "hbm|dram|nand|存储芯片|内存.*(涨价|缺货)|"
-        "涨价.*(hbm|dram|nand|存储)|缺货.*(hbm|dram|nand|存储)",
+        "(?:hbm|dram|nand|存储芯片|内存|存储).*(?:涨价|提价|价格上涨|价格上调|"
+        "报价上调|缺货|供不应求|供应紧张)|"
+        "(?:涨价|提价|价格上涨|价格上调|报价上调|缺货|供不应求|供应紧张).*"
+        "(?:hbm|dram|nand|存储芯片|内存|存储)",
         "存储涨价/缺货",
         5,
     ),
@@ -698,6 +702,10 @@ _AUTHORITATIVE_SOURCE_TOKENS: tuple[str, ...] = (
     "Federal Reserve",
     "ECB",
     "NASA",
+    "NVIDIA Newsroom",
+    "AMD Press Releases",
+    "Intel Press Releases",
+    "OpenAI News",
 )
 
 _MEDIA_SOURCE_TOKENS: tuple[str, ...] = (
@@ -720,8 +728,8 @@ _SOURCE_BY_URL_TOKEN: tuple[tuple[str, str], ...] = (
     ("sec.gov", "SEC"),
     ("ecb.europa.eu", "ECB"),
     ("nasa.gov", "NASA"),
-    ("nvidia.com", "NVIDIA"),
     ("nvidianews.nvidia.com", "NVIDIA Newsroom"),
+    ("nvidia.com", "NVIDIA"),
     ("ir.amd.com", "AMD Press Releases"),
     ("intc.com", "Intel Press Releases"),
     ("openai.com", "OpenAI News"),
@@ -1522,7 +1530,7 @@ def _classify_title(title: str) -> tuple[str, Impact, int, str] | None:
     if _is_non_actionable_price_hike_noise(clean):
         return None
     for pattern, category, weight in NEGATIVE_PATTERNS:
-        if re.search(pattern, clean):
+        if re.search(pattern, clean, flags=re.IGNORECASE):
             return (
                 category,
                 "negative",
@@ -1530,7 +1538,7 @@ def _classify_title(title: str) -> tuple[str, Impact, int, str] | None:
                 "",
             )
     for pattern, category, weight in POSITIVE_PATTERNS:
-        if re.search(pattern, clean):
+        if re.search(pattern, clean, flags=re.IGNORECASE):
             return (
                 category,
                 "positive",
@@ -1698,6 +1706,9 @@ def _region_from_source(source: str) -> str:
             "nasa",
             "marketwatch",
             "nvidia",
+            "amd",
+            "intel",
+            "openai",
             "reuters",
             "bloomberg",
         )

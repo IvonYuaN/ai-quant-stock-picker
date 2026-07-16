@@ -29,9 +29,11 @@ from aqsp.data.news_source import (
     rss_news_runtime_summary,
 )
 from aqsp.news.catalysts import (
+    CatalystEvent,
     CatalystReport,
     NewsCatalystConfig,
     _classify_title,
+    _select_diverse_events,
     build_catalyst_report,
     format_catalyst_notification,
     _akshare_global_news,
@@ -43,6 +45,129 @@ from aqsp.market_context import build_market_context_artifact
 
 _RECENT_NEWS_TIME = (now_shanghai() - timedelta(minutes=10)).strftime("%Y-%m-%d %H:%M")
 _RECENT_NEWS_DATE = today_shanghai().isoformat()
+
+
+@pytest.mark.parametrize(
+    ("title", "category"),
+    [
+        ("PCB覆铜板厂商宣布新一轮报价上调", "电子材料涨价/缺货"),
+        ("高端铜箔供应紧张，厂商称短期缺货", "电子材料涨价/缺货"),
+        ("HBM供给紧张，服务器内存出现缺货", "存储涨价/缺货"),
+        ("DRAM现货价格上涨，供应趋紧", "存储涨价/缺货"),
+        ("半导体设备订单同比大增，刻蚀设备需求提升", "订单/需求验证"),
+    ],
+)
+def test_news_catalyst_classifies_supply_chain_evidence(
+    title: str, category: str
+) -> None:
+    classified = _classify_title(title)
+
+    assert classified is not None
+    assert classified[0] == category
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        "PCB企业发布年度报告",
+        "HBM产业论坛召开，厂商展示新产品",
+        "半导体设备公司参加行业展会",
+    ],
+)
+def test_news_catalyst_does_not_classify_supply_chain_keyword_without_evidence(
+    title: str,
+) -> None:
+    assert _classify_title(title) is None
+
+
+def test_news_catalyst_maps_supply_chain_evidence_to_affected_sectors() -> None:
+    report = build_catalyst_report(
+        fetch_global_news=lambda _limit: pd.DataFrame(
+            [
+                {
+                    "标题": "PCB覆铜板厂商宣布新一轮报价上调",
+                    "来源": "证券报",
+                    "时间": _RECENT_NEWS_TIME,
+                },
+                {
+                    "标题": "HBM供给紧张，服务器内存出现缺货",
+                    "来源": "路透",
+                    "时间": _RECENT_NEWS_TIME,
+                },
+                {
+                    "标题": "半导体设备订单同比大增，刻蚀设备需求提升",
+                    "来源": "公司公告",
+                    "时间": _RECENT_NEWS_TIME,
+                },
+            ]
+        )
+    )
+
+    by_title = {event.title: event for event in report.events}
+    assert {"PCB", "覆铜板", "铜箔"}.issubset(
+        set(by_title["PCB覆铜板厂商宣布新一轮报价上调"].affected_sectors)
+    )
+    assert {"存储", "AI算力"}.issubset(
+        set(by_title["HBM供给紧张，服务器内存出现缺货"].affected_sectors)
+    )
+    assert {"半导体设备", "半导体材料"}.issubset(
+        set(by_title["半导体设备订单同比大增，刻蚀设备需求提升"].affected_sectors)
+    )
+
+
+@pytest.mark.parametrize(
+    ("url", "source"),
+    [
+        ("https://nvidianews.nvidia.com/news/physical-ai", "NVIDIA Newsroom"),
+        ("https://ir.amd.com/news-events/press-releases", "AMD Press Releases"),
+        ("https://www.intc.com/news-events/press-releases", "Intel Press Releases"),
+        ("https://openai.com/news/", "OpenAI News"),
+    ],
+)
+def test_news_catalyst_marks_overseas_official_sources_as_high_value(
+    url: str, source: str
+) -> None:
+    report = build_catalyst_report(
+        fetch_global_news=lambda _limit: pd.DataFrame(
+            [
+                {
+                    "标题": "NVIDIA announces Physical AI robotics platform",
+                    "链接": url,
+                    "时间": _RECENT_NEWS_TIME,
+                }
+            ]
+        )
+    )
+
+    assert report.events
+    assert report.events[0].source == source
+    assert report.events[0].source_quality_label == "高价值来源"
+    assert report.events[0].source_quality_score == 4
+    assert report.events[0].source_region == "international"
+
+
+def test_news_catalyst_selects_ranked_events_from_diverse_sources() -> None:
+    def event(title: str, source: str, weight: int) -> CatalystEvent:
+        return CatalystEvent(
+            title=title,
+            source=source,
+            published_at=_RECENT_NEWS_TIME,
+            weight=weight,
+            confidence=0.8,
+        )
+
+    selected = _select_diverse_events(
+        (
+            event("同源高分1", "NVIDIA Newsroom", 10),
+            event("同源高分2", "NVIDIA Newsroom", 9),
+            event("另一来源", "Reuters", 8),
+            event("第三来源", "AMD Press Releases", 7),
+        ),
+        3,
+    )
+
+    assert tuple(item.title for item in selected) == ("同源高分1", "另一来源", "第三来源")
+    assert len({item.source for item in selected}) == 3
 
 
 def test_news_catalyst_report_prioritizes_verified_price_hike_events() -> None:
@@ -926,6 +1051,68 @@ def test_composite_news_keeps_fast_fallback_when_later_source_times_out() -> Non
     assert source.last_health[-1].status == "timeout"
     assert source.fetch_global_news()[0].iloc[0]["来源"] == "RSS"
     assert source.last_health[-1].status == "timeout"
+
+
+def test_composite_news_returns_fast_source_before_slow_source_deadline() -> None:
+    frame = pd.DataFrame([{"标题": "RSS 先返回", "来源": "RSS"}])
+
+    def slow_fetch() -> list[pd.DataFrame]:
+        time.sleep(1.0)
+        return [pd.DataFrame([{"标题": "慢源", "来源": "AkShare"}])]
+
+    fast_source = SimpleNamespace(
+        name="rss_news",
+        region="international",
+        last_health=(),
+        fetch_symbol_news=lambda _symbol: [frame],
+        fetch_global_news=lambda: [frame],
+    )
+    slow_source = SimpleNamespace(
+        name="akshare_news",
+        region="domestic",
+        _timeout_seconds=1.0,
+        last_health=(),
+        fetch_symbol_news=lambda _symbol: slow_fetch(),
+        fetch_global_news=slow_fetch,
+    )
+    source = CompositeNewsSource((fast_source, slow_source), timeout_seconds=0.2)
+
+    started = time.monotonic()
+    frames = source.fetch_global_news()
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 0.7
+    assert frames[0].iloc[0]["标题"] == "RSS 先返回"
+    assert any(item.name == "akshare_news" and item.status == "timeout" for item in source.last_health)
+
+
+def test_akshare_news_source_returns_partial_frames_when_next_endpoint_blocks() -> None:
+    def slow() -> pd.DataFrame:
+        time.sleep(1.0)
+        return pd.DataFrame([{"标题": "不应等待"}])
+
+    source = AkshareNewsSource.__new__(AkshareNewsSource)
+    source._timeout_seconds = 0.2
+    source._ak = SimpleNamespace(
+        stock_info_global_cls=lambda: pd.DataFrame([{"标题": "已拿到"}]),
+        stock_info_global_em=slow,
+        stock_info_global_ths=lambda: pd.DataFrame(),
+        stock_info_global_futu=lambda: pd.DataFrame(),
+        stock_info_global_sina=lambda: pd.DataFrame(),
+        news_cctv=lambda: pd.DataFrame(),
+        news_economic_baidu=lambda: pd.DataFrame(),
+        stock_notice_report=lambda: pd.DataFrame(),
+    )
+
+    started = time.monotonic()
+    frames = source.fetch_global_news()
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 0.7
+    assert len(frames) == 1
+    assert frames[0].iloc[0]["标题"] == "已拿到"
+    assert "stock_info_global_em" in frames[0].attrs["aqsp_warnings"][0]
+    assert source.last_health[1].status == "timeout"
 
 
 def test_news_catalyst_report_uses_fresh_cache_before_refetch(

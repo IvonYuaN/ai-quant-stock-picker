@@ -787,7 +787,7 @@ def test_news_catalysts_script_sends_research_notification() -> None:
     assert "AQSP_NEWS_JSON_OUTPUT" in script
     assert '--json-output "$JSON_OUTPUT"' in script
     assert 'MAX_LLM_REVIEW_EVENTS="${AQSP_NEWS_MAX_LLM_REVIEW_EVENTS:-1}"' in script
-    assert 'SOURCE_TIMEOUT_SECONDS="${AQSP_NEWS_SOURCE_TIMEOUT_SECONDS:-4}"' in script
+    assert 'SOURCE_TIMEOUT_SECONDS="${AQSP_NEWS_SOURCE_TIMEOUT_SECONDS:-8}"' in script
     assert 'TASK_TIMEOUT_SECONDS="${AQSP_NEWS_TASK_TIMEOUT_SECONDS:-300}"' in script
     assert 'timeout "${TASK_TIMEOUT_SECONDS}"' in script
     assert "消息面雷达超时:" in script
