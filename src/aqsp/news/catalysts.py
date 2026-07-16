@@ -603,6 +603,24 @@ def _report_from_stale_cache(
 
 
 POSITIVE_PATTERNS: tuple[tuple[str, str, int], ...] = (
+    (
+        "pcb|覆铜板|铜箔|玻纤布|树脂|基材.*(涨价|缺货)|"
+        "涨价.*(pcb|覆铜板|铜箔|玻纤布)|缺货.*(pcb|芯片|半导体)",
+        "电子材料涨价/缺货",
+        5,
+    ),
+    (
+        "hbm|dram|nand|存储芯片|内存.*(涨价|缺货)|"
+        "涨价.*(hbm|dram|nand|存储)|缺货.*(hbm|dram|nand|存储)",
+        "存储涨价/缺货",
+        5,
+    ),
+    (
+        "晶圆.*(涨价|缺货|满产)|半导体.*(缺货|涨价)|"
+        "光刻胶|硅片|先进封装.*(订单|扩产|涨价)",
+        "半导体供需催化",
+        5,
+    ),
     ("涨价|提价|价格上调|报价上调|缺货|供不应求", "涨价/供需催化", 5),
     ("扩产受限|停产|限产|供给收缩|库存低位|排产紧张", "供给收缩", 4),
     (
@@ -703,6 +721,10 @@ _SOURCE_BY_URL_TOKEN: tuple[tuple[str, str], ...] = (
     ("ecb.europa.eu", "ECB"),
     ("nasa.gov", "NASA"),
     ("nvidia.com", "NVIDIA"),
+    ("nvidianews.nvidia.com", "NVIDIA Newsroom"),
+    ("ir.amd.com", "AMD Press Releases"),
+    ("intc.com", "Intel Press Releases"),
+    ("openai.com", "OpenAI News"),
     ("marketwatch.com", "MarketWatch"),
     ("dowjones.io", "MarketWatch"),
     ("reuters.com", "Reuters"),
@@ -723,6 +745,34 @@ _SOURCE_BY_URL_TOKEN: tuple[tuple[str, str], ...] = (
 # the first places to look after a catalyst is classified; price/volume
 # confirmation remains outside this module.
 _SECTOR_TAG_RULES: tuple[tuple[tuple[str, ...], tuple[str, ...]], ...] = (
+    (
+        (
+            "pcb",
+            "覆铜板",
+            "铜箔",
+            "玻纤布",
+            "树脂",
+            "基材",
+            "电子材料",
+        ),
+        ("PCB", "覆铜板", "铜箔", "电子材料", "先进封装"),
+    ),
+    (
+        ("hbm", "dram", "nand", "存储芯片", "内存", "存储涨价"),
+        ("存储", "半导体", "先进封装", "AI算力"),
+    ),
+    (
+        (
+            "晶圆",
+            "光刻胶",
+            "硅片",
+            "半导体设备",
+            "刻蚀",
+            "薄膜沉积",
+            "先进封装",
+        ),
+        ("半导体设备", "半导体材料", "先进封装", "半导体"),
+    ),
     (
         ("spacex", "space x", "starlink", "商业航天", "卫星", "低轨", "火箭"),
         ("商业航天", "卫星互联网", "军工电子"),
