@@ -7,6 +7,7 @@ import {
   CircleAlert,
   Clock3,
   Columns3,
+  ExternalLink,
   MessageSquareText,
   RefreshCw,
   ShieldAlert,
@@ -166,7 +167,9 @@ function MessageCard({ message, transmission }: { message: AqspMessage; transmis
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             {message.category && <span className="vr-chip vr-chip-primary">{message.category}</span>}
+            {message.event_type && <span className="vr-chip">{message.event_type}</span>}
             {message.source && <span className="vr-chip">{message.source}</span>}
+            {message.source_quality && <span className="vr-chip">{message.source_quality}</span>}
             <time className="text-[10px] text-muted-foreground">{formatAqspTime(message.published_at)}</time>
           </div>
           <h3 className="mt-2 text-sm font-medium leading-relaxed">{message.title || "消息标题未记录"}</h3>
@@ -174,6 +177,17 @@ function MessageCard({ message, transmission }: { message: AqspMessage; transmis
         <MessageSquareText className="mt-0.5 h-4 w-4 shrink-0 text-primary/75" />
       </div>
       {message.summary && <p className="mt-3 text-xs leading-relaxed text-foreground/78">{message.summary}</p>}
+      {message.source_url && (
+        <a
+          href={message.source_url}
+          target="_blank"
+          rel="noreferrer"
+          className="mt-3 inline-flex max-w-full items-center gap-1 text-[11px] text-primary underline-offset-2 hover:underline"
+        >
+          <ExternalLink className="h-3.5 w-3.5 shrink-0" />
+          <span className="truncate">查看原文</span>
+        </a>
+      )}
       {impact && (
         <div className="vr-message-impact">
           <p className="vr-kicker text-primary">影响</p>
@@ -190,6 +204,20 @@ function MessageCard({ message, transmission }: { message: AqspMessage; transmis
         <div className="mt-3">
           <p className="vr-kicker">传导路径</p>
           <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">{path.join(" → ")}</p>
+        </div>
+      )}
+      {message.transmission_hypothesis && (
+        <div className="mt-3">
+          <p className="vr-kicker">传导逻辑</p>
+          <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">{message.transmission_hypothesis}</p>
+        </div>
+      )}
+      {uniqueNonEmpty(message.supporting_evidence, 3).length > 0 && (
+        <div className="mt-3 border-t border-border/45 pt-3">
+          <p className="vr-kicker">来源证据</p>
+          <ul className="mt-1.5 space-y-1 text-[11px] leading-relaxed text-muted-foreground">
+            {uniqueNonEmpty(message.supporting_evidence, 3).map((evidence) => <li key={evidence}>· {evidence}</li>)}
+          </ul>
         </div>
       )}
       {validations.length > 0 && (
