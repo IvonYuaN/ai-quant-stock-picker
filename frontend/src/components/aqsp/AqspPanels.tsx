@@ -40,6 +40,9 @@ function EmptyState({ title, detail }: { title: string; detail: string }) {
 
 function SnapshotMeta({ snapshot }: { snapshot: AqspSnapshot }) {
   const stale = isAqspSnapshotStale(snapshot);
+  const contextLines = snapshot.market_context?.summary_lines ?? [];
+  const crossMarketStale = contextLines.some((line) => /实时跨市:\s*stale/i.test(line));
+  const newsUnavailable = /失败|timeout|超时/i.test(snapshot.market_context?.status ?? "") || snapshot.message_status === "来源失败";
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
       <span>{snapshot.selected_date || "日期未记录"}</span>
@@ -47,6 +50,8 @@ function SnapshotMeta({ snapshot }: { snapshot: AqspSnapshot }) {
       <span className={cn("vr-status", stale ? "vr-status-warning" : "vr-status-success")}>
         {stale ? "历史数据" : "数据有效"}
       </span>
+      {newsUnavailable && <span className="vr-status vr-status-warning">消息源受限</span>}
+      {crossMarketStale && <span className="vr-status vr-status-warning">跨市场数据滞后</span>}
     </div>
   );
 }
