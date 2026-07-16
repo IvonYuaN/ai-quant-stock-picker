@@ -799,6 +799,24 @@ def test_fetch_special_strategy_frames_requires_today_intraday(monkeypatch) -> N
         )
 
 
+def test_intraday_actual_source_uses_current_overlay_provenance() -> None:
+    import aqsp.cli as cli_mod
+
+    eastmoney = _fresh_frame("2026-06-26")
+    eastmoney.attrs["source_name"] = "eastmoney"
+    tencent = _fresh_frame("2026-06-26")
+    tencent.attrs["source_name"] = "tencent"
+
+    assert cli_mod._intraday_actual_source({"600000": eastmoney}, "sina") == "eastmoney"
+    assert (
+        cli_mod._intraday_actual_source(
+            {"600000": eastmoney, "000001": tencent}, "sina"
+        )
+        == "multi"
+    )
+    assert cli_mod._intraday_actual_source({}, "sina") == "sina"
+
+
 def test_fetch_special_strategy_frames_blocks_historical_only_live_short_source(
     monkeypatch,
 ) -> None:

@@ -2334,7 +2334,7 @@ def _fetch_special_strategy_frames(
     }
     for frame in overlay.frames.values():
         frame.attrs["intraday_overlay_coverage"] = coverage
-    return overlay.frames, actual_source
+    return overlay.frames, _intraday_actual_source(overlay.frames, actual_source)
 
 
 def _intraday_overlay_coverage(
@@ -2350,6 +2350,23 @@ def _intraday_overlay_coverage(
         status = str(coverage.get("status", "partial" if missing else "complete"))
         return status, missing
     return "not_available", ()
+
+
+def _intraday_actual_source(
+    frames: dict[str, pd.DataFrame],
+    fallback: str,
+) -> str:
+    """Summarize the sources that supplied the current-day overlay."""
+    sources = {
+        str(frame.attrs.get("source_name", "") or "").strip()
+        for frame in frames.values()
+        if str(frame.attrs.get("source_name", "") or "").strip()
+    }
+    if len(sources) == 1:
+        return next(iter(sources))
+    if len(sources) > 1:
+        return "multi"
+    return fallback
 
 
 def _force_intraday_observation(
