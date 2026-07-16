@@ -12,6 +12,7 @@ from aqsp.market_context import (
     build_market_context_artifact,
     market_context_metrics_for_pick,
 )
+from aqsp.core.time import today_shanghai
 from aqsp.news.catalysts import load_catalyst_report_artifact
 from scripts.backfill_intraday_debate import _pick_from_row
 
@@ -31,7 +32,11 @@ def merge_intraday_news(
     if not fieldnames:
         raise ValueError(f"candidate CSV has no header: {csv_path}")
 
-    report = load_catalyst_report_artifact(news_path)
+    report = load_catalyst_report_artifact(
+        news_path,
+        expected_date=today_shanghai().isoformat(),
+        max_age_seconds=30 * 60,
+    )
     if report is None:
         raise ValueError(f"news artifact unavailable: {news_path}")
     artifact = build_market_context_artifact(catalyst_report=report)
