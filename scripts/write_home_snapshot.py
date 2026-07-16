@@ -383,7 +383,12 @@ def _snapshot_recommendation_count(payload: Any) -> int:
 
 def _align_count_summary(text: str, *, total: int, shown: int) -> str:
     """Make a legacy count headline explicit when the home card cap hides rows."""
-    if total <= shown or not text:
+    if not text:
+        return text
+    match = re.search(r"(?:纸面复核|待复核)\s*(\d+)\s*只", text)
+    reported = int(match.group(1)) if match else 0
+    total = max(total, reported)
+    if total <= shown:
         return text
     return re.sub(
         r"(纸面复核|待复核)\s*\d+\s*只",
