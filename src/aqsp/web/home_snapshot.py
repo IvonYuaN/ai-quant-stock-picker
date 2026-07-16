@@ -160,6 +160,7 @@ class HomeSnapshotDebate:
     bear_count: int = 0
     neutral_count: int = 0
     process_summary: str = ""
+    round_summaries: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -816,6 +817,7 @@ def _debate_from_dict(payload: object) -> HomeSnapshotDebate:
             "bear_count",
             "neutral_count",
             "process_summary",
+            "round_summaries",
         },
     )
     return HomeSnapshotDebate(
@@ -833,6 +835,9 @@ def _debate_from_dict(payload: object) -> HomeSnapshotDebate:
         neutral_count=_integer(mapping.get("neutral_count", 0), "debate.neutral_count"),
         process_summary=_optional_text(
             mapping.get("process_summary"), "debate.process_summary"
+        ),
+        round_summaries=_text_tuple(
+            mapping.get("round_summaries", []), "debate.round_summaries"
         ),
     )
 

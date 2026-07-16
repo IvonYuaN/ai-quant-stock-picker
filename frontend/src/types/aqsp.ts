@@ -73,6 +73,7 @@ export interface AqspAgentResult {
   bear_count: number;
   neutral_count: number;
   process_summary: string;
+  round_summaries?: readonly string[];
 }
 
 export type AqspAgentDiscussion = AqspAgentResult;

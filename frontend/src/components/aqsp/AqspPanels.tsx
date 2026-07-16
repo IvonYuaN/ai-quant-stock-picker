@@ -208,6 +208,11 @@ function DebateCard({ result }: { result: AqspAgentResult }) {
           <p className="vr-kicker flex items-center gap-1.5"><UsersRound className="h-3.5 w-3.5" />讨论过程</p>
           <p className="mt-2 text-xs leading-relaxed text-foreground/80">{process || "讨论过程未记录"}</p>
           {result.active_roles.length > 0 && <div className="mt-2 flex flex-wrap gap-1.5">{result.active_roles.map((role) => <span key={role} className="vr-chip">{role}</span>)}</div>}
+          {(result.round_summaries ?? []).length > 0 && (
+            <ol className="mt-3 space-y-1 border-t border-border/45 pt-2 text-[11px] leading-relaxed text-muted-foreground">
+              {(result.round_summaries ?? []).slice(0, 3).map((summary, index) => <li key={`${index}-${summary}`}>第 {index + 1} 轮：{summary}</li>)}
+            </ol>
+          )}
         </div>
         <div className="grid min-w-[9rem] grid-cols-3 gap-1.5 sm:grid-cols-1">
           <div className="vr-vote vr-vote-bull"><span>支持</span><strong>{result.bull_count}</strong></div>

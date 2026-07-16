@@ -96,6 +96,7 @@ class AQSPDebate:
     bear_count: int = 0
     neutral_count: int = 0
     process_summary: str = ""
+    round_summaries: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -542,6 +543,7 @@ def _parse_debate(payload: object) -> AQSPDebate:
             "deterministic_score",
             "deterministic_score_unchanged",
             "advisory_boundary_ok",
+            "round_summaries",
         },
     )
     return AQSPDebate(
@@ -557,6 +559,9 @@ def _parse_debate(payload: object) -> AQSPDebate:
         neutral_count=_integer(item.get("neutral_count", 0), "debate.neutral_count"),
         process_summary=_optional_text(
             item.get("process_summary"), "debate.process_summary"
+        ),
+        round_summaries=tuple(
+            _text_list(item.get("round_summaries", []), "debate.round_summaries")
         ),
     )
 
