@@ -158,6 +158,11 @@ def test_default_market_context_providers_use_verified_eastmoney_secids() -> Non
         for instrument, items in providers.items()
     } == expected
     assert all(items[0].name == "eastmoney_push2" for items in providers.values())
+    assert all(
+        [item.name for item in items]
+        == ["eastmoney_push2", "eastmoney_push2_retry", "yahoo_chart_primary"]
+        for items in providers.values()
+    )
 
 
 def test_fetch_live_market_context_payload_uses_short_term_timeout(monkeypatch) -> None:

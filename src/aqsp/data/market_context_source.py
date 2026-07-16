@@ -276,16 +276,22 @@ def default_market_context_providers() -> dict[str, tuple[HttpJsonProvider, ...]
     providers: dict[str, tuple[HttpJsonProvider, ...]] = {}
     for instrument, symbol in _DEFAULT_YAHOO_SYMBOLS.items():
         providers[instrument] = (
-            _eastmoney_provider(_DEFAULT_EASTMONEY_SECIDS[instrument]),
+            _eastmoney_provider(
+                _DEFAULT_EASTMONEY_SECIDS[instrument],
+                name="eastmoney_push2",
+            ),
+            _eastmoney_provider(
+                _DEFAULT_EASTMONEY_SECIDS[instrument],
+                name="eastmoney_push2_retry",
+            ),
             _yahoo_provider("yahoo_chart_primary", "query1.finance.yahoo.com", symbol),
-            _yahoo_provider("yahoo_chart_fallback", "query2.finance.yahoo.com", symbol),
         )
     return providers
 
 
-def _eastmoney_provider(secid: str) -> HttpJsonProvider:
+def _eastmoney_provider(secid: str, *, name: str) -> HttpJsonProvider:
     return HttpJsonProvider(
-        name="eastmoney_push2",
+        name=name,
         url="https://push2.eastmoney.com/api/qt/stock/get",
         value_path="data.f43",
         change_pct_path="data.f170",
