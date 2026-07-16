@@ -333,7 +333,7 @@ export function AqspResearchWorkspace() {
         </div>
       </section>
 
-      <div className="vr-board-grid">
+      <div className="vr-board-stack">
         <section id="candidates" className="vr-board-section">
           <div className="vr-section-heading"><div><p className="vr-kicker">评分与依据</p><h2>候选研究</h2></div><span className="vr-count">{data.candidates.length} 条</span></div>
           {data.candidates.length === 0 ? <EmptyState title="当前没有候选" detail="可能是研究 gate 阻塞，或当天数据尚未产出。" /> : <div className="vr-candidate-grid">{data.candidates.map((candidate) => <CandidateCard key={candidate.symbol} candidate={candidate} />)}</div>}
