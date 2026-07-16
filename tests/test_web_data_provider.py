@@ -1450,7 +1450,7 @@ def test_dashboard_data_provider_prioritized_debate_summaries_returns_empty_when
     )
 
 
-def test_dashboard_data_provider_keeps_debate_with_nonfatal_evidence_gap(
+def test_dashboard_data_provider_hides_debate_with_any_evidence_gap(
     tmp_path: Path,
 ) -> None:
     debate_path = tmp_path / "debate.jsonl"
@@ -1504,7 +1504,7 @@ def test_dashboard_data_provider_keeps_debate_with_nonfatal_evidence_gap(
         symbols=("000001",),
     )
 
-    assert [item.symbol for item in summaries] == ["000001"]
+    assert summaries == ()
 
 
 def test_dashboard_data_provider_debate_summary_keeps_rich_row_over_newer_score_only_row(

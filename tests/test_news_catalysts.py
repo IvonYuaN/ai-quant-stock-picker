@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta
 import json
 from pathlib import Path
+import threading
 import time
 from types import SimpleNamespace
 
@@ -773,6 +774,82 @@ def test_news_catalyst_report_degrades_when_source_times_out() -> None:
     assert report.source_status == "timeout"
     assert not report.events
     assert "超过 0.0s 未返回" in report.warnings[0]
+
+
+def test_news_catalyst_fetches_symbol_and_global_news_in_parallel() -> None:
+    symbol_started = threading.Event()
+    global_started = threading.Event()
+    released_by_global = {"value": False}
+
+    def symbol_news(_symbol: str, _limit: int) -> pd.DataFrame:
+        symbol_started.set()
+        released_by_global["value"] = global_started.wait(0.3)
+        return pd.DataFrame(
+            [{"标题": "个股订单落地", "来源": "公司公告", "时间": _RECENT_NEWS_TIME}]
+        )
+
+    def global_news(_limit: int) -> pd.DataFrame:
+        global_started.set()
+        return pd.DataFrame(
+            [
+                {
+                    "标题": "海外风险偏好回升",
+                    "来源": "国际媒体",
+                    "时间": _RECENT_NEWS_TIME,
+                }
+            ]
+        )
+
+    report = build_catalyst_report(
+        symbols=("600001",),
+        fetch_symbol_news=symbol_news,
+        fetch_global_news=global_news,
+        config=NewsCatalystConfig(
+            allow_undated_news=True,
+            source_timeout_seconds=0.5,
+        ),
+    )
+
+    assert symbol_started.is_set()
+    assert global_started.is_set()
+    assert released_by_global["value"] is True
+    assert report.raw_news_count == 2
+    assert report.source_status == "ok"
+
+
+def test_news_catalyst_keeps_global_news_when_symbol_source_times_out() -> None:
+    def slow_symbol_news(_symbol: str, _limit: int) -> pd.DataFrame:
+        time.sleep(0.3)
+        return pd.DataFrame(
+            [{"标题": "不应阻塞全市场消息", "来源": "慢源", "时间": _RECENT_NEWS_TIME}]
+        )
+
+    report = build_catalyst_report(
+        symbols=("600002",),
+        fetch_symbol_news=slow_symbol_news,
+        fetch_global_news=lambda _limit: pd.DataFrame(
+            [
+                {
+                    "标题": "政策支持半导体材料国产替代",
+                    "来源": "快源",
+                    "时间": _RECENT_NEWS_TIME,
+                }
+            ]
+        ),
+        config=NewsCatalystConfig(
+            allow_undated_news=True,
+            min_confidence=0.3,
+            source_timeout_seconds=0.1,
+        ),
+    )
+
+    assert report.source_status == "partial"
+    assert report.raw_news_count == 1
+    assert report.events
+    assert report.events[0].title == "政策支持半导体材料国产替代"
+    health = {(item.name, item.status) for item in report.source_statuses}
+    assert ("600002:symbol_news", "timeout") in health
+    assert ("global_news", "ok") in health
 
 
 def test_default_news_adapters_use_configured_source_timeout(monkeypatch) -> None:

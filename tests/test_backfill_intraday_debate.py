@@ -128,6 +128,24 @@ def _read_status(path: Path) -> dict[str, object]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def test_debate_quality_gate_rejects_failure_and_any_quality_issue() -> None:
+    assert "failure" in backfill_intraday_debate._debate_payload_quality_failure(
+        {"failure": "讨论执行失败"}
+    )
+    assert "missing_cross_market_viewpoint" in (
+        backfill_intraday_debate._debate_payload_quality_failure(
+            {"debate_quality_issues": ["missing_cross_market_viewpoint"]}
+        )
+    )
+    assert (
+        backfill_intraday_debate._debate_payload_quality_failure(
+            {"advisory_boundary_ok": False}
+        )
+        == "debate advisory boundary is not valid"
+    )
+    assert backfill_intraday_debate._debate_payload_quality_failure({}) == ""
+
+
 def test_backfill_continues_after_candidate_failure_and_persists_success(
     tmp_path: Path, monkeypatch
 ) -> None:

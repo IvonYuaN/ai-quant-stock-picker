@@ -5,7 +5,7 @@ import os
 import signal
 import threading
 from collections.abc import Callable, Iterable, Sequence
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor, wait
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime
@@ -182,6 +182,13 @@ class _SourceStats:
                 warnings=(str(exc),),
             )
         )
+
+
+@dataclass(frozen=True)
+class _NewsFetchOutcome:
+    frame: pd.DataFrame = field(default_factory=pd.DataFrame)
+    error: BaseException | None = None
+    timed_out: bool = False
 
 
 Fetcher = Callable[[str, int], pd.DataFrame]
@@ -791,6 +798,65 @@ def _contains_source_token(source: str, tokens: Sequence[str]) -> bool:
     return any(str(token).casefold() in clean for token in tokens)
 
 
+def _fetch_news_frames_parallel(
+    symbols: Sequence[str],
+    *,
+    symbol_fetcher: Fetcher,
+    global_fetcher: Callable[[int], pd.DataFrame],
+    max_symbol_news: int,
+    max_global_news: int,
+    timeout_seconds: float,
+) -> dict[str, _NewsFetchOutcome]:
+    """Fetch all news scopes against one deadline.
+
+    A slow candidate must not consume a separate timeout before the global
+    feed or the other candidates get a chance to return.  Workers may still
+    be unwinding after the deadline, so the executor is deliberately not
+    used as a context manager (which would wait for those workers).
+    """
+
+    unique_symbols = tuple(dict.fromkeys(str(symbol).strip() for symbol in symbols))
+    executor = ThreadPoolExecutor(max_workers=max(1, len(unique_symbols) + 1))
+    futures: dict[str, Future[pd.DataFrame]] = {}
+    try:
+        for symbol in unique_symbols:
+            futures[symbol] = executor.submit(
+                symbol_fetcher,
+                symbol,
+                max_symbol_news,
+            )
+        futures["__global__"] = executor.submit(global_fetcher, max_global_news)
+        done, pending = wait(
+            futures.values(),
+            timeout=max(0.1, float(timeout_seconds)),
+        )
+        done_set = set(done)
+        outcomes: dict[str, _NewsFetchOutcome] = {}
+        for key, future in futures.items():
+            if future in done_set:
+                try:
+                    result = future.result()
+                except Exception as exc:
+                    outcomes[key] = _NewsFetchOutcome(error=exc)
+                else:
+                    outcomes[key] = _NewsFetchOutcome(
+                        frame=result
+                        if isinstance(result, pd.DataFrame)
+                        else pd.DataFrame()
+                    )
+            elif future in pending:
+                future.cancel()
+                outcomes[key] = _NewsFetchOutcome(
+                    error=TimeoutError(
+                        f"消息源超过 {float(timeout_seconds):.1f}s 未返回"
+                    ),
+                    timed_out=True,
+                )
+        return outcomes
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
+
+
 def build_catalyst_report(
     *,
     symbols: Sequence[str] = (),
@@ -837,13 +903,19 @@ def build_catalyst_report(
     )
     anchor_day = today_shanghai()
 
+    fetches = _fetch_news_frames_parallel(
+        tuple(symbols or cfg.symbols),
+        symbol_fetcher=symbol_fetcher,
+        global_fetcher=global_fetcher,
+        max_symbol_news=cfg.max_symbol_news,
+        max_global_news=cfg.max_global_news,
+        timeout_seconds=cfg.source_timeout_seconds,
+    )
+
     for symbol in tuple(symbols or cfg.symbols):
-        try:
-            df = _call_fetcher_with_timeout(
-                lambda: symbol_fetcher(symbol, cfg.max_symbol_news),
-                timeout_seconds=cfg.source_timeout_seconds,
-            )
-        except Exception as exc:
+        outcome = fetches.get(symbol, _NewsFetchOutcome())
+        if outcome.error is not None:
+            exc = outcome.error
             source_stats.record_failure(
                 exc,
                 name=f"{symbol}:symbol_news",
@@ -851,6 +923,7 @@ def build_catalyst_report(
             )
             warnings.append(f"{symbol} 个股新闻获取失败: {exc}")
             continue
+        df = outcome.frame
         frame_warnings = _frame_warnings(df, prefix=f"{symbol} 个股新闻")
         source_stats.record_frame(
             df,
@@ -888,12 +961,9 @@ def build_catalyst_report(
             )
         )
 
-    try:
-        global_df = _call_fetcher_with_timeout(
-            lambda: global_fetcher(cfg.max_global_news),
-            timeout_seconds=cfg.source_timeout_seconds,
-        )
-    except Exception as exc:
+    global_outcome = fetches.get("__global__", _NewsFetchOutcome())
+    if global_outcome.error is not None:
+        exc = global_outcome.error
         source_stats.record_failure(
             exc,
             name="global_news",
@@ -902,6 +972,7 @@ def build_catalyst_report(
         warnings.append(f"全市场快讯获取失败: {exc}")
         global_df = pd.DataFrame()
     else:
+        global_df = global_outcome.frame
         frame_warnings = _frame_warnings(global_df, prefix="全市场快讯")
         source_stats.record_frame(
             global_df,

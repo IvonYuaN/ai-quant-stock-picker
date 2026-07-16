@@ -5729,6 +5729,10 @@ class DashboardDataProvider:
             return False
         if not str(row.get("symbol", "") or "").strip():
             return False
+        if str(row.get("failure", "") or "").strip():
+            return False
+        if self._as_text_tuple(row.get("debate_quality_issues")):
+            return False
         if self._explicit_false(row.get("process_recorded")):
             return False
         if self._explicit_false(row.get("conclusion_recorded")):

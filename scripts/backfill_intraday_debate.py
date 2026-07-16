@@ -729,6 +729,10 @@ def _run_candidate_debate(
             "basis": "round_1_counterarguments_and_current_context",
             "new_evidence": list(reconsideration_evidence),
         }
+    quality_failure = _debate_payload_quality_failure(payload)
+    if quality_failure:
+        payload["backfill_status"] = CANDIDATE_FAILED
+        payload["backfill_failure"] = quality_failure
     payload["debate_context_quality"] = context_quality
     payload["debate_data_context"] = data_context
     if context_warning:
@@ -757,6 +761,21 @@ def _run_candidate_debate(
     responsibilities = _responsibility_snapshot(active_coordinator)
     payload["debate_responsibilities"] = responsibilities
     return payload, result, responsibilities
+
+
+def _debate_payload_quality_failure(payload: dict[str, Any]) -> str:
+    """Reject incomplete committee records before they are counted as success."""
+    failure = str(payload.get("failure", "") or "").strip()
+    issues = _text_tuple(payload.get("debate_quality_issues"))
+    if failure:
+        return f"debate result failure: {failure}"[:500]
+    if issues:
+        return f"debate quality issues: {'、'.join(issues)}"[:500]
+    if payload.get("advisory_boundary_ok") is False:
+        return "debate advisory boundary is not valid"
+    if payload.get("deterministic_score_unchanged") is False:
+        return "deterministic score changed by advisory debate"
+    return ""
 
 
 def run_backfill(
@@ -992,6 +1011,19 @@ def run_backfill(
                         task_id=task_id,
                         run_id=run_id,
                     )
+                    if str(payload.get("backfill_status", "")) == CANDIDATE_FAILED:
+                        _persist_debate_update(
+                            output_path,
+                            cutoff=cutoff,
+                            payload=payload,
+                        )
+                        raise ValueError(
+                            str(
+                                payload.get(
+                                    "backfill_failure", "debate quality gate failed"
+                                )
+                            )
+                        )
                     _persist_debate_update(
                         output_path,
                         cutoff=cutoff,
