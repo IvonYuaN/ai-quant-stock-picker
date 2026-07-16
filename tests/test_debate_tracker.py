@@ -746,6 +746,57 @@ def test_audit_debate_quality_rejects_empty_discussion() -> None:
     assert "missing_next_trigger" in audit.issues
 
 
+def test_audit_debate_quality_keeps_explicit_empty_cross_market_viewpoint() -> None:
+    result = DebateResult(
+        debate_id="cross-market-neutral",
+        symbol="300750",
+        name="宁德时代",
+        original_score=72.0,
+        rating="watch",
+        rounds=[
+            DebateRound(
+                round_num=1,
+                opinions=[
+                    AgentOpinion(
+                        agent_id="cross-1",
+                        role=AgentRole.CROSS_MARKET,
+                        stance="neutral",
+                        confidence=0.5,
+                        arguments=["无可用跨市消息或规则传导，不据此形成判断"],
+                        risk_factors=["保持中性，等待可核验的外部证据"],
+                    )
+                ],
+            ),
+            DebateRound(
+                round_num=2,
+                opinions=[
+                    AgentOpinion(
+                        agent_id="cross-1",
+                        role=AgentRole.CROSS_MARKET,
+                        stance="neutral",
+                        confidence=0.5,
+                        arguments=["无可用跨市消息或规则传导，不据此形成判断"],
+                        counterarguments=["当前没有新增跨市证据"],
+                        peer_reviewed_roles=[AgentRole.CROSS_MARKET],
+                        risk_factors=["保持中性，等待可核验的外部证据"],
+                    )
+                ],
+            ),
+        ],
+        final_consensus="跨市证据不足，保持中性",
+        final_vote={AgentRole.CROSS_MARKET: "neutral"},
+        next_trigger="出现可核验的跨市传导证据",
+    )
+
+    audit = audit_debate_quality(
+        result,
+        expected_roles=(AgentRole.CROSS_MARKET,),
+    )
+
+    assert audit.cross_market_recorded
+    assert "missing_cross_market_viewpoint" not in audit.issues
+
+
 def test_audit_debate_quality_rejects_same_symbol_when_date_or_fingerprint_mismatch() -> (
     None
 ):

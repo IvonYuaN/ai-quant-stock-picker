@@ -211,8 +211,11 @@ def audit_debate_quality(
         and any(
             _role_value(_field(opinion, "role", "")) == "cross_market"
             and bool(
-                _substantive_values(_field(opinion, "arguments", ()))
-                or _substantive_values(_field(opinion, "risk_factors", ()))
+                # An explicit "no verified cross-market evidence" judgment is
+                # still a valid role output. It must remain neutral, but should
+                # not be mistaken for the role being absent from the debate.
+                _meaningful_values(_field(opinion, "arguments", ()))
+                or _meaningful_values(_field(opinion, "risk_factors", ()))
             )
             for round_data in rounds
             for opinion in (_field(round_data, "opinions", ()) or ())
