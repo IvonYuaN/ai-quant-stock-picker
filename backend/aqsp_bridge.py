@@ -74,6 +74,10 @@ class AQSPCandidate:
     strategies: tuple[str, ...] = ()
     evidence_status: str = "证据不足"
     technical_metrics: tuple[AQSPTechnicalMetric, ...] = ()
+    data_source: str = ""
+    data_fetched_at: str = ""
+    data_timestamp_source: str = ""
+    freshness: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -448,7 +452,16 @@ def _parse_candidate(payload: object) -> AQSPCandidate:
         item,
         {"symbol", "display_name", "score", "research_status", "next_step", "context"},
         "candidate",
-        {"deterministic_reasons", "strategies", "evidence_status", "technical_metrics"},
+        {
+            "deterministic_reasons",
+            "strategies",
+            "evidence_status",
+            "technical_metrics",
+            "data_source",
+            "data_fetched_at",
+            "data_timestamp_source",
+            "freshness",
+        },
     )
     return AQSPCandidate(
         symbol=_validate_symbol(_text(item["symbol"], "candidate.symbol")),
@@ -471,8 +484,18 @@ def _parse_candidate(payload: object) -> AQSPCandidate:
         or "证据不足",
         technical_metrics=tuple(
             _parse_technical_metric(value)
-            for value in _list(item.get("technical_metrics", []), "candidate.technical_metrics")
+            for value in _list(
+                item.get("technical_metrics", []), "candidate.technical_metrics"
+            )
         ),
+        data_source=_optional_text(item.get("data_source"), "candidate.data_source"),
+        data_fetched_at=_optional_text(
+            item.get("data_fetched_at"), "candidate.data_fetched_at"
+        ),
+        data_timestamp_source=_optional_text(
+            item.get("data_timestamp_source"), "candidate.data_timestamp_source"
+        ),
+        freshness=_optional_text(item.get("freshness"), "candidate.freshness"),
     )
 
 
