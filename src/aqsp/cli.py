@@ -2655,6 +2655,12 @@ def _filter_catalyst_report_for_symbols(
         events=events,
         source_status=str(getattr(report, "source_status", "")).strip(),
         warnings=tuple(getattr(report, "warnings", ()) or ()),
+        source_statuses=tuple(getattr(report, "source_statuses", ()) or ()),
+        event_status=str(getattr(report, "event_status", "") or ""),
+        raw_news_count=int(getattr(report, "raw_news_count", 0) or 0),
+        stale_news_count=int(getattr(report, "stale_news_count", 0) or 0),
+        undated_news_count=int(getattr(report, "undated_news_count", 0) or 0),
+        future_news_count=int(getattr(report, "future_news_count", 0) or 0),
     )
 
 

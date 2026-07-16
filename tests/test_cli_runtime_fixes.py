@@ -371,12 +371,18 @@ def test_filter_catalyst_report_for_symbols_keeps_global_and_selected_events() -
             ),
         ),
         warnings=(),
+        event_status="high_impact",
+        raw_news_count=3,
+        stale_news_count=1,
     )
 
     filtered = cli_mod._filter_catalyst_report_for_symbols(report, ("300750",))
 
     assert filtered is not None
     assert [event.symbol for event in filtered.events] == ["", "300750"]
+    assert filtered.event_status == "high_impact"
+    assert filtered.raw_news_count == 3
+    assert filtered.stale_news_count == 1
 
 
 def test_reprioritize_screened_picks_keeps_direct_news_context_only() -> None:
