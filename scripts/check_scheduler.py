@@ -6,6 +6,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 import os
+import re
 import subprocess
 import sys
 
@@ -108,6 +109,37 @@ def check_crontab() -> CheckResult:
     )
 
 
+def check_cron_lock_collisions() -> CheckResult:
+    """Reject one outer flock being reused by different BaoTa task wrappers."""
+    code, output = _run(["crontab", "-l"])
+    if code != 0:
+        return CheckResult("cron outer locks", True, output or "crontab unavailable")
+    owners: dict[str, set[str]] = {}
+    pattern = re.compile(r"\bflock\s+\S+\s+(\S+)\s+-c\s+(\S+)")
+    for line in output.splitlines():
+        match = pattern.search(line)
+        if not match:
+            continue
+        lock_path, command_path = match.groups()
+        owners.setdefault(lock_path, set()).add(command_path)
+    collisions = {
+        lock_path: sorted(commands)
+        for lock_path, commands in owners.items()
+        if len(commands) > 1
+    }
+    if collisions:
+        detail = "; ".join(
+            f"{lock_path} -> {','.join(commands)}"
+            for lock_path, commands in sorted(collisions.items())
+        )
+        return CheckResult(
+            "cron outer locks",
+            False,
+            "different tasks share one flock and can suppress each other: " + detail,
+        )
+    return CheckResult("cron outer locks", True, "no cross-task flock collisions")
+
+
 def check_logs() -> list[CheckResult]:
     bt_dir = PROJECT_ROOT / "logs" / "bt"
     bt_logs = sorted(bt_dir.glob(f"bt-*-{TODAY}.log")) if bt_dir.exists() else []
@@ -190,6 +222,7 @@ def main() -> int:
         check_python_import(),
         check_bt_script(),
         check_crontab(),
+        check_cron_lock_collisions(),
         *check_logs(),
         *check_locks(),
     ]
