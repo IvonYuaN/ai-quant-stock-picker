@@ -182,9 +182,9 @@ def test_write_home_snapshot_builds_bounded_advisory_only_payload(monkeypatch) -
     assert "999" not in snapshot.to_json()
     assert "raise" not in snapshot.to_json()
     assert snapshot.summaries == (
+        "讨论复核 1/5 只；4 只未通过质量门，已隐藏",
         "当前运行已落盘",
         "重点看首个确定性候选",
-        "量能阻塞待解除",
     )
     assert snapshot.stale_after == "2026-07-10T15:31:00+08:00"
 

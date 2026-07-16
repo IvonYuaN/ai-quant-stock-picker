@@ -900,6 +900,18 @@ def build_home_snapshot(
         is_home_recommendation(candidate) for candidate in candidates
     )
     debates = _snapshot_debates(payload, candidates)
+    candidate_symbols = {candidate.symbol for candidate in candidates}
+    debate_symbols = {debate.symbol for debate in debates}
+    debate_gap_summary = ""
+    if (
+        getattr(payload, "debates", ())
+        and debates
+        and candidate_symbols - debate_symbols
+    ):
+        debate_gap_summary = (
+            f"讨论复核 {len(debate_symbols)}/{len(candidate_symbols)} 只；"
+            f"{len(candidate_symbols - debate_symbols)} 只未通过质量门，已隐藏"
+        )
     message_status, messages, catalyst_report = _parse_news_report_payload(
         selected_date
     )
@@ -926,21 +938,28 @@ def build_home_snapshot(
     debate_missing = bool(getattr(payload, "debates", ()) or ()) and not debates
     raw_summaries = (
         "委员会结论缺少当前候选映射，已隐藏" if debate_missing else "",
+        debate_gap_summary,
         getattr(runtime, "conclusion", ""),
         getattr(overview, "focus_headline", ""),
         getattr(overview, "blocker_headline", ""),
         getattr(overview, "top_headline", ""),
         getattr(task_view, "headline", ""),
     )
+    aligned_summaries = tuple(
+        _align_count_summary(
+            str(summary),
+            total=recommendation_count,
+            shown=shown_recommendation_count,
+        )
+        for summary in raw_summaries
+    )
+    count_summaries = tuple(
+        summary
+        for summary in aligned_summaries
+        if re.search(r"(?:纸面复核|待复核)\s*\d+\s*只", summary)
+    )
     summaries = _bounded_unique_text(
-        tuple(
-            _align_count_summary(
-                str(summary),
-                total=recommendation_count,
-                shown=shown_recommendation_count,
-            )
-            for summary in raw_summaries
-        ),
+        (*count_summaries, debate_gap_summary, *aligned_summaries),
         MAX_HOME_SUMMARIES,
     )
 
