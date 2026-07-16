@@ -37,6 +37,34 @@ rss:
       enabled: true
       keywords: ["NVIDIA", "Physical AI", "robotics", "机器人", "具身智能", "AI算力"]
       max_items: 8
+    - name: 英伟达-NVIDIA Newsroom
+      url: "https://nvidianews.nvidia.com/rss"
+      category: "global_tech"
+      region: international
+      enabled: true
+      keywords: ["NVIDIA", "Blackwell", "AI", "robotics", "机器人", "数据中心"]
+      max_items: 6
+    - name: AMD-PressReleases
+      url: "https://ir.amd.com/news-events/press-releases/rss"
+      category: "global_tech"
+      region: international
+      enabled: true
+      keywords: ["AMD", "Instinct", "EPYC", "AI", "data center", "服务器"]
+      max_items: 6
+    - name: Intel-PressReleases
+      url: "https://www.intc.com/news-events/press-releases/rss"
+      category: "global_tech"
+      region: international
+      enabled: true
+      keywords: ["Intel", "foundry", "Gaudi", "AI", "先进封装", "半导体"]
+      max_items: 6
+    - name: OpenAI-News
+      url: "https://openai.com/news/rss.xml"
+      category: "global_tech"
+      region: international
+      enabled: true
+      keywords: ["OpenAI", "GPT", "AI", "model", "physical AI", "人工智能"]
+      max_items: 6
     - name: NASA-NewsReleases
       url: "https://www.nasa.gov/news-release/feed/"
       category: "global_aerospace"

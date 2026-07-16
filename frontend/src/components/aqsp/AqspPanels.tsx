@@ -6,7 +6,6 @@ import {
   Check,
   CircleAlert,
   Clock3,
-  Columns3,
   ExternalLink,
   MessageSquareText,
   RefreshCw,
@@ -15,7 +14,7 @@ import {
   UsersRound,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import type { AqspAgentResult, AqspCandidate, AqspCrossMarket, AqspMessage, AqspSnapshot } from "@/lib/api";
+import type { AqspAgentResult, AqspCandidate, AqspMessage, AqspSnapshot } from "@/lib/api";
 import { debateProcessText, formatResearchDate, snapshotConclusion } from "@/lib/research-view";
 import {
   formatAqspTime,
@@ -150,17 +149,8 @@ function CandidateCard({ candidate }: { candidate: AqspCandidate }) {
   );
 }
 
-function matchingTransmission(message: AqspMessage, items: readonly AqspCrossMarket[]): AqspCrossMarket | null {
-  const title = message.title.trim();
-  if (!title) return null;
-  return items.find((item) => item.source_title === title || title.includes(item.source_title) || item.source_title.includes(title)) ?? null;
-}
-
-function MessageCard({ message, transmission }: { message: AqspMessage; transmission: AqspCrossMarket | null }) {
-  const sectors = uniqueNonEmpty(message.affected_sectors ?? transmission?.affected_sectors, 5);
-  const path = uniqueNonEmpty(message.transmission_path ?? transmission?.transmission_path, 4);
-  const validations = uniqueNonEmpty(message.validation_signals ?? transmission?.validation_signals, 3);
-  const impact = message.impact || transmission?.action || transmission?.summary || "";
+function MessageCard({ message }: { message: AqspMessage }) {
+  const sectors = uniqueNonEmpty(message.affected_sectors, 4);
   return (
     <article className="vr-message-card">
       <div className="flex min-w-0 items-start justify-between gap-3">
@@ -169,64 +159,29 @@ function MessageCard({ message, transmission }: { message: AqspMessage; transmis
             {message.category && <span className="vr-chip vr-chip-primary">{message.category}</span>}
             {message.event_type && <span className="vr-chip">{message.event_type}</span>}
             {message.source && <span className="vr-chip">{message.source}</span>}
-            {message.source_quality && <span className="vr-chip">{message.source_quality}</span>}
             <time className="text-[10px] text-muted-foreground">{formatAqspTime(message.published_at)}</time>
           </div>
           <h3 className="mt-2 text-sm font-medium leading-relaxed">{message.title || "消息标题未记录"}</h3>
         </div>
         <MessageSquareText className="mt-0.5 h-4 w-4 shrink-0 text-primary/75" />
       </div>
-      {message.summary && <p className="mt-3 text-xs leading-relaxed text-foreground/78">{message.summary}</p>}
+      {message.summary && <p className="mt-2 text-xs leading-relaxed text-foreground/78">{message.summary}</p>}
+      {sectors.length > 0 && (
+        <div className="mt-2 flex flex-wrap items-center gap-1.5">
+          <span className="vr-kicker mr-0.5">影响板块</span>
+          {sectors.map((sector) => <span key={sector} className="vr-chip vr-chip-primary">{sector}</span>)}
+        </div>
+      )}
       {message.source_url && (
         <a
           href={message.source_url}
           target="_blank"
           rel="noreferrer"
-          className="mt-3 inline-flex max-w-full items-center gap-1 text-[11px] text-primary underline-offset-2 hover:underline"
+          className="mt-2 inline-flex max-w-full items-center gap-1 text-[11px] text-primary underline-offset-2 hover:underline"
         >
           <ExternalLink className="h-3.5 w-3.5 shrink-0" />
           <span className="truncate">查看原文</span>
         </a>
-      )}
-      {impact && (
-        <div className="vr-message-impact">
-          <p className="vr-kicker text-primary">影响</p>
-          <p>{impact}</p>
-        </div>
-      )}
-      {sectors.length > 0 && (
-        <div className="mt-3">
-          <p className="vr-kicker">产业链映射</p>
-          <div className="mt-1.5 flex flex-wrap gap-1.5">{sectors.map((sector) => <span key={sector} className="vr-chip vr-chip-primary">{sector}</span>)}</div>
-        </div>
-      )}
-      {path.length > 0 && (
-        <div className="mt-3">
-          <p className="vr-kicker">传导路径</p>
-          <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">{path.join(" → ")}</p>
-        </div>
-      )}
-      {message.transmission_hypothesis && (
-        <div className="mt-3">
-          <p className="vr-kicker">传导逻辑</p>
-          <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">{message.transmission_hypothesis}</p>
-        </div>
-      )}
-      {uniqueNonEmpty(message.supporting_evidence, 3).length > 0 && (
-        <div className="mt-3 border-t border-border/45 pt-3">
-          <p className="vr-kicker">来源证据</p>
-          <ul className="mt-1.5 space-y-1 text-[11px] leading-relaxed text-muted-foreground">
-            {uniqueNonEmpty(message.supporting_evidence, 3).map((evidence) => <li key={evidence}>· {evidence}</li>)}
-          </ul>
-        </div>
-      )}
-      {validations.length > 0 && (
-        <div className="mt-3 border-t border-border/45 pt-3">
-          <p className="vr-kicker">验证信号</p>
-          <ul className="mt-1.5 space-y-1 text-[11px] leading-relaxed text-muted-foreground">
-            {validations.map((signal) => <li key={signal}>· {signal}</li>)}
-          </ul>
-        </div>
       )}
     </article>
   );
@@ -340,8 +295,8 @@ export function AqspResearchWorkspace() {
         </section>
 
         <section id="messages" className="vr-board-section vr-messages-section">
-          <div className="vr-section-heading"><div><p className="vr-kicker flex items-center gap-1.5"><Columns3 className="h-3.5 w-3.5" />独立消息模块</p><h2>消息证据</h2></div><span className="vr-count">{data.messages.length} 条</span></div>
-          {data.messages.length === 0 ? <EmptyState title="当前没有消息摘要" detail="快照未记录可核验消息，不在界面中补充推断。" /> : <div className="vr-message-list">{data.messages.slice(0, 5).map((message) => <MessageCard key={`${message.title}-${message.published_at}`} message={message} transmission={matchingTransmission(message, data.market_context?.cross_market ?? [])} />)}</div>}
+          <div className="vr-section-heading"><div><p className="vr-kicker">消息独立汇总</p><h2>消息</h2></div><span className="vr-count">{data.messages.length} 条</span></div>
+          {data.messages.length === 0 ? <EmptyState title="当前没有消息摘要" detail="快照未记录可核验消息，不在界面中补充推断。" /> : <div className="vr-message-list">{data.messages.slice(0, 5).map((message) => <MessageCard key={`${message.title}-${message.published_at}`} message={message} />)}</div>}
         </section>
       </div>
 

@@ -1068,7 +1068,7 @@ def build_catalyst_report(
     report = CatalystReport(
         date=today_shanghai().isoformat(),
         generated_at=now_shanghai().isoformat(timespec="seconds"),
-        events=tuple(ranked[: cfg.max_events]),
+        events=_select_diverse_events(ranked, cfg.max_events),
         source_status=status,
         warnings=tuple(warnings[:5]),
         source_statuses=tuple(source_stats.health),
@@ -1546,7 +1546,19 @@ def _iter_news_rows(df: pd.DataFrame) -> Iterable[dict[str, str]]:
         )
         if not title:
             continue
-        url = _first_text(row, ("新闻链接", "链接", "url", "公告链接"))
+        url = _first_text(
+            row,
+            (
+                "新闻链接",
+                "链接",
+                "url",
+                "URL",
+                "公告链接",
+                "公告网址",
+                "网址",
+                "原文链接",
+            ),
+        )
         published_at = _first_text(
             row,
             (
@@ -1555,8 +1567,10 @@ def _iter_news_rows(df: pd.DataFrame) -> Iterable[dict[str, str]]:
                 "date",
                 "日期",
                 "公告日期",
+                "公告时间",
                 "发布日期",
                 "发稿时间",
+                "published_at",
                 "pub_time",
                 "pubDate",
                 "display_time",
@@ -1729,6 +1743,30 @@ def _source_health_from_frame(df: pd.DataFrame) -> tuple[NewsSourceHealth, ...]:
 def _fallback_published_at(title: str, url: str) -> str:
     published_day = _parse_published_day(title) or _parse_published_day(url)
     return published_day.isoformat() if published_day is not None else ""
+
+
+def _select_diverse_events(
+    events: Sequence[CatalystEvent],
+    limit: int,
+) -> tuple[CatalystEvent, ...]:
+    """Keep the ranked result from being filled by one source only."""
+    target = max(0, int(limit))
+    if target == 0:
+        return ()
+    selected: list[CatalystEvent] = []
+    deferred: list[CatalystEvent] = []
+    seen_sources: set[str] = set()
+    for event in events:
+        source = event.source.strip().casefold() or "unknown"
+        if source in seen_sources and len(seen_sources) < target:
+            deferred.append(event)
+            continue
+        selected.append(event)
+        seen_sources.add(source)
+        if len(selected) >= target:
+            return tuple(selected)
+    selected.extend(deferred[: target - len(selected)])
+    return tuple(selected[:target])
 
 
 def _merge_events(events: Sequence[CatalystEvent]) -> tuple[CatalystEvent, ...]:
@@ -2287,7 +2325,7 @@ def _akshare_global_news(
         warnings.append(warning)
     for df in fetched if isinstance(fetched, list) else []:
         if df is not None and not df.empty:
-            frames.append(df.head(per_source_limit))
+            frames.append(_prioritize_news_frame(df).head(per_source_limit))
     if not frames:
         empty = pd.DataFrame()
         empty.attrs["aqsp_warnings"] = tuple(warnings)
@@ -2381,5 +2419,30 @@ def _prioritize_news_frame(df: pd.DataFrame) -> pd.DataFrame:
         return 3
 
     rows = df.to_dict(orient="records")
-    ordered = sorted(enumerate(rows), key=lambda item: (priority(item[1]), item[0]))
-    return pd.DataFrame([row for _, row in ordered])
+    def published_day(row: dict[str, Any]) -> date:
+        raw = _first_text(
+            row,
+            (
+                "发布时间",
+                "时间",
+                "date",
+                "日期",
+                "公告日期",
+                "公告时间",
+                "发布日期",
+                "发稿时间",
+                "published_at",
+                "pub_time",
+                "pubDate",
+                "display_time",
+            ),
+        )
+        return _parse_published_day(raw) or date.min
+
+    ordered = sorted(
+        enumerate(rows),
+        key=lambda item: (priority(item[1]), -published_day(item[1]).toordinal(), item[0]),
+    )
+    result = pd.DataFrame([row for _, row in ordered])
+    result.attrs.update(getattr(df, "attrs", {}))
+    return result
