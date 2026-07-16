@@ -157,6 +157,7 @@ def test_backfill_continues_after_candidate_failure_and_persists_success(
     assert status["succeeded_count"] == 1
     assert status["failed_count"] == 1
     assert status["failed_candidates"][0]["symbol"] == "000002"
+    assert rows[0]["run_id"] == status["run_id"]
     failed_state = next(
         item for item in status["candidate_states"] if item["symbol"] == "000002"
     )

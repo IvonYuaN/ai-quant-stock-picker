@@ -673,6 +673,7 @@ def _run_candidate_debate(
     today: str,
     created_at: str,
     task_id: str,
+    run_id: str,
 ) -> tuple[dict[str, Any], Any, list[dict[str, str]]]:
     market_context_lines = _market_context_lines_for_pick(
         pick,
@@ -740,6 +741,7 @@ def _run_candidate_debate(
     payload["debate_date"] = today
     payload["created_at"] = created_at
     payload["task_id"] = task_id
+    payload["run_id"] = run_id
     payload["candidate_created_at"] = created_at
     payload["candidate_signal_date"] = pick.date or today
     payload["candidate_fingerprint"] = _candidate_debate_fingerprint(pick)
@@ -988,6 +990,7 @@ def run_backfill(
                         today=today,
                         created_at=now,
                         task_id=task_id,
+                        run_id=run_id,
                     )
                     _persist_debate_update(
                         output_path,

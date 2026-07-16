@@ -45,6 +45,7 @@ from aqsp.web.home_snapshot import (
     HomeSnapshotSource,
     HomeSnapshotTechnicalMetric,
     MAX_HOME_SNAPSHOT_TECHNICAL_METRICS,
+    HOME_RECOMMENDATION_LABELS,
     is_home_recommendation,
     stale_after_for_task,
     write_home_dashboard_snapshot,
@@ -353,6 +354,43 @@ def _snapshot_candidates(payload: Any) -> tuple[HomeSnapshotCandidate, ...]:
             if len(candidates) == MAX_HOME_CANDIDATES:
                 return tuple(candidates)
     return tuple(candidates)
+
+
+def _snapshot_recommendation_count(payload: Any) -> int:
+    """Count all distinct deterministic recommendation cards before the home cap."""
+    ordered = (
+        *(getattr(payload.task_view, "detail_cards", ()) or ()),
+        *(getattr(payload, "spotlights", ()) or ()),
+    )
+    seen: set[str] = set()
+    count = 0
+    for item in ordered:
+        raw_status = _first_text(
+            getattr(item, "action_label", ""),
+            getattr(item, "status_label", ""),
+            getattr(item, "rank_label", ""),
+        )
+        if not any(label in raw_status for label in HOME_RECOMMENDATION_LABELS):
+            continue
+        if not _has_candidate_deterministic_evidence(item):
+            continue
+        symbol = _text(getattr(item, "symbol", ""))
+        if symbol and symbol not in seen:
+            seen.add(symbol)
+            count += 1
+    return count
+
+
+def _align_count_summary(text: str, *, total: int, shown: int) -> str:
+    """Make a legacy count headline explicit when the home card cap hides rows."""
+    if total <= shown or not text:
+        return text
+    return re.sub(
+        r"(纸面复核|待复核)\s*\d+\s*只",
+        rf"\1 {total} 只，首页展示 {shown} 只",
+        text,
+        count=1,
+    )
 
 
 def _snapshot_debates(
@@ -852,6 +890,10 @@ def build_home_snapshot(
     overview = payload.overview
     generated_at = to_shanghai(now_shanghai()).isoformat(timespec="seconds")
     candidates = _snapshot_candidates(payload)
+    recommendation_count = _snapshot_recommendation_count(payload)
+    shown_recommendation_count = sum(
+        is_home_recommendation(candidate) for candidate in candidates
+    )
     debates = _snapshot_debates(payload, candidates)
     message_status, messages, catalyst_report = _parse_news_report_payload(
         selected_date
@@ -877,14 +919,22 @@ def build_home_snapshot(
     )
     messages = _append_cross_market_messages(messages, artifact)
     debate_missing = bool(getattr(payload, "debates", ()) or ()) and not debates
+    raw_summaries = (
+        "委员会结论缺少当前候选映射，已隐藏" if debate_missing else "",
+        getattr(runtime, "conclusion", ""),
+        getattr(overview, "focus_headline", ""),
+        getattr(overview, "blocker_headline", ""),
+        getattr(overview, "top_headline", ""),
+        getattr(task_view, "headline", ""),
+    )
     summaries = _bounded_unique_text(
-        (
-            "委员会结论缺少当前候选映射，已隐藏" if debate_missing else "",
-            getattr(runtime, "conclusion", ""),
-            getattr(overview, "focus_headline", ""),
-            getattr(overview, "blocker_headline", ""),
-            getattr(overview, "top_headline", ""),
-            getattr(task_view, "headline", ""),
+        tuple(
+            _align_count_summary(
+                str(summary),
+                total=recommendation_count,
+                shown=shown_recommendation_count,
+            )
+            for summary in raw_summaries
         ),
         MAX_HOME_SUMMARIES,
     )

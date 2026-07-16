@@ -189,6 +189,37 @@ def test_write_home_snapshot_builds_bounded_advisory_only_payload(monkeypatch) -
     assert snapshot.stale_after == "2026-07-10T15:31:00+08:00"
 
 
+def test_write_home_snapshot_makes_hidden_candidate_count_explicit(monkeypatch) -> None:
+    provider = _Provider()
+    original_payload = provider.home_digest_payload
+    original_runtime = provider.runtime_overview
+
+    def payload_with_six_candidates(task_id: str, signal_date: str = ""):
+        payload = original_payload(task_id, signal_date)
+        payload.task_view.detail_cards = (
+            *payload.task_view.detail_cards,
+            _candidate("600006", 60.0),
+            _candidate("600007", 59.0),
+        )
+        payload.spotlights = ()
+        return payload
+
+    def runtime_with_count(signal_date: str = ""):
+        runtime = original_runtime(signal_date)
+        runtime.conclusion = "待复核 6 只，先看 600001、600002、600003"
+        return runtime
+
+    monkeypatch.setattr(provider, "home_digest_payload", payload_with_six_candidates)
+    monkeypatch.setattr(provider, "runtime_overview", runtime_with_count)
+
+    snapshot = write_home_snapshot.build_home_snapshot(
+        provider, signal_date="2026-07-10", task_id="intraday"
+    )
+
+    assert len(snapshot.candidates) == 5
+    assert "待复核 6 只，首页展示 5 只" in snapshot.summaries[0]
+
+
 def test_snapshot_realtime_cross_market_reads_sidecar_without_network(
     monkeypatch, tmp_path: Path
 ) -> None:
