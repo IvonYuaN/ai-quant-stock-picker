@@ -29,6 +29,7 @@ _DEFAULT_HEADERS = {
     "User-Agent": "aqsp-market-context/1.0",
 }
 _UNIX_MILLISECONDS_THRESHOLD = 10_000_000_000
+_MAX_MARKET_CONTEXT_CONCURRENCY = 2
 _INSTRUMENT_ALIASES = {
     "SPX": "SPX",
     "SP500": "SPX",
@@ -155,7 +156,7 @@ class MarketContextSource:
         """Fetch independent instruments concurrently within provider deadlines."""
         current = to_shanghai(now or self._clock())
         with ThreadPoolExecutor(
-            max_workers=len(REALTIME_CROSS_MARKET_INSTRUMENTS),
+            max_workers=_MAX_MARKET_CONTEXT_CONCURRENCY,
             thread_name_prefix="aqsp-market-context",
         ) as executor:
             futures = {

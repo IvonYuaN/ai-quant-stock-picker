@@ -181,7 +181,7 @@ def test_fetch_live_market_context_payload_uses_short_term_timeout(monkeypatch) 
 
 
 def test_market_context_live_payload_fetches_instruments_concurrently() -> None:
-    barrier = Barrier(6)
+    barrier = Barrier(2)
 
     def transport(_url: str, _headers: object, _timeout: float) -> object:
         barrier.wait(timeout=1.0)
