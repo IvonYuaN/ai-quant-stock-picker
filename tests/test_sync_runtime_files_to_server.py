@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -88,12 +89,14 @@ def test_expand_runtime_dependencies_covers_runtime_overlay_closure(
         "src/aqsp/data/pit_financial.py",
     )
     expected_dependencies = (
+        "src/aqsp/data/market_context_source.py",
         "src/aqsp/goal_switches.py",
         "config/goal_switches.yaml",
         "src/aqsp/backtest/audit.py",
         "src/aqsp/strategies/catalog.py",
         "config/strategy_sources.yaml",
         "src/aqsp/data/pit_policy.py",
+        "src/aqsp/market_context.py",
     )
     for relative in (*selected, *expected_dependencies):
         path = project_root / relative
@@ -129,6 +132,55 @@ def test_expand_runtime_dependencies_covers_market_context_smoke_script(
     )
 
     assert expanded == expected
+
+
+def test_expand_runtime_dependencies_covers_live_home_snapshot_modules(
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path / "repo"
+    expected = (
+        "scripts/write_home_snapshot.py",
+        "src/aqsp/data/market_context_source.py",
+        "src/aqsp/market_context.py",
+        "src/aqsp/web/data_provider.py",
+        "src/aqsp/web/home_snapshot.py",
+        "src/aqsp/goal_switches.py",
+        "config/goal_switches.yaml",
+    )
+    for relative in expected:
+        path = project_root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("# ok\n", encoding="utf-8")
+
+    expanded = sync_mod._expand_runtime_dependencies(
+        project_root,
+        ("scripts/write_home_snapshot.py",),
+    )
+
+    assert expanded == expected
+
+
+def test_expand_runtime_dependencies_covers_beginner_compat_module(
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path / "repo"
+    expected = (
+        "src/aqsp/web/dashboard_beginner.py",
+        "src/aqsp/web/dashboard_beginner_compat.py",
+        "src/aqsp/web/data_provider.py",
+    )
+    for relative in expected:
+        path = project_root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("# ok\n", encoding="utf-8")
+
+    assert (
+        sync_mod._expand_runtime_dependencies(
+            project_root,
+            ("src/aqsp/web/dashboard_beginner.py",),
+        )
+        == expected
+    )
 
 
 def test_module_import_targets_only_include_aqsp_python_modules() -> None:
@@ -186,6 +238,32 @@ def test_remote_import_smoke_runs_aqsp_modules_and_script_entrypoints(
     )
     assert "runpy.run_path" in commands[0]
     assert "__aqsp_runtime_sync_smoke__" in commands[0]
+
+
+def test_remote_import_smoke_reports_remote_failure_output(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    error = subprocess.CalledProcessError(
+        1,
+        ["ssh", "aqsp-server"],
+        output="module:aqsp.market_context\n",
+        stderr="ModuleNotFoundError: aqsp.data.market_context_source\n",
+    )
+    monkeypatch.setattr(
+        sync_mod,
+        "_ssh",
+        lambda _target, _command: (_ for _ in ()).throw(error),
+    )
+
+    with pytest.raises(RuntimeError, match="market_context_source"):
+        sync_mod._remote_import_smoke(
+            sync_mod.SyncPlan(
+                ssh_target="aqsp-server",
+                remote_root="/opt/aqsp",
+                backup_dir="/opt/aqsp/runtime-backups",
+                files=("src/aqsp/market_context.py",),
+            )
+        )
 
 
 def test_expand_runtime_dependencies_covers_research_package_exports(

@@ -44,9 +44,17 @@ RUNTIME_SYNC_DEPENDENCIES: dict[str, tuple[str, ...]] = {
         "config/goal_switches.yaml",
     ),
     "src/aqsp/cli.py": (
+        "src/aqsp/data/market_context_source.py",
         "src/aqsp/goal_switches.py",
         "config/goal_switches.yaml",
     ),
+    "scripts/write_home_snapshot.py": (
+        "src/aqsp/data/market_context_source.py",
+        "src/aqsp/market_context.py",
+        "src/aqsp/web/data_provider.py",
+        "src/aqsp/web/home_snapshot.py",
+    ),
+    "src/aqsp/data/market_context_source.py": ("src/aqsp/market_context.py",),
     "src/aqsp/config.py": (
         "src/aqsp/goal_switches.py",
         "config/goal_switches.yaml",
@@ -87,6 +95,13 @@ RUNTIME_SYNC_DEPENDENCIES: dict[str, tuple[str, ...]] = {
         "src/aqsp/web/data_provider.py",
         "src/aqsp/web/home_snapshot.py",
         "config/goal_switches.yaml",
+    ),
+    "src/aqsp/web/dashboard_beginner.py": (
+        "src/aqsp/web/dashboard_beginner_compat.py",
+        "src/aqsp/web/data_provider.py",
+    ),
+    "src/aqsp/web/dashboard_beginner_compat.py": (
+        "src/aqsp/web/data_provider.py",
     ),
 }
 
@@ -536,7 +551,15 @@ def _remote_import_smoke(plan: SyncPlan) -> tuple[str, ...]:
         f"{python}"
         "PY"
     )
-    result = _ssh(plan.ssh_target, command)
+    try:
+        result = _ssh(plan.ssh_target, command)
+    except subprocess.CalledProcessError as exc:
+        detail = "\n".join(
+            part.strip() for part in (exc.stdout or "", exc.stderr or "") if part.strip()
+        )
+        raise RuntimeError(
+            f"remote runtime import smoke failed: {detail or exc}"
+        ) from exc
     return tuple(line.strip() for line in result.stdout.splitlines() if line.strip())
 
 
