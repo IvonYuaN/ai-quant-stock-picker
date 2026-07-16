@@ -702,9 +702,13 @@ _AUTHORITATIVE_SOURCE_TOKENS: tuple[str, ...] = (
     "Federal Reserve",
     "ECB",
     "NASA",
+    "NVIDIADeveloper",
     "NVIDIA Newsroom",
+    "AMD-PressReleases",
     "AMD Press Releases",
+    "Intel-PressReleases",
     "Intel Press Releases",
+    "OpenAI-News",
     "OpenAI News",
 )
 

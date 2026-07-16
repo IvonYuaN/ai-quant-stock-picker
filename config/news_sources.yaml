@@ -38,7 +38,7 @@ rss:
       keywords: ["NVIDIA", "Physical AI", "robotics", "机器人", "具身智能", "AI算力"]
       max_items: 8
     - name: 英伟达-NVIDIA Newsroom
-      url: "https://nvidianews.nvidia.com/rss"
+      url: "https://nvidianews.nvidia.com/rss.xml"
       category: "global_tech"
       region: international
       enabled: true
