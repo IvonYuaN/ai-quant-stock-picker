@@ -12,6 +12,7 @@ from aqsp.data.intraday import (
     FrameProvenance,
     IntradayService,
     OverlayProvenance,
+    _a_share_elapsed_trading_minutes,
 )
 from aqsp.data.realtime import RealtimeService
 from aqsp.data.source import DataSource
@@ -39,6 +40,21 @@ class MockSource(DataSource):
 
     def fetch_index(self, index_codes, start, end):
         return {}
+
+
+@pytest.mark.parametrize(
+    ("timestamp", "expected"),
+    (
+        (datetime(2026, 7, 16, 11, 30), 120),
+        (datetime(2026, 7, 16, 12, 15), 120),
+        (datetime(2026, 7, 16, 13, 5), 125),
+        (datetime(2026, 7, 16, 15, 0), 240),
+    ),
+)
+def test_a_share_elapsed_trading_minutes_excludes_lunch_break(
+    timestamp: datetime, expected: int
+) -> None:
+    assert _a_share_elapsed_trading_minutes(timestamp) == expected
 
 
 def _historical_frame(data: dict) -> pd.DataFrame:

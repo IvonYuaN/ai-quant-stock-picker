@@ -3,6 +3,7 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
+from aqsp.indicators import enrich_indicators
 from aqsp.models import ScreeningConfig
 from aqsp.internet_strategies import evaluate_strategy_signals
 from aqsp.strategies.thresholds import (
@@ -47,6 +48,26 @@ def _frame(symbol: str, drift: float, volume_boost: float = 1.0) -> pd.DataFrame
     frame = pd.DataFrame(rows)
     frame.attrs.update({"source_name": "synthetic", "workload": "walkforward"})
     return frame
+
+
+def test_intraday_volume_ratio_uses_elapsed_minutes_and_prior_complete_days() -> None:
+    frame = pd.DataFrame(
+        {
+            "date": pd.date_range("2026-07-09", periods=6, freq="B"),
+            "open": [10.0] * 6,
+            "high": [10.2] * 6,
+            "low": [9.8] * 6,
+            "close": [10.0] * 6,
+            "volume": [1_000.0] * 5 + [600.0],
+            "amount": [1_000_000.0] * 6,
+            "intraday_elapsed_minutes": [None] * 5 + [120],
+            "intraday_session_minutes": [None] * 5 + [240],
+        }
+    )
+
+    enriched = enrich_indicators(frame)
+
+    assert enriched.iloc[-1]["volume_ratio"] == pytest.approx(1.2)
 
 
 def _n_rebound_frame() -> pd.DataFrame:

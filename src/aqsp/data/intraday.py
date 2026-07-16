@@ -27,6 +27,25 @@ _INTRADAY_MAX_AGE_SECONDS: dict[str, int] = {
 }
 _MAX_FUTURE_BAR_SECONDS = 120
 _COMPOSITE_SOURCES = frozenset({"auto", "local_first", "online_first", "multi"})
+_A_SHARE_SESSION_MINUTES = 240
+
+
+def _a_share_elapsed_trading_minutes(timestamp: datetime) -> int:
+    """Return completed A-share session minutes without counting the lunch break."""
+    minute_of_day = timestamp.hour * 60 + timestamp.minute
+    morning_start = 9 * 60 + 30
+    morning_end = 11 * 60 + 30
+    afternoon_start = 13 * 60
+    afternoon_end = 15 * 60
+    if minute_of_day <= morning_start:
+        return 1
+    if minute_of_day <= morning_end:
+        return min(120, minute_of_day - morning_start)
+    if minute_of_day < afternoon_start:
+        return 120
+    if minute_of_day <= afternoon_end:
+        return min(240, 120 + minute_of_day - afternoon_start)
+    return _A_SHARE_SESSION_MINUTES
 
 
 @dataclass(frozen=True)
@@ -437,6 +456,9 @@ class IntradayService:
 
         first_bar = normalized.iloc[0]
         last_bar = normalized.iloc[-1]
+        elapsed_minutes = _a_share_elapsed_trading_minutes(
+            pd.Timestamp(last_bar["date"]).to_pydatetime()
+        )
         amount_series = (
             pd.to_numeric(normalized["amount"], errors="coerce")
             if "amount" in normalized.columns
@@ -464,6 +486,8 @@ class IntradayService:
                 "limit_up": [0.0],
                 "limit_down": [0.0],
                 "adj_factor": [1.0],
+                "intraday_elapsed_minutes": [elapsed_minutes],
+                "intraday_session_minutes": [_A_SHARE_SESSION_MINUTES],
             }
         )
         return _attach_frame_provenance(synthesized, source_provenance)

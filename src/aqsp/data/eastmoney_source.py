@@ -88,7 +88,9 @@ class EastmoneySource(DataSource):
                 workload=self._cache_workload(),
             )
             if cached is not None and not cached.empty:
-                out[symbol] = self._annotate_frame(cached)
+                out[symbol] = self._annotate_frame(
+                    _normalize_stock_volume_to_shares(cached)
+                )
                 continue
 
             df = require_fetched_frame(
@@ -97,7 +99,9 @@ class EastmoneySource(DataSource):
                 symbol,
                 self._fetch_eastmoney_daily(symbol, start, end),
             )
-            df = self._normalize_eastmoney_df(df, symbol)
+            df = self._normalize_eastmoney_df(
+                _normalize_stock_volume_to_shares(df), symbol
+            )
             validated = self._validate_ohlcv(df, symbol)
             self.cache.set_ohlcv(
                 symbol,
@@ -117,11 +121,13 @@ class EastmoneySource(DataSource):
     ) -> dict[str, OhlcvFrame]:
         out: dict[str, OhlcvFrame] = {}
         for symbol in symbols:
-            out[symbol] = require_fetched_frame(
-                self.name,
-                "分时",
-                symbol,
-                self._fetch_eastmoney_intraday(symbol, period),
+            out[symbol] = _normalize_stock_volume_to_shares(
+                require_fetched_frame(
+                    self.name,
+                    "分时",
+                    symbol,
+                    self._fetch_eastmoney_intraday(symbol, period),
+                )
             )
         require_non_empty_fetch_result(self.name, "分时", symbols, out)
         return out
@@ -313,6 +319,7 @@ class EastmoneySource(DataSource):
                                 "high": float(parts[3]),
                                 "low": float(parts[4]),
                                 "volume": float(parts[5]),
+                                "amount": float(parts[6]),
                             }
                         )
                 df = pd.DataFrame(rows)
@@ -505,3 +512,21 @@ def _safe_float(value: object) -> float:
         return float(value)
     except (TypeError, ValueError):
         return 0.0
+
+
+def _normalize_stock_volume_to_shares(df: pd.DataFrame) -> pd.DataFrame:
+    """Normalize Eastmoney stock volume from lots to the project-wide share unit."""
+    normalized = df.copy()
+    if normalized.empty or "volume" not in normalized.columns:
+        return normalized
+    volume = pd.to_numeric(normalized["volume"], errors="coerce")
+    empty = pd.Series(float("nan"), index=normalized.index)
+    close = pd.to_numeric(normalized.get("close", empty), errors="coerce")
+    amount = pd.to_numeric(normalized.get("amount", empty), errors="coerce")
+    valid = (volume > 0) & (close > 0) & (amount > 0)
+    implied_unit = (amount[valid] / (close[valid] * volume[valid])).median()
+    if pd.notna(implied_unit) and 20.0 <= float(implied_unit) <= 200.0:
+        normalized["volume"] = volume * 100.0
+    normalized.attrs.update(df.attrs)
+    normalized.attrs["volume_unit"] = "shares"
+    return normalized

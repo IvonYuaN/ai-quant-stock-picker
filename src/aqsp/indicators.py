@@ -31,6 +31,15 @@ def enrich_indicators(raw: pd.DataFrame) -> pd.DataFrame:
     df["low_20"] = low.rolling(20).min()
     df["bias20"] = (close / df["ma20"] - 1) * 100
     df["volume_ratio"] = volume / df["vol_ma5"]
+    if {"intraday_elapsed_minutes", "intraday_session_minutes"}.issubset(df.columns):
+        elapsed = pd.to_numeric(df["intraday_elapsed_minutes"], errors="coerce")
+        session = pd.to_numeric(df["intraday_session_minutes"], errors="coerce")
+        historical_volume = volume.shift(1).rolling(5, min_periods=5).mean()
+        intraday_mask = elapsed.notna() & session.notna() & (elapsed > 0)
+        adjusted_ratio = (volume / historical_volume * session / elapsed).where(
+            historical_volume > 0
+        )
+        df.loc[intraday_mask, "volume_ratio"] = adjusted_ratio[intraday_mask]
     df["amount_ma20"] = amount.rolling(20).mean()
     df["range_pos"] = (close - low) / (high - low).replace(0, np.nan)
     df["upper_shadow_pct"] = (high - np.maximum(close, df["open"])) / close * 100
