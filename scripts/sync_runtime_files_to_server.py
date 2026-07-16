@@ -100,9 +100,7 @@ RUNTIME_SYNC_DEPENDENCIES: dict[str, tuple[str, ...]] = {
         "src/aqsp/web/dashboard_beginner_compat.py",
         "src/aqsp/web/data_provider.py",
     ),
-    "src/aqsp/web/dashboard_beginner_compat.py": (
-        "src/aqsp/web/data_provider.py",
-    ),
+    "src/aqsp/web/dashboard_beginner_compat.py": ("src/aqsp/web/data_provider.py",),
 }
 
 
@@ -555,7 +553,9 @@ def _remote_import_smoke(plan: SyncPlan) -> tuple[str, ...]:
         result = _ssh(plan.ssh_target, command)
     except subprocess.CalledProcessError as exc:
         detail = "\n".join(
-            part.strip() for part in (exc.stdout or "", exc.stderr or "") if part.strip()
+            part.strip()
+            for part in (exc.stdout or "", exc.stderr or "")
+            if part.strip()
         )
         raise RuntimeError(
             f"remote runtime import smoke failed: {detail or exc}"
@@ -722,9 +722,23 @@ def _merge_overlay_manifest(
     backup_path: str = "",
     sync_id: str = "",
 ) -> dict[str, object]:
-    del existing
-    managed_files = sorted(set(files))
-    file_hashes = {relative: hashes[relative] for relative in managed_files}
+    existing = existing if isinstance(existing, dict) else {}
+    existing_files = _overlay_files_from_manifest(existing)
+    existing_hashes_raw = existing.get("file_hashes")
+    existing_hashes = (
+        {
+            str(relative): str(value)
+            for relative, value in existing_hashes_raw.items()
+            if str(relative).strip() and str(value).strip()
+        }
+        if isinstance(existing_hashes_raw, dict)
+        else {}
+    )
+    managed_files = sorted(set(existing_files) | set(files))
+    file_hashes = {
+        relative: hashes.get(relative, existing_hashes.get(relative, ""))
+        for relative in managed_files
+    }
     merged: dict[str, object] = {
         "managed_files": managed_files,
         "file_hashes": file_hashes,
@@ -779,9 +793,25 @@ def _write_remote_overlay_manifest(
         "    for key in ('sync_id', 'source', 'backup_path')\n"
         "    if key in existing\n"
         "}\n"
+        "existing_files = existing.get('managed_files', [])\n"
+        "existing_hashes = existing.get('file_hashes', {})\n"
+        "if not isinstance(existing_files, list):\n"
+        "    existing_files = []\n"
+        "if not isinstance(existing_hashes, dict):\n"
+        "    existing_hashes = {}\n"
+        "payload_files = payload.get('managed_files', [])\n"
+        "payload_hashes = payload.get('file_hashes', {})\n"
+        "managed_files = sorted({\n"
+        "    item for item in (*existing_files, *payload_files)\n"
+        "    if isinstance(item, str) and item.strip()\n"
+        "})\n"
+        "file_hashes = {\n"
+        "    item: payload_hashes.get(item, existing_hashes.get(item, ''))\n"
+        "    for item in managed_files\n"
+        "}\n"
         "manifest = {\n"
-        "    'managed_files': payload.get('managed_files', []),\n"
-        "    'file_hashes': payload.get('file_hashes', {}),\n"
+        "    'managed_files': managed_files,\n"
+        "    'file_hashes': file_hashes,\n"
         "    'updated_at': payload.get('updated_at', ''),\n"
         "}\n"
         "for key in ('source', 'backup_path', 'sync_id'):\n"

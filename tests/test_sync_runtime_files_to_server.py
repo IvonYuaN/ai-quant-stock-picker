@@ -459,7 +459,7 @@ def test_build_plan_allows_empty_files_for_verify_overlay() -> None:
     assert plan.files == ()
 
 
-def test_merge_overlay_manifest_replaces_stale_files_and_updates_hashes() -> None:
+def test_merge_overlay_manifest_accumulates_managed_files_and_updates_hashes() -> None:
     merged = sync_mod._merge_overlay_manifest(
         {
             "managed_files": ["scripts/a.sh"],
@@ -473,8 +473,11 @@ def test_merge_overlay_manifest_replaces_stale_files_and_updates_hashes() -> Non
         synced_at="2026-07-07T09:00:00+08:00",
     )
 
-    assert merged["managed_files"] == ["src/aqsp/config.py"]
-    assert merged["file_hashes"] == {"src/aqsp/config.py": "new-config"}
+    assert merged["managed_files"] == ["scripts/a.sh", "src/aqsp/config.py"]
+    assert merged["file_hashes"] == {
+        "scripts/a.sh": "old",
+        "src/aqsp/config.py": "new-config",
+    }
     assert merged["updated_at"] == "2026-07-07T09:00:00+08:00"
 
 
