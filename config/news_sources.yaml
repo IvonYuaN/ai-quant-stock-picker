@@ -2,9 +2,9 @@ version: "2026.07.14"
 
 rss:
   enabled: true
-  timeout_seconds: 6
+  timeout_seconds: 8
   # 单个 feed 的超时不应按 feed 数量累加到盘中主链。
-  max_concurrency: 4
+  max_concurrency: 11
   max_items: 12
   # 默认只启用当前可验证的官方/原生 RSS；国内政策、公告和 CCTV/新华社聚合
   # 继续由 akshare 适配器提供，避免把失效公共 RSSHub 实例放入生产默认链路。

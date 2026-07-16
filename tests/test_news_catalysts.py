@@ -1791,7 +1791,7 @@ def test_default_news_source_config_enables_official_rss_feeds() -> None:
     }.issubset(feed_names)
     assert all(feed.url.startswith("https://") for feed in feeds)
     assert all("rsshub.example.com" not in feed.url for feed in feeds)
-    assert source._max_concurrency == 4
+    assert source._max_concurrency == 11
     assert Path("config/news_sources.yaml").exists()
 
 

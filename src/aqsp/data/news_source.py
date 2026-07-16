@@ -31,6 +31,7 @@ _SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
 _DIRECT_STOCK_NEWS_TIMEOUT_SECONDS = 8.0
 _DEFAULT_NEWS_SOURCE_TIMEOUT_SECONDS = 8.0
 _COMPOSITE_TIMEOUT_MARGIN_SECONDS = 0.25
+_RSS_FRAME_CACHE_TTL_SECONDS = 15.0
 
 NewsSourceStatus = Literal["ok", "empty", "timeout", "partial", "failed"]
 NewsSourceRegion = Literal["domestic", "international", "mixed"]
@@ -319,6 +320,10 @@ class RssNewsSource:
         self._timeout_seconds = max(0.1, float(timeout_seconds))
         self._max_concurrency = max(1, int(max_concurrency))
         self._last_health: tuple[NewsSourceHealth, ...] = ()
+        self._frames_condition = threading.Condition()
+        self._frames_loading = False
+        self._frames_cache: tuple[pd.DataFrame, ...] = ()
+        self._frames_cache_at = 0.0
 
     def fetch_symbol_news(self, symbol: str) -> list[pd.DataFrame]:
         clean_symbol = str(symbol or "").strip()
@@ -346,6 +351,32 @@ class RssNewsSource:
         return self._last_health
 
     def _fetch_frames(self) -> list[pd.DataFrame]:
+        now = monotonic()
+        with self._frames_condition:
+            if self._frames_cache and now - self._frames_cache_at <= _RSS_FRAME_CACHE_TTL_SECONDS:
+                return list(self._frames_cache)
+            if self._frames_loading:
+                remaining = max(0.1, self._timeout_seconds)
+                self._frames_condition.wait(timeout=remaining)
+                if self._frames_cache and monotonic() - self._frames_cache_at <= _RSS_FRAME_CACHE_TTL_SECONDS:
+                    return list(self._frames_cache)
+                raise TimeoutError(f"RSS 新闻共享抓取超过 {self._timeout_seconds:.1f}s 未返回")
+            self._frames_loading = True
+        try:
+            frames = self._fetch_frames_uncached()
+        except BaseException:
+            with self._frames_condition:
+                self._frames_loading = False
+                self._frames_condition.notify_all()
+            raise
+        with self._frames_condition:
+            self._frames_cache = tuple(frames)
+            self._frames_cache_at = monotonic()
+            self._frames_loading = False
+            self._frames_condition.notify_all()
+        return frames
+
+    def _fetch_frames_uncached(self) -> list[pd.DataFrame]:
         frames: list[pd.DataFrame] = []
         errors: list[str] = []
         health: list[NewsSourceHealth] = []
