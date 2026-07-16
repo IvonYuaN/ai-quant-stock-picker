@@ -55,6 +55,8 @@ _RECENT_NEWS_DATE = today_shanghai().isoformat()
         ("HBM供给紧张，服务器内存出现缺货", "存储涨价/缺货"),
         ("DRAM现货价格上涨，供应趋紧", "存储涨价/缺货"),
         ("半导体设备订单同比大增，刻蚀设备需求提升", "订单/需求验证"),
+        ("GPT-Red: Unlocking Self-Improvement for Robustness", "AI/半导体技术动态"),
+        ("Minutes of the Board's discount rate meetings", "宏观流动性"),
     ],
 )
 def test_news_catalyst_classifies_supply_chain_evidence(

@@ -604,6 +604,23 @@ def _report_from_stale_cache(
 
 POSITIVE_PATTERNS: tuple[tuple[str, str, int], ...] = (
     (
+        "GPT|AI safety|agentic AI|AI investments|AI innovation|"
+        "foundry|EPYC|Instinct|Gaudi|processor|数据中心|人工智能",
+        "AI/半导体技术动态",
+        3,
+    ),
+    (
+        "利率|通胀|inflation|liquidity|discount rate|rate meetings|"
+        "流动性|货币政策",
+        "宏观流动性",
+        3,
+    ),
+    (
+        "IPO|public markets|上市|注册制|资本市场|market access",
+        "资本市场制度",
+        3,
+    ),
+    (
         "(?:pcb|覆铜板|铜箔|玻纤布|树脂|基材|电子材料).*(?:涨价|提价|"
         "价格上调|报价上调|缺货|供不应求|供应紧张)|"
         "(?:涨价|提价|价格上调|报价上调|缺货|供不应求|供应紧张).*"
@@ -816,6 +833,9 @@ _SECTOR_TAG_RULES: tuple[tuple[tuple[str, ...], tuple[str, ...]], ...] = (
 )
 
 _CATEGORY_TIME_HORIZONS: dict[str, str] = {
+    "AI/半导体技术动态": "隔夜-5日",
+    "宏观流动性": "隔夜-5日",
+    "资本市场制度": "隔夜-5日",
     "科技催化": "隔夜-3日",
     "资本运作": "当日-3日",
     "外盘风险偏好": "隔夜-2日",
