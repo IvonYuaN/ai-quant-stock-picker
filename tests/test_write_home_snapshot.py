@@ -37,6 +37,7 @@ def _candidate(symbol: str, score: float) -> SimpleNamespace:
         bias20_pct=2.1,
         stop_loss=11.1,
         take_profit=14.8,
+        data_source="eastmoney",
     )
 
 
@@ -162,6 +163,7 @@ def test_write_home_snapshot_builds_bounded_advisory_only_payload(monkeypatch) -
     assert snapshot.candidates[0].deterministic_reasons == ("MA20 斜率向上",)
     assert snapshot.candidates[0].strategies == ("ma_pullback",)
     assert snapshot.candidates[0].evidence_status == "有独立规则证据"
+    assert snapshot.candidates[0].context.endswith("数据源: eastmoney")
     assert [
         (item.label, item.value) for item in snapshot.candidates[0].technical_metrics
     ] == [

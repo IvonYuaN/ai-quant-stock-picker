@@ -264,6 +264,11 @@ def _snapshot_candidate(candidate: Any) -> HomeSnapshotCandidate | None:
         return None
     reasons = _candidate_reasons(candidate)
     strategies = _candidate_strategies(candidate)
+    context = _candidate_context(candidate)
+    data_source = _text(getattr(candidate, "data_source", ""))
+    if data_source:
+        source_context = f"数据源: {data_source}"
+        context = " / ".join(part for part in (context, source_context) if part)
     return HomeSnapshotCandidate(
         symbol=symbol,
         display_name=_first_text(
@@ -277,7 +282,7 @@ def _snapshot_candidate(candidate: Any) -> HomeSnapshotCandidate | None:
             "待复核",
         ),
         next_step=_text(getattr(candidate, "next_step", "")),
-        context=_candidate_context(candidate),
+        context=context,
         deterministic_reasons=reasons,
         strategies=strategies,
         evidence_status=("有独立规则证据" if reasons else "证据不足"),

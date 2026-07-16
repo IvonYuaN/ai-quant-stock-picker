@@ -5801,6 +5801,8 @@ def test_dashboard_data_provider_live_view_caps_intraday_csv_and_exposes_card_ev
             "bias20_pct": 3.1 if index == 0 else "",
             "stop_loss": 48.6 if index == 0 else "",
             "take_profit": 59.4 if index == 0 else "",
+            "data_source": "eastmoney" if index == 0 else "",
+            "run_actual_source": "multi",
         }
         for index in range(10)
     ]
@@ -5816,6 +5818,7 @@ def test_dashboard_data_provider_live_view_caps_intraday_csv_and_exposes_card_ev
 
     view = provider.live_candidate_view(now=now)
     spotlights = provider.live_candidate_spotlights(now=now)
+    cards = provider._build_detail_cards(rows[:1], task_id="intraday")
 
     assert len(view.candidates) == 3
     assert [item.status for item in view.candidates] == [
@@ -5835,6 +5838,7 @@ def test_dashboard_data_provider_live_view_caps_intraday_csv_and_exposes_card_ev
     assert spotlights[0].stop_loss == 48.6
     assert spotlights[0].take_profit == 59.4
     assert spotlights[1].ret5_pct is None
+    assert cards[0].data_source == "eastmoney"
 
 
 def test_dashboard_data_provider_uses_nested_freshness_when_sidecar_partially_fails(

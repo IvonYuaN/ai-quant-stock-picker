@@ -6253,7 +6253,9 @@ class DashboardDataProvider:
                     reasons=self._as_text_tuple(row.get("reasons")),
                     risks=self._as_text_tuple(row.get("risks")),
                     strategies=strategies_tuple,
-                    data_source=str(row.get("run_actual_source", "") or ""),
+                    data_source=str(
+                        row.get("data_source") or row.get("run_actual_source") or ""
+                    ),
                     candidate_fingerprint=self._candidate_fingerprint_for_row(row),
                     news_catalyst_summary=self._spotlight_news_catalyst_summary(row),
                     cross_market_summary=self._spotlight_cross_market_summary(row),
