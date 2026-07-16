@@ -186,6 +186,7 @@ class CompositeNewsSource:
             self._sources,
             lambda source: source.fetch_global_news(),
             timeout_seconds=self._timeout_seconds,
+            sequential=True,
         )
         self._last_health = tuple(health)
         if frames:
@@ -202,6 +203,7 @@ def _collect_composite_news(
     fetch: Callable[[NewsSource], list[pd.DataFrame]],
     *,
     timeout_seconds: float | None = None,
+    sequential: bool = False,
 ) -> tuple[list[pd.DataFrame], list[str], list[NewsSourceHealth]]:
     """Collect source results concurrently and retain partial success.
 
@@ -234,25 +236,41 @@ def _collect_composite_news(
         with results_lock:
             results[index] = (source_frames, error)
 
-    workers = [
-        threading.Thread(
-            target=fetch_one,
-            args=(index, source),
-            name=f"aqsp-composite-news-{index}",
-            daemon=True,
-        )
-        for index, source in enumerate(sources)
-    ]
-    for worker in workers:
-        worker.start()
     deadline = monotonic() + timeout_seconds
-    for worker in workers:
-        worker.join(max(0.0, deadline - monotonic()))
-        # Once one source has produced usable frames, return them as a partial
-        # result instead of waiting for a slower optional source to consume the
-        # outer news deadline.
-        if any(frames for frames, _error in results.values()):
-            break
+    if sequential:
+        for index, source in enumerate(sources):
+            remaining = deadline - monotonic()
+            if remaining <= 0:
+                break
+            try:
+                source_frames = _run_callable_with_timeout(
+                    lambda source=source: fetch(source), remaining
+                )
+            except BaseException as exc:
+                results[index] = ([], exc)
+            else:
+                results[index] = (list(source_frames), None)  # type: ignore[arg-type]
+                if source_frames:
+                    break
+    else:
+        workers = [
+            threading.Thread(
+                target=fetch_one,
+                args=(index, source),
+                name=f"aqsp-composite-news-{index}",
+                daemon=True,
+            )
+            for index, source in enumerate(sources)
+        ]
+        for worker in workers:
+            worker.start()
+        for worker in workers:
+            worker.join(max(0.0, deadline - monotonic()))
+            # Once one source has produced usable frames, return them as a partial
+            # result instead of waiting for a slower optional source to consume the
+            # outer news deadline.
+            if any(frames for frames, _error in results.values()):
+                break
 
     frames: list[pd.DataFrame] = []
     errors: list[str] = []
