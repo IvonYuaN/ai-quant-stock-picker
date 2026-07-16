@@ -20,6 +20,22 @@ DEFAULT_OUTPUT_PATH = Path("data/runtime/realtime_cross_market_context.json")
 DEFAULT_TIMEOUT_SECONDS = 1.0
 
 
+def _previous_usable_payload(output: str | Path) -> dict[str, object] | None:
+    try:
+        previous = json.loads(Path(output).read_text(encoding="utf-8"))
+    except (FileNotFoundError, OSError, json.JSONDecodeError):
+        return None
+    payload = previous.get("payload") if isinstance(previous, dict) else None
+    if not isinstance(payload, dict):
+        return None
+    if not any(
+        isinstance(item, dict) and item.get("value") is not None
+        for item in payload.values()
+    ):
+        return None
+    return payload
+
+
 def collect_realtime_cross_market(
     output: str | Path,
     *,
@@ -29,6 +45,7 @@ def collect_realtime_cross_market(
     """Fetch and atomically persist a sidecar without propagating source errors."""
     generated = to_shanghai(now or now_shanghai())
     generated_at = generated.isoformat(timespec="seconds")
+    previous_payload = _previous_usable_payload(output)
     try:
         if timeout_seconds <= 0:
             raise ValueError("timeout_seconds must be positive")
@@ -49,6 +66,12 @@ def collect_realtime_cross_market(
             "status": status,
             "payload": payload,
         }
+        if status == "unavailable" and previous_payload is not None:
+            sidecar.update(
+                status="stale_cache",
+                payload=previous_payload,
+                warning="当前实时源不可用，保留上次观测并按原时间戳判定新鲜度",
+            )
         serialized = json.dumps(sidecar, ensure_ascii=False, indent=2) + "\n"
     except Exception as exc:
         print(f"realtime cross-market collection degraded: {exc}", file=sys.stderr)
@@ -58,6 +81,12 @@ def collect_realtime_cross_market(
             "status": "unavailable",
             "payload": {},
         }
+        if previous_payload is not None:
+            sidecar.update(
+                status="stale_cache",
+                payload=previous_payload,
+                warning="当前实时源异常，保留上次观测并按原时间戳判定新鲜度",
+            )
         serialized = json.dumps(sidecar, ensure_ascii=False, indent=2) + "\n"
 
     atomic_write_text(output, serialized)

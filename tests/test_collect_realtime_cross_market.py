@@ -108,3 +108,35 @@ def test_main_surfaces_artifact_write_failure(monkeypatch, tmp_path: Path) -> No
     )
 
     assert collector.main(["--output", str(tmp_path / "sidecar.json")]) == 1
+
+
+def test_collect_realtime_cross_market_preserves_previous_values_when_sources_fail(
+    tmp_path: Path, monkeypatch
+) -> None:
+    output = tmp_path / "sidecar.json"
+    previous_payload = {"HSI": _observation("HSI")}
+    output.write_text(
+        json.dumps(
+            {
+                "schema_version": collector.SCHEMA_VERSION,
+                "generated_at": NOW.isoformat(timespec="seconds"),
+                "status": "partial",
+                "payload": previous_payload,
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        collector,
+        "fetch_live_market_context_payload",
+        lambda **_: {
+            instrument: {"status": "unavailable", "value": None}
+            for instrument in REALTIME_CROSS_MARKET_INSTRUMENTS
+        },
+    )
+
+    result = collector.collect_realtime_cross_market(output, now=NOW)
+
+    assert result["status"] == "stale_cache"
+    assert result["payload"] == previous_payload
+    assert "原时间戳" in str(result["warning"])
