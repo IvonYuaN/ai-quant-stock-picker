@@ -55,6 +55,10 @@ class HomeSnapshotCandidate:
     strategies: tuple[str, ...] = ()
     evidence_status: str = "证据不足"
     technical_metrics: tuple[HomeSnapshotTechnicalMetric, ...] = ()
+    data_source: str = ""
+    data_fetched_at: str = ""
+    data_timestamp_source: str = ""
+    freshness: str = ""
 
     @property
     def has_deterministic_evidence(self) -> bool:
@@ -609,6 +613,10 @@ def _candidate_from_dict(payload: object) -> HomeSnapshotCandidate:
             "strategies",
             "evidence_status",
             "technical_metrics",
+            "data_source",
+            "data_fetched_at",
+            "data_timestamp_source",
+            "freshness",
         },
     )
     return HomeSnapshotCandidate(
@@ -636,6 +644,14 @@ def _candidate_from_dict(payload: object) -> HomeSnapshotCandidate:
                 mapping.get("technical_metrics", ()), "candidate.technical_metrics"
             )
         ),
+        data_source=_optional_text(mapping.get("data_source"), "candidate.data_source"),
+        data_fetched_at=_optional_text(
+            mapping.get("data_fetched_at"), "candidate.data_fetched_at"
+        ),
+        data_timestamp_source=_optional_text(
+            mapping.get("data_timestamp_source"), "candidate.data_timestamp_source"
+        ),
+        freshness=_optional_text(mapping.get("freshness"), "candidate.freshness"),
     )
 
 

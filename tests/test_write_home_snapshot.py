@@ -38,6 +38,9 @@ def _candidate(symbol: str, score: float) -> SimpleNamespace:
         stop_loss=11.1,
         take_profit=14.8,
         data_source="eastmoney",
+        data_fetched_at="2026-07-10T14:59:00+08:00",
+        data_timestamp_source="bar_time",
+        freshness="fresh",
     )
 
 
@@ -164,6 +167,10 @@ def test_write_home_snapshot_builds_bounded_advisory_only_payload(monkeypatch) -
     assert snapshot.candidates[0].strategies == ("ma_pullback",)
     assert snapshot.candidates[0].evidence_status == "有独立规则证据"
     assert snapshot.candidates[0].context.endswith("数据源: eastmoney")
+    assert snapshot.candidates[0].data_source == "eastmoney"
+    assert snapshot.candidates[0].data_fetched_at == "2026-07-10T14:59:00+08:00"
+    assert snapshot.candidates[0].data_timestamp_source == "bar_time"
+    assert snapshot.candidates[0].freshness == "fresh"
     assert [
         (item.label, item.value) for item in snapshot.candidates[0].technical_metrics
     ] == [

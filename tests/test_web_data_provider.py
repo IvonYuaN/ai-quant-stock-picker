@@ -5802,6 +5802,9 @@ def test_dashboard_data_provider_live_view_caps_intraday_csv_and_exposes_card_ev
             "stop_loss": 48.6 if index == 0 else "",
             "take_profit": 59.4 if index == 0 else "",
             "data_source": "eastmoney" if index == 0 else "",
+            "data_fetched_at": ("2026-07-13T15:09:00+08:00" if index == 0 else ""),
+            "data_timestamp_source": "bar_time" if index == 0 else "",
+            "freshness": "fresh" if index == 0 else "",
             "run_actual_source": "multi",
         }
         for index in range(10)
@@ -5829,6 +5832,10 @@ def test_dashboard_data_provider_live_view_caps_intraday_csv_and_exposes_card_ev
     assert len(spotlights) == 3
     assert all("新鲜度: 新鲜" in item.review_meta for item in spotlights)
     assert all("证据质量:" in item.review_meta for item in spotlights)
+    assert spotlights[0].data_source == "eastmoney"
+    assert spotlights[0].data_fetched_at == "2026-07-13T15:09:00+08:00"
+    assert spotlights[0].data_timestamp_source == "bar_time"
+    assert spotlights[0].freshness == "fresh"
     assert spotlights[0].close == 52.31
     assert spotlights[0].ret5_pct == 4.25
     assert spotlights[0].ret20_pct == 12.8
@@ -5839,6 +5846,9 @@ def test_dashboard_data_provider_live_view_caps_intraday_csv_and_exposes_card_ev
     assert spotlights[0].take_profit == 59.4
     assert spotlights[1].ret5_pct is None
     assert cards[0].data_source == "eastmoney"
+    assert cards[0].data_fetched_at == "2026-07-13T15:09:00+08:00"
+    assert cards[0].data_timestamp_source == "bar_time"
+    assert cards[0].freshness == "fresh"
 
 
 def test_dashboard_data_provider_uses_nested_freshness_when_sidecar_partially_fails(

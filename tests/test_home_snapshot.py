@@ -107,6 +107,47 @@ def test_home_snapshot_round_trips_bounded_home_payload(tmp_path) -> None:
     assert json.loads(source.read_text(encoding="utf-8"))["schema_version"] == "v1"
 
 
+def test_home_snapshot_round_trips_candidate_provenance(tmp_path) -> None:
+    candidate = HomeSnapshotCandidate(
+        symbol="603019",
+        display_name="中科曙光",
+        score=72.5,
+        research_status="纸面复核",
+        next_step="确认量能",
+        context="",
+        deterministic_reasons=("量价确认",),
+        data_source="tencent",
+        data_fetched_at="2026-07-11T10:05:00+08:00",
+        data_timestamp_source="bar_time",
+        freshness="fresh",
+    )
+    path = tmp_path / "home.json"
+
+    write_home_dashboard_snapshot(path, _snapshot(candidates=(candidate,)))
+
+    loaded = load_home_dashboard_snapshot(path)
+    assert loaded is not None
+    assert loaded.candidates[0] == candidate
+
+
+def test_home_snapshot_legacy_candidate_provenance_stays_empty(tmp_path) -> None:
+    path = tmp_path / "legacy.json"
+    payload = _snapshot(candidates=(_candidate("603019"),)).to_dict()
+    payload["candidates"][0].pop("data_source", None)
+    payload["candidates"][0].pop("data_fetched_at", None)
+    payload["candidates"][0].pop("data_timestamp_source", None)
+    payload["candidates"][0].pop("freshness", None)
+    path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+    loaded = load_home_dashboard_snapshot(path)
+    assert loaded is not None
+    legacy_candidate = loaded.candidates[0]
+    assert legacy_candidate.data_source == ""
+    assert legacy_candidate.data_fetched_at == ""
+    assert legacy_candidate.data_timestamp_source == ""
+    assert legacy_candidate.freshness == ""
+
+
 def test_home_snapshot_writes_service_group_readable_mode(tmp_path) -> None:
     source = tmp_path / "home.json"
 

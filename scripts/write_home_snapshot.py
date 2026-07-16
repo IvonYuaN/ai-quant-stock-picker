@@ -288,6 +288,10 @@ def _snapshot_candidate(candidate: Any) -> HomeSnapshotCandidate | None:
         strategies=strategies,
         evidence_status=("有独立规则证据" if reasons else "证据不足"),
         technical_metrics=_candidate_technical_metrics(candidate),
+        data_source=data_source,
+        data_fetched_at=_text(getattr(candidate, "data_fetched_at", "")),
+        data_timestamp_source=_text(getattr(candidate, "data_timestamp_source", "")),
+        freshness=_text(getattr(candidate, "freshness", "")),
     )
 
 

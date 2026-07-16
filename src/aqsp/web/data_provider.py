@@ -379,6 +379,10 @@ class DashboardCandidateSpotlight:
     opposition_points: tuple[str, ...] = ()
     watch_items: tuple[str, ...] = ()
     freshness_label: str = ""
+    data_source: str = ""
+    data_fetched_at: str = ""
+    data_timestamp_source: str = ""
+    freshness: str = ""
     evidence_quality_label: str = ""
     artifact_date: str = ""
     updated_at: str = ""
@@ -838,6 +842,9 @@ class DashboardCandidateCard:
     risks: tuple[str, ...]
     strategies: tuple[str, ...]
     data_source: str
+    data_fetched_at: str = ""
+    data_timestamp_source: str = ""
+    freshness: str = ""
     news_catalyst_summary: str = ""
     cross_market_summary: str = ""
     cross_market_chain_summary: str = ""
@@ -1228,6 +1235,28 @@ class DashboardDataProvider:
                     ),
                     watch_items=self._as_text_tuple(merged_row.get("watch_items")),
                     freshness_label=candidate.freshness_label,
+                    data_source=self._candidate_provenance_value(
+                        merged_row, "data_source", "run_actual_source"
+                    ),
+                    data_fetched_at=self._candidate_provenance_value(
+                        merged_row,
+                        "data_fetched_at",
+                        "fetched_at",
+                        "run_data_fetched_at",
+                    ),
+                    data_timestamp_source=self._candidate_provenance_value(
+                        merged_row,
+                        "data_timestamp_source",
+                        "timestamp_source",
+                        "run_data_timestamp_source",
+                    ),
+                    freshness=self._candidate_provenance_value(
+                        merged_row,
+                        "freshness",
+                        "freshness_status",
+                        "live_freshness_status",
+                        "run_source_freshness_tier",
+                    ),
                     evidence_quality_label=candidate.evidence_quality_label,
                     artifact_date=candidate.artifact_date,
                     updated_at=candidate.updated_at,
@@ -6257,8 +6286,24 @@ class DashboardDataProvider:
                     reasons=self._as_text_tuple(row.get("reasons")),
                     risks=self._as_text_tuple(row.get("risks")),
                     strategies=strategies_tuple,
-                    data_source=str(
-                        row.get("data_source") or row.get("run_actual_source") or ""
+                    data_source=self._candidate_provenance_value(
+                        row, "data_source", "run_actual_source"
+                    ),
+                    data_fetched_at=self._candidate_provenance_value(
+                        row, "data_fetched_at", "fetched_at", "run_data_fetched_at"
+                    ),
+                    data_timestamp_source=self._candidate_provenance_value(
+                        row,
+                        "data_timestamp_source",
+                        "timestamp_source",
+                        "run_data_timestamp_source",
+                    ),
+                    freshness=self._candidate_provenance_value(
+                        row,
+                        "freshness",
+                        "freshness_status",
+                        "live_freshness_status",
+                        "run_source_freshness_tier",
                     ),
                     candidate_fingerprint=self._candidate_fingerprint_for_row(row),
                     news_catalyst_summary=self._spotlight_news_catalyst_summary(row),
@@ -6283,6 +6328,17 @@ class DashboardDataProvider:
                 )
             )
         return tuple(cards)
+
+    def _candidate_provenance_value(self, row: dict[str, Any], *fields: str) -> str:
+        """Read a candidate provenance value without inventing fallback metadata."""
+        metrics = row.get("metrics")
+        sources = (row, metrics) if isinstance(metrics, dict) else (row,)
+        for source in sources:
+            for field in fields:
+                value = source.get(field)
+                if value not in (None, "") and str(value).strip():
+                    return str(value).strip()
+        return ""
 
     def _rank_label(self, index: int, row: dict[str, Any], task_id: str = "") -> str:
         if index == 1 and self._is_actionable(row, task_id=task_id):

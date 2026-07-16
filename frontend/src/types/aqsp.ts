@@ -11,6 +11,10 @@ export interface AqspCandidate {
   strategies: readonly string[];
   evidence_status: string;
   technical_metrics?: readonly { key: string; label: string; value: string }[];
+  data_source?: string;
+  data_fetched_at?: string;
+  data_timestamp_source?: string;
+  freshness?: string;
 }
 
 export interface AqspMessage {

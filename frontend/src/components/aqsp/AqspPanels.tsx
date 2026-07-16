@@ -74,6 +74,14 @@ function CandidateCard({ candidate }: { candidate: AqspCandidate }) {
         <span className="vr-chip vr-chip-primary">{candidate.research_status || "状态未记录"}</span>
         <span className="vr-chip">{candidate.evidence_status || "证据状态未记录"}</span>
       </div>
+      {(candidate.data_source || candidate.freshness || candidate.data_fetched_at || candidate.data_timestamp_source) && (
+        <div className="mt-3 border-t border-border/50 pt-2 text-[10px] leading-relaxed text-muted-foreground" aria-label="候选数据 provenance">
+          {candidate.data_source && <span>源：{candidate.data_source}</span>}
+          {candidate.freshness && <span>{candidate.data_source ? " · " : ""}新鲜度：{candidate.freshness}</span>}
+          {candidate.data_fetched_at && <span> · 抓取：{formatAqspTime(candidate.data_fetched_at)}</span>}
+          {candidate.data_timestamp_source && <span> · 时间依据：{candidate.data_timestamp_source}</span>}
+        </div>
+      )}
       {candidate.context && <p className="mt-3 text-xs leading-relaxed text-muted-foreground">{candidate.context}</p>}
       {(candidate.technical_metrics ?? []).length > 0 && (
         <div className="vr-technical-grid" aria-label="短线技术指标">
