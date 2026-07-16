@@ -1450,6 +1450,63 @@ def test_dashboard_data_provider_prioritized_debate_summaries_returns_empty_when
     )
 
 
+def test_dashboard_data_provider_keeps_debate_with_nonfatal_evidence_gap(
+    tmp_path: Path,
+) -> None:
+    debate_path = tmp_path / "debate.jsonl"
+    debate_path.write_text(
+        json.dumps(
+            {
+                "debate_id": "partial-evidence",
+                "symbol": "000001",
+                "related_signal_date": "2026-07-16",
+                "task_id": "intraday",
+                "process_recorded": True,
+                "conclusion_recorded": True,
+                "advisory_boundary_ok": True,
+                "evidence_sufficient": True,
+                "debate_quality_issues": ["missing_cross_market_viewpoint"],
+                "rounds": [
+                    {
+                        "round_num": 1,
+                        "summary": "技术与风险角色已完成讨论",
+                        "opinions": [
+                            {
+                                "role": "bull",
+                                "stance": "bullish",
+                                "arguments": ["均线多头"],
+                            },
+                            {
+                                "role": "risk_control",
+                                "stance": "neutral",
+                                "arguments": ["等待量能"],
+                            },
+                        ],
+                    }
+                ],
+                "final_vote": {"bull": "bullish", "risk_control": "neutral"},
+                "final_consensus": "继续观察",
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    provider = DashboardDataProvider(
+        ledger_path=str(tmp_path / "ledger.jsonl"),
+        paper_ledger_path=str(tmp_path / "paper.jsonl"),
+        debate_results_path=str(debate_path),
+    )
+
+    summaries = provider.prioritized_debate_summaries(
+        "2026-07-16",
+        task_id="intraday",
+        symbols=("000001",),
+    )
+
+    assert [item.symbol for item in summaries] == ["000001"]
+
+
 def test_dashboard_data_provider_debate_summary_keeps_rich_row_over_newer_score_only_row(
     tmp_path: Path,
 ) -> None:

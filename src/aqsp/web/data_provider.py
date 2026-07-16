@@ -134,6 +134,19 @@ _DEBATE_BACKFILL_FIELDS = frozenset(
         "debate_historical_context_accuracy",
     }
 )
+_FATAL_DEBATE_QUALITY_ISSUES = frozenset(
+    {
+        "candidate_unmapped",
+        "insufficient_roles",
+        "empty_discussion",
+        "invalid_round_sequence",
+        "invalid_opinion",
+        "missing_conclusion",
+        "invalid_final_vote",
+        "advisory_boundary_violation",
+        "no_substantive_evidence",
+    }
+)
 
 
 def _runtime_float(value: Any) -> float | None:
@@ -5725,7 +5738,7 @@ class DashboardDataProvider:
         if self._explicit_false(row.get("evidence_sufficient")):
             return False
         quality_issues = self._as_text_tuple(row.get("debate_quality_issues"))
-        if quality_issues:
+        if any(issue in _FATAL_DEBATE_QUALITY_ISSUES for issue in quality_issues):
             return False
         task_id = str(row.get("task_id", "") or "").strip()
         if not task_id:
