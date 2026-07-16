@@ -602,7 +602,7 @@ def test_intraday_runtime_news_failure_warns_without_blocking_candidates_or_home
         timeout=30,
     )
 
-    assert result.returncode == 1, result.stdout + result.stderr
+    assert result.returncode == 0, result.stdout + result.stderr
     assert "[WARN] 消息面刷新失败" in result.stdout
     assert home_marker.read_text(encoding="utf-8") == "refreshed"
     assert (tmp_path / "reports" / "intraday_latest.csv").exists()
@@ -813,6 +813,19 @@ def test_intraday_runtime_quality_gate_blocks_unknown_freshness(
     assert 'reasons.append("freshness_watch")' in script
     assert "AQSP_INTRADAY_DEBATE_BACKFILL_TIMEOUT_SECONDS:-120" in script
     assert '"${DEBATE_BACKFILL_TIMEOUT_SECONDS}s"' in script
+
+
+def test_intraday_runtime_publishes_candidates_before_slow_sidecars() -> None:
+    script = SCRIPT_PATH.read_text(encoding="utf-8")
+
+    early_publish = script.index("盘中候选首页已先行刷新")
+    news_start = script.index("refresh_intraday_news_catalysts", early_publish)
+    sidecar_start = script.index("if [ \"$OBSERVATION_ONLY\" = \"true\" ]", early_publish)
+    final_publish = script.index(
+        "if ! refresh_home_dashboard_snapshot; then", sidecar_start
+    )
+
+    assert early_publish < news_start < sidecar_start < final_publish
 
 
 def test_intraday_runtime_unknown_freshness_keeps_previous_artifacts(

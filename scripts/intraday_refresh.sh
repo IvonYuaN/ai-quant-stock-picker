@@ -1373,9 +1373,19 @@ elif ! is_truthy "$PARTIAL_SNAPSHOT_USED"; then
     write_intraday_status "completed" "盘中刷新完成；保护状态仅提示，不重写候选队列" "$RUN_EXIT_CODE"
 fi
 
+# Publish fresh candidates before the slower news/debate sidecars. The final
+# refresh below merges those advisory layers without delaying the live board.
+if refresh_home_dashboard_snapshot; then
+    log "盘中候选首页已先行刷新；消息与讨论完成后会再次合并"
+else
+    SCRIPT_EXIT_CODE="1"
+    write_intraday_status "partial_failed" "盘中候选已刷新，但首页先行刷新失败" "$SCRIPT_EXIT_CODE"
+fi
+
 refresh_intraday_news_catalysts
 if [ "$NEWS_CATALYST_STATUS" = "warning" ]; then
-    SCRIPT_EXIT_CODE="1"
+    # News is advisory-only. Preserve its warning in the status artifact, but
+    # do not turn a fresh candidate/home publish into a failed scheduled run.
     write_intraday_status "partial_failed" "盘中候选已刷新；消息面仅标记 warning，继续首页快照" "$SCRIPT_EXIT_CODE"
 elif [ "$OBSERVATION_ONLY" = "true" ]; then
     if [ "$QUALITY_GATE_EXIT_CODE" -ne 0 ] || [ "$RUN_TIMED_OUT" = "true" ] || [ "$PARTIAL_SNAPSHOT_USED" = "true" ]; then
