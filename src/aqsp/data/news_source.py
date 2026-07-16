@@ -144,10 +144,13 @@ def _collect_composite_news(
 
     results: dict[int, tuple[list[pd.DataFrame], BaseException | None]] = {}
     results_lock = threading.Lock()
-    timeout_seconds = max(
+    source_timeout_seconds = max(
         [float(getattr(source, "_timeout_seconds", 0.0) or 0.0) for source in sources]
         + [6.0]
     )
+    # Leave room for the outer catalyst deadline to collect this result and
+    # merge its provenance before it marks the composite source as timed out.
+    timeout_seconds = max(0.5, source_timeout_seconds - 0.5)
 
     def fetch_one(index: int, source: NewsSource) -> None:
         try:
