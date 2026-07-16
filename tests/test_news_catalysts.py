@@ -11,6 +11,7 @@ import pytest
 import requests
 
 import aqsp.data.news_source as news_source
+import aqsp.news.catalysts as catalysts
 from aqsp.core.errors import DataError
 from aqsp.core.time import now_shanghai, today_shanghai
 from aqsp.data.news_source import (
@@ -771,6 +772,32 @@ def test_news_catalyst_report_degrades_when_source_times_out() -> None:
     assert report.source_status == "timeout"
     assert not report.events
     assert "超过 0.0s 未返回" in report.warnings[0]
+
+
+def test_default_news_adapters_use_configured_source_timeout(monkeypatch) -> None:
+    timeouts: list[float] = []
+    fake_source = SimpleNamespace(
+        fetch_symbol_news=lambda _symbol: [],
+        fetch_global_news=lambda: [],
+        last_health=(),
+    )
+
+    def fetch_optional(_fetch, timeout_seconds: float):
+        timeouts.append(timeout_seconds)
+        return [], ""
+
+    monkeypatch.setattr(catalysts, "_get_akshare_news_source", lambda: fake_source)
+    monkeypatch.setattr(catalysts, "_fetch_optional_frame", fetch_optional)
+
+    build_catalyst_report(
+        symbols=("600276",),
+        config=NewsCatalystConfig(
+            symbols=("600276",),
+            source_timeout_seconds=0.25,
+        ),
+    )
+
+    assert timeouts == [0.25, 0.25]
 
 
 def test_news_catalyst_report_uses_fresh_cache_before_refetch(

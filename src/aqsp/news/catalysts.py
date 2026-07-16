@@ -822,8 +822,19 @@ def build_catalyst_report(
     future_news_count = 0
     recent_news_count = 0
 
-    symbol_fetcher = fetch_symbol_news or _akshare_symbol_news
-    global_fetcher = fetch_global_news or _akshare_global_news
+    symbol_fetcher = fetch_symbol_news or (
+        lambda symbol, limit: _akshare_symbol_news(
+            symbol,
+            limit,
+            timeout_seconds=cfg.source_timeout_seconds,
+        )
+    )
+    global_fetcher = fetch_global_news or (
+        lambda limit: _akshare_global_news(
+            limit,
+            timeout_seconds=cfg.source_timeout_seconds,
+        )
+    )
     anchor_day = today_shanghai()
 
     for symbol in tuple(symbols or cfg.symbols):
@@ -2131,13 +2142,18 @@ def _fetch_optional_frame(
         return pd.DataFrame(), str(exc)
 
 
-def _akshare_symbol_news(symbol: str, limit: int) -> pd.DataFrame:
+def _akshare_symbol_news(
+    symbol: str,
+    limit: int,
+    *,
+    timeout_seconds: float = 6.0,
+) -> pd.DataFrame:
     akshare_news = _get_akshare_news_source()
     frames: list[pd.DataFrame] = []
     warnings: list[str] = []
     fetched, warning = _fetch_optional_frame(
         lambda: akshare_news.fetch_symbol_news(symbol),
-        timeout_seconds=6.0,
+        timeout_seconds=timeout_seconds,
     )
     if warning:
         warnings.append(warning)
@@ -2160,14 +2176,18 @@ def _akshare_symbol_news(symbol: str, limit: int) -> pd.DataFrame:
     return result
 
 
-def _akshare_global_news(limit: int) -> pd.DataFrame:
+def _akshare_global_news(
+    limit: int,
+    *,
+    timeout_seconds: float = 6.0,
+) -> pd.DataFrame:
     akshare_news = _get_akshare_news_source()
     frames: list[pd.DataFrame] = []
     warnings: list[str] = []
     per_source_limit = max(2, min(5, limit))
     fetched, warning = _fetch_optional_frame(
         akshare_news.fetch_global_news,
-        timeout_seconds=6.0,
+        timeout_seconds=timeout_seconds,
     )
     if warning:
         warnings.append(warning)

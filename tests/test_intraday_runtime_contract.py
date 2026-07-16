@@ -60,6 +60,8 @@ def test_intraday_runtime_contract_uses_configured_benchmark_and_quality_gate() 
         in script
     )
     assert 'INTRADAY_NEWS_MAX_EVENTS="${AQSP_INTRADAY_NEWS_MAX_EVENTS:-3}"' in script
+    assert 'INTRADAY_NEWS_MAX_SYMBOLS="${AQSP_INTRADAY_NEWS_MAX_SYMBOLS:-3}"' in script
+    assert "count < limit && seen[$symbol_column]++ == 0" in script
     assert (
         'INTRADAY_NEWS_MAX_NEWS_AGE_DAYS="${AQSP_INTRADAY_NEWS_MAX_NEWS_AGE_DAYS:-0}"'
         in script
@@ -820,7 +822,7 @@ def test_intraday_runtime_publishes_candidates_before_slow_sidecars() -> None:
 
     early_publish = script.index("盘中候选首页已先行刷新")
     news_start = script.index("refresh_intraday_news_catalysts", early_publish)
-    sidecar_start = script.index("if [ \"$OBSERVATION_ONLY\" = \"true\" ]", early_publish)
+    sidecar_start = script.index('if [ "$OBSERVATION_ONLY" = "true" ]', early_publish)
     final_publish = script.index(
         "if ! refresh_home_dashboard_snapshot; then", sidecar_start
     )

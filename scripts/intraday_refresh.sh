@@ -227,7 +227,11 @@ INTRADAY_NEWS_JSON_OUTPUT="$(resolve_path "${AQSP_INTRADAY_NEWS_JSON_OUTPUT:-${A
 INTRADAY_NEWS_TASK_TIMEOUT_SECONDS="${AQSP_INTRADAY_NEWS_TASK_TIMEOUT_SECONDS:-20}"
 INTRADAY_NEWS_SOURCE_TIMEOUT_SECONDS="${AQSP_INTRADAY_NEWS_SOURCE_TIMEOUT_SECONDS:-2}"
 INTRADAY_NEWS_MAX_EVENTS="${AQSP_INTRADAY_NEWS_MAX_EVENTS:-3}"
+INTRADAY_NEWS_MAX_SYMBOLS="${AQSP_INTRADAY_NEWS_MAX_SYMBOLS:-3}"
 INTRADAY_NEWS_MAX_NEWS_AGE_DAYS="${AQSP_INTRADAY_NEWS_MAX_NEWS_AGE_DAYS:-0}"
+if ! [[ "$INTRADAY_NEWS_MAX_SYMBOLS" =~ ^[0-9]+$ ]] || [ "$INTRADAY_NEWS_MAX_SYMBOLS" -le 0 ]; then
+    INTRADAY_NEWS_MAX_SYMBOLS="3"
+fi
 DEBATE_RESULTS="$(resolve_path "${AQSP_DEBATE_RESULTS:-data/debate_results.jsonl}")"
 DEBATE_BACKFILL_LOG="${LOG_DIR}/debate-backfill-$(date +%Y-%m-%d).log"
 DEBATE_BACKFILL_LOCK="${PROJECT_ROOT}/.locks/intraday-debate-backfill.lock"
@@ -420,7 +424,7 @@ collect_intraday_news_symbols() {
     if [ ! -f "$INTRADAY_OUTPUT_CSV" ]; then
         return 0
     fi
-    awk -F',' '
+    awk -F',' -v limit="$INTRADAY_NEWS_MAX_SYMBOLS" '
         NR == 1 {
             for (i = 1; i <= NF; i++) {
                 if ($i == "symbol") symbol_column = i
@@ -429,7 +433,7 @@ collect_intraday_news_symbols() {
         }
         symbol_column && $symbol_column != "" && $symbol_column != "__RUN__" {
             gsub(/^"|"$/, "", $symbol_column)
-            if (seen[$symbol_column]++ == 0) {
+            if (count < limit && seen[$symbol_column]++ == 0) {
                 if (count++ > 0) printf ","
                 printf "%s", $symbol_column
             }
