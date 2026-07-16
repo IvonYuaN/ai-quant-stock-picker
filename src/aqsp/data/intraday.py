@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from concurrent.futures import ThreadPoolExecutor, wait
 from collections.abc import Collection
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -28,6 +29,8 @@ _INTRADAY_MAX_AGE_SECONDS: dict[str, int] = {
 _MAX_FUTURE_BAR_SECONDS = 120
 _COMPOSITE_SOURCES = frozenset({"auto", "local_first", "online_first", "multi"})
 _A_SHARE_SESSION_MINUTES = 240
+_DEFAULT_FETCH_DEADLINE_SECONDS = 30.0
+_DEFAULT_FETCH_MAX_WORKERS = 24
 
 
 def _a_share_elapsed_trading_minutes(timestamp: datetime) -> int:
@@ -89,6 +92,8 @@ class IntradayService:
         source: DataSource,
         *,
         allow_historical_replay: bool = False,
+        fetch_deadline_seconds: float = _DEFAULT_FETCH_DEADLINE_SECONDS,
+        fetch_max_workers: int = _DEFAULT_FETCH_MAX_WORKERS,
     ) -> None:
         source_name = str(getattr(source, "name", "") or "").strip()
         guard_message = workload_guard_message(source_name, "live_short")
@@ -103,6 +108,12 @@ class IntradayService:
             )
         self.source = source
         self.allow_historical_replay = bool(allow_historical_replay)
+        if fetch_deadline_seconds <= 0:
+            raise ValueError("fetch_deadline_seconds 必须大于 0")
+        if fetch_max_workers <= 0:
+            raise ValueError("fetch_max_workers 必须大于 0")
+        self.fetch_deadline_seconds = float(fetch_deadline_seconds)
+        self.fetch_max_workers = int(fetch_max_workers)
 
     def get_intraday_bars(
         self,
@@ -182,34 +193,70 @@ class IntradayService:
         index_symbols: Collection[str] = (),
     ) -> dict[str, OhlcvFrame]:
         index_set = {str(symbol) for symbol in index_symbols if str(symbol)}
-        result: dict[str, OhlcvFrame] = {}
-        stock_symbols = [symbol for symbol in symbols if symbol not in index_set]
-        if stock_symbols:
-            result.update(
-                self._fetch_intraday_group(
-                    stock_symbols,
-                    period,
-                    method_name="fetch_intraday",
-                )
-            )
-        index_values = [symbol for symbol in symbols if symbol in index_set]
-        if index_values:
-            result.update(
-                self._fetch_intraday_group(
-                    index_values,
-                    period,
-                    method_name="fetch_index_intraday",
-                )
-            )
-        return result
+        requested = list(
+            dict.fromkeys(str(symbol) for symbol in symbols if str(symbol))
+        )
+        jobs = {
+            symbol: "fetch_index_intraday" if symbol in index_set else "fetch_intraday"
+            for symbol in requested
+        }
+        if not jobs:
+            return {}
 
-    def _fetch_intraday_group(
+        setter = getattr(self.source, "set_workload", None)
+        if callable(setter):
+            setter("live_short")
+        executor = ThreadPoolExecutor(
+            max_workers=min(self.fetch_max_workers, len(jobs)),
+            thread_name_prefix="aqsp-intraday",
+        )
+        futures = {
+            executor.submit(
+                self._fetch_one_intraday, symbol, period, method_name
+            ): symbol
+            for symbol, method_name in jobs.items()
+        }
+        try:
+            done, pending = wait(futures, timeout=self.fetch_deadline_seconds)
+            for future in pending:
+                future.cancel()
+            result: dict[str, OhlcvFrame] = {}
+            for future in done:
+                symbol = futures[future]
+                try:
+                    frame = future.result()
+                except Exception as exc:
+                    _logger.warning(
+                        "数据源 %s 分时跳过标的 %s: %s",
+                        self.source.name,
+                        symbol,
+                        exc,
+                    )
+                    continue
+                if frame is not None and not frame.empty:
+                    result[symbol] = frame
+            if pending:
+                _logger.warning(
+                    "数据源 %s 分时共享 deadline %.1fs 到期，跳过 %d/%d 个标的",
+                    self.source.name,
+                    self.fetch_deadline_seconds,
+                    len(pending),
+                    len(futures),
+                )
+            return result
+        finally:
+            # Do not wait again after the shared deadline. Requests are independently
+            # bounded by their adapter; incomplete symbols remain explicit missing.
+            executor.shutdown(wait=False, cancel_futures=True)
+            if callable(setter):
+                setter(None)
+
+    def _fetch_one_intraday(
         self,
-        symbols: list[str],
+        symbol: str,
         period: Literal["1", "5", "15", "30", "60"],
-        *,
         method_name: str,
-    ) -> dict[str, OhlcvFrame]:
+    ) -> OhlcvFrame | None:
         fetch_method = getattr(self.source, method_name, None)
         if not callable(fetch_method):
             if method_name == "fetch_index_intraday":
@@ -217,46 +264,13 @@ class IntradayService:
                     "数据源 %s 不支持指数分时接口，benchmark 不能冒充股票分时",
                     self.source.name,
                 )
-                return {}
+                return None
             fetch_method = self.source.fetch_intraday
-        setter = getattr(self.source, "set_workload", None)
-        if callable(setter):
-            setter("live_short")
-        try:
-            result = fetch_method(symbols, period)
-        except Exception as exc:
-            _logger.warning(
-                "数据源 %s 批量%s获取失败，改为逐标的隔离: %s",
-                self.source.name,
-                "指数分时" if method_name == "fetch_index_intraday" else "分时",
-                exc,
-            )
-            result = {}
-        finally:
-            if callable(setter):
-                setter(None)
-        missing = [s for s in symbols if s not in result or result[s].empty]
-        for symbol in missing:
-            if callable(setter):
-                setter("live_short")
-            try:
-                single = fetch_method([symbol], period)
-            except Exception as exc:
-                _logger.warning(
-                    "数据源 %s %s跳过坏标的 %s: %s",
-                    self.source.name,
-                    "指数分时" if method_name == "fetch_index_intraday" else "分时",
-                    symbol,
-                    exc,
-                )
-                continue
-            finally:
-                if callable(setter):
-                    setter(None)
-            frame = single.get(symbol)
-            if frame is not None and not frame.empty:
-                result[symbol] = frame
-        return result
+        result = fetch_method([symbol], period)
+        frame = result.get(symbol)
+        if frame is None or frame.empty:
+            raise MissingDataError(symbol, reason="单标的分时返回为空")
+        return frame
 
     def synthesize_daily_from_intraday(
         self,

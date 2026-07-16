@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from datetime import date
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal
+import time
 import pandas as pd
 
 from aqsp.data.source import DataSource, OhlcvFrame
@@ -36,10 +38,14 @@ class MultiSource(DataSource):
         fallbacks: list[DataSource | SourceFactory],
         *,
         validate_consistency: bool = True,
+        live_fetch_deadline_seconds: float = 30.0,
     ) -> None:
         self.primary = primary
         self.fallbacks = fallbacks
         self.validate_consistency = validate_consistency
+        if live_fetch_deadline_seconds <= 0:
+            raise ValueError("live_fetch_deadline_seconds 必须大于 0")
+        self.live_fetch_deadline_seconds = float(live_fetch_deadline_seconds)
         self._last_used_source: str | None = None
         self._last_used_sources: dict[str, str] = {}
         self._active_workload: WorkloadId | None = None
@@ -76,12 +82,133 @@ class MultiSource(DataSource):
         symbols: list[str],
         period: Literal["1", "5", "15", "30", "60"] = "5",
     ) -> dict[str, OhlcvFrame]:
-        return self._with_fallback(
+        return self._with_live_short_fallback(
             lambda src: src.fetch_intraday(symbols, period),
             "fetch_intraday",
             expected_keys=symbols,
-            workload="live_short",
         )
+
+    def _with_live_short_fallback(
+        self,
+        func,
+        method_name: str,
+        *,
+        expected_keys: list[str],
+    ) -> dict[str, object]:
+        """Race realtime sources under one deadline without admitting history."""
+        self._clear_last_used()
+        eligible: list[tuple[int, DataSource | SourceFactory, str]] = []
+        exceptions: list[tuple[str, object]] = []
+        for index, source_ref in enumerate([self.primary] + self.fallbacks):
+            source_name = self._source_name(source_ref)
+            guard_message = workload_guard_message(source_name, "live_short")
+            if guard_message:
+                exceptions.append((source_name, guard_message))
+                continue
+            if source_role_for_workload(source_name, "live_short") == "observation":
+                exceptions.append((source_name, "candidate 来源仅可观察"))
+                continue
+            eligible.append((index, source_ref, source_name))
+
+        if not eligible:
+            raise DataError(
+                f"所有数据源获取{method_name}失败: "
+                + ", ".join(f"{name}: {error}" for name, error in exceptions)
+            )
+
+        executor = ThreadPoolExecutor(
+            max_workers=len(eligible),
+            thread_name_prefix="aqsp-live-source",
+        )
+        futures = {
+            executor.submit(self._fetch_live_source, source_ref, func): (
+                index,
+                source_name,
+            )
+            for index, source_ref, source_name in eligible
+        }
+        pending = set(futures)
+        complete_results: list[tuple[int, str, dict[str, object]]] = []
+        partial_results: list[_PartialResult] = []
+        deadline = time.monotonic() + self.live_fetch_deadline_seconds
+        try:
+            while pending:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                done, pending = wait(
+                    pending,
+                    timeout=remaining,
+                    return_when=FIRST_COMPLETED,
+                )
+                if not done:
+                    break
+                for future in done:
+                    index, source_name = futures[future]
+                    try:
+                        result = future.result()
+                        if not result:
+                            raise DataError("empty result")
+                        result = _annotate_result(result, source_name, "live_short")
+                        if not _has_realtime_provenance(result):
+                            raise DataError("实时 workload 缺少逐标的 provenance")
+                    except Exception as exc:
+                        exceptions.append((source_name, exc))
+                        continue
+                    missing = _missing_requested_keys(result, expected_keys)
+                    if missing:
+                        partial_results.append(
+                            _PartialResult(source_name=source_name, result=result)
+                        )
+                        exceptions.append(
+                            (
+                                source_name,
+                                f"partial result missing {len(missing)}/{len(expected_keys)}",
+                            )
+                        )
+                        continue
+                    complete_results.append((index, source_name, result))
+                if complete_results and not self.validate_consistency:
+                    # The first completed source is the freshest usable answer; source
+                    # order only breaks ties among sources completed in this batch.
+                    _, _, result = min(complete_results, key=lambda item: item[0])
+                    self._set_last_used_provenance(result, "multi")
+                    return result
+
+            if complete_results:
+                complete_results.sort(key=lambda item: item[0])
+                _, primary_name, primary_result = complete_results[0]
+                self._set_last_used_provenance(primary_result, primary_name)
+                if self.validate_consistency and len(complete_results) > 1:
+                    self._validate_consistency(
+                        primary_result,
+                        complete_results[1][2],
+                        primary_source_name=primary_name,
+                        fallback_source_name=complete_results[1][1],
+                    )
+                return primary_result
+
+            merged_result = _merge_partial_results(partial_results, expected_keys)
+            if merged_result is not None:
+                self._set_last_used_provenance(merged_result, "multi")
+                self._last_used_source = "multi"
+                return merged_result
+            raise DataError(
+                f"所有数据源获取{method_name}失败: "
+                + ", ".join(f"{name}: {str(error)[:80]}" for name, error in exceptions)
+            )
+        finally:
+            for future in pending:
+                future.cancel()
+            executor.shutdown(wait=False, cancel_futures=True)
+
+    def _fetch_live_source(
+        self,
+        source_ref: DataSource | SourceFactory,
+        func,
+    ) -> dict[str, object]:
+        source = self._materialize(source_ref)
+        return func(source)
 
     def fetch_index_intraday(
         self,
@@ -89,11 +216,10 @@ class MultiSource(DataSource):
         period: Literal["1", "5", "15", "30", "60"] = "5",
     ) -> dict[str, OhlcvFrame]:
         """Fetch index bars without routing index codes through stock APIs."""
-        return self._with_fallback(
+        return self._with_live_short_fallback(
             lambda src: _fetch_index_intraday_from_source(src, index_codes, period),
             "fetch_index_intraday",
             expected_keys=index_codes,
-            workload="live_short",
         )
 
     def fetch_realtime_quote(
@@ -510,6 +636,20 @@ def _has_verifiable_provenance(result: dict[str, object]) -> bool:
         or bool(str(value.attrs.get("source_name", "")).strip())
         for value in result.values()
     )
+
+
+def _has_realtime_provenance(result: dict[str, object]) -> bool:
+    """Require both traceability and an accepted live_short source role."""
+    for value in result.values():
+        if not isinstance(value, pd.DataFrame):
+            continue
+        source_name = str(value.attrs.get("source_name", "")).strip()
+        if (
+            not source_name
+            or source_role_for_workload(source_name, "live_short") != "realtime"
+        ):
+            return False
+    return True
 
 
 def _result_provenance(

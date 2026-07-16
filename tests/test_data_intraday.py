@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+import threading
+import time
 
 import pandas as pd
 import pytest
@@ -103,6 +105,119 @@ def test_intraday_service():
 def test_intraday_service_rejects_empty_symbol_request() -> None:
     with pytest.raises(DataError, match="未请求分时标的"):
         IntradayService(MockSource()).get_intraday_bars([])
+
+
+def test_intraday_service_fetches_stock_and_index_symbols_in_parallel(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        "aqsp.data.intraday.now_shanghai",
+        lambda: datetime(2026, 7, 16, 9, 35, tzinfo=now_shanghai().tzinfo),
+    )
+
+    class SlowSource(MockSource):
+        def __init__(self):
+            super().__init__(
+                intraday_data={
+                    symbol: pd.DataFrame(
+                        {
+                            "date": ["2026-07-16 09:30:00"],
+                            "open": [10.0],
+                            "high": [10.1],
+                            "low": [9.9],
+                            "close": [10.0],
+                            "volume": [1000],
+                        }
+                    )
+                    for symbol in ("600000", "000001")
+                },
+                index_intraday_data={
+                    "000300": pd.DataFrame(
+                        {
+                            "date": ["2026-07-16 09:30:00"],
+                            "open": [4000.0],
+                            "high": [4001.0],
+                            "low": [3999.0],
+                            "close": [4000.0],
+                            "volume": [1000],
+                        }
+                    )
+                },
+            )
+            self.active = 0
+            self.max_active = 0
+            self._lock = threading.Lock()
+
+        def _wait(self) -> None:
+            with self._lock:
+                self.active += 1
+                self.max_active = max(self.max_active, self.active)
+            try:
+                time.sleep(0.05)
+            finally:
+                with self._lock:
+                    self.active -= 1
+
+        def fetch_intraday(self, symbols, period="5"):
+            self._wait()
+            return super().fetch_intraday(symbols, period)
+
+        def fetch_index_intraday(self, index_codes, period="5"):
+            self._wait()
+            return super().fetch_index_intraday(index_codes, period)
+
+    source = SlowSource()
+    bars = IntradayService(
+        source,
+        fetch_deadline_seconds=1.0,
+        fetch_max_workers=3,
+    ).get_intraday_bars(
+        ["600000", "000001", "000300"],
+        index_symbols=["000300"],
+        target_date=date(2026, 7, 16),
+    )
+
+    assert set(bars) == {"600000", "000001", "000300"}
+    assert source.max_active >= 2
+
+
+def test_intraday_service_shared_deadline_leaves_slow_symbols_missing() -> None:
+    class SlowSource(MockSource):
+        def fetch_intraday(self, symbols, period="5"):
+            if symbols == ["000001"]:
+                time.sleep(0.2)
+            return super().fetch_intraday(symbols, period)
+
+    data = {
+        symbol: pd.DataFrame(
+            {
+                "date": ["2026-07-16 09:30:00"],
+                "open": [10.0],
+                "high": [10.1],
+                "low": [9.9],
+                "close": [10.0],
+                "volume": [1000],
+            }
+        )
+        for symbol in ("600000", "000001")
+    }
+    service = IntradayService(
+        SlowSource(intraday_data=data),
+        fetch_deadline_seconds=0.05,
+        fetch_max_workers=2,
+    )
+
+    result = service._fetch_intraday_with_symbol_isolation(["600000", "000001"], "5")
+
+    assert "600000" in result
+    assert "000001" not in result
+
+
+def test_intraday_service_rejects_invalid_fetch_limits() -> None:
+    with pytest.raises(ValueError, match="fetch_deadline_seconds"):
+        IntradayService(MockSource(), fetch_deadline_seconds=0)
+    with pytest.raises(ValueError, match="fetch_max_workers"):
+        IntradayService(MockSource(), fetch_max_workers=0)
 
 
 def test_intraday_service_routes_benchmark_to_index_endpoint() -> None:
