@@ -39,6 +39,22 @@ FORMAL_LEDGER_WORKLOADS = frozenset(
     }
 )
 
+_TECHNICAL_METRIC_FIELDS = (
+    "ret5_pct",
+    "ret20_pct",
+    "volume_ratio",
+    "rsi12",
+    "bias20_pct",
+)
+
+
+def _finite_metric(value: object) -> float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
+
 
 @dataclass(frozen=True)
 class ValidationSummary:
@@ -378,6 +394,10 @@ def append_predictions(
                 "margin_balance_change_5d": margin_balance_change_5d,
                 **run_metadata_fields(run_metadata),
             }
+            for field in _TECHNICAL_METRIC_FIELDS:
+                value = _finite_metric(pick.metrics.get(field))
+                if value is not None:
+                    prediction_fields[field] = value
 
             existing_idx = row_index_by_key.get(row_key)
             if existing_idx is not None:

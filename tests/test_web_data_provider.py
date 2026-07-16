@@ -5737,6 +5737,14 @@ def test_dashboard_data_provider_live_view_caps_intraday_csv_and_exposes_card_ev
             "rating": "buy_candidate" if index < 4 else "watch",
             "reasons": "量价确认" if index < 4 else "",
             "candidate_blocker": "组合保护" if index == 3 else "",
+            "close": 52.31 if index == 0 else "",
+            "ret5_pct": 4.25 if index == 0 else "",
+            "ret20_pct": 12.8 if index == 0 else "",
+            "volume_ratio": 1.42 if index == 0 else "",
+            "rsi12": 63.7 if index == 0 else "",
+            "bias20_pct": 3.1 if index == 0 else "",
+            "stop_loss": 48.6 if index == 0 else "",
+            "take_profit": 59.4 if index == 0 else "",
         }
         for index in range(10)
     ]
@@ -5762,6 +5770,15 @@ def test_dashboard_data_provider_live_view_caps_intraday_csv_and_exposes_card_ev
     assert len(spotlights) == 3
     assert all("新鲜度: 新鲜" in item.review_meta for item in spotlights)
     assert all("证据质量:" in item.review_meta for item in spotlights)
+    assert spotlights[0].close == 52.31
+    assert spotlights[0].ret5_pct == 4.25
+    assert spotlights[0].ret20_pct == 12.8
+    assert spotlights[0].volume_ratio == 1.42
+    assert spotlights[0].rsi12 == 63.7
+    assert spotlights[0].bias20_pct == 3.1
+    assert spotlights[0].stop_loss == 48.6
+    assert spotlights[0].take_profit == 59.4
+    assert spotlights[1].ret5_pct is None
 
 
 def test_dashboard_data_provider_uses_nested_freshness_when_sidecar_partially_fails(

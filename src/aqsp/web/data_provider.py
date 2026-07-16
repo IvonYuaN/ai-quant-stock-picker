@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import re
 from dataclasses import dataclass
@@ -142,6 +143,18 @@ def _runtime_float(value: Any) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _technical_metric_value(
+    row: dict[str, Any],
+    key: str,
+    *aliases: str,
+) -> float | None:
+    for field in (key, *aliases):
+        value = _runtime_float(row.get(field))
+        if value is not None and math.isfinite(value):
+            return value
+    return None
 
 
 def _runtime_pct(value: Any) -> str:
@@ -357,6 +370,14 @@ class DashboardCandidateSpotlight:
     artifact_date: str = ""
     updated_at: str = ""
     candidate_fingerprint: str = ""
+    close: float | None = None
+    ret5_pct: float | None = None
+    ret20_pct: float | None = None
+    volume_ratio: float | None = None
+    rsi12: float | None = None
+    bias20_pct: float | None = None
+    stop_loss: float | None = None
+    take_profit: float | None = None
 
 
 @dataclass(frozen=True)
@@ -814,6 +835,14 @@ class DashboardCandidateCard:
     artifact_date: str = ""
     updated_at: str = ""
     candidate_fingerprint: str = ""
+    close: float | None = None
+    ret5_pct: float | None = None
+    ret20_pct: float | None = None
+    volume_ratio: float | None = None
+    rsi12: float | None = None
+    bias20_pct: float | None = None
+    stop_loss: float | None = None
+    take_profit: float | None = None
 
 
 @dataclass(frozen=True)
@@ -1192,6 +1221,14 @@ class DashboardDataProvider:
                     candidate_fingerprint=self._candidate_fingerprint_for_row(
                         merged_row
                     ),
+                    close=_technical_metric_value(merged_row, "close", "signal_close"),
+                    ret5_pct=_technical_metric_value(merged_row, "ret5_pct"),
+                    ret20_pct=_technical_metric_value(merged_row, "ret20_pct"),
+                    volume_ratio=_technical_metric_value(merged_row, "volume_ratio"),
+                    rsi12=_technical_metric_value(merged_row, "rsi12"),
+                    bias20_pct=_technical_metric_value(merged_row, "bias20_pct"),
+                    stop_loss=_technical_metric_value(merged_row, "stop_loss"),
+                    take_profit=_technical_metric_value(merged_row, "take_profit"),
                 )
             )
         return tuple(spotlights)
@@ -4966,6 +5003,14 @@ class DashboardDataProvider:
             opposition_points=self._as_text_tuple(merged_row.get("opposition_points")),
             watch_items=self._as_text_tuple(merged_row.get("watch_items")),
             candidate_fingerprint=self._candidate_fingerprint_for_row(merged_row),
+            close=_technical_metric_value(merged_row, "close", "signal_close"),
+            ret5_pct=_technical_metric_value(merged_row, "ret5_pct"),
+            ret20_pct=_technical_metric_value(merged_row, "ret20_pct"),
+            volume_ratio=_technical_metric_value(merged_row, "volume_ratio"),
+            rsi12=_technical_metric_value(merged_row, "rsi12"),
+            bias20_pct=_technical_metric_value(merged_row, "bias20_pct"),
+            stop_loss=_technical_metric_value(merged_row, "stop_loss"),
+            take_profit=_technical_metric_value(merged_row, "take_profit"),
         )
 
     def _same_day_merged_row(
@@ -6218,6 +6263,14 @@ class DashboardDataProvider:
                     cross_market_invalidation_summary=(
                         self._spotlight_cross_market_invalidation_summary(row)
                     ),
+                    close=_technical_metric_value(row, "close", "signal_close"),
+                    ret5_pct=_technical_metric_value(row, "ret5_pct"),
+                    ret20_pct=_technical_metric_value(row, "ret20_pct"),
+                    volume_ratio=_technical_metric_value(row, "volume_ratio"),
+                    rsi12=_technical_metric_value(row, "rsi12"),
+                    bias20_pct=_technical_metric_value(row, "bias20_pct"),
+                    stop_loss=_technical_metric_value(row, "stop_loss"),
+                    take_profit=_technical_metric_value(row, "take_profit"),
                 )
             )
         return tuple(cards)

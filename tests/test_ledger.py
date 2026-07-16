@@ -125,6 +125,40 @@ def test_ledger_validates_pending_prediction(tmp_path) -> None:
     assert rows[0]["return_pct"] == 3.9604
 
 
+def test_append_predictions_persists_finite_short_term_metrics(tmp_path) -> None:
+    ledger = tmp_path / "predictions.jsonl"
+    pick = PickResult(
+        symbol="600276",
+        name="恒瑞医药",
+        date="2026-07-16",
+        close=52.31,
+        score=82,
+        rating="buy_candidate",
+        entry_type="ma_pullback",
+        ideal_buy=52.31,
+        stop_loss=48.6,
+        take_profit=59.4,
+        position="10%",
+        strategies=("ma_pullback",),
+        metrics={
+            "ret5_pct": 4.25,
+            "ret20_pct": 12.8,
+            "volume_ratio": 1.42,
+            "rsi12": 63.7,
+            "bias20_pct": float("nan"),
+        },
+    )
+
+    append_predictions(ledger, [pick])
+
+    row = read_ledger(ledger)[0]
+    assert row["ret5_pct"] == 4.25
+    assert row["ret20_pct"] == 12.8
+    assert row["volume_ratio"] == 1.42
+    assert row["rsi12"] == 63.7
+    assert "bias20_pct" not in row
+
+
 def test_append_predictions_is_idempotent_for_same_signal_run(tmp_path) -> None:
     ledger = tmp_path / "predictions.jsonl"
     pick = PickResult(
