@@ -481,6 +481,18 @@ def test_merge_overlay_manifest_accumulates_managed_files_and_updates_hashes() -
     assert merged["updated_at"] == "2026-07-07T09:00:00+08:00"
 
 
+def test_merge_overlay_manifest_initializes_without_existing_manifest() -> None:
+    merged = sync_mod._merge_overlay_manifest(
+        None,
+        files=("scripts/a.sh",),
+        hashes={"scripts/a.sh": "new"},
+        synced_at="2026-07-07T09:00:00+08:00",
+    )
+
+    assert merged["managed_files"] == ["scripts/a.sh"]
+    assert merged["file_hashes"] == {"scripts/a.sh": "new"}
+
+
 def test_verify_remote_overlay_reports_local_drift_when_file_not_synced(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

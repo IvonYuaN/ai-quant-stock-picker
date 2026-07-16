@@ -723,7 +723,14 @@ def _merge_overlay_manifest(
     sync_id: str = "",
 ) -> dict[str, object]:
     existing = existing if isinstance(existing, dict) else {}
-    existing_files = _overlay_files_from_manifest(existing)
+    existing_files_raw = existing.get("managed_files")
+    existing_files = (
+        tuple(
+            str(item).strip() for item in existing_files_raw if str(item or "").strip()
+        )
+        if isinstance(existing_files_raw, list)
+        else ()
+    )
     existing_hashes_raw = existing.get("file_hashes")
     existing_hashes = (
         {
