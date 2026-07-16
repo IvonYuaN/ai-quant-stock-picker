@@ -46,6 +46,17 @@ export function AqspWorkspaceProvider({ children }: { children: ReactNode }) {
       })
       .catch((reason: unknown) => {
         if (!active) return;
+        // A browser can retain a date that has been pruned from the server index.
+        // Recover to the live snapshot instead of leaving the whole workspace in a 404 state.
+        if (reason instanceof ApiError && reason.status === 404 && selectedDate) {
+          setSelectedDate("");
+          try {
+            localStorage.removeItem("vr-selected-date");
+          } catch {
+            // Storage is optional; the next request still uses the live snapshot.
+          }
+          return;
+        }
         setError(reason instanceof ApiError ? reason.message : "研究快照加载失败");
       })
       .finally(() => {
