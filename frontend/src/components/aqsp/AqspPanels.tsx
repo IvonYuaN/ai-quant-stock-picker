@@ -156,29 +156,6 @@ function matchingTransmission(message: AqspMessage, items: readonly AqspCrossMar
   return items.find((item) => item.source_title === title || title.includes(item.source_title) || item.source_title.includes(title)) ?? null;
 }
 
-function candidateMessageScore(candidate: AqspCandidate, message: AqspMessage): number {
-  const symbol = candidate.symbol.trim();
-  if (symbol && (message.affected_symbols ?? []).some((value) => value.trim() === symbol)) return 100;
-  const candidateText = [
-    candidate.display_name,
-    candidate.context,
-    ...candidate.strategies,
-    ...candidate.deterministic_reasons,
-  ].join(" ").toLowerCase();
-  return (message.affected_sectors ?? []).filter((sector) => {
-    const clean = sector.trim().toLowerCase();
-    return clean.length >= 2 && candidateText.includes(clean);
-  }).length;
-}
-
-function relatedMessages(candidates: readonly AqspCandidate[], messages: readonly AqspMessage[]): AqspMessage[] {
-  return messages
-    .map((message, index) => ({ message, index, score: Math.max(...candidates.map((candidate) => candidateMessageScore(candidate, message)), 0) }))
-    .filter((item) => item.score > 0)
-    .sort((left, right) => right.score - left.score || left.index - right.index)
-    .map((item) => item.message);
-}
-
 function MessageCard({ message, transmission }: { message: AqspMessage; transmission: AqspCrossMarket | null }) {
   const sectors = uniqueNonEmpty(message.affected_sectors ?? transmission?.affected_sectors, 5);
   const path = uniqueNonEmpty(message.transmission_path ?? transmission?.transmission_path, 4);
@@ -363,17 +340,8 @@ export function AqspResearchWorkspace() {
         </section>
 
         <section id="messages" className="vr-board-section vr-messages-section">
-          {(() => {
-            const linkedMessages = relatedMessages(data.candidates, data.messages);
-            return (
-              <>
-                <div className="vr-section-heading"><div><p className="vr-kicker flex items-center gap-1.5"><Columns3 className="h-3.5 w-3.5" />候选关联证据</p><h2>消息证据</h2></div><span className="vr-count">{linkedMessages.length} 条关联</span></div>
-                {linkedMessages.length === 0
-                  ? <EmptyState title="当前没有候选相关消息" detail={data.messages.length > 0 ? "当前消息没有可核验的候选代码或产业链标签映射，已隐藏无关全局消息。" : "快照未记录可核验消息，不在界面中补充推断。"} />
-                  : <div className="vr-message-list">{linkedMessages.slice(0, 5).map((message) => <MessageCard key={`${message.title}-${message.published_at}`} message={message} transmission={matchingTransmission(message, data.market_context?.cross_market ?? [])} />)}</div>}
-              </>
-            );
-          })()}
+          <div className="vr-section-heading"><div><p className="vr-kicker flex items-center gap-1.5"><Columns3 className="h-3.5 w-3.5" />独立消息模块</p><h2>消息证据</h2></div><span className="vr-count">{data.messages.length} 条</span></div>
+          {data.messages.length === 0 ? <EmptyState title="当前没有消息摘要" detail="快照未记录可核验消息，不在界面中补充推断。" /> : <div className="vr-message-list">{data.messages.slice(0, 5).map((message) => <MessageCard key={`${message.title}-${message.published_at}`} message={message} transmission={matchingTransmission(message, data.market_context?.cross_market ?? [])} />)}</div>}
         </section>
       </div>
 
