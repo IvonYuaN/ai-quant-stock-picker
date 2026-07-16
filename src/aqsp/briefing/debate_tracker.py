@@ -29,6 +29,11 @@ _CROSS_MARKET_CONTEXT_MIN_BUCKET_SAMPLES = 3
 _CROSS_MARKET_CONTEXT_MIN_TOTAL_SAMPLES = 5
 _VALID_STANCES = frozenset(("bullish", "bearish", "neutral"))
 
+# 学习层只在足够的、可归属的历史上生效，避免盘中重复运行造成权重抖动。
+_MIN_AGENT_SAMPLES = 5
+_MIN_INDEPENDENT_SIGNAL_DAYS = 3
+_LEARNING_COOLDOWN_DAYS = 3
+
 
 @dataclass(frozen=True)
 class DebateQualityAudit:
@@ -363,7 +368,8 @@ def _advisory_boundary_is_intact(result: Any) -> bool:
 
 def _evaluation_record_key(data: dict[str, Any]) -> str:
     """Build a dedupe key only for fully attributable post-debate outcomes."""
-    values = tuple(
+    task_id = _clean_text(data.get("task_id"))
+    identity = tuple(
         _clean_text(data.get(field))
         for field in (
             "debate_id",
@@ -373,7 +379,7 @@ def _evaluation_record_key(data: dict[str, Any]) -> str:
             "agent_id",
         )
     )
-    return "|".join(values) if all(values) else ""
+    return "|".join((task_id, *identity)) if all(identity) else ""
 
 
 def _candidate_symbol(candidate: Any | None) -> str:
@@ -388,6 +394,19 @@ def _candidate_symbol(candidate: Any | None) -> str:
 
 def _normal_date(value: Any) -> str:
     return _clean_text(value)[:10]
+
+
+def _parse_record_datetime(value: Any) -> datetime | None:
+    text = _clean_text(value)
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=now_shanghai().tzinfo)
+    return parsed
 
 
 def _candidate_fingerprint(candidate: Any | None) -> str:
@@ -559,6 +578,9 @@ class DebatePerformanceTracker:
     """追踪辩论中各Agent的预测表现"""
 
     PERFORMANCE_WINDOW_DAYS = 21  # 3周窗口
+    MIN_AGENT_SAMPLES = _MIN_AGENT_SAMPLES
+    MIN_INDEPENDENT_SIGNAL_DAYS = _MIN_INDEPENDENT_SIGNAL_DAYS
+    LEARNING_COOLDOWN_DAYS = _LEARNING_COOLDOWN_DAYS
 
     def __init__(
         self,
@@ -573,6 +595,8 @@ class DebatePerformanceTracker:
         )
         self._performance_cache: dict[str, AgentPerformanceMetrics] = {}
         self._record_keys: set[str] = set()
+        self._agent_signal_days: dict[str, set[str]] = {}
+        self._agent_latest_record_at: dict[str, datetime] = {}
         self._load_cache()
 
     def _load_cache(self) -> None:
@@ -630,6 +654,7 @@ class DebatePerformanceTracker:
                 metrics.total_predictions += 1
                 if data.get("was_correct", False):
                     metrics.correct_predictions += 1
+                self._track_record_provenance(key, data)
 
             except (json.JSONDecodeError, KeyError):
                 continue
@@ -664,8 +689,12 @@ class DebatePerformanceTracker:
         """记录一次预测结果，可按 task_id 过滤上下文历史。"""
         if not self._prediction_is_valid(agent_id, predicted_stance):
             return
+        effective_task_id = _clean_text(task_id) or self.task_id
+        if effective_task_id and self.task_id and effective_task_id != self.task_id:
+            return
         record_key = _evaluation_record_key(
             {
+                "task_id": effective_task_id,
                 "role": role.value,
                 "agent_id": agent_id,
                 "debate_id": debate_id,
@@ -675,12 +704,16 @@ class DebatePerformanceTracker:
         )
         if record_key and record_key in self._record_keys:
             return
-        metrics = self.get_agent_metrics(role, agent_id)
-        metrics.total_predictions += 1
-        if was_correct:
-            metrics.correct_predictions += 1
+        in_tracker_scope = (
+            effective_task_id == self.task_id if self.task_id else not effective_task_id
+        )
+        if in_tracker_scope:
+            metrics = self.get_agent_metrics(role, agent_id)
+            metrics.total_predictions += 1
+            if was_correct:
+                metrics.correct_predictions += 1
 
-        if metrics.total_predictions > 5:
+        if in_tracker_scope and metrics.total_predictions > 5:
             if metrics.correct_predictions / metrics.total_predictions > 0.6:
                 metrics.bias_toward = "bullish"
             elif metrics.correct_predictions / metrics.total_predictions < 0.4:
@@ -694,13 +727,21 @@ class DebatePerformanceTracker:
             predicted_stance,
             was_correct,
             context=context,
-            task_id=_clean_text(task_id) or self.task_id,
+            task_id=effective_task_id,
             debate_id=debate_id,
             signal_date=signal_date,
             candidate_fingerprint=candidate_fingerprint,
         )
         if record_key:
             self._record_keys.add(record_key)
+        if in_tracker_scope:
+            self._track_record_provenance(
+                self._agent_cache_key(role, agent_id),
+                {
+                    "signal_date": signal_date,
+                    "created_at": now_shanghai().isoformat(timespec="seconds"),
+                },
+            )
 
     def _persist_record(
         self,
@@ -754,6 +795,8 @@ class DebatePerformanceTracker:
         - 市场状态自适应：牛市时多头加权，熊市时空头加权
         """
         metrics = self.get_agent_metrics(role, agent_id)
+        if not self._learning_is_unlocked(role, agent_id):
+            return 0.0
         accuracy = metrics.accuracy
 
         if accuracy >= 0.7:
@@ -793,6 +836,39 @@ class DebatePerformanceTracker:
             1.0,
             0.5 + 0.5 * (metrics.total_predictions / (metrics.total_predictions + 10)),
         )
+
+    def _track_record_provenance(self, key: str, record: dict[str, Any]) -> None:
+        signal_date = _normal_date(record.get("signal_date", ""))
+        created_at = _parse_record_datetime(record.get("created_at", ""))
+        if not signal_date and created_at is not None:
+            signal_date = created_at.date().isoformat()
+        if signal_date:
+            self._agent_signal_days.setdefault(key, set()).add(signal_date)
+        if created_at is not None:
+            previous = self._agent_latest_record_at.get(key)
+            if previous is None or created_at > previous:
+                self._agent_latest_record_at[key] = created_at
+
+    def _learning_is_unlocked(self, role: AgentRole, agent_id: str) -> bool:
+        """只有满足样本、独立信号日且离最近记录足够久才允许自适应。"""
+        key = self._agent_cache_key(role, agent_id)
+        metrics = self.get_agent_metrics(role, agent_id)
+        signal_days = len(self._agent_signal_days.get(key, set()))
+        # 兼容仅用于离线单元测试/旧缓存的手工聚合指标；生产记录都会带来源信息。
+        has_provenance = (
+            key in self._agent_signal_days or key in self._agent_latest_record_at
+        )
+        if has_provenance and (
+            metrics.total_predictions < self.MIN_AGENT_SAMPLES
+            or signal_days < self.MIN_INDEPENDENT_SIGNAL_DAYS
+        ):
+            return False
+        latest = self._agent_latest_record_at.get(key)
+        if latest is not None:
+            elapsed = now_shanghai() - latest
+            if elapsed < timedelta(days=self.LEARNING_COOLDOWN_DAYS):
+                return False
+        return metrics.total_predictions >= self.MIN_AGENT_SAMPLES
 
     def _get_regime_factor(self, role: AgentRole, regime: str) -> float:
         """市场状态自适应：不同市场状态下调整不同Agent的权重"""
@@ -1172,9 +1248,11 @@ class DebatePerformanceTracker:
 
     @staticmethod
     def _record_matches_task(record: dict[str, Any], task_id: str) -> bool:
-        if not task_id:
-            return True
-        return _clean_text(record.get("task_id")) == task_id
+        record_task_id = _clean_text(record.get("task_id"))
+        if task_id:
+            return record_task_id == task_id
+        # 未指定任务时只读明确没有任务归属的 legacy 记录，禁止跨任务串读。
+        return not record_task_id
 
     @staticmethod
     def _record_is_recent(

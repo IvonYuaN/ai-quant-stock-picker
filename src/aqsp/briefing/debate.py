@@ -4,9 +4,12 @@ import hashlib
 import json
 import logging
 import os
+import queue
 import re
+import threading
+import time
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Callable, Literal
 from uuid import uuid4
 
 import pandas as pd
@@ -27,6 +30,10 @@ from aqsp.core.types import PickResult
 from aqsp.utils.llm_safe import llm_call_or_fallback
 
 logger = logging.getLogger(__name__)
+
+
+class DebateDeadlineExceeded(TimeoutError):
+    """整场讨论超过 deadline；不表示 Agent 进程已经失活。"""
 
 
 def parse_agent_roles(role_names: list[str] | tuple[str, ...]) -> tuple[AgentRole, ...]:
@@ -166,6 +173,11 @@ class DebateResult:
     realtime_blocked: bool = False
     runtime_blocker: str = ""
     failure: str = ""
+    task_id: str = ""
+    deadline_seconds: float = 0.0
+    deadline_exceeded: bool = False
+    heartbeat_count: int = 0
+    last_heartbeat_at: str = ""
     deterministic_score: float = 0.0
     deterministic_score_unchanged: bool = True
     advisory_only: bool = True
@@ -273,6 +285,11 @@ class DebateResult:
             "deterministic_score": deterministic_score,
             "deterministic_score_unchanged": self.deterministic_score_unchanged,
             "advisory_only": self.advisory_only,
+            "task_id": self.task_id,
+            "deadline_seconds": self.deadline_seconds,
+            "deadline_exceeded": self.deadline_exceeded,
+            "heartbeat_count": self.heartbeat_count,
+            "last_heartbeat_at": self.last_heartbeat_at,
             "agent_performance_snapshot": {
                 k: v.to_dict() for k, v in self.agent_performance_snapshot.items()
             },
@@ -1394,12 +1411,22 @@ class AShareDebateCoordinator:
         language: str = "zh-CN",
         roles: tuple[AgentRole, ...] | None = None,
         role_runtime: tuple[DebateRoleRuntime, ...] | None = None,
+        task_id: str | None = None,
+        debate_deadline_seconds: float = 30.0,
+        heartbeat_callback: Callable[[], None] | None = None,
+        heartbeat_interval_seconds: float = 1.0,
     ):
         self.enable_llm = enable_llm
         self.thresholds_version = thresholds_version
         self.regime = regime
         self.data_source = data_source
         self.language = language
+        self.task_id = str(task_id or os.getenv("AQSP_RUN_TASK_ID", "")).strip()
+        self.debate_deadline_seconds = max(0.0, float(debate_deadline_seconds))
+        self.heartbeat_callback = heartbeat_callback
+        self.heartbeat_interval_seconds = max(0.05, float(heartbeat_interval_seconds))
+        self._deadline_monotonic: float | None = None
+        self._result: DebateResult | None = None
         self.roles = DEFAULT_AGENT_ROLE_ORDER if roles is None else tuple(roles)
         self.role_runtime = {item.role: item for item in (role_runtime or ())}
         # One round cannot contain a peer response, so it is not a debate.
@@ -1408,7 +1435,7 @@ class AShareDebateCoordinator:
 
         from aqsp.briefing.debate_tracker import DebatePerformanceTracker
 
-        self.tracker = DebatePerformanceTracker()
+        self.tracker = DebatePerformanceTracker(task_id=self.task_id or None)
 
     def _create_agents(self) -> list[AShareDebateAgent]:
         """创建所有辩论 Agent"""
@@ -1472,6 +1499,8 @@ class AShareDebateCoordinator:
             runtime_status="blocked" if runtime_blocked else "paper_review",
             realtime_blocked=runtime_blocked,
             runtime_blocker=str(runtime_blocker or "").strip(),
+            task_id=self.task_id,
+            deadline_seconds=self.debate_deadline_seconds,
             deterministic_score=float(pick.score),
             advisory_only=True,
         )
@@ -1537,13 +1566,29 @@ class AShareDebateCoordinator:
             result.adjusted_score = result.original_score
             return result
 
+        self._result = result
+        self._deadline_monotonic = (
+            time.monotonic() + self.debate_deadline_seconds
+            if self.debate_deadline_seconds > 0
+            else None
+        )
         try:
+            self._heartbeat()
             final_opinions = self._run_debate_rounds(
                 result,
                 pick,
                 df,
                 market_context_lines=result.market_context_lines,
             )
+        except DebateDeadlineExceeded as exc:
+            result.deadline_exceeded = True
+            result.failure = f"讨论执行超时: {exc}"
+            result.runtime_status = "blocked"
+            result.realtime_blocked = True
+            result.runtime_blocker = result.failure
+            result.adjusted_score = result.original_score
+            result.deterministic_score_unchanged = True
+            return result
         except Exception as exc:
             logger.exception("多 Agent 讨论失败: %s", exc)
             result.failure = f"讨论执行失败: {type(exc).__name__}: {exc}"
@@ -1553,6 +1598,9 @@ class AShareDebateCoordinator:
             result.adjusted_score = result.original_score
             result.deterministic_score_unchanged = True
             return result
+        finally:
+            self._deadline_monotonic = None
+            self._result = None
 
         self._synthesize_result(result, final_opinions)
         if not result.pending_confirmations:
@@ -1722,12 +1770,16 @@ class AShareDebateCoordinator:
         """运行辩论轮次"""
         round1_opinions = []
         for agent in self.agents:
-            opinion = agent.generate_initial_opinion(
-                pick,
-                df,
-                market_context_lines=market_context_lines,
+            self._heartbeat()
+            opinion = self._call_agent_with_deadline(
+                lambda: agent.generate_initial_opinion(
+                    pick,
+                    df,
+                    market_context_lines=market_context_lines,
+                )
             )
             round1_opinions.append(opinion)
+            self._heartbeat()
 
         result.rounds.append(
             DebateRound(
@@ -1744,6 +1796,7 @@ class AShareDebateCoordinator:
             current_opinions = []
 
             for agent in self.agents:
+                self._heartbeat()
                 my_prev = next(
                     (op for op in prev_round.opinions if op.agent_id == agent.agent_id),
                     None,
@@ -1753,11 +1806,14 @@ class AShareDebateCoordinator:
                         f"辩论链路断裂: Agent {agent.agent_id} 缺失第 {round_num - 1} 轮观点，无法继续辩论"
                     )
                     raise ValueError(f"Agent {agent.agent_id} 的观点缺失，辩论中止")
-                updated = agent.respond_to_counterarguments(
-                    my_prev,
-                    prev_round.opinions,
+                updated = self._call_agent_with_deadline(
+                    lambda: agent.respond_to_counterarguments(
+                        my_prev,
+                        prev_round.opinions,
+                    )
                 )
                 current_opinions.append(updated)
+                self._heartbeat()
 
             result.rounds.append(
                 DebateRound(
@@ -1770,6 +1826,63 @@ class AShareDebateCoordinator:
             )
 
         return result.rounds[-1].opinions
+
+    def _call_agent_with_deadline(
+        self,
+        operation: Callable[[], AgentOpinion],
+    ) -> AgentOpinion:
+        """在模型调用阻塞时继续 heartbeat，超时不等待后台线程收尾。"""
+        if self._deadline_monotonic is None:
+            return operation()
+
+        outcome: queue.Queue[tuple[bool, object]] = queue.Queue(maxsize=1)
+
+        def worker() -> None:
+            try:
+                outcome.put((True, operation()))
+            except BaseException as exc:  # 在线程边界重新抛回主流程
+                outcome.put((False, exc))
+
+        thread = threading.Thread(target=worker, daemon=True)
+        thread.start()
+        while True:
+            self._heartbeat()
+            remaining = self._deadline_monotonic - time.monotonic()
+            if remaining <= 0:
+                raise DebateDeadlineExceeded(
+                    f"超过 {self.debate_deadline_seconds:.1f}s deadline"
+                )
+            try:
+                succeeded, value = outcome.get(
+                    timeout=min(self.heartbeat_interval_seconds, remaining)
+                )
+            except queue.Empty:
+                continue
+            if succeeded:
+                return value  # type: ignore[return-value]
+            raise value  # type: ignore[misc]
+
+    def _heartbeat(self) -> None:
+        """先刷新存活信号，再检查 deadline，避免长调用被误判为 stale。"""
+        if self._result is not None:
+            self._result.heartbeat_count += 1
+            from aqsp.core.time import now_shanghai
+
+            self._result.last_heartbeat_at = now_shanghai().isoformat(
+                timespec="seconds"
+            )
+        if self.heartbeat_callback is not None:
+            try:
+                self.heartbeat_callback()
+            except Exception:  # 心跳是观测旁路，不能改变讨论结论
+                logger.warning("多 Agent 讨论 heartbeat callback failed", exc_info=True)
+        if (
+            self._deadline_monotonic is not None
+            and time.monotonic() > self._deadline_monotonic
+        ):
+            raise DebateDeadlineExceeded(
+                f"超过 {self.debate_deadline_seconds:.1f}s deadline"
+            )
 
     def _summarize_round(self, opinions: list[AgentOpinion]) -> str:
         vote_counts: dict[str, int] = {"bullish": 0, "bearish": 0, "neutral": 0}

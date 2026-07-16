@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import json
+import time
+from datetime import timedelta
+
 import pandas as pd
 import pytest
 
@@ -22,6 +26,7 @@ from aqsp.briefing.debate_tracker import (
     DebatePerformanceTracker,
 )
 from aqsp.core.types import PickResult
+from aqsp.core.time import now_shanghai
 from aqsp.utils.llm_safe import LlmResult
 
 
@@ -942,3 +947,114 @@ def test_debate_performance_tracker_ignores_empty_predictions_and_old_tasks(
     breakdown = current.get_context_breakdown(AgentRole.BULL)
     assert breakdown[0].bucket == "unknown"
     assert breakdown[0].sample_count == 1
+
+
+def test_debate_performance_tracker_isolates_explicit_task_history(tmp_path) -> None:
+    storage_path = tmp_path / "debate_performance.jsonl"
+    rows = []
+    signal_date = now_shanghai().date().isoformat()
+    created_at = f"{signal_date}T09:00:00+08:00"
+    for task_id, was_correct in (("intraday", True), ("closing_review", False)):
+        rows.append(
+            {
+                "agent_id": "bull-shared",
+                "role": AgentRole.BULL.value,
+                "predicted_stance": "bullish",
+                "was_correct": was_correct,
+                "task_id": task_id,
+                "debate_id": f"debate-{task_id}",
+                "signal_date": signal_date,
+                "candidate_fingerprint": f"candidate-{task_id}",
+                "created_at": created_at,
+            }
+        )
+    storage_path.write_text(
+        "\n".join(json.dumps(row) for row in rows), encoding="utf-8"
+    )
+
+    intraday = DebatePerformanceTracker(
+        storage_path=str(storage_path), task_id="intraday"
+    )
+    closing = DebatePerformanceTracker(
+        storage_path=str(storage_path), task_id="closing_review"
+    )
+    unscoped = DebatePerformanceTracker(storage_path=str(storage_path), task_id=None)
+
+    assert (
+        intraday.get_agent_metrics(AgentRole.BULL, "bull-shared").correct_predictions
+        == 1
+    )
+    assert (
+        closing.get_agent_metrics(AgentRole.BULL, "bull-shared").correct_predictions
+        == 0
+    )
+    assert (
+        unscoped.get_agent_metrics(AgentRole.BULL, "bull-shared").total_predictions == 0
+    )
+
+
+def test_debate_performance_tracker_requires_independent_days_and_cooldown(
+    tmp_path,
+) -> None:
+    storage_path = tmp_path / "debate_performance.jsonl"
+    rows = []
+    base_date = now_shanghai().date()
+    signal_dates = tuple(
+        (base_date - timedelta(days=offset)).isoformat() for offset in (15, 14, 13)
+    )
+    for index, signal_date in enumerate(signal_dates):
+        for duplicate in range(2):
+            rows.append(
+                {
+                    "agent_id": "bull-qualified",
+                    "role": AgentRole.BULL.value,
+                    "predicted_stance": "bullish",
+                    "was_correct": True,
+                    "task_id": "intraday",
+                    "debate_id": f"debate-{index}-{duplicate}",
+                    "signal_date": signal_date,
+                    "candidate_fingerprint": f"candidate-{index}-{duplicate}",
+                    "created_at": f"{signal_date}T09:00:00+08:00",
+                }
+            )
+    storage_path.write_text(
+        "\n".join(json.dumps(row) for row in rows), encoding="utf-8"
+    )
+    tracker = DebatePerformanceTracker(
+        storage_path=str(storage_path), task_id="intraday"
+    )
+    qualified = tracker.calculate_adjustment_weight(AgentRole.BULL, "bull-qualified")
+    assert qualified > 0
+
+    tracker._agent_latest_record_at["bull_bull-qualified"] = now_shanghai()
+    assert tracker.calculate_adjustment_weight(AgentRole.BULL, "bull-qualified") == 0.0
+
+
+def test_debate_coordinator_deadline_reports_block_without_changing_score(
+    monkeypatch,
+) -> None:
+    original = AShareDebateAgent.generate_initial_opinion
+
+    def slow_initial(self, pick, df, *, market_context_lines=()):
+        time.sleep(0.01)
+        return original(self, pick, df, market_context_lines=market_context_lines)
+
+    monkeypatch.setattr(AShareDebateAgent, "generate_initial_opinion", slow_initial)
+    heartbeats: list[int] = []
+    pick = _make_pick(score=72.0)
+    result = AShareDebateCoordinator(
+        max_rounds=2,
+        roles=(AgentRole.BULL, AgentRole.RISK_CONTROL),
+        task_id="intraday",
+        debate_deadline_seconds=0.001,
+        heartbeat_callback=lambda: heartbeats.append(1),
+    ).run_debate(pick, pd.DataFrame({"close": [100.0, 101.0]}))
+
+    assert result.deadline_exceeded is True
+    assert result.runtime_status == "blocked"
+    assert result.deterministic_score == 72.0
+    assert result.deterministic_score_unchanged is True
+    assert result.advisory_only is True
+    assert result.task_id == "intraday"
+    assert result.heartbeat_count >= 1
+    assert heartbeats
