@@ -5,6 +5,7 @@ import math
 import socket
 import time
 from collections.abc import Callable, Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from json import JSONDecodeError
@@ -47,6 +48,14 @@ _DEFAULT_YAHOO_SYMBOLS = {
     "DXY": "DX-Y.NYB",
     "US10Y": "^TNX",
     "WTI": "CL=F",
+}
+_DEFAULT_EASTMONEY_SECIDS = {
+    "SPX": "100.SPX",
+    "NASDAQ100": "100.NDX100",
+    "HSI": "100.HSI",
+    "DXY": "100.UDI",
+    "US10Y": "171.US10Y",
+    "WTI": "102.CL00Y",
 }
 
 
@@ -136,6 +145,32 @@ class MarketContextSource:
             instrument: self._fetch_instrument(instrument, current, policy)
             for instrument in REALTIME_CROSS_MARKET_INSTRUMENTS
         }
+
+    def fetch_payload_concurrent(
+        self,
+        *,
+        now: datetime | None = None,
+        policy: RealtimeCrossMarketPolicy = RealtimeCrossMarketPolicy(),
+    ) -> dict[str, dict[str, object]]:
+        """Fetch independent instruments concurrently within provider deadlines."""
+        current = to_shanghai(now or self._clock())
+        with ThreadPoolExecutor(
+            max_workers=len(REALTIME_CROSS_MARKET_INSTRUMENTS),
+            thread_name_prefix="aqsp-market-context",
+        ) as executor:
+            futures = {
+                instrument: executor.submit(
+                    self._fetch_instrument,
+                    instrument,
+                    current,
+                    policy,
+                )
+                for instrument in REALTIME_CROSS_MARKET_INSTRUMENTS
+            }
+            return {
+                instrument: futures[instrument].result()
+                for instrument in REALTIME_CROSS_MARKET_INSTRUMENTS
+            }
 
     def _fetch_instrument(
         self,
@@ -231,7 +266,7 @@ def fetch_live_market_context_payload(
 ) -> dict[str, dict[str, object]]:
     """Fetch the live cross-market payload for a short-term runtime task."""
     policy = RealtimeCrossMarketPolicy(timeout_seconds=timeout_seconds)
-    return MarketContextSource().fetch_payload(now=now, policy=policy)
+    return MarketContextSource().fetch_payload_concurrent(now=now, policy=policy)
 
 
 def default_market_context_providers() -> dict[str, tuple[HttpJsonProvider, ...]]:
@@ -240,10 +275,27 @@ def default_market_context_providers() -> dict[str, tuple[HttpJsonProvider, ...]
     providers: dict[str, tuple[HttpJsonProvider, ...]] = {}
     for instrument, symbol in _DEFAULT_YAHOO_SYMBOLS.items():
         providers[instrument] = (
+            _eastmoney_provider(_DEFAULT_EASTMONEY_SECIDS[instrument]),
             _yahoo_provider("yahoo_chart_primary", "query1.finance.yahoo.com", symbol),
             _yahoo_provider("yahoo_chart_fallback", "query2.finance.yahoo.com", symbol),
         )
     return providers
+
+
+def _eastmoney_provider(secid: str) -> HttpJsonProvider:
+    return HttpJsonProvider(
+        name="eastmoney_push2",
+        url="https://push2.eastmoney.com/api/qt/stock/get",
+        value_path="data.f43",
+        change_pct_path="data.f170",
+        observed_at_path="data.f86",
+        timestamp_source="vendor",
+        params={
+            "secid": secid,
+            "fltt": 2,
+            "fields": "f43,f170,f86",
+        },
+    )
 
 
 def _yahoo_provider(name: str, host: str, symbol: str) -> HttpJsonProvider:

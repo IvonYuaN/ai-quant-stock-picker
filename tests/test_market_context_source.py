@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from datetime import datetime
+from threading import Barrier
 
 import pytest
 
 from aqsp.data.market_context_source import (
     HttpJsonProvider,
     MarketContextSource,
+    default_market_context_providers,
     fetch_live_market_context_payload,
 )
 from aqsp.market_context import RealtimeCrossMarketPolicy
@@ -140,6 +142,24 @@ def test_market_context_source_rejects_invalid_provider_config() -> None:
         )
 
 
+def test_default_market_context_providers_use_verified_eastmoney_secids() -> None:
+    providers = default_market_context_providers()
+    expected = {
+        "SPX": "100.SPX",
+        "NASDAQ100": "100.NDX100",
+        "HSI": "100.HSI",
+        "DXY": "100.UDI",
+        "US10Y": "171.US10Y",
+        "WTI": "102.CL00Y",
+    }
+
+    assert {
+        instrument: str(items[0].params["secid"])
+        for instrument, items in providers.items()
+    } == expected
+    assert all(items[0].name == "eastmoney_push2" for items in providers.values())
+
+
 def test_fetch_live_market_context_payload_uses_short_term_timeout(monkeypatch) -> None:
     seen: dict[str, object] = {}
 
@@ -148,9 +168,37 @@ def test_fetch_live_market_context_payload_uses_short_term_timeout(monkeypatch) 
         seen["timeout"] = policy.timeout_seconds
         return {"SPX": {"status": "unavailable", "value": None}}
 
-    monkeypatch.setattr(MarketContextSource, "fetch_payload", fake_fetch_payload)
+    monkeypatch.setattr(
+        MarketContextSource,
+        "fetch_payload_concurrent",
+        fake_fetch_payload,
+    )
 
     payload = fetch_live_market_context_payload(timeout_seconds=0.75, now=NOW)
 
     assert payload["SPX"]["status"] == "unavailable"
     assert seen == {"now": NOW, "timeout": 0.75}
+
+
+def test_market_context_live_payload_fetches_instruments_concurrently() -> None:
+    barrier = Barrier(6)
+
+    def transport(_url: str, _headers: object, _timeout: float) -> object:
+        barrier.wait(timeout=1.0)
+        return {
+            "data": {
+                "value": 100.0,
+                "observed_at": "2026-07-14T09:59:30+08:00",
+            }
+        }
+
+    providers = {
+        instrument: [_provider(instrument, f"https://mock.test/{instrument}")]
+        for instrument in ("SPX", "NASDAQ100", "HSI", "DXY", "US10Y", "WTI")
+    }
+    source = MarketContextSource(providers, transport=transport)
+
+    payload = source.fetch_payload_concurrent(now=NOW)
+
+    assert set(payload) == set(providers)
+    assert all("value" in item for item in payload.values())
