@@ -792,6 +792,16 @@ class Briefing:
                 )
             if self.portfolio_summary.strategy_mix_name:
                 items.append(f"- 策略偏向: {self.portfolio_summary.strategy_mix_name}")
+            if self.portfolio_summary.strategy_weights:
+                items.append(
+                    "- 市况评分倍率: "
+                    + "、".join(
+                        f"{strategy_id} ×{weight:.2f}"
+                        for strategy_id, weight in self.portfolio_summary.strategy_weights[
+                            :4
+                        ]
+                    )
+                )
             if self.portfolio_summary.top_focus:
                 items.append(
                     "- 主看名单: " + "、".join(self.portfolio_summary.top_focus)
@@ -1479,9 +1489,9 @@ class BriefingGenerator:
             )
         if portfolio_summary.strategy_weights:
             lines.append(
-                "- 方向占比参考: "
+                "- 市况评分倍率: "
                 + "、".join(
-                    f"{strategy_id} {weight:.0%}"
+                    f"{strategy_id} ×{weight:.2f}"
                     for strategy_id, weight in portfolio_summary.strategy_weights[:4]
                 )
             )

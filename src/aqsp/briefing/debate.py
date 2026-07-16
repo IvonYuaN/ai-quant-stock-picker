@@ -303,6 +303,14 @@ class DebateResult:
         }
 
 
+def _is_st_risk_pick(pick: PickResult) -> bool:
+    name = str(pick.name or "").strip().upper()
+    if name.startswith(("ST", "*ST")) or "退市" in name:
+        return True
+    risk_text = "；".join(str(item) for item in pick.risks).upper()
+    return any(marker in risk_text for marker in ("ST股", "*ST", "退市风险"))
+
+
 class AShareDebateAgent:
     """A股市场辩论 Agent 基类"""
 
@@ -565,7 +573,7 @@ class AShareDebateAgent:
             return "bearish" if pick.score < 50 else "neutral"
         elif self.role == AgentRole.RISK_CONTROL:
             # 风控更保守
-            if "ST" in pick.name or "ST" in str(pick.risks):
+            if _is_st_risk_pick(pick):
                 return "bearish"
             if invalidation_signals or pressure_targets or conflict_count > 0:
                 return "bearish"
@@ -824,7 +832,7 @@ class AShareDebateAgent:
         """分析风险因素"""
         risks = []
 
-        if "ST" in pick.name or "st" in pick.rating.lower():
+        if _is_st_risk_pick(pick):
             risks.append("ST股风险")
         if "涨停" in str(pick.risks) or "涨停" in str(pick.reasons):
             risks.append("涨停板流动性风险")
@@ -854,7 +862,7 @@ class AShareDebateAgent:
         )
 
         if self.role == AgentRole.RISK_CONTROL:
-            if "ST" in pick.name:
+            if _is_st_risk_pick(pick):
                 risks.append("⚠️ ST股：存在退市风险")
             if pick.score > 80:
                 risks.append("⚠️ 高分股：警惕回调风险")

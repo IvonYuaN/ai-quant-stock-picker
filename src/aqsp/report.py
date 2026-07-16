@@ -179,9 +179,9 @@ def _format_final_decision_board(
             )
         if getattr(portfolio_summary, "strategy_weights", ()):
             lines.append(
-                "- 策略权重建议: "
+                "- 市况评分倍率: "
                 + "、".join(
-                    f"{strategy_id} {weight:.0%}"
+                    f"{strategy_id} ×{weight:.2f}"
                     for strategy_id, weight in tuple(
                         getattr(portfolio_summary, "strategy_weights", ())
                     )[:4]

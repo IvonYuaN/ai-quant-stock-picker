@@ -455,7 +455,7 @@ def test_report_renders_allocation_guidance_when_summary_provided() -> None:
     assert "- 当前市况: 稳定上涨" in markdown
     assert "- 策略主配比: 进攻牛市 | 稳定上涨期，重仓动量+涨停板" in markdown
     assert "- 优先策略: 动量趋势、涨停接力" in markdown
-    assert "- 策略权重建议: momentum 30%、limit_up_ladder 30%" in markdown
+    assert "- 市况评分倍率: momentum ×0.30、limit_up_ladder ×0.30" in markdown
     assert "长江电力: 20% | 主链评分 76.0；优先级上调" in markdown
     assert "- 先看顺序: 600900 长江电力" in markdown
     assert "- 现金留存: 25%" in markdown

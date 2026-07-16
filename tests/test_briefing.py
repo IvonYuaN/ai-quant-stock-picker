@@ -738,6 +738,34 @@ class TestBriefingGenerator:
 
 
 class TestDebateAgent:
+    def test_strong_buy_rating_is_not_misclassified_as_st_risk(self):
+        agent = AShareDebateAgent(role=AgentRole.RISK_CONTROL)
+        opinion = agent.generate_initial_opinion(
+            _make_pick(
+                symbol="000001",
+                name="平安银行",
+                score=75.5,
+                rating="strong_buy_candidate",
+                risks=(),
+            ),
+            pd.DataFrame({"close": [10 + index * 0.01 for index in range(30)]}),
+        )
+
+        rendered = " ".join((*opinion.arguments, *opinion.risk_factors))
+        assert "ST股风险" not in rendered
+        assert "ST股：存在退市风险" not in rendered
+
+    def test_st_name_still_emits_explicit_st_risk(self):
+        agent = AShareDebateAgent(role=AgentRole.RISK_CONTROL)
+        opinion = agent.generate_initial_opinion(
+            _make_pick(name="*ST示例", rating="watch"),
+            pd.DataFrame({"close": [10 + index * 0.01 for index in range(30)]}),
+        )
+
+        rendered = " ".join((*opinion.arguments, *opinion.risk_factors))
+        assert "ST股风险" in rendered
+        assert "ST股：存在退市风险" in rendered
+
     def test_cross_market_agent_does_not_invent_overseas_claim_when_news_is_empty(self):
         agent = AShareDebateAgent(
             role=AgentRole.CROSS_MARKET,
@@ -1400,6 +1428,31 @@ class TestGenerateSmartSummary:
         assert "- 待确认: 板块集中度过高，压低新能源暴露" in summary
         assert "- 现金留存: 20%" in summary
         assert "- 阻塞: 300750 宁德时代: 板块集中度过高，压低新能源暴露" in summary
+
+    def test_smart_summary_labels_strategy_values_as_score_multipliers(self):
+        briefing = Briefing(
+            date="2026-05-27 10:00",
+            sections=[],
+            portfolio_summary=PortfolioDecisionSummary(
+                promote_count=0,
+                downgrade_count=0,
+                keep_count=1,
+                top_focus=(),
+                watchlist=(),
+                allocations=(),
+                cash_reserve=1.0,
+                allocation_note="",
+                strategy_weights=(
+                    ("low_vol_trend", 0.97),
+                    ("ma_pullback", 0.97),
+                ),
+            ),
+        )
+
+        summary = briefing.generate_smart_summary()
+
+        assert "- 市况评分倍率: low_vol_trend ×0.97、ma_pullback ×0.97" in summary
+        assert "97%" not in summary
 
     def test_main_chain_section_renders_allocation_guidance(self):
         gen = BriefingGenerator()
