@@ -29,6 +29,7 @@ DEFAULT_BACKUP_DIR = "/opt/aqsp/runtime-backups"
 DEFAULT_REMOTE_OVERLAY_STATE = ".state/runtime-sync-overlay.json"
 DEFAULT_REMOTE_RUNTIME_LOCK = ".locks/server-runtime.lock"
 RUNTIME_SYNC_DEPENDENCIES: dict[str, tuple[str, ...]] = {
+    "scripts/intraday_refresh.sh": ("scripts/merge_intraday_news.py",),
     "scripts/smoke_market_context_runtime.py": (
         "src/aqsp/market_context.py",
         "src/aqsp/portfolio/manager.py",

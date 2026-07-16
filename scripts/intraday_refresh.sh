@@ -506,6 +506,22 @@ refresh_intraday_news_catalysts() {
     return 0
 }
 
+merge_intraday_news_context() {
+    local merge_script="${PROJECT_ROOT}/scripts/merge_intraday_news.py"
+    if [ ! -f "$merge_script" ] || [ ! -f "$INTRADAY_OUTPUT_CSV" ] || [ ! -f "$INTRADAY_NEWS_JSON_OUTPUT" ]; then
+        log "[WARN] 消息结果回写所需文件缺失，跳过候选上下文接线"
+        return 0
+    fi
+    if ! "$PYTHON_BIN" "$merge_script" \
+        --csv "$INTRADAY_OUTPUT_CSV" \
+        --news-json "$INTRADAY_NEWS_JSON_OUTPUT" \
+        >>"$RESULT_LOG" 2>&1; then
+        log "[WARN] 当前消息结果未能回写候选 CSV；Agent 仅使用运行级消息状态"
+        return 0
+    fi
+    log "当前消息结果已回写候选 CSV，供 Agent 讨论使用"
+}
+
 refresh_realtime_cross_market_context() {
     if ! is_truthy "${AQSP_INTRADAY_MARKET_CONTEXT_REFRESH:-true}"; then
         log "盘中跨市场 sidecar 已关闭"
@@ -1418,6 +1434,7 @@ fi
 
 refresh_realtime_cross_market_context
 refresh_intraday_news_catalysts
+merge_intraday_news_context
 if [ "$NEWS_CATALYST_STATUS" = "warning" ]; then
     # News is advisory-only. Preserve its warning in the status artifact, but
     # do not turn a fresh candidate/home publish into a failed scheduled run.
