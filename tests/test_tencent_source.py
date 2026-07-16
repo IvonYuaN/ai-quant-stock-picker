@@ -5,7 +5,11 @@ from datetime import date
 import pandas as pd
 
 from aqsp.core.errors import DataError
-from aqsp.data.tencent_source import TencentSource, _get_market_prefix
+from aqsp.data.tencent_source import (
+    TencentSource,
+    _get_market_prefix,
+    _normalize_tencent_intraday_volume_to_shares,
+)
 
 
 @pytest.fixture
@@ -191,6 +195,20 @@ def test_tencent_intraday_reads_market_prefixed_payload_key(monkeypatch):
     assert frame["close"].tolist() == [1182.20, 1181.00]
     assert frame["volume"].tolist() == [100.0, 40.0]
     assert frame["amount"].tolist() == [118220.0, 47240.0]
+
+
+def test_tencent_intraday_volume_normalizes_lots_row_by_row() -> None:
+    frame = pd.DataFrame(
+        {
+            "close": [10.0, 10.0],
+            "volume": [1_000.0, 100_000.0],
+            "amount": [1_000_000.0, 1_000_000.0],
+        }
+    )
+
+    normalized = _normalize_tencent_intraday_volume_to_shares(frame)
+
+    assert normalized["volume"].tolist() == [100_000.0, 100_000.0]
 
 
 def test_fetch_intraday_returns_dict(tencent_source):

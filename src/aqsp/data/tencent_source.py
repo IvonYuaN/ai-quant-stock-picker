@@ -131,11 +131,13 @@ class TencentSource(DataSource):
     ) -> dict[str, OhlcvFrame]:
         out: dict[str, OhlcvFrame] = {}
         for symbol in symbols:
-            out[symbol] = require_fetched_frame(
-                self.name,
-                "分时",
-                symbol,
-                self._fetch_tencent_intraday(symbol, period),
+            out[symbol] = _normalize_tencent_intraday_volume_to_shares(
+                require_fetched_frame(
+                    self.name,
+                    "分时",
+                    symbol,
+                    self._fetch_tencent_intraday(symbol, period),
+                )
             )
         require_non_empty_fetch_result(self.name, "分时", symbols, out)
         return out
@@ -395,3 +397,21 @@ class TencentSource(DataSource):
         df["amount"] = df["volume"] * df["close"]
         df = apply_limit_suspended_adj(df, symbol, cache=self.cache)
         return df
+
+
+def _normalize_tencent_intraday_volume_to_shares(df: pd.DataFrame) -> pd.DataFrame:
+    """Normalize Tencent minute volume row by row when it is reported in lots."""
+    normalized = df.copy()
+    if normalized.empty or "volume" not in normalized.columns:
+        return normalized
+    volume = pd.to_numeric(normalized["volume"], errors="coerce")
+    empty = pd.Series(float("nan"), index=normalized.index)
+    close = pd.to_numeric(normalized.get("close", empty), errors="coerce")
+    amount = pd.to_numeric(normalized.get("amount", empty), errors="coerce")
+    valid = (volume > 0) & (close > 0) & (amount > 0)
+    implied_unit = amount / (close * volume)
+    lots_mask = valid & implied_unit.between(20.0, 200.0)
+    normalized["volume"] = volume.where(~lots_mask, volume * 100.0)
+    normalized.attrs.update(df.attrs)
+    normalized.attrs["volume_unit"] = "shares"
+    return normalized
