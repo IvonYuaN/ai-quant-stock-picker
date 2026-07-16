@@ -248,6 +248,11 @@ def _collect_composite_news(
     deadline = monotonic() + timeout_seconds
     for worker in workers:
         worker.join(max(0.0, deadline - monotonic()))
+        # Once one source has produced usable frames, return them as a partial
+        # result instead of waiting for a slower optional source to consume the
+        # outer news deadline.
+        if any(frames for frames, _error in results.values()):
+            break
 
     frames: list[pd.DataFrame] = []
     errors: list[str] = []
