@@ -48,6 +48,19 @@ RESULT_COLUMNS = [
 ]
 
 
+def _intraday_coverage_label(metadata: RunMetadata) -> str:
+    status = str(metadata.intraday_coverage_status or "not_applicable").strip().lower()
+    label = {
+        "complete": "完整",
+        "partial": "部分",
+        "not_available": "不可用",
+        "not_applicable": "非盘中任务",
+    }.get(status, status or "未知")
+    if status == "partial" and metadata.intraday_missing_symbols:
+        label += "（缺少 " + "、".join(metadata.intraday_missing_symbols) + "）"
+    return label
+
+
 def _resolve_decision_label(pick: PickResult) -> str:
     return rating_label(pick.rating)
 
@@ -613,7 +626,8 @@ def _metadata_lines(metadata: RunMetadata) -> list[str]:
         f"- 最大扫描范围: {metadata.max_universe}",
         f"- 价格范围: {metadata.min_price} - {metadata.max_price}",
         f"- 20日均成交额下限: {metadata.min_avg_amount:.0f}",
-        f"- 盘中增强: {'已开启' if metadata.online_factors_enabled else '未开启'}",
+        f"- 盘中覆盖: {_intraday_coverage_label(metadata)}",
+        f"- 在线附加因子: {'已开启' if metadata.online_factors_enabled else '未开启'}",
         "- "
         + humanize_runtime_snapshot_line(
             f"thresholds.version: {metadata.thresholds_version}"

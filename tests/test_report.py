@@ -56,7 +56,40 @@ def test_report_renders_run_metadata_when_provided() -> None:
     assert "- 数据时效: 最新交易日 2026-05-29 / 延迟 0 天" in markdown
     assert "- 数据状态: 正常 / tdx_vipdoc 健康；数据源成功/失败 3/0" in markdown
     assert "显式 0 / 解析 100 / 取数 101 / 筛选前 8 / 最终 1" in markdown
+    assert "- 盘中覆盖: 非盘中任务" in markdown
+    assert "- 在线附加因子: 未开启" in markdown
     assert "- 规则版本: 1.0.0" in markdown
+
+
+def test_report_distinguishes_partial_intraday_coverage_from_online_factors() -> None:
+    metadata = RunMetadata(
+        requested_source="online_first",
+        actual_source="multi",
+        source_freshness_tier="realtime",
+        source_coverage_tier="broad_runtime",
+        source_local_status="not_required",
+        source_health_label="fallback",
+        source_health_message="部分来源已回退",
+        fallback_used=True,
+        explicit_symbol_count=2,
+        resolved_symbol_count=2,
+        fetched_frame_count=2,
+        screened_count=1,
+        final_count=1,
+        min_price=1.0,
+        max_price=1000.0,
+        min_avg_amount=50_000_000,
+        online_factors_enabled=False,
+        thresholds_version="1.0.0",
+        intraday_coverage_status="partial",
+        intraday_missing_symbols=("000001",),
+    )
+
+    markdown = to_markdown([], metadata=metadata)
+
+    assert "- 盘中覆盖: 部分（缺少 000001）" in markdown
+    assert "- 在线附加因子: 未开启" in markdown
+    assert "盘中增强" not in markdown
 
 
 def test_report_renders_market_context_lines_when_provided() -> None:
