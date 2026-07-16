@@ -156,6 +156,7 @@ def test_write_home_snapshot_builds_bounded_advisory_only_payload(monkeypatch) -
         "600004",
         "600005",
     ]
+
     assert [item.score for item in snapshot.candidates] == [
         88.0,
         80.0,
@@ -194,6 +195,17 @@ def test_write_home_snapshot_builds_bounded_advisory_only_payload(monkeypatch) -
         "重点看首个确定性候选",
     )
     assert snapshot.stale_after == "2026-07-10T15:31:00+08:00"
+
+
+def test_snapshot_candidate_maps_freshness_label_when_status_is_missing() -> None:
+    candidate = _candidate("600006", 70.0)
+    candidate.freshness = ""
+    candidate.freshness_label = "新鲜"
+
+    snapshot_candidate = write_home_snapshot._snapshot_candidate(candidate)
+
+    assert snapshot_candidate is not None
+    assert snapshot_candidate.freshness == "fresh"
 
 
 def test_write_home_snapshot_makes_hidden_candidate_count_explicit(monkeypatch) -> None:

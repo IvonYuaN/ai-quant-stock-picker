@@ -259,6 +259,25 @@ def _has_candidate_deterministic_evidence(candidate: Any) -> bool:
     return math.isfinite(score) and bool(_candidate_reasons(candidate))
 
 
+def _candidate_freshness(candidate: Any) -> str:
+    """Preserve a machine-readable freshness status at the snapshot boundary."""
+    explicit = _text(getattr(candidate, "freshness", ""))
+    if explicit:
+        return explicit
+    label = _text(getattr(candidate, "freshness_label", ""))
+    if "新鲜" in label:
+        return "fresh"
+    if "观察" in label or "偏旧" in label:
+        return "watch"
+    if "过期" in label:
+        return "stale"
+    if "失败" in label or "不可用" in label:
+        return "failed"
+    if "未知" in label:
+        return "unknown"
+    return ""
+
+
 def _snapshot_candidate(candidate: Any) -> HomeSnapshotCandidate | None:
     symbol = _text(getattr(candidate, "symbol", ""))
     if not symbol:
@@ -291,7 +310,7 @@ def _snapshot_candidate(candidate: Any) -> HomeSnapshotCandidate | None:
         data_source=data_source,
         data_fetched_at=_text(getattr(candidate, "data_fetched_at", "")),
         data_timestamp_source=_text(getattr(candidate, "data_timestamp_source", "")),
-        freshness=_text(getattr(candidate, "freshness", "")),
+        freshness=_candidate_freshness(candidate),
     )
 
 
