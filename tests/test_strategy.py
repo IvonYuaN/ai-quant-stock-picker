@@ -187,6 +187,32 @@ def test_score_symbol_rejects_stale_realtime_source() -> None:
     assert pick is None
 
 
+def test_score_symbol_preserves_runtime_source_provenance() -> None:
+    frame = _frame("TRACEABLE", 0.004, 1.8)
+    frame.attrs.update(
+        {
+            "source_name": "eastmoney",
+            "fetched_at": "2026-07-16T13:05:00+08:00",
+            "timestamp_source": "bar_time",
+            "historical_source": "sina",
+            "workload": "walkforward",
+        }
+    )
+
+    pick = score_symbol(
+        "TRACEABLE",
+        frame,
+        ScreeningConfig(min_avg_amount=1),
+        ScoringThresholds(),
+    )
+
+    assert pick is not None
+    assert pick.metrics["data_source"] == "eastmoney"
+    assert pick.metrics["data_fetched_at"] == "2026-07-16T13:05:00+08:00"
+    assert pick.metrics["data_timestamp_source"] == "bar_time"
+    assert pick.metrics["historical_data_source"] == "sina"
+
+
 def test_liquidity_penalty_uses_scoring_threshold() -> None:
     frame = _frame("LOW", 0.004, 1.5)
     config = ScreeningConfig(min_avg_amount=10**12)
