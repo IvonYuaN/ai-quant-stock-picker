@@ -56,7 +56,7 @@ def test_intraday_runtime_contract_uses_configured_benchmark_and_quality_gate() 
         in script
     )
     assert (
-        'INTRADAY_NEWS_SOURCE_TIMEOUT_SECONDS="${AQSP_INTRADAY_NEWS_SOURCE_TIMEOUT_SECONDS:-2}"'
+        'INTRADAY_NEWS_SOURCE_TIMEOUT_SECONDS="${AQSP_INTRADAY_NEWS_SOURCE_TIMEOUT_SECONDS:-6}"'
         in script
     )
     assert 'INTRADAY_NEWS_MAX_EVENTS="${AQSP_INTRADAY_NEWS_MAX_EVENTS:-3}"' in script
@@ -562,7 +562,7 @@ def test_intraday_runtime_refreshes_news_after_candidates_and_keeps_home_snapsho
     assert result.returncode == 0, result.stdout + result.stderr
     assert home_marker.read_text(encoding="utf-8") == "refreshed"
     news_args = news_marker.read_text(encoding="utf-8").strip().split("|")
-    assert news_args[:6] == ["20", "2", "3", "false", "false", "600000"]
+    assert news_args[:6] == ["20", "6", "3", "false", "false", "600000"]
     assert (tmp_path / "reports" / "news_catalysts.md").exists()
     assert (tmp_path / "data" / "runtime" / "news_catalysts_latest.json").exists()
     status = json.loads(
