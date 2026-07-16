@@ -110,6 +110,20 @@ class CompositeNewsSource:
                 source_frames = source.fetch_symbol_news(symbol)
                 frames.extend(source_frames)
                 health.extend(getattr(source, "last_health", ()))
+            except TimeoutError as exc:
+                errors.append(f"{source.name}: {exc}")
+                health.append(
+                    NewsSourceHealth(
+                        name=source.name,
+                        region=_normalize_region(getattr(source, "region", "mixed")),
+                        status="timeout",
+                        fetched_at=_source_fetched_at(),
+                        warnings=(f"{source.name}: {exc}",),
+                    )
+                )
+                if not frames:
+                    raise
+                break
             except Exception as exc:
                 errors.append(f"{source.name}: {exc}")
                 health.append(
@@ -139,6 +153,20 @@ class CompositeNewsSource:
                 source_frames = source.fetch_global_news()
                 frames.extend(source_frames)
                 health.extend(getattr(source, "last_health", ()))
+            except TimeoutError as exc:
+                errors.append(f"{source.name}: {exc}")
+                health.append(
+                    NewsSourceHealth(
+                        name=source.name,
+                        region=_normalize_region(getattr(source, "region", "mixed")),
+                        status="timeout",
+                        fetched_at=_source_fetched_at(),
+                        warnings=(f"{source.name}: {exc}",),
+                    )
+                )
+                if not frames:
+                    raise
+                break
             except Exception as exc:
                 errors.append(f"{source.name}: {exc}")
                 health.append(
@@ -529,10 +557,10 @@ def build_default_news_source() -> NewsSource:
         akshare_source = None
 
     sources: list[NewsSource] = []
-    if akshare_source is not None:
-        sources.append(akshare_source)
     if rss_source is not None:
         sources.append(rss_source)
+    if akshare_source is not None:
+        sources.append(akshare_source)
     if not sources:
         raise DataError("未配置可用新闻源: akshare 未安装且 RSS 未启用或无有效订阅源")
     if len(sources) == 1:

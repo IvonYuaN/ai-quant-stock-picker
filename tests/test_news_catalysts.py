@@ -16,6 +16,7 @@ from aqsp.core.errors import DataError
 from aqsp.core.time import now_shanghai, today_shanghai
 from aqsp.data.news_source import (
     AkshareNewsSource,
+    CompositeNewsSource,
     NewsSource,
     NewsSourceHealth,
     RssFeedConfig,
@@ -798,6 +799,34 @@ def test_default_news_adapters_use_configured_source_timeout(monkeypatch) -> Non
     )
 
     assert timeouts == [0.25, 0.25]
+
+
+def test_composite_news_keeps_fast_fallback_when_later_source_times_out() -> None:
+    frame = pd.DataFrame([{"标题": "美股风险偏好回升", "来源": "RSS"}])
+    fast_source = SimpleNamespace(
+        name="rss_news",
+        region="international",
+        last_health=(),
+        fetch_symbol_news=lambda _symbol: [frame],
+        fetch_global_news=lambda: [frame],
+    )
+
+    def timeout():
+        raise TimeoutError("source deadline")
+
+    slow_source = SimpleNamespace(
+        name="akshare_news",
+        region="domestic",
+        last_health=(),
+        fetch_symbol_news=lambda _symbol: timeout(),
+        fetch_global_news=timeout,
+    )
+    source = CompositeNewsSource((fast_source, slow_source))
+
+    assert source.fetch_symbol_news("600276")[0].iloc[0]["来源"] == "RSS"
+    assert source.last_health[-1].status == "timeout"
+    assert source.fetch_global_news()[0].iloc[0]["来源"] == "RSS"
+    assert source.last_health[-1].status == "timeout"
 
 
 def test_news_catalyst_report_uses_fresh_cache_before_refetch(
