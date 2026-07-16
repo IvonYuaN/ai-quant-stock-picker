@@ -5,12 +5,11 @@ import os
 import signal
 import threading
 from collections.abc import Callable, Iterable, Sequence
-from concurrent.futures import Future, ThreadPoolExecutor, wait
-from concurrent.futures import TimeoutError as FutureTimeoutError
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime
 from pathlib import Path
 import re
+from time import monotonic
 from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
@@ -186,7 +185,7 @@ class _SourceStats:
 
 @dataclass(frozen=True)
 class _NewsFetchOutcome:
-    frame: pd.DataFrame = field(default_factory=pd.DataFrame)
+    frame: Any = field(default_factory=pd.DataFrame)
     error: BaseException | None = None
     timed_out: bool = False
 
@@ -816,45 +815,76 @@ def _fetch_news_frames_parallel(
     """
 
     unique_symbols = tuple(dict.fromkeys(str(symbol).strip() for symbol in symbols))
-    executor = ThreadPoolExecutor(max_workers=max(1, len(unique_symbols) + 1))
-    futures: dict[str, Future[pd.DataFrame]] = {}
-    try:
-        for symbol in unique_symbols:
-            futures[symbol] = executor.submit(
-                symbol_fetcher,
-                symbol,
-                max_symbol_news,
-            )
-        futures["__global__"] = executor.submit(global_fetcher, max_global_news)
-        done, pending = wait(
-            futures.values(),
-            timeout=max(0.1, float(timeout_seconds)),
+    timeout = float(timeout_seconds)
+    fetches: dict[str, Callable[[], pd.DataFrame]] = {
+        symbol: lambda symbol=symbol: symbol_fetcher(symbol, max_symbol_news)
+        for symbol in unique_symbols
+    }
+    fetches["__global__"] = lambda: global_fetcher(max_global_news)
+    outcomes = _run_fetchers_with_deadline(fetches, timeout_seconds=timeout)
+    return {
+        key: replace(
+            outcome,
+            frame=(
+                outcome.frame
+                if isinstance(outcome.frame, pd.DataFrame)
+                else pd.DataFrame()
+            ),
         )
-        done_set = set(done)
-        outcomes: dict[str, _NewsFetchOutcome] = {}
-        for key, future in futures.items():
-            if future in done_set:
-                try:
-                    result = future.result()
-                except Exception as exc:
-                    outcomes[key] = _NewsFetchOutcome(error=exc)
-                else:
-                    outcomes[key] = _NewsFetchOutcome(
-                        frame=result
-                        if isinstance(result, pd.DataFrame)
-                        else pd.DataFrame()
-                    )
-            elif future in pending:
-                future.cancel()
-                outcomes[key] = _NewsFetchOutcome(
-                    error=TimeoutError(
-                        f"消息源超过 {float(timeout_seconds):.1f}s 未返回"
-                    ),
-                    timed_out=True,
-                )
-        return outcomes
-    finally:
-        executor.shutdown(wait=False, cancel_futures=True)
+        for key, outcome in outcomes.items()
+    }
+
+
+def _run_fetchers_with_deadline(
+    fetches: dict[str, Callable[[], pd.DataFrame]],
+    *,
+    timeout_seconds: float,
+) -> dict[str, _NewsFetchOutcome]:
+    """Run independent fetches without registering exit-blocking futures.
+
+    ``ThreadPoolExecutor.shutdown(wait=False)`` still leaves its worker threads
+    registered in ``concurrent.futures``' interpreter-exit hook.  A network
+    source that ignores its request timeout can therefore keep the whole CLI
+    alive after the deadline.  These daemon workers are deliberately detached:
+    the caller receives a bounded result and the process can publish its
+    partial/observation snapshot without waiting for an uncooperative source.
+    """
+
+    outcomes: dict[str, _NewsFetchOutcome] = {}
+    lock = threading.Lock()
+
+    def run_one(key: str, fetch: Callable[[], pd.DataFrame]) -> None:
+        try:
+            result = fetch()
+            outcome = _NewsFetchOutcome(frame=result)
+        except BaseException as exc:
+            outcome = _NewsFetchOutcome(error=exc)
+        with lock:
+            outcomes[key] = outcome
+
+    workers = [
+        threading.Thread(
+            target=run_one,
+            args=(key, fetch),
+            name=f"aqsp-news-{key}",
+            daemon=True,
+        )
+        for key, fetch in fetches.items()
+    ]
+    for worker in workers:
+        worker.start()
+
+    deadline = monotonic() + max(0.1, float(timeout_seconds))
+    for worker in workers:
+        worker.join(max(0.0, deadline - monotonic()))
+
+    for key in fetches:
+        if key not in outcomes:
+            outcomes[key] = _NewsFetchOutcome(
+                error=TimeoutError(f"消息源超过 {float(timeout_seconds):.1f}s 未返回"),
+                timed_out=True,
+            )
+    return outcomes
 
 
 def build_catalyst_report(
@@ -2165,20 +2195,13 @@ def _call_fetcher_with_timeout(
             fetch,
             timeout_seconds=timeout_seconds,
         )
-    executor = ThreadPoolExecutor(max_workers=1)
-    future = executor.submit(fetch)
-    try:
-        result = future.result(timeout=max(0.1, timeout_seconds))
-    except FutureTimeoutError as exc:
-        future.cancel()
-        executor.shutdown(wait=False, cancel_futures=True)
-        raise TimeoutError(f"消息源超过 {timeout_seconds:.1f}s 未返回") from exc
-    finally:
-        if future.done():
-            executor.shutdown(wait=False, cancel_futures=True)
-    if result is None:
-        return pd.DataFrame()
-    return result
+    result = _run_fetchers_with_deadline(
+        {"single": fetch},
+        timeout_seconds=float(timeout_seconds),
+    )["single"]
+    if result.error is not None:
+        raise result.error
+    return result.frame
 
 
 def _call_fetcher_with_signal_timeout(

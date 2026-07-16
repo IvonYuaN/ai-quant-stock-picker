@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta
 import json
 from pathlib import Path
+import subprocess
+import sys
 import threading
 import time
 from types import SimpleNamespace
@@ -774,6 +776,26 @@ def test_news_catalyst_report_degrades_when_source_times_out() -> None:
     assert report.source_status == "timeout"
     assert not report.events
     assert "超过 0.0s 未返回" in report.warnings[0]
+
+
+def test_news_catalyst_timeout_does_not_block_process_exit() -> None:
+    code = """
+import time
+from aqsp.news.catalysts import _call_fetcher_with_timeout
+
+try:
+    _call_fetcher_with_timeout(lambda: time.sleep(10), timeout_seconds=0.05)
+except TimeoutError:
+    pass
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        timeout=2,
+    )
+
+    assert result.returncode == 0, result.stderr
 
 
 def test_news_catalyst_fetches_symbol_and_global_news_in_parallel() -> None:

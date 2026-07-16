@@ -8,7 +8,8 @@ from pathlib import Path
 import os
 import xml.etree.ElementTree as ET
 from collections.abc import Callable, Sequence
-from concurrent.futures import Future, ThreadPoolExecutor, wait
+import threading
+from time import monotonic
 from typing import Literal, Protocol
 from zoneinfo import ZoneInfo
 
@@ -246,72 +247,84 @@ class RssNewsSource:
             )
             raise DataError("RSS 新闻未配置可用 feed")
 
-        executor = ThreadPoolExecutor(
-            max_workers=min(len(self._feeds), self._max_concurrency),
-            thread_name_prefix="aqsp-rss",
-        )
-        futures: dict[int, Future[pd.DataFrame]] = {
-            index: executor.submit(self._fetch_feed, feed)
-            for index, feed in enumerate(self._feeds)
-        }
-        _done, pending = wait(tuple(futures.values()), timeout=self._timeout_seconds)
-        try:
-            for index, feed in enumerate(self._feeds):
-                future = futures[index]
-                if future in pending:
-                    future.cancel()
-                    frame: pd.DataFrame | None = None
-                    error: BaseException | None = TimeoutError(
-                        f"feed 超过 {self._timeout_seconds:.1f}s 未返回"
-                    )
-                else:
-                    try:
-                        frame = future.result()
-                        error = None
-                    except Exception as exc:
-                        frame = None
-                        error = exc
+        results: dict[int, tuple[pd.DataFrame | None, BaseException | None]] = {}
+        results_lock = threading.Lock()
+        semaphore = threading.BoundedSemaphore(self._max_concurrency)
 
-                if error is not None:
-                    warning = f"{feed.name}: {error}"
-                    errors.append(warning)
-                    health.append(
-                        NewsSourceHealth(
-                            name=feed.name,
-                            region=feed.region,
-                            status=_status_from_exception(error),
-                            fetched_at=_source_fetched_at(),
-                            warnings=(warning,),
-                        )
-                    )
-                    continue
-                if frame is not None and not frame.empty:
-                    frame.attrs["aqsp_fetched_at"] = _source_fetched_at()
-                    frames.append(frame)
-                    health.append(
-                        NewsSourceHealth(
-                            name=feed.name,
-                            region=feed.region,
-                            status="ok",
-                            successful=1,
-                            row_count=len(frame),
-                            fetched_at=str(frame.attrs["aqsp_fetched_at"]),
-                        )
-                    )
+        def fetch_one(index: int, feed: RssFeedConfig) -> None:
+            with semaphore:
+                try:
+                    frame = self._fetch_feed(feed)
+                except BaseException as exc:
+                    frame = None
+                    error: BaseException | None = exc
                 else:
-                    warning = f"{feed.name}: empty"
-                    errors.append(warning)
-                    health.append(
-                        NewsSourceHealth(
-                            name=feed.name,
-                            region=feed.region,
-                            status="empty",
-                            fetched_at=_source_fetched_at(),
-                            warnings=(warning,),
-                        )
+                    error = None
+                with results_lock:
+                    results[index] = (frame, error)
+
+        workers = [
+            threading.Thread(
+                target=fetch_one,
+                args=(index, feed),
+                name=f"aqsp-rss-{index}",
+                daemon=True,
+            )
+            for index, feed in enumerate(self._feeds)
+        ]
+        for worker in workers:
+            worker.start()
+        deadline = monotonic() + self._timeout_seconds
+        for worker in workers:
+            worker.join(max(0.0, deadline - monotonic()))
+
+        for index, feed in enumerate(self._feeds):
+            if index not in results:
+                frame = None
+                error: BaseException | None = TimeoutError(
+                    f"feed 超过 {self._timeout_seconds:.1f}s 未返回"
+                )
+            else:
+                frame, error = results[index]
+
+            if error is not None:
+                warning = f"{feed.name}: {error}"
+                errors.append(warning)
+                health.append(
+                    NewsSourceHealth(
+                        name=feed.name,
+                        region=feed.region,
+                        status=_status_from_exception(error),
+                        fetched_at=_source_fetched_at(),
+                        warnings=(warning,),
                     )
-        finally:
-            executor.shutdown(wait=False, cancel_futures=True)
+                )
+                continue
+            if frame is not None and not frame.empty:
+                frame.attrs["aqsp_fetched_at"] = _source_fetched_at()
+                frames.append(frame)
+                health.append(
+                    NewsSourceHealth(
+                        name=feed.name,
+                        region=feed.region,
+                        status="ok",
+                        successful=1,
+                        row_count=len(frame),
+                        fetched_at=str(frame.attrs["aqsp_fetched_at"]),
+                    )
+                )
+            else:
+                warning = f"{feed.name}: empty"
+                errors.append(warning)
+                health.append(
+                    NewsSourceHealth(
+                        name=feed.name,
+                        region=feed.region,
+                        status="empty",
+                        fetched_at=_source_fetched_at(),
+                        warnings=(warning,),
+                    )
+                )
         self._last_health = tuple(health)
         if frames and errors:
             _attach_source_warnings(frames, errors)
