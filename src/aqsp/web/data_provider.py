@@ -1092,10 +1092,23 @@ class DashboardDataProvider:
         )
 
     def _intraday_artifact_freshness_status(self) -> str:
-        status = str(self._intraday_artifact_state().get("status") or "").strip()
+        state = self._intraday_artifact_state()
+        status = str(state.get("status") or "").strip()
+        if status in {"failed", "error"}:
+            return "failed"
+        freshness = state.get("freshness")
+        if isinstance(freshness, dict):
+            nested_status = str(freshness.get("status") or "").strip()
+            if nested_status:
+                return nested_status
+        quality_gate = state.get("quality_gate")
+        if isinstance(quality_gate, dict):
+            gate_status = str(quality_gate.get("freshness_status") or "").strip()
+            if gate_status:
+                return gate_status
         if not status or status == "completed":
             return ""
-        return "failed" if status in {"failed", "error"} else "unknown"
+        return "unknown"
 
     def _intraday_artifact_status_reason(self) -> str:
         state = self._intraday_artifact_state()
@@ -3502,7 +3515,7 @@ class DashboardDataProvider:
                 else self.prioritized_debate_summaries(
                     review_date,
                     limit=3,
-                    salient_only=True,
+                    salient_only=False,
                     task_id=normalized_task,
                 )
             )
@@ -3517,17 +3530,15 @@ class DashboardDataProvider:
             current_debate_symbols = {
                 item.symbol for item in debates if item.symbol in candidate_symbol_set
             }
-            if (
-                debates
-                and candidate_symbol_set
-                and len(current_debate_symbols) < min(3, len(candidate_symbol_set))
+            if candidate_symbol_set and len(current_debate_symbols) < min(
+                3, len(candidate_symbol_set)
             ):
                 # The first priority slice may contain stale/non-focus symbols;
                 # widen whenever it does not cover the current candidate set.
                 debates = self.prioritized_debate_summaries(
                     review_date,
                     limit=max(20, len(candidate_symbols) * 3),
-                    salient_only=True,
+                    salient_only=False,
                     task_id=normalized_task,
                 )
             debates = self._prioritize_debates_for_candidate_symbols(

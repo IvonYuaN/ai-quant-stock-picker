@@ -1997,10 +1997,12 @@ def test_dashboard_data_provider_home_digest_expands_partial_debate_coverage(
     monkeypatch.setattr(
         provider,
         "live_candidate_view",
-        lambda **_kwargs: SimpleNamespace(candidates=(), artifact_date=""),
+        lambda **_kwargs: SimpleNamespace(
+            candidates=(SimpleNamespace(),), artifact_date="2026-07-14", status="fresh"
+        ),
     )
     monkeypatch.setattr(
-        provider, "same_day_candidate_spotlights", lambda *_args, **_kwargs: spotlights
+        provider, "live_candidate_spotlights", lambda *_args, **_kwargs: spotlights
     )
     calls: list[int] = []
 
@@ -2018,10 +2020,8 @@ def test_dashboard_data_provider_home_digest_expands_partial_debate_coverage(
 
     payload = provider.home_digest_payload("intraday", signal_date="2026-07-14")
 
-    # Without a fresh intraday artifact, historical same-day spotlights are
-    # intentionally not used to expand the live debate coverage.
-    assert calls == []
-    assert payload.debates == ()
+    assert calls == [3, 20]
+    assert payload.debates == current
 
 
 def test_dashboard_data_provider_splits_strategy_csv_values_for_home_cards(
@@ -5762,6 +5762,41 @@ def test_dashboard_data_provider_live_view_caps_intraday_csv_and_exposes_card_ev
     assert len(spotlights) == 3
     assert all("新鲜度: 新鲜" in item.review_meta for item in spotlights)
     assert all("证据质量:" in item.review_meta for item in spotlights)
+
+
+def test_dashboard_data_provider_uses_nested_freshness_when_sidecar_partially_fails(
+    monkeypatch, tmp_path: Path
+) -> None:
+    latest_path = tmp_path / "intraday_latest.csv"
+    pd.DataFrame(
+        [
+            {
+                "symbol": "600276",
+                "name": "恒瑞医药",
+                "date": "2026-07-16",
+                "score": 82,
+                "rating": "buy_candidate",
+                "reasons": "量价确认",
+            }
+        ]
+    ).to_csv(latest_path, index=False)
+    status_path = tmp_path / "intraday_refresh_status.json"
+    status_path.write_text(
+        json.dumps({"status": "partial_failed", "freshness": {"status": "fresh"}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AQSP_INTRADAY_STATUS", str(status_path))
+    now = datetime(2026, 7, 16, 10, 30, tzinfo=ZoneInfo("Asia/Shanghai"))
+    os.utime(latest_path, (now.timestamp(), now.timestamp()))
+    provider = DashboardDataProvider(
+        ledger_path=str(tmp_path / "ledger.jsonl"),
+        paper_ledger_path=str(tmp_path / "paper.jsonl"),
+        intraday_ledger_path=str(tmp_path / "intraday.jsonl"),
+        intraday_latest_path=str(latest_path),
+    )
+
+    assert provider.live_candidate_view(now=now).status == "fresh"
+    assert provider.live_candidate_spotlights(now=now)[0].action_label != "数据不可用"
 
 
 def test_live_candidate_view_quality_gate_blocks_failed_high_rating_rows() -> None:
