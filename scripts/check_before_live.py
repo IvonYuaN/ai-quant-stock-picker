@@ -267,7 +267,7 @@ def check_before_live(
     findings.append(_check_pbo_diagnostics(root, gate_path))
     findings.append(_check_trading_calendar_coverage(root, today))
     findings.append(_check_signal_sample_size(ledger_path))
-    findings.append(_check_gate_cold_start_alignment(root, ledger_path))
+    findings.append(_check_gate_cold_start_alignment(root, ledger_path, today=today))
     findings.append(_check_paper_tracking_sample_size(paper_ledger_path))
     findings.append(_check_signal_sample_status_boundary(root))
     findings.append(_check_strategy_executability_feedback(paper_ledger_path))
@@ -1141,7 +1141,12 @@ def _check_signal_sample_size(path: Path) -> ReadinessFinding:
     )
 
 
-def _check_gate_cold_start_alignment(root: Path, ledger_path: Path) -> ReadinessFinding:
+def _check_gate_cold_start_alignment(
+    root: Path,
+    ledger_path: Path,
+    *,
+    today: date,
+) -> ReadinessFinding:
     signal_days = count_independent_signal_days(str(ledger_path))
     if signal_days < MIN_INDEPENDENT_SIGNAL_DAYS:
         return ReadinessFinding(
@@ -1170,6 +1175,7 @@ def _check_gate_cold_start_alignment(root: Path, ledger_path: Path) -> Readiness
     gate_ok, gate_reasons = _check_notification_gate(
         cold_start_days=signal_days,
         gate_path=str(gate_path),
+        validation_date=today,
     )
     expected_fingerprint = gate_reason_fingerprint(gate_reasons) if gate_reasons else ""
     payload = _read_json(gate_state_path)

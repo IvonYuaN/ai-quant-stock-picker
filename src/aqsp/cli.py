@@ -1874,7 +1874,10 @@ def _log_run_decisions(
                     "symbol": pick.symbol,
                     "score": round(float(pick.score), 4),
                     "deterministic_score": round(
-                        float(pick.metrics.get("deterministic_score", pick.score) or pick.score),
+                        float(
+                            pick.metrics.get("deterministic_score", pick.score)
+                            or pick.score
+                        ),
                         4,
                     ),
                     "deterministic_score_unchanged": bool(
@@ -2334,12 +2337,16 @@ def _fetch_special_strategy_frames(
     return overlay.frames, actual_source
 
 
-def _intraday_overlay_coverage(frames: dict[str, pd.DataFrame]) -> tuple[str, tuple[str, ...]]:
+def _intraday_overlay_coverage(
+    frames: dict[str, pd.DataFrame],
+) -> tuple[str, tuple[str, ...]]:
     for frame in frames.values():
         coverage = frame.attrs.get("intraday_overlay_coverage")
         if not isinstance(coverage, dict):
             continue
-        missing = tuple(str(item) for item in coverage.get("missing_symbols", ()) if str(item))
+        missing = tuple(
+            str(item) for item in coverage.get("missing_symbols", ()) if str(item)
+        )
         status = str(coverage.get("status", "partial" if missing else "complete"))
         return status, missing
     return "not_available", ()
@@ -2549,7 +2556,11 @@ def _runtime_news_artifact_path(task_id: str) -> str:
     configured = str(os.getenv("AQSP_NEWS_JSON_OUTPUT", "") or "").strip()
     if configured:
         return configured
-    return "data/runtime/news_catalysts_latest.json" if _is_high_frequency_task(task_id) else ""
+    return (
+        "data/runtime/news_catalysts_latest.json"
+        if _is_high_frequency_task(task_id)
+        else ""
+    )
 
 
 def _runtime_news_artifact_max_age_seconds(task_id: str) -> float:
@@ -3008,9 +3019,7 @@ def _build_streaming_sqlite_context(
 
     def summarize_market_window(window_start: str, window_end: str):
         returns: list[float] = []
-        batch_size = int(
-            getattr(args, "stream_batch_size", DEFAULT_STREAM_BATCH_SIZE)
-        )
+        batch_size = int(getattr(args, "stream_batch_size", DEFAULT_STREAM_BATCH_SIZE))
         for index in range(0, len(effective_symbols), batch_size):
             batch = effective_symbols[index : index + batch_size]
             frames = load_batch(batch, window_start, window_end)
@@ -3528,9 +3537,7 @@ def _walkforward_gate_metadata(
         )
     if bool(getattr(args, "streaming", False)):
         metadata["memory_mode"] = "streaming"
-        metadata["stream_batch_size"] = int(
-            getattr(args, "stream_batch_size", 0) or 0
-        )
+        metadata["stream_batch_size"] = int(getattr(args, "stream_batch_size", 0) or 0)
     if metadata["source"] == "sqlite_db":
         db_path = _resolve_sqlite_db_path()
         if db_path:
@@ -3628,7 +3635,10 @@ def _walkforward_runtime_rows(
 
 
 def _check_notification_gate(
-    *, cold_start_days: int, gate_path: str = WALKFORWARD_GATE_PATH
+    *,
+    cold_start_days: int,
+    gate_path: str = WALKFORWARD_GATE_PATH,
+    validation_date: date | None = None,
 ) -> tuple[bool, list[str]]:
     """宪法 §1.3 #12/#14：返回 (是否放行, 未达原因列表)。
 
@@ -3662,7 +3672,7 @@ def _check_notification_gate(
 
     validation = validate_walkforward_gate_payload(
         gate,
-        today=today_shanghai(),
+        today=validation_date or today_shanghai(),
         max_age_days=MAX_GATE_AGE_DAYS,
         heldout_cutoff=date.fromisoformat(HELDOUT_TRAIN_CUTOFF),
     )
@@ -5849,7 +5859,9 @@ def run_walkforward(args: argparse.Namespace) -> int:
         if logger:
             logger.info("有效标的: %d 只", len(filtered))
     else:
-        print(f"正式覆盖标的: {effective_symbols} 只（按批加载，不保留全市场 DataFrame）")
+        print(
+            f"正式覆盖标的: {effective_symbols} 只（按批加载，不保留全市场 DataFrame）"
+        )
         if logger:
             logger.info("streaming 正式覆盖标的: %d 只", effective_symbols)
 
