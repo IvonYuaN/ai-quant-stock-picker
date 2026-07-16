@@ -111,6 +111,7 @@ def aqsp_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
                 "primary_risk_gate": "证据确认",
                 "next_trigger": "新增独立证据",
                 "active_roles": ["risk"],
+                "round_summaries": ["第1轮完成技术与风险初筛"],
             }
         ],
     )
@@ -154,6 +155,9 @@ def test_aqsp_api_returns_current_snapshot_with_messages_and_agents(
     assert body["data"]["selected_date"] == "2026-07-14"
     assert body["data"]["messages"]
     assert body["data"]["debates"]
+    assert body["data"]["debates"][0]["round_summaries"] == [
+        "第1轮完成技术与风险初筛"
+    ]
     assert body["data"]["stale_after"]
     assert body["meta"] == {"historical": False, "stale": False}
 
