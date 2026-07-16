@@ -209,6 +209,12 @@ def test_home_snapshot_round_trips_messages_and_debate_process(tmp_path) -> None
                 category="跨市",
                 source="RSS",
                 published_at="2026-07-11T09:00:00+08:00",
+                event_type="海外公司事件",
+                affected_sectors=("商业航天",),
+                affected_symbols=("600879",),
+                transmission_hypothesis="海外事件 -> A股映射",
+                supporting_evidence=("RSS: 海外主线",),
+                source_url="https://example.test/news",
             ),
         ),
     )
@@ -221,6 +227,9 @@ def test_home_snapshot_round_trips_messages_and_debate_process(tmp_path) -> None
     assert loaded is not None
     assert loaded.message_status == "部分可用"
     assert loaded.messages[0].source == "RSS"
+    assert loaded.messages[0].event_type == "海外公司事件"
+    assert loaded.messages[0].affected_sectors == ("商业航天",)
+    assert loaded.messages[0].supporting_evidence == ("RSS: 海外主线",)
     assert loaded.debate is not None
     assert loaded.debate.round_count == 3
 

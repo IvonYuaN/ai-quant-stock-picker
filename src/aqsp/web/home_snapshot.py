@@ -104,6 +104,16 @@ class HomeSnapshotMessage:
     category: str
     source: str
     published_at: str
+    url: str = ""
+    source_region: str = "mixed"
+    source_quality: str = ""
+    event_type: str = ""
+    affected_sectors: tuple[str, ...] = ()
+    affected_symbols: tuple[str, ...] = ()
+    transmission_hypothesis: str = ""
+    supporting_evidence: tuple[str, ...] = ()
+    source_url: str = ""
+    verification: str = ""
 
 
 @dataclass(frozen=True)
@@ -671,6 +681,18 @@ def _message_from_dict(payload: object) -> HomeSnapshotMessage:
         mapping,
         {"title", "summary", "impact", "category", "source", "published_at"},
         "message",
+        optional={
+            "url",
+            "source_region",
+            "source_quality",
+            "event_type",
+            "affected_sectors",
+            "affected_symbols",
+            "transmission_hypothesis",
+            "supporting_evidence",
+            "source_url",
+            "verification",
+        },
     )
     return HomeSnapshotMessage(
         title=_text(mapping["title"], "message.title"),
@@ -679,6 +701,31 @@ def _message_from_dict(payload: object) -> HomeSnapshotMessage:
         category=_text(mapping["category"], "message.category"),
         source=_text(mapping["source"], "message.source"),
         published_at=_text(mapping["published_at"], "message.published_at"),
+        url=_optional_text(mapping.get("url"), "message.url"),
+        source_region=_optional_text(
+            mapping.get("source_region"), "message.source_region"
+        )
+        or "mixed",
+        source_quality=_optional_text(
+            mapping.get("source_quality"), "message.source_quality"
+        ),
+        event_type=_optional_text(mapping.get("event_type"), "message.event_type"),
+        affected_sectors=_text_tuple(
+            mapping.get("affected_sectors", []), "message.affected_sectors"
+        ),
+        affected_symbols=_text_tuple(
+            mapping.get("affected_symbols", []), "message.affected_symbols"
+        ),
+        transmission_hypothesis=_optional_text(
+            mapping.get("transmission_hypothesis"), "message.transmission_hypothesis"
+        ),
+        supporting_evidence=_text_tuple(
+            mapping.get("supporting_evidence", []), "message.supporting_evidence"
+        ),
+        source_url=_optional_text(mapping.get("source_url"), "message.source_url"),
+        verification=_optional_text(
+            mapping.get("verification"), "message.verification"
+        ),
     )
 
 

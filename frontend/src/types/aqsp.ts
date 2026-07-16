@@ -24,6 +24,18 @@ export interface AqspMessage {
   category: string;
   source: string;
   published_at: string;
+  url?: string;
+  source_region?: string;
+  source_quality?: string;
+  event_type?: string;
+  affected_sectors?: readonly string[];
+  affected_symbols?: readonly string[];
+  transmission_hypothesis?: string;
+  supporting_evidence?: readonly string[];
+  source_url?: string;
+  transmission_path?: readonly string[];
+  validation_signals?: readonly string[];
+  verification?: string;
 }
 
 export interface AqspCrossMarket {

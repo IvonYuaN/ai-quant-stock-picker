@@ -2,9 +2,11 @@ import {
   AlertCircle,
   ArrowRight,
   Bot,
+  CalendarDays,
   Check,
   CircleAlert,
   Clock3,
+  Columns3,
   MessageSquareText,
   RefreshCw,
   ShieldAlert,
@@ -12,13 +14,17 @@ import {
   UsersRound,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import type { AqspAgentResult, AqspCandidate, AqspMessage, AqspSnapshot } from "@/lib/api";
-import { debateProcessText, snapshotConclusion } from "@/lib/research-view";
+import type { AqspAgentResult, AqspCandidate, AqspCrossMarket, AqspMessage, AqspSnapshot } from "@/lib/api";
+import { debateProcessText, formatResearchDate, snapshotConclusion } from "@/lib/research-view";
 import {
   formatAqspTime,
   isAqspSnapshotStale,
   useWorkspaceSnapshot,
 } from "./useAqspSnapshot";
+
+function uniqueNonEmpty(values: readonly string[] | undefined, limit = 4): string[] {
+  return Array.from(new Set((values ?? []).map((value) => value.trim()).filter(Boolean))).slice(0, limit);
+}
 
 function EmptyState({ title, detail }: { title: string; detail: string }) {
   return (
@@ -51,6 +57,40 @@ function FreshnessNotice({ snapshot }: { snapshot: AqspSnapshot }) {
     <div className="vr-freshness">
       <Clock3 className="mt-0.5 h-4 w-4 shrink-0" />
       <span>这是历史日期的数据，内容仅用于观察与复核。</span>
+    </div>
+  );
+}
+
+function DateStrip({ snapshot }: { snapshot: AqspSnapshot }) {
+  const { loading, selectedDate, selectDate } = useWorkspaceSnapshot();
+  const dates = snapshot.available_dates;
+  if (dates.length === 0) return null;
+  const activeDate = selectedDate || snapshot.selected_date;
+  return (
+    <div className="vr-date-strip" aria-label="研究日期">
+      <div className="flex min-w-0 items-center gap-2 text-[11px] font-semibold text-muted-foreground">
+        <CalendarDays className="h-3.5 w-3.5 shrink-0 text-primary" />
+        <span>日期</span>
+      </div>
+      <div className="vr-date-strip-list">
+        {dates.map((date) => {
+          const label = formatResearchDate(date);
+          const active = date === activeDate;
+          return (
+            <button
+              key={date}
+              type="button"
+              onClick={() => selectDate(date)}
+              className={cn("vr-date-pill", active && "vr-date-pill-active")}
+              aria-pressed={active}
+              disabled={loading && active}
+            >
+              <span className="font-mono">{label.day}</span>
+              <span>{label.weekday}</span>
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -109,21 +149,57 @@ function CandidateCard({ candidate }: { candidate: AqspCandidate }) {
   );
 }
 
-function MessageCard({ message }: { message: AqspMessage }) {
+function matchingTransmission(message: AqspMessage, items: readonly AqspCrossMarket[]): AqspCrossMarket | null {
+  const title = message.title.trim();
+  if (!title) return null;
+  return items.find((item) => item.source_title === title || title.includes(item.source_title) || item.source_title.includes(title)) ?? null;
+}
+
+function MessageCard({ message, transmission }: { message: AqspMessage; transmission: AqspCrossMarket | null }) {
+  const sectors = uniqueNonEmpty(message.affected_sectors ?? transmission?.affected_sectors, 5);
+  const path = uniqueNonEmpty(message.transmission_path ?? transmission?.transmission_path, 4);
+  const validations = uniqueNonEmpty(message.validation_signals ?? transmission?.validation_signals, 3);
+  const impact = message.impact || transmission?.action || transmission?.summary || "";
   return (
-    <article className="vr-message-row">
+    <article className="vr-message-card">
       <div className="flex min-w-0 items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             {message.category && <span className="vr-chip vr-chip-primary">{message.category}</span>}
+            {message.source && <span className="vr-chip">{message.source}</span>}
             <time className="text-[10px] text-muted-foreground">{formatAqspTime(message.published_at)}</time>
           </div>
           <h3 className="mt-2 text-sm font-medium leading-relaxed">{message.title || "消息标题未记录"}</h3>
         </div>
         <MessageSquareText className="mt-0.5 h-4 w-4 shrink-0 text-primary/75" />
       </div>
-      {(message.summary || message.impact) && <p className="mt-2 text-xs leading-relaxed text-muted-foreground">{message.summary || message.impact}</p>}
-      {(message.source || message.impact) && <p className="mt-3 text-[10px] text-muted-foreground/65">{message.source || "来源未记录"}{message.impact && message.summary ? ` · 影响：${message.impact}` : ""}</p>}
+      {message.summary && <p className="mt-3 text-xs leading-relaxed text-foreground/78">{message.summary}</p>}
+      {impact && (
+        <div className="vr-message-impact">
+          <p className="vr-kicker text-primary">影响</p>
+          <p>{impact}</p>
+        </div>
+      )}
+      {sectors.length > 0 && (
+        <div className="mt-3">
+          <p className="vr-kicker">产业链映射</p>
+          <div className="mt-1.5 flex flex-wrap gap-1.5">{sectors.map((sector) => <span key={sector} className="vr-chip vr-chip-primary">{sector}</span>)}</div>
+        </div>
+      )}
+      {path.length > 0 && (
+        <div className="mt-3">
+          <p className="vr-kicker">传导路径</p>
+          <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">{path.join(" → ")}</p>
+        </div>
+      )}
+      {validations.length > 0 && (
+        <div className="mt-3 border-t border-border/45 pt-3">
+          <p className="vr-kicker">验证信号</p>
+          <ul className="mt-1.5 space-y-1 text-[11px] leading-relaxed text-muted-foreground">
+            {validations.map((signal) => <li key={signal}>· {signal}</li>)}
+          </ul>
+        </div>
+      )}
     </article>
   );
 }
@@ -208,6 +284,7 @@ export function AqspResearchWorkspace() {
         </button>
       </header>
 
+      <DateStrip snapshot={data} />
       {stale && <FreshnessNotice snapshot={data} />}
       {error && <div className="mb-5 text-xs text-warning">后台刷新未完成，仍展示上一次已读取的数据。</div>}
 
@@ -235,8 +312,8 @@ export function AqspResearchWorkspace() {
         </section>
 
         <section id="messages" className="vr-board-section vr-messages-section">
-          <div className="vr-section-heading"><div><p className="vr-kicker">来源与影响</p><h2>消息证据</h2></div><span className="vr-count">{data.message_status || `${data.messages.length} 条`}</span></div>
-          {data.messages.length === 0 ? <EmptyState title="当前没有消息摘要" detail="快照未记录可核验消息，不在界面中补充推断。" /> : <div className="vr-message-list">{data.messages.slice(0, 5).map((message) => <MessageCard key={`${message.title}-${message.published_at}`} message={message} />)}</div>}
+          <div className="vr-section-heading"><div><p className="vr-kicker flex items-center gap-1.5"><Columns3 className="h-3.5 w-3.5" />独立证据列</p><h2>消息证据</h2></div><span className="vr-count">{data.message_status || `${data.messages.length} 条`}</span></div>
+          {data.messages.length === 0 ? <EmptyState title="当前没有消息摘要" detail="快照未记录可核验消息，不在界面中补充推断。" /> : <div className="vr-message-list">{data.messages.slice(0, 5).map((message) => <MessageCard key={`${message.title}-${message.published_at}`} message={message} transmission={matchingTransmission(message, data.market_context?.cross_market ?? [])} />)}</div>}
         </section>
       </div>
 

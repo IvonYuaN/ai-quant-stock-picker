@@ -415,6 +415,54 @@ def test_write_home_snapshot_rejects_stale_current_news_without_markdown_fallbac
     assert "不应回退的旧 Markdown" not in snapshot.to_json()
 
 
+def test_write_home_snapshot_preserves_catalyst_chain_evidence(
+    monkeypatch, tmp_path
+) -> None:
+    current_time = datetime(2026, 7, 10, 10, 1, tzinfo=ZoneInfo("Asia/Shanghai"))
+    report_path = tmp_path / "news.json"
+    report = CatalystReport(
+        date="2026-07-10",
+        generated_at="2026-07-10T10:00:00+08:00",
+        source_status="ok",
+        event_status="high_impact",
+        events=(
+            CatalystEvent(
+                title="NVIDIA 发布 Physical AI 新平台",
+                source="NVIDIA",
+                published_at="2026-07-10T09:30:00+08:00",
+                impact="positive",
+                category="科技催化",
+                inference="映射机器人和边缘算力链",
+                url="https://nvidia.example/news",
+                affected_sectors=("机器人", "AI算力"),
+                affected_symbols=("000977",),
+                transmission_hypothesis="海外大厂发布 -> A股机器人映射",
+                supporting_evidence=("NVIDIA: Physical AI 新平台",),
+            ),
+        ),
+    )
+    report_path.write_text(
+        json.dumps(serialize_catalyst_report(report), ensure_ascii=False),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AQSP_NEWS_JSON_OUTPUT", str(report_path))
+    monkeypatch.setattr(write_home_snapshot, "now_shanghai", lambda: current_time)
+    monkeypatch.setattr("aqsp.news.catalysts.now_shanghai", lambda: current_time)
+
+    snapshot = write_home_snapshot.build_home_snapshot(
+        _Provider(), signal_date="2026-07-10", task_id="intraday"
+    )
+
+    assert snapshot.message_status == "可用"
+    message = snapshot.messages[0]
+    assert message.event_type == "新品发布"
+    assert message.affected_sectors == ("机器人", "AI算力")
+    assert message.affected_symbols == ("000977",)
+    assert message.transmission_hypothesis == "海外大厂发布 -> A股机器人映射"
+    assert message.supporting_evidence == ("NVIDIA: Physical AI 新平台",)
+    assert message.source_url == "https://nvidia.example/news"
+
+
 def test_write_home_snapshot_clears_messages_when_current_source_failed(
     monkeypatch, tmp_path
 ) -> None:

@@ -71,6 +71,12 @@ def _snapshot(selected_date: str, symbol: str = "600001") -> dict:
                 "category": "市场",
                 "source": "fixture",
                 "published_at": "2026-07-14T09:00:00+08:00",
+                "event_type": "产业政策",
+                "affected_sectors": ["设备更新"],
+                "affected_symbols": ["600001"],
+                "transmission_hypothesis": "政策 -> A股产业链映射",
+                "supporting_evidence": ["fixture: 测试消息"],
+                "source_url": "https://example.test/news",
             }
         ],
     }
@@ -117,6 +123,9 @@ def test_aqsp_bridge_snapshot_returns_typed_candidate_payload_when_snapshot_is_v
     payload = response.json()["data"]
     assert payload["selected_date"] == "2026-07-14"
     assert payload["candidates"][0]["score"] == 72.5
+    assert payload["messages"][0]["event_type"] == "产业政策"
+    assert payload["messages"][0]["affected_sectors"] == ["设备更新"]
+    assert payload["messages"][0]["supporting_evidence"] == ["fixture: 测试消息"]
     assert isinstance(
         aqsp_bridge.load_surface().current.candidates[0], aqsp_bridge.AQSPCandidate
     )

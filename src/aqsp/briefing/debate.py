@@ -1662,13 +1662,10 @@ class AShareDebateCoordinator:
                 if not _is_non_evidence_text(item):
                     text = item
                     messages.append(text)
-        if not messages:
-            for raw in market_context_lines:
-                text = str(raw).strip()
-                if text.startswith("候选消息:"):
-                    message = text[len("候选消息:") :].strip()
-                    if message and not _is_non_evidence_text(message):
-                        messages.append(message)
+        for raw in market_context_lines:
+            message = _message_evidence_from_context_line(raw)
+            if message:
+                messages.append(message)
 
         rules: list[str] = []
         hypothesis = str(
@@ -2502,9 +2499,12 @@ _NON_EVIDENCE_PHRASES = (
     "当前输入不足",
     "无可用",
     "无可用新闻记录",
+    "无新增",
     "尚未形成",
     "等待更多确认",
     "等待新证据",
+    "未筛出",
+    "抓取失败",
     "不能确认",
     "无法确认",
     "暂不确认",
@@ -2538,6 +2538,15 @@ def _nonnegative_int(value: object) -> int:
 def _is_non_evidence_text(value: object) -> bool:
     text = str(value or "").strip()
     return not text or any(marker in text for marker in _NON_EVIDENCE_PHRASES)
+
+
+def _message_evidence_from_context_line(value: object) -> str:
+    text = str(value or "").strip()
+    for prefix in ("候选消息:", "个股催化:", "全局雷达:", "消息结果:"):
+        if text.startswith(prefix):
+            message = text[len(prefix) :].strip()
+            return "" if _is_non_evidence_text(message) else message
+    return ""
 
 
 def _has_substantive_debate_evidence(result: DebateResult) -> bool:

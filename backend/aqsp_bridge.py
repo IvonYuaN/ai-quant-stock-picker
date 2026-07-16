@@ -109,6 +109,16 @@ class AQSPMessage:
     category: str
     source: str
     published_at: str
+    url: str = ""
+    source_region: str = "mixed"
+    source_quality: str = ""
+    event_type: str = ""
+    affected_sectors: tuple[str, ...] = ()
+    affected_symbols: tuple[str, ...] = ()
+    transmission_hypothesis: str = ""
+    supporting_evidence: tuple[str, ...] = ()
+    source_url: str = ""
+    verification: str = ""
 
 
 @dataclass(frozen=True)
@@ -586,6 +596,18 @@ def _parse_message(payload: object) -> AQSPMessage:
         item,
         {"title", "summary", "impact", "category", "source", "published_at"},
         "message",
+        {
+            "url",
+            "source_region",
+            "source_quality",
+            "event_type",
+            "affected_sectors",
+            "affected_symbols",
+            "transmission_hypothesis",
+            "supporting_evidence",
+            "source_url",
+            "verification",
+        },
     )
     published_at = _normalize_message_timestamp(
         _text(item["published_at"], "message.published_at")
@@ -597,6 +619,29 @@ def _parse_message(payload: object) -> AQSPMessage:
         category=_text(item["category"], "message.category"),
         source=_text(item["source"], "message.source"),
         published_at=published_at,
+        url=_optional_text(item.get("url"), "message.url"),
+        source_region=_optional_text(item.get("source_region"), "message.source_region")
+        or "mixed",
+        source_quality=_optional_text(
+            item.get("source_quality"), "message.source_quality"
+        ),
+        event_type=_optional_text(item.get("event_type"), "message.event_type"),
+        affected_sectors=tuple(
+            _text_list(item.get("affected_sectors", []), "message.affected_sectors")
+        ),
+        affected_symbols=tuple(
+            _text_list(item.get("affected_symbols", []), "message.affected_symbols")
+        ),
+        transmission_hypothesis=_optional_text(
+            item.get("transmission_hypothesis"), "message.transmission_hypothesis"
+        ),
+        supporting_evidence=tuple(
+            _text_list(
+                item.get("supporting_evidence", []), "message.supporting_evidence"
+            )
+        ),
+        source_url=_optional_text(item.get("source_url"), "message.source_url"),
+        verification=_optional_text(item.get("verification"), "message.verification"),
     )
 
 

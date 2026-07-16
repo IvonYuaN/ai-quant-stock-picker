@@ -54,11 +54,9 @@ def debate_evidence_provenance(result: Any) -> DebateEvidenceProvenance:
     messages = values("real_message_evidence")
     if not messages:
         messages = tuple(
-            line[len("候选消息:") :].strip()
+            message
             for line in lines
-            if line.startswith("候选消息:")
-            and line[len("候选消息:") :].strip()
-            and not _is_non_evidence_text(line[len("候选消息:") :].strip())
+            if (message := _message_evidence_from_context_line(line))
         )
 
     cross_market = values("cross_market_evidence")
@@ -96,9 +94,12 @@ def debate_evidence_provenance(result: Any) -> DebateEvidenceProvenance:
 _PROVENANCE_GAP_MARKERS = (
     "输入未提供",
     "无可用",
+    "无新增",
     "尚未形成",
     "等待更多确认",
     "等待新证据",
+    "未筛出",
+    "抓取失败",
     "不能确认",
     "无法确认",
     "暂不确认",
@@ -109,6 +110,15 @@ _PROVENANCE_GAP_MARKERS = (
 def _is_non_evidence_text(value: object) -> bool:
     text = str(value or "").strip()
     return not text or any(marker in text for marker in _PROVENANCE_GAP_MARKERS)
+
+
+def _message_evidence_from_context_line(value: object) -> str:
+    text = str(value or "").strip()
+    for prefix in ("候选消息:", "个股催化:", "全局雷达:", "消息结果:"):
+        if text.startswith(prefix):
+            message = text[len(prefix) :].strip()
+            return "" if _is_non_evidence_text(message) else message
+    return ""
 
 
 def _market_context_lines(result: Any) -> tuple[str, ...]:

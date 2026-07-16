@@ -75,6 +75,25 @@ _EVENT_STATUS_LABELS = {
     "source_failed": "来源失败",
     "stale_cache": "旧缓存已排除",
 }
+_EVENT_TYPE_RULES: tuple[tuple[tuple[str, ...], str], ...] = (
+    (
+        ("新品", "发布", "launch", "platform", "physical ai", "具身", "机器人"),
+        "新品发布",
+    ),
+    (
+        ("政策", "国常会", "发改委", "工信部", "补贴", "行动方案", "指导意见"),
+        "产业政策",
+    ),
+    (
+        ("spacex", "nvidia", "英伟达", "tesla", "海外", "ipo", "starlink"),
+        "海外公司事件",
+    ),
+    (
+        ("涨价", "提价", "报价", "缺货", "供给", "库存", "油价", "原油", "opec"),
+        "供应链/价格变化",
+    ),
+    (("战争", "地缘", "冲突", "袭击", "导弹", "war", "geopolitical"), "地缘事件"),
+)
 
 
 def _text(value: object) -> str:
@@ -512,6 +531,16 @@ def _messages_from_catalyst_report(
                 category=event.category,
                 source=event.source,
                 published_at=published_at,
+                url=event.url,
+                source_region=event.source_region,
+                source_quality=event.source_quality_label,
+                event_type=_event_type_for_snapshot(event),
+                affected_sectors=event.affected_sectors[:5],
+                affected_symbols=event.affected_symbols[:5],
+                transmission_hypothesis=event.transmission_hypothesis,
+                supporting_evidence=event.supporting_evidence[:5],
+                source_url=event.url,
+                verification=event.verification,
             )
         )
         if len(messages) == MAX_HOME_MESSAGES:
@@ -714,6 +743,15 @@ def _parse_news_report_payload(
                 category=fields["category"],
                 source=source,
                 published_at=published_at,
+                url=fields.get("原文", "").strip(),
+                source_region=source_region,
+                source_quality=quality_label,
+                event_type=_event_type_from_text(title, fields["category"]),
+                supporting_evidence=(f"{source}: {title}" if source else title,),
+                source_url=fields.get("原文", "").strip(),
+                affected_sectors=(),
+                transmission_hypothesis=fields.get("结论", "").strip(),
+                verification="已记录来源",
             )
         )
     if source_status in {"failed", "timeout"} or event_status in {
@@ -831,6 +869,34 @@ def _empty_snapshot_market_context(status: str) -> HomeSnapshotMarketContext:
     )
 
 
+def _event_type_for_snapshot(event: CatalystEvent) -> str:
+    return _event_type_from_text(
+        " ".join(
+            (
+                event.title,
+                event.category,
+                event.source,
+                " ".join(event.affected_sectors),
+            )
+        ),
+        event.category,
+    )
+
+
+def _event_type_from_text(title: str, category: str = "") -> str:
+    text = f"{title} {category}".casefold()
+    for keywords, label in _EVENT_TYPE_RULES:
+        if any(keyword.casefold() in text for keyword in keywords):
+            return label
+    if "政策" in category:
+        return "产业政策"
+    if "地缘" in category:
+        return "地缘事件"
+    if "供需" in category or "涨价" in category or "油价" in category:
+        return "供应链/价格变化"
+    return "其他事件"
+
+
 def _append_cross_market_messages(
     messages: tuple[HomeSnapshotMessage, ...],
     artifact: MarketContextArtifact,
@@ -843,6 +909,18 @@ def _append_cross_market_messages(
             category="跨市场传导",
             source=item.source_title,
             published_at=published_at,
+            url=item.source_url,
+            source_region="、".join(item.source_regions) or "mixed",
+            source_quality=item.source_quality_label,
+            event_type=_event_type_from_text(
+                f"{item.source_title} {item.theme}", item.source_category
+            ),
+            affected_sectors=item.affected_sectors[:5],
+            affected_symbols=item.affected_symbols[:5],
+            transmission_hypothesis=item.transmission_hypothesis,
+            supporting_evidence=item.supporting_evidence[:5],
+            source_url=item.source_url,
+            verification="多源/规则映射",
         )
         for item in artifact.cross_market_implications[:3]
         if (published_at := _normalize_timestamp(item.source_published_at))
