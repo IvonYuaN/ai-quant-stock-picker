@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import shlex
 import subprocess
 import sys
@@ -544,9 +545,12 @@ def _remote_import_smoke(plan: SyncPlan) -> tuple[str, ...]:
         "    runpy.run_path(script, run_name='__aqsp_runtime_sync_smoke__')\n"
         "    print(f'script:{script}')\n"
     )
+    remote_python = os.environ.get(
+        "AQSP_REMOTE_PYTHON", ".venv/bin/python"
+    ).strip() or ".venv/bin/python"
     command = (
         f"cd {shlex.quote(plan.remote_root)} && "
-        "PYTHONPATH=src:. .venv/bin/python - <<'PY'\n"
+        f"PYTHONPATH=src:. {shlex.quote(remote_python)} - <<'PY'\n"
         f"{python}"
         "PY"
     )
