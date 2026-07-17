@@ -2626,6 +2626,7 @@ def _build_runtime_catalyst_report(
             allow_stale_cache_on_failure=_runtime_catalyst_allow_stale_cache_on_failure(
                 task_id
             ),
+            isolate_external_sources=True,
         ),
     )
 
@@ -6574,6 +6575,7 @@ def run_news_catalysts(args: argparse.Namespace) -> int:
             source_timeout_seconds=args.source_timeout_seconds,
             llm_timeout_seconds=args.llm_timeout_seconds,
             max_llm_review_events=args.max_llm_review_events,
+            isolate_external_sources=True,
         ),
     )
     markdown = format_catalyst_notification(report)

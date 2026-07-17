@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import multiprocessing
 import os
 import signal
 import threading
@@ -56,6 +57,7 @@ class NewsCatalystConfig:
     cache_ttl_seconds: float = 0.0
     allow_stale_cache_on_failure: bool = False
     max_stale_cache_age_seconds: float = _DEFAULT_MAX_STALE_CACHE_AGE_SECONDS
+    isolate_external_sources: bool = False
 
 
 @dataclass(frozen=True)
@@ -947,6 +949,7 @@ def _fetch_news_frames_parallel(
     max_symbol_news: int,
     max_global_news: int,
     timeout_seconds: float,
+    isolate_process: bool = False,
 ) -> dict[str, _NewsFetchOutcome]:
     """Fetch all news scopes against one deadline.
 
@@ -963,7 +966,11 @@ def _fetch_news_frames_parallel(
         for symbol in unique_symbols
     }
     fetches["__global__"] = lambda: global_fetcher(max_global_news)
-    outcomes = _run_fetchers_with_deadline(fetches, timeout_seconds=timeout)
+    outcomes = _run_fetchers_with_deadline(
+        fetches,
+        timeout_seconds=timeout,
+        isolate_process=isolate_process,
+    )
     return {
         key: replace(
             outcome,
@@ -981,6 +988,7 @@ def _run_fetchers_with_deadline(
     fetches: dict[str, Callable[[], pd.DataFrame]],
     *,
     timeout_seconds: float,
+    isolate_process: bool = False,
 ) -> dict[str, _NewsFetchOutcome]:
     """Run independent fetches without registering exit-blocking futures.
 
@@ -991,6 +999,12 @@ def _run_fetchers_with_deadline(
     the caller receives a bounded result and the process can publish its
     partial/observation snapshot without waiting for an uncooperative source.
     """
+
+    if isolate_process:
+        return _run_fetchers_in_processes(
+            fetches,
+            timeout_seconds=timeout_seconds,
+        )
 
     outcomes: dict[str, _NewsFetchOutcome] = {}
     lock = threading.Lock()
@@ -1026,6 +1040,83 @@ def _run_fetchers_with_deadline(
                 error=TimeoutError(f"消息源超过 {float(timeout_seconds):.1f}s 未返回"),
                 timed_out=True,
             )
+    return outcomes
+
+
+def _process_fetcher_entry(
+    key: str,
+    fetch: Callable[[], pd.DataFrame],
+    result_queue: Any,
+) -> None:
+    """Run an untrusted network adapter outside the parent interpreter."""
+    try:
+        result_queue.put((key, _NewsFetchOutcome(frame=fetch())))
+    except BaseException as exc:
+        result_queue.put(
+            (
+                key,
+                _NewsFetchOutcome(
+                    error=RuntimeError(f"{type(exc).__name__}: {exc}")
+                ),
+            )
+        )
+
+
+def _run_fetchers_in_processes(
+    fetches: dict[str, Callable[[], pd.DataFrame]],
+    *,
+    timeout_seconds: float,
+) -> dict[str, _NewsFetchOutcome]:
+    """Bound third-party adapters without leaving native threads at exit."""
+    try:
+        context = multiprocessing.get_context("fork")
+    except ValueError:
+        # Windows has no fork context; retain the daemon-thread fallback there.
+        return _run_fetchers_with_deadline(
+            fetches,
+            timeout_seconds=timeout_seconds,
+            isolate_process=False,
+        )
+
+    result_queue = context.Queue()
+    workers = {
+        key: context.Process(
+            target=_process_fetcher_entry,
+            args=(key, fetch, result_queue),
+            name=f"aqsp-news-process-{key}",
+        )
+        for key, fetch in fetches.items()
+    }
+    for worker in workers.values():
+        worker.daemon = True
+        worker.start()
+
+    deadline = monotonic() + max(0.1, float(timeout_seconds))
+    for worker in workers.values():
+        worker.join(max(0.0, deadline - monotonic()))
+
+    outcomes: dict[str, _NewsFetchOutcome] = {}
+    while True:
+        try:
+            key, outcome = result_queue.get_nowait()
+        except Exception:
+            break
+        if isinstance(key, str) and isinstance(outcome, _NewsFetchOutcome):
+            outcomes[key] = outcome
+
+    for key, worker in workers.items():
+        if worker.is_alive():
+            worker.terminate()
+            worker.join(0.5)
+        if key not in outcomes:
+            outcomes[key] = _NewsFetchOutcome(
+                error=TimeoutError(
+                    f"消息源超过 {float(timeout_seconds):.1f}s 未返回"
+                ),
+                timed_out=True,
+            )
+        worker.close()
+    result_queue.close()
     return outcomes
 
 
@@ -1082,6 +1173,7 @@ def build_catalyst_report(
         max_symbol_news=cfg.max_symbol_news,
         max_global_news=cfg.max_global_news,
         timeout_seconds=cfg.source_timeout_seconds,
+        isolate_process=bool(cfg.isolate_external_sources),
     )
 
     for symbol in tuple(symbols or cfg.symbols):
