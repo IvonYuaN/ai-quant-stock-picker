@@ -1,5 +1,12 @@
 import type { AqspAgentResult, AqspSnapshot } from "./api";
 
+export function snapshotMatchesSelectedDate(
+  snapshot: Pick<AqspSnapshot, "selected_date">,
+  selectedDate: string,
+): boolean {
+  return !selectedDate || snapshot.selected_date === selectedDate;
+}
+
 export function snapshotConclusion(snapshot: AqspSnapshot): string {
   return snapshot.summaries[0] || snapshot.market_context?.overview || "";
 }

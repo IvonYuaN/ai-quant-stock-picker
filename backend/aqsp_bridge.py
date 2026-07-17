@@ -253,9 +253,12 @@ def load_surface() -> AQSPResearchSurface:
         if index_payload.get("schema_version") != INDEX_SCHEMA_VERSION:
             raise AQSPSnapshotUnavailable("日期索引 schema_version 不支持或缺失")
         snapshots, selected_date = _parse_index(index_payload)
+        indexed_current = _select_current(snapshots, selected_date)
+        if indexed_current.selected_date != current.selected_date:
+            raise AQSPSnapshotUnavailable("当前快照与日期索引不一致，拒绝回退旧日期")
         return AQSPResearchSurface(
             path,
-            _select_current(snapshots, selected_date),
+            indexed_current,
             snapshots,
         )
     return AQSPResearchSurface(path, current, ())
@@ -266,7 +269,10 @@ def snapshot_payload(selected_date: str | None = None) -> dict[str, Any]:
     surface = load_surface()
     snapshot = surface.snapshot_for_date(selected_date)
     _require_current_snapshot_fresh(surface, selected_date)
-    return snapshot.to_dict()
+    return _snapshot_payload(
+        snapshot,
+        historical=_is_historical(surface, selected_date),
+    )
 
 
 def snapshot_response(selected_date: str | None = None) -> dict[str, Any]:
@@ -279,38 +285,93 @@ def snapshot_response(selected_date: str | None = None) -> dict[str, Any]:
     stale = snapshot.is_stale()
     _require_current_snapshot_fresh(surface, selected_date, stale=stale)
     return {
-        "data": snapshot.to_dict(),
+        "data": _snapshot_payload(snapshot, historical=historical),
         "meta": {
             "historical": historical,
             "stale": stale,
-            "freshness": _snapshot_component_freshness(snapshot),
+            "freshness": _snapshot_component_freshness(snapshot, historical=historical),
         },
     }
 
 
-def _snapshot_component_freshness(snapshot: AQSPSnapshot) -> dict[str, str]:
+def _is_historical(surface: AQSPResearchSurface, selected_date: str | None) -> bool:
+    return selected_date is not None and selected_date != surface.current.selected_date
+
+
+def _snapshot_payload(snapshot: AQSPSnapshot, *, historical: bool) -> dict[str, Any]:
+    """Prevent archive data from being presented as current realtime data."""
+    payload = snapshot.to_dict()
+    if not historical:
+        return payload
+
+    source = payload.get("source")
+    if isinstance(source, dict) and source.get("status"):
+        source["status"] = "historical"
+    for candidate in payload.get("candidates", ()):
+        if isinstance(candidate, dict) and candidate.get("freshness"):
+            candidate["freshness"] = "historical"
+    if payload.get("messages") and payload.get("message_status") in {
+        "ok",
+        "部分可用",
+    }:
+        payload["message_status"] = "历史记录"
+    market_context = payload.get("market_context")
+    if isinstance(market_context, dict):
+        market_context["overview"] = str(
+            market_context.get("overview", "") or ""
+        ).replace("实时跨市", "历史跨市")
+        market_context["summary_lines"] = [
+            str(line or "").replace("实时跨市", "历史跨市")
+            for line in market_context.get("summary_lines", ())
+        ]
+    return payload
+
+
+def _snapshot_component_freshness(
+    snapshot: AQSPSnapshot, *, historical: bool = False
+) -> dict[str, str]:
     """Expose component freshness without hiding usable realtime candidates."""
     candidate_states = {
         item.freshness.strip().lower()
         for item in snapshot.candidates
         if item.freshness.strip()
     }
-    if candidate_states == {"fresh"}:
+    if historical and candidate_states:
+        candidates = "historical"
+    elif candidate_states == {"fresh"}:
         candidates = "fresh"
     elif candidate_states:
         candidates = "degraded"
     else:
         candidates = "unavailable"
 
-    if snapshot.messages and snapshot.message_status in {"ok", "部分可用"}:
+    if (
+        historical
+        and snapshot.messages
+        and snapshot.message_status
+        in {
+            "ok",
+            "部分可用",
+        }
+    ):
+        messages = "historical"
+    elif snapshot.messages and snapshot.message_status in {"ok", "部分可用"}:
         messages = "partial" if snapshot.message_status == "部分可用" else "fresh"
     elif snapshot.message_status in {"来源失败", "timeout", "failed"}:
         messages = "unavailable"
     else:
         messages = "no_data"
 
-    summary = "；".join(snapshot.market_context.summary_lines) if snapshot.market_context else ""
-    if "实时跨市: stale" in summary.lower():
+    summary = (
+        "；".join(snapshot.market_context.summary_lines)
+        if snapshot.market_context
+        else ""
+    )
+    if historical and (
+        "实时跨市: stale" in summary.lower() or "实时跨市: fresh" in summary.lower()
+    ):
+        cross_market = "historical"
+    elif "实时跨市: stale" in summary.lower():
         cross_market = "stale"
     elif "实时跨市: fresh" in summary.lower():
         cross_market = "fresh"
@@ -350,6 +411,8 @@ def candidate_payload(symbol: str, selected_date: str | None = None) -> dict[str
         (item for item in snapshot.debates if item.symbol == normalized), None
     )
     payload = candidate.to_dict()
+    if _is_historical(surface, selected_date) and payload.get("freshness"):
+        payload["freshness"] = "historical"
     payload["date"] = snapshot.selected_date
     payload["debate"] = debate.to_dict() if debate is not None else None
     return payload

@@ -59,6 +59,7 @@ MAX_HOME_DATES = 4
 MAX_HOME_CANDIDATES = MAX_HOME_SNAPSHOT_CANDIDATES
 MAX_HOME_SUMMARIES = 3
 MAX_HOME_MESSAGES = 5
+MAX_HOME_MESSAGES_PER_SOURCE = 2
 NEWS_REPORT_MAX_AGE_SECONDS = 6 * 60 * 60
 CURRENT_MESSAGE_WINDOW = timedelta(hours=24)
 _SOURCE_STATUS_LABELS = {
@@ -548,7 +549,8 @@ def _messages_from_catalyst_report(
     messages: list[HomeSnapshotMessage] = []
     for event in report.events:
         published_at = _normalize_timestamp(event.published_at)
-        if not published_at:
+        source = _text(event.source)
+        if not published_at or not source:
             continue
         messages.append(
             HomeSnapshotMessage(
@@ -556,7 +558,7 @@ def _messages_from_catalyst_report(
                 summary=event.inference or event.title,
                 impact=impact_labels.get(event.impact, event.impact),
                 category=event.category,
-                source=event.source,
+                source=source,
                 published_at=published_at,
                 url=event.url,
                 source_region=event.source_region,
@@ -573,28 +575,35 @@ def _messages_from_catalyst_report(
                 invalidation_signals=event.invalidation_signals[:3],
             )
         )
-    if len(messages) <= MAX_HOME_MESSAGES:
-        return tuple(messages)
-
-    # Do not let a burst of near-identical headlines hide other catalysts.
-    # Preserve source order within each pass, then fill remaining slots in
-    # source order so the selection remains deterministic and explainable.
+    # Do not let one source or a burst of near-identical headlines hide other
+    # catalysts. A single available source may still fill the whole digest.
     selected: list[HomeSnapshotMessage] = []
     covered: set[tuple[str, str]] = set()
+    source_counts: dict[str, int] = {}
+    source_count = len({message.source.casefold() for message in messages})
+    source_limit = (
+        MAX_HOME_MESSAGES if source_count == 1 else MAX_HOME_MESSAGES_PER_SOURCE
+    )
     for message in messages:
         topic = (message.event_type or message.category or "消息").strip()
         region = (message.source_region or "mixed").strip().lower()
         key = (topic, region)
-        if key in covered:
+        source_key = message.source.casefold()
+        if key in covered or source_counts.get(source_key, 0) >= source_limit:
             continue
         selected.append(message)
         covered.add(key)
+        source_counts[source_key] = source_counts.get(source_key, 0) + 1
         if len(selected) == MAX_HOME_MESSAGES:
             return tuple(selected)
     for message in messages:
         if message in selected:
             continue
+        source_key = message.source.casefold()
+        if source_counts.get(source_key, 0) >= source_limit:
+            continue
         selected.append(message)
+        source_counts[source_key] = source_counts.get(source_key, 0) + 1
         if len(selected) == MAX_HOME_MESSAGES:
             break
     return tuple(selected)
@@ -769,7 +778,7 @@ def _parse_news_report_payload(
             fields.get("来源", "")
         )
         published_at = _normalize_timestamp(fields.get("时间", ""))
-        if not published_at or published_at[:10] != signal_date:
+        if not source or not published_at or published_at[:10] != signal_date:
             continue
         category = fields["category"]
         events.append(

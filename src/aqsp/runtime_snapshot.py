@@ -144,6 +144,11 @@ def build_runtime_research_snapshot(
         or _get(task_view, "latest_date", "")
         or signal_date
     ).strip()
+    requested_date = signal_date.strip()
+    if requested_date and resolved_date != requested_date:
+        raise ValueError(
+            "provider returned a historical date for the requested snapshot date"
+        )
     runtime = provider.runtime_overview(resolved_date)
     overview = _get(payload, "overview", None)
 

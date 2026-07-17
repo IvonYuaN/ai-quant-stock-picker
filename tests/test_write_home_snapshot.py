@@ -404,6 +404,90 @@ def test_messages_prioritize_distinct_topics_before_repeating_one_topic() -> Non
     ]
 
 
+def test_messages_bound_one_source_when_multiple_sources_are_available() -> None:
+    report = CatalystReport(
+        date="2026-07-10",
+        generated_at="2026-07-10T15:00:00+08:00",
+        source_status="ok",
+        events=tuple(
+            CatalystEvent(
+                title=f"主源事件 {index}",
+                source="主源",
+                published_at=f"2026-07-10T09:{index:02d}:00+08:00",
+                impact="positive",
+                category=f"主源类别 {index}",
+                inference=f"主源摘要 {index}",
+            )
+            for index in range(5)
+        )
+        + tuple(
+            CatalystEvent(
+                title=f"备用源事件 {index}",
+                source="备用源",
+                published_at=f"2026-07-10T10:{index:02d}:00+08:00",
+                impact="neutral",
+                category=f"备用类别 {index}",
+                inference=f"备用源摘要 {index}",
+            )
+            for index in range(2)
+        ),
+    )
+
+    messages = write_home_snapshot._messages_from_catalyst_report(report)
+
+    assert len(messages) == 4
+    assert {message.source for message in messages} == {"主源", "备用源"}
+    assert sum(message.source == "主源" for message in messages) == 2
+
+
+def test_messages_bound_sources_even_when_digest_has_fewer_than_five_items() -> None:
+    report = CatalystReport(
+        date="2026-07-10",
+        generated_at="2026-07-10T15:00:00+08:00",
+        source_status="ok",
+        events=tuple(
+            CatalystEvent(
+                title=f"主源事件 {index}",
+                source="主源",
+                published_at=f"2026-07-10T09:{index:02d}:00+08:00",
+                category=f"主源类别 {index}",
+            )
+            for index in range(3)
+        )
+        + (
+            CatalystEvent(
+                title="备用源事件",
+                source="备用源",
+                published_at="2026-07-10T10:00:00+08:00",
+                category="备用类别",
+            ),
+        ),
+    )
+
+    messages = write_home_snapshot._messages_from_catalyst_report(report)
+
+    assert [message.source for message in messages] == ["主源", "主源", "备用源"]
+
+
+def test_messages_exclude_events_without_traceable_source() -> None:
+    report = CatalystReport(
+        date="2026-07-10",
+        generated_at="2026-07-10T15:00:00+08:00",
+        source_status="ok",
+        events=(
+            CatalystEvent(
+                title="无来源事件",
+                source="",
+                published_at="2026-07-10T09:00:00+08:00",
+                impact="positive",
+                inference="不应进入首页摘要",
+            ),
+        ),
+    )
+
+    assert write_home_snapshot._messages_from_catalyst_report(report) == ()
+
+
 def test_write_home_snapshot_excludes_future_dated_news(monkeypatch, tmp_path) -> None:
     report_path = tmp_path / "news.json"
     current_time = datetime(2026, 7, 10, 15, 1, tzinfo=ZoneInfo("Asia/Shanghai"))

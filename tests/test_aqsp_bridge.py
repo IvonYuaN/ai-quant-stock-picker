@@ -162,6 +162,67 @@ def test_aqsp_bridge_does_not_replace_missing_history_with_latest(
     assert "未替换为最新日期" in response.json()["detail"]
 
 
+def test_aqsp_bridge_rejects_snapshot_index_that_points_to_an_older_current_date(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    current = _snapshot("2026-07-14")
+    historical = _snapshot("2026-07-11", symbol="600002")
+    snapshot_path = _write_single(tmp_path, current)
+    index_path = tmp_path / "home_dashboard_snapshot_index.json"
+    index_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "v1-index",
+                "generated_at": "2026-07-14T18:00:00+08:00",
+                "stale_after": "2099-01-01T00:00:00+08:00",
+                "selected_date": "2026-07-11",
+                "days": [
+                    {"date": "2026-07-14", "snapshot": current},
+                    {"date": "2026-07-11", "snapshot": historical},
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AQSP_RESEARCH_SURFACE_SNAPSHOT", str(snapshot_path))
+
+    response = client.get("/api/aqsp/snapshot")
+
+    assert response.status_code == 503
+    assert "拒绝回退旧日期" in response.json()["detail"]
+
+
+def test_aqsp_bridge_marks_historical_payload_as_archive_data(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    historical = _snapshot("2026-07-11", symbol="600002")
+    historical["source"]["status"] = "fresh"
+    historical["candidates"][0]["freshness"] = "fresh"
+    historical["message_status"] = "ok"
+    path = _write_index(tmp_path)
+    index_path = tmp_path / "home_dashboard_snapshot_index.json"
+    index_payload = json.loads(index_path.read_text(encoding="utf-8"))
+    index_payload["days"][1]["snapshot"] = historical
+    index_path.write_text(
+        json.dumps(index_payload, ensure_ascii=False), encoding="utf-8"
+    )
+    monkeypatch.setenv("AQSP_RESEARCH_SURFACE_SNAPSHOT", str(path))
+
+    response = client.get("/api/aqsp/snapshot?date=2026-07-11")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["data"]["source"]["status"] == "historical"
+    assert body["data"]["candidates"][0]["freshness"] == "historical"
+    assert body["data"]["message_status"] == "历史记录"
+    assert body["meta"]["freshness"] == {
+        "candidates": "historical",
+        "messages": "historical",
+        "cross_market": "unavailable",
+    }
+
+
 def test_aqsp_bridge_does_not_advertise_unloaded_history_without_an_index(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

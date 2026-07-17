@@ -4,6 +4,8 @@ from argparse import Namespace
 import json
 from types import SimpleNamespace
 
+import pytest
+
 from aqsp import cli
 from aqsp.runtime_snapshot import (
     RuntimeSnapshotDebate,
@@ -305,11 +307,11 @@ def test_runtime_snapshot_keeps_round_process_and_candidate_role_coverage() -> N
             ],
             # Deliberately lie in the input flags; snapshot construction must
             # recompute them from the recorded rounds and vote.
-                "process_recorded": False,
-                "conclusion_recorded": False,
-                "advisory_only": True,
-                "original_score": 72.0,
-                "deterministic_score": 72.0,
+            "process_recorded": False,
+            "conclusion_recorded": False,
+            "advisory_only": True,
+            "original_score": 72.0,
+            "deterministic_score": 72.0,
             "deterministic_score_unchanged": True,
             "support_points": ["放量突破"],
             "opposition_points": ["等待确认"],
@@ -380,6 +382,34 @@ def test_runtime_snapshot_accepts_missing_debate_collection_as_empty() -> None:
     snapshot = build_runtime_research_snapshot(_Provider())
 
     assert snapshot.debates == ()
+
+
+def test_runtime_snapshot_rejects_provider_historical_date_fallback() -> None:
+    class _Provider:
+        def default_task_id(self) -> str:
+            return "intraday"
+
+        def home_digest_payload(self, task_id: str, signal_date: str = ""):
+            return SimpleNamespace(
+                task_view=SimpleNamespace(
+                    task_id=task_id,
+                    task_label="盘中",
+                    selected_date="2026-07-11",
+                    latest_date="2026-07-11",
+                    detail_cards=(),
+                ),
+                overview=SimpleNamespace(
+                    actionable_total=0,
+                    watch_total=0,
+                    blocked_total=0,
+                ),
+            )
+
+        def runtime_overview(self, signal_date: str = ""):
+            return SimpleNamespace()
+
+    with pytest.raises(ValueError, match="historical date"):
+        build_runtime_research_snapshot(_Provider(), signal_date="2026-07-14")
 
 
 def test_cli_runtime_snapshot_writes_machine_readable_payload(

@@ -1,6 +1,7 @@
 import { RefreshCw } from "lucide-react";
 import type { ReactNode } from "react";
 import { useAqspSnapshot } from "@/components/aqsp/useAqspSnapshot";
+import { snapshotMatchesSelectedDate } from "@/lib/research-view";
 
 interface AqspDateBoundaryProps {
   children: ReactNode;
@@ -9,7 +10,7 @@ interface AqspDateBoundaryProps {
 /** Prevent a previous date's snapshot from remaining visible during a date request. */
 export function AqspDateBoundary({ children }: AqspDateBoundaryProps) {
   const { data, error, loading, selectedDate, refresh } = useAqspSnapshot();
-  const hasMismatchedSnapshot = Boolean(data && selectedDate && data.selected_date !== selectedDate);
+  const hasMismatchedSnapshot = Boolean(data && !snapshotMatchesSelectedDate(data, selectedDate));
 
   if (!hasMismatchedSnapshot) return <>{children}</>;
 

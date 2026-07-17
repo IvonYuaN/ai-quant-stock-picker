@@ -1,5 +1,5 @@
 import type { AqspAgentResult, AqspSnapshot } from "./api";
-import { debateProcessText, snapshotConclusion } from "./research-view";
+import { debateProcessText, snapshotConclusion, snapshotMatchesSelectedDate } from "./research-view";
 
 const emptySnapshot = {
   schema_version: "v1",
@@ -35,4 +35,7 @@ const debateWithoutProcess = {
 export const researchViewContractChecks = {
   emptyConclusion: snapshotConclusion(emptySnapshot) === "",
   processFallback: debateProcessText(debateWithoutProcess) === "2 轮讨论 · 角色 风险视角",
+  selectedDateMatches: snapshotMatchesSelectedDate(emptySnapshot, "2026-07-15"),
+  selectedDateRejectsPreviousSnapshot: !snapshotMatchesSelectedDate(emptySnapshot, "2026-07-14"),
+  emptySelectionAcceptsCurrentSnapshot: snapshotMatchesSelectedDate(emptySnapshot, ""),
 };
