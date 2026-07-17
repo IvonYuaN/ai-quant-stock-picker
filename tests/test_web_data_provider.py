@@ -5965,6 +5965,39 @@ def test_live_candidate_view_ignores_old_run_failure_when_current_rows_are_fresh
     assert view.candidates[0].status == "actionable"
 
 
+def test_dashboard_detail_card_exposes_deterministic_score_breakdown(
+    tmp_path: Path,
+) -> None:
+    provider = DashboardDataProvider(
+        ledger_path=str(tmp_path / "ledger.jsonl"),
+        paper_ledger_path=str(tmp_path / "paper.jsonl"),
+        intraday_ledger_path=str(tmp_path / "intraday.jsonl"),
+    )
+
+    cards = provider._build_detail_cards(
+        [
+            {
+                "symbol": "600001",
+                "name": "示例",
+                "score": 72.0,
+                "rating": "buy_candidate",
+                "reasons": ["量价确认"],
+                "strategies": ["rps_momentum"],
+                "score_breakdown": {
+                    "rps_momentum": {
+                        "raw_score": 18.0,
+                        "weight": 0.5,
+                        "weighted_score": 9.0,
+                    }
+                },
+            }
+        ],
+        task_id="intraday",
+    )
+
+    assert cards[0].score_breakdown == ("rps_momentum +9.0 (原始 18.0 × 0.50)",)
+
+
 def test_dashboard_data_provider_live_view_caps_intraday_csv_and_exposes_card_evidence(
     tmp_path: Path,
 ) -> None:

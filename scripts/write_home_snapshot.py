@@ -249,6 +249,13 @@ def _candidate_strategies(candidate: Any) -> tuple[str, ...]:
     return _bounded_unique_text(raw, 6)
 
 
+def _candidate_score_breakdown(candidate: Any) -> tuple[str, ...]:
+    raw = getattr(candidate, "score_breakdown", ()) or ()
+    if isinstance(raw, str):
+        raw = (raw,)
+    return _bounded_unique_text(raw, 4)
+
+
 def _candidate_technical_metrics(
     candidate: Any,
 ) -> tuple[HomeSnapshotTechnicalMetric, ...]:
@@ -315,6 +322,7 @@ def _snapshot_candidate(candidate: Any) -> HomeSnapshotCandidate | None:
         return None
     reasons = _candidate_reasons(candidate)
     strategies = _candidate_strategies(candidate)
+    score_breakdown = _candidate_score_breakdown(candidate)
     context = _candidate_context(candidate)
     data_source = _text(getattr(candidate, "data_source", ""))
     if data_source:
@@ -336,6 +344,7 @@ def _snapshot_candidate(candidate: Any) -> HomeSnapshotCandidate | None:
         context=context,
         deterministic_reasons=reasons,
         strategies=strategies,
+        score_breakdown=score_breakdown,
         evidence_status=("有独立规则证据" if reasons else "证据不足"),
         technical_metrics=_candidate_technical_metrics(candidate),
         data_source=data_source,

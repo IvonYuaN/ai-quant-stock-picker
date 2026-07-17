@@ -337,6 +337,7 @@ def score_symbol(
     strategy_signals = evaluate_strategy_signals(df, thresholds=internet_strategy)
     applied_strategy_weights: dict[str, float] = {}
     applied_strategy_weight_reasons: dict[str, str] = {}
+    score_breakdown: dict[str, dict[str, float]] = {}
     for signal in strategy_signals:
         if (
             config.strategy_weights
@@ -349,7 +350,13 @@ def score_symbol(
             applied_strategy_weight_reasons[signal.strategy_id] = (
                 config.strategy_weight_reasons[signal.strategy_id]
             )
-        score += signal.score * weight
+        weighted_score = float(signal.score) * float(weight)
+        score += weighted_score
+        score_breakdown[signal.strategy_id] = {
+            "raw_score": round(float(signal.score), 4),
+            "weight": round(float(weight), 4),
+            "weighted_score": round(weighted_score, 4),
+        }
         strategy_ids.append(signal.strategy_id)
         reasons.append(f"{signal.display_name}: {'/'.join(signal.reasons[:2])}")
 
@@ -416,6 +423,7 @@ def score_symbol(
             "historical_data_source": _text(frame.attrs.get("historical_source")),
             "strategy_weights": applied_strategy_weights,
             "strategy_weight_reasons": applied_strategy_weight_reasons,
+            "score_breakdown": score_breakdown,
             "technical_evidence": quality.technical_evidence,
             "technical_evidence_count": len(quality.technical_evidence),
             "technical_quality_status": quality.action,

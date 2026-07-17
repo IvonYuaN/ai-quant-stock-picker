@@ -53,6 +53,7 @@ class HomeSnapshotCandidate:
     context: str
     deterministic_reasons: tuple[str, ...] = ()
     strategies: tuple[str, ...] = ()
+    score_breakdown: tuple[str, ...] = ()
     evidence_status: str = "证据不足"
     technical_metrics: tuple[HomeSnapshotTechnicalMetric, ...] = ()
     data_source: str = ""
@@ -625,6 +626,7 @@ def _candidate_from_dict(payload: object) -> HomeSnapshotCandidate:
         optional={
             "deterministic_reasons",
             "strategies",
+            "score_breakdown",
             "evidence_status",
             "technical_metrics",
             "data_source",
@@ -647,6 +649,10 @@ def _candidate_from_dict(payload: object) -> HomeSnapshotCandidate:
         strategies=_text_tuple(
             mapping.get("strategies", ()),
             "candidate.strategies",
+        ),
+        score_breakdown=_text_tuple(
+            mapping.get("score_breakdown", ()),
+            "candidate.score_breakdown",
         ),
         evidence_status=_optional_text(
             mapping.get("evidence_status"), "candidate.evidence_status"

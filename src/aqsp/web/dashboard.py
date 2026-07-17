@@ -47,6 +47,7 @@ from aqsp.web.data_provider import (
 )
 from aqsp.web.home_snapshot import (
     HomeDashboardSnapshot,
+    HomeSnapshotCandidate,
     HomeSnapshotIndex,
     is_home_recommendation,
     load_home_dashboard_snapshot,
@@ -7915,15 +7916,7 @@ def _snapshot_candidate_grid(
             continue
         if not _status_filter_matches("推荐", status_filter):
             continue
-        cards.append(
-            '<article class="aqsp-simple-candidate-card">'
-            f'<div class="aqsp-simple-candidate-rank">{escape(_compact_snapshot_text(_snapshot_display_status(candidate, historical=historical)))}</div>'
-            f'<div class="aqsp-simple-candidate-name">{escape(_compact_snapshot_text(candidate.display_name))}</div>'
-            f'<div class="aqsp-simple-candidate-score">{candidate.score:.1f}</div>'
-            f'<div class="aqsp-simple-candidate-line">{escape(_compact_snapshot_text(candidate.context))}</div>'
-            f'<div class="aqsp-simple-candidate-line">{("历史记录" if historical else "下一步")}: {escape(_compact_snapshot_text(_snapshot_display_next_step(candidate, historical=historical)))}</div>'
-            "</article>"
-        )
+        cards.append(_snapshot_candidate_card_markup(candidate, historical=historical))
     return '<div class="aqsp-simple-candidate-grid">' + "".join(cards) + "</div>"
 
 
@@ -7942,15 +7935,39 @@ def _snapshot_observation_grid(
         ):
             continue
         cards.append(
-            '<article class="aqsp-simple-candidate-card aqsp-observation-card">'
-            f'<div class="aqsp-simple-candidate-rank">{escape(_compact_snapshot_text(_snapshot_display_status(candidate, historical=historical)))}</div>'
-            f'<div class="aqsp-simple-candidate-name">{escape(_compact_snapshot_text(candidate.display_name))}</div>'
-            f'<div class="aqsp-simple-candidate-score">{candidate.score:.1f}</div>'
-            f'<div class="aqsp-simple-candidate-line">{escape(_compact_snapshot_text(candidate.context))}</div>'
-            f'<div class="aqsp-simple-candidate-line">{("历史记录" if historical else "下一步")}: {escape(_compact_snapshot_text(_snapshot_display_next_step(candidate, historical=historical)))}</div>'
-            "</article>"
+            _snapshot_candidate_card_markup(candidate, historical=historical, observation=True)
         )
     return '<div class="aqsp-simple-candidate-grid">' + "".join(cards) + "</div>"
+
+
+def _snapshot_candidate_card_markup(
+    candidate: HomeSnapshotCandidate,
+    *,
+    historical: bool,
+    observation: bool = False,
+) -> str:
+    class_name = (
+        "aqsp-simple-candidate-card aqsp-observation-card"
+        if observation
+        else "aqsp-simple-candidate-card"
+    )
+    contribution = (
+        f'<div class="aqsp-simple-candidate-line">贡献: '
+        f'{escape(_compact_snapshot_text("；".join(candidate.score_breakdown)))}</div>'
+        if candidate.score_breakdown
+        else ""
+    )
+    return (
+        f'<article class="{class_name}">'
+        f'<div class="aqsp-simple-candidate-rank">{escape(_compact_snapshot_text(_snapshot_display_status(candidate, historical=historical)))}</div>'
+        f'<div class="aqsp-simple-candidate-name">{escape(_compact_snapshot_text(candidate.display_name))}</div>'
+        f'<div class="aqsp-simple-candidate-score">{candidate.score:.1f}</div>'
+        f'<div class="aqsp-simple-candidate-line">{escape(_compact_snapshot_text(candidate.context))}</div>'
+        f'{contribution}'
+        f'<div class="aqsp-simple-candidate-line">{("历史记录" if historical else "下一步")}: '
+        f'{escape(_compact_snapshot_text(_snapshot_display_next_step(candidate, historical=historical)))}</div>'
+        "</article>"
+    )
 
 
 def _snapshot_message_status_label(status: str) -> str:

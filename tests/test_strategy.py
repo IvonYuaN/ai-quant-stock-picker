@@ -549,6 +549,9 @@ def test_score_symbol_applies_screening_strategy_weights() -> None:
     assert boosted is not None
     assert "rps_momentum" in base.strategies
     assert boosted.score > base.score
+    assert base.metrics["score_breakdown"]["rps_momentum"]["weight"] == pytest.approx(1.0)
+    assert boosted.metrics["score_breakdown"]["rps_momentum"]["weight"] == pytest.approx(2.0)
+    assert boosted.metrics["score_breakdown"]["rps_momentum"]["weighted_score"] > base.metrics["score_breakdown"]["rps_momentum"]["weighted_score"]
 
 
 def test_score_symbol_skips_unlisted_strategy_when_weights_are_explicit() -> None:

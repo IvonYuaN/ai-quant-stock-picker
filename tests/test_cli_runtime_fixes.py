@@ -1853,7 +1853,6 @@ def test_run_scheduled_live_short_caps_env_lag_before_freshness(
         "_fetch_frames_for_cli_with_metadata",
         lambda *_, **__: (frames, "sina"),
     )
-
     def fake_assert_fresh_data(_frames, max_data_lag_days, **kwargs):
         seen["max_data_lag_days"] = max_data_lag_days
         seen["workload"] = kwargs.get("workload")
@@ -1958,6 +1957,11 @@ def test_run_screen_live_short_caps_env_lag_before_freshness(
     monkeypatch.setattr(
         cli_mod,
         "_fetch_frames_for_cli_with_metadata",
+        lambda *_, **__: (frames, "sina"),
+    )
+    monkeypatch.setattr(
+        cli_mod,
+        "_fetch_special_strategy_frames",
         lambda *_, **__: (frames, "sina"),
     )
 
@@ -2078,7 +2082,7 @@ def test_run_screen_injects_threshold_screening_config(
 
     monkeypatch.setattr(
         cli_mod,
-        "_fetch_frames_for_cli_with_metadata",
+        "_fetch_special_strategy_frames",
         lambda *_args, **_kwargs: (frames, "eastmoney"),
     )
     monkeypatch.setattr(

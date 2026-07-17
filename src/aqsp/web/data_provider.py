@@ -842,6 +842,7 @@ class DashboardCandidateCard:
     risks: tuple[str, ...]
     strategies: tuple[str, ...]
     data_source: str
+    score_breakdown: tuple[str, ...] = ()
     data_fetched_at: str = ""
     data_timestamp_source: str = ""
     freshness: str = ""
@@ -6296,6 +6297,7 @@ class DashboardDataProvider:
                     data_source=self._candidate_provenance_value(
                         row, "data_source", "run_actual_source"
                     ),
+                    score_breakdown=self._score_breakdown_lines(row),
                     data_fetched_at=self._candidate_provenance_value(
                         row, "data_fetched_at", "fetched_at", "run_data_fetched_at"
                     ),
@@ -6346,6 +6348,30 @@ class DashboardDataProvider:
                 if value not in (None, "") and str(value).strip():
                     return str(value).strip()
         return ""
+
+    def _score_breakdown_lines(self, row: dict[str, Any]) -> tuple[str, ...]:
+        """Format deterministic strategy contributions for compact candidate cards."""
+        metrics = row.get("metrics")
+        raw = row.get("score_breakdown")
+        if raw in (None, "") and isinstance(metrics, dict):
+            raw = metrics.get("score_breakdown")
+        if not isinstance(raw, dict):
+            return ()
+        lines: list[str] = []
+        for strategy_id, values in raw.items():
+            if not isinstance(values, dict):
+                continue
+            try:
+                raw_score = float(values["raw_score"])
+                weight = float(values["weight"])
+                weighted_score = float(values["weighted_score"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            lines.append(
+                f"{str(strategy_id).strip()} {weighted_score:+.1f} "
+                f"(原始 {raw_score:.1f} × {weight:.2f})"
+            )
+        return tuple(lines[:4])
 
     def _rank_label(self, index: int, row: dict[str, Any], task_id: str = "") -> str:
         if index == 1 and self._is_actionable(row, task_id=task_id):

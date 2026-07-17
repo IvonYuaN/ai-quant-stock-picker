@@ -3988,27 +3988,18 @@ def run_screen(args: argparse.Namespace) -> int:
             )
         else:
             explicit_symbol_count = len(symbols)
-        if str(getattr(args, "mode", "") or "").strip().lower() == "open":
+        # `screen` is a live_short entrypoint for every mode.  Keep the
+        # intraday overlay on close-mode scans too; otherwise regime and
+        # scores silently fall back to the last daily close during the session.
+        try:
             frames, actual_source = _fetch_special_strategy_frames(
                 args.source,
                 symbols,
                 benchmark_symbol=args.benchmark_symbol,
             )
-        else:
-            frames, actual_source = _fetch_frames_for_cli_with_metadata(
-                args.source,
-                symbols,
-                benchmark_symbol=args.benchmark_symbol,
-                workload="live_short",
-            )
-            actual_allowed, actual_reason = _runtime_actual_source_workload_allowed(
-                args.source,
-                actual_source,
-                workload="live_short",
-            )
-            if not actual_allowed:
-                print(actual_reason)
-                return 1
+        except DataError as exc:
+            print(str(exc))
+            return 1
 
     configured_max_data_lag_days = int(
         getattr(args, "max_data_lag_days", 0) or load_runtime_config().max_data_lag_days
