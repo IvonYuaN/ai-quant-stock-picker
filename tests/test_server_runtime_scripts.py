@@ -648,6 +648,7 @@ def test_news_script_preserves_valid_same_day_report_on_source_failure() -> None
     assert "if current_count == 0" in script
     assert 'source_status not in {"ok", "partial"}' in script
     assert 'raw_count = int(payload.get("raw_news_count", 0) or 0)' in script
+    assert 'event_status != "no_high_impact"' in script
 
 
 def test_bt_task_script_exposes_panel_safe_actions() -> None:
@@ -1306,6 +1307,8 @@ def test_daily_run_defaults_to_full_market_universe() -> None:
     assert "AQSP_RUN_TASK_ID=${RUN_TASK_ID:-<empty>}" in script
     assert "仅允许 daily" in script
     assert 'export AQSP_RUN_TASK_ID="daily"' in script
+    assert "export -f run_daily_pipeline" in script
+    assert "run_with_timeout \"$DAILY_TIMEOUT_SECONDS\" /bin/bash -c 'run_daily_pipeline'" in script
     assert 'ENFORCE_DAILY_WINDOW="${AQSP_ENFORCE_DAILY_WINDOW:-true}"' in script
     assert 'DAILY_WINDOW_START_HM="${AQSP_DAILY_WINDOW_START_HM:-1730}"' in script
     assert 'DAILY_WINDOW_END_HM="${AQSP_DAILY_WINDOW_END_HM:-2300}"' in script
@@ -1353,3 +1356,46 @@ def test_launchd_strategy_wrappers_set_explicit_task_ids() -> None:
 
     assert 'export AQSP_RUN_TASK_ID="morning"' in morning
     assert 'export AQSP_RUN_TASK_ID="closing"' in closing
+
+
+def test_parallel_entry_scripts_have_portable_bounded_lock_and_timeout() -> None:
+    scripts = [
+        PROJECT_ROOT / "scripts" / "launchd" / "aqsp_morning_wrapper.sh",
+        PROJECT_ROOT / "scripts" / "launchd" / "aqsp_closing_wrapper.sh",
+        PROJECT_ROOT / "scripts" / "daily_run.sh",
+    ]
+
+    for path in scripts:
+        script = path.read_text(encoding="utf-8")
+        assert "flock -n 9" in script
+        assert "while ! mkdir " in script
+        assert "trap cleanup" in script or "trap cleanup_lock" in script
+        assert "run_with_timeout()" in script
+        assert "kill -TERM" in script
+        assert "kill -KILL" in script
+        assert 'kill -TERM "-$child_pid"' in script
+        assert 'kill -KILL "-$child_pid"' in script
+        assert 'owner_pid=%s\\nowner_start_time=%s\\n' in script
+        assert "lock_owner_is_alive" in script
+        assert "recover_stale_lock" in script
+        assert 'mv "$LOCK_' in script
+        assert "LOCK_STALE_SECONDS" in script
+        assert "MAX_" in script
+        assert 'touch "$LOCK_FILE"' not in script
+
+
+def test_parallel_entry_scripts_pass_bash_syntax_check() -> None:
+    scripts = [
+        PROJECT_ROOT / "scripts" / "launchd" / "aqsp_morning_wrapper.sh",
+        PROJECT_ROOT / "scripts" / "launchd" / "aqsp_closing_wrapper.sh",
+        PROJECT_ROOT / "scripts" / "daily_run.sh",
+    ]
+
+    for path in scripts:
+        result = subprocess.run(
+            ["bash", "-n", str(path)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode == 0, f"{path}: {result.stderr}"

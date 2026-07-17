@@ -1722,6 +1722,34 @@ def test_akshare_global_news_preserves_adapter_warnings(monkeypatch) -> None:
     assert df.attrs["aqsp_warnings"] == ("stock_info_global_em: empty",)
 
 
+def test_news_http_get_disables_macos_environment_proxy_lookup(monkeypatch) -> None:
+    class Response:
+        pass
+
+    class Session:
+        instances: list["Session"] = []
+
+        def __init__(self) -> None:
+            self.trust_env = True
+            self.proxies: dict[str, str] = {}
+            self.__class__.instances.append(self)
+
+        def get(self, *_args, **_kwargs) -> Response:
+            assert self.trust_env is False
+            return Response()
+
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(news_source.sys, "platform", "darwin")
+    monkeypatch.setattr(news_source.requests, "Session", Session)
+
+    response = news_source._http_get("https://example.com", timeout=1)
+
+    assert isinstance(response, Response)
+    assert len(Session.instances) == 1
+
+
 def test_rss_news_source_parses_feed_items(monkeypatch) -> None:
     class Response:
         content = """<?xml version="1.0" encoding="utf-8"?>

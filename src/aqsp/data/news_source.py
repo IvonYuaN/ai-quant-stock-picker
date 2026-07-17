@@ -11,8 +11,9 @@ import xml.etree.ElementTree as ET
 from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
+import sys
 from time import monotonic
-from typing import Literal, Protocol
+from typing import Any, Literal, Protocol
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -34,6 +35,8 @@ _DIRECT_STOCK_NEWS_TIMEOUT_SECONDS = 8.0
 _DEFAULT_NEWS_SOURCE_TIMEOUT_SECONDS = 8.0
 _COMPOSITE_TIMEOUT_MARGIN_SECONDS = 0.25
 _RSS_FRAME_CACHE_TTL_SECONDS = 15.0
+_MACOS_PROXY_LOCK = threading.Lock()
+_MACOS_PROXY_CACHE: dict[str, dict[str, str]] = {}
 
 NewsSourceStatus = Literal["ok", "empty", "timeout", "partial", "failed"]
 NewsSourceRegion = Literal["domestic", "international", "mixed"]
@@ -41,6 +44,32 @@ NewsSourceRegion = Literal["domestic", "international", "mixed"]
 
 def _source_fetched_at() -> str:
     return now_shanghai().isoformat(timespec="seconds")
+
+
+def _http_get(url: str, **kwargs: Any) -> requests.Response:
+    """Fetch news without macOS proxy discovery racing across worker threads."""
+    # Preserve test doubles and adapters that replace requests.get at the
+    # boundary; only the stock requests implementation needs the workaround.
+    if sys.platform != "darwin" or getattr(requests.get, "__module__", "") != "requests.api":
+        return requests.get(url, **kwargs)
+    session = requests.Session()
+    session.trust_env = False
+    with _MACOS_PROXY_LOCK:
+        proxies = _MACOS_PROXY_CACHE.get(url)
+        if proxies is None:
+            proxies = dict(requests.utils.get_environ_proxies(url))
+            _MACOS_PROXY_CACHE[url] = proxies
+    if proxies:
+        session.proxies.update(proxies)
+    ca_bundle = os.environ.get("REQUESTS_CA_BUNDLE") or os.environ.get(
+        "CURL_CA_BUNDLE"
+    )
+    if ca_bundle:
+        session.verify = ca_bundle
+    try:
+        return session.get(url, **kwargs)
+    finally:
+        session.close()
 
 
 @dataclass(frozen=True)
@@ -503,7 +532,7 @@ class RssNewsSource:
         return frames
 
     def _fetch_feed(self, feed: RssFeedConfig) -> pd.DataFrame:
-        response = requests.get(
+        response = _http_get(
             feed.url,
             headers={"User-Agent": "AQSP/0.1 news radar"},
             timeout=self._timeout_seconds,
@@ -809,7 +838,7 @@ def _fetch_eastmoney_stock_news_compat(symbol: str) -> pd.DataFrame:
             }
         },
     }
-    response = requests.get(
+    response = _http_get(
         "https://search-api-web.eastmoney.com/search/jsonp",
         params={
             "cb": "aqsp_callback",
@@ -879,7 +908,7 @@ def _fetch_eastmoney_search_news(
             }
         },
     }
-    response = requests.get(
+    response = _http_get(
         "https://search-api-web.eastmoney.com/search/jsonp",
         params={
             "cb": "aqsp_callback",

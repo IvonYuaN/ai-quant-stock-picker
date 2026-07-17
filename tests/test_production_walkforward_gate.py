@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import sqlite3
+import subprocess
 import sys
 from pathlib import Path
 
@@ -20,6 +22,74 @@ from scripts.run_production_walkforward_gate import (
     warn_if_report_path_not_writable,
     write_minimal_pbo_diagnostics,
 )
+
+
+def test_terminate_process_group_kills_only_verified_group(monkeypatch) -> None:
+    import scripts.run_production_walkforward_gate as gate
+
+    class _Process:
+        pid = 4321
+
+        def __init__(self) -> None:
+            self.wait_calls: list[float] = []
+
+        def wait(self, timeout: float) -> None:
+            self.wait_calls.append(timeout)
+            if len(self.wait_calls) == 1:
+                raise subprocess.TimeoutExpired(cmd=["child"], timeout=timeout)
+
+        def terminate(self) -> None:
+            raise AssertionError("verified process groups must use killpg")
+
+        def kill(self) -> None:
+            raise AssertionError("verified process groups must use killpg")
+
+    signals: list[tuple[int, signal.Signals]] = []
+    monkeypatch.setattr(gate.os, "getpgid", lambda pid: pid)
+    monkeypatch.setattr(
+        gate.os,
+        "killpg",
+        lambda pgid, sig: signals.append((pgid, sig)),
+    )
+
+    process = _Process()
+    gate._terminate_process_group(process, terminate_timeout=1, kill_timeout=2)
+
+    assert signals == [(4321, signal.SIGTERM), (4321, signal.SIGKILL)]
+    assert process.wait_calls == [1, 2]
+
+
+def test_terminate_process_group_falls_back_to_child_when_group_is_not_owned(
+    monkeypatch,
+) -> None:
+    import scripts.run_production_walkforward_gate as gate
+
+    class _Process:
+        pid = 4321
+
+        def __init__(self) -> None:
+            self.terminated = False
+            self.killed = False
+            self.wait_calls = 0
+
+        def terminate(self) -> None:
+            self.terminated = True
+
+        def kill(self) -> None:
+            self.killed = True
+
+        def wait(self, timeout: float) -> None:
+            self.wait_calls += 1
+            if self.wait_calls == 1:
+                raise subprocess.TimeoutExpired(cmd=["child"], timeout=timeout)
+
+    monkeypatch.setattr(gate.os, "getpgid", lambda _pid: (_ for _ in ()).throw(OSError))
+    process = _Process()
+    gate._terminate_process_group(process, terminate_timeout=1, kill_timeout=2)
+
+    assert process.terminated is True
+    assert process.killed is True
+    assert process.wait_calls == 2
 
 
 def test_main_blocks_child_walkforward_on_low_memory_host(

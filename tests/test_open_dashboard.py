@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import signal
+import subprocess
 import sys
 from pathlib import Path
 
@@ -19,6 +21,41 @@ from scripts.open_dashboard import (
     render_dashboard_bundle,
     probe_dashboard_port,
 )
+
+
+def test_terminate_process_group_uses_verified_group_and_escalates(monkeypatch) -> None:
+    import scripts.open_dashboard as dashboard
+
+    class _Process:
+        pid = 9876
+
+        def __init__(self) -> None:
+            self.wait_calls: list[float] = []
+
+        def wait(self, timeout: float) -> None:
+            self.wait_calls.append(timeout)
+            if len(self.wait_calls) == 1:
+                raise subprocess.TimeoutExpired(cmd=["streamlit"], timeout=timeout)
+
+        def terminate(self) -> None:
+            raise AssertionError("verified process groups must use killpg")
+
+        def kill(self) -> None:
+            raise AssertionError("verified process groups must use killpg")
+
+    signals: list[tuple[int, signal.Signals]] = []
+    monkeypatch.setattr(dashboard.os, "getpgid", lambda pid: pid)
+    monkeypatch.setattr(
+        dashboard.os,
+        "killpg",
+        lambda pgid, sig: signals.append((pgid, sig)),
+    )
+
+    process = _Process()
+    dashboard._terminate_process_group(process, terminate_timeout=1, kill_timeout=2)
+
+    assert signals == [(9876, signal.SIGTERM), (9876, signal.SIGKILL)]
+    assert process.wait_calls == [1, 2]
 
 
 def test_render_dashboard_bundle_writes_html_and_db(tmp_path: Path) -> None:

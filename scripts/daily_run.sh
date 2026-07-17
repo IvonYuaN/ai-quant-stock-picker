@@ -61,6 +61,130 @@ case "${ENFORCE_DAILY_WINDOW,,}" in
         fi
         ;;
 esac
+
+LOCK_PATH="${AQSP_ENTRY_LOCK_PATH:-/tmp/aqsp-entry.lock}"
+LOCK_WAIT_SECONDS="${AQSP_ENTRY_LOCK_WAIT_SECONDS:-5}"
+DAILY_TIMEOUT_SECONDS="${AQSP_DAILY_TIMEOUT_SECONDS:-5400}"
+MAX_DAILY_TIMEOUT_SECONDS=7200
+LOCK_STALE_SECONDS="${AQSP_ENTRY_LOCK_STALE_SECONDS:-21600}"
+LOCK_KIND=""
+LOCK_META_PATH="${LOCK_PATH}/meta.env"
+LOCK_OWNER_PID="$$"
+LOCK_OWNER_START_TIME="$(ps -p "$$" -o lstart= 2>/dev/null | sed 's/^ *//')"
+lock_owner_is_alive() {
+    local pid="$1" expected_start="$2" actual_start
+    [[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 1
+    kill -0 "$pid" 2>/dev/null || return 1
+    actual_start="$(ps -p "$pid" -o lstart= 2>/dev/null | sed 's/^ *//')"
+    [ -n "$expected_start" ] && [ "$actual_start" = "$expected_start" ]
+}
+lock_is_stale() {
+    local owner_pid owner_start lock_age now
+    [ -d "$LOCK_PATH" ] || return 1
+    owner_pid="$(awk -F= '$1 == "owner_pid" {print $2; exit}' "$LOCK_META_PATH" 2>/dev/null)"
+    owner_start="$(awk -F= '$1 == "owner_start_time" {$1=""; sub(/^=/, ""); print; exit}' "$LOCK_META_PATH" 2>/dev/null)"
+    if [ -n "$owner_pid" ] && [ -n "$owner_start" ]; then
+        lock_owner_is_alive "$owner_pid" "$owner_start" && return 1
+        return 0
+    fi
+    now="$(date +%s)"
+    lock_age=$((now - $(stat -f %m "$LOCK_PATH" 2>/dev/null || echo "$now")))
+    [ "$lock_age" -ge "$LOCK_STALE_SECONDS" ]
+}
+recover_stale_lock() {
+    local quarantine="${LOCK_PATH}.stale.$$.$RANDOM"
+    lock_is_stale || return 1
+    mv "$LOCK_PATH" "$quarantine" 2>/dev/null || return 1
+    rm -f "$quarantine/meta.env" 2>/dev/null || true
+    rmdir "$quarantine" 2>/dev/null || true
+    return 0
+}
+owns_mkdir_lock() {
+    [ "$(awk -F= '$1 == "owner_pid" {print $2; exit}' "$LOCK_META_PATH" 2>/dev/null)" = "$LOCK_OWNER_PID" ] || return 1
+    [ "$(awk -F= '$1 == "owner_start_time" {$1=""; sub(/^=/, ""); print; exit}' "$LOCK_META_PATH" 2>/dev/null)" = "$LOCK_OWNER_START_TIME" ]
+}
+cleanup_lock() {
+    if [ "$LOCK_KIND" = "flock" ]; then
+        flock -u 9 2>/dev/null || true
+        exec 9>&- || true
+    elif [ "$LOCK_KIND" = "mkdir" ]; then
+        if owns_mkdir_lock; then
+            rm -f "$LOCK_META_PATH" 2>/dev/null || true
+            rmdir "$LOCK_PATH" 2>/dev/null || true
+        fi
+    fi
+}
+trap cleanup_lock EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+if ! [[ "$LOCK_WAIT_SECONDS" =~ ^[0-9]+$ ]] || [ "$LOCK_WAIT_SECONDS" -gt 60 ]; then
+    LOCK_WAIT_SECONDS=5
+fi
+if ! [[ "$DAILY_TIMEOUT_SECONDS" =~ ^[0-9]+$ ]] || [ "$DAILY_TIMEOUT_SECONDS" -le 0 ]; then
+    DAILY_TIMEOUT_SECONDS=5400
+fi
+if [ "$DAILY_TIMEOUT_SECONDS" -gt "$MAX_DAILY_TIMEOUT_SECONDS" ]; then
+    DAILY_TIMEOUT_SECONDS="$MAX_DAILY_TIMEOUT_SECONDS"
+fi
+if ! [[ "$LOCK_STALE_SECONDS" =~ ^[0-9]+$ ]] || [ "$LOCK_STALE_SECONDS" -le 0 ]; then
+    LOCK_STALE_SECONDS=21600
+fi
+acquire_lock() {
+    local waited=0
+    if command -v flock >/dev/null 2>&1 && [ ! -d "$LOCK_PATH" ]; then
+        exec 9>"$LOCK_PATH"
+        while ! flock -n 9; do
+            [ "$waited" -ge "$LOCK_WAIT_SECONDS" ] && return 1
+            sleep 1
+            waited=$((waited + 1))
+        done
+        LOCK_KIND=flock
+        return 0
+    fi
+    while ! mkdir "$LOCK_PATH" 2>/dev/null; do
+        recover_stale_lock || true
+        [ "$waited" -ge "$LOCK_WAIT_SECONDS" ] && return 1
+        sleep 1
+        waited=$((waited + 1))
+    done
+    LOCK_KIND=mkdir
+    printf 'owner_pid=%s\nowner_start_time=%s\n' "$LOCK_OWNER_PID" "$LOCK_OWNER_START_TIME" > "$LOCK_META_PATH"
+}
+run_with_timeout() {
+    local timeout_seconds="$1"
+    shift
+    if command -v setsid >/dev/null 2>&1; then
+        setsid "$@" &
+    else
+        perl -e 'setpgrp(0, 0); exec @ARGV' "$@" &
+    fi
+    local child_pid=$!
+    local timeout_marker="${TMPDIR:-/tmp}/aqsp-timeout.$$.$child_pid"
+    rm -f "$timeout_marker"
+    (
+        sleep "$timeout_seconds"
+        kill -0 "$child_pid" 2>/dev/null || exit 0
+        : > "$timeout_marker"
+        kill -TERM "-$child_pid" 2>/dev/null || true
+        sleep 5
+        kill -KILL "-$child_pid" 2>/dev/null || true
+    ) &
+    local watchdog_pid=$!
+    local status=0
+    if wait "$child_pid"; then status=0; else status=$?; fi
+    kill "$watchdog_pid" 2>/dev/null || true
+    wait "$watchdog_pid" 2>/dev/null || true
+    if [ -f "$timeout_marker" ]; then
+        rm -f "$timeout_marker"
+        return 124
+    fi
+    return "$status"
+}
+if ! acquire_lock; then
+    echo "[$(date)] 另一个入口正在运行，锁等待超时 ${LOCK_WAIT_SECONDS}s，跳过" >> "$LOG"
+    exit 0
+fi
 export AQSP_SOURCE="${AQSP_SOURCE:-auto}"
 export AQSP_SYMBOLS="${AQSP_SYMBOLS:-}"
 export AQSP_MODE="${AQSP_MODE:-close}"
@@ -86,6 +210,7 @@ case "$AQSP_DIAGNOSIS" in /*) ;; *) export AQSP_DIAGNOSIS="$PROJECT_ROOT/$AQSP_D
 case "$AQSP_DASHBOARD_HTML" in /*) ;; *) export AQSP_DASHBOARD_HTML="$PROJECT_ROOT/$AQSP_DASHBOARD_HTML" ;; esac
 case "$AQSP_DASHBOARD_DB" in /*) ;; *) export AQSP_DASHBOARD_DB="$PROJECT_ROOT/$AQSP_DASHBOARD_DB" ;; esac
 
+run_daily_pipeline() {
 {
     echo "=== aqsp run @ $(date) ==="
     echo "source=$AQSP_SOURCE symbols=$AQSP_SYMBOLS mode=$AQSP_MODE"
@@ -154,5 +279,16 @@ case "$AQSP_DASHBOARD_DB" in /*) ;; *) export AQSP_DASHBOARD_DB="$PROJECT_ROOT/$
     echo "=== runtime diagnosis @ $(date) ==="
     "$PYTHON_BIN" scripts/diagnose_runtime.py | tee "$AQSP_DIAGNOSIS"
 } >> "$LOG" 2>&1
+}
+
+export -f run_daily_pipeline
+export DATE LOG PYTHON_BIN
+if run_with_timeout "$DAILY_TIMEOUT_SECONDS" /bin/bash -c 'run_daily_pipeline'; then
+    :
+else
+    RUN_STATUS=$?
+    echo "[$(date)] daily_run 超时或失败 (exit=${RUN_STATUS}, timeout=${DAILY_TIMEOUT_SECONDS}s)" >> "$LOG"
+    exit "$RUN_STATUS"
+fi
 
 echo "[$(date)] daily_run done, log: $LOG"

@@ -160,7 +160,8 @@ for event in events:
     if published_date == today_shanghai().isoformat():
         current_count += 1
 raw_count = int(payload.get("raw_news_count", 0) or 0)
-if current_count == 0 and raw_count <= 0:
+event_status = str(payload.get("event_status", "")).strip()
+if current_count == 0 and (event_status != "no_high_impact" or raw_count <= 0):
     raise SystemExit(1)
 raise SystemExit(0)
 AQSP_CURRENT_NEWS_CHECK

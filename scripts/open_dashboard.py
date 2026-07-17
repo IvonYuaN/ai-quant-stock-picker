@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -43,6 +44,8 @@ CURRENT_DASHBOARD_MARKERS = (
     "AQSP 日期任务研究台",
     "短线决策看板",
 )
+PROCESS_GROUP_TERMINATE_TIMEOUT_SECONDS = 2.0
+PROCESS_GROUP_KILL_TIMEOUT_SECONDS = 2.0
 DashboardPortStatus = Literal["free", "current", "occupied"]
 
 
@@ -195,6 +198,49 @@ def foreground_browser_allowed() -> bool:
     return value in {"1", "true", "yes", "y", "on"}
 
 
+def _terminate_process_group(
+    process: subprocess.Popen[bytes],
+    *,
+    terminate_timeout: float = PROCESS_GROUP_TERMINATE_TIMEOUT_SECONDS,
+    kill_timeout: float = PROCESS_GROUP_KILL_TIMEOUT_SECONDS,
+) -> None:
+    """Stop a child and its descendants without targeting an unrelated group."""
+    process_group_id: int | None = None
+    child_pid = getattr(process, "pid", None)
+    if isinstance(child_pid, int) and child_pid > 0:
+        try:
+            if os.getpgid(child_pid) == child_pid:
+                process_group_id = child_pid
+        except OSError:
+            pass
+
+    if process_group_id is not None:
+        try:
+            os.killpg(process_group_id, signal.SIGTERM)
+        except OSError:
+            pass
+    else:
+        process.terminate()
+
+    try:
+        process.wait(timeout=terminate_timeout)
+        return
+    except subprocess.TimeoutExpired:
+        pass
+
+    if process_group_id is not None:
+        try:
+            os.killpg(process_group_id, signal.SIGKILL)
+        except OSError:
+            pass
+    else:
+        process.kill()
+    try:
+        process.wait(timeout=kill_timeout)
+    except subprocess.TimeoutExpired:
+        pass
+
+
 def ensure_dashboard_server(
     *,
     directory: Path,
@@ -246,16 +292,10 @@ def ensure_dashboard_server(
         if probe.status == "current":
             return True, process.pid
         if probe.status == "occupied":
-            process.terminate()
-            process.wait(timeout=2)
+            _terminate_process_group(process)
             raise _port_conflict_error(host, port, probe.detail)
 
-    process.terminate()
-    try:
-        process.wait(timeout=2)
-    except subprocess.TimeoutExpired:
-        process.kill()
-        process.wait(timeout=2)
+    _terminate_process_group(process)
     raise RuntimeError(f"dashboard server failed to start: {url}")
 
 

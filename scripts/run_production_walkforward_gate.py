@@ -24,6 +24,7 @@ from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta
 from pathlib import Path
 import re
+import signal
 
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
@@ -45,6 +46,8 @@ PRODUCTION_TIMEOUT_FLOOR_SECONDS = 7200
 PRODUCTION_TIMEOUT_SECONDS_PER_SYMBOL = 2
 MIN_PRODUCTION_MEMORY_GIB = 4.0
 DEFAULT_STREAM_BATCH_SIZE = 200
+PROCESS_GROUP_TERMINATE_TIMEOUT_SECONDS = 5.0
+PROCESS_GROUP_KILL_TIMEOUT_SECONDS = 5.0
 
 
 @dataclass(frozen=True)
@@ -292,6 +295,49 @@ def _low_memory_blocker(min_memory_gib: float) -> str:
     )
 
 
+def _terminate_process_group(
+    process: subprocess.Popen[bytes],
+    *,
+    terminate_timeout: float = PROCESS_GROUP_TERMINATE_TIMEOUT_SECONDS,
+    kill_timeout: float = PROCESS_GROUP_KILL_TIMEOUT_SECONDS,
+) -> None:
+    """Stop a child and its descendants without targeting an unrelated group."""
+    process_group_id: int | None = None
+    child_pid = getattr(process, "pid", None)
+    if isinstance(child_pid, int) and child_pid > 0:
+        try:
+            if os.getpgid(child_pid) == child_pid:
+                process_group_id = child_pid
+        except OSError:
+            pass
+
+    if process_group_id is not None:
+        try:
+            os.killpg(process_group_id, signal.SIGTERM)
+        except OSError:
+            pass
+    else:
+        process.terminate()
+
+    try:
+        process.wait(timeout=terminate_timeout)
+        return
+    except subprocess.TimeoutExpired:
+        pass
+
+    if process_group_id is not None:
+        try:
+            os.killpg(process_group_id, signal.SIGKILL)
+        except OSError:
+            pass
+    else:
+        process.kill()
+    try:
+        process.wait(timeout=kill_timeout)
+    except subprocess.TimeoutExpired:
+        pass
+
+
 def _execute_child_walkforward(
     *,
     command: list[str],
@@ -329,12 +375,7 @@ def _execute_child_walkforward(
         if timeout_seconds > 0:
             remaining_seconds = max(0.0, timeout_seconds - elapsed_seconds)
             if remaining_seconds <= 0:
-                process.terminate()
-                try:
-                    process.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    process.kill()
-                    process.wait(timeout=5)
+                _terminate_process_group(process)
                 raise subprocess.TimeoutExpired(cmd=command, timeout=timeout_seconds)
         wait_timeout = (
             heartbeat_seconds
@@ -1168,7 +1209,11 @@ def build_walkforward_command(args: argparse.Namespace) -> list[str]:
         args.log,
     ]
     if not bool(getattr(args, "no_streaming", False)):
-        command[command.index("--skip-pit-financials") : command.index("--skip-pit-financials")] = [
+        command[
+            command.index("--skip-pit-financials") : command.index(
+                "--skip-pit-financials"
+            )
+        ] = [
             "--engine",
             "builtin",
             "--streaming",
@@ -1802,7 +1847,12 @@ def main() -> int:
         )
         print(f"BLOCK: {resource_blocker}")
         return 2
-    if resource_blocker and args.no_streaming and not args.dry_run and not args.repair_only:
+    if (
+        resource_blocker
+        and args.no_streaming
+        and not args.dry_run
+        and not args.repair_only
+    ):
         _write_preflight_status(
             status_path,
             args=args,
@@ -1811,7 +1861,12 @@ def main() -> int:
         )
         print(f"BLOCK: {resource_blocker}; bounded streaming workflow was disabled")
         return 2
-    if resource_blocker and not args.no_streaming and not args.dry_run and not args.repair_only:
+    if (
+        resource_blocker
+        and not args.no_streaming
+        and not args.dry_run
+        and not args.repair_only
+    ):
         print(
             "INFO: host is below the full-materialization memory floor; "
             f"using bounded streaming batches of {args.stream_batch_size} symbols "
