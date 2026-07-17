@@ -110,6 +110,20 @@ def test_build_briefing_notification_includes_debate_summary_when_summary_mode()
     assert "# AI 量化选股日报" not in markdown
 
 
+def test_build_briefing_notification_does_not_append_normalized_candidate_evidence() -> None:
+    briefing = Briefing(
+        date="2026-06-04",
+        sections=[
+            BriefingSection(title="主链总览", content="今日结论: 维持观察"),
+            BriefingSection(title="候选来龙去脉", content="候选正文不应在 summary 重复"),
+        ],
+    )
+
+    markdown = build_briefing_notification(briefing, mode="summary")
+
+    assert "候选正文不应在 summary 重复" not in markdown
+
+
 def test_build_briefing_notification_includes_research_radar_when_summary_mode() -> (
     None
 ):

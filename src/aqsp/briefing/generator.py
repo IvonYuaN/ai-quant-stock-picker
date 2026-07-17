@@ -1754,15 +1754,18 @@ class BriefingGenerator:
             cross_market_chain = format_pick_market_context_chain_summary(pick)
             if cross_market_chain:
                 lines.append(f"- 传导链条: {cross_market_chain}")
-            news_line = _format_pick_news_catalyst_line(pick)
-            if news_line:
-                lines.append(f"- 消息判断: {news_line}")
             price_path = _format_price_path_context(
                 (frames or {}).get(pick.symbol, pd.DataFrame())
             )
             if price_path:
                 lines.append(f"- 量价路径: {price_path}")
-            context_lines = _format_decision_context_lines(pick)
+            # News remains in the Agent debate context, but its full text is
+            # rendered in the dedicated message section rather than here.
+            context_lines = tuple(
+                line
+                for line in _format_decision_context_lines(pick)
+                if not line.startswith("消息 ")
+            )
             if context_lines:
                 lines.append(f"- 上下文卡: {'；'.join(context_lines[:4])}")
             for reason in pick.reasons:

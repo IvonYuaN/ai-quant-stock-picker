@@ -194,7 +194,8 @@ def build_briefing_notification(
     extra_sections = [
         section
         for section in briefing.sections
-        if section.title not in known_titles and section.content.strip()
+        if _notification_section_title(section.title) not in known_titles
+        and section.content.strip()
     ]
     for section in extra_sections:
         body_parts.append(f"## {section.title}\n\n{section.content.strip()}")

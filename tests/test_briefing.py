@@ -2117,7 +2117,7 @@ class TestGenerateSmartSummary:
         assert "## 产物追溯" in markdown
         assert "catalyst:2026-07-07 | catalyst_report" in markdown
 
-    def test_briefing_generator_outputs_decision_context_card(self):
+    def test_briefing_generator_keeps_news_out_of_candidate_evidence_card(self):
         gen = BriefingGenerator()
         briefing = gen.generate(
             picks=[
@@ -2137,10 +2137,9 @@ class TestGenerateSmartSummary:
         )
         evidence = next(s for s in briefing.sections if s.title == "候选来龙去脉")
 
-        assert (
-            "上下文卡: 消息 消息支持: 300750 宁德时代 偏多｜订单/需求验证｜中标储能大单"
-            in evidence.content
-        )
+        assert "消息判断:" not in evidence.content
+        assert "上下文卡: 消息 " not in evidence.content
+        assert "下一步: 优先看竞价量能" in evidence.content
 
     def test_briefing_debate_receives_market_context_lines(self):
         import pandas as pd
