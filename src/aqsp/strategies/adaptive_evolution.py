@@ -19,7 +19,7 @@ import json
 from dataclasses import dataclass, asdict
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Mapping, Optional, Tuple
 
 import numpy as np
 
@@ -30,6 +30,7 @@ from aqsp.regime.strategy_mixer import (
     StrategyMixAdaptor,
 )
 from aqsp.utils.jsonl_io import atomic_write_text
+from aqsp.walkforward_gate import build_walkforward_gate_evidence
 
 
 # ============================================================
@@ -46,8 +47,9 @@ class FactorPerformance:
     ic_decay: float  # IC衰减率
     win_rate_30d: float  # 30日胜率
     sharpe_30d: float  # 30日夏普
-    sample_count: int
+    sample_count: int  # 原始观测数，不作为独立信号日门槛
     last_updated: date
+    independent_signal_days: int = 0
 
 
 @dataclass(frozen=True)
@@ -83,11 +85,14 @@ class FactorWeightAdaptor:
     MIN_WEIGHT = 0.05  # 最低权重
     MAX_WEIGHT = 0.45  # 单因子最高权重
     LOOKBACK_DAYS = 30
+    MIN_INDEPENDENT_SIGNAL_DAYS = 30
 
     def evaluate_factors(
         self,
         factor_performance: Dict[str, FactorPerformance],
         current_weights: Dict[str, float],
+        *,
+        min_independent_signal_days: int = MIN_INDEPENDENT_SIGNAL_DAYS,
     ) -> List[FactorWeightAdjustment]:
         """评估并建议因子权重调整。"""
         adjustments: List[FactorWeightAdjustment] = []
@@ -96,7 +101,7 @@ class FactorWeightAdaptor:
             current = current_weights.get(factor_name, 0.0)
 
             # 样本不足，保持不变
-            if perf.sample_count < 15:
+            if perf.independent_signal_days < min_independent_signal_days:
                 continue
 
             # 失效因子：停用
@@ -488,11 +493,18 @@ class AdaptiveEvolutionCoordinator:
     4. 每次变更：保存快照，监控表现，必要时回滚 → RollbackManager
     """
 
-    def __init__(self):
+    @dataclass(frozen=True)
+    class Config:
+        min_independent_signal_days: int = 30
+        cooldown_days: int = 30
+
+    def __init__(self, config: Config | None = None):
+        self.config = config or self.Config()
         self.factor_adaptor = FactorWeightAdaptor()
         self.mix_adaptor = StrategyMixAdaptor()
         self.meta_learner = MetaStrategyLearner()
         self.rollback_mgr = RollbackManager()
+        self._last_proposal_time: datetime | None = None
 
     def daily_adapt(
         self,
@@ -503,14 +515,7 @@ class AdaptiveEvolutionCoordinator:
         if is_system_halt:
             return STRATEGY_MIXES["emergency_defensive"]
 
-        # 优先用元学习推荐
-        recommendation = self.meta_learner.recommend_mix(current_regime)
-        if recommendation.confidence > 0.7:
-            mix = self.mix_adaptor.get_mix_by_name(recommendation.suggested_mix_name)
-            if mix:
-                return mix
-
-        # 否则按制度匹配
+        # 元学习只生成研究建议，不能改变实时策略路由。
         return self.mix_adaptor.select_mix(current_regime)
 
     def weekly_factor_review(
@@ -519,12 +524,32 @@ class AdaptiveEvolutionCoordinator:
         current_weights: Dict[str, float],
         current_sharpe: float,
         current_win_rate: float,
+        *,
+        independent_signal_days: int | None = None,
+        walkforward_payload: Mapping[str, object] | None = None,
     ) -> Tuple[List[FactorWeightAdjustment], str]:
         """每周因子权重评估。
 
         返回：(调整建议列表, 快照ID)
         """
-        # 保存快照
+        signal_days = self._resolve_signal_days(
+            factor_performance, independent_signal_days
+        )
+        if signal_days < self.config.min_independent_signal_days:
+            return [], ""
+        if not self._walkforward_gate_passes(walkforward_payload):
+            return [], ""
+        if self._cooldown_active():
+            return [], ""
+
+        adjustments = self.factor_adaptor.evaluate_factors(
+            factor_performance,
+            current_weights,
+            min_independent_signal_days=self.config.min_independent_signal_days,
+        )
+        if not adjustments:
+            return [], ""
+
         snapshot_id = self.rollback_mgr.save_snapshot(
             factor_weights=current_weights,
             strategy_mix="current",
@@ -532,13 +557,50 @@ class AdaptiveEvolutionCoordinator:
             baseline_sharpe=current_sharpe,
             baseline_win_rate=current_win_rate,
         )
-
-        # 评估调整
-        adjustments = self.factor_adaptor.evaluate_factors(
-            factor_performance, current_weights
-        )
+        self._last_proposal_time = now_shanghai()
 
         return adjustments, snapshot_id
+
+    def _cooldown_active(self) -> bool:
+        timestamps = [
+            timestamp
+            for timestamp in [
+                self._last_proposal_time,
+                *(snapshot.timestamp for snapshot in self.rollback_mgr.snapshots),
+            ]
+            if timestamp is not None
+        ]
+        if not timestamps:
+            return False
+        return now_shanghai() - max(timestamps) < timedelta(
+            days=self.config.cooldown_days
+        )
+
+    def _resolve_signal_days(
+        self,
+        factor_performance: Mapping[str, FactorPerformance],
+        explicit_signal_days: int | None,
+    ) -> int:
+        if explicit_signal_days is not None:
+            if isinstance(explicit_signal_days, bool) or not isinstance(
+                explicit_signal_days, int
+            ):
+                return 0
+            return max(0, explicit_signal_days)
+        if not factor_performance:
+            return 0
+        return min(perf.independent_signal_days for perf in factor_performance.values())
+
+    @staticmethod
+    def _walkforward_gate_passes(payload: Mapping[str, object] | None) -> bool:
+        if payload is None:
+            return False
+        evidence = build_walkforward_gate_evidence(
+            payload,
+            today=now_shanghai().date(),
+            require_assumption_audit=True,
+        )
+        return evidence.ok
 
     def check_rollback_needed(
         self,

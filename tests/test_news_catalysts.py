@@ -2124,6 +2124,30 @@ def test_rss_news_runtime_summary_reports_core_trigger_coverage() -> None:
     assert summary.missing_triggers == ()
 
 
+def test_default_news_source_config_prevents_single_nvidia_source_bias() -> None:
+    source = build_rss_news_source_from_config("config/news_sources.yaml")
+
+    assert source is not None
+    feeds = tuple(source._feeds)
+    enabled_budget = sum(feed.max_items for feed in feeds)
+    nvidia_budget = sum(
+        feed.max_items
+        for feed in feeds
+        if "nvidia" in f"{feed.name} {feed.url}".casefold()
+    )
+    categories = {feed.category for feed in feeds}
+    keyword_blob = " ".join(" ".join(feed.keywords) for feed in feeds).casefold()
+
+    assert enabled_budget > 0
+    assert nvidia_budget * 2 < enabled_budget
+    assert {"global_macro", "global_regulation", "global_tech"} <= categories
+    assert {"global_risk_appetite", "global_cross_asset"} <= categories
+    assert "nasdaq" in keyword_blob or "s&p 500" in keyword_blob
+    assert all(feed.region == "international" for feed in feeds)
+    assert all(feed.url.startswith("https://") for feed in feeds)
+    assert source._timeout_seconds == 5.5
+
+
 def test_rss_cross_market_events_reach_catalyst_and_market_context(
     monkeypatch,
 ) -> None:

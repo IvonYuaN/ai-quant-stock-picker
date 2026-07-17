@@ -499,19 +499,16 @@ class AutoEvolution:
 
     def _apply_evolution(self, result: EvolutionResult) -> None:
         """Compatibility shim: serialize a proposal, never apply runtime state."""
-        # This explicit legacy API records the caller-supplied research object;
-        # automatic evolution still enforces the sample gate before calling it.
-        self._write_proposal(result, enforce_sample_gate=False)
+        # Keep the legacy entry point behind the same gate as the main path.
+        self._write_proposal(result)
 
     def _write_proposal(
         self,
         result: EvolutionResult,
-        *,
-        enforce_sample_gate: bool = True,
     ) -> None:
         if not result.new_params:
             return
-        if enforce_sample_gate and result.sample_count < self.config.min_samples:
+        if result.sample_count < self.config.min_samples:
             _LOGGER.warning(
                 "拒绝写入自动优化提案：独立信号日不足 (%s/%s)",
                 result.sample_count,
@@ -522,11 +519,7 @@ class AutoEvolution:
         proposal_file = self.data_dir / "threshold_proposals.jsonl"
         gate_evidence = dict(result.gate_evidence)
         gate_status = str(gate_evidence.get("status", "missing"))
-        proposal_status = (
-            str(result.status or PROPOSAL_STATUS)
-            if not enforce_sample_gate
-            else self._proposal_status(gate_evidence)
-        )
+        proposal_status = self._proposal_status(gate_evidence)
         gate_reasons = gate_evidence.get("reasons")
         if not isinstance(gate_reasons, list) or not gate_reasons:
             gate_reasons = ["walkforward gate evidence missing"]
@@ -652,8 +645,10 @@ class AutoEvolution:
             if "executable" in valid.columns:
                 executable = valid["executable"]
                 executable = executable.map(
-                    lambda value: str(value).strip().lower()
-                    not in {"false", "0", "no", "not_executable"}
+                    lambda value: (
+                        str(value).strip().lower()
+                        not in {"false", "0", "no", "not_executable"}
+                    )
                 )
                 valid = valid[executable]
             if valid.empty:
@@ -661,13 +656,17 @@ class AutoEvolution:
 
             if "date" in valid.columns:
                 dates = pd.to_datetime(valid["date"], errors="coerce")
+                if "signal_day_group" in valid.columns:
+                    groups = valid["signal_day_group"].dropna().astype(str).str.strip()
+                    groups = groups[groups != ""]
+                    if not groups.empty:
+                        signal_days.update(groups.tolist())
+                        continue
             elif isinstance(valid.index, pd.DatetimeIndex):
                 dates = pd.Series(valid.index, index=valid.index)
             else:
                 continue
-            signal_days.update(
-                dates.dropna().dt.strftime("%Y-%m-%d").tolist()
-            )
+            signal_days.update(dates.dropna().dt.strftime("%Y-%m-%d").tolist())
         return len(signal_days)
 
     @classmethod
@@ -725,7 +724,10 @@ class AutoEvolution:
         try:
             for line in proposal_file.read_text(encoding="utf-8").splitlines():
                 payload = json.loads(line)
-                if isinstance(payload, dict) and payload.get("proposal_id") == proposal_id:
+                if (
+                    isinstance(payload, dict)
+                    and payload.get("proposal_id") == proposal_id
+                ):
                     return True
         except (OSError, TypeError, ValueError, json.JSONDecodeError):
             return False

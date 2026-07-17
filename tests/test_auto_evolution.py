@@ -267,6 +267,44 @@ def test_auto_evolution_apply_never_refreshes_runtime_thresholds(tmp_path) -> No
     assert (now_shanghai() - result.timestamp) < timedelta(minutes=1)
 
 
+def test_auto_evolution_apply_rejects_insufficient_signal_days(tmp_path) -> None:
+    evolution = _evolution(tmp_path)
+    result = evolution._record_evolution(
+        "composite",
+        {"candidate": 1.0},
+        {"candidate": 1.5},
+        0.5,
+        "test",
+        sample_count=2,
+    )
+
+    evolution._apply_evolution(result)
+
+    assert not (tmp_path / "evolution" / "threshold_proposals.jsonl").exists()
+
+
+def test_auto_evolution_counts_signal_day_groups_once(tmp_path) -> None:
+    evolution = _evolution(tmp_path)
+    data = {
+        "600000": pd.DataFrame(
+            {
+                "date": ["2026-06-01", "2026-06-02"],
+                "signal_day_group": ["2026-06-01_composite", "2026-06-02_composite"],
+                "status": ["pending", "pending"],
+            }
+        ),
+        "000001": pd.DataFrame(
+            {
+                "date": ["2026-06-01", "2026-06-03"],
+                "signal_day_group": ["2026-06-01_composite", "2026-06-03_composite"],
+                "status": ["pending", "pending"],
+            }
+        ),
+    }
+
+    assert evolution._resolve_sample_count(data, None) == 3
+
+
 def test_auto_evolution_proposal_is_written_by_main_evolution_path(tmp_path) -> None:
     evolution = _evolution(tmp_path)
     evolution._evaluate_params = lambda params, _data, _name: {

@@ -389,6 +389,7 @@ def test_factor_adaptor_dead_factor():
             sharpe_30d=0.2,
             sample_count=30,
             last_updated=date(2024, 1, 1),
+            independent_signal_days=30,
         )
     }
     adjustments = adaptor.evaluate_factors(perf, {"momentum": 0.4})

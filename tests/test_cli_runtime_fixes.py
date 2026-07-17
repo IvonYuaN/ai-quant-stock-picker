@@ -3576,6 +3576,8 @@ def test_auto_evolution_apply_writes_proposal_without_touching_thresholds(
         confidence=0.9,
         timestamp=datetime(2026, 6, 3, 12, 0, 0),
         reason="test",
+        sample_count=30,
+        gate_evidence={"status": "pass"},
     )
 
     evolution._apply_evolution(result)
