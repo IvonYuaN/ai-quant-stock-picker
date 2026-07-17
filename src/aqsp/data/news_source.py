@@ -265,13 +265,12 @@ def _collect_composite_news(
         ]
         for worker in workers:
             worker.start()
+        # Let every source use the same wall-clock budget. Returning as soon as
+        # the first source succeeds marks still-running sources as timeouts even
+        # when they would have completed within the shared budget, which makes
+        # source health and fallback decisions inaccurate.
         for worker in workers:
             worker.join(max(0.0, deadline - monotonic()))
-            # Once one source has produced usable frames, return them as a partial
-            # result instead of waiting for a slower optional source to consume the
-            # outer news deadline.
-            if any(frames for frames, _error in results.values()):
-                break
 
     frames: list[pd.DataFrame] = []
     errors: list[str] = []
@@ -940,23 +939,26 @@ def _source_health_from_attrs(frame: pd.DataFrame) -> tuple[NewsSourceHealth, ..
 
 def build_default_news_source() -> NewsSource:
     rss_source = build_rss_news_source_from_config()
+    configured_timeout = _configured_news_source_timeout_seconds()
+    eastmoney_source = EastmoneyDomesticNewsSource(
+        timeout_seconds=configured_timeout or _DEFAULT_NEWS_SOURCE_TIMEOUT_SECONDS
+    )
     try:
-        configured_timeout = _configured_news_source_timeout_seconds()
         if configured_timeout is None:
             akshare_source: NewsSource | None = AkshareNewsSource()
         else:
             akshare_source = AkshareNewsSource(timeout_seconds=configured_timeout)
     except _AkshareOptionalDependencyError:
-        akshare_source = EastmoneyDomesticNewsSource(
-            timeout_seconds=_configured_news_source_timeout_seconds()
-            or _DEFAULT_NEWS_SOURCE_TIMEOUT_SECONDS
-        )
+        akshare_source = None
 
     sources: list[NewsSource] = []
     if rss_source is not None:
         sources.append(rss_source)
     if akshare_source is not None:
         sources.append(akshare_source)
+    # Keep the dependency-free domestic adapter available when AkShare is
+    # installed too: installation is not a runtime health check.
+    sources.append(eastmoney_source)
     if not sources:
         raise DataError("未配置可用新闻源: akshare 未安装且 RSS 未启用或无有效订阅源")
     if len(sources) == 1:

@@ -1231,6 +1231,67 @@ def test_composite_news_returns_fast_source_before_slow_source_deadline() -> Non
     assert any(item.name == "akshare_news" and item.status == "timeout" for item in source.last_health)
 
 
+def test_composite_news_keeps_source_that_finishes_within_shared_budget() -> None:
+    fast_frame = pd.DataFrame([{"标题": "快源", "来源": "RSS"}])
+    slow_frame = pd.DataFrame([{"标题": "预算内返回", "来源": "国内源"}])
+
+    def delayed() -> list[pd.DataFrame]:
+        time.sleep(0.04)
+        return [slow_frame]
+
+    fast_source = SimpleNamespace(
+        name="rss_news",
+        region="international",
+        last_health=(),
+        fetch_global_news=lambda: [fast_frame],
+        fetch_symbol_news=lambda _symbol: [fast_frame],
+    )
+    delayed_source = SimpleNamespace(
+        name="eastmoney_domestic_news",
+        region="domestic",
+        last_health=(),
+        fetch_global_news=delayed,
+        fetch_symbol_news=delayed,
+    )
+
+    source = CompositeNewsSource(
+        (fast_source, delayed_source),
+        timeout_seconds=0.2,
+    )
+
+    frames = source.fetch_global_news()
+
+    assert {str(frame.iloc[0]["标题"]) for frame in frames} == {"快源", "预算内返回"}
+    health = {(item.name, item.status) for item in source.last_health}
+    assert ("eastmoney_domestic_news", "ok") in health
+
+
+def test_build_default_news_source_keeps_eastmoney_as_runtime_fallback(
+    monkeypatch,
+) -> None:
+    rss_source = RssNewsSource(
+        (RssFeedConfig(name="财经雷达", url="https://example.com/rss"),)
+    )
+    akshare_source = SimpleNamespace(
+        name="akshare_news",
+        region="mixed",
+        _timeout_seconds=1.0,
+        last_health=(),
+    )
+
+    monkeypatch.setattr(news_source, "build_rss_news_source_from_config", lambda: rss_source)
+    monkeypatch.setattr(news_source, "AkshareNewsSource", lambda **_kwargs: akshare_source)
+
+    source = build_default_news_source()
+
+    assert isinstance(source, CompositeNewsSource)
+    assert {item.name for item in source._sources} == {
+        "rss_news",
+        "akshare_news",
+        "eastmoney_domestic_news",
+    }
+
+
 def test_akshare_news_source_returns_partial_frames_when_next_endpoint_blocks() -> None:
     def slow() -> pd.DataFrame:
         time.sleep(1.0)

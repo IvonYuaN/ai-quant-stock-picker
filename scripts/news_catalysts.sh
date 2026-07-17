@@ -140,8 +140,11 @@ except (OSError, ValueError, IndexError):
 
 if str(payload.get("date", "")).strip() != today_shanghai().isoformat():
     raise SystemExit(1)
+source_status = str(payload.get("source_status", "")).strip()
+if source_status not in {"ok", "partial"}:
+    raise SystemExit(1)
 events = payload.get("events")
-if not isinstance(events, list) or not events:
+if not isinstance(events, list):
     raise SystemExit(1)
 current_count = 0
 for event in events:
@@ -156,7 +159,8 @@ for event in events:
         raise SystemExit(1)
     if published_date == today_shanghai().isoformat():
         current_count += 1
-if current_count == 0:
+raw_count = int(payload.get("raw_news_count", 0) or 0)
+if current_count == 0 and raw_count <= 0:
     raise SystemExit(1)
 raise SystemExit(0)
 AQSP_CURRENT_NEWS_CHECK
