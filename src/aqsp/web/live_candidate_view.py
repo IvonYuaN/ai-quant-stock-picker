@@ -89,7 +89,7 @@ def build_live_candidate_view(
         now=now,
         requested_date=requested_date,
         max_age=resolved_config.max_age,
-        rows=rows,
+        rows=dated_rows,
     )
     candidates = tuple(
         _candidate_from_row(

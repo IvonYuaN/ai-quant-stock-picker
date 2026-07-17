@@ -5938,6 +5938,33 @@ def test_live_candidate_view_filters_rows_to_requested_date_when_csv_contains_mu
     assert [candidate.symbol for candidate in view.candidates] == ["600001"]
 
 
+def test_live_candidate_view_ignores_old_run_failure_when_current_rows_are_fresh() -> None:
+    view = build_live_candidate_view(
+        (
+            {
+                "symbol": "600001",
+                "date": "2026-07-13",
+                "score": 90,
+                "rating": "buy_candidate",
+            },
+            {
+                "symbol": "__RUN__",
+                "date": "2026-07-12",
+                "source_status": "failed",
+            },
+        ),
+        metadata=LiveArtifactMetadata(
+            artifact_date="2026-07-13",
+            updated_at="2026-07-13T15:00:00+08:00",
+        ),
+        now=datetime(2026, 7, 13, 15, 1, tzinfo=ZoneInfo("Asia/Shanghai")),
+        requested_date="2026-07-13",
+    )
+
+    assert view.status == "fresh"
+    assert view.candidates[0].status == "actionable"
+
+
 def test_dashboard_data_provider_live_view_caps_intraday_csv_and_exposes_card_evidence(
     tmp_path: Path,
 ) -> None:
