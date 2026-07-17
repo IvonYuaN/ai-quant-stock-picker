@@ -48,11 +48,24 @@ class StrategyPerformance:
 
 
 def _validated_rows(df: pd.DataFrame) -> pd.DataFrame:
-    """Return settled outcome rows; unresolved rows are not learning samples."""
+    """Return real, settled outcome rows for learning.
+
+    Simulated/backtest rows may still carry ``status=validated`` after their
+    own evaluation.  They are not observations from the production signal
+    ledger and must not influence weights or decay alerts.
+    """
     if df.empty or "status" not in df.columns:
         return df.iloc[0:0].copy()
     status = df["status"].fillna("").astype(str).str.strip()
-    return df.loc[status == "validated"].copy()
+    validated = status == "validated"
+    if "is_simulated" in df.columns:
+        simulated = df["is_simulated"].fillna(False)
+        if simulated.dtype == object:
+            simulated = simulated.astype(str).str.strip().str.lower().isin(
+                {"true", "1", "yes", "y"}
+            )
+        validated &= ~simulated.astype(bool)
+    return df.loc[validated].copy()
 
 
 def _explode_strategies(df: pd.DataFrame) -> pd.DataFrame:

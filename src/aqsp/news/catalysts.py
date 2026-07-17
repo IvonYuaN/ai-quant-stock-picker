@@ -84,6 +84,9 @@ class CatalystEvent:
     time_horizon: str = ""
     supporting_evidence: tuple[str, ...] = ()
     contradicting_evidence: tuple[str, ...] = ()
+    transmission_path: tuple[str, ...] = ()
+    validation_signals: tuple[str, ...] = ()
+    invalidation_signals: tuple[str, ...] = ()
 
     @property
     def deterministic_score(self) -> int:
@@ -287,6 +290,9 @@ def _serialize_catalyst_report(report: CatalystReport) -> dict[str, Any]:
                 "time_horizon": event.time_horizon,
                 "supporting_evidence": list(event.supporting_evidence),
                 "contradicting_evidence": list(event.contradicting_evidence),
+                "transmission_path": list(event.transmission_path),
+                "validation_signals": list(event.validation_signals),
+                "invalidation_signals": list(event.invalidation_signals),
             }
             for event in report.events
         ],
@@ -344,6 +350,11 @@ def _deserialize_catalyst_report(payload: Any) -> CatalystReport | None:
                 supporting_evidence=_text_tuple(item.get("supporting_evidence", ())),
                 contradicting_evidence=_text_tuple(
                     item.get("contradicting_evidence", ())
+                ),
+                transmission_path=_text_tuple(item.get("transmission_path", ())),
+                validation_signals=_text_tuple(item.get("validation_signals", ())),
+                invalidation_signals=_text_tuple(
+                    item.get("invalidation_signals", ())
                 ),
             )
             for item in tuple(payload.get("events", ()) or ())
@@ -829,6 +840,50 @@ _SECTOR_TAG_RULES: tuple[tuple[tuple[str, ...], tuple[str, ...]], ...] = (
     (
         ("设备更新", "以旧换新", "国常会", "补贴", "政策支持"),
         ("设备更新", "工程机械", "汽车家电"),
+    ),
+)
+
+# These are short-horizon causal chains, not price forecasts.  They make the
+# first verification target explicit so a headline cannot become a stock tip
+# merely because it contains a fashionable keyword.
+_TRANSMISSION_CHAIN_RULES: tuple[
+    tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...], tuple[str, ...]], ...
+] = (
+    (
+        ("pcb", "覆铜板", "铜箔", "玻纤布", "电子材料"),
+        ("原材料/覆铜板价格", "PCB厂商报价与订单", "高频通信/服务器板需求"),
+        ("相关品种报价继续上调", "板块成交额放大且强于大盘"),
+        ("现货价格未跟涨", "放量冲高后跌回消息前"),
+    ),
+    (
+        ("hbm", "dram", "nand", "存储芯片", "内存", "存储"),
+        ("存储现货价格", "模组/封测与渠道库存", "AI服务器与终端需求"),
+        ("现货或厂商报价连续上调", "存储产业链出现扩散"),
+        ("价格仅为单点传闻", "库存/需求数据反向"),
+    ),
+    (
+        ("晶圆", "光刻胶", "硅片", "半导体设备", "先进封装"),
+        ("设备/材料订单", "晶圆厂稼动率", "下游芯片交付"),
+        ("订单或产能利用率被公告/数据确认", "相关环节相对强度延续"),
+        ("只有概念标题无订单", "成交无法承接"),
+    ),
+    (
+        ("physical ai", "具身智能", "robotics", "humanoid", "英伟达", "nvidia"),
+        ("平台/模型发布", "机器人本体与传感器", "控制器/算力/伺服"),
+        ("客户发布产品或订单落地", "机器人产业链成交扩散"),
+        ("仅开发者演示无商业化", "相关标的高开低走"),
+    ),
+    (
+        ("spacex", "space x", "商业航天", "卫星", "低轨", "火箭"),
+        ("发射/卫星订单", "卫星制造与地面设备", "军工电子/通信应用"),
+        ("发射计划或订单有官方来源", "商业航天板块相对强度扩散"),
+        ("上市传闻未有文件", "板块冲高回落"),
+    ),
+    (
+        ("战争", "war", "地缘", "冲突", "袭击", "中东"),
+        ("避险需求", "黄金/贵金属", "军工与能源"),
+        ("黄金与军工相对强度同步", "事件持续且有权威来源"),
+        ("停火或风险溢价回落", "金价/军工冲高回落"),
     ),
 )
 
@@ -1443,6 +1498,13 @@ def _events_from_rows(
                 contradicting_evidence=_text_tuple(
                     row.get("contradicting_evidence", "")
                 ),
+                transmission_path=_transmission_path(title, affected_sectors),
+                validation_signals=_transmission_signals(
+                    title, affected_sectors, positive=True
+                ),
+                invalidation_signals=_transmission_signals(
+                    title, affected_sectors, positive=False
+                ),
             )
         )
     return events
@@ -1499,10 +1561,45 @@ def _build_transmission_hypothesis(
         "抬升" if impact == "positive" else "压低" if impact == "negative" else "扰动"
     )
     sector_text = "、".join(sectors[:3]) or "相关行业"
+    path = _transmission_path(title, sectors)
+    if path:
+        return f"{' -> '.join(path)}；先{direction}短线关注度，再等价格与成交确认（{category}）。"
     return (
         f"{title}通过改变{sector_text}预期，先{direction}{target}的短线关注度，"
         f"再观察板块扩散与价格成交确认（{category}）。"
     )
+
+
+def _transmission_rule(
+    title: str,
+    sectors: tuple[str, ...],
+) -> tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...], tuple[str, ...]] | None:
+    text = " ".join((str(title or ""), *sectors)).casefold()
+    return next(
+        (
+            rule
+            for rule in _TRANSMISSION_CHAIN_RULES
+            if any(keyword.casefold() in text for keyword in rule[0])
+        ),
+        None,
+    )
+
+
+def _transmission_path(title: str, sectors: tuple[str, ...]) -> tuple[str, ...]:
+    rule = _transmission_rule(title, sectors)
+    return () if rule is None else rule[1]
+
+
+def _transmission_signals(
+    title: str,
+    sectors: tuple[str, ...],
+    *,
+    positive: bool,
+) -> tuple[str, ...]:
+    rule = _transmission_rule(title, sectors)
+    if rule is None:
+        return ()
+    return rule[2] if positive else rule[3]
 
 
 def _event_supporting_evidence(
@@ -1841,13 +1938,31 @@ def _select_diverse_events(
     selected: list[CatalystEvent] = []
     deferred: list[CatalystEvent] = []
     seen_sources: set[str] = set()
+    seen_themes: set[str] = set()
+
+    def theme_key(event: CatalystEvent) -> str:
+        sectors = tuple(
+            str(item).strip().casefold()
+            for item in event.affected_sectors
+            if str(item).strip()
+        )
+        # A generic category such as "消息" is not a useful theme.  Keeping it
+        # as unknown preserves the long-standing source-diversity contract for
+        # rows that carry no structured sector evidence.
+        return sectors[0] if sectors else "unknown"
+
     for event in events:
         source = event.source.strip().casefold() or "unknown"
-        if source in seen_sources and len(seen_sources) < target:
+        theme = theme_key(event)
+        if (
+            (source in seen_sources or (theme != "unknown" and theme in seen_themes))
+            and len(selected) < target
+        ):
             deferred.append(event)
             continue
         selected.append(event)
         seen_sources.add(source)
+        seen_themes.add(theme)
         if len(selected) >= target:
             return tuple(selected)
     selected.extend(deferred[: target - len(selected)])
@@ -1934,6 +2049,13 @@ def _merge_events(events: Sequence[CatalystEvent]) -> tuple[CatalystEvent, ...]:
             ),
             contradicting_evidence=_text_tuple(
                 (*existing.contradicting_evidence, *event.contradicting_evidence)
+            ),
+            transmission_path=existing.transmission_path or event.transmission_path,
+            validation_signals=_text_tuple(
+                (*existing.validation_signals, *event.validation_signals)
+            ),
+            invalidation_signals=_text_tuple(
+                (*existing.invalidation_signals, *event.invalidation_signals)
             ),
         )
     return tuple(merged)

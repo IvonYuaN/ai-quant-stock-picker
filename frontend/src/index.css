@@ -207,6 +207,8 @@
   .vr-technical-grid strong { overflow: hidden; color: hsl(var(--foreground) / 0.9); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.7rem; font-variant-numeric: tabular-nums; text-overflow: ellipsis; white-space: nowrap; }
   .vr-chip { display: inline-flex; align-items: center; max-width: 100%; border-radius: 999px; padding: 0.22rem 0.48rem; background: hsl(var(--muted) / 0.7); color: hsl(var(--muted-foreground)); font-size: 0.65rem; line-height: 1.2; }
   .vr-chip-primary { background: hsl(var(--primary) / 0.13); color: hsl(var(--primary)); }
+  .vr-chip-positive { background: hsl(var(--success) / 0.13); color: hsl(var(--success)); }
+  .vr-chip-negative { background: hsl(var(--danger) / 0.13); color: hsl(var(--danger)); }
   .vr-message-list { display: grid; gap: 0.75rem; }
   .vr-message-card { border: 1px solid hsl(var(--border) / 0.72); border-radius: 0.65rem; background: hsl(var(--card) / 0.58); padding: 0.75rem 0.85rem; box-shadow: inset 2px 0 0 hsl(var(--primary) / 0.4); transition: border-color 140ms ease, background 140ms ease; }
   .vr-message-card:hover { border-color: hsl(var(--primary) / 0.34); background: hsl(var(--card) / 0.82); }

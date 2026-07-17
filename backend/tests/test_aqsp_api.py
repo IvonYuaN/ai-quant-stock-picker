@@ -159,7 +159,15 @@ def test_aqsp_api_returns_current_snapshot_with_messages_and_agents(
         "第1轮完成技术与风险初筛"
     ]
     assert body["data"]["stale_after"]
-    assert body["meta"] == {"historical": False, "stale": False}
+    assert body["meta"] == {
+        "historical": False,
+        "stale": False,
+        "freshness": {
+            "candidates": "unavailable",
+            "messages": "fresh",
+            "cross_market": "unavailable",
+        },
+    }
 
 
 def test_aqsp_api_returns_503_when_current_snapshot_lacks_stale_after(
@@ -214,7 +222,15 @@ def test_aqsp_api_returns_exact_historical_date_without_substitution(
     assert response.status_code == 200
     assert response.json()["data"]["selected_date"] == "2026-07-10"
     assert response.json()["data"]["stale_after"] == "2026-07-11T09:30:00+08:00"
-    assert response.json()["meta"] == {"historical": True, "stale": True}
+    assert response.json()["meta"] == {
+        "historical": True,
+        "stale": True,
+        "freshness": {
+            "candidates": "unavailable",
+            "messages": "no_data",
+            "cross_market": "unavailable",
+        },
+    }
 
 
 def test_aqsp_api_allows_historical_snapshot_without_stale_after(
@@ -245,7 +261,15 @@ def test_aqsp_api_allows_historical_snapshot_without_stale_after(
 
     assert response.status_code == 200
     assert response.json()["data"]["selected_date"] == "2026-07-10"
-    assert response.json()["meta"] == {"historical": True, "stale": True}
+    assert response.json()["meta"] == {
+        "historical": True,
+        "stale": True,
+        "freshness": {
+            "candidates": "unavailable",
+            "messages": "no_data",
+            "cross_market": "unavailable",
+        },
+    }
 
 
 def test_aqsp_api_returns_404_when_requested_date_is_missing(

@@ -40,6 +40,7 @@ function EmptyState({ title, detail }: { title: string; detail: string }) {
 
 function SnapshotMeta({ snapshot }: { snapshot: AqspSnapshot }) {
   const stale = isAqspSnapshotStale(snapshot);
+  const componentFreshness = snapshot.meta?.freshness;
   const contextLines = snapshot.market_context?.summary_lines ?? [];
   const crossMarketStale = contextLines.some((line) => /实时跨市:\s*stale/i.test(line));
   const newsUnavailable = /失败|timeout|超时/i.test(snapshot.market_context?.status ?? "") || snapshot.message_status === "来源失败";
@@ -52,6 +53,7 @@ function SnapshotMeta({ snapshot }: { snapshot: AqspSnapshot }) {
       </span>
       {newsUnavailable && <span className="vr-status vr-status-warning">消息源受限</span>}
       {crossMarketStale && <span className="vr-status vr-status-warning">跨市场数据滞后</span>}
+      {componentFreshness?.candidates === "fresh" && <span className="vr-status vr-status-success">行情实时</span>}
     </div>
   );
 }
@@ -156,6 +158,10 @@ function CandidateCard({ candidate }: { candidate: AqspCandidate }) {
 
 function MessageCard({ message }: { message: AqspMessage }) {
   const sectors = uniqueNonEmpty(message.affected_sectors, 4);
+  const path = uniqueNonEmpty(message.transmission_path, 4);
+  const validation = uniqueNonEmpty(message.validation_signals, 2);
+  const invalidation = uniqueNonEmpty(message.invalidation_signals, 2);
+  const evidence = uniqueNonEmpty(message.supporting_evidence, 2);
   return (
     <article className="vr-message-card">
       <div className="flex min-w-0 items-start justify-between gap-3">
@@ -164,6 +170,7 @@ function MessageCard({ message }: { message: AqspMessage }) {
             {message.category && <span className="vr-chip vr-chip-primary">{message.category}</span>}
             {message.event_type && <span className="vr-chip">{message.event_type}</span>}
             {message.source && <span className="vr-chip">{message.source}</span>}
+            {message.impact && <span className={cn("vr-chip", message.impact === "利空" ? "vr-chip-negative" : message.impact === "利好" ? "vr-chip-positive" : "")}>{message.impact}</span>}
             <time className="text-[10px] text-muted-foreground">{formatAqspTime(message.published_at)}</time>
           </div>
           <h3 className="mt-2 text-sm font-medium leading-relaxed">{message.title || "消息标题未记录"}</h3>
@@ -177,6 +184,18 @@ function MessageCard({ message }: { message: AqspMessage }) {
           {sectors.map((sector) => <span key={sector} className="vr-chip vr-chip-primary">{sector}</span>)}
         </div>
       )}
+      {(path.length > 0 || message.transmission_hypothesis) && (
+        <div className="vr-message-impact">
+          <p className="vr-kicker">传导判断</p>
+          {path.length > 0 && <p className="mt-1 text-xs font-medium">{path.join(" -> ")}</p>}
+          {message.transmission_hypothesis && <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{message.transmission_hypothesis}</p>}
+          {(validation.length > 0 || invalidation.length > 0) && <div className="mt-2 grid gap-1 text-[11px] text-muted-foreground sm:grid-cols-2">
+            {validation.length > 0 && <p><span className="text-success">确认：</span>{validation.join("；")}</p>}
+            {invalidation.length > 0 && <p><span className="text-warning">失效：</span>{invalidation.join("；")}</p>}
+          </div>}
+        </div>
+      )}
+      {evidence.length > 0 && <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">证据：{evidence.join("；")}</p>}
       {message.source_url && (
         <a
           href={message.source_url}

@@ -120,6 +120,9 @@ class AQSPMessage:
     supporting_evidence: tuple[str, ...] = ()
     source_url: str = ""
     verification: str = ""
+    transmission_path: tuple[str, ...] = ()
+    validation_signals: tuple[str, ...] = ()
+    invalidation_signals: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -277,7 +280,46 @@ def snapshot_response(selected_date: str | None = None) -> dict[str, Any]:
     _require_current_snapshot_fresh(surface, selected_date, stale=stale)
     return {
         "data": snapshot.to_dict(),
-        "meta": {"historical": historical, "stale": stale},
+        "meta": {
+            "historical": historical,
+            "stale": stale,
+            "freshness": _snapshot_component_freshness(snapshot),
+        },
+    }
+
+
+def _snapshot_component_freshness(snapshot: AQSPSnapshot) -> dict[str, str]:
+    """Expose component freshness without hiding usable realtime candidates."""
+    candidate_states = {
+        item.freshness.strip().lower()
+        for item in snapshot.candidates
+        if item.freshness.strip()
+    }
+    if candidate_states == {"fresh"}:
+        candidates = "fresh"
+    elif candidate_states:
+        candidates = "degraded"
+    else:
+        candidates = "unavailable"
+
+    if snapshot.messages and snapshot.message_status in {"ok", "部分可用"}:
+        messages = "partial" if snapshot.message_status == "部分可用" else "fresh"
+    elif snapshot.message_status in {"来源失败", "timeout", "failed"}:
+        messages = "unavailable"
+    else:
+        messages = "no_data"
+
+    summary = "；".join(snapshot.market_context.summary_lines) if snapshot.market_context else ""
+    if "实时跨市: stale" in summary.lower():
+        cross_market = "stale"
+    elif "实时跨市: fresh" in summary.lower():
+        cross_market = "fresh"
+    else:
+        cross_market = "unavailable"
+    return {
+        "candidates": candidates,
+        "messages": messages,
+        "cross_market": cross_market,
     }
 
 
@@ -612,6 +654,9 @@ def _parse_message(payload: object) -> AQSPMessage:
             "supporting_evidence",
             "source_url",
             "verification",
+            "transmission_path",
+            "validation_signals",
+            "invalidation_signals",
         },
     )
     published_at = _normalize_message_timestamp(
@@ -647,6 +692,17 @@ def _parse_message(payload: object) -> AQSPMessage:
         ),
         source_url=_optional_text(item.get("source_url"), "message.source_url"),
         verification=_optional_text(item.get("verification"), "message.verification"),
+        transmission_path=tuple(
+            _text_list(item.get("transmission_path", []), "message.transmission_path")
+        ),
+        validation_signals=tuple(
+            _text_list(item.get("validation_signals", []), "message.validation_signals")
+        ),
+        invalidation_signals=tuple(
+            _text_list(
+                item.get("invalidation_signals", []), "message.invalidation_signals"
+            )
+        ),
     )
 
 

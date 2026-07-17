@@ -547,6 +547,9 @@ def _messages_from_catalyst_report(
                 supporting_evidence=event.supporting_evidence[:5],
                 source_url=event.url,
                 verification=event.verification,
+                transmission_path=event.transmission_path[:5],
+                validation_signals=event.validation_signals[:3],
+                invalidation_signals=event.invalidation_signals[:3],
             )
         )
         if len(messages) == MAX_HOME_MESSAGES:
@@ -758,6 +761,9 @@ def _parse_news_report_payload(
                 affected_sectors=(),
                 transmission_hypothesis=fields.get("结论", "").strip(),
                 verification="已记录来源",
+                transmission_path=(),
+                validation_signals=(),
+                invalidation_signals=(),
             )
         )
     if source_status in {"failed", "timeout"} or event_status in {
@@ -927,6 +933,9 @@ def _append_cross_market_messages(
             supporting_evidence=item.supporting_evidence[:5],
             source_url=item.source_url,
             verification="多源/规则映射",
+            transmission_path=item.transmission_path[:5],
+            validation_signals=item.validation_signals[:3],
+            invalidation_signals=item.invalidation_signals[:3],
         )
         for item in artifact.cross_market_implications[:3]
         if (published_at := _normalize_timestamp(item.source_published_at))

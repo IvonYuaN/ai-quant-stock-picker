@@ -172,6 +172,37 @@ def test_news_catalyst_selects_ranked_events_from_diverse_sources() -> None:
     assert len({item.source for item in selected}) == 3
 
 
+def test_news_catalyst_builds_explicit_pcb_transmission_chain() -> None:
+    report = build_catalyst_report(
+        fetch_global_news=lambda _limit: pd.DataFrame(
+            [
+                {
+                    "标题": "PCB覆铜板厂商宣布报价上调，电子材料供应紧张",
+                    "来源": "产业公告",
+                    "时间": _RECENT_NEWS_TIME,
+                    "链接": "https://example.com/pcb",
+                }
+            ]
+        ),
+        config=NewsCatalystConfig(
+            allow_undated_news=False,
+            min_confidence=0.1,
+            max_news_age_days=7,
+        ),
+    )
+
+    assert len(report.events) == 1
+    event = report.events[0]
+    assert event.affected_sectors[0] == "PCB"
+    assert event.transmission_path == (
+        "原材料/覆铜板价格",
+        "PCB厂商报价与订单",
+        "高频通信/服务器板需求",
+    )
+    assert "报价" in event.validation_signals[0]
+    assert event.invalidation_signals
+
+
 def test_news_catalyst_report_prioritizes_verified_price_hike_events() -> None:
     def symbol_news(symbol: str, limit: int) -> pd.DataFrame:
         return pd.DataFrame(

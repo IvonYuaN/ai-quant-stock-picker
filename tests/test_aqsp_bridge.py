@@ -280,7 +280,15 @@ def test_aqsp_bridge_allows_historical_snapshot_without_stale_after(
     response = client.get("/api/aqsp/snapshot?date=2026-07-11")
 
     assert response.status_code == 200
-    assert response.json()["meta"] == {"historical": True, "stale": True}
+    assert response.json()["meta"] == {
+        "historical": True,
+        "stale": True,
+        "freshness": {
+            "candidates": "unavailable",
+            "messages": "no_data",
+            "cross_market": "unavailable",
+        },
+    }
 
 
 @pytest.mark.parametrize(

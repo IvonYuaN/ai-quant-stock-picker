@@ -36,6 +36,7 @@ export interface AqspMessage {
   transmission_path?: readonly string[];
   validation_signals?: readonly string[];
   verification?: string;
+  invalidation_signals?: readonly string[];
 }
 
 export interface AqspCrossMarket {
@@ -106,6 +107,11 @@ export interface AqspSnapshot {
 export interface AqspSnapshotMeta {
   historical: boolean;
   stale: boolean;
+  freshness?: {
+    candidates: string;
+    messages: string;
+    cross_market: string;
+  };
 }
 
 export interface AqspSnapshotEnvelope {

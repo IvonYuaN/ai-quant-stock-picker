@@ -114,6 +114,9 @@ class HomeSnapshotMessage:
     supporting_evidence: tuple[str, ...] = ()
     source_url: str = ""
     verification: str = ""
+    transmission_path: tuple[str, ...] = ()
+    validation_signals: tuple[str, ...] = ()
+    invalidation_signals: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -693,6 +696,9 @@ def _message_from_dict(payload: object) -> HomeSnapshotMessage:
             "supporting_evidence",
             "source_url",
             "verification",
+            "transmission_path",
+            "validation_signals",
+            "invalidation_signals",
         },
     )
     return HomeSnapshotMessage(
@@ -726,6 +732,15 @@ def _message_from_dict(payload: object) -> HomeSnapshotMessage:
         source_url=_optional_text(mapping.get("source_url"), "message.source_url"),
         verification=_optional_text(
             mapping.get("verification"), "message.verification"
+        ),
+        transmission_path=_text_tuple(
+            mapping.get("transmission_path", []), "message.transmission_path"
+        ),
+        validation_signals=_text_tuple(
+            mapping.get("validation_signals", []), "message.validation_signals"
+        ),
+        invalidation_signals=_text_tuple(
+            mapping.get("invalidation_signals", []), "message.invalidation_signals"
         ),
     )
 

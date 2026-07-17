@@ -455,6 +455,15 @@ def test_strategy_weights_ignore_not_executable_rows_and_string_strategies(
             "strategies": "volume_breakout",
         }
     )
+    rows.append(
+        {
+            "status": "validated",
+            "signal_date": "2026-02-02",
+            "return_pct": 99.0,
+            "strategies": "volume_breakout",
+            "is_simulated": True,
+        }
+    )
     write_ledger(ledger, rows)
 
     weights = strategy_weights_from_ledger(ledger)
@@ -532,6 +541,39 @@ def test_learner_ignores_unresolved_rows_and_not_executable_rows_when_learning(
     assert performance.recent_performance.independent_signal_days == 30
     assert performance.recent_performance.total_picks == 30
     assert performance.recent_performance.win_rate == 1.0
+
+
+def test_learner_excludes_simulated_validated_rows_from_learning(tmp_path) -> None:
+    rows = [
+        {
+            "status": "validated",
+            "signal_date": f"2026-01-{day:02d}",
+            "return_pct": 2.0,
+            "strategies": ["volume_breakout"],
+        }
+        for day in range(1, 30)
+    ]
+    rows.append(
+        {
+            "status": "validated",
+            "signal_date": "2026-02-01",
+            "return_pct": 99.0,
+            "strategies": ["volume_breakout"],
+            "is_simulated": True,
+        }
+    )
+
+    learner = PerformanceLearner(
+        config=LearnerConfig(min_independent_signal_days=30),
+        weight_history_path=tmp_path / "weight_history.jsonl",
+    )
+
+    result = learner.learn_from_ledger(pd.DataFrame(rows))
+
+    performance = result["volume_breakout"].recent_performance
+    assert performance.independent_signal_days == 29
+    assert performance.total_picks == 29
+    assert performance.avg_return == pytest.approx(0.02)
 
 
 def test_validation_keeps_string_strategies_in_independent_execution_feedback(

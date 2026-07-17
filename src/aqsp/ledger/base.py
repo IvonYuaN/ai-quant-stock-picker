@@ -762,6 +762,11 @@ def strategy_weights_from_ledger(
     for row in read_ledger(path):
         if str(row.get("status") or "").strip() != "validated":
             continue
+        simulated = row.get("is_simulated", False)
+        if isinstance(simulated, str):
+            simulated = simulated.strip().lower() in {"true", "1", "yes", "y"}
+        if bool(simulated):
+            continue
         ret = float(
             row.get("excess_return_pct")
             if row.get("excess_return_pct") is not None
