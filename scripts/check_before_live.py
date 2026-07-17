@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
@@ -1944,10 +1945,24 @@ def _check_notify_channels(root: Path) -> ReadinessFinding:
         "SLACK_WEBHOOK_URL",
         "GENERIC_WEBHOOK_URL",
     )
+    notify_mode = read_env_value(env_path, "AQSP_NOTIFY_MODE").strip().lower()
+    if notify_mode and notify_mode not in {"summary", "full", "fanout"}:
+        return ReadinessFinding(
+            "notify_channels",
+            False,
+            "AQSP_NOTIFY_MODE must be one of summary/full/fanout",
+        )
+    url_keys = (
+        "WECHAT_WEBHOOK_URL",
+        "FEISHU_WEBHOOK_URL",
+        "DINGTALK_WEBHOOK_URL",
+        "DISCORD_WEBHOOK_URL",
+        "SLACK_WEBHOOK_URL",
+        "GENERIC_WEBHOOK_URL",
+    )
     configured: list[str] = []
     for key in channel_keys:
-        value = read_env_value(env_path, key)
-        if value:
+        if read_env_value(env_path, key).strip():
             configured.append(key)
     telegram_pair = {"TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID"}
     if telegram_pair & set(configured) and not telegram_pair.issubset(set(configured)):
@@ -1955,6 +1970,28 @@ def _check_notify_channels(root: Path) -> ReadinessFinding:
             "notify_channels",
             False,
             "telegram notify config incomplete: need TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID",
+        )
+    dingtalk_webhook_configured = "DINGTALK_WEBHOOK_URL" in configured
+    dingtalk_secret_configured = bool(
+        read_env_value(env_path, "DINGTALK_SECRET").strip()
+    )
+    if dingtalk_secret_configured and not dingtalk_webhook_configured:
+        return ReadinessFinding(
+            "notify_channels",
+            False,
+            "dingtalk notify config incomplete: DINGTALK_SECRET requires DINGTALK_WEBHOOK_URL",
+        )
+    invalid_webhooks = [
+        key
+        for key in url_keys
+        if read_env_value(env_path, key).strip()
+        and not _is_http_webhook_url(read_env_value(env_path, key))
+    ]
+    if invalid_webhooks:
+        return ReadinessFinding(
+            "notify_channels",
+            False,
+            "webhook URL must use http/https: " + ", ".join(invalid_webhooks),
         )
     if not configured:
         return ReadinessFinding(
@@ -1977,6 +2014,14 @@ def _check_notify_channels(root: Path) -> ReadinessFinding:
         True,
         "configured: " + ", ".join(configured),
     )
+
+
+def _is_http_webhook_url(value: str) -> bool:
+    """Validate webhook URL shape without contacting the endpoint."""
+    if any(char.isspace() for char in value):
+        return False
+    parsed = urlparse(value.strip())
+    return parsed.scheme.lower() in {"http", "https"} and bool(parsed.netloc)
 
 
 def _check_cli_subcommand_notify_dedupe(root: Path) -> ReadinessFinding:

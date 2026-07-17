@@ -172,6 +172,59 @@ def test_server_doctor_reports_notify_mode_and_channels(monkeypatch) -> None:
     assert "wechat" in by_name["notify:mode"].detail
 
 
+def test_server_doctor_returns_nonzero_when_notify_check_has_error(
+    monkeypatch, capsys
+) -> None:
+    monkeypatch.setattr(server_doctor, "_load_env_file", lambda: None)
+    monkeypatch.setattr(server_doctor, "_artifact_checks", lambda: [])
+    monkeypatch.setattr(
+        server_doctor,
+        "_tracked_worktree_check",
+        lambda: server_doctor.DoctorCheck("git:tracked_worktree", "ok", "clean"),
+    )
+    monkeypatch.setattr(server_doctor, "_dashboard_ingress_checks", lambda: [])
+    monkeypatch.setattr(server_doctor, "_source_auth_checks", lambda **_kwargs: [])
+    monkeypatch.setattr(server_doctor, "_llm_checks", lambda **_kwargs: [])
+    monkeypatch.setattr(
+        server_doctor,
+        "_notify_checks",
+        lambda: [server_doctor.DoctorCheck("notify:test", "error", "failed")],
+    )
+
+    exit_code = server_doctor.main([])
+
+    capsys.readouterr()
+    assert exit_code != 0
+
+
+def test_server_doctor_keeps_notify_warning_and_info_non_blocking(
+    monkeypatch, capsys
+) -> None:
+    monkeypatch.setattr(server_doctor, "_load_env_file", lambda: None)
+    monkeypatch.setattr(server_doctor, "_artifact_checks", lambda: [])
+    monkeypatch.setattr(
+        server_doctor,
+        "_tracked_worktree_check",
+        lambda: server_doctor.DoctorCheck("git:tracked_worktree", "ok", "clean"),
+    )
+    monkeypatch.setattr(server_doctor, "_dashboard_ingress_checks", lambda: [])
+    monkeypatch.setattr(server_doctor, "_source_auth_checks", lambda **_kwargs: [])
+    monkeypatch.setattr(server_doctor, "_llm_checks", lambda **_kwargs: [])
+    monkeypatch.setattr(
+        server_doctor,
+        "_notify_checks",
+        lambda: [
+            server_doctor.DoctorCheck("notify:warning", "warning", "degraded"),
+            server_doctor.DoctorCheck("notify:info", "info", "details"),
+        ],
+    )
+
+    exit_code = server_doctor.main([])
+
+    capsys.readouterr()
+    assert exit_code == 0
+
+
 def test_server_doctor_reports_dirty_worktree(monkeypatch) -> None:
     monkeypatch.setattr(
         server_doctor.subprocess,

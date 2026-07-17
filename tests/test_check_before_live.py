@@ -12,6 +12,7 @@ from scripts.check_before_live import (
     _check_strategy_weight_snapshot_audit,
     _schedule_matches_bt_action,
     _strategy_threshold_consistency_blockers,
+    _check_notify_channels,
     check_before_live,
 )
 from aqsp.strategies.thresholds import (
@@ -2143,6 +2144,82 @@ def test_check_before_live_accepts_summary_mode_with_only_full_notify_channel(
     finding = next(item for item in findings if item.gate == "notify_channels")
     assert finding.ok is True
     assert "FEISHU_WEBHOOK_URL" in finding.detail
+
+
+def test_check_before_live_blocks_non_http_webhook_url(tmp_path: Path) -> None:
+    _prepare_ready_runtime(tmp_path)
+    (tmp_path / ".env").write_text(
+        "AQSP_NOTIFY=true\nGENERIC_WEBHOOK_URL=ftp://example.com/hook\n",
+        encoding="utf-8",
+    )
+
+    finding = _check_notify_channels(tmp_path)
+
+    assert finding.ok is False
+    assert "GENERIC_WEBHOOK_URL" in finding.detail
+    assert "ftp://" not in finding.detail
+
+
+def test_check_before_live_blocks_invalid_notify_mode(tmp_path: Path) -> None:
+    _prepare_ready_runtime(tmp_path)
+    (tmp_path / ".env").write_text(
+        "AQSP_NOTIFY=true\n"
+        "AQSP_NOTIFY_MODE=serverchan\n"
+        "SERVERCHAN_SENDKEY=test\n",
+        encoding="utf-8",
+    )
+
+    finding = _check_notify_channels(tmp_path)
+
+    assert finding.ok is False
+    assert "summary/full/fanout" in finding.detail
+
+
+def test_check_before_live_blocks_dingtalk_secret_without_webhook(
+    tmp_path: Path,
+) -> None:
+    _prepare_ready_runtime(tmp_path)
+    (tmp_path / ".env").write_text(
+        "AQSP_NOTIFY=true\nDINGTALK_SECRET=test-secret\n",
+        encoding="utf-8",
+    )
+
+    finding = _check_notify_channels(tmp_path)
+
+    assert finding.ok is False
+    assert "DINGTALK_SECRET" in finding.detail
+
+
+def test_check_before_live_accepts_dingtalk_webhook_without_secret(
+    tmp_path: Path,
+) -> None:
+    _prepare_ready_runtime(tmp_path)
+    (tmp_path / ".env").write_text(
+        "AQSP_NOTIFY=true\nDINGTALK_WEBHOOK_URL=https://example.com/hook\n",
+        encoding="utf-8",
+    )
+
+    finding = _check_notify_channels(tmp_path)
+
+    assert finding.ok is True
+
+
+def test_check_before_live_accepts_http_webhook_and_dingtalk_pair(
+    tmp_path: Path,
+) -> None:
+    _prepare_ready_runtime(tmp_path)
+    (tmp_path / ".env").write_text(
+        "AQSP_NOTIFY=true\n"
+        "DINGTALK_WEBHOOK_URL=http://example.com/hook\n"
+        "DINGTALK_SECRET=test-secret\n",
+        encoding="utf-8",
+    )
+
+    finding = _check_notify_channels(tmp_path)
+
+    assert finding.ok is True
+    assert "DINGTALK_WEBHOOK_URL" in finding.detail
+    assert "test-secret" not in finding.detail
 
 
 def test_check_before_live_blocks_direct_cli_subcommand_notify(

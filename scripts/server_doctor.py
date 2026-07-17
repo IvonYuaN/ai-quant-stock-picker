@@ -415,6 +415,7 @@ def _has_hard_failures(checks: list[DoctorCheck]) -> bool:
         "missing_package",
         "failed",
         "dirty",
+        "error",
     }
     return any(check.status in failing for check in checks)
 
@@ -457,7 +458,12 @@ def main(argv: list[str] | None = None) -> int:
     return (
         1
         if _has_hard_failures(
-            artifact_checks + git_checks + ingress_checks + source_checks + llm_checks
+            artifact_checks
+            + git_checks
+            + ingress_checks
+            + source_checks
+            + llm_checks
+            + notify_checks
         )
         else 0
     )
