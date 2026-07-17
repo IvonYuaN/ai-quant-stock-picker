@@ -9,7 +9,8 @@ set -euo pipefail
 PORT="${AQSP_DEPLOY_PORT:-22}"
 SOURCE_DIR="${1:-dist/dashboard}"
 SSH_KEY_PATH="${AQSP_DEPLOY_SSH_KEY_PATH:-$HOME/.ssh/aqsp_deploy}"
-SSH_OPTS="-p $PORT -o StrictHostKeyChecking=accept-new"
+SSH_CONNECT_TIMEOUT="${AQSP_DEPLOY_CONNECT_TIMEOUT_SECONDS:-8}"
+SSH_OPTS="-p $PORT -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o ConnectTimeout=$SSH_CONNECT_TIMEOUT -o ConnectionAttempts=1 -o ServerAliveInterval=5 -o ServerAliveCountMax=2"
 if [ -f "$SSH_KEY_PATH" ]; then
     SSH_OPTS="-i $SSH_KEY_PATH $SSH_OPTS"
 fi
