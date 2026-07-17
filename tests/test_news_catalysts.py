@@ -203,6 +203,27 @@ def test_news_catalyst_builds_explicit_pcb_transmission_chain() -> None:
     assert event.invalidation_signals
 
 
+def test_news_catalyst_prioritizes_title_theme_over_broad_sector_tags() -> None:
+    report = build_catalyst_report(
+        fetch_global_news=lambda _limit: pd.DataFrame(
+            [
+                {
+                    "标题": "NVIDIA launches Physical AI robotics platform",
+                    "来源": "NVIDIA Newsroom",
+                    "时间": _RECENT_NEWS_TIME,
+                }
+            ]
+        ),
+        config=NewsCatalystConfig(min_confidence=0.1, max_news_age_days=7),
+    )
+
+    assert report.events[0].transmission_path == (
+        "平台/模型发布",
+        "机器人本体与传感器",
+        "控制器/算力/伺服",
+    )
+
+
 def test_news_catalyst_report_prioritizes_verified_price_hike_events() -> None:
     def symbol_news(symbol: str, limit: int) -> pd.DataFrame:
         return pd.DataFrame(

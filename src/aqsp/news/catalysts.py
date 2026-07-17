@@ -1579,12 +1579,23 @@ def _transmission_rule(
     title: str,
     sectors: tuple[str, ...],
 ) -> tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...], tuple[str, ...]] | None:
-    text = " ".join((str(title or ""), *sectors)).casefold()
+    title_text = str(title or "").casefold()
+    title_rule = next(
+        (
+            rule
+            for rule in _TRANSMISSION_CHAIN_RULES
+            if any(keyword.casefold() in title_text for keyword in rule[0])
+        ),
+        None,
+    )
+    if title_rule is not None:
+        return title_rule
+    sector_text = " ".join(str(item) for item in sectors).casefold()
     return next(
         (
             rule
             for rule in _TRANSMISSION_CHAIN_RULES
-            if any(keyword.casefold() in text for keyword in rule[0])
+            if any(keyword.casefold() in sector_text for keyword in rule[0])
         ),
         None,
     )
