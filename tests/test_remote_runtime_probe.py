@@ -1,6 +1,28 @@
 from __future__ import annotations
 
-from scripts.remote_runtime_probe import ProbeCheck, _summarize_checks
+from scripts.remote_runtime_probe import ProbeCheck, _ssh_banner_probe, _summarize_checks
+
+
+def test_remote_runtime_probe_does_not_accept_non_ssh_banner(monkeypatch) -> None:
+    class _Socket:
+        def settimeout(self, _timeout: float) -> None:
+            return None
+
+        def connect(self, _address: tuple[str, int]) -> None:
+            return None
+
+        def recv(self, _size: int) -> bytes:
+            return b"HTTP/1.1 200 OK"
+
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setattr("scripts.remote_runtime_probe.socket.socket", _Socket)
+
+    check = _ssh_banner_probe("127.0.0.1", 22, 1.0)
+
+    assert check.status == "failed"
+    assert check.detail.endswith("invalid banner")
 
 
 def test_remote_runtime_probe_summary_reports_missing_https_listener() -> None:

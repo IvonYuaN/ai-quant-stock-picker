@@ -11,6 +11,25 @@ import pytest
 from scripts import sync_runtime_files_to_server as sync_mod
 
 
+def test_remote_commands_use_bounded_noninteractive_ssh_options(monkeypatch) -> None:
+    calls: list[tuple[list[str], float | None]] = []
+
+    def fake_run(command, *, timeout_seconds=None, **_kwargs):
+        calls.append((command, timeout_seconds))
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(sync_mod, "_run", fake_run)
+    sync_mod._ssh("aqsp-server", "echo ok")
+    sync_mod._scp("aqsp-server", "/tmp/source", "/tmp/destination")
+
+    assert calls[0][0][:3] == ["ssh", "-o", "BatchMode=yes"]
+    assert "ConnectTimeout=180" in calls[0][0]
+    assert "ServerAliveCountMax=2" in calls[0][0]
+    assert calls[0][1] == 180.0
+    assert calls[1][0][:3] == ["scp", "-o", "BatchMode=yes"]
+    assert calls[1][1] == 180.0
+
+
 def test_normalize_files_dedupes_and_returns_project_relative_paths(
     tmp_path: Path,
 ) -> None:

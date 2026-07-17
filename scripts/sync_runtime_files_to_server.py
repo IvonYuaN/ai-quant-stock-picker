@@ -29,6 +29,7 @@ DEFAULT_REMOTE_ROOT = "/opt/aqsp"
 DEFAULT_BACKUP_DIR = "/opt/aqsp/runtime-backups"
 DEFAULT_REMOTE_OVERLAY_STATE = ".state/runtime-sync-overlay.json"
 DEFAULT_REMOTE_RUNTIME_LOCK = ".locks/server-runtime.lock"
+DEFAULT_REMOTE_COMMAND_TIMEOUT_SECONDS = 180.0
 RUNTIME_SYNC_DEPENDENCIES: dict[str, tuple[str, ...]] = {
     "scripts/intraday_refresh.sh": ("scripts/merge_intraday_news.py",),
     "scripts/smoke_market_context_runtime.py": (
@@ -250,7 +251,7 @@ def apply_unified_patch(
     }
     patch_digest = hashlib.sha256(patch_path.read_bytes()).hexdigest()[:16]
     remote_patch = f"/tmp/aqsp-runtime-patch-{patch_digest}.diff"
-    _run(["scp", str(patch_path), f"{plan.ssh_target}:{remote_patch}"])
+    _scp(plan.ssh_target, str(patch_path), remote_patch)
     try:
         result = _ssh(
             plan.ssh_target,
@@ -325,8 +326,17 @@ def _backup_name(files: tuple[str, ...]) -> str:
 
 
 def _run(
-    command: list[str], *, cwd: Path | None = None, input_text: str | None = None
+    command: list[str],
+    *,
+    cwd: Path | None = None,
+    input_text: str | None = None,
+    timeout_seconds: float | None = None,
 ) -> subprocess.CompletedProcess[str]:
+    timeout = (
+        DEFAULT_REMOTE_COMMAND_TIMEOUT_SECONDS
+        if timeout_seconds is None
+        else max(1.0, float(timeout_seconds))
+    )
     return subprocess.run(
         command,
         cwd=str(cwd) if cwd else None,
@@ -334,6 +344,7 @@ def _run(
         capture_output=True,
         text=True,
         input=input_text,
+        timeout=timeout,
     )
 
 
@@ -352,7 +363,46 @@ def _source_metadata() -> dict[str, object]:
 
 
 def _ssh(ssh_target: str, remote_command: str) -> subprocess.CompletedProcess[str]:
-    return _run(["ssh", ssh_target, remote_command])
+    timeout = float(
+        os.getenv(
+            "AQSP_REMOTE_COMMAND_TIMEOUT_SECONDS",
+            str(DEFAULT_REMOTE_COMMAND_TIMEOUT_SECONDS),
+        )
+    )
+    options = [
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        f"ConnectTimeout={max(1, int(timeout))}",
+        "-o",
+        "ConnectionAttempts=1",
+        "-o",
+        "ServerAliveInterval=5",
+        "-o",
+        "ServerAliveCountMax=2",
+    ]
+    return _run(["ssh", *options, ssh_target, remote_command], timeout_seconds=timeout)
+
+
+def _scp(ssh_target: str, source: str, destination: str) -> subprocess.CompletedProcess[str]:
+    timeout = float(
+        os.getenv(
+            "AQSP_REMOTE_COMMAND_TIMEOUT_SECONDS",
+            str(DEFAULT_REMOTE_COMMAND_TIMEOUT_SECONDS),
+        )
+    )
+    options = [
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        f"ConnectTimeout={max(1, int(timeout))}",
+        "-o",
+        "ConnectionAttempts=1",
+    ]
+    return _run(
+        ["scp", *options, source, f"{ssh_target}:{destination}"],
+        timeout_seconds=timeout,
+    )
 
 
 def _remote_runtime_lock_path(remote_root: str) -> str:
@@ -448,7 +498,7 @@ def _restore_remote_backup(plan: SyncPlan, backup_path: str) -> None:
 
 def _upload_and_extract(plan: SyncPlan, archive_path: Path) -> None:
     remote_tmp = f"/tmp/{archive_path.name}"
-    _run(["scp", str(archive_path), f"{plan.ssh_target}:{remote_tmp}"])
+    _scp(plan.ssh_target, str(archive_path), remote_tmp)
     command = (
         f"mkdir -p {shlex.quote(plan.remote_root)} && "
         f"tar -xzf {shlex.quote(remote_tmp)} -C {shlex.quote(plan.remote_root)} && "

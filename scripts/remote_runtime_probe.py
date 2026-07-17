@@ -84,6 +84,8 @@ def _ssh_banner_probe(host: str, port: int, timeout: float) -> ProbeCheck:
     text = banner.decode("utf-8", errors="replace").strip()
     if not text:
         return ProbeCheck("ssh_banner", "timeout", f"{host}:{port} empty banner")
+    if not text.startswith("SSH-"):
+        return ProbeCheck("ssh_banner", "failed", f"{host}:{port} invalid banner")
     return ProbeCheck("ssh_banner", "ok", text)
 
 
