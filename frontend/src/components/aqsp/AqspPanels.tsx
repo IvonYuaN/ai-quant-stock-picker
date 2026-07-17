@@ -117,7 +117,7 @@ function CandidateCard({ candidate }: { candidate: AqspCandidate }) {
           <p className="text-[10px] text-muted-foreground">评分</p>
         </div>
       </div>
-      <div className="mt-3 flex flex-wrap gap-1.5">
+      <div className="mt-2 flex flex-wrap gap-1.5">
         <span className="vr-chip vr-chip-primary">{candidate.research_status || "状态未记录"}</span>
         <span className="vr-chip">{candidate.evidence_status || "证据状态未记录"}</span>
       </div>
@@ -129,7 +129,7 @@ function CandidateCard({ candidate }: { candidate: AqspCandidate }) {
           {candidate.data_timestamp_source && <span> · 时间依据：{candidate.data_timestamp_source}</span>}
         </div>
       )}
-      {candidate.context && <p className="mt-3 text-xs leading-relaxed text-muted-foreground">{candidate.context}</p>}
+      {candidate.context && <p className="mt-2 text-xs leading-relaxed text-muted-foreground">{candidate.context}</p>}
       {(candidate.technical_metrics ?? []).length > 0 && (
         <div className="vr-technical-grid" aria-label="短线技术指标">
           {(candidate.technical_metrics ?? []).map((metric) => (
@@ -141,14 +141,14 @@ function CandidateCard({ candidate }: { candidate: AqspCandidate }) {
         </div>
       )}
       {candidate.deterministic_reasons.length > 0 && (
-        <ul className="mt-3 space-y-1 text-xs leading-relaxed text-foreground/80">
+        <ul className="mt-2 space-y-1 text-xs leading-relaxed text-foreground/80">
           {candidate.deterministic_reasons.slice(0, 3).map((reason) => (
             <li key={reason} className="flex items-start gap-2"><Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-success" />{reason}</li>
           ))}
         </ul>
       )}
       {candidate.next_step && (
-        <p className="mt-4 flex items-start gap-1.5 border-t border-border/50 pt-3 text-xs text-warning">
+        <p className="mt-3 flex items-start gap-1.5 border-t border-border/50 pt-2 text-xs text-warning">
           <ArrowRight className="mt-0.5 h-3.5 w-3.5 shrink-0" />下一观察：{candidate.next_step}
         </p>
       )}
@@ -177,7 +177,7 @@ function MessageCard({ message }: { message: AqspMessage }) {
         </div>
         <MessageSquareText className="mt-0.5 h-4 w-4 shrink-0 text-primary/75" />
       </div>
-      {message.summary && <p className="mt-2 text-xs leading-relaxed text-foreground/78">{message.summary}</p>}
+      {message.summary && <p className="mt-1.5 text-xs leading-relaxed text-foreground/78">{message.summary}</p>}
       {sectors.length > 0 && (
         <div className="mt-2 flex flex-wrap items-center gap-1.5">
           <span className="vr-kicker mr-0.5">影响板块</span>
@@ -186,12 +186,12 @@ function MessageCard({ message }: { message: AqspMessage }) {
       )}
       {(path.length > 0 || message.transmission_hypothesis) && (
         <div className="vr-message-impact">
-          <p className="vr-kicker">传导判断</p>
+          <p className="vr-kicker">产业链传导</p>
           {path.length > 0 && <p className="mt-1 text-xs font-medium">{path.join(" -> ")}</p>}
           {message.transmission_hypothesis && <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{message.transmission_hypothesis}</p>}
           {(validation.length > 0 || invalidation.length > 0) && <div className="mt-2 grid gap-1 text-[11px] text-muted-foreground sm:grid-cols-2">
-            {validation.length > 0 && <p><span className="text-success">确认：</span>{validation.join("；")}</p>}
-            {invalidation.length > 0 && <p><span className="text-warning">失效：</span>{invalidation.join("；")}</p>}
+            {validation.length > 0 && <p><span className="text-success">确认信号：</span>{validation.join("；")}</p>}
+            {invalidation.length > 0 && <p><span className="text-warning">失效条件：</span>{invalidation.join("；")}</p>}
           </div>}
         </div>
       )}
@@ -228,12 +228,12 @@ function DebateCard({ result }: { result: AqspAgentResult }) {
         </span>
       </div>
       <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_auto]">
-        <div className="rounded-lg border border-border/55 bg-background/20 p-3">
-          <p className="vr-kicker flex items-center gap-1.5"><UsersRound className="h-3.5 w-3.5" />讨论过程</p>
+        <div className="vr-debate-process">
+          <p className="vr-kicker flex items-center gap-1.5"><UsersRound className="h-3.5 w-3.5" />Agent 讨论</p>
           <p className="mt-2 text-xs leading-relaxed text-foreground/80">{process || "讨论过程未记录"}</p>
           {result.active_roles.length > 0 && <div className="mt-2 flex flex-wrap gap-1.5">{result.active_roles.map((role) => <span key={role} className="vr-chip">{role}</span>)}</div>}
           {(result.round_summaries ?? []).length > 0 && (
-            <ol className="mt-3 space-y-1 border-t border-border/45 pt-2 text-[11px] leading-relaxed text-muted-foreground">
+            <ol className="mt-2 space-y-1 border-t border-border/45 pt-2 text-[11px] leading-relaxed text-muted-foreground">
               {(result.round_summaries ?? []).slice(0, 3).map((summary, index) => <li key={`${index}-${summary}`}>第 {index + 1} 轮：{summary}</li>)}
             </ol>
           )}
@@ -244,14 +244,14 @@ function DebateCard({ result }: { result: AqspAgentResult }) {
           <div className="vr-vote vr-vote-bear"><span>风险</span><strong>{result.bear_count}</strong></div>
         </div>
       </div>
-      <div className="mt-4 border-l-2 border-primary/70 pl-3">
-        <p className="vr-kicker text-primary">讨论结论</p>
+      <div className="vr-debate-conclusion">
+        <p className="vr-kicker text-primary">汇总结论</p>
         <p className="mt-1 text-sm leading-relaxed">{result.conclusion || "暂无可展示的讨论结论。"}</p>
       </div>
       {(result.primary_risk_gate || result.next_trigger) && (
-        <div className="mt-4 grid gap-2 border-t border-border/50 pt-3 text-xs sm:grid-cols-2">
-          {result.primary_risk_gate && <p className="flex items-start gap-1.5 text-warning"><ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />风险卡点：{result.primary_risk_gate}</p>}
-          {result.next_trigger && <p className="flex items-start gap-1.5 text-muted-foreground"><Sparkles className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" />验证条件：{result.next_trigger}</p>}
+        <div className="mt-3 grid gap-2 border-t border-border/50 pt-2 text-xs sm:grid-cols-2">
+          {result.primary_risk_gate && <p className="flex items-start gap-1.5 text-warning"><ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />风险：{result.primary_risk_gate}</p>}
+          {result.next_trigger && <p className="flex items-start gap-1.5 text-muted-foreground"><Sparkles className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" />下一验证：{result.next_trigger}</p>}
         </div>
       )}
     </article>
@@ -286,8 +286,8 @@ export function AqspResearchWorkspace() {
         <div>
           <p className="vr-kicker text-primary">AQSP / DAILY RESEARCH</p>
           <div className="mt-2 flex flex-wrap items-end gap-x-3 gap-y-1">
-            <h1 className="text-2xl font-semibold">AQSP 研究工作台</h1>
-            <span className="text-sm text-muted-foreground">{data.selected_date || "日期未记录"}</span>
+            <h1 className="text-2xl font-semibold">当天研究</h1>
+            <span className="vr-current-date">{data.selected_date || "日期未记录"}</span>
           </div>
           <div className="mt-2"><SnapshotMeta snapshot={data} /></div>
         </div>
@@ -300,11 +300,11 @@ export function AqspResearchWorkspace() {
       {stale && <FreshnessNotice snapshot={data} />}
       {error && <div className="mb-5 text-xs text-warning">后台刷新未完成，仍展示上一次已读取的数据。</div>}
 
-      <section className="vr-conclusion-panel" aria-labelledby="conclusion-title">
+      <section className="vr-module vr-conclusion-panel" aria-labelledby="conclusion-title">
         <div className="flex items-start gap-3">
           <span className="vr-section-icon"><Sparkles className="h-4 w-4" /></span>
           <div className="min-w-0">
-            <p className="vr-kicker text-primary">研究结论</p>
+            <p className="vr-kicker text-primary">01 · 当天结论</p>
             <h2 id="conclusion-title" className="mt-2 text-lg font-semibold leading-relaxed">{conclusion || "今日结论未记录"}</h2>
             {data.summaries.length > 1 && <div className="mt-3 space-y-1 text-xs leading-relaxed text-muted-foreground">{data.summaries.slice(1, 3).map((line) => <p key={line}>· {line}</p>)}</div>}
           </div>
@@ -318,19 +318,19 @@ export function AqspResearchWorkspace() {
       </section>
 
       <div className="vr-board-stack">
-        <section id="candidates" className="vr-board-section">
-          <div className="vr-section-heading"><div><p className="vr-kicker">评分与依据</p><h2>候选研究</h2></div><span className="vr-count">{data.candidates.length} 条</span></div>
+        <section id="candidates" className="vr-module vr-board-section">
+          <div className="vr-section-heading"><div><p className="vr-kicker">02 · 评分与依据</p><h2>候选</h2></div><span className="vr-count">{data.candidates.length} 个</span></div>
           {data.candidates.length === 0 ? <EmptyState title="当前没有候选" detail="可能是研究 gate 阻塞，或当天数据尚未产出。" /> : <div className="vr-candidate-grid">{data.candidates.map((candidate) => <CandidateCard key={candidate.symbol} candidate={candidate} />)}</div>}
         </section>
 
-        <section id="messages" className="vr-board-section vr-messages-section">
-          <div className="vr-section-heading"><div><p className="vr-kicker">消息独立汇总</p><h2>消息</h2></div><span className="vr-count">{data.messages.length} 条</span></div>
+        <section id="messages" className="vr-module vr-board-section vr-messages-section">
+          <div className="vr-section-heading"><div><p className="vr-kicker">03 · 来源与影响</p><h2>消息</h2></div><span className="vr-count">{data.messages.length} 条</span></div>
           {data.messages.length === 0 ? <EmptyState title="当前没有消息摘要" detail="快照未记录可核验消息，不在界面中补充推断。" /> : <div className="vr-message-list">{data.messages.slice(0, 5).map((message) => <MessageCard key={`${message.title}-${message.published_at}`} message={message} />)}</div>}
         </section>
       </div>
 
-      <section id="discussion" className="vr-board-section vr-discussion-section">
-        <div className="vr-section-heading"><div><p className="vr-kicker">分歧与风险</p><h2>讨论复核</h2></div><span className="vr-count">{data.debates.length} 条</span></div>
+      <section id="discussion" className="vr-module vr-board-section vr-discussion-section">
+        <div className="vr-section-heading"><div><p className="vr-kicker">04 · 分歧与风险</p><h2>Agent 讨论</h2></div><span className="vr-count">{data.debates.length} 条</span></div>
         {data.debates.length === 0 ? <EmptyState title="暂无讨论记录" detail="当前快照没有多 Agent 讨论结果，保留确定性研究数据。" /> : <div className="grid gap-3 xl:grid-cols-2">{data.debates.map((result) => <DebateCard key={result.symbol} result={result} />)}</div>}
         <div className="mt-5 flex items-start gap-2 border-t border-border/50 pt-3 text-[11px] leading-relaxed text-muted-foreground/70"><ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" />讨论仅作为研究补充，确定性评分和原始证据保持独立。</div>
       </section>
