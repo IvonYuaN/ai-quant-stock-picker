@@ -2286,6 +2286,137 @@ def test_dashboard_data_provider_does_not_fallback_to_main_chain_for_current_int
     assert payload.debates == ()
 
 
+def test_dashboard_data_provider_keeps_same_day_intraday_debate_when_artifact_is_stale(
+    tmp_path: Path,
+) -> None:
+    latest_path = tmp_path / "intraday_latest.csv"
+    debate_path = tmp_path / "debate_results.jsonl"
+    pd.DataFrame(
+        [
+            {
+                "symbol": "000001",
+                "name": "平安银行",
+                "date": "2026-07-14",
+                "signal_date": "2026-07-14",
+                "score": 72,
+                "rating": "buy_candidate",
+                "reasons": "量价趋势改善",
+                "task_id": "intraday",
+                "created_at": "2026-07-14T11:00:00+08:00",
+            }
+        ]
+    ).to_csv(latest_path, index=False)
+    debate_path.write_text(
+        json.dumps(
+            {
+                "debate_id": "intraday-000001-1",
+                "symbol": "000001",
+                "task_id": "intraday",
+                "related_signal_date": "2026-07-14",
+                "candidate_signal_date": "2026-07-14",
+                "candidate_fingerprint": "candidate-from-debate",
+                "created_at": "2026-07-14T11:01:00+08:00",
+                "original_score": 72,
+                "adjusted_score": 72,
+                "final_consensus": "观察",
+                "final_vote": {"risk_control": "neutral"},
+                "research_verdict": "等待承接确认",
+                "primary_risk_gate": "盘中产物已过期",
+                "next_trigger": "重新刷新盘中数据",
+                "process_recorded": True,
+                "conclusion_recorded": True,
+                "advisory_boundary_ok": True,
+                "evidence_sufficient": True,
+                "rounds": [
+                    {
+                        "round_num": 1,
+                        "summary": "看多 1 / 看空 1 / 中性 1",
+                        "opinions": [],
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    provider = DashboardDataProvider(
+        ledger_path=str(tmp_path / "ledger.jsonl"),
+        paper_ledger_path=str(tmp_path / "paper.jsonl"),
+        intraday_latest_path=str(latest_path),
+        debate_results_path=str(debate_path),
+    )
+
+    payload = provider.home_digest_payload("intraday", signal_date="2026-07-14")
+
+    assert payload.spotlights
+    assert payload.spotlights[0].status_label == "数据已过期"
+    assert [item.symbol for item in payload.debates] == ["000001"]
+    assert payload.debates[0].candidate_fingerprint == "candidate-from-debate"
+
+
+def test_dashboard_data_provider_merges_debate_by_date_task_and_symbol_when_candidate_fingerprint_missing(
+    tmp_path: Path,
+) -> None:
+    ledger_path = tmp_path / "ledger.jsonl"
+    debate_path = tmp_path / "debate_results.jsonl"
+    ledger_path.write_text(
+        json.dumps(
+            {
+                "symbol": "600519",
+                "name": "贵州茅台",
+                "signal_date": "2026-07-14",
+                "task_id": "intraday",
+                "score": 70,
+                "rating": "buy_candidate",
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    debate_path.write_text(
+        json.dumps(
+            {
+                "debate_id": "task-date-symbol-fallback",
+                "symbol": "600519",
+                "task_id": "intraday",
+                "related_signal_date": "2026-07-14",
+                "candidate_fingerprint": "debate-fingerprint",
+                "created_at": "2026-07-14T10:00:00+08:00",
+                "original_score": 70,
+                "adjusted_score": 70,
+                "research_verdict": "同日同任务回退映射",
+                "final_vote": {"risk_control": "neutral"},
+                "process_recorded": True,
+                "conclusion_recorded": True,
+                "advisory_boundary_ok": True,
+                "evidence_sufficient": True,
+                "rounds": [{"round_num": 1, "summary": "有效讨论", "opinions": []}],
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    provider = DashboardDataProvider(
+        ledger_path=str(ledger_path),
+        paper_ledger_path=str(tmp_path / "paper.jsonl"),
+        debate_results_path=str(debate_path),
+    )
+
+    merged = provider._merge_debate_evidence(
+        {
+            "symbol": "600519",
+            "signal_date": "2026-07-14",
+            "task_id": "intraday",
+            "score": 70,
+        }
+    )
+
+    assert merged["debate_research_verdict"] == "同日同任务回退映射"
+
+
 def test_dashboard_data_provider_blocked_candidate_without_reason_surfaces_missing_evidence(
     tmp_path: Path,
 ) -> None:

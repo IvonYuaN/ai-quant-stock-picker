@@ -3598,17 +3598,16 @@ class DashboardDataProvider:
                 str(getattr(spotlight, "symbol", "") or "").strip()
                 for spotlight in spotlights
             )
-            debates = (
-                ()
-                if normalized_task == "intraday"
-                and getattr(live_view, "status", "unknown") != "fresh"
-                else self.prioritized_debate_summaries(
-                    review_date,
-                    limit=3,
-                    salient_only=False,
-                    task_id=normalized_task,
-                    symbols=candidate_symbols,
-                )
+            # Freshness blocks a candidate from being actionable, but it must
+            # not erase a same-day debate that is already bound to this task
+            # and these symbols.  The debate is advisory evidence and remains
+            # useful for explaining why the stale candidate is blocked.
+            debates = self.prioritized_debate_summaries(
+                review_date,
+                limit=3,
+                salient_only=False,
+                task_id=normalized_task,
+                symbols=candidate_symbols,
             )
             debates = self._prioritize_debates_for_candidate_symbols(
                 debates,
