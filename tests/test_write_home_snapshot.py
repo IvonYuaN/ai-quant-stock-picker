@@ -363,7 +363,75 @@ def test_write_home_snapshot_normalizes_legacy_news_and_cross_market_timestamps(
         == "2026-07-10T09:00:00+08:00"
     )
     assert all("2026-07-09" not in item.title for item in snapshot.messages)
-    assert all(item.title != "无时间事件" for item in snapshot.messages)
+
+
+def test_messages_prioritize_distinct_topics_before_repeating_one_topic() -> None:
+    report = CatalystReport(
+        date="2026-07-10",
+        generated_at="2026-07-10T15:00:00+08:00",
+        source_status="ok",
+        events=tuple(
+            CatalystEvent(
+                title=title,
+                source="feed",
+                published_at=f"2026-07-10T09:{index:02d}:00+08:00",
+                impact="positive",
+                category=category,
+                inference=title,
+                source_region=region,
+            )
+            for index, (title, category, region) in enumerate(
+                (
+                    ("英伟达新品 1", "海外公司事件", "international"),
+                    ("英伟达新品 2", "海外公司事件", "international"),
+                    ("PCB 涨价", "供应链/价格变化", "domestic"),
+                    ("商业航天 IPO", "海外公司事件", "international"),
+                    ("军工订单", "地缘事件", "mixed"),
+                    ("政策支持", "产业政策", "domestic"),
+                )
+            )
+        ),
+    )
+
+    messages = write_home_snapshot._messages_from_catalyst_report(report)
+
+    assert [message.title for message in messages] == [
+        "英伟达新品 1",
+        "PCB 涨价",
+        "商业航天 IPO",
+        "军工订单",
+        "政策支持",
+    ]
+
+
+def test_write_home_snapshot_excludes_future_dated_news(monkeypatch, tmp_path) -> None:
+    report_path = tmp_path / "news.json"
+    current_time = datetime(2026, 7, 10, 15, 1, tzinfo=ZoneInfo("Asia/Shanghai"))
+    report = CatalystReport(
+        date="2026-07-10",
+        generated_at=current_time.isoformat(),
+        source_status="ok",
+        events=(
+            CatalystEvent(
+                title="未来事件",
+                source="feed",
+                published_at="2026-07-10T15:02:00+08:00",
+                impact="positive",
+            ),
+        ),
+    )
+    report_path.write_text(
+        json.dumps(serialize_catalyst_report(report), ensure_ascii=False),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AQSP_NEWS_JSON_OUTPUT", str(report_path))
+    monkeypatch.setattr(write_home_snapshot, "now_shanghai", lambda: current_time)
+
+    snapshot = write_home_snapshot.build_home_snapshot(
+        _Provider(), signal_date="2026-07-10", task_id="intraday"
+    )
+
+    assert snapshot.messages == ()
 
 
 def test_write_home_snapshot_rejects_stale_current_news_without_markdown_fallback(

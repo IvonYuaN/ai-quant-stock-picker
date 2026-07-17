@@ -5911,6 +5911,33 @@ def test_live_candidate_view_marks_old_artifact_stale_without_relabeling_score()
     assert view.candidates[0].freshness_label == "数据已过期"
 
 
+def test_live_candidate_view_filters_rows_to_requested_date_when_csv_contains_multiple_days() -> None:
+    view = build_live_candidate_view(
+        (
+            {
+                "symbol": "600001",
+                "date": "2026-07-13",
+                "score": 90,
+                "rating": "buy_candidate",
+            },
+            {
+                "symbol": "600002",
+                "date": "2026-07-12",
+                "score": 99,
+                "rating": "strong_buy_candidate",
+            },
+        ),
+        metadata=LiveArtifactMetadata(
+            artifact_date="2026-07-13",
+            updated_at="2026-07-13T15:00:00+08:00",
+        ),
+        now=datetime(2026, 7, 13, 15, 1, tzinfo=ZoneInfo("Asia/Shanghai")),
+        requested_date="2026-07-13",
+    )
+
+    assert [candidate.symbol for candidate in view.candidates] == ["600001"]
+
+
 def test_dashboard_data_provider_live_view_caps_intraday_csv_and_exposes_card_evidence(
     tmp_path: Path,
 ) -> None:

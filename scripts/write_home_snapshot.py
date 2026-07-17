@@ -122,16 +122,20 @@ def _normalize_catalyst_report_for_snapshot(
     historical_count = 0
     invalid_count = 0
     current_day = today_shanghai().isoformat()
-    live_window_start = now_shanghai() - CURRENT_MESSAGE_WINDOW
+    current_time = now_shanghai()
+    live_window_start = current_time - CURRENT_MESSAGE_WINDOW
     for event in report.events:
         published_at = _normalize_timestamp(event.published_at)
         if not published_at:
             invalid_count += 1
             continue
         published_dt = datetime.fromisoformat(published_at)
+        if published_dt > current_time:
+            invalid_count += 1
+            continue
         is_recent_live_event = (
             signal_date == current_day
-            and live_window_start <= published_dt <= now_shanghai()
+            and live_window_start <= published_dt <= current_time
         )
         if published_at[:10] != signal_date and not is_recent_live_event:
             historical_count += 1
@@ -560,9 +564,31 @@ def _messages_from_catalyst_report(
                 invalidation_signals=event.invalidation_signals[:3],
             )
         )
-        if len(messages) == MAX_HOME_MESSAGES:
+    if len(messages) <= MAX_HOME_MESSAGES:
+        return tuple(messages)
+
+    # Do not let a burst of near-identical headlines hide other catalysts.
+    # Preserve source order within each pass, then fill remaining slots in
+    # source order so the selection remains deterministic and explainable.
+    selected: list[HomeSnapshotMessage] = []
+    covered: set[tuple[str, str]] = set()
+    for message in messages:
+        topic = (message.event_type or message.category or "消息").strip()
+        region = (message.source_region or "mixed").strip().lower()
+        key = (topic, region)
+        if key in covered:
+            continue
+        selected.append(message)
+        covered.add(key)
+        if len(selected) == MAX_HOME_MESSAGES:
+            return tuple(selected)
+    for message in messages:
+        if message in selected:
+            continue
+        selected.append(message)
+        if len(selected) == MAX_HOME_MESSAGES:
             break
-    return tuple(messages)
+    return tuple(selected)
 
 
 def _news_report_source_status(data_status: str, report_status: str) -> str:

@@ -79,7 +79,11 @@ def build_live_candidate_view(
     """Build a bounded view without changing deterministic scores or ratings."""
     resolved_config = config or LiveCandidateViewConfig()
     max_candidates = max(1, int(resolved_config.max_candidates))
-    normalized_rows = _dedupe_rows(rows)
+    dated_rows = _rows_for_target_date(
+        rows,
+        target_date=requested_date.strip() or metadata.artifact_date.strip(),
+    )
+    normalized_rows = _dedupe_rows(dated_rows)
     freshness_status, stale_reason = _freshness_status(
         metadata=metadata,
         now=now,
@@ -108,6 +112,31 @@ def build_live_candidate_view(
         watch_count=sum(item.status == "watch" for item in candidates),
         blocked_count=sum(item.status == "blocked" for item in candidates),
         recommendation_blocked=freshness_status != "fresh",
+    )
+
+
+def _rows_for_target_date(
+    rows: Sequence[Mapping[str, Any]],
+    *,
+    target_date: str,
+) -> tuple[Mapping[str, Any], ...]:
+    """Keep one dated artifact from a CSV that may contain multiple run days."""
+    if not target_date:
+        return tuple(rows)
+    dated_rows = tuple(
+        row
+        for row in rows
+        if str(row.get("signal_date") or row.get("date") or "").strip()
+    )
+    if not dated_rows:
+        # Legacy fixtures/artifacts without row dates remain governed by the
+        # metadata date and the freshness gate.
+        return tuple(rows)
+    return tuple(
+        row
+        for row in dated_rows
+        if str(row.get("signal_date") or row.get("date") or "").strip()[:10]
+        == target_date[:10]
     )
 
 
