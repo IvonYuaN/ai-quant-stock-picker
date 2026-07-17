@@ -616,7 +616,8 @@ def _report_from_stale_cache(
 POSITIVE_PATTERNS: tuple[tuple[str, str, int], ...] = (
     (
         "GPT|AI safety|agentic AI|AI investments|AI innovation|"
-        "foundry|EPYC|Instinct|Gaudi|processor|数据中心|人工智能",
+        "foundry|EPYC|Instinct|Gaudi|processor|AMD|Intel|semiconductor|"
+        "data center|AI infrastructure|数据中心|人工智能",
         "AI/半导体技术动态",
         3,
     ),
@@ -673,7 +674,8 @@ POSITIVE_PATTERNS: tuple[tuple[str, str, int], ...] = (
         3,
     ),
     (
-        "SpaceX|commercial space|satellite|launch vehicle|商业航天|卫星互联网|低轨卫星",
+        "NASA|SpaceX|space mission|commercial space|satellite|launch vehicle|"
+        "rocket|商业航天|卫星互联网|低轨卫星",
         "资本运作",
         3,
     ),
