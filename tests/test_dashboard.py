@@ -16488,6 +16488,7 @@ def test_dashboard_snapshot_home_board_renders_bounded_card_layout(monkeypatch) 
             status="fresh",
         ),
         coldstart=HomeSnapshotColdstart(status="积累中", detail="样本 12/30"),
+        stale_after="2099-07-11T09:30:00+08:00",
         message_status="ok",
         messages=(
             HomeSnapshotMessage(
@@ -17068,9 +17069,10 @@ def test_dashboard_snapshot_home_marks_historical_sections_and_keeps_empty_state
                 symbol="600001",
                 display_name="600001 观察",
                 score=61.0,
-                research_status="观察",
+                research_status="纸面复核",
                 next_step="等待确认",
                 context="历史观察记录",
+                deterministic_reasons=("MA20 向上",),
             ),
         ),
         debate=None,
@@ -17128,10 +17130,13 @@ def test_dashboard_snapshot_home_marks_historical_sections_and_keeps_empty_state
     rendered = "\n".join(markdown_blocks)
     assert "历史回看" in rendered
     assert "历史观察记录" in rendered
-    assert cockpit_cards[0]["title"] == "当前无实时推荐，保留观察对象"
+    assert cockpit_cards[0]["title"] == "历史日期保留 1 个候选"
     assert cockpit_cards[1]["title"] == "历史消息汇总"
     assert cockpit_cards[-1]["title"] == "历史无 Agent 讨论记录"
     assert cockpit_cards[-1]["kicker"] == "Agent 讨论"
+    assert "实时推荐" not in rendered
+    assert "实时候选" not in rendered
+    assert "历史复核" in rendered
 
 
 def test_dashboard_snapshot_without_stale_after_is_expired() -> None:

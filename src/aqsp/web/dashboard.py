@@ -7322,6 +7322,17 @@ def _snapshot_status_bucket(candidate) -> str:
     return "观察"
 
 
+def _snapshot_display_status(candidate, *, historical: bool = False) -> str:
+    """Use archive wording for recommendation labels on historical dates."""
+    status = str(candidate.research_status or "").strip()
+    return "历史复核" if historical and _snapshot_status_bucket(candidate) == "推荐" else status
+
+
+def _snapshot_display_next_step(candidate, *, historical: bool = False) -> str:
+    next_step = str(candidate.next_step or "").strip()
+    return next_step
+
+
 def _status_filter_matches(bucket: str, status_filter: str) -> bool:
     return status_filter == "全部" or bucket == status_filter
 
@@ -7895,6 +7906,7 @@ def _snapshot_candidate_grid(
     snapshot: HomeDashboardSnapshot,
     *,
     status_filter: str = "全部",
+    historical: bool = False,
 ) -> str:
     """Render the already bounded candidate cards without recreating task views."""
     cards: list[str] = []
@@ -7905,11 +7917,11 @@ def _snapshot_candidate_grid(
             continue
         cards.append(
             '<article class="aqsp-simple-candidate-card">'
-            f'<div class="aqsp-simple-candidate-rank">{escape(_compact_snapshot_text(candidate.research_status))}</div>'
+            f'<div class="aqsp-simple-candidate-rank">{escape(_compact_snapshot_text(_snapshot_display_status(candidate, historical=historical)))}</div>'
             f'<div class="aqsp-simple-candidate-name">{escape(_compact_snapshot_text(candidate.display_name))}</div>'
             f'<div class="aqsp-simple-candidate-score">{candidate.score:.1f}</div>'
             f'<div class="aqsp-simple-candidate-line">{escape(_compact_snapshot_text(candidate.context))}</div>'
-            f'<div class="aqsp-simple-candidate-line">下一步: {escape(_compact_snapshot_text(candidate.next_step))}</div>'
+            f'<div class="aqsp-simple-candidate-line">{("历史记录" if historical else "下一步")}: {escape(_compact_snapshot_text(_snapshot_display_next_step(candidate, historical=historical)))}</div>'
             "</article>"
         )
     return '<div class="aqsp-simple-candidate-grid">' + "".join(cards) + "</div>"
@@ -7919,20 +7931,23 @@ def _snapshot_observation_grid(
     snapshot: HomeDashboardSnapshot,
     *,
     status_filter: str = "全部",
+    historical: bool = False,
 ) -> str:
     """Show bounded live observations when protection blocks recommendations."""
     cards: list[str] = []
     for candidate in snapshot.candidates:
         bucket = _snapshot_status_bucket(candidate)
-        if bucket == "推荐" or not _status_filter_matches(bucket, status_filter):
+        if (bucket == "推荐" and not historical) or not _status_filter_matches(
+            bucket, status_filter
+        ):
             continue
         cards.append(
             '<article class="aqsp-simple-candidate-card aqsp-observation-card">'
-            f'<div class="aqsp-simple-candidate-rank">{escape(_compact_snapshot_text(candidate.research_status))}</div>'
+            f'<div class="aqsp-simple-candidate-rank">{escape(_compact_snapshot_text(_snapshot_display_status(candidate, historical=historical)))}</div>'
             f'<div class="aqsp-simple-candidate-name">{escape(_compact_snapshot_text(candidate.display_name))}</div>'
             f'<div class="aqsp-simple-candidate-score">{candidate.score:.1f}</div>'
             f'<div class="aqsp-simple-candidate-line">{escape(_compact_snapshot_text(candidate.context))}</div>'
-            f'<div class="aqsp-simple-candidate-line">下一步: {escape(_compact_snapshot_text(candidate.next_step))}</div>'
+            f'<div class="aqsp-simple-candidate-line">{("历史记录" if historical else "下一步")}: {escape(_compact_snapshot_text(_snapshot_display_next_step(candidate, historical=historical)))}</div>'
             "</article>"
         )
     return '<div class="aqsp-simple-candidate-grid">' + "".join(cards) + "</div>"
@@ -8102,7 +8117,9 @@ def _render_snapshot_home_rail(
     historical = _historical_home_label(selected_date, latest_date) == "历史回看"
     queue_counts = _snapshot_candidate_queue_counts(snapshot)
     status_label = (
-        "阻塞"
+        "历史回看"
+        if historical
+        else "阻塞"
         if queue_counts[2] or _snapshot_is_expired(snapshot, historical=historical)
         else "实时推荐"
         if queue_counts[0]
@@ -8207,19 +8224,22 @@ def _render_snapshot_home_board(
             recommend_candidates = tuple(
                 candidate
                 for candidate in snapshot.candidates
-                if _snapshot_status_bucket(candidate) == "推荐"
+                if not historical
+                and _snapshot_status_bucket(candidate) == "推荐"
                 and _status_filter_matches("推荐", status_filter)
             )
             non_recommend_candidates = tuple(
                 candidate
                 for candidate in snapshot.candidates
-                if _snapshot_status_bucket(candidate) != "推荐"
+                if (historical or _snapshot_status_bucket(candidate) != "推荐")
                 and _status_filter_matches(
                     _snapshot_status_bucket(candidate), status_filter
                 )
             )
             if snapshot.summaries:
                 conclusion_title = _compact_snapshot_text(snapshot.summaries[0])
+            elif historical and non_recommend_candidates:
+                conclusion_title = f"历史日期保留 {len(non_recommend_candidates)} 个候选"
             elif recommend_candidates:
                 conclusion_title = f"当天有 {len(recommend_candidates)} 个实时候选"
             elif non_recommend_candidates:
@@ -8236,7 +8256,7 @@ def _render_snapshot_home_board(
                 if line
             )[:4]
             st.markdown(
-                f'<div class="aqsp-board-section">当天结论 · {escape(history_label)}</div>',
+                f'<div class="aqsp-board-section">{("历史结论" if historical else "当天结论")} · {escape(history_label)}</div>',
                 unsafe_allow_html=True,
             )
             _render_cockpit_card(
@@ -8253,7 +8273,7 @@ def _render_snapshot_home_board(
             )
 
             st.markdown(
-                f'<div class="aqsp-board-section">候选卡</div>'
+                f'<div class="aqsp-board-section">{("历史候选卡" if historical else "候选卡")}</div>'
                 f'<div class="aqsp-board-section-note">当前筛选: {escape(status_filter)}</div>',
                 unsafe_allow_html=True,
             )
@@ -8274,6 +8294,7 @@ def _render_snapshot_home_board(
                     _snapshot_observation_grid(
                         snapshot,
                         status_filter=status_filter,
+                        historical=historical,
                     ),
                     unsafe_allow_html=True,
                 )
