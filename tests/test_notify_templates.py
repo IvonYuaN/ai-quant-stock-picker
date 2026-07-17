@@ -171,6 +171,42 @@ def test_build_briefing_notification_returns_full_markdown_when_full_mode() -> N
     assert "# 每日研究复盘-2026-06-04" in markdown
 
 
+def test_build_briefing_notification_full_mode_dedupes_alias_sections_in_order() -> None:
+    briefing = Briefing(
+        date="2026-06-04",
+        sections=[
+            BriefingSection(title="主链总览", content="第一段"),
+            BriefingSection(title="候选来龙去脉", content="候选第一段"),
+            BriefingSection(title="候选证据链", content="候选重复段"),
+            BriefingSection(title="明日重点", content="最后一段"),
+        ],
+    )
+
+    markdown = build_briefing_notification(briefing, mode="full")
+
+    assert markdown.count("## 候选来龙去脉") == 1
+    assert "候选第一段" in markdown
+    assert "候选重复段" not in markdown
+    assert markdown.index("第一段") < markdown.index("候选第一段") < markdown.index("最后一段")
+
+
+def test_build_briefing_notification_summary_dedupes_unknown_sections() -> None:
+    briefing = Briefing(
+        date="2026-06-04",
+        sections=[
+            BriefingSection(title="主链总览", content="今日结论: 维持观察"),
+            BriefingSection(title="自定义区", content="第一份自定义内容"),
+            BriefingSection(title="自定义区", content="重复自定义内容"),
+        ],
+    )
+
+    markdown = build_briefing_notification(briefing, mode="summary")
+
+    assert markdown.count("## 自定义区") == 1
+    assert "第一份自定义内容" in markdown
+    assert "重复自定义内容" not in markdown
+
+
 def test_build_briefing_notification_sanitizes_research_wording_in_both_modes() -> None:
     briefing = Briefing(
         date="2026-06-04",

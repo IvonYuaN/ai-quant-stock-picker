@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import replace
 from typing import Literal
 
 from aqsp.briefing.closing_review import DailyReview, WeeklySummary
@@ -136,6 +137,10 @@ def build_briefing_notification(
     mode: str = "summary",
 ) -> str:
     if _safe_mode(mode) == "full":
+        briefing = replace(
+            briefing,
+            sections=list(_dedupe_briefing_sections(briefing.sections)),
+        )
         return _source_safe_notification(
             briefing.to_markdown(),
             source_status=source_status,
@@ -193,7 +198,7 @@ def build_briefing_notification(
         body_parts.append("## 明日\n\n" + next_day)
     extra_sections = [
         section
-        for section in briefing.sections
+        for section in _dedupe_briefing_sections(briefing.sections)
         if _notification_section_title(section.title) not in known_titles
         and section.content.strip()
     ]
@@ -218,6 +223,19 @@ def _notification_section_title(title: str) -> str:
     if clean in {"候选来龙去脉", "候选证据链"}:
         return "候选说明"
     return clean
+
+
+def _dedupe_briefing_sections(sections: Sequence[object]) -> tuple[object, ...]:
+    """Keep the first section for each user-facing canonical title."""
+    selected: list[object] = []
+    seen: set[str] = set()
+    for section in sections:
+        title = _notification_section_title(getattr(section, "title", ""))
+        if title in seen:
+            continue
+        seen.add(title)
+        selected.append(section)
+    return tuple(selected)
 
 
 def _compact_briefing_summary(summary: str) -> str:
