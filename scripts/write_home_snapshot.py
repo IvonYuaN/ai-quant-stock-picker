@@ -11,7 +11,7 @@ import os
 import re
 import sys
 from dataclasses import replace
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -60,6 +60,7 @@ MAX_HOME_CANDIDATES = MAX_HOME_SNAPSHOT_CANDIDATES
 MAX_HOME_SUMMARIES = 3
 MAX_HOME_MESSAGES = 5
 NEWS_REPORT_MAX_AGE_SECONDS = 6 * 60 * 60
+CURRENT_MESSAGE_WINDOW = timedelta(hours=24)
 _SOURCE_STATUS_LABELS = {
     "ok": "可用",
     "partial": "部分可用",
@@ -120,12 +121,19 @@ def _normalize_catalyst_report_for_snapshot(
     current_events: list[CatalystEvent] = []
     historical_count = 0
     invalid_count = 0
+    current_day = today_shanghai().isoformat()
+    live_window_start = now_shanghai() - CURRENT_MESSAGE_WINDOW
     for event in report.events:
         published_at = _normalize_timestamp(event.published_at)
         if not published_at:
             invalid_count += 1
             continue
-        if published_at[:10] != signal_date:
+        published_dt = datetime.fromisoformat(published_at)
+        is_recent_live_event = (
+            signal_date == current_day
+            and live_window_start <= published_dt <= now_shanghai()
+        )
+        if published_at[:10] != signal_date and not is_recent_live_event:
             historical_count += 1
             continue
         current_events.append(
