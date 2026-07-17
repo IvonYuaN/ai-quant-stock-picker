@@ -1,8 +1,10 @@
-version: "2026.07.14"
+version: "2026.07.17"
 
 rss:
   enabled: true
-  timeout_seconds: 8
+  # RSS must return before the outer composite/news deadline so partial feeds
+  # can still reach the short-term decision surface.
+  timeout_seconds: 5.5
   # 单个 feed 的超时不应按 feed 数量累加到盘中主链。
   max_concurrency: 11
   max_items: 12
