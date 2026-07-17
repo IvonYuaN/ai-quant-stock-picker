@@ -20,6 +20,7 @@ from aqsp.core.time import now_shanghai, today_shanghai
 from aqsp.data.news_source import (
     AkshareNewsSource,
     CompositeNewsSource,
+    EastmoneyDomesticNewsSource,
     NewsSource,
     NewsSourceHealth,
     RssFeedConfig,
@@ -1739,7 +1740,40 @@ def test_build_default_news_source_returns_rss_when_akshare_is_not_installed(
 
     source = build_default_news_source()
 
-    assert source is rss_source
+    assert isinstance(source, CompositeNewsSource)
+    assert {item.name for item in source._sources} == {
+        "rss_news",
+        "eastmoney_domestic_news",
+    }
+
+
+def test_eastmoney_domestic_news_source_normalizes_search_results(monkeypatch) -> None:
+    class Response:
+        text = (
+            'aqsp_callback({"result":{"cmsArticleWebOld":['
+            '{"date":"2026-07-17 09:30:00",'
+            '"title":"PCB覆铜板报价上调",'
+            '"content":"供应紧张",'
+            '"mediaName":"财联社",'
+            '"code":"2026071738"}]}})'
+        )
+
+        def raise_for_status(self) -> None:
+            return None
+
+    monkeypatch.setattr(
+        "aqsp.data.news_source.requests.get", lambda *a, **k: Response()
+    )
+    source = EastmoneyDomesticNewsSource(timeout_seconds=1)
+    frames = source.fetch_global_news()
+
+    assert frames
+    assert frames[0].iloc[0]["新闻标题"] == "PCB覆铜板报价上调"
+    assert frames[0].iloc[0]["source_region"] == "domestic"
+    assert any(
+        item.region == "domestic" and item.status == "ok"
+        for item in source.last_health
+    )
 
 
 def test_build_default_news_source_propagates_unexpected_akshare_error(
@@ -1824,8 +1858,8 @@ def test_build_default_news_source_raises_data_error_when_no_source_is_available
         lambda: None,
     )
 
-    with pytest.raises(DataError, match="未配置可用新闻源"):
-        build_default_news_source()
+    source = build_default_news_source()
+    assert source.name == "eastmoney_domestic_news"
 
 
 def test_default_news_source_config_enables_official_rss_feeds() -> None:

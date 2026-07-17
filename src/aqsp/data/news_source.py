@@ -6,8 +6,10 @@ from email.utils import parsedate_to_datetime
 import json
 from pathlib import Path
 import os
+import re
 import xml.etree.ElementTree as ET
 from collections.abc import Callable, Sequence
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
 from time import monotonic
 from typing import Literal, Protocol
@@ -695,6 +697,99 @@ class AkshareNewsSource:
         return frames, errors
 
 
+class EastmoneyDomesticNewsSource:
+    """Lightweight domestic news adapter that does not require AkShare."""
+
+    name = "eastmoney_domestic_news"
+    region: NewsSourceRegion = "domestic"
+    _SEARCH_KEYWORDS: tuple[str, ...] = (
+        "半导体 涨价",
+        "存储 缺货",
+        "PCB 覆铜板",
+        "商业航天 卫星",
+        "订单 扩产",
+        "黄金 军工",
+    )
+
+    def __init__(self, *, timeout_seconds: float = 6.0) -> None:
+        self._timeout_seconds = max(0.5, float(timeout_seconds))
+        self._last_health: tuple[NewsSourceHealth, ...] = ()
+
+    @property
+    def last_health(self) -> tuple[NewsSourceHealth, ...]:
+        return self._last_health
+
+    def fetch_symbol_news(self, symbol: str) -> list[pd.DataFrame]:
+        frame = _fetch_eastmoney_stock_news_compat(symbol)
+        frame["source_region"] = "domestic"
+        frame.attrs["aqsp_source_health"] = (
+            {
+                "name": self.name,
+                "region": self.region,
+                "status": "ok",
+                "successful": 1,
+                "row_count": len(frame),
+                "fetched_at": _source_fetched_at(),
+            },
+        )
+        self._last_health = _source_health_from_attrs(frame)
+        return [frame]
+
+    def fetch_global_news(self) -> list[pd.DataFrame]:
+        frames: list[pd.DataFrame] = []
+        health: list[NewsSourceHealth] = []
+        with ThreadPoolExecutor(max_workers=len(self._SEARCH_KEYWORDS)) as executor:
+            futures = {
+                executor.submit(
+                    _fetch_eastmoney_search_news,
+                    keyword,
+                    max_items=8,
+                    timeout_seconds=self._timeout_seconds,
+                ): keyword
+                for keyword in self._SEARCH_KEYWORDS
+            }
+            for future in as_completed(futures):
+                keyword = futures[future]
+                try:
+                    frame = future.result()
+                except Exception as exc:
+                    health.append(
+                        NewsSourceHealth(
+                            name=f"{self.name}:{keyword}",
+                            region=self.region,
+                            status=_status_from_exception(exc),
+                            fetched_at=_source_fetched_at(),
+                            warnings=(str(exc),),
+                        )
+                    )
+                    continue
+                if frame.empty:
+                    health.append(
+                        NewsSourceHealth(
+                            name=f"{self.name}:{keyword}",
+                            region=self.region,
+                            status="empty",
+                            fetched_at=_source_fetched_at(),
+                        )
+                    )
+                    continue
+                frames.append(frame)
+                health.append(
+                    NewsSourceHealth(
+                        name=f"{self.name}:{keyword}",
+                        region=self.region,
+                        status="ok",
+                        successful=1,
+                        row_count=len(frame),
+                        fetched_at=_source_fetched_at(),
+                    )
+                )
+        self._last_health = tuple(health)
+        if frames:
+            _attach_source_health(frames, self._last_health)
+        return frames
+
+
 def _fetch_eastmoney_stock_news_compat(symbol: str) -> pd.DataFrame:
     """Fetch Eastmoney stock news without AkShare's stale JSONP stripper."""
     inner_param = {
@@ -760,6 +855,89 @@ def _fetch_eastmoney_stock_news_compat(symbol: str) -> pd.DataFrame:
     return frame
 
 
+def _fetch_eastmoney_search_news(
+    keyword: str,
+    *,
+    max_items: int,
+    timeout_seconds: float,
+) -> pd.DataFrame:
+    """Search Eastmoney's public news index for one domestic catalyst theme."""
+    inner_param = {
+        "uid": "",
+        "keyword": keyword,
+        "type": ["cmsArticleWebOld"],
+        "client": "web",
+        "clientType": "web",
+        "clientVersion": "curr",
+        "param": {
+            "cmsArticleWebOld": {
+                "searchScope": "default",
+                "sort": "default",
+                "pageIndex": 1,
+                "pageSize": max(1, int(max_items)),
+                "preTag": "<em>",
+                "postTag": "</em>",
+            }
+        },
+    }
+    response = requests.get(
+        "https://search-api-web.eastmoney.com/search/jsonp",
+        params={
+            "cb": "aqsp_callback",
+            "param": json.dumps(inner_param, ensure_ascii=False, separators=(",", ":")),
+        },
+        headers={"User-Agent": "AQSP/0.1 news radar", "Referer": "https://so.eastmoney.com/"},
+        timeout=max(0.5, float(timeout_seconds)),
+    )
+    response.raise_for_status()
+    payload_text = str(response.text or "").strip()
+    if "(" not in payload_text or not payload_text.endswith(")"):
+        raise DataError(f"东财搜索返回格式异常: {keyword}")
+    payload = json.loads(payload_text[payload_text.index("(") + 1 : -1])
+    raw_rows = (payload.get("result") or {}).get("cmsArticleWebOld") or []
+    rows: list[dict[str, str]] = []
+    for item in raw_rows:
+        if not isinstance(item, dict):
+            continue
+        def clean(value: object) -> str:
+            return re.sub(r"</?em>", "", str(value or "")).strip()
+        code = clean(item.get("code"))
+        rows.append(
+            {
+                "新闻标题": clean(item.get("title")),
+                "新闻内容": clean(item.get("content")),
+                "发布时间": clean(item.get("date")),
+                "文章来源": clean(item.get("mediaName")) or "东财",
+                "新闻链接": clean(item.get("url"))
+                or (f"http://finance.eastmoney.com/a/{code}.html" if code else ""),
+                "source_region": "domestic",
+                "search_keyword": keyword,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def _source_health_from_attrs(frame: pd.DataFrame) -> tuple[NewsSourceHealth, ...]:
+    raw = getattr(frame, "attrs", {}).get("aqsp_source_health", ())
+    return tuple(
+        NewsSourceHealth(
+            name=str(item.get("name", "eastmoney_domestic_news")),
+            region="domestic",
+            status=(
+                str(item.get("status", "failed"))
+                if str(item.get("status", "failed"))
+                in {"ok", "empty", "timeout", "partial", "failed"}
+                else "failed"
+            ),
+            successful=int(item.get("successful", 0) or 0),
+            row_count=int(item.get("row_count", 0) or 0),
+            fetched_at=str(item.get("fetched_at", "")),
+        )
+        for item in raw
+        if isinstance(item, dict)
+    )
+
+
 def build_default_news_source() -> NewsSource:
     rss_source = build_rss_news_source_from_config()
     try:
@@ -769,7 +947,10 @@ def build_default_news_source() -> NewsSource:
         else:
             akshare_source = AkshareNewsSource(timeout_seconds=configured_timeout)
     except _AkshareOptionalDependencyError:
-        akshare_source = None
+        akshare_source = EastmoneyDomesticNewsSource(
+            timeout_seconds=_configured_news_source_timeout_seconds()
+            or _DEFAULT_NEWS_SOURCE_TIMEOUT_SECONDS
+        )
 
     sources: list[NewsSource] = []
     if rss_source is not None:
