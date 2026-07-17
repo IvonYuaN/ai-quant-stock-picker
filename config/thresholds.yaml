@@ -1,4 +1,4 @@
-version: "1.1.16"
+version: "1.1.17"
 composite:
   base_blend_weight: 0.7
   min_total_score: 0.4
@@ -305,6 +305,13 @@ scoring:
   ma20_slope_lookback: 6
   ma20_slope_up_threshold: 1.0
   ma20_slope_down_threshold: -1.5
+  quality_min_observation_score: 50.0
+  quality_min_observation_dimensions: 3
+  quality_min_confirmation_dimensions: 1
+  quality_min_paper_score: 55.0
+  quality_min_paper_dimensions: 4
+  quality_max_paper_risks: 1
+  quality_max_ret5_drawdown_pct: -10.0
 morning_breakout:
   enabled: true
   min_change_pct: 5.0
@@ -446,4 +453,4 @@ internet_strategy:
   low_vol_amplitude_max: 5.5
   low_vol_volume_max: 1.8
   low_vol_score: 10.0
-version: 1.1.16
+version: 1.1.17

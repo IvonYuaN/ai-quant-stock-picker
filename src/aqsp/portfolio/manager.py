@@ -649,6 +649,11 @@ def apply_portfolio_manager(
     for pick in picks:
         reasons: list[str] = []
         action = "keep"
+        observation_only = bool(pick.metrics.get("observation_only", False))
+        paper_review_eligible = pick.metrics.get("paper_review_eligible", True)
+        if observation_only or paper_review_eligible is False:
+            action = "observation_only"
+            reasons.append("质量门/组合保护仅允许观察，不进入纸面复核")
 
         if pick.recommended_adjustment == "lower":
             reasons.append("多 Agent 委员会偏谨慎，仅作为复核提示")
@@ -665,11 +670,13 @@ def apply_portfolio_manager(
             == concentrated_sector
         ):
             reasons.append(f"板块集中度过高，限制{concentrated_sector}暴露")
-            action = "downgrade"
+            if not observation_only:
+                action = "downgrade"
 
         if pick.symbol in high_corr_symbols:
             reasons.append("与前序候选高相关，限制组合拥挤风险")
-            action = "downgrade"
+            if not observation_only:
+                action = "downgrade"
 
         if str(pick.metrics.get("cross_market_primary_theme", "") or "").strip():
             reasons.append("跨市证据仅进入复核，不改写候选评分")

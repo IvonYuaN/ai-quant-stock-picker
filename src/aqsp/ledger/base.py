@@ -94,6 +94,35 @@ def _normalize_strategies(raw: object) -> list[str]:
     return [str(item).strip() for item in raw if str(item).strip()]
 
 
+def _as_bool(value: object, *, default: bool) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"true", "1", "yes"}:
+            return True
+        if normalized in {"false", "0", "no", ""}:
+            return False
+    return bool(value)
+
+
+def is_ledger_row_paper_review_eligible(row: dict) -> bool:
+    """Use persisted quality state before considering a rating tradable."""
+    quality_action = str(
+        row.get("quality_gate_action", row.get("quality_gate_status", "")) or ""
+    ).strip()
+    portfolio_action = str(row.get("portfolio_action", "") or "").strip()
+    if quality_action in {"observe", "blocked", "rejected"}:
+        return False
+    if portfolio_action == "observation_only":
+        return False
+    if _as_bool(row.get("observation_only"), default=False):
+        return False
+    return _as_bool(row.get("paper_review_eligible"), default=True)
+
+
 def execution_config_from_thresholds(
     thresholds: object | None = None,
     *,
@@ -183,6 +212,15 @@ def append_predictions(
                 "rating": pick.rating,
                 "position": pick.position,
                 "portfolio_action": str(pick.metrics.get("portfolio_action", "")),
+                "quality_gate_action": str(
+                    pick.metrics.get("quality_gate_action", "") or ""
+                ),
+                "paper_review_eligible": _as_bool(
+                    pick.metrics.get("paper_review_eligible"), default=True
+                ),
+                "observation_only": _as_bool(
+                    pick.metrics.get("observation_only"), default=False
+                ),
                 "candidate_status": str(pick.metrics.get("candidate_status", "") or ""),
                 "candidate_blocker": str(
                     pick.metrics.get("candidate_blocker", "") or ""
@@ -661,7 +699,9 @@ def validate_predictions(
     for row in rows:
         if row.get("status") != "pending":
             continue
-        if not is_tradable_rating(row.get("rating")):
+        if not is_tradable_rating(
+            row.get("rating")
+        ) or not is_ledger_row_paper_review_eligible(row):
             row["status"] = "watch_only"
             continue
         strategies = _normalize_strategies(row.get("strategies"))

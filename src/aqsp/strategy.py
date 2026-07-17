@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import math
 import logging
+from dataclasses import replace
 
 import pandas as pd
 
 from aqsp.core.errors import FreshnessError
+from aqsp.candidate_quality import assess_short_term_quality
 from aqsp.data.source_readiness import source_role_for_workload
 from aqsp.data.validation import DataValidator
 from aqsp.data.filters import TradabilityFilter
@@ -34,6 +36,45 @@ _INTERNET_STRATEGY_REGIME_BUCKETS: dict[str, str] = {
     "low_vol_trend": "momentum",
     "n_rebound": "triple_rise",
 }
+
+
+def apply_candidate_quality_gate(picks: list[PickResult]) -> list[PickResult]:
+    """Keep only quality-approved paper/observation candidates.
+
+    Picks produced by older or test-only paths without a quality status are kept;
+    they are not silently reclassified without the deterministic evidence fields.
+    """
+    result: list[PickResult] = []
+    for pick in picks:
+        status = str(pick.metrics.get("quality_gate_status", "") or "").strip()
+        if not status:
+            result.append(pick)
+            continue
+        if status in {"blocked", "rejected"}:
+            _logger.info(
+                "质量门剔除 %s: %s",
+                pick.symbol,
+                "；".join(pick.metrics.get("quality_gate_reasons", ()) or ()),
+            )
+            continue
+        if status != "observe":
+            result.append(pick)
+            continue
+        metrics = dict(pick.metrics)
+        metrics.update(
+            {
+                "paper_review_eligible": False,
+                "candidate_status": "质量观察",
+                "candidate_blocker": "",
+                "quality_gate_action": "observe",
+                "candidate_next_step": "等待短线动能与量价确认后，再评估纸面复核",
+                "candidate_review_window": "下一次盘中确认",
+                "candidate_review_priority": "low",
+                "portfolio_action": "observation_only",
+            }
+        )
+        result.append(replace(pick, metrics=metrics))
+    return result
 
 
 def strategy_weights_for_regime(
@@ -318,6 +359,25 @@ def score_symbol(
     )
     stop_loss = max(stop_base * (1 - config.stop_loss_buffer), 0.01)
     take_profit = close + max(close - stop_loss, atr14) * scoring.take_profit_multiplier
+    quality = assess_short_term_quality(
+        score=score,
+        rating=_rating(score, scoring),
+        ret5_pct=ret5,
+        ret20_pct=ret20,
+        volume_ratio=volume_ratio,
+        rsi12=rsi12,
+        bias20_pct=bias20,
+        ma_trend=ma5 > ma10 > ma20,
+        ma_slope_up=ma20_slope > scoring.ma20_slope_up_threshold,
+        macd_improving=macd_hist > 0 and macd_hist > prev_macd_hist,
+        near_high_confirmed=(
+            close >= _num(prev["high_20"]) * scoring.near_high_threshold
+            and volume_ratio >= scoring.near_high_volume
+        ),
+        pullback_confirmed=pullback_to_ma,
+        scoring=scoring,
+        risk_count=len(risks),
+    )
     position = _position(
         score, risks, scoring, max_position_pct=config.max_position_pct
     )
@@ -344,6 +404,9 @@ def score_symbol(
             "bias20_pct": round(bias20, 2),
             "volume_ratio": round(volume_ratio, 2),
             "rsi12": round(rsi12, 2),
+            "quality_gate_status": quality.action,
+            "quality_gate_reasons": tuple(dict.fromkeys(quality.reasons)),
+            "paper_review_eligible": quality.paper_review_eligible,
             "avg_amount_20": round(avg_amount, 2),
             "sector": _text(row.get("sector")),
             "industry": _text(row.get("industry")),
@@ -353,6 +416,31 @@ def score_symbol(
             "historical_data_source": _text(frame.attrs.get("historical_source")),
             "strategy_weights": applied_strategy_weights,
             "strategy_weight_reasons": applied_strategy_weight_reasons,
+            "technical_evidence": quality.technical_evidence,
+            "technical_evidence_count": len(quality.technical_evidence),
+            "technical_quality_status": quality.action,
+            "quality_gate_action": quality.action,
+            **(
+                {
+                    "candidate_status": "质量观察",
+                    "candidate_next_step": "等待短线动量与量能重新确认后，再评估纸面复核",
+                    "candidate_review_window": "下一次量价确认时",
+                    "candidate_review_priority": "low",
+                }
+                if quality.action == "observe"
+                else {}
+            ),
+            **(
+                {
+                    "candidate_status": "质量阻塞",
+                    "candidate_blocker": "；".join(quality.reasons),
+                    "candidate_next_step": "补足技术证据并重新通过观察门后，再评估",
+                    "candidate_review_window": "下一轮信号出现时",
+                    "candidate_review_priority": "low",
+                }
+                if quality.action == "blocked"
+                else {}
+            ),
         },
         confidence=_compute_confidence(
             len(strategy_ids), score, len(risks), volume_ratio, scoring

@@ -398,6 +398,14 @@ class ScoringThresholds:
     ma20_slope_lookback: float = 6
     ma20_slope_up_threshold: float = 1.0
     ma20_slope_down_threshold: float = -1.5
+    # 短线候选质量门：评分只负责排序，不能替代独立的结构/动能确认。
+    quality_min_observation_score: float = 50.0
+    quality_min_observation_dimensions: int = 3
+    quality_min_confirmation_dimensions: int = 1
+    quality_min_paper_score: float = 55.0
+    quality_min_paper_dimensions: int = 4
+    quality_max_paper_risks: int = 1
+    quality_max_ret5_drawdown_pct: float = -10.0
 
 
 @dataclass(frozen=True)

@@ -22,10 +22,15 @@ TEST_TRADE_DAY = date(2026, 6, 26)
 
 @pytest.fixture(autouse=True)
 def _isolated_notify_state(monkeypatch, tmp_path: Path) -> None:
+    import aqsp.cli as cli_mod
+
     monkeypatch.setenv("AQSP_NOTIFY_STATE_PATH", str(tmp_path / "notify_state.json"))
     monkeypatch.setenv(
         "AQSP_GATE_NOTIFY_STATE_PATH", str(tmp_path / "gate_notify_state.json")
     )
+    # Notification tests use explicit fixtures for message content. Keep live
+    # catalyst workers out of unrelated scheduled-flow tests.
+    monkeypatch.setattr(cli_mod, "_should_build_market_context", lambda _task_id: False)
 
 
 @pytest.fixture(autouse=True)
@@ -397,6 +402,74 @@ def test_run_briefing_rehydrates_debate_summary_metrics_from_ledger(
     )
 
 
+def test_run_briefing_rehydrates_candidate_quality_boundary_from_ledger(
+    monkeypatch, tmp_path: Path
+) -> None:
+    import aqsp.cli as cli_mod
+
+    ledger = tmp_path / "predictions.jsonl"
+    output = tmp_path / "briefing.md"
+    ledger.write_text(
+        json.dumps(
+            {
+                "signal_date": "2026-06-12",
+                "status": "watch_only",
+                "symbol": "600000",
+                "name": "浦发银行",
+                "signal_close": 10.0,
+                "score": 72,
+                "rating": "buy_candidate",
+                "quality_gate_action": "observe",
+                "quality_gate_status": "observe",
+                "quality_gate_reasons": ["缺少量价确认"],
+                "paper_review_eligible": False,
+                "observation_only": True,
+                "portfolio_action": "observation_only",
+                "candidate_status": "质量观察",
+                "candidate_blocker": "",
+                "candidate_next_step": "等待短线动量与量能重新确认后，再评估纸面复核",
+                "candidate_review_window": "下一次量价确认时",
+                "candidate_review_priority": "low",
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(
+        "aqsp.briefing.enhance_briefing",
+        lambda briefing, enable_llm: captured.setdefault("briefing", briefing)
+        or briefing,
+    )
+    monkeypatch.setattr(
+        "aqsp.briefing.notifier.send_smart_summary_card", lambda briefing: None
+    )
+
+    exit_code = cli_mod.run_briefing(
+        Namespace(
+            ledger=str(ledger),
+            output=str(output),
+            enable_llm=False,
+            notify=False,
+            email=False,
+        )
+    )
+
+    pick = captured["briefing"].picks[0]
+    assert exit_code == 0
+    assert pick.metrics["quality_gate_action"] == "observe"
+    assert pick.metrics["quality_gate_status"] == "observe"
+    assert pick.metrics["quality_gate_reasons"] == ("缺少量价确认",)
+    assert pick.metrics["paper_review_eligible"] is False
+    assert pick.metrics["observation_only"] is True
+    assert pick.metrics["portfolio_action"] == "observation_only"
+    assert pick.metrics["candidate_status"] == "质量观察"
+    assert pick.metrics["candidate_next_step"].startswith("等待短线动量")
+    assert captured["briefing"].portfolio_summary.allocations == ()
+
+
 def test_run_briefing_ignores_stale_source_metadata_from_previous_date(
     monkeypatch, tmp_path: Path
 ) -> None:
@@ -617,6 +690,10 @@ def test_run_scheduled_notify_prepends_source_status_banner(
     monkeypatch, tmp_path
 ) -> None:
     import aqsp.cli as cli_mod
+
+    # This test validates notification ordering and source status; it must not
+    # launch the live multi-source catalyst subprocess graph.
+    monkeypatch.setattr(cli_mod, "_should_build_market_context", lambda _task_id: False)
 
     latest = TEST_TRADE_DAY.isoformat()
     frames = {

@@ -24,6 +24,7 @@ from aqsp.ledger import (
     validate_predictions,
     write_ledger,
 )
+from aqsp.ledger.base import is_ledger_row_paper_review_eligible
 from aqsp.ledger.learner import format_decay_alerts
 from aqsp.models import PickResult
 
@@ -36,6 +37,83 @@ def test_execution_config_defaults_load_from_thresholds() -> None:
     assert execution.benchmark_symbol == "000300"
     assert execution.limit_up_pct == pytest.approx(0.10)
     assert execution.limit_down_pct == pytest.approx(0.10)
+
+
+def test_append_predictions_persists_quality_gate_state_without_rating_promotion(
+    tmp_path,
+) -> None:
+    ledger = tmp_path / "predictions.jsonl"
+    pick = PickResult(
+        symbol="600000",
+        name="测试",
+        date="2026-07-17",
+        close=10.0,
+        score=80.0,
+        rating="strong_buy_candidate",
+        entry_type="relative_strength",
+        ideal_buy=10.0,
+        stop_loss=9.0,
+        take_profit=12.0,
+        position="30%-50%",
+        metrics={
+            "quality_gate_action": "observe",
+            "paper_review_eligible": False,
+            "observation_only": True,
+            "portfolio_action": "observation_only",
+        },
+    )
+
+    append_predictions(ledger, [pick])
+
+    row = read_ledger(ledger)[0]
+    assert row["rating"] == "strong_buy_candidate"
+    assert row["quality_gate_action"] == "observe"
+    assert row["paper_review_eligible"] is False
+    assert row["observation_only"] is True
+    assert row["portfolio_action"] == "observation_only"
+    assert is_ledger_row_paper_review_eligible(row) is False
+
+
+def test_validate_predictions_does_not_promote_persisted_observation_state(
+    tmp_path,
+) -> None:
+    ledger = tmp_path / "predictions.jsonl"
+    pick = PickResult(
+        symbol="600000",
+        name="测试",
+        date="2026-07-17",
+        close=10.0,
+        score=80.0,
+        rating="strong_buy_candidate",
+        entry_type="relative_strength",
+        ideal_buy=10.0,
+        stop_loss=9.0,
+        take_profit=12.0,
+        position="30%-50%",
+        strategies=("relative_strength",),
+        metrics={
+            "quality_gate_action": "observe",
+            "paper_review_eligible": False,
+            "observation_only": True,
+            "portfolio_action": "observation_only",
+        },
+    )
+    append_predictions(ledger, [pick], execution=ExecutionConfig(horizon_days=1))
+
+    summary = validate_predictions(
+        ledger,
+        {
+            "600000": pd.DataFrame(
+                [
+                    {"date": "2026-07-17", "open": 10.0, "close": 10.0},
+                    {"date": "2026-07-20", "open": 10.0, "close": 11.0},
+                ]
+            )
+        },
+    )
+
+    assert summary.checked == 0
+    assert read_ledger(ledger)[0]["status"] == "watch_only"
 
 
 def test_fallback_limit_pct_uses_symbol_board_thresholds(tmp_path) -> None:

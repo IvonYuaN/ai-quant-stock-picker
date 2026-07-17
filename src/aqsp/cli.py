@@ -121,6 +121,7 @@ from aqsp.runtime.gate_notify import (
     should_send_gate_notification,
 )
 from aqsp.strategy import (
+    apply_candidate_quality_gate,
     screen_universe,
 )
 from aqsp.strategies.thresholds import load_thresholds
@@ -527,11 +528,12 @@ def _screen_universe_with_thresholds(
     thresholds: Any,
 ) -> list[PickResult]:
     try:
-        return screen_universe(frames, config, thresholds=thresholds)
+        picks = screen_universe(frames, config, thresholds=thresholds)
     except TypeError as exc:
         if "thresholds" not in str(exc):
             raise
-        return screen_universe(frames, config)
+        picks = screen_universe(frames, config)
+    return apply_candidate_quality_gate(picks)
 
 
 def _runtime_strategy_weights(
@@ -2398,6 +2400,45 @@ def _force_intraday_observation(
             }
         )
         risks = tuple(dict.fromkeys((*pick.risks, reason)))
+        observed.append(replace(pick, metrics=metrics, risks=risks))
+    return observed
+
+
+def _apply_protection_observation_boundary(
+    picks: list[PickResult],
+    *,
+    reason: str,
+) -> list[PickResult]:
+    """Keep quality-qualified research visible while hard protection blocks paper action."""
+    if not picks:
+        return picks
+    clean_reason = str(reason or "组合保护已触发").strip()
+    observed: list[PickResult] = []
+    for pick in picks:
+        metrics = dict(pick.metrics)
+        if str(metrics.get("quality_gate_action", "clean")) == "blocked":
+            observed.append(pick)
+            continue
+        alerts = tuple(metrics.get("quality_gate_reasons", ()) or ())
+        metrics.update(
+            {
+                "observation_only": True,
+                "quality_gate_action": "observe",
+                "paper_review_eligible": False,
+                "candidate_status": "组合保护观察",
+                "candidate_next_step": "组合保护解除且短线确认仍有效后，再评估纸面复核",
+                "candidate_review_window": "组合保护解除后",
+                "candidate_review_priority": "low",
+                "candidate_blocker": "",
+                "quality_gate_reasons": tuple(
+                    dict.fromkeys((*alerts, f"组合保护：{clean_reason}"))
+                ),
+                "portfolio_action": "observation_only",
+            }
+        )
+        risks = tuple(
+            dict.fromkeys((*pick.risks, f"组合保护生效: {clean_reason}"))
+        )
         observed.append(replace(pick, metrics=metrics, risks=risks))
     return observed
 
@@ -4320,6 +4361,11 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
         screened_picks,
         missing_symbols=relevant_intraday_missing_symbols,
     )
+    if status.triggered:
+        screened_picks = _apply_protection_observation_boundary(
+            screened_picks,
+            reason=status.reason,
+        )
     _write_high_frequency_provisional_outputs(
         task_id=normalized_task_id,
         args=args,
@@ -6253,7 +6299,29 @@ def run_briefing(args: argparse.Namespace) -> int:
                 reasons=tuple(row.get("reasons", [])),
                 risks=tuple(row.get("risks", [])),
                 metrics={
+                    "quality_gate_action": str(
+                        row.get("quality_gate_action", "") or ""
+                    ),
+                    "quality_gate_status": str(
+                        row.get("quality_gate_status", "") or ""
+                    ),
+                    "quality_gate_reasons": tuple(
+                        row.get("quality_gate_reasons", []) or []
+                    ),
+                    "paper_review_eligible": row.get("paper_review_eligible", True),
+                    "observation_only": row.get("observation_only", False),
                     "portfolio_action": str(row.get("portfolio_action", "") or ""),
+                    "candidate_status": str(row.get("candidate_status", "") or ""),
+                    "candidate_blocker": str(row.get("candidate_blocker", "") or ""),
+                    "candidate_next_step": str(
+                        row.get("candidate_next_step", "") or ""
+                    ),
+                    "candidate_review_window": str(
+                        row.get("candidate_review_window", "") or ""
+                    ),
+                    "candidate_review_priority": str(
+                        row.get("candidate_review_priority", "") or ""
+                    ),
                     "stop_method": str(row.get("stop_method", "") or ""),
                     "sector": str(row.get("sector", "") or ""),
                     "industry": str(row.get("industry", "") or ""),

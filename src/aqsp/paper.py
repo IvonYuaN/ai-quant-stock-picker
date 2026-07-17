@@ -10,7 +10,11 @@ import pandas as pd
 
 from aqsp.core.time import now_shanghai
 from aqsp.ledger import ExecutionConfig, execution_config_from_thresholds, read_ledger
-from aqsp.ledger.base import _check_executable, _resolve_exit
+from aqsp.ledger.base import (
+    _check_executable,
+    _resolve_exit,
+    is_ledger_row_paper_review_eligible,
+)
 from aqsp.ratings import is_tradable_rating
 from aqsp.utils.jsonl_io import advisory_lock, atomic_write_text
 
@@ -29,6 +33,16 @@ class PaperSummary:
 
 _PAPER_CONTEXT_FIELDS = (
     "portfolio_action",
+    "quality_gate_status",
+    "quality_gate_action",
+    "quality_gate_reasons",
+    "paper_review_eligible",
+    "observation_only",
+    "technical_evidence",
+    "technical_evidence_count",
+    "technical_quality_status",
+    "data_quality_status",
+    "data_quality_alerts",
     "candidate_status",
     "candidate_blocker",
     "candidate_next_step",
@@ -122,6 +136,9 @@ def sync_paper_trades(
                 skipped += 1
                 continue
             if not is_tradable_rating(signal.get("rating")):
+                skipped += 1
+                continue
+            if not is_ledger_row_paper_review_eligible(signal):
                 skipped += 1
                 continue
             if symbol in open_symbols:
@@ -341,11 +358,8 @@ def _paper_context_from_signal(signal: dict) -> dict:
         value = signal.get(field)
         if value in (None, "", [], ()):
             continue
-        if field == "strategies":
-            if isinstance(value, tuple):
-                context[field] = list(value)
-            else:
-                context[field] = value
+        if isinstance(value, (tuple, set)):
+            context[field] = list(value)
             continue
         context[field] = value
     return context
@@ -368,6 +382,10 @@ def _update_pending_entry_trades(
     now = now_shanghai().isoformat(timespec="seconds")
     for trade in trades:
         if trade.get("status") != "pending_entry":
+            continue
+        if not is_ledger_row_paper_review_eligible(trade):
+            trade["status"] = "watch_only"
+            trade["updated_at"] = now
             continue
         symbol = str(trade.get("symbol", ""))
         frame = frames.get(symbol)

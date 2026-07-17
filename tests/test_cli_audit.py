@@ -7,6 +7,7 @@ from unittest.mock import MagicMock
 
 import pandas as pd
 import pytest
+import requests
 
 from aqsp.core.time import today_shanghai
 from aqsp.core.types import PickResult
@@ -18,6 +19,13 @@ def _isolated_runtime_state(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("AQSP_NOTIFY_STATE_PATH", str(tmp_path / "notify_state.json"))
     monkeypatch.setenv(
         "AQSP_GATE_NOTIFY_STATE_PATH", str(tmp_path / "gate_notify_state.json")
+    )
+    monkeypatch.setattr(
+        requests,
+        "get",
+        lambda *args, **kwargs: pytest.fail(
+            f"test_cli_audit attempted real network access: {args[0] if args else ''}"
+        ),
     )
 
 
@@ -79,6 +87,13 @@ def test_run_scheduled_persists_decision_audit_log(
         cli_mod,
         "_fetch_frames_for_cli_with_metadata",
         lambda *args, **kwargs: (frames, "eastmoney"),
+    )
+    # This audit test verifies persistence, not live news retrieval. Keep the
+    # external-source process/thread graph out of the test process.
+    monkeypatch.setattr(
+        cli_mod,
+        "_build_runtime_catalyst_report",
+        lambda *args, **kwargs: None,
     )
     monkeypatch.setattr(
         cli_mod, "_resolve_run_symbols", lambda *args, **kwargs: ["600519"]

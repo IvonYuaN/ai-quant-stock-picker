@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from aqsp.core.time import now_shanghai
+from aqsp.ledger.base import is_ledger_row_paper_review_eligible
 from aqsp.paper import read_paper_trades
 from aqsp.presentation import format_symbol_name
 from aqsp.ratings import is_tradable_rating, rating_label
@@ -255,7 +256,7 @@ class ClosingReviewer:
             name = str(pred.get("name", "")).strip()
             display = format_symbol_name(symbol, name)
             rating = str(pred.get("rating", "")).strip()
-            if is_tradable_rating(rating):
+            if is_tradable_rating(rating) and is_ledger_row_paper_review_eligible(pred):
                 tradable.append(display)
             else:
                 watchlist.append(display)
@@ -322,7 +323,9 @@ class ClosingReviewer:
             display = format_symbol_name(symbol, name)
             rating = str(row.get("rating", "")).strip()
             action = str(row.get("portfolio_action", "")).strip()
-            if is_tradable_rating(rating) or action == "promote":
+            if is_ledger_row_paper_review_eligible(row) and (
+                is_tradable_rating(rating) or action == "promote"
+            ):
                 tradable.append(display)
             else:
                 watchlist.append(display)

@@ -116,6 +116,100 @@ def test_paper_skips_watch_signals(tmp_path: Path) -> None:
     assert read_paper_trades(trades) == []
 
 
+@pytest.mark.parametrize(
+    "quality_fields",
+    [
+        {"quality_gate_action": "observe"},
+        {"quality_gate_action": "blocked"},
+        {"observation_only": True},
+    ],
+)
+def test_paper_does_not_create_entry_for_quality_blocked_signals(
+    tmp_path: Path, quality_fields: dict[str, object]
+) -> None:
+    signals = tmp_path / "signals.jsonl"
+    trades = tmp_path / "paper.jsonl"
+    _write_signal(signals, **quality_fields)
+
+    summary = sync_paper_trades(
+        signal_ledger=signals,
+        paper_ledger=trades,
+        frames={"600519": _frame()},
+    )
+
+    assert summary.opened == 0
+    assert summary.pending_entry == 0
+    assert summary.skipped == 1
+    assert read_paper_trades(trades) == []
+
+
+def test_paper_persists_quality_context_on_open_trade(tmp_path: Path) -> None:
+    signals = tmp_path / "signals.jsonl"
+    trades = tmp_path / "paper.jsonl"
+    _write_signal(
+        signals,
+        quality_gate_status="clean",
+        quality_gate_action="clean",
+        quality_gate_reasons=("确认充分",),
+        paper_review_eligible=True,
+        observation_only=False,
+        technical_evidence=("趋势：均线多头", "量能：放量确认"),
+        technical_evidence_count=2,
+        technical_quality_status="clean",
+        data_quality_status="watch",
+        data_quality_alerts=("盘口延迟",),
+    )
+
+    summary = sync_paper_trades(
+        signal_ledger=signals,
+        paper_ledger=trades,
+        frames={"600519": _frame()},
+    )
+
+    row = read_paper_trades(trades)[0]
+    assert summary.opened == 1
+    assert row["quality_gate_action"] == "clean"
+    assert row["quality_gate_reasons"] == ["确认充分"]
+    assert row["paper_review_eligible"] is True
+    assert row["observation_only"] is False
+    assert row["technical_evidence"] == ["趋势：均线多头", "量能：放量确认"]
+    assert row["data_quality_status"] == "watch"
+    assert row["data_quality_alerts"] == ["盘口延迟"]
+
+
+def test_paper_demotes_existing_quality_blocked_pending_entry(
+    tmp_path: Path,
+) -> None:
+    signals = tmp_path / "signals.jsonl"
+    trades = tmp_path / "paper.jsonl"
+    _write_signal(signals, signal_date="2026-05-29")
+    trades.write_text(
+        json.dumps(
+            {
+                "id": "paper-1",
+                "signal_id": "sig-1",
+                "symbol": "600519",
+                "status": "pending_entry",
+                "quality_gate_action": "blocked",
+                "paper_review_eligible": False,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    summary = sync_paper_trades(
+        signal_ledger=signals,
+        paper_ledger=trades,
+        frames={"600519": _frame()},
+    )
+
+    row = read_paper_trades(trades)[0]
+    assert summary.opened == 0
+    assert summary.pending_entry == 0
+    assert row["status"] == "watch_only"
+
+
 def test_paper_opens_trade_from_next_open(tmp_path: Path) -> None:
     signals = tmp_path / "signals.jsonl"
     trades = tmp_path / "paper.jsonl"

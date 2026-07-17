@@ -52,6 +52,8 @@ def optimize_portfolio_allocations(
         pick
         for pick in picks
         if is_tradable_rating(pick.rating)
+        and pick.metrics.get("paper_review_eligible", True) is not False
+        and not bool(pick.metrics.get("observation_only", False))
         and getattr(decision_by_symbol.get(pick.symbol), "action", "keep")
         != "downgrade"
     ][:max_names]

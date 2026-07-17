@@ -15,10 +15,84 @@ from aqsp.strategies.thresholds import (
 )
 from aqsp.strategy import (
     _entry_type,
+    apply_candidate_quality_gate,
+    assess_short_term_quality,
     score_symbol,
     screen_universe,
     strategy_weights_for_regime,
 )
+
+
+def test_short_term_quality_requires_independent_evidence_and_score() -> None:
+    scoring = ScoringThresholds()
+
+    quality = assess_short_term_quality(
+        score=48.0,
+        rating="buy_candidate",
+        ret5_pct=2.0,
+        ret20_pct=13.0,
+        volume_ratio=1.2,
+        rsi12=55.0,
+        bias20_pct=3.0,
+        ma_trend=True,
+        ma_slope_up=True,
+        macd_improving=False,
+        near_high_confirmed=False,
+        pullback_confirmed=False,
+        scoring=scoring,
+    )
+
+    assert quality.action == "blocked"
+    assert quality.paper_review_eligible is False
+    assert any("观察门槛" in reason for reason in quality.reasons)
+
+
+def test_short_term_quality_downgrades_recent_drawdown_to_observation() -> None:
+    quality = assess_short_term_quality(
+        score=72.0,
+        rating="strong_buy_candidate",
+        ret5_pct=-13.0,
+        ret20_pct=18.0,
+        volume_ratio=1.2,
+        rsi12=55.0,
+        bias20_pct=4.0,
+        ma_trend=True,
+        ma_slope_up=True,
+        macd_improving=True,
+        near_high_confirmed=False,
+        pullback_confirmed=False,
+        scoring=ScoringThresholds(),
+    )
+
+    assert quality.action == "observe"
+    assert quality.paper_review_eligible is False
+    assert any("近5日动量偏弱" in reason for reason in quality.reasons)
+
+
+def test_apply_candidate_quality_gate_removes_blocked_and_marks_observation() -> None:
+    from aqsp.core.types import PickResult
+
+    def pick(symbol: str, action: str) -> PickResult:
+        return PickResult(
+            symbol=symbol,
+            name=symbol,
+            date="2026-07-17",
+            close=10.0,
+            score=60.0,
+            rating="buy_candidate",
+            entry_type="relative_strength",
+            ideal_buy=10.0,
+            stop_loss=9.0,
+            take_profit=12.0,
+            position="10%-20%",
+            metrics={"quality_gate_status": action, "quality_gate_reasons": ("test",)},
+        )
+
+    kept = apply_candidate_quality_gate([pick("OBS", "observe"), pick("BAD", "blocked")])
+
+    assert [item.symbol for item in kept] == ["OBS"]
+    assert kept[0].metrics["paper_review_eligible"] is False
+    assert kept[0].metrics["quality_gate_action"] == "observe"
 
 
 def _frame(symbol: str, drift: float, volume_boost: float = 1.0) -> pd.DataFrame:

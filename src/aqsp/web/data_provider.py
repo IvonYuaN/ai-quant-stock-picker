@@ -5568,6 +5568,10 @@ class DashboardDataProvider:
         if self._is_blocked(row):
             return False
         action = str(row.get("portfolio_action", "") or "").strip()
+        if action == "observation_only" or bool(row.get("observation_only", False)):
+            return False
+        if row.get("paper_review_eligible", True) is False:
+            return False
         if action == "promote":
             return True
         if action == "downgrade":
@@ -5577,7 +5581,11 @@ class DashboardDataProvider:
     def _is_watch_candidate(self, row: dict[str, Any], task_id: str = "") -> bool:
         rating = str(row.get("rating", "") or "").strip()
         action = str(row.get("portfolio_action", "") or "").strip()
-        return rating in {"watch", "avoid"} or action in {"downgrade", "keep"}
+        return rating in {"watch", "avoid"} or action in {
+            "downgrade",
+            "keep",
+            "observation_only",
+        } or row.get("paper_review_eligible", True) is False
 
     def _is_watch_only(self, row: dict[str, Any], task_id: str = "") -> bool:
         return (

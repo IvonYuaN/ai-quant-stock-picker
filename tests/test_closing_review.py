@@ -38,6 +38,26 @@ class TestClosingReviewerInit:
 
 
 class TestReviewToday:
+    def test_quality_state_blocks_rating_from_main_watch_list(self) -> None:
+        reviewer = ClosingReviewer()
+
+        summary = reviewer._build_main_chain_summary(
+            [
+                {
+                    "symbol": "600000",
+                    "name": "测试",
+                    "rating": "strong_buy_candidate",
+                    "quality_gate_action": "observe",
+                    "paper_review_eligible": False,
+                    "observation_only": True,
+                    "portfolio_action": "observation_only",
+                }
+            ]
+        )
+
+        assert "主看名单" not in "\n".join(summary)
+        assert "观察名单" in "\n".join(summary)
+
     def test_review_uses_paper_ledger_as_trade_fact_source(self, tmp_path) -> None:
         ledger = tmp_path / "predictions.jsonl"
         paper = tmp_path / "paper_trades.jsonl"

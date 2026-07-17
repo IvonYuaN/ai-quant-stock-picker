@@ -20,7 +20,7 @@ from aqsp.strategies.thresholds import load_thresholds
 
 def test_load_thresholds():
     thresholds = load_thresholds()
-    assert thresholds.version == "1.1.16"
+    assert thresholds.version == "1.1.17"
     assert thresholds.last_walkforward_run == "2026-05-30"
     assert thresholds.momentum.lookback_days == 60
     assert thresholds.momentum.weights.momentum == 0.4
