@@ -121,6 +121,44 @@ JSON_OUTPUT="${AQSP_NEWS_JSON_OUTPUT:-data/runtime/news_catalysts_latest.json}"
 ENABLE_LLM_REVIEW="${AQSP_NEWS_ENABLE_LLM_REVIEW:-false}"
 ALLOW_NON_TRADING_NOTIFY="${AQSP_ALLOW_NON_TRADING_NEWS_NOTIFY:-false}"
 
+has_usable_current_news() {
+    # A transient source failure must not erase a valid same-day report that
+    # was fetched minutes earlier. Historical or empty artifacts are not kept.
+    [ -s "$JSON_OUTPUT" ] || return 1
+    "$PYTHON_BIN" - "$JSON_OUTPUT" <<'AQSP_CURRENT_NEWS_CHECK'
+import json
+import sys
+from datetime import datetime
+from pathlib import Path
+
+from aqsp.core.time import today_shanghai
+
+try:
+    payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+except (OSError, ValueError, IndexError):
+    raise SystemExit(1)
+
+if str(payload.get("date", "")).strip() != today_shanghai().isoformat():
+    raise SystemExit(1)
+events = payload.get("events")
+if not isinstance(events, list) or not events:
+    raise SystemExit(1)
+for event in events:
+    if not isinstance(event, dict) or not str(event.get("title", "")).strip():
+        raise SystemExit(1)
+    published_at = str(event.get("published_at", "")).strip()
+    try:
+        published_date = datetime.fromisoformat(
+            published_at.replace("Z", "+00:00")
+        ).date().isoformat()
+    except ValueError:
+        raise SystemExit(1)
+    if published_date != today_shanghai().isoformat():
+        raise SystemExit(1)
+raise SystemExit(0)
+AQSP_CURRENT_NEWS_CHECK
+}
+
 LLM_ARGS=()
 if is_truthy "$ENABLE_LLM_REVIEW"; then
     LLM_ARGS=(--enable-llm-review)
@@ -180,18 +218,26 @@ fi
 set -e
 
 if [ "$NEWS_EXIT" -eq 124 ]; then
-    if ! write_failed_report "消息源超时"; then
+    if has_usable_current_news; then
+        log "消息源超时：保留已有同日消息产物，不覆盖有效证据"
+    elif ! write_failed_report "消息源超时"; then
         log "[WARN] 超时失败报告写入失败: ${OUTPUT}"
     fi
-    if ! write_failed_json "消息源超时" "timeout"; then
+    if has_usable_current_news; then
+        :
+    elif ! write_failed_json "消息源超时" "timeout"; then
         log "[WARN] 超时失败 JSON 写入失败: ${JSON_OUTPUT}"
     fi
     log "消息面雷达超时: ${OUTPUT}"
 elif [ "$NEWS_EXIT" -ne 0 ]; then
-    if ! write_failed_report "消息面雷达命令失败: exit=${NEWS_EXIT}"; then
+    if has_usable_current_news; then
+        log "消息面命令失败：保留已有同日消息产物，不覆盖有效证据"
+    elif ! write_failed_report "消息面雷达命令失败: exit=${NEWS_EXIT}"; then
         log "[WARN] 失败报告写入失败: ${OUTPUT}"
     fi
-    if ! write_failed_json "消息面雷达命令失败: exit=${NEWS_EXIT}" "failed"; then
+    if has_usable_current_news; then
+        :
+    elif ! write_failed_json "消息面雷达命令失败: exit=${NEWS_EXIT}" "failed"; then
         log "[WARN] 失败 JSON 写入失败: ${JSON_OUTPUT}"
     fi
     log "[ERROR] 消息面雷达失败: exit=${NEWS_EXIT}"

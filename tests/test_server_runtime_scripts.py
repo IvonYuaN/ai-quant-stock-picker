@@ -638,6 +638,15 @@ def test_scheduled_scripts_share_release_runtime_python_resolution() -> None:
         assert "aqsp_runtime_python" in script, name
 
 
+def test_news_script_preserves_valid_same_day_report_on_source_failure() -> None:
+    script = (PROJECT_ROOT / "scripts" / "news_catalysts.sh").read_text(
+        encoding="utf-8"
+    )
+    assert "has_usable_current_news()" in script
+    assert "不覆盖有效证据" in script
+    assert "published_date != today_shanghai().isoformat()" in script
+
+
 def test_bt_task_script_exposes_panel_safe_actions() -> None:
     script = (PROJECT_ROOT / "scripts" / "bt_task.sh").read_text(encoding="utf-8")
 
