@@ -7,8 +7,19 @@
 set -euo pipefail
 
 PROJECT_ROOT="${AQSP_PROJECT_ROOT:-/opt/aqsp}"
-VENV_DIR="${AQSP_INTRADAY_VENV_DIR:-${PROJECT_ROOT}/.venv}"
-PYTHON_BIN="${VENV_DIR}/bin/python3"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+RUNTIME_PYTHON_HELPER="${PROJECT_ROOT}/scripts/runtime_python.sh"
+if [ ! -f "$RUNTIME_PYTHON_HELPER" ] && [ -f "${SCRIPT_DIR}/runtime_python.sh" ]; then
+    RUNTIME_PYTHON_HELPER="${SCRIPT_DIR}/runtime_python.sh"
+fi
+if [ ! -f "$RUNTIME_PYTHON_HELPER" ]; then
+    echo "[ERROR] 缺少运行时 Python 解析器: ${RUNTIME_PYTHON_HELPER}" >&2
+    exit 1
+fi
+# shellcheck disable=SC1090
+source "$RUNTIME_PYTHON_HELPER"
+VENV_DIR="${AQSP_INTRADAY_VENV_DIR:-${AQSP_RUNTIME_VENV_DIR:-${AQSP_VIBE_VENV_DIR:-}}}"
+PYTHON_BIN="$(aqsp_runtime_python "$PROJECT_ROOT")"
 INITIAL_PROJECT_ROOT="$PROJECT_ROOT"
 INITIAL_VENV_DIR="$VENV_DIR"
 LOG_DIR="${PROJECT_ROOT}/logs/intraday"
@@ -81,13 +92,8 @@ fi
 } >"$LOCK_INFO_FILE"
 trap 'rm -f "$LOCK_INFO_FILE"; rmdir "$LOCK_DIR"' EXIT
 
-if [ ! -d "$VENV_DIR" ]; then
-    log "[ERROR] 虚拟环境不存在: $VENV_DIR"
-    exit 1
-fi
-
-if [ ! -f "$PYTHON_BIN" ]; then
-    log "[ERROR] Python 可执行文件不存在: $PYTHON_BIN"
+if ! aqsp_require_runtime_python "$PYTHON_BIN"; then
+    log "[ERROR] 当前 release 没有可用的运行时 Python: $PYTHON_BIN"
     exit 1
 fi
 
@@ -104,7 +110,7 @@ if [ -f "${PROJECT_ROOT}/.env" ]; then
     # file must not silently redirect an explicit release to another worktree.
     PROJECT_ROOT="$INITIAL_PROJECT_ROOT"
     VENV_DIR="$INITIAL_VENV_DIR"
-    PYTHON_BIN="${VENV_DIR}/bin/python3"
+    PYTHON_BIN="$(aqsp_runtime_python "$PROJECT_ROOT")"
     log "已加载 .env 配置"
 fi
 
@@ -370,7 +376,11 @@ launch_intraday_debate_backfill() {
         --max-candidates "$max_candidates"
         "${force_arg[@]}"
     )
-    if is_truthy "${AQSP_INTRADAY_DEBATE_BACKFILL_BACKGROUND:-true}"; then
+    # The scheduler owns the runner process. A detached child can be reaped
+    # when the runner exits, leaving candidates fresh but debates permanently
+    # absent. Candidates are already published above, so wait here for the
+    # advisory sidecar and publish one final coherent snapshot.
+    if is_truthy "${AQSP_INTRADAY_DEBATE_BACKFILL_BACKGROUND:-false}"; then
         (
             refresh_debate_backfill_lock_owner
             trap release_debate_backfill_lock EXIT

@@ -7,6 +7,18 @@
 set -euo pipefail
 
 PROJECT_ROOT="${AQSP_PROJECT_ROOT:-/opt/aqsp}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+RUNTIME_PYTHON_HELPER="${PROJECT_ROOT}/scripts/runtime_python.sh"
+if [ ! -f "$RUNTIME_PYTHON_HELPER" ] && [ -f "${SCRIPT_DIR}/runtime_python.sh" ]; then
+    RUNTIME_PYTHON_HELPER="${SCRIPT_DIR}/runtime_python.sh"
+fi
+if [ ! -f "$RUNTIME_PYTHON_HELPER" ]; then
+    echo "[ERROR] 缺少运行时 Python 解析器: ${RUNTIME_PYTHON_HELPER}" >&2
+    exit 1
+fi
+# shellcheck disable=SC1090
+source "$RUNTIME_PYTHON_HELPER"
+export TZ="${TZ:-Asia/Shanghai}"
 DATE="$(date +%Y-%m-%d)"
 LOG_DIR="${AQSP_COLDSTART_LOG_DIR:-${PROJECT_ROOT}/logs/coldstart}"
 RUN_LOG="${LOG_DIR}/coldstart-${DATE}.log"
@@ -93,13 +105,10 @@ if [ -f "${PROJECT_ROOT}/.env" ]; then
     set +a
 fi
 
-export TZ="${TZ:-Asia/Shanghai}"
 export PYTHONPATH="${PROJECT_ROOT}/src:${PROJECT_ROOT}:${PYTHONPATH:-}"
 
-PYTHON_BIN="${AQSP_PYTHON:-${PROJECT_ROOT}/.venv/bin/python3}"
-if [ ! -x "$PYTHON_BIN" ]; then
-    PYTHON_BIN="$(command -v python3)"
-fi
+PYTHON_BIN="$(aqsp_runtime_python "$PROJECT_ROOT")"
+aqsp_require_runtime_python "$PYTHON_BIN"
 
 SQLITE_DB_PATH="$(resolve_path "${AQSP_COLDSTART_DB_PATH:-${AQSP_SQLITE_DB_PATH:-A股量化分析数据/astocks_raw.db}}")"
 RUNTIME_SQLITE_DB_PATH="$(resolve_path "${AQSP_SQLITE_DB_PATH:-A股量化分析数据/astocks_raw.db}")"

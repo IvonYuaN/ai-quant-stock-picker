@@ -13,6 +13,26 @@
 set -euo pipefail
 
 PROJECT_ROOT="${AQSP_PROJECT_ROOT:-/opt/aqsp}"
+INITIAL_PROJECT_ROOT="$PROJECT_ROOT"
+if [ -f "${PROJECT_ROOT}/.env" ]; then
+    set -a
+    # shellcheck disable=SC1090
+    source "${PROJECT_ROOT}/.env"
+    set +a
+    # .env may configure the runtime, but must not redirect this checkout.
+    PROJECT_ROOT="$INITIAL_PROJECT_ROOT"
+fi
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+RUNTIME_PYTHON_HELPER="${PROJECT_ROOT}/scripts/runtime_python.sh"
+if [ ! -f "$RUNTIME_PYTHON_HELPER" ] && [ -f "${SCRIPT_DIR}/runtime_python.sh" ]; then
+    RUNTIME_PYTHON_HELPER="${SCRIPT_DIR}/runtime_python.sh"
+fi
+if [ ! -f "$RUNTIME_PYTHON_HELPER" ]; then
+    echo "[ERROR] 缺少运行时 Python 解析器: ${RUNTIME_PYTHON_HELPER}" >&2
+    exit 1
+fi
+# shellcheck disable=SC1090
+source "$RUNTIME_PYTHON_HELPER"
 ACTION="${1:-}"
 LOG_DIR="${PROJECT_ROOT}/logs/bt"
 RUN_LOG="${LOG_DIR}/bt-${ACTION}-$(date +%Y-%m-%d).log"
@@ -23,6 +43,7 @@ GIT_SYNC_LOCK_FILE="${LOCK_DIR}/server-git-sync.lock"
 GIT_SYNC_LOCK_INFO_FILE="${GIT_SYNC_LOCK_FILE}/meta.env"
 GIT_SYNC_WAIT_SECONDS="${AQSP_GIT_SYNC_WAIT_SECONDS:-180}"
 GIT_LOCK_STALE_MINUTES="${AQSP_GIT_LOCK_STALE_MINUTES:-30}"
+export AQSP_RUNTIME_PYTHON="$(aqsp_runtime_python "$PROJECT_ROOT")"
 
 log() {
     mkdir -p "$LOG_DIR"
@@ -263,7 +284,7 @@ is_truthy() {
 }
 
 is_market_trading_day() {
-    local python_bin="${PROJECT_ROOT}/.venv/bin/python3"
+    local python_bin="${AQSP_RUNTIME_PYTHON}"
     local target_date="${AQSP_TRADING_DAY_OVERRIDE_DATE:-}"
     if [ ! -x "$python_bin" ]; then
         log "[ERROR] Python 可执行文件不存在，无法检查交易日: $python_bin"
@@ -289,7 +310,7 @@ skip_non_trading_day() {
 }
 
 is_calendar_weekend() {
-    local python_bin="${PROJECT_ROOT}/.venv/bin/python3"
+    local python_bin="${AQSP_RUNTIME_PYTHON}"
     local target_date="${AQSP_TRADING_DAY_OVERRIDE_DATE:-}"
     PYTHONPATH="${PROJECT_ROOT}/src:${PROJECT_ROOT}:${PYTHONPATH:-}" "$python_bin" - "$target_date" <<'AQSP_WEEKEND_PY'
 import sys
@@ -361,9 +382,10 @@ run_python_script() {
         log "[ERROR] 脚本不存在: $script_path"
         exit 1
     fi
-    local python_bin="${AQSP_PYTHON:-${PROJECT_ROOT}/.venv/bin/python3}"
-    if [ ! -x "$python_bin" ]; then
-        python_bin="${AQSP_PYTHON:-python3}"
+    local python_bin="${AQSP_RUNTIME_PYTHON}"
+    if ! aqsp_require_runtime_python "$python_bin"; then
+        log "[ERROR] 拒绝使用非 release Python 运行任务: ${python_bin}"
+        return 1
     fi
     log "开始运行: ${python_bin} ${script_path} $*"
     set +e

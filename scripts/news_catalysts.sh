@@ -6,8 +6,17 @@
 set -euo pipefail
 
 PROJECT_ROOT="${AQSP_PROJECT_ROOT:-/opt/aqsp}"
-VENV_DIR="${PROJECT_ROOT}/.venv"
-PYTHON_BIN="${VENV_DIR}/bin/python3"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+RUNTIME_PYTHON_HELPER="${PROJECT_ROOT}/scripts/runtime_python.sh"
+if [ ! -f "$RUNTIME_PYTHON_HELPER" ] && [ -f "${SCRIPT_DIR}/runtime_python.sh" ]; then
+    RUNTIME_PYTHON_HELPER="${SCRIPT_DIR}/runtime_python.sh"
+fi
+if [ ! -f "$RUNTIME_PYTHON_HELPER" ]; then
+    echo "[ERROR] 缺少运行时 Python 解析器: ${RUNTIME_PYTHON_HELPER}" >&2
+    exit 1
+fi
+# shellcheck disable=SC1090
+source "$RUNTIME_PYTHON_HELPER"
 LOG_DIR="${PROJECT_ROOT}/logs/news"
 RESULT_LOG="${LOG_DIR}/news-$(date +%Y-%m-%d).log"
 
@@ -91,6 +100,9 @@ if [ -f "${PROJECT_ROOT}/.env" ]; then
     set +a
     log "已加载 .env 配置"
 fi
+
+PYTHON_BIN="$(aqsp_runtime_python "$PROJECT_ROOT")"
+aqsp_require_runtime_python "$PYTHON_BIN"
 
 export PYTHONPATH="${PROJECT_ROOT}/src:${PROJECT_ROOT}:${PYTHONPATH:-}"
 export TZ="${TZ:-Asia/Shanghai}"

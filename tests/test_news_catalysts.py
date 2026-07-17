@@ -202,8 +202,65 @@ def test_news_catalyst_selects_ranked_events_from_diverse_sources() -> None:
         3,
     )
 
-    assert tuple(item.title for item in selected) == ("同源高分1", "另一来源", "第三来源")
+    assert tuple(item.title for item in selected) == (
+        "同源高分1",
+        "另一来源",
+        "第三来源",
+    )
     assert len({item.source for item in selected}) == 3
+
+
+def test_news_catalyst_groups_publication_labels_by_publisher_family() -> None:
+    def event(title: str, source: str, category: str) -> CatalystEvent:
+        return CatalystEvent(
+            title=title,
+            source=source,
+            category=category,
+            published_at=_RECENT_NEWS_TIME,
+            weight=10,
+            confidence=0.8,
+        )
+
+    selected = _select_diverse_events(
+        (
+            event("英伟达平台更新", "NVIDIA Developer", "新品发布"),
+            event("英伟达基础设施", "NVIDIA Newsroom", "订单/需求验证"),
+            event("国内PCB报价上调", "财联社", "涨价/供需催化"),
+            event("海外宏观变化", "Reuters", "宏观流动性"),
+        ),
+        3,
+    )
+
+    assert tuple(item.title for item in selected) == (
+        "英伟达平台更新",
+        "国内PCB报价上调",
+        "海外宏观变化",
+    )
+
+
+def test_news_catalyst_prefers_new_supply_chain_theme_before_same_theme_source() -> (
+    None
+):
+    def event(title: str, source: str, sector: str) -> CatalystEvent:
+        return CatalystEvent(
+            title=title,
+            source=source,
+            affected_sectors=(sector,),
+            published_at=_RECENT_NEWS_TIME,
+            weight=10,
+            confidence=0.8,
+        )
+
+    selected = _select_diverse_events(
+        (
+            event("算力平台发布", "NVIDIA Newsroom", "AI算力"),
+            event("海外算力订单", "Reuters", "AI算力"),
+            event("PCB覆铜板涨价", "财联社", "PCB"),
+        ),
+        2,
+    )
+
+    assert tuple(item.title for item in selected) == ("算力平台发布", "PCB覆铜板涨价")
 
 
 def test_news_catalyst_builds_explicit_pcb_transmission_chain() -> None:

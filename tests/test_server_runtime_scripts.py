@@ -108,6 +108,7 @@ def _build_coldstart_runtime(tmp_path: Path) -> tuple[Path, Path, Path]:
     scripts_dir.mkdir(parents=True)
     data_dir.mkdir(parents=True)
     shutil.copy2(PROJECT_ROOT / "scripts" / "coldstart_daily.sh", scripts_dir)
+    shutil.copy2(PROJECT_ROOT / "scripts" / "runtime_python.sh", scripts_dir)
     (scripts_dir / "update_sqlite_daily.py").write_text("# fake updater\n")
     db_path = data_dir / "astocks_raw.db"
     db_path.write_text("", encoding="utf-8")
@@ -463,7 +464,7 @@ def test_intraday_refresh_script_uses_isolated_outputs() -> None:
     )
     assert "launch_intraday_debate_backfill" in script
     assert "scripts/backfill_intraday_debate.py" in script
-    assert "AQSP_INTRADAY_DEBATE_BACKFILL_BACKGROUND:-true" in script
+    assert "AQSP_INTRADAY_DEBATE_BACKFILL_BACKGROUND:-false" in script
     assert "AQSP_INTRADAY_DEBATE_BACKFILL_FORCE:-true" in script
     assert "AQSP_INTRADAY_DEBATE_BACKFILL_MAX_CANDIDATES:-5" in script
     assert '"AQSP_ENABLE_DEBATE=true"' in script
@@ -609,9 +610,32 @@ def test_midday_refresh_reuses_intraday_chain_without_formal_ledger_pollution() 
     assert 'AQSP_INTRADAY_NOTIFY="false"' in script
     assert 'AQSP_INTRADAY_ALLOW_NOTIFY="false"' in script
     assert "scripts/intraday_refresh.sh" in script
-    assert 'PYTHON_BIN="${VENV_DIR}/bin/python3"' in script
+    assert 'source "$RUNTIME_PYTHON_HELPER"' in script
+    assert 'PYTHON_BIN="$(aqsp_runtime_python "$PROJECT_ROOT")"' in script
     assert "today_shanghai" in script
     assert "今日非交易日，跳过午盘回看" in script
+
+
+def test_scheduled_scripts_share_release_runtime_python_resolution() -> None:
+    helper = (PROJECT_ROOT / "scripts" / "runtime_python.sh").read_text(
+        encoding="utf-8"
+    )
+    assert "AQSP_RUNTIME_VENV_DIR" in helper
+    assert "AQSP_VIBE_VENV_DIR" in helper
+    assert "AQSP_INTRADAY_VENV_DIR" in helper
+    assert ".venv-vibe-research/bin/python3" in helper
+    assert "aqsp_require_runtime_python" in helper
+    for name in (
+        "bt_task.sh",
+        "coldstart_daily.sh",
+        "daily_pipeline.sh",
+        "intraday_refresh.sh",
+        "midday_refresh.sh",
+        "news_catalysts.sh",
+    ):
+        script = (PROJECT_ROOT / "scripts" / name).read_text(encoding="utf-8")
+        assert 'source "$RUNTIME_PYTHON_HELPER"' in script, name
+        assert "aqsp_runtime_python" in script, name
 
 
 def test_bt_task_script_exposes_panel_safe_actions() -> None:
@@ -690,6 +714,7 @@ def test_bt_task_propagates_intraday_runner_failure_to_cron(
     bt_script = scripts_dir / "bt_task.sh"
     sync_script = scripts_dir / "server_sync_and_run.sh"
     shutil.copy2(PROJECT_ROOT / "scripts" / "bt_task.sh", bt_script)
+    shutil.copy2(PROJECT_ROOT / "scripts" / "runtime_python.sh", scripts_dir)
     shutil.copy2(PROJECT_ROOT / "scripts" / "server_sync_and_run.sh", sync_script)
     runner = scripts_dir / "intraday_refresh.sh"
     runner.write_text(

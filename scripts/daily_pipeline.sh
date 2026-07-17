@@ -12,11 +12,31 @@ set -euo pipefail
 # ============================ 配置 ============================
 
 PROJECT_ROOT="${AQSP_PROJECT_ROOT:-/opt/aqsp}"
-VENV_DIR="${PROJECT_ROOT}/.venv"
-PYTHON_BIN="${VENV_DIR}/bin/python3"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+RUNTIME_PYTHON_HELPER="${PROJECT_ROOT}/scripts/runtime_python.sh"
+if [ ! -f "$RUNTIME_PYTHON_HELPER" ] && [ -f "${SCRIPT_DIR}/runtime_python.sh" ]; then
+    RUNTIME_PYTHON_HELPER="${SCRIPT_DIR}/runtime_python.sh"
+fi
+if [ ! -f "$RUNTIME_PYTHON_HELPER" ]; then
+    echo "[ERROR] 缺少运行时 Python 解析器: ${RUNTIME_PYTHON_HELPER}" >&2
+    exit 1
+fi
+# shellcheck disable=SC1090
+source "$RUNTIME_PYTHON_HELPER"
 PIPELINE_SCRIPT="${PROJECT_ROOT}/scripts/daily_pipeline.py"
 LOG_DIR="${PROJECT_ROOT}/logs/daily"
 RESULT_LOG="${LOG_DIR}/pipeline-$(date +%Y-%m-%d).log"
+
+# ============================ 加载环境变量 ============================
+
+if [ -f "${PROJECT_ROOT}/.env" ]; then
+    set -a
+    # shellcheck disable=SC1090
+    source "${PROJECT_ROOT}/.env"
+    set +a
+fi
+
+PYTHON_BIN="$(aqsp_runtime_python "$PROJECT_ROOT")"
 
 # ============================ 工具函数 ============================
 
@@ -40,9 +60,8 @@ run_data_cleanup() {
 
 mkdir -p "$LOG_DIR"
 
-if [ ! -d "$VENV_DIR" ]; then
-    log "[ERROR] 虚拟环境不存在: $VENV_DIR"
-    log "[ERROR] 请先运行 deploy/setup.sh 部署项目"
+if ! aqsp_require_runtime_python "$PYTHON_BIN"; then
+    log "[ERROR] 当前 release 没有可用的运行时 Python: $PYTHON_BIN"
     exit 1
 fi
 
@@ -56,15 +75,8 @@ if [ ! -f "$PIPELINE_SCRIPT" ]; then
     exit 1
 fi
 
-# ============================ 加载环境变量 ============================
-
-# 加载 .env 文件
-if [ -f "${PROJECT_ROOT}/.env" ]; then
-    set -a
-    source "${PROJECT_ROOT}/.env"
-    set +a
-    log "已加载 .env 配置"
-fi
+aqsp_require_runtime_python "$PYTHON_BIN"
+log "运行时 Python: ${PYTHON_BIN}"
 
 # 设置 PYTHONPATH
 export PYTHONPATH="${PROJECT_ROOT}/src:${PROJECT_ROOT}:${PYTHONPATH:-}"

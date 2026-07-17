@@ -37,6 +37,17 @@ Mac 本地开发
 /opt/market-data/         # 你的历史数据库
 ```
 
+生产 release 若使用独立运行时，建议在服务器 `.env` 明确指定，所有
+`bt_task`、盘中、消息、冷启动和 daily 入口都会复用这一解释器：
+
+```bash
+AQSP_RUNTIME_VENV_DIR=/opt/aqsp/.venv-vibe-research
+```
+
+入口优先级为 `AQSP_PYTHON`、`AQSP_RUNTIME_VENV_DIR`、
+`AQSP_VIBE_VENV_DIR`、自动发现的 `.venv-vibe-research`，最后才回退到
+`.venv`。这样代码 checkout、日历检查和任务 Python 不会静默分叉。
+
 `.env` 示例：
 
 ```bash

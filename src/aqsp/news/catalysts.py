@@ -2150,42 +2150,106 @@ def _select_diverse_events(
     events: Sequence[CatalystEvent],
     limit: int,
 ) -> tuple[CatalystEvent, ...]:
-    """Keep the ranked result from being filled by one source only."""
+    """Select ranked events while maximizing publisher, theme, and region diversity.
+
+    Source names often identify a publication rather than a publisher (for
+    example, ``NVIDIA Developer`` and ``NVIDIA Newsroom``).  Treating those
+    strings as unrelated sources lets one publisher fill the whole snapshot.
+    The first event remains the highest-ranked event; subsequent slots prefer
+    new publisher families and new supply-chain themes before falling back to
+    the deterministic rank order.
+    """
     target = max(0, int(limit))
     if target == 0:
         return ()
-    selected: list[CatalystEvent] = []
-    deferred: list[CatalystEvent] = []
-    seen_sources: set[str] = set()
-    seen_themes: set[str] = set()
+    ranked = tuple(events)
+    if not ranked:
+        return ()
 
-    def theme_key(event: CatalystEvent) -> str:
+    def source_groups(event: CatalystEvent) -> frozenset[str]:
+        return frozenset(
+            _source_diversity_key(part)
+            for part in _source_names(event.source)
+            if part.strip()
+        ) or frozenset({"unknown"})
+
+    def theme_groups(event: CatalystEvent) -> frozenset[str]:
         sectors = tuple(
-            str(item).strip().casefold()
+            f"sector:{str(item).strip().casefold()}"
             for item in event.affected_sectors
             if str(item).strip()
         )
-        # A generic category such as "消息" is not a useful theme.  Keeping it
-        # as unknown preserves the long-standing source-diversity contract for
-        # rows that carry no structured sector evidence.
-        return sectors[0] if sectors else "unknown"
+        if sectors:
+            return frozenset(sectors)
+        chain = tuple(
+            f"chain:{str(item).strip().casefold()}"
+            for item in event.transmission_path
+            if str(item).strip()
+        )
+        if chain:
+            return frozenset(chain[:2])
+        category = str(event.category).strip().casefold()
+        return (
+            frozenset({f"category:{category}"})
+            if category and category != "消息"
+            else frozenset()
+        )
 
-    for event in events:
-        source = event.source.strip().casefold() or "unknown"
-        theme = theme_key(event)
-        if (
-            (source in seen_sources or (theme != "unknown" and theme in seen_themes))
-            and len(selected) < target
-        ):
-            deferred.append(event)
-            continue
-        selected.append(event)
-        seen_sources.add(source)
-        seen_themes.add(theme)
-        if len(selected) >= target:
-            return tuple(selected)
-    selected.extend(deferred[: target - len(selected)])
-    return tuple(selected[:target])
+    def region_groups(event: CatalystEvent) -> frozenset[str]:
+        region = _normalize_region(event.source_region)
+        return frozenset({region}) if region != "mixed" else frozenset()
+
+    selected: list[CatalystEvent] = [ranked[0]]
+    remaining = list(ranked[1:])
+    seen_sources = set(source_groups(selected[0]))
+    seen_themes = set(theme_groups(selected[0]))
+    seen_regions = set(region_groups(selected[0]))
+
+    while remaining and len(selected) < target:
+        def selection_key(
+            event: CatalystEvent,
+        ) -> tuple[int, int, int, tuple[int, int, int, float, int]]:
+            sources = source_groups(event)
+            themes = theme_groups(event)
+            regions = region_groups(event)
+            return (
+                int(not sources.intersection(seen_sources)),
+                int(bool(themes) and not themes.intersection(seen_themes)),
+                int(bool(regions) and not regions.intersection(seen_regions)),
+                _event_rank_key(event),
+            )
+
+        best = max(remaining, key=selection_key)
+        remaining.remove(best)
+        selected.append(best)
+        seen_sources.update(source_groups(best))
+        seen_themes.update(theme_groups(best))
+        seen_regions.update(region_groups(best))
+    return tuple(selected)
+
+
+def _source_diversity_key(source: str) -> str:
+    """Normalize publication labels to stable publisher families."""
+    normalized = re.sub(r"\s+", " ", str(source or "").strip().casefold())
+    if not normalized:
+        return "unknown"
+    aliases: tuple[tuple[str, tuple[str, ...]], ...] = (
+        ("nvidia", ("nvidia", "英伟达")),
+        ("reuters", ("reuters", "路透")),
+        ("bloomberg", ("bloomberg", "彭博")),
+        ("marketwatch", ("marketwatch",)),
+        ("amd", ("amd",)),
+        ("intel", ("intel",)),
+        ("openai", ("openai",)),
+        ("eastmoney", ("eastmoney", "东方财富", "东财")),
+        ("cls", ("财联社",)),
+        ("xinhua", ("新华社",)),
+        ("cctv", ("央视",)),
+    )
+    for family, tokens in aliases:
+        if any(token in normalized for token in tokens):
+            return family
+    return normalized
 
 
 def _merge_events(events: Sequence[CatalystEvent]) -> tuple[CatalystEvent, ...]:
