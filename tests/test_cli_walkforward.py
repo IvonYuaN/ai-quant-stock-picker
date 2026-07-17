@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, timezone
 from types import SimpleNamespace
 import json
 
@@ -24,6 +24,10 @@ def _isolate_walkforward_gate(monkeypatch, tmp_path):
     )
     monkeypatch.setattr("aqsp.cli.today_shanghai", lambda: TEST_TRADE_DAY)
     monkeypatch.setattr("aqsp.universe.runtime.today_shanghai", lambda: TEST_TRADE_DAY)
+    monkeypatch.setattr(
+        "aqsp.data.intraday.now_shanghai",
+        lambda: datetime.combine(TEST_TRADE_DAY, datetime.min.time(), tzinfo=timezone.utc),
+    )
 
 
 def _make_sample_data(n_days: int = 200) -> pd.DataFrame:
@@ -1652,6 +1656,16 @@ class TestCLIPoolSelection:
             mock_fetch_frames,
         )
         monkeypatch.setattr("aqsp.cli.screen_universe", lambda *_args, **_kwargs: [])
+        monkeypatch.setattr(
+            "aqsp.data.intraday.IntradayService.merge_intraday_bar_into_daily_with_coverage",
+            lambda _service, frames, symbols, **_kwargs: SimpleNamespace(
+                frames=frames,
+                complete=True,
+                requested_symbols=tuple(symbols),
+                covered_symbols=tuple(symbols),
+                missing_symbols=(),
+            ),
+        )
         monkeypatch.setattr(
             "aqsp.freshness.today_shanghai",
             lambda: TEST_TRADE_DAY,

@@ -16,6 +16,7 @@ LEGACY_HEALTH_PATH = "/_stcore/health"
 # The static shell uses the full product title; the hydrated React page keeps
 # the product name and AQSP provenance in separate visible regions.
 CANONICAL_ENTRY_MARKERS = ("AQSP", "研究工作台")
+CANONICAL_DASHBOARD_ARTIFACT_NAMES = frozenset(("index.html", "archive.html"))
 LEGACY_ENTRY_MARKERS = (
     "AQSP 日期任务研究台",
     "短线决策看板",
@@ -109,7 +110,13 @@ def render_legacy_redirect(*, target_url: str | None = None) -> str:
 
 
 def write_dashboard_artifact(output_path: Path, html_text: str) -> Path:
-    """Write an archive and make the conventional index a canonical redirect."""
+    """Write only canonical dashboard artifacts and preserve index migration."""
+    if output_path.name not in CANONICAL_DASHBOARD_ARTIFACT_NAMES:
+        allowed = ", ".join(sorted(CANONICAL_DASHBOARD_ARTIFACT_NAMES))
+        raise ValueError(
+            f"dashboard artifact must use one of: {allowed}; got {output_path.name!r}"
+        )
+
     output_path.parent.mkdir(parents=True, exist_ok=True)
     if output_path.name != "index.html":
         atomic_write_text(output_path, html_text)

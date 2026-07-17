@@ -154,6 +154,38 @@ file_line() {
     fi
 }
 
+critical_status=0
+
+record_critical_status() {
+    local label="$1"
+    local status="$2"
+    if [ "$status" -eq 0 ]; then
+        return
+    fi
+
+    printf 'critical check failed: %s (exit=%s)\n' "$label" "$status" >&2
+    if [ "$critical_status" -eq 0 ]; then
+        critical_status="$status"
+    fi
+}
+
+run_critical_check() {
+    local label="$1"
+    shift
+    local status
+    if "$@"; then
+        return 0
+    else
+        status="$?"
+    fi
+
+    record_critical_status "$label" "$status"
+}
+
+run_project_check() {
+    ( cd "$PROJECT_ROOT" && "$@" )
+}
+
 print_section "GIT"
 cd "$PROJECT_ROOT"
 git log --oneline -3
@@ -196,23 +228,26 @@ fi
 
 print_section "DOCTOR"
 if [ -f "${PROJECT_ROOT}/.venv/bin/python3" ] && [ -f "${PROJECT_ROOT}/src/aqsp/cli.py" ]; then
-    ( cd "${PROJECT_ROOT}" && "${PROJECT_ROOT}/.venv/bin/python3" -m aqsp doctor ) || true
+    run_critical_check "aqsp doctor" run_project_check "${PROJECT_ROOT}/.venv/bin/python3" -m aqsp doctor
 else
     echo "aqsp doctor unavailable"
+    record_critical_status "aqsp doctor unavailable" 127
 fi
 
 print_section "BEFORE LIVE"
 if [ -f "${PROJECT_ROOT}/.venv/bin/python3" ] && [ -f "${PROJECT_ROOT}/scripts/check_before_live.py" ]; then
-    ( cd "${PROJECT_ROOT}" && "${PROJECT_ROOT}/.venv/bin/python3" scripts/check_before_live.py ) || true
+    run_critical_check "check_before_live" run_project_check "${PROJECT_ROOT}/.venv/bin/python3" scripts/check_before_live.py
 else
     echo "check_before_live unavailable"
+    record_critical_status "check_before_live unavailable" 127
 fi
 
 print_section "REMOTE PROBE"
 if [ -f "${PROJECT_ROOT}/scripts/remote_runtime_probe.py" ]; then
-    ( cd "${PROJECT_ROOT}" && python3 scripts/remote_runtime_probe.py ) || true
+    run_critical_check "remote_runtime_probe" run_project_check python3 scripts/remote_runtime_probe.py
 else
     echo "remote_runtime_probe unavailable"
+    record_critical_status "remote_runtime_probe unavailable" 127
 fi
 
 print_section "DEPLOY LOG"
@@ -229,3 +264,8 @@ tail -n 40 "${PROJECT_ROOT}/logs/intraday/intraday-$(date +%Y-%m-%d).log" 2>/dev
 
 print_section "DAILY LOG"
 tail -n 40 "${PROJECT_ROOT}/logs/daily/pipeline-$(date +%Y-%m-%d).log" 2>/dev/null || true
+
+if [ "$critical_status" -ne 0 ]; then
+    printf 'critical checks failed; server status exit=%s\n' "$critical_status" >&2
+    exit "$critical_status"
+fi

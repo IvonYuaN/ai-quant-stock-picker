@@ -254,7 +254,11 @@ check_api_preflight() {
     [[ -f "${PROJECT_ROOT}/backend/app.py" ]] || fail "缺少 backend/app.py"
     "$PYTHON_BIN" -c "import fastapi, uvicorn" \
         || fail "Python API 依赖缺失，请检查 ${PYTHON_BIN}"
-    check_snapshot
+    if [[ "$SKIP_SNAPSHOT" == "true" ]]; then
+        echo "SKIP AQSP snapshot"
+    else
+        check_snapshot
+    fi
     if [[ "$PORT_GUARD" == "true" ]]; then
         check_port_free "$BACKEND_HOST" "$BACKEND_PORT" \
             || fail "API 端口已被占用: ${BACKEND_HOST}:${BACKEND_PORT}"

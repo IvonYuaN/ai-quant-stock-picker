@@ -57,9 +57,14 @@ def _snapshot() -> dict[str, object]:
     }
 
 
-def _run(tmp_path: Path, payload: dict[str, object]) -> subprocess.CompletedProcess[str]:
+def _run(
+    tmp_path: Path,
+    payload: dict[str, object] | None,
+    *extra_args: str,
+) -> subprocess.CompletedProcess[str]:
     path = tmp_path / "snapshot.json"
-    path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    if payload is not None:
+        path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
     stubs = tmp_path / "python-stubs"
     stubs.mkdir(exist_ok=True)
     (stubs / "fastapi.py").write_text("", encoding="utf-8")
@@ -73,7 +78,7 @@ def _run(tmp_path: Path, payload: dict[str, object]) -> subprocess.CompletedProc
         ),
     )
     return subprocess.run(
-        [str(SCRIPT), "--component", "api", "--preflight-only"],
+        [str(SCRIPT), "--component", "api", "--preflight-only", *extra_args],
         cwd=ROOT,
         env=env,
         text=True,
@@ -120,3 +125,12 @@ def test_health_vibe_research_rejects_incomplete_schema(tmp_path: Path) -> None:
     result = _run(tmp_path, payload)
     assert result.returncode != 0
     assert "coldstart" in result.stderr
+
+
+def test_health_vibe_research_skip_snapshot_really_skips_snapshot_preflight(
+    tmp_path: Path,
+) -> None:
+    result = _run(tmp_path, None, "--skip-snapshot")
+
+    assert result.returncode == 0, result.stderr
+    assert "SKIP AQSP snapshot" in result.stdout

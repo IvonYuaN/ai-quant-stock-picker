@@ -142,9 +142,10 @@ def audit_debate_quality(
                 )
                 referenced_roles = set(peer_reviewed_roles) | set(counterargument_roles)
                 reviewed_previous_roles = referenced_roles & previous_roles
-                if not _field_present(opinion, "rebuttal_records"):
+                if not _field_present(opinion, "rebuttal_records") or not rebuttal_records:
                     # Legacy JSON predates structured rebuttal records. Keep
-                    # its explicit role references as interaction evidence.
+                    # its explicit role references as interaction evidence when
+                    # the structured field is absent or empty.
                     interactive = bool(counterarguments and reviewed_previous_roles)
                 else:
                     interactive = bool(

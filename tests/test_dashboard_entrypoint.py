@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from aqsp.web.entrypoint import (
     CANONICAL_HEALTH_PATH,
     classify_entry_text,
@@ -63,9 +65,7 @@ def test_entrypoint_classification_distinguishes_canonical_legacy_and_redirect()
 
 
 def test_health_classification_distinguishes_vibe_api_and_streamlit() -> None:
-    assert classify_health_text('{"ok": true, "service": "aqsp-api"}') == (
-        "canonical"
-    )
+    assert classify_health_text('{"ok": true, "service": "aqsp-api"}') == ("canonical")
     assert classify_health_text("ok") == "legacy"
     assert classify_health_text("not healthy") == "unknown"
 
@@ -81,6 +81,30 @@ def test_index_artifact_redirects_and_preserves_archive(tmp_path: Path) -> None:
     assert 'content="canonical-research-surface"' in entry
     assert "https://lh.ifidy.cn" in entry
     assert "archive" not in entry
+
+
+@pytest.mark.parametrize("filename", ("agents.html", "dashboard.html", "legacy.html"))
+def test_dashboard_entrypoint_rejects_artifact_when_filename_is_noncanonical(
+    tmp_path: Path, filename: str
+) -> None:
+    output = tmp_path / "dist" / "dashboard" / filename
+
+    with pytest.raises(ValueError, match="artifact must use one of"):
+        write_dashboard_artifact(output, "<main>legacy</main>")
+
+    assert not output.exists()
+    assert not output.parent.exists()
+
+
+def test_dashboard_entrypoint_preserves_archive_when_artifact_is_archive(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "dist" / "dashboard" / "archive.html"
+
+    result = write_dashboard_artifact(output, "<main>archive</main>")
+
+    assert result == output
+    assert output.read_text(encoding="utf-8") == "<main>archive</main>"
 
 
 def test_agent_page_is_retired_to_canonical_entry(tmp_path: Path) -> None:
