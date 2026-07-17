@@ -489,13 +489,11 @@ def _snapshot_debates(
                     *(getattr(debate, "round_summaries", ()) or ())[:1],
                 ),
                 round_summaries=tuple(
-                    _first_text(
-                        getattr(round_data, "summary", ""),
-                        f"第{getattr(round_data, 'round_num', 0)}轮讨论",
-                    )
+                    _first_text(getattr(round_data, "summary", ""))
                     for round_data in (getattr(debate, "rounds", ()) or ())
                     if _first_text(getattr(round_data, "summary", ""))
-                )[:5],
+                )[:5]
+                or tuple(getattr(debate, "round_summaries", ()) or ())[:5],
             )
         )
         selected_symbols.add(symbol)
