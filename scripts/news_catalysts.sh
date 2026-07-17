@@ -159,6 +159,30 @@ raise SystemExit(0)
 AQSP_CURRENT_NEWS_CHECK
 }
 
+PREVIOUS_NEWS_JSON="${JSON_OUTPUT}.previous.$$"
+PREVIOUS_NEWS_REPORT="${OUTPUT}.previous.$$"
+cleanup_previous_news() {
+    rm -f "$PREVIOUS_NEWS_JSON" "$PREVIOUS_NEWS_REPORT"
+}
+trap cleanup_previous_news EXIT
+
+if has_usable_current_news; then
+    cp -f "$JSON_OUTPUT" "$PREVIOUS_NEWS_JSON"
+    if [ -f "$OUTPUT" ]; then
+        cp -f "$OUTPUT" "$PREVIOUS_NEWS_REPORT"
+    fi
+fi
+
+restore_previous_current_news() {
+    [ -s "$PREVIOUS_NEWS_JSON" ] || return 1
+    cp -f "$PREVIOUS_NEWS_JSON" "$JSON_OUTPUT"
+    if [ -s "$PREVIOUS_NEWS_REPORT" ]; then
+        cp -f "$PREVIOUS_NEWS_REPORT" "$OUTPUT"
+    fi
+    log "消息结果失败：恢复任务开始前的同日消息产物"
+    return 0
+}
+
 LLM_ARGS=()
 if is_truthy "$ENABLE_LLM_REVIEW"; then
     LLM_ARGS=(--enable-llm-review)
@@ -218,7 +242,9 @@ fi
 set -e
 
 if [ "$NEWS_EXIT" -eq 124 ]; then
-    if has_usable_current_news; then
+    if restore_previous_current_news; then
+        :
+    elif has_usable_current_news; then
         log "消息源超时：保留已有同日消息产物，不覆盖有效证据"
     elif ! write_failed_report "消息源超时"; then
         log "[WARN] 超时失败报告写入失败: ${OUTPUT}"
@@ -230,7 +256,9 @@ if [ "$NEWS_EXIT" -eq 124 ]; then
     fi
     log "消息面雷达超时: ${OUTPUT}"
 elif [ "$NEWS_EXIT" -ne 0 ]; then
-    if has_usable_current_news; then
+    if restore_previous_current_news; then
+        :
+    elif has_usable_current_news; then
         log "消息面命令失败：保留已有同日消息产物，不覆盖有效证据"
     elif ! write_failed_report "消息面雷达命令失败: exit=${NEWS_EXIT}"; then
         log "[WARN] 失败报告写入失败: ${OUTPUT}"
@@ -242,6 +270,8 @@ elif [ "$NEWS_EXIT" -ne 0 ]; then
     fi
     log "[ERROR] 消息面雷达失败: exit=${NEWS_EXIT}"
     exit "$NEWS_EXIT"
+elif ! has_usable_current_news && restore_previous_current_news; then
+    log "消息面任务返回成功但产物状态失败：已恢复同日消息"
 fi
 log "消息面雷达完成: ${OUTPUT}"
 
