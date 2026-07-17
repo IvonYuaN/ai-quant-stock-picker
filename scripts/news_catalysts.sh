@@ -131,7 +131,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from aqsp.core.time import today_shanghai
+from aqsp.core.time import today_shanghai, to_shanghai
 
 try:
     payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
@@ -148,8 +148,8 @@ for event in events:
         raise SystemExit(1)
     published_at = str(event.get("published_at", "")).strip()
     try:
-        published_date = datetime.fromisoformat(
-            published_at.replace("Z", "+00:00")
+        published_date = to_shanghai(
+            datetime.fromisoformat(published_at.replace("Z", "+00:00"))
         ).date().isoformat()
     except ValueError:
         raise SystemExit(1)
