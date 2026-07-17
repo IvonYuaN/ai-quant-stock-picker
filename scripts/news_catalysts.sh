@@ -143,6 +143,7 @@ if str(payload.get("date", "")).strip() != today_shanghai().isoformat():
 events = payload.get("events")
 if not isinstance(events, list) or not events:
     raise SystemExit(1)
+current_count = 0
 for event in events:
     if not isinstance(event, dict) or not str(event.get("title", "")).strip():
         raise SystemExit(1)
@@ -153,8 +154,10 @@ for event in events:
         ).date().isoformat()
     except ValueError:
         raise SystemExit(1)
-    if published_date != today_shanghai().isoformat():
-        raise SystemExit(1)
+    if published_date == today_shanghai().isoformat():
+        current_count += 1
+if current_count == 0:
+    raise SystemExit(1)
 raise SystemExit(0)
 AQSP_CURRENT_NEWS_CHECK
 }

@@ -644,7 +644,8 @@ def test_news_script_preserves_valid_same_day_report_on_source_failure() -> None
     )
     assert "has_usable_current_news()" in script
     assert "不覆盖有效证据" in script
-    assert "published_date != today_shanghai().isoformat()" in script
+    assert "current_count += 1" in script
+    assert "if current_count == 0" in script
 
 
 def test_bt_task_script_exposes_panel_safe_actions() -> None:
