@@ -61,6 +61,7 @@ class RuntimeSnapshotDebate:
     process_recorded: bool = False
     conclusion_recorded: bool = False
     advisory_only: bool = True
+    original_score: float = 0.0
     deterministic_score: float = 0.0
     deterministic_score_unchanged: bool = True
     failure: str = ""
@@ -301,6 +302,9 @@ def _snapshot_debates(debates: Any) -> tuple[RuntimeSnapshotDebate, ...]:
             process_recorded=False,
             conclusion_recorded=False,
             advisory_only=_strict_bool(_get(item, "advisory_only", True), True),
+            original_score=float(
+                _get(item, "original_score", _get(item, "score", 0.0)) or 0.0
+            ),
             deterministic_score=float(
                 _get(item, "deterministic_score", _get(item, "original_score", 0.0))
                 or 0.0

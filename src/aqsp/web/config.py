@@ -3,7 +3,7 @@
 from aqsp.strategies.thresholds import Thresholds
 from aqsp.strategies.thresholds import load_thresholds
 
-# Streamlit配置
+# 仅供历史 Streamlit 回滚链使用；当前生产入口见 deploy/nginx/aqsp-dashboard.conf。
 DASHBOARD_CONFIG = {
     "port": 8501,
     "host": "localhost",

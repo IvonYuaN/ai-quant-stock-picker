@@ -7,7 +7,7 @@ set -euo pipefail
 
 PROJECT_ROOT="${AQSP_PROJECT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 SSH_TARGET="${AQSP_SSH_TARGET:-aqsp-server}"
-HEALTH_URL="${AQSP_DASHBOARD_HEALTH_URL:-https://lh.ifidy.cn/_stcore/health}"
+HEALTH_URL="${AQSP_DASHBOARD_HEALTH_URL:-https://lh.ifidy.cn/api/health}"
 PYTHON_BIN="${AQSP_LOCAL_PYTHON:-python3}"
 SSH_CONNECT_TIMEOUT="${AQSP_RECOVER_SSH_CONNECT_TIMEOUT:-8}"
 RESULT_FILE="${AQSP_RECOVER_RESULT_FILE:-${PROJECT_ROOT}/.state/walkforward-incident-recovery.env}"

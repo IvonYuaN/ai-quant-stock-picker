@@ -263,6 +263,79 @@ def test_market_context_direct_news_fallback_exposes_full_chain_when_no_rule_mat
     assert metrics["cross_market_source_published_at"] == ("2026-07-13T09:45:00+08:00")
 
 
+def test_market_context_keeps_event_chain_and_resonance_confirmation_for_pick() -> None:
+    report = CatalystReport(
+        date="2026-07-13",
+        generated_at="2026-07-13T10:00:00+08:00",
+        source_status="ok",
+        events=(
+            CatalystEvent(
+                title="某厂商发布新一代800G光模块产品",
+                source="公司公告",
+                published_at="2026-07-13T09:45:00+08:00",
+                symbol="300001",
+                name="样本光模块",
+                impact="positive",
+                category="新品/产品发布",
+                confidence=0.9,
+                source_quality_label="高价值来源",
+                source_quality_score=4,
+                affected_sectors=("光模块", "服务器", "AI算力"),
+                transmission_path=(
+                    "海外算力资本开支",
+                    "光模块/服务器订单",
+                    "上游芯片与散热交付",
+                ),
+                validation_signals=(
+                    "公司订单、扩产或出货被公告确认",
+                    "光模块与服务器成交扩散",
+                ),
+                invalidation_signals=(
+                    "只有产品发布没有订单",
+                    "订单兑现或板块成交明显转弱",
+                ),
+            ),
+        ),
+    )
+    artifact = build_market_context_artifact(catalyst_report=report)
+    pick = PickResult(
+        symbol="300001",
+        name="样本光模块",
+        date="2026-07-13",
+        close=100.0,
+        score=70.0,
+        rating="watch",
+        entry_type="relative_strength",
+        ideal_buy=100.0,
+        stop_loss=95.0,
+        take_profit=110.0,
+        position="watch",
+        metrics={"sector": "光模块", "industry": "服务器"},
+    )
+
+    metrics = market_context_metrics_for_pick(pick, artifact)
+
+    assert metrics["cross_market_context_only"] is True
+    assert metrics["cross_market_score_adjustment_allowed"] is False
+    assert metrics["cross_market_second_order_targets"] == (
+        "光模块",
+        "服务器",
+        "AI算力",
+        "同主题竞品/上下游",
+    )
+    assert metrics["cross_market_transmission_path"] == (
+        "公司公告消息 -> 300001 样本光模块",
+        "海外算力资本开支",
+        "光模块/服务器订单",
+        "上游芯片与散热交付",
+        "价格与成交确认后再判断催化是否延续",
+    )
+    assert metrics["cross_market_validation_signals"] == (
+        "公司订单、扩产或出货被公告确认",
+        "光模块与服务器成交扩散",
+    )
+
+
 def test_market_context_artifact_summarizes_symbol_global_and_flow_signals() -> None:
     report = CatalystReport(
         date="2026-06-30",

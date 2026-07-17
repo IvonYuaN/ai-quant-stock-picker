@@ -11,22 +11,22 @@
 
 它 **不是** 券商账户终端，也 **不会** 推断真实账户总资产、实时市值、当日盈亏或策略胜率。
 
-## 启动
+## 当前入口
 
 ```bash
-bash scripts/start_dashboard.sh
-```
-
-或：
-
-```bash
-streamlit run src/aqsp/web/dashboard.py --server.port 8501
+bash scripts/start_vibe_research.sh
 ```
 
 本机访问：
 
 ```text
-http://localhost:8501
+http://127.0.0.1:5899
+```
+
+API 健康检查：
+
+```text
+http://127.0.0.1:8900/api/health
 ```
 
 ## 页面内容
@@ -71,7 +71,7 @@ python -m aqsp run
 - `reports/latest.md`
 - `reports/briefing-YYYY-MM-DD.md`
 
-## 推荐部署
+## 生产部署
 
 现在有已备案域名时，推荐默认走：
 
@@ -80,13 +80,15 @@ python -m aqsp run
 - HTTPS
 - 统一登录或 Basic Auth
 
-Streamlit 建议只监听本机回环地址，再由反向代理对外提供服务：
+生产入口由 Nginx/宝塔统一代理：
 
 ```bash
-streamlit run src/aqsp/web/dashboard.py --server.address 127.0.0.1 --server.port 8501
+前端 -> 127.0.0.1:5899
+API   -> 127.0.0.1:8900
 ```
 
-然后把域名指向你的服务器，并在反向代理里转发到 `127.0.0.1:8501`。
+域名根路径和 React 路由转发到前端，`/api/*` 转发到 FastAPI。不要把旧 `8501`
+或 `dist/dashboard/` 配成公网根入口。
 
 最低要求：
 
@@ -94,33 +96,11 @@ streamlit run src/aqsp/web/dashboard.py --server.address 127.0.0.1 --server.port
 - 反向代理 Basic Auth 或统一登录
 - 仅允许可信 IP 或额外 WAF / CDN 访问控制
 
-Nginx 示例：
+唯一配置源是 `deploy/nginx/aqsp-dashboard.conf`；它还会将历史
+`/dashboard*`、`/beginner*`、`/agent*` 和归档 HTML 路径临时 `302` 到根路径。
 
-```nginx
-server {
-    listen 80;
-    server_name dashboard.yourdomain.com;
-    return 301 https://$host$request_uri;
-}
+### 历史 Streamlit 回滚
 
-server {
-    listen 443 ssl http2;
-    server_name dashboard.yourdomain.com;
-
-    ssl_certificate     /path/to/fullchain.pem;
-    ssl_certificate_key /path/to/privkey.pem;
-
-    auth_basic "AQSP Dashboard";
-    auth_basic_user_file /etc/nginx/.htpasswd;
-
-    location / {
-        proxy_pass http://127.0.0.1:8501;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-}
-```
-
-不要把 Streamlit 端口直接暴露到公网。公网入口只保留反向代理层，应用进程继续监听 `127.0.0.1:8501`；如果要托管静态面板，发布 `dist/dashboard/` 到受保护的 Web 目录。
+`src/aqsp/web/dashboard.py`、`scripts/start_dashboard.sh` 和 `127.0.0.1:8501`
+只用于正式入口故障时的临时恢复，不是当前生产入口。恢复验收必须显式使用
+`scripts/headless_dashboard_check.py --allow-legacy`，问题排除后恢复 React/FastAPI。

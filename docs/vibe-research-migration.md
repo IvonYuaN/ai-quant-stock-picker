@@ -247,7 +247,9 @@ bash -n scripts/health_vibe_research.sh scripts/start_vibe_research_service.sh \
 scripts/test_vibe_research_deployment.sh
 ```
 
-当前生产配置 `deploy/nginx/aqsp-dashboard.conf` 仍是 AQSP Streamlit 入口：
+以下是迁移演练期间的历史配置记录，不是当前生产入口。当前生产配置
+`deploy/nginx/aqsp-dashboard.conf` 使用 React + FastAPI；下列 Streamlit
+配置仅用于回滚演练：
 
 - `location /` 反代到 `127.0.0.1:8501`；不能改成 `5899` 或 `8900` 作为本次演练的一部分。
 - `/_stcore/stream` 和 `/_stcore/health` 继续走 `8501`。

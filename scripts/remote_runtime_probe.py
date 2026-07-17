@@ -222,7 +222,7 @@ def main(argv: list[str] | None = None) -> int:
         description="Probe SSH banner, TLS handshake, and HTTP health for AQSP remote runtime.",
     )
     parser.add_argument("--ssh-target", default="aqsp-server")
-    parser.add_argument("--http-url", default="https://lh.ifidy.cn/_stcore/health")
+    parser.add_argument("--http-url", default="https://lh.ifidy.cn/api/health")
     parser.add_argument("--timeout", type=float, default=5.0)
     args = parser.parse_args(argv)
 

@@ -62,6 +62,7 @@ _RECENT_NEWS_DATE = today_shanghai().isoformat()
         ("红海绕行导致集运运价连续上涨", "航运运价催化"),
         ("半导体设备订单同比大增，刻蚀设备需求提升", "订单/需求验证"),
         ("GPT-Red: Unlocking Self-Improvement for Robustness", "AI/半导体技术动态"),
+        ("某厂商发布新一代800G光模块产品", "新品/产品发布"),
         ("Minutes of the Board's discount rate meetings", "宏观流动性"),
     ],
 )
@@ -123,6 +124,31 @@ def test_news_catalyst_maps_supply_chain_evidence_to_affected_sectors() -> None:
     assert {"半导体设备", "半导体材料"}.issubset(
         set(by_title["半导体设备订单同比大增，刻蚀设备需求提升"].affected_sectors)
     )
+
+
+def test_news_catalyst_maps_product_launch_to_supply_chain_chain() -> None:
+    report = build_catalyst_report(
+        fetch_global_news=lambda _limit: pd.DataFrame(
+            [
+                {
+                    "标题": "某厂商发布新一代800G光模块产品",
+                    "来源": "公司公告",
+                    "时间": _RECENT_NEWS_TIME,
+                }
+            ]
+        )
+    )
+
+    assert len(report.events) == 1
+    event = report.events[0]
+    assert event.category == "新品/产品发布"
+    assert {"光模块", "服务器", "AI算力"}.issubset(set(event.affected_sectors))
+    assert event.transmission_path == (
+        "海外算力资本开支",
+        "光模块/服务器订单",
+        "上游芯片与散热交付",
+    )
+    assert "光模块与服务器成交扩散" in event.validation_signals
 
 
 def test_news_catalyst_builds_strong_supply_chain_transmission_path() -> None:

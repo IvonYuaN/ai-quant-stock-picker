@@ -2626,6 +2626,15 @@ def _pick_news_judgement_metrics(
         "news_catalyst_affected_symbols": (
             tuple(lead.affected_symbols) if lead is not None else ()
         ),
+        "news_catalyst_transmission_path": (
+            tuple(lead.transmission_path) if lead is not None else ()
+        ),
+        "news_catalyst_validation_signals": (
+            tuple(lead.validation_signals) if lead is not None else ()
+        ),
+        "news_catalyst_invalidation_signals": (
+            tuple(lead.invalidation_signals) if lead is not None else ()
+        ),
         "news_catalyst_transmission_hypothesis": str(
             lead.transmission_hypothesis if lead is not None else ""
         ),
@@ -2674,23 +2683,38 @@ def _cross_market_fallback_from_news(
     )
     sector = str(metrics.get("news_catalyst_sector", "") or "").strip()
     industry = str(metrics.get("news_catalyst_industry", "") or "").strip()
-    second_order = tuple(
-        value
-        for value in (industry, sector, "同主题竞品/上下游")
-        if value and value != target
+    affected_sectors = _as_text_tuple(metrics.get("news_catalyst_affected_sectors"))
+    second_order = _dedupe_texts(
+        tuple(
+            value
+            for value in (*affected_sectors, industry, sector, "同主题竞品/上下游")
+            if value and value != target
+        )
+    )
+    event_path = _as_text_tuple(metrics.get("news_catalyst_transmission_path"))
+    event_validation = _as_text_tuple(metrics.get("news_catalyst_validation_signals"))
+    event_invalidation = _as_text_tuple(
+        metrics.get("news_catalyst_invalidation_signals")
     )
     first_order = (target,)
-    transmission_path = (
-        f"{metrics.get('news_catalyst_source', '') or '可追踪来源'}消息 -> {target}",
-        f"{target} -> {industry or sector or '所属行业/上下游'}",
-        "价格与成交确认后再判断催化是否延续",
+    source_to_target = (
+        f"{metrics.get('news_catalyst_source', '') or '可追踪来源'}消息 -> {target}"
     )
-    validation_signals = (
+    transmission_path = (
+        (source_to_target, *event_path, "价格与成交确认后再判断催化是否延续")
+        if event_path
+        else (
+            source_to_target,
+            f"{target} -> {industry or sector or '所属行业/上下游'}",
+            "价格与成交确认后再判断催化是否延续",
+        )
+    )
+    validation_signals = event_validation or (
         "原文来源与发布时间可复核",
         "竞价及首小时价格、成交同步确认",
         f"{industry or sector or '所属板块'}出现至少两只跟随标的",
     )
-    invalidation_signals = (
+    invalidation_signals = event_invalidation or (
         "来源无法复核或后续公告澄清",
         "高开低走或放量不涨",
         f"{industry or sector or '所属板块'}没有扩散而仅单点脉冲",

@@ -92,7 +92,7 @@
 - CSV 输出：`reports/latest.csv`。
 - 每日简报：`reports/briefing.md`。
 - 收盘复盘：`reports/closing_review.md`。
-- 当前 Dashboard：Streamlit `src/aqsp/web/dashboard.py`（本地 `8501`，生产由 Nginx 反代）。`dist/dashboard/index.html` 和 `aqsp.db` 仅是离线归档产物。
+- 当前 Dashboard：AQSP React + FastAPI（React `5899`，FastAPI `8900`，生产由 Nginx 反代）。`dist/dashboard/index.html` 和 `aqsp.db` 仅是离线归档产物；Streamlit `8501` 只作为历史回滚点。
 - 通知：
   - Server 酱：`SERVERCHAN_SENDKEY`。
   - Telegram / 企业微信 / 飞书 / 通用 Webhook。

@@ -305,10 +305,11 @@ def test_runtime_snapshot_keeps_round_process_and_candidate_role_coverage() -> N
             ],
             # Deliberately lie in the input flags; snapshot construction must
             # recompute them from the recorded rounds and vote.
-            "process_recorded": False,
-            "conclusion_recorded": False,
-            "advisory_only": True,
-            "deterministic_score": 72.0,
+                "process_recorded": False,
+                "conclusion_recorded": False,
+                "advisory_only": True,
+                "original_score": 72.0,
+                "deterministic_score": 72.0,
             "deterministic_score_unchanged": True,
             "support_points": ["放量突破"],
             "opposition_points": ["等待确认"],

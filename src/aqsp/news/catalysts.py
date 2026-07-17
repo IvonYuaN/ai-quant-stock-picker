@@ -626,6 +626,14 @@ POSITIVE_PATTERNS: tuple[tuple[str, str, int], ...] = (
         3,
     ),
     (
+        "(?:发布|推出|上市|量产|交付|商业化).*"
+        "(?:新品|新产品|新型号|新一代)|"
+        "(?:新品|新产品|新型号|新一代).*"
+        "(?:发布|推出|上市|量产|交付|商业化)",
+        "新品/产品发布",
+        4,
+    ),
+    (
         "利率|通胀|inflation|liquidity|discount rate|rate meetings|"
         "流动性|货币政策",
         "宏观流动性",
@@ -1002,6 +1010,7 @@ _TRANSMISSION_CHAIN_RULES: tuple[
 
 _CATEGORY_TIME_HORIZONS: dict[str, str] = {
     "AI/半导体技术动态": "隔夜-5日",
+    "新品/产品发布": "当日-3日",
     "宏观流动性": "隔夜-5日",
     "资本市场制度": "隔夜-5日",
     "科技催化": "隔夜-3日",

@@ -142,7 +142,10 @@ def audit_debate_quality(
                 )
                 referenced_roles = set(peer_reviewed_roles) | set(counterargument_roles)
                 reviewed_previous_roles = referenced_roles & previous_roles
-                if not _field_present(opinion, "rebuttal_records") or not rebuttal_records:
+                if (
+                    not _field_present(opinion, "rebuttal_records")
+                    or not rebuttal_records
+                ):
                     # Legacy JSON predates structured rebuttal records. Keep
                     # its explicit role references as interaction evidence when
                     # the structured field is absent or empty.
@@ -388,8 +391,8 @@ def _advisory_boundary_is_intact(result: Any) -> bool:
         return False
     original = _field(result, "original_score", None)
     deterministic = _field(result, "deterministic_score", None)
-    if original is None or deterministic in (None, "", 0.0) and original != 0.0:
-        return True
+    if original is None or deterministic in (None, ""):
+        return False
     try:
         return float(original) == float(deterministic)
     except (TypeError, ValueError):

@@ -36,7 +36,7 @@ python3 scripts/open_dashboard.py
 
 如果历史脚本仍执行 `dashboard_beginner.py`，它也会进入同一个主 Dashboard，不需要再维护 `8502` 端口。
 
-服务器生产看板仍建议使用宝塔反向代理到 Streamlit 服务；调试时不要使用用户前台浏览器，优先使用 `scripts/headless_dashboard_check.py` 或 `curl`。
+服务器生产看板统一使用宝塔反向代理到 React `5899` 和 FastAPI `8900`；历史 Streamlit `8501` 只用于故障回滚。调试时不要使用用户前台浏览器，优先使用 `scripts/headless_dashboard_check.py` 或 `curl`。
 
 ## 表达原则
 

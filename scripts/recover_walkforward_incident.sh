@@ -4,7 +4,7 @@
 # Scope:
 # - stop only production walk-forward wrapper/child processes
 # - repair stale walk-forward status
-# - optionally restart the Streamlit dashboard
+# - optionally restart the legacy Streamlit dashboard during rollback only
 #
 # 北京时间任意时刻手工执行；不作为定时任务入口。
 
@@ -12,7 +12,7 @@ set -euo pipefail
 
 PROJECT_ROOT="${AQSP_PROJECT_ROOT:-/opt/aqsp}"
 PYTHON_BIN="${AQSP_PYTHON:-${PROJECT_ROOT}/.venv/bin/python3}"
-RESTART_DASHBOARD="${AQSP_RECOVER_RESTART_DASHBOARD:-true}"
+RESTART_DASHBOARD="${AQSP_RECOVER_RESTART_DASHBOARD:-false}"
 STATUS_PATH="${AQSP_WALKFORWARD_STATUS_PATH:-${PROJECT_ROOT}/data/walkforward_production_status.json}"
 LOG_DIR="${AQSP_RECOVER_LOG_DIR:-${PROJECT_ROOT}/logs/recovery}"
 LOG_FILE="${LOG_DIR}/walkforward-incident-$(date +%Y-%m-%d).log"

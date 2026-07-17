@@ -31,21 +31,21 @@ tail -50 logs/daily/run-$(date +%Y-%m-%d).log
 
 如果只是本地长期运行，这条链路已经够用，不需要依赖 GitHub。
 
-## 本地前端
+## 当前前端
 
-当前 Streamlit 看板地址：
+当前 AQSP React 看板地址：
 
 ```text
-http://127.0.0.1:8501
+http://127.0.0.1:5899
 ```
 
-启动/复用当前 Streamlit 服务，不打开前台浏览器：
+启动/复用当前 React + FastAPI 服务：
 
 ```bash
-python3 scripts/open_dashboard.py
+bash scripts/start_vibe_research.sh
 ```
 
-人工确实要打开系统浏览器时，必须显式授权：
+历史 Streamlit 回滚调试需要打开系统浏览器时，必须显式授权：
 
 ```bash
 AQSP_ALLOW_FOREGROUND_BROWSER=1 python3 scripts/open_dashboard.py --open-browser
@@ -66,7 +66,8 @@ python3 scripts/headless_dashboard_check.py --url https://lh.ifidy.cn --screensh
 
 截图检查会使用临时 profile、随机 DevTools 端口和 AQSP 专属锁，不复用用户 Chrome，也不连接其它项目的无头浏览器。
 
-`daily_run.sh` 仍会在每日跑完后刷新 `dist/dashboard/archive.html` 和 `dist/dashboard/aqsp.db` 供归档/静态产物使用；`dist/dashboard/index.html` 只是迁移入口，用户入口统一是当前 Streamlit 看板 `8501`。
+`daily_run.sh` 仍会刷新 `dist/dashboard/archive.html` 和 `dist/dashboard/aqsp.db` 供离线归档；这些产物和
+`scripts/open_dashboard.py` 属于历史兼容链，不是生产前端入口。生产入口统一是 React `5899` + FastAPI `8900`。
 
 ## 卸载
 

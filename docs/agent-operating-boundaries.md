@@ -9,28 +9,28 @@
 | 本地 Mac | 开发、单元测试、ruff、截图草稿、提交和 push | 保存生产密钥、把本地临时截图/报告提交进仓库、依赖用户前台浏览器调试 |
 | GitHub | 代码、文档、测试、可复现配置、公开研究元数据 | `.env`、token、webhook、私有行情库、ledger、日志、运行报告、Dashboard runtime 产物 |
 | 云服务器 `/opt/aqsp` | clean checkout、`.env`、`.venv`、私有数据库、ledger、reports、logs、systemd/宝塔计划任务 | 直接开发代码、提交本地脏改、把服务器运行数据推回 GitHub |
-| 公网入口 `lh.ifidy.cn` | Nginx/证书/反向代理到 `127.0.0.1:8501` | 暴露 Streamlit 端口、放密钥、提供下单或券商接口 |
+| 公网入口 `lh.ifidy.cn` | Nginx/证书/反向代理到 React `127.0.0.1:5899` 和 FastAPI `127.0.0.1:8900` | 暴露应用端口、把历史 Streamlit `8501` 当生产入口、放密钥、提供下单或券商接口 |
 
 ## 2. 默认调试方式
 
 Codex 需要验证远程时，默认使用后台、非侵入方式：
 
 ```bash
-ssh aqsp-server 'cd /opt/aqsp && git log --oneline -3 && systemctl is-active aqsp-dashboard'
+ssh aqsp-server 'cd /opt/aqsp && git log --oneline -3 && systemctl is-active aqsp-vibe-research.target'
 ssh aqsp-server 'cd /opt/aqsp && tail -80 logs/bt/bt-status-$(date +%Y-%m-%d).log 2>/dev/null || true'
-curl -Ik https://lh.ifidy.cn/_stcore/health
+curl -Ik https://lh.ifidy.cn/api/health
 ```
 
 允许：
 
-- 后台 SSH 读日志、跑测试、重启 `aqsp-dashboard`。
+- 后台 SSH 读日志、跑测试、重启 `aqsp-vibe-research.target`。
 - 本地用 `pytest`、`ruff`、`scripts/check_no_secrets.py` 验证。
 - 用 `scripts/headless_dashboard_check.py` 做公网/本地 Dashboard 检查。
-- `scripts/open_dashboard.py` 默认不得打开前台浏览器；即使命令显式传 `--open-browser`，也必须同时设置 `AQSP_ALLOW_FOREGROUND_BROWSER=1` 才允许触碰系统前台浏览器。
+- 历史回滚调试脚本 `scripts/open_dashboard.py` 默认不得打开前台浏览器；即使命令显式传 `--open-browser`，也必须同时设置 `AQSP_ALLOW_FOREGROUND_BROWSER=1` 才允许触碰系统前台浏览器。
 - 需要视觉截图时，只能启动独立无头 Chromium/Chrome 进程，并且必须使用临时 `user-data-dir`、`--remote-debugging-port=0`、独立输出文件。
 - 默认检查脚本只自动寻找 Chromium；如需专用 Chrome/其它浏览器，必须用 `AQSP_HEADLESS_BROWSER=/path/to/dedicated-browser` 或 `--browser` 显式指定隔离二进制。
 - AQSP 无头检查必须串行占用 AQSP 专属锁，默认 `/tmp/aqsp-headless-dashboard.lock`；同机多项目并行时用 `AQSP_HEADLESS_LOCK` 或 `--headless-lock` 指定本项目自己的锁文件。
-- `scripts/headless_dashboard_check.py` 输出里的 `browser=-` 表示只做 raw/health 检查，没有启动浏览器；`headless_lock=...` 表示启动的是 AQSP 隔离无头进程，不是用户前台浏览器。
+- `scripts/headless_dashboard_check.py` 输出里的 `browser=-` 表示只做 raw/health 检查，没有启动浏览器；`headless_lock=...` 表示启动的是 AQSP 隔离无头进程，不是用户前台浏览器。`--allow-legacy` 仅用于历史 Streamlit 回滚验收。
 
 禁止：
 

@@ -15,7 +15,7 @@ Mac 本地开发
 -> 宝塔计划任务执行 scripts/bt_task.sh
 -> bt_task.sh 同步代码并运行指定任务
 -> 产出 reports/、data/、dist/dashboard/
--> aqsp-dashboard.service 读取落盘结果
+-> aqsp-vibe-research.target 提供 React + FastAPI 看板
 -> Nginx / 宝塔反代到 https://lh.ifidy.cn
 ```
 
@@ -353,10 +353,11 @@ https://lh.ifidy.cn
 服务器健康检查：
 
 ```bash
-curl -Ik https://lh.ifidy.cn/_stcore/health
+curl -Ik https://lh.ifidy.cn/api/health
 ```
 
-Streamlit 只监听 `127.0.0.1:8501`，不要把 8501 端口直接暴露公网。
+React 只监听 `127.0.0.1:5899`，FastAPI 只监听 `127.0.0.1:8900`，不要把应用端口直接暴露公网。
+旧 Streamlit `8501` 仅保留在 `docs/server-dashboard-deployment.md` 的历史回滚流程中。
 
 ## 不会被覆盖的东西
 

@@ -254,6 +254,27 @@ def test_debate_coordinator_keeps_deterministic_score_as_advisory_boundary(
     assert result.advisory_only is True
 
 
+def test_debate_audit_rejects_missing_deterministic_score_when_original_score_is_nonzero(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    pick = _make_pick(score=72.0)
+    result = AShareDebateCoordinator(
+        max_rounds=2,
+        roles=(AgentRole.BULL, AgentRole.RISK_CONTROL),
+    ).run_debate(pick, pd.DataFrame({"close": [100.0, 101.0]}))
+    result.deterministic_score = 0.0
+
+    audit = audit_debate_quality(
+        result,
+        candidate=pick,
+        expected_roles=(AgentRole.BULL, AgentRole.RISK_CONTROL),
+    )
+
+    assert audit.advisory_boundary_ok is False
+    assert "advisory_boundary_violation" in audit.issues
+
+
 def test_debate_coordinator_blocks_placeholder_only_rounds_without_fake_interaction(
     tmp_path, monkeypatch
 ) -> None:
@@ -729,6 +750,7 @@ def test_audit_debate_quality_accepts_real_nine_role_round_history(
         symbol="300750",
         name="宁德时代",
         original_score=72.0,
+        deterministic_score=72.0,
         rating="watch",
         rounds=rounds,
         final_consensus="neutral",

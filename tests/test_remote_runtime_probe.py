@@ -33,11 +33,11 @@ def test_remote_runtime_probe_summary_reports_missing_https_listener() -> None:
         ProbeCheck(
             "http_target",
             "info",
-            "url=https://lh.ifidy.cn/_stcore/health host=lh.ifidy.cn port=443",
+            "url=https://lh.ifidy.cn/api/health host=lh.ifidy.cn port=443",
         ),
         ProbeCheck("tcp", "failed", "lh.ifidy.cn:443 [Errno 61] Connection refused"),
         ProbeCheck("tls", "failed", "lh.ifidy.cn:443 [Errno 61] Connection refused"),
-        ProbeCheck("http", "failed", "https://lh.ifidy.cn/_stcore/health connection refused"),
+        ProbeCheck("http", "failed", "https://lh.ifidy.cn/api/health connection refused"),
     ]
 
     summary = _summarize_checks(checks)
@@ -53,11 +53,11 @@ def test_remote_runtime_probe_summary_reports_tls_handshake_only_when_tcp_ok() -
         ProbeCheck(
             "http_target",
             "info",
-            "url=https://lh.ifidy.cn/_stcore/health host=lh.ifidy.cn port=443",
+            "url=https://lh.ifidy.cn/api/health host=lh.ifidy.cn port=443",
         ),
         ProbeCheck("tcp", "ok", "lh.ifidy.cn:443"),
         ProbeCheck("tls", "failed", "lh.ifidy.cn:443 handshake failure"),
-        ProbeCheck("http", "failed", "https://lh.ifidy.cn/_stcore/health EOF"),
+        ProbeCheck("http", "failed", "https://lh.ifidy.cn/api/health EOF"),
     ]
 
     summary = _summarize_checks(checks)

@@ -1011,7 +1011,7 @@ def _step_refresh_dashboard(
 def _refresh_home_snapshot(
     config: PipelineConfig, logger: logging.Logger
 ) -> dict[str, Any]:
-    """Refresh the Streamlit home artifact from the same runtime inputs as daily."""
+    """Refresh the legacy-compatible home artifact from the daily inputs."""
     try:
         sys.path.insert(0, str(config.project_root / "scripts"))
         from write_home_snapshot import build_home_snapshot, build_home_snapshot_index

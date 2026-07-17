@@ -992,7 +992,17 @@ def test_sync_and_recover_walkforward_incident_script_uses_runtime_overlay() -> 
     assert 'ssh -o ConnectTimeout="${SSH_CONNECT_TIMEOUT}"' in script
     assert "bash scripts/recover_walkforward_incident.sh" in script
     assert "--verify-overlay" in script
-    assert "_stcore/health" in script
+    assert "https://lh.ifidy.cn/api/health" in script
+    assert "_stcore/health" not in script
+
+
+def test_recovery_script_does_not_restart_legacy_dashboard_by_default() -> None:
+    script = (PROJECT_ROOT / "scripts" / "recover_walkforward_incident.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'AQSP_RECOVER_RESTART_DASHBOARD:-false' in script
+    assert "legacy Streamlit dashboard during rollback only" in script
     assert "git reset" not in script
     assert "checkout --" not in script
 

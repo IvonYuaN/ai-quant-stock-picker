@@ -30,7 +30,7 @@
 - 研究判断有没有进入虚拟盘执行
 - 某天的归档摘要、明日重点、运行快照分别是什么
 
-## 启动
+## 历史回滚入口
 
 ```bash
 bash scripts/start_dashboard.sh
@@ -42,11 +42,14 @@ bash scripts/start_dashboard.sh
 streamlit run src/aqsp/web/dashboard.py --server.port 8501
 ```
 
+该入口只用于正式 React + FastAPI 入口故障时的临时回滚；当前生产入口请使用
+`bash scripts/start_vibe_research.sh`，访问 `http://127.0.0.1:5899`。
+
 如果没有主链产物，页面会显示空态提示，这是预期行为。
 
-## 部署
+## 历史回滚部署
 
-如果已经有备案域名，公网部署默认不要直接暴露 Streamlit 端口，而是：
+如需临时回滚，公网部署默认不要直接暴露 Streamlit 端口，而是：
 
 - Streamlit 监听 `127.0.0.1:8501`
 - 域名指向 Nginx / Caddy

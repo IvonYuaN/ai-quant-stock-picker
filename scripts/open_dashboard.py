@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Refresh artifacts and open the current Streamlit dashboard.
+"""Refresh legacy Streamlit artifacts and open the rollback dashboard.
 
 Static HTML remains available through ``--render-only`` for pipeline artifacts;
-the normal local entry must use the same Streamlit app as production.
+this script is not the production entry. Production uses React + FastAPI via
+``scripts/start_vibe_research.sh``.
 """
 # ruff: noqa: E402
 
