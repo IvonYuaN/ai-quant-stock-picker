@@ -55,6 +55,11 @@ _RECENT_NEWS_DATE = today_shanghai().isoformat()
         ("高端铜箔供应紧张，厂商称短期缺货", "电子材料涨价/缺货"),
         ("HBM供给紧张，服务器内存出现缺货", "存储涨价/缺货"),
         ("DRAM现货价格上涨，供应趋紧", "存储涨价/缺货"),
+        ("1.6T光模块订单良好，公司持续扩产", "AI算力基础设施"),
+        ("碳酸锂现货报价上调，材料厂排产紧张", "锂电供需催化"),
+        ("氧化镨钕报价上涨，磁材厂订单增加", "稀土/磁材供需"),
+        ("特高压变压器项目中标，电网设备订单增长", "电网与储能订单"),
+        ("红海绕行导致集运运价连续上涨", "航运运价催化"),
         ("半导体设备订单同比大增，刻蚀设备需求提升", "订单/需求验证"),
         ("GPT-Red: Unlocking Self-Improvement for Robustness", "AI/半导体技术动态"),
         ("Minutes of the Board's discount rate meetings", "宏观流动性"),
@@ -75,6 +80,8 @@ def test_news_catalyst_classifies_supply_chain_evidence(
         "PCB企业发布年度报告",
         "HBM产业论坛召开，厂商展示新产品",
         "半导体设备公司参加行业展会",
+        "锂电材料行业论坛召开",
+        "稀土产业链公司发布年度报告",
     ],
 )
 def test_news_catalyst_does_not_classify_supply_chain_keyword_without_evidence(
@@ -116,6 +123,32 @@ def test_news_catalyst_maps_supply_chain_evidence_to_affected_sectors() -> None:
     assert {"半导体设备", "半导体材料"}.issubset(
         set(by_title["半导体设备订单同比大增，刻蚀设备需求提升"].affected_sectors)
     )
+
+
+def test_news_catalyst_builds_strong_supply_chain_transmission_path() -> None:
+    report = build_catalyst_report(
+        fetch_global_news=lambda _limit: pd.DataFrame(
+            [
+                {
+                    "标题": "1.6T光模块订单良好，公司持续扩产",
+                    "来源": "财联社",
+                    "时间": _RECENT_NEWS_TIME,
+                }
+            ]
+        ),
+        config=NewsCatalystConfig(max_events=5),
+    )
+
+    assert len(report.events) == 1
+    event = report.events[0]
+    assert event.category == "AI算力基础设施"
+    assert event.transmission_path == (
+        "海外算力资本开支",
+        "光模块/服务器订单",
+        "上游芯片与散热交付",
+    )
+    assert event.validation_signals
+    assert event.invalidation_signals
 
 
 @pytest.mark.parametrize(
