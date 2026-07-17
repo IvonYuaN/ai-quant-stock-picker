@@ -186,7 +186,6 @@ class CompositeNewsSource:
             self._sources,
             lambda source: source.fetch_global_news(),
             timeout_seconds=self._timeout_seconds,
-            sequential=True,
         )
         self._last_health = tuple(health)
         if frames:
