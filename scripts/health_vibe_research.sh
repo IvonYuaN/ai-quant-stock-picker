@@ -64,8 +64,14 @@ if [[ -z "$PYTHON_BIN" && -x "${PROJECT_ROOT}/.venv/bin/python3" ]]; then
     PYTHON_BIN="${PROJECT_ROOT}/.venv/bin/python3"
 elif [[ -z "$PYTHON_BIN" && -x "${PROJECT_ROOT}/.venv/bin/python" ]]; then
     PYTHON_BIN="${PROJECT_ROOT}/.venv/bin/python"
+elif [[ -z "$PYTHON_BIN" && -x "${PROJECT_ROOT}/backend/venv/bin/python3" ]]; then
+    PYTHON_BIN="${PROJECT_ROOT}/backend/venv/bin/python3"
+elif [[ -z "$PYTHON_BIN" && -x "${PROJECT_ROOT}/backend/venv/bin/python" ]]; then
+    PYTHON_BIN="${PROJECT_ROOT}/backend/venv/bin/python"
 elif [[ -z "$PYTHON_BIN" && -x "${PROJECT_ROOT}/backend/.venv/bin/python" ]]; then
     PYTHON_BIN="${PROJECT_ROOT}/backend/.venv/bin/python"
+elif [[ -z "$PYTHON_BIN" && -x "${PROJECT_ROOT}/backend/.venv/bin/python3" ]]; then
+    PYTHON_BIN="${PROJECT_ROOT}/backend/.venv/bin/python3"
 fi
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 FRONTEND_HOST="${VIBE_RESEARCH_FRONTEND_HOST:-127.0.0.1}"
@@ -96,13 +102,135 @@ check_snapshot() {
     snapshot_file="$(resolve_path "$SNAPSHOT_PATH")"
     [[ -f "$snapshot_file" && -r "$snapshot_file" ]] || fail "AQSP 快照不可读: ${snapshot_file}"
     "$PYTHON_BIN" - "$snapshot_file" <<'PY'
+from datetime import date
 import json
+import math
 import sys
+import time
+from datetime import datetime
+
+
+def fail(message: str) -> None:
+    raise ValueError(message)
+
+
+def mapping(value: object, label: str) -> dict[str, object]:
+    if not isinstance(value, dict):
+        fail(f"{label} 必须是对象")
+    return value
+
+
+def required(value: dict[str, object], keys: set[str], label: str) -> None:
+    missing = sorted(keys - value.keys())
+    if missing:
+        fail(f"{label} 缺少字段: {', '.join(missing)}")
+
+
+def text(value: object, label: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        fail(f"{label} 必须是非空字符串")
+    return value.strip()
+
+
+def text_list(value: object, label: str) -> list[str]:
+    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+        fail(f"{label} 必须是字符串数组")
+    return value
+
+
+def timestamp(value: object, label: str) -> float:
+    raw = text(value, label)
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError(f"{label} 不是 ISO 8601 时间戳") from exc
+    if parsed.tzinfo is None:
+        fail(f"{label} 必须包含时区")
+    return parsed.timestamp()
 
 with open(sys.argv[1], encoding="utf-8") as handle:
-    json.load(handle)
+    payload = mapping(json.load(handle), "snapshot")
+
+required(
+    payload,
+    {
+        "schema_version",
+        "generated_at",
+        "stale_after",
+        "selected_date",
+        "available_dates",
+        "candidates",
+        "debates",
+        "summaries",
+        "source",
+        "coldstart",
+        "messages",
+    },
+    "snapshot",
+)
+if text(payload["schema_version"], "schema_version") != "v1":
+    fail("不支持的 snapshot schema_version")
+generated_at = timestamp(payload["generated_at"], "generated_at")
+stale_after = timestamp(payload["stale_after"], "stale_after")
+if stale_after < generated_at:
+    fail("stale_after 不得早于 generated_at")
+if stale_after <= time.time():
+    fail("snapshot 已过期")
+
+selected_date = text(payload["selected_date"], "selected_date")
+try:
+    date.fromisoformat(selected_date)
+except ValueError as exc:
+    raise ValueError("selected_date 必须是 YYYY-MM-DD") from exc
+available_dates = text_list(payload["available_dates"], "available_dates")
+if selected_date not in available_dates:
+    fail("selected_date 必须存在于 available_dates")
+
+candidates = payload["candidates"]
+if not isinstance(candidates, list):
+    fail("candidates 必须是数组")
+candidate_symbols: set[str] = set()
+for index, candidate in enumerate(candidates):
+    item = mapping(candidate, f"candidate[{index}]")
+    required(item, {"symbol", "display_name", "score", "research_status", "next_step", "context"}, f"candidate[{index}]")
+    symbol = text(item["symbol"], f"candidate[{index}].symbol")
+    if symbol in candidate_symbols:
+        fail(f"candidates 存在重复 symbol: {symbol}")
+    candidate_symbols.add(symbol)
+    if not isinstance(item["score"], (int, float)) or isinstance(item["score"], bool) or not math.isfinite(item["score"]):
+        fail(f"candidate[{index}].score 必须是有限数字")
+    for key in ("display_name", "research_status", "next_step", "context"):
+        text(item[key], f"candidate[{index}].{key}")
+
+debates = payload["debates"]
+if not isinstance(debates, list):
+    fail("debates 必须是数组")
+debate_symbols: set[str] = set()
+for index, debate in enumerate(debates):
+    item = mapping(debate, f"debate[{index}]")
+    required(item, {"symbol", "display_name", "conclusion", "primary_risk_gate", "next_trigger", "active_roles"}, f"debate[{index}]")
+    symbol = text(item["symbol"], f"debate[{index}].symbol")
+    if symbol in debate_symbols:
+        fail(f"debates 存在重复 symbol: {symbol}")
+    if symbol not in candidate_symbols:
+        fail(f"debate[{index}].symbol 未映射到 candidates: {symbol}")
+    debate_symbols.add(symbol)
+    for key in ("display_name", "conclusion", "primary_risk_gate", "next_trigger"):
+        text(item[key], f"debate[{index}].{key}")
+    text_list(item["active_roles"], f"debate[{index}].active_roles")
+
+messages = payload["messages"]
+if not isinstance(messages, list):
+    fail("messages 必须是数组")
+for index, message in enumerate(messages):
+    item = mapping(message, f"message[{index}]")
+    required(item, {"title", "summary", "impact", "category", "source", "published_at"}, f"message[{index}]")
+    for key in ("title", "summary", "impact", "category", "source"):
+        text(item[key], f"message[{index}].{key}")
+    timestamp(item["published_at"], f"message[{index}].published_at")
+    text_list(item.get("affected_symbols", []), f"message[{index}].affected_symbols")
 PY
-    echo "PASS AQSP snapshot: ${snapshot_file}"
+    echo "PASS AQSP snapshot schema/mapping: ${snapshot_file}"
 }
 
 check_port_free() {

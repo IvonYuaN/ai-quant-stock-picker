@@ -16,6 +16,7 @@ from aqsp.briefing.debate import (
     AgentOpinion,
     DebateResult,
     DebateRound,
+    RebuttalRecord,
     format_debate_result,
 )
 from aqsp.briefing.debate_tracker import (
@@ -442,6 +443,16 @@ def test_debate_coordinator_records_real_second_round_when_no_opposing_stance() 
         any(opinion.counterarguments for opinion in round_data.opinions)
         for round_data in result.rounds[1:]
     )
+    reviewed_opinions = [
+        opinion for opinion in result.rounds[1].opinions if opinion.rebuttal_records
+    ]
+    assert reviewed_opinions
+    assert all(opinion.peer_reviewed_roles for opinion in reviewed_opinions)
+    assert all(
+        record.challenged_claim and record.rebuttal_reason
+        for opinion in result.rounds[1].opinions
+        for record in opinion.rebuttal_records
+    )
     audit = audit_debate_quality(
         result,
         candidate=pick,
@@ -691,6 +702,17 @@ def test_audit_debate_quality_accepts_real_nine_role_round_history(
                 peer_reviewed_roles=(
                     [] if round_num == 1 else [roles[(index + 1) % len(roles)].value]
                 ),
+                rebuttal_records=(
+                    []
+                    if round_num == 1
+                    else [
+                        RebuttalRecord(
+                            challenged_role=roles[(index + 1) % len(roles)].value,
+                            challenged_claim=f"第{round_num}轮被复核主张{roles[(index + 1) % len(roles)].value}",
+                            rebuttal_reason="当前证据与该主张存在方向冲突，需要保留复核关系",
+                        )
+                    ]
+                ),
             )
             for index, role in enumerate(roles)
         ]
@@ -778,6 +800,13 @@ def test_audit_debate_quality_keeps_explicit_empty_cross_market_viewpoint() -> N
                         arguments=["无可用跨市消息或规则传导，不据此形成判断"],
                         counterarguments=["当前没有新增跨市证据"],
                         peer_reviewed_roles=[AgentRole.CROSS_MARKET],
+                        rebuttal_records=[
+                            RebuttalRecord(
+                                challenged_role=AgentRole.CROSS_MARKET.value,
+                                challenged_claim="当前没有新增跨市证据",
+                                rebuttal_reason="同行仍为中性观点，记录为复核而非方向性反驳",
+                            )
+                        ],
                         risk_factors=["保持中性，等待可核验的外部证据"],
                     )
                 ],
@@ -886,6 +915,68 @@ def test_audit_debate_quality_rejects_generic_second_round_without_peer_referenc
     assert not audit.passed
     assert audit.non_interactive_rounds == (2,)
     assert "non_interactive_round" in audit.issues
+
+
+def test_audit_debate_quality_accepts_legacy_json_role_references_without_rebuttals() -> (
+    None
+):
+    result = {
+        "symbol": "300750",
+        "rounds": [
+            {
+                "round_num": 1,
+                "opinions": [
+                    {
+                        "agent_id": "bull-1",
+                        "role": "bull",
+                        "stance": "bullish",
+                        "arguments": ["放量突破"],
+                    },
+                    {
+                        "agent_id": "cross-1",
+                        "role": "cross_market",
+                        "stance": "neutral",
+                        "arguments": ["等待海外映射证据"],
+                    },
+                ],
+            },
+            {
+                "round_num": 2,
+                "opinions": [
+                    {
+                        "agent_id": "bull-1",
+                        "role": "bull",
+                        "stance": "bullish",
+                        "arguments": ["放量突破"],
+                        "counterarguments": ["复核跨市证据"],
+                        "peer_reviewed_roles": ["cross_market"],
+                    },
+                    {
+                        "agent_id": "cross-1",
+                        "role": "cross_market",
+                        "stance": "neutral",
+                        "arguments": ["等待海外映射证据"],
+                        "counterarguments": ["复核多头观点"],
+                        "counterargument_roles": ["bull"],
+                    },
+                ],
+            },
+        ],
+        "final_consensus": "neutral",
+        "final_vote": {"bull": "bullish", "cross_market": "neutral"},
+        "support_points": ["放量突破"],
+        "opposition_points": ["等待海外映射证据"],
+        "risk_warnings": ["等待风险确认"],
+        "next_trigger": "确认A股映射",
+    }
+
+    audit = audit_debate_quality(
+        result,
+        expected_roles=(AgentRole.BULL, AgentRole.CROSS_MARKET),
+    )
+
+    assert audit.non_interactive_rounds == ()
+    assert "non_interactive_round" not in audit.issues
 
 
 def test_audit_debate_quality_rejects_non_advisory_result() -> None:

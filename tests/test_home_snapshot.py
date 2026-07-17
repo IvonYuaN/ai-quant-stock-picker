@@ -49,6 +49,7 @@ def _snapshot(
     debates: tuple[HomeSnapshotDebate, ...] = (),
     summaries: tuple[str, ...] = (),
     stale_after: str = "",
+    messages: tuple[HomeSnapshotMessage, ...] = (),
 ) -> HomeDashboardSnapshot:
     return HomeDashboardSnapshot(
         schema_version=HOME_SNAPSHOT_SCHEMA_VERSION,
@@ -67,6 +68,7 @@ def _snapshot(
         ),
         coldstart=HomeSnapshotColdstart(status="ready", detail="样本已就绪"),
         stale_after=stale_after,
+        messages=messages,
     )
 
 
@@ -184,6 +186,7 @@ def test_home_snapshot_prefers_structured_news_artifact(monkeypatch, tmp_path) -
 
 def test_home_snapshot_round_trips_messages_and_debate_process(tmp_path) -> None:
     snapshot = _snapshot(
+        candidates=(_candidate("600001"), _candidate("600879")),
         debate=HomeSnapshotDebate(
             symbol="600001",
             display_name="示例",
@@ -301,8 +304,11 @@ def test_home_snapshot_round_trips_multiple_debate_summaries(tmp_path) -> None:
         for symbol in ("600001", "600002", "600003")
     )
     path = tmp_path / "home.json"
+    candidates = tuple(_candidate(symbol) for symbol in ("600001", "600002", "600003"))
 
-    write_home_dashboard_snapshot(path, _snapshot(debates=debates))
+    write_home_dashboard_snapshot(
+        path, _snapshot(candidates=candidates, debates=debates)
+    )
 
     loaded = load_home_dashboard_snapshot(path)
     assert loaded is not None
@@ -331,6 +337,51 @@ def test_home_snapshot_rejects_duplicate_debate_symbols() -> None:
         )
 
 
+def test_home_snapshot_rejects_debate_symbol_outside_candidates() -> None:
+    debate = HomeSnapshotDebate(
+        symbol="600002",
+        display_name="示例",
+        conclusion="观察",
+        primary_risk_gate="量能",
+        next_trigger="放量",
+        active_roles=("风控",),
+    )
+
+    with pytest.raises(ValueError, match="debates symbols.*candidates"):
+        _snapshot(candidates=(_candidate("600001"),), debates=(debate,))
+
+
+def test_home_snapshot_allows_message_symbol_outside_candidates() -> None:
+    message = HomeSnapshotMessage(
+        title="消息",
+        summary="仅作辅助参考",
+        impact="中性",
+        category="消息",
+        source="RSS",
+        published_at="2026-07-11T09:00:00+08:00",
+        affected_symbols=("600002",),
+    )
+
+    snapshot = _snapshot(candidates=(_candidate("600001"),), messages=(message,))
+
+    assert snapshot.messages == (message,)
+
+
+def test_home_snapshot_allows_market_message_without_affected_symbols() -> None:
+    message = HomeSnapshotMessage(
+        title="市场消息",
+        summary="仅作市场级参考",
+        impact="中性",
+        category="市场",
+        source="RSS",
+        published_at="2026-07-11T09:00:00+08:00",
+    )
+
+    snapshot = _snapshot(messages=(message,))
+
+    assert snapshot.messages == (message,)
+
+
 def test_home_snapshot_reads_legacy_single_debate_payload(tmp_path) -> None:
     path = tmp_path / "legacy-home.json"
     debate = HomeSnapshotDebate(
@@ -341,7 +392,7 @@ def test_home_snapshot_reads_legacy_single_debate_payload(tmp_path) -> None:
         next_trigger="放量",
         active_roles=("风控",),
     )
-    payload = _snapshot(debate=debate).to_dict()
+    payload = _snapshot(candidates=(_candidate("600001"),), debate=debate).to_dict()
     payload.pop("debates")
     payload["debate"] = debate.__dict__
     path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")

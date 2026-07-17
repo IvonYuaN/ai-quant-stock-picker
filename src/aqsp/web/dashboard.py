@@ -8047,12 +8047,13 @@ def _snapshot_is_expired(
     """Block stale live data, but keep exact historical snapshots reviewable."""
     if historical:
         return False
-    if snapshot.stale_after:
-        try:
-            if snapshot.is_stale():
-                return True
-        except ValueError:
+    if not snapshot.stale_after:
+        return True
+    try:
+        if snapshot.is_stale():
             return True
+    except ValueError:
+        return True
     status = snapshot.source.status.strip().lower()
     stale_markers = (
         "过期",

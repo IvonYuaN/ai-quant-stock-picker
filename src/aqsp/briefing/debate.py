@@ -55,11 +55,21 @@ class AgentOpinion:
     # from counterargument_roles because reviewing a neutral view is still
     # interaction, but is not an opposing vote.
     peer_reviewed_roles: list[str] = field(default_factory=list)
+    rebuttal_records: list["RebuttalRecord"] = field(default_factory=list)
     risk_factors: list[str] = field(default_factory=list)  # 风险因素
     opportunity_factors: list[str] = field(default_factory=list)  # 机会因素
     # LLM output is retained for audit only and never replaces rule evidence.
     llm_advisory_points: tuple[str, ...] = field(default_factory=tuple)
     final_position: Literal["bullish", "bearish", "neutral"] | None = None
+
+
+@dataclass(frozen=True)
+class RebuttalRecord:
+    """可审计的同行复核或反驳关系。"""
+
+    challenged_role: str
+    challenged_claim: str
+    rebuttal_reason: str
 
 
 @dataclass
@@ -225,6 +235,14 @@ class DebateResult:
                             "counterarguments": opinion.counterarguments,
                             "counterargument_roles": opinion.counterargument_roles,
                             "peer_reviewed_roles": opinion.peer_reviewed_roles,
+                            "rebuttal_records": [
+                                {
+                                    "challenged_role": record.challenged_role,
+                                    "challenged_claim": record.challenged_claim,
+                                    "rebuttal_reason": record.rebuttal_reason,
+                                }
+                                for record in opinion.rebuttal_records
+                            ],
                             "risk_factors": opinion.risk_factors,
                             "opportunity_factors": opinion.opportunity_factors,
                             "llm_advisory_points": list(opinion.llm_advisory_points),
@@ -448,6 +466,8 @@ class AShareDebateAgent:
             arguments=opinion.arguments.copy(),
             counterarguments=opinion.counterarguments.copy(),
             counterargument_roles=opinion.counterargument_roles.copy(),
+            peer_reviewed_roles=opinion.peer_reviewed_roles.copy(),
+            rebuttal_records=opinion.rebuttal_records.copy(),
             risk_factors=opinion.risk_factors.copy(),
             opportunity_factors=opinion.opportunity_factors.copy(),
             llm_advisory_points=tuple(llm_advisory_points),
@@ -1307,11 +1327,13 @@ class AShareDebateAgent:
             counterarguments=[],
             counterargument_roles=[],
             peer_reviewed_roles=[],
+            rebuttal_records=[],
             llm_advisory_points=my_opinion.llm_advisory_points,
             final_position=my_opinion.final_position,
         )
 
-        counterargs = []
+        counterargs: list[str] = []
+        rebuttal_records: list[RebuttalRecord] = []
         for other in others_opinions:
             if other.role == self.role:
                 continue
@@ -1325,9 +1347,9 @@ class AShareDebateAgent:
 
             # 基于角色生成针对性质疑
             if self._should_counter(other, updated_opinion):
-                counterargs.append(
-                    self._generate_counterargument(other, updated_opinion)
-                )
+                record = self._generate_counterargument(other, updated_opinion)
+                rebuttal_records.append(record)
+                counterargs.append(self._format_rebuttal(record))
                 updated_opinion.counterargument_roles.append(other.role.value)
 
         updated_opinion.counterarguments.extend(counterargs)
@@ -1343,9 +1365,13 @@ class AShareDebateAgent:
                     other.arguments or other.risk_factors or other.opportunity_factors
                 )
                 if peer_point:
+                    record = self._generate_peer_review(other, peer_point)
+                    rebuttal_records.append(record)
                     updated_opinion.counterarguments.append(
-                        self._generate_peer_review(other, peer_point)
+                        self._format_rebuttal(record)
                     )
+
+        updated_opinion.rebuttal_records.extend(rebuttal_records)
 
         # 如果反对意见太多，降低信心
         if len(counterargs) > 2:
@@ -1353,9 +1379,23 @@ class AShareDebateAgent:
 
         return updated_opinion
 
-    def _generate_peer_review(self, other: AgentOpinion, peer_point: str) -> str:
-        """Record a structured review of a concrete peer point."""
-        return f"复核对象={other.role.value}; 证据={peer_point}"
+    def _generate_peer_review(
+        self, other: AgentOpinion, peer_point: str
+    ) -> RebuttalRecord:
+        """Record a fallback review of a concrete peer claim."""
+        return RebuttalRecord(
+            challenged_role=other.role.value,
+            challenged_claim=peer_point,
+            rebuttal_reason="同行观点未触发直接反向立场，保留该主张并记录为待复核依据",
+        )
+
+    @staticmethod
+    def _format_rebuttal(record: RebuttalRecord) -> str:
+        return (
+            f"复核对象={record.challenged_role}; "
+            f"被挑战主张={record.challenged_claim}; "
+            f"反驳理由={record.rebuttal_reason}"
+        )
 
     @staticmethod
     def _first_meaningful_point(points: list[str]) -> str:
@@ -1389,13 +1429,22 @@ class AShareDebateAgent:
         self,
         other: AgentOpinion,
         my_opinion: AgentOpinion,
-    ) -> str:
+    ) -> RebuttalRecord:
         peer_point = self._first_meaningful_point(
             other.arguments or other.risk_factors or other.opportunity_factors
         )
         if not peer_point:
-            return ""
-        return f"质询对象={other.role.value}; 待核对证据={peer_point}"
+            raise ValueError(
+                "cannot generate rebuttal without a substantive peer claim"
+            )
+        return RebuttalRecord(
+            challenged_role=other.role.value,
+            challenged_claim=peer_point,
+            rebuttal_reason=(
+                f"当前{my_opinion.stance}立场与该主张存在方向或置信度冲突，"
+                "需要明确记录其对当前判断的影响"
+            ),
+        )
 
 
 class AShareDebateCoordinator:

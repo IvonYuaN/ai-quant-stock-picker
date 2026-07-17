@@ -135,9 +135,28 @@ def audit_debate_quality(
                     for item in (_field(opinion, "counterargument_roles", ()) or ())
                     if _role_value(item)
                 )
+                rebuttal_records = tuple(
+                    record
+                    for record in (_field(opinion, "rebuttal_records", ()) or ())
+                    if _rebuttal_record_is_substantive(record)
+                )
                 referenced_roles = set(peer_reviewed_roles) | set(counterargument_roles)
-                if counterarguments and referenced_roles & previous_roles:
-                    interactive = True
+                reviewed_previous_roles = referenced_roles & previous_roles
+                if not _field_present(opinion, "rebuttal_records"):
+                    # Legacy JSON predates structured rebuttal records. Keep
+                    # its explicit role references as interaction evidence.
+                    interactive = bool(counterarguments and reviewed_previous_roles)
+                else:
+                    interactive = bool(
+                        counterarguments
+                        and reviewed_previous_roles
+                        and any(
+                            _role_value(_field(record, "challenged_role", ""))
+                            in reviewed_previous_roles
+                            for record in rebuttal_records
+                        )
+                    )
+                if interactive:
                     break
             if not interactive:
                 non_interactive_rounds.append(round_num)
@@ -297,6 +316,13 @@ def _field(value: Any, name: str, default: Any = None) -> Any:
     if isinstance(value, Mapping):
         return value.get(name, default)
     return getattr(value, name, default)
+
+
+def _field_present(value: Any, name: str) -> bool:
+    """Distinguish legacy mappings from new records with an empty field."""
+    if isinstance(value, Mapping):
+        return name in value
+    return hasattr(value, name)
 
 
 def _role_value(value: Any) -> str:
@@ -461,6 +487,15 @@ def _round_has_valid_opinions(round_data: Any) -> bool:
         if not role or not agent_id or stance not in _VALID_STANCES or not has_text:
             return False
     return True
+
+
+def _rebuttal_record_is_substantive(record: Any) -> bool:
+    """Require both sides of the relation; a placeholder is not evidence."""
+    return bool(
+        _has_substantive_text(_field(record, "challenged_claim", ""))
+        and _has_substantive_text(_field(record, "rebuttal_reason", ""))
+        and _role_value(_field(record, "challenged_role", ""))
+    )
 
 
 def _meaningful_values(values: Any) -> bool:

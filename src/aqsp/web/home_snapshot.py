@@ -919,6 +919,10 @@ def _validate_snapshot(snapshot: HomeDashboardSnapshot) -> None:
     debate_symbols = tuple(value.symbol for value in snapshot.debates)
     if len(set(debate_symbols)) != len(debate_symbols):
         raise ValueError("debates must not contain duplicate symbols")
+    candidate_symbol_set = set(candidate_symbols)
+    missing_debate_symbols = set(debate_symbols) - candidate_symbol_set
+    if missing_debate_symbols:
+        raise ValueError("debates symbols must belong to candidates")
     if not all(isinstance(value, str) for value in snapshot.summaries):
         raise ValueError("summaries must contain text")
     if not isinstance(snapshot.message_status, str):

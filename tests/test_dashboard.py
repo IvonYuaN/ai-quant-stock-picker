@@ -17132,3 +17132,12 @@ def test_dashboard_snapshot_home_marks_historical_sections_and_keeps_empty_state
     assert cockpit_cards[1]["title"] == "历史消息汇总"
     assert cockpit_cards[-1]["title"] == "历史无 Agent 讨论记录"
     assert cockpit_cards[-1]["kicker"] == "Agent 讨论"
+
+
+def test_dashboard_snapshot_without_stale_after_is_expired() -> None:
+    import aqsp.web.dashboard as dashboard
+
+    snapshot = SimpleNamespace(stale_after="")
+
+    assert dashboard._snapshot_is_expired(snapshot) is True
+    assert dashboard._snapshot_is_expired(snapshot, historical=True) is False
