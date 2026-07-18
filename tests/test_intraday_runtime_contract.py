@@ -888,3 +888,16 @@ def test_intraday_runtime_unknown_freshness_keeps_previous_artifacts(
     assert status["status"] == "failed"
     assert status["freshness"]["status"] == "unknown"
     assert status["quality_gate"]["status"] == "blocked"
+
+
+def test_intraday_runtime_contract_preserves_empty_candidate_reason_in_outputs() -> (
+    None
+):
+    script = SCRIPT_PATH.read_text(encoding="utf-8")
+
+    assert '"run_no_candidate_reason"' in script
+    assert (
+        '"no_candidate_reason": runtime_metadata.get("run_no_candidate_reason", "")'
+        in script
+    )
+    assert '+ "；无候选原因: "' in script

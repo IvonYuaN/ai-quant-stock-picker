@@ -1623,7 +1623,14 @@ class DashboardDataProvider:
             elif coldstart_ready:
                 conclusion = "冷启动样本已达标，等待生产 walk-forward gate"
             elif final_count == 0:
-                conclusion = "最近运行无新增候选，先看阻塞与数据状态"
+                no_candidate_reason = str(
+                    run.get("run_no_candidate_reason") or ""
+                ).strip()
+                conclusion = (
+                    f"最近运行无新增候选：{no_candidate_reason}"
+                    if no_candidate_reason
+                    else "最近运行无新增候选，先看阻塞与数据状态"
+                )
             elif run:
                 conclusion = "最近运行已落盘，等待完整收盘摘要"
             elif coldstart_run is not None:
@@ -1710,7 +1717,14 @@ class DashboardDataProvider:
             if status == "blocked_by_circuit_breaker" or triggered:
                 conclusion = "组合保护生效，暂停新增纸面复核"
             elif final_count == 0:
-                conclusion = "最近运行无新增候选，先看阻塞与数据状态"
+                no_candidate_reason = str(
+                    run.get("run_no_candidate_reason") or ""
+                ).strip()
+                conclusion = (
+                    f"最近运行无新增候选：{no_candidate_reason}"
+                    if no_candidate_reason
+                    else "最近运行无新增候选，先看阻塞与数据状态"
+                )
             else:
                 conclusion = "最近运行已落盘，等待完整收盘摘要"
 

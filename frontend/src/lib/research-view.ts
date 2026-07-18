@@ -11,6 +11,23 @@ export function snapshotConclusion(snapshot: AqspSnapshot): string {
   return snapshot.summaries[0] || snapshot.market_context?.overview || "";
 }
 
+export function dedupeResearchText(values: readonly string[]): string[] {
+  const seen = new Set<string>();
+  return values.reduce<string[]>((result, value) => {
+    const text = value.trim();
+    const key = text.replace(/\s+/g, " ");
+    if (!key || seen.has(key)) return result;
+    seen.add(key);
+    result.push(text);
+    return result;
+  }, []);
+}
+
+export function sameResearchText(left: string, right: string): boolean {
+  const [first] = dedupeResearchText([left, right]);
+  return Boolean(first) && dedupeResearchText([left, right]).length === 1;
+}
+
 export function debateProcessText(result: AqspAgentResult): string {
   if (result.process_summary) return result.process_summary;
   const details: string[] = [];

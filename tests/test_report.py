@@ -197,6 +197,38 @@ def test_report_intraday_dataframe_includes_runtime_context_row() -> None:
     )
 
 
+def test_report_explains_empty_intraday_result_without_history_fallback() -> None:
+    metadata = RunMetadata(
+        requested_source="online_first",
+        actual_source="tencent",
+        source_freshness_tier="realtime",
+        source_coverage_tier="broad_runtime",
+        source_local_status="not_required",
+        source_health_label="healthy",
+        source_health_message="实时源正常",
+        fallback_used=False,
+        explicit_symbol_count=0,
+        resolved_symbol_count=80,
+        fetched_frame_count=80,
+        screened_count=0,
+        final_count=0,
+        min_price=1.0,
+        max_price=1000.0,
+        min_avg_amount=50_000_000,
+        online_factors_enabled=False,
+        thresholds_version="1.0.0",
+        data_latest_trade_date="2026-07-10",
+        task_id="intraday",
+        no_candidate_reason="策略筛选未产生符合条件的候选",
+    )
+
+    markdown = to_markdown([], metadata=metadata)
+    frame = to_intraday_dataframe([], metadata=metadata)
+
+    assert "无候选原因: 策略筛选未产生符合条件的候选" in markdown
+    assert frame.iloc[0]["run_no_candidate_reason"] == "策略筛选未产生符合条件的候选"
+
+
 def test_report_renders_portfolio_manager_decision_when_provided() -> None:
     pick = PickResult(
         symbol="600900",

@@ -1114,6 +1114,7 @@ try:
                         "run_fallback_used",
                         "run_data_latest_trade_date",
                         "run_data_lag_days",
+                        "run_no_candidate_reason",
                     )
                 }
                 break
@@ -1158,6 +1159,7 @@ payload = {
     "ledger_path": os.environ["INTRADAY_STATUS_LEDGER"],
     "report_path": os.environ["INTRADAY_STATUS_REPORT"],
     "csv_path": os.environ["INTRADAY_STATUS_CSV"],
+    "no_candidate_reason": runtime_metadata.get("run_no_candidate_reason", ""),
     "updated_at": now_shanghai().isoformat(timespec="seconds"),
     "advisory_boundary": "research_only_no_auto_trading",
     "observation_only": os.environ["INTRADAY_STATUS_OBSERVATION_ONLY"].lower()
@@ -1264,6 +1266,13 @@ payload.update(
         "quality_gate": payload["quality_gate"],
     }
 )
+no_candidate_reason = str(payload.get("no_candidate_reason") or "").strip()
+if candidate_count == 0 and no_candidate_reason:
+    payload["reason"] = (
+        str(payload["reason"]).rstrip("；。")
+        + "；无候选原因: "
+        + no_candidate_reason
+    )
 path = Path(os.environ["INTRADAY_STATUS_PATH"])
 path.parent.mkdir(parents=True, exist_ok=True)
 tmp = path.with_suffix(path.suffix + ".tmp")

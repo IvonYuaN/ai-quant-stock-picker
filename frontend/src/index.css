@@ -225,8 +225,8 @@
   .vr-debate-process { border: 1px solid hsl(var(--border) / 0.55); border-radius: 0.5rem; background: hsl(var(--background) / 0.2); padding: 0.7rem; }
   .vr-debate-conclusion { margin-top: 0.75rem; border-left: 2px solid hsl(var(--primary) / 0.7); padding-left: 0.7rem; }
   .vr-current-date { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.8rem; color: hsl(var(--primary)); }
-  .vr-empty-state { display: flex; align-items: flex-start; gap: 0.6rem; min-height: 5rem; padding: 0.9rem; border: 1px dashed hsl(var(--border) / 0.85); border-radius: 0.65rem; color: hsl(var(--muted-foreground)); font-size: 0.72rem; }
-  .vr-state-panel { display: flex; align-items: center; gap: 0.6rem; min-height: 8rem; padding: 1rem; border: 1px solid hsl(var(--border) / 0.72); border-radius: 0.75rem; color: hsl(var(--muted-foreground)); font-size: 0.8rem; }
+  .vr-empty-state { display: flex; align-items: flex-start; gap: 0.6rem; min-height: 3.5rem; padding: 0.7rem; border: 1px dashed hsl(var(--border) / 0.85); border-radius: 0.65rem; color: hsl(var(--muted-foreground)); font-size: 0.72rem; }
+  .vr-state-panel { display: flex; align-items: center; gap: 0.6rem; min-height: 4.5rem; padding: 0.75rem; border: 1px solid hsl(var(--border) / 0.72); border-radius: 0.75rem; color: hsl(var(--muted-foreground)); font-size: 0.8rem; }
   .vr-state-panel-warning { border-color: hsl(var(--warning) / 0.3); }
   .vr-data-status { display: inline-flex; align-items: center; gap: 0.4rem; color: hsl(var(--muted-foreground)); font-size: 0.65rem; }
   .vr-data-status-dot { display: inline-block; width: 0.45rem; height: 0.45rem; border-radius: 999px; }

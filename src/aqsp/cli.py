@@ -2806,6 +2806,15 @@ def _write_high_frequency_provisional_outputs(
     print("盘中候选快照已先行落盘")
 
 
+def _no_candidate_reason(*, screened_count: int, final_count: int) -> str:
+    """Explain an empty result without turning prior candidates into fallback data."""
+    if final_count > 0:
+        return ""
+    if screened_count <= 0:
+        return "策略筛选未产生符合条件的候选"
+    return "筛选出的候选在排雷、T+1 或组合约束后全部移除"
+
+
 def _ledger_signal_date(row: dict[str, Any]) -> str:
     from aqsp.ledger.runtime import ledger_signal_date
 
@@ -4367,6 +4376,10 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
             run_metadata_base,
             screened_count=len(screened_picks),
             final_count=min(len(screened_picks), limit),
+            no_candidate_reason=_no_candidate_reason(
+                screened_count=len(screened_picks),
+                final_count=min(len(screened_picks), limit),
+            ),
             regime=regime,
             market_context_lines=_runtime_regime_market_context_lines(
                 frames,
@@ -4538,6 +4551,10 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
         workload="live_short" if requires_live_short_source else "scheduled",
         intraday_coverage_status=intraday_coverage_status,
         intraday_missing_symbols=intraday_missing_symbols,
+        no_candidate_reason=_no_candidate_reason(
+            screened_count=len(screened_picks),
+            final_count=len(picks),
+        ),
     )
     _write_high_frequency_provisional_outputs(
         task_id=normalized_task_id,

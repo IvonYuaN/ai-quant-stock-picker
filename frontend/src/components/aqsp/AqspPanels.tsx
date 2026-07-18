@@ -15,7 +15,13 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { AqspAgentResult, AqspCandidate, AqspMessage, AqspSnapshot } from "@/lib/api";
-import { debateProcessText, formatResearchDate, snapshotConclusion } from "@/lib/research-view";
+import {
+  debateProcessText,
+  dedupeResearchText,
+  formatResearchDate,
+  sameResearchText,
+  snapshotConclusion,
+} from "@/lib/research-view";
 import {
   formatAqspTime,
   isAqspSnapshotStale,
@@ -162,6 +168,7 @@ function MessageCard({ message }: { message: AqspMessage }) {
   const validation = uniqueNonEmpty(message.validation_signals, 2);
   const invalidation = uniqueNonEmpty(message.invalidation_signals, 2);
   const evidence = uniqueNonEmpty(message.supporting_evidence, 2);
+  const summary = sameResearchText(message.title, message.summary) ? "" : message.summary;
   return (
     <article className="vr-message-card">
       <div className="flex min-w-0 items-start justify-between gap-3">
@@ -177,7 +184,7 @@ function MessageCard({ message }: { message: AqspMessage }) {
         </div>
         <MessageSquareText className="mt-0.5 h-4 w-4 shrink-0 text-primary/75" />
       </div>
-      {message.summary && <p className="mt-1.5 text-xs leading-relaxed text-foreground/78">{message.summary}</p>}
+      {summary && <p className="mt-1.5 text-xs leading-relaxed text-foreground/78">{summary}</p>}
       {sectors.length > 0 && (
         <div className="mt-2 flex flex-wrap items-center gap-1.5">
           <span className="vr-kicker mr-0.5">影响板块</span>
@@ -213,6 +220,11 @@ function MessageCard({ message }: { message: AqspMessage }) {
 
 function DebateCard({ result }: { result: AqspAgentResult }) {
   const process = debateProcessText(result);
+  const conclusion = result.conclusion.trim();
+  const visibleProcess = sameResearchText(process, conclusion) ? "" : process;
+  const roundSummaries = dedupeResearchText(result.round_summaries ?? [])
+    .filter((summary) => !sameResearchText(summary, conclusion) && !sameResearchText(summary, process))
+    .slice(0, 2);
   return (
     <article className="vr-debate-card">
       <div className="flex items-start justify-between gap-3">
@@ -227,14 +239,14 @@ function DebateCard({ result }: { result: AqspAgentResult }) {
           {result.conclusion ? "结论已记录" : "结论缺失"}
         </span>
       </div>
-      <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_auto]">
+      <div className="mt-3 grid gap-2.5 sm:grid-cols-[1fr_auto]">
         <div className="vr-debate-process">
           <p className="vr-kicker flex items-center gap-1.5"><UsersRound className="h-3.5 w-3.5" />Agent 讨论</p>
-          <p className="mt-2 text-xs leading-relaxed text-foreground/80">{process || "讨论过程未记录"}</p>
+          <p className="mt-2 text-xs leading-relaxed text-foreground/80">{visibleProcess || "讨论过程未记录"}</p>
           {result.active_roles.length > 0 && <div className="mt-2 flex flex-wrap gap-1.5">{result.active_roles.map((role) => <span key={role} className="vr-chip">{role}</span>)}</div>}
-          {(result.round_summaries ?? []).length > 0 && (
+          {roundSummaries.length > 0 && (
             <ol className="mt-2 space-y-1 border-t border-border/45 pt-2 text-[11px] leading-relaxed text-muted-foreground">
-              {(result.round_summaries ?? []).slice(0, 3).map((summary, index) => <li key={`${index}-${summary}`}>第 {index + 1} 轮：{summary}</li>)}
+              {roundSummaries.map((summary, index) => <li key={`${index}-${summary}`}>第 {index + 1} 轮：{summary}</li>)}
             </ol>
           )}
         </div>
@@ -246,7 +258,7 @@ function DebateCard({ result }: { result: AqspAgentResult }) {
       </div>
       <div className="vr-debate-conclusion">
         <p className="vr-kicker text-primary">汇总结论</p>
-        <p className="mt-1 text-sm leading-relaxed">{result.conclusion || "暂无可展示的讨论结论。"}</p>
+        <p className="mt-1 text-sm leading-relaxed">{conclusion || "暂无可展示的讨论结论。"}</p>
       </div>
       {(result.primary_risk_gate || result.next_trigger) && (
         <div className="mt-3 grid gap-2 border-t border-border/50 pt-2 text-xs sm:grid-cols-2">

@@ -83,6 +83,7 @@ class RunMetadata:
     workload: str = ""
     intraday_coverage_status: str = "not_applicable"
     intraday_missing_symbols: tuple[str, ...] = field(default_factory=tuple)
+    no_candidate_reason: str = ""
 
 
 @dataclass(frozen=True)

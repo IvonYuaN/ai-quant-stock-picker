@@ -542,6 +542,7 @@ def run_metadata_fields(metadata: RunMetadata | None) -> dict[str, object]:
         "run_market_context_lines": list(metadata.market_context_lines),
         "run_intraday_coverage_status": metadata.intraday_coverage_status,
         "run_intraday_missing_symbols": list(metadata.intraday_missing_symbols),
+        "run_no_candidate_reason": metadata.no_candidate_reason,
         "thresholds_version": metadata.thresholds_version,
         "run_workload": metadata.workload,
     }

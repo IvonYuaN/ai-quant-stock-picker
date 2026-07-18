@@ -1,5 +1,11 @@
 import type { AqspAgentResult, AqspSnapshot } from "./api";
-import { debateProcessText, snapshotConclusion, snapshotMatchesSelectedDate } from "./research-view";
+import {
+  debateProcessText,
+  dedupeResearchText,
+  sameResearchText,
+  snapshotConclusion,
+  snapshotMatchesSelectedDate,
+} from "./research-view";
 
 const emptySnapshot = {
   schema_version: "v1",
@@ -38,4 +44,7 @@ export const researchViewContractChecks = {
   selectedDateMatches: snapshotMatchesSelectedDate(emptySnapshot, "2026-07-15"),
   selectedDateRejectsPreviousSnapshot: !snapshotMatchesSelectedDate(emptySnapshot, "2026-07-14"),
   emptySelectionAcceptsCurrentSnapshot: snapshotMatchesSelectedDate(emptySnapshot, ""),
+  duplicateResearchTextCollapses: dedupeResearchText(["  过程摘要  ", "过程   摘要", "另一条"]).join("|") === "过程摘要|另一条",
+  equalResearchTextMatches: sameResearchText("标题", "标题"),
+  differentResearchTextDoesNotMatch: !sameResearchText("标题", "摘要"),
 };

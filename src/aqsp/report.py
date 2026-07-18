@@ -503,6 +503,8 @@ def to_markdown(
         lines.extend(_metadata_lines(metadata))
     if not picks:
         lines.append("无符合条件的候选。")
+        if metadata is not None and metadata.no_candidate_reason:
+            lines.append(f"无候选原因: {metadata.no_candidate_reason}")
         return normalize_research_tone("\n".join(lines))
 
     debate_map = {r.symbol: r for r in debate_results} if debate_results else {}

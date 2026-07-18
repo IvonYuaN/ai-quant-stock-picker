@@ -2960,6 +2960,8 @@ def test_dashboard_data_provider_runtime_overview_uses_run_event_not_candidate_r
                         "run_actual_source": "sina",
                         "run_data_latest_trade_date": "2026-07-10",
                         "run_data_lag_days": 0,
+                        "run_final_count": 0,
+                        "run_no_candidate_reason": "策略筛选未产生符合条件的候选",
                     },
                     ensure_ascii=False,
                 ),
@@ -2990,6 +2992,7 @@ def test_dashboard_data_provider_runtime_overview_uses_run_event_not_candidate_r
     assert overview.effective_source == "sina"
     assert overview.data_latest_trade_date == "2026-07-10"
     assert overview.lag_days == "0"
+    assert "策略筛选未产生符合条件的候选" in overview.conclusion
 
 
 def test_dashboard_data_provider_dedupes_intraday_ledger_and_csv_symbols(
