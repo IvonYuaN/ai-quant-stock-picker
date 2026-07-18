@@ -62,6 +62,12 @@ export interface AqspMarketContext {
   warnings: readonly string[];
 }
 
+export interface AqspRecommendationGate {
+  recommendation_allowed: boolean;
+  status: string;
+  reasons: readonly string[];
+}
+
 export interface AqspAgentResult {
   symbol: string;
   display_name: string;
@@ -100,6 +106,7 @@ export interface AqspSnapshot {
   message_status: string;
   messages: readonly AqspMessage[];
   market_context: AqspMarketContext | null;
+  recommendation_gate?: AqspRecommendationGate;
   /** Present after the HTTP envelope is normalized; absent in the raw data payload. */
   meta?: AqspSnapshotMeta;
 }

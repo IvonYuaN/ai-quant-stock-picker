@@ -11,7 +11,7 @@ import os
 import re
 import sys
 from dataclasses import replace
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -27,6 +27,12 @@ from aqsp.news.catalysts import (
     load_catalyst_report_artifact,
 )
 from aqsp.web.data_provider import DashboardDataProvider
+from aqsp.ledger.runtime import count_paper_tracking_days
+from aqsp.runtime.recommendation_gate import (
+    FreshnessEvidence,
+    RecommendationGateInputs,
+    evaluate as evaluate_recommendation_gate,
+)
 from aqsp.web.home_snapshot import (
     HOME_SNAPSHOT_INDEX_SCHEMA_VERSION,
     HOME_SNAPSHOT_SCHEMA_VERSION,
@@ -37,6 +43,7 @@ from aqsp.web.home_snapshot import (
     HomeSnapshotDay,
     HomeSnapshotCandidate,
     HomeSnapshotColdstart,
+    HomeSnapshotRecommendationGate,
     HomeSnapshotCrossMarket,
     HomeSnapshotDebate,
     HomeSnapshotIndex,
@@ -1044,6 +1051,64 @@ def _snapshot_coldstart(runtime: Any) -> HomeSnapshotColdstart:
     )
 
 
+def _progress_days(value: str) -> int:
+    match = re.match(r"\s*(\d+)\s*/", str(value or ""))
+    return int(match.group(1)) if match else 0
+
+
+def _recommendation_gate(
+    provider: DashboardDataProvider,
+    runtime: Any,
+    source: Any,
+    message_status: str,
+    *,
+    evaluated_at: datetime,
+) -> HomeSnapshotRecommendationGate:
+    cooldown_until = str(getattr(runtime, "cooldown_until", "") or "").strip()
+    cooldown_date = None
+    if cooldown_until:
+        try:
+            cooldown_date = date.fromisoformat(cooldown_until[:10])
+        except ValueError:
+            cooldown_date = None
+    walkforward_line = str(
+        getattr(runtime, "walkforward_runtime_line", "") or ""
+    )
+    walkforward_ok = "双门已过" in walkforward_line and "未过门" not in walkforward_line
+    source_status = str(getattr(source, "status", "") or "").strip()
+    freshness_ok = (
+        source_status not in {"", "blocked_by_circuit_breaker", "failed", "stale"}
+        and int(getattr(source, "lag_days", 999) or 999) <= 0
+        and message_status not in {"来源失败", "超时", "失败"}
+    )
+    result = evaluate_recommendation_gate(
+        RecommendationGateInputs(
+            coldstart_days=_progress_days(getattr(runtime, "coldstart_progress", "")),
+            paper_tracking_days=count_paper_tracking_days(
+                str(provider.paper_ledger_path)
+            ),
+            walkforward_ok=walkforward_ok,
+            walkforward_updated_at=None,
+            freshness=FreshnessEvidence(
+                ok=freshness_ok,
+                status=message_status,
+                reason=(
+                    "实时行情或消息源未达到最低新鲜度"
+                    if not freshness_ok
+                    else ""
+                ),
+            ),
+            circuit_breaker_until=cooldown_date,
+            evaluated_at=evaluated_at,
+        )
+    )
+    return HomeSnapshotRecommendationGate(
+        recommendation_allowed=result.recommendation_allowed,
+        status=result.status,
+        reasons=result.reasons,
+    )
+
+
 def build_home_snapshot(
     provider: DashboardDataProvider,
     *,
@@ -1062,6 +1127,7 @@ def build_home_snapshot(
     runtime = provider.runtime_overview(selected_date)
     overview = payload.overview
     generated_at = to_shanghai(now_shanghai()).isoformat(timespec="seconds")
+    source = _snapshot_source(runtime, task_view)
     candidates = _snapshot_candidates(payload)
     recommendation_count = _snapshot_recommendation_count(payload)
     shown_recommendation_count = sum(
@@ -1103,6 +1169,13 @@ def build_home_snapshot(
         status_override=(message_status if not artifact.catalyst_events else ""),
     )
     messages = _append_cross_market_messages(messages, artifact)
+    recommendation_gate = _recommendation_gate(
+        provider,
+        runtime,
+        source,
+        message_status,
+        evaluated_at=now_shanghai(),
+    )
     debate_missing = bool(getattr(payload, "debates", ()) or ()) and not debates
     raw_summaries = (
         "委员会结论缺少当前候选映射，已隐藏" if debate_missing else "",
@@ -1140,12 +1213,13 @@ def build_home_snapshot(
         # Debate summaries are adjacent advisory cards and never ranking inputs.
         debates=debates,
         summaries=summaries,
-        source=_snapshot_source(runtime, task_view),
+        source=source,
         coldstart=_snapshot_coldstart(runtime),
         stale_after=stale_after_for_task(generated_at, selected_task_id),
         message_status=message_status,
         messages=messages,
         market_context=market_context,
+        recommendation_gate=recommendation_gate,
     )
 
 

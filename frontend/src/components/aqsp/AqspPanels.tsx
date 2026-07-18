@@ -75,6 +75,40 @@ function FreshnessNotice({ snapshot }: { snapshot: AqspSnapshot }) {
   );
 }
 
+function RecommendationGateNotice({ snapshot }: { snapshot: AqspSnapshot }) {
+  const gate = snapshot.recommendation_gate;
+  if (!gate || gate.recommendation_allowed) {
+    return (
+      <div className="vr-gate-notice vr-gate-notice-ready">
+        <Check className="h-4 w-4 shrink-0" />
+        <span>全局研究 gate 已通过，可进入纸面复核。</span>
+      </div>
+    );
+  }
+  const reasons = gate.reasons.slice(0, 3).map((reason) => {
+    if (reason.startsWith("coldstart_below_minimum:")) return "冷启动样本不足";
+    if (reason.startsWith("paper_tracking_below_minimum:")) return "纸面跟踪样本不足";
+    if (reason === "walkforward_not_ok") return "Walk-forward 双门未通过";
+    if (reason === "walkforward_updated_at_missing") return "Walk-forward 更新时间缺失";
+    if (reason.startsWith("walkforward_stale:")) return "Walk-forward 证据已过期";
+    if (reason.startsWith("circuit_breaker_active_until:")) {
+      const parts = reason.split(":");
+      return `组合保护冷却至 ${parts[parts.length - 1]}`;
+    }
+    if (reason.startsWith("freshness_not_ready:")) return "实时行情或消息源未达到新鲜度要求";
+    return reason;
+  });
+  return (
+    <div className="vr-gate-notice vr-gate-notice-blocked">
+      <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" />
+      <div className="min-w-0">
+        <strong>当前仅观察，未达到可推荐条件</strong>
+        <span className="mt-1 block text-[11px]">{reasons.join("；") || "推荐 gate 未通过"}</span>
+      </div>
+    </div>
+  );
+}
+
 function DateStrip({ snapshot }: { snapshot: AqspSnapshot }) {
   const { loading, selectedDate, selectDate } = useWorkspaceSnapshot();
   const dates = snapshot.available_dates;
@@ -312,8 +346,9 @@ export function AqspResearchWorkspace() {
         </header>
 
         <DateStrip snapshot={data} />
-        {stale && <FreshnessNotice snapshot={data} />}
-        {error && <div className="mb-3 text-xs text-warning">后台刷新未完成，仍展示上一次已读取的数据。</div>}
+      {stale && <FreshnessNotice snapshot={data} />}
+      <RecommendationGateNotice snapshot={data} />
+      {error && <div className="mb-3 text-xs text-warning">后台刷新未完成，仍展示上一次已读取的数据。</div>}
 
         <section className="vr-module vr-conclusion-panel" aria-labelledby="conclusion-title">
           <div className="flex min-w-0 items-start gap-3">

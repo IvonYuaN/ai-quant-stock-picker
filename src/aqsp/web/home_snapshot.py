@@ -185,6 +185,15 @@ class HomeSnapshotColdstart:
     detail: str
 
 
+@dataclass(frozen=True)
+class HomeSnapshotRecommendationGate:
+    """Global research-only recommendation eligibility evidence."""
+
+    recommendation_allowed: bool
+    status: str
+    reasons: tuple[str, ...] = ()
+
+
 @dataclass(frozen=True, init=False)
 class HomeDashboardSnapshot:
     """Small home-page payload that is safe to load without historical fan-out."""
@@ -203,6 +212,7 @@ class HomeDashboardSnapshot:
     message_status: str = "未产出"
     messages: tuple[HomeSnapshotMessage, ...] = ()
     market_context: HomeSnapshotMarketContext | None = None
+    recommendation_gate: HomeSnapshotRecommendationGate | None = None
 
     def __init__(
         self,
@@ -221,6 +231,7 @@ class HomeDashboardSnapshot:
         message_status: str = "未产出",
         messages: tuple[HomeSnapshotMessage, ...] = (),
         market_context: HomeSnapshotMarketContext | None = None,
+        recommendation_gate: HomeSnapshotRecommendationGate | None = None,
     ) -> None:
         normalized_debates = tuple(debates or ())
         if debate is not None:
@@ -241,6 +252,16 @@ class HomeDashboardSnapshot:
         object.__setattr__(self, "message_status", message_status)
         object.__setattr__(self, "messages", messages)
         object.__setattr__(self, "market_context", market_context)
+        object.__setattr__(
+            self,
+            "recommendation_gate",
+            recommendation_gate
+            or HomeSnapshotRecommendationGate(
+                recommendation_allowed=False,
+                status="blocked",
+                reasons=("recommendation_gate_missing",),
+            ),
+        )
         self.__post_init__()
 
     @property
@@ -549,6 +570,7 @@ def _snapshot_from_dict(payload: object) -> HomeDashboardSnapshot:
             "message_status",
             "messages",
             "market_context",
+            "recommendation_gate",
         },
     )
     if "debates" in mapping:
@@ -588,6 +610,11 @@ def _snapshot_from_dict(payload: object) -> HomeDashboardSnapshot:
             None
             if mapping.get("market_context") is None
             else _market_context_from_dict(mapping["market_context"])
+        ),
+        recommendation_gate=(
+            None
+            if mapping.get("recommendation_gate") is None
+            else _recommendation_gate_from_dict(mapping["recommendation_gate"])
         ),
     )
 
@@ -889,6 +916,22 @@ def _coldstart_from_dict(payload: object) -> HomeSnapshotColdstart:
     )
 
 
+def _recommendation_gate_from_dict(
+    payload: object,
+) -> HomeSnapshotRecommendationGate:
+    mapping = _mapping(payload, "recommendation_gate")
+    _require_keys(
+        mapping,
+        {"recommendation_allowed", "status", "reasons"},
+        "recommendation_gate",
+    )
+    return HomeSnapshotRecommendationGate(
+        recommendation_allowed=bool(mapping["recommendation_allowed"]),
+        status=_text(mapping["status"], "recommendation_gate.status"),
+        reasons=_text_tuple(mapping["reasons"], "recommendation_gate.reasons"),
+    )
+
+
 def _validate_snapshot(snapshot: HomeDashboardSnapshot) -> None:
     if snapshot.schema_version != HOME_SNAPSHOT_SCHEMA_VERSION:
         raise ValueError("unsupported home snapshot schema version")
@@ -965,6 +1008,12 @@ def _validate_snapshot(snapshot: HomeDashboardSnapshot) -> None:
         raise ValueError("source must be a HomeSnapshotSource value")
     if not isinstance(snapshot.coldstart, HomeSnapshotColdstart):
         raise ValueError("coldstart must be a HomeSnapshotColdstart value")
+    if not isinstance(
+        snapshot.recommendation_gate, HomeSnapshotRecommendationGate
+    ):
+        raise ValueError(
+            "recommendation_gate must be a HomeSnapshotRecommendationGate value"
+        )
     if len(set(snapshot.available_dates)) != len(snapshot.available_dates):
         raise ValueError("available_dates must not contain duplicates")
 

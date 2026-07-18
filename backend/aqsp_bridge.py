@@ -140,6 +140,13 @@ class AQSPColdstart:
 
 
 @dataclass(frozen=True)
+class AQSPRecommendationGate:
+    recommendation_allowed: bool
+    status: str
+    reasons: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class AQSPCrossMarket:
     rule_id: str
     theme: str
@@ -182,6 +189,7 @@ class AQSPSnapshot:
     message_status: str = "未产出"
     messages: tuple[AQSPMessage, ...] = ()
     market_context: AQSPMarketContext | None = None
+    recommendation_gate: AQSPRecommendationGate | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -500,6 +508,7 @@ def _parse_snapshot(payload: Mapping[str, Any]) -> AQSPSnapshot:
         "message_status",
         "messages",
         "market_context",
+        "recommendation_gate",
     }
     _check_keys(payload, required, "快照", optional)
     schema_version = _text(payload["schema_version"], "schema_version")
@@ -559,6 +568,36 @@ def _parse_snapshot(payload: Mapping[str, Any]) -> AQSPSnapshot:
         or "未产出",
         messages=messages,
         market_context=_parse_market_context(payload.get("market_context")),
+        recommendation_gate=_parse_recommendation_gate(
+            payload.get("recommendation_gate")
+        ),
+    )
+
+
+def _parse_recommendation_gate(payload: object) -> AQSPRecommendationGate:
+    if payload is None:
+        return AQSPRecommendationGate(
+            recommendation_allowed=False,
+            status="blocked",
+            reasons=("recommendation_gate_missing",),
+        )
+    item = _object(payload, "recommendation_gate")
+    _check_keys(
+        item,
+        {"recommendation_allowed", "status", "reasons"},
+        "recommendation_gate",
+    )
+    allowed = item["recommendation_allowed"]
+    if not isinstance(allowed, bool):
+        raise AQSPSnapshotUnavailable(
+            "recommendation_gate.recommendation_allowed 必须是布尔值"
+        )
+    return AQSPRecommendationGate(
+        recommendation_allowed=allowed,
+        status=_text(item["status"], "recommendation_gate.status"),
+        reasons=tuple(
+            _text_list(item["reasons"], "recommendation_gate.reasons")
+        ),
     )
 
 
