@@ -296,42 +296,44 @@ export function AqspResearchWorkspace() {
   const stale = isAqspSnapshotStale(data);
   return (
     <div className="vr-research-page">
-      <header className="vr-page-topline" id="overview">
-        <div>
-          <p className="vr-kicker text-primary">AQSP / DAILY RESEARCH</p>
-          <div className="mt-2 flex flex-wrap items-end gap-x-3 gap-y-1">
-            <h1 className="text-2xl font-semibold">当天研究</h1>
-            <span className="vr-current-date">{data.selected_date || "日期未记录"}</span>
+      <div className="vr-top-summary">
+        <header className="vr-page-topline" id="overview">
+          <div>
+            <p className="vr-kicker text-primary">AQSP / DAILY RESEARCH</p>
+            <div className="mt-1 flex flex-wrap items-end gap-x-3 gap-y-1">
+              <h1 className="text-2xl font-semibold">当天研究</h1>
+              <span className="vr-current-date">{data.selected_date || "日期未记录"}</span>
+            </div>
+            <div className="mt-1"><SnapshotMeta snapshot={data} /></div>
           </div>
-          <div className="mt-2"><SnapshotMeta snapshot={data} /></div>
-        </div>
-        <button type="button" onClick={refresh} disabled={loading} className="vr-refresh-button" title="刷新研究数据">
-          <RefreshCw className={cn("h-4 w-4", loading && "animate-spin")} />刷新
-        </button>
-      </header>
+          <button type="button" onClick={refresh} disabled={loading} className="vr-refresh-button" title="刷新研究数据">
+            <RefreshCw className={cn("h-4 w-4", loading && "animate-spin")} />刷新
+          </button>
+        </header>
 
-      <DateStrip snapshot={data} />
-      {stale && <FreshnessNotice snapshot={data} />}
-      {error && <div className="mb-5 text-xs text-warning">后台刷新未完成，仍展示上一次已读取的数据。</div>}
+        <DateStrip snapshot={data} />
+        {stale && <FreshnessNotice snapshot={data} />}
+        {error && <div className="mb-3 text-xs text-warning">后台刷新未完成，仍展示上一次已读取的数据。</div>}
 
-      <section className="vr-module vr-conclusion-panel" aria-labelledby="conclusion-title">
-        <div className="flex items-start gap-3">
-          <span className="vr-section-icon"><Sparkles className="h-4 w-4" /></span>
-          <div className="min-w-0">
-            <p className="vr-kicker text-primary">01 · 当天结论</p>
-            <h2 id="conclusion-title" className="mt-2 text-lg font-semibold leading-relaxed">{conclusion || "今日结论未记录"}</h2>
-            {data.summaries.length > 1 && <div className="mt-3 space-y-1 text-xs leading-relaxed text-muted-foreground">{data.summaries.slice(1, 3).map((line) => <p key={line}>· {line}</p>)}</div>}
+        <section className="vr-module vr-conclusion-panel" aria-labelledby="conclusion-title">
+          <div className="flex min-w-0 items-start gap-3">
+            <span className="vr-section-icon"><Sparkles className="h-4 w-4" /></span>
+            <div className="min-w-0">
+              <p className="vr-kicker text-primary">01 · 当天结论</p>
+              <h2 id="conclusion-title" className="mt-1 text-base font-semibold leading-relaxed">{conclusion || "今日结论未记录"}</h2>
+              {data.summaries.length > 1 && <div className="mt-2 space-y-1 text-xs leading-relaxed text-muted-foreground">{data.summaries.slice(1, 3).map((line) => <p key={line}>· {line}</p>)}</div>}
+            </div>
           </div>
-        </div>
-        <div className="vr-summary-stats" aria-label="研究数据统计">
-          <div><strong>{data.candidates.length}</strong><span>候选</span></div>
-          <div><strong>{data.messages.length}</strong><span>消息</span></div>
-          <div><strong>{data.debates.length}</strong><span>讨论</span></div>
-          <div><strong>{data.source.lag_days > 0 ? `${data.source.lag_days}d` : "0d"}</strong><span>数据滞后</span></div>
-        </div>
-      </section>
+          <div className="vr-summary-stats" aria-label="研究数据统计">
+            <div><strong>{data.candidates.length}</strong><span>候选</span></div>
+            <div><strong>{data.messages.length}</strong><span>消息</span></div>
+            <div><strong>{data.debates.length}</strong><span>讨论</span></div>
+            <div><strong>{data.source.lag_days > 0 ? `${data.source.lag_days}d` : "0d"}</strong><span>数据滞后</span></div>
+          </div>
+        </section>
+      </div>
 
-      <div className="vr-board-stack">
+      <div className="vr-board-grid">
         <section id="candidates" className="vr-module vr-board-section">
           <div className="vr-section-heading"><div><p className="vr-kicker">02 · 评分与依据</p><h2>候选</h2></div><span className="vr-count">{data.candidates.length} 个</span></div>
           {data.candidates.length === 0 ? <EmptyState title="当前没有候选" detail="可能是研究 gate 阻塞，或当天数据尚未产出。" /> : <div className="vr-candidate-grid">{data.candidates.map((candidate) => <CandidateCard key={candidate.symbol} candidate={candidate} />)}</div>}

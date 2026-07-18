@@ -175,7 +175,8 @@
   /* 暖橙光文字 */
   .text-glow { text-shadow: 0 0 18px hsl(var(--primary) / 0.45); }
 
-  .vr-page-topline { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; margin-bottom: 1.25rem; }
+  .vr-top-summary { position: sticky; top: 0; z-index: 10; margin: -1.25rem -1.25rem 0; padding: 1.25rem 1.25rem 0.75rem; background: hsl(var(--background) / 0.94); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); }
+  .vr-page-topline { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; margin-bottom: 0.65rem; }
   .vr-refresh-button { display: inline-flex; align-items: center; gap: 0.45rem; min-height: 2.25rem; padding: 0.5rem 0.75rem; border: 1px solid hsl(var(--border)); border-radius: 0.6rem; color: hsl(var(--muted-foreground)); font-size: 0.75rem; transition: border-color 140ms ease, color 140ms ease, background 140ms ease; }
   .vr-refresh-button:hover { border-color: hsl(var(--primary) / 0.55); color: hsl(var(--foreground)); background: hsl(var(--muted) / 0.45); }
   .vr-refresh-button:disabled { cursor: wait; opacity: 0.55; }
@@ -188,12 +189,13 @@
   .vr-date-pill:hover { color: hsl(var(--foreground)); background: hsl(var(--muted) / 0.55); }
   .vr-date-pill-active { border-color: hsl(var(--primary) / 0.36); color: hsl(var(--primary)); background: hsl(var(--primary) / 0.12); }
   .vr-freshness { display: flex; align-items: flex-start; gap: 0.5rem; margin-bottom: 1rem; padding: 0.7rem 0.8rem; border: 1px solid hsl(var(--warning) / 0.28); border-radius: 0.65rem; background: hsl(var(--warning) / 0.07); color: hsl(var(--warning)); font-size: 0.72rem; line-height: 1.5; }
-  .vr-conclusion-panel { display: flex; align-items: flex-start; justify-content: space-between; gap: 1.25rem; margin-bottom: 1rem; padding: 1rem 1.1rem; border: 1px solid hsl(var(--primary) / 0.28); border-radius: 0.7rem; background: hsl(var(--card) / 0.62); box-shadow: inset 3px 0 0 hsl(var(--primary) / 0.7); }
+  .vr-conclusion-panel { display: flex; align-items: flex-start; justify-content: space-between; gap: 1.25rem; margin-bottom: 0.75rem; padding: 0.75rem 0.9rem; border: 1px solid hsl(var(--primary) / 0.28); border-radius: 0.7rem; background: hsl(var(--card) / 0.62); box-shadow: inset 3px 0 0 hsl(var(--primary) / 0.7); }
   .vr-section-icon { display: inline-flex; align-items: center; justify-content: center; width: 2rem; height: 2rem; flex-shrink: 0; border-radius: 0.55rem; color: hsl(var(--primary)); background: hsl(var(--primary) / 0.13); }
   .vr-summary-stats { display: grid; min-width: 13rem; grid-template-columns: repeat(4, minmax(3rem, 1fr)); gap: 0.5rem 0.8rem; padding-left: 1rem; border-left: 1px solid hsl(var(--border) / 0.7); }
   .vr-summary-stats div { display: flex; flex-direction: column; gap: 0.2rem; }
   .vr-summary-stats strong { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 1.1rem; font-variant-numeric: tabular-nums; color: hsl(var(--foreground)); }
   .vr-summary-stats span { color: hsl(var(--muted-foreground)); font-size: 0.65rem; }
+  .vr-board-grid { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(20rem, 0.95fr); align-items: start; gap: 0.85rem; }
   .vr-board-stack { display: grid; gap: 0.85rem; }
   .vr-board-section { min-width: 0; scroll-margin-top: 1.25rem; }
   .vr-module { border: 1px solid hsl(var(--border) / 0.62); border-radius: 0.7rem; background: hsl(var(--card) / 0.28); padding: 0.9rem; }
@@ -249,9 +251,11 @@
   .vr-sidebar-footer { padding: 0.6rem 0.75rem; }
   .vr-content { padding: 1.25rem 0.5rem 2rem; }
   .vr-content h1 { font-size: 1.55rem; }
+  .vr-top-summary { position: static; margin: -1.25rem -0.5rem 0; padding: 1.25rem 0.5rem 0.65rem; }
   .vr-page-topline, .vr-conclusion-panel { display: block; }
   .vr-refresh-button { margin-top: 1rem; }
   .vr-summary-stats { min-width: 0; margin-top: 1.25rem; padding-top: 1rem; padding-left: 0; border-top: 1px solid hsl(var(--border) / 0.7); border-left: 0; }
+  .vr-board-grid { grid-template-columns: minmax(0, 1fr); gap: 0.65rem; }
   .vr-board-stack { display: grid; gap: 0.65rem; }
   .vr-module { padding: 0.75rem; }
   .vr-candidate-grid { grid-template-columns: minmax(0, 1fr); }
