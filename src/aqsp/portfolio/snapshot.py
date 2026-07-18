@@ -20,6 +20,7 @@ class PickSnapshot:
     rank: int
     adjusted_score: float
     recommended_adjustment: str
+    candidate_review_priority: str = ""
 
 
 @dataclass(frozen=True)
@@ -63,6 +64,12 @@ def save_snapshot(
                 "score": p.score,
                 "adjusted_score": getattr(p, "adjusted_score", p.score),
                 "recommended_adjustment": getattr(p, "recommended_adjustment", "keep"),
+                "candidate_review_priority": str(
+                    (getattr(p, "metrics", {}) or {}).get(
+                        "candidate_review_priority", ""
+                    )
+                    or ""
+                ),
             }
             for p in picks
         ],
@@ -114,6 +121,9 @@ def load_snapshot(
                         rank=idx + 1,
                         adjusted_score=p.get("adjusted_score", p["score"]),
                         recommended_adjustment=p.get("recommended_adjustment", "keep"),
+                        candidate_review_priority=str(
+                            p.get("candidate_review_priority", "") or ""
+                        ),
                     )
                     for idx, p in enumerate(data["picks"])
                 ]

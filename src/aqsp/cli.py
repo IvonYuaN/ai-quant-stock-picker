@@ -1992,9 +1992,54 @@ def _annotate_candidate_status(
             metrics["candidate_review_window"] = str(
                 review.get("review_window", "") or ""
             )
-            metrics["candidate_review_priority"] = str(review.get("priority", "") or "")
+            # 消息后置复核优先级是证据派生字段，不能被快照状态的通用优先级覆盖。
+            context_priority = str(
+                metrics.get("candidate_review_priority", "") or ""
+            ).strip()
+            metrics["candidate_review_priority"] = (
+                context_priority
+                if context_priority in {"优先复核", "风险复核", "常规"}
+                else str(review.get("priority", "") or "")
+            )
         enriched.append(replace(pick, metrics=metrics))
     return enriched
+
+
+def _market_context_review_priority(metrics: dict[str, Any]) -> tuple[str, str]:
+    """Map post-screening evidence to a display-only review priority."""
+    news_judgement = str(metrics.get("news_catalyst_judgement", "") or "").strip()
+    news_priority = int(metrics.get("news_catalyst_priority_score", 0) or 0)
+    cross_action = str(metrics.get("cross_market_action", "") or "").strip()
+    cross_priority = float(metrics.get("cross_market_priority_score", 0) or 0)
+    support_count = int(metrics.get("news_catalyst_support_count", 0) or 0)
+    oppose_count = int(metrics.get("news_catalyst_oppose_count", 0) or 0)
+    conflict_count = int(metrics.get("cross_market_conflict_event_count", 0) or 0)
+    has_evidence = bool(
+        news_judgement
+        or news_priority > 0
+        or cross_action
+        or cross_priority > 0
+        or metrics.get("cross_market_rule_ids")
+        or metrics.get("cross_market_summaries")
+    )
+    if not has_evidence:
+        return "", ""
+    if (
+        news_judgement == "opposes"
+        or cross_action == "风险复核"
+        or oppose_count > 0
+        or conflict_count > support_count
+    ):
+        return "风险复核", "存在负向或冲突证据，先做风险复核"
+    if (
+        cross_action == "优先复核"
+        or news_priority >= 3
+        or cross_priority >= 3
+        or news_judgement == "supports"
+        and support_count > 0
+    ):
+        return "优先复核", "存在明确正向消息或跨市场传导证据"
+    return "常规", "存在消息或跨市场线索，但尚未达到强复核条件"
 
 
 def _merge_candidate_note(existing: str, note: str) -> str:
@@ -2127,6 +2172,10 @@ def _annotate_cross_market_context(
             )
         if evidence_ids:
             metrics["artifact_ids"] = tuple(sorted(evidence_ids))
+        review_priority, review_reason = _market_context_review_priority(metrics)
+        if review_priority:
+            metrics["candidate_review_priority"] = review_priority
+            metrics["candidate_review_priority_reason"] = review_reason
         enriched.append(replace(pick, metrics=metrics))
     return enriched
 

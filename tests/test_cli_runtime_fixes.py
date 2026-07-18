@@ -891,6 +891,85 @@ def test_force_intraday_observation_keeps_score_but_blocks_review() -> None:
     assert observed[0].metrics["portfolio_action"] == "observation_only"
 
 
+def test_cross_market_context_assigns_display_priority_without_changing_score(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import aqsp.cli as cli_mod
+    from aqsp.core.types import PickResult
+
+    pick = PickResult(
+        symbol="300750",
+        name="宁德时代",
+        date="2026-07-10",
+        close=180.0,
+        score=73.5,
+        rating="watch",
+        entry_type="next_open",
+        ideal_buy=180.0,
+        stop_loss=170.0,
+        take_profit=198.0,
+        position="watch",
+    )
+    context = SimpleNamespace()
+    # Isolate the provider so this test covers only the post-screening contract.
+    monkeypatch.setattr(
+        "aqsp.market_context.market_context_metrics_for_pick",
+        lambda _pick, _context: {
+            "news_catalyst_judgement": "supports",
+            "news_catalyst_priority_score": 3,
+            "news_catalyst_support_count": 1,
+            "cross_market_action": "优先复核",
+            "cross_market_priority_score": 3,
+            "cross_market_rule_ids": ("physical_ai",),
+        },
+    )
+    enriched = cli_mod._annotate_cross_market_context([pick], market_context=context)[0]
+
+    assert enriched.score == 73.5
+    assert enriched.metrics["candidate_review_priority"] == "优先复核"
+    assert "正向消息" in enriched.metrics["candidate_review_priority_reason"]
+
+
+def test_cross_market_context_marks_negative_evidence_as_risk_review() -> None:
+    import aqsp.cli as cli_mod
+
+    metrics = {
+        "news_catalyst_judgement": "opposes",
+        "news_catalyst_oppose_count": 1,
+        "cross_market_action": "风险复核",
+    }
+    assert cli_mod._market_context_review_priority(metrics) == (
+        "风险复核",
+        "存在负向或冲突证据，先做风险复核",
+    )
+
+
+def test_snapshot_round_trip_keeps_candidate_review_priority(tmp_path: Path) -> None:
+    from aqsp.core.types import PickResult
+    from aqsp.portfolio.snapshot import load_snapshot, save_snapshot
+
+    pick = PickResult(
+        symbol="300750",
+        name="宁德时代",
+        date="2026-07-10",
+        close=180.0,
+        score=73.5,
+        rating="watch",
+        entry_type="next_open",
+        ideal_buy=180.0,
+        stop_loss=170.0,
+        take_profit=198.0,
+        position="watch",
+        metrics={"candidate_review_priority": "优先复核"},
+    )
+    path = tmp_path / "snapshots.jsonl"
+    save_snapshot([pick], snapshot_path=str(path), date="2026-07-10")
+
+    loaded = load_snapshot("2026-07-10", snapshot_path=str(path))
+    assert loaded is not None
+    assert loaded[0].candidate_review_priority == "优先复核"
+
+
 def test_relevant_intraday_missing_symbols_ignores_unrelated_pool_gaps() -> None:
     import aqsp.cli as cli_mod
     from aqsp.core.types import PickResult
