@@ -36,6 +36,7 @@ from aqsp.news.catalysts import (
     _classify_title,
     _select_diverse_events,
     build_catalyst_report,
+    deserialize_catalyst_report,
     format_catalyst_notification,
     _akshare_global_news,
     load_catalyst_report_artifact,
@@ -864,6 +865,71 @@ def test_news_catalyst_report_marks_partial_when_raw_news_has_no_strong_event() 
     markdown = format_catalyst_notification(report)
     assert "数据状态: 部分可用" in markdown
     assert "抓取失败" not in markdown.splitlines()[0]
+
+
+def test_catalyst_report_aggregates_domestic_and_international_source_status() -> None:
+    report = CatalystReport(
+        date=_RECENT_NEWS_DATE,
+        generated_at=now_shanghai().isoformat(timespec="seconds"),
+        events=(),
+        source_status="partial",
+        source_statuses=(
+            NewsSourceHealth(
+                name="eastmoney",
+                region="domestic",
+                status="ok",
+                successful=1,
+                row_count=4,
+            ),
+            NewsSourceHealth(
+                name="rss",
+                region="international",
+                status="timeout",
+            ),
+        ),
+    )
+
+    statuses = {item.region: item for item in report.region_statuses}
+
+    assert statuses["domestic"].status == "ok"
+    assert statuses["domestic"].source_count == 1
+    assert statuses["domestic"].successful_sources == 1
+    assert statuses["domestic"].row_count == 4
+    assert statuses["international"].status == "timeout"
+    assert statuses["international"].successful_sources == 0
+
+
+def test_catalyst_report_region_statuses_round_trip_and_legacy_payload_is_compatible() -> (
+    None
+):
+    report = CatalystReport(
+        date=_RECENT_NEWS_DATE,
+        generated_at=now_shanghai().isoformat(timespec="seconds"),
+        events=(),
+        source_status="empty",
+        source_statuses=(
+            NewsSourceHealth(
+                name="domestic-feed",
+                region="domestic",
+                status="empty",
+            ),
+        ),
+    )
+    payload = serialize_catalyst_report(report)
+
+    assert {item["region"] for item in payload["region_statuses"]} == {
+        "domestic",
+        "international",
+    }
+    loaded = deserialize_catalyst_report(payload)
+    assert loaded is not None
+    assert loaded.region_statuses == report.region_statuses
+
+    legacy_payload = dict(payload)
+    legacy_payload.pop("region_statuses")
+    legacy_loaded = deserialize_catalyst_report(legacy_payload)
+    assert legacy_loaded is not None
+    assert legacy_loaded.region_statuses == report.region_statuses
 
 
 def test_news_catalyst_notification_dedupes_timeout_warnings() -> None:

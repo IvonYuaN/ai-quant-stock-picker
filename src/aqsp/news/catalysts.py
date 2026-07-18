@@ -97,6 +97,23 @@ class CatalystEvent:
         return int(self.weight)
 
 
+NewsRegion = Literal["domestic", "international"]
+NewsRegionStatusValue = Literal[
+    "ok", "partial", "empty", "timeout", "failed", "unavailable"
+]
+
+
+@dataclass(frozen=True)
+class NewsRegionStatus:
+    """Aggregated source health for one domestic/international region."""
+
+    region: NewsRegion
+    status: NewsRegionStatusValue
+    source_count: int = 0
+    successful_sources: int = 0
+    row_count: int = 0
+
+
 @dataclass(frozen=True)
 class CatalystReport:
     date: str
@@ -110,6 +127,16 @@ class CatalystReport:
     stale_news_count: int = 0
     undated_news_count: int = 0
     future_news_count: int = 0
+    # Added as a derived field so callers constructing legacy reports remain valid.
+    region_statuses: tuple[NewsRegionStatus, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not self.region_statuses:
+            object.__setattr__(
+                self,
+                "region_statuses",
+                _region_statuses_from_sources(self.source_statuses),
+            )
 
     @property
     def news_status(self) -> CatalystResultStatus:
@@ -265,6 +292,16 @@ def _serialize_catalyst_report(report: CatalystReport) -> dict[str, Any]:
         "stale_news_count": report.stale_news_count,
         "undated_news_count": report.undated_news_count,
         "future_news_count": report.future_news_count,
+        "region_statuses": [
+            {
+                "region": item.region,
+                "status": item.status,
+                "source_count": item.source_count,
+                "successful_sources": item.successful_sources,
+                "row_count": item.row_count,
+            }
+            for item in report.region_statuses
+        ],
         "warnings": list(report.warnings),
         "events": [
             {
@@ -380,6 +417,20 @@ def _deserialize_catalyst_report(payload: Any) -> CatalystReport | None:
             for item in tuple(payload.get("source_statuses", ()) or ())
             if isinstance(item, dict)
         )
+        region_statuses = tuple(
+            NewsRegionStatus(
+                region=str(item.get("region", "")).strip(),
+                status=str(item.get("status", "unavailable")).strip() or "unavailable",
+                source_count=int(item.get("source_count", 0) or 0),
+                successful_sources=int(item.get("successful_sources", 0) or 0),
+                row_count=int(item.get("row_count", 0) or 0),
+            )
+            for item in tuple(payload.get("region_statuses", ()) or ())
+            if isinstance(item, dict)
+            and str(item.get("region", "")).strip() in {"domestic", "international"}
+            and str(item.get("status", "unavailable")).strip()
+            in {"ok", "partial", "empty", "timeout", "failed", "unavailable"}
+        )
         return CatalystReport(
             date=str(payload.get("date", "")).strip(),
             generated_at=str(payload.get("generated_at", "")).strip(),
@@ -396,6 +447,7 @@ def _deserialize_catalyst_report(payload: Any) -> CatalystReport | None:
             stale_news_count=int(payload.get("stale_news_count", 0) or 0),
             undated_news_count=int(payload.get("undated_news_count", 0) or 0),
             future_news_count=int(payload.get("future_news_count", 0) or 0),
+            region_statuses=region_statuses,
         )
     except (TypeError, ValueError):
         return None
@@ -1532,14 +1584,21 @@ def format_catalyst_notification(report: CatalystReport) -> str:
 
 def _source_status_digest(statuses: Sequence[NewsSourceHealth]) -> str:
     if not statuses:
-        return "无记录"
+        return "国内=unavailable；国际=unavailable"
     grouped: dict[str, list[str]] = {}
     for item in statuses:
         grouped.setdefault(item.region, []).append(item.status)
-    return "；".join(
+    source_digest = "；".join(
         f"{region}={'、'.join(_dedupe_texts(values))}"
         for region, values in sorted(grouped.items())
     )
+    region_statuses = _region_statuses_from_sources(statuses)
+    region_digest = "；".join(
+        f"{item.region}={item.status}"
+        for item in region_statuses
+        if item.region not in grouped
+    )
+    return "；".join(item for item in (source_digest, region_digest) if item)
 
 
 def _source_status_label(status: str) -> str:
@@ -1580,6 +1639,45 @@ def _report_source_status(
     if all(status == "timeout" for status in statuses):
         return "timeout"
     return "failed"
+
+
+def _region_statuses_from_sources(
+    source_statuses: Sequence[NewsSourceHealth],
+) -> tuple[NewsRegionStatus, ...]:
+    """Aggregate existing per-source health without changing source semantics."""
+
+    result: list[NewsRegionStatus] = []
+    for region in ("domestic", "international"):
+        items = tuple(
+            item
+            for item in source_statuses
+            if item.region == region or item.region == "mixed"
+        )
+        statuses = tuple(item.status for item in items)
+        if not statuses:
+            status: NewsRegionStatusValue = "unavailable"
+        elif all(value == "ok" for value in statuses):
+            status = "ok"
+        elif any(value in {"ok", "partial"} for value in statuses):
+            status = "partial"
+        elif all(value == "empty" for value in statuses):
+            status = "empty"
+        elif all(value == "timeout" for value in statuses):
+            status = "timeout"
+        else:
+            status = "failed"
+        result.append(
+            NewsRegionStatus(
+                region=region,
+                status=status,
+                source_count=len(items),
+                successful_sources=sum(
+                    1 for item in items if item.status in {"ok", "partial"}
+                ),
+                row_count=sum(max(0, int(item.row_count)) for item in items),
+            )
+        )
+    return tuple(result)
 
 
 def _event_result_status(
