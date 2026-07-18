@@ -10,6 +10,7 @@ export interface AqspCandidate {
   deterministic_reasons: readonly string[];
   strategies: readonly string[];
   evidence_status: string;
+  score_breakdown?: readonly string[];
   technical_metrics?: readonly { key: string; label: string; value: string }[];
   data_source?: string;
   data_fetched_at?: string;

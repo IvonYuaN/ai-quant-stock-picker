@@ -73,6 +73,7 @@ class AQSPCandidate:
     deterministic_reasons: tuple[str, ...] = ()
     strategies: tuple[str, ...] = ()
     evidence_status: str = "证据不足"
+    score_breakdown: tuple[str, ...] = ()
     technical_metrics: tuple[AQSPTechnicalMetric, ...] = ()
     data_source: str = ""
     data_fetched_at: str = ""
@@ -611,6 +612,7 @@ def _parse_candidate(payload: object) -> AQSPCandidate:
             "deterministic_reasons",
             "strategies",
             "evidence_status",
+            "score_breakdown",
             "technical_metrics",
             "data_source",
             "data_fetched_at",
@@ -637,6 +639,9 @@ def _parse_candidate(payload: object) -> AQSPCandidate:
             item.get("evidence_status"), "candidate.evidence_status"
         )
         or "证据不足",
+        score_breakdown=tuple(
+            _text_list(item.get("score_breakdown", []), "candidate.score_breakdown")
+        ),
         technical_metrics=tuple(
             _parse_technical_metric(value)
             for value in _list(
