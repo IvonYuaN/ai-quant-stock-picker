@@ -119,6 +119,11 @@ export interface AqspSnapshotEnvelope {
   meta: AqspSnapshotMeta;
 }
 
+export interface AqspDateIndex {
+  selected_date: string;
+  available_dates: readonly string[];
+}
+
 /** Snapshot data after the HTTP envelope is normalized for the existing view layer. */
 export interface AqspSnapshotView extends AqspSnapshot {
   meta: AqspSnapshotMeta;

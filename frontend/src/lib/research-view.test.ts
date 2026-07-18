@@ -2,6 +2,8 @@ import type { AqspAgentResult, AqspSnapshot } from "./api";
 import {
   debateProcessText,
   dedupeResearchText,
+  mergeAvailableResearchDates,
+  messageSourceUrl,
   sameResearchText,
   snapshotConclusion,
   snapshotMatchesSelectedDate,
@@ -47,4 +49,6 @@ export const researchViewContractChecks = {
   duplicateResearchTextCollapses: dedupeResearchText(["  过程摘要  ", "过程   摘要", "另一条"]).join("|") === "过程摘要|另一条",
   equalResearchTextMatches: sameResearchText("标题", "标题"),
   differentResearchTextDoesNotMatch: !sameResearchText("标题", "摘要"),
+  dateIndexCompletesSnapshotDates: mergeAvailableResearchDates(["2026-07-14"], ["2026-07-14", "2026-07-11"]).join("|") === "2026-07-14|2026-07-11",
+  legacyMessageUrlRemainsVisible: messageSourceUrl({ url: "https://example.test/news" }) === "https://example.test/news",
 };

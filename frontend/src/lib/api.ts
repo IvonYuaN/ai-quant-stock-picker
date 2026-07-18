@@ -1,12 +1,13 @@
 // AQSP 后端 API 客户端。/api → vite 代理到本地 FastAPI（默认 8900）。
 // 后端未启动或数据源异常时抛 ApiError，页面据此优雅降级。
-import type { AqspSnapshotEnvelope, AqspSnapshotView } from "@/types/aqsp";
+import type { AqspDateIndex, AqspSnapshotEnvelope, AqspSnapshotView } from "@/types/aqsp";
 
 export type {
   AqspAgentDiscussion,
   AqspAgentResult,
   AqspCandidate,
   AqspCrossMarket,
+  AqspDateIndex,
   AqspMarketContext,
   AqspMessage,
   AqspSnapshot,
@@ -268,6 +269,7 @@ export const api = {
   aqspSnapshot: (date?: string): Promise<AqspSnapshotView> =>
     getEnvelope<AqspSnapshotEnvelope>(date ? `/aqsp/snapshot?date=${encodeURIComponent(date)}` : "/aqsp/snapshot")
       .then(({ data, meta }) => ({ ...data, meta })),
+  aqspDates: (): Promise<AqspDateIndex> => get<AqspDateIndex>("/aqsp/dates"),
   indices: () => get<IndexQuote[]>("/indices"),
   marketOverview: () => get<MarketOverview>("/market/overview"),
   emotion: () => get<ShortTermEmotion>("/market/emotion"),

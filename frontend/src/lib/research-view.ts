@@ -23,6 +23,17 @@ export function dedupeResearchText(values: readonly string[]): string[] {
   }, []);
 }
 
+export function mergeAvailableResearchDates(
+  snapshotDates: readonly string[],
+  indexedDates: readonly string[],
+): string[] {
+  return dedupeResearchText([...indexedDates, ...snapshotDates]);
+}
+
+export function messageSourceUrl(message: { source_url?: string; url?: string }): string {
+  return message.source_url?.trim() || message.url?.trim() || "";
+}
+
 export function sameResearchText(left: string, right: string): boolean {
   const [first] = dedupeResearchText([left, right]);
   return Boolean(first) && dedupeResearchText([left, right]).length === 1;

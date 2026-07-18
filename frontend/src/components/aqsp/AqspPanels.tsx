@@ -19,6 +19,7 @@ import {
   debateProcessText,
   dedupeResearchText,
   formatResearchDate,
+  messageSourceUrl,
   sameResearchText,
   snapshotConclusion,
 } from "@/lib/research-view";
@@ -169,6 +170,7 @@ function MessageCard({ message }: { message: AqspMessage }) {
   const invalidation = uniqueNonEmpty(message.invalidation_signals, 2);
   const evidence = uniqueNonEmpty(message.supporting_evidence, 2);
   const summary = sameResearchText(message.title, message.summary) ? "" : message.summary;
+  const sourceUrl = messageSourceUrl(message);
   return (
     <article className="vr-message-card">
       <div className="flex min-w-0 items-start justify-between gap-3">
@@ -203,9 +205,9 @@ function MessageCard({ message }: { message: AqspMessage }) {
         </div>
       )}
       {evidence.length > 0 && <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">证据：{evidence.join("；")}</p>}
-      {message.source_url && (
+      {sourceUrl && (
         <a
-          href={message.source_url}
+          href={sourceUrl}
           target="_blank"
           rel="noreferrer"
           className="mt-2 inline-flex max-w-full items-center gap-1 text-[11px] text-primary underline-offset-2 hover:underline"

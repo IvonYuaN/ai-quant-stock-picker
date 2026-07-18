@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { api, ApiError, type AqspSnapshot } from "@/lib/api";
+import { mergeAvailableResearchDates } from "@/lib/research-view";
 
 export interface AqspSnapshotState {
   data: AqspSnapshot | null;
@@ -31,10 +32,18 @@ export function AqspWorkspaceProvider({ children }: { children: ReactNode }) {
     let active = true;
     setLoading(true);
     setError(null);
-    api.aqspSnapshot(selectedDate || undefined)
-      .then((snapshot) => {
+    const snapshotRequest = api.aqspSnapshot(selectedDate || undefined);
+    const dateIndexRequest = api.aqspDates().catch(() => null);
+    Promise.all([snapshotRequest, dateIndexRequest])
+      .then(([snapshot, dateIndex]) => {
         if (!active) return;
-        setData(snapshot);
+        setData({
+          ...snapshot,
+          available_dates: mergeAvailableResearchDates(
+            snapshot.available_dates,
+            dateIndex?.available_dates ?? [],
+          ),
+        });
         if (!selectedDate && snapshot.selected_date) {
           setSelectedDate(snapshot.selected_date);
           try {
