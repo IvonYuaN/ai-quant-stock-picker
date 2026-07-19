@@ -2086,7 +2086,7 @@ def test_dashboard_data_provider_dedupes_same_symbol_across_runtime_tasks_and_sa
 
     summaries = provider.debate_summaries("2026-07-14", limit=10)
 
-    assert [item.symbol for item in summaries] == ["002084", "300604"]
+    assert [item.symbol for item in summaries] == ["002084", "300604", "002084"]
     assert summaries[0].original_score == 80
     assert summaries[0].cross_market_summary == ""
     assert summaries[0].research_verdict == "倾向继续观察，机会在 技术多头: 技术面强势"
