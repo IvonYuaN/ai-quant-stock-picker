@@ -121,6 +121,10 @@ export AQSP_RUN_TASK_ID="${AQSP_RUN_TASK_ID:-intraday}"
 export AQSP_RUN_TASK_ID="intraday"
 export AQSP_NOTIFY="false"
 export AQSP_GATE_NOTIFY="false"
+# Keep the existing per-source fork isolation by default. Set this explicitly
+# to "thread" for an intraday/midday OOM fallback using bounded daemon threads.
+export AQSP_INTRADAY_CATALYST_FETCH_MODE="${AQSP_INTRADAY_CATALYST_FETCH_MODE:-process}"
+export AQSP_CATALYST_TASK_CONTEXT="${AQSP_RUN_TASK_ID}"
 # live_short 不能在消息源失败时复用上一交易日的催化缓存。
 export AQSP_CATALYST_REPORT_ALLOW_STALE_CACHE="false"
 # 实时跨市场网络采集在候选发布后的 sidecar 执行，主选股链禁止等待网络。
@@ -489,6 +493,8 @@ refresh_intraday_news_catalysts() {
         AQSP_NEWS_SOURCE_TIMEOUT_SECONDS="$INTRADAY_NEWS_SOURCE_TIMEOUT_SECONDS" \
         AQSP_NEWS_MAX_EVENTS="$INTRADAY_NEWS_MAX_EVENTS" \
         AQSP_NEWS_MAX_NEWS_AGE_DAYS="$INTRADAY_NEWS_MAX_NEWS_AGE_DAYS" \
+        AQSP_INTRADAY_CATALYST_FETCH_MODE="$AQSP_INTRADAY_CATALYST_FETCH_MODE" \
+        AQSP_CATALYST_TASK_CONTEXT="$AQSP_CATALYST_TASK_CONTEXT" \
         AQSP_NEWS_ENABLE_LLM_REVIEW="false" \
         AQSP_NEWS_LLM_TIMEOUT_SECONDS="1" \
         AQSP_NEWS_MAX_LLM_REVIEW_EVENTS="0" \
