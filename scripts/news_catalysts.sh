@@ -284,12 +284,14 @@ elif ! has_usable_current_news && restore_previous_current_news; then
 fi
 log "消息面雷达完成: ${OUTPUT}"
 
-# Keep one exact-date structured artifact so the dashboard can open historical
-# message days without treating them as current recommendations.
+# Keep the complete run-day artifact, then write date-scoped artifacts whose
+# events are partitioned by their actual published_at date. The dashboard reads
+# the latter, so an older event fetched today cannot appear as today's news.
 if [ -s "$JSON_OUTPUT" ]; then
     archive_date="$($PYTHON_BIN - "$JSON_OUTPUT" <<'PY'
 import json
 import sys
+from datetime import datetime
 from pathlib import Path
 
 try:
@@ -297,18 +299,68 @@ try:
 except (OSError, ValueError, IndexError):
     raise SystemExit(1)
 value = str(payload.get("date", "")).strip()
-if len(value) != 10 or str(payload.get("source_status", "")).strip() not in {"ok", "partial"}:
+try:
+    parsed_date = datetime.strptime(value, "%Y-%m-%d")
+except ValueError:
+    raise SystemExit(1)
+if parsed_date.strftime("%Y-%m-%d") != value:
+    raise SystemExit(1)
+if str(payload.get("source_status", "")).strip() not in {"ok", "partial"}:
     raise SystemExit(1)
 print(value)
 PY
     )" || archive_date=""
     if [ -n "$archive_date" ]; then
         mkdir -p "$ARCHIVE_DIR"
-        cp -f "$JSON_OUTPUT" "${ARCHIVE_DIR%/}/news-${archive_date}.json"
+        cp -f "$JSON_OUTPUT" "${ARCHIVE_DIR%/}/news-run-${archive_date}.json"
         if [ -f "$OUTPUT" ]; then
-            cp -f "$OUTPUT" "${ARCHIVE_DIR%/}/news-${archive_date}.md"
+            cp -f "$OUTPUT" "${ARCHIVE_DIR%/}/news-run-${archive_date}.md"
         fi
-        log "消息面按日期归档: ${ARCHIVE_DIR%/}/news-${archive_date}.json"
+        ARCHIVE_SOURCE_JSON="$JSON_OUTPUT" \
+        ARCHIVE_OUTPUT_DIR="$ARCHIVE_DIR" \
+        ARCHIVE_RUN_DATE="$archive_date" \
+        "$PYTHON_BIN" - <<'PY'
+import json
+import os
+from collections import defaultdict
+from datetime import datetime
+from pathlib import Path
+
+from aqsp.core.time import to_shanghai
+
+source_path = Path(os.environ["ARCHIVE_SOURCE_JSON"])
+output_dir = Path(os.environ["ARCHIVE_OUTPUT_DIR"])
+run_date = os.environ["ARCHIVE_RUN_DATE"]
+payload = json.loads(source_path.read_text(encoding="utf-8"))
+events_by_date: dict[str, list[dict]] = defaultdict(list)
+for event in payload.get("events", []):
+    if not isinstance(event, dict):
+        continue
+    published_at = str(event.get("published_at", "")).strip()
+    try:
+        published_date = to_shanghai(
+            datetime.fromisoformat(published_at.replace("Z", "+00:00"))
+        ).date().isoformat()
+    except (TypeError, ValueError):
+        continue
+    events_by_date[published_date].append(event)
+
+for published_date, events in sorted(events_by_date.items()):
+    scoped = dict(payload)
+    scoped["date"] = published_date
+    scoped["run_date"] = run_date
+    scoped["archive_date"] = published_date
+    scoped["archive_scope"] = "published_date"
+    scoped["events"] = events
+    scoped["archived_event_count"] = len(events)
+    target = output_dir / f"news-{published_date}.json"
+    temporary = target.with_suffix(target.suffix + ".tmp")
+    temporary.write_text(
+        json.dumps(scoped, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+    temporary.replace(target)
+PY
+        log "消息面按事件发布日期归档: ${ARCHIVE_DIR%/}/news-YYYY-MM-DD.json"
     fi
 fi
 

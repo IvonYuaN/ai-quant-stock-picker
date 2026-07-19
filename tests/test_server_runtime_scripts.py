@@ -5,6 +5,7 @@ import hashlib
 import os
 import shutil
 import subprocess
+from datetime import date, timedelta
 from pathlib import Path
 
 
@@ -836,6 +837,98 @@ def test_news_catalysts_script_sends_research_notification() -> None:
     assert "--enable-llm-review" in script
     assert "无有效结论：消息源失败" in script
     assert "## ✅ 开盘怎么用" not in script
+
+
+def test_news_catalysts_archives_events_by_published_date(tmp_path: Path) -> None:
+    project_root = tmp_path / "project"
+    python_bin = project_root / ".venv" / "bin" / "python3"
+    python_bin.parent.mkdir(parents=True)
+    python_bin.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        "if [ \"${1:-}\" = \"-m\" ]; then\n"
+        "  json_path=\"\"; report_path=\"\"\n"
+        "  previous=\"\"\n"
+        "  for argument in \"$@\"; do\n"
+        "    if [ \"$previous\" = \"--json-output\" ]; then json_path=\"$argument\"; fi\n"
+        "    if [ \"$previous\" = \"--output\" ]; then report_path=\"$argument\"; fi\n"
+        "    previous=\"$argument\"\n"
+        "  done\n"
+        "  python3 - \"$json_path\" \"$report_path\" <<'PY'\n"
+        "import json\n"
+        "import sys\n"
+        "from datetime import timedelta\n"
+        "from pathlib import Path\n"
+        "from aqsp.core.time import now_shanghai, today_shanghai\n"
+        "today = today_shanghai()\n"
+        "yesterday = today - timedelta(days=1)\n"
+        "payload = {\n"
+        "    'date': today.isoformat(),\n"
+        "    'generated_at': now_shanghai().isoformat(),\n"
+        "    'source_status': 'ok',\n"
+        "    'event_status': 'high_impact',\n"
+        "    'raw_news_count': 2,\n"
+        "    'events': [\n"
+        "        {'title': '今日事件', 'published_at': f'{today.isoformat()}T09:00:00+08:00'},\n"
+        "        {'title': '昨日事件', 'published_at': f'{yesterday.isoformat()}T15:30:00Z'},\n"
+        "    ],\n"
+        "}\n"
+        "Path(sys.argv[1]).parent.mkdir(parents=True, exist_ok=True)\n"
+        "Path(sys.argv[1]).write_text(json.dumps(payload), encoding='utf-8')\n"
+        "Path(sys.argv[2]).parent.mkdir(parents=True, exist_ok=True)\n"
+        "Path(sys.argv[2]).write_text('# fake report\\n', encoding='utf-8')\n"
+        "PY\n"
+        "  exit 0\n"
+        "fi\n"
+        "python3 \"$@\"\n",
+        encoding="utf-8",
+    )
+    python_bin.chmod(0o755)
+    output = project_root / "reports" / "news.md"
+    latest = project_root / "data" / "runtime" / "latest.json"
+    archive_dir = project_root / "data" / "runtime" / "news_archive"
+
+    result = subprocess.run(
+        ["bash", str(PROJECT_ROOT / "scripts" / "news_catalysts.sh")],
+        cwd=project_root,
+        env={
+            **os.environ,
+            "AQSP_PROJECT_ROOT": str(project_root),
+            "AQSP_PYTHON": str(python_bin),
+            "AQSP_NEWS_OUTPUT": str(output),
+            "AQSP_NEWS_JSON_OUTPUT": str(latest),
+            "AQSP_NEWS_ARCHIVE_DIR": str(archive_dir),
+            "AQSP_NEWS_NOTIFY": "false",
+            "PYTHONPATH": f"{PROJECT_ROOT / 'src'}:{PROJECT_ROOT}",
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=10,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    today = date.today()
+    yesterday = today - timedelta(days=1)
+    run_payload = json.loads(
+        (archive_dir / f"news-run-{today.isoformat()}.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert len(run_payload["events"]) == 2
+    today = today.isoformat()
+    yesterday = yesterday.isoformat()
+    today_payload = json.loads(
+        (archive_dir / f"news-{today}.json").read_text(encoding="utf-8")
+    )
+    yesterday_payload = json.loads(
+        (archive_dir / f"news-{yesterday}.json").read_text(encoding="utf-8")
+    )
+    assert today_payload["archive_scope"] == "published_date"
+    assert today_payload["run_date"] == today
+    assert [event["title"] for event in today_payload["events"]] == ["今日事件"]
+    assert [event["title"] for event in yesterday_payload["events"]] == ["昨日事件"]
+    assert yesterday_payload["date"] == yesterday
 
 
 def test_news_catalysts_failure_replaces_old_report_and_json(tmp_path: Path) -> None:
