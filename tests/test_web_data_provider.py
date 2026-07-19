@@ -1659,16 +1659,17 @@ def test_dashboard_data_provider_backfills_only_matching_candidate_fingerprint(
         ("candidate-a", "正确批次，应回填"),
     ):
         rows.append(
-            {
-                "debate_id": fingerprint,
+                {
+                    "debate_id": fingerprint,
                 "symbol": "300750",
                 "related_signal_date": "2026-07-14",
                 "candidate_fingerprint": fingerprint,
                 "task_id": "intraday",
                 "final_vote": {"bull": "bullish"},
-                "final_consensus": verdict,
-                "research_verdict": verdict,
-                "rounds": [{"round_num": 1, "opinions": [{"role": "bull"}]}],
+                    "final_consensus": verdict,
+                    "research_verdict": verdict,
+                    "opposition_points": ["高开低走或量价背离则失效"],
+                    "rounds": [{"round_num": 1, "opinions": [{"role": "bull"}]}],
             }
         )
     debate_path.write_text(
@@ -2039,7 +2040,8 @@ def test_dashboard_data_provider_dedupes_same_symbol_across_runtime_tasks_and_sa
                 "倾向继续观察，机会在 技术多头: 技术面强势，"
                 "但卡点是 跨市传导: ⚠️ 海外叙事未必立刻传到A股，需确认板块共振"
             ),
-            "primary_risk_gate": "跨市传导: ⚠️ 海外叙事未必立刻传到A股，需确认板块共振",
+                "primary_risk_gate": "跨市传导: ⚠️ 海外叙事未必立刻传到A股，需确认板块共振",
+                "opposition_points": ["海外叙事未形成板块共振则失效"],
             "next_trigger": "等待量价确认",
             "market_context_lines": [
                 "消息状态: 部分可用",

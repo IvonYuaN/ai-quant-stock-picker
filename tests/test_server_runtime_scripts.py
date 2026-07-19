@@ -513,7 +513,7 @@ def test_intraday_refresh_script_uses_isolated_outputs() -> None:
     )
     assert 'PARTIAL_SNAPSHOT_USED="false"' in script
     assert (
-        'write_intraday_status "running" "盘中刷新运行中；候选筛出后会先更新快照" "0"'
+            'write_intraday_status "running" "盘中刷新运行中；正在解析实时股票池" "0"'
         in script
     )
     assert 'AQSP_PROVISIONAL_REPORT="${INTRADAY_REPORT}"' in script
