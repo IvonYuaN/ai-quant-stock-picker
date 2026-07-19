@@ -1426,7 +1426,6 @@ def build_home_snapshot(
         available_dates=_bounded_unique_text(
             (
                 selected_date,
-                *_news_archive_dates(),
                 *_snapshot_dates(task_view, selected_date),
             ),
             MAX_HOME_DATES,
