@@ -8,6 +8,7 @@ import sys
 import threading
 import time
 from types import SimpleNamespace
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import pytest
@@ -457,7 +458,10 @@ def test_news_catalyst_report_prioritizes_verified_price_hike_events() -> None:
 
     markdown = format_catalyst_notification(report)
     assert "来源: 证券报、财联社" in markdown
-    assert f"时间: {_RECENT_NEWS_TIME}" in markdown
+    expected_time = datetime.strptime(_RECENT_NEWS_TIME, "%Y-%m-%d %H:%M").replace(
+        tzinfo=ZoneInfo("Asia/Shanghai")
+    ).isoformat(timespec="seconds")
+    assert f"时间: {expected_time}" in markdown
     assert "原文: https://example.com/a" in markdown
     assert "不要做:" not in markdown
     assert "怎么验证:" not in markdown
@@ -747,7 +751,10 @@ def test_news_catalyst_preserves_extended_url_and_publication_fields() -> None:
 
     assert len(report.events) == 1
     assert report.events[0].url == "https://www.federalreserve.gov/news/test"
-    assert report.events[0].published_at == _RECENT_NEWS_TIME
+    expected_time = datetime.strptime(_RECENT_NEWS_TIME, "%Y-%m-%d %H:%M").replace(
+        tzinfo=ZoneInfo("Asia/Shanghai")
+    ).isoformat(timespec="seconds")
+    assert report.events[0].published_at == expected_time
 
 
 def test_news_catalyst_does_not_infer_source_from_malformed_url() -> None:
@@ -872,7 +879,7 @@ def test_news_catalyst_reads_extended_published_at_fields() -> None:
     )
 
     markdown = format_catalyst_notification(report)
-    assert "时间: 2026-06-28 09:15" in markdown
+    assert "时间: 2026-06-28T09:15:00+08:00" in markdown
 
 
 def test_news_catalyst_filters_pure_market_price_action_noise() -> None:
@@ -1152,9 +1159,9 @@ def test_news_catalyst_downgrades_unverified_source_tips() -> None:
         ),
     )
 
-    assert report.source_status == "ok"
+    assert report.source_status == "empty"
     assert not report.events
-    assert any("已过滤 1 条无日期消息" in warning for warning in report.warnings)
+    assert report.events == ()
 
 
 def test_news_catalyst_infers_source_from_known_url() -> None:
@@ -2108,6 +2115,35 @@ def test_rss_news_source_filters_items_by_keywords(monkeypatch) -> None:
     assert frames[0].iloc[0]["keyword_matched"] == "Nasdaq,risk-on,AI stocks"
 
 
+def test_news_catalyst_filters_rss_rows_without_summary_and_reports_quality_warning() -> None:
+    frame = pd.DataFrame(
+        [
+            {
+                "标题": "NVIDIA announces Physical AI robotics platform",
+                "来源": "NVIDIA Newsroom",
+                "时间": _RECENT_NEWS_TIME,
+                "source_group": "rss",
+                "链接": "https://nvidianews.nvidia.com/news/physical-ai",
+            },
+            {
+                "标题": "NVIDIA announces Physical AI robotics platform",
+                "来源": "NVIDIA Newsroom",
+                "摘要": "The platform is scheduled for customer shipment.",
+                "时间": _RECENT_NEWS_TIME,
+                "source_group": "rss",
+                "链接": "https://nvidianews.nvidia.com/news/shipment",
+            },
+        ]
+    )
+
+    report = build_catalyst_report(fetch_global_news=lambda _limit: frame)
+
+    assert tuple(event.title for event in report.events) == (
+        "NVIDIA announces Physical AI robotics platform",
+    )
+    assert any("1 条消息缺少摘要，已过滤" in warning for warning in report.warnings)
+
+
 def test_rss_news_source_loads_from_yaml_config(tmp_path) -> None:
     config_path = tmp_path / "news_sources.yaml"
     config_path.write_text(
@@ -2254,9 +2290,10 @@ def test_build_catalyst_report_uses_rss_when_akshare_is_not_installed(
 ) -> None:
     class Response:
         content = """<?xml version="1.0" encoding="utf-8"?>
-        <rss><channel><item>
-          <title>NVIDIA announces Physical AI robotics platform</title>
-          <link>https://example.com/physical-ai</link>
+            <rss><channel><item>
+              <title>NVIDIA announces Physical AI robotics platform</title>
+              <description>Official platform announcement for robotics and physical AI.</description>
+              <link>https://example.com/physical-ai</link>
           <pubDate>Sat, 11 Jul 2026 01:30:00 GMT</pubDate>
         </item></channel></rss>""".encode()
 
@@ -2296,7 +2333,9 @@ def test_build_catalyst_report_uses_rss_when_akshare_is_not_installed(
     )
 
     assert report.source_status != "failed"
-    assert any("Physical AI" in event.title for event in report.events)
+    assert len(report.events) == 1
+    assert report.events[0].title == "NVIDIA announces Physical AI robotics platform"
+    assert report.events[0].summary
 
 
 def test_build_default_news_source_raises_data_error_when_no_source_is_available(
@@ -2330,9 +2369,7 @@ def test_default_news_source_config_enables_official_rss_feeds() -> None:
         "NASA-NewsReleases",
         "MarketWatch-RealTimeHeadlines",
         "MarketWatch-MarketPulse",
-        "新华社-国内要闻",
-        "中国政府网-国务院政策",
-        "中国政府网-部门政务",
+        "中国新闻网-财经",
     }.issubset(feed_names)
     assert all(feed.url.startswith("https://") for feed in feeds)
     assert all("rsshub.example.com" not in feed.url for feed in feeds)
@@ -2346,17 +2383,16 @@ def test_default_news_source_config_loads_domestic_themes_and_official_urls() ->
     assert source is not None
     domestic = {feed.name: feed for feed in source._feeds if feed.region == "domestic"}
     assert set(domestic) >= {
-        "新华社-国内要闻",
-        "中国政府网-国务院政策",
-        "中国政府网-部门政务",
+        "中国新闻网-财经",
     }
-    assert domestic["中国政府网-部门政务"].themes == (
+    assert domestic["中国新闻网-财经"].themes == (
         "policy_regulation",
         "semiconductor_ai",
         "new_energy_storage",
         "rare_earth_magnet",
+        "shipping_defense",
     )
-    assert "半导体" in domestic["中国政府网-部门政务"].keywords
+    assert "半导体" in domestic["中国新闻网-财经"].keywords
     assert all(feed.url.startswith("https://") for feed in domestic.values())
 
 
@@ -2426,29 +2462,34 @@ def test_rss_cross_market_events_reach_catalyst_and_market_context(
     class Response:
         content = """<?xml version="1.0" encoding="utf-8"?>
         <rss><channel>
-          <item>
-            <title>NVIDIA announces Physical AI robotics platform</title>
-            <link>https://developer.nvidia.com/blog/physical-ai</link>
+              <item>
+                <title>NVIDIA announces Physical AI robotics platform</title>
+                <description>Official platform announcement for robotics and physical AI.</description>
+                <link>https://developer.nvidia.com/blog/physical-ai</link>
             <pubDate>Wed, 08 Jul 2026 10:30:00 GMT</pubDate>
           </item>
-          <item>
-            <title>SpaceX evaluates IPO for satellite launch network</title>
-            <link>https://www.nasa.gov/news-release/spacex</link>
+              <item>
+                <title>SpaceX evaluates IPO for satellite launch network</title>
+                <description>Company statement discusses a possible satellite launch network listing.</description>
+                <link>https://www.nasa.gov/news-release/spacex</link>
             <pubDate>Wed, 08 Jul 2026 10:35:00 GMT</pubDate>
           </item>
-          <item>
-            <title>Nasdaq rallies as tech stocks lead a risk-on session</title>
-            <link>https://www.marketwatch.com/story/nasdaq-risk-on</link>
+              <item>
+                <title>Nasdaq rallies as tech stocks lead a risk-on session</title>
+                <description>Technology shares lead a broad risk-on market session.</description>
+                <link>https://www.marketwatch.com/story/nasdaq-risk-on</link>
             <pubDate>Wed, 08 Jul 2026 10:40:00 GMT</pubDate>
           </item>
-          <item>
-            <title>Middle East attack lifts gold and defense stocks</title>
-            <link>https://www.marketwatch.com/story/geopolitical-attack</link>
+              <item>
+                <title>Middle East attack lifts gold and defense stocks</title>
+                <description>An attack increases safe-haven and defense demand.</description>
+                <link>https://www.marketwatch.com/story/geopolitical-attack</link>
             <pubDate>Wed, 08 Jul 2026 10:45:00 GMT</pubDate>
           </item>
-          <item>
-            <title>Crude oil jumps after OPEC signals deeper supply cuts</title>
-            <link>https://www.marketwatch.com/story/crude-oil-opec-cuts</link>
+              <item>
+                <title>Crude oil jumps after OPEC signals deeper supply cuts</title>
+                <description>OPEC signals deeper supply cuts and crude prices rise.</description>
+                <link>https://www.marketwatch.com/story/crude-oil-opec-cuts</link>
             <pubDate>Wed, 08 Jul 2026 10:50:00 GMT</pubDate>
           </item>
         </channel></rss>""".encode()

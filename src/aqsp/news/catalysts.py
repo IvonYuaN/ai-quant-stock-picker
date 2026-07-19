@@ -7,7 +7,7 @@ import signal
 import threading
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field, replace
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 import re
 from time import monotonic
@@ -2194,26 +2194,36 @@ def _iter_news_rows(df: pd.DataFrame) -> Iterable[dict[str, str]]:
             row,
             ("contradicting_evidence", "反向证据", "利空证据"),
         )
+        summary = _first_text(
+            row,
+            ("summary", "摘要", "新闻摘要", "description", "描述"),
+        )
+        content = _first_text(
+            row,
+            (
+                "content",
+                "新闻内容",
+                "正文",
+                "内容",
+                "body",
+                "article_body",
+            ),
+        )
+        source_group = _first_text(row, ("source_group", "source_type"))
+        # RSS title-only items are leads, not auditable messages. Do not let a
+        # headline keyword manufacture a catalyst without an abstract/body.
+        if not source or (source_group == "rss" and not (summary or content)):
+            continue
+        summary = summary or content or title
         rows.append(
             {
                 "title": title,
-                "summary": _first_text(
-                    row,
-                    ("summary", "摘要", "新闻摘要", "description", "描述"),
-                ),
-                "content": _first_text(
-                    row,
-                    (
-                        "content",
-                        "新闻内容",
-                        "正文",
-                        "内容",
-                        "body",
-                        "article_body",
-                    ),
-                ),
+                "summary": summary,
+                "content": content,
                 "source": source,
-                "published_at": published_at or _fallback_published_at(title, url),
+                "published_at": _normalize_news_published_at(
+                    published_at or _fallback_published_at(title, url)
+                ),
                 "source_fetched_at": str(
                     getattr(df, "attrs", {}).get("aqsp_fetched_at", "") or ""
                 ),
@@ -2251,6 +2261,24 @@ def _normalize_news_url(value: str) -> str:
     if parsed.scheme.casefold() not in {"http", "https"} or not parsed.netloc:
         return ""
     return text
+
+
+def _normalize_news_published_at(value: str) -> str:
+    """Require a traceable publication timestamp in Shanghai time when known."""
+
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    parsed = _parse_published_datetime(text)
+    if parsed is None:
+        return text
+    # Preserve already Shanghai-qualified display strings; normalize naive or
+    # other-zone values so serialized output carries an explicit offset.
+    if parsed.utcoffset() == timedelta(hours=8) and re.search(
+        r"[+-]\d{2}:?\d{2}$", text
+    ):
+        return text
+    return parsed.isoformat(timespec="seconds")
 
 
 def _source_from_url(url: str) -> str:
@@ -2372,7 +2400,11 @@ def _source_health_from_frame(df: pd.DataFrame) -> tuple[NewsSourceHealth, ...]:
 
 def _fallback_published_at(title: str, url: str) -> str:
     published_day = _parse_published_day(title) or _parse_published_day(url)
-    return published_day.isoformat() if published_day is not None else ""
+    if published_day is None:
+        return ""
+    return datetime.combine(published_day, datetime.min.time()).replace(
+        tzinfo=_SHANGHAI_TZ
+    ).isoformat(timespec="seconds")
 
 
 def _select_diverse_events(
@@ -2951,7 +2983,53 @@ def _frame_warnings(df: pd.DataFrame, *, prefix: str) -> list[str]:
     warnings = (
         getattr(df, "attrs", {}).get("aqsp_warnings", ()) if df is not None else ()
     )
-    return [f"{prefix}: {warning}" for warning in warnings]
+    result = [f"{prefix}: {warning}" for warning in warnings]
+    result.extend(
+        f"{prefix}: {warning}" for warning in _news_quality_warnings(df)
+    )
+    return result
+
+
+def _news_quality_warnings(df: pd.DataFrame) -> tuple[str, ...]:
+    """Report malformed source rows without treating a reachable source as down."""
+
+    if df is None or df.empty:
+        return ()
+    rows = df.to_dict(orient="records")
+    is_rss = any(
+        _first_text(row, ("source_group", "source_type")) == "rss"
+        for row in rows
+    )
+    if not is_rss:
+        return ()
+    missing_summary = 0
+    missing_source = 0
+    for row in rows:
+        title = _first_text(row, ("标题", "title", "新闻标题"))
+        if not title:
+            continue
+        source = _first_text(
+            row,
+            (
+                "文章来源",
+                "source",
+                "来源",
+                "source_name",
+                "publisher",
+            ),
+        )
+        summary = _first_text(
+            row,
+            ("summary", "摘要", "新闻摘要", "description", "描述", "content"),
+        )
+        missing_source += int(not source)
+        missing_summary += int(not summary)
+    warnings: list[str] = []
+    if missing_summary:
+        warnings.append(f"{missing_summary} 条消息缺少摘要，已过滤")
+    if missing_source:
+        warnings.append(f"{missing_source} 条消息缺少来源，已过滤")
+    return tuple(warnings)
 
 
 def _call_fetcher_with_timeout(
