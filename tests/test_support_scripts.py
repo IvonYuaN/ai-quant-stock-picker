@@ -181,20 +181,105 @@ def test_backfill_intraday_debate_writes_current_task_records(
             "rating": result.rating,
             "recommended_adjustment": result.recommended_adjustment,
             "disagreement_score": result.disagreement_score,
+            "data_status": "available",
+            "final_consensus": "split",
+            "final_vote": {
+                "bull": "bullish",
+                "risk_control": "bearish",
+                "cross_market": "neutral",
+            },
+            "support_points": ["先观察承接"],
+            "opposition_points": ["高开低走则失效"],
+            "risk_warnings": ["高开低走则失效"],
+            "next_trigger": "确认板块承接",
+            "falsifiable_conditions": ["高开低走则失效"],
+            "advisory_only": True,
+            "deterministic_score": result.original_score,
+            "deterministic_score_unchanged": True,
             "rounds": [
                 {
                     "round_num": 1,
                     "opinions": [
                         {
+                            "agent_id": "bull-agent",
                             "role": "bull",
-                            "stance": "neutral",
+                            "stance": "bullish",
                             "confidence": 0.7,
                             "arguments": ["先观察承接。"],
-                        }
+                            "risk_factors": [],
+                            "opportunity_factors": ["量价承接"],
+                        },
+                        {
+                            "agent_id": "risk-agent",
+                            "role": "risk_control",
+                            "stance": "bearish",
+                            "confidence": 0.7,
+                            "arguments": ["高开低走则失效"],
+                            "risk_factors": ["高开低走则失效"],
+                            "opportunity_factors": [],
+                        },
+                        {
+                            "agent_id": "cross-agent",
+                            "role": "cross_market",
+                            "stance": "neutral",
+                            "confidence": 0.5,
+                            "arguments": ["等待A股映射确认"],
+                            "risk_factors": ["海外叙事需盘中验证"],
+                            "opportunity_factors": [],
+                        },
                     ],
-                }
+                },
+                {
+                    "round_num": 2,
+                    "opinions": [
+                        {
+                            "agent_id": "bull-agent",
+                            "role": "bull",
+                            "stance": "bullish",
+                            "confidence": 0.7,
+                            "arguments": ["先观察承接。"],
+                            "risk_factors": [],
+                            "opportunity_factors": ["量价承接"],
+                            "peer_reviewed_roles": ["risk_control"],
+                            "counterarguments": [],
+                            "rebuttal_records": [],
+                        },
+                        {
+                            "agent_id": "risk-agent",
+                            "role": "risk_control",
+                            "stance": "bearish",
+                            "confidence": 0.7,
+                            "arguments": ["高开低走则失效"],
+                            "risk_factors": ["高开低走则失效"],
+                            "opportunity_factors": [],
+                            "counterarguments": ["已质询承接延续"],
+                            "counterargument_roles": ["bull"],
+                            "peer_reviewed_roles": ["bull"],
+                            "rebuttal_records": [
+                                {
+                                    "challenged_role": "bull",
+                                    "challenged_claim": "先观察承接。",
+                                    "rebuttal_reason": "高开低走则失效",
+                                    "challenged_stance": "bullish",
+                                    "opposing_stance": "bearish",
+                                }
+                            ],
+                        },
+                        {
+                            "agent_id": "cross-agent",
+                            "role": "cross_market",
+                            "stance": "neutral",
+                            "confidence": 0.5,
+                            "arguments": ["等待A股映射确认"],
+                            "risk_factors": ["海外叙事需盘中验证"],
+                            "opportunity_factors": [],
+                            "counterarguments": ["等待A股映射确认"],
+                            "peer_reviewed_roles": ["bull"],
+                            "rebuttal_records": [],
+                        },
+                    ],
+                },
             ],
-            "final_vote": {"bull": "neutral"},
         },
     )
 
@@ -226,7 +311,13 @@ def test_backfill_intraday_debate_writes_current_task_records(
     assert "debate_context_warning" not in current_row
     assert any("海外AI算力映射" in line for line in current_row["market_context_lines"])
     assert any("消息催化" in line for line in current_row["market_context_lines"])
-    assert captured["resolved_context"] == captured["debate_context"]
+    assert (
+        tuple(captured["debate_context"][: len(captured["resolved_context"])])
+        == (captured["resolved_context"])
+    )
+    assert any(
+        line.startswith("第2轮复议新证据:") for line in captured["debate_context"]
+    )
     assert captured["debate_context"]
 
 
