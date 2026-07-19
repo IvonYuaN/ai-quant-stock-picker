@@ -126,7 +126,7 @@ function CurrentEmptyObservationNotice({ snapshot }: { snapshot: AqspSnapshot })
       <CalendarDays className="mt-0.5 h-4 w-4 shrink-0" />
       <div className="min-w-0">
         <strong>今日无交易任务，当前仅观察</strong>
-        <p className="mt-1">当前日期没有候选或消息；推荐 gate 已阻塞，系统没有把历史数据当作今日推荐。</p>
+        <p className="mt-1">当前日期没有实时任务结果；系统没有把历史数据当作今日推荐。</p>
         {recentLabel && (
           <button type="button" onClick={() => selectDate(recentDate)} className="mt-1.5 text-left underline underline-offset-2 hover:text-foreground">
             最近可回看：{recentLabel.day}（{recentLabel.weekday}）

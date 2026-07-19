@@ -1626,15 +1626,15 @@ class DashboardDataProvider:
             elif (status == "blocked_by_circuit_breaker" or triggered) and (
                 coldstart_ready and cooldown_until
             ):
-                conclusion = "冷启动样本已达标，等待组合保护冷却"
+                conclusion = "冷启动样本已达标；组合验证状态单独展示，候选仍可研究"
             elif status == "blocked_by_circuit_breaker" or triggered:
                 conclusion = "组合保护生效，暂停新增纸面复核"
             elif (
                 coldstart_ready and cooldown_until
             ):
-                conclusion = "冷启动样本已达标，等待组合保护冷却"
+                conclusion = "冷启动样本已达标；组合验证状态单独展示，候选仍可研究"
             elif coldstart_ready:
-                conclusion = "冷启动样本已达标，等待生产 walk-forward gate"
+                conclusion = "冷启动样本已达标；下一交易日直接生成研究推荐"
             elif final_count == 0:
                 no_candidate_reason = str(
                     run.get("run_no_candidate_reason") or ""

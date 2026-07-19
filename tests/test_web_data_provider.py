@@ -532,7 +532,7 @@ def test_dashboard_data_provider_runtime_overview_backfills_coldstart_progress_f
 
     assert overview.coldstart_progress == "30/30"
     assert overview.gate_blocker_line == "双门 gate: DSR 未过门 / PBO 未过门"
-    assert overview.conclusion == "冷启动样本已达标，等待组合保护冷却"
+    assert overview.conclusion == "冷启动样本已达标；组合验证状态单独展示，候选仍可研究"
 
 
 def test_dashboard_data_provider_runtime_overview_uses_coldstart_handoff_state(
@@ -566,7 +566,7 @@ def test_dashboard_data_provider_runtime_overview_uses_coldstart_handoff_state(
     overview = provider.runtime_overview("2026-07-09")
 
     assert overview.coldstart_progress == "34/30"
-    assert overview.conclusion == "冷启动样本已达标，等待生产 walk-forward gate"
+    assert overview.conclusion == "冷启动样本已达标；下一交易日直接生成研究推荐"
     assert overview.coldstart_handoff_line.startswith("冷启动交接: 样本门已达标")
     assert "run_production_walkforward_gate" in overview.coldstart_handoff_line
     assert "bt_task.sh walkforward-gate" in overview.coldstart_handoff_line
