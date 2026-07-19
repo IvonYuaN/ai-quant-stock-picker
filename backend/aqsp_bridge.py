@@ -190,6 +190,27 @@ class AQSPRecommendationGate:
 
 
 @dataclass(frozen=True)
+class AQSPPhase:
+    task_id: str
+    label: str
+    status: str
+    candidate_count: int
+    unique_symbols: int
+    overlap_symbols: int
+    updated_at: str = ""
+
+
+@dataclass(frozen=True)
+class AQSPUniverse:
+    total: int = 0
+    resolved: int = 0
+    screened: int = 0
+    final: int = 0
+    max_universe: int = 0
+    source: str = ""
+
+
+@dataclass(frozen=True)
 class AQSPCrossMarket:
     rule_id: str
     theme: str
@@ -233,6 +254,8 @@ class AQSPSnapshot:
     messages: tuple[AQSPMessage, ...] = ()
     market_context: AQSPMarketContext | None = None
     recommendation_gate: AQSPRecommendationGate | None = None
+    phases: tuple[AQSPPhase, ...] = ()
+    universe: AQSPUniverse = AQSPUniverse()
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -702,6 +725,8 @@ def _parse_snapshot(payload: Mapping[str, Any]) -> AQSPSnapshot:
         "messages",
         "market_context",
         "recommendation_gate",
+        "phases",
+        "universe",
     }
     _check_keys(payload, required, "快照", optional)
     schema_version = _text(payload["schema_version"], "schema_version")
@@ -764,6 +789,47 @@ def _parse_snapshot(payload: Mapping[str, Any]) -> AQSPSnapshot:
         recommendation_gate=_parse_recommendation_gate(
             payload.get("recommendation_gate")
         ),
+        phases=tuple(_parse_phase(item) for item in _list(payload.get("phases", []), "phases")),
+        universe=_parse_universe(payload.get("universe")),
+    )
+
+
+def _parse_phase(payload: object) -> AQSPPhase:
+    item = _object(payload, "phase")
+    _check_keys(
+        item,
+        {"task_id", "label", "status", "candidate_count", "unique_symbols", "overlap_symbols"},
+        "phase",
+        {"updated_at"},
+    )
+    return AQSPPhase(
+        task_id=_text(item["task_id"], "phase.task_id"),
+        label=_text(item["label"], "phase.label"),
+        status=_text(item["status"], "phase.status"),
+        candidate_count=_integer(item["candidate_count"], "phase.candidate_count"),
+        unique_symbols=_integer(item["unique_symbols"], "phase.unique_symbols"),
+        overlap_symbols=_integer(item["overlap_symbols"], "phase.overlap_symbols"),
+        updated_at=_optional_text(item.get("updated_at"), "phase.updated_at"),
+    )
+
+
+def _parse_universe(payload: object) -> AQSPUniverse:
+    if payload is None:
+        return AQSPUniverse()
+    item = _object(payload, "universe")
+    _check_keys(
+        item,
+        set(),
+        "universe",
+        {"total", "resolved", "screened", "final", "max_universe", "source"},
+    )
+    return AQSPUniverse(
+        total=_integer(item.get("total", 0), "universe.total"),
+        resolved=_integer(item.get("resolved", 0), "universe.resolved"),
+        screened=_integer(item.get("screened", 0), "universe.screened"),
+        final=_integer(item.get("final", 0), "universe.final"),
+        max_universe=_integer(item.get("max_universe", 0), "universe.max_universe"),
+        source=_optional_text(item.get("source"), "universe.source"),
     )
 
 
