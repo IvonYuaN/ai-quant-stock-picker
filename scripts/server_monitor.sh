@@ -7,8 +7,14 @@
 set -euo pipefail
 
 PROJECT_ROOT="${AQSP_PROJECT_ROOT:-/opt/aqsp}"
-VENV_DIR="${PROJECT_ROOT}/.venv"
-PYTHON_BIN="${VENV_DIR}/bin/python3"
+RUNTIME_PYTHON_HELPER="${PROJECT_ROOT}/scripts/runtime_python.sh"
+if [ ! -f "$RUNTIME_PYTHON_HELPER" ]; then
+    echo "[ERROR] 缺少运行时 Python 解析器: ${RUNTIME_PYTHON_HELPER}" >&2
+    exit 1
+fi
+# shellcheck disable=SC1090
+source "$RUNTIME_PYTHON_HELPER"
+PYTHON_BIN="$(aqsp_runtime_python "$PROJECT_ROOT")"
 LOG_DIR="${PROJECT_ROOT}/logs/monitor"
 RESULT_LOG="${LOG_DIR}/monitor-$(date +%Y-%m-%d).log"
 MONITOR_CONFIG="${AQSP_MONITOR_CONFIG:-config/monitors.yaml}"
@@ -81,8 +87,8 @@ fi
 } >"$LOCK_INFO_FILE"
 trap 'rm -f "$LOCK_INFO_FILE"; rmdir "$LOCK_FILE"' EXIT
 
-if [ ! -f "$PYTHON_BIN" ]; then
-    log "[ERROR] Python 可执行文件不存在: $PYTHON_BIN"
+if ! aqsp_require_runtime_python "$PYTHON_BIN"; then
+    log "[ERROR] AQSP runtime Python 不可用: $PYTHON_BIN"
     exit 1
 fi
 
