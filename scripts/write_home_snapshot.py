@@ -1381,6 +1381,15 @@ def build_home_snapshot(
         getattr(overview, "top_headline", ""),
         getattr(task_view, "headline", ""),
     )
+    if not candidates:
+        raw_summaries = (
+            "当前日期没有候选，未使用其他日期或旧运行计数填充",
+            *tuple(
+                summary
+                for summary in raw_summaries
+                if not re.search(r"(?:\d+\s*个?\s*候选|候选\s*\d+|纸面复核\s*\d+|待复核\s*\d+)", str(summary))
+            ),
+        )
     aligned_summaries = tuple(
         _align_count_summary(
             str(summary),
