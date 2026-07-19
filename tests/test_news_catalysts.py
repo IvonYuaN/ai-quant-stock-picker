@@ -66,6 +66,10 @@ _RECENT_NEWS_DATE = today_shanghai().isoformat()
         ("GPT-Red: Unlocking Self-Improvement for Robustness", "AI/半导体技术动态"),
         ("某厂商发布新一代800G光模块产品", "新品/产品发布"),
         ("Minutes of the Board's discount rate meetings", "宏观流动性"),
+        ("商业航天发射任务成功，卫星订单落地", "商业航天/卫星订单"),
+        ("国防部公布新型军机采购合同，军工订单增长", "军工订单/政策"),
+        ("地缘风险推升金价，央行购金继续增加", "黄金/贵金属催化"),
+        ("LNG供应中断，天然气现货价格上涨", "油气供需催化"),
     ],
 )
 def test_news_catalyst_classifies_supply_chain_evidence(
@@ -102,6 +106,17 @@ def test_news_catalyst_classifies_supply_chain_evidence_from_summary() -> None:
     assert classified is not None
     assert classified[0] == "电子材料涨价/缺货"
     assert classified[1] == "positive"
+
+
+def test_news_catalyst_does_not_treat_bare_wti_mention_as_price_rise() -> None:
+    assert _classify_title("WTI库存数据公布，市场等待方向") is None
+
+
+def test_news_catalyst_classifies_oil_price_fall_as_negative() -> None:
+    classified = _classify_title("原油价格下跌，库存高企压制油气需求")
+
+    assert classified is not None
+    assert classified[:2] == ("油气供需转弱", "negative")
 
 
 def test_news_catalyst_uses_body_context_for_negative_impact() -> None:

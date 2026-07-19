@@ -73,6 +73,20 @@ rss:
       enabled: true
       keywords: ["NASA", "SpaceX", "space", "satellite", "launch", "rocket", "commercial space", "商业航天", "卫星互联网"]
       max_items: 8
+    - name: 美国能源信息署-EIA
+      url: "https://www.eia.gov/rss/todayinenergy.xml"
+      category: "global_energy"
+      region: international
+      enabled: true
+      keywords: ["oil", "crude", "natural gas", "LNG", "inventory", "production", "原油", "天然气", "油气", "库存", "产量"]
+      max_items: 8
+    - name: 美国国防部-DefenseNews
+      url: "https://www.defense.gov/DesktopModules/ArticleCS/RSS.ashx?ContentType=400&Site=150"
+      category: "global_defense"
+      region: international
+      enabled: true
+      keywords: ["defense", "defence", "contract", "military", "security", "defense budget", "军工", "国防", "防务", "合同"]
+      max_items: 8
     - name: MarketWatch-RealTimeHeadlines
       url: "https://feeds.content.dowjones.io/public/rss/mw_realtimeheadlines"
       category: "global_risk_appetite"

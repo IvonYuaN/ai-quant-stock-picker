@@ -26,6 +26,12 @@ def test_news_entity_graph_matches_summary_aliases() -> None:
     assert "PCB" in result.sectors
 
 
+def test_news_entity_graph_matches_cross_market_supply_chain_aliases() -> None:
+    result = match_news_entities("国防订单增长，LNG供应紧张推升金价")
+
+    assert {"军工电子", "油气", "黄金"}.issubset(set(result.sectors))
+
+
 def test_news_entity_graph_matches_explicit_six_digit_codes() -> None:
     result = match_news_entities("公告关注 300750 与 688256 的产业链影响")
 

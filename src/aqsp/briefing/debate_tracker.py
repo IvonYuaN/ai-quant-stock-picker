@@ -1083,7 +1083,9 @@ class DebatePerformanceTracker:
             elif stance == "bearish":
                 weighted_sum -= weight
 
-        max_possible = sum(agent_weights.values()) if agent_weights else 0.1
+        # Negative historical weights represent contrarian influence. Use
+        # magnitude for normalization so signed weights cannot cancel out.
+        max_possible = sum(abs(weight) for weight in agent_weights.values())
         if max_possible > 0:
             normalized = weighted_sum / max_possible
         else:

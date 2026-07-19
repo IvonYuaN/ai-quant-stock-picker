@@ -781,6 +781,18 @@ POSITIVE_PATTERNS: tuple[tuple[str, str, int], ...] = (
         4,
     ),
     (
+        "NASA.*(?:launch|rocket|satellite|spacecraft|mission)|SpaceX|"
+        "space mission|commercial space|satellite|launch vehicle|rocket|"
+        "商业航天|卫星互联网|低轨卫星",
+        "商业航天/卫星订单",
+        4,
+    ),
+    (
+        "军工|国防|防务|国防预算|军品|军用装备|(?:defense|defence).*(?:order|contract|spending|budget)",
+        "军工订单/政策",
+        4,
+    ),
+    (
         "中标|大单|订单|签订合同|采购|定点|销量放量|出货放量|需求放量",
         "订单/需求验证",
         4,
@@ -793,11 +805,10 @@ POSITIVE_PATTERNS: tuple[tuple[str, str, int], ...] = (
         3,
     ),
     (
-        "NASA.*(?:launch|rocket|satellite|spacecraft|mission)|SpaceX|"
-        "space mission|commercial space|satellite|launch vehicle|rocket|"
-        "商业航天|卫星互联网|低轨卫星",
-        "资本运作",
-        3,
+        "(?:天然气|lng|液化天然气|原油|油气|oil|gas|lng).*(?:涨价|上涨|飙升|供应中断|减产|涨|rises|surges|spike)|"
+        "(?:涨价|上涨|飙升|供应中断|减产|rises|surges|spike).*(?:天然气|lng|液化天然气|原油|油气|oil|gas)",
+        "油气供需催化",
+        4,
     ),
 )
 
@@ -811,6 +822,12 @@ GLOBAL_CROSS_MARKET_PATTERNS: tuple[tuple[str, str, Impact, int], ...] = (
         4,
     ),
     (
+        "黄金|金价|贵金属|央行购金|gold price|gold.*(?:rises|jumps|surges|record)",
+        "黄金/贵金属催化",
+        "positive",
+        4,
+    ),
+    (
         "战争|地缘|冲突|袭击|空袭|导弹|中东|停火破裂|"
         r"\bwar\b|\bgeopolitical\b|\battack\b|\bairstrike\b|\bmissile\b|"
         r"\bmiddle east\b|\bdefense stocks\b",
@@ -819,11 +836,18 @@ GLOBAL_CROSS_MARKET_PATTERNS: tuple[tuple[str, str, Impact, int], ...] = (
         5,
     ),
     (
-        "油价大涨|油价飙升|原油大涨|布伦特原油|wti|"
+        "油价大涨|油价飙升|原油大涨|布伦特原油大涨|WTI原油大涨|WTI油价上涨|"
         "crude oil.*(rises|jumps|surges|rally)|brent.*(rises|jumps|surges)|"
         "opec.*(cut|cuts)|oil prices.*(rise|jump|surge)",
         "油价冲击",
         "positive",
+        4,
+    ),
+    (
+        "油价下跌|原油下跌|油价暴跌|crude oil.*(?:falls|drops|slumps)|"
+        "brent.*(?:falls|drops|slumps)|oil prices.*(?:fall|drop|slump)",
+        "油气价格回落",
+        "negative",
         4,
     ),
 )
@@ -838,6 +862,12 @@ NEGATIVE_PATTERNS: tuple[tuple[str, str, int], ...] = (
     ("事故|停工|停产|召回|安全隐患|污染", "经营事故", 5),
     ("制裁|限制|禁令|断供|关税|出口管制", "外部冲击", 4),
     ("业绩下滑|亏损|不及预期|预亏|暴雷", "业绩风险", 4),
+    (
+        "(?:天然气|lng|液化天然气|原油|油气|oil|gas).*(?:价格下跌|下跌|暴跌|需求疲弱|库存高企|减产)|"
+        "(?:价格下跌|下跌|暴跌|需求疲弱|库存高企|减产).*(?:天然气|lng|液化天然气|原油|油气|oil|gas)",
+        "油气供需转弱",
+        4,
+    ),
     ("价格下跌|降价|需求疲弱|库存高企|产能过剩", "供需转弱", 4),
     (
         "(?:光模块|服务器|交换机|液冷|数据中心).*"
@@ -1079,6 +1109,24 @@ _TRANSMISSION_CHAIN_RULES: tuple[
         ("航线受阻/运力变化", "运价与港口周转", "航运公司利润弹性"),
         ("运价指数连续上行且公司运力受益", "航运板块相对强度延续"),
         ("运价单日脉冲", "航线恢复或运价快速回落"),
+    ),
+    (
+        ("黄金", "gold", "贵金属", "央行购金"),
+        ("避险/实际利率", "金价与资源品", "黄金股相对强度"),
+        ("金价与黄金股同步走强", "美元和实际利率未反向"),
+        ("金价冲高回落", "美元或实际利率快速上行"),
+    ),
+    (
+        ("军工", "国防", "防务", "军品", "defense", "defence"),
+        ("政策/地缘风险", "军工订单与预算", "军工电子/通信交付"),
+        ("预算、订单或招标有官方来源", "军工板块成交扩散"),
+        ("只有情绪没有订单", "事件缓和或板块冲高回落"),
+    ),
+    (
+        ("天然气", "lng", "液化天然气", "油气", "oil", "gas"),
+        ("供给/运输扰动", "油气价格", "油服与资源品利润"),
+        ("现货或期货趋势被数据确认", "油气与油服相对强度扩散"),
+        ("价格单日脉冲", "供给恢复或库存回升"),
     ),
 )
 

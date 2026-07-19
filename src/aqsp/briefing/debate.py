@@ -1761,7 +1761,7 @@ class AShareDebateCoordinator:
             logger.exception("多 Agent 讨论失败: %s", exc)
             result.failure = f"讨论执行失败: {type(exc).__name__}: {exc}"
             result.runtime_status = "blocked"
-            result.runtime_blocked = True
+            result.realtime_blocked = True
             result.runtime_blocker = result.failure
             result.adjusted_score = result.original_score
             result.deterministic_score_unchanged = True
@@ -2193,8 +2193,12 @@ class AShareDebateCoordinator:
         )[:5]
 
         max_vote = max(vote_counts.values())
+        # A tie must remain a disagreement. Dict insertion order must not
+        # turn a bull/bear tie into a bullish conclusion.
         consensus_positions = [
-            pos for pos, count in vote_counts.items() if count == max_vote
+            pos
+            for pos, count in vote_counts.items()
+            if count == max_vote and count > 0
         ]
         result.final_consensus = (
             consensus_positions[0] if len(consensus_positions) == 1 else "split"

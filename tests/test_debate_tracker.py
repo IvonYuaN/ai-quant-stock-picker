@@ -131,6 +131,35 @@ def test_debate_agent_uses_stable_agent_id_when_runtime_signature_matches() -> N
     assert first.agent_id != changed.agent_id
 
 
+def test_debate_adjustment_marks_bull_bear_tie_as_keep(tmp_path) -> None:
+    tracker = DebatePerformanceTracker(
+        storage_path=str(tmp_path / "debate-performance.jsonl")
+    )
+
+    adjustment, disagreement, recommendation = tracker.calculate_debate_adjustment(
+        {AgentRole.BULL: "bullish", AgentRole.BEAR: "bearish"},
+        {AgentRole.BULL: 0.1, AgentRole.BEAR: 0.1},
+    )
+
+    assert adjustment == 0.0
+    assert disagreement == 0.75
+    assert recommendation == "keep"
+
+
+def test_debate_adjustment_normalizes_contrarian_weights_by_magnitude(tmp_path) -> None:
+    tracker = DebatePerformanceTracker(
+        storage_path=str(tmp_path / "debate-performance.jsonl")
+    )
+
+    adjustment, _, recommendation = tracker.calculate_debate_adjustment(
+        {AgentRole.BULL: "bullish", AgentRole.BEAR: "bearish"},
+        {AgentRole.BULL: 0.2, AgentRole.BEAR: -0.1},
+    )
+
+    assert adjustment == pytest.approx(0.3)
+    assert recommendation == "raise"
+
+
 def test_debate_performance_tracker_reuses_stable_agent_history_when_reloaded(
     tmp_path,
 ) -> None:

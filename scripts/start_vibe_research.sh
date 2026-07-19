@@ -13,6 +13,7 @@ SNAPSHOT_PATH="${AQSP_RESEARCH_SURFACE_SNAPSHOT:-data/runtime/home_dashboard_sna
 LOG_DIR="${VIBE_RESEARCH_LOG_DIR:-${PROJECT_ROOT}/logs/vibe-research}"
 SKIP_BUILD="false"
 CHECK_ONLY="false"
+SKIP_SNAPSHOT="false"
 
 for bind_host in "$FRONTEND_HOST" "$BACKEND_HOST"; do
     case "$bind_host" in
@@ -29,10 +30,11 @@ done
 
 usage() {
     cat <<'EOF'
-用法: scripts/start_vibe_research.sh [--skip-build] [--check-only]
+用法: scripts/start_vibe_research.sh [--skip-build] [--check-only] [--skip-snapshot]
 
 默认端口：前端 127.0.0.1:5899，FastAPI 127.0.0.1:8900。
 已有健康进程会复用；端口被其他服务占用时直接失败，不会 kill 或覆盖进程。
+没有运行快照时可用 --skip-snapshot 验收双服务和页面空态。
 EOF
 }
 
@@ -40,6 +42,7 @@ while (($# > 0)); do
     case "$1" in
         --skip-build) SKIP_BUILD="true" ;;
         --check-only) CHECK_ONLY="true" ;;
+        --skip-snapshot) SKIP_SNAPSHOT="true" ;;
         -h|--help) usage; exit 0 ;;
         *) echo "未知参数: $1" >&2; usage >&2; exit 2 ;;
     esac
@@ -111,10 +114,15 @@ wait_for_http() {
 }
 
 if [[ "$CHECK_ONLY" == "true" ]]; then
-    exec "${PROJECT_ROOT}/scripts/check_vibe_research.sh" \
-        --frontend-url "$frontend_url" \
-        --backend-url "$backend_url" \
+    check_args=(
+        --frontend-url "$frontend_url"
+        --backend-url "$backend_url"
         --snapshot "$SNAPSHOT_PATH"
+    )
+    if [[ "$SKIP_SNAPSHOT" == "true" ]]; then
+        check_args+=(--skip-snapshot)
+    fi
+    exec "${PROJECT_ROOT}/scripts/check_vibe_research.sh" "${check_args[@]}"
 fi
 
 if [[ ! -d "$FRONTEND_DIR/node_modules" ]]; then
@@ -182,11 +190,16 @@ if ! assert_port_available_or_expected "Vite preview" "$FRONTEND_HOST" "$FRONTEN
     wait_for_http "Vite preview" "${frontend_url}/"
 fi
 
-AQSP_RESEARCH_SURFACE_SNAPSHOT="$SNAPSHOT_PATH" \
-    "${PROJECT_ROOT}/scripts/check_vibe_research.sh" \
-    --frontend-url "$frontend_url" \
-    --backend-url "$backend_url" \
+check_args=(
+    --frontend-url "$frontend_url"
+    --backend-url "$backend_url"
     --snapshot "$SNAPSHOT_PATH"
+)
+if [[ "$SKIP_SNAPSHOT" == "true" ]]; then
+    check_args+=(--skip-snapshot)
+fi
+AQSP_RESEARCH_SURFACE_SNAPSHOT="$SNAPSHOT_PATH" \
+    "${PROJECT_ROOT}/scripts/check_vibe_research.sh" "${check_args[@]}"
 
 if [[ "$started_backend" == "false" && "$started_frontend" == "false" ]]; then
     echo "All AQSP services were already healthy; nothing was restarted."
