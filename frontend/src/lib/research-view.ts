@@ -11,6 +11,20 @@ export function snapshotConclusion(snapshot: AqspSnapshot): string {
   return snapshot.summaries[0] || snapshot.market_context?.overview || "";
 }
 
+export function isCurrentEmptyObservation(snapshot: AqspSnapshot): boolean {
+  return Boolean(
+    snapshot.meta?.historical === false &&
+      snapshot.candidates.length === 0 &&
+      snapshot.messages.length === 0 &&
+      snapshot.recommendation_gate &&
+      !snapshot.recommendation_gate.recommendation_allowed,
+  );
+}
+
+export function latestReviewDate(snapshot: AqspSnapshot): string {
+  return snapshot.available_dates.find((date) => date !== snapshot.selected_date) || "";
+}
+
 export function dedupeResearchText(values: readonly string[]): string[] {
   const seen = new Set<string>();
   return values.reduce<string[]>((result, value) => {

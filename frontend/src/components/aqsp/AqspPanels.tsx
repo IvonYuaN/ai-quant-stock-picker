@@ -20,6 +20,8 @@ import {
   debateProcessText,
   dedupeResearchText,
   formatResearchDate,
+  isCurrentEmptyObservation,
+  latestReviewDate,
   messageSourceUrl,
   sameResearchText,
   snapshotConclusion,
@@ -105,6 +107,27 @@ function RecommendationGateNotice({ snapshot }: { snapshot: AqspSnapshot }) {
       <div className="min-w-0">
         <strong>当前仅观察，未达到可推荐条件</strong>
         <span className="mt-1 block text-[11px]">{reasons.join("；") || "推荐 gate 未通过"}</span>
+      </div>
+    </div>
+  );
+}
+
+function CurrentEmptyObservationNotice({ snapshot }: { snapshot: AqspSnapshot }) {
+  const { selectDate } = useWorkspaceSnapshot();
+  if (!isCurrentEmptyObservation(snapshot)) return null;
+  const recentDate = latestReviewDate(snapshot);
+  const recentLabel = recentDate ? formatResearchDate(recentDate) : null;
+  return (
+    <div className="vr-empty-observation" role="status">
+      <CalendarDays className="mt-0.5 h-4 w-4 shrink-0" />
+      <div className="min-w-0">
+        <strong>今日无交易任务，当前仅观察</strong>
+        <p className="mt-1">当前日期没有候选或消息；推荐 gate 已阻塞，系统没有把历史数据当作今日推荐。</p>
+        {recentLabel && (
+          <button type="button" onClick={() => selectDate(recentDate)} className="mt-1.5 text-left underline underline-offset-2 hover:text-foreground">
+            最近可回看：{recentLabel.day}（{recentLabel.weekday}）
+          </button>
+        )}
       </div>
     </div>
   );
@@ -349,6 +372,7 @@ export function AqspResearchWorkspace() {
         <DateStrip snapshot={data} />
       {stale && <FreshnessNotice snapshot={data} />}
       <RecommendationGateNotice snapshot={data} />
+      <CurrentEmptyObservationNotice snapshot={data} />
       {error && <div className="mb-3 text-xs text-warning">后台刷新未完成，仍展示上一次已读取的数据。</div>}
 
         <section className="vr-module vr-conclusion-panel" aria-labelledby="conclusion-title">

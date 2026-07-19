@@ -2,6 +2,8 @@ import type { AqspAgentResult, AqspSnapshot } from "./api";
 import {
   debateProcessText,
   dedupeResearchText,
+  isCurrentEmptyObservation,
+  latestReviewDate,
   mergeAvailableResearchDates,
   messageSourceUrl,
   sameResearchText,
@@ -25,6 +27,17 @@ const emptySnapshot = {
   market_context: null,
 } satisfies AqspSnapshot;
 
+const currentBlockedSnapshot = {
+  ...emptySnapshot,
+  meta: { historical: false, stale: false },
+  available_dates: ["2026-07-19", "2026-07-18", "2026-07-17"],
+  recommendation_gate: {
+    recommendation_allowed: false,
+    status: "blocked",
+    reasons: ["freshness_not_ready"],
+  },
+} satisfies AqspSnapshot;
+
 const debateWithoutProcess = {
   symbol: "000001",
   display_name: "示例对象",
@@ -42,6 +55,20 @@ const debateWithoutProcess = {
 // Compile-time and deterministic checks run through the package test command.
 export const researchViewContractChecks = {
   emptyConclusion: snapshotConclusion(emptySnapshot) === "",
+  currentEmptyObservationIsExplicit: isCurrentEmptyObservation(currentBlockedSnapshot),
+  historicalEmptySnapshotIsNotCurrentObservation: !isCurrentEmptyObservation({
+    ...currentBlockedSnapshot,
+    meta: { historical: true, stale: true },
+  }),
+  allowedEmptySnapshotIsNotCurrentObservation: !isCurrentEmptyObservation({
+    ...currentBlockedSnapshot,
+    recommendation_gate: { recommendation_allowed: true, status: "ready", reasons: [] },
+  }),
+  latestReviewDateUsesPreviousIndexedDate: latestReviewDate(currentBlockedSnapshot) === "2026-07-18",
+  latestReviewDateIsEmptyWhenNoPreviousDate: latestReviewDate({
+    ...currentBlockedSnapshot,
+    available_dates: ["2026-07-19"],
+  }) === "",
   processFallback: debateProcessText(debateWithoutProcess) === "2 轮讨论 · 角色 风险视角",
   selectedDateMatches: snapshotMatchesSelectedDate(emptySnapshot, "2026-07-15"),
   selectedDateRejectsPreviousSnapshot: !snapshotMatchesSelectedDate(emptySnapshot, "2026-07-14"),
