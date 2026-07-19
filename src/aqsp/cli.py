@@ -6,6 +6,8 @@ import json
 import logging
 import os
 import inspect
+import subprocess
+import sys
 from dataclasses import dataclass, replace
 from datetime import date, timedelta
 from pathlib import Path
@@ -845,11 +847,10 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     dash_cmd = sub.add_parser(
-        "dashboard", help="open or reuse the current Streamlit dashboard"
+        "dashboard", help="start or reuse the current AQSP React + FastAPI dashboard"
     )
     dash_cmd.add_argument("--host", default="127.0.0.1")
-    dash_cmd.add_argument("--port", type=int, default=8501)
-    dash_cmd.add_argument("--open-browser", action="store_true")
+    dash_cmd.add_argument("--port", type=int, default=5899)
 
     static_dash_cmd = sub.add_parser(
         "dashboard-static", help="generate the static dashboard archive artifact"
@@ -5360,29 +5361,25 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
 
 
 def run_dashboard(args: argparse.Namespace) -> int:
-    from scripts.open_dashboard import open_dashboard
-    from aqsp.web.entrypoint import public_dashboard_url
+    """Start the canonical React + FastAPI dashboard, never the legacy UI."""
+    project_root = Path(__file__).resolve().parents[2]
+    launcher = project_root / "scripts" / "start_vibe_research.sh"
+    if not launcher.is_file():
+        print(f"canonical dashboard launcher missing: {launcher}", file=sys.stderr)
+        return 2
 
-    result = open_dashboard(
-        csv_path=Path(os.getenv("AQSP_OUTPUT_CSV", "reports/latest.csv")),
-        ledger_path=Path(os.getenv("AQSP_LEDGER", "data/predictions.jsonl")),
-        paper_ledger_path=Path(
-            os.getenv("AQSP_PAPER_LEDGER", "data/paper_trades.jsonl")
-        ),
-        intraday_csv_path=Path(
-            os.getenv("AQSP_INTRADAY_OUTPUT_CSV", "reports/intraday_latest.csv")
-        ),
-        output_path=Path(os.getenv("AQSP_DASHBOARD_HTML", "dist/dashboard/index.html")),
-        db_path=Path(os.getenv("AQSP_DASHBOARD_DB", "dist/dashboard/aqsp.db")),
-        host=args.host,
-        port=args.port,
-        open_browser=args.open_browser,
-        render_static_artifact=False,
+    env = os.environ.copy()
+    env["VIBE_RESEARCH_FRONTEND_HOST"] = str(args.host)
+    env["VIBE_RESEARCH_FRONTEND_PORT"] = str(args.port)
+    env["VIBE_RESEARCH_BACKEND_HOST"] = str(
+        os.getenv("VIBE_RESEARCH_BACKEND_HOST", "127.0.0.1")
     )
-    print(f"Dashboard URL: {public_dashboard_url()}")
-    print(f"Local Dashboard URL: {result.url}")
-    print(f"Dashboard server started: {'yes' if result.server_started else 'reused'}")
-    return 0
+    print(
+        f"启动 canonical AQSP 看板: http://{args.host}:{args.port} "
+        "（React + FastAPI；不启动 Streamlit/8501）"
+    )
+    completed = subprocess.run(["bash", str(launcher)], env=env, check=False)
+    return int(completed.returncode)
 
 
 def run_dashboard_static(args: argparse.Namespace) -> int:

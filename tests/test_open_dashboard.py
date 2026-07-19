@@ -233,6 +233,7 @@ def test_ensure_dashboard_server_rejects_old_streamlit_on_default_port(
 def test_open_dashboard_does_not_render_static_archive_for_production_launch(
     monkeypatch, tmp_path: Path
 ) -> None:
+    monkeypatch.setenv("AQSP_ALLOW_LEGACY_ENTRY", "1")
     render_calls: list[bool] = []
     monkeypatch.setattr(
         "scripts.open_dashboard.render_dashboard_bundle",
@@ -292,6 +293,7 @@ def test_probe_dashboard_port_classifies_current_and_legacy_pages(
 def test_open_dashboard_uses_fixed_default_port_without_opening_browser_by_default(
     monkeypatch, tmp_path: Path
 ) -> None:
+    monkeypatch.setenv("AQSP_ALLOW_LEGACY_ENTRY", "1")
     output_path = tmp_path / "dist/dashboard/index.html"
     db_path = tmp_path / "dist/dashboard/aqsp.db"
     calls: list[str] = []
@@ -329,6 +331,7 @@ def test_open_dashboard_uses_fixed_default_port_without_opening_browser_by_defau
 def test_open_dashboard_blocks_foreground_browser_without_env_opt_in(
     monkeypatch, tmp_path: Path
 ) -> None:
+    monkeypatch.setenv("AQSP_ALLOW_LEGACY_ENTRY", "1")
     monkeypatch.delenv(ALLOW_FOREGROUND_BROWSER_ENV, raising=False)
     output_path = tmp_path / "dist/dashboard/index.html"
     db_path = tmp_path / "dist/dashboard/aqsp.db"
@@ -364,6 +367,7 @@ def test_open_dashboard_blocks_foreground_browser_without_env_opt_in(
 def test_open_dashboard_opens_browser_only_with_explicit_env_opt_in(
     monkeypatch, tmp_path: Path
 ) -> None:
+    monkeypatch.setenv("AQSP_ALLOW_LEGACY_ENTRY", "1")
     monkeypatch.setenv(ALLOW_FOREGROUND_BROWSER_ENV, "1")
     output_path = tmp_path / "dist/dashboard/index.html"
     db_path = tmp_path / "dist/dashboard/aqsp.db"

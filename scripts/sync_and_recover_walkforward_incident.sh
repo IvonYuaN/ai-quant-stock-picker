@@ -28,7 +28,6 @@ FILES=(
     "scripts/recover_walkforward_incident.sh"
     "scripts/sync_and_recover_walkforward_incident.sh"
     "src/aqsp/web/data_provider.py"
-    "src/aqsp/web/dashboard.py"
 )
 
 echo "[preflight] checking SSH: ${SSH_TARGET}"

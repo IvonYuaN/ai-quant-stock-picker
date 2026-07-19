@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Refresh legacy Streamlit artifacts and open the rollback dashboard.
+"""Refresh legacy artifacts and open the explicitly authorized rollback dashboard.
 
 Static HTML remains available through ``--render-only`` for pipeline artifacts;
 this script is not the production entry. Production uses React + FastAPI via
@@ -40,6 +40,7 @@ from aqsp.web.entrypoint import write_dashboard_artifact  # noqa: E402
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8501
 ALLOW_FOREGROUND_BROWSER_ENV = "AQSP_ALLOW_FOREGROUND_BROWSER"
+ALLOW_LEGACY_ENTRY_ENV = "AQSP_ALLOW_LEGACY_ENTRY"
 STREAMLIT_APP = PROJECT_ROOT / "src" / "aqsp" / "web" / "dashboard.py"
 CURRENT_DASHBOARD_MARKERS = (
     "AQSP 日期任务研究台",
@@ -199,6 +200,12 @@ def foreground_browser_allowed() -> bool:
     return value in {"1", "true", "yes", "y", "on"}
 
 
+def legacy_entry_allowed() -> bool:
+    """Require explicit opt-in before starting the retired Streamlit server."""
+    value = os.getenv(ALLOW_LEGACY_ENTRY_ENV, "").strip().lower()
+    return value in {"1", "true", "yes", "y", "on"}
+
+
 def _terminate_process_group(
     process: subprocess.Popen[bytes],
     *,
@@ -334,6 +341,12 @@ def open_dashboard(
     browser_opened = False
     url = _dashboard_url(host, port)
     if not render_only:
+        if not legacy_entry_allowed():
+            raise RuntimeError(
+                "旧 Streamlit/8501 入口默认已禁用；生产请使用 "
+                "scripts/start_vibe_research.sh。仅故障回滚时显式设置 "
+                f"{ALLOW_LEGACY_ENTRY_ENV}=1。"
+            )
         server_started, pid = ensure_dashboard_server(
             directory=output_path.parent,
             host=host,
