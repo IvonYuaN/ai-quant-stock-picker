@@ -2448,6 +2448,12 @@ def test_default_news_source_config_enables_official_rss_feeds() -> None:
     assert all(
         "新华社" not in f"{feed.name} {feed.url}"
         and "news.cn" not in feed.url.casefold()
+        and "defense.gov" not in feed.url.casefold()
+        for feed in feeds
+    )
+    assert any(
+        feed.name == "DefenseNews-DefenseIndustry"
+        and feed.url == "https://www.defensenews.com/arc/outboundfeeds/rss/"
         for feed in feeds
     )
     assert source._max_concurrency == 11
