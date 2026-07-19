@@ -251,7 +251,7 @@ lock_is_stale() {
     [ "$age_minutes" -ge "$LOCK_STALE_MINUTES" ]
 }
 
-if [ ! -d "${PROJECT_ROOT}/.git" ]; then
+if [ "${IMMUTABLE_RELEASE}" != "true" ] && [ ! -d "${PROJECT_ROOT}/.git" ]; then
     echo "Git repo not found: ${PROJECT_ROOT}" >&2
     exit 1
 fi

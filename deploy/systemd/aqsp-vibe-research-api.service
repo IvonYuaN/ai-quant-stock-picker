@@ -16,7 +16,7 @@ Environment=PYTHONUNBUFFERED=1
 Environment=PYTHONPATH=@AQSP_PROJECT_ROOT@/src:@AQSP_PROJECT_ROOT@/backend
 Environment=VIBE_RESEARCH_PYTHON_BIN=@AQSP_VENV_DIR@/bin/python
 ExecStartPre=/usr/bin/test -d @AQSP_LOG_DIR@
-ExecStartPre=/usr/bin/env VIBE_RESEARCH_PYTHON_BIN=@AQSP_VENV_DIR@/bin/python @AQSP_PROJECT_ROOT@/scripts/health_vibe_research.sh --preflight-only --component api --port-guard
+ExecStartPre=/usr/bin/env VIBE_RESEARCH_PYTHON_BIN=@AQSP_VENV_DIR@/bin/python @AQSP_PROJECT_ROOT@/scripts/health_vibe_research.sh --preflight-only --component api --port-guard --allow-stale-snapshot
 ExecStart=@AQSP_VENV_DIR@/bin/python -m uvicorn app:app --host 127.0.0.1 --port 8900
 Restart=on-failure
 RestartSec=5s
