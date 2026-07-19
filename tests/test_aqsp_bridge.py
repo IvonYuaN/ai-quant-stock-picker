@@ -53,6 +53,23 @@ def _snapshot(selected_date: str, symbol: str = "600001") -> dict:
                 "primary_risk_gate": "量能承接",
                 "next_trigger": "放量确认",
                 "active_roles": ["risk"],
+                "round_count": 2,
+                "round_summaries": ["首轮提出假设", "二轮复核风险"],
+                "support_points": ["量价同步"],
+                "opposition_points": ["量能尚未确认"],
+                "risk_warnings": ["高开回撤"],
+                "watch_items": ["观察开盘承接"],
+                "real_message_evidence": ["公告: 产品发布"],
+                "cross_market_evidence": ["海外同业订单增长"],
+                "rule_transmission_evidence": ["产品发布 -> 产业链订单"],
+                "pending_confirmations": ["确认板块扩散"],
+                "process_recorded": True,
+                "conclusion_recorded": True,
+                "debate_quality_issues": [],
+                "advisory_only": True,
+                "deterministic_score": 72.5,
+                "deterministic_score_unchanged": True,
+                "advisory_boundary_ok": True,
             }
         ],
         "summaries": ["仅供研究复核"],
@@ -474,3 +491,59 @@ def test_aqsp_bridge_keeps_matching_deterministic_score_when_advisory_metadata_i
 
     assert response.status_code == 200
     assert response.json()["data"]["candidates"][0]["score"] == 72.5
+
+
+def test_aqsp_bridge_exposes_structured_debate_process_without_changing_score(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = _write_single(tmp_path, _snapshot("2026-07-14"))
+    monkeypatch.setenv("AQSP_RESEARCH_SURFACE_SNAPSHOT", str(path))
+
+    response = client.get("/api/aqsp/snapshot")
+
+    assert response.status_code == 200
+    debate = response.json()["data"]["debates"][0]
+    assert debate["active_roles"] == ["risk"]
+    assert debate["round_count"] == 2
+    assert debate["round_summaries"] == ["首轮提出假设", "二轮复核风险"]
+    assert debate["support_points"] == ["量价同步"]
+    assert debate["opposition_points"] == ["量能尚未确认"]
+    assert debate["risk_warnings"] == ["高开回撤"]
+    assert debate["primary_risk_gate"] == "量能承接"
+    assert debate["next_trigger"] == "放量确认"
+    assert debate["evidence"] == [
+        {"kind": "message", "text": "公告: 产品发布"},
+        {"kind": "cross_market", "text": "海外同业订单增长"},
+        {"kind": "transmission", "text": "产品发布 -> 产业链订单"},
+    ]
+    assert debate["advisory_only"] is True
+    assert debate["deterministic_score"] == 72.5
+    assert debate["deterministic_score_unchanged"] is True
+    assert response.json()["data"]["candidates"][0]["score"] == 72.5
+
+
+def test_aqsp_bridge_does_not_invent_evidence_for_legacy_debate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    payload = _snapshot("2026-07-14")
+    legacy = payload["debates"][0]
+    for key in (
+        "round_summaries",
+        "support_points",
+        "opposition_points",
+        "risk_warnings",
+        "real_message_evidence",
+        "cross_market_evidence",
+        "rule_transmission_evidence",
+    ):
+        legacy.pop(key, None)
+    path = _write_single(tmp_path, payload)
+    monkeypatch.setenv("AQSP_RESEARCH_SURFACE_SNAPSHOT", str(path))
+
+    response = client.get("/api/aqsp/snapshot")
+
+    assert response.status_code == 200
+    debate = response.json()["data"]["debates"][0]
+    assert debate["evidence"] == []
+    assert debate["support_points"] == []
+    assert debate["opposition_points"] == []

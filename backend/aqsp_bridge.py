@@ -85,6 +85,14 @@ class AQSPCandidate:
 
 
 @dataclass(frozen=True)
+class AQSPDebateEvidence:
+    """One sourced evidence item attached to an advisory debate."""
+
+    kind: str
+    text: str
+
+
+@dataclass(frozen=True)
 class AQSPDebate:
     symbol: str
     display_name: str
@@ -98,9 +106,41 @@ class AQSPDebate:
     neutral_count: int = 0
     process_summary: str = ""
     round_summaries: tuple[str, ...] = ()
+    support_points: tuple[str, ...] = ()
+    opposition_points: tuple[str, ...] = ()
+    risk_warnings: tuple[str, ...] = ()
+    watch_items: tuple[str, ...] = ()
+    real_message_evidence: tuple[str, ...] = ()
+    cross_market_evidence: tuple[str, ...] = ()
+    rule_transmission_evidence: tuple[str, ...] = ()
+    pending_confirmations: tuple[str, ...] = ()
+    advisory_only: bool = True
+    deterministic_score: float | None = None
+    deterministic_score_unchanged: bool = True
+    advisory_boundary_ok: bool = True
+    process_recorded: bool = False
+    conclusion_recorded: bool = False
+    quality_issues: tuple[str, ...] = ()
+
+    @property
+    def evidence(self) -> tuple[AQSPDebateEvidence, ...]:
+        """Return only evidence actually present in the source snapshot."""
+        buckets = (
+            ("message", self.real_message_evidence),
+            ("cross_market", self.cross_market_evidence),
+            ("transmission", self.rule_transmission_evidence),
+        )
+        return tuple(
+            AQSPDebateEvidence(kind=kind, text=text)
+            for kind, values in buckets
+            for text in values
+            if text.strip()
+        )
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        payload = asdict(self)
+        payload["evidence"] = [asdict(item) for item in self.evidence]
+        return payload
 
 
 @dataclass(frozen=True)
@@ -310,6 +350,9 @@ def _is_historical(surface: AQSPResearchSurface, selected_date: str | None) -> b
 def _snapshot_payload(snapshot: AQSPSnapshot, *, historical: bool) -> dict[str, Any]:
     """Prevent archive data from being presented as current realtime data."""
     payload = snapshot.to_dict()
+    for raw_debate, debate in zip(payload.get("debates", ()), snapshot.debates):
+        if isinstance(raw_debate, dict):
+            raw_debate["evidence"] = [asdict(item) for item in debate.evidence]
     if not historical:
         return payload
 
@@ -693,7 +736,59 @@ def _parse_debate(payload: object) -> AQSPDebate:
             "deterministic_score_unchanged",
             "advisory_boundary_ok",
             "round_summaries",
+            "support_points",
+            "opposition_points",
+            "risk_warnings",
+            "watch_items",
+            "real_message_evidence",
+            "cross_market_evidence",
+            "rule_transmission_evidence",
+            "pending_confirmations",
+            "process_recorded",
+            "conclusion_recorded",
+            "debate_quality_issues",
+            "evidence",
         },
+    )
+    raw_evidence = tuple(
+        _parse_debate_evidence(value)
+        for value in _list(item.get("evidence", []), "debate.evidence")
+    )
+    evidence_by_kind = {
+        "message": tuple(
+            entry.text for entry in raw_evidence if entry.kind == "message"
+        ),
+        "cross_market": tuple(
+            entry.text for entry in raw_evidence if entry.kind == "cross_market"
+        ),
+        "transmission": tuple(
+            entry.text for entry in raw_evidence if entry.kind == "transmission"
+        ),
+    }
+    message_evidence = (
+        tuple(
+            _text_list(
+                item.get("real_message_evidence", []), "debate.real_message_evidence"
+            )
+        )
+        or evidence_by_kind["message"]
+    )
+    cross_market_evidence = (
+        tuple(
+            _text_list(
+                item.get("cross_market_evidence", []), "debate.cross_market_evidence"
+            )
+        )
+        or evidence_by_kind["cross_market"]
+    )
+    transmission_evidence = (
+        tuple(
+            _text_list(
+                item.get("rule_transmission_evidence", []),
+                "debate.rule_transmission_evidence",
+            )
+        )
+        or evidence_by_kind["transmission"]
     )
     return AQSPDebate(
         symbol=_validate_symbol(_text(item["symbol"], "debate.symbol")),
@@ -712,6 +807,65 @@ def _parse_debate(payload: object) -> AQSPDebate:
         round_summaries=tuple(
             _text_list(item.get("round_summaries", []), "debate.round_summaries")
         ),
+        support_points=tuple(
+            _text_list(item.get("support_points", []), "debate.support_points")
+        ),
+        opposition_points=tuple(
+            _text_list(item.get("opposition_points", []), "debate.opposition_points")
+        ),
+        risk_warnings=tuple(
+            _text_list(item.get("risk_warnings", []), "debate.risk_warnings")
+        ),
+        watch_items=tuple(
+            _text_list(item.get("watch_items", []), "debate.watch_items")
+        ),
+        real_message_evidence=message_evidence,
+        cross_market_evidence=cross_market_evidence,
+        rule_transmission_evidence=transmission_evidence,
+        pending_confirmations=tuple(
+            _text_list(
+                item.get("pending_confirmations", []),
+                "debate.pending_confirmations",
+            )
+        ),
+        advisory_only=_boolean(item.get("advisory_only", True), "debate.advisory_only"),
+        deterministic_score=(
+            _number(item["deterministic_score"], "debate.deterministic_score")
+            if "deterministic_score" in item
+            else None
+        ),
+        deterministic_score_unchanged=_boolean(
+            item.get("deterministic_score_unchanged", True),
+            "debate.deterministic_score_unchanged",
+        ),
+        advisory_boundary_ok=_boolean(
+            item.get("advisory_boundary_ok", True),
+            "debate.advisory_boundary_ok",
+        ),
+        process_recorded=_boolean(
+            item.get("process_recorded", False), "debate.process_recorded"
+        ),
+        conclusion_recorded=_boolean(
+            item.get("conclusion_recorded", False), "debate.conclusion_recorded"
+        ),
+        quality_issues=tuple(
+            _text_list(
+                item.get("debate_quality_issues", []),
+                "debate.debate_quality_issues",
+            )
+        ),
+    )
+
+
+def _parse_debate_evidence(payload: object) -> AQSPDebateEvidence:
+    item = _object(payload, "debate.evidence")
+    _check_keys(item, {"kind", "text"}, "debate.evidence")
+    kind = _text(item["kind"], "debate.evidence.kind")
+    if kind not in {"message", "cross_market", "transmission"}:
+        raise AQSPSnapshotUnavailable("debate.evidence.kind 不支持")
+    return AQSPDebateEvidence(
+        kind=kind,
+        text=_text(item["text"], "debate.evidence.text"),
     )
 
 
@@ -965,6 +1119,12 @@ def _number(payload: object, name: str) -> float:
     if not math.isfinite(value):
         raise AQSPSnapshotUnavailable(f"{name} 必须是有限数字")
     return value
+
+
+def _boolean(payload: object, name: str) -> bool:
+    if not isinstance(payload, bool):
+        raise AQSPSnapshotUnavailable(f"{name} 必须是布尔值")
+    return payload
 
 
 def _integer(payload: object, name: str) -> int:
