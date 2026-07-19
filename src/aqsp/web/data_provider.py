@@ -145,6 +145,12 @@ _FATAL_DEBATE_QUALITY_ISSUES = frozenset(
         "invalid_final_vote",
         "advisory_boundary_violation",
         "no_substantive_evidence",
+        "missing_role",
+        "duplicate_role",
+        "empty_round",
+        "non_interactive_round",
+        "missing_opposition_viewpoint",
+        "missing_risk_viewpoint",
     }
 )
 
@@ -1406,11 +1412,7 @@ class DashboardDataProvider:
                     for row in raw_rows
                     if str(row.get("task_id", "") or "").strip() == normalized_task
                 ]
-                raw_rows = task_rows or [
-                    row
-                    for row in raw_rows
-                    if not str(row.get("task_id", "") or "").strip()
-                ]
+                raw_rows = task_rows
             summaries = [
                 self._build_debate_summary(row)
                 for row in self._dedupe_debate_rows(raw_rows)
@@ -5729,11 +5731,13 @@ class DashboardDataProvider:
         attempts, not separate candidates; displaying both made one candidate
         occupy multiple committee cards and pushed other candidates out.
         """
-        grouped: dict[tuple[str, str], dict[str, Any]] = {}
+        grouped: dict[tuple[str, str, str, str], dict[str, Any]] = {}
         for row in rows:
             key = (
                 self._debate_signal_date(row),
                 str(row.get("symbol", "") or "").strip(),
+                str(row.get("task_id", "") or "").strip(),
+                str(row.get("candidate_fingerprint", "") or "").strip(),
             )
             if not key[0] or not key[1]:
                 continue
@@ -5838,6 +5842,19 @@ class DashboardDataProvider:
             # Legacy records predate task metadata; keep their established display
             # contract while new task-scoped records use the stricter gate below.
             return self._debate_evidence_score(row) > 0
+
+        opposition = self._as_text_tuple(row.get("opposition_points"))
+        risks = self._as_text_tuple(row.get("risk_warnings"))
+        placeholder_markers = (
+            "尚未形成明确反对证据",
+            "未触发直接反向立场",
+            "保留该主张并记录",
+        )
+        if not any(
+            text and not any(marker in text for marker in placeholder_markers)
+            for text in (*opposition, *risks)
+        ):
+            return False
 
         rounds = self._debate_round_dicts(row)
         has_opinions = any(

@@ -1325,9 +1325,10 @@ def test_dashboard_data_provider_debate_summaries_use_latest_rerun_per_symbol(
         "original_score": 72.0,
         "adjusted_score": 72.0,
         "recommended_adjustment": "keep",
-        "final_consensus": "等待确认",
-        "final_vote": {"bull": "neutral", "risk_control": "neutral"},
-        "rounds": [{"round_num": 1, "summary": "讨论完成"}],
+            "final_consensus": "等待确认",
+            "final_vote": {"bull": "neutral", "risk_control": "neutral"},
+            "opposition_points": ["冲高回落且成交量衰减则失效"],
+            "rounds": [{"round_num": 1, "summary": "讨论完成"}],
     }
     debate_path.write_text(
         "\n".join(
@@ -1365,7 +1366,7 @@ def test_dashboard_data_provider_debate_summaries_use_latest_rerun_per_symbol(
 
     summaries = provider.prioritized_debate_summaries("2026-07-10")
 
-    assert [item.debate_id for item in summaries] == ["latest-run"]
+    assert {item.debate_id for item in summaries} == {"latest-run", "older-run"}
 
 
 def test_dashboard_data_provider_home_debates_follow_current_candidate_order() -> None:
@@ -2396,8 +2397,9 @@ def test_dashboard_data_provider_keeps_same_day_intraday_debate_when_artifact_is
                 "final_consensus": "观察",
                 "final_vote": {"risk_control": "neutral"},
                 "research_verdict": "等待承接确认",
-                "primary_risk_gate": "盘中产物已过期",
-                "next_trigger": "重新刷新盘中数据",
+                    "primary_risk_gate": "盘中产物已过期",
+                    "next_trigger": "重新刷新盘中数据",
+                    "opposition_points": ["盘中数据过期，任何追涨判断均失效"],
                 "process_recorded": True,
                 "conclusion_recorded": True,
                 "advisory_boundary_ok": True,
@@ -2461,7 +2463,8 @@ def test_dashboard_data_provider_merges_debate_by_date_task_and_symbol_when_cand
                 "created_at": "2026-07-14T10:00:00+08:00",
                 "original_score": 70,
                 "adjusted_score": 70,
-                "research_verdict": "同日同任务回退映射",
+                    "research_verdict": "同日同任务回退映射",
+                    "opposition_points": ["高开低走则失效"],
                 "final_vote": {"risk_control": "neutral"},
                 "process_recorded": True,
                 "conclusion_recorded": True,

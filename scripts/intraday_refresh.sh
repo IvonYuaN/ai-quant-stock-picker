@@ -248,6 +248,7 @@ INTRADAY_BATCH_SYMBOLS=""
 INTRADAY_BATCH_ID=""
 INTRADAY_BATCH_UNIVERSE_COUNT="0"
 INTRADAY_BATCH_COVERAGE_PCT="0"
+BATCH_COMMITTED="false"
 INTRADAY_NEWS_TASK_TIMEOUT_SECONDS="${AQSP_INTRADAY_NEWS_TASK_TIMEOUT_SECONDS:-20}"
 # The configured RSS set needs up to roughly five seconds on the production
 # host; a two-second deadline consistently misclassified reachable feeds as
@@ -1395,6 +1396,12 @@ AQSP_INTRADAY_STATUS_PY
 }
 
 cleanup() {
+    if [ "$INTRADAY_BATCH_ACTIVE" = "true" ] && [ "$BATCH_COMMITTED" != "true" ]; then
+        "${PYTHON_BIN}" "${PROJECT_ROOT}/scripts/prepare_intraday_batch.py" \
+            --cursor "$INTRADAY_CURSOR_PATH" \
+            --fail "${BATCH_FAILURE_REASON:-intraday_run_incomplete}" \
+            >>"$RESULT_LOG" 2>&1 || true
+    fi
     rm -rf "$TMP_DIR" 2>/dev/null || true
     # The initial EXIT trap is replaced below, so remove the lock metadata
     # explicitly before releasing the directory.
@@ -1404,6 +1411,16 @@ cleanup() {
 trap cleanup EXIT
 
 cd "$PROJECT_ROOT"
+
+# A global AQSP_SYMBOLS setting must not silently disable full-universe rotation
+# in the production intraday task. Fixed symbols remain available for diagnostics.
+if ! is_truthy "${AQSP_INTRADAY_ALLOW_FIXED_SYMBOLS:-false}"; then
+    unset AQSP_SYMBOLS
+fi
+
+START_TIME=$(date +%s)
+INTRADAY_STARTED_AT="$(date '+%Y-%m-%dT%H:%M:%S%z')"
+write_intraday_status "running" "盘中刷新运行中；正在解析实时股票池" "0"
 
 if is_truthy "$INTRADAY_BATCH_SCAN" && \
    [ -f "${PROJECT_ROOT}/scripts/prepare_intraday_batch.py" ] && \
@@ -1415,6 +1432,7 @@ if is_truthy "$INTRADAY_BATCH_SCAN" && \
         --min-avg-amount "$INTRADAY_MIN_AVG_AMOUNT" \
         --cursor "$INTRADAY_CURSOR_PATH" 2>>"$RESULT_LOG")"; then
         log "[ERROR] 无法准备盘中股票批次；不退回全量重策略，避免再次阻塞服务器"
+        write_intraday_status "failed" "universe_resolution_failed；实时股票池解析失败" "1"
         exit 1
     fi
     if [ -z "$INTRADAY_BATCH_SYMBOLS" ]; then
@@ -1427,9 +1445,6 @@ if is_truthy "$INTRADAY_BATCH_SCAN" && \
     log "盘中批次已准备: ${INTRADAY_BATCH_SYMBOLS}"
 fi
 
-START_TIME=$(date +%s)
-INTRADAY_STARTED_AT="$(date '+%Y-%m-%dT%H:%M:%S%z')"
-
 log "=========================================="
 log "AI量化选股 - 盘中刷新开始"
 log "项目目录: ${PROJECT_ROOT}"
@@ -1437,7 +1452,6 @@ log "Python: ${PYTHON_BIN}"
 log "数据源: ${INTRADAY_SOURCE}"
 log "市场基准: ${INTRADAY_BENCHMARK_SYMBOL}"
 log "=========================================="
-write_intraday_status "running" "盘中刷新运行中；候选筛出后会先更新快照" "0"
 NOTIFY_ARGS=()
 if is_truthy "$INTRADAY_ALLOW_NOTIFY" && is_truthy "$INTRADAY_NOTIFY"; then
     NOTIFY_ARGS=(--notify)
@@ -1479,19 +1493,6 @@ RUN_EXIT_CODE="${RUN_PIPE_STATUS[0]:-1}"
 TEE_EXIT_CODE="${RUN_PIPE_STATUS[1]:-1}"
 unset AQSP_PROVISIONAL_REPORT AQSP_PROVISIONAL_OUTPUT_CSV
 set -e
-
-if [ "$INTRADAY_BATCH_ACTIVE" = "true" ]; then
-    if [ "$RUN_EXIT_CODE" -eq 0 ]; then
-        AQSP_INTRADAY_BATCH_SCANNED="$INTRADAY_BATCH_SIZE" \
-            "$PYTHON_BIN" "${PROJECT_ROOT}/scripts/prepare_intraday_batch.py" \
-            --cursor "$INTRADAY_CURSOR_PATH" --commit
-        log "盘中批次已提交，下一轮继续覆盖剩余股票池"
-    else
-        "$PYTHON_BIN" "${PROJECT_ROOT}/scripts/prepare_intraday_batch.py" \
-            --cursor "$INTRADAY_CURSOR_PATH" --fail "run_exit=$RUN_EXIT_CODE"
-        log "盘中批次未提交，下一轮重试当前批次"
-    fi
-fi
 
 PARTIAL_SNAPSHOT_USED="false"
 SCRIPT_EXIT_CODE="0"
@@ -1635,7 +1636,23 @@ else
 fi
 if ! refresh_home_dashboard_snapshot; then
     SCRIPT_EXIT_CODE="1"
+    BATCH_FAILURE_REASON="final_home_snapshot_failed"
     write_intraday_status "partial_failed" "盘中数据已刷新，但首页快照刷新失败，继续保留上一版首页" "$SCRIPT_EXIT_CODE"
+fi
+
+if [ "$INTRADAY_BATCH_ACTIVE" = "true" ] && \
+   [ "$RUN_EXIT_CODE" -eq 0 ] && \
+   [ "$QUALITY_GATE_EXIT_CODE" -eq 0 ] && \
+   [ "$OBSERVATION_ONLY" != "true" ] && \
+   [ "$PARTIAL_SNAPSHOT_USED" != "true" ] && \
+   [ "${SCRIPT_EXIT_CODE:-0}" -eq 0 ]; then
+    AQSP_INTRADAY_BATCH_SCANNED="$INTRADAY_BATCH_SIZE" \
+        "$PYTHON_BIN" "${PROJECT_ROOT}/scripts/prepare_intraday_batch.py" \
+        --cursor "$INTRADAY_CURSOR_PATH" --commit
+    BATCH_COMMITTED="true"
+    log "盘中批次已提交，下一轮继续覆盖剩余股票池"
+else
+    BATCH_FAILURE_REASON="${BATCH_FAILURE_REASON:-recommendation_or_publish_not_complete}"
 fi
 
 END_TIME=$(date +%s)
