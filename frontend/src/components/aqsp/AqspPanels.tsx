@@ -375,7 +375,7 @@ function MarketContextCard({ snapshot }: { snapshot: AqspSnapshot }) {
   const lines = uniqueNonEmpty(context?.summary_lines, 5);
   const crossMarket = context?.cross_market ?? [];
   return (
-    <section id={RESEARCH_SECTION_IDS[3]} className="vr-module vr-board-section">
+    <section id={RESEARCH_SECTION_IDS[4]} className="vr-module vr-board-section">
       <div className="vr-section-heading"><div><p className="vr-kicker">05 · 市场与传导</p><h2>市场与产业链</h2></div><span className="vr-count">{crossMarket.length} 条</span></div>
       {!context ? <EmptyState title="暂无市场上下文" detail="当前快照没有可核验的跨市场或产业链传导记录。" /> : (
         <div className="vr-context-list">
