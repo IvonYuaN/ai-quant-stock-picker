@@ -119,6 +119,23 @@ def test_dashboard_data_provider_does_not_reuse_prior_runtime_event_for_selected
     assert provider._latest_run_event("2026-07-19") is None
 
 
+def test_dashboard_data_provider_handles_display_override_without_run_count(
+    monkeypatch, tmp_path: Path
+) -> None:
+    provider = DashboardDataProvider(
+        ledger_path=str(tmp_path / "ledger.jsonl"),
+        paper_ledger_path=str(tmp_path / "paper.jsonl"),
+        logs_path=str(tmp_path / "logs"),
+        reports_dir=str(tmp_path / "reports"),
+    )
+    monkeypatch.setenv("AQSP_RESEARCH_DISPLAY_OVERRIDE", "1")
+    monkeypatch.setattr(provider, "_read_runtime_risk_state", lambda: {})
+
+    overview = provider.runtime_overview("2026-07-19")
+
+    assert overview.cooldown_until == ""
+
+
 def test_dashboard_data_provider_reads_real_runtime_files(
     monkeypatch, tmp_path: Path
 ) -> None:

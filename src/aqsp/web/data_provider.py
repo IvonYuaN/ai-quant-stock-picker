@@ -1617,7 +1617,7 @@ class DashboardDataProvider:
             display_override = os.getenv("AQSP_RESEARCH_DISPLAY_OVERRIDE", "").strip().lower() in {
                 "1", "true", "yes", "on"
             }
-            if display_override and final_count > 0:
+            if display_override and final_count is not None and final_count > 0:
                 conclusion = f"研究展示模式：当前运行已产出 {int(final_count)} 个候选"
             elif display_override and run:
                 conclusion = "研究展示模式：当前运行结果已落盘，风险单独展示"
