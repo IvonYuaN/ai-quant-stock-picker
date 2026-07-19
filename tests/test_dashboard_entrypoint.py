@@ -54,6 +54,7 @@ def test_entrypoint_classification_distinguishes_canonical_legacy_and_redirect()
     None
 ):
     assert classify_entry_text("AQSP · 量化选股研究工作台") == "canonical"
+    assert classify_entry_text("AQSP / DAILY RESEARCH 当前研究") == "canonical"
     assert classify_entry_text("<div>AQSP 日期任务研究台</div>") == "legacy"
     assert (
         classify_entry_text(

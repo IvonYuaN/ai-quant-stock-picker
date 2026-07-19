@@ -18,7 +18,6 @@ from collections.abc import Iterator
 from pathlib import Path
 
 from aqsp.web.entrypoint import (
-    CANONICAL_ENTRY_MARKERS,
     LEGACY_HEALTH_PATH,
     classify_entry_text,
     classify_health_text,
@@ -27,7 +26,9 @@ from aqsp.web.entrypoint import (
 
 
 DEFAULT_URL = "https://lh.ifidy.cn"
-DEFAULT_EXPECTED_TEXT = CANONICAL_ENTRY_MARKERS
+# Hydrated React pages may replace the static product title with the compact
+# visible workspace heading; classify_entry_text handles the full marker groups.
+DEFAULT_EXPECTED_TEXT = ("AQSP",)
 DEFAULT_FORBIDDEN_TEXT = (
     "candidate_blocker",
     "next open",
