@@ -54,6 +54,7 @@ def _patch_runtime(
     max_rounds: int = 1,
     enabled: bool = True,
     captured: dict[str, object] | None = None,
+    message_evidence: bool = True,
 ) -> None:
     fixed_now = datetime(2026, 7, 10, 14, 30, tzinfo=SHANGHAI_TZ)
     monkeypatch.setattr(backfill_intraday_debate, "now_shanghai", lambda: fixed_now)
@@ -130,6 +131,15 @@ def _patch_runtime(
             "risk_warnings": ["若冲高回落则降级"],
             "next_trigger": "确认盘中承接",
             "falsifiable_conditions": ["若冲高回落则降级"],
+            "real_message_evidence": (
+                ["测试公告：订单已确认"] if message_evidence else []
+            ),
+            "cross_market_evidence": ["测试传导：海外主题映射A股"] if message_evidence else [],
+            "rule_transmission_evidence": (
+                ["传导路径：海外主题 -> A股板块"] if message_evidence else []
+            ),
+            "message_evidence_recorded": message_evidence,
+            "transmission_evidence_recorded": message_evidence,
             "advisory_only": True,
             "deterministic_score": result.original_score,
             "deterministic_score_unchanged": True,
@@ -216,6 +226,71 @@ def test_debate_quality_gate_rejects_failure_and_any_quality_issue() -> None:
         == "debate advisory boundary is not valid"
     )
     assert backfill_intraday_debate._debate_payload_quality_failure({}) == ""
+
+
+def test_debate_quality_gate_rejects_incomplete_rounds_and_missing_message_evidence() -> None:
+    assert "at least two completed rounds" in (
+        backfill_intraday_debate._debate_payload_quality_failure(
+            {
+                "debate_rounds_requested": 2,
+                "debate_rounds_completed": 1,
+                "real_message_evidence": ["测试公告"],
+            }
+        )
+    )
+    assert (
+        backfill_intraday_debate._debate_payload_quality_failure(
+            {
+                "debate_rounds_requested": 2,
+                "debate_rounds_completed": 2,
+                "real_message_evidence": [],
+            }
+        )
+        == "debate missing current message evidence"
+    )
+    assert (
+        backfill_intraday_debate._debate_payload_quality_failure(
+            {
+                "debate_rounds_requested": 2,
+                "debate_rounds_completed": 2,
+                "real_message_evidence": ["测试公告"],
+                "market_context_lines": ["传导推演[设备链]: 海外事件 -> A股设备链"],
+                "rule_transmission_evidence": [],
+            }
+        )
+        == "debate missing current transmission evidence"
+    )
+
+
+def test_backfill_does_not_persist_invalid_debate_but_retains_candidate(
+    tmp_path: Path, monkeypatch
+) -> None:
+    input_csv = tmp_path / "intraday_latest.csv"
+    output_path = tmp_path / "debate_results.jsonl"
+    status_path = tmp_path / "status.json"
+    lock_path = tmp_path / "backfill.lock"
+    _write_candidates(input_csv, ("000001",))
+    _patch_runtime(monkeypatch, message_evidence=False)
+
+    count = backfill_intraday_debate.run_backfill(
+        input_csv=input_csv,
+        output_path=output_path,
+        task_id="intraday",
+        max_candidates=5,
+        force=True,
+        status_path=status_path,
+        lock_path=lock_path,
+    )
+
+    status = _read_status(status_path)
+    assert count == 0
+    assert status["status"] == "failed"
+    assert status["failed_count"] == 1
+    assert "message evidence" in status["failed_candidates"][0]["error"]
+    assert not output_path.exists()
+    assert [pick.symbol for pick in backfill_intraday_debate.load_intraday_picks(input_csv, 5)] == [
+        "000001"
+    ]
 
 
 def test_debate_quality_gate_rejects_neutral_only_opposition_payload(
