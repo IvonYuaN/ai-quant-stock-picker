@@ -595,8 +595,8 @@ def _normalize_runtime_path(root: Path, value: str) -> Path:
 
 def _check_runtime_data_source_config(root: Path) -> ReadinessFinding:
     env_path = root / ".env"
-    source = (read_env_value(env_path, "AQSP_SOURCE") or "").strip().lower()
-    fallback = (read_env_value(env_path, "AQSP_ALLOW_ONLINE_FALLBACK") or "").strip()
+    source = _read_env_assignment(env_path, "AQSP_SOURCE").strip().lower()
+    fallback = _read_env_assignment(env_path, "AQSP_ALLOW_ONLINE_FALLBACK").strip()
     allowed_sources = {"local_first", "tdx_vipdoc", "sqlite_db"}
     blockers: list[str] = []
     if not source:
