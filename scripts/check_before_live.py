@@ -239,10 +239,26 @@ def check_before_live(
     paper_ledger_path: Path | None = None,
     thresholds: Thresholds | None = None,
 ) -> list[ReadinessFinding]:
-    gate_path = gate_path or root / "data" / "walkforward_gate.json"
-    ledger_path = ledger_path or root / "data" / "predictions.jsonl"
-    paper_ledger_path = paper_ledger_path or root / "data" / "paper_trades.jsonl"
-    run_history_path = run_history_path or root / "data" / "daily_run_history.jsonl"
+    env_path = root / ".env"
+    gate_path = gate_path or _normalize_runtime_path(
+        root,
+        _read_env_assignment(env_path, "AQSP_WALKFORWARD_GATE_PATH")
+        or "data/walkforward_gate.json",
+    )
+    ledger_path = ledger_path or _normalize_runtime_path(
+        root,
+        _read_env_assignment(env_path, "AQSP_LEDGER") or "data/predictions.jsonl",
+    )
+    paper_ledger_path = paper_ledger_path or _normalize_runtime_path(
+        root,
+        _read_env_assignment(env_path, "AQSP_PAPER_LEDGER")
+        or "data/paper_trades.jsonl",
+    )
+    run_history_path = run_history_path or _normalize_runtime_path(
+        root,
+        _read_env_assignment(env_path, "AQSP_DAILY_RUN_HISTORY")
+        or "data/daily_run_history.jsonl",
+    )
 
     findings: list[ReadinessFinding] = []
     findings.append(_check_walkforward_gate(gate_path, today))
