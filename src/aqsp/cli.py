@@ -2224,6 +2224,53 @@ def _annotate_cross_market_context(
     return enriched
 
 
+def _append_cross_market_watch_candidates(
+    picks: list[PickResult],
+    screened_picks: list[PickResult],
+    *,
+    market_context: Any | None,
+    max_candidates: int = 3,
+) -> list[PickResult]:
+    """Expose message-linked realtime candidates without promoting their score."""
+    if not screened_picks or market_context is None or max_candidates <= 0:
+        return picks
+
+    from aqsp.market_context import market_context_metrics_for_pick
+
+    selected_symbols = {pick.symbol for pick in picks}
+    watch_candidates: list[PickResult] = []
+    for candidate in screened_picks:
+        if candidate.symbol in selected_symbols:
+            continue
+        metrics = market_context_metrics_for_pick(candidate, market_context)
+        rule_ids = tuple(metrics.get("cross_market_rule_ids", ()) or ())
+        priority = int(metrics.get("cross_market_priority_score", 0) or 0)
+        if not rule_ids or priority < 2:
+            continue
+        validation = tuple(metrics.get("cross_market_validation_signals", ()) or ())
+        next_step = (
+            str(validation[0]).strip()
+            if validation and str(validation[0]).strip()
+            else "等待盘中量价与板块扩散确认"
+        )
+        metrics.update(
+            {
+                "candidate_status": "消息产业链观察",
+                "observation_only": True,
+                "portfolio_action": "observation_only",
+                "candidate_review_priority": "优先复核",
+                "candidate_review_priority_reason": "实时消息规则与当前技术扫描结果匹配，尚未进入正式排序",
+                "candidate_next_step": next_step,
+                "cross_market_candidate_origin": "news_to_current_universe",
+            }
+        )
+        watch_candidates.append(replace(candidate, metrics=metrics))
+        selected_symbols.add(candidate.symbol)
+        if len(watch_candidates) >= max_candidates:
+            break
+    return [*picks, *watch_candidates]
+
+
 def _resolve_run_symbols(
     source_name: str,
     explicit_symbols: str,
@@ -4631,6 +4678,12 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
             picks,
             market_context=market_context,
         )
+    picks = _append_cross_market_watch_candidates(
+        picks,
+        screened_picks,
+        market_context=market_context,
+        max_candidates=3,
+    )
 
     run_metadata = RunMetadata(
         requested_source=args.source,
