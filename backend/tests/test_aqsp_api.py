@@ -302,6 +302,30 @@ def test_aqsp_api_rejects_current_snapshot_after_ttl(
     assert response.status_code == 503
 
 
+def test_aqsp_api_serves_expired_current_snapshot_as_stale_when_enabled(
+    aqsp_client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    expired = _snapshot(
+        "2026-07-14",
+        stale_after="2026-07-13T09:30:00+08:00",
+        messages=[],
+        debates=[],
+    )
+    _write_snapshot_files(tmp_path, current=expired)
+    monkeypatch.setenv(
+        "AQSP_RESEARCH_SURFACE_SNAPSHOT",
+        str(tmp_path / "home_dashboard_snapshot.json"),
+    )
+    monkeypatch.setenv("AQSP_ALLOW_STALE_SNAPSHOT", "1")
+
+    response = aqsp_client.get(SNAPSHOT_ROUTE)
+
+    assert response.status_code == 200
+    assert response.json()["meta"]["stale"] is True
+
+
 def test_aqsp_api_preserves_explicit_empty_messages_and_agents(
     aqsp_client: TestClient,
     monkeypatch: pytest.MonkeyPatch,

@@ -626,6 +626,13 @@ def _require_current_snapshot_fresh(
         raise AQSPSnapshotStale("当前 AQSP 研究快照缺少 stale_after")
     is_stale = surface.current.is_stale() if stale is None else stale
     if is_stale:
+        if os.getenv("AQSP_ALLOW_STALE_SNAPSHOT", "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }:
+            return
         raise AQSPSnapshotStale("当前 AQSP 研究快照已过期")
 
 
