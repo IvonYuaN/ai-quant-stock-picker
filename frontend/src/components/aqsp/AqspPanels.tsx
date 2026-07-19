@@ -15,8 +15,8 @@ import {
   UsersRound,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { FORMAL_RESEARCH_SECTIONS, TEST_VARIANTS_SECTION_ID } from "@/lib/research-layout";
-import type { AqspAgentResult, AqspCandidate, AqspMessage, AqspSnapshot } from "@/lib/api";
+import { FORMAL_RESEARCH_SECTIONS, resolveResearchView, TEST_VARIANTS_SECTION_ID, type ResearchViewId } from "@/lib/research-layout";
+import type { AqspAgentResult, AqspCandidate, AqspMessage, AqspPhase, AqspSnapshot } from "@/lib/api";
 import {
   debateProcessText,
   dedupeResearchText,
@@ -29,6 +29,7 @@ import {
   snapshotConclusion,
 } from "@/lib/research-view";
 import { formatAqspTime, isAqspSnapshotStale, useWorkspaceSnapshot } from "./useAqspSnapshot";
+import { useLocation } from "react-router-dom";
 
 function unique(values: readonly string[] | undefined, limit = 4): string[] {
   return Array.from(new Set((values ?? []).map((value) => value.trim()).filter(Boolean))).slice(0, limit);
@@ -113,6 +114,35 @@ function StatusLine({ snapshot }: { snapshot: AqspSnapshot }) {
   );
 }
 
+const MARKET_PHASES = [
+  { id: "pre", label: "盘前", keywords: ["盘前", "pre_market", "pre-market"] },
+  { id: "intraday", label: "盘中", keywords: ["盘中", "intraday"] },
+  { id: "post", label: "盘后", keywords: ["盘后", "post_market", "post-market"] },
+] as const;
+
+function phaseForLabel(phase: AqspPhase, keywords: readonly string[]) {
+  const text = `${phase.task_id} ${phase.label}`.toLowerCase();
+  return keywords.some((keyword) => text.includes(keyword.toLowerCase())) ? phase : undefined;
+}
+
+function PhaseLane({ snapshot }: { snapshot: AqspSnapshot }) {
+  const phases = snapshot.phases ?? [];
+  return (
+    <div className="aqsp-phase-lane" aria-label="盘前盘中盘后数据状态">
+      {MARKET_PHASES.map((phase) => {
+        const record = phases.find((item) => phaseForLabel(item, phase.keywords));
+        const status = record?.status || "未产出";
+        return (
+          <div className="aqsp-phase" key={phase.id}>
+            <div><b>{phase.label}</b><span>{status}</span></div>
+            {record ? <small>候选 {record.candidate_count} · 批次重叠 {record.overlap_symbols}</small> : <small>独立数据段，未与当天结果合并</small>}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function GateState({ snapshot }: { snapshot: AqspSnapshot }) {
   const gate = snapshot.recommendation_gate;
   const presentation = gatePresentation(gate);
@@ -193,21 +223,25 @@ function ErrorState({ error, onRefresh }: { error: string; onRefresh: () => void
 
 export function AqspResearchWorkspace() {
   const { data, loading, error, refresh } = useWorkspaceSnapshot();
-  if (loading && !data) return <><LoadingState /><TestVariantsPanel /></>;
-  if (error && !data) return <><ErrorState error={error} onRefresh={refresh} /><TestVariantsPanel /></>;
-  if (!data) return <><EmptyState title="当前没有研究快照" detail="等待正式 AQSP 任务产出，当前不显示历史内容。" /><TestVariantsPanel /></>;
+  const { hash } = useLocation();
+  const activeView: ResearchViewId = resolveResearchView(hash);
+  if (loading && !data) return <div className="aqsp-page">{activeView === TEST_VARIANTS_SECTION_ID ? <TestVariantsPanel /> : <LoadingState />}</div>;
+  if (error && !data) return <div className="aqsp-page">{activeView === TEST_VARIANTS_SECTION_ID ? <TestVariantsPanel /> : <ErrorState error={error} onRefresh={refresh} />}</div>;
+  if (!data) return <div className="aqsp-page">{activeView === TEST_VARIANTS_SECTION_ID ? <TestVariantsPanel /> : <EmptyState title="当前没有研究快照" detail="等待正式 AQSP 任务产出，当前不显示历史内容。" />}</div>;
 
   const conclusion = snapshotConclusion(data);
+  const formalSections = {
+    overview: <section id="overview" className="aqsp-module aqsp-module-overview"><SectionHead number={FORMAL_RESEARCH_SECTIONS[0].number} title={FORMAL_RESEARCH_SECTIONS[0].label} count="独立结论" /><div className="aqsp-summary-conclusion"><Sparkles className="h-5 w-5 shrink-0 text-primary" /><div><strong>{conclusion || "当天结论未记录"}</strong>{data.summaries.slice(1, 3).map((line) => <p key={line}>{line}</p>)}</div></div><StatusLine snapshot={data} /><PhaseLane snapshot={data} /><GateState snapshot={data} /><EmptyToday snapshot={data} /></section>,
+    messages: <section id="messages" className="aqsp-module aqsp-module-messages"><SectionHead number={FORMAL_RESEARCH_SECTIONS[1].number} title={FORMAL_RESEARCH_SECTIONS[1].label} count={`${data.messages.length} 条`} />{data.messages.length === 0 ? <EmptyState title="当天没有有效消息" detail="没有可核验来源时，系统不补写消息或产业链推断。" /> : <div className="aqsp-list">{data.messages.map((message, index) => <MessageCard key={`${message.title}-${message.published_at}-${index}`} message={message} />)}</div>}<MarketContext snapshot={data} /></section>,
+    candidates: <section id="candidates" className="aqsp-module aqsp-module-candidates"><SectionHead number={FORMAL_RESEARCH_SECTIONS[2].number} title={FORMAL_RESEARCH_SECTIONS[2].label} count={`${data.candidates.length} 个`} />{data.candidates.length === 0 ? <EmptyState title="当天没有候选" detail="当前没有通过数据质量与短线筛选的对象，不用历史候选填充。" /> : <div className="aqsp-list">{data.candidates.map((candidate) => <CandidateCard key={candidate.symbol} candidate={candidate} />)}</div>}</section>,
+    discussion: <section id="discussion" className="aqsp-module aqsp-module-discussion"><SectionHead number={FORMAL_RESEARCH_SECTIONS[3].number} title={FORMAL_RESEARCH_SECTIONS[3].label} count={`${data.debates.length} 条`} />{data.debates.length === 0 ? <EmptyState title="当天没有有效讨论" detail="没有可核验的分歧和风险条件时，不显示推断内容。" /> : <div className="aqsp-list">{data.debates.map((result) => <DebateCard key={result.symbol} result={result} />)}</div>}</section>,
+  } as const;
   return <div className="aqsp-page">
     <header className="aqsp-header"><div><p className="aqsp-eyebrow">AQSP · 短线研究</p><div className="aqsp-title-row"><h1>当天研究</h1><strong>{data.selected_date || "日期未记录"}</strong></div><SnapshotMeta snapshot={data} /></div><button type="button" className="aqsp-refresh" onClick={refresh} disabled={loading} title="刷新研究数据"><RefreshCw className={cn("h-4 w-4", loading && "animate-spin")} />刷新</button></header>
     <DatePicker snapshot={data} />
-    <div className="aqsp-formal-grid">
-      <section id="overview" className="aqsp-module aqsp-module-overview"><SectionHead number={FORMAL_RESEARCH_SECTIONS[0].number} title={FORMAL_RESEARCH_SECTIONS[0].label} count="独立结论" /><div className="aqsp-summary-conclusion"><Sparkles className="h-5 w-5 shrink-0 text-primary" /><div><strong>{conclusion || "当天结论未记录"}</strong>{data.summaries.slice(1, 3).map((line) => <p key={line}>{line}</p>)}</div></div><StatusLine snapshot={data} /><GateState snapshot={data} /><EmptyToday snapshot={data} /></section>
-      <section id="messages" className="aqsp-module aqsp-module-messages"><SectionHead number={FORMAL_RESEARCH_SECTIONS[1].number} title={FORMAL_RESEARCH_SECTIONS[1].label} count={`${data.messages.length} 条`} />{data.messages.length === 0 ? <EmptyState title="当天没有有效消息" detail="没有可核验来源时，系统不补写消息或产业链推断。" /> : <div className="aqsp-list">{data.messages.map((message, index) => <MessageCard key={`${message.title}-${message.published_at}-${index}`} message={message} />)}</div>}<MarketContext snapshot={data} /></section>
-      <section id="candidates" className="aqsp-module aqsp-module-candidates"><SectionHead number={FORMAL_RESEARCH_SECTIONS[2].number} title={FORMAL_RESEARCH_SECTIONS[2].label} count={`${data.candidates.length} 个`} />{data.candidates.length === 0 ? <EmptyState title="当天没有候选" detail="当前没有通过数据质量与短线筛选的对象，不用历史候选填充。" /> : <div className="aqsp-list">{data.candidates.map((candidate) => <CandidateCard key={candidate.symbol} candidate={candidate} />)}</div>}</section>
-      <section id="discussion" className="aqsp-module aqsp-module-discussion"><SectionHead number={FORMAL_RESEARCH_SECTIONS[3].number} title={FORMAL_RESEARCH_SECTIONS[3].label} count={`${data.debates.length} 条`} />{data.debates.length === 0 ? <EmptyState title="当天没有有效讨论" detail="没有可核验的分歧和风险条件时，不显示推断内容。" /> : <div className="aqsp-list">{data.debates.map((result) => <DebateCard key={result.symbol} result={result} />)}</div>}</section>
-    </div>
-    <TestVariantsPanel snapshot={data} />
+    <main className="aqsp-active-view" aria-live="polite">
+      {activeView === TEST_VARIANTS_SECTION_ID ? <TestVariantsPanel snapshot={data} /> : formalSections[activeView]}
+    </main>
   </div>;
 }
 

@@ -308,6 +308,7 @@
 /* AQSP 正式研究页：一个左侧入口只对应一个右侧模块。 */
 @layer components {
   .aqsp-page { display: grid; gap: 0.75rem; }
+  .aqsp-active-view { min-width: 0; }
   .aqsp-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; padding-bottom: 0.2rem; }
   .aqsp-title-row { display: flex; align-items: baseline; flex-wrap: wrap; gap: 0.7rem; margin-top: 0.2rem; }
   .aqsp-title-row h1 { font-size: 1.55rem; font-weight: 700; letter-spacing: 0; }
@@ -327,7 +328,6 @@
   .aqsp-date:hover { color: hsl(var(--foreground)); background: hsl(var(--muted) / 0.5); }
   .aqsp-date-active { border-color: hsl(var(--primary) / 0.42); color: hsl(var(--primary)); background: hsl(var(--primary) / 0.1); }
   .aqsp-date b { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.7rem; }
-  .aqsp-formal-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0.7rem; align-items: start; }
   .aqsp-module, .aqsp-lab { min-width: 0; border: 1px solid hsl(var(--border) / 0.9); border-radius: 0.65rem; background: hsl(var(--card) / 0.42); padding: 1rem; }
   .aqsp-module-overview { border-left: 3px solid hsl(var(--primary)); }
   .aqsp-module-messages { border-left: 3px solid hsl(var(--success)); }
@@ -342,6 +342,12 @@
   .aqsp-status-line { display: flex; flex-wrap: wrap; gap: 0.5rem 1.1rem; border-bottom: 1px solid hsl(var(--border) / 0.6); padding: 0.75rem 0; color: hsl(var(--muted-foreground)); font-size: 0.68rem; }
   .aqsp-status-line b { margin-right: 0.25rem; color: hsl(var(--foreground)); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.83rem; }
   .aqsp-status-muted { color: hsl(var(--muted-foreground) / 0.72); }
+  .aqsp-phase-lane { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.45rem; margin-top: 0.7rem; }
+  .aqsp-phase { min-width: 0; border: 1px solid hsl(var(--border) / 0.6); border-radius: 0.4rem; padding: 0.5rem; background: hsl(var(--background) / 0.18); }
+  .aqsp-phase > div { display: flex; align-items: baseline; justify-content: space-between; gap: 0.35rem; }
+  .aqsp-phase b { color: hsl(var(--foreground) / 0.88); font-size: 0.68rem; }
+  .aqsp-phase span { overflow: hidden; color: hsl(var(--muted-foreground)); font-size: 0.6rem; text-overflow: ellipsis; white-space: nowrap; }
+  .aqsp-phase small { display: block; overflow: hidden; margin-top: 0.25rem; color: hsl(var(--muted-foreground) / 0.75); font-size: 0.58rem; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
   .aqsp-gate, .aqsp-observation { display: flex; align-items: flex-start; gap: 0.5rem; margin-top: 0.75rem; border: 1px solid hsl(var(--border) / 0.65); border-radius: 0.45rem; padding: 0.6rem 0.7rem; font-size: 0.7rem; line-height: 1.45; }
   .aqsp-gate-ok { color: hsl(var(--success)); background: hsl(var(--success) / 0.055); }
   .aqsp-gate-warn, .aqsp-observation { color: hsl(var(--warning)); border-color: hsl(var(--warning) / 0.3); background: hsl(var(--warning) / 0.055); }
@@ -427,11 +433,11 @@
 @media (max-width: 767px) {
   .aqsp-header { align-items: stretch; flex-direction: column; }
   .aqsp-refresh { width: fit-content; }
-  .aqsp-list, .aqsp-formal-grid, .aqsp-lab-grid { grid-template-columns: minmax(0, 1fr); }
+  .aqsp-list, .aqsp-lab-grid { grid-template-columns: minmax(0, 1fr); }
   .aqsp-module, .aqsp-lab { padding: 0.8rem; }
   .aqsp-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .aqsp-phase-lane { grid-template-columns: minmax(0, 1fr); }
 }
 
 @media (min-width: 768px) and (max-width: 1180px) {
-  .aqsp-formal-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }

@@ -10,6 +10,7 @@ export type {
   AqspDateIndex,
   AqspMarketContext,
   AqspMessage,
+  AqspPhase,
   AqspRecommendationGate,
   AqspSnapshot,
   AqspSnapshotEnvelope,
