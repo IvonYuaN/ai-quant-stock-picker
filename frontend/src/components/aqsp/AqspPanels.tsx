@@ -432,11 +432,13 @@ export function AqspResearchWorkspace() {
         </header>
 
       <DateStrip snapshot={data} />
-      <PhaseStrip snapshot={data} />
-      {stale && <FreshnessNotice snapshot={data} />}
-      <RecommendationGateNotice snapshot={data} />
-      <CurrentEmptyObservationNotice snapshot={data} />
-      {error && <div className="mb-3 text-xs text-warning">后台刷新未完成，仍展示上一次已读取的数据。</div>}
+      {activeSection === RESEARCH_SECTION_IDS[0] && <>
+        <PhaseStrip snapshot={data} />
+        {stale && <FreshnessNotice snapshot={data} />}
+        <RecommendationGateNotice snapshot={data} />
+        <CurrentEmptyObservationNotice snapshot={data} />
+        {error && <div className="mb-3 text-xs text-warning">后台刷新未完成，仍展示上一次已读取的数据。</div>}
+      </>}
 
         {activeSection === RESEARCH_SECTION_IDS[0] && <section id={RESEARCH_SECTION_IDS[0]} className="vr-module vr-conclusion-panel" aria-labelledby="conclusion-title">
           <div className="flex min-w-0 items-start gap-3">
