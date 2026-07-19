@@ -2767,7 +2767,21 @@ def _pick_news_judgement_metrics(
 ) -> dict[str, object]:
     matched = _pick_relevant_catalyst_events(pick, artifact.catalyst_events)
     if not matched:
-        return {}
+        # Industry/supply-chain expansion is intentionally separate from the
+        # raw event list.  A generic headline can map to a symbol through the
+        # point-in-time universe, even when the headline never names that
+        # company or the PickResult has no sector metadata.
+        watch_candidate = next(
+            (
+                candidate
+                for candidate in artifact.news_watch_candidates
+                if candidate.symbol == pick.symbol
+            ),
+            None,
+        )
+        if watch_candidate is None:
+            return {}
+        return _news_watch_candidate_metrics(watch_candidate)
     supports = tuple(event for event in matched if event.impact == "positive")
     opposes = tuple(event for event in matched if event.impact == "negative")
     needs_review = tuple(
@@ -2846,6 +2860,60 @@ def _pick_news_judgement_metrics(
         "news_catalyst_industry": str(
             (pick.metrics or {}).get("industry", "") if pick.metrics else ""
         ),
+    }
+
+
+def _news_watch_candidate_metrics(
+    candidate: NewsWatchCandidate,
+) -> dict[str, object]:
+    """Project a source-backed expanded news candidate into pick evidence."""
+    impact = str(candidate.impact or "neutral").strip().lower()
+    if impact == "positive":
+        judgement = "supports"
+    elif impact == "negative":
+        judgement = "opposes"
+    else:
+        judgement = "needs_review"
+    lead = (
+        f"{candidate.symbol} {candidate.name} "
+        f"{'偏多' if impact == 'positive' else '偏空' if impact == 'negative' else '中性'}｜"
+        f"{candidate.relation}｜{candidate.summary or candidate.event_title}"
+    ).strip()
+    support_count = int(candidate.supporting_event_count)
+    oppose_count = int(candidate.contradicting_event_count)
+    review_count = int(not support_count and not oppose_count)
+    return {
+        "news_catalyst_judgement": judgement,
+        "news_catalyst_priority_score": int(candidate.priority_score),
+        "news_catalyst_support_count": support_count,
+        "news_catalyst_oppose_count": oppose_count,
+        "news_catalyst_review_count": review_count,
+        "news_catalyst_supports": (lead,) if impact == "positive" else (),
+        "news_catalyst_opposes": (lead,) if impact == "negative" else (),
+        "news_catalyst_needs_review": (lead,) if judgement == "needs_review" else (),
+        "news_catalyst_lead": lead,
+        "news_catalyst_source": candidate.source,
+        "news_catalyst_url": candidate.source_url,
+        "news_catalyst_title": candidate.event_title,
+        "news_catalyst_published_at": candidate.published_at,
+        "news_catalyst_source_quality_label": candidate.source_quality_label,
+        "news_catalyst_source_quality_score": int(candidate.source_quality_score),
+        "news_catalyst_confidence": float(candidate.confidence),
+        "news_catalyst_symbol": candidate.symbol,
+        "news_catalyst_name": candidate.name,
+        "news_catalyst_category": candidate.relation,
+        "news_catalyst_affected_sectors": candidate.affected_sectors,
+        "news_catalyst_affected_symbols": (),
+        "news_catalyst_transmission_path": candidate.transmission_path,
+        "news_catalyst_validation_signals": candidate.validation_signals,
+        "news_catalyst_invalidation_signals": candidate.invalidation_signals,
+        "news_catalyst_transmission_hypothesis": candidate.transmission_hypothesis,
+        "news_catalyst_supporting_evidence": candidate.supporting_evidence,
+        "news_catalyst_contradicting_evidence": (),
+        "news_catalyst_sector": (
+            candidate.affected_sectors[0] if candidate.affected_sectors else ""
+        ),
+        "news_catalyst_industry": "",
     }
 
 
@@ -3004,7 +3072,14 @@ def _pick_news_judgement_line(
     }.get(judgement, "消息观察")
     lead = str(metrics.get("news_catalyst_lead", "") or "")
     stack = _news_evidence_stack_summary(metrics)
-    suffix = f"｜{stack}" if stack else ""
+    source = str(metrics.get("news_catalyst_source", "") or "").strip()
+    path = _as_text_tuple(metrics.get("news_catalyst_transmission_path"))
+    suffix_parts = [
+        item for item in (stack, f"来源 {source}" if source else "") if item
+    ]
+    if path:
+        suffix_parts.append(f"传导 {' -> '.join(path[:2])}")
+    suffix = f"｜{'｜'.join(suffix_parts)}" if suffix_parts else ""
     return f"{label}: {lead}{suffix}"
 
 

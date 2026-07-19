@@ -21,16 +21,33 @@ from aqsp.universe.runtime import resolve_run_symbols  # noqa: E402
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--source", default=os.getenv("AQSP_INTRADAY_SOURCE", "online_first"))
-    parser.add_argument("--batch-size", type=int, default=int(os.getenv("AQSP_INTRADAY_BATCH_SIZE", "128")))
-    parser.add_argument("--min-avg-amount", type=float, default=float(os.getenv("AQSP_INTRADAY_MIN_AVG_AMOUNT", "50000000")))
-    parser.add_argument("--cursor", default=os.getenv("AQSP_INTRADAY_CURSOR_PATH", "data/runtime/intraday_universe_cursor.json"))
+    parser.add_argument(
+        "--source", default=os.getenv("AQSP_INTRADAY_SOURCE", "online_first")
+    )
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=int(os.getenv("AQSP_INTRADAY_BATCH_SIZE", "128")),
+    )
+    parser.add_argument(
+        "--min-avg-amount",
+        type=float,
+        default=float(os.getenv("AQSP_INTRADAY_MIN_AVG_AMOUNT", "0")),
+    )
+    parser.add_argument(
+        "--cursor",
+        default=os.getenv(
+            "AQSP_INTRADAY_CURSOR_PATH", "data/runtime/intraday_universe_cursor.json"
+        ),
+    )
     parser.add_argument("--commit", action="store_true")
     parser.add_argument("--fail", default="")
     args = parser.parse_args()
     cursor = IntradayUniverseCursor(args.cursor)
     if args.commit:
-        cursor.commit_current(scanned_count=int(os.getenv("AQSP_INTRADAY_BATCH_SCANNED", "0")))
+        cursor.commit_current(
+            scanned_count=int(os.getenv("AQSP_INTRADAY_BATCH_SCANNED", "0"))
+        )
         return 0
     if args.fail:
         cursor.fail_current(args.fail)
@@ -47,7 +64,9 @@ def main() -> int:
         max_universe=0,
         min_avg_amount=args.min_avg_amount,
     )
-    batch = cursor.select(symbols, trade_date=today_shanghai(), batch_size=args.batch_size)
+    batch = cursor.select(
+        symbols, trade_date=today_shanghai(), batch_size=args.batch_size
+    )
     print(",".join(batch.symbols))
     print(
         f"batch_id={batch.batch_id} universe_count={batch.universe_count} "

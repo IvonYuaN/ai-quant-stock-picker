@@ -100,6 +100,55 @@ def test_resolve_run_symbols_uses_liquid_universe_before_available() -> None:
     ) == ["600000", "000001"]
 
 
+def test_resolve_run_symbols_marks_live_discovery_as_live_short(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workload_calls: list[str | None] = []
+    monkeypatch.setenv("AQSP_RUN_TASK_ID", "intraday")
+
+    class Source:
+        def set_workload(self, workload: str | None) -> None:
+            workload_calls.append(workload)
+
+        def get_liquid_symbols(self, *, limit: int, min_amount: float) -> list[str]:
+            return ["600000"]
+
+    assert resolve_run_symbols(
+        "online_first",
+        "",
+        get_source_fn=lambda _name: Source(),
+        default_symbols=("000001",),
+        max_universe=0,
+        min_avg_amount=50.0,
+    ) == ["600000"]
+    assert workload_calls == ["live_short", None]
+
+
+def test_resolve_run_symbols_marks_full_live_pool_as_live_short_when_amount_filter_is_zero(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workload_calls: list[str | None] = []
+
+    class Source:
+        def set_workload(self, workload: str | None) -> None:
+            workload_calls.append(workload)
+
+        def get_available_symbols(self) -> list[str]:
+            return ["600000"]
+
+    monkeypatch.setenv("AQSP_RUN_TASK_ID", "intraday")
+    monkeypatch.setenv("AQSP_INTRADAY_FULL_UNIVERSE", "true")
+    assert resolve_run_symbols(
+        "online_first",
+        "",
+        get_source_fn=lambda _name: Source(),
+        default_symbols=("000001",),
+        max_universe=0,
+        min_avg_amount=0.0,
+    ) == ["600000"]
+    assert workload_calls == ["live_short", None]
+
+
 def test_resolve_run_symbols_filters_auto_universe_by_daily_coverage() -> None:
     seen: dict[str, object] = {}
 
@@ -299,6 +348,61 @@ def test_resolve_run_symbols_intraday_uses_live_liquidity_before_fast_cache(
         max_universe=2,
         min_avg_amount=50.0,
     ) == ["600519", "300750"]
+
+
+def test_resolve_run_symbols_intraday_full_universe_uses_all_live_membership(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class LiveSource:
+        def get_available_symbols(self) -> list[str]:
+            return ["600000", "000001", "300750"]
+
+        def get_liquid_symbols(self, *, limit: int, min_amount: float) -> list[str]:
+            raise AssertionError("full live rotation must not use liquid head")
+
+    monkeypatch.setenv("AQSP_RUN_TASK_ID", "intraday")
+    monkeypatch.setenv("AQSP_INTRADAY_FULL_UNIVERSE", "true")
+
+    assert resolve_run_symbols(
+        "online_first",
+        "",
+        get_source_fn=lambda _name: LiveSource(),
+        default_symbols=("600519",),
+        max_universe=0,
+        min_avg_amount=50_000_000,
+    ) == ["600000", "000001", "300750"]
+
+
+def test_resolve_run_symbols_intraday_full_universe_rejects_partial_cache(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cache_path = tmp_path / "symbols.json"
+    cache_path.write_text(
+        json.dumps({"covered_symbols": ["600000", "000001"]}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AQSP_RUN_TASK_ID", "intraday")
+    monkeypatch.setenv("AQSP_INTRADAY_FULL_UNIVERSE", "true")
+    monkeypatch.setenv("AQSP_INTRADAY_FAST_SYMBOL_CACHE", str(cache_path))
+    monkeypatch.setenv("AQSP_INTRADAY_FAST_SYMBOL_CSVS", "")
+
+    class UnavailableLiveSource:
+        def get_available_symbols(self) -> list[str]:
+            raise DataError("live snapshot unavailable")
+
+        def get_liquid_symbols(self, *, limit: int, min_amount: float) -> list[str]:
+            raise AssertionError("full live rotation must not use liquid fallback")
+
+    with pytest.raises(DataError, match="实时全池解析失败"):
+        resolve_run_symbols(
+            "online_first",
+            "",
+            get_source_fn=lambda _name: UnavailableLiveSource(),
+            default_symbols=("600519",),
+            max_universe=0,
+            min_avg_amount=0.0,
+        )
 
 
 def test_resolve_run_symbols_intraday_falls_back_to_fast_cache_when_live_fails(

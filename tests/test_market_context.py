@@ -128,6 +128,60 @@ def test_market_context_expands_actionable_news_to_full_market_candidates() -> N
     )
 
 
+def test_market_context_projects_expanded_news_into_candidate_explanation() -> None:
+    report = CatalystReport(
+        date="2026-07-14",
+        generated_at="2026-07-14T10:00:00+08:00",
+        source_status="ok",
+        events=(
+            CatalystEvent(
+                title="覆铜板报价上调，供应商库存偏低",
+                source="交易所公告",
+                published_at="2026-07-14T09:45:00+08:00",
+                url="https://example.test/pcb",
+                impact="positive",
+                category="电子材料涨价/缺货",
+                confidence=0.9,
+                source_quality_score=3,
+                source_quality_label="高价值来源",
+                affected_sectors=("PCB",),
+                transmission_path=("覆铜板涨价", "PCB厂商毛利预期"),
+                validation_signals=("PCB板块至少两只标的同步放量",),
+                invalidation_signals=("报价未继续上调且板块不扩散",),
+            ),
+        ),
+    )
+    artifact = build_market_context_artifact(
+        catalyst_report=report,
+        news_universe=(NewsUniverseInstrument("002463", "沪电股份", ("PCB",)),),
+    )
+    pick = PickResult(
+        symbol="002463",
+        name="沪电股份",
+        date="2026-07-14",
+        close=40.0,
+        score=70.0,
+        rating="watch",
+        entry_type="relative_strength",
+        ideal_buy=40.0,
+        stop_loss=37.0,
+        take_profit=44.0,
+        position="watch",
+    )
+
+    metrics = market_context_metrics_for_pick(pick, artifact)
+    lines = market_context_lines_for_pick(pick, artifact)
+
+    assert metrics["news_catalyst_judgement"] == "supports"
+    assert metrics["news_catalyst_source"] == "交易所公告"
+    transmission_path = metrics["cross_market_transmission_path"]
+    assert transmission_path[1:3] == ("覆铜板涨价", "PCB厂商毛利预期")
+    assert transmission_path[-1] == "价格与成交确认后再判断催化是否延续"
+    assert any(line.startswith("消息支持: 002463 沪电股份") for line in lines)
+    assert any("来源 交易所公告" in line for line in lines)
+    assert any("传导 覆铜板涨价 -> PCB厂商毛利预期" in line for line in lines)
+
+
 def test_realtime_cross_market_context_marks_all_supported_instruments_fresh() -> None:
     context = build_realtime_cross_market_context(
         _realtime_cross_market_payload(),

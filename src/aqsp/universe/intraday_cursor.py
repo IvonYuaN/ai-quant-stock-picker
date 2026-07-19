@@ -70,9 +70,10 @@ class IntradayUniverseCursor:
         else:
             offset = int(current.get("next_offset") or 0) % len(normalized)
             cycle_id = int(current.get("cycle_id") or 1)
-        selected = tuple(normalized[offset : offset + batch_size])
-        if len(selected) < batch_size and offset > 0:
-            selected += tuple(normalized[: batch_size - len(selected)])
+        # Do not wrap a short final batch into the head of the pool. Wrapping
+        # would repeat symbols before the current cycle has covered the tail.
+        effective_batch_size = min(batch_size, len(normalized) - offset)
+        selected = tuple(normalized[offset : offset + effective_batch_size])
         batch = IntradayBatch(
             trade_date=date_text,
             universe_version=version,
@@ -80,7 +81,7 @@ class IntradayUniverseCursor:
             offset=offset,
             symbols=selected,
             universe_count=len(normalized),
-            batch_size=batch_size,
+            batch_size=effective_batch_size,
         )
         self._write(
             {
@@ -108,8 +109,11 @@ class IntradayUniverseCursor:
         self.fail(self._batch_from_state(current), error)
 
     def commit(self, batch: IntradayBatch, *, scanned_count: int) -> None:
-        if scanned_count < 0:
-            raise ValueError("scanned_count must not be negative")
+        if scanned_count != len(batch.symbols):
+            raise ValueError(
+                "scanned_count must equal the selected batch size; "
+                f"expected={len(batch.symbols)} actual={scanned_count}"
+            )
         next_offset = batch.offset + len(batch.symbols)
         cycle_id = batch.cycle_id
         if next_offset >= batch.universe_count:

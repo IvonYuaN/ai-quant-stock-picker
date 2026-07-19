@@ -62,6 +62,12 @@ class DebateQualityAudit:
     data_status: str = "available"
     real_opposition_recorded: bool = False
     falsifiable_condition_recorded: bool = False
+    discussion_agent_count: int = 0
+    stance_counts: tuple[tuple[str, int], ...] = ()
+    rebuttal_count: int = 0
+    real_opposition_count: int = 0
+    message_evidence_recorded: bool = False
+    transmission_evidence_recorded: bool = False
 
     @property
     def passed(self) -> bool:
@@ -219,6 +225,25 @@ def audit_debate_quality(
     next_trigger_recorded = bool(_clean_text(_field(result, "next_trigger", "")))
     evidence_sufficient = _has_substantive_evidence(result, rounds)
     real_opposition_recorded = _has_real_opposition(rounds)
+    rebuttal_count = sum(
+        1
+        for round_data in rounds
+        for opinion in (_field(round_data, "opinions", ()) or ())
+        for record in (_field(opinion, "rebuttal_records", ()) or ())
+        if _rebuttal_record_is_substantive(record)
+    )
+    real_opposition_count = _real_opposition_count(rounds)
+    stance_counts = tuple(
+        (
+            stance,
+            sum(
+                _clean_text(_field(opinion, "stance", "")) == stance
+                for round_data in rounds
+                for opinion in (_field(round_data, "opinions", ()) or ())
+            ),
+        )
+        for stance in ("bullish", "bearish", "neutral")
+    )
     falsifiable_condition_recorded = _has_falsifiable_condition(result, rounds)
     data_status = _clean_text(_field(result, "data_status", "available")) or "available"
     if data_status != "available":
@@ -329,6 +354,17 @@ def audit_debate_quality(
         data_status=data_status,
         real_opposition_recorded=real_opposition_recorded,
         falsifiable_condition_recorded=falsifiable_condition_recorded,
+        discussion_agent_count=len(recorded_roles),
+        stance_counts=stance_counts,
+        rebuttal_count=rebuttal_count,
+        real_opposition_count=real_opposition_count,
+        message_evidence_recorded=_substantive_values(
+            _field(result, "real_message_evidence", ())
+        ),
+        transmission_evidence_recorded=bool(
+            _substantive_values(_field(result, "cross_market_evidence", ()))
+            or _substantive_values(_field(result, "rule_transmission_evidence", ()))
+        ),
     )
 
 
@@ -561,10 +597,19 @@ def _record_is_real_opposition(
         return False
     if recorded_opposing and recorded_opposing != current_stance:
         return False
+    # A neutral risk reviewer is useful process evidence, but it is not a
+    # bearish vote. Keep the real-opposition gate strict so a candidate cannot
+    # receive a directional committee conclusion without an actual opposing
+    # stance.
     return _opposite_stances(current_stance, challenged_stance)
 
 
 def _has_real_opposition(rounds: tuple[Any, ...]) -> bool:
+    return _real_opposition_count(rounds) > 0
+
+
+def _real_opposition_count(rounds: tuple[Any, ...]) -> int:
+    count = 0
     previous_by_role: dict[str, Any] = {}
     for round_data in rounds:
         round_num = int(_field(round_data, "round_num", 0) or 0)
@@ -578,13 +623,21 @@ def _has_real_opposition(rounds: tuple[Any, ...]) -> bool:
             for opinion in opinions
             for record in (_field(opinion, "rebuttal_records", ()) or ())
         ):
-            return True
+            count += sum(
+                _record_is_real_opposition(
+                    record,
+                    current_opinion=opinion,
+                    previous_by_role=previous_by_role,
+                )
+                for opinion in opinions
+                for record in (_field(opinion, "rebuttal_records", ()) or ())
+            )
         previous_by_role = {
             _role_value(_field(opinion, "role", "")): opinion
             for opinion in opinions
             if _role_value(_field(opinion, "role", ""))
         }
-    return False
+    return count
 
 
 def _has_falsifiable_condition(result: Any, rounds: tuple[Any, ...]) -> bool:

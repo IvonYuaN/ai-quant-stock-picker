@@ -245,6 +245,19 @@ class MultiSource(DataSource):
         exceptions = []
         for source_ref in [self.primary] + self.fallbacks:
             source_name = self._source_name(source_ref)
+            if self._active_workload is not None:
+                guard_message = workload_guard_message(
+                    source_name, self._active_workload
+                )
+                if guard_message or (
+                    self._active_workload == "live_short"
+                    and source_role_for_workload(source_name, "live_short")
+                    != "realtime"
+                ):
+                    exceptions.append(
+                        (source_name, guard_message or "非实时源不能解析盘中股票池")
+                    )
+                    continue
             try:
                 source = self._materialize(source_ref)
                 method = getattr(source, "get_available_symbols", None)
@@ -267,6 +280,19 @@ class MultiSource(DataSource):
         exceptions = []
         for source_ref in [self.primary] + self.fallbacks:
             source_name = self._source_name(source_ref)
+            if self._active_workload is not None:
+                guard_message = workload_guard_message(
+                    source_name, self._active_workload
+                )
+                if guard_message or (
+                    self._active_workload == "live_short"
+                    and source_role_for_workload(source_name, "live_short")
+                    != "realtime"
+                ):
+                    exceptions.append(
+                        (source_name, guard_message or "非实时源不能解析盘中流动性池")
+                    )
+                    continue
             try:
                 source = self._materialize(source_ref)
                 method = getattr(source, "get_liquid_symbols", None)

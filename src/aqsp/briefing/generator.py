@@ -454,6 +454,15 @@ def _debate_metrics(result: DebateResult) -> dict[str, object]:
         "debate_conclusion_recorded": bool(quality and quality.conclusion_recorded),
         "debate_quality_issues": () if quality is None else quality.issues,
         "debate_evidence_sufficient": bool(quality and quality.evidence_sufficient),
+        "debate_agent_count": quality.discussion_agent_count if quality else 0,
+        "debate_rebuttal_count": quality.rebuttal_count if quality else 0,
+        "debate_real_opposition_count": quality.real_opposition_count if quality else 0,
+        "debate_message_evidence_recorded": bool(
+            quality and quality.message_evidence_recorded
+        ),
+        "debate_transmission_evidence_recorded": bool(
+            quality and quality.transmission_evidence_recorded
+        ),
         "debate_data_status": result.data_status,
         "debate_data_note": result.data_note,
         "debate_advisory_only": bool(result.advisory_only),

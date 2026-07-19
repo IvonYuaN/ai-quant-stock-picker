@@ -119,6 +119,9 @@ export TZ="${TZ:-Asia/Shanghai}"
 export AQSP_RUN_TASK_ID="${AQSP_RUN_TASK_ID:-intraday}"
 # 盘中入口不接受外部任务 ID，避免残留 daily/live_short 环境改变运行分支。
 export AQSP_RUN_TASK_ID="intraday"
+# Resolve the complete live A-share membership before cursor rotation. The
+# cursor, not a liquidity head or historical cache, limits each refresh.
+export AQSP_INTRADAY_FULL_UNIVERSE="${AQSP_INTRADAY_FULL_UNIVERSE:-true}"
 export AQSP_NOTIFY="false"
 export AQSP_GATE_NOTIFY="false"
 # Intraday screening must not inherit the slower daily online-factor side
@@ -216,7 +219,8 @@ if ! [[ "$INTRADAY_RUN_TIMEOUT_SECONDS" =~ ^[0-9]+$ ]] || [ "$INTRADAY_RUN_TIMEO
     log "盘中运行超时配置无效(${INTRADAY_RUN_TIMEOUT_SECONDS})，使用 420 秒"
     INTRADAY_RUN_TIMEOUT_SECONDS="420"
 fi
-# 盘中默认解析完整实时流动性池；资源保护由数据源批量和超时控制，不能静默只扫前 40 只。
+# 盘中默认解析完整实时股票池；短线流动性阈值必须通过盘中专用变量显式设置，
+# 不能继承收盘主链的 AQSP_MIN_AVG_AMOUNT 而静默缩成一部分股票。
 INTRADAY_FAST_MAX_UNIVERSE="${AQSP_INTRADAY_FAST_MAX_UNIVERSE:-0}"
 INTRADAY_MAX_UNIVERSE="${AQSP_INTRADAY_MAX_UNIVERSE:-${INTRADAY_FAST_MAX_UNIVERSE}}"
 if [ -n "$PRESET_AQSP_INTRADAY_MAX_UNIVERSE" ]; then
@@ -229,7 +233,7 @@ elif [ "$INTRADAY_MAX_UNIVERSE" -gt 0 ] && [ "$INTRADAY_MAX_UNIVERSE" -gt 120 ] 
     log "盘中显式最大扫描范围 ${INTRADAY_MAX_UNIVERSE} 过大，收紧为 120；设置 AQSP_INTRADAY_ALLOW_HEAVY_UNIVERSE=true 才允许限制池扩大"
     INTRADAY_MAX_UNIVERSE="120"
 fi
-INTRADAY_MIN_AVG_AMOUNT="${AQSP_INTRADAY_MIN_AVG_AMOUNT:-${AQSP_MIN_AVG_AMOUNT:-50000000}}"
+INTRADAY_MIN_AVG_AMOUNT="${AQSP_INTRADAY_MIN_AVG_AMOUNT:-0}"
 INTRADAY_MAX_DATA_LAG_DAYS="${AQSP_INTRADAY_MAX_DATA_LAG_DAYS:-1}"
 INTRADAY_ALLOW_NOTIFY="${AQSP_INTRADAY_ALLOW_NOTIFY:-false}"
 INTRADAY_NOTIFY="${AQSP_INTRADAY_NOTIFY:-false}"
@@ -323,6 +327,50 @@ replace_intraday_artifact() {
     else
         log "未生成${label}，保留上一版: ${dest}"
     fi
+}
+
+validate_intraday_batch_output() {
+    local expected_count="$INTRADAY_BATCH_SIZE"
+    local scanned_count
+    local batch_output_path="$INTRADAY_OUTPUT_CSV"
+    if [ ! -f "$batch_output_path" ] && [ -f "$TMP_INTRADAY_OUTPUT_CSV" ]; then
+        batch_output_path="$TMP_INTRADAY_OUTPUT_CSV"
+    fi
+    if [ ! -f "$batch_output_path" ]; then
+        log "[ERROR] 盘中批次产物缺少 CSV，拒绝提交 cursor"
+        return 1
+    fi
+    if ! scanned_count="$("$PYTHON_BIN" - "$batch_output_path" "$expected_count" <<'AQSP_INTRADAY_BATCH_OUTPUT_CHECK'
+import csv
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+expected = int(sys.argv[2])
+with path.open("r", encoding="utf-8", newline="") as handle:
+    rows = list(csv.DictReader(handle))
+run_rows = [row for row in rows if str(row.get("symbol") or "").strip() == "__RUN__"]
+if len(run_rows) != 1:
+    raise SystemExit("盘中批次 CSV 缺少唯一运行元数据行")
+run = run_rows[0]
+try:
+    resolved = int(float(str(run.get("run_resolved_symbol_count") or "")))
+    fetched = int(float(str(run.get("run_fetched_frame_count") or "")))
+except ValueError as exc:
+    raise SystemExit("盘中批次 CSV 缺少有效解析/取数数量") from exc
+if resolved != expected:
+    raise SystemExit(f"盘中批次解析数量不完整: {resolved}/{expected}")
+if fetched < resolved:
+    raise SystemExit(f"盘中批次取数数量不完整: {fetched}/{resolved}")
+print(resolved)
+AQSP_INTRADAY_BATCH_OUTPUT_CHECK
+    )"; then
+        log "[ERROR] 盘中批次实际覆盖不足，拒绝提交 cursor"
+        return 1
+    fi
+    INTRADAY_BATCH_SCANNED="$scanned_count"
+    log "盘中批次产物校验通过: 解析/扫描 ${INTRADAY_BATCH_SCANNED}/${expected_count}"
+    return 0
 }
 
 debate_backfill_lock_age_minutes() {
@@ -1732,11 +1780,17 @@ if [ "$INTRADAY_BATCH_ACTIVE" = "true" ] && \
    [ "$OBSERVATION_ONLY" != "true" ] && \
    [ "$PARTIAL_SNAPSHOT_USED" != "true" ] && \
    [ "${SCRIPT_EXIT_CODE:-0}" -eq 0 ]; then
-    AQSP_INTRADAY_BATCH_SCANNED="$INTRADAY_BATCH_SIZE" \
-        "$PYTHON_BIN" "${PROJECT_ROOT}/scripts/prepare_intraday_batch.py" \
-        --cursor "$INTRADAY_CURSOR_PATH" --commit
-    BATCH_COMMITTED="true"
-    log "盘中批次已提交，下一轮继续覆盖剩余股票池"
+    if validate_intraday_batch_output; then
+        AQSP_INTRADAY_BATCH_SCANNED="$INTRADAY_BATCH_SCANNED" \
+            "$PYTHON_BIN" "${PROJECT_ROOT}/scripts/prepare_intraday_batch.py" \
+            --cursor "$INTRADAY_CURSOR_PATH" --commit
+        BATCH_COMMITTED="true"
+        log "盘中批次已提交，下一轮继续覆盖剩余股票池"
+    else
+        BATCH_FAILURE_REASON="intraday_batch_output_incomplete"
+        SCRIPT_EXIT_CODE="1"
+        write_intraday_status "partial_failed" "盘中批次产物覆盖不完整，cursor 未推进" "$SCRIPT_EXIT_CODE"
+    fi
 else
     BATCH_FAILURE_REASON="${BATCH_FAILURE_REASON:-recommendation_or_publish_not_complete}"
 fi
