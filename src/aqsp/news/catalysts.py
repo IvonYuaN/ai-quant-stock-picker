@@ -714,7 +714,7 @@ def _report_from_stale_cache(
 
 POSITIVE_PATTERNS: tuple[tuple[str, str, int], ...] = (
     (
-        "GPT|AI safety|agentic AI|AI investments|AI innovation|"
+        r"(?<![A-Za-z0-9])GPT(?![A-Za-z0-9])|AI safety|agentic AI|AI investments|AI innovation|"
         "foundry|EPYC|Instinct|Gaudi|processor|semiconductor|"
         "data center|AI infrastructure|数据中心|人工智能|"
         "(?:AMD|Intel).*(?:AI|data center|processor|semiconductor|foundry|"
@@ -2289,7 +2289,9 @@ def _iter_news_rows(df: pd.DataFrame) -> Iterable[dict[str, str]]:
         # Keep article body separate from the headline/abstract. A body may
         # contain generic words such as "AI", "satellite", or "contract"
         # that describe the publisher's page rather than the news event.
-        summary = summary or title
+        # Empty abstract is intentional; the body remains available as
+        # supporting evidence and for negative-risk checks.
+        summary = summary or ""
         rows.append(
             {
                 "title": title,
