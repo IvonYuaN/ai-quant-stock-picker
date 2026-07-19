@@ -201,7 +201,8 @@
   .vr-summary-stats div { display: flex; flex-direction: column; gap: 0.2rem; }
   .vr-summary-stats strong { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 1.1rem; font-variant-numeric: tabular-nums; color: hsl(var(--foreground)); }
   .vr-summary-stats span { color: hsl(var(--muted-foreground)); font-size: 0.65rem; }
-  .vr-research-columns { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); align-items: start; gap: 0.7rem; }
+  /* Keep evidence types in separate vertical modules; cards only tile within their own module. */
+  .vr-research-columns { display: grid; grid-template-columns: minmax(0, 1fr); align-items: start; gap: 0.85rem; }
   .vr-board-section { min-width: 0; scroll-margin-top: 1.25rem; }
   .vr-module { border: 1px solid hsl(var(--border) / 0.62); border-radius: 0.7rem; background: hsl(var(--card) / 0.28); padding: 0.85rem; }
   .vr-section-heading { display: flex; align-items: end; justify-content: space-between; gap: 1rem; margin-bottom: 0.65rem; }
@@ -218,7 +219,7 @@
   .vr-chip-primary { background: hsl(var(--primary) / 0.13); color: hsl(var(--primary)); }
   .vr-chip-positive { background: hsl(var(--success) / 0.13); color: hsl(var(--success)); }
   .vr-chip-negative { background: hsl(var(--danger) / 0.13); color: hsl(var(--danger)); }
-  .vr-message-list { display: grid; gap: 0.55rem; }
+  .vr-message-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.65rem; }
   .vr-message-card { border: 1px solid hsl(var(--border) / 0.72); border-radius: 0.55rem; background: hsl(var(--card) / 0.58); padding: 0.65rem 0.75rem; box-shadow: inset 2px 0 0 hsl(var(--primary) / 0.4); transition: border-color 140ms ease, background 140ms ease; }
   .vr-message-card:hover { border-color: hsl(var(--primary) / 0.34); background: hsl(var(--card) / 0.82); }
   .vr-message-impact { margin-top: 0.6rem; border-radius: 0.45rem; background: hsl(var(--primary) / 0.08); padding: 0.55rem 0.6rem; color: hsl(var(--foreground) / 0.86); font-size: 0.72rem; line-height: 1.5; }
@@ -228,7 +229,7 @@
   .vr-vote-bull { color: hsl(var(--success)); background: hsl(var(--success) / 0.09); }
   .vr-vote-neutral { color: hsl(var(--muted-foreground)); background: hsl(var(--muted) / 0.55); }
   .vr-vote-bear { color: hsl(var(--warning)); background: hsl(var(--warning) / 0.09); }
-  .vr-discussion-section { margin-top: 0.85rem; }
+  .vr-discussion-section { margin-top: 0; }
   .vr-context-list { display: grid; gap: 0.65rem; }
   .vr-context-status { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; padding-bottom: 0.55rem; border-bottom: 1px solid hsl(var(--border) / 0.5); font-size: 0.7rem; color: hsl(var(--muted-foreground)); }
   .vr-context-status strong { color: hsl(var(--primary)); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.68rem; }
@@ -276,6 +277,7 @@
   .vr-lab-grid { grid-template-columns: 1fr; }
   .vr-module { padding: 0.75rem; }
   .vr-candidate-grid { grid-template-columns: minmax(0, 1fr); }
+  .vr-message-list { grid-template-columns: minmax(0, 1fr); }
   .vr-vote { min-width: 0; }
   .vr-technical-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .vr-research-columns { grid-template-columns: minmax(0, 1fr); }
