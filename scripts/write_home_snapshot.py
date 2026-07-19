@@ -507,6 +507,8 @@ def _snapshot_debates(
     selected: list[HomeSnapshotDebate] = []
     selected_symbols: set[str] = set()
     for debate in debates:
+        if not _debate_is_complete(debate):
+            continue
         symbol = _text(getattr(debate, "symbol", ""))
         if symbol not in candidate_symbols or symbol in selected_symbols:
             continue
@@ -558,6 +560,19 @@ def _snapshot_debates(
         if len(selected) == MAX_HOME_SNAPSHOT_DEBATES:
             break
     return tuple(selected)
+
+
+def _debate_is_complete(debate: Any) -> bool:
+    """Keep quality-failed committee attempts out of the normal debate lane."""
+    for field in ("process_recorded", "conclusion_recorded", "evidence_sufficient"):
+        if getattr(debate, field, None) is False:
+            return False
+    quality_issues = getattr(
+        debate,
+        "quality_issues",
+        getattr(debate, "debate_quality_issues", ()),
+    )
+    return not bool(tuple(quality_issues or ()))
 
 
 def _news_report_path() -> Path:
