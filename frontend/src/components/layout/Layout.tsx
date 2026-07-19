@@ -1,9 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, Outlet, useLocation } from "react-router-dom";
 import {
-  CalendarDays,
   FlaskConical,
-  Globe2,
   LineChart,
   Moon,
   PanelLeftClose,
@@ -17,9 +15,8 @@ import { cn } from "@/lib/utils";
 import { RESEARCH_NAV_ITEMS, TEST_VARIANTS_SECTION_ID } from "@/lib/research-layout";
 import { useDarkMode } from "@/hooks/useDarkMode";
 import { AqspWorkspaceProvider, useAqspSnapshot } from "@/components/aqsp/useAqspSnapshot";
-import { formatResearchDate } from "@/lib/research-view";
 
-const NAV_ICONS = [Sparkles, ScrollText, LineChart, UsersRound, Globe2] as const;
+const NAV_ICONS = [Sparkles, ScrollText, LineChart, UsersRound] as const;
 
 export function Layout() {
   return <AqspWorkspaceProvider><WorkspaceLayout /></AqspWorkspaceProvider>;
@@ -40,9 +37,6 @@ function WorkspaceLayout() {
       selectDate(data.selected_date);
     }
   }, [data, selectedDate, selectDate]);
-
-  const dates = data?.available_dates ?? [];
-  const activeDate = selectedDate || data?.selected_date || "";
 
   return (
     <div className="vr-shell">
@@ -78,8 +72,6 @@ function WorkspaceLayout() {
               const Icon = NAV_ICONS[index];
               const count = countKey === "conclusion"
                 ? 1
-                : countKey === "market"
-                ? data?.market_context?.cross_market.length ?? 0
                 : countKey === "messages"
                   ? data?.messages.length ?? 0
                   : countKey === "candidates"
@@ -115,35 +107,6 @@ function WorkspaceLayout() {
             </Link>
           </nav>
 
-          {!collapsed && (
-            <section className="vr-sidebar-section mt-7" aria-labelledby="date-index-title">
-              <div className="vr-sidebar-label" id="date-index-title"><span>研究日期</span><CalendarDays className="h-3.5 w-3.5" /></div>
-              <div className="mt-2 space-y-1.5">
-                {loading && <div className="rounded-lg border border-border/50 px-3 py-2 text-xs text-muted-foreground">读取日期索引…</div>}
-                {!loading && dates.length === 0 && <div className="rounded-lg border border-dashed border-border/60 px-3 py-2 text-xs text-muted-foreground">暂无日期索引</div>}
-                {dates.map((date) => {
-                  const label = formatResearchDate(date);
-                  const active = date === activeDate;
-                  return (
-                    <button
-                      key={date}
-                      type="button"
-                      className={cn("vr-date-item", active && "vr-date-item-active")}
-                      onClick={() => {
-                        selectDate(date);
-                      }}
-                      aria-pressed={active}
-                    >
-                      <span className="font-mono text-xs">{label.day}</span>
-                      <span className="text-[10px] text-muted-foreground">{label.weekday}</span>
-                      {active && <span className="ml-auto text-[10px] text-primary">当前</span>}
-                    </button>
-                  );
-                })}
-              </div>
-              <p className="mt-2 text-[10px] leading-relaxed text-muted-foreground/60">日期来自只读快照索引，正文以当前数据源返回为准。</p>
-            </section>
-          )}
         </div>
 
         <div className="vr-sidebar-footer">

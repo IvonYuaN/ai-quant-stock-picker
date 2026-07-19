@@ -248,6 +248,7 @@
   .vr-vote-bear { color: hsl(var(--warning)); background: hsl(var(--warning) / 0.09); }
   .vr-discussion-section { margin-top: 0; }
   .vr-context-list { display: grid; gap: 0.65rem; }
+  .vr-context-module { margin-top: 1rem; padding-top: 0.9rem; border-top: 1px solid hsl(var(--border) / 0.7); }
   .vr-context-status { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; padding-bottom: 0.55rem; border-bottom: 1px solid hsl(var(--border) / 0.5); font-size: 0.7rem; color: hsl(var(--muted-foreground)); }
   .vr-context-status strong { color: hsl(var(--primary)); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.68rem; }
   .vr-context-item { display: grid; gap: 0.2rem; padding-left: 0.55rem; border-left: 2px solid hsl(var(--primary) / 0.45); font-size: 0.7rem; line-height: 1.45; }

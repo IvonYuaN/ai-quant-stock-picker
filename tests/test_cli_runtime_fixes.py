@@ -941,6 +941,36 @@ def test_force_intraday_observation_keeps_score_but_blocks_review() -> None:
     assert observed[0].metrics["portfolio_action"] == "observation_only"
 
 
+def test_force_intraday_observation_only_downgrades_missing_candidate() -> None:
+    import aqsp.cli as cli_mod
+    from aqsp.core.types import PickResult
+
+    picks = [
+        PickResult(
+            symbol=symbol,
+            name=symbol,
+            date="2026-06-26",
+            close=10.0,
+            score=80.0,
+            rating="buy_candidate",
+            entry_type="next_open",
+            ideal_buy=10.0,
+            stop_loss=9.4,
+            take_profit=11.0,
+            position="10%-30%",
+        )
+        for symbol in ("600000", "600001")
+    ]
+
+    observed = cli_mod._force_intraday_observation(
+        picks,
+        missing_symbols=("600001",),
+    )
+
+    assert observed[0].metrics.get("observation_only", False) is False
+    assert observed[1].metrics["observation_only"] is True
+
+
 def test_cross_market_context_assigns_display_priority_without_changing_score(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

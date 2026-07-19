@@ -181,10 +181,69 @@ def test_intraday_service_fetches_stock_and_index_symbols_in_parallel(
     assert source.max_active >= 2
 
 
+def test_intraday_service_batches_stock_requests_and_separates_benchmark() -> None:
+    class RecordingSource(MockSource):
+        def __init__(self):
+            super().__init__(
+                intraday_data={
+                    symbol: pd.DataFrame(
+                        {
+                            "date": ["2026-07-16 09:30:00"],
+                            "open": [10.0],
+                            "high": [10.1],
+                            "low": [9.9],
+                            "close": [10.0],
+                            "volume": [1000],
+                        }
+                    )
+                    for symbol in ("600000", "000001", "000002")
+                },
+                index_intraday_data={
+                    "000300": pd.DataFrame(
+                        {
+                            "date": ["2026-07-16 09:30:00"],
+                            "open": [4000.0],
+                            "high": [4001.0],
+                            "low": [3999.0],
+                            "close": [4000.0],
+                            "volume": [1000],
+                        }
+                    )
+                },
+            )
+            self.calls: list[tuple[str, tuple[str, ...]]] = []
+
+        def fetch_intraday(self, symbols, period="5"):
+            self.calls.append(("stock", tuple(symbols)))
+            return super().fetch_intraday(symbols, period)
+
+        def fetch_index_intraday(self, index_codes, period="5"):
+            self.calls.append(("benchmark", tuple(index_codes)))
+            return super().fetch_index_intraday(index_codes, period)
+
+    source = RecordingSource()
+    bars = IntradayService(
+        source,
+        allow_historical_replay=True,
+        fetch_batch_size=2,
+    ).get_intraday_bars(
+        ["600000", "000001", "000002", "000300"],
+        index_symbols=["000300"],
+        target_date=date(2026, 7, 16),
+    )
+
+    assert set(bars) == {"600000", "000001", "000002", "000300"}
+    assert set(source.calls) == {
+        ("stock", ("600000", "000001")),
+        ("stock", ("000002",)),
+        ("benchmark", ("000300",)),
+    }
+
+
 def test_intraday_service_shared_deadline_leaves_slow_symbols_missing() -> None:
     class SlowSource(MockSource):
         def fetch_intraday(self, symbols, period="5"):
-            if symbols == ["000001"]:
+            if "000001" in symbols:
                 time.sleep(0.2)
             return super().fetch_intraday(symbols, period)
 
@@ -209,8 +268,7 @@ def test_intraday_service_shared_deadline_leaves_slow_symbols_missing() -> None:
 
     result = service._fetch_intraday_with_symbol_isolation(["600000", "000001"], "5")
 
-    assert "600000" in result
-    assert "000001" not in result
+    assert result == {}
 
 
 def test_intraday_service_rejects_invalid_fetch_limits() -> None:
@@ -218,6 +276,8 @@ def test_intraday_service_rejects_invalid_fetch_limits() -> None:
         IntradayService(MockSource(), fetch_deadline_seconds=0)
     with pytest.raises(ValueError, match="fetch_max_workers"):
         IntradayService(MockSource(), fetch_max_workers=0)
+    with pytest.raises(ValueError, match="fetch_batch_size"):
+        IntradayService(MockSource(), fetch_batch_size=0)
 
 
 def test_intraday_service_routes_benchmark_to_index_endpoint() -> None:
@@ -419,11 +479,20 @@ def test_intraday_overlay_coverage_keeps_missing_symbols_explicit() -> None:
     ).merge_intraday_bar_into_daily_with_coverage(
         {"600000": _historical_frame({"date": ["2026-06-25"], "symbol": ["600000"]})},
         ["600000", "000300"],
+        index_symbols=["000300"],
         target_date=date(2026, 6, 26),
     )
 
     assert result.covered_symbols == ("600000",)
     assert result.missing_symbols == ("000300",)
+    assert result.candidate_requested_symbols == ("600000",)
+    assert result.candidate_covered_symbols == ("600000",)
+    assert result.candidate_missing_symbols == ()
+    assert result.benchmark_requested_symbols == ("000300",)
+    assert result.benchmark_covered_symbols == ()
+    assert result.benchmark_missing_symbols == ("000300",)
+    assert result.candidate_complete
+    assert not result.benchmark_complete
     assert not result.complete
 
 

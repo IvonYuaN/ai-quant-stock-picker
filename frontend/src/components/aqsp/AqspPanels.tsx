@@ -15,7 +15,7 @@ import {
 } from "lucide-react";
 import { useLocation } from "react-router-dom";
 import { cn } from "@/lib/utils";
-import { RESEARCH_SECTION_IDS, TEST_VARIANTS_SECTION_ID } from "@/lib/research-layout";
+import { MARKET_CONTEXT_SECTION_ID, RESEARCH_SECTION_IDS, TEST_VARIANTS_SECTION_ID } from "@/lib/research-layout";
 import type { AqspAgentResult, AqspCandidate, AqspMessage, AqspSnapshot } from "@/lib/api";
 import {
   debateProcessText,
@@ -379,8 +379,8 @@ function MarketContextCard({ snapshot }: { snapshot: AqspSnapshot }) {
   const lines = uniqueNonEmpty(context?.summary_lines, 5);
   const crossMarket = context?.cross_market ?? [];
   return (
-    <section id={RESEARCH_SECTION_IDS[4]} className="vr-module vr-board-section">
-      <div className="vr-section-heading"><div><p className="vr-kicker">05 · 市场与传导</p><h2>市场与产业链</h2></div><span className="vr-count">{crossMarket.length} 条</span></div>
+    <section id={MARKET_CONTEXT_SECTION_ID} className="vr-context-module" aria-label="市场与产业链传导">
+      <div className="vr-section-heading"><div><p className="vr-kicker">消息关联</p><h3 className="text-sm font-semibold">市场与产业链传导</h3></div><span className="vr-count">{crossMarket.length} 条</span></div>
       {!context ? <EmptyState title="暂无市场上下文" detail="当前快照没有可核验的跨市场或产业链传导记录。" /> : (
         <div className="vr-context-list">
           <div className="vr-context-status"><span>状态</span><strong>{context.status || "未记录"}</strong></div>
@@ -417,7 +417,10 @@ export function AqspResearchWorkspace() {
 
   const conclusion = snapshotConclusion(data);
   const stale = isAqspSnapshotStale(data);
-  const activeSection = hash.slice(1) || RESEARCH_SECTION_IDS[0];
+  const requestedSection = hash.slice(1);
+  const activeSection = requestedSection === TEST_VARIANTS_SECTION_ID || RESEARCH_SECTION_IDS.includes(requestedSection as (typeof RESEARCH_SECTION_IDS)[number])
+    ? requestedSection
+    : RESEARCH_SECTION_IDS[0];
   return (
     <div className="vr-research-page">
       <div className="vr-top-summary">
@@ -466,6 +469,7 @@ export function AqspResearchWorkspace() {
       {activeSection === RESEARCH_SECTION_IDS[1] && <section id={RESEARCH_SECTION_IDS[1]} className="vr-module vr-board-section">
         <div className="vr-section-heading"><div><p className="vr-kicker">02 · 来源与影响</p><h2>消息</h2></div><span className="vr-count">{data.messages.length} 条</span></div>
         {data.messages.length === 0 ? <EmptyState title="当前没有消息摘要" detail="快照未记录可核验消息，不在界面中补充推断。" /> : <div className="vr-message-list">{data.messages.map((message) => <MessageCard key={`${message.title}-${message.published_at}`} message={message} />)}</div>}
+        <MarketContextCard snapshot={data} />
       </section>}
 
       {activeSection === RESEARCH_SECTION_IDS[2] && <section id={RESEARCH_SECTION_IDS[2]} className="vr-module vr-board-section">
@@ -477,7 +481,6 @@ export function AqspResearchWorkspace() {
         <div className="vr-section-heading"><div><p className="vr-kicker">04 · 分歧与风险</p><h2>Agent 讨论</h2></div><span className="vr-count">{data.debates.length} 条</span></div>
         {data.debates.length === 0 ? <EmptyState title="暂无讨论记录" detail="当前快照没有多 Agent 讨论结果，保留确定性研究数据。" /> : <div className="grid gap-3 xl:grid-cols-2">{data.debates.map((result) => <DebateCard key={result.symbol} result={result} />)}</div>}
       </section>}
-      {activeSection === RESEARCH_SECTION_IDS[4] && <MarketContextCard snapshot={data} />}
       </div>
       {activeSection === TEST_VARIANTS_SECTION_ID && <TestVariantsPanel snapshot={data} />}
     </div>

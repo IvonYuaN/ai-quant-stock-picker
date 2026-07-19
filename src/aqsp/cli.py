@@ -2515,13 +2515,23 @@ def _force_intraday_observation(
     picks: list[PickResult],
     *,
     missing_symbols: tuple[str, ...],
+    benchmark_symbol: str = "000300",
 ) -> list[PickResult]:
     """Keep deterministic scores visible while forbidding partial-live recommendations."""
     if not picks or not missing_symbols:
         return picks
-    reason = "盘中覆盖不完整，缺少: " + "、".join(missing_symbols)
+    benchmark = str(benchmark_symbol or "000300").strip()
+    benchmark_missing = benchmark in missing_symbols
     observed: list[PickResult] = []
     for pick in picks:
+        pick_missing = tuple(
+            symbol for symbol in missing_symbols if symbol == str(pick.symbol).strip()
+        )
+        if not benchmark_missing and not pick_missing:
+            observed.append(pick)
+            continue
+        reason_symbols = (benchmark,) if benchmark_missing else pick_missing
+        reason = "盘中覆盖不完整，缺少: " + "、".join(reason_symbols)
         metrics = dict(pick.metrics)
         alerts = tuple(metrics.get("data_quality_alerts", ()) or ())
         metrics.update(
@@ -4515,6 +4525,7 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
     screened_picks = _force_intraday_observation(
         screened_picks,
         missing_symbols=relevant_intraday_missing_symbols,
+        benchmark_symbol=args.benchmark_symbol,
     )
     if status.triggered:
         screened_picks = _apply_protection_observation_boundary(

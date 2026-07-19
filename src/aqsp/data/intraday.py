@@ -30,7 +30,13 @@ _MAX_FUTURE_BAR_SECONDS = 120
 _COMPOSITE_SOURCES = frozenset({"auto", "local_first", "online_first", "multi"})
 _A_SHARE_SESSION_MINUTES = 240
 _DEFAULT_FETCH_DEADLINE_SECONDS = 30.0
-_DEFAULT_FETCH_MAX_WORKERS = 24
+_DEFAULT_FETCH_MAX_WORKERS = 4
+_DEFAULT_FETCH_BATCH_SIZE = 64
+
+
+def _chunked(values: list[str], size: int) -> list[list[str]]:
+    """Split symbols into bounded source requests."""
+    return [values[index : index + size] for index in range(0, len(values), size)]
 
 
 def _a_share_elapsed_trading_minutes(timestamp: datetime) -> int:
@@ -80,10 +86,24 @@ class IntradayOverlayResult:
     requested_symbols: tuple[str, ...]
     covered_symbols: tuple[str, ...]
     missing_symbols: tuple[str, ...]
+    candidate_requested_symbols: tuple[str, ...] = ()
+    candidate_covered_symbols: tuple[str, ...] = ()
+    candidate_missing_symbols: tuple[str, ...] = ()
+    benchmark_requested_symbols: tuple[str, ...] = ()
+    benchmark_covered_symbols: tuple[str, ...] = ()
+    benchmark_missing_symbols: tuple[str, ...] = ()
 
     @property
     def complete(self) -> bool:
         return not self.missing_symbols
+
+    @property
+    def candidate_complete(self) -> bool:
+        return not self.candidate_missing_symbols
+
+    @property
+    def benchmark_complete(self) -> bool:
+        return not self.benchmark_missing_symbols
 
 
 class IntradayService:
@@ -94,6 +114,7 @@ class IntradayService:
         allow_historical_replay: bool = False,
         fetch_deadline_seconds: float = _DEFAULT_FETCH_DEADLINE_SECONDS,
         fetch_max_workers: int = _DEFAULT_FETCH_MAX_WORKERS,
+        fetch_batch_size: int = _DEFAULT_FETCH_BATCH_SIZE,
     ) -> None:
         source_name = str(getattr(source, "name", "") or "").strip()
         guard_message = workload_guard_message(source_name, "live_short")
@@ -112,8 +133,11 @@ class IntradayService:
             raise ValueError("fetch_deadline_seconds 必须大于 0")
         if fetch_max_workers <= 0:
             raise ValueError("fetch_max_workers 必须大于 0")
+        if fetch_batch_size <= 0:
+            raise ValueError("fetch_batch_size 必须大于 0")
         self.fetch_deadline_seconds = float(fetch_deadline_seconds)
         self.fetch_max_workers = int(fetch_max_workers)
+        self.fetch_batch_size = int(fetch_batch_size)
 
     def get_intraday_bars(
         self,
@@ -196,10 +220,17 @@ class IntradayService:
         requested = list(
             dict.fromkeys(str(symbol) for symbol in symbols if str(symbol))
         )
-        jobs = {
-            symbol: "fetch_index_intraday" if symbol in index_set else "fetch_intraday"
-            for symbol in requested
-        }
+        stock_symbols = [symbol for symbol in requested if symbol not in index_set]
+        benchmark_symbols = [symbol for symbol in requested if symbol in index_set]
+        jobs: list[tuple[tuple[str, ...], str]] = [
+            (tuple(batch), "fetch_intraday")
+            for batch in _chunked(stock_symbols, self.fetch_batch_size)
+        ]
+        if benchmark_symbols:
+            jobs.extend(
+                (tuple(batch), "fetch_index_intraday")
+                for batch in _chunked(benchmark_symbols, self.fetch_batch_size)
+            )
         if not jobs:
             return {}
 
@@ -211,10 +242,8 @@ class IntradayService:
             thread_name_prefix="aqsp-intraday",
         )
         futures = {
-            executor.submit(
-                self._fetch_one_intraday, symbol, period, method_name
-            ): symbol
-            for symbol, method_name in jobs.items()
+            executor.submit(self._fetch_intraday_batch, batch, period, method_name): batch
+            for batch, method_name in jobs
         }
         try:
             done, pending = wait(futures, timeout=self.fetch_deadline_seconds)
@@ -222,22 +251,23 @@ class IntradayService:
                 future.cancel()
             result: dict[str, OhlcvFrame] = {}
             for future in done:
-                symbol = futures[future]
+                batch = futures[future]
                 try:
-                    frame = future.result()
+                    frames = future.result()
                 except Exception as exc:
                     _logger.warning(
-                        "数据源 %s 分时跳过标的 %s: %s",
+                        "数据源 %s 分时批次跳过 %s: %s",
                         self.source.name,
-                        symbol,
+                        ",".join(batch),
                         exc,
                     )
                     continue
-                if frame is not None and not frame.empty:
-                    result[symbol] = frame
+                for symbol, frame in frames.items():
+                    if frame is not None and not frame.empty:
+                        result[symbol] = frame
             if pending:
                 _logger.warning(
-                    "数据源 %s 分时共享 deadline %.1fs 到期，跳过 %d/%d 个标的",
+                    "数据源 %s 分时共享 deadline %.1fs 到期，跳过 %d/%d 个批次",
                     self.source.name,
                     self.fetch_deadline_seconds,
                     len(pending),
@@ -251,12 +281,12 @@ class IntradayService:
             if callable(setter):
                 setter(None)
 
-    def _fetch_one_intraday(
+    def _fetch_intraday_batch(
         self,
-        symbol: str,
+        symbols: tuple[str, ...],
         period: Literal["1", "5", "15", "30", "60"],
         method_name: str,
-    ) -> OhlcvFrame | None:
+    ) -> dict[str, OhlcvFrame]:
         fetch_method = getattr(self.source, method_name, None)
         if not callable(fetch_method):
             if method_name == "fetch_index_intraday":
@@ -264,13 +294,34 @@ class IntradayService:
                     "数据源 %s 不支持指数分时接口，benchmark 不能冒充股票分时",
                     self.source.name,
                 )
-                return None
+                return {}
             fetch_method = self.source.fetch_intraday
-        result = fetch_method([symbol], period)
-        frame = result.get(symbol)
-        if frame is None or frame.empty:
-            raise MissingDataError(symbol, reason="单标的分时返回为空")
-        return frame
+        try:
+            result = fetch_method(list(symbols), period)
+        except Exception:
+            # A few adapters reject batched requests even though their single-symbol
+            # endpoint works. Retry only this failed batch so the normal path keeps
+            # bounded fan-out while preserving partial-symbol isolation.
+            if method_name == "fetch_index_intraday" or len(symbols) == 1:
+                raise
+            result = {}
+            for symbol in symbols:
+                try:
+                    result.update(fetch_method([symbol], period))
+                except Exception as exc:
+                    _logger.warning(
+                        "数据源 %s 分时降级跳过标的 %s: %s",
+                        self.source.name,
+                        symbol,
+                        exc,
+                    )
+        if not result:
+            raise MissingDataError(symbols[0], reason="分时批次返回为空")
+        return {
+            str(symbol): frame
+            for symbol, frame in result.items()
+            if frame is not None and not frame.empty and str(symbol) in symbols
+        }
 
     def synthesize_daily_from_intraday(
         self,
@@ -367,20 +418,48 @@ class IntradayService:
     ) -> IntradayOverlayResult:
         """Merge live bars and retain missing symbols instead of hiding them."""
         requested = tuple(dict.fromkeys(symbol for symbol in symbols if symbol))
-        frames = self.merge_intraday_bar_into_daily(
-            daily_data,
-            list(requested),
-            period=period,
-            target_date=target_date,
-            index_symbols=index_symbols,
-        )
+        index_set = {str(symbol) for symbol in index_symbols if str(symbol)}
+        try:
+            frames = self.merge_intraday_bar_into_daily(
+                daily_data,
+                list(requested),
+                period=period,
+                target_date=target_date,
+                index_symbols=index_symbols,
+            )
+        except MissingDataError:
+            frames = {}
         covered = tuple(symbol for symbol in requested if symbol in frames)
         missing = tuple(symbol for symbol in requested if symbol not in frames)
+        candidate_requested = tuple(
+            symbol for symbol in requested if symbol not in index_set
+        )
+        candidate_covered = tuple(
+            symbol for symbol in candidate_requested if symbol in frames
+        )
+        candidate_missing = tuple(
+            symbol for symbol in candidate_requested if symbol not in frames
+        )
+        benchmark_requested = tuple(
+            symbol for symbol in requested if symbol in index_set
+        )
+        benchmark_covered = tuple(
+            symbol for symbol in benchmark_requested if symbol in frames
+        )
+        benchmark_missing = tuple(
+            symbol for symbol in benchmark_requested if symbol not in frames
+        )
         return IntradayOverlayResult(
             frames=frames,
             requested_symbols=requested,
             covered_symbols=covered,
             missing_symbols=missing,
+            candidate_requested_symbols=candidate_requested,
+            candidate_covered_symbols=candidate_covered,
+            candidate_missing_symbols=candidate_missing,
+            benchmark_requested_symbols=benchmark_requested,
+            benchmark_covered_symbols=benchmark_covered,
+            benchmark_missing_symbols=benchmark_missing,
         )
 
     def _merge_single_symbol_daily(
