@@ -685,7 +685,10 @@ def _messages_from_catalyst_report(
         region = (message.source_region or "mixed").strip().lower()
         key = (topic, region)
         source_key = _message_source_family(message.source)
-        if key in covered or source_counts.get(source_key, 0) >= source_limit:
+        family_limit = (
+            1 if source_key in {"nvidia", "英伟达", "openai"} else source_limit
+        )
+        if key in covered or source_counts.get(source_key, 0) >= family_limit:
             continue
         selected.append(message)
         covered.add(key)
@@ -696,7 +699,10 @@ def _messages_from_catalyst_report(
         if message in selected:
             continue
         source_key = _message_source_family(message.source)
-        if source_counts.get(source_key, 0) >= source_limit:
+        family_limit = (
+            1 if source_key in {"nvidia", "英伟达", "openai"} else source_limit
+        )
+        if source_counts.get(source_key, 0) >= family_limit:
             continue
         selected.append(message)
         source_counts[source_key] = source_counts.get(source_key, 0) + 1
