@@ -168,6 +168,27 @@ def test_news_catalyst_maps_supply_chain_evidence_to_affected_sectors() -> None:
     )
 
 
+def test_news_catalyst_resolves_company_and_sector_aliases_from_summary() -> None:
+    report = build_catalyst_report(
+        fetch_global_news=lambda _limit: pd.DataFrame(
+            [
+                {
+                    "标题": "客户发布新一代服务器产品",
+                    "摘要": "英伟达平台带动浪潮信息订单，印制电路板供应紧张。",
+                    "来源": "公司公告",
+                    "时间": _RECENT_NEWS_TIME,
+                }
+            ]
+        ),
+        config=NewsCatalystConfig(min_confidence=0.1, max_news_age_days=7),
+    )
+
+    assert len(report.events) == 1
+    event = report.events[0]
+    assert "000977" in event.affected_symbols
+    assert {"AI算力", "服务器", "PCB"}.issubset(set(event.affected_sectors))
+
+
 def test_news_catalyst_maps_product_launch_to_supply_chain_chain() -> None:
     report = build_catalyst_report(
         fetch_global_news=lambda _limit: pd.DataFrame(

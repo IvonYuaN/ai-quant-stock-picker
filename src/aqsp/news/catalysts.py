@@ -27,6 +27,7 @@ from aqsp.core.time import now_shanghai, today_shanghai
 from aqsp.notification_style import compact_notification_markdown
 from aqsp.presentation import normalize_research_tone
 from aqsp.utils.jsonl_io import advisory_lock, atomic_write_text
+from aqsp.news.entity_graph import match_news_entities
 
 Impact = Literal["positive", "negative", "neutral"]
 CatalystResultStatus = Literal[
@@ -1781,10 +1782,12 @@ def _events_from_rows(
         affected_symbols = _event_symbols(
             symbol=symbol,
             title=title,
+            summary=summary,
             row_symbols=row.get("affected_symbols", ""),
         )
         affected_sectors = _event_sectors(
             title=title,
+            summary=summary,
             category=category,
             row=row,
         )
@@ -1850,6 +1853,7 @@ def _event_symbols(
     *,
     symbol: str,
     title: str,
+    summary: str = "",
     row_symbols: str = "",
 ) -> tuple[str, ...]:
     values: list[str] = []
@@ -1860,12 +1864,16 @@ def _event_symbols(
     for item in re.findall(r"(?<!\d)\d{6}(?!\d)", str(title or "")):
         if item not in values:
             values.append(item)
+    for item in match_news_entities(title, summary).symbols:
+        if item not in values:
+            values.append(item)
     return tuple(values)
 
 
 def _event_sectors(
     *,
     title: str,
+    summary: str = "",
     category: str,
     row: dict[str, str],
 ) -> tuple[str, ...]:
@@ -1874,7 +1882,13 @@ def _event_sectors(
         for value in _text_tuple(row.get(key, "")):
             if value not in values:
                 values.append(value)
-    text = " ".join((str(title or ""), str(category or ""))).casefold()
+    entity_resolution = match_news_entities(title, summary)
+    for sector in entity_resolution.sectors:
+        if sector not in values:
+            values.append(sector)
+    text = " ".join(
+        (str(title or ""), str(summary or ""), str(category or ""))
+    ).casefold()
     for keywords, sectors in _SECTOR_TAG_RULES:
         if any(keyword.casefold() in text for keyword in keywords):
             for sector in sectors:
