@@ -1204,9 +1204,10 @@ def test_merge_home_snapshot_index_preserves_unrequested_history() -> None:
     assert merged.snapshot_for_date("2026-07-09") == refreshed.snapshot_for_date(
         "2026-07-09"
     )
-    assert merged.snapshot_for_date("2026-07-10") == existing.snapshot_for_date(
-        "2026-07-10"
-    )
+    historical = merged.snapshot_for_date("2026-07-10")
+    original = existing.snapshot_for_date("2026-07-10")
+    assert historical.candidates == original.candidates
+    assert historical.available_dates == merged.available_dates
 
 
 def test_write_home_snapshot_cli_honors_output_date_and_task_id(

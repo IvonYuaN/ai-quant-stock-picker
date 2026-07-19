@@ -1523,12 +1523,20 @@ def merge_home_snapshot_index(
         if current is not None:
             selected_days.append(current)
 
+    merged_dates = tuple(day.date for day in selected_days)
+    normalized_days = tuple(
+        HomeSnapshotDay(
+            date=day.date,
+            snapshot=replace(day.snapshot, available_dates=merged_dates),
+        )
+        for day in selected_days
+    )
     return HomeSnapshotIndex(
         schema_version=refreshed.schema_version,
         generated_at=refreshed.generated_at,
         stale_after=refreshed.stale_after,
         selected_date=refreshed.selected_date,
-        days=tuple(selected_days),
+        days=normalized_days,
     )
 
 
@@ -1569,7 +1577,6 @@ def main(argv: list[str] | None = None) -> int:
     if index_path.resolve() == output_path.resolve():
         raise ValueError("home snapshot and snapshot index must use different paths")
     existing_index = load_home_snapshot_index(index_path)
-    write_home_dashboard_snapshot(output_path, snapshot)
     index = build_home_snapshot_index(
         provider,
         signal_date=args.date.strip(),
@@ -1577,6 +1584,10 @@ def main(argv: list[str] | None = None) -> int:
         initial_snapshot=snapshot,
     )
     index = merge_home_snapshot_index(existing_index, index)
+    current_snapshot = next(
+        day.snapshot for day in index.days if day.date == index.selected_date
+    )
+    write_home_dashboard_snapshot(output_path, current_snapshot)
     write_home_snapshot_index(index_path, index)
     print(
         "home snapshot written "
