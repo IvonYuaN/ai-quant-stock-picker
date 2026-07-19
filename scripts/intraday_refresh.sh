@@ -247,7 +247,9 @@ INTRADAY_NEWS_SCRIPT="${AQSP_INTRADAY_NEWS_SCRIPT:-${PROJECT_ROOT}/scripts/news_
 INTRADAY_NEWS_OUTPUT="$(resolve_path "${AQSP_INTRADAY_NEWS_OUTPUT:-${AQSP_NEWS_OUTPUT:-reports/news_catalysts.md}}")"
 INTRADAY_NEWS_JSON_OUTPUT="$(resolve_path "${AQSP_INTRADAY_NEWS_JSON_OUTPUT:-${AQSP_NEWS_JSON_OUTPUT:-data/runtime/news_catalysts_latest.json}}")"
 INTRADAY_BATCH_SCAN="${AQSP_INTRADAY_BATCH_SCAN:-true}"
-INTRADAY_BATCH_SIZE="${AQSP_INTRADAY_BATCH_SIZE:-128}"
+# Keep the full-universe cursor, but lower per-run memory pressure on the
+# 1.6 GiB production host. Coverage advances across more 10-minute batches.
+INTRADAY_BATCH_SIZE="${AQSP_INTRADAY_BATCH_SIZE:-64}"
 INTRADAY_CURSOR_PATH="$(resolve_path "${AQSP_INTRADAY_CURSOR_PATH:-data/runtime/intraday_universe_cursor.json}")"
 INTRADAY_BATCH_ACTIVE="false"
 INTRADAY_BATCH_SYMBOLS=""

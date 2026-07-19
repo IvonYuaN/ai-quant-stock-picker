@@ -976,7 +976,7 @@ def test_intraday_batch_mode_does_not_let_aqsp_max_universe_40_bypass_rotation(
 
     assert result.returncode == 0, result.stdout + result.stderr
     cli_args = json.loads(args_path.read_text(encoding="utf-8"))
-    assert cli_args["max_universe"] == "128"
+    assert cli_args["max_universe"] == "64"
     assert "忽略配置最大股票数 40" in result.stdout
 
 
