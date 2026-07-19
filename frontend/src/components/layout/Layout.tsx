@@ -13,17 +13,12 @@ import {
   UsersRound,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { RESEARCH_SECTION_IDS } from "@/lib/research-layout";
+import { RESEARCH_NAV_ITEMS, TEST_VARIANTS_SECTION_ID } from "@/lib/research-layout";
 import { useDarkMode } from "@/hooks/useDarkMode";
 import { AqspWorkspaceProvider, useAqspSnapshot } from "@/components/aqsp/useAqspSnapshot";
 import { formatResearchDate } from "@/lib/research-view";
 
-const NAV = [
-  { hash: RESEARCH_SECTION_IDS[0], icon: ScrollText, label: "消息证据", description: "来源与影响" },
-  { hash: RESEARCH_SECTION_IDS[1], icon: LineChart, label: "候选研究", description: "评分与依据" },
-  { hash: RESEARCH_SECTION_IDS[2], icon: UsersRound, label: "讨论复核", description: "分歧与风险" },
-  { hash: RESEARCH_SECTION_IDS[3], icon: Globe2, label: "市场与产业链", description: "跨市与传导" },
-];
+const NAV_ICONS = [ScrollText, LineChart, UsersRound, Globe2] as const;
 
 export function Layout() {
   return <AqspWorkspaceProvider><WorkspaceLayout /></AqspWorkspaceProvider>;
@@ -82,11 +77,12 @@ function WorkspaceLayout() {
         <div className={cn("vr-sidebar-scroll", collapsed && "px-1.5")}>
           {!collapsed && (
             <div className="vr-sidebar-section">
-              <div className="vr-sidebar-label"><span>研究内容</span><span className="text-muted-foreground/50">{NAV.length}</span></div>
+              <div className="vr-sidebar-label"><span>研究内容</span><span className="text-muted-foreground/50">{RESEARCH_NAV_ITEMS.length}</span></div>
             </div>
           )}
           <nav className="space-y-1" aria-label="研究内容">
-            {NAV.map(({ hash: targetHash, icon: Icon, label, description }) => {
+            {RESEARCH_NAV_ITEMS.map(({ id: targetHash, label, description }, index) => {
+              const Icon = NAV_ICONS[index];
               const to = `/daily-review#${targetHash}`;
               const active = pathname === "/daily-review" && (hash === `#${targetHash}` || (!hash && targetHash === "messages"));
               return (
@@ -111,14 +107,14 @@ function WorkspaceLayout() {
           {!collapsed && <div className="vr-sidebar-section mt-7"><div className="vr-sidebar-label"><span>独立实验区</span><span className="text-muted-foreground/50">不入推荐</span></div></div>}
           <nav className="mt-1 space-y-1" aria-label="独立实验区">
             <Link
-              to="/daily-review#test-variants"
+              to={`/daily-review#${TEST_VARIANTS_SECTION_ID}`}
               onClick={() => {
                 window.requestAnimationFrame(() => {
-                  document.getElementById("test-variants")?.scrollIntoView({ behavior: "smooth", block: "start" });
+                  document.getElementById(TEST_VARIANTS_SECTION_ID)?.scrollIntoView({ behavior: "smooth", block: "start" });
                 });
               }}
               title={collapsed ? "测试与变体 · 不参与正式推荐" : undefined}
-              className={cn("vr-nav-item", hash === "#test-variants" && "vr-nav-item-active", collapsed && "justify-center px-2")}
+              className={cn("vr-nav-item", hash === `#${TEST_VARIANTS_SECTION_ID}` && "vr-nav-item-active", collapsed && "justify-center px-2")}
             >
               <FlaskConical className="h-4 w-4 shrink-0" />
               {!collapsed && <span className="min-w-0"><span className="block truncate font-medium">测试与变体</span><span className="block truncate text-[10px] text-muted-foreground">不参与正式推荐</span></span>}

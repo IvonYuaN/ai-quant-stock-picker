@@ -14,7 +14,7 @@ import {
   UsersRound,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { RESEARCH_SECTION_IDS } from "@/lib/research-layout";
+import { RESEARCH_SECTION_IDS, TEST_VARIANTS_SECTION_ID } from "@/lib/research-layout";
 import type { AqspAgentResult, AqspCandidate, AqspMessage, AqspSnapshot } from "@/lib/api";
 import {
   debateProcessText,
@@ -364,13 +364,13 @@ function MarketContextCard({ snapshot }: { snapshot: AqspSnapshot }) {
   );
 }
 
-function TestVariantsPanel({ snapshot }: { snapshot: AqspSnapshot }) {
-  const gateReady = snapshot.recommendation_gate?.recommendation_allowed === true;
+function TestVariantsPanel({ snapshot }: { snapshot?: AqspSnapshot }) {
+  const gateReady = snapshot?.recommendation_gate?.recommendation_allowed === true;
   return (
-    <section id="test-variants" className="vr-lab-panel" aria-label="测试与变体">
+    <section id={TEST_VARIANTS_SECTION_ID} className="vr-lab-panel" aria-label="测试与变体">
       <div className="vr-section-heading"><div><p className="vr-kicker">独立实验区</p><h2>测试与变体</h2></div><span className="vr-count">不参与正式推荐</span></div>
       <div className="vr-lab-grid">
-        <div><span>正式短线主线</span><strong className={gateReady ? "vr-lab-ready" : "vr-lab-observe"}>{gateReady ? "可进入纸面复核" : "当前仅观察"}</strong><p>使用实时数据，受全局 gate 约束。</p></div>
+        <div><span>正式短线主线</span><strong className={gateReady ? "vr-lab-ready" : "vr-lab-observe"}>{gateReady ? "可进入纸面复核" : snapshot ? "当前仅观察" : "等待研究快照"}</strong><p>使用实时数据，受全局 gate 约束。</p></div>
         <div><span>Walk-forward 变体组</span><strong>历史回测验证</strong><p>用于比较参数变体，不改写今日评分。</p></div>
         <div><span>盘中资源保护变体</span><strong>观察模式</strong><p>降低外部抓取资源占用，不进入正式 ledger。</p></div>
       </div>
@@ -380,9 +380,9 @@ function TestVariantsPanel({ snapshot }: { snapshot: AqspSnapshot }) {
 
 export function AqspResearchWorkspace() {
   const { data, loading, error, refresh } = useWorkspaceSnapshot();
-  if (loading && !data) return <LoadingState />;
-  if (error && !data) return <ErrorState error={error} onRefresh={refresh} />;
-  if (!data) return <EmptyState title="暂无研究数据" detail="当前没有可展示的快照，数据产出后会自动出现在这里。" />;
+  if (loading && !data) return <><LoadingState /><TestVariantsPanel /></>;
+  if (error && !data) return <><ErrorState error={error} onRefresh={refresh} /><TestVariantsPanel /></>;
+  if (!data) return <><EmptyState title="暂无研究数据" detail="当前没有可展示的快照，数据产出后会自动出现在这里。" /><TestVariantsPanel /></>;
 
   const conclusion = snapshotConclusion(data);
   const stale = isAqspSnapshotStale(data);
