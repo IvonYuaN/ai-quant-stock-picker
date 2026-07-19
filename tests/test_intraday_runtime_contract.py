@@ -1072,6 +1072,10 @@ def test_intraday_batch_does_not_commit_when_output_metadata_is_partial(
     check = script[check_start:check_end]
     assert "run_resolved_symbol_count" in check
     assert "run_fetched_frame_count" in check
+    assert "resolved/fetched/skipped" in check
+    assert "minimum = max(1, math.ceil(expected * ratio))" in check
+    assert "fetched < minimum" in check
+    assert "fetched != resolved" not in check
     assert "拒绝提交 cursor" in check
     commit_start = script.index('AQSP_INTRADAY_BATCH_SCANNED="$INTRADAY_BATCH_SCANNED"')
     assert (
@@ -1079,6 +1083,18 @@ def test_intraday_batch_does_not_commit_when_output_metadata_is_partial(
         < commit_start
     )
     assert 'BATCH_FAILURE_REASON="intraday_batch_output_incomplete"' in script
+
+
+def test_intraday_batch_status_records_data_coverage_and_skipped_symbols() -> None:
+    script = SCRIPT_PATH.read_text(encoding="utf-8")
+
+    assert '"resolved_count": resolved_count' in script
+    assert '"fetched_count": fetched_count' in script
+    assert '"skipped_count": int(batch_detail.get("skipped_count") or 0)' in script
+    assert '"skipped_symbols": list(batch_detail.get("skipped_symbols") or [])' in script
+    assert '"data_coverage_pct": data_coverage_pct' in script
+    assert '"intraday_batch_commit_failed"' in script
+    assert "不能保留 completed" in script
 
 
 def test_intraday_batch_cursor_is_not_committed_after_137_timeout(

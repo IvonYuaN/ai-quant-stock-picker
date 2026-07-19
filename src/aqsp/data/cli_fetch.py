@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import json
 import math
 import os
+from pathlib import Path
+
 import pandas as pd
 from datetime import date
 
@@ -76,6 +79,18 @@ def fetch_frames_for_cli_with_metadata(
                             frame.attrs["live_short_missing_symbols"] = tuple(missing)
                             frame.attrs["live_short_resolved_symbol_count"] = len(symbols)
                             frame.attrs["live_short_fetched_frame_count"] = fetched
+                else:
+                    fetched = len(symbols)
+                _write_intraday_batch_detail(
+                    symbols,
+                    fetched_symbols=[
+                        str(symbol)
+                        for symbol in symbols
+                        if str(symbol) in frames
+                        and isinstance(frames[str(symbol)], pd.DataFrame)
+                        and not frames[str(symbol)].empty
+                    ],
+                )
             actual_source = str(
                 getattr(source, "last_used_source", None) or source.name
             )
@@ -149,6 +164,38 @@ def _minimum_live_short_frames(symbol_count: int) -> int:
         ratio = 0.8
     ratio = min(max(ratio, 0.0), 1.0)
     return max(1, math.ceil(symbol_count * ratio))
+
+
+def _write_intraday_batch_detail(
+    resolved_symbols: list[str], *, fetched_symbols: list[str]
+) -> None:
+    """Persist batch coverage for the shell runner without changing source policy."""
+    raw_path = os.getenv("AQSP_INTRADAY_SKIP_DETAIL_PATH", "").strip()
+    if not raw_path:
+        return
+    resolved = list(
+        dict.fromkeys(str(symbol) for symbol in resolved_symbols if str(symbol))
+    )
+    fetched = list(
+        dict.fromkeys(str(symbol) for symbol in fetched_symbols if str(symbol))
+    )
+    fetched_set = set(fetched)
+    skipped = [symbol for symbol in resolved if symbol not in fetched_set]
+    payload = {
+        "resolved_count": len(resolved),
+        "fetched_count": len(fetched),
+        "skipped_count": len(skipped),
+        "resolved_symbols": resolved,
+        "fetched_symbols": fetched,
+        "skipped_symbols": skipped,
+    }
+    path = Path(raw_path).expanduser()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(
+        json.dumps(payload, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
+    temporary.replace(path)
 
 
 def _validate_workload_provenance(

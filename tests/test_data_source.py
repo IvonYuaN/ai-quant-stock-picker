@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+import json
 from datetime import date
 from pathlib import Path
 from types import SimpleNamespace
@@ -793,11 +794,13 @@ def test_live_short_fetch_rejects_partial_daily_frames_explicitly() -> None:
     assert "000001" in failures[0][1]
 
 
-def test_intraday_live_short_isolates_missing_symbols_when_valid_batch_remains(
-    monkeypatch,
+def test_intraday_live_short_records_resolved_fetched_and_skipped_symbols(
+    tmp_path: Path, monkeypatch,
 ) -> None:
     monkeypatch.setenv("AQSP_RUN_TASK_ID", "intraday")
     monkeypatch.setenv("AQSP_INTRADAY_MIN_VALID_RATIO", "0.5")
+    detail_path = tmp_path / "intraday_batch_detail.json"
+    monkeypatch.setenv("AQSP_INTRADAY_SKIP_DETAIL_PATH", str(detail_path))
     seen: dict[str, object] = {}
 
     class DummySource:
@@ -805,13 +808,14 @@ def test_intraday_live_short_isolates_missing_symbols_when_valid_batch_remains(
 
     frames, actual_source = fetch_frames_for_cli_with_metadata(
         "eastmoney",
-        ["600000", "000001", "000002"],
+        ["600000", "000001", "000002", "000003"],
         benchmark_symbol=None,
         workload="live_short",
         get_source_fn=lambda _name, *, cache=None: DummySource(),
         fetch_with_source_fn=lambda *_args, **_kwargs: {
             "600000": pd.DataFrame([{"date": "2026-07-15", "close": 10.0}]),
             "000001": pd.DataFrame([{"date": "2026-07-15", "close": 11.0}]),
+            "000002": pd.DataFrame([{"date": "2026-07-15", "close": 12.0}]),
         },
         record_source_success_fn=lambda requested, actual: seen.update(
             {"success": (requested, actual)}
@@ -822,9 +826,17 @@ def test_intraday_live_short_isolates_missing_symbols_when_valid_batch_remains(
     )
 
     assert actual_source == "eastmoney"
-    assert set(frames) == {"600000", "000001"}
+    assert set(frames) == {"600000", "000001", "000002"}
     assert seen["success"] == ("eastmoney", "eastmoney")
-    assert frames["600000"].attrs["live_short_missing_symbols"] == ("000002",)
+    assert frames["600000"].attrs["live_short_missing_symbols"] == ("000003",)
+    assert json.loads(detail_path.read_text(encoding="utf-8")) == {
+        "resolved_count": 4,
+        "fetched_count": 3,
+        "skipped_count": 1,
+        "resolved_symbols": ["600000", "000001", "000002", "000003"],
+        "fetched_symbols": ["600000", "000001", "000002"],
+        "skipped_symbols": ["000003"],
+    }
 
 
 def test_fetch_with_source_skips_bad_symbol_when_other_symbols_succeed() -> None:
