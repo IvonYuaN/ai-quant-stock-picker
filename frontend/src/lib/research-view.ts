@@ -17,7 +17,9 @@ export function snapshotMatchesSelectedDate(
 }
 
 export function snapshotConclusion(snapshot: AqspSnapshot): string {
-  return snapshot.summaries[0] || snapshot.market_context?.overview || "";
+  // Market context is evidence attached to the message lane, never a
+  // substitute for the day's own conclusion.
+  return snapshot.summaries[0] || "";
 }
 
 export function isCurrentEmptyObservation(snapshot: AqspSnapshot): boolean {

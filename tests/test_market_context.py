@@ -1551,6 +1551,110 @@ def test_market_context_blocks_stale_cross_market_news_from_actionable_context()
     assert market_context_metrics_for_pick(pick, artifact) == {}
 
 
+def test_market_context_keeps_stale_cache_for_display_only() -> None:
+    report = CatalystReport(
+        date="2026-07-07",
+        generated_at="2026-07-07T09:40:00+08:00",
+        source_status="partial",
+        event_status="stale_cache",
+        events=(
+            CatalystEvent(
+                title="缓存消息：覆铜板报价上调",
+                source="交易所公告",
+                published_at="2026-07-07T09:30:00+08:00",
+                impact="positive",
+                category="涨价/供需催化",
+                confidence=0.9,
+                source_quality_score=3,
+                affected_sectors=("PCB",),
+            ),
+        ),
+        warnings=("消息缓存回退: 使用 5 分钟前摘要",),
+    )
+    artifact = build_market_context_artifact(
+        catalyst_report=report,
+        news_universe=(NewsUniverseInstrument("002463", "沪电股份", ("PCB",)),),
+    )
+    pick = PickResult(
+        symbol="002463",
+        name="沪电股份",
+        date="2026-07-07",
+        close=40.0,
+        score=70.0,
+        rating="watch",
+        entry_type="relative_strength",
+        ideal_buy=40.0,
+        stop_loss=37.0,
+        take_profit=45.0,
+        position="watch",
+        metrics={"sector": "PCB"},
+    )
+
+    assert artifact.catalyst_events == ()
+    assert artifact.news_watch_candidates == ()
+    assert market_context_metrics_for_pick(pick, artifact) == {}
+    assert any("不参与判断" in line for line in artifact.summary_lines)
+
+
+def test_market_context_preserves_mixed_watch_candidate_direction() -> None:
+    report = CatalystReport(
+        date="2026-07-07",
+        generated_at="2026-07-07T09:40:00+08:00",
+        source_status="ok",
+        events=(
+            CatalystEvent(
+                title="供应商订单变化",
+                source="公司公告",
+                published_at="2026-07-07T09:30:00+08:00",
+                impact="positive",
+                category="供需催化",
+                confidence=0.9,
+                weight=3,
+                source_quality_score=3,
+                affected_sectors=("PCB",),
+            ),
+            CatalystEvent(
+                title="下游需求放缓",
+                source="路透",
+                published_at="2026-07-07T09:31:00+08:00",
+                impact="negative",
+                category="供需风险",
+                confidence=0.9,
+                weight=4,
+                source_quality_score=3,
+                affected_sectors=("PCB",),
+            ),
+        ),
+    )
+    artifact = build_market_context_artifact(
+        catalyst_report=report,
+        news_universe=(NewsUniverseInstrument("002463", "沪电股份", ("PCB",)),),
+    )
+    pick = PickResult(
+        symbol="002463",
+        name="沪电股份",
+        date="2026-07-07",
+        close=40.0,
+        score=70.0,
+        rating="watch",
+        entry_type="relative_strength",
+        ideal_buy=40.0,
+        stop_loss=37.0,
+        take_profit=45.0,
+        position="watch",
+        metrics={"sector": "非匹配行业"},
+    )
+
+    metrics = market_context_metrics_for_pick(pick, artifact)
+
+    assert metrics["news_catalyst_judgement"] == "mixed"
+    assert metrics["news_catalyst_support_count"] == 1
+    assert metrics["news_catalyst_oppose_count"] == 1
+    assert metrics["news_catalyst_supports"]
+    assert metrics["news_catalyst_opposes"]
+    assert "分化" in metrics["news_catalyst_lead"]
+
+
 def test_market_context_blocks_single_low_quality_source_from_actionable_context() -> (
     None
 ):

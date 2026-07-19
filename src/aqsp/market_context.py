@@ -1305,11 +1305,25 @@ def build_market_context_artifact(
         warnings = tuple(
             str(item) for item in catalyst_report.warnings if str(item).strip()
         )
-        actionable_events, gate_warnings = _actionable_catalyst_events(
-            catalyst_report.events,
-            generated_at=catalyst_report.generated_at,
-            max_age_minutes=max_actionable_news_age_minutes,
-        )
+        stale_cache_only = catalyst_report.news_status == "stale_cache"
+        if stale_cache_only:
+            # A bounded cache fallback is display context only.  Keeping it out
+            # of the artifact's evidence collections prevents debate and
+            # industry expansion from treating a failed live fetch as fresh.
+            display_events = tuple(catalyst_report.events[:2])
+            if display_events:
+                lines.append(
+                    "消息缓存展示（不参与判断）: "
+                    + "；".join(_event_brief(event) for event in display_events)
+                )
+            actionable_events = ()
+            gate_warnings = ("情报门禁: stale_cache 仅展示，不进入判断或产业链候选",)
+        else:
+            actionable_events, gate_warnings = _actionable_catalyst_events(
+                catalyst_report.events,
+                generated_at=catalyst_report.generated_at,
+                max_age_minutes=max_actionable_news_age_minutes,
+            )
         warnings = tuple(_dedupe_texts((*warnings, *gate_warnings)))
         if normalized_news_universe:
             news_watch_candidates = discover_watch_candidates(
@@ -2868,19 +2882,26 @@ def _news_watch_candidate_metrics(
 ) -> dict[str, object]:
     """Project a source-backed expanded news candidate into pick evidence."""
     impact = str(candidate.impact or "neutral").strip().lower()
-    if impact == "positive":
+    support_count = max(0, int(candidate.supporting_event_count))
+    oppose_count = max(0, int(candidate.contradicting_event_count))
+    impact_direction = str(candidate.impact_direction or "").strip().lower()
+    if support_count > 0 and oppose_count > 0:
+        judgement = "mixed"
+        display_impact = "分化"
+    elif support_count > 0 or impact_direction == "positive" or impact == "positive":
         judgement = "supports"
-    elif impact == "negative":
+        display_impact = "偏多"
+    elif oppose_count > 0 or impact_direction == "negative" or impact == "negative":
         judgement = "opposes"
+        display_impact = "偏空"
     else:
         judgement = "needs_review"
+        display_impact = "中性"
     lead = (
         f"{candidate.symbol} {candidate.name} "
-        f"{'偏多' if impact == 'positive' else '偏空' if impact == 'negative' else '中性'}｜"
+        f"{display_impact}｜"
         f"{candidate.relation}｜{candidate.summary or candidate.event_title}"
     ).strip()
-    support_count = int(candidate.supporting_event_count)
-    oppose_count = int(candidate.contradicting_event_count)
     review_count = int(not support_count and not oppose_count)
     return {
         "news_catalyst_judgement": judgement,
@@ -2888,8 +2909,8 @@ def _news_watch_candidate_metrics(
         "news_catalyst_support_count": support_count,
         "news_catalyst_oppose_count": oppose_count,
         "news_catalyst_review_count": review_count,
-        "news_catalyst_supports": (lead,) if impact == "positive" else (),
-        "news_catalyst_opposes": (lead,) if impact == "negative" else (),
+        "news_catalyst_supports": (lead,) if support_count else (),
+        "news_catalyst_opposes": (lead,) if oppose_count else (),
         "news_catalyst_needs_review": (lead,) if judgement == "needs_review" else (),
         "news_catalyst_lead": lead,
         "news_catalyst_source": candidate.source,

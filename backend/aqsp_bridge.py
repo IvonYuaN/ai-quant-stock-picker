@@ -407,14 +407,13 @@ def _attach_debates(
     snapshot: AQSPSnapshot,
     records: tuple[dict[str, Any], ...],
 ) -> AQSPSnapshot:
-    if snapshot.debates or not snapshot.candidates:
+    if not snapshot.candidates:
         return snapshot
     candidates_by_symbol = {item.symbol: item for item in snapshot.candidates}
-    debates: list[AQSPDebate] = []
-    seen: set[str] = set()
+    debates_by_symbol = {item.symbol: item for item in snapshot.debates}
     for record in reversed(records):
         symbol = str(record.get("symbol", "") or "").strip()
-        if symbol in seen or symbol not in candidates_by_symbol:
+        if symbol not in candidates_by_symbol:
             continue
         if not _runtime_debate_is_complete(record):
             continue
@@ -424,11 +423,17 @@ def _attach_debates(
             _validate_advisory_boundary([payload], snapshot.candidates)
         except (AQSPBridgeError, TypeError, ValueError):
             continue
-        debates.append(debate)
-        seen.add(symbol)
-        if len(debates) >= MAX_DEBATES:
-            break
-    return replace(snapshot, debates=tuple(reversed(debates))) if debates else snapshot
+        debates_by_symbol[symbol] = debate
+    if not debates_by_symbol:
+        return snapshot
+    # Preserve candidate order so a newly backfilled discussion fills the same
+    # lane as its candidate instead of drifting into a separate stale list.
+    debates = tuple(
+        debates_by_symbol[candidate.symbol]
+        for candidate in snapshot.candidates
+        if candidate.symbol in debates_by_symbol
+    )[:MAX_DEBATES]
+    return replace(snapshot, debates=debates)
 
 
 def _runtime_debate_is_complete(record: Mapping[str, Any]) -> bool:
