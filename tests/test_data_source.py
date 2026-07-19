@@ -793,6 +793,40 @@ def test_live_short_fetch_rejects_partial_daily_frames_explicitly() -> None:
     assert "000001" in failures[0][1]
 
 
+def test_intraday_live_short_isolates_missing_symbols_when_valid_batch_remains(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("AQSP_RUN_TASK_ID", "intraday")
+    monkeypatch.setenv("AQSP_INTRADAY_MIN_VALID_RATIO", "0.5")
+    seen: dict[str, object] = {}
+
+    class DummySource:
+        name = "eastmoney"
+
+    frames, actual_source = fetch_frames_for_cli_with_metadata(
+        "eastmoney",
+        ["600000", "000001", "000002"],
+        benchmark_symbol=None,
+        workload="live_short",
+        get_source_fn=lambda _name, *, cache=None: DummySource(),
+        fetch_with_source_fn=lambda *_args, **_kwargs: {
+            "600000": pd.DataFrame([{"date": "2026-07-15", "close": 10.0}]),
+            "000001": pd.DataFrame([{"date": "2026-07-15", "close": 11.0}]),
+        },
+        record_source_success_fn=lambda requested, actual: seen.update(
+            {"success": (requested, actual)}
+        ),
+        record_source_failure_fn=lambda *_args: pytest.fail(
+            "valid partial intraday batch must not be recorded as failure"
+        ),
+    )
+
+    assert actual_source == "eastmoney"
+    assert set(frames) == {"600000", "000001"}
+    assert seen["success"] == ("eastmoney", "eastmoney")
+    assert frames["600000"].attrs["live_short_missing_symbols"] == ("000002",)
+
+
 def test_fetch_with_source_skips_bad_symbol_when_other_symbols_succeed() -> None:
     class DummySource:
         name = "dummy"

@@ -7,6 +7,7 @@
 set -euo pipefail
 
 PROJECT_ROOT="${AQSP_PROJECT_ROOT:-/opt/aqsp}"
+RUNTIME_ROOT="${AQSP_RUNTIME_ROOT:-$PROJECT_ROOT}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RUNTIME_PYTHON_HELPER="${PROJECT_ROOT}/scripts/runtime_python.sh"
 if [ ! -f "$RUNTIME_PYTHON_HELPER" ] && [ -f "${SCRIPT_DIR}/runtime_python.sh" ]; then
@@ -22,9 +23,9 @@ VENV_DIR="${AQSP_INTRADAY_VENV_DIR:-${AQSP_RUNTIME_VENV_DIR:-${AQSP_VIBE_VENV_DI
 PYTHON_BIN="$(aqsp_runtime_python "$PROJECT_ROOT")"
 INITIAL_PROJECT_ROOT="$PROJECT_ROOT"
 INITIAL_VENV_DIR="$VENV_DIR"
-LOG_DIR="${PROJECT_ROOT}/logs/intraday"
-RESULT_LOG="${LOG_DIR}/intraday-$(date +%Y-%m-%d).log"
-LOCK_DIR="${PROJECT_ROOT}/.locks/intraday-refresh.lock"
+LOG_DIR="${RUNTIME_ROOT}/logs/intraday"
+RESULT_LOG="${RUNTIME_ROOT}/logs/intraday/intraday-$(date +%Y-%m-%d).log"
+LOCK_DIR="${RUNTIME_ROOT}/.locks/intraday-refresh.lock"
 LOCK_INFO_FILE="${LOCK_DIR}/meta.env"
 LOCK_STALE_MINUTES="${AQSP_INTRADAY_LOCK_STALE_MINUTES:-30}"
 
@@ -41,7 +42,7 @@ is_truthy() {
 resolve_path() {
     case "$1" in
         /*) printf '%s\n' "$1" ;;
-        *) printf '%s/%s\n' "$PROJECT_ROOT" "$1" ;;
+        *) printf '%s/%s\n' "$RUNTIME_ROOT" "$1" ;;
     esac
 }
 
@@ -74,7 +75,7 @@ lock_is_stale() {
     [ "$age_minutes" -ge "$LOCK_STALE_MINUTES" ]
 }
 
-mkdir -p "$LOG_DIR" "${PROJECT_ROOT}/.locks"
+mkdir -p "$LOG_DIR" "${RUNTIME_ROOT}/.locks"
 
 if [ -d "$LOCK_DIR" ] && lock_is_stale; then
     stale_age="$(lock_age_minutes "$LOCK_DIR")"
@@ -109,6 +110,11 @@ if [ -f "${PROJECT_ROOT}/.env" ]; then
     # Runtime paths are resolved before loading project secrets/config. A .env
     # file must not silently redirect an explicit release to another worktree.
     PROJECT_ROOT="$INITIAL_PROJECT_ROOT"
+    RUNTIME_ROOT="${AQSP_RUNTIME_ROOT:-$PROJECT_ROOT}"
+    LOG_DIR="${RUNTIME_ROOT}/logs/intraday"
+    RESULT_LOG="${LOG_DIR}/intraday-$(date +%Y-%m-%d).log"
+    LOCK_DIR="${RUNTIME_ROOT}/.locks/intraday-refresh.lock"
+    LOCK_INFO_FILE="${LOCK_DIR}/meta.env"
     VENV_DIR="$INITIAL_VENV_DIR"
     PYTHON_BIN="$(aqsp_runtime_python "$PROJECT_ROOT")"
     log "已加载 .env 配置"
@@ -302,7 +308,7 @@ mkdir -p \
     "$(dirname "$REALTIME_CROSS_MARKET_PATH")" \
     "$(dirname "$DEBATE_RESULTS")"
 
-TMP_ROOT="${PROJECT_ROOT}/.tmp"
+TMP_ROOT="${RUNTIME_ROOT}/.tmp"
 mkdir -p "$TMP_ROOT"
 TMP_DIR="$(mktemp -d "${TMP_ROOT}/intraday-refresh.XXXXXX")"
 TMP_INTRADAY_LEDGER="${TMP_DIR}/intraday_predictions.jsonl"
@@ -331,6 +337,7 @@ replace_intraday_artifact() {
 
 validate_intraday_batch_output() {
     local expected_count="$INTRADAY_BATCH_SIZE"
+    local min_valid_ratio="${AQSP_INTRADAY_MIN_VALID_RATIO:-0.8}"
     local scanned_count
     local batch_output_path="$INTRADAY_OUTPUT_CSV"
     if [ ! -f "$batch_output_path" ] && [ -f "$TMP_INTRADAY_OUTPUT_CSV" ]; then
@@ -340,13 +347,20 @@ validate_intraday_batch_output() {
         log "[ERROR] 盘中批次产物缺少 CSV，拒绝提交 cursor"
         return 1
     fi
-    if ! scanned_count="$("$PYTHON_BIN" - "$batch_output_path" "$expected_count" <<'AQSP_INTRADAY_BATCH_OUTPUT_CHECK'
+    if ! scanned_count="$("$PYTHON_BIN" - "$batch_output_path" "$expected_count" "$min_valid_ratio" <<'AQSP_INTRADAY_BATCH_OUTPUT_CHECK'
 import csv
+import math
 import sys
 from pathlib import Path
 
 path = Path(sys.argv[1])
 expected = int(sys.argv[2])
+try:
+    ratio = float(sys.argv[3])
+except ValueError:
+    ratio = 0.8
+ratio = min(max(ratio, 0.0), 1.0)
+minimum = max(1, math.ceil(expected * ratio))
 with path.open("r", encoding="utf-8", newline="") as handle:
     rows = list(csv.DictReader(handle))
 run_rows = [row for row in rows if str(row.get("symbol") or "").strip() == "__RUN__"]
@@ -360,8 +374,8 @@ except ValueError as exc:
     raise SystemExit("盘中批次 CSV 缺少有效解析/取数数量") from exc
 if resolved != expected:
     raise SystemExit(f"盘中批次解析数量不完整: {resolved}/{expected}")
-if fetched < resolved:
-    raise SystemExit(f"盘中批次取数数量不完整: {fetched}/{resolved}")
+if fetched < minimum:
+    raise SystemExit(f"盘中批次有效取数低于最低覆盖: {fetched}/{resolved}，最低 {minimum}")
 print(resolved)
 AQSP_INTRADAY_BATCH_OUTPUT_CHECK
     )"; then

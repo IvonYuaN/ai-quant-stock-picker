@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import math
+import os
 import pandas as pd
 from datetime import date
 
@@ -55,11 +57,25 @@ def fetch_frames_for_cli_with_metadata(
                     or not isinstance(frames.get(str(symbol)), pd.DataFrame)
                     or frames[str(symbol)].empty
                 ]
-                if missing:
+                if missing and not _allow_partial_intraday_batch():
                     raise DataError(
                         "live_short 日线取数不完整，拒绝生成候选；缺少: "
                         + ", ".join(missing[:20])
                     )
+                if missing:
+                    minimum = _minimum_live_short_frames(len(symbols))
+                    fetched = len(symbols) - len(missing)
+                    if fetched < minimum:
+                        raise DataError(
+                            "盘中批次有效日线低于最低覆盖，拒绝生成候选；"
+                            f"有效 {fetched}/{len(symbols)}，最低 {minimum}；缺少: "
+                            + ", ".join(missing[:20])
+                        )
+                    for frame in frames.values():
+                        if isinstance(frame, pd.DataFrame):
+                            frame.attrs["live_short_missing_symbols"] = tuple(missing)
+                            frame.attrs["live_short_resolved_symbol_count"] = len(symbols)
+                            frame.attrs["live_short_fetched_frame_count"] = fetched
             actual_source = str(
                 getattr(source, "last_used_source", None) or source.name
             )
@@ -116,6 +132,23 @@ def _workload_guard(source_name: str, workload: WorkloadId | None) -> str:
     if workload is None:
         return ""
     return workload_guard_message(source_name, workload)
+
+
+def _allow_partial_intraday_batch() -> bool:
+    """Allow bad symbols to be isolated only for the production batch task."""
+    task_id = os.getenv("AQSP_RUN_TASK_ID", "").strip().lower()
+    value = os.getenv("AQSP_INTRADAY_ALLOW_PARTIAL_BATCH", "true").strip().lower()
+    return task_id in {"intraday", "midday"} and value in {"1", "true", "yes", "on"}
+
+
+def _minimum_live_short_frames(symbol_count: int) -> int:
+    raw = os.getenv("AQSP_INTRADAY_MIN_VALID_RATIO", "0.8").strip()
+    try:
+        ratio = float(raw)
+    except ValueError:
+        ratio = 0.8
+    ratio = min(max(ratio, 0.0), 1.0)
+    return max(1, math.ceil(symbol_count * ratio))
 
 
 def _validate_workload_provenance(
