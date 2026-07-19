@@ -1542,6 +1542,11 @@ if is_truthy "$INTRADAY_BATCH_SCAN" && \
    [ -f "${PROJECT_ROOT}/scripts/prepare_intraday_batch.py" ] && \
    [ -z "${AQSP_SYMBOLS:-}" ] && \
    [ "$INTRADAY_MAX_UNIVERSE" = "0" ]; then
+    # Mark the batch as active before resolution. The resolver writes the active
+    # cursor before returning symbols; if source resolution then fails, cleanup
+    # must still record a failure instead of leaving an unclassified active batch.
+    INTRADAY_BATCH_ACTIVE="true"
+    BATCH_FAILURE_REASON="universe_resolution_failed"
     if ! INTRADAY_BATCH_SYMBOLS="$(${PYTHON_BIN} "${PROJECT_ROOT}/scripts/prepare_intraday_batch.py" \
         --source "$INTRADAY_SOURCE" \
         --batch-size "$INTRADAY_BATCH_SIZE" \
@@ -1556,7 +1561,9 @@ if is_truthy "$INTRADAY_BATCH_SCAN" && \
         exit 1
     fi
     INTRADAY_BATCH_ACTIVE="true"
-    INTRADAY_MAX_UNIVERSE="$INTRADAY_BATCH_SIZE"
+    # The cursor already bounds this run. Keep CLI max-universe at zero so the
+    # batch size cannot be mistaken for a global universe cap in run metadata.
+    INTRADAY_MAX_UNIVERSE="0"
     export AQSP_SYMBOLS="$INTRADAY_BATCH_SYMBOLS"
     log "盘中批次已准备: ${INTRADAY_BATCH_SYMBOLS}"
 fi

@@ -126,6 +126,8 @@ if args and Path(args[0]).name == "prepare_intraday_batch.py":
         with Path(calls_path).open("a", encoding="utf-8") as handle:
             handle.write(call + "\\n")
     if os.getenv("AQSP_TEST_PREPARE_BATCH") and "--commit" not in args:
+        if os.getenv("AQSP_TEST_PREPARE_FAIL") and "--fail" not in args:
+            raise SystemExit(3)
         print("600000,000001")
     raise SystemExit(0)
 
@@ -1003,8 +1005,61 @@ def test_intraday_batch_mode_does_not_let_aqsp_max_universe_40_bypass_rotation(
 
     assert result.returncode == 0, result.stdout + result.stderr
     cli_args = json.loads(args_path.read_text(encoding="utf-8"))
-    assert cli_args["max_universe"] == "2"
+    assert cli_args["max_universe"] == "0"
     assert "忽略配置最大股票数 40" in result.stdout
+
+
+def test_intraday_batch_resolution_failure_records_cursor_failure(
+    tmp_path: Path,
+) -> None:
+    venv_bin = tmp_path / ".venv" / "bin"
+    venv_bin.mkdir(parents=True)
+    utility_bin = tmp_path / "bin"
+    utility_bin.mkdir()
+    _write_timeout_stub(utility_bin / "timeout")
+    args_path = tmp_path / "cli_args.json"
+    calls_path = tmp_path / "prepare.calls"
+    _write_python_stub(venv_bin / "python3", PROJECT_ROOT, args_path)
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "scripts" / "prepare_intraday_batch.py").write_text(
+        "# test stub\n", encoding="utf-8"
+    )
+
+    env = os.environ.copy()
+    env.update(
+        {
+            "AQSP_PROJECT_ROOT": str(tmp_path),
+            "AQSP_TEST_REPO": str(PROJECT_ROOT),
+            "AQSP_TEST_ARGS": str(args_path),
+            "AQSP_TEST_PREPARE_BATCH": "true",
+            "AQSP_TEST_PREPARE_FAIL": "true",
+            "AQSP_TEST_PREPARE_CALLS": str(calls_path),
+            "AQSP_INTRADAY_REQUIRE_MARKET_HOURS": "false",
+            "AQSP_INTRADAY_DEBATE_BACKFILL": "false",
+            "AQSP_HOME_SNAPSHOT_ENABLED": "false",
+            "PATH": f"{utility_bin}:{os.environ['PATH']}",
+        }
+    )
+
+    result = subprocess.run(
+        ["bash", str(SCRIPT_PATH)],
+        cwd=PROJECT_ROOT,
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=30,
+    )
+
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert calls_path.read_text(encoding="utf-8").splitlines() == ["select", "fail"]
+    status = json.loads(
+        (tmp_path / "data" / "intraday_refresh_status.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert status["status"] == "failed"
+    assert "universe_resolution_failed" in status["reason"]
+    assert status["execution"]["batch_failure_recorded"] == "true"
 
 
 def test_intraday_batch_does_not_commit_when_output_metadata_is_partial(
