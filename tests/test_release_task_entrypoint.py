@@ -14,6 +14,8 @@ def test_release_task_entrypoint_keeps_code_and_runtime_roots_separate() -> None
     assert 'AQSP_NEWS_JSON_OUTPUT' in script
     assert 'AQSP_INTRADAY_CURSOR_PATH' in script
     assert 'AQSP_HOME_SNAPSHOT_PATH' in script
+    assert 'AQSP_RELEASE_MANIFEST' in script
+    assert 'AQSP_RELEASE_COMMIT' in script
     assert 'exec /bin/bash "${RELEASE_ROOT}/scripts/bt_task.sh" "$@"' in script
 
     bt_task = (PROJECT_ROOT / "scripts/bt_task.sh").read_text(encoding="utf-8")

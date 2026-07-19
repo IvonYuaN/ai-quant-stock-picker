@@ -22,6 +22,24 @@ runtime_path() {
 export AQSP_PROJECT_ROOT="$RELEASE_ROOT"
 export AQSP_RUNTIME_ROOT="$RUNTIME_ROOT"
 export AQSP_IMMUTABLE_RELEASE="${AQSP_IMMUTABLE_RELEASE:-true}"
+export AQSP_RELEASE_MANIFEST="${AQSP_RELEASE_MANIFEST:-${RELEASE_ROOT}/.aqsp-release.json}"
+if [[ -f "$AQSP_RELEASE_MANIFEST" ]]; then
+    AQSP_RELEASE_COMMIT="$(${AQSP_RUNTIME_PYTHON:-python3} - "$AQSP_RELEASE_MANIFEST" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+commit = payload.get("commit")
+if not isinstance(commit, str) or len(commit) != 40:
+    raise SystemExit("invalid release manifest commit")
+print(commit)
+PY
+    )"
+    export AQSP_RELEASE_COMMIT
+else
+    echo "[WARN] release identity manifest missing: ${AQSP_RELEASE_MANIFEST}" >&2
+fi
 export AQSP_RUNTIME_VENV_DIR="${AQSP_RUNTIME_VENV_DIR:-${RELEASE_ROOT}/.venv-vibe-research}"
 export AQSP_LEDGER="$(runtime_path "${AQSP_LEDGER:-data/predictions.jsonl}")"
 export AQSP_PAPER_LEDGER="$(runtime_path "${AQSP_PAPER_LEDGER:-data/paper_trades.jsonl}")"

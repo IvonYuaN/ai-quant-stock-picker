@@ -225,6 +225,31 @@ else
     echo "immutable release: ${PROJECT_ROOT} (git metadata not required)"
 fi
 
+print_section "RELEASE CONSISTENCY"
+if [ -f "${PROJECT_ROOT}/scripts/check_release_consistency.py" ]; then
+    release_args=(
+        --project-root "$PROJECT_ROOT"
+        --runtime-root "$RUNTIME_ROOT"
+        --remote "${AQSP_GIT_REMOTE:-origin}"
+        --branch "${AQSP_GIT_BRANCH:-main}"
+        --manifest "${AQSP_RELEASE_MANIFEST:-${PROJECT_ROOT}/.aqsp-release.json}"
+        --overlay "${AQSP_RUNTIME_OVERLAY_MANIFEST:-${RUNTIME_ROOT}/.state/runtime-sync-overlay.json}"
+        --active-file scripts/release_task_entrypoint.sh
+        --active-file scripts/bt_task.sh
+    )
+    if [ -L /opt/aqsp-releases/aqsp-scheduler-current ]; then
+        release_args+=(--canonical-link /opt/aqsp-releases/aqsp-scheduler-current)
+    fi
+    release_check_python="${RUNTIME_PYTHON:-python3}"
+    run_critical_check "release_consistency" run_project_check "$release_check_python" scripts/check_release_consistency.py "${release_args[@]}"
+else
+    # Older releases may predate this checker. Keep the diagnostic explicit,
+    # but preserve the real doctor/before-live exit code until the release is
+    # upgraded; silently treating the missing checker as a runtime failure
+    # makes the status output misleading.
+    echo "WARNING release consistency checker unavailable; release upgrade required"
+fi
+
 print_section "CRON"
 crontab -l 2>/dev/null || true
 

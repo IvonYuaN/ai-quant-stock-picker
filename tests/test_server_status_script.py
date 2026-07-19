@@ -19,7 +19,11 @@ def _write_fake_server_status_runtime(tmp_path: Path) -> tuple[Path, Path]:
     (project_root / "src" / "aqsp" / "cli.py").write_text(
         "# fake cli\n", encoding="utf-8"
     )
-    for name in ("check_before_live.py", "remote_runtime_probe.py"):
+    for name in (
+        "check_before_live.py",
+        "remote_runtime_probe.py",
+        "check_release_consistency.py",
+    ):
         (project_root / "scripts" / name).write_text("# fake check\n", encoding="utf-8")
 
     fake_python = """#!/usr/bin/env bash
@@ -28,6 +32,7 @@ case "$*" in
   *aqsp\\ doctor*) printf 'doctor output\\n' ; exit "${FAKE_DOCTOR_EXIT:-0}" ;;
   *check_before_live.py*) printf 'before-live output\\n' ; exit "${FAKE_BEFORE_LIVE_EXIT:-0}" ;;
   *remote_runtime_probe.py*) printf 'remote probe output\\n' ; exit "${FAKE_REMOTE_PROBE_EXIT:-0}" ;;
+  *check_release_consistency.py*) printf 'release consistency output\\n' ; exit "${FAKE_RELEASE_EXIT:-0}" ;;
 esac
 printf 'unexpected fake python args: %s\\n' "$*" >&2
 exit 42
@@ -75,6 +80,9 @@ def test_server_status_script_covers_runtime_sections() -> None:
     script = (PROJECT_ROOT / "scripts" / "server_status.sh").read_text(encoding="utf-8")
 
     assert 'print_section "GIT"' in script
+    assert 'print_section "RELEASE CONSISTENCY"' in script
+    assert "check_release_consistency.py" in script
+    assert "AQSP_RELEASE_MANIFEST" in script
     assert "git status --short --untracked-files=no" in script
     assert "untracked runtime files:" in script
     assert 'print_section "CRON"' in script
@@ -134,6 +142,7 @@ def test_server_status_propagates_critical_check_failures_after_showing_all_sect
     assert "===== REMOTE PROBE =====" in output
     assert "===== DEPLOY LOG =====" in output
     assert "===== DAILY LOG =====" in output
+    assert "RELEASE CONSISTENCY" in output
     assert "critical check failed: check_before_live (exit=12)" in output
     assert "critical check failed: remote_runtime_probe (exit=23)" in output
     assert "critical checks failed; server status exit=11" in output

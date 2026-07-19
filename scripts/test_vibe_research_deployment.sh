@@ -25,6 +25,16 @@ for script in \
     bash -n "$path"
 done
 
+for script in \
+    check_release_consistency.py \
+    write_release_manifest.py \
+    push_with_report.py; do
+    path="${PROJECT_ROOT}/scripts/${script}"
+    assert_file "$path"
+    python3 -m py_compile "$path"
+done
+echo "PASS release identity and publish checks"
+
 for unit in \
     aqsp-vibe-research-api.service \
     aqsp-vibe-research-preview.service \
