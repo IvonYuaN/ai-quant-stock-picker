@@ -47,6 +47,8 @@ export AQSP_GATE_NOTIFY_STATE_PATH="$(runtime_path "${AQSP_GATE_NOTIFY_STATE_PAT
 export AQSP_REALTIME_CROSS_MARKET_PATH="$(runtime_path "${AQSP_REALTIME_CROSS_MARKET_PATH:-data/runtime/realtime_cross_market_context.json}")"
 export AQSP_RUNTIME_SYMBOL_CACHE="$(runtime_path "${AQSP_RUNTIME_SYMBOL_CACHE:-data/walkforward_production_symbols.json}")"
 export AQSP_INTRADAY_FAST_SYMBOL_CACHE="$(runtime_path "${AQSP_INTRADAY_FAST_SYMBOL_CACHE:-data/walkforward_production_symbols.json}")"
-export AQSP_INTRADAY_FAST_SYMBOL_CSVS="$(runtime_path "${AQSP_INTRADAY_FAST_SYMBOL_CSVS:-reports/intraday_latest.csv"),$(runtime_path "reports/latest.csv")"
+if [[ -z "${AQSP_INTRADAY_FAST_SYMBOL_CSVS:-}" ]]; then
+    export AQSP_INTRADAY_FAST_SYMBOL_CSVS="$(runtime_path reports/intraday_latest.csv),$(runtime_path reports/latest.csv)"
+fi
 
 exec /bin/bash "${RELEASE_ROOT}/scripts/bt_task.sh" "$@"
