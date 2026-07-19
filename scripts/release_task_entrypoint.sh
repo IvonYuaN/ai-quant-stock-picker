@@ -22,6 +22,7 @@ export AQSP_INTRADAY_LATEST_CSV="${AQSP_INTRADAY_LATEST_CSV:-${RUNTIME_ROOT}/rep
 export AQSP_OUTPUT_CSV="${AQSP_OUTPUT_CSV:-${RUNTIME_ROOT}/reports/latest.csv}"
 export AQSP_NEWS_OUTPUT="${AQSP_NEWS_OUTPUT:-${RUNTIME_ROOT}/reports/news_catalysts.md}"
 export AQSP_NEWS_JSON_OUTPUT="${AQSP_NEWS_JSON_OUTPUT:-${RUNTIME_ROOT}/data/runtime/news_catalysts_latest.json}"
+export AQSP_NEWS_ARCHIVE_DIR="${AQSP_NEWS_ARCHIVE_DIR:-${RUNTIME_ROOT}/data/runtime/news_archive}"
 export AQSP_NEWS_SOURCE_CONFIG="${AQSP_NEWS_SOURCE_CONFIG:-${RELEASE_ROOT}/config/news_sources.yaml}"
 export AQSP_BT_LOGS_DIR="${AQSP_BT_LOGS_DIR:-${RUNTIME_ROOT}/logs/bt}"
 export AQSP_RISK_STATE="${AQSP_RISK_STATE:-${RUNTIME_ROOT}/data/risk_state.json}"

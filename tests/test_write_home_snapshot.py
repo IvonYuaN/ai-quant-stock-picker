@@ -822,9 +822,50 @@ def test_write_home_snapshot_reads_only_current_day_news_report(
     assert (
         write_home_snapshot.build_home_snapshot(
             _DateAwareProvider(), signal_date="2026-07-09", task_id="intraday"
-        ).messages
+    ).messages
         == ()
     )
+
+
+def test_write_home_snapshot_reads_dated_news_archive_when_latest_is_missing(
+    monkeypatch, tmp_path
+) -> None:
+    archive_dir = tmp_path / "news_archive"
+    archive_dir.mkdir()
+    report = CatalystReport(
+        date="2026-07-09",
+        generated_at="2026-07-09T10:00:00+08:00",
+        events=(
+            CatalystEvent(
+                title="PCB 供需变化",
+                source="eastmoney_domestic",
+                published_at="2026-07-09T09:30:00+08:00",
+                impact="positive",
+                category="涨价/供需催化",
+                confidence=0.9,
+                inference="短线关注产业链确认",
+                source_region="domestic",
+            ),
+        ),
+        source_status="partial",
+        event_status="high_impact",
+        raw_news_count=1,
+    )
+    (archive_dir / "news-2026-07-09.json").write_text(
+        json.dumps(serialize_catalyst_report(report), ensure_ascii=False),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv(
+        "AQSP_NEWS_JSON_OUTPUT", str(tmp_path / "missing-latest.json")
+    )
+    monkeypatch.setenv("AQSP_NEWS_ARCHIVE_DIR", str(archive_dir))
+
+    snapshot = write_home_snapshot.build_home_snapshot(
+        _DateAwareProvider(), signal_date="2026-07-09", task_id="intraday"
+    )
+
+    assert snapshot.message_status == "部分可用"
+    assert [item.title for item in snapshot.messages] == ["PCB 供需变化"]
 
 
 def test_write_home_snapshot_structures_current_cross_market_context(
