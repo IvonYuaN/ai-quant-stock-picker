@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 from dataclasses import asdict, dataclass
 from datetime import date
@@ -214,6 +215,27 @@ def evaluate_status(
         if isinstance(payload.get("quality_gate", {}), dict)
         else freshness.get("checked_count")
     )
+    resolved_count = _as_nonnegative_int(universe.get("resolved_count"))
+    fetched_count = _as_nonnegative_int(universe.get("fetched_count"))
+    skipped_count = _as_nonnegative_int(universe.get("skipped_count"))
+    data_coverage_pct = _as_nonnegative_float(universe.get("data_coverage_pct"))
+    coverage_detail_ok = (
+        resolved_count is not None
+        and resolved_count > 0
+        and batch_size is not None
+        and resolved_count == batch_size
+        and fetched_count is not None
+        and fetched_count > 0
+        and skipped_count is not None
+        and fetched_count + skipped_count == resolved_count
+        and data_coverage_pct is not None
+        and math.isclose(
+            data_coverage_pct,
+            fetched_count / resolved_count,
+            rel_tol=0.0,
+            abs_tol=1e-6,
+        )
+    )
     checks.extend(
         (
             _check(
@@ -241,6 +263,16 @@ def evaluate_status(
                 freshness_checked is not None and freshness_checked > 0,
                 f"freshness.checked_count={freshness_checked}",
             ),
+            _check(
+                "coverage_detail",
+                coverage_detail_ok,
+                "resolved={}; fetched={}; skipped={}; data_coverage_pct={}".format(
+                    resolved_count,
+                    fetched_count,
+                    skipped_count,
+                    data_coverage_pct,
+                ),
+            ),
         )
     )
 
@@ -264,6 +296,10 @@ def evaluate_status(
         "blocked_count": blocked_count,
         "freshness_status": freshness_status,
         "freshness_checked_count": freshness_checked,
+        "resolved_count": resolved_count,
+        "fetched_count": fetched_count,
+        "skipped_count": skipped_count,
+        "data_coverage_pct": data_coverage_pct,
     }
     return ContractResult(
         classification="success" if all(check.ok for check in checks) else "failed",

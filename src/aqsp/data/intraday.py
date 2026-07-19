@@ -668,6 +668,11 @@ def _validate_live_bar_freshness(
         else current.astimezone(SHANGHAI_TZ)
     )
     expected_date = target_date or current.date()
+    if expected_date > current.date():
+        raise DataError(
+            f"分时目标日期不能晚于当前日期: {symbol} target={expected_date.isoformat()} "
+            f"current={current.date().isoformat()}"
+        )
     if latest.date() != expected_date:
         raise DataError(
             f"分时最新 bar 非目标交易日: {symbol} latest={latest.date().isoformat()} "

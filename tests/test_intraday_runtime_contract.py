@@ -1085,6 +1085,18 @@ def test_intraday_batch_does_not_commit_when_output_metadata_is_partial(
     assert 'BATCH_FAILURE_REASON="intraday_batch_output_incomplete"' in script
 
 
+def test_intraday_batch_validates_exact_final_batch_and_only_fresh_output() -> None:
+    script = SCRIPT_PATH.read_text(encoding="utf-8")
+    check_start = script.index("validate_intraday_batch_output()")
+    check_end = script.index("debate_backfill_lock_age_minutes()")
+    check = script[check_start:check_end]
+
+    assert 'local expected_count="${INTRADAY_BATCH_EXPECTED_COUNT:-$INTRADAY_BATCH_SIZE}"' in check
+    assert 'local batch_output_path="$TMP_INTRADAY_OUTPUT_CSV"' in check
+    assert "public CSV is the previous successful run" in check
+    assert 'INTRADAY_BATCH_EXPECTED_COUNT="${#INTRADAY_BATCH_SYMBOL_ARRAY[@]}"' in script
+
+
 def test_intraday_batch_status_records_data_coverage_and_skipped_symbols() -> None:
     script = SCRIPT_PATH.read_text(encoding="utf-8")
 

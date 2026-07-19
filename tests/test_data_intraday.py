@@ -612,6 +612,25 @@ def test_intraday_service_rejects_explicit_historical_target_without_replay(
         )
 
 
+def test_intraday_service_rejects_future_replay_target(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "aqsp.data.intraday.now_shanghai",
+        lambda: datetime(2026, 7, 14, 10, 0, tzinfo=now_shanghai().tzinfo),
+    )
+    frame = pd.DataFrame(
+        {
+            "date": ["2026-07-15 09:30:00"],
+            "close": [10.0],
+        }
+    )
+
+    with pytest.raises(DataError, match="目标日期不能晚于当前日期"):
+        IntradayService(
+            MockSource(intraday_data={"600000": frame}),
+            allow_historical_replay=True,
+        ).get_intraday_bars(["600000"], target_date=date(2026, 7, 15))
+
+
 def test_legacy_intraday_merge_does_not_return_daily_history_when_market_is_closed(
     monkeypatch,
 ) -> None:

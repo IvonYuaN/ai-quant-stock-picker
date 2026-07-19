@@ -266,6 +266,7 @@ INTRADAY_BATCH_SYMBOLS=""
 INTRADAY_BATCH_ID=""
 INTRADAY_BATCH_UNIVERSE_COUNT="0"
 INTRADAY_BATCH_COVERAGE_PCT="0"
+INTRADAY_BATCH_EXPECTED_COUNT="0"
 BATCH_COMMITTED="false"
 INTRADAY_NEWS_TASK_TIMEOUT_SECONDS="${AQSP_INTRADAY_NEWS_TASK_TIMEOUT_SECONDS:-20}"
 # The configured RSS set needs up to roughly five seconds on the production
@@ -329,7 +330,16 @@ replace_intraday_artifact() {
     local dest="$2"
     local label="$3"
     if [ -f "$src" ]; then
-        mv -f "$src" "$dest"
+        # Keep the run-local artifact alive until cursor validation finishes.
+        # Publish through a same-filesystem temp destination so readers never
+        # observe a partial copy, while validation cannot fall back to an old
+        # public artifact.
+        local publish_tmp="${dest}.publish.$$"
+        if ! cp -f -- "$src" "$publish_tmp" || ! mv -f -- "$publish_tmp" "$dest"; then
+            rm -f -- "$publish_tmp"
+            log "[ERROR] 发布${label}失败: ${dest}"
+            return 1
+        fi
         log "已更新${label}: ${dest}"
     else
         log "未生成${label}，保留上一版: ${dest}"
@@ -337,13 +347,15 @@ replace_intraday_artifact() {
 }
 
 validate_intraday_batch_output() {
-    local expected_count="$INTRADAY_BATCH_SIZE"
+    # The final cursor batch may be shorter than the configured batch size.
+    # Validate the exact symbols selected for this run, never the nominal size.
+    local expected_count="${INTRADAY_BATCH_EXPECTED_COUNT:-$INTRADAY_BATCH_SIZE}"
     local min_valid_ratio="${AQSP_INTRADAY_MIN_VALID_RATIO:-0.8}"
     local scanned_count
-    local batch_output_path="$INTRADAY_OUTPUT_CSV"
-    if [ ! -f "$batch_output_path" ] && [ -f "$TMP_INTRADAY_OUTPUT_CSV" ]; then
-        batch_output_path="$TMP_INTRADAY_OUTPUT_CSV"
-    fi
+    # The public CSV is the previous successful run until promotion. Reading it
+    # here could validate stale symbols and advance the cursor without validating
+    # the current batch.
+    local batch_output_path="$TMP_INTRADAY_OUTPUT_CSV"
     if [ ! -f "$batch_output_path" ]; then
         log "[ERROR] 盘中批次产物缺少 CSV，拒绝提交 cursor"
         return 1
@@ -1634,6 +1646,12 @@ if is_truthy "$INTRADAY_BATCH_SCAN" && \
     fi
     if [ -z "$INTRADAY_BATCH_SYMBOLS" ]; then
         log "[ERROR] 盘中股票批次为空；不运行重策略"
+        exit 1
+    fi
+    IFS=',' read -r -a INTRADAY_BATCH_SYMBOL_ARRAY <<< "$INTRADAY_BATCH_SYMBOLS"
+    INTRADAY_BATCH_EXPECTED_COUNT="${#INTRADAY_BATCH_SYMBOL_ARRAY[@]}"
+    if [ "$INTRADAY_BATCH_EXPECTED_COUNT" -le 0 ]; then
+        log "[ERROR] 盘中股票批次没有可计数标的；不运行重策略"
         exit 1
     fi
     INTRADAY_BATCH_ACTIVE="true"

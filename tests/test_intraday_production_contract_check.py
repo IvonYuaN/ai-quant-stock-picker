@@ -30,6 +30,10 @@ def _status(**overrides: object) -> dict[str, object]:
             "universe_count": 5200,
             "batch_size": 128,
             "coverage_pct": 0.0246,
+            "resolved_count": 128,
+            "fetched_count": 120,
+            "skipped_count": 8,
+            "data_coverage_pct": 0.9375,
         },
         "freshness": {"status": "fresh", "checked_count": 128},
     }
@@ -79,6 +83,27 @@ def test_contract_check_rejects_resource_kill_and_missing_runtime_contract() -> 
         "freshness_status",
         "run_status",
     } <= failed
+
+
+def test_contract_check_rejects_inconsistent_batch_coverage() -> None:
+    result = evaluate_status(
+        _status(
+            universe={
+                "batch_id": "2026-07-17:1:128",
+                "universe_count": 5200,
+                "batch_size": 128,
+                "coverage_pct": 0.0246,
+                "resolved_count": 128,
+                "fetched_count": 120,
+                "skipped_count": 2,
+                "data_coverage_pct": 0.9375,
+            }
+        ),
+        trade_date=TRADE_DATE,
+    )
+
+    assert result.classification == "failed"
+    assert any(check.name == "coverage_detail" and not check.ok for check in result.checks)
 
 
 def test_contract_check_rejects_missing_status_on_trading_day() -> None:
