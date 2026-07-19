@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, Outlet, useLocation } from "react-router-dom";
 import {
-  Activity,
   CalendarDays,
   LineChart,
   Moon,
@@ -17,9 +16,8 @@ import { AqspWorkspaceProvider, useAqspSnapshot } from "@/components/aqsp/useAqs
 import { formatResearchDate } from "@/lib/research-view";
 
 const NAV = [
-  { hash: "overview", icon: Activity, label: "今日总览", description: "结论与状态" },
-  { hash: "candidates", icon: LineChart, label: "候选研究", description: "评分与依据" },
   { hash: "messages", icon: ScrollText, label: "消息证据", description: "来源与影响" },
+  { hash: "candidates", icon: LineChart, label: "候选研究", description: "评分与依据" },
   { hash: "discussion", icon: UsersRound, label: "讨论复核", description: "分歧与风险" },
 ];
 
@@ -80,13 +78,13 @@ function WorkspaceLayout() {
         <div className={cn("vr-sidebar-scroll", collapsed && "px-1.5")}>
           {!collapsed && (
             <div className="vr-sidebar-section">
-              <div className="vr-sidebar-label"><span>研究工作区</span><span className="text-muted-foreground/50">4</span></div>
+              <div className="vr-sidebar-label"><span>研究内容</span><span className="text-muted-foreground/50">3</span></div>
             </div>
           )}
-          <nav className="space-y-1" aria-label="研究工作区">
+          <nav className="space-y-1" aria-label="研究内容">
             {NAV.map(({ hash: targetHash, icon: Icon, label, description }) => {
               const to = `/daily-review#${targetHash}`;
-              const active = pathname === "/daily-review" && (hash === `#${targetHash}` || (!hash && targetHash === "overview"));
+              const active = pathname === "/daily-review" && (hash === `#${targetHash}` || (!hash && targetHash === "messages"));
               return (
                 <Link
                   key={to}

@@ -14,6 +14,7 @@ import {
   UsersRound,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { RESEARCH_SECTION_IDS } from "@/lib/research-layout";
 import type { AqspAgentResult, AqspCandidate, AqspMessage, AqspSnapshot } from "@/lib/api";
 import {
   debateProcessText,
@@ -368,35 +369,24 @@ export function AqspResearchWorkspace() {
         </section>
       </div>
 
-      <div className="vr-board-grid">
-        <section id="candidates" className="vr-module vr-board-section">
-          <div className="vr-section-heading"><div><p className="vr-kicker">02 · 评分与依据</p><h2>候选</h2></div><span className="vr-count">{data.candidates.length} 个</span></div>
-          {data.candidates.length === 0 ? <EmptyState title="当前没有候选" detail="可能是研究 gate 阻塞，或当天数据尚未产出。" /> : <div className="vr-candidate-grid">{data.candidates.map((candidate) => <CandidateCard key={candidate.symbol} candidate={candidate} />)}</div>}
-        </section>
+      <section id={RESEARCH_SECTION_IDS[0]} className="vr-module vr-board-section">
+        <div className="vr-section-heading"><div><p className="vr-kicker">02 · 来源与影响</p><h2>消息</h2></div><span className="vr-count">{data.messages.length} 条</span></div>
+        {data.messages.length === 0 ? <EmptyState title="当前没有消息摘要" detail="快照未记录可核验消息，不在界面中补充推断。" /> : <div className="vr-message-list">{data.messages.map((message) => <MessageCard key={`${message.title}-${message.published_at}`} message={message} />)}</div>}
+      </section>
 
-        <section id="messages" className="vr-module vr-board-section vr-messages-section">
-          <div className="vr-section-heading"><div><p className="vr-kicker">03 · 来源与影响</p><h2>消息</h2></div><span className="vr-count">{data.messages.length} 条</span></div>
-          {data.messages.length === 0 ? <EmptyState title="当前没有消息摘要" detail="快照未记录可核验消息，不在界面中补充推断。" /> : <div className="vr-message-list">{data.messages.map((message) => <MessageCard key={`${message.title}-${message.published_at}`} message={message} />)}</div>}
-        </section>
-      </div>
+      <section id={RESEARCH_SECTION_IDS[1]} className="vr-module vr-board-section">
+        <div className="vr-section-heading"><div><p className="vr-kicker">03 · 评分与依据</p><h2>候选</h2></div><span className="vr-count">{data.candidates.length} 个</span></div>
+        {data.candidates.length === 0 ? <EmptyState title="当前没有候选" detail="可能是研究 gate 阻塞，或当天数据尚未产出。" /> : <div className="vr-candidate-grid">{data.candidates.map((candidate) => <CandidateCard key={candidate.symbol} candidate={candidate} />)}</div>}
+      </section>
 
-      <section id="discussion" className="vr-module vr-board-section vr-discussion-section">
+      <section id={RESEARCH_SECTION_IDS[2]} className="vr-module vr-board-section vr-discussion-section">
         <div className="vr-section-heading"><div><p className="vr-kicker">04 · 分歧与风险</p><h2>Agent 讨论</h2></div><span className="vr-count">{data.debates.length} 条</span></div>
         {data.debates.length === 0 ? <EmptyState title="暂无讨论记录" detail="当前快照没有多 Agent 讨论结果，保留确定性研究数据。" /> : <div className="grid gap-3 xl:grid-cols-2">{data.debates.map((result) => <DebateCard key={result.symbol} result={result} />)}</div>}
-        <div className="mt-5 flex items-start gap-2 border-t border-border/50 pt-3 text-[11px] leading-relaxed text-muted-foreground/70"><ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" />讨论仅作为研究补充，确定性评分和原始证据保持独立。</div>
       </section>
     </div>
   );
 }
 
 export function AqspDailySnapshot() {
-  return <AqspResearchWorkspace />;
-}
-
-export function AqspIntelSnapshot() {
-  return <AqspResearchWorkspace />;
-}
-
-export function AqspPaperResearch() {
   return <AqspResearchWorkspace />;
 }

@@ -976,7 +976,10 @@ def test_news_catalyst_merges_same_company_event_across_sources() -> None:
                 },
             ]
         ),
-        config=NewsCatalystConfig(allow_undated_news=True),
+        config=NewsCatalystConfig(
+            allow_undated_news=True,
+            max_news_age_days=365,
+        ),
     )
 
     assert len(report.events) == 1
