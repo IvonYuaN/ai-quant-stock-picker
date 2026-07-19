@@ -242,9 +242,11 @@ export function AqspResearchWorkspace() {
   return <div className="aqsp-page">
     <header className="aqsp-header"><div><p className="aqsp-eyebrow">AQSP · 短线研究</p><div className="aqsp-title-row"><h1>当天研究</h1><strong>{data.selected_date || "日期未记录"}</strong></div><SnapshotMeta snapshot={data} /></div><button type="button" className="aqsp-refresh" onClick={refresh} disabled={loading} title="刷新研究数据"><RefreshCw className={cn("h-4 w-4", loading && "animate-spin")} />刷新</button></header>
     <DatePicker snapshot={data} />
-    <main className="aqsp-active-view" aria-live="polite">
+    <div className="aqsp-formal-grid">
+      <main className="aqsp-active-view" aria-live="polite">
       {activeView === TEST_VARIANTS_SECTION_ID ? <TestVariantsPanel snapshot={data} /> : formalSections[activeView]}
-    </main>
+      </main>
+    </div>
   </div>;
 }
 
