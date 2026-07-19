@@ -640,7 +640,12 @@ def _responsibility_snapshot(coordinator: Any) -> list[dict[str, str]]:
     ]
 
 
-def load_intraday_picks(path: Path, limit: int) -> list[PickResult]:
+def load_intraday_picks(
+    path: Path,
+    limit: int,
+    *,
+    include_observation_only: bool = False,
+) -> list[PickResult]:
     if not path.exists():
         return []
     with path.open(encoding="utf-8", newline="") as file:
@@ -654,6 +659,12 @@ def load_intraday_picks(path: Path, limit: int) -> list[PickResult]:
                 or (
                     str(row.get("quality_gate_action") or "").strip() == "clean"
                     and str(row.get("paper_review_eligible") or "").lower() == "true"
+                )
+                or (
+                    include_observation_only
+                    and str(row.get("quality_gate_action") or "").strip()
+                    in {"observe", "observation_only"}
+                    and str(row.get("observation_only") or "").lower() == "true"
                 )
             )
         ]
@@ -789,6 +800,7 @@ def run_backfill(
     lock_path: Path = DEFAULT_LOCK_PATH,
     stale_lock_seconds: int = DEFAULT_STALE_LOCK_SECONDS,
     max_attempts: int = DEFAULT_MAX_ATTEMPTS,
+    include_observation_only: bool = False,
 ) -> int:
     input_csv = Path(input_csv)
     output_path = Path(output_path)
@@ -847,6 +859,7 @@ def run_backfill(
         picks = load_intraday_picks(
             input_csv,
             limit=max(1, min(max_candidates, runtime.max_candidates)),
+            include_observation_only=include_observation_only,
         )
     except Exception as exc:
         failed_candidates.append(
@@ -1181,6 +1194,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--max-candidates", type=int, default=DEFAULT_MAX_CANDIDATES)
     parser.add_argument("--max-attempts", type=int, default=DEFAULT_MAX_ATTEMPTS)
     parser.add_argument("--force", action="store_true")
+    parser.add_argument(
+        "--include-observation-only",
+        action="store_true",
+        help="允许为明确标记 observation_only 的历史盘中候选生成 advisory 讨论",
+    )
     parser.add_argument("--status-path", default=str(DEFAULT_STATUS_PATH))
     parser.add_argument("--lock-path", default=str(DEFAULT_LOCK_PATH))
     parser.add_argument(
@@ -1200,6 +1218,7 @@ def main(argv: list[str] | None = None) -> int:
         lock_path=Path(args.lock_path),
         stale_lock_seconds=args.stale_lock_seconds,
         max_attempts=args.max_attempts,
+        include_observation_only=args.include_observation_only,
     )
     status = _read_json_object(Path(args.status_path))
     print(
