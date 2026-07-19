@@ -545,6 +545,36 @@ def _news_json_report_path() -> Path:
     return path if path.is_absolute() else PROJECT_ROOT / path
 
 
+def _news_json_archive_path(signal_date: str) -> Path:
+    raw_path = os.getenv(
+        "AQSP_NEWS_ARCHIVE_DIR", "data/runtime/news_archive"
+    ).strip()
+    path = Path(raw_path).expanduser()
+    if not path.is_absolute():
+        path = PROJECT_ROOT / path
+    return path / f"news-{signal_date}.json"
+
+
+def _news_archive_dates() -> tuple[str, ...]:
+    raw_path = os.getenv(
+        "AQSP_NEWS_ARCHIVE_DIR", "data/runtime/news_archive"
+    ).strip()
+    path = Path(raw_path).expanduser()
+    if not path.is_absolute():
+        path = PROJECT_ROOT / path
+    if not path.is_dir():
+        return ()
+    dates: list[str] = []
+    for item in path.glob("news-??????????.json"):
+        value = item.stem.removeprefix("news-")
+        try:
+            datetime.strptime(value, "%Y-%m-%d")
+        except ValueError:
+            continue
+        dates.append(value)
+    return tuple(sorted(set(dates), reverse=True))
+
+
 def _messages_from_catalyst_report(
     report: CatalystReport,
 ) -> tuple[HomeSnapshotMessage, ...]:
@@ -678,6 +708,12 @@ def _parse_news_report_payload(
         expected_date=signal_date,
         max_age_seconds=NEWS_REPORT_MAX_AGE_SECONDS,
     )
+    if structured_report is None:
+        archive_path = _news_json_archive_path(signal_date)
+        structured_report = load_catalyst_report_artifact(
+            archive_path,
+            expected_date=signal_date,
+        )
     if structured_report is None and structured_path.is_file():
         is_current_day = signal_date == now_shanghai().date().isoformat()
         if is_current_day:
@@ -1081,12 +1117,16 @@ def _recommendation_gate(
         and int(getattr(source, "lag_days", 999) or 999) <= 0
         and message_status not in {"来源失败", "超时", "失败"}
     )
+    paper_ledger_path = getattr(provider, "paper_ledger_path", None)
+    paper_tracking_days = (
+        count_paper_tracking_days(str(paper_ledger_path))
+        if paper_ledger_path
+        else 0
+    )
     result = evaluate_recommendation_gate(
         RecommendationGateInputs(
             coldstart_days=_progress_days(getattr(runtime, "coldstart_progress", "")),
-            paper_tracking_days=count_paper_tracking_days(
-                str(provider.paper_ledger_path)
-            ),
+            paper_tracking_days=paper_tracking_days,
             walkforward_ok=walkforward_ok,
             walkforward_updated_at=None,
             freshness=FreshnessEvidence(
@@ -1208,7 +1248,10 @@ def build_home_snapshot(
         schema_version=HOME_SNAPSHOT_SCHEMA_VERSION,
         generated_at=generated_at,
         selected_date=selected_date,
-        available_dates=_snapshot_dates(task_view, selected_date),
+        available_dates=_bounded_unique_text(
+            (*_snapshot_dates(task_view, selected_date), *_news_archive_dates()),
+            MAX_HOME_DATES,
+        ),
         candidates=candidates,
         # Debate summaries are adjacent advisory cards and never ranking inputs.
         debates=debates,

@@ -118,6 +118,7 @@ MAX_LLM_REVIEW_EVENTS="${AQSP_NEWS_MAX_LLM_REVIEW_EVENTS:-1}"
 TASK_TIMEOUT_SECONDS="${AQSP_NEWS_TASK_TIMEOUT_SECONDS:-300}"
 OUTPUT="${AQSP_NEWS_OUTPUT:-reports/news_catalysts.md}"
 JSON_OUTPUT="${AQSP_NEWS_JSON_OUTPUT:-data/runtime/news_catalysts_latest.json}"
+ARCHIVE_DIR="${AQSP_NEWS_ARCHIVE_DIR:-data/runtime/news_archive}"
 ENABLE_LLM_REVIEW="${AQSP_NEWS_ENABLE_LLM_REVIEW:-false}"
 ALLOW_NON_TRADING_NOTIFY="${AQSP_ALLOW_NON_TRADING_NEWS_NOTIFY:-false}"
 
@@ -282,5 +283,33 @@ elif ! has_usable_current_news && restore_previous_current_news; then
     log "消息面任务返回成功但产物状态失败：已恢复同日消息"
 fi
 log "消息面雷达完成: ${OUTPUT}"
+
+# Keep one exact-date structured artifact so the dashboard can open historical
+# message days without treating them as current recommendations.
+if [ -s "$JSON_OUTPUT" ]; then
+    archive_date="$($PYTHON_BIN - "$JSON_OUTPUT" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+try:
+    payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+except (OSError, ValueError, IndexError):
+    raise SystemExit(1)
+value = str(payload.get("date", "")).strip()
+if len(value) != 10 or str(payload.get("source_status", "")).strip() not in {"ok", "partial"}:
+    raise SystemExit(1)
+print(value)
+PY
+    )" || archive_date=""
+    if [ -n "$archive_date" ]; then
+        mkdir -p "$ARCHIVE_DIR"
+        cp -f "$JSON_OUTPUT" "${ARCHIVE_DIR%/}/news-${archive_date}.json"
+        if [ -f "$OUTPUT" ]; then
+            cp -f "$OUTPUT" "${ARCHIVE_DIR%/}/news-${archive_date}.md"
+        fi
+        log "消息面按日期归档: ${ARCHIVE_DIR%/}/news-${archive_date}.json"
+    fi
+fi
 
 find "$LOG_DIR" -name "news-*.log" -mtime +30 -delete 2>/dev/null || true
