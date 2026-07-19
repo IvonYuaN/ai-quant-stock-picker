@@ -313,6 +313,15 @@ def test_write_home_snapshot_makes_hidden_candidate_count_explicit(monkeypatch) 
 
     monkeypatch.setattr(provider, "home_digest_payload", payload_with_six_candidates)
     monkeypatch.setattr(provider, "runtime_overview", runtime_with_count)
+    monkeypatch.setattr(
+        write_home_snapshot,
+        "_recommendation_gate",
+        lambda *args, **kwargs: write_home_snapshot.HomeSnapshotRecommendationGate(
+            recommendation_allowed=True,
+            status="open",
+            reasons=(),
+        ),
+    )
 
     snapshot = write_home_snapshot.build_home_snapshot(
         provider, signal_date="2026-07-10", task_id="intraday"
@@ -320,6 +329,35 @@ def test_write_home_snapshot_makes_hidden_candidate_count_explicit(monkeypatch) 
 
     assert len(snapshot.candidates) == 5
     assert "待复核 6 只，首页展示 5 只" in snapshot.summaries[0]
+
+
+def test_write_home_snapshot_downgrades_recommendations_when_gate_is_blocked(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        write_home_snapshot,
+        "_recommendation_gate",
+        lambda *args, **kwargs: write_home_snapshot.HomeSnapshotRecommendationGate(
+            recommendation_allowed=False,
+            status="blocked",
+            reasons=("walkforward_failed",),
+        ),
+    )
+
+    snapshot = write_home_snapshot.build_home_snapshot(
+        _Provider(), signal_date="2026-07-10", task_id="intraday"
+    )
+
+    assert snapshot.recommendation_gate.recommendation_allowed is False
+    assert snapshot.candidates
+    assert all(
+        not write_home_snapshot.is_home_recommendation(candidate)
+        for candidate in snapshot.candidates
+    )
+    assert all(
+        "仅观察（推荐 gate 阻塞）" in candidate.research_status
+        for candidate in snapshot.candidates
+    )
 
 
 def test_snapshot_realtime_cross_market_reads_sidecar_without_network(

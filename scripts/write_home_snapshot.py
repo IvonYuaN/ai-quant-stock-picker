@@ -455,6 +455,26 @@ def _snapshot_recommendation_count(payload: Any) -> int:
     return count
 
 
+def _apply_recommendation_gate(
+    candidates: tuple[HomeSnapshotCandidate, ...],
+    gate: HomeSnapshotRecommendationGate,
+) -> tuple[HomeSnapshotCandidate, ...]:
+    """Downgrade formal cards to observation when the global gate is closed."""
+    if gate.recommendation_allowed:
+        return candidates
+    return tuple(
+        replace(
+            candidate,
+            research_status=(
+                "仅观察（推荐 gate 阻塞）"
+                if is_home_recommendation(candidate)
+                else candidate.research_status
+            ),
+        )
+        for candidate in candidates
+    )
+
+
 def _align_count_summary(text: str, *, total: int, shown: int) -> str:
     """Make a legacy count headline explicit when the home card cap hides rows."""
     if not text:
@@ -1256,6 +1276,10 @@ def build_home_snapshot(
         message_status,
         evaluated_at=now_shanghai(),
     )
+    candidates = _apply_recommendation_gate(candidates, recommendation_gate)
+    if not recommendation_gate.recommendation_allowed:
+        recommendation_count = 0
+        shown_recommendation_count = 0
     debate_missing = bool(getattr(payload, "debates", ()) or ()) and not debates
     raw_summaries = (
         "委员会结论缺少当前候选映射，已隐藏" if debate_missing else "",
