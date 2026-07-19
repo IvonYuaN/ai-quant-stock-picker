@@ -1107,12 +1107,22 @@ def test_cross_market_watch_candidate_stays_observation_only(
         [formal],
         [formal, screened],
         market_context=SimpleNamespace(),
+        max_candidates=0,
     )
 
     assert [item.symbol for item in result] == ["300750", "688981"]
     assert result[1].score == 41.0
     assert result[1].metrics["observation_only"] is True
     assert result[1].metrics["portfolio_action"] == "observation_only"
+
+
+def test_news_watch_candidate_limit_zero_means_uncapped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import aqsp.cli as cli_mod
+
+    monkeypatch.setenv("AQSP_NEWS_WATCH_MAX_CANDIDATES", "0")
+    assert cli_mod._news_watch_candidate_limit() == 0
 
 
 def test_cross_market_context_marks_negative_evidence_as_risk_review() -> None:

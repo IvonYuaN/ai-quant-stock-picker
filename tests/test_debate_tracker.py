@@ -388,7 +388,9 @@ def test_debate_evidence_provenance_keeps_scalar_event_and_cross_market_evidence
     assert pending == ("确认: A股龙头同步放量",)
 
 
-def test_debate_evidence_provenance_records_backfill_message_prefixes_and_transmission() -> None:
+def test_debate_evidence_provenance_records_backfill_message_prefixes_and_transmission() -> (
+    None
+):
     pick = _make_pick(
         score=72.0,
         metrics={
@@ -414,7 +416,9 @@ def test_debate_evidence_provenance_records_backfill_message_prefixes_and_transm
     )
 
     assert result.real_message_evidence
-    assert any("交易所公告确认订单落地" in item for item in result.real_message_evidence)
+    assert any(
+        "交易所公告确认订单落地" in item for item in result.real_message_evidence
+    )
     assert result.rule_transmission_evidence
     assert any("海外事件" in item for item in result.rule_transmission_evidence)
     assert result.cross_market_evidence == ("海外同业同步上调指引",)
@@ -754,6 +758,54 @@ def test_debate_bear_and_risk_roles_emit_falsifiable_checks_for_high_score() -> 
 
     assert any("反方检验" in item for item in bear.risk_factors)
     assert any("失效检验" in item for item in risk.risk_factors)
+
+
+def test_debate_support_evidence_adds_conditional_cross_market_challenge_without_fake_bearish_vote() -> (
+    None
+):
+    pick = _make_pick(
+        risks=(),
+        metrics={
+            "cross_market_action": "优先复核",
+            "cross_market_priority_score": 3,
+            "cross_market_supporting_evidence": ("海外产业订单公开披露",),
+        },
+    )
+    result = AShareDebateCoordinator(
+        enable_llm=False,
+        max_rounds=2,
+        roles=(AgentRole.BULL, AgentRole.CROSS_MARKET),
+    ).run_debate(
+        pick,
+        pd.DataFrame({"close": [100.0, 101.0, 102.0]}),
+        market_context_lines=("传导推演[强]: 海外订单 -> A股产业链",),
+    )
+
+    cross_opinion = next(
+        opinion
+        for opinion in result.rounds[0].opinions
+        if opinion.role == AgentRole.CROSS_MARKET
+    )
+    assert cross_opinion.stance == "bullish"
+    assert any("反方可证伪主张" in item for item in cross_opinion.risk_factors)
+    assert any("反方可证伪主张" in item for item in result.opposition_points)
+    assert result.falsifiable_conditions
+    assert any("失效" in item for item in result.falsifiable_conditions)
+    assert result.final_vote[AgentRole.CROSS_MARKET] == "bullish"
+    assert result.deterministic_score == pick.score
+    assert result.deterministic_score_unchanged is True
+
+
+def test_debate_without_support_evidence_does_not_invent_conditional_challenge() -> (
+    None
+):
+    pick = _make_pick(risks=(), metrics={})
+    opinion = AShareDebateAgent(AgentRole.CROSS_MARKET).generate_initial_opinion(
+        pick,
+        pd.DataFrame({"close": [100.0, 101.0, 102.0]}),
+    )
+
+    assert not any("反方可证伪主张" in item for item in opinion.risk_factors)
 
 
 def test_debate_performance_tracker_summarizes_cross_market_context_history_when_records_exist(

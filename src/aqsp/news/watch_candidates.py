@@ -68,6 +68,35 @@ class NewsWatchCandidate:
     impact_direction: Literal["positive", "negative", "mixed", "neutral"] = "neutral"
 
 
+def build_current_news_universe(
+    current_symbols: Iterable[object],
+    metadata: Iterable[NewsUniverseInstrument | Mapping[str, object]] = (),
+    *,
+    graph: EntityGraph = DEFAULT_ENTITY_GRAPH,
+) -> tuple[NewsUniverseInstrument, ...]:
+    """Combine the current live symbol pool with same-run metadata.
+
+    Runtime quote/daily batches are intentionally smaller than the current
+    universe. This helper keeps every symbol resolved by the current run while
+    overlaying only metadata supplied by that run. A symbol without metadata
+    remains eligible for direct symbol links, but is not assigned an industry
+    by inference or historical lookup.
+    """
+    normalized_metadata = _normalize_universe(metadata, graph=graph)
+    metadata_by_symbol = {item.symbol: item for item in normalized_metadata}
+    result: list[NewsUniverseInstrument] = []
+    seen: set[str] = set()
+    for raw_symbol in current_symbols:
+        symbol = _normalize_symbol(raw_symbol)
+        if not re.fullmatch(r"\d{6}", symbol) or symbol in seen:
+            continue
+        result.append(
+            metadata_by_symbol.get(symbol, NewsUniverseInstrument(symbol=symbol))
+        )
+        seen.add(symbol)
+    return tuple(result)
+
+
 def discover_watch_candidates(
     events: Iterable[CatalystEvent],
     universe: Iterable[NewsUniverseInstrument | Mapping[str, object]],
@@ -385,6 +414,7 @@ def _evidence_stack_summary(supporting: int, contradicting: int) -> str:
 
 
 __all__ = [
+    "build_current_news_universe",
     "NewsUniverseInstrument",
     "NewsWatchCandidate",
     "WatchRelation",

@@ -2237,7 +2237,7 @@ def _append_cross_market_watch_candidates(
     screen_frames: dict[str, pd.DataFrame] | None = None,
     screening_config: ScreeningConfig | None = None,
     thresholds: Any | None = None,
-    max_candidates: int = 3,
+    max_candidates: int = 0,
 ) -> list[PickResult]:
     """Expose message-linked candidates after an independent technical check.
 
@@ -2246,7 +2246,7 @@ def _append_cross_market_watch_candidates(
     technical function, then keep it observation-only instead of promoting it
     into the ranked picks.
     """
-    if market_context is None or max_candidates <= 0:
+    if market_context is None or max_candidates < 0:
         return picks
 
     from aqsp.market_context import market_context_metrics_for_pick
@@ -2374,9 +2374,19 @@ def _append_cross_market_watch_candidates(
         )
         watch_candidates.append(replace(candidate, metrics=metrics))
         selected_symbols.add(candidate.symbol)
-        if len(watch_candidates) >= max_candidates:
+        if max_candidates > 0 and len(watch_candidates) >= max_candidates:
             break
     return [*picks, *watch_candidates]
+
+
+def _news_watch_candidate_limit() -> int:
+    """Read the optional observation-card cap; zero means keep all matches."""
+    raw = os.getenv("AQSP_NEWS_WATCH_MAX_CANDIDATES", "0").strip()
+    try:
+        value = int(raw)
+    except ValueError:
+        return 0
+    return max(value, 0)
 
 
 def _resolve_run_symbols(
@@ -4786,20 +4796,27 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
                 from aqsp.news.catalysts import format_catalyst_notification
 
                 news_summary = format_catalyst_notification(catalyst_report)
+            from aqsp.news.watch_candidates import build_current_news_universe
+
+            current_news_symbols = tuple(symbols) or tuple(screen_frames)
+            current_news_metadata = tuple(
+                {
+                    "symbol": symbol,
+                    "name": str(frame.iloc[-1].get("name", "") or ""),
+                    "sector": str(frame.iloc[-1].get("sector", "") or ""),
+                    "industry": str(frame.iloc[-1].get("industry", "") or ""),
+                }
+                for symbol, frame in screen_frames.items()
+                if not frame.empty
+            )
             market_context = build_market_context_artifact(
                 catalyst_report=catalyst_report,
                 northbound_flow_5d_z=nb_z,
                 margin_balance_change_5d=margin_z,
                 realtime_cross_market=realtime_cross_market,
-                news_universe=tuple(
-                    {
-                        "symbol": symbol,
-                        "name": str(frame.iloc[-1].get("name", "") or ""),
-                        "sector": str(frame.iloc[-1].get("sector", "") or ""),
-                        "industry": str(frame.iloc[-1].get("industry", "") or ""),
-                    }
-                    for symbol, frame in screen_frames.items()
-                    if not frame.empty
+                news_universe=build_current_news_universe(
+                    current_news_symbols,
+                    current_news_metadata,
                 ),
             )
         except Exception as exc:
@@ -4821,7 +4838,7 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
         screen_frames=screen_frames,
         screening_config=config,
         thresholds=thresholds,
-        max_candidates=3,
+        max_candidates=_news_watch_candidate_limit(),
     )
 
     run_metadata = RunMetadata(

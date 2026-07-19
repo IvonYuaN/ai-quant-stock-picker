@@ -5,6 +5,7 @@ import pytest
 from aqsp.news.catalysts import CatalystEvent
 from aqsp.news.watch_candidates import (
     NewsUniverseInstrument,
+    build_current_news_universe,
     discover_watch_candidates,
 )
 
@@ -50,6 +51,33 @@ def test_discover_watch_candidates_expands_event_to_full_universe() -> None:
         "PCB成本上升",
         "下游订单与利润分化",
     )
+
+
+def test_build_current_news_universe_keeps_live_symbols_without_historical_metadata() -> (
+    None
+):
+    universe = build_current_news_universe(
+        ("002463", "300476", "600183", "002463"),
+        ({"symbol": "002463", "name": "沪电股份", "sector": "PCB"},),
+    )
+
+    assert tuple(item.symbol for item in universe) == ("002463", "300476", "600183")
+    assert universe[0].name == "沪电股份"
+    assert universe[0].sectors == ("PCB",)
+    assert universe[1].name == ""
+    assert universe[1].sectors == ()
+
+
+def test_discover_watch_candidates_does_not_cap_current_universe_by_default() -> None:
+    event = _event()
+    universe = tuple(
+        NewsUniverseInstrument(f"600{index:03d}", f"标的{index}", ("PCB",))
+        for index in range(1, 21)
+    )
+
+    candidates = discover_watch_candidates((event,), universe)
+
+    assert len(candidates) == 20
 
 
 def test_discover_watch_candidates_prefers_direct_company_link() -> None:

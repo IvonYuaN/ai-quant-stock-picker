@@ -423,6 +423,11 @@ class AShareDebateAgent:
         opportunity_factors = self._identify_opportunity_factors(
             pick, df, market_context_lines
         )
+        risk_factors = self._ensure_falsifiable_counterclaim(
+            pick,
+            risk_factors,
+            market_context_lines=market_context_lines,
+        )
 
         opinion = AgentOpinion(
             agent_id=self.agent_id,
@@ -438,6 +443,41 @@ class AShareDebateAgent:
             pick,
             market_context_lines=market_context_lines,
         )
+
+    def _ensure_falsifiable_counterclaim(
+        self,
+        pick: PickResult,
+        risk_factors: list[str],
+        *,
+        market_context_lines: tuple[str, ...] = (),
+    ) -> list[str]:
+        """Add a conditional challenge when support evidence is present.
+
+        This is a research challenge, not a vote.  In particular, a neutral
+        risk reviewer remains neutral; the quality gate must not manufacture a
+        bearish stance just to make the discussion look balanced.
+        """
+        if self.role == AgentRole.BULL or not _has_supporting_evidence(
+            pick,
+            market_context_lines,
+        ):
+            return risk_factors
+        if any(_contains_falsifiable_marker(item) for item in risk_factors):
+            return risk_factors
+
+        if self.role == AgentRole.CROSS_MARKET or any(
+            "跨市" in str(line) or "传导" in str(line) for line in market_context_lines
+        ):
+            challenge = (
+                "⚠️ 反方可证伪主张: 跨市支持线索只有在A股板块共振并出现量价承接时成立，"
+                "若未出现板块扩散或承接转弱，则该主张失效"
+            )
+        else:
+            challenge = (
+                "⚠️ 反方可证伪主张: 支持证据只有在盘中量价承接延续时成立，"
+                "若冲高回落或量价背离，则该主张失效"
+            )
+        return [*risk_factors, challenge][:3]
 
     def _maybe_enhance_initial_opinion(
         self,
@@ -2204,6 +2244,18 @@ class AShareDebateCoordinator:
                 return text
         return ""
 
+    @staticmethod
+    def _first_falsifiable_point(points: list[str]) -> str:
+        for raw in points:
+            text = str(raw).strip()
+            if (
+                text
+                and not _is_non_evidence_text(text)
+                and _contains_falsifiable_marker(text)
+            ):
+                return text
+        return ""
+
     def _synthesize_result(
         self,
         result: DebateResult,
@@ -2248,6 +2300,12 @@ class AShareDebateCoordinator:
         result.falsifiable_conditions = self._build_falsifiable_conditions(
             final_opinions, result
         )
+        if not result.falsifiable_conditions and _has_supporting_result_evidence(
+            result
+        ):
+            result.falsifiable_conditions = (
+                "失效条件: 支持证据未在盘中量价承接或板块扩散中得到确认。",
+            )
         result.primary_risk_gate = self._build_primary_risk_gate(result)
         result.next_trigger = self._build_next_trigger(result)
         result.research_verdict = self._build_research_verdict(result)
@@ -2330,7 +2388,14 @@ class AShareDebateCoordinator:
             }.get(opinion.role, 3),
         )
         for opinion in ordered_opinions:
-            if opinion.role == AgentRole.CROSS_MARKET and not has_cross_market_evidence:
+            has_conditional_challenge = any(
+                "反方可证伪主张" in str(item) for item in opinion.risk_factors
+            )
+            if (
+                opinion.role == AgentRole.CROSS_MARKET
+                and not has_cross_market_evidence
+                and not has_conditional_challenge
+            ):
                 continue
             if opinion.stance == "bearish" or opinion.role in {
                 AgentRole.RISK_CONTROL,
@@ -2340,6 +2405,7 @@ class AShareDebateCoordinator:
                     self._preferred_cross_market_point(
                         opinion.risk_factors,
                         preferred_markers=(
+                            "反方可证伪主张",
                             "反向证据",
                             "失效条件",
                             "跨市传导证据偏弱",
@@ -2348,8 +2414,11 @@ class AShareDebateCoordinator:
                         fallback=opinion.arguments,
                     )
                     if opinion.role == AgentRole.CROSS_MARKET
-                    else self._first_meaningful_point(
-                        opinion.risk_factors or opinion.arguments
+                    else (
+                        self._first_falsifiable_point(opinion.risk_factors)
+                        or self._first_meaningful_point(
+                            opinion.risk_factors or opinion.arguments
+                        )
                     )
                 )
                 if point:
@@ -2812,6 +2881,65 @@ def _nonnegative_int(value: object) -> int:
 def _is_non_evidence_text(value: object) -> bool:
     text = str(value or "").strip()
     return not text or any(marker in text for marker in _NON_EVIDENCE_PHRASES)
+
+
+def _contains_falsifiable_marker(value: object) -> bool:
+    text = str(value or "").strip()
+    return bool(text) and any(
+        marker in text for marker in ("失效", "若", "跌破", "低于", "不达")
+    )
+
+
+def _has_supporting_evidence(
+    pick: PickResult,
+    market_context_lines: tuple[str, ...] = (),
+) -> bool:
+    """Return whether supplied evidence supports a thesis, without using score."""
+    metrics = pick.metrics or {}
+    fields = (
+        "news_catalyst_lead",
+        "news_catalyst_title",
+        "cross_market_supporting_evidence",
+        "cross_market_evidence_points",
+        "cross_market_validation_signals",
+        "rule_transmission_evidence",
+    )
+    if any(
+        any(not _is_non_evidence_text(item) for item in _text_items(metrics.get(field)))
+        for field in fields
+    ):
+        return True
+    return any(
+        str(line)
+        .strip()
+        .startswith(
+            (
+                "候选消息:",
+                "个股催化:",
+                "消息催化:",
+                "消息支持:",
+                "全局雷达:",
+                "传导推演[",
+                "传导链:",
+                "确认信号:",
+            )
+        )
+        and not _is_non_evidence_text(str(line).split(":", 1)[-1])
+        for line in market_context_lines
+    )
+
+
+def _has_supporting_result_evidence(result: DebateResult) -> bool:
+    """Check synthesized support evidence before adding a fallback condition."""
+    values = (
+        *result.real_message_evidence,
+        *result.cross_market_evidence,
+        *result.rule_transmission_evidence,
+        *result.support_points,
+    )
+    return any(
+        str(value).strip() and not _is_non_evidence_text(value) for value in values
+    )
 
 
 def _message_evidence_from_context_line(value: object) -> str:
