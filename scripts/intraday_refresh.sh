@@ -1888,6 +1888,10 @@ if [ "$INTRADAY_BATCH_ACTIVE" = "true" ] && \
             --cursor "$INTRADAY_CURSOR_PATH" --commit; then
             BATCH_COMMITTED="true"
             log "盘中批次已提交，下一轮继续覆盖剩余股票池"
+            # Cursor commit happens after the normal completion status write.
+            # Rewrite the final status so coverage and last_successful_batch_id
+            # describe this run rather than the pre-commit cursor snapshot.
+            write_intraday_status "completed" "盘中刷新完成；批次 cursor 已提交，候选与消息面已更新" "$SCRIPT_EXIT_CODE"
         else
             BATCH_FAILURE_REASON="intraday_batch_commit_failed"
             SCRIPT_EXIT_CODE="1"

@@ -1097,6 +1097,21 @@ def test_intraday_batch_validates_exact_final_batch_and_only_fresh_output() -> N
     assert 'INTRADAY_BATCH_EXPECTED_COUNT="${#INTRADAY_BATCH_SYMBOL_ARRAY[@]}"' in script
 
 
+def test_intraday_batch_rewrites_completed_status_after_cursor_commit() -> None:
+    script = SCRIPT_PATH.read_text(encoding="utf-8")
+    commit_block_start = script.rindex(
+        'if [ "$INTRADAY_BATCH_ACTIVE" = "true" ] &&'
+    )
+    commit_block_end = script.index("else", commit_block_start)
+    commit_block = script[commit_block_start:commit_block_end]
+
+    assert 'BATCH_COMMITTED="true"' in commit_block
+    assert 'write_intraday_status "completed"' in commit_block
+    assert commit_block.index('BATCH_COMMITTED="true"') < commit_block.index(
+        'write_intraday_status "completed"'
+    )
+
+
 def test_intraday_batch_status_records_data_coverage_and_skipped_symbols() -> None:
     script = SCRIPT_PATH.read_text(encoding="utf-8")
 
