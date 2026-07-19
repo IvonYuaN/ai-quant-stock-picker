@@ -10,6 +10,12 @@ from aqsp.news.catalysts import (
     load_catalyst_report_artifact,
     serialize_catalyst_report,
 )
+from aqsp.news.watch_candidates import (
+    NewsUniverseInstrument,
+    NewsWatchCandidate,
+    WatchRelation,
+    discover_watch_candidates,
+)
 
 __all__ = [
     "CatalystEvent",
@@ -20,4 +26,8 @@ __all__ = [
     "format_catalyst_notification",
     "load_catalyst_report_artifact",
     "serialize_catalyst_report",
+    "NewsUniverseInstrument",
+    "NewsWatchCandidate",
+    "WatchRelation",
+    "discover_watch_candidates",
 ]

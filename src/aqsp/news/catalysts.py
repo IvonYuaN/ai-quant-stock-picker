@@ -91,6 +91,7 @@ class CatalystEvent:
     transmission_path: tuple[str, ...] = ()
     validation_signals: tuple[str, ...] = ()
     invalidation_signals: tuple[str, ...] = ()
+    summary: str = ""
 
     @property
     def deterministic_score(self) -> int:
@@ -325,6 +326,7 @@ def _serialize_catalyst_report(report: CatalystReport) -> dict[str, Any]:
         "events": [
             {
                 "title": event.title,
+                "summary": event.summary,
                 "source": event.source,
                 "published_at": event.published_at,
                 "source_fetched_at": event.source_fetched_at,
@@ -377,6 +379,7 @@ def _deserialize_catalyst_report(payload: Any) -> CatalystReport | None:
         events = tuple(
             CatalystEvent(
                 title=str(item.get("title", "")).strip(),
+                summary=str(item.get("summary", "")).strip(),
                 source=str(item.get("source", "")).strip(),
                 published_at=str(item.get("published_at", "")).strip(),
                 source_fetched_at=str(item.get("source_fetched_at", "")).strip(),
@@ -1844,6 +1847,7 @@ def _events_from_rows(
                 invalidation_signals=_transmission_signals(
                     title, affected_sectors, positive=False
                 ),
+                summary=_news_context_snippet(summary, content),
             )
         )
     return events
@@ -2579,6 +2583,7 @@ def _merge_events(events: Sequence[CatalystEvent]) -> tuple[CatalystEvent, ...]:
             invalidation_signals=_text_tuple(
                 (*existing.invalidation_signals, *event.invalidation_signals)
             ),
+            summary=existing.summary or event.summary,
         )
     return tuple(merged)
 

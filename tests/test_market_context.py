@@ -19,6 +19,7 @@ from aqsp.market_context import (
     relevant_cross_market_implications_for_pick,
 )
 from aqsp.news.catalysts import CatalystEvent, CatalystReport
+from aqsp.news.watch_candidates import NewsUniverseInstrument
 
 
 def _realtime_cross_market_payload() -> dict[str, dict[str, object]]:
@@ -87,6 +88,43 @@ def test_market_context_matches_structured_chain_fields_when_headline_is_generic
 
     assert any(
         item.rule_id == "physical_ai" for item in artifact.cross_market_implications
+    )
+
+
+def test_market_context_expands_actionable_news_to_full_market_candidates() -> None:
+    report = CatalystReport(
+        date="2026-07-14",
+        generated_at="2026-07-14T10:00:00+08:00",
+        source_status="ok",
+        events=(
+            CatalystEvent(
+                title="PCB覆铜板报价上调，供应紧张",
+                source="财联社",
+                published_at="2026-07-14T09:45:00+08:00",
+                impact="positive",
+                category="电子材料涨价/缺货",
+                confidence=0.9,
+                source_quality_score=3,
+                affected_sectors=("PCB", "覆铜板"),
+            ),
+        ),
+    )
+
+    artifact = build_market_context_artifact(
+        catalyst_report=report,
+        news_universe=(
+            NewsUniverseInstrument("002463", "沪电股份", ("PCB",)),
+            NewsUniverseInstrument("300476", "胜宏科技", ("PCB",)),
+            NewsUniverseInstrument("000001", "平安银行", ("银行",)),
+        ),
+    )
+
+    assert tuple(item.symbol for item in artifact.news_watch_candidates) == (
+        "300476",
+        "002463",
+    )
+    assert all(
+        item.relation == "price_supply" for item in artifact.news_watch_candidates
     )
 
 

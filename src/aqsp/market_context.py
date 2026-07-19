@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal
@@ -10,6 +10,11 @@ from aqsp.core.time import now_shanghai, today_shanghai, to_shanghai
 from aqsp.core.types import PickResult
 from aqsp.goal_switches import goal_switch_enabled
 from aqsp.news.catalysts import CatalystEvent, CatalystReport, Impact
+from aqsp.news.watch_candidates import (
+    NewsUniverseInstrument,
+    NewsWatchCandidate,
+    discover_watch_candidates,
+)
 
 _NORTHBOUND_STRONG_Z = 1.0
 _MARGIN_STRONG_CHANGE = 0.03
@@ -156,6 +161,7 @@ class MarketContextArtifact:
     catalyst_events: tuple[CatalystEvent, ...] = ()
     news_status: str = ""
     realtime_cross_market: RealtimeCrossMarketContext | None = None
+    news_watch_candidates: tuple[NewsWatchCandidate, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -1262,7 +1268,9 @@ def build_market_context_artifact(
     realtime_cross_market: Mapping[str, object] | None = None,
     realtime_now: datetime | None = None,
     realtime_policy: RealtimeCrossMarketPolicy = _DEFAULT_REALTIME_CROSS_MARKET_POLICY,
+    news_universe: Iterable[NewsUniverseInstrument | Mapping[str, object]] = (),
 ) -> MarketContextArtifact:
+    normalized_news_universe = tuple(news_universe)
     domestic_enabled = (
         enable_domestic_intelligence
         if enable_domestic_intelligence is not None
@@ -1281,6 +1289,7 @@ def build_market_context_artifact(
     symbol_events: list[CatalystEvent] = []
     cross_market_events: list[CatalystEvent] = []
     cross_market_implications: tuple[CrossMarketImplication, ...] = ()
+    news_watch_candidates: tuple[NewsWatchCandidate, ...] = ()
     realtime_context = (
         build_realtime_cross_market_context(
             realtime_cross_market,
@@ -1302,6 +1311,11 @@ def build_market_context_artifact(
             max_age_minutes=max_actionable_news_age_minutes,
         )
         warnings = tuple(_dedupe_texts((*warnings, *gate_warnings)))
+        if normalized_news_universe:
+            news_watch_candidates = discover_watch_candidates(
+                actionable_events,
+                normalized_news_universe,
+            )
         symbol_events = [
             event for event in actionable_events if event.symbol and domestic_enabled
         ]
@@ -1453,6 +1467,7 @@ def build_market_context_artifact(
             catalyst_report.news_status if catalyst_report is not None else ""
         ),
         realtime_cross_market=realtime_context,
+        news_watch_candidates=news_watch_candidates,
     )
 
 

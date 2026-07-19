@@ -82,6 +82,39 @@ class EntityGraph:
 
     entities: tuple[GraphEntity, ...]
 
+    def canonicalize_sector_labels(self, labels: object) -> tuple[str, ...]:
+        """Map source/universe industry labels to the graph's stable names."""
+        values: list[str] = []
+        if isinstance(labels, str):
+            raw = re.split(r"[,，;；|/、\s]+", labels)
+        elif isinstance(labels, (list, tuple, set, frozenset)):
+            raw = [str(item) for item in labels]
+        else:
+            raw = []
+        sector_entities = tuple(item for item in self.entities if item.kind == "sector")
+        for item in raw:
+            for part in re.split(r"[,，;；|/、\s]+", str(item or "")):
+                clean = part.strip()
+                normalized = _clean_alias(clean)
+                if not normalized:
+                    continue
+                match = next(
+                    (
+                        entity
+                        for entity in sector_entities
+                        if any(
+                            _clean_alias(alias) == normalized
+                            for alias in entity.aliases
+                        )
+                        or _clean_alias(entity.canonical) == normalized
+                    ),
+                    None,
+                )
+                canonical = match.canonical if match is not None else clean
+                if canonical not in values:
+                    values.append(canonical)
+        return tuple(values)
+
     def resolve(self, title: str = "", summary: str = "") -> EntityResolution:
         text = f"{title}\n{summary}"
         normalized = _clean_alias(text)
