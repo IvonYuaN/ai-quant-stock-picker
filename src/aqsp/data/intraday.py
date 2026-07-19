@@ -657,10 +657,25 @@ def _validate_live_bar_freshness(
     """Reject stale bars unless the caller explicitly requests a replay date."""
     if frame.empty or "date" not in frame.columns:
         raise DataError(f"分时数据缺少时间列: {symbol}")
-    parsed = pd.to_datetime(frame["date"], errors="coerce")
-    if parsed.dropna().empty:
+    normalized_timestamps: list[pd.Timestamp] = []
+    for raw_value in frame["date"]:
+        try:
+            timestamp = pd.Timestamp(raw_value)
+        except (TypeError, ValueError):
+            continue
+        if pd.isna(timestamp):
+            continue
+        if timestamp.tzinfo is None or timestamp.utcoffset() is None:
+            timestamp = timestamp.tz_localize(SHANGHAI_TZ)
+        else:
+            timestamp = timestamp.tz_convert(SHANGHAI_TZ)
+        normalized_timestamps.append(timestamp)
+    if not normalized_timestamps:
         raise DataError(f"分时数据时间无效: {symbol}")
-    latest = parsed.dropna().max()
+    # Vendors mix naive Shanghai timestamps with offset-aware UTC timestamps.
+    # Normalize before max/date checks so one mixed frame cannot crash the batch
+    # or be classified by the vendor's original timezone.
+    latest = max(normalized_timestamps)
     current = now or now_shanghai()
     current = (
         current.replace(tzinfo=SHANGHAI_TZ)
@@ -682,10 +697,6 @@ def _validate_live_bar_freshness(
     # callers omit target_date, so a previous-day bar cannot enter live_short.
     if target_date is not None and target_date != current.date():
         return
-    if latest.tzinfo is None:
-        latest = latest.tz_localize(SHANGHAI_TZ)
-    else:
-        latest = latest.tz_convert(SHANGHAI_TZ)
     age_seconds = (current - latest.to_pydatetime()).total_seconds()
     if age_seconds < -_MAX_FUTURE_BAR_SECONDS:
         raise DataError(f"分时最新 bar 时间超前当前时间: {symbol} {latest.isoformat()}")

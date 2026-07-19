@@ -631,6 +631,27 @@ def test_intraday_service_rejects_future_replay_target(monkeypatch) -> None:
         ).get_intraday_bars(["600000"], target_date=date(2026, 7, 15))
 
 
+def test_intraday_service_normalizes_mixed_timestamp_timezones_before_freshness(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        "aqsp.data.intraday.now_shanghai",
+        lambda: datetime(2026, 7, 20, 9, 35, tzinfo=now_shanghai().tzinfo),
+    )
+    frame = pd.DataFrame(
+        {
+            "date": ["2026-07-20T01:30:00+00:00", "2026-07-20 09:35:00"],
+            "close": [10.0, 10.1],
+        }
+    )
+
+    bars = IntradayService(MockSource(intraday_data={"600000": frame})).get_intraday_bars(
+        ["600000"], period="5"
+    )
+
+    assert list(bars) == ["600000"]
+
+
 def test_legacy_intraday_merge_does_not_return_daily_history_when_market_is_closed(
     monkeypatch,
 ) -> None:
