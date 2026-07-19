@@ -50,7 +50,10 @@ def _http_get(url: str, **kwargs: Any) -> requests.Response:
     """Fetch news without macOS proxy discovery racing across worker threads."""
     # Preserve test doubles and adapters that replace requests.get at the
     # boundary; only the stock requests implementation needs the workaround.
-    if sys.platform != "darwin" or getattr(requests.get, "__module__", "") != "requests.api":
+    if (
+        sys.platform != "darwin"
+        or getattr(requests.get, "__module__", "") != "requests.api"
+    ):
         return requests.get(url, **kwargs)
     session = requests.Session()
     session.trust_env = False
@@ -61,9 +64,7 @@ def _http_get(url: str, **kwargs: Any) -> requests.Response:
             _MACOS_PROXY_CACHE[url] = proxies
     if proxies:
         session.proxies.update(proxies)
-    ca_bundle = os.environ.get("REQUESTS_CA_BUNDLE") or os.environ.get(
-        "CURL_CA_BUNDLE"
-    )
+    ca_bundle = os.environ.get("REQUESTS_CA_BUNDLE") or os.environ.get("CURL_CA_BUNDLE")
     if ca_bundle:
         session.verify = ca_bundle
     try:
@@ -108,6 +109,7 @@ class RssFeedConfig:
     keywords: tuple[str, ...] = ()
     max_items: int = 20
     region: NewsSourceRegion = "domestic"
+    themes: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -148,7 +150,9 @@ def _composite_timeout_seconds(sources: Sequence[NewsSource]) -> float:
     return max(0.1, budget - _COMPOSITE_TIMEOUT_MARGIN_SECONDS)
 
 
-def _run_callable_with_timeout(fetch: Callable[[], object], timeout_seconds: float) -> object:
+def _run_callable_with_timeout(
+    fetch: Callable[[], object], timeout_seconds: float
+) -> object:
     """Run an optional third-party call without letting it block the news chain."""
 
     result: dict[str, object] = {}
@@ -313,20 +317,23 @@ def _collect_composite_news(
         else:
             source_frames, error = results[index]
         source_name = str(getattr(source, "name", "unknown") or "unknown")
+        source_health = tuple(getattr(source, "last_health", ()))
         if error is not None:
             warning = f"{source_name}: {error}"
             errors.append(warning)
-            health.append(
-                NewsSourceHealth(
-                    name=source_name,
-                    region=_normalize_region(getattr(source, "region", "mixed")),
-                    status=_status_from_exception(error),
-                    fetched_at=_source_fetched_at(),
-                    warnings=(warning,),
+            if source_health:
+                health.extend(source_health)
+            else:
+                health.append(
+                    NewsSourceHealth(
+                        name=source_name,
+                        region=_normalize_region(getattr(source, "region", "mixed")),
+                        status=_status_from_exception(error),
+                        fetched_at=_source_fetched_at(),
+                        warnings=(warning,),
+                    )
                 )
-            )
             continue
-        source_health = tuple(getattr(source, "last_health", ()))
         if source_frames:
             frames.extend(source_frames)
             if source_health:
@@ -345,15 +352,18 @@ def _collect_composite_news(
         else:
             warning = f"{source_name}: empty"
             errors.append(warning)
-            health.append(
-                NewsSourceHealth(
-                    name=source_name,
-                    region=_normalize_region(getattr(source, "region", "mixed")),
-                    status="empty",
-                    fetched_at=_source_fetched_at(),
-                    warnings=(warning,),
+            if source_health:
+                health.extend(source_health)
+            else:
+                health.append(
+                    NewsSourceHealth(
+                        name=source_name,
+                        region=_normalize_region(getattr(source, "region", "mixed")),
+                        status="empty",
+                        fetched_at=_source_fetched_at(),
+                        warnings=(warning,),
+                    )
                 )
-            )
     return frames, errors, health
 
 
@@ -405,14 +415,23 @@ class RssNewsSource:
     def _fetch_frames(self) -> list[pd.DataFrame]:
         now = monotonic()
         with self._frames_condition:
-            if self._frames_cache and now - self._frames_cache_at <= _RSS_FRAME_CACHE_TTL_SECONDS:
+            if (
+                self._frames_cache
+                and now - self._frames_cache_at <= _RSS_FRAME_CACHE_TTL_SECONDS
+            ):
                 return list(self._frames_cache)
             if self._frames_loading:
                 remaining = max(0.1, self._timeout_seconds)
                 self._frames_condition.wait(timeout=remaining)
-                if self._frames_cache and monotonic() - self._frames_cache_at <= _RSS_FRAME_CACHE_TTL_SECONDS:
+                if (
+                    self._frames_cache
+                    and monotonic() - self._frames_cache_at
+                    <= _RSS_FRAME_CACHE_TTL_SECONDS
+                ):
                     return list(self._frames_cache)
-                raise TimeoutError(f"RSS 新闻共享抓取超过 {self._timeout_seconds:.1f}s 未返回")
+                raise TimeoutError(
+                    f"RSS 新闻共享抓取超过 {self._timeout_seconds:.1f}s 未返回"
+                )
             self._frames_loading = True
         try:
             frames = self._fetch_frames_uncached()
@@ -546,6 +565,7 @@ class RssNewsSource:
             symbols=feed.symbols,
             keywords=feed.keywords,
             max_items=feed.max_items,
+            themes=feed.themes,
         )
 
 
@@ -739,7 +759,16 @@ class EastmoneyDomesticNewsSource:
         "黄金 军工",
     )
 
-    def __init__(self, *, timeout_seconds: float = 6.0) -> None:
+    def __init__(
+        self,
+        *,
+        timeout_seconds: float = 6.0,
+        search_keywords: tuple[str, ...] | None = None,
+    ) -> None:
+        configured_keywords = tuple(
+            str(item).strip() for item in (search_keywords or ()) if str(item).strip()
+        )
+        self._search_keywords = configured_keywords or self._SEARCH_KEYWORDS
         self._timeout_seconds = max(0.5, float(timeout_seconds))
         self._last_health: tuple[NewsSourceHealth, ...] = ()
 
@@ -748,7 +777,30 @@ class EastmoneyDomesticNewsSource:
         return self._last_health
 
     def fetch_symbol_news(self, symbol: str) -> list[pd.DataFrame]:
-        frame = _fetch_eastmoney_stock_news_compat(symbol)
+        try:
+            frame = _fetch_eastmoney_stock_news_compat(symbol)
+        except Exception as exc:
+            warning = f"{self.name}:{symbol}: {exc}"
+            self._last_health = (
+                NewsSourceHealth(
+                    name=f"{self.name}:{symbol}",
+                    region=self.region,
+                    status=_status_from_exception(exc),
+                    fetched_at=_source_fetched_at(),
+                    warnings=(warning,),
+                ),
+            )
+            raise DataError(f"东财个股新闻获取失败: {symbol}; {exc}") from exc
+        if frame.empty:
+            self._last_health = (
+                NewsSourceHealth(
+                    name=f"{self.name}:{symbol}",
+                    region=self.region,
+                    status="empty",
+                    fetched_at=_source_fetched_at(),
+                ),
+            )
+            return []
         frame["source_region"] = "domestic"
         frame.attrs["aqsp_source_health"] = (
             {
@@ -766,7 +818,7 @@ class EastmoneyDomesticNewsSource:
     def fetch_global_news(self) -> list[pd.DataFrame]:
         frames: list[pd.DataFrame] = []
         health: list[NewsSourceHealth] = []
-        with ThreadPoolExecutor(max_workers=len(self._SEARCH_KEYWORDS)) as executor:
+        with ThreadPoolExecutor(max_workers=len(self._search_keywords)) as executor:
             futures = {
                 executor.submit(
                     _fetch_eastmoney_search_news,
@@ -774,7 +826,7 @@ class EastmoneyDomesticNewsSource:
                     max_items=8,
                     timeout_seconds=self._timeout_seconds,
                 ): keyword
-                for keyword in self._SEARCH_KEYWORDS
+                for keyword in self._search_keywords
             }
             for future in as_completed(futures):
                 keyword = futures[future]
@@ -814,8 +866,23 @@ class EastmoneyDomesticNewsSource:
                 )
         self._last_health = tuple(health)
         if frames:
+            failed = tuple(
+                item.warnings[0]
+                for item in health
+                if item.status not in {"ok", "empty"} and item.warnings
+            )
+            if failed:
+                _attach_source_warnings(frames, failed)
             _attach_source_health(frames, self._last_health)
-        return frames
+            return frames
+        failed = tuple(
+            item.warnings[0]
+            for item in health
+            if item.status not in {"ok", "empty"} and item.warnings
+        )
+        if failed:
+            raise DataError(f"东财国内新闻获取失败: {'; '.join(failed)}")
+        return []
 
 
 def _fetch_eastmoney_stock_news_compat(symbol: str) -> pd.DataFrame:
@@ -914,7 +981,10 @@ def _fetch_eastmoney_search_news(
             "cb": "aqsp_callback",
             "param": json.dumps(inner_param, ensure_ascii=False, separators=(",", ":")),
         },
-        headers={"User-Agent": "AQSP/0.1 news radar", "Referer": "https://so.eastmoney.com/"},
+        headers={
+            "User-Agent": "AQSP/0.1 news radar",
+            "Referer": "https://so.eastmoney.com/",
+        },
         timeout=max(0.5, float(timeout_seconds)),
     )
     response.raise_for_status()
@@ -927,8 +997,10 @@ def _fetch_eastmoney_search_news(
     for item in raw_rows:
         if not isinstance(item, dict):
             continue
+
         def clean(value: object) -> str:
             return re.sub(r"</?em>", "", str(value or "")).strip()
+
         code = clean(item.get("code"))
         rows.append(
             {
@@ -969,9 +1041,15 @@ def _source_health_from_attrs(frame: pd.DataFrame) -> tuple[NewsSourceHealth, ..
 def build_default_news_source() -> NewsSource:
     rss_source = build_rss_news_source_from_config()
     configured_timeout = _configured_news_source_timeout_seconds()
-    eastmoney_source = EastmoneyDomesticNewsSource(
-        timeout_seconds=configured_timeout or _DEFAULT_NEWS_SOURCE_TIMEOUT_SECONDS
+    domestic_enabled, domestic_timeout, domestic_search_keywords = (
+        _domestic_news_settings()
     )
+    eastmoney_source: NewsSource | None = None
+    if domestic_enabled:
+        eastmoney_source = EastmoneyDomesticNewsSource(
+            timeout_seconds=configured_timeout or domestic_timeout,
+            search_keywords=domestic_search_keywords,
+        )
     try:
         if configured_timeout is None:
             akshare_source: NewsSource | None = AkshareNewsSource()
@@ -987,7 +1065,8 @@ def build_default_news_source() -> NewsSource:
         sources.append(akshare_source)
     # Keep the dependency-free domestic adapter available when AkShare is
     # installed too: installation is not a runtime health check.
-    sources.append(eastmoney_source)
+    if eastmoney_source is not None:
+        sources.append(eastmoney_source)
     if not sources:
         raise DataError("未配置可用新闻源: akshare 未安装且 RSS 未启用或无有效订阅源")
     if len(sources) == 1:
@@ -1002,14 +1081,17 @@ def build_rss_news_source_from_config(path: str | None = None) -> RssNewsSource 
     config_path = _news_source_config_path(path)
     if not config_path.exists():
         return None
-    try:
-        payload = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
-    except (OSError, yaml.YAMLError) as exc:
-        raise DataError(f"新闻源配置读取失败: {config_path}; {exc}") from exc
+    payload = _load_news_source_payload(config_path)
     rss_cfg = payload.get("rss", {}) if isinstance(payload, dict) else {}
+    domestic_cfg = payload.get("domestic", {}) if isinstance(payload, dict) else {}
     if not isinstance(rss_cfg, dict) or not bool(rss_cfg.get("enabled", False)):
         return None
     feeds = _rss_feeds_from_payload(rss_cfg)
+    if isinstance(domestic_cfg, dict) and bool(domestic_cfg.get("enabled", False)):
+        feeds += _rss_feeds_from_payload(
+            domestic_cfg,
+            theme_keywords=_domestic_theme_keywords(domestic_cfg),
+        )
     if not feeds:
         return None
     timeout_seconds = float(rss_cfg.get("timeout_seconds", 6.0) or 6.0)
@@ -1024,8 +1106,8 @@ def build_rss_news_source_from_config(path: str | None = None) -> RssNewsSource 
 def rss_news_runtime_summary(path: str | None = None) -> RssNewsRuntimeSummary:
     config_path = _news_source_config_path(path)
     try:
-        payload = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
-    except (OSError, yaml.YAMLError):
+        payload = _load_news_source_payload(config_path)
+    except DataError:
         return RssNewsRuntimeSummary(
             enabled=False,
             feed_count=0,
@@ -1035,6 +1117,7 @@ def rss_news_runtime_summary(path: str | None = None) -> RssNewsRuntimeSummary:
             keyword_gated_feeds=0,
         )
     rss_cfg = payload.get("rss", {}) if isinstance(payload, dict) else {}
+    domestic_cfg = payload.get("domestic", {}) if isinstance(payload, dict) else {}
     if not isinstance(rss_cfg, dict) or not bool(rss_cfg.get("enabled", False)):
         return RssNewsRuntimeSummary(
             enabled=False,
@@ -1045,6 +1128,11 @@ def rss_news_runtime_summary(path: str | None = None) -> RssNewsRuntimeSummary:
             keyword_gated_feeds=0,
         )
     feeds = _rss_feeds_from_payload(rss_cfg)
+    if isinstance(domestic_cfg, dict) and bool(domestic_cfg.get("enabled", False)):
+        feeds += _rss_feeds_from_payload(
+            domestic_cfg,
+            theme_keywords=_domestic_theme_keywords(domestic_cfg),
+        )
     keyword_blob = " ".join(
         " ".join(feed.keywords).casefold() for feed in feeds if feed.enabled
     )
@@ -1083,7 +1171,73 @@ def _news_source_config_path(path: str | None) -> Path:
     return (project_root / raw).resolve(strict=False)
 
 
-def _rss_feeds_from_payload(payload: dict[object, object]) -> tuple[RssFeedConfig, ...]:
+def _load_news_source_payload(config_path: Path) -> dict[object, object]:
+    try:
+        payload = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError) as exc:
+        raise DataError(f"新闻源配置读取失败: {config_path}; {exc}") from exc
+    return payload if isinstance(payload, dict) else {}
+
+
+def _domestic_theme_keywords(
+    payload: dict[object, object],
+) -> dict[str, tuple[str, ...]]:
+    themes_raw = payload.get("themes", ())
+    if not isinstance(themes_raw, list):
+        return {}
+    themes: dict[str, tuple[str, ...]] = {}
+    for item in themes_raw:
+        if not isinstance(item, dict):
+            continue
+        theme_id = str(item.get("id", "") or "").strip()
+        if not theme_id:
+            continue
+        query = str(item.get("query", "") or "").strip()
+        keywords = _as_text_tuple(item.get("keywords", ()))
+        themes[theme_id] = keywords or ((query,) if query else ())
+    return themes
+
+
+def _domestic_news_settings(
+    path: str | None = None,
+) -> tuple[bool, float, tuple[str, ...]]:
+    config_path = _news_source_config_path(path)
+    if not config_path.exists():
+        return True, _DEFAULT_NEWS_SOURCE_TIMEOUT_SECONDS, ()
+    payload = _load_news_source_payload(config_path)
+    domestic_cfg = payload.get("domestic", {})
+    if not isinstance(domestic_cfg, dict) or not bool(
+        domestic_cfg.get("enabled", False)
+    ):
+        return False, _DEFAULT_NEWS_SOURCE_TIMEOUT_SECONDS, ()
+    raw_timeout = domestic_cfg.get(
+        "timeout_seconds", _DEFAULT_NEWS_SOURCE_TIMEOUT_SECONDS
+    )
+    try:
+        timeout_seconds = max(
+            0.5, float(raw_timeout or _DEFAULT_NEWS_SOURCE_TIMEOUT_SECONDS)
+        )
+    except (TypeError, ValueError) as exc:
+        raise DataError(
+            f"国内新闻源 timeout_seconds 配置无效: {raw_timeout!r}"
+        ) from exc
+    themes_raw = domestic_cfg.get("themes", ())
+    queries: list[str] = []
+    if isinstance(themes_raw, list):
+        for item in themes_raw:
+            if not isinstance(item, dict):
+                continue
+            query = str(item.get("query", "") or "").strip()
+            if query and query not in queries:
+                queries.append(query)
+    return True, timeout_seconds, tuple(queries)
+
+
+def _rss_feeds_from_payload(
+    payload: dict[object, object],
+    *,
+    theme_keywords: dict[str, tuple[str, ...]] | None = None,
+) -> tuple[RssFeedConfig, ...]:
     feeds_raw = payload.get("feeds", ())
     if not isinstance(feeds_raw, list):
         return ()
@@ -1095,6 +1249,11 @@ def _rss_feeds_from_payload(payload: dict[object, object]) -> tuple[RssFeedConfi
         url = str(item.get("url", "") or "").strip()
         if not name or not url:
             continue
+        keywords = list(_as_text_tuple(item.get("keywords", ())))
+        for theme_id in _as_text_tuple(item.get("themes", ())):
+            for keyword in (theme_keywords or {}).get(theme_id, ()):
+                if keyword not in keywords:
+                    keywords.append(keyword)
         feeds.append(
             RssFeedConfig(
                 name=name,
@@ -1102,7 +1261,7 @@ def _rss_feeds_from_payload(payload: dict[object, object]) -> tuple[RssFeedConfi
                 category=str(item.get("category", "") or "").strip(),
                 enabled=bool(item.get("enabled", True)),
                 symbols=_as_text_tuple(item.get("symbols", ())),
-                keywords=_as_text_tuple(item.get("keywords", ())),
+                keywords=tuple(keywords),
                 max_items=max(
                     1, int(item.get("max_items", payload.get("max_items", 20)) or 20)
                 ),
@@ -1111,6 +1270,7 @@ def _rss_feeds_from_payload(payload: dict[object, object]) -> tuple[RssFeedConfi
                     category=str(item.get("category", "") or "").strip(),
                     name=name,
                 ),
+                themes=_as_text_tuple(item.get("themes", ())),
             )
         )
     return tuple(feeds)
@@ -1125,6 +1285,7 @@ def _parse_rss_xml(
     symbols: tuple[str, ...],
     keywords: tuple[str, ...],
     max_items: int,
+    themes: tuple[str, ...] = (),
 ) -> pd.DataFrame:
     root = ET.fromstring(content)
     items = root.findall(".//item")
@@ -1183,6 +1344,7 @@ def _parse_rss_xml(
                 "source_region": region,
                 "symbols": ",".join(symbols),
                 "keywords": ",".join(keywords),
+                "themes": ",".join(themes),
                 "keyword_matched": _rss_keyword_match_text(
                     title=title,
                     summary=summary,
