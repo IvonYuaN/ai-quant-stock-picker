@@ -72,6 +72,14 @@ class CircuitBreaker:
                     self._last_triggered_date = date.fromisoformat(
                         state["last_triggered_date"]
                     )
+                if (
+                    self._cooldown_until is not None
+                    and now_shanghai().date() >= self._cooldown_until
+                ):
+                    # 解除日已到时清理持久化状态，避免旧文案继续被看板读取。
+                    self._cooldown_until = None
+                    self._last_triggered_date = None
+                    self._save_state()
             except (OSError, json.JSONDecodeError, ValueError) as exc:
                 _logger.error("组合熔断状态损坏，保守进入冷却期: %s", exc)
                 self._cooldown_until = date.max

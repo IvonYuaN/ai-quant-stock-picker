@@ -1341,6 +1341,7 @@ def test_coldstart_daily_skips_when_signal_days_already_completed(
     assert handoff["progress"] == "34/30"
     assert handoff["next_step"] == "run_production_walkforward_gate"
     assert handoff["next_command"] == "bash scripts/bt_task.sh walkforward-gate"
+    assert "组合保护按解除日单独判断" in handoff["blocker"]
     assert "fake sqlite update" not in result.stdout
     assert not (tmp_path / "cli-args.txt").exists()
 

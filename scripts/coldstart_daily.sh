@@ -350,7 +350,7 @@ if [[ "$COLDSTART_SIGNAL_PROGRESS" =~ ^([0-9]+)/([0-9]+)$ ]] \
     && [ "${BASH_REMATCH[1]}" -ge "${BASH_REMATCH[2]}" ]; then
     log "冷启动样本已达标: ${COLDSTART_SIGNAL_PROGRESS}，跳过本次冷启动追加"
     log "冷启动后续: 样本门已关闭；交接给 bt_task.sh walkforward-gate 运行生产 walk-forward 双门 gate（DSR/PBO），不在冷启动任务里自动启动重型回测"
-    write_coldstart_handoff_status "$COLDSTART_SIGNAL_PROGRESS" "冷启动样本门已达标；下一步用 bt_task.sh walkforward-gate 复核运行生产 walk-forward 双门 gate（DSR/PBO）与组合保护冷却"
+    write_coldstart_handoff_status "$COLDSTART_SIGNAL_PROGRESS" "冷启动样本门已达标；下一步仅复核生产 walk-forward 双门 gate（DSR/PBO）；组合保护按解除日单独判断"
     log "冷启动日跑完成"
     exit 0
 fi
@@ -406,7 +406,7 @@ PY
 COLDSTART_SIGNAL_PROGRESS="$(coldstart_signal_progress || true)"
 if [[ "$COLDSTART_SIGNAL_PROGRESS" =~ ^([0-9]+)/([0-9]+)$ ]] \
     && [ "${BASH_REMATCH[1]}" -ge "${BASH_REMATCH[2]}" ]; then
-    write_coldstart_handoff_status "$COLDSTART_SIGNAL_PROGRESS" "冷启动刚达标；下一步用 bt_task.sh walkforward-gate 复核运行生产 walk-forward 双门 gate（DSR/PBO）与组合保护冷却"
+    write_coldstart_handoff_status "$COLDSTART_SIGNAL_PROGRESS" "冷启动刚达标；下一步仅复核生产 walk-forward 双门 gate（DSR/PBO）；组合保护按解除日单独判断"
     log "冷启动后续: 样本门刚达标；已写入 ${HANDOFF_STATUS_PATH}，后续看生产 walk-forward 双门 gate 与组合保护状态"
 fi
 

@@ -341,8 +341,8 @@ def _coldstart_ready_next_blocker(gate_state: dict[str, object]) -> str:
     fingerprint = str(gate_state.get("latest_fingerprint") or "")
     parts = {item for item in fingerprint.split("|") if item}
     if {"dsr", "pbo"} & parts:
-        return "冷启动样本门已达标；当前后续阻塞是 DSR/PBO 双门质量门或组合保护冷却"
-    return "冷启动样本门已达标；后续看 walk-forward 双门 gate 与组合保护状态，不再追加冷启动样本"
+        return "冷启动样本门已达标；当前后续阻塞是 DSR/PBO 双门质量门；组合保护按实时解除日单独判断"
+    return "冷启动样本门已达标；后续看 walk-forward 双门 gate；组合保护按实时解除日单独判断"
 
 
 def _coldstart_runtime_summary(root: Path) -> dict[str, Any]:
