@@ -83,6 +83,7 @@ export function AqspWorkspaceProvider({ children }: { children: ReactNode }) {
     refresh: () => setReloadKey((value) => value + 1),
     selectedDate,
     selectDate: (date: string) => {
+      if (date !== selectedDate) setData(null);
       setSelectedDate(date);
       try {
         localStorage.setItem("vr-selected-date", date);

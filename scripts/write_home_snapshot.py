@@ -51,8 +51,10 @@ from aqsp.web.home_snapshot import (
     HomeSnapshotIndex,
     HomeSnapshotMarketContext,
     HomeSnapshotMessage,
+    HomeSnapshotPhase,
     HomeSnapshotSource,
     HomeSnapshotTechnicalMetric,
+    HomeSnapshotUniverse,
     MAX_HOME_SNAPSHOT_TECHNICAL_METRICS,
     HOME_RECOMMENDATION_LABELS,
     is_home_recommendation,
@@ -1231,6 +1233,65 @@ def _recommendation_gate(
     )
 
 
+def _phase_snapshot(provider: DashboardDataProvider, signal_date: str) -> tuple[HomeSnapshotPhase, ...]:
+    """Read phase artifacts without network calls and calculate symbol overlap."""
+    phase_specs = (
+        ("main_chain", "盘前", "盘前主链"),
+        ("intraday", "盘中", "盘中观察"),
+        ("closing_review", "盘后", "收盘复盘"),
+    )
+    phases: list[HomeSnapshotPhase] = []
+    seen_symbols: set[str] = set()
+    for task_id, label, _task_label in phase_specs:
+        try:
+            rows = provider._signal_task_rows_for_date(task_id, signal_date)
+        except Exception:
+            rows = []
+        symbols = {
+            str(row.get("symbol", "") or "").strip()
+            for row in rows
+            if str(row.get("symbol", "") or "").strip()
+        }
+        overlap = len(symbols & seen_symbols)
+        seen_symbols.update(symbols)
+        phases.append(
+            HomeSnapshotPhase(
+                task_id=task_id,
+                label=label,
+                status="已产出" if rows else "未产出",
+                candidate_count=len(rows),
+                unique_symbols=len(symbols),
+                overlap_symbols=overlap,
+                updated_at=str(
+                    max((row.get("created_at", "") for row in rows), default="")
+                    or ""
+                ),
+            )
+        )
+    return tuple(phases)
+
+
+def _universe_snapshot() -> HomeSnapshotUniverse:
+    raw = _runtime_json_path(
+        "AQSP_INTRADAY_REFRESH_STATUS_PATH",
+        "data/runtime/intraday_refresh_status.json",
+    )
+    try:
+        payload = json.loads(raw.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return HomeSnapshotUniverse()
+    if not isinstance(payload, dict):
+        return HomeSnapshotUniverse()
+    return HomeSnapshotUniverse(
+        total=int(payload.get("universe_total") or payload.get("total") or 0),
+        resolved=int(payload.get("resolved_symbol_count") or 0),
+        screened=int(payload.get("screened_count") or 0),
+        final=int(payload.get("final_count") or payload.get("candidate_count") or 0),
+        max_universe=int(payload.get("max_universe") or 0),
+        source=_text(payload.get("actual_source") or payload.get("source")),
+    )
+
+
 def build_home_snapshot(
     provider: DashboardDataProvider,
     *,
@@ -1353,6 +1414,8 @@ def build_home_snapshot(
         messages=messages,
         market_context=market_context,
         recommendation_gate=recommendation_gate,
+        phases=_phase_snapshot(provider, selected_date),
+        universe=_universe_snapshot(),
     )
 
 

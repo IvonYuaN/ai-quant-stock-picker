@@ -69,6 +69,17 @@ export interface AqspRecommendationGate {
   reasons: readonly string[];
 }
 
+export interface AqspPhase {
+  task_id: string; label: string; status: string;
+  candidate_count: number; unique_symbols: number; overlap_symbols: number;
+  updated_at?: string;
+}
+
+export interface AqspUniverse {
+  total: number; resolved: number; screened: number; final: number;
+  max_universe: number; source?: string;
+}
+
 export interface AqspAgentResult {
   symbol: string;
   display_name: string;
@@ -108,6 +119,8 @@ export interface AqspSnapshot {
   messages: readonly AqspMessage[];
   market_context: AqspMarketContext | null;
   recommendation_gate?: AqspRecommendationGate;
+  phases?: readonly AqspPhase[];
+  universe?: AqspUniverse;
   /** Present after the HTTP envelope is normalized; absent in the raw data payload. */
   meta?: AqspSnapshotMeta;
 }

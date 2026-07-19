@@ -428,7 +428,7 @@ def test_intraday_refresh_script_uses_isolated_outputs() -> None:
     assert 'if [ -n "$PRESET_AQSP_INTRADAY_MAX_UNIVERSE" ]; then' in script
     assert 'INTRADAY_MAX_UNIVERSE="$PRESET_AQSP_INTRADAY_MAX_UNIVERSE"' in script
     assert (
-        'INTRADAY_FAST_MAX_UNIVERSE="${AQSP_INTRADAY_FAST_MAX_UNIVERSE:-40}"' in script
+        'INTRADAY_FAST_MAX_UNIVERSE="${AQSP_INTRADAY_FAST_MAX_UNIVERSE:-0}"' in script
     )
     assert (
         'INTRADAY_MAX_UNIVERSE="${AQSP_INTRADAY_MAX_UNIVERSE:-${INTRADAY_FAST_MAX_UNIVERSE}}"'
@@ -436,7 +436,7 @@ def test_intraday_refresh_script_uses_isolated_outputs() -> None:
     )
     assert 'if ! [[ "$INTRADAY_MAX_UNIVERSE" =~ ^[0-9]+$ ]]' in script
     assert "盘中最大扫描范围无效" in script
-    assert "使用盘中时效默认 40" in script
+    assert "使用完整实时流动性池" in script
     assert "AQSP_INTRADAY_ALLOW_HEAVY_UNIVERSE" in script
     assert "收紧为 120" in script
     assert "${AQSP_SOURCE:-eastmoney}" not in script

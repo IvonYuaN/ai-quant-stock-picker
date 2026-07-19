@@ -194,6 +194,31 @@ class HomeSnapshotRecommendationGate:
     reasons: tuple[str, ...] = ()
 
 
+@dataclass(frozen=True)
+class HomeSnapshotPhase:
+    """One research phase with explicit overlap accounting."""
+
+    task_id: str
+    label: str
+    status: str
+    candidate_count: int
+    unique_symbols: int
+    overlap_symbols: int
+    updated_at: str = ""
+
+
+@dataclass(frozen=True)
+class HomeSnapshotUniverse:
+    """Observable universe coverage; zero means the producer did not report it."""
+
+    total: int = 0
+    resolved: int = 0
+    screened: int = 0
+    final: int = 0
+    max_universe: int = 0
+    source: str = ""
+
+
 @dataclass(frozen=True, init=False)
 class HomeDashboardSnapshot:
     """Small home-page payload that is safe to load without historical fan-out."""
@@ -213,6 +238,8 @@ class HomeDashboardSnapshot:
     messages: tuple[HomeSnapshotMessage, ...] = ()
     market_context: HomeSnapshotMarketContext | None = None
     recommendation_gate: HomeSnapshotRecommendationGate | None = None
+    phases: tuple[HomeSnapshotPhase, ...] = ()
+    universe: HomeSnapshotUniverse = HomeSnapshotUniverse()
 
     def __init__(
         self,
@@ -232,6 +259,8 @@ class HomeDashboardSnapshot:
         messages: tuple[HomeSnapshotMessage, ...] = (),
         market_context: HomeSnapshotMarketContext | None = None,
         recommendation_gate: HomeSnapshotRecommendationGate | None = None,
+        phases: tuple[HomeSnapshotPhase, ...] = (),
+        universe: HomeSnapshotUniverse | None = None,
     ) -> None:
         normalized_debates = tuple(debates or ())
         if debate is not None:
@@ -262,6 +291,8 @@ class HomeDashboardSnapshot:
                 reasons=("recommendation_gate_missing",),
             ),
         )
+        object.__setattr__(self, "phases", tuple(phases or ()))
+        object.__setattr__(self, "universe", universe or HomeSnapshotUniverse())
         self.__post_init__()
 
     @property
@@ -571,6 +602,8 @@ def _snapshot_from_dict(payload: object) -> HomeDashboardSnapshot:
             "messages",
             "market_context",
             "recommendation_gate",
+            "phases",
+            "universe",
         },
     )
     if "debates" in mapping:
@@ -616,6 +649,11 @@ def _snapshot_from_dict(payload: object) -> HomeDashboardSnapshot:
             if mapping.get("recommendation_gate") is None
             else _recommendation_gate_from_dict(mapping["recommendation_gate"])
         ),
+        phases=tuple(
+            _phase_from_dict(item)
+            for item in _list(mapping.get("phases", ()), "phases")
+        ),
+        universe=_universe_from_dict(mapping.get("universe", {})),
     )
 
 
@@ -932,6 +970,34 @@ def _recommendation_gate_from_dict(
     )
 
 
+def _phase_from_dict(payload: object) -> HomeSnapshotPhase:
+    mapping = _mapping(payload, "phase")
+    _require_keys(mapping, {"task_id", "label", "status", "candidate_count", "unique_symbols", "overlap_symbols"}, "phase", optional={"updated_at"})
+    return HomeSnapshotPhase(
+        task_id=_text(mapping["task_id"], "phase.task_id"),
+        label=_text(mapping["label"], "phase.label"),
+        status=_text(mapping["status"], "phase.status"),
+        candidate_count=_integer(mapping["candidate_count"], "phase.candidate_count"),
+        unique_symbols=_integer(mapping["unique_symbols"], "phase.unique_symbols"),
+        overlap_symbols=_integer(mapping["overlap_symbols"], "phase.overlap_symbols"),
+        updated_at=_optional_text(mapping.get("updated_at"), "phase.updated_at"),
+    )
+
+
+def _universe_from_dict(payload: object) -> HomeSnapshotUniverse:
+    if payload in (None, {}):
+        return HomeSnapshotUniverse()
+    mapping = _mapping(payload, "universe")
+    return HomeSnapshotUniverse(
+        total=_integer(mapping.get("total", 0), "universe.total"),
+        resolved=_integer(mapping.get("resolved", 0), "universe.resolved"),
+        screened=_integer(mapping.get("screened", 0), "universe.screened"),
+        final=_integer(mapping.get("final", 0), "universe.final"),
+        max_universe=_integer(mapping.get("max_universe", 0), "universe.max_universe"),
+        source=_optional_text(mapping.get("source"), "universe.source"),
+    )
+
+
 def _validate_snapshot(snapshot: HomeDashboardSnapshot) -> None:
     if snapshot.schema_version != HOME_SNAPSHOT_SCHEMA_VERSION:
         raise ValueError("unsupported home snapshot schema version")
@@ -949,6 +1015,11 @@ def _validate_snapshot(snapshot: HomeDashboardSnapshot) -> None:
     _validate_limit(snapshot.debates, MAX_HOME_SNAPSHOT_DEBATES, "debates")
     _validate_limit(snapshot.summaries, MAX_HOME_SNAPSHOT_SUMMARIES, "summaries")
     _validate_limit(snapshot.messages, MAX_HOME_SNAPSHOT_MESSAGES, "messages")
+    _validate_limit(snapshot.phases, 3, "phases")
+    if any(not isinstance(value, HomeSnapshotPhase) for value in snapshot.phases):
+        raise ValueError("phases must contain HomeSnapshotPhase values")
+    if not isinstance(snapshot.universe, HomeSnapshotUniverse):
+        raise ValueError("universe must be a HomeSnapshotUniverse value")
     _validate_date(snapshot.selected_date, "selected_date")
     if snapshot.selected_date not in snapshot.available_dates:
         raise ValueError("selected_date must exist in available_dates")

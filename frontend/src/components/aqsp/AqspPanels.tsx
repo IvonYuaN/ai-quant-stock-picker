@@ -167,6 +167,31 @@ function DateStrip({ snapshot }: { snapshot: AqspSnapshot }) {
   );
 }
 
+function PhaseStrip({ snapshot }: { snapshot: AqspSnapshot }) {
+  const phases = snapshot.phases ?? [];
+  const universe = snapshot.universe;
+  return (
+    <section className="vr-phase-strip" aria-label="研究阶段与扫描覆盖">
+      <div className="vr-phase-heading"><span>阶段</span><span>候选 / 去重 / 重叠</span></div>
+      <div className="vr-phase-grid">
+        {phases.map((phase) => (
+          <div key={phase.task_id} className={cn("vr-phase-item", phase.status === "未产出" && "vr-phase-item-empty")}>
+            <strong>{phase.label}</strong><span>{phase.status}</span>
+            <b>{phase.candidate_count} / {phase.unique_symbols} / {phase.overlap_symbols}</b>
+          </div>
+        ))}
+      </div>
+      <div className="vr-universe-line">
+        <span>扫描覆盖</span>
+        {universe && universe.resolved > 0
+          ? <strong>{universe.resolved} / {universe.total || "全池未记录"} 只已解析，筛选 {universe.screened}，输出 {universe.final}{universe.max_universe > 0 ? `，上限 ${universe.max_universe}` : ""}</strong>
+          : <strong>当前产物未记录全市场覆盖率</strong>}
+        {universe?.source && <em>源：{universe.source}</em>}
+      </div>
+    </section>
+  );
+}
+
 function CandidateCard({ candidate }: { candidate: AqspCandidate }) {
   return (
     <article className="vr-research-card group">
@@ -403,7 +428,8 @@ export function AqspResearchWorkspace() {
           </button>
         </header>
 
-        <DateStrip snapshot={data} />
+      <DateStrip snapshot={data} />
+      <PhaseStrip snapshot={data} />
       {stale && <FreshnessNotice snapshot={data} />}
       <RecommendationGateNotice snapshot={data} />
       <CurrentEmptyObservationNotice snapshot={data} />
