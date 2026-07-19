@@ -8,6 +8,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
+import pandas as pd
+
 from scripts import backfill_intraday_debate
 
 
@@ -111,15 +113,76 @@ def _patch_runtime(
             "rating": result.rating,
             "recommended_adjustment": result.recommended_adjustment,
             "disagreement_score": result.disagreement_score,
+            "data_status": "available",
+            "final_consensus": "bullish",
+            "final_vote": {"bull": "bullish", "risk_control": "bearish"},
+            "support_points": ["放量突破"],
+            "opposition_points": ["风险条件需要确认"],
+            "risk_warnings": ["若冲高回落则降级"],
+            "next_trigger": "确认盘中承接",
+            "falsifiable_conditions": ["若冲高回落则降级"],
+            "advisory_only": True,
+            "deterministic_score": result.original_score,
+            "deterministic_score_unchanged": True,
             "rounds": [
-                {"round_num": 1, "opinions": [{"role": "bull"}]},
-                *(
-                    [{"round_num": 2, "opinions": [{"role": "bull"}]}]
-                    if max_rounds >= 2
-                    else []
-                ),
+                {
+                    "round_num": 1,
+                    "opinions": [
+                        {
+                            "agent_id": "bull-agent",
+                            "role": "bull",
+                            "stance": "bullish",
+                            "arguments": ["放量突破"],
+                            "risk_factors": [],
+                            "opportunity_factors": ["量价延续"],
+                        },
+                        {
+                            "agent_id": "risk-agent",
+                            "role": "risk_control",
+                            "stance": "bearish",
+                            "arguments": ["风险条件需要确认"],
+                            "risk_factors": ["若冲高回落则降级"],
+                            "opportunity_factors": [],
+                        },
+                    ],
+                },
+                {
+                    "round_num": 2,
+                    "opinions": [
+                        {
+                            "agent_id": "bull-agent",
+                            "role": "bull",
+                            "stance": "bullish",
+                            "arguments": ["放量突破"],
+                            "risk_factors": [],
+                            "opportunity_factors": ["量价延续"],
+                            "counterarguments": [],
+                            "peer_reviewed_roles": ["risk_control"],
+                            "rebuttal_records": [],
+                        },
+                        {
+                            "agent_id": "risk-agent",
+                            "role": "risk_control",
+                            "stance": "bearish",
+                            "arguments": ["风险条件需要确认"],
+                            "risk_factors": ["若冲高回落则降级"],
+                            "opportunity_factors": [],
+                            "counterarguments": ["已质询多头放量延续"],
+                            "counterargument_roles": ["bull"],
+                            "peer_reviewed_roles": ["bull"],
+                            "rebuttal_records": [
+                                {
+                                    "challenged_role": "bull",
+                                    "challenged_claim": "放量突破",
+                                    "rebuttal_reason": "风险条件需要确认，若失效则降级",
+                                    "challenged_stance": "bullish",
+                                    "opposing_stance": "bearish",
+                                }
+                            ],
+                        },
+                    ],
+                },
             ],
-            "final_vote": {"bull": "neutral"},
         },
     )
 
@@ -144,6 +207,44 @@ def test_debate_quality_gate_rejects_failure_and_any_quality_issue() -> None:
         == "debate advisory boundary is not valid"
     )
     assert backfill_intraday_debate._debate_payload_quality_failure({}) == ""
+
+
+def test_debate_quality_gate_rejects_neutral_only_opposition_payload(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    from aqsp.briefing.agent_roles import AgentRole
+    from aqsp.briefing.debate import AShareDebateCoordinator
+
+    pick = backfill_intraday_debate._pick_from_row(
+        {
+            "symbol": "000001",
+            "name": "测试标的",
+            "date": "2026-07-10",
+            "close": "10.5",
+            "score": "72",
+            "rating": "watch",
+            "reasons": "放量突破",
+        }
+    )
+    result = AShareDebateCoordinator(
+        max_rounds=2,
+        roles=(AgentRole.BULL, AgentRole.BEAR),
+    ).run_debate(
+        pick,
+        pd.DataFrame({"close": [100.0, 101.0]}),
+        signal_date=pick.date,
+    )
+    payload = backfill_intraday_debate.serialize_debate_result(result)
+
+    failure = backfill_intraday_debate._debate_payload_quality_failure(
+        payload,
+        candidate=pick,
+        expected_roles=("bull", "bear"),
+        expected_signal_date=pick.date,
+    )
+
+    assert "missing_real_opposition" in failure
 
 
 def test_backfill_continues_after_candidate_failure_and_persists_success(
@@ -424,6 +525,39 @@ def test_debate_frame_prefers_complete_runtime_ohlcv_over_synthetic_context() ->
     assert len(frame) == 1
     assert frame.iloc[0]["open"] == 10.0
     assert frame.iloc[0]["volume"] == 12345.0
+
+
+def test_market_context_lines_for_pick_preserve_news_direction_counts_and_provenance() -> (
+    None
+):
+    pick = backfill_intraday_debate._pick_from_row(
+        {
+            "symbol": "000001",
+            "name": "测试标的",
+            "date": "2026-07-10",
+            "close": "10.5",
+            "news_catalyst_lead": "上游材料涨价，产业链供给收紧",
+            "news_catalyst_source": "交易所公告",
+            "news_catalyst_published_at": "2026-07-10T09:05:00+08:00",
+            "news_catalyst_supports": "上游涨价",
+            "news_catalyst_opposes": "下游需求尚未验证",
+            "news_catalyst_needs_review": "板块扩散待确认",
+            "news_catalyst_support_count": "1",
+            "news_catalyst_oppose_count": "1",
+            "news_catalyst_review_count": "1",
+        }
+    )
+
+    lines = backfill_intraday_debate._market_context_lines_for_pick(
+        pick,
+        run_market_context_lines=(),
+    )
+
+    assert "消息支持: 上游涨价" in lines
+    assert "消息压力: 下游需求尚未验证" in lines
+    assert "消息待复核: 板块扩散待确认" in lines
+    assert "消息证据堆栈: 支持 1 条｜反对 1 条｜待复核 1 条" in lines
+    assert any(line.startswith("消息溯源: 交易所公告 /") for line in lines)
 
 
 def test_backfill_keeps_same_candidate_isolated_by_task_id(

@@ -547,6 +547,43 @@ def test_debate_result_to_dict_persists_process_and_advisory_boundary() -> None:
     assert payload["adjusted_score_is_advisory"] is True
     assert payload["deterministic_score"] == pick.score
     assert payload["viewpoint_coverage"]["cross_market"] is True
+    assert payload["discussion_agent_count"] == 3
+    assert payload["rebuttal_count"] >= 1
+    assert payload["real_opposition_count"] >= 1
+
+
+def test_debate_audit_keeps_neutral_bear_role_out_of_real_opposition_count() -> None:
+    pick = _make_pick(score=72.0, risks=())
+    result = AShareDebateCoordinator(
+        enable_llm=False,
+        max_rounds=2,
+        roles=(AgentRole.BULL, AgentRole.BEAR),
+    ).run_debate(
+        pick,
+        pd.DataFrame({"close": [100.0, 101.0]}),
+        signal_date=pick.date,
+    )
+
+    bear_round = next(
+        opinion
+        for opinion in result.rounds[-1].opinions
+        if opinion.role == AgentRole.BEAR
+    )
+    assert bear_round.stance == "neutral"
+    assert bear_round.rebuttal_records
+    assert any(
+        "风险条件" in record.rebuttal_reason for record in bear_round.rebuttal_records
+    )
+
+    audit = audit_debate_quality(
+        result, candidate=pick, expected_roles=("bull", "bear")
+    )
+
+    assert not audit.passed
+    assert audit.rebuttal_count >= 1
+    assert audit.real_opposition_recorded is False
+    assert audit.real_opposition_count == 0
+    assert "missing_real_opposition" in audit.issues
 
 
 def test_debate_coordinator_passes_cross_market_evidence_context_to_tracker_when_adjusting() -> (

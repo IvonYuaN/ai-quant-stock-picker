@@ -22,6 +22,7 @@ from aqsp.cli import (
     serialize_debate_result,
 )
 from aqsp.config import load_debate_runtime_config
+from aqsp.briefing.debate_tracker import audit_debate_quality
 from aqsp.core.time import now_shanghai
 from aqsp.models import PickResult
 from aqsp.strategies.thresholds import load_thresholds
@@ -259,6 +260,21 @@ def _market_context_lines_for_pick(
         lines.append(f"消息支持: {supports[0]}")
     if opposes:
         lines.append(f"消息压力: {opposes[0]}")
+    needs_review = _text_tuple(metrics.get("news_catalyst_needs_review"))
+    if needs_review:
+        lines.append(f"消息待复核: {needs_review[0]}")
+    source = str(metrics.get("news_catalyst_source", "") or "").strip()
+    published_at = str(metrics.get("news_catalyst_published_at", "") or "").strip()
+    if source or published_at:
+        provenance = " / ".join(item for item in (source, published_at) if item)
+        lines.append(f"消息溯源: {provenance}")
+    support_count = int(metrics.get("news_catalyst_support_count", 0) or 0)
+    oppose_count = int(metrics.get("news_catalyst_oppose_count", 0) or 0)
+    review_count = int(metrics.get("news_catalyst_review_count", 0) or 0)
+    if support_count or oppose_count or review_count:
+        lines.append(
+            f"消息证据堆栈: 支持 {support_count} 条｜反对 {oppose_count} 条｜待复核 {review_count} 条"
+        )
 
     return _dedupe_lines(lines)
 
@@ -272,6 +288,8 @@ def _context_quality_for_pick(
         market_context_lines
         or str(metrics.get("cross_market_primary_theme", "") or "").strip()
         or str(metrics.get("news_catalyst_lead", "") or "").strip()
+        or _text_tuple(metrics.get("news_catalyst_supporting_evidence"))
+        or _text_tuple(metrics.get("news_catalyst_contradicting_evidence"))
     )
     if has_structured_context:
         return "structured_context", ""
@@ -711,7 +729,10 @@ def _run_candidate_debate(
         )
     )
     frame, data_context = _debate_frame(pick)
-    requested_rounds = max(1, int(runtime.max_rounds))
+    # Backfill is a committee audit, not a single-agent annotation.  The
+    # coordinator also enforces this minimum, so keep the persisted contract
+    # consistent even when runtime configuration asks for one round.
+    requested_rounds = max(2, int(runtime.max_rounds))
     reconsideration_evidence = _reconsideration_evidence(pick, frame, data_context)
     debate_context_lines = market_context_lines
     if requested_rounds >= 2:
@@ -740,10 +761,6 @@ def _run_candidate_debate(
             "basis": "round_1_counterarguments_and_current_context",
             "new_evidence": list(reconsideration_evidence),
         }
-    quality_failure = _debate_payload_quality_failure(payload)
-    if quality_failure:
-        payload["backfill_status"] = CANDIDATE_FAILED
-        payload["backfill_failure"] = quality_failure
     payload["debate_context_quality"] = context_quality
     payload["debate_data_context"] = data_context
     if context_warning:
@@ -769,12 +786,29 @@ def _run_candidate_debate(
     )
     payload["advisory_only"] = True
     payload["adjusted_score_is_advisory"] = True
+    quality_failure = _debate_payload_quality_failure(
+        payload,
+        candidate=pick,
+        expected_roles=roles,
+        expected_task_id=task_id,
+        expected_signal_date=pick.date or today,
+    )
+    if quality_failure:
+        payload["backfill_status"] = CANDIDATE_FAILED
+        payload["backfill_failure"] = quality_failure
     responsibilities = _responsibility_snapshot(active_coordinator)
     payload["debate_responsibilities"] = responsibilities
     return payload, result, responsibilities
 
 
-def _debate_payload_quality_failure(payload: dict[str, Any]) -> str:
+def _debate_payload_quality_failure(
+    payload: dict[str, Any],
+    *,
+    candidate: PickResult | None = None,
+    expected_roles: tuple[str, ...] = (),
+    expected_task_id: str = "",
+    expected_signal_date: str = "",
+) -> str:
     """Reject incomplete committee records before they are counted as success."""
     failure = str(payload.get("failure", "") or "").strip()
     issues = _text_tuple(payload.get("debate_quality_issues"))
@@ -786,6 +820,16 @@ def _debate_payload_quality_failure(payload: dict[str, Any]) -> str:
         return "debate advisory boundary is not valid"
     if payload.get("deterministic_score_unchanged") is False:
         return "deterministic score changed by advisory debate"
+    if expected_roles:
+        audit = audit_debate_quality(
+            payload,
+            candidate=candidate,
+            expected_roles=expected_roles,
+            expected_task_id=expected_task_id,
+            expected_signal_date=expected_signal_date,
+        )
+        if audit.issues:
+            return f"debate quality issues: {'、'.join(audit.issues)}"[:500]
     return ""
 
 

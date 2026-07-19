@@ -131,9 +131,27 @@ def test_eastmoney_get_liquid_symbols_uses_spot_snapshot(monkeypatch) -> None:
         1: {
             "data": {
                 "diff": [
-                    {"f12": "600000", "f14": "浦发银行", "f2": 10.0, "f5": 1, "f6": 80_000_000},
-                    {"f12": "000001", "f14": "平安银行", "f2": 10.0, "f5": 1, "f6": 120_000_000},
-                    {"f12": "000002", "f14": "ST测试", "f2": 3.0, "f5": 1, "f6": 200_000_000},
+                    {
+                        "f12": "600000",
+                        "f14": "浦发银行",
+                        "f2": 10.0,
+                        "f5": 1,
+                        "f6": 80_000_000,
+                    },
+                    {
+                        "f12": "000001",
+                        "f14": "平安银行",
+                        "f2": 10.0,
+                        "f5": 1,
+                        "f6": 120_000_000,
+                    },
+                    {
+                        "f12": "000002",
+                        "f14": "ST测试",
+                        "f2": 3.0,
+                        "f5": 1,
+                        "f6": 200_000_000,
+                    },
                     {"f12": "300001", "f14": "特锐德", "f2": 20.0, "f5": 1, "f6": "-"},
                 ]
             }
@@ -147,6 +165,33 @@ def test_eastmoney_get_liquid_symbols_uses_spot_snapshot(monkeypatch) -> None:
         "600000",
     ]
     assert source.get_available_symbols() == ["600000", "000001", "300001"]
+
+
+def test_eastmoney_spot_snapshot_rejects_incomplete_pagination(monkeypatch) -> None:
+    source = EastmoneySource.__new__(EastmoneySource)
+    source.name = "eastmoney"
+    monkeypatch.setattr(source, "_throttle", lambda: None)
+    pages = {
+        1: {
+            "data": {
+                "total": 401,
+                "diff": [
+                    {
+                        "f12": "600000",
+                        "f14": "浦发银行",
+                        "f2": 10.0,
+                        "f5": 1,
+                        "f6": 80_000_000,
+                    }
+                ],
+            }
+        },
+        2: {"data": {"total": 401, "diff": []}},
+    }
+    monkeypatch.setattr(source, "_fetch_eastmoney_spot_page", lambda page: pages[page])
+
+    with pytest.raises(DataError, match="分页不完整"):
+        source.get_available_symbols()
 
 
 def test_public_fetch_methods_raise_data_error_when_eastmoney_returns_empty(

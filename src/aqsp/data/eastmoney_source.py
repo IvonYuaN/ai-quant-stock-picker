@@ -380,11 +380,28 @@ class EastmoneySource(DataSource):
     def _fetch_eastmoney_spot_snapshot(self) -> pd.DataFrame:
         rows: list[dict[str, object]] = []
         page = 1
+        received_rows = 0
+        expected_rows: int | None = None
         while True:
             data = self._fetch_eastmoney_spot_page(page)
-            diff = (data.get("data") or {}).get("diff") or []
+            payload = data.get("data") or {}
+            diff = payload.get("diff") or []
+            if expected_rows is None:
+                raw_total = payload.get("total")
+                try:
+                    parsed_total = int(raw_total)
+                except (TypeError, ValueError):
+                    parsed_total = 0
+                if parsed_total > 0:
+                    expected_rows = parsed_total
             if not diff:
+                if expected_rows is not None and received_rows < expected_rows:
+                    raise DataError(
+                        "eastmoney 全市场快照分页不完整: "
+                        f"received={received_rows}, expected={expected_rows}"
+                    )
                 break
+            received_rows += len(diff)
             for item in diff:
                 symbol = str(item.get("f12") or "").strip()
                 name = str(item.get("f14") or "").strip()
@@ -401,7 +418,10 @@ class EastmoneySource(DataSource):
                         "amount": _safe_float(item.get("f6")),
                     }
                 )
-            if len(diff) < _SPOT_PAGE_SIZE:
+            if expected_rows is not None:
+                if received_rows >= expected_rows:
+                    break
+            elif len(diff) < _SPOT_PAGE_SIZE:
                 break
             page += 1
         if not rows:

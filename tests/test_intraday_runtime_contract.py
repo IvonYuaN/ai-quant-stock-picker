@@ -180,7 +180,7 @@ if args[:1] == ["-"]:
         )
         raise SystemExit(1)
     result = subprocess.run(
-        [sys.executable, "-"],
+        [sys.executable, "-", *args[1:]],
         input=source,
         text=True,
         env={**os.environ, "PYTHONPATH": os.environ["AQSP_TEST_REPO"] + "/src"},
@@ -229,6 +229,8 @@ if args[:2] == ["-m", "aqsp"]:
         "run_workload",
         "run_data_latest_trade_date",
         "run_source_freshness_tier",
+        "run_resolved_symbol_count",
+        "run_fetched_frame_count",
     ]
     csv_path.parent.mkdir(parents=True, exist_ok=True)
     with csv_path.open("w", encoding="utf-8", newline="") as handle:
@@ -249,6 +251,12 @@ if args[:2] == ["-m", "aqsp"]:
                 "run_source_freshness_tier": ""
                 if os.getenv("AQSP_TEST_UNKNOWN_FRESHNESS")
                 else "realtime",
+                "run_resolved_symbol_count": os.getenv(
+                    "AQSP_TEST_RESOLVED_COUNT", "2"
+                ),
+                "run_fetched_frame_count": os.getenv(
+                    "AQSP_TEST_FETCHED_COUNT", "2"
+                ),
             }
         )
         writer.writerow(
@@ -936,8 +944,22 @@ def test_intraday_batch_mode_ignores_env_limited_universe_by_default() -> None:
     batch_guard = script.index("盘中批次轮转忽略配置最大股票数")
     assert 'is_truthy "$INTRADAY_BATCH_SCAN"' in script[batch_guard - 400 : batch_guard]
     assert 'INTRADAY_MAX_UNIVERSE="0"' in script[batch_guard : batch_guard + 600]
-    assert "AQSP_INTRADAY_ALLOW_LIMITED_UNIVERSE" in script[batch_guard - 200 : batch_guard + 600]
+    assert (
+        "AQSP_INTRADAY_ALLOW_LIMITED_UNIVERSE"
+        in script[batch_guard - 200 : batch_guard + 600]
+    )
     assert 'export AQSP_ENABLE_ONLINE_FACTORS="false"' in script
+    assert (
+        'export AQSP_INTRADAY_FULL_UNIVERSE="${AQSP_INTRADAY_FULL_UNIVERSE:-true}"'
+        in script
+    )
+
+
+def test_intraday_full_pool_does_not_inherit_daily_liquidity_cap() -> None:
+    script = SCRIPT_PATH.read_text(encoding="utf-8")
+
+    assert 'INTRADAY_MIN_AVG_AMOUNT="${AQSP_INTRADAY_MIN_AVG_AMOUNT:-0}"' in script
+    assert "AQSP_MIN_AVG_AMOUNT:-50000000" not in script
 
 
 def test_intraday_batch_mode_does_not_let_aqsp_max_universe_40_bypass_rotation(
@@ -963,6 +985,7 @@ def test_intraday_batch_mode_does_not_let_aqsp_max_universe_40_bypass_rotation(
             "AQSP_TEST_ARGS": str(args_path),
             "AQSP_TEST_PREPARE_BATCH": "true",
             "AQSP_MAX_UNIVERSE": "40",
+            "AQSP_INTRADAY_BATCH_SIZE": "2",
             "AQSP_INTRADAY_REQUIRE_MARKET_HOURS": "false",
             "AQSP_INTRADAY_DEBATE_BACKFILL": "false",
             "AQSP_HOME_SNAPSHOT_ENABLED": "false",
@@ -980,8 +1003,27 @@ def test_intraday_batch_mode_does_not_let_aqsp_max_universe_40_bypass_rotation(
 
     assert result.returncode == 0, result.stdout + result.stderr
     cli_args = json.loads(args_path.read_text(encoding="utf-8"))
-    assert cli_args["max_universe"] == "64"
+    assert cli_args["max_universe"] == "2"
     assert "忽略配置最大股票数 40" in result.stdout
+
+
+def test_intraday_batch_does_not_commit_when_output_metadata_is_partial(
+    tmp_path: Path,
+) -> None:
+    script = SCRIPT_PATH.read_text(encoding="utf-8")
+    assert "validate_intraday_batch_output()" in script
+    check_start = script.index("validate_intraday_batch_output()")
+    check_end = script.index("debate_backfill_lock_age_minutes()")
+    check = script[check_start:check_end]
+    assert "run_resolved_symbol_count" in check
+    assert "run_fetched_frame_count" in check
+    assert "拒绝提交 cursor" in check
+    commit_start = script.index('AQSP_INTRADAY_BATCH_SCANNED="$INTRADAY_BATCH_SCANNED"')
+    assert (
+        script.index("validate_intraday_batch_output", commit_start - 500)
+        < commit_start
+    )
+    assert 'BATCH_FAILURE_REASON="intraday_batch_output_incomplete"' in script
 
 
 def test_intraday_batch_cursor_is_not_committed_after_137_timeout(
@@ -1077,9 +1119,7 @@ def test_intraday_runtime_timeout_records_batch_failure_before_status(
     assert calls[:2] == ["select", "fail"]
     assert "commit" not in calls
     status = json.loads(
-        (tmp_path / "data" / "intraday_refresh_status.json").read_text(
-            encoding="utf-8"
-        )
+        (tmp_path / "data" / "intraday_refresh_status.json").read_text(encoding="utf-8")
     )
     assert status["execution"]["batch_failure_recorded"] == "true"
 

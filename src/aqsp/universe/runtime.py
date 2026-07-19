@@ -38,6 +38,13 @@ def _intraday_fast_fill_cache_enabled() -> bool:
     return _is_truthy(os.getenv("AQSP_INTRADAY_FAST_FILL_CACHE", ""))
 
 
+def _intraday_full_universe_enabled() -> bool:
+    """Require live rotation to resolve the complete available A-share pool."""
+    return _is_high_frequency_task() and _is_truthy(
+        os.getenv("AQSP_INTRADAY_FULL_UNIVERSE", "")
+    )
+
+
 def _filter_symbols_with_daily_coverage(
     source: object,
     symbols: list[str],
@@ -75,6 +82,58 @@ def _resolve_symbols_from_source(
     min_avg_amount: float,
 ) -> list[str]:
     needs_live_liquidity = _requires_liquid_universe(source_name, min_avg_amount)
+    live_workload = source_name in _LIVE_LIQUIDITY_SOURCES and (
+        needs_live_liquidity or _is_high_frequency_task()
+    )
+    workload_setter = getattr(source, "set_workload", None)
+    if live_workload and callable(workload_setter):
+        workload_setter("live_short")
+
+    try:
+        return _resolve_symbols_from_source_with_workload(
+            source_name,
+            source,
+            target_day=target_day,
+            max_universe=max_universe,
+            min_avg_amount=min_avg_amount,
+            needs_live_liquidity=needs_live_liquidity,
+        )
+    finally:
+        if live_workload and callable(workload_setter):
+            workload_setter(None)
+
+
+def _resolve_symbols_from_source_with_workload(
+    source_name: str,
+    source: object,
+    *,
+    target_day: date,
+    max_universe: int,
+    min_avg_amount: float,
+    needs_live_liquidity: bool,
+) -> list[str]:
+    if _intraday_full_universe_enabled():
+        if not hasattr(source, "get_available_symbols"):
+            return []
+        try:
+            available = source.get_available_symbols()
+        except DataError:
+            available = []
+        if available:
+            covered = _filter_symbols_with_daily_coverage(
+                source,
+                list(available),
+                target_day=target_day,
+                strict=source_name == "sqlite_db",
+            )
+            return _limit_resolved_symbols(
+                covered,
+                max_universe=max_universe,
+                stratified=False,
+            )
+        # Do not silently replace a failed full live pool with a liquid head.
+        return []
+
     if hasattr(source, "get_liquid_symbols"):
         try:
             # 收盘主链需要完整的流动性梯队再做确定性抽样；盘中任务沿用
@@ -338,6 +397,8 @@ def resolve_run_symbols(
         )
         if resolved:
             return resolved
+    if source_name != "sqlite_db" and _intraday_full_universe_enabled():
+        raise DataError(f"{source_name} 实时全池解析失败，拒绝退回不完整盘中缓存")
     if (
         source_name != "sqlite_db"
         and _is_high_frequency_task()

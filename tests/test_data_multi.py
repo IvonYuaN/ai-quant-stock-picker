@@ -466,3 +466,27 @@ def test_multi_source_exposes_liquid_symbols_from_primary():
     multi = MultiSource(MockSource({}, symbols=["600000", "000001"]), [])
 
     assert multi.get_liquid_symbols(limit=1, min_amount=50_000_000) == ["600000"]
+
+
+def test_multi_source_live_symbol_discovery_skips_historical_fallbacks():
+    primary = MockSource({}, symbols=[])
+    primary.name = "eastmoney"
+    historical = MockSource({}, symbols=["600519"])
+    historical.name = "tdx_vipdoc"
+    multi = MultiSource(primary, [historical])
+    multi.set_workload("live_short")
+
+    with pytest.raises(DataError, match="tdx_vipdoc"):
+        multi.get_liquid_symbols(limit=0, min_amount=50_000_000)
+
+
+def test_multi_source_live_available_discovery_skips_historical_fallbacks():
+    primary = MockSource({}, symbols=[])
+    primary.name = "eastmoney"
+    historical = MockSource({}, symbols=["600519"])
+    historical.name = "tdx_vipdoc"
+    multi = MultiSource(primary, [historical])
+    multi.set_workload("live_short")
+
+    with pytest.raises(DataError, match="tdx_vipdoc"):
+        multi.get_available_symbols()

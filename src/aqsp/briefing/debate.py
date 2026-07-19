@@ -331,6 +331,12 @@ class DebateResult:
             "debate_quality_issues": list(quality.issues),
             "evidence_sufficient": quality.evidence_sufficient,
             "advisory_boundary_ok": quality.advisory_boundary_ok,
+            "discussion_agent_count": quality.discussion_agent_count,
+            "stance_counts": dict(quality.stance_counts),
+            "rebuttal_count": quality.rebuttal_count,
+            "real_opposition_count": quality.real_opposition_count,
+            "message_evidence_recorded": quality.message_evidence_recorded,
+            "transmission_evidence_recorded": quality.transmission_evidence_recorded,
             "viewpoint_coverage": {
                 "support": quality.support_recorded,
                 "opposition": quality.opposition_recorded,
@@ -1537,10 +1543,21 @@ class AShareDebateAgent:
         my_opinion: AgentOpinion,
     ) -> bool:
         """判断是否应该反驳"""
-        return {
+        if {
             other.stance,
             my_opinion.stance,
-        } == {"bullish", "bearish"}
+        } == {"bullish", "bearish"}:
+            return True
+
+        # 高分候选上的反方角色通常保持 neutral，而不是硬造 bearish
+        # 投票。只要它给出了可核验的风险/失效条件，也必须形成真实质询，
+        # 否则第二轮只是“读过观点”而不是讨论。
+        if my_opinion.stance == "neutral" and other.stance in {
+            "bullish",
+            "bearish",
+        }:
+            return bool(self._first_meaningful_point(my_opinion.risk_factors))
+        return False
 
     def _generate_counterargument(
         self,
@@ -1554,13 +1571,20 @@ class AShareDebateAgent:
             raise ValueError(
                 "cannot generate rebuttal without a substantive peer claim"
             )
+        if my_opinion.stance == "neutral":
+            reason = (
+                "当前维持中性；该主张仍缺少风险条件的确认，"
+                "若失效条件出现则不支持继续提高优先级"
+            )
+        else:
+            reason = (
+                f"当前{my_opinion.stance}立场与该主张方向相反；"
+                "若该主张成立，当前方向假设将失效"
+            )
         return RebuttalRecord(
             challenged_role=other.role.value,
             challenged_claim=peer_point,
-            rebuttal_reason=(
-                f"当前{my_opinion.stance}立场与该主张方向相反；"
-                "若该主张成立，当前方向假设将失效"
-            ),
+            rebuttal_reason=reason,
             challenged_stance=other.stance,
             opposing_stance=my_opinion.stance,
         )
@@ -2196,9 +2220,7 @@ class AShareDebateCoordinator:
         # A tie must remain a disagreement. Dict insertion order must not
         # turn a bull/bear tie into a bullish conclusion.
         consensus_positions = [
-            pos
-            for pos, count in vote_counts.items()
-            if count == max_vote and count > 0
+            pos for pos, count in vote_counts.items() if count == max_vote and count > 0
         ]
         result.final_consensus = (
             consensus_positions[0] if len(consensus_positions) == 1 else "split"
@@ -2326,6 +2348,12 @@ class AShareDebateCoordinator:
                 if point:
                     points.append(
                         f"{agent_role_label(opinion.role, self.language)}: {point}"
+                    )
+            elif opinion.rebuttal_records:
+                point = self._first_meaningful_point(opinion.counterarguments)
+                if point:
+                    points.append(
+                        f"{agent_role_label(opinion.role, self.language)}反方质询: {point}"
                     )
         if not points:
             for point in result.risk_warnings[:2]:
@@ -2494,8 +2522,11 @@ class AShareDebateCoordinator:
         support = self._preferred_research_support(result.support_points)
         risk_gate = str(result.primary_risk_gate or "").strip()
         quality = _audit_result_quality(result)
-        requires_opposition = {"bull", "bear"}.issubset(set(result.expected_roles))
-        if requires_opposition and not quality.real_opposition_recorded:
+        # A named bear role is useful, but it is not the quality gate.  Risk
+        # control, sector, or cross-market roles can all supply a bearish
+        # thesis.  Without a real opposing claim and rebuttal, the committee
+        # has not debated and must not emit a directional verdict.
+        if not quality.real_opposition_recorded:
             return "结论阻断：未形成真实正反方交锋，仅记录观点和待确认条件。"
         if not quality.evidence_sufficient:
             return "结论阻断：缺少可核验证据，仅记录待补证据。"
@@ -2644,11 +2675,9 @@ class AShareDebateCoordinator:
         )
         if result.rounds:
             quality = _audit_result_quality(result)
-            requires_opposition = {"bull", "bear"}.issubset(
-                set(result.expected_roles)
-            )
-            if (requires_opposition and "missing_real_opposition" in quality.issues) or (
-                "no_substantive_evidence" in quality.issues
+            if (
+                "missing_real_opposition" in quality.issues
+                or "no_substantive_evidence" in quality.issues
             ):
                 # A one-sided or evidence-free discussion cannot produce even
                 # an advisory adjustment. Keep the deterministic score intact.
@@ -2663,7 +2692,9 @@ class AShareDebateCoordinator:
                 )
                 result.historical_context_note = history_summary.governance_note
                 result.historical_context_bucket = history_summary.current_bucket
-                result.historical_context_sample_count = history_summary.current_sample_count
+                result.historical_context_sample_count = (
+                    history_summary.current_sample_count
+                )
                 result.historical_context_accuracy = history_summary.current_accuracy
                 result.role_reliability_lines = tuple(
                     item.summary_line for item in reliability_summaries[:4]
