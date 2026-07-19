@@ -175,6 +175,7 @@ def test_server_sync_script_supports_custom_runner() -> None:
     )
 
     assert 'RUNNER_SCRIPT="${AQSP_RUNNER_SCRIPT:-}"' in script
+    assert 'if [ "${IMMUTABLE_RELEASE}" != "true" ] && [ ! -d "${PROJECT_ROOT}/.git" ]; then' in script
     assert "AQSP_RUNNER_SCRIPT is required" in script
     assert 'log "开始运行任务: ${RUNNER_PATH}"' in script
     assert 'bash "${RUNNER_PATH}"' in script
