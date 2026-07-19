@@ -717,7 +717,8 @@ POSITIVE_PATTERNS: tuple[tuple[str, str, int], ...] = (
         r"(?<![A-Za-z0-9])GPT(?![A-Za-z0-9])|AI safety|agentic AI|AI investments|AI innovation|"
         "foundry|EPYC|Instinct|Gaudi|processor|semiconductor|"
         "data center|AI infrastructure|数据中心|人工智能|"
-        "(?:AMD|Intel).*(?:AI|data center|processor|semiconductor|foundry|"
+        r"(?<![A-Za-z0-9])(?:AMD|Intel)(?![A-Za-z0-9]).*(?<![A-Za-z0-9])AI(?![A-Za-z0-9])|"
+        "(?:AMD|Intel).*(?:data center|processor|semiconductor|foundry|"
         "Instinct|EPYC|Gaudi|launch|introduces|unveil)",
         "AI/半导体技术动态",
         3,
@@ -2077,7 +2078,10 @@ def _classify_title(
 
     # Positive catalysts must be stated by the headline/abstract. Matching a
     # positive theme from arbitrary article body text creates false mappings.
-    positive_evidence = _news_evidence_text(clean, summary=summary)
+    summary_text = str(summary or "").strip()
+    if len(summary_text) > 400 or "<" in summary_text or ">" in summary_text:
+        summary_text = ""
+    positive_evidence = _news_evidence_text(clean, summary=summary_text)
     negative_evidence = _news_evidence_text(
         clean,
         summary=summary,
