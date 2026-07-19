@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 
 import pandas as pd
 
 from aqsp.core.time import today_shanghai
+from aqsp.data.trading_calendar import load_optional_trade_calendar, trading_day_lag
 
 
 @dataclass(frozen=True)
@@ -16,10 +17,6 @@ class FreshnessReport:
     status: str
 
 
-def _count_calendar_days(last: date, today: date) -> int:
-    return (today - last).days
-
-
 def _resolve_status(delay_days: int) -> str:
     if delay_days <= 1:
         return "fresh"
@@ -28,25 +25,22 @@ def _resolve_status(delay_days: int) -> str:
     return "critical"
 
 
-def _adjust_for_weekend(last: date, today: date) -> int:
-    raw = _count_calendar_days(last, today)
-    if raw <= 1:
-        return raw
-    if last.weekday() == 4 and today.weekday() == 0:
-        return 1
-    if last.weekday() == 4 and today.weekday() == 1:
-        return 2
-    if last.weekday() == 5 and today.weekday() == 0:
-        return 1
-    if last.weekday() == 5 and today.weekday() == 1:
-        return 2
-    if last.weekday() == 4 and today.weekday() == 2:
-        return 3
-    return raw
-
-
 def check_freshness(frames: dict[str, pd.DataFrame]) -> list[FreshnessReport]:
     today = today_shanghai()
+    latest_dates = [
+        _frame_latest_date(df)
+        for df in frames.values()
+        if not df.empty and "date" in df.columns
+    ]
+    valid_latest_dates = [value for value in latest_dates if value is not None]
+    calendar_df = (
+        load_optional_trade_calendar(
+            min(valid_latest_dates) - timedelta(days=31),
+            today,
+        )
+        if valid_latest_dates
+        else None
+    )
     reports: list[FreshnessReport] = []
     for symbol, df in frames.items():
         if df.empty or "date" not in df.columns:
@@ -59,8 +53,8 @@ def check_freshness(frames: dict[str, pd.DataFrame]) -> list[FreshnessReport]:
                 )
             )
             continue
-        last_ts = pd.to_datetime(df["date"], errors="coerce").dropna().max()
-        if pd.isna(last_ts):
+        last = _frame_latest_date(df)
+        if last is None:
             reports.append(
                 FreshnessReport(
                     symbol=symbol,
@@ -70,17 +64,33 @@ def check_freshness(frames: dict[str, pd.DataFrame]) -> list[FreshnessReport]:
                 )
             )
             continue
-        last = last_ts.date()
-        delay = _adjust_for_weekend(last, today)
+        delay = -1 if last > today else trading_day_lag(
+            last, today, calendar_df=calendar_df
+        )
         reports.append(
             FreshnessReport(
                 symbol=symbol,
                 last_date=last.isoformat(),
                 delay_days=delay,
-                status=_resolve_status(delay),
+                status="critical" if delay < 0 else _resolve_status(delay),
             )
         )
     return reports
+
+
+def _frame_latest_date(df: pd.DataFrame) -> date | None:
+    values: list[date] = []
+    for value in df["date"]:
+        try:
+            parsed = pd.Timestamp(value)
+        except (TypeError, ValueError):
+            continue
+        if pd.isna(parsed):
+            continue
+        if parsed.tzinfo is not None:
+            parsed = parsed.tz_convert("Asia/Shanghai")
+        values.append(parsed.date())
+    return max(values) if values else None
 
 
 def format_freshness_report(reports: list[FreshnessReport]) -> str:

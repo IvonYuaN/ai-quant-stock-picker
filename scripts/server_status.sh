@@ -237,6 +237,9 @@ if [ -f "${PROJECT_ROOT}/scripts/check_release_consistency.py" ]; then
         --active-file scripts/release_task_entrypoint.sh
         --active-file scripts/bt_task.sh
     )
+    if [ ! -d "${PROJECT_ROOT}/.git" ]; then
+        release_args+=(--immutable-release)
+    fi
     if [ -L /opt/aqsp-releases/aqsp-scheduler-current ]; then
         release_args+=(--canonical-link /opt/aqsp-releases/aqsp-scheduler-current)
     fi

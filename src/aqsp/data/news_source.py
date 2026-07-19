@@ -818,7 +818,11 @@ class EastmoneyDomesticNewsSource:
     def fetch_global_news(self) -> list[pd.DataFrame]:
         frames: list[pd.DataFrame] = []
         health: list[NewsSourceHealth] = []
-        with ThreadPoolExecutor(max_workers=len(self._search_keywords)) as executor:
+        # Keep the domestic search fan-out bounded.  This path can run beside
+        # RSS, quote fetching, and the dashboard process on a small server.
+        with ThreadPoolExecutor(
+            max_workers=max(1, min(len(self._search_keywords), 4))
+        ) as executor:
             futures = {
                 executor.submit(
                     _fetch_eastmoney_search_news,
@@ -1394,12 +1398,12 @@ def _normalize_rss_time(value: str) -> str:
     if parsed is not None:
         if parsed.tzinfo is None:
             parsed = parsed.replace(tzinfo=_SHANGHAI_TZ)
-        return parsed.isoformat(timespec="seconds")
+        return parsed.astimezone(_SHANGHAI_TZ).isoformat(timespec="seconds")
     try:
         parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
         if parsed.tzinfo is None:
             parsed = parsed.replace(tzinfo=_SHANGHAI_TZ)
-        return parsed.isoformat(timespec="seconds")
+        return parsed.astimezone(_SHANGHAI_TZ).isoformat(timespec="seconds")
     except ValueError:
         return text
 

@@ -305,6 +305,13 @@ TMP_INTRADAY_LEDGER="${TMP_DIR}/intraday_predictions.jsonl"
 TMP_INTRADAY_REPORT="${TMP_DIR}/intraday_latest.md"
 TMP_INTRADAY_OUTPUT_CSV="${TMP_DIR}/intraday_latest.csv"
 QUALITY_GATE_SUMMARY="${TMP_DIR}/quality_gate.json"
+BATCH_FAILURE_RECORDED="false"
+
+# Install cleanup before resolver/data-source work can fail.
+cleanup_tmp_dir() {
+    rm -rf "$TMP_DIR" 2>/dev/null || true
+}
+trap cleanup_tmp_dir EXIT
 
 replace_intraday_artifact() {
     local src="$1"
@@ -1074,16 +1081,34 @@ AQSP_INTRADAY_OBSERVATION_PY
 promote_provisional_observation_only() {
     # The run may flush the provisional CSV/report before producing a ledger.
     # Keep that fresh evidence visible, but never promote it to recommendation.
-    if [ ! -f "$INTRADAY_OUTPUT_CSV" ] || [ ! -f "$INTRADAY_REPORT" ]; then
+    if [ ! -f "$TMP_INTRADAY_OUTPUT_CSV" ] || [ ! -f "$TMP_INTRADAY_REPORT" ]; then
+        return 1
+    fi
+    # This path is only for a fresh provisional snapshot.  Do not let a
+    # permissive test/runtime stub or a stale source bypass the same freshness
+    # boundary enforced by the quality gate.
+    if ! INTRADAY_QUALITY_STATUS_PATH="$QUALITY_GATE_SUMMARY" "$PYTHON_BIN" - <<'AQSP_PROVISIONAL_STATUS_CHECK'
+import json
+import os
+from pathlib import Path
+
+summary = json.loads(
+    Path(os.environ["INTRADAY_QUALITY_STATUS_PATH"]).read_text(encoding="utf-8")
+)
+raise SystemExit(0 if summary.get("freshness_status") in {"fresh", "watch"} else 1)
+AQSP_PROVISIONAL_STATUS_CHECK
+    then
         return 1
     fi
     if ! "${PYTHON_BIN}" "${PROJECT_ROOT}/scripts/mark_intraday_observation.py" \
-        --csv "$INTRADAY_OUTPUT_CSV" \
-        --report "$INTRADAY_REPORT" \
+        --csv "$TMP_INTRADAY_OUTPUT_CSV" \
+        --report "$TMP_INTRADAY_REPORT" \
         --reason "盘中任务超时或后处理未完成，临时 ledger 不完整" \
         --minimum-mtime "$START_TIME" >>"${RESULT_LOG}" 2>&1; then
         return 1
     fi
+    replace_intraday_artifact "$TMP_INTRADAY_REPORT" "$INTRADAY_REPORT" "盘中 provisional observation-only 报告"
+    replace_intraday_artifact "$TMP_INTRADAY_OUTPUT_CSV" "$INTRADAY_OUTPUT_CSV" "盘中 provisional observation-only CSV"
     OBSERVATION_ONLY="true"
     OBSERVATION_REASON="最新临时 CSV 已晋级 observation-only；盘中 ledger 未完整生成"
     return 0
@@ -1110,6 +1135,19 @@ write_intraday_status() {
     local status="$1"
     local reason="$2"
     local exit_code="$3"
+    if [ "$status" != "running" ] && [ "$status" != "completed" ] && \
+       [ "$INTRADAY_BATCH_ACTIVE" = "true" ] && \
+       [ "$BATCH_COMMITTED" != "true" ] && [ "$BATCH_FAILURE_RECORDED" != "true" ]; then
+        if "${PYTHON_BIN}" "${PROJECT_ROOT}/scripts/prepare_intraday_batch.py" \
+            --cursor "$INTRADAY_CURSOR_PATH" \
+            --fail "${BATCH_FAILURE_REASON:-${status}}" >>"$RESULT_LOG" 2>&1; then
+            BATCH_FAILURE_RECORDED="true"
+            log "盘中批次已记录失败状态，保留 cursor 位置: ${BATCH_FAILURE_REASON:-${status}}"
+        else
+            BATCH_FAILURE_RECORDED="error"
+            log "[WARN] 盘中批次失败状态写入失败，状态标记 cursor_failure_unrecorded"
+        fi
+    fi
     INTRADAY_STATUS_PATH="$INTRADAY_STATUS" \
     INTRADAY_STATUS_VALUE="$status" \
     INTRADAY_STATUS_REASON="$reason" \
@@ -1140,6 +1178,8 @@ write_intraday_status() {
     INTRADAY_STATUS_START_EPOCH="${START_TIME:-}" \
     INTRADAY_STATUS_RUN_TIMED_OUT="${RUN_TIMED_OUT:-false}" \
     INTRADAY_STATUS_RESOURCE_KILLED="${RESOURCE_KILLED:-false}" \
+    INTRADAY_STATUS_EXIT_CLASS="${RUN_EXIT_CLASS:-unknown}" \
+    INTRADAY_STATUS_BATCH_FAILURE_RECORDED="${BATCH_FAILURE_RECORDED:-false}" \
     INTRADAY_STATUS_RUNNER_TIMEOUT="$INTRADAY_RUN_TIMEOUT_SECONDS" \
     "$PYTHON_BIN" - <<'AQSP_INTRADAY_STATUS_PY'
 import csv
@@ -1256,6 +1296,8 @@ payload = {
         "runner_timeout_seconds": int(os.environ.get("INTRADAY_STATUS_RUNNER_TIMEOUT", "0") or "0"),
         "timed_out": truthy(os.environ["INTRADAY_STATUS_RUN_TIMED_OUT"]),
         "resource_killed": truthy(os.environ.get("INTRADAY_STATUS_RESOURCE_KILLED", "false")),
+        "exit_class": os.environ.get("INTRADAY_STATUS_EXIT_CLASS", "unknown"),
+        "batch_failure_recorded": os.environ.get("INTRADAY_STATUS_BATCH_FAILURE_RECORDED", "false"),
         "news_task_timeout_seconds": int(os.environ["INTRADAY_STATUS_NEWS_TASK_TIMEOUT"] or "0"),
         "news_source_timeout_seconds": float(os.environ["INTRADAY_STATUS_NEWS_SOURCE_TIMEOUT"] or "0"),
     },
@@ -1408,13 +1450,14 @@ AQSP_INTRADAY_STATUS_PY
 }
 
 cleanup() {
-    if [ "$INTRADAY_BATCH_ACTIVE" = "true" ] && [ "$BATCH_COMMITTED" != "true" ]; then
+    if [ "$INTRADAY_BATCH_ACTIVE" = "true" ] && [ "$BATCH_COMMITTED" != "true" ] && \
+       [ "$BATCH_FAILURE_RECORDED" != "true" ]; then
         "${PYTHON_BIN}" "${PROJECT_ROOT}/scripts/prepare_intraday_batch.py" \
             --cursor "$INTRADAY_CURSOR_PATH" \
             --fail "${BATCH_FAILURE_REASON:-intraday_run_incomplete}" \
             >>"$RESULT_LOG" 2>&1 || true
     fi
-    rm -rf "$TMP_DIR" 2>/dev/null || true
+    cleanup_tmp_dir
     # The initial EXIT trap is replaced below, so remove the lock metadata
     # explicitly before releasing the directory.
     rm -f "$LOCK_INFO_FILE" 2>/dev/null || true
@@ -1485,8 +1528,11 @@ elif is_truthy "$INTRADAY_NOTIFY"; then
 fi
 
 set +e
-export AQSP_PROVISIONAL_REPORT="${INTRADAY_REPORT}"
-export AQSP_PROVISIONAL_OUTPUT_CSV="${INTRADAY_OUTPUT_CSV}"
+# Keep provisional writes inside the run directory. Promotion is explicit and
+# only happens after freshness/quality checks, so an interrupted atomic write
+# cannot corrupt the previous public CSV/report.
+export AQSP_PROVISIONAL_REPORT="${TMP_INTRADAY_REPORT}"
+export AQSP_PROVISIONAL_OUTPUT_CSV="${TMP_INTRADAY_OUTPUT_CSV}"
 RUN_COMMAND_START_TIME=$(date +%s)
 RUN_CMD=(
     # Without --foreground, GNU timeout owns the command process group and
@@ -1526,6 +1572,7 @@ OBSERVATION_ONLY="false"
 OBSERVATION_REASON=""
 RUN_TIMED_OUT="false"
 RESOURCE_KILLED="false"
+RUN_EXIT_CLASS="completed"
 RUN_ELAPSED_SECONDS=$(( $(date +%s) - RUN_COMMAND_START_TIME ))
 if [ "$RUN_EXIT_CODE" -eq 137 ]; then
     # GNU timeout may return 137 when its kill-after KILL is required.  The
@@ -1534,13 +1581,16 @@ if [ "$RUN_EXIT_CODE" -eq 137 ]; then
     # resource/cgroup incident.
     if [ "$RUN_ELAPSED_SECONDS" -ge $((INTRADAY_RUN_TIMEOUT_SECONDS - 5)) ]; then
         RUN_TIMED_OUT="true"
+        RUN_EXIT_CLASS="timeout_kill_after"
         log "[ERROR] 盘中任务达到 timeout=${INTRADAY_RUN_TIMEOUT_SECONDS}s，终止收敛后退出码为 137；按超时处理"
     else
         RESOURCE_KILLED="true"
+        RUN_EXIT_CLASS="resource_kill_or_oom"
         log "[ERROR] 盘中任务被系统资源限制终止（退出码 137，运行 ${RUN_ELAPSED_SECONDS}s）；不是 timeout"
     fi
 elif [ "$RUN_EXIT_CODE" -eq 124 ] || [ "$RUN_EXIT_CODE" -eq 143 ]; then
     RUN_TIMED_OUT="true"
+    RUN_EXIT_CLASS="timeout_term"
     log "[ERROR] 盘中任务达到 timeout=${INTRADAY_RUN_TIMEOUT_SECONDS}s，子进程组已请求收敛；命令退出码: ${RUN_EXIT_CODE}"
 fi
 if [ "$TEE_EXIT_CODE" -ne 0 ]; then

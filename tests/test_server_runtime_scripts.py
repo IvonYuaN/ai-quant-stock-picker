@@ -204,9 +204,11 @@ def test_server_sync_script_supports_custom_runner() -> None:
     assert "PIPESTATUS[0]" in script
     assert "printf 'exit_code=%s\\n'" in script
     assert (
-        'timeout --foreground "${RUNNER_TIMEOUT_SECONDS}" bash "${RUNNER_PATH}"'
+        'timeout --foreground --signal=TERM --kill-after="${RUNNER_KILL_AFTER_SECONDS}s" "${RUNNER_TIMEOUT_SECONDS}" bash "${RUNNER_PATH}"'
         in script
     )
+    assert 'RUNNER_KILL_AFTER_SECONDS="${AQSP_RUNNER_KILL_AFTER_SECONDS:-15}"' in script
+    assert 'printf \'exit_class=%s\\n\' "$RUNNER_EXIT_CLASS"' in script
     assert "主链路执行超时，被保护性终止" in script
 
 
@@ -385,6 +387,63 @@ def test_server_sync_propagates_runner_failure_and_records_exit_code(
     assert "exit_code=17" in result_text
 
 
+def test_server_sync_classifies_runner_timeout_and_records_execution_evidence(
+    tmp_path: Path,
+) -> None:
+    root, runner = _build_sync_runtime(tmp_path)
+    runner.write_text(
+        "#!/usr/bin/env bash\nsleep 5\n",
+        encoding="utf-8",
+    )
+    runner.chmod(0o755)
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_timeout = fake_bin / "timeout"
+    fake_timeout.write_text(
+        "#!/usr/bin/env bash\n"
+        "while [ \"$#\" -gt 0 ]; do\n"
+        "  case \"$1\" in\n"
+        "    --foreground|--signal=*) shift ;;\n"
+        "    --kill-after=*) shift ;;\n"
+        "    *) break ;;\n"
+        "  esac\n"
+        "done\n"
+        "duration=\"$1\"\n"
+        "shift\n"
+        "\"$@\" & child=\"$!\"\n"
+        "sleep \"$duration\"\n"
+        "kill -TERM \"$child\" 2>/dev/null || true\n"
+        "wait \"$child\" 2>/dev/null || true\n"
+        "exit 124\n",
+        encoding="utf-8",
+    )
+    fake_timeout.chmod(0o755)
+    manifest = _write_overlay_manifest(root, ("runner.sh",))
+    result_path = root / ".state" / "result.env"
+    marker_path = root / "marker.txt"
+
+    result = _run_server_sync(
+        root,
+        runner=runner,
+        result_path=result_path,
+        marker_path=marker_path,
+        extra_env={
+            "AQSP_RUNTIME_OVERLAY_MANIFEST": str(manifest),
+            "AQSP_RUNNER_TIMEOUT_SECONDS": "1",
+            "AQSP_RUNNER_KILL_AFTER_SECONDS": "1",
+            "PATH": f"{fake_bin}:{os.environ['PATH']}",
+        },
+    )
+
+    assert result.returncode == 124, result.stdout + result.stderr
+    result_text = result_path.read_text(encoding="utf-8")
+    assert "status=timeout" in result_text
+    assert "exit_code=124" in result_text
+    assert "exit_class=timeout_term" in result_text
+    assert "timed_out=true" in result_text
+    assert "resource_killed=false" in result_text
+
+
 def test_intraday_refresh_script_uses_isolated_outputs() -> None:
     script = (PROJECT_ROOT / "scripts" / "intraday_refresh.sh").read_text(
         encoding="utf-8"
@@ -516,8 +575,8 @@ def test_intraday_refresh_script_uses_isolated_outputs() -> None:
             'write_intraday_status "running" "盘中刷新运行中；正在解析实时股票池" "0"'
         in script
     )
-    assert 'AQSP_PROVISIONAL_REPORT="${INTRADAY_REPORT}"' in script
-    assert 'AQSP_PROVISIONAL_OUTPUT_CSV="${INTRADAY_OUTPUT_CSV}"' in script
+    assert 'AQSP_PROVISIONAL_REPORT="${TMP_INTRADAY_REPORT}"' in script
+    assert 'AQSP_PROVISIONAL_OUTPUT_CSV="${TMP_INTRADAY_OUTPUT_CSV}"' in script
     assert 'QUALITY_GATE_TIMEOUT_SECONDS="${AQSP_INTRADAY_QUALITY_GATE_TIMEOUT_SECONDS:-30}"' in script
     assert '"${QUALITY_GATE_TIMEOUT_SECONDS}s"' in script
     assert "盘中后处理未完整结束" in script

@@ -238,6 +238,37 @@ def test_release_consistency_rejects_dirty_release(monkeypatch, tmp_path: Path) 
     assert any(item.code == "release_dirty" for item in findings)
 
 
+def test_release_consistency_immutable_release_ignores_remote_and_overlay(
+    monkeypatch, tmp_path: Path
+) -> None:
+    manifest = _manifest(tmp_path)
+    _fake_git(
+        monkeypatch,
+        {
+            ("rev-parse", "HEAD"): (False, "git metadata unavailable"),
+            ("status", "--porcelain=v1", "--untracked-files=all"): (
+                False,
+                "git metadata unavailable",
+            ),
+        },
+    )
+
+    findings = checker.audit(
+        project_root=tmp_path,
+        runtime_root=tmp_path / "runtime",
+        remote="origin",
+        branch="main",
+        canonical_link=None,
+        manifest_path=manifest,
+        overlay_path=tmp_path / "runtime" / "overlay.json",
+        active_files=[],
+        require_overlay=False,
+        immutable_release=True,
+    )
+
+    assert findings == []
+
+
 def test_write_release_manifest_refuses_dirty_git_source(tmp_path: Path) -> None:
     (tmp_path / ".git").mkdir()
     (tmp_path / "tracked.txt").write_text("value\n", encoding="utf-8")

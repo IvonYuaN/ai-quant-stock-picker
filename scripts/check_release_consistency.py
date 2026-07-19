@@ -137,6 +137,7 @@ def audit(
     overlay_path: Path,
     active_files: list[str],
     require_overlay: bool,
+    immutable_release: bool = False,
 ) -> list[Finding]:
     findings: list[Finding] = []
     project_root = project_root.resolve()
@@ -154,14 +155,17 @@ def audit(
         release_commit = _validate_sha(manifest.get("commit"), SHA40, "release commit", findings)
         if manifest.get("schema_version") != 1:
             findings.append(Finding("error", "unsupported_manifest", "release manifest schema_version must be 1"))
-        if str(manifest.get("branch") or "") != branch:
+        if not immutable_release and str(manifest.get("branch") or "") != branch:
             findings.append(Finding("error", "branch_mismatch", f"manifest branch {manifest.get('branch')!r} != expected {branch!r}"))
     has_head, head = _git(project_root, "rev-parse", "HEAD")
     if has_head and release_commit and head.lower() != release_commit:
         findings.append(Finding("error", "release_head_mismatch", f"release HEAD {head} != manifest {release_commit}"))
     has_remote, remote_head = _git(project_root, "rev-parse", "--verify", f"refs/remotes/{remote}/{branch}")
     remote_failure_reported = False
-    if not has_remote and manifest is not None and not (project_root / ".git").exists():
+    if immutable_release:
+        has_remote = True
+        remote_head = release_commit
+    elif not has_remote and manifest is not None and not (project_root / ".git").exists():
         remote_url = str(manifest.get("remote_url") or "").strip()
         if remote_url and remote_url != "unknown":
             has_remote, remote_head = _remote_head(project_root, remote_url, branch)
@@ -178,7 +182,7 @@ def audit(
     status_ok, status = _git(project_root, "status", "--porcelain=v1", "--untracked-files=all")
     if status_ok and status:
         findings.append(Finding("error", "release_dirty", f"release worktree is dirty: {status.replace(chr(10), '; ')}"))
-    if require_overlay or overlay_path.exists():
+    if (require_overlay or overlay_path.exists()) and not immutable_release:
         if release_commit:
             _check_overlay(release_root, overlay_path, release_commit, findings)
     _check_old_entries(release_root, active_files, findings)
@@ -196,6 +200,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--overlay", type=Path)
     parser.add_argument("--active-file", action="append", default=[])
     parser.add_argument("--require-overlay", action="store_true")
+    parser.add_argument(
+        "--immutable-release",
+        action="store_true",
+        help="检查无本地 Git remote 的 immutable release；跳过旧 overlay/远端分支校验",
+    )
     parser.add_argument("--json", action="store_true", dest="as_json")
     args = parser.parse_args(argv)
     project_root = args.project_root.resolve()
@@ -217,6 +226,7 @@ def main(argv: list[str] | None = None) -> int:
         overlay_path=overlay,
         active_files=active_files,
         require_overlay=args.require_overlay,
+        immutable_release=args.immutable_release,
     )
     if args.as_json:
         print(json.dumps([asdict(item) for item in findings], ensure_ascii=False, indent=2))

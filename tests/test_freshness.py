@@ -42,6 +42,22 @@ def test_latest_trade_date() -> None:
     assert latest_trade_date(frames) == date(2026, 5, 21)
 
 
+def test_latest_trade_date_normalizes_utc_timestamp_to_shanghai_day() -> None:
+    frames = {
+        "A": pd.DataFrame({"date": ["2026-07-19T16:30:00Z"]}),
+    }
+
+    assert latest_trade_date(frames) == date(2026, 7, 20)
+
+
+def test_assert_fresh_data_rejects_future_trade_day(monkeypatch) -> None:
+    frames = {"A": _frame_for_day("2026-07-21")}
+    monkeypatch.setattr("aqsp.freshness.today_shanghai", lambda: date(2026, 7, 20))
+
+    with pytest.raises(RuntimeError, match="in the future"):
+        assert_fresh_data(frames, max_lag_days=0)
+
+
 def test_assert_fresh_data_rejects_stale_data(monkeypatch) -> None:
     frames = {"A": _frame_for_day("2026-05-20")}
     monkeypatch.setattr("aqsp.freshness.today_shanghai", lambda: date(2026, 6, 1))

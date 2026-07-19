@@ -50,10 +50,30 @@ def latest_trade_date(frames: dict[str, pd.DataFrame]) -> date | None:
     for frame in frames.values():
         if frame.empty or "date" not in frame.columns:
             continue
-        value = pd.to_datetime(frame["date"], errors="coerce").dropna().max()
-        if pd.notna(value):
-            dates.append(value.date())
+        value = _latest_frame_trade_day(frame)
+        if value is not None:
+            dates.append(value)
     return max(dates) if dates else None
+
+
+def _trade_day_from_value(value: object) -> date | None:
+    """Return a date in Shanghai time from date-like source values."""
+
+    try:
+        parsed = pd.Timestamp(value)
+    except (TypeError, ValueError):
+        return None
+    if pd.isna(parsed):
+        return None
+    if parsed.tzinfo is None:
+        return parsed.date()
+    return parsed.tz_convert(SHANGHAI_TZ).date()
+
+
+def _latest_frame_trade_day(frame: pd.DataFrame) -> date | None:
+    values = (_trade_day_from_value(value) for value in frame["date"])
+    valid = [value for value in values if value is not None]
+    return max(valid) if valid else None
 
 
 def assert_fresh_data(
@@ -72,9 +92,11 @@ def assert_fresh_data(
 
     today = today_shanghai()
     symbol_latest_dates = [
-        pd.to_datetime(frame["date"], errors="coerce").dropna().max().date()
+        latest_symbol_date
         for frame in frames.values()
-        if not frame.empty and "date" in frame.columns
+        if not frame.empty
+        and "date" in frame.columns
+        and (latest_symbol_date := _latest_frame_trade_day(frame)) is not None
     ]
     calendar_df = (
         load_optional_trade_calendar(
@@ -85,24 +107,29 @@ def assert_fresh_data(
         else None
     )
 
+    if latest > today:
+        _raise_freshness(
+            "ALL",
+            "market data timestamp is in the future: "
+            f"latest={latest.isoformat()}, reference={today.isoformat()}",
+        )
+
     lag = trading_day_lag(latest, today, calendar_df=calendar_df)
     if lag > max_lag_days:
         stale_symbols = []
         for symbol, frame in frames.items():
             if frame.empty or "date" not in frame.columns:
                 continue
-            symbol_latest = (
-                pd.to_datetime(frame["date"], errors="coerce").dropna().max()
-            )
-            if pd.isna(symbol_latest):
+            symbol_latest = _latest_frame_trade_day(frame)
+            if symbol_latest is None:
                 continue
             symbol_lag = trading_day_lag(
-                symbol_latest.date(),
+                symbol_latest,
                 today,
                 calendar_df=calendar_df,
             )
             if symbol_lag > max_lag_days:
-                stale_symbols.append(f"{symbol}:{symbol_latest.date().isoformat()}")
+                stale_symbols.append(f"{symbol}:{symbol_latest.isoformat()}")
         _raise_freshness(
             ",".join(stale_symbols) or "ALL",
             "market data is stale: "
@@ -126,10 +153,9 @@ def assert_fresh_data(
                 symbol,
                 f"market data schema missing columns for {symbol}: {missing_text}",
             )
-        value = pd.to_datetime(frame["date"], errors="coerce").dropna().max()
-        if pd.isna(value):
+        symbol_latest = _latest_frame_trade_day(frame)
+        if symbol_latest is None:
             _raise_freshness(symbol, f"no valid trade date for {symbol}")
-        symbol_latest = value.date()
         symbol_lag = trading_day_lag(symbol_latest, today, calendar_df=calendar_df)
         max_symbol_lag = max(max_symbol_lag, symbol_lag)
         if symbol_lag > max_lag_days:

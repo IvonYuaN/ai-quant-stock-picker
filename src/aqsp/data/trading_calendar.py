@@ -66,7 +66,8 @@ def resolve_is_trading_day(
         )
     )
     if runtime_calendar is not None:
-        return is_open_day_in_calendar(runtime_calendar, target)
+        if _calendar_covers(runtime_calendar, target):
+            return is_open_day_in_calendar(runtime_calendar, target)
     return _is_basic_trading_day(target)
 
 
@@ -146,6 +147,17 @@ def resolve_next_trading_day(
     ):
         cursor += timedelta(days=1)
     return cursor
+
+
+def _calendar_covers(calendar_df: pd.DataFrame, target: date) -> bool:
+    """Use a supplied calendar only inside its actual coverage window."""
+
+    if calendar_df.empty or "cal_date" not in calendar_df.columns:
+        return False
+    dates = pd.to_datetime(calendar_df["cal_date"], errors="coerce").dropna()
+    if dates.empty:
+        return False
+    return dates.min().date() <= target <= dates.max().date()
 
 
 def trading_day_lag(

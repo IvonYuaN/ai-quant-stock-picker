@@ -30,8 +30,8 @@ def test_intraday_runtime_contract_uses_configured_benchmark_and_quality_gate() 
     assert 'payload["freshness"]' in script
     assert 'payload["quality_gate"]' in script
     assert "不改写确定性评分，不触发自动下单" in script
-    assert 'export AQSP_PROVISIONAL_REPORT="${INTRADAY_REPORT}"' in script
-    assert 'export AQSP_PROVISIONAL_OUTPUT_CSV="${INTRADAY_OUTPUT_CSV}"' in script
+    assert 'export AQSP_PROVISIONAL_REPORT="${TMP_INTRADAY_REPORT}"' in script
+    assert 'export AQSP_PROVISIONAL_OUTPUT_CSV="${TMP_INTRADAY_OUTPUT_CSV}"' in script
     assert "unset AQSP_PROVISIONAL_REPORT AQSP_PROVISIONAL_OUTPUT_CSV" in script
     assert 'export AQSP_ENABLE_DEBATE="${AQSP_INTRADAY_ENABLE_DEBATE:-false}"' in script
     assert (
@@ -99,7 +99,7 @@ def test_intraday_runtime_contract_uses_configured_benchmark_and_quality_gate() 
     assert '"${BASHPID:-$$}"' in script
     assert "AQSP_INTRADAY_DEBATE_BACKFILL_BACKGROUND:-false" in script
     assert script.index(
-        'export AQSP_PROVISIONAL_REPORT="${INTRADAY_REPORT}"'
+        'export AQSP_PROVISIONAL_REPORT="${TMP_INTRADAY_REPORT}"'
     ) < script.index('if apply_intraday_quality_gate "$TMP_INTRADAY_OUTPUT_CSV"')
 
 
@@ -394,6 +394,7 @@ def test_intraday_refresh_releases_lock_when_run_completes(tmp_path: Path) -> No
     assert second.returncode == 0, second.stdout + second.stderr
     assert "已有盘中刷新任务在运行，跳过" not in second.stdout
     assert not (tmp_path / ".locks" / "intraday-refresh.lock").exists()
+    assert not list((tmp_path / ".tmp").glob("intraday-refresh.*"))
 
 
 def test_intraday_runtime_quality_gate_downgrades_watch_candidate_and_records_state(
@@ -446,12 +447,14 @@ def test_intraday_runtime_quality_gate_downgrades_watch_candidate_and_records_st
     cli_args = json.loads(args_path.read_text(encoding="utf-8"))
     assert cli_args["disable_circuit_breaker"] == "false"
     assert cli_args["benchmark"] == "399001"
-    assert cli_args["provisional_report"] == str(
-        tmp_path / "reports" / "intraday_latest.md"
+    assert cli_args["provisional_report"].startswith(
+        str(tmp_path / ".tmp" / "intraday-refresh.")
     )
-    assert cli_args["provisional_csv"] == str(
-        tmp_path / "reports" / "intraday_latest.csv"
+    assert cli_args["provisional_report"].endswith("/intraday_latest.md")
+    assert cli_args["provisional_csv"].startswith(
+        str(tmp_path / ".tmp" / "intraday-refresh.")
     )
+    assert cli_args["provisional_csv"].endswith("/intraday_latest.csv")
 
     output_csv = tmp_path / "reports" / "intraday_latest.csv"
     with output_csv.open(encoding="utf-8", newline="") as handle:
@@ -923,6 +926,7 @@ def test_intraday_runtime_classifies_kill_after_137_at_deadline_as_timeout(
     )
     assert status["execution"]["timed_out"] is True
     assert status["execution"]["resource_killed"] is False
+    assert status["execution"]["exit_class"] == "timeout_kill_after"
     assert "按超时处理" in result.stdout
 
 
@@ -1027,6 +1031,57 @@ def test_intraday_batch_cursor_is_not_committed_after_137_timeout(
     assert calls[0] == "select"
     assert "fail" in calls
     assert "commit" not in calls
+
+
+def test_intraday_runtime_timeout_records_batch_failure_before_status(
+    tmp_path: Path,
+) -> None:
+    venv_bin = tmp_path / ".venv" / "bin"
+    venv_bin.mkdir(parents=True)
+    utility_bin = tmp_path / "bin"
+    utility_bin.mkdir()
+    _write_timeout_stub(utility_bin / "timeout")
+    args_path = tmp_path / "cli_args.json"
+    calls_path = tmp_path / "prepare.calls"
+    _write_python_stub(venv_bin / "python3", PROJECT_ROOT, args_path)
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "scripts" / "prepare_intraday_batch.py").write_text(
+        "# test stub\n", encoding="utf-8"
+    )
+    env = os.environ.copy()
+    env.update(
+        {
+            "AQSP_PROJECT_ROOT": str(tmp_path),
+            "AQSP_TEST_REPO": str(PROJECT_ROOT),
+            "AQSP_TEST_ARGS": str(args_path),
+            "AQSP_TEST_PREPARE_BATCH": "true",
+            "AQSP_TEST_PREPARE_CALLS": str(calls_path),
+            "AQSP_TEST_CLI_EXIT_CODE": "124",
+            "AQSP_INTRADAY_RUN_TIMEOUT_SECONDS": "1",
+            "AQSP_INTRADAY_REQUIRE_MARKET_HOURS": "false",
+            "AQSP_INTRADAY_DEBATE_BACKFILL": "false",
+            "AQSP_HOME_SNAPSHOT_ENABLED": "false",
+            "PATH": f"{utility_bin}:{os.environ['PATH']}",
+        }
+    )
+    result = subprocess.run(
+        ["bash", str(SCRIPT_PATH)],
+        cwd=PROJECT_ROOT,
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=30,
+    )
+    assert result.returncode == 124, result.stdout + result.stderr
+    calls = calls_path.read_text(encoding="utf-8").splitlines()
+    assert calls[:2] == ["select", "fail"]
+    assert "commit" not in calls
+    status = json.loads(
+        (tmp_path / "data" / "intraday_refresh_status.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert status["execution"]["batch_failure_recorded"] == "true"
 
 
 def test_intraday_runtime_quality_gate_blocks_unknown_freshness(

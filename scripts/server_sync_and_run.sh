@@ -22,11 +22,16 @@ GIT_SYNC_WAIT_SECONDS="${AQSP_GIT_SYNC_WAIT_SECONDS:-180}"
 GIT_LOCK_STALE_MINUTES="${AQSP_GIT_LOCK_STALE_MINUTES:-30}"
 LOCK_STALE_MINUTES="${AQSP_LOCK_STALE_MINUTES:-360}"
 RUNNER_TIMEOUT_SECONDS="${AQSP_RUNNER_TIMEOUT_SECONDS:-0}"
+RUNNER_KILL_AFTER_SECONDS="${AQSP_RUNNER_KILL_AFTER_SECONDS:-15}"
 RUN_RESULT_FILE="${AQSP_SYNC_RESULT_FILE:-}"
 STATE_DIR="${PROJECT_ROOT}/.state"
 DIRTY_STATE_FILE="${STATE_DIR}/server-sync-dirty.env"
 RUNTIME_OVERLAY_MANIFEST="${AQSP_RUNTIME_OVERLAY_MANIFEST:-${STATE_DIR}/runtime-sync-overlay.json}"
 IMMUTABLE_RELEASE="${AQSP_IMMUTABLE_RELEASE:-false}"
+RUNNER_EXIT_CLASS="not_run"
+RUNNER_TIMED_OUT="false"
+RUNNER_RESOURCE_KILLED="false"
+RUNNER_ELAPSED_SECONDS="0"
 
 log() {
     mkdir -p "$LOG_DIR"
@@ -44,6 +49,11 @@ write_result() {
             if [ -n "$exit_code" ]; then
                 printf 'exit_code=%s\n' "$exit_code"
             fi
+            printf 'exit_class=%s\n' "$RUNNER_EXIT_CLASS"
+            printf 'timed_out=%s\n' "$RUNNER_TIMED_OUT"
+            printf 'resource_killed=%s\n' "$RUNNER_RESOURCE_KILLED"
+            printf 'elapsed_seconds=%s\n' "$RUNNER_ELAPSED_SECONDS"
+            printf 'runner_timeout_seconds=%s\n' "$RUNNER_TIMEOUT_SECONDS"
         } >"$RUN_RESULT_FILE"
     fi
 }
@@ -374,10 +384,11 @@ if [ ! -f "${RUNNER_PATH}" ]; then
 fi
 
 log "开始运行任务: ${RUNNER_PATH}"
+RUNNER_START_EPOCH="$(date +%s)"
 if [ "${RUNNER_TIMEOUT_SECONDS}" -gt 0 ] && command -v timeout >/dev/null 2>&1; then
     log "启用主链路超时保护: ${RUNNER_TIMEOUT_SECONDS}s"
     set +e
-    timeout --foreground "${RUNNER_TIMEOUT_SECONDS}" bash "${RUNNER_PATH}" 2>&1 | tee -a "$RUN_LOG"
+    timeout --foreground --signal=TERM --kill-after="${RUNNER_KILL_AFTER_SECONDS}s" "${RUNNER_TIMEOUT_SECONDS}" bash "${RUNNER_PATH}" 2>&1 | tee -a "$RUN_LOG"
     RUNNER_EXIT_CODE=${PIPESTATUS[0]}
     set -e
 elif [ "${RUNNER_TIMEOUT_SECONDS}" -gt 0 ]; then
@@ -393,7 +404,23 @@ else
     set -e
 fi
 
-if [ "${RUNNER_EXIT_CODE}" -eq 124 ]; then
+RUNNER_ELAPSED_SECONDS=$(( $(date +%s) - RUNNER_START_EPOCH ))
+RUNNER_EXIT_CLASS="completed"
+if [ "${RUNNER_EXIT_CODE}" -eq 124 ] || [ "${RUNNER_EXIT_CODE}" -eq 143 ]; then
+    RUNNER_TIMED_OUT="true"
+    RUNNER_EXIT_CLASS="timeout_term"
+elif [ "${RUNNER_EXIT_CODE}" -eq 137 ]; then
+    if [ "${RUNNER_TIMEOUT_SECONDS}" -gt 0 ] && \
+       [ "${RUNNER_ELAPSED_SECONDS}" -ge $((RUNNER_TIMEOUT_SECONDS - 5)) ]; then
+        RUNNER_TIMED_OUT="true"
+        RUNNER_EXIT_CLASS="timeout_kill_after"
+    else
+        RUNNER_RESOURCE_KILLED="true"
+        RUNNER_EXIT_CLASS="resource_kill_or_oom"
+    fi
+fi
+
+if [ "${RUNNER_TIMED_OUT}" = "true" ]; then
     log "主链路执行超时，被保护性终止: ${RUNNER_TIMEOUT_SECONDS}s"
     write_result "timeout" "$RUNNER_EXIT_CODE"
     exit "${RUNNER_EXIT_CODE}"
