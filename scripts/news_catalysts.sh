@@ -387,7 +387,11 @@ fi
 SNAPSHOT_SCRIPT="${PROJECT_ROOT}/scripts/write_home_snapshot.py"
 if [ -f "$SNAPSHOT_SCRIPT" ]; then
     snapshot_date="${archive_date:-$(date +%Y-%m-%d)}"
+    snapshot_output="${AQSP_HOME_SNAPSHOT_PATH:-data/runtime/home_dashboard_snapshot.json}"
+    snapshot_index_output="${AQSP_HOME_SNAPSHOT_INDEX_PATH:-data/runtime/home_dashboard_snapshot_index.json}"
     if ! "$PYTHON_BIN" "$SNAPSHOT_SCRIPT" \
+        --output "$snapshot_output" \
+        --index-output "$snapshot_index_output" \
         --date "$snapshot_date" \
         --task-id news >>"$RESULT_LOG" 2>&1; then
         log "[WARN] 消息已落盘，但首页快照刷新失败: ${snapshot_date}"
