@@ -5,16 +5,98 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
+import ast
 from pathlib import Path
 from typing import Any
 
+from aqsp.models import PickResult
 from aqsp.market_context import (
     build_market_context_artifact,
     market_context_metrics_for_pick,
 )
 from aqsp.core.time import today_shanghai
 from aqsp.news.catalysts import load_catalyst_report_artifact
-from scripts.backfill_intraday_debate import _pick_from_row
+
+
+_TUPLE_FIELDS = {
+    "strategies",
+    "reasons",
+    "risks",
+    "cross_market_summaries",
+    "cross_market_themes",
+    "cross_market_rule_ids",
+    "cross_market_validation_signals",
+    "cross_market_invalidation_signals",
+}
+
+
+def _float_value(row: dict[str, str], key: str, default: float = 0.0) -> float:
+    try:
+        value = str(row.get(key, "") or "").strip()
+        return default if not value else float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _text_tuple(value: object) -> tuple[str, ...]:
+    if isinstance(value, (list, tuple, set)):
+        return tuple(str(item).strip() for item in value if str(item).strip())
+    text = str(value or "").strip()
+    if not text:
+        return ()
+    if text[:1] in "[(":
+        for parser in (json.loads, ast.literal_eval):
+            try:
+                return _text_tuple(parser(text))
+            except (TypeError, ValueError, SyntaxError, json.JSONDecodeError):
+                continue
+    for separator in ("；", ";", "|"):
+        if separator in text:
+            return tuple(part.strip() for part in text.split(separator) if part.strip())
+    return (text,)
+
+
+def _pick_from_row(row: dict[str, str]) -> PickResult:
+    close = _float_value(row, "close")
+    excluded = {
+        "symbol",
+        "name",
+        "date",
+        "close",
+        "score",
+        "rating",
+        "entry_type",
+        "ideal_buy",
+        "stop_loss",
+        "take_profit",
+        "position",
+        "strategies",
+        "reasons",
+        "risks",
+    }
+    metrics: dict[str, Any] = {}
+    for key, value in row.items():
+        if not key or key in excluded or value in ("", None):
+            continue
+        metrics[key] = _text_tuple(value) if key in _TUPLE_FIELDS else value
+    return PickResult(
+        symbol=str(row.get("symbol", "") or "").zfill(6),
+        name=str(row.get("name", "") or ""),
+        date=str(row.get("date", "") or ""),
+        close=close,
+        score=_float_value(row, "score"),
+        rating=str(row.get("rating", "") or "watch"),
+        entry_type=str(row.get("entry_type", "") or "intraday_observation"),
+        ideal_buy=_float_value(row, "ideal_buy", close),
+        stop_loss=_float_value(row, "stop_loss", close),
+        take_profit=_float_value(row, "take_profit", close),
+        position=str(row.get("position", "") or ""),
+        strategies=_text_tuple(row.get("strategies", "")),
+        reasons=_text_tuple(row.get("reasons", "")),
+        risks=_text_tuple(row.get("risks", "")),
+        metrics=metrics,
+    )
 
 
 def merge_intraday_news(
