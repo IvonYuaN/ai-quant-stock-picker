@@ -158,12 +158,18 @@ def _normalize_catalyst_report_for_snapshot(
                 source_fetched_at=_normalize_timestamp(event.source_fetched_at),
             )
         )
-    return (
-        replace(
-            report,
-            generated_at=_normalize_timestamp(report.generated_at),
-            events=tuple(current_events),
+    normalized_report = replace(
+        report,
+        generated_at=_normalize_timestamp(report.generated_at),
+        events=tuple(current_events),
+        event_status=(
+            "stale_only"
+            if historical_count and not current_events
+            else report.event_status
         ),
+    )
+    return (
+        normalized_report,
         historical_count,
         invalid_count,
     )
