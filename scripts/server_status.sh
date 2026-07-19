@@ -263,7 +263,7 @@ fi
 
 print_section "BEFORE LIVE"
 if [ -x "$RUNTIME_PYTHON" ] && [ -f "${PROJECT_ROOT}/scripts/check_before_live.py" ]; then
-    run_critical_check "check_before_live" run_project_check "$RUNTIME_PYTHON" scripts/check_before_live.py
+    run_critical_check "check_before_live" run_project_check "$RUNTIME_PYTHON" scripts/check_before_live.py --root "$RUNTIME_ROOT"
 else
     echo "check_before_live unavailable"
     record_critical_status "check_before_live unavailable" 127
