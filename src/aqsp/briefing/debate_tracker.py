@@ -795,6 +795,18 @@ class DebatePerformanceTracker:
         self._agent_latest_record_at: dict[str, datetime] = {}
         self._load_cache()
 
+    def set_task_scope(self, task_id: str | None) -> None:
+        """切换任务范围并重新加载该范围的历史表现。"""
+        scoped_task_id = _clean_text(task_id)
+        if scoped_task_id == self.task_id:
+            return
+        self.task_id = scoped_task_id
+        self._performance_cache.clear()
+        self._record_keys.clear()
+        self._agent_signal_days.clear()
+        self._agent_latest_record_at.clear()
+        self._load_cache()
+
     def _load_cache(self) -> None:
         """从文件加载历史表现数据"""
         if not self.storage_path.exists():

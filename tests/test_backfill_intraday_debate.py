@@ -82,11 +82,20 @@ def _patch_runtime(
     )
 
     class _Coordinator:
-        def run_debate(self, pick, frame, signal_date, *, market_context_lines=()):
+        def run_debate(
+            self,
+            pick,
+            frame,
+            signal_date,
+            *,
+            market_context_lines=(),
+            task_id=None,
+        ):
             if pick.symbol == fail_symbol:
                 raise RuntimeError("simulated candidate failure")
             if captured is not None:
                 captured["market_context_lines"] = tuple(market_context_lines)
+                captured["task_id"] = task_id
             return SimpleNamespace(
                 debate_id=f"debate-{pick.symbol}",
                 symbol=pick.symbol,
@@ -345,7 +354,15 @@ def test_backfill_retries_candidate_and_persists_attempt_evidence(
     calls = {"000001": 0}
 
     class _RetryCoordinator:
-        def run_debate(self, pick, frame, signal_date, *, market_context_lines=()):
+        def run_debate(
+            self,
+            pick,
+            frame,
+            signal_date,
+            *,
+            market_context_lines=(),
+            task_id=None,
+        ):
             calls[pick.symbol] += 1
             if calls[pick.symbol] == 1:
                 raise TimeoutError("temporary provider timeout")
@@ -502,6 +519,7 @@ def test_backfill_second_round_records_new_evidence_and_is_complete(
     assert row["debate_reconsideration"]["round_num"] == 2
     assert "synthetic_context" in row["debate_reconsideration"]["new_evidence"][0]
     assert any("第2轮复议新证据" in line for line in captured["market_context_lines"])
+    assert captured["task_id"] == "intraday"
 
 
 def test_debate_frame_prefers_complete_runtime_ohlcv_over_synthetic_context() -> None:

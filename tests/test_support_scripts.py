@@ -153,8 +153,17 @@ def test_backfill_intraday_debate_writes_current_task_records(
     )
 
     class _Coordinator:
-        def run_debate(self, pick, df, signal_date, *, market_context_lines=()):
+        def run_debate(
+            self,
+            pick,
+            df,
+            signal_date,
+            *,
+            market_context_lines=(),
+            task_id=None,
+        ):
             captured["debate_context"] = tuple(market_context_lines)
+            captured["task_id"] = task_id
             return SimpleNamespace(
                 debate_id="debate-1",
                 symbol=pick.symbol,

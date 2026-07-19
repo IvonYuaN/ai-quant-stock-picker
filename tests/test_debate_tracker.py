@@ -388,6 +388,39 @@ def test_debate_evidence_provenance_keeps_scalar_event_and_cross_market_evidence
     assert pending == ("确认: A股龙头同步放量",)
 
 
+def test_debate_evidence_provenance_records_backfill_message_prefixes_and_transmission() -> None:
+    pick = _make_pick(
+        score=72.0,
+        metrics={
+            "news_catalyst_lead": "交易所公告确认订单落地",
+            "cross_market_transmission_path": ("海外事件", "A股设备链"),
+            "cross_market_supporting_evidence": "海外同业同步上调指引",
+        },
+    )
+    result = AShareDebateCoordinator(
+        max_rounds=2,
+        roles=(AgentRole.BULL, AgentRole.BEAR, AgentRole.CROSS_MARKET),
+    ).run_debate(
+        pick,
+        pd.DataFrame({"close": [100.0, 101.0]}),
+        signal_date=pick.date,
+        task_id="intraday",
+        market_context_lines=(
+            "消息催化: 交易所公告确认订单落地",
+            "消息支持: 订单已落地",
+            "消息压力: 下游扩散仍待确认",
+            "传导推演[设备链]: 海外事件 -> A股设备链",
+        ),
+    )
+
+    assert result.real_message_evidence
+    assert any("交易所公告确认订单落地" in item for item in result.real_message_evidence)
+    assert result.rule_transmission_evidence
+    assert any("海外事件" in item for item in result.rule_transmission_evidence)
+    assert result.cross_market_evidence == ("海外同业同步上调指引",)
+    assert result.task_id == "intraday"
+
+
 def test_debate_coordinator_blocks_empty_market_before_any_round_is_generated(
     monkeypatch,
 ) -> None:

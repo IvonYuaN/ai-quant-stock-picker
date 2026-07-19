@@ -1656,9 +1656,16 @@ class AShareDebateCoordinator:
         market_context_lines: tuple[str, ...] = (),
         runtime_blocked: bool = False,
         runtime_blocker: str = "",
+        task_id: str | None = None,
     ) -> DebateResult:
         """运行完整辩论流程"""
         from aqsp.core.time import now_shanghai
+
+        if task_id is not None:
+            scoped_task_id = str(task_id or "").strip()
+            if scoped_task_id != self.task_id:
+                self.task_id = scoped_task_id
+                self.tracker.set_task_scope(scoped_task_id or None)
 
         result = DebateResult(
             debate_id=uuid4().hex,
@@ -2809,7 +2816,15 @@ def _is_non_evidence_text(value: object) -> bool:
 
 def _message_evidence_from_context_line(value: object) -> str:
     text = str(value or "").strip()
-    for prefix in ("候选消息:", "个股催化:", "全局雷达:", "消息结果:"):
+    for prefix in (
+        "候选消息:",
+        "个股催化:",
+        "消息催化:",
+        "消息支持:",
+        "消息压力:",
+        "全局雷达:",
+        "消息结果:",
+    ):
         if text.startswith(prefix):
             message = text[len(prefix) :].strip()
             return "" if _is_non_evidence_text(message) else message

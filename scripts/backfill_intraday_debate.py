@@ -742,6 +742,7 @@ def _run_candidate_debate(
         frame,
         signal_date=pick.date or today,
         market_context_lines=debate_context_lines,
+        task_id=task_id,
     )
     payload = serialize_debate_result(result)
     payload.setdefault("market_context_lines", list(market_context_lines))
