@@ -83,6 +83,22 @@ def test_dashboard_data_provider_home_status_distinguishes_live_watch_and_blocke
     assert blocked.tone == "blocked"
 
 
+def test_dashboard_data_provider_ignores_cooldown_on_release_date(tmp_path: Path) -> None:
+    provider = DashboardDataProvider(
+        ledger_path=str(tmp_path / "ledger.jsonl"),
+        paper_ledger_path=str(tmp_path / "paper.jsonl"),
+        logs_path=str(tmp_path / "logs"),
+        reports_dir=str(tmp_path / "reports"),
+    )
+
+    assert provider._active_cooldown_until(
+        {"cooldown_until": "2026-07-19"}, evaluated_date="2026-07-18"
+    ) == "2026-07-19"
+    assert provider._active_cooldown_until(
+        {"cooldown_until": "2026-07-19"}, evaluated_date="2026-07-19"
+    ) == ""
+
+
 def test_dashboard_data_provider_reads_real_runtime_files(
     monkeypatch, tmp_path: Path
 ) -> None:

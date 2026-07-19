@@ -1593,6 +1593,10 @@ class DashboardDataProvider:
             handoff_progress = self._coldstart_handoff_progress(coldstart_handoff)
             handoff_line = self._coldstart_handoff_line_from_state(coldstart_handoff)
             risk_state = self._read_runtime_risk_state()
+            cooldown_until = self._active_cooldown_until(
+                risk_state,
+                evaluated_date=selected_date or today_shanghai().isoformat(),
+            )
             gate_blocker_line = self._runtime_gate_blocker_line(selected_date)
             progress = ""
             if coldstart_run is not None:
@@ -1602,7 +1606,7 @@ class DashboardDataProvider:
             if not progress:
                 progress = handoff_progress
             if not progress and (
-                gate_blocker_line or str(risk_state.get("cooldown_until") or "").strip()
+                gate_blocker_line or cooldown_until
             ):
                 progress = self._coldstart_progress_from_ledger()
             coldstart_ready = self._coldstart_progress_ready(progress)
@@ -1618,13 +1622,13 @@ class DashboardDataProvider:
             elif display_override and run:
                 conclusion = "研究展示模式：当前运行结果已落盘，风险单独展示"
             elif (status == "blocked_by_circuit_breaker" or triggered) and (
-                coldstart_ready and str(risk_state.get("cooldown_until") or "").strip()
+                coldstart_ready and cooldown_until
             ):
                 conclusion = "冷启动样本已达标，等待组合保护冷却"
             elif status == "blocked_by_circuit_breaker" or triggered:
                 conclusion = "组合保护生效，暂停新增纸面复核"
             elif (
-                coldstart_ready and str(risk_state.get("cooldown_until") or "").strip()
+                coldstart_ready and cooldown_until
             ):
                 conclusion = "冷启动样本已达标，等待组合保护冷却"
             elif coldstart_ready:
@@ -1690,7 +1694,7 @@ class DashboardDataProvider:
                     else str(run.get("run_data_lag_days"))
                 ),
                 risk_reason=normalize_research_tone(risk_reason),
-                cooldown_until=str(risk_state.get("cooldown_until") or "").strip(),
+                cooldown_until=cooldown_until,
                 coldstart_progress=progress,
                 gate_blocker_line=gate_blocker_line,
                 coldstart_handoff_line=handoff_line,
@@ -1827,6 +1831,22 @@ class DashboardDataProvider:
             return {}
 
         return self._cache_value("runtime_risk_state", "all", _load)
+
+    @staticmethod
+    def _active_cooldown_until(
+        risk_state: dict[str, Any], *, evaluated_date: str
+    ) -> str:
+        """Return a cooldown only while its calendar release date is pending."""
+        raw = str(risk_state.get("cooldown_until") or "").strip()
+        if not raw:
+            return ""
+        try:
+            release_date = date.fromisoformat(raw[:10])
+            current_date = date.fromisoformat(evaluated_date[:10])
+        except ValueError:
+            logger.warning("忽略无效组合保护解除日: %s", raw)
+            return ""
+        return raw if current_date < release_date else ""
 
     def _read_coldstart_handoff_state(self) -> dict[str, Any]:
         return self._read_runtime_json_state(
