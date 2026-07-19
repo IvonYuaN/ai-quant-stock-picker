@@ -2779,7 +2779,8 @@ def test_run_scheduled_skips_formal_ledger_writes_when_circuit_breaker_triggers(
         "_compute_real_pnl",
         lambda *_args, **_kwargs: order.append("pnl") or (-4.0, 0.0, 0.0),
     )
-    monkeypatch.setattr(cli_mod, "_count_independent_signal_days", lambda *_, **__: 35)
+    # Before cold-start completion, the portfolio breaker still blocks the main chain.
+    monkeypatch.setattr(cli_mod, "_count_independent_signal_days", lambda *_, **__: 0)
     monkeypatch.setattr(cli_mod, "_detect_runtime_regime", lambda *_, **__: "")
     monkeypatch.setattr("aqsp.data.anomaly.detect_anomalies", lambda *_, **__: [])
     monkeypatch.setattr("aqsp.data.freshness.check_freshness", lambda *_, **__: [])

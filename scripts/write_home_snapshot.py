@@ -1202,8 +1202,10 @@ def _recommendation_gate(
         evaluated_at=evaluated_at
     )
     source_status = str(getattr(source, "status", "") or "").strip()
+    # Risk cooldown limits paper-portfolio actions, not quote freshness.
+    # Treating it as stale data hides otherwise valid short-term candidates.
     freshness_ok = (
-        source_status not in {"", "blocked_by_circuit_breaker", "failed", "stale"}
+        source_status not in {"", "failed", "stale"}
         and int(getattr(source, "lag_days", 999) or 999) <= 0
         and message_status not in {"来源失败", "超时", "失败"}
     )

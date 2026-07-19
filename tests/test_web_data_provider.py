@@ -532,7 +532,7 @@ def test_dashboard_data_provider_runtime_overview_backfills_coldstart_progress_f
 
     assert overview.coldstart_progress == "30/30"
     assert overview.gate_blocker_line == "双门 gate: DSR 未过门 / PBO 未过门"
-    assert overview.conclusion == "冷启动样本已达标；组合验证状态单独展示，候选仍可研究"
+    assert overview.conclusion == "冷启动样本已达标；候选研究继续，组合保护单独展示"
 
 
 def test_dashboard_data_provider_runtime_overview_uses_coldstart_handoff_state(
@@ -736,7 +736,7 @@ def test_dashboard_data_provider_runtime_fallback_digest_uses_run_event_without_
 
     assert provider.same_day_task_rows("2026-07-07") == ()
     assert provider.runtime_fallback_digest_lines("2026-07-07") == (
-        "结论: 组合保护生效，暂停新增纸面复核",
+        "结论: 组合保护生效，候选研究等待新鲜数据",
         "运行状态: 任务 coldstart / 日期 2026-07-07",
         "数据: 当前实际源 sqlite_db 只适合历史验证，盘中短线不可用（live_short=avoid） / 数据日 2026-07-07 / 延迟 0 天",
         "风险/阻塞: 组合保护冷却期中，至 2026-07-12 解除",
@@ -774,7 +774,7 @@ def test_dashboard_data_provider_runtime_fallback_digest_uses_run_event_without_
         encoding="utf-8",
     )
     overview = provider.runtime_overview("2026-07-07")
-    assert overview.conclusion == "组合保护生效，暂停新增纸面复核"
+    assert overview.conclusion == "组合保护生效，候选研究等待新鲜数据"
     assert overview.task_id == "coldstart"
     assert overview.effective_source == "sqlite_db"
     assert (

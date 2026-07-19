@@ -4419,6 +4419,14 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
     cold_start_days = _count_independent_signal_days(formal_ledger_path)
     cold_start_min_days = _cold_start_min_days()
     is_cold_start = cold_start_days < cold_start_min_days
+    allow_research_during_protection = (
+        _allow_observation_during_circuit_breaker(task_id)
+        or not is_cold_start
+    )
+    persist_research_outputs = (
+        not status.triggered
+        or not _is_high_frequency_task(normalized_task_id)
+    )
 
     run_metadata_base = RunMetadata(
         requested_source=args.source,
@@ -4450,7 +4458,7 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
         intraday_coverage_status=intraday_coverage_status,
         intraday_missing_symbols=intraday_missing_symbols,
     )
-    if status.triggered and not _allow_observation_during_circuit_breaker(task_id):
+    if status.triggered and not allow_research_during_protection:
         return _handle_circuit_breaker_block(
             args=args,
             status=status,
@@ -4684,7 +4692,7 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
             market_context_overview = market_context.cross_market_overview
             market_context_lines = market_context_lines + market_context.summary_lines
 
-    if picks:
+    if picks and persist_research_outputs:
         picks = _annotate_cross_market_context(
             picks,
             market_context=market_context,
@@ -5076,7 +5084,7 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
             print("排序结果已生成")
 
     # 保存选股快照并在 ledger 写入前补齐候选状态，确保 report / ledger / paper 三端一致。
-    if picks and not status.triggered:
+    if picks and persist_research_outputs:
         from aqsp.portfolio.snapshot import (
             save_snapshot,
             compare_snapshots,
@@ -5094,7 +5102,7 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
         if diff is not None and diff.has_changes:
             print(format_snapshot_diff(diff))
     elif picks and status.triggered:
-        print("🛡️ 组合保护已触发，跳过正式候选快照写入")
+        print("🛡️ 高频任务处于组合保护，保留内存观察结果，不写入正式快照")
 
     if picks:
         picks = _annotate_candidate_status(
@@ -5113,7 +5121,7 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
             },
         )
 
-    if status.triggered:
+    if status.triggered and not persist_research_outputs:
         print(f"🛡️ 组合保护已触发，跳过正式信号 ledger 写入: {status.reason}")
         append_run_event(
             args.ledger,
@@ -5197,7 +5205,9 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
             summary_lines.append(f"🛡️ 当前处于组合保护: {status.reason}")
         else:
             summary_lines.append(
-                f"🛡️ **组合保护已触发**: {status.reason}，暂停新增纸面复核"
+                f"🛡️ **组合保护已触发**: {status.reason}，候选研究继续，组合动作受限"
+                if allow_research_during_protection
+                else f"🛡️ **组合保护已触发**: {status.reason}，暂停新增纸面复核"
             )
     else:
         summary_lines.append(_build_execution_summary_line(tradable, portfolio_summary))
@@ -5236,9 +5246,9 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
         )
     if status.triggered:
         markdown += f"\n\n## 组合保护\n- ⚠️ 熔断触发: {status.reason}\n" + (
-            "- 当前不新增纸面复核\n"
-            if compact_report
-            else "- 本期信号仅供参考，不建议新建仓位\n"
+            "- 候选研究已继续落盘；组合动作仍受限\n"
+            if allow_research_during_protection
+            else "- 当前不新增纸面复核\n"
         )
     if validation is not None and not compact_report:
         validation_text = "\n\n## 策略自检\n"
@@ -5443,9 +5453,7 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
         ),
         notification_kind=f"daily:{latest.isoformat()}",
     )
-    if status.triggered and not _allow_observation_during_circuit_breaker(
-        normalized_task_id
-    ):
+    if status.triggered and not allow_research_during_protection:
         return 2
     return 0
 
