@@ -73,6 +73,28 @@ def _validate_sha(value: object, pattern: re.Pattern[str], label: str, findings:
     return text
 
 
+def _validate_manifest_identity(
+    manifest: dict[str, object], release_root: Path, findings: list[Finding]
+) -> None:
+    declared_root = str(manifest.get("release_root") or "").strip()
+    if declared_root and Path(declared_root).resolve() != release_root:
+        findings.append(
+            Finding(
+                "error",
+                "manifest_root_mismatch",
+                f"manifest release_root {declared_root!r} != checked release {release_root}",
+            )
+        )
+    file_count = manifest.get("file_count")
+    if file_count is not None and (
+        not isinstance(file_count, int) or isinstance(file_count, bool) or file_count < 0
+    ):
+        findings.append(Finding("error", "invalid_file_count", "manifest file_count must be a non-negative integer"))
+    digest = manifest.get("content_digest")
+    if digest not in (None, "unverified") and not SHA64.fullmatch(str(digest).lower()):
+        findings.append(Finding("error", "invalid_content_digest", "manifest content_digest is not a SHA-256 digest"))
+
+
 def _check_overlay(
     release_root: Path,
     overlay_path: Path,
@@ -152,6 +174,7 @@ def audit(
     manifest = _read_json(manifest_path, "release manifest", findings)
     release_commit = ""
     if manifest is not None:
+        _validate_manifest_identity(manifest, release_root, findings)
         release_commit = _validate_sha(manifest.get("commit"), SHA40, "release commit", findings)
         if manifest.get("schema_version") != 1:
             findings.append(Finding("error", "unsupported_manifest", "release manifest schema_version must be 1"))

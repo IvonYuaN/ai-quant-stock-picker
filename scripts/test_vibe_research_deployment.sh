@@ -70,6 +70,14 @@ rg -q 'AQSP_RESEARCH_SURFACE_SNAPSHOT' "${SYSTEMD_DIR}/aqsp-vibe-research.env.ex
 rg -q -- '--skip-snapshot' "${PROJECT_ROOT}/scripts/start_vibe_research.sh"
 rg -q 'start_vibe_research.sh' "${PROJECT_ROOT}/scripts/start_dashboard.sh"
 ! rg -q 'proxy_pass http://127.0.0.1:8501' "${PROJECT_ROOT}/deploy/nginx/aqsp-dashboard.conf" "${PROJECT_ROOT}/deploy/nginx/vibe-research-mainline.conf"
+for nginx_config in \
+    "${PROJECT_ROOT}/deploy/nginx/aqsp-dashboard.conf" \
+    "${PROJECT_ROOT}/deploy/nginx/vibe-research-mainline.conf"; do
+    rg -q 'location /' "$nginx_config"
+    rg -q 'proxy_pass http://127.0.0.1:5899' "$nginx_config"
+    rg -q 'location \^~ /api/' "$nginx_config"
+    rg -q 'proxy_pass http://127.0.0.1:8900' "$nginx_config"
+done
 rg -q -- '--allow-stale-snapshot' "${SYSTEMD_DIR}/aqsp-vibe-research-api.service"
 rg -q 'AQSP_VIBE_USER|AQSP_VIBE_VENV_DIR|python3 -m venv' \
     "${PROJECT_ROOT}/scripts/install_vibe_research_systemd.sh"

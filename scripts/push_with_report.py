@@ -5,12 +5,32 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 from pathlib import Path
 
 
+COMMAND_TIMEOUT_SECONDS = 30
+
+
 def _run(root: Path, command: list[str]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(command, cwd=root, capture_output=True, text=True, check=False)
+    timeout = float(os.environ.get("AQSP_GIT_COMMAND_TIMEOUT_SECONDS", COMMAND_TIMEOUT_SECONDS))
+    try:
+        return subprocess.run(
+            command,
+            cwd=root,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as exc:
+        output = " ".join(
+            part.decode(errors="replace") if isinstance(part, bytes) else str(part)
+            for part in (exc.stdout, exc.stderr)
+            if part
+        )
+        return subprocess.CompletedProcess(command, 124, "", f"command timed out after {timeout:g}s: {output}".strip())
 
 
 def push(
@@ -44,7 +64,9 @@ def push(
     result = _run(root, command)
     output = "\n".join(part.strip() for part in (result.stdout, result.stderr) if part.strip())
     payload = {
-        "status": "pushed" if result.returncode == 0 else "failed",
+        "status": ("dry_run_passed" if dry_run else "pushed")
+        if result.returncode == 0
+        else "failed",
         "remote": remote,
         "branch": branch,
         "commit": commit,
@@ -81,13 +103,31 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     root = args.root.resolve()
     if not args.skip_preflight:
-        preflight = subprocess.run(
-            ["python3", "-m", "scripts.preflight_upload"],
-            cwd=root,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        try:
+            preflight = subprocess.run(
+                ["python3", "-m", "scripts.preflight_upload"],
+                cwd=root,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=float(
+                    os.environ.get(
+                        "AQSP_GIT_COMMAND_TIMEOUT_SECONDS", COMMAND_TIMEOUT_SECONDS
+                    )
+                ),
+            )
+        except subprocess.TimeoutExpired as exc:
+            output = " ".join(
+                part.decode(errors="replace") if isinstance(part, bytes) else str(part)
+                for part in (exc.stdout, exc.stderr)
+                if part
+            )
+            preflight = subprocess.CompletedProcess(
+                ["python3", "-m", "scripts.preflight_upload"],
+                124,
+                "",
+                f"preflight timed out after {COMMAND_TIMEOUT_SECONDS:g}s: {output}".strip(),
+            )
         if preflight.returncode != 0:
             output = "\n".join(
                 part.strip() for part in (preflight.stdout, preflight.stderr) if part.strip()
