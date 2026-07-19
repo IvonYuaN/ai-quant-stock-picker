@@ -57,6 +57,7 @@ echo "PASS template rendering: isolated user, venv and PYTHONPATH"
 rg -q 'port 8900|--port 8900' "${SYSTEMD_DIR}/aqsp-vibe-research-api.service"
 rg -q 'port 5899|--port 5899' "${SYSTEMD_DIR}/aqsp-vibe-research-preview.service"
 rg -q 'AQSP_RESEARCH_SURFACE_SNAPSHOT' "${SYSTEMD_DIR}/aqsp-vibe-research.env.example"
+rg -q -- '--allow-stale-snapshot' "${SYSTEMD_DIR}/aqsp-vibe-research-api.service"
 rg -q 'AQSP_VIBE_USER|AQSP_VIBE_VENV_DIR|python3 -m venv' \
     "${PROJECT_ROOT}/scripts/install_vibe_research_systemd.sh"
 rg -q 'pip install -e .*\[api\]' "${PROJECT_ROOT}/scripts/install_vibe_research_systemd.sh"

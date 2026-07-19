@@ -8,6 +8,7 @@ ENV_FILE=""
 PREFLIGHT_ONLY="false"
 PORT_GUARD="false"
 SKIP_SNAPSHOT="false"
+ALLOW_STALE_SNAPSHOT="false"
 SYSTEMD_UNIT="${AQSP_VIBE_SYSTEMD_TARGET:-aqsp-vibe-research.target}"
 API_URL=""
 FRONTEND_URL=""
@@ -21,6 +22,7 @@ usage() {
   --preflight-only      只检查依赖、快照和构建产物，不请求 HTTP
   --port-guard          预检时拒绝已被占用的 API/前端端口
   --skip-snapshot       健康检查时不要求 AQSP 快照
+  --allow-stale-snapshot 允许服务在快照过期时启动，但保留过期状态
   --api-url URL         API 地址，默认 http://127.0.0.1:8900
   --frontend-url URL    前端地址，默认 http://127.0.0.1:5899
   --systemd-unit NAME   同时检查 systemd 单元状态
@@ -34,6 +36,7 @@ while (($# > 0)); do
         --preflight-only) PREFLIGHT_ONLY="true" ;;
         --port-guard) PORT_GUARD="true" ;;
         --skip-snapshot) SKIP_SNAPSHOT="true" ;;
+        --allow-stale-snapshot) ALLOW_STALE_SNAPSHOT="true" ;;
         --api-url) API_URL="${2:?缺少 --api-url 参数}"; shift ;;
         --frontend-url) FRONTEND_URL="${2:?缺少 --frontend-url 参数}"; shift ;;
         --systemd-unit) SYSTEMD_UNIT="${2:?缺少 --systemd-unit 参数}"; shift ;;
@@ -101,10 +104,11 @@ check_snapshot() {
     local snapshot_file
     snapshot_file="$(resolve_path "$SNAPSHOT_PATH")"
     [[ -f "$snapshot_file" && -r "$snapshot_file" ]] || fail "AQSP 快照不可读: ${snapshot_file}"
-    "$PYTHON_BIN" - "$snapshot_file" <<'PY'
+    AQSP_ALLOW_STALE_SNAPSHOT="$ALLOW_STALE_SNAPSHOT" "$PYTHON_BIN" - "$snapshot_file" <<'PY'
 from datetime import date
 import json
 import math
+import os
 import sys
 import time
 from datetime import datetime
@@ -175,7 +179,10 @@ stale_after = timestamp(payload["stale_after"], "stale_after")
 if stale_after < generated_at:
     fail("stale_after 不得早于 generated_at")
 if stale_after <= time.time():
-    fail("snapshot 已过期")
+    if os.environ.get("AQSP_ALLOW_STALE_SNAPSHOT") == "true":
+        print("WARN snapshot 已过期，服务保留只读 stale 状态", file=sys.stderr)
+    else:
+        fail("snapshot 已过期")
 
 selected_date = text(payload["selected_date"], "selected_date")
 try:
