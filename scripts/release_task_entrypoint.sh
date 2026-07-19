@@ -20,6 +20,7 @@ runtime_path() {
 }
 
 export AQSP_PROJECT_ROOT="$RELEASE_ROOT"
+export AQSP_RUNTIME_ROOT="$RUNTIME_ROOT"
 export AQSP_IMMUTABLE_RELEASE="${AQSP_IMMUTABLE_RELEASE:-true}"
 export AQSP_RUNTIME_VENV_DIR="${AQSP_RUNTIME_VENV_DIR:-${RELEASE_ROOT}/.venv-vibe-research}"
 export AQSP_LEDGER="$(runtime_path "${AQSP_LEDGER:-data/predictions.jsonl}")"

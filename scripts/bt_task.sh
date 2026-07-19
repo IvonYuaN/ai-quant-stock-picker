@@ -431,7 +431,7 @@ run_synced_task_with_result() {
     return 1
 }
 
-if [ ! -d "${PROJECT_ROOT}/.git" ]; then
+if [ "${AQSP_IMMUTABLE_RELEASE:-false}" != "true" ] && [ ! -d "${PROJECT_ROOT}/.git" ]; then
     echo "Git repo not found: ${PROJECT_ROOT}" >&2
     exit 1
 fi

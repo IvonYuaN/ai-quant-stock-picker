@@ -8,6 +8,7 @@
 set -euo pipefail
 
 PROJECT_ROOT="${AQSP_PROJECT_ROOT:-/opt/aqsp}"
+RUNTIME_ROOT="${AQSP_RUNTIME_ROOT:-/opt/aqsp}"
 LOCK_STALE_MINUTES="${AQSP_LOCK_STALE_MINUTES:-360}"
 RUNNER_TIMEOUT_SECONDS="${AQSP_RUNNER_TIMEOUT_SECONDS:-0}"
 MONITOR_TIMEOUT_SECONDS="${AQSP_MONITOR_TIMEOUT_SECONDS:-0}"
@@ -202,15 +203,19 @@ run_project_check() {
 
 print_section "GIT"
 cd "$PROJECT_ROOT"
-git log --oneline -3
-tracked_status="$(git status --short --untracked-files=no)"
-if [ -n "$tracked_status" ]; then
-    printf '%s\n' "$tracked_status"
+if [ -d "${PROJECT_ROOT}/.git" ]; then
+    git log --oneline -3
+    tracked_status="$(git status --short --untracked-files=no)"
+    if [ -n "$tracked_status" ]; then
+        printf '%s\n' "$tracked_status"
+    else
+        echo "tracked working tree clean"
+    fi
+    untracked_count="$(git status --short --untracked-files=normal | awk '$1 == "??" {count++} END {print count + 0}')"
+    echo "untracked runtime files: ${untracked_count} (omitted)"
 else
-    echo "tracked working tree clean"
+    echo "immutable release: ${PROJECT_ROOT} (git metadata not required)"
 fi
-untracked_count="$(git status --short --untracked-files=normal | awk '$1 == "??" {count++} END {print count + 0}')"
-echo "untracked runtime files: ${untracked_count} (omitted)"
 
 print_section "CRON"
 crontab -l 2>/dev/null || true
@@ -221,17 +226,17 @@ print_aqsp_cron_audit
 print_section "LOCKS"
 printf 'config runner_timeout=%ss monitor_timeout=%ss stale_after=%smin\n' \
     "$RUNNER_TIMEOUT_SECONDS" "$MONITOR_TIMEOUT_SECONDS" "$LOCK_STALE_MINUTES"
-print_lock_state "${PROJECT_ROOT}/.locks/server-runtime.lock"
-print_lock_state "${PROJECT_ROOT}/.locks/server-monitor.lock"
+print_lock_state "${RUNTIME_ROOT}/.locks/server-runtime.lock"
+print_lock_state "${RUNTIME_ROOT}/.locks/server-monitor.lock"
 
 print_section "ARTIFACTS"
-file_line "${PROJECT_ROOT}/reports/latest.md"
-file_line "${PROJECT_ROOT}/reports/latest.csv"
-file_line "${PROJECT_ROOT}/reports/briefing.md"
-file_line "${PROJECT_ROOT}/reports/intraday_latest.md"
-file_line "${PROJECT_ROOT}/reports/intraday_latest.csv"
-file_line "${PROJECT_ROOT}/dist/dashboard/index.html"
-file_line "${PROJECT_ROOT}/dist/dashboard/aqsp.db"
+file_line "${RUNTIME_ROOT}/reports/latest.md"
+file_line "${RUNTIME_ROOT}/reports/latest.csv"
+file_line "${RUNTIME_ROOT}/reports/briefing.md"
+file_line "${RUNTIME_ROOT}/reports/intraday_latest.md"
+file_line "${RUNTIME_ROOT}/reports/intraday_latest.csv"
+file_line "${RUNTIME_ROOT}/dist/dashboard/index.html"
+file_line "${RUNTIME_ROOT}/dist/dashboard/aqsp.db"
 
 print_section "RUNTIME"
 if [ -x "$RUNTIME_PYTHON" ] && [ -f "${PROJECT_ROOT}/scripts/diagnose_runtime.py" ]; then
@@ -265,19 +270,19 @@ else
 fi
 
 print_section "DEPLOY LOG"
-tail -n 40 "${PROJECT_ROOT}/logs/deploy/sync-$(date +%Y-%m-%d).log" 2>/dev/null || true
+tail -n 40 "${RUNTIME_ROOT}/logs/deploy/sync-$(date +%Y-%m-%d).log" 2>/dev/null || true
 
 print_section "BT TASK LOG"
 for action in intraday midday daily coldstart monitor news; do
     echo "--- ${action} ---"
-    tail -n 20 "${PROJECT_ROOT}/logs/bt/bt-${action}-$(date +%Y-%m-%d).log" 2>/dev/null || true
+    tail -n 20 "${RUNTIME_ROOT}/logs/bt/bt-${action}-$(date +%Y-%m-%d).log" 2>/dev/null || true
 done
 
 print_section "INTRADAY LOG"
-tail -n 40 "${PROJECT_ROOT}/logs/intraday/intraday-$(date +%Y-%m-%d).log" 2>/dev/null || true
+tail -n 40 "${RUNTIME_ROOT}/logs/intraday/intraday-$(date +%Y-%m-%d).log" 2>/dev/null || true
 
 print_section "DAILY LOG"
-tail -n 40 "${PROJECT_ROOT}/logs/daily/pipeline-$(date +%Y-%m-%d).log" 2>/dev/null || true
+tail -n 40 "${RUNTIME_ROOT}/logs/daily/pipeline-$(date +%Y-%m-%d).log" 2>/dev/null || true
 
 if [ "$critical_status" -ne 0 ]; then
     printf 'critical checks failed; server status exit=%s\n' "$critical_status" >&2
