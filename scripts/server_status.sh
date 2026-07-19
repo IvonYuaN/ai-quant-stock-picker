@@ -18,6 +18,20 @@ if [ -f "${PROJECT_ROOT}/.env" ]; then
     set +a
 fi
 
+RUNTIME_PYTHON="${AQSP_RUNTIME_PYTHON:-}"
+if [ -z "$RUNTIME_PYTHON" ]; then
+    RUNTIME_PYTHON_HELPER="${PROJECT_ROOT}/scripts/runtime_python.sh"
+    if [ ! -f "$RUNTIME_PYTHON_HELPER" ]; then
+        RUNTIME_PYTHON_HELPER="${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}/runtime_python.sh"
+    fi
+    if [ -f "$RUNTIME_PYTHON_HELPER" ]; then
+        # Status checks must inspect the same immutable release as scheduled tasks.
+        # shellcheck disable=SC1090
+        source "$RUNTIME_PYTHON_HELPER"
+        RUNTIME_PYTHON="$(aqsp_runtime_python "$PROJECT_ROOT")"
+    fi
+fi
+
 print_section() {
     printf '\n===== %s =====\n' "$1"
 }
@@ -183,7 +197,7 @@ run_critical_check() {
 }
 
 run_project_check() {
-    ( cd "$PROJECT_ROOT" && "$@" )
+    ( cd "$PROJECT_ROOT" && PYTHONPATH="${PROJECT_ROOT}/src:${PROJECT_ROOT}:${PYTHONPATH:-}" "$@" )
 }
 
 print_section "GIT"
@@ -220,23 +234,23 @@ file_line "${PROJECT_ROOT}/dist/dashboard/index.html"
 file_line "${PROJECT_ROOT}/dist/dashboard/aqsp.db"
 
 print_section "RUNTIME"
-if [ -f "${PROJECT_ROOT}/.venv/bin/python3" ] && [ -f "${PROJECT_ROOT}/scripts/diagnose_runtime.py" ]; then
-    "${PROJECT_ROOT}/.venv/bin/python3" "${PROJECT_ROOT}/scripts/diagnose_runtime.py" || true
+if [ -x "$RUNTIME_PYTHON" ] && [ -f "${PROJECT_ROOT}/scripts/diagnose_runtime.py" ]; then
+    "$RUNTIME_PYTHON" "${PROJECT_ROOT}/scripts/diagnose_runtime.py" || true
 else
     echo "diagnose_runtime unavailable"
 fi
 
 print_section "DOCTOR"
-if [ -f "${PROJECT_ROOT}/.venv/bin/python3" ] && [ -f "${PROJECT_ROOT}/src/aqsp/cli.py" ]; then
-    run_critical_check "aqsp doctor" run_project_check "${PROJECT_ROOT}/.venv/bin/python3" -m aqsp doctor
+if [ -x "$RUNTIME_PYTHON" ] && [ -f "${PROJECT_ROOT}/src/aqsp/cli.py" ]; then
+    run_critical_check "aqsp doctor" run_project_check "$RUNTIME_PYTHON" -m aqsp doctor
 else
     echo "aqsp doctor unavailable"
     record_critical_status "aqsp doctor unavailable" 127
 fi
 
 print_section "BEFORE LIVE"
-if [ -f "${PROJECT_ROOT}/.venv/bin/python3" ] && [ -f "${PROJECT_ROOT}/scripts/check_before_live.py" ]; then
-    run_critical_check "check_before_live" run_project_check "${PROJECT_ROOT}/.venv/bin/python3" scripts/check_before_live.py
+if [ -x "$RUNTIME_PYTHON" ] && [ -f "${PROJECT_ROOT}/scripts/check_before_live.py" ]; then
+    run_critical_check "check_before_live" run_project_check "$RUNTIME_PYTHON" scripts/check_before_live.py
 else
     echo "check_before_live unavailable"
     record_critical_status "check_before_live unavailable" 127
@@ -244,7 +258,7 @@ fi
 
 print_section "REMOTE PROBE"
 if [ -f "${PROJECT_ROOT}/scripts/remote_runtime_probe.py" ]; then
-    run_critical_check "remote_runtime_probe" run_project_check python3 scripts/remote_runtime_probe.py
+    run_critical_check "remote_runtime_probe" run_project_check "$RUNTIME_PYTHON" scripts/remote_runtime_probe.py
 else
     echo "remote_runtime_probe unavailable"
     record_critical_status "remote_runtime_probe unavailable" 127
