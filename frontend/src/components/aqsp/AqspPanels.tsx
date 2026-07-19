@@ -13,6 +13,7 @@ import {
   Sparkles,
   UsersRound,
 } from "lucide-react";
+import { useLocation } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import { RESEARCH_SECTION_IDS, TEST_VARIANTS_SECTION_ID } from "@/lib/research-layout";
 import type { AqspAgentResult, AqspCandidate, AqspMessage, AqspSnapshot } from "@/lib/api";
@@ -405,16 +406,18 @@ function TestVariantsPanel({ snapshot }: { snapshot?: AqspSnapshot }) {
 
 export function AqspResearchWorkspace() {
   const { data, loading, error, refresh } = useWorkspaceSnapshot();
+  const { hash } = useLocation();
   if (loading && !data) return <><LoadingState /><TestVariantsPanel /></>;
   if (error && !data) return <><ErrorState error={error} onRefresh={refresh} /><TestVariantsPanel /></>;
   if (!data) return <><EmptyState title="暂无研究数据" detail="当前没有可展示的快照，数据产出后会自动出现在这里。" /><TestVariantsPanel /></>;
 
   const conclusion = snapshotConclusion(data);
   const stale = isAqspSnapshotStale(data);
+  const activeSection = hash.slice(1) || RESEARCH_SECTION_IDS[0];
   return (
     <div className="vr-research-page">
       <div className="vr-top-summary">
-        <header className="vr-page-topline" id="overview">
+        <header className="vr-page-topline" id="page-top">
           <div>
             <p className="vr-kicker text-primary">AQSP / DAILY RESEARCH</p>
             <div className="mt-1 flex flex-wrap items-end gap-x-3 gap-y-1">
@@ -435,7 +438,7 @@ export function AqspResearchWorkspace() {
       <CurrentEmptyObservationNotice snapshot={data} />
       {error && <div className="mb-3 text-xs text-warning">后台刷新未完成，仍展示上一次已读取的数据。</div>}
 
-        <section className="vr-module vr-conclusion-panel" aria-labelledby="conclusion-title">
+        {activeSection === RESEARCH_SECTION_IDS[0] && <section id={RESEARCH_SECTION_IDS[0]} className="vr-module vr-conclusion-panel" aria-labelledby="conclusion-title">
           <div className="flex min-w-0 items-start gap-3">
             <span className="vr-section-icon"><Sparkles className="h-4 w-4" /></span>
             <div className="min-w-0">
@@ -450,27 +453,27 @@ export function AqspResearchWorkspace() {
             <div><strong>{data.debates.length}</strong><span>讨论</span></div>
             <div><strong>{data.source.lag_days > 0 ? `${data.source.lag_days}d` : "0d"}</strong><span>数据滞后</span></div>
           </div>
-        </section>
+        </section>}
       </div>
 
       <div className="vr-research-columns">
-      <section id={RESEARCH_SECTION_IDS[0]} className="vr-module vr-board-section">
+      {activeSection === RESEARCH_SECTION_IDS[1] && <section id={RESEARCH_SECTION_IDS[1]} className="vr-module vr-board-section">
         <div className="vr-section-heading"><div><p className="vr-kicker">02 · 来源与影响</p><h2>消息</h2></div><span className="vr-count">{data.messages.length} 条</span></div>
         {data.messages.length === 0 ? <EmptyState title="当前没有消息摘要" detail="快照未记录可核验消息，不在界面中补充推断。" /> : <div className="vr-message-list">{data.messages.map((message) => <MessageCard key={`${message.title}-${message.published_at}`} message={message} />)}</div>}
-      </section>
+      </section>}
 
-      <section id={RESEARCH_SECTION_IDS[1]} className="vr-module vr-board-section">
+      {activeSection === RESEARCH_SECTION_IDS[2] && <section id={RESEARCH_SECTION_IDS[2]} className="vr-module vr-board-section">
         <div className="vr-section-heading"><div><p className="vr-kicker">03 · 评分与依据</p><h2>候选</h2></div><span className="vr-count">{data.candidates.length} 个</span></div>
         {data.candidates.length === 0 ? <EmptyState title="当前没有候选" detail="可能是研究 gate 阻塞，或当天数据尚未产出。" /> : <div className="vr-candidate-grid">{data.candidates.map((candidate) => <CandidateCard key={candidate.symbol} candidate={candidate} />)}</div>}
-      </section>
+      </section>}
 
-      <section id={RESEARCH_SECTION_IDS[2]} className="vr-module vr-board-section vr-discussion-section">
+      {activeSection === RESEARCH_SECTION_IDS[3] && <section id={RESEARCH_SECTION_IDS[3]} className="vr-module vr-board-section vr-discussion-section">
         <div className="vr-section-heading"><div><p className="vr-kicker">04 · 分歧与风险</p><h2>Agent 讨论</h2></div><span className="vr-count">{data.debates.length} 条</span></div>
         {data.debates.length === 0 ? <EmptyState title="暂无讨论记录" detail="当前快照没有多 Agent 讨论结果，保留确定性研究数据。" /> : <div className="grid gap-3 xl:grid-cols-2">{data.debates.map((result) => <DebateCard key={result.symbol} result={result} />)}</div>}
-      </section>
-      <MarketContextCard snapshot={data} />
+      </section>}
+      {activeSection === RESEARCH_SECTION_IDS[4] && <MarketContextCard snapshot={data} />}
       </div>
-      <TestVariantsPanel snapshot={data} />
+      {activeSection === TEST_VARIANTS_SECTION_ID && <TestVariantsPanel snapshot={data} />}
     </div>
   );
 }

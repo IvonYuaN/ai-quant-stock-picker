@@ -1513,15 +1513,6 @@ if ! refresh_home_dashboard_snapshot; then
     write_intraday_status "partial_failed" "盘中数据已刷新，但首页快照刷新失败，继续保留上一版首页" "$SCRIPT_EXIT_CODE"
 fi
 
-"${PYTHON_BIN}" "${PROJECT_ROOT}/scripts/open_dashboard.py" \
-    --render-only \
-    --no-open-browser \
-    --csv "${INTRADAY_OUTPUT_CSV}" \
-    --ledger "${INTRADAY_LEDGER}" \
-    --paper-ledger "${PAPER_LEDGER}" \
-    --output "${INTRADAY_DASHBOARD_HTML}" \
-    --db "${INTRADAY_DASHBOARD_DB}" 2>&1 | tee -a "$RESULT_LOG"
-
 END_TIME=$(date +%s)
 DURATION=$((END_TIME - START_TIME))
 
@@ -1529,7 +1520,7 @@ log "=========================================="
 log "盘中刷新结束"
 log "退出码: ${RUN_EXIT_CODE}"
 log "耗时: ${DURATION}秒"
-log "Dashboard: ${INTRADAY_DASHBOARD_HTML}"
+log "AQSP 快照: ${HOME_SNAPSHOT_PATH}"
 log "报告: ${INTRADAY_REPORT}"
 log "CSV: ${INTRADAY_OUTPUT_CSV}"
 log "=========================================="

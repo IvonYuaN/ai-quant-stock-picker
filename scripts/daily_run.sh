@@ -266,16 +266,6 @@ run_daily_pipeline() {
     ls -lh "$AQSP_REPORT" "$AQSP_OUTPUT_CSV" "$AQSP_BRIEFING_REPORT" 2>/dev/null || true
 
     echo ""
-    echo "=== dashboard refresh @ $(date) ==="
-    "$PYTHON_BIN" scripts/open_dashboard.py \
-        --csv "$AQSP_OUTPUT_CSV" \
-        --ledger "$AQSP_LEDGER" \
-        --paper-ledger "$AQSP_PAPER_LEDGER" \
-        --output "$AQSP_DASHBOARD_HTML" \
-        --db "$AQSP_DASHBOARD_DB" \
-        --render-only 2>&1
-
-    echo ""
     echo "=== runtime diagnosis @ $(date) ==="
     "$PYTHON_BIN" scripts/diagnose_runtime.py | tee "$AQSP_DIAGNOSIS"
 } >> "$LOG" 2>&1

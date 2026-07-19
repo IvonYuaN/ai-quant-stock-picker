@@ -9,6 +9,7 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   ScrollText,
+  Sparkles,
   Sun,
   UsersRound,
 } from "lucide-react";
@@ -18,7 +19,7 @@ import { useDarkMode } from "@/hooks/useDarkMode";
 import { AqspWorkspaceProvider, useAqspSnapshot } from "@/components/aqsp/useAqspSnapshot";
 import { formatResearchDate } from "@/lib/research-view";
 
-const NAV_ICONS = [ScrollText, LineChart, UsersRound, Globe2] as const;
+const NAV_ICONS = [Sparkles, ScrollText, LineChart, UsersRound, Globe2] as const;
 
 export function Layout() {
   return <AqspWorkspaceProvider><WorkspaceLayout /></AqspWorkspaceProvider>;
@@ -39,14 +40,6 @@ function WorkspaceLayout() {
       selectDate(data.selected_date);
     }
   }, [data, selectedDate, selectDate]);
-
-  useEffect(() => {
-    const sectionId = hash.slice(1) || "overview";
-    const frame = window.requestAnimationFrame(() => {
-      document.getElementById(sectionId)?.scrollIntoView({ block: "start" });
-    });
-    return () => window.cancelAnimationFrame(frame);
-  }, [hash, loading, data?.selected_date]);
 
   const dates = data?.available_dates ?? [];
   const activeDate = selectedDate || data?.selected_date || "";
@@ -83,7 +76,9 @@ function WorkspaceLayout() {
           <nav className="space-y-1" aria-label="研究内容">
             {RESEARCH_NAV_ITEMS.map(({ id: targetHash, label, description, countKey }, index) => {
               const Icon = NAV_ICONS[index];
-              const count = countKey === "market"
+              const count = countKey === "conclusion"
+                ? 1
+                : countKey === "market"
                 ? data?.market_context?.cross_market.length ?? 0
                 : countKey === "messages"
                   ? data?.messages.length ?? 0
@@ -91,16 +86,12 @@ function WorkspaceLayout() {
                     ? data?.candidates.length ?? 0
                     : data?.debates.length ?? 0;
               const to = `/daily-review#${targetHash}`;
-              const active = pathname === "/daily-review" && (hash === `#${targetHash}` || (!hash && targetHash === "messages"));
+              const active = pathname === "/daily-review" && (hash === `#${targetHash}` || (!hash && targetHash === "overview"));
               return (
                 <Link
                   key={to}
                   to={to}
-                  onClick={() => {
-                    window.requestAnimationFrame(() => {
-                      document.getElementById(targetHash)?.scrollIntoView({ behavior: "smooth", block: "start" });
-                    });
-                  }}
+                  onClick={() => undefined}
                   title={collapsed ? `${label} · ${description}` : undefined}
                   className={cn("vr-nav-item", active && "vr-nav-item-active", collapsed && "justify-center px-2")}
                 >
@@ -115,11 +106,7 @@ function WorkspaceLayout() {
           <nav className="mt-1 space-y-1" aria-label="独立实验区">
             <Link
               to={`/daily-review#${TEST_VARIANTS_SECTION_ID}`}
-              onClick={() => {
-                window.requestAnimationFrame(() => {
-                  document.getElementById(TEST_VARIANTS_SECTION_ID)?.scrollIntoView({ behavior: "smooth", block: "start" });
-                });
-              }}
+              onClick={() => undefined}
               title={collapsed ? "测试与变体 · 不参与正式推荐" : undefined}
               className={cn("vr-nav-item", hash === `#${TEST_VARIANTS_SECTION_ID}` && "vr-nav-item-active", collapsed && "justify-center px-2")}
             >

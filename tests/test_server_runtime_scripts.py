@@ -529,7 +529,7 @@ def test_intraday_refresh_script_uses_isolated_outputs() -> None:
     assert "未生成${label}，保留上一版" in script
     assert "--skip-validation" in script
     assert '--benchmark-symbol "${INTRADAY_BENCHMARK_SYMBOL}"' in script
-    assert "--render-only" in script
+    assert "open_dashboard.py" not in script
     assert "today_shanghai" in script
     assert "今日非交易日，跳过盘中刷新" in script
 
