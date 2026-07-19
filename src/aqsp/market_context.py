@@ -20,6 +20,18 @@ _CROSS_MARKET_MEDIUM_SCORE = 1
 _NEWS_DIRECT_STRONG_SCORE = 3
 _NEWS_DIRECT_MEDIUM_SCORE = 2
 _NEWS_DIRECT_WEAK_SCORE = 1
+# Realtime observations only become implication evidence after a meaningful
+# move.  The thresholds are deliberately explicit so ordinary quote noise
+# remains display-only and cannot create a theme by itself.
+_REALTIME_IMPLICATION_THRESHOLDS: dict[str, float] = {
+    "SPX": 0.75,
+    "NASDAQ100": 0.75,
+    "HSI": 0.75,
+    "DXY": 0.35,
+    "US10Y": 0.10,
+    "WTI": 1.00,
+    "GOLD": 0.75,
+}
 _DEFAULT_ACTIONABLE_NEWS_AGE_MINUTES = 12 * 60
 _ACTIONABLE_NEWS_MIN_SOURCE_QUALITY = 2
 _AUTHORITATIVE_SOURCE_TOKENS = (
@@ -1267,6 +1279,7 @@ def build_market_context_artifact(
     global_events: list[CatalystEvent] = []
     domestic_events: list[CatalystEvent] = []
     symbol_events: list[CatalystEvent] = []
+    cross_market_events: list[CatalystEvent] = []
     cross_market_implications: tuple[CrossMarketImplication, ...] = ()
     realtime_context = (
         build_realtime_cross_market_context(
@@ -1338,6 +1351,7 @@ def build_market_context_artifact(
             cross_market_implications = _cross_market_implications(
                 cross_market_events,
                 generated_at=catalyst_report.generated_at,
+                realtime_context=realtime_context,
             )
             lines.extend(
                 implication.summary_line
@@ -1394,6 +1408,16 @@ def build_market_context_artifact(
         lines.append(coverage_line)
 
     if realtime_context is not None:
+        if not cross_market_events:
+            cross_market_implications = _cross_market_implications(
+                [],
+                generated_at=realtime_context.generated_at,
+                realtime_context=realtime_context,
+            )
+            lines.extend(
+                implication.summary_line
+                for implication in cross_market_implications[:3]
+            )
         lines.append(_realtime_cross_market_summary_line(realtime_context))
         warnings = tuple(_dedupe_texts((*warnings, *realtime_context.warnings)))
 
@@ -1917,6 +1941,7 @@ def _cross_market_implications(
     events: list[CatalystEvent],
     *,
     generated_at: str,
+    realtime_context: RealtimeCrossMarketContext | None = None,
 ) -> tuple[CrossMarketImplication, ...]:
     matched_events: dict[str, list[CatalystEvent]] = {}
     generated_dt = _parse_iso_datetime(generated_at)
@@ -1927,6 +1952,10 @@ def _cross_market_implications(
         for rule in _CROSS_MARKET_RULES:
             if _rule_matches_event(rule, text):
                 matched_events.setdefault(rule.rule_id, []).append(event)
+    for rule_id, realtime_events in _realtime_cross_market_events(
+        realtime_context
+    ).items():
+        matched_events.setdefault(rule_id, []).extend(realtime_events)
     matched: list[CrossMarketImplication] = []
     for rule in _CROSS_MARKET_RULES:
         events_for_rule = matched_events.get(rule.rule_id, [])
@@ -1958,6 +1987,137 @@ def _cross_market_implications(
         reverse=True,
     )
     return tuple(ordered[:5])
+
+
+def _realtime_cross_market_events(
+    context: RealtimeCrossMarketContext | None,
+) -> dict[str, tuple[CatalystEvent, ...]]:
+    """Translate fresh, significant market moves into rule evidence.
+
+    This is intentionally a small deterministic bridge rather than a second
+    scoring system.  It only emits evidence for relationships represented by
+    existing rules: broad risk-on requires an equity-index move, liquidity
+    easing requires both a weaker dollar and lower 10Y yield, and oil shock
+    requires a meaningful WTI move.  Values that are stale, unavailable, or
+    below the explicit thresholds remain display-only.
+    """
+
+    if context is None:
+        return {}
+    observations = {
+        item.instrument: item
+        for item in context.observations
+        if item.status == "fresh"
+        and item.change_pct is not None
+        and math.isfinite(item.change_pct)
+    }
+
+    result: dict[str, tuple[CatalystEvent, ...]] = {}
+
+    equity_triggered = any(
+        (item := observations.get(instrument)) is not None
+        and item.change_pct is not None
+        and item.change_pct >= _realtime_threshold(instrument)
+        for instrument in ("SPX", "NASDAQ100")
+    )
+    equity_events = tuple(
+        _realtime_implication_event(item, rule_id="us_risk_on", impact="positive")
+        for instrument in ("SPX", "NASDAQ100", "HSI")
+        if (item := observations.get(instrument)) is not None
+        and item.change_pct is not None
+        and item.change_pct >= _realtime_threshold(instrument)
+    )
+    if equity_triggered:
+        result["us_risk_on"] = equity_events
+
+    dollar = observations.get("DXY")
+    treasury = observations.get("US10Y")
+    if (
+        dollar is not None
+        and treasury is not None
+        and dollar.change_pct is not None
+        and treasury.change_pct is not None
+        and dollar.change_pct <= -_realtime_threshold("DXY")
+        and treasury.change_pct <= -_realtime_threshold("US10Y")
+    ):
+        liquidity_events = [
+            _realtime_implication_event(
+                dollar,
+                rule_id="global_liquidity_easing",
+                impact="positive",
+            ),
+            _realtime_implication_event(
+                treasury,
+                rule_id="global_liquidity_easing",
+                impact="positive",
+            ),
+        ]
+        gold = observations.get("GOLD")
+        if (
+            gold is not None
+            and gold.change_pct is not None
+            and gold.change_pct >= _realtime_threshold("GOLD")
+        ):
+            liquidity_events.append(
+                _realtime_implication_event(
+                    gold,
+                    rule_id="global_liquidity_easing",
+                    impact="positive",
+                )
+            )
+        result["global_liquidity_easing"] = tuple(liquidity_events)
+
+    oil = observations.get("WTI")
+    if (
+        oil is not None
+        and oil.change_pct is not None
+        and abs(oil.change_pct) >= _realtime_threshold("WTI")
+    ):
+        result["oil_price_shock"] = (
+            _realtime_implication_event(
+                oil,
+                rule_id="oil_price_shock",
+                impact="positive" if oil.change_pct > 0 else "negative",
+            ),
+        )
+    return result
+
+
+def _realtime_threshold(instrument: str) -> float:
+    return _REALTIME_IMPLICATION_THRESHOLDS[instrument]
+
+
+def _realtime_implication_event(
+    observation: RealtimeCrossMarketObservation,
+    *,
+    rule_id: str,
+    impact: Impact,
+) -> CatalystEvent:
+    change_pct = float(observation.change_pct or 0.0)
+    direction = "上涨" if change_pct > 0 else "下跌"
+    source = observation.provenance.source or "实时跨市场行情"
+    title = f"{observation.instrument} 实时{direction} {change_pct:+.2f}%"
+    evidence = (
+        f"{observation.instrument} 变动 {change_pct:+.2f}%；"
+        f"观测时间 {observation.observed_at}；来源 {source}",
+    )
+    return CatalystEvent(
+        title=title,
+        source=source,
+        published_at=observation.observed_at,
+        source_fetched_at=observation.fetched_at,
+        impact=impact,
+        category="实时跨市场行情",
+        confidence=0.68,
+        source_count=1,
+        verification="实时观测",
+        source_quality_label="实时行情源",
+        source_quality_score=3,
+        inference=f"{observation.instrument} 的实时变动达到 {rule_id} 规则阈值。",
+        url=observation.provenance.source_url,
+        source_region="international",
+        supporting_evidence=evidence,
+    )
 
 
 def _expand_rule_evidence_events(

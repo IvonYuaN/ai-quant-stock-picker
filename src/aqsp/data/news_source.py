@@ -936,6 +936,9 @@ def _fetch_eastmoney_stock_news_compat(symbol: str) -> pd.DataFrame:
     frame = pd.DataFrame(rows)
     frame["新闻标题"] = frame.get("title", "")
     frame["新闻内容"] = frame.get("content", "")
+    frame["title"] = frame["新闻标题"]
+    frame["content"] = frame["新闻内容"]
+    frame["summary"] = frame["新闻内容"]
     frame["发布时间"] = frame.get("date", "")
     frame["文章来源"] = frame.get("mediaName", "")
     codes = (
@@ -1004,6 +1007,9 @@ def _fetch_eastmoney_search_news(
         code = clean(item.get("code"))
         rows.append(
             {
+                "title": clean(item.get("title")),
+                "content": clean(item.get("content")),
+                "summary": clean(item.get("content")),
                 "新闻标题": clean(item.get("title")),
                 "新闻内容": clean(item.get("content")),
                 "发布时间": clean(item.get("date")),
@@ -1334,6 +1340,7 @@ def _parse_rss_xml(
                 "published_at": published_at,
                 "url": link,
                 "summary": summary,
+                "content": summary,
                 "标题": title,
                 "来源": source_name,
                 "时间": published_at,

@@ -1768,7 +1768,9 @@ def _events_from_rows(
     events: list[CatalystEvent] = []
     for row in rows:
         title = row.get("title", "")
-        event = _classify_title(title)
+        summary = row.get("summary", "")
+        content = row.get("content", "")
+        event = _classify_title(title, summary=summary, content=content)
         if event is None:
             continue
         category, impact, weight, _reason = event
@@ -1827,6 +1829,7 @@ def _events_from_rows(
                     title=title,
                     source=source,
                     verification=_verification_label(row),
+                    context=_news_context_snippet(summary, content),
                 ),
                 contradicting_evidence=_text_tuple(
                     row.get("contradicting_evidence", "")
@@ -1951,9 +1954,13 @@ def _event_supporting_evidence(
     title: str,
     source: str,
     verification: str,
+    context: str = "",
 ) -> tuple[str, ...]:
     source_text = source or "来源未标注"
-    return (f"{source_text}: {title}", f"来源验证: {verification}")
+    evidence = [f"{source_text}: {title}", f"来源验证: {verification}"]
+    if context:
+        evidence.append(f"正文证据: {context}")
+    return tuple(evidence)
 
 
 def _event_target(event: CatalystEvent) -> str:
@@ -1974,28 +1981,35 @@ def _name_from_title(title: str) -> str:
     return name
 
 
-def _classify_title(title: str) -> tuple[str, Impact, int, str] | None:
+def _classify_title(
+    title: str,
+    *,
+    summary: str = "",
+    content: str = "",
+) -> tuple[str, Impact, int, str] | None:
     clean = str(title or "").strip()
     if not clean:
         return None
     import re
 
+    evidence = _news_evidence_text(clean, summary=summary, content=content)
+
     for pattern, category, impact, weight in GLOBAL_CROSS_MARKET_PATTERNS:
-        if re.search(pattern, clean, flags=re.IGNORECASE):
+        if re.search(pattern, evidence, flags=re.IGNORECASE):
             return (
                 category,
                 impact,
                 weight,
                 "",
             )
-    if _is_market_price_action_noise(clean):
+    if _is_market_price_action_noise(evidence):
         return None
-    if _is_non_actionable_discipline_news(clean):
+    if _is_non_actionable_discipline_news(evidence):
         return None
-    if _is_non_actionable_price_hike_noise(clean):
+    if _is_non_actionable_price_hike_noise(evidence):
         return None
     for pattern, category, weight in NEGATIVE_PATTERNS:
-        if re.search(pattern, clean, flags=re.IGNORECASE):
+        if re.search(pattern, evidence, flags=re.IGNORECASE):
             return (
                 category,
                 "negative",
@@ -2003,7 +2017,7 @@ def _classify_title(title: str) -> tuple[str, Impact, int, str] | None:
                 "",
             )
     for pattern, category, weight in POSITIVE_PATTERNS:
-        if re.search(pattern, clean, flags=re.IGNORECASE):
+        if re.search(pattern, evidence, flags=re.IGNORECASE):
             return (
                 category,
                 "positive",
@@ -2011,6 +2025,25 @@ def _classify_title(title: str) -> tuple[str, Impact, int, str] | None:
                 "",
             )
     return None
+
+
+def _news_evidence_text(title: str, *, summary: str = "", content: str = "") -> str:
+    """Combine bounded title, abstract, and body evidence for rule matching."""
+
+    parts = [str(title or "").strip()]
+    for value in (summary, content):
+        text = str(value or "").strip()
+        if text and text not in parts:
+            parts.append(text[:2000])
+    return "\n".join(parts)
+
+
+def _news_context_snippet(summary: str, content: str) -> str:
+    for value in (summary, content):
+        text = " ".join(str(value or "").split())
+        if text:
+            return text[:240]
+    return ""
 
 
 def _is_market_price_action_noise(title: str) -> bool:
@@ -2146,6 +2179,21 @@ def _iter_news_rows(df: pd.DataFrame) -> Iterable[dict[str, str]]:
         rows.append(
             {
                 "title": title,
+                "summary": _first_text(
+                    row,
+                    ("summary", "摘要", "新闻摘要", "description", "描述"),
+                ),
+                "content": _first_text(
+                    row,
+                    (
+                        "content",
+                        "新闻内容",
+                        "正文",
+                        "内容",
+                        "body",
+                        "article_body",
+                    ),
+                ),
                 "source": source,
                 "published_at": published_at or _fallback_published_at(title, url),
                 "source_fetched_at": str(

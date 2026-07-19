@@ -378,7 +378,21 @@ if run_date not in events_by_date:
     )
     temporary.replace(target)
 PY
-        log "消息面按事件发布日期归档: ${ARCHIVE_DIR%/}/news-YYYY-MM-DD.json"
+        log "消息面按事件发布日期归档: ${ARCHIVE_DIR%/}/news-<published-date>.json"
+    fi
+fi
+
+# News is a first-class same-day dashboard input. Refresh the canonical home
+# snapshot immediately so the message panel does not wait for the evening run.
+SNAPSHOT_SCRIPT="${PROJECT_ROOT}/scripts/write_home_snapshot.py"
+if [ -f "$SNAPSHOT_SCRIPT" ]; then
+    snapshot_date="${archive_date:-$(date +%Y-%m-%d)}"
+    if ! "$PYTHON_BIN" "$SNAPSHOT_SCRIPT" \
+        --date "$snapshot_date" \
+        --task-id news >>"$RESULT_LOG" 2>&1; then
+        log "[WARN] 消息已落盘，但首页快照刷新失败: ${snapshot_date}"
+    else
+        log "首页快照已刷新: ${snapshot_date}"
     fi
 fi
 

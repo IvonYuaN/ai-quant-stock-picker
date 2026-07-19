@@ -92,6 +92,47 @@ def test_news_catalyst_does_not_classify_supply_chain_keyword_without_evidence(
     assert _classify_title(title) is None
 
 
+def test_news_catalyst_classifies_supply_chain_evidence_from_summary() -> None:
+    classified = _classify_title(
+        "某电子企业召开行业交流会",
+        summary="上游覆铜板报价连续上调，供应商反馈短期缺货。",
+    )
+
+    assert classified is not None
+    assert classified[0] == "电子材料涨价/缺货"
+    assert classified[1] == "positive"
+
+
+def test_news_catalyst_uses_body_context_for_negative_impact() -> None:
+    classified = _classify_title(
+        "某上市公司公告",
+        content="公司核心产线发生事故并停产，预计短期无法恢复。",
+    )
+
+    assert classified is not None
+    assert classified[1] == "negative"
+
+
+def test_news_catalyst_retains_context_in_standardized_event_evidence() -> None:
+    report = build_catalyst_report(
+        fetch_global_news=lambda _limit: pd.DataFrame(
+            [
+                {
+                    "标题": "某电子企业召开行业交流会",
+                    "摘要": "上游覆铜板报价连续上调，供应商反馈短期缺货。",
+                    "来源": "证券报",
+                    "时间": _RECENT_NEWS_TIME,
+                }
+            ]
+        )
+    )
+
+    assert report.events
+    assert any(
+        "覆铜板报价连续上调" in item for item in report.events[0].supporting_evidence
+    )
+
+
 def test_news_catalyst_maps_supply_chain_evidence_to_affected_sectors() -> None:
     report = build_catalyst_report(
         fetch_global_news=lambda _limit: pd.DataFrame(
@@ -1953,6 +1994,8 @@ def test_rss_news_source_parses_feed_items(monkeypatch) -> None:
     assert frames[0].iloc[0]["source_group"] == "rss"
     assert frames[0].iloc[0]["themes"] == "new_energy_storage"
     assert frames[0].iloc[0]["title"] == frames[0].iloc[0]["标题"]
+    assert frames[0].iloc[0]["content"] == frames[0].iloc[0]["摘要"]
+    assert frames[0].iloc[0]["summary"] == frames[0].iloc[0]["摘要"]
     assert frames[0].iloc[0]["source"] == frames[0].iloc[0]["来源"]
     assert frames[0].iloc[0]["published_at"] == frames[0].iloc[0]["时间"]
     assert frames[0].iloc[0]["url"] == "https://example.com/catl"
@@ -2115,6 +2158,8 @@ def test_eastmoney_domestic_news_source_normalizes_search_results(monkeypatch) -
 
     assert frames
     assert frames[0].iloc[0]["新闻标题"] == "PCB覆铜板报价上调"
+    assert frames[0].iloc[0]["content"] == "供应紧张"
+    assert frames[0].iloc[0]["summary"] == "供应紧张"
     assert frames[0].iloc[0]["source_region"] == "domestic"
     assert any(
         item.region == "domestic" and item.status == "ok" for item in source.last_health

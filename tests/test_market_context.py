@@ -58,7 +58,9 @@ def test_market_context_runtime_summary_exposes_core_cross_market_rules() -> Non
     assert any(line.startswith("- cross_market_rule_count:") for line in lines)
 
 
-def test_market_context_matches_structured_chain_fields_when_headline_is_generic() -> None:
+def test_market_context_matches_structured_chain_fields_when_headline_is_generic() -> (
+    None
+):
     report = CatalystReport(
         date="2026-07-14",
         generated_at="2026-07-14T10:00:00+08:00",
@@ -84,8 +86,7 @@ def test_market_context_matches_structured_chain_fields_when_headline_is_generic
     artifact = build_market_context_artifact(catalyst_report=report)
 
     assert any(
-        item.rule_id == "physical_ai"
-        for item in artifact.cross_market_implications
+        item.rule_id == "physical_ai" for item in artifact.cross_market_implications
     )
 
 
@@ -235,6 +236,67 @@ def test_market_context_artifact_keeps_realtime_context_out_of_deterministic_sco
     assert artifact.realtime_cross_market.status == "fresh"
     assert market_context_metrics_for_pick(pick, artifact) == {}
     assert pick.score == 72.0
+
+
+def test_realtime_cross_market_evidence_enters_risk_on_implication() -> None:
+    payload = _realtime_cross_market_payload()
+    payload["SPX"]["change_pct"] = 1.2
+    payload["NASDAQ100"]["change_pct"] = 1.6
+
+    artifact = build_market_context_artifact(
+        catalyst_report=None,
+        realtime_cross_market=payload,
+        realtime_now=_REALTIME_NOW,
+    )
+
+    implication = next(
+        item
+        for item in artifact.cross_market_implications
+        if item.rule_id == "us_risk_on"
+    )
+    assert implication.support_event_count == 2
+    assert implication.source_quality_label == "实时行情源"
+    assert any("SPX 变动 +1.20%" in item for item in implication.supporting_evidence)
+    assert "外盘风险偏好修复" in artifact.cross_market_overview
+
+
+def test_realtime_gold_confirms_liquidity_implication_with_rates_and_dollar() -> None:
+    payload = _realtime_cross_market_payload()
+    payload["DXY"]["change_pct"] = -0.6
+    payload["US10Y"]["change_pct"] = -0.2
+    payload["GOLD"]["change_pct"] = 1.1
+
+    artifact = build_market_context_artifact(
+        catalyst_report=None,
+        realtime_cross_market=payload,
+        realtime_now=_REALTIME_NOW,
+    )
+
+    implication = next(
+        item
+        for item in artifact.cross_market_implications
+        if item.rule_id == "global_liquidity_easing"
+    )
+    assert implication.support_event_count == 3
+    assert any("GOLD 变动 +1.10%" in item for item in implication.supporting_evidence)
+
+
+def test_stale_realtime_cross_market_evidence_stays_display_only() -> None:
+    payload = _realtime_cross_market_payload()
+    payload["SPX"]["change_pct"] = 1.2
+    payload["SPX"]["observed_at"] = "2026-07-14T09:00:00+08:00"
+
+    artifact = build_market_context_artifact(
+        catalyst_report=None,
+        realtime_cross_market=payload,
+        realtime_now=_REALTIME_NOW,
+        realtime_policy=RealtimeCrossMarketPolicy(max_age_seconds=60),
+    )
+
+    assert not any(
+        item.rule_id == "us_risk_on" for item in artifact.cross_market_implications
+    )
+    assert any("SPX: stale" in warning for warning in artifact.warnings)
 
 
 def test_market_context_blocks_news_without_source_when_timestamp_is_fresh() -> None:
