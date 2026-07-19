@@ -280,6 +280,25 @@ def test_write_home_snapshot_builds_bounded_advisory_only_payload(monkeypatch) -
     assert snapshot.stale_after == "2026-07-10T15:31:00+08:00"
 
 
+def test_recommendation_gate_keeps_quote_candidates_when_news_refresh_fails() -> None:
+    provider = _Provider()
+    runtime = provider.runtime_overview("2026-07-10")
+    source = SimpleNamespace(status="完成", lag_days=0)
+
+    gate = write_home_snapshot._recommendation_gate(
+        provider,
+        runtime,
+        source,
+        "来源失败",
+        evaluated_at=datetime(
+            2026, 7, 10, 15, 1, tzinfo=ZoneInfo("Asia/Shanghai")
+        ),
+    )
+
+    assert gate.recommendation_allowed is True
+    assert gate.reasons == ()
+
+
 def test_snapshot_candidate_maps_freshness_label_when_status_is_missing() -> None:
     candidate = _candidate("600006", 70.0)
     candidate.freshness = ""

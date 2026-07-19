@@ -1203,11 +1203,13 @@ def _recommendation_gate(
     )
     source_status = str(getattr(source, "status", "") or "").strip()
     # Risk cooldown limits paper-portfolio actions, not quote freshness.
-    # Treating it as stale data hides otherwise valid short-term candidates.
+    # News is a separate evidence stream: a failed news refresh must remain
+    # visible in the message section without hiding a valid quote-based pick.
+    raw_lag_days = getattr(source, "lag_days", None)
+    lag_days = 999 if raw_lag_days in (None, "") else int(raw_lag_days)
     freshness_ok = (
         source_status not in {"", "failed", "stale"}
-        and int(getattr(source, "lag_days", 999) or 999) <= 0
-        and message_status not in {"来源失败", "超时", "失败"}
+        and lag_days <= 0
     )
     paper_ledger_path = getattr(provider, "paper_ledger_path", None)
     paper_tracking_days = (
