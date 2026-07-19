@@ -94,6 +94,10 @@ def debate_evidence_provenance(result: Any) -> DebateEvidenceProvenance:
 _PROVENANCE_GAP_MARKERS = (
     "输入未提供",
     "无可用",
+    "暂无消息证据",
+    "暂无跨市证据",
+    "等待海外映射证据",
+    "无可用跨市消息或规则传导",
     "无新增",
     "尚未形成",
     "等待更多确认",

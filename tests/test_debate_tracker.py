@@ -623,6 +623,34 @@ def test_debate_audit_keeps_neutral_bear_role_out_of_real_opposition_count() -> 
     assert "missing_real_opposition" in audit.issues
 
 
+def test_debate_evidence_provenance_drops_cross_market_placeholders() -> None:
+    result = SimpleNamespace(
+        real_message_evidence=("公告已核验",),
+        cross_market_evidence=("暂无跨市证据",),
+        rule_transmission_evidence=("等待海外映射证据",),
+        market_context_lines=(),
+    )
+
+    provenance = debate_evidence_provenance(result)
+
+    assert provenance.real_messages == ("公告已核验",)
+    assert provenance.cross_market_evidence == ()
+    assert provenance.rule_transmissions == ()
+
+
+def test_debate_audit_rejects_serialized_placeholder_message_evidence() -> None:
+    payload = {
+        "symbol": "300750",
+        "real_message_evidence": ["暂无消息证据"],
+        "message_evidence_recorded": True,
+    }
+
+    audit = audit_debate_quality(payload, expected_roles=("bull", "bear"))
+
+    assert audit.message_evidence_recorded is False
+    assert "missing_message_evidence" in audit.issues
+
+
 def test_debate_coordinator_passes_cross_market_evidence_context_to_tracker_when_adjusting() -> (
     None
 ):

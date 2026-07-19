@@ -284,7 +284,15 @@ def audit_debate_quality(
         )
     )
 
+    message_evidence_recorded = _substantive_values(
+        _field(result, "real_message_evidence", ())
+    )
     issues: list[str] = []
+    if (
+        _field_present(result, "message_evidence_recorded")
+        and not message_evidence_recorded
+    ):
+        issues.append("missing_message_evidence")
     if not candidate_mapped:
         issues.append("candidate_unmapped")
     if len(recorded_roles) < 2:
@@ -358,9 +366,7 @@ def audit_debate_quality(
         stance_counts=stance_counts,
         rebuttal_count=rebuttal_count,
         real_opposition_count=real_opposition_count,
-        message_evidence_recorded=_substantive_values(
-            _field(result, "real_message_evidence", ())
-        ),
+        message_evidence_recorded=message_evidence_recorded,
         transmission_evidence_recorded=bool(
             _substantive_values(_field(result, "cross_market_evidence", ()))
             or _substantive_values(_field(result, "rule_transmission_evidence", ()))
@@ -392,6 +398,10 @@ def _role_value(value: Any) -> str:
 _NON_EVIDENCE_MARKERS = (
     "输入未提供",
     "无可用",
+    "暂无消息证据",
+    "暂无跨市证据",
+    "等待海外映射证据",
+    "无可用跨市消息或规则传导",
     "无可用新闻记录",
     "尚未形成",
     "等待更多确认",
