@@ -802,9 +802,9 @@ POSITIVE_PATTERNS: tuple[tuple[str, str, int], ...] = (
         4,
     ),
     (
-        "NASA.*(?:launch|rocket|satellite|spacecraft|mission)|SpaceX|"
-        "space mission|commercial space|satellite|launch vehicle|rocket|"
-        "商业航天|卫星互联网|低轨卫星",
+        "SpaceX|space mission|commercial space|commercial launch|"
+        "satellite order|satellite contract|launch contract|rocket launch|"
+        "商业航天|卫星订单|卫星发射|卫星互联网|低轨卫星|火箭发射",
         "商业航天/卫星订单",
         4,
     ),
@@ -2075,38 +2075,45 @@ def _classify_title(
         return None
     import re
 
-    evidence = _news_evidence_text(clean, summary=summary, content=content)
+    # Positive catalysts must be stated by the headline/abstract. Matching a
+    # positive theme from arbitrary article body text creates false mappings.
+    positive_evidence = _news_evidence_text(clean, summary=summary)
+    negative_evidence = _news_evidence_text(
+        clean,
+        summary=summary,
+        content=content,
+    )
 
     for pattern, category, impact, weight in GLOBAL_CROSS_MARKET_PATTERNS:
-        if re.search(pattern, evidence, flags=re.IGNORECASE):
+        if re.search(pattern, positive_evidence, flags=re.IGNORECASE):
             return (
                 category,
                 impact,
                 weight,
                 "",
             )
-    if _is_market_price_action_noise(evidence):
+    if _is_market_price_action_noise(positive_evidence):
         return None
-    if _is_non_actionable_discipline_news(evidence):
+    if _is_non_actionable_discipline_news(negative_evidence):
         return None
-    if _is_non_actionable_price_hike_noise(evidence):
+    if _is_non_actionable_price_hike_noise(negative_evidence):
         return None
     for pattern, category, weight in NEGATIVE_PATTERNS:
-        if re.search(pattern, evidence, flags=re.IGNORECASE):
+        if re.search(pattern, negative_evidence, flags=re.IGNORECASE):
             return (
                 category,
                 "negative",
                 weight,
                 "",
             )
-    for pattern, category, weight in POSITIVE_PATTERNS:
-        if re.search(pattern, evidence, flags=re.IGNORECASE):
-            return (
-                category,
-                "positive",
-                weight,
-                "",
-            )
+    matches = [
+        (category, weight, index)
+        for index, (pattern, category, weight) in enumerate(POSITIVE_PATTERNS)
+        if re.search(pattern, positive_evidence, flags=re.IGNORECASE)
+    ]
+    if matches:
+        category, weight, _index = max(matches, key=lambda item: (item[1], -item[2]))
+        return (category, "positive", weight, "")
     return None
 
 
@@ -2279,7 +2286,10 @@ def _iter_news_rows(df: pd.DataFrame) -> Iterable[dict[str, str]]:
         # headline keyword manufacture a catalyst without an abstract/body.
         if not source or (source_group == "rss" and not (summary or content)):
             continue
-        summary = summary or content or title
+        # Keep article body separate from the headline/abstract. A body may
+        # contain generic words such as "AI", "satellite", or "contract"
+        # that describe the publisher's page rather than the news event.
+        summary = summary or title
         rows.append(
             {
                 "title": title,

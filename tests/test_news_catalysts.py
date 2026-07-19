@@ -97,6 +97,33 @@ def test_news_catalyst_does_not_classify_supply_chain_keyword_without_evidence(
     assert _classify_title(title) is None
 
 
+def test_news_catalyst_does_not_map_generic_article_body_to_positive_theme() -> None:
+    assert (
+        _classify_title(
+            "NASA Awards Facilities Support Services Contract for Ames Research Center",
+            content=(
+                "The contract supports facilities operations in Silicon Valley; "
+                "the page also mentions satellite and spacecraft research."
+            ),
+        )
+        is None
+    )
+    assert (
+        _classify_title(
+            "Why teens deserve access to safe AI",
+            content="OpenAI describes safety, learning tools, and parental controls.",
+        )
+        is None
+    )
+
+
+def test_news_catalyst_prefers_specific_supply_chain_match() -> None:
+    classified = _classify_title("AI数据中心储能系统扩产，服务器备电需求放量")
+
+    assert classified is not None
+    assert classified[0] in {"AI算力基础设施", "电网与储能订单"}
+
+
 def test_news_catalyst_classifies_supply_chain_evidence_from_summary() -> None:
     classified = _classify_title(
         "某电子企业召开行业交流会",
