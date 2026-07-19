@@ -1904,6 +1904,16 @@ class DashboardDataProvider:
         watch_count = state.get("watch_count")
         blocked_count = state.get("blocked_count")
         protection_blocked = bool(state.get("protection_blocked"))
+        execution = state.get("execution")
+        if isinstance(execution, dict):
+            catalyst_mode = str(execution.get("catalyst_fetch_mode") or "").strip()
+            duration = execution.get("duration_seconds")
+            if catalyst_mode:
+                parts.append(f"消息模式 {catalyst_mode}")
+            if duration not in ("", None):
+                parts.append(f"耗时 {duration}s")
+            if execution.get("timed_out") is True:
+                parts.append("消息/盘中超时")
         if candidate_count not in ("", None):
             count_parts = [f"输出 {candidate_count}"]
             if focus_count not in ("", None):

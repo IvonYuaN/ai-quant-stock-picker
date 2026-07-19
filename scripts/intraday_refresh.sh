@@ -1086,10 +1086,18 @@ write_intraday_status() {
     INTRADAY_STATUS_NEWS_WARNING="${NEWS_CATALYST_WARNING:-}" \
     INTRADAY_STATUS_NEWS_OUTPUT="$INTRADAY_NEWS_OUTPUT" \
     INTRADAY_STATUS_NEWS_JSON_OUTPUT="$INTRADAY_NEWS_JSON_OUTPUT" \
+    INTRADAY_STATUS_CATALYST_MODE="$AQSP_INTRADAY_CATALYST_FETCH_MODE" \
+    INTRADAY_STATUS_NEWS_TASK_TIMEOUT="$INTRADAY_NEWS_TASK_TIMEOUT_SECONDS" \
+    INTRADAY_STATUS_NEWS_SOURCE_TIMEOUT="$INTRADAY_NEWS_SOURCE_TIMEOUT_SECONDS" \
+    INTRADAY_STATUS_STARTED_AT="${INTRADAY_STARTED_AT:-}" \
+    INTRADAY_STATUS_START_EPOCH="${START_TIME:-}" \
+    INTRADAY_STATUS_RUN_TIMED_OUT="${RUN_TIMED_OUT:-false}" \
+    INTRADAY_STATUS_RUNNER_TIMEOUT="$INTRADAY_RUN_TIMEOUT_SECONDS" \
     "$PYTHON_BIN" - <<'AQSP_INTRADAY_STATUS_PY'
 import csv
 import json
 import os
+import time
 from pathlib import Path
 
 from aqsp.core.time import now_shanghai
@@ -1167,6 +1175,15 @@ payload = {
     "csv_path": os.environ["INTRADAY_STATUS_CSV"],
     "no_candidate_reason": runtime_metadata.get("run_no_candidate_reason", ""),
     "updated_at": now_shanghai().isoformat(timespec="seconds"),
+    "execution": {
+        "started_at": os.environ["INTRADAY_STATUS_STARTED_AT"],
+        "duration_seconds": 0,
+        "catalyst_fetch_mode": os.environ["INTRADAY_STATUS_CATALYST_MODE"],
+        "runner_timeout_seconds": int(os.environ.get("INTRADAY_STATUS_RUNNER_TIMEOUT", "0") or "0"),
+        "timed_out": truthy(os.environ["INTRADAY_STATUS_RUN_TIMED_OUT"]),
+        "news_task_timeout_seconds": int(os.environ["INTRADAY_STATUS_NEWS_TASK_TIMEOUT"] or "0"),
+        "news_source_timeout_seconds": float(os.environ["INTRADAY_STATUS_NEWS_SOURCE_TIMEOUT"] or "0"),
+    },
     "advisory_boundary": "research_only_no_auto_trading",
     "observation_only": os.environ["INTRADAY_STATUS_OBSERVATION_ONLY"].lower()
     in {"1", "true", "yes", "on"},
@@ -1178,6 +1195,12 @@ payload = {
         "json_output": os.environ["INTRADAY_STATUS_NEWS_JSON_OUTPUT"],
     },
 }
+try:
+    payload["execution"]["duration_seconds"] = max(
+        0, int(time.time() - float(os.environ["INTRADAY_STATUS_START_EPOCH"] or "0"))
+    )
+except (TypeError, ValueError):
+    payload["execution"]["duration_seconds"] = 0
 quality_gate = {
     "status": "not_run",
     "benchmark_symbol": payload["benchmark_symbol"],
@@ -1299,6 +1322,9 @@ trap cleanup EXIT
 
 cd "$PROJECT_ROOT"
 
+START_TIME=$(date +%s)
+INTRADAY_STARTED_AT="$(date '+%Y-%m-%dT%H:%M:%S%z')"
+
 log "=========================================="
 log "AI量化选股 - 盘中刷新开始"
 log "项目目录: ${PROJECT_ROOT}"
@@ -1307,8 +1333,6 @@ log "数据源: ${INTRADAY_SOURCE}"
 log "市场基准: ${INTRADAY_BENCHMARK_SYMBOL}"
 log "=========================================="
 write_intraday_status "running" "盘中刷新运行中；候选筛出后会先更新快照" "0"
-
-START_TIME=$(date +%s)
 NOTIFY_ARGS=()
 if is_truthy "$INTRADAY_ALLOW_NOTIFY" && is_truthy "$INTRADAY_NOTIFY"; then
     NOTIFY_ARGS=(--notify)
