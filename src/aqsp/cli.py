@@ -125,6 +125,7 @@ from aqsp.runtime.gate_notify import (
 from aqsp.strategy import (
     apply_candidate_quality_gate,
     screen_universe,
+    score_symbol,
 )
 from aqsp.strategies.thresholds import load_thresholds
 from aqsp.universe import DEFAULT_SYMBOLS
@@ -2229,20 +2230,114 @@ def _append_cross_market_watch_candidates(
     screened_picks: list[PickResult],
     *,
     market_context: Any | None,
+    screen_frames: dict[str, pd.DataFrame] | None = None,
+    screening_config: ScreeningConfig | None = None,
+    thresholds: Any | None = None,
     max_candidates: int = 3,
 ) -> list[PickResult]:
-    """Expose message-linked realtime candidates without promoting their score."""
-    if not screened_picks or market_context is None or max_candidates <= 0:
+    """Expose message-linked candidates after an independent technical check.
+
+    The regular ranking can omit a symbol before the news layer sees it. For
+    affected symbols with a fresh frame, score it with the same deterministic
+    technical function, then keep it observation-only instead of promoting it
+    into the ranked picks.
+    """
+    if market_context is None or max_candidates <= 0:
         return picks
 
     from aqsp.market_context import market_context_metrics_for_pick
 
+    candidate_pool = list(screened_picks)
+    news_watch_candidates = tuple(
+        getattr(market_context, "news_watch_candidates", ()) or ()
+    )
+    if screen_frames and screening_config is not None and thresholds is not None:
+        ranked_symbols = {candidate.symbol for candidate in candidate_pool}
+        affected_symbols = {
+            str(symbol).strip()
+            for implication in getattr(market_context, "cross_market_implications", ())
+            for symbol in tuple(getattr(implication, "affected_symbols", ()) or ())
+            if str(symbol).strip()
+        }
+        affected_symbols.update(
+            str(getattr(candidate, "symbol", "") or "").strip()
+            for candidate in news_watch_candidates
+            if str(getattr(candidate, "symbol", "") or "").strip()
+        )
+        for symbol in sorted(affected_symbols - ranked_symbols):
+            frame = screen_frames.get(symbol)
+            if frame is None or frame.empty:
+                continue
+            try:
+                technical_candidate = score_symbol(
+                    symbol,
+                    frame,
+                    screening_config,
+                    thresholds.scoring,
+                    thresholds,
+                )
+            except (ValueError, IndexError, KeyError, TypeError) as exc:
+                LOGGER.debug("消息关联标的技术确认失败 %s: %s", symbol, exc)
+                continue
+            if technical_candidate is not None:
+                candidate_pool.append(technical_candidate)
+
     selected_symbols = {pick.symbol for pick in picks}
     watch_candidates: list[PickResult] = []
-    for candidate in screened_picks:
+    for candidate in candidate_pool:
         if candidate.symbol in selected_symbols:
             continue
         metrics = market_context_metrics_for_pick(candidate, market_context)
+        if not metrics:
+            watch = next(
+                (
+                    item
+                    for item in news_watch_candidates
+                    if str(getattr(item, "symbol", "") or "").strip()
+                    == candidate.symbol
+                ),
+                None,
+            )
+            if watch is not None:
+                metrics = {
+                    "cross_market_primary_theme": str(
+                        getattr(watch, "relation", "") or ""
+                    ),
+                    "cross_market_rule_ids": (
+                        "news_watch:" + str(getattr(watch, "relation", "") or "industry"),
+                    ),
+                    "cross_market_action": "观察为主",
+                    "cross_market_priority_score": int(
+                        getattr(watch, "priority_score", 0) or 0
+                    ),
+                    "cross_market_affected_sectors": tuple(
+                        getattr(watch, "affected_sectors", ()) or ()
+                    ),
+                    "cross_market_transmission_path": tuple(
+                        getattr(watch, "transmission_path", ()) or ()
+                    ),
+                    "cross_market_validation_signals": tuple(
+                        getattr(watch, "validation_signals", ()) or ()
+                    ),
+                    "cross_market_invalidation_signals": tuple(
+                        getattr(watch, "invalidation_signals", ()) or ()
+                    ),
+                    "news_catalyst_title": str(
+                        getattr(watch, "event_title", "") or ""
+                    ),
+                    "news_catalyst_summary": str(
+                        getattr(watch, "summary", "") or ""
+                    ),
+                    "news_catalyst_source": str(
+                        getattr(watch, "source", "") or ""
+                    ),
+                    "news_catalyst_url": str(
+                        getattr(watch, "source_url", "") or ""
+                    ),
+                    "news_catalyst_published_at": str(
+                        getattr(watch, "published_at", "") or ""
+                    ),
+                }
         rule_ids = tuple(metrics.get("cross_market_rule_ids", ()) or ())
         priority = int(metrics.get("cross_market_priority_score", 0) or 0)
         if not rule_ids or priority < 2:
@@ -2262,6 +2357,22 @@ def _append_cross_market_watch_candidates(
                 "candidate_review_priority_reason": "实时消息规则与当前技术扫描结果匹配，尚未进入正式排序",
                 "candidate_next_step": next_step,
                 "cross_market_candidate_origin": "news_to_current_universe",
+                "news_watch_relation": str(
+                    getattr(
+                        next(
+                            (
+                                item
+                                for item in news_watch_candidates
+                                if str(getattr(item, "symbol", "") or "").strip()
+                                == candidate.symbol
+                            ),
+                            None,
+                        ),
+                        "relation",
+                        "",
+                    )
+                    or "",
+                ),
             }
         )
         watch_candidates.append(replace(candidate, metrics=metrics))
@@ -4684,6 +4795,16 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
                 northbound_flow_5d_z=nb_z,
                 margin_balance_change_5d=margin_z,
                 realtime_cross_market=realtime_cross_market,
+                news_universe=tuple(
+                    {
+                        "symbol": symbol,
+                        "name": str(frame.iloc[-1].get("name", "") or ""),
+                        "sector": str(frame.iloc[-1].get("sector", "") or ""),
+                        "industry": str(frame.iloc[-1].get("industry", "") or ""),
+                    }
+                    for symbol, frame in screen_frames.items()
+                    if not frame.empty
+                ),
             )
         except Exception as exc:
             LOGGER.warning("市场上下文构建失败，跳过附加展示: %s", exc)
@@ -4701,6 +4822,9 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
         picks,
         screened_picks,
         market_context=market_context,
+        screen_frames=screen_frames,
+        screening_config=config,
+        thresholds=thresholds,
         max_candidates=3,
     )
 

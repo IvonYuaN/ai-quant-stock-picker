@@ -2,6 +2,7 @@ import type { AqspAgentResult, AqspSnapshot } from "./api";
 import {
   debateProcessText,
   dedupeResearchText,
+  gatePresentation,
   isCurrentEmptyObservation,
   latestReviewDate,
   mergeAvailableResearchDates,
@@ -56,6 +57,7 @@ const debateWithoutProcess = {
 export const researchViewContractChecks = {
   emptyConclusion: snapshotConclusion(emptySnapshot) === "",
   currentEmptyObservationIsExplicit: isCurrentEmptyObservation(currentBlockedSnapshot),
+  researchDisplayIsObservationOnly: gatePresentation({ recommendation_allowed: true, status: "research_display", reasons: ["research_display_override"] }) === "research_only",
   historicalEmptySnapshotIsNotCurrentObservation: !isCurrentEmptyObservation({
     ...currentBlockedSnapshot,
     meta: { historical: true, stale: true },

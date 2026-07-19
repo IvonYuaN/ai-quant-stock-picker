@@ -16,7 +16,7 @@ import {
 } from "lucide-react";
 import { useLocation } from "react-router-dom";
 import { cn } from "@/lib/utils";
-import { RESEARCH_SECTION_IDS, resolveResearchView, TEST_VARIANTS_SECTION_ID } from "@/lib/research-layout";
+import { FORMAL_RESEARCH_SECTIONS, RESEARCH_SECTION_IDS, resolveResearchView, TEST_VARIANTS_SECTION_ID } from "@/lib/research-layout";
 import type { AqspAgentResult, AqspCandidate, AqspMessage, AqspSnapshot } from "@/lib/api";
 import {
   debateProcessText,
@@ -24,6 +24,7 @@ import {
   formatResearchDate,
   isCurrentEmptyObservation,
   latestReviewDate,
+  gatePresentation,
   messageSourceUrl,
   sameResearchText,
   snapshotConclusion,
@@ -112,12 +113,16 @@ function StatusLine({ snapshot }: { snapshot: AqspSnapshot }) {
 
 function GateState({ snapshot }: { snapshot: AqspSnapshot }) {
   const gate = snapshot.recommendation_gate;
-  if (!gate || gate.recommendation_allowed || gate.status === "research_display") {
+  const presentation = gatePresentation(gate);
+  if (presentation === "ready") {
     return <div className="aqsp-gate aqsp-gate-ok"><Check className="h-4 w-4 shrink-0" /><span>当前结果可进入纸面复核，不自动下单。</span></div>;
   }
-  const reason = gate.reasons[0] ?? "当前结果未放行";
+  if (presentation === "unavailable") {
+    return <div className="aqsp-gate aqsp-gate-warn"><ShieldAlert className="h-4 w-4 shrink-0" /><span>推荐状态未记录，当前只显示可核验数据。</span></div>;
+  }
+  const reason = gate?.reasons[0] ?? "当前结果未放行";
   const label = reason.startsWith("freshness_not_ready") ? "实时数据新鲜度未达标" : reason.startsWith("circuit_breaker") ? "组合保护处于冷却状态" : "当前结果仅供观察";
-  return <div className="aqsp-gate aqsp-gate-warn"><ShieldAlert className="h-4 w-4 shrink-0" /><span>{label}。这不改变数据本身，只影响当前呈现状态。</span></div>;
+  return <div className="aqsp-gate aqsp-gate-warn"><ShieldAlert className="h-4 w-4 shrink-0" /><span>{label}。当前为研究展示，不进入正式推荐或纸面复核。</span></div>;
 }
 
 function CandidateCard({ candidate }: { candidate: AqspCandidate }) {
@@ -194,10 +199,10 @@ export function AqspResearchWorkspace() {
   return <div className="aqsp-page">
     <header className="aqsp-header"><div><p className="aqsp-eyebrow">AQSP · 短线研究</p><div className="aqsp-title-row"><h1>当天研究</h1><strong>{data.selected_date || "日期未记录"}</strong></div><SnapshotMeta snapshot={data} /></div><button type="button" className="aqsp-refresh" onClick={refresh} disabled={loading} title="刷新研究数据"><RefreshCw className={cn("h-4 w-4", loading && "animate-spin")} />刷新</button></header>
     <DatePicker snapshot={data} />
-    {active === RESEARCH_SECTION_IDS[0] && <section id="overview" className="aqsp-module aqsp-module-overview"><SectionHead number="01" title="当天结论" count="独立结论" /><div className="aqsp-summary-conclusion"><Sparkles className="h-5 w-5 shrink-0 text-primary" /><div><strong>{conclusion || "当天结论未记录"}</strong>{data.summaries.slice(1, 3).map((line) => <p key={line}>{line}</p>)}</div></div><StatusLine snapshot={data} /><GateState snapshot={data} /><EmptyToday snapshot={data} /></section>}
-    {active === RESEARCH_SECTION_IDS[1] && <section id="messages" className="aqsp-module aqsp-module-messages"><SectionHead number="02" title="消息证据" count={`${data.messages.length} 条`} />{data.messages.length === 0 ? <EmptyState title="当天没有有效消息" detail="没有可核验来源时，系统不补写消息或产业链推断。" /> : <div className="aqsp-list">{data.messages.map((message, index) => <MessageCard key={`${message.title}-${message.published_at}-${index}`} message={message} />)}</div>}<MarketContext snapshot={data} /></section>}
-    {active === RESEARCH_SECTION_IDS[2] && <section id="candidates" className="aqsp-module aqsp-module-candidates"><SectionHead number="03" title="候选研究" count={`${data.candidates.length} 个`} />{data.candidates.length === 0 ? <EmptyState title="当天没有候选" detail="当前没有通过数据质量与短线筛选的对象，不用历史候选填充。" /> : <div className="aqsp-list">{data.candidates.map((candidate) => <CandidateCard key={candidate.symbol} candidate={candidate} />)}</div>}</section>}
-    {active === RESEARCH_SECTION_IDS[3] && <section id="discussion" className="aqsp-module aqsp-module-discussion"><SectionHead number="04" title="讨论复核" count={`${data.debates.length} 条`} />{data.debates.length === 0 ? <EmptyState title="当天没有有效讨论" detail="没有可核验的分歧和风险条件时，不显示推断内容。" /> : <div className="aqsp-list">{data.debates.map((result) => <DebateCard key={result.symbol} result={result} />)}</div>}</section>}
+    {active === RESEARCH_SECTION_IDS[0] && <section id="overview" className="aqsp-module aqsp-module-overview"><SectionHead number={FORMAL_RESEARCH_SECTIONS[0].number} title={FORMAL_RESEARCH_SECTIONS[0].label} count="独立结论" /><div className="aqsp-summary-conclusion"><Sparkles className="h-5 w-5 shrink-0 text-primary" /><div><strong>{conclusion || "当天结论未记录"}</strong>{data.summaries.slice(1, 3).map((line) => <p key={line}>{line}</p>)}</div></div><StatusLine snapshot={data} /><GateState snapshot={data} /><EmptyToday snapshot={data} /></section>}
+    {active === RESEARCH_SECTION_IDS[1] && <section id="messages" className="aqsp-module aqsp-module-messages"><SectionHead number={FORMAL_RESEARCH_SECTIONS[1].number} title={FORMAL_RESEARCH_SECTIONS[1].label} count={`${data.messages.length} 条`} />{data.messages.length === 0 ? <EmptyState title="当天没有有效消息" detail="没有可核验来源时，系统不补写消息或产业链推断。" /> : <div className="aqsp-list">{data.messages.map((message, index) => <MessageCard key={`${message.title}-${message.published_at}-${index}`} message={message} />)}</div>}<MarketContext snapshot={data} /></section>}
+    {active === RESEARCH_SECTION_IDS[2] && <section id="candidates" className="aqsp-module aqsp-module-candidates"><SectionHead number={FORMAL_RESEARCH_SECTIONS[2].number} title={FORMAL_RESEARCH_SECTIONS[2].label} count={`${data.candidates.length} 个`} />{data.candidates.length === 0 ? <EmptyState title="当天没有候选" detail="当前没有通过数据质量与短线筛选的对象，不用历史候选填充。" /> : <div className="aqsp-list">{data.candidates.map((candidate) => <CandidateCard key={candidate.symbol} candidate={candidate} />)}</div>}</section>}
+    {active === RESEARCH_SECTION_IDS[3] && <section id="discussion" className="aqsp-module aqsp-module-discussion"><SectionHead number={FORMAL_RESEARCH_SECTIONS[3].number} title={FORMAL_RESEARCH_SECTIONS[3].label} count={`${data.debates.length} 条`} />{data.debates.length === 0 ? <EmptyState title="当天没有有效讨论" detail="没有可核验的分歧和风险条件时，不显示推断内容。" /> : <div className="aqsp-list">{data.debates.map((result) => <DebateCard key={result.symbol} result={result} />)}</div>}</section>}
     {active === TEST_VARIANTS_SECTION_ID && <TestVariantsPanel snapshot={data} />}
   </div>;
 }

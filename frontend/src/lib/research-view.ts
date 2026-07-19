@@ -1,4 +1,13 @@
 import type { AqspAgentResult, AqspSnapshot } from "./api";
+import type { AqspRecommendationGate } from "./api";
+
+export type GatePresentation = "ready" | "research_only" | "unavailable";
+
+export function gatePresentation(gate: AqspRecommendationGate | undefined): GatePresentation {
+  if (!gate) return "unavailable";
+  if (gate.status === "research_display" || !gate.recommendation_allowed) return "research_only";
+  return "ready";
+}
 
 export function snapshotMatchesSelectedDate(
   snapshot: Pick<AqspSnapshot, "selected_date">,
@@ -17,7 +26,7 @@ export function isCurrentEmptyObservation(snapshot: AqspSnapshot): boolean {
       snapshot.candidates.length === 0 &&
       snapshot.messages.length === 0 &&
       snapshot.recommendation_gate &&
-      !snapshot.recommendation_gate.recommendation_allowed,
+      gatePresentation(snapshot.recommendation_gate) !== "ready",
   );
 }
 

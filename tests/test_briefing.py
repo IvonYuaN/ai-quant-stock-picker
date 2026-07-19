@@ -1074,6 +1074,69 @@ class TestDebateAgent:
             )
             assert opinion.stance == "neutral"
 
+    def test_sector_role_stays_neutral_when_targets_have_no_evidence(self):
+        agent = AShareDebateAgent(AgentRole.SECTOR_LEADER, enable_llm=False)
+        opinion = agent.generate_initial_opinion(
+            _make_pick(
+                score=72,
+                metrics={
+                    "cross_market_first_order_targets": ("机器人整机",),
+                    "cross_market_second_order_targets": ("传感器",),
+                },
+            ),
+            pd.DataFrame({"close": [100.0 + i for i in range(20)]}),
+        )
+
+        assert opinion.stance == "neutral"
+
+    def test_two_sided_debate_preserves_real_bear_and_score_boundary(self):
+        coordinator = AShareDebateCoordinator(
+            enable_llm=False,
+            max_rounds=2,
+            roles=(AgentRole.BULL, AgentRole.BEAR),
+        )
+        pick = _make_pick(score=72, metrics={})
+        result = coordinator.run_debate(
+            pick,
+            pd.DataFrame({"close": [100.0 + i for i in range(20)]}),
+            signal_date=pick.date,
+        )
+
+        assert result.final_vote[AgentRole.BULL] == "bullish"
+        assert result.final_vote[AgentRole.BEAR] == "bearish"
+        assert any(
+            record for opinion in result.rounds[-1].opinions
+            for record in opinion.rebuttal_records
+        )
+        assert "missing_real_opposition" not in result.failure
+        assert result.recommended_adjustment == "keep"
+        assert result.adjustment_weight == 0.0
+        assert result.adjusted_score == pick.score
+        assert result.deterministic_score == pick.score
+        assert result.deterministic_score_unchanged is True
+
+    def test_one_sided_debate_blocks_verdict_and_preserves_reliability(self):
+        coordinator = AShareDebateCoordinator(
+            enable_llm=False,
+            max_rounds=2,
+            roles=(AgentRole.BULL, AgentRole.BEAR),
+        )
+        pick = _make_pick(score=72, risks=(), metrics={})
+        result = coordinator.run_debate(
+            pick,
+            pd.DataFrame({"close": [100.0 + i for i in range(20)]}),
+            signal_date=pick.date,
+        )
+
+        assert result.final_vote[AgentRole.BULL] == "bullish"
+        assert result.final_vote[AgentRole.BEAR] == "neutral"
+        assert "未形成真实正反方交锋" in result.research_verdict
+        assert result.recommended_adjustment == "keep"
+        assert result.adjustment_weight == 0.0
+        assert result.adjusted_score == pick.score
+        assert result.role_reliability_lines
+        assert "missing_real_opposition" in result.failure
+
     def test_llm_enhancement_keeps_deterministic_points_and_records_advisory(self):
         agent = AShareDebateAgent(
             role=AgentRole.BULL,

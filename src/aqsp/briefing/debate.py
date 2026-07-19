@@ -642,13 +642,20 @@ class AShareDebateAgent:
             if conflict_count > support_count and conflict_count > 0:
                 return "bearish"
             if (
-                self._cross_market_metric_texts(
-                    pick, "cross_market_first_order_targets"
+                self._has_cross_market_evidence(
+                    pick,
+                    market_context_lines=market_context_lines,
                 )
-                or self._cross_market_metric_texts(
-                    pick, "cross_market_second_order_targets"
+                and (
+                    self._cross_market_metric_texts(
+                        pick, "cross_market_first_order_targets"
+                    )
+                    or self._cross_market_metric_texts(
+                        pick, "cross_market_second_order_targets"
+                    )
                 )
-            ) and support_count >= conflict_count:
+                and support_count > conflict_count
+            ):
                 return "bullish"
             return "neutral"
         elif self.role == AgentRole.CROSS_MARKET:
@@ -2482,6 +2489,12 @@ class AShareDebateCoordinator:
     def _build_research_verdict(self, result: DebateResult) -> str:
         support = self._preferred_research_support(result.support_points)
         risk_gate = str(result.primary_risk_gate or "").strip()
+        quality = _audit_result_quality(result)
+        requires_opposition = {"bull", "bear"}.issubset(set(result.expected_roles))
+        if requires_opposition and not quality.real_opposition_recorded:
+            return "结论阻断：未形成真实正反方交锋，仅记录观点和待确认条件。"
+        if not quality.evidence_sufficient:
+            return "结论阻断：缺少可核验证据，仅记录待补证据。"
         if not _has_substantive_debate_evidence(result):
             return "结论阻断：缺少可核验证据，仅记录待补证据。"
         near_review = any("纸面复核名单" in item for item in result.watch_items) or any(
@@ -2606,32 +2619,52 @@ class AShareDebateCoordinator:
         agent_ids: dict[AgentRole, str],
     ) -> None:
         """计算评分调整"""
+        debate_context = {
+            "cross_market_support_event_count": result.cross_market_support_event_count,
+            "cross_market_conflict_event_count": result.cross_market_conflict_event_count,
+            "cross_market_evidence_stack_summary": result.cross_market_evidence_stack_summary,
+        }
+        history_summary = self.tracker.get_cross_market_context_history(
+            debate_context=debate_context,
+        )
         votes = {role: stance for role, stance in result.final_vote.items()}
         agent_weights = self.tracker.get_all_weights(
             agent_ids,
             regime=self.regime,
-            debate_context={
-                "cross_market_support_event_count": result.cross_market_support_event_count,
-                "cross_market_conflict_event_count": result.cross_market_conflict_event_count,
-                "cross_market_evidence_stack_summary": result.cross_market_evidence_stack_summary,
-            },
-        )
-        history_summary = self.tracker.get_cross_market_context_history(
-            debate_context={
-                "cross_market_support_event_count": result.cross_market_support_event_count,
-                "cross_market_conflict_event_count": result.cross_market_conflict_event_count,
-                "cross_market_evidence_stack_summary": result.cross_market_evidence_stack_summary,
-            },
+            debate_context=debate_context,
         )
         reliability_summaries = self.tracker.get_all_reliability_summaries(
             agent_ids,
             regime=self.regime,
-            debate_context={
-                "cross_market_support_event_count": result.cross_market_support_event_count,
-                "cross_market_conflict_event_count": result.cross_market_conflict_event_count,
-                "cross_market_evidence_stack_summary": result.cross_market_evidence_stack_summary,
-            },
+            debate_context=debate_context,
         )
+        if result.rounds:
+            quality = _audit_result_quality(result)
+            requires_opposition = {"bull", "bear"}.issubset(
+                set(result.expected_roles)
+            )
+            if (requires_opposition and "missing_real_opposition" in quality.issues) or (
+                "no_substantive_evidence" in quality.issues
+            ):
+                # A one-sided or evidence-free discussion cannot produce even
+                # an advisory adjustment. Keep the deterministic score intact.
+                result.disagreement_score = 1.0
+                result.adjustment_weight = 0.0
+                result.adjusted_score = result.original_score
+                result.recommended_adjustment = "keep"
+                result.adjustment_reason = (
+                    "讨论质量门阻塞: "
+                    + "、".join(quality.issues)
+                    + "；不计算讨论层调整，确定性评分保持不变"
+                )
+                result.historical_context_note = history_summary.governance_note
+                result.historical_context_bucket = history_summary.current_bucket
+                result.historical_context_sample_count = history_summary.current_sample_count
+                result.historical_context_accuracy = history_summary.current_accuracy
+                result.role_reliability_lines = tuple(
+                    item.summary_line for item in reliability_summaries[:4]
+                )
+                return
 
         (
             adjustment_weight,

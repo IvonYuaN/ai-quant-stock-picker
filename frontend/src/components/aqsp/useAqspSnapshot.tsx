@@ -14,7 +14,7 @@ const AqspWorkspaceContext = createContext<AqspSnapshotState | null>(null);
 
 function readSelectedDate(): string {
   try {
-    return localStorage.getItem("vr-selected-date") || "";
+    return localStorage.getItem("aqsp-selected-date") || "";
   } catch {
     return "";
   }
@@ -39,7 +39,7 @@ export function AqspWorkspaceProvider({ children }: { children: ReactNode }) {
         if (!selectedDate && snapshot.selected_date) {
           setSelectedDate(snapshot.selected_date);
           try {
-            localStorage.setItem("vr-selected-date", snapshot.selected_date);
+            localStorage.setItem("aqsp-selected-date", snapshot.selected_date);
           } catch {
             // Storage is optional; the in-memory selection remains usable.
           }
@@ -52,7 +52,7 @@ export function AqspWorkspaceProvider({ children }: { children: ReactNode }) {
         if (reason instanceof ApiError && reason.status === 404 && selectedDate) {
           setSelectedDate("");
           try {
-            localStorage.removeItem("vr-selected-date");
+            localStorage.removeItem("aqsp-selected-date");
           } catch {
             // Storage is optional; the next request still uses the live snapshot.
           }
@@ -78,7 +78,7 @@ export function AqspWorkspaceProvider({ children }: { children: ReactNode }) {
       if (date !== selectedDate) setData(null);
       setSelectedDate(date);
       try {
-        localStorage.setItem("vr-selected-date", date);
+        localStorage.setItem("aqsp-selected-date", date);
       } catch {
         // Storage is optional; the in-memory selection remains usable.
       }

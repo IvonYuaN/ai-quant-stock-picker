@@ -170,6 +170,19 @@ def test_aqsp_api_returns_current_snapshot_with_messages_and_agents(
     }
 
 
+def test_aqsp_api_keeps_formal_board_sections_independent(
+    aqsp_client: TestClient,
+) -> None:
+    body = aqsp_client.get(SNAPSHOT_ROUTE).json()["data"]
+
+    assert body["selected_date"] == "2026-07-14"
+    assert len(body["messages"]) == 1
+    assert len(body["candidates"]) == 1
+    assert len(body["debates"]) == 1
+    assert body["messages"][0]["title"] != body["candidates"][0]["display_name"]
+    assert body["debates"][0]["symbol"] == body["candidates"][0]["symbol"]
+
+
 def test_aqsp_api_returns_503_when_current_snapshot_lacks_stale_after(
     aqsp_client: TestClient,
     monkeypatch: pytest.MonkeyPatch,

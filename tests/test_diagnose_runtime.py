@@ -615,7 +615,7 @@ def test_diagnose_runtime_warns_when_gate_state_missing_after_cold_start_target(
     assert "- coldstart_latest_status: completed" in output
     assert "- coldstart_latest_progress: 30/30" in output
     assert (
-        "- coldstart_latest_blocker: 冷启动样本门已达标；后续看 walk-forward 双门 gate 与组合保护状态，不再追加冷启动样本"
+        "- coldstart_latest_blocker: 冷启动样本门已达标；后续看 walk-forward 双门 gate；组合保护按实时解除日单独判断"
         in output
     )
     assert "- warning_gate_state_missing: signal_days=30/30" in output
