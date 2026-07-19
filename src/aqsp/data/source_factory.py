@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import inspect
+import logging
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -11,6 +12,10 @@ from aqsp.data.cache import DataCache
 from aqsp.data.multi_source import MultiSource, SourceFactory
 from aqsp.data.source_health import prioritize_source_ids
 from aqsp.data.source import DataSource
+
+
+_logger = logging.getLogger("aqsp.data.source_factory")
+_OPTIONAL_SOURCE_NAMES = frozenset({"akshare", "baostock", "efinance", "mootdx"})
 
 
 SourceBuilder = Callable[..., DataSource]
@@ -110,12 +115,11 @@ def build_data_source(
         if not online_fallback_allowed():
             return builders["tdx_vipdoc"]()
         fallbacks = _reorder_source_refs(
-            [
-                _build_with_cache(builders["eastmoney"], source_cache),
-                _build_with_cache(builders["sina"], source_cache),
-                _build_with_cache(builders["tencent"], source_cache),
-                _build_with_cache(builders["akshare"], source_cache),
-            ],
+            _build_source_refs(
+                ("eastmoney", "sina", "tencent", "akshare"),
+                builders,
+                source_cache,
+            ),
             pinned_last=("akshare",),
         )
         return MultiSource(
@@ -125,12 +129,11 @@ def build_data_source(
         )
     if source_name == "online_first":
         online_sources = _reorder_source_refs(
-            [
-                _build_with_cache(builders["eastmoney"], source_cache),
-                _build_with_cache(builders["sina"], source_cache),
-                _build_with_cache(builders["tencent"], source_cache),
-                _build_with_cache(builders["akshare"], source_cache),
-            ],
+            _build_source_refs(
+                ("eastmoney", "sina", "tencent", "akshare"),
+                builders,
+                source_cache,
+            ),
             pinned_last=("akshare",),
         )
         return MultiSource(
@@ -140,12 +143,11 @@ def build_data_source(
         )
     if source_name == "multi":
         sources = _reorder_source_refs(
-            [
-                _build_with_cache(builders["akshare"], source_cache),
-                _build_with_cache(builders["sina"], source_cache),
-                _build_with_cache(builders["eastmoney"], source_cache),
-                _build_with_cache(builders["tencent"], source_cache),
-            ],
+            _build_source_refs(
+                ("akshare", "sina", "eastmoney", "tencent"),
+                builders,
+                source_cache,
+            ),
             pinned_last=("akshare",),
         )
         return MultiSource(sources[0], sources[1:])
@@ -161,6 +163,31 @@ def _build_with_cache(builder: SourceBuilder, cache: DataCache) -> DataSource:
         if "cache" not in str(exc):
             raise
         return builder()
+
+
+def _build_source_refs(
+    names: tuple[str, ...],
+    builders: dict[str, SourceBuilder],
+    cache: DataCache,
+) -> list[DataSource]:
+    """Build available source adapters without letting optional imports block live data."""
+    refs: list[DataSource] = []
+    for name in names:
+        builder = builders[name]
+        try:
+            refs.append(_build_with_cache(builder, cache))
+        except (ImportError, ModuleNotFoundError, RuntimeError) as exc:
+            if name not in _OPTIONAL_SOURCE_NAMES or not _is_missing_optional_source(exc):
+                raise
+            _logger.warning("跳过未安装的可选数据源 %s: %s", name, exc)
+    if not refs:
+        raise RuntimeError("没有可用的实时数据源")
+    return refs
+
+
+def _is_missing_optional_source(exc: BaseException) -> bool:
+    message = str(exc).lower()
+    return "not installed" in message or "no module named" in message
 
 
 def _source_builders(overrides: dict[str, SourceBuilder]) -> dict[str, SourceBuilder]:

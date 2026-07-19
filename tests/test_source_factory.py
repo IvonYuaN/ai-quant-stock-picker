@@ -102,3 +102,24 @@ def test_build_data_source_tdx_vipdoc_does_not_require_baostock_dependency(
     source = sf.build_data_source("tdx_vipdoc", overrides={"tdx_vipdoc": DummyTdx})
 
     assert source.name == "tdx_vipdoc"
+
+
+def test_build_source_refs_skips_missing_optional_adapter(monkeypatch) -> None:
+    from aqsp.data import source_factory as sf
+
+    class DummySource:
+        name = "tencent"
+
+    def missing_builder(*, cache=None):
+        raise RuntimeError("akshare is not installed")
+
+    def working_builder(*, cache=None):
+        return DummySource()
+
+    refs = sf._build_source_refs(
+        ("akshare", "tencent"),
+        {"akshare": missing_builder, "tencent": working_builder},
+        object(),
+    )
+
+    assert [item.name for item in refs] == ["tencent"]
