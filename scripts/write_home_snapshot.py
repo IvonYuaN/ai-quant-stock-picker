@@ -676,7 +676,7 @@ def _messages_from_catalyst_report(
     selected: list[HomeSnapshotMessage] = []
     covered: set[tuple[str, str]] = set()
     source_counts: dict[str, int] = {}
-    source_count = len({message.source.casefold() for message in messages})
+    source_count = len({_message_source_family(message.source) for message in messages})
     source_limit = (
         MAX_HOME_MESSAGES if source_count == 1 else MAX_HOME_MESSAGES_PER_SOURCE
     )
@@ -684,7 +684,7 @@ def _messages_from_catalyst_report(
         topic = (message.event_type or message.category or "消息").strip()
         region = (message.source_region or "mixed").strip().lower()
         key = (topic, region)
-        source_key = message.source.casefold()
+        source_key = _message_source_family(message.source)
         if key in covered or source_counts.get(source_key, 0) >= source_limit:
             continue
         selected.append(message)
@@ -695,7 +695,7 @@ def _messages_from_catalyst_report(
     for message in messages:
         if message in selected:
             continue
-        source_key = message.source.casefold()
+        source_key = _message_source_family(message.source)
         if source_counts.get(source_key, 0) >= source_limit:
             continue
         selected.append(message)
@@ -703,6 +703,22 @@ def _messages_from_catalyst_report(
         if len(selected) == MAX_HOME_MESSAGES:
             break
     return tuple(selected)
+
+
+def _message_source_family(source: str) -> str:
+    """Group branded feeds so one publisher cannot fill the daily digest."""
+    text = re.sub(r"[^a-z0-9\u4e00-\u9fff]+", " ", str(source or "").casefold()).strip()
+    for token in (
+        "nvidia",
+        "英伟达",
+        "openai",
+        "美联储",
+        "federal reserve",
+        "证券日报",
+    ):
+        if token in text:
+            return token
+    return text or "unknown"
 
 
 def _news_report_source_status(data_status: str, report_status: str) -> str:
