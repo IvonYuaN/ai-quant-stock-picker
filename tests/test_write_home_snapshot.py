@@ -1063,6 +1063,34 @@ def test_write_home_snapshot_marks_historical_news_as_excluded(
     assert snapshot.market_context.status == "历史消息已排除"
 
 
+def test_normalize_catalyst_report_downgrades_historical_high_impact_status() -> None:
+    report = CatalystReport(
+        date="2026-07-19",
+        generated_at="2026-07-19T15:36:11+08:00",
+        source_status="partial",
+        event_status="high_impact",
+        events=(
+            CatalystEvent(
+                title="旧事件",
+                source="fixture",
+                published_at="2026-07-17T09:00:00+08:00",
+                impact="positive",
+            ),
+        ),
+    )
+
+    normalized, historical_count, invalid_count = (
+        write_home_snapshot._normalize_catalyst_report_for_snapshot(
+            report, "2026-07-19"
+        )
+    )
+
+    assert historical_count == 1
+    assert invalid_count == 0
+    assert normalized.events == ()
+    assert normalized.news_status == "stale_only"
+
+
 def test_write_home_snapshot_explains_empty_current_news(monkeypatch, tmp_path) -> None:
     report = tmp_path / "news_catalysts.md"
     report.write_text(
