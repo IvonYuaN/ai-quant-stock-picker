@@ -128,6 +128,116 @@ def _write_index(tmp_path: Path) -> Path:
     return _write_single(tmp_path, current)
 
 
+def _write_debates(tmp_path: Path, *records: dict) -> Path:
+    path = tmp_path / "debate_results.jsonl"
+    path.write_text(
+        "".join(json.dumps(record, ensure_ascii=False) + "\n" for record in records),
+        encoding="utf-8",
+    )
+    return path
+
+
+def _runtime_debate(
+    *, date: str, symbol: str = "600002", score: float = 72.5
+) -> dict:
+    return {
+        "symbol": symbol,
+        "debate_date": date,
+        "research_verdict": "维持纸面复核",
+        "primary_risk_gate": "量能承接",
+        "next_trigger": "放量确认",
+        "active_roles": ["bull", "bear", "risk"],
+        "debate_rounds_completed": 2,
+        "rounds": [{"summary": "多空完成复核"}],
+        "support_points": ["量价同步"],
+        "opposition_points": ["量能尚未确认"],
+        "risk_warnings": ["高开回撤"],
+        "watch_items": ["观察开盘承接"],
+        "advisory_only": True,
+        "deterministic_score": score,
+        "deterministic_score_unchanged": True,
+        "advisory_boundary_ok": True,
+        "process_recorded": True,
+        "conclusion_recorded": True,
+    }
+
+
+def test_aqsp_bridge_attaches_date_matched_runtime_debate_to_history(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    current = _snapshot("2026-07-14")
+    historical = _snapshot("2026-07-11", symbol="600002")
+    historical["debates"] = []
+    index_path = tmp_path / "home_dashboard_snapshot_index.json"
+    index_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "v1-index",
+                "generated_at": "2026-07-14T18:00:00+08:00",
+                "stale_after": "2099-01-01T00:00:00+08:00",
+                "selected_date": "2026-07-14",
+                "days": [
+                    {"date": "2026-07-14", "snapshot": current},
+                    {"date": "2026-07-11", "snapshot": historical},
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    snapshot_path = _write_single(tmp_path, current)
+    debate_path = _write_debates(
+        tmp_path, _runtime_debate(date="2026-07-11", symbol="600002")
+    )
+    monkeypatch.setenv("AQSP_RESEARCH_SURFACE_SNAPSHOT", str(snapshot_path))
+    monkeypatch.setenv("AQSP_DEBATE_RESULTS", str(debate_path))
+
+    response = client.get("/api/aqsp/snapshot?date=2026-07-11")
+
+    assert response.status_code == 200
+    debate = response.json()["data"]["debates"][0]
+    assert debate["symbol"] == "600002"
+    assert debate["round_summaries"] == ["多空完成复核"]
+    assert response.json()["data"]["candidates"][0]["score"] == 72.5
+
+
+def test_aqsp_bridge_does_not_attach_unmatched_runtime_debate_to_current_date(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    payload = _snapshot("2026-07-14")
+    payload["debates"] = []
+    snapshot_path = _write_single(tmp_path, payload)
+    debate_path = _write_debates(
+        tmp_path, _runtime_debate(date="2026-07-13", symbol="600001")
+    )
+    monkeypatch.setenv("AQSP_RESEARCH_SURFACE_SNAPSHOT", str(snapshot_path))
+    monkeypatch.setenv("AQSP_DEBATE_RESULTS", str(debate_path))
+
+    response = client.get("/api/aqsp/snapshot")
+
+    assert response.status_code == 200
+    assert response.json()["data"]["debates"] == []
+
+
+def test_aqsp_bridge_skips_runtime_debate_when_deterministic_score_differs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    payload = _snapshot("2026-07-14")
+    payload["debates"] = []
+    snapshot_path = _write_single(tmp_path, payload)
+    debate_path = _write_debates(
+        tmp_path, _runtime_debate(date="2026-07-14", symbol="600001", score=71.0)
+    )
+    monkeypatch.setenv("AQSP_RESEARCH_SURFACE_SNAPSHOT", str(snapshot_path))
+    monkeypatch.setenv("AQSP_DEBATE_RESULTS", str(debate_path))
+
+    response = client.get("/api/aqsp/snapshot")
+
+    assert response.status_code == 200
+    assert response.json()["data"]["debates"] == []
+    assert response.json()["data"]["candidates"][0]["score"] == 72.5
+
+
 def test_aqsp_bridge_snapshot_returns_typed_candidate_payload_when_snapshot_is_valid(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
