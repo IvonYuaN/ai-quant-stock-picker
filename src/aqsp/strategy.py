@@ -227,11 +227,18 @@ def score_symbol(
     risks: list[str] = []
     score = 0.0
     strategy_ids: list[str] = []
+    technical_breakdown: dict[str, float] = {}
+
+    def add_technical_score(component: str, value: float) -> None:
+        """Keep every deterministic technical contribution auditable."""
+        nonlocal score
+        score += float(value)
+        technical_breakdown[component] = round(float(value), 4)
 
     avg_amount = _num(row["amount_ma20"])
     if avg_amount < config.min_avg_amount:
         risks.append("20日均成交额不足，流动性过滤")
-        score += scoring.liquidity_penalty
+        add_technical_score("liquidity", scoring.liquidity_penalty)
 
     ma5, ma10, ma20, ma60 = (_num(row[f"ma{x}"]) for x in (5, 10, 20, 60))
     bias20 = _num(row["bias20"])
@@ -244,13 +251,13 @@ def score_symbol(
     prev_macd_hist = _num(prev["macd_hist"])
 
     if ma5 > ma10 > ma20 > ma60:
-        score += scoring.ma_full_bull
+        add_technical_score("ma_full_bull", scoring.ma_full_bull)
         reasons.append("MA5/10/20/60 多头排列")
     elif ma5 > ma10 > ma20:
-        score += scoring.ma_short_bull
+        add_technical_score("ma_short_bull", scoring.ma_short_bull)
         reasons.append("短中期均线多头")
     elif close < ma20:
-        score += scoring.ma_below_ma20
+        add_technical_score("ma_below_ma20", scoring.ma_below_ma20)
         risks.append("收盘价低于 MA20")
 
     # ma20_slope_lookback 在 thresholds 里标注为 float，但用作 iloc 负索引必须是 int。
@@ -263,24 +270,24 @@ def score_symbol(
     else:
         ma20_slope = 0.0
     if ma20_slope > scoring.ma20_slope_up_threshold:
-        score += scoring.ma20_slope_up
+        add_technical_score("ma20_slope_up", scoring.ma20_slope_up)
         reasons.append("MA20 斜率向上")
     elif ma20_slope < scoring.ma20_slope_down_threshold:
-        score += scoring.ma20_slope_down
+        add_technical_score("ma20_slope_down", scoring.ma20_slope_down)
         risks.append("MA20 仍在下行")
 
     if ret20 > scoring.ret20_strong_threshold:
-        score += scoring.ret20_strong
+        add_technical_score("ret20_strong", scoring.ret20_strong)
         reasons.append("20日相对强势")
     elif ret20 < scoring.ret20_weak_threshold:
-        score += scoring.ret20_weak
+        add_technical_score("ret20_weak", scoring.ret20_weak)
         risks.append("20日弱势")
 
     if (
         close >= _num(prev["high_20"]) * scoring.near_high_threshold
         and volume_ratio >= scoring.near_high_volume
     ):
-        score += scoring.near_high_bonus
+        add_technical_score("near_high", scoring.near_high_bonus)
         reasons.append("接近或突破20日新高且量能确认")
 
     pullback_to_ma = (
@@ -289,49 +296,49 @@ def score_symbol(
         and ma5 > ma10 > ma20
     )
     if pullback_to_ma:
-        score += scoring.pullback_bonus
+        add_technical_score("pullback", scoring.pullback_bonus)
         reasons.append("强趋势缩量回踩均线")
 
     if macd_hist > 0 and macd_hist > prev_macd_hist:
-        score += scoring.macd_improve
+        add_technical_score("macd_improve", scoring.macd_improve)
         reasons.append("MACD 动能改善")
     elif macd_hist < 0 and macd_hist < prev_macd_hist:
-        score += scoring.macd_weaken
+        add_technical_score("macd_weaken", scoring.macd_weaken)
         risks.append("MACD 动能走弱")
 
     if scoring.rsi_healthy_low <= rsi12 <= scoring.rsi_healthy_high:
-        score += scoring.rsi_healthy_bonus
+        add_technical_score("rsi_healthy", scoring.rsi_healthy_bonus)
         reasons.append("RSI 位于健康强势区间")
     elif rsi12 > scoring.rsi_overbought:
-        score += scoring.rsi_overbought_penalty
+        add_technical_score("rsi_overbought", scoring.rsi_overbought_penalty)
         risks.append("RSI 过热")
 
     if bias20 > config.max_bias20:
-        score += scoring.bias_high_penalty
+        add_technical_score("bias_high", scoring.bias_high_penalty)
         risks.append("MA20 乖离过高，追高风险")
     elif 0 <= bias20 <= scoring.bias_healthy_max:
-        score += scoring.bias_healthy_bonus
+        add_technical_score("bias_healthy", scoring.bias_healthy_bonus)
         reasons.append("价格相对 MA20 位置不拥挤")
 
     if config.mode == "close":
         if _num(row["range_pos"]) >= scoring.range_strong_threshold:
-            score += scoring.range_strong_bonus
+            add_technical_score("range_strong", scoring.range_strong_bonus)
             reasons.append("尾盘收在日内偏强区域")
         if (
             _num(row["upper_shadow_pct"]) > scoring.upper_shadow_threshold
             and volume_ratio > scoring.upper_shadow_volume
         ):
-            score += scoring.upper_shadow_penalty
+            add_technical_score("upper_shadow", scoring.upper_shadow_penalty)
             risks.append("尾盘放量长上影")
     else:
         if (
             abs(bias20) <= scoring.open_calm_bias
             and volume_ratio < scoring.open_calm_volume
         ):
-            score += scoring.open_calm_bonus
+            add_technical_score("open_calm", scoring.open_calm_bonus)
             reasons.append("开盘候选未明显过热")
         if _num(row["amplitude_pct"]) > scoring.amplitude_threshold:
-            score += scoring.amplitude_penalty
+            add_technical_score("amplitude", scoring.amplitude_penalty)
             risks.append("前一交易日振幅过大")
 
     strategy_signals = evaluate_strategy_signals(df, thresholds=internet_strategy)
@@ -423,7 +430,27 @@ def score_symbol(
             "historical_data_source": _text(frame.attrs.get("historical_source")),
             "strategy_weights": applied_strategy_weights,
             "strategy_weight_reasons": applied_strategy_weight_reasons,
-            "score_breakdown": score_breakdown,
+            # Keep the existing strategy-id keys for consumers, and add the
+            # deterministic technical components beside them.  The total is
+            # recorded so downstream renderers can detect dropped components.
+            "score_breakdown": {
+                **score_breakdown,
+                **{
+                    f"technical.{name}": {
+                        "raw_score": value,
+                        "weight": 1.0,
+                        "weighted_score": value,
+                    }
+                    for name, value in technical_breakdown.items()
+                },
+            },
+            "score_breakdown_total": round(score, 4),
+            "score_breakdown_strategy_total": round(
+                sum(item["weighted_score"] for item in score_breakdown.values()), 4
+            ),
+            "score_breakdown_technical_total": round(
+                sum(technical_breakdown.values()), 4
+            ),
             "technical_evidence": quality.technical_evidence,
             "technical_evidence_count": len(quality.technical_evidence),
             "technical_quality_status": quality.action,

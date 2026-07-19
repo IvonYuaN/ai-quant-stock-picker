@@ -258,11 +258,22 @@ class AutoEvolution:
 
     def _get_base_params(self, strategy_name: str) -> Dict[str, float]:
         param_spaces = self.config.param_spaces.get(strategy_name, {})
-        base_params = {}
+        base_params: Dict[str, float] = {}
+        section_name = self._threshold_section(strategy_name)
+        section = getattr(self.thresholds, section_name, None)
 
         for param_name, bounds in param_spaces.items():
             if len(bounds) == 2:
-                base_params[param_name] = (bounds[0] + bounds[1]) / 2
+                configured = getattr(section, param_name, None)
+                if isinstance(configured, (int, float)) and not isinstance(
+                    configured, bool
+                ):
+                    base_params[param_name] = float(configured)
+                else:
+                    # Legacy parameter spaces may contain fields that are not
+                    # in the frozen threshold dataclass. Keep their midpoint
+                    # fallback, but never let them mutate runtime thresholds.
+                    base_params[param_name] = (bounds[0] + bounds[1]) / 2
 
         return base_params
 
@@ -409,7 +420,10 @@ class AutoEvolution:
             candidate[param_name] = max(bounds[0], min(bounds[1], current_value * 1.1))
             candidates.append(candidate)
 
-        return candidates
+        # The setting limits parameter trials per evolution cycle. It is a
+        # resource and overfitting control, not a runtime writeback switch.
+        limit = max(0, int(self.config.max_evolution_per_cycle))
+        return candidates[:limit] if limit else []
 
     def _evaluate_params(
         self,

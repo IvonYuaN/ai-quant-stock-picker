@@ -554,6 +554,28 @@ def test_score_symbol_applies_screening_strategy_weights() -> None:
     assert boosted.metrics["score_breakdown"]["rps_momentum"]["weighted_score"] > base.metrics["score_breakdown"]["rps_momentum"]["weighted_score"]
 
 
+def test_score_symbol_exposes_complete_deterministic_score_breakdown() -> None:
+    frame = _frame("VOL", 0.004, 1.8)
+    pick = score_symbol(
+        "VOL",
+        frame,
+        ScreeningConfig(min_avg_amount=1, strategy_weights={"rps_momentum": 1.0}),
+        ScoringThresholds(),
+        Thresholds(),
+    )
+
+    assert pick is not None
+    breakdown = pick.metrics["score_breakdown"]
+    assert any(key.startswith("technical.") for key in breakdown)
+    assert "technical.ma_full_bull" in breakdown or "technical.ma_short_bull" in breakdown
+    assert pick.metrics["score_breakdown_total"] == pytest.approx(pick.score, abs=0.01)
+    assert pick.metrics["score_breakdown_total"] == pytest.approx(
+        pick.metrics["score_breakdown_strategy_total"]
+        + pick.metrics["score_breakdown_technical_total"],
+        abs=0.01,
+    )
+
+
 def test_score_symbol_skips_unlisted_strategy_when_weights_are_explicit() -> None:
     frame = _frame("VOL", 0.004, 1.8)
 

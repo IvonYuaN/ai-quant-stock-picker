@@ -8,6 +8,7 @@ import pytest
 
 from aqsp.core.time import now_shanghai
 from aqsp.strategies.auto_evolution import AutoEvolution, EvolutionConfig
+from aqsp.strategies.thresholds import ScoringThresholds
 from aqsp.walkforward_gate import build_walkforward_gate_payload
 
 
@@ -214,6 +215,29 @@ def test_auto_evolution_missing_gate_is_blocked_proposal(tmp_path) -> None:
     assert proposal["status"] == "blocked_proposal"
     assert proposal["gate_status"] == "missing"
     assert proposal["gate_reasons"] == ["walkforward gate evidence missing"]
+
+
+def test_auto_evolution_uses_current_thresholds_as_proposal_baseline(tmp_path) -> None:
+    evolution = _evolution(tmp_path)
+    evolution.config = EvolutionConfig(
+        min_samples=3,
+        max_evolution_per_cycle=1,
+        param_spaces={
+            "scoring": {
+                "near_high_threshold": [0.98, 1.0],
+                "near_high_volume": [1.2, 2.0],
+            }
+        },
+    )
+
+    assert evolution._get_base_params("scoring")["near_high_threshold"] == pytest.approx(
+        ScoringThresholds().near_high_threshold
+    )
+    candidates = evolution._generate_candidates(
+        "scoring", evolution._get_base_params("scoring")
+    )
+    assert len(candidates) == 1
+    assert set(candidates[0]) == {"near_high_threshold", "near_high_volume"}
 
 
 def test_auto_evolution_should_evolve_does_not_treat_metric_keys_as_samples(
