@@ -7104,41 +7104,11 @@ def _print_optimization_result(result: Any) -> None:
 
 
 def _apply_best_params(best_params: dict[str, float]) -> None:
-    import re
-
-    path = _find_thresholds_yaml()
-    if path is None:
-        print("⚠️  找不到 thresholds.yaml，无法自动应用参数")
-        return
-
-    content = path.read_text(encoding="utf-8")
-    new_version = f"{now_shanghai().strftime('%Y%m%d')}.opt"
-
-    for key, val in best_params.items():
-        parts = key.split(".")
-        if len(parts) == 2:
-            section, field = parts
-            pattern = re.compile(
-                rf"^({field}:\s*)(['\"]?)(.*?)\2(\s*(?:#.*)?)$",
-                flags=re.MULTILINE,
-            )
-            new_content, n = pattern.subn(
-                lambda m, v=val: f"{m.group(1)}{m.group(2)}{v}{m.group(2)}{m.group(4)}",
-                content,
-            )
-            if n > 0:
-                content = new_content
-
-    version_pattern = re.compile(
-        r"^(version:\s*)(['\"]?)(.*?)\2(\s*(?:#.*)?)$",
-        flags=re.MULTILINE,
+    """Reject the legacy writeback path; optimization is proposal-only."""
+    del best_params
+    raise RuntimeError(
+        "自动写回 thresholds.yaml 已禁用；请提交通过 walk-forward 和人工审核的版本变更"
     )
-    content = version_pattern.sub(
-        lambda m: f'{m.group(1)}"{new_version}"{m.group(4)}',
-        content,
-    )
-    path.write_text(content, encoding="utf-8")
-    print(f"✅ 最优参数已写入 thresholds.yaml (version={new_version})")
 
 
 def run_discover(args: argparse.Namespace) -> int:
