@@ -466,7 +466,7 @@ def test_write_home_snapshot_normalizes_legacy_news_and_cross_market_timestamps(
         events=(
             CatalystEvent(
                 title="SpaceX 评估 IPO 上市窗口",
-                source="新华社",
+                    source="Reuters",
                 published_at="2026-07-10T01:00:00Z",
                 impact="positive",
                 category="资本运作",

@@ -11,7 +11,7 @@ PORTFOLIO_ACTION_LABELS = {
     "promote": "上调优先级",
     "downgrade": "降级观察",
     "keep": "维持原排序",
-    "observation_only": "仅观察（保护/质量门）",
+    "observation_only": "仅观察（数据或质量门待确认）",
 }
 
 

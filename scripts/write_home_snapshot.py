@@ -1243,7 +1243,9 @@ def _recommendation_gate(
     return gate
 
 
-def _phase_snapshot(provider: DashboardDataProvider, signal_date: str) -> tuple[HomeSnapshotPhase, ...]:
+def _phase_snapshot(
+    provider: DashboardDataProvider, signal_date: str
+) -> tuple[HomeSnapshotPhase, ...]:
     """Read phase artifacts without network calls and calculate symbol overlap."""
     phase_specs = (
         ("main_chain", "盘前", "盘前主链"),
@@ -1273,8 +1275,7 @@ def _phase_snapshot(provider: DashboardDataProvider, signal_date: str) -> tuple[
                 unique_symbols=len(symbols),
                 overlap_symbols=overlap,
                 updated_at=str(
-                    max((row.get("created_at", "") for row in rows), default="")
-                    or ""
+                    max((row.get("created_at", "") for row in rows), default="") or ""
                 ),
             )
         )
@@ -1298,10 +1299,26 @@ def _universe_snapshot() -> HomeSnapshotUniverse:
     batch = payload.get("universe")
     batch_payload = batch if isinstance(batch, dict) else {}
     return HomeSnapshotUniverse(
-        total=int(batch_payload.get("universe_count") or payload.get("universe_total") or payload.get("total") or 0),
-        resolved=int(batch_payload.get("resolved_count") or payload.get("resolved_symbol_count") or 0),
-        screened=int(batch_payload.get("screened_count") or payload.get("screened_count") or 0),
-        final=int(batch_payload.get("final_count") or payload.get("final_count") or payload.get("candidate_count") or 0),
+        total=int(
+            batch_payload.get("universe_count")
+            or payload.get("universe_total")
+            or payload.get("total")
+            or 0
+        ),
+        resolved=int(
+            batch_payload.get("resolved_count")
+            or payload.get("resolved_symbol_count")
+            or 0
+        ),
+        screened=int(
+            batch_payload.get("screened_count") or payload.get("screened_count") or 0
+        ),
+        final=int(
+            batch_payload.get("final_count")
+            or payload.get("final_count")
+            or payload.get("candidate_count")
+            or 0
+        ),
         max_universe=int(payload.get("max_universe") or 0),
         source=_text(payload.get("actual_source") or payload.get("source")),
         batch_active=bool(batch_payload.get("batch_active", False)),
@@ -1400,7 +1417,10 @@ def build_home_snapshot(
             *tuple(
                 summary
                 for summary in raw_summaries
-                if not re.search(r"(?:\d+\s*个?\s*候选|候选\s*\d+|纸面复核\s*\d+|待复核\s*\d+)", str(summary))
+                if not re.search(
+                    r"(?:\d+\s*个?\s*候选|候选\s*\d+|纸面复核\s*\d+|待复核\s*\d+)",
+                    str(summary),
+                )
             ),
         )
     aligned_summaries = tuple(

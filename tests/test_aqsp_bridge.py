@@ -137,9 +137,7 @@ def _write_debates(tmp_path: Path, *records: dict) -> Path:
     return path
 
 
-def _runtime_debate(
-    *, date: str, symbol: str = "600002", score: float = 72.5
-) -> dict:
+def _runtime_debate(*, date: str, symbol: str = "600002", score: float = 72.5) -> dict:
     return {
         "symbol": symbol,
         "debate_date": date,
@@ -311,6 +309,13 @@ def test_aqsp_bridge_dates_and_candidate_use_exact_historical_snapshot(
     assert candidate_response.status_code == 200
     assert candidate_response.json()["data"]["date"] == "2026-07-11"
     assert candidate_response.json()["data"]["symbol"] == "600002"
+
+    historical_snapshot = client.get("/api/aqsp/snapshot?date=2026-07-11")
+    assert historical_snapshot.status_code == 200
+    assert historical_snapshot.json()["data"]["available_dates"] == [
+        "2026-07-14",
+        "2026-07-11",
+    ]
 
 
 def test_aqsp_bridge_does_not_replace_missing_history_with_latest(

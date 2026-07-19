@@ -447,11 +447,15 @@ def _runtime_debate_payload(
     record: Mapping[str, Any], candidate: AQSPCandidate
 ) -> dict[str, Any]:
     rounds = record.get("rounds")
-    round_summaries = [
-        str(item.get("summary", "") or "").strip()
-        for item in rounds
-        if isinstance(item, dict) and str(item.get("summary", "") or "").strip()
-    ] if isinstance(rounds, list) else []
+    round_summaries = (
+        [
+            str(item.get("summary", "") or "").strip()
+            for item in rounds
+            if isinstance(item, dict) and str(item.get("summary", "") or "").strip()
+        ]
+        if isinstance(rounds, list)
+        else []
+    )
     return {
         "symbol": candidate.symbol,
         "display_name": candidate.display_name,
@@ -489,10 +493,12 @@ def snapshot_payload(selected_date: str | None = None) -> dict[str, Any]:
     surface = load_surface()
     snapshot = surface.snapshot_for_date(selected_date)
     _require_current_snapshot_fresh(surface, selected_date)
-    return _snapshot_payload(
+    payload = _snapshot_payload(
         snapshot,
         historical=_is_historical(surface, selected_date),
     )
+    payload["available_dates"] = list(surface.available_dates)
+    return payload
 
 
 def snapshot_response(selected_date: str | None = None) -> dict[str, Any]:
@@ -504,8 +510,12 @@ def snapshot_response(selected_date: str | None = None) -> dict[str, Any]:
     )
     stale = snapshot.is_stale()
     _require_current_snapshot_fresh(surface, selected_date, stale=stale)
+    payload = _snapshot_payload(snapshot, historical=historical)
+    # Keep the date picker complete after selecting an archive day. Each
+    # dated snapshot may contain only its own producer-local date list.
+    payload["available_dates"] = list(surface.available_dates)
     return {
-        "data": _snapshot_payload(snapshot, historical=historical),
+        "data": payload,
         "meta": {
             "historical": historical,
             "stale": stale,
@@ -795,7 +805,9 @@ def _parse_snapshot(payload: Mapping[str, Any]) -> AQSPSnapshot:
         recommendation_gate=_parse_recommendation_gate(
             payload.get("recommendation_gate")
         ),
-        phases=tuple(_parse_phase(item) for item in _list(payload.get("phases", []), "phases")),
+        phases=tuple(
+            _parse_phase(item) for item in _list(payload.get("phases", []), "phases")
+        ),
         universe=_parse_universe(payload.get("universe")),
     )
 
@@ -804,7 +816,14 @@ def _parse_phase(payload: object) -> AQSPPhase:
     item = _object(payload, "phase")
     _check_keys(
         item,
-        {"task_id", "label", "status", "candidate_count", "unique_symbols", "overlap_symbols"},
+        {
+            "task_id",
+            "label",
+            "status",
+            "candidate_count",
+            "unique_symbols",
+            "overlap_symbols",
+        },
         "phase",
         {"updated_at"},
     )
@@ -828,8 +847,18 @@ def _parse_universe(payload: object) -> AQSPUniverse:
         set(),
         "universe",
         {
-            "total", "resolved", "screened", "final", "max_universe", "source",
-            "batch_active", "batch_id", "batch_size", "cycle_id", "coverage_pct", "last_error",
+            "total",
+            "resolved",
+            "screened",
+            "final",
+            "max_universe",
+            "source",
+            "batch_active",
+            "batch_id",
+            "batch_size",
+            "cycle_id",
+            "coverage_pct",
+            "last_error",
         },
     )
     return AQSPUniverse(
@@ -869,9 +898,7 @@ def _parse_recommendation_gate(payload: object) -> AQSPRecommendationGate:
     return AQSPRecommendationGate(
         recommendation_allowed=allowed,
         status=_text(item["status"], "recommendation_gate.status"),
-        reasons=tuple(
-            _text_list(item["reasons"], "recommendation_gate.reasons")
-        ),
+        reasons=tuple(_text_list(item["reasons"], "recommendation_gate.reasons")),
     )
 
 

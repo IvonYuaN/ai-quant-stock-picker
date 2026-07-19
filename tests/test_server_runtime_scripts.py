@@ -175,7 +175,10 @@ def test_server_sync_script_supports_custom_runner() -> None:
     )
 
     assert 'RUNNER_SCRIPT="${AQSP_RUNNER_SCRIPT:-}"' in script
-    assert 'if [ "${IMMUTABLE_RELEASE}" != "true" ] && [ ! -d "${PROJECT_ROOT}/.git" ]; then' in script
+    assert (
+        'if [ "${IMMUTABLE_RELEASE}" != "true" ] && [ ! -d "${PROJECT_ROOT}/.git" ]; then'
+        in script
+    )
     assert "AQSP_RUNNER_SCRIPT is required" in script
     assert 'log "开始运行任务: ${RUNNER_PATH}"' in script
     assert 'bash "${RUNNER_PATH}"' in script
@@ -208,7 +211,7 @@ def test_server_sync_script_supports_custom_runner() -> None:
         in script
     )
     assert 'RUNNER_KILL_AFTER_SECONDS="${AQSP_RUNNER_KILL_AFTER_SECONDS:-15}"' in script
-    assert 'printf \'exit_class=%s\\n\' "$RUNNER_EXIT_CLASS"' in script
+    assert "printf 'exit_class=%s\\n' \"$RUNNER_EXIT_CLASS\"" in script
     assert "主链路执行超时，被保护性终止" in script
 
 
@@ -401,19 +404,19 @@ def test_server_sync_classifies_runner_timeout_and_records_execution_evidence(
     fake_timeout = fake_bin / "timeout"
     fake_timeout.write_text(
         "#!/usr/bin/env bash\n"
-        "while [ \"$#\" -gt 0 ]; do\n"
-        "  case \"$1\" in\n"
+        'while [ "$#" -gt 0 ]; do\n'
+        '  case "$1" in\n'
         "    --foreground|--signal=*) shift ;;\n"
         "    --kill-after=*) shift ;;\n"
         "    *) break ;;\n"
         "  esac\n"
         "done\n"
-        "duration=\"$1\"\n"
+        'duration="$1"\n'
         "shift\n"
-        "\"$@\" & child=\"$!\"\n"
-        "sleep \"$duration\"\n"
-        "kill -TERM \"$child\" 2>/dev/null || true\n"
-        "wait \"$child\" 2>/dev/null || true\n"
+        '"$@" & child="$!"\n'
+        'sleep "$duration"\n'
+        'kill -TERM "$child" 2>/dev/null || true\n'
+        'wait "$child" 2>/dev/null || true\n'
         "exit 124\n",
         encoding="utf-8",
     )
@@ -453,8 +456,13 @@ def test_intraday_refresh_script_uses_isolated_outputs() -> None:
     assert 'export AQSP_NOTIFY="false"' in script
     assert 'export AQSP_GATE_NOTIFY="false"' in script
     assert 'export AQSP_ENABLE_DEBATE="${AQSP_INTRADAY_ENABLE_DEBATE:-false}"' in script
-    assert 'export AQSP_INTRADAY_DEBATE_ENABLE_LLM="${AQSP_INTRADAY_DEBATE_ENABLE_LLM:-false}"' in script
-    assert 'export AQSP_DEBATE_ENABLE_LLM="${AQSP_INTRADAY_DEBATE_ENABLE_LLM}"' in script
+    assert (
+        'export AQSP_INTRADAY_DEBATE_ENABLE_LLM="${AQSP_INTRADAY_DEBATE_ENABLE_LLM:-false}"'
+        in script
+    )
+    assert (
+        'export AQSP_DEBATE_ENABLE_LLM="${AQSP_INTRADAY_DEBATE_ENABLE_LLM}"' in script
+    )
     assert (
         'export AQSP_DISABLE_CIRCUIT_BREAKER="${AQSP_INTRADAY_DISABLE_CIRCUIT_BREAKER}"'
         in script
@@ -529,7 +537,7 @@ def test_intraday_refresh_script_uses_isolated_outputs() -> None:
     assert "AQSP_INTRADAY_DEBATE_BACKFILL_FORCE:-true" in script
     assert "AQSP_INTRADAY_DEBATE_BACKFILL_MAX_CANDIDATES:-5" in script
     assert '"AQSP_ENABLE_DEBATE=true"' in script
-    assert 'AQSP_INTRADAY_DEBATE_ENABLE_LLM:-false' in script
+    assert "AQSP_INTRADAY_DEBATE_ENABLE_LLM:-false" in script
     assert '"AQSP_DEBATE_ENABLE_LLM=${AQSP_INTRADAY_DEBATE_ENABLE_LLM}"' in script
     assert "intraday-debate-backfill.lock" in script
     assert "refresh_home_dashboard_snapshot" in script
@@ -537,11 +545,11 @@ def test_intraday_refresh_script_uses_isolated_outputs() -> None:
     assert 'log "Agent 讨论回填完成，首页快照已刷新"' in script
     assert "AQSP_HOME_SNAPSHOT_ENABLED:-true" in script
     assert "scripts/write_home_snapshot.py" in script
-    assert 'return 1' in script
+    assert "return 1" in script
     assert "首页快照刷新失败，保留上一版快照" in script
     assert "首页快照刷新失败，继续保留上一版首页" in script
     assert script.index("launch_intraday_debate_backfill") < script.index(
-        'if ! refresh_home_dashboard_snapshot; then'
+        "if ! refresh_home_dashboard_snapshot; then"
     )
     assert "data/intraday_refresh_status.json" in script
     assert (
@@ -572,12 +580,15 @@ def test_intraday_refresh_script_uses_isolated_outputs() -> None:
     )
     assert 'PARTIAL_SNAPSHOT_USED="false"' in script
     assert (
-            'write_intraday_status "running" "盘中刷新运行中；正在解析实时股票池" "0"'
+        'write_intraday_status "running" "盘中刷新运行中；正在解析实时股票池" "0"'
         in script
     )
     assert 'AQSP_PROVISIONAL_REPORT="${TMP_INTRADAY_REPORT}"' in script
     assert 'AQSP_PROVISIONAL_OUTPUT_CSV="${TMP_INTRADAY_OUTPUT_CSV}"' in script
-    assert 'QUALITY_GATE_TIMEOUT_SECONDS="${AQSP_INTRADAY_QUALITY_GATE_TIMEOUT_SECONDS:-30}"' in script
+    assert (
+        'QUALITY_GATE_TIMEOUT_SECONDS="${AQSP_INTRADAY_QUALITY_GATE_TIMEOUT_SECONDS:-30}"'
+        in script
+    )
     assert '"${QUALITY_GATE_TIMEOUT_SECONDS}s"' in script
     assert "盘中后处理未完整结束" in script
     assert "partial_failed" in script
@@ -859,7 +870,7 @@ def test_bt_task_propagates_intraday_runner_failure_to_cron(
     assert 'DAILY_WINDOW_END_HM="${AQSP_DAILY_WINDOW_END_HM:-2300}"' in daily_script
     assert "不在 daily 允许窗口" in daily_script
     assert 'PIPELINE_EXIT_CODE="${PIPESTATUS[0]}"' in daily_script
-    assert 'PIPELINE_EXIT_CODE=${PIPELINE_EXIT_CODE:-$?}' not in daily_script
+    assert "PIPELINE_EXIT_CODE=${PIPELINE_EXIT_CODE:-$?}" not in daily_script
     assert 'RUN_TASK_ID="${AQSP_RUN_TASK_ID:-}"' in daily_script
     assert "缺少 AQSP_RUN_TASK_ID" in daily_script
     assert "拒绝运行 daily_pipeline" in daily_script
@@ -906,15 +917,15 @@ def test_news_catalysts_archives_events_by_published_date(tmp_path: Path) -> Non
     python_bin.write_text(
         "#!/usr/bin/env bash\n"
         "set -euo pipefail\n"
-        "if [ \"${1:-}\" = \"-m\" ]; then\n"
-        "  json_path=\"\"; report_path=\"\"\n"
-        "  previous=\"\"\n"
-        "  for argument in \"$@\"; do\n"
-        "    if [ \"$previous\" = \"--json-output\" ]; then json_path=\"$argument\"; fi\n"
-        "    if [ \"$previous\" = \"--output\" ]; then report_path=\"$argument\"; fi\n"
-        "    previous=\"$argument\"\n"
+        'if [ "${1:-}" = "-m" ]; then\n'
+        '  json_path=""; report_path=""\n'
+        '  previous=""\n'
+        '  for argument in "$@"; do\n'
+        '    if [ "$previous" = "--json-output" ]; then json_path="$argument"; fi\n'
+        '    if [ "$previous" = "--output" ]; then report_path="$argument"; fi\n'
+        '    previous="$argument"\n'
         "  done\n"
-        "  python3 - \"$json_path\" \"$report_path\" <<'PY'\n"
+        '  python3 - "$json_path" "$report_path" <<\'PY\'\n'
         "import json\n"
         "import sys\n"
         "from datetime import timedelta\n"
@@ -940,7 +951,7 @@ def test_news_catalysts_archives_events_by_published_date(tmp_path: Path) -> Non
         "PY\n"
         "  exit 0\n"
         "fi\n"
-        "python3 \"$@\"\n",
+        'python3 "$@"\n',
         encoding="utf-8",
     )
     python_bin.chmod(0o755)
@@ -971,9 +982,7 @@ def test_news_catalysts_archives_events_by_published_date(tmp_path: Path) -> Non
     today = date.today()
     yesterday = today - timedelta(days=1)
     run_payload = json.loads(
-        (archive_dir / f"news-run-{today.isoformat()}.json").read_text(
-            encoding="utf-8"
-        )
+        (archive_dir / f"news-run-{today.isoformat()}.json").read_text(encoding="utf-8")
     )
     assert len(run_payload["events"]) == 2
     today = today.isoformat()
@@ -997,8 +1006,8 @@ def test_news_catalysts_failure_replaces_old_report_and_json(tmp_path: Path) -> 
     python_bin.parent.mkdir(parents=True)
     python_bin.write_text(
         "#!/usr/bin/env bash\n"
-        "if [ \"${1:-}\" = \"-m\" ]; then exit 23; fi\n"
-        "exec \"$(command -v python3)\" \"$@\"\n",
+        'if [ "${1:-}" = "-m" ]; then exit 23; fi\n'
+        'exec "$(command -v python3)" "$@"\n',
         encoding="utf-8",
     )
     python_bin.chmod(0o755)
@@ -1154,7 +1163,7 @@ def test_recovery_script_does_not_restart_legacy_dashboard_by_default() -> None:
         encoding="utf-8"
     )
 
-    assert 'AQSP_RECOVER_RESTART_RESEARCH:-false' in script
+    assert "AQSP_RECOVER_RESTART_RESEARCH:-false" in script
     assert "canonical AQSP research target" in script
     assert "git reset" not in script
     assert "checkout --" not in script
@@ -1288,8 +1297,8 @@ def test_coldstart_daily_script_updates_db_then_runs_cli() -> None:
     assert 'log "运行数据日: ${RUN_AS_OF}"' in script
     assert 'COLDSTART_RUNTIME_SOURCE="${AQSP_COLDSTART_SOURCE:-online_first}"' in script
     assert "历史源生成候选" in script
-    assert 'recommendations-${RUN_AS_OF}.md' in script
-    assert 'recommendations-${RUN_AS_OF}.csv' in script
+    assert "recommendations-${RUN_AS_OF}.md" in script
+    assert "recommendations-${RUN_AS_OF}.csv" in script
     assert 'log "筛选数据源: ${COLDSTART_RUNTIME_SOURCE}"' in script
     assert "A股量化分析数据/astocks_raw.db" in script
     assert "A股量化分析数据/astocks_qfq.db" not in script
@@ -1400,7 +1409,8 @@ def test_coldstart_daily_skips_when_signal_days_already_completed(
     assert handoff["progress"] == "34/30"
     assert handoff["next_step"] == "run_production_walkforward_gate"
     assert handoff["next_command"] == "bash scripts/bt_task.sh walkforward-gate"
-    assert "组合保护按解除日单独判断" in handoff["blocker"]
+    assert "下一交易时段按实时数据生成研究候选" in handoff["blocker"]
+    assert "组合保护仅限制纸面动作" in handoff["blocker"]
     assert "fake sqlite update" not in result.stdout
     assert not (tmp_path / "cli-args.txt").exists()
 
@@ -1472,7 +1482,10 @@ def test_daily_run_defaults_to_full_market_universe() -> None:
     assert "仅允许 daily" in script
     assert 'export AQSP_RUN_TASK_ID="daily"' in script
     assert "export -f run_daily_pipeline" in script
-    assert "run_with_timeout \"$DAILY_TIMEOUT_SECONDS\" /bin/bash -c 'run_daily_pipeline'" in script
+    assert (
+        "run_with_timeout \"$DAILY_TIMEOUT_SECONDS\" /bin/bash -c 'run_daily_pipeline'"
+        in script
+    )
     assert 'ENFORCE_DAILY_WINDOW="${AQSP_ENFORCE_DAILY_WINDOW:-true}"' in script
     assert 'DAILY_WINDOW_START_HM="${AQSP_DAILY_WINDOW_START_HM:-1730}"' in script
     assert 'DAILY_WINDOW_END_HM="${AQSP_DAILY_WINDOW_END_HM:-2300}"' in script
@@ -1539,7 +1552,7 @@ def test_parallel_entry_scripts_have_portable_bounded_lock_and_timeout() -> None
         assert "kill -KILL" in script
         assert 'kill -TERM "-$child_pid"' in script
         assert 'kill -KILL "-$child_pid"' in script
-        assert 'owner_pid=%s\\nowner_start_time=%s\\n' in script
+        assert "owner_pid=%s\\nowner_start_time=%s\\n" in script
         assert "lock_owner_is_alive" in script
         assert "recover_stale_lock" in script
         assert 'mv "$LOCK_' in script

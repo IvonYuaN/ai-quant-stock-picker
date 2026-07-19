@@ -473,9 +473,11 @@ def test_news_catalyst_report_prioritizes_verified_price_hike_events() -> None:
 
     markdown = format_catalyst_notification(report)
     assert "来源: 证券报、财联社" in markdown
-    expected_time = datetime.strptime(_RECENT_NEWS_TIME, "%Y-%m-%d %H:%M").replace(
-        tzinfo=ZoneInfo("Asia/Shanghai")
-    ).isoformat(timespec="seconds")
+    expected_time = (
+        datetime.strptime(_RECENT_NEWS_TIME, "%Y-%m-%d %H:%M")
+        .replace(tzinfo=ZoneInfo("Asia/Shanghai"))
+        .isoformat(timespec="seconds")
+    )
     assert f"时间: {expected_time}" in markdown
     assert "原文: https://example.com/a" in markdown
     assert "不要做:" not in markdown
@@ -766,9 +768,11 @@ def test_news_catalyst_preserves_extended_url_and_publication_fields() -> None:
 
     assert len(report.events) == 1
     assert report.events[0].url == "https://www.federalreserve.gov/news/test"
-    expected_time = datetime.strptime(_RECENT_NEWS_TIME, "%Y-%m-%d %H:%M").replace(
-        tzinfo=ZoneInfo("Asia/Shanghai")
-    ).isoformat(timespec="seconds")
+    expected_time = (
+        datetime.strptime(_RECENT_NEWS_TIME, "%Y-%m-%d %H:%M")
+        .replace(tzinfo=ZoneInfo("Asia/Shanghai"))
+        .isoformat(timespec="seconds")
+    )
     assert report.events[0].published_at == expected_time
 
 
@@ -1077,6 +1081,57 @@ def test_catalyst_report_region_statuses_round_trip_and_legacy_payload_is_compat
     legacy_loaded = deserialize_catalyst_report(legacy_payload)
     assert legacy_loaded is not None
     assert legacy_loaded.region_statuses == report.region_statuses
+
+
+def test_catalyst_report_round_trip_preserves_news_evidence_fields() -> None:
+    event = CatalystEvent(
+        title="覆铜板报价上调",
+        summary="供应商确认短期缺货。",
+        source="公司公告",
+        published_at="2026-07-20T09:00:00+08:00",
+        transmission_path=("材料涨价", "PCB订单"),
+        validation_signals=("现货报价继续上行",),
+        invalidation_signals=("库存回升且报价回落",),
+    )
+    report = CatalystReport(
+        date="2026-07-20",
+        generated_at="2026-07-20T09:05:00+08:00",
+        events=(event,),
+        source_status="ok",
+    )
+
+    restored = deserialize_catalyst_report(serialize_catalyst_report(report))
+
+    assert restored is not None
+    assert restored.events[0] == event
+
+
+def test_catalyst_report_artifact_rejects_legacy_release_and_retired_source(
+    tmp_path: Path,
+) -> None:
+    report = CatalystReport(
+        date=today_shanghai().isoformat(),
+        generated_at=now_shanghai().isoformat(timespec="seconds"),
+        events=(
+            CatalystEvent(
+                title="政策消息",
+                summary="摘要",
+                source="新华社",
+                published_at=now_shanghai().isoformat(timespec="seconds"),
+            ),
+        ),
+        source_status="ok",
+    )
+    path = tmp_path / "news.json"
+    payload = serialize_catalyst_report(report)
+    path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+    assert load_catalyst_report_artifact(path, expected_date=report.date) is None
+
+    payload.pop("schema_version")
+    payload["events"][0]["source"] = "财联社"
+    path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    assert load_catalyst_report_artifact(path, expected_date=report.date) is None
 
 
 def test_news_catalyst_notification_dedupes_timeout_warnings() -> None:
@@ -2130,7 +2185,9 @@ def test_rss_news_source_filters_items_by_keywords(monkeypatch) -> None:
     assert frames[0].iloc[0]["keyword_matched"] == "Nasdaq,risk-on,AI stocks"
 
 
-def test_news_catalyst_filters_rss_rows_without_summary_and_reports_quality_warning() -> None:
+def test_news_catalyst_filters_rss_rows_without_summary_and_reports_quality_warning() -> (
+    None
+):
     frame = pd.DataFrame(
         [
             {
@@ -2388,6 +2445,11 @@ def test_default_news_source_config_enables_official_rss_feeds() -> None:
     }.issubset(feed_names)
     assert all(feed.url.startswith("https://") for feed in feeds)
     assert all("rsshub.example.com" not in feed.url for feed in feeds)
+    assert all(
+        "新华社" not in f"{feed.name} {feed.url}"
+        and "news.cn" not in feed.url.casefold()
+        for feed in feeds
+    )
     assert source._max_concurrency == 11
     assert Path("config/news_sources.yaml").exists()
 
