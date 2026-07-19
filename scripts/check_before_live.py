@@ -239,26 +239,10 @@ def check_before_live(
     paper_ledger_path: Path | None = None,
     thresholds: Thresholds | None = None,
 ) -> list[ReadinessFinding]:
-    env_path = root / ".env"
-    gate_path = gate_path or _normalize_runtime_path(
-        root,
-        _read_env_assignment(env_path, "AQSP_WALKFORWARD_GATE_PATH")
-        or "data/walkforward_gate.json",
-    )
-    ledger_path = ledger_path or _normalize_runtime_path(
-        root,
-        _read_env_assignment(env_path, "AQSP_LEDGER") or "data/predictions.jsonl",
-    )
-    paper_ledger_path = paper_ledger_path or _normalize_runtime_path(
-        root,
-        _read_env_assignment(env_path, "AQSP_PAPER_LEDGER")
-        or "data/paper_trades.jsonl",
-    )
-    run_history_path = run_history_path or _normalize_runtime_path(
-        root,
-        _read_env_assignment(env_path, "AQSP_DAILY_RUN_HISTORY")
-        or "data/daily_run_history.jsonl",
-    )
+    gate_path = gate_path or root / "data" / "walkforward_gate.json"
+    ledger_path = ledger_path or root / "data" / "predictions.jsonl"
+    paper_ledger_path = paper_ledger_path or root / "data" / "paper_trades.jsonl"
+    run_history_path = run_history_path or root / "data" / "daily_run_history.jsonl"
 
     findings: list[ReadinessFinding] = []
     findings.append(_check_walkforward_gate(gate_path, today))
@@ -595,8 +579,8 @@ def _normalize_runtime_path(root: Path, value: str) -> Path:
 
 def _check_runtime_data_source_config(root: Path) -> ReadinessFinding:
     env_path = root / ".env"
-    source = _read_env_assignment(env_path, "AQSP_SOURCE").strip().lower()
-    fallback = _read_env_assignment(env_path, "AQSP_ALLOW_ONLINE_FALLBACK").strip()
+    source = (read_env_value(env_path, "AQSP_SOURCE") or "").strip().lower()
+    fallback = (read_env_value(env_path, "AQSP_ALLOW_ONLINE_FALLBACK") or "").strip()
     allowed_sources = {"local_first", "tdx_vipdoc", "sqlite_db"}
     blockers: list[str] = []
     if not source:
