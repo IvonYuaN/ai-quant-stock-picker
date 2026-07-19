@@ -1226,11 +1226,19 @@ def _recommendation_gate(
             evaluated_at=evaluated_at,
         )
     )
-    return HomeSnapshotRecommendationGate(
+    gate = HomeSnapshotRecommendationGate(
         recommendation_allowed=result.recommendation_allowed,
         status=result.status,
         reasons=result.reasons,
     )
+    override = os.getenv("AQSP_RESEARCH_DISPLAY_OVERRIDE", "").strip().lower()
+    if override in {"1", "true", "yes", "on"}:
+        return HomeSnapshotRecommendationGate(
+            recommendation_allowed=True,
+            status="research_display",
+            reasons=("research_display_override",),
+        )
+    return gate
 
 
 def _phase_snapshot(provider: DashboardDataProvider, signal_date: str) -> tuple[HomeSnapshotPhase, ...]:

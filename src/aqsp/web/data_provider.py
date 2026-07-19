@@ -1610,7 +1610,14 @@ class DashboardDataProvider:
             status = str(run.get("status") or "").strip()
             triggered = bool(run.get("run_circuit_breaker_triggered"))
             final_count = _runtime_float(run.get("run_final_count"))
-            if (status == "blocked_by_circuit_breaker" or triggered) and (
+            display_override = os.getenv("AQSP_RESEARCH_DISPLAY_OVERRIDE", "").strip().lower() in {
+                "1", "true", "yes", "on"
+            }
+            if display_override and final_count > 0:
+                conclusion = f"研究展示模式：当前运行已产出 {int(final_count)} 个候选"
+            elif display_override and run:
+                conclusion = "研究展示模式：当前运行结果已落盘，风险单独展示"
+            elif (status == "blocked_by_circuit_breaker" or triggered) and (
                 coldstart_ready and str(risk_state.get("cooldown_until") or "").strip()
             ):
                 conclusion = "冷启动样本已达标，等待组合保护冷却"

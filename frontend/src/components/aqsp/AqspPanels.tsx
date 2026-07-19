@@ -81,6 +81,9 @@ function FreshnessNotice({ snapshot }: { snapshot: AqspSnapshot }) {
 
 function RecommendationGateNotice({ snapshot }: { snapshot: AqspSnapshot }) {
   const gate = snapshot.recommendation_gate;
+  if (gate?.status === "research_display") {
+    return <div className="vr-gate-notice vr-gate-notice-ready"><Check className="h-4 w-4 shrink-0" /><span>研究展示模式：显示当前候选与风险，不自动下单。</span></div>;
+  }
   if (!gate || gate.recommendation_allowed) {
     return (
       <div className="vr-gate-notice vr-gate-notice-ready">
