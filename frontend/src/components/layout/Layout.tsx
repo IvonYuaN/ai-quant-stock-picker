@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { Link, Outlet, useLocation } from "react-router-dom";
 import {
   CalendarDays,
+  FlaskConical,
+  Globe2,
   LineChart,
   Moon,
   PanelLeftClose,
@@ -11,14 +13,16 @@ import {
   UsersRound,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { RESEARCH_SECTION_IDS } from "@/lib/research-layout";
 import { useDarkMode } from "@/hooks/useDarkMode";
 import { AqspWorkspaceProvider, useAqspSnapshot } from "@/components/aqsp/useAqspSnapshot";
 import { formatResearchDate } from "@/lib/research-view";
 
 const NAV = [
-  { hash: "messages", icon: ScrollText, label: "消息证据", description: "来源与影响" },
-  { hash: "candidates", icon: LineChart, label: "候选研究", description: "评分与依据" },
-  { hash: "discussion", icon: UsersRound, label: "讨论复核", description: "分歧与风险" },
+  { hash: RESEARCH_SECTION_IDS[0], icon: ScrollText, label: "消息证据", description: "来源与影响" },
+  { hash: RESEARCH_SECTION_IDS[1], icon: LineChart, label: "候选研究", description: "评分与依据" },
+  { hash: RESEARCH_SECTION_IDS[2], icon: UsersRound, label: "讨论复核", description: "分歧与风险" },
+  { hash: RESEARCH_SECTION_IDS[3], icon: Globe2, label: "市场与产业链", description: "跨市与传导" },
 ];
 
 export function Layout() {
@@ -78,7 +82,7 @@ function WorkspaceLayout() {
         <div className={cn("vr-sidebar-scroll", collapsed && "px-1.5")}>
           {!collapsed && (
             <div className="vr-sidebar-section">
-              <div className="vr-sidebar-label"><span>研究内容</span><span className="text-muted-foreground/50">3</span></div>
+              <div className="vr-sidebar-label"><span>研究内容</span><span className="text-muted-foreground/50">{NAV.length}</span></div>
             </div>
           )}
           <nav className="space-y-1" aria-label="研究内容">
@@ -102,6 +106,23 @@ function WorkspaceLayout() {
                 </Link>
               );
             })}
+          </nav>
+
+          {!collapsed && <div className="vr-sidebar-section mt-7"><div className="vr-sidebar-label"><span>独立实验区</span><span className="text-muted-foreground/50">不入推荐</span></div></div>}
+          <nav className="mt-1 space-y-1" aria-label="独立实验区">
+            <Link
+              to="/daily-review#test-variants"
+              onClick={() => {
+                window.requestAnimationFrame(() => {
+                  document.getElementById("test-variants")?.scrollIntoView({ behavior: "smooth", block: "start" });
+                });
+              }}
+              title={collapsed ? "测试与变体 · 不参与正式推荐" : undefined}
+              className={cn("vr-nav-item", hash === "#test-variants" && "vr-nav-item-active", collapsed && "justify-center px-2")}
+            >
+              <FlaskConical className="h-4 w-4 shrink-0" />
+              {!collapsed && <span className="min-w-0"><span className="block truncate font-medium">测试与变体</span><span className="block truncate text-[10px] text-muted-foreground">不参与正式推荐</span></span>}
+            </Link>
           </nav>
 
           {!collapsed && (
