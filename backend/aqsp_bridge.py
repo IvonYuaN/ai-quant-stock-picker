@@ -363,8 +363,8 @@ def _read_runtime_debate_records() -> dict[str, tuple[dict[str, Any], ...]]:
 
 
 def _debate_record_date(item: Mapping[str, Any]) -> str:
-    """Prefer the date on which the debate ran; support legacy rows."""
-    for key in ("debate_date", "candidate_signal_date", "related_signal_date"):
+    """Use the candidate's signal date; debate date is legacy fallback only."""
+    for key in ("candidate_signal_date", "related_signal_date", "debate_date"):
         value = str(item.get(key, "") or "").strip()
         if value:
             try:
@@ -387,6 +387,8 @@ def _attach_debates(
         symbol = str(record.get("symbol", "") or "").strip()
         if symbol in seen or symbol not in candidates_by_symbol:
             continue
+        if not _runtime_debate_is_complete(record):
+            continue
         payload = _runtime_debate_payload(record, candidates_by_symbol[symbol])
         try:
             debate = _parse_debate(payload)
@@ -398,6 +400,18 @@ def _attach_debates(
         if len(debates) >= MAX_DEBATES:
             break
     return replace(snapshot, debates=tuple(reversed(debates))) if debates else snapshot
+
+
+def _runtime_debate_is_complete(record: Mapping[str, Any]) -> bool:
+    """Keep incomplete committee attempts out of the normal discussion lane."""
+    if record.get("process_recorded") is False:
+        return False
+    if record.get("conclusion_recorded") is False:
+        return False
+    if record.get("evidence_sufficient") is False:
+        return False
+    quality_issues = record.get("debate_quality_issues", [])
+    return not (isinstance(quality_issues, list) and quality_issues)
 
 
 def _runtime_debate_payload(

@@ -238,6 +238,42 @@ def test_aqsp_bridge_skips_runtime_debate_when_deterministic_score_differs(
     assert response.json()["data"]["candidates"][0]["score"] == 72.5
 
 
+def test_aqsp_bridge_uses_candidate_signal_date_over_debate_run_date(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    payload = _snapshot("2026-07-14")
+    payload["debates"] = []
+    snapshot_path = _write_single(tmp_path, payload)
+    record = _runtime_debate(date="2026-07-14", symbol="600001")
+    record["candidate_signal_date"] = "2026-07-12"
+    debate_path = _write_debates(tmp_path, record)
+    monkeypatch.setenv("AQSP_RESEARCH_SURFACE_SNAPSHOT", str(snapshot_path))
+    monkeypatch.setenv("AQSP_DEBATE_RESULTS", str(debate_path))
+
+    response = client.get("/api/aqsp/snapshot")
+
+    assert response.status_code == 200
+    assert response.json()["data"]["debates"] == []
+
+
+def test_aqsp_bridge_skips_incomplete_runtime_debate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    payload = _snapshot("2026-07-14")
+    payload["debates"] = []
+    snapshot_path = _write_single(tmp_path, payload)
+    record = _runtime_debate(date="2026-07-14", symbol="600001")
+    record["conclusion_recorded"] = False
+    debate_path = _write_debates(tmp_path, record)
+    monkeypatch.setenv("AQSP_RESEARCH_SURFACE_SNAPSHOT", str(snapshot_path))
+    monkeypatch.setenv("AQSP_DEBATE_RESULTS", str(debate_path))
+
+    response = client.get("/api/aqsp/snapshot")
+
+    assert response.status_code == 200
+    assert response.json()["data"]["debates"] == []
+
+
 def test_aqsp_bridge_snapshot_returns_typed_candidate_payload_when_snapshot_is_valid(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
