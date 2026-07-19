@@ -2575,6 +2575,13 @@ def _check_notify_state_path(
 
 
 def _read_env_assignment(env_path: Path, env_name: str) -> str:
+    # Immutable release tasks export private runtime paths explicitly; those
+    # must take precedence over an optional release-local .env file.
+    process_value = os.environ.get(env_name)
+    if process_value is not None:
+        return process_value.strip().strip('"').strip("'")
+    if not env_path.exists():
+        return ""
     for line in env_path.read_text(encoding="utf-8").splitlines():
         if line.strip().startswith(f"{env_name}="):
             return line.split("=", 1)[1].strip().strip('"').strip("'")
