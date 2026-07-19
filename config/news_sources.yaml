@@ -80,8 +80,8 @@ rss:
       enabled: true
       keywords: ["oil", "crude", "natural gas", "LNG", "inventory", "production", "原油", "天然气", "油气", "库存", "产量"]
       max_items: 8
-    - name: 美国国防部-DefenseNews
-      url: "https://www.defense.gov/DesktopModules/ArticleCS/RSS.ashx?ContentType=400&Site=150"
+    - name: DefenseNews-DefenseIndustry
+      url: "https://www.defensenews.com/arc/outboundfeeds/rss/"
       category: "global_defense"
       region: international
       enabled: true
