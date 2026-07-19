@@ -3819,6 +3819,13 @@ def test_run_optimize_apply_writes_proposal_without_touching_thresholds(
     assert payload["applied"] is False
 
 
+def test_legacy_apply_best_params_rejects_threshold_writeback() -> None:
+    import aqsp.cli as cli_mod
+
+    with pytest.raises(RuntimeError, match="自动写回 thresholds.yaml 已禁用"):
+        cli_mod._apply_best_params({"composite.momentum_weight": 0.4})
+
+
 def test_auto_evolution_apply_writes_proposal_without_touching_thresholds(
     tmp_path: Path,
 ) -> None:
