@@ -2153,14 +2153,40 @@ def _annotate_cross_market_context(
 
     from aqsp.market_context import market_context_metrics_for_pick
 
-    enriched: list[PickResult] = []
+    context_by_symbol: dict[str, dict[str, object]] = {}
+    symbols_by_rule: dict[str, list[str]] = {}
     for pick in picks:
         context_metrics = market_context_metrics_for_pick(pick, market_context)
+        if not context_metrics:
+            continue
+        context_by_symbol[pick.symbol] = context_metrics
+        for rule_id in tuple(context_metrics.get("cross_market_rule_ids", ()) or ()):
+            clean_rule_id = str(rule_id).strip()
+            if clean_rule_id and pick.symbol not in symbols_by_rule.setdefault(clean_rule_id, []):
+                symbols_by_rule[clean_rule_id].append(pick.symbol)
+
+    enriched: list[PickResult] = []
+    for pick in picks:
+        context_metrics = context_by_symbol.get(pick.symbol)
         if not context_metrics:
             enriched.append(pick)
             continue
         metrics = dict(pick.metrics)
         metrics.update(context_metrics)
+        rule_ids = tuple(context_metrics.get("cross_market_rule_ids", ()) or ())
+        mapped_symbols = tuple(
+            symbol
+            for rule_id in rule_ids
+            for symbol in symbols_by_rule.get(str(rule_id).strip(), ())
+            if symbol != pick.symbol
+        )
+        metrics["cross_market_candidate_symbols"] = tuple(dict.fromkeys(mapped_symbols))
+        metrics["cross_market_candidate_count"] = len(
+            metrics["cross_market_candidate_symbols"]
+        )
+        metrics["cross_market_candidate_mapping_status"] = (
+            "matched_current_candidates" if mapped_symbols else "single_current_candidate"
+        )
         evidence_ids = {
             str(item).strip()
             for item in tuple(metrics.get("artifact_ids", ()) or ())

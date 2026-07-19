@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import time
 from datetime import timedelta
+from types import SimpleNamespace
 
 import pandas as pd
 import pytest
@@ -602,6 +603,42 @@ def test_debate_coordinator_passes_cross_market_evidence_context_to_tracker_when
         "cross_market_conflict_event_count": 1,
         "cross_market_evidence_stack_summary": "同向 2 条｜反向 1 条",
     }
+
+
+def test_debate_risk_control_veto_blocks_advisory_raise() -> None:
+    coordinator = AShareDebateCoordinator(
+        enable_llm=False,
+        max_rounds=2,
+        roles=(AgentRole.BULL, AgentRole.RISK_CONTROL),
+    )
+    coordinator.tracker = SimpleNamespace(
+        get_all_weights=lambda agent_ids, regime="unknown", debate_context=None: {
+            role: 1.0 for role in agent_ids
+        },
+        calculate_debate_adjustment=lambda votes, agent_weights: (0.2, 0.5, "raise"),
+        get_cross_market_context_history=lambda debate_context=None: SimpleNamespace(
+            governance_note="", current_bucket="", current_sample_count=0, current_accuracy=0.0
+        ),
+        get_all_reliability_summaries=lambda agent_ids, regime="unknown", debate_context=None: (),
+    )
+    result = DebateResult(
+        debate_id="risk-veto",
+        symbol="300750",
+        name="宁德时代",
+        original_score=72.0,
+        rating="watch",
+        final_vote={
+            AgentRole.BULL: "bullish",
+            AgentRole.RISK_CONTROL: "bearish",
+        },
+    )
+
+    coordinator._calculate_adjustment(result, {})
+
+    assert result.adjustment_weight == 0.0
+    assert result.recommended_adjustment == "keep"
+    assert result.risk_veto_applied is True
+    assert "禁止讨论层上调" in result.risk_veto_reason
 
 
 def test_debate_performance_tracker_summarizes_cross_market_context_history_when_records_exist(

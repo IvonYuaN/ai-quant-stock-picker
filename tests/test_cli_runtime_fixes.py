@@ -980,6 +980,58 @@ def test_cross_market_context_assigns_display_priority_without_changing_score(
     assert "正向消息" in enriched.metrics["candidate_review_priority_reason"]
 
 
+def test_cross_market_context_maps_shared_rule_to_current_candidates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import aqsp.cli as cli_mod
+    from aqsp.core.types import PickResult
+
+    picks = [
+        PickResult(
+            symbol="300750",
+            name="宁德时代",
+            date="2026-07-10",
+            close=180.0,
+            score=73.5,
+            rating="watch",
+            entry_type="next_open",
+            ideal_buy=180.0,
+            stop_loss=170.0,
+            take_profit=198.0,
+            position="watch",
+        ),
+        PickResult(
+            symbol="688981",
+            name="中芯国际",
+            date="2026-07-10",
+            close=80.0,
+            score=71.0,
+            rating="watch",
+            entry_type="next_open",
+            ideal_buy=80.0,
+            stop_loss=75.0,
+            take_profit=88.0,
+            position="watch",
+        ),
+    ]
+
+    monkeypatch.setattr(
+        "aqsp.market_context.market_context_metrics_for_pick",
+        lambda _pick, _context: {
+            "cross_market_rule_ids": ("physical_ai",),
+            "cross_market_action": "优先复核",
+            "cross_market_priority_score": 3,
+        },
+    )
+    enriched = cli_mod._annotate_cross_market_context(
+        picks, market_context=SimpleNamespace()
+    )
+
+    assert enriched[0].score == picks[0].score
+    assert enriched[0].metrics["cross_market_candidate_symbols"] == ("688981",)
+    assert enriched[1].metrics["cross_market_candidate_symbols"] == ("300750",)
+
+
 def test_cross_market_context_marks_negative_evidence_as_risk_review() -> None:
     import aqsp.cli as cli_mod
 

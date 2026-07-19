@@ -153,6 +153,8 @@ class DebateResult:
     adjusted_score: float = 0.0  # 调整后最终评分
     recommended_adjustment: Literal["raise", "lower", "keep"] = "keep"
     adjustment_reason: str = ""
+    risk_veto_applied: bool = False
+    risk_veto_reason: str = ""
 
     # 风险与机会
     risk_warnings: list[str] = field(default_factory=list)
@@ -271,6 +273,8 @@ class DebateResult:
             "adjusted_score": self.adjusted_score,
             "recommended_adjustment": self.recommended_adjustment,
             "adjustment_reason": self.adjustment_reason,
+            "risk_veto_applied": self.risk_veto_applied,
+            "risk_veto_reason": self.risk_veto_reason,
             "final_consensus": self.final_consensus,
             "final_vote": {k.value: v for k, v in self.final_vote.items()},
             "risk_warnings": self.risk_warnings,
@@ -2624,10 +2628,19 @@ class AShareDebateCoordinator:
             recommended_adjustment,
         ) = self.tracker.calculate_debate_adjustment(votes, agent_weights)
 
+        risk_vote = result.final_vote.get(AgentRole.RISK_CONTROL)
+        if risk_vote == "bearish" and adjustment_weight > 0:
+            adjustment_weight = 0.0
+            recommended_adjustment = "keep"
+            result.risk_veto_applied = True
+            result.risk_veto_reason = "风控角色明确看空，禁止讨论层上调候选评分"
+
         result.disagreement_score = disagreement_score
         result.adjustment_weight = adjustment_weight
         result.adjusted_score = result.original_score * (1 + adjustment_weight)
         result.recommended_adjustment = recommended_adjustment
+        if result.risk_veto_applied:
+            result.adjustment_reason += f"；{result.risk_veto_reason}"
         result.historical_context_note = history_summary.governance_note
         result.historical_context_bucket = history_summary.current_bucket
         result.historical_context_sample_count = history_summary.current_sample_count
