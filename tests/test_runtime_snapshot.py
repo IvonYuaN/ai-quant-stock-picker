@@ -348,12 +348,12 @@ def test_runtime_snapshot_keeps_round_process_and_candidate_role_coverage() -> N
 
     assert snapshot.debates[0].active_roles == ("bull", "cross_market")
     assert len(snapshot.debates[0].rounds) == 2
-    assert snapshot.debates[0].process_recorded is True
+    assert snapshot.debates[0].process_recorded is False
     assert snapshot.debates[0].conclusion_recorded is True
     assert snapshot.debates[0].advisory_only is True
     assert snapshot.candidates[0].debate_round_count == 2
     assert snapshot.candidates[0].debate_roles == ("bull", "cross_market")
-    assert snapshot.candidates[0].debate_status == "recorded"
+    assert snapshot.candidates[0].debate_status == "failed"
 
 
 def test_runtime_snapshot_accepts_missing_debate_collection_as_empty() -> None:

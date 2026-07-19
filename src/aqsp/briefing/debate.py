@@ -70,6 +70,8 @@ class RebuttalRecord:
     challenged_role: str
     challenged_claim: str
     rebuttal_reason: str
+    challenged_stance: Literal["bullish", "bearish", "neutral"] | str = ""
+    opposing_stance: Literal["bullish", "bearish", "neutral"] | str = ""
 
 
 @dataclass
@@ -179,6 +181,7 @@ class DebateResult:
     cross_market_evidence: tuple[str, ...] = field(default_factory=tuple)
     rule_transmission_evidence: tuple[str, ...] = field(default_factory=tuple)
     pending_confirmations: tuple[str, ...] = field(default_factory=tuple)
+    falsifiable_conditions: tuple[str, ...] = field(default_factory=tuple)
 
     # Runtime gates are advisory metadata and never replace the candidate score.
     runtime_status: Literal["paper_review", "observation", "blocked"] = "paper_review"
@@ -242,6 +245,8 @@ class DebateResult:
                                     "challenged_role": record.challenged_role,
                                     "challenged_claim": record.challenged_claim,
                                     "rebuttal_reason": record.rebuttal_reason,
+                                    "challenged_stance": record.challenged_stance,
+                                    "opposing_stance": record.opposing_stance,
                                 }
                                 for record in opinion.rebuttal_records
                             ],
@@ -299,6 +304,7 @@ class DebateResult:
             "cross_market_evidence": list(self.cross_market_evidence),
             "rule_transmission_evidence": list(self.rule_transmission_evidence),
             "pending_confirmations": list(self.pending_confirmations),
+            "falsifiable_conditions": list(self.falsifiable_conditions),
             "runtime_status": self.runtime_status,
             "realtime_blocked": self.realtime_blocked,
             "runtime_blocker": self.runtime_blocker,
@@ -1035,7 +1041,9 @@ class AShareDebateAgent:
             if pressure_targets:
                 risks.append(f"⚠️ 承压方向: {'、'.join(pressure_targets[:2])}")
             if not risks:
-                risks.append("⚠️ 失效检验: 高分延续需盘中承接，若冲高回落或量价背离则降级")
+                risks.append(
+                    "⚠️ 失效检验: 高分延续需盘中承接，若冲高回落或量价背离则降级"
+                )
         elif self.role == AgentRole.BEAR:
             if pick.score < 50:
                 risks.append("⚠️ 技术面偏弱")
@@ -1479,7 +1487,7 @@ class AShareDebateAgent:
                 continue
             updated_opinion.peer_reviewed_roles.append(other.role.value)
 
-            # 基于角色生成针对性质疑
+            # 只有多空方向相反才构成反驳；中性意见只能作为待确认事项。
             if self._should_counter(other, updated_opinion):
                 record = self._generate_counterargument(other, updated_opinion)
                 rebuttal_records.append(record)
@@ -1488,23 +1496,6 @@ class AShareDebateAgent:
 
         updated_opinion.counterarguments.extend(counterargs)
 
-        if not counterargs:
-            # Do not manufacture a generic "re-check" sentence.  If no peer
-            # supplied a concrete point, the audit must mark this round as
-            # non-interactive instead of presenting a fake second round.
-            for other in others_opinions:
-                if other.role == self.role:
-                    continue
-                peer_point = self._first_meaningful_point(
-                    other.arguments or other.risk_factors or other.opportunity_factors
-                )
-                if peer_point:
-                    record = self._generate_peer_review(other, peer_point)
-                    rebuttal_records.append(record)
-                    updated_opinion.counterarguments.append(
-                        self._format_rebuttal(record)
-                    )
-
         updated_opinion.rebuttal_records.extend(rebuttal_records)
 
         # 如果反对意见太多，降低信心
@@ -1512,16 +1503,6 @@ class AShareDebateAgent:
             updated_opinion.confidence *= 0.85
 
         return updated_opinion
-
-    def _generate_peer_review(
-        self, other: AgentOpinion, peer_point: str
-    ) -> RebuttalRecord:
-        """Record a fallback review of a concrete peer claim."""
-        return RebuttalRecord(
-            challenged_role=other.role.value,
-            challenged_claim=peer_point,
-            rebuttal_reason="同行观点未触发直接反向立场，保留该主张并记录为待复核依据",
-        )
 
     @staticmethod
     def _format_rebuttal(record: RebuttalRecord) -> str:
@@ -1549,15 +1530,10 @@ class AShareDebateAgent:
         my_opinion: AgentOpinion,
     ) -> bool:
         """判断是否应该反驳"""
-        if other.stance == "neutral":
-            return False
-        if other.role == AgentRole.RISK_CONTROL and my_opinion.stance == "bullish":
-            return True
-        if other.role == AgentRole.BEAR and my_opinion.stance == "bullish":
-            return True
-        if other.role == AgentRole.BULL and my_opinion.stance == "bearish":
-            return True
-        return abs(my_opinion.confidence - other.confidence) < 0.2
+        return {
+            other.stance,
+            my_opinion.stance,
+        } == {"bullish", "bearish"}
 
     def _generate_counterargument(
         self,
@@ -1575,9 +1551,11 @@ class AShareDebateAgent:
             challenged_role=other.role.value,
             challenged_claim=peer_point,
             rebuttal_reason=(
-                f"当前{my_opinion.stance}立场与该主张存在方向或置信度冲突，"
-                "需要明确记录其对当前判断的影响"
+                f"当前{my_opinion.stance}立场与该主张方向相反；"
+                "若该主张成立，当前方向假设将失效"
             ),
+            challenged_stance=other.stance,
+            opposing_stance=my_opinion.stance,
         )
 
 
@@ -2227,6 +2205,9 @@ class AShareDebateCoordinator:
             result.opposition_points = ("尚未形成明确反对证据，仍需风险复核。",)
         if not result.watch_items:
             result.watch_items = ("等待实时量价、消息与跨市场映射确认。",)
+        result.falsifiable_conditions = self._build_falsifiable_conditions(
+            final_opinions, result
+        )
         result.primary_risk_gate = self._build_primary_risk_gate(result)
         result.next_trigger = self._build_next_trigger(result)
         result.research_verdict = self._build_research_verdict(result)
@@ -2455,6 +2436,32 @@ class AShareDebateCoordinator:
             if point:
                 return point
         return ""
+
+    def _build_falsifiable_conditions(
+        self,
+        final_opinions: list[AgentOpinion],
+        result: DebateResult,
+    ) -> tuple[str, ...]:
+        """Collect explicit checks that can invalidate the current thesis."""
+        points: list[str] = []
+        for raw in result.pending_confirmations:
+            text = str(raw).strip()
+            if text and any(
+                marker in text for marker in ("失效", "确认", "若", "低于", "跌破")
+            ):
+                points.append(text)
+        for raw in result.market_context_lines:
+            text = str(raw).strip()
+            if text.startswith(("失效条件:", "确认信号:")):
+                points.append(text)
+        for opinion in final_opinions:
+            for raw in opinion.risk_factors + opinion.arguments:
+                text = str(raw).strip()
+                if text and any(
+                    marker in text for marker in ("失效", "若", "跌破", "低于", "不达")
+                ):
+                    points.append(text)
+        return self._dedupe_points(points, limit=4)
 
     def _build_next_trigger(self, result: DebateResult) -> str:
         confirmation_signal = self._context_line_value(

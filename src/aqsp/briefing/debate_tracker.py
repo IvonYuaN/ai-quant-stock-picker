@@ -60,6 +60,8 @@ class DebateQualityAudit:
     evidence_sufficient: bool = False
     advisory_boundary_ok: bool = True
     data_status: str = "available"
+    real_opposition_recorded: bool = False
+    falsifiable_condition_recorded: bool = False
 
     @property
     def passed(self) -> bool:
@@ -72,6 +74,9 @@ def audit_debate_quality(
     candidate: Any | None = None,
     expected_roles: Iterable[AgentRole | str] = DEFAULT_RUNTIME_AGENT_ROLE_ORDER,
     expected_round_counts: tuple[int, ...] = (2, 3),
+    expected_task_id: str = "",
+    expected_signal_date: str = "",
+    expected_symbol: str = "",
 ) -> DebateQualityAudit:
     """审计讨论过程、结论和触发条件；历史表现只标记为评估用途。"""
     expected_role_values = tuple(
@@ -142,24 +147,18 @@ def audit_debate_quality(
                 )
                 referenced_roles = set(peer_reviewed_roles) | set(counterargument_roles)
                 reviewed_previous_roles = referenced_roles & previous_roles
-                if (
-                    not _field_present(opinion, "rebuttal_records")
-                    or not rebuttal_records
-                ):
-                    # Legacy JSON predates structured rebuttal records. Keep
-                    # its explicit role references as interaction evidence when
-                    # the structured field is absent or empty.
-                    interactive = bool(counterarguments and reviewed_previous_roles)
-                else:
-                    interactive = bool(
-                        counterarguments
-                        and reviewed_previous_roles
-                        and any(
-                            _role_value(_field(record, "challenged_role", ""))
-                            in reviewed_previous_roles
-                            for record in rebuttal_records
+                interactive = bool(
+                    counterarguments
+                    and reviewed_previous_roles
+                    and any(
+                        _record_is_real_opposition(
+                            record,
+                            current_opinion=opinion,
+                            previous_by_role=previous_by_role,
                         )
+                        for record in rebuttal_records
                     )
+                )
                 if interactive:
                     break
             if not interactive:
@@ -175,18 +174,31 @@ def audit_debate_quality(
     candidate_mapped = bool(result_symbol) and (
         not candidate_symbol or result_symbol == candidate_symbol
     )
+    if (
+        expected_symbol := _clean_text(expected_symbol)
+    ) and result_symbol != expected_symbol:
+        candidate_mapped = False
     result_date = _normal_date(
         _field(result, "related_signal_date", _field(result, "signal_date", ""))
     )
     candidate_date = _normal_date(
         _field(candidate, "date", _field(candidate, "signal_date", ""))
     )
-    if candidate_mapped and result_date and candidate_date:
-        candidate_mapped = result_date == candidate_date
+    if expected_date := _normal_date(expected_signal_date):
+        candidate_mapped = candidate_mapped and result_date == expected_date
+    if candidate_mapped and candidate_date:
+        candidate_mapped = bool(result_date) and result_date == candidate_date
     result_fingerprint = _result_fingerprint(result)
     candidate_fingerprint = _candidate_fingerprint(candidate)
-    if candidate_mapped and result_fingerprint and candidate_fingerprint:
-        candidate_mapped = result_fingerprint == candidate_fingerprint
+    if candidate_mapped and candidate_fingerprint:
+        candidate_mapped = (
+            bool(result_fingerprint) and result_fingerprint == candidate_fingerprint
+        )
+    task_scope = _clean_text(expected_task_id) or _candidate_task_id(candidate)
+    if task_scope:
+        candidate_mapped = candidate_mapped and (
+            _clean_text(_field(result, "task_id", "")) == task_scope
+        )
     round_count = len(rounds)
     expected_sequence = tuple(range(1, round_count + 1))
     valid_round_sequence = tuple(round_numbers) == expected_sequence
@@ -206,6 +218,8 @@ def audit_debate_quality(
     )
     next_trigger_recorded = bool(_clean_text(_field(result, "next_trigger", "")))
     evidence_sufficient = _has_substantive_evidence(result, rounds)
+    real_opposition_recorded = _has_real_opposition(rounds)
+    falsifiable_condition_recorded = _has_falsifiable_condition(result, rounds)
     data_status = _clean_text(_field(result, "data_status", "available")) or "available"
     if data_status != "available":
         process_recorded = False
@@ -215,7 +229,7 @@ def audit_debate_quality(
         _substantive_values(_field(result, "support_points", ()))
         or _stance_viewpoint_recorded(rounds, "bullish")
     )
-    opposition_recorded = bool(
+    opposition_recorded = real_opposition_recorded and bool(
         _substantive_values(_field(result, "opposition_points", ()))
         or _stance_viewpoint_recorded(rounds, "bearish")
     )
@@ -276,12 +290,16 @@ def audit_debate_quality(
         issues.append("missing_support_viewpoint")
     if not opposition_recorded:
         issues.append("missing_opposition_viewpoint")
+    if not real_opposition_recorded:
+        issues.append("missing_real_opposition")
     if not risk_recorded:
         issues.append("missing_risk_viewpoint")
     if not cross_market_recorded:
         issues.append("missing_cross_market_viewpoint")
     if not evidence_sufficient:
         issues.append("no_substantive_evidence")
+    if not falsifiable_condition_recorded:
+        issues.append("missing_falsifiable_condition")
     if data_status != "available":
         issues.append("empty_market_data")
     if not advisory_boundary_ok:
@@ -309,6 +327,8 @@ def audit_debate_quality(
         evidence_sufficient=evidence_sufficient,
         advisory_boundary_ok=advisory_boundary_ok,
         data_status=data_status,
+        real_opposition_recorded=real_opposition_recorded,
+        falsifiable_condition_recorded=falsifiable_condition_recorded,
     )
 
 
@@ -347,6 +367,10 @@ _NON_EVIDENCE_MARKERS = (
     "未提供额外风控证据",
     "未发现明显风险因素",
     "未出现需要反驳",
+    "保留该主张",
+    "保留原观点",
+    "记录为待复核",
+    "未触发直接反向立场",
 )
 
 
@@ -425,6 +449,17 @@ def _candidate_symbol(candidate: Any | None) -> str:
     return _clean_text(getattr(candidate, "symbol", ""))
 
 
+def _candidate_task_id(candidate: Any | None) -> str:
+    if candidate is None:
+        return ""
+    if isinstance(candidate, Mapping):
+        metrics = candidate.get("metrics")
+        metrics = metrics if isinstance(metrics, Mapping) else {}
+        return _clean_text(candidate.get("task_id") or metrics.get("task_id"))
+    metrics = getattr(candidate, "metrics", {}) or {}
+    return _clean_text(getattr(candidate, "task_id", "") or metrics.get("task_id"))
+
+
 def _normal_date(value: Any) -> str:
     return _clean_text(value)[:10]
 
@@ -499,6 +534,72 @@ def _rebuttal_record_is_substantive(record: Any) -> bool:
         _has_substantive_text(_field(record, "challenged_claim", ""))
         and _has_substantive_text(_field(record, "rebuttal_reason", ""))
         and _role_value(_field(record, "challenged_role", ""))
+    )
+
+
+def _opposite_stances(left: str, right: str) -> bool:
+    return {left, right} == {"bullish", "bearish"}
+
+
+def _record_is_real_opposition(
+    record: Any,
+    *,
+    current_opinion: Any,
+    previous_by_role: Mapping[str, Any],
+) -> bool:
+    if not _rebuttal_record_is_substantive(record):
+        return False
+    challenged_role = _role_value(_field(record, "challenged_role", ""))
+    previous = previous_by_role.get(challenged_role)
+    if previous is None:
+        return False
+    current_stance = _clean_text(_field(current_opinion, "stance", ""))
+    challenged_stance = _clean_text(_field(previous, "stance", ""))
+    recorded_challenged = _clean_text(_field(record, "challenged_stance", ""))
+    recorded_opposing = _clean_text(_field(record, "opposing_stance", ""))
+    if recorded_challenged and recorded_challenged != challenged_stance:
+        return False
+    if recorded_opposing and recorded_opposing != current_stance:
+        return False
+    return _opposite_stances(current_stance, challenged_stance)
+
+
+def _has_real_opposition(rounds: tuple[Any, ...]) -> bool:
+    previous_by_role: dict[str, Any] = {}
+    for round_data in rounds:
+        round_num = int(_field(round_data, "round_num", 0) or 0)
+        opinions = tuple(_field(round_data, "opinions", ()) or ())
+        if round_num > 1 and any(
+            _record_is_real_opposition(
+                record,
+                current_opinion=opinion,
+                previous_by_role=previous_by_role,
+            )
+            for opinion in opinions
+            for record in (_field(opinion, "rebuttal_records", ()) or ())
+        ):
+            return True
+        previous_by_role = {
+            _role_value(_field(opinion, "role", "")): opinion
+            for opinion in opinions
+            if _role_value(_field(opinion, "role", ""))
+        }
+    return False
+
+
+def _has_falsifiable_condition(result: Any, rounds: tuple[Any, ...]) -> bool:
+    values: list[Any] = list(_field(result, "falsifiable_conditions", ()) or ())
+    values.extend(_field(result, "pending_confirmations", ()) or ())
+    values.extend(_field(result, "market_context_lines", ()) or ())
+    for round_data in rounds:
+        for opinion in _field(round_data, "opinions", ()) or ():
+            values.extend(_field(opinion, "risk_factors", ()) or ())
+            values.extend(_field(opinion, "arguments", ()) or ())
+    markers = ("失效", "若", "跌破", "低于", "不达")
+    return any(
+        _has_substantive_text(value)
+        and any(marker in _clean_text(value) for marker in markers)
+        for value in values
     )
 
 

@@ -9,8 +9,9 @@ import json
 import os
 import subprocess
 import tempfile
-from datetime import datetime, timezone
 from pathlib import Path
+
+from aqsp.core.time import now_shanghai
 
 
 HEX40 = set("0123456789abcdef")
@@ -93,7 +94,7 @@ def build_manifest(
         "release_root": str(root),
         "file_count": len(files),
         "content_digest": _content_digest(root, files) if files else "unverified",
-        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "generated_at": now_shanghai().isoformat(),
     }
 
 

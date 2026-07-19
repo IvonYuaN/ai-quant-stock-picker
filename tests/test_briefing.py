@@ -401,7 +401,7 @@ class TestBriefingGenerator:
         assert any("跨市证据已出现反向分歧" in item for item in result.watch_items)
 
         formatted = format_debate_result(result)
-        assert "- 讨论视角: 技术多头、基本面空头、风险控制、跨市传导" in formatted
+        assert "- 研究口径: 结论已阻断" in formatted
         assert "## 讨论摘要" in formatted
         assert "## 支持观点" in formatted
         assert "## 待确认" in formatted
@@ -410,9 +410,9 @@ class TestBriefingGenerator:
         assert "- 第1轮:" in formatted
         assert "- 角色可信度:" in formatted
         assert formatted.index("## 裁决压缩") < formatted.index("## 市场上下文")
-        assert formatted.index("- 跨市判断:") < formatted.index("## 支持观点")
+        assert "- 跨市判断:" not in formatted
         assert formatted.index("## 待确认") < formatted.index("## 视角与分工")
-        assert formatted.index("- 讨论视角:") > formatted.index("## 视角与分工")
+        assert "- 讨论视角:" not in formatted
 
     def test_format_debate_result_includes_historical_context_note(self):
         from aqsp.briefing.debate import DebateResult, format_debate_result

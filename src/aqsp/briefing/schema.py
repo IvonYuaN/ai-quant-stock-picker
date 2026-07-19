@@ -134,6 +134,7 @@ class CommitteeConclusion:
     data_status: str = "available"
     data_note: str = ""
     pending_confirmations: tuple[str, ...] = field(default_factory=tuple)
+    falsifiable_conditions: tuple[str, ...] = field(default_factory=tuple)
 
     @classmethod
     def from_debate_result(cls, result: DebateResult) -> CommitteeConclusion:
@@ -196,6 +197,9 @@ class CommitteeConclusion:
             data_status=str(getattr(result, "data_status", "available") or "available"),
             data_note=str(getattr(result, "data_note", "") or ""),
             pending_confirmations=provenance.pending_confirmations,
+            falsifiable_conditions=_unique_texts(
+                getattr(result, "falsifiable_conditions", ()) or ()
+            ),
         )
 
 

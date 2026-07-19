@@ -302,6 +302,17 @@ def build_debate_conclusion_view(
         )
     else:
         quality_audit = audit_debate_quality(result, candidate=candidate)
+    task_id = (
+        str(result.get("task_id", "") or "").strip()
+        if isinstance(result, Mapping)
+        else str(getattr(result, "task_id", "") or "").strip()
+    )
+    if not task_id and "missing_task_id" not in quality_audit.issues:
+        quality_audit = replace(
+            quality_audit,
+            process_recorded=False,
+            issues=(*quality_audit.issues, "missing_task_id"),
+        )
     if (
         selected_roles
         and len(selected_roles) < 2
@@ -312,8 +323,6 @@ def build_debate_conclusion_view(
             process_recorded=False,
             issues=(*quality_audit.issues, "insufficient_roles"),
         )
-    if _legacy_conclusion_is_compatible(result, quality_audit):
-        quality_audit = None
     if quality_audit is not None and not quality_audit.candidate_mapped:
         return DebateConclusionView(
             headline="结论已阻断：无法映射候选",

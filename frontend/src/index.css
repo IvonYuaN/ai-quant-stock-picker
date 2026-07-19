@@ -304,3 +304,126 @@
   .vr-sidebar-scroll .vr-sidebar-section.mt-7 > .mt-2 { display: flex; overflow-x: auto; gap: 0.4rem; padding-bottom: 0.15rem; }
   .vr-sidebar-scroll .vr-sidebar-section.mt-7 .vr-date-item { min-width: 7.5rem; }
 }
+
+/* AQSP 正式研究页：一个左侧入口只对应一个右侧模块。 */
+@layer components {
+  .aqsp-page { display: grid; gap: 0.75rem; }
+  .aqsp-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; padding-bottom: 0.2rem; }
+  .aqsp-title-row { display: flex; align-items: baseline; flex-wrap: wrap; gap: 0.7rem; margin-top: 0.2rem; }
+  .aqsp-title-row h1 { font-size: 1.55rem; font-weight: 700; letter-spacing: 0; }
+  .aqsp-title-row strong { color: hsl(var(--primary)); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.82rem; font-weight: 600; }
+  .aqsp-eyebrow { display: flex; align-items: center; gap: 0.35rem; color: hsl(var(--muted-foreground) / 0.78); font-size: 0.65rem; font-weight: 700; letter-spacing: 0; }
+  .aqsp-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem 0.7rem; margin-top: 0.45rem; color: hsl(var(--muted-foreground)); font-size: 0.66rem; }
+  .aqsp-badge { display: inline-flex; align-items: center; width: fit-content; border-radius: 999px; padding: 0.18rem 0.45rem; font-size: 0.62rem; line-height: 1; }
+  .aqsp-badge-ok { color: hsl(var(--success)); background: hsl(var(--success) / 0.12); }
+  .aqsp-badge-warn { color: hsl(var(--warning)); background: hsl(var(--warning) / 0.13); }
+  .aqsp-refresh { display: inline-flex; align-items: center; gap: 0.4rem; min-height: 2.15rem; border: 1px solid hsl(var(--border)); border-radius: 0.45rem; padding: 0.45rem 0.7rem; color: hsl(var(--muted-foreground)); font-size: 0.72rem; }
+  .aqsp-refresh:hover { border-color: hsl(var(--primary) / 0.55); color: hsl(var(--foreground)); background: hsl(var(--muted) / 0.4); }
+  .aqsp-refresh:disabled { cursor: wait; opacity: 0.55; }
+  .aqsp-date-picker { display: flex; align-items: center; gap: 0.55rem; min-width: 0; border-bottom: 1px solid hsl(var(--border) / 0.75); padding: 0.15rem 0 0.7rem; }
+  .aqsp-date-label { flex-shrink: 0; color: hsl(var(--muted-foreground)); font-size: 0.7rem; font-weight: 650; }
+  .aqsp-date-list { display: flex; min-width: 0; flex-wrap: wrap; gap: 0.3rem; }
+  .aqsp-date { display: inline-flex; flex-shrink: 0; align-items: center; gap: 0.35rem; border: 1px solid transparent; border-radius: 0.35rem; padding: 0.3rem 0.5rem; color: hsl(var(--muted-foreground)); font-size: 0.67rem; }
+  .aqsp-date:hover { color: hsl(var(--foreground)); background: hsl(var(--muted) / 0.5); }
+  .aqsp-date-active { border-color: hsl(var(--primary) / 0.42); color: hsl(var(--primary)); background: hsl(var(--primary) / 0.1); }
+  .aqsp-date b { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.7rem; }
+  .aqsp-module, .aqsp-lab { min-width: 0; border: 1px solid hsl(var(--border) / 0.9); border-radius: 0.65rem; background: hsl(var(--card) / 0.42); padding: 1rem; }
+  .aqsp-module-overview { border-left: 3px solid hsl(var(--primary)); }
+  .aqsp-module-messages { border-left: 3px solid hsl(var(--success)); }
+  .aqsp-module-candidates { border-left: 3px solid hsl(var(--warning)); }
+  .aqsp-module-discussion { border-left: 3px solid hsl(190 75% 55%); }
+  .aqsp-section-head { display: flex; align-items: end; justify-content: space-between; gap: 1rem; margin-bottom: 0.8rem; border-bottom: 1px solid hsl(var(--border) / 0.7); padding-bottom: 0.65rem; }
+  .aqsp-section-head h2 { margin-top: 0.2rem; font-size: 1.05rem; font-weight: 700; }
+  .aqsp-section-head > span { color: hsl(var(--muted-foreground)); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.68rem; }
+  .aqsp-summary-conclusion { display: flex; align-items: flex-start; gap: 0.65rem; border-left: 2px solid hsl(var(--primary)); background: hsl(var(--primary) / 0.07); padding: 0.8rem 0.85rem; }
+  .aqsp-summary-conclusion strong { display: block; font-size: 0.95rem; line-height: 1.5; }
+  .aqsp-summary-conclusion p { margin-top: 0.25rem; color: hsl(var(--muted-foreground)); font-size: 0.72rem; line-height: 1.45; }
+  .aqsp-status-line { display: flex; flex-wrap: wrap; gap: 0.5rem 1.1rem; border-bottom: 1px solid hsl(var(--border) / 0.6); padding: 0.75rem 0; color: hsl(var(--muted-foreground)); font-size: 0.68rem; }
+  .aqsp-status-line b { margin-right: 0.25rem; color: hsl(var(--foreground)); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.83rem; }
+  .aqsp-status-muted { color: hsl(var(--muted-foreground) / 0.72); }
+  .aqsp-gate, .aqsp-observation { display: flex; align-items: flex-start; gap: 0.5rem; margin-top: 0.75rem; border: 1px solid hsl(var(--border) / 0.65); border-radius: 0.45rem; padding: 0.6rem 0.7rem; font-size: 0.7rem; line-height: 1.45; }
+  .aqsp-gate-ok { color: hsl(var(--success)); background: hsl(var(--success) / 0.055); }
+  .aqsp-gate-warn, .aqsp-observation { color: hsl(var(--warning)); border-color: hsl(var(--warning) / 0.3); background: hsl(var(--warning) / 0.055); }
+  .aqsp-observation strong { display: block; color: hsl(var(--foreground)); font-size: 0.74rem; }
+  .aqsp-observation p { margin-top: 0.18rem; color: hsl(var(--muted-foreground)); }
+  .aqsp-observation button { margin-top: 0.25rem; color: hsl(var(--primary)); text-decoration: underline; text-underline-offset: 2px; }
+  .aqsp-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.7rem; }
+  .aqsp-card { min-width: 0; border: 1px solid hsl(var(--border) / 0.75); border-radius: 0.5rem; background: hsl(var(--card) / 0.62); padding: 0.75rem; }
+  .aqsp-card:hover { border-color: hsl(var(--primary) / 0.38); }
+  .aqsp-card-head, .aqsp-message-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 0.75rem; }
+  .aqsp-card h3 { min-width: 0; font-size: 0.82rem; font-weight: 700; line-height: 1.35; }
+  .aqsp-code { display: block; margin-top: 0.18rem; color: hsl(var(--muted-foreground)); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.65rem; }
+  .aqsp-score { flex-shrink: 0; text-align: right; }
+  .aqsp-score b { display: block; color: hsl(var(--primary)); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 1.2rem; }
+  .aqsp-score span, .aqsp-message-top time { color: hsl(var(--muted-foreground)); font-size: 0.62rem; }
+  .aqsp-tags { display: flex; flex-wrap: wrap; gap: 0.3rem; margin-top: 0.5rem; }
+  .aqsp-tag { display: inline-flex; max-width: 100%; border-radius: 999px; padding: 0.18rem 0.4rem; background: hsl(var(--muted) / 0.72); color: hsl(var(--muted-foreground)); font-size: 0.62rem; line-height: 1.2; }
+  .aqsp-tag-primary { color: hsl(var(--primary)); background: hsl(var(--primary) / 0.13); }
+  .aqsp-tag-good { color: hsl(var(--success)); background: hsl(var(--success) / 0.13); }
+  .aqsp-tag-bad { color: hsl(var(--danger)); background: hsl(var(--danger) / 0.13); }
+  .aqsp-card-summary { margin-top: 0.55rem; color: hsl(var(--foreground) / 0.78); font-size: 0.72rem; line-height: 1.5; }
+  .aqsp-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0.4rem; margin-top: 0.65rem; border-top: 1px solid hsl(var(--border) / 0.45); padding-top: 0.6rem; }
+  .aqsp-metrics div { min-width: 0; }
+  .aqsp-metrics span { display: block; overflow: hidden; color: hsl(var(--muted-foreground)); font-size: 0.58rem; text-overflow: ellipsis; white-space: nowrap; }
+  .aqsp-metrics b { display: block; overflow: hidden; margin-top: 0.12rem; color: hsl(var(--foreground) / 0.88); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.7rem; text-overflow: ellipsis; white-space: nowrap; }
+  .aqsp-reasons { display: grid; gap: 0.25rem; margin-top: 0.6rem; color: hsl(var(--foreground) / 0.8); font-size: 0.68rem; line-height: 1.4; }
+  .aqsp-reasons li, .aqsp-next, .aqsp-debate-foot span, .aqsp-source { display: flex; align-items: flex-start; gap: 0.3rem; }
+  .aqsp-next { margin-top: 0.6rem; border-top: 1px solid hsl(var(--border) / 0.45); padding-top: 0.55rem; color: hsl(var(--warning)); font-size: 0.67rem; }
+  .aqsp-provenance { margin-top: 0.55rem; color: hsl(var(--muted-foreground) / 0.75); font-size: 0.6rem; }
+  .aqsp-message-title { display: flex; align-items: flex-start; gap: 0.4rem; margin-top: 0.55rem; font-size: 0.82rem; font-weight: 700; line-height: 1.45; }
+  .aqsp-inline, .aqsp-signal { margin-top: 0.55rem; color: hsl(var(--foreground) / 0.78); font-size: 0.68rem; line-height: 1.45; }
+  .aqsp-inline b, .aqsp-signal b { margin-right: 0.35rem; color: hsl(var(--primary)); font-weight: 650; }
+  .aqsp-signal-warn b { color: hsl(var(--warning)); }
+  .aqsp-transmission { margin-top: 0.6rem; border-left: 2px solid hsl(var(--primary) / 0.55); background: hsl(var(--primary) / 0.06); padding: 0.5rem 0.6rem; font-size: 0.68rem; line-height: 1.45; }
+  .aqsp-transmission b { color: hsl(var(--primary)); font-size: 0.65rem; }
+  .aqsp-transmission p { margin-top: 0.2rem; font-weight: 650; }
+  .aqsp-transmission span { display: block; margin-top: 0.2rem; color: hsl(var(--muted-foreground)); }
+  .aqsp-source { margin-top: 0.6rem; width: fit-content; color: hsl(var(--primary)); font-size: 0.65rem; text-decoration: none; }
+  .aqsp-source:hover { text-decoration: underline; text-underline-offset: 2px; }
+  .aqsp-context { margin-top: 0.8rem; border-top: 1px solid hsl(var(--border) / 0.7); padding-top: 0.75rem; }
+  .aqsp-subhead { display: flex; align-items: baseline; justify-content: space-between; gap: 0.75rem; }
+  .aqsp-subhead h3 { font-size: 0.78rem; font-weight: 700; }
+  .aqsp-subhead span { color: hsl(var(--muted-foreground)); font-size: 0.62rem; }
+  .aqsp-context-list { display: grid; gap: 0.2rem; margin-top: 0.5rem; color: hsl(var(--muted-foreground)); font-size: 0.68rem; line-height: 1.45; }
+  .aqsp-context-list li::before { content: "·"; margin-right: 0.35rem; color: hsl(var(--primary)); }
+  .aqsp-link-list { display: grid; gap: 0.35rem; margin-top: 0.55rem; }
+  .aqsp-link-list div { display: grid; gap: 0.12rem; border-left: 2px solid hsl(var(--primary) / 0.4); padding-left: 0.5rem; font-size: 0.67rem; line-height: 1.4; }
+  .aqsp-link-list span { color: hsl(var(--muted-foreground)); }
+  .aqsp-warning-text { margin-top: 0.5rem; color: hsl(var(--warning)); font-size: 0.64rem; }
+  .aqsp-agent-title { display: flex; min-width: 0; align-items: flex-start; gap: 0.5rem; }
+  .aqsp-agent-mark { display: inline-flex; align-items: center; justify-content: center; width: 1.8rem; height: 1.8rem; flex-shrink: 0; border: 1px solid hsl(var(--primary) / 0.3); border-radius: 0.4rem; color: hsl(var(--primary)); background: hsl(var(--primary) / 0.1); }
+  .aqsp-discussion { margin-top: 0.65rem; border: 1px solid hsl(var(--border) / 0.55); border-radius: 0.4rem; background: hsl(var(--background) / 0.18); padding: 0.6rem; color: hsl(var(--foreground) / 0.78); font-size: 0.69rem; line-height: 1.5; }
+  .aqsp-label { display: flex; align-items: center; gap: 0.3rem; color: hsl(var(--primary)); font-size: 0.63rem; font-weight: 700; }
+  .aqsp-discussion > p:not(.aqsp-label) { margin-top: 0.3rem; }
+  .aqsp-discussion ol { display: grid; gap: 0.2rem; margin-top: 0.45rem; border-top: 1px solid hsl(var(--border) / 0.45); padding-top: 0.4rem; color: hsl(var(--muted-foreground)); font-size: 0.64rem; }
+  .aqsp-votes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.35rem; margin-top: 0.6rem; }
+  .aqsp-votes span { display: flex; justify-content: space-between; border-radius: 0.3rem; padding: 0.35rem 0.45rem; color: hsl(var(--muted-foreground)); background: hsl(var(--muted) / 0.5); font-size: 0.64rem; }
+  .aqsp-votes span:first-child { color: hsl(var(--success)); background: hsl(var(--success) / 0.08); }
+  .aqsp-votes span:last-child { color: hsl(var(--warning)); background: hsl(var(--warning) / 0.08); }
+  .aqsp-votes b { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .aqsp-debate-conclusion { margin-top: 0.65rem; border-left: 2px solid hsl(var(--primary) / 0.7); padding-left: 0.6rem; }
+  .aqsp-debate-conclusion strong { display: block; margin-top: 0.2rem; font-size: 0.75rem; line-height: 1.45; }
+  .aqsp-debate-foot { display: grid; gap: 0.25rem; margin-top: 0.6rem; border-top: 1px solid hsl(var(--border) / 0.45); padding-top: 0.5rem; color: hsl(var(--muted-foreground)); font-size: 0.65rem; }
+  .aqsp-debate-foot span:first-child { color: hsl(var(--warning)); }
+  .aqsp-empty, .aqsp-state { display: flex; align-items: flex-start; gap: 0.55rem; border: 1px dashed hsl(var(--border) / 0.9); border-radius: 0.45rem; padding: 0.75rem; color: hsl(var(--muted-foreground)); font-size: 0.7rem; line-height: 1.45; }
+  .aqsp-empty strong { display: block; color: hsl(var(--foreground) / 0.85); }
+  .aqsp-empty p { margin-top: 0.18rem; }
+  .aqsp-state { align-items: center; min-height: 3rem; border-style: solid; }
+  .aqsp-state-warn { color: hsl(var(--warning)); }
+  .aqsp-state button { margin-left: auto; color: inherit; }
+  .aqsp-icon-button { display: inline-flex; align-items: center; justify-content: center; border-radius: 0.35rem; padding: 0.3rem; color: inherit; }
+  .aqsp-icon-button:hover { background: hsl(var(--muted) / 0.55); }
+  .aqsp-lab { border-style: dashed; border-color: hsl(var(--primary) / 0.4); }
+  .aqsp-lab .aqsp-section-head { margin-bottom: 0.65rem; }
+  .aqsp-lab-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.55rem; }
+  .aqsp-lab-grid div { display: grid; gap: 0.25rem; border: 1px solid hsl(var(--border) / 0.65); border-radius: 0.4rem; padding: 0.65rem; font-size: 0.68rem; }
+  .aqsp-lab-grid span { color: hsl(var(--muted-foreground)); }
+}
+
+@media (max-width: 767px) {
+  .aqsp-header { align-items: stretch; flex-direction: column; }
+  .aqsp-refresh { width: fit-content; }
+  .aqsp-list, .aqsp-lab-grid { grid-template-columns: minmax(0, 1fr); }
+  .aqsp-module, .aqsp-lab { padding: 0.8rem; }
+  .aqsp-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}

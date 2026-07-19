@@ -6,7 +6,7 @@ from aqsp.briefing.conclusion import (
     debate_consensus_point,
     debate_summary_segments,
 )
-from aqsp.briefing.debate import AgentOpinion, DebateResult, DebateRound
+from aqsp.briefing.debate import AgentOpinion, DebateResult, DebateRound, RebuttalRecord
 from aqsp.briefing.schema import CommitteeConclusion
 
 
@@ -25,7 +25,7 @@ def _real_rounds() -> list[DebateRound]:
                 AgentOpinion(
                     agent_id="risk-1",
                     role=AgentRole.RISK_CONTROL,
-                    stance="neutral",
+                    stance="bearish",
                     confidence=0.6,
                     arguments=["需要确认流动性"],
                     peer_reviewed_roles=["bull", "cross_market"],
@@ -52,11 +52,21 @@ def _real_rounds() -> list[DebateRound]:
                     arguments=["量价共振"],
                     counterarguments=["已复核风险与跨市观点"],
                     peer_reviewed_roles=["risk_control", "cross_market"],
+                    counterargument_roles=["risk_control"],
+                    rebuttal_records=[
+                        RebuttalRecord(
+                            challenged_role="risk_control",
+                            challenged_claim="需要确认流动性",
+                            rebuttal_reason="多头与风控方向相反，若流动性恶化则多头假设失效",
+                            challenged_stance="bearish",
+                            opposing_stance="bullish",
+                        )
+                    ],
                 ),
                 AgentOpinion(
                     agent_id="risk-1",
                     role=AgentRole.RISK_CONTROL,
-                    stance="neutral",
+                    stance="bearish",
                     confidence=0.6,
                     arguments=["需要确认流动性"],
                     counterarguments=["已复核多头与跨市观点"],
@@ -86,6 +96,8 @@ def test_briefing_conclusion_view_builds_structured_lines_from_debate_result() -
         deterministic_score=72.0,
         adjusted_score=78.0,
         rating="buy_candidate",
+        task_id="closing_review",
+        related_signal_date="2026-06-30",
         rounds=_real_rounds(),
         recommended_adjustment="raise",
         disagreement_score=0.42,
@@ -113,6 +125,7 @@ def test_briefing_conclusion_view_builds_structured_lines_from_debate_result() -
         cross_market_evidence=("海外机器人订单公开披露",),
         rule_transmission_evidence=("传导假设: 海外主题 -> A股机器人",),
         pending_confirmations=("确认: A股板块同步放量",),
+        falsifiable_conditions=("失效条件: A股板块不共振",),
     )
 
     view = build_debate_conclusion_view(result)
@@ -141,6 +154,7 @@ def test_briefing_conclusion_view_builds_structured_lines_from_debate_result() -
     assert projection.cross_market_evidence == ("海外机器人订单公开披露",)
     assert projection.transmission_points == ("传导假设: 海外主题 -> A股机器人",)
     assert projection.pending_confirmations == ("确认: A股板块同步放量",)
+    assert projection.falsifiable_conditions == ("失效条件: A股板块不共振",)
     assert segments == (
         "倾向继续观察，等待开盘承接确认",
         "视角: 技术多头、风险控制、跨市传导",
@@ -162,6 +176,8 @@ def test_debate_consensus_point_reuses_structured_lines_for_raise_result() -> No
         deterministic_score=72.0,
         adjusted_score=78.0,
         rating="buy_candidate",
+        task_id="closing_review",
+        related_signal_date="2026-06-30",
         rounds=_real_rounds(),
         recommended_adjustment="raise",
         disagreement_score=0.42,
@@ -326,3 +342,24 @@ def test_briefing_conclusion_does_not_legacy_bypass_explicit_incomplete_dict() -
     assert view.quality_audit is not None
     assert not view.quality_audit.passed
     assert "empty_discussion" in view.quality_audit.issues
+
+
+def test_briefing_conclusion_blocks_old_schema_without_task_id() -> None:
+    result = DebateResult(
+        debate_id="old-schema",
+        symbol="300750",
+        name="宁德时代",
+        original_score=72.0,
+        deterministic_score=72.0,
+        related_signal_date="2026-06-30",
+        rating="watch",
+        final_consensus="bullish",
+        final_vote={AgentRole.BULL: "bullish", AgentRole.BEAR: "bearish"},
+        next_trigger="确认量价延续",
+    )
+
+    view = build_debate_conclusion_view(result)
+
+    assert view.quality_audit is not None
+    assert not view.quality_audit.passed
+    assert "missing_task_id" in view.quality_audit.issues

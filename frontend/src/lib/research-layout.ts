@@ -10,3 +10,11 @@ export const RESEARCH_NAV_ITEMS = [
 ] as const;
 
 export type ResearchSectionId = (typeof RESEARCH_SECTION_IDS)[number];
+export type ResearchViewId = ResearchSectionId | typeof TEST_VARIANTS_SECTION_ID;
+
+export function resolveResearchView(hash: string): ResearchViewId {
+  const value = hash.replace(/^#/, "");
+  return value === TEST_VARIANTS_SECTION_ID || RESEARCH_SECTION_IDS.includes(value as ResearchSectionId)
+    ? (value as ResearchViewId)
+    : RESEARCH_SECTION_IDS[0];
+}

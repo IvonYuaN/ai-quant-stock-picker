@@ -15,7 +15,7 @@ export function AqspDateBoundary({ children }: AqspDateBoundaryProps) {
   if (!hasMismatchedSnapshot) return <>{children}</>;
 
   return (
-    <div className="vr-state-panel vr-state-panel-warning">
+    <div className="aqsp-state aqsp-state-warn">
       <span className="min-w-0 flex-1">
         {loading
           ? `正在读取 ${selectedDate} 的研究数据…`
@@ -24,7 +24,7 @@ export function AqspDateBoundary({ children }: AqspDateBoundaryProps) {
             : `正在读取 ${selectedDate} 的研究数据…`}
       </span>
       {!loading && error && (
-        <button type="button" onClick={refresh} className="vr-icon-button" title="重新读取" aria-label="重新读取">
+        <button type="button" onClick={refresh} className="aqsp-icon-button" title="重新读取" aria-label="重新读取">
           <RefreshCw className="h-4 w-4" />
         </button>
       )}

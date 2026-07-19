@@ -101,8 +101,8 @@ def test_build_briefing_notification_includes_debate_summary_when_summary_mode()
     assert "## 结论" in markdown
     assert "## 分歧" in markdown
     assert "分歧 45%" in markdown
-    assert "倾向继续观察，等待开盘承接确认" in markdown
-    assert "待确认 先确认开盘承接是否继续增强。" in markdown
+    assert "委员会阻塞: 平安银行(000001)" in markdown
+    assert "待确认 确认信号: 竞价高弹性方向明显强于防御方向" in markdown
     assert "选角 " not in markdown
     assert "分工 " not in markdown
     assert "选角理由" not in markdown
@@ -307,11 +307,8 @@ def test_build_daily_run_notification_includes_allocation_guidance() -> None:
         in markdown
     )
     assert "- 市况: 稳定上涨" in markdown
-    assert (
-        "- 跨市主线: 海外物理AI叙事升温，纸面复核 300750 宁德时代 | 先看 300750 宁德时代 | 确认 次日竞价高弹性方向明显强于防御方向 | 失效 美股强但A股竞价无明显风险偏好跟随"
-        in markdown
-    )
-    assert markdown.count("跨市主线") == 1
+    assert "结论已阻断" in markdown
+    assert markdown.count("跨市主线") == 0
     assert "- 风格: 进攻牛市 | 稳定上涨期，重仓动量+涨停板" in markdown
     assert "- 讨论支持:" not in markdown
     assert "- 讨论反对:" not in markdown
@@ -324,7 +321,7 @@ def test_build_daily_run_notification_includes_allocation_guidance() -> None:
     assert "# 收盘研究日报-2026-06-04" in markdown
     assert "## 结果" in markdown
     assert "- 结论: 1 个仓位参考对象" in markdown
-    assert "- 300750 宁德时代: 偏积极 / 分歧 42% | 趋势强但仍需确认开盘承接" in markdown
+    assert "结论已阻断" in markdown
     assert "## 风险" in markdown
     assert "| 项目 | 结论 | 先看什么 |" not in markdown
     assert "- 候选: 仓位参考 1 | 300750 宁德时代" in markdown
@@ -374,7 +371,7 @@ def test_build_daily_run_notification_full_mode_hides_agent_process_terms() -> N
     )
 
     assert "- 分歧: 300750 宁德时代 | 偏积极 | 趋势强但仍需确认开盘承接" in markdown
-    assert "- 300750 宁德时代: 偏积极 / 分歧 42% | 趋势强但仍需确认开盘承接" in markdown
+    assert "结论已阻断" in markdown
     assert "视角 " not in markdown
     assert "讨论视角" not in markdown
     assert "选角 " not in markdown
@@ -409,10 +406,7 @@ def test_daily_snapshot_debate_helpers_surface_cross_market_then_roles() -> None
     assert (
         _daily_snapshot_debate_state((result,)) == "300750 宁德时代 偏积极 / 分歧 42%"
     )
-    assert _daily_snapshot_debate_focus((result,)) == (
-        "先看 300750 宁德时代 | 确认 次日竞价高弹性方向明显强于防御方向 | "
-        "失效 美股强但A股竞价无明显风险偏好跟随"
-    )
+    assert _daily_snapshot_debate_focus((result,)) == "结论已阻断：缺少可核验证据"
 
 
 def test_daily_snapshot_debate_helpers_fall_back_to_support_and_watch_when_cross_market_missing() -> (
@@ -441,9 +435,7 @@ def test_daily_snapshot_debate_helpers_fall_back_to_support_and_watch_when_cross
     assert (
         _daily_snapshot_debate_state((result,)) == "600036 招商银行 暂维持 / 分歧 48%"
     )
-    assert _daily_snapshot_debate_focus((result,)) == (
-        "观点分化，保持原评级 | 支持 防御属性仍在。"
-    )
+    assert _daily_snapshot_debate_focus((result,)) == "结论已阻断：越过 advisory-only 边界"
 
 
 def test_notification_live_source_status_line_marks_fallback_and_history_only() -> None:

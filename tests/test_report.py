@@ -735,13 +735,10 @@ def test_report_renders_debate_score_change_when_available() -> None:
     assert "- 参考分歧: 系统原始评分 76.0；附件参考分 79.0" in markdown
     assert "评分变化" not in markdown
     assert "- 分歧: 35%" in markdown
-    assert "- 研究口径: 倾向优先纸面复核，主因 技术多头: ✅ 技术面强势" in markdown
-    assert (
-        "- 跨市判断: 先看 600900 长江电力 | 确认 次日竞价高弹性方向明显强于防御方向 | 失效 外盘强但A股竞价无明显风险偏好跟随"
-        in markdown
-    )
-    assert "- 核心卡点: 风险控制: ⚠️ 接近涨停：流动性风险" in markdown
-    assert "- 下一触发: 分歧不大，但仍需确认开盘承接。" in markdown
+    assert "- 研究口径: 结论已阻断：越过 advisory-only 边界" in markdown
+    assert "结论已阻断" in markdown
+    assert "- 核心卡点: 风险控制: ⚠️ 接近涨停：流动性风险" not in markdown
+    assert "- 下一触发: 分歧不大，但仍需确认开盘承接。" not in markdown
     assert "- 历史校验: 强证据 2/3 (67%)；冲突主导 1/3" in markdown
 
 

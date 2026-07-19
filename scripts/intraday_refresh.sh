@@ -121,6 +121,9 @@ export AQSP_RUN_TASK_ID="${AQSP_RUN_TASK_ID:-intraday}"
 export AQSP_RUN_TASK_ID="intraday"
 export AQSP_NOTIFY="false"
 export AQSP_GATE_NOTIFY="false"
+# Intraday screening must not inherit the slower daily online-factor side
+# effects from .env.  Cross-market/news work belongs to the isolated sidecars.
+export AQSP_ENABLE_ONLINE_FACTORS="false"
 # Intraday already holds the market frames in memory; forking per-source workers
 # duplicates them and previously caused a production OOM. Process mode remains
 # an explicit fallback for isolated diagnostics.
@@ -156,12 +159,16 @@ export AQSP_INTRADAY_FAST_SYMBOL_CSVS="${AQSP_INTRADAY_FAST_SYMBOL_CSVS:-reports
 export AQSP_INTRADAY_FAST_FILL_CACHE="${AQSP_INTRADAY_FAST_FILL_CACHE:-true}"
 
 DOW=$(date +%u)
-if [ "$DOW" -ge 6 ]; then
+REQUIRE_MARKET_HOURS="${AQSP_INTRADAY_REQUIRE_MARKET_HOURS:-true}"
+
+# The explicit diagnostic mode is also used by the isolated runtime contract
+# tests. Production keeps the trading-day guard because its default is true.
+if is_truthy "$REQUIRE_MARKET_HOURS" && [ "$DOW" -ge 6 ]; then
     log "周末(周${DOW})，跳过盘中刷新"
     exit 0
 fi
 
-if ! "${PYTHON_BIN}" - <<'AQSP_CALENDAR_PY'
+if is_truthy "$REQUIRE_MARKET_HOURS" && ! "${PYTHON_BIN}" - <<'AQSP_CALENDAR_PY'
 from aqsp.core.time import is_trading_day, today_shanghai
 raise SystemExit(0 if is_trading_day(today_shanghai()) else 1)
 AQSP_CALENDAR_PY
@@ -170,7 +177,6 @@ then
     exit 0
 fi
 
-REQUIRE_MARKET_HOURS="${AQSP_INTRADAY_REQUIRE_MARKET_HOURS:-true}"
 NOW_HM=$((10#$(date +%H%M)))
 if is_truthy "$REQUIRE_MARKET_HOURS"; then
     if ! { [ "$NOW_HM" -ge 935 ] && [ "$NOW_HM" -le 1130 ]; } && \
@@ -1338,7 +1344,11 @@ if csv_path.exists() and quality_gate.get("status") != "not_run":
                 blocker = str(row.get("candidate_blocker", "") or "").strip()
                 status = str(row.get("candidate_status", "") or "").strip()
                 quality_action = str(row.get("quality_gate_action", "clean") or "clean").strip()
-                blocked = bool(blocker or "阻塞" in status or quality_action == "blocked")
+                # candidate_blocker is also used for observation-only copy such
+                # as "质量门未完整结束".  Count quality blockers from the
+                # quality action or an explicit blocked status only; otherwise
+                # a timed-out observation snapshot appears as N blocked picks.
+                blocked = quality_action == "blocked" or "阻塞" in status
                 eligible = quality_action == "clean" and str(
                     row.get("paper_review_eligible", "true") or "true"
                 ).lower() == "true"
@@ -1418,6 +1428,19 @@ if ! is_truthy "${AQSP_INTRADAY_ALLOW_FIXED_SYMBOLS:-false}"; then
     unset AQSP_SYMBOLS
 fi
 
+# A configured max-universe is a diagnostic escape hatch, not the production
+# intraday universe.  With batch rotation enabled, resolve the complete live
+# liquidity pool once and let the cursor bound each run.  This prevents a
+# stale .env value such as 40 from permanently excluding most A-shares.
+if is_truthy "$INTRADAY_BATCH_SCAN" && \
+   ! is_truthy "${AQSP_INTRADAY_ALLOW_FIXED_SYMBOLS:-false}" && \
+   ! is_truthy "${AQSP_INTRADAY_ALLOW_LIMITED_UNIVERSE:-false}"; then
+    if [ "$INTRADAY_MAX_UNIVERSE" != "0" ]; then
+        log "盘中批次轮转忽略配置最大股票数 ${INTRADAY_MAX_UNIVERSE}，改用完整实时流动性池"
+    fi
+    INTRADAY_MAX_UNIVERSE="0"
+fi
+
 START_TIME=$(date +%s)
 INTRADAY_STARTED_AT="$(date '+%Y-%m-%dT%H:%M:%S%z')"
 write_intraday_status "running" "盘中刷新运行中；正在解析实时股票池" "0"
@@ -1462,6 +1485,7 @@ fi
 set +e
 export AQSP_PROVISIONAL_REPORT="${INTRADAY_REPORT}"
 export AQSP_PROVISIONAL_OUTPUT_CSV="${INTRADAY_OUTPUT_CSV}"
+RUN_COMMAND_START_TIME=$(date +%s)
 RUN_CMD=(
     # Without --foreground, GNU timeout owns the command process group and
     # kill-after can converge descendants instead of leaving the task running.
@@ -1500,9 +1524,19 @@ OBSERVATION_ONLY="false"
 OBSERVATION_REASON=""
 RUN_TIMED_OUT="false"
 RESOURCE_KILLED="false"
+RUN_ELAPSED_SECONDS=$(( $(date +%s) - RUN_COMMAND_START_TIME ))
 if [ "$RUN_EXIT_CODE" -eq 137 ]; then
-    RESOURCE_KILLED="true"
-    log "[ERROR] 盘中任务被系统资源限制终止（退出码 137，通常表示 OOM）；不是 timeout"
+    # GNU timeout may return 137 when its kill-after KILL is required.  The
+    # elapsed time is the only portable evidence available here: at the
+    # configured deadline it is a timeout, while an early 137 remains a
+    # resource/cgroup incident.
+    if [ "$RUN_ELAPSED_SECONDS" -ge $((INTRADAY_RUN_TIMEOUT_SECONDS - 5)) ]; then
+        RUN_TIMED_OUT="true"
+        log "[ERROR] 盘中任务达到 timeout=${INTRADAY_RUN_TIMEOUT_SECONDS}s，终止收敛后退出码为 137；按超时处理"
+    else
+        RESOURCE_KILLED="true"
+        log "[ERROR] 盘中任务被系统资源限制终止（退出码 137，运行 ${RUN_ELAPSED_SECONDS}s）；不是 timeout"
+    fi
 elif [ "$RUN_EXIT_CODE" -eq 124 ] || [ "$RUN_EXIT_CODE" -eq 143 ]; then
     RUN_TIMED_OUT="true"
     log "[ERROR] 盘中任务达到 timeout=${INTRADAY_RUN_TIMEOUT_SECONDS}s，子进程组已请求收敛；命令退出码: ${RUN_EXIT_CODE}"

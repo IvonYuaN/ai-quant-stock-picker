@@ -617,7 +617,10 @@ def test_debate_risk_control_veto_blocks_advisory_raise() -> None:
         },
         calculate_debate_adjustment=lambda votes, agent_weights: (0.2, 0.5, "raise"),
         get_cross_market_context_history=lambda debate_context=None: SimpleNamespace(
-            governance_note="", current_bucket="", current_sample_count=0, current_accuracy=0.0
+            governance_note="",
+            current_bucket="",
+            current_sample_count=0,
+            current_accuracy=0.0,
         ),
         get_all_reliability_summaries=lambda agent_ids, regime="unknown", debate_context=None: (),
     )
@@ -764,7 +767,9 @@ def test_audit_debate_quality_accepts_real_nine_role_round_history(
             AgentOpinion(
                 agent_id=f"{role.value}-agent",
                 role=role,
-                stance="neutral",
+                stance=(
+                    "bullish" if index == 0 else "bearish" if index == 1 else "neutral"
+                ),
                 confidence=0.5,
                 arguments=[f"第{round_num}轮{role.value}证据"],
                 counterarguments=(
@@ -775,12 +780,14 @@ def test_audit_debate_quality_accepts_real_nine_role_round_history(
                 ),
                 rebuttal_records=(
                     []
-                    if round_num == 1
+                    if round_num == 1 or index > 1
                     else [
                         RebuttalRecord(
-                            challenged_role=roles[(index + 1) % len(roles)].value,
-                            challenged_claim=f"第{round_num}轮被复核主张{roles[(index + 1) % len(roles)].value}",
-                            rebuttal_reason="当前证据与该主张存在方向冲突，需要保留复核关系",
+                            challenged_role=roles[1 - index].value,
+                            challenged_claim=f"第{round_num}轮被反驳主张{roles[1 - index].value}",
+                            rebuttal_reason="当前证据与该主张方向相反，若该主张成立则当前假设失效",
+                            challenged_stance=("bearish" if index == 0 else "bullish"),
+                            opposing_stance=("bullish" if index == 0 else "bearish"),
                         )
                     ]
                 ),
@@ -802,6 +809,8 @@ def test_audit_debate_quality_accepts_real_nine_role_round_history(
         original_score=72.0,
         deterministic_score=72.0,
         rating="watch",
+        related_signal_date="2026-06-30",
+        task_id="closing_review",
         rounds=rounds,
         final_consensus="neutral",
         final_vote={role: "neutral" for role in roles},
@@ -810,6 +819,7 @@ def test_audit_debate_quality_accepts_real_nine_role_round_history(
         risk_warnings=["已记录风控观点"],
         primary_risk_gate="等待风险确认",
         next_trigger="确认下一轮量价与流动性",
+        falsifiable_conditions=("失效条件: 跌破关键支撑则取消当前假设",),
     )
 
     audit = audit_debate_quality(result, candidate=_make_pick())
@@ -989,6 +999,138 @@ def test_audit_debate_quality_rejects_generic_second_round_without_peer_referenc
     assert "non_interactive_round" in audit.issues
 
 
+def test_audit_debate_quality_rejects_neutral_preserve_original_view_as_rebuttal() -> (
+    None
+):
+    roles = (AgentRole.BULL, AgentRole.CROSS_MARKET)
+    result = DebateResult(
+        debate_id="neutral-review",
+        symbol="300750",
+        name="宁德时代",
+        original_score=72.0,
+        deterministic_score=72.0,
+        related_signal_date="2026-06-30",
+        task_id="intraday",
+        rating="watch",
+        rounds=[
+            DebateRound(
+                round_num=1,
+                opinions=[
+                    AgentOpinion(
+                        agent_id="bull-1",
+                        role=AgentRole.BULL,
+                        stance="bullish",
+                        confidence=0.7,
+                        arguments=["放量突破"],
+                    ),
+                    AgentOpinion(
+                        agent_id="cross-1",
+                        role=AgentRole.CROSS_MARKET,
+                        stance="neutral",
+                        confidence=0.5,
+                        arguments=["暂无跨市证据"],
+                    ),
+                ],
+            ),
+            DebateRound(
+                round_num=2,
+                opinions=[
+                    AgentOpinion(
+                        agent_id="bull-1",
+                        role=AgentRole.BULL,
+                        stance="bullish",
+                        confidence=0.7,
+                        arguments=["放量突破"],
+                        counterarguments=["保留原观点，等待复核"],
+                        peer_reviewed_roles=["cross_market"],
+                        rebuttal_records=[
+                            RebuttalRecord(
+                                challenged_role="cross_market",
+                                challenged_claim="暂无跨市证据",
+                                rebuttal_reason="保留该主张并记录为待复核依据",
+                            )
+                        ],
+                    ),
+                    AgentOpinion(
+                        agent_id="cross-1",
+                        role=AgentRole.CROSS_MARKET,
+                        stance="neutral",
+                        confidence=0.5,
+                        arguments=["暂无跨市证据"],
+                        counterarguments=["保留原观点"],
+                        counterargument_roles=["bull"],
+                    ),
+                ],
+            ),
+        ],
+        final_consensus="neutral",
+        final_vote={AgentRole.BULL: "bullish", AgentRole.CROSS_MARKET: "neutral"},
+        support_points=("放量突破",),
+        opposition_points=("暂无跨市证据",),
+        risk_warnings=["失效条件: A股板块不共振"],
+        next_trigger="确认A股映射",
+        falsifiable_conditions=("失效条件: A股板块不共振",),
+    )
+
+    audit = audit_debate_quality(result, expected_roles=roles)
+
+    assert not audit.passed
+    assert audit.non_interactive_rounds == (2,)
+    assert "missing_real_opposition" in audit.issues
+
+
+def test_debate_result_serializes_falsifiable_conditions_and_rebuttal_stances() -> None:
+    pick = _make_pick(
+        metrics={
+            "candidate_fingerprint": "fp-1",
+            "cross_market_invalidation_signals": ("跌破关键支撑",),
+        }
+    )
+    result = AShareDebateCoordinator(
+        task_id="intraday",
+        max_rounds=2,
+        roles=(AgentRole.BULL, AgentRole.BEAR),
+    ).run_debate(pick, pd.DataFrame({"close": [100.0, 101.0]}), signal_date=pick.date)
+
+    payload = result.to_dict()
+
+    assert "falsifiable_conditions" in payload
+    assert payload["deterministic_score"] == pick.score
+    records = [
+        record
+        for round_data in payload["rounds"]
+        for opinion in round_data["opinions"]
+        for record in opinion["rebuttal_records"]
+    ]
+    assert records
+    assert all(
+        record["challenged_stance"] != record["opposing_stance"] for record in records
+    )
+
+
+def test_audit_debate_quality_rejects_task_mismatch_even_when_symbol_and_date_match() -> (
+    None
+):
+    result = DebateResult(
+        debate_id="task-mismatch",
+        symbol="300750",
+        name="宁德时代",
+        original_score=72.0,
+        deterministic_score=72.0,
+        related_signal_date="2026-06-30",
+        task_id="closing_review",
+        rating="watch",
+    )
+    candidate = _make_pick(
+        metrics={"candidate_fingerprint": "fp-1", "task_id": "intraday"}
+    )
+
+    audit = audit_debate_quality(result, candidate=candidate)
+
+    assert not audit.candidate_mapped
+    assert "candidate_unmapped" in audit.issues
+
+
 def test_audit_debate_quality_accepts_legacy_json_role_references_without_rebuttals() -> (
     None
 ):
@@ -1047,8 +1189,8 @@ def test_audit_debate_quality_accepts_legacy_json_role_references_without_rebutt
         expected_roles=(AgentRole.BULL, AgentRole.CROSS_MARKET),
     )
 
-    assert audit.non_interactive_rounds == ()
-    assert "non_interactive_round" not in audit.issues
+    assert audit.non_interactive_rounds == (2,)
+    assert "missing_real_opposition" in audit.issues
 
 
 def test_audit_debate_quality_rejects_non_advisory_result() -> None:
