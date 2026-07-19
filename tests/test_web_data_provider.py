@@ -620,6 +620,28 @@ def test_dashboard_data_provider_intraday_runtime_line_marks_protection_observat
     )
 
 
+def test_dashboard_data_provider_intraday_runtime_line_exposes_fetch_telemetry() -> None:
+    from aqsp.web.data_provider import DashboardDataProvider
+
+    line = DashboardDataProvider._intraday_runtime_line_from_state(
+        {
+            "status": "partial_failed",
+            "source": "online_first",
+            "updated_at": "2026-07-17T14:57:30+08:00",
+            "reason": "消息面已处理",
+            "execution": {
+                "catalyst_fetch_mode": "thread",
+                "duration_seconds": 451,
+                "timed_out": True,
+            },
+        }
+    )
+
+    assert "消息模式 thread" in line
+    assert "耗时 451s" in line
+    assert "消息/盘中超时" in line
+
+
 def test_dashboard_data_provider_runtime_fallback_digest_uses_run_event_without_task_pollution(
     tmp_path: Path,
 ) -> None:

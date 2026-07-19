@@ -584,6 +584,10 @@ def test_intraday_runtime_refreshes_news_after_candidates_and_keeps_home_snapsho
     )
     assert status["status"] == "completed"
     assert status["news_catalysts"]["status"] == "refreshed"
+    assert status["execution"]["catalyst_fetch_mode"] == "process"
+    assert status["execution"]["runner_timeout_seconds"] == 420
+    assert status["execution"]["news_task_timeout_seconds"] == 20
+    assert status["execution"]["duration_seconds"] >= 0
 
 
 def test_intraday_runtime_passes_explicit_thread_catalyst_mode_to_sidecar(
@@ -621,6 +625,11 @@ def test_intraday_runtime_passes_explicit_thread_catalyst_mode_to_sidecar(
     assert result.returncode == 0, result.stdout + result.stderr
     news_args = news_marker.read_text(encoding="utf-8").strip().split("|")
     assert news_args[7:] == ["thread", "intraday"]
+    status = json.loads(
+        (tmp_path / "data" / "intraday_refresh_status.json").read_text(encoding="utf-8")
+    )
+    assert status["execution"]["catalyst_fetch_mode"] == "thread"
+    assert status["execution"]["timed_out"] is False
 
 
 def test_intraday_runtime_news_failure_warns_without_blocking_candidates_or_home(
