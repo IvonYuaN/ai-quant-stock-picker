@@ -290,9 +290,7 @@ def test_recommendation_gate_keeps_quote_candidates_when_news_refresh_fails() ->
         runtime,
         source,
         "来源失败",
-        evaluated_at=datetime(
-            2026, 7, 10, 15, 1, tzinfo=ZoneInfo("Asia/Shanghai")
-        ),
+        evaluated_at=datetime(2026, 7, 10, 15, 1, tzinfo=ZoneInfo("Asia/Shanghai")),
     )
 
     assert gate.recommendation_allowed is True
@@ -485,7 +483,7 @@ def test_write_home_snapshot_normalizes_legacy_news_and_cross_market_timestamps(
         events=(
             CatalystEvent(
                 title="SpaceX 评估 IPO 上市窗口",
-                    source="Reuters",
+                source="Reuters",
                 published_at="2026-07-10T01:00:00Z",
                 impact="positive",
                 category="资本运作",
@@ -1134,6 +1132,40 @@ def test_normalize_catalyst_report_downgrades_historical_high_impact_status() ->
     assert invalid_count == 0
     assert normalized.events == ()
     assert normalized.news_status == "stale_only"
+
+
+def test_normalize_catalyst_report_keeps_previous_trade_day_news_for_current_session(
+    monkeypatch,
+) -> None:
+    current_time = datetime(2026, 7, 20, 5, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
+    monkeypatch.setattr(
+        write_home_snapshot, "today_shanghai", lambda: current_time.date()
+    )
+    monkeypatch.setattr(write_home_snapshot, "now_shanghai", lambda: current_time)
+    report = CatalystReport(
+        date="2026-07-20",
+        generated_at=current_time.isoformat(),
+        source_status="ok",
+        event_status="high_impact",
+        events=(
+            CatalystEvent(
+                title="周末海外事件",
+                source="fixture",
+                published_at="2026-07-18T09:00:00+08:00",
+                impact="positive",
+            ),
+        ),
+    )
+
+    normalized, historical_count, invalid_count = (
+        write_home_snapshot._normalize_catalyst_report_for_snapshot(
+            report, "2026-07-20"
+        )
+    )
+
+    assert historical_count == 0
+    assert invalid_count == 0
+    assert len(normalized.events) == 1
 
 
 def test_write_home_snapshot_explains_empty_current_news(monkeypatch, tmp_path) -> None:
