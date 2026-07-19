@@ -198,14 +198,13 @@
   .vr-summary-stats div { display: flex; flex-direction: column; gap: 0.2rem; }
   .vr-summary-stats strong { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 1.1rem; font-variant-numeric: tabular-nums; color: hsl(var(--foreground)); }
   .vr-summary-stats span { color: hsl(var(--muted-foreground)); font-size: 0.65rem; }
-  .vr-board-grid { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(20rem, 0.95fr); align-items: start; gap: 0.85rem; }
   .vr-board-stack { display: grid; gap: 0.85rem; }
   .vr-board-section { min-width: 0; scroll-margin-top: 1.25rem; }
-  .vr-module { border: 1px solid hsl(var(--border) / 0.62); border-radius: 0.7rem; background: hsl(var(--card) / 0.28); padding: 0.9rem; }
+  .vr-module { border: 1px solid hsl(var(--border) / 0.62); border-radius: 0.7rem; background: hsl(var(--card) / 0.28); padding: 0.85rem; }
   .vr-section-heading { display: flex; align-items: end; justify-content: space-between; gap: 1rem; margin-bottom: 0.65rem; }
   .vr-section-heading h2 { margin-top: 0.25rem; font-size: 1.05rem; font-weight: 650; }
   .vr-count { color: hsl(var(--muted-foreground)); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.68rem; font-variant-numeric: tabular-nums; }
-  .vr-candidate-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.6rem; }
+  .vr-candidate-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); gap: 0.6rem; }
   .vr-research-card, .vr-debate-card { border: 1px solid hsl(var(--border) / 0.72); border-radius: 0.55rem; background: hsl(var(--card) / 0.62); padding: 0.8rem; transition: border-color 140ms ease, background 140ms ease; }
   .vr-research-card:hover, .vr-debate-card:hover { border-color: hsl(var(--primary) / 0.38); background: hsl(var(--card) / 0.82); }
   .vr-technical-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0.45rem; margin-top: 0.8rem; padding-top: 0.75rem; border-top: 1px solid hsl(var(--border) / 0.45); }
@@ -258,7 +257,6 @@
   .vr-page-topline, .vr-conclusion-panel { display: block; }
   .vr-refresh-button { margin-top: 1rem; }
   .vr-summary-stats { min-width: 0; margin-top: 1.25rem; padding-top: 1rem; padding-left: 0; border-top: 1px solid hsl(var(--border) / 0.7); border-left: 0; }
-  .vr-board-grid { grid-template-columns: minmax(0, 1fr); gap: 0.65rem; }
   .vr-board-stack { display: grid; gap: 0.65rem; }
   .vr-module { padding: 0.75rem; }
   .vr-candidate-grid { grid-template-columns: minmax(0, 1fr); }
