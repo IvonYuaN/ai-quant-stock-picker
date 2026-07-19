@@ -24,6 +24,17 @@ export class ApiError extends Error {
   }
 }
 
+export type AqspRequestOptions = Pick<RequestInit, "signal">;
+
+export function isAqspAbortError(reason: unknown): boolean {
+  return (
+    typeof reason === "object" &&
+    reason !== null &&
+    "name" in reason &&
+    reason.name === "AbortError"
+  );
+}
+
 // 后端访问密钥（对应后端部署时的 VR_API_KEY，公网部署防蹭用）。只存本地浏览器。
 const ACCESS_KEY = "vr-access-key";
 
@@ -77,10 +88,15 @@ function errorDetail(payload: unknown): string | undefined {
   return typeof payload.detail === "string" ? payload.detail : undefined;
 }
 
-async function requestPayload(path: string, method: "GET" | "POST" | "DELETE" = "GET", body?: unknown): Promise<unknown> {
+async function requestPayload(
+  path: string,
+  method: "GET" | "POST" | "DELETE" = "GET",
+  body?: unknown,
+  options?: AqspRequestOptions,
+): Promise<unknown> {
   let resp: Response;
   const headers: Record<string, string> = { ...authHeaders() };
-  const opts: RequestInit = { method };
+  const opts: RequestInit = { method, signal: options?.signal };
   if (body !== undefined) {
     headers["Content-Type"] = "application/json";
     opts.body = JSON.stringify(body);
@@ -88,7 +104,8 @@ async function requestPayload(path: string, method: "GET" | "POST" | "DELETE" = 
   if (Object.keys(headers).length > 0) opts.headers = headers;
   try {
     resp = await fetch(`/api${path}`, opts);
-  } catch {
+  } catch (reason) {
+    if (isAqspAbortError(reason)) throw reason;
     throw new ApiError("连接不到后端，请先启动 backend（uvicorn app:app --port 8900）", 0);
   }
   let payload: unknown = null;
@@ -112,7 +129,8 @@ async function request<T>(path: string, method: "GET" | "POST" | "DELETE" = "GET
 }
 
 const get = <T>(path: string) => request<T>(path, "GET");
-const getEnvelope = <T>(path: string): Promise<T> => requestPayload(path, "GET") as Promise<T>;
+const getEnvelope = <T>(path: string, options?: AqspRequestOptions): Promise<T> =>
+  requestPayload(path, "GET", undefined, options) as Promise<T>;
 
 export interface Quote {
   name: string; price: number; last_close: number; change_pct: number;
@@ -267,8 +285,11 @@ export interface GlobalStock {
 
 export const api = {
   health: () => get<{ ok: boolean }>("/health"),
-  aqspSnapshot: (date?: string): Promise<AqspSnapshotView> =>
-    getEnvelope<AqspSnapshotEnvelope>(date ? `/aqsp/snapshot?date=${encodeURIComponent(date)}` : "/aqsp/snapshot")
+  aqspSnapshot: (date?: string, options?: AqspRequestOptions): Promise<AqspSnapshotView> =>
+    getEnvelope<AqspSnapshotEnvelope>(
+      date ? `/aqsp/snapshot?date=${encodeURIComponent(date)}` : "/aqsp/snapshot",
+      options,
+    )
       .then(({ data, meta }) => ({ ...data, meta })),
   aqspDates: (): Promise<AqspDateIndex> => get<AqspDateIndex>("/aqsp/dates"),
   indices: () => get<IndexQuote[]>("/indices"),

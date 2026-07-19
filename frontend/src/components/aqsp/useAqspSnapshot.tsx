@@ -1,5 +1,5 @@
-import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
-import { api, ApiError, type AqspSnapshot } from "@/lib/api";
+import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { api, ApiError, isAqspAbortError, type AqspSnapshot } from "@/lib/api";
 
 export interface AqspSnapshotState {
   data: AqspSnapshot | null;
@@ -26,15 +26,24 @@ export function AqspWorkspaceProvider({ children }: { children: ReactNode }) {
   const [error, setError] = useState<string | null>(null);
   const [selectedDate, setSelectedDate] = useState(readSelectedDate);
   const [reloadKey, setReloadKey] = useState(0);
+  const activeRequest = useRef<AbortController | null>(null);
+  const requestSequence = useRef(0);
 
   useEffect(() => {
     let active = true;
+    const sequence = requestSequence.current + 1;
+    requestSequence.current = sequence;
+    activeRequest.current?.abort();
+    const controller = new AbortController();
+    activeRequest.current = controller;
     setLoading(true);
     setError(null);
-    const snapshotRequest = api.aqspSnapshot(selectedDate || undefined);
+    const snapshotRequest = api.aqspSnapshot(selectedDate || undefined, {
+      signal: controller.signal,
+    });
     snapshotRequest
       .then((snapshot) => {
-        if (!active) return;
+        if (!active || requestSequence.current !== sequence) return;
         setData(snapshot);
         if (!selectedDate && snapshot.selected_date) {
           setSelectedDate(snapshot.selected_date);
@@ -46,7 +55,7 @@ export function AqspWorkspaceProvider({ children }: { children: ReactNode }) {
         }
       })
       .catch((reason: unknown) => {
-        if (!active) return;
+        if (!active || requestSequence.current !== sequence || isAqspAbortError(reason)) return;
         // A browser can retain a date that has been pruned from the server index.
         // Recover to the live snapshot instead of leaving the whole workspace in a 404 state.
         if (reason instanceof ApiError && reason.status === 404 && selectedDate) {
@@ -61,10 +70,12 @@ export function AqspWorkspaceProvider({ children }: { children: ReactNode }) {
         setError(reason instanceof ApiError ? reason.message : "研究快照加载失败");
       })
       .finally(() => {
-        if (active) setLoading(false);
+        if (active && requestSequence.current === sequence) setLoading(false);
       });
     return () => {
       active = false;
+      controller.abort();
+      if (activeRequest.current === controller) activeRequest.current = null;
     };
   }, [reloadKey, selectedDate]);
 
