@@ -1189,6 +1189,31 @@ except (TypeError, ValueError):
     metadata_lag_days = -1
 provenance_status = "available" if actual_source and source_freshness_tier else "unavailable"
 
+cursor_state: dict[str, object] = {}
+try:
+    cursor_payload = json.loads(
+        Path(os.environ["INTRADAY_STATUS_CURSOR"]).read_text(encoding="utf-8")
+    )
+    if isinstance(cursor_payload, dict):
+        cursor_state = cursor_payload
+except (OSError, json.JSONDecodeError):
+    cursor_state = {}
+
+universe = {
+    "batch_active": truthy(os.environ.get("INTRADAY_STATUS_BATCH_ACTIVE", "false")),
+    "batch_id": os.environ.get("INTRADAY_STATUS_BATCH_ID", ""),
+    "universe_count": int(cursor_state.get("universe_count") or 0),
+    "batch_size": int(cursor_state.get("batch_size") or 0),
+    "cycle_id": int(cursor_state.get("cycle_id") or 0),
+    "coverage_pct": float(cursor_state.get("coverage_pct") or 0.0),
+    "scanned_count": int(cursor_state.get("scanned_count") or 0),
+    "last_successful_batch_id": str(cursor_state.get("last_batch_id") or ""),
+    "last_batch_finished_at": str(cursor_state.get("last_batch_finished_at") or ""),
+    "last_error": str(cursor_state.get("last_error") or ""),
+}
+if not universe["batch_id"]:
+    universe["batch_id"] = str(cursor_state.get("active_batch_id") or cursor_state.get("last_batch_id") or "")
+
 payload = {
     "status": os.environ["INTRADAY_STATUS_VALUE"],
     "task_id": os.environ["INTRADAY_STATUS_TASK_ID"],
@@ -1209,15 +1234,7 @@ payload = {
     "mode": os.environ["INTRADAY_STATUS_MODE"],
     "benchmark_symbol": os.environ["INTRADAY_STATUS_BENCHMARK"],
     "max_universe": int(os.environ["INTRADAY_STATUS_MAX_UNIVERSE"] or "0"),
-    "universe": {
-        "batch_active": truthy(os.environ.get("INTRADAY_STATUS_BATCH_ACTIVE", "false")),
-        "batch_id": os.environ.get("INTRADAY_STATUS_BATCH_ID", ""),
-        "universe_count": 0,
-        "batch_size": 0,
-        "coverage_pct": 0.0,
-        "scanned_count": 0,
-        "last_error": "",
-    },
+    "universe": universe,
     "ledger_path": os.environ["INTRADAY_STATUS_LEDGER"],
     "report_path": os.environ["INTRADAY_STATUS_REPORT"],
     "csv_path": os.environ["INTRADAY_STATUS_CSV"],

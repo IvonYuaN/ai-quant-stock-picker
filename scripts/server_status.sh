@@ -7,7 +7,15 @@
 
 set -euo pipefail
 
-PROJECT_ROOT="${AQSP_PROJECT_ROOT:-/opt/aqsp}"
+# Code lives in the active immutable release; runtime data remains under
+# /opt/aqsp. Resolve the release only when the caller did not pin a root.
+if [ -n "${AQSP_PROJECT_ROOT:-}" ]; then
+    PROJECT_ROOT="$AQSP_PROJECT_ROOT"
+elif [ -L /opt/aqsp-releases/aqsp-scheduler-current ]; then
+    PROJECT_ROOT="$(readlink -f /opt/aqsp-releases/aqsp-scheduler-current)"
+else
+    PROJECT_ROOT="/opt/aqsp"
+fi
 RUNTIME_ROOT="${AQSP_RUNTIME_ROOT:-/opt/aqsp}"
 LOCK_STALE_MINUTES="${AQSP_LOCK_STALE_MINUTES:-360}"
 RUNNER_TIMEOUT_SECONDS="${AQSP_RUNNER_TIMEOUT_SECONDS:-0}"

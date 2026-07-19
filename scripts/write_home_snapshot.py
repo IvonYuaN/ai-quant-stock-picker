@@ -1297,9 +1297,9 @@ def _universe_snapshot() -> HomeSnapshotUniverse:
     batch_payload = batch if isinstance(batch, dict) else {}
     return HomeSnapshotUniverse(
         total=int(batch_payload.get("universe_count") or payload.get("universe_total") or payload.get("total") or 0),
-        resolved=int(payload.get("resolved_symbol_count") or 0),
-        screened=int(payload.get("screened_count") or 0),
-        final=int(payload.get("final_count") or payload.get("candidate_count") or 0),
+        resolved=int(batch_payload.get("resolved_count") or payload.get("resolved_symbol_count") or 0),
+        screened=int(batch_payload.get("screened_count") or payload.get("screened_count") or 0),
+        final=int(batch_payload.get("final_count") or payload.get("final_count") or payload.get("candidate_count") or 0),
         max_universe=int(payload.get("max_universe") or 0),
         source=_text(payload.get("actual_source") or payload.get("source")),
         batch_active=bool(batch_payload.get("batch_active", False)),
