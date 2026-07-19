@@ -6,7 +6,7 @@ import json
 import math
 import os
 from collections.abc import Mapping
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import date as CalendarDate
 from datetime import datetime
 from pathlib import Path
@@ -17,6 +17,7 @@ from aqsp.core.time import now_shanghai
 
 
 DEFAULT_SNAPSHOT_PATH = "data/runtime/home_dashboard_snapshot.json"
+DEFAULT_DEBATE_RESULTS_PATH = "data/debate_results.jsonl"
 SNAPSHOT_SCHEMA_VERSION = "v1"
 INDEX_SCHEMA_VERSION = "v1-index"
 MAX_SNAPSHOT_BYTES = 64 * 1024
@@ -25,6 +26,7 @@ MAX_CANDIDATES = 5
 MAX_DEBATES = 3
 MAX_SUMMARIES = 3
 MAX_MESSAGES = 5
+MAX_DEBATE_RESULTS_BYTES = 8 * 1024 * 1024
 MAX_CROSS_MARKET = 3
 LEGACY_MESSAGE_TIMESTAMP_FORMAT = "%Y-%m-%d %H:%M:%S"
 SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
@@ -290,18 +292,20 @@ def load_surface() -> AQSPResearchSurface:
     )
     if schema_version == INDEX_SCHEMA_VERSION:
         snapshots, selected_date = _parse_index(payload)
+        snapshots = _attach_runtime_debates(snapshots)
         current = _select_current(snapshots, selected_date)
         return AQSPResearchSurface(path, current, snapshots)
     if schema_version != SNAPSHOT_SCHEMA_VERSION:
         raise AQSPSnapshotUnavailable("schema_version 不支持或缺失")
 
-    current = _parse_snapshot(payload)
+    current = _attach_runtime_debates((_parse_snapshot(payload),))[0]
     index_path = path.with_name("home_dashboard_snapshot_index.json")
     if index_path != path and index_path.is_file():
         index_payload = _read_json(index_path)
         if index_payload.get("schema_version") != INDEX_SCHEMA_VERSION:
             raise AQSPSnapshotUnavailable("日期索引 schema_version 不支持或缺失")
         snapshots, selected_date = _parse_index(index_payload)
+        snapshots = _attach_runtime_debates(snapshots)
         indexed_current = _select_current(snapshots, selected_date)
         if indexed_current.selected_date != current.selected_date:
             raise AQSPSnapshotUnavailable("当前快照与日期索引不一致，拒绝回退旧日期")
@@ -311,6 +315,130 @@ def load_surface() -> AQSPResearchSurface:
             snapshots,
         )
     return AQSPResearchSurface(path, current, ())
+
+
+def _debate_results_path() -> Path:
+    raw_path = os.environ.get("AQSP_DEBATE_RESULTS", "").strip()
+    raw_path = raw_path or DEFAULT_DEBATE_RESULTS_PATH
+    path = Path(raw_path).expanduser()
+    return path if path.is_absolute() else _PROJECT_ROOT / path
+
+
+def _attach_runtime_debates(
+    snapshots: tuple[AQSPSnapshot, ...],
+) -> tuple[AQSPSnapshot, ...]:
+    """Attach date-matched advisory debates without changing candidate scores."""
+    records = _read_runtime_debate_records()
+    if not records:
+        return snapshots
+    return tuple(
+        _attach_debates(snapshot, records.get(snapshot.selected_date, ()))
+        for snapshot in snapshots
+    )
+
+
+def _read_runtime_debate_records() -> dict[str, tuple[dict[str, Any], ...]]:
+    """Read optional local debate output; malformed lines are ignored."""
+    path = _debate_results_path()
+    try:
+        raw = path.read_bytes()
+    except OSError:
+        return {}
+    if len(raw) > MAX_DEBATE_RESULTS_BYTES:
+        return {}
+    by_date: dict[str, list[dict[str, Any]]] = {}
+    for line in raw.splitlines():
+        if not line.strip():
+            continue
+        try:
+            item = json.loads(line.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            continue
+        if not isinstance(item, dict):
+            continue
+        match_date = _debate_record_date(item)
+        if match_date:
+            by_date.setdefault(match_date, []).append(item)
+    return {key: tuple(value) for key, value in by_date.items()}
+
+
+def _debate_record_date(item: Mapping[str, Any]) -> str:
+    """Prefer the date on which the debate ran; support legacy rows."""
+    for key in ("debate_date", "candidate_signal_date", "related_signal_date"):
+        value = str(item.get(key, "") or "").strip()
+        if value:
+            try:
+                return _validate_date(value, f"debate.{key}")
+            except AQSPBridgeError:
+                return ""
+    return ""
+
+
+def _attach_debates(
+    snapshot: AQSPSnapshot,
+    records: tuple[dict[str, Any], ...],
+) -> AQSPSnapshot:
+    if snapshot.debates or not snapshot.candidates:
+        return snapshot
+    candidates_by_symbol = {item.symbol: item for item in snapshot.candidates}
+    debates: list[AQSPDebate] = []
+    seen: set[str] = set()
+    for record in reversed(records):
+        symbol = str(record.get("symbol", "") or "").strip()
+        if symbol in seen or symbol not in candidates_by_symbol:
+            continue
+        payload = _runtime_debate_payload(record, candidates_by_symbol[symbol])
+        try:
+            debate = _parse_debate(payload)
+            _validate_advisory_boundary([payload], snapshot.candidates)
+        except (AQSPBridgeError, TypeError, ValueError):
+            continue
+        debates.append(debate)
+        seen.add(symbol)
+        if len(debates) >= MAX_DEBATES:
+            break
+    return replace(snapshot, debates=tuple(reversed(debates))) if debates else snapshot
+
+
+def _runtime_debate_payload(
+    record: Mapping[str, Any], candidate: AQSPCandidate
+) -> dict[str, Any]:
+    rounds = record.get("rounds")
+    round_summaries = [
+        str(item.get("summary", "") or "").strip()
+        for item in rounds
+        if isinstance(item, dict) and str(item.get("summary", "") or "").strip()
+    ] if isinstance(rounds, list) else []
+    return {
+        "symbol": candidate.symbol,
+        "display_name": candidate.display_name,
+        "conclusion": str(
+            record.get("research_verdict") or record.get("final_consensus") or ""
+        ).strip(),
+        "primary_risk_gate": str(record.get("primary_risk_gate", "") or "").strip(),
+        "next_trigger": str(record.get("next_trigger", "") or "").strip(),
+        "active_roles": record.get("active_roles", []),
+        "round_count": record.get("debate_rounds_completed", len(round_summaries)) or 0,
+        "process_summary": str(record.get("role_selection_summary", "") or "").strip(),
+        "round_summaries": round_summaries,
+        "support_points": record.get("support_points", []),
+        "opposition_points": record.get("opposition_points", []),
+        "risk_warnings": record.get("risk_warnings", []),
+        "watch_items": record.get("watch_items", []),
+        "real_message_evidence": record.get("real_message_evidence", []),
+        "cross_market_evidence": record.get("cross_market_evidence", []),
+        "rule_transmission_evidence": record.get("rule_transmission_evidence", []),
+        "pending_confirmations": record.get("pending_confirmations", []),
+        "advisory_only": record.get("advisory_only", True),
+        "deterministic_score": record.get("deterministic_score"),
+        "deterministic_score_unchanged": record.get(
+            "deterministic_score_unchanged", True
+        ),
+        "advisory_boundary_ok": record.get("advisory_boundary_ok", True),
+        "process_recorded": record.get("process_recorded", False),
+        "conclusion_recorded": record.get("conclusion_recorded", False),
+        "debate_quality_issues": record.get("debate_quality_issues", []),
+    }
 
 
 def snapshot_payload(selected_date: str | None = None) -> dict[str, Any]:
