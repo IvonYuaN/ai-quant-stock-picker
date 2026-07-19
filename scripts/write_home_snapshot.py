@@ -11,9 +11,10 @@ import os
 import re
 import sys
 from dataclasses import replace
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, time
 from pathlib import Path
 from typing import Any, Iterable
+from zoneinfo import ZoneInfo
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT / "src") not in sys.path:
@@ -29,6 +30,7 @@ from aqsp.news.catalysts import (
 from aqsp.web.data_provider import DashboardDataProvider
 from aqsp.ledger.runtime import count_paper_tracking_days
 from aqsp.runtime.recommendation_gate import (
+    DEFAULT_WALKFORWARD_MAX_AGE_DAYS,
     FreshnessEvidence,
     RecommendationGateInputs,
     evaluate as evaluate_recommendation_gate,
@@ -103,6 +105,7 @@ _EVENT_TYPE_RULES: tuple[tuple[tuple[str, ...], str], ...] = (
     ),
     (("战争", "地缘", "冲突", "袭击", "导弹", "war", "geopolitical"), "地缘事件"),
 )
+SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
 
 
 def _text(value: object) -> str:
@@ -546,9 +549,7 @@ def _news_json_report_path() -> Path:
 
 
 def _news_json_archive_path(signal_date: str) -> Path:
-    raw_path = os.getenv(
-        "AQSP_NEWS_ARCHIVE_DIR", "data/runtime/news_archive"
-    ).strip()
+    raw_path = os.getenv("AQSP_NEWS_ARCHIVE_DIR", "data/runtime/news_archive").strip()
     path = Path(raw_path).expanduser()
     if not path.is_absolute():
         path = PROJECT_ROOT / path
@@ -556,9 +557,7 @@ def _news_json_archive_path(signal_date: str) -> Path:
 
 
 def _news_archive_dates() -> tuple[str, ...]:
-    raw_path = os.getenv(
-        "AQSP_NEWS_ARCHIVE_DIR", "data/runtime/news_archive"
-    ).strip()
+    raw_path = os.getenv("AQSP_NEWS_ARCHIVE_DIR", "data/runtime/news_archive").strip()
     path = Path(raw_path).expanduser()
     if not path.is_absolute():
         path = PROJECT_ROOT / path
@@ -1092,6 +1091,54 @@ def _progress_days(value: str) -> int:
     return int(match.group(1)) if match else 0
 
 
+def _runtime_json_path(env_name: str, default: str) -> Path:
+    raw_path = os.getenv(env_name, default).strip()
+    path = Path(raw_path).expanduser()
+    return path if path.is_absolute() else PROJECT_ROOT / path
+
+
+def _read_json_object(path: Path) -> dict[str, object]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _walkforward_evidence(*, evaluated_at: datetime) -> tuple[bool, datetime | None]:
+    """Load production status and gate sidecar as one fail-closed evidence set."""
+    status = _read_json_object(
+        _runtime_json_path(
+            "AQSP_WALKFORWARD_PRODUCTION_STATUS",
+            "data/walkforward_production_status.json",
+        )
+    )
+    if status.get("status") != "completed":
+        return False, None
+
+    sidecar = _read_json_object(
+        _runtime_json_path(
+            "AQSP_WALKFORWARD_GATE_PATH",
+            "data/walkforward_gate.json",
+        )
+    )
+    raw_run_date = sidecar.get("run_date")
+    if not isinstance(raw_run_date, str):
+        return False, None
+    try:
+        run_date = date.fromisoformat(raw_run_date)
+    except ValueError:
+        return False, None
+    if sidecar.get("both_pass") is not True:
+        return False, None
+
+    evaluated_shanghai = to_shanghai(evaluated_at)
+    age_days = (evaluated_shanghai.date() - run_date).days
+    if age_days < 0 or age_days > DEFAULT_WALKFORWARD_MAX_AGE_DAYS:
+        return False, datetime.combine(run_date, time.min, tzinfo=SHANGHAI_TZ)
+    return True, datetime.combine(run_date, time.min, tzinfo=SHANGHAI_TZ)
+
+
 def _recommendation_gate(
     provider: DashboardDataProvider,
     runtime: Any,
@@ -1107,10 +1154,9 @@ def _recommendation_gate(
             cooldown_date = date.fromisoformat(cooldown_until[:10])
         except ValueError:
             cooldown_date = None
-    walkforward_line = str(
-        getattr(runtime, "walkforward_runtime_line", "") or ""
+    walkforward_ok, walkforward_updated_at = _walkforward_evidence(
+        evaluated_at=evaluated_at
     )
-    walkforward_ok = "双门已过" in walkforward_line and "未过门" not in walkforward_line
     source_status = str(getattr(source, "status", "") or "").strip()
     freshness_ok = (
         source_status not in {"", "blocked_by_circuit_breaker", "failed", "stale"}
@@ -1119,24 +1165,18 @@ def _recommendation_gate(
     )
     paper_ledger_path = getattr(provider, "paper_ledger_path", None)
     paper_tracking_days = (
-        count_paper_tracking_days(str(paper_ledger_path))
-        if paper_ledger_path
-        else 0
+        count_paper_tracking_days(str(paper_ledger_path)) if paper_ledger_path else 0
     )
     result = evaluate_recommendation_gate(
         RecommendationGateInputs(
             coldstart_days=_progress_days(getattr(runtime, "coldstart_progress", "")),
             paper_tracking_days=paper_tracking_days,
             walkforward_ok=walkforward_ok,
-            walkforward_updated_at=None,
+            walkforward_updated_at=walkforward_updated_at,
             freshness=FreshnessEvidence(
                 ok=freshness_ok,
                 status=message_status,
-                reason=(
-                    "实时行情或消息源未达到最低新鲜度"
-                    if not freshness_ok
-                    else ""
-                ),
+                reason=("实时行情或消息源未达到最低新鲜度" if not freshness_ok else ""),
             ),
             circuit_breaker_until=cooldown_date,
             evaluated_at=evaluated_at,

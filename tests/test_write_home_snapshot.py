@@ -44,6 +44,89 @@ def _candidate(symbol: str, score: float) -> SimpleNamespace:
     )
 
 
+def _write_walkforward_artifacts(
+    tmp_path: Path,
+    *,
+    status: str = "completed",
+    run_date: object = "2026-07-18",
+    both_pass: object = True,
+) -> None:
+    status_path = tmp_path / "walkforward_production_status.json"
+    gate_path = tmp_path / "walkforward_gate.json"
+    status_path.write_text(
+        json.dumps({"status": status}, ensure_ascii=False), encoding="utf-8"
+    )
+    gate_path.write_text(
+        json.dumps({"run_date": run_date, "both_pass": both_pass}),
+        encoding="utf-8",
+    )
+
+
+def test_walkforward_evidence_reads_completed_status_and_sidecar_in_shanghai(
+    monkeypatch, tmp_path
+) -> None:
+    _write_walkforward_artifacts(tmp_path)
+    monkeypatch.setenv(
+        "AQSP_WALKFORWARD_PRODUCTION_STATUS",
+        str(tmp_path / "walkforward_production_status.json"),
+    )
+    monkeypatch.setenv(
+        "AQSP_WALKFORWARD_GATE_PATH", str(tmp_path / "walkforward_gate.json")
+    )
+
+    ok, updated_at = write_home_snapshot._walkforward_evidence(
+        evaluated_at=datetime(2026, 7, 19, 9, tzinfo=ZoneInfo("Asia/Shanghai"))
+    )
+
+    assert ok is True
+    assert updated_at is not None
+    assert updated_at.tzinfo == ZoneInfo("Asia/Shanghai")
+    assert updated_at.isoformat() == "2026-07-18T00:00:00+08:00"
+
+
+@pytest.mark.parametrize("status", ["blocked_resources", "timeout", "failed"])
+def test_walkforward_evidence_rejects_non_completed_production_status(
+    monkeypatch, tmp_path, status: str
+) -> None:
+    _write_walkforward_artifacts(tmp_path, status=status)
+    monkeypatch.setenv(
+        "AQSP_WALKFORWARD_PRODUCTION_STATUS",
+        str(tmp_path / "walkforward_production_status.json"),
+    )
+    monkeypatch.setenv(
+        "AQSP_WALKFORWARD_GATE_PATH", str(tmp_path / "walkforward_gate.json")
+    )
+
+    assert write_home_snapshot._walkforward_evidence(
+        evaluated_at=datetime(2026, 7, 19, tzinfo=ZoneInfo("Asia/Shanghai"))
+    ) == (False, None)
+
+
+def test_walkforward_evidence_rejects_old_or_invalid_sidecar(
+    monkeypatch, tmp_path
+) -> None:
+    _write_walkforward_artifacts(tmp_path, run_date="2026-05-01")
+    monkeypatch.setenv(
+        "AQSP_WALKFORWARD_PRODUCTION_STATUS",
+        str(tmp_path / "walkforward_production_status.json"),
+    )
+    monkeypatch.setenv(
+        "AQSP_WALKFORWARD_GATE_PATH", str(tmp_path / "walkforward_gate.json")
+    )
+
+    ok, updated_at = write_home_snapshot._walkforward_evidence(
+        evaluated_at=datetime(2026, 7, 19, tzinfo=ZoneInfo("Asia/Shanghai"))
+    )
+    assert ok is False
+    assert updated_at is not None
+    assert updated_at.isoformat() == "2026-05-01T00:00:00+08:00"
+
+    _write_walkforward_artifacts(tmp_path, both_pass="true")
+    assert write_home_snapshot._walkforward_evidence(
+        evaluated_at=datetime(2026, 7, 19, tzinfo=ZoneInfo("Asia/Shanghai"))
+    ) == (False, None)
+
+
 class _Provider:
     def __init__(self, debate_symbol: str = "600003") -> None:
         self.digest_calls: list[tuple[str, str]] = []
@@ -822,7 +905,7 @@ def test_write_home_snapshot_reads_only_current_day_news_report(
     assert (
         write_home_snapshot.build_home_snapshot(
             _DateAwareProvider(), signal_date="2026-07-09", task_id="intraday"
-    ).messages
+        ).messages
         == ()
     )
 
@@ -855,9 +938,7 @@ def test_write_home_snapshot_reads_dated_news_archive_when_latest_is_missing(
         json.dumps(serialize_catalyst_report(report), ensure_ascii=False),
         encoding="utf-8",
     )
-    monkeypatch.setenv(
-        "AQSP_NEWS_JSON_OUTPUT", str(tmp_path / "missing-latest.json")
-    )
+    monkeypatch.setenv("AQSP_NEWS_JSON_OUTPUT", str(tmp_path / "missing-latest.json"))
     monkeypatch.setenv("AQSP_NEWS_ARCHIVE_DIR", str(archive_dir))
 
     snapshot = write_home_snapshot.build_home_snapshot(
