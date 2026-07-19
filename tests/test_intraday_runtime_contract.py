@@ -79,6 +79,8 @@ def test_intraday_runtime_contract_uses_configured_benchmark_and_quality_gate() 
         in script
     )
     assert 'AQSP_NEWS_MAX_NEWS_AGE_DAYS="$INTRADAY_NEWS_MAX_NEWS_AGE_DAYS"' in script
+    assert "load_catalyst_report_artifact" in script
+    assert "消息脚本返回成功但当前消息产物无效或已过期" in script
     assert 'AQSP_NEWS_ENABLE_LLM_REVIEW="false"' in script
     assert 'AQSP_NEWS_NOTIFY="false"' in script
     assert 'if [ ! -f "$INTRADAY_NEWS_SCRIPT" ]; then' in script

@@ -528,8 +528,29 @@ refresh_intraday_news_catalysts() {
         log "[WARN] 盘中消息面结果日志管道退出码: ${news_tee_exit_code}"
     fi
     if [ "$news_exit_code" -eq 0 ]; then
-        NEWS_CATALYST_STATUS="refreshed"
-        log "盘中消息面刷新完成: ${INTRADAY_NEWS_JSON_OUTPUT} / ${INTRADAY_NEWS_OUTPUT}"
+        if "$PYTHON_BIN" - "$INTRADAY_NEWS_JSON_OUTPUT" <<'AQSP_NEWS_ARTIFACT_CHECK'
+import sys
+from pathlib import Path
+
+from aqsp.core.time import today_shanghai
+from aqsp.news.catalysts import load_catalyst_report_artifact
+
+path = Path(sys.argv[1])
+report = load_catalyst_report_artifact(
+    path,
+    expected_date=today_shanghai().isoformat(),
+    max_age_seconds=30 * 60,
+)
+raise SystemExit(0 if report is not None else 1)
+AQSP_NEWS_ARTIFACT_CHECK
+        then
+            NEWS_CATALYST_STATUS="refreshed"
+            log "盘中消息面刷新完成: ${INTRADAY_NEWS_JSON_OUTPUT} / ${INTRADAY_NEWS_OUTPUT}"
+        else
+            NEWS_CATALYST_STATUS="warning"
+            NEWS_CATALYST_WARNING="消息脚本返回成功但当前消息产物无效或已过期"
+            log "[WARN] ${NEWS_CATALYST_WARNING}，不把消息作为 Agent 证据"
+        fi
     else
         NEWS_CATALYST_STATUS="warning"
         NEWS_CATALYST_WARNING="消息面刷新失败，保留候选和首页快照"
