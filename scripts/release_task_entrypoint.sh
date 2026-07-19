@@ -13,6 +13,7 @@ if [[ -f "${RUNTIME_ROOT}/.env" ]]; then
 fi
 
 export AQSP_PROJECT_ROOT="$RELEASE_ROOT"
+export AQSP_IMMUTABLE_RELEASE="${AQSP_IMMUTABLE_RELEASE:-true}"
 export AQSP_RUNTIME_VENV_DIR="${AQSP_RUNTIME_VENV_DIR:-${RELEASE_ROOT}/.venv-vibe-research}"
 export AQSP_LEDGER="${AQSP_LEDGER:-${RUNTIME_ROOT}/data/predictions.jsonl}"
 export AQSP_PAPER_LEDGER="${AQSP_PAPER_LEDGER:-${RUNTIME_ROOT}/data/paper_trades.jsonl}"

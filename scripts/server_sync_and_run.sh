@@ -26,6 +26,7 @@ RUN_RESULT_FILE="${AQSP_SYNC_RESULT_FILE:-}"
 STATE_DIR="${PROJECT_ROOT}/.state"
 DIRTY_STATE_FILE="${STATE_DIR}/server-sync-dirty.env"
 RUNTIME_OVERLAY_MANIFEST="${AQSP_RUNTIME_OVERLAY_MANIFEST:-${STATE_DIR}/runtime-sync-overlay.json}"
+IMMUTABLE_RELEASE="${AQSP_IMMUTABLE_RELEASE:-false}"
 
 log() {
     mkdir -p "$LOG_DIR"
@@ -295,6 +296,9 @@ trap 'rm -f "$LOCK_INFO_FILE"; rmdir "$LOCK_FILE"' EXIT
 
 log "开始同步代码: ${REMOTE}/${BRANCH}"
 
+if [ "$IMMUTABLE_RELEASE" = "true" ]; then
+    log "immutable release 运行模式：跳过 Git fetch/pull，仅执行 release 内任务"
+else
 if ! acquire_git_sync_lock; then
     log "无法取得 Git 同步锁，本次任务阻断"
     write_result "sync_lock_failed" 1
@@ -360,6 +364,7 @@ else
 fi
 
 release_git_sync_lock
+fi
 trap 'rm -f "$LOCK_INFO_FILE"; rmdir "$LOCK_FILE"' EXIT
 
 if [ ! -f "${RUNNER_PATH}" ]; then
