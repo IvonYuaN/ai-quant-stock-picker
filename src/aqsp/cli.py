@@ -149,6 +149,11 @@ LOGGER = logging.getLogger(__name__)
 notify_markdown = _notify_markdown_default
 DEBATE_RETENTION_DAYS = 30
 DEBATE_COOLDOWN_DAYS = 3
+# Keep the intraday catalyst fan-out bounded even when the final screen limit
+# is large. These are resource guards, not scoring or recommendation thresholds.
+_INTRADAY_CATALYST_PREVIEW_MIN = 3
+_INTRADAY_CATALYST_PREVIEW_MAX = 5
+_INTRADAY_CATALYST_THREAD_MODES = frozenset({"thread", "in_process", "same_process"})
 
 
 def serialize_debate_result(result: DebateResult) -> dict:
@@ -1666,10 +1671,22 @@ def _augment_summary_with_market_context(
     return replace(summary, cross_market_overview=combined)
 
 
-def _market_context_preview_count(limit: int, total: int) -> int:
+def _market_context_preview_count(
+    limit: int,
+    total: int,
+    *,
+    task_id: str = "",
+) -> int:
     if total <= 0:
         return 0
-    return min(total, max(int(limit) * 2, 6))
+    if not _is_high_frequency_task(task_id):
+        return min(total, max(int(limit) * 2, 6))
+    bounded_limit = max(0, int(limit))
+    preview_count = min(
+        max(bounded_limit, _INTRADAY_CATALYST_PREVIEW_MIN),
+        _INTRADAY_CATALYST_PREVIEW_MAX,
+    )
+    return min(total, preview_count)
 
 
 def _build_execution_summary_line(
@@ -2485,9 +2502,7 @@ def _apply_protection_observation_boundary(
                 "portfolio_action": "observation_only",
             }
         )
-        risks = tuple(
-            dict.fromkeys((*pick.risks, f"组合保护生效: {clean_reason}"))
-        )
+        risks = tuple(dict.fromkeys((*pick.risks, f"组合保护生效: {clean_reason}")))
         observed.append(replace(pick, metrics=metrics, risks=risks))
     return observed
 
@@ -2547,6 +2562,21 @@ def _formal_runtime_ledger_path(current_ledger_path: str, *, task_id: str) -> st
 
 def _is_high_frequency_task(task_id: str) -> bool:
     return str(task_id or "").strip().lower() in {"intraday", "midday"}
+
+
+def _runtime_catalyst_isolate_external_sources(task_id: str) -> bool:
+    """Keep fork isolation by default; allow an explicit HF thread fallback."""
+    if not _is_high_frequency_task(task_id):
+        return True
+
+    mode = (
+        str(os.getenv("AQSP_INTRADAY_CATALYST_FETCH_MODE", "process") or "process")
+        .strip()
+        .lower()
+    )
+    if mode in _INTRADAY_CATALYST_THREAD_MODES:
+        return False
+    return True
 
 
 def _requires_intraday_overlay_task(task_id: str) -> bool:
@@ -2716,7 +2746,9 @@ def _build_runtime_catalyst_report(
             allow_stale_cache_on_failure=_runtime_catalyst_allow_stale_cache_on_failure(
                 task_id
             ),
-            isolate_external_sources=True,
+            isolate_external_sources=_runtime_catalyst_isolate_external_sources(
+                task_id
+            ),
         ),
     )
 
@@ -4442,7 +4474,11 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
     preview_symbols: tuple[str, ...] = ()
     if screened_picks and _should_build_market_context(normalized_task_id):
         try:
-            preview_count = _market_context_preview_count(limit, len(screened_picks))
+            preview_count = _market_context_preview_count(
+                limit,
+                len(screened_picks),
+                task_id=normalized_task_id,
+            )
             preview_picks = screened_picks[:preview_count]
             preview_symbols = tuple(pick.symbol for pick in preview_picks)
             preview_report = _build_runtime_catalyst_report(
@@ -6700,7 +6736,9 @@ def run_news_catalysts(args: argparse.Namespace) -> int:
             source_timeout_seconds=args.source_timeout_seconds,
             llm_timeout_seconds=args.llm_timeout_seconds,
             max_llm_review_events=args.max_llm_review_events,
-            isolate_external_sources=True,
+            isolate_external_sources=_runtime_catalyst_isolate_external_sources(
+                os.getenv("AQSP_CATALYST_TASK_CONTEXT", "news")
+            ),
         ),
     )
     markdown = format_catalyst_notification(report)

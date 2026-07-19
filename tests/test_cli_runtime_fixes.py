@@ -620,6 +620,9 @@ def test_build_runtime_catalyst_report_enables_cache_for_intraday(
         seen["allow_stale_cache_on_failure"] = getattr(
             config, "allow_stale_cache_on_failure", False
         )
+        seen["isolate_external_sources"] = getattr(
+            config, "isolate_external_sources", False
+        )
         return "ok"
 
     monkeypatch.setattr(
@@ -653,6 +656,53 @@ def test_build_runtime_catalyst_report_enables_cache_for_intraday(
     assert seen["max_stale_cache_age_seconds"] == 30 * 60
     assert seen["max_news_age_days"] == 5
     assert seen["allow_stale_cache_on_failure"] is True
+    assert seen["isolate_external_sources"] is True
+
+
+def test_runtime_catalyst_thread_mode_is_explicit_and_high_frequency_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import aqsp.cli as cli_mod
+
+    monkeypatch.delenv("AQSP_INTRADAY_CATALYST_FETCH_MODE", raising=False)
+    assert cli_mod._runtime_catalyst_isolate_external_sources("intraday") is True
+
+    monkeypatch.setenv("AQSP_INTRADAY_CATALYST_FETCH_MODE", "thread")
+    assert cli_mod._runtime_catalyst_isolate_external_sources("intraday") is False
+    assert cli_mod._runtime_catalyst_isolate_external_sources("midday") is False
+    assert cli_mod._runtime_catalyst_isolate_external_sources("daily") is True
+
+
+def test_market_context_preview_count_is_bounded_when_screen_limit_is_large() -> None:
+    import aqsp.cli as cli_mod
+
+    assert (
+        cli_mod._market_context_preview_count(
+            limit=10,
+            total=20,
+            task_id="intraday",
+        )
+        == 5
+    )
+    assert (
+        cli_mod._market_context_preview_count(
+            limit=2,
+            total=20,
+            task_id="midday",
+        )
+        == 3
+    )
+    assert (
+        cli_mod._market_context_preview_count(
+            limit=10,
+            total=2,
+            task_id="intraday",
+        )
+        == 2
+    )
+    assert (
+        cli_mod._market_context_preview_count(limit=10, total=20, task_id="daily") == 20
+    )
 
 
 def test_apply_debate_results_to_picks_keeps_runtime_score_when_override_disabled(
