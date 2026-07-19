@@ -58,6 +58,37 @@ def test_market_context_runtime_summary_exposes_core_cross_market_rules() -> Non
     assert any(line.startswith("- cross_market_rule_count:") for line in lines)
 
 
+def test_market_context_matches_structured_chain_fields_when_headline_is_generic() -> None:
+    report = CatalystReport(
+        date="2026-07-14",
+        generated_at="2026-07-14T10:00:00+08:00",
+        source_status="ok",
+        events=(
+            CatalystEvent(
+                title="海外厂商发布新平台",
+                source="NVIDIA Newsroom",
+                source_region="international",
+                published_at="2026-07-14T09:45:00+08:00",
+                url="https://nvidianews.nvidia.com/news/platform",
+                impact="positive",
+                category="新品/产品发布",
+                confidence=0.9,
+                source_quality_score=4,
+                source_quality_label="高价值来源",
+                affected_sectors=("物理AI", "机器人", "AI算力"),
+                transmission_path=("海外大厂平台", "A股机器人与核心零部件"),
+            ),
+        ),
+    )
+
+    artifact = build_market_context_artifact(catalyst_report=report)
+
+    assert any(
+        item.rule_id == "physical_ai"
+        for item in artifact.cross_market_implications
+    )
+
+
 def test_realtime_cross_market_context_marks_all_supported_instruments_fresh() -> None:
     context = build_realtime_cross_market_context(
         _realtime_cross_market_payload(),

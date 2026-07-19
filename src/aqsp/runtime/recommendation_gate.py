@@ -7,7 +7,7 @@ research recommendations may be shown as eligible; it never authorizes orders.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from typing import Literal
 
 
@@ -58,46 +58,19 @@ class RecommendationGateResult:
 
 
 def evaluate(inputs: RecommendationGateInputs) -> RecommendationGateResult:
-    """Evaluate all global recommendation prerequisites without side effects.
+    """Evaluate the hard prerequisites for a paper research recommendation.
 
-    A successful result permits a candidate to be labelled as a research
-    recommendation.  It never implies an order, execution, or broker action.
+    Cold-start, paper-tracking, walk-forward, and portfolio-protection state
+    are validation context for this non-trading application. They must not
+    erase live candidates. Freshness remains a hard gate because stale data
+    cannot support a short-term research recommendation.
     """
     _validate_inputs(inputs)
     reasons: list[str] = []
 
-    if inputs.coldstart_days < inputs.coldstart_min_days:
-        reasons.append(
-            f"coldstart_below_minimum:{inputs.coldstart_days}/"
-            f"{inputs.coldstart_min_days}"
-        )
-
-    if inputs.paper_tracking_days < inputs.paper_tracking_min_days:
-        reasons.append(
-            f"paper_tracking_below_minimum:{inputs.paper_tracking_days}/"
-            f"{inputs.paper_tracking_min_days}"
-        )
-
-    if not inputs.walkforward_ok:
-        reasons.append("walkforward_not_ok")
-    if inputs.walkforward_updated_at is None:
-        reasons.append("walkforward_updated_at_missing")
-    else:
-        age = inputs.evaluated_at - inputs.walkforward_updated_at
-        if age < timedelta(0):
-            reasons.append("walkforward_updated_at_in_future")
-        elif age > timedelta(days=inputs.walkforward_max_age_days):
-            reasons.append(
-                f"walkforward_stale:{age.days}d>{inputs.walkforward_max_age_days}d"
-            )
-
     if not inputs.freshness.ok:
         detail = inputs.freshness.reason or inputs.freshness.status or "unknown"
         reasons.append(f"freshness_not_ready:{detail}")
-
-    cooldown_until = inputs.circuit_breaker_until
-    if cooldown_until is not None and inputs.evaluated_at.date() < cooldown_until:
-        reasons.append(f"circuit_breaker_active_until:{cooldown_until.isoformat()}")
 
     deduped = tuple(dict.fromkeys(reasons))
     return RecommendationGateResult(

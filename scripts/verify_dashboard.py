@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""仪表盘验证脚本 - 检查研究工作台依赖、模块与关键能力入口"""
+"""验证 canonical React + FastAPI 研究工作台，不认可旧 Streamlit 入口。"""
 
 import sys
 from pathlib import Path
@@ -13,10 +13,7 @@ def check_imports():
     """检查所有必需的导入"""
     print("检查导入...")
 
-    checks = [
-        ("streamlit", "Streamlit Web框架"),
-        ("pandas", "数据处理"),
-    ]
+    checks = [("pandas", "数据处理")]
 
     for module_name, description in checks:
         try:
@@ -34,13 +31,7 @@ def check_project_modules():
     """检查项目模块"""
     print("\n检查项目模块...")
 
-    modules = [
-        ("aqsp.portfolio.position_tracker", "持仓追踪器"),
-        ("aqsp.risk.stop_loss", "止损管理器"),
-        ("aqsp.audit.trade_logger", "交易日志"),
-        ("aqsp.ledger.base", "账本系统"),
-        ("aqsp.core.time", "时间工具"),
-    ]
+    modules = [("aqsp.core.time", "时间工具")]
 
     for module_name, description in modules:
         try:
@@ -58,11 +49,7 @@ def check_web_modules():
     """检查web模块"""
     print("\n检查web模块...")
 
-    modules = [
-        ("aqsp.web.config", "仪表盘配置"),
-        ("aqsp.web.data_provider", "数据提供器"),
-        ("aqsp.web.dashboard", "仪表盘主程序"),
-    ]
+    modules = [("aqsp.web.data_provider", "研究数据提供器")]
 
     for module_name, description in modules:
         try:
@@ -81,11 +68,11 @@ def check_files():
     print("\n检查文件结构...")
 
     files = [
-        ("src/aqsp/web/__init__.py", "Web模块初始化"),
-        ("src/aqsp/web/dashboard.py", "仪表盘程序"),
-        ("src/aqsp/web/data_provider.py", "数据提供器"),
-        ("scripts/start_dashboard.sh", "启动脚本"),
-        (".streamlit/config.toml", "Streamlit配置"),
+        ("frontend/package.json", "React 前端配置"),
+        ("backend/app.py", "FastAPI 服务入口"),
+        ("scripts/start_vibe_research_service.sh", "canonical 服务启动脚本"),
+        ("scripts/health_vibe_research.sh", "canonical 健康检查脚本"),
+        ("deploy/nginx/vibe-research-mainline.conf", "canonical Nginx 入口"),
     ]
 
     for file_path, description in files:
@@ -105,10 +92,9 @@ def check_directories():
     print("\n检查目录结构...")
 
     dirs = [
-        ("src/aqsp/web", "Web模块目录"),
+        ("frontend", "React 前端目录"),
+        ("backend", "FastAPI 后端目录"),
         ("scripts", "脚本目录"),
-        (".streamlit", "Streamlit配置目录"),
-        ("docs", "文档目录"),
     ]
 
     for dir_path, description in dirs:
@@ -126,27 +112,27 @@ def check_dashboard_capabilities():
     """检查当前研究工作台关键能力入口是否存在。"""
     print("\n检查研究工作台能力入口...")
 
-    dashboard_path = project_root / "src/aqsp/web/dashboard.py"
-    provider_path = project_root / "src/aqsp/web/data_provider.py"
-    if not dashboard_path.exists() or not provider_path.exists():
-        print("  ✗ dashboard 或 data_provider 文件缺失")
+    frontend_path = project_root / "frontend/src"
+    backend_path = project_root / "backend/app.py"
+    if not frontend_path.exists() or not backend_path.exists():
+        print("  ✗ canonical frontend 或 backend 文件缺失")
         return False
-
-    dashboard_text = dashboard_path.read_text(encoding="utf-8")
-    provider_text = provider_path.read_text(encoding="utf-8")
+    frontend_text = "\n".join(
+        path.read_text(encoding="utf-8")
+        for pattern in ("*.tsx", "*.ts")
+        for path in frontend_path.rglob(pattern)
+    )
+    backend_text = backend_path.read_text(encoding="utf-8")
     checks = [
-        ("决策首页", "首页工作区入口"),
-        ("焦点候选", "首页统一候选焦点"),
-        ("候选复盘", "按标的聚焦研究视图"),
-        ("虚拟盘跟踪", "按标的聚焦纸面验证视图"),
-        ("归档回看", "按日期回看归档"),
-        ("same_day_candidate_journey", "provider 候选路径接口"),
+        ("当天结论", "正式研究模块"),
+        ("消息证据", "消息研究模块"),
+        ("候选研究", "候选研究模块"),
+        ("讨论复核", "Agent 复核模块"),
+        ("/api/aqsp/snapshot", "当前快照接口"),
     ]
     all_passed = True
     for needle, label in checks:
-        haystack = (
-            dashboard_text if needle != "same_day_candidate_journey" else provider_text
-        )
+        haystack = frontend_text if needle != "/api/aqsp/snapshot" else backend_text
         if needle in haystack:
             print(f"  ✓ {needle:28} - {label}")
         else:
@@ -159,7 +145,7 @@ def check_script_executable():
     """检查启动脚本权限"""
     print("\n检查脚本权限...")
 
-    script = project_root / "scripts/start_dashboard.sh"
+    script = project_root / "scripts/start_vibe_research_service.sh"
     if script.exists():
         import os
 
@@ -178,7 +164,7 @@ def check_script_executable():
 def main():
     """运行所有检查"""
     print("=" * 60)
-    print("A股量化选股 - Streamlit仪表盘验证")
+    print("AQSP canonical 研究工作台验证")
     print("=" * 60)
 
     checks = [
@@ -215,15 +201,13 @@ def main():
 
     if all_passed:
         print("\n✓ 所有检查通过！研究工作台可以启动。")
-        print("\n启动仪表盘:")
-        print("  bash scripts/start_dashboard.sh")
-        print("\n或直接运行:")
-        print("  streamlit run src/aqsp/web/dashboard.py")
+        print("\n启动 canonical 服务:")
+        print("  bash scripts/start_vibe_research_service.sh")
         return 0
     else:
         print("\n✗ 部分检查失败，请先解决上述问题。")
         print(
-            "  如果只有 streamlit 缺失，则属于本地运行环境问题，不代表工作台代码本身有误。"
+            "  旧 Streamlit 入口不属于 canonical 生产工作台。"
         )
         return 1
 

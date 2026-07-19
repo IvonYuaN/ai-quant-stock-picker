@@ -1058,10 +1058,10 @@ def test_recover_walkforward_incident_script_is_narrowly_scoped() -> None:
     assert "--grid-cscv" in script
     assert "--symbols-file" in script
     assert "--repair-only" in script
-    assert "systemctl restart aqsp-dashboard" in script
-    assert "aqsp-dashboard 重启失败" in script
-    assert "aqsp-dashboard 重启后未处于 active" in script
-    assert "AQSP_RECOVER_RESTART_DASHBOARD" in script
+    assert "systemctl restart aqsp-vibe-research.target" in script
+    assert "aqsp-vibe-research.target 重启失败" in script
+    assert "aqsp-vibe-research.target 重启后未处于 active" in script
+    assert "AQSP_RECOVER_RESTART_RESEARCH" in script
     assert "daily_pipeline.py" not in script
     assert "intraday_refresh.sh" not in script
     assert "pgrep" not in script
@@ -1078,7 +1078,7 @@ def test_sync_and_recover_walkforward_incident_script_uses_runtime_overlay() -> 
     assert "scripts/recover_walkforward_incident.sh" in script
     assert "scripts/sync_and_recover_walkforward_incident.sh" in script
     assert "src/aqsp/web/data_provider.py" in script
-    assert "src/aqsp/web/dashboard.py" in script
+    assert "src/aqsp/web/dashboard.py" not in script
     assert "AQSP_RECOVER_SSH_CONNECT_TIMEOUT" in script
     assert "AQSP_RECOVER_RESULT_FILE" in script
     assert 'write_result "blocked_ssh"' in script
@@ -1095,8 +1095,8 @@ def test_recovery_script_does_not_restart_legacy_dashboard_by_default() -> None:
         encoding="utf-8"
     )
 
-    assert 'AQSP_RECOVER_RESTART_DASHBOARD:-false' in script
-    assert "legacy Streamlit dashboard during rollback only" in script
+    assert 'AQSP_RECOVER_RESTART_RESEARCH:-false' in script
+    assert "canonical AQSP research target" in script
     assert "git reset" not in script
     assert "checkout --" not in script
 

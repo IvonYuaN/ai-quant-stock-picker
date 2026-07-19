@@ -1921,11 +1921,7 @@ def _cross_market_implications(
     matched_events: dict[str, list[CatalystEvent]] = {}
     generated_dt = _parse_iso_datetime(generated_at)
     for event in events:
-        text = " ".join(
-            part.strip().lower()
-            for part in (event.title, event.inference, event.category)
-            if str(part).strip()
-        )
+        text = _event_rule_text(event)
         if not text:
             continue
         for rule in _CROSS_MARKET_RULES:
@@ -1975,11 +1971,7 @@ def _expand_rule_evidence_events(
     for event in events:
         if id(event) in selected_ids:
             continue
-        text = " ".join(
-            part.strip().lower()
-            for part in (event.title, event.inference, event.category)
-            if str(part).strip()
-        )
+        text = _event_rule_text(event)
         if any(keyword in text for keyword in rule.keywords):
             selected.append(event)
             selected_ids.add(id(event))
@@ -2323,6 +2315,23 @@ def _rule_matches_event(
         if group and not any(keyword in text for keyword in group):
             return False
     return True
+
+
+def _event_rule_text(event: CatalystEvent) -> str:
+    """Build rule input from both raw headlines and normalized chain evidence."""
+
+    values = (
+        event.title,
+        event.inference,
+        event.category,
+        *event.affected_sectors,
+        *event.transmission_path,
+        *event.validation_signals,
+        *event.supporting_evidence,
+    )
+    return " ".join(
+        str(part).strip().casefold() for part in values if str(part).strip()
+    )
 
 
 def _event_supports_rule(

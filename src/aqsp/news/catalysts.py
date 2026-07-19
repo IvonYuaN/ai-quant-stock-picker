@@ -12,6 +12,7 @@ from pathlib import Path
 import re
 from time import monotonic
 from typing import Any, Literal
+from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -167,6 +168,9 @@ class _SourceStats:
     failed: int = 0
     raw_rows: int = 0
     health: list[NewsSourceHealth] = field(default_factory=list)
+    _health_keys: set[tuple[str, str, str, str, tuple[str, ...]]] = field(
+        default_factory=set
+    )
 
     def record_frame(
         self,
@@ -180,19 +184,31 @@ class _SourceStats:
         row_count = len(_iter_news_rows(df))
         metadata = _source_health_from_frame(df)
         if metadata:
-            self.health.extend(metadata)
-        else:
-            self.health.append(
-                NewsSourceHealth(
-                    name=name,
-                    region=_normalize_region(region),
-                    status=_status_from_frame(row_count, warnings),
-                    successful=1 if row_count > 0 else 0,
-                    row_count=row_count,
-                    fetched_at=now_shanghai().isoformat(timespec="seconds"),
-                    warnings=tuple(warnings),
+            for item in metadata:
+                key = (
+                    item.name,
+                    item.region,
+                    item.status,
+                    item.fetched_at,
+                    item.warnings,
                 )
+                if key not in self._health_keys:
+                    self._health_keys.add(key)
+                    self.health.append(item)
+        else:
+            item = NewsSourceHealth(
+                name=name,
+                region=_normalize_region(region),
+                status=_status_from_frame(row_count, warnings),
+                successful=1 if row_count > 0 else 0,
+                row_count=row_count,
+                fetched_at=now_shanghai().isoformat(timespec="seconds"),
+                warnings=tuple(warnings),
             )
+            key = (item.name, item.region, item.status, item.fetched_at, item.warnings)
+            if key not in self._health_keys:
+                self._health_keys.add(key)
+                self.health.append(item)
         if row_count <= 0:
             if _status_from_frame(row_count, warnings) in {"timeout", "failed"}:
                 self.failed += 1
@@ -204,15 +220,17 @@ class _SourceStats:
         self.attempted += 1
         self.failed += 1
         status = _status_from_exception(exc)
-        self.health.append(
-            NewsSourceHealth(
-                name=name,
-                region=_normalize_region(region),
-                status=status,
-                fetched_at=now_shanghai().isoformat(timespec="seconds"),
-                warnings=(str(exc),),
-            )
+        item = NewsSourceHealth(
+            name=name,
+            region=_normalize_region(region),
+            status=status,
+            fetched_at=now_shanghai().isoformat(timespec="seconds"),
+            warnings=(str(exc),),
         )
+        key = (item.name, item.region, item.status, item.fetched_at, item.warnings)
+        if key not in self._health_keys:
+            self._health_keys.add(key)
+            self.health.append(item)
 
 
 @dataclass(frozen=True)
@@ -2056,6 +2074,15 @@ def _iter_news_rows(df: pd.DataFrame) -> Iterable[dict[str, str]]:
             (
                 "新闻链接",
                 "链接",
+                "原文",
+                "原文地址",
+                "新闻网址",
+                "新闻URL",
+                "source_url",
+                "news_url",
+                "article_url",
+                "href",
+                "link",
                 "url",
                 "URL",
                 "公告链接",
@@ -2076,13 +2103,27 @@ def _iter_news_rows(df: pd.DataFrame) -> Iterable[dict[str, str]]:
                 "发布日期",
                 "发稿时间",
                 "published_at",
+                "published",
+                "publishedAt",
+                "pubtime",
+                "publish_time",
                 "pub_time",
                 "pubDate",
                 "display_time",
             ),
         )
+        url = _normalize_news_url(url)
         source = _first_text(
-            row, ("文章来源", "媒体", "source", "来源", "公告类型")
+            row,
+            (
+                "文章来源",
+                "媒体",
+                "source",
+                "来源",
+                "source_name",
+                "publisher",
+                "公告类型",
+            ),
         ) or _source_from_url(url)
         source_region = _first_text(
             row,
@@ -2129,6 +2170,21 @@ def _first_text(row: dict[str, Any], keys: Sequence[str]) -> str:
         if text and text.lower() != "nan":
             return text
     return ""
+
+
+def _normalize_news_url(value: str) -> str:
+    """Keep only traceable web URLs; malformed values must not be shown as evidence."""
+
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    try:
+        parsed = urlsplit(text)
+    except ValueError:
+        return ""
+    if parsed.scheme.casefold() not in {"http", "https"} or not parsed.netloc:
+        return ""
+    return text
 
 
 def _source_from_url(url: str) -> str:
@@ -2376,7 +2432,15 @@ def _merge_events(events: Sequence[CatalystEvent]) -> tuple[CatalystEvent, ...]:
         existing = merged[existing_index]
         merged_source = "、".join(_dedupe_texts((existing.source, event.source)))
         merged_sources = _source_names(existing.source, event.source)
-        merged_source_count = max(1, len(merged_sources))
+        source_families = {
+            _source_diversity_key(source)
+            for source in merged_sources
+            if source.strip()
+        }
+        merged_source_count = max(1, len(source_families))
+        is_new_source = _source_diversity_key(event.source) not in {
+            _source_diversity_key(source) for source in _source_names(existing.source)
+        }
         source_quality_label, source_quality_score = _source_quality_from_source(
             merged_source,
             source_count=merged_source_count,
@@ -2404,11 +2468,17 @@ def _merge_events(events: Sequence[CatalystEvent]) -> tuple[CatalystEvent, ...]:
             name=existing.name or event.name,
             impact=existing.impact,
             category=existing.category,
-            weight=max(existing.weight, event.weight) + 1,
-            confidence=min(1.0, max(existing.confidence, event.confidence) + 0.18),
+            # Repeated rows from one publisher are transport duplication, not
+            # corroboration. Only a genuinely new publisher family adds weight.
+            weight=max(existing.weight, event.weight) + int(is_new_source),
+            confidence=min(
+                1.0,
+                max(existing.confidence, event.confidence)
+                + (0.18 if is_new_source else 0.0),
+            ),
             source_count=merged_source_count,
             verification="多源交叉"
-            if len(merged_sources) >= 2
+            if merged_source_count >= 2
             else existing.verification,
             source_quality_label=source_quality_label,
             source_quality_score=source_quality_score,

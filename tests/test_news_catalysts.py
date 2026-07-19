@@ -642,6 +642,69 @@ def test_news_catalyst_does_not_promote_same_source_duplicates_to_multi_source()
     assert report.events[0].verification == "媒体来源"
 
 
+def test_news_catalyst_does_not_inflate_one_publisher_duplicate_rows() -> None:
+    report = build_catalyst_report(
+        fetch_global_news=lambda _limit: pd.DataFrame(
+            [
+                {
+                    "标题": "英伟达发布 Physical AI 机器人平台",
+                    "来源": "NVIDIADeveloper",
+                    "时间": _RECENT_NEWS_TIME,
+                    "链接": "https://developer.nvidia.com/blog/physical-ai",
+                },
+                {
+                    "标题": "英伟达发布 Physical AI 机器人平台",
+                    "来源": "NVIDIA Newsroom",
+                    "时间": _RECENT_NEWS_TIME,
+                    "链接": "https://nvidianews.nvidia.com/news/physical-ai",
+                },
+            ]
+        ),
+        config=NewsCatalystConfig(min_confidence=0.3),
+    )
+
+    assert len(report.events) == 1
+    event = report.events[0]
+    assert event.source_count == 1
+    assert event.verification != "多源交叉"
+    assert event.weight == 3
+
+
+def test_news_catalyst_preserves_extended_url_and_publication_fields() -> None:
+    report = build_catalyst_report(
+        fetch_global_news=lambda _limit: pd.DataFrame(
+            [
+                {
+                    "标题": "美联储政策支持流动性改善",
+                    "source_url": "https://www.federalreserve.gov/news/test",
+                    "publishedAt": _RECENT_NEWS_TIME,
+                }
+            ]
+        )
+    )
+
+    assert len(report.events) == 1
+    assert report.events[0].url == "https://www.federalreserve.gov/news/test"
+    assert report.events[0].published_at == _RECENT_NEWS_TIME
+
+
+def test_news_catalyst_does_not_infer_source_from_malformed_url() -> None:
+    report = build_catalyst_report(
+        fetch_global_news=lambda _limit: pd.DataFrame(
+            [
+                {
+                    "标题": "美联储政策支持流动性改善",
+                    "来源": "",
+                    "链接": "javascript:alert(1)",
+                    "时间": _RECENT_NEWS_TIME,
+                }
+            ]
+        ),
+    )
+
+    assert report.events == ()
+
+
 def test_news_catalyst_infers_international_quality_from_known_url() -> None:
     report = build_catalyst_report(
         fetch_global_news=lambda _limit: pd.DataFrame(
