@@ -106,6 +106,31 @@ def test_realtime_cross_market_context_marks_observations_stale_by_age() -> None
     assert any("SPX: stale" in warning for warning in context.warnings)
 
 
+def test_realtime_cross_market_context_normalizes_shanghai_gold_alias() -> None:
+    payload = _realtime_cross_market_payload()
+    gold_payload = payload.pop("GOLD")
+    payload["上海金"] = gold_payload
+
+    context = build_realtime_cross_market_context(payload, now=_REALTIME_NOW)
+
+    gold = next(item for item in context.observations if item.instrument == "GOLD")
+    assert gold.status == "fresh"
+    assert gold.value == 7.0
+    assert "GOLD" in context.available_instruments
+
+
+def test_realtime_cross_market_context_surfaces_gold_timeout() -> None:
+    payload = _realtime_cross_market_payload()
+    payload["GOLD"] = {"status": "timeout", "value": 2_400.0}
+
+    context = build_realtime_cross_market_context(payload, now=_REALTIME_NOW)
+
+    gold = next(item for item in context.observations if item.instrument == "GOLD")
+    assert gold.status == "timeout"
+    assert gold.value is None
+    assert any("GOLD: timeout" in warning for warning in context.warnings)
+
+
 def test_realtime_cross_market_context_marks_timeout_without_numeric_fallback() -> None:
     payload = _realtime_cross_market_payload()
     payload["SPX"] = {
