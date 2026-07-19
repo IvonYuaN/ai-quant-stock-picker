@@ -1156,11 +1156,7 @@ def _check_gate_cold_start_alignment(
             f"signal days below cold-start gate: {signal_days}/{MIN_INDEPENDENT_SIGNAL_DAYS}",
         )
     env_path = root / ".env"
-    value = (
-        _read_env_assignment(env_path, "AQSP_GATE_NOTIFY_STATE_PATH")
-        if env_path.exists()
-        else ""
-    )
+    value = _read_env_assignment(env_path, "AQSP_GATE_NOTIFY_STATE_PATH")
     gate_state_path = _normalize_runtime_path(
         root, value or "data/gate_notify_state.json"
     )
@@ -1168,8 +1164,6 @@ def _check_gate_cold_start_alignment(
         root,
         (
             _read_env_assignment(env_path, "AQSP_WALKFORWARD_GATE_PATH")
-            if env_path.exists()
-            else ""
         )
         or WALKFORWARD_GATE_PATH,
     )
@@ -2562,7 +2556,7 @@ def _check_notify_state_path(
     default_value: str,
 ) -> ReadinessFinding:
     env_path = root / ".env"
-    value = _read_env_assignment(env_path, env_name) if env_path.exists() else ""
+    value = _read_env_assignment(env_path, env_name)
     if not value:
         value = default_value
     path = Path(value)
