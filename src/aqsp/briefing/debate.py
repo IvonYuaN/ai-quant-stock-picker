@@ -346,6 +346,15 @@ def _is_st_risk_pick(pick: PickResult) -> bool:
     return any(marker in risk_text for marker in ("ST股", "*ST", "退市风险"))
 
 
+def _pick_risk_items(pick: PickResult) -> tuple[str, ...]:
+    """Return explicit candidate risks, excluding empty placeholders."""
+    return tuple(
+        dict.fromkeys(
+            text for item in (pick.risks or ()) if (text := str(item).strip())
+        )
+    )
+
+
 class AShareDebateAgent:
     """A股市场辩论 Agent 基类"""
 
@@ -599,7 +608,7 @@ class AShareDebateAgent:
             if (
                 invalidation_signals
                 or pressure_targets
-                or pick.risks
+                or _pick_risk_items(pick)
                 or conflict_count > 0
                 or any(
                     marker in str(line)
@@ -611,15 +620,33 @@ class AShareDebateAgent:
             return "bearish" if pick.score < 50 else "neutral"
         elif self.role == AgentRole.RISK_CONTROL:
             # 风控更保守
-            if _is_st_risk_pick(pick) or pick.risks:
+            if _is_st_risk_pick(pick) or _pick_risk_items(pick):
                 return "bearish"
             if invalidation_signals or pressure_targets or conflict_count > 0:
                 return "bearish"
             return "bearish" if pick.score < 60 else "neutral"
         elif self.role == AgentRole.SECTOR_LEADER:
-            # 板块专家关注热点轮动
+            # 板块证据既可以支持扩散，也可以否定单点题材。
+            if pressure_targets or invalidation_signals:
+                return "bearish"
+            if conflict_count > support_count and conflict_count > 0:
+                return "bearish"
+            if (
+                self._cross_market_metric_texts(
+                    pick, "cross_market_first_order_targets"
+                )
+                or self._cross_market_metric_texts(
+                    pick, "cross_market_second_order_targets"
+                )
+            ) and support_count >= conflict_count:
+                return "bullish"
             return "neutral"
         elif self.role == AgentRole.CROSS_MARKET:
+            if not self._has_cross_market_evidence(
+                pick,
+                market_context_lines=market_context_lines,
+            ):
+                return "neutral"
             action = str(pick.metrics.get("cross_market_action", "") or "").strip()
             priority_score = int(
                 pick.metrics.get("cross_market_priority_score", 0) or 0
@@ -643,18 +670,88 @@ class AShareDebateAgent:
                 return "bullish"
             return "neutral"
         elif self.role == AgentRole.POLICY_SENSITIVE:
-            # 政策敏感型关注监管动向
-            return "neutral"
+            return (
+                self._context_stance(
+                    market_context_lines,
+                    selectors=("政策", "监管", "发改委", "工信部", "财政部"),
+                    bullish_markers=("支持", "推进", "落地", "加码", "鼓励", "扩围"),
+                    bearish_markers=("收紧", "处罚", "限制", "叫停", "压降", "风险"),
+                )
+                or "neutral"
+            )
         elif self.role == AgentRole.MARGIN_TRADING:
-            # 融资专家保持中立
-            return "neutral"
+            return (
+                self._context_stance(
+                    market_context_lines,
+                    selectors=("融资", "杠杆", "融券"),
+                    bullish_markers=("净买入", "余额上升", "偏强", "改善", "增加"),
+                    bearish_markers=(
+                        "净偿还",
+                        "余额下降",
+                        "偏弱",
+                        "拥挤",
+                        "踩踏",
+                        "回落",
+                    ),
+                )
+                or "neutral"
+            )
         elif self.role == AgentRole.NORTHBOUND:
-            # 北向资金专家关注外资
-            return "neutral"
+            return (
+                self._context_stance(
+                    market_context_lines,
+                    selectors=("北向资金", "外资", "陆股通"),
+                    bullish_markers=("净流入", "偏强", "改善", "增配", "风险偏好上升"),
+                    bearish_markers=("净流出", "偏弱", "减配", "风险偏好回落", "回落"),
+                )
+                or "neutral"
+            )
         elif self.role == AgentRole.RETAIL_MOOD:
-            # 散户情绪专家
-            return "neutral"
+            return (
+                self._context_stance(
+                    market_context_lines,
+                    selectors=("全局雷达", "市场情绪", "散户", "拥挤度"),
+                    bullish_markers=(
+                        "偏多",
+                        "偏强",
+                        "风险偏好改善",
+                        "情绪修复",
+                        "扩散",
+                    ),
+                    bearish_markers=(
+                        "偏空",
+                        "偏弱",
+                        "风险偏好回落",
+                        "情绪退潮",
+                        "拥挤",
+                    ),
+                )
+                or "neutral"
+            )
         return "neutral"
+
+    @staticmethod
+    def _context_stance(
+        market_context_lines: tuple[str, ...],
+        *,
+        selectors: tuple[str, ...],
+        bullish_markers: tuple[str, ...],
+        bearish_markers: tuple[str, ...],
+    ) -> Literal["bullish", "bearish"] | None:
+        """从角色相关上下文提取方向；无证据或多空同分时保持中性。"""
+        bullish = 0
+        bearish = 0
+        for raw in market_context_lines:
+            line = str(raw).strip()
+            if not line or not any(selector in line for selector in selectors):
+                continue
+            bullish += sum(marker in line for marker in bullish_markers)
+            bearish += sum(marker in line for marker in bearish_markers)
+        if bullish > bearish:
+            return "bullish"
+        if bearish > bullish:
+            return "bearish"
+        return None
 
     def _calculate_confidence(
         self,
@@ -810,6 +907,24 @@ class AShareDebateAgent:
             )
             if not has_cross_market_evidence:
                 args.append("无可用跨市消息或规则传导，不据此形成判断")
+                # Theme/action/targets are hypotheses or routing metadata. They
+                # must not be rendered as sourced evidence when the evidence
+                # gate above is closed.
+                theme = ""
+                basis = ""
+                action = ""
+                lead_window = ""
+                window = ""
+                source_quality_label = ""
+                source_quality_score = 0
+                execution_watchpoints = ()
+                evidence_stack_summary = ""
+                first_order_targets = ()
+                second_order_targets = ()
+                pressure_targets = ()
+                validation_signals = ()
+                support_count = 0
+                conflict_count = 0
             if theme:
                 args.append(f"海外主线已映射到A股方向: {theme}")
             if basis and lead_window:
@@ -870,6 +985,8 @@ class AShareDebateAgent:
         """分析风险因素"""
         risks = []
 
+        risks.extend(f"候选明确风险: {risk}" for risk in _pick_risk_items(pick))
+
         if _is_st_risk_pick(pick):
             risks.append("ST股风险")
         if "涨停" in str(pick.risks) or "涨停" in str(pick.reasons):
@@ -889,7 +1006,7 @@ class AShareDebateAgent:
     ) -> list[str]:
         """识别风险因素"""
         risks: list[str] = []
-        generic_risks = [f"策略提示: {r}" for r in pick.risks]
+        generic_risks = [f"策略提示: {risk}" for risk in _pick_risk_items(pick)]
         invalidation_signals = self._cross_market_metric_texts(
             pick,
             "cross_market_invalidation_signals",
@@ -1047,6 +1164,20 @@ class AShareDebateAgent:
                     market_context_lines=market_context_lines,
                 )
             )
+            has_cross_market_evidence = self._has_cross_market_evidence(
+                pick,
+                market_context_lines=market_context_lines,
+            )
+            if not has_cross_market_evidence:
+                # Do not turn a theme, action, or watch condition into an
+                # opportunity without a sourced event or evidence count.
+                theme = ""
+                action = ""
+                source_quality_label = ""
+                source_quality_score = 0
+                validation_signals = ()
+                pressure_targets = ()
+                support_count = 0
             if source_quality_label and source_quality_score >= 3:
                 opportunities.append(f"✅ 来源质量较高: {source_quality_label}")
             if support_count >= 2:
@@ -1261,35 +1392,29 @@ class AShareDebateAgent:
         ):
             return False
         metrics = pick.metrics or {}
-        scalar_fields = (
-            "cross_market_primary_theme",
-            "cross_market_linkage_basis",
-            "cross_market_action",
-            "cross_market_transmission_hypothesis",
-            "cross_market_chain_summary",
-            "cross_market_evidence_stack_summary",
+        evidence_fields = (
+            "cross_market_supporting_evidence",
+            "cross_market_contradicting_evidence",
+            "cross_market_evidence_points",
         )
-        if any(str(metrics.get(field, "") or "").strip() for field in scalar_fields):
+        if any(
+            any(
+                not _is_non_evidence_text(item)
+                for item in _text_items(metrics.get(field))
+            )
+            for field in evidence_fields
+        ):
             return True
-        tuple_fields = (
-            "cross_market_first_order_targets",
-            "cross_market_second_order_targets",
-            "cross_market_validation_signals",
-            "cross_market_invalidation_signals",
-            "cross_market_pressure_targets",
+        support_count, conflict_count = cls._cross_market_evidence_counts(
+            pick,
+            market_context_lines=market_context_lines,
         )
-        if any(metrics.get(field) for field in tuple_fields):
+        if support_count > 0 or conflict_count > 0:
             return True
-        prefixes = (
-            "传导推演[",
-            "候选传导:",
-            "传导链:",
-            "确认信号:",
-            "失效条件:",
-            "证据堆栈:",
-        )
         return any(
-            str(line).strip().startswith(prefixes) for line in market_context_lines
+            str(line).strip().startswith("跨市证据:")
+            and not _is_non_evidence_text(str(line).strip()[5:])
+            for line in market_context_lines
         )
 
     @staticmethod

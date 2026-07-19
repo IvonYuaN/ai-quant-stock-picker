@@ -295,7 +295,9 @@ def test_write_home_snapshot_hides_quality_failed_debate() -> None:
     provider = _Provider()
     original = provider.home_digest_payload
 
-    def payload_with_failed_debate(task_id: str, signal_date: str = "") -> SimpleNamespace:
+    def payload_with_failed_debate(
+        task_id: str, signal_date: str = ""
+    ) -> SimpleNamespace:
         payload = original(task_id, signal_date)
         payload.debates = (
             SimpleNamespace(
@@ -1185,6 +1187,26 @@ def test_write_home_snapshot_builds_optional_four_day_index(monkeypatch) -> None
     )
     assert index.snapshot_for_date("2026-07-09") is not None
     assert index.snapshot_for_date("2026-07-04") is None
+
+
+def test_merge_home_snapshot_index_preserves_unrequested_history() -> None:
+    provider = _DateAwareProvider()
+    existing = write_home_snapshot.build_home_snapshot_index(
+        provider, signal_date="2026-07-10", task_id="intraday"
+    )
+    refreshed = write_home_snapshot.build_home_snapshot_index(
+        provider, signal_date="2026-07-09", task_id="intraday"
+    )
+
+    merged = write_home_snapshot.merge_home_snapshot_index(existing, refreshed)
+
+    assert merged.selected_date == "2026-07-09"
+    assert merged.snapshot_for_date("2026-07-09") == refreshed.snapshot_for_date(
+        "2026-07-09"
+    )
+    assert merged.snapshot_for_date("2026-07-10") == existing.snapshot_for_date(
+        "2026-07-10"
+    )
 
 
 def test_write_home_snapshot_cli_honors_output_date_and_task_id(

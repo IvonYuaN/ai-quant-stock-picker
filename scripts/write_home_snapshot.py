@@ -56,6 +56,7 @@ from aqsp.web.home_snapshot import (
     MAX_HOME_SNAPSHOT_TECHNICAL_METRICS,
     HOME_RECOMMENDATION_LABELS,
     is_home_recommendation,
+    load_home_snapshot_index,
     stale_after_for_task,
     write_home_dashboard_snapshot,
     write_home_snapshot_index,
@@ -1396,6 +1397,51 @@ def build_home_snapshot_index(
     )
 
 
+def merge_home_snapshot_index(
+    existing: HomeSnapshotIndex | None,
+    refreshed: HomeSnapshotIndex,
+) -> HomeSnapshotIndex:
+    """Refresh one requested date without erasing older indexed evidence.
+
+    Intraday artifacts are intentionally short-lived. A later refresh may not
+    be able to reproduce an older day's candidate file, so existing historical
+    snapshots remain authoritative unless that date was explicitly requested.
+    """
+    if existing is None:
+        return refreshed
+
+    existing_by_date = {day.date: day for day in existing.days}
+    refreshed_by_date = {day.date: day for day in refreshed.days}
+    dates = {day.date for day in existing.days} | set(refreshed_by_date)
+    ordered_dates = [refreshed.selected_date]
+    ordered_dates.extend(
+        sorted(
+            (value for value in dates if value != refreshed.selected_date),
+            reverse=True,
+        )
+    )
+    selected_days: list[HomeSnapshotDay] = []
+    for value in ordered_dates[:MAX_HOME_SNAPSHOT_INDEX_DAYS]:
+        if value == refreshed.selected_date:
+            selected_days.append(refreshed_by_date[value])
+            continue
+        previous = existing_by_date.get(value)
+        if previous is not None:
+            selected_days.append(previous)
+            continue
+        current = refreshed_by_date.get(value)
+        if current is not None:
+            selected_days.append(current)
+
+    return HomeSnapshotIndex(
+        schema_version=refreshed.schema_version,
+        generated_at=refreshed.generated_at,
+        stale_after=refreshed.stale_after,
+        selected_date=refreshed.selected_date,
+        days=tuple(selected_days),
+    )
+
+
 def _resolve_output_path(raw_path: str) -> Path:
     path = Path(raw_path).expanduser()
     return path if path.is_absolute() else PROJECT_ROOT / path
@@ -1432,6 +1478,7 @@ def main(argv: list[str] | None = None) -> int:
     index_path = _resolve_output_path(args.index_output)
     if index_path.resolve() == output_path.resolve():
         raise ValueError("home snapshot and snapshot index must use different paths")
+    existing_index = load_home_snapshot_index(index_path)
     write_home_dashboard_snapshot(output_path, snapshot)
     index = build_home_snapshot_index(
         provider,
@@ -1439,6 +1486,7 @@ def main(argv: list[str] | None = None) -> int:
         task_id=args.task_id.strip(),
         initial_snapshot=snapshot,
     )
+    index = merge_home_snapshot_index(existing_index, index)
     write_home_snapshot_index(index_path, index)
     print(
         "home snapshot written "

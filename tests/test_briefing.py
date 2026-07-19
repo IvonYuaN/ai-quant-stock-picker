@@ -895,6 +895,56 @@ class TestDebateAgent:
 
         assert opinion.stance == "bearish"
 
+    @pytest.mark.parametrize("role", [AgentRole.BEAR, AgentRole.RISK_CONTROL])
+    def test_explicit_pick_risks_enter_risk_vote_and_risk_evidence(self, role):
+        agent = AShareDebateAgent(role=role, enable_llm=False, language="zh-CN")
+        risk = "PCB涨价压缩下游利润，短线需防高开回落"
+
+        opinion = agent.generate_initial_opinion(
+            _make_pick(score=72, risks=(risk,)),
+            pd.DataFrame({"close": [10 + i for i in range(30)]}),
+        )
+
+        assert opinion.stance == "bearish"
+        rendered = " ".join((*opinion.arguments, *opinion.risk_factors))
+        assert risk in rendered
+        if role == AgentRole.RISK_CONTROL:
+            assert "候选明确风险:" in rendered
+            assert "未提供额外风控证据" not in rendered
+
+    def test_cross_market_metadata_without_evidence_stays_neutral_and_unpublished(
+        self,
+    ):
+        agent = AShareDebateAgent(
+            role=AgentRole.CROSS_MARKET,
+            enable_llm=False,
+            language="zh-CN",
+        )
+        pick = _make_pick(
+            score=72,
+            metrics={
+                "cross_market_primary_theme": "海外物理AI叙事升温",
+                "cross_market_action": "优先复核",
+                "cross_market_priority_score": 3,
+                "cross_market_first_order_targets": ("机器人整机",),
+                "cross_market_validation_signals": ("板块放量共振",),
+            },
+        )
+
+        opinion = agent.generate_initial_opinion(
+            pick,
+            pd.DataFrame({"close": [10 + i for i in range(30)]}),
+        )
+
+        assert opinion.stance == "neutral"
+        rendered = " ".join(
+            (*opinion.arguments, *opinion.risk_factors, *opinion.opportunity_factors)
+        )
+        assert "无可用跨市消息或规则传导，不据此形成判断" in rendered
+        assert "海外主线已映射到A股方向" not in rendered
+        assert "传导动作 优先复核" not in rendered
+        assert "验证重点: 板块放量共振" not in rendered
+
     def test_bear_agent_turns_bearish_for_high_score_when_invalidation_present(self):
         agent = AShareDebateAgent(
             role=AgentRole.BEAR,
@@ -970,6 +1020,59 @@ class TestDebateAgent:
             in risk_opinion.arguments
         )
         assert "⚠️ 承压方向: 消费电子代工、下游整机" in risk_opinion.risk_factors
+
+    def test_default_debate_roles_use_relevant_context_instead_of_neutral_collapse(
+        self,
+    ):
+        coordinator = AShareDebateCoordinator(enable_llm=False, max_rounds=2)
+        pick = _make_pick(
+            score=72,
+            metrics={
+                "cross_market_first_order_targets": ("机器人整机",),
+                "cross_market_support_event_count": 2,
+                "cross_market_conflict_event_count": 0,
+            },
+        )
+        frame = pd.DataFrame({"close": [100.0 + i for i in range(20)]})
+
+        result = coordinator.run_debate(
+            pick,
+            frame,
+            market_context_lines=(
+                "政策跟踪: 工信部支持机器人产业链落地。",
+                "融资情绪: 杠杆拥挤，融资余额下降。",
+                "北向资金: 净流出，外资风险偏好回落。",
+                "全局雷达: 全市场偏空，情绪退潮。",
+            ),
+        )
+
+        counts = {
+            stance: sum(value == stance for value in result.final_vote.values())
+            for stance in ("bullish", "bearish", "neutral")
+        }
+        assert counts["bullish"] >= 2
+        assert counts["bearish"] >= 3
+        assert counts["neutral"] < 8
+        assert result.final_vote[AgentRole.POLICY_SENSITIVE] == "bullish"
+        assert result.final_vote[AgentRole.MARGIN_TRADING] == "bearish"
+        assert result.final_vote[AgentRole.NORTHBOUND] == "bearish"
+        assert result.final_vote[AgentRole.RETAIL_MOOD] == "bearish"
+
+    def test_context_only_roles_stay_neutral_without_role_specific_evidence(self):
+        frame = pd.DataFrame({"close": [100.0 + i for i in range(20)]})
+        pick = _make_pick(score=72, metrics={})
+        for role in (
+            AgentRole.POLICY_SENSITIVE,
+            AgentRole.MARGIN_TRADING,
+            AgentRole.NORTHBOUND,
+            AgentRole.RETAIL_MOOD,
+        ):
+            opinion = AShareDebateAgent(
+                role, enable_llm=False
+            ).generate_initial_opinion(
+                pick, frame, market_context_lines=("普通市场摘要: 暂无对应数据。",)
+            )
+            assert opinion.stance == "neutral"
 
     def test_llm_enhancement_keeps_deterministic_points_and_records_advisory(self):
         agent = AShareDebateAgent(
