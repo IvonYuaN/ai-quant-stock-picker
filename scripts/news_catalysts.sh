@@ -359,6 +359,24 @@ for published_date, events in sorted(events_by_date.items()):
         json.dumps(scoped, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
     temporary.replace(target)
+
+# Replace a prior same-day scoped file with an explicit empty artifact when
+# today's run only found older events. This prevents stale events from wearing
+# the current date through an old filename.
+if run_date not in events_by_date:
+    scoped = dict(payload)
+    scoped["date"] = run_date
+    scoped["run_date"] = run_date
+    scoped["archive_date"] = run_date
+    scoped["archive_scope"] = "published_date"
+    scoped["events"] = []
+    scoped["archived_event_count"] = 0
+    target = output_dir / f"news-{run_date}.json"
+    temporary = target.with_suffix(target.suffix + ".tmp")
+    temporary.write_text(
+        json.dumps(scoped, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+    temporary.replace(target)
 PY
         log "消息面按事件发布日期归档: ${ARCHIVE_DIR%/}/news-YYYY-MM-DD.json"
     fi
