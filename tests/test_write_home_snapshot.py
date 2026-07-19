@@ -291,6 +291,30 @@ def test_snapshot_candidate_maps_freshness_label_when_status_is_missing() -> Non
     assert snapshot_candidate.freshness == "fresh"
 
 
+def test_write_home_snapshot_hides_quality_failed_debate() -> None:
+    provider = _Provider()
+    original = provider.home_digest_payload
+
+    def payload_with_failed_debate(task_id: str, signal_date: str = "") -> SimpleNamespace:
+        payload = original(task_id, signal_date)
+        payload.debates = (
+            SimpleNamespace(
+                **{
+                    **vars(payload.debates[0]),
+                    "debate_quality_issues": ("missing_support_viewpoint",),
+                }
+            ),
+        )
+        return payload
+
+    provider.home_digest_payload = payload_with_failed_debate
+    snapshot = write_home_snapshot.build_home_snapshot(
+        provider, signal_date="2026-07-10", task_id="intraday"
+    )
+
+    assert snapshot.debates == ()
+
+
 def test_write_home_snapshot_makes_hidden_candidate_count_explicit(monkeypatch) -> None:
     provider = _Provider()
     original_payload = provider.home_digest_payload
