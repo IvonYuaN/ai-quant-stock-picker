@@ -1284,19 +1284,30 @@ def _universe_snapshot() -> HomeSnapshotUniverse:
         "AQSP_INTRADAY_REFRESH_STATUS_PATH",
         "data/runtime/intraday_refresh_status.json",
     )
-    try:
-        payload = json.loads(raw.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    payload = _read_json_object(raw)
+    if not payload:
+        legacy = PROJECT_ROOT / "data" / "intraday_refresh_status.json"
+        if legacy != raw:
+            payload = _read_json_object(legacy)
+    if not payload:
         return HomeSnapshotUniverse()
     if not isinstance(payload, dict):
         return HomeSnapshotUniverse()
+    batch = payload.get("universe")
+    batch_payload = batch if isinstance(batch, dict) else {}
     return HomeSnapshotUniverse(
-        total=int(payload.get("universe_total") or payload.get("total") or 0),
+        total=int(batch_payload.get("universe_count") or payload.get("universe_total") or payload.get("total") or 0),
         resolved=int(payload.get("resolved_symbol_count") or 0),
         screened=int(payload.get("screened_count") or 0),
         final=int(payload.get("final_count") or payload.get("candidate_count") or 0),
         max_universe=int(payload.get("max_universe") or 0),
         source=_text(payload.get("actual_source") or payload.get("source")),
+        batch_active=bool(batch_payload.get("batch_active", False)),
+        batch_id=_text(batch_payload.get("batch_id")),
+        batch_size=int(batch_payload.get("batch_size") or 0),
+        cycle_id=int(batch_payload.get("cycle_id") or 0),
+        coverage_pct=float(batch_payload.get("coverage_pct") or 0.0),
+        last_error=_text(batch_payload.get("last_error")),
     )
 
 

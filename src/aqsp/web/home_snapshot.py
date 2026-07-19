@@ -217,6 +217,12 @@ class HomeSnapshotUniverse:
     final: int = 0
     max_universe: int = 0
     source: str = ""
+    batch_active: bool = False
+    batch_id: str = ""
+    batch_size: int = 0
+    cycle_id: int = 0
+    coverage_pct: float = 0.0
+    last_error: str = ""
 
 
 @dataclass(frozen=True, init=False)
@@ -995,6 +1001,12 @@ def _universe_from_dict(payload: object) -> HomeSnapshotUniverse:
         final=_integer(mapping.get("final", 0), "universe.final"),
         max_universe=_integer(mapping.get("max_universe", 0), "universe.max_universe"),
         source=_optional_text(mapping.get("source"), "universe.source"),
+        batch_active=bool(mapping.get("batch_active", False)),
+        batch_id=_optional_text(mapping.get("batch_id"), "universe.batch_id"),
+        batch_size=_integer(mapping.get("batch_size", 0), "universe.batch_size"),
+        cycle_id=_integer(mapping.get("cycle_id", 0), "universe.cycle_id"),
+        coverage_pct=float(mapping.get("coverage_pct", 0.0) or 0.0),
+        last_error=_optional_text(mapping.get("last_error"), "universe.last_error"),
     )
 
 

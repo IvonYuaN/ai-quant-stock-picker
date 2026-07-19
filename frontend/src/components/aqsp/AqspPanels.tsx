@@ -187,10 +187,11 @@ function PhaseStrip({ snapshot }: { snapshot: AqspSnapshot }) {
       </div>
       <div className="vr-universe-line">
         <span>扫描覆盖</span>
-        {universe && universe.resolved > 0
-          ? <strong>{universe.resolved} / {universe.total || "全池未记录"} 只已解析，筛选 {universe.screened}，输出 {universe.final}{universe.max_universe > 0 ? `，上限 ${universe.max_universe}` : ""}</strong>
+        {universe && (universe.total > 0 || (universe.coverage_pct ?? 0) > 0)
+          ? <strong>{universe.batch_id ? `批次 ${universe.batch_id}，` : ""}{universe.coverage_pct ? `周期覆盖 ${(universe.coverage_pct * 100).toFixed(1)}%，` : ""}{universe.resolved > 0 ? `${universe.resolved} / ${universe.total || "全池未记录"} 只已解析，筛选 ${universe.screened}，输出 ${universe.final}` : `全市场 ${universe.total} 只，当前批次 ${universe.batch_size || 0} 只`}{universe.max_universe > 0 ? `，上限 ${universe.max_universe}` : ""}</strong>
           : <strong>当前产物未记录全市场覆盖率</strong>}
         {universe?.source && <em>源：{universe.source}</em>}
+        {universe?.last_error && <em className="text-amber-700">批次错误：{universe.last_error}</em>}
       </div>
     </section>
   );

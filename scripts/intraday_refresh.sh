@@ -142,6 +142,11 @@ export AQSP_ENABLE_DEBATE="${AQSP_INTRADAY_ENABLE_DEBATE:-false}"
 # 组合保护默认开启；仅显式设置盘中本地开发开关才能关闭。
 export AQSP_INTRADAY_DISABLE_CIRCUIT_BREAKER="${AQSP_INTRADAY_DISABLE_CIRCUIT_BREAKER:-false}"
 export AQSP_DISABLE_CIRCUIT_BREAKER="${AQSP_INTRADAY_DISABLE_CIRCUIT_BREAKER}"
+# Research display mode must never turn an empty result into a protected state.
+if is_truthy "${AQSP_RESEARCH_DISPLAY_OVERRIDE:-false}"; then
+    export AQSP_INTRADAY_DISABLE_CIRCUIT_BREAKER="true"
+    export AQSP_DISABLE_CIRCUIT_BREAKER="true"
+fi
 # 盘中默认使用规则 Agent，避免外部 LLM 延迟阻塞实时快照；需要时显式开启。
 export AQSP_INTRADAY_DEBATE_ENABLE_LLM="${AQSP_INTRADAY_DEBATE_ENABLE_LLM:-false}"
 export AQSP_DEBATE_ENABLE_LLM="${AQSP_INTRADAY_DEBATE_ENABLE_LLM}"
@@ -234,6 +239,14 @@ PAPER_LEDGER="$(resolve_path "${AQSP_PAPER_LEDGER:-data/paper_trades.jsonl}")"
 INTRADAY_NEWS_SCRIPT="${AQSP_INTRADAY_NEWS_SCRIPT:-${PROJECT_ROOT}/scripts/news_catalysts.sh}"
 INTRADAY_NEWS_OUTPUT="$(resolve_path "${AQSP_INTRADAY_NEWS_OUTPUT:-${AQSP_NEWS_OUTPUT:-reports/news_catalysts.md}}")"
 INTRADAY_NEWS_JSON_OUTPUT="$(resolve_path "${AQSP_INTRADAY_NEWS_JSON_OUTPUT:-${AQSP_NEWS_JSON_OUTPUT:-data/runtime/news_catalysts_latest.json}}")"
+INTRADAY_BATCH_SCAN="${AQSP_INTRADAY_BATCH_SCAN:-true}"
+INTRADAY_BATCH_SIZE="${AQSP_INTRADAY_BATCH_SIZE:-128}"
+INTRADAY_CURSOR_PATH="$(resolve_path "${AQSP_INTRADAY_CURSOR_PATH:-data/runtime/intraday_universe_cursor.json}")"
+INTRADAY_BATCH_ACTIVE="false"
+INTRADAY_BATCH_SYMBOLS=""
+INTRADAY_BATCH_ID=""
+INTRADAY_BATCH_UNIVERSE_COUNT="0"
+INTRADAY_BATCH_COVERAGE_PCT="0"
 INTRADAY_NEWS_TASK_TIMEOUT_SECONDS="${AQSP_INTRADAY_NEWS_TASK_TIMEOUT_SECONDS:-20}"
 # The configured RSS set needs up to roughly five seconds on the production
 # host; a two-second deadline consistently misclassified reachable feeds as
@@ -1089,6 +1102,9 @@ write_intraday_status() {
     INTRADAY_STATUS_CATALYST_MODE="$AQSP_INTRADAY_CATALYST_FETCH_MODE" \
     INTRADAY_STATUS_NEWS_TASK_TIMEOUT="$INTRADAY_NEWS_TASK_TIMEOUT_SECONDS" \
     INTRADAY_STATUS_NEWS_SOURCE_TIMEOUT="$INTRADAY_NEWS_SOURCE_TIMEOUT_SECONDS" \
+    INTRADAY_STATUS_CURSOR="$INTRADAY_CURSOR_PATH" \
+    INTRADAY_STATUS_BATCH_ACTIVE="$INTRADAY_BATCH_ACTIVE" \
+    INTRADAY_STATUS_BATCH_ID="$INTRADAY_BATCH_ID" \
     INTRADAY_STATUS_STARTED_AT="${INTRADAY_STARTED_AT:-}" \
     INTRADAY_STATUS_START_EPOCH="${START_TIME:-}" \
     INTRADAY_STATUS_RUN_TIMED_OUT="${RUN_TIMED_OUT:-false}" \
@@ -1170,6 +1186,15 @@ payload = {
     "mode": os.environ["INTRADAY_STATUS_MODE"],
     "benchmark_symbol": os.environ["INTRADAY_STATUS_BENCHMARK"],
     "max_universe": int(os.environ["INTRADAY_STATUS_MAX_UNIVERSE"] or "0"),
+    "universe": {
+        "batch_active": truthy(os.environ.get("INTRADAY_STATUS_BATCH_ACTIVE", "false")),
+        "batch_id": os.environ.get("INTRADAY_STATUS_BATCH_ID", ""),
+        "universe_count": 0,
+        "batch_size": 0,
+        "coverage_pct": 0.0,
+        "scanned_count": 0,
+        "last_error": "",
+    },
     "ledger_path": os.environ["INTRADAY_STATUS_LEDGER"],
     "report_path": os.environ["INTRADAY_STATUS_REPORT"],
     "csv_path": os.environ["INTRADAY_STATUS_CSV"],
@@ -1195,6 +1220,23 @@ payload = {
         "json_output": os.environ["INTRADAY_STATUS_NEWS_JSON_OUTPUT"],
     },
 }
+cursor_path = Path(os.environ.get("INTRADAY_STATUS_CURSOR", ""))
+try:
+    cursor_payload = json.loads(cursor_path.read_text(encoding="utf-8"))
+    if isinstance(cursor_payload, dict):
+        payload["universe"].update(
+            {
+                "batch_id": str(cursor_payload.get("active_batch_id") or cursor_payload.get("last_batch_id") or payload["universe"]["batch_id"]),
+                "universe_count": int(cursor_payload.get("universe_count") or 0),
+                "batch_size": int(cursor_payload.get("batch_size") or 0),
+                "coverage_pct": float(cursor_payload.get("coverage_pct") or 0.0),
+                "scanned_count": int(cursor_payload.get("scanned_count") or 0),
+                "cycle_id": int(cursor_payload.get("cycle_id") or 0),
+                "last_error": str(cursor_payload.get("last_error") or ""),
+            }
+        )
+except (OSError, ValueError, TypeError, json.JSONDecodeError):
+    pass
 try:
     payload["execution"]["duration_seconds"] = max(
         0, int(time.time() - float(os.environ["INTRADAY_STATUS_START_EPOCH"] or "0"))
@@ -1322,6 +1364,28 @@ trap cleanup EXIT
 
 cd "$PROJECT_ROOT"
 
+if is_truthy "$INTRADAY_BATCH_SCAN" && \
+   [ -f "${PROJECT_ROOT}/scripts/prepare_intraday_batch.py" ] && \
+   [ -z "${AQSP_SYMBOLS:-}" ] && \
+   [ "$INTRADAY_MAX_UNIVERSE" = "0" ]; then
+    if ! INTRADAY_BATCH_SYMBOLS="$(${PYTHON_BIN} "${PROJECT_ROOT}/scripts/prepare_intraday_batch.py" \
+        --source "$INTRADAY_SOURCE" \
+        --batch-size "$INTRADAY_BATCH_SIZE" \
+        --min-avg-amount "$INTRADAY_MIN_AVG_AMOUNT" \
+        --cursor "$INTRADAY_CURSOR_PATH" 2>>"$RESULT_LOG")"; then
+        log "[ERROR] 无法准备盘中股票批次；不退回全量重策略，避免再次阻塞服务器"
+        exit 1
+    fi
+    if [ -z "$INTRADAY_BATCH_SYMBOLS" ]; then
+        log "[ERROR] 盘中股票批次为空；不运行重策略"
+        exit 1
+    fi
+    INTRADAY_BATCH_ACTIVE="true"
+    INTRADAY_MAX_UNIVERSE="$INTRADAY_BATCH_SIZE"
+    export AQSP_SYMBOLS="$INTRADAY_BATCH_SYMBOLS"
+    log "盘中批次已准备: ${INTRADAY_BATCH_SYMBOLS}"
+fi
+
 START_TIME=$(date +%s)
 INTRADAY_STARTED_AT="$(date '+%Y-%m-%dT%H:%M:%S%z')"
 
@@ -1362,6 +1426,9 @@ RUN_CMD=(
     --output-csv "${TMP_INTRADAY_OUTPUT_CSV}"
     --skip-validation
 )
+if [ "$INTRADAY_BATCH_ACTIVE" = "true" ]; then
+    RUN_CMD+=(--symbols "${INTRADAY_BATCH_SYMBOLS}")
+fi
 if [ "${#NOTIFY_ARGS[@]}" -gt 0 ]; then
     RUN_CMD+=("${NOTIFY_ARGS[@]}")
 fi
@@ -1371,6 +1438,19 @@ RUN_EXIT_CODE="${RUN_PIPE_STATUS[0]:-1}"
 TEE_EXIT_CODE="${RUN_PIPE_STATUS[1]:-1}"
 unset AQSP_PROVISIONAL_REPORT AQSP_PROVISIONAL_OUTPUT_CSV
 set -e
+
+if [ "$INTRADAY_BATCH_ACTIVE" = "true" ]; then
+    if [ "$RUN_EXIT_CODE" -eq 0 ]; then
+        AQSP_INTRADAY_BATCH_SCANNED="$INTRADAY_BATCH_SIZE" \
+            "$PYTHON_BIN" "${PROJECT_ROOT}/scripts/prepare_intraday_batch.py" \
+            --cursor "$INTRADAY_CURSOR_PATH" --commit
+        log "盘中批次已提交，下一轮继续覆盖剩余股票池"
+    else
+        "$PYTHON_BIN" "${PROJECT_ROOT}/scripts/prepare_intraday_batch.py" \
+            --cursor "$INTRADAY_CURSOR_PATH" --fail "run_exit=$RUN_EXIT_CODE"
+        log "盘中批次未提交，下一轮重试当前批次"
+    fi
+fi
 
 PARTIAL_SNAPSHOT_USED="false"
 SCRIPT_EXIT_CODE="0"

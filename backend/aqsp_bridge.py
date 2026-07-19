@@ -208,6 +208,12 @@ class AQSPUniverse:
     final: int = 0
     max_universe: int = 0
     source: str = ""
+    batch_active: bool = False
+    batch_id: str = ""
+    batch_size: int = 0
+    cycle_id: int = 0
+    coverage_pct: float = 0.0
+    last_error: str = ""
 
 
 @dataclass(frozen=True)
@@ -821,7 +827,10 @@ def _parse_universe(payload: object) -> AQSPUniverse:
         item,
         set(),
         "universe",
-        {"total", "resolved", "screened", "final", "max_universe", "source"},
+        {
+            "total", "resolved", "screened", "final", "max_universe", "source",
+            "batch_active", "batch_id", "batch_size", "cycle_id", "coverage_pct", "last_error",
+        },
     )
     return AQSPUniverse(
         total=_integer(item.get("total", 0), "universe.total"),
@@ -830,6 +839,12 @@ def _parse_universe(payload: object) -> AQSPUniverse:
         final=_integer(item.get("final", 0), "universe.final"),
         max_universe=_integer(item.get("max_universe", 0), "universe.max_universe"),
         source=_optional_text(item.get("source"), "universe.source"),
+        batch_active=bool(item.get("batch_active", False)),
+        batch_id=_optional_text(item.get("batch_id"), "universe.batch_id"),
+        batch_size=_integer(item.get("batch_size", 0), "universe.batch_size"),
+        cycle_id=_integer(item.get("cycle_id", 0), "universe.cycle_id"),
+        coverage_pct=float(item.get("coverage_pct", 0.0) or 0.0),
+        last_error=_optional_text(item.get("last_error"), "universe.last_error"),
     )
 
 

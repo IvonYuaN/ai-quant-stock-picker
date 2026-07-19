@@ -77,7 +77,8 @@ export interface AqspPhase {
 
 export interface AqspUniverse {
   total: number; resolved: number; screened: number; final: number;
-  max_universe: number; source?: string;
+  max_universe: number; source?: string; batch_active?: boolean; batch_id?: string;
+  batch_size?: number; cycle_id?: number; coverage_pct?: number; last_error?: string;
 }
 
 export interface AqspAgentResult {
