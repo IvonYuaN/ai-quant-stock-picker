@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Mapping, Optional
 import numpy as np
 import pandas as pd
 from pathlib import Path
@@ -32,6 +32,29 @@ class FactorConfig:
     factors: Dict[str, List[FactorDefinition]]
     regime_adjustments: Dict[str, Dict[str, float]]
     scoring: Dict[str, Any]
+
+
+@dataclass(frozen=True)
+class FactorWeightProposal:
+    """研究提案；不会改变策略实例的正式运行权重。"""
+
+    current_weights: tuple[tuple[str, float], ...]
+    proposed_weights: tuple[tuple[str, float], ...]
+    independent_signal_days: int
+    cooldown_days: int
+    walkforward_status: str
+    proposal_only: bool = True
+
+
+def _walkforward_evidence_passes(
+    evidence: Mapping[str, object] | None,
+) -> bool:
+    """Require an explicit passing gate before exposing a weight proposal."""
+    if evidence is None or str(evidence.get("status", "")).strip() != "pass":
+        return False
+    if evidence.get("forward_performance_validated") is False:
+        return False
+    return True
 
 
 class FactorCalculator:
@@ -422,25 +445,73 @@ class MultiFactorRotationStrategy(BaseStrategy):
 
         return detailed
 
-    def update_factor_weights(self, performance: Dict[str, float]) -> bool:
-        if not performance:
-            return False
+    def update_factor_weights(
+        self,
+        performance: Dict[str, float],
+        *,
+        independent_signal_days: int = 0,
+        cooldown_active: bool = False,
+        walkforward_evidence: Mapping[str, object] | None = None,
+    ) -> FactorWeightProposal | None:
+        """兼容旧入口，但只生成提案，绝不改变正式运行权重。
 
-        updated = False
+        因子评估本身不是回测证据。调用方必须显式提供最低独立信号日数、
+        未处于冷却期以及通过的 walk-forward gate，避免短期噪声污染运行参数。
+        """
+        return self.propose_factor_weight_updates(
+            performance,
+            independent_signal_days=independent_signal_days,
+            cooldown_active=cooldown_active,
+            walkforward_evidence=walkforward_evidence,
+        )
+
+    def propose_factor_weight_updates(
+        self,
+        performance: Dict[str, float],
+        *,
+        independent_signal_days: int,
+        cooldown_active: bool,
+        walkforward_evidence: Mapping[str, object] | None,
+    ) -> FactorWeightProposal | None:
+        """在证据门禁通过后产生因子权重提案，不写入 ``_factor_weights``。"""
+        monitor_config = self.factor_monitor.config
+        if (
+            not performance
+            or isinstance(independent_signal_days, bool)
+            or not isinstance(independent_signal_days, int)
+            or independent_signal_days < monitor_config.min_sample_size
+            or cooldown_active
+            or not _walkforward_evidence_passes(walkforward_evidence)
+        ):
+            return None
+
+        floor = float(self.factor_config.scoring.get("weight_floor", 0.65))
+        ceiling = float(self.factor_config.scoring.get("weight_ceiling", 1.45))
+        proposed = dict(self._factor_weights)
         for factor_name, perf_score in performance.items():
-            if factor_name in self._factor_weights:
-                old_weight = self._factor_weights[factor_name]
-                new_weight = old_weight * (0.5 + perf_score)
+            if factor_name not in proposed:
+                continue
+            try:
+                score = float(perf_score)
+            except (TypeError, ValueError):
+                continue
+            old_weight = proposed[factor_name]
+            proposed[factor_name] = max(floor, min(ceiling, old_weight * (0.5 + score)))
 
-                ceiling = self.factor_config.scoring.get("weight_ceiling", 1.45)
-                floor = self.factor_config.scoring.get("weight_floor", 0.65)
-                new_weight = max(floor, min(ceiling, new_weight))
-
-                if abs(new_weight - old_weight) > 0.01:
-                    self._factor_weights[factor_name] = new_weight
-                    updated = True
-
-        return updated
+        changed = {
+            name: round(weight, 6)
+            for name, weight in proposed.items()
+            if abs(weight - self._factor_weights[name]) > 0.01
+        }
+        if not changed:
+            return None
+        return FactorWeightProposal(
+            current_weights=tuple(sorted(self._factor_weights.items())),
+            proposed_weights=tuple(sorted(proposed.items())),
+            independent_signal_days=independent_signal_days,
+            cooldown_days=monitor_config.cooldown_days,
+            walkforward_status="pass",
+        )
 
     def get_factor_effectiveness(self) -> Dict[str, float]:
         return self.factor_monitor.get_factor_effectiveness()

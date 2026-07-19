@@ -48,7 +48,7 @@ def optimize_portfolio_allocations(
             cash_reserve=1.0,
             note="紧急防守状态：组合分配已停止，仅保留观察与复核。",
         )
-    tradable = [
+    tradable_candidates = [
         pick
         for pick in picks
         if is_tradable_rating(pick.rating)
@@ -56,7 +56,13 @@ def optimize_portfolio_allocations(
         and not bool(pick.metrics.get("observation_only", False))
         and getattr(decision_by_symbol.get(pick.symbol), "action", "keep")
         != "downgrade"
-    ][:max_names]
+    ]
+    # 上游可能因辩论或消息上下文重排候选；组合上限必须按确定性评分截断，
+    # 否则低分候选会因输入顺序占用组合名额。
+    tradable = sorted(
+        tradable_candidates,
+        key=lambda pick: (-float(pick.score), pick.symbol),
+    )[:max_names]
     if not tradable:
         return PortfolioOptimizationResult(
             allocations=(),

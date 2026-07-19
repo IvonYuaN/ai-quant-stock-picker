@@ -32,6 +32,18 @@ class PortfolioResult:
     diversification_score: float
 
 
+def _correlation_value(
+    correlation_matrix: pd.DataFrame,
+    left: str,
+    right: str,
+) -> float:
+    """Return a pair correlation, treating missing data as unknown."""
+    if left not in correlation_matrix.index or right not in correlation_matrix.columns:
+        return 0.0
+    value = pd.to_numeric(correlation_matrix.loc[left, right], errors="coerce")
+    return float(value) if pd.notna(value) else 0.0
+
+
 class DiversificationEngine:
     def __init__(self, constraints: PortfolioConstraint = None):
         self.constraints = constraints or PortfolioConstraint()
@@ -44,7 +56,10 @@ class DiversificationEngine:
         correlation_matrix: Optional[pd.DataFrame] = None,
     ) -> PortfolioResult:
 
-        sorted_symbols = sorted(scores.keys(), key=lambda x: scores[x], reverse=True)
+        sorted_symbols = sorted(
+            scores,
+            key=lambda symbol: (-float(scores[symbol]), symbol),
+        )
 
         weights = {}
         sector_counts: Dict[str, int] = {}
@@ -52,6 +67,16 @@ class DiversificationEngine:
 
         for symbol in sorted_symbols:
             sector = sector_map.get(symbol, "unknown")
+
+            # 保留得分更高的标的，避免组合层把高度相关的重复风险叠加进去。
+            if correlation_matrix is not None and weights:
+                selected = list(weights)
+                if any(
+                    _correlation_value(correlation_matrix, symbol, selected_symbol)
+                    > self.constraints.max_correlation
+                    for selected_symbol in selected
+                ):
+                    continue
 
             if sector_weights.get(sector, 0) >= self.constraints.max_sector_weight:
                 continue
@@ -65,7 +90,10 @@ class DiversificationEngine:
                 1.0 - sum(weights.values()),
             )
 
-            weight = max_possible * scores[symbol]
+            score = max(0.0, float(scores[symbol]))
+            if score <= 0:
+                continue
+            weight = max_possible * score
 
             weights[symbol] = weight
             sector_counts[sector] = sector_counts.get(sector, 0) + 1
@@ -73,9 +101,19 @@ class DiversificationEngine:
 
         weights = self._normalize_weights(weights)
 
+        normalized_sector_weights: Dict[str, float] = {}
+        for symbol, weight in weights.items():
+            sector = sector_map.get(symbol, "unknown")
+            normalized_sector_weights[sector] = (
+                normalized_sector_weights.get(sector, 0.0) + weight
+            )
         sector_allocations = [
-            SectorAllocation(sector=sector, weight=weight, count=sector_counts[sector])
-            for sector, weight in sector_weights.items()
+            SectorAllocation(
+                sector=sector,
+                weight=round(weight, 6),
+                count=sector_counts[sector],
+            )
+            for sector, weight in normalized_sector_weights.items()
         ]
 
         max_corr = self._calculate_max_correlation(
@@ -120,6 +158,9 @@ class DiversificationEngine:
 
         symbol_count = len(weights)
         sector_count = len(sector_counts)
+
+        if symbol_count == 1:
+            return min(1.0, sector_count / 5)
 
         concentration_penalty = np.sum(np.array(list(weights.values())) ** 2)
         ideal_concentration = 1 / symbol_count

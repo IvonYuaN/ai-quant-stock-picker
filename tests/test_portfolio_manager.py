@@ -1,11 +1,17 @@
 from __future__ import annotations
 
+import pandas as pd
+
 from aqsp.core.types import PickResult
 from aqsp.portfolio.correlation import CorrelationResult
 from aqsp.portfolio.manager import apply_portfolio_manager
 from aqsp.portfolio.optimizer import (
     _cap_weights,
     optimize_portfolio_allocations_from_risk,
+)
+from aqsp.portfolio.diversification import (
+    DiversificationEngine,
+    PortfolioConstraint,
 )
 from aqsp.portfolio.sector_check import ConcentrationResult, SectorConcentration
 from aqsp.strategies.thresholds import RiskThresholds, Thresholds
@@ -359,6 +365,65 @@ def test_portfolio_optimizer_uses_best_base_score_after_context_reordering() -> 
     )
 
     assert result.invested_ratio == 0.60
+
+
+def test_portfolio_optimizer_caps_by_score_not_input_order() -> None:
+    low = _pick("000001", 60)
+    high = _pick("300750", 85)
+
+    result = optimize_portfolio_allocations_from_risk(
+        [low, high],
+        {},
+        risk=RiskThresholds(
+            max_positions=1,
+            max_single_position_pct=1.0,
+            min_cash_reserve=0.0,
+            allocation_invested_strong=0.5,
+            allocation_adjustment_step=0.0,
+        ),
+    )
+
+    assert [item.symbol for item in result.allocations] == ["300750"]
+
+
+def test_diversification_engine_enforces_correlation_constraint() -> None:
+    engine = DiversificationEngine(
+        PortfolioConstraint(
+            max_weight=0.5,
+            max_sector_weight=1.0,
+            max_correlation=0.7,
+            min_diversification=1,
+        )
+    )
+    correlation = pd.DataFrame(
+        [[1.0, 0.9], [0.9, 1.0]],
+        index=["300750", "000001"],
+        columns=["300750", "000001"],
+    )
+
+    result = engine.optimize(
+        {"300750": 0.9, "000001": 0.8},
+        {"300750": "新能源", "000001": "银行"},
+        correlation,
+    )
+
+    assert result.symbols == ["300750"]
+    assert result.max_correlation == 0.0
+
+
+def test_diversification_engine_skips_non_positive_scores() -> None:
+    engine = DiversificationEngine(
+        PortfolioConstraint(
+            max_weight=0.5,
+            max_sector_weight=1.0,
+            min_diversification=1,
+        )
+    )
+
+    result = engine.optimize({"000001": -1.0}, {"000001": "银行"})
+
+    assert result.symbols == []
+    assert result.weights == {}
 
 
 def test_apply_portfolio_manager_excludes_downgraded_tradable_from_allocations() -> (
