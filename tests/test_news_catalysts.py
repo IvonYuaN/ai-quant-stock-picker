@@ -1323,7 +1323,10 @@ def test_composite_news_returns_fast_source_before_slow_source_deadline() -> Non
 
     assert elapsed < 0.7
     assert frames[0].iloc[0]["标题"] == "RSS 先返回"
-    assert any(item.name == "akshare_news" and item.status == "timeout" for item in source.last_health)
+    assert any(
+        item.name == "akshare_news" and item.status == "timeout"
+        for item in source.last_health
+    )
 
 
 def test_composite_news_keeps_source_that_finishes_within_shared_budget() -> None:
@@ -1374,8 +1377,12 @@ def test_build_default_news_source_keeps_eastmoney_as_runtime_fallback(
         last_health=(),
     )
 
-    monkeypatch.setattr(news_source, "build_rss_news_source_from_config", lambda: rss_source)
-    monkeypatch.setattr(news_source, "AkshareNewsSource", lambda **_kwargs: akshare_source)
+    monkeypatch.setattr(
+        news_source, "build_rss_news_source_from_config", lambda: rss_source
+    )
+    monkeypatch.setattr(
+        news_source, "AkshareNewsSource", lambda **_kwargs: akshare_source
+    )
 
     source = build_default_news_source()
 
@@ -1871,6 +1878,7 @@ def test_rss_news_source_parses_feed_items(monkeypatch) -> None:
                 url="https://rsshub.example.com/finance",
                 category="stock",
                 symbols=("300750",),
+                themes=("new_energy_storage",),
             ),
         )
     )
@@ -1880,6 +1888,7 @@ def test_rss_news_source_parses_feed_items(monkeypatch) -> None:
     assert frames[0].iloc[0]["标题"] == "300750 宁德时代中标储能大单"
     assert frames[0].iloc[0]["来源"] == "RSSHub-财经"
     assert frames[0].iloc[0]["source_group"] == "rss"
+    assert frames[0].iloc[0]["themes"] == "new_energy_storage"
     assert frames[0].iloc[0]["title"] == frames[0].iloc[0]["标题"]
     assert frames[0].iloc[0]["source"] == frames[0].iloc[0]["来源"]
     assert frames[0].iloc[0]["published_at"] == frames[0].iloc[0]["时间"]
@@ -2045,8 +2054,50 @@ def test_eastmoney_domestic_news_source_normalizes_search_results(monkeypatch) -
     assert frames[0].iloc[0]["新闻标题"] == "PCB覆铜板报价上调"
     assert frames[0].iloc[0]["source_region"] == "domestic"
     assert any(
-        item.region == "domestic" and item.status == "ok"
-        for item in source.last_health
+        item.region == "domestic" and item.status == "ok" for item in source.last_health
+    )
+
+
+def test_eastmoney_domestic_news_source_surfaces_total_failure(monkeypatch) -> None:
+    def fail_search(*_args, **_kwargs):
+        raise TimeoutError("theme endpoint timed out")
+
+    monkeypatch.setattr(news_source, "_fetch_eastmoney_search_news", fail_search)
+    source = EastmoneyDomesticNewsSource(
+        timeout_seconds=1,
+        search_keywords=("半导体", "储能"),
+    )
+
+    with pytest.raises(DataError, match="东财国内新闻获取失败"):
+        source.fetch_global_news()
+
+    assert {item.status for item in source.last_health} == {"timeout"}
+    assert all(item.warnings for item in source.last_health)
+
+
+def test_build_default_news_source_uses_configured_domestic_theme_queries(
+    monkeypatch,
+) -> None:
+    def missing_akshare() -> NewsSource:
+        raise news_source._AkshareOptionalDependencyError("akshare not installed")
+
+    monkeypatch.setattr(news_source, "AkshareNewsSource", missing_akshare)
+    source = build_default_news_source()
+
+    assert isinstance(source, CompositeNewsSource)
+    eastmoney = next(
+        item
+        for item in source._sources
+        if isinstance(item, EastmoneyDomesticNewsSource)
+    )
+    assert eastmoney._search_keywords == (
+        "政策 监管 产业支持",
+        "设备更新 以旧换新",
+        "低空经济 机器人 具身智能",
+        "半导体 芯片 AI算力 光模块",
+        "锂电 储能 电网 充电桩",
+        "稀土 磁材 氧化镨钕",
+        "航运 军工 黄金 原油",
     )
 
 
@@ -2150,11 +2201,34 @@ def test_default_news_source_config_enables_official_rss_feeds() -> None:
         "NASA-NewsReleases",
         "MarketWatch-RealTimeHeadlines",
         "MarketWatch-MarketPulse",
+        "新华社-国内要闻",
+        "中国政府网-国务院政策",
+        "中国政府网-部门政务",
     }.issubset(feed_names)
     assert all(feed.url.startswith("https://") for feed in feeds)
     assert all("rsshub.example.com" not in feed.url for feed in feeds)
     assert source._max_concurrency == 11
     assert Path("config/news_sources.yaml").exists()
+
+
+def test_default_news_source_config_loads_domestic_themes_and_official_urls() -> None:
+    source = build_rss_news_source_from_config("config/news_sources.yaml")
+
+    assert source is not None
+    domestic = {feed.name: feed for feed in source._feeds if feed.region == "domestic"}
+    assert set(domestic) >= {
+        "新华社-国内要闻",
+        "中国政府网-国务院政策",
+        "中国政府网-部门政务",
+    }
+    assert domestic["中国政府网-部门政务"].themes == (
+        "policy_regulation",
+        "semiconductor_ai",
+        "new_energy_storage",
+        "rare_earth_magnet",
+    )
+    assert "半导体" in domestic["中国政府网-部门政务"].keywords
+    assert all(feed.url.startswith("https://") for feed in domestic.values())
 
 
 def test_default_news_source_config_covers_core_cross_market_triggers() -> None:
@@ -2212,7 +2286,7 @@ def test_default_news_source_config_prevents_single_nvidia_source_bias() -> None
     assert {"global_macro", "global_regulation", "global_tech"} <= categories
     assert {"global_risk_appetite", "global_cross_asset"} <= categories
     assert "nasdaq" in keyword_blob or "s&p 500" in keyword_blob
-    assert all(feed.region == "international" for feed in feeds)
+    assert {feed.region for feed in feeds} == {"domestic", "international"}
     assert all(feed.url.startswith("https://") for feed in feeds)
     assert source._timeout_seconds == 5.5
 

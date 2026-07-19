@@ -1,4 +1,4 @@
-version: "2026.07.17"
+version: "2026.07.19"
 
 rss:
   enabled: true
@@ -8,8 +8,7 @@ rss:
   # 单个 feed 的超时不应按 feed 数量累加到盘中主链。
   max_concurrency: 11
   max_items: 12
-  # 默认只启用当前可验证的官方/原生 RSS；国内政策、公告和 CCTV/新华社聚合
-  # 继续由 akshare 适配器提供，避免把失效公共 RSSHub 实例放入生产默认链路。
+  # 默认只启用当前可验证的官方/原生 RSS，避免把失效公共 RSSHub 实例放入生产默认链路。
   feeds:
     - name: 美联储-FederalReserve
       url: "https://www.federalreserve.gov/feeds/press_all.xml"
@@ -88,3 +87,59 @@ rss:
       enabled: true
       keywords: ["gold", "oil", "crude", "war", "attack", "Iran", "Middle East", "geopolitical", "defense", "SpaceX", "IPO", "satellite", "launch", "黄金", "原油", "战争", "地缘", "军工", "商业航天"]
       max_items: 8
+
+    - name: 新华社-国内要闻
+      url: "https://www.news.cn/rss/news.xml"
+      category: "domestic_industry_news"
+      region: domestic
+      enabled: true
+      themes: [policy_regulation, low_altitude_robotics, semiconductor_ai, new_energy_storage, rare_earth_magnet, shipping_defense]
+      keywords: ["产业链", "供应链", "订单", "扩产", "需求", "政策"]
+      max_items: 10
+
+domestic:
+  enabled: true
+  # Eastmoney 公开搜索只作国内新闻/主题发现适配器；结果保留原始文章来源，
+  # 政策判断仍需回看上面的官方 RSS 或企业公告。
+  timeout_seconds: 5.5
+  # 中国政府网官方 RSS：只作政策原文发现入口，单条 feed 失败会进入
+  # NewsSourceHealth，不会由 RSS 适配器补造新闻。
+  feeds:
+    - name: 中国政府网-国务院政策
+      url: "https://www.gov.cn/pushinfo/v150.xml"
+      category: "domestic_policy"
+      region: domestic
+      enabled: true
+      themes: [policy_regulation, equipment_update, low_altitude_robotics]
+      keywords: ["政策", "国务院", "设备更新", "低空经济", "机器人", "人工智能", "新能源", "半导体", "算力", "储能"]
+      max_items: 10
+    - name: 中国政府网-部门政务
+      url: "https://www.gov.cn/pushinfo/v151.xml"
+      category: "domestic_industry_policy"
+      region: domestic
+      enabled: true
+      themes: [policy_regulation, semiconductor_ai, new_energy_storage, rare_earth_magnet]
+      keywords: ["工信部", "发改委", "政策", "产业", "半导体", "算力", "储能", "锂电", "稀土", "磁材", "通信"]
+      max_items: 10
+  themes:
+    - id: policy_regulation
+      query: "政策 监管 产业支持"
+      keywords: ["政策", "监管", "产业支持"]
+    - id: equipment_update
+      query: "设备更新 以旧换新"
+      keywords: ["设备更新", "以旧换新"]
+    - id: low_altitude_robotics
+      query: "低空经济 机器人 具身智能"
+      keywords: ["低空经济", "机器人", "具身智能"]
+    - id: semiconductor_ai
+      query: "半导体 芯片 AI算力 光模块"
+      keywords: ["半导体", "芯片", "AI算力", "光模块"]
+    - id: new_energy_storage
+      query: "锂电 储能 电网 充电桩"
+      keywords: ["锂电", "储能", "电网", "充电桩"]
+    - id: rare_earth_magnet
+      query: "稀土 磁材 氧化镨钕"
+      keywords: ["稀土", "磁材", "氧化镨钕"]
+    - id: shipping_defense
+      query: "航运 军工 黄金 原油"
+      keywords: ["航运", "军工", "黄金", "原油"]
