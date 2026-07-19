@@ -14,6 +14,7 @@ from scripts.check_before_live import (
     _strategy_threshold_consistency_blockers,
     _check_notify_channels,
     check_before_live,
+    _environment_path,
 )
 from aqsp.strategies.thresholds import (
     CompositeThresholds,
@@ -34,6 +35,20 @@ def _write_jsonl(path: Path, rows: list[dict]) -> None:
         "\n".join(json.dumps(row, ensure_ascii=False) for row in rows) + "\n",
         encoding="utf-8",
     )
+
+
+def test_environment_path_prefers_runtime_env_for_immutable_release(
+    tmp_path: Path, monkeypatch
+) -> None:
+    release_root = tmp_path / "release"
+    runtime_root = tmp_path / "runtime"
+    release_root.mkdir()
+    runtime_root.mkdir()
+    (runtime_root / ".env").write_text("AQSP_SOURCE=sqlite_db\n", encoding="utf-8")
+    monkeypatch.setenv("AQSP_RUNTIME_ROOT", str(runtime_root))
+    monkeypatch.delenv("AQSP_ENV_FILE", raising=False)
+
+    assert _environment_path(release_root) == runtime_root / ".env"
 
 
 def _write_runtime_outputs(root: Path) -> None:

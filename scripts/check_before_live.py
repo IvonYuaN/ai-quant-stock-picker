@@ -101,6 +101,21 @@ def _read_jsonl(path: Path) -> list[dict[str, Any]]:
     return rows
 
 
+def _environment_path(root: Path) -> Path:
+    """Use private runtime configuration when code runs from an immutable release."""
+    configured = str(os.getenv("AQSP_ENV_FILE", "")).strip()
+    if configured:
+        path = Path(configured).expanduser()
+        if path.is_file():
+            return path
+    runtime_root = str(os.getenv("AQSP_RUNTIME_ROOT", "")).strip()
+    if runtime_root:
+        path = Path(runtime_root).expanduser() / ".env"
+        if path.is_file():
+            return path
+    return root / ".env"
+
+
 def _read_pipeline_history(root: Path) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for path in sorted((root / "logs" / "pipeline").glob("*.json")):
@@ -239,7 +254,7 @@ def check_before_live(
     paper_ledger_path: Path | None = None,
     thresholds: Thresholds | None = None,
 ) -> list[ReadinessFinding]:
-    env_path = root / ".env"
+    env_path = _environment_path(root)
     gate_path = gate_path or _normalize_runtime_path(
         root,
         _read_env_assignment(env_path, "AQSP_WALKFORWARD_GATE_PATH")
@@ -422,7 +437,7 @@ def _check_walkforward_price_mode(root: Path, gate_path: Path) -> ReadinessFindi
     price_mode = str(gate.get("price_mode") or "").strip().lower()
     db_path = str(gate.get("sqlite_db_path") or "").strip()
     if not db_path:
-        db_path = read_env_value(root / ".env", "AQSP_SQLITE_DB_PATH")
+        db_path = read_env_value(_environment_path(root), "AQSP_SQLITE_DB_PATH")
     if not db_path:
         db_path = "A股量化分析数据/astocks_raw.db"
     db_name = Path(db_path).name.lower()
@@ -518,7 +533,7 @@ def _check_walkforward_market_coverage(
 
 
 def _check_runtime_universe_cap(root: Path) -> ReadinessFinding:
-    raw_value = read_env_value(root / ".env", "AQSP_MAX_UNIVERSE")
+    raw_value = read_env_value(_environment_path(root), "AQSP_MAX_UNIVERSE")
     if not raw_value:
         return ReadinessFinding(
             "runtime_universe_cap", True, "AQSP_MAX_UNIVERSE unset; default full market"
@@ -541,7 +556,7 @@ def _check_runtime_universe_cap(root: Path) -> ReadinessFinding:
 
 
 def _check_runtime_symbol_override(root: Path) -> ReadinessFinding:
-    raw_value = read_env_value(root / ".env", "AQSP_SYMBOLS")
+    raw_value = read_env_value(_environment_path(root), "AQSP_SYMBOLS")
     symbols = [item.strip() for item in raw_value.split(",") if item.strip()]
     if not symbols:
         return ReadinessFinding(
@@ -558,7 +573,7 @@ def _check_runtime_symbol_override(root: Path) -> ReadinessFinding:
 
 
 def _check_runtime_ledger_paths(root: Path) -> ReadinessFinding:
-    env_path = root / ".env"
+    env_path = _environment_path(root)
     prediction_values = {
         "AQSP_LEDGER": read_env_value(env_path, "AQSP_LEDGER"),
     }
@@ -594,7 +609,7 @@ def _normalize_runtime_path(root: Path, value: str) -> Path:
 
 
 def _check_runtime_data_source_config(root: Path) -> ReadinessFinding:
-    env_path = root / ".env"
+    env_path = _environment_path(root)
     source = _read_env_assignment(env_path, "AQSP_SOURCE").strip().lower()
     fallback = _read_env_assignment(env_path, "AQSP_ALLOW_ONLINE_FALLBACK").strip()
     allowed_sources = {"local_first", "tdx_vipdoc", "sqlite_db"}
@@ -626,7 +641,7 @@ def _check_runtime_data_source_config(root: Path) -> ReadinessFinding:
 
 
 def _check_runtime_sqlite_price_mode(root: Path) -> ReadinessFinding:
-    env_path = root / ".env"
+    env_path = _environment_path(root)
     source = (read_env_value(env_path, "AQSP_SOURCE") or "").strip().lower()
     db_path = read_env_value(env_path, "AQSP_SQLITE_DB_PATH")
     if source != "sqlite_db" and not db_path:
@@ -648,7 +663,7 @@ def _check_runtime_sqlite_price_mode(root: Path) -> ReadinessFinding:
 
 
 def _check_runtime_sqlite_freshness(root: Path, today: date) -> ReadinessFinding:
-    env_path = root / ".env"
+    env_path = _environment_path(root)
     source = (read_env_value(env_path, "AQSP_SOURCE") or "").strip().lower()
     raw_path = read_env_value(env_path, "AQSP_SQLITE_DB_PATH")
     if source != "sqlite_db" and not raw_path:
@@ -716,7 +731,7 @@ def _check_runtime_sqlite_freshness(root: Path, today: date) -> ReadinessFinding
 
 
 def _check_coldstart_runtime_alignment(root: Path) -> ReadinessFinding:
-    env_path = root / ".env"
+    env_path = _environment_path(root)
     source = (read_env_value(env_path, "AQSP_SOURCE") or "").strip().lower()
     runtime_db_path = read_env_value(env_path, "AQSP_SQLITE_DB_PATH")
     coldstart_db_path = read_env_value(env_path, "AQSP_COLDSTART_DB_PATH")
@@ -814,7 +829,7 @@ def _check_short_line_subcommand_universe(root: Path) -> ReadinessFinding:
 
 
 def _check_cold_start_gate_config(root: Path) -> ReadinessFinding:
-    raw_value = read_env_value(root / ".env", "AQSP_COLD_START_MIN_DAYS")
+    raw_value = read_env_value(_environment_path(root), "AQSP_COLD_START_MIN_DAYS")
     if not raw_value:
         return ReadinessFinding(
             "cold_start_gate_config",
@@ -1171,7 +1186,7 @@ def _check_gate_cold_start_alignment(
             True,
             f"signal days below cold-start gate: {signal_days}/{MIN_INDEPENDENT_SIGNAL_DAYS}",
         )
-    env_path = root / ".env"
+    env_path = _environment_path(root)
     value = _read_env_assignment(env_path, "AQSP_GATE_NOTIFY_STATE_PATH")
     gate_state_path = _normalize_runtime_path(
         root, value or "data/gate_notify_state.json"
@@ -1938,7 +1953,7 @@ def _check_notify_state_paths(root: Path) -> list[ReadinessFinding]:
 
 
 def _check_notify_channels(root: Path) -> ReadinessFinding:
-    env_path = root / ".env"
+    env_path = _environment_path(root)
     notify_enabled = str(
         read_env_value(env_path, "AQSP_NOTIFY") or ""
     ).strip().lower() in {"1", "true", "yes", "on"}
@@ -2571,7 +2586,7 @@ def _check_notify_state_path(
     env_name: str,
     default_value: str,
 ) -> ReadinessFinding:
-    env_path = root / ".env"
+    env_path = _environment_path(root)
     value = _read_env_assignment(env_path, env_name)
     if not value:
         value = default_value
