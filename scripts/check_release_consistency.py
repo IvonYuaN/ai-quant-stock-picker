@@ -179,9 +179,28 @@ def audit(
         findings.append(Finding("error", "remote_ref_missing", f"remote ref unavailable: {remote}/{branch}: {remote_head}"))
     elif release_commit and remote_head.lower() != release_commit:
         findings.append(Finding("error", "release_not_published", f"release {release_commit} != GitHub {remote}/{branch} {remote_head}; push/fetch state is not consistent"))
-    status_ok, status = _git(project_root, "status", "--porcelain=v1", "--untracked-files=all")
+    status_ok, status = _git(
+        project_root, "status", "--porcelain=v1", "--untracked-files=all"
+    )
     if status_ok and status:
-        findings.append(Finding("error", "release_dirty", f"release worktree is dirty: {status.replace(chr(10), '; ')}"))
+        dirty_lines = [line for line in status.splitlines() if line.strip()]
+        if immutable_release:
+            # Immutable deployments create the manifest and may reuse a
+            # private venv as untracked release-local artifacts. Code changes
+            # and any other untracked files remain a release error.
+            allowed = {
+                "?? .aqsp-release.json",
+                "?? .venv-vibe-research",
+            }
+            dirty_lines = [line for line in dirty_lines if line not in allowed]
+        if dirty_lines:
+            findings.append(
+                Finding(
+                    "error",
+                    "release_dirty",
+                    f"release worktree is dirty: {'; '.join(dirty_lines)}",
+                )
+            )
     if (require_overlay or overlay_path.exists()) and not immutable_release:
         if release_commit:
             _check_overlay(release_root, overlay_path, release_commit, findings)

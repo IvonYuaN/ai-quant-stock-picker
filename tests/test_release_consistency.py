@@ -269,6 +269,37 @@ def test_release_consistency_immutable_release_ignores_remote_and_overlay(
     assert findings == []
 
 
+def test_release_consistency_immutable_release_allows_release_generated_files(
+    monkeypatch, tmp_path: Path
+) -> None:
+    manifest = _manifest(tmp_path)
+    _fake_git(
+        monkeypatch,
+        {
+            ("rev-parse", "HEAD"): (False, "git metadata unavailable"),
+            ("status", "--porcelain=v1", "--untracked-files=all"): (
+                True,
+                "?? .aqsp-release.json\n?? .venv-vibe-research\n",
+            ),
+        },
+    )
+
+    findings = checker.audit(
+        project_root=tmp_path,
+        runtime_root=tmp_path / "runtime",
+        remote="origin",
+        branch="main",
+        canonical_link=None,
+        manifest_path=manifest,
+        overlay_path=tmp_path / "runtime" / "overlay.json",
+        active_files=[],
+        require_overlay=False,
+        immutable_release=True,
+    )
+
+    assert findings == []
+
+
 def test_write_release_manifest_refuses_dirty_git_source(tmp_path: Path) -> None:
     (tmp_path / ".git").mkdir()
     (tmp_path / "tracked.txt").write_text("value\n", encoding="utf-8")
