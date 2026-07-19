@@ -20,7 +20,12 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT / "src") not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-from aqsp.core.time import now_shanghai, today_shanghai, to_shanghai
+from aqsp.core.time import (
+    get_previous_trading_day,
+    now_shanghai,
+    today_shanghai,
+    to_shanghai,
+)
 from aqsp.market_context import MarketContextArtifact, build_market_context_artifact
 from aqsp.news.catalysts import (
     CatalystEvent,
@@ -127,6 +132,17 @@ def _normalize_timestamp(value: object) -> str:
     return to_shanghai(parsed).isoformat(timespec="seconds")
 
 
+def _current_message_window_start(signal_date: str, current_time: datetime) -> datetime:
+    """Include overnight/weekend news for the current trading session only."""
+    if signal_date != today_shanghai().isoformat():
+        return current_time - CURRENT_MESSAGE_WINDOW
+    try:
+        previous_trade_day = get_previous_trading_day(current_time.date())
+    except (OSError, ValueError):
+        return current_time - CURRENT_MESSAGE_WINDOW
+    return datetime.combine(previous_trade_day, time.min, tzinfo=SHANGHAI_TZ)
+
+
 def _normalize_catalyst_report_for_snapshot(
     report: CatalystReport,
     signal_date: str,
@@ -137,7 +153,7 @@ def _normalize_catalyst_report_for_snapshot(
     invalid_count = 0
     current_day = today_shanghai().isoformat()
     current_time = now_shanghai()
-    live_window_start = current_time - CURRENT_MESSAGE_WINDOW
+    live_window_start = _current_message_window_start(signal_date, current_time)
     for event in report.events:
         published_at = _normalize_timestamp(event.published_at)
         if not published_at:
@@ -1207,10 +1223,7 @@ def _recommendation_gate(
     # visible in the message section without hiding a valid quote-based pick.
     raw_lag_days = getattr(source, "lag_days", None)
     lag_days = 999 if raw_lag_days in (None, "") else int(raw_lag_days)
-    freshness_ok = (
-        source_status not in {"", "failed", "stale"}
-        and lag_days <= 0
-    )
+    freshness_ok = source_status not in {"", "failed", "stale"} and lag_days <= 0
     paper_ledger_path = getattr(provider, "paper_ledger_path", None)
     paper_tracking_days = (
         count_paper_tracking_days(str(paper_ledger_path)) if paper_ledger_path else 0
