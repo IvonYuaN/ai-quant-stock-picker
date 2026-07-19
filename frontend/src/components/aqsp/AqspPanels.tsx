@@ -145,6 +145,9 @@ function PhaseLane({ snapshot }: { snapshot: AqspSnapshot }) {
 
 function GateState({ snapshot }: { snapshot: AqspSnapshot }) {
   const gate = snapshot.recommendation_gate;
+  if (snapshot.candidates.length === 0) {
+    return <div className="aqsp-gate aqsp-gate-warn"><Clock3 className="h-4 w-4 shrink-0" /><span>当天暂无候选，等待盘前或盘中任务产出；不使用历史结果替代。</span></div>;
+  }
   const presentation = gatePresentation(gate);
   if (presentation === "ready") {
     return <div className="aqsp-gate aqsp-gate-ok"><Check className="h-4 w-4 shrink-0" /><span>当前结果可进入纸面复核，不自动下单。</span></div>;
