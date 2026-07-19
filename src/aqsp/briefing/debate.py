@@ -599,6 +599,7 @@ class AShareDebateAgent:
             if (
                 invalidation_signals
                 or pressure_targets
+                or pick.risks
                 or conflict_count > 0
                 or any(
                     marker in str(line)
@@ -610,7 +611,7 @@ class AShareDebateAgent:
             return "bearish" if pick.score < 50 else "neutral"
         elif self.role == AgentRole.RISK_CONTROL:
             # 风控更保守
-            if _is_st_risk_pick(pick):
+            if _is_st_risk_pick(pick) or pick.risks:
                 return "bearish"
             if invalidation_signals or pressure_targets or conflict_count > 0:
                 return "bearish"
