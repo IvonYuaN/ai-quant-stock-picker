@@ -139,7 +139,11 @@ fi
     || BOOTSTRAP_PYTHON="$(command -v "$BOOTSTRAP_PYTHON" || true)"
 [[ -x "$BOOTSTRAP_PYTHON" ]] || { echo "缺少 Python: ${BOOTSTRAP_PYTHON}" >&2; exit 1; }
 
-"$BOOTSTRAP_PYTHON" -m venv "$VENV_DIR"
+if [[ -x "${VENV_DIR}/bin/python" ]]; then
+    echo "复用已有 Vibe-Research venv: ${VENV_DIR}"
+else
+    "$BOOTSTRAP_PYTHON" -m venv "$VENV_DIR"
+fi
 "${VENV_DIR}/bin/python" -m pip install -e "${PROJECT_ROOT}[api]"
 "${VENV_DIR}/bin/python" -c 'import fastapi, uvicorn'
 chown -R "$SERVICE_USER:$SERVICE_GROUP" "$VENV_DIR"
