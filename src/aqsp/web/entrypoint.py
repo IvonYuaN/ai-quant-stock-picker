@@ -16,6 +16,11 @@ LEGACY_HEALTH_PATH = "/_stcore/health"
 # The static shell uses the full product title; the hydrated React page keeps
 # the product name and AQSP provenance in separate visible regions.
 CANONICAL_ENTRY_MARKERS = ("AQSP", "研究工作台")
+CANONICAL_ENTRY_MARKER_GROUPS = (
+    CANONICAL_ENTRY_MARKERS,
+    ("AQSP", "当前研究"),
+    ("AQSP", "当天研究"),
+)
 CANONICAL_DASHBOARD_ARTIFACT_NAMES = frozenset(("index.html", "archive.html"))
 LEGACY_ENTRY_MARKERS = (
     "AQSP 日期任务研究台",
@@ -67,7 +72,10 @@ def classify_entry_text(text: str) -> EntryKind:
         and "canonical-research-surface" in haystack
     ):
         return "redirect"
-    if all(marker.casefold() in haystack for marker in CANONICAL_ENTRY_MARKERS):
+    if any(
+        all(marker.casefold() in haystack for marker in markers)
+        for markers in CANONICAL_ENTRY_MARKER_GROUPS
+    ):
         return "canonical"
     if any(marker.casefold() in haystack for marker in LEGACY_ENTRY_MARKERS):
         return "legacy"
