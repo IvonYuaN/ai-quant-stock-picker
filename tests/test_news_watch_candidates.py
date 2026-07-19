@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from aqsp.news.catalysts import CatalystEvent
 from aqsp.news.watch_candidates import (
     NewsUniverseInstrument,
@@ -126,3 +128,50 @@ def test_discover_watch_candidates_normalizes_exchange_qualified_symbols() -> No
 
     assert len(candidates) == 1
     assert candidates[0].relation == "company"
+
+
+@pytest.mark.parametrize(
+    ("title", "category", "sector", "relation"),
+    [
+        ("PCB覆铜板报价上调，供应紧张", "电子材料涨价/缺货", "PCB", "price_supply"),
+        ("HBM缺货，内存价格上涨", "存储涨价/缺货", "存储", "price_supply"),
+        ("厂商发布新一代800G产品", "新品/产品发布", "光模块", "product"),
+        ("半导体设备订单大增", "订单/需求验证", "半导体设备", "supply_chain"),
+        ("地缘冲突升级，防务合同增加", "地缘冲突", "军工电子", "geopolitical"),
+        ("地缘风险推升金价", "黄金/贵金属催化", "黄金", "geopolitical"),
+        ("LNG供应中断，天然气价格上涨", "油气供需催化", "油气", "price_supply"),
+        ("国防采购合同落地", "军工订单/政策", "军工电子", "supply_chain"),
+    ],
+)
+def test_news_watch_candidates_reaches_each_requested_chain(
+    title: str, category: str, sector: str, relation: str
+) -> None:
+    event = CatalystEvent(
+        title=title,
+        summary=f"{title}，等待产业数据确认。",
+        source="公司公告",
+        published_at="2026-07-20T09:00:00+08:00",
+        category=category,
+        confidence=0.9,
+        weight=5,
+        source_quality_score=4,
+        affected_sectors=(sector,),
+        transmission_path=("消息事实", "产业链传导"),
+        validation_signals=("价格或订单继续确认",),
+        invalidation_signals=("验证指标反向",),
+    )
+
+    candidates = discover_watch_candidates(
+        (event,),
+        (NewsUniverseInstrument("600000", "测试标的", (sector,)),),
+    )
+
+    assert len(candidates) == 1
+    candidate = candidates[0]
+    assert candidate.relation == relation
+    assert candidate.source == "公司公告"
+    assert candidate.summary.startswith(title)
+    assert candidate.published_at.endswith("+08:00")
+    assert candidate.transmission_path == ("消息事实", "产业链传导")
+    assert candidate.validation_signals == ("价格或订单继续确认",)
+    assert candidate.invalidation_signals == ("验证指标反向",)

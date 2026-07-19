@@ -30,7 +30,9 @@ class IntradayBatch:
     def coverage_pct(self) -> float:
         if self.universe_count <= 0:
             return 0.0
-        return round(min(1.0, (self.offset + len(self.symbols)) / self.universe_count), 6)
+        return round(
+            min(1.0, (self.offset + len(self.symbols)) / self.universe_count), 6
+        )
 
 
 class IntradayUniverseCursor:
@@ -46,7 +48,11 @@ class IntradayUniverseCursor:
         trade_date: date,
         batch_size: int,
     ) -> IntradayBatch:
-        normalized = tuple(dict.fromkeys(str(symbol).strip() for symbol in symbols if str(symbol).strip()))
+        # Live liquidity rankings can reorder between refreshes. Cursor state
+        # must track the current live membership, not transient ranking order.
+        normalized = tuple(
+            sorted({str(symbol).strip() for symbol in symbols if str(symbol).strip()})
+        )
         if not normalized:
             raise ValueError("intraday universe must not be empty")
         if batch_size <= 0:
@@ -135,7 +141,9 @@ class IntradayUniverseCursor:
                 "batch_size": batch.batch_size,
                 "next_offset": batch.offset,
                 "cycle_id": batch.cycle_id,
-                "last_successful_offset": int(self._read().get("last_successful_offset") or 0),
+                "last_successful_offset": int(
+                    self._read().get("last_successful_offset") or 0
+                ),
                 "scanned_count": 0,
                 "coverage_pct": round(batch.offset / batch.universe_count, 6),
                 "last_batch_finished_at": "",
@@ -152,14 +160,18 @@ class IntradayUniverseCursor:
 
     @staticmethod
     def _batch_from_state(payload: dict[str, object]) -> IntradayBatch:
-        symbols = tuple(str(item) for item in payload.get("active_symbols", ()) if str(item))
+        symbols = tuple(
+            str(item) for item in payload.get("active_symbols", ()) if str(item)
+        )
         if not symbols:
             raise ValueError("no active intraday batch")
         return IntradayBatch(
             trade_date=str(payload.get("trade_date") or ""),
             universe_version=str(payload.get("universe_version") or ""),
             cycle_id=int(payload.get("cycle_id") or 1),
-            offset=int(payload.get("active_offset", payload.get("next_offset", 0)) or 0),
+            offset=int(
+                payload.get("active_offset", payload.get("next_offset", 0)) or 0
+            ),
             symbols=symbols,
             universe_count=int(payload.get("universe_count") or 0),
             batch_size=int(payload.get("batch_size") or len(symbols)),
@@ -167,7 +179,9 @@ class IntradayUniverseCursor:
 
     def _write(self, payload: dict[str, object]) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        atomic_write_text(self.path, json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n")
+        atomic_write_text(
+            self.path, json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n"
+        )
 
 
 def _universe_version(symbols: tuple[str, ...]) -> str:

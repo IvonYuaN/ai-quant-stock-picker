@@ -2163,7 +2163,9 @@ def _annotate_cross_market_context(
         context_by_symbol[pick.symbol] = context_metrics
         for rule_id in tuple(context_metrics.get("cross_market_rule_ids", ()) or ()):
             clean_rule_id = str(rule_id).strip()
-            if clean_rule_id and pick.symbol not in symbols_by_rule.setdefault(clean_rule_id, []):
+            if clean_rule_id and pick.symbol not in symbols_by_rule.setdefault(
+                clean_rule_id, []
+            ):
                 symbols_by_rule[clean_rule_id].append(pick.symbol)
 
     enriched: list[PickResult] = []
@@ -2186,7 +2188,9 @@ def _annotate_cross_market_context(
             metrics["cross_market_candidate_symbols"]
         )
         metrics["cross_market_candidate_mapping_status"] = (
-            "matched_current_candidates" if mapped_symbols else "single_current_candidate"
+            "matched_current_candidates"
+            if mapped_symbols
+            else "single_current_candidate"
         )
         evidence_ids = {
             str(item).strip()
@@ -2304,7 +2308,8 @@ def _append_cross_market_watch_candidates(
                         getattr(watch, "relation", "") or ""
                     ),
                     "cross_market_rule_ids": (
-                        "news_watch:" + str(getattr(watch, "relation", "") or "industry"),
+                        "news_watch:"
+                        + str(getattr(watch, "relation", "") or "industry"),
                     ),
                     "cross_market_action": "观察为主",
                     "cross_market_priority_score": int(
@@ -2322,18 +2327,10 @@ def _append_cross_market_watch_candidates(
                     "cross_market_invalidation_signals": tuple(
                         getattr(watch, "invalidation_signals", ()) or ()
                     ),
-                    "news_catalyst_title": str(
-                        getattr(watch, "event_title", "") or ""
-                    ),
-                    "news_catalyst_summary": str(
-                        getattr(watch, "summary", "") or ""
-                    ),
-                    "news_catalyst_source": str(
-                        getattr(watch, "source", "") or ""
-                    ),
-                    "news_catalyst_url": str(
-                        getattr(watch, "source_url", "") or ""
-                    ),
+                    "news_catalyst_title": str(getattr(watch, "event_title", "") or ""),
+                    "news_catalyst_summary": str(getattr(watch, "summary", "") or ""),
+                    "news_catalyst_source": str(getattr(watch, "source", "") or ""),
+                    "news_catalyst_url": str(getattr(watch, "source_url", "") or ""),
                     "news_catalyst_published_at": str(
                         getattr(watch, "published_at", "") or ""
                     ),
@@ -4531,13 +4528,12 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
     cold_start_min_days = _cold_start_min_days()
     is_cold_start = cold_start_days < cold_start_min_days
     allow_research_during_protection = (
-        _allow_observation_during_circuit_breaker(task_id)
-        or not is_cold_start
+        _allow_observation_during_circuit_breaker(task_id) or not is_cold_start
     )
-    persist_research_outputs = (
-        not status.triggered
-        or not _is_high_frequency_task(normalized_task_id)
-    )
+    # Portfolio protection gates paper actions and formal ledger writes. It
+    # must not erase a fresh live candidate snapshot or make a safe intraday
+    # batch look empty.
+    persist_research_outputs = True
 
     run_metadata_base = RunMetadata(
         requested_source=args.source,
@@ -5245,7 +5241,7 @@ def _run_scheduled_legacy(args: argparse.Namespace) -> int:
             },
         )
 
-    if status.triggered and not persist_research_outputs:
+    if status.triggered and _is_high_frequency_task(normalized_task_id):
         print(f"🛡️ 组合保护已触发，跳过正式信号 ledger 写入: {status.reason}")
         append_run_event(
             args.ledger,

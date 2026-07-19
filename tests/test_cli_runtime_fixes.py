@@ -2117,6 +2117,7 @@ def test_run_scheduled_live_short_caps_env_lag_before_freshness(
         "_fetch_frames_for_cli_with_metadata",
         lambda *_, **__: (frames, "sina"),
     )
+
     def fake_assert_fresh_data(_frames, max_data_lag_days, **kwargs):
         seen["max_data_lag_days"] = max_data_lag_days
         seen["workload"] = kwargs.get("workload")
@@ -3037,11 +3038,10 @@ def test_run_scheduled_intraday_keeps_observation_output_during_circuit_breaker(
     )
     monkeypatch.setattr(cli_mod, "to_markdown", lambda *_args, **_kwargs: "# report")
     monkeypatch.setattr(cli_mod, "notify_markdown", lambda *_args, **_kwargs: [])
+    saved_snapshots: list[object] = []
     monkeypatch.setattr(
         "aqsp.portfolio.snapshot.save_snapshot",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            AssertionError("snapshot should stay disabled during circuit breaker")
-        ),
+        lambda picks, **_kwargs: saved_snapshots.append(picks),
     )
     appended_events: list[str] = []
     monkeypatch.setattr(
@@ -3090,6 +3090,7 @@ def test_run_scheduled_intraday_keeps_observation_output_during_circuit_breaker(
 
     assert cli_mod.run_scheduled(args) == 0
     assert appended_events == ["blocked_by_circuit_breaker"]
+    assert len(saved_snapshots) == 1
     report_text = (tmp_path / "intraday.md").read_text(encoding="utf-8")
     assert report_text.startswith("# report")
     assert "## 组合保护" in report_text

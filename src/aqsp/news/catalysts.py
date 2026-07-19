@@ -5,7 +5,7 @@ import multiprocessing
 import os
 import signal
 import threading
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -40,6 +40,8 @@ CatalystResultStatus = Literal[
 ]
 _DEFAULT_MAX_STALE_CACHE_AGE_SECONDS = 30 * 60
 _SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
+_CATALYST_REPORT_SCHEMA_VERSION = 2
+_RETIRED_SOURCE_TOKENS = ("新华社", "news.cn")
 
 
 @dataclass(frozen=True)
@@ -244,7 +246,7 @@ class _NewsFetchOutcome:
 
 Fetcher = Callable[[str, int], pd.DataFrame]
 _AKSHARE_NEWS: NewsSource | None = None
-_CATALYST_CACHE_VERSION = 1
+_CATALYST_CACHE_VERSION = 2
 
 
 @dataclass(frozen=True)
@@ -304,6 +306,7 @@ def _text_tuple(value: object) -> tuple[str, ...]:
 
 def _serialize_catalyst_report(report: CatalystReport) -> dict[str, Any]:
     return {
+        "schema_version": _CATALYST_REPORT_SCHEMA_VERSION,
         "date": report.date,
         "generated_at": report.generated_at,
         "source_status": report.source_status,
@@ -414,9 +417,7 @@ def _deserialize_catalyst_report(payload: Any) -> CatalystReport | None:
                 ),
                 transmission_path=_text_tuple(item.get("transmission_path", ())),
                 validation_signals=_text_tuple(item.get("validation_signals", ())),
-                invalidation_signals=_text_tuple(
-                    item.get("invalidation_signals", ())
-                ),
+                invalidation_signals=_text_tuple(item.get("invalidation_signals", ())),
             )
             for item in tuple(payload.get("events", ()) or ())
             if isinstance(item, dict)
@@ -499,6 +500,15 @@ def load_catalyst_report_artifact(
         payload = json.loads(resolved.read_text(encoding="utf-8"))
     except (OSError, TypeError, ValueError):
         return None
+    if not isinstance(payload, dict):
+        return None
+    # A report without this marker may be readable as a legacy object for
+    # migrations, but it must not enter the live research surface: old releases
+    # did not preserve the complete evidence contract.
+    if payload.get("schema_version") != _CATALYST_REPORT_SCHEMA_VERSION:
+        return None
+    if _payload_contains_retired_source(payload):
+        return None
     report = _deserialize_catalyst_report(payload)
     if report is None:
         return None
@@ -520,6 +530,21 @@ def load_catalyst_report_artifact(
     return report
 
 
+def _payload_contains_retired_source(payload: Mapping[str, object]) -> bool:
+    """Reject runtime artifacts carrying a source removed from production."""
+
+    events = payload.get("events", ())
+    statuses = payload.get("source_statuses", ())
+    values: list[str] = []
+    for item in (*tuple(events or ()), *tuple(statuses or ())):
+        if isinstance(item, Mapping):
+            values.extend(
+                str(item.get(key, "") or "") for key in ("source", "name", "url")
+            )
+    text = " ".join(values).casefold()
+    return any(token.casefold() in text for token in _RETIRED_SOURCE_TOKENS)
+
+
 def _read_catalyst_cache(path: Path) -> dict[str, Any]:
     if not path.exists():
         return {"version": _CATALYST_CACHE_VERSION, "entries": {}}
@@ -532,12 +557,10 @@ def _read_catalyst_cache(path: Path) -> dict[str, Any]:
     entries = payload.get("entries", {})
     if not isinstance(entries, dict):
         entries = {}
-    return {
-        "version": int(
-            payload.get("version", _CATALYST_CACHE_VERSION) or _CATALYST_CACHE_VERSION
-        ),
-        "entries": entries,
-    }
+    version = int(payload.get("version", 0) or 0)
+    if version != _CATALYST_CACHE_VERSION:
+        return {"version": _CATALYST_CACHE_VERSION, "entries": {}}
+    return {"version": version, "entries": entries}
 
 
 def _load_cached_catalyst_report(
@@ -708,8 +731,7 @@ POSITIVE_PATTERNS: tuple[tuple[str, str, int], ...] = (
         4,
     ),
     (
-        "利率|通胀|inflation|liquidity|discount rate|rate meetings|"
-        "流动性|货币政策",
+        "利率|通胀|inflation|liquidity|discount rate|rate meetings|流动性|货币政策",
         "宏观流动性",
         3,
     ),
@@ -763,8 +785,7 @@ POSITIVE_PATTERNS: tuple[tuple[str, str, int], ...] = (
         5,
     ),
     (
-        "(?:变压器|电力设备|储能系统).*(?:招标|中标|订单|扩产)|"
-        "算力.*(用电|电力需求)",
+        "(?:变压器|电力设备|储能系统).*(?:招标|中标|订单|扩产)|算力.*(用电|电力需求)",
         "电网与储能订单",
         4,
     ),
@@ -1297,9 +1318,7 @@ def _process_fetcher_entry(
         result_queue.put(
             (
                 key,
-                _NewsFetchOutcome(
-                    error=RuntimeError(f"{type(exc).__name__}: {exc}")
-                ),
+                _NewsFetchOutcome(error=RuntimeError(f"{type(exc).__name__}: {exc}")),
             )
         )
 
@@ -1352,9 +1371,7 @@ def _run_fetchers_in_processes(
             worker.join(0.5)
         if key not in outcomes:
             outcomes[key] = _NewsFetchOutcome(
-                error=TimeoutError(
-                    f"消息源超过 {float(timeout_seconds):.1f}s 未返回"
-                ),
+                error=TimeoutError(f"消息源超过 {float(timeout_seconds):.1f}s 未返回"),
                 timed_out=True,
             )
         worker.close()
@@ -2450,9 +2467,11 @@ def _fallback_published_at(title: str, url: str) -> str:
     published_day = _parse_published_day(title) or _parse_published_day(url)
     if published_day is None:
         return ""
-    return datetime.combine(published_day, datetime.min.time()).replace(
-        tzinfo=_SHANGHAI_TZ
-    ).isoformat(timespec="seconds")
+    return (
+        datetime.combine(published_day, datetime.min.time())
+        .replace(tzinfo=_SHANGHAI_TZ)
+        .isoformat(timespec="seconds")
+    )
 
 
 def _select_diverse_events(
@@ -2515,6 +2534,7 @@ def _select_diverse_events(
     seen_regions = set(region_groups(selected[0]))
 
     while remaining and len(selected) < target:
+
         def selection_key(
             event: CatalystEvent,
         ) -> tuple[int, int, int, tuple[int, int, int, float, int]]:
@@ -2579,9 +2599,7 @@ def _merge_events(events: Sequence[CatalystEvent]) -> tuple[CatalystEvent, ...]:
         merged_source = "、".join(_dedupe_texts((existing.source, event.source)))
         merged_sources = _source_names(existing.source, event.source)
         source_families = {
-            _source_diversity_key(source)
-            for source in merged_sources
-            if source.strip()
+            _source_diversity_key(source) for source in merged_sources if source.strip()
         }
         merged_source_count = max(1, len(source_families))
         is_new_source = _source_diversity_key(event.source) not in {
@@ -3032,9 +3050,7 @@ def _frame_warnings(df: pd.DataFrame, *, prefix: str) -> list[str]:
         getattr(df, "attrs", {}).get("aqsp_warnings", ()) if df is not None else ()
     )
     result = [f"{prefix}: {warning}" for warning in warnings]
-    result.extend(
-        f"{prefix}: {warning}" for warning in _news_quality_warnings(df)
-    )
+    result.extend(f"{prefix}: {warning}" for warning in _news_quality_warnings(df))
     return result
 
 
@@ -3045,8 +3061,7 @@ def _news_quality_warnings(df: pd.DataFrame) -> tuple[str, ...]:
         return ()
     rows = df.to_dict(orient="records")
     is_rss = any(
-        _first_text(row, ("source_group", "source_type")) == "rss"
-        for row in rows
+        _first_text(row, ("source_group", "source_type")) == "rss" for row in rows
     )
     if not is_rss:
         return ()
@@ -3279,6 +3294,7 @@ def _prioritize_news_frame(df: pd.DataFrame) -> pd.DataFrame:
         return 3
 
     rows = df.to_dict(orient="records")
+
     def published_day(row: dict[str, Any]) -> date:
         raw = _first_text(
             row,
@@ -3301,7 +3317,11 @@ def _prioritize_news_frame(df: pd.DataFrame) -> pd.DataFrame:
 
     ordered = sorted(
         enumerate(rows),
-        key=lambda item: (priority(item[1]), -published_day(item[1]).toordinal(), item[0]),
+        key=lambda item: (
+            priority(item[1]),
+            -published_day(item[1]).toordinal(),
+            item[0],
+        ),
     )
     result = pd.DataFrame([row for _, row in ordered])
     result.attrs.update(getattr(df, "attrs", {}))
