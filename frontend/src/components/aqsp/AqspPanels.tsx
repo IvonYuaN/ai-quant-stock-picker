@@ -344,6 +344,40 @@ function ErrorState({ error, onRefresh }: { error: string; onRefresh: () => void
   );
 }
 
+function MarketContextCard({ snapshot }: { snapshot: AqspSnapshot }) {
+  const context = snapshot.market_context;
+  const lines = uniqueNonEmpty(context?.summary_lines, 5);
+  const crossMarket = context?.cross_market ?? [];
+  return (
+    <section id={RESEARCH_SECTION_IDS[3]} className="vr-module vr-board-section">
+      <div className="vr-section-heading"><div><p className="vr-kicker">05 · 市场与传导</p><h2>市场与产业链</h2></div><span className="vr-count">{crossMarket.length} 条</span></div>
+      {!context ? <EmptyState title="暂无市场上下文" detail="当前快照没有可核验的跨市场或产业链传导记录。" /> : (
+        <div className="vr-context-list">
+          <div className="vr-context-status"><span>状态</span><strong>{context.status || "未记录"}</strong></div>
+          {context.overview && <p className="text-xs leading-relaxed">{context.overview}</p>}
+          {lines.length > 0 && <ul className="space-y-1.5 text-xs leading-relaxed text-muted-foreground">{lines.map((line) => <li key={line}>· {line}</li>)}</ul>}
+          {crossMarket.length > 0 && <div className="space-y-2 border-t border-border/50 pt-2">{crossMarket.slice(0, 4).map((item) => <div key={`${item.rule_id}-${item.source_title}`} className="vr-context-item"><strong>{item.theme || item.rule_id}</strong><span>{item.summary || item.action || "待验证"}</span></div>)}</div>}
+          {context.warnings.length > 0 && <p className="text-[11px] leading-relaxed text-warning">数据告警：{context.warnings.slice(0, 2).join("；")}</p>}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function TestVariantsPanel({ snapshot }: { snapshot: AqspSnapshot }) {
+  const gateReady = snapshot.recommendation_gate?.recommendation_allowed === true;
+  return (
+    <section id="test-variants" className="vr-lab-panel" aria-label="测试与变体">
+      <div className="vr-section-heading"><div><p className="vr-kicker">独立实验区</p><h2>测试与变体</h2></div><span className="vr-count">不参与正式推荐</span></div>
+      <div className="vr-lab-grid">
+        <div><span>正式短线主线</span><strong className={gateReady ? "vr-lab-ready" : "vr-lab-observe"}>{gateReady ? "可进入纸面复核" : "当前仅观察"}</strong><p>使用实时数据，受全局 gate 约束。</p></div>
+        <div><span>Walk-forward 变体组</span><strong>历史回测验证</strong><p>用于比较参数变体，不改写今日评分。</p></div>
+        <div><span>盘中资源保护变体</span><strong>观察模式</strong><p>降低外部抓取资源占用，不进入正式 ledger。</p></div>
+      </div>
+    </section>
+  );
+}
+
 export function AqspResearchWorkspace() {
   const { data, loading, error, refresh } = useWorkspaceSnapshot();
   if (loading && !data) return <LoadingState />;
@@ -393,6 +427,7 @@ export function AqspResearchWorkspace() {
         </section>
       </div>
 
+      <div className="vr-research-columns">
       <section id={RESEARCH_SECTION_IDS[0]} className="vr-module vr-board-section">
         <div className="vr-section-heading"><div><p className="vr-kicker">02 · 来源与影响</p><h2>消息</h2></div><span className="vr-count">{data.messages.length} 条</span></div>
         {data.messages.length === 0 ? <EmptyState title="当前没有消息摘要" detail="快照未记录可核验消息，不在界面中补充推断。" /> : <div className="vr-message-list">{data.messages.map((message) => <MessageCard key={`${message.title}-${message.published_at}`} message={message} />)}</div>}
@@ -407,6 +442,9 @@ export function AqspResearchWorkspace() {
         <div className="vr-section-heading"><div><p className="vr-kicker">04 · 分歧与风险</p><h2>Agent 讨论</h2></div><span className="vr-count">{data.debates.length} 条</span></div>
         {data.debates.length === 0 ? <EmptyState title="暂无讨论记录" detail="当前快照没有多 Agent 讨论结果，保留确定性研究数据。" /> : <div className="grid gap-3 xl:grid-cols-2">{data.debates.map((result) => <DebateCard key={result.symbol} result={result} />)}</div>}
       </section>
+      <MarketContextCard snapshot={data} />
+      </div>
+      <TestVariantsPanel snapshot={data} />
     </div>
   );
 }
