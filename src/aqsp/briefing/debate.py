@@ -1000,7 +1000,7 @@ class AShareDebateAgent:
 
         if risks:
             return f"风险提示: {', '.join(risks)}"
-        return "未提供额外风控证据，保持风险复核"
+        return "风险检验: 高分延续需盘中承接，若冲高回落或量价背离则降级"
 
     def _identify_risk_factors(
         self,
@@ -1034,6 +1034,8 @@ class AShareDebateAgent:
                 risks.append(f"⚠️ 失效先看: {invalidation_signals[0]}")
             if pressure_targets:
                 risks.append(f"⚠️ 承压方向: {'、'.join(pressure_targets[:2])}")
+            if not risks:
+                risks.append("⚠️ 失效检验: 高分延续需盘中承接，若冲高回落或量价背离则降级")
         elif self.role == AgentRole.BEAR:
             if pick.score < 50:
                 risks.append("⚠️ 技术面偏弱")
@@ -1043,6 +1045,8 @@ class AShareDebateAgent:
                 risks.append(f"⚠️ 失效条件: {invalidation_signals[0]}")
             if pressure_targets:
                 risks.append(f"⚠️ 承压方向: {'、'.join(pressure_targets[:2])}")
+            if pick.score >= 50 and not risks:
+                risks.append("⚠️ 反方检验: 高分不等于延续，若放量承接不足则看空假设成立")
         elif self.role == AgentRole.SECTOR_LEADER:
             risks.append("⚠️ 板块轮动可能导致风格切换")
             if pressure_targets:

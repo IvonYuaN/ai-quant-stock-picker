@@ -641,6 +641,19 @@ def test_debate_risk_control_veto_blocks_advisory_raise() -> None:
     assert "禁止讨论层上调" in result.risk_veto_reason
 
 
+def test_debate_bear_and_risk_roles_emit_falsifiable_checks_for_high_score() -> None:
+    pick = _make_pick(score=72.0, risks=())
+    frame = pd.DataFrame({"close": [100.0, 101.0, 102.0]})
+
+    bear = AShareDebateAgent(AgentRole.BEAR).generate_initial_opinion(pick, frame)
+    risk = AShareDebateAgent(AgentRole.RISK_CONTROL).generate_initial_opinion(
+        pick, frame
+    )
+
+    assert any("反方检验" in item for item in bear.risk_factors)
+    assert any("失效检验" in item for item in risk.risk_factors)
+
+
 def test_debate_performance_tracker_summarizes_cross_market_context_history_when_records_exist(
     tmp_path,
 ) -> None:
