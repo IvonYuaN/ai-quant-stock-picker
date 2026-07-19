@@ -1249,7 +1249,11 @@ def build_home_snapshot(
         generated_at=generated_at,
         selected_date=selected_date,
         available_dates=_bounded_unique_text(
-            (*_snapshot_dates(task_view, selected_date), *_news_archive_dates()),
+            (
+                selected_date,
+                *_news_archive_dates(),
+                *_snapshot_dates(task_view, selected_date),
+            ),
             MAX_HOME_DATES,
         ),
         candidates=candidates,
