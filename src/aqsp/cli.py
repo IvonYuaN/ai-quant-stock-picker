@@ -3276,7 +3276,14 @@ def _handle_circuit_breaker_block(
 
 
 def _allow_observation_during_circuit_breaker(task_id: str) -> bool:
-    return _is_high_frequency_task(task_id)
+    """Keep research generation independent from paper-portfolio protection.
+
+    The breaker is an account-level action constraint.  It must not suppress
+    fresh candidate generation or evidence collection for any scheduled task.
+    Paper actions remain marked as restricted by the caller.
+    """
+    del task_id
+    return True
 
 
 def _execution_cost_bps_from_thresholds(thresholds: Any) -> tuple[float, float]:

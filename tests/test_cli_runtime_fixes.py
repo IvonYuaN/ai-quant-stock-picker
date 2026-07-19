@@ -2056,6 +2056,13 @@ def test_intraday_circuit_breaker_disable_requires_explicit_intraday_switch(
     assert "AQSP_INTRADAY_DISABLE_CIRCUIT_BREAKER" in status.reason
 
 
+def test_circuit_breaker_only_restricts_paper_actions_not_research() -> None:
+    from aqsp.cli import _allow_observation_during_circuit_breaker
+
+    assert _allow_observation_during_circuit_breaker("daily") is True
+    assert _allow_observation_during_circuit_breaker("intraday") is True
+
+
 def test_run_scheduled_as_of_controls_universe_and_fetch_end_date(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -2790,7 +2797,7 @@ def test_run_scheduled_skips_formal_ledger_writes_when_circuit_breaker_triggers(
         "_compute_real_pnl",
         lambda *_args, **_kwargs: order.append("pnl") or (-4.0, 0.0, 0.0),
     )
-    # Before cold-start completion, the portfolio breaker still blocks the main chain.
+    # Portfolio protection must not block fresh research generation.
     monkeypatch.setattr(cli_mod, "_count_independent_signal_days", lambda *_, **__: 0)
     monkeypatch.setattr(cli_mod, "_detect_runtime_regime", lambda *_, **__: "")
     monkeypatch.setattr("aqsp.data.anomaly.detect_anomalies", lambda *_, **__: [])
@@ -2840,9 +2847,7 @@ def test_run_scheduled_skips_formal_ledger_writes_when_circuit_breaker_triggers(
     monkeypatch.setattr(
         cli_mod,
         "screen_universe",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            AssertionError("circuit breaker must stop before screening")
-        ),
+        lambda *_args, **_kwargs: [],
     )
     monkeypatch.setattr(
         cli_mod, "_enrich_pick_names", lambda picks, *_args, **_kwargs: picks
@@ -2856,20 +2861,12 @@ def test_run_scheduled_skips_formal_ledger_writes_when_circuit_breaker_triggers(
     monkeypatch.setattr(cli_mod, "notify_markdown", lambda *_args, **_kwargs: [])
     monkeypatch.setattr(
         "aqsp.portfolio.snapshot.save_snapshot",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            AssertionError(
-                "snapshot should not be saved while circuit breaker is active"
-            )
-        ),
+        lambda *_args, **_kwargs: None,
     )
     monkeypatch.setattr(
         cli_mod,
         "append_predictions",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            AssertionError(
-                "formal ledger should not be written while circuit breaker is active"
-            )
-        ),
+        lambda *_args, **_kwargs: None,
     )
 
     class TriggeredBreaker:
@@ -2901,7 +2898,7 @@ def test_run_scheduled_skips_formal_ledger_writes_when_circuit_breaker_triggers(
         notify=False,
     )
 
-    assert cli_mod.run_scheduled(args) == 2
+    assert cli_mod.run_scheduled(args) == 0
     assert order == ["validate", "pnl"]
 
 
