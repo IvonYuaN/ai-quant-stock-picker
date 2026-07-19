@@ -202,6 +202,7 @@ REALTIME_CROSS_MARKET_INSTRUMENTS: tuple[str, ...] = (
     "DXY",
     "US10Y",
     "WTI",
+    "GOLD",
 )
 RealtimeCrossMarketStatus = Literal["fresh", "stale", "timeout", "unavailable"]
 RealtimeCrossMarketOverallStatus = Literal[
@@ -295,6 +296,14 @@ _REALTIME_CROSS_MARKET_ALIASES: dict[str, str] = {
     "WTI": "WTI",
     "原油": "WTI",
     "WTICRUDE": "WTI",
+    "GOLD": "GOLD",
+    "COMEXGOLD": "GOLD",
+    "COMEXGC": "GOLD",
+    "GC=F": "GOLD",
+    "SHANGHAIGOLD": "GOLD",
+    "AU9999": "GOLD",
+    "黄金": "GOLD",
+    "上海金": "GOLD",
 }
 
 

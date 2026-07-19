@@ -41,6 +41,14 @@ _INSTRUMENT_ALIASES = {
     "US10Y": "US10Y",
     "US10": "US10Y",
     "WTI": "WTI",
+    "GOLD": "GOLD",
+    "COMEXGOLD": "GOLD",
+    "COMEXGC": "GOLD",
+    "GC=F": "GOLD",
+    "SHANGHAIGOLD": "GOLD",
+    "AU9999": "GOLD",
+    "黄金": "GOLD",
+    "上海金": "GOLD",
 }
 _DEFAULT_YAHOO_SYMBOLS = {
     "SPX": "^GSPC",
@@ -49,6 +57,8 @@ _DEFAULT_YAHOO_SYMBOLS = {
     "DXY": "DX-Y.NYB",
     "US10Y": "^TNX",
     "WTI": "CL=F",
+    # COMEX Gold is the explicit keyless fallback for Shanghai Gold.
+    "GOLD": "GC=F",
 }
 _DEFAULT_EASTMONEY_SECIDS = {
     "SPX": "100.SPX",
@@ -275,17 +285,24 @@ def default_market_context_providers() -> dict[str, tuple[HttpJsonProvider, ...]
 
     providers: dict[str, tuple[HttpJsonProvider, ...]] = {}
     for instrument, symbol in _DEFAULT_YAHOO_SYMBOLS.items():
-        providers[instrument] = (
-            _eastmoney_provider(
-                _DEFAULT_EASTMONEY_SECIDS[instrument],
-                name="eastmoney_push2",
-            ),
-            _eastmoney_provider(
-                _DEFAULT_EASTMONEY_SECIDS[instrument],
-                name="eastmoney_push2_retry",
-            ),
-            _yahoo_provider("yahoo_chart_primary", "query1.finance.yahoo.com", symbol),
+        configured: list[HttpJsonProvider] = []
+        secid = _DEFAULT_EASTMONEY_SECIDS.get(instrument)
+        if secid:
+            configured.extend(
+                (
+                    _eastmoney_provider(secid, name="eastmoney_push2"),
+                    _eastmoney_provider(secid, name="eastmoney_push2_retry"),
+                )
+            )
+        yahoo_name = (
+            "yahoo_comex_gold_fallback"
+            if instrument == "GOLD"
+            else "yahoo_chart_primary"
         )
+        configured.append(
+            _yahoo_provider(yahoo_name, "query1.finance.yahoo.com", symbol)
+        )
+        providers[instrument] = tuple(configured)
     return providers
 
 
