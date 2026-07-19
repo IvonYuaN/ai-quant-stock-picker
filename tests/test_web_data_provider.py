@@ -99,6 +99,26 @@ def test_dashboard_data_provider_ignores_cooldown_on_release_date(tmp_path: Path
     ) == ""
 
 
+def test_dashboard_data_provider_does_not_reuse_prior_runtime_event_for_selected_day(
+    tmp_path: Path,
+) -> None:
+    ledger_path = tmp_path / "ledger.jsonl"
+    ledger_path.write_text(
+        json.dumps(
+            {
+                "symbol": "__RUN__",
+                "signal_date": "2026-07-18",
+                "status": "blocked_by_circuit_breaker",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    provider = DashboardDataProvider(ledger_path=str(ledger_path))
+
+    assert provider._latest_run_event("2026-07-19") is None
+
+
 def test_dashboard_data_provider_reads_real_runtime_files(
     monkeypatch, tmp_path: Path
 ) -> None:

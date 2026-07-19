@@ -121,9 +121,10 @@ export AQSP_RUN_TASK_ID="${AQSP_RUN_TASK_ID:-intraday}"
 export AQSP_RUN_TASK_ID="intraday"
 export AQSP_NOTIFY="false"
 export AQSP_GATE_NOTIFY="false"
-# Keep the existing per-source fork isolation by default. Set this explicitly
-# to "thread" for an intraday/midday OOM fallback using bounded daemon threads.
-export AQSP_INTRADAY_CATALYST_FETCH_MODE="${AQSP_INTRADAY_CATALYST_FETCH_MODE:-process}"
+# Intraday already holds the market frames in memory; forking per-source workers
+# duplicates them and previously caused a production OOM. Process mode remains
+# an explicit fallback for isolated diagnostics.
+export AQSP_INTRADAY_CATALYST_FETCH_MODE="${AQSP_INTRADAY_CATALYST_FETCH_MODE:-thread}"
 export AQSP_CATALYST_TASK_CONTEXT="${AQSP_RUN_TASK_ID}"
 # live_short 不能在消息源失败时复用上一交易日的催化缓存。
 export AQSP_CATALYST_REPORT_ALLOW_STALE_CACHE="false"
@@ -1129,6 +1130,7 @@ write_intraday_status() {
     INTRADAY_STATUS_STARTED_AT="${INTRADAY_STARTED_AT:-}" \
     INTRADAY_STATUS_START_EPOCH="${START_TIME:-}" \
     INTRADAY_STATUS_RUN_TIMED_OUT="${RUN_TIMED_OUT:-false}" \
+    INTRADAY_STATUS_RESOURCE_KILLED="${RESOURCE_KILLED:-false}" \
     INTRADAY_STATUS_RUNNER_TIMEOUT="$INTRADAY_RUN_TIMEOUT_SECONDS" \
     "$PYTHON_BIN" - <<'AQSP_INTRADAY_STATUS_PY'
 import csv
@@ -1227,6 +1229,7 @@ payload = {
         "catalyst_fetch_mode": os.environ["INTRADAY_STATUS_CATALYST_MODE"],
         "runner_timeout_seconds": int(os.environ.get("INTRADAY_STATUS_RUNNER_TIMEOUT", "0") or "0"),
         "timed_out": truthy(os.environ["INTRADAY_STATUS_RUN_TIMED_OUT"]),
+        "resource_killed": truthy(os.environ.get("INTRADAY_STATUS_RESOURCE_KILLED", "false")),
         "news_task_timeout_seconds": int(os.environ["INTRADAY_STATUS_NEWS_TASK_TIMEOUT"] or "0"),
         "news_source_timeout_seconds": float(os.environ["INTRADAY_STATUS_NEWS_SOURCE_TIMEOUT"] or "0"),
     },
@@ -1478,7 +1481,11 @@ SCRIPT_EXIT_CODE="0"
 OBSERVATION_ONLY="false"
 OBSERVATION_REASON=""
 RUN_TIMED_OUT="false"
-if [ "$RUN_EXIT_CODE" -eq 124 ] || [ "$RUN_EXIT_CODE" -eq 137 ] || [ "$RUN_EXIT_CODE" -eq 143 ]; then
+RESOURCE_KILLED="false"
+if [ "$RUN_EXIT_CODE" -eq 137 ]; then
+    RESOURCE_KILLED="true"
+    log "[ERROR] 盘中任务被系统资源限制终止（退出码 137，通常表示 OOM）；不是 timeout"
+elif [ "$RUN_EXIT_CODE" -eq 124 ] || [ "$RUN_EXIT_CODE" -eq 143 ]; then
     RUN_TIMED_OUT="true"
     log "[ERROR] 盘中任务达到 timeout=${INTRADAY_RUN_TIMEOUT_SECONDS}s，子进程组已请求收敛；命令退出码: ${RUN_EXIT_CODE}"
 fi

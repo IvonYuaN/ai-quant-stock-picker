@@ -64,7 +64,7 @@ def test_intraday_runtime_contract_uses_configured_benchmark_and_quality_gate() 
     assert "count < limit && seen[$symbol_column]++ == 0" in script
     assert 'export AQSP_MARKET_CONTEXT_LIVE_SOURCE="false"' in script
     assert (
-        'export AQSP_INTRADAY_CATALYST_FETCH_MODE="${AQSP_INTRADAY_CATALYST_FETCH_MODE:-process}"'
+        'export AQSP_INTRADAY_CATALYST_FETCH_MODE="${AQSP_INTRADAY_CATALYST_FETCH_MODE:-thread}"'
         in script
     )
     assert 'export AQSP_CATALYST_TASK_CONTEXT="${AQSP_RUN_TASK_ID}"' in script
@@ -578,7 +578,7 @@ def test_intraday_runtime_refreshes_news_after_candidates_and_keeps_home_snapsho
     assert home_marker.read_text(encoding="utf-8") == "refreshed"
     news_args = news_marker.read_text(encoding="utf-8").strip().split("|")
     assert news_args[:6] == ["20", "6", "3", "false", "false", "600000"]
-    assert news_args[7:] == ["process", "intraday"]
+    assert news_args[7:] == ["thread", "intraday"]
     assert (tmp_path / "reports" / "news_catalysts.md").exists()
     assert (tmp_path / "data" / "runtime" / "news_catalysts_latest.json").exists()
     status = json.loads(
@@ -586,7 +586,7 @@ def test_intraday_runtime_refreshes_news_after_candidates_and_keeps_home_snapsho
     )
     assert status["status"] == "completed"
     assert status["news_catalysts"]["status"] == "refreshed"
-    assert status["execution"]["catalyst_fetch_mode"] == "process"
+    assert status["execution"]["catalyst_fetch_mode"] == "thread"
     assert status["execution"]["runner_timeout_seconds"] == 420
     assert status["execution"]["news_task_timeout_seconds"] == 20
     assert status["execution"]["duration_seconds"] >= 0

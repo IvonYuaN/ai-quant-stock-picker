@@ -1807,8 +1807,9 @@ class DashboardDataProvider:
                 if str(row.get("signal_date") or row.get("signal_day_group") or "")[:10]
                 == selected_date[:10]
             ]
-            if dated:
-                rows = dated
+            # A selected day must never inherit a prior run's status. Historical
+            # fallback here made old circuit-breaker events look like today's block.
+            return dated[-1] if dated else None
         if not rows:
             return None
         return rows[-1]
