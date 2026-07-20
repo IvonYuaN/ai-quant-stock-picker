@@ -11,7 +11,7 @@ from types import SimpleNamespace
 
 import pandas as pd
 import pytest
-from aqsp.core.errors import DataError, MissingDataError
+from aqsp.core.errors import DataError
 
 
 @pytest.fixture(autouse=True)
@@ -823,7 +823,9 @@ switches:
     assert updated[0].debate_consensus == "倾向优先纸面复核"
 
 
-def test_fetch_special_strategy_frames_requires_today_intraday(monkeypatch) -> None:
+def test_fetch_special_strategy_frames_keeps_daily_when_intraday_overlay_is_empty(
+    monkeypatch,
+) -> None:
     import aqsp.cli as cli_mod
 
     frames = {
@@ -842,17 +844,26 @@ def test_fetch_special_strategy_frames_requires_today_intraday(monkeypatch) -> N
             pass
 
         def merge_intraday_bar_into_daily_with_coverage(self, *_args, **_kwargs):
-            raise MissingDataError("600000", reason="分时数据不含 2026-06-26 当日 bar")
+            return SimpleNamespace(
+                frames={},
+                requested_symbols=("600000", "000300"),
+                covered_symbols=(),
+                missing_symbols=("600000", "000300"),
+                complete=False,
+            )
 
     monkeypatch.setattr(cli_mod, "IntradayService", FakeIntradayService)
     monkeypatch.setattr(cli_mod, "today_shanghai", lambda: date(2026, 6, 26))
 
-    with pytest.raises(MissingDataError, match="当日 bar"):
-        cli_mod._fetch_special_strategy_frames(
-            "eastmoney",
-            ["600000"],
-            benchmark_symbol="000300",
-        )
+    result, actual_source = cli_mod._fetch_special_strategy_frames(
+        "eastmoney",
+        ["600000"],
+        benchmark_symbol="000300",
+    )
+
+    assert set(result) == {"600000", "000300"}
+    assert actual_source == "eastmoney"
+    assert result["600000"].attrs["intraday_overlay_coverage"]["status"] == "partial"
 
 
 def test_intraday_actual_source_uses_current_overlay_provenance() -> None:
