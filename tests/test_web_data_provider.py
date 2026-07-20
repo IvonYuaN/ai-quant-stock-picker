@@ -28,6 +28,30 @@ from aqsp.web.live_candidate_view import (
 )
 
 
+def test_dashboard_research_recommendation_remains_actionable_during_protection(
+    tmp_path: Path,
+) -> None:
+    provider = DashboardDataProvider(
+        ledger_path=str(tmp_path / "ledger.jsonl"),
+        paper_ledger_path=str(tmp_path / "paper.jsonl"),
+        logs_path=str(tmp_path / "logs"),
+        reports_dir=str(tmp_path / "reports"),
+    )
+    row = {
+        "symbol": "000001",
+        "rating": "buy_candidate",
+        "research_recommendation": True,
+        "observation_only": True,
+        "paper_review_eligible": False,
+        "portfolio_action": "observation_only",
+        "candidate_status": "组合保护观察",
+    }
+
+    assert provider._is_actionable(row, task_id="intraday") is True
+    assert provider._is_watch_candidate(row, task_id="intraday") is False
+    assert provider._action_label(row) == "实时推荐"
+
+
 def test_dashboard_data_provider_home_status_distinguishes_live_watch_and_blocked(
     monkeypatch, tmp_path: Path
 ) -> None:

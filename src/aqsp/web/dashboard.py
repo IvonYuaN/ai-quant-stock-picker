@@ -7263,6 +7263,8 @@ def _simple_candidate_bucket(
     *,
     cooldown_until: str,
 ) -> str:
+    if card.research_recommendation:
+        return "实时推荐"
     if _card_primary_blocker(card):
         return "PM/风控阻塞"
     return "盘中观察"
@@ -7273,6 +7275,8 @@ def _simple_candidate_card_tone(
     *,
     cooldown_until: str,
 ) -> str:
+    if card.research_recommendation:
+        return "focus"
     if _card_primary_blocker(card):
         return "blocked"
     if _action_status_label(card.action_label, card.status_label) != "纸面复核":
@@ -7295,6 +7299,8 @@ def _set_home_status_filter(value: str) -> None:
 
 def _candidate_status_bucket(card: DashboardCandidateCard) -> str:
     status = _action_status_label(card.action_label, card.status_label)
+    if card.research_recommendation:
+        return "推荐"
     if _card_primary_blocker(card) or "阻塞" in status:
         return "阻塞"
     if (

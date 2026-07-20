@@ -2697,8 +2697,10 @@ def _apply_protection_observation_boundary(
             {
                 "observation_only": True,
                 "paper_review_eligible": False,
+                "research_recommendation": pick.rating
+                in {"strong_buy_candidate", "buy_candidate"},
                 "candidate_status": "组合保护观察",
-                "candidate_next_step": "继续按实时信号复核；组合保护仅限制纸面动作",
+                "candidate_next_step": "按实时信号继续复核；组合保护仅限制纸面动作",
                 "candidate_review_window": "当前盘中窗口",
                 "quality_gate_reasons": alerts,
                 "portfolio_action": "observation_only",
