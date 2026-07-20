@@ -176,6 +176,13 @@ class _Provider:
                     next_trigger="放量站稳",
                     adjusted_score=999.0,
                     recommended_adjustment="raise",
+                    process_recorded=True,
+                    conclusion_recorded=True,
+                    evidence_sufficient=True,
+                    round_count=2,
+                    bull_count=1,
+                    bear_count=0,
+                    neutral_count=1,
                     agent_views=(
                         SimpleNamespace(role_id="bull"),
                         SimpleNamespace(role_id="risk_control"),
@@ -240,13 +247,7 @@ def test_write_home_snapshot_builds_bounded_advisory_only_payload(monkeypatch) -
         "600005",
     ]
 
-    assert [item.score for item in snapshot.candidates] == [
-        88.0,
-        80.0,
-        72.0,
-        66.0,
-        99.0,
-    ]
+    assert [item.score for item in snapshot.candidates] == [88.0, 80.0, 72.0, 66.0, 99.0]
     assert snapshot.candidates[0].deterministic_reasons == ("MA20 斜率向上",)
     assert snapshot.candidates[0].strategies == ("ma_pullback",)
     assert snapshot.candidates[0].evidence_status == "有独立规则证据"
@@ -278,6 +279,23 @@ def test_write_home_snapshot_builds_bounded_advisory_only_payload(monkeypatch) -
         "重点看首个确定性候选",
     )
     assert snapshot.stale_after == "2026-07-10T15:31:00+08:00"
+
+
+def test_recommendation_gate_keeps_quote_candidates_when_news_refresh_fails() -> None:
+    provider = _Provider()
+    runtime = provider.runtime_overview("2026-07-10")
+    source = SimpleNamespace(status="完成", lag_days=0)
+
+    gate = write_home_snapshot._recommendation_gate(
+        provider,
+        runtime,
+        source,
+        "来源失败",
+        evaluated_at=datetime(2026, 7, 10, 15, 1, tzinfo=ZoneInfo("Asia/Shanghai")),
+    )
+
+    assert gate.recommendation_allowed is True
+    assert gate.reasons == ()
 
 
 def test_snapshot_candidate_maps_freshness_label_when_status_is_missing() -> None:
@@ -330,6 +348,7 @@ def test_write_home_snapshot_makes_hidden_candidate_count_explicit(monkeypatch) 
             _candidate("600007", 59.0),
         )
         payload.spotlights = ()
+        delattr(payload, "debates")
         return payload
 
     def runtime_with_count(signal_date: str = ""):
@@ -466,7 +485,7 @@ def test_write_home_snapshot_normalizes_legacy_news_and_cross_market_timestamps(
         events=(
             CatalystEvent(
                 title="SpaceX 评估 IPO 上市窗口",
-                    source="Reuters",
+                source="Reuters",
                 published_at="2026-07-10T01:00:00Z",
                 impact="positive",
                 category="资本运作",
@@ -1115,6 +1134,40 @@ def test_normalize_catalyst_report_downgrades_historical_high_impact_status() ->
     assert invalid_count == 0
     assert normalized.events == ()
     assert normalized.news_status == "stale_only"
+
+
+def test_normalize_catalyst_report_keeps_previous_trade_day_news_for_current_session(
+    monkeypatch,
+) -> None:
+    current_time = datetime(2026, 7, 20, 5, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
+    monkeypatch.setattr(
+        write_home_snapshot, "today_shanghai", lambda: current_time.date()
+    )
+    monkeypatch.setattr(write_home_snapshot, "now_shanghai", lambda: current_time)
+    report = CatalystReport(
+        date="2026-07-20",
+        generated_at=current_time.isoformat(),
+        source_status="ok",
+        event_status="high_impact",
+        events=(
+            CatalystEvent(
+                title="周末海外事件",
+                source="fixture",
+                published_at="2026-07-18T09:00:00+08:00",
+                impact="positive",
+            ),
+        ),
+    )
+
+    normalized, historical_count, invalid_count = (
+        write_home_snapshot._normalize_catalyst_report_for_snapshot(
+            report, "2026-07-20"
+        )
+    )
+
+    assert historical_count == 0
+    assert invalid_count == 0
+    assert len(normalized.events) == 1
 
 
 def test_write_home_snapshot_explains_empty_current_news(monkeypatch, tmp_path) -> None:

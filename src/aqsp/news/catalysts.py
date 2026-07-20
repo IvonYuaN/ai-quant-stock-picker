@@ -5,6 +5,7 @@ import multiprocessing
 import os
 import signal
 import threading
+from html import unescape
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta
@@ -106,6 +107,10 @@ NewsRegion = Literal["domestic", "international"]
 NewsRegionStatusValue = Literal[
     "ok", "partial", "empty", "timeout", "failed", "unavailable"
 ]
+NewsFreshnessStatus = Literal["fresh", "stale", "unknown"]
+NewsFallbackStatus = Literal["not_needed", "active", "failed"]
+
+_REGION_SOURCE_FRESHNESS_MAX_AGE_SECONDS = 15 * 60
 
 
 @dataclass(frozen=True)
@@ -117,6 +122,9 @@ class NewsRegionStatus:
     source_count: int = 0
     successful_sources: int = 0
     row_count: int = 0
+    freshness: NewsFreshnessStatus = "unknown"
+    quality_score: int = 0
+    fallback: NewsFallbackStatus = "failed"
 
 
 @dataclass(frozen=True)
@@ -140,7 +148,10 @@ class CatalystReport:
             object.__setattr__(
                 self,
                 "region_statuses",
-                _region_statuses_from_sources(self.source_statuses),
+                _region_statuses_from_sources(
+                    self.source_statuses,
+                    generated_at=self.generated_at,
+                ),
             )
 
     @property
@@ -322,6 +333,9 @@ def _serialize_catalyst_report(report: CatalystReport) -> dict[str, Any]:
                 "source_count": item.source_count,
                 "successful_sources": item.successful_sources,
                 "row_count": item.row_count,
+                "freshness": item.freshness,
+                "quality_score": item.quality_score,
+                "fallback": item.fallback,
             }
             for item in report.region_statuses
         ],
@@ -447,6 +461,10 @@ def _deserialize_catalyst_report(payload: Any) -> CatalystReport | None:
                 source_count=int(item.get("source_count", 0) or 0),
                 successful_sources=int(item.get("successful_sources", 0) or 0),
                 row_count=int(item.get("row_count", 0) or 0),
+                freshness=str(item.get("freshness", "unknown")).strip()
+                or "unknown",
+                quality_score=int(item.get("quality_score", 0) or 0),
+                fallback=str(item.get("fallback", "failed")).strip() or "failed",
             )
             for item in tuple(payload.get("region_statuses", ()) or ())
             if isinstance(item, dict)
@@ -714,10 +732,11 @@ def _report_from_stale_cache(
 
 POSITIVE_PATTERNS: tuple[tuple[str, str, int], ...] = (
     (
-        "GPT|AI safety|agentic AI|AI investments|AI innovation|"
+        r"(?<![A-Za-z0-9])GPT(?![A-Za-z0-9])|AI safety|agentic AI|AI investments|AI innovation|"
         "foundry|EPYC|Instinct|Gaudi|processor|semiconductor|"
         "data center|AI infrastructure|数据中心|人工智能|"
-        "(?:AMD|Intel).*(?:AI|data center|processor|semiconductor|foundry|"
+        r"(?<![A-Za-z0-9])(?:AMD|Intel)(?![A-Za-z0-9]).*(?<![A-Za-z0-9])AI(?![A-Za-z0-9])|"
+        "(?:AMD|Intel).*(?:data center|processor|semiconductor|foundry|"
         "Instinct|EPYC|Gaudi|launch|introduces|unveil)",
         "AI/半导体技术动态",
         3,
@@ -802,9 +821,9 @@ POSITIVE_PATTERNS: tuple[tuple[str, str, int], ...] = (
         4,
     ),
     (
-        "NASA.*(?:launch|rocket|satellite|spacecraft|mission)|SpaceX|"
-        "space mission|commercial space|satellite|launch vehicle|rocket|"
-        "商业航天|卫星互联网|低轨卫星",
+        "SpaceX|space mission|commercial space|commercial launch|"
+        "satellite order|satellite contract|launch contract|rocket launch|"
+        "商业航天|卫星订单|卫星发射|卫星互联网|低轨卫星|火箭发射",
         "商业航天/卫星订单",
         4,
     ),
@@ -937,6 +956,8 @@ _AUTHORITATIVE_SOURCE_TOKENS: tuple[str, ...] = (
 )
 
 _MEDIA_SOURCE_TOKENS: tuple[str, ...] = (
+    "中国新闻网",
+    "中新网",
     "新华社",
     "央视",
     "证券报",
@@ -1730,15 +1751,21 @@ def _report_source_status(
 
 def _region_statuses_from_sources(
     source_statuses: Sequence[NewsSourceHealth],
+    *,
+    generated_at: str = "",
 ) -> tuple[NewsRegionStatus, ...]:
-    """Aggregate existing per-source health without changing source semantics."""
+    """Aggregate explicitly regional source health.
+
+    A ``mixed`` source has no auditable regional coverage and must not be
+    counted as evidence for both domestic and international feeds.
+    """
 
     result: list[NewsRegionStatus] = []
     for region in ("domestic", "international"):
         items = tuple(
             item
             for item in source_statuses
-            if item.region == region or item.region == "mixed"
+            if item.region == region
         )
         statuses = tuple(item.status for item in items)
         if not statuses:
@@ -1753,15 +1780,49 @@ def _region_statuses_from_sources(
             status = "timeout"
         else:
             status = "failed"
+        successful_sources = sum(
+            1 for item in items if item.status in {"ok", "partial"}
+        )
+        if not items:
+            freshness: NewsFreshnessStatus = "unknown"
+        else:
+            reference = _parse_published_datetime(generated_at)
+            ages = [
+                (reference - fetched).total_seconds()
+                for item in items
+                if reference is not None
+                and (fetched := _parse_published_datetime(item.fetched_at))
+                is not None
+            ]
+            if not ages:
+                freshness = "unknown"
+            elif all(0 <= age <= _REGION_SOURCE_FRESHNESS_MAX_AGE_SECONDS for age in ages):
+                freshness = "fresh"
+            elif any(0 <= age <= _REGION_SOURCE_FRESHNESS_MAX_AGE_SECONDS for age in ages):
+                freshness = "stale"
+            else:
+                freshness = "stale"
+        quality_score = max(
+            (_source_quality_from_source(item.name)[1] for item in items),
+            default=0,
+        )
+        fallback: NewsFallbackStatus = (
+            "not_needed"
+            if items and all(item.status == "ok" for item in items)
+            else "active"
+            if successful_sources > 0
+            else "failed"
+        )
         result.append(
             NewsRegionStatus(
                 region=region,
                 status=status,
                 source_count=len(items),
-                successful_sources=sum(
-                    1 for item in items if item.status in {"ok", "partial"}
-                ),
+                successful_sources=successful_sources,
                 row_count=sum(max(0, int(item.row_count)) for item in items),
+                freshness=freshness,
+                quality_score=quality_score,
+                fallback=fallback,
             )
         )
     return tuple(result)
@@ -2040,7 +2101,7 @@ def _event_supporting_evidence(
     context: str = "",
 ) -> tuple[str, ...]:
     source_text = source or "来源未标注"
-    evidence = [f"{source_text}: {title}", f"来源验证: {verification}"]
+    evidence = [f"{source_text}: {title}", f"来源状态: {verification}"]
     if context:
         evidence.append(f"正文证据: {context}")
     return tuple(evidence)
@@ -2075,47 +2136,57 @@ def _classify_title(
         return None
     import re
 
-    evidence = _news_evidence_text(clean, summary=summary, content=content)
+    # Positive catalysts must be stated by the headline/abstract. Matching a
+    # positive theme from arbitrary article body text creates false mappings.
+    summary_text = str(summary or "").strip()
+    if len(summary_text) > 400 or "<" in summary_text or ">" in summary_text:
+        summary_text = ""
+    positive_evidence = _news_evidence_text(clean, summary=summary_text)
+    negative_evidence = _news_evidence_text(
+        clean,
+        summary=summary,
+        content=content,
+    )
 
     for pattern, category, impact, weight in GLOBAL_CROSS_MARKET_PATTERNS:
-        if re.search(pattern, evidence, flags=re.IGNORECASE):
+        if re.search(pattern, positive_evidence, flags=re.IGNORECASE):
             return (
                 category,
                 impact,
                 weight,
                 "",
             )
-    if _is_market_price_action_noise(evidence):
+    if _is_market_price_action_noise(positive_evidence):
         return None
-    if _is_non_actionable_discipline_news(evidence):
+    if _is_non_actionable_discipline_news(negative_evidence):
         return None
-    if _is_non_actionable_price_hike_noise(evidence):
+    if _is_non_actionable_price_hike_noise(negative_evidence):
         return None
     for pattern, category, weight in NEGATIVE_PATTERNS:
-        if re.search(pattern, evidence, flags=re.IGNORECASE):
+        if re.search(pattern, negative_evidence, flags=re.IGNORECASE):
             return (
                 category,
                 "negative",
                 weight,
                 "",
             )
-    for pattern, category, weight in POSITIVE_PATTERNS:
-        if re.search(pattern, evidence, flags=re.IGNORECASE):
-            return (
-                category,
-                "positive",
-                weight,
-                "",
-            )
+    matches = [
+        (category, weight, index)
+        for index, (pattern, category, weight) in enumerate(POSITIVE_PATTERNS)
+        if re.search(pattern, positive_evidence, flags=re.IGNORECASE)
+    ]
+    if matches:
+        category, weight, _index = max(matches, key=lambda item: (item[1], -item[2]))
+        return (category, "positive", weight, "")
     return None
 
 
 def _news_evidence_text(title: str, *, summary: str = "", content: str = "") -> str:
     """Combine bounded title, abstract, and body evidence for rule matching."""
 
-    parts = [str(title or "").strip()]
+    parts = [_plain_news_text(title)]
     for value in (summary, content):
-        text = str(value or "").strip()
+        text = _plain_news_text(value)
         if text and text not in parts:
             parts.append(text[:2000])
     return "\n".join(parts)
@@ -2123,10 +2194,18 @@ def _news_evidence_text(title: str, *, summary: str = "", content: str = "") -> 
 
 def _news_context_snippet(summary: str, content: str) -> str:
     for value in (summary, content):
-        text = " ".join(str(value or "").split())
+        text = _plain_news_text(value)
         if text:
             return text[:240]
     return ""
+
+
+def _plain_news_text(value: object) -> str:
+    """Return readable article text without treating markup as evidence."""
+
+    text = unescape(str(value or ""))
+    text = re.sub(r"<[^>]*>", " ", text)
+    return " ".join(text.split()).strip()
 
 
 def _is_market_price_action_noise(title: str) -> bool:
@@ -2279,7 +2358,12 @@ def _iter_news_rows(df: pd.DataFrame) -> Iterable[dict[str, str]]:
         # headline keyword manufacture a catalyst without an abstract/body.
         if not source or (source_group == "rss" and not (summary or content)):
             continue
-        summary = summary or content or title
+        # Keep article body separate from the headline/abstract. A body may
+        # contain generic words such as "AI", "satellite", or "contract"
+        # that describe the publisher's page rather than the news event.
+        # Empty abstract is intentional; the body remains available as
+        # supporting evidence and for negative-risk checks.
+        summary = summary or ""
         rows.append(
             {
                 "title": title,

@@ -2677,7 +2677,12 @@ def _apply_protection_observation_boundary(
     *,
     reason: str,
 ) -> list[PickResult]:
-    """Keep quality-qualified research visible while hard protection blocks paper action."""
+    """Keep research candidates intact while limiting only paper actions.
+
+    Portfolio protection is not evidence about the current quote or signal. It
+    must therefore not rewrite a candidate into a low-priority observation or
+    hide its deterministic research qualification.
+    """
     if not picks:
         return picks
     clean_reason = str(reason or "组合保护已触发").strip()
@@ -2691,20 +2696,19 @@ def _apply_protection_observation_boundary(
         metrics.update(
             {
                 "observation_only": True,
-                "quality_gate_action": "observe",
                 "paper_review_eligible": False,
                 "candidate_status": "组合保护观察",
-                "candidate_next_step": "组合保护解除且短线确认仍有效后，再评估纸面复核",
-                "candidate_review_window": "组合保护解除后",
-                "candidate_review_priority": "low",
-                "candidate_blocker": "",
-                "quality_gate_reasons": tuple(
-                    dict.fromkeys((*alerts, f"组合保护：{clean_reason}"))
-                ),
+                "candidate_next_step": "继续按实时信号复核；组合保护仅限制纸面动作",
+                "candidate_review_window": "当前盘中窗口",
+                "quality_gate_reasons": alerts,
                 "portfolio_action": "observation_only",
             }
         )
-        risks = tuple(dict.fromkeys((*pick.risks, f"组合保护生效: {clean_reason}")))
+        risks = tuple(
+            dict.fromkeys(
+                (*pick.risks, f"组合保护仅限制纸面动作: {clean_reason}")
+            )
+        )
         observed.append(replace(pick, metrics=metrics, risks=risks))
     return observed
 
