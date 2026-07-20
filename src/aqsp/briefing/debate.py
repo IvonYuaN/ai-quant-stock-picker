@@ -388,6 +388,16 @@ def _pick_risk_items(pick: PickResult) -> tuple[str, ...]:
     )
 
 
+def _pick_actionable_risk_items(pick: PickResult) -> tuple[str, ...]:
+    """Exclude run-wide data blockers from candidate-specific vote evidence."""
+    shared_blockers = ("盘中覆盖不完整", "数据质量", "质量门阻塞", "新鲜度")
+    return tuple(
+        item
+        for item in _pick_risk_items(pick)
+        if not any(marker in item for marker in shared_blockers)
+    )
+
+
 class AShareDebateAgent:
     """A股市场辩论 Agent 基类"""
 
@@ -668,6 +678,7 @@ class AShareDebateAgent:
         )
         metrics = pick.metrics or {}
         ret5 = _metric_float(metrics.get("ret5_pct"))
+        ret20 = _metric_float(metrics.get("ret20_pct"))
         bias20 = _metric_float(metrics.get("bias20_pct"))
         rsi12 = _metric_float(metrics.get("rsi12"))
         support_count, conflict_count = self._cross_market_evidence_counts(
@@ -686,7 +697,7 @@ class AShareDebateAgent:
             if (
                 invalidation_signals
                 or pressure_targets
-                or _pick_risk_items(pick)
+                or _pick_actionable_risk_items(pick)
                 or conflict_count > 0
                 or any(
                     marker in str(line)
@@ -694,13 +705,14 @@ class AShareDebateAgent:
                     for line in market_context_lines
                 )
                 or (ret5 is not None and ret5 <= -3.0)
+                or (ret20 is not None and ret20 <= -2.0)
                 or (bias20 is not None and bias20 >= 8.0)
             ):
                 return "bearish"
             return "bearish" if pick.score < 50 else "neutral"
         elif self.role == AgentRole.RISK_CONTROL:
             # 风控更保守
-            if _is_st_risk_pick(pick) or _pick_risk_items(pick):
+            if _is_st_risk_pick(pick) or _pick_actionable_risk_items(pick):
                 return "bearish"
             if invalidation_signals or pressure_targets or conflict_count > 0:
                 return "bearish"
