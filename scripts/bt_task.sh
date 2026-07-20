@@ -468,7 +468,11 @@ case "$ACTION" in
                     exit 0
                 fi
             else
-                log "午盘桥接未真实执行，不写完成标记；后续定时仍可重试"
+                # A failed bridge must not be retried by every 10-minute
+                # intraday tick. The dedicated 12:05 midday task remains the
+                # retry path and does not consult this bridge marker.
+                touch "$AQSP_MIDDAY_MARKER_FILE"
+                log "午盘桥接失败，今日不再重复桥接；12:05 午盘任务仍会独立重试"
                 exit 1
             fi
         fi

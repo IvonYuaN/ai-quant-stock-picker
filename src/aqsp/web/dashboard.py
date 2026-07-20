@@ -7263,8 +7263,6 @@ def _simple_candidate_bucket(
     *,
     cooldown_until: str,
 ) -> str:
-    if cooldown_until:
-        return "风控压制"
     if _card_primary_blocker(card):
         return "PM/风控阻塞"
     return "盘中观察"
@@ -7277,10 +7275,7 @@ def _simple_candidate_card_tone(
 ) -> str:
     if _card_primary_blocker(card):
         return "blocked"
-    if (
-        cooldown_until
-        or _action_status_label(card.action_label, card.status_label) != "纸面复核"
-    ):
+    if _action_status_label(card.action_label, card.status_label) != "纸面复核":
         return "watch"
     return "focus"
 
@@ -7460,7 +7455,7 @@ def _render_simple_recommendation_panel(
         else (f"原因: {risk_reason}" if risk_reason else "原因: 今日条件未到复核档")
     )
     if cooldown and candidate_count > 0:
-        hero_title = "今日候选已产生，组合保护中"
+        hero_title = "今日候选已产生，组合保护仅限制纸面动作"
     elif recommend_cards:
         hero_title = "今日候选已产生"
     else:
@@ -7776,7 +7771,7 @@ def _render_simple_home_rail(
         status = DashboardHomeStatus(
             label=(
                 "阻塞"
-                if overview.blocked_total or getattr(runtime, "cooldown_until", "")
+                if overview.blocked_total
                 else "实时推荐"
                 if overview.actionable_total
                 else "观察"

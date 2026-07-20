@@ -2712,7 +2712,6 @@ class DashboardDataProvider:
         )
         blocked = bool(
             date_overview.blocked_total
-            or runtime.cooldown_until
             or runtime.gate_blocker_line
             or stale_source
         )
