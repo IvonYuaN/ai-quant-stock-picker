@@ -5,6 +5,7 @@ import multiprocessing
 import os
 import signal
 import threading
+from html import unescape
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta
@@ -2100,7 +2101,7 @@ def _event_supporting_evidence(
     context: str = "",
 ) -> tuple[str, ...]:
     source_text = source or "来源未标注"
-    evidence = [f"{source_text}: {title}", f"来源验证: {verification}"]
+    evidence = [f"{source_text}: {title}", f"来源状态: {verification}"]
     if context:
         evidence.append(f"正文证据: {context}")
     return tuple(evidence)
@@ -2183,9 +2184,9 @@ def _classify_title(
 def _news_evidence_text(title: str, *, summary: str = "", content: str = "") -> str:
     """Combine bounded title, abstract, and body evidence for rule matching."""
 
-    parts = [str(title or "").strip()]
+    parts = [_plain_news_text(title)]
     for value in (summary, content):
-        text = str(value or "").strip()
+        text = _plain_news_text(value)
         if text and text not in parts:
             parts.append(text[:2000])
     return "\n".join(parts)
@@ -2193,10 +2194,18 @@ def _news_evidence_text(title: str, *, summary: str = "", content: str = "") -> 
 
 def _news_context_snippet(summary: str, content: str) -> str:
     for value in (summary, content):
-        text = " ".join(str(value or "").split())
+        text = _plain_news_text(value)
         if text:
             return text[:240]
     return ""
+
+
+def _plain_news_text(value: object) -> str:
+    """Return readable article text without treating markup as evidence."""
+
+    text = unescape(str(value or ""))
+    text = re.sub(r"<[^>]*>", " ", text)
+    return " ".join(text.split()).strip()
 
 
 def _is_market_price_action_noise(title: str) -> bool:

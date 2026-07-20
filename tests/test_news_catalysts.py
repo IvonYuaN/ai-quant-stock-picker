@@ -176,6 +176,27 @@ def test_news_catalyst_retains_context_in_standardized_event_evidence() -> None:
     )
 
 
+def test_news_catalyst_strips_markup_before_creating_article_evidence() -> None:
+    report = build_catalyst_report(
+        fetch_global_news=lambda _limit: pd.DataFrame(
+            [
+                {
+                    "标题": "PCB覆铜板厂商宣布新一轮报价上调",
+                    "正文": '<p>供应商公告 <img src="tracking.gif"> 价格上调</p>',
+                    "来源": "证券报",
+                    "时间": _RECENT_NEWS_TIME,
+                }
+            ]
+        )
+    )
+
+    assert report.events
+    evidence = " ".join(report.events[0].supporting_evidence)
+    assert "<img" not in evidence
+    assert "价格上调" in evidence
+    assert "来源状态:" in evidence
+
+
 def test_news_catalyst_maps_supply_chain_evidence_to_affected_sectors() -> None:
     report = build_catalyst_report(
         fetch_global_news=lambda _limit: pd.DataFrame(
