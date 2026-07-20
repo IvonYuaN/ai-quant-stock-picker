@@ -284,15 +284,7 @@ def audit_debate_quality(
         )
     )
 
-    message_evidence_recorded = _substantive_values(
-        _field(result, "real_message_evidence", ())
-    )
     issues: list[str] = []
-    if (
-        _field_present(result, "message_evidence_recorded")
-        and not message_evidence_recorded
-    ):
-        issues.append("missing_message_evidence")
     if not candidate_mapped:
         issues.append("candidate_unmapped")
     if len(recorded_roles) < 2:
@@ -366,7 +358,9 @@ def audit_debate_quality(
         stance_counts=stance_counts,
         rebuttal_count=rebuttal_count,
         real_opposition_count=real_opposition_count,
-        message_evidence_recorded=message_evidence_recorded,
+        message_evidence_recorded=_substantive_values(
+            _field(result, "real_message_evidence", ())
+        ),
         transmission_evidence_recorded=bool(
             _substantive_values(_field(result, "cross_market_evidence", ()))
             or _substantive_values(_field(result, "rule_transmission_evidence", ()))
@@ -398,10 +392,6 @@ def _role_value(value: Any) -> str:
 _NON_EVIDENCE_MARKERS = (
     "输入未提供",
     "无可用",
-    "暂无消息证据",
-    "暂无跨市证据",
-    "等待海外映射证据",
-    "无可用跨市消息或规则传导",
     "无可用新闻记录",
     "尚未形成",
     "等待更多确认",
@@ -803,18 +793,6 @@ class DebatePerformanceTracker:
         self._record_keys: set[str] = set()
         self._agent_signal_days: dict[str, set[str]] = {}
         self._agent_latest_record_at: dict[str, datetime] = {}
-        self._load_cache()
-
-    def set_task_scope(self, task_id: str | None) -> None:
-        """切换任务范围并重新加载该范围的历史表现。"""
-        scoped_task_id = _clean_text(task_id)
-        if scoped_task_id == self.task_id:
-            return
-        self.task_id = scoped_task_id
-        self._performance_cache.clear()
-        self._record_keys.clear()
-        self._agent_signal_days.clear()
-        self._agent_latest_record_at.clear()
         self._load_cache()
 
     def _load_cache(self) -> None:

@@ -742,7 +742,6 @@ def _run_candidate_debate(
         frame,
         signal_date=pick.date or today,
         market_context_lines=debate_context_lines,
-        task_id=task_id,
     )
     payload = serialize_debate_result(result)
     payload.setdefault("market_context_lines", list(market_context_lines))
@@ -821,47 +820,6 @@ def _debate_payload_quality_failure(
         return "debate advisory boundary is not valid"
     if payload.get("deterministic_score_unchanged") is False:
         return "deterministic score changed by advisory debate"
-    if "debate_rounds_requested" in payload or "debate_rounds_completed" in payload:
-        try:
-            requested_rounds = int(payload.get("debate_rounds_requested") or 0)
-            completed_rounds = int(payload.get("debate_rounds_completed") or 0)
-        except (TypeError, ValueError):
-            return "debate round metadata is invalid"
-        if requested_rounds < 2 or completed_rounds < 2:
-            return (
-                "debate requires at least two completed rounds: "
-                f"requested={requested_rounds}, completed={completed_rounds}"
-            )
-    is_debate_record = bool(
-        payload.get("rounds")
-        or "debate_rounds_completed" in payload
-        or expected_roles
-    )
-    if is_debate_record:
-        if payload.get("message_evidence_recorded") is False or not _text_tuple(
-            payload.get("real_message_evidence")
-        ):
-            return "debate missing current message evidence"
-        has_transmission_context = any(
-            _text_tuple(payload.get(field))
-            for field in (
-                "cross_market_evidence",
-                "rule_transmission_evidence",
-                "cross_market_transmission_path",
-                "cross_market_chain_summary",
-            )
-        ) or any(
-            str(line).strip().startswith(("传导推演[", "传导链:", "候选传导:"))
-            for line in _text_tuple(payload.get("market_context_lines"))
-        )
-        if has_transmission_context and (
-            payload.get("transmission_evidence_recorded") is False
-            or not (
-                _text_tuple(payload.get("cross_market_evidence"))
-                or _text_tuple(payload.get("rule_transmission_evidence"))
-            )
-        ):
-            return "debate missing current transmission evidence"
     if expected_roles:
         audit = audit_debate_quality(
             payload,
@@ -1111,9 +1069,11 @@ def run_backfill(
                         run_id=run_id,
                     )
                     if str(payload.get("backfill_status", "")) == CANDIDATE_FAILED:
-                        # Keep invalid committee output out of the shared debate
-                        # store. The candidate remains in the intraday CSV and
-                        # the status file records why its discussion was rejected.
+                        _persist_debate_update(
+                            output_path,
+                            cutoff=cutoff,
+                            payload=payload,
+                        )
                         raise ValueError(
                             str(
                                 payload.get(

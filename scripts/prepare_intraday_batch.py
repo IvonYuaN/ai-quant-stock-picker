@@ -27,7 +27,7 @@ def main() -> int:
     parser.add_argument(
         "--batch-size",
         type=int,
-        default=int(os.getenv("AQSP_INTRADAY_BATCH_SIZE", "64")),
+        default=int(os.getenv("AQSP_INTRADAY_BATCH_SIZE", "128")),
     )
     parser.add_argument(
         "--min-avg-amount",

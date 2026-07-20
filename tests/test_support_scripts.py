@@ -52,7 +52,6 @@ def test_backfill_intraday_debate_writes_current_task_records(
         "cross_market_summaries",
         "cross_market_evidence_stack_summary",
         "news_catalyst_lead",
-        "news_catalyst_supporting_evidence",
     ]
     with input_csv.open("w", encoding="utf-8", newline="") as file:
         writer = csv.DictWriter(file, fieldnames=fieldnames)
@@ -88,7 +87,6 @@ def test_backfill_intraday_debate_writes_current_task_records(
                 "cross_market_summaries": "传导推演[海外AI算力映射]: 英伟达走强传导A股算力链",
                 "cross_market_evidence_stack_summary": "同向 2 条｜反向 0 条",
                 "news_catalyst_lead": "603019 中科曙光 偏多｜AI算力｜海外龙头上行",
-                "news_catalyst_supporting_evidence": "海外龙头上行被来源正文确认",
             }
         )
     output_path.write_text(
@@ -155,17 +153,8 @@ def test_backfill_intraday_debate_writes_current_task_records(
     )
 
     class _Coordinator:
-        def run_debate(
-            self,
-            pick,
-            df,
-            signal_date,
-            *,
-            market_context_lines=(),
-            task_id=None,
-        ):
+        def run_debate(self, pick, df, signal_date, *, market_context_lines=()):
             captured["debate_context"] = tuple(market_context_lines)
-            captured["task_id"] = task_id
             return SimpleNamespace(
                 debate_id="debate-1",
                 symbol=pick.symbol,
@@ -204,12 +193,8 @@ def test_backfill_intraday_debate_writes_current_task_records(
             "risk_warnings": ["高开低走则失效"],
             "next_trigger": "确认板块承接",
             "falsifiable_conditions": ["高开低走则失效"],
-                "advisory_only": True,
-                "message_evidence_recorded": True,
-                "real_message_evidence": ["海外龙头上行被来源正文确认"],
-                "transmission_evidence_recorded": True,
-                "cross_market_evidence": ["英伟达走强传导A股算力链"],
-                "deterministic_score": result.original_score,
+            "advisory_only": True,
+            "deterministic_score": result.original_score,
             "deterministic_score_unchanged": True,
             "rounds": [
                 {

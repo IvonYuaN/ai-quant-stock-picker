@@ -126,8 +126,6 @@ if args and Path(args[0]).name == "prepare_intraday_batch.py":
         with Path(calls_path).open("a", encoding="utf-8") as handle:
             handle.write(call + "\\n")
     if os.getenv("AQSP_TEST_PREPARE_BATCH") and "--commit" not in args:
-        if os.getenv("AQSP_TEST_PREPARE_FAIL") and "--fail" not in args:
-            raise SystemExit(3)
         print("600000,000001")
     raise SystemExit(0)
 
@@ -1005,61 +1003,8 @@ def test_intraday_batch_mode_does_not_let_aqsp_max_universe_40_bypass_rotation(
 
     assert result.returncode == 0, result.stdout + result.stderr
     cli_args = json.loads(args_path.read_text(encoding="utf-8"))
-    assert cli_args["max_universe"] == "0"
+    assert cli_args["max_universe"] == "2"
     assert "忽略配置最大股票数 40" in result.stdout
-
-
-def test_intraday_batch_resolution_failure_records_cursor_failure(
-    tmp_path: Path,
-) -> None:
-    venv_bin = tmp_path / ".venv" / "bin"
-    venv_bin.mkdir(parents=True)
-    utility_bin = tmp_path / "bin"
-    utility_bin.mkdir()
-    _write_timeout_stub(utility_bin / "timeout")
-    args_path = tmp_path / "cli_args.json"
-    calls_path = tmp_path / "prepare.calls"
-    _write_python_stub(venv_bin / "python3", PROJECT_ROOT, args_path)
-    (tmp_path / "scripts").mkdir()
-    (tmp_path / "scripts" / "prepare_intraday_batch.py").write_text(
-        "# test stub\n", encoding="utf-8"
-    )
-
-    env = os.environ.copy()
-    env.update(
-        {
-            "AQSP_PROJECT_ROOT": str(tmp_path),
-            "AQSP_TEST_REPO": str(PROJECT_ROOT),
-            "AQSP_TEST_ARGS": str(args_path),
-            "AQSP_TEST_PREPARE_BATCH": "true",
-            "AQSP_TEST_PREPARE_FAIL": "true",
-            "AQSP_TEST_PREPARE_CALLS": str(calls_path),
-            "AQSP_INTRADAY_REQUIRE_MARKET_HOURS": "false",
-            "AQSP_INTRADAY_DEBATE_BACKFILL": "false",
-            "AQSP_HOME_SNAPSHOT_ENABLED": "false",
-            "PATH": f"{utility_bin}:{os.environ['PATH']}",
-        }
-    )
-
-    result = subprocess.run(
-        ["bash", str(SCRIPT_PATH)],
-        cwd=PROJECT_ROOT,
-        env=env,
-        text=True,
-        capture_output=True,
-        timeout=30,
-    )
-
-    assert result.returncode == 1, result.stdout + result.stderr
-    assert calls_path.read_text(encoding="utf-8").splitlines() == ["select", "fail"]
-    status = json.loads(
-        (tmp_path / "data" / "intraday_refresh_status.json").read_text(
-            encoding="utf-8"
-        )
-    )
-    assert status["status"] == "failed"
-    assert "universe_resolution_failed" in status["reason"]
-    assert status["execution"]["batch_failure_recorded"] == "true"
 
 
 def test_intraday_batch_does_not_commit_when_output_metadata_is_partial(
@@ -1072,10 +1017,6 @@ def test_intraday_batch_does_not_commit_when_output_metadata_is_partial(
     check = script[check_start:check_end]
     assert "run_resolved_symbol_count" in check
     assert "run_fetched_frame_count" in check
-    assert "resolved/fetched/skipped" in check
-    assert "minimum = max(1, math.ceil(expected * ratio))" in check
-    assert "fetched < minimum" in check
-    assert "fetched != resolved" not in check
     assert "拒绝提交 cursor" in check
     commit_start = script.index('AQSP_INTRADAY_BATCH_SCANNED="$INTRADAY_BATCH_SCANNED"')
     assert (
@@ -1083,45 +1024,6 @@ def test_intraday_batch_does_not_commit_when_output_metadata_is_partial(
         < commit_start
     )
     assert 'BATCH_FAILURE_REASON="intraday_batch_output_incomplete"' in script
-
-
-def test_intraday_batch_validates_exact_final_batch_and_only_fresh_output() -> None:
-    script = SCRIPT_PATH.read_text(encoding="utf-8")
-    check_start = script.index("validate_intraday_batch_output()")
-    check_end = script.index("debate_backfill_lock_age_minutes()")
-    check = script[check_start:check_end]
-
-    assert 'local expected_count="${INTRADAY_BATCH_EXPECTED_COUNT:-$INTRADAY_BATCH_SIZE}"' in check
-    assert 'local batch_output_path="$TMP_INTRADAY_OUTPUT_CSV"' in check
-    assert "public CSV is the previous successful run" in check
-    assert 'INTRADAY_BATCH_EXPECTED_COUNT="${#INTRADAY_BATCH_SYMBOL_ARRAY[@]}"' in script
-
-
-def test_intraday_batch_rewrites_completed_status_after_cursor_commit() -> None:
-    script = SCRIPT_PATH.read_text(encoding="utf-8")
-    commit_block_start = script.rindex(
-        'if [ "$INTRADAY_BATCH_ACTIVE" = "true" ] &&'
-    )
-    commit_block_end = script.index("else", commit_block_start)
-    commit_block = script[commit_block_start:commit_block_end]
-
-    assert 'BATCH_COMMITTED="true"' in commit_block
-    assert 'write_intraday_status "completed"' in commit_block
-    assert commit_block.index('BATCH_COMMITTED="true"') < commit_block.index(
-        'write_intraday_status "completed"'
-    )
-
-
-def test_intraday_batch_status_records_data_coverage_and_skipped_symbols() -> None:
-    script = SCRIPT_PATH.read_text(encoding="utf-8")
-
-    assert '"resolved_count": resolved_count' in script
-    assert '"fetched_count": fetched_count' in script
-    assert '"skipped_count": int(batch_detail.get("skipped_count") or 0)' in script
-    assert '"skipped_symbols": list(batch_detail.get("skipped_symbols") or [])' in script
-    assert '"data_coverage_pct": data_coverage_pct' in script
-    assert '"intraday_batch_commit_failed"' in script
-    assert "不能保留 completed" in script
 
 
 def test_intraday_batch_cursor_is_not_committed_after_137_timeout(

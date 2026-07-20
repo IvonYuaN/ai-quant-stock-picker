@@ -7,7 +7,6 @@
 set -euo pipefail
 
 PROJECT_ROOT="${AQSP_PROJECT_ROOT:-/opt/aqsp}"
-RUNTIME_ROOT="${AQSP_RUNTIME_ROOT:-$PROJECT_ROOT}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RUNTIME_PYTHON_HELPER="${PROJECT_ROOT}/scripts/runtime_python.sh"
 if [ ! -f "$RUNTIME_PYTHON_HELPER" ] && [ -f "${SCRIPT_DIR}/runtime_python.sh" ]; then
@@ -23,9 +22,9 @@ VENV_DIR="${AQSP_INTRADAY_VENV_DIR:-${AQSP_RUNTIME_VENV_DIR:-${AQSP_VIBE_VENV_DI
 PYTHON_BIN="$(aqsp_runtime_python "$PROJECT_ROOT")"
 INITIAL_PROJECT_ROOT="$PROJECT_ROOT"
 INITIAL_VENV_DIR="$VENV_DIR"
-LOG_DIR="${RUNTIME_ROOT}/logs/intraday"
-RESULT_LOG="${RUNTIME_ROOT}/logs/intraday/intraday-$(date +%Y-%m-%d).log"
-LOCK_DIR="${RUNTIME_ROOT}/.locks/intraday-refresh.lock"
+LOG_DIR="${PROJECT_ROOT}/logs/intraday"
+RESULT_LOG="${LOG_DIR}/intraday-$(date +%Y-%m-%d).log"
+LOCK_DIR="${PROJECT_ROOT}/.locks/intraday-refresh.lock"
 LOCK_INFO_FILE="${LOCK_DIR}/meta.env"
 LOCK_STALE_MINUTES="${AQSP_INTRADAY_LOCK_STALE_MINUTES:-30}"
 
@@ -42,7 +41,7 @@ is_truthy() {
 resolve_path() {
     case "$1" in
         /*) printf '%s\n' "$1" ;;
-        *) printf '%s/%s\n' "$RUNTIME_ROOT" "$1" ;;
+        *) printf '%s/%s\n' "$PROJECT_ROOT" "$1" ;;
     esac
 }
 
@@ -75,7 +74,7 @@ lock_is_stale() {
     [ "$age_minutes" -ge "$LOCK_STALE_MINUTES" ]
 }
 
-mkdir -p "$LOG_DIR" "${RUNTIME_ROOT}/.locks"
+mkdir -p "$LOG_DIR" "${PROJECT_ROOT}/.locks"
 
 if [ -d "$LOCK_DIR" ] && lock_is_stale; then
     stale_age="$(lock_age_minutes "$LOCK_DIR")"
@@ -110,11 +109,6 @@ if [ -f "${PROJECT_ROOT}/.env" ]; then
     # Runtime paths are resolved before loading project secrets/config. A .env
     # file must not silently redirect an explicit release to another worktree.
     PROJECT_ROOT="$INITIAL_PROJECT_ROOT"
-    RUNTIME_ROOT="${AQSP_RUNTIME_ROOT:-$PROJECT_ROOT}"
-    LOG_DIR="${RUNTIME_ROOT}/logs/intraday"
-    RESULT_LOG="${LOG_DIR}/intraday-$(date +%Y-%m-%d).log"
-    LOCK_DIR="${RUNTIME_ROOT}/.locks/intraday-refresh.lock"
-    LOCK_INFO_FILE="${LOCK_DIR}/meta.env"
     VENV_DIR="$INITIAL_VENV_DIR"
     PYTHON_BIN="$(aqsp_runtime_python "$PROJECT_ROOT")"
     log "已加载 .env 配置"
@@ -266,7 +260,6 @@ INTRADAY_BATCH_SYMBOLS=""
 INTRADAY_BATCH_ID=""
 INTRADAY_BATCH_UNIVERSE_COUNT="0"
 INTRADAY_BATCH_COVERAGE_PCT="0"
-INTRADAY_BATCH_EXPECTED_COUNT="0"
 BATCH_COMMITTED="false"
 INTRADAY_NEWS_TASK_TIMEOUT_SECONDS="${AQSP_INTRADAY_NEWS_TASK_TIMEOUT_SECONDS:-20}"
 # The configured RSS set needs up to roughly five seconds on the production
@@ -309,13 +302,12 @@ mkdir -p \
     "$(dirname "$REALTIME_CROSS_MARKET_PATH")" \
     "$(dirname "$DEBATE_RESULTS")"
 
-TMP_ROOT="${RUNTIME_ROOT}/.tmp"
+TMP_ROOT="${PROJECT_ROOT}/.tmp"
 mkdir -p "$TMP_ROOT"
 TMP_DIR="$(mktemp -d "${TMP_ROOT}/intraday-refresh.XXXXXX")"
 TMP_INTRADAY_LEDGER="${TMP_DIR}/intraday_predictions.jsonl"
 TMP_INTRADAY_REPORT="${TMP_DIR}/intraday_latest.md"
 TMP_INTRADAY_OUTPUT_CSV="${TMP_DIR}/intraday_latest.csv"
-TMP_INTRADAY_BATCH_DETAIL="${TMP_DIR}/intraday_batch_detail.json"
 QUALITY_GATE_SUMMARY="${TMP_DIR}/quality_gate.json"
 BATCH_FAILURE_RECORDED="false"
 
@@ -330,16 +322,7 @@ replace_intraday_artifact() {
     local dest="$2"
     local label="$3"
     if [ -f "$src" ]; then
-        # Keep the run-local artifact alive until cursor validation finishes.
-        # Publish through a same-filesystem temp destination so readers never
-        # observe a partial copy, while validation cannot fall back to an old
-        # public artifact.
-        local publish_tmp="${dest}.publish.$$"
-        if ! cp -f -- "$src" "$publish_tmp" || ! mv -f -- "$publish_tmp" "$dest"; then
-            rm -f -- "$publish_tmp"
-            log "[ERROR] 发布${label}失败: ${dest}"
-            return 1
-        fi
+        mv -f "$src" "$dest"
         log "已更新${label}: ${dest}"
     else
         log "未生成${label}，保留上一版: ${dest}"
@@ -347,37 +330,23 @@ replace_intraday_artifact() {
 }
 
 validate_intraday_batch_output() {
-    # The final cursor batch may be shorter than the configured batch size.
-    # Validate the exact symbols selected for this run, never the nominal size.
-    local expected_count="${INTRADAY_BATCH_EXPECTED_COUNT:-$INTRADAY_BATCH_SIZE}"
-    # Isolate invalid symbols while preserving the batch; the next full cycle
-    # will revisit them without allowing one bad code to stall the universe.
-    local min_valid_ratio="${AQSP_INTRADAY_MIN_VALID_RATIO:-0.8}"
+    local expected_count="$INTRADAY_BATCH_SIZE"
     local scanned_count
-    # The public CSV is the previous successful run until promotion. Reading it
-    # here could validate stale symbols and advance the cursor without validating
-    # the current batch.
-    local batch_output_path="$TMP_INTRADAY_OUTPUT_CSV"
+    local batch_output_path="$INTRADAY_OUTPUT_CSV"
+    if [ ! -f "$batch_output_path" ] && [ -f "$TMP_INTRADAY_OUTPUT_CSV" ]; then
+        batch_output_path="$TMP_INTRADAY_OUTPUT_CSV"
+    fi
     if [ ! -f "$batch_output_path" ]; then
         log "[ERROR] 盘中批次产物缺少 CSV，拒绝提交 cursor"
         return 1
     fi
-    if ! scanned_count="$("$PYTHON_BIN" - "$batch_output_path" "$expected_count" "$min_valid_ratio" "$TMP_INTRADAY_BATCH_DETAIL" <<'AQSP_INTRADAY_BATCH_OUTPUT_CHECK'
+    if ! scanned_count="$("$PYTHON_BIN" - "$batch_output_path" "$expected_count" <<'AQSP_INTRADAY_BATCH_OUTPUT_CHECK'
 import csv
-import json
-import math
 import sys
 from pathlib import Path
 
 path = Path(sys.argv[1])
 expected = int(sys.argv[2])
-try:
-    ratio = float(sys.argv[3])
-except ValueError:
-    ratio = 0.8
-ratio = min(max(ratio, 0.0), 1.0)
-minimum = max(1, math.ceil(expected * ratio))
-detail_path = Path(sys.argv[4])
 with path.open("r", encoding="utf-8", newline="") as handle:
     rows = list(csv.DictReader(handle))
 run_rows = [row for row in rows if str(row.get("symbol") or "").strip() == "__RUN__"]
@@ -389,30 +358,10 @@ try:
     fetched = int(float(str(run.get("run_fetched_frame_count") or "")))
 except ValueError as exc:
     raise SystemExit("盘中批次 CSV 缺少有效解析/取数数量") from exc
-detail = {}
-if detail_path.is_file():
-    try:
-        detail = json.loads(detail_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise SystemExit("盘中批次缺少可读取的 resolved/fetched/skipped 明细") from exc
-if detail:
-    detail_resolved = int(detail.get("resolved_count", -1))
-    detail_fetched = int(detail.get("fetched_count", -1))
-    detail_skipped = int(detail.get("skipped_count", -1))
-    if (detail_resolved, detail_fetched, detail_skipped) != (
-        resolved,
-        fetched,
-        resolved - fetched,
-    ):
-        raise SystemExit("盘中批次 resolved/fetched/skipped 明细与 CSV 不一致")
-else:
-    detail_skipped = resolved - fetched
 if resolved != expected:
     raise SystemExit(f"盘中批次解析数量不完整: {resolved}/{expected}")
-if fetched < minimum:
-    raise SystemExit(
-        f"盘中批次有效取数低于最低覆盖: resolved={resolved} fetched={fetched} skipped={detail_skipped} 最低={minimum}"
-    )
+if fetched < resolved:
+    raise SystemExit(f"盘中批次取数数量不完整: {fetched}/{resolved}")
 print(resolved)
 AQSP_INTRADAY_BATCH_OUTPUT_CHECK
     )"; then
@@ -507,7 +456,6 @@ launch_intraday_debate_backfill() {
         --output "$DEBATE_RESULTS"
         --task-id "${AQSP_RUN_TASK_ID}"
         --max-candidates "$max_candidates"
-        --include-observation-only
         "${force_arg[@]}"
     )
     # The scheduler owns the runner process. A detached child can be reaped
@@ -1281,7 +1229,6 @@ write_intraday_status() {
     INTRADAY_STATUS_RESOURCE_KILLED="${RESOURCE_KILLED:-false}" \
     INTRADAY_STATUS_EXIT_CLASS="${RUN_EXIT_CLASS:-unknown}" \
     INTRADAY_STATUS_BATCH_FAILURE_RECORDED="${BATCH_FAILURE_RECORDED:-false}" \
-    INTRADAY_STATUS_BATCH_DETAIL="$TMP_INTRADAY_BATCH_DETAIL" \
     INTRADAY_STATUS_RUNNER_TIMEOUT="$INTRADAY_RUN_TIMEOUT_SECONDS" \
     "$PYTHON_BIN" - <<'AQSP_INTRADAY_STATUS_PY'
 import csv
@@ -1318,8 +1265,6 @@ try:
                         "run_fallback_used",
                         "run_data_latest_trade_date",
                         "run_data_lag_days",
-                        "run_resolved_symbol_count",
-                        "run_fetched_frame_count",
                         "run_no_candidate_reason",
                     )
                 }
@@ -1367,41 +1312,6 @@ universe = {
 if not universe["batch_id"]:
     universe["batch_id"] = str(cursor_state.get("active_batch_id") or cursor_state.get("last_batch_id") or "")
 
-batch_detail: dict[str, object] = {}
-try:
-    detail_path = Path(os.environ["INTRADAY_STATUS_BATCH_DETAIL"])
-    detail_payload = json.loads(detail_path.read_text(encoding="utf-8"))
-    if isinstance(detail_payload, dict):
-        batch_detail = detail_payload
-except (OSError, json.JSONDecodeError):
-    batch_detail = {}
-if not batch_detail:
-    try:
-        resolved_fallback = int(runtime_metadata.get("run_resolved_symbol_count", "0") or "0")
-        fetched_fallback = int(runtime_metadata.get("run_fetched_frame_count", "0") or "0")
-        batch_detail = {
-            "resolved_count": resolved_fallback,
-            "fetched_count": fetched_fallback,
-            "skipped_count": max(0, resolved_fallback - fetched_fallback),
-            "skipped_symbols": [],
-        }
-    except (TypeError, ValueError):
-        batch_detail = {}
-resolved_count = int(batch_detail.get("resolved_count") or 0)
-fetched_count = int(batch_detail.get("fetched_count") or 0)
-data_coverage_pct = (
-    round(fetched_count / resolved_count, 6) if resolved_count > 0 else 0.0
-)
-universe.update(
-    {
-        "resolved_count": resolved_count,
-        "fetched_count": fetched_count,
-        "skipped_count": int(batch_detail.get("skipped_count") or 0),
-        "skipped_symbols": list(batch_detail.get("skipped_symbols") or []),
-        "data_coverage_pct": data_coverage_pct,
-    }
-)
-
 payload = {
     "status": os.environ["INTRADAY_STATUS_VALUE"],
     "task_id": os.environ["INTRADAY_STATUS_TASK_ID"],
@@ -1423,7 +1333,6 @@ payload = {
     "benchmark_symbol": os.environ["INTRADAY_STATUS_BENCHMARK"],
     "max_universe": int(os.environ["INTRADAY_STATUS_MAX_UNIVERSE"] or "0"),
     "universe": universe,
-    "data_coverage_pct": data_coverage_pct,
     "ledger_path": os.environ["INTRADAY_STATUS_LEDGER"],
     "report_path": os.environ["INTRADAY_STATUS_REPORT"],
     "csv_path": os.environ["INTRADAY_STATUS_CSV"],
@@ -1634,11 +1543,6 @@ if is_truthy "$INTRADAY_BATCH_SCAN" && \
    [ -f "${PROJECT_ROOT}/scripts/prepare_intraday_batch.py" ] && \
    [ -z "${AQSP_SYMBOLS:-}" ] && \
    [ "$INTRADAY_MAX_UNIVERSE" = "0" ]; then
-    # Mark the batch as active before resolution. The resolver writes the active
-    # cursor before returning symbols; if source resolution then fails, cleanup
-    # must still record a failure instead of leaving an unclassified active batch.
-    INTRADAY_BATCH_ACTIVE="true"
-    BATCH_FAILURE_REASON="universe_resolution_failed"
     if ! INTRADAY_BATCH_SYMBOLS="$(${PYTHON_BIN} "${PROJECT_ROOT}/scripts/prepare_intraday_batch.py" \
         --source "$INTRADAY_SOURCE" \
         --batch-size "$INTRADAY_BATCH_SIZE" \
@@ -1652,16 +1556,8 @@ if is_truthy "$INTRADAY_BATCH_SCAN" && \
         log "[ERROR] 盘中股票批次为空；不运行重策略"
         exit 1
     fi
-    IFS=',' read -r -a INTRADAY_BATCH_SYMBOL_ARRAY <<< "$INTRADAY_BATCH_SYMBOLS"
-    INTRADAY_BATCH_EXPECTED_COUNT="${#INTRADAY_BATCH_SYMBOL_ARRAY[@]}"
-    if [ "$INTRADAY_BATCH_EXPECTED_COUNT" -le 0 ]; then
-        log "[ERROR] 盘中股票批次没有可计数标的；不运行重策略"
-        exit 1
-    fi
     INTRADAY_BATCH_ACTIVE="true"
-    # The cursor already bounds this run. Keep CLI max-universe at zero so the
-    # batch size cannot be mistaken for a global universe cap in run metadata.
-    INTRADAY_MAX_UNIVERSE="0"
+    INTRADAY_MAX_UNIVERSE="$INTRADAY_BATCH_SIZE"
     export AQSP_SYMBOLS="$INTRADAY_BATCH_SYMBOLS"
     log "盘中批次已准备: ${INTRADAY_BATCH_SYMBOLS}"
 fi
@@ -1686,7 +1582,6 @@ set +e
 # cannot corrupt the previous public CSV/report.
 export AQSP_PROVISIONAL_REPORT="${TMP_INTRADAY_REPORT}"
 export AQSP_PROVISIONAL_OUTPUT_CSV="${TMP_INTRADAY_OUTPUT_CSV}"
-export AQSP_INTRADAY_SKIP_DETAIL_PATH="${TMP_INTRADAY_BATCH_DETAIL}"
 RUN_COMMAND_START_TIME=$(date +%s)
 RUN_CMD=(
     # Without --foreground, GNU timeout owns the command process group and
@@ -1886,21 +1781,11 @@ if [ "$INTRADAY_BATCH_ACTIVE" = "true" ] && \
    [ "$PARTIAL_SNAPSHOT_USED" != "true" ] && \
    [ "${SCRIPT_EXIT_CODE:-0}" -eq 0 ]; then
     if validate_intraday_batch_output; then
-        if AQSP_INTRADAY_BATCH_SCANNED="$INTRADAY_BATCH_SCANNED" \
+        AQSP_INTRADAY_BATCH_SCANNED="$INTRADAY_BATCH_SCANNED" \
             "$PYTHON_BIN" "${PROJECT_ROOT}/scripts/prepare_intraday_batch.py" \
-            --cursor "$INTRADAY_CURSOR_PATH" --commit; then
-            BATCH_COMMITTED="true"
-            log "盘中批次已提交，下一轮继续覆盖剩余股票池"
-            # Cursor commit happens after the normal completion status write.
-            # Rewrite the final status so coverage and last_successful_batch_id
-            # describe this run rather than the pre-commit cursor snapshot.
-            write_intraday_status "completed" "盘中刷新完成；批次 cursor 已提交，候选与消息面已更新" "$SCRIPT_EXIT_CODE"
-        else
-            BATCH_FAILURE_REASON="intraday_batch_commit_failed"
-            SCRIPT_EXIT_CODE="1"
-            write_intraday_status "partial_failed" "盘中批次 cursor 提交失败，不能保留 completed" "1"
-            log "[ERROR] 盘中批次 cursor 提交失败，状态已覆盖为 partial_failed"
-        fi
+            --cursor "$INTRADAY_CURSOR_PATH" --commit
+        BATCH_COMMITTED="true"
+        log "盘中批次已提交，下一轮继续覆盖剩余股票池"
     else
         BATCH_FAILURE_REASON="intraday_batch_output_incomplete"
         SCRIPT_EXIT_CODE="1"
