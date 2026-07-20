@@ -709,7 +709,12 @@ class AShareDebateAgent:
                 or (bias20 is not None and bias20 >= 8.0)
             ):
                 return "bearish"
-            return "bearish" if pick.score < 50 else "neutral"
+            # A populated short-term evidence set gives the bear role a real
+            # falsifiable counter-thesis. Missing metrics remain neutral rather
+            # than manufacturing an opposition vote.
+            return "bearish" if pick.score < 50 or any(
+                value is not None for value in (ret5, ret20, bias20, rsi12)
+            ) else "neutral"
         elif self.role == AgentRole.RISK_CONTROL:
             # 风控更保守
             if _is_st_risk_pick(pick) or _pick_actionable_risk_items(pick):
