@@ -1745,6 +1745,28 @@ elif ! is_truthy "$PARTIAL_SNAPSHOT_USED"; then
     write_intraday_status "completed" "盘中刷新完成；保护状态仅提示，不重写候选队列" "$RUN_EXIT_CODE"
 fi
 
+# Cursor advancement depends only on the fresh quote batch. News and debate
+# are advisory sidecars and must not turn a successfully scanned batch into a
+# failed cursor state.
+if [ "$INTRADAY_BATCH_ACTIVE" = "true" ] && \
+   [ "$RUN_EXIT_CODE" -eq 0 ] && \
+   [ "$QUALITY_GATE_EXIT_CODE" -eq 0 ] && \
+   [ "$OBSERVATION_ONLY" != "true" ] && \
+   [ "$PARTIAL_SNAPSHOT_USED" != "true" ] && \
+   [ "${SCRIPT_EXIT_CODE:-0}" -eq 0 ]; then
+    if validate_intraday_batch_output; then
+        AQSP_INTRADAY_BATCH_SCANNED="$INTRADAY_BATCH_SCANNED" \
+            "$PYTHON_BIN" "${PROJECT_ROOT}/scripts/prepare_intraday_batch.py" \
+            --cursor "$INTRADAY_CURSOR_PATH" --commit
+        BATCH_COMMITTED="true"
+        log "盘中批次已提交；消息与讨论 sidecar 不影响 cursor 推进"
+    else
+        BATCH_FAILURE_REASON="intraday_batch_output_incomplete"
+        SCRIPT_EXIT_CODE="1"
+        write_intraday_status "partial_failed" "盘中批次产物覆盖不完整，cursor 未推进" "$SCRIPT_EXIT_CODE"
+    fi
+fi
+
 # Publish fresh candidates before the slower news/debate sidecars. The final
 # refresh below merges those advisory layers without delaying the live board.
 if refresh_home_dashboard_snapshot; then
@@ -1784,6 +1806,7 @@ if ! refresh_home_dashboard_snapshot; then
 fi
 
 if [ "$INTRADAY_BATCH_ACTIVE" = "true" ] && \
+   [ "$BATCH_COMMITTED" != "true" ] && \
    [ "$RUN_EXIT_CODE" -eq 0 ] && \
    [ "$QUALITY_GATE_EXIT_CODE" -eq 0 ] && \
    [ "$OBSERVATION_ONLY" != "true" ] && \
