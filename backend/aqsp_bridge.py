@@ -859,17 +859,20 @@ def _parse_variant(payload: object) -> AQSPVariant:
     item = _object(payload, "variant")
     _check_keys(
         item,
-        {"variant_id", "label", "initial_cash", "cash", "final_equity", "total_pnl", "return_pct", "filled_orders", "rejected_orders", "start_date", "end_date", "data_mode"},
+        {"variant_id", "label", "initial_cash", "final_equity", "return_pct", "filled_orders", "rejected_orders", "start_date", "end_date", "data_mode"},
         "variant",
-        {"hard_rules"},
+        {"cash", "total_pnl", "rank", "strategy", "holdings", "hard_rules"},
     )
     variant = AQSPVariant(
         variant_id=_text(item["variant_id"], "variant.variant_id"),
         label=_text(item["label"], "variant.label"),
         initial_cash=_number(item["initial_cash"], "variant.initial_cash"),
-        cash=_number(item["cash"], "variant.cash"),
+        cash=_number(item.get("cash", item["initial_cash"]), "variant.cash"),
         final_equity=_number(item["final_equity"], "variant.final_equity"),
-        total_pnl=_number(item["total_pnl"], "variant.total_pnl"),
+        total_pnl=_number(
+            item.get("total_pnl", float(item["final_equity"]) - float(item["initial_cash"])),
+            "variant.total_pnl",
+        ),
         return_pct=_number(item["return_pct"], "variant.return_pct"),
         filled_orders=_integer(item["filled_orders"], "variant.filled_orders"),
         rejected_orders=_integer(item["rejected_orders"], "variant.rejected_orders"),
