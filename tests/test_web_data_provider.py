@@ -1033,6 +1033,12 @@ def test_dashboard_data_provider_returns_debate_summary_for_symbol_and_day(
                         "adjustment_reason": "多头略占优",
                         "risk_warnings": ["高位波动放大"],
                         "opportunity_highlights": ["主线延续"],
+                        "viewpoint_buckets": {
+                            "bullish": ["量价仍在主升段"],
+                            "risk_counterevidence": ["追高回撤风险"],
+                        },
+                        "disagreement_points": ["是否属于板块共振"],
+                        "uncertainty_points": ["次日成交质量未确认"],
                         "final_vote": {
                             "bull": "bullish",
                             "risk_control": "neutral",
@@ -1110,6 +1116,9 @@ def test_dashboard_data_provider_returns_debate_summary_for_symbol_and_day(
     )
     assert summary.agent_views[0].role_label in {"技术多头", "风控"}
     assert summary.risk_warnings == ("高位波动放大",)
+    assert summary.viewpoint_buckets["bullish"] == ("量价仍在主升段",)
+    assert summary.disagreement_points == ("是否属于板块共振",)
+    assert summary.uncertainty_points == ("次日成交质量未确认",)
 
     summaries = provider.debate_summaries("2026-06-05")
     assert [item.symbol for item in summaries] == ["600519", "002594"]

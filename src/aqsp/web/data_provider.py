@@ -7,7 +7,7 @@ import logging
 import math
 import os
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field as dataclass_field
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable
@@ -506,6 +506,9 @@ class DashboardDebateSummary:
     support_points: tuple[str, ...] = ()
     opposition_points: tuple[str, ...] = ()
     watch_items: tuple[str, ...] = ()
+    viewpoint_buckets: dict[str, tuple[str, ...]] = dataclass_field(default_factory=dict)
+    disagreement_points: tuple[str, ...] = ()
+    uncertainty_points: tuple[str, ...] = ()
     created_at: str = ""
     candidate_fingerprint: str = ""
 
@@ -6089,6 +6092,13 @@ class DashboardDataProvider:
             support_points=support_points,
             opposition_points=opposition_points,
             watch_items=watch_items,
+            viewpoint_buckets={
+                str(bucket): self._as_text_tuple(points)
+                for bucket, points in (row.get("viewpoint_buckets") or {}).items()
+                if str(bucket).strip()
+            },
+            disagreement_points=self._as_text_tuple(row.get("disagreement_points")),
+            uncertainty_points=self._as_text_tuple(row.get("uncertainty_points")),
             created_at=str(row.get("created_at", "") or "").strip(),
             candidate_fingerprint=str(
                 self._candidate_fingerprint_for_row(row) or ""
