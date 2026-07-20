@@ -825,6 +825,36 @@ def test_live_short_drops_upstream_stale_daily_frames_before_coverage_gate(
     assert failures == []
 
 
+def test_live_short_drops_future_daily_frames_before_coverage_gate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class DummySource:
+        name = "eastmoney"
+
+    monkeypatch.setenv("AQSP_RUN_TASK_ID", "intraday")
+    failures: list[tuple[str, str]] = []
+    with pytest.raises(DataError, match="盘中批次有效日线低于最低覆盖"):
+        fetch_frames_for_cli_with_metadata(
+            "eastmoney",
+            ["600000"],
+            benchmark_symbol=None,
+            end_date=date(2026, 7, 20),
+            workload="live_short",
+            get_source_fn=lambda _name, *, cache=None: DummySource(),
+            fetch_with_source_fn=lambda *_args, **_kwargs: {
+                "600000": pd.DataFrame([{"date": "2026-07-21", "close": 10.0}])
+            },
+            record_source_success_fn=lambda *_args: pytest.fail(
+                "future live_short frame must not be recorded as success"
+            ),
+            record_source_failure_fn=lambda requested, reason: failures.append(
+                (requested, reason)
+            ),
+        )
+
+    assert failures and failures[0][0] == "eastmoney"
+
+
 def test_intraday_live_short_records_resolved_fetched_and_skipped_symbols(
     tmp_path: Path, monkeypatch,
 ) -> None:

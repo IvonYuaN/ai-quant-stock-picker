@@ -1003,7 +1003,7 @@ def test_intraday_batch_mode_does_not_let_aqsp_max_universe_40_bypass_rotation(
 
     assert result.returncode == 0, result.stdout + result.stderr
     cli_args = json.loads(args_path.read_text(encoding="utf-8"))
-    assert cli_args["max_universe"] == "2"
+    assert cli_args["max_universe"] == "0"
     assert "忽略配置最大股票数 40" in result.stdout
 
 
@@ -1019,10 +1019,7 @@ def test_intraday_batch_does_not_commit_when_output_metadata_is_partial(
     assert "run_fetched_frame_count" in check
     assert "拒绝提交 cursor" in check
     commit_start = script.index('AQSP_INTRADAY_BATCH_SCANNED="$INTRADAY_BATCH_SCANNED"')
-    assert (
-        script.index("validate_intraday_batch_output", commit_start - 500)
-        < commit_start
-    )
+    assert script.index('BATCH_OUTPUT_VALIDATED="true"') < commit_start
     assert 'BATCH_FAILURE_REASON="intraday_batch_output_incomplete"' in script
 
 
@@ -1053,8 +1050,10 @@ def test_intraday_batch_cursor_is_independent_of_observation_only_gate() -> None
         )
     ]
 
-    assert '"$RUN_EXIT_CODE" -eq 0' in cursor_section
-    assert '"$PARTIAL_SNAPSHOT_USED" != "true"' in cursor_section
+    assert '"$BATCH_OUTPUT_VALIDATED" = "true"' in cursor_section
+    assert '"$RESOURCE_KILLED" != "true"' in cursor_section
+    assert '"$RUN_EXIT_CODE" -eq 0' not in cursor_section
+    assert '"$PARTIAL_SNAPSHOT_USED" != "true"' not in cursor_section
     assert '"$OBSERVATION_ONLY" != "true"' not in cursor_section
     assert '"$QUALITY_GATE_EXIT_CODE" -eq 0' not in cursor_section
     assert '"${SCRIPT_EXIT_CODE:-0}" -eq 0' not in cursor_section
@@ -1079,7 +1078,20 @@ def test_intraday_debate_backfill_includes_observation_candidates() -> None:
     assert "--include-observation-only" in launch_function
 
 
-def test_intraday_batch_cursor_is_not_committed_after_137_timeout(
+def test_intraday_partial_and_timeout_can_advance_validated_cursor() -> None:
+    script = SCRIPT_PATH.read_text(encoding="utf-8")
+    cursor_section = script[
+        script.index("# Cursor advancement") : script.index(
+            "# Publish fresh candidates"
+        )
+    ]
+
+    assert "partial/timeout" in cursor_section
+    assert 'BATCH_OUTPUT_VALIDATED="true"' in script
+    assert 'local batch_output_path="$TMP_INTRADAY_OUTPUT_CSV"' in script
+
+
+def test_intraday_batch_cursor_commits_validated_137_timeout(
     tmp_path: Path,
 ) -> None:
     venv_bin = tmp_path / ".venv" / "bin"
@@ -1124,8 +1136,8 @@ def test_intraday_batch_cursor_is_not_committed_after_137_timeout(
     assert result.returncode == 137, result.stdout + result.stderr
     calls = calls_path.read_text(encoding="utf-8").splitlines()
     assert calls[0] == "select"
-    assert "fail" in calls
-    assert "commit" not in calls
+    assert "commit" in calls
+    assert "fail" not in calls
 
 
 def test_intraday_runtime_timeout_records_batch_failure_before_status(
@@ -1169,12 +1181,12 @@ def test_intraday_runtime_timeout_records_batch_failure_before_status(
     )
     assert result.returncode == 124, result.stdout + result.stderr
     calls = calls_path.read_text(encoding="utf-8").splitlines()
-    assert calls[:2] == ["select", "fail"]
-    assert "commit" not in calls
+    assert calls[:2] == ["select", "commit"]
+    assert "fail" not in calls
     status = json.loads(
         (tmp_path / "data" / "intraday_refresh_status.json").read_text(encoding="utf-8")
     )
-    assert status["execution"]["batch_failure_recorded"] == "true"
+    assert status["execution"]["batch_failure_recorded"] == "false"
 
 
 def test_intraday_runtime_quality_gate_blocks_unknown_freshness(
