@@ -1749,13 +1749,14 @@ fi
 
 # Cursor advancement depends only on the fresh quote batch. News and debate
 # are advisory sidecars and must not turn a successfully scanned batch into a
-# failed cursor state.
+# failed cursor state.  observation-only is a recommendation/ledger status;
+# it is not evidence that the selected universe was not scanned.
 if [ "$INTRADAY_BATCH_ACTIVE" = "true" ] && \
    [ "$RUN_EXIT_CODE" -eq 0 ] && \
-   [ "$QUALITY_GATE_EXIT_CODE" -eq 0 ] && \
-   [ "$OBSERVATION_ONLY" != "true" ] && \
+   [ "$RUN_TIMED_OUT" != "true" ] && \
+   [ "$RESOURCE_KILLED" != "true" ] && \
    [ "$PARTIAL_SNAPSHOT_USED" != "true" ] && \
-   [ "${SCRIPT_EXIT_CODE:-0}" -eq 0 ]; then
+   [ "$BATCH_COMMITTED" != "true" ]; then
     if validate_intraday_batch_output; then
         AQSP_INTRADAY_BATCH_SCANNED="$INTRADAY_BATCH_SCANNED" \
             "$PYTHON_BIN" "${PROJECT_ROOT}/scripts/prepare_intraday_batch.py" \
@@ -1810,10 +1811,10 @@ fi
 if [ "$INTRADAY_BATCH_ACTIVE" = "true" ] && \
    [ "$BATCH_COMMITTED" != "true" ] && \
    [ "$RUN_EXIT_CODE" -eq 0 ] && \
-   [ "$QUALITY_GATE_EXIT_CODE" -eq 0 ] && \
-   [ "$OBSERVATION_ONLY" != "true" ] && \
+   [ "$RUN_TIMED_OUT" != "true" ] && \
+   [ "$RESOURCE_KILLED" != "true" ] && \
    [ "$PARTIAL_SNAPSHOT_USED" != "true" ] && \
-   [ "${SCRIPT_EXIT_CODE:-0}" -eq 0 ]; then
+   [ "$BATCH_COMMITTED" != "true" ]; then
     if validate_intraday_batch_output; then
         AQSP_INTRADAY_BATCH_SCANNED="$INTRADAY_BATCH_SCANNED" \
             "$PYTHON_BIN" "${PROJECT_ROOT}/scripts/prepare_intraday_batch.py" \
