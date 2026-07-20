@@ -193,6 +193,37 @@ def test_tencent_daily_request_does_not_use_qfq(monkeypatch, tencent_source):
     assert "qfq" not in captured["params"]["param"]
 
 
+def test_tencent_daily_request_uses_market_prefixed_payload_key(
+    monkeypatch, tencent_source
+):
+    captured = {}
+
+    class FakeResponse:
+        def json(self):
+            return {
+                "data": {
+                    "sz000001": {
+                        "day": [["2026-07-20", "10", "10.2", "10.3", "9.9", "100"]]
+                    }
+                }
+            }
+
+    def fake_get(url, params=None, **kwargs):
+        captured["params"] = params
+        return FakeResponse()
+
+    monkeypatch.setattr(tencent_source._session, "get", fake_get)
+    monkeypatch.setattr(tencent_source, "_throttle", lambda: None)
+
+    frame = tencent_source._fetch_tencent_daily(
+        "000001", start=date(2026, 7, 20), end=date(2026, 7, 20)
+    )
+
+    assert frame is not None
+    assert captured["params"]["param"].startswith("sz000001,day,")
+    assert frame["close"].iloc[0] == pytest.approx(10.2)
+
+
 def test_tencent_intraday_reads_market_prefixed_payload_key(monkeypatch):
     class FakeResponse:
         def json(self):

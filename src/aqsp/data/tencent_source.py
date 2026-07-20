@@ -325,8 +325,13 @@ class TencentSource(DataSource):
         for attempt in range(_MAX_RETRIES):
             try:
                 self._throttle()
+                market_symbol = (
+                    symbol
+                    if is_index
+                    else f"{_get_market_prefix(symbol)}{symbol}"
+                )
                 params = {
-                    "param": f"{symbol},day,{start.strftime('%Y-%m-%d')},{end.strftime('%Y-%m-%d')},640",
+                    "param": f"{market_symbol},day,{start.strftime('%Y-%m-%d')},{end.strftime('%Y-%m-%d')},640",
                 }
                 response = self._session.get(
                     TENCENT_KLINE_URL, params=params, timeout=10
@@ -334,7 +339,7 @@ class TencentSource(DataSource):
                 data = response.json()
                 if not data.get("data"):
                     return None
-                stock_data = data["data"].get(symbol, {})
+                stock_data = data["data"].get(market_symbol, {})
                 if not stock_data:
                     return None
                 klines = stock_data.get("day", [])
