@@ -93,12 +93,18 @@ class SinaSource(DataSource):
                 out[symbol] = self._annotate_frame(cached)
                 continue
 
-            df = require_fetched_frame(
-                self.name,
-                "日线",
-                symbol,
-                self._fetch_sina_daily(symbol, start, end),
-            )
+            try:
+                df = require_fetched_frame(
+                    self.name,
+                    "日线",
+                    symbol,
+                    self._fetch_sina_daily(symbol, start, end),
+                )
+            except DataError:
+                if self._cache_workload() != "live_short":
+                    raise
+                _logger.warning("sina 盘中日线跳过无返回标的: %s", symbol)
+                continue
             df = self._normalize_sina_df(df, symbol)
             validated = self._validate_ohlcv(df, symbol)
             self.cache.set_ohlcv(

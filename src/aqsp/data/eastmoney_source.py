@@ -93,12 +93,18 @@ class EastmoneySource(DataSource):
                 )
                 continue
 
-            df = require_fetched_frame(
-                self.name,
-                "日线",
-                symbol,
-                self._fetch_eastmoney_daily(symbol, start, end),
-            )
+            try:
+                df = require_fetched_frame(
+                    self.name,
+                    "日线",
+                    symbol,
+                    self._fetch_eastmoney_daily(symbol, start, end),
+                )
+            except DataError:
+                if self._cache_workload() != "live_short":
+                    raise
+                _logger.warning("eastmoney 盘中日线跳过无返回标的: %s", symbol)
+                continue
             df = self._normalize_eastmoney_df(
                 _normalize_stock_volume_to_shares(df), symbol
             )
