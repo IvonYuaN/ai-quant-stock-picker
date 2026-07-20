@@ -2592,9 +2592,13 @@ def _fetch_special_strategy_frames(
         "covered_symbols": overlay.covered_symbols,
         "missing_symbols": overlay.missing_symbols,
     }
-    for frame in overlay.frames.values():
+    # A failed intraday overlay must not erase a valid live daily batch. Keep
+    # the daily frames, expose the overlay gap, and let the downstream quality
+    # boundary downgrade affected candidates explicitly.
+    output_frames = overlay.frames or frames
+    for frame in output_frames.values():
         frame.attrs["intraday_overlay_coverage"] = coverage
-    return overlay.frames, _intraday_actual_source(overlay.frames, actual_source)
+    return output_frames, _intraday_actual_source(output_frames, actual_source)
 
 
 def _intraday_overlay_coverage(
