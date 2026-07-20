@@ -117,7 +117,11 @@ class EastmoneySource(DataSource):
                 workload=self._cache_workload(),
             )
             out[symbol] = self._annotate_frame(validated)
-        require_non_empty_fetch_result(self.name, "日线", symbols, out)
+        if self._cache_workload() == "live_short":
+            if not out:
+                raise DataError(f"{self.name} 日线获取失败: {symbols}")
+        else:
+            require_non_empty_fetch_result(self.name, "日线", symbols, out)
         return out
 
     def fetch_intraday(
