@@ -22,7 +22,7 @@ def _pick() -> PickResult:
     )
 
 
-def test_circuit_breaker_observation_cannot_be_promoted() -> None:
+def test_circuit_breaker_keeps_research_recommendation_but_blocks_paper_action() -> None:
     observed = _apply_protection_observation_boundary(
         [_pick()], reason="单日组合亏损触发"
     )[0]
@@ -30,7 +30,8 @@ def test_circuit_breaker_observation_cannot_be_promoted() -> None:
     assert observed.metrics["observation_only"] is True
     assert observed.metrics["paper_review_eligible"] is False
     assert observed.metrics["portfolio_action"] == "observation_only"
-    assert observed.metrics["candidate_status"] == "组合保护观察"
+    assert observed.metrics["research_recommendation"] is True
+    assert observed.metrics["candidate_status"] == "实时推荐"
     assert "单日组合亏损触发" in observed.risks[-1]
 
 
