@@ -681,7 +681,7 @@ def load_intraday_picks(
                 or (
                     include_observation_only
                     and str(row.get("quality_gate_action") or "").strip()
-                    in {"observe", "observation_only"}
+                    in {"blocked", "observe", "observation_only"}
                     and str(row.get("observation_only") or "").lower() == "true"
                 )
             )
