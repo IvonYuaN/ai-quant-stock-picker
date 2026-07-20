@@ -2563,9 +2563,17 @@ def _fetch_special_strategy_frames(
         symbols,
         benchmark_symbol=benchmark_symbol,
         days=days,
-        end_date=today_shanghai(),
         workload="live_short",
     )
+    target_day = today_shanghai()
+    frames = {
+        symbol: frame
+        for symbol, frame in frames.items()
+        if not frame.empty
+        and "date" in frame.columns
+        and pd.to_datetime(frame["date"], errors="coerce").max().date()
+        >= target_day
+    }
     actual_allowed, actual_reason = _runtime_actual_source_workload_allowed(
         source_name,
         actual_source,
