@@ -54,7 +54,7 @@ def test_ci_runs_upload_preflight_before_install() -> None:
     assert "timeout-minutes: 40" in text
     assert "shard: [0, 1, 2, 3]" in text
     assert "PYTEST_TOTAL_SHARDS: 4" in text
-    assert "--collect-only -q tests backend/tests" in text
+    assert '--collect-only -q -m "not live" tests backend/tests' in text
     assert "$(cat /tmp/aqsp-test-files.txt)" not in text
     assert '"${TEST_NODES[@]}"' in text
     assert "python3 -m scripts.preflight_upload" in text
