@@ -1070,6 +1070,15 @@ def test_intraday_observation_status_does_not_fail_selected_cursor() -> None:
     assert '--fail "${BATCH_FAILURE_REASON:-${status}}"' in status_function
 
 
+def test_intraday_debate_backfill_includes_observation_candidates() -> None:
+    script = SCRIPT_PATH.read_text(encoding="utf-8")
+    launch_start = script.index("launch_intraday_debate_backfill()")
+    launch_end = script.index("refresh_home_dashboard_snapshot()", launch_start)
+    launch_function = script[launch_start:launch_end]
+
+    assert "--include-observation-only" in launch_function
+
+
 def test_intraday_batch_cursor_is_not_committed_after_137_timeout(
     tmp_path: Path,
 ) -> None:

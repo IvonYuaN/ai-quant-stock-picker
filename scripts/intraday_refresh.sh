@@ -467,6 +467,7 @@ launch_intraday_debate_backfill() {
         --output "$DEBATE_RESULTS"
         --task-id "${AQSP_RUN_TASK_ID}"
         --max-candidates "$max_candidates"
+        --include-observation-only
         "${force_arg[@]}"
     )
     # The scheduler owns the runner process. A detached child can be reaped
