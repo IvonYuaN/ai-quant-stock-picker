@@ -94,6 +94,9 @@ def test_home_snapshot_round_trips_bounded_home_payload(tmp_path) -> None:
         primary_risk_gate="量能承接",
         next_trigger="放量确认",
         active_roles=("cross_market", "risk"),
+        round_count=2,
+        bull_count=1,
+        neutral_count=1,
     )
     source = tmp_path / "home.json"
     snapshot = _snapshot(
@@ -197,7 +200,7 @@ def test_home_snapshot_round_trips_messages_and_debate_process(tmp_path) -> None
             round_count=3,
             bull_count=1,
             bear_count=1,
-            neutral_count=7,
+            neutral_count=0,
             process_summary="3轮；看多 1 / 看空 1 / 中性 7",
         ),
     )
@@ -299,6 +302,8 @@ def test_home_snapshot_round_trips_multiple_debate_summaries(tmp_path) -> None:
             next_trigger="放量确认",
             active_roles=("技术多头", "风控"),
             round_count=3,
+            bull_count=1,
+            bear_count=1,
             process_summary="3轮；看多 1 / 看空 1 / 中性 7",
         )
         for symbol in ("600001", "600002", "600003")
@@ -327,7 +332,10 @@ def test_home_snapshot_rejects_duplicate_debate_symbols() -> None:
         conclusion="观察",
         primary_risk_gate="量能",
         next_trigger="放量",
-        active_roles=("风控",),
+        active_roles=("风控", "技术多头"),
+        round_count=2,
+        bull_count=1,
+        neutral_count=1,
     )
 
     with pytest.raises(ValueError, match="duplicate symbols"):
@@ -344,7 +352,10 @@ def test_home_snapshot_rejects_debate_symbol_outside_candidates() -> None:
         conclusion="观察",
         primary_risk_gate="量能",
         next_trigger="放量",
-        active_roles=("风控",),
+        active_roles=("风控", "技术多头"),
+        round_count=2,
+        bull_count=1,
+        neutral_count=1,
     )
 
     with pytest.raises(ValueError, match="debates symbols.*candidates"):
@@ -390,7 +401,10 @@ def test_home_snapshot_reads_legacy_single_debate_payload(tmp_path) -> None:
         conclusion="观察",
         primary_risk_gate="量能",
         next_trigger="放量",
-        active_roles=("风控",),
+        active_roles=("风控", "技术多头"),
+        round_count=2,
+        bull_count=1,
+        neutral_count=1,
     )
     payload = _snapshot(candidates=(_candidate("600001"),), debate=debate).to_dict()
     payload.pop("debates")

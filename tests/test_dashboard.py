@@ -8337,7 +8337,7 @@ def test_dashboard_render_home_runtime_truth_explains_coldstart_block(
                 "_RuntimeOverview",
                 (),
                 {
-                    "conclusion": "冷启动样本已达标，等待组合保护冷却",
+                    "conclusion": "冷启动样本已达标；候选研究继续，组合保护单独展示",
                     "task_label": "冷启动",
                     "signal_date": "2026-07-07",
                     "run_status": "风控阻塞",
@@ -8382,7 +8382,7 @@ def test_dashboard_render_home_runtime_truth_explains_coldstart_block(
     assert rendered_cards == [
         {
             "kicker": "运行真相",
-            "title": "冷启动样本已达标，等待组合保护冷却",
+            "title": "冷启动样本已达标；候选研究继续，组合保护单独展示",
             "lines": (
                 "运行状态: 冷启动 / 2026-07-07 / 风控阻塞",
                 "风险/阻塞: 组合保护冷却期中，至 2026-07-12 解除",
@@ -16363,6 +16363,9 @@ def test_dashboard_main_reads_only_home_snapshot_when_valid(
             primary_risk_gate="高开回落",
             next_trigger="站稳早盘高点",
             active_roles=("bull", "risk_control"),
+            round_count=2,
+            bull_count=1,
+            neutral_count=1,
         ),
         summaries=("市场风险偏好稳定",),
         source=HomeSnapshotSource(
@@ -16477,7 +16480,10 @@ def test_dashboard_snapshot_home_board_renders_bounded_card_layout(monkeypatch) 
             conclusion="等待确认",
             primary_risk_gate="量能不足",
             next_trigger="放量站稳",
-            active_roles=("bull",),
+            active_roles=("bull", "risk_control"),
+            round_count=2,
+            bull_count=1,
+            neutral_count=1,
             process_summary="实时讨论过程: 第 2 轮完成",
         ),
         summaries=("摘要一", "摘要二", "摘要三"),

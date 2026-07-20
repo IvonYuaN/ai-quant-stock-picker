@@ -1638,7 +1638,7 @@ class DashboardDataProvider:
             ):
                 conclusion = "冷启动样本已达标；候选研究继续，组合保护单独展示"
             elif coldstart_ready:
-                conclusion = "冷启动样本已达标；下一交易日直接生成研究推荐"
+                conclusion = "冷启动样本已达标；候选研究不再等待组合保护"
             elif final_count == 0:
                 no_candidate_reason = str(
                     run.get("run_no_candidate_reason") or ""

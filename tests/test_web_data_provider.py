@@ -566,7 +566,7 @@ def test_dashboard_data_provider_runtime_overview_uses_coldstart_handoff_state(
     overview = provider.runtime_overview("2026-07-09")
 
     assert overview.coldstart_progress == "34/30"
-    assert overview.conclusion == "冷启动样本已达标；下一交易日直接生成研究推荐"
+    assert overview.conclusion == "冷启动样本已达标；候选研究不再等待组合保护"
     assert overview.coldstart_handoff_line.startswith("冷启动交接: 样本门已达标")
     assert "run_production_walkforward_gate" in overview.coldstart_handoff_line
     assert "bt_task.sh walkforward-gate" in overview.coldstart_handoff_line
