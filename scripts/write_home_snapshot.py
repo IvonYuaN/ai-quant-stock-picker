@@ -13,6 +13,7 @@ import sys
 from dataclasses import replace
 from datetime import date, datetime, timedelta, time
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Iterable
 from zoneinfo import ZoneInfo
 
@@ -60,6 +61,7 @@ from aqsp.web.home_snapshot import (
     HomeSnapshotSource,
     HomeSnapshotTechnicalMetric,
     HomeSnapshotUniverse,
+    HomeSnapshotHolding,
     HomeSnapshotVariant,
     MAX_HOME_SNAPSHOT_TECHNICAL_METRICS,
     HOME_RECOMMENDATION_LABELS,
@@ -521,9 +523,11 @@ def _align_count_summary(text: str, *, total: int, shown: int) -> str:
 def _snapshot_debates(
     payload: Any,
     candidates: tuple[HomeSnapshotCandidate, ...],
+    *,
+    runtime_debates: tuple[Any, ...] = (),
 ) -> tuple[HomeSnapshotDebate, ...]:
     candidate_symbols = {candidate.symbol for candidate in candidates}
-    debates = tuple(getattr(payload, "debates", ()) or ())
+    debates = tuple(getattr(payload, "debates", ()) or ()) + runtime_debates
     selected: list[HomeSnapshotDebate] = []
     selected_symbols: set[str] = set()
     for debate in debates:
@@ -594,6 +598,111 @@ def _snapshot_debates(
     return tuple(selected)
 
 
+def _runtime_debate_path() -> Path:
+    """Resolve the private debate sidecar from the release or runtime root."""
+    raw_path = os.getenv("AQSP_DEBATE_RESULTS", "").strip()
+    path = Path(raw_path or "data/debate_results.jsonl").expanduser()
+    if path.is_absolute():
+        return path
+    runtime_root = os.getenv("AQSP_RUNTIME_ROOT", "").strip()
+    if runtime_root:
+        return Path(runtime_root).expanduser() / path
+    return PROJECT_ROOT / path
+
+
+def _runtime_debate_date(record: dict[str, Any]) -> str:
+    for key in ("candidate_signal_date", "related_signal_date", "debate_date"):
+        value = _text(record.get(key))
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+            return value
+    return ""
+
+
+def _runtime_debates_for_snapshot(
+    signal_date: str,
+    candidate_symbols: set[str],
+) -> tuple[Any, ...]:
+    """Adapt completed JSONL debates when the provider task view omitted them."""
+    path = _runtime_debate_path()
+    try:
+        raw_lines = path.read_bytes().splitlines()
+    except OSError:
+        return ()
+    if sum(len(line) for line in raw_lines) > 8 * 1024 * 1024:
+        return ()
+
+    selected: list[Any] = []
+    seen: set[str] = set()
+    for line in reversed(raw_lines):
+        if not line.strip():
+            continue
+        try:
+            record = json.loads(line.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            continue
+        if not isinstance(record, dict) or _runtime_debate_date(record) != signal_date:
+            continue
+        symbol = _text(record.get("symbol"))
+        if not symbol or symbol not in candidate_symbols or symbol in seen:
+            continue
+        rounds = record.get("rounds")
+        rounds = [item for item in rounds if isinstance(item, dict)] if isinstance(rounds, list) else []
+        if not rounds:
+            continue
+        final_round = max(
+            rounds,
+            key=lambda item: int(item.get("round_num") or item.get("round") or 0),
+        )
+        opinions = [item for item in final_round.get("opinions", ()) if isinstance(item, dict)]
+        vote_map = record.get("final_vote")
+        if not isinstance(vote_map, dict):
+            vote_map = {
+                _text(item.get("role")): _text(item.get("final_position") or item.get("stance"))
+                for item in opinions
+                if _text(item.get("role"))
+            }
+        roles = tuple(dict.fromkeys(_text(role) for role in vote_map if _text(role)))
+        if len(roles) < 2:
+            continue
+        agent_views = tuple(
+            SimpleNamespace(role_id=role, role_label=role) for role in roles
+        )
+        counts = {
+            "bull_count": sum(str(v).strip().lower() in {"bull", "bullish"} for v in vote_map.values()),
+            "bear_count": sum(str(v).strip().lower() in {"bear", "bearish"} for v in vote_map.values()),
+            "neutral_count": sum(str(v).strip().lower() in {"neutral", "watch"} for v in vote_map.values()),
+        }
+        selected.append(
+            SimpleNamespace(
+                symbol=symbol,
+                display_name=_first_text(record.get("name"), symbol),
+                research_verdict=_first_text(
+                    record.get("research_verdict"), record.get("final_consensus")
+                ),
+                consensus=_text(record.get("final_consensus")),
+                primary_risk_gate=_text(record.get("primary_risk_gate")),
+                next_trigger=_text(record.get("next_trigger")),
+                agent_views=agent_views,
+                round_count=len(rounds),
+                round_summaries=tuple(
+                    _text(item.get("summary")) for item in rounds if _text(item.get("summary"))
+                ),
+                process_recorded=record.get("process_recorded"),
+                conclusion_recorded=record.get("conclusion_recorded"),
+                evidence_sufficient=record.get("evidence_sufficient"),
+                debate_quality_issues=record.get("debate_quality_issues", ()),
+                viewpoint_buckets=record.get("viewpoint_buckets", {}),
+                disagreement_points=record.get("disagreement_points", ()),
+                uncertainty_points=record.get("uncertainty_points", ()),
+                **counts,
+            )
+        )
+        seen.add(symbol)
+        if len(selected) == MAX_HOME_SNAPSHOT_DEBATES:
+            break
+    return tuple(selected)
+
+
 def _debate_is_complete(debate: Any) -> bool:
     """Keep incomplete committee attempts out of the formal debate lane."""
     for field in ("process_recorded", "conclusion_recorded", "evidence_sufficient"):
@@ -638,7 +747,14 @@ def _debate_is_complete(debate: Any) -> bool:
 def _news_report_path() -> Path:
     raw_path = os.getenv("AQSP_NEWS_OUTPUT", "reports/news_catalysts.md").strip()
     path = Path(raw_path).expanduser()
-    return path if path.is_absolute() else PROJECT_ROOT / path
+    if path.is_absolute():
+        return path
+    runtime_root = os.getenv("AQSP_RUNTIME_ROOT", "").strip()
+    return (
+        Path(runtime_root).expanduser() / path
+        if runtime_root
+        else PROJECT_ROOT / path
+    )
 
 
 def _news_json_report_path() -> Path:
@@ -646,14 +762,22 @@ def _news_json_report_path() -> Path:
         "AQSP_NEWS_JSON_OUTPUT", "data/runtime/news_catalysts_latest.json"
     ).strip()
     path = Path(raw_path).expanduser()
-    return path if path.is_absolute() else PROJECT_ROOT / path
+    if path.is_absolute():
+        return path
+    runtime_root = os.getenv("AQSP_RUNTIME_ROOT", "").strip()
+    return (
+        Path(runtime_root).expanduser() / path
+        if runtime_root
+        else PROJECT_ROOT / path
+    )
 
 
 def _news_json_archive_path(signal_date: str) -> Path:
     raw_path = os.getenv("AQSP_NEWS_ARCHIVE_DIR", "data/runtime/news_archive").strip()
     path = Path(raw_path).expanduser()
     if not path.is_absolute():
-        path = PROJECT_ROOT / path
+        runtime_root = os.getenv("AQSP_RUNTIME_ROOT", "").strip()
+        path = Path(runtime_root).expanduser() / path if runtime_root else PROJECT_ROOT / path
     return path / f"news-{signal_date}.json"
 
 
@@ -661,7 +785,8 @@ def _news_archive_dates() -> tuple[str, ...]:
     raw_path = os.getenv("AQSP_NEWS_ARCHIVE_DIR", "data/runtime/news_archive").strip()
     path = Path(raw_path).expanduser()
     if not path.is_absolute():
-        path = PROJECT_ROOT / path
+        runtime_root = os.getenv("AQSP_RUNTIME_ROOT", "").strip()
+        path = Path(runtime_root).expanduser() / path if runtime_root else PROJECT_ROOT / path
     if not path.is_dir():
         return ()
     dates: list[str] = []
@@ -1428,7 +1553,7 @@ def _variant_snapshot() -> tuple[HomeSnapshotVariant, ...]:
         "含佣金、印花税、滑点",
     )
     variants: list[HomeSnapshotVariant] = []
-    for item in raw_variants[:3]:
+    for item in raw_variants[:12]:
         if not isinstance(item, dict) or item.get("initial_cash") != 100_000.0:
             continue
         variants.append(
@@ -1436,13 +1561,29 @@ def _variant_snapshot() -> tuple[HomeSnapshotVariant, ...]:
                 variant_id=_text(item.get("variant_id")),
                 label=_text(item.get("label")) or _text(item.get("variant_id")),
                 initial_cash=100_000.0,
+                cash=float(item.get("cash") or 0.0),
                 final_equity=float(item.get("final_equity") or 0.0),
+                total_pnl=float(item.get("total_pnl") or 0.0),
+                rank=int(item.get("rank") or 0),
                 return_pct=float(item.get("return_pct") or 0.0),
                 filled_orders=int(item.get("filled_orders") or 0),
                 rejected_orders=int(item.get("rejected_orders") or 0),
                 start_date=_text(payload.get("start_date")),
                 end_date=_text(payload.get("end_date")),
                 data_mode=_text(payload.get("data_mode")),
+                strategy=_text(item.get("strategy_label")) or _text(item.get("label")),
+                holdings=tuple(
+                    HomeSnapshotHolding(
+                        symbol=_text(holding.get("symbol")),
+                        quantity=int(holding.get("quantity") or 0),
+                        average_price=float(holding.get("average_price") or 0.0),
+                        last_price=float(holding.get("last_price") or 0.0),
+                        market_value=float(holding.get("market_value") or 0.0),
+                        unrealized_pnl=float(holding.get("unrealized_pnl") or 0.0),
+                    )
+                    for holding in item.get("holdings", ())
+                    if isinstance(holding, dict)
+                ),
                 hard_rules=rule_labels if isinstance(rules, dict) else (),
             )
         )
@@ -1470,7 +1611,15 @@ def build_home_snapshot(
     source = _snapshot_source(runtime, task_view)
     candidates = _snapshot_candidates(payload)
     recommendation_count = _snapshot_recommendation_count(payload)
-    debates = _snapshot_debates(payload, candidates)
+    runtime_debates = _runtime_debates_for_snapshot(
+        selected_date,
+        {candidate.symbol for candidate in candidates},
+    )
+    debates = _snapshot_debates(
+        payload,
+        candidates,
+        runtime_debates=runtime_debates,
+    )
     shown_recommendation_count = sum(
         is_home_recommendation(candidate) for candidate in candidates
     )

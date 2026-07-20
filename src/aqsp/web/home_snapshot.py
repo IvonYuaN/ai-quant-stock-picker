@@ -24,7 +24,7 @@ MAX_HOME_SNAPSHOT_SUMMARIES = 3
 MAX_HOME_SNAPSHOT_MESSAGES = 5
 MAX_HOME_SNAPSHOT_MARKET_LINES = 5
 MAX_HOME_SNAPSHOT_CROSS_MARKET = 3
-MAX_HOME_SNAPSHOT_VARIANTS = 3
+MAX_HOME_SNAPSHOT_VARIANTS = 12
 HOME_SNAPSHOT_INDEX_SCHEMA_VERSION = "v1-index"
 MAX_HOME_SNAPSHOT_INDEX_DAYS = 4
 HOME_SNAPSHOT_DEFAULT_TTL = timedelta(hours=24)
@@ -172,19 +172,36 @@ class HomeSnapshotDebate:
 
 
 @dataclass(frozen=True)
+class HomeSnapshotHolding:
+    """One bounded end-of-run holding in an isolated experiment account."""
+
+    symbol: str
+    quantity: int
+    average_price: float
+    last_price: float
+    market_value: float
+    unrealized_pnl: float
+
+
+@dataclass(frozen=True)
 class HomeSnapshotVariant:
     """Bounded result for one isolated 100,000 yuan experiment account."""
 
     variant_id: str
     label: str
     initial_cash: float
+    cash: float
     final_equity: float
+    total_pnl: float
     return_pct: float
     filled_orders: int
     rejected_orders: int
     start_date: str
     end_date: str
     data_mode: str
+    rank: int = 0
+    strategy: str = ""
+    holdings: tuple[HomeSnapshotHolding, ...] = ()
     hard_rules: tuple[str, ...] = ()
 
 
@@ -723,13 +740,29 @@ def _variant_from_dict(payload: object) -> HomeSnapshotVariant:
         variant_id=_text(mapping.get("variant_id", ""), "variant.variant_id"),
         label=_text(mapping.get("label", ""), "variant.label"),
         initial_cash=float(mapping.get("initial_cash", 0.0) or 0.0),
+        cash=float(mapping.get("cash", 0.0) or 0.0),
         final_equity=float(mapping.get("final_equity", 0.0) or 0.0),
+        total_pnl=float(mapping.get("total_pnl", 0.0) or 0.0),
         return_pct=float(mapping.get("return_pct", 0.0) or 0.0),
         filled_orders=int(mapping.get("filled_orders", 0) or 0),
         rejected_orders=int(mapping.get("rejected_orders", 0) or 0),
         start_date=_text(mapping.get("start_date", ""), "variant.start_date"),
         end_date=_text(mapping.get("end_date", ""), "variant.end_date"),
         data_mode=_text(mapping.get("data_mode", ""), "variant.data_mode"),
+        rank=int(mapping.get("rank", 0) or 0),
+        strategy=_text(mapping.get("strategy", ""), "variant.strategy"),
+        holdings=tuple(
+            HomeSnapshotHolding(
+                symbol=_text(item.get("symbol", ""), "holding.symbol"),
+                quantity=int(item.get("quantity", 0) or 0),
+                average_price=float(item.get("average_price", 0.0) or 0.0),
+                last_price=float(item.get("last_price", 0.0) or 0.0),
+                market_value=float(item.get("market_value", 0.0) or 0.0),
+                unrealized_pnl=float(item.get("unrealized_pnl", 0.0) or 0.0),
+            )
+            for item in mapping.get("holdings", ())
+            if isinstance(item, dict)
+        ),
         hard_rules=_text_tuple(mapping.get("hard_rules", ()), "variant.hard_rules"),
     )
 

@@ -28,12 +28,17 @@ done
 for script in \
     check_release_consistency.py \
     write_release_manifest.py \
-    push_with_report.py; do
+    push_with_report.py \
+    check_runtime_storage.py; do
     path="${PROJECT_ROOT}/scripts/${script}"
     assert_file "$path"
     python3 -m py_compile "$path"
 done
 echo "PASS release identity and publish checks"
+
+rg -q 'releases|current|rollback|--apply' \
+    "${PROJECT_ROOT}/scripts/check_runtime_storage.py"
+echo "PASS runtime storage cleanup guard"
 
 for unit in \
     aqsp-vibe-research-api.service \

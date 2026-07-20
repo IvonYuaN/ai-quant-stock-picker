@@ -85,14 +85,31 @@ export interface AqspVariant {
   variant_id: string;
   label: string;
   initial_cash: number;
+  /** Optional for older snapshots; the UI must show a missing-field state. */
+  cash?: number;
   final_equity: number;
+  /** Optional for older snapshots; return_pct remains the compatibility fallback. */
+  total_pnl?: number;
+  rank?: number;
   return_pct: number;
   filled_orders: number;
   rejected_orders: number;
   start_date: string;
   end_date: string;
   data_mode: string;
-  hard_rules: readonly string[];
+  /** Serialized strategy description in the current producer contract. */
+  strategy?: string;
+  holdings?: readonly AqspVariantHolding[];
+  hard_rules?: readonly string[];
+}
+
+export interface AqspVariantHolding {
+  symbol: string;
+  quantity: number;
+  average_price: number;
+  last_price: number;
+  market_value: number;
+  unrealized_pnl: number;
 }
 
 export interface AqspAgentResult {

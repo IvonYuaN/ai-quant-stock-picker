@@ -37,6 +37,41 @@ Mac 本地开发
 /opt/market-data/         # 你的历史数据库
 ```
 
+### 发布目录与磁盘清理契约
+
+生产发布使用不可变目录时，目录关系必须保持如下结构：
+
+```text
+/opt/aqsp-releases/<commit>                 # 只读代码 release
+/opt/aqsp-releases/aqsp-scheduler-current -> <commit>  # 当前 release
+/opt/aqsp-releases/aqsp-scheduler-rollback -> <commit> # 唯一回滚 release
+/opt/aqsp/data/                   # ledger、快照、报告、日志等运行产物
+/opt/aqsp-vibe-venv/              # 共享解释器，禁止随 release 清理
+/opt/aqsp/data/walkforward_raw_production_cache.db  # 历史 raw，禁止清理
+```
+
+运行产物不得写入 release。入口 `scripts/release_task_entrypoint.sh` 会把相对
+路径统一解析到 `/opt/aqsp/data`，显式绝对路径若不在该目录下会直接失败。
+
+服务器清理先执行只读审计：
+
+```bash
+cd /opt/aqsp
+python3 scripts/check_runtime_storage.py --env-file /etc/aqsp/vibe-research.env --json
+```
+
+只有审计通过后，才允许显式执行清理：
+
+```bash
+python3 scripts/check_runtime_storage.py --env-file /etc/aqsp/vibe-research.env --apply
+```
+
+清理脚本只删除 `/opt/aqsp-releases/` 下未被 `aqsp-scheduler-current` 或
+`aqsp-scheduler-rollback` 指向的直接子目录，
+不会删除 `/opt/aqsp/data`、共享 venv、历史 raw 数据或 symlink 指向的目录；
+缺少任一 release 链接、路径污染或 current/rollback 指向同一版本时会拒绝操作。
+不要使用 `git clean -fd` 代替这条检查。
+
 生产 release 若使用独立运行时，建议在服务器 `.env` 明确指定，所有
 `bt_task`、盘中、消息、冷启动和 daily 入口都会复用这一解释器：
 

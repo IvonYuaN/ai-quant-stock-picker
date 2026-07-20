@@ -205,6 +205,31 @@ def test_aqsp_bridge_attaches_date_matched_runtime_debate_to_history(
     assert response.json()["data"]["candidates"][0]["score"] == 72.5
 
 
+def test_aqsp_bridge_resolves_runtime_debates_from_runtime_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    payload = _snapshot("2026-07-14")
+    payload["debates"] = []
+    snapshot_path = _write_single(tmp_path, payload)
+    runtime_root = tmp_path / "runtime"
+    debate_path = runtime_root / "data" / "debate_results.jsonl"
+    debate_path.parent.mkdir(parents=True)
+    debate_path.write_text(
+        json.dumps(_runtime_debate(date="2026-07-14", symbol="600001")) + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AQSP_RESEARCH_SURFACE_SNAPSHOT", str(snapshot_path))
+    monkeypatch.delenv("AQSP_DEBATE_RESULTS", raising=False)
+    monkeypatch.setenv("AQSP_RUNTIME_ROOT", str(runtime_root))
+
+    response = client.get("/api/aqsp/snapshot")
+
+    assert response.status_code == 200
+    assert [item["symbol"] for item in response.json()["data"]["debates"]] == [
+        "600001"
+    ]
+
+
 def test_aqsp_bridge_does_not_attach_unmatched_runtime_debate_to_current_date(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

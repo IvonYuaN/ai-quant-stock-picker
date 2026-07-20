@@ -1,6 +1,8 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { api, ApiError, isAqspAbortError, type AqspSnapshot } from "@/lib/api";
 
+export const AQSP_LIVE_REFRESH_INTERVAL_MS = 60_000;
+
 export interface AqspSnapshotState {
   data: AqspSnapshot | null;
   loading: boolean;
@@ -78,6 +80,13 @@ export function AqspWorkspaceProvider({ children }: { children: ReactNode }) {
       if (activeRequest.current === controller) activeRequest.current = null;
     };
   }, [reloadKey, selectedDate]);
+
+  useEffect(() => {
+    // Historical dates are static records; only the current snapshot polls.
+    if (data?.meta?.historical) return;
+    const timer = window.setInterval(() => setReloadKey((value) => value + 1), AQSP_LIVE_REFRESH_INTERVAL_MS);
+    return () => window.clearInterval(timer);
+  }, [data?.meta?.historical]);
 
   const value = useMemo<AqspSnapshotState>(() => ({
     data,
