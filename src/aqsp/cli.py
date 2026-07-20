@@ -2563,6 +2563,7 @@ def _fetch_special_strategy_frames(
         symbols,
         benchmark_symbol=benchmark_symbol,
         days=days,
+        end_date=today_shanghai(),
         workload="live_short",
     )
     actual_allowed, actual_reason = _runtime_actual_source_workload_allowed(
