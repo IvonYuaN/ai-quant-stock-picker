@@ -1060,6 +1060,16 @@ def test_intraday_batch_cursor_is_independent_of_observation_only_gate() -> None
     assert '"${SCRIPT_EXIT_CODE:-0}" -eq 0' not in cursor_section
 
 
+def test_intraday_observation_status_does_not_fail_selected_cursor() -> None:
+    script = SCRIPT_PATH.read_text(encoding="utf-8")
+    status_start = script.index("write_intraday_status()")
+    status_end = script.index("cleanup()", status_start)
+    status_function = script[status_start:status_end]
+
+    assert '[ "$status" != "observation_only" ]' in status_function
+    assert '--fail "${BATCH_FAILURE_REASON:-${status}}"' in status_function
+
+
 def test_intraday_batch_cursor_is_not_committed_after_137_timeout(
     tmp_path: Path,
 ) -> None:

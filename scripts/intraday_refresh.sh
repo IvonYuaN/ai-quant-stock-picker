@@ -1195,7 +1195,10 @@ write_intraday_status() {
     local status="$1"
     local reason="$2"
     local exit_code="$3"
+    # observation-only is a valid fresh scan result. It blocks recommendation
+    # and paper-ledger actions, but must not invalidate the universe batch.
     if [ "$status" != "running" ] && [ "$status" != "completed" ] && \
+       [ "$status" != "observation_only" ] && \
        [ "$INTRADAY_BATCH_ACTIVE" = "true" ] && \
        [ "$BATCH_COMMITTED" != "true" ] && [ "$BATCH_FAILURE_RECORDED" != "true" ]; then
         if "${PYTHON_BIN}" "${PROJECT_ROOT}/scripts/prepare_intraday_batch.py" \
