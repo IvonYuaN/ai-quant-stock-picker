@@ -405,6 +405,8 @@ class DataCache:
         cached_max = pd.to_datetime(df["date"].max())
         req_start = pd.Timestamp(start)
         req_end = pd.Timestamp(end)
+        if workload == "live_short" and cached_max < req_end:
+            return None
         if cached_min > req_start + pd.Timedelta(days=TOLERANCE_DAYS):
             return None
         if cached_max < req_end - pd.Timedelta(days=TOLERANCE_DAYS):
@@ -495,6 +497,8 @@ class DataCache:
                 return None
         cached_min = pd.to_datetime(df["date"].min())
         cached_max = pd.to_datetime(df["date"].max())
+        if workload == "live_short" and cached_max < pd.Timestamp(end):
+            return None
         if cached_min > pd.Timestamp(start) + pd.Timedelta(days=7):
             return None
         if cached_max < pd.Timestamp(end) - pd.Timedelta(days=7):
