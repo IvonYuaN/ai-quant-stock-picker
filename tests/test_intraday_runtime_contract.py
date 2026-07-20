@@ -1026,6 +1026,23 @@ def test_intraday_batch_does_not_commit_when_output_metadata_is_partial(
     assert 'BATCH_FAILURE_REASON="intraday_batch_output_incomplete"' in script
 
 
+def test_intraday_batch_cursor_uses_minimum_live_coverage_and_precedes_sidecars() -> None:
+    script = SCRIPT_PATH.read_text(encoding="utf-8")
+
+    assert 'AQSP_INTRADAY_MIN_VALID_RATIO:-0.8' in script
+    assert "math.ceil(resolved * ratio)" in script
+    publish = script.index("# Publish fresh candidates")
+    sidecar = script.index(
+        "\nrefresh_realtime_cross_market_context\nrefresh_intraday_news_catalysts",
+        publish,
+    )
+    cursor_commit = script.index(
+        "prepare_intraday_batch.py", script.index("# Cursor advancement")
+    )
+    assert cursor_commit < sidecar
+    assert "消息与讨论 sidecar 不影响 cursor 推进" in script
+
+
 def test_intraday_batch_cursor_is_not_committed_after_137_timeout(
     tmp_path: Path,
 ) -> None:
