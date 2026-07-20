@@ -188,7 +188,10 @@ class MultiSource(DataSource):
                     )
                 return primary_result
 
-            merged_result = _merge_partial_results(partial_results, expected_keys)
+            merged_result = _merge_partial_results(
+                partial_results,
+                expected_keys,
+            )
             if merged_result is not None:
                 self._set_last_used_provenance(merged_result, "multi")
                 self._last_used_source = "multi"
@@ -413,7 +416,11 @@ class MultiSource(DataSource):
                     raise
             return primary_result
 
-        merged_result = _merge_partial_results(partial_results, expected_keys)
+        merged_result = _merge_partial_results(
+            partial_results,
+            expected_keys,
+            allow_incomplete=effective_workload == "live_short",
+        )
         if merged_result is not None:
             self._set_last_used_provenance(merged_result, "multi")
             self._last_used_source = "multi"
@@ -619,6 +626,8 @@ def _record_quote_error(
 def _merge_partial_results(
     partial_results: list[_PartialResult],
     expected_keys: list[str],
+    *,
+    allow_incomplete: bool = False,
 ) -> dict[str, object] | None:
     requested = [str(key) for key in expected_keys if str(key)]
     if not requested:
@@ -630,9 +639,9 @@ def _merge_partial_results(
                 continue
             if key in partial.result:
                 merged[key] = partial.result[key]
-    if _missing_requested_keys(merged, requested):
+    if not allow_incomplete and _missing_requested_keys(merged, requested):
         return None
-    return merged
+    return merged or None
 
 
 def _annotate_result(

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date
 from typing import Literal
 import pandas as pd
@@ -36,12 +38,22 @@ TENCENT_QUOTE_FIELD_LIMIT_DOWN = 48
 _REQUEST_DELAY = 0.3
 _MAX_RETRIES = 3
 _BACKOFF_BASE = 2.0
+_DEFAULT_DAILY_FETCH_WORKERS = 8
 
 
 def _get_market_prefix(symbol: str, *, is_index: bool = False) -> str:
     if is_index or symbol.startswith("6"):
         return "sh"
     return "sz"
+
+
+def _configured_daily_fetch_workers(requested_count: int) -> int:
+    raw = os.getenv("AQSP_TENCENT_DAILY_FETCH_WORKERS", "").strip()
+    try:
+        configured = int(raw) if raw else _DEFAULT_DAILY_FETCH_WORKERS
+    except ValueError:
+        configured = _DEFAULT_DAILY_FETCH_WORKERS
+    return max(1, min(configured, max(1, requested_count)))
 
 
 class TencentSource(DataSource):
@@ -93,6 +105,7 @@ class TencentSource(DataSource):
         adjust: Literal["", "qfq", "hfq"] = "",
     ) -> dict[str, OhlcvFrame]:
         out: dict[str, OhlcvFrame] = {}
+        pending: list[str] = []
         for symbol in symbols:
             cached = self.cache.get_ohlcv(
                 symbol,
@@ -105,14 +118,33 @@ class TencentSource(DataSource):
             if cached is not None and not cached.empty:
                 out[symbol] = self._annotate_frame(cached)
                 continue
+            pending.append(symbol)
 
-            df = require_fetched_frame(
-                self.name,
-                "日线",
-                symbol,
-                self._fetch_tencent_daily(symbol, start, end),
-            )
-            df = self._normalize_tencent_df(df, symbol)
+        # Fetch network data concurrently, then normalize/cache sequentially.
+        # This keeps SQLite/cache writes deterministic while avoiding a full
+        # live batch deadline spent on the 0.3s per-symbol throttle.
+        workers = _configured_daily_fetch_workers(len(pending))
+        fetched: dict[str, pd.DataFrame] = {}
+        if pending:
+            with ThreadPoolExecutor(
+                max_workers=workers, thread_name_prefix="aqsp-tencent-daily"
+            ) as executor:
+                futures = {
+                    executor.submit(self._fetch_tencent_daily, symbol, start, end): symbol
+                    for symbol in pending
+                }
+                for future in as_completed(futures):
+                    symbol = futures[future]
+                    try:
+                        frame = future.result()
+                    except Exception as exc:
+                        _logger.warning("tencent 日线跳过标的 %s: %s", symbol, exc)
+                        continue
+                    if isinstance(frame, pd.DataFrame) and not frame.empty:
+                        fetched[symbol] = frame
+
+        for symbol, raw_frame in fetched.items():
+            df = self._normalize_tencent_df(raw_frame, symbol)
             validated = self._validate_ohlcv(df, symbol)
             self.cache.set_ohlcv(
                 symbol,
@@ -122,6 +154,11 @@ class TencentSource(DataSource):
                 workload=self._cache_workload(),
             )
             out[symbol] = self._annotate_frame(validated)
+        if self._cache_workload() == "live_short" and out:
+            return out
+        if out and len(out) < len(tuple(dict.fromkeys(symbols))):
+            missing = [symbol for symbol in symbols if symbol not in out]
+            raise DataError(f"{self.name} 日线获取失败（不完整）: 缺少 {missing}")
         require_non_empty_fetch_result(self.name, "日线", symbols, out)
         return out
 

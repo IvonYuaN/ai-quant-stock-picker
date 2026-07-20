@@ -174,6 +174,12 @@ def _fetch_daily_with_symbol_isolation(
     if not missing:
         return out
 
+    # live_short has an explicit coverage gate downstream. Do not spend the
+    # remaining deadline retrying every missing symbol serially after the
+    # multi-source layer already returned a fresh partial batch.
+    if getattr(source, "_active_workload", None) == "live_short":
+        return out
+
     for symbol in missing:
         try:
             single = source.fetch_daily([symbol], start, end, adjust)
