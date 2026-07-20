@@ -1212,6 +1212,32 @@ def test_catalyst_report_round_trip_preserves_news_evidence_fields() -> None:
     assert restored.events[0] == event
 
 
+def test_news_catalyst_notification_renders_structured_chain_evidence() -> None:
+    report = CatalystReport(
+        date="2026-07-20",
+        generated_at="2026-07-20T09:05:00+08:00",
+        events=(
+            CatalystEvent(
+                title="覆铜板报价上调",
+                summary="供应商确认短期缺货。",
+                source="公司公告",
+                published_at="2026-07-20T09:00:00+08:00",
+                transmission_path=("材料涨价", "PCB成本上升", "订单与利润分化"),
+                validation_signals=("现货报价继续上行", "PCB板块放量扩散"),
+                invalidation_signals=("库存回升且报价回落",),
+            ),
+        ),
+        source_status="ok",
+    )
+
+    markdown = format_catalyst_notification(report)
+
+    assert "摘要: 供应商确认短期缺货。" in markdown
+    assert "传导链: 材料涨价 -> PCB成本上升 -> 订单与利润分化" in markdown
+    assert "验证: 现货报价继续上行；PCB板块放量扩散" in markdown
+    assert "失效: 库存回升且报价回落" in markdown
+
+
 def test_catalyst_report_artifact_rejects_legacy_release_and_retired_source(
     tmp_path: Path,
 ) -> None:
