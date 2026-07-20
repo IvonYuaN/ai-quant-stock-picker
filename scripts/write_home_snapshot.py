@@ -573,6 +573,18 @@ def _snapshot_debates(
                     if _first_text(getattr(round_data, "summary", ""))
                 )[:5]
                 or tuple(getattr(debate, "round_summaries", ()) or ())[:5],
+                viewpoint_buckets={
+                    str(bucket): tuple(points)[:4]
+                    for bucket, points in (
+                        getattr(debate, "viewpoint_buckets", {}) or ()
+                    ).items()
+                },
+                disagreement_points=tuple(
+                    getattr(debate, "disagreement_points", ()) or ()
+                )[:4],
+                uncertainty_points=tuple(
+                    getattr(debate, "uncertainty_points", ()) or ()
+                )[:4],
             )
         )
         selected_symbols.add(symbol)
@@ -1463,9 +1475,7 @@ def build_home_snapshot(
         recommendation_count = 0
         shown_recommendation_count = 0
     phases = _phase_snapshot(provider, selected_date)
-    live_phase_produced = any(
-        phase.status != "未产出" for phase in phases
-    )
+    live_phase_produced = any(phase.status != "未产出" for phase in phases)
     debate_missing = bool(getattr(payload, "debates", ()) or ()) and not debates
     raw_summaries = (
         "委员会结论缺少当前候选映射，已隐藏" if debate_missing else "",
