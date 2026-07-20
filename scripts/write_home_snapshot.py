@@ -1462,6 +1462,10 @@ def build_home_snapshot(
     if not recommendation_gate.recommendation_allowed:
         recommendation_count = 0
         shown_recommendation_count = 0
+    phases = _phase_snapshot(provider, selected_date)
+    live_phase_produced = any(
+        phase.status != "未产出" for phase in phases
+    )
     debate_missing = bool(getattr(payload, "debates", ()) or ()) and not debates
     raw_summaries = (
         "委员会结论缺少当前候选映射，已隐藏" if debate_missing else "",
@@ -1473,8 +1477,14 @@ def build_home_snapshot(
         getattr(task_view, "headline", ""),
     )
     if not candidates:
+        if messages and not live_phase_produced:
+            empty_day_summary = "今日消息已更新；实时行情任务尚未产出，未使用历史候选"
+        elif messages:
+            empty_day_summary = "今日消息已更新；实时行情筛选暂无候选，未使用历史结果"
+        else:
+            empty_day_summary = "当前日期没有候选，未使用其他日期或旧运行计数填充"
         raw_summaries = (
-            "当前日期没有候选，未使用其他日期或旧运行计数填充",
+            empty_day_summary,
             *tuple(
                 summary
                 for summary in raw_summaries
@@ -1524,7 +1534,7 @@ def build_home_snapshot(
         messages=messages,
         market_context=market_context,
         recommendation_gate=recommendation_gate,
-        phases=_phase_snapshot(provider, selected_date),
+        phases=phases,
         universe=_universe_snapshot(),
     )
 
