@@ -49,6 +49,43 @@ def test_tencent_source_has_name(tencent_source):
     assert tencent_source.name == "tencent"
 
 
+def test_tencent_source_fetches_quote_batch_and_keeps_partial_symbols(
+    monkeypatch, tencent_source
+):
+    def payload(symbol: str, price: str) -> str:
+        parts = [""] * 50
+        parts[3] = price
+        parts[6] = "1000"
+        parts[9] = price
+        parts[19] = price
+        parts[30] = "2026-07-20"
+        parts[31] = "10:15:00"
+        parts[37] = "10000"
+        parts[47] = "11.0"
+        parts[48] = "9.0"
+        body = "~".join(parts)
+        prefix = "sh" if symbol.startswith("6") else "sz"
+        return f'v_{prefix}{symbol}="{body}";'
+
+    class Response:
+        text = payload("600000", "10.5") + payload("000001", "12.5")
+
+    requested_urls: list[str] = []
+
+    def fake_get(url: str, **_kwargs):
+        requested_urls.append(url)
+        return Response()
+
+    monkeypatch.setattr(tencent_source._session, "get", fake_get)
+    monkeypatch.setattr(tencent_source, "_throttle", lambda: None)
+
+    result = tencent_source.fetch_realtime_quote(["600000", "000001", "000002"])
+
+    assert set(result) == {"600000", "000001"}
+    assert result["600000"]["price"] == 10.5
+    assert "q=sh600000,sz000001,sz000002" in requested_urls[0]
+
+
 def test_get_market_prefix_sh():
     assert _get_market_prefix("600000") == "sh"
     assert _get_market_prefix("601398") == "sh"
@@ -248,7 +285,7 @@ def test_tencent_public_fetch_methods_raise_data_error_when_empty(
     monkeypatch, tencent_source
 ) -> None:
     monkeypatch.setattr(tencent_source, "_fetch_tencent_intraday", lambda *_args: None)
-    monkeypatch.setattr(tencent_source, "_fetch_tencent_quote", lambda *_args: None)
+    monkeypatch.setattr(tencent_source, "_fetch_tencent_quotes_batch", lambda *_args: {})
     monkeypatch.setattr(
         tencent_source,
         "_fetch_tencent_daily",

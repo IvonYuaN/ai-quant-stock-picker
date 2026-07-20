@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import time
 from datetime import date
 from typing import Literal
@@ -12,7 +13,6 @@ from aqsp.data.source import (
     OhlcvFrame,
     apply_limit_suspended_adj,
     require_fetched_frame,
-    require_fetched_mapping,
     require_non_empty_fetch_result,
 )
 from aqsp.data.cache import DataCache
@@ -27,6 +27,7 @@ _logger = logging.getLogger("aqsp.data.tencent")
 
 TENCENT_SIMPLE_QUOTE_URL = "http://qt.gtimg.cn/q=s_{symbol}"
 TENCENT_FULL_QUOTE_URL = "http://qt.gtimg.cn/q={market}{symbol}"
+TENCENT_BATCH_QUOTE_URL = "http://qt.gtimg.cn/q={symbols}"
 TENCENT_KLINE_URL = "http://web.ifzq.gtimg.cn/appstock/app/fqkline/get"
 
 TENCENT_QUOTE_FIELD_LIMIT_UP = 47
@@ -163,15 +164,81 @@ class TencentSource(DataSource):
         self,
         symbols: list[str],
     ) -> dict[str, dict]:
-        quotes = {}
-        for symbol in symbols:
-            quotes[symbol] = require_fetched_mapping(
-                self.name,
-                "实时行情",
-                symbol,
-                self._fetch_tencent_quote(symbol),
-            )
-        require_non_empty_fetch_result(self.name, "实时行情", symbols, quotes)
+        requested = tuple(dict.fromkeys(str(symbol).strip() for symbol in symbols if str(symbol).strip()))
+        if not requested:
+            raise DataError("tencent 实时行情未请求标的")
+        quotes = self._fetch_tencent_quotes_batch(requested)
+        if not quotes:
+            raise DataError(f"{self.name} 实时行情获取失败: {symbols}")
+        return quotes
+
+    def _fetch_tencent_quotes_batch(
+        self, symbols: tuple[str, ...]
+    ) -> dict[str, dict]:
+        """Fetch a quote batch in one request and retain partial successes.
+
+        Tencent's quote endpoint accepts comma-separated market-prefixed
+        symbols.  The previous one-request-per-symbol loop made a 64-symbol
+        live batch spend most of its deadline on throttling and returned only
+        the first successful quote under server-side rate limiting.
+        """
+        for attempt in range(_MAX_RETRIES):
+            try:
+                self._throttle()
+                query = ",".join(
+                    f"{_get_market_prefix(symbol)}{symbol}" for symbol in symbols
+                )
+                response = self._session.get(
+                    TENCENT_BATCH_QUOTE_URL.format(symbols=query), timeout=10
+                )
+                quotes = self._parse_tencent_quote_response(response.text)
+                return {
+                    symbol: quotes[symbol]
+                    for symbol in symbols
+                    if symbol in quotes
+                }
+            except Exception as exc:
+                if attempt < _MAX_RETRIES - 1:
+                    time.sleep(_BACKOFF_BASE ** (attempt + 1))
+                else:
+                    _logger.warning(
+                        "tencent 批量实时报价获取失败（重试%d次后放弃）: %s",
+                        _MAX_RETRIES,
+                        exc,
+                    )
+        return {}
+
+    @staticmethod
+    def _parse_tencent_quote_response(content: str) -> dict[str, dict]:
+        quotes: dict[str, dict] = {}
+        for match in re.finditer(r'v_(?:sh|sz)(\d{6})="([^"]*)"', content or ""):
+            symbol = match.group(1)
+            parts = match.group(2).split("~")
+            if len(parts) < 50:
+                continue
+            try:
+                price = float(parts[3]) if parts[3] else 0.0
+                bid1 = float(parts[9]) if parts[9] else 0.0
+                ask1 = float(parts[19]) if parts[19] else 0.0
+                volume = float(parts[6]) if parts[6] else 0.0
+                amount = float(parts[37]) if parts[37] else 0.0
+                limit_up = float(parts[TENCENT_QUOTE_FIELD_LIMIT_UP]) if parts[TENCENT_QUOTE_FIELD_LIMIT_UP] else None
+                limit_down = float(parts[TENCENT_QUOTE_FIELD_LIMIT_DOWN]) if parts[TENCENT_QUOTE_FIELD_LIMIT_DOWN] else None
+            except (TypeError, ValueError):
+                continue
+            received_at = now_shanghai().isoformat()
+            quotes[symbol] = {
+                "price": price,
+                "bid1": bid1,
+                "ask1": ask1,
+                "volume": volume,
+                "amount": amount,
+                "limit_up": limit_up,
+                "limit_down": limit_down,
+                **quote_timestamp_metadata(
+                    parse_legacy_quote_timestamp(parts), received_at
+                ),
+            }
         return quotes
 
     def fetch_index(
@@ -345,38 +412,8 @@ class TencentSource(DataSource):
                 market = _get_market_prefix(symbol)
                 url = TENCENT_FULL_QUOTE_URL.format(market=market, symbol=symbol)
                 response = self._session.get(url, timeout=10)
-                content = response.text
-                parts = content.split("~")
-                if len(parts) < 50:
-                    return None
-                price = float(parts[3]) if parts[3] else 0.0
-                bid1 = float(parts[9]) if parts[9] else 0.0
-                ask1 = float(parts[19]) if parts[19] else 0.0
-                volume = float(parts[6]) if parts[6] else 0.0
-                amount = float(parts[37]) if parts[37] else 0.0
-                limit_up = (
-                    float(parts[TENCENT_QUOTE_FIELD_LIMIT_UP])
-                    if parts[TENCENT_QUOTE_FIELD_LIMIT_UP]
-                    else None
-                )
-                limit_down = (
-                    float(parts[TENCENT_QUOTE_FIELD_LIMIT_DOWN])
-                    if parts[TENCENT_QUOTE_FIELD_LIMIT_DOWN]
-                    else None
-                )
-                received_at = now_shanghai().isoformat()
-                return {
-                    "price": price,
-                    "bid1": bid1,
-                    "ask1": ask1,
-                    "volume": volume,
-                    "amount": amount,
-                    "limit_up": limit_up,
-                    "limit_down": limit_down,
-                    **quote_timestamp_metadata(
-                        parse_legacy_quote_timestamp(parts), received_at
-                    ),
-                }
+                parsed = self._parse_tencent_quote_response(response.text)
+                return parsed.get(symbol)
             except Exception as exc:
                 if attempt < _MAX_RETRIES - 1:
                     time.sleep(_BACKOFF_BASE ** (attempt + 1))
