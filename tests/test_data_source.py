@@ -794,6 +794,37 @@ def test_live_short_fetch_rejects_partial_daily_frames_explicitly() -> None:
     assert "000001" in failures[0][1]
 
 
+def test_live_short_drops_upstream_stale_daily_frames_before_coverage_gate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class DummySource:
+        name = "eastmoney"
+
+    monkeypatch.setenv("AQSP_RUN_TASK_ID", "intraday")
+    monkeypatch.setenv("AQSP_INTRADAY_MIN_VALID_RATIO", "0.5")
+    failures: list[tuple[str, str]] = []
+    frames, actual_source = fetch_frames_for_cli_with_metadata(
+        "eastmoney",
+        ["600000", "000001"],
+        benchmark_symbol=None,
+        end_date=date(2026, 7, 20),
+        workload="live_short",
+        get_source_fn=lambda _name, *, cache=None: DummySource(),
+        fetch_with_source_fn=lambda *_args, **_kwargs: {
+            "600000": pd.DataFrame([{"date": "2026-07-20", "close": 10.0}]),
+            "000001": pd.DataFrame([{"date": "2026-07-19", "close": 11.0}]),
+        },
+        record_source_success_fn=lambda *_args: None,
+        record_source_failure_fn=lambda requested, reason: failures.append(
+            (requested, reason)
+        ),
+    )
+
+    assert actual_source == "eastmoney"
+    assert set(frames) == {"600000"}
+    assert failures == []
+
+
 def test_intraday_live_short_records_resolved_fetched_and_skipped_symbols(
     tmp_path: Path, monkeypatch,
 ) -> None:

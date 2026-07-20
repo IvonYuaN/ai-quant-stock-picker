@@ -53,6 +53,7 @@ def fetch_frames_for_cli_with_metadata(
                 end_date=end_date,
             )
             if workload == "live_short":
+                frames = _drop_stale_live_frames(frames, end_date=end_date)
                 missing = [
                     str(symbol)
                     for symbol in symbols
@@ -164,6 +165,23 @@ def _minimum_live_short_frames(symbol_count: int) -> int:
         ratio = 0.8
     ratio = min(max(ratio, 0.0), 1.0)
     return max(1, math.ceil(symbol_count * ratio))
+
+
+def _drop_stale_live_frames(
+    frames: dict[str, pd.DataFrame], *, end_date: date | None
+) -> dict[str, pd.DataFrame]:
+    """Remove old daily bars from a live batch instead of treating them as live."""
+    if not frames or end_date is None:
+        return frames
+    result: dict[str, pd.DataFrame] = {}
+    for symbol, frame in frames.items():
+        if frame.empty or "date" not in frame.columns:
+            continue
+        latest = pd.to_datetime(frame["date"], errors="coerce").max()
+        if pd.isna(latest) or latest.date() < end_date:
+            continue
+        result[symbol] = frame
+    return result
 
 
 def _write_intraday_batch_detail(
