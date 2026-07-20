@@ -27,6 +27,13 @@ def test_frontend_aqsp_keeps_empty_states_and_experiment_snapshot_bound_to_data(
     assert "snapshot.meta?.historical" in source
 
 
+def test_frontend_aqsp_exposes_deterministic_score_breakdown() -> None:
+    source = PANELS.read_text(encoding="utf-8")
+
+    assert "candidate.score_breakdown" in source
+    assert '评分依据' in source
+
+
 def test_frontend_aqsp_has_no_legacy_streamlit_or_8501_navigation() -> None:
     source = "\n".join(
         path.read_text(encoding="utf-8")

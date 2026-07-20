@@ -328,7 +328,6 @@
   .aqsp-date:hover { color: hsl(var(--foreground)); background: hsl(var(--muted) / 0.5); }
   .aqsp-date-active { border-color: hsl(var(--primary) / 0.42); color: hsl(var(--primary)); background: hsl(var(--primary) / 0.1); }
   .aqsp-date b { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.7rem; }
-  .aqsp-formal-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0.7rem; align-items: start; }
   .aqsp-module, .aqsp-lab { min-width: 0; border: 1px solid hsl(var(--border) / 0.9); border-radius: 0.65rem; background: hsl(var(--card) / 0.42); padding: 1rem; }
   .aqsp-module-overview { border-left: 3px solid hsl(var(--primary)); }
   .aqsp-module-messages { border-left: 3px solid hsl(var(--success)); }
@@ -434,15 +433,11 @@
 @media (max-width: 767px) {
   .aqsp-header { align-items: stretch; flex-direction: column; }
   .aqsp-refresh { width: fit-content; }
-  .aqsp-list, .aqsp-formal-grid, .aqsp-lab-grid { grid-template-columns: minmax(0, 1fr); }
+  .aqsp-list, .aqsp-lab-grid { grid-template-columns: minmax(0, 1fr); }
   .aqsp-module, .aqsp-lab { padding: 0.8rem; }
   .aqsp-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .aqsp-phase-lane { grid-template-columns: minmax(0, 1fr); }
 }
 
 @media (min-width: 768px) and (max-width: 1180px) {
-}
-
-@media (min-width: 768px) and (max-width: 1180px) {
-  .aqsp-formal-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
