@@ -178,7 +178,9 @@ def _drop_stale_live_frames(
         if frame.empty or "date" not in frame.columns:
             continue
         latest = pd.to_datetime(frame["date"], errors="coerce").max()
-        if pd.isna(latest) or latest.date() < end_date:
+        # A live batch must contain the requested trade date exactly. Older
+        # rows are stale; future rows are look-ahead data and equally invalid.
+        if pd.isna(latest) or latest.date() != end_date:
             continue
         result[symbol] = frame
     return result

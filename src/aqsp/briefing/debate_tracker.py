@@ -15,6 +15,7 @@ from aqsp.briefing.agent_roles import (
     DEFAULT_RUNTIME_AGENT_ROLE_ORDER,
     agent_role_label,
     agent_role_focus,
+    VIEWPOINT_BUCKET_ORDER,
 )
 from aqsp.briefing.debate import AgentPerformanceMetrics
 from aqsp.core.time import now_shanghai
@@ -68,6 +69,8 @@ class DebateQualityAudit:
     real_opposition_count: int = 0
     message_evidence_recorded: bool = False
     transmission_evidence_recorded: bool = False
+    viewpoint_bucket_presence: tuple[tuple[str, bool], ...] = ()
+    uncertainty_recorded: bool = False
 
     @property
     def passed(self) -> bool:
@@ -233,16 +236,38 @@ def audit_debate_quality(
         if _rebuttal_record_is_substantive(record)
     )
     real_opposition_count = _real_opposition_count(rounds)
+    # Count final positions only. Counting every round made a two-round
+    # debate look like two independent votes per role.
+    final_opinions = tuple(
+        _field(rounds[-1], "opinions", ()) or ()
+        if rounds
+        else ()
+    )
     stance_counts = tuple(
         (
             stance,
             sum(
                 _clean_text(_field(opinion, "stance", "")) == stance
-                for round_data in rounds
-                for opinion in (_field(round_data, "opinions", ()) or ())
+                for opinion in final_opinions
             ),
         )
         for stance in ("bullish", "bearish", "neutral")
+    )
+    raw_buckets = _field(result, "viewpoint_buckets", {})
+    viewpoint_bucket_presence = tuple(
+        (
+            bucket,
+            bool(
+                _substantive_values(
+                    raw_buckets.get(bucket, ()) if isinstance(raw_buckets, Mapping) else ()
+                )
+            ),
+        )
+        for bucket in VIEWPOINT_BUCKET_ORDER
+    )
+    uncertainty_recorded = bool(
+        _substantive_values(_field(result, "uncertainty_points", ()))
+        or dict(viewpoint_bucket_presence).get("uncertainty", False)
     )
     falsifiable_condition_recorded = _has_falsifiable_condition(result, rounds)
     data_status = _clean_text(_field(result, "data_status", "available")) or "available"
@@ -365,6 +390,8 @@ def audit_debate_quality(
             _substantive_values(_field(result, "cross_market_evidence", ()))
             or _substantive_values(_field(result, "rule_transmission_evidence", ()))
         ),
+        viewpoint_bucket_presence=viewpoint_bucket_presence,
+        uncertainty_recorded=uncertainty_recorded,
     )
 
 

@@ -22,7 +22,9 @@ from aqsp.briefing.agent_roles import (
     agent_role_description,
     agent_role_focus,
     agent_role_label,
+    agent_role_viewpoint_buckets,
     parse_agent_roles as _parse_agent_roles,
+    empty_viewpoint_buckets,
     summarize_context_agent_roles,
     summarize_context_role_plan,
 )
@@ -182,6 +184,13 @@ class DebateResult:
     rule_transmission_evidence: tuple[str, ...] = field(default_factory=tuple)
     pending_confirmations: tuple[str, ...] = field(default_factory=tuple)
     falsifiable_conditions: tuple[str, ...] = field(default_factory=tuple)
+    # Evidence lanes are independent from the final vote.  Empty lanes are
+    # serialized explicitly so "no risk evidence" is not confused with risk=0.
+    viewpoint_buckets: dict[str, tuple[str, ...]] = field(
+        default_factory=empty_viewpoint_buckets
+    )
+    disagreement_points: tuple[str, ...] = field(default_factory=tuple)
+    uncertainty_points: tuple[str, ...] = field(default_factory=tuple)
 
     # Runtime gates are advisory metadata and never replace the candidate score.
     runtime_status: Literal["paper_review", "observation", "blocked"] = "paper_review"
@@ -305,6 +314,12 @@ class DebateResult:
             "rule_transmission_evidence": list(self.rule_transmission_evidence),
             "pending_confirmations": list(self.pending_confirmations),
             "falsifiable_conditions": list(self.falsifiable_conditions),
+            "viewpoint_buckets": {
+                str(bucket): list(points)
+                for bucket, points in self.viewpoint_buckets.items()
+            },
+            "disagreement_points": list(self.disagreement_points),
+            "uncertainty_points": list(self.uncertainty_points),
             "runtime_status": self.runtime_status,
             "realtime_blocked": self.realtime_blocked,
             "runtime_blocker": self.runtime_blocker,
@@ -343,6 +358,8 @@ class DebateResult:
                 "risk": quality.risk_recorded,
                 "cross_market": quality.cross_market_recorded,
             },
+            "viewpoint_bucket_presence": dict(quality.viewpoint_bucket_presence),
+            "uncertainty_recorded": quality.uncertainty_recorded,
             "advisory_adjusted_score": self.adjusted_score,
             "adjusted_score_is_advisory": self.advisory_only,
             "score_boundary": {
@@ -575,6 +592,7 @@ class AShareDebateAgent:
 - reasons: {"；".join(pick.reasons) or "无"}
 - risks: {"；".join(pick.risks) or "无"}
 - strategies: {",".join(pick.strategies) or "无"}
+- candidate_evidence: {self._candidate_signature(pick)}
 - market_context: {market_context}
 
 已有基础观点:
@@ -648,6 +666,10 @@ class AShareDebateAgent:
             pick,
             "cross_market_pressure_targets",
         )
+        metrics = pick.metrics or {}
+        ret5 = _metric_float(metrics.get("ret5_pct"))
+        bias20 = _metric_float(metrics.get("bias20_pct"))
+        rsi12 = _metric_float(metrics.get("rsi12"))
         support_count, conflict_count = self._cross_market_evidence_counts(
             pick,
             market_context_lines=market_context_lines,
@@ -671,6 +693,8 @@ class AShareDebateAgent:
                     for marker in ("动作 观察为主", "承压方向:", "失效条件:")
                     for line in market_context_lines
                 )
+                or (ret5 is not None and ret5 <= -3.0)
+                or (bias20 is not None and bias20 >= 8.0)
             ):
                 return "bearish"
             return "bearish" if pick.score < 50 else "neutral"
@@ -679,6 +703,10 @@ class AShareDebateAgent:
             if _is_st_risk_pick(pick) or _pick_risk_items(pick):
                 return "bearish"
             if invalidation_signals or pressure_targets or conflict_count > 0:
+                return "bearish"
+            if (rsi12 is not None and rsi12 >= 80.0) or (
+                bias20 is not None and bias20 >= 8.0
+            ):
                 return "bearish"
             return "bearish" if pick.score < 60 else "neutral"
         elif self.role == AgentRole.SECTOR_LEADER:
@@ -856,7 +884,7 @@ class AShareDebateAgent:
         market_context_lines: tuple[str, ...] = (),
     ) -> list[str]:
         """构建论据"""
-        args = []
+        args = [self._candidate_signature(pick)]
         validation_signals = self._cross_market_metric_texts(
             pick,
             "cross_market_validation_signals",
@@ -1043,6 +1071,20 @@ class AShareDebateAgent:
             )
         )
         return args
+
+    @staticmethod
+    def _candidate_signature(pick: PickResult) -> str:
+        """Keep each role anchored to the candidate's own evidence."""
+        metrics = pick.metrics or {}
+        sector = str(metrics.get("sector") or metrics.get("industry") or "行业未记录").strip()
+        technical = metrics.get("technical_evidence") or ()
+        technical_text = "、".join(str(item).strip() for item in technical if str(item).strip())
+        return (
+            f"候选专属证据: {pick.symbol} {pick.name or '名称未记录'}；"
+            f"行业={sector}；ret5={metrics.get('ret5_pct', '—')}%；"
+            f"ret20={metrics.get('ret20_pct', '—')}%；量比={metrics.get('volume_ratio', '—')}；"
+            f"技术={technical_text[:100] or '未记录'}"
+        )
 
     def _analyze_risk_factors(self, pick: PickResult) -> str:
         """分析风险因素"""
@@ -2291,6 +2333,7 @@ class AShareDebateCoordinator:
         result.support_points = self._build_support_points(final_opinions, result)
         result.opposition_points = self._build_opposition_points(final_opinions, result)
         result.watch_items = self._build_watch_items(final_opinions, result)
+        self._build_viewpoint_buckets(result, final_opinions)
         if not result.support_points:
             result.support_points = ("尚未形成明确支持证据，先保持观察。",)
         if not result.opposition_points:
@@ -2309,6 +2352,73 @@ class AShareDebateCoordinator:
         result.primary_risk_gate = self._build_primary_risk_gate(result)
         result.next_trigger = self._build_next_trigger(result)
         result.research_verdict = self._build_research_verdict(result)
+
+    def _build_viewpoint_buckets(
+        self,
+        result: DebateResult,
+        final_opinions: list[AgentOpinion],
+    ) -> None:
+        """Keep evidence lanes separate from votes and advisory wording."""
+        buckets = empty_viewpoint_buckets()
+        disagreement: list[str] = []
+        uncertainty: list[str] = list(result.pending_confirmations)
+
+        def add(bucket: str, values: list[str]) -> None:
+            for raw in values:
+                text = str(raw).strip()
+                if text and not _is_non_evidence_text(text) and text not in buckets[bucket]:
+                    buckets[bucket] = (*buckets[bucket], text)
+
+        for opinion in final_opinions:
+            role_buckets = agent_role_viewpoint_buckets(opinion.role)
+            meaningful_arguments = [
+                point
+                for point in (*opinion.arguments, *opinion.risk_factors)
+                if str(point).strip() and not _is_non_evidence_text(point)
+            ]
+            meaningful_opportunities = [
+                point
+                for point in opinion.opportunity_factors
+                if str(point).strip() and not _is_non_evidence_text(point)
+            ]
+            # A neutral vote still carries a domain claim.  Keep the claim in
+            # its role-owned lane without upgrading it into a bearish/bullish
+            # vote; this is the distinction the old aggregate lost.
+            role_points = meaningful_arguments or meaningful_opportunities
+            if opinion.stance == "bullish":
+                add("bullish", meaningful_opportunities or role_points)
+            elif opinion.stance == "bearish":
+                add("bearish", role_points)
+            else:
+                add("uncertainty", opinion.arguments or opinion.risk_factors)
+                uncertainty.append(
+                    f"{agent_role_label(opinion.role, self.language)}未形成方向性判断"
+                )
+
+            base_points = opinion.opportunity_factors or role_points
+            for bucket in role_buckets:
+                if bucket == "bullish":
+                    add(bucket, meaningful_opportunities or role_points)
+                elif bucket == "bearish":
+                    add(bucket, role_points)
+                else:
+                    add(bucket, base_points)
+            add("risk_counterevidence", opinion.risk_factors)
+            add("risk_counterevidence", opinion.counterarguments)
+            for record in opinion.rebuttal_records:
+                if record.rebuttal_reason:
+                    disagreement.append(
+                        f"{agent_role_label(opinion.role, self.language)}质询"
+                        f"{record.challenged_role}: {record.rebuttal_reason}"
+                    )
+
+        result.viewpoint_buckets = {
+            bucket: tuple(points[:4]) for bucket, points in buckets.items()
+        }
+        result.disagreement_points = tuple(dict.fromkeys(disagreement))[:4]
+        result.uncertainty_points = tuple(dict.fromkeys(
+            item for item in uncertainty if str(item).strip()
+        ))[:4]
 
     def _build_support_points(
         self,
@@ -2876,6 +2986,15 @@ def _nonnegative_int(value: object) -> int:
         return max(0, int(value or 0))
     except (TypeError, ValueError, OverflowError):
         return 0
+
+
+def _metric_float(value: object) -> float | None:
+    """Parse a candidate metric without turning missing data into evidence."""
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return parsed if pd.notna(parsed) else None
 
 
 def _is_non_evidence_text(value: object) -> bool:

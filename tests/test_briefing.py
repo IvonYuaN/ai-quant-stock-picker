@@ -738,6 +738,24 @@ class TestBriefingGenerator:
 
 
 class TestDebateAgent:
+    def test_bear_role_uses_candidate_specific_short_term_metrics(self):
+        agent = AShareDebateAgent(role=AgentRole.BEAR)
+        frame = pd.DataFrame({"close": [10 + index * 0.01 for index in range(30)]})
+        strong = _make_pick(
+            symbol="AAA",
+            score=72,
+            metrics={"ret5_pct": 4.2, "bias20_pct": 2.0},
+            risks=(),
+        )
+        weak = _make_pick(
+            symbol="BBB",
+            score=72,
+            metrics={"ret5_pct": -4.2, "bias20_pct": 2.0},
+            risks=(),
+        )
+        assert agent.generate_initial_opinion(strong, frame).stance == "neutral"
+        assert agent.generate_initial_opinion(weak, frame).stance == "bearish"
+
     def test_strong_buy_rating_is_not_misclassified_as_st_risk(self):
         agent = AShareDebateAgent(role=AgentRole.RISK_CONTROL)
         opinion = agent.generate_initial_opinion(

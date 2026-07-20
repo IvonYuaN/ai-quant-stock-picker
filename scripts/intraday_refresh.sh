@@ -262,6 +262,7 @@ INTRADAY_BATCH_SYMBOLS=""
 INTRADAY_BATCH_ID=""
 INTRADAY_BATCH_UNIVERSE_COUNT="0"
 INTRADAY_BATCH_COVERAGE_PCT="0"
+INTRADAY_BATCH_EXPECTED_COUNT="0"
 BATCH_COMMITTED="false"
 INTRADAY_NEWS_TASK_TIMEOUT_SECONDS="${AQSP_INTRADAY_NEWS_TASK_TIMEOUT_SECONDS:-20}"
 # The configured RSS set needs up to roughly five seconds on the production
@@ -312,6 +313,7 @@ TMP_INTRADAY_REPORT="${TMP_DIR}/intraday_latest.md"
 TMP_INTRADAY_OUTPUT_CSV="${TMP_DIR}/intraday_latest.csv"
 QUALITY_GATE_SUMMARY="${TMP_DIR}/quality_gate.json"
 BATCH_FAILURE_RECORDED="false"
+BATCH_OUTPUT_VALIDATED="false"
 
 # Install cleanup before resolver/data-source work can fail.
 cleanup_tmp_dir() {
@@ -324,7 +326,13 @@ replace_intraday_artifact() {
     local dest="$2"
     local label="$3"
     if [ -f "$src" ]; then
-        mv -f "$src" "$dest"
+        # Keep the run-local artifact for cursor validation and publish atomically.
+        local publish_tmp="${dest}.publish.$$"
+        if ! cp -f -- "$src" "$publish_tmp" || ! mv -f -- "$publish_tmp" "$dest"; then
+            rm -f -- "$publish_tmp"
+            log "[ERROR] 发布${label}失败: ${dest}"
+            return 1
+        fi
         log "已更新${label}: ${dest}"
     else
         log "未生成${label}，保留上一版: ${dest}"
@@ -335,10 +343,8 @@ validate_intraday_batch_output() {
     local expected_count="${INTRADAY_BATCH_EXPECTED_COUNT:-$INTRADAY_BATCH_SIZE}"
     local min_valid_ratio="${AQSP_INTRADAY_MIN_VALID_RATIO:-0.8}"
     local scanned_count
-    local batch_output_path="$INTRADAY_OUTPUT_CSV"
-    if [ ! -f "$batch_output_path" ] && [ -f "$TMP_INTRADAY_OUTPUT_CSV" ]; then
-        batch_output_path="$TMP_INTRADAY_OUTPUT_CSV"
-    fi
+    # The public CSV may still be the previous run. Validate this run's file only.
+    local batch_output_path="$TMP_INTRADAY_OUTPUT_CSV"
     if [ ! -f "$batch_output_path" ]; then
         log "[ERROR] 盘中批次产物缺少 CSV，拒绝提交 cursor"
         return 1
@@ -467,6 +473,7 @@ launch_intraday_debate_backfill() {
         --output "$DEBATE_RESULTS"
         --task-id "${AQSP_RUN_TASK_ID}"
         --max-candidates "$max_candidates"
+        --include-observation-only
         "${force_arg[@]}"
     )
     # The scheduler owns the runner process. A detached child can be reaped
@@ -1195,9 +1202,15 @@ write_intraday_status() {
     local status="$1"
     local reason="$2"
     local exit_code="$3"
+    # observation-only is a valid fresh scan result. It blocks recommendation
+    # and paper-ledger actions, but must not invalidate the universe batch.
     if [ "$status" != "running" ] && [ "$status" != "completed" ] && \
+       [ "$status" != "observation_only" ] && \
        [ "$INTRADAY_BATCH_ACTIVE" = "true" ] && \
-       [ "$BATCH_COMMITTED" != "true" ] && [ "$BATCH_FAILURE_RECORDED" != "true" ]; then
+       [ "$BATCH_COMMITTED" != "true" ] && \
+       [ "$BATCH_FAILURE_RECORDED" != "true" ] && \
+       [ -n "${BATCH_FAILURE_REASON:-}" ] && \
+       [ "$BATCH_OUTPUT_VALIDATED" != "true" ]; then
         if "${PYTHON_BIN}" "${PROJECT_ROOT}/scripts/prepare_intraday_batch.py" \
             --cursor "$INTRADAY_CURSOR_PATH" \
             --fail "${BATCH_FAILURE_REASON:-${status}}" >>"$RESULT_LOG" 2>&1; then
@@ -1567,8 +1580,16 @@ if is_truthy "$INTRADAY_BATCH_SCAN" && \
         log "[ERROR] 盘中股票批次为空；不运行重策略"
         exit 1
     fi
+    IFS=',' read -r -a INTRADAY_BATCH_SYMBOL_ARRAY <<< "$INTRADAY_BATCH_SYMBOLS"
+    INTRADAY_BATCH_EXPECTED_COUNT="${#INTRADAY_BATCH_SYMBOL_ARRAY[@]}"
+    if [ "$INTRADAY_BATCH_EXPECTED_COUNT" -le 0 ]; then
+        log "[ERROR] 盘中股票批次没有可计数标的；不运行重策略"
+        exit 1
+    fi
     INTRADAY_BATCH_ACTIVE="true"
-    INTRADAY_MAX_UNIVERSE="$INTRADAY_BATCH_SIZE"
+    # The explicit symbol list is already bounded by the cursor. Keep metadata
+    # at zero so batch size is not reported as a global universe cap.
+    INTRADAY_MAX_UNIVERSE="0"
     export AQSP_SYMBOLS="$INTRADAY_BATCH_SYMBOLS"
     log "盘中批次已准备: ${INTRADAY_BATCH_SYMBOLS}"
 fi
@@ -1732,6 +1753,14 @@ if [ "$OBSERVATION_ONLY" != "true" ] && quality_gate_requires_observation; then
     fi
 fi
 
+# A partial/timeout run may still have a fresh, sufficiently covered batch.
+# Validate that evidence before degraded status persistence can mark it failed.
+if [ "$INTRADAY_BATCH_ACTIVE" = "true" ] && \
+   [ "$RESOURCE_KILLED" != "true" ] && \
+   validate_intraday_batch_output; then
+    BATCH_OUTPUT_VALIDATED="true"
+fi
+
 if [ "$OBSERVATION_ONLY" = "true" ]; then
     if [ "$QUALITY_GATE_EXIT_CODE" -ne 0 ] || \
        [ "$RUN_TIMED_OUT" = "true" ] || \
@@ -1749,24 +1778,23 @@ fi
 
 # Cursor advancement depends only on the fresh quote batch. News and debate
 # are advisory sidecars and must not turn a successfully scanned batch into a
-# failed cursor state.
+# failed cursor state.  observation-only is a recommendation/ledger status;
+# it is not evidence that the selected universe was not scanned.
 if [ "$INTRADAY_BATCH_ACTIVE" = "true" ] && \
-   [ "$RUN_EXIT_CODE" -eq 0 ] && \
-   [ "$QUALITY_GATE_EXIT_CODE" -eq 0 ] && \
-   [ "$OBSERVATION_ONLY" != "true" ] && \
-   [ "$PARTIAL_SNAPSHOT_USED" != "true" ] && \
-   [ "${SCRIPT_EXIT_CODE:-0}" -eq 0 ]; then
-    if validate_intraday_batch_output; then
-        AQSP_INTRADAY_BATCH_SCANNED="$INTRADAY_BATCH_SCANNED" \
-            "$PYTHON_BIN" "${PROJECT_ROOT}/scripts/prepare_intraday_batch.py" \
-            --cursor "$INTRADAY_CURSOR_PATH" --commit
-        BATCH_COMMITTED="true"
-        log "盘中批次已提交；消息与讨论 sidecar 不影响 cursor 推进"
-    else
-        BATCH_FAILURE_REASON="intraday_batch_output_incomplete"
-        SCRIPT_EXIT_CODE="1"
-        write_intraday_status "partial_failed" "盘中批次产物覆盖不完整，cursor 未推进" "$SCRIPT_EXIT_CODE"
-    fi
+   [ "$RESOURCE_KILLED" != "true" ] && \
+   [ "$BATCH_OUTPUT_VALIDATED" = "true" ] && \
+   [ "$BATCH_COMMITTED" != "true" ]; then
+    AQSP_INTRADAY_BATCH_SCANNED="$INTRADAY_BATCH_SCANNED" \
+        "$PYTHON_BIN" "${PROJECT_ROOT}/scripts/prepare_intraday_batch.py" \
+        --cursor "$INTRADAY_CURSOR_PATH" --commit
+    BATCH_COMMITTED="true"
+    log "盘中批次已提交；partial/timeout 和消息与讨论 sidecar 不影响 cursor 推进"
+elif [ "$INTRADAY_BATCH_ACTIVE" = "true" ] && \
+     [ "$BATCH_OUTPUT_VALIDATED" != "true" ] && \
+     [ "$BATCH_FAILURE_RECORDED" != "true" ]; then
+    BATCH_FAILURE_REASON="intraday_batch_output_incomplete"
+    SCRIPT_EXIT_CODE="1"
+    write_intraday_status "partial_failed" "盘中批次产物覆盖不完整，cursor 未推进" "$SCRIPT_EXIT_CODE"
 fi
 
 # Publish fresh candidates before the slower news/debate sidecars. The final
@@ -1810,10 +1838,10 @@ fi
 if [ "$INTRADAY_BATCH_ACTIVE" = "true" ] && \
    [ "$BATCH_COMMITTED" != "true" ] && \
    [ "$RUN_EXIT_CODE" -eq 0 ] && \
-   [ "$QUALITY_GATE_EXIT_CODE" -eq 0 ] && \
-   [ "$OBSERVATION_ONLY" != "true" ] && \
+   [ "$RUN_TIMED_OUT" != "true" ] && \
+   [ "$RESOURCE_KILLED" != "true" ] && \
    [ "$PARTIAL_SNAPSHOT_USED" != "true" ] && \
-   [ "${SCRIPT_EXIT_CODE:-0}" -eq 0 ]; then
+   [ "$BATCH_COMMITTED" != "true" ]; then
     if validate_intraday_batch_output; then
         AQSP_INTRADAY_BATCH_SCANNED="$INTRADAY_BATCH_SCANNED" \
             "$PYTHON_BIN" "${PROJECT_ROOT}/scripts/prepare_intraday_batch.py" \

@@ -10,6 +10,7 @@ import pytest
 
 from aqsp.briefing.agent_roles import AgentRole
 from aqsp.briefing.conclusion import debate_evidence_provenance
+from aqsp.briefing.schema import CommitteeConclusion
 from aqsp.briefing.debate import (
     AShareDebateCoordinator,
     AShareDebateAgent,
@@ -550,6 +551,55 @@ def test_debate_result_to_dict_persists_process_and_advisory_boundary() -> None:
     assert payload["discussion_agent_count"] == 3
     assert payload["rebuttal_count"] >= 1
     assert payload["real_opposition_count"] >= 1
+
+
+def test_debate_result_keeps_independent_viewpoint_buckets_and_final_round_counts(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    pick = _make_pick(
+        metrics={
+            "cross_market_primary_theme": "海外物理AI叙事升温",
+            "cross_market_support_event_count": 2,
+            "cross_market_supporting_evidence": "Reuters: 海外设备商上调指引",
+            "cross_market_validation_signals": ("A股设备链同步放量",),
+        }
+    )
+    result = AShareDebateCoordinator(
+        max_rounds=2,
+        roles=(
+            AgentRole.BULL,
+            AgentRole.BEAR,
+            AgentRole.RISK_CONTROL,
+            AgentRole.CROSS_MARKET,
+        ),
+        task_id="viewpoint-test",
+    ).run_debate(pick, pd.DataFrame({"close": [100.0, 101.0, 102.0]}))
+
+    payload = result.to_dict()
+    buckets = payload["viewpoint_buckets"]
+    assert set(buckets) == {
+        "bullish",
+        "bearish",
+        "event_fundamental",
+        "technical",
+        "risk_counterevidence",
+        "uncertainty",
+    }
+    assert buckets["bullish"]
+    assert buckets["technical"]
+    assert buckets["bearish"]
+    assert buckets["event_fundamental"]
+    assert buckets["risk_counterevidence"]
+    assert sum(payload["stance_counts"].values()) == len(result.final_vote)
+    assert payload["deterministic_score"] == pick.score
+    assert payload["deterministic_score_unchanged"] is True
+
+    conclusion = CommitteeConclusion.from_debate_result(result)
+    assert conclusion.viewpoint_buckets["technical"]
+    assert conclusion.viewpoint_buckets["event_fundamental"]
+    assert conclusion.viewpoint_buckets["risk_counterevidence"]
+    assert conclusion.disagreement_points
 
 
 def test_debate_audit_keeps_neutral_bear_role_out_of_real_opposition_count() -> None:

@@ -305,6 +305,12 @@ def test_home_snapshot_round_trips_multiple_debate_summaries(tmp_path) -> None:
             bull_count=1,
             bear_count=1,
             process_summary="3轮；看多 1 / 看空 1 / 中性 7",
+            viewpoint_buckets={
+                "technical": ("均线多头",),
+                "risk_counterevidence": ("量能不足",),
+            },
+            disagreement_points=("风控质询看多",),
+            uncertainty_points=("等待板块扩散",),
         )
         for symbol in ("600001", "600002", "600003")
     )
@@ -323,6 +329,9 @@ def test_home_snapshot_round_trips_multiple_debate_summaries(tmp_path) -> None:
         "600003",
     )
     assert loaded.debate is loaded.debates[0]
+    assert loaded.debates[0].viewpoint_buckets["technical"] == ("均线多头",)
+    assert loaded.debates[0].disagreement_points == ("风控质询看多",)
+    assert loaded.debates[0].uncertainty_points == ("等待板块扩散",)
 
 
 def test_home_snapshot_rejects_duplicate_debate_symbols() -> None:

@@ -94,6 +94,9 @@ export interface AqspAgentResult {
   neutral_count: number;
   process_summary: string;
   round_summaries?: readonly string[];
+  viewpoint_buckets?: Readonly<Record<string, readonly string[]>>;
+  disagreement_points?: readonly string[];
+  uncertainty_points?: readonly string[];
 }
 
 export type AqspAgentDiscussion = AqspAgentResult;

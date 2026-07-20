@@ -6,7 +6,7 @@ import json
 import math
 import os
 from collections.abc import Mapping
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, dataclass, field, replace
 from datetime import date as CalendarDate
 from datetime import datetime
 from pathlib import Path
@@ -123,6 +123,9 @@ class AQSPDebate:
     process_recorded: bool = False
     conclusion_recorded: bool = False
     quality_issues: tuple[str, ...] = ()
+    viewpoint_buckets: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    disagreement_points: tuple[str, ...] = ()
+    uncertainty_points: tuple[str, ...] = ()
 
     @property
     def evidence(self) -> tuple[AQSPDebateEvidence, ...]:
@@ -1010,6 +1013,9 @@ def _parse_debate(payload: object) -> AQSPDebate:
             "conclusion_recorded",
             "debate_quality_issues",
             "evidence",
+            "viewpoint_buckets",
+            "disagreement_points",
+            "uncertainty_points",
         },
     )
     raw_evidence = tuple(
@@ -1052,6 +1058,13 @@ def _parse_debate(payload: object) -> AQSPDebate:
         )
         or evidence_by_kind["transmission"]
     )
+    raw_viewpoint_buckets = _object(
+        item.get("viewpoint_buckets", {}), "debate.viewpoint_buckets"
+    )
+    viewpoint_buckets = {
+        str(bucket): tuple(_text_list(points, f"debate.viewpoint_buckets.{bucket}"))
+        for bucket, points in raw_viewpoint_buckets.items()
+    }
     return AQSPDebate(
         symbol=_validate_symbol(_text(item["symbol"], "debate.symbol")),
         display_name=_text(item["display_name"], "debate.display_name"),
@@ -1114,6 +1127,19 @@ def _parse_debate(payload: object) -> AQSPDebate:
             _text_list(
                 item.get("debate_quality_issues", []),
                 "debate.debate_quality_issues",
+            )
+        ),
+        viewpoint_buckets=viewpoint_buckets,
+        disagreement_points=tuple(
+            _text_list(
+                item.get("disagreement_points", []),
+                "debate.disagreement_points",
+            )
+        ),
+        uncertainty_points=tuple(
+            _text_list(
+                item.get("uncertainty_points", []),
+                "debate.uncertainty_points",
             )
         ),
     )

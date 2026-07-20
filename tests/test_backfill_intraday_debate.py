@@ -306,6 +306,20 @@ def test_load_intraday_picks_includes_observation_only_only_when_explicit(
         == 1
     )
 
+    path.write_text(
+        "symbol,name,date,score,rating,reasons,quality_gate_action,observation_only\n"
+        "000001,测试,2026-07-10,80,watch,放量突破,blocked,true\n",
+        encoding="utf-8",
+    )
+    assert (
+        len(
+            backfill_intraday_debate.load_intraday_picks(
+                path, 5, include_observation_only=True
+            )
+        )
+        == 1
+    )
+
 
 def test_backfill_force_runs_rules_when_global_debate_is_disabled(
     tmp_path: Path, monkeypatch

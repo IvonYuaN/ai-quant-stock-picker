@@ -6,10 +6,22 @@ from aqsp.backtest.walk_forward import (
     WalkForwardResult,
     WalkForwardTester,
 )
+from aqsp.backtest.variant_account import (
+    VariantExecutionRules,
+    VariantFill,
+    VariantOrder,
+    VariantResult,
+    simulate_variant,
+)
 
 __all__ = [
     "BacktestResult",
     "TradeResult",
     "WalkForwardResult",
     "WalkForwardTester",
+    "VariantExecutionRules",
+    "VariantFill",
+    "VariantOrder",
+    "VariantResult",
+    "simulate_variant",
 ]

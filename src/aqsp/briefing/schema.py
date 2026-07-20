@@ -135,6 +135,9 @@ class CommitteeConclusion:
     data_note: str = ""
     pending_confirmations: tuple[str, ...] = field(default_factory=tuple)
     falsifiable_conditions: tuple[str, ...] = field(default_factory=tuple)
+    viewpoint_buckets: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    disagreement_points: tuple[str, ...] = field(default_factory=tuple)
+    uncertainty_points: tuple[str, ...] = field(default_factory=tuple)
 
     @classmethod
     def from_debate_result(cls, result: DebateResult) -> CommitteeConclusion:
@@ -199,6 +202,18 @@ class CommitteeConclusion:
             pending_confirmations=provenance.pending_confirmations,
             falsifiable_conditions=_unique_texts(
                 getattr(result, "falsifiable_conditions", ()) or ()
+            ),
+            viewpoint_buckets={
+                str(bucket): _as_text_tuple(points)
+                for bucket, points in (
+                    getattr(result, "viewpoint_buckets", {}) or {}
+                ).items()
+            },
+            disagreement_points=_unique_texts(
+                getattr(result, "disagreement_points", ()) or ()
+            ),
+            uncertainty_points=_unique_texts(
+                getattr(result, "uncertainty_points", ()) or ()
             ),
         )
 

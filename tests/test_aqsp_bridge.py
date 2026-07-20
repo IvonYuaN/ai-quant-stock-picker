@@ -66,6 +66,12 @@ def _snapshot(selected_date: str, symbol: str = "600001") -> dict:
                 "process_recorded": True,
                 "conclusion_recorded": True,
                 "debate_quality_issues": [],
+                "viewpoint_buckets": {
+                    "technical": ["均线多头"],
+                    "risk_counterevidence": ["量能未确认"],
+                },
+                "disagreement_points": ["看空质询看多"],
+                "uncertainty_points": ["等待板块扩散"],
                 "advisory_only": True,
                 "deterministic_score": 72.5,
                 "deterministic_score_unchanged": True,
@@ -667,6 +673,12 @@ def test_aqsp_bridge_exposes_structured_debate_process_without_changing_score(
         {"kind": "cross_market", "text": "海外同业订单增长"},
         {"kind": "transmission", "text": "产品发布 -> 产业链订单"},
     ]
+    assert debate["viewpoint_buckets"] == {
+        "technical": ["均线多头"],
+        "risk_counterevidence": ["量能未确认"],
+    }
+    assert debate["disagreement_points"] == ["看空质询看多"]
+    assert debate["uncertainty_points"] == ["等待板块扩散"]
     assert debate["advisory_only"] is True
     assert debate["deterministic_score"] == 72.5
     assert debate["deterministic_score_unchanged"] is True

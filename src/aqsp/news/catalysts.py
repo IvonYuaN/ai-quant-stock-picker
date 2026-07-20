@@ -1686,7 +1686,10 @@ def format_catalyst_notification(report: CatalystReport) -> str:
         )
     return compact_notification_markdown(
         normalize_research_tone("\n".join(lines)),
-        max_section_items=8,
+        # An event card carries source, publication time, summary, transmission,
+        # validation, and invalidation evidence. Keep one complete card visible;
+        # the formatter still summarizes additional events beyond the limit.
+        max_section_items=14,
     )
 
 
@@ -1880,6 +1883,23 @@ def _event_card_lines(index: int, event: CatalystEvent) -> list[str]:
         f"- 影响: {_event_impact_summary(event)}",
         f"- 来源: {_inline(event.source)} | 质量 {_inline(event.source_quality_label)}（{event.source_quality_score}/4） | 区域 {_inline(event.source_region)}",
     ]
+    if event.summary:
+        lines.append(f"- 摘要: {_inline(_short_text(event.summary, 180))}")
+    if event.transmission_path:
+        lines.append(
+            "- 传导链: "
+            + _inline(" -> ".join(str(item) for item in event.transmission_path))
+        )
+    if event.validation_signals:
+        lines.append(
+            "- 验证: "
+            + _inline("；".join(str(item) for item in event.validation_signals))
+        )
+    if event.invalidation_signals:
+        lines.append(
+            "- 失效: "
+            + _inline("；".join(str(item) for item in event.invalidation_signals))
+        )
     if event.published_at:
         lines.append(f"- 时间: {_inline(event.published_at)}")
     if event.url:

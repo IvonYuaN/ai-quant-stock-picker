@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import math
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, dataclass, field, replace
 from datetime import date as CalendarDate
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -165,6 +165,9 @@ class HomeSnapshotDebate:
     neutral_count: int = 0
     process_summary: str = ""
     round_summaries: tuple[str, ...] = ()
+    viewpoint_buckets: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    disagreement_points: tuple[str, ...] = ()
+    uncertainty_points: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -910,6 +913,9 @@ def _debate_from_dict(payload: object) -> HomeSnapshotDebate:
             "neutral_count",
             "process_summary",
             "round_summaries",
+            "viewpoint_buckets",
+            "disagreement_points",
+            "uncertainty_points",
         },
     )
     return HomeSnapshotDebate(
@@ -930,6 +936,18 @@ def _debate_from_dict(payload: object) -> HomeSnapshotDebate:
         ),
         round_summaries=_text_tuple(
             mapping.get("round_summaries", []), "debate.round_summaries"
+        ),
+        viewpoint_buckets={
+            str(bucket): _text_tuple(points, f"debate.viewpoint_buckets.{bucket}")
+            for bucket, points in _mapping(
+                mapping.get("viewpoint_buckets", {}), "debate.viewpoint_buckets"
+            ).items()
+        },
+        disagreement_points=_text_tuple(
+            mapping.get("disagreement_points", []), "debate.disagreement_points"
+        ),
+        uncertainty_points=_text_tuple(
+            mapping.get("uncertainty_points", []), "debate.uncertainty_points"
         ),
     )
 
@@ -978,7 +996,19 @@ def _recommendation_gate_from_dict(
 
 def _phase_from_dict(payload: object) -> HomeSnapshotPhase:
     mapping = _mapping(payload, "phase")
-    _require_keys(mapping, {"task_id", "label", "status", "candidate_count", "unique_symbols", "overlap_symbols"}, "phase", optional={"updated_at"})
+    _require_keys(
+        mapping,
+        {
+            "task_id",
+            "label",
+            "status",
+            "candidate_count",
+            "unique_symbols",
+            "overlap_symbols",
+        },
+        "phase",
+        optional={"updated_at"},
+    )
     return HomeSnapshotPhase(
         task_id=_text(mapping["task_id"], "phase.task_id"),
         label=_text(mapping["label"], "phase.label"),
@@ -1103,9 +1133,7 @@ def _validate_snapshot(snapshot: HomeDashboardSnapshot) -> None:
         raise ValueError("source must be a HomeSnapshotSource value")
     if not isinstance(snapshot.coldstart, HomeSnapshotColdstart):
         raise ValueError("coldstart must be a HomeSnapshotColdstart value")
-    if not isinstance(
-        snapshot.recommendation_gate, HomeSnapshotRecommendationGate
-    ):
+    if not isinstance(snapshot.recommendation_gate, HomeSnapshotRecommendationGate):
         raise ValueError(
             "recommendation_gate must be a HomeSnapshotRecommendationGate value"
         )
