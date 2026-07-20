@@ -48,11 +48,16 @@ def load_frames(
     end: str,
 ) -> dict[str, pd.DataFrame]:
     placeholders = ",".join("?" for _ in symbols)
+    with sqlite3.connect(db_path) as conn:
+        columns = {
+            str(row[1]) for row in conn.execute("PRAGMA table_info(ohlcv)")
+        }
+    workload_filter = " AND workload = 'historical'" if "workload" in columns else ""
     query = f"""
         SELECT symbol, date, open, high, low, close, volume, amount,
                suspended, limit_up, limit_down
         FROM ohlcv
-        WHERE price_mode = 'raw' AND workload = 'historical'
+        WHERE price_mode = 'raw'{workload_filter}
           AND symbol IN ({placeholders}) AND date BETWEEN ? AND ?
         ORDER BY symbol, date
     """
