@@ -870,6 +870,7 @@ class DashboardCandidateCard:
     bias20_pct: float | None = None
     stop_loss: float | None = None
     take_profit: float | None = None
+    research_recommendation: bool = False
 
 
 @dataclass(frozen=True)
@@ -5574,6 +5575,8 @@ class DashboardDataProvider:
     def _action_label(self, row: dict[str, Any]) -> str:
         action = str(row.get("portfolio_action", "") or "").strip()
         rating = str(row.get("rating", "") or "").strip()
+        if bool(row.get("research_recommendation", False)):
+            return "实时推荐"
         if action and action != "keep":
             return normalize_research_tone(portfolio_action_label(action))
         if self._is_intraday_row(row) and self._is_actionable(row):
@@ -5630,6 +5633,8 @@ class DashboardDataProvider:
     def _is_actionable(self, row: dict[str, Any], task_id: str = "") -> bool:
         if self._is_blocked(row):
             return False
+        if bool(row.get("research_recommendation", False)):
+            return is_tradable_rating(row.get("rating"))
         action = str(row.get("portfolio_action", "") or "").strip()
         if action == "observation_only" or bool(row.get("observation_only", False)):
             return False
@@ -5642,6 +5647,8 @@ class DashboardDataProvider:
         return is_tradable_rating(row.get("rating"))
 
     def _is_watch_candidate(self, row: dict[str, Any], task_id: str = "") -> bool:
+        if bool(row.get("research_recommendation", False)):
+            return False
         rating = str(row.get("rating", "") or "").strip()
         action = str(row.get("portfolio_action", "") or "").strip()
         return rating in {"watch", "avoid"} or action in {
@@ -6411,6 +6418,9 @@ class DashboardDataProvider:
                     bias20_pct=_technical_metric_value(row, "bias20_pct"),
                     stop_loss=_technical_metric_value(row, "stop_loss"),
                     take_profit=_technical_metric_value(row, "take_profit"),
+                    research_recommendation=bool(
+                        row.get("research_recommendation", False)
+                    ),
                 )
             )
         return tuple(cards)

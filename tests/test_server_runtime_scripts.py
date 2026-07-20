@@ -1439,6 +1439,15 @@ def test_intraday_bridge_marks_failed_attempt_without_blocking_midday_task() -> 
     assert '午盘任务未真实执行，不写完成标记；后续定时仍可重试' in script
 
 
+def test_intraday_refresh_default_batch_can_rotate_full_market_in_session() -> None:
+    script = (PROJECT_ROOT / "scripts" / "intraday_refresh.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'INTRADAY_BATCH_SIZE="${AQSP_INTRADAY_BATCH_SIZE:-256}"' in script
+    assert "AQSP_INTRADAY_BATCH_SIZE" in script
+
+
 def test_coldstart_daily_stops_when_update_fails_and_target_coverage_is_too_low(
     tmp_path: Path,
 ) -> None:
