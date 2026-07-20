@@ -28,7 +28,7 @@ MAX_SUMMARIES = 3
 MAX_MESSAGES = 5
 MAX_DEBATE_RESULTS_BYTES = 8 * 1024 * 1024
 MAX_CROSS_MARKET = 3
-MAX_VARIANTS = 3
+MAX_VARIANTS = 12
 LEGACY_MESSAGE_TIMESTAMP_FORMAT = "%Y-%m-%d %H:%M:%S"
 SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -225,13 +225,18 @@ class AQSPVariant:
     variant_id: str
     label: str
     initial_cash: float
+    cash: float
     final_equity: float
+    total_pnl: float
     return_pct: float
     filled_orders: int
     rejected_orders: int
     start_date: str
     end_date: str
     data_mode: str
+    rank: int = 0
+    strategy: str = ""
+    holdings: tuple[dict[str, Any], ...] = ()
     hard_rules: tuple[str, ...] = ()
 
 
@@ -368,9 +373,15 @@ def load_surface() -> AQSPResearchSurface:
 
 def _debate_results_path() -> Path:
     raw_path = os.environ.get("AQSP_DEBATE_RESULTS", "").strip()
-    raw_path = raw_path or DEFAULT_DEBATE_RESULTS_PATH
-    path = Path(raw_path).expanduser()
-    return path if path.is_absolute() else _PROJECT_ROOT / path
+    path = Path(raw_path or DEFAULT_DEBATE_RESULTS_PATH).expanduser()
+    if path.is_absolute():
+        return path
+    runtime_root = os.environ.get("AQSP_RUNTIME_ROOT", "").strip()
+    return (
+        Path(runtime_root).expanduser() / path
+        if runtime_root
+        else _PROJECT_ROOT / path
+    )
 
 
 def _attach_runtime_debates(
@@ -848,7 +859,7 @@ def _parse_variant(payload: object) -> AQSPVariant:
     item = _object(payload, "variant")
     _check_keys(
         item,
-        {"variant_id", "label", "initial_cash", "final_equity", "return_pct", "filled_orders", "rejected_orders", "start_date", "end_date", "data_mode"},
+        {"variant_id", "label", "initial_cash", "cash", "final_equity", "total_pnl", "return_pct", "filled_orders", "rejected_orders", "start_date", "end_date", "data_mode"},
         "variant",
         {"hard_rules"},
     )
@@ -856,13 +867,21 @@ def _parse_variant(payload: object) -> AQSPVariant:
         variant_id=_text(item["variant_id"], "variant.variant_id"),
         label=_text(item["label"], "variant.label"),
         initial_cash=_number(item["initial_cash"], "variant.initial_cash"),
+        cash=_number(item["cash"], "variant.cash"),
         final_equity=_number(item["final_equity"], "variant.final_equity"),
+        total_pnl=_number(item["total_pnl"], "variant.total_pnl"),
         return_pct=_number(item["return_pct"], "variant.return_pct"),
         filled_orders=_integer(item["filled_orders"], "variant.filled_orders"),
         rejected_orders=_integer(item["rejected_orders"], "variant.rejected_orders"),
         start_date=_text(item["start_date"], "variant.start_date"),
         end_date=_text(item["end_date"], "variant.end_date"),
         data_mode=_text(item["data_mode"], "variant.data_mode"),
+        rank=_integer(item.get("rank", 0), "variant.rank"),
+        strategy=_optional_text(item.get("strategy"), "variant.strategy"),
+        holdings=tuple(
+            value for value in _list(item.get("holdings", []), "variant.holdings")
+            if isinstance(value, dict)
+        ),
         hard_rules=tuple(_text_list(item.get("hard_rules", []), "variant.hard_rules")),
     )
     if variant.initial_cash != 100_000.0:

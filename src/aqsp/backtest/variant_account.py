@@ -48,6 +48,18 @@ class VariantFill:
     reason: str = ""
 
 
+@dataclass(frozen=True)
+class VariantHolding:
+    """Marked-to-market holding at the end of the historical run."""
+
+    symbol: str
+    quantity: int
+    average_price: float
+    last_price: float
+    market_value: float
+    unrealized_pnl: float
+
+
 @dataclass
 class _Position:
     quantity: int = 0
@@ -63,11 +75,16 @@ class VariantResult:
     cash: float
     fills: tuple[VariantFill, ...]
     positions: Mapping[str, int]
+    holdings: tuple[VariantHolding, ...]
     rejected_orders: int
 
     @property
     def return_pct(self) -> float:
         return (self.final_equity / self.initial_cash - 1.0) * 100.0
+
+    @property
+    def total_pnl(self) -> float:
+        return self.final_equity - self.initial_cash
 
 
 def simulate_variant(
@@ -163,10 +180,20 @@ def simulate_variant(
         for position in positions.values():
             position.available_quantity = position.quantity
 
-    final_equity = cash + sum(
-        position.quantity * _last_close(frames[symbol])
+    holdings = tuple(
+        VariantHolding(
+            symbol=symbol,
+            quantity=position.quantity,
+            average_price=position.average_price,
+            last_price=_last_close(frames[symbol]),
+            market_value=position.quantity * _last_close(frames[symbol]),
+            unrealized_pnl=position.quantity
+            * (_last_close(frames[symbol]) - position.average_price),
+        )
         for symbol, position in positions.items()
+        if position.quantity
     )
+    final_equity = cash + sum(holding.market_value for holding in holdings)
     return VariantResult(
         variant_id=variant_id,
         initial_cash=cfg.initial_cash,
@@ -174,6 +201,7 @@ def simulate_variant(
         cash=cash,
         fills=tuple(fills),
         positions={symbol: position.quantity for symbol, position in positions.items() if position.quantity},
+        holdings=holdings,
         rejected_orders=rejected,
     )
 
@@ -185,10 +213,22 @@ def variant_result_to_dict(result: VariantResult) -> dict[str, Any]:
         "initial_cash": result.initial_cash,
         "final_equity": result.final_equity,
         "cash": result.cash,
+        "total_pnl": result.total_pnl,
         "return_pct": result.return_pct,
         "filled_orders": sum(fill.status == "filled" for fill in result.fills),
         "rejected_orders": result.rejected_orders,
         "positions": dict(result.positions),
+        "holdings": [
+            {
+                "symbol": holding.symbol,
+                "quantity": holding.quantity,
+                "average_price": holding.average_price,
+                "last_price": holding.last_price,
+                "market_value": holding.market_value,
+                "unrealized_pnl": holding.unrealized_pnl,
+            }
+            for holding in result.holdings
+        ],
         "fills": [
             {
                 "date": fill.date,

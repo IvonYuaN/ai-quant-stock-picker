@@ -4,6 +4,7 @@ set -euo pipefail
 
 RELEASE_ROOT="${AQSP_RELEASE_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 RUNTIME_ROOT="${AQSP_RUNTIME_ROOT:-/opt/aqsp}"
+RUNTIME_DATA_ROOT="${AQSP_RUNTIME_DATA_ROOT:-${RUNTIME_ROOT}/data}"
 
 if [[ -f "${RUNTIME_ROOT}/.env" ]]; then
     set -a
@@ -14,10 +15,30 @@ fi
 
 runtime_path() {
     case "${1:-}" in
-        /*) printf '%s\n' "$1" ;;
-        *) printf '%s/%s\n' "$RUNTIME_ROOT" "${1:-}" ;;
+        /*)
+            case "$1" in
+                "$RUNTIME_DATA_ROOT"|"$RUNTIME_DATA_ROOT"/*) printf '%s\n' "$1" ;;
+                *) echo "runtime output must be under ${RUNTIME_DATA_ROOT}: $1" >&2; exit 1 ;;
+            esac
+            ;;
+        *)
+            relative="${1:-}"
+            relative="${relative#data/}"
+            printf '%s/%s\n' "$RUNTIME_DATA_ROOT" "$relative"
+            ;;
     esac
 }
+
+case "$RUNTIME_DATA_ROOT" in
+    /*) ;;
+    *) echo "AQSP_RUNTIME_DATA_ROOT must be absolute: $RUNTIME_DATA_ROOT" >&2; exit 1 ;;
+esac
+case "$RELEASE_ROOT" in
+    "$RUNTIME_DATA_ROOT"|"$RUNTIME_DATA_ROOT"/*) echo "runtime data cannot be inside release: $RUNTIME_DATA_ROOT" >&2; exit 1 ;;
+esac
+case "$RUNTIME_DATA_ROOT" in
+    "$RELEASE_ROOT"|"$RELEASE_ROOT"/*) echo "runtime data cannot be inside release: $RUNTIME_DATA_ROOT" >&2; exit 1 ;;
+esac
 
 export AQSP_PROJECT_ROOT="$RELEASE_ROOT"
 export AQSP_RUNTIME_ROOT="$RUNTIME_ROOT"
@@ -45,13 +66,16 @@ export AQSP_LEDGER="$(runtime_path "${AQSP_LEDGER:-data/predictions.jsonl}")"
 export AQSP_PAPER_LEDGER="$(runtime_path "${AQSP_PAPER_LEDGER:-data/paper_trades.jsonl}")"
 export AQSP_DEBATE_RESULTS="$(runtime_path "${AQSP_DEBATE_RESULTS:-data/debate_results.jsonl}")"
 export AQSP_INTRADAY_LEDGER="$(runtime_path "${AQSP_INTRADAY_LEDGER:-data/intraday_predictions.jsonl}")"
+export AQSP_REPORT="$(runtime_path "${AQSP_REPORT:-reports/latest.md}")"
+export AQSP_OUTPUT_CSV="$(runtime_path "${AQSP_OUTPUT_CSV:-reports/latest.csv}")"
 export AQSP_INTRADAY_REPORT="$(runtime_path "${AQSP_INTRADAY_REPORT:-reports/intraday_latest.md}")"
 export AQSP_INTRADAY_LATEST_CSV="$(runtime_path "${AQSP_INTRADAY_LATEST_CSV:-reports/intraday_latest.csv}")"
 export AQSP_INTRADAY_OUTPUT_CSV="$(runtime_path "${AQSP_INTRADAY_OUTPUT_CSV:-reports/intraday_latest.csv}")"
 export AQSP_INTRADAY_STATUS="$(runtime_path "${AQSP_INTRADAY_STATUS:-data/intraday_refresh_status.json}")"
 export AQSP_INTRADAY_REFRESH_STATUS_PATH="$AQSP_INTRADAY_STATUS"
 export AQSP_INTRADAY_CURSOR_PATH="$(runtime_path "${AQSP_INTRADAY_CURSOR_PATH:-data/runtime/intraday_universe_cursor.json}")"
-export AQSP_OUTPUT_CSV="$(runtime_path "${AQSP_OUTPUT_CSV:-reports/latest.csv}")"
+export AQSP_DASHBOARD_HTML="$(runtime_path "${AQSP_DASHBOARD_HTML:-dist/dashboard/index.html}")"
+export AQSP_DASHBOARD_DB="$(runtime_path "${AQSP_DASHBOARD_DB:-dist/dashboard/aqsp.db}")"
 export AQSP_HOME_SNAPSHOT_PATH="$(runtime_path "${AQSP_HOME_SNAPSHOT_PATH:-data/runtime/home_dashboard_snapshot.json}")"
 export AQSP_HOME_SNAPSHOT_INDEX_PATH="$(runtime_path "${AQSP_HOME_SNAPSHOT_INDEX_PATH:-data/runtime/home_dashboard_snapshot_index.json}")"
 export AQSP_NEWS_OUTPUT="$(runtime_path "${AQSP_NEWS_OUTPUT:-reports/news_catalysts.md}")"

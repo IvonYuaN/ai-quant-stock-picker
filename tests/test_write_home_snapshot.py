@@ -335,6 +335,62 @@ def test_write_home_snapshot_hides_quality_failed_debate() -> None:
     assert snapshot.debates == ()
 
 
+def test_write_home_snapshot_backfills_current_runtime_debate_when_provider_omits_it(
+    monkeypatch, tmp_path
+) -> None:
+    provider = _Provider()
+    original = provider.home_digest_payload
+
+    def payload_without_debate(task_id: str, signal_date: str = "") -> SimpleNamespace:
+        payload = original(task_id, signal_date)
+        payload.debates = ()
+        return payload
+
+    provider.home_digest_payload = payload_without_debate
+    runtime_root = tmp_path / "runtime"
+    debate_path = runtime_root / "data" / "debate_results.jsonl"
+    debate_path.parent.mkdir(parents=True)
+    debate_path.write_text(
+        json.dumps(
+            {
+                "symbol": "600001",
+                "candidate_signal_date": "2026-07-10",
+                "name": "测试候选",
+                "research_verdict": "保留观察",
+                "final_consensus": "neutral",
+                "primary_risk_gate": "量能",
+                "next_trigger": "放量",
+                "final_vote": {"bull": "bullish", "bear": "bearish", "risk": "neutral"},
+                "rounds": [
+                    {"round_num": 1, "summary": "首轮"},
+                    {"round_num": 2, "summary": "复核"},
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AQSP_RUNTIME_ROOT", str(runtime_root))
+
+    snapshot = write_home_snapshot.build_home_snapshot(
+        provider, signal_date="2026-07-10", task_id="intraday"
+    )
+
+    assert [item.symbol for item in snapshot.debates] == ["600001"]
+    assert snapshot.debates[0].round_count == 2
+
+
+def test_write_home_snapshot_resolves_news_sidecar_from_runtime_root(
+    monkeypatch, tmp_path
+) -> None:
+    monkeypatch.delenv("AQSP_NEWS_JSON_OUTPUT", raising=False)
+    monkeypatch.setenv("AQSP_RUNTIME_ROOT", str(tmp_path))
+
+    assert write_home_snapshot._news_json_report_path() == (
+        tmp_path / "data/runtime/news_catalysts_latest.json"
+    )
+
+
 def test_write_home_snapshot_makes_hidden_candidate_count_explicit(monkeypatch) -> None:
     provider = _Provider()
     original_payload = provider.home_digest_payload

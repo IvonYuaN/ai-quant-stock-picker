@@ -207,6 +207,7 @@ def test_deployment_bundle_checks_release_identity_tools() -> None:
     assert "check_release_consistency.py" in script
     assert "write_release_manifest.py" in script
     assert "push_with_report.py" in script
+    assert "check_runtime_storage.py" in script
 
 
 def test_release_consistency_rejects_dirty_release(monkeypatch, tmp_path: Path) -> None:

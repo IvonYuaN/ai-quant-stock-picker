@@ -32,13 +32,49 @@ class VariantProfile:
     lookback: int
     entry_return_pct: float
     max_bias_pct: float
+    mode: str = "trend"
 
 
 PROFILES = (
     VariantProfile("trend_follow", "趋势跟随", 20, 2.0, 12.0),
     VariantProfile("pullback", "趋势回踩", 20, 0.0, 4.0),
+    VariantProfile("breakout_continuation", "突破延续", 10, 4.0, 15.0, "breakout"),
     VariantProfile("defensive_momentum", "防守动量", 10, 1.0, 8.0),
+    VariantProfile("mean_reversion", "均值回归", 20, 3.0, 0.0, "reversion"),
+    VariantProfile("low_volatility", "低波动趋势", 30, 1.0, 6.0, "low_vol"),
 )
+
+
+def _training_volatility_pct(frames: dict[str, pd.DataFrame]) -> float:
+    """Estimate volatility from the first 60 bars only; never use evaluation data."""
+    values: list[float] = []
+    for frame in frames.values():
+        closes = pd.to_numeric(frame["close"], errors="coerce").dropna().head(60)
+        if len(closes) > 1:
+            values.extend((closes.pct_change().dropna().abs() * 100.0).tolist())
+    return float(pd.Series(values).median()) if values else 0.0
+
+
+def generate_variant_profiles(
+    frames: dict[str, pd.DataFrame],
+) -> tuple[VariantProfile, ...]:
+    """Add deterministic mutations based on a point-in-time training window."""
+    volatility = _training_volatility_pct(frames)
+    if volatility >= 2.5:
+        mutations = (
+            VariantProfile("auto_high_vol_defensive", "自动变体·高波防守", 15, 2.0, 5.0, "low_vol"),
+            VariantProfile("auto_high_vol_reversal", "自动变体·高波反转", 15, 4.0, 0.0, "reversion"),
+            VariantProfile("auto_high_vol_trend", "自动变体·高波趋势", 25, 3.0, 7.0),
+            VariantProfile("auto_high_vol_breakout", "自动变体·高波突破", 8, 5.0, 18.0, "breakout"),
+        )
+    else:
+        mutations = (
+            VariantProfile("auto_low_vol_breakout", "自动变体·低波突破", 15, 3.0, 10.0, "breakout"),
+            VariantProfile("auto_low_vol_pullback", "自动变体·低波回踩", 25, 0.0, 3.0),
+            VariantProfile("auto_low_vol_defensive", "自动变体·低波防守", 35, 0.5, 4.0, "low_vol"),
+            VariantProfile("auto_low_vol_reversal", "自动变体·低波反转", 30, 2.0, 0.0, "reversion"),
+        )
+    return (*PROFILES, *mutations)
 
 
 def load_frames(
@@ -89,12 +125,20 @@ def build_orders(
             valid = pd.notna(row["sma"]) and pd.notna(row["ret"])
             if not valid:
                 continue
-            entry = bool(
-                row["close"] > row["sma"]
-                and row["ret"] >= profile.entry_return_pct
-                and row["bias"] <= profile.max_bias_pct
-            )
-            exit_signal = bool(row["close"] < row["sma"] or row["ret"] < -2.0)
+            if profile.mode == "reversion":
+                entry = bool(
+                    row["close"] < row["sma"]
+                    and row["ret"] <= -profile.entry_return_pct
+                    and row["bias"] >= -profile.max_bias_pct - 8.0
+                )
+                exit_signal = bool(row["close"] > row["sma"] or row["ret"] > 2.0)
+            else:
+                entry = bool(
+                    row["close"] > row["sma"]
+                    and row["ret"] >= profile.entry_return_pct
+                    and row["bias"] <= profile.max_bias_pct
+                )
+                exit_signal = bool(row["close"] < row["sma"] or row["ret"] < -2.0)
             if entry:
                 orders.append(VariantOrder(next_date, symbol, "buy", weight=0.33))
             if exit_signal:
@@ -110,8 +154,9 @@ def run_suite(
 ) -> dict[str, object]:
     frames = load_frames(db_path, symbols, start, end)
     rules = VariantExecutionRules(initial_cash=100_000.0)
+    profiles = generate_variant_profiles(frames)
     results = []
-    for profile in PROFILES:
+    for profile in profiles:
         result = simulate_variant(
             profile.variant_id,
             frames,
@@ -120,7 +165,19 @@ def run_suite(
         )
         payload = variant_result_to_dict(result)
         payload["label"] = profile.label
+        payload["strategy_label"] = profile.label
+        payload["strategy"] = {
+            "id": profile.variant_id,
+            "lookback_days": profile.lookback,
+            "entry_return_pct": profile.entry_return_pct,
+            "max_bias_pct": profile.max_bias_pct,
+            "mode": profile.mode,
+        }
         results.append(payload)
+    results.sort(key=lambda item: float(item["final_equity"]), reverse=True)
+    for rank, item in enumerate(results, start=1):
+        item["rank"] = rank
+    training_volatility_pct = _training_volatility_pct(frames)
     return {
         "schema_version": "variant-suite-v1",
         "generated_at": now_shanghai().isoformat(timespec="seconds"),
@@ -129,6 +186,13 @@ def run_suite(
         "end_date": end,
         "symbols": list(symbols),
         "initial_cash": 100_000.0,
+        "optimization": {
+            "method": "training_window_volatility_mutation_v1",
+            "training_bars": 60,
+            "training_volatility_pct": training_volatility_pct,
+            "evaluation_only": True,
+            "selected_variant_id": results[0]["variant_id"] if results else "",
+        },
         "execution_rules": {
             "t_plus_one": True,
             "lot_size": 100,
