@@ -428,7 +428,7 @@ class MultiSource(DataSource):
                 for name, error in exceptions
                 if "不适合 live_short" in str(error)
             ]
-            if missing and guarded_sources:
+            if missing and guarded_sources and len(partial_results) <= 1:
                 self._clear_last_used()
                 raise DataError(
                     f"{guarded_sources[0]} 不适合 live_short；实时数据存在未覆盖标的，"
