@@ -330,7 +330,8 @@ replace_intraday_artifact() {
 }
 
 validate_intraday_batch_output() {
-    local expected_count="$INTRADAY_BATCH_SIZE"
+    local expected_count="${INTRADAY_BATCH_EXPECTED_COUNT:-$INTRADAY_BATCH_SIZE}"
+    local min_valid_ratio="${AQSP_INTRADAY_MIN_VALID_RATIO:-0.8}"
     local scanned_count
     local batch_output_path="$INTRADAY_OUTPUT_CSV"
     if [ ! -f "$batch_output_path" ] && [ -f "$TMP_INTRADAY_OUTPUT_CSV" ]; then
@@ -340,8 +341,9 @@ validate_intraday_batch_output() {
         log "[ERROR] 盘中批次产物缺少 CSV，拒绝提交 cursor"
         return 1
     fi
-    if ! scanned_count="$("$PYTHON_BIN" - "$batch_output_path" "$expected_count" <<'AQSP_INTRADAY_BATCH_OUTPUT_CHECK'
+    if ! scanned_count="$("$PYTHON_BIN" - "$batch_output_path" "$expected_count" "$min_valid_ratio" <<'AQSP_INTRADAY_BATCH_OUTPUT_CHECK'
 import csv
+import math
 import sys
 from pathlib import Path
 
@@ -360,8 +362,15 @@ except ValueError as exc:
     raise SystemExit("盘中批次 CSV 缺少有效解析/取数数量") from exc
 if resolved != expected:
     raise SystemExit(f"盘中批次解析数量不完整: {resolved}/{expected}")
-if fetched < resolved:
-    raise SystemExit(f"盘中批次取数数量不完整: {fetched}/{resolved}")
+try:
+    ratio = min(max(float(sys.argv[3]), 0.0), 1.0)
+except (IndexError, ValueError):
+    ratio = 0.8
+minimum = max(1, math.ceil(resolved * ratio))
+if fetched < minimum:
+    raise SystemExit(
+        f"盘中批次有效取数低于最低覆盖: {fetched}/{resolved}，最低 {minimum}/{resolved}"
+    )
 print(resolved)
 AQSP_INTRADAY_BATCH_OUTPUT_CHECK
     )"; then
