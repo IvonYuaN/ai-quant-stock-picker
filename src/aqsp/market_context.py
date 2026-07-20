@@ -53,6 +53,8 @@ _AUTHORITATIVE_SOURCE_TOKENS = (
 )
 _PRIORITY_MEDIA_SOURCE_TOKENS = ("新华社", "央视", "国常会", "发改委", "工信部")
 _MAINSTREAM_MEDIA_SOURCE_TOKENS = (
+    "中国新闻网",
+    "中新网",
     "财联社",
     "证券报",
     "东财",

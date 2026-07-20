@@ -89,6 +89,23 @@ def test_cursor_rejects_commit_that_did_not_scan_selected_batch(tmp_path) -> Non
         cursor.commit(batch, scanned_count=1)
 
 
+def test_cursor_rejects_commit_after_failed_active_batch(tmp_path) -> None:
+    cursor = IntradayUniverseCursor(tmp_path / "cursor.json")
+    batch = cursor.select(
+        ["000001", "000002"], trade_date=date(2026, 7, 20), batch_size=2
+    )
+    cursor.fail(batch, "oom")
+
+    with pytest.raises(ValueError, match="no successful active"):
+        cursor.commit_current(scanned_count=2)
+
+    retry = cursor.select(
+        ["000001", "000002"], trade_date=date(2026, 7, 20), batch_size=2
+    )
+    assert retry.offset == batch.offset
+    assert retry.symbols == batch.symbols
+
+
 def test_cursor_caps_batch_to_universe_without_duplicate_symbols(tmp_path) -> None:
     cursor = IntradayUniverseCursor(tmp_path / "cursor.json")
     batch = cursor.select(

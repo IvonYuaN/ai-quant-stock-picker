@@ -350,6 +350,8 @@ validate_intraday_batch_output() {
     # The final cursor batch may be shorter than the configured batch size.
     # Validate the exact symbols selected for this run, never the nominal size.
     local expected_count="${INTRADAY_BATCH_EXPECTED_COUNT:-$INTRADAY_BATCH_SIZE}"
+    # Isolate invalid symbols while preserving the batch; the next full cycle
+    # will revisit them without allowing one bad code to stall the universe.
     local min_valid_ratio="${AQSP_INTRADAY_MIN_VALID_RATIO:-0.8}"
     local scanned_count
     # The public CSV is the previous successful run until promotion. Reading it

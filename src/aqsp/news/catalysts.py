@@ -106,6 +106,10 @@ NewsRegion = Literal["domestic", "international"]
 NewsRegionStatusValue = Literal[
     "ok", "partial", "empty", "timeout", "failed", "unavailable"
 ]
+NewsFreshnessStatus = Literal["fresh", "stale", "unknown"]
+NewsFallbackStatus = Literal["not_needed", "active", "failed"]
+
+_REGION_SOURCE_FRESHNESS_MAX_AGE_SECONDS = 15 * 60
 
 
 @dataclass(frozen=True)
@@ -117,6 +121,9 @@ class NewsRegionStatus:
     source_count: int = 0
     successful_sources: int = 0
     row_count: int = 0
+    freshness: NewsFreshnessStatus = "unknown"
+    quality_score: int = 0
+    fallback: NewsFallbackStatus = "failed"
 
 
 @dataclass(frozen=True)
@@ -140,7 +147,10 @@ class CatalystReport:
             object.__setattr__(
                 self,
                 "region_statuses",
-                _region_statuses_from_sources(self.source_statuses),
+                _region_statuses_from_sources(
+                    self.source_statuses,
+                    generated_at=self.generated_at,
+                ),
             )
 
     @property
@@ -322,6 +332,9 @@ def _serialize_catalyst_report(report: CatalystReport) -> dict[str, Any]:
                 "source_count": item.source_count,
                 "successful_sources": item.successful_sources,
                 "row_count": item.row_count,
+                "freshness": item.freshness,
+                "quality_score": item.quality_score,
+                "fallback": item.fallback,
             }
             for item in report.region_statuses
         ],
@@ -447,6 +460,10 @@ def _deserialize_catalyst_report(payload: Any) -> CatalystReport | None:
                 source_count=int(item.get("source_count", 0) or 0),
                 successful_sources=int(item.get("successful_sources", 0) or 0),
                 row_count=int(item.get("row_count", 0) or 0),
+                freshness=str(item.get("freshness", "unknown")).strip()
+                or "unknown",
+                quality_score=int(item.get("quality_score", 0) or 0),
+                fallback=str(item.get("fallback", "failed")).strip() or "failed",
             )
             for item in tuple(payload.get("region_statuses", ()) or ())
             if isinstance(item, dict)
@@ -938,6 +955,8 @@ _AUTHORITATIVE_SOURCE_TOKENS: tuple[str, ...] = (
 )
 
 _MEDIA_SOURCE_TOKENS: tuple[str, ...] = (
+    "中国新闻网",
+    "中新网",
     "新华社",
     "央视",
     "证券报",
@@ -1731,15 +1750,21 @@ def _report_source_status(
 
 def _region_statuses_from_sources(
     source_statuses: Sequence[NewsSourceHealth],
+    *,
+    generated_at: str = "",
 ) -> tuple[NewsRegionStatus, ...]:
-    """Aggregate existing per-source health without changing source semantics."""
+    """Aggregate explicitly regional source health.
+
+    A ``mixed`` source has no auditable regional coverage and must not be
+    counted as evidence for both domestic and international feeds.
+    """
 
     result: list[NewsRegionStatus] = []
     for region in ("domestic", "international"):
         items = tuple(
             item
             for item in source_statuses
-            if item.region == region or item.region == "mixed"
+            if item.region == region
         )
         statuses = tuple(item.status for item in items)
         if not statuses:
@@ -1754,15 +1779,49 @@ def _region_statuses_from_sources(
             status = "timeout"
         else:
             status = "failed"
+        successful_sources = sum(
+            1 for item in items if item.status in {"ok", "partial"}
+        )
+        if not items:
+            freshness: NewsFreshnessStatus = "unknown"
+        else:
+            reference = _parse_published_datetime(generated_at)
+            ages = [
+                (reference - fetched).total_seconds()
+                for item in items
+                if reference is not None
+                and (fetched := _parse_published_datetime(item.fetched_at))
+                is not None
+            ]
+            if not ages:
+                freshness = "unknown"
+            elif all(0 <= age <= _REGION_SOURCE_FRESHNESS_MAX_AGE_SECONDS for age in ages):
+                freshness = "fresh"
+            elif any(0 <= age <= _REGION_SOURCE_FRESHNESS_MAX_AGE_SECONDS for age in ages):
+                freshness = "stale"
+            else:
+                freshness = "stale"
+        quality_score = max(
+            (_source_quality_from_source(item.name)[1] for item in items),
+            default=0,
+        )
+        fallback: NewsFallbackStatus = (
+            "not_needed"
+            if items and all(item.status == "ok" for item in items)
+            else "active"
+            if successful_sources > 0
+            else "failed"
+        )
         result.append(
             NewsRegionStatus(
                 region=region,
                 status=status,
                 source_count=len(items),
-                successful_sources=sum(
-                    1 for item in items if item.status in {"ok", "partial"}
-                ),
+                successful_sources=successful_sources,
                 row_count=sum(max(0, int(item.row_count)) for item in items),
+                freshness=freshness,
+                quality_score=quality_score,
+                fallback=fallback,
             )
         )
     return tuple(result)

@@ -582,7 +582,7 @@ def _snapshot_debates(
 
 
 def _debate_is_complete(debate: Any) -> bool:
-    """Keep quality-failed committee attempts out of the normal debate lane."""
+    """Keep incomplete committee attempts out of the formal debate lane."""
     for field in ("process_recorded", "conclusion_recorded", "evidence_sufficient"):
         if getattr(debate, field, None) is False:
             return False
@@ -591,7 +591,35 @@ def _debate_is_complete(debate: Any) -> bool:
         "quality_issues",
         getattr(debate, "debate_quality_issues", ()),
     )
-    return not bool(tuple(quality_issues or ()))
+    if tuple(quality_issues or ()):
+        return False
+
+    try:
+        round_count = int(getattr(debate, "round_count", 0) or 0)
+    except (TypeError, ValueError):
+        return False
+    if round_count not in (2, 3):
+        return False
+
+    roles = tuple(
+        dict.fromkeys(
+            _first_text(getattr(view, "role_label", ""), getattr(view, "role_id", ""))
+            for view in (getattr(debate, "agent_views", ()) or ())
+            if _first_text(
+                getattr(view, "role_label", ""), getattr(view, "role_id", "")
+            )
+        )
+    )
+    if len(roles) < 2:
+        return False
+    try:
+        vote_counts = tuple(
+            int(getattr(debate, field, 0) or 0)
+            for field in ("bull_count", "bear_count", "neutral_count")
+        )
+    except (TypeError, ValueError):
+        return False
+    return all(count >= 0 for count in vote_counts) and sum(vote_counts) == len(roles)
 
 
 def _news_report_path() -> Path:
@@ -1388,18 +1416,14 @@ def build_home_snapshot(
     source = _snapshot_source(runtime, task_view)
     candidates = _snapshot_candidates(payload)
     recommendation_count = _snapshot_recommendation_count(payload)
+    debates = _snapshot_debates(payload, candidates)
     shown_recommendation_count = sum(
         is_home_recommendation(candidate) for candidate in candidates
     )
-    debates = _snapshot_debates(payload, candidates)
     candidate_symbols = {candidate.symbol for candidate in candidates}
     debate_symbols = {debate.symbol for debate in debates}
     debate_gap_summary = ""
-    if (
-        getattr(payload, "debates", ())
-        and debates
-        and candidate_symbols - debate_symbols
-    ):
+    if debates and candidate_symbols - debate_symbols:
         debate_gap_summary = (
             f"讨论复核 {len(debate_symbols)}/{len(candidate_symbols)} 只；"
             f"{len(candidate_symbols - debate_symbols)} 只未通过质量门，已隐藏"

@@ -95,12 +95,15 @@ class IntradayUniverseCursor:
                 "active_offset": batch.offset,
                 "active_symbols": list(batch.symbols),
                 "active_batch_id": batch.batch_id,
+                "active_state": "selected",
             }
         )
         return batch
 
     def commit_current(self, *, scanned_count: int) -> None:
         current = self._read()
+        if current.get("active_state") != "selected":
+            raise ValueError("no successful active intraday batch to commit")
         batch = self._batch_from_state(current)
         self.commit(batch, scanned_count=scanned_count)
 
@@ -133,6 +136,7 @@ class IntradayUniverseCursor:
                 "coverage_pct": batch.coverage_pct,
                 "last_batch_finished_at": now_shanghai().isoformat(timespec="seconds"),
                 "last_error": "",
+                "active_state": "committed",
             }
         )
 
@@ -152,6 +156,7 @@ class IntradayUniverseCursor:
                 "coverage_pct": round(batch.offset / batch.universe_count, 6),
                 "last_batch_finished_at": "",
                 "last_error": str(error or "batch failed")[:500],
+                "active_state": "failed",
             }
         )
 

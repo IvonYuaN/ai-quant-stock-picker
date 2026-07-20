@@ -1048,6 +1048,18 @@ def _validate_snapshot(snapshot: HomeDashboardSnapshot) -> None:
         raise ValueError("candidates must not contain duplicate symbols")
     if not all(isinstance(value, HomeSnapshotDebate) for value in snapshot.debates):
         raise ValueError("debates must contain HomeSnapshotDebate values")
+    for debate in snapshot.debates:
+        vote_counts = (
+            debate.bull_count,
+            debate.bear_count,
+            debate.neutral_count,
+        )
+        if debate.round_count not in (2, 3):
+            raise ValueError("published debates must contain two or three rounds")
+        if any(count < 0 for count in vote_counts):
+            raise ValueError("debate vote counts must not be negative")
+        if sum(vote_counts) != len(debate.active_roles) or len(debate.active_roles) < 2:
+            raise ValueError("debate vote counts must match active roles")
     debate_symbols = tuple(value.symbol for value in snapshot.debates)
     if len(set(debate_symbols)) != len(debate_symbols):
         raise ValueError("debates must not contain duplicate symbols")

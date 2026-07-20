@@ -176,6 +176,13 @@ class _Provider:
                     next_trigger="放量站稳",
                     adjusted_score=999.0,
                     recommended_adjustment="raise",
+                    process_recorded=True,
+                    conclusion_recorded=True,
+                    evidence_sufficient=True,
+                    round_count=2,
+                    bull_count=1,
+                    bear_count=0,
+                    neutral_count=1,
                     agent_views=(
                         SimpleNamespace(role_id="bull"),
                         SimpleNamespace(role_id="risk_control"),
@@ -240,13 +247,7 @@ def test_write_home_snapshot_builds_bounded_advisory_only_payload(monkeypatch) -
         "600005",
     ]
 
-    assert [item.score for item in snapshot.candidates] == [
-        88.0,
-        80.0,
-        72.0,
-        66.0,
-        99.0,
-    ]
+    assert [item.score for item in snapshot.candidates] == [88.0, 80.0, 72.0, 66.0, 99.0]
     assert snapshot.candidates[0].deterministic_reasons == ("MA20 斜率向上",)
     assert snapshot.candidates[0].strategies == ("ma_pullback",)
     assert snapshot.candidates[0].evidence_status == "有独立规则证据"
@@ -347,6 +348,7 @@ def test_write_home_snapshot_makes_hidden_candidate_count_explicit(monkeypatch) 
             _candidate("600007", 59.0),
         )
         payload.spotlights = ()
+        delattr(payload, "debates")
         return payload
 
     def runtime_with_count(signal_date: str = ""):

@@ -1077,6 +1077,64 @@ def test_catalyst_report_aggregates_domestic_and_international_source_status() -
     assert statuses["international"].successful_sources == 0
 
 
+def test_catalyst_report_does_not_treat_mixed_source_as_regional_coverage() -> None:
+    report = CatalystReport(
+        date="2026-07-20",
+        generated_at="2026-07-20T10:00:00+08:00",
+        events=(),
+        source_status="ok",
+        source_statuses=(
+            NewsSourceHealth(
+                name="unclassified-feed",
+                region="mixed",
+                status="ok",
+                successful=1,
+                row_count=8,
+                fetched_at="2026-07-20T09:59:30+08:00",
+            ),
+        ),
+    )
+
+    statuses = {item.region: item for item in report.region_statuses}
+
+    assert statuses["domestic"].status == "unavailable"
+    assert statuses["international"].status == "unavailable"
+    assert statuses["domestic"].freshness == "unknown"
+    assert statuses["international"].quality_score == 0
+
+
+def test_catalyst_report_exposes_regional_freshness_quality_and_fallback() -> None:
+    report = CatalystReport(
+        date="2026-07-20",
+        generated_at="2026-07-20T10:00:00+08:00",
+        events=(),
+        source_status="partial",
+        source_statuses=(
+            NewsSourceHealth(
+                name="中国新闻网-财经",
+                region="domestic",
+                status="ok",
+                successful=1,
+                row_count=3,
+                fetched_at="2026-07-20T09:59:30+08:00",
+            ),
+            NewsSourceHealth(
+                name="domestic-fallback",
+                region="domestic",
+                status="timeout",
+                fetched_at="2026-07-20T09:59:40+08:00",
+            ),
+        ),
+    )
+
+    domestic = next(item for item in report.region_statuses if item.region == "domestic")
+
+    assert domestic.status == "partial"
+    assert domestic.freshness == "fresh"
+    assert domestic.quality_score >= 2
+    assert domestic.fallback == "active"
+
+
 def test_catalyst_report_region_statuses_round_trip_and_legacy_payload_is_compatible() -> (
     None
 ):
