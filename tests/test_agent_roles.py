@@ -13,6 +13,9 @@ from aqsp.briefing.agent_roles import (
     select_runtime_agent_roles,
     summarize_context_agent_roles,
     summarize_context_role_plan,
+    VIEWPOINT_BUCKET_ORDER,
+    agent_role_viewpoint_buckets,
+    empty_viewpoint_buckets,
 )
 from aqsp.core.types import PickResult
 
@@ -48,6 +51,24 @@ def test_agent_role_helpers_render_metadata_when_language_switches() -> None:
     assert "不能成交" in agent_role_challenge_style("risk_control", language="zh-CN")
     assert "板块共振" in agent_role_challenge_style("cross_market", language="zh-CN")
     assert agent_role_emoji("risk_control") == "🛡️"
+
+
+def test_agent_roles_keep_independent_evidence_lanes_separate() -> None:
+    assert agent_role_viewpoint_buckets(AgentRole.BULL) == (
+        "bullish",
+        "technical",
+    )
+    assert agent_role_viewpoint_buckets(AgentRole.BEAR) == (
+        "bearish",
+        "event_fundamental",
+    )
+    assert agent_role_viewpoint_buckets(AgentRole.CROSS_MARKET) == (
+        "event_fundamental",
+    )
+    assert agent_role_viewpoint_buckets(AgentRole.RISK_CONTROL) == (
+        "risk_counterevidence",
+    )
+    assert tuple(empty_viewpoint_buckets()) == VIEWPOINT_BUCKET_ORDER
 
 
 def test_select_runtime_agent_roles_focus_reorders_and_disabled_cuts() -> None:

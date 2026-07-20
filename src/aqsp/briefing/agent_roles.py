@@ -257,6 +257,40 @@ DEFAULT_RUNTIME_AGENT_ROLE_ORDER: tuple[AgentRole, ...] = (
 DEFAULT_RUNTIME_AGENT_ROLE_NAMES: tuple[str, ...] = tuple(
     role.value for role in DEFAULT_RUNTIME_AGENT_ROLE_ORDER
 )
+
+# These buckets are evidence lanes, not votes.  A role may contribute to more
+# than one lane, while every lane remains visible even when it has no evidence.
+VIEWPOINT_BUCKET_ORDER: tuple[str, ...] = (
+    "bullish",
+    "bearish",
+    "event_fundamental",
+    "technical",
+    "risk_counterevidence",
+    "uncertainty",
+)
+
+_ROLE_VIEWPOINT_BUCKETS: dict[AgentRole, tuple[str, ...]] = {
+    AgentRole.BULL: ("bullish", "technical"),
+    AgentRole.BEAR: ("bearish", "event_fundamental"),
+    AgentRole.CROSS_MARKET: ("event_fundamental",),
+    AgentRole.SECTOR_LEADER: ("event_fundamental", "technical"),
+    AgentRole.POLICY_SENSITIVE: ("event_fundamental",),
+    AgentRole.NORTHBOUND: ("event_fundamental",),
+    AgentRole.RISK_CONTROL: ("risk_counterevidence",),
+    AgentRole.MARGIN_TRADING: ("risk_counterevidence",),
+    AgentRole.RETAIL_MOOD: ("risk_counterevidence",),
+}
+
+
+def agent_role_viewpoint_buckets(role: AgentRole | str) -> tuple[str, ...]:
+    """Return independent evidence lanes owned by a role."""
+    resolved = _coerce_role(role)
+    return _ROLE_VIEWPOINT_BUCKETS.get(resolved, ()) if resolved else ()
+
+
+def empty_viewpoint_buckets() -> dict[str, tuple[str, ...]]:
+    """Create a stable shape so empty evidence is visible, not silently lost."""
+    return {bucket: () for bucket in VIEWPOINT_BUCKET_ORDER}
 _CROSS_MARKET_SIGNAL_KEYWORDS = (
     "海外",
     "外盘",
