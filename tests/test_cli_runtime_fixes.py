@@ -829,8 +829,8 @@ def test_fetch_special_strategy_frames_keeps_daily_when_intraday_overlay_is_empt
     import aqsp.cli as cli_mod
 
     frames = {
-        "600000": _fresh_frame("2026-06-25"),
-        "000300": _fresh_frame("2026-06-25"),
+        "600000": _fresh_frame("2026-06-26"),
+        "000300": _fresh_frame("2026-06-26"),
     }
 
     monkeypatch.setattr(
