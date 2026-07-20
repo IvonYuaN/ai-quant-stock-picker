@@ -421,6 +421,20 @@ class MultiSource(DataSource):
             expected_keys,
             allow_incomplete=effective_workload == "live_short",
         )
+        if effective_workload == "live_short" and merged_result is not None:
+            missing = _missing_requested_keys(merged_result, expected_keys)
+            guarded_sources = [
+                name
+                for name, error in exceptions
+                if "不适合 live_short" in str(error)
+            ]
+            if missing and guarded_sources:
+                self._clear_last_used()
+                raise DataError(
+                    f"{guarded_sources[0]} 不适合 live_short；实时数据存在未覆盖标的，"
+                    "且历史源不得补齐: "
+                    + ", ".join(missing[:20])
+                )
         if merged_result is not None:
             self._set_last_used_provenance(merged_result, "multi")
             self._last_used_source = "multi"

@@ -116,7 +116,7 @@ jobs:
           PYTEST_SHARD: ${{ matrix.shard }}
           PYTEST_TOTAL_SHARDS: 4
         run: |
-          python3 -m pytest --collect-only -q tests backend/tests > /tmp/aqsp-all-test-nodes.txt
+          python3 -m pytest --collect-only -q -m "not live" tests backend/tests > /tmp/aqsp-all-test-nodes.txt
           python3 - <<'PY' > /tmp/aqsp-test-nodes.txt
           import os
           from pathlib import Path
@@ -136,7 +136,7 @@ jobs:
           while IFS= read -r node; do
             [[ -n "${node}" ]] && TEST_NODES+=("${node}")
           done < /tmp/aqsp-test-nodes.txt
-          pytest -q -vv --durations=20 -o faulthandler_timeout=120 "${TEST_NODES[@]}"
+          pytest -q -vv -m "not live" --durations=20 -o faulthandler_timeout=120 "${TEST_NODES[@]}"
 
       - name: Secret scan
         run: python3 scripts/check_no_secrets.py .
