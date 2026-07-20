@@ -507,6 +507,7 @@ launch_intraday_debate_backfill() {
         --output "$DEBATE_RESULTS"
         --task-id "${AQSP_RUN_TASK_ID}"
         --max-candidates "$max_candidates"
+        --include-observation-only
         "${force_arg[@]}"
     )
     # The scheduler owns the runner process. A detached child can be reaped
@@ -684,6 +685,7 @@ merge_intraday_news_context() {
     if ! "$PYTHON_BIN" "$merge_script" \
         --csv "$INTRADAY_OUTPUT_CSV" \
         --news-json "$INTRADAY_NEWS_JSON_OUTPUT" \
+        --symbols "${INTRADAY_BATCH_SYMBOLS:-}" \
         >>"$RESULT_LOG" 2>&1; then
         log "[WARN] 当前消息结果未能回写候选 CSV；Agent 仅使用运行级消息状态"
         return 0
@@ -1868,10 +1870,9 @@ else
 fi
 
 if [ "$OBSERVATION_ONLY" = "true" ]; then
-    log "盘中产物为 observation-only，跳过 Agent 回填，避免观察内容被误读为推荐"
-else
-    launch_intraday_debate_backfill
+    log "盘中产物为 observation-only；Agent 仍异步回填，仅保留 advisory 讨论"
 fi
+launch_intraday_debate_backfill
 if ! refresh_home_dashboard_snapshot; then
     SCRIPT_EXIT_CODE="1"
     BATCH_FAILURE_REASON="final_home_snapshot_failed"

@@ -49,6 +49,7 @@ export AQSP_INTRADAY_REPORT="$(runtime_path "${AQSP_INTRADAY_REPORT:-reports/int
 export AQSP_INTRADAY_LATEST_CSV="$(runtime_path "${AQSP_INTRADAY_LATEST_CSV:-reports/intraday_latest.csv}")"
 export AQSP_INTRADAY_OUTPUT_CSV="$(runtime_path "${AQSP_INTRADAY_OUTPUT_CSV:-reports/intraday_latest.csv}")"
 export AQSP_INTRADAY_STATUS="$(runtime_path "${AQSP_INTRADAY_STATUS:-data/intraday_refresh_status.json}")"
+export AQSP_INTRADAY_REFRESH_STATUS_PATH="$AQSP_INTRADAY_STATUS"
 export AQSP_INTRADAY_CURSOR_PATH="$(runtime_path "${AQSP_INTRADAY_CURSOR_PATH:-data/runtime/intraday_universe_cursor.json}")"
 export AQSP_OUTPUT_CSV="$(runtime_path "${AQSP_OUTPUT_CSV:-reports/latest.csv}")"
 export AQSP_HOME_SNAPSHOT_PATH="$(runtime_path "${AQSP_HOME_SNAPSHOT_PATH:-data/runtime/home_dashboard_snapshot.json}")"

@@ -17,6 +17,8 @@ from aqsp.market_context import (
 )
 from aqsp.core.time import today_shanghai
 from aqsp.news.catalysts import load_catalyst_report_artifact
+from aqsp.news.entity_graph import DEFAULT_ENTITY_GRAPH
+from aqsp.news.watch_candidates import NewsUniverseInstrument
 
 
 _TUPLE_FIELDS = {
@@ -104,8 +106,9 @@ def merge_intraday_news(
     news_path: Path,
     *,
     output_path: Path | None = None,
+    symbols: tuple[str, ...] = (),
 ) -> int:
-    """Annotate current intraday rows with the exact current news artifact."""
+    """Annotate rows and append current-message observation candidates."""
     output_path = output_path or csv_path
     with csv_path.open(encoding="utf-8", newline="") as handle:
         reader = csv.DictReader(handle)
@@ -121,7 +124,30 @@ def merge_intraday_news(
     )
     if report is None:
         raise ValueError(f"news artifact unavailable: {news_path}")
-    artifact = build_market_context_artifact(catalyst_report=report)
+    existing_symbols = {
+        str(row.get("symbol", "") or "").strip()
+        for row in rows
+        if str(row.get("symbol", "") or "").strip() not in {"", "__RUN__"}
+    }
+    graph_metadata = {
+        symbol: NewsUniverseInstrument(
+            symbol=symbol,
+            name=entity.canonical,
+            sectors=entity.sectors,
+        )
+        for entity in DEFAULT_ENTITY_GRAPH.entities
+        if entity.kind == "company"
+        for symbol in entity.symbols
+    }
+    universe = tuple(
+        graph_metadata.get(symbol, NewsUniverseInstrument(symbol=symbol))
+        for symbol in dict.fromkeys((*symbols, *sorted(existing_symbols)))
+        if symbol.isdigit() and len(symbol) == 6
+    )
+    artifact = build_market_context_artifact(
+        catalyst_report=report,
+        news_universe=universe,
+    )
     run_lines = list(artifact.summary_lines)
     for line in artifact.warnings:
         if line not in run_lines:
@@ -168,6 +194,66 @@ def merge_intraday_news(
                     value = "；".join(str(item) for item in value)
                 row[key] = str(value)
 
+    observation_rows: list[dict[str, str]] = []
+    for watch in getattr(artifact, "news_watch_candidates", ()) or ():
+        symbol = str(getattr(watch, "symbol", "") or "").strip()
+        if not symbol or symbol in existing_symbols:
+            continue
+        sectors = tuple(getattr(watch, "affected_sectors", ()) or ())
+        path = tuple(getattr(watch, "transmission_path", ()) or ())
+        observation_rows.append(
+            {
+                "symbol": symbol,
+                "name": str(getattr(watch, "name", "") or ""),
+                "date": today_shanghai().isoformat(),
+                "score": "0",
+                "rating": "watch",
+                "entry_type": "intraday_news_observation",
+                "reasons": str(getattr(watch, "summary", "") or ""),
+                "risks": "；".join(
+                    str(item)
+                    for item in (getattr(watch, "invalidation_signals", ()) or ())
+                ),
+                "quality_gate_action": "observe",
+                "observation_only": "true",
+                "paper_review_eligible": "false",
+                "candidate_status": "消息产业链观察",
+                "news_catalyst_title": str(
+                    getattr(watch, "event_title", "") or ""
+                ),
+                "news_catalyst_summary": str(
+                    getattr(watch, "summary", "") or ""
+                ),
+                "news_catalyst_source": str(getattr(watch, "source", "") or ""),
+                "news_catalyst_url": str(
+                    getattr(watch, "source_url", "") or ""
+                ),
+                "news_catalyst_published_at": str(
+                    getattr(watch, "published_at", "") or ""
+                ),
+                "news_catalyst_verification": str(
+                    getattr(watch, "verification", "") or ""
+                ),
+                "news_catalyst_sectors": "；".join(sectors),
+                "news_catalyst_transmission_path": "；".join(path),
+                "news_catalyst_validation_signals": "；".join(
+                    str(item)
+                    for item in (getattr(watch, "validation_signals", ()) or ())
+                ),
+                "news_catalyst_invalidation_signals": "；".join(
+                    str(item)
+                    for item in (getattr(watch, "invalidation_signals", ()) or ())
+                ),
+            }
+        )
+        existing_symbols.add(symbol)
+    if observation_rows:
+        for row in observation_rows:
+            for key in row:
+                if key not in fieldnames:
+                    fieldnames.append(key)
+        rows.extend(observation_rows)
+
     output_path.parent.mkdir(parents=True, exist_ok=True)
     temporary = output_path.with_suffix(output_path.suffix + ".tmp")
     with temporary.open("w", encoding="utf-8", newline="") as handle:
@@ -187,8 +273,19 @@ def main() -> int:
     parser.add_argument("--csv", required=True, type=Path)
     parser.add_argument("--news-json", required=True, type=Path)
     parser.add_argument("--output", type=Path)
+    parser.add_argument(
+        "--symbols",
+        default="",
+        help="当前实时批次代码，逗号分隔；仅用于消息观察候选扩展",
+    )
     args = parser.parse_args()
-    count = merge_intraday_news(args.csv, args.news_json, output_path=args.output)
+    symbols = tuple(item.strip() for item in args.symbols.split(",") if item.strip())
+    count = merge_intraday_news(
+        args.csv,
+        args.news_json,
+        output_path=args.output,
+        symbols=symbols,
+    )
     print(
         f"merged current news context into {args.output or args.csv}: candidates={count}"
     )
