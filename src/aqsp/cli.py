@@ -2693,14 +2693,23 @@ def _apply_protection_observation_boundary(
             observed.append(pick)
             continue
         alerts = tuple(metrics.get("quality_gate_reasons", ()) or ())
+        is_recommendation = pick.rating in {
+            "strong_buy_candidate",
+            "buy_candidate",
+        }
         metrics.update(
             {
                 "observation_only": True,
                 "paper_review_eligible": False,
-                "research_recommendation": pick.rating
-                in {"strong_buy_candidate", "buy_candidate"},
-                "candidate_status": "组合保护观察",
-                "candidate_next_step": "按实时信号继续复核；组合保护仅限制纸面动作",
+                # Circuit-breaker state is a portfolio-action constraint. It
+                # must not downgrade a fresh, deterministic research signal.
+                "research_recommendation": is_recommendation,
+                "candidate_status": (
+                    "实时推荐" if is_recommendation else "实时观察"
+                ),
+                "candidate_next_step": (
+                    "按实时信号继续复核；组合保护仅限制纸面动作"
+                ),
                 "candidate_review_window": "当前盘中窗口",
                 "quality_gate_reasons": alerts,
                 "portfolio_action": "observation_only",
