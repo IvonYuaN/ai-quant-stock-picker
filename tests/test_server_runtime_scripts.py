@@ -1430,6 +1430,15 @@ def test_bt_task_exposes_walkforward_gate_as_controlled_action() -> None:
     )
 
 
+def test_intraday_bridge_marks_failed_attempt_without_blocking_midday_task() -> None:
+    script = (PROJECT_ROOT / "scripts" / "bt_task.sh").read_text(encoding="utf-8")
+
+    assert "午盘桥接失败，今日不再重复桥接" in script
+    assert 'touch "$AQSP_MIDDAY_MARKER_FILE"' in script
+    assert "12:05 午盘任务仍会独立重试" in script
+    assert '午盘任务未真实执行，不写完成标记；后续定时仍可重试' in script
+
+
 def test_coldstart_daily_stops_when_update_fails_and_target_coverage_is_too_low(
     tmp_path: Path,
 ) -> None:

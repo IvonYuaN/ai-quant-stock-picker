@@ -1676,8 +1676,8 @@ def test_dashboard_simple_recommendation_panel_renders_compact_candidate_cards(
     )
 
     html = "\n".join(markdown_calls)
-    assert "今日候选已产生，组合保护中" in html
-    assert "风控压制" in html
+    assert "今日候选已产生，组合保护仅限制纸面动作" in html
+    assert "风控压制" not in html
     assert "600900 长江电力" in html
     assert "跨市 美股电力设备走强，关注A股映射" in html
     assert "aqsp-simple-candidate-grid" in html
@@ -9345,7 +9345,7 @@ def test_dashboard_simple_recommendation_panel_keeps_candidates_under_cooldown(
     )
 
     rendered = "\n".join(markdown_blocks)
-    assert "今日候选已产生，组合保护中" in rendered
+    assert "今日候选已产生，组合保护仅限制纸面动作" in rendered
     assert "今日无可纸面复核推荐" not in rendered
     assert "002025 航天电器" in rendered
     assert cockpit_cards == []
