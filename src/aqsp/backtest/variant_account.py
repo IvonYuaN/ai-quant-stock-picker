@@ -8,7 +8,7 @@ cash or positions between variants.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal, Mapping, Sequence
+from typing import Any, Literal, Mapping, Sequence
 
 import pandas as pd
 
@@ -176,6 +176,33 @@ def simulate_variant(
         positions={symbol: position.quantity for symbol, position in positions.items() if position.quantity},
         rejected_orders=rejected,
     )
+
+
+def variant_result_to_dict(result: VariantResult) -> dict[str, Any]:
+    """Serialize a result for the isolated experiment artifact."""
+    return {
+        "variant_id": result.variant_id,
+        "initial_cash": result.initial_cash,
+        "final_equity": result.final_equity,
+        "cash": result.cash,
+        "return_pct": result.return_pct,
+        "filled_orders": sum(fill.status == "filled" for fill in result.fills),
+        "rejected_orders": result.rejected_orders,
+        "positions": dict(result.positions),
+        "fills": [
+            {
+                "date": fill.date,
+                "symbol": fill.symbol,
+                "side": fill.side,
+                "quantity": fill.quantity,
+                "price": fill.price,
+                "fees": fill.fees,
+                "status": fill.status,
+                "reason": fill.reason,
+            }
+            for fill in result.fills
+        ],
+    }
 
 
 def _normalize_frames(data: Mapping[str, pd.DataFrame]) -> dict[str, pd.DataFrame]:

@@ -431,12 +431,24 @@
   .aqsp-lab-grid div { display: grid; gap: 0.25rem; border: 1px solid hsl(var(--border) / 0.65); border-radius: 0.4rem; padding: 0.65rem; font-size: 0.68rem; }
   .aqsp-lab-grid span { color: hsl(var(--muted-foreground)); }
   .aqsp-lab-snapshot { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 0.8rem; margin-bottom: 0.65rem; color: hsl(var(--muted-foreground)); font-size: 0.66rem; }
+  .aqsp-variant-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.65rem; }
+  .aqsp-variant-card { min-width: 0; border: 1px solid hsl(var(--border) / 0.75); border-radius: 0.5rem; padding: 0.75rem; background: hsl(var(--card) / 0.62); }
+  .aqsp-variant-head { display: flex; justify-content: space-between; gap: 0.5rem; }
+  .aqsp-variant-head h3 { font-size: 0.82rem; font-weight: 700; }
+  .aqsp-variant-head span { display: block; margin-top: 0.2rem; color: hsl(var(--muted-foreground)); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.6rem; }
+  .aqsp-variant-head strong { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 1rem; }
+  .aqsp-variant-positive { color: hsl(var(--success)); }
+  .aqsp-variant-negative { color: hsl(var(--danger)); }
+  .aqsp-variant-stats { display: grid; grid-template-columns: 1.4fr 1fr 1fr; gap: 0.35rem; margin-top: 0.7rem; border-top: 1px solid hsl(var(--border) / 0.45); padding-top: 0.55rem; }
+  .aqsp-variant-stats span { display: block; color: hsl(var(--muted-foreground)); font-size: 0.58rem; }
+  .aqsp-variant-stats b { display: block; margin-top: 0.12rem; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.7rem; }
+  .aqsp-variant-rules { margin-top: 0.6rem; color: hsl(var(--muted-foreground)); font-size: 0.6rem; line-height: 1.45; }
 }
 
 @media (max-width: 767px) {
   .aqsp-header { align-items: stretch; flex-direction: column; }
   .aqsp-refresh { width: fit-content; }
-  .aqsp-list, .aqsp-lab-grid { grid-template-columns: minmax(0, 1fr); }
+  .aqsp-list, .aqsp-lab-grid, .aqsp-variant-grid { grid-template-columns: minmax(0, 1fr); }
   .aqsp-module, .aqsp-lab { padding: 0.8rem; }
   .aqsp-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .aqsp-phase-lane { grid-template-columns: minmax(0, 1fr); }

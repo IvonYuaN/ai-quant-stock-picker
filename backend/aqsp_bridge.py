@@ -28,6 +28,7 @@ MAX_SUMMARIES = 3
 MAX_MESSAGES = 5
 MAX_DEBATE_RESULTS_BYTES = 8 * 1024 * 1024
 MAX_CROSS_MARKET = 3
+MAX_VARIANTS = 3
 LEGACY_MESSAGE_TIMESTAMP_FORMAT = "%Y-%m-%d %H:%M:%S"
 SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -220,6 +221,21 @@ class AQSPUniverse:
 
 
 @dataclass(frozen=True)
+class AQSPVariant:
+    variant_id: str
+    label: str
+    initial_cash: float
+    final_equity: float
+    return_pct: float
+    filled_orders: int
+    rejected_orders: int
+    start_date: str
+    end_date: str
+    data_mode: str
+    hard_rules: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class AQSPCrossMarket:
     rule_id: str
     theme: str
@@ -265,6 +281,7 @@ class AQSPSnapshot:
     recommendation_gate: AQSPRecommendationGate | None = None
     phases: tuple[AQSPPhase, ...] = ()
     universe: AQSPUniverse = AQSPUniverse()
+    variants: tuple[AQSPVariant, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -751,6 +768,7 @@ def _parse_snapshot(payload: Mapping[str, Any]) -> AQSPSnapshot:
         "recommendation_gate",
         "phases",
         "universe",
+        "variants",
     }
     _check_keys(payload, required, "快照", optional)
     schema_version = _text(payload["schema_version"], "schema_version")
@@ -795,6 +813,11 @@ def _parse_snapshot(payload: Mapping[str, Any]) -> AQSPSnapshot:
     stale_after = _optional_text(payload.get("stale_after"), "stale_after")
     if stale_after:
         _timestamp(stale_after, "stale_after")
+    variants = tuple(
+        _parse_variant(item)
+        for item in _list(payload.get("variants", []), "variants")
+    )
+    _check_limit(variants, MAX_VARIANTS, "variants")
     return AQSPSnapshot(
         schema_version=schema_version,
         generated_at=generated_at,
@@ -817,7 +840,34 @@ def _parse_snapshot(payload: Mapping[str, Any]) -> AQSPSnapshot:
             _parse_phase(item) for item in _list(payload.get("phases", []), "phases")
         ),
         universe=_parse_universe(payload.get("universe")),
+        variants=variants,
     )
+
+
+def _parse_variant(payload: object) -> AQSPVariant:
+    item = _object(payload, "variant")
+    _check_keys(
+        item,
+        {"variant_id", "label", "initial_cash", "final_equity", "return_pct", "filled_orders", "rejected_orders", "start_date", "end_date", "data_mode"},
+        "variant",
+        {"hard_rules"},
+    )
+    variant = AQSPVariant(
+        variant_id=_text(item["variant_id"], "variant.variant_id"),
+        label=_text(item["label"], "variant.label"),
+        initial_cash=_number(item["initial_cash"], "variant.initial_cash"),
+        final_equity=_number(item["final_equity"], "variant.final_equity"),
+        return_pct=_number(item["return_pct"], "variant.return_pct"),
+        filled_orders=_integer(item["filled_orders"], "variant.filled_orders"),
+        rejected_orders=_integer(item["rejected_orders"], "variant.rejected_orders"),
+        start_date=_text(item["start_date"], "variant.start_date"),
+        end_date=_text(item["end_date"], "variant.end_date"),
+        data_mode=_text(item["data_mode"], "variant.data_mode"),
+        hard_rules=tuple(_text_list(item.get("hard_rules", []), "variant.hard_rules")),
+    )
+    if variant.initial_cash != 100_000.0:
+        raise AQSPSnapshotUnavailable("variant.initial_cash 必须为 100000")
+    return variant
 
 
 def _parse_phase(payload: object) -> AQSPPhase:

@@ -24,6 +24,7 @@ MAX_HOME_SNAPSHOT_SUMMARIES = 3
 MAX_HOME_SNAPSHOT_MESSAGES = 5
 MAX_HOME_SNAPSHOT_MARKET_LINES = 5
 MAX_HOME_SNAPSHOT_CROSS_MARKET = 3
+MAX_HOME_SNAPSHOT_VARIANTS = 3
 HOME_SNAPSHOT_INDEX_SCHEMA_VERSION = "v1-index"
 MAX_HOME_SNAPSHOT_INDEX_DAYS = 4
 HOME_SNAPSHOT_DEFAULT_TTL = timedelta(hours=24)
@@ -171,6 +172,23 @@ class HomeSnapshotDebate:
 
 
 @dataclass(frozen=True)
+class HomeSnapshotVariant:
+    """Bounded result for one isolated 100,000 yuan experiment account."""
+
+    variant_id: str
+    label: str
+    initial_cash: float
+    final_equity: float
+    return_pct: float
+    filled_orders: int
+    rejected_orders: int
+    start_date: str
+    end_date: str
+    data_mode: str
+    hard_rules: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class HomeSnapshotSource:
     """Freshness and effective source status for the current run."""
 
@@ -249,6 +267,7 @@ class HomeDashboardSnapshot:
     recommendation_gate: HomeSnapshotRecommendationGate | None = None
     phases: tuple[HomeSnapshotPhase, ...] = ()
     universe: HomeSnapshotUniverse = HomeSnapshotUniverse()
+    variants: tuple[HomeSnapshotVariant, ...] = ()
 
     def __init__(
         self,
@@ -270,6 +289,7 @@ class HomeDashboardSnapshot:
         recommendation_gate: HomeSnapshotRecommendationGate | None = None,
         phases: tuple[HomeSnapshotPhase, ...] = (),
         universe: HomeSnapshotUniverse | None = None,
+        variants: tuple[HomeSnapshotVariant, ...] = (),
     ) -> None:
         normalized_debates = tuple(debates or ())
         if debate is not None:
@@ -302,6 +322,7 @@ class HomeDashboardSnapshot:
         )
         object.__setattr__(self, "phases", tuple(phases or ()))
         object.__setattr__(self, "universe", universe or HomeSnapshotUniverse())
+        object.__setattr__(self, "variants", tuple(variants or ()))
         self.__post_init__()
 
     @property
@@ -613,6 +634,7 @@ def _snapshot_from_dict(payload: object) -> HomeDashboardSnapshot:
             "recommendation_gate",
             "phases",
             "universe",
+            "variants",
         },
     )
     if "debates" in mapping:
@@ -662,7 +684,11 @@ def _snapshot_from_dict(payload: object) -> HomeDashboardSnapshot:
             _phase_from_dict(item)
             for item in _list(mapping.get("phases", ()), "phases")
         ),
-        universe=_universe_from_dict(mapping.get("universe", {})),
+            universe=_universe_from_dict(mapping.get("universe", {})),
+        variants=tuple(
+            _variant_from_dict(item)
+            for item in _list(mapping.get("variants", ()), "variants")
+        ),
     )
 
 
@@ -688,6 +714,23 @@ def _day_from_dict(payload: object) -> HomeSnapshotDay:
     return HomeSnapshotDay(
         date=_text(mapping["date"], "day.date"),
         snapshot=_snapshot_from_dict(mapping["snapshot"]),
+    )
+
+
+def _variant_from_dict(payload: object) -> HomeSnapshotVariant:
+    mapping = _mapping(payload, "variant")
+    return HomeSnapshotVariant(
+        variant_id=_text(mapping.get("variant_id", ""), "variant.variant_id"),
+        label=_text(mapping.get("label", ""), "variant.label"),
+        initial_cash=float(mapping.get("initial_cash", 0.0) or 0.0),
+        final_equity=float(mapping.get("final_equity", 0.0) or 0.0),
+        return_pct=float(mapping.get("return_pct", 0.0) or 0.0),
+        filled_orders=int(mapping.get("filled_orders", 0) or 0),
+        rejected_orders=int(mapping.get("rejected_orders", 0) or 0),
+        start_date=_text(mapping.get("start_date", ""), "variant.start_date"),
+        end_date=_text(mapping.get("end_date", ""), "variant.end_date"),
+        data_mode=_text(mapping.get("data_mode", ""), "variant.data_mode"),
+        hard_rules=_text_tuple(mapping.get("hard_rules", ()), "variant.hard_rules"),
     )
 
 
@@ -1058,10 +1101,15 @@ def _validate_snapshot(snapshot: HomeDashboardSnapshot) -> None:
     _validate_limit(snapshot.summaries, MAX_HOME_SNAPSHOT_SUMMARIES, "summaries")
     _validate_limit(snapshot.messages, MAX_HOME_SNAPSHOT_MESSAGES, "messages")
     _validate_limit(snapshot.phases, 3, "phases")
+    _validate_limit(snapshot.variants, MAX_HOME_SNAPSHOT_VARIANTS, "variants")
     if any(not isinstance(value, HomeSnapshotPhase) for value in snapshot.phases):
         raise ValueError("phases must contain HomeSnapshotPhase values")
     if not isinstance(snapshot.universe, HomeSnapshotUniverse):
         raise ValueError("universe must be a HomeSnapshotUniverse value")
+    if not all(isinstance(value, HomeSnapshotVariant) for value in snapshot.variants):
+        raise ValueError("variants must contain HomeSnapshotVariant values")
+    if any(value.initial_cash != 100_000.0 for value in snapshot.variants):
+        raise ValueError("variant accounts must start with 100000 yuan")
     _validate_date(snapshot.selected_date, "selected_date")
     if snapshot.selected_date not in snapshot.available_dates:
         raise ValueError("selected_date must exist in available_dates")

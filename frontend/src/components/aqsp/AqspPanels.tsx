@@ -16,7 +16,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { FORMAL_RESEARCH_SECTIONS, resolveResearchView, TEST_VARIANTS_SECTION_ID, type ResearchViewId } from "@/lib/research-layout";
-import type { AqspAgentResult, AqspCandidate, AqspMessage, AqspPhase, AqspSnapshot } from "@/lib/api";
+import type { AqspAgentResult, AqspCandidate, AqspMessage, AqspPhase, AqspSnapshot, AqspVariant } from "@/lib/api";
 import {
   debateProcessText,
   dedupeResearchText,
@@ -216,7 +216,13 @@ function DebateCard({ result }: { result: AqspAgentResult }) {
 
 function TestVariantsPanel({ snapshot }: { snapshot?: AqspSnapshot }) {
   const historical = snapshot?.meta?.historical ?? false;
-  return <section id={TEST_VARIANTS_SECTION_ID} className="aqsp-lab" aria-label="测试与变体"><div className="aqsp-section-head"><div><p className="aqsp-eyebrow"><FlaskConical className="h-3.5 w-3.5" />独立区域</p><h2>测试与变体</h2></div><span>不进入正式结论</span></div><div className="aqsp-lab-snapshot">{snapshot ? <><span>读取快照：{snapshot.selected_date || "日期未记录"}</span><span>生成于：{formatAqspTime(snapshot.generated_at)}</span><span className={cn("aqsp-badge", historical ? "aqsp-badge-warn" : "aqsp-badge-ok")}>{historical ? "历史日期" : "当前数据"}</span></> : <span>等待正式快照</span>}</div><div className="aqsp-lab-grid"><div><b>正式研究</b><span>{snapshot ? "跟随当前选择日期" : "等待快照"}</span></div><div><b>历史回测</b><span>只用于参数验证</span></div><div><b>实验变体</b><span>不改写当前评分</span></div></div></section>;
+  const variants = snapshot?.variants ?? [];
+  const money = (value: number) => `${value.toLocaleString("zh-CN", { maximumFractionDigits: 0 })} 元`;
+  return <section id={TEST_VARIANTS_SECTION_ID} className="aqsp-lab" aria-label="测试与变体">
+    <div className="aqsp-section-head"><div><p className="aqsp-eyebrow"><FlaskConical className="h-3.5 w-3.5" />独立区域</p><h2>测试与变体</h2></div><span>不进入正式结论</span></div>
+    <div className="aqsp-lab-snapshot">{snapshot ? <><span>数据区间：{variants[0]?.start_date || "—"} 至 {variants[0]?.end_date || "—"}</span><span>每套账户：100,000 元</span><span className={cn("aqsp-badge", historical ? "aqsp-badge-warn" : "aqsp-badge-ok")}>{historical ? "历史回测" : "当前实验结果"}</span></> : <span>等待正式快照</span>}</div>
+    {variants.length === 0 ? <EmptyState title="变体结果尚未产出" detail="实验结果独立于正式候选，产出后会显示在这里。" /> : <div className="aqsp-variant-grid">{variants.map((variant: AqspVariant) => <article className="aqsp-variant-card" key={variant.variant_id}><div className="aqsp-variant-head"><div><h3>{variant.label || variant.variant_id}</h3><span>{variant.variant_id}</span></div><strong className={variant.return_pct >= 0 ? "aqsp-variant-positive" : "aqsp-variant-negative"}>{variant.return_pct.toFixed(2)}%</strong></div><div className="aqsp-variant-stats"><div><span>最终权益</span><b>{money(variant.final_equity)}</b></div><div><span>成交</span><b>{variant.filled_orders}</b></div><div><span>拒绝</span><b>{variant.rejected_orders}</b></div></div><p className="aqsp-variant-rules">{variant.hard_rules.join(" · ") || "硬成交规则未记录"}</p></article>)}</div>}
+  </section>;
 }
 
 function SectionHead({ number, title, count }: { number: string; title: string; count: string }) {

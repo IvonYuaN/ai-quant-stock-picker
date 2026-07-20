@@ -12,6 +12,7 @@ from aqsp.backtest.variant_account import (
     VariantOrder,
     VariantResult,
     simulate_variant,
+    variant_result_to_dict,
 )
 
 __all__ = [
@@ -24,4 +25,5 @@ __all__ = [
     "VariantOrder",
     "VariantResult",
     "simulate_variant",
+    "variant_result_to_dict",
 ]

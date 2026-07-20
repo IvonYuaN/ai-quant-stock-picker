@@ -81,6 +81,20 @@ export interface AqspUniverse {
   batch_size?: number; cycle_id?: number; coverage_pct?: number; last_error?: string;
 }
 
+export interface AqspVariant {
+  variant_id: string;
+  label: string;
+  initial_cash: number;
+  final_equity: number;
+  return_pct: number;
+  filled_orders: number;
+  rejected_orders: number;
+  start_date: string;
+  end_date: string;
+  data_mode: string;
+  hard_rules: readonly string[];
+}
+
 export interface AqspAgentResult {
   symbol: string;
   display_name: string;
@@ -125,6 +139,7 @@ export interface AqspSnapshot {
   recommendation_gate?: AqspRecommendationGate;
   phases?: readonly AqspPhase[];
   universe?: AqspUniverse;
+  variants?: readonly AqspVariant[];
   /** Present after the HTTP envelope is normalized; absent in the raw data payload. */
   meta?: AqspSnapshotMeta;
 }

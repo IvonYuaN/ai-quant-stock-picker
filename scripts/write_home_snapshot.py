@@ -60,6 +60,7 @@ from aqsp.web.home_snapshot import (
     HomeSnapshotSource,
     HomeSnapshotTechnicalMetric,
     HomeSnapshotUniverse,
+    HomeSnapshotVariant,
     MAX_HOME_SNAPSHOT_TECHNICAL_METRICS,
     HOME_RECOMMENDATION_LABELS,
     is_home_recommendation,
@@ -1407,6 +1408,47 @@ def _universe_snapshot() -> HomeSnapshotUniverse:
     )
 
 
+def _variant_snapshot() -> tuple[HomeSnapshotVariant, ...]:
+    """Read only bounded summaries from the isolated experiment artifact."""
+    path = _runtime_json_path(
+        "AQSP_VARIANT_RESULTS",
+        "data/runtime/variant_results.json",
+    )
+    payload = _read_json_object(path)
+    if not payload or payload.get("initial_cash") != 100_000.0:
+        return ()
+    raw_variants = payload.get("variants")
+    if not isinstance(raw_variants, list):
+        return ()
+    rules = payload.get("execution_rules")
+    rule_labels = (
+        "T+1：买入当日不可卖",
+        "100 股整手",
+        "停牌/涨停买入/跌停卖出拒绝",
+        "含佣金、印花税、滑点",
+    )
+    variants: list[HomeSnapshotVariant] = []
+    for item in raw_variants[:3]:
+        if not isinstance(item, dict) or item.get("initial_cash") != 100_000.0:
+            continue
+        variants.append(
+            HomeSnapshotVariant(
+                variant_id=_text(item.get("variant_id")),
+                label=_text(item.get("label")) or _text(item.get("variant_id")),
+                initial_cash=100_000.0,
+                final_equity=float(item.get("final_equity") or 0.0),
+                return_pct=float(item.get("return_pct") or 0.0),
+                filled_orders=int(item.get("filled_orders") or 0),
+                rejected_orders=int(item.get("rejected_orders") or 0),
+                start_date=_text(payload.get("start_date")),
+                end_date=_text(payload.get("end_date")),
+                data_mode=_text(payload.get("data_mode")),
+                hard_rules=rule_labels if isinstance(rules, dict) else (),
+            )
+        )
+    return tuple(variants)
+
+
 def build_home_snapshot(
     provider: DashboardDataProvider,
     *,
@@ -1546,6 +1588,7 @@ def build_home_snapshot(
         recommendation_gate=recommendation_gate,
         phases=phases,
         universe=_universe_snapshot(),
+        variants=_variant_snapshot(),
     )
 
 
