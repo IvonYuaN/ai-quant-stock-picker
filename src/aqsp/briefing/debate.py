@@ -723,6 +723,8 @@ class AShareDebateAgent:
                 return "bearish"
             if (rsi12 is not None and rsi12 >= 80.0) or (
                 bias20 is not None and bias20 >= 8.0
+            ) or (
+                ret20 is not None and ret20 <= -2.0
             ):
                 return "bearish"
             return "bearish" if pick.score < 60 else "neutral"
