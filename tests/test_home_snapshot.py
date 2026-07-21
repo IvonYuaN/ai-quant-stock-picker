@@ -586,6 +586,51 @@ def test_home_snapshot_index_write_does_not_replace_newer_date_with_history(
     assert load_home_snapshot_index(source) == current_index
 
 
+def test_home_snapshot_index_compacts_non_current_variant_details_when_oversized(
+    monkeypatch, tmp_path
+) -> None:
+    variant = HomeSnapshotVariant(
+        variant_id="variant",
+        label="策略" * 80,
+        initial_cash=100_000.0,
+        cash=40_000.0,
+        final_equity=101_000.0,
+        total_pnl=1_000.0,
+        return_pct=1.0,
+        filled_orders=2,
+        rejected_orders=0,
+        start_date="2026-07-01",
+        end_date="2026-07-11",
+        data_mode="historical_raw_unadjusted",
+        strategy="技术证据" * 120,
+        recent_actions=("动作" * 120,),
+    )
+    current = replace(_snapshot(), variants=(variant,))
+    historical = replace(
+        _snapshot(selected_date="2026-07-10", dates=("2026-07-10",)),
+        variants=(variant,) * 20,
+    )
+    index = HomeSnapshotIndex(
+        schema_version=HOME_SNAPSHOT_INDEX_SCHEMA_VERSION,
+        generated_at="2026-07-11T09:30:00+08:00",
+        stale_after="2026-07-12T09:30:00+08:00",
+        selected_date="2026-07-11",
+        days=(
+            HomeSnapshotDay(date="2026-07-11", snapshot=current),
+            HomeSnapshotDay(date="2026-07-10", snapshot=historical),
+        ),
+    )
+    monkeypatch.setattr(home_snapshot, "MAX_HOME_SNAPSHOT_BYTES", 10_000)
+    source = tmp_path / "home-index.json"
+
+    write_home_snapshot_index(source, index)
+
+    loaded = load_home_snapshot_index(source)
+    assert loaded is not None
+    assert len(loaded.snapshot_for_date("2026-07-11").variants) == 1
+    assert loaded.snapshot_for_date("2026-07-10").variants == ()
+
+
 @pytest.mark.parametrize(
     ("field", "value", "message"),
     [

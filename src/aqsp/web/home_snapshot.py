@@ -485,9 +485,25 @@ def write_home_snapshot_index(path: str | Path, index: HomeSnapshotIndex) -> Non
         raise ValueError("refusing to replace a newer home snapshot index")
     payload = f"{index.to_json()}\n"
     if len(payload.encode("utf-8")) > MAX_HOME_SNAPSHOT_BYTES:
-        raise ValueError("home snapshot index exceeds the 256 KiB byte budget")
+        index = _compact_historical_variants(index)
+        payload = f"{index.to_json()}\n"
+    if len(payload.encode("utf-8")) > MAX_HOME_SNAPSHOT_BYTES:
+        raise ValueError("home snapshot index exceeds the 512 KiB byte budget")
     atomic_write_text(path, payload)
     _set_runtime_snapshot_mode(path)
+
+
+def _compact_historical_variants(index: HomeSnapshotIndex) -> HomeSnapshotIndex:
+    """Keep the current research detail without duplicating it across history."""
+    return replace(
+        index,
+        days=tuple(
+            day
+            if day.date == index.selected_date
+            else replace(day, snapshot=replace(day.snapshot, variants=()))
+            for day in index.days
+        ),
+    )
 
 
 def _set_runtime_snapshot_mode(path: str | Path) -> None:
