@@ -24,6 +24,7 @@ _REQUEST_DELAY = 0.3
 _MAX_RETRIES = 3
 _BACKOFF_BASE = 2.0
 _SPOT_PAGE_SIZE = 200
+_SPOT_HOSTS = ("push2.eastmoney.com", "push2delay.eastmoney.com")
 
 _logger = logging.getLogger("aqsp.data.eastmoney")
 
@@ -442,7 +443,10 @@ class EastmoneySource(DataSource):
         for attempt in range(_MAX_RETRIES):
             try:
                 self._throttle()
-                url = "https://push2.eastmoney.com/api/qt/clist/get"
+                # Eastmoney occasionally resets connections on a page-specific
+                # basis. The delay host serves the same live snapshot contract.
+                host = _SPOT_HOSTS[attempt % len(_SPOT_HOSTS)]
+                url = f"https://{host}/api/qt/clist/get"
                 params = {
                     "pn": page,
                     "pz": _SPOT_PAGE_SIZE,
