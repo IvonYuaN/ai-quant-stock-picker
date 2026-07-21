@@ -27,7 +27,9 @@ from aqsp.web.home_snapshot import (
     HomeSnapshotIndex,
     HomeSnapshotMarketContext,
     HomeSnapshotMessage,
+    HomeSnapshotHolding,
     HomeSnapshotSource,
+    HomeSnapshotVariant,
     HOME_SNAPSHOT_CLOSE_TTL,
     HOME_SNAPSHOT_INTRADAY_TTL,
     load_home_dashboard_snapshot,
@@ -658,10 +660,78 @@ def test_home_snapshot_write_rejects_payload_that_exceeds_byte_budget(tmp_path) 
     source = tmp_path / "home.json"
     snapshot = _snapshot(summaries=("x" * MAX_HOME_SNAPSHOT_BYTES,))
 
-    with pytest.raises(ValueError, match="64 KiB"):
+    with pytest.raises(ValueError, match="256 KiB"):
         write_home_dashboard_snapshot(source, snapshot)
 
     assert not source.exists()
+
+
+def test_home_snapshot_variant_roundtrip_keeps_names_and_previous_holdings(tmp_path) -> None:
+    variant = HomeSnapshotVariant(
+        variant_id="trend_follow",
+        label="趋势跟随",
+        initial_cash=100_000.0,
+        cash=40_000.0,
+        final_equity=101_000.0,
+        total_pnl=1_000.0,
+        return_pct=1.0,
+        filled_orders=2,
+        rejected_orders=0,
+        start_date="2026-07-01",
+        end_date="2026-07-11",
+        data_mode="historical_raw_unadjusted",
+        holdings=(HomeSnapshotHolding("600000", 100, 10.0, 11.0, 1100.0, 100.0, "浦发银行"),),
+        previous_holdings=(HomeSnapshotHolding("000001", 100, 9.0, 9.5, 950.0, 50.0, "平安银行"),),
+    )
+    source = tmp_path / "home.json"
+    write_home_dashboard_snapshot(source, replace(_snapshot(), variants=(variant,)))
+
+    loaded = load_home_dashboard_snapshot(source)
+    assert loaded is not None
+    assert loaded.variants[0].holdings[0].name == "浦发银行"
+    assert loaded.variants[0].previous_holdings[0].name == "平安银行"
+
+
+def test_home_snapshot_variant_keeps_missing_previous_holdings_explicit(tmp_path) -> None:
+    variant = HomeSnapshotVariant(
+        variant_id="legacy",
+        label="旧结果",
+        initial_cash=100_000.0,
+        cash=100_000.0,
+        final_equity=100_000.0,
+        total_pnl=0.0,
+        return_pct=0.0,
+        filled_orders=0,
+        rejected_orders=0,
+        start_date="2026-07-01",
+        end_date="2026-07-11",
+        data_mode="historical_raw_unadjusted",
+    )
+    payload = replace(_snapshot(), variants=(variant,)).to_dict()
+    payload["variants"][0].pop("previous_holdings")
+    source = tmp_path / "legacy-home.json"
+    source.write_text(json.dumps(payload), encoding="utf-8")
+
+    loaded = load_home_dashboard_snapshot(source)
+    assert loaded is not None
+    assert loaded.variants[0].previous_holdings is None
+
+
+def test_previous_variant_holdings_replays_only_before_last_filled_date() -> None:
+    current = (HomeSnapshotHolding("600000", 100, 10.5, 11.0, 1100.0, 50.0, "浦发银行"),)
+    previous = write_home_snapshot._previous_variant_holdings(
+        [
+            {"date": "2026-07-09", "symbol": "600000", "side": "buy", "quantity": 100, "price": 10.0, "status": "filled"},
+            {"date": "2026-07-10", "symbol": "600000", "side": "buy", "quantity": 100, "price": 11.0, "status": "filled"},
+            {"date": "2026-07-11", "symbol": "600000", "side": "sell", "quantity": 100, "price": 11.0, "status": "filled"},
+        ],
+        current,
+    )
+
+    assert previous[0].symbol == "600000"
+    assert previous[0].quantity == 200
+    assert previous[0].average_price == 10.5
+    assert previous[0].name == "浦发银行"
 
 
 def test_home_snapshot_module_has_no_ledger_or_network_dependencies() -> None:

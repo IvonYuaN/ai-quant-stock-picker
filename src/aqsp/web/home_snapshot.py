@@ -15,7 +15,7 @@ from aqsp.utils.jsonl_io import atomic_write_text
 
 
 HOME_SNAPSHOT_SCHEMA_VERSION = "v1"
-MAX_HOME_SNAPSHOT_BYTES = 64 * 1024
+MAX_HOME_SNAPSHOT_BYTES = 512 * 1024
 MAX_HOME_SNAPSHOT_DATES = 4
 MAX_HOME_SNAPSHOT_CANDIDATES = 5
 MAX_HOME_SNAPSHOT_TECHNICAL_METRICS = 8
@@ -24,7 +24,7 @@ MAX_HOME_SNAPSHOT_SUMMARIES = 3
 MAX_HOME_SNAPSHOT_MESSAGES = 5
 MAX_HOME_SNAPSHOT_MARKET_LINES = 5
 MAX_HOME_SNAPSHOT_CROSS_MARKET = 3
-MAX_HOME_SNAPSHOT_VARIANTS = 16
+MAX_HOME_SNAPSHOT_VARIANTS = 192
 HOME_SNAPSHOT_INDEX_SCHEMA_VERSION = "v1-index"
 MAX_HOME_SNAPSHOT_INDEX_DAYS = 4
 HOME_SNAPSHOT_DEFAULT_TTL = timedelta(hours=24)
@@ -181,6 +181,7 @@ class HomeSnapshotHolding:
     last_price: float
     market_value: float
     unrealized_pnl: float
+    name: str = ""
 
 
 @dataclass(frozen=True)
@@ -202,7 +203,21 @@ class HomeSnapshotVariant:
     rank: int = 0
     strategy: str = ""
     holdings: tuple[HomeSnapshotHolding, ...] = ()
+    previous_holdings: tuple[HomeSnapshotHolding, ...] | None = None
+    recent_actions: tuple[str, ...] = ()
     hard_rules: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class HomeSnapshotVariantUniverse:
+    """Exact universe and freshness scope used by the isolated variants."""
+
+    symbol_count: int = 0
+    board_scope: str = ""
+    excluded: tuple[str, ...] = ()
+    latest_trade_date: str = ""
+    coverage_pct: float = 0.0
+    sources: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -284,6 +299,7 @@ class HomeDashboardSnapshot:
     recommendation_gate: HomeSnapshotRecommendationGate | None = None
     phases: tuple[HomeSnapshotPhase, ...] = ()
     universe: HomeSnapshotUniverse = HomeSnapshotUniverse()
+    variant_universe: HomeSnapshotVariantUniverse = HomeSnapshotVariantUniverse()
     variants: tuple[HomeSnapshotVariant, ...] = ()
 
     def __init__(
@@ -306,6 +322,7 @@ class HomeDashboardSnapshot:
         recommendation_gate: HomeSnapshotRecommendationGate | None = None,
         phases: tuple[HomeSnapshotPhase, ...] = (),
         universe: HomeSnapshotUniverse | None = None,
+        variant_universe: HomeSnapshotVariantUniverse | None = None,
         variants: tuple[HomeSnapshotVariant, ...] = (),
     ) -> None:
         normalized_debates = tuple(debates or ())
@@ -339,6 +356,11 @@ class HomeDashboardSnapshot:
         )
         object.__setattr__(self, "phases", tuple(phases or ()))
         object.__setattr__(self, "universe", universe or HomeSnapshotUniverse())
+        object.__setattr__(
+            self,
+            "variant_universe",
+            variant_universe or HomeSnapshotVariantUniverse(),
+        )
         object.__setattr__(self, "variants", tuple(variants or ()))
         self.__post_init__()
 
@@ -445,7 +467,7 @@ def write_home_dashboard_snapshot(
         raise ValueError("refusing to replace a newer home snapshot with an older date")
     payload = f"{snapshot.to_json()}\n"
     if len(payload.encode("utf-8")) > MAX_HOME_SNAPSHOT_BYTES:
-        raise ValueError("home snapshot exceeds the 64 KiB byte budget")
+        raise ValueError("home snapshot exceeds the 256 KiB byte budget")
     atomic_write_text(path, payload)
     _set_runtime_snapshot_mode(path)
 
@@ -463,7 +485,7 @@ def write_home_snapshot_index(path: str | Path, index: HomeSnapshotIndex) -> Non
         raise ValueError("refusing to replace a newer home snapshot index")
     payload = f"{index.to_json()}\n"
     if len(payload.encode("utf-8")) > MAX_HOME_SNAPSHOT_BYTES:
-        raise ValueError("home snapshot index exceeds the 64 KiB byte budget")
+        raise ValueError("home snapshot index exceeds the 256 KiB byte budget")
     atomic_write_text(path, payload)
     _set_runtime_snapshot_mode(path)
 
@@ -651,6 +673,7 @@ def _snapshot_from_dict(payload: object) -> HomeDashboardSnapshot:
             "recommendation_gate",
             "phases",
             "universe",
+            "variant_universe",
             "variants",
         },
     )
@@ -701,7 +724,10 @@ def _snapshot_from_dict(payload: object) -> HomeDashboardSnapshot:
             _phase_from_dict(item)
             for item in _list(mapping.get("phases", ()), "phases")
         ),
-            universe=_universe_from_dict(mapping.get("universe", {})),
+        universe=_universe_from_dict(mapping.get("universe", {})),
+        variant_universe=_variant_universe_from_dict(
+            mapping.get("variant_universe", {})
+        ),
         variants=tuple(
             _variant_from_dict(item)
             for item in _list(mapping.get("variants", ()), "variants")
@@ -759,9 +785,31 @@ def _variant_from_dict(payload: object) -> HomeSnapshotVariant:
                 last_price=float(item.get("last_price", 0.0) or 0.0),
                 market_value=float(item.get("market_value", 0.0) or 0.0),
                 unrealized_pnl=float(item.get("unrealized_pnl", 0.0) or 0.0),
+                name=_optional_text(item.get("name"), "holding.name"),
             )
             for item in mapping.get("holdings", ())
             if isinstance(item, dict)
+        ),
+        previous_holdings=(
+            None
+            if "previous_holdings" not in mapping
+            or mapping.get("previous_holdings") is None
+            else tuple(
+                HomeSnapshotHolding(
+                    symbol=_text(item.get("symbol", ""), "previous_holding.symbol"),
+                    quantity=int(item.get("quantity", 0) or 0),
+                    average_price=float(item.get("average_price", 0.0) or 0.0),
+                    last_price=float(item.get("last_price", 0.0) or 0.0),
+                    market_value=float(item.get("market_value", 0.0) or 0.0),
+                    unrealized_pnl=float(item.get("unrealized_pnl", 0.0) or 0.0),
+                    name=_optional_text(item.get("name"), "previous_holding.name"),
+                )
+                for item in _list(mapping["previous_holdings"], "previous_holdings")
+                if isinstance(item, dict)
+            )
+        ),
+        recent_actions=_text_tuple(
+            mapping.get("recent_actions", ()), "variant.recent_actions"
         ),
         hard_rules=_text_tuple(mapping.get("hard_rules", ()), "variant.hard_rules"),
     )
@@ -1113,6 +1161,22 @@ def _universe_from_dict(payload: object) -> HomeSnapshotUniverse:
         cycle_id=_integer(mapping.get("cycle_id", 0), "universe.cycle_id"),
         coverage_pct=float(mapping.get("coverage_pct", 0.0) or 0.0),
         last_error=_optional_text(mapping.get("last_error"), "universe.last_error"),
+    )
+
+
+def _variant_universe_from_dict(payload: object) -> HomeSnapshotVariantUniverse:
+    if payload in (None, {}):
+        return HomeSnapshotVariantUniverse()
+    mapping = _mapping(payload, "variant_universe")
+    return HomeSnapshotVariantUniverse(
+        symbol_count=_integer(mapping.get("symbol_count", 0), "variant_universe.symbol_count"),
+        board_scope=_optional_text(mapping.get("board_scope"), "variant_universe.board_scope"),
+        excluded=_text_tuple(mapping.get("excluded", ()), "variant_universe.excluded"),
+        latest_trade_date=_optional_text(
+            mapping.get("latest_trade_date"), "variant_universe.latest_trade_date"
+        ),
+        coverage_pct=float(mapping.get("coverage_pct", 0.0) or 0.0),
+        sources=_text_tuple(mapping.get("sources", ()), "variant_universe.sources"),
     )
 
 

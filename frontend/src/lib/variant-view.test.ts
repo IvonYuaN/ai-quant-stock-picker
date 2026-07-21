@@ -1,5 +1,5 @@
 import type { AqspVariant } from "@/types/aqsp";
-import { variantHoldingsLabel, variantMoney, variantPercent, variantStrategyText } from "./variant-view";
+import { variantAdjustmentReasons, variantMoney, variantPercent, variantStrategyLogic, variantStrategyText } from "./variant-view";
 
 const variantFixture = {
   variant_id: "trend_follow",
@@ -22,8 +22,12 @@ const variantFixture = {
 export const variantViewContractChecks = {
   accountFieldsAreRepresented: [variantFixture.cash, variantFixture.final_equity, variantFixture.total_pnl].every((value) => typeof value === "number"),
   strategyIsReadable: variantStrategyText(variantFixture.strategy, variantFixture.variant_id).includes("回看 20 日"),
-  emptyHoldingsAreExplicit: variantHoldingsLabel(variantFixture.holdings) === "当前无持仓",
-  missingHoldingsAreExplicit: variantHoldingsLabel(undefined) === "持仓字段未提供",
+  strategyIncludesHypothesis: variantStrategyText('{"id":"x","mode":"trend","hypothesis":"价格趋势延续"}', "x").includes("价格趋势延续"),
+  strategyLogicExplainsTrigger: variantStrategyLogic('{"mode":"reversion","lookback_days":20,"entry_return_pct":3,"max_bias_pct":0}', "x").includes("收盘低于20日均线"),
   missingCashDoesNotBecomeZero: variantMoney(undefined) === "未提供",
   positivePnlIsSigned: variantPercent(variantFixture.return_pct) === "+1.25%",
+  adjustmentReasonsExposeChanges: variantAdjustmentReasons(
+    [{ symbol: "BBB", quantity: 100, average_price: 10, last_price: 10, market_value: 1000, unrealized_pnl: 0, name: "乙公司" }],
+    [{ symbol: "AAA", quantity: 100, average_price: 10, last_price: 10, market_value: 1000, unrealized_pnl: 0, name: "甲公司" }],
+  ).join("；") === "新增：乙公司；移出：甲公司",
 };

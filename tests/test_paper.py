@@ -8,6 +8,11 @@ import pandas as pd
 import pytest
 
 from aqsp.paper import (
+    BLOCKED_BY_CIRCUIT_BREAKER,
+    HELD,
+    PAPER_REVIEW,
+    NOT_EXECUTABLE,
+    PaperAccountConfig,
     PaperSummary,
     read_paper_trades,
     render_paper_report,
@@ -82,6 +87,140 @@ def test_paper_default_execution_costs_use_thresholds(tmp_path: Path) -> None:
     assert summary.opened == 1
     assert row["fee_bps"] == pytest.approx(3.0)
     assert row["slippage_bps"] == pytest.approx(20.0)
+
+
+def test_paper_contract_tracks_held_cash_quantity_and_t_plus_one(
+    tmp_path: Path,
+) -> None:
+    signals = tmp_path / "signals.jsonl"
+    trades = tmp_path / "paper.jsonl"
+    _write_signal(signals, quantity=200, horizon_days=4)
+
+    summary = sync_paper_trades(
+        signal_ledger=signals,
+        paper_ledger=trades,
+        frames={"600519": _frame()},
+        account=PaperAccountConfig(initial_cash=100_000, lot_size=100),
+    )
+
+    row = read_paper_trades(trades)[0]
+    assert row["paper_status"] == HELD
+    assert row["paper_state"] == HELD
+    assert row["quantity"] == 200
+    assert row["cash_required"] == pytest.approx(20_200.0)
+    assert row["cash_before"] == pytest.approx(100_000.0)
+    assert row["cash_after"] == pytest.approx(79_800.0)
+    assert row["t_plus_one_sellable_date"] == "2026-05-29"
+    assert summary.account is not None
+    assert summary.account.held_count == 1
+    assert summary.account.cash == pytest.approx(79_800.0)
+
+
+def test_paper_contract_marks_missing_next_open_as_review(tmp_path: Path) -> None:
+    signals = tmp_path / "signals.jsonl"
+    trades = tmp_path / "paper.jsonl"
+    _write_signal(signals, signal_date="2026-05-29")
+
+    summary = sync_paper_trades(
+        signal_ledger=signals,
+        paper_ledger=trades,
+        frames={"600519": _frame()},
+    )
+
+    row = read_paper_trades(trades)[0]
+    assert row["status"] == "pending_entry"
+    assert row["paper_status"] == PAPER_REVIEW
+    assert row["paper_state"] == PAPER_REVIEW
+    assert row["paper_review_reason"]
+    assert summary.paper_review == 1
+
+
+def test_paper_contract_marks_circuit_breaker_without_cash_commitment(
+    tmp_path: Path,
+) -> None:
+    signals = tmp_path / "signals.jsonl"
+    trades = tmp_path / "paper.jsonl"
+    _write_signal(signals)
+
+    summary = sync_paper_trades(
+        signal_ledger=signals,
+        paper_ledger=trades,
+        frames={"600519": _frame()},
+        circuit_breaker_triggered=True,
+        circuit_breaker_reason="组合保护至 2026-07-25",
+    )
+
+    row = read_paper_trades(trades)[0]
+    assert row["status"] == BLOCKED_BY_CIRCUIT_BREAKER
+    assert row["paper_status"] == BLOCKED_BY_CIRCUIT_BREAKER
+    assert row["blocked_reason"] == "组合保护至 2026-07-25"
+    assert row["cash_required"] == 0.0
+    assert summary.blocked_by_circuit_breaker == 1
+    assert summary.account is not None
+    assert summary.account.cash == pytest.approx(100_000.0)
+
+
+def test_paper_contract_keeps_not_executable_reason_separate(
+    tmp_path: Path,
+) -> None:
+    signals = tmp_path / "signals.jsonl"
+    trades = tmp_path / "paper.jsonl"
+    _write_signal(signals)
+    frame = _frame()
+    frame.loc[1, ["open", "high", "low", "close"]] = 110.0
+
+    sync_paper_trades(
+        signal_ledger=signals,
+        paper_ledger=trades,
+        frames={"600519": frame},
+    )
+
+    row = read_paper_trades(trades)[0]
+    assert row["status"] == NOT_EXECUTABLE
+    assert row["paper_status"] == NOT_EXECUTABLE
+    assert row["reject_reason"] == "limit_up_at_open"
+    assert row["cash_after"] == pytest.approx(100_000.0)
+
+
+def test_paper_contract_can_enforce_cash_without_creating_an_order(
+    tmp_path: Path,
+) -> None:
+    signals = tmp_path / "signals.jsonl"
+    trades = tmp_path / "paper.jsonl"
+    first = {
+        "id": "sig-1",
+        "status": "pending",
+        "signal_date": "2026-05-27",
+        "symbol": "600519",
+        "rating": "buy_candidate",
+        "score": 70,
+        "stop_loss": 95.0,
+        "take_profit": 110.0,
+        "horizon_days": 4,
+    }
+    second = {**first, "id": "sig-2", "symbol": "600036"}
+    signals.write_text(
+        json.dumps(first, ensure_ascii=False)
+        + "\n"
+        + json.dumps(second, ensure_ascii=False)
+        + "\n",
+        encoding="utf-8",
+    )
+
+    summary = sync_paper_trades(
+        signal_ledger=signals,
+        paper_ledger=trades,
+        frames={"600519": _frame(), "600036": _frame()},
+        account=PaperAccountConfig(
+            initial_cash=11_000, lot_size=100, enforce_cash=True
+        ),
+    )
+
+    rows = read_paper_trades(trades)
+    assert [row["paper_status"] for row in rows] == [HELD, PAPER_REVIEW]
+    assert rows[1]["cash_rejection_reason"] == "insufficient_cash"
+    assert summary.opened == 1
+    assert summary.paper_review == 1
 
 
 def test_paper_skips_avoid_signals(tmp_path: Path) -> None:

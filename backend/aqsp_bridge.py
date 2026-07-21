@@ -20,7 +20,7 @@ DEFAULT_SNAPSHOT_PATH = "data/runtime/home_dashboard_snapshot.json"
 DEFAULT_DEBATE_RESULTS_PATH = "data/debate_results.jsonl"
 SNAPSHOT_SCHEMA_VERSION = "v1"
 INDEX_SCHEMA_VERSION = "v1-index"
-MAX_SNAPSHOT_BYTES = 64 * 1024
+MAX_SNAPSHOT_BYTES = 512 * 1024
 MAX_DATES = 4
 MAX_CANDIDATES = 5
 MAX_DEBATES = 3
@@ -28,7 +28,7 @@ MAX_SUMMARIES = 3
 MAX_MESSAGES = 5
 MAX_DEBATE_RESULTS_BYTES = 8 * 1024 * 1024
 MAX_CROSS_MARKET = 3
-MAX_VARIANTS = 12
+MAX_VARIANTS = 192
 LEGACY_MESSAGE_TIMESTAMP_FORMAT = "%Y-%m-%d %H:%M:%S"
 SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -237,7 +237,19 @@ class AQSPVariant:
     rank: int = 0
     strategy: str = ""
     holdings: tuple[dict[str, Any], ...] = ()
+    previous_holdings: tuple[dict[str, Any], ...] | None = None
+    recent_actions: tuple[str, ...] = ()
     hard_rules: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class AQSPVariantUniverse:
+    symbol_count: int = 0
+    board_scope: str = ""
+    excluded: tuple[str, ...] = ()
+    latest_trade_date: str = ""
+    coverage_pct: float = 0.0
+    sources: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -286,6 +298,7 @@ class AQSPSnapshot:
     recommendation_gate: AQSPRecommendationGate | None = None
     phases: tuple[AQSPPhase, ...] = ()
     universe: AQSPUniverse = AQSPUniverse()
+    variant_universe: AQSPVariantUniverse = AQSPVariantUniverse()
     variants: tuple[AQSPVariant, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
@@ -717,7 +730,7 @@ def _read_json(path: Path) -> dict[str, Any]:
     except OSError as exc:
         raise AQSPSnapshotUnavailable(f"无法读取快照文件：{path}") from exc
     if len(raw) > MAX_SNAPSHOT_BYTES:
-        raise AQSPSnapshotUnavailable("快照超过 64 KiB 大小上限")
+        raise AQSPSnapshotUnavailable("快照超过 256 KiB 大小上限")
     try:
         payload = json.loads(raw.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -779,6 +792,7 @@ def _parse_snapshot(payload: Mapping[str, Any]) -> AQSPSnapshot:
         "recommendation_gate",
         "phases",
         "universe",
+        "variant_universe",
         "variants",
     }
     _check_keys(payload, required, "快照", optional)
@@ -851,6 +865,7 @@ def _parse_snapshot(payload: Mapping[str, Any]) -> AQSPSnapshot:
             _parse_phase(item) for item in _list(payload.get("phases", []), "phases")
         ),
         universe=_parse_universe(payload.get("universe")),
+        variant_universe=_parse_variant_universe(payload.get("variant_universe")),
         variants=variants,
     )
 
@@ -861,7 +876,16 @@ def _parse_variant(payload: object) -> AQSPVariant:
         item,
         {"variant_id", "label", "initial_cash", "final_equity", "return_pct", "filled_orders", "rejected_orders", "start_date", "end_date", "data_mode"},
         "variant",
-        {"cash", "total_pnl", "rank", "strategy", "holdings", "hard_rules"},
+        {
+            "cash",
+            "total_pnl",
+            "rank",
+            "strategy",
+            "holdings",
+            "previous_holdings",
+            "recent_actions",
+            "hard_rules",
+        },
     )
     variant = AQSPVariant(
         variant_id=_text(item["variant_id"], "variant.variant_id"),
@@ -884,6 +908,21 @@ def _parse_variant(payload: object) -> AQSPVariant:
         holdings=tuple(
             value for value in _list(item.get("holdings", []), "variant.holdings")
             if isinstance(value, dict)
+        ),
+        previous_holdings=(
+            None
+            if "previous_holdings" not in item
+            or item.get("previous_holdings") is None
+            else tuple(
+                value
+                for value in _list(
+                    item["previous_holdings"], "variant.previous_holdings"
+                )
+                if isinstance(value, dict)
+            )
+        ),
+        recent_actions=tuple(
+            _text_list(item.get("recent_actions", []), "variant.recent_actions")
         ),
         hard_rules=tuple(_text_list(item.get("hard_rules", []), "variant.hard_rules")),
     )
@@ -954,6 +993,43 @@ def _parse_universe(payload: object) -> AQSPUniverse:
         cycle_id=_integer(item.get("cycle_id", 0), "universe.cycle_id"),
         coverage_pct=float(item.get("coverage_pct", 0.0) or 0.0),
         last_error=_optional_text(item.get("last_error"), "universe.last_error"),
+    )
+
+
+def _parse_variant_universe(payload: object) -> AQSPVariantUniverse:
+    """Parse the exact symbol universe and freshness used by variant runs."""
+    if payload is None:
+        return AQSPVariantUniverse()
+    item = _object(payload, "variant_universe")
+    _check_keys(
+        item,
+        set(),
+        "variant_universe",
+        {
+            "symbol_count",
+            "board_scope",
+            "excluded",
+            "latest_trade_date",
+            "coverage_pct",
+            "sources",
+        },
+    )
+    latest_trade_date = _optional_text(
+        item.get("latest_trade_date"), "variant_universe.latest_trade_date"
+    )
+    if latest_trade_date:
+        _validate_date(latest_trade_date, "variant_universe.latest_trade_date")
+    return AQSPVariantUniverse(
+        symbol_count=_integer(item.get("symbol_count", 0), "variant_universe.symbol_count"),
+        board_scope=_optional_text(item.get("board_scope"), "variant_universe.board_scope"),
+        excluded=tuple(
+            _text_list(item.get("excluded", []), "variant_universe.excluded")
+        ),
+        latest_trade_date=latest_trade_date,
+        coverage_pct=_number(
+            item.get("coverage_pct", 0.0), "variant_universe.coverage_pct"
+        ),
+        sources=tuple(_text_list(item.get("sources", []), "variant_universe.sources")),
     )
 
 

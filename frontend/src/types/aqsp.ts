@@ -100,7 +100,18 @@ export interface AqspVariant {
   /** Serialized strategy description in the current producer contract. */
   strategy?: string;
   holdings?: readonly AqspVariantHolding[];
+  previous_holdings?: readonly AqspVariantHolding[] | null;
+  recent_actions?: readonly string[];
   hard_rules?: readonly string[];
+}
+
+export interface AqspVariantUniverse {
+  symbol_count: number;
+  board_scope: string;
+  excluded: readonly string[];
+  latest_trade_date: string;
+  coverage_pct: number;
+  sources: readonly string[];
 }
 
 export interface AqspVariantHolding {
@@ -110,6 +121,8 @@ export interface AqspVariantHolding {
   last_price: number;
   market_value: number;
   unrealized_pnl: number;
+  name?: string;
+  display_name?: string;
 }
 
 export interface AqspAgentResult {
@@ -156,6 +169,7 @@ export interface AqspSnapshot {
   recommendation_gate?: AqspRecommendationGate;
   phases?: readonly AqspPhase[];
   universe?: AqspUniverse;
+  variant_universe?: AqspVariantUniverse;
   variants?: readonly AqspVariant[];
   /** Present after the HTTP envelope is normalized; absent in the raw data payload. */
   meta?: AqspSnapshotMeta;

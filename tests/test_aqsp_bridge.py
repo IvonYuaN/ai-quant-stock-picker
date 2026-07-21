@@ -323,6 +323,43 @@ def test_aqsp_bridge_snapshot_returns_typed_candidate_payload_when_snapshot_is_v
     )
 
 
+def test_aqsp_bridge_preserves_variant_position_names_and_previous_holdings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    payload = _snapshot("2026-07-14")
+    payload["variants"] = [
+        {
+            "variant_id": "trend_follow",
+            "label": "趋势跟随",
+            "initial_cash": 100000.0,
+            "final_equity": 101000.0,
+            "return_pct": 1.0,
+            "filled_orders": 2,
+            "rejected_orders": 0,
+            "start_date": "2026-07-01",
+            "end_date": "2026-07-14",
+            "data_mode": "historical_raw_unadjusted",
+            "cash": 40000.0,
+            "total_pnl": 1000.0,
+            "rank": 1,
+            "strategy": "趋势跟随",
+            "holdings": [{"symbol": "600001", "quantity": 100, "average_price": 10.0, "last_price": 11.0, "market_value": 1100.0, "unrealized_pnl": 100.0, "name": "示例公司"}],
+            "previous_holdings": [{"symbol": "600002", "quantity": 100, "average_price": 9.0, "last_price": 9.5, "market_value": 950.0, "unrealized_pnl": 50.0, "name": "昨日公司"}],
+            "recent_actions": ["2026-07-14 卖出 昨日公司 600002 100 股"],
+        }
+    ]
+    path = _write_single(tmp_path, payload)
+    monkeypatch.setenv("AQSP_RESEARCH_SURFACE_SNAPSHOT", str(path))
+
+    response = client.get("/api/aqsp/snapshot")
+
+    assert response.status_code == 200
+    variant = response.json()["data"]["variants"][0]
+    assert variant["holdings"][0]["name"] == "示例公司"
+    assert variant["previous_holdings"][0]["name"] == "昨日公司"
+    assert variant["recent_actions"] == ["2026-07-14 卖出 昨日公司 600002 100 股"]
+
+
 def test_aqsp_bridge_dates_and_candidate_use_exact_historical_snapshot(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

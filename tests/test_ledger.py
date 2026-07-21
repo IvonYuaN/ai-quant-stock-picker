@@ -71,6 +71,9 @@ def test_append_predictions_persists_quality_gate_state_without_rating_promotion
     assert row["paper_review_eligible"] is False
     assert row["observation_only"] is True
     assert row["portfolio_action"] == "observation_only"
+    assert row["paper_status"] == "paper_review"
+    assert row["paper_state"] == "paper_review"
+    assert row["paper_review_reason"] == "质量门禁: observe"
     assert is_ledger_row_paper_review_eligible(row) is False
 
 
@@ -1034,6 +1037,9 @@ def test_validation_marks_limit_up_at_open_not_executable(tmp_path) -> None:
     assert summary.skipped_not_executable == 1
     assert summary.not_executable_reasons == {"limit_up_at_open": 1}
     assert rows[0]["status"] == "not_executable"
+    assert rows[0]["paper_status"] == "not_executable"
+    assert rows[0]["paper_state"] == "not_executable"
+    assert rows[0]["reject_reason"] == "limit_up_at_open"
     assert rows[0]["not_executable_reason"] == "limit_up_at_open"
 
 

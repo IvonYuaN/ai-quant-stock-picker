@@ -1014,7 +1014,12 @@ def _refresh_home_snapshot(
     """Refresh the legacy-compatible home artifact from the daily inputs."""
     try:
         sys.path.insert(0, str(config.project_root / "scripts"))
-        from write_home_snapshot import build_home_snapshot, build_home_snapshot_index
+        from write_home_snapshot import (
+            build_home_snapshot,
+            build_home_snapshot_index,
+            load_home_snapshot_index,
+            merge_home_snapshot_index,
+        )
         from aqsp.web.data_provider import DashboardDataProvider
         from aqsp.web.home_snapshot import (
             write_home_dashboard_snapshot,
@@ -1057,22 +1062,29 @@ def _refresh_home_snapshot(
             provider,
             initial_snapshot=snapshot,
         )
-        write_home_dashboard_snapshot(snapshot_path, snapshot)
-        write_home_snapshot_index(index_path, index)
+        existing_index = load_home_snapshot_index(index_path)
+        merged_index = merge_home_snapshot_index(existing_index, index)
+        current_snapshot = next(
+            day.snapshot
+            for day in merged_index.days
+            if day.date == merged_index.selected_date
+        )
+        write_home_dashboard_snapshot(snapshot_path, current_snapshot)
+        write_home_snapshot_index(index_path, merged_index)
         logger.info(
             "  首页快照已保存: %s (index=%s date=%s candidates=%d days=%d)",
             snapshot_path,
             index_path,
             snapshot.selected_date,
             len(snapshot.candidates),
-            len(index.days),
+            len(merged_index.days),
         )
         return {
             "path": str(snapshot_path),
             "index_path": str(index_path),
             "date": snapshot.selected_date,
             "candidate_count": len(snapshot.candidates),
-            "day_count": len(index.days),
+            "day_count": len(merged_index.days),
         }
     except Exception as exc:
         logger.warning("  首页快照刷新失败: %s", exc)

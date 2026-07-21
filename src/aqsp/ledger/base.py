@@ -25,6 +25,18 @@ TERMINAL_PREDICTION_STATUSES = frozenset(
     }
 )
 
+# ``status`` is kept backward compatible for the prediction ledger.  Paper
+# tracking uses the explicit vocabulary below so a candidate cannot be
+# mistaken for an executed order.
+PAPER_REVIEW_STATUSES = frozenset(
+    {
+        "paper_review",
+        "not_executable",
+        "blocked_by_circuit_breaker",
+        "held",
+    }
+)
+
 FORMAL_LEDGER_WORKLOADS = frozenset(
     {
         "live_short",
@@ -106,6 +118,20 @@ def _as_bool(value: object, *, default: bool) -> bool:
         if normalized in {"false", "0", "no", ""}:
             return False
     return bool(value)
+
+
+def _prediction_paper_status(
+    pick: PickResult, run_metadata: RunMetadata | None
+) -> tuple[str, str]:
+    if run_metadata is not None and run_metadata.circuit_breaker_triggered:
+        return (
+            "blocked_by_circuit_breaker",
+            run_metadata.circuit_breaker_reason or "组合保护冷却期中，暂停新增纸面动作",
+        )
+    action = str(pick.metrics.get("quality_gate_action", "") or "").strip()
+    if action in {"observe", "blocked", "rejected"}:
+        return "paper_review", f"质量门禁: {action}"
+    return "paper_review", "等待次日开盘成交性确认"
 
 
 def is_ledger_row_paper_review_eligible(row: dict) -> bool:
@@ -202,6 +228,9 @@ def append_predictions(
             strategies = list(pick.strategies)
             signal_day_group = pick.date
             row_key = (pick.date, pick.symbol, thresholds_version, regime, "next_open")
+            paper_status, paper_review_reason = _prediction_paper_status(
+                pick, run_metadata
+            )
             prediction_fields = {
                 "signal_date": pick.date,
                 "symbol": pick.symbol,
@@ -218,6 +247,11 @@ def append_predictions(
                 "paper_review_eligible": _as_bool(
                     pick.metrics.get("paper_review_eligible"), default=True
                 ),
+                "paper_status": paper_status,
+                "paper_state": paper_status,
+                "paper_review_reason": paper_review_reason,
+                "not_executable_reason": "",
+                "reject_reason": "",
                 "observation_only": _as_bool(
                     pick.metrics.get("observation_only"), default=False
                 ),
@@ -704,6 +738,9 @@ def validate_predictions(
             row.get("rating")
         ) or not is_ledger_row_paper_review_eligible(row):
             row["status"] = "watch_only"
+            row["paper_status"] = "paper_review"
+            row["paper_state"] = "paper_review"
+            row["paper_review_reason"] = "质量门禁或评级未达到纸面跟踪条件"
             continue
         strategies = _normalize_strategies(row.get("strategies"))
         symbol = str(row.get("symbol", ""))
@@ -734,8 +771,11 @@ def validate_predictions(
         executable, reason = _check_executable(entry_bar, prev_close, row)
         if not executable:
             row["status"] = "not_executable"
+            row["paper_status"] = "not_executable"
+            row["paper_state"] = "not_executable"
             row["entry_date"] = str(entry_bar["date"])
             row["not_executable_reason"] = reason
+            row["reject_reason"] = reason
             skipped += 1
             not_executable_reasons[reason] = not_executable_reasons.get(reason, 0) + 1
             for strategy in strategies:

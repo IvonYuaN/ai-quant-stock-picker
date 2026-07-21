@@ -28,6 +28,7 @@ from aqsp.core.time import (
     to_shanghai,
 )
 from aqsp.market_context import MarketContextArtifact, build_market_context_artifact
+from aqsp.data.source_factory import load_sqlite_symbol_name_map
 from aqsp.news.catalysts import (
     CatalystEvent,
     CatalystReport,
@@ -44,6 +45,7 @@ from aqsp.runtime.recommendation_gate import (
 from aqsp.web.home_snapshot import (
     HOME_SNAPSHOT_INDEX_SCHEMA_VERSION,
     HOME_SNAPSHOT_SCHEMA_VERSION,
+    MAX_HOME_SNAPSHOT_VARIANTS,
     MAX_HOME_SNAPSHOT_CANDIDATES,
     MAX_HOME_SNAPSHOT_DEBATES,
     MAX_HOME_SNAPSHOT_INDEX_DAYS,
@@ -63,6 +65,7 @@ from aqsp.web.home_snapshot import (
     HomeSnapshotUniverse,
     HomeSnapshotHolding,
     HomeSnapshotVariant,
+    HomeSnapshotVariantUniverse,
     MAX_HOME_SNAPSHOT_TECHNICAL_METRICS,
     HOME_RECOMMENDATION_LABELS,
     is_home_recommendation,
@@ -1540,7 +1543,9 @@ def _universe_snapshot() -> HomeSnapshotUniverse:
     )
 
 
-def _variant_snapshot() -> tuple[HomeSnapshotVariant, ...]:
+def _variant_snapshot(
+    candidate_names: dict[str, str] | None = None,
+) -> tuple[HomeSnapshotVariant, ...]:
     """Read only bounded summaries from the isolated experiment artifact."""
     path = _runtime_json_path(
         "AQSP_VARIANT_RESULTS",
@@ -1553,6 +1558,24 @@ def _variant_snapshot() -> tuple[HomeSnapshotVariant, ...]:
     if not isinstance(raw_variants, list):
         return ()
     rules = payload.get("execution_rules")
+    variant_symbols = {
+        _text(holding.get("symbol"))
+        for item in raw_variants[:MAX_HOME_SNAPSHOT_VARIANTS]
+        if isinstance(item, dict)
+        for holding in item.get("holdings", ())
+        if isinstance(holding, dict) and _text(holding.get("symbol"))
+    }
+    variant_symbols.update(
+        _text(fill.get("symbol"))
+        for item in raw_variants[:MAX_HOME_SNAPSHOT_VARIANTS]
+        if isinstance(item, dict)
+        for fill in item.get("fills", ())
+        if isinstance(fill, dict) and _text(fill.get("symbol"))
+    )
+    variant_names = {
+        **(candidate_names or {}),
+        **load_sqlite_symbol_name_map(sorted(variant_symbols)),
+    }
     rule_labels = (
         "T+1：买入当日不可卖",
         "100 股整手",
@@ -1560,9 +1583,32 @@ def _variant_snapshot() -> tuple[HomeSnapshotVariant, ...]:
         "含佣金、印花税、滑点",
     )
     variants: list[HomeSnapshotVariant] = []
-    for item in raw_variants[:12]:
+    for item in raw_variants[:MAX_HOME_SNAPSHOT_VARIANTS]:
         if not isinstance(item, dict) or item.get("initial_cash") != 100_000.0:
             continue
+        holdings = tuple(
+            HomeSnapshotHolding(
+                symbol=_text(holding.get("symbol")),
+                quantity=int(holding.get("quantity") or 0),
+                average_price=float(holding.get("average_price") or 0.0),
+                last_price=float(holding.get("last_price") or 0.0),
+                market_value=float(holding.get("market_value") or 0.0),
+                unrealized_pnl=float(holding.get("unrealized_pnl") or 0.0),
+                name=_first_text(
+                    holding.get("name"),
+                    holding.get("display_name"),
+                    variant_names.get(_text(holding.get("symbol"))),
+                ),
+            )
+            for holding in item.get("holdings", ())
+            if isinstance(holding, dict)
+        )
+        raw_strategy = item.get("strategy")
+        strategy = (
+            json.dumps(raw_strategy, ensure_ascii=False, separators=(",", ":"))
+            if isinstance(raw_strategy, dict)
+            else _text(item.get("strategy_label")) or _text(item.get("label"))
+        )
         variants.append(
             HomeSnapshotVariant(
                 variant_id=_text(item.get("variant_id")),
@@ -1578,23 +1624,184 @@ def _variant_snapshot() -> tuple[HomeSnapshotVariant, ...]:
                 start_date=_text(payload.get("start_date")),
                 end_date=_text(payload.get("end_date")),
                 data_mode=_text(payload.get("data_mode")),
-                strategy=_text(item.get("strategy_label")) or _text(item.get("label")),
-                holdings=tuple(
-                    HomeSnapshotHolding(
-                        symbol=_text(holding.get("symbol")),
-                        quantity=int(holding.get("quantity") or 0),
-                        average_price=float(holding.get("average_price") or 0.0),
-                        last_price=float(holding.get("last_price") or 0.0),
-                        market_value=float(holding.get("market_value") or 0.0),
-                        unrealized_pnl=float(holding.get("unrealized_pnl") or 0.0),
-                    )
-                    for holding in item.get("holdings", ())
-                    if isinstance(holding, dict)
+                strategy=strategy,
+                holdings=holdings,
+                previous_holdings=_previous_variant_holdings(
+                    item.get("fills"), holdings, variant_names
                 ),
+                recent_actions=_variant_recent_actions(item.get("fills"), variant_names),
                 hard_rules=rule_labels if isinstance(rules, dict) else (),
             )
         )
     return tuple(variants)
+
+
+def _variant_provenance() -> dict[str, object]:
+    """Read verified raw-data provenance for the isolated variant artifact."""
+    payload = _read_json_object(
+        _runtime_json_path("AQSP_VARIANT_RESULTS", "data/runtime/variant_results.json")
+    )
+    coverage = payload.get("data_coverage")
+    raw_coverage = (
+        coverage.get("end_date_coverage_pct")
+        if isinstance(coverage, dict)
+        else None
+    )
+    try:
+        coverage_pct = float(raw_coverage) if raw_coverage is not None else None
+    except (TypeError, ValueError):
+        coverage_pct = None
+    return {
+        "symbol_count": int(
+            (payload.get("universe_scope") or {}).get("symbol_count", 0)
+            if isinstance(payload.get("universe_scope"), dict)
+            else 0
+        ),
+        "board_scope": _text(
+            (payload.get("universe_scope") or {}).get("board_scope", "")
+            if isinstance(payload.get("universe_scope"), dict)
+            else ""
+        ),
+        "excluded": tuple(
+            _text(value)
+            for value in (
+                (payload.get("universe_scope") or {}).get("excluded", ())
+                if isinstance(payload.get("universe_scope"), dict)
+                else ()
+            )
+            if _text(value)
+        ),
+        "latest_trade_date": _text(payload.get("data_latest_trade_date")),
+        "sources": tuple(
+            _text(value)
+            for value in payload.get("data_sources", ())
+            if _text(value)
+        ),
+        "coverage_pct": coverage_pct,
+    }
+
+
+def _variant_universe_snapshot() -> HomeSnapshotVariantUniverse:
+    provenance = _variant_provenance()
+    return HomeSnapshotVariantUniverse(
+        symbol_count=int(provenance.get("symbol_count", 0) or 0),
+        board_scope=_text(provenance.get("board_scope")),
+        excluded=tuple(provenance.get("excluded", ())),
+        latest_trade_date=_text(provenance.get("latest_trade_date")),
+        coverage_pct=float(provenance.get("coverage_pct") or 0.0),
+        sources=tuple(provenance.get("sources", ())),
+    )
+
+
+def _previous_variant_holdings(
+    raw_fills: object,
+    current_holdings: tuple[HomeSnapshotHolding, ...],
+    symbol_names: dict[str, str] | None = None,
+) -> tuple[HomeSnapshotHolding, ...]:
+    """Replay filled trades before the last filled date for a comparable view."""
+    fills = [
+        fill
+        for fill in (raw_fills if isinstance(raw_fills, list) else [])
+        if isinstance(fill, dict)
+        and _text(fill.get("status")) == "filled"
+        and _text(fill.get("date"))
+        and _text(fill.get("symbol"))
+    ]
+    if not fills:
+        return ()
+    last_date = max(_text(fill.get("date"))[:10] for fill in fills)
+    positions: dict[str, tuple[int, float]] = {}
+    for fill in fills:
+        if _text(fill.get("date"))[:10] >= last_date:
+            continue
+        symbol = _text(fill.get("symbol"))
+        quantity = max(0, int(fill.get("quantity") or 0))
+        price = max(0.0, float(fill.get("price") or 0.0))
+        if not symbol or quantity <= 0:
+            continue
+        current_quantity, average_price = positions.get(symbol, (0, 0.0))
+        if _text(fill.get("side")) == "buy":
+            total_quantity = current_quantity + quantity
+            average_price = (
+                (current_quantity * average_price + quantity * price) / total_quantity
+                if total_quantity
+                else 0.0
+            )
+            positions[symbol] = (total_quantity, average_price)
+        elif _text(fill.get("side")) == "sell":
+            remaining = max(0, current_quantity - quantity)
+            if remaining:
+                positions[symbol] = (remaining, average_price)
+            else:
+                positions.pop(symbol, None)
+
+    current_by_symbol = {holding.symbol: holding for holding in current_holdings}
+    previous: list[HomeSnapshotHolding] = []
+    for symbol, (quantity, average_price) in positions.items():
+        current = current_by_symbol.get(symbol)
+        last_price = current.last_price if current else 0.0
+        previous.append(
+            HomeSnapshotHolding(
+                symbol=symbol,
+                quantity=quantity,
+                average_price=average_price,
+                last_price=last_price,
+                market_value=quantity * last_price,
+                unrealized_pnl=quantity * (last_price - average_price),
+                name=(current.name if current else "")
+                or (symbol_names or {}).get(symbol, ""),
+            )
+        )
+    return tuple(previous)
+
+
+def _variant_recent_actions(
+    raw_fills: object,
+    symbol_names: dict[str, str],
+) -> tuple[str, ...]:
+    """Summarize the last filled trading date as actual adjustment evidence."""
+    fills = [
+        fill
+        for fill in (raw_fills if isinstance(raw_fills, list) else [])
+        if isinstance(fill, dict)
+        and _text(fill.get("status")) == "filled"
+        and _text(fill.get("date"))
+        and _text(fill.get("symbol"))
+        and _text(fill.get("side")) in {"buy", "sell"}
+    ]
+    if not fills:
+        return ()
+    last_date = max(_text(fill.get("date"))[:10] for fill in fills)
+    totals: dict[tuple[str, str], int] = {}
+    for fill in fills:
+        if _text(fill.get("date"))[:10] != last_date:
+            continue
+        key = (_text(fill.get("side")), _text(fill.get("symbol")))
+        totals[key] = totals.get(key, 0) + max(0, int(fill.get("quantity") or 0))
+    actions: list[str] = []
+    for (side, symbol), quantity in totals.items():
+        if quantity <= 0:
+            continue
+        action = "买入" if side == "buy" else "卖出"
+        name = symbol_names.get(symbol, "名称未记录")
+        evidence_values: list[str] = []
+        for fill in fills:
+            if (
+                _text(fill.get("date"))[:10] == last_date
+                and _text(fill.get("side")) == side
+                and _text(fill.get("symbol")) == symbol
+            ):
+                raw_evidence = fill.get("evidence")
+                if isinstance(raw_evidence, list):
+                    evidence_values.extend(_text(value) for value in raw_evidence)
+        evidence = _bounded_unique_text(evidence_values, 5)
+        action_text = f"{last_date} {action} {name} {symbol} {quantity} 股"
+        if evidence:
+            action_text += "；技术证据：" + "，".join(evidence)
+        actions.append(action_text)
+        if len(actions) == 4:
+            break
+    return tuple(actions)
 
 
 def build_home_snapshot(
@@ -1616,6 +1823,28 @@ def build_home_snapshot(
     overview = payload.overview
     generated_at = to_shanghai(now_shanghai()).isoformat(timespec="seconds")
     source = _snapshot_source(runtime, task_view)
+    primary_source = source
+    variant_provenance = _variant_provenance()
+    variant_date = _text(variant_provenance.get("latest_trade_date"))
+    if source.latest_trade_date == "未记录" and variant_date:
+        try:
+            variant_lag_days = max(
+                0, (now_shanghai().date() - date.fromisoformat(variant_date)).days
+            )
+        except ValueError:
+            variant_lag_days = 0
+        coverage_pct = variant_provenance.get("coverage_pct")
+        source = HomeSnapshotSource(
+            effective="、".join(variant_provenance.get("sources", ()))
+            or "原始行情缓存",
+            latest_trade_date=variant_date,
+            lag_days=variant_lag_days,
+            status=(
+                "纸面变体原始数据已核验"
+                if coverage_pct == 100.0
+                else "纸面变体原始数据覆盖不完整"
+            ),
+        )
     candidates = _snapshot_candidates(payload)
     recommendation_count = _snapshot_recommendation_count(payload)
     runtime_debates = _runtime_debates_for_snapshot(
@@ -1664,7 +1893,7 @@ def build_home_snapshot(
     recommendation_gate = _recommendation_gate(
         provider,
         runtime,
-        source,
+        primary_source,
         message_status,
         evaluated_at=now_shanghai(),
     )
@@ -1744,7 +1973,10 @@ def build_home_snapshot(
         recommendation_gate=recommendation_gate,
         phases=phases,
         universe=_universe_snapshot(),
-        variants=_variant_snapshot(),
+        variant_universe=_variant_universe_snapshot(),
+        variants=_variant_snapshot(
+            {candidate.symbol: candidate.display_name for candidate in candidates}
+        ),
     )
 
 

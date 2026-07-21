@@ -34,6 +34,7 @@ class VariantOrder:
     symbol: str
     side: Side
     weight: float = 1.0
+    evidence: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -46,6 +47,7 @@ class VariantFill:
     fees: float
     status: str
     reason: str = ""
+    evidence: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -165,7 +167,18 @@ def simulate_variant(
                     position.average_price * position.quantity + quantity * price
                 ) / (position.quantity + quantity)
                 position.quantity += quantity
-                fills.append(VariantFill(date, order.symbol, "buy", quantity, price, fees, "filled"))
+                fills.append(
+                    VariantFill(
+                        date,
+                        order.symbol,
+                        "buy",
+                        quantity,
+                        price,
+                        fees,
+                        "filled",
+                        evidence=order.evidence,
+                    )
+                )
             else:
                 quantity = int(position.available_quantity * min(max(order.weight, 0.0), 1.0) / cfg.lot_size) * cfg.lot_size
                 if quantity <= 0:
@@ -176,7 +189,18 @@ def simulate_variant(
                 cash += quantity * price - fees
                 position.quantity -= quantity
                 position.available_quantity -= quantity
-                fills.append(VariantFill(date, order.symbol, "sell", quantity, price, fees, "filled"))
+                fills.append(
+                    VariantFill(
+                        date,
+                        order.symbol,
+                        "sell",
+                        quantity,
+                        price,
+                        fees,
+                        "filled",
+                        evidence=order.evidence,
+                    )
+                )
         for position in positions.values():
             position.available_quantity = position.quantity
 
@@ -239,6 +263,7 @@ def variant_result_to_dict(result: VariantResult) -> dict[str, Any]:
                 "fees": fill.fees,
                 "status": fill.status,
                 "reason": fill.reason,
+                "evidence": list(fill.evidence),
             }
             for fill in result.fills
         ],
@@ -283,4 +308,14 @@ def _sell_fees(amount: float, cfg: VariantExecutionRules) -> float:
 
 
 def _reject(date: str, order: VariantOrder, reason: str) -> VariantFill:
-    return VariantFill(date, order.symbol, order.side, 0, 0.0, 0.0, "rejected", reason)
+    return VariantFill(
+        date,
+        order.symbol,
+        order.side,
+        0,
+        0.0,
+        0.0,
+        "rejected",
+        reason,
+        order.evidence,
+    )

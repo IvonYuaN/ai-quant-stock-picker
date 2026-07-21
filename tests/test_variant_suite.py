@@ -1,6 +1,6 @@
 import sqlite3
 
-from scripts.run_variant_suite import run_suite
+from scripts.run_variant_suite import run_suite, select_stratified_symbols
 
 
 def test_run_suite_creates_fourteen_independent_ten_wan_accounts(tmp_path):
@@ -39,13 +39,15 @@ def test_run_suite_creates_fourteen_independent_ten_wan_accounts(tmp_path):
 
     result = run_suite(db, ("AAA",), "2026-01-01", "2026-01-30")
     assert result["initial_cash"] == 100_000.0
-    assert len(result["variants"]) == 14
+    assert len(result["variants"]) >= 60
+    assert len({item["variant_id"] for item in result["variants"]}) == len(result["variants"])
     assert {item["initial_cash"] for item in result["variants"]} == {100_000.0}
     assert all("cash" in item and "total_pnl" in item for item in result["variants"])
     assert all("strategy" in item and "holdings" in item for item in result["variants"])
     assert result["optimization"]["evaluation_only"] is True
     assert result["optimization"]["selected_variant_id"]
     assert all(item["filled_orders"] >= 0 for item in result["variants"])
+    assert all(item["strategy"]["max_positions"] >= 1 for item in result["variants"])
     assert {item["strategy"]["mode"] for item in result["variants"]} >= {
         "reversion",
         "volume_breakout",
@@ -54,3 +56,29 @@ def test_run_suite_creates_fourteen_independent_ten_wan_accounts(tmp_path):
     }
     assert all(item["strategy"]["hypothesis"] for item in result["variants"])
     assert result["execution_rules"]["t_plus_one"] is True
+
+
+def test_select_stratified_symbols_spans_boards_and_turnover_quantiles(tmp_path):
+    db = tmp_path / "universe.db"
+    with sqlite3.connect(db) as conn:
+        conn.execute(
+            """
+            CREATE TABLE ohlcv (
+                symbol TEXT, date TEXT, price_mode TEXT, workload TEXT,
+                open REAL, high REAL, low REAL, close REAL, volume REAL,
+                amount REAL, suspended INTEGER, limit_up REAL, limit_down REAL
+            )
+            """
+        )
+        symbols = ["000001", "000101", "300001", "300101", "600001", "601001"]
+        rows = []
+        for index, symbol in enumerate(symbols):
+            rows.append(
+                (symbol, "2026-07-16", "raw", "historical", 10, 11, 9, 10, 1000, (index + 1) * 1_000_000, 0, 11, 9)
+            )
+        conn.executemany("INSERT INTO ohlcv VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", rows)
+
+    selected = select_stratified_symbols(db, "2026-07-20", max_symbols=7)
+
+    assert set(selected) == set(symbols)
+    assert selected != tuple(sorted(symbols))
