@@ -8,7 +8,7 @@ AQSP 在服务器上的生产定时统一放在 **宝塔面板 -> 计划任务**
 /bin/bash /opt/aqsp/scripts/bt_task.sh <动作>
 ```
 
-可用动作：`intraday`、`midday`、`news`、`daily`、`coldstart`、`monitor`、`status`。
+可用动作：`intraday`、`midday`、`news`、`daily`、`coldstart`、`variants`、`monitor`、`status`。
 
 ## 前置条件
 
@@ -21,7 +21,7 @@ AQSP 在服务器上的生产定时统一放在 **宝塔面板 -> 计划任务**
 
 ## 计划任务
 
-在宝塔里新增 Shell 脚本任务。建议配置 **6 条自动任务 + 1 条手动自检**：
+在宝塔里新增 Shell 脚本任务。建议配置 **7 条自动任务 + 1 条手动自检**：
 
 | 任务名 | 周期/时间 | 脚本内容 |
 |---|---|---|
@@ -31,6 +31,7 @@ AQSP 在服务器上的生产定时统一放在 **宝塔面板 -> 计划任务**
 | `AQSP-周末消息雷达` | 周六、周日 `10:00` | `/bin/bash /opt/aqsp/scripts/bt_task.sh news` |
 | `AQSP-收盘主链路` | 工作日 `18:00` | `/bin/bash /opt/aqsp/scripts/bt_task.sh daily` |
 | `AQSP-冷启动补样本` | 工作日 `19:40` | `/bin/bash /opt/aqsp/scripts/bt_task.sh coldstart` |
+| `AQSP-变体重算` | 工作日 `21:30`；使用前一交易日 raw 数据；失败保留旧结果 | `/bin/bash /opt/aqsp/scripts/bt_task.sh variants` |
 | `AQSP-服务器监控` | 工作日每 15 分钟 | `/bin/bash /opt/aqsp/scripts/bt_task.sh monitor` |
 
 `status` 不建议定时跑，需要排查时在宝塔手动执行：
@@ -46,6 +47,7 @@ AQSP 在服务器上的生产定时统一放在 **宝塔面板 -> 计划任务**
 - `news`：消息面雷达，标题为 `消息面雷达-YYYY-MM-DD`，盘前和周末最有价值。
 - `daily`：收盘完整主链路，生成正式复盘、通知和看板。
 - `coldstart`：补冷启动样本，建议晚于 `daily` 至少 90 分钟。
+- `variants`：用前一交易日不复权 raw 数据重算独立纸面变体；覆盖率、策略标题或成交证据校验失败时不替换旧结果，不接触正式候选、Ledger 或下单接口。
 - `monitor`：运行态检查，默认只推关键异常。
 
 ## 锁提示不是失败

@@ -8,6 +8,7 @@
 #   /bin/bash /opt/aqsp/scripts/bt_task.sh walkforward-gate
 #   /bin/bash /opt/aqsp/scripts/bt_task.sh monitor
 #   /bin/bash /opt/aqsp/scripts/bt_task.sh news
+#   /bin/bash /opt/aqsp/scripts/bt_task.sh variants
 #   /bin/bash /opt/aqsp/scripts/bt_task.sh status
 
 set -euo pipefail
@@ -52,7 +53,7 @@ log() {
 
 usage() {
     cat <<'EOF'
-Usage: bt_task.sh <daily|intraday|midday|coldstart|walkforward-gate|monitor|news|status>
+Usage: bt_task.sh <daily|intraday|midday|coldstart|variants|walkforward-gate|monitor|news|status>
 
 BT panel examples:
   /bin/bash /opt/aqsp/scripts/bt_task.sh intraday
@@ -62,6 +63,7 @@ BT panel examples:
   /bin/bash /opt/aqsp/scripts/bt_task.sh walkforward-gate
   /bin/bash /opt/aqsp/scripts/bt_task.sh monitor
   /bin/bash /opt/aqsp/scripts/bt_task.sh news
+  /bin/bash /opt/aqsp/scripts/bt_task.sh variants
 
 Recommended BT schedule (Asia/Shanghai):
   news      08:35 Mon-Fri trading days only; 09:05 Sat/Sun
@@ -69,6 +71,7 @@ Recommended BT schedule (Asia/Shanghai):
   midday    12:05 Mon-Fri
   daily     18:00 Mon-Fri
   coldstart 19:40 Mon-Fri
+  variants   21:30 Mon-Fri, after coldstart; isolated paper research only
   walkforward-gate manual/controlled after coldstart reaches 30/30
   monitor   every 15 min
   status    manual only
@@ -506,6 +509,18 @@ case "$ACTION" in
         export AQSP_GATE_NOTIFY="false"
         sync_code_only
         run_script "${PROJECT_ROOT}/scripts/coldstart_daily.sh"
+        ;;
+    variants)
+        skip_non_trading_day
+        export AQSP_RUN_TASK_ID="variants"
+        export AQSP_NOTIFY="false"
+        export AQSP_GATE_NOTIFY="false"
+        if [ "${AQSP_IMMUTABLE_RELEASE:-false}" = "true" ]; then
+            run_script "${PROJECT_ROOT}/scripts/variant_refresh.sh"
+        else
+            sync_code_only
+            run_script "${PROJECT_ROOT}/scripts/variant_refresh.sh"
+        fi
         ;;
     walkforward-gate)
         export AQSP_RUN_TASK_ID="walkforward_gate"

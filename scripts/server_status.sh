@@ -119,7 +119,7 @@ print_aqsp_cron_audit() {
                 esac
                 if [ "$day_gate" = "-" ]; then
                     case "${action:-}" in
-                        daily|coldstart)
+                        daily|coldstart|variants)
                             day_gate="script:Mon-Fri"
                             ;;
                         midday)
@@ -309,7 +309,7 @@ print_section "DEPLOY LOG"
 tail -n 40 "${RUNTIME_ROOT}/logs/deploy/sync-$(date +%Y-%m-%d).log" 2>/dev/null || true
 
 print_section "BT TASK LOG"
-for action in intraday midday daily coldstart monitor news; do
+for action in intraday midday daily coldstart variants monitor news; do
     echo "--- ${action} ---"
     tail -n 20 "${RUNTIME_ROOT}/logs/bt/bt-${action}-$(date +%Y-%m-%d).log" 2>/dev/null || true
 done

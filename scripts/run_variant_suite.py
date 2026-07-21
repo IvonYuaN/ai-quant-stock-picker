@@ -11,6 +11,7 @@ import argparse
 import json
 import sqlite3
 from collections import defaultdict
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import date, timedelta
 from pathlib import Path
@@ -668,6 +669,66 @@ def deduplicate_variant_results(
     return unique_results, removed
 
 
+def validate_variant_artifact(
+    payload: Mapping[str, object],
+    *,
+    expected_end_date: str,
+    expected_start_date: str | None = None,
+) -> None:
+    """Fail closed before a generated artifact replaces production data."""
+    if payload.get("schema_version") != "variant-suite-v1":
+        raise ValueError("variant artifact schema_version 不支持")
+    if payload.get("data_mode") != "historical_raw_unadjusted":
+        raise ValueError("variant artifact 必须使用不复权历史数据")
+    if str(payload.get("end_date", "")) != expected_end_date:
+        raise ValueError("variant artifact end_date 与重置日不一致")
+    if expected_start_date is not None and str(payload.get("start_date", "")) != expected_start_date:
+        raise ValueError("variant artifact start_date 与重置日不一致")
+    symbols = payload.get("symbols")
+    if not isinstance(symbols, list) or not symbols:
+        raise ValueError("variant artifact symbols 不能为空")
+    if len(set(symbols)) != len(symbols):
+        raise ValueError("variant artifact symbols 不得重复")
+    scope = payload.get("universe_scope")
+    if not isinstance(scope, dict):
+        raise ValueError("variant artifact 缺少 universe_scope")
+    if scope.get("symbol_count") != len(symbols):
+        raise ValueError("universe_scope.symbol_count 与 symbols 不一致")
+    if scope.get("board_scope") != "沪深主板+创业板":
+        raise ValueError("variant artifact board_scope 不符合生产范围")
+    if scope.get("excluded") != ["ST", "科创板", "其他板块"]:
+        raise ValueError("variant artifact excluded 不符合生产范围")
+    coverage = payload.get("data_coverage")
+    if not isinstance(coverage, dict) or coverage.get("end_date_coverage_pct") != 100.0:
+        raise ValueError("variant artifact 末日数据覆盖率不是 100%")
+    variants = payload.get("variants")
+    if not isinstance(variants, list) or not variants:
+        raise ValueError("variant artifact variants 不能为空")
+    ids: set[str] = set()
+    labels: set[str] = set()
+    for item in variants:
+        if not isinstance(item, dict):
+            raise ValueError("variant artifact variant 必须是 object")
+        variant_id = str(item.get("variant_id", ""))
+        label = str(item.get("label", ""))
+        if not variant_id or variant_id in ids:
+            raise ValueError("variant artifact variant_id 重复或为空")
+        if not label or label in labels:
+            raise ValueError("variant artifact label 重复或为空")
+        ids.add(variant_id)
+        labels.add(label)
+        if item.get("initial_cash") != 100_000.0:
+            raise ValueError("variant artifact initial_cash 必须为 100000")
+        fills = item.get("fills", [])
+        if not isinstance(fills, list):
+            raise ValueError("variant artifact fills 必须是 array")
+        for fill in fills:
+            if not isinstance(fill, dict):
+                raise ValueError("variant artifact fill 必须是 object")
+            if fill.get("status") == "filled" and not fill.get("evidence"):
+                raise ValueError("variant artifact 成交缺少技术证据")
+
+
 def run_suite(
     db_path: Path,
     symbols: tuple[str, ...],
@@ -739,7 +800,7 @@ def run_suite(
             for source in frame.attrs.get("sources", ())
         }
     )
-    return {
+    artifact = {
         "schema_version": "variant-suite-v1",
         "generated_at": now_shanghai().isoformat(timespec="seconds"),
         "data_mode": "historical_raw_unadjusted",
@@ -790,6 +851,8 @@ def run_suite(
         },
         "variants": results,
     }
+    validate_variant_artifact(artifact, expected_end_date=end)
+    return artifact
 
 
 def main() -> int:

@@ -730,7 +730,8 @@ def test_bt_task_script_exposes_panel_safe_actions() -> None:
     assert 'ACTION="${1:-}"' in script
     assert 'if [ -z "$ACTION" ]' in script
     assert (
-        "daily|intraday|midday|coldstart|walkforward-gate|monitor|news|status" in script
+        "daily|intraday|midday|coldstart|variants|walkforward-gate|monitor|news|status"
+        in script
     )
     assert "AQSP_RUNNER_TIMEOUT_SECONDS=5400" in script
     assert "AQSP_MONITOR_TIMEOUT_SECONDS=600" in script
@@ -739,6 +740,7 @@ def test_bt_task_script_exposes_panel_safe_actions() -> None:
     assert "news      08:35 Mon-Fri trading days only; 09:05 Sat/Sun" in script
     assert "daily     18:00 Mon-Fri" in script
     assert "coldstart 19:40 Mon-Fri" in script
+    assert "variants   21:30 Mon-Fri" in script
     assert '"正常跳过/互斥保护"' in script
     assert "It is not a failed run." in script
     assert "is_market_trading_day" in script
@@ -774,6 +776,7 @@ def test_bt_task_script_exposes_panel_safe_actions() -> None:
     assert "midday-$(date +%Y-%m-%d).done" in script
     assert "scripts/server_sync_and_run.sh" in script
     assert "scripts/coldstart_daily.sh" in script
+    assert "scripts/variant_refresh.sh" in script
     assert "scripts/server_monitor.sh" in script
     assert script.index("monitor)") < script.index("scripts/server_monitor.sh")
     monitor_block = script[script.index("monitor)") : script.index("news)")]
@@ -1054,7 +1057,7 @@ def test_server_status_surfaces_bt_task_logs() -> None:
     assert "runner=%s pid=%s started_at=%s age=%smin %s" in script
     assert 'print_section "BT TASK LOG"' in script
     assert "logs/bt/bt-${action}-$(date +%Y-%m-%d).log" in script
-    assert "intraday midday daily coldstart monitor news" in script
+    assert "intraday midday daily coldstart variants monitor news" in script
     assert "bt-status-" not in script
 
 

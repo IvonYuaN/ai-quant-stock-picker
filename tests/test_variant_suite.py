@@ -1,6 +1,12 @@
 import sqlite3
 
-from scripts.run_variant_suite import run_suite, select_stratified_symbols
+import pytest
+
+from scripts.run_variant_suite import (
+    run_suite,
+    select_stratified_symbols,
+    validate_variant_artifact,
+)
 
 
 def test_run_suite_creates_fourteen_independent_ten_wan_accounts(tmp_path):
@@ -91,3 +97,68 @@ def test_select_stratified_symbols_spans_boards_and_turnover_quantiles(tmp_path)
 
     assert set(selected) == set(symbols)
     assert selected != tuple(sorted(symbols))
+
+
+def test_validate_variant_artifact_allows_historical_warmup_before_reset():
+    payload = {
+        "schema_version": "variant-suite-v1",
+        "data_mode": "historical_raw_unadjusted",
+        "start_date": "2026-07-01",
+        "end_date": "2026-07-20",
+        "symbols": ["600001"],
+        "universe_scope": {
+            "symbol_count": 1,
+            "board_scope": "沪深主板+创业板",
+            "excluded": ["ST", "科创板", "其他板块"],
+        },
+        "data_coverage": {"end_date_coverage_pct": 100.0},
+        "variants": [
+            {
+                "variant_id": "v1",
+                "label": "趋势·20日",
+                "initial_cash": 100_000.0,
+                "fills": [],
+            }
+        ],
+    }
+
+    validate_variant_artifact(payload, expected_end_date="2026-07-20")
+
+
+def test_validate_variant_artifact_rejects_wrong_reset_date_and_missing_evidence():
+    payload = {
+        "schema_version": "variant-suite-v1",
+        "data_mode": "historical_raw_unadjusted",
+        "start_date": "2026-07-20",
+        "end_date": "2026-07-20",
+        "symbols": ["600001"],
+        "universe_scope": {
+            "symbol_count": 1,
+            "board_scope": "沪深主板+创业板",
+            "excluded": ["ST", "科创板", "其他板块"],
+        },
+        "data_coverage": {"end_date_coverage_pct": 100.0},
+        "variants": [
+            {
+                "variant_id": "v1",
+                "label": "趋势·20日",
+                "initial_cash": 100_000.0,
+                "fills": [
+                    {"status": "filled", "evidence": []},
+                ],
+            }
+        ],
+    }
+
+    with pytest.raises(ValueError, match="start_date"):
+        validate_variant_artifact(
+            payload,
+            expected_end_date="2026-07-20",
+            expected_start_date="2026-07-21",
+        )
+    with pytest.raises(ValueError, match="技术证据"):
+        validate_variant_artifact(
+            payload,
+            expected_end_date="2026-07-20",
+            expected_start_date="2026-07-20",
+        )
