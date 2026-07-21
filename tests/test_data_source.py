@@ -195,6 +195,32 @@ def test_eastmoney_spot_snapshot_rejects_incomplete_pagination(monkeypatch) -> N
         source.get_available_symbols()
 
 
+def test_eastmoney_spot_page_uses_delay_host_after_connection_reset(monkeypatch) -> None:
+    source = EastmoneySource.__new__(EastmoneySource)
+    source.name = "eastmoney"
+    source._last_request_ts = 0.0
+    monkeypatch.setattr(source, "_throttle", lambda: None)
+    calls: list[str] = []
+
+    class Response:
+        def json(self) -> dict:
+            return {"data": {"total": 1, "diff": []}}
+
+    class Session:
+        def get(self, url, **_kwargs):
+            calls.append(url)
+            if "push2.eastmoney.com" in url:
+                raise ConnectionError("connection reset")
+            return Response()
+
+    source._session = Session()
+    assert source._fetch_eastmoney_spot_page(9) == {"data": {"total": 1, "diff": []}}
+    assert calls == [
+        "https://push2.eastmoney.com/api/qt/clist/get",
+        "https://push2delay.eastmoney.com/api/qt/clist/get",
+    ]
+
+
 def test_public_fetch_methods_raise_data_error_when_eastmoney_returns_empty(
     monkeypatch,
 ) -> None:
