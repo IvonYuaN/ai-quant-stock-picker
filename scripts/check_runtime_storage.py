@@ -221,8 +221,8 @@ def _layout_from_args(args: argparse.Namespace) -> StorageLayout:
     return StorageLayout(
         root=root,
         releases=Path(args.releases).resolve(),
-        current=Path(args.current).resolve(),
-        rollback=Path(args.rollback).resolve(),
+        current=Path(args.current).expanduser(),
+        rollback=Path(args.rollback).expanduser(),
         runtime=Path(args.runtime).resolve(),
         shared_venv=Path(args.shared_venv).resolve(),
         raw_history=Path(args.raw_history).resolve(),
