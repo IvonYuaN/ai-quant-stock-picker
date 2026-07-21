@@ -1342,7 +1342,14 @@ def _progress_days(value: str) -> int:
 def _runtime_json_path(env_name: str, default: str) -> Path:
     raw_path = os.getenv(env_name, default).strip()
     path = Path(raw_path).expanduser()
-    return path if path.is_absolute() else PROJECT_ROOT / path
+    if path.is_absolute():
+        return path
+    runtime_root = os.getenv("AQSP_RUNTIME_ROOT", "").strip()
+    return (
+        Path(runtime_root).expanduser() / path
+        if runtime_root
+        else PROJECT_ROOT / path
+    )
 
 
 def _read_json_object(path: Path) -> dict[str, object]:
