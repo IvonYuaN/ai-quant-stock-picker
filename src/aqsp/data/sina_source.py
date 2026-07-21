@@ -26,6 +26,12 @@ from aqsp.core.time import now_shanghai
 _REQUEST_DELAY = 0.3
 _MAX_RETRIES = 3
 _BACKOFF_BASE = 2.0
+_SPOT_PAGE_SIZE = 100
+_SPOT_MAX_PAGES = 100
+_SINA_SPOT_URL = (
+    "https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/"
+    "Market_Center.getHQNodeData"
+)
 
 _logger = logging.getLogger("aqsp.data.sina")
 
@@ -169,6 +175,88 @@ class SinaSource(DataSource):
             )
         require_non_empty_fetch_result(self.name, "实时行情", symbols, quotes)
         return quotes
+
+    def get_available_symbols(self) -> list[str]:
+        """Return the current A-share pool from Sina's paginated live snapshot."""
+        snapshot = self._fetch_sina_spot_snapshot()
+        if snapshot.empty or "symbol" not in snapshot.columns:
+            raise DataError("sina 全市场实时快照未返回可用标的")
+        return snapshot["symbol"].astype(str).tolist()
+
+    def get_liquid_symbols(self, *, limit: int, min_amount: float) -> list[str]:
+        """Return live symbols ranked by the current turnover amount."""
+        snapshot = self._fetch_sina_spot_snapshot(sort="amount")
+        if snapshot.empty:
+            raise DataError("sina 全市场实时快照为空，无法筛选高流动性标的")
+        liquid = snapshot[
+            snapshot["amount"] >= max(float(min_amount or 0.0), 0.0)
+        ]
+        row_limit = max(int(limit or 0), 0)
+        if row_limit > 0:
+            liquid = liquid.head(row_limit)
+        return liquid["symbol"].astype(str).tolist()
+
+    def _fetch_sina_spot_snapshot(self, *, sort: str = "symbol") -> pd.DataFrame:
+        rows: list[dict[str, object]] = []
+        for page in range(1, _SPOT_MAX_PAGES + 1):
+            data = self._fetch_sina_spot_page(page, sort=sort)
+            if not data:
+                break
+            for item in data:
+                symbol = str(item.get("code") or "").strip()
+                name = str(item.get("name") or "").strip()
+                if (
+                    len(symbol) != 6
+                    or not symbol.isdigit()
+                    or name.startswith(("ST", "*ST", "退市"))
+                ):
+                    continue
+                rows.append(
+                    {
+                        "symbol": symbol,
+                        "name": name or symbol,
+                        "price": _safe_float(item.get("trade")),
+                        "volume": _safe_float(item.get("volume")),
+                        "amount": _safe_float(item.get("amount")),
+                    }
+                )
+            if len(data) < _SPOT_PAGE_SIZE:
+                break
+        else:
+            raise DataError("sina 全市场实时快照分页超过最大页数")
+        if not rows:
+            raise DataError("sina 全市场实时快照无有效 A 股标的")
+        return pd.DataFrame(rows)
+
+    def _fetch_sina_spot_page(self, page: int, *, sort: str) -> list[dict[str, object]]:
+        for attempt in range(_MAX_RETRIES):
+            try:
+                self._throttle()
+                response = self._session.get(
+                    _SINA_SPOT_URL,
+                    params={
+                        "page": page,
+                        "num": _SPOT_PAGE_SIZE,
+                        "sort": sort,
+                        "asc": 1 if sort == "symbol" else 0,
+                        "node": "hs_a",
+                        "symbol": "",
+                        "_s_r_a": "init",
+                    },
+                    timeout=10,
+                )
+                data = response.json()
+                if not isinstance(data, list):
+                    raise DataError("sina 全市场实时快照返回格式错误")
+                return data
+            except Exception as exc:
+                if attempt < _MAX_RETRIES - 1:
+                    time.sleep(_BACKOFF_BASE ** (attempt + 1))
+                else:
+                    raise DataError(
+                        f"sina 全市场实时快照获取失败 page={page}"
+                    ) from exc
+        return []
 
     def fetch_index(
         self,
@@ -340,3 +428,8 @@ class SinaSource(DataSource):
         df["amount"] = df["volume"] * df["close"]
         df = apply_limit_suspended_adj(df, symbol, cache=self.cache)
         return df
+
+
+def _safe_float(value: object) -> float:
+    parsed = pd.to_numeric(pd.Series([value]), errors="coerce").iloc[0]
+    return 0.0 if pd.isna(parsed) else float(parsed)

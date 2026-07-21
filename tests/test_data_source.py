@@ -168,6 +168,50 @@ def test_eastmoney_get_liquid_symbols_uses_spot_snapshot(monkeypatch) -> None:
     assert source.get_available_symbols() == ["600000", "000001", "300001"]
 
 
+def test_sina_get_available_symbols_and_liquid_symbols_use_paginated_live_snapshot(
+    monkeypatch,
+) -> None:
+    source = SinaSource.__new__(SinaSource)
+    source.name = "sina"
+    source._last_request_ts = 0.0
+    monkeypatch.setattr(source, "_throttle", lambda: None)
+    pages = {
+        ("symbol", 1): [
+            {"code": "600000", "name": "浦发银行", "amount": 80_000_000},
+            {"code": "000002", "name": "ST测试", "amount": 200_000_000},
+        ],
+        ("symbol", 2): [],
+        ("amount", 1): [
+            {"code": "000001", "name": "平安银行", "amount": 120_000_000},
+            {"code": "300001", "name": "特锐德", "amount": 50_000_000},
+        ],
+        ("amount", 2): [],
+    }
+    monkeypatch.setattr(
+        source,
+        "_fetch_sina_spot_page",
+        lambda page, *, sort: pages[(sort, page)],
+    )
+
+    assert source.get_available_symbols() == ["600000"]
+    assert source.get_liquid_symbols(limit=1, min_amount=50_000_000) == ["000001"]
+
+
+def test_sina_spot_snapshot_rejects_page_fetch_failure(monkeypatch) -> None:
+    source = SinaSource.__new__(SinaSource)
+    source.name = "sina"
+    source._last_request_ts = 0.0
+    monkeypatch.setattr(source, "_throttle", lambda: None)
+
+    def fail(*_args, **_kwargs):
+        raise DataError("sina 全市场实时快照获取失败 page=1")
+
+    monkeypatch.setattr(source, "_fetch_sina_spot_page", fail)
+
+    with pytest.raises(DataError, match="sina 全市场实时快照获取失败"):
+        source.get_available_symbols()
+
+
 def test_eastmoney_spot_snapshot_rejects_incomplete_pagination(monkeypatch) -> None:
     source = EastmoneySource.__new__(EastmoneySource)
     source.name = "eastmoney"
