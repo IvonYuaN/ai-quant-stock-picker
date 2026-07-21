@@ -78,6 +78,7 @@ export AQSP_DASHBOARD_HTML="$(runtime_path "${AQSP_DASHBOARD_HTML:-dist/dashboar
 export AQSP_DASHBOARD_DB="$(runtime_path "${AQSP_DASHBOARD_DB:-dist/dashboard/aqsp.db}")"
 export AQSP_HOME_SNAPSHOT_PATH="$(runtime_path "${AQSP_HOME_SNAPSHOT_PATH:-data/runtime/home_dashboard_snapshot.json}")"
 export AQSP_HOME_SNAPSHOT_INDEX_PATH="$(runtime_path "${AQSP_HOME_SNAPSHOT_INDEX_PATH:-data/runtime/home_dashboard_snapshot_index.json}")"
+export AQSP_VARIANT_RESULTS="$(runtime_path "${AQSP_VARIANT_RESULTS:-data/runtime/variant_results.json}")"
 export AQSP_NEWS_OUTPUT="$(runtime_path "${AQSP_NEWS_OUTPUT:-reports/news_catalysts.md}")"
 export AQSP_NEWS_JSON_OUTPUT="$(runtime_path "${AQSP_NEWS_JSON_OUTPUT:-data/runtime/news_catalysts_latest.json}")"
 export AQSP_NEWS_ARCHIVE_DIR="$(runtime_path "${AQSP_NEWS_ARCHIVE_DIR:-data/runtime/news_archive}")"

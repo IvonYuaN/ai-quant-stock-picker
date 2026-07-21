@@ -218,9 +218,10 @@ function DebateCard({ result }: { result: AqspAgentResult }) {
 function TestVariantsPanel({ snapshot }: { snapshot?: AqspSnapshot }) {
   const historical = snapshot?.meta?.historical ?? false;
   const variants = snapshot?.variants ?? [];
+  const variantHistory = variants.some((variant) => variant.data_mode.includes("historical"));
   return <section id={TEST_VARIANTS_SECTION_ID} className="aqsp-lab" aria-label="测试与变体">
     <div className="aqsp-section-head"><div><p className="aqsp-eyebrow"><FlaskConical className="h-3.5 w-3.5" />独立区域</p><h2>测试与变体</h2></div><span>不进入正式结论</span></div>
-    <div className="aqsp-lab-snapshot">{snapshot ? <><span>数据区间：{variants[0]?.start_date || "—"} 至 {variants[0]?.end_date || "—"}</span><span>每套账户：100,000 元</span><span className={cn("aqsp-badge", historical ? "aqsp-badge-warn" : "aqsp-badge-ok")}>{historical ? "历史回测" : "当前实验结果"}</span></> : <span>等待正式快照</span>}</div>
+    <div className="aqsp-lab-snapshot">{snapshot ? <><span>数据区间：{variants[0]?.start_date || "—"} 至 {variants[0]?.end_date || "—"}</span><span>每套账户：100,000 元</span><span className={cn("aqsp-badge", historical || variantHistory ? "aqsp-badge-warn" : "aqsp-badge-ok")}>{historical || variantHistory ? "历史回测 · 仅验证" : "当前实验结果"}</span></> : <span>等待正式快照</span>}</div>
     {variants.length === 0 ? <EmptyState title="变体结果尚未产出" detail="实验结果独立于正式候选，产出后会显示在这里。" /> : <div className="aqsp-variant-grid">{variants.map((variant: AqspVariant) => {
       const pnl = variant.total_pnl;
       const holdings = variant.holdings;
