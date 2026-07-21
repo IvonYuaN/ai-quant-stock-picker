@@ -1168,14 +1168,24 @@ def _variant_universe_from_dict(payload: object) -> HomeSnapshotVariantUniverse:
     if payload in (None, {}):
         return HomeSnapshotVariantUniverse()
     mapping = _mapping(payload, "variant_universe")
+    symbol_count = _integer(
+        mapping.get("symbol_count", 0), "variant_universe.symbol_count"
+    )
+    if symbol_count < 0:
+        raise ValueError("variant_universe.symbol_count must not be negative")
+    coverage_pct = _number(
+        mapping.get("coverage_pct", 0.0), "variant_universe.coverage_pct"
+    )
+    if not 0.0 <= coverage_pct <= 100.0:
+        raise ValueError("variant_universe.coverage_pct must be between 0 and 100")
     return HomeSnapshotVariantUniverse(
-        symbol_count=_integer(mapping.get("symbol_count", 0), "variant_universe.symbol_count"),
+        symbol_count=symbol_count,
         board_scope=_optional_text(mapping.get("board_scope"), "variant_universe.board_scope"),
         excluded=_text_tuple(mapping.get("excluded", ()), "variant_universe.excluded"),
         latest_trade_date=_optional_text(
             mapping.get("latest_trade_date"), "variant_universe.latest_trade_date"
         ),
-        coverage_pct=float(mapping.get("coverage_pct", 0.0) or 0.0),
+        coverage_pct=coverage_pct,
         sources=_text_tuple(mapping.get("sources", ()), "variant_universe.sources"),
     )
 
@@ -1203,6 +1213,21 @@ def _validate_snapshot(snapshot: HomeDashboardSnapshot) -> None:
         raise ValueError("phases must contain HomeSnapshotPhase values")
     if not isinstance(snapshot.universe, HomeSnapshotUniverse):
         raise ValueError("universe must be a HomeSnapshotUniverse value")
+    if not isinstance(snapshot.variant_universe, HomeSnapshotVariantUniverse):
+        raise ValueError("variant_universe must be a HomeSnapshotVariantUniverse value")
+    if snapshot.variant_universe.symbol_count < 0:
+        raise ValueError("variant_universe.symbol_count must not be negative")
+    if not 0.0 <= snapshot.variant_universe.coverage_pct <= 100.0:
+        raise ValueError("variant_universe.coverage_pct must be between 0 and 100")
+    if snapshot.variant_universe.latest_trade_date:
+        _validate_date(
+            snapshot.variant_universe.latest_trade_date,
+            "variant_universe.latest_trade_date",
+        )
+    if not all(isinstance(value, str) for value in snapshot.variant_universe.excluded):
+        raise ValueError("variant_universe.excluded must contain text")
+    if not all(isinstance(value, str) for value in snapshot.variant_universe.sources):
+        raise ValueError("variant_universe.sources must contain text")
     if not all(isinstance(value, HomeSnapshotVariant) for value in snapshot.variants):
         raise ValueError("variants must contain HomeSnapshotVariant values")
     if any(value.initial_cash != 100_000.0 for value in snapshot.variants):

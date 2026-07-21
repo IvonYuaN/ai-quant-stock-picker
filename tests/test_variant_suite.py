@@ -41,6 +41,7 @@ def test_run_suite_creates_fourteen_independent_ten_wan_accounts(tmp_path):
     assert result["initial_cash"] == 100_000.0
     assert len(result["variants"]) >= 60
     assert len({item["variant_id"] for item in result["variants"]}) == len(result["variants"])
+    assert len({item["label"] for item in result["variants"]}) == len(result["variants"])
     assert {item["initial_cash"] for item in result["variants"]} == {100_000.0}
     assert all("cash" in item and "total_pnl" in item for item in result["variants"])
     assert all("strategy" in item and "holdings" in item for item in result["variants"])
@@ -55,6 +56,14 @@ def test_run_suite_creates_fourteen_independent_ten_wan_accounts(tmp_path):
         "defensive_range",
     }
     assert all(item["strategy"]["hypothesis"] for item in result["variants"])
+    assert result["universe_scope"]["board_scope"] == "沪深主板+创业板"
+    assert result["universe_scope"]["excluded"] == ["ST", "科创板", "其他板块"]
+    assert all(
+        fill["evidence"]
+        for item in result["variants"]
+        for fill in item["fills"]
+        if fill["status"] == "filled"
+    )
     assert result["execution_rules"]["t_plus_one"] is True
 
 

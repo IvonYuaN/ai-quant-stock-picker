@@ -717,6 +717,25 @@ def test_home_snapshot_variant_keeps_missing_previous_holdings_explicit(tmp_path
     assert loaded.variants[0].previous_holdings is None
 
 
+@pytest.mark.parametrize(
+    "variant_universe",
+    [
+        {"symbol_count": -1},
+        {"coverage_pct": 100.1},
+        {"coverage_pct": "100"},
+    ],
+)
+def test_home_snapshot_rejects_invalid_variant_universe_metadata(
+    tmp_path, variant_universe
+) -> None:
+    source = tmp_path / "invalid-variant-universe.json"
+    payload = _snapshot().to_dict()
+    payload["variant_universe"] = variant_universe
+    source.write_text(json.dumps(payload), encoding="utf-8")
+
+    assert load_home_dashboard_snapshot(source) is None
+
+
 def test_previous_variant_holdings_replays_only_before_last_filled_date() -> None:
     current = (HomeSnapshotHolding("600000", 100, 10.5, 11.0, 1100.0, 50.0, "浦发银行"),)
     previous = write_home_snapshot._previous_variant_holdings(

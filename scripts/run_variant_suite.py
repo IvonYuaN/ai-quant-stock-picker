@@ -575,12 +575,24 @@ def build_orders(
             if exit_signal and symbol in active_symbols:
                 orders.append(
                     VariantOrder(
-                        trade_date, symbol, "sell", weight=1.0, evidence=evidence
+                        trade_date,
+                        symbol,
+                        "sell",
+                        weight=1.0,
+                        evidence=evidence + ("退出条件：策略退出信号触发",),
                     )
                 )
                 active_symbols.discard(symbol)
             elif symbol in active_symbols and symbol not in selected:
-                orders.append(VariantOrder(trade_date, symbol, "sell", weight=1.0))
+                orders.append(
+                    VariantOrder(
+                        trade_date,
+                        symbol,
+                        "sell",
+                        weight=1.0,
+                        evidence=evidence + ("退出条件：未进入当日持仓名额",),
+                    )
+                )
                 active_symbols.discard(symbol)
             elif entry and symbol in selected and symbol not in active_symbols:
                 orders.append(
@@ -608,6 +620,7 @@ def _rsi(close: pd.Series, period: int) -> pd.Series:
 def _signal_evidence(row: pd.Series, profile: VariantProfile) -> tuple[str, ...]:
     """Serialize observed technical values attached to every generated order."""
     evidence = [
+        f"信号日 {str(row['date'])[:10]}",
         f"收盘 {float(row['close']):.2f}",
         f"{profile.lookback}日收益 {float(row['ret']):+.2f}%",
     ]

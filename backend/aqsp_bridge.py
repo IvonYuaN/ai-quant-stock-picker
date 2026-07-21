@@ -1019,16 +1019,28 @@ def _parse_variant_universe(payload: object) -> AQSPVariantUniverse:
     )
     if latest_trade_date:
         _validate_date(latest_trade_date, "variant_universe.latest_trade_date")
+    symbol_count = _integer(
+        item.get("symbol_count", 0), "variant_universe.symbol_count"
+    )
+    if symbol_count < 0:
+        raise AQSPSnapshotUnavailable(
+            "variant_universe.symbol_count 不得为负数"
+        )
+    coverage_pct = _number(
+        item.get("coverage_pct", 0.0), "variant_universe.coverage_pct"
+    )
+    if not 0.0 <= coverage_pct <= 100.0:
+        raise AQSPSnapshotUnavailable(
+            "variant_universe.coverage_pct 必须在 0 到 100 之间"
+        )
     return AQSPVariantUniverse(
-        symbol_count=_integer(item.get("symbol_count", 0), "variant_universe.symbol_count"),
+        symbol_count=symbol_count,
         board_scope=_optional_text(item.get("board_scope"), "variant_universe.board_scope"),
         excluded=tuple(
             _text_list(item.get("excluded", []), "variant_universe.excluded")
         ),
         latest_trade_date=latest_trade_date,
-        coverage_pct=_number(
-            item.get("coverage_pct", 0.0), "variant_universe.coverage_pct"
-        ),
+        coverage_pct=coverage_pct,
         sources=tuple(_text_list(item.get("sources", []), "variant_universe.sources")),
     )
 

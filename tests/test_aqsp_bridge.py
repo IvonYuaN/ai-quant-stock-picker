@@ -360,6 +360,27 @@ def test_aqsp_bridge_preserves_variant_position_names_and_previous_holdings(
     assert variant["recent_actions"] == ["2026-07-14 卖出 昨日公司 600002 100 股"]
 
 
+def test_aqsp_bridge_exposes_variant_universe_metadata(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    payload = _snapshot("2026-07-14")
+    payload["variant_universe"] = {
+        "symbol_count": 828,
+        "board_scope": "沪深主板+创业板",
+        "excluded": ["ST", "科创板", "其他板块"],
+        "latest_trade_date": "2026-07-13",
+        "coverage_pct": 100.0,
+        "sources": ["eastmoney", "sina"],
+    }
+    path = _write_single(tmp_path, payload)
+    monkeypatch.setenv("AQSP_RESEARCH_SURFACE_SNAPSHOT", str(path))
+
+    response = client.get("/api/aqsp/snapshot")
+
+    assert response.status_code == 200
+    assert response.json()["data"]["variant_universe"] == payload["variant_universe"]
+
+
 def test_aqsp_bridge_dates_and_candidate_use_exact_historical_snapshot(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
