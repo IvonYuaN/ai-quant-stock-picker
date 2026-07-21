@@ -295,7 +295,10 @@ def generate_variant_profiles(
                     grid.append(
                         VariantProfile(
                             variant_id=f"grid_{mode}_lb{lookback}_t{entry_index}_n{max_positions}",
-                            label=f"{label}·{lookback}日·{max_positions}持仓",
+                            label=(
+                                f"{label}·{lookback}日·收益{entry:+g}%·"
+                                f"乖离≤{bias:g}%·{max_positions}持仓"
+                            ),
                             lookback=lookback,
                             entry_return_pct=entry,
                             max_bias_pct=bias,
