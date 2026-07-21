@@ -3,7 +3,7 @@ import sqlite3
 from scripts.run_variant_suite import run_suite
 
 
-def test_run_suite_creates_ten_independent_ten_wan_accounts(tmp_path):
+def test_run_suite_creates_fourteen_independent_ten_wan_accounts(tmp_path):
     db = tmp_path / "history.db"
     with sqlite3.connect(db) as conn:
         conn.execute(
@@ -39,11 +39,18 @@ def test_run_suite_creates_ten_independent_ten_wan_accounts(tmp_path):
 
     result = run_suite(db, ("AAA",), "2026-01-01", "2026-01-30")
     assert result["initial_cash"] == 100_000.0
-    assert len(result["variants"]) == 10
+    assert len(result["variants"]) == 14
     assert {item["initial_cash"] for item in result["variants"]} == {100_000.0}
     assert all("cash" in item and "total_pnl" in item for item in result["variants"])
     assert all("strategy" in item and "holdings" in item for item in result["variants"])
     assert result["optimization"]["evaluation_only"] is True
     assert result["optimization"]["selected_variant_id"]
     assert all(item["filled_orders"] >= 0 for item in result["variants"])
+    assert {item["strategy"]["mode"] for item in result["variants"]} >= {
+        "reversion",
+        "volume_breakout",
+        "atr_trend",
+        "defensive_range",
+    }
+    assert all(item["strategy"]["hypothesis"] for item in result["variants"])
     assert result["execution_rules"]["t_plus_one"] is True
