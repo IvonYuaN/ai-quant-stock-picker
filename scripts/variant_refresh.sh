@@ -188,7 +188,7 @@ print(
 )
 PY
 
-"$PYTHON_BIN" "$PROJECT_ROOT/scripts/write_home_snapshot.py" \
+AQSP_SQLITE_DB_PATH="$DB_PATH" "$PYTHON_BIN" "$PROJECT_ROOT/scripts/write_home_snapshot.py" \
     --output "$SNAPSHOT_PATH" \
     --index-output "$INDEX_PATH" \
     --date "$TODAY" \
