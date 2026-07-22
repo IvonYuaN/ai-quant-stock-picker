@@ -854,35 +854,38 @@ def run_suite(
     rules = VariantExecutionRules(initial_cash=100_000.0)
     profiles = generate_variant_profiles(frames, training_end=start)
     results = []
-    prepared_cache: dict[tuple[str, int], pd.DataFrame] = {}
     base_cache: dict[str, pd.DataFrame] = {}
-    for profile in profiles:
-        result = simulate_variant(
-            profile.variant_id,
-            frames,
-            build_orders(
+    for lookback in sorted({profile.lookback for profile in profiles}):
+        # Keep only one lookback's derived columns alive; the shared base
+        # indicators remain cached for the other orthogonal variants.
+        prepared_cache: dict[tuple[str, int], pd.DataFrame] = {}
+        for profile in (item for item in profiles if item.lookback == lookback):
+            result = simulate_variant(
+                profile.variant_id,
                 frames,
-                profile,
-                first_trade_date=start,
-                prepared_cache=prepared_cache,
-                base_cache=base_cache,
-            ),
-            rules=rules,
-        )
-        payload = variant_result_to_dict(result)
-        payload["label"] = profile.label
-        payload["strategy_label"] = profile.label
-        payload["strategy"] = {
-            "id": profile.variant_id,
-            "lookback_days": profile.lookback,
-            "entry_return_pct": profile.entry_return_pct,
-            "max_bias_pct": profile.max_bias_pct,
-            "mode": profile.mode,
-            "hypothesis": profile.hypothesis,
-            "max_positions": profile.max_positions,
-            "selection": profile.selection,
-        }
-        results.append(payload)
+                build_orders(
+                    frames,
+                    profile,
+                    first_trade_date=start,
+                    prepared_cache=prepared_cache,
+                    base_cache=base_cache,
+                ),
+                rules=rules,
+            )
+            payload = variant_result_to_dict(result)
+            payload["label"] = profile.label
+            payload["strategy_label"] = profile.label
+            payload["strategy"] = {
+                "id": profile.variant_id,
+                "lookback_days": profile.lookback,
+                "entry_return_pct": profile.entry_return_pct,
+                "max_bias_pct": profile.max_bias_pct,
+                "mode": profile.mode,
+                "hypothesis": profile.hypothesis,
+                "max_positions": profile.max_positions,
+                "selection": profile.selection,
+            }
+            results.append(payload)
     generated_variant_count = len(results)
     results, duplicate_portfolios_removed = deduplicate_variant_results(
         results, symbol_count=len(symbols)
