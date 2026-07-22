@@ -659,7 +659,7 @@ def build_orders(
             elif profile.mode == "low_vol":
                 atr_pct = float(row["atr_pct"]) if pd.notna(row["atr_pct"]) else 999.0
                 score = -atr_pct
-            evidence = _signal_evidence(row, profile)
+            evidence = _signal_evidence(row, profile) if entry or exit_signal else ()
             signals_by_date[next_date].append(
                 (symbol, score, entry, exit_signal, evidence)
             )
