@@ -156,6 +156,40 @@ def test_snapshot_candidate_uses_deterministic_reason_when_context_is_missing() 
     assert snapshot_candidate.context == "MACD 柱体转强"
 
 
+def test_variant_snapshot_resolves_previous_holding_names(
+    monkeypatch, tmp_path
+) -> None:
+    path = tmp_path / "variant-results.json"
+    path.write_text(
+        json.dumps(
+            {
+                "initial_cash": 100_000.0,
+                "variants": [
+                    {
+                        "variant_id": "trend_lb10_n3",
+                        "label": "趋势 | 10日 | 3只",
+                        "initial_cash": 100_000.0,
+                        "previous_holdings": [{"symbol": "001230"}],
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AQSP_VARIANT_RESULTS", str(path))
+    monkeypatch.setattr(
+        write_home_snapshot,
+        "load_sqlite_symbol_name_map",
+        lambda symbols: {"001230": "劲旅环境"},
+    )
+
+    variants = write_home_snapshot._variant_snapshot()
+
+    assert variants[0].previous_holdings is not None
+    assert variants[0].previous_holdings[0].name == "劲旅环境"
+
+
 def test_home_snapshot_legacy_candidate_provenance_stays_empty(tmp_path) -> None:
     path = tmp_path / "legacy.json"
     payload = _snapshot(candidates=(_candidate("603019"),)).to_dict()

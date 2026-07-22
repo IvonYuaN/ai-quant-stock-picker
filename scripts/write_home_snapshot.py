@@ -1598,6 +1598,13 @@ def _variant_snapshot(
         for fill in item.get("fills", ())
         if isinstance(fill, dict) and _text(fill.get("symbol"))
     )
+    variant_symbols.update(
+        _text(holding.get("symbol"))
+        for item in raw_variants[:MAX_HOME_SNAPSHOT_VARIANTS]
+        if isinstance(item, dict)
+        for holding in item.get("previous_holdings", ())
+        if isinstance(holding, dict) and _text(holding.get("symbol"))
+    )
     variant_names = {
         **(candidate_names or {}),
         **load_sqlite_symbol_name_map(sorted(variant_symbols)),
