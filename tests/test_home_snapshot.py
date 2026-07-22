@@ -5,6 +5,7 @@ import json
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -135,6 +136,24 @@ def test_home_snapshot_round_trips_candidate_provenance(tmp_path) -> None:
     loaded = load_home_dashboard_snapshot(path)
     assert loaded is not None
     assert loaded.candidates[0] == candidate
+
+
+def test_snapshot_candidate_uses_deterministic_reason_when_context_is_missing() -> None:
+    candidate = SimpleNamespace(
+        symbol="600001",
+        display_name="平安示例",
+        score=65.0,
+        action_label="纸面复核",
+        next_step="确认量能",
+        reasons=("MACD 柱体转强",),
+        strategies=(),
+        score_breakdown=(),
+    )
+
+    snapshot_candidate = write_home_snapshot._snapshot_candidate(candidate)
+
+    assert snapshot_candidate is not None
+    assert snapshot_candidate.context == "MACD 柱体转强"
 
 
 def test_home_snapshot_legacy_candidate_provenance_stays_empty(tmp_path) -> None:

@@ -54,8 +54,10 @@ _FAMILY_SPECS = (
     ("kdj", "KDJ", (1.0, 8.0), "KDJ金叉从弱势区修复"),
     ("low_vol", "低波趋势", (1.0, 6.0), "低波动趋势优先，减少异常追涨"),
 )
-_VARIANT_LOOKBACKS = (10, 20)
-_VARIANT_POSITION_CAPS = (3, 6)
+# Keep the experiment matrix orthogonal: each family gets a fast and a slow
+# horizon, while the horizon also fixes the account capacity. This avoids
+# generating many labels that execute the same signal set.
+_VARIANT_CONFIGS = ((10, 3), (20, 6))
 
 FEATURE_WARMUP_CALENDAR_DAYS = 90
 DEFAULT_VARIANT_UNIVERSE_SIZE = 0
@@ -336,24 +338,20 @@ def generate_variant_profiles(
     volatility = _training_volatility_pct(frames, before_date=training_end)
     grid: list[VariantProfile] = []
     for mode, label, (entry, bias), hypothesis in _FAMILY_SPECS:
-        for lookback in _VARIANT_LOOKBACKS:
-            for max_positions in _VARIANT_POSITION_CAPS:
-                grid.append(
-                    VariantProfile(
-                        variant_id=f"{mode}_lb{lookback}_n{max_positions}",
-                        label=(
-                            f"{label}·{lookback}日·收益{entry:+g}%·"
-                            f"乖离≤{bias:g}%·{max_positions}持仓"
-                        ),
-                        lookback=lookback,
-                        entry_return_pct=entry,
-                        max_bias_pct=bias,
-                        mode=mode,
-                        hypothesis=hypothesis
-                        + (f"；训练波动中位数{volatility:.2f}%" if volatility else ""),
-                        max_positions=max_positions,
-                    )
+        for lookback, max_positions in _VARIANT_CONFIGS:
+            grid.append(
+                VariantProfile(
+                    variant_id=f"{mode}_lb{lookback}_n{max_positions}",
+                    label=(f"{label} | {lookback}日 | {max_positions}只"),
+                    lookback=lookback,
+                    entry_return_pct=entry,
+                    max_bias_pct=bias,
+                    mode=mode,
+                    hypothesis=hypothesis
+                    + (f"；训练波动中位数{volatility:.2f}%" if volatility else ""),
+                    max_positions=max_positions,
                 )
+            )
     return tuple(grid)
 
 

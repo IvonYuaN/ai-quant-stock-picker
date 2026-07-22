@@ -15,7 +15,7 @@ from scripts.run_variant_suite import (
 )
 
 
-def test_run_suite_creates_fourteen_independent_ten_wan_accounts(tmp_path):
+def test_run_suite_creates_distinct_independent_ten_wan_accounts(tmp_path):
     db = tmp_path / "history.db"
     with sqlite3.connect(db) as conn:
         conn.execute(
@@ -51,7 +51,7 @@ def test_run_suite_creates_fourteen_independent_ten_wan_accounts(tmp_path):
 
     result = run_suite(db, ("AAA",), "2026-01-01", "2026-01-30")
     assert result["initial_cash"] == 100_000.0
-    assert 24 <= len(result["variants"]) <= 40
+    assert 7 <= len(result["variants"]) <= 14
     assert len({item["variant_id"] for item in result["variants"]}) == len(
         result["variants"]
     )

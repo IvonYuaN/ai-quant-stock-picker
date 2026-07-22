@@ -366,6 +366,13 @@ def _snapshot_candidate(candidate: Any) -> HomeSnapshotCandidate | None:
     strategies = _candidate_strategies(candidate)
     score_breakdown = _candidate_score_breakdown(candidate)
     context = _candidate_context(candidate)
+    if not context:
+        # Technical candidates often have no news context. Reuse their
+        # deterministic reason so the homepage explains the evidence instead
+        # of writing an invalid empty context.
+        context = _first_text(*reasons, *score_breakdown, *strategies)
+    if not context and reasons:
+        context = "独立规则证据已记录"
     data_source = _text(getattr(candidate, "data_source", ""))
     if data_source:
         source_context = f"数据源: {data_source}"
