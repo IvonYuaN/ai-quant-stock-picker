@@ -711,7 +711,9 @@ def test_home_snapshot_write_rejects_payload_that_exceeds_byte_budget(tmp_path) 
     assert not source.exists()
 
 
-def test_home_snapshot_variant_roundtrip_keeps_names_and_previous_holdings(tmp_path) -> None:
+def test_home_snapshot_variant_roundtrip_keeps_names_and_previous_holdings(
+    tmp_path,
+) -> None:
     variant = HomeSnapshotVariant(
         variant_id="trend_follow",
         label="趋势跟随",
@@ -725,8 +727,12 @@ def test_home_snapshot_variant_roundtrip_keeps_names_and_previous_holdings(tmp_p
         start_date="2026-07-01",
         end_date="2026-07-11",
         data_mode="historical_raw_unadjusted",
-        holdings=(HomeSnapshotHolding("600000", 100, 10.0, 11.0, 1100.0, 100.0, "浦发银行"),),
-        previous_holdings=(HomeSnapshotHolding("000001", 100, 9.0, 9.5, 950.0, 50.0, "平安银行"),),
+        holdings=(
+            HomeSnapshotHolding("600000", 100, 10.0, 11.0, 1100.0, 100.0, "浦发银行"),
+        ),
+        previous_holdings=(
+            HomeSnapshotHolding("000001", 100, 9.0, 9.5, 950.0, 50.0, "平安银行"),
+        ),
     )
     source = tmp_path / "home.json"
     write_home_dashboard_snapshot(source, replace(_snapshot(), variants=(variant,)))
@@ -737,7 +743,9 @@ def test_home_snapshot_variant_roundtrip_keeps_names_and_previous_holdings(tmp_p
     assert loaded.variants[0].previous_holdings[0].name == "平安银行"
 
 
-def test_home_snapshot_variant_keeps_missing_previous_holdings_explicit(tmp_path) -> None:
+def test_home_snapshot_variant_keeps_missing_previous_holdings_explicit(
+    tmp_path,
+) -> None:
     variant = HomeSnapshotVariant(
         variant_id="legacy",
         label="旧结果",
@@ -782,12 +790,35 @@ def test_home_snapshot_rejects_invalid_variant_universe_metadata(
 
 
 def test_previous_variant_holdings_replays_only_before_last_filled_date() -> None:
-    current = (HomeSnapshotHolding("600000", 100, 10.5, 11.0, 1100.0, 50.0, "浦发银行"),)
+    current = (
+        HomeSnapshotHolding("600000", 100, 10.5, 11.0, 1100.0, 50.0, "浦发银行"),
+    )
     previous = write_home_snapshot._previous_variant_holdings(
         [
-            {"date": "2026-07-09", "symbol": "600000", "side": "buy", "quantity": 100, "price": 10.0, "status": "filled"},
-            {"date": "2026-07-10", "symbol": "600000", "side": "buy", "quantity": 100, "price": 11.0, "status": "filled"},
-            {"date": "2026-07-11", "symbol": "600000", "side": "sell", "quantity": 100, "price": 11.0, "status": "filled"},
+            {
+                "date": "2026-07-09",
+                "symbol": "600000",
+                "side": "buy",
+                "quantity": 100,
+                "price": 10.0,
+                "status": "filled",
+            },
+            {
+                "date": "2026-07-10",
+                "symbol": "600000",
+                "side": "buy",
+                "quantity": 100,
+                "price": 11.0,
+                "status": "filled",
+            },
+            {
+                "date": "2026-07-11",
+                "symbol": "600000",
+                "side": "sell",
+                "quantity": 100,
+                "price": 11.0,
+                "status": "filled",
+            },
         ],
         current,
     )
@@ -796,6 +827,22 @@ def test_previous_variant_holdings_replays_only_before_last_filled_date() -> Non
     assert previous[0].quantity == 200
     assert previous[0].average_price == 10.5
     assert previous[0].name == "浦发银行"
+    assert (
+        write_home_snapshot._previous_variant_holdings(
+            [
+                {
+                    "date": "2026-07-11",
+                    "symbol": "600000",
+                    "side": "buy",
+                    "quantity": 100,
+                    "price": 11.0,
+                    "status": "filled",
+                }
+            ],
+            current,
+        )
+        is None
+    )
 
 
 def test_home_snapshot_module_has_no_ledger_or_network_dependencies() -> None:

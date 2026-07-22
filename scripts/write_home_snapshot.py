@@ -1750,6 +1750,8 @@ def _previous_variant_holdings(
     if not fills:
         return None
     last_date = max(_text(fill.get("date"))[:10] for fill in fills)
+    if not any(_text(fill.get("date"))[:10] < last_date for fill in fills):
+        return None
     positions: dict[str, tuple[int, float]] = {}
     for fill in fills:
         if _text(fill.get("date"))[:10] >= last_date:
