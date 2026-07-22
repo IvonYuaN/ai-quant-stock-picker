@@ -82,6 +82,7 @@ Notes:
 
 Optional env:
   AQSP_RUNNER_TIMEOUT_SECONDS=5400   # 主链路最长 90 分钟
+  AQSP_VARIANT_TIMEOUT_SECONDS=1800  # 变体研究最长 30 分钟
   AQSP_MONITOR_TIMEOUT_SECONDS=600   # 监控最长 10 分钟
   AQSP_LOCK_STALE_MINUTES=360        # 无活跃 PID 时，6 小时后视为陈旧锁
 EOF
@@ -369,7 +370,19 @@ run_script() {
     fi
     log "开始运行: $script_path $*"
     set +e
-    /bin/bash "$script_path" "$@" 2>&1 | tee -a "$RUN_LOG"
+    if [ "$ACTION" = "variants" ] && command -v timeout >/dev/null 2>&1; then
+        local variant_timeout="${AQSP_VARIANT_TIMEOUT_SECONDS:-1800}"
+        local kill_after="${AQSP_RUNNER_KILL_AFTER_SECONDS:-15}"
+        if [[ ! "$variant_timeout" =~ ^[1-9][0-9]*$ ]] || [[ ! "$kill_after" =~ ^[1-9][0-9]*$ ]]; then
+            log "[ERROR] variants 超时配置必须是正整数: timeout=${variant_timeout}s kill_after=${kill_after}s"
+            return 2
+        fi
+        log "启用 variants 超时保护: ${variant_timeout}s，终止宽限 ${kill_after}s"
+        timeout --foreground --signal=TERM --kill-after="${kill_after}s" \
+            "$variant_timeout" /bin/bash "$script_path" "$@" 2>&1 | tee -a "$RUN_LOG"
+    else
+        /bin/bash "$script_path" "$@" 2>&1 | tee -a "$RUN_LOG"
+    fi
     local runner_exit_code=${PIPESTATUS[0]}
     set -e
     if [ "$runner_exit_code" -ne 0 ]; then

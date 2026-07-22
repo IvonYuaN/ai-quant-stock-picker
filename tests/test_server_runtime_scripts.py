@@ -734,6 +734,9 @@ def test_bt_task_script_exposes_panel_safe_actions() -> None:
         in script
     )
     assert "AQSP_RUNNER_TIMEOUT_SECONDS=5400" in script
+    assert "AQSP_VARIANT_TIMEOUT_SECONDS=1800" in script
+    assert 'timeout --foreground --signal=TERM' in script
+    assert 'AQSP_VARIANT_TIMEOUT_SECONDS:-1800' in script
     assert "AQSP_MONITOR_TIMEOUT_SECONDS=600" in script
     assert "AQSP_LOCK_STALE_MINUTES=360" in script
     assert "Recommended BT schedule (Asia/Shanghai)" in script
