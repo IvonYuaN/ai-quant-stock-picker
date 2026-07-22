@@ -109,9 +109,9 @@ def select_stratified_symbols(
 ) -> tuple[str, ...]:
     """Select a broad, reproducible universe without using future bars.
 
-    The reference date is chosen from the historical date with the strongest
-    coverage before the reset date. Each board is sampled across turnover
-    quantiles, so the result is not an alphabetical or large-cap-only slice.
+    The reference date is the latest available historical date before the
+    reset date. Each board is sampled across turnover quantiles, so the result
+    is not an alphabetical or large-cap-only slice.
     """
     if max_symbols < 0:
         raise ValueError("max_symbols must be non-negative")
@@ -125,12 +125,9 @@ def select_stratified_symbols(
         if "ohlcv" in tables:
             reference_row = conn.execute(
                 """
-                SELECT date
+                SELECT MAX(date)
                 FROM ohlcv
                 WHERE price_mode = 'raw' AND workload = 'historical' AND date < ?
-                GROUP BY date
-                ORDER BY COUNT(*) DESC, date DESC
-                LIMIT 1
                 """,
                 (before_date,),
             ).fetchone()
@@ -152,38 +149,53 @@ def select_stratified_symbols(
             )
         elif {"daily_qfq", "stocks"} <= tables:
             compact_before = before_date.replace("-", "")
-            reference_row = conn.execute(
+            current_rows = conn.execute(
                 """
-                SELECT trade_date
+                SELECT ts_code
                 FROM daily_qfq
-                WHERE trade_date != 'SKIP' AND trade_date < ?
-                GROUP BY trade_date
-                ORDER BY COUNT(*) DESC, trade_date DESC
-                LIMIT 1
+                WHERE trade_date = ? AND close > 0 AND amount > 0
                 """,
                 (compact_before,),
-            ).fetchone()
-            if reference_row is None:
-                raise ValueError("reset date 前没有可用 raw daily_qfq 覆盖日")
-            reference_date = str(reference_row[0])
-            raw_rows = conn.execute(
-                """
-                SELECT substr(d.ts_code, 1, 6), d.close, d.amount, COALESCE(s.name, '')
-                FROM daily_qfq AS d
-                LEFT JOIN stocks AS s ON s.ts_code = d.ts_code
-                WHERE d.trade_date = ? AND d.trade_date != 'SKIP'
-                  AND d.close > 0 AND d.amount > 0
-                  AND EXISTS (
-                      SELECT 1
-                      FROM daily_qfq AS current_bar
-                      WHERE current_bar.ts_code = d.ts_code
-                        AND current_bar.trade_date = ?
-                        AND current_bar.close > 0
-                  )
-                ORDER BY d.ts_code
-                """,
-                (reference_date, compact_before),
             ).fetchall()
+            if not current_rows:
+                raise ValueError("reset date 前没有可用 raw daily_qfq 覆盖日")
+
+            reference_date = ""
+            for (current_code,) in current_rows:
+                reference_row = conn.execute(
+                    """
+                    SELECT MAX(trade_date)
+                    FROM daily_qfq
+                    WHERE ts_code = ? AND trade_date != 'SKIP'
+                      AND trade_date < ? AND close > 0 AND amount > 0
+                    """,
+                    (current_code, compact_before),
+                ).fetchone()
+                if reference_row and reference_row[0]:
+                    reference_date = str(reference_row[0])
+                    break
+            if not reference_date:
+                raise ValueError("reset date 前没有可用 raw daily_qfq 历史日")
+
+            current_codes = [str(row[0]) for row in current_rows]
+            raw_rows: list[tuple[object, ...]] = []
+            for offset in range(0, len(current_codes), 400):
+                chunk = current_codes[offset : offset + 400]
+                placeholders = ",".join("?" for _ in chunk)
+                raw_rows.extend(
+                    conn.execute(
+                        f"""
+                        SELECT substr(d.ts_code, 1, 6), d.close, d.amount,
+                               COALESCE(s.name, '')
+                        FROM daily_qfq AS d
+                        LEFT JOIN stocks AS s ON s.ts_code = d.ts_code
+                        WHERE d.trade_date = ? AND d.ts_code IN ({placeholders})
+                          AND d.close > 0 AND d.amount > 0
+                        ORDER BY d.ts_code
+                        """,
+                        (reference_date, *chunk),
+                    ).fetchall()
+                )
             rows = [(str(symbol), close, amount) for symbol, close, amount, _name in raw_rows]
             name_map = {str(symbol): str(name or "") for symbol, _close, _amount, name in raw_rows}
             reference_date = (

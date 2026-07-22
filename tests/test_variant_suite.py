@@ -125,6 +125,10 @@ def test_external_raw_database_loader_keeps_board_symbols_and_dates(tmp_path):
                 (code, date, 10.0, 10.5, 9.5, 10.0, 1000.0, 1_000_000.0)
                 for code in ("600001.SH", "000001.SZ")
                 for date in ("20260717", "20260720")
+            ]
+            + [
+                (code, "20260718", 10.0, 10.5, 9.5, 10.0, 1000.0, 1_000_000.0)
+                for code in ("688001.SH", "688002.SH", "688003.SH")
             ],
         )
 
