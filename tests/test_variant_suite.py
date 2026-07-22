@@ -3,6 +3,7 @@ import sqlite3
 import pytest
 
 from scripts.run_variant_suite import (
+    load_frames,
     run_suite,
     select_stratified_symbols,
     validate_variant_artifact,
@@ -45,7 +46,7 @@ def test_run_suite_creates_fourteen_independent_ten_wan_accounts(tmp_path):
 
     result = run_suite(db, ("AAA",), "2026-01-01", "2026-01-30")
     assert result["initial_cash"] == 100_000.0
-    assert len(result["variants"]) >= 60
+    assert 24 <= len(result["variants"]) <= 40
     assert len({item["variant_id"] for item in result["variants"]}) == len(result["variants"])
     assert len({item["label"] for item in result["variants"]}) == len(result["variants"])
     assert {item["initial_cash"] for item in result["variants"]} == {100_000.0}
@@ -57,9 +58,12 @@ def test_run_suite_creates_fourteen_independent_ten_wan_accounts(tmp_path):
     assert all(item["strategy"]["max_positions"] >= 1 for item in result["variants"])
     assert {item["strategy"]["mode"] for item in result["variants"]} >= {
         "reversion",
+        "trend",
+        "breakout",
         "volume_breakout",
-        "atr_trend",
-        "defensive_range",
+        "macd",
+        "kdj",
+        "low_vol",
     }
     assert all(item["strategy"]["hypothesis"] for item in result["variants"])
     assert result["universe_scope"]["board_scope"] == "沪深主板+创业板"
@@ -97,6 +101,39 @@ def test_select_stratified_symbols_spans_boards_and_turnover_quantiles(tmp_path)
 
     assert set(selected) == set(symbols)
     assert selected != tuple(sorted(symbols))
+
+
+def test_external_raw_database_loader_keeps_board_symbols_and_dates(tmp_path):
+    db = tmp_path / "astocks_raw.db"
+    with sqlite3.connect(db) as conn:
+        conn.executescript(
+            """
+            CREATE TABLE stocks (ts_code TEXT PRIMARY KEY, name TEXT);
+            CREATE TABLE daily_qfq (
+                ts_code TEXT, trade_date TEXT, open REAL, high REAL, low REAL,
+                close REAL, volume REAL, amount REAL
+            );
+            """
+        )
+        conn.executemany(
+            "INSERT INTO stocks VALUES (?, ?)",
+            [("600001.SH", "沪市样本"), ("000001.SZ", "深市样本")],
+        )
+        conn.executemany(
+            "INSERT INTO daily_qfq VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            [
+                (code, date, 10.0, 10.5, 9.5, 10.0, 1000.0, 1_000_000.0)
+                for code in ("600001.SH", "000001.SZ")
+                for date in ("20260717", "20260720")
+            ],
+        )
+
+    selected = select_stratified_symbols(db, "2026-07-20")
+    frames = load_frames(db, selected, "2026-07-17", "2026-07-20")
+
+    assert set(selected) == {"600001", "000001"}
+    assert set(frames) == set(selected)
+    assert set(frames["600001"]["date"]) == {"2026-07-17", "2026-07-20"}
 
 
 def test_validate_variant_artifact_allows_historical_warmup_before_reset():

@@ -793,6 +793,14 @@ def test_bt_task_script_exposes_panel_safe_actions() -> None:
     assert "logs/bt" in script
 
 
+def test_variant_refresh_prefers_production_raw_database() -> None:
+    script = (PROJECT_ROOT / "scripts" / "variant_refresh.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert "AQSP_VARIANT_DB:-${AQSP_SQLITE_DB_PATH:-${RUNTIME_ROOT}/data/cache.db}" in script
+
+
 def test_bt_task_propagates_intraday_runner_failure_to_cron(
     tmp_path: Path,
 ) -> None:

@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 import sqlite3
+from bisect import bisect_left
 from collections import defaultdict
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -42,18 +43,17 @@ class VariantProfile:
     selection: str = "ranked_signal"
 
 
-PROFILES = (
-    VariantProfile("trend_follow", "趋势跟随", 20, 2.0, 12.0, max_positions=5),
-    VariantProfile("pullback", "趋势回踩", 20, 0.0, 4.0, max_positions=5),
-    VariantProfile("breakout_continuation", "突破延续", 10, 4.0, 15.0, "breakout", max_positions=3),
-    VariantProfile("defensive_momentum", "防守动量", 10, 1.0, 8.0, max_positions=3),
-    VariantProfile("mean_reversion", "均值回归", 20, 3.0, 0.0, "reversion", max_positions=6),
-    VariantProfile("low_volatility", "低波动趋势", 30, 1.0, 6.0, "low_vol", max_positions=6),
-    VariantProfile("relative_strength", "相对强势", 15, 3.0, 10.0, "relative_strength", "强势股相对强度延续", 3),
-    VariantProfile("volume_breakout", "量价突破", 20, 2.0, 15.0, "volume_breakout", "成交量确认突破比单看价格更可靠", 3),
-    VariantProfile("atr_trend", "ATR趋势", 20, 1.5, 12.0, "atr_trend", "用波动率调整趋势入场，避免追逐异常波动", 5),
-    VariantProfile("defensive_range", "防守区间", 20, 0.0, 5.0, "defensive_range", "低波动区间承接优先于高波动追涨", 6),
+_FAMILY_SPECS = (
+    ("trend", "趋势", (0.0, 8.0), "趋势延续需要均线方向和收益确认"),
+    ("reversion", "均值回归", (2.0, 0.0), "偏离均线后等待价格回归"),
+    ("breakout", "突破", (3.0, 12.0), "突破前高并限制追高乖离"),
+    ("volume_breakout", "量价突破", (2.0, 12.0), "突破必须由成交量放大确认"),
+    ("macd", "MACD", (1.0, 10.0), "MACD柱体转强并由价格趋势确认"),
+    ("kdj", "KDJ", (1.0, 8.0), "KDJ金叉从弱势区修复"),
+    ("low_vol", "低波趋势", (1.0, 6.0), "低波动趋势优先，减少异常追涨"),
 )
+_VARIANT_LOOKBACKS = (10, 20)
+_VARIANT_POSITION_CAPS = (3, 6)
 
 FEATURE_WARMUP_CALENDAR_DAYS = 90
 DEFAULT_VARIANT_UNIVERSE_SIZE = 0
@@ -116,31 +116,83 @@ def select_stratified_symbols(
     if max_symbols < 0:
         raise ValueError("max_symbols must be non-negative")
     with sqlite3.connect(db_path) as conn:
-        reference_row = conn.execute(
-            """
-            SELECT date
-            FROM ohlcv
-            WHERE price_mode = 'raw' AND workload = 'historical' AND date < ?
-            GROUP BY date
-            ORDER BY COUNT(*) DESC, date DESC
-            LIMIT 1
-            """,
-            (before_date,),
-        ).fetchone()
-        if reference_row is None:
-            raise ValueError("reset date 前没有可用 raw/historical 覆盖日")
-        reference_date = str(reference_row[0])
-        rows = conn.execute(
-            """
-            SELECT symbol, close, amount
-            FROM ohlcv
-            WHERE price_mode = 'raw' AND workload = 'historical'
-              AND date = ? AND suspended = 0 AND close > 0 AND amount > 0
-            ORDER BY symbol
-            """,
-            (reference_date,),
-        ).fetchall()
-    name_map = load_sqlite_symbol_name_map([str(symbol) for symbol, _close, _amount in rows])
+        tables = {
+            str(row[0])
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            )
+        }
+        if "ohlcv" in tables:
+            reference_row = conn.execute(
+                """
+                SELECT date
+                FROM ohlcv
+                WHERE price_mode = 'raw' AND workload = 'historical' AND date < ?
+                GROUP BY date
+                ORDER BY COUNT(*) DESC, date DESC
+                LIMIT 1
+                """,
+                (before_date,),
+            ).fetchone()
+            if reference_row is None:
+                raise ValueError("reset date 前没有可用 raw/historical 覆盖日")
+            reference_date = str(reference_row[0])
+            rows = conn.execute(
+                """
+                SELECT symbol, close, amount
+                FROM ohlcv
+                WHERE price_mode = 'raw' AND workload = 'historical'
+                  AND date = ? AND suspended = 0 AND close > 0 AND amount > 0
+                ORDER BY symbol
+                """,
+                (reference_date,),
+            ).fetchall()
+            name_map = load_sqlite_symbol_name_map(
+                [str(symbol) for symbol, _close, _amount in rows]
+            )
+        elif {"daily_qfq", "stocks"} <= tables:
+            compact_before = before_date.replace("-", "")
+            reference_row = conn.execute(
+                """
+                SELECT trade_date
+                FROM daily_qfq
+                WHERE trade_date != 'SKIP' AND trade_date < ?
+                GROUP BY trade_date
+                ORDER BY COUNT(*) DESC, trade_date DESC
+                LIMIT 1
+                """,
+                (compact_before,),
+            ).fetchone()
+            if reference_row is None:
+                raise ValueError("reset date 前没有可用 raw daily_qfq 覆盖日")
+            reference_date = str(reference_row[0])
+            raw_rows = conn.execute(
+                """
+                SELECT substr(d.ts_code, 1, 6), d.close, d.amount, COALESCE(s.name, '')
+                FROM daily_qfq AS d
+                LEFT JOIN stocks AS s ON s.ts_code = d.ts_code
+                WHERE d.trade_date = ? AND d.trade_date != 'SKIP'
+                  AND d.close > 0 AND d.amount > 0
+                  AND EXISTS (
+                      SELECT 1
+                      FROM daily_qfq AS current_bar
+                      WHERE current_bar.ts_code = d.ts_code
+                        AND current_bar.trade_date = ?
+                        AND current_bar.close > 0
+                  )
+                ORDER BY d.ts_code
+                """,
+                (reference_date, compact_before),
+            ).fetchall()
+            rows = [(str(symbol), close, amount) for symbol, close, amount, _name in raw_rows]
+            name_map = {str(symbol): str(name or "") for symbol, _close, _amount, name in raw_rows}
+            reference_date = (
+                f"{reference_date[:4]}-{reference_date[4:6]}-{reference_date[6:8]}"
+                if len(reference_date) == 8
+                else reference_date
+            )
+        else:
+            raise ValueError("数据库缺少 ohlcv 或 daily_qfq/stocks 表")
     grouped: dict[str, list[tuple[str, float, float]]] = {
         key: [] for key in _UNIVERSE_BUCKETS
     }
@@ -256,59 +308,29 @@ def generate_variant_profiles(
     *,
     training_end: str = "",
 ) -> tuple[VariantProfile, ...]:
-    """Add deterministic mutations based on a point-in-time training window."""
+    """Build a small orthogonal grid; training only selects the market note."""
     volatility = _training_volatility_pct(frames, before_date=training_end)
-    if volatility >= 2.5:
-        mutations = (
-            VariantProfile("auto_high_vol_defensive", "自动变体·高波防守", 15, 2.0, 5.0, "low_vol"),
-            VariantProfile("auto_high_vol_reversal", "自动变体·高波反转", 15, 4.0, 0.0, "reversion"),
-            VariantProfile("auto_high_vol_trend", "自动变体·高波趋势", 25, 3.0, 7.0),
-            VariantProfile("auto_high_vol_breakout", "自动变体·高波突破", 8, 5.0, 18.0, "breakout"),
-        )
-    else:
-        mutations = (
-            VariantProfile("auto_low_vol_breakout", "自动变体·低波突破", 15, 3.0, 10.0, "breakout"),
-            VariantProfile("auto_low_vol_pullback", "自动变体·低波回踩", 25, 0.0, 3.0),
-            VariantProfile("auto_low_vol_defensive", "自动变体·低波防守", 35, 0.5, 4.0, "low_vol"),
-            VariantProfile("auto_low_vol_reversal", "自动变体·低波反转", 30, 2.0, 0.0, "reversion"),
-        )
-    grid_specs = (
-        ("trend", "趋势网格", (0.0, 2.0), (4.0, 10.0), "趋势延续需要均线方向和收益确认"),
-        ("reversion", "回归网格", (1.0, 3.0), (0.0, 4.0), "回撤达到阈值后等待均值修复"),
-        ("breakout", "突破网格", (2.0, 4.0), (8.0, 15.0), "突破前高并限制追高偏离"),
-        ("low_vol", "低波网格", (0.5, 1.5), (3.0, 6.0), "优先低波动趋势，控制追涨偏离"),
-        ("macd", "MACD网格", (0.0, 2.0), (6.0, 12.0), "MACD柱体转强并由趋势确认"),
-        ("kdj", "KDJ网格", (0.0, 2.0), (0.0, 8.0), "KDJ金叉从超卖区修复"),
-        ("volume", "量能网格", (1.0, 3.0), (8.0, 15.0), "突破必须由成交量放大确认"),
-        ("bollinger", "布林网格", (-3.0, -1.0), (0.0, 4.0), "价格触及下轨后观察均值回归"),
-        ("rsi", "RSI网格", (-2.0, 0.0), (4.0, 8.0), "RSI从弱势区修复且不过度追涨"),
-        ("ema_cross", "EMA交叉网格", (0.0, 2.0), (6.0, 12.0), "短长周期EMA交叉确认趋势"),
-        ("obv", "OBV网格", (0.0, 2.0), (6.0, 12.0), "价格趋势与能量潮同步"),
-        ("donchian", "唐奇安网格", (2.0, 4.0), (8.0, 15.0), "突破历史通道并控制乖离"),
-        ("vwap", "成交额加权网格", (0.0, 2.0), (6.0, 12.0), "收盘站上成交额加权成本线"),
-    )
     grid: list[VariantProfile] = []
-    for mode, label, entries, biases, hypothesis in grid_specs:
-        for lookback in (10, 20, 30):
-            for entry_index, entry in enumerate(entries):
-                bias = biases[entry_index]
-                for max_positions in (3, 6):
-                    grid.append(
-                        VariantProfile(
-                            variant_id=f"grid_{mode}_lb{lookback}_t{entry_index}_n{max_positions}",
-                            label=(
-                                f"{label}·{lookback}日·收益{entry:+g}%·"
-                                f"乖离≤{bias:g}%·{max_positions}持仓"
-                            ),
-                            lookback=lookback,
-                            entry_return_pct=entry,
-                            max_bias_pct=bias,
-                            mode=mode,
-                            hypothesis=hypothesis,
-                            max_positions=max_positions,
-                        )
+    for mode, label, (entry, bias), hypothesis in _FAMILY_SPECS:
+        for lookback in _VARIANT_LOOKBACKS:
+            for max_positions in _VARIANT_POSITION_CAPS:
+                grid.append(
+                    VariantProfile(
+                        variant_id=f"{mode}_lb{lookback}_n{max_positions}",
+                        label=(
+                            f"{label}·{lookback}日·收益{entry:+g}%·"
+                            f"乖离≤{bias:g}%·{max_positions}持仓"
+                        ),
+                        lookback=lookback,
+                        entry_return_pct=entry,
+                        max_bias_pct=bias,
+                        mode=mode,
+                        hypothesis=hypothesis
+                        + (f"；训练波动中位数{volatility:.2f}%" if volatility else ""),
+                        max_positions=max_positions,
                     )
-    return (*PROFILES, *mutations, *grid)
+                )
+    return tuple(grid)
 
 
 def load_frames(
@@ -317,34 +339,80 @@ def load_frames(
     start: str,
     end: str,
 ) -> dict[str, pd.DataFrame]:
-    placeholders = ",".join("?" for _ in symbols)
     with sqlite3.connect(db_path) as conn:
+        tables = {
+            str(row[0])
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            )
+        }
         columns = {
             str(row[1]) for row in conn.execute("PRAGMA table_info(ohlcv)")
         }
-    workload_filter = " AND workload = 'historical'" if "workload" in columns else ""
-    metadata_columns = [
-        column
-        for column in ("source", "fetched_at", "timestamp_source")
-        if column in columns
-    ]
-    select_columns = (
-        "symbol, date, open, high, low, close, volume, amount, "
-        "suspended, limit_up, limit_down"
-        + (", " + ", ".join(metadata_columns) if metadata_columns else "")
-    )
-    query = f"""
-        SELECT {select_columns}
-        FROM ohlcv
-        WHERE price_mode = 'raw'{workload_filter}
-          AND symbol IN ({placeholders}) AND date BETWEEN ? AND ?
-        ORDER BY symbol, date
-    """
-    with sqlite3.connect(db_path) as conn:
-        frame = pd.read_sql_query(query, conn, params=(*symbols, start, end))
+        if "ohlcv" not in tables:
+            if not {"daily_qfq", "stocks"} <= tables:
+                raise ValueError("数据库缺少 ohlcv 或 daily_qfq/stocks 表")
+            symbol_map = dict(
+                conn.execute(
+                    "SELECT substr(ts_code, 1, 6), ts_code FROM stocks"
+                ).fetchall()
+            )
+            selected_ts_codes = [symbol_map[symbol] for symbol in symbols if symbol in symbol_map]
+            frames: list[pd.DataFrame] = []
+            for offset in range(0, len(selected_ts_codes), 400):
+                chunk = selected_ts_codes[offset : offset + 400]
+                placeholders = ",".join("?" for _ in chunk)
+                frames.append(
+                    pd.read_sql_query(
+                        f"""
+                        SELECT substr(ts_code, 1, 6) AS symbol, trade_date AS date,
+                               open, high, low, close, volume, amount,
+                               0 AS suspended, NULL AS limit_up, NULL AS limit_down
+                        FROM daily_qfq
+                        WHERE ts_code IN ({placeholders})
+                          AND trade_date != 'SKIP'
+                          AND trade_date BETWEEN ? AND ?
+                        ORDER BY ts_code, trade_date
+                        """,
+                        conn,
+                        params=(*chunk, start.replace("-", ""), end.replace("-", "")),
+                    )
+                )
+            frame = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+            if not frame.empty:
+                frame["date"] = frame["date"].map(
+                    lambda value: (
+                        f"{str(value)[:4]}-{str(value)[4:6]}-{str(value)[6:8]}"
+                        if len(str(value)) == 8
+                        else str(value)
+                    )
+                )
+            metadata_columns: list[str] = []
+        else:
+            workload_filter = " AND workload = 'historical'" if "workload" in columns else ""
+            metadata_columns = [
+                column
+                for column in ("source", "fetched_at", "timestamp_source")
+                if column in columns
+            ]
+            placeholders = ",".join("?" for _ in symbols)
+            select_columns = (
+                "symbol, date, open, high, low, close, volume, amount, "
+                "suspended, limit_up, limit_down"
+                + (", " + ", ".join(metadata_columns) if metadata_columns else "")
+            )
+            query = f"""
+                SELECT {select_columns}
+                FROM ohlcv
+                WHERE price_mode = 'raw'{workload_filter}
+                  AND symbol IN ({placeholders}) AND date BETWEEN ? AND ?
+                ORDER BY symbol, date
+            """
+            frame = pd.read_sql_query(query, conn, params=(*symbols, start, end))
     if frame.empty:
         raise ValueError("历史 raw/historical OHLCV 为空")
     result: dict[str, pd.DataFrame] = {}
+    external_source = "ohlcv" not in tables
     for symbol, group in frame.groupby("symbol", sort=True):
         prepared = group.drop(columns=["symbol"]).reset_index(drop=True)
         prepared.attrs["sources"] = tuple(
@@ -356,6 +424,8 @@ def load_frames(
                 }
             )
         )
+        if external_source and not prepared.attrs["sources"]:
+            prepared.attrs["sources"] = ("sqlite_db",)
         prepared.attrs["latest_fetched_at"] = max(
             (
                 str(value).strip()
@@ -371,17 +441,10 @@ def load_frames(
     return result
 
 
-def _prepare_signal_frame(raw: pd.DataFrame, lookback: int) -> pd.DataFrame:
-    """Compute all technical features once for one symbol/lookback pair."""
+def _prepare_base_signal_frame(raw: pd.DataFrame) -> pd.DataFrame:
+    """Compute lookback-independent technical features once per symbol."""
     frame = raw.copy()
     frame["date"] = pd.to_datetime(frame["date"]).dt.strftime("%Y-%m-%d")
-    frame["sma"] = frame["close"].rolling(lookback).mean()
-    frame["ret"] = frame["close"].pct_change(lookback) * 100.0
-    frame["bias"] = (frame["close"] / frame["sma"] - 1.0) * 100.0
-    frame["prior_high"] = frame["high"].rolling(lookback).max().shift(1)
-    frame["prior_low"] = frame["low"].rolling(lookback).min().shift(1)
-    frame["volume_mean"] = frame["volume"].rolling(lookback).mean().shift(1)
-    frame["volume_ratio"] = frame["volume"] / frame["volume_mean"]
     frame["atr"] = (frame["high"] - frame["low"]).rolling(14).mean()
     frame["atr_pct"] = frame["atr"] / frame["close"] * 100.0
     frame["ema12"] = frame["close"].ewm(span=12, adjust=False).mean()
@@ -400,10 +463,27 @@ def _prepare_signal_frame(raw: pd.DataFrame, lookback: int) -> pd.DataFrame:
     frame["bb_mid"] = frame["close"].rolling(20).mean()
     frame["bb_std"] = frame["close"].rolling(20).std(ddof=0)
     frame["bb_lower"] = frame["bb_mid"] - 2.0 * frame["bb_std"]
-    direction = frame["close"].diff().fillna(0.0).map(
-        lambda value: 1 if value > 0 else -1 if value < 0 else 0
-    )
+    delta = frame["close"].diff().fillna(0.0)
+    direction = delta.gt(0).astype(int) - delta.lt(0).astype(int)
     frame["obv"] = (direction * frame["volume"]).cumsum()
+    return frame
+
+
+def _prepare_signal_frame(
+    raw: pd.DataFrame,
+    lookback: int,
+    *,
+    base: pd.DataFrame | None = None,
+) -> pd.DataFrame:
+    """Add the small set of lookback-dependent features to a shared base."""
+    frame = base.copy() if base is not None else _prepare_base_signal_frame(raw)
+    frame["sma"] = frame["close"].rolling(lookback).mean()
+    frame["ret"] = frame["close"].pct_change(lookback) * 100.0
+    frame["bias"] = (frame["close"] / frame["sma"] - 1.0) * 100.0
+    frame["prior_high"] = frame["high"].rolling(lookback).max().shift(1)
+    frame["prior_low"] = frame["low"].rolling(lookback).min().shift(1)
+    frame["volume_mean"] = frame["volume"].rolling(lookback).mean().shift(1)
+    frame["volume_ratio"] = frame["volume"] / frame["volume_mean"]
     frame["obv_mean"] = frame["obv"].rolling(lookback).mean()
     frame["vwap"] = (
         frame["amount"].rolling(lookback).sum()
@@ -418,6 +498,7 @@ def build_orders(
     *,
     first_trade_date: str = "",
     prepared_cache: dict[tuple[str, int], pd.DataFrame] | None = None,
+    base_cache: dict[str, pd.DataFrame] | None = None,
 ) -> tuple[VariantOrder, ...]:
     signals_by_date: dict[
         str, list[tuple[str, float, bool, bool, tuple[str, ...]]]
@@ -426,15 +507,24 @@ def build_orders(
         cache_key = (symbol, profile.lookback)
         frame = prepared_cache.get(cache_key) if prepared_cache is not None else None
         if frame is None:
-            frame = _prepare_signal_frame(raw, profile.lookback)
+            base = base_cache.get(symbol) if base_cache is not None else None
+            if base is None:
+                base = _prepare_base_signal_frame(raw)
+                if base_cache is not None:
+                    base_cache[symbol] = base
+            frame = _prepare_signal_frame(raw, profile.lookback, base=base)
             if prepared_cache is not None:
                 prepared_cache[cache_key] = frame
         dates = frame["date"].tolist()
-        for index in range(profile.lookback, len(frame) - 1):
+        first_index = profile.lookback
+        if first_trade_date:
+            first_index = max(
+                first_index,
+                bisect_left(dates, first_trade_date) - 1,
+            )
+        for index in range(first_index, len(frame) - 1):
             row = frame.iloc[index]
             next_date = dates[index + 1]
-            if first_trade_date and next_date < first_trade_date:
-                continue
             valid = pd.notna(row["sma"]) and pd.notna(row["ret"])
             if not valid:
                 continue
@@ -753,6 +843,7 @@ def run_suite(
     profiles = generate_variant_profiles(frames, training_end=start)
     results = []
     prepared_cache: dict[tuple[str, int], pd.DataFrame] = {}
+    base_cache: dict[str, pd.DataFrame] = {}
     for profile in profiles:
         result = simulate_variant(
             profile.variant_id,
@@ -762,6 +853,7 @@ def run_suite(
                 profile,
                 first_trade_date=start,
                 prepared_cache=prepared_cache,
+                base_cache=base_cache,
             ),
             rules=rules,
         )

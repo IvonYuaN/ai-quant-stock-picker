@@ -5,7 +5,7 @@ set -euo pipefail
 PROJECT_ROOT="${AQSP_PROJECT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 RUNTIME_ROOT="${AQSP_RUNTIME_ROOT:-${PROJECT_ROOT}}"
 PYTHON_BIN="${AQSP_RUNTIME_PYTHON:-${PROJECT_ROOT}/.venv/bin/python3}"
-DB_PATH="${AQSP_VARIANT_DB:-${RUNTIME_ROOT}/data/cache.db}"
+DB_PATH="${AQSP_VARIANT_DB:-${AQSP_SQLITE_DB_PATH:-${RUNTIME_ROOT}/data/cache.db}}"
 OUTPUT_PATH="${AQSP_VARIANT_RESULTS:-${RUNTIME_ROOT}/data/runtime/variant_results.json}"
 SNAPSHOT_PATH="${AQSP_HOME_SNAPSHOT_PATH:-${RUNTIME_ROOT}/data/runtime/home_dashboard_snapshot.json}"
 INDEX_PATH="${AQSP_HOME_SNAPSHOT_INDEX_PATH:-${RUNTIME_ROOT}/data/runtime/home_dashboard_snapshot_index.json}"
