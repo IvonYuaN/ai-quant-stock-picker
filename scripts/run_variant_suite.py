@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 from aqsp.backtest.variant_account import (
@@ -453,31 +454,107 @@ def load_frames(
     return result
 
 
+def _rolling_sum_np(values: np.ndarray, window: int) -> np.ndarray:
+    result = np.full(values.shape, np.nan, dtype=float)
+    if window <= 0 or len(values) < window:
+        return result
+    cumulative = np.concatenate(([0.0], np.cumsum(values, dtype=float)))
+    result[window - 1 :] = cumulative[window:] - cumulative[:-window]
+    return result
+
+
+def _rolling_mean_np(values: np.ndarray, window: int) -> np.ndarray:
+    return _rolling_sum_np(values, window) / float(window)
+
+
+def _rolling_std_np(values: np.ndarray, window: int) -> np.ndarray:
+    result = np.full(values.shape, np.nan, dtype=float)
+    if window <= 0 or len(values) < window:
+        return result
+    windows = np.lib.stride_tricks.sliding_window_view(values, window)
+    result[window - 1 :] = windows.std(axis=1, ddof=0)
+    return result
+
+
+def _rolling_min_np(values: np.ndarray, window: int) -> np.ndarray:
+    result = np.full(values.shape, np.nan, dtype=float)
+    if window <= 0 or len(values) < window:
+        return result
+    result[window - 1 :] = np.lib.stride_tricks.sliding_window_view(
+        values, window
+    ).min(axis=1)
+    return result
+
+
+def _rolling_max_np(values: np.ndarray, window: int) -> np.ndarray:
+    result = np.full(values.shape, np.nan, dtype=float)
+    if window <= 0 or len(values) < window:
+        return result
+    result[window - 1 :] = np.lib.stride_tricks.sliding_window_view(
+        values, window
+    ).max(axis=1)
+    return result
+
+
+def _ewm_np(values: np.ndarray, alpha: float) -> np.ndarray:
+    """Compute causal adjust=False EWM without constructing pandas objects."""
+    result = np.full(values.shape, np.nan, dtype=float)
+    if len(values) == 0:
+        return result
+    finite = np.flatnonzero(np.isfinite(values))
+    if len(finite) == 0:
+        return result
+    first = int(finite[0])
+    result[first] = values[first]
+    for index in range(first + 1, len(values)):
+        value = values[index]
+        previous = result[index - 1]
+        result[index] = (
+            previous
+            if not np.isfinite(value)
+            else value
+            if not np.isfinite(previous)
+            else alpha * value + (1.0 - alpha) * previous
+        )
+    return result
+
+
 def _prepare_base_signal_frame(raw: pd.DataFrame) -> pd.DataFrame:
     """Compute lookback-independent technical features once per symbol."""
     frame = raw.copy()
     frame["date"] = pd.to_datetime(frame["date"]).dt.strftime("%Y-%m-%d")
-    frame["atr"] = (frame["high"] - frame["low"]).rolling(14).mean()
+    high = frame["high"].to_numpy(dtype=float, copy=False)
+    low = frame["low"].to_numpy(dtype=float, copy=False)
+    close = frame["close"].to_numpy(dtype=float, copy=False)
+    volume = frame["volume"].to_numpy(dtype=float, copy=False)
+    frame["atr"] = _rolling_mean_np(high - low, 14)
     frame["atr_pct"] = frame["atr"] / frame["close"] * 100.0
-    frame["ema12"] = frame["close"].ewm(span=12, adjust=False).mean()
-    frame["ema26"] = frame["close"].ewm(span=26, adjust=False).mean()
+    frame["ema12"] = _ewm_np(close, 2.0 / 13.0)
+    frame["ema26"] = _ewm_np(close, 2.0 / 27.0)
     frame["macd"] = frame["ema12"] - frame["ema26"]
-    frame["macd_signal"] = frame["macd"].ewm(span=9, adjust=False).mean()
+    frame["macd_signal"] = _ewm_np(frame["macd"].to_numpy(dtype=float), 0.2)
     frame["macd_hist"] = frame["macd"] - frame["macd_signal"]
     frame["macd_hist_prev"] = frame["macd_hist"].shift(1)
-    low9 = frame["low"].rolling(9).min()
-    high9 = frame["high"].rolling(9).max()
-    rsv = (frame["close"] - low9) / (high9 - low9).replace(0, float("nan")) * 100.0
-    frame["kdj_k"] = rsv.ewm(com=2, adjust=False).mean()
-    frame["kdj_d"] = frame["kdj_k"].ewm(com=2, adjust=False).mean()
+    low9 = _rolling_min_np(low, 9)
+    high9 = _rolling_max_np(high, 9)
+    denominator = high9 - low9
+    denominator[denominator == 0.0] = np.nan
+    rsv = (close - low9) / denominator * 100.0
+    frame["kdj_k"] = _ewm_np(rsv, 1.0 / 3.0)
+    frame["kdj_d"] = _ewm_np(frame["kdj_k"].to_numpy(dtype=float), 1.0 / 3.0)
     frame["kdj_j"] = 3.0 * frame["kdj_k"] - 2.0 * frame["kdj_d"]
-    frame["rsi"] = _rsi(frame["close"], 14)
-    frame["bb_mid"] = frame["close"].rolling(20).mean()
-    frame["bb_std"] = frame["close"].rolling(20).std(ddof=0)
+    delta = np.diff(close, prepend=np.nan)
+    gains = np.maximum(delta, 0.0)
+    losses = np.maximum(-delta, 0.0)
+    average_gain = _ewm_np(gains, 1.0 / 14.0)
+    average_loss = _ewm_np(losses, 1.0 / 14.0)
+    relative = average_gain / np.where(average_loss == 0.0, np.nan, average_loss)
+    frame["rsi"] = 100.0 - 100.0 / (1.0 + relative)
+    frame["bb_mid"] = _rolling_mean_np(close, 20)
+    frame["bb_std"] = _rolling_std_np(close, 20)
     frame["bb_lower"] = frame["bb_mid"] - 2.0 * frame["bb_std"]
-    delta = frame["close"].diff().fillna(0.0)
-    direction = delta.gt(0).astype(int) - delta.lt(0).astype(int)
-    frame["obv"] = (direction * frame["volume"]).cumsum()
+    direction = np.sign(np.nan_to_num(delta, nan=0.0))
+    frame["obv"] = np.cumsum(direction * volume)
     return frame
 
 
@@ -489,18 +566,34 @@ def _prepare_signal_frame(
 ) -> pd.DataFrame:
     """Add the small set of lookback-dependent features to a shared base."""
     frame = base.copy() if base is not None else _prepare_base_signal_frame(raw)
-    frame["sma"] = frame["close"].rolling(lookback).mean()
-    frame["ret"] = frame["close"].pct_change(lookback) * 100.0
+    close = frame["close"].to_numpy(dtype=float, copy=False)
+    high = frame["high"].to_numpy(dtype=float, copy=False)
+    low = frame["low"].to_numpy(dtype=float, copy=False)
+    volume = frame["volume"].to_numpy(dtype=float, copy=False)
+    amount = frame["amount"].to_numpy(dtype=float, copy=False)
+    obv = frame["obv"].to_numpy(dtype=float, copy=False)
+    frame["sma"] = _rolling_mean_np(close, lookback)
+    returns = np.full(close.shape, np.nan, dtype=float)
+    returns[lookback:] = (close[lookback:] / close[:-lookback] - 1.0) * 100.0
+    frame["ret"] = returns
     frame["bias"] = (frame["close"] / frame["sma"] - 1.0) * 100.0
-    frame["prior_high"] = frame["high"].rolling(lookback).max().shift(1)
-    frame["prior_low"] = frame["low"].rolling(lookback).min().shift(1)
-    frame["volume_mean"] = frame["volume"].rolling(lookback).mean().shift(1)
+    prior_high = _rolling_max_np(high, lookback)
+    prior_low = _rolling_min_np(low, lookback)
+    volume_mean = _rolling_mean_np(volume, lookback)
+    obv_mean = _rolling_mean_np(obv, lookback)
+    prior_high = np.roll(prior_high, 1)
+    prior_low = np.roll(prior_low, 1)
+    volume_mean = np.roll(volume_mean, 1)
+    prior_high[0] = np.nan
+    prior_low[0] = np.nan
+    volume_mean[0] = np.nan
+    frame["prior_high"] = prior_high
+    frame["prior_low"] = prior_low
+    frame["volume_mean"] = volume_mean
     frame["volume_ratio"] = frame["volume"] / frame["volume_mean"]
-    frame["obv_mean"] = frame["obv"].rolling(lookback).mean()
-    frame["vwap"] = (
-        frame["amount"].rolling(lookback).sum()
-        / frame["volume"].rolling(lookback).sum()
-    )
+    frame["obv_mean"] = obv_mean
+    volume_sum = _rolling_sum_np(volume, lookback)
+    frame["vwap"] = _rolling_sum_np(amount, lookback) / volume_sum
     return frame
 
 

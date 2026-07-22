@@ -1,8 +1,12 @@
 import sqlite3
 
+import numpy as np
+import pandas as pd
 import pytest
 
 from scripts.run_variant_suite import (
+    _prepare_base_signal_frame,
+    _prepare_signal_frame,
     load_frames,
     run_suite,
     select_stratified_symbols,
@@ -138,6 +142,35 @@ def test_external_raw_database_loader_keeps_board_symbols_and_dates(tmp_path):
     assert set(selected) == {"600001", "000001"}
     assert set(frames) == set(selected)
     assert set(frames["600001"]["date"]) == {"2026-07-17", "2026-07-20"}
+
+
+def test_fast_indicator_cache_matches_causal_pandas_features() -> None:
+    dates = pd.date_range("2026-01-01", periods=40, freq="D")
+    close = pd.Series(np.linspace(10.0, 14.0, len(dates)))
+    raw = pd.DataFrame(
+        {
+            "date": dates,
+            "open": close,
+            "high": close + 0.2,
+            "low": close - 0.2,
+            "close": close,
+            "volume": np.linspace(1000.0, 2000.0, len(dates)),
+            "amount": close * 1000.0,
+            "suspended": 0,
+            "limit_up": np.nan,
+            "limit_down": np.nan,
+        }
+    )
+
+    base = _prepare_base_signal_frame(raw)
+    prepared = _prepare_signal_frame(raw, 10, base=base)
+    expected_ema = close.ewm(span=12, adjust=False).mean().to_numpy()
+    expected_sma = close.rolling(10).mean().to_numpy()
+    expected_high = raw["high"].rolling(10).max().shift(1).to_numpy()
+
+    assert np.allclose(base["ema12"], expected_ema, equal_nan=True)
+    assert np.allclose(prepared["sma"], expected_sma, equal_nan=True)
+    assert np.allclose(prepared["prior_high"], expected_high, equal_nan=True)
 
 
 def test_validate_variant_artifact_allows_historical_warmup_before_reset():
