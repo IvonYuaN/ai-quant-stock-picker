@@ -96,10 +96,7 @@ def _sample_turnover_quantiles(
         return [symbol for symbol, _close, _amount in ordered]
     if take == 1:
         return [ordered[len(ordered) // 2][0]]
-    indexes = {
-        round(index * (len(ordered) - 1) / (take - 1))
-        for index in range(take)
-    }
+    indexes = {round(index * (len(ordered) - 1) / (take - 1)) for index in range(take)}
     return [ordered[index][0] for index in sorted(indexes)]
 
 
@@ -198,8 +195,14 @@ def select_stratified_symbols(
                         (reference_date, *chunk),
                     ).fetchall()
                 )
-            rows = [(str(symbol), close, amount) for symbol, close, amount, _name in raw_rows]
-            name_map = {str(symbol): str(name or "") for symbol, _close, _amount, name in raw_rows}
+            rows = [
+                (str(symbol), close, amount)
+                for symbol, close, amount, _name in raw_rows
+            ]
+            name_map = {
+                str(symbol): str(name or "")
+                for symbol, _close, _amount, name in raw_rows
+            }
             reference_date = (
                 f"{reference_date[:4]}-{reference_date[4:6]}-{reference_date[6:8]}"
                 if len(reference_date) == 8
@@ -223,11 +226,16 @@ def select_stratified_symbols(
         return tuple(
             symbol
             for bucket in _UNIVERSE_BUCKETS
-            for symbol, _close, _amount in sorted(grouped[bucket], key=lambda item: item[0])
+            for symbol, _close, _amount in sorted(
+                grouped[bucket], key=lambda item: item[0]
+            )
         )
 
     desired = {"main_sh": 28, "main_sz": 52, "chinext": 40}
-    quotas = {bucket: min(desired[bucket], len(grouped[bucket])) for bucket in _UNIVERSE_BUCKETS}
+    quotas = {
+        bucket: min(desired[bucket], len(grouped[bucket]))
+        for bucket in _UNIVERSE_BUCKETS
+    }
     remaining = max_symbols - sum(quotas.values())
     while remaining > 0:
         candidates = [
@@ -249,7 +257,10 @@ def select_stratified_symbols(
         take = quotas[bucket]
         if take >= len(candidates):
             selected.extend(
-                symbol for symbol, _close, _amount in sorted(candidates, key=lambda item: item[0])
+                symbol
+                for symbol, _close, _amount in sorted(
+                    candidates, key=lambda item: item[0]
+                )
             )
             continue
         by_price_band: dict[str, list[tuple[str, float, float]]] = {
@@ -266,8 +277,7 @@ def select_stratified_symbols(
             "over_80": 0.02,
         }
         target_counts = {
-            band: max(1, round(take * target_share[band]))
-            for band in active_bands
+            band: max(1, round(take * target_share[band])) for band in active_bands
         }
         band_quotas = {band: min(1, len(by_price_band[band])) for band in active_bands}
         remaining = take - sum(band_quotas.values())
@@ -360,9 +370,7 @@ def load_frames(
                 "SELECT name FROM sqlite_master WHERE type = 'table'"
             )
         }
-        columns = {
-            str(row[1]) for row in conn.execute("PRAGMA table_info(ohlcv)")
-        }
+        columns = {str(row[1]) for row in conn.execute("PRAGMA table_info(ohlcv)")}
         if "ohlcv" not in tables:
             if not {"daily_qfq", "stocks"} <= tables:
                 raise ValueError("数据库缺少 ohlcv 或 daily_qfq/stocks 表")
@@ -371,7 +379,9 @@ def load_frames(
                     "SELECT substr(ts_code, 1, 6), ts_code FROM stocks"
                 ).fetchall()
             )
-            selected_ts_codes = [symbol_map[symbol] for symbol in symbols if symbol in symbol_map]
+            selected_ts_codes = [
+                symbol_map[symbol] for symbol in symbols if symbol in symbol_map
+            ]
             frames: list[pd.DataFrame] = []
             for offset in range(0, len(selected_ts_codes), 400):
                 chunk = selected_ts_codes[offset : offset + 400]
@@ -403,7 +413,9 @@ def load_frames(
                 )
             metadata_columns: list[str] = []
         else:
-            workload_filter = " AND workload = 'historical'" if "workload" in columns else ""
+            workload_filter = (
+                " AND workload = 'historical'" if "workload" in columns else ""
+            )
             metadata_columns = [
                 column
                 for column in ("source", "fetched_at", "timestamp_source")
@@ -481,9 +493,9 @@ def _rolling_min_np(values: np.ndarray, window: int) -> np.ndarray:
     result = np.full(values.shape, np.nan, dtype=float)
     if window <= 0 or len(values) < window:
         return result
-    result[window - 1 :] = np.lib.stride_tricks.sliding_window_view(
-        values, window
-    ).min(axis=1)
+    result[window - 1 :] = np.lib.stride_tricks.sliding_window_view(values, window).min(
+        axis=1
+    )
     return result
 
 
@@ -491,9 +503,9 @@ def _rolling_max_np(values: np.ndarray, window: int) -> np.ndarray:
     result = np.full(values.shape, np.nan, dtype=float)
     if window <= 0 or len(values) < window:
         return result
-    result[window - 1 :] = np.lib.stride_tricks.sliding_window_view(
-        values, window
-    ).max(axis=1)
+    result[window - 1 :] = np.lib.stride_tricks.sliding_window_view(values, window).max(
+        axis=1
+    )
     return result
 
 
@@ -606,9 +618,9 @@ def build_orders(
     prepared_cache: dict[tuple[str, int], pd.DataFrame] | None = None,
     base_cache: dict[str, pd.DataFrame] | None = None,
 ) -> tuple[VariantOrder, ...]:
-    signals_by_date: dict[
-        str, list[tuple[str, float, bool, bool, tuple[str, ...]]]
-    ] = defaultdict(list)
+    signals_by_date: dict[str, list[tuple[str, float, bool, bool, tuple[str, ...]]]] = (
+        defaultdict(list)
+    )
     for symbol, raw in frames.items():
         cache_key = (symbol, profile.lookback)
         frame = prepared_cache.get(cache_key) if prepared_cache is not None else None
@@ -833,9 +845,7 @@ def _signal_evidence(row: pd.Series, profile: VariantProfile) -> tuple[str, ...]
             evidence.append(
                 label
                 + " "
-                + "/".join(
-                    f"{float(row[column]):.2f}" for column in columns
-                )
+                + "/".join(f"{float(row[column]):.2f}" for column in columns)
             )
     return tuple(evidence)
 
@@ -865,6 +875,55 @@ def deduplicate_variant_results(
     return unique_results, removed
 
 
+def attach_previous_variant_holdings(
+    payload: Mapping[str, object],
+    previous_payload: Mapping[str, object] | None,
+    *,
+    expected_previous_date: str,
+) -> dict[str, object]:
+    """Carry yesterday's verified holdings into a new one-day artifact.
+
+    The daily refresh intentionally evaluates only the latest raw trading day.
+    A prior artifact is therefore the only valid source for yesterday's end
+    holdings. A stale or mismatched artifact is ignored instead of being
+    presented as a comparison baseline.
+    """
+    result = dict(payload)
+    current_variants = payload.get("variants")
+    previous_variants = previous_payload.get("variants") if previous_payload else None
+    previous_date = (
+        str(previous_payload.get("end_date", "")) if previous_payload else ""
+    )
+    if (
+        not expected_previous_date
+        or previous_date != expected_previous_date
+        or not isinstance(current_variants, list)
+        or not isinstance(previous_variants, list)
+    ):
+        return result
+
+    previous_by_id = {
+        str(item.get("variant_id")): item
+        for item in previous_variants
+        if isinstance(item, dict) and str(item.get("variant_id", ""))
+    }
+    carried_variants: list[dict[str, object]] = []
+    for item in current_variants:
+        if not isinstance(item, dict):
+            continue
+        carried = dict(item)
+        previous = previous_by_id.get(str(item.get("variant_id", "")))
+        holdings = previous.get("holdings") if previous else None
+        if isinstance(holdings, list):
+            carried["previous_holdings"] = [
+                dict(holding) for holding in holdings if isinstance(holding, dict)
+            ]
+        carried_variants.append(carried)
+    result["variants"] = carried_variants
+    result["previous_holdings_date"] = expected_previous_date
+    return result
+
+
 def validate_variant_artifact(
     payload: Mapping[str, object],
     *,
@@ -878,7 +937,10 @@ def validate_variant_artifact(
         raise ValueError("variant artifact 必须使用不复权历史数据")
     if str(payload.get("end_date", "")) != expected_end_date:
         raise ValueError("variant artifact end_date 与重置日不一致")
-    if expected_start_date is not None and str(payload.get("start_date", "")) != expected_start_date:
+    if (
+        expected_start_date is not None
+        and str(payload.get("start_date", "")) != expected_start_date
+    ):
         raise ValueError("variant artifact start_date 与重置日不一致")
     symbols = payload.get("symbols")
     if not isinstance(symbols, list) or not symbols:
@@ -918,6 +980,13 @@ def validate_variant_artifact(
         fills = item.get("fills", [])
         if not isinstance(fills, list):
             raise ValueError("variant artifact fills 必须是 array")
+        previous_holdings = item.get("previous_holdings")
+        if previous_holdings is not None and not isinstance(previous_holdings, list):
+            raise ValueError("variant artifact previous_holdings 必须是 array 或 null")
+        if isinstance(previous_holdings, list) and any(
+            not isinstance(holding, dict) for holding in previous_holdings
+        ):
+            raise ValueError("variant artifact previous_holdings 项必须是 object")
         for fill in fills:
             if not isinstance(fill, dict):
                 raise ValueError("variant artifact fill 必须是 object")
@@ -998,7 +1067,9 @@ def run_suite(
         str(frame["date"].max())[:10] for frame in frames.values() if not frame.empty
     )
     end_coverage = sum(
-        str(frame["date"].max())[:10] == end for frame in frames.values() if not frame.empty
+        str(frame["date"].max())[:10] == end
+        for frame in frames.values()
+        if not frame.empty
     )
     latest_sources = sorted(
         {
@@ -1030,9 +1101,7 @@ def run_suite(
             "excluded": ["ST", "科创板", "其他板块"],
         },
         "universe_warning": (
-            "变体样本池少于 8 只，结果不适合比较持仓差异"
-            if len(symbols) < 8
-            else ""
+            "变体样本池少于 8 只，结果不适合比较持仓差异" if len(symbols) < 8 else ""
         ),
         "initial_cash": 100_000.0,
         "optimization": {
@@ -1085,7 +1154,9 @@ def main() -> int:
             max_symbols=args.universe_size,
         )
     payload = run_suite(args.db, symbols, args.start, args.end)
-    atomic_write_text(args.output, json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
+    atomic_write_text(
+        args.output, json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
+    )
     print(
         f"variant suite completed: variants={len(payload['variants'])} "
         f"symbols={len(payload['symbols'])} output={args.output}"

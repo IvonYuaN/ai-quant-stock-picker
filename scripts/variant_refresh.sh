@@ -80,6 +80,47 @@ with sqlite3.connect(db_path) as conn:
         raise SystemExit("数据库缺少 raw ohlcv 或 daily_qfq/stocks 表")
 PY
 )"
+PREVIOUS_RESET_DATE="$(
+    AQSP_VARIANT_DB="$DB_PATH" RESET_DATE="$RESET_DATE" \
+        "$PYTHON_BIN" - <<'PY'
+import os
+import sqlite3
+from pathlib import Path
+
+
+db_path = Path(os.environ["AQSP_VARIANT_DB"])
+reset_date = os.environ["RESET_DATE"]
+compact_reset = reset_date.replace("-", "")
+with sqlite3.connect(db_path) as conn:
+    tables = {
+        str(row[0])
+        for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+    }
+    if {"daily_qfq", "stocks"} <= tables:
+        row = conn.execute(
+            """
+            SELECT MAX(trade_date)
+            FROM daily_qfq
+            WHERE trade_date != 'SKIP' AND trade_date < ?
+            """,
+            (compact_reset,),
+        ).fetchone()
+        value = str(row[0] or "")
+        print(f"{value[:4]}-{value[4:6]}-{value[6:8]}" if len(value) == 8 else "")
+    elif "ohlcv" in tables:
+        row = conn.execute(
+            """
+            SELECT MAX(date)
+            FROM ohlcv
+            WHERE price_mode = 'raw' AND workload = 'historical' AND date < ?
+            """,
+            (reset_date,),
+        ).fetchone()
+        print(str(row[0] or ""))
+    else:
+        raise SystemExit("数据库缺少 raw ohlcv 或 daily_qfq/stocks 表")
+PY
+)"
 TODAY="$($PYTHON_BIN - <<'PY'
 from aqsp.core.time import today_shanghai
 
@@ -103,19 +144,36 @@ nice -n "$VARIANT_NICE" "$PYTHON_BIN" "$PROJECT_ROOT/scripts/run_variant_suite.p
 
 VARIANT_TMP="$TMP_OUTPUT" VARIANT_OUTPUT="$OUTPUT_PATH" \
 EXPECTED_START_DATE="$RESET_DATE" EXPECTED_END_DATE="$RESET_DATE" \
+EXPECTED_PREVIOUS_DATE="$PREVIOUS_RESET_DATE" \
     "$PYTHON_BIN" - <<'PY'
 import json
 import os
 import stat
 from pathlib import Path
 
-from scripts.run_variant_suite import validate_variant_artifact
+from scripts.run_variant_suite import (
+    attach_previous_variant_holdings,
+    validate_variant_artifact,
+)
 
 temporary = Path(os.environ["VARIANT_TMP"])
 output = Path(os.environ["VARIANT_OUTPUT"])
 expected_date = os.environ["EXPECTED_END_DATE"]
 expected_start_date = os.environ["EXPECTED_START_DATE"]
 payload = json.loads(temporary.read_text(encoding="utf-8"))
+previous_payload = None
+if output.exists():
+    try:
+        candidate = json.loads(output.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        candidate = None
+    if isinstance(candidate, dict):
+        previous_payload = candidate
+payload = attach_previous_variant_holdings(
+    payload,
+    previous_payload,
+    expected_previous_date=os.environ.get("EXPECTED_PREVIOUS_DATE", ""),
+)
 validate_variant_artifact(
     payload,
     expected_end_date=expected_date,

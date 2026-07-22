@@ -7,6 +7,7 @@ import pytest
 from scripts.run_variant_suite import (
     _prepare_base_signal_frame,
     _prepare_signal_frame,
+    attach_previous_variant_holdings,
     load_frames,
     run_suite,
     select_stratified_symbols,
@@ -51,8 +52,12 @@ def test_run_suite_creates_fourteen_independent_ten_wan_accounts(tmp_path):
     result = run_suite(db, ("AAA",), "2026-01-01", "2026-01-30")
     assert result["initial_cash"] == 100_000.0
     assert 24 <= len(result["variants"]) <= 40
-    assert len({item["variant_id"] for item in result["variants"]}) == len(result["variants"])
-    assert len({item["label"] for item in result["variants"]}) == len(result["variants"])
+    assert len({item["variant_id"] for item in result["variants"]}) == len(
+        result["variants"]
+    )
+    assert len({item["label"] for item in result["variants"]}) == len(
+        result["variants"]
+    )
     assert {item["initial_cash"] for item in result["variants"]} == {100_000.0}
     assert all("cash" in item and "total_pnl" in item for item in result["variants"])
     assert all("strategy" in item and "holdings" in item for item in result["variants"])
@@ -97,7 +102,21 @@ def test_select_stratified_symbols_spans_boards_and_turnover_quantiles(tmp_path)
         rows = []
         for index, symbol in enumerate(symbols):
             rows.append(
-                (symbol, "2026-07-16", "raw", "historical", 10, 11, 9, 10, 1000, (index + 1) * 1_000_000, 0, 11, 9)
+                (
+                    symbol,
+                    "2026-07-16",
+                    "raw",
+                    "historical",
+                    10,
+                    11,
+                    9,
+                    10,
+                    1000,
+                    (index + 1) * 1_000_000,
+                    0,
+                    11,
+                    9,
+                )
             )
         conn.executemany("INSERT INTO ohlcv VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", rows)
 
@@ -142,6 +161,44 @@ def test_external_raw_database_loader_keeps_board_symbols_and_dates(tmp_path):
     assert set(selected) == {"600001", "000001"}
     assert set(frames) == set(selected)
     assert set(frames["600001"]["date"]) == {"2026-07-17", "2026-07-20"}
+
+
+def test_attach_previous_variant_holdings_requires_exact_previous_date() -> None:
+    current = {
+        "end_date": "2026-07-20",
+        "variants": [
+            {
+                "variant_id": "trend_lb10_n3",
+                "holdings": [{"symbol": "600001", "quantity": 100}],
+            }
+        ],
+    }
+    previous = {
+        "end_date": "2026-07-17",
+        "variants": [
+            {
+                "variant_id": "trend_lb10_n3",
+                "holdings": [{"symbol": "000001", "quantity": 200}],
+            }
+        ],
+    }
+
+    carried = attach_previous_variant_holdings(
+        current,
+        previous,
+        expected_previous_date="2026-07-17",
+    )
+    assert carried["variants"][0]["previous_holdings"] == [
+        {"symbol": "000001", "quantity": 200}
+    ]
+    assert (
+        "previous_holdings"
+        not in attach_previous_variant_holdings(
+            current,
+            previous,
+            expected_previous_date="2026-07-18",
+        )["variants"][0]
+    )
 
 
 def test_fast_indicator_cache_matches_causal_pandas_features() -> None:

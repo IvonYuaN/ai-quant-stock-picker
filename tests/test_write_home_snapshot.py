@@ -127,6 +127,45 @@ def test_walkforward_evidence_rejects_old_or_invalid_sidecar(
     ) == (False, None)
 
 
+def test_variant_snapshot_reads_carried_forward_previous_holdings(
+    monkeypatch, tmp_path
+) -> None:
+    artifact = {
+        "initial_cash": 100_000.0,
+        "start_date": "2026-07-20",
+        "end_date": "2026-07-20",
+        "data_mode": "historical_raw_unadjusted",
+        "execution_rules": {"t_plus_one": True},
+        "variants": [
+            {
+                "variant_id": "trend_lb10_n3",
+                "label": "趋势·10日·3持仓",
+                "initial_cash": 100_000.0,
+                "cash": 90_000.0,
+                "final_equity": 100_000.0,
+                "total_pnl": 0.0,
+                "return_pct": 0.0,
+                "filled_orders": 1,
+                "rejected_orders": 0,
+                "holdings": [{"symbol": "600001", "quantity": 100, "last_price": 11.0}],
+                "previous_holdings": [
+                    {"symbol": "000001", "quantity": 200, "last_price": 10.0}
+                ],
+                "fills": [],
+            }
+        ],
+    }
+    path = tmp_path / "variant_results.json"
+    path.write_text(json.dumps(artifact), encoding="utf-8")
+    monkeypatch.setenv("AQSP_VARIANT_RESULTS", str(path))
+
+    variants = write_home_snapshot._variant_snapshot()
+
+    assert variants[0].holdings[0].symbol == "600001"
+    assert variants[0].previous_holdings is not None
+    assert variants[0].previous_holdings[0].symbol == "000001"
+
+
 class _Provider:
     def __init__(self, debate_symbol: str = "600003") -> None:
         self.digest_calls: list[tuple[str, str]] = []
@@ -247,7 +286,13 @@ def test_write_home_snapshot_builds_bounded_advisory_only_payload(monkeypatch) -
         "600005",
     ]
 
-    assert [item.score for item in snapshot.candidates] == [88.0, 80.0, 72.0, 66.0, 99.0]
+    assert [item.score for item in snapshot.candidates] == [
+        88.0,
+        80.0,
+        72.0,
+        66.0,
+        99.0,
+    ]
     assert snapshot.candidates[0].deterministic_reasons == ("MA20 斜率向上",)
     assert snapshot.candidates[0].strategies == ("ma_pullback",)
     assert snapshot.candidates[0].evidence_status == "有独立规则证据"

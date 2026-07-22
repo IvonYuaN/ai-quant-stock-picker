@@ -649,18 +649,26 @@ def _runtime_debates_for_snapshot(
         if not symbol or symbol not in candidate_symbols or symbol in seen:
             continue
         rounds = record.get("rounds")
-        rounds = [item for item in rounds if isinstance(item, dict)] if isinstance(rounds, list) else []
+        rounds = (
+            [item for item in rounds if isinstance(item, dict)]
+            if isinstance(rounds, list)
+            else []
+        )
         if not rounds:
             continue
         final_round = max(
             rounds,
             key=lambda item: int(item.get("round_num") or item.get("round") or 0),
         )
-        opinions = [item for item in final_round.get("opinions", ()) if isinstance(item, dict)]
+        opinions = [
+            item for item in final_round.get("opinions", ()) if isinstance(item, dict)
+        ]
         vote_map = record.get("final_vote")
         if not isinstance(vote_map, dict):
             vote_map = {
-                _text(item.get("role")): _text(item.get("final_position") or item.get("stance"))
+                _text(item.get("role")): _text(
+                    item.get("final_position") or item.get("stance")
+                )
                 for item in opinions
                 if _text(item.get("role"))
             }
@@ -671,9 +679,16 @@ def _runtime_debates_for_snapshot(
             SimpleNamespace(role_id=role, role_label=role) for role in roles
         )
         counts = {
-            "bull_count": sum(str(v).strip().lower() in {"bull", "bullish"} for v in vote_map.values()),
-            "bear_count": sum(str(v).strip().lower() in {"bear", "bearish"} for v in vote_map.values()),
-            "neutral_count": sum(str(v).strip().lower() in {"neutral", "watch"} for v in vote_map.values()),
+            "bull_count": sum(
+                str(v).strip().lower() in {"bull", "bullish"} for v in vote_map.values()
+            ),
+            "bear_count": sum(
+                str(v).strip().lower() in {"bear", "bearish"} for v in vote_map.values()
+            ),
+            "neutral_count": sum(
+                str(v).strip().lower() in {"neutral", "watch"}
+                for v in vote_map.values()
+            ),
         }
         selected.append(
             SimpleNamespace(
@@ -688,7 +703,9 @@ def _runtime_debates_for_snapshot(
                 agent_views=agent_views,
                 round_count=len(rounds),
                 round_summaries=tuple(
-                    _text(item.get("summary")) for item in rounds if _text(item.get("summary"))
+                    _text(item.get("summary"))
+                    for item in rounds
+                    if _text(item.get("summary"))
                 ),
                 process_recorded=record.get("process_recorded"),
                 conclusion_recorded=record.get("conclusion_recorded"),
@@ -754,9 +771,7 @@ def _news_report_path() -> Path:
         return path
     runtime_root = os.getenv("AQSP_RUNTIME_ROOT", "").strip()
     return (
-        Path(runtime_root).expanduser() / path
-        if runtime_root
-        else PROJECT_ROOT / path
+        Path(runtime_root).expanduser() / path if runtime_root else PROJECT_ROOT / path
     )
 
 
@@ -769,9 +784,7 @@ def _news_json_report_path() -> Path:
         return path
     runtime_root = os.getenv("AQSP_RUNTIME_ROOT", "").strip()
     return (
-        Path(runtime_root).expanduser() / path
-        if runtime_root
-        else PROJECT_ROOT / path
+        Path(runtime_root).expanduser() / path if runtime_root else PROJECT_ROOT / path
     )
 
 
@@ -780,7 +793,11 @@ def _news_json_archive_path(signal_date: str) -> Path:
     path = Path(raw_path).expanduser()
     if not path.is_absolute():
         runtime_root = os.getenv("AQSP_RUNTIME_ROOT", "").strip()
-        path = Path(runtime_root).expanduser() / path if runtime_root else PROJECT_ROOT / path
+        path = (
+            Path(runtime_root).expanduser() / path
+            if runtime_root
+            else PROJECT_ROOT / path
+        )
     return path / f"news-{signal_date}.json"
 
 
@@ -789,7 +806,11 @@ def _news_archive_dates() -> tuple[str, ...]:
     path = Path(raw_path).expanduser()
     if not path.is_absolute():
         runtime_root = os.getenv("AQSP_RUNTIME_ROOT", "").strip()
-        path = Path(runtime_root).expanduser() / path if runtime_root else PROJECT_ROOT / path
+        path = (
+            Path(runtime_root).expanduser() / path
+            if runtime_root
+            else PROJECT_ROOT / path
+        )
     if not path.is_dir():
         return ()
     dates: list[str] = []
@@ -1349,9 +1370,7 @@ def _runtime_json_path(env_name: str, default: str) -> Path:
         return path
     runtime_root = os.getenv("AQSP_RUNTIME_ROOT", "").strip()
     return (
-        Path(runtime_root).expanduser() / path
-        if runtime_root
-        else PROJECT_ROOT / path
+        Path(runtime_root).expanduser() / path if runtime_root else PROJECT_ROOT / path
     )
 
 
@@ -1587,21 +1606,21 @@ def _variant_snapshot(
         if not isinstance(item, dict) or item.get("initial_cash") != 100_000.0:
             continue
         holdings = tuple(
-            HomeSnapshotHolding(
-                symbol=_text(holding.get("symbol")),
-                quantity=int(holding.get("quantity") or 0),
-                average_price=float(holding.get("average_price") or 0.0),
-                last_price=float(holding.get("last_price") or 0.0),
-                market_value=float(holding.get("market_value") or 0.0),
-                unrealized_pnl=float(holding.get("unrealized_pnl") or 0.0),
-                name=_first_text(
-                    holding.get("name"),
-                    holding.get("display_name"),
-                    variant_names.get(_text(holding.get("symbol"))),
-                ),
-            )
+            parsed
             for holding in item.get("holdings", ())
-            if isinstance(holding, dict)
+            if (parsed := _variant_holding_from_payload(holding, variant_names))
+            is not None
+        )
+        raw_previous_holdings = item.get("previous_holdings")
+        previous_holdings = (
+            tuple(
+                parsed
+                for holding in raw_previous_holdings
+                if (parsed := _variant_holding_from_payload(holding, variant_names))
+                is not None
+            )
+            if isinstance(raw_previous_holdings, list)
+            else _previous_variant_holdings(item.get("fills"), holdings, variant_names)
         )
         raw_strategy = item.get("strategy")
         strategy = (
@@ -1626,14 +1645,39 @@ def _variant_snapshot(
                 data_mode=_text(payload.get("data_mode")),
                 strategy=strategy,
                 holdings=holdings,
-                previous_holdings=_previous_variant_holdings(
-                    item.get("fills"), holdings, variant_names
+                previous_holdings=previous_holdings,
+                recent_actions=_variant_recent_actions(
+                    item.get("fills"), variant_names
                 ),
-                recent_actions=_variant_recent_actions(item.get("fills"), variant_names),
                 hard_rules=rule_labels if isinstance(rules, dict) else (),
             )
         )
     return tuple(variants)
+
+
+def _variant_holding_from_payload(
+    raw_holding: object,
+    symbol_names: dict[str, str],
+) -> HomeSnapshotHolding | None:
+    """Normalize a current or carried-forward holding without inventing symbols."""
+    if not isinstance(raw_holding, dict):
+        return None
+    symbol = _text(raw_holding.get("symbol"))
+    if not symbol:
+        return None
+    return HomeSnapshotHolding(
+        symbol=symbol,
+        quantity=int(raw_holding.get("quantity") or 0),
+        average_price=float(raw_holding.get("average_price") or 0.0),
+        last_price=float(raw_holding.get("last_price") or 0.0),
+        market_value=float(raw_holding.get("market_value") or 0.0),
+        unrealized_pnl=float(raw_holding.get("unrealized_pnl") or 0.0),
+        name=_first_text(
+            raw_holding.get("name"),
+            raw_holding.get("display_name"),
+            symbol_names.get(symbol),
+        ),
+    )
 
 
 def _variant_provenance() -> dict[str, object]:
@@ -1643,9 +1687,7 @@ def _variant_provenance() -> dict[str, object]:
     )
     coverage = payload.get("data_coverage")
     raw_coverage = (
-        coverage.get("end_date_coverage_pct")
-        if isinstance(coverage, dict)
-        else None
+        coverage.get("end_date_coverage_pct") if isinstance(coverage, dict) else None
     )
     try:
         coverage_pct = float(raw_coverage) if raw_coverage is not None else None
@@ -1673,9 +1715,7 @@ def _variant_provenance() -> dict[str, object]:
         ),
         "latest_trade_date": _text(payload.get("data_latest_trade_date")),
         "sources": tuple(
-            _text(value)
-            for value in payload.get("data_sources", ())
-            if _text(value)
+            _text(value) for value in payload.get("data_sources", ()) if _text(value)
         ),
         "coverage_pct": coverage_pct,
     }
@@ -1697,7 +1737,7 @@ def _previous_variant_holdings(
     raw_fills: object,
     current_holdings: tuple[HomeSnapshotHolding, ...],
     symbol_names: dict[str, str] | None = None,
-) -> tuple[HomeSnapshotHolding, ...]:
+) -> tuple[HomeSnapshotHolding, ...] | None:
     """Replay filled trades before the last filled date for a comparable view."""
     fills = [
         fill
@@ -1708,7 +1748,7 @@ def _previous_variant_holdings(
         and _text(fill.get("symbol"))
     ]
     if not fills:
-        return ()
+        return None
     last_date = max(_text(fill.get("date"))[:10] for fill in fills)
     positions: dict[str, tuple[int, float]] = {}
     for fill in fills:
