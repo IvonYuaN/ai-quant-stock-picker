@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 import sqlite3
+import time
 from bisect import bisect_left
 from collections import defaultdict
 from collections.abc import Mapping
@@ -930,6 +931,7 @@ def run_suite(
     start: str,
     end: str,
 ) -> dict[str, object]:
+    started_at = time.perf_counter()
     start_day = date.fromisoformat(start)
     end_day = date.fromisoformat(end)
     if start_day > end_day:
@@ -979,6 +981,11 @@ def run_suite(
                 "selection": profile.selection,
             }
             results.append(payload)
+            print(
+                f"variant completed: {profile.variant_id} "
+                f"symbols={len(frames)} filled={payload.get('filled_orders', 0)}",
+                flush=True,
+            )
     generated_variant_count = len(results)
     results, duplicate_portfolios_removed = deduplicate_variant_results(
         results, symbol_count=len(symbols)
@@ -1040,6 +1047,7 @@ def run_suite(
             "variant_count": len(results),
             "duplicate_portfolios_removed": duplicate_portfolios_removed,
             "selected_variant_id": results[0]["variant_id"] if results else "",
+            "elapsed_seconds": round(time.perf_counter() - started_at, 2),
         },
         "execution_rules": {
             "t_plus_one": True,

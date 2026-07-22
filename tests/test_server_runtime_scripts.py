@@ -799,6 +799,8 @@ def test_variant_refresh_prefers_production_raw_database() -> None:
     )
 
     assert "AQSP_VARIANT_DB:-${AQSP_SQLITE_DB_PATH:-${RUNTIME_ROOT}/data/cache.db}" in script
+    assert 'VARIANT_NICE="${AQSP_VARIANT_NICE:-10}"' in script
+    assert 'nice -n "$VARIANT_NICE"' in script
 
 
 def test_bt_task_propagates_intraday_runner_failure_to_cron(

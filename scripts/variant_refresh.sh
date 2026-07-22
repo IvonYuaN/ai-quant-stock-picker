@@ -10,6 +10,7 @@ OUTPUT_PATH="${AQSP_VARIANT_RESULTS:-${RUNTIME_ROOT}/data/runtime/variant_result
 SNAPSHOT_PATH="${AQSP_HOME_SNAPSHOT_PATH:-${RUNTIME_ROOT}/data/runtime/home_dashboard_snapshot.json}"
 INDEX_PATH="${AQSP_HOME_SNAPSHOT_INDEX_PATH:-${RUNTIME_ROOT}/data/runtime/home_dashboard_snapshot_index.json}"
 UNIVERSE_SIZE="${AQSP_VARIANT_UNIVERSE_SIZE:-0}"
+VARIANT_NICE="${AQSP_VARIANT_NICE:-10}"
 
 if [[ ! -x "$PYTHON_BIN" ]]; then
     echo "variant refresh requires release Python: $PYTHON_BIN" >&2
@@ -17,6 +18,10 @@ if [[ ! -x "$PYTHON_BIN" ]]; then
 fi
 if [[ ! -f "$DB_PATH" ]]; then
     echo "variant refresh database is missing: $DB_PATH" >&2
+    exit 1
+fi
+if [[ ! "$VARIANT_NICE" =~ ^[0-9]+$ ]] || (( VARIANT_NICE > 19 )); then
+    echo "variant refresh nice must be an integer from 0 to 19: $VARIANT_NICE" >&2
     exit 1
 fi
 
@@ -89,7 +94,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-"$PYTHON_BIN" "$PROJECT_ROOT/scripts/run_variant_suite.py" \
+nice -n "$VARIANT_NICE" "$PYTHON_BIN" "$PROJECT_ROOT/scripts/run_variant_suite.py" \
     --db "$DB_PATH" \
     --universe-size "$UNIVERSE_SIZE" \
     --start "$RESET_DATE" \
