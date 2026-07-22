@@ -21,10 +21,58 @@ if [[ ! -f "$DB_PATH" ]]; then
 fi
 
 export PYTHONPATH="${PROJECT_ROOT}/src:${PROJECT_ROOT}:${PYTHONPATH:-}"
-RESET_DATE="$($PYTHON_BIN - <<'PY'
+CALENDAR_CANDIDATE_DATE="$($PYTHON_BIN - <<'PY'
 from aqsp.core.time import get_previous_trading_day, today_shanghai
 
 print(get_previous_trading_day(today_shanghai()).isoformat())
+PY
+)"
+RESET_DATE="$(
+    AQSP_VARIANT_DB="$DB_PATH" CALENDAR_CANDIDATE_DATE="$CALENDAR_CANDIDATE_DATE" \
+        "$PYTHON_BIN" - <<'PY'
+import os
+import sqlite3
+from pathlib import Path
+
+
+db_path = Path(os.environ["AQSP_VARIANT_DB"])
+candidate = os.environ["CALENDAR_CANDIDATE_DATE"]
+compact_candidate = candidate.replace("-", "")
+with sqlite3.connect(db_path) as conn:
+    tables = {
+        str(row[0])
+        for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+    }
+    if {"daily_qfq", "stocks"} <= tables:
+        row = conn.execute(
+            """
+            SELECT MAX(trade_date)
+            FROM daily_qfq
+            WHERE trade_date != 'SKIP' AND trade_date <= ?
+            """,
+            (compact_candidate,),
+        ).fetchone()
+        value = str(row[0] or "")
+        if len(value) == 8:
+            print(f"{value[:4]}-{value[4:6]}-{value[6:8]}")
+        else:
+            raise SystemExit("raw daily_qfq 没有不晚于日历候选日的交易日")
+    elif "ohlcv" in tables:
+        row = conn.execute(
+            """
+            SELECT MAX(date)
+            FROM ohlcv
+            WHERE price_mode = 'raw' AND workload = 'historical' AND date <= ?
+            """,
+            (candidate,),
+        ).fetchone()
+        value = str(row[0] or "")
+        if value:
+            print(value)
+        else:
+            raise SystemExit("raw ohlcv 没有不晚于日历候选日的交易日")
+    else:
+        raise SystemExit("数据库缺少 raw ohlcv 或 daily_qfq/stocks 表")
 PY
 )"
 TODAY="$($PYTHON_BIN - <<'PY'
