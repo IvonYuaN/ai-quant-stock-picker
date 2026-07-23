@@ -70,7 +70,24 @@ with sqlite3.connect(db_path) as conn:
         str(row[0])
         for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
     }
-    if {"daily_qfq", "stocks"} <= tables:
+    if "ohlcv" in tables:
+        columns = {str(row[1]) for row in conn.execute("PRAGMA table_info(ohlcv)")}
+        if "workload" not in columns:
+            raise SystemExit("paper_realtime 数据表缺少 workload，拒绝使用历史数据")
+        row = conn.execute(
+            """
+            SELECT MAX(date)
+            FROM ohlcv
+            WHERE price_mode = 'raw' AND workload = ? AND date <= ?
+            """,
+            (workload, candidate),
+        ).fetchone()
+        value = str(row[0] or "")
+        if value:
+            print(value)
+        else:
+            raise SystemExit("raw live_short ohlcv 没有不晚于日历候选日的交易日")
+    elif {"daily_qfq", "stocks"} <= tables:
         if run_mode == "paper_realtime":
             raise SystemExit("paper_realtime 要求 ohlcv(raw,live_short)，不得读取 daily_qfq")
         row = conn.execute(
@@ -123,7 +140,20 @@ with sqlite3.connect(db_path) as conn:
         str(row[0])
         for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
     }
-    if {"daily_qfq", "stocks"} <= tables:
+    if "ohlcv" in tables:
+        columns = {str(row[1]) for row in conn.execute("PRAGMA table_info(ohlcv)")}
+        if "workload" not in columns:
+            raise SystemExit("paper_realtime 数据表缺少 workload，拒绝使用历史数据")
+        row = conn.execute(
+            """
+            SELECT MAX(date)
+            FROM ohlcv
+            WHERE price_mode = 'raw' AND workload = ? AND date < ?
+            """,
+            (workload, reset_date),
+        ).fetchone()
+        print(str(row[0] or ""))
+    elif {"daily_qfq", "stocks"} <= tables:
         if run_mode == "paper_realtime":
             raise SystemExit("paper_realtime 要求 ohlcv(raw,live_short)，不得读取 daily_qfq")
         row = conn.execute(
@@ -156,6 +186,10 @@ from aqsp.core.time import today_shanghai
 print(today_shanghai().isoformat())
 PY
 )"
+if [[ "$RUN_MODE" == "paper_realtime" && "$RESET_DATE" != "$TODAY" ]]; then
+    echo "paper_realtime live_short 数据未覆盖今日交易日: today=$TODAY latest=$RESET_DATE" >&2
+    exit 1
+fi
 
 # The paper suite is refreshed at the latest completed raw trade date, while
 # the dashboard snapshot remains dated today and must not present history as
@@ -167,6 +201,10 @@ cleanup() {
     rm -f -- "$TMP_OUTPUT"
 }
 trap cleanup EXIT
+PREVIOUS_ARGS=()
+if [[ -f "$OUTPUT_PATH" ]]; then
+    PREVIOUS_ARGS=(--previous-output "$OUTPUT_PATH")
+fi
 
 nice -n "$VARIANT_NICE" "$PYTHON_BIN" "$PROJECT_ROOT/scripts/run_variant_suite.py" \
     --db "$DB_PATH" \
@@ -174,6 +212,8 @@ nice -n "$VARIANT_NICE" "$PYTHON_BIN" "$PROJECT_ROOT/scripts/run_variant_suite.p
     --start "$RESET_DATE" \
     --end "$RESET_DATE" \
     --run-mode "$RUN_MODE" \
+    "${PREVIOUS_ARGS[@]}" \
+    --previous-date "$PREVIOUS_RESET_DATE" \
     --output "$TMP_OUTPUT"
 
 VARIANT_TMP="$TMP_OUTPUT" VARIANT_OUTPUT="$OUTPUT_PATH" \

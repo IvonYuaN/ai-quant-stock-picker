@@ -5,6 +5,7 @@ import pandas as pd
 import pytest
 
 from scripts.run_variant_suite import (
+    _simulate_with_previous_baseline,
     _prepare_base_signal_frame,
     _prepare_signal_frame,
     attach_previous_variant_holdings,
@@ -14,6 +15,50 @@ from scripts.run_variant_suite import (
     validate_previous_variant_baseline,
     validate_variant_artifact,
 )
+from aqsp.backtest.variant_account import VariantExecutionRules, VariantOrder
+
+
+def test_variant_suite_carries_yesterday_position_into_today_pnl_and_sell_rules():
+    frame = pd.DataFrame(
+        [
+            {
+                "date": "2026-07-20",
+                "open": 11.0,
+                "high": 12.0,
+                "low": 10.5,
+                "close": 12.0,
+                "volume": 1000.0,
+                "amount": 11000.0,
+                "suspended": 0,
+                "limit_up": 13.0,
+                "limit_down": 9.0,
+            }
+        ]
+    )
+    payload = _simulate_with_previous_baseline(
+        "v1",
+        {"600001": frame},
+        (VariantOrder("2026-07-20", "600001", "sell", evidence=("exit",)),),
+        {
+            "cash": 99_000.0,
+            "holdings": [
+                {
+                    "symbol": "600001",
+                    "quantity": 100,
+                    "average_price": 10.0,
+                }
+            ],
+        },
+        start="2026-07-20",
+        rules=VariantExecutionRules(initial_cash=100_000.0),
+    )
+
+    assert payload["positions"] == {}
+    assert payload["holdings"] == []
+    assert [fill["side"] for fill in payload["fills"]] == ["sell"]
+    assert payload["fills"][0]["status"] == "filled"
+    assert payload["final_equity"] > 100_000.0
+    assert payload["total_pnl"] == pytest.approx(payload["final_equity"] - 100_000.0)
 
 
 def test_run_suite_creates_distinct_independent_ten_wan_accounts(tmp_path):

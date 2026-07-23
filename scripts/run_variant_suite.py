@@ -739,6 +739,7 @@ def build_orders(
     first_trade_date: str = "",
     prepared_cache: dict[tuple[str, int], pd.DataFrame] | None = None,
     base_cache: dict[str, pd.DataFrame] | None = None,
+    initial_active_symbols: set[str] | None = None,
 ) -> tuple[VariantOrder, ...]:
     signals_by_date: dict[str, list[tuple[str, float, bool, bool, tuple[str, ...]]]] = (
         defaultdict(list)
@@ -894,7 +895,7 @@ def build_orders(
             )
 
     orders: list[VariantOrder] = []
-    active_symbols: set[str] = set()
+    active_symbols: set[str] = set(initial_active_symbols or ())
     for trade_date in sorted(signals_by_date):
         signals = signals_by_date[trade_date]
         entries = sorted(
@@ -938,6 +939,127 @@ def build_orders(
                 )
                 active_symbols.add(symbol)
     return tuple(orders)
+
+
+def _simulate_with_previous_baseline(
+    variant_id: str,
+    frames: dict[str, pd.DataFrame],
+    orders: tuple[VariantOrder, ...],
+    previous: Mapping[str, object] | None,
+    *,
+    start: str,
+    rules: VariantExecutionRules,
+) -> dict[str, object]:
+    """Run today's orders with yesterday's paper account as the seed state."""
+    if previous is None:
+        return variant_result_to_dict(
+            simulate_variant(variant_id, frames, orders, rules=rules)
+        )
+    holdings = previous.get("holdings", [])
+    if not isinstance(holdings, list):
+        raise ValueError(f"变体 {variant_id} 昨日持仓结构无效")
+    previous_cash = float(previous.get("cash") or 0.0)
+    if previous_cash < 0:
+        raise ValueError(f"变体 {variant_id} 昨日现金无效")
+    seed_date = (date.fromisoformat(start) - timedelta(days=1)).isoformat()
+    seeded_frames = {symbol: frame.copy() for symbol, frame in frames.items()}
+    seed_orders: list[VariantOrder] = []
+    seed_cost = 0.0
+    for holding in holdings:
+        if not isinstance(holding, dict):
+            raise ValueError(f"变体 {variant_id} 昨日持仓项无效")
+        symbol = str(holding.get("symbol") or "")
+        quantity = int(holding.get("quantity") or 0)
+        average_price = float(holding.get("average_price") or 0.0)
+        if quantity <= 0:
+            continue
+        if symbol not in seeded_frames or average_price <= 0:
+            raise ValueError(
+                f"变体 {variant_id} 昨日持仓无法在今日样本池复现: {symbol}"
+            )
+        frame = seeded_frames[symbol]
+        seed_row = {column: None for column in frame.columns}
+        seed_row.update(
+            {
+                "date": seed_date,
+                "open": average_price / (1.0 + rules.slippage_bps / 10_000.0),
+                "high": average_price,
+                "low": average_price,
+                "close": average_price,
+                "volume": 0.0,
+                "amount": 0.0,
+                "suspended": 0,
+                "limit_up": None,
+                "limit_down": None,
+            }
+        )
+        seeded_frames[symbol] = pd.concat(
+            [pd.DataFrame([seed_row]), frame], ignore_index=True
+        )
+        gross = quantity * average_price
+        fee = max(gross * rules.commission_rate, rules.min_commission)
+        seed_cost += gross + fee
+        seed_orders.append(
+            VariantOrder(seed_date, symbol, "buy", weight=0.0, evidence=())
+        )
+    if not seed_orders:
+        return variant_result_to_dict(
+            simulate_variant(variant_id, frames, orders, rules=rules)
+        )
+    seed_cash = previous_cash + seed_cost
+    seed_rules = VariantExecutionRules(
+        initial_cash=seed_cash,
+        commission_rate=rules.commission_rate,
+        stamp_tax_rate=rules.stamp_tax_rate,
+        min_commission=rules.min_commission,
+        slippage_bps=rules.slippage_bps,
+        lot_size=rules.lot_size,
+    )
+    # Convert each seed order's zero weight into the fraction needed to buy the
+    # exact carried lot from the available seed cash.
+    cash_before = seed_cash
+    sized_seed_orders: list[VariantOrder] = []
+    for order, holding in zip(
+        seed_orders,
+        (
+            item
+            for item in holdings
+            if isinstance(item, dict) and int(item.get("quantity") or 0) > 0
+        ),
+    ):
+        quantity = int(holding["quantity"])
+        price = float(holding["average_price"])
+        gross = quantity * price
+        fee = max(gross * seed_rules.commission_rate, seed_rules.min_commission)
+        sized_seed_orders.append(
+            VariantOrder(
+                order.date,
+                order.symbol,
+                order.side,
+                weight=min(1.0, (gross + fee + 0.01) / max(cash_before, 0.01)),
+            )
+        )
+        cash_before -= gross + fee
+    result = simulate_variant(
+        variant_id,
+        seeded_frames,
+        tuple(sized_seed_orders) + orders,
+        rules=seed_rules,
+    )
+    payload = variant_result_to_dict(result)
+    payload["initial_cash"] = rules.initial_cash
+    payload["total_pnl"] = float(payload["final_equity"]) - rules.initial_cash
+    payload["return_pct"] = payload["total_pnl"] / rules.initial_cash * 100.0
+    payload["fills"] = [
+        fill for fill in payload["fills"] if str(fill.get("date")) >= start
+    ]
+    payload["filled_orders"] = sum(
+        fill.get("status") == "filled" for fill in payload["fills"]
+    )
+    payload["rejected_orders"] = sum(
+        fill.get("status") == "rejected" for fill in payload["fills"]
+    )
+    return payload
 
 
 def _rsi(close: pd.Series, period: int) -> pd.Series:
@@ -1227,6 +1349,8 @@ def run_suite(
     end: str,
     *,
     run_mode: str = "backtest_historical",
+    previous_payload: Mapping[str, object] | None = None,
+    previous_date: str = "",
 ) -> dict[str, object]:
     normalized_mode = _validate_run_mode(run_mode)
     data_mode, research_mode, live_recommendation_allowed = _artifact_modes(
@@ -1240,8 +1364,8 @@ def run_suite(
     grid = load_variant_grid()
     warmup_start = start_day - timedelta(days=grid.feature_warmup_calendar_days)
     # Indicators may use only bars before the reset date as warm-up data. Orders
-    # are filtered separately, so the paper account always starts from zero cash
-    # and zero holdings on the requested reset date.
+    # are filtered separately; a realtime run may additionally seed yesterday's
+    # verified paper account below.
     frames = load_frames(
         db_path,
         symbols,
@@ -1251,6 +1375,16 @@ def run_suite(
     )
     rules = VariantExecutionRules(initial_cash=100_000.0)
     profiles = generate_variant_profiles(frames, training_end=start, grid=grid)
+    previous_by_id = {}
+    if previous_payload is not None:
+        if str(previous_payload.get("end_date", "")) == previous_date:
+            previous_variants = previous_payload.get("variants")
+            if isinstance(previous_variants, list):
+                previous_by_id = {
+                    str(item.get("variant_id")): item
+                    for item in previous_variants
+                    if isinstance(item, dict) and item.get("variant_id")
+                }
     results = []
     base_cache: dict[str, pd.DataFrame] = {}
     for lookback in sorted({profile.lookback for profile in profiles}):
@@ -1258,19 +1392,33 @@ def run_suite(
         # indicators remain cached for the other orthogonal variants.
         prepared_cache: dict[tuple[str, int], pd.DataFrame] = {}
         for profile in (item for item in profiles if item.lookback == lookback):
-            result = simulate_variant(
-                profile.variant_id,
+            previous = previous_by_id.get(profile.variant_id)
+            initial_active_symbols = {
+                str(item.get("symbol"))
+                for item in (previous or {}).get("holdings", [])
+                if isinstance(item, dict) and int(item.get("quantity") or 0) > 0
+            }
+            orders = build_orders(
                 frames,
-                build_orders(
-                    frames,
-                    profile,
-                    first_trade_date=start,
-                    prepared_cache=prepared_cache,
-                    base_cache=base_cache,
-                ),
-                rules=rules,
+                profile,
+                first_trade_date=start,
+                prepared_cache=prepared_cache,
+                base_cache=base_cache,
+                initial_active_symbols=initial_active_symbols,
             )
-            payload = variant_result_to_dict(result)
+            if previous is not None:
+                payload = _simulate_with_previous_baseline(
+                    profile.variant_id,
+                    frames,
+                    orders,
+                    previous,
+                    start=start,
+                    rules=rules,
+                )
+            else:
+                payload = variant_result_to_dict(
+                    simulate_variant(profile.variant_id, frames, orders, rules=rules)
+                )
             payload["label"] = profile.label
             payload["holdings_date"] = end
             payload["previous_holdings_date"] = ""
@@ -1391,6 +1539,8 @@ def main() -> int:
     parser.add_argument("--start", required=True)
     parser.add_argument("--end", required=True)
     parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument("--previous-output", type=Path)
+    parser.add_argument("--previous-date", default="")
     parser.add_argument(
         "--run-mode",
         choices=VARIANT_RUN_MODES,
@@ -1406,12 +1556,23 @@ def main() -> int:
             max_symbols=args.universe_size,
             run_mode=args.run_mode,
         )
+    previous_payload = None
+    if args.previous_output and args.previous_output.exists():
+        try:
+            candidate = json.loads(args.previous_output.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ValueError(f"昨日变体产物无法读取: {args.previous_output}") from exc
+        if not isinstance(candidate, dict):
+            raise ValueError("昨日变体产物必须是 object")
+        previous_payload = candidate
     payload = run_suite(
         args.db,
         symbols,
         args.start,
         args.end,
         run_mode=args.run_mode,
+        previous_payload=previous_payload,
+        previous_date=args.previous_date,
     )
     atomic_write_text(
         args.output, json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
