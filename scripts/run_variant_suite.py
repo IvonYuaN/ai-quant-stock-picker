@@ -764,141 +764,20 @@ def build_orders(
             if prepared_cache is not None:
                 prepared_cache[cache_key] = frame
         dates = frame["date"].tolist()
+        entry_mask, exit_mask, score_values, valid_mask = _signal_masks(
+            frame, profile
+        )
         first_index = profile.lookback
         if first_trade_date:
-            first_index = max(
-                first_index,
-                bisect_left(dates, first_trade_date) - 1,
-            )
-        for index, row in enumerate(frame.itertuples(index=False)):
-            if index < first_index:
-                continue
-            if index >= len(frame) - 1:
-                break
-            next_date = dates[index + 1]
-            valid = pd.notna(row.sma) and pd.notna(row.ret)
-            if not valid:
-                continue
-            if profile.mode == "reversion":
-                entry = bool(
-                    row.close < row.sma
-                    and row.ret <= -profile.entry_return_pct
-                    and row.bias >= -profile.max_bias_pct - 8.0
-                )
-                exit_signal = bool(row.close > row.sma or row.ret > 2.0)
-            elif profile.mode == "breakout":
-                entry = bool(
-                    row.close >= row.prior_high
-                    and row.ret >= profile.entry_return_pct
-                    and row.bias <= profile.max_bias_pct
-                )
-                exit_signal = bool(row.close < row.sma)
-            elif profile.mode == "volume_breakout":
-                entry = bool(
-                    row.close >= row.prior_high
-                    and row.volume_ratio >= 1.35
-                    and row.bias <= profile.max_bias_pct
-                )
-                exit_signal = bool(row.close < row.sma)
-            elif profile.mode == "volume":
-                entry = bool(
-                    row.close >= row.prior_high
-                    and row.volume_ratio >= 1.2 + profile.entry_return_pct * 0.1
-                    and row.bias <= profile.max_bias_pct
-                )
-                exit_signal = bool(row.close < row.sma or row.volume_ratio < 0.8)
-            elif profile.mode == "macd":
-                entry = bool(
-                    row.close > row.sma
-                    and row.macd_hist > 0
-                    and row.macd_hist >= row.macd_hist_prev
-                    and row.ret >= profile.entry_return_pct
-                    and row.bias <= profile.max_bias_pct
-                )
-                exit_signal = bool(row.macd_hist < 0 or row.close < row.sma)
-            elif profile.mode == "kdj":
-                entry = bool(
-                    row.kdj_k > row.kdj_d
-                    and row.kdj_j < 100.0
-                    and row.ret >= profile.entry_return_pct
-                    and row.bias <= profile.max_bias_pct
-                )
-                exit_signal = bool(row.kdj_k < row.kdj_d or row.kdj_j > 110.0)
-            elif profile.mode == "bollinger":
-                entry = bool(
-                    row.close <= row.bb_lower
-                    and row.ret <= profile.entry_return_pct
-                    and row.bias <= profile.max_bias_pct
-                )
-                exit_signal = bool(row.close > row.bb_mid)
-            elif profile.mode == "rsi":
-                entry = bool(
-                    row.rsi < 45.0
-                    and row.ret >= profile.entry_return_pct
-                    and row.bias <= profile.max_bias_pct
-                )
-                exit_signal = bool(row.rsi > 65.0 or row.close < row.sma)
-            elif profile.mode == "ema_cross":
-                entry = bool(
-                    row.ema12 > row.ema26
-                    and row.macd_hist >= row.macd_hist_prev
-                    and row.ret >= profile.entry_return_pct
-                    and row.bias <= profile.max_bias_pct
-                )
-                exit_signal = bool(row.ema12 < row.ema26)
-            elif profile.mode == "obv":
-                entry = bool(
-                    row.obv > row.obv_mean
-                    and row.close > row.sma
-                    and row.ret >= profile.entry_return_pct
-                    and row.bias <= profile.max_bias_pct
-                )
-                exit_signal = bool(row.obv < row.obv_mean)
-            elif profile.mode == "donchian":
-                entry = bool(
-                    row.close >= row.prior_high
-                    and row.ret >= profile.entry_return_pct
-                    and row.bias <= profile.max_bias_pct
-                )
-                exit_signal = bool(row.close < row.prior_low)
-            elif profile.mode == "vwap":
-                entry = bool(
-                    row.close > row.vwap
-                    and row.ret >= profile.entry_return_pct
-                    and row.bias <= profile.max_bias_pct
-                )
-                exit_signal = bool(row.close < row.vwap)
-            elif profile.mode == "atr_trend":
-                entry = bool(
-                    row.close > row.sma
-                    and row.ret >= profile.entry_return_pct
-                    and row.atr_pct <= 6.0
-                )
-                exit_signal = bool(row.close < row.sma or row.ret < -2.0)
-            elif profile.mode == "defensive_range":
-                entry = bool(
-                    row.close > row.sma
-                    and row.ret >= profile.entry_return_pct
-                    and row.bias <= profile.max_bias_pct
-                    and row.atr_pct <= 3.5
-                )
-                exit_signal = bool(row.close < row.sma or row.atr_pct > 6.0)
-            else:
-                entry = bool(
-                    row.close > row.sma
-                    and row.ret >= profile.entry_return_pct
-                    and row.bias <= profile.max_bias_pct
-                )
-                exit_signal = bool(row.close < row.sma or row.ret < -2.0)
-            score = float(row.ret)
-            if profile.mode == "reversion":
-                score = -score
-            elif profile.mode == "low_vol":
-                atr_pct = float(row.atr_pct) if pd.notna(row.atr_pct) else 999.0
-                score = -atr_pct
+            first_index = max(first_index, bisect_left(dates, first_trade_date) - 1)
+        last_index = max(first_index, len(frame) - 1)
+        for index in np.flatnonzero(valid_mask[first_index:last_index]) + first_index:
+            row = frame.iloc[int(index)]
+            entry = bool(entry_mask[index])
+            exit_signal = bool(exit_mask[index])
             evidence = _signal_evidence(row, profile) if entry or exit_signal else ()
-            signals_by_date[next_date].append(
-                (symbol, score, entry, exit_signal, evidence)
+            signals_by_date[dates[index + 1]].append(
+                (symbol, float(score_values[index]), entry, exit_signal, evidence)
             )
 
     orders: list[VariantOrder] = []
@@ -946,6 +825,158 @@ def build_orders(
                 )
                 active_symbols.add(symbol)
     return tuple(orders)
+
+
+def _signal_masks(
+    frame: pd.DataFrame, profile: VariantProfile
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Vectorize one profile's causal entry/exit rules over a prepared frame."""
+    values = {
+        column: frame[column].to_numpy(dtype=float, copy=False)
+        for column in (
+            "close",
+            "sma",
+            "ret",
+            "bias",
+            "prior_high",
+            "prior_low",
+            "volume_ratio",
+            "macd_hist",
+            "macd_hist_prev",
+            "kdj_k",
+            "kdj_d",
+            "kdj_j",
+            "bb_lower",
+            "bb_mid",
+            "rsi",
+            "ema12",
+            "ema26",
+            "obv",
+            "obv_mean",
+            "vwap",
+            "atr_pct",
+        )
+    }
+    close = values["close"]
+    sma = values["sma"]
+    ret = values["ret"]
+    bias = values["bias"]
+    valid = np.isfinite(sma) & np.isfinite(ret)
+    mode = profile.mode
+    if mode == "reversion":
+        entry = (
+            (close < sma)
+            & (ret <= -profile.entry_return_pct)
+            & (bias >= -profile.max_bias_pct - 8.0)
+        )
+        exit_signal = (close > sma) | (ret > 2.0)
+    elif mode in {"breakout", "donchian"}:
+        entry = (
+            (close >= values["prior_high"])
+            & (ret >= profile.entry_return_pct)
+            & (bias <= profile.max_bias_pct)
+        )
+        exit_signal = (
+            close < sma
+            if mode == "breakout"
+            else close < values["prior_low"]
+        )
+    elif mode == "volume_breakout":
+        entry = (
+            (close >= values["prior_high"])
+            & (values["volume_ratio"] >= 1.35)
+            & (bias <= profile.max_bias_pct)
+        )
+        exit_signal = close < sma
+    elif mode == "volume":
+        entry = (
+            (close >= values["prior_high"])
+            & (values["volume_ratio"] >= 1.2 + profile.entry_return_pct * 0.1)
+            & (bias <= profile.max_bias_pct)
+        )
+        exit_signal = (close < sma) | (values["volume_ratio"] < 0.8)
+    elif mode == "macd":
+        entry = (
+            (close > sma)
+            & (values["macd_hist"] > 0)
+            & (values["macd_hist"] >= values["macd_hist_prev"])
+            & (ret >= profile.entry_return_pct)
+            & (bias <= profile.max_bias_pct)
+        )
+        exit_signal = (values["macd_hist"] < 0) | (close < sma)
+    elif mode == "kdj":
+        entry = (
+            (values["kdj_k"] > values["kdj_d"])
+            & (values["kdj_j"] < 100.0)
+            & (ret >= profile.entry_return_pct)
+            & (bias <= profile.max_bias_pct)
+        )
+        exit_signal = (values["kdj_k"] < values["kdj_d"]) | (values["kdj_j"] > 110.0)
+    elif mode == "bollinger":
+        entry = (
+            (close <= values["bb_lower"])
+            & (ret <= profile.entry_return_pct)
+            & (bias <= profile.max_bias_pct)
+        )
+        exit_signal = close > values["bb_mid"]
+    elif mode == "rsi":
+        entry = (
+            (values["rsi"] < 45.0)
+            & (ret >= profile.entry_return_pct)
+            & (bias <= profile.max_bias_pct)
+        )
+        exit_signal = (values["rsi"] > 65.0) | (close < sma)
+    elif mode == "ema_cross":
+        entry = (
+            (values["ema12"] > values["ema26"])
+            & (values["macd_hist"] >= values["macd_hist_prev"])
+            & (ret >= profile.entry_return_pct)
+            & (bias <= profile.max_bias_pct)
+        )
+        exit_signal = values["ema12"] < values["ema26"]
+    elif mode == "obv":
+        entry = (
+            (values["obv"] > values["obv_mean"])
+            & (close > sma)
+            & (ret >= profile.entry_return_pct)
+            & (bias <= profile.max_bias_pct)
+        )
+        exit_signal = values["obv"] < values["obv_mean"]
+    elif mode == "vwap":
+        entry = (
+            (close > values["vwap"])
+            & (ret >= profile.entry_return_pct)
+            & (bias <= profile.max_bias_pct)
+        )
+        exit_signal = close < values["vwap"]
+    elif mode == "atr_trend":
+        entry = (
+            (close > sma)
+            & (ret >= profile.entry_return_pct)
+            & (values["atr_pct"] <= 6.0)
+        )
+        exit_signal = (close < sma) | (ret < -2.0)
+    elif mode == "defensive_range":
+        entry = (
+            (close > sma)
+            & (ret >= profile.entry_return_pct)
+            & (bias <= profile.max_bias_pct)
+            & (values["atr_pct"] <= 3.5)
+        )
+        exit_signal = (close < sma) | (values["atr_pct"] > 6.0)
+    else:
+        entry = (
+            (close > sma)
+            & (ret >= profile.entry_return_pct)
+            & (bias <= profile.max_bias_pct)
+        )
+        exit_signal = (close < sma) | (ret < -2.0)
+    score = ret.copy()
+    if mode == "reversion":
+        score = -score
+    elif mode == "low_vol":
+        score = np.where(np.isfinite(values["atr_pct"]), -values["atr_pct"], -999.0)
+    return entry, exit_signal, score, valid
 
 
 def _simulate_with_previous_baseline(
@@ -1436,6 +1467,9 @@ def run_suite(
                 }
     results = []
     feature_cache_enabled = len(frames) <= grid.feature_cache_max_symbols
+    # Base indicators do not depend on the lookback. Keep them for one period
+    # even on the full universe; the cache is released before the next period.
+    base_feature_cache_enabled = True
     for lookback in sorted({profile.lookback for profile in profiles}):
         # Keep only one lookback's derived columns alive. Retaining all four
         # periods for 4,000+ symbols causes avoidable memory pressure.
@@ -1443,7 +1477,7 @@ def run_suite(
             {} if feature_cache_enabled else None
         )
         base_cache: dict[str, pd.DataFrame] | None = (
-            {} if feature_cache_enabled else None
+            {} if base_feature_cache_enabled else None
         )
         for profile in (item for item in profiles if item.lookback == lookback):
             previous = previous_by_id.get(profile.variant_id)
@@ -1556,6 +1590,7 @@ def run_suite(
             "configuration_count": len(grid.configurations),
             "feature_cache_enabled": feature_cache_enabled,
             "feature_cache_max_symbols": grid.feature_cache_max_symbols,
+            "base_feature_cache_enabled": base_feature_cache_enabled,
             "training_bars": 60,
             "training_volatility_pct": training_volatility_pct,
             "training_end_exclusive": start,
