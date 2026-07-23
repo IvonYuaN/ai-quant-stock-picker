@@ -224,6 +224,84 @@ def test_home_snapshot_writes_service_group_readable_mode(tmp_path) -> None:
     assert source.stat().st_mode & 0o777 == 0o640
 
 
+def test_home_snapshot_uses_merged_cycle_coverage_after_cursor_advances(
+    monkeypatch, tmp_path
+) -> None:
+    status = tmp_path / "intraday-status.json"
+    status.write_text(
+        json.dumps(
+            {
+                "universe": {
+                    "batch_active": True,
+                    "batch_id": "next-cycle",
+                    "universe_count": 5000,
+                    "coverage_pct": 0.0,
+                    "snapshot_scope": "cycle",
+                    "snapshot_coverage_pct": 1.0,
+                    "snapshot_complete": True,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AQSP_INTRADAY_REFRESH_STATUS_PATH", str(status))
+
+    universe = write_home_snapshot._universe_snapshot()
+
+    assert universe.coverage_pct == 1.0
+    assert universe.batch_active is False
+
+
+def test_home_snapshot_hides_candidates_until_intraday_cycle_is_complete(
+    monkeypatch, tmp_path
+) -> None:
+    status = tmp_path / "intraday-status.json"
+    status.write_text(
+        json.dumps(
+            {
+                "universe": {
+                    "batch_active": True,
+                    "universe_count": 5000,
+                    "snapshot_scope": "cycle",
+                    "snapshot_coverage_pct": 0.25,
+                    "snapshot_complete": False,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AQSP_INTRADAY_REFRESH_STATUS_PATH", str(status))
+
+    universe = write_home_snapshot._universe_snapshot()
+
+    assert write_home_snapshot._batch_candidates_publishable(universe) is False
+
+
+def test_home_snapshot_ignores_default_cycle_fields_for_non_batch_refresh(
+    monkeypatch, tmp_path
+) -> None:
+    status = tmp_path / "intraday-status.json"
+    status.write_text(
+        json.dumps(
+            {
+                "universe": {
+                    "batch_active": False,
+                    "snapshot_scope": "cycle",
+                    "snapshot_coverage_pct": 0.0,
+                    "snapshot_complete": False,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AQSP_INTRADAY_REFRESH_STATUS_PATH", str(status))
+
+    universe = write_home_snapshot._universe_snapshot()
+
+    assert universe.batch_active is False
+    assert write_home_snapshot._batch_candidates_publishable(universe) is True
+
+
 def test_home_snapshot_prefers_structured_news_artifact(monkeypatch, tmp_path) -> None:
     path = tmp_path / "news.json"
     report = CatalystReport(

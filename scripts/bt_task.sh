@@ -348,7 +348,8 @@ should_bridge_intraday_to_midday() {
         return 1
     fi
     now_hm=$((10#$(date +%H%M)))
-    if ! { [ "$now_hm" -ge 1135 ] && [ "$now_hm" -le 1230 ]; }; then
+    # 12:05 has a dedicated schedule; bridge only before it.
+    if ! { [ "$now_hm" -ge 1135 ] && [ "$now_hm" -lt 1205 ]; }; then
         return 1
     fi
     marker_dir="${PROJECT_ROOT}/.state"
@@ -362,7 +363,7 @@ should_bridge_intraday_to_midday() {
 }
 
 wait_for_coldstart_completion() {
-    local today wait_seconds interval elapsed log_path
+    local today wait_seconds interval elapsed marker_path
     today="${AQSP_TRADING_DAY_OVERRIDE_DATE:-$(date +%Y-%m-%d)}"
     wait_seconds="${AQSP_COLDSTART_WAIT_SECONDS:-600}"
     interval="${AQSP_COLDSTART_WAIT_INTERVAL_SECONDS:-5}"
@@ -370,11 +371,11 @@ wait_for_coldstart_completion() {
         log "[ERROR] 冷启动等待配置无效: wait=${wait_seconds}s interval=${interval}s"
         return 2
     fi
-    log_path="${AQSP_COLDSTART_LOG_DIR:-${PROJECT_ROOT}/logs/coldstart}/coldstart-${today}.log"
+    marker_path="${AQSP_COLDSTART_MARKER_FILE:-${PROJECT_ROOT}/.state/coldstart-${today}.done}"
     elapsed=0
     while :; do
-        if [ -f "$log_path" ] && grep -q "冷启动日跑完成" "$log_path"; then
-            log "冷启动已完成，允许刷新 paper_realtime 变体: ${log_path}"
+        if [ -f "$marker_path" ]; then
+            log "冷启动已完成，允许刷新 paper_realtime 变体: ${marker_path}"
             return 0
         fi
         if [ "$elapsed" -ge "$wait_seconds" ]; then
@@ -484,6 +485,7 @@ case "$ACTION" in
     daily)
         skip_non_trading_day
         export AQSP_RUN_TASK_ID="daily"
+        export AQSP_RUNNER_TIMEOUT_SECONDS="${AQSP_RUNNER_TIMEOUT_SECONDS:-5400}"
         export AQSP_RUNNER_SCRIPT=scripts/daily_pipeline.sh
         run_script "${PROJECT_ROOT}/scripts/server_sync_and_run.sh"
         ;;
@@ -493,6 +495,7 @@ case "$ACTION" in
         export AQSP_NOTIFY="false"
         export AQSP_GATE_NOTIFY="false"
         export AQSP_INTRADAY_NOTIFY="${AQSP_INTRADAY_NOTIFY:-false}"
+        export AQSP_RUNNER_TIMEOUT_SECONDS="${AQSP_RUNNER_TIMEOUT_SECONDS:-5400}"
         if should_bridge_intraday_to_midday; then
             export AQSP_RUN_TASK_ID="midday"
             export AQSP_NOTIFY="false"
@@ -504,15 +507,15 @@ case "$ACTION" in
                     log "午盘桥接因已有主链路运行而跳过，不写完成标记；后续定时仍可重试"
                     exit 0
                 else
-                    touch "$AQSP_MIDDAY_MARKER_FILE"
+                    printf 'success\n' >"$AQSP_MIDDAY_MARKER_FILE"
                     log "午盘桥接已完成，今日不再重复触发"
                     exit 0
                 fi
             else
                 # A failed bridge must not be retried by every 10-minute
                 # intraday tick. The dedicated 12:05 midday task remains the
-                # retry path and does not consult this bridge marker.
-                touch "$AQSP_MIDDAY_MARKER_FILE"
+                # retry path and consumes the failed marker.
+                printf 'failed\n' >"$AQSP_MIDDAY_MARKER_FILE"
                 log "午盘桥接失败，今日不再重复桥接；12:05 午盘任务仍会独立重试"
                 exit 1
             fi
@@ -526,14 +529,20 @@ case "$ACTION" in
         export AQSP_NOTIFY="false"
         export AQSP_GATE_NOTIFY="false"
         export AQSP_INTRADAY_NOTIFY="${AQSP_INTRADAY_NOTIFY:-false}"
+        export AQSP_RUNNER_TIMEOUT_SECONDS="${AQSP_RUNNER_TIMEOUT_SECONDS:-5400}"
         export AQSP_RUNNER_SCRIPT=scripts/midday_refresh.sh
+        marker_file="${AQSP_MIDDAY_MARKER_FILE:-${PROJECT_ROOT}/.state/midday-$(date +%Y-%m-%d).done}"
+        if [ -f "$marker_file" ] && grep -qx 'success' "$marker_file"; then
+            log "午盘已由盘中桥接成功完成，跳过 12:05 重复运行"
+            exit 0
+        fi
+        rm -f "$marker_file"
         if run_synced_task_with_result; then
             if [ "$SYNC_TASK_SKIPPED" = "true" ]; then
                 log "午盘任务因已有主链路运行而跳过，不写完成标记；后续定时仍可重试"
             else
-                marker_file="${AQSP_MIDDAY_MARKER_FILE:-${PROJECT_ROOT}/.state/midday-$(date +%Y-%m-%d).done}"
                 mkdir -p "$(dirname "$marker_file")"
-                touch "$marker_file"
+                printf 'success\n' >"$marker_file"
             fi
         else
             log "午盘任务未真实执行，不写完成标记；后续定时仍可重试"

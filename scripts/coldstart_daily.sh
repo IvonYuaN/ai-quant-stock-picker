@@ -105,6 +105,9 @@ if [ -f "${PROJECT_ROOT}/.env" ]; then
     set +a
 fi
 
+COLDSTART_MARKER_DATE="${AQSP_TRADING_DAY_OVERRIDE_DATE:-$DATE}"
+COLDSTART_MARKER_FILE="${AQSP_COLDSTART_MARKER_FILE:-${PROJECT_ROOT}/.state/coldstart-${COLDSTART_MARKER_DATE}.done}"
+
 export PYTHONPATH="${PROJECT_ROOT}/src:${PROJECT_ROOT}:${PYTHONPATH:-}"
 
 PYTHON_BIN="$(aqsp_runtime_python "$PROJECT_ROOT")"
@@ -198,6 +201,7 @@ fi
     printf 'LOCK_STARTED_AT=%q\n' "$(date '+%Y-%m-%d %H:%M:%S')"
 } >"$LOCK_INFO_FILE"
 trap 'rm -f "$LOCK_INFO_FILE"; rmdir "$LOCK_FILE"' EXIT
+rm -f "$COLDSTART_MARKER_FILE"
 
 DOW="$(date +%u)"
 if [ "$DOW" -ge 6 ]; then
@@ -352,6 +356,8 @@ if [[ "$COLDSTART_SIGNAL_PROGRESS" =~ ^([0-9]+)/([0-9]+)$ ]] \
     log "冷启动后续: 样本门已关闭；交接给 bt_task.sh walkforward-gate 运行生产 walk-forward 双门 gate（DSR/PBO），不在冷启动任务里自动启动重型回测"
     write_coldstart_handoff_status "$COLDSTART_SIGNAL_PROGRESS" "冷启动样本门已达标；下一交易时段按实时数据生成研究候选；生产 walk-forward 双门 gate（DSR/PBO）单独复核；组合保护仅限制纸面动作"
     log "冷启动日跑完成"
+    mkdir -p "$(dirname "$COLDSTART_MARKER_FILE")"
+    : >"$COLDSTART_MARKER_FILE"
     exit 0
 fi
 
@@ -365,12 +371,8 @@ else
     set -e
     if [ "$UPDATE_EXIT_CODE" -ne 0 ]; then
         TARGET_COVERAGE_AFTER_UPDATE="$(coldstart_target_coverage)"
-        if [ "$TARGET_COVERAGE_AFTER_UPDATE" -ge "$COLDSTART_MIN_TARGET_COVERAGE" ]; then
-            log "历史库更新存在尾部缺口但覆盖达标: target=${RUN_AS_OF} coverage=${TARGET_COVERAGE_AFTER_UPDATE}/${COLDSTART_MIN_TARGET_COVERAGE}；继续使用 ${COLDSTART_RUNTIME_SOURCE} 生成冷启动候选"
-        else
-            log "[ERROR] 历史库更新失败且目标日覆盖不足: exit=${UPDATE_EXIT_CODE} target=${RUN_AS_OF} coverage=${TARGET_COVERAGE_AFTER_UPDATE}/${COLDSTART_MIN_TARGET_COVERAGE}"
-            exit "$UPDATE_EXIT_CODE"
-        fi
+        log "[ERROR] 当天历史库更新失败，拒绝发布候选: exit=${UPDATE_EXIT_CODE} target=${RUN_AS_OF} coverage=${TARGET_COVERAGE_AFTER_UPDATE}/${COLDSTART_MIN_TARGET_COVERAGE}"
+        exit "$UPDATE_EXIT_CODE"
     fi
 fi
 
@@ -411,3 +413,5 @@ if [[ "$COLDSTART_SIGNAL_PROGRESS" =~ ^([0-9]+)/([0-9]+)$ ]] \
 fi
 
 log "冷启动日跑完成"
+mkdir -p "$(dirname "$COLDSTART_MARKER_FILE")"
+: >"$COLDSTART_MARKER_FILE"

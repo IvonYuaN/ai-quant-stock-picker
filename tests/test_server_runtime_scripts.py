@@ -1373,9 +1373,9 @@ def test_coldstart_daily_script_updates_db_then_runs_cli() -> None:
     assert "冷启动后续: 样本门已关闭" in script
     assert "跳过重复历史库更新" in script
     assert "UPDATE_EXIT_CODE=${PIPESTATUS[0]}" in script
-    assert "历史库更新存在尾部缺口但覆盖达标" in script
-    assert "继续使用 ${COLDSTART_RUNTIME_SOURCE} 生成冷启动候选" in script
-    assert "历史库更新失败且目标日覆盖不足" in script
+    assert "当天历史库更新失败，拒绝发布候选" in script
+    assert "COLDSTART_MARKER_FILE" in script
+    assert '冷启动日跑完成' in script
     assert "--force-from-start" in script
     assert "--fill-history-gaps" in script
     assert "AQSP_COLDSTART_ALLOW_INTRADAY" in script
@@ -1407,7 +1407,7 @@ def test_coldstart_daily_script_updates_db_then_runs_cli() -> None:
     assert "今日非交易日，跳过冷启动任务" in script
 
 
-def test_coldstart_daily_continues_when_update_fails_but_target_coverage_is_enough(
+def test_coldstart_daily_rejects_update_failure_even_when_target_coverage_is_enough(
     tmp_path: Path,
 ) -> None:
     result = _run_fake_coldstart(
@@ -1420,12 +1420,9 @@ def test_coldstart_daily_continues_when_update_fails_but_target_coverage_is_enou
         is_trading_day=True,
     )
 
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert "历史库更新存在尾部缺口但覆盖达标" in result.stdout
-    assert "筛选数据源: online_first" in result.stdout
-    cli_args = (tmp_path / "cli-args.txt").read_text(encoding="utf-8")
-    assert "--source online_first" in cli_args
-    assert "--source sqlite_db" not in cli_args
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "当天历史库更新失败，拒绝发布候选" in result.stdout
+    assert not (tmp_path / "cli-args.txt").exists()
 
 
 def test_coldstart_daily_skips_when_signal_days_already_completed(
@@ -1479,7 +1476,8 @@ def test_intraday_bridge_marks_failed_attempt_without_blocking_midday_task() -> 
     script = (PROJECT_ROOT / "scripts" / "bt_task.sh").read_text(encoding="utf-8")
 
     assert "午盘桥接失败，今日不再重复桥接" in script
-    assert 'touch "$AQSP_MIDDAY_MARKER_FILE"' in script
+    assert "printf 'success\\n' >\"$AQSP_MIDDAY_MARKER_FILE\"" in script
+    assert "printf 'failed\\n' >\"$AQSP_MIDDAY_MARKER_FILE\"" in script
     assert "12:05 午盘任务仍会独立重试" in script
     assert "午盘任务未真实执行，不写完成标记；后续定时仍可重试" in script
 
@@ -1507,7 +1505,7 @@ def test_coldstart_daily_stops_when_update_fails_and_target_coverage_is_too_low(
     )
 
     assert result.returncode == 1
-    assert "历史库更新失败且目标日覆盖不足" in result.stdout
+    assert "当天历史库更新失败，拒绝发布候选" in result.stdout
     assert not (tmp_path / "cli-args.txt").exists()
 
 

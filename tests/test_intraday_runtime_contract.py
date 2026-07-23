@@ -1023,6 +1023,13 @@ def test_intraday_batch_does_not_commit_when_output_metadata_is_partial(
     assert 'BATCH_FAILURE_REASON="intraday_batch_output_incomplete"' in script
 
 
+def test_intraday_status_keeps_merged_snapshot_coverage_separate_from_cursor() -> None:
+    script = SCRIPT_PATH.read_text(encoding="utf-8")
+
+    assert '"snapshot_coverage_pct": float(snapshot_state.get("coverage_pct") or 0.0)' in script
+    assert '"snapshot_complete": float(snapshot_state.get("coverage_pct") or 0.0) >= 1.0' in script
+
+
 def test_intraday_batch_cursor_uses_minimum_live_coverage_and_precedes_sidecars() -> (
     None
 ):

@@ -1580,6 +1580,25 @@ def _universe_snapshot() -> HomeSnapshotUniverse:
         return HomeSnapshotUniverse()
     batch = payload.get("universe")
     batch_payload = batch if isinstance(batch, dict) else {}
+    snapshot_coverage = batch_payload.get("snapshot_coverage_pct")
+    snapshot_complete = batch_payload.get("snapshot_complete")
+    has_cycle_snapshot = (
+        batch_payload.get("snapshot_scope") == "cycle"
+        and snapshot_coverage is not None
+        and bool(batch_payload.get("batch_active", False))
+    )
+    coverage_pct = (
+        float(snapshot_coverage or 0.0)
+        if has_cycle_snapshot
+        else float(batch_payload.get("coverage_pct") or 0.0)
+    )
+    # Once a cycle is finalized the cursor points at the next cycle. The
+    # homepage must describe the merged snapshot, not that fresh cursor.
+    batch_active = (
+        not bool(snapshot_complete)
+        if has_cycle_snapshot
+        else bool(batch_payload.get("batch_active", False))
+    )
     return HomeSnapshotUniverse(
         total=int(
             batch_payload.get("universe_count")
@@ -1603,13 +1622,18 @@ def _universe_snapshot() -> HomeSnapshotUniverse:
         ),
         max_universe=int(payload.get("max_universe") or 0),
         source=_text(payload.get("actual_source") or payload.get("source")),
-        batch_active=bool(batch_payload.get("batch_active", False)),
+        batch_active=batch_active,
         batch_id=_text(batch_payload.get("batch_id")),
         batch_size=int(batch_payload.get("batch_size") or 0),
         cycle_id=int(batch_payload.get("cycle_id") or 0),
-        coverage_pct=float(batch_payload.get("coverage_pct") or 0.0),
+        coverage_pct=coverage_pct,
         last_error=_text(batch_payload.get("last_error")),
     )
+
+
+def _batch_candidates_publishable(universe: HomeSnapshotUniverse) -> bool:
+    """Do not present one completed batch as a whole-market conclusion."""
+    return not universe.batch_active or universe.coverage_pct >= 1.0
 
 
 def _variant_snapshot(
@@ -2061,8 +2085,16 @@ def build_home_snapshot(
                 else "纸面变体原始数据覆盖不完整"
             ),
         )
-    candidates = _snapshot_candidates(payload)
+    universe = _universe_snapshot()
+    candidates = (
+        _snapshot_candidates(payload)
+        if _batch_candidates_publishable(universe)
+        else ()
+    )
     recommendation_count = _snapshot_recommendation_count(payload)
+    batch_candidates_publishable = _batch_candidates_publishable(universe)
+    if not batch_candidates_publishable:
+        recommendation_count = 0
     runtime_debates = _runtime_debates_for_snapshot(
         selected_date,
         {candidate.symbol for candidate in candidates},
@@ -2134,7 +2166,12 @@ def build_home_snapshot(
         getattr(task_view, "headline", ""),
     )
     if not candidates:
-        if messages and not live_phase_produced:
+        if not batch_candidates_publishable:
+            empty_day_summary = (
+                "全市场扫描尚未完成；当前批次候选不作全市场结论，"
+                f"覆盖率 {universe.coverage_pct:.1%}"
+            )
+        elif messages and not live_phase_produced:
             empty_day_summary = "今日消息已更新；实时行情任务尚未产出，未使用历史候选"
         elif messages:
             empty_day_summary = "今日消息已更新；实时行情筛选暂无候选，未使用历史结果"
@@ -2192,7 +2229,7 @@ def build_home_snapshot(
         market_context=market_context,
         recommendation_gate=recommendation_gate,
         phases=phases,
-        universe=_universe_snapshot(),
+        universe=universe,
         variant_universe=_variant_universe_snapshot(),
         variants=_variant_snapshot(
             {candidate.symbol: candidate.display_name for candidate in candidates}

@@ -381,6 +381,23 @@ def test_aqsp_bridge_exposes_variant_universe_metadata(
     assert response.json()["data"]["variant_universe"] == payload["variant_universe"]
 
 
+def test_aqsp_bridge_rejects_candidates_from_incomplete_market_batch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    payload = _snapshot("2026-07-14")
+    payload["universe"] = {
+        "batch_active": True,
+        "coverage_pct": 0.25,
+        "total": 5000,
+    }
+    path = _write_single(tmp_path, payload)
+    monkeypatch.setenv("AQSP_RESEARCH_SURFACE_SNAPSHOT", str(path))
+
+    response = client.get("/api/aqsp/snapshot")
+
+    assert response.status_code == 503
+
+
 def test_aqsp_bridge_dates_and_candidate_use_exact_historical_snapshot(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

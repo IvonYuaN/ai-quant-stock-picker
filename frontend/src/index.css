@@ -450,14 +450,16 @@
   .aqsp-variant-position-head { display: flex; justify-content: space-between; gap: 0.4rem; color: hsl(var(--muted-foreground)); font-size: 0.61rem; }
   .aqsp-variant-position-head span { white-space: nowrap; }
   .aqsp-variant-position-list { display: grid; gap: 0.3rem; margin-top: 0.35rem; color: hsl(var(--foreground) / 0.8); font-size: 0.62rem; line-height: 1.35; }
-  .aqsp-variant-position-list > div { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 0.35rem 0.5rem; }
-  .aqsp-holding-identity { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; column-gap: 0.3rem; min-width: 0; }
-  .aqsp-holding-identity .aqsp-code { grid-column: 2; margin-top: -0.05rem; }
+  .aqsp-variant-position-list > div { min-width: 0; }
+  .aqsp-holding-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.35fr); align-items: center; gap: 0.45rem; border-bottom: 1px solid hsl(var(--border) / 0.28); padding: 0.28rem 0; }
+  .aqsp-holding-row:last-child { border-bottom: 0; }
+  .aqsp-holding-identity { display: flex; min-width: 0; align-items: center; gap: 0.35rem; }
+  .aqsp-holding-identity > div { min-width: 0; }
   .aqsp-holding-rank { grid-row: span 2; border-radius: 0.2rem; padding: 0.18rem 0.25rem; color: hsl(var(--muted-foreground)); background: hsl(var(--muted) / 0.7); font-size: 0.55rem; font-weight: 700; line-height: 1; }
   .aqsp-holding-rank-primary { color: hsl(var(--primary)); background: hsl(var(--primary) / 0.14); }
   .aqsp-variant-position-list strong { display: block; overflow-wrap: anywhere; font-size: 0.66rem; }
   .aqsp-variant-position-list .aqsp-code { display: block; }
-  .aqsp-holding-metrics { min-width: 0; color: hsl(var(--muted-foreground)); font-size: 0.58rem; line-height: 1.35; text-align: right; overflow-wrap: anywhere; }
+  .aqsp-holding-metrics { display: flex; min-width: 0; flex-wrap: wrap; justify-content: flex-end; gap: 0.1rem 0.45rem; color: hsl(var(--muted-foreground)); font-size: 0.58rem; line-height: 1.35; text-align: right; overflow-wrap: anywhere; }
   .aqsp-variant-muted { margin-top: 0.35rem; color: hsl(var(--muted-foreground)); font-size: 0.61rem; line-height: 1.35; }
   .aqsp-variant-reason { margin-top: 0.6rem; }
   .aqsp-variant-reason ul { display: grid; gap: 0.22rem; margin-top: 0.35rem; color: hsl(var(--foreground) / 0.82); font-size: 0.63rem; line-height: 1.4; }

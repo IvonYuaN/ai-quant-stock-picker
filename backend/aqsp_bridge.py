@@ -835,6 +835,11 @@ def _parse_snapshot(payload: Mapping[str, Any]) -> AQSPSnapshot:
     if len({item.symbol for item in debates}) != len(debates):
         raise AQSPSnapshotUnavailable("debates 不得包含重复 symbol")
     _validate_advisory_boundary(raw_debates or [], candidates)
+    universe = _parse_universe(payload.get("universe"))
+    if universe.batch_active and universe.coverage_pct < 1.0 and candidates:
+        raise AQSPSnapshotUnavailable(
+            "未完成全市场批次不得发布候选"
+        )
     stale_after = _optional_text(payload.get("stale_after"), "stale_after")
     if stale_after:
         _timestamp(stale_after, "stale_after")
@@ -864,7 +869,7 @@ def _parse_snapshot(payload: Mapping[str, Any]) -> AQSPSnapshot:
         phases=tuple(
             _parse_phase(item) for item in _list(payload.get("phases", []), "phases")
         ),
-        universe=_parse_universe(payload.get("universe")),
+        universe=universe,
         variant_universe=_parse_variant_universe(payload.get("variant_universe")),
         variants=variants,
     )
@@ -980,6 +985,13 @@ def _parse_universe(payload: object) -> AQSPUniverse:
             "last_error",
         },
     )
+    coverage_pct = _number(
+        item.get("coverage_pct", 0.0), "universe.coverage_pct"
+    )
+    if not 0.0 <= coverage_pct <= 1.0:
+        raise AQSPSnapshotUnavailable(
+            "universe.coverage_pct 必须在 0 到 1 之间"
+        )
     return AQSPUniverse(
         total=_integer(item.get("total", 0), "universe.total"),
         resolved=_integer(item.get("resolved", 0), "universe.resolved"),
@@ -991,7 +1003,7 @@ def _parse_universe(payload: object) -> AQSPUniverse:
         batch_id=_optional_text(item.get("batch_id"), "universe.batch_id"),
         batch_size=_integer(item.get("batch_size", 0), "universe.batch_size"),
         cycle_id=_integer(item.get("cycle_id", 0), "universe.cycle_id"),
-        coverage_pct=float(item.get("coverage_pct", 0.0) or 0.0),
+        coverage_pct=coverage_pct,
         last_error=_optional_text(item.get("last_error"), "universe.last_error"),
     )
 
