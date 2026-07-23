@@ -18,7 +18,10 @@ from aqsp.market_context import (
 from aqsp.core.time import today_shanghai
 from aqsp.news.catalysts import load_catalyst_report_artifact
 from aqsp.news.entity_graph import DEFAULT_ENTITY_GRAPH
-from aqsp.news.watch_candidates import NewsUniverseInstrument
+from aqsp.news.watch_candidates import (
+    NewsUniverseInstrument,
+    discover_watch_candidates,
+)
 
 
 _TUPLE_FIELDS = {
@@ -148,6 +151,16 @@ def merge_intraday_news(
         catalyst_report=report,
         news_universe=universe,
     )
+    # Formal market context keeps the evidence gate strict. Intraday still
+    # records a separate observation-only row for a fresh direct/industry link
+    # so the user can see the message without promoting it to a candidate.
+    observation_candidates = getattr(artifact, "news_watch_candidates", ()) or ()
+    if not observation_candidates:
+        observation_candidates = discover_watch_candidates(
+            report.events,
+            universe,
+            require_structured_evidence=False,
+        )
     run_lines = list(artifact.summary_lines)
     for line in artifact.warnings:
         if line not in run_lines:
@@ -195,7 +208,7 @@ def merge_intraday_news(
                 row[key] = str(value)
 
     observation_rows: list[dict[str, str]] = []
-    for watch in getattr(artifact, "news_watch_candidates", ()) or ():
+    for watch in observation_candidates:
         symbol = str(getattr(watch, "symbol", "") or "").strip()
         if not symbol or symbol in existing_symbols:
             continue

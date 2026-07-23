@@ -104,6 +104,7 @@ def discover_watch_candidates(
     graph: EntityGraph = DEFAULT_ENTITY_GRAPH,
     max_candidates: int = 0,
     min_confidence: float = 0.0,
+    require_structured_evidence: bool = True,
 ) -> tuple[NewsWatchCandidate, ...]:
     """Expand events against the whole supplied universe in stable order.
 
@@ -118,7 +119,10 @@ def discover_watch_candidates(
             event
             for event in events
             if float(event.confidence) >= float(min_confidence)
-            and event_has_structured_evidence(event)
+            and (
+                not require_structured_evidence
+                or event_has_structured_evidence(event)
+            )
         ),
         key=_event_key,
         reverse=True,
