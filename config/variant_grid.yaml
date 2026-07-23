@@ -1,0 +1,97 @@
+version: "2026.07.23.v4"
+feature_warmup_calendar_days: 90
+
+# This is an isolated paper-research grid. It does not change formal signal
+# thresholds or place orders. Each family has a distinct entry/exit rule in
+# scripts/run_variant_suite.py; duplicate end portfolios are removed later.
+configurations:
+  - lookback_days: 5
+    max_positions: 3
+  - lookback_days: 10
+    max_positions: 5
+  - lookback_days: 20
+    max_positions: 8
+  - lookback_days: 40
+    max_positions: 12
+
+families:
+  - mode: trend
+    label: 趋势
+    entry_return_pct: 0.0
+    max_bias_pct: 8.0
+    hypothesis: 趋势延续需要均线方向和收益确认
+  - mode: reversion
+    label: 均值回归
+    entry_return_pct: 2.0
+    max_bias_pct: 0.0
+    hypothesis: 偏离均线后等待价格回归
+  - mode: breakout
+    label: 突破
+    entry_return_pct: 3.0
+    max_bias_pct: 12.0
+    hypothesis: 突破前高并限制追高乖离
+  - mode: volume_breakout
+    label: 量价突破
+    entry_return_pct: 2.0
+    max_bias_pct: 12.0
+    hypothesis: 突破必须由成交量放大确认
+  - mode: volume
+    label: 成交量趋势
+    entry_return_pct: 1.0
+    max_bias_pct: 10.0
+    hypothesis: 量能持续性比单日价格突破更重要
+  - mode: macd
+    label: MACD
+    entry_return_pct: 1.0
+    max_bias_pct: 10.0
+    hypothesis: MACD柱体转强并由价格趋势确认
+  - mode: kdj
+    label: KDJ
+    entry_return_pct: 1.0
+    max_bias_pct: 8.0
+    hypothesis: KDJ金叉从弱势区修复
+  - mode: low_vol
+    label: 低波趋势
+    entry_return_pct: 1.0
+    max_bias_pct: 6.0
+    hypothesis: 低波动趋势优先，减少异常追涨
+  - mode: bollinger
+    label: 布林回归
+    entry_return_pct: -2.0
+    max_bias_pct: 0.0
+    hypothesis: 跌破布林下轨后等待均值修复
+  - mode: rsi
+    label: RSI修复
+    entry_return_pct: 0.0
+    max_bias_pct: 8.0
+    hypothesis: RSI低位修复且价格没有继续破坏趋势
+  - mode: ema_cross
+    label: EMA交叉
+    entry_return_pct: 1.0
+    max_bias_pct: 10.0
+    hypothesis: 快慢EMA方向一致且动能改善
+  - mode: obv
+    label: OBV量能
+    entry_return_pct: 1.0
+    max_bias_pct: 8.0
+    hypothesis: 价格趋势与资金量能方向一致
+  - mode: donchian
+    label: 唐奇安突破
+    entry_return_pct: 3.0
+    max_bias_pct: 12.0
+    hypothesis: 突破历史通道上沿并控制追高风险
+  - mode: vwap
+    label: VWAP趋势
+    entry_return_pct: 1.0
+    max_bias_pct: 8.0
+    hypothesis: 价格站上成交量加权均价后跟踪趋势
+  - mode: atr_trend
+    label: ATR趋势
+    entry_return_pct: 1.0
+    max_bias_pct: 8.0
+    hypothesis: 趋势成立且波动仍在可承受范围
+  - mode: defensive_range
+    label: 防守区间
+    entry_return_pct: 0.5
+    max_bias_pct: 5.0
+    hypothesis: 在低波动和温和趋势同时成立时降低追涨

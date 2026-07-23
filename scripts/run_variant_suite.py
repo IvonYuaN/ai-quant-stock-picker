@@ -16,10 +16,12 @@ from collections import defaultdict
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import date, timedelta
+from functools import lru_cache
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import yaml
 
 from aqsp.backtest.variant_account import (
     VariantOrder,
@@ -45,21 +47,94 @@ class VariantProfile:
     selection: str = "ranked_signal"
 
 
-_FAMILY_SPECS = (
-    ("trend", "趋势", (0.0, 8.0), "趋势延续需要均线方向和收益确认"),
-    ("reversion", "均值回归", (2.0, 0.0), "偏离均线后等待价格回归"),
-    ("breakout", "突破", (3.0, 12.0), "突破前高并限制追高乖离"),
-    ("volume_breakout", "量价突破", (2.0, 12.0), "突破必须由成交量放大确认"),
-    ("macd", "MACD", (1.0, 10.0), "MACD柱体转强并由价格趋势确认"),
-    ("kdj", "KDJ", (1.0, 8.0), "KDJ金叉从弱势区修复"),
-    ("low_vol", "低波趋势", (1.0, 6.0), "低波动趋势优先，减少异常追涨"),
-)
-# Keep the experiment matrix orthogonal: each family gets a fast and a slow
-# horizon, while the horizon also fixes the account capacity. This avoids
-# generating many labels that execute the same signal set.
-_VARIANT_CONFIGS = ((10, 3), (20, 6))
+@dataclass(frozen=True)
+class VariantFamilySpec:
+    """One independently explainable rule family from the research grid."""
 
-FEATURE_WARMUP_CALENDAR_DAYS = 90
+    mode: str
+    label: str
+    entry_return_pct: float
+    max_bias_pct: float
+    hypothesis: str
+
+
+@dataclass(frozen=True)
+class VariantGridConfig:
+    """Versioned, reviewable configuration for the isolated variant matrix."""
+
+    version: str
+    feature_warmup_calendar_days: int
+    families: tuple[VariantFamilySpec, ...]
+    configurations: tuple[tuple[int, int], ...]
+
+
+@lru_cache(maxsize=4)
+def load_variant_grid(path: str = "") -> VariantGridConfig:
+    """Load the frozen exploration grid without accessing market data."""
+    config_path = (
+        Path(path).expanduser()
+        if path
+        else Path(__file__).resolve().parents[1] / "config" / "variant_grid.yaml"
+    )
+    payload = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError(f"variant grid must be a mapping: {config_path}")
+    version = str(payload.get("version") or "").strip()
+    if not version:
+        raise ValueError("variant grid version must not be empty")
+    warmup = int(payload.get("feature_warmup_calendar_days") or 0)
+    if warmup <= 0:
+        raise ValueError("variant grid warmup must be positive")
+    raw_families = payload.get("families")
+    raw_configurations = payload.get("configurations")
+    if not isinstance(raw_families, list) or not raw_families:
+        raise ValueError("variant grid families must be a non-empty list")
+    if not isinstance(raw_configurations, list) or not raw_configurations:
+        raise ValueError("variant grid configurations must be a non-empty list")
+    families: list[VariantFamilySpec] = []
+    modes: set[str] = set()
+    labels: set[str] = set()
+    for raw in raw_families:
+        if not isinstance(raw, dict):
+            raise ValueError("variant grid family must be a mapping")
+        family = VariantFamilySpec(
+            mode=str(raw.get("mode") or "").strip(),
+            label=str(raw.get("label") or "").strip(),
+            entry_return_pct=float(raw.get("entry_return_pct")),
+            max_bias_pct=float(raw.get("max_bias_pct")),
+            hypothesis=str(raw.get("hypothesis") or "").strip(),
+        )
+        if not family.mode or family.mode in modes:
+            raise ValueError(f"variant grid mode duplicated or empty: {family.mode!r}")
+        if not family.label or family.label in labels:
+            raise ValueError(
+                f"variant grid label duplicated or empty: {family.label!r}"
+            )
+        if not family.hypothesis:
+            raise ValueError(f"variant grid hypothesis missing: {family.mode}")
+        modes.add(family.mode)
+        labels.add(family.label)
+        families.append(family)
+    configurations: list[tuple[int, int]] = []
+    for raw in raw_configurations:
+        if not isinstance(raw, dict):
+            raise ValueError("variant grid configuration must be a mapping")
+        lookback = int(raw.get("lookback_days") or 0)
+        max_positions = int(raw.get("max_positions") or 0)
+        configuration = (lookback, max_positions)
+        if lookback <= 0 or max_positions <= 0 or configuration in configurations:
+            raise ValueError(
+                f"variant grid configuration invalid or duplicated: {raw!r}"
+            )
+        configurations.append(configuration)
+    return VariantGridConfig(
+        version=version,
+        feature_warmup_calendar_days=warmup,
+        families=tuple(families),
+        configurations=tuple(configurations),
+    )
+
+
 DEFAULT_VARIANT_UNIVERSE_SIZE = 0
 _UNIVERSE_BUCKETS = ("main_sh", "main_sz", "chinext")
 _PRICE_BANDS = ("under_5", "5_to_15", "15_to_30", "30_to_80", "over_80")
@@ -333,26 +408,28 @@ def generate_variant_profiles(
     frames: dict[str, pd.DataFrame],
     *,
     training_end: str = "",
+    grid: VariantGridConfig | None = None,
 ) -> tuple[VariantProfile, ...]:
-    """Build a small orthogonal grid; training only selects the market note."""
+    """Build the versioned orthogonal grid; training only selects the market note."""
     volatility = _training_volatility_pct(frames, before_date=training_end)
-    grid: list[VariantProfile] = []
-    for mode, label, (entry, bias), hypothesis in _FAMILY_SPECS:
-        for lookback, max_positions in _VARIANT_CONFIGS:
-            grid.append(
+    config = grid or load_variant_grid()
+    profiles: list[VariantProfile] = []
+    for family in config.families:
+        for lookback, max_positions in config.configurations:
+            profiles.append(
                 VariantProfile(
-                    variant_id=f"{mode}_lb{lookback}_n{max_positions}",
-                    label=(f"{label} | {lookback}日 | {max_positions}只"),
+                    variant_id=f"{family.mode}_lb{lookback}_n{max_positions}",
+                    label=(f"{family.label} | {lookback}日 | {max_positions}只"),
                     lookback=lookback,
-                    entry_return_pct=entry,
-                    max_bias_pct=bias,
-                    mode=mode,
-                    hypothesis=hypothesis
+                    entry_return_pct=family.entry_return_pct,
+                    max_bias_pct=family.max_bias_pct,
+                    mode=family.mode,
+                    hypothesis=family.hypothesis
                     + (f"；训练波动中位数{volatility:.2f}%" if volatility else ""),
                     max_positions=max_positions,
                 )
             )
-    return tuple(grid)
+    return tuple(profiles)
 
 
 def load_frames(
@@ -638,130 +715,131 @@ def build_orders(
                 first_index,
                 bisect_left(dates, first_trade_date) - 1,
             )
-        for index in range(first_index, len(frame) - 1):
-            row = frame.iloc[index]
+        for index, row in enumerate(frame.itertuples(index=False)):
+            if index < first_index:
+                continue
+            if index >= len(frame) - 1:
+                break
             next_date = dates[index + 1]
-            valid = pd.notna(row["sma"]) and pd.notna(row["ret"])
+            valid = pd.notna(row.sma) and pd.notna(row.ret)
             if not valid:
                 continue
             if profile.mode == "reversion":
                 entry = bool(
-                    row["close"] < row["sma"]
-                    and row["ret"] <= -profile.entry_return_pct
-                    and row["bias"] >= -profile.max_bias_pct - 8.0
+                    row.close < row.sma
+                    and row.ret <= -profile.entry_return_pct
+                    and row.bias >= -profile.max_bias_pct - 8.0
                 )
-                exit_signal = bool(row["close"] > row["sma"] or row["ret"] > 2.0)
+                exit_signal = bool(row.close > row.sma or row.ret > 2.0)
             elif profile.mode == "breakout":
                 entry = bool(
-                    row["close"] >= row["prior_high"]
-                    and row["ret"] >= profile.entry_return_pct
-                    and row["bias"] <= profile.max_bias_pct
+                    row.close >= row.prior_high
+                    and row.ret >= profile.entry_return_pct
+                    and row.bias <= profile.max_bias_pct
                 )
-                exit_signal = bool(row["close"] < row["sma"])
+                exit_signal = bool(row.close < row.sma)
             elif profile.mode == "volume_breakout":
                 entry = bool(
-                    row["close"] >= row["prior_high"]
-                    and row["volume_ratio"] >= 1.35
-                    and row["bias"] <= profile.max_bias_pct
+                    row.close >= row.prior_high
+                    and row.volume_ratio >= 1.35
+                    and row.bias <= profile.max_bias_pct
                 )
-                exit_signal = bool(row["close"] < row["sma"])
+                exit_signal = bool(row.close < row.sma)
             elif profile.mode == "volume":
                 entry = bool(
-                    row["close"] >= row["prior_high"]
-                    and row["volume_ratio"] >= 1.2 + profile.entry_return_pct * 0.1
-                    and row["bias"] <= profile.max_bias_pct
+                    row.close >= row.prior_high
+                    and row.volume_ratio >= 1.2 + profile.entry_return_pct * 0.1
+                    and row.bias <= profile.max_bias_pct
                 )
-                exit_signal = bool(
-                    row["close"] < row["sma"] or row["volume_ratio"] < 0.8
-                )
+                exit_signal = bool(row.close < row.sma or row.volume_ratio < 0.8)
             elif profile.mode == "macd":
                 entry = bool(
-                    row["close"] > row["sma"]
-                    and row["macd_hist"] > 0
-                    and row["macd_hist"] >= row["macd_hist_prev"]
-                    and row["ret"] >= profile.entry_return_pct
-                    and row["bias"] <= profile.max_bias_pct
+                    row.close > row.sma
+                    and row.macd_hist > 0
+                    and row.macd_hist >= row.macd_hist_prev
+                    and row.ret >= profile.entry_return_pct
+                    and row.bias <= profile.max_bias_pct
                 )
-                exit_signal = bool(row["macd_hist"] < 0 or row["close"] < row["sma"])
+                exit_signal = bool(row.macd_hist < 0 or row.close < row.sma)
             elif profile.mode == "kdj":
                 entry = bool(
-                    row["kdj_k"] > row["kdj_d"]
-                    and row["kdj_j"] < 100.0
-                    and row["ret"] >= profile.entry_return_pct
-                    and row["bias"] <= profile.max_bias_pct
+                    row.kdj_k > row.kdj_d
+                    and row.kdj_j < 100.0
+                    and row.ret >= profile.entry_return_pct
+                    and row.bias <= profile.max_bias_pct
                 )
-                exit_signal = bool(row["kdj_k"] < row["kdj_d"] or row["kdj_j"] > 110.0)
+                exit_signal = bool(row.kdj_k < row.kdj_d or row.kdj_j > 110.0)
             elif profile.mode == "bollinger":
                 entry = bool(
-                    row["close"] <= row["bb_lower"]
-                    and row["ret"] <= profile.entry_return_pct
-                    and row["bias"] <= profile.max_bias_pct
+                    row.close <= row.bb_lower
+                    and row.ret <= profile.entry_return_pct
+                    and row.bias <= profile.max_bias_pct
                 )
-                exit_signal = bool(row["close"] > row["bb_mid"])
+                exit_signal = bool(row.close > row.bb_mid)
             elif profile.mode == "rsi":
                 entry = bool(
-                    row["rsi"] < 45.0
-                    and row["ret"] >= profile.entry_return_pct
-                    and row["bias"] <= profile.max_bias_pct
+                    row.rsi < 45.0
+                    and row.ret >= profile.entry_return_pct
+                    and row.bias <= profile.max_bias_pct
                 )
-                exit_signal = bool(row["rsi"] > 65.0 or row["close"] < row["sma"])
+                exit_signal = bool(row.rsi > 65.0 or row.close < row.sma)
             elif profile.mode == "ema_cross":
                 entry = bool(
-                    row["ema12"] > row["ema26"]
-                    and row["macd_hist"] >= row["macd_hist_prev"]
-                    and row["ret"] >= profile.entry_return_pct
-                    and row["bias"] <= profile.max_bias_pct
+                    row.ema12 > row.ema26
+                    and row.macd_hist >= row.macd_hist_prev
+                    and row.ret >= profile.entry_return_pct
+                    and row.bias <= profile.max_bias_pct
                 )
-                exit_signal = bool(row["ema12"] < row["ema26"])
+                exit_signal = bool(row.ema12 < row.ema26)
             elif profile.mode == "obv":
                 entry = bool(
-                    row["obv"] > row["obv_mean"]
-                    and row["close"] > row["sma"]
-                    and row["ret"] >= profile.entry_return_pct
-                    and row["bias"] <= profile.max_bias_pct
+                    row.obv > row.obv_mean
+                    and row.close > row.sma
+                    and row.ret >= profile.entry_return_pct
+                    and row.bias <= profile.max_bias_pct
                 )
-                exit_signal = bool(row["obv"] < row["obv_mean"])
+                exit_signal = bool(row.obv < row.obv_mean)
             elif profile.mode == "donchian":
                 entry = bool(
-                    row["close"] >= row["prior_high"]
-                    and row["ret"] >= profile.entry_return_pct
-                    and row["bias"] <= profile.max_bias_pct
+                    row.close >= row.prior_high
+                    and row.ret >= profile.entry_return_pct
+                    and row.bias <= profile.max_bias_pct
                 )
-                exit_signal = bool(row["close"] < row["prior_low"])
+                exit_signal = bool(row.close < row.prior_low)
             elif profile.mode == "vwap":
                 entry = bool(
-                    row["close"] > row["vwap"]
-                    and row["ret"] >= profile.entry_return_pct
-                    and row["bias"] <= profile.max_bias_pct
+                    row.close > row.vwap
+                    and row.ret >= profile.entry_return_pct
+                    and row.bias <= profile.max_bias_pct
                 )
-                exit_signal = bool(row["close"] < row["vwap"])
+                exit_signal = bool(row.close < row.vwap)
             elif profile.mode == "atr_trend":
                 entry = bool(
-                    row["close"] > row["sma"]
-                    and row["ret"] >= profile.entry_return_pct
-                    and row["atr_pct"] <= 6.0
+                    row.close > row.sma
+                    and row.ret >= profile.entry_return_pct
+                    and row.atr_pct <= 6.0
                 )
-                exit_signal = bool(row["close"] < row["sma"] or row["ret"] < -2.0)
+                exit_signal = bool(row.close < row.sma or row.ret < -2.0)
             elif profile.mode == "defensive_range":
                 entry = bool(
-                    row["close"] > row["sma"]
-                    and row["ret"] >= profile.entry_return_pct
-                    and row["bias"] <= profile.max_bias_pct
-                    and row["atr_pct"] <= 3.5
+                    row.close > row.sma
+                    and row.ret >= profile.entry_return_pct
+                    and row.bias <= profile.max_bias_pct
+                    and row.atr_pct <= 3.5
                 )
-                exit_signal = bool(row["close"] < row["sma"] or row["atr_pct"] > 6.0)
+                exit_signal = bool(row.close < row.sma or row.atr_pct > 6.0)
             else:
                 entry = bool(
-                    row["close"] > row["sma"]
-                    and row["ret"] >= profile.entry_return_pct
-                    and row["bias"] <= profile.max_bias_pct
+                    row.close > row.sma
+                    and row.ret >= profile.entry_return_pct
+                    and row.bias <= profile.max_bias_pct
                 )
-                exit_signal = bool(row["close"] < row["sma"] or row["ret"] < -2.0)
-            score = float(row["ret"])
+                exit_signal = bool(row.close < row.sma or row.ret < -2.0)
+            score = float(row.ret)
             if profile.mode == "reversion":
                 score = -score
             elif profile.mode == "low_vol":
-                atr_pct = float(row["atr_pct"]) if pd.notna(row["atr_pct"]) else 999.0
+                atr_pct = float(row.atr_pct) if pd.notna(row.atr_pct) else 999.0
                 score = -atr_pct
             evidence = _signal_evidence(row, profile) if entry or exit_signal else ()
             signals_by_date[next_date].append(
@@ -824,12 +902,18 @@ def _rsi(close: pd.Series, period: int) -> pd.Series:
     return 100.0 - 100.0 / (1.0 + relative)
 
 
-def _signal_evidence(row: pd.Series, profile: VariantProfile) -> tuple[str, ...]:
+def _row_value(row: object, key: str) -> object:
+    if isinstance(row, Mapping):
+        return row[key]
+    return getattr(row, key)
+
+
+def _signal_evidence(row: object, profile: VariantProfile) -> tuple[str, ...]:
     """Serialize observed technical values attached to every generated order."""
     evidence = [
-        f"信号日 {str(row['date'])[:10]}",
-        f"收盘 {float(row['close']):.2f}",
-        f"{profile.lookback}日收益 {float(row['ret']):+.2f}%",
+        f"信号日 {str(_row_value(row, 'date'))[:10]}",
+        f"收盘 {float(_row_value(row, 'close')):.2f}",
+        f"{profile.lookback}日收益 {float(_row_value(row, 'ret')):+.2f}%",
     ]
     values = {
         "MACD": ("macd", "macd_signal", "macd_hist"),
@@ -839,11 +923,13 @@ def _signal_evidence(row: pd.Series, profile: VariantProfile) -> tuple[str, ...]
         "布林": ("bb_lower", "bb_mid"),
     }
     for label, columns in values.items():
-        if all(pd.notna(row.get(column)) for column in columns):
+        if all(pd.notna(_row_value(row, column)) for column in columns):
             evidence.append(
                 label
                 + " "
-                + "/".join(f"{float(row[column]):.2f}" for column in columns)
+                + "/".join(
+                    f"{float(_row_value(row, column)):.2f}" for column in columns
+                )
             )
     return tuple(evidence)
 
@@ -956,9 +1042,7 @@ def validate_previous_variant_baseline(
         else previous_date
     )
     if baseline_date != expected_previous_date:
-        raise ValueError(
-            "variant artifact 无法继承准确的昨日持仓基线，拒绝覆盖上一版"
-        )
+        raise ValueError("variant artifact 无法继承准确的昨日持仓基线，拒绝覆盖上一版")
 
     variants = payload.get("variants")
     if not isinstance(variants, list) or not variants:
@@ -968,9 +1052,7 @@ def validate_previous_variant_baseline(
             item.get("previous_holdings"), list
         ):
             variant_id = item.get("variant_id", "") if isinstance(item, dict) else ""
-            raise ValueError(
-                f"变体 {variant_id} 缺少昨日持仓基线，拒绝覆盖上一版"
-            )
+            raise ValueError(f"变体 {variant_id} 缺少昨日持仓基线，拒绝覆盖上一版")
 
 
 def validate_variant_artifact(
@@ -1054,7 +1136,8 @@ def run_suite(
     end_day = date.fromisoformat(end)
     if start_day > end_day:
         raise ValueError("start must not be later than end")
-    warmup_start = start_day - timedelta(days=FEATURE_WARMUP_CALENDAR_DAYS)
+    grid = load_variant_grid()
+    warmup_start = start_day - timedelta(days=grid.feature_warmup_calendar_days)
     # Indicators may use only bars before the reset date as warm-up data. Orders
     # are filtered separately, so the paper account always starts from zero cash
     # and zero holdings on the requested reset date.
@@ -1065,7 +1148,7 @@ def run_suite(
         end,
     )
     rules = VariantExecutionRules(initial_cash=100_000.0)
-    profiles = generate_variant_profiles(frames, training_end=start)
+    profiles = generate_variant_profiles(frames, training_end=start, grid=grid)
     results = []
     base_cache: dict[str, pd.DataFrame] = {}
     for lookback in sorted({profile.lookback for profile in profiles}):
@@ -1154,7 +1237,10 @@ def run_suite(
         ),
         "initial_cash": 100_000.0,
         "optimization": {
-            "method": "training_only_evolution_and_orthogonal_strategy_grid_v3",
+            "method": "training_only_evolution_and_orthogonal_strategy_grid_v4",
+            "grid_version": grid.version,
+            "family_count": len(grid.families),
+            "configuration_count": len(grid.configurations),
             "training_bars": 60,
             "training_volatility_pct": training_volatility_pct,
             "training_end_exclusive": start,
