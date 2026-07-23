@@ -398,6 +398,28 @@ def test_aqsp_bridge_rejects_candidates_from_incomplete_market_batch(
     assert response.status_code == 503
 
 
+def test_aqsp_bridge_serves_read_only_status_without_partial_candidates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    payload = _snapshot("2026-07-14")
+    payload["universe"] = {
+        "batch_active": True,
+        "coverage_pct": 0.25,
+        "total": 5000,
+    }
+    path = _write_single(tmp_path, payload)
+    monkeypatch.setenv("AQSP_RESEARCH_SURFACE_SNAPSHOT", str(path))
+    monkeypatch.setenv("AQSP_ALLOW_STALE_SNAPSHOT", "1")
+
+    response = client.get("/api/aqsp/snapshot")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["data"]["candidates"] == []
+    assert body["data"]["debates"] == []
+    assert any("全市场批次未完成" in item for item in body["data"]["summaries"])
+
+
 def test_aqsp_bridge_dates_and_candidate_use_exact_historical_snapshot(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

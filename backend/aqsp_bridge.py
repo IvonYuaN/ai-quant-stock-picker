@@ -837,9 +837,17 @@ def _parse_snapshot(payload: Mapping[str, Any]) -> AQSPSnapshot:
     _validate_advisory_boundary(raw_debates or [], candidates)
     universe = _parse_universe(payload.get("universe"))
     if universe.batch_active and universe.coverage_pct < 1.0 and candidates:
-        raise AQSPSnapshotUnavailable(
-            "未完成全市场批次不得发布候选"
-        )
+        if os.getenv("AQSP_ALLOW_STALE_SNAPSHOT", "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }:
+            candidates = ()
+            debates = ()
+            summaries = (*summaries, "全市场批次未完成，今日候选暂不发布")
+        else:
+            raise AQSPSnapshotUnavailable("未完成全市场批次不得发布候选")
     stale_after = _optional_text(payload.get("stale_after"), "stale_after")
     if stale_after:
         _timestamp(stale_after, "stale_after")
