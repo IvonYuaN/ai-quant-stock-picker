@@ -889,12 +889,20 @@ def attach_previous_variant_holdings(
     result = dict(payload)
     current_variants = payload.get("variants")
     previous_variants = previous_payload.get("variants") if previous_payload else None
+    current_date = str(payload.get("end_date", ""))
     previous_date = (
         str(previous_payload.get("end_date", "")) if previous_payload else ""
     )
+    same_date_retry = (
+        previous_date == current_date
+        and str(previous_payload.get("previous_holdings_date", ""))
+        == expected_previous_date
+        if previous_payload
+        else False
+    )
     if (
         not expected_previous_date
-        or previous_date != expected_previous_date
+        or (previous_date != expected_previous_date and not same_date_retry)
         or not isinstance(current_variants, list)
         or not isinstance(previous_variants, list)
     ):
@@ -911,7 +919,13 @@ def attach_previous_variant_holdings(
             continue
         carried = dict(item)
         previous = previous_by_id.get(str(item.get("variant_id", "")))
-        holdings = previous.get("holdings") if previous else None
+        holdings = (
+            previous.get("previous_holdings")
+            if same_date_retry and previous
+            else previous.get("holdings")
+            if previous
+            else None
+        )
         if isinstance(holdings, list):
             carried["previous_holdings"] = [
                 dict(holding) for holding in holdings if isinstance(holding, dict)

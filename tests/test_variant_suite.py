@@ -201,6 +201,34 @@ def test_attach_previous_variant_holdings_requires_exact_previous_date() -> None
     )
 
 
+def test_attach_previous_variant_holdings_reuses_baseline_on_same_date_retry() -> None:
+    current = {
+        "end_date": "2026-07-20",
+        "variants": [{"variant_id": "trend_lb10_n3", "holdings": []}],
+    }
+    previous = {
+        "end_date": "2026-07-20",
+        "previous_holdings_date": "2026-07-17",
+        "variants": [
+            {
+                "variant_id": "trend_lb10_n3",
+                "holdings": [{"symbol": "600001", "quantity": 100}],
+                "previous_holdings": [{"symbol": "000001", "quantity": 200}],
+            }
+        ],
+    }
+
+    carried = attach_previous_variant_holdings(
+        current,
+        previous,
+        expected_previous_date="2026-07-17",
+    )
+
+    assert carried["variants"][0]["previous_holdings"] == [
+        {"symbol": "000001", "quantity": 200}
+    ]
+
+
 def test_fast_indicator_cache_matches_causal_pandas_features() -> None:
     dates = pd.date_range("2026-01-01", periods=40, freq="D")
     close = pd.Series(np.linspace(10.0, 14.0, len(dates)))

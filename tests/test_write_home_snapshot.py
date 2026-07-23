@@ -668,6 +668,7 @@ def test_messages_prioritize_distinct_topics_before_repeating_one_topic() -> Non
         "商业航天 IPO",
         "军工订单",
         "政策支持",
+        "英伟达新品 2",
     ]
 
 
@@ -702,9 +703,9 @@ def test_messages_bound_one_source_when_multiple_sources_are_available() -> None
 
     messages = write_home_snapshot._messages_from_catalyst_report(report)
 
-    assert len(messages) == 4
+    assert len(messages) == 5
     assert {message.source for message in messages} == {"主源", "备用源"}
-    assert sum(message.source == "主源" for message in messages) == 2
+    assert sum(message.source == "主源" for message in messages) == 3
 
 
 def test_messages_bound_sources_even_when_digest_has_fewer_than_five_items() -> None:
@@ -733,7 +734,12 @@ def test_messages_bound_sources_even_when_digest_has_fewer_than_five_items() -> 
 
     messages = write_home_snapshot._messages_from_catalyst_report(report)
 
-    assert [message.source for message in messages] == ["主源", "主源", "备用源"]
+    assert [message.source for message in messages] == [
+        "主源",
+        "主源",
+        "主源",
+        "备用源",
+    ]
 
 
 def test_messages_exclude_events_without_traceable_source() -> None:
