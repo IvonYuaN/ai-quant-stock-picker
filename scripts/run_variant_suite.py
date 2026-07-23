@@ -87,6 +87,7 @@ class VariantGridConfig:
 
     version: str
     feature_warmup_calendar_days: int
+    feature_cache_max_symbols: int
     families: tuple[VariantFamilySpec, ...]
     configurations: tuple[tuple[int, int], ...]
 
@@ -108,6 +109,9 @@ def load_variant_grid(path: str = "") -> VariantGridConfig:
     warmup = int(payload.get("feature_warmup_calendar_days") or 0)
     if warmup <= 0:
         raise ValueError("variant grid warmup must be positive")
+    feature_cache_max_symbols = int(payload.get("feature_cache_max_symbols") or 0)
+    if feature_cache_max_symbols <= 0:
+        raise ValueError("variant grid feature cache limit must be positive")
     raw_families = payload.get("families")
     raw_configurations = payload.get("configurations")
     if not isinstance(raw_families, list) or not raw_families:
@@ -153,6 +157,7 @@ def load_variant_grid(path: str = "") -> VariantGridConfig:
     return VariantGridConfig(
         version=version,
         feature_warmup_calendar_days=warmup,
+        feature_cache_max_symbols=feature_cache_max_symbols,
         families=tuple(families),
         configurations=tuple(configurations),
     )
@@ -1430,11 +1435,16 @@ def run_suite(
                     if isinstance(item, dict) and item.get("variant_id")
                 }
     results = []
+    feature_cache_enabled = len(frames) <= grid.feature_cache_max_symbols
     for lookback in sorted({profile.lookback for profile in profiles}):
         # Keep only one lookback's derived columns alive. Retaining all four
         # periods for 4,000+ symbols causes avoidable memory pressure.
-        prepared_cache: dict[tuple[str, int], pd.DataFrame] = {}
-        base_cache: dict[str, pd.DataFrame] = {}
+        prepared_cache: dict[tuple[str, int], pd.DataFrame] | None = (
+            {} if feature_cache_enabled else None
+        )
+        base_cache: dict[str, pd.DataFrame] | None = (
+            {} if feature_cache_enabled else None
+        )
         for profile in (item for item in profiles if item.lookback == lookback):
             previous = previous_by_id.get(profile.variant_id)
             initial_active_symbols = {
@@ -1483,7 +1493,10 @@ def run_suite(
                 f"symbols={len(frames)} filled={payload.get('filled_orders', 0)}",
                 flush=True,
             )
-        del prepared_cache, base_cache
+        if prepared_cache is not None:
+            prepared_cache.clear()
+        if base_cache is not None:
+            base_cache.clear()
     generated_variant_count = len(results)
     results, duplicate_portfolios_removed = deduplicate_variant_results(
         results, symbol_count=len(symbols)
@@ -1541,6 +1554,8 @@ def run_suite(
             "grid_version": grid.version,
             "family_count": len(grid.families),
             "configuration_count": len(grid.configurations),
+            "feature_cache_enabled": feature_cache_enabled,
+            "feature_cache_max_symbols": grid.feature_cache_max_symbols,
             "training_bars": 60,
             "training_volatility_pct": training_volatility_pct,
             "training_end_exclusive": start,

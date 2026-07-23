@@ -1,5 +1,8 @@
-version: "2026.07.23.v4"
+version: "2026.07.23.v5"
 feature_warmup_calendar_days: 90
+# Above this universe size, derived feature frames are computed per symbol and
+# released immediately to keep the full-board run within the server memory cap.
+feature_cache_max_symbols: 512
 
 # This is an isolated paper-research grid. It does not change formal signal
 # thresholds or place orders. Each family has a distinct entry/exit rule in

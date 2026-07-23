@@ -174,9 +174,11 @@ def test_run_suite_creates_distinct_independent_ten_wan_accounts(tmp_path):
     assert all("cash" in item and "total_pnl" in item for item in result["variants"])
     assert all("strategy" in item and "holdings" in item for item in result["variants"])
     assert result["optimization"]["evaluation_only"] is True
-    assert result["optimization"]["grid_version"] == "2026.07.23.v4"
+    assert result["optimization"]["grid_version"] == "2026.07.23.v5"
     assert result["optimization"]["family_count"] == 16
     assert result["optimization"]["configuration_count"] == 4
+    assert result["optimization"]["feature_cache_enabled"] is True
+    assert result["optimization"]["feature_cache_max_symbols"] == 512
     assert result["optimization"]["selected_variant_id"]
     assert all(item["filled_orders"] >= 0 for item in result["variants"])
     assert all(item["strategy"]["max_positions"] >= 1 for item in result["variants"])
