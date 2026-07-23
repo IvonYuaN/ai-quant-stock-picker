@@ -11,6 +11,7 @@ from scripts.run_variant_suite import (
     load_frames,
     run_suite,
     select_stratified_symbols,
+    validate_previous_variant_baseline,
     validate_variant_artifact,
 )
 
@@ -227,6 +228,48 @@ def test_attach_previous_variant_holdings_reuses_baseline_on_same_date_retry() -
     assert carried["variants"][0]["previous_holdings"] == [
         {"symbol": "000001", "quantity": 200}
     ]
+
+
+def test_validate_previous_variant_baseline_rejects_missing_same_day_baseline() -> None:
+    payload = {
+        "end_date": "2026-07-20",
+        "variants": [{"variant_id": "trend_lb10_n3", "holdings": []}],
+    }
+    previous = {
+        "end_date": "2026-07-20",
+        "previous_holdings_date": "2026-07-17",
+        "variants": [{"variant_id": "trend_lb10_n3", "holdings": []}],
+    }
+
+    with pytest.raises(ValueError, match="缺少昨日持仓基线"):
+        validate_previous_variant_baseline(
+            payload,
+            previous,
+            expected_previous_date="2026-07-17",
+        )
+
+
+def test_validate_previous_variant_baseline_rejects_stale_previous_artifact() -> None:
+    payload = {
+        "end_date": "2026-07-23",
+        "variants": [
+            {
+                "variant_id": "trend_lb10_n3",
+                "previous_holdings": [],
+            }
+        ],
+    }
+    previous = {
+        "end_date": "2026-07-21",
+        "variants": [{"variant_id": "trend_lb10_n3", "holdings": []}],
+    }
+
+    with pytest.raises(ValueError, match="准确的昨日持仓基线"):
+        validate_previous_variant_baseline(
+            payload,
+            previous,
+            expected_previous_date="2026-07-22",
+        )
 
 
 def test_fast_indicator_cache_matches_causal_pandas_features() -> None:

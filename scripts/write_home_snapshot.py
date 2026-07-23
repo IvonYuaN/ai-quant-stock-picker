@@ -1483,9 +1483,12 @@ def _recommendation_gate(
 
 
 def _phase_snapshot(
-    provider: DashboardDataProvider, signal_date: str
+    provider: DashboardDataProvider,
+    signal_date: str,
+    *,
+    premarket_messages: tuple[HomeSnapshotMessage, ...] = (),
 ) -> tuple[HomeSnapshotPhase, ...]:
-    """Read phase artifacts without network calls and calculate symbol overlap."""
+    """Read phase artifacts and keep message-only premarket work visible."""
     phase_specs = (
         ("main_chain", "盘前", "盘前主链"),
         ("intraday", "盘中", "盘中观察"),
@@ -1505,17 +1508,27 @@ def _phase_snapshot(
         }
         overlap = len(symbols & seen_symbols)
         seen_symbols.update(symbols)
+        status = "已产出" if rows else "未产出"
+        updated_at = str(
+            max((row.get("created_at", "") for row in rows), default="") or ""
+        )
+        if task_id == "main_chain" and not rows and premarket_messages:
+            # News is a real premarket artifact, but it must not be counted as
+            # a main-chain candidate signal.
+            status = "消息已更新"
+            updated_at = str(
+                max((message.published_at for message in premarket_messages), default="")
+                or ""
+            )
         phases.append(
             HomeSnapshotPhase(
                 task_id=task_id,
                 label=label,
-                status="已产出" if rows else "未产出",
+                status=status,
                 candidate_count=len(rows),
                 unique_symbols=len(symbols),
                 overlap_symbols=overlap,
-                updated_at=str(
-                    max((row.get("created_at", "") for row in rows), default="") or ""
-                ),
+                updated_at=updated_at,
             )
         )
     return tuple(phases)
@@ -1957,8 +1970,12 @@ def build_home_snapshot(
     if not recommendation_gate.recommendation_allowed:
         recommendation_count = 0
         shown_recommendation_count = 0
-    phases = _phase_snapshot(provider, selected_date)
-    live_phase_produced = any(phase.status != "未产出" for phase in phases)
+    phases = _phase_snapshot(
+        provider,
+        selected_date,
+        premarket_messages=tuple(messages),
+    )
+    live_phase_produced = any(phase.candidate_count > 0 for phase in phases)
     debate_missing = bool(getattr(payload, "debates", ()) or ()) and not debates
     raw_summaries = (
         "委员会结论缺少当前候选映射，已隐藏" if debate_missing else "",

@@ -10,6 +10,7 @@ import pytest
 
 from aqsp.news.catalysts import CatalystEvent, CatalystReport, serialize_catalyst_report
 from aqsp.web.home_snapshot import (
+    HomeSnapshotMessage,
     load_home_dashboard_snapshot,
     load_home_snapshot_index,
 )
@@ -164,6 +165,34 @@ def test_variant_snapshot_reads_carried_forward_previous_holdings(
     assert variants[0].holdings[0].symbol == "600001"
     assert variants[0].previous_holdings is not None
     assert variants[0].previous_holdings[0].symbol == "000001"
+
+
+def test_phase_snapshot_surfaces_premarket_messages_without_fake_candidates() -> None:
+    class PhaseProvider:
+        def _signal_task_rows_for_date(
+            self, task_id: str, signal_date: str
+        ) -> list[dict[str, str]]:
+            return []
+
+    message = HomeSnapshotMessage(
+        title="盘前消息",
+        summary="等待量价确认",
+        impact="利好",
+        category="产业政策",
+        source="测试源",
+        published_at="2026-07-23T08:35:00+08:00",
+    )
+
+    phases = write_home_snapshot._phase_snapshot(
+        PhaseProvider(),
+        "2026-07-23",
+        premarket_messages=(message,),
+    )
+
+    assert phases[0].status == "消息已更新"
+    assert phases[0].candidate_count == 0
+    assert phases[0].updated_at == message.published_at
+    assert phases[1].status == "未产出"
 
 
 class _Provider:

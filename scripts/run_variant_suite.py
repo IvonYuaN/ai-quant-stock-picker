@@ -936,6 +936,43 @@ def attach_previous_variant_holdings(
     return result
 
 
+def validate_previous_variant_baseline(
+    payload: Mapping[str, object],
+    previous_payload: Mapping[str, object] | None,
+    *,
+    expected_previous_date: str,
+) -> None:
+    """Reject replacing an existing artifact when yesterday's baseline is absent."""
+    if previous_payload is None:
+        return
+    if not expected_previous_date:
+        raise ValueError("variant artifact 缺少昨日基线日期")
+
+    current_date = str(payload.get("end_date", ""))
+    previous_date = str(previous_payload.get("end_date", ""))
+    baseline_date = (
+        str(previous_payload.get("previous_holdings_date", ""))
+        if previous_date == current_date
+        else previous_date
+    )
+    if baseline_date != expected_previous_date:
+        raise ValueError(
+            "variant artifact 无法继承准确的昨日持仓基线，拒绝覆盖上一版"
+        )
+
+    variants = payload.get("variants")
+    if not isinstance(variants, list) or not variants:
+        raise ValueError("variant artifact variants 不能为空")
+    for item in variants:
+        if not isinstance(item, dict) or not isinstance(
+            item.get("previous_holdings"), list
+        ):
+            variant_id = item.get("variant_id", "") if isinstance(item, dict) else ""
+            raise ValueError(
+                f"变体 {variant_id} 缺少昨日持仓基线，拒绝覆盖上一版"
+            )
+
+
 def validate_variant_artifact(
     payload: Mapping[str, object],
     *,

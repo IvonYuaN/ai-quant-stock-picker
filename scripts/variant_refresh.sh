@@ -154,6 +154,7 @@ from pathlib import Path
 from scripts.run_variant_suite import (
     attach_previous_variant_holdings,
     validate_variant_artifact,
+    validate_previous_variant_baseline,
 )
 
 temporary = Path(os.environ["VARIANT_TMP"])
@@ -170,6 +171,11 @@ if output.exists():
     if isinstance(candidate, dict):
         previous_payload = candidate
 payload = attach_previous_variant_holdings(
+    payload,
+    previous_payload,
+    expected_previous_date=os.environ.get("EXPECTED_PREVIOUS_DATE", ""),
+)
+validate_previous_variant_baseline(
     payload,
     previous_payload,
     expected_previous_date=os.environ.get("EXPECTED_PREVIOUS_DATE", ""),
