@@ -8,7 +8,8 @@
 # 4. 北京时间 08:35 和周末 09:05 运行消息面雷达
 # 5. 北京时间 18:00 运行收盘同步 + 全量跑批
 # 6. 北京时间 19:40 运行冷启动补样本，避开收盘主链路
-# 7. 北京时间每 15 分钟运行一次监控
+# 7. 北京时间 15:20 运行实时纸面变体，避免等到晚间收盘主链路
+# 8. 北京时间每 15 分钟运行一次监控
 
 set -euo pipefail
 
@@ -21,6 +22,7 @@ ENABLE_DAILY="${AQSP_ENABLE_DAILY_CRON:-true}"
 ENABLE_MONITOR="${AQSP_ENABLE_MONITOR_CRON:-true}"
 ENABLE_NEWS="${AQSP_ENABLE_NEWS_CRON:-true}"
 ENABLE_COLDSTART="${AQSP_ENABLE_COLDSTART_CRON:-true}"
+ENABLE_VARIANTS="${AQSP_ENABLE_VARIANTS_CRON:-true}"
 
 mkdir -p "$(dirname "$CRON_LOG")"
 
@@ -51,6 +53,10 @@ emit_jobs() {
         echo '40 19 * * 1-5 /bin/bash '"${PROJECT_ROOT}"'/scripts/bt_task.sh coldstart >> '"${CRON_LOG}"' 2>&1'
     fi
 
+    if [[ "${ENABLE_VARIANTS,,}" =~ ^(1|true|yes|on)$ ]]; then
+        echo '20 15 * * 1-5 /bin/bash '"${PROJECT_ROOT}"'/scripts/bt_task.sh variants >> '"${CRON_LOG}"' 2>&1'
+    fi
+
     if [[ "${ENABLE_NEWS,,}" =~ ^(1|true|yes|on)$ ]]; then
         echo '35 8 * * 1-5 /bin/bash '"${PROJECT_ROOT}"'/scripts/bt_task.sh news >> '"${CRON_LOG}"' 2>&1'
         echo '5 9 * * 6,0 /bin/bash '"${PROJECT_ROOT}"'/scripts/bt_task.sh news >> '"${CRON_LOG}"' 2>&1'
@@ -64,7 +70,7 @@ emit_jobs() {
 CURRENT_CRONTAB="$(crontab -l 2>/dev/null || true)"
 FILTERED_CRONTAB="$(
     printf '%s\n' "$CURRENT_CRONTAB" | grep -vE \
-        'AQSP_RUNNER_SCRIPT=scripts/intraday_refresh\.sh|AQSP_RUNNER_SCRIPT=scripts/midday_refresh\.sh|/scripts/server_sync_and_run\.sh|/scripts/server_monitor\.sh|/scripts/bt_task\.sh (daily|intraday|midday|coldstart|monitor|news)' || true
+        'AQSP_RUNNER_SCRIPT=scripts/intraday_refresh\.sh|AQSP_RUNNER_SCRIPT=scripts/midday_refresh\.sh|/scripts/server_sync_and_run\.sh|/scripts/server_monitor\.sh|/scripts/bt_task\.sh (daily|intraday|midday|variants|coldstart|monitor|news)' || true
 )"
 
 {

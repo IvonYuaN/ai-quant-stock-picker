@@ -1669,7 +1669,7 @@ def _variant_snapshot(
             is not None
         )
         raw_previous_holdings = item.get("previous_holdings")
-        previous_holdings = (
+        explicit_previous_holdings = (
             tuple(
                 parsed
                 for holding in raw_previous_holdings
@@ -1677,17 +1677,16 @@ def _variant_snapshot(
                 is not None
             )
             if isinstance(raw_previous_holdings, list)
-            else _previous_variant_holdings(item.get("fills"), holdings, variant_names)
+            else None
         )
         holdings_date = _first_text(item.get("holdings_date"), payload.get("end_date"))
         previous_holdings_date = _first_text(
-            item.get("previous_holdings_date"), payload.get("previous_holdings_date")
-        ) or _derived_previous_holdings_date(
-            item.get("fills"), current_date=holdings_date
+            item.get("previous_holdings_date"),
+            payload.get("previous_holdings_date"),
         )
         adjustments = _variant_adjustments(
             holdings,
-            previous_holdings,
+            explicit_previous_holdings,
             raw_fills=item.get("fills"),
             holdings_date=holdings_date,
         )
@@ -1714,7 +1713,7 @@ def _variant_snapshot(
                 data_mode=_text(payload.get("data_mode")),
                 strategy=strategy,
                 holdings=holdings,
-                previous_holdings=previous_holdings,
+                previous_holdings=explicit_previous_holdings,
                 holdings_date=holdings_date,
                 previous_holdings_date=previous_holdings_date,
                 adjustments=adjustments,
@@ -1725,25 +1724,6 @@ def _variant_snapshot(
             )
         )
     return tuple(variants)
-
-
-def _derived_previous_holdings_date(
-    raw_fills: object,
-    *,
-    current_date: str,
-) -> str:
-    """Return the latest filled date before the current holdings date."""
-    dates = sorted(
-        {
-            _text(fill.get("date"))[:10]
-            for fill in (raw_fills if isinstance(raw_fills, list) else [])
-            if isinstance(fill, dict)
-            and _text(fill.get("status")) == "filled"
-            and _text(fill.get("date"))
-            and _text(fill.get("date"))[:10] < current_date[:10]
-        }
-    )
-    return dates[-1] if dates else ""
 
 
 def _variant_adjustments(

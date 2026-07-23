@@ -4,7 +4,19 @@ set -euo pipefail
 
 PROJECT_ROOT="${AQSP_PROJECT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 RUNTIME_ROOT="${AQSP_RUNTIME_ROOT:-${PROJECT_ROOT}}"
-PYTHON_BIN="${AQSP_RUNTIME_PYTHON:-${PROJECT_ROOT}/.venv/bin/python3}"
+PYTHON_BIN="${AQSP_RUNTIME_PYTHON:-${AQSP_PYTHON:-${VIBE_RESEARCH_PYTHON_BIN:-}}}"
+if [[ -z "$PYTHON_BIN" && -n "${AQSP_RUNTIME_VENV_DIR:-}" ]]; then
+    PYTHON_BIN="${AQSP_RUNTIME_VENV_DIR}/bin/python"
+fi
+if [[ -z "$PYTHON_BIN" && -n "${AQSP_VIBE_VENV_DIR:-}" ]]; then
+    PYTHON_BIN="${AQSP_VIBE_VENV_DIR}/bin/python"
+fi
+if [[ -z "$PYTHON_BIN" && -x "${PROJECT_ROOT}/.venv-vibe-research/bin/python" ]]; then
+    PYTHON_BIN="${PROJECT_ROOT}/.venv-vibe-research/bin/python"
+fi
+if [[ -z "$PYTHON_BIN" ]]; then
+    PYTHON_BIN="$(command -v python3 || true)"
+fi
 DB_PATH="${AQSP_VARIANT_DB:-${AQSP_SQLITE_DB_PATH:-${RUNTIME_ROOT}/data/cache.db}}"
 OUTPUT_PATH="${AQSP_VARIANT_RESULTS:-${RUNTIME_ROOT}/data/runtime/variant_results.json}"
 SNAPSHOT_PATH="${AQSP_HOME_SNAPSHOT_PATH:-${RUNTIME_ROOT}/data/runtime/home_dashboard_snapshot.json}"
@@ -127,6 +139,10 @@ from aqsp.core.time import today_shanghai
 print(today_shanghai().isoformat())
 PY
 )"
+
+# The paper suite is refreshed at the latest completed raw trade date, while
+# the dashboard snapshot remains dated today and must not present history as
+# a formal live recommendation.
 
 mkdir -p "$(dirname "$OUTPUT_PATH")"
 TMP_OUTPUT="${OUTPUT_PATH}.next.$$"
