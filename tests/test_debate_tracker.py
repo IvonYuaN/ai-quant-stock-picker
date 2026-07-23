@@ -1554,3 +1554,57 @@ def test_debate_coordinator_deadline_reports_block_without_changing_score(
     assert result.task_id == "intraday"
     assert result.heartbeat_count >= 1
     assert heartbeats
+
+
+def test_audit_debate_quality_flags_three_roles_with_identical_stances():
+    def opinion(role: str) -> SimpleNamespace:
+        return SimpleNamespace(
+            role=role,
+            agent_id=f"{role}-agent",
+            stance="neutral",
+            arguments=["同一条待核验观察"],
+            counterarguments=[],
+            counterargument_roles=[],
+            peer_reviewed_roles=[],
+            rebuttal_records=[],
+            risk_factors=["若量价背离则失效"],
+            opportunity_factors=[],
+        )
+
+    result = SimpleNamespace(
+        symbol="600001",
+        related_signal_date="2026-07-20",
+        candidate_fingerprint="",
+        task_id="",
+        rounds=[
+            SimpleNamespace(
+                round_num=1,
+                opinions=[opinion("bull"), opinion("bear"), opinion("risk_control")],
+            ),
+            SimpleNamespace(
+                round_num=2,
+                opinions=[opinion("bull"), opinion("bear"), opinion("risk_control")],
+            ),
+        ],
+        final_consensus="neutral",
+        final_vote={"bull": "neutral", "bear": "neutral", "risk_control": "neutral"},
+        next_trigger="量价确认",
+        advisory_only=True,
+        deterministic_score_unchanged=True,
+        original_score=60.0,
+        deterministic_score=60.0,
+        data_status="available",
+        support_points=["支持证据"],
+        opposition_points=["反方证据"],
+        risk_warnings=["若量价背离则失效"],
+        viewpoint_buckets={},
+        uncertainty_points=["等待确认"],
+    )
+
+    audit = audit_debate_quality(
+        result,
+        expected_roles=(AgentRole.BULL, AgentRole.BEAR, AgentRole.RISK_CONTROL),
+    )
+
+    assert audit.stance_diversity_recorded is False
+    assert "no_stance_diversity" in audit.issues

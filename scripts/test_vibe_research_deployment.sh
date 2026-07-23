@@ -83,7 +83,7 @@ for nginx_config in \
     rg -q 'location \^~ /api/' "$nginx_config"
     rg -q 'proxy_pass http://127.0.0.1:8900' "$nginx_config"
 done
-rg -q -- '--allow-stale-snapshot' "${SYSTEMD_DIR}/aqsp-vibe-research-api.service"
+! rg -q -- '--allow-stale-snapshot|AQSP_ALLOW_STALE_SNAPSHOT=1' "${SYSTEMD_DIR}/aqsp-vibe-research-api.service" "${PROJECT_ROOT}/deploy/systemd/aqsp-vibe-research.env.example"
 rg -q 'AQSP_VIBE_USER|AQSP_VIBE_VENV_DIR|python3 -m venv' \
     "${PROJECT_ROOT}/scripts/install_vibe_research_systemd.sh"
 rg -q 'pip install -e .*\[api\]' "${PROJECT_ROOT}/scripts/install_vibe_research_systemd.sh"

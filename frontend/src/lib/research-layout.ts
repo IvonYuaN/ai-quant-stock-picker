@@ -5,6 +5,8 @@ export const FORMAL_RESEARCH_SECTIONS = [
   { id: "discussion", number: "04", label: "讨论复核", description: "分歧与风险", countKey: "debates" },
 ] as const;
 
+export type FormalResearchSection = (typeof FORMAL_RESEARCH_SECTIONS)[number];
+
 export const RESEARCH_SECTION_IDS = FORMAL_RESEARCH_SECTIONS.map((section) => section.id) as [
   "overview",
   "messages",
@@ -15,6 +17,9 @@ export const TEST_VARIANTS_SECTION_ID = "test-variants" as const;
 export const MARKET_CONTEXT_SECTION_ID = "market-context" as const;
 
 export const RESEARCH_NAV_ITEMS = FORMAL_RESEARCH_SECTIONS;
+
+export const FORMAL_RESEARCH_SECTION_BY_ID: Readonly<Record<ResearchSectionId, FormalResearchSection>> =
+  Object.fromEntries(FORMAL_RESEARCH_SECTIONS.map((section) => [section.id, section])) as Record<ResearchSectionId, FormalResearchSection>;
 
 export type ResearchSectionId = (typeof RESEARCH_SECTION_IDS)[number];
 export type ResearchViewId = ResearchSectionId | typeof TEST_VARIANTS_SECTION_ID;

@@ -72,6 +72,7 @@ class DebateQualityAudit:
     transmission_evidence_recorded: bool = False
     viewpoint_bucket_presence: tuple[tuple[str, bool], ...] = ()
     uncertainty_recorded: bool = False
+    stance_diversity_recorded: bool = False
 
     @property
     def passed(self) -> bool:
@@ -250,6 +251,10 @@ def audit_debate_quality(
         )
         for stance in ("bullish", "bearish", "neutral")
     )
+    final_stances = tuple(
+        _clean_text(_field(opinion, "stance", "")) for opinion in final_opinions
+    )
+    stance_diversity_recorded = len(set(final_stances)) > 1
     raw_buckets = _field(result, "viewpoint_buckets", {})
     viewpoint_bucket_presence = tuple(
         (
@@ -341,6 +346,8 @@ def audit_debate_quality(
         issues.append("missing_opposition_viewpoint")
     if not real_opposition_recorded:
         issues.append("missing_real_opposition")
+    if len(final_opinions) >= 3 and not stance_diversity_recorded:
+        issues.append("no_stance_diversity")
     if not risk_recorded:
         issues.append("missing_risk_viewpoint")
     if not cross_market_recorded:
@@ -391,6 +398,7 @@ def audit_debate_quality(
         ),
         viewpoint_bucket_presence=viewpoint_bucket_presence,
         uncertainty_recorded=uncertainty_recorded,
+        stance_diversity_recorded=stance_diversity_recorded,
     )
 
 

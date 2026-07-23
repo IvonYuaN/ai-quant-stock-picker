@@ -1,4 +1,4 @@
-import { FORMAL_RESEARCH_SECTIONS, RESEARCH_NAV_ITEMS, RESEARCH_SECTION_IDS, resolveResearchView, TEST_VARIANTS_SECTION_ID } from "./research-layout";
+import { FORMAL_RESEARCH_SECTION_BY_ID, FORMAL_RESEARCH_SECTIONS, RESEARCH_NAV_ITEMS, RESEARCH_SECTION_IDS, resolveResearchView, TEST_VARIANTS_SECTION_ID } from "./research-layout";
 
 export const researchLayoutContract = {
   sectionsAreSeparate: RESEARCH_SECTION_IDS.join("|") === "overview|messages|candidates|discussion",
@@ -6,6 +6,7 @@ export const researchLayoutContract = {
   formalBoardHasExactlyFourIndependentSections: FORMAL_RESEARCH_SECTIONS.length === 4 && new Set(FORMAL_RESEARCH_SECTIONS.map((section) => section.id)).size === 4,
   formalBoardNumbersAreStable: FORMAL_RESEARCH_SECTIONS.map((section) => section.number).join("|") === "01|02|03|04",
   navCoversEverySection: RESEARCH_NAV_ITEMS.map((item) => item.id).join("|") === RESEARCH_SECTION_IDS.join("|"),
+  contentMapCoversEverySection: RESEARCH_SECTION_IDS.every((id) => FORMAL_RESEARCH_SECTION_BY_ID[id].id === id),
   testVariantsHasStableAnchor: TEST_VARIANTS_SECTION_ID === "test-variants",
   unknownHashOpensConclusion: resolveResearchView("#unknown") === "overview",
   formalHashKeepsOneToOneMapping: RESEARCH_SECTION_IDS.every((section) => resolveResearchView(`#${section}`) === section),

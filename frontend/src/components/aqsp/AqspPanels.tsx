@@ -14,8 +14,9 @@ import {
   Sparkles,
   UsersRound,
 } from "lucide-react";
+import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
-import { FORMAL_RESEARCH_SECTIONS, resolveResearchView, TEST_VARIANTS_SECTION_ID, type ResearchViewId } from "@/lib/research-layout";
+import { FORMAL_RESEARCH_SECTION_BY_ID, resolveResearchView, TEST_VARIANTS_SECTION_ID, type ResearchSectionId, type ResearchViewId } from "@/lib/research-layout";
 import type { AqspAgentResult, AqspCandidate, AqspMessage, AqspPhase, AqspSnapshot, AqspVariant } from "@/lib/api";
 import {
   debateProcessText,
@@ -30,7 +31,7 @@ import {
 } from "@/lib/research-view";
 import { formatAqspTime, isAqspSnapshotStale, useWorkspaceSnapshot } from "./useAqspSnapshot";
 import { useLocation } from "react-router-dom";
-import { variantHoldingName, variantMoney, variantPercent, variantStrategyLogic } from "@/lib/variant-view";
+import { variantAdjustmentEvidence, variantAdjustmentReasons, variantHoldingName, variantMoney, variantPercent, variantStrategyLogic } from "@/lib/variant-view";
 
 function unique(values: readonly string[] | undefined, limit = 4): string[] {
   return Array.from(new Set((values ?? []).map((value) => value.trim()).filter(Boolean))).slice(0, limit);
@@ -168,7 +169,7 @@ function CandidateCard({ candidate }: { candidate: AqspCandidate }) {
   return (
     <article className="aqsp-card">
       <div className="aqsp-card-head">
-        <div><h3>{candidate.display_name || "名称未记录"}</h3><span className="aqsp-code">{candidate.symbol || "代码未记录"}</span></div>
+        <div className="aqsp-candidate-identity"><p className="aqsp-card-kicker">研究候选卡</p><h3>{candidate.display_name || "中文名未记录"}</h3><span className="aqsp-code">{candidate.symbol || "代码未记录"}</span></div>
         <div className="aqsp-score"><b>{Number.isFinite(candidate.score) ? candidate.score.toFixed(1) : "—"}</b><span>评分</span></div>
       </div>
       <div className="aqsp-tags"><span className="aqsp-tag aqsp-tag-primary">{candidate.research_status || "状态未记录"}</span><span className="aqsp-tag">{candidate.evidence_status || "证据未记录"}</span></div>
@@ -261,10 +262,10 @@ function TestVariantsPanel({ snapshot }: { snapshot?: AqspSnapshot }) {
       return <article className="aqsp-variant-card" key={variant.variant_id}>
         <div className="aqsp-variant-head"><div><h3>{variant.label || "未命名变体"}</h3><span>{variant.rank ? `回测第 ${variant.rank} 名` : "独立纸面账户"}</span></div><strong className={pnl == null || pnl >= 0 ? "aqsp-variant-positive" : "aqsp-variant-negative"}>{variantMoney(pnl)}</strong></div>
         <div className="aqsp-variant-position-grid">
-          <VariantHoldingList label={variantHistory ? "回测末日持仓" : "今日纸面持有"} holdings={holdings} date={variant.holdings_date} candidateNames={candidateNames} />
-          <VariantHoldingList label={variantHistory ? "前一交易日持仓" : "昨日纸面持有"} holdings={variant.previous_holdings} date={variant.previous_holdings_date} candidateNames={candidateNames} />
+          <VariantHoldingList label="今日持仓" holdings={holdings} date={variant.holdings_date} candidateNames={candidateNames} />
+          <VariantHoldingList label="昨日持仓" holdings={variant.previous_holdings} date={variant.previous_holdings_date} candidateNames={candidateNames} />
         </div>
-        <div className="aqsp-variant-reason"><div className="aqsp-variant-position-head"><b>为什么换票</b><span>{variant.adjustments?.length ? "持仓差异" : variant.recent_actions?.length ? "实际成交证据" : "无最近成交"}</span></div>{adjustmentLines.length > 0 ? <ul className="aqsp-variant-change-list">{adjustmentLines.map((line, index) => <li key={`${index}-${line}`}>{line}</li>)}</ul> : <p className="aqsp-variant-muted">没有成交动作，持仓按原策略继续或明确空仓</p>}<p className="aqsp-variant-footnote">成交 {variant.filled_orders} · 拒绝 {variant.rejected_orders} · 仅纸面验证，不自动下单</p></div>
+        <div className="aqsp-variant-reason"><div className="aqsp-variant-position-head"><b>换票原因</b><span>{variant.adjustments?.length ? "成交变更" : variant.recent_actions?.length ? "成交记录" : "无最近成交"}</span></div><ul className="aqsp-variant-change-list">{(variant.adjustments?.length ? adjustmentLines : variantAdjustmentReasons(holdings, variant.previous_holdings, candidateNames)).map((line, index) => <li key={`${index}-${line}`}>{line}</li>)}</ul><div className="aqsp-variant-evidence"><b>证据</b><ul>{variantAdjustmentEvidence(variant).map((evidence, index) => <li key={`${index}-${evidence}`}>{evidence}</li>)}</ul></div><p className="aqsp-variant-footnote">成交 {variant.filled_orders} · 拒绝 {variant.rejected_orders} · 仅纸面验证，不自动下单</p></div>
         <p className="aqsp-variant-strategy"><b>策略逻辑</b>{variantStrategyLogic(variant.strategy, variant.variant_id)}</p>
         <div className="aqsp-variant-account">
           <div><span>账户权益</span><b>{variantMoney(variant.final_equity)}</b></div>
@@ -293,16 +294,16 @@ export function AqspResearchWorkspace() {
   if (!data) return <div className="aqsp-page">{activeView === TEST_VARIANTS_SECTION_ID ? <TestVariantsPanel /> : <EmptyState title="当前没有研究快照" detail="等待正式 AQSP 任务产出，当前不显示历史内容。" />}</div>;
 
   const conclusion = snapshotConclusion(data);
-  const formalSections = {
-    overview: <section id="overview" className="aqsp-module aqsp-module-overview"><SectionHead number={FORMAL_RESEARCH_SECTIONS[0].number} title={FORMAL_RESEARCH_SECTIONS[0].label} count="独立结论" /><div className="aqsp-summary-conclusion"><Sparkles className="h-5 w-5 shrink-0 text-primary" /><div><strong>{conclusion || "当天结论未记录"}</strong>{data.summaries.slice(1, 3).map((line) => <p key={line}>{line}</p>)}</div></div><StatusLine snapshot={data} /><PhaseLane snapshot={data} /><GateState snapshot={data} /><EmptyToday snapshot={data} /></section>,
-    messages: <section id="messages" className="aqsp-module aqsp-module-messages"><SectionHead number={FORMAL_RESEARCH_SECTIONS[1].number} title={FORMAL_RESEARCH_SECTIONS[1].label} count={`${data.messages.length} 条`} />{data.messages.length === 0 ? <EmptyState title="当天没有有效消息" detail="没有可核验来源时，系统不补写消息或产业链推断。" /> : <div className="aqsp-list">{data.messages.map((message, index) => <MessageCard key={`${message.title}-${message.published_at}-${index}`} message={message} />)}</div>}<MarketContext snapshot={data} /></section>,
-    candidates: <section id="candidates" className="aqsp-module aqsp-module-candidates"><SectionHead number={FORMAL_RESEARCH_SECTIONS[2].number} title={FORMAL_RESEARCH_SECTIONS[2].label} count={`${data.candidates.length} 个`} />{data.candidates.length === 0 ? <EmptyState title="当天没有候选" detail="当前没有通过数据质量与短线筛选的对象，不用历史候选填充。" /> : <div className="aqsp-list">{data.candidates.map((candidate) => <CandidateCard key={candidate.symbol} candidate={candidate} />)}</div>}</section>,
-    discussion: <section id="discussion" className="aqsp-module aqsp-module-discussion"><SectionHead number={FORMAL_RESEARCH_SECTIONS[3].number} title={FORMAL_RESEARCH_SECTIONS[3].label} count={`${data.debates.length} 条`} />{data.debates.length === 0 ? <EmptyState title="当天没有有效讨论" detail="没有可核验的分歧和风险条件时，不显示推断内容。" /> : <div className="aqsp-list">{data.debates.map((result) => <DebateCard key={result.symbol} result={result} />)}</div>}</section>,
+  const formalSections: Record<ResearchSectionId, ReactNode> = {
+    overview: <section id="overview" className="aqsp-module aqsp-module-overview"><SectionHead number={FORMAL_RESEARCH_SECTION_BY_ID.overview.number} title={FORMAL_RESEARCH_SECTION_BY_ID.overview.label} count="独立结论" /><div className="aqsp-summary-conclusion"><Sparkles className="h-5 w-5 shrink-0 text-primary" /><div><strong>{conclusion || "当天结论未记录"}</strong>{data.summaries.slice(1, 3).map((line) => <p key={line}>{line}</p>)}</div></div><StatusLine snapshot={data} /><PhaseLane snapshot={data} /><GateState snapshot={data} /><EmptyToday snapshot={data} /></section>,
+    messages: <section id="messages" className="aqsp-module aqsp-module-messages"><SectionHead number={FORMAL_RESEARCH_SECTION_BY_ID.messages.number} title={FORMAL_RESEARCH_SECTION_BY_ID.messages.label} count={`${data.messages.length} 条`} />{data.messages.length === 0 ? <EmptyState title="当天没有有效消息" detail="没有可核验来源时，系统不补写消息或产业链推断。" /> : <div className="aqsp-list">{data.messages.map((message, index) => <MessageCard key={`${message.title}-${message.published_at}-${index}`} message={message} />)}</div>}<MarketContext snapshot={data} /></section>,
+    candidates: <section id="candidates" className="aqsp-module aqsp-module-candidates"><SectionHead number={FORMAL_RESEARCH_SECTION_BY_ID.candidates.number} title={FORMAL_RESEARCH_SECTION_BY_ID.candidates.label} count={`${data.candidates.length} 个`} />{data.candidates.length === 0 ? <EmptyState title="当天没有候选" detail="当前没有通过数据质量与短线筛选的对象，不用历史候选填充。" /> : <div className="aqsp-list">{data.candidates.map((candidate) => <CandidateCard key={candidate.symbol} candidate={candidate} />)}</div>}</section>,
+    discussion: <section id="discussion" className="aqsp-module aqsp-module-discussion"><SectionHead number={FORMAL_RESEARCH_SECTION_BY_ID.discussion.number} title={FORMAL_RESEARCH_SECTION_BY_ID.discussion.label} count={`${data.debates.length} 条`} />{data.debates.length === 0 ? <EmptyState title="当天没有有效讨论" detail="没有可核验的分歧和风险条件时，不显示推断内容。" /> : <div className="aqsp-list">{data.debates.map((result) => <DebateCard key={result.symbol} result={result} />)}</div>}</section>,
   } as const;
   return <div className="aqsp-page">
     <header className="aqsp-header"><div><p className="aqsp-eyebrow">AQSP · 短线研究</p><div className="aqsp-title-row"><h1>当天研究</h1><strong>{data.selected_date || "日期未记录"}</strong></div><SnapshotMeta snapshot={data} /></div><button type="button" className="aqsp-refresh" onClick={refresh} disabled={loading} title="刷新研究数据"><RefreshCw className={cn("h-4 w-4", loading && "animate-spin")} />刷新</button></header>
     <DatePicker snapshot={data} />
-    <div className="aqsp-formal-grid">
+    <div className="aqsp-formal-grid" aria-label="正式研究正文四栏">
       <main className="aqsp-active-view" aria-live="polite">
       {activeView === TEST_VARIANTS_SECTION_ID ? <TestVariantsPanel snapshot={data} /> : formalSections[activeView]}
       </main>

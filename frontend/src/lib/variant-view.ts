@@ -71,11 +71,11 @@ export function variantHoldingName(
 }
 
 export function variantAdjustmentReasons(
-  current: AqspVariant["holdings"],
+  current: AqspVariant["holdings"] | null,
   previous: AqspVariant["previous_holdings"],
   candidateNames: ReadonlyMap<string, string> = new Map(),
 ): string[] {
-  if (current === undefined || previous == null) return ["昨日持仓未记录，暂无法比较换票原因"];
+  if (current == null || previous == null) return ["昨日持仓未记录，暂无法比较换票原因"];
   const currentBySymbol = new Map(current.map((holding) => [holding.symbol, holding]));
   const previousBySymbol = new Map(previous.map((holding) => [holding.symbol, holding]));
   const added = current.filter((holding) => !previousBySymbol.has(holding.symbol));
@@ -86,4 +86,13 @@ export function variantAdjustmentReasons(
   if (removed.length > 0) reasons.push(`移出：${removed.map((holding) => variantHoldingName(holding, candidateNames)).join("、")}`);
   if (continued.length > 0) reasons.push(`继续持有：${continued.map((holding) => variantHoldingName(holding, candidateNames)).join("、")}`);
   return reasons.length > 0 ? reasons : ["持仓未变化"];
+}
+
+export function variantAdjustmentEvidence(variant: AqspVariant): string[] {
+  const adjustmentEvidence = (variant.adjustments ?? []).flatMap((adjustment) =>
+    adjustment.evidence.map((evidence) => `${adjustment.symbol}：${evidence}`),
+  );
+  if (adjustmentEvidence.length > 0) return adjustmentEvidence;
+  if ((variant.recent_actions ?? []).length > 0) return [...(variant.recent_actions ?? [])];
+  return ["成交证据未记录"];
 }

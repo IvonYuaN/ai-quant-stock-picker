@@ -348,6 +348,7 @@ class DebateResult:
             "advisory_boundary_ok": quality.advisory_boundary_ok,
             "discussion_agent_count": quality.discussion_agent_count,
             "stance_counts": dict(quality.stance_counts),
+            "stance_diversity_recorded": quality.stance_diversity_recorded,
             "rebuttal_count": quality.rebuttal_count,
             "real_opposition_count": quality.real_opposition_count,
             "message_evidence_recorded": quality.message_evidence_recorded,

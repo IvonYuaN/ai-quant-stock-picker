@@ -441,3 +441,38 @@ def test_validate_variant_artifact_rejects_historical_label_for_realtime_mode() 
 
     with pytest.raises(ValueError, match="data_mode"):
         validate_variant_artifact(payload, expected_end_date="2026-07-20")
+
+
+def test_validate_variant_artifact_reconciles_positions_and_pnl():
+    payload = {
+        "schema_version": "variant-suite-v1",
+        "run_mode": "backtest_historical",
+        "data_mode": "historical_raw_unadjusted",
+        "research_mode": "historical_backtest_only",
+        "live_recommendation_allowed": False,
+        "start_date": "2026-07-20",
+        "end_date": "2026-07-20",
+        "symbols": ["600001"],
+        "universe_scope": {
+            "symbol_count": 1,
+            "board_scope": "沪深主板+创业板",
+            "excluded": ["ST", "科创板", "其他板块"],
+        },
+        "data_coverage": {"end_date_coverage_pct": 100.0},
+        "variants": [
+            {
+                "variant_id": "v1",
+                "label": "趋势",
+                "initial_cash": 100_000.0,
+                "final_equity": 100_010.0,
+                "total_pnl": 0.0,
+                "positions": {"600001": 100},
+                "holdings": [],
+                "holdings_date": "2026-07-20",
+                "fills": [],
+            }
+        ],
+    }
+
+    with pytest.raises(ValueError, match="positions 与 holdings 不一致"):
+        validate_variant_artifact(payload, expected_end_date="2026-07-20")

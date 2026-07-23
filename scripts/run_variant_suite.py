@@ -1196,6 +1196,28 @@ def validate_variant_artifact(
                 raise ValueError("variant artifact fill 必须是 object")
             if fill.get("status") == "filled" and not fill.get("evidence"):
                 raise ValueError("variant artifact 成交缺少技术证据")
+        holdings = item.get("holdings", [])
+        positions = item.get("positions", {})
+        if not isinstance(holdings, list) or not isinstance(positions, dict):
+            raise ValueError("variant artifact 持仓结构无效")
+        holding_positions = {
+            str(holding.get("symbol")): int(holding.get("quantity") or 0)
+            for holding in holdings
+            if isinstance(holding, dict) and int(holding.get("quantity") or 0) > 0
+        }
+        normalized_positions = {
+            str(symbol): int(quantity)
+            for symbol, quantity in positions.items()
+            if int(quantity or 0) > 0
+        }
+        if holding_positions != normalized_positions:
+            raise ValueError("variant artifact positions 与 holdings 不一致")
+        if {"final_equity", "total_pnl"} <= item.keys():
+            initial_cash = float(item.get("initial_cash") or 0.0)
+            final_equity = float(item.get("final_equity") or 0.0)
+            total_pnl = float(item.get("total_pnl") or 0.0)
+            if abs((final_equity - initial_cash) - total_pnl) > 0.01:
+                raise ValueError("variant artifact total_pnl 未与 final_equity 对账")
 
 
 def run_suite(

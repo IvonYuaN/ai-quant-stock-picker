@@ -329,6 +329,25 @@ def test_variant_snapshot_generates_structured_adjustments_from_fills_and_eviden
     assert by_symbol["000003"].evidence == ("跌破止损",)
 
 
+def test_variant_adjustments_flag_missing_reason_without_inventing_trade_evidence():
+    current = (
+        write_home_snapshot.HomeSnapshotHolding("600001", 100, 10, 11, 1100, 100),
+    )
+    previous = (
+        write_home_snapshot.HomeSnapshotHolding("600001", 200, 10, 11, 2200, 200),
+    )
+
+    adjustments = write_home_snapshot._variant_adjustments(
+        current,
+        previous,
+        raw_fills=[],
+        holdings_date="2026-07-20",
+    )
+
+    assert adjustments[0].action == "decreased"
+    assert adjustments[0].evidence == ("变更未找到已成交订单证据，原因待复核",)
+
+
 def test_phase_snapshot_surfaces_premarket_messages_without_fake_candidates() -> None:
     class PhaseProvider:
         def _signal_task_rows_for_date(

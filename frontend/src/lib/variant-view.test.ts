@@ -1,5 +1,5 @@
 import type { AqspVariant } from "@/types/aqsp";
-import { variantAdjustmentReasons, variantMoney, variantPercent, variantStrategyLogic, variantStrategyText } from "./variant-view";
+import { variantAdjustmentEvidence, variantAdjustmentReasons, variantMoney, variantPercent, variantStrategyLogic, variantStrategyText } from "./variant-view";
 
 const variantFixture = {
   variant_id: "trend_follow",
@@ -30,4 +30,10 @@ export const variantViewContractChecks = {
     [{ symbol: "BBB", quantity: 100, average_price: 10, last_price: 10, market_value: 1000, unrealized_pnl: 0, name: "乙公司" }],
     [{ symbol: "AAA", quantity: 100, average_price: 10, last_price: 10, market_value: 1000, unrealized_pnl: 0, name: "甲公司" }],
   ).join("；") === "新增：乙公司；移出：甲公司",
+  missingPreviousHoldingsStayExplicit: variantAdjustmentReasons([], null).join("；") === "昨日持仓未记录，暂无法比较换票原因",
+  missingEvidenceIsNotInvented: variantAdjustmentEvidence(variantFixture).join("；") === "成交证据未记录",
+  adjustmentEvidenceIsScopedToSymbol: variantAdjustmentEvidence({
+    ...variantFixture,
+    adjustments: [{ action: "added", symbol: "BBB", name: "乙公司", previous_quantity: 0, current_quantity: 100, quantity_delta: 100, evidence: ["量能确认"] }],
+  }).join("；") === "BBB：量能确认",
 };

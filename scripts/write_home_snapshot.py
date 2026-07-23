@@ -1807,6 +1807,8 @@ def _variant_adjustments(
                 evidence_values.extend(
                     _text(value) for value in raw_evidence if _text(value)
                 )
+        if not evidence_values:
+            evidence_values.append("变更未找到已成交订单证据，原因待复核")
         name = _first_text(
             current.name if current else "",
             previous.name if previous else "",
