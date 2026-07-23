@@ -33,6 +33,29 @@ from aqsp.core.time import now_shanghai
 from aqsp.data.source_factory import load_sqlite_symbol_name_map
 from aqsp.utils.jsonl_io import atomic_write_text
 
+VARIANT_RUN_MODES = ("backtest_historical", "paper_realtime")
+_VARIANT_WORKLOADS = {
+    "backtest_historical": "historical",
+    "paper_realtime": "live_short",
+}
+
+
+def _validate_run_mode(run_mode: str) -> str:
+    """Keep paper replay and historical backtests on separate data partitions."""
+    normalized = str(run_mode or "").strip()
+    if normalized not in VARIANT_RUN_MODES:
+        allowed = ", ".join(VARIANT_RUN_MODES)
+        raise ValueError(f"不支持的变体 run_mode={normalized!r}；可选：{allowed}")
+    return normalized
+
+
+def _artifact_modes(run_mode: str) -> tuple[str, str, bool]:
+    """Return data mode, research label and the hard no-auto-trading flag."""
+    normalized = _validate_run_mode(run_mode)
+    if normalized == "paper_realtime":
+        return "raw_live_short_paper", "realtime_paper_only", False
+    return "historical_raw_unadjusted", "historical_backtest_only", False
+
 
 @dataclass(frozen=True)
 class VariantProfile:
@@ -182,6 +205,7 @@ def select_stratified_symbols(
     before_date: str,
     *,
     max_symbols: int = DEFAULT_VARIANT_UNIVERSE_SIZE,
+    run_mode: str = "backtest_historical",
 ) -> tuple[str, ...]:
     """Select a broad, reproducible universe without using future bars.
 
@@ -189,6 +213,9 @@ def select_stratified_symbols(
     reset date. Each board is sampled across turnover quantiles, so the result
     is not an alphabetical or large-cap-only slice.
     """
+    normalized_mode = _validate_run_mode(run_mode)
+    workload = _VARIANT_WORKLOADS[normalized_mode]
+    date_operator = "<=" if normalized_mode == "paper_realtime" else "<"
     if max_symbols < 0:
         raise ValueError("max_symbols must be non-negative")
     with sqlite3.connect(db_path) as conn:
@@ -200,12 +227,12 @@ def select_stratified_symbols(
         }
         if "ohlcv" in tables:
             reference_row = conn.execute(
-                """
+                f"""
                 SELECT MAX(date)
                 FROM ohlcv
-                WHERE price_mode = 'raw' AND workload = 'historical' AND date < ?
+                WHERE price_mode = 'raw' AND workload = ? AND date {date_operator} ?
                 """,
-                (before_date,),
+                (workload, before_date),
             ).fetchone()
             if reference_row is None:
                 raise ValueError("reset date 前没有可用 raw/historical 覆盖日")
@@ -214,16 +241,20 @@ def select_stratified_symbols(
                 """
                 SELECT symbol, close, amount
                 FROM ohlcv
-                WHERE price_mode = 'raw' AND workload = 'historical'
+                WHERE price_mode = 'raw' AND workload = ?
                   AND date = ? AND suspended = 0 AND close > 0 AND amount > 0
                 ORDER BY symbol
                 """,
-                (reference_date,),
+                (workload, reference_date),
             ).fetchall()
             name_map = load_sqlite_symbol_name_map(
                 [str(symbol) for symbol, _close, _amount in rows]
             )
         elif {"daily_qfq", "stocks"} <= tables:
+            if normalized_mode == "paper_realtime":
+                raise ValueError(
+                    "paper_realtime 禁止使用没有 live_short workload 的 daily_qfq 历史库"
+                )
             compact_before = before_date.replace("-", "")
             current_rows = conn.execute(
                 """
@@ -437,7 +468,11 @@ def load_frames(
     symbols: tuple[str, ...],
     start: str,
     end: str,
+    *,
+    run_mode: str = "backtest_historical",
 ) -> dict[str, pd.DataFrame]:
+    normalized_mode = _validate_run_mode(run_mode)
+    workload = _VARIANT_WORKLOADS[normalized_mode]
     with sqlite3.connect(db_path) as conn:
         tables = {
             str(row[0])
@@ -447,6 +482,8 @@ def load_frames(
         }
         columns = {str(row[1]) for row in conn.execute("PRAGMA table_info(ohlcv)")}
         if "ohlcv" not in tables:
+            if normalized_mode == "paper_realtime":
+                raise ValueError("paper_realtime 禁止使用 daily_qfq 历史库")
             if not {"daily_qfq", "stocks"} <= tables:
                 raise ValueError("数据库缺少 ohlcv 或 daily_qfq/stocks 表")
             symbol_map = dict(
@@ -488,9 +525,14 @@ def load_frames(
                 )
             metadata_columns: list[str] = []
         else:
-            workload_filter = (
-                " AND workload = 'historical'" if "workload" in columns else ""
-            )
+            if "workload" not in columns:
+                if normalized_mode == "paper_realtime":
+                    raise ValueError(
+                        "paper_realtime 数据表缺少 workload，拒绝使用历史数据"
+                    )
+                workload_filter = ""
+            else:
+                workload_filter = " AND workload = ?"
             metadata_columns = [
                 column
                 for column in ("source", "fetched_at", "timestamp_source")
@@ -509,9 +551,14 @@ def load_frames(
                   AND symbol IN ({placeholders}) AND date BETWEEN ? AND ?
                 ORDER BY symbol, date
             """
-            frame = pd.read_sql_query(query, conn, params=(*symbols, start, end))
+            params = (
+                (workload, *symbols, start, end)
+                if workload_filter
+                else (*symbols, start, end)
+            )
+            frame = pd.read_sql_query(query, conn, params=params)
     if frame.empty:
-        raise ValueError("历史 raw/historical OHLCV 为空")
+        raise ValueError(f"{normalized_mode} workload={workload} OHLCV 为空")
     result: dict[str, pd.DataFrame] = {}
     external_source = "ohlcv" not in tables
     for symbol, group in frame.groupby("symbol", sort=True):
@@ -1016,6 +1063,8 @@ def attach_previous_variant_holdings(
             carried["previous_holdings"] = [
                 dict(holding) for holding in holdings if isinstance(holding, dict)
             ]
+            carried["holdings_date"] = current_date
+            carried["previous_holdings_date"] = expected_previous_date
         carried_variants.append(carried)
     result["variants"] = carried_variants
     result["previous_holdings_date"] = expected_previous_date
@@ -1060,12 +1109,27 @@ def validate_variant_artifact(
     *,
     expected_end_date: str,
     expected_start_date: str | None = None,
+    expected_run_mode: str | None = None,
 ) -> None:
     """Fail closed before a generated artifact replaces production data."""
     if payload.get("schema_version") != "variant-suite-v1":
         raise ValueError("variant artifact schema_version 不支持")
-    if payload.get("data_mode") != "historical_raw_unadjusted":
-        raise ValueError("variant artifact 必须使用不复权历史数据")
+    run_mode = _validate_run_mode(str(payload.get("run_mode") or ""))
+    data_mode, research_mode, live_recommendation_allowed = _artifact_modes(run_mode)
+    if payload.get("data_mode") != data_mode:
+        raise ValueError("variant artifact data_mode 与 run_mode 不一致")
+    if payload.get("research_mode") != research_mode:
+        raise ValueError("variant artifact research_mode 与 run_mode 不一致")
+    if (
+        "live_recommendation_allowed" in payload
+        and payload.get("live_recommendation_allowed")
+        is not live_recommendation_allowed
+    ):
+        raise ValueError("变体产物不得进入正式推荐或自动下单")
+    if expected_run_mode is not None and run_mode != _validate_run_mode(
+        expected_run_mode
+    ):
+        raise ValueError("variant artifact run_mode 与刷新模式不一致")
     if str(payload.get("end_date", "")) != expected_end_date:
         raise ValueError("variant artifact end_date 与重置日不一致")
     if (
@@ -1108,6 +1172,15 @@ def validate_variant_artifact(
         labels.add(label)
         if item.get("initial_cash") != 100_000.0:
             raise ValueError("variant artifact initial_cash 必须为 100000")
+        if "holdings_date" in item and str(item.get("holdings_date", "")) != str(
+            payload.get("end_date", "")
+        ):
+            raise ValueError("variant artifact holdings_date 必须等于 end_date")
+        previous_date = str(item.get("previous_holdings_date", ""))
+        if previous_date and previous_date >= str(
+            payload.get("holdings_date", payload.get("end_date", ""))
+        ):
+            raise ValueError("variant artifact previous_holdings_date 必须早于持仓日")
         fills = item.get("fills", [])
         if not isinstance(fills, list):
             raise ValueError("variant artifact fills 必须是 array")
@@ -1130,7 +1203,13 @@ def run_suite(
     symbols: tuple[str, ...],
     start: str,
     end: str,
+    *,
+    run_mode: str = "backtest_historical",
 ) -> dict[str, object]:
+    normalized_mode = _validate_run_mode(run_mode)
+    data_mode, research_mode, live_recommendation_allowed = _artifact_modes(
+        normalized_mode
+    )
     started_at = time.perf_counter()
     start_day = date.fromisoformat(start)
     end_day = date.fromisoformat(end)
@@ -1146,6 +1225,7 @@ def run_suite(
         symbols,
         warmup_start.isoformat(),
         end,
+        run_mode=normalized_mode,
     )
     rules = VariantExecutionRules(initial_cash=100_000.0)
     profiles = generate_variant_profiles(frames, training_end=start, grid=grid)
@@ -1170,6 +1250,8 @@ def run_suite(
             )
             payload = variant_result_to_dict(result)
             payload["label"] = profile.label
+            payload["holdings_date"] = end
+            payload["previous_holdings_date"] = ""
             payload["strategy_label"] = profile.label
             payload["strategy"] = {
                 "id": profile.variant_id,
@@ -1213,7 +1295,10 @@ def run_suite(
     artifact = {
         "schema_version": "variant-suite-v1",
         "generated_at": now_shanghai().isoformat(timespec="seconds"),
-        "data_mode": "historical_raw_unadjusted",
+        "run_mode": normalized_mode,
+        "data_mode": data_mode,
+        "research_mode": research_mode,
+        "live_recommendation_allowed": live_recommendation_allowed,
         "start_date": start,
         "end_date": end,
         "data_start_date": warmup_start.isoformat(),
@@ -1263,7 +1348,11 @@ def run_suite(
         },
         "variants": results,
     }
-    validate_variant_artifact(artifact, expected_end_date=end)
+    validate_variant_artifact(
+        artifact,
+        expected_end_date=end,
+        expected_run_mode=normalized_mode,
+    )
     return artifact
 
 
@@ -1280,6 +1369,12 @@ def main() -> int:
     parser.add_argument("--start", required=True)
     parser.add_argument("--end", required=True)
     parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument(
+        "--run-mode",
+        choices=VARIANT_RUN_MODES,
+        default="backtest_historical",
+        help="paper_realtime 只读 live_short；backtest_historical 只读 historical",
+    )
     args = parser.parse_args()
     symbols = tuple(dict.fromkeys(args.symbols or ()))
     if not symbols:
@@ -1287,8 +1382,15 @@ def main() -> int:
             args.db,
             args.start,
             max_symbols=args.universe_size,
+            run_mode=args.run_mode,
         )
-    payload = run_suite(args.db, symbols, args.start, args.end)
+    payload = run_suite(
+        args.db,
+        symbols,
+        args.start,
+        args.end,
+        run_mode=args.run_mode,
+    )
     atomic_write_text(
         args.output, json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
     )

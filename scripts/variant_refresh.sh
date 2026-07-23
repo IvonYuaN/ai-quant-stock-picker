@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Rebuild isolated paper variants from the previous trading day's raw bars.
+# Rebuild isolated paper variants from an explicitly selected data partition.
+# Production defaults to paper_realtime; historical backtests must opt in.
 set -euo pipefail
 
 PROJECT_ROOT="${AQSP_PROJECT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
@@ -23,6 +24,12 @@ SNAPSHOT_PATH="${AQSP_HOME_SNAPSHOT_PATH:-${RUNTIME_ROOT}/data/runtime/home_dash
 INDEX_PATH="${AQSP_HOME_SNAPSHOT_INDEX_PATH:-${RUNTIME_ROOT}/data/runtime/home_dashboard_snapshot_index.json}"
 UNIVERSE_SIZE="${AQSP_VARIANT_UNIVERSE_SIZE:-0}"
 VARIANT_NICE="${AQSP_VARIANT_NICE:-10}"
+RUN_MODE="${AQSP_VARIANT_RUN_MODE:-paper_realtime}"
+case "$RUN_MODE" in
+    paper_realtime) WORKLOAD="live_short" ;;
+    backtest_historical) WORKLOAD="historical" ;;
+    *) echo "unsupported AQSP_VARIANT_RUN_MODE: $RUN_MODE" >&2; exit 1 ;;
+esac
 
 if [[ ! -x "$PYTHON_BIN" ]]; then
     echo "variant refresh requires release Python: $PYTHON_BIN" >&2
@@ -39,13 +46,14 @@ fi
 
 export PYTHONPATH="${PROJECT_ROOT}/src:${PROJECT_ROOT}:${PYTHONPATH:-}"
 CALENDAR_CANDIDATE_DATE="$($PYTHON_BIN - <<'PY'
-from aqsp.core.time import get_previous_trading_day, today_shanghai
+from aqsp.core.time import today_shanghai
 
-print(get_previous_trading_day(today_shanghai()).isoformat())
+print(today_shanghai().isoformat())
 PY
 )"
 RESET_DATE="$(
     AQSP_VARIANT_DB="$DB_PATH" CALENDAR_CANDIDATE_DATE="$CALENDAR_CANDIDATE_DATE" \
+        VARIANT_RUN_MODE="$RUN_MODE" VARIANT_WORKLOAD="$WORKLOAD" \
         "$PYTHON_BIN" - <<'PY'
 import os
 import sqlite3
@@ -54,6 +62,8 @@ from pathlib import Path
 
 db_path = Path(os.environ["AQSP_VARIANT_DB"])
 candidate = os.environ["CALENDAR_CANDIDATE_DATE"]
+run_mode = os.environ["VARIANT_RUN_MODE"]
+workload = os.environ["VARIANT_WORKLOAD"]
 compact_candidate = candidate.replace("-", "")
 with sqlite3.connect(db_path) as conn:
     tables = {
@@ -61,6 +71,8 @@ with sqlite3.connect(db_path) as conn:
         for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
     }
     if {"daily_qfq", "stocks"} <= tables:
+        if run_mode == "paper_realtime":
+            raise SystemExit("paper_realtime 要求 ohlcv(raw,live_short)，不得读取 daily_qfq")
         row = conn.execute(
             """
             SELECT MAX(trade_date)
@@ -79,9 +91,9 @@ with sqlite3.connect(db_path) as conn:
             """
             SELECT MAX(date)
             FROM ohlcv
-            WHERE price_mode = 'raw' AND workload = 'historical' AND date <= ?
+            WHERE price_mode = 'raw' AND workload = ? AND date <= ?
             """,
-            (candidate,),
+            (workload, candidate),
         ).fetchone()
         value = str(row[0] or "")
         if value:
@@ -94,6 +106,7 @@ PY
 )"
 PREVIOUS_RESET_DATE="$(
     AQSP_VARIANT_DB="$DB_PATH" RESET_DATE="$RESET_DATE" \
+        VARIANT_RUN_MODE="$RUN_MODE" VARIANT_WORKLOAD="$WORKLOAD" \
         "$PYTHON_BIN" - <<'PY'
 import os
 import sqlite3
@@ -102,6 +115,8 @@ from pathlib import Path
 
 db_path = Path(os.environ["AQSP_VARIANT_DB"])
 reset_date = os.environ["RESET_DATE"]
+run_mode = os.environ["VARIANT_RUN_MODE"]
+workload = os.environ["VARIANT_WORKLOAD"]
 compact_reset = reset_date.replace("-", "")
 with sqlite3.connect(db_path) as conn:
     tables = {
@@ -109,6 +124,8 @@ with sqlite3.connect(db_path) as conn:
         for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
     }
     if {"daily_qfq", "stocks"} <= tables:
+        if run_mode == "paper_realtime":
+            raise SystemExit("paper_realtime 要求 ohlcv(raw,live_short)，不得读取 daily_qfq")
         row = conn.execute(
             """
             SELECT MAX(trade_date)
@@ -124,9 +141,9 @@ with sqlite3.connect(db_path) as conn:
             """
             SELECT MAX(date)
             FROM ohlcv
-            WHERE price_mode = 'raw' AND workload = 'historical' AND date < ?
+            WHERE price_mode = 'raw' AND workload = ? AND date < ?
             """,
-            (reset_date,),
+            (workload, reset_date),
         ).fetchone()
         print(str(row[0] or ""))
     else:
@@ -156,10 +173,12 @@ nice -n "$VARIANT_NICE" "$PYTHON_BIN" "$PROJECT_ROOT/scripts/run_variant_suite.p
     --universe-size "$UNIVERSE_SIZE" \
     --start "$RESET_DATE" \
     --end "$RESET_DATE" \
+    --run-mode "$RUN_MODE" \
     --output "$TMP_OUTPUT"
 
 VARIANT_TMP="$TMP_OUTPUT" VARIANT_OUTPUT="$OUTPUT_PATH" \
 EXPECTED_START_DATE="$RESET_DATE" EXPECTED_END_DATE="$RESET_DATE" \
+EXPECTED_RUN_MODE="$RUN_MODE" \
 EXPECTED_PREVIOUS_DATE="$PREVIOUS_RESET_DATE" \
     "$PYTHON_BIN" - <<'PY'
 import json
@@ -200,6 +219,7 @@ validate_variant_artifact(
     payload,
     expected_end_date=expected_date,
     expected_start_date=expected_start_date,
+    expected_run_mode=os.environ["EXPECTED_RUN_MODE"],
 )
 old_mode = stat.S_IMODE(output.stat().st_mode) if output.exists() else 0o640
 os.replace(temporary, output)
@@ -216,4 +236,4 @@ AQSP_SQLITE_DB_PATH="$DB_PATH" "$PYTHON_BIN" "$PROJECT_ROOT/scripts/write_home_s
     --date "$TODAY" \
     --task-id variants
 
-echo "variant refresh completed: reset=$RESET_DATE snapshot_date=$TODAY"
+echo "variant refresh completed: mode=$RUN_MODE workload=$WORKLOAD reset=$RESET_DATE snapshot_date=$TODAY"

@@ -149,6 +149,8 @@ class CrossMarketImplication:
     impact_direction: Literal["positive", "negative", "mixed", "neutral"] = "neutral"
     source_url: str = ""
     source_fetched_at: str = ""
+    fact_type: str = ""
+    topic_key: str = ""
 
 
 @dataclass(frozen=True)
@@ -203,6 +205,8 @@ class PickMarketContext:
     impact_direction: Literal["positive", "negative", "mixed", "neutral"] = "neutral"
     source_url: str = ""
     source_fetched_at: str = ""
+    primary_fact_type: str = ""
+    primary_topic_key: str = ""
 
 
 @dataclass(frozen=True)
@@ -1701,6 +1705,8 @@ def build_pick_market_context(
         impact_direction=primary.impact_direction,
         source_url=primary.source_url,
         source_fetched_at=primary.source_fetched_at,
+        primary_fact_type=primary.fact_type,
+        primary_topic_key=primary.topic_key,
     )
 
 
@@ -1748,6 +1754,8 @@ def market_context_metrics_for_pick(
         "cross_market_impact_direction": context.impact_direction,
         "cross_market_source_url": context.source_url,
         "cross_market_source_fetched_at": context.source_fetched_at,
+        "cross_market_fact_type": context.primary_fact_type,
+        "cross_market_topic_key": context.primary_topic_key,
         "cross_market_score_adjustment_allowed": structured_rule_match,
         "cross_market_priority_boost": structured_rule_match,
         "cross_market_context_only": not structured_rule_match,
@@ -2260,6 +2268,8 @@ def _implication_for_events(
         impact_direction=impact_direction,
         source_url=str(primary_event.url or "").strip(),
         source_fetched_at=str(primary_event.source_fetched_at or "").strip(),
+        fact_type=str(primary_event.fact_type or primary_event.category or "").strip(),
+        topic_key=str(primary_event.topic_key or "").strip(),
     )
 
 

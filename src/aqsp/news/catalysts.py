@@ -4,6 +4,7 @@ import json
 import multiprocessing
 import os
 import signal
+import sys
 import threading
 from html import unescape
 from collections.abc import Callable, Iterable, Mapping, Sequence
@@ -95,6 +96,10 @@ class CatalystEvent:
     validation_signals: tuple[str, ...] = ()
     invalidation_signals: tuple[str, ...] = ()
     summary: str = ""
+    # Stable deterministic labels for downstream deduplication and display.
+    # They describe the observed fact; they are not a forecast or a score.
+    fact_type: str = ""
+    topic_key: str = ""
 
     @property
     def deterministic_score(self) -> int:
@@ -370,6 +375,8 @@ def _serialize_catalyst_report(report: CatalystReport) -> dict[str, Any]:
                 "transmission_path": list(event.transmission_path),
                 "validation_signals": list(event.validation_signals),
                 "invalidation_signals": list(event.invalidation_signals),
+                "fact_type": event.fact_type,
+                "topic_key": event.topic_key,
             }
             for event in report.events
         ],
@@ -432,6 +439,8 @@ def _deserialize_catalyst_report(payload: Any) -> CatalystReport | None:
                 transmission_path=_text_tuple(item.get("transmission_path", ())),
                 validation_signals=_text_tuple(item.get("validation_signals", ())),
                 invalidation_signals=_text_tuple(item.get("invalidation_signals", ())),
+                fact_type=str(item.get("fact_type", "")).strip(),
+                topic_key=str(item.get("topic_key", "")).strip(),
             )
             for item in tuple(payload.get("events", ()) or ())
             if isinstance(item, dict)
@@ -461,8 +470,7 @@ def _deserialize_catalyst_report(payload: Any) -> CatalystReport | None:
                 source_count=int(item.get("source_count", 0) or 0),
                 successful_sources=int(item.get("successful_sources", 0) or 0),
                 row_count=int(item.get("row_count", 0) or 0),
-                freshness=str(item.get("freshness", "unknown")).strip()
-                or "unknown",
+                freshness=str(item.get("freshness", "unknown")).strip() or "unknown",
                 quality_score=int(item.get("quality_score", 0) or 0),
                 fallback=str(item.get("fallback", "failed")).strip() or "failed",
             )
@@ -862,18 +870,18 @@ GLOBAL_CROSS_MARKET_PATTERNS: tuple[tuple[str, str, Impact, int], ...] = (
         4,
     ),
     (
-        "黄金|金价|贵金属|央行购金|gold price|gold.*(?:rises|jumps|surges|record)",
-        "黄金/贵金属催化",
-        "positive",
-        4,
-    ),
-    (
         "战争|地缘|冲突|袭击|空袭|导弹|中东|停火破裂|"
         r"\bwar\b|\bgeopolitical\b|\battack\b|\bairstrike\b|\bmissile\b|"
         r"\bmiddle east\b|\bdefense stocks\b",
         "地缘冲突",
         "negative",
         5,
+    ),
+    (
+        "黄金|金价|贵金属|央行购金|gold price|gold.*(?:rises|jumps|surges|record)",
+        "黄金/贵金属催化",
+        "positive",
+        4,
     ),
     (
         "油价大涨|油价飙升|原油大涨|布伦特原油大涨|WTI原油大涨|WTI油价上涨|"
@@ -1350,6 +1358,15 @@ def _run_fetchers_in_processes(
     timeout_seconds: float,
 ) -> dict[str, _NewsFetchOutcome]:
     """Bound third-party adapters without leaving native threads at exit."""
+    if sys.platform == "darwin":
+        # macOS can abort a multi-threaded parent that forks while proxy/curl
+        # native code is active. Keep the bounded deadline without fork there.
+        return _run_fetchers_with_deadline(
+            fetches,
+            timeout_seconds=timeout_seconds,
+            isolate_process=False,
+        )
+
     try:
         context = multiprocessing.get_context("fork")
     except ValueError:
@@ -1765,11 +1782,7 @@ def _region_statuses_from_sources(
 
     result: list[NewsRegionStatus] = []
     for region in ("domestic", "international"):
-        items = tuple(
-            item
-            for item in source_statuses
-            if item.region == region
-        )
+        items = tuple(item for item in source_statuses if item.region == region)
         statuses = tuple(item.status for item in items)
         if not statuses:
             status: NewsRegionStatusValue = "unavailable"
@@ -1794,14 +1807,17 @@ def _region_statuses_from_sources(
                 (reference - fetched).total_seconds()
                 for item in items
                 if reference is not None
-                and (fetched := _parse_published_datetime(item.fetched_at))
-                is not None
+                and (fetched := _parse_published_datetime(item.fetched_at)) is not None
             ]
             if not ages:
                 freshness = "unknown"
-            elif all(0 <= age <= _REGION_SOURCE_FRESHNESS_MAX_AGE_SECONDS for age in ages):
+            elif all(
+                0 <= age <= _REGION_SOURCE_FRESHNESS_MAX_AGE_SECONDS for age in ages
+            ):
                 freshness = "fresh"
-            elif any(0 <= age <= _REGION_SOURCE_FRESHNESS_MAX_AGE_SECONDS for age in ages):
+            elif any(
+                0 <= age <= _REGION_SOURCE_FRESHNESS_MAX_AGE_SECONDS for age in ages
+            ):
                 freshness = "stale"
             else:
                 freshness = "stale"
@@ -1994,6 +2010,13 @@ def _events_from_rows(
                     title, affected_sectors, positive=False
                 ),
                 summary=_news_context_snippet(summary, content),
+                fact_type=_fact_type(title, summary=summary, category=category),
+                topic_key=_topic_key(
+                    title,
+                    summary=summary,
+                    category=category,
+                    sectors=affected_sectors,
+                ),
             )
         )
     return events
@@ -2047,6 +2070,97 @@ def _event_sectors(
     if not values and category and category != "消息":
         values.append(category)
     return tuple(values[:8])
+
+
+def _fact_type(title: str, *, summary: str = "", category: str = "") -> str:
+    """Classify the observable news fact without inferring an outcome."""
+
+    text = _plain_news_text(f"{title} {summary} {category}").casefold()
+    patterns: tuple[tuple[str, tuple[str, ...]], ...] = (
+        (
+            "geopolitical_risk",
+            (
+                "战争",
+                "冲突",
+                "袭击",
+                "地缘",
+                "中东",
+                "war",
+                "attack",
+                "geopolitical",
+                "military conflict",
+            ),
+        ),
+        ("safe_haven", ("黄金", "金价", "贵金属", "央行购金", "gold", "safe haven")),
+        (
+            "price_or_supply",
+            (
+                "涨价",
+                "提价",
+                "报价上调",
+                "价格上涨",
+                "缺货",
+                "供应紧张",
+                "供给收缩",
+                "库存低位",
+                "supply shortage",
+                "shortage",
+                "supply constraint",
+                "supply disruption",
+                "tight supply",
+            ),
+        ),
+        (
+            "product_launch",
+            (
+                "新品",
+                "新产品",
+                "新一代",
+                "发布",
+                "推出",
+                "launch",
+                "unveil",
+                "introduces",
+            ),
+        ),
+        (
+            "order_or_contract",
+            ("订单", "中标", "合同", "采购", "定点", "招标", "contract", "order"),
+        ),
+        (
+            "macro_or_market",
+            ("美股大涨", "纳斯达克", "利率", "通胀", "流动性", "nasdaq", "liquidity"),
+        ),
+    )
+    for fact_type, keywords in patterns:
+        if any(keyword.casefold() in text for keyword in keywords):
+            return fact_type
+    return "other"
+
+
+def _topic_key(
+    title: str,
+    *,
+    summary: str = "",
+    category: str = "",
+    sectors: tuple[str, ...] = (),
+) -> str:
+    """Return a stable topic key used to merge syndicated headlines.
+
+    The key deliberately includes the fact type and canonical sectors. Thus
+    an NVIDIA product launch and an NVIDIA supply shortage remain separate,
+    while two differently worded reports about the same launch collapse into
+    one event with multiple sources.
+    """
+
+    fact_type = _fact_type(title, summary=summary, category=category)
+    canonical_sectors = tuple(
+        sorted({str(item).strip().casefold() for item in sectors if str(item).strip()})
+    )
+    if canonical_sectors:
+        return f"{fact_type}|{'/'.join(canonical_sectors[:4])}"
+    normalized = _normalized_title_key(title)
+    return f"{fact_type}|{normalized[:60]}"
 
 
 def _build_transmission_hypothesis(
@@ -2167,6 +2281,15 @@ def _classify_title(
         summary=summary,
         content=content,
     )
+    # When the headline explicitly states a gold-price/safe-haven fact, keep
+    # the existing actionable category; geopolitical risk remains available
+    # as a structured fact_type for downstream transmission analysis.
+    if re.search(
+        r"黄金|金价|贵金属|央行购金|gold price|gold.*(?:rises|jumps|surges|record)",
+        positive_evidence,
+        flags=re.IGNORECASE,
+    ):
+        return ("黄金/贵金属催化", "positive", 4, "")
 
     for pattern, category, impact, weight in GLOBAL_CROSS_MARKET_PATTERNS:
         if re.search(pattern, positive_evidence, flags=re.IGNORECASE):
@@ -2786,6 +2909,8 @@ def _merge_events(events: Sequence[CatalystEvent]) -> tuple[CatalystEvent, ...]:
                 (*existing.invalidation_signals, *event.invalidation_signals)
             ),
             summary=existing.summary or event.summary,
+            fact_type=existing.fact_type or event.fact_type,
+            topic_key=existing.topic_key or event.topic_key,
         )
     return tuple(merged)
 
@@ -2884,6 +3009,15 @@ def _events_can_merge(left: CatalystEvent, right: CatalystEvent) -> bool:
         return False
     if left_title and left_title == right_title:
         return True
+    # Merge differently worded syndicated coverage of the same fact/theme.
+    # The fact type keeps a product launch separate from a supply shock, and
+    # the canonical sectors prevent unrelated headlines from collapsing.
+    if left.topic_key and left.topic_key == right.topic_key:
+        # A broad sector label alone is not enough: two independent PCB
+        # price notices on the same day must remain separate unless their
+        # headlines share a meaningful event anchor.
+        if _title_overlap_ratio(left_title, right_title) >= 0.35:
+            return True
     if left.impact != right.impact or left.category != right.category:
         return False
     left_target = _event_target(left)

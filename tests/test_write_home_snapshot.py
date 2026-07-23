@@ -154,9 +154,12 @@ def test_variant_snapshot_reads_carried_forward_previous_holdings(
 ) -> None:
     artifact = {
         "initial_cash": 100_000.0,
+        "run_mode": "backtest_historical",
         "start_date": "2026-07-20",
         "end_date": "2026-07-20",
         "data_mode": "historical_raw_unadjusted",
+        "research_mode": "historical_backtest_only",
+        "live_recommendation_allowed": False,
         "execution_rules": {"t_plus_one": True},
         "variants": [
             {
@@ -169,6 +172,7 @@ def test_variant_snapshot_reads_carried_forward_previous_holdings(
                 "return_pct": 0.0,
                 "filled_orders": 1,
                 "rejected_orders": 0,
+                "holdings_date": "2026-07-20",
                 "holdings": [{"symbol": "600001", "quantity": 100, "last_price": 11.0}],
                 "previous_holdings": [
                     {"symbol": "000001", "quantity": 200, "last_price": 10.0}
@@ -188,19 +192,65 @@ def test_variant_snapshot_reads_carried_forward_previous_holdings(
     assert variants[0].previous_holdings[0].symbol == "000001"
 
 
+def test_variant_snapshot_does_not_infer_previous_holdings_from_fills(
+    monkeypatch, tmp_path
+) -> None:
+    artifact = {
+        "initial_cash": 100_000.0,
+        "run_mode": "backtest_historical",
+        "start_date": "2026-07-19",
+        "end_date": "2026-07-20",
+        "holdings_date": "2026-07-20",
+        "data_mode": "historical_raw_unadjusted",
+        "research_mode": "historical_backtest_only",
+        "live_recommendation_allowed": False,
+        "variants": [
+            {
+                "variant_id": "legacy",
+                "label": "无昨日基线",
+                "initial_cash": 100_000.0,
+                "holdings_date": "2026-07-20",
+                "holdings": [{"symbol": "000001", "quantity": 100}],
+                "fills": [
+                    {
+                        "status": "filled",
+                        "date": "2026-07-19",
+                        "symbol": "000001",
+                        "side": "buy",
+                        "quantity": 100,
+                    }
+                ],
+            }
+        ],
+    }
+    path = tmp_path / "variant-results.json"
+    path.write_text(json.dumps(artifact), encoding="utf-8")
+    monkeypatch.setenv("AQSP_VARIANT_RESULTS", str(path))
+
+    variant = write_home_snapshot._variant_snapshot()[0]
+
+    assert variant.previous_holdings is None
+    assert variant.previous_holdings_date == ""
+
+
 def test_variant_snapshot_generates_structured_adjustments_from_fills_and_evidence(
     monkeypatch, tmp_path
 ) -> None:
     artifact = {
         "initial_cash": 100_000.0,
+        "run_mode": "backtest_historical",
         "start_date": "2026-07-19",
         "end_date": "2026-07-20",
         "data_mode": "historical_raw_unadjusted",
+        "research_mode": "historical_backtest_only",
+        "live_recommendation_allowed": False,
+        "holdings_date": "2026-07-20",
         "variants": [
             {
                 "variant_id": "evidence_variant",
                 "label": "证据变体",
                 "initial_cash": 100_000.0,
+                "holdings_date": "2026-07-20",
                 "holdings": [
                     {"symbol": "000001", "quantity": 200, "name": "平安银行"},
                     {"symbol": "000002", "quantity": 100, "name": "万科A"},

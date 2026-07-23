@@ -307,7 +307,10 @@ def test_fast_indicator_cache_matches_causal_pandas_features() -> None:
 def test_validate_variant_artifact_allows_historical_warmup_before_reset():
     payload = {
         "schema_version": "variant-suite-v1",
+        "run_mode": "backtest_historical",
         "data_mode": "historical_raw_unadjusted",
+        "research_mode": "historical_backtest_only",
+        "live_recommendation_allowed": False,
         "start_date": "2026-07-01",
         "end_date": "2026-07-20",
         "symbols": ["600001"],
@@ -322,6 +325,7 @@ def test_validate_variant_artifact_allows_historical_warmup_before_reset():
                 "variant_id": "v1",
                 "label": "趋势·20日",
                 "initial_cash": 100_000.0,
+                "holdings_date": "2026-07-20",
                 "fills": [],
             }
         ],
@@ -333,7 +337,10 @@ def test_validate_variant_artifact_allows_historical_warmup_before_reset():
 def test_validate_variant_artifact_rejects_wrong_reset_date_and_missing_evidence():
     payload = {
         "schema_version": "variant-suite-v1",
+        "run_mode": "backtest_historical",
         "data_mode": "historical_raw_unadjusted",
+        "research_mode": "historical_backtest_only",
+        "live_recommendation_allowed": False,
         "start_date": "2026-07-20",
         "end_date": "2026-07-20",
         "symbols": ["600001"],
@@ -348,6 +355,7 @@ def test_validate_variant_artifact_rejects_wrong_reset_date_and_missing_evidence
                 "variant_id": "v1",
                 "label": "趋势·20日",
                 "initial_cash": 100_000.0,
+                "holdings_date": "2026-07-20",
                 "fills": [
                     {"status": "filled", "evidence": []},
                 ],
@@ -367,3 +375,69 @@ def test_validate_variant_artifact_rejects_wrong_reset_date_and_missing_evidence
             expected_end_date="2026-07-20",
             expected_start_date="2026-07-20",
         )
+
+
+def test_load_frames_rejects_realtime_mode_when_only_historical_workload_exists(
+    tmp_path,
+):
+    db = tmp_path / "historical-only.db"
+    with sqlite3.connect(db) as conn:
+        conn.execute(
+            """
+            CREATE TABLE ohlcv (
+                symbol TEXT, date TEXT, price_mode TEXT, workload TEXT,
+                open REAL, high REAL, low REAL, close REAL, volume REAL,
+                amount REAL, suspended INTEGER, limit_up REAL, limit_down REAL
+            )
+            """
+        )
+        conn.execute(
+            "INSERT INTO ohlcv VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                "000001",
+                "2026-07-20",
+                "raw",
+                "historical",
+                10.0,
+                10.5,
+                9.5,
+                10.0,
+                1000.0,
+                100000.0,
+                0,
+                11.0,
+                9.0,
+            ),
+        )
+
+    with pytest.raises(ValueError, match="live_short"):
+        load_frames(
+            db,
+            ("000001",),
+            "2026-07-20",
+            "2026-07-20",
+            run_mode="paper_realtime",
+        )
+
+
+def test_validate_variant_artifact_rejects_historical_label_for_realtime_mode() -> None:
+    payload = {
+        "schema_version": "variant-suite-v1",
+        "run_mode": "paper_realtime",
+        "data_mode": "historical_raw_unadjusted",
+        "research_mode": "historical_backtest_only",
+        "live_recommendation_allowed": False,
+        "start_date": "2026-07-20",
+        "end_date": "2026-07-20",
+        "symbols": ["600001"],
+        "universe_scope": {
+            "symbol_count": 1,
+            "board_scope": "沪深主板+创业板",
+            "excluded": ["ST", "科创板", "其他板块"],
+        },
+        "data_coverage": {"end_date_coverage_pct": 100.0},
+        "variants": [],
+    }
+
+    with pytest.raises(ValueError, match="data_mode"):
+        validate_variant_artifact(payload, expected_end_date="2026-07-20")

@@ -1621,7 +1621,27 @@ def _variant_snapshot(
         "data/runtime/variant_results.json",
     )
     payload = _read_json_object(path)
-    if not payload or payload.get("initial_cash") != 100_000.0:
+    run_mode = _text(payload.get("run_mode")) if payload else ""
+    valid_modes = {
+        "backtest_historical": (
+            "historical_raw_unadjusted",
+            "historical_backtest_only",
+        ),
+        "paper_realtime": (
+            "raw_live_short_paper",
+            "realtime_paper_only",
+        ),
+    }
+    expected_modes = valid_modes.get(run_mode)
+    if (
+        not payload
+        or payload.get("initial_cash") != 100_000.0
+        or expected_modes is None
+        or payload.get("data_mode") != expected_modes[0]
+        or payload.get("research_mode") != expected_modes[1]
+        or payload.get("live_recommendation_allowed") is not False
+        or not _text(payload.get("end_date"))
+    ):
         return ()
     raw_variants = payload.get("variants")
     if not isinstance(raw_variants, list):
@@ -1679,7 +1699,9 @@ def _variant_snapshot(
             if isinstance(raw_previous_holdings, list)
             else None
         )
-        holdings_date = _first_text(item.get("holdings_date"), payload.get("end_date"))
+        holdings_date = _first_text(item.get("holdings_date"))
+        if holdings_date != _text(payload.get("end_date")):
+            continue
         previous_holdings_date = _first_text(
             item.get("previous_holdings_date"),
             payload.get("previous_holdings_date"),

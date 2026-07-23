@@ -89,6 +89,56 @@ def test_market_context_matches_structured_chain_fields_when_headline_is_generic
     assert any(
         item.rule_id == "physical_ai" for item in artifact.cross_market_implications
     )
+    implication = next(
+        item
+        for item in artifact.cross_market_implications
+        if item.rule_id == "physical_ai"
+    )
+    assert implication.fact_type == "新品/产品发布"
+    assert implication.source_url == "https://nvidianews.nvidia.com/news/platform"
+
+
+def test_market_context_maps_supply_price_shock_to_upstream_and_pressure_chain() -> (
+    None
+):
+    report = CatalystReport(
+        date="2026-07-14",
+        generated_at="2026-07-14T10:00:00+08:00",
+        source_status="ok",
+        events=(
+            CatalystEvent(
+                title="HBM现货价格上涨，服务器内存供应紧张",
+                source="Reuters",
+                source_region="international",
+                published_at="2026-07-14T09:45:00+08:00",
+                impact="positive",
+                category="存储涨价/缺货",
+                fact_type="price_or_supply",
+                topic_key="price_or_supply|存储/半导体",
+                confidence=0.86,
+                source_quality_score=3,
+                source_quality_label="多源/权威媒体",
+                affected_sectors=("存储", "半导体", "先进封装"),
+                transmission_path=(
+                    "存储现货价格",
+                    "模组/封测与渠道库存",
+                    "AI服务器与终端需求",
+                ),
+                url="https://reuters.example/hbm",
+            ),
+        ),
+    )
+
+    artifact = build_market_context_artifact(catalyst_report=report)
+
+    implication = next(
+        item
+        for item in artifact.cross_market_implications
+        if item.rule_id == "global_supply_tightening"
+    )
+    assert implication.first_order_targets[:2] == ("存储", "半导体材料")
+    assert "消费电子代工" in implication.pressure_targets
+    assert implication.source_url == "https://reuters.example/hbm"
 
 
 def test_market_context_expands_actionable_news_to_full_market_candidates() -> None:

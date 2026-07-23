@@ -165,11 +165,18 @@ def test_variant_snapshot_resolves_previous_holding_names(
         json.dumps(
             {
                 "initial_cash": 100_000.0,
+                "run_mode": "backtest_historical",
+                "end_date": "2026-07-20",
+                "holdings_date": "2026-07-20",
+                "data_mode": "historical_raw_unadjusted",
+                "research_mode": "historical_backtest_only",
+                "live_recommendation_allowed": False,
                 "variants": [
                     {
                         "variant_id": "trend_lb10_n3",
                         "label": "趋势 | 10日 | 3只",
                         "initial_cash": 100_000.0,
+                        "holdings_date": "2026-07-20",
                         "previous_holdings": [{"symbol": "001230"}],
                     }
                 ],

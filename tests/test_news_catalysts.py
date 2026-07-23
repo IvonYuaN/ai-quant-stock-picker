@@ -1148,7 +1148,9 @@ def test_catalyst_report_exposes_regional_freshness_quality_and_fallback() -> No
         ),
     )
 
-    domestic = next(item for item in report.region_statuses if item.region == "domestic")
+    domestic = next(
+        item for item in report.region_statuses if item.region == "domestic"
+    )
 
     assert domestic.status == "partial"
     assert domestic.freshness == "fresh"
@@ -1495,6 +1497,24 @@ except TimeoutError:
     )
 
     assert result.returncode == 0, result.stderr
+
+
+def test_news_process_isolation_falls_back_without_fork_on_macos(monkeypatch) -> None:
+    monkeypatch.setattr(catalysts.sys, "platform", "darwin")
+
+    def fail_get_context(_method: str):
+        raise AssertionError("macOS must not use fork isolation")
+
+    monkeypatch.setattr(catalysts.multiprocessing, "get_context", fail_get_context)
+
+    outcomes = catalysts._run_fetchers_in_processes(
+        {"global": lambda: pd.DataFrame([{"标题": "消息源返回"}])},
+        timeout_seconds=0.2,
+    )
+
+    assert outcomes["global"].error is None
+    assert outcomes["global"].timed_out is False
+    assert outcomes["global"].frame.iloc[0]["标题"] == "消息源返回"
 
 
 def test_news_catalyst_fetches_symbol_and_global_news_in_parallel() -> None:
@@ -2902,6 +2922,76 @@ def test_news_catalyst_cross_source_merge_keeps_newest_publication_and_fetch_tim
     assert len(report.events) == 1
     assert report.events[0].published_at == "2026-07-13 10:00:00+08:00"
     assert report.events[0].source_fetched_at == "2026-07-13T10:05:00+08:00"
+    assert report.events[0].fact_type == "order_or_contract"
+    assert report.events[0].topic_key.startswith("order_or_contract|")
+
+
+def test_news_catalyst_merges_reworded_same_nvidia_launch_but_keeps_supply_shock() -> (
+    None
+):
+    report = build_catalyst_report(
+        fetch_global_news=lambda _limit: pd.DataFrame(
+            [
+                {
+                    "标题": "NVIDIA launches Physical AI robotics platform",
+                    "来源": "NVIDIA Newsroom",
+                    "时间": _RECENT_NEWS_TIME,
+                    "链接": "https://nvidianews.nvidia.com/news/launch",
+                },
+                {
+                    "标题": "英伟达推出 Physical AI 机器人平台",
+                    "来源": "Reuters",
+                    "时间": _RECENT_NEWS_TIME,
+                    "链接": "https://reuters.example/launch",
+                },
+                {
+                    "标题": "NVIDIA GPU supply shortage reported by distributors",
+                    "来源": "MarketWatch",
+                    "时间": _RECENT_NEWS_TIME,
+                    "链接": "https://marketwatch.example/shortage",
+                },
+            ]
+        ),
+        config=NewsCatalystConfig(min_confidence=0.1, max_news_age_days=7),
+    )
+
+    assert len(report.events) == 2
+    launch = next(item for item in report.events if item.fact_type == "product_launch")
+    shortage = next(
+        item for item in report.events if item.fact_type == "price_or_supply"
+    )
+    assert launch.source_count == 2
+    assert "NVIDIA Newsroom" in launch.source
+    assert "Reuters" in launch.source
+    assert shortage.source_count == 1
+    assert shortage.topic_key != launch.topic_key
+
+
+def test_news_catalyst_structures_cross_market_fact_types_without_fabricating_url() -> (
+    None
+):
+    report = build_catalyst_report(
+        fetch_global_news=lambda _limit: pd.DataFrame(
+            [
+                {
+                    "标题": "战争升级推升金价，军工订单受到关注",
+                    "来源": "Reuters",
+                    "时间": _RECENT_NEWS_TIME,
+                },
+                {
+                    "标题": "PCB覆铜板报价上调，供应商反馈短期缺货",
+                    "来源": "财联社",
+                    "时间": _RECENT_NEWS_TIME,
+                },
+            ]
+        ),
+        config=NewsCatalystConfig(min_confidence=0.1),
+    )
+
+    by_type = {item.fact_type: item for item in report.events}
+    assert by_type["geopolitical_risk"].url == ""
+    assert by_type["geopolitical_risk"].affected_sectors
+    assert by_type["price_or_supply"].transmission_path
 
 
 def test_catalyst_report_artifact_round_trips_with_date_and_freshness_gate(
