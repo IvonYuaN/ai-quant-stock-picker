@@ -257,13 +257,18 @@ INTRADAY_BATCH_SCAN="${AQSP_INTRADAY_BATCH_SCAN:-true}"
 # a smaller host with AQSP_INTRADAY_BATCH_SIZE.
 INTRADAY_BATCH_SIZE="${AQSP_INTRADAY_BATCH_SIZE:-256}"
 INTRADAY_CURSOR_PATH="$(resolve_path "${AQSP_INTRADAY_CURSOR_PATH:-data/runtime/intraday_universe_cursor.json}")"
+INTRADAY_SNAPSHOT_STATE="$(resolve_path "${AQSP_INTRADAY_SNAPSHOT_STATE:-data/runtime/intraday_snapshot_state.json}")"
 INTRADAY_BATCH_ACTIVE="false"
 INTRADAY_BATCH_SYMBOLS=""
 INTRADAY_BATCH_ID=""
 INTRADAY_BATCH_UNIVERSE_COUNT="0"
 INTRADAY_BATCH_COVERAGE_PCT="0"
 INTRADAY_BATCH_EXPECTED_COUNT="0"
+INTRADAY_BATCH_TRADE_DATE=""
+INTRADAY_BATCH_CYCLE_ID="0"
+INTRADAY_BATCH_UNIVERSE_VERSION=""
 BATCH_COMMITTED="false"
+BATCH_SNAPSHOT_MERGED="false"
 INTRADAY_NEWS_TASK_TIMEOUT_SECONDS="${AQSP_INTRADAY_NEWS_TASK_TIMEOUT_SECONDS:-20}"
 # The configured RSS set needs up to roughly five seconds on the production
 # host; a two-second deadline consistently misclassified reachable feeds as
@@ -1245,6 +1250,7 @@ write_intraday_status() {
     INTRADAY_STATUS_NEWS_TASK_TIMEOUT="$INTRADAY_NEWS_TASK_TIMEOUT_SECONDS" \
     INTRADAY_STATUS_NEWS_SOURCE_TIMEOUT="$INTRADAY_NEWS_SOURCE_TIMEOUT_SECONDS" \
     INTRADAY_STATUS_CURSOR="$INTRADAY_CURSOR_PATH" \
+    INTRADAY_STATUS_SNAPSHOT_STATE="$INTRADAY_SNAPSHOT_STATE" \
     INTRADAY_STATUS_BATCH_ACTIVE="$INTRADAY_BATCH_ACTIVE" \
     INTRADAY_STATUS_BATCH_ID="$INTRADAY_BATCH_ID" \
     INTRADAY_STATUS_STARTED_AT="${INTRADAY_STARTED_AT:-}" \
@@ -1321,6 +1327,16 @@ try:
 except (OSError, json.JSONDecodeError):
     cursor_state = {}
 
+snapshot_state: dict[str, object] = {}
+try:
+    snapshot_payload = json.loads(
+        Path(os.environ["INTRADAY_STATUS_SNAPSHOT_STATE"]).read_text(encoding="utf-8")
+    )
+    if isinstance(snapshot_payload, dict):
+        snapshot_state = snapshot_payload
+except (OSError, json.JSONDecodeError):
+    snapshot_state = {}
+
 universe = {
     "batch_active": truthy(os.environ.get("INTRADAY_STATUS_BATCH_ACTIVE", "false")),
     "batch_id": os.environ.get("INTRADAY_STATUS_BATCH_ID", ""),
@@ -1332,6 +1348,12 @@ universe = {
     "last_successful_batch_id": str(cursor_state.get("last_batch_id") or ""),
     "last_batch_finished_at": str(cursor_state.get("last_batch_finished_at") or ""),
     "last_error": str(cursor_state.get("last_error") or ""),
+    "snapshot_scope": "cycle",
+    "snapshot_trade_date": str(snapshot_state.get("trade_date") or ""),
+    "snapshot_cycle_id": int(snapshot_state.get("cycle_id") or 0),
+    "snapshot_universe_version": str(snapshot_state.get("universe_version") or ""),
+    "snapshot_coverage_pct": float(snapshot_state.get("coverage_pct") or 0.0),
+    "snapshot_complete": float(snapshot_state.get("coverage_pct") or 0.0) >= 1.0,
 }
 if not universe["batch_id"]:
     universe["batch_id"] = str(cursor_state.get("active_batch_id") or cursor_state.get("last_batch_id") or "")
@@ -1587,6 +1609,29 @@ if is_truthy "$INTRADAY_BATCH_SCAN" && \
         exit 1
     fi
     INTRADAY_BATCH_ACTIVE="true"
+    if [ -f "$INTRADAY_CURSOR_PATH" ] && ! read -r INTRADAY_BATCH_TRADE_DATE INTRADAY_BATCH_CYCLE_ID INTRADAY_BATCH_UNIVERSE_VERSION INTRADAY_BATCH_COVERAGE_PCT < <(
+        "$PYTHON_BIN" - "$INTRADAY_CURSOR_PATH" "$INTRADAY_BATCH_EXPECTED_COUNT" <<'AQSP_INTRADAY_BATCH_METADATA'
+import json
+import sys
+from pathlib import Path
+
+payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+universe_count = int(payload.get("universe_count") or 0)
+offset = int(payload.get("active_offset") or 0)
+selected = int(sys.argv[2])
+coverage = min(1.0, (offset + selected) / universe_count) if universe_count else 0.0
+print(
+    payload.get("trade_date", ""),
+    payload.get("cycle_id", 0),
+    payload.get("universe_version", ""),
+    coverage,
+)
+AQSP_INTRADAY_BATCH_METADATA
+    ); then
+        log "[ERROR] 盘中批次游标快照字段缺失；拒绝发布未标识的批次产物"
+        write_intraday_status "failed" "intraday_batch_metadata_missing；游标快照字段缺失" "1"
+        exit 1
+    fi
     # The explicit symbol list is already bounded by the cursor. Keep metadata
     # at zero so batch size is not reported as a global universe cap.
     INTRADAY_MAX_UNIVERSE="0"
@@ -1690,6 +1735,28 @@ if [ "$RUN_EXIT_CODE" -ne 0 ] && [ "$RUN_EXIT_CODE" -ne 2 ]; then
     fi
 fi
 
+if [ "$INTRADAY_BATCH_ACTIVE" = "true" ] && [ -f "$TMP_INTRADAY_OUTPUT_CSV" ] && \
+   [ -n "$INTRADAY_BATCH_UNIVERSE_VERSION" ]; then
+    if "$PYTHON_BIN" "${PROJECT_ROOT}/scripts/prepare_intraday_batch.py" \
+        --merge-snapshot \
+        --current-csv "$TMP_INTRADAY_OUTPUT_CSV" \
+        --previous-csv "$INTRADAY_OUTPUT_CSV" \
+        --current-ledger "$TMP_INTRADAY_LEDGER" \
+        --previous-ledger "$INTRADAY_LEDGER" \
+        --snapshot-state "$INTRADAY_SNAPSHOT_STATE" \
+        --trade-date "$INTRADAY_BATCH_TRADE_DATE" \
+        --cycle-id "$INTRADAY_BATCH_CYCLE_ID" \
+        --universe-version "$INTRADAY_BATCH_UNIVERSE_VERSION" \
+        --coverage-pct "$INTRADAY_BATCH_COVERAGE_PCT" >>"$RESULT_LOG" 2>&1; then
+        BATCH_SNAPSHOT_MERGED="true"
+        log "盘中批次已合并到当前周期快照: coverage=${INTRADAY_BATCH_COVERAGE_PCT}"
+    else
+        BATCH_FAILURE_REASON="intraday_snapshot_merge_failed"
+        write_intraday_status "failed" "盘中周期快照合并失败，保留上一版产物" "1"
+        exit 1
+    fi
+fi
+
 QUALITY_GATE_EXIT_CODE="0"
 if apply_intraday_quality_gate "$TMP_INTRADAY_OUTPUT_CSV" "$TMP_INTRADAY_LEDGER" "$TMP_INTRADAY_REPORT" "$QUALITY_GATE_SUMMARY"; then
     QUALITY_GATE_EXIT_CODE="0"
@@ -1788,6 +1855,12 @@ if [ "$INTRADAY_BATCH_ACTIVE" = "true" ] && \
         "$PYTHON_BIN" "${PROJECT_ROOT}/scripts/prepare_intraday_batch.py" \
         --cursor "$INTRADAY_CURSOR_PATH" --commit
     BATCH_COMMITTED="true"
+    "$PYTHON_BIN" "${PROJECT_ROOT}/scripts/prepare_intraday_batch.py" \
+        --finalize-snapshot --snapshot-state "$INTRADAY_SNAPSHOT_STATE" \
+        --trade-date "$INTRADAY_BATCH_TRADE_DATE" \
+        --cycle-id "$INTRADAY_BATCH_CYCLE_ID" \
+        --universe-version "$INTRADAY_BATCH_UNIVERSE_VERSION" \
+        --coverage-pct "$INTRADAY_BATCH_COVERAGE_PCT"
     log "盘中批次已提交；partial/timeout 和消息与讨论 sidecar 不影响 cursor 推进"
 elif [ "$INTRADAY_BATCH_ACTIVE" = "true" ] && \
      [ "$BATCH_OUTPUT_VALIDATED" != "true" ] && \
@@ -1847,6 +1920,12 @@ if [ "$INTRADAY_BATCH_ACTIVE" = "true" ] && \
             "$PYTHON_BIN" "${PROJECT_ROOT}/scripts/prepare_intraday_batch.py" \
             --cursor "$INTRADAY_CURSOR_PATH" --commit
         BATCH_COMMITTED="true"
+        "$PYTHON_BIN" "${PROJECT_ROOT}/scripts/prepare_intraday_batch.py" \
+            --finalize-snapshot --snapshot-state "$INTRADAY_SNAPSHOT_STATE" \
+            --trade-date "$INTRADAY_BATCH_TRADE_DATE" \
+            --cycle-id "$INTRADAY_BATCH_CYCLE_ID" \
+            --universe-version "$INTRADAY_BATCH_UNIVERSE_VERSION" \
+            --coverage-pct "$INTRADAY_BATCH_COVERAGE_PCT"
         log "盘中批次已提交，下一轮继续覆盖剩余股票池"
     else
         BATCH_FAILURE_REASON="intraday_batch_output_incomplete"
