@@ -64,6 +64,7 @@ from aqsp.web.home_snapshot import (
     HomeSnapshotTechnicalMetric,
     HomeSnapshotUniverse,
     HomeSnapshotHolding,
+    HomeSnapshotAdjustment,
     HomeSnapshotVariant,
     HomeSnapshotVariantUniverse,
     MAX_HOME_SNAPSHOT_TECHNICAL_METRICS,
@@ -1544,7 +1545,9 @@ def _phase_snapshot(
             # a main-chain candidate signal.
             status = "消息已更新"
             updated_at = str(
-                max((message.published_at for message in premarket_messages), default="")
+                max(
+                    (message.published_at for message in premarket_messages), default=""
+                )
                 or ""
             )
         phases.append(
@@ -1676,6 +1679,18 @@ def _variant_snapshot(
             if isinstance(raw_previous_holdings, list)
             else _previous_variant_holdings(item.get("fills"), holdings, variant_names)
         )
+        holdings_date = _first_text(item.get("holdings_date"), payload.get("end_date"))
+        previous_holdings_date = _first_text(
+            item.get("previous_holdings_date"), payload.get("previous_holdings_date")
+        ) or _derived_previous_holdings_date(
+            item.get("fills"), current_date=holdings_date
+        )
+        adjustments = _variant_adjustments(
+            holdings,
+            previous_holdings,
+            raw_fills=item.get("fills"),
+            holdings_date=holdings_date,
+        )
         raw_strategy = item.get("strategy")
         strategy = (
             json.dumps(raw_strategy, ensure_ascii=False, separators=(",", ":"))
@@ -1700,6 +1715,9 @@ def _variant_snapshot(
                 strategy=strategy,
                 holdings=holdings,
                 previous_holdings=previous_holdings,
+                holdings_date=holdings_date,
+                previous_holdings_date=previous_holdings_date,
+                adjustments=adjustments,
                 recent_actions=_variant_recent_actions(
                     item.get("fills"), variant_names
                 ),
@@ -1707,6 +1725,101 @@ def _variant_snapshot(
             )
         )
     return tuple(variants)
+
+
+def _derived_previous_holdings_date(
+    raw_fills: object,
+    *,
+    current_date: str,
+) -> str:
+    """Return the latest filled date before the current holdings date."""
+    dates = sorted(
+        {
+            _text(fill.get("date"))[:10]
+            for fill in (raw_fills if isinstance(raw_fills, list) else [])
+            if isinstance(fill, dict)
+            and _text(fill.get("status")) == "filled"
+            and _text(fill.get("date"))
+            and _text(fill.get("date"))[:10] < current_date[:10]
+        }
+    )
+    return dates[-1] if dates else ""
+
+
+def _variant_adjustments(
+    current_holdings: tuple[HomeSnapshotHolding, ...],
+    previous_holdings: tuple[HomeSnapshotHolding, ...] | None,
+    *,
+    raw_fills: object,
+    holdings_date: str,
+) -> tuple[HomeSnapshotAdjustment, ...]:
+    """Compare holdings and attach only evidence found in filled orders."""
+    if previous_holdings is None:
+        return ()
+    current_by_symbol = {holding.symbol: holding for holding in current_holdings}
+    previous_by_symbol = {holding.symbol: holding for holding in previous_holdings}
+    fills = [
+        fill
+        for fill in (raw_fills if isinstance(raw_fills, list) else [])
+        if isinstance(fill, dict)
+        and _text(fill.get("status")) == "filled"
+        and _text(fill.get("symbol"))
+    ]
+    by_symbol: dict[str, list[dict[str, object]]] = {}
+    for fill in fills:
+        by_symbol.setdefault(_text(fill.get("symbol")), []).append(fill)
+
+    adjustments: list[HomeSnapshotAdjustment] = []
+    for symbol in sorted(set(current_by_symbol) | set(previous_by_symbol)):
+        current = current_by_symbol.get(symbol)
+        previous = previous_by_symbol.get(symbol)
+        previous_quantity = previous.quantity if previous else 0
+        current_quantity = current.quantity if current else 0
+        if previous_quantity == current_quantity == 0:
+            continue
+        if previous_quantity == 0:
+            action = "added"
+        elif current_quantity == 0:
+            action = "removed"
+        elif current_quantity > previous_quantity:
+            action = "increased"
+        elif current_quantity < previous_quantity:
+            action = "decreased"
+        else:
+            action = "continued"
+        symbol_fills = by_symbol.get(symbol, [])
+        fill_dates = sorted(
+            {
+                _text(fill.get("date"))[:10]
+                for fill in symbol_fills
+                if _text(fill.get("date"))
+            }
+        )
+        evidence_values: list[str] = []
+        for fill in symbol_fills:
+            raw_evidence = fill.get("evidence")
+            if isinstance(raw_evidence, (list, tuple)):
+                evidence_values.extend(
+                    _text(value) for value in raw_evidence if _text(value)
+                )
+        name = _first_text(
+            current.name if current else "",
+            previous.name if previous else "",
+            symbol,
+        )
+        adjustments.append(
+            HomeSnapshotAdjustment(
+                action=action,
+                symbol=symbol,
+                name=name,
+                previous_quantity=previous_quantity,
+                current_quantity=current_quantity,
+                quantity_delta=current_quantity - previous_quantity,
+                trade_date=fill_dates[-1] if fill_dates else "",
+                evidence=_bounded_unique_text(evidence_values, 5),
+            )
+        )
+    return tuple(adjustments)
 
 
 def _variant_holding_from_payload(

@@ -144,7 +144,9 @@ def test_snapshot_candidate_fills_missing_next_step_from_existing_evidence() -> 
     snapshot = write_home_snapshot._snapshot_candidate(candidate)
 
     assert snapshot is not None
-    assert snapshot.next_step == "核对“MACD 金叉”是否延续，再决定是否提升纸面复核优先级。"
+    assert (
+        snapshot.next_step == "核对“MACD 金叉”是否延续，再决定是否提升纸面复核优先级。"
+    )
 
 
 def test_variant_snapshot_reads_carried_forward_previous_holdings(
@@ -186,6 +188,73 @@ def test_variant_snapshot_reads_carried_forward_previous_holdings(
     assert variants[0].previous_holdings[0].symbol == "000001"
 
 
+def test_variant_snapshot_generates_structured_adjustments_from_fills_and_evidence(
+    monkeypatch, tmp_path
+) -> None:
+    artifact = {
+        "initial_cash": 100_000.0,
+        "start_date": "2026-07-19",
+        "end_date": "2026-07-20",
+        "data_mode": "historical_raw_unadjusted",
+        "variants": [
+            {
+                "variant_id": "evidence_variant",
+                "label": "证据变体",
+                "initial_cash": 100_000.0,
+                "holdings": [
+                    {"symbol": "000001", "quantity": 200, "name": "平安银行"},
+                    {"symbol": "000002", "quantity": 100, "name": "万科A"},
+                ],
+                "previous_holdings": [
+                    {"symbol": "000001", "quantity": 100, "name": "平安银行"},
+                    {"symbol": "000003", "quantity": 100, "name": "国农科技"},
+                ],
+                "fills": [
+                    {
+                        "status": "filled",
+                        "date": "2026-07-20",
+                        "symbol": "000001",
+                        "side": "buy",
+                        "quantity": 100,
+                        "evidence": ["10日收益 +8.2%", "量能放大"],
+                    },
+                    {
+                        "status": "filled",
+                        "date": "2026-07-20",
+                        "symbol": "000002",
+                        "side": "buy",
+                        "quantity": 100,
+                        "evidence": ["突破20日高点"],
+                    },
+                    {
+                        "status": "filled",
+                        "date": "2026-07-20",
+                        "symbol": "000003",
+                        "side": "sell",
+                        "quantity": 100,
+                        "evidence": ["跌破止损"],
+                    },
+                ],
+            }
+        ],
+    }
+    path = tmp_path / "variant-results.json"
+    path.write_text(json.dumps(artifact, ensure_ascii=False), encoding="utf-8")
+    monkeypatch.setenv("AQSP_VARIANT_RESULTS", str(path))
+
+    variant = write_home_snapshot._variant_snapshot()[0]
+
+    assert variant.holdings_date == "2026-07-20"
+    assert variant.previous_holdings_date == ""
+    by_symbol = {item.symbol: item for item in variant.adjustments}
+    assert by_symbol["000001"].action == "increased"
+    assert by_symbol["000001"].quantity_delta == 100
+    assert by_symbol["000001"].evidence == ("10日收益 +8.2%", "量能放大")
+    assert by_symbol["000002"].action == "added"
+    assert by_symbol["000003"].action == "removed"
+    assert by_symbol["000003"].evidence == ("跌破止损",)
+
+
 def test_phase_snapshot_surfaces_premarket_messages_without_fake_candidates() -> None:
     class PhaseProvider:
         def _signal_task_rows_for_date(
@@ -193,9 +262,7 @@ def test_phase_snapshot_surfaces_premarket_messages_without_fake_candidates() ->
         ) -> list[dict[str, str]]:
             return []
 
-        def _same_day_unique_rows(
-            self, signal_date: str
-        ) -> tuple[dict[str, str], ...]:
+        def _same_day_unique_rows(self, signal_date: str) -> tuple[dict[str, str], ...]:
             return ({"symbol": "600001", "created_at": "2026-07-23T10:00:00+08:00"},)
 
         def _lightweight_closing_review_summary(

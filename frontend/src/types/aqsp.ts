@@ -101,8 +101,29 @@ export interface AqspVariant {
   strategy?: string;
   holdings?: readonly AqspVariantHolding[];
   previous_holdings?: readonly AqspVariantHolding[] | null;
+  holdings_date?: string;
+  previous_holdings_date?: string;
+  adjustments?: readonly AqspVariantAdjustment[];
   recent_actions?: readonly string[];
   hard_rules?: readonly string[];
+}
+
+export type AqspVariantAdjustmentAction =
+  | "added"
+  | "removed"
+  | "increased"
+  | "decreased"
+  | "continued";
+
+export interface AqspVariantAdjustment {
+  action: AqspVariantAdjustmentAction;
+  symbol: string;
+  name: string;
+  previous_quantity: number;
+  current_quantity: number;
+  quantity_delta: number;
+  trade_date?: string;
+  evidence: readonly string[];
 }
 
 export interface AqspVariantUniverse {

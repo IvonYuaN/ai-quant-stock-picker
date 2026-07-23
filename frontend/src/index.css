@@ -442,7 +442,7 @@
   .aqsp-variant-account { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0.35rem; margin-top: 0.7rem; border-top: 1px solid hsl(var(--border) / 0.45); padding-top: 0.55rem; }
   .aqsp-variant-account div { min-width: 0; }
   .aqsp-variant-account span { display: block; color: hsl(var(--muted-foreground)); font-size: 0.58rem; }
-  .aqsp-variant-account b { display: block; overflow: hidden; margin-top: 0.12rem; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.68rem; font-variant-numeric: tabular-nums; text-overflow: ellipsis; white-space: nowrap; }
+  .aqsp-variant-account b { display: block; margin-top: 0.12rem; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.68rem; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
   .aqsp-variant-position-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.45rem; margin-top: 0.65rem; }
   .aqsp-variant-position, .aqsp-variant-reason { min-width: 0; border-top: 1px solid hsl(var(--border) / 0.45); padding-top: 0.5rem; }
   .aqsp-variant-position-head { display: flex; justify-content: space-between; gap: 0.4rem; color: hsl(var(--muted-foreground)); font-size: 0.61rem; }
@@ -452,12 +452,15 @@
   .aqsp-variant-position-list > div > div { min-width: 0; }
   .aqsp-variant-position-list strong { display: block; overflow-wrap: anywhere; font-size: 0.66rem; }
   .aqsp-variant-position-list .aqsp-code { display: block; margin-top: 0.08rem; }
-  .aqsp-variant-position-list > div > span:last-child { flex-shrink: 0; color: hsl(var(--muted-foreground)); font-size: 0.58rem; }
+  .aqsp-variant-position-list > div > span:last-child { min-width: 0; color: hsl(var(--muted-foreground)); font-size: 0.58rem; line-height: 1.35; text-align: right; overflow-wrap: anywhere; }
   .aqsp-variant-muted { margin-top: 0.35rem; color: hsl(var(--muted-foreground)); font-size: 0.61rem; line-height: 1.35; }
   .aqsp-variant-reason { margin-top: 0.6rem; }
   .aqsp-variant-reason ul { display: grid; gap: 0.22rem; margin-top: 0.35rem; color: hsl(var(--foreground) / 0.82); font-size: 0.63rem; line-height: 1.4; }
   .aqsp-variant-reason li { overflow-wrap: anywhere; }
+  .aqsp-variant-change-list { padding-left: 1rem; }
   .aqsp-variant-reason > p { margin-top: 0.4rem; color: hsl(var(--muted-foreground)); font-size: 0.58rem; line-height: 1.4; }
+  .aqsp-variant-change { color: hsl(var(--foreground) / 0.88) !important; font-size: 0.64rem !important; }
+  .aqsp-variant-footnote { border-top: 1px dashed hsl(var(--border) / 0.45); padding-top: 0.35rem; }
   .aqsp-variant-positive { color: hsl(var(--success)); }
   .aqsp-variant-negative { color: hsl(var(--danger)); }
 }

@@ -29,6 +29,7 @@ from aqsp.web.home_snapshot import (
     HomeSnapshotMarketContext,
     HomeSnapshotMessage,
     HomeSnapshotHolding,
+    HomeSnapshotAdjustment,
     HomeSnapshotSource,
     HomeSnapshotVariant,
     HOME_SNAPSHOT_CLOSE_TTL,
@@ -821,6 +822,48 @@ def test_home_snapshot_variant_keeps_missing_previous_holdings_explicit(
     loaded = load_home_dashboard_snapshot(source)
     assert loaded is not None
     assert loaded.variants[0].previous_holdings is None
+
+
+def test_home_snapshot_variant_roundtrip_preserves_dates_and_adjustments(tmp_path):
+    variant = HomeSnapshotVariant(
+        variant_id="v1",
+        label="证据变体",
+        initial_cash=100_000.0,
+        cash=90_000.0,
+        final_equity=101_000.0,
+        total_pnl=1_000.0,
+        return_pct=1.0,
+        filled_orders=2,
+        rejected_orders=0,
+        start_date="2026-07-19",
+        end_date="2026-07-20",
+        data_mode="historical_raw_unadjusted",
+        holdings_date="2026-07-20",
+        previous_holdings_date="2026-07-19",
+        adjustments=(
+            HomeSnapshotAdjustment(
+                action="increased",
+                symbol="000001",
+                name="平安银行",
+                previous_quantity=100,
+                current_quantity=200,
+                quantity_delta=100,
+                trade_date="2026-07-20",
+                evidence=("量能放大",),
+            ),
+        ),
+    )
+    source = tmp_path / "home.json"
+
+    write_home_dashboard_snapshot(source, replace(_snapshot(), variants=(variant,)))
+
+    loaded = load_home_dashboard_snapshot(source)
+    assert loaded is not None
+    loaded_variant = loaded.variants[0]
+    assert loaded_variant.holdings_date == "2026-07-20"
+    assert loaded_variant.previous_holdings_date == "2026-07-19"
+    assert loaded_variant.adjustments[0].action == "increased"
+    assert loaded_variant.adjustments[0].evidence == ("量能放大",)
 
 
 @pytest.mark.parametrize(

@@ -25,6 +25,9 @@ MAX_HOME_SNAPSHOT_MESSAGES = 5
 MAX_HOME_SNAPSHOT_MARKET_LINES = 5
 MAX_HOME_SNAPSHOT_CROSS_MARKET = 3
 MAX_HOME_SNAPSHOT_VARIANTS = 192
+HOME_SNAPSHOT_ADJUSTMENT_ACTIONS = frozenset(
+    {"added", "removed", "increased", "decreased", "continued"}
+)
 HOME_SNAPSHOT_INDEX_SCHEMA_VERSION = "v1-index"
 MAX_HOME_SNAPSHOT_INDEX_DAYS = 4
 HOME_SNAPSHOT_DEFAULT_TTL = timedelta(hours=24)
@@ -185,6 +188,20 @@ class HomeSnapshotHolding:
 
 
 @dataclass(frozen=True)
+class HomeSnapshotAdjustment:
+    """One evidence-backed change between two variant holding snapshots."""
+
+    action: str
+    symbol: str
+    name: str
+    previous_quantity: int
+    current_quantity: int
+    quantity_delta: int
+    trade_date: str = ""
+    evidence: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class HomeSnapshotVariant:
     """Bounded result for one isolated 100,000 yuan experiment account."""
 
@@ -204,6 +221,9 @@ class HomeSnapshotVariant:
     strategy: str = ""
     holdings: tuple[HomeSnapshotHolding, ...] = ()
     previous_holdings: tuple[HomeSnapshotHolding, ...] | None = None
+    holdings_date: str = ""
+    previous_holdings_date: str = ""
+    adjustments: tuple[HomeSnapshotAdjustment, ...] = ()
     recent_actions: tuple[str, ...] = ()
     hard_rules: tuple[str, ...] = ()
 
@@ -824,6 +844,29 @@ def _variant_from_dict(payload: object) -> HomeSnapshotVariant:
                 if isinstance(item, dict)
             )
         ),
+        holdings_date=_optional_text(
+            mapping.get("holdings_date"), "variant.holdings_date"
+        ),
+        previous_holdings_date=_optional_text(
+            mapping.get("previous_holdings_date"),
+            "variant.previous_holdings_date",
+        ),
+        adjustments=tuple(
+            HomeSnapshotAdjustment(
+                action=_text(item.get("action", ""), "adjustment.action"),
+                symbol=_text(item.get("symbol", ""), "adjustment.symbol"),
+                name=_optional_text(item.get("name"), "adjustment.name"),
+                previous_quantity=int(item.get("previous_quantity", 0) or 0),
+                current_quantity=int(item.get("current_quantity", 0) or 0),
+                quantity_delta=int(item.get("quantity_delta", 0) or 0),
+                trade_date=_optional_text(
+                    item.get("trade_date"), "adjustment.trade_date"
+                ),
+                evidence=_text_tuple(item.get("evidence", ()), "adjustment.evidence"),
+            )
+            for item in _list(mapping.get("adjustments", ()), "variant.adjustments")
+            if isinstance(item, dict)
+        ),
         recent_actions=_text_tuple(
             mapping.get("recent_actions", ()), "variant.recent_actions"
         ),
@@ -1196,7 +1239,9 @@ def _variant_universe_from_dict(payload: object) -> HomeSnapshotVariantUniverse:
         raise ValueError("variant_universe.coverage_pct must be between 0 and 100")
     return HomeSnapshotVariantUniverse(
         symbol_count=symbol_count,
-        board_scope=_optional_text(mapping.get("board_scope"), "variant_universe.board_scope"),
+        board_scope=_optional_text(
+            mapping.get("board_scope"), "variant_universe.board_scope"
+        ),
         excluded=_text_tuple(mapping.get("excluded", ()), "variant_universe.excluded"),
         latest_trade_date=_optional_text(
             mapping.get("latest_trade_date"), "variant_universe.latest_trade_date"
@@ -1248,6 +1293,22 @@ def _validate_snapshot(snapshot: HomeDashboardSnapshot) -> None:
         raise ValueError("variants must contain HomeSnapshotVariant values")
     if any(value.initial_cash != 100_000.0 for value in snapshot.variants):
         raise ValueError("variant accounts must start with 100000 yuan")
+    for variant in snapshot.variants:
+        for field_name in ("holdings_date", "previous_holdings_date"):
+            field_value = getattr(variant, field_name)
+            if field_value:
+                _validate_date(field_value, f"variant.{field_name}")
+        for adjustment in variant.adjustments:
+            if adjustment.action not in HOME_SNAPSHOT_ADJUSTMENT_ACTIONS:
+                raise ValueError("variant.adjustments contains an unknown action")
+            if adjustment.previous_quantity < 0 or adjustment.current_quantity < 0:
+                raise ValueError("variant.adjustment quantities must not be negative")
+            if adjustment.quantity_delta != (
+                adjustment.current_quantity - adjustment.previous_quantity
+            ):
+                raise ValueError("variant.adjustment quantity_delta is inconsistent")
+            if adjustment.trade_date:
+                _validate_date(adjustment.trade_date, "variant.adjustment.trade_date")
     _validate_date(snapshot.selected_date, "selected_date")
     if snapshot.selected_date not in snapshot.available_dates:
         raise ValueError("selected_date must exist in available_dates")
