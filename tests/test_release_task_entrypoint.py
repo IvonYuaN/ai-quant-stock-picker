@@ -39,6 +39,7 @@ def test_release_task_entrypoint_does_not_allow_runtime_root_to_replace_code_roo
 
     assert 'AQSP_PROJECT_ROOT="$RUNTIME_ROOT"' not in script
     assert "runtime output must be under ${RUNTIME_DATA_ROOT}" in script
+    assert "dist/dashboard" not in script
 
 
 def test_release_task_entrypoint_maps_relative_runtime_paths_once_to_data(
