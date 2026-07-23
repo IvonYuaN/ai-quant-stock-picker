@@ -441,7 +441,7 @@
   .aqsp-variant-head strong { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 1rem; font-variant-numeric: tabular-nums; }
   .aqsp-variant-strategy { display: grid; gap: 0.18rem; margin-top: 0.45rem; color: hsl(var(--primary)); font-size: 0.64rem; line-height: 1.4; overflow-wrap: anywhere; }
   .aqsp-variant-strategy b, .aqsp-variant-position-head b, .aqsp-variant-reason > .aqsp-variant-position-head b { color: hsl(var(--muted-foreground)); font-size: 0.58rem; font-weight: 650; }
-  .aqsp-variant-account { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 0.35rem; margin-top: 0.7rem; border-top: 1px solid hsl(var(--border) / 0.45); padding-top: 0.55rem; }
+  .aqsp-variant-account { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.35rem; margin-top: 0.7rem; border-top: 1px solid hsl(var(--border) / 0.45); padding-top: 0.55rem; }
   .aqsp-variant-account div { min-width: 0; }
   .aqsp-variant-account span { display: block; color: hsl(var(--muted-foreground)); font-size: 0.58rem; }
   .aqsp-variant-account b { display: block; margin-top: 0.12rem; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.68rem; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
@@ -449,21 +449,24 @@
   .aqsp-variant-position, .aqsp-variant-reason { min-width: 0; border-top: 1px solid hsl(var(--border) / 0.45); padding-top: 0.5rem; }
   .aqsp-variant-position-head { display: flex; justify-content: space-between; gap: 0.4rem; color: hsl(var(--muted-foreground)); font-size: 0.61rem; }
   .aqsp-variant-position-head span { white-space: nowrap; }
-  .aqsp-variant-position-list { display: grid; gap: 0.3rem; margin-top: 0.35rem; color: hsl(var(--foreground) / 0.8); font-size: 0.62rem; line-height: 1.35; }
+  .aqsp-variant-position-list { display: grid; gap: 0.3rem; margin-top: 0.35rem; color: hsl(var(--foreground) / 0.8); font-size: 0.68rem; line-height: 1.4; }
   .aqsp-variant-position-list > div { min-width: 0; }
-  .aqsp-holding-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.35fr); align-items: center; gap: 0.45rem; border-bottom: 1px solid hsl(var(--border) / 0.28); padding: 0.28rem 0; }
+  .aqsp-holding-row { display: grid; grid-template-columns: minmax(0, 1fr); align-items: start; gap: 0.28rem; border-bottom: 1px solid hsl(var(--border) / 0.28); padding: 0.38rem 0; }
   .aqsp-holding-row:last-child { border-bottom: 0; }
   .aqsp-holding-identity { display: flex; min-width: 0; align-items: center; gap: 0.35rem; }
   .aqsp-holding-identity > div { min-width: 0; }
   .aqsp-holding-rank { grid-row: span 2; border-radius: 0.2rem; padding: 0.18rem 0.25rem; color: hsl(var(--muted-foreground)); background: hsl(var(--muted) / 0.7); font-size: 0.55rem; font-weight: 700; line-height: 1; }
   .aqsp-holding-rank-primary { color: hsl(var(--primary)); background: hsl(var(--primary) / 0.14); }
-  .aqsp-variant-position-list strong { display: block; overflow-wrap: anywhere; font-size: 0.66rem; }
+  .aqsp-variant-position-list strong { display: block; overflow-wrap: anywhere; color: hsl(var(--foreground)); font-size: 0.78rem; font-weight: 750; }
   .aqsp-variant-position-list .aqsp-code { display: block; }
-  .aqsp-holding-metrics { display: flex; min-width: 0; flex-wrap: wrap; justify-content: flex-end; gap: 0.1rem 0.45rem; color: hsl(var(--muted-foreground)); font-size: 0.58rem; line-height: 1.35; text-align: right; overflow-wrap: anywhere; }
+  .aqsp-holding-metrics { display: grid; min-width: 0; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.12rem 0.45rem; color: hsl(var(--muted-foreground)); font-size: 0.62rem; line-height: 1.35; text-align: left; overflow-wrap: anywhere; }
+  .aqsp-holding-metrics b { color: hsl(var(--foreground) / 0.9); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 650; }
   .aqsp-variant-muted { margin-top: 0.35rem; color: hsl(var(--muted-foreground)); font-size: 0.61rem; line-height: 1.35; }
   .aqsp-variant-reason { margin-top: 0.6rem; }
   .aqsp-variant-reason ul { display: grid; gap: 0.22rem; margin-top: 0.35rem; color: hsl(var(--foreground) / 0.82); font-size: 0.63rem; line-height: 1.4; }
   .aqsp-variant-reason li { overflow-wrap: anywhere; }
+  .aqsp-variant-diff { display: grid; gap: 0.15rem; margin-top: 0.5rem; border-left: 2px solid hsl(var(--border)); padding-left: 0.5rem; color: hsl(var(--muted-foreground)); font-size: 0.61rem; line-height: 1.4; }
+  .aqsp-variant-diff b { color: hsl(var(--muted-foreground) / 0.86); font-weight: 650; }
   .aqsp-variant-evidence { margin-top: 0.55rem; border-top: 1px dashed hsl(var(--border) / 0.45); padding-top: 0.45rem; color: hsl(var(--muted-foreground)); font-size: 0.6rem; line-height: 1.4; }
   .aqsp-variant-evidence b { color: hsl(var(--primary)); font-weight: 650; }
   .aqsp-variant-evidence ul { display: grid; gap: 0.2rem; margin-top: 0.25rem; padding-left: 0.85rem; list-style: disc; }
@@ -486,4 +489,10 @@
 }
 
 @media (min-width: 768px) and (max-width: 1180px) {
+  .aqsp-list, .aqsp-variant-grid { grid-template-columns: minmax(0, 1fr); align-items: start; }
+  .aqsp-variant-account { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (min-width: 1360px) {
+  .aqsp-list, .aqsp-variant-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
 }

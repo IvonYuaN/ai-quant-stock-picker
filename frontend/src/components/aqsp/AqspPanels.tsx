@@ -238,7 +238,14 @@ function VariantHoldingList({
     {holdings == null ? <p className="aqsp-variant-muted">{label.includes("昨日") || label.includes("前一") ? "对比持仓未记录，无法比较换票" : "当前持仓未记录"}</p> : holdings.length === 0 ? <p className="aqsp-variant-muted">明确空仓</p> : <div className="aqsp-variant-position-list">
       {holdings.map((holding, index) => <div className="aqsp-holding-row" key={holding.symbol}>
         <div className="aqsp-holding-identity"><span className={cn("aqsp-holding-rank", index === 0 ? "aqsp-holding-rank-primary" : "")}>{index === 0 ? "主仓" : "次仓"}</span><div><strong>{variantHoldingName(holding, candidateNames)}</strong><span className="aqsp-code">{holding.symbol}</span></div></div>
-        <div className="aqsp-holding-metrics"><span>{holding.quantity} 股</span><span>市值 {variantMoney(holding.market_value)}</span><span className={holding.unrealized_pnl < 0 ? "aqsp-variant-negative" : "aqsp-variant-positive"}>浮盈 {variantMoney(holding.unrealized_pnl)}</span>{holding.holding_status === "suspended" && <span className="aqsp-variant-negative">停牌，暂不可卖</span>}{holding.holding_status === "missing_quote" && <span className="aqsp-variant-negative">缺行情，按旧价估值</span>}</div>
+        <div className="aqsp-holding-metrics">
+          <span>数量 <b>{holding.quantity} 股</b></span>
+          <span>现价 <b>{holding.last_price?.toFixed(2) ?? "—"}</b></span>
+          <span>市值 <b>{variantMoney(holding.market_value)}</b></span>
+          <span className={holding.unrealized_pnl < 0 ? "aqsp-variant-negative" : "aqsp-variant-positive"}>浮盈 <b>{variantMoney(holding.unrealized_pnl)}</b></span>
+          {holding.holding_status === "suspended" && <span className="aqsp-variant-negative">停牌，暂不可卖</span>}
+          {holding.holding_status === "missing_quote" && <span className="aqsp-variant-negative">缺行情，按旧价估值</span>}
+        </div>
       </div>)}
     </div>}
   </div>;
@@ -269,16 +276,22 @@ function TestVariantsPanel({ snapshot }: { snapshot?: AqspSnapshot }) {
         : variant.recent_actions?.length
           ? variant.recent_actions.map((action) => `成交记录：${action}`)
           : ["换票原因未记录，不能仅凭前后持仓推断"];
+      const holdingDiff = variantAdjustmentReasons(holdings, variant.previous_holdings, candidateNames);
       return <article className="aqsp-variant-card" key={variant.variant_id}>
         <div className="aqsp-variant-head"><div><h3>{variant.label || "未命名变体"}</h3><span>{variant.rank ? `回测第 ${variant.rank} 名` : "独立纸面账户"}</span></div><strong className={pnl == null || pnl >= 0 ? "aqsp-variant-positive" : "aqsp-variant-negative"}>{variantMoney(pnl)}</strong></div>
         <div className="aqsp-variant-position-grid">
           <VariantHoldingList label="今日持仓" holdings={holdings} date={variant.holdings_date} candidateNames={candidateNames} />
           <VariantHoldingList label="昨日持仓" holdings={variant.previous_holdings} date={variant.previous_holdings_date} candidateNames={candidateNames} />
         </div>
-        <div className="aqsp-variant-reason"><div className="aqsp-variant-position-head"><b>为什么换票</b><span>{variant.adjustments?.length ? "成交变更" : variant.recent_actions?.length ? "成交记录" : "无最近成交"}</span></div><ul className="aqsp-variant-change-list">{(variant.adjustments?.length ? adjustmentLines : variantAdjustmentReasons(holdings, variant.previous_holdings, candidateNames)).map((line, index) => <li key={`${index}-${line}`}>{line}</li>)}</ul><div className="aqsp-variant-evidence"><b>依据</b><ul>{variantAdjustmentEvidence(variant).map((evidence, index) => <li key={`${index}-${evidence}`}>{evidence}</li>)}</ul></div><p className="aqsp-variant-footnote">成交 {variant.filled_orders} · 拒绝 {variant.rejected_orders} · 仅纸面验证，不自动下单</p></div>
+        <div className="aqsp-variant-reason">
+          <div className="aqsp-variant-position-head"><b>为什么换票</b><span>{variant.adjustments?.length ? "有调仓证据" : variant.recent_actions?.length ? "有成交记录" : "未记录"}</span></div>
+          <ul className="aqsp-variant-change-list">{adjustmentLines.slice(0, 3).map((line, index) => <li key={`${index}-${line}`}>{line}</li>)}</ul>
+          <div className="aqsp-variant-diff"><b>持仓变化（不是原因）</b><span>{holdingDiff.slice(0, 3).join("；")}</span></div>
+          <div className="aqsp-variant-evidence"><b>决策依据</b><ul>{variantAdjustmentEvidence(variant).slice(0, 3).map((evidence, index) => <li key={`${index}-${evidence}`}>{evidence}</li>)}</ul></div>
+          <p className="aqsp-variant-footnote">成交 {variant.filled_orders} · 拒绝 {variant.rejected_orders} · 仅纸面验证，不自动下单</p>
+        </div>
         <p className="aqsp-variant-strategy"><b>策略逻辑</b>{variantStrategyLogic(variant.strategy, variant.variant_id)}</p>
         <div className="aqsp-variant-account">
-          <div><span>起始资金</span><b>{variantMoney(variant.initial_cash)}</b></div>
           <div><span>账户权益</span><b>{variantMoney(variant.final_equity)}</b></div>
           <div><span>现金</span><b>{variantMoney(variant.cash)}</b></div>
           <div><span>收益率</span><b>{variantPercent(variant.return_pct)}</b></div>
