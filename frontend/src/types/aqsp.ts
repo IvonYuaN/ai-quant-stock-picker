@@ -142,6 +142,7 @@ export interface AqspVariantHolding {
   last_price: number;
   market_value: number;
   unrealized_pnl: number;
+  holding_status?: "fresh" | "suspended" | "missing_quote" | string;
   name?: string;
   display_name?: string;
 }

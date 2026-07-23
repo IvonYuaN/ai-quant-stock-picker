@@ -961,7 +961,19 @@ def _simulate_with_previous_baseline(
     previous_cash = float(previous.get("cash") or 0.0)
     if previous_cash < 0:
         raise ValueError(f"变体 {variant_id} 昨日现金无效")
-    seed_date = (date.fromisoformat(start) - timedelta(days=1)).isoformat()
+    previous_holdings_date = str(
+        previous.get("holdings_date") or previous.get("end_date") or ""
+    )
+    # The previous artifact is the authoritative trading-calendar boundary.
+    # Falling back to the calendar day keeps legacy unit fixtures readable, but
+    # production paper_realtime artifacts always carry end_date.
+    seed_date = previous_holdings_date or (
+        date.fromisoformat(start) - timedelta(days=1)
+    ).isoformat()
+    if seed_date >= start:
+        raise ValueError(
+            f"变体 {variant_id} 昨日持仓日期必须早于今日: {seed_date} >= {start}"
+        )
     seeded_frames = {symbol: frame.copy() for symbol, frame in frames.items()}
     seed_orders: list[VariantOrder] = []
     seed_cost = 0.0
@@ -973,11 +985,15 @@ def _simulate_with_previous_baseline(
         average_price = float(holding.get("average_price") or 0.0)
         if quantity <= 0:
             continue
-        if symbol not in seeded_frames or average_price <= 0:
-            raise ValueError(
-                f"变体 {variant_id} 昨日持仓无法在今日样本池复现: {symbol}"
-            )
-        frame = seeded_frames[symbol]
+        if average_price <= 0:
+            raise ValueError(f"变体 {variant_id} 昨日持仓成本无效: {symbol}")
+        frame = seeded_frames.get(symbol)
+        if frame is None:
+            # A carried position is independent of today's candidate universe.
+            # Keep it in the account even when today's source has no quote.
+            template = next(iter(seeded_frames.values()), pd.DataFrame())
+            frame = template.iloc[0:0].copy()
+            seeded_frames[symbol] = frame
         seed_row = {column: None for column in frame.columns}
         seed_row.update(
             {
@@ -988,6 +1004,8 @@ def _simulate_with_previous_baseline(
                 "close": average_price,
                 "volume": 0.0,
                 "amount": 0.0,
+                # The seed is the verified previous close; only today's
+                # missing quote is marked below, never the carried buy itself.
                 "suspended": 0,
                 "limit_up": None,
                 "limit_down": None,
@@ -1059,7 +1077,31 @@ def _simulate_with_previous_baseline(
     payload["rejected_orders"] = sum(
         fill.get("status") == "rejected" for fill in payload["fills"]
     )
+    holding_status = {
+        str(holding.get("symbol")): _carried_holding_status(
+            seeded_frames.get(str(holding.get("symbol"))), start
+        )
+        for holding in payload.get("holdings", [])
+        if isinstance(holding, dict) and holding.get("symbol")
+    }
+    for holding in payload.get("holdings", []):
+        if isinstance(holding, dict):
+            holding["holding_status"] = holding_status.get(
+                str(holding.get("symbol")), "fresh"
+            )
     return payload
+
+
+def _carried_holding_status(frame: pd.DataFrame | None, trade_date: str) -> str:
+    """Describe quote quality for a carried position without dropping it."""
+    if frame is None or frame.empty:
+        return "missing_quote"
+    rows = frame.loc[frame["date"].astype(str).str[:10] == trade_date]
+    if rows.empty:
+        return "missing_quote"
+    if bool(rows.iloc[-1].get("suspended", False)):
+        return "suspended"
+    return "fresh"
 
 
 def _rsi(close: pd.Series, period: int) -> pd.Series:

@@ -15,6 +15,7 @@ from aqsp.news.watch_candidates import (
     NewsWatchCandidate,
     WatchRelation,
     discover_watch_candidates,
+    event_has_structured_evidence,
 )
 
 __all__ = [
@@ -30,4 +31,5 @@ __all__ = [
     "NewsWatchCandidate",
     "WatchRelation",
     "discover_watch_candidates",
+    "event_has_structured_evidence",
 ]

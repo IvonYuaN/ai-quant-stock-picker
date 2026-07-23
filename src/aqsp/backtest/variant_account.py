@@ -250,6 +250,7 @@ def variant_result_to_dict(result: VariantResult) -> dict[str, Any]:
                 "last_price": holding.last_price,
                 "market_value": holding.market_value,
                 "unrealized_pnl": holding.unrealized_pnl,
+                "holding_status": "fresh",
             }
             for holding in result.holdings
         ],

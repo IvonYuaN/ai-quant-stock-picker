@@ -61,6 +61,72 @@ def test_variant_suite_carries_yesterday_position_into_today_pnl_and_sell_rules(
     assert payload["total_pnl"] == pytest.approx(payload["final_equity"] - 100_000.0)
 
 
+def test_variant_suite_keeps_carried_holding_when_today_quote_is_missing():
+    frame = pd.DataFrame(
+        [
+            {
+                "date": "2026-07-20",
+                "open": 11.0,
+                "high": 11.5,
+                "low": 10.5,
+                "close": 11.0,
+                "volume": 1000.0,
+                "amount": 11000.0,
+                "suspended": 0,
+                "limit_up": 12.0,
+                "limit_down": 10.0,
+            }
+        ]
+    )
+    payload = _simulate_with_previous_baseline(
+        "v1",
+        {"OTHER": frame},
+        (),
+        {
+            "end_date": "2026-07-17",
+            "cash": 99_000.0,
+            "holdings": [
+                {"symbol": "600001", "quantity": 100, "average_price": 10.0}
+            ],
+        },
+        start="2026-07-20",
+        rules=VariantExecutionRules(initial_cash=100_000.0),
+    )
+
+    assert payload["positions"] == {"600001": 100}
+    assert payload["holdings"][0]["holding_status"] == "missing_quote"
+    assert payload["cash"] == pytest.approx(99_000.0)
+
+
+def test_variant_suite_rejects_baseline_on_or_after_current_trade_date():
+    frame = pd.DataFrame(
+        [
+            {
+                "date": "2026-07-20",
+                "open": 11.0,
+                "high": 11.5,
+                "low": 10.5,
+                "close": 11.0,
+            }
+        ]
+    )
+    with pytest.raises(ValueError, match="昨日持仓日期必须早于今日"):
+        _simulate_with_previous_baseline(
+            "v1",
+            {"600001": frame},
+            (),
+            {
+                "end_date": "2026-07-20",
+                "cash": 99_000.0,
+                "holdings": [
+                    {"symbol": "600001", "quantity": 100, "average_price": 10.0}
+                ],
+            },
+            start="2026-07-20",
+            rules=VariantExecutionRules(initial_cash=100_000.0),
+        )
+
+
 def test_run_suite_creates_distinct_independent_ten_wan_accounts(tmp_path):
     db = tmp_path / "history.db"
     with sqlite3.connect(db) as conn:

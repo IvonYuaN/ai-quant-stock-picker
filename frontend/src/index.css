@@ -441,7 +441,7 @@
   .aqsp-variant-head strong { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 1rem; font-variant-numeric: tabular-nums; }
   .aqsp-variant-strategy { display: grid; gap: 0.18rem; margin-top: 0.45rem; color: hsl(var(--primary)); font-size: 0.64rem; line-height: 1.4; overflow-wrap: anywhere; }
   .aqsp-variant-strategy b, .aqsp-variant-position-head b, .aqsp-variant-reason > .aqsp-variant-position-head b { color: hsl(var(--muted-foreground)); font-size: 0.58rem; font-weight: 650; }
-  .aqsp-variant-account { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0.35rem; margin-top: 0.7rem; border-top: 1px solid hsl(var(--border) / 0.45); padding-top: 0.55rem; }
+  .aqsp-variant-account { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 0.35rem; margin-top: 0.7rem; border-top: 1px solid hsl(var(--border) / 0.45); padding-top: 0.55rem; }
   .aqsp-variant-account div { min-width: 0; }
   .aqsp-variant-account span { display: block; color: hsl(var(--muted-foreground)); font-size: 0.58rem; }
   .aqsp-variant-account b { display: block; margin-top: 0.12rem; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.68rem; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }

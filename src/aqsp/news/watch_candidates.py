@@ -114,7 +114,12 @@ def discover_watch_candidates(
     """
     instruments = _normalize_universe(universe, graph=graph)
     ranked_events = sorted(
-        (event for event in events if float(event.confidence) >= float(min_confidence)),
+        (
+            event
+            for event in events
+            if float(event.confidence) >= float(min_confidence)
+            and event_has_structured_evidence(event)
+        ),
         key=_event_key,
         reverse=True,
     )
@@ -141,6 +146,24 @@ def discover_watch_candidates(
     if max_candidates > 0:
         candidates = candidates[: int(max_candidates)]
     return tuple(candidates)
+
+
+def event_has_structured_evidence(event: CatalystEvent) -> bool:
+    """Return whether an event is complete enough to expand into candidates.
+
+    A headline can remain visible as context, but it must carry an auditable
+    source, target mapping, transmission path, and both confirmation and
+    invalidation conditions before it can influence the watch list.
+    """
+    return bool(
+        str(event.source).strip()
+        and str(event.published_at).strip()
+        and (event.affected_symbols or event.affected_sectors)
+        and event.supporting_evidence
+        and event.transmission_path
+        and event.validation_signals
+        and event.invalidation_signals
+    )
 
 
 def _normalize_universe(

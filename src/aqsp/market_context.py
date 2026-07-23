@@ -14,6 +14,7 @@ from aqsp.news.watch_candidates import (
     NewsUniverseInstrument,
     NewsWatchCandidate,
     discover_watch_candidates,
+    event_has_structured_evidence,
 )
 
 _NORTHBOUND_STRONG_Z = 1.0
@@ -1332,8 +1333,21 @@ def build_market_context_artifact(
             )
         warnings = tuple(_dedupe_texts((*warnings, *gate_warnings)))
         if normalized_news_universe:
+            structured_events = tuple(
+                event for event in actionable_events if event_has_structured_evidence(event)
+            )
+            incomplete_count = len(actionable_events) - len(structured_events)
+            if incomplete_count > 0:
+                warnings = tuple(
+                    _dedupe_texts(
+                        (
+                            *warnings,
+                            f"情报门禁: {incomplete_count} 条消息仅作上下文，缺少完整产业链验证，不进入候选扩展",
+                        )
+                    )
+                )
             news_watch_candidates = discover_watch_candidates(
-                actionable_events,
+                structured_events,
                 normalized_news_universe,
             )
         symbol_events = [

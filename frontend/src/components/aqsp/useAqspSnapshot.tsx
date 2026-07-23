@@ -58,15 +58,10 @@ export function AqspWorkspaceProvider({ children }: { children: ReactNode }) {
       })
       .catch((reason: unknown) => {
         if (!active || requestSequence.current !== sequence || isAqspAbortError(reason)) return;
-        // A browser can retain a date that has been pruned from the server index.
-        // Recover to the live snapshot instead of leaving the whole workspace in a 404 state.
+        // Never replace an explicitly selected date with the live snapshot: that
+        // would make a missing historical record look like the requested day.
         if (reason instanceof ApiError && reason.status === 404 && selectedDate) {
-          setSelectedDate("");
-          try {
-            localStorage.removeItem("aqsp-selected-date");
-          } catch {
-            // Storage is optional; the next request still uses the live snapshot.
-          }
+          setError(`研究日期 ${selectedDate} 不存在，未替换为最新日期`);
           return;
         }
         setError(reason instanceof ApiError ? reason.message : "研究快照加载失败");

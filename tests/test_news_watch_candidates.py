@@ -7,6 +7,7 @@ from aqsp.news.watch_candidates import (
     NewsUniverseInstrument,
     build_current_news_universe,
     discover_watch_candidates,
+    event_has_structured_evidence,
 )
 
 
@@ -51,6 +52,15 @@ def test_discover_watch_candidates_expands_event_to_full_universe() -> None:
         "PCB成本上升",
         "下游订单与利润分化",
     )
+
+
+def test_discover_watch_candidates_excludes_context_only_event_without_validation():
+    event = _event(validation_signals=(), invalidation_signals=())
+
+    assert not event_has_structured_evidence(event)
+    assert discover_watch_candidates(
+        (event,), (NewsUniverseInstrument("002463", "沪电股份", ("PCB",)),)
+    ) == ()
 
 
 def test_build_current_news_universe_keeps_live_symbols_without_historical_metadata() -> (
@@ -185,6 +195,7 @@ def test_news_watch_candidates_reaches_each_requested_chain(
         source_quality_score=4,
         affected_sectors=(sector,),
         transmission_path=("消息事实", "产业链传导"),
+        supporting_evidence=("公司公告已披露相关事实",),
         validation_signals=("价格或订单继续确认",),
         invalidation_signals=("验证指标反向",),
     )
