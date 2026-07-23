@@ -13,6 +13,16 @@ if [[ -f "${RUNTIME_ROOT}/.env" ]]; then
     set +a
 fi
 
+# Scheduled tasks run outside systemd. Load the same optional private runtime
+# environment used by the persistent API/frontend services when it exists.
+VIBE_ENV_FILE="${AQSP_VIBE_ENV_FILE:-/etc/aqsp/vibe-research.env}"
+if [[ -r "$VIBE_ENV_FILE" ]]; then
+    set -a
+    # shellcheck disable=SC1090
+    source "$VIBE_ENV_FILE"
+    set +a
+fi
+
 runtime_path() {
     case "${1:-}" in
         /*)
@@ -61,7 +71,9 @@ PY
 else
     echo "[WARN] release identity manifest missing: ${AQSP_RELEASE_MANIFEST}" >&2
 fi
-export AQSP_RUNTIME_VENV_DIR="${AQSP_RUNTIME_VENV_DIR:-${RELEASE_ROOT}/.venv-vibe-research}"
+if [[ -z "${AQSP_RUNTIME_VENV_DIR:-}" && -z "${AQSP_PYTHON:-}" && -z "${VIBE_RESEARCH_PYTHON_BIN:-}" ]]; then
+    export AQSP_RUNTIME_VENV_DIR="${RELEASE_ROOT}/.venv-vibe-research"
+fi
 export AQSP_LEDGER="$(runtime_path "${AQSP_LEDGER:-data/predictions.jsonl}")"
 export AQSP_PAPER_LEDGER="$(runtime_path "${AQSP_PAPER_LEDGER:-data/paper_trades.jsonl}")"
 export AQSP_DEBATE_RESULTS="$(runtime_path "${AQSP_DEBATE_RESULTS:-data/debate_results.jsonl}")"

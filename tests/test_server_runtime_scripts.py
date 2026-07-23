@@ -710,6 +710,25 @@ def test_scheduled_scripts_share_release_runtime_python_resolution() -> None:
         assert "aqsp_runtime_python" in script, name
 
 
+def test_runtime_python_prefers_configured_vibe_research_interpreter(
+    tmp_path: Path,
+) -> None:
+    configured = tmp_path / "vibe-python"
+    configured.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+    configured.chmod(0o755)
+    helper = PROJECT_ROOT / "scripts" / "runtime_python.sh"
+    result = subprocess.run(
+        ["bash", "-c", f"source {helper}; aqsp_runtime_python /tmp/release"],
+        env={"VIBE_RESEARCH_PYTHON_BIN": str(configured)},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    assert result.stdout.strip() == str(configured)
+
+
 def test_news_script_preserves_valid_same_day_report_on_source_failure() -> None:
     script = (PROJECT_ROOT / "scripts" / "news_catalysts.sh").read_text(
         encoding="utf-8"
@@ -735,8 +754,8 @@ def test_bt_task_script_exposes_panel_safe_actions() -> None:
     )
     assert "AQSP_RUNNER_TIMEOUT_SECONDS=5400" in script
     assert "AQSP_VARIANT_TIMEOUT_SECONDS=1800" in script
-    assert 'timeout --foreground --signal=TERM' in script
-    assert 'AQSP_VARIANT_TIMEOUT_SECONDS:-1800' in script
+    assert "timeout --foreground --signal=TERM" in script
+    assert "AQSP_VARIANT_TIMEOUT_SECONDS:-1800" in script
     assert "AQSP_MONITOR_TIMEOUT_SECONDS=600" in script
     assert "AQSP_LOCK_STALE_MINUTES=360" in script
     assert "Recommended BT schedule (Asia/Shanghai)" in script
@@ -801,7 +820,10 @@ def test_variant_refresh_prefers_production_raw_database() -> None:
         encoding="utf-8"
     )
 
-    assert "AQSP_VARIANT_DB:-${AQSP_SQLITE_DB_PATH:-${RUNTIME_ROOT}/data/cache.db}" in script
+    assert (
+        "AQSP_VARIANT_DB:-${AQSP_SQLITE_DB_PATH:-${RUNTIME_ROOT}/data/cache.db}"
+        in script
+    )
     assert 'VARIANT_NICE="${AQSP_VARIANT_NICE:-10}"' in script
     assert 'nice -n "$VARIANT_NICE"' in script
 
@@ -1452,7 +1474,7 @@ def test_intraday_bridge_marks_failed_attempt_without_blocking_midday_task() -> 
     assert "午盘桥接失败，今日不再重复桥接" in script
     assert 'touch "$AQSP_MIDDAY_MARKER_FILE"' in script
     assert "12:05 午盘任务仍会独立重试" in script
-    assert '午盘任务未真实执行，不写完成标记；后续定时仍可重试' in script
+    assert "午盘任务未真实执行，不写完成标记；后续定时仍可重试" in script
 
 
 def test_intraday_refresh_default_batch_can_rotate_full_market_in_session() -> None:

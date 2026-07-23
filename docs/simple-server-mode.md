@@ -73,7 +73,9 @@ python3 scripts/check_runtime_storage.py --env-file /etc/aqsp/vibe-research.env 
 不要使用 `git clean -fd` 代替这条检查。
 
 生产 release 若使用独立运行时，建议在服务器 `.env` 明确指定，所有
-`bt_task`、盘中、消息、冷启动和 daily 入口都会复用这一解释器：
+`bt_task`、盘中、消息、冷启动和 daily 入口都会复用这一解释器。若只在
+`/etc/aqsp/vibe-research.env` 设置 `VIBE_RESEARCH_PYTHON_BIN`，release
+入口也会加载该私有配置：
 
 ```bash
 AQSP_RUNTIME_VENV_DIR=/opt/aqsp/.venv-vibe-research
