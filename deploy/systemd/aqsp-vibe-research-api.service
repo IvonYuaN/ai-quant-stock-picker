@@ -13,6 +13,7 @@ Group=@AQSP_VIBE_GROUP@
 WorkingDirectory=@AQSP_PROJECT_ROOT@/backend
 EnvironmentFile=-@AQSP_ENV_FILE@
 Environment=PYTHONUNBUFFERED=1
+Environment=AQSP_ALLOW_STALE_SNAPSHOT=1
 Environment=PYTHONPATH=@AQSP_PROJECT_ROOT@/src:@AQSP_PROJECT_ROOT@/backend
 Environment=VIBE_RESEARCH_PYTHON_BIN=@AQSP_VENV_DIR@/bin/python
 ExecStartPre=/usr/bin/test -d @AQSP_LOG_DIR@
