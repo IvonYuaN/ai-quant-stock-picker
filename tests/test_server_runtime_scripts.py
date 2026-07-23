@@ -799,6 +799,9 @@ def test_bt_task_script_exposes_panel_safe_actions() -> None:
     assert "scripts/server_sync_and_run.sh" in script
     assert "scripts/coldstart_daily.sh" in script
     assert "scripts/variant_refresh.sh" in script
+    assert "wait_for_coldstart_completion" in script
+    assert "AQSP_COLDSTART_WAIT_SECONDS" in script
+    assert "避免复用过期产物" in script
     assert "scripts/server_monitor.sh" in script
     assert script.index("monitor)") < script.index("scripts/server_monitor.sh")
     monitor_block = script[script.index("monitor)") : script.index("news)")]
@@ -826,6 +829,10 @@ def test_variant_refresh_prefers_production_raw_database() -> None:
     )
     assert 'VARIANT_NICE="${AQSP_VARIANT_NICE:-10}"' in script
     assert 'nice -n "$VARIANT_NICE"' in script
+    assert 'if "ohlcv" in tables:' in script
+    assert 'workload = ? AND date <= ?' in script
+    assert 'RESET_DATE" != "$TODAY"' in script
+    assert '--previous-date "$PREVIOUS_RESET_DATE"' in script
 
 
 def test_bt_task_propagates_intraday_runner_failure_to_cron(

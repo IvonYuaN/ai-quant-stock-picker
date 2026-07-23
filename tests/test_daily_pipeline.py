@@ -261,7 +261,7 @@ def test_build_config_defaults_daily_universe_to_bounded_live_pool(
 
     config = daily_pipeline._build_config(args)
 
-    assert config.max_universe == 300
+    assert config.max_universe == 0
 
 
 def test_build_config_allows_daily_universe_override(monkeypatch) -> None:

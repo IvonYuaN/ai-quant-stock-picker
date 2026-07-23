@@ -361,6 +361,31 @@ should_bridge_intraday_to_midday() {
     return 0
 }
 
+wait_for_coldstart_completion() {
+    local today wait_seconds interval elapsed log_path
+    today="${AQSP_TRADING_DAY_OVERRIDE_DATE:-$(date +%Y-%m-%d)}"
+    wait_seconds="${AQSP_COLDSTART_WAIT_SECONDS:-600}"
+    interval="${AQSP_COLDSTART_WAIT_INTERVAL_SECONDS:-5}"
+    if [[ ! "$wait_seconds" =~ ^[0-9]+$ ]] || [[ ! "$interval" =~ ^[1-9][0-9]*$ ]]; then
+        log "[ERROR] 冷启动等待配置无效: wait=${wait_seconds}s interval=${interval}s"
+        return 2
+    fi
+    log_path="${AQSP_COLDSTART_LOG_DIR:-${PROJECT_ROOT}/logs/coldstart}/coldstart-${today}.log"
+    elapsed=0
+    while :; do
+        if [ -f "$log_path" ] && grep -q "冷启动日跑完成" "$log_path"; then
+            log "冷启动已完成，允许刷新 paper_realtime 变体: ${log_path}"
+            return 0
+        fi
+        if [ "$elapsed" -ge "$wait_seconds" ]; then
+            log "[ERROR] 冷启动在 ${wait_seconds}s 内未完成，拒绝运行 variants，避免复用过期产物"
+            return 1
+        fi
+        sleep "$interval"
+        elapsed=$((elapsed + interval))
+    done
+}
+
 run_script() {
     local script_path="$1"
     shift || true
@@ -525,6 +550,7 @@ case "$ACTION" in
         ;;
     variants)
         skip_non_trading_day
+        wait_for_coldstart_completion
         export AQSP_RUN_TASK_ID="variants"
         export AQSP_NOTIFY="false"
         export AQSP_GATE_NOTIFY="false"

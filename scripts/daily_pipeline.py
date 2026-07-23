@@ -25,7 +25,9 @@ from aqsp.utils.jsonl_io import append_jsonl, atomic_write_text
 
 _DEFAULT_FETCH_HISTORY_DAYS = 260
 _DEFAULT_FETCH_LOOKBACK_DAYS = max(_DEFAULT_FETCH_HISTORY_DAYS * 2, 365)
-_DEFAULT_DAILY_MAX_UNIVERSE = 300
+# 0 means the resolved production universe; explicit positive values remain
+# available for isolated tests and controlled local experiments.
+_DEFAULT_DAILY_MAX_UNIVERSE = 0
 
 
 def _runtime_path_env(
@@ -339,7 +341,7 @@ def _live_runtime_max_universe(cli_value: int, env_value: int) -> int:
     raw_daily = str(os.getenv("AQSP_DAILY_MAX_UNIVERSE", "") or "").strip()
     if raw_daily:
         try:
-            return max(int(raw_daily), 1)
+            return max(int(raw_daily), 0)
         except ValueError:
             return _DEFAULT_DAILY_MAX_UNIVERSE
     if env_value > 0:
