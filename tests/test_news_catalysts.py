@@ -2994,6 +2994,82 @@ def test_news_catalyst_structures_cross_market_fact_types_without_fabricating_ur
     assert by_type["price_or_supply"].transmission_path
 
 
+def test_news_fact_types_separate_macro_gold_and_supply_chain_facts() -> None:
+    assert catalysts._fact_type("央行购金推动黄金价格创新高") == "safe_haven"
+    assert catalysts._fact_type("CPI高于预期，美联储降息预期降温") == "macro_or_market"
+    assert catalysts._fact_type("HBM现货价格上涨，渠道库存偏低") == "price_or_supply"
+    assert catalysts._fact_type("英伟达推出新一代机器人平台") == "product_launch"
+    assert catalysts._fact_type("服务器厂商获得数据中心订单") == "order_or_contract"
+    assert catalysts._fact_type("中东冲突扩大，航运受到影响") == "geopolitical_risk"
+
+
+def test_news_topic_key_separates_same_sector_companies() -> None:
+    first = catalysts._topic_key(
+        "英伟达发布机器人平台",
+        summary="Physical AI platform",
+        sectors=("机器人", "AI算力"),
+    )
+    second = catalysts._topic_key(
+        "AMD发布机器人平台",
+        summary="Physical AI platform",
+        sectors=("机器人", "AI算力"),
+    )
+
+    assert first != second
+    assert "entity:英伟达" in first
+    assert "entity:amd" in second
+
+
+def test_news_catalyst_keeps_verifiable_source_and_fetch_time_in_evidence() -> None:
+    frame = pd.DataFrame(
+        [
+            {
+                "标题": "HBM供应紧张，现货价格上涨",
+                "摘要": "渠道反馈库存偏低，等待厂商报价确认。",
+                "来源": "Reuters",
+                "时间": _RECENT_NEWS_TIME,
+                "链接": "https://reuters.example/hbm",
+            }
+        ]
+    )
+    frame.attrs["aqsp_fetched_at"] = "2026-07-23T10:05:00+08:00"
+
+    report = build_catalyst_report(
+        fetch_global_news=lambda _limit: frame,
+        config=NewsCatalystConfig(min_confidence=0.1),
+    )
+
+    evidence = report.events[0].supporting_evidence
+    assert "可核验原文: https://reuters.example/hbm" in evidence
+    assert "抓取时间: 2026-07-23T10:05:00+08:00" in evidence
+    assert report.events[0].validation_signals
+    assert report.events[0].invalidation_signals
+
+
+def test_news_selection_limits_same_entity_when_other_entities_are_available() -> None:
+    def event(title: str, source: str, weight: int) -> CatalystEvent:
+        return CatalystEvent(
+            title=title,
+            source=source,
+            published_at=_RECENT_NEWS_TIME,
+            category="新品/产品发布",
+            weight=weight,
+            confidence=0.9,
+            affected_sectors=("AI算力",),
+        )
+
+    selected = catalysts._select_diverse_events(
+        (
+            event("英伟达发布平台", "NVIDIA Newsroom", 10),
+            event("英伟达发布芯片", "Reuters", 9),
+            event("AMD发布平台", "AMD Press Releases", 8),
+        ),
+        2,
+    )
+
+    assert {item.title for item in selected} == {"英伟达发布平台", "AMD发布平台"}
+
+
 def test_catalyst_report_artifact_round_trips_with_date_and_freshness_gate(
     tmp_path: Path,
 ) -> None:

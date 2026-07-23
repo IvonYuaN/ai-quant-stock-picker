@@ -62,7 +62,10 @@ class AgentOpinion:
     opportunity_factors: list[str] = field(default_factory=list)  # 机会因素
     # LLM output is retained for audit only and never replaces rule evidence.
     llm_advisory_points: tuple[str, ...] = field(default_factory=tuple)
+    initial_position: Literal["bullish", "bearish", "neutral"] | None = None
     final_position: Literal["bullish", "bearish", "neutral"] | None = None
+    position_change_reason: str = ""
+    veto_conditions: tuple[str, ...] = field(default_factory=tuple)
 
 
 @dataclass(frozen=True)
@@ -74,6 +77,18 @@ class RebuttalRecord:
     rebuttal_reason: str
     challenged_stance: Literal["bullish", "bearish", "neutral"] | str = ""
     opposing_stance: Literal["bullish", "bearish", "neutral"] | str = ""
+
+
+@dataclass(frozen=True)
+class PositionDecisionRecord:
+    """每个角色从初始立场到最终立场的确定性审计记录。"""
+
+    role: str
+    initial_position: str
+    rebuttals: tuple[str, ...] = ()
+    final_position: str = "neutral"
+    position_change_reason: str = ""
+    veto_conditions: tuple[str, ...] = ()
 
 
 @dataclass
@@ -191,6 +206,9 @@ class DebateResult:
     )
     disagreement_points: tuple[str, ...] = field(default_factory=tuple)
     uncertainty_points: tuple[str, ...] = field(default_factory=tuple)
+    position_decisions: tuple[PositionDecisionRecord, ...] = field(
+        default_factory=tuple
+    )
 
     # Runtime gates are advisory metadata and never replace the candidate score.
     runtime_status: Literal["paper_review", "observation", "blocked"] = "paper_review"
@@ -262,7 +280,10 @@ class DebateResult:
                             "risk_factors": opinion.risk_factors,
                             "opportunity_factors": opinion.opportunity_factors,
                             "llm_advisory_points": list(opinion.llm_advisory_points),
+                            "initial_position": opinion.initial_position,
                             "final_position": opinion.final_position,
+                            "position_change_reason": opinion.position_change_reason,
+                            "veto_conditions": list(opinion.veto_conditions),
                         }
                         for opinion in round_data.opinions
                     ],
@@ -320,6 +341,17 @@ class DebateResult:
             },
             "disagreement_points": list(self.disagreement_points),
             "uncertainty_points": list(self.uncertainty_points),
+            "position_decisions": [
+                {
+                    "role": decision.role,
+                    "initial_position": decision.initial_position,
+                    "rebuttals": list(decision.rebuttals),
+                    "final_position": decision.final_position,
+                    "position_change_reason": decision.position_change_reason,
+                    "veto_conditions": list(decision.veto_conditions),
+                }
+                for decision in self.position_decisions
+            ],
             "runtime_status": self.runtime_status,
             "realtime_blocked": self.realtime_blocked,
             "runtime_blocker": self.runtime_blocker,
@@ -349,6 +381,7 @@ class DebateResult:
             "discussion_agent_count": quality.discussion_agent_count,
             "stance_counts": dict(quality.stance_counts),
             "stance_diversity_recorded": quality.stance_diversity_recorded,
+            "position_chain_recorded": quality.position_chain_recorded,
             "rebuttal_count": quality.rebuttal_count,
             "real_opposition_count": quality.real_opposition_count,
             "message_evidence_recorded": quality.message_evidence_recorded,
@@ -465,6 +498,11 @@ class AShareDebateAgent:
             arguments=arguments,
             risk_factors=risk_factors,
             opportunity_factors=opportunity_factors,
+            initial_position=stance,
+            final_position=stance,
+            veto_conditions=tuple(
+                item for item in risk_factors if _contains_falsifiable_marker(item)
+            ),
         )
         return self._maybe_enhance_initial_opinion(
             opinion,
@@ -564,7 +602,10 @@ class AShareDebateAgent:
             risk_factors=opinion.risk_factors.copy(),
             opportunity_factors=opinion.opportunity_factors.copy(),
             llm_advisory_points=tuple(llm_advisory_points),
+            initial_position=opinion.initial_position or opinion.stance,
             final_position=opinion.final_position,
+            position_change_reason=opinion.position_change_reason,
+            veto_conditions=opinion.veto_conditions,
         )
 
     def _build_initial_prompt(
@@ -1588,7 +1629,10 @@ class AShareDebateAgent:
             peer_reviewed_roles=[],
             rebuttal_records=[],
             llm_advisory_points=my_opinion.llm_advisory_points,
+            initial_position=my_opinion.initial_position or my_opinion.stance,
             final_position=my_opinion.final_position,
+            position_change_reason=my_opinion.position_change_reason,
+            veto_conditions=my_opinion.veto_conditions,
         )
 
         counterargs: list[str] = []
@@ -1615,11 +1659,70 @@ class AShareDebateAgent:
 
         updated_opinion.rebuttal_records.extend(rebuttal_records)
 
+        final_position, reason = self._derive_final_position(
+            updated_opinion,
+            rebuttal_records,
+        )
+        updated_opinion.final_position = final_position
+        updated_opinion.position_change_reason = reason
+        updated_opinion.veto_conditions = tuple(
+            dict.fromkeys(
+                [
+                    *updated_opinion.veto_conditions,
+                    *(
+                        item
+                        for item in updated_opinion.risk_factors
+                        if _contains_falsifiable_marker(item)
+                    ),
+                ]
+            )
+        )
+
         # 如果反对意见太多，降低信心
         if len(counterargs) > 2:
             updated_opinion.confidence *= 0.85
 
         return updated_opinion
+
+    @staticmethod
+    def _derive_final_position(
+        opinion: AgentOpinion,
+        rebuttals: list[RebuttalRecord],
+    ) -> tuple[Literal["bullish", "bearish", "neutral"], str]:
+        """根据第二轮确定性反证更新立场，不读取 LLM advisory 文本。"""
+        initial = opinion.initial_position or opinion.stance
+        opposite_records = [
+            record
+            for record in rebuttals
+            if {record.opposing_stance, record.challenged_stance}
+            == {"bullish", "bearish"}
+            and any(
+                marker in f"{record.challenged_claim}{record.rebuttal_reason}"
+                for marker in ("已证伪", "已失效", "实际跌破", "确认失效")
+            )
+        ]
+        if not opposite_records:
+            return initial, "第二轮未形成与初始立场相反的结构化反证"
+
+        # 只有角色自身已有可证伪风险/机会条件时才改变立场；“看到了对手”
+        # 本身不够，避免把话术交互误当成观点更新。
+        own_conditions = (
+            opinion.risk_factors
+            if initial == "bullish"
+            else opinion.opportunity_factors
+        )
+        meaningful_conditions = tuple(
+            str(item).strip()
+            for item in own_conditions
+            if str(item).strip() and not _is_non_evidence_text(item)
+        )
+        if not meaningful_conditions:
+            return initial, "第二轮有反方主张，但缺少本角色可核验的转向条件"
+        changed = "neutral"
+        return changed, (
+            f"第二轮结构化反证触发：{initial} -> neutral；"
+            f"依据={meaningful_conditions[0]}"
+        )
 
     @staticmethod
     def _format_rebuttal(record: RebuttalRecord) -> str:
@@ -2329,8 +2432,9 @@ class AShareDebateCoordinator:
         vote_counts: dict[str, int] = {"bullish": 0, "bearish": 0, "neutral": 0}
 
         for opinion in final_opinions:
-            result.final_vote[opinion.role] = opinion.stance
-            vote_counts[opinion.stance] += 1
+            final_position = _final_position(opinion)
+            result.final_vote[opinion.role] = final_position
+            vote_counts[final_position] += 1
             result.risk_warnings.extend(opinion.risk_factors)
             result.opportunity_highlights.extend(opinion.opportunity_factors)
 
@@ -2351,6 +2455,20 @@ class AShareDebateCoordinator:
 
         result.adjustment_reason = (
             f"多头{vote_counts['bullish']}票 vs 空头{vote_counts['bearish']}票"
+        )
+        result.position_decisions = tuple(
+            PositionDecisionRecord(
+                role=opinion.role.value,
+                initial_position=opinion.initial_position or opinion.stance,
+                rebuttals=tuple(
+                    AShareDebateAgent._format_rebuttal(record)
+                    for record in opinion.rebuttal_records
+                ),
+                final_position=_final_position(opinion),
+                position_change_reason=opinion.position_change_reason,
+                veto_conditions=opinion.veto_conditions,
+            )
+            for opinion in final_opinions
         )
         result.support_points = self._build_support_points(final_opinions, result)
         result.opposition_points = self._build_opposition_points(final_opinions, result)
@@ -2411,9 +2529,9 @@ class AShareDebateCoordinator:
             # its role-owned lane without upgrading it into a bearish/bullish
             # vote; this is the distinction the old aggregate lost.
             role_points = meaningful_arguments or meaningful_opportunities
-            if opinion.stance == "bullish":
+            if _final_position(opinion) == "bullish":
                 add("bullish", meaningful_opportunities or role_points)
-            elif opinion.stance == "bearish":
+            elif _final_position(opinion) == "bearish":
                 add("bearish", role_points)
             else:
                 add("uncertainty", opinion.arguments or opinion.risk_factors)
@@ -2458,7 +2576,7 @@ class AShareDebateCoordinator:
             prefix="确认信号:",
         )
         for opinion in final_opinions:
-            if opinion.stance != "bullish":
+            if _final_position(opinion) != "bullish":
                 continue
             if opinion.role == AgentRole.CROSS_MARKET:
                 points = self._preferred_cross_market_points(
@@ -2533,7 +2651,7 @@ class AShareDebateCoordinator:
                 and not has_conditional_challenge
             ):
                 continue
-            if opinion.stance == "bearish" or opinion.role in {
+            if _final_position(opinion) == "bearish" or opinion.role in {
                 AgentRole.RISK_CONTROL,
                 AgentRole.CROSS_MARKET,
             }:
@@ -3124,6 +3242,14 @@ def _has_substantive_debate_evidence(result: DebateResult) -> bool:
         (text := str(value).strip()) and not _is_non_evidence_text(text)
         for value in values
     )
+
+
+def _final_position(opinion: AgentOpinion) -> Literal["bullish", "bearish", "neutral"]:
+    """读取确定性最终立场；兼容历史观点记录。"""
+    position = opinion.final_position or opinion.stance
+    if position not in {"bullish", "bearish", "neutral"}:
+        return opinion.stance
+    return position
 
 
 def debate_active_roles(result: DebateResult) -> tuple[AgentRole, ...]:

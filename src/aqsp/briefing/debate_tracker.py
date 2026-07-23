@@ -73,6 +73,7 @@ class DebateQualityAudit:
     viewpoint_bucket_presence: tuple[tuple[str, bool], ...] = ()
     uncertainty_recorded: bool = False
     stance_diversity_recorded: bool = False
+    position_chain_recorded: bool = False
 
     @property
     def passed(self) -> bool:
@@ -252,7 +253,36 @@ def audit_debate_quality(
         for stance in ("bullish", "bearish", "neutral")
     )
     final_stances = tuple(
-        _clean_text(_field(opinion, "stance", "")) for opinion in final_opinions
+        _clean_text(
+            _field(opinion, "final_position", "") or _field(opinion, "stance", "")
+        )
+        for opinion in final_opinions
+    )
+    position_decisions = _field(result, "position_decisions", None)
+    # Legacy artifacts may not have this field; an explicitly empty chain in a
+    # new artifact is different and must fail the quality audit. The final
+    # opinions distinguish a legacy object from a new empty chain because the
+    # new coordinator always records initial/final positions on each opinion.
+    has_position_fields = any(
+        _field(opinion, "initial_position", None) is not None
+        or _field(opinion, "final_position", None) is not None
+        for opinion in final_opinions
+    )
+    position_chain_recorded = (
+        True
+        if position_decisions is None or (not position_decisions and not has_position_fields)
+        else bool(position_decisions)
+        and all(
+            _clean_text(_field(record, "role", ""))
+            and _clean_text(_field(record, "initial_position", ""))
+            and _clean_text(_field(record, "final_position", ""))
+            and (
+                _clean_text(_field(record, "position_change_reason", ""))
+                or _clean_text(_field(record, "initial_position", ""))
+                == _clean_text(_field(record, "final_position", ""))
+            )
+            for record in position_decisions
+        )
     )
     stance_diversity_recorded = len(set(final_stances)) > 1
     raw_buckets = _field(result, "viewpoint_buckets", {})
@@ -346,6 +376,8 @@ def audit_debate_quality(
         issues.append("missing_opposition_viewpoint")
     if not real_opposition_recorded:
         issues.append("missing_real_opposition")
+    if not position_chain_recorded:
+        issues.append("missing_position_chain")
     if len(final_opinions) >= 3 and not stance_diversity_recorded:
         issues.append("no_stance_diversity")
     if not risk_recorded:
@@ -399,6 +431,7 @@ def audit_debate_quality(
         viewpoint_bucket_presence=viewpoint_bucket_presence,
         uncertainty_recorded=uncertainty_recorded,
         stance_diversity_recorded=stance_diversity_recorded,
+        position_chain_recorded=position_chain_recorded,
     )
 
 

@@ -107,6 +107,60 @@ def test_debate_performance_tracker_calculate_adjustment_weight_when_cross_marke
     assert bull_weight >= 0.0
 
 
+def test_debate_agent_changes_final_position_when_second_round_confirms_invalidation() -> (
+    None
+):
+    agent = AShareDebateAgent(role=AgentRole.BULL, enable_llm=False)
+    initial = AgentOpinion(
+        agent_id="bull-audit",
+        role=AgentRole.BULL,
+        stance="bullish",
+        initial_position="bullish",
+        final_position="bullish",
+        confidence=0.8,
+        arguments=["放量突破"],
+        risk_factors=["若实际跌破关键支撑则失效"],
+    )
+    counterparty = AgentOpinion(
+        agent_id="bear-audit",
+        role=AgentRole.BEAR,
+        stance="bearish",
+        confidence=0.7,
+        arguments=["实际跌破关键支撑，原假设已失效"],
+        risk_factors=["已证伪：支撑失守"],
+    )
+
+    final = agent.respond_to_counterarguments(initial, [initial, counterparty])
+
+    assert final.initial_position == "bullish"
+    assert final.final_position == "neutral"
+    assert "bullish -> neutral" in final.position_change_reason
+    assert final.veto_conditions == ("若实际跌破关键支撑则失效",)
+
+
+def test_debate_position_decision_is_serialized_without_changing_deterministic_score() -> (
+    None
+):
+    pick = _make_pick(score=72.0)
+    result = AShareDebateCoordinator(
+        enable_llm=False,
+        max_rounds=2,
+        roles=(AgentRole.BULL, AgentRole.BEAR),
+    ).run_debate(pick, pd.DataFrame({"close": [100.0, 101.0]}))
+
+    payload = result.to_dict()
+
+    assert payload["position_decisions"]
+    assert {
+        "initial_position",
+        "rebuttals",
+        "final_position",
+        "veto_conditions",
+    } <= payload["position_decisions"][0].keys()
+    assert payload["deterministic_score"] == pick.score
+    assert payload["deterministic_score_unchanged"] is True
+
+
 def test_debate_agent_uses_stable_agent_id_when_runtime_signature_matches() -> None:
     first = AShareDebateAgent(
         role=AgentRole.CROSS_MARKET,

@@ -2156,6 +2156,12 @@ def _realtime_implication_event(
         url=observation.provenance.source_url,
         source_region="international",
         supporting_evidence=evidence,
+        fact_type={
+            "us_risk_on": "macro_or_market",
+            "global_liquidity_easing": "macro_or_market",
+            "oil_price_shock": "price_or_supply",
+        }.get(rule_id, "macro_or_market"),
+        topic_key=f"cross_market|{rule_id}|{observation.instrument.casefold()}",
     )
 
 

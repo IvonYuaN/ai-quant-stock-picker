@@ -1178,12 +1178,32 @@ _TRANSMISSION_CHAIN_RULES: tuple[
         ("现货或期货趋势被数据确认", "油气与油服相对强度扩散"),
         ("价格单日脉冲", "供给恢复或库存回升"),
     ),
+    (
+        (
+            "利率",
+            "降息",
+            "加息",
+            "通胀",
+            "cpi",
+            "pmi",
+            "gdp",
+            "美联储",
+            "fomc",
+            "流动性",
+            "美元",
+            "美债",
+        ),
+        ("宏观数据/政策变化", "美元与利率资产", "成长与资源风格相对强弱"),
+        ("数据或会议原文确认", "美元、利率与A股风格同步反馈"),
+        ("仅预期没有数据确认", "美元/利率方向反转且A股不跟随"),
+    ),
 )
 
 _CATEGORY_TIME_HORIZONS: dict[str, str] = {
     "AI/半导体技术动态": "隔夜-5日",
     "新品/产品发布": "当日-3日",
     "宏观流动性": "隔夜-5日",
+    "宏观数据/政策": "隔夜-5日",
     "资本市场制度": "隔夜-5日",
     "科技催化": "隔夜-3日",
     "资本运作": "当日-3日",
@@ -1998,6 +2018,8 @@ def _events_from_rows(
                     source=source,
                     verification=_verification_label(row),
                     context=_news_context_snippet(summary, content),
+                    url=row.get("url", ""),
+                    fetched_at=row.get("source_fetched_at", ""),
                 ),
                 contradicting_evidence=_text_tuple(
                     row.get("contradicting_evidence", "")
@@ -2129,7 +2151,26 @@ def _fact_type(title: str, *, summary: str = "", category: str = "") -> str:
         ),
         (
             "macro_or_market",
-            ("美股大涨", "纳斯达克", "利率", "通胀", "流动性", "nasdaq", "liquidity"),
+            (
+                "美股大涨",
+                "纳斯达克",
+                "利率",
+                "降息",
+                "加息",
+                "通胀",
+                "cpi",
+                "pmi",
+                "gdp",
+                "美联储",
+                "fomc",
+                "流动性",
+                "美元",
+                "美债收益率",
+                "nasdaq",
+                "liquidity",
+                "inflation",
+                "federal reserve",
+            ),
         ),
     )
     for fact_type, keywords in patterns:
@@ -2158,7 +2199,18 @@ def _topic_key(
         sorted({str(item).strip().casefold() for item in sectors if str(item).strip()})
     )
     if canonical_sectors:
-        return f"{fact_type}|{'/'.join(canonical_sectors[:4])}"
+        resolution = match_news_entities(title, summary)
+        entities = tuple(
+            sorted(
+                {
+                    str(item.canonical).strip().casefold()
+                    for item in resolution.matches
+                    if item.kind == "company" and str(item.canonical).strip()
+                }
+            )
+        )
+        entity_key = f"|entity:{'/'.join(entities[:3])}" if entities else ""
+        return f"{fact_type}|{'/'.join(canonical_sectors[:4])}{entity_key}"
     normalized = _normalized_title_key(title)
     return f"{fact_type}|{normalized[:60]}"
 
@@ -2233,11 +2285,17 @@ def _event_supporting_evidence(
     source: str,
     verification: str,
     context: str = "",
+    url: str = "",
+    fetched_at: str = "",
 ) -> tuple[str, ...]:
     source_text = source or "来源未标注"
     evidence = [f"{source_text}: {title}", f"来源状态: {verification}"]
     if context:
         evidence.append(f"正文证据: {context}")
+    if url:
+        evidence.append(f"可核验原文: {url}")
+    if fetched_at:
+        evidence.append(f"抓取时间: {fetched_at}")
     return tuple(evidence)
 
 
@@ -2750,6 +2808,20 @@ def _select_diverse_events(
             else frozenset()
         )
 
+    def entity_groups(event: CatalystEvent) -> frozenset[str]:
+        resolution = match_news_entities(event.title, event.summary)
+        entities = {
+            f"entity:{item.canonical.casefold()}"
+            for item in resolution.matches
+            if item.kind == "company" and item.canonical.strip()
+        }
+        entities.update(
+            f"symbol:{str(symbol).strip()}"
+            for symbol in event.affected_symbols
+            if str(symbol).strip()
+        )
+        return frozenset(entities)
+
     def region_groups(event: CatalystEvent) -> frozenset[str]:
         region = _normalize_region(event.source_region)
         return frozenset({region}) if region != "mixed" else frozenset()
@@ -2758,19 +2830,22 @@ def _select_diverse_events(
     remaining = list(ranked[1:])
     seen_sources = set(source_groups(selected[0]))
     seen_themes = set(theme_groups(selected[0]))
+    seen_entities = set(entity_groups(selected[0]))
     seen_regions = set(region_groups(selected[0]))
 
     while remaining and len(selected) < target:
 
         def selection_key(
             event: CatalystEvent,
-        ) -> tuple[int, int, int, tuple[int, int, int, float, int]]:
+        ) -> tuple[int, int, int, int, tuple[int, int, int, float, int]]:
             sources = source_groups(event)
             themes = theme_groups(event)
+            entities = entity_groups(event)
             regions = region_groups(event)
             return (
                 int(not sources.intersection(seen_sources)),
                 int(bool(themes) and not themes.intersection(seen_themes)),
+                int(bool(entities) and not entities.intersection(seen_entities)),
                 int(bool(regions) and not regions.intersection(seen_regions)),
                 _event_rank_key(event),
             )
@@ -2780,6 +2855,7 @@ def _select_diverse_events(
         selected.append(best)
         seen_sources.update(source_groups(best))
         seen_themes.update(theme_groups(best))
+        seen_entities.update(entity_groups(best))
         seen_regions.update(region_groups(best))
     return tuple(selected)
 
@@ -3016,7 +3092,10 @@ def _events_can_merge(left: CatalystEvent, right: CatalystEvent) -> bool:
         # A broad sector label alone is not enough: two independent PCB
         # price notices on the same day must remain separate unless their
         # headlines share a meaningful event anchor.
-        if _title_overlap_ratio(left_title, right_title) >= 0.35:
+        if (
+            _same_entity_fact_anchor(left, right)
+            or _title_overlap_ratio(left_title, right_title) >= 0.35
+        ):
             return True
     if left.impact != right.impact or left.category != right.category:
         return False
@@ -3027,6 +3106,22 @@ def _events_can_merge(left: CatalystEvent, right: CatalystEvent) -> bool:
     if left_target != right_target:
         return False
     return _title_overlap_ratio(left_title, right_title) >= 0.62
+
+
+def _same_entity_fact_anchor(left: CatalystEvent, right: CatalystEvent) -> bool:
+    """Allow translated syndication to merge without broad sector merging."""
+
+    left_entities = {
+        item.canonical.casefold()
+        for item in match_news_entities(left.title, left.summary).matches
+        if item.kind == "company"
+    }
+    right_entities = {
+        item.canonical.casefold()
+        for item in match_news_entities(right.title, right.summary).matches
+        if item.kind == "company"
+    }
+    return bool(left_entities and left_entities.intersection(right_entities))
 
 
 def _normalized_title_key(title: str) -> str:

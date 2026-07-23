@@ -69,11 +69,17 @@ def _contains_alias(normalized_text: str, alias: str) -> bool:
     if not clean:
         return False
     if re.fullmatch(r"[a-z0-9]+", clean):
+        # ``resolve`` keeps word separators so NVIDIA does not disappear when
+        # followed by an English word; spaces inside aliases remain optional.
+        spaced_alias = r"\s*".join(re.escape(char) for char in clean)
         return (
-            re.search(rf"(?<![a-z0-9]){re.escape(clean)}(?![a-z0-9])", normalized_text)
+            re.search(
+                rf"(?<![a-z0-9]){spaced_alias}(?![a-z0-9])",
+                normalized_text,
+            )
             is not None
         )
-    return clean in normalized_text
+    return clean in re.sub(r"\s+", "", normalized_text)
 
 
 @dataclass(frozen=True)
@@ -117,7 +123,7 @@ class EntityGraph:
 
     def resolve(self, title: str = "", summary: str = "") -> EntityResolution:
         text = f"{title}\n{summary}"
-        normalized = _clean_alias(text)
+        normalized = str(text or "").casefold()
         matches: list[EntityMatch] = []
         symbols: list[str] = []
         sectors: list[str] = []
@@ -236,7 +242,20 @@ DEFAULT_ENTITY_GRAPH = EntityGraph(
         _sector("光模块", ("光模块", "800G", "1.6T", "光通信模块")),
         _sector("军工电子", ("军工", "军工电子", "国防装备", "防务", "国防", "军品")),
         _sector("黄金", ("黄金", "贵金属", "金价")),
-        _sector("油气", ("原油", "油价", "石油", "天然气", "LNG", "液化天然气", "油气", "WTI", "Brent")),
+        _sector(
+            "油气",
+            (
+                "原油",
+                "油价",
+                "石油",
+                "天然气",
+                "LNG",
+                "液化天然气",
+                "油气",
+                "WTI",
+                "Brent",
+            ),
+        ),
         _sector("稀土资源", ("稀土", "氧化镨钕", "钕铁硼", "永磁")),
         _sector("锂电材料", ("锂电", "碳酸锂", "氢氧化锂", "电解液", "正极", "负极")),
         _sector("MLCC", ("MLCC", "多层陶瓷电容")),
