@@ -174,6 +174,19 @@ def test_phase_snapshot_surfaces_premarket_messages_without_fake_candidates() ->
         ) -> list[dict[str, str]]:
             return []
 
+        def _same_day_unique_rows(
+            self, signal_date: str
+        ) -> tuple[dict[str, str], ...]:
+            return ({"symbol": "600001", "created_at": "2026-07-23T10:00:00+08:00"},)
+
+        def _lightweight_closing_review_summary(
+            self, signal_date: str, *, include_report_insights: bool
+        ) -> SimpleNamespace:
+            return SimpleNamespace(
+                status_label="待复盘",
+                created_at="2026-07-23T10:00:00+08:00",
+            )
+
     message = HomeSnapshotMessage(
         title="盘前消息",
         summary="等待量价确认",
@@ -193,6 +206,8 @@ def test_phase_snapshot_surfaces_premarket_messages_without_fake_candidates() ->
     assert phases[0].candidate_count == 0
     assert phases[0].updated_at == message.published_at
     assert phases[1].status == "未产出"
+    assert phases[2].status == "待复盘"
+    assert phases[2].candidate_count == 1
 
 
 class _Provider:

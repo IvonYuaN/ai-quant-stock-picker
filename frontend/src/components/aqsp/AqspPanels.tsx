@@ -110,7 +110,7 @@ function StatusLine({ snapshot }: { snapshot: AqspSnapshot }) {
       <span><b>{snapshot.messages.length}</b>消息</span>
       <span><b>{snapshot.debates.length}</b>复核</span>
       <span><b>{coverage}</b>全池周期覆盖</span>
-      {phases.length > 0 && <span className="aqsp-status-muted">阶段 {phases.filter((phase) => phase.status !== "未产出").length}/{phases.length}</span>}
+      {phases.length > 0 && <span className="aqsp-status-muted">阶段 {phases.filter((phase) => ["已产出", "消息已更新"].includes(phase.status)).length}/{phases.length}</span>}
     </div>
   );
 }
@@ -133,13 +133,13 @@ function PhaseLane({ snapshot }: { snapshot: AqspSnapshot }) {
     <div className="aqsp-phase-lane" aria-label="盘前盘中盘后数据状态">
         {MARKET_PHASES.map((phase) => {
         const record = phases.find((item) => phaseForLabel(item, phase.keywords));
-        const newsStatus = phase.id === "pre" && premarketNewsReady ? "消息已产出" : "未产出";
-        const outputRecord = record && record.status !== "未产出" ? record : undefined;
+        const newsStatus = phase.id === "pre" && premarketNewsReady ? (record?.status === "消息已更新" ? "消息已更新" : "消息已产出") : "未产出";
+        const outputRecord = record && record.candidate_count > 0 ? record : undefined;
         const status = outputRecord?.status || newsStatus;
         return (
           <div className="aqsp-phase" key={phase.id}>
             <div><b>{phase.label}</b><span>{status}</span></div>
-            {outputRecord ? <small>候选 {outputRecord.candidate_count} · 批次重叠 {outputRecord.overlap_symbols}</small> : phase.id === "pre" && premarketNewsReady ? <small>{snapshot.messages.length} 条消息已进入今日证据区</small> : <small>独立数据段，未与当天结果合并</small>}
+            {outputRecord ? <small>候选 {outputRecord.candidate_count} · 批次重叠 {outputRecord.overlap_symbols}</small> : phase.id === "pre" && premarketNewsReady ? <small>{snapshot.messages.length} 条消息已进入今日证据区</small> : record?.status === "待复盘" ? <small>{record.candidate_count} 只候选等待收盘复核</small> : <small>独立数据段，未与当天结果合并</small>}
           </div>
         );
       })}

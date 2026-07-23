@@ -1498,9 +1498,26 @@ def _phase_snapshot(
     seen_symbols: set[str] = set()
     for task_id, label, _task_label in phase_specs:
         try:
-            rows = provider._signal_task_rows_for_date(task_id, signal_date)
+            if task_id == "closing_review":
+                rows = provider._same_day_unique_rows(signal_date)
+                review = provider._lightweight_closing_review_summary(
+                    signal_date,
+                    include_report_insights=False,
+                )
+                status = {
+                    "已复盘": "已产出",
+                    "已验证未归档": "已产出",
+                    "待复盘": "待复盘",
+                }.get(str(review.status_label), "未产出")
+                review_updated_at = str(review.created_at or "")
+            else:
+                rows = provider._signal_task_rows_for_date(task_id, signal_date)
+                status = "已产出" if rows else "未产出"
+                review_updated_at = ""
         except Exception:
             rows = []
+            status = "未产出"
+            review_updated_at = ""
         symbols = {
             str(row.get("symbol", "") or "").strip()
             for row in rows
@@ -1508,9 +1525,10 @@ def _phase_snapshot(
         }
         overlap = len(symbols & seen_symbols)
         seen_symbols.update(symbols)
-        status = "已产出" if rows else "未产出"
         updated_at = str(
-            max((row.get("created_at", "") for row in rows), default="") or ""
+            review_updated_at
+            or max((row.get("created_at", "") for row in rows), default="")
+            or ""
         )
         if task_id == "main_chain" and not rows and premarket_messages:
             # News is a real premarket artifact, but it must not be counted as
