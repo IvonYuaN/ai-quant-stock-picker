@@ -656,7 +656,9 @@ def _ewm_np(values: np.ndarray, alpha: float) -> np.ndarray:
 
 def _prepare_base_signal_frame(raw: pd.DataFrame) -> pd.DataFrame:
     """Compute lookback-independent technical features once per symbol."""
-    frame = raw.copy()
+    # Keep the derived cache narrow. The raw frame remains the source for
+    # execution simulation; signal evaluation only needs these six columns.
+    frame = raw.loc[:, ["date", "high", "low", "close", "volume", "amount"]].copy()
     frame["date"] = pd.to_datetime(frame["date"]).dt.strftime("%Y-%m-%d")
     high = frame["high"].to_numpy(dtype=float, copy=False)
     low = frame["low"].to_numpy(dtype=float, copy=False)
@@ -1428,11 +1430,11 @@ def run_suite(
                     if isinstance(item, dict) and item.get("variant_id")
                 }
     results = []
-    base_cache: dict[str, pd.DataFrame] = {}
     for lookback in sorted({profile.lookback for profile in profiles}):
-        # Keep only one lookback's derived columns alive; the shared base
-        # indicators remain cached for the other orthogonal variants.
+        # Keep only one lookback's derived columns alive. Retaining all four
+        # periods for 4,000+ symbols causes avoidable memory pressure.
         prepared_cache: dict[tuple[str, int], pd.DataFrame] = {}
+        base_cache: dict[str, pd.DataFrame] = {}
         for profile in (item for item in profiles if item.lookback == lookback):
             previous = previous_by_id.get(profile.variant_id)
             initial_active_symbols = {
@@ -1481,6 +1483,7 @@ def run_suite(
                 f"symbols={len(frames)} filled={payload.get('filled_orders', 0)}",
                 flush=True,
             )
+        del prepared_cache, base_cache
     generated_variant_count = len(results)
     results, duplicate_portfolios_removed = deduplicate_variant_results(
         results, symbol_count=len(symbols)
