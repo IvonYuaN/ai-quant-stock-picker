@@ -365,6 +365,15 @@ def _snapshot_candidate(candidate: Any) -> HomeSnapshotCandidate | None:
     reasons = _candidate_reasons(candidate)
     strategies = _candidate_strategies(candidate)
     score_breakdown = _candidate_score_breakdown(candidate)
+    raw_next_step = _text(getattr(candidate, "next_step", ""))
+    if raw_next_step:
+        next_step = raw_next_step
+    elif reasons:
+        next_step = f"核对“{reasons[0]}”是否延续，再决定是否提升纸面复核优先级。"
+    elif _text(getattr(candidate, "data_source", "")):
+        next_step = "补齐可复核的技术面、消息面和数据时间后再复核。"
+    else:
+        next_step = "等待可复核的技术面、消息面和数据时间后再复核。"
     context = _candidate_context(candidate)
     if not context:
         # Technical candidates often have no news context. Reuse their
@@ -389,7 +398,7 @@ def _snapshot_candidate(candidate: Any) -> HomeSnapshotCandidate | None:
             getattr(candidate, "status_label", ""),
             "待复核",
         ),
-        next_step=_text(getattr(candidate, "next_step", "")),
+        next_step=next_step,
         context=context,
         deterministic_reasons=reasons,
         strategies=strategies,

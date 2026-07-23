@@ -128,6 +128,25 @@ def test_walkforward_evidence_rejects_old_or_invalid_sidecar(
     ) == (False, None)
 
 
+def test_snapshot_candidate_fills_missing_next_step_from_existing_evidence() -> None:
+    candidate = SimpleNamespace(
+        symbol="000001",
+        display_name="000001 平安银行",
+        score=72.0,
+        action_label="纸面复核",
+        status_label="观察中",
+        next_step="",
+        reasons=("MACD 金叉",),
+        strategies=("macd_reversal",),
+        data_source="sqlite",
+    )
+
+    snapshot = write_home_snapshot._snapshot_candidate(candidate)
+
+    assert snapshot is not None
+    assert snapshot.next_step == "核对“MACD 金叉”是否延续，再决定是否提升纸面复核优先级。"
+
+
 def test_variant_snapshot_reads_carried_forward_previous_holdings(
     monkeypatch, tmp_path
 ) -> None:
