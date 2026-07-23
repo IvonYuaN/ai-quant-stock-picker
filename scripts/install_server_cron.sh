@@ -8,7 +8,7 @@
 # 4. 北京时间 08:35 和周末 09:05 运行消息面雷达
 # 5. 北京时间 18:00 运行收盘同步 + 全量跑批
 # 6. 北京时间 19:40 运行冷启动补样本，避开收盘主链路
-# 7. 北京时间 15:20 运行实时纸面变体，避免等到晚间收盘主链路
+# 7. 北京时间 21:30 运行实时纸面变体，确保收盘数据和冷启动已完成
 # 8. 北京时间每 15 分钟运行一次监控
 
 set -euo pipefail
@@ -54,7 +54,7 @@ emit_jobs() {
     fi
 
     if [[ "${ENABLE_VARIANTS,,}" =~ ^(1|true|yes|on)$ ]]; then
-        echo '20 15 * * 1-5 /bin/bash '"${PROJECT_ROOT}"'/scripts/bt_task.sh variants >> '"${CRON_LOG}"' 2>&1'
+        echo '30 21 * * 1-5 /bin/bash '"${PROJECT_ROOT}"'/scripts/bt_task.sh variants >> '"${CRON_LOG}"' 2>&1'
     fi
 
     if [[ "${ENABLE_NEWS,,}" =~ ^(1|true|yes|on)$ ]]; then

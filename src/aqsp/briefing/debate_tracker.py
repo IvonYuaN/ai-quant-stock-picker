@@ -34,6 +34,7 @@ _VALID_STANCES = frozenset(("bullish", "bearish", "neutral"))
 _MIN_AGENT_SAMPLES = 5
 _MIN_INDEPENDENT_SIGNAL_DAYS = 3
 _LEARNING_COOLDOWN_DAYS = 3
+_UNCALIBRATED_VOTE_ADJUSTMENT_CAP = 0.12
 
 
 @dataclass(frozen=True)
@@ -238,11 +239,7 @@ def audit_debate_quality(
     real_opposition_count = _real_opposition_count(rounds)
     # Count final positions only. Counting every round made a two-round
     # debate look like two independent votes per role.
-    final_opinions = tuple(
-        _field(rounds[-1], "opinions", ()) or ()
-        if rounds
-        else ()
-    )
+    final_opinions = tuple(_field(rounds[-1], "opinions", ()) or () if rounds else ())
     stance_counts = tuple(
         (
             stance,
@@ -259,7 +256,9 @@ def audit_debate_quality(
             bucket,
             bool(
                 _substantive_values(
-                    raw_buckets.get(bucket, ()) if isinstance(raw_buckets, Mapping) else ()
+                    raw_buckets.get(bucket, ())
+                    if isinstance(raw_buckets, Mapping)
+                    else ()
                 )
             ),
         )
@@ -1168,10 +1167,20 @@ class DebatePerformanceTracker:
         max_possible = sum(abs(weight) for weight in agent_weights.values())
         if max_possible > 0:
             normalized = weighted_sum / max_possible
+            adjustment_cap = 0.3
         else:
-            normalized = 0.0
+            # Before the learning layer unlocks, do not manufacture a neutral
+            # result from zero weights. Use only the current non-neutral vote
+            # margin and keep its advisory influence below calibrated weights.
+            active_votes = bullish_count + bearish_count
+            normalized = (
+                (bullish_count - bearish_count) / active_votes
+                if active_votes > 0
+                else 0.0
+            )
+            adjustment_cap = _UNCALIBRATED_VOTE_ADJUSTMENT_CAP
 
-        adjustment_weight = normalized * 0.3
+        adjustment_weight = normalized * adjustment_cap
 
         if normalized > 0.2:
             recommended = "raise"

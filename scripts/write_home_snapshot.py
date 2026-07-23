@@ -1633,6 +1633,9 @@ def _variant_snapshot(
         ),
     }
     expected_modes = valid_modes.get(run_mode)
+    generated_date = _text(payload.get("generated_at"))[:10]
+    if run_mode == "paper_realtime" and generated_date != today_shanghai().isoformat():
+        return ()
     if (
         not payload
         or payload.get("initial_cash") != 100_000.0

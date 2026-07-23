@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
@@ -190,6 +190,30 @@ def test_variant_snapshot_reads_carried_forward_previous_holdings(
     assert variants[0].holdings[0].symbol == "600001"
     assert variants[0].previous_holdings is not None
     assert variants[0].previous_holdings[0].symbol == "000001"
+
+
+def test_variant_snapshot_hides_stale_paper_realtime_artifact(
+    monkeypatch, tmp_path
+) -> None:
+    artifact = {
+        "initial_cash": 100_000.0,
+        "run_mode": "paper_realtime",
+        "generated_at": "2026-07-22T21:30:00+08:00",
+        "start_date": "2026-07-21",
+        "end_date": "2026-07-22",
+        "data_mode": "raw_live_short_paper",
+        "research_mode": "realtime_paper_only",
+        "live_recommendation_allowed": False,
+        "variants": [],
+    }
+    path = tmp_path / "variant_results.json"
+    path.write_text(json.dumps(artifact), encoding="utf-8")
+    monkeypatch.setenv("AQSP_VARIANT_RESULTS", str(path))
+    monkeypatch.setattr(
+        write_home_snapshot, "today_shanghai", lambda: date(2026, 7, 23)
+    )
+
+    assert write_home_snapshot._variant_snapshot() == ()
 
 
 def test_variant_snapshot_does_not_infer_previous_holdings_from_fills(

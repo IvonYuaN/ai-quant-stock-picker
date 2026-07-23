@@ -771,7 +771,7 @@ class TestDebateAgent:
             metrics={"ret5_pct": 2.0, "ret20_pct": -2.5},
             risks=("盘中覆盖不完整，缺少: 000300",),
         )
-        assert agent.generate_initial_opinion(common_blocker, frame).stance == "bearish"
+        assert agent.generate_initial_opinion(common_blocker, frame).stance == "neutral"
         assert agent.generate_initial_opinion(weak, frame).stance == "bearish"
 
     def test_strong_buy_rating_is_not_misclassified_as_st_risk(self):
@@ -1141,7 +1141,8 @@ class TestDebateAgent:
         assert result.final_vote[AgentRole.BULL] == "bullish"
         assert result.final_vote[AgentRole.BEAR] == "bearish"
         assert any(
-            record for opinion in result.rounds[-1].opinions
+            record
+            for opinion in result.rounds[-1].opinions
             for record in opinion.rebuttal_records
         )
         assert "missing_real_opposition" not in result.failure

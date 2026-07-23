@@ -161,6 +161,30 @@ def test_debate_adjustment_normalizes_contrarian_weights_by_magnitude(tmp_path) 
     assert recommendation == "raise"
 
 
+def test_debate_adjustment_uses_current_vote_margin_before_history_unlocks(
+    tmp_path,
+) -> None:
+    tracker = DebatePerformanceTracker(
+        storage_path=str(tmp_path / "debate-performance.jsonl")
+    )
+
+    adjustment, _, recommendation = tracker.calculate_debate_adjustment(
+        {
+            AgentRole.BULL: "bullish",
+            AgentRole.BEAR: "bullish",
+            AgentRole.RISK_CONTROL: "bearish",
+        },
+        {
+            role: 0.0
+            for role in (AgentRole.BULL, AgentRole.BEAR, AgentRole.RISK_CONTROL)
+        },
+    )
+
+    assert adjustment > 0
+    assert adjustment < 0.3
+    assert recommendation == "raise"
+
+
 def test_debate_performance_tracker_reuses_stable_agent_history_when_reloaded(
     tmp_path,
 ) -> None:
