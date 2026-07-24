@@ -1,4 +1,4 @@
-version: "1.0.0"
+version: "1.1.0"
 monitors:
   - name: "stale_data"
     description: "数据滞后超过阈值"
@@ -32,4 +32,14 @@ monitors:
     check: "source_health"
     params:
       max_consecutive_failures: 3
+    severity: "critical"
+
+  - name: "walkforward_runtime"
+    description: "walk-forward 生产自评估状态"
+    enabled: true
+    check: "walkforward_runtime"
+    params:
+      gate_path: data/walkforward_gate.json
+      status_path: data/walkforward_production_status.json
+      max_age_days: 35
     severity: "critical"

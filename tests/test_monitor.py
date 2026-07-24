@@ -262,6 +262,116 @@ class TestMonitorChecker:
             assert result.triggered is True
             assert result.severity == "warning"
 
+    def test_monitor_walkforward_runtime_alerts_when_resources_blocked(
+        self, sample_config: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        checker = MonitorChecker(config_path=str(sample_config))
+        gate_path = tmp_path / "walkforward_gate.json"
+        status_path = tmp_path / "walkforward_production_status.json"
+        gate_path.write_text(
+            json.dumps(
+                {
+                    "run_date": "2026-07-20",
+                    "deflated_sharpe": 0.8,
+                    "pbo": 0.7,
+                    "pbo_valid": True,
+                    "dsr_pass": False,
+                    "pbo_pass": False,
+                    "both_pass": False,
+                    "n_periods": 20,
+                }
+            ),
+            encoding="utf-8",
+        )
+        status_path.write_text(
+            json.dumps(
+                {
+                    "status": "blocked_resources",
+                    "updated_at": "2026-07-24T17:00:00+08:00",
+                    "detail": "server memory too low",
+                }
+            ),
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(
+            "aqsp.monitor.checker.today_shanghai", lambda: date(2026, 7, 24)
+        )
+
+        result = checker._check_walkforward_runtime(
+            {"gate_path": str(gate_path), "status_path": str(status_path)}
+        )
+
+        assert result.triggered is True
+        assert result.severity == "critical"
+        assert result.message == "walk-forward 未完成: blocked_resources"
+        assert result.details["production_detail"] == "server memory too low"
+
+    def test_monitor_walkforward_runtime_reports_quality_gate_without_false_alert(
+        self, sample_config: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        checker = MonitorChecker(config_path=str(sample_config))
+        gate_path = tmp_path / "walkforward_gate.json"
+        status_path = tmp_path / "walkforward_production_status.json"
+        gate_path.write_text(
+            json.dumps(
+                {
+                    "run_date": "2026-07-20",
+                    "deflated_sharpe": 0.8,
+                    "pbo": 0.7,
+                    "pbo_valid": True,
+                    "dsr_pass": False,
+                    "pbo_pass": False,
+                    "both_pass": False,
+                    "n_periods": 20,
+                }
+            ),
+            encoding="utf-8",
+        )
+        status_path.write_text(json.dumps({"status": "completed"}), encoding="utf-8")
+        monkeypatch.setattr(
+            "aqsp.monitor.checker.today_shanghai", lambda: date(2026, 7, 24)
+        )
+
+        result = checker._check_walkforward_runtime(
+            {"gate_path": str(gate_path), "status_path": str(status_path)}
+        )
+
+        assert result.triggered is False
+        assert result.message == "walk-forward 已完成，但 DSR/PBO 双门未通过"
+
+    def test_monitor_walkforward_runtime_alerts_when_gate_is_stale(
+        self, sample_config: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        checker = MonitorChecker(config_path=str(sample_config))
+        gate_path = tmp_path / "walkforward_gate.json"
+        status_path = tmp_path / "walkforward_production_status.json"
+        gate_path.write_text(
+            json.dumps(
+                {
+                    "run_date": "2026-06-01",
+                    "deflated_sharpe": 1.2,
+                    "pbo": 0.2,
+                    "pbo_valid": True,
+                    "dsr_pass": True,
+                    "pbo_pass": True,
+                    "both_pass": True,
+                    "n_periods": 20,
+                }
+            ),
+            encoding="utf-8",
+        )
+        status_path.write_text(json.dumps({"status": "completed"}), encoding="utf-8")
+        monkeypatch.setattr(
+            "aqsp.monitor.checker.today_shanghai", lambda: date(2026, 7, 24)
+        )
+
+        result = checker._check_walkforward_runtime(
+            {"gate_path": str(gate_path), "status_path": str(status_path)}
+        )
+
+        assert result.triggered is True
+        assert result.message == "walk-forward gate 已过期: 53 天"
+
 
 class TestNotifier:
     @pytest.fixture(autouse=True)

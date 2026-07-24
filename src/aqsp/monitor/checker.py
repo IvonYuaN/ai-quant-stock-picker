@@ -11,6 +11,7 @@ import yaml
 from aqsp.core.time import today_shanghai
 from aqsp.data.trading_calendar import trading_day_lag
 from aqsp.ledger.base import read_ledger
+from aqsp.walkforward_gate import MAX_GATE_AGE_DAYS, validate_walkforward_gate_payload
 
 
 @dataclass(frozen=True)
@@ -73,6 +74,8 @@ class MonitorChecker:
                     result = self._check_win_rate(monitor.params)
                 elif monitor.check == "source_health":
                     result = self._check_source_health(monitor.params)
+                elif monitor.check == "walkforward_runtime":
+                    result = self._check_walkforward_runtime(monitor.params)
                 else:
                     result = MonitorResult(
                         name=monitor.name,
@@ -326,3 +329,126 @@ class MonitorChecker:
                 message=f"检查数据源健康失败: {e}",
                 details={"error": str(e)},
             )
+
+    def _check_walkforward_runtime(self, params: dict[str, Any]) -> MonitorResult:
+        """Expose failed-closed production gate state without treating a failed DSR/PBO as a run failure."""
+        gate_path = Path(str(params.get("gate_path", "data/walkforward_gate.json")))
+        status_path = Path(
+            str(params.get("status_path", "data/walkforward_production_status.json"))
+        )
+        max_age_days = int(params.get("max_age_days", MAX_GATE_AGE_DAYS))
+        if max_age_days < 0:
+            raise ValueError("max_age_days must be non-negative")
+
+        if not gate_path.exists():
+            return MonitorResult(
+                name="walkforward_runtime",
+                triggered=True,
+                severity="critical",
+                message="walk-forward gate 文件缺失，无法验证自评估状态",
+                details={"gate_path": str(gate_path), "status_path": str(status_path)},
+            )
+
+        try:
+            gate_payload = json.loads(gate_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            return MonitorResult(
+                name="walkforward_runtime",
+                triggered=True,
+                severity="critical",
+                message=f"walk-forward gate 无法读取: {exc}",
+                details={"gate_path": str(gate_path)},
+            )
+        if not isinstance(gate_payload, dict):
+            return MonitorResult(
+                name="walkforward_runtime",
+                triggered=True,
+                severity="critical",
+                message="walk-forward gate 格式无效",
+                details={"gate_path": str(gate_path)},
+            )
+
+        status_payload: dict[str, Any] = {}
+        if status_path.exists():
+            try:
+                raw_status = json.loads(status_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as exc:
+                return MonitorResult(
+                    name="walkforward_runtime",
+                    triggered=True,
+                    severity="critical",
+                    message=f"walk-forward 生产状态无法读取: {exc}",
+                    details={"status_path": str(status_path)},
+                )
+            if not isinstance(raw_status, dict):
+                return MonitorResult(
+                    name="walkforward_runtime",
+                    triggered=True,
+                    severity="critical",
+                    message="walk-forward 生产状态格式无效",
+                    details={"status_path": str(status_path)},
+                )
+            status_payload = raw_status
+
+        validation = validate_walkforward_gate_payload(
+            gate_payload,
+            today=today_shanghai(),
+            max_age_days=max_age_days,
+        )
+        status = str(status_payload.get("status") or "missing").strip()
+        blocked_statuses = {
+            "blocked_resources",
+            "blocked_db",
+            "blocked_cutoff",
+            "blocked_coverage",
+            "blocked_symbols",
+            "timeout",
+        }
+        is_stale = any(
+            blocker.startswith("gate stale:") for blocker in validation.blockers
+        )
+        details = {
+            "gate_path": str(gate_path),
+            "status_path": str(status_path),
+            "production_status": status,
+            "updated_at": status_payload.get("updated_at"),
+            "run_date": gate_payload.get("run_date"),
+            "gate_age_days": validation.age_days,
+            "gate_blockers": list(validation.blockers),
+            "production_detail": status_payload.get("detail"),
+        }
+        if status in blocked_statuses:
+            return MonitorResult(
+                name="walkforward_runtime",
+                triggered=True,
+                severity="critical",
+                message=f"walk-forward 未完成: {status}",
+                details=details,
+            )
+        if is_stale:
+            return MonitorResult(
+                name="walkforward_runtime",
+                triggered=True,
+                severity="critical",
+                message=f"walk-forward gate 已过期: {validation.age_days} 天",
+                details=details,
+            )
+        if status == "missing":
+            return MonitorResult(
+                name="walkforward_runtime",
+                triggered=True,
+                severity="critical",
+                message="walk-forward 从未写入生产运行状态",
+                details=details,
+            )
+        if validation.ok:
+            message = "walk-forward 已完成且双门通过"
+        else:
+            message = "walk-forward 已完成，但 DSR/PBO 双门未通过"
+        return MonitorResult(
+            name="walkforward_runtime",
+            triggered=False,
+            severity="critical",
+            message=message,
+            details=details,
+        )
