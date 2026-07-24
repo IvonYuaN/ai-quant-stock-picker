@@ -62,7 +62,17 @@ fi
     )
     (fake_bin / "curl").write_text(
         """#!/usr/bin/env bash
-if [ "${FAKE_CURL_FAIL:-0}" = "1" ]; then
+set -eu
+calls_file="${FAKE_CURL_CALLS:-}"
+calls=0
+if [ -n "$calls_file" ] && [ -f "$calls_file" ]; then
+    calls="$(cat "$calls_file")"
+fi
+calls=$((calls + 1))
+if [ -n "$calls_file" ]; then
+    printf '%s' "$calls" > "$calls_file"
+fi
+if [ "${FAKE_CURL_FAIL:-0}" = "1" ] || [ "${FAKE_CURL_FAIL_AFTER:-0}" -gt 0 ] && [ "$calls" -gt "${FAKE_CURL_FAIL_AFTER}" ]; then
     exit 6
 fi
 exit 0
@@ -82,6 +92,7 @@ exit 0
             "AQSP_DEPLOY_TRANSFER_TIMEOUT_SECONDS": "2",
             "FAKE_SSH_LOG": str(tmp_path / "ssh.log"),
             "FAKE_RSYNC_LOG": str(tmp_path / "rsync.log"),
+            "FAKE_CURL_CALLS": str(tmp_path / "curl.calls"),
             "TMPDIR": str(tmp_path),
         }
     )
@@ -173,3 +184,28 @@ def test_deploy_dashboard_fails_before_remote_mutation_when_ssh_or_tls_is_unavai
     assert tls_result.returncode != 0
     assert (active / "index.html").read_text(encoding="utf-8") == "old\n"
     assert not Path(tls_env["FAKE_SSH_LOG"]).exists()
+
+
+def test_deploy_dashboard_rolls_back_when_a_post_deploy_route_is_unavailable(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "dashboard"
+    source.mkdir()
+    (source / "index.html").write_text("new\n", encoding="utf-8")
+    active = tmp_path / "www" / "dashboard"
+    active.mkdir(parents=True)
+    (active / "index.html").write_text("old\n", encoding="utf-8")
+
+    _, env = _fake_transport(tmp_path)
+    env.update(
+        {
+            "AQSP_DEPLOY_PATH": str(active),
+            "AQSP_DEPLOY_VERIFY_URLS": "https://dashboard.example/,https://dashboard.example/daily-review,https://dashboard.example/api/health",
+            "FAKE_CURL_FAIL_AFTER": "3",
+        }
+    )
+    result = _run_deploy(source, env)
+
+    assert result.returncode != 0
+    assert "post-deploy verification failed" in result.stderr
+    assert (active / "index.html").read_text(encoding="utf-8") == "old\n"

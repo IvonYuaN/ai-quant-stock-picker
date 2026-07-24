@@ -13,6 +13,7 @@ SSH_CONNECT_TIMEOUT="${AQSP_DEPLOY_CONNECT_TIMEOUT_SECONDS:-8}"
 TRANSFER_TIMEOUT="${AQSP_DEPLOY_TRANSFER_TIMEOUT_SECONDS:-120}"
 TLS_URL="${AQSP_DEPLOY_TLS_URL:-${AQSP_DEPLOY_HEALTH_URL:-}}"
 TLS_TIMEOUT="${AQSP_DEPLOY_TLS_TIMEOUT_SECONDS:-10}"
+VERIFY_URLS_RAW="${AQSP_DEPLOY_VERIFY_URLS:-$TLS_URL}"
 
 SSH_OPTS=(
     -p "$PORT"
@@ -30,6 +31,30 @@ fi
 fail() {
     printf 'dashboard deployment failed: %s\n' "$1" >&2
     exit 1
+}
+
+verify_urls() {
+    local phase="$1"
+    local url
+    local -a urls
+    IFS=',' read -r -a urls <<< "$VERIFY_URLS_RAW"
+    for url in "${urls[@]}"; do
+        url="${url//[[:space:]]/}"
+        [ -z "$url" ] && continue
+        case "$url" in
+            https://*) ;;
+            *)
+                printf 'deployment verification URL must use https://: %s\n' "$url" >&2
+                return 1
+                ;;
+        esac
+        if ! curl --fail --silent --show-error \
+            --connect-timeout "$TLS_TIMEOUT" --max-time "$TLS_TIMEOUT" \
+            "$url" >/dev/null; then
+            printf '%s verification failed: %s\n' "$phase" "$url" >&2
+            return 1
+        fi
+    done
 }
 
 remote_quote() {
@@ -69,18 +94,10 @@ if ! find "$SOURCE_DIR" -type f -print -quit | grep -q .; then
     fail "dashboard dir is empty: $SOURCE_DIR"
 fi
 
-if [ -n "$TLS_URL" ]; then
-    case "$TLS_URL" in
-        https://*) ;;
-        *) fail "AQSP_DEPLOY_TLS_URL must use https://" ;;
-    esac
-    if ! curl --fail --silent --show-error \
-        --connect-timeout "$TLS_TIMEOUT" --max-time "$TLS_TIMEOUT" \
-        "$TLS_URL" >/dev/null; then
-        fail "TLS preflight failed: $TLS_URL"
-    fi
+if [ -n "$VERIFY_URLS_RAW" ]; then
+    verify_urls "pre-deploy" || fail "pre-deploy verification failed"
 elif [ "${AQSP_DEPLOY_REQUIRE_TLS:-false}" = "true" ]; then
-    fail "AQSP_DEPLOY_REQUIRE_TLS=true requires AQSP_DEPLOY_TLS_URL"
+    fail "AQSP_DEPLOY_REQUIRE_TLS=true requires AQSP_DEPLOY_VERIFY_URLS or AQSP_DEPLOY_TLS_URL"
 fi
 
 REMOTE_PARENT="$(dirname "$AQSP_DEPLOY_PATH")"
@@ -189,10 +206,8 @@ if ! REMOTE_BACKUP="$(ssh "${SSH_OPTS[@]}" "$REMOTE_TARGET" "$ACTIVATE_COMMAND")
 fi
 REMOTE_STAGE=""
 
-if [ -n "$TLS_URL" ]; then
-    if ! curl --fail --silent --show-error \
-        --connect-timeout "$TLS_TIMEOUT" --max-time "$TLS_TIMEOUT" \
-        "$TLS_URL" >/dev/null; then
+if [ -n "$VERIFY_URLS_RAW" ]; then
+    if ! verify_urls "post-deploy"; then
         ROLLBACK_COMMAND="set -eu
 active=$REMOTE_ACTIVE_Q
 backup=$(remote_quote "$REMOTE_BACKUP")

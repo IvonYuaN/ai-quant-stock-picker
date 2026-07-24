@@ -73,6 +73,14 @@ Variables 会在日志里明文出现,只放非敏感配置。
 
 Secrets 用于敏感信息。GitHub 官方文档说明 Actions secret 会加密存储,并通过 `secrets` context 显式传给 workflow。
 
+部署验收 URL 写入服务器私有环境文件，不提交到 GitHub：
+
+```bash
+AQSP_DEPLOY_VERIFY_URLS=https://lh.ifidy.cn/,https://lh.ifidy.cn/daily-review,https://lh.ifidy.cn/variants,https://lh.ifidy.cn/api/health
+```
+
+`scripts/deploy_dashboard.sh` 会在切换前后分别检查这组 URL；切换后任一路由返回失败会自动恢复前一版本，并以失败退出。
+
 ## 服务器准备
 
 若你走“服务器独立跑”，先把仓库部署到例如 `/opt/aqsp`，再在服务器写 `.env`。

@@ -39,6 +39,14 @@ dev = [
 [project.scripts]
 aqsp = "aqsp.cli:main"
 
+[tool.ruff]
+target-version = "py310"
+
+[tool.ruff.lint]
+# CI must not inherit a runner-level Ruff profile. Keep the baseline explicit
+# until the existing style backlog is migrated in a dedicated change.
+select = ["E4", "E7", "E9", "F"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests", "backend/tests"]
 pythonpath = ["src", "."]
