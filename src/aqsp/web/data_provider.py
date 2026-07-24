@@ -6997,6 +6997,13 @@ class DashboardDataProvider:
         if blocked_rows:
             names = "、".join(self._symbol_name(row) for row in blocked_rows[:3])
             return f"{label} {signal_date}: 无待复核候选，先核对卡点 {names}"
+        run = self._latest_run_event(signal_date)
+        event_type = str((run or {}).get("event_type") or "").strip()
+        if event_type in {"backfill_no_picks", "run_completed_no_picks"}:
+            scanned = _runtime_float((run or {}).get("scanned_symbols"))
+            scanned_label = f"真实扫描 {int(scanned)} 只；" if scanned else "真实扫描已完成；"
+            reason = str((run or {}).get("reason") or "无候选").strip()
+            return f"{label} {signal_date}: {scanned_label}无候选：{reason}"
         return f"{label} {signal_date}: 还没有真实落盘结果，先确认任务是否已运行"
 
     def _summary_lines_for_signal_task(

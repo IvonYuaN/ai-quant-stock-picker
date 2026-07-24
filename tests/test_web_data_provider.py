@@ -3171,6 +3171,9 @@ def test_runtime_overview_explains_real_no_pick_scan(
     assert overview.data_latest_trade_date == "2026-07-23"
     assert "4612" in overview.conclusion
     assert "无候选" in overview.conclusion
+    summary = provider.build_task_view("main_chain", signal_date="2026-07-23")
+    assert "真实扫描 4612 只" in summary.headline
+    assert "还没有真实落盘结果" not in summary.headline
 
 
 def test_dashboard_data_provider_dedupes_intraday_ledger_and_csv_symbols(
