@@ -76,7 +76,16 @@ fi
 mkdir -p "$RUNTIME_ROOT" "$RUNTIME_DATA_ROOT"
 cd "$RUNTIME_ROOT"
 if [[ -z "${AQSP_RUNTIME_VENV_DIR:-}" && -z "${AQSP_PYTHON:-}" && -z "${VIBE_RESEARCH_PYTHON_BIN:-}" ]]; then
-    export AQSP_RUNTIME_VENV_DIR="${RELEASE_ROOT}/.venv-vibe-research"
+    if [[ -x "${RELEASE_ROOT}/.venv-vibe-research/bin/python" ]]; then
+        export AQSP_RUNTIME_VENV_DIR="${RELEASE_ROOT}/.venv-vibe-research"
+    elif [[ -x "/opt/aqsp-vibe-venv/bin/python" ]]; then
+        export AQSP_RUNTIME_VENV_DIR="/opt/aqsp-vibe-venv"
+    elif [[ -x "${RELEASE_ROOT}/.venv/bin/python" ]]; then
+        export AQSP_RUNTIME_VENV_DIR="${RELEASE_ROOT}/.venv"
+    else
+        echo "[ERROR] 找不到可用 AQSP runtime Python；请配置 VIBE_RESEARCH_PYTHON_BIN" >&2
+        exit 1
+    fi
 fi
 export AQSP_LEDGER="$(runtime_path "${AQSP_LEDGER:-data/predictions.jsonl}")"
 export AQSP_PAPER_LEDGER="$(runtime_path "${AQSP_PAPER_LEDGER:-data/paper_trades.jsonl}")"

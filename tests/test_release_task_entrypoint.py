@@ -1,6 +1,7 @@
 from pathlib import Path
 import os
 import subprocess
+import sys
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -43,6 +44,15 @@ def test_release_task_entrypoint_does_not_allow_runtime_root_to_replace_code_roo
     assert "dist/dashboard" not in script
 
 
+def test_release_task_entrypoint_has_shared_runtime_fallback() -> None:
+    script = (PROJECT_ROOT / "scripts/release_task_entrypoint.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'AQSP_RUNTIME_VENV_DIR="/opt/aqsp-vibe-venv"' in script
+    assert '找不到可用 AQSP runtime Python' in script
+
+
 def test_release_task_entrypoint_maps_relative_runtime_paths_once_to_data(
     tmp_path: Path,
 ) -> None:
@@ -61,6 +71,7 @@ def test_release_task_entrypoint_maps_relative_runtime_paths_once_to_data(
         "AQSP_RELEASE_ROOT": str(release),
         "AQSP_RUNTIME_ROOT": str(runtime),
         "AQSP_RUNTIME_DATA_ROOT": str(runtime / "data"),
+        "AQSP_PYTHON": sys.executable,
         "MARKER": str(marker),
     }
 

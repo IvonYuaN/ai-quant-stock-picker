@@ -729,6 +729,12 @@ def test_runtime_python_prefers_configured_vibe_research_interpreter(
     assert result.stdout.strip() == str(configured)
 
 
+def test_runtime_python_fallback_keeps_shared_production_venv() -> None:
+    helper = PROJECT_ROOT / "scripts" / "runtime_python.sh"
+    text = helper.read_text(encoding="utf-8")
+    assert '"/opt/aqsp-vibe-venv/bin/python"' in text
+
+
 def test_news_script_preserves_valid_same_day_report_on_source_failure() -> None:
     script = (PROJECT_ROOT / "scripts" / "news_catalysts.sh").read_text(
         encoding="utf-8"

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Shared runtime selection for scheduled AQSP tasks.
 # Precedence: explicit interpreter, the configured Vibe-Research interpreter,
-# explicit release venv, then the installed release venv and legacy fallback.
+# explicit release venv, installed shared runtime venv, then the legacy fallback.
 
 aqsp_runtime_python() {
     local project_root="${1:?project root is required}"
@@ -18,6 +18,10 @@ aqsp_runtime_python() {
     fi
     if [ -x "${project_root}/.venv-vibe-research/bin/python3" ]; then
         printf '%s\n' "${project_root}/.venv-vibe-research/bin/python3"
+        return 0
+    fi
+    if [ -x "/opt/aqsp-vibe-venv/bin/python" ]; then
+        printf '%s\n' "/opt/aqsp-vibe-venv/bin/python"
         return 0
     fi
     printf '%s\n' "${project_root}/.venv/bin/python3"
