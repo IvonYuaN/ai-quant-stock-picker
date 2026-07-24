@@ -21,6 +21,7 @@ ENABLE_DAILY="${AQSP_ENABLE_DAILY_CRON:-true}"
 ENABLE_MONITOR="${AQSP_ENABLE_MONITOR_CRON:-true}"
 ENABLE_NEWS="${AQSP_ENABLE_NEWS_CRON:-true}"
 ENABLE_COLDSTART="${AQSP_ENABLE_COLDSTART_CRON:-true}"
+ENABLE_WALKFORWARD_GATE="${AQSP_ENABLE_WALKFORWARD_GATE_CRON:-true}"
 
 mkdir -p "$(dirname "$CRON_LOG")"
 
@@ -51,6 +52,10 @@ emit_jobs() {
         echo '40 19 * * 1-5 /bin/bash '"${PROJECT_ROOT}"'/scripts/bt_task.sh coldstart >> '"${CRON_LOG}"' 2>&1'
     fi
 
+    if [[ "${ENABLE_WALKFORWARD_GATE,,}" =~ ^(1|true|yes|on)$ ]]; then
+        echo '0 22 * * 6 /bin/bash '"${PROJECT_ROOT}"'/scripts/bt_task.sh walkforward-gate >> '"${CRON_LOG}"' 2>&1'
+    fi
+
     if [[ "${ENABLE_NEWS,,}" =~ ^(1|true|yes|on)$ ]]; then
         echo '35 8 * * 1-5 /bin/bash '"${PROJECT_ROOT}"'/scripts/bt_task.sh news >> '"${CRON_LOG}"' 2>&1'
         echo '5 9 * * 6,0 /bin/bash '"${PROJECT_ROOT}"'/scripts/bt_task.sh news >> '"${CRON_LOG}"' 2>&1'
@@ -64,7 +69,7 @@ emit_jobs() {
 CURRENT_CRONTAB="$(crontab -l 2>/dev/null || true)"
 FILTERED_CRONTAB="$(
     printf '%s\n' "$CURRENT_CRONTAB" | grep -vE \
-        'AQSP_RUNNER_SCRIPT=scripts/intraday_refresh\.sh|AQSP_RUNNER_SCRIPT=scripts/midday_refresh\.sh|/scripts/server_sync_and_run\.sh|/scripts/server_monitor\.sh|/scripts/bt_task\.sh (daily|intraday|midday|coldstart|monitor|news)' || true
+        'AQSP_RUNNER_SCRIPT=scripts/intraday_refresh\.sh|AQSP_RUNNER_SCRIPT=scripts/midday_refresh\.sh|/scripts/server_sync_and_run\.sh|/scripts/server_monitor\.sh|/scripts/bt_task\.sh (daily|intraday|midday|coldstart|walkforward-gate|monitor|news)' || true
 )"
 
 {

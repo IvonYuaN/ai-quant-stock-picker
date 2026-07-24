@@ -739,6 +739,7 @@ def test_bt_task_script_exposes_panel_safe_actions() -> None:
     assert "news      08:35 Mon-Fri trading days only; 09:05 Sat/Sun" in script
     assert "daily     18:00 Mon-Fri" in script
     assert "coldstart 19:40 Mon-Fri" in script
+    assert "walkforward-gate 22:00 Sat" in script
     assert '"正常跳过/互斥保护"' in script
     assert "It is not a failed run." in script
     assert "is_market_trading_day" in script

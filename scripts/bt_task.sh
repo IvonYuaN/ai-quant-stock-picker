@@ -69,7 +69,7 @@ Recommended BT schedule (Asia/Shanghai):
   midday    12:05 Mon-Fri
   daily     18:00 Mon-Fri
   coldstart 19:40 Mon-Fri
-  walkforward-gate manual/controlled after coldstart reaches 30/30
+  walkforward-gate 22:00 Sat; controlled production evidence only, no threshold apply
   monitor   every 15 min
   status    manual only
 

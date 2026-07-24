@@ -21,7 +21,7 @@ AQSP 在服务器上的生产定时统一放在 **宝塔面板 -> 计划任务**
 
 ## 计划任务
 
-在宝塔里新增 Shell 脚本任务。建议配置 **6 条自动任务 + 1 条手动自检**：
+在宝塔里新增 Shell 脚本任务。建议配置 **8 条自动任务 + 1 条手动自检**：
 
 | 任务名 | 周期/时间 | 脚本内容 |
 |---|---|---|
@@ -31,6 +31,7 @@ AQSP 在服务器上的生产定时统一放在 **宝塔面板 -> 计划任务**
 | `AQSP-周末消息雷达` | 周六、周日 `10:00` | `/bin/bash /opt/aqsp/scripts/bt_task.sh news` |
 | `AQSP-收盘主链路` | 工作日 `18:00` | `/bin/bash /opt/aqsp/scripts/bt_task.sh daily` |
 | `AQSP-冷启动补样本` | 工作日 `19:40` | `/bin/bash /opt/aqsp/scripts/bt_task.sh coldstart` |
+| `AQSP-walk-forward` | 周六 `22:00`；只更新 DSR/PBO 证据，绝不自动修改阈值 | `/bin/bash /opt/aqsp/scripts/bt_task.sh walkforward-gate` |
 | `AQSP-服务器监控` | 工作日每 15 分钟 | `/bin/bash /opt/aqsp/scripts/bt_task.sh monitor` |
 
 `status` 不建议定时跑，需要排查时在宝塔手动执行：
@@ -46,6 +47,7 @@ AQSP 在服务器上的生产定时统一放在 **宝塔面板 -> 计划任务**
 - `news`：消息面雷达，标题为 `消息面雷达-YYYY-MM-DD`，盘前和周末最有价值。
 - `daily`：收盘完整主链路，生成正式复盘、通知和看板。
 - `coldstart`：补冷启动样本，建议晚于 `daily` 至少 90 分钟。
+- `walkforward-gate`：受控复核全市场纸面研究；资源或覆盖不足时写入阻塞状态，不改阈值、不下单。
 - `monitor`：运行态检查，默认只推关键异常。
 
 ## 锁提示不是失败
