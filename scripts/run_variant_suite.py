@@ -869,6 +869,137 @@ def build_orders(
     return tuple(orders)
 
 
+def _orders_from_signals(
+    signals_by_date: dict[
+        str, list[tuple[str, float, bool, bool, tuple[str, ...], float]]
+    ],
+    profile: VariantProfile,
+    initial_active_symbols: set[str] | None = None,
+) -> tuple[VariantOrder, ...]:
+    """Turn one profile's causal signals into paper orders."""
+    orders: list[VariantOrder] = []
+    active_symbols: set[str] = set(initial_active_symbols or ())
+    for trade_date in sorted(signals_by_date):
+        signals = signals_by_date[trade_date]
+        entries = sorted(
+            (signal for signal in signals if signal[2]),
+            key=lambda signal: (signal[5], signal[1], signal[0]),
+            reverse=True,
+        )
+        selected = {signal[0] for signal in entries[: max(profile.max_positions, 1)]}
+        for symbol, _score, entry, exit_signal, evidence, _selection_rank in signals:
+            selection_evidence = (f"组合排序：{profile.selection}",)
+            if exit_signal and symbol in active_symbols:
+                orders.append(
+                    VariantOrder(
+                        trade_date,
+                        symbol,
+                        "sell",
+                        weight=1.0,
+                        evidence=evidence
+                        + selection_evidence
+                        + ("退出条件：策略退出信号触发",),
+                    )
+                )
+                active_symbols.discard(symbol)
+            elif symbol in active_symbols and symbol not in selected:
+                orders.append(
+                    VariantOrder(
+                        trade_date,
+                        symbol,
+                        "sell",
+                        weight=1.0,
+                        evidence=evidence
+                        + selection_evidence
+                        + ("退出条件：未进入当日持仓名额",),
+                    )
+                )
+                active_symbols.discard(symbol)
+            elif entry and symbol in selected and symbol not in active_symbols:
+                orders.append(
+                    VariantOrder(
+                        trade_date,
+                        symbol,
+                        "buy",
+                        weight=min(0.5, 1.0 / max(profile.max_positions, 1)),
+                        evidence=evidence + selection_evidence,
+                    )
+                )
+                active_symbols.add(symbol)
+    return tuple(orders)
+
+
+def build_orders_for_profiles(
+    frames: dict[str, pd.DataFrame],
+    profiles: tuple[VariantProfile, ...],
+    *,
+    first_trade_date: str = "",
+    initial_active_symbols_by_variant: dict[str, set[str]] | None = None,
+) -> dict[str, tuple[VariantOrder, ...]]:
+    """Build several profiles while reusing causal features by lookback.
+
+    The previous implementation traversed the full universe once per profile.
+    Here each symbol's base indicators are built once, and each lookback frame
+    is shared by all families using that lookback. Signals remain isolated per
+    variant, so portfolio selection and T+1 simulation are unchanged.
+    """
+    grouped: dict[int, tuple[VariantProfile, ...]] = {}
+    for lookback in sorted({profile.lookback for profile in profiles}):
+        grouped[lookback] = tuple(
+            profile for profile in profiles if profile.lookback == lookback
+        )
+    signals: dict[
+        str, dict[str, list[tuple[str, float, bool, bool, tuple[str, ...], float]]]
+    ] = {
+        profile.variant_id: defaultdict(list)
+        for profile in profiles
+    }
+    for symbol, raw in frames.items():
+        base = _prepare_base_signal_frame(raw)
+        for lookback, lookback_profiles in grouped.items():
+            frame = _prepare_signal_frame(raw, lookback, base=base)
+            dates = frame["date"].tolist()
+            for profile in lookback_profiles:
+                entry_mask, exit_mask, score_values, valid_mask = _signal_masks(
+                    frame, profile
+                )
+                first_index = profile.lookback
+                if first_trade_date:
+                    first_index = max(
+                        first_index, bisect_left(dates, first_trade_date) - 1
+                    )
+                last_index = max(first_index, len(frame) - 1)
+                for index in (
+                    np.flatnonzero(valid_mask[first_index:last_index]) + first_index
+                ):
+                    row = frame.iloc[int(index)]
+                    entry = bool(entry_mask[index])
+                    exit_signal = bool(exit_mask[index])
+                    evidence = (
+                        _signal_evidence(row, profile) if entry or exit_signal else ()
+                    )
+                    signals[profile.variant_id][dates[index + 1]].append(
+                        (
+                            symbol,
+                            float(score_values[index]),
+                            entry,
+                            exit_signal,
+                            evidence,
+                            _selection_score(
+                                row, profile, float(score_values[index])
+                            ),
+                        )
+                    )
+    return {
+        profile.variant_id: _orders_from_signals(
+            signals[profile.variant_id],
+            profile,
+            (initial_active_symbols_by_variant or {}).get(profile.variant_id),
+        )
+        for profile in profiles
+    }
+
+
 def _selection_score(
     row: pd.Series, profile: VariantProfile, signal_score: float
 ) -> float:
@@ -1526,34 +1657,33 @@ def run_suite(
                     if isinstance(item, dict) and item.get("variant_id")
                 }
     results = []
-    feature_cache_enabled = len(frames) <= grid.feature_cache_max_symbols
-    # Base indicators do not depend on the lookback. Keep them for one period
-    # even on the full universe; the cache is released before the next period.
+    # Features are now shared in a bounded lookback batch and released before
+    # the next batch; these fields describe that reuse in the artifact.
+    feature_cache_enabled = True
     base_feature_cache_enabled = True
     for lookback in sorted({profile.lookback for profile in profiles}):
-        # Keep only one lookback's derived columns alive. Retaining all four
-        # periods for 4,000+ symbols causes avoidable memory pressure.
-        prepared_cache: dict[tuple[str, int], pd.DataFrame] | None = (
-            {} if feature_cache_enabled else None
+        lookback_profiles = tuple(
+            item for item in profiles if item.lookback == lookback
         )
-        base_cache: dict[str, pd.DataFrame] | None = (
-            {} if base_feature_cache_enabled else None
-        )
-        for profile in (item for item in profiles if item.lookback == lookback):
-            previous = previous_by_id.get(profile.variant_id)
-            initial_active_symbols = {
+        initial_active_symbols_by_variant = {
+            profile.variant_id: {
                 str(item.get("symbol"))
-                for item in (previous or {}).get("holdings", [])
+                for item in (previous_by_id.get(profile.variant_id) or {}).get(
+                    "holdings", []
+                )
                 if isinstance(item, dict) and int(item.get("quantity") or 0) > 0
             }
-            orders = build_orders(
-                frames,
-                profile,
-                first_trade_date=start,
-                prepared_cache=prepared_cache,
-                base_cache=base_cache,
-                initial_active_symbols=initial_active_symbols,
-            )
+            for profile in lookback_profiles
+        }
+        orders_by_variant = build_orders_for_profiles(
+            frames,
+            lookback_profiles,
+            first_trade_date=start,
+            initial_active_symbols_by_variant=initial_active_symbols_by_variant,
+        )
+        for profile in lookback_profiles:
+            previous = previous_by_id.get(profile.variant_id)
+            orders = orders_by_variant[profile.variant_id]
             if previous is not None:
                 payload = _simulate_with_previous_baseline(
                     profile.variant_id,
@@ -1587,10 +1717,6 @@ def run_suite(
                 f"symbols={len(frames)} filled={payload.get('filled_orders', 0)}",
                 flush=True,
             )
-        if prepared_cache is not None:
-            prepared_cache.clear()
-        if base_cache is not None:
-            base_cache.clear()
     generated_variant_count = len(results)
     results, duplicate_portfolios_removed = deduplicate_variant_results(
         results, symbol_count=len(symbols)

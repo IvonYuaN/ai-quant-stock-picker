@@ -6,6 +6,8 @@ import pytest
 
 from scripts.run_variant_suite import (
     VariantProfile,
+    build_orders,
+    build_orders_for_profiles,
     _selection_score,
     _simulate_with_previous_baseline,
     _prepare_base_signal_frame,
@@ -74,6 +76,38 @@ def test_variant_selection_rules_use_different_observed_factors():
         "high_price": 10.0,
         "vwap": 1.0,
     }
+
+
+def test_batch_variant_orders_match_single_profile_orders_without_lookahead():
+    rows = []
+    dates = pd.date_range("2026-01-01", periods=40, freq="D")
+    for index, timestamp in enumerate(dates):
+        close = 10.0 + index * 0.15
+        rows.append(
+            {
+                "date": timestamp.strftime("%Y-%m-%d"),
+                "high": close + 0.2,
+                "low": close - 0.2,
+                "close": close,
+                "volume": 100000.0 + index * 1000.0,
+                "amount": close * (100000.0 + index * 1000.0),
+            }
+        )
+    frames = {"AAA": pd.DataFrame(rows)}
+    profiles = (
+        VariantProfile("trend_a", "趋势 A", 5, 0.0, 8.0, mode="trend", selection="momentum"),
+        VariantProfile("macd_a", "MACD A", 5, 1.0, 10.0, mode="macd", selection="macd"),
+    )
+    expected = {
+        profile.variant_id: build_orders(
+            frames, profile, first_trade_date="2026-01-30"
+        )
+        for profile in profiles
+    }
+    actual = build_orders_for_profiles(
+        frames, profiles, first_trade_date="2026-01-30"
+    )
+    assert actual == expected
 
 
 def test_variant_suite_carries_yesterday_position_into_today_pnl_and_sell_rules():
