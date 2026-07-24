@@ -1,4 +1,4 @@
-version: "2026.07.23.v5"
+version: "2026.07.24.v6"
 feature_warmup_calendar_days: 90
 # Above this universe size, derived feature frames are computed per symbol and
 # released immediately to keep the full-board run within the server memory cap.
@@ -23,78 +23,94 @@ families:
     entry_return_pct: 0.0
     max_bias_pct: 8.0
     hypothesis: 趋势延续需要均线方向和收益确认
+    selection: momentum
   - mode: reversion
     label: 均值回归
     entry_return_pct: 2.0
     max_bias_pct: 0.0
     hypothesis: 偏离均线后等待价格回归
+    selection: mean_reversion
   - mode: breakout
     label: 突破
     entry_return_pct: 3.0
     max_bias_pct: 12.0
     hypothesis: 突破前高并限制追高乖离
+    selection: momentum
   - mode: volume_breakout
     label: 量价突破
     entry_return_pct: 2.0
     max_bias_pct: 12.0
     hypothesis: 突破必须由成交量放大确认
+    selection: volume
   - mode: volume
     label: 成交量趋势
     entry_return_pct: 1.0
     max_bias_pct: 10.0
     hypothesis: 量能持续性比单日价格突破更重要
+    selection: volume
   - mode: macd
     label: MACD
     entry_return_pct: 1.0
     max_bias_pct: 10.0
     hypothesis: MACD柱体转强并由价格趋势确认
+    selection: macd
   - mode: kdj
     label: KDJ
     entry_return_pct: 1.0
     max_bias_pct: 8.0
     hypothesis: KDJ金叉从弱势区修复
+    selection: kdj
   - mode: low_vol
     label: 低波趋势
     entry_return_pct: 1.0
     max_bias_pct: 6.0
     hypothesis: 低波动趋势优先，减少异常追涨
+    selection: low_volatility
   - mode: bollinger
     label: 布林回归
     entry_return_pct: -2.0
     max_bias_pct: 0.0
     hypothesis: 跌破布林下轨后等待均值修复
+    selection: mean_reversion
   - mode: rsi
     label: RSI修复
     entry_return_pct: 0.0
     max_bias_pct: 8.0
     hypothesis: RSI低位修复且价格没有继续破坏趋势
+    selection: mean_reversion
   - mode: ema_cross
     label: EMA交叉
     entry_return_pct: 1.0
     max_bias_pct: 10.0
     hypothesis: 快慢EMA方向一致且动能改善
+    selection: macd
   - mode: obv
     label: OBV量能
     entry_return_pct: 1.0
     max_bias_pct: 8.0
     hypothesis: 价格趋势与资金量能方向一致
+    selection: volume
   - mode: donchian
     label: 唐奇安突破
     entry_return_pct: 3.0
     max_bias_pct: 12.0
     hypothesis: 突破历史通道上沿并控制追高风险
+    selection: momentum
   - mode: vwap
     label: VWAP趋势
     entry_return_pct: 1.0
     max_bias_pct: 8.0
     hypothesis: 价格站上成交量加权均价后跟踪趋势
+    selection: vwap
   - mode: atr_trend
     label: ATR趋势
     entry_return_pct: 1.0
     max_bias_pct: 8.0
     hypothesis: 趋势成立且波动仍在可承受范围
+    selection: low_volatility
   - mode: defensive_range
     label: 防守区间
     entry_return_pct: 0.5
     max_bias_pct: 5.0
     hypothesis: 在低波动和温和趋势同时成立时降低追涨
+    selection: low_price

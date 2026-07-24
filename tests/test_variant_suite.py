@@ -5,6 +5,8 @@ import pandas as pd
 import pytest
 
 from scripts.run_variant_suite import (
+    VariantProfile,
+    _selection_score,
     _simulate_with_previous_baseline,
     _prepare_base_signal_frame,
     _prepare_signal_frame,
@@ -16,6 +18,62 @@ from scripts.run_variant_suite import (
     validate_variant_artifact,
 )
 from aqsp.backtest.variant_account import VariantExecutionRules, VariantOrder
+
+
+def test_variant_selection_rules_use_different_observed_factors():
+    row = pd.Series(
+        {
+            "ret": 8.0,
+            "bias": 2.0,
+            "volume_ratio": 1.5,
+            "macd_hist": 0.4,
+            "kdj_j": 72.0,
+            "atr_pct": 2.0,
+            "close": 10.0,
+            "vwap": 9.0,
+        }
+    )
+    profiles = {
+        selection: VariantProfile("v", "v", 5, 0.0, 8.0, selection=selection)
+        for selection in (
+            "momentum",
+            "mean_reversion",
+            "volume",
+            "macd",
+            "kdj",
+            "low_volatility",
+            "low_price",
+            "high_price",
+            "vwap",
+        )
+    }
+
+    scores = {
+        selection: _selection_score(profile_row, profile, 1.0)
+        for selection, profile_row, profile in (
+            ("momentum", row, profiles["momentum"]),
+            ("mean_reversion", row, profiles["mean_reversion"]),
+            ("volume", row, profiles["volume"]),
+            ("macd", row, profiles["macd"]),
+            ("kdj", row, profiles["kdj"]),
+            ("low_volatility", row, profiles["low_volatility"]),
+            ("low_price", row, profiles["low_price"]),
+            ("high_price", row, profiles["high_price"]),
+            ("vwap", row, profiles["vwap"]),
+        )
+    }
+
+    assert scores == {
+        "momentum": 8.0,
+        "mean_reversion": -2.0,
+        "volume": 1.5,
+        "macd": 0.4,
+        "kdj": 72.0,
+        "low_volatility": -2.0,
+        "low_price": -10.0,
+        "high_price": 10.0,
+        "vwap": 1.0,
+    }
 
 
 def test_variant_suite_carries_yesterday_position_into_today_pnl_and_sell_rules():
@@ -85,9 +143,7 @@ def test_variant_suite_keeps_carried_holding_when_today_quote_is_missing():
         {
             "end_date": "2026-07-17",
             "cash": 99_000.0,
-            "holdings": [
-                {"symbol": "600001", "quantity": 100, "average_price": 10.0}
-            ],
+            "holdings": [{"symbol": "600001", "quantity": 100, "average_price": 10.0}],
         },
         start="2026-07-20",
         rules=VariantExecutionRules(initial_cash=100_000.0),
@@ -174,11 +230,25 @@ def test_run_suite_creates_distinct_independent_ten_wan_accounts(tmp_path):
     assert all("cash" in item and "total_pnl" in item for item in result["variants"])
     assert all("strategy" in item and "holdings" in item for item in result["variants"])
     assert result["optimization"]["evaluation_only"] is True
-    assert result["optimization"]["grid_version"] == "2026.07.23.v5"
+    assert result["optimization"]["grid_version"] == "2026.07.24.v6"
     assert result["optimization"]["family_count"] == 16
     assert result["optimization"]["configuration_count"] == 4
+    assert result["optimization"]["generated_variant_count"] == 64
+    assert "duplicate_portfolios_removed" in result["optimization"]
     assert result["optimization"]["feature_cache_enabled"] is True
     assert result["optimization"]["feature_cache_max_symbols"] == 512
+    assert {item["strategy"]["selection"] for item in result["variants"]} <= {
+        "ranked_signal",
+        "momentum",
+        "mean_reversion",
+        "volume",
+        "macd",
+        "kdj",
+        "low_volatility",
+        "low_price",
+        "high_price",
+        "vwap",
+    }
     assert result["optimization"]["selected_variant_id"]
     assert all(item["filled_orders"] >= 0 for item in result["variants"])
     assert all(item["strategy"]["max_positions"] >= 1 for item in result["variants"])

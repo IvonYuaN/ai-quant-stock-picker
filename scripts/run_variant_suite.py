@@ -38,6 +38,20 @@ _VARIANT_WORKLOADS = {
     "backtest_historical": "historical",
     "paper_realtime": "live_short",
 }
+_SELECTION_RULES = frozenset(
+    {
+        "ranked_signal",
+        "momentum",
+        "mean_reversion",
+        "volume",
+        "macd",
+        "kdj",
+        "low_volatility",
+        "low_price",
+        "high_price",
+        "vwap",
+    }
+)
 
 
 def _validate_run_mode(run_mode: str) -> str:
@@ -79,6 +93,7 @@ class VariantFamilySpec:
     entry_return_pct: float
     max_bias_pct: float
     hypothesis: str
+    selection: str = "ranked_signal"
 
 
 @dataclass(frozen=True)
@@ -130,6 +145,7 @@ def load_variant_grid(path: str = "") -> VariantGridConfig:
             entry_return_pct=float(raw.get("entry_return_pct")),
             max_bias_pct=float(raw.get("max_bias_pct")),
             hypothesis=str(raw.get("hypothesis") or "").strip(),
+            selection=str(raw.get("selection") or "ranked_signal").strip(),
         )
         if not family.mode or family.mode in modes:
             raise ValueError(f"variant grid mode duplicated or empty: {family.mode!r}")
@@ -139,6 +155,10 @@ def load_variant_grid(path: str = "") -> VariantGridConfig:
             )
         if not family.hypothesis:
             raise ValueError(f"variant grid hypothesis missing: {family.mode}")
+        if family.selection not in _SELECTION_RULES:
+            raise ValueError(
+                f"variant grid selection unsupported: {family.selection!r}"
+            )
         modes.add(family.mode)
         labels.add(family.label)
         families.append(family)
@@ -460,6 +480,7 @@ def generate_variant_profiles(
                     entry_return_pct=family.entry_return_pct,
                     max_bias_pct=family.max_bias_pct,
                     mode=family.mode,
+                    selection=family.selection,
                     hypothesis=family.hypothesis
                     + (f"；训练波动中位数{volatility:.2f}%" if volatility else ""),
                     max_positions=max_positions,
@@ -748,9 +769,9 @@ def build_orders(
     base_cache: dict[str, pd.DataFrame] | None = None,
     initial_active_symbols: set[str] | None = None,
 ) -> tuple[VariantOrder, ...]:
-    signals_by_date: dict[str, list[tuple[str, float, bool, bool, tuple[str, ...]]]] = (
-        defaultdict(list)
-    )
+    signals_by_date: dict[
+        str, list[tuple[str, float, bool, bool, tuple[str, ...], float]]
+    ] = defaultdict(list)
     for symbol, raw in frames.items():
         cache_key = (symbol, profile.lookback)
         frame = prepared_cache.get(cache_key) if prepared_cache is not None else None
@@ -764,9 +785,7 @@ def build_orders(
             if prepared_cache is not None:
                 prepared_cache[cache_key] = frame
         dates = frame["date"].tolist()
-        entry_mask, exit_mask, score_values, valid_mask = _signal_masks(
-            frame, profile
-        )
+        entry_mask, exit_mask, score_values, valid_mask = _signal_masks(frame, profile)
         first_index = profile.lookback
         if first_trade_date:
             first_index = max(first_index, bisect_left(dates, first_trade_date) - 1)
@@ -776,8 +795,16 @@ def build_orders(
             entry = bool(entry_mask[index])
             exit_signal = bool(exit_mask[index])
             evidence = _signal_evidence(row, profile) if entry or exit_signal else ()
+            selection_score = _selection_score(row, profile, float(score_values[index]))
             signals_by_date[dates[index + 1]].append(
-                (symbol, float(score_values[index]), entry, exit_signal, evidence)
+                (
+                    symbol,
+                    float(score_values[index]),
+                    entry,
+                    exit_signal,
+                    evidence,
+                    selection_score,
+                )
             )
 
     orders: list[VariantOrder] = []
@@ -786,11 +813,12 @@ def build_orders(
         signals = signals_by_date[trade_date]
         entries = sorted(
             (signal for signal in signals if signal[2]),
-            key=lambda signal: (signal[1], signal[0]),
+            key=lambda signal: (signal[5], signal[1], signal[0]),
             reverse=True,
         )
         selected = {signal[0] for signal in entries[: max(profile.max_positions, 1)]}
-        for symbol, _score, entry, exit_signal, evidence in signals:
+        for symbol, _score, entry, exit_signal, evidence, selection_rank in signals:
+            selection_evidence = (f"组合排序：{profile.selection}",)
             if exit_signal and symbol in active_symbols:
                 orders.append(
                     VariantOrder(
@@ -798,7 +826,9 @@ def build_orders(
                         symbol,
                         "sell",
                         weight=1.0,
-                        evidence=evidence + ("退出条件：策略退出信号触发",),
+                        evidence=evidence
+                        + selection_evidence
+                        + ("退出条件：策略退出信号触发",),
                     )
                 )
                 active_symbols.discard(symbol)
@@ -809,7 +839,9 @@ def build_orders(
                         symbol,
                         "sell",
                         weight=1.0,
-                        evidence=evidence + ("退出条件：未进入当日持仓名额",),
+                        evidence=evidence
+                        + selection_evidence
+                        + ("退出条件：未进入当日持仓名额",),
                     )
                 )
                 active_symbols.discard(symbol)
@@ -820,11 +852,32 @@ def build_orders(
                         symbol,
                         "buy",
                         weight=min(0.5, 1.0 / max(profile.max_positions, 1)),
-                        evidence=evidence,
+                        evidence=evidence + selection_evidence,
                     )
                 )
                 active_symbols.add(symbol)
     return tuple(orders)
+
+
+def _selection_score(
+    row: pd.Series, profile: VariantProfile, signal_score: float
+) -> float:
+    """Rank same-day entries with the family-specific, observed factor."""
+    selection = profile.selection
+    values = {
+        "ranked_signal": signal_score,
+        "momentum": row["ret"],
+        "mean_reversion": -abs(row["bias"]),
+        "volume": row["volume_ratio"],
+        "macd": row["macd_hist"],
+        "kdj": row["kdj_j"],
+        "low_volatility": -row["atr_pct"],
+        "low_price": -row["close"],
+        "high_price": row["close"],
+        "vwap": row["close"] - row["vwap"],
+    }
+    value = float(values.get(selection, signal_score))
+    return value if np.isfinite(value) else signal_score
 
 
 def _signal_masks(
@@ -876,11 +929,7 @@ def _signal_masks(
             & (ret >= profile.entry_return_pct)
             & (bias <= profile.max_bias_pct)
         )
-        exit_signal = (
-            close < sma
-            if mode == "breakout"
-            else close < values["prior_low"]
-        )
+        exit_signal = close < sma if mode == "breakout" else close < values["prior_low"]
     elif mode == "volume_breakout":
         entry = (
             (close >= values["prior_high"])
@@ -1005,9 +1054,10 @@ def _simulate_with_previous_baseline(
     # The previous artifact is the authoritative trading-calendar boundary.
     # Falling back to the calendar day keeps legacy unit fixtures readable, but
     # production paper_realtime artifacts always carry end_date.
-    seed_date = previous_holdings_date or (
-        date.fromisoformat(start) - timedelta(days=1)
-    ).isoformat()
+    seed_date = (
+        previous_holdings_date
+        or (date.fromisoformat(start) - timedelta(days=1)).isoformat()
+    )
     if seed_date >= start:
         raise ValueError(
             f"变体 {variant_id} 昨日持仓日期必须早于今日: {seed_date} >= {start}"
@@ -1517,9 +1567,9 @@ def run_suite(
                 "entry_return_pct": profile.entry_return_pct,
                 "max_bias_pct": profile.max_bias_pct,
                 "mode": profile.mode,
+                "selection": profile.selection,
                 "hypothesis": profile.hypothesis,
                 "max_positions": profile.max_positions,
-                "selection": profile.selection,
             }
             results.append(payload)
             print(
