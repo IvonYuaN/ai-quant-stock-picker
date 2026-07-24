@@ -22,6 +22,17 @@ RUNTIME_DATA_ROOT = Path(
 RUNTIME_LOCK_ROOT = Path(
     os.environ.get("AQSP_RUNTIME_LOCK_ROOT", RUNTIME_ROOT / ".locks")
 ).resolve()
+SCHEDULED_ACTIONS = frozenset(
+    {
+        "daily",
+        "intraday",
+        "midday",
+        "coldstart",
+        "walkforward-gate",
+        "monitor",
+        "news",
+    }
+)
 for candidate in (PROJECT_ROOT / "src", PROJECT_ROOT):
     candidate_str = str(candidate)
     if candidate_str not in sys.path:
@@ -181,7 +192,11 @@ def _scheduled_actions(
 ) -> set[str]:
     actions: set[str] = set()
     wrapper_pattern = re.compile(r"\bflock\s+\S+\s+(\S+)\s+-c\s+(\S+)")
-    action_pattern = re.compile(r"(?:release_task_entrypoint|bt_task)\.sh\s+([a-z-]+)")
+    action_pattern = re.compile(
+        r"(?:release_task_entrypoint|bt_task)\.sh\s+("
+        + "|".join(sorted(SCHEDULED_ACTIONS))
+        + r")\b"
+    )
     for line in crontab.splitlines():
         match = wrapper_pattern.search(line)
         if not match:
@@ -210,16 +225,7 @@ def check_bt_panel_actions() -> CheckResult:
         return CheckResult(
             "BT Panel actions", True, "no readable BT Panel wrappers in system crontab"
         )
-    expected = {
-        "daily",
-        "intraday",
-        "midday",
-        "coldstart",
-        "walkforward-gate",
-        "monitor",
-        "news",
-    }
-    missing = sorted(expected - actions)
+    missing = sorted(SCHEDULED_ACTIONS - actions)
     return CheckResult(
         "BT Panel actions",
         not missing,

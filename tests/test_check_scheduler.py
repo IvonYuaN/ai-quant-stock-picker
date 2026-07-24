@@ -57,3 +57,20 @@ def test_scheduled_actions_returns_actions_from_bt_panel_wrappers(tmp_path) -> N
     )
 
     assert actions == {"daily", "walkforward-gate"}
+
+
+def test_scheduled_actions_ignores_bt_task_comment_words(tmp_path) -> None:
+    wrapper = tmp_path / "intraday"
+    wrapper.write_text(
+        "# bt_task.sh owns the market-hours gate\n"
+        "/bin/bash /opt/aqsp/scripts/release_task_entrypoint.sh intraday\n",
+        encoding="utf-8",
+    )
+    crontab = f"*/10 * * * * flock -xn {tmp_path}/intraday.lock -c {wrapper}"
+
+    actions = check_scheduler._scheduled_actions(
+        crontab,
+        lambda path: path.read_text(encoding="utf-8"),
+    )
+
+    assert actions == {"intraday"}
