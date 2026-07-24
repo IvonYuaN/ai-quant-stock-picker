@@ -1643,6 +1643,7 @@ def _batch_candidates_publishable(universe: HomeSnapshotUniverse) -> bool:
 
 def _variant_snapshot(
     candidate_names: dict[str, str] | None = None,
+    signal_date: str = "",
 ) -> tuple[HomeSnapshotVariant, ...]:
     """Read only bounded summaries from the isolated experiment artifact."""
     path = _runtime_json_path(
@@ -1663,7 +1664,14 @@ def _variant_snapshot(
     }
     expected_modes = valid_modes.get(run_mode)
     generated_date = _text(payload.get("generated_at"))[:10]
+    artifact_end_date = _text(payload.get("end_date"))
     if run_mode == "paper_realtime" and generated_date != today_shanghai().isoformat():
+        return ()
+    if (
+        signal_date
+        and run_mode == "backtest_historical"
+        and artifact_end_date != signal_date
+    ):
         return ()
     if (
         not payload
@@ -2252,7 +2260,8 @@ def build_home_snapshot(
         universe=universe,
         variant_universe=_variant_universe_snapshot(),
         variants=_variant_snapshot(
-            {candidate.symbol: candidate.display_name for candidate in candidates}
+            {candidate.symbol: candidate.display_name for candidate in candidates},
+            selected_date,
         ),
     )
 

@@ -216,6 +216,34 @@ def test_variant_snapshot_hides_stale_paper_realtime_artifact(
     assert write_home_snapshot._variant_snapshot() == ()
 
 
+def test_variant_snapshot_does_not_project_historical_artifact_to_another_date(
+    monkeypatch, tmp_path
+) -> None:
+    artifact = {
+        "initial_cash": 100_000.0,
+        "run_mode": "backtest_historical",
+        "end_date": "2026-07-20",
+        "data_mode": "historical_raw_unadjusted",
+        "research_mode": "historical_backtest_only",
+        "live_recommendation_allowed": False,
+        "variants": [
+            {
+                "variant_id": "trend_lb10_n3",
+                "label": "趋势·10日·3持仓",
+                "initial_cash": 100_000.0,
+                "holdings_date": "2026-07-20",
+                "holdings": [],
+            }
+        ],
+    }
+    path = tmp_path / "variant_results.json"
+    path.write_text(json.dumps(artifact), encoding="utf-8")
+    monkeypatch.setenv("AQSP_VARIANT_RESULTS", str(path))
+
+    assert write_home_snapshot._variant_snapshot(signal_date="2026-07-24") == ()
+    assert len(write_home_snapshot._variant_snapshot(signal_date="2026-07-20")) == 1
+
+
 def test_variant_snapshot_does_not_infer_previous_holdings_from_fills(
     monkeypatch, tmp_path
 ) -> None:
