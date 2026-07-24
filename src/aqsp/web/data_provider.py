@@ -3575,7 +3575,23 @@ class DashboardDataProvider:
                 return self._briefing_dates()
             if task_id == "closing_review":
                 return self._closing_review_dates()
-            return self._signal_dates(self._task_signal_rows(task_id))
+            dates = set(self._signal_dates(self._task_signal_rows(task_id)))
+            # A completed historical scan can legitimately produce no stock
+            # rows. Keep its exact date selectable so the UI can show the
+            # scan scope and "no candidates" reason instead of hiding it.
+            if task_id == "main_chain":
+                dates.update(
+                    self._signal_dates(
+                        [
+                            row
+                            for row in self.load_signal_rows()
+                            if self._is_runtime_event_row(row)
+                            and str(row.get("event_type", "") or "").strip()
+                            in {"backfill_no_picks", "run_completed_no_picks"}
+                        ]
+                    )
+                )
+            return tuple(sorted((item for item in dates if item), reverse=True))
 
         return self._cache_value("task_dates", task_id, _build)
 

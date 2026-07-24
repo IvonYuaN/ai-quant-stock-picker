@@ -3053,6 +3053,36 @@ def test_dashboard_data_provider_loads_intraday_latest_as_paper_review(
     assert spotlights[0].task_labels == ("盘中观察",)
 
 
+def test_task_dates_includes_formal_no_pick_scan_when_main_chain_has_no_rows(
+    tmp_path: Path,
+) -> None:
+    ledger_path = tmp_path / "predictions.jsonl"
+    ledger_path.write_text(
+        json.dumps(
+            {
+                "symbol": "__RUN__",
+                "name": "run_event",
+                "event_type": "backfill_no_picks",
+                "signal_date": "2026-07-23",
+                "status": "backfill_no_picks",
+                "scanned_symbols": 4612,
+                "source": "sqlite_db",
+                "reason": "no picks from real sample backfill",
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    provider = DashboardDataProvider(
+        ledger_path=str(ledger_path),
+        paper_ledger_path=str(tmp_path / "paper_trades.jsonl"),
+        debate_results_path=str(tmp_path / "debates.jsonl"),
+    )
+
+    assert provider.task_dates("main_chain") == ("2026-07-23",)
+
+
 def test_dashboard_data_provider_runtime_overview_uses_run_event_not_candidate_row(
     tmp_path: Path,
 ) -> None:
