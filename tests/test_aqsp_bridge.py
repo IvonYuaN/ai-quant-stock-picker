@@ -360,6 +360,7 @@ def test_aqsp_bridge_accepts_variant_universe_in_date_index(
         "symbol_count": 4272,
         "board_scope": "沪深主板+创业板",
     }
+    payload["days"][1]["snapshot"]["observation_candidates"] = []
     path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
     monkeypatch.setenv("AQSP_RESEARCH_SURFACE_SNAPSHOT", str(path))
 

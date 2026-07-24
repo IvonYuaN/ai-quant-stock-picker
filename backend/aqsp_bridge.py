@@ -776,6 +776,7 @@ def _parse_snapshot(payload: Mapping[str, Any]) -> AQSPSnapshot:
         "message_status",
         "messages",
         "market_context",
+        "observation_candidates",
         "recommendation_gate",
         "phases",
         "universe",
