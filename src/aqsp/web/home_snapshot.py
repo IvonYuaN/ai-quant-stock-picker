@@ -18,6 +18,7 @@ HOME_SNAPSHOT_SCHEMA_VERSION = "v1"
 MAX_HOME_SNAPSHOT_BYTES = 512 * 1024
 MAX_HOME_SNAPSHOT_DATES = 4
 MAX_HOME_SNAPSHOT_CANDIDATES = 5
+MAX_HOME_SNAPSHOT_OBSERVATIONS = 12
 MAX_HOME_SNAPSHOT_TECHNICAL_METRICS = 8
 MAX_HOME_SNAPSHOT_DEBATES = 3
 MAX_HOME_SNAPSHOT_SUMMARIES = 3
@@ -307,6 +308,7 @@ class HomeDashboardSnapshot:
     selected_date: str
     available_dates: tuple[str, ...]
     candidates: tuple[HomeSnapshotCandidate, ...]
+    observation_candidates: tuple[HomeSnapshotCandidate, ...]
     debates: tuple[HomeSnapshotDebate, ...]
     summaries: tuple[str, ...]
     source: HomeSnapshotSource
@@ -333,6 +335,7 @@ class HomeDashboardSnapshot:
         summaries: tuple[str, ...],
         source: HomeSnapshotSource,
         coldstart: HomeSnapshotColdstart,
+        observation_candidates: tuple[HomeSnapshotCandidate, ...] = (),
         debates: tuple[HomeSnapshotDebate, ...] = (),
         debate: HomeSnapshotDebate | None = None,
         stale_after: str = "",
@@ -356,6 +359,9 @@ class HomeDashboardSnapshot:
         object.__setattr__(self, "selected_date", selected_date)
         object.__setattr__(self, "available_dates", available_dates)
         object.__setattr__(self, "candidates", candidates)
+        object.__setattr__(
+            self, "observation_candidates", tuple(observation_candidates or ())
+        )
         object.__setattr__(self, "debates", normalized_debates)
         object.__setattr__(self, "summaries", summaries)
         object.__setattr__(self, "source", source)
@@ -711,6 +717,7 @@ def _snapshot_from_dict(payload: object) -> HomeDashboardSnapshot:
             "universe",
             "variant_universe",
             "variants",
+            "observation_candidates",
         },
     )
     if "debates" in mapping:
@@ -734,6 +741,13 @@ def _snapshot_from_dict(payload: object) -> HomeDashboardSnapshot:
         candidates=tuple(
             _candidate_from_dict(item)
             for item in _list(mapping["candidates"], "candidates")
+        ),
+        observation_candidates=tuple(
+            _candidate_from_dict(item)
+            for item in _list(
+                mapping.get("observation_candidates", ()),
+                "observation_candidates",
+            )
         ),
         debates=debates,
         summaries=_text_tuple(mapping["summaries"], "summaries"),
@@ -1265,6 +1279,11 @@ def _validate_snapshot(snapshot: HomeDashboardSnapshot) -> None:
         snapshot.available_dates, MAX_HOME_SNAPSHOT_DATES, "available_dates"
     )
     _validate_limit(snapshot.candidates, MAX_HOME_SNAPSHOT_CANDIDATES, "candidates")
+    _validate_limit(
+        snapshot.observation_candidates,
+        MAX_HOME_SNAPSHOT_OBSERVATIONS,
+        "observation_candidates",
+    )
     _validate_limit(snapshot.debates, MAX_HOME_SNAPSHOT_DEBATES, "debates")
     _validate_limit(snapshot.summaries, MAX_HOME_SNAPSHOT_SUMMARIES, "summaries")
     _validate_limit(snapshot.messages, MAX_HOME_SNAPSHOT_MESSAGES, "messages")
@@ -1323,6 +1342,18 @@ def _validate_snapshot(snapshot: HomeDashboardSnapshot) -> None:
     candidate_symbols = tuple(value.symbol for value in snapshot.candidates)
     if len(set(candidate_symbols)) != len(candidate_symbols):
         raise ValueError("candidates must not contain duplicate symbols")
+    if not all(
+        isinstance(value, HomeSnapshotCandidate)
+        for value in snapshot.observation_candidates
+    ):
+        raise ValueError(
+            "observation_candidates must contain HomeSnapshotCandidate values"
+        )
+    observation_symbols = tuple(
+        value.symbol for value in snapshot.observation_candidates
+    )
+    if len(set(observation_symbols)) != len(observation_symbols):
+        raise ValueError("observation_candidates must not contain duplicate symbols")
     if not all(isinstance(value, HomeSnapshotDebate) for value in snapshot.debates):
         raise ValueError("debates must contain HomeSnapshotDebate values")
     for debate in snapshot.debates:

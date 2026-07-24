@@ -24,8 +24,9 @@ export function snapshotConclusion(snapshot: AqspSnapshot): string {
 
 export function isCurrentEmptyObservation(snapshot: AqspSnapshot): boolean {
   return Boolean(
-    snapshot.meta?.historical === false &&
+      snapshot.meta?.historical === false &&
       snapshot.candidates.length === 0 &&
+      (snapshot.observation_candidates ?? []).length === 0 &&
       snapshot.messages.length === 0 &&
       snapshot.recommendation_gate &&
       gatePresentation(snapshot.recommendation_gate) !== "ready",

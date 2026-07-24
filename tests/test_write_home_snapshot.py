@@ -549,6 +549,40 @@ def test_write_home_snapshot_builds_bounded_advisory_only_payload(monkeypatch) -
     assert snapshot.stale_after == "2026-07-10T15:31:00+08:00"
 
 
+def test_write_home_snapshot_keeps_observations_when_batch_is_incomplete(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        write_home_snapshot,
+        "_universe_snapshot",
+        lambda: write_home_snapshot.HomeSnapshotUniverse(
+            total=5322,
+            resolved=256,
+            batch_active=True,
+            coverage_pct=256 / 5322,
+            last_error="missing_market_benchmark",
+        ),
+    )
+
+    snapshot = write_home_snapshot.build_home_snapshot(
+        _Provider(), signal_date="2026-07-10", task_id="intraday"
+    )
+
+    assert snapshot.candidates == ()
+    assert [item.symbol for item in snapshot.observation_candidates] == [
+        "600001",
+        "600002",
+        "600003",
+        "600004",
+        "600005",
+    ]
+    assert all(
+        item.research_status == "仅观察（全市场批次未完成）"
+        for item in snapshot.observation_candidates
+    )
+    assert snapshot.observation_candidates[0].technical_metrics
+
+
 def test_recommendation_gate_keeps_quote_candidates_when_news_refresh_fails() -> None:
     provider = _Provider()
     runtime = provider.runtime_overview("2026-07-10")

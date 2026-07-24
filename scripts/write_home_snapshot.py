@@ -47,6 +47,7 @@ from aqsp.web.home_snapshot import (
     HOME_SNAPSHOT_SCHEMA_VERSION,
     MAX_HOME_SNAPSHOT_VARIANTS,
     MAX_HOME_SNAPSHOT_CANDIDATES,
+    MAX_HOME_SNAPSHOT_OBSERVATIONS,
     MAX_HOME_SNAPSHOT_DEBATES,
     MAX_HOME_SNAPSHOT_INDEX_DAYS,
     HomeDashboardSnapshot,
@@ -413,7 +414,11 @@ def _snapshot_candidate(candidate: Any) -> HomeSnapshotCandidate | None:
     )
 
 
-def _snapshot_candidates(payload: Any) -> tuple[HomeSnapshotCandidate, ...]:
+def _snapshot_candidates(
+    payload: Any,
+    *,
+    limit: int = MAX_HOME_SNAPSHOT_CANDIDATES,
+) -> tuple[HomeSnapshotCandidate, ...]:
     """Return bounded recommendation, observation, and blocked cards.
 
     Observation-only data must remain visible on the home page without becoming a
@@ -473,7 +478,7 @@ def _snapshot_candidates(payload: Any) -> tuple[HomeSnapshotCandidate, ...]:
                 continue
             candidates.append(candidate)
             symbols.add(candidate.symbol)
-            if len(candidates) == MAX_HOME_CANDIDATES:
+            if len(candidates) == limit:
                 return tuple(candidates)
     return tuple(candidates)
 
@@ -2086,13 +2091,27 @@ def build_home_snapshot(
             ),
         )
     universe = _universe_snapshot()
+    batch_candidates_publishable = _batch_candidates_publishable(universe)
+    all_cards = _snapshot_candidates(payload, limit=MAX_HOME_SNAPSHOT_OBSERVATIONS)
     candidates = (
-        _snapshot_candidates(payload)
-        if _batch_candidates_publishable(universe)
-        else ()
+        all_cards[:MAX_HOME_SNAPSHOT_CANDIDATES] if batch_candidates_publishable else ()
+    )
+    observation_candidates = (
+        tuple(card for card in all_cards if not is_home_recommendation(card))
+        if batch_candidates_publishable
+        else tuple(
+            replace(
+                card,
+                research_status=(
+                    "仅观察（全市场批次未完成）"
+                    if is_home_recommendation(card)
+                    else card.research_status
+                ),
+            )
+            for card in all_cards
+        )
     )
     recommendation_count = _snapshot_recommendation_count(payload)
-    batch_candidates_publishable = _batch_candidates_publishable(universe)
     if not batch_candidates_publishable:
         recommendation_count = 0
     runtime_debates = _runtime_debates_for_snapshot(
@@ -2218,6 +2237,7 @@ def build_home_snapshot(
             MAX_HOME_DATES,
         ),
         candidates=candidates,
+        observation_candidates=observation_candidates,
         # Debate summaries are adjacent advisory cards and never ranking inputs.
         debates=debates,
         summaries=summaries,

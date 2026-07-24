@@ -180,6 +180,7 @@ export interface AqspSnapshot {
   selected_date: string;
   available_dates: readonly string[];
   candidates: readonly AqspCandidate[];
+  observation_candidates?: readonly AqspCandidate[];
   debates: readonly AqspAgentResult[];
   summaries: readonly string[];
   source: AqspSourceHealth;

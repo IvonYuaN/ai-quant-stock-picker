@@ -356,6 +356,10 @@
   .aqsp-observation p { margin-top: 0.18rem; color: hsl(var(--muted-foreground)); }
   .aqsp-observation button { margin-top: 0.25rem; color: hsl(var(--primary)); text-decoration: underline; text-underline-offset: 2px; }
   .aqsp-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.7rem; }
+  .aqsp-observation-panel { margin-top: 0.85rem; border-top: 1px solid hsl(var(--warning) / 0.35); padding-top: 0.75rem; }
+  .aqsp-observation-panel .aqsp-subhead { align-items: flex-start; margin-bottom: 0.55rem; }
+  .aqsp-observation-panel .aqsp-subhead p { margin-top: 0.18rem; color: hsl(var(--muted-foreground)); font-size: 0.65rem; }
+  .aqsp-observation-card { border-color: hsl(var(--warning) / 0.28); background: hsl(var(--warning) / 0.035); }
   .aqsp-card { min-width: 0; border: 1px solid hsl(var(--border) / 0.75); border-radius: 0.5rem; background: hsl(var(--card) / 0.62); padding: 0.75rem; }
   .aqsp-card:hover { border-color: hsl(var(--primary) / 0.38); }
   .aqsp-card-head, .aqsp-message-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 0.75rem; }
