@@ -313,6 +313,33 @@ def test_select_stratified_symbols_spans_boards_and_turnover_quantiles(tmp_path)
     assert selected != tuple(sorted(symbols))
 
 
+def test_select_stratified_symbols_accepts_raw_ohlcv_without_workload(tmp_path):
+    db = tmp_path / "raw_history.db"
+    with sqlite3.connect(db) as conn:
+        conn.execute(
+            """
+            CREATE TABLE ohlcv (
+                symbol TEXT, date TEXT, price_mode TEXT,
+                close REAL, amount REAL, suspended INTEGER
+            )
+            """
+        )
+        conn.executemany(
+            "INSERT INTO ohlcv VALUES (?, ?, ?, ?, ?, ?)",
+            [
+                ("000001", "2026-07-17", "raw", 10.0, 1_000_000.0, 0),
+                ("600001", "2026-07-17", "raw", 11.0, 2_000_000.0, 0),
+                ("000001", "2026-07-20", "raw", 10.5, 1_100_000.0, 0),
+                ("600001", "2026-07-20", "raw", 11.5, 2_100_000.0, 0),
+            ],
+        )
+
+    assert set(select_stratified_symbols(db, "2026-07-20")) == {
+        "000001",
+        "600001",
+    }
+
+
 def test_external_raw_database_loader_keeps_board_symbols_and_dates(tmp_path):
     db = tmp_path / "astocks_raw.db"
     with sqlite3.connect(db) as conn:

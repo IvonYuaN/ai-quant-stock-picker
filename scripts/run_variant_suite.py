@@ -251,26 +251,36 @@ def select_stratified_symbols(
             )
         }
         if "ohlcv" in tables:
+            ohlcv_columns = {
+                str(row[1]) for row in conn.execute("PRAGMA table_info(ohlcv)")
+            }
+            has_workload = "workload" in ohlcv_columns
+            if normalized_mode == "paper_realtime" and not has_workload:
+                raise ValueError(
+                    "paper_realtime 数据表缺少 workload，拒绝使用历史 raw 库"
+                )
+            workload_filter = " AND workload = ?" if has_workload else ""
             reference_row = conn.execute(
                 f"""
                 SELECT MAX(date)
                 FROM ohlcv
-                WHERE price_mode = 'raw' AND workload = ? AND date {date_operator} ?
+                WHERE price_mode = 'raw'{workload_filter}
+                  AND date {date_operator} ?
                 """,
-                (workload, before_date),
+                (workload, before_date) if has_workload else (before_date,),
             ).fetchone()
             if reference_row is None:
                 raise ValueError("reset date 前没有可用 raw/historical 覆盖日")
             reference_date = str(reference_row[0])
             rows = conn.execute(
-                """
+                f"""
                 SELECT symbol, close, amount
                 FROM ohlcv
-                WHERE price_mode = 'raw' AND workload = ?
+                  WHERE price_mode = 'raw'{workload_filter}
                   AND date = ? AND suspended = 0 AND close > 0 AND amount > 0
                 ORDER BY symbol
                 """,
-                (workload, reference_date),
+                (workload, reference_date) if has_workload else (reference_date,),
             ).fetchall()
             name_map = load_sqlite_symbol_name_map(
                 [str(symbol) for symbol, _close, _amount in rows]
