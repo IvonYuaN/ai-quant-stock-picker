@@ -1618,8 +1618,14 @@ class DashboardDataProvider:
             coldstart_ready = self._coldstart_progress_ready(progress)
 
             status = str(run.get("status") or "").strip()
+            event_type = str(run.get("event_type") or "").strip()
+            no_pick_scan = event_type in {
+                "backfill_no_picks",
+                "run_completed_no_picks",
+            }
             triggered = bool(run.get("run_circuit_breaker_triggered"))
             final_count = _runtime_float(run.get("run_final_count"))
+            scanned_count = _runtime_float(run.get("scanned_symbols"))
             display_override = os.getenv("AQSP_RESEARCH_DISPLAY_OVERRIDE", "").strip().lower() in {
                 "1", "true", "yes", "on"
             }
@@ -1627,6 +1633,12 @@ class DashboardDataProvider:
                 conclusion = f"研究展示模式：当前运行已产出 {int(final_count)} 个候选"
             elif display_override and run:
                 conclusion = "研究展示模式：当前运行结果已落盘，风险单独展示"
+            elif no_pick_scan:
+                scanned_label = (
+                    f"真实扫描 {int(scanned_count)} 只；" if scanned_count else "真实扫描已完成；"
+                )
+                reason = str(run.get("reason") or "无候选").strip()
+                conclusion = f"{scanned_label}无候选：{reason}"
             elif (status == "blocked_by_circuit_breaker" or triggered) and (
                 coldstart_ready and cooldown_until
             ):
@@ -1665,8 +1677,12 @@ class DashboardDataProvider:
                 task_id = coldstart_run.action
                 task_label = coldstart_run.task_label
 
-            requested_source = str(run.get("run_requested_source") or "").strip()
-            effective_source = str(run.get("run_actual_source") or "").strip()
+            requested_source = str(
+                run.get("run_requested_source") or run.get("source") or ""
+            ).strip()
+            effective_source = str(
+                run.get("run_actual_source") or run.get("source") or ""
+            ).strip()
             source_for_reason = effective_source or requested_source
             source_reason = str(run.get("run_source_health_message") or "").strip()
             if source_for_reason and not source_supports_workload(
@@ -1696,7 +1712,9 @@ class DashboardDataProvider:
                 effective_source=effective_source,
                 source_reason=source_reason,
                 data_latest_trade_date=str(
-                    run.get("run_data_latest_trade_date") or ""
+                    run.get("run_data_latest_trade_date")
+                    or (run.get("signal_date") if no_pick_scan else "")
+                    or ""
                 ).strip(),
                 lag_days=(
                     ""
@@ -7103,12 +7121,18 @@ class DashboardDataProvider:
     def _source_status_from_row(self, row: dict[str, Any]) -> dict[str, str]:
         lag_days = row.get("run_data_lag_days", "")
         return {
-            "requested_source": str(row.get("run_requested_source", "") or ""),
-            "actual_source": str(row.get("run_actual_source", "") or ""),
+            "requested_source": str(
+                row.get("run_requested_source") or row.get("source") or ""
+            ),
+            "actual_source": str(
+                row.get("run_actual_source") or row.get("source") or ""
+            ),
             "health_label": str(row.get("run_source_health_label", "") or ""),
             "health_message": str(row.get("run_source_health_message", "") or ""),
             "data_latest_trade_date": str(
-                row.get("run_data_latest_trade_date", "") or ""
+                row.get("run_data_latest_trade_date")
+                or row.get("signal_date")
+                or ""
             ),
             "lag_days": "" if lag_days in ("", None) else str(lag_days),
             "updated_at": now_shanghai().isoformat(timespec="seconds"),

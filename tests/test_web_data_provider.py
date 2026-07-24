@@ -3138,6 +3138,41 @@ def test_dashboard_data_provider_runtime_overview_uses_run_event_not_candidate_r
     assert "策略筛选未产生符合条件的候选" in overview.conclusion
 
 
+def test_runtime_overview_explains_real_no_pick_scan(
+    tmp_path: Path,
+) -> None:
+    ledger_path = tmp_path / "predictions.jsonl"
+    ledger_path.write_text(
+        json.dumps(
+            {
+                "symbol": "__RUN__",
+                "name": "run_event",
+                "event_type": "backfill_no_picks",
+                "signal_date": "2026-07-23",
+                "status": "backfill_no_picks",
+                "scanned_symbols": 4612,
+                "source": "sqlite_db",
+                "reason": "no picks from real sample backfill",
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    provider = DashboardDataProvider(
+        ledger_path=str(ledger_path),
+        paper_ledger_path=str(tmp_path / "paper_trades.jsonl"),
+        intraday_ledger_path=str(tmp_path / "intraday_predictions.jsonl"),
+    )
+
+    overview = provider.runtime_overview("2026-07-23")
+
+    assert overview.effective_source == "sqlite_db"
+    assert overview.data_latest_trade_date == "2026-07-23"
+    assert "4612" in overview.conclusion
+    assert "无候选" in overview.conclusion
+
+
 def test_dashboard_data_provider_dedupes_intraday_ledger_and_csv_symbols(
     tmp_path: Path,
 ) -> None:
