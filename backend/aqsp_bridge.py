@@ -779,6 +779,7 @@ def _parse_snapshot(payload: Mapping[str, Any]) -> AQSPSnapshot:
         "recommendation_gate",
         "phases",
         "universe",
+        "variant_universe",
         "variants",
     }
     _check_keys(payload, required, "快照", optional)

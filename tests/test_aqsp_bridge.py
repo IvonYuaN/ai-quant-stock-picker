@@ -326,7 +326,8 @@ def test_aqsp_bridge_snapshot_returns_typed_candidate_payload_when_snapshot_is_v
 def test_aqsp_bridge_dates_and_candidate_use_exact_historical_snapshot(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    path = _write_index(tmp_path)
+    _write_index(tmp_path)
+    path = tmp_path / "home_dashboard_snapshot_index.json"
     monkeypatch.setenv("AQSP_RESEARCH_SURFACE_SNAPSHOT", str(path))
 
     dates_response = client.get("/api/aqsp/dates")
@@ -347,6 +348,25 @@ def test_aqsp_bridge_dates_and_candidate_use_exact_historical_snapshot(
         "2026-07-14",
         "2026-07-11",
     ]
+
+
+def test_aqsp_bridge_accepts_variant_universe_in_date_index(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_index(tmp_path)
+    path = tmp_path / "home_dashboard_snapshot_index.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["days"][1]["snapshot"]["variant_universe"] = {
+        "symbol_count": 4272,
+        "board_scope": "沪深主板+创业板",
+    }
+    path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    monkeypatch.setenv("AQSP_RESEARCH_SURFACE_SNAPSHOT", str(path))
+
+    response = client.get("/api/aqsp/snapshot?date=2026-07-11")
+
+    assert response.status_code == 200
+    assert response.json()["data"]["selected_date"] == "2026-07-11"
 
 
 def test_aqsp_bridge_does_not_replace_missing_history_with_latest(
