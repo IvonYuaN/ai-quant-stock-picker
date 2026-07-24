@@ -32,6 +32,7 @@ def _manifest(root: Path, commit: str = SHA_A) -> Path:
                 "tree": "tree",
                 "remote": "origin",
                 "remote_url": "https://github.com/example/aqsp.git",
+                "content_digest": "c" * 64,
             }
         ),
         encoding="utf-8",
@@ -39,7 +40,9 @@ def _manifest(root: Path, commit: str = SHA_A) -> Path:
     return path
 
 
-def test_release_consistency_rejects_release_not_published(monkeypatch, tmp_path: Path) -> None:
+def test_release_consistency_rejects_release_not_published(
+    monkeypatch, tmp_path: Path
+) -> None:
     _manifest(tmp_path)
     _fake_git(
         monkeypatch,
@@ -125,7 +128,9 @@ def test_release_consistency_rejects_legacy_active_entry(tmp_path: Path) -> None
     assert {item.code for item in findings} >= {"legacy_entry_reference"}
 
 
-def test_write_release_manifest_contains_commit_and_content_digest(tmp_path: Path) -> None:
+def test_write_release_manifest_contains_commit_and_content_digest(
+    tmp_path: Path,
+) -> None:
     (tmp_path / ".git").mkdir()
     (tmp_path / "tracked.txt").write_text("value\n", encoding="utf-8")
     monkeypatch_values = {
@@ -157,6 +162,44 @@ def test_write_release_manifest_contains_commit_and_content_digest(tmp_path: Pat
     assert len(saved["content_digest"]) == 64
 
 
+def test_write_release_manifest_verifies_archive_against_source_commit(
+    tmp_path: Path, monkeypatch
+) -> None:
+    release = tmp_path / "release"
+    source = tmp_path / "source"
+    release.mkdir()
+    source.mkdir()
+    (source / ".git").mkdir()
+    (release / "tracked.txt").write_text("value\n", encoding="utf-8")
+
+    import scripts.write_release_manifest as writer
+
+    def fake_git(root: Path, *args: str) -> str:
+        assert root == source
+        values = {
+            ("rev-parse", f"{SHA_A}^{{commit}}"): SHA_A,
+            ("rev-parse", f"{SHA_A}^{{tree}}"): "tree-sha",
+            (
+                "config",
+                "--get",
+                "remote.origin.url",
+            ): "https://github.com/example/aqsp.git",
+            ("ls-tree", "-r", "--name-only", "-z", SHA_A): "tracked.txt\0",
+        }
+        return values[args]
+
+    monkeypatch.setattr(writer, "_git", fake_git)
+    payload = writer.build_manifest(
+        release,
+        commit=SHA_A,
+        source_root=source,
+    )
+
+    assert payload["tree"] == "tree-sha"
+    assert payload["file_count"] == 1
+    assert len(str(payload["content_digest"])) == 64
+
+
 def test_push_with_report_exposes_github_failure(monkeypatch, tmp_path: Path) -> None:
     calls = iter(
         [
@@ -172,24 +215,44 @@ def test_push_with_report_exposes_github_failure(monkeypatch, tmp_path: Path) ->
         return next(calls)
 
     monkeypatch.setattr(push_with_report.subprocess, "run", fake_run)
-    code, payload = push_with_report.push(
-        tmp_path, remote="origin", branch="main"
-    )
+    code, payload = push_with_report.push(tmp_path, remote="origin", branch="main")
 
     assert code == 128
     assert payload["status"] == "failed"
     assert "HTTP/2" in payload["output"]
 
 
-def test_push_with_report_rejects_remote_commit_mismatch(monkeypatch, tmp_path: Path) -> None:
+def test_push_with_report_rejects_remote_commit_mismatch(
+    monkeypatch, tmp_path: Path
+) -> None:
     monkeypatch.setattr(
         push_with_report,
         "_run",
         lambda _root, command: {
-            ("git", "rev-parse", "HEAD"): subprocess.CompletedProcess(command, 0, SHA_A + "\n", ""),
-            ("git", "status", "--porcelain", "--untracked-files=all"): subprocess.CompletedProcess(command, 0, "", ""),
-            ("git", "push", "--porcelain", "origin", "HEAD:refs/heads/main"): subprocess.CompletedProcess(command, 0, "", ""),
-            ("git", "ls-remote", "origin", "refs/heads/main"): subprocess.CompletedProcess(command, 0, SHA_B + "\trefs/heads/main\n", ""),
+            ("git", "rev-parse", "HEAD"): subprocess.CompletedProcess(
+                command, 0, SHA_A + "\n", ""
+            ),
+            (
+                "git",
+                "status",
+                "--porcelain",
+                "--untracked-files=all",
+            ): subprocess.CompletedProcess(command, 0, "", ""),
+            (
+                "git",
+                "push",
+                "--porcelain",
+                "origin",
+                "HEAD:refs/heads/main",
+            ): subprocess.CompletedProcess(command, 0, "", ""),
+            (
+                "git",
+                "ls-remote",
+                "origin",
+                "refs/heads/main",
+            ): subprocess.CompletedProcess(
+                command, 0, SHA_B + "\trefs/heads/main\n", ""
+            ),
         }[tuple(command)],
     )
 
@@ -268,6 +331,40 @@ def test_release_consistency_immutable_release_ignores_remote_and_overlay(
     )
 
     assert findings == []
+
+
+def test_release_consistency_rejects_unverified_immutable_content(
+    monkeypatch, tmp_path: Path
+) -> None:
+    manifest = _manifest(tmp_path)
+    payload = json.loads(manifest.read_text(encoding="utf-8"))
+    payload["content_digest"] = "unverified"
+    manifest.write_text(json.dumps(payload), encoding="utf-8")
+    _fake_git(
+        monkeypatch,
+        {
+            ("rev-parse", "HEAD"): (False, "git metadata unavailable"),
+            ("status", "--porcelain=v1", "--untracked-files=all"): (
+                False,
+                "git metadata unavailable",
+            ),
+        },
+    )
+
+    findings = checker.audit(
+        project_root=tmp_path,
+        runtime_root=tmp_path / "runtime",
+        remote="origin",
+        branch="main",
+        canonical_link=None,
+        manifest_path=manifest,
+        overlay_path=tmp_path / "runtime" / "overlay.json",
+        active_files=[],
+        require_overlay=False,
+        immutable_release=True,
+    )
+
+    assert any(item.code == "unverified_release_content" for item in findings)
 
 
 def test_release_consistency_immutable_release_allows_release_generated_files(

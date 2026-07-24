@@ -36,6 +36,11 @@ def _tracked_files(root: Path) -> list[str]:
     return sorted(item for item in output.split("\0") if item)
 
 
+def _tracked_files_at_commit(root: Path, commit: str) -> list[str]:
+    output = _git(root, "ls-tree", "-r", "--name-only", "-z", commit)
+    return sorted(item for item in output.split("\0") if item)
+
+
 def _content_digest(root: Path, files: list[str]) -> str:
     digest = hashlib.sha256()
     for relative in files:
@@ -57,9 +62,12 @@ def build_manifest(
     branch: str | None = None,
     remote: str | None = None,
     remote_url: str | None = None,
+    source_root: Path | None = None,
 ) -> dict[str, object]:
     root = root.resolve()
     has_git = (root / ".git").exists()
+    source_root = source_root.resolve() if source_root is not None else None
+    source_has_git = source_root is not None and (source_root / ".git").exists()
     if has_git:
         status = _git(root, "status", "--porcelain", "--untracked-files=all")
         if status:
@@ -78,6 +86,21 @@ def build_manifest(
         remote = remote or "origin"
         remote_url = remote_url or _git(root, "config", "--get", f"remote.{remote}.url")
         files = _tracked_files(root)
+    elif source_has_git:
+        resolved_commit = _commit(
+            _git(source_root, "rev-parse", f"{commit}^{{commit}}")
+        )
+        if resolved_commit != commit:
+            raise ValueError(
+                f"requested commit {commit} differs from source {resolved_commit}"
+            )
+        tree = _git(source_root, "rev-parse", f"{commit}^{{tree}}")
+        branch = branch or "immutable-release"
+        remote = remote or "origin"
+        remote_url = remote_url or _git(
+            source_root, "config", "--get", f"remote.{remote}.url"
+        )
+        files = _tracked_files_at_commit(source_root, commit)
     else:
         tree = "unavailable"
         branch = branch or "immutable-release"
@@ -124,6 +147,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--branch")
     parser.add_argument("--remote")
     parser.add_argument("--remote-url")
+    parser.add_argument(
+        "--source-root",
+        type=Path,
+        help="Git source used to verify tracked files for an archive release",
+    )
     args = parser.parse_args(argv)
     root = args.root.resolve()
     output = args.output or root / ".aqsp-release.json"
@@ -134,6 +162,7 @@ def main(argv: list[str] | None = None) -> int:
             branch=args.branch,
             remote=args.remote,
             remote_url=args.remote_url,
+            source_root=args.source_root,
         )
         write_manifest(manifest, output)
     except (OSError, subprocess.CalledProcessError, ValueError) as exc:
