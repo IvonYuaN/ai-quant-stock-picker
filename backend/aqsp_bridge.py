@@ -235,6 +235,8 @@ class AQSPVariant:
     start_date: str
     end_date: str
     data_mode: str
+    holdings_date: str = ""
+    previous_holdings_date: str = ""
     rank: int = 0
     strategy: str = ""
     holdings: tuple[dict[str, Any], ...] = ()
@@ -921,6 +923,8 @@ def _parse_variant(payload: object) -> AQSPVariant:
             "holdings",
             "previous_holdings",
             "adjustments",
+            "holdings_date",
+            "previous_holdings_date",
             "recent_actions",
             "hard_rules",
         },
@@ -943,6 +947,10 @@ def _parse_variant(payload: object) -> AQSPVariant:
         start_date=_text(item["start_date"], "variant.start_date"),
         end_date=_text(item["end_date"], "variant.end_date"),
         data_mode=_text(item["data_mode"], "variant.data_mode"),
+        holdings_date=_optional_text(item.get("holdings_date"), "variant.holdings_date"),
+        previous_holdings_date=_optional_text(
+            item.get("previous_holdings_date"), "variant.previous_holdings_date"
+        ),
         rank=_integer(item.get("rank", 0), "variant.rank"),
         strategy=_optional_text(item.get("strategy"), "variant.strategy"),
         holdings=tuple(
