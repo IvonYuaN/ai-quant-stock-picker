@@ -19,12 +19,8 @@ class _Source:
             for symbol in symbols
         }
 
-    def fetch_daily(
-        self, symbols: list[str], start, end, adjust: str = ""
-    ) -> dict:
-        return {
-            symbols[0]: pd.DataFrame({"date": ["2026-07-16"], "close": [10.0]})
-        }
+    def fetch_daily(self, symbols: list[str], start, end, adjust: str = "") -> dict:
+        return {symbols[0]: pd.DataFrame({"date": ["2026-07-16"], "close": [10.0]})}
 
     def set_workload(self, workload: str | None) -> None:
         self.workload = workload
@@ -52,7 +48,7 @@ def test_multi_source_live_short_daily_keeps_partial_batch_for_coverage_gate() -
     assert set(result) == {"600000"}
 
 
-def test_multi_source_live_intraday_races_sources_under_shared_deadline() -> None:
+def test_multi_source_live_intraday_uses_fallback_after_primary_failure() -> None:
     class SlowSource(_Source):
         def __init__(self, name: str, delay: float, *, fail: bool = False) -> None:
             self.name = name
@@ -78,7 +74,62 @@ def test_multi_source_live_intraday_races_sources_under_shared_deadline() -> Non
 
     assert set(result) == {"600000"}
     assert result["600000"].attrs["source_name"] == "sina"
-    assert elapsed < 0.15
+    assert elapsed < 0.35
+
+
+def test_multi_source_live_intraday_does_not_call_fallback_when_primary_complete() -> (
+    None
+):
+    class RecordingSource(_Source):
+        def __init__(self, name: str) -> None:
+            self.name = name
+            self.calls: list[tuple[str, ...]] = []
+
+        def fetch_intraday(self, symbols: list[str], period: str = "5") -> dict:
+            self.calls.append(tuple(symbols))
+            return super().fetch_intraday(symbols, period)
+
+    primary = RecordingSource("eastmoney")
+    fallback = RecordingSource("sina")
+
+    result = MultiSource(primary, [fallback]).fetch_intraday(["600000"])
+
+    assert set(result) == {"600000"}
+    assert primary.calls == [("600000",)]
+    assert fallback.calls == []
+
+
+def test_multi_source_live_intraday_fallback_only_receives_missing_symbols() -> None:
+    class RecordingSource(_Source):
+        def __init__(self, name: str, data: dict[str, pd.DataFrame]) -> None:
+            self.name = name
+            self.data = data
+            self.calls: list[tuple[str, ...]] = []
+
+        def fetch_intraday(self, symbols: list[str], period: str = "5") -> dict:
+            self.calls.append(tuple(symbols))
+            return {
+                symbol: self.data[symbol] for symbol in symbols if symbol in self.data
+            }
+
+    primary = RecordingSource(
+        "eastmoney", {"600000": _Source().fetch_intraday(["600000"])["600000"]}
+    )
+    fallback = RecordingSource(
+        "sina",
+        {
+            "000001": _Source().fetch_intraday(["000001"])["000001"],
+            "300750": _Source().fetch_intraday(["300750"])["300750"],
+        },
+    )
+
+    result = MultiSource(primary, [fallback]).fetch_intraday(
+        ["600000", "000001", "300750"]
+    )
+
+    assert set(result) == {"600000", "000001", "300750"}
+    assert primary.calls == [("600000", "000001", "300750")]
+    assert fallback.calls == [("000001", "300750")]
 
 
 def test_multi_source_live_intraday_rejects_historical_fallback() -> None:

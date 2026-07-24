@@ -22,6 +22,7 @@ from aqsp.data.quote_metadata import (
 )
 from aqsp.core.errors import DataError
 from aqsp.core.time import now_shanghai
+from aqsp.data.parallel_fetch import fetch_in_parallel
 
 _REQUEST_DELAY = 0.3
 _MAX_RETRIES = 3
@@ -133,14 +134,17 @@ class SinaSource(DataSource):
         symbols: list[str],
         period: Literal["1", "5", "15", "30", "60"] = "5",
     ) -> dict[str, OhlcvFrame]:
-        out: dict[str, OhlcvFrame] = {}
-        for symbol in symbols:
-            out[symbol] = require_fetched_frame(
+        def fetch_one(symbol: str) -> OhlcvFrame:
+            return require_fetched_frame(
                 self.name,
                 "分时",
                 symbol,
                 self._fetch_sina_intraday(symbol, period),
             )
+
+        out, errors = fetch_in_parallel(list(symbols), fetch_one)
+        if errors and self._cache_workload() != "live_short":
+            raise next(iter(errors.values()))
         require_non_empty_fetch_result(self.name, "分时", symbols, out)
         return out
 
@@ -188,9 +192,7 @@ class SinaSource(DataSource):
         snapshot = self._fetch_sina_spot_snapshot(sort="amount")
         if snapshot.empty:
             raise DataError("sina 全市场实时快照为空，无法筛选高流动性标的")
-        liquid = snapshot[
-            snapshot["amount"] >= max(float(min_amount or 0.0), 0.0)
-        ]
+        liquid = snapshot[snapshot["amount"] >= max(float(min_amount or 0.0), 0.0)]
         row_limit = max(int(limit or 0), 0)
         if row_limit > 0:
             liquid = liquid.head(row_limit)
@@ -253,9 +255,7 @@ class SinaSource(DataSource):
                 if attempt < _MAX_RETRIES - 1:
                     time.sleep(_BACKOFF_BASE ** (attempt + 1))
                 else:
-                    raise DataError(
-                        f"sina 全市场实时快照获取失败 page={page}"
-                    ) from exc
+                    raise DataError(f"sina 全市场实时快照获取失败 page={page}") from exc
         return []
 
     def fetch_index(

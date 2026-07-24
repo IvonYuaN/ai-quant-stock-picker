@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -83,7 +83,7 @@ class MultiSource(DataSource):
         period: Literal["1", "5", "15", "30", "60"] = "5",
     ) -> dict[str, OhlcvFrame]:
         return self._with_live_short_fallback(
-            lambda src: src.fetch_intraday(symbols, period),
+            lambda src, requested: src.fetch_intraday(requested, period),
             "fetch_intraday",
             expected_keys=symbols,
         )
@@ -95,7 +95,7 @@ class MultiSource(DataSource):
         *,
         expected_keys: list[str],
     ) -> dict[str, object]:
-        """Race realtime sources under one deadline without admitting history."""
+        """Use sources by priority and ask fallbacks only for missing symbols."""
         self._clear_last_used()
         eligible: list[tuple[int, DataSource | SourceFactory, str]] = []
         exceptions: list[tuple[str, object]] = []
@@ -116,102 +116,72 @@ class MultiSource(DataSource):
                 + ", ".join(f"{name}: {error}" for name, error in exceptions)
             )
 
-        executor = ThreadPoolExecutor(
-            max_workers=len(eligible),
-            thread_name_prefix="aqsp-live-source",
-        )
-        futures = {
-            executor.submit(self._fetch_live_source, source_ref, func): (
-                index,
-                source_name,
-            )
-            for index, source_ref, source_name in eligible
-        }
-        pending = set(futures)
-        complete_results: list[tuple[int, str, dict[str, object]]] = []
-        partial_results: list[_PartialResult] = []
+        requested = list(dict.fromkeys(str(key) for key in expected_keys if str(key)))
+        accepted: dict[str, object] = {}
+        pending = requested[:]
         deadline = time.monotonic() + self.live_fetch_deadline_seconds
+        executor = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="aqsp-live-source"
+        )
         try:
-            while pending:
+            for _, source_ref, source_name in eligible:
+                if not pending:
+                    break
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     break
-                done, pending = wait(
-                    pending,
-                    timeout=remaining,
-                    return_when=FIRST_COMPLETED,
+                future = executor.submit(
+                    self._fetch_live_source, source_ref, func, pending[:]
                 )
-                if not done:
-                    break
-                for future in done:
-                    index, source_name = futures[future]
-                    try:
-                        result = future.result()
-                        if not result:
-                            raise DataError("empty result")
-                        result = _annotate_result(result, source_name, "live_short")
-                        if not _has_realtime_provenance(result):
-                            raise DataError("实时 workload 缺少逐标的 provenance")
-                    except Exception as exc:
-                        exceptions.append((source_name, exc))
-                        continue
-                    missing = _missing_requested_keys(result, expected_keys)
-                    if missing:
-                        partial_results.append(
-                            _PartialResult(source_name=source_name, result=result)
-                        )
-                        exceptions.append(
-                            (
-                                source_name,
-                                f"partial result missing {len(missing)}/{len(expected_keys)}",
-                            )
-                        )
-                        continue
-                    complete_results.append((index, source_name, result))
-                if complete_results and not self.validate_consistency:
-                    # The first completed source is the freshest usable answer; source
-                    # order only breaks ties among sources completed in this batch.
-                    _, _, result = min(complete_results, key=lambda item: item[0])
-                    self._set_last_used_provenance(result, "multi")
-                    return result
-
-            if complete_results:
-                complete_results.sort(key=lambda item: item[0])
-                _, primary_name, primary_result = complete_results[0]
-                self._set_last_used_provenance(primary_result, primary_name)
-                if self.validate_consistency and len(complete_results) > 1:
-                    self._validate_consistency(
-                        primary_result,
-                        complete_results[1][2],
-                        primary_source_name=primary_name,
-                        fallback_source_name=complete_results[1][1],
+                try:
+                    result = future.result(timeout=remaining)
+                except Exception as exc:
+                    exceptions.append((source_name, exc))
+                    continue
+                if not result:
+                    exceptions.append((source_name, "empty result"))
+                    continue
+                result = _annotate_result(result, source_name, "live_short")
+                if not _has_realtime_provenance(result):
+                    exceptions.append(
+                        (source_name, "实时 workload 缺少逐标的 provenance")
                     )
-                return primary_result
-
-            merged_result = _merge_partial_results(
-                partial_results,
-                expected_keys,
-            )
-            if merged_result is not None:
+                    continue
+                for symbol in requested:
+                    if symbol in result and symbol not in accepted:
+                        accepted[symbol] = result[symbol]
+                missing = [symbol for symbol in pending if symbol not in result]
+                if missing:
+                    exceptions.append(
+                        (
+                            source_name,
+                            f"partial result missing {len(missing)}/{len(pending)}",
+                        )
+                    )
+                pending = missing
+            if not pending and accepted:
+                merged_result = {symbol: accepted[symbol] for symbol in requested}
                 self._set_last_used_provenance(merged_result, "multi")
-                self._last_used_source = "multi"
                 return merged_result
             raise DataError(
                 f"所有数据源获取{method_name}失败: "
                 + ", ".join(f"{name}: {str(error)[:80]}" for name, error in exceptions)
             )
         finally:
-            for future in pending:
-                future.cancel()
             executor.shutdown(wait=False, cancel_futures=True)
 
     def _fetch_live_source(
         self,
         source_ref: DataSource | SourceFactory,
         func,
+        symbols: list[str],
     ) -> dict[str, object]:
         source = self._materialize(source_ref)
-        return func(source)
+        return self._call_source(
+            source,
+            lambda current: func(current, symbols),
+            workload="live_short",
+        )
 
     def fetch_index_intraday(
         self,
@@ -220,7 +190,9 @@ class MultiSource(DataSource):
     ) -> dict[str, OhlcvFrame]:
         """Fetch index bars without routing index codes through stock APIs."""
         return self._with_live_short_fallback(
-            lambda src: _fetch_index_intraday_from_source(src, index_codes, period),
+            lambda src, requested: _fetch_index_intraday_from_source(
+                src, requested, period
+            ),
             "fetch_index_intraday",
             expected_keys=index_codes,
         )
@@ -424,16 +396,13 @@ class MultiSource(DataSource):
         if effective_workload == "live_short" and merged_result is not None:
             missing = _missing_requested_keys(merged_result, expected_keys)
             guarded_sources = [
-                name
-                for name, error in exceptions
-                if "不适合 live_short" in str(error)
+                name for name, error in exceptions if "不适合 live_short" in str(error)
             ]
             if missing and guarded_sources and len(partial_results) <= 1:
                 self._clear_last_used()
                 raise DataError(
                     f"{guarded_sources[0]} 不适合 live_short；实时数据存在未覆盖标的，"
-                    "且历史源不得补齐: "
-                    + ", ".join(missing[:20])
+                    "且历史源不得补齐: " + ", ".join(missing[:20])
                 )
         if merged_result is not None:
             self._set_last_used_provenance(merged_result, "multi")

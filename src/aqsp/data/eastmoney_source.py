@@ -19,6 +19,7 @@ from aqsp.data.cache import DataCache
 from aqsp.core.errors import DataError
 from aqsp.core.time import now_shanghai
 from aqsp.data.quote_metadata import parse_vendor_timestamp, quote_timestamp_metadata
+from aqsp.data.parallel_fetch import fetch_in_parallel
 
 _REQUEST_DELAY = 0.3
 _MAX_RETRIES = 3
@@ -130,9 +131,8 @@ class EastmoneySource(DataSource):
         symbols: list[str],
         period: Literal["1", "5", "15", "30", "60"] = "5",
     ) -> dict[str, OhlcvFrame]:
-        out: dict[str, OhlcvFrame] = {}
-        for symbol in symbols:
-            out[symbol] = _normalize_stock_volume_to_shares(
+        def fetch_one(symbol: str) -> OhlcvFrame:
+            return _normalize_stock_volume_to_shares(
                 require_fetched_frame(
                     self.name,
                     "分时",
@@ -140,6 +140,10 @@ class EastmoneySource(DataSource):
                     self._fetch_eastmoney_intraday(symbol, period),
                 )
             )
+
+        out, errors = fetch_in_parallel(list(symbols), fetch_one)
+        if errors and self._cache_workload() != "live_short":
+            raise next(iter(errors.values()))
         require_non_empty_fetch_result(self.name, "分时", symbols, out)
         return out
 
