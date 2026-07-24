@@ -70,6 +70,13 @@ class MultiSource(DataSource):
         end: date,
         adjust: Literal["", "qfq", "hfq"] = "",
     ) -> dict[str, OhlcvFrame]:
+        if self._active_workload == "live_short":
+            return self._with_live_short_fallback(
+                lambda src, requested: src.fetch_daily(requested, start, end, adjust),
+                "fetch_daily",
+                expected_keys=symbols,
+                allow_incomplete=True,
+            )
         return self._with_fallback(
             lambda src: src.fetch_daily(symbols, start, end, adjust),
             "fetch_daily",
@@ -94,6 +101,7 @@ class MultiSource(DataSource):
         method_name: str,
         *,
         expected_keys: list[str],
+        allow_incomplete: bool = False,
     ) -> dict[str, object]:
         """Use sources by priority and ask fallbacks only for missing symbols."""
         self._clear_last_used()
@@ -159,8 +167,15 @@ class MultiSource(DataSource):
                         )
                     )
                 pending = missing
-            if not pending and accepted:
-                merged_result = {symbol: accepted[symbol] for symbol in requested}
+            guarded_sources = [
+                name for name, error in exceptions if "不适合 live_short" in str(error)
+            ]
+            if accepted and (not pending or (allow_incomplete and not guarded_sources)):
+                merged_result = {
+                    symbol: accepted[symbol]
+                    for symbol in requested
+                    if symbol in accepted
+                }
                 self._set_last_used_provenance(merged_result, "multi")
                 return merged_result
             raise DataError(

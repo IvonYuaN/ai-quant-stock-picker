@@ -132,6 +132,36 @@ def test_multi_source_live_intraday_fallback_only_receives_missing_symbols() -> 
     assert fallback.calls == [("000001", "300750")]
 
 
+def test_multi_source_live_daily_fallback_only_receives_missing_symbols() -> None:
+    class RecordingSource(_Source):
+        def __init__(self, name: str, data: dict[str, pd.DataFrame]) -> None:
+            self.name = name
+            self.data = data
+            self.calls: list[tuple[str, ...]] = []
+
+        def fetch_daily(self, symbols, start, end, adjust=""):
+            self.calls.append(tuple(symbols))
+            return {
+                symbol: self.data[symbol] for symbol in symbols if symbol in self.data
+            }
+
+    frame = pd.DataFrame({"date": ["2026-07-16"], "close": [10.0]})
+    primary = RecordingSource("eastmoney", {"600000": frame})
+    fallback = RecordingSource("sina", {"000001": frame, "300750": frame})
+    multi = MultiSource(primary, [fallback])
+    multi.set_workload("live_short")
+
+    result = multi.fetch_daily(
+        ["600000", "000001", "300750"],
+        date(2026, 7, 1),
+        date(2026, 7, 16),
+    )
+
+    assert set(result) == {"600000", "000001", "300750"}
+    assert primary.calls == [("600000", "000001", "300750")]
+    assert fallback.calls == [("000001", "300750")]
+
+
 def test_multi_source_live_intraday_rejects_historical_fallback() -> None:
     historical = _Source()
     historical.name = "sqlite_db"

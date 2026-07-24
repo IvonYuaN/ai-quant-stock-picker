@@ -86,6 +86,8 @@ class SinaSource(DataSource):
         end: date,
         adjust: Literal["", "qfq", "hfq"] = "",
     ) -> dict[str, OhlcvFrame]:
+        if self._cache_workload() == "live_short":
+            return self._fetch_live_daily_parallel(symbols, start, end, adjust)
         out: dict[str, OhlcvFrame] = {}
         for symbol in symbols:
             cached = self.cache.get_ohlcv(
@@ -127,6 +129,55 @@ class SinaSource(DataSource):
                 raise DataError(f"{self.name} 日线获取失败: {symbols}")
         else:
             require_non_empty_fetch_result(self.name, "日线", symbols, out)
+        return out
+
+    def _fetch_live_daily_parallel(
+        self,
+        symbols: list[str],
+        start: date,
+        end: date,
+        adjust: Literal["", "qfq", "hfq"],
+    ) -> dict[str, OhlcvFrame]:
+        out: dict[str, OhlcvFrame] = {}
+        pending: list[str] = []
+        for symbol in symbols:
+            cached = self.cache.get_ohlcv(
+                symbol,
+                start,
+                end,
+                price_mode=adjust or "raw",
+                source=self.name,
+                workload=self._cache_workload(),
+            )
+            if cached is not None and not cached.empty:
+                out[symbol] = self._annotate_frame(cached)
+            else:
+                pending.append(symbol)
+
+        fetched, errors = fetch_in_parallel(
+            pending,
+            lambda symbol: require_fetched_frame(
+                self.name,
+                "日线",
+                symbol,
+                self._fetch_sina_daily(symbol, start, end),
+            ),
+        )
+        for symbol, raw_frame in fetched.items():
+            df = self._normalize_sina_df(raw_frame, symbol)
+            validated = self._validate_ohlcv(df, symbol)
+            self.cache.set_ohlcv(
+                symbol,
+                validated,
+                source=self.name,
+                price_mode=adjust or "raw",
+                workload=self._cache_workload(),
+            )
+            out[symbol] = self._annotate_frame(validated)
+        for symbol, error in errors.items():
+            _logger.warning("sina 盘中日线跳过无返回标的 %s: %s", symbol, error)
+        if not out:
+            raise DataError(f"{self.name} 日线获取失败: {symbols}")
         return out
 
     def fetch_intraday(
