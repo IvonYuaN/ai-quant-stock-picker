@@ -187,6 +187,52 @@ def test_multi_source_live_daily_fallback_only_receives_missing_symbols() -> Non
     assert fallback.calls == [("000001", "300750")]
 
 
+def test_multi_source_live_daily_splits_large_batches_before_fallback() -> None:
+    class RecordingSource(_Source):
+        def __init__(self, name: str, symbols: set[str]) -> None:
+            self.name = name
+            self.symbols = symbols
+            self.calls: list[tuple[str, ...]] = []
+
+        def fetch_daily(self, symbols, start, end, adjust=""):
+            self.calls.append(tuple(symbols))
+            return {
+                symbol: pd.DataFrame(
+                    {"date": ["2026-07-16"], "close": [10.0]}
+                )
+                for symbol in symbols
+                if symbol in self.symbols
+            }
+
+    symbols = [f"{index:06d}" for index in range(5)]
+    primary = RecordingSource("eastmoney", {symbols[0], symbols[1]})
+    fallback = RecordingSource("sina", set(symbols[2:]))
+    multi = MultiSource(
+        primary,
+        [fallback],
+        validate_consistency=False,
+        live_fetch_batch_size=2,
+    )
+    multi.set_workload("live_short")
+
+    result = multi.fetch_daily(
+        symbols,
+        date(2026, 7, 1),
+        date(2026, 7, 16),
+    )
+
+    assert set(result) == set(symbols)
+    assert primary.calls == [(symbols[0], symbols[1]), (symbols[2], symbols[3])]
+    assert fallback.calls == [(symbols[2], symbols[3]), (symbols[4],)]
+    assert multi.last_used_sources == {
+        symbols[0]: "eastmoney",
+        symbols[1]: "eastmoney",
+        symbols[2]: "sina",
+        symbols[3]: "sina",
+        symbols[4]: "sina",
+    }
+
+
 def test_multi_source_live_intraday_rejects_historical_fallback() -> None:
     historical = _Source()
     historical.name = "sqlite_db"

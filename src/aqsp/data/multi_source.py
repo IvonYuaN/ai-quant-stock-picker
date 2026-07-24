@@ -5,6 +5,7 @@ from datetime import date
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal
+import os
 import time
 import pandas as pd
 
@@ -31,6 +32,7 @@ class _PartialResult:
 
 class MultiSource(DataSource):
     name: str = "multi"
+    _DEFAULT_LIVE_FETCH_BATCH_SIZE = 64
 
     def __init__(
         self,
@@ -39,6 +41,7 @@ class MultiSource(DataSource):
         *,
         validate_consistency: bool = True,
         live_fetch_deadline_seconds: float = 30.0,
+        live_fetch_batch_size: int | None = None,
     ) -> None:
         self.primary = primary
         self.fallbacks = fallbacks
@@ -46,6 +49,7 @@ class MultiSource(DataSource):
         if live_fetch_deadline_seconds <= 0:
             raise ValueError("live_fetch_deadline_seconds 必须大于 0")
         self.live_fetch_deadline_seconds = float(live_fetch_deadline_seconds)
+        self.live_fetch_batch_size = _live_fetch_batch_size(live_fetch_batch_size)
         self._last_used_source: str | None = None
         self._last_used_sources: dict[str, str] = {}
         self._active_workload: WorkloadId | None = None
@@ -128,7 +132,7 @@ class MultiSource(DataSource):
         accepted: dict[str, object] = {}
         pending = requested[:]
         deadline = time.monotonic() + self.live_fetch_deadline_seconds
-        # Keep one worker per source.  A timed-out primary request may still be
+        # Keep one worker per source. A timed-out primary request may still be
         # unwinding its HTTP retries; a single-worker executor would queue the
         # fallback behind that stuck request and consume the whole deadline.
         executor = ThreadPoolExecutor(
@@ -143,35 +147,57 @@ class MultiSource(DataSource):
                     break
                 sources_left = len(eligible) - position
                 source_timeout = remaining / sources_left
-                future = executor.submit(
-                    self._fetch_live_source, source_ref, func, pending[:]
-                )
                 try:
-                    result = future.result(timeout=source_timeout)
+                    source = self._materialize(source_ref)
                 except Exception as exc:
                     exceptions.append((source_name, exc))
                     continue
-                if not result:
-                    exceptions.append((source_name, "empty result"))
-                    continue
-                result = _annotate_result(result, source_name, "live_short")
-                if not _has_realtime_provenance(result):
-                    exceptions.append(
-                        (source_name, "实时 workload 缺少逐标的 provenance")
+                source_deadline = min(deadline, time.monotonic() + source_timeout)
+                source_failed = False
+                for batch in _chunked(pending, self.live_fetch_batch_size):
+                    batch_remaining = source_deadline - time.monotonic()
+                    if batch_remaining <= 0:
+                        exceptions.append((source_name, "source deadline exceeded"))
+                        source_failed = True
+                        break
+                    future = executor.submit(
+                        self._fetch_live_source_instance, source, func, batch
                     )
-                    continue
-                for symbol in requested:
-                    if symbol in result and symbol not in accepted:
-                        accepted[symbol] = result[symbol]
-                missing = [symbol for symbol in pending if symbol not in result]
-                if missing:
+                    try:
+                        result = future.result(timeout=batch_remaining)
+                    except Exception as exc:
+                        exceptions.append(
+                            (
+                                source_name,
+                                f"batch {len(batch)} failed: {str(exc)[:120]}",
+                            )
+                        )
+                        source_failed = True
+                        break
+                    if not result:
+                        exceptions.append(
+                            (source_name, f"batch {len(batch)} empty result")
+                        )
+                        source_failed = True
+                        break
+                    result = _annotate_result(result, source_name, "live_short")
+                    if not _has_realtime_provenance(result):
+                        exceptions.append(
+                            (source_name, "实时 workload 缺少逐标的 provenance")
+                        )
+                        source_failed = True
+                        break
+                    for symbol in batch:
+                        if symbol in result and symbol not in accepted:
+                            accepted[symbol] = result[symbol]
+                pending = [symbol for symbol in pending if symbol not in accepted]
+                if pending and source_failed:
                     exceptions.append(
                         (
                             source_name,
-                            f"partial result missing {len(missing)}/{len(pending)}",
+                            f"partial result missing {len(pending)}/{len(requested)}",
                         )
                     )
-                pending = missing
             guarded_sources = [
                 name for name, error in exceptions if "不适合 live_short" in str(error)
             ]
@@ -197,6 +223,14 @@ class MultiSource(DataSource):
         symbols: list[str],
     ) -> dict[str, object]:
         source = self._materialize(source_ref)
+        return self._fetch_live_source_instance(source, func, symbols)
+
+    def _fetch_live_source_instance(
+        self,
+        source: DataSource,
+        func,
+        symbols: list[str],
+    ) -> dict[str, object]:
         return self._call_source(
             source,
             lambda current: func(current, symbols),
@@ -615,6 +649,25 @@ def _missing_requested_keys(
         return []
     present = {str(key) for key in result}
     return [key for key in requested if key not in present]
+
+
+def _chunked(values: list[str], size: int) -> list[list[str]]:
+    return [values[index : index + size] for index in range(0, len(values), size)]
+
+
+def _live_fetch_batch_size(configured: int | None) -> int:
+    if configured is not None:
+        if configured <= 0:
+            raise ValueError("live_fetch_batch_size 必须大于 0")
+        return int(configured)
+    raw = os.getenv("AQSP_LIVE_SOURCE_BATCH_SIZE", "").strip()
+    if not raw:
+        return MultiSource._DEFAULT_LIVE_FETCH_BATCH_SIZE
+    try:
+        value = int(raw)
+    except ValueError:
+        return MultiSource._DEFAULT_LIVE_FETCH_BATCH_SIZE
+    return value if value > 0 else MultiSource._DEFAULT_LIVE_FETCH_BATCH_SIZE
 
 
 def _record_quote_error(
