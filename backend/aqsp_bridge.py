@@ -23,6 +23,7 @@ INDEX_SCHEMA_VERSION = "v1-index"
 MAX_SNAPSHOT_BYTES = 512 * 1024
 MAX_DATES = 4
 MAX_CANDIDATES = 5
+MAX_OBSERVATIONS = 12
 MAX_DEBATES = 3
 MAX_SUMMARIES = 3
 MAX_MESSAGES = 5
@@ -300,6 +301,7 @@ class AQSPSnapshot:
     universe: AQSPUniverse = AQSPUniverse()
     variant_universe: AQSPVariantUniverse = AQSPVariantUniverse()
     variants: tuple[AQSPVariant, ...] = ()
+    observation_candidates: tuple[AQSPCandidate, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -391,9 +393,7 @@ def _debate_results_path() -> Path:
         return path
     runtime_root = os.environ.get("AQSP_RUNTIME_ROOT", "").strip()
     return (
-        Path(runtime_root).expanduser() / path
-        if runtime_root
-        else _PROJECT_ROOT / path
+        Path(runtime_root).expanduser() / path if runtime_root else _PROJECT_ROOT / path
     )
 
 
@@ -794,6 +794,7 @@ def _parse_snapshot(payload: Mapping[str, Any]) -> AQSPSnapshot:
         "universe",
         "variant_universe",
         "variants",
+        "observation_candidates",
     }
     _check_keys(payload, required, "快照", optional)
     schema_version = _text(payload["schema_version"], "schema_version")
@@ -823,6 +824,13 @@ def _parse_snapshot(payload: Mapping[str, Any]) -> AQSPSnapshot:
         _parse_candidate(item) for item in _list(payload["candidates"], "candidates")
     )
     _check_limit(candidates, MAX_CANDIDATES, "candidates")
+    observation_candidates = tuple(
+        _parse_candidate(item)
+        for item in _list(
+            payload.get("observation_candidates", []), "observation_candidates"
+        )
+    )
+    _check_limit(observation_candidates, MAX_OBSERVATIONS, "observation_candidates")
     _check_limit(debates, MAX_DEBATES, "debates")
     summaries = tuple(_text_list(payload["summaries"], "summaries"))
     _check_limit(summaries, MAX_SUMMARIES, "summaries")
@@ -832,6 +840,10 @@ def _parse_snapshot(payload: Mapping[str, Any]) -> AQSPSnapshot:
     _check_limit(messages, MAX_MESSAGES, "messages")
     if len({item.symbol for item in candidates}) != len(candidates):
         raise AQSPSnapshotUnavailable("candidates 不得包含重复 symbol")
+    if len({item.symbol for item in observation_candidates}) != len(
+        observation_candidates
+    ):
+        raise AQSPSnapshotUnavailable("observation_candidates 不得包含重复 symbol")
     if len({item.symbol for item in debates}) != len(debates):
         raise AQSPSnapshotUnavailable("debates 不得包含重复 symbol")
     _validate_advisory_boundary(raw_debates or [], candidates)
@@ -852,8 +864,7 @@ def _parse_snapshot(payload: Mapping[str, Any]) -> AQSPSnapshot:
     if stale_after:
         _timestamp(stale_after, "stale_after")
     variants = tuple(
-        _parse_variant(item)
-        for item in _list(payload.get("variants", []), "variants")
+        _parse_variant(item) for item in _list(payload.get("variants", []), "variants")
     )
     _check_limit(variants, MAX_VARIANTS, "variants")
     return AQSPSnapshot(
@@ -880,6 +891,7 @@ def _parse_snapshot(payload: Mapping[str, Any]) -> AQSPSnapshot:
         universe=universe,
         variant_universe=_parse_variant_universe(payload.get("variant_universe")),
         variants=variants,
+        observation_candidates=observation_candidates,
     )
 
 
@@ -887,7 +899,18 @@ def _parse_variant(payload: object) -> AQSPVariant:
     item = _object(payload, "variant")
     _check_keys(
         item,
-        {"variant_id", "label", "initial_cash", "final_equity", "return_pct", "filled_orders", "rejected_orders", "start_date", "end_date", "data_mode"},
+        {
+            "variant_id",
+            "label",
+            "initial_cash",
+            "final_equity",
+            "return_pct",
+            "filled_orders",
+            "rejected_orders",
+            "start_date",
+            "end_date",
+            "data_mode",
+        },
         "variant",
         {
             "cash",
@@ -907,7 +930,9 @@ def _parse_variant(payload: object) -> AQSPVariant:
         cash=_number(item.get("cash", item["initial_cash"]), "variant.cash"),
         final_equity=_number(item["final_equity"], "variant.final_equity"),
         total_pnl=_number(
-            item.get("total_pnl", float(item["final_equity"]) - float(item["initial_cash"])),
+            item.get(
+                "total_pnl", float(item["final_equity"]) - float(item["initial_cash"])
+            ),
             "variant.total_pnl",
         ),
         return_pct=_number(item["return_pct"], "variant.return_pct"),
@@ -919,13 +944,13 @@ def _parse_variant(payload: object) -> AQSPVariant:
         rank=_integer(item.get("rank", 0), "variant.rank"),
         strategy=_optional_text(item.get("strategy"), "variant.strategy"),
         holdings=tuple(
-            value for value in _list(item.get("holdings", []), "variant.holdings")
+            value
+            for value in _list(item.get("holdings", []), "variant.holdings")
             if isinstance(value, dict)
         ),
         previous_holdings=(
             None
-            if "previous_holdings" not in item
-            or item.get("previous_holdings") is None
+            if "previous_holdings" not in item or item.get("previous_holdings") is None
             else tuple(
                 value
                 for value in _list(
@@ -993,13 +1018,9 @@ def _parse_universe(payload: object) -> AQSPUniverse:
             "last_error",
         },
     )
-    coverage_pct = _number(
-        item.get("coverage_pct", 0.0), "universe.coverage_pct"
-    )
+    coverage_pct = _number(item.get("coverage_pct", 0.0), "universe.coverage_pct")
     if not 0.0 <= coverage_pct <= 1.0:
-        raise AQSPSnapshotUnavailable(
-            "universe.coverage_pct 必须在 0 到 1 之间"
-        )
+        raise AQSPSnapshotUnavailable("universe.coverage_pct 必须在 0 到 1 之间")
     return AQSPUniverse(
         total=_integer(item.get("total", 0), "universe.total"),
         resolved=_integer(item.get("resolved", 0), "universe.resolved"),
@@ -1043,9 +1064,7 @@ def _parse_variant_universe(payload: object) -> AQSPVariantUniverse:
         item.get("symbol_count", 0), "variant_universe.symbol_count"
     )
     if symbol_count < 0:
-        raise AQSPSnapshotUnavailable(
-            "variant_universe.symbol_count 不得为负数"
-        )
+        raise AQSPSnapshotUnavailable("variant_universe.symbol_count 不得为负数")
     coverage_pct = _number(
         item.get("coverage_pct", 0.0), "variant_universe.coverage_pct"
     )
@@ -1055,7 +1074,9 @@ def _parse_variant_universe(payload: object) -> AQSPVariantUniverse:
         )
     return AQSPVariantUniverse(
         symbol_count=symbol_count,
-        board_scope=_optional_text(item.get("board_scope"), "variant_universe.board_scope"),
+        board_scope=_optional_text(
+            item.get("board_scope"), "variant_universe.board_scope"
+        ),
         excluded=tuple(
             _text_list(item.get("excluded", []), "variant_universe.excluded")
         ),
