@@ -378,9 +378,7 @@ def _debate_results_path() -> Path:
         return path
     runtime_root = os.environ.get("AQSP_RUNTIME_ROOT", "").strip()
     return (
-        Path(runtime_root).expanduser() / path
-        if runtime_root
-        else _PROJECT_ROOT / path
+        Path(runtime_root).expanduser() / path if runtime_root else _PROJECT_ROOT / path
     )
 
 
@@ -827,8 +825,7 @@ def _parse_snapshot(payload: Mapping[str, Any]) -> AQSPSnapshot:
     if stale_after:
         _timestamp(stale_after, "stale_after")
     variants = tuple(
-        _parse_variant(item)
-        for item in _list(payload.get("variants", []), "variants")
+        _parse_variant(item) for item in _list(payload.get("variants", []), "variants")
     )
     _check_limit(variants, MAX_VARIANTS, "variants")
     return AQSPSnapshot(
@@ -861,9 +858,32 @@ def _parse_variant(payload: object) -> AQSPVariant:
     item = _object(payload, "variant")
     _check_keys(
         item,
-        {"variant_id", "label", "initial_cash", "final_equity", "return_pct", "filled_orders", "rejected_orders", "start_date", "end_date", "data_mode"},
+        {
+            "variant_id",
+            "label",
+            "initial_cash",
+            "final_equity",
+            "return_pct",
+            "filled_orders",
+            "rejected_orders",
+            "start_date",
+            "end_date",
+            "data_mode",
+        },
         "variant",
-        {"cash", "total_pnl", "rank", "strategy", "holdings", "hard_rules"},
+        {
+            "cash",
+            "total_pnl",
+            "rank",
+            "strategy",
+            "holdings",
+            "hard_rules",
+            "holdings_date",
+            "previous_holdings",
+            "previous_holdings_date",
+            "recent_actions",
+            "adjustments",
+        },
     )
     variant = AQSPVariant(
         variant_id=_text(item["variant_id"], "variant.variant_id"),
@@ -872,7 +892,9 @@ def _parse_variant(payload: object) -> AQSPVariant:
         cash=_number(item.get("cash", item["initial_cash"]), "variant.cash"),
         final_equity=_number(item["final_equity"], "variant.final_equity"),
         total_pnl=_number(
-            item.get("total_pnl", float(item["final_equity"]) - float(item["initial_cash"])),
+            item.get(
+                "total_pnl", float(item["final_equity"]) - float(item["initial_cash"])
+            ),
             "variant.total_pnl",
         ),
         return_pct=_number(item["return_pct"], "variant.return_pct"),
@@ -884,7 +906,8 @@ def _parse_variant(payload: object) -> AQSPVariant:
         rank=_integer(item.get("rank", 0), "variant.rank"),
         strategy=_optional_text(item.get("strategy"), "variant.strategy"),
         holdings=tuple(
-            value for value in _list(item.get("holdings", []), "variant.holdings")
+            value
+            for value in _list(item.get("holdings", []), "variant.holdings")
             if isinstance(value, dict)
         ),
         hard_rules=tuple(_text_list(item.get("hard_rules", []), "variant.hard_rules")),
