@@ -9,6 +9,7 @@ import {
   messageSourceUrl,
   sameResearchText,
   snapshotConclusion,
+  snapshotScanSummary,
   snapshotMatchesSelectedDate,
 } from "./research-view";
 
@@ -56,6 +57,7 @@ const debateWithoutProcess = {
 // Compile-time and deterministic checks run through the package test command.
 export const researchViewContractChecks = {
   emptyConclusion: snapshotConclusion(emptySnapshot) === "",
+  scanSummarySurfacesHistoricalNoPickScan: snapshotScanSummary({ summaries: ["真实扫描 4612 只；无候选：no picks"] }) === "真实扫描 4612 只；无候选：no picks",
   currentEmptyObservationIsExplicit: isCurrentEmptyObservation(currentBlockedSnapshot),
   researchDisplayIsObservationOnly: gatePresentation({ recommendation_allowed: true, status: "research_display", reasons: ["research_display_override"] }) === "research_only",
   historicalEmptySnapshotIsNotCurrentObservation: !isCurrentEmptyObservation({

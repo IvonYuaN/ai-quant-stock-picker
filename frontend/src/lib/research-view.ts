@@ -22,6 +22,11 @@ export function snapshotConclusion(snapshot: AqspSnapshot): string {
   return snapshot.summaries[0] || "";
 }
 
+export function snapshotScanSummary(snapshot: Pick<AqspSnapshot, "summaries">): string {
+  const line = snapshot.summaries.find((summary) => summary.includes("真实扫描"));
+  return line || "";
+}
+
 export function isCurrentEmptyObservation(snapshot: AqspSnapshot): boolean {
   return Boolean(
       snapshot.meta?.historical === false &&

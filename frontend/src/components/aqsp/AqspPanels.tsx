@@ -28,6 +28,7 @@ import {
   messageSourceUrl,
   sameResearchText,
   snapshotConclusion,
+  snapshotScanSummary,
 } from "@/lib/research-view";
 import { formatAqspTime, isAqspSnapshotStale, useWorkspaceSnapshot } from "./useAqspSnapshot";
 import { useLocation } from "react-router-dom";
@@ -105,8 +106,10 @@ function StatusLine({ snapshot }: { snapshot: AqspSnapshot }) {
   const universe = snapshot.universe;
   const phases = snapshot.phases ?? [];
   const coverage = universe?.coverage_pct == null ? "—" : `${(universe.coverage_pct * 100).toFixed(1)}%`;
+  const scanSummary = snapshotScanSummary(snapshot);
   return (
     <div className="aqsp-status-line" aria-label="数据概况">
+      {scanSummary && <span className="aqsp-status-scan"><b>{scanSummary}</b></span>}
       <span><b>{snapshot.candidates.length}</b>候选</span>
       <span><b>{snapshot.observation_candidates?.length ?? 0}</b>今日观察</span>
       <span><b>{snapshot.messages.length}</b>消息</span>
