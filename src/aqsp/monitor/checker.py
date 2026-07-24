@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
@@ -332,10 +333,15 @@ class MonitorChecker:
 
     def _check_walkforward_runtime(self, params: dict[str, Any]) -> MonitorResult:
         """Expose failed-closed production gate state without treating a failed DSR/PBO as a run failure."""
+        runtime_root = Path(os.environ.get("AQSP_RUNTIME_ROOT", "").strip() or ".")
         gate_path = Path(str(params.get("gate_path", "data/walkforward_gate.json")))
         status_path = Path(
             str(params.get("status_path", "data/walkforward_production_status.json"))
         )
+        if not gate_path.is_absolute():
+            gate_path = runtime_root / gate_path
+        if not status_path.is_absolute():
+            status_path = runtime_root / status_path
         max_age_days = int(params.get("max_age_days", MAX_GATE_AGE_DAYS))
         if max_age_days < 0:
             raise ValueError("max_age_days must be non-negative")
