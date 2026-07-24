@@ -866,6 +866,51 @@ def test_fetch_special_strategy_frames_keeps_daily_when_intraday_overlay_is_empt
     assert result["600000"].attrs["intraday_overlay_coverage"]["status"] == "partial"
 
 
+def test_fetch_special_strategy_frames_accepts_previous_day_base_for_today_overlay(
+    monkeypatch,
+) -> None:
+    import aqsp.cli as cli_mod
+
+    base = {"600000": _fresh_frame("2026-06-25")}
+    current = _fresh_frame("2026-06-26")
+    monkeypatch.setattr(
+        cli_mod,
+        "_fetch_frames_for_cli_with_metadata",
+        lambda *_args, **_kwargs: (base, "eastmoney"),
+    )
+    monkeypatch.setattr(cli_mod, "today_shanghai", lambda: date(2026, 6, 26))
+    monkeypatch.setattr(cli_mod, "trading_day_lag", lambda latest, target: 1)
+    monkeypatch.setattr(
+        cli_mod,
+        "load_runtime_config",
+        lambda: SimpleNamespace(max_data_lag_days=1),
+    )
+
+    class FakeIntradayService:
+        def __init__(self, _source) -> None:
+            pass
+
+        def merge_intraday_bar_into_daily_with_coverage(self, *_args, **_kwargs):
+            return SimpleNamespace(
+                frames={"600000": current},
+                requested_symbols=("600000",),
+                covered_symbols=("600000",),
+                missing_symbols=(),
+                complete=True,
+            )
+
+    monkeypatch.setattr(cli_mod, "IntradayService", FakeIntradayService)
+
+    result, actual_source = cli_mod._fetch_special_strategy_frames(
+        "eastmoney",
+        ["600000"],
+        benchmark_symbol="",
+    )
+
+    assert actual_source == "eastmoney"
+    assert result["600000"]["date"].iloc[-1] == "2026-06-26"
+
+
 def test_intraday_actual_source_uses_current_overlay_provenance() -> None:
     import aqsp.cli as cli_mod
 

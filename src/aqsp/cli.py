@@ -2566,13 +2566,19 @@ def _fetch_special_strategy_frames(
         workload="live_short",
     )
     target_day = today_shanghai()
+    max_base_lag_days = _effective_live_short_max_data_lag_days(
+        load_runtime_config().max_data_lag_days,
+        requires_live_short_source=True,
+        csv_path="",
+    )
     frames = {
         symbol: frame
         for symbol, frame in frames.items()
-        if not frame.empty
-        and "date" in frame.columns
-        and pd.to_datetime(frame["date"], errors="coerce").max().date()
-        >= target_day
+        if _is_usable_intraday_daily_base(
+            frame,
+            target_day=target_day,
+            max_lag_days=max_base_lag_days,
+        )
     }
     actual_allowed, actual_reason = _runtime_actual_source_workload_allowed(
         source_name,
@@ -2608,6 +2614,29 @@ def _fetch_special_strategy_frames(
     for frame in output_frames.values():
         frame.attrs["intraday_overlay_coverage"] = coverage
     return output_frames, _intraday_actual_source(output_frames, actual_source)
+
+
+def _is_usable_intraday_daily_base(
+    frame: pd.DataFrame,
+    *,
+    target_day: date,
+    max_lag_days: int,
+) -> bool:
+    """Accept today's or the immediately previous trading day's daily base.
+
+    The daily endpoint may publish one bar late while the intraday endpoint is
+    already current.  The overlay supplies today's bar; a future or older base
+    remains blocked to preserve live freshness and causal indicators.
+    """
+    if frame.empty or "date" not in frame.columns:
+        return False
+    parsed = pd.to_datetime(frame["date"], errors="coerce").dropna()
+    if parsed.empty:
+        return False
+    latest = parsed.max().date()
+    if latest > target_day:
+        return False
+    return trading_day_lag(latest, target_day) <= max(int(max_lag_days), 0)
 
 
 def _intraday_overlay_coverage(
