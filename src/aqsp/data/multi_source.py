@@ -33,6 +33,7 @@ class _PartialResult:
 class MultiSource(DataSource):
     name: str = "multi"
     _DEFAULT_LIVE_FETCH_BATCH_SIZE = 64
+    _MAX_PARALLEL_LIVE_SOURCE_SLOTS = 2
 
     def __init__(
         self,
@@ -146,7 +147,15 @@ class MultiSource(DataSource):
                 if remaining <= 0:
                     break
                 sources_left = len(eligible) - position
-                source_timeout = remaining / sources_left
+                # A source fetch is internally parallel, so the first source
+                # needs enough time to finish all bounded batches. Keep one
+                # slot for fallback capacity instead of dividing three sources
+                # into three equal slices and cutting the primary at 10s.
+                source_slots = max(
+                    1,
+                    min(sources_left, self._MAX_PARALLEL_LIVE_SOURCE_SLOTS),
+                )
+                source_timeout = remaining / source_slots
                 try:
                     source = self._materialize(source_ref)
                 except Exception as exc:
