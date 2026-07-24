@@ -19,6 +19,8 @@ def test_release_task_entrypoint_keeps_code_and_runtime_roots_separate() -> None
     assert 'AQSP_HOME_SNAPSHOT_PATH' in script
     assert 'AQSP_REPORT=' in script
     assert 'AQSP_DASHBOARD_HTML=' in script
+    assert 'data/runtime/archive/dashboard/index.html' in script
+    assert 'dist/dashboard' not in script
     assert 'AQSP_RELEASE_MANIFEST' in script
     assert 'AQSP_RELEASE_COMMIT' in script
     assert 'exec /bin/bash "${RELEASE_ROOT}/scripts/bt_task.sh" "$@"' in script
