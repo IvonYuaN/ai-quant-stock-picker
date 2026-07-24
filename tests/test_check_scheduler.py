@@ -31,3 +31,29 @@ def test_check_cron_lock_collisions_accepts_per_task_locks(monkeypatch) -> None:
 
     assert result.ok is True
     assert result.detail == "no cross-task flock collisions"
+
+
+def test_scheduled_actions_returns_actions_from_bt_panel_wrappers(tmp_path) -> None:
+    daily = tmp_path / "daily"
+    daily.write_text(
+        "/bin/bash /opt/aqsp/scripts/release_task_entrypoint.sh daily\n",
+        encoding="utf-8",
+    )
+    gate = tmp_path / "gate"
+    gate.write_text(
+        "/bin/bash /opt/aqsp/scripts/release_task_entrypoint.sh walkforward-gate\n",
+        encoding="utf-8",
+    )
+    crontab = "\n".join(
+        (
+            f"0 18 * * * flock -xn {tmp_path}/daily.lock -c {daily}",
+            f"0 22 * * 6 flock -xn {tmp_path}/gate.lock -c {gate}",
+        )
+    )
+
+    actions = check_scheduler._scheduled_actions(
+        crontab,
+        lambda path: path.read_text(encoding="utf-8"),
+    )
+
+    assert actions == {"daily", "walkforward-gate"}

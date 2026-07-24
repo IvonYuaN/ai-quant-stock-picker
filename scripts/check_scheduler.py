@@ -9,10 +9,18 @@ import os
 import re
 import subprocess
 import sys
+from collections.abc import Callable
 
 
 PROJECT_ROOT = Path(
     os.environ.get("AQSP_PROJECT_ROOT", Path(__file__).resolve().parents[1])
+).resolve()
+RUNTIME_ROOT = Path(os.environ.get("AQSP_RUNTIME_ROOT", PROJECT_ROOT)).resolve()
+RUNTIME_DATA_ROOT = Path(
+    os.environ.get("AQSP_RUNTIME_DATA_ROOT", RUNTIME_ROOT / "data")
+).resolve()
+RUNTIME_LOCK_ROOT = Path(
+    os.environ.get("AQSP_RUNTIME_LOCK_ROOT", RUNTIME_ROOT / ".locks")
 ).resolve()
 for candidate in (PROJECT_ROOT / "src", PROJECT_ROOT):
     candidate_str = str(candidate)
@@ -32,6 +40,15 @@ class CheckResult:
 
 
 def _run(args: list[str], cwd: Path | None = None) -> tuple[int, str]:
+    env = os.environ.copy()
+    source_paths = (str(PROJECT_ROOT / "src"), str(PROJECT_ROOT))
+    existing_pythonpath = env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = os.pathsep.join(
+        (
+            *source_paths,
+            *(item for item in existing_pythonpath.split(os.pathsep) if item),
+        )
+    )
     try:
         result = subprocess.run(
             args,
@@ -39,6 +56,7 @@ def _run(args: list[str], cwd: Path | None = None) -> tuple[int, str]:
             check=False,
             capture_output=True,
             text=True,
+            env=env,
         )
     except FileNotFoundError as exc:
         return 127, str(exc)
@@ -58,17 +76,35 @@ def _exists(path: Path) -> CheckResult:
 
 def check_project_root() -> CheckResult:
     git_dir = PROJECT_ROOT / ".git"
+    manifest = PROJECT_ROOT / ".aqsp-release.json"
+    immutable_release = manifest.is_file()
     return CheckResult(
         "project root",
-        git_dir.is_dir(),
-        f"{PROJECT_ROOT} ({'git repo' if git_dir.is_dir() else 'not a git repo'})",
+        git_dir.is_dir() or immutable_release,
+        f"{PROJECT_ROOT} ("
+        + (
+            "git repo"
+            if git_dir.is_dir()
+            else "immutable release"
+            if immutable_release
+            else "not a git repo or release"
+        )
+        + ")",
     )
 
 
 def check_python_import() -> CheckResult:
-    python_bin = PROJECT_ROOT / ".venv" / "bin" / "python3"
-    if not python_bin.exists():
-        python_bin = Path("python3")
+    configured = os.environ.get("AQSP_RUNTIME_PYTHON")
+    candidates = [
+        Path(configured) if configured else None,
+        Path(os.environ.get("AQSP_RUNTIME_VENV_DIR", "")) / "bin" / "python3",
+        RUNTIME_ROOT.parent / "aqsp-vibe-venv" / "bin" / "python3",
+        PROJECT_ROOT / ".venv" / "bin" / "python3",
+        Path("python3"),
+    ]
+    python_bin = next(
+        (item for item in candidates if item and item.exists()), Path("python3")
+    )
     code, output = _run(
         [str(python_bin), "-c", "import aqsp; import aqsp.cli; print('ok')"],
         PROJECT_ROOT,
@@ -140,8 +176,61 @@ def check_cron_lock_collisions() -> CheckResult:
     return CheckResult("cron outer locks", True, "no cross-task flock collisions")
 
 
+def _scheduled_actions(
+    crontab: str, read_wrapper: Callable[[Path], str | None]
+) -> set[str]:
+    actions: set[str] = set()
+    wrapper_pattern = re.compile(r"\bflock\s+\S+\s+(\S+)\s+-c\s+(\S+)")
+    action_pattern = re.compile(r"(?:release_task_entrypoint|bt_task)\.sh\s+([a-z-]+)")
+    for line in crontab.splitlines():
+        match = wrapper_pattern.search(line)
+        if not match:
+            continue
+        wrapper = Path(match.group(2))
+        text = read_wrapper(wrapper)
+        if text is None:
+            continue
+        actions.update(action_pattern.findall(text))
+    return actions
+
+
+def check_bt_panel_actions() -> CheckResult:
+    code, output = _run(["crontab", "-l"])
+    if code != 0:
+        return CheckResult("BT Panel actions", True, output or "crontab unavailable")
+
+    def read_wrapper(path: Path) -> str | None:
+        try:
+            return path.read_text(encoding="utf-8")
+        except OSError:
+            return None
+
+    actions = _scheduled_actions(output, read_wrapper)
+    if not actions:
+        return CheckResult(
+            "BT Panel actions", True, "no readable BT Panel wrappers in system crontab"
+        )
+    expected = {
+        "daily",
+        "intraday",
+        "midday",
+        "coldstart",
+        "walkforward-gate",
+        "monitor",
+        "news",
+    }
+    missing = sorted(expected - actions)
+    return CheckResult(
+        "BT Panel actions",
+        not missing,
+        "scheduled actions: "
+        + ",".join(sorted(actions))
+        + ("; missing: " + ",".join(missing) if missing else ""),
+    )
+
+
 def check_logs() -> list[CheckResult]:
-    bt_dir = PROJECT_ROOT / "logs" / "bt"
+    bt_dir = RUNTIME_DATA_ROOT / "logs" / "bt"
     bt_logs = sorted(bt_dir.glob(f"bt-*-{TODAY}.log")) if bt_dir.exists() else []
     expected = ("daily", "intraday", "midday", "monitor")
     seen_actions = {
@@ -165,12 +254,12 @@ def check_logs() -> list[CheckResult]:
                 "not seen today yet: " + ",".join(missing),
             )
         )
-    results.append(_exists(PROJECT_ROOT / "logs" / "deploy" / f"sync-{TODAY}.log"))
+    results.append(_exists(RUNTIME_DATA_ROOT / "logs" / "deploy" / f"sync-{TODAY}.log"))
     return results
 
 
 def check_locks() -> list[CheckResult]:
-    lock_dir = PROJECT_ROOT / ".locks"
+    lock_dir = RUNTIME_LOCK_ROOT
     locks = sorted(lock_dir.glob("*.lock")) if lock_dir.exists() else []
     if not locks:
         return [CheckResult("locks", True, "no active lock directories")]
@@ -223,6 +312,7 @@ def main() -> int:
         check_bt_script(),
         check_crontab(),
         check_cron_lock_collisions(),
+        check_bt_panel_actions(),
         *check_logs(),
         *check_locks(),
     ]

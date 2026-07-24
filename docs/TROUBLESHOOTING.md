@@ -32,6 +32,10 @@ tail -50 logs/daily/run-$(date +%Y-%m-%d).log
 
 如果服务器任务由宝塔或 cron 触发，先看 `scripts/server_status.sh` 输出里的最新 commit、日志文件和锁状态。不要直接在服务器手改受 Git 管理的代码。
 
+`check_scheduler.py` 会读取运行目录的真实日志，并核对宝塔包装任务是否覆盖
+`daily`、`intraday`、`midday`、`coldstart`、`walkforward-gate`、`monitor` 和 `news`。
+任一动作缺失都不是“正常”，应先修复宝塔计划任务再依赖其产物。
+
 ## 锁文件残留
 
 项目有两类锁：
