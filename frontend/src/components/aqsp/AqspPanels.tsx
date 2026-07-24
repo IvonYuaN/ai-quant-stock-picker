@@ -271,6 +271,7 @@ function VariantHoldingList({
 }
 
 function TestVariantsPanel({ snapshot }: { snapshot?: AqspSnapshot }) {
+  const { selectDate } = useWorkspaceSnapshot();
   const historical = snapshot?.meta?.historical ?? false;
   const variants = snapshot?.variants ?? [];
   const variantHistory = variants.some((variant) => variant.data_mode.includes("historical"));
@@ -279,10 +280,16 @@ function TestVariantsPanel({ snapshot }: { snapshot?: AqspSnapshot }) {
   const variantUniverse = snapshot?.variant_universe;
   const coverage = variantUniverse?.coverage_pct == null ? "—" : `${variantUniverse.coverage_pct.toFixed(1)}%`;
   const sources = variantUniverse?.sources?.join("、") || "未记录";
+  const previousDate = snapshot?.available_dates.find((date) => date !== snapshot.selected_date) || "";
   return <section id={TEST_VARIANTS_SECTION_ID} className="aqsp-lab" aria-label="测试与变体">
     <div className="aqsp-section-head"><div><p className="aqsp-eyebrow"><FlaskConical className="h-3.5 w-3.5" />独立区域</p><h2>测试与变体</h2></div><span>{variants.length} 个变体 · {uniquePortfolioCount} 种末端持仓</span></div>
     <div className="aqsp-lab-snapshot">{snapshot ? <><span>数据区间：{variants[0]?.start_date || "—"} 至 {variants[0]?.end_date || "—"}</span><span>账户起始资金见各变体</span><span>样本池：{variantUniverse?.symbol_count || "—"} 只</span><span>{variantUniverse?.board_scope || "板块范围未记录"}</span><span>排除：{variantUniverse?.excluded?.join("、") || "未记录"}</span><span>覆盖率：{coverage}</span><span>来源：{sources}</span><span className={cn("aqsp-badge", historical || variantHistory ? "aqsp-badge-warn" : "aqsp-badge-ok")}>{historical || variantHistory ? "历史回测 · 仅验证" : "当前实验结果"}</span></> : <span>等待正式快照</span>}</div>
-    {variants.length === 0 ? <EmptyState title="变体结果尚未产出" detail="实验结果独立于正式候选，产出后会显示在这里。" /> : <div className="aqsp-variant-grid">{variants.map((variant: AqspVariant) => {
+    {variants.length === 0 ? <>
+      <EmptyState title="当前日期暂无变体结果" detail="不使用历史结果冒充当天数据。请选择已有日期查看真实变体记录。" />
+      {previousDate && <button type="button" className="aqsp-history-link" onClick={() => selectDate(previousDate)}>
+        查看最近日期：{formatResearchDate(previousDate).day}
+      </button>}
+    </> : <div className="aqsp-variant-grid">{variants.map((variant: AqspVariant) => {
       const pnl = variant.total_pnl;
       const holdings = variant.holdings;
       const adjustmentLines = variant.adjustments?.length

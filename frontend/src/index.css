@@ -429,6 +429,8 @@
   .aqsp-state { align-items: center; min-height: 3rem; border-style: solid; }
   .aqsp-state-warn { color: hsl(var(--warning)); }
   .aqsp-state button { margin-left: auto; color: inherit; }
+  .aqsp-history-link { margin-top: 0.65rem; border: 1px solid hsl(var(--primary) / 0.45); border-radius: 0.4rem; padding: 0.45rem 0.7rem; color: hsl(var(--primary)); font-size: 0.7rem; font-weight: 700; }
+  .aqsp-history-link:hover { background: hsl(var(--primary) / 0.08); }
   .aqsp-icon-button { display: inline-flex; align-items: center; justify-content: center; border-radius: 0.35rem; padding: 0.3rem; color: inherit; }
   .aqsp-icon-button:hover { background: hsl(var(--muted) / 0.55); }
   .aqsp-lab { border-style: dashed; border-color: hsl(var(--primary) / 0.4); }
