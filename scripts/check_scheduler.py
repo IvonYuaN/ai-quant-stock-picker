@@ -260,7 +260,17 @@ def check_logs() -> list[CheckResult]:
                 "not seen today yet: " + ",".join(missing),
             )
         )
-    results.append(_exists(RUNTIME_DATA_ROOT / "logs" / "deploy" / f"sync-{TODAY}.log"))
+    deploy_log = RUNTIME_DATA_ROOT / "logs" / "deploy" / f"sync-{TODAY}.log"
+    if (PROJECT_ROOT / ".aqsp-release.json").is_file() and not deploy_log.exists():
+        results.append(
+            CheckResult(
+                str(deploy_log),
+                True,
+                "not required for an immutable release",
+            )
+        )
+    else:
+        results.append(_exists(deploy_log))
     return results
 
 

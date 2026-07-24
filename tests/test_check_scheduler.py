@@ -74,3 +74,20 @@ def test_scheduled_actions_ignores_bt_task_comment_words(tmp_path) -> None:
     )
 
     assert actions == {"intraday"}
+
+
+def test_check_logs_accepts_missing_sync_log_for_immutable_release(
+    monkeypatch, tmp_path
+) -> None:
+    project_root = tmp_path / "release"
+    project_root.mkdir()
+    (project_root / ".aqsp-release.json").write_text("{}\n", encoding="utf-8")
+    runtime_data_root = tmp_path / "runtime-data"
+    monkeypatch.setattr(check_scheduler, "PROJECT_ROOT", project_root)
+    monkeypatch.setattr(check_scheduler, "RUNTIME_DATA_ROOT", runtime_data_root)
+
+    results = check_scheduler.check_logs()
+
+    sync_result = next(result for result in results if "sync-" in result.label)
+    assert sync_result.ok is True
+    assert sync_result.detail == "not required for an immutable release"
