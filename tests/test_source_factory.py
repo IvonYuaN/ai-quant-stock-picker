@@ -123,3 +123,30 @@ def test_build_source_refs_skips_missing_optional_adapter(monkeypatch) -> None:
     )
 
     assert [item.name for item in refs] == ["tencent"]
+
+
+def test_build_data_source_online_first_prioritizes_sina_for_live_daily(monkeypatch) -> None:
+    from aqsp.data import source_factory as sf
+
+    class DummySource:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+    def builder(name: str):
+        return lambda *, cache=None: DummySource(name)
+
+    monkeypatch.setattr(sf, "prioritize_source_ids", lambda source_ids: source_ids)
+    overrides = {
+        name: builder(name)
+        for name in ("sina", "eastmoney", "tencent", "akshare", "tdx_vipdoc")
+    }
+
+    source = sf.build_data_source("online_first", cache=object(), overrides=overrides)
+
+    assert source.primary.name == "sina"
+    assert [item.name for item in source.fallbacks] == [
+        "eastmoney",
+        "tencent",
+        "akshare",
+        "tdx_vipdoc",
+    ]

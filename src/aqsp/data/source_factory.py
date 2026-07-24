@@ -130,7 +130,9 @@ def build_data_source(
     if source_name == "online_first":
         online_sources = _reorder_source_refs(
             _build_source_refs(
-                ("eastmoney", "sina", "tencent", "akshare"),
+                # Sina currently provides the most reliable live daily
+                # coverage; eastmoney and Tencent remain fallbacks.
+                ("sina", "eastmoney", "tencent", "akshare"),
                 builders,
                 source_cache,
             ),
