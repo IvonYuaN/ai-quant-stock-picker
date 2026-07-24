@@ -10,7 +10,7 @@ PROJECT_ROOT="${AQSP_PROJECT_ROOT:-/opt/aqsp}"
 BRANCH="${AQSP_GIT_BRANCH:-main}"
 REMOTE="${AQSP_GIT_REMOTE:-origin}"
 RUNNER_SCRIPT="${AQSP_RUNNER_SCRIPT:-}"
-LOG_DIR="${PROJECT_ROOT}/logs/deploy"
+LOG_DIR="${AQSP_LOG_ROOT:-${PROJECT_ROOT}/logs}/deploy"
 RUN_LOG="${LOG_DIR}/sync-$(date +%Y-%m-%d).log"
 LOCK_DIR="${PROJECT_ROOT}/.locks"
 # This lock is also used by sync_runtime_files_to_server.py; keep the path shared.

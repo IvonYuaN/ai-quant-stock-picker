@@ -18,7 +18,7 @@ if [ ! -f "$RUNTIME_PYTHON_HELPER" ]; then
 fi
 # shellcheck disable=SC1090
 source "$RUNTIME_PYTHON_HELPER"
-LOG_DIR="${PROJECT_ROOT}/logs/midday"
+LOG_DIR="${AQSP_LOG_ROOT:-${PROJECT_ROOT}/logs}/midday"
 RESULT_LOG="${LOG_DIR}/midday-$(date +%Y-%m-%d).log"
 
 log() {

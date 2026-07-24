@@ -9,6 +9,7 @@ import pandas as pd
 from datetime import date
 
 from aqsp.core.errors import DataError
+from aqsp.data.trading_calendar import trading_day_lag
 from aqsp.data.cache import DataCache
 from aqsp.data.source_readiness import (
     WorkloadId,
@@ -78,7 +79,9 @@ def fetch_frames_for_cli_with_metadata(
                     for frame in frames.values():
                         if isinstance(frame, pd.DataFrame):
                             frame.attrs["live_short_missing_symbols"] = tuple(missing)
-                            frame.attrs["live_short_resolved_symbol_count"] = len(symbols)
+                            frame.attrs["live_short_resolved_symbol_count"] = len(
+                                symbols
+                            )
                             frame.attrs["live_short_fetched_frame_count"] = fetched
                 else:
                     fetched = len(symbols)
@@ -170,20 +173,40 @@ def _minimum_live_short_frames(symbol_count: int) -> int:
 def _drop_stale_live_frames(
     frames: dict[str, pd.DataFrame], *, end_date: date | None
 ) -> dict[str, pd.DataFrame]:
-    """Remove old daily bars from a live batch instead of treating them as live."""
+    """Remove stale or future daily bars before a live workload uses them.
+
+    Intraday runs may start from the previous trading day's raw daily bar. The
+    caller then overlays a bar synthesized from the current session's intraday
+    feed, so rejecting that base before the overlay would turn a valid live
+    batch into an empty one. Other live workloads still require an exact-date
+    daily bar.
+    """
     if not frames or end_date is None:
         return frames
+    allow_intraday_base = _allows_previous_intraday_daily_base()
     result: dict[str, pd.DataFrame] = {}
     for symbol, frame in frames.items():
         if frame.empty or "date" not in frame.columns:
             continue
         latest = pd.to_datetime(frame["date"], errors="coerce").max()
-        # A live batch must contain the requested trade date exactly. Older
-        # rows are stale; future rows are look-ahead data and equally invalid.
-        if pd.isna(latest) or latest.date() != end_date:
+        if pd.isna(latest) or latest.date() > end_date:
             continue
+        if latest.date() != end_date:
+            # This exception is intentionally narrow: a prior raw close may
+            # only become a current intraday input after the dedicated overlay
+            # path has fetched today's bars. It is never a current close.
+            if not allow_intraday_base or trading_day_lag(latest.date(), end_date) > 1:
+                continue
         result[symbol] = frame
     return result
+
+
+def _allows_previous_intraday_daily_base() -> bool:
+    """Return whether the caller will overlay today's intraday bar."""
+    return os.getenv("AQSP_RUN_TASK_ID", "").strip().lower() in {
+        "intraday",
+        "midday",
+    }
 
 
 def _write_intraday_batch_detail(

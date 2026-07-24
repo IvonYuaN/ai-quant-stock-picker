@@ -24,7 +24,7 @@ fi
 # shellcheck disable=SC1090
 source "$RUNTIME_PYTHON_HELPER"
 PIPELINE_SCRIPT="${PROJECT_ROOT}/scripts/daily_pipeline.py"
-LOG_DIR="${PROJECT_ROOT}/logs/daily"
+LOG_DIR="${AQSP_LOG_ROOT:-${PROJECT_ROOT}/logs}/daily"
 RESULT_LOG="${LOG_DIR}/pipeline-$(date +%Y-%m-%d).log"
 
 # ============================ 加载环境变量 ============================

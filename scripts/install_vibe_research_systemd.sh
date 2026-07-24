@@ -12,7 +12,7 @@ VENV_DIR="${AQSP_VIBE_VENV_DIR:-${PROJECT_ROOT}/.venv-vibe-research}"
 BOOTSTRAP_PYTHON="${AQSP_VIBE_BOOTSTRAP_PYTHON:-python3}"
 NPM_BIN="${AQSP_VIBE_NPM_BIN:-}"
 ENV_FILE="${AQSP_VIBE_ENV_FILE:-/etc/aqsp/vibe-research.env}"
-LOG_DIR="${AQSP_VIBE_LOG_DIR:-${PROJECT_ROOT}/logs/vibe-research}"
+LOG_DIR="${AQSP_VIBE_LOG_DIR:-}"
 DATA_DIR="${AQSP_VIBE_DATA_DIR:-${PROJECT_ROOT}/data/vibe-research}"
 SKIP_BUILD="false"
 NO_START="false"
@@ -87,6 +87,13 @@ set -a
 . "$ENV_FILE"
 set +a
 DATA_DIR="${VR_DATA_DIR:-$DATA_DIR}"
+if [[ -z "$LOG_DIR" ]]; then
+    if [[ "$PROJECT_ROOT" == /opt/aqsp-releases/* && -n "${VR_DATA_DIR:-}" ]]; then
+        LOG_DIR="$(dirname "$DATA_DIR")/logs/vibe-research"
+    else
+        LOG_DIR="${PROJECT_ROOT}/logs/vibe-research"
+    fi
+fi
 install -d -o "$SERVICE_USER" -g "$SERVICE_GROUP" "$LOG_DIR" "$DATA_DIR"
 SNAPSHOT_PATH="${AQSP_RESEARCH_SURFACE_SNAPSHOT:-}"
 SNAPSHOT_INDEX_PATH="$(dirname "$SNAPSHOT_PATH")/home_dashboard_snapshot_index.json"

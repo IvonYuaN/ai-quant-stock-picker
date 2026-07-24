@@ -20,7 +20,7 @@ fi
 source "$RUNTIME_PYTHON_HELPER"
 export TZ="${TZ:-Asia/Shanghai}"
 DATE="$(date +%Y-%m-%d)"
-LOG_DIR="${AQSP_COLDSTART_LOG_DIR:-${PROJECT_ROOT}/logs/coldstart}"
+LOG_DIR="${AQSP_COLDSTART_LOG_DIR:-${AQSP_LOG_ROOT:-${PROJECT_ROOT}/logs}/coldstart}"
 RUN_LOG="${LOG_DIR}/coldstart-${DATE}.log"
 LOCK_DIR="${PROJECT_ROOT}/.locks"
 # 与 scripts/server_sync_and_run.sh 共用同一把锁，避免冷启动与日终主链路并发。

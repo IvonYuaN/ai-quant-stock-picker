@@ -15,7 +15,7 @@ fi
 # shellcheck disable=SC1090
 source "$RUNTIME_PYTHON_HELPER"
 PYTHON_BIN="$(aqsp_runtime_python "$PROJECT_ROOT")"
-LOG_DIR="${PROJECT_ROOT}/logs/monitor"
+LOG_DIR="${AQSP_LOG_ROOT:-${PROJECT_ROOT}/logs}/monitor"
 RESULT_LOG="${LOG_DIR}/monitor-$(date +%Y-%m-%d).log"
 MONITOR_CONFIG="${AQSP_MONITOR_CONFIG:-config/monitors.yaml}"
 NOTIFY_WARNINGS="${AQSP_MONITOR_NOTIFY_WARNINGS:-false}"

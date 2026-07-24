@@ -821,7 +821,7 @@ def test_bt_task_script_exposes_panel_safe_actions() -> None:
     news_block = script[script.index("\n    news)") : script.index("\n    status)")]
     assert 'export AQSP_GATE_NOTIFY="false"' in news_block
     assert "scripts/server_status.sh" in script
-    assert "logs/bt" in script
+    assert 'LOG_DIR="${AQSP_LOG_ROOT:-${PROJECT_ROOT}/logs}/bt"' in script
 
 
 def test_variant_refresh_prefers_production_raw_database() -> None:
@@ -836,7 +836,7 @@ def test_variant_refresh_prefers_production_raw_database() -> None:
     assert 'VARIANT_NICE="${AQSP_VARIANT_NICE:-10}"' in script
     assert 'nice -n "$VARIANT_NICE"' in script
     assert 'if "ohlcv" in tables:' in script
-    assert 'workload = ? AND date <= ?' in script
+    assert "workload = ? AND date <= ?" in script
     assert 'RESET_DATE" != "$TODAY"' in script
     assert '--previous-date "$PREVIOUS_RESET_DATE"' in script
 
@@ -1381,7 +1381,7 @@ def test_coldstart_daily_script_updates_db_then_runs_cli() -> None:
     assert "UPDATE_EXIT_CODE=${PIPESTATUS[0]}" in script
     assert "当天历史库更新失败，拒绝发布候选" in script
     assert "COLDSTART_MARKER_FILE" in script
-    assert '冷启动日跑完成' in script
+    assert "冷启动日跑完成" in script
     assert "--force-from-start" in script
     assert "--fill-history-gaps" in script
     assert "AQSP_COLDSTART_ALLOW_INTRADAY" in script

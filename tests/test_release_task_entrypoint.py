@@ -22,6 +22,9 @@ def test_release_task_entrypoint_keeps_code_and_runtime_roots_separate() -> None
     assert 'cd "$RUNTIME_ROOT"' in script
     assert "AQSP_HOME_SNAPSHOT_PATH" in script
     assert "AQSP_REPORT=" in script
+    assert (
+        'export AQSP_LOG_ROOT="${AQSP_LOG_ROOT:-${RUNTIME_DATA_ROOT}/logs}"' in script
+    )
     assert "AQSP_DASHBOARD_HTML=" in script
     assert "AQSP_RELEASE_MANIFEST" in script
     assert "AQSP_RELEASE_COMMIT" in script
@@ -50,7 +53,7 @@ def test_release_task_entrypoint_has_shared_runtime_fallback() -> None:
     )
 
     assert 'AQSP_RUNTIME_VENV_DIR="/opt/aqsp-vibe-venv"' in script
-    assert '找不到可用 AQSP runtime Python' in script
+    assert "找不到可用 AQSP runtime Python" in script
 
 
 def test_release_task_entrypoint_maps_relative_runtime_paths_once_to_data(
@@ -62,7 +65,7 @@ def test_release_task_entrypoint_maps_relative_runtime_paths_once_to_data(
     (release / "scripts").mkdir(parents=True)
     (release / "scripts" / "bt_task.sh").write_text(
         "#!/usr/bin/env bash\n"
-        'printf \'%s\\n\' "AQSP_LEDGER=$AQSP_LEDGER" "AQSP_REPORT=$AQSP_REPORT" > "$MARKER"\n',
+        'printf \'%s\\n\' "AQSP_LEDGER=$AQSP_LEDGER" "AQSP_REPORT=$AQSP_REPORT" "AQSP_LOG_ROOT=$AQSP_LOG_ROOT" > "$MARKER"\n',
         encoding="utf-8",
     )
     (release / "scripts" / "bt_task.sh").chmod(0o755)
@@ -87,6 +90,7 @@ def test_release_task_entrypoint_maps_relative_runtime_paths_once_to_data(
     assert marker.read_text(encoding="utf-8").splitlines() == [
         f"AQSP_LEDGER={runtime / 'data' / 'predictions.jsonl'}",
         f"AQSP_REPORT={runtime / 'data' / 'reports' / 'latest.md'}",
+        f"AQSP_LOG_ROOT={runtime / 'data' / 'logs'}",
     ]
 
 
