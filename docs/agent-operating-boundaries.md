@@ -98,5 +98,7 @@ python3 scripts/headless_dashboard_check.py --url https://lh.ifidy.cn --screensh
 - 任何后台任务都必须有可识别的锁、日志和退出路径；发现已有任务占用资源时只读诊断，不重复启动同一链路。
 - 只有本地定向测试通过、完整验证单独通过、部署后 health/数据契约检查通过，才算交付；并行速度不能替代验证闭环。
 - 每个子任务记录 `parent_run_id`、`agent_run_id`、PID、开始时间、deadline 和退出原因；超时或锁冲突必须降级/退出，不得无限等待。
+- 运行登记统一使用 `aqsp.audit.agent_runs.AgentRunRegistry`，生产记录写入私有
+  `/opt/aqsp/data/runtime/agent_runs.jsonl`；同一文件范围不可并行，单父任务最多 3 个活跃子任务。
 - 资源不足时优先保护用户前台和生产主链，允许跳过旁路 Agent；旁路 Agent 的输出只能补充证据，不能覆盖确定性评分或交易边界。
 - 用户影响是硬门禁：任何任务只要可能拖慢、重启、覆盖或污染用户正在使用的服务，必须先降级为只读诊断或隔离环境；部署后未完成 health、数据新鲜度、页面入口和关键结果检查，不得宣称完成。

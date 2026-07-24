@@ -12,6 +12,7 @@ from .decision_chain import (
     new_decision_record,
     verify_decision_chain,
 )
+from .agent_runs import AgentRunRecord, AgentRunRegistry
 
 __all__ = [
     "PaperExecutionLog",
@@ -22,4 +23,6 @@ __all__ = [
     "append_decision_record",
     "new_decision_record",
     "verify_decision_chain",
+    "AgentRunRecord",
+    "AgentRunRegistry",
 ]
