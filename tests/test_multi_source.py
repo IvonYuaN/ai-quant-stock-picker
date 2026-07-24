@@ -77,6 +77,31 @@ def test_multi_source_live_intraday_uses_fallback_after_primary_failure() -> Non
     assert elapsed < 0.35
 
 
+def test_multi_source_live_fallback_starts_after_primary_timeout() -> None:
+    class SlowSource(_Source):
+        def __init__(self, name: str, delay: float) -> None:
+            self.name = name
+            self.delay = delay
+
+        def fetch_intraday(self, symbols: list[str], period: str = "5") -> dict:
+            time.sleep(self.delay)
+            return super().fetch_intraday(symbols, period)
+
+    fallback = _Source()
+    fallback.name = "sina"
+    source = MultiSource(
+        SlowSource("eastmoney", 0.3),
+        [fallback],
+        validate_consistency=False,
+        live_fetch_deadline_seconds=0.1,
+    )
+
+    result = source.fetch_intraday(["600000"])
+
+    assert set(result) == {"600000"}
+    assert result["600000"].attrs["source_name"] == "sina"
+
+
 def test_multi_source_live_intraday_does_not_call_fallback_when_primary_complete() -> (
     None
 ):

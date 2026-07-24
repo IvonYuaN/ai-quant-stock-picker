@@ -18,6 +18,7 @@ def test_release_task_entrypoint_keeps_code_and_runtime_roots_separate() -> None
     )
     assert "AQSP_NEWS_JSON_OUTPUT" in script
     assert "AQSP_INTRADAY_CURSOR_PATH" in script
+    assert 'cd "$RUNTIME_ROOT"' in script
     assert "AQSP_HOME_SNAPSHOT_PATH" in script
     assert "AQSP_REPORT=" in script
     assert "AQSP_DASHBOARD_HTML=" in script

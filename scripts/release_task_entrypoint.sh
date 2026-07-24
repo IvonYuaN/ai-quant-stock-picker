@@ -71,6 +71,10 @@ PY
 else
     echo "[WARN] release identity manifest missing: ${AQSP_RELEASE_MANIFEST}" >&2
 fi
+# Keep all default relative runtime paths (data/cache.db, data/source_health.json,
+# logs, and sidecar state) under the private runtime root, never the release.
+mkdir -p "$RUNTIME_ROOT" "$RUNTIME_DATA_ROOT"
+cd "$RUNTIME_ROOT"
 if [[ -z "${AQSP_RUNTIME_VENV_DIR:-}" && -z "${AQSP_PYTHON:-}" && -z "${VIBE_RESEARCH_PYTHON_BIN:-}" ]]; then
     export AQSP_RUNTIME_VENV_DIR="${RELEASE_ROOT}/.venv-vibe-research"
 fi

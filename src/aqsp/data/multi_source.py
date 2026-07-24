@@ -128,21 +128,26 @@ class MultiSource(DataSource):
         accepted: dict[str, object] = {}
         pending = requested[:]
         deadline = time.monotonic() + self.live_fetch_deadline_seconds
+        # Keep one worker per source.  A timed-out primary request may still be
+        # unwinding its HTTP retries; a single-worker executor would queue the
+        # fallback behind that stuck request and consume the whole deadline.
         executor = ThreadPoolExecutor(
-            max_workers=1, thread_name_prefix="aqsp-live-source"
+            max_workers=len(eligible), thread_name_prefix="aqsp-live-source"
         )
         try:
-            for _, source_ref, source_name in eligible:
+            for position, (_, source_ref, source_name) in enumerate(eligible):
                 if not pending:
                     break
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     break
+                sources_left = len(eligible) - position
+                source_timeout = remaining / sources_left
                 future = executor.submit(
                     self._fetch_live_source, source_ref, func, pending[:]
                 )
                 try:
-                    result = future.result(timeout=remaining)
+                    result = future.result(timeout=source_timeout)
                 except Exception as exc:
                     exceptions.append((source_name, exc))
                     continue
