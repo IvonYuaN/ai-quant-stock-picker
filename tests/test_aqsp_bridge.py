@@ -345,6 +345,7 @@ def test_aqsp_bridge_preserves_variant_position_names_and_previous_holdings(
             "strategy": "趋势跟随",
             "holdings": [{"symbol": "600001", "quantity": 100, "average_price": 10.0, "last_price": 11.0, "market_value": 1100.0, "unrealized_pnl": 100.0, "name": "示例公司"}],
             "previous_holdings": [{"symbol": "600002", "quantity": 100, "average_price": 9.0, "last_price": 9.5, "market_value": 950.0, "unrealized_pnl": 50.0, "name": "昨日公司"}],
+            "adjustments": [{"action": "added", "symbol": "600001", "evidence": ["MACD柱体转强"]}],
             "recent_actions": ["2026-07-14 卖出 昨日公司 600002 100 股"],
         }
     ]
@@ -357,6 +358,7 @@ def test_aqsp_bridge_preserves_variant_position_names_and_previous_holdings(
     variant = response.json()["data"]["variants"][0]
     assert variant["holdings"][0]["name"] == "示例公司"
     assert variant["previous_holdings"][0]["name"] == "昨日公司"
+    assert variant["adjustments"][0]["action"] == "added"
     assert variant["recent_actions"] == ["2026-07-14 卖出 昨日公司 600002 100 股"]
 
 
