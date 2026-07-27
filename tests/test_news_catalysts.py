@@ -1148,7 +1148,9 @@ def test_catalyst_report_exposes_regional_freshness_quality_and_fallback() -> No
         ),
     )
 
-    domestic = next(item for item in report.region_statuses if item.region == "domestic")
+    domestic = next(
+        item for item in report.region_statuses if item.region == "domestic"
+    )
 
     assert domestic.status == "partial"
     assert domestic.freshness == "fresh"
@@ -2941,3 +2943,20 @@ def test_catalyst_report_artifact_round_trips_with_date_and_freshness_gate(
         )
         is None
     )
+
+
+def test_news_catalyst_never_uses_fork_on_macos(monkeypatch) -> None:
+    def fail_get_context(_method: str) -> object:
+        raise AssertionError("darwin must not call multiprocessing fork")
+
+    monkeypatch.setattr(catalysts.sys, "platform", "darwin")
+    monkeypatch.setattr(catalysts.multiprocessing, "get_context", fail_get_context)
+
+    outcomes = catalysts._run_fetchers_with_deadline(
+        {"global": lambda: pd.DataFrame([{"title": "ok"}])},
+        timeout_seconds=1.0,
+        isolate_process=True,
+    )
+
+    assert outcomes["global"].error is None
+    assert len(outcomes["global"].frame) == 1

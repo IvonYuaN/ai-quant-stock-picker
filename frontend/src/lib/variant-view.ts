@@ -35,3 +35,23 @@ export function variantHoldingsLabel(holdings: AqspVariant["holdings"]): string 
   if (holdings === undefined) return "持仓字段未提供";
   return holdings.length === 0 ? "当前无持仓" : `${holdings.length} 个持仓`;
 }
+
+export function variantHoldingName(
+  holding: NonNullable<AqspVariant["holdings"]>[number],
+): string {
+  return holding.display_name || holding.name || holding.symbol;
+}
+
+export function variantActionText(
+  action: NonNullable<AqspVariant["recent_actions"]>[number],
+): string {
+  const side = action.action || action.side || "动作未记录";
+  const name = action.display_name || action.name || action.symbol || "标的未记录";
+  const quantity =
+    typeof action.quantity === "number" && Number.isFinite(action.quantity)
+      ? ` · ${action.quantity} 股`
+      : "";
+  return `${action.date || "日期未记录"} · ${side} · ${name}${quantity} · ${
+    action.reason || "原因未记录"
+  }`;
+}

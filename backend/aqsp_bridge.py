@@ -237,6 +237,11 @@ class AQSPVariant:
     rank: int = 0
     strategy: str = ""
     holdings: tuple[dict[str, Any], ...] = ()
+    holdings_date: str = ""
+    previous_holdings: tuple[dict[str, Any], ...] = ()
+    previous_holdings_date: str = ""
+    recent_actions: tuple[dict[str, Any], ...] = ()
+    adjustments: tuple[str, ...] = ()
     hard_rules: tuple[str, ...] = ()
 
 
@@ -909,6 +914,27 @@ def _parse_variant(payload: object) -> AQSPVariant:
             value
             for value in _list(item.get("holdings", []), "variant.holdings")
             if isinstance(value, dict)
+        ),
+        holdings_date=_optional_text(
+            item.get("holdings_date"), "variant.holdings_date"
+        ),
+        previous_holdings=tuple(
+            value
+            for value in _list(
+                item.get("previous_holdings", []), "variant.previous_holdings"
+            )
+            if isinstance(value, dict)
+        ),
+        previous_holdings_date=_optional_text(
+            item.get("previous_holdings_date"), "variant.previous_holdings_date"
+        ),
+        recent_actions=tuple(
+            value
+            for value in _list(item.get("recent_actions", []), "variant.recent_actions")
+            if isinstance(value, dict)
+        ),
+        adjustments=tuple(
+            _text_list(item.get("adjustments", []), "variant.adjustments")
         ),
         hard_rules=tuple(_text_list(item.get("hard_rules", []), "variant.hard_rules")),
     )

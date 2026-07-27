@@ -30,7 +30,14 @@ import {
 } from "@/lib/research-view";
 import { formatAqspTime, isAqspSnapshotStale, useWorkspaceSnapshot } from "./useAqspSnapshot";
 import { useLocation } from "react-router-dom";
-import { variantHoldingsLabel, variantMoney, variantPercent, variantStrategyText } from "@/lib/variant-view";
+import {
+  variantActionText,
+  variantHoldingName,
+  variantHoldingsLabel,
+  variantMoney,
+  variantPercent,
+  variantStrategyText,
+} from "@/lib/variant-view";
 
 function unique(values: readonly string[] | undefined, limit = 4): string[] {
   return Array.from(new Set((values ?? []).map((value) => value.trim()).filter(Boolean))).slice(0, limit);
@@ -235,7 +242,11 @@ function TestVariantsPanel({ snapshot }: { snapshot?: AqspSnapshot }) {
           <div><span>总盈亏</span><b className={pnl != null && pnl < 0 ? "aqsp-variant-negative" : "aqsp-variant-positive"}>{variantMoney(pnl)}</b></div>
           <div><span>收益率</span><b>{variantPercent(variant.return_pct)}</b></div>
         </div>
-        <div className="aqsp-variant-holdings"><b>持仓 · {variantHoldingsLabel(holdings)}</b>{holdings?.map((holding) => <span key={holding.symbol}>{holding.symbol} {holding.quantity} 股 · 市值 {variantMoney(holding.market_value)} · 浮盈 {variantMoney(holding.unrealized_pnl)}</span>)}</div>
+        <div className="aqsp-variant-ledger">
+          <div><b>今日持仓 · {variant.holdings_date || "日期未记录"} · {variantHoldingsLabel(holdings)}</b>{holdings?.map((holding) => <span key={holding.symbol}>{variantHoldingName(holding)}（{holding.symbol}）{holding.quantity} 股 · 市值 {variantMoney(holding.market_value)} · 浮盈 {variantMoney(holding.unrealized_pnl)}</span>)}</div>
+          <div><b>昨日持仓 · {variant.previous_holdings_date || "日期未记录"} · {variantHoldingsLabel(variant.previous_holdings)}</b>{variant.previous_holdings?.map((holding) => <span key={holding.symbol}>{variantHoldingName(holding)}（{holding.symbol}）{holding.quantity} 股 · 市值 {variantMoney(holding.market_value)} · 浮盈 {variantMoney(holding.unrealized_pnl)}</span>)}</div>
+        </div>
+        <div className="aqsp-variant-actions"><b>换票逻辑</b>{(variant.adjustments ?? []).slice(0, 4).map((line) => <span key={line}>{line}</span>)}{(variant.adjustments?.length ?? 0) === 0 && (variant.recent_actions ?? []).slice(0, 4).map((action, index) => <span key={`${action.date}-${action.symbol}-${index}`}>{variantActionText(action)}</span>)}</div>
         <p className="aqsp-variant-rules">成交 {variant.filled_orders} · 拒绝 {variant.rejected_orders} · {(variant.hard_rules ?? []).join(" · ") || "硬成交规则未记录"}</p>
       </article>;
     })}</div>}

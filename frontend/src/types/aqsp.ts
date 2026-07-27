@@ -99,17 +99,36 @@ export interface AqspVariant {
   data_mode: string;
   /** Serialized strategy description in the current producer contract. */
   strategy?: string;
+  holdings_date?: string;
   holdings?: readonly AqspVariantHolding[];
+  previous_holdings_date?: string;
+  previous_holdings?: readonly AqspVariantHolding[];
+  recent_actions?: readonly AqspVariantAction[];
+  adjustments?: readonly string[];
   hard_rules?: readonly string[];
 }
 
 export interface AqspVariantHolding {
   symbol: string;
+  name?: string;
+  display_name?: string;
   quantity: number;
   average_price: number;
   last_price: number;
   market_value: number;
   unrealized_pnl: number;
+}
+
+export interface AqspVariantAction {
+  date?: string;
+  symbol?: string;
+  name?: string;
+  display_name?: string;
+  side?: string;
+  action?: string;
+  quantity?: number;
+  price?: number;
+  reason?: string;
 }
 
 export interface AqspAgentResult {

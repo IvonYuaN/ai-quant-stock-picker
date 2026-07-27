@@ -34,6 +34,7 @@ class VariantOrder:
     symbol: str
     side: Side
     weight: float = 1.0
+    reason: str = ""
 
 
 @dataclass(frozen=True)
@@ -139,7 +140,11 @@ def simulate_variant(
                 fills.append(_reject(date, order, "limit_up"))
                 rejected += 1
                 continue
-            if order.side == "sell" and limit_down is not None and open_price <= limit_down:
+            if (
+                order.side == "sell"
+                and limit_down is not None
+                and open_price <= limit_down
+            ):
                 fills.append(_reject(date, order, "limit_down"))
                 rejected += 1
                 continue
@@ -165,9 +170,27 @@ def simulate_variant(
                     position.average_price * position.quantity + quantity * price
                 ) / (position.quantity + quantity)
                 position.quantity += quantity
-                fills.append(VariantFill(date, order.symbol, "buy", quantity, price, fees, "filled"))
+                fills.append(
+                    VariantFill(
+                        date,
+                        order.symbol,
+                        "buy",
+                        quantity,
+                        price,
+                        fees,
+                        "filled",
+                        order.reason,
+                    )
+                )
             else:
-                quantity = int(position.available_quantity * min(max(order.weight, 0.0), 1.0) / cfg.lot_size) * cfg.lot_size
+                quantity = (
+                    int(
+                        position.available_quantity
+                        * min(max(order.weight, 0.0), 1.0)
+                        / cfg.lot_size
+                    )
+                    * cfg.lot_size
+                )
                 if quantity <= 0:
                     fills.append(_reject(date, order, "no_lot_available"))
                     rejected += 1
@@ -176,7 +199,18 @@ def simulate_variant(
                 cash += quantity * price - fees
                 position.quantity -= quantity
                 position.available_quantity -= quantity
-                fills.append(VariantFill(date, order.symbol, "sell", quantity, price, fees, "filled"))
+                fills.append(
+                    VariantFill(
+                        date,
+                        order.symbol,
+                        "sell",
+                        quantity,
+                        price,
+                        fees,
+                        "filled",
+                        order.reason,
+                    )
+                )
         for position in positions.values():
             position.available_quantity = position.quantity
 
@@ -200,7 +234,11 @@ def simulate_variant(
         final_equity=final_equity,
         cash=cash,
         fills=tuple(fills),
-        positions={symbol: position.quantity for symbol, position in positions.items() if position.quantity},
+        positions={
+            symbol: position.quantity
+            for symbol, position in positions.items()
+            if position.quantity
+        },
         holdings=holdings,
         rejected_orders=rejected,
     )
@@ -253,8 +291,12 @@ def _normalize_frames(data: Mapping[str, pd.DataFrame]) -> dict[str, pd.DataFram
         if missing:
             raise ValueError(f"{symbol} missing columns: {sorted(missing)}")
         frame = raw.copy()
-        frame["date"] = pd.to_datetime(frame["date"], errors="coerce").dt.strftime("%Y-%m-%d")
-        result[str(symbol)] = frame.dropna(subset=["date"]).sort_values("date").reset_index(drop=True)
+        frame["date"] = pd.to_datetime(frame["date"], errors="coerce").dt.strftime(
+            "%Y-%m-%d"
+        )
+        result[str(symbol)] = (
+            frame.dropna(subset=["date"]).sort_values("date").reset_index(drop=True)
+        )
     return result
 
 
@@ -275,7 +317,11 @@ def _as_bool(value: object) -> bool:
 
 
 def _buy_fees(amount: float, cfg: VariantExecutionRules) -> float:
-    return amount * cfg.commission_rate if amount * cfg.commission_rate >= cfg.min_commission else cfg.min_commission
+    return (
+        amount * cfg.commission_rate
+        if amount * cfg.commission_rate >= cfg.min_commission
+        else cfg.min_commission
+    )
 
 
 def _sell_fees(amount: float, cfg: VariantExecutionRules) -> float:

@@ -24,7 +24,7 @@ MAX_HOME_SNAPSHOT_SUMMARIES = 3
 MAX_HOME_SNAPSHOT_MESSAGES = 5
 MAX_HOME_SNAPSHOT_MARKET_LINES = 5
 MAX_HOME_SNAPSHOT_CROSS_MARKET = 3
-MAX_HOME_SNAPSHOT_VARIANTS = 16
+MAX_HOME_SNAPSHOT_VARIANTS = 64
 HOME_SNAPSHOT_INDEX_SCHEMA_VERSION = "v1-index"
 MAX_HOME_SNAPSHOT_INDEX_DAYS = 4
 HOME_SNAPSHOT_DEFAULT_TTL = timedelta(hours=24)
@@ -181,6 +181,7 @@ class HomeSnapshotHolding:
     last_price: float
     market_value: float
     unrealized_pnl: float
+    name: str = ""
 
 
 @dataclass(frozen=True)
@@ -202,6 +203,11 @@ class HomeSnapshotVariant:
     rank: int = 0
     strategy: str = ""
     holdings: tuple[HomeSnapshotHolding, ...] = ()
+    holdings_date: str = ""
+    previous_holdings: tuple[HomeSnapshotHolding, ...] = ()
+    previous_holdings_date: str = ""
+    recent_actions: tuple[dict[str, object], ...] = ()
+    adjustments: tuple[str, ...] = ()
     hard_rules: tuple[str, ...] = ()
 
 
@@ -701,7 +707,7 @@ def _snapshot_from_dict(payload: object) -> HomeDashboardSnapshot:
             _phase_from_dict(item)
             for item in _list(mapping.get("phases", ()), "phases")
         ),
-            universe=_universe_from_dict(mapping.get("universe", {})),
+        universe=_universe_from_dict(mapping.get("universe", {})),
         variants=tuple(
             _variant_from_dict(item)
             for item in _list(mapping.get("variants", ()), "variants")
@@ -759,10 +765,34 @@ def _variant_from_dict(payload: object) -> HomeSnapshotVariant:
                 last_price=float(item.get("last_price", 0.0) or 0.0),
                 market_value=float(item.get("market_value", 0.0) or 0.0),
                 unrealized_pnl=float(item.get("unrealized_pnl", 0.0) or 0.0),
+                name=_optional_text(item.get("name"), "holding.name"),
             )
             for item in mapping.get("holdings", ())
             if isinstance(item, dict)
         ),
+        holdings_date=_optional_text(
+            mapping.get("holdings_date"), "variant.holdings_date"
+        ),
+        previous_holdings=tuple(
+            HomeSnapshotHolding(
+                symbol=_text(item.get("symbol", ""), "previous_holding.symbol"),
+                quantity=int(item.get("quantity", 0) or 0),
+                average_price=float(item.get("average_price", 0.0) or 0.0),
+                last_price=float(item.get("last_price", 0.0) or 0.0),
+                market_value=float(item.get("market_value", 0.0) or 0.0),
+                unrealized_pnl=float(item.get("unrealized_pnl", 0.0) or 0.0),
+                name=_optional_text(item.get("name"), "previous_holding.name"),
+            )
+            for item in mapping.get("previous_holdings", ())
+            if isinstance(item, dict)
+        ),
+        previous_holdings_date=_optional_text(
+            mapping.get("previous_holdings_date"), "variant.previous_holdings_date"
+        ),
+        recent_actions=tuple(
+            item for item in mapping.get("recent_actions", ()) if isinstance(item, dict)
+        ),
+        adjustments=_text_tuple(mapping.get("adjustments", ()), "variant.adjustments"),
         hard_rules=_text_tuple(mapping.get("hard_rules", ()), "variant.hard_rules"),
     )
 

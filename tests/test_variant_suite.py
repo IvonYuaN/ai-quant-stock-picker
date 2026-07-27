@@ -1,56 +1,99 @@
 import sqlite3
+from collections import Counter
+from datetime import date, timedelta
 
 from scripts.run_variant_suite import run_suite
 
 
-def test_run_suite_creates_fourteen_independent_ten_wan_accounts(tmp_path):
+def test_run_suite_creates_many_explained_nonduplicate_accounts(tmp_path):
     db = tmp_path / "history.db"
     with sqlite3.connect(db) as conn:
         conn.execute(
             """
             CREATE TABLE ohlcv (
-                symbol TEXT, date TEXT, price_mode TEXT, workload TEXT,
+                symbol TEXT, date TEXT, name TEXT, price_mode TEXT, workload TEXT,
                 open REAL, high REAL, low REAL, close REAL, volume REAL,
                 amount REAL, suspended INTEGER, limit_up REAL, limit_down REAL
             )
             """
         )
         rows = []
-        for index in range(30):
-            close = 10.0 + index * 0.2
-            rows.append(
-                (
-                    "AAA",
-                    f"2026-01-{index + 1:02d}",
-                    "raw",
-                    "historical",
-                    close,
-                    close + 0.1,
-                    close - 0.1,
-                    close,
-                    100000.0,
-                    close * 100000.0,
-                    0,
-                    close * 1.1,
-                    close * 0.9,
+        start = date(2026, 1, 1)
+        symbols = {
+            "AAA": ("阿尔法", 10.0, 0.18, 1.00),
+            "BBB": ("贝塔", 18.0, 0.08, 0.75),
+            "CCC": ("伽马", 14.0, -0.04, 1.45),
+            "DDD": ("德尔塔", 9.0, 0.03, 0.55),
+            "EEE": ("伊普西龙", 22.0, 0.12, 1.20),
+        }
+        for symbol, (name, base, slope, volume_scale) in symbols.items():
+            for index in range(90):
+                current = start + timedelta(days=index)
+                wave = ((index % 9) - 4) * 0.06
+                breakout = 1.2 if symbol == "EEE" and index in {45, 70} else 0.0
+                close = base + index * slope + wave + breakout
+                high = close + 0.25
+                low = close - 0.22
+                volume = 100000.0 * volume_scale * (1.0 + (index % 7) / 10.0)
+                if symbol in {"AAA", "EEE"} and index in {44, 69}:
+                    volume *= 2.2
+                rows.append(
+                    (
+                        symbol,
+                        current.isoformat(),
+                        name,
+                        "raw",
+                        "historical",
+                        close,
+                        high,
+                        low,
+                        close,
+                        volume,
+                        close * volume,
+                        0,
+                        close * 1.1,
+                        close * 0.9,
+                    )
                 )
-            )
-        conn.executemany("INSERT INTO ohlcv VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", rows)
+        conn.executemany("INSERT INTO ohlcv VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)", rows)
 
-    result = run_suite(db, ("AAA",), "2026-01-01", "2026-01-30")
+    result = run_suite(db, tuple(symbols), "2026-01-01", "2026-03-31")
+    variants = result["variants"]
+
     assert result["initial_cash"] == 100_000.0
-    assert len(result["variants"]) == 14
-    assert {item["initial_cash"] for item in result["variants"]} == {100_000.0}
-    assert all("cash" in item and "total_pnl" in item for item in result["variants"])
-    assert all("strategy" in item and "holdings" in item for item in result["variants"])
-    assert result["optimization"]["evaluation_only"] is True
-    assert result["optimization"]["selected_variant_id"]
-    assert all(item["filled_orders"] >= 0 for item in result["variants"])
-    assert {item["strategy"]["mode"] for item in result["variants"]} >= {
+    assert result["schema_version"] == "variant-suite-v2"
+    assert len(variants) >= 100
+    assert {item["initial_cash"] for item in variants} == {100_000.0}
+    assert len({item["variant_id"] for item in variants}) == len(variants)
+    assert len({item["strategy_signature"] for item in variants}) >= 100
+    assert len({item["holdings_signature"] for item in variants}) > 1
+    assert (
+        Counter(item["holdings_signature"] for item in variants[:12]).most_common(1)[0][
+            1
+        ]
+        <= 3
+    )
+    assert all("cash" in item and "total_pnl" in item for item in variants)
+    assert all(item["strategy"]["hypothesis"] for item in variants)
+    assert all(item["holdings_date"] == "2026-03-31" for item in variants)
+    assert all(item["previous_holdings_date"] == "2026-03-30" for item in variants)
+    assert all("previous_holdings" in item for item in variants)
+    assert all(item["adjustments"] for item in variants)
+    assert any(
+        holding.get("name") == "阿尔法"
+        for item in variants
+        for holding in item["holdings"]
+    )
+    assert all(item["filled_orders"] >= 0 for item in variants)
+    assert {item["strategy"]["mode"] for item in variants} >= {
         "reversion",
         "volume_breakout",
         "atr_trend",
         "defensive_range",
+        "macd_cross",
+        "kdj_rebound",
     }
-    assert all(item["strategy"]["hypothesis"] for item in result["variants"])
     assert result["execution_rules"]["t_plus_one"] is True
+    assert result["execution_rules"]["raw_unadjusted_prices"] is True
+    assert result["optimization"]["evaluation_only"] is True
+    assert result["optimization"]["selected_variant_id"]
