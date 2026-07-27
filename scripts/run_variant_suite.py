@@ -437,18 +437,12 @@ def _with_indicators(raw: pd.DataFrame, lookback: int) -> pd.DataFrame:
     return frame
 
 
-def build_indicator_cache(
+def build_indicator_frames(
     frames: dict[str, pd.DataFrame],
-    profiles: tuple[VariantProfile, ...],
-) -> dict[int, dict[str, pd.DataFrame]]:
-    """Cache indicator frames by lookback; profiles share the same inputs."""
-    lookbacks = sorted({profile.lookback for profile in profiles})
-    return {
-        lookback: {
-            symbol: _with_indicators(raw, lookback) for symbol, raw in frames.items()
-        }
-        for lookback in lookbacks
-    }
+    lookback: int,
+) -> dict[str, pd.DataFrame]:
+    """Build one lookback cache; callers release it before the next lookback."""
+    return {symbol: _with_indicators(raw, lookback) for symbol, raw in frames.items()}
 
 
 def _row_is_valid(row: pd.Series) -> bool:
@@ -739,38 +733,42 @@ def run_suite(
     frames = load_frames(db_path, symbols, start, end)
     rules = VariantExecutionRules(initial_cash=BASE_CASH)
     profiles = generate_variant_profiles(frames)
-    indicator_cache = build_indicator_cache(frames, profiles)
     symbol_names = _symbol_names(frames)
     previous_date = _previous_trade_date(frames, end)
     prepared_data = prepare_variant_data(frames)
     snapshot_dates = (previous_date,) if previous_date else ()
     results = []
+    profiles_by_lookback: dict[int, list[VariantProfile]] = defaultdict(list)
     for profile in profiles:
-        orders = build_orders(frames, profile, indicator_cache)
-        result = simulate_variant(
-            profile.variant_id,
-            prepared_data,
-            orders,
-            rules=rules,
-            snapshot_dates=snapshot_dates,
-        )
-        payload = variant_result_to_dict(result)
-        _attach_holding_names(payload["holdings"], symbol_names)
-        previous_holdings = _holding_dicts(result.snapshots.get(previous_date, ()))
-        _attach_holding_names(previous_holdings, symbol_names)
-        payload["label"] = profile.label
-        payload["strategy_label"] = profile.label
-        payload["strategy"] = _strategy_payload(profile)
-        payload["strategy_signature"] = _strategy_signature(profile)
-        payload["holdings_date"] = end
-        payload["previous_holdings_date"] = previous_date or ""
-        payload["previous_holdings"] = previous_holdings
-        payload["recent_actions"] = _recent_actions(result, symbol_names)
-        payload["adjustments"] = _adjustments(
-            payload["holdings"], previous_holdings, result, symbol_names
-        )
-        payload["holdings_signature"] = _holdings_signature(payload["holdings"])
-        results.append(payload)
+        profiles_by_lookback[profile.lookback].append(profile)
+    for lookback in sorted(profiles_by_lookback):
+        indicator_cache = {lookback: build_indicator_frames(frames, lookback)}
+        for profile in profiles_by_lookback[lookback]:
+            orders = build_orders(frames, profile, indicator_cache)
+            result = simulate_variant(
+                profile.variant_id,
+                prepared_data,
+                orders,
+                rules=rules,
+                snapshot_dates=snapshot_dates,
+            )
+            payload = variant_result_to_dict(result)
+            _attach_holding_names(payload["holdings"], symbol_names)
+            previous_holdings = _holding_dicts(result.snapshots.get(previous_date, ()))
+            _attach_holding_names(previous_holdings, symbol_names)
+            payload["label"] = profile.label
+            payload["strategy_label"] = profile.label
+            payload["strategy"] = _strategy_payload(profile)
+            payload["strategy_signature"] = _strategy_signature(profile)
+            payload["holdings_date"] = end
+            payload["previous_holdings_date"] = previous_date or ""
+            payload["previous_holdings"] = previous_holdings
+            payload["recent_actions"] = _recent_actions(result, symbol_names)
+            payload["adjustments"] = _adjustments(
+                payload["holdings"], previous_holdings, result, symbol_names
+            )
+            payload["holdings_signature"] = _holdings_signature(payload["holdings"])
+            results.append(payload)
     results = _diversity_ranked(results)
     training_volatility_pct = _training_volatility_pct(frames)
     return {
