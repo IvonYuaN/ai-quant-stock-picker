@@ -338,13 +338,14 @@ def build_orders(
             continue
         entry_mask, exit_mask, scores = _evaluate_frame(frame, profile)
         eligible_index = frame.index[profile.lookback : -1]
-        next_dates = frame["date"].shift(-1)
+        dates = frame["date"].tolist()
         entry_indices = eligible_index[entry_mask.loc[eligible_index]]
         entry_rows = frame.loc[
             entry_indices,
             ("ret", "bias", "macd_hist", "kdj_j", "volume_ratio", "atr_pct"),
         ].assign(
-            next_date=next_dates.loc[entry_indices], score=scores.loc[entry_indices]
+            next_date=[dates[int(index) + 1] for index in entry_indices],
+            score=scores.loc[entry_indices],
         )
         for row in entry_rows.itertuples(index=False):
             next_date = str(row.next_date)
@@ -369,7 +370,7 @@ def build_orders(
             )
         exit_indices = eligible_index[exit_mask.loc[eligible_index]]
         exit_rows = frame.loc[exit_indices, ("ret", "bias", "macd_hist")].assign(
-            next_date=next_dates.loc[exit_indices]
+            next_date=[dates[int(index) + 1] for index in exit_indices]
         )
         for row in exit_rows.itertuples(index=False):
             sell_orders.append(
