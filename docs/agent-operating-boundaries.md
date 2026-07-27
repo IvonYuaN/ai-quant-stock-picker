@@ -56,7 +56,7 @@ curl -Ik https://lh.ifidy.cn/api/health
 推荐验证命令：
 
 ```bash
-python3 scripts/check_deployment_closure.py --branch codex/monitor-walkforward --expected-end 2026-07-24
+python3 scripts/check_deployment_closure.py --branch codex/monitor-walkforward
 python3 scripts/headless_dashboard_check.py --url https://lh.ifidy.cn --mode raw
 python3 scripts/headless_dashboard_check.py --url https://lh.ifidy.cn --screenshot outputs/dashboard-check.png --headless-lock /tmp/aqsp-headless-dashboard.lock
 ```

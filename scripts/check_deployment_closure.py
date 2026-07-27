@@ -24,6 +24,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from aqsp.core.http import urlopen_no_macos_proxy  # noqa: E402
+from aqsp.core.time import latest_completed_trading_day  # noqa: E402
 from scripts.remote_runtime_probe import build_report as build_probe_report  # noqa: E402
 
 
@@ -406,20 +407,25 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--branch", default="codex/monitor-walkforward")
     parser.add_argument("--ssh-target", default=DEFAULT_SSH_TARGET)
     parser.add_argument("--base-url", default=DEFAULT_BASE_URL)
-    parser.add_argument("--expected-end", default="")
+    parser.add_argument(
+        "--expected-end",
+        default="",
+        help="Expected completed trading day; defaults to the latest completed A-share day.",
+    )
     parser.add_argument("--timeout", type=float, default=6.0)
     parser.add_argument("--skip-github-ci", action="store_true")
     parser.add_argument("--skip-remote", action="store_true")
     parser.add_argument("--skip-snapshot", action="store_true")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
+    expected_end = args.expected_end or latest_completed_trading_day().isoformat()
     report = assess(
         root=args.root.resolve(),
         remote=args.remote,
         branch=args.branch,
         ssh_target=args.ssh_target,
         base_url=args.base_url,
-        expected_end=args.expected_end,
+        expected_end=expected_end,
         timeout=args.timeout,
         skip_github_ci=args.skip_github_ci,
         skip_remote=args.skip_remote,

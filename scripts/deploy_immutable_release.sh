@@ -229,6 +229,14 @@ check_public_routes() {
     for path in / /daily-review /variants /api/health /api/aqsp/snapshot; do
         curl -fsS --max-time 12 "${CHECK_URL%/}${path}" >/dev/null
     done
+    if [ -z "$EXPECTED_VARIANT_END" ]; then
+        EXPECTED_VARIANT_END="$(PYTHONPATH="$RELEASE_DIR/src" "$PYTHON_BIN" - <<'PY'
+from aqsp.core.time import latest_completed_trading_day
+
+print(latest_completed_trading_day().isoformat())
+PY
+)"
+    fi
     "$PYTHON_BIN" - "${CHECK_URL%/}/api/aqsp/snapshot" "$RELEASE_DIR/src" "$EXPECTED_VARIANT_END" <<'PY'
 import json
 import sys

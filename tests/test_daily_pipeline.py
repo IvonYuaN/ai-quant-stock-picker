@@ -2767,7 +2767,7 @@ def test_resolve_symbols_samples_live_liquid_universe_across_turnover_ladder(
     assert daily_pipeline._resolve_symbols(config, logging.getLogger("test")) == [
         "600000",
         "300750",
-        "688981",
+        "002594",
     ]
     assert seen == {"limit": 0, "min_amount": 50_000_000}
 

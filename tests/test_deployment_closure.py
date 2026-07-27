@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+from datetime import date
 from pathlib import Path
 
 from scripts import check_deployment_closure as closure
@@ -125,6 +126,28 @@ def test_deployment_closure_requires_successful_ci(monkeypatch, tmp_path: Path) 
     assert any(
         item.name == "github_ci" and item.status == "failed" for item in report.checks
     )
+
+
+def test_deployment_closure_defaults_expected_end_to_latest_completed_day(
+    monkeypatch, tmp_path: Path
+) -> None:
+    captured: dict[str, str] = {}
+
+    def fake_assess(**kwargs: object) -> closure.ClosureReport:
+        captured["expected_end"] = str(kwargs["expected_end"])
+        return closure.ClosureReport(
+            status="verified", commit=SHA_A, branch="test", checks=()
+        )
+
+    monkeypatch.setattr(
+        closure, "latest_completed_trading_day", lambda: date(2026, 7, 27)
+    )
+    monkeypatch.setattr(closure, "assess", fake_assess)
+
+    assert (
+        closure.main(["--root", str(tmp_path), "--skip-remote", "--skip-snapshot"]) == 0
+    )
+    assert captured["expected_end"] == "2026-07-27"
 
 
 def test_deployment_closure_rejects_unreachable_remote(
