@@ -16,6 +16,31 @@ _LIVE_LIQUIDITY_SOURCES = frozenset(
     {"online_first", "eastmoney", "akshare", "sina", "tencent", "multi"}
 )
 _HIGH_FREQUENCY_TASKS = frozenset({"intraday", "midday", "live_short"})
+_SUPPORTED_A_SHARE_PREFIXES = (
+    "000",
+    "001",
+    "002",
+    "300",
+    "301",
+    "600",
+    "601",
+    "603",
+    "605",
+)
+
+
+def _is_supported_a_share_symbol(symbol: str) -> bool:
+    """Keep only Shanghai/Shenzhen main boards and ChiNext for runtime scans."""
+    normalized = str(symbol).strip()
+    return (
+        len(normalized) == 6
+        and normalized.isdigit()
+        and normalized.startswith(_SUPPORTED_A_SHARE_PREFIXES)
+    )
+
+
+def _supported_a_share_symbols(symbols: list[str]) -> list[str]:
+    return [symbol for symbol in symbols if _is_supported_a_share_symbol(symbol)]
 
 
 def _requires_liquid_universe(source_name: str, min_avg_amount: float) -> bool:
@@ -190,6 +215,7 @@ def _limit_resolved_symbols(
     max_universe: int,
     stratified: bool,
 ) -> list[str]:
+    symbols = _supported_a_share_symbols(symbols)
     if max_universe <= 0 or len(symbols) <= max_universe:
         return list(symbols)
     if not stratified:
@@ -243,7 +269,7 @@ def _load_cached_symbol_pool_from_path(
     seen: set[str] = set()
     for item in raw_symbols:
         symbol = str(item).strip()
-        if not symbol or symbol in seen or not symbol.isdigit() or len(symbol) != 6:
+        if not _is_supported_a_share_symbol(symbol) or symbol in seen:
             continue
         seen.add(symbol)
         symbols.append(symbol)
@@ -269,12 +295,7 @@ def _append_unique_symbols(
     seen = set(target)
     for symbol in symbols:
         normalized = str(symbol).strip()
-        if (
-            not normalized
-            or normalized in seen
-            or not normalized.isdigit()
-            or len(normalized) != 6
-        ):
+        if not _is_supported_a_share_symbol(normalized) or normalized in seen:
             continue
         seen.add(normalized)
         target.append(normalized)
@@ -368,6 +389,9 @@ def resolve_run_symbols(
     target_day = as_of or today_shanghai()
     symbols = [item.strip() for item in explicit_symbols.split(",") if item.strip()]
     if symbols:
+        symbols = _supported_a_share_symbols(symbols)
+        if not symbols:
+            raise DataError("标的池过滤后为空：仅支持沪深主板和创业板")
         if source_name != "sqlite_db":
             return symbols
         source = get_source_fn(source_name)
@@ -381,7 +405,11 @@ def resolve_run_symbols(
         from aqsp.universe.pool import UniversePool
 
         pool = UniversePool.from_default(pool_name)
-        return pool.get_symbols(as_of=target_day)
+        return _limit_resolved_symbols(
+            pool.get_symbols(as_of=target_day),
+            max_universe=max_universe,
+            stratified=False,
+        )
     source = None
     try:
         source = get_source_fn(source_name)
@@ -432,4 +460,8 @@ def resolve_run_symbols(
     if _requires_liquid_universe(source_name, min_avg_amount):
         raise DataError(f"{source_name} 未能解析实时流动性标的池，拒绝退回默认大盘池")
 
-    return list(default_symbols[:max_universe] if max_universe > 0 else default_symbols)
+    return _limit_resolved_symbols(
+        list(default_symbols),
+        max_universe=max_universe,
+        stratified=False,
+    )

@@ -23,6 +23,32 @@ def test_resolve_run_symbols_prefers_explicit_symbols() -> None:
     ) == ["600519", "300750"]
 
 
+def test_resolve_run_symbols_excludes_star_beijing_and_b_shares() -> None:
+    def fail_source(_name: str) -> object:
+        raise AssertionError("source should not be built")
+
+    assert resolve_run_symbols(
+        "auto",
+        "600519,688981,300750,830001,200002,900901",
+        get_source_fn=fail_source,
+        default_symbols=("000001",),
+        max_universe=0,
+        min_avg_amount=0,
+    ) == ["600519", "300750"]
+
+
+def test_resolve_run_symbols_rejects_explicit_unsupported_boards() -> None:
+    with pytest.raises(DataError, match="仅支持沪深主板和创业板"):
+        resolve_run_symbols(
+            "auto",
+            "688981,830001",
+            get_source_fn=lambda _name: object(),
+            default_symbols=("000001",),
+            max_universe=0,
+            min_avg_amount=0,
+        )
+
+
 def test_resolve_run_symbols_filters_explicit_symbols_by_sqlite_coverage() -> None:
     seen: dict[str, object] = {}
 
@@ -428,7 +454,7 @@ def test_resolve_run_symbols_intraday_falls_back_to_fast_cache_when_live_fails(
         default_symbols=("600519",),
         max_universe=2,
         min_avg_amount=50.0,
-    ) == ["688981", "002025"]
+    ) == ["002025", "000938"]
 
 
 def test_resolve_run_symbols_intraday_uses_candidate_csv_without_cache_fill_by_default(
@@ -459,7 +485,7 @@ def test_resolve_run_symbols_intraday_uses_candidate_csv_without_cache_fill_by_d
         default_symbols=("600519",),
         max_universe=4,
         min_avg_amount=50.0,
-    ) == ["000017", "688981", "000021"]
+    ) == ["000017", "000021"]
 
 
 def test_resolve_run_symbols_intraday_can_fill_candidate_csv_from_cache(
@@ -488,7 +514,7 @@ def test_resolve_run_symbols_intraday_can_fill_candidate_csv_from_cache(
         default_symbols=("600519",),
         max_universe=3,
         min_avg_amount=50.0,
-    ) == ["688981", "000001", "000002"]
+    ) == ["000001", "000002", "000004"]
 
 
 def test_resolve_run_symbols_intraday_does_not_let_small_csv_cap_global_scan(
@@ -517,7 +543,7 @@ def test_resolve_run_symbols_intraday_does_not_let_small_csv_cap_global_scan(
         default_symbols=("600519",),
         max_universe=4,
         min_avg_amount=50.0,
-    ) == ["688981", "000001", "000002", "000004"]
+    ) == ["000001", "000002", "000004"]
 
 
 def test_resolve_run_symbols_intraday_respects_candidate_csv_priority(
@@ -552,7 +578,7 @@ def test_resolve_run_symbols_intraday_respects_candidate_csv_priority(
         default_symbols=("600519",),
         max_universe=4,
         min_avg_amount=50.0,
-    ) == ["600900", "688981", "000017", "000002"]
+    ) == ["600900", "000017", "000002"]
 
 
 def test_resolve_run_symbols_intraday_fast_cache_can_be_disabled(
