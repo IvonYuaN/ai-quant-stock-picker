@@ -13,30 +13,36 @@ def test_release_task_entrypoint_keeps_code_and_runtime_roots_separate() -> None
 
     assert 'export AQSP_PROJECT_ROOT="$RELEASE_ROOT"' in script
     assert 'RUNTIME_ROOT="${AQSP_RUNTIME_ROOT:-/opt/aqsp}"' in script
-    assert 'RUNTIME_DATA_ROOT="${AQSP_RUNTIME_DATA_ROOT:-${RUNTIME_ROOT}/data}"' in script
-    assert 'AQSP_NEWS_JSON_OUTPUT' in script
-    assert 'AQSP_INTRADAY_CURSOR_PATH' in script
-    assert 'AQSP_HOME_SNAPSHOT_PATH' in script
-    assert 'AQSP_REPORT=' in script
-    assert 'AQSP_DASHBOARD_HTML=' in script
-    assert 'data/runtime/archive/dashboard/index.html' in script
-    assert 'dist/dashboard' not in script
-    assert 'AQSP_RELEASE_MANIFEST' in script
-    assert 'AQSP_RELEASE_COMMIT' in script
+    assert (
+        'RUNTIME_DATA_ROOT="${AQSP_RUNTIME_DATA_ROOT:-${RUNTIME_ROOT}/data}"' in script
+    )
+    assert "AQSP_NEWS_JSON_OUTPUT" in script
+    assert "AQSP_INTRADAY_CURSOR_PATH" in script
+    assert "AQSP_HOME_SNAPSHOT_PATH" in script
+    assert "AQSP_REPORT=" in script
+    assert "AQSP_DASHBOARD_HTML=" in script
+    assert "data/runtime/archive/dashboard/index.html" in script
+    assert "dist/dashboard" not in script
+    assert "AQSP_RELEASE_MANIFEST" in script
+    assert "AQSP_RELEASE_COMMIT" in script
+    assert "AQSP_SHARED_VENV_DIR:-/opt/aqsp-vibe-venv" in script
+    assert "AQSP_RUNTIME_PYTHON=" in script
     assert 'exec /bin/bash "${RELEASE_ROOT}/scripts/bt_task.sh" "$@"' in script
 
     bt_task = (PROJECT_ROOT / "scripts/bt_task.sh").read_text(encoding="utf-8")
-    assert 'AQSP_IMMUTABLE_RELEASE:-false' in bt_task
-    assert 'Git repo not found: ${PROJECT_ROOT}' in bt_task
+    assert "AQSP_IMMUTABLE_RELEASE:-false" in bt_task
+    assert "Git repo not found: ${PROJECT_ROOT}" in bt_task
 
 
-def test_release_task_entrypoint_does_not_allow_runtime_root_to_replace_code_root() -> None:
+def test_release_task_entrypoint_does_not_allow_runtime_root_to_replace_code_root() -> (
+    None
+):
     script = (PROJECT_ROOT / "scripts/release_task_entrypoint.sh").read_text(
         encoding="utf-8"
     )
 
     assert 'AQSP_PROJECT_ROOT="$RUNTIME_ROOT"' not in script
-    assert 'runtime output must be under ${RUNTIME_DATA_ROOT}' in script
+    assert "runtime output must be under ${RUNTIME_DATA_ROOT}" in script
 
 
 def test_release_task_entrypoint_maps_relative_runtime_paths_once_to_data(
@@ -48,7 +54,7 @@ def test_release_task_entrypoint_maps_relative_runtime_paths_once_to_data(
     (release / "scripts").mkdir(parents=True)
     (release / "scripts" / "bt_task.sh").write_text(
         "#!/usr/bin/env bash\n"
-        "printf '%s\\n' \"AQSP_LEDGER=$AQSP_LEDGER\" \"AQSP_REPORT=$AQSP_REPORT\" > \"$MARKER\"\n",
+        'printf \'%s\\n\' "AQSP_LEDGER=$AQSP_LEDGER" "AQSP_REPORT=$AQSP_REPORT" "AQSP_RUNTIME_PYTHON=$AQSP_RUNTIME_PYTHON" "AQSP_BT_LOGS_DIR=$AQSP_BT_LOGS_DIR" > "$MARKER"\n',
         encoding="utf-8",
     )
     (release / "scripts" / "bt_task.sh").chmod(0o755)
@@ -72,4 +78,12 @@ def test_release_task_entrypoint_maps_relative_runtime_paths_once_to_data(
     assert marker.read_text(encoding="utf-8").splitlines() == [
         f"AQSP_LEDGER={runtime / 'data' / 'predictions.jsonl'}",
         f"AQSP_REPORT={runtime / 'data' / 'reports' / 'latest.md'}",
+        "AQSP_RUNTIME_PYTHON=/opt/aqsp-vibe-venv/bin/python3",
+        f"AQSP_BT_LOGS_DIR={runtime / 'data' / 'logs' / 'bt'}",
     ]
+
+
+def test_bt_task_uses_runtime_log_directory_when_provided() -> None:
+    script = (PROJECT_ROOT / "scripts" / "bt_task.sh").read_text(encoding="utf-8")
+
+    assert 'LOG_DIR="${AQSP_BT_LOGS_DIR:-${PROJECT_ROOT}/logs/bt}"' in script

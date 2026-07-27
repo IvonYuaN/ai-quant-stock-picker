@@ -123,3 +123,23 @@ def test_build_source_refs_skips_missing_optional_adapter(monkeypatch) -> None:
     )
 
     assert [item.name for item in refs] == ["tencent"]
+
+
+def test_build_data_source_online_first_prioritizes_concurrent_tencent_daily_source() -> (
+    None
+):
+    from aqsp.data import source_factory as sf
+
+    class DummySource:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+    source = sf.build_data_source(
+        "online_first",
+        overrides={
+            name: lambda *, cache=None, name=name: DummySource(name)
+            for name in ("tencent", "eastmoney", "sina", "akshare", "tdx_vipdoc")
+        },
+    )
+
+    assert source.primary.name == "tencent"

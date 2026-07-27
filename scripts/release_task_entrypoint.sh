@@ -61,7 +61,11 @@ PY
 else
     echo "[WARN] release identity manifest missing: ${AQSP_RELEASE_MANIFEST}" >&2
 fi
-export AQSP_RUNTIME_VENV_DIR="${AQSP_RUNTIME_VENV_DIR:-${RELEASE_ROOT}/.venv-vibe-research}"
+# Releases are immutable and do not carry a venv. Scheduled jobs must use the
+# shared server venv, matching the systemd services, instead of a stale path
+# inside the current release.
+export AQSP_RUNTIME_VENV_DIR="${AQSP_RUNTIME_VENV_DIR:-${AQSP_SHARED_VENV_DIR:-/opt/aqsp-vibe-venv}}"
+export AQSP_RUNTIME_PYTHON="${AQSP_RUNTIME_PYTHON:-${AQSP_RUNTIME_VENV_DIR}/bin/python3}"
 export AQSP_LEDGER="$(runtime_path "${AQSP_LEDGER:-data/predictions.jsonl}")"
 export AQSP_PAPER_LEDGER="$(runtime_path "${AQSP_PAPER_LEDGER:-data/paper_trades.jsonl}")"
 export AQSP_DEBATE_RESULTS="$(runtime_path "${AQSP_DEBATE_RESULTS:-data/debate_results.jsonl}")"

@@ -34,7 +34,7 @@ fi
 # shellcheck disable=SC1090
 source "$RUNTIME_PYTHON_HELPER"
 ACTION="${1:-}"
-LOG_DIR="${PROJECT_ROOT}/logs/bt"
+LOG_DIR="${AQSP_BT_LOGS_DIR:-${PROJECT_ROOT}/logs/bt}"
 RUN_LOG="${LOG_DIR}/bt-${ACTION}-$(date +%Y-%m-%d).log"
 BRANCH="${AQSP_GIT_BRANCH:-main}"
 REMOTE="${AQSP_GIT_REMOTE:-origin}"

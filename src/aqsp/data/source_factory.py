@@ -130,7 +130,10 @@ def build_data_source(
     if source_name == "online_first":
         online_sources = _reorder_source_refs(
             _build_source_refs(
-                ("eastmoney", "sina", "tencent", "akshare"),
+                # Tencent batches daily requests concurrently. It is the only
+                # online adapter suitable as the first choice for a large
+                # live universe; Eastmoney retries each symbol serially.
+                ("tencent", "eastmoney", "sina", "akshare"),
                 builders,
                 source_cache,
             ),
@@ -177,7 +180,9 @@ def _build_source_refs(
         try:
             refs.append(_build_with_cache(builder, cache))
         except (ImportError, ModuleNotFoundError, RuntimeError) as exc:
-            if name not in _OPTIONAL_SOURCE_NAMES or not _is_missing_optional_source(exc):
+            if name not in _OPTIONAL_SOURCE_NAMES or not _is_missing_optional_source(
+                exc
+            ):
                 raise
             _logger.warning("跳过未安装的可选数据源 %s: %s", name, exc)
     if not refs:
