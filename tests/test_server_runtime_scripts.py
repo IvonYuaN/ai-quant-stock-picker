@@ -1469,14 +1469,20 @@ def test_coldstart_daily_script_updates_db_then_runs_cli() -> None:
     assert "AQSP_COLDSTART_BACKFILL_START_DATE" in script
     assert "AQSP_COLDSTART_BACKFILL_FORCE" in script
     assert "AQSP_COLDSTART_FILL_HISTORY_GAPS" in script
-    assert 'COLDSTART_SAFE_MAX_UNIVERSE="${AQSP_COLDSTART_SAFE_MAX_UNIVERSE:-600}"' in script
+    assert (
+        'COLDSTART_SAFE_MAX_UNIVERSE="${AQSP_COLDSTART_SAFE_MAX_UNIVERSE:-600}"'
+        in script
+    )
     assert (
         'COLDSTART_MAX_UNIVERSE="${AQSP_COLDSTART_MAX_UNIVERSE:-${AQSP_MAX_UNIVERSE:-$COLDSTART_SAFE_MAX_UNIVERSE}}"'
         in script
     )
     assert '[ "$COLDSTART_MAX_UNIVERSE" -le 0 ]' in script
-    assert 'AQSP_COLDSTART_ALLOW_HEAVY_UNIVERSE' in script
-    assert 'AQSP_TENCENT_DAILY_FETCH_WORKERS="${AQSP_TENCENT_DAILY_FETCH_WORKERS:-2}"' in script
+    assert "AQSP_COLDSTART_ALLOW_HEAVY_UNIVERSE" in script
+    assert (
+        'AQSP_TENCENT_DAILY_FETCH_WORKERS="${AQSP_TENCENT_DAILY_FETCH_WORKERS:-2}"'
+        in script
+    )
     assert (
         'COLDSTART_MIN_TARGET_COVERAGE="${AQSP_COLDSTART_MIN_TARGET_COVERAGE:-3000}"'
         in script
@@ -1520,6 +1526,21 @@ def test_coldstart_daily_script_updates_db_then_runs_cli() -> None:
     assert "冷启动:" in script
     assert "today_shanghai" in script
     assert "今日非交易日，跳过冷启动任务" in script
+
+
+def test_launchd_strategy_wrappers_gate_non_trading_days_before_execution() -> None:
+    cases = (
+        ("aqsp_morning_wrapper.sh", "早盘策略正常跳过", 'log "运行早盘'),
+        ("aqsp_closing_wrapper.sh", "尾盘策略正常跳过", 'log "运行尾盘'),
+    )
+    for filename, skip_message, run_marker in cases:
+        script = (PROJECT_ROOT / "scripts" / "launchd" / filename).read_text(
+            encoding="utf-8"
+        )
+
+        assert "from aqsp.core.time import is_trading_day, today_shanghai" in script
+        assert skip_message in script
+        assert script.index(skip_message) < script.index(run_marker)
 
 
 def test_coldstart_daily_continues_when_update_fails_but_target_coverage_is_enough(
