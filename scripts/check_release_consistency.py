@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
 from dataclasses import asdict, dataclass
@@ -51,25 +52,41 @@ def _remote_head(root: Path, remote_url: str, branch: str) -> tuple[bool, str]:
     return (True, line.split()[0]) if line else (False, "remote branch not found")
 
 
-def _read_json(path: Path, label: str, findings: list[Finding]) -> dict[str, object] | None:
+def _read_json(
+    path: Path, label: str, findings: list[Finding]
+) -> dict[str, object] | None:
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
-        findings.append(Finding("error", "missing_manifest", f"{label} missing: {path}"))
+        findings.append(
+            Finding("error", "missing_manifest", f"{label} missing: {path}")
+        )
         return None
     except (OSError, json.JSONDecodeError) as exc:
-        findings.append(Finding("error", "invalid_manifest", f"{label} invalid: {path}: {exc}"))
+        findings.append(
+            Finding("error", "invalid_manifest", f"{label} invalid: {path}: {exc}")
+        )
         return None
     if not isinstance(value, dict):
-        findings.append(Finding("error", "invalid_manifest", f"{label} must be a JSON object: {path}"))
+        findings.append(
+            Finding(
+                "error", "invalid_manifest", f"{label} must be a JSON object: {path}"
+            )
+        )
         return None
     return value
 
 
-def _validate_sha(value: object, pattern: re.Pattern[str], label: str, findings: list[Finding]) -> str:
+def _validate_sha(
+    value: object, pattern: re.Pattern[str], label: str, findings: list[Finding]
+) -> str:
     text = str(value or "").strip().lower()
     if not pattern.fullmatch(text):
-        findings.append(Finding("error", "invalid_identity", f"{label} is not a valid SHA: {value!r}"))
+        findings.append(
+            Finding(
+                "error", "invalid_identity", f"{label} is not a valid SHA: {value!r}"
+            )
+        )
     return text
 
 
@@ -87,12 +104,26 @@ def _validate_manifest_identity(
         )
     file_count = manifest.get("file_count")
     if file_count is not None and (
-        not isinstance(file_count, int) or isinstance(file_count, bool) or file_count < 0
+        not isinstance(file_count, int)
+        or isinstance(file_count, bool)
+        or file_count < 0
     ):
-        findings.append(Finding("error", "invalid_file_count", "manifest file_count must be a non-negative integer"))
+        findings.append(
+            Finding(
+                "error",
+                "invalid_file_count",
+                "manifest file_count must be a non-negative integer",
+            )
+        )
     digest = manifest.get("content_digest")
     if digest not in (None, "unverified") and not SHA64.fullmatch(str(digest).lower()):
-        findings.append(Finding("error", "invalid_content_digest", "manifest content_digest is not a SHA-256 digest"))
+        findings.append(
+            Finding(
+                "error",
+                "invalid_content_digest",
+                "manifest content_digest is not a SHA-256 digest",
+            )
+        )
 
 
 def _check_overlay(
@@ -102,7 +133,11 @@ def _check_overlay(
     findings: list[Finding],
 ) -> None:
     if not overlay_path.exists():
-        findings.append(Finding("error", "missing_overlay", f"runtime overlay missing: {overlay_path}"))
+        findings.append(
+            Finding(
+                "error", "missing_overlay", f"runtime overlay missing: {overlay_path}"
+            )
+        )
         return
     manifest = _read_json(overlay_path, "runtime overlay", findings)
     if manifest is None:
@@ -110,42 +145,113 @@ def _check_overlay(
     source = manifest.get("source")
     source_commit = source.get("commit") if isinstance(source, dict) else None
     if str(source_commit or "").lower() != release_commit:
-        findings.append(Finding("error", "overlay_source_mismatch", f"overlay source commit {source_commit!r} != release {release_commit}"))
+        findings.append(
+            Finding(
+                "error",
+                "overlay_source_mismatch",
+                f"overlay source commit {source_commit!r} != release {release_commit}",
+            )
+        )
     files = manifest.get("managed_files")
     hashes = manifest.get("file_hashes")
     if not isinstance(files, list) or not files or not isinstance(hashes, dict):
-        findings.append(Finding("error", "invalid_overlay", "overlay must contain managed_files and file_hashes"))
+        findings.append(
+            Finding(
+                "error",
+                "invalid_overlay",
+                "overlay must contain managed_files and file_hashes",
+            )
+        )
         return
     for item in files:
         relative = str(item or "")
         expected = str(hashes.get(relative) or "").lower()
         path = release_root / relative
         if not relative or Path(relative).is_absolute() or ".." in Path(relative).parts:
-            findings.append(Finding("error", "unsafe_overlay_path", f"unsafe overlay path: {relative!r}"))
+            findings.append(
+                Finding(
+                    "error", "unsafe_overlay_path", f"unsafe overlay path: {relative!r}"
+                )
+            )
             continue
         if not SHA64.fullmatch(expected):
-            findings.append(Finding("error", "invalid_overlay_hash", f"overlay hash invalid for {relative}"))
+            findings.append(
+                Finding(
+                    "error",
+                    "invalid_overlay_hash",
+                    f"overlay hash invalid for {relative}",
+                )
+            )
             continue
         if not path.is_file():
-            findings.append(Finding("error", "overlay_file_missing", f"overlay file missing from release: {relative}"))
+            findings.append(
+                Finding(
+                    "error",
+                    "overlay_file_missing",
+                    f"overlay file missing from release: {relative}",
+                )
+            )
             continue
         import hashlib
 
         actual = hashlib.sha256(path.read_bytes()).hexdigest()
         if actual != expected:
-            findings.append(Finding("error", "overlay_hash_mismatch", f"overlay hash mismatch: {relative}"))
+            findings.append(
+                Finding(
+                    "error",
+                    "overlay_hash_mismatch",
+                    f"overlay hash mismatch: {relative}",
+                )
+            )
 
 
-def _check_old_entries(root: Path, active_files: list[str], findings: list[Finding]) -> None:
+def _check_old_entries(
+    root: Path, active_files: list[str], findings: list[Finding]
+) -> None:
     for relative in active_files:
         path = root / relative
         if not path.is_file():
-            findings.append(Finding("error", "active_entry_missing", f"active entry missing: {path}"))
+            findings.append(
+                Finding(
+                    "error", "active_entry_missing", f"active entry missing: {path}"
+                )
+            )
             continue
         text = path.read_text(encoding="utf-8", errors="replace").lower()
         for term in OLD_ENTRY_TERMS:
             if term in text:
-                findings.append(Finding("error", "legacy_entry_reference", f"{relative} references retired entry {term!r}"))
+                findings.append(
+                    Finding(
+                        "error",
+                        "legacy_entry_reference",
+                        f"{relative} references retired entry {term!r}",
+                    )
+                )
+
+
+def _check_executable_entries(
+    root: Path, executable_files: list[str], findings: list[Finding]
+) -> None:
+    for relative in executable_files:
+        path = root / relative
+        if not path.is_file():
+            findings.append(
+                Finding(
+                    "error",
+                    "executable_entry_missing",
+                    f"executable entry missing: {path}",
+                )
+            )
+            continue
+        if os.access(path, os.X_OK):
+            continue
+        findings.append(
+            Finding(
+                "error",
+                "executable_entry_not_executable",
+                f"executable entry lacks +x permission: {relative}",
+            )
+        )
 
 
 def audit(
@@ -159,6 +265,7 @@ def audit(
     overlay_path: Path,
     active_files: list[str],
     require_overlay: bool,
+    executable_files: list[str] | None = None,
     immutable_release: bool = False,
 ) -> list[Finding]:
     findings: list[Finding] = []
@@ -166,42 +273,102 @@ def audit(
     release_root = project_root
     if canonical_link is not None:
         if not canonical_link.is_symlink():
-            findings.append(Finding("error", "canonical_link_missing", f"canonical release is not a symlink: {canonical_link}"))
+            findings.append(
+                Finding(
+                    "error",
+                    "canonical_link_missing",
+                    f"canonical release is not a symlink: {canonical_link}",
+                )
+            )
         else:
             release_root = canonical_link.resolve()
             if release_root != project_root:
-                findings.append(Finding("error", "canonical_root_mismatch", f"canonical release {release_root} != checked release {project_root}"))
+                findings.append(
+                    Finding(
+                        "error",
+                        "canonical_root_mismatch",
+                        f"canonical release {release_root} != checked release {project_root}",
+                    )
+                )
     manifest = _read_json(manifest_path, "release manifest", findings)
     release_commit = ""
     if manifest is not None:
         _validate_manifest_identity(manifest, release_root, findings)
-        release_commit = _validate_sha(manifest.get("commit"), SHA40, "release commit", findings)
+        release_commit = _validate_sha(
+            manifest.get("commit"), SHA40, "release commit", findings
+        )
         if manifest.get("schema_version") != 1:
-            findings.append(Finding("error", "unsupported_manifest", "release manifest schema_version must be 1"))
+            findings.append(
+                Finding(
+                    "error",
+                    "unsupported_manifest",
+                    "release manifest schema_version must be 1",
+                )
+            )
         if not immutable_release and str(manifest.get("branch") or "") != branch:
-            findings.append(Finding("error", "branch_mismatch", f"manifest branch {manifest.get('branch')!r} != expected {branch!r}"))
+            findings.append(
+                Finding(
+                    "error",
+                    "branch_mismatch",
+                    f"manifest branch {manifest.get('branch')!r} != expected {branch!r}",
+                )
+            )
     has_head, head = _git(project_root, "rev-parse", "HEAD")
     if has_head and release_commit and head.lower() != release_commit:
-        findings.append(Finding("error", "release_head_mismatch", f"release HEAD {head} != manifest {release_commit}"))
-    has_remote, remote_head = _git(project_root, "rev-parse", "--verify", f"refs/remotes/{remote}/{branch}")
+        findings.append(
+            Finding(
+                "error",
+                "release_head_mismatch",
+                f"release HEAD {head} != manifest {release_commit}",
+            )
+        )
+    has_remote, remote_head = _git(
+        project_root, "rev-parse", "--verify", f"refs/remotes/{remote}/{branch}"
+    )
     remote_failure_reported = False
     if immutable_release:
         has_remote = True
         remote_head = release_commit
-    elif not has_remote and manifest is not None and not (project_root / ".git").exists():
+    elif (
+        not has_remote and manifest is not None and not (project_root / ".git").exists()
+    ):
         remote_url = str(manifest.get("remote_url") or "").strip()
         if remote_url and remote_url != "unknown":
             has_remote, remote_head = _remote_head(project_root, remote_url, branch)
             if not has_remote:
-                findings.append(Finding("error", "remote_ref_unavailable", f"remote branch unavailable: {remote_url} {branch}: {remote_head}"))
+                findings.append(
+                    Finding(
+                        "error",
+                        "remote_ref_unavailable",
+                        f"remote branch unavailable: {remote_url} {branch}: {remote_head}",
+                    )
+                )
                 remote_failure_reported = True
         else:
-            findings.append(Finding("error", "remote_url_missing", "immutable release manifest has no remote_url for GitHub verification"))
+            findings.append(
+                Finding(
+                    "error",
+                    "remote_url_missing",
+                    "immutable release manifest has no remote_url for GitHub verification",
+                )
+            )
             remote_failure_reported = True
     if not has_remote and not remote_failure_reported:
-        findings.append(Finding("error", "remote_ref_missing", f"remote ref unavailable: {remote}/{branch}: {remote_head}"))
+        findings.append(
+            Finding(
+                "error",
+                "remote_ref_missing",
+                f"remote ref unavailable: {remote}/{branch}: {remote_head}",
+            )
+        )
     elif release_commit and remote_head.lower() != release_commit:
-        findings.append(Finding("error", "release_not_published", f"release {release_commit} != GitHub {remote}/{branch} {remote_head}; push/fetch state is not consistent"))
+        findings.append(
+            Finding(
+                "error",
+                "release_not_published",
+                f"release {release_commit} != GitHub {remote}/{branch} {remote_head}; push/fetch state is not consistent",
+            )
+        )
     status_ok, status = _git(
         project_root, "status", "--porcelain=v1", "--untracked-files=all"
     )
@@ -228,6 +395,7 @@ def audit(
         if release_commit:
             _check_overlay(release_root, overlay_path, release_commit, findings)
     _check_old_entries(release_root, active_files, findings)
+    _check_executable_entries(release_root, executable_files or [], findings)
     return findings
 
 
@@ -241,6 +409,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--manifest", type=Path)
     parser.add_argument("--overlay", type=Path)
     parser.add_argument("--active-file", action="append", default=[])
+    parser.add_argument("--executable-file", action="append", default=[])
     parser.add_argument("--require-overlay", action="store_true")
     parser.add_argument(
         "--immutable-release",
@@ -258,6 +427,10 @@ def main(argv: list[str] | None = None) -> int:
         "scripts/release_task_entrypoint.sh",
         "scripts/bt_task.sh",
     ]
+    executable_files = args.executable_file or [
+        "scripts/bt_task.sh",
+        "scripts/health_vibe_research.sh",
+    ]
     findings = audit(
         project_root=project_root,
         runtime_root=runtime_root,
@@ -268,10 +441,15 @@ def main(argv: list[str] | None = None) -> int:
         overlay_path=overlay,
         active_files=active_files,
         require_overlay=args.require_overlay,
+        executable_files=executable_files,
         immutable_release=args.immutable_release,
     )
     if args.as_json:
-        print(json.dumps([asdict(item) for item in findings], ensure_ascii=False, indent=2))
+        print(
+            json.dumps(
+                [asdict(item) for item in findings], ensure_ascii=False, indent=2
+            )
+        )
     elif findings:
         print("Release consistency FAILED:")
         for item in findings:

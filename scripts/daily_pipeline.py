@@ -1039,9 +1039,14 @@ def _refresh_home_snapshot(
     """Refresh the legacy-compatible home artifact from the daily inputs."""
     try:
         sys.path.insert(0, str(config.project_root / "scripts"))
-        from write_home_snapshot import build_home_snapshot, build_home_snapshot_index
+        from write_home_snapshot import (
+            build_home_snapshot,
+            build_home_snapshot_index,
+            merge_home_snapshot_index,
+        )
         from aqsp.web.data_provider import DashboardDataProvider
         from aqsp.web.home_snapshot import (
+            load_home_snapshot_index,
             write_home_dashboard_snapshot,
             write_home_snapshot_index,
         )
@@ -1078,10 +1083,12 @@ def _refresh_home_snapshot(
             ),
         )
         snapshot = build_home_snapshot(provider)
-        index = build_home_snapshot_index(
+        refreshed_index = build_home_snapshot_index(
             provider,
             initial_snapshot=snapshot,
         )
+        existing_index = load_home_snapshot_index(index_path)
+        index = merge_home_snapshot_index(existing_index, refreshed_index)
         write_home_dashboard_snapshot(snapshot_path, snapshot)
         write_home_snapshot_index(index_path, index)
         logger.info(

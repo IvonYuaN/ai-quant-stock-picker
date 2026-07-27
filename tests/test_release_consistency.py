@@ -39,7 +39,9 @@ def _manifest(root: Path, commit: str = SHA_A) -> Path:
     return path
 
 
-def test_release_consistency_rejects_release_not_published(monkeypatch, tmp_path: Path) -> None:
+def test_release_consistency_rejects_release_not_published(
+    monkeypatch, tmp_path: Path
+) -> None:
     _manifest(tmp_path)
     _fake_git(
         monkeypatch,
@@ -59,6 +61,7 @@ def test_release_consistency_rejects_release_not_published(monkeypatch, tmp_path
         manifest_path=tmp_path / ".aqsp-release.json",
         overlay_path=tmp_path / "missing-overlay.json",
         active_files=[],
+        executable_files=[],
         require_overlay=False,
     )
 
@@ -100,6 +103,7 @@ def test_release_consistency_rejects_overlay_from_another_release(
         manifest_path=tmp_path / ".aqsp-release.json",
         overlay_path=overlay,
         active_files=[],
+        executable_files=[],
         require_overlay=True,
     )
 
@@ -119,13 +123,66 @@ def test_release_consistency_rejects_legacy_active_entry(tmp_path: Path) -> None
         manifest_path=tmp_path / ".aqsp-release.json",
         overlay_path=tmp_path / "missing-overlay.json",
         active_files=["active.sh"],
+        executable_files=[],
         require_overlay=False,
     )
 
     assert {item.code for item in findings} >= {"legacy_entry_reference"}
 
 
-def test_write_release_manifest_contains_commit_and_content_digest(tmp_path: Path) -> None:
+def test_release_consistency_rejects_non_executable_required_entry(
+    tmp_path: Path,
+) -> None:
+    _manifest(tmp_path)
+    entry = tmp_path / "scripts" / "health_vibe_research.sh"
+    entry.parent.mkdir()
+    entry.write_text("#!/usr/bin/env bash\necho ok\n", encoding="utf-8")
+    entry.chmod(0o644)
+
+    findings = checker.audit(
+        project_root=tmp_path,
+        runtime_root=tmp_path,
+        remote="origin",
+        branch="main",
+        canonical_link=None,
+        manifest_path=tmp_path / ".aqsp-release.json",
+        overlay_path=tmp_path / "missing-overlay.json",
+        active_files=[],
+        executable_files=["scripts/health_vibe_research.sh"],
+        require_overlay=False,
+    )
+
+    assert any(item.code == "executable_entry_not_executable" for item in findings)
+
+
+def test_release_consistency_accepts_executable_required_entry(
+    tmp_path: Path,
+) -> None:
+    _manifest(tmp_path)
+    entry = tmp_path / "scripts" / "health_vibe_research.sh"
+    entry.parent.mkdir()
+    entry.write_text("#!/usr/bin/env bash\necho ok\n", encoding="utf-8")
+    entry.chmod(0o755)
+
+    findings = checker.audit(
+        project_root=tmp_path,
+        runtime_root=tmp_path,
+        remote="origin",
+        branch="main",
+        canonical_link=None,
+        manifest_path=tmp_path / ".aqsp-release.json",
+        overlay_path=tmp_path / "missing-overlay.json",
+        active_files=[],
+        executable_files=["scripts/health_vibe_research.sh"],
+        require_overlay=False,
+    )
+
+    assert not any(item.code.startswith("executable_entry") for item in findings)
+
+
+def test_write_release_manifest_contains_commit_and_content_digest(
+    tmp_path: Path,
+) -> None:
     (tmp_path / ".git").mkdir()
     (tmp_path / "tracked.txt").write_text("value\n", encoding="utf-8")
     monkeypatch_values = {
@@ -172,24 +229,44 @@ def test_push_with_report_exposes_github_failure(monkeypatch, tmp_path: Path) ->
         return next(calls)
 
     monkeypatch.setattr(push_with_report.subprocess, "run", fake_run)
-    code, payload = push_with_report.push(
-        tmp_path, remote="origin", branch="main"
-    )
+    code, payload = push_with_report.push(tmp_path, remote="origin", branch="main")
 
     assert code == 128
     assert payload["status"] == "failed"
     assert "HTTP/2" in payload["output"]
 
 
-def test_push_with_report_rejects_remote_commit_mismatch(monkeypatch, tmp_path: Path) -> None:
+def test_push_with_report_rejects_remote_commit_mismatch(
+    monkeypatch, tmp_path: Path
+) -> None:
     monkeypatch.setattr(
         push_with_report,
         "_run",
         lambda _root, command: {
-            ("git", "rev-parse", "HEAD"): subprocess.CompletedProcess(command, 0, SHA_A + "\n", ""),
-            ("git", "status", "--porcelain", "--untracked-files=all"): subprocess.CompletedProcess(command, 0, "", ""),
-            ("git", "push", "--porcelain", "origin", "HEAD:refs/heads/main"): subprocess.CompletedProcess(command, 0, "", ""),
-            ("git", "ls-remote", "origin", "refs/heads/main"): subprocess.CompletedProcess(command, 0, SHA_B + "\trefs/heads/main\n", ""),
+            ("git", "rev-parse", "HEAD"): subprocess.CompletedProcess(
+                command, 0, SHA_A + "\n", ""
+            ),
+            (
+                "git",
+                "status",
+                "--porcelain",
+                "--untracked-files=all",
+            ): subprocess.CompletedProcess(command, 0, "", ""),
+            (
+                "git",
+                "push",
+                "--porcelain",
+                "origin",
+                "HEAD:refs/heads/main",
+            ): subprocess.CompletedProcess(command, 0, "", ""),
+            (
+                "git",
+                "ls-remote",
+                "origin",
+                "refs/heads/main",
+            ): subprocess.CompletedProcess(
+                command, 0, SHA_B + "\trefs/heads/main\n", ""
+            ),
         }[tuple(command)],
     )
 
@@ -233,6 +310,7 @@ def test_release_consistency_rejects_dirty_release(monkeypatch, tmp_path: Path) 
         manifest_path=tmp_path / ".aqsp-release.json",
         overlay_path=tmp_path / "missing-overlay.json",
         active_files=[],
+        executable_files=[],
         require_overlay=False,
     )
 
@@ -263,6 +341,7 @@ def test_release_consistency_immutable_release_ignores_remote_and_overlay(
         manifest_path=manifest,
         overlay_path=tmp_path / "runtime" / "overlay.json",
         active_files=[],
+        executable_files=[],
         require_overlay=False,
         immutable_release=True,
     )
@@ -294,6 +373,7 @@ def test_release_consistency_immutable_release_allows_release_generated_files(
         manifest_path=manifest,
         overlay_path=tmp_path / "runtime" / "overlay.json",
         active_files=[],
+        executable_files=[],
         require_overlay=False,
         immutable_release=True,
     )

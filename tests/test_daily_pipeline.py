@@ -1923,6 +1923,86 @@ def test_refresh_dashboard_marks_home_snapshot_failure_as_pipeline_failure(
     assert result["error"] == "首页快照刷新失败: snapshot write failed"
 
 
+def test_refresh_home_snapshot_merges_existing_index(
+    monkeypatch, tmp_path: Path
+) -> None:
+    daily_pipeline = _load_daily_pipeline_module()
+    captured: dict[str, object] = {}
+    existing_index = SimpleNamespace(
+        selected_date="2026-07-24",
+        days=(SimpleNamespace(date="2026-07-24"), SimpleNamespace(date="2026-07-23")),
+    )
+    refreshed_index = SimpleNamespace(
+        selected_date="2026-07-27",
+        days=(SimpleNamespace(date="2026-07-27"),),
+    )
+    merged_index = SimpleNamespace(
+        selected_date="2026-07-27",
+        days=(
+            SimpleNamespace(date="2026-07-27"),
+            SimpleNamespace(date="2026-07-24"),
+            SimpleNamespace(date="2026-07-23"),
+        ),
+    )
+    snapshot = SimpleNamespace(
+        selected_date="2026-07-27",
+        candidates=[{"symbol": "000001"}],
+    )
+
+    write_home_snapshot = type(sys)("write_home_snapshot")
+    write_home_snapshot.build_home_snapshot = lambda _provider: snapshot
+    write_home_snapshot.build_home_snapshot_index = (
+        lambda _provider, *, initial_snapshot: refreshed_index
+    )
+
+    def fake_merge(existing, refreshed):
+        captured["merge_existing"] = existing
+        captured["merge_refreshed"] = refreshed
+        return merged_index
+
+    write_home_snapshot.merge_home_snapshot_index = fake_merge
+
+    data_provider = type(sys)("aqsp.web.data_provider")
+    data_provider.DashboardDataProvider = lambda **kwargs: SimpleNamespace(
+        kwargs=kwargs
+    )
+
+    home_snapshot = type(sys)("aqsp.web.home_snapshot")
+    home_snapshot.load_home_snapshot_index = lambda path: existing_index
+
+    def fake_write_snapshot(path, value):
+        captured["snapshot_path"] = Path(path)
+        captured["snapshot"] = value
+
+    def fake_write_index(path, value):
+        captured["index_path"] = Path(path)
+        captured["index"] = value
+
+    home_snapshot.write_home_dashboard_snapshot = fake_write_snapshot
+    home_snapshot.write_home_snapshot_index = fake_write_index
+
+    monkeypatch.setitem(sys.modules, "write_home_snapshot", write_home_snapshot)
+    monkeypatch.setitem(sys.modules, "aqsp.web.data_provider", data_provider)
+    monkeypatch.setitem(sys.modules, "aqsp.web.home_snapshot", home_snapshot)
+    monkeypatch.setenv(
+        "AQSP_HOME_SNAPSHOT_PATH",
+        str(tmp_path / "data" / "runtime" / "home_dashboard_snapshot.json"),
+    )
+
+    result = daily_pipeline._refresh_home_snapshot(
+        _pipeline_config(daily_pipeline, tmp_path), logging.getLogger("test")
+    )
+
+    assert captured["merge_existing"] is existing_index
+    assert captured["merge_refreshed"] is refreshed_index
+    assert captured["index"] is merged_index
+    assert result["day_count"] == 3
+    assert result["date"] == "2026-07-27"
+    assert captured["index_path"] == (
+        tmp_path / "data" / "runtime" / "home_dashboard_snapshot_index.json"
+    )
+
+
 def test_generate_report_suppresses_fanout_notify_when_non_trade_day(
     monkeypatch, tmp_path: Path
 ) -> None:
