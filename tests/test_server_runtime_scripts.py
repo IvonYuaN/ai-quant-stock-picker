@@ -185,7 +185,7 @@ def test_server_sync_script_supports_custom_runner() -> None:
     assert 'bash "${RUNNER_PATH}"' in script
     assert "printf 'GIT_SYNC_LOCK_STARTED_AT=%q\\n'" in script
     assert "printf 'LOCK_STARTED_AT=%q\\n'" in script
-    assert 'RUNNER_TIMEOUT_SECONDS="${AQSP_RUNNER_TIMEOUT_SECONDS:-0}"' in script
+    assert 'RUNNER_TIMEOUT_SECONDS="${AQSP_RUNNER_TIMEOUT_SECONDS:-5400}"' in script
     assert (
         'RUNTIME_OVERLAY_MANIFEST="${AQSP_RUNTIME_OVERLAY_MANIFEST:-${STATE_DIR}/runtime-sync-overlay.json}"'
         in script
@@ -508,6 +508,29 @@ def test_server_sync_classifies_runner_timeout_and_records_execution_evidence(
     assert "exit_class=timeout_term" in result_text
     assert "timed_out=true" in result_text
     assert "resource_killed=false" in result_text
+
+
+def test_server_sync_rejects_disabled_or_invalid_timeout(tmp_path: Path) -> None:
+    root, runner = _build_sync_runtime(tmp_path)
+    runner.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    runner.chmod(0o755)
+    manifest = _write_overlay_manifest(root, ("runner.sh",))
+    result_path = root / ".state" / "result.env"
+
+    result = _run_server_sync(
+        root,
+        runner=runner,
+        result_path=result_path,
+        marker_path=root / "marker.txt",
+        extra_env={
+            "AQSP_RUNTIME_OVERLAY_MANIFEST": str(manifest),
+            "AQSP_RUNNER_TIMEOUT_SECONDS": "0",
+        },
+    )
+
+    assert result.returncode == 2
+    assert "AQSP_RUNNER_TIMEOUT_SECONDS 必须是正整数: 0" in result.stdout
+    assert "status=invalid_timeout" in result_path.read_text(encoding="utf-8")
 
 
 def test_intraday_refresh_script_uses_isolated_outputs() -> None:
