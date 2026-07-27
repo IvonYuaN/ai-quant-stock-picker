@@ -229,22 +229,52 @@ check_public_routes() {
     for path in / /daily-review /variants /api/health /api/aqsp/snapshot; do
         curl -fsS --max-time 12 "${CHECK_URL%/}${path}" >/dev/null
     done
-    "$PYTHON_BIN" - "${CHECK_URL%/}/api/aqsp/snapshot" "$RELEASE_DIR/src" <<'PY'
+    "$PYTHON_BIN" - "${CHECK_URL%/}/api/aqsp/snapshot" "$RELEASE_DIR/src" "$EXPECTED_VARIANT_END" <<'PY'
 import json
 import sys
+from datetime import date
 
 sys.path.insert(0, sys.argv[2])
 from aqsp.core.http import urlopen_no_macos_proxy
 
 url = sys.argv[1]
+expected_end = sys.argv[3]
 payload = json.loads(urlopen_no_macos_proxy(url, timeout=12).read().decode())
 data = payload.get("data", payload)
 selected = data.get("selected_date")
 available = data.get("available_dates")
 if not isinstance(selected, str) or not selected:
     raise SystemExit("snapshot selected_date missing")
+date.fromisoformat(selected)
 if not isinstance(available, list) or selected not in available:
     raise SystemExit("snapshot available_dates missing selected_date")
+if expected_end and selected != expected_end:
+    raise SystemExit(f"snapshot selected_date {selected} != expected {expected_end}")
+source = data.get("source") if isinstance(data.get("source"), dict) else {}
+latest_trade_date = str(source.get("latest_trade_date") or "")
+if expected_end and latest_trade_date and latest_trade_date != expected_end:
+    raise SystemExit(
+        f"snapshot latest_trade_date {latest_trade_date} != expected {expected_end}"
+    )
+variant_suite = data.get("variant_suite")
+if not isinstance(variant_suite, dict):
+    raise SystemExit("snapshot variant_suite missing")
+suite_end = str(variant_suite.get("end_date") or "")
+if expected_end and suite_end != expected_end:
+    raise SystemExit(f"snapshot variant_suite end_date {suite_end} != expected {expected_end}")
+variants = data.get("variants")
+if not isinstance(variants, list) or not variants or not isinstance(variants[0], dict):
+    raise SystemExit("snapshot variants missing")
+first = variants[0]
+previous_holdings_date = str(first.get("previous_holdings_date") or "")
+if expected_end and first.get("holdings_date") != expected_end:
+    raise SystemExit("snapshot first variant holdings_date mismatch")
+if previous_holdings_date and previous_holdings_date not in available:
+    raise SystemExit("snapshot available_dates missing previous_holdings_date")
+if not first.get("adjustments"):
+    raise SystemExit("snapshot first variant adjustments empty")
+if not first.get("technical_evidence"):
+    raise SystemExit("snapshot first variant technical_evidence empty")
 for key in ("candidates", "debates", "summaries", "messages"):
     value = data.get(key)
     if value is not None and not isinstance(value, list):

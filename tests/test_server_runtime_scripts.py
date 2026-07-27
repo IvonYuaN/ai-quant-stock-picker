@@ -240,6 +240,10 @@ def test_immutable_release_deploy_script_covers_full_server_activation_chain() -
     assert "snapshot_contract" in script
     assert "selected_date" in script
     assert "available_dates" in script
+    assert "expected_end" in script
+    assert "latest_trade_date" in script
+    assert "previous_holdings_date" in script
+    assert "technical_evidence" in script
     assert "check_runtime_storage.py" in script
     assert "--apply --json" in script
     assert "check_scheduler.py" in script

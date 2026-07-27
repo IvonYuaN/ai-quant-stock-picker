@@ -15,6 +15,7 @@ import sys
 import urllib.error
 import urllib.request
 from dataclasses import asdict, dataclass
+from datetime import date as CalendarDate
 from pathlib import Path
 from typing import Any
 
@@ -216,10 +217,37 @@ def _snapshot_contract(
     available = data.get("available_dates")
     if not selected:
         return ClosureCheck("snapshot_contract", "failed", "selected_date missing")
+    if not _valid_date(selected):
+        return ClosureCheck("snapshot_contract", "failed", "selected_date invalid")
     if not isinstance(available, list) or selected not in available:
         return ClosureCheck(
             "snapshot_contract", "failed", "available_dates missing selected_date"
         )
+    if expected_end and selected != expected_end:
+        return ClosureCheck(
+            "snapshot_contract",
+            "failed",
+            f"selected_date {selected} != expected {expected_end}",
+        )
+    if expected_end and expected_end not in available:
+        return ClosureCheck(
+            "snapshot_contract", "failed", "available_dates missing expected_end"
+        )
+    source = data.get("source")
+    if isinstance(source, dict):
+        latest_trade_date = str(source.get("latest_trade_date") or "").strip()
+        if latest_trade_date:
+            if not _valid_date(latest_trade_date):
+                return ClosureCheck(
+                    "snapshot_contract", "failed", "source latest_trade_date invalid"
+                )
+            if expected_end and latest_trade_date != expected_end:
+                return ClosureCheck(
+                    "snapshot_contract",
+                    "failed",
+                    "source latest_trade_date "
+                    f"{latest_trade_date} != expected {expected_end}",
+                )
     variant_suite = data.get("variant_suite")
     if not isinstance(variant_suite, dict):
         return ClosureCheck("snapshot_contract", "failed", "variant_suite missing")
@@ -228,6 +256,8 @@ def _snapshot_contract(
             "snapshot_contract", "failed", "variant_suite schema_version mismatch"
         )
     suite_end = str(variant_suite.get("end_date") or "").strip()
+    if suite_end and not _valid_date(suite_end):
+        return ClosureCheck("snapshot_contract", "failed", "variant_suite end invalid")
     if expected_end and suite_end != expected_end:
         return ClosureCheck(
             "snapshot_contract",
@@ -254,16 +284,55 @@ def _snapshot_contract(
         "previous_holdings",
         "recent_actions",
         "adjustments",
+        "technical_evidence",
     ):
         if key not in first:
             return ClosureCheck(
                 "snapshot_contract", "failed", f"first variant missing {key}"
             )
+    holdings_date = str(first.get("holdings_date") or "").strip()
+    previous_holdings_date = str(first.get("previous_holdings_date") or "").strip()
+    if expected_end and holdings_date != expected_end:
+        return ClosureCheck(
+            "snapshot_contract",
+            "failed",
+            f"first variant holdings_date {holdings_date or '-'} != expected {expected_end}",
+        )
+    if not _valid_date(previous_holdings_date) or (
+        holdings_date and previous_holdings_date >= holdings_date
+    ):
+        return ClosureCheck(
+            "snapshot_contract",
+            "failed",
+            "first variant previous_holdings_date invalid",
+        )
+    if previous_holdings_date not in available:
+        return ClosureCheck(
+            "snapshot_contract",
+            "failed",
+            "available_dates missing previous_holdings_date",
+        )
+    if not first.get("adjustments"):
+        return ClosureCheck(
+            "snapshot_contract", "failed", "first variant adjustments empty"
+        )
+    if not first.get("technical_evidence"):
+        return ClosureCheck(
+            "snapshot_contract", "failed", "first variant technical_evidence empty"
+        )
     return ClosureCheck(
         "snapshot_contract",
         "ok",
         f"selected_date={selected} suite_end={suite_end} selected_symbols={selected_symbols} variants={len(variants)}",
     )
+
+
+def _valid_date(value: str) -> bool:
+    try:
+        CalendarDate.fromisoformat(value)
+    except ValueError:
+        return False
+    return True
 
 
 def assess(
