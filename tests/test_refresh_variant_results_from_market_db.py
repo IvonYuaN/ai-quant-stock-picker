@@ -41,3 +41,8 @@ def test_balanced_symbols_interleaves_boards_when_capped() -> None:
     )
     picked = mod.balanced_symbols(symbols, 3)
     assert [item.group for item in picked] == ["深市主板", "创业板", "沪市主板"]
+
+
+def test_refresh_defaults_keep_production_refresh_bounded() -> None:
+    assert mod.DEFAULT_MAX_SYMBOLS == 300
+    assert mod.DEFAULT_LOOKBACK_CALENDAR_DAYS == 180
