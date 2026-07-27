@@ -21,7 +21,13 @@ from urllib.parse import urlparse
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from aqsp.core.time import SHANGHAI_TZ, get_previous_trading_day, today_shanghai
+from aqsp.core.time import (
+    SHANGHAI_TZ,
+    get_previous_trading_day,
+    latest_completed_trading_day,
+    now_shanghai,
+    today_shanghai,
+)
 from aqsp.cli import WALKFORWARD_GATE_PATH, _check_notification_gate
 from aqsp.ledger.runtime import (
     collect_simulated_signal_dates,
@@ -690,7 +696,7 @@ def _check_runtime_sqlite_freshness(root: Path, today: date) -> ReadinessFinding
         )
 
     mtime_day = datetime.fromtimestamp(db_path.stat().st_mtime, tz=SHANGHAI_TZ).date()
-    required_day = get_previous_trading_day(today)
+    required_day = _runtime_sqlite_required_day(today)
     required_day_compact = required_day.strftime("%Y%m%d")
     symbol_count: int | None = None
     query_error = ""
@@ -728,6 +734,14 @@ def _check_runtime_sqlite_freshness(root: Path, today: date) -> ReadinessFinding
             detail += f"; qfq sibling newer: {qfq_day.isoformat()}"
 
     return ReadinessFinding("runtime_sqlite_freshness", ok, detail)
+
+
+def _runtime_sqlite_required_day(today: date) -> date:
+    """Require today's close only when checking the actual current date."""
+    current = now_shanghai()
+    if today == current.date():
+        return latest_completed_trading_day(current)
+    return get_previous_trading_day(today)
 
 
 def _check_coldstart_runtime_alignment(root: Path) -> ReadinessFinding:
@@ -1193,9 +1207,7 @@ def _check_gate_cold_start_alignment(
     )
     gate_path = _normalize_runtime_path(
         root,
-        (
-            _read_env_assignment(env_path, "AQSP_WALKFORWARD_GATE_PATH")
-        )
+        (_read_env_assignment(env_path, "AQSP_WALKFORWARD_GATE_PATH"))
         or WALKFORWARD_GATE_PATH,
     )
     gate_ok, gate_reasons = _check_notification_gate(
