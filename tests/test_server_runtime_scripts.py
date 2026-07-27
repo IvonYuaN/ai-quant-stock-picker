@@ -129,6 +129,7 @@ def _run_fake_coldstart(
     today: str = "2026-07-07",
     weekday: int = 2,
     is_trading_day: bool = True,
+    extra_env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     root, db_path, fake_python = _build_coldstart_runtime(tmp_path)
     cli_args_path = tmp_path / "cli-args.txt"
@@ -159,6 +160,8 @@ def _run_fake_coldstart(
     }
     if aqsp_source is not None:
         env["AQSP_SOURCE"] = aqsp_source
+    if extra_env:
+        env.update(extra_env)
     return subprocess.run(
         ["bash", str(root / "scripts" / "coldstart_daily.sh")],
         env=env,
@@ -1466,12 +1469,14 @@ def test_coldstart_daily_script_updates_db_then_runs_cli() -> None:
     assert "AQSP_COLDSTART_BACKFILL_START_DATE" in script
     assert "AQSP_COLDSTART_BACKFILL_FORCE" in script
     assert "AQSP_COLDSTART_FILL_HISTORY_GAPS" in script
+    assert 'COLDSTART_SAFE_MAX_UNIVERSE="${AQSP_COLDSTART_SAFE_MAX_UNIVERSE:-600}"' in script
     assert (
-        'COLDSTART_MAX_UNIVERSE="${AQSP_COLDSTART_MAX_UNIVERSE:-${AQSP_MAX_UNIVERSE:-3000}}"'
+        'COLDSTART_MAX_UNIVERSE="${AQSP_COLDSTART_MAX_UNIVERSE:-${AQSP_MAX_UNIVERSE:-$COLDSTART_SAFE_MAX_UNIVERSE}}"'
         in script
     )
     assert '[ "$COLDSTART_MAX_UNIVERSE" -le 0 ]' in script
-    assert 'COLDSTART_MAX_UNIVERSE="3000"' in script
+    assert 'AQSP_COLDSTART_ALLOW_HEAVY_UNIVERSE' in script
+    assert 'AQSP_TENCENT_DAILY_FETCH_WORKERS="${AQSP_TENCENT_DAILY_FETCH_WORKERS:-2}"' in script
     assert (
         'COLDSTART_MIN_TARGET_COVERAGE="${AQSP_COLDSTART_MIN_TARGET_COVERAGE:-3000}"'
         in script
@@ -1536,6 +1541,22 @@ def test_coldstart_daily_continues_when_update_fails_but_target_coverage_is_enou
     cli_args = (tmp_path / "cli-args.txt").read_text(encoding="utf-8")
     assert "--source online_first" in cli_args
     assert "--source sqlite_db" not in cli_args
+
+
+def test_coldstart_daily_caps_legacy_heavy_universe_without_explicit_opt_in(
+    tmp_path: Path,
+) -> None:
+    result = _run_fake_coldstart(
+        tmp_path,
+        coverage="3200",
+        update_exit=0,
+        extra_env={"AQSP_COLDSTART_MAX_UNIVERSE": "3000"},
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "超过安全上限 600，已收紧" in result.stdout
+    cli_args = (tmp_path / "cli-args.txt").read_text(encoding="utf-8")
+    assert "--max-universe 600" in cli_args
 
 
 def test_coldstart_daily_skips_when_signal_days_already_completed(
