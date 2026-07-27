@@ -123,6 +123,26 @@ def test_runtime_python_uses_proxy_safe_urlopen_wrapper() -> None:
     assert offenders == []
 
 
+def test_runtime_download_clients_do_not_call_requests_get_directly() -> None:
+    offenders: list[str] = []
+    allowed = {Path("src/aqsp/data/news_source.py")}
+    roots = (PROJECT_ROOT / "scripts", PROJECT_ROOT / "src" / "aqsp" / "data")
+
+    for root in roots:
+        for path in sorted(root.rglob("*.py")):
+            rel = _relative(path)
+            if rel in allowed:
+                continue
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call):
+                    continue
+                if _call_name(node.func) in {"requests.get", "requests.request"}:
+                    offenders.append(f"{rel}:{node.lineno}")
+
+    assert offenders == []
+
+
 def test_runtime_python_has_no_lookahead_shift_or_centered_rolling() -> None:
     offenders: list[str] = []
 
@@ -165,6 +185,18 @@ def test_runtime_shell_scripts_do_not_use_shell_injection_helpers() -> None:
         rel = _relative(path)
         for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
             if "shell=True" in line or "os.system(" in line:
+                offenders.append(f"{rel}:{lineno}")
+
+    assert offenders == []
+
+
+def test_runtime_shell_inline_python_uses_proxy_safe_urlopen_wrapper() -> None:
+    offenders: list[str] = []
+
+    for path in sorted(SHELL_RUNTIME_ROOT.rglob("*.sh")):
+        rel = _relative(path)
+        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if "urllib.request.urlopen" in line:
                 offenders.append(f"{rel}:{lineno}")
 
     assert offenders == []

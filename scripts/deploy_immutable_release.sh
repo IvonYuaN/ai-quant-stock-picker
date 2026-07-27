@@ -229,13 +229,15 @@ check_public_routes() {
     for path in / /daily-review /variants /api/health /api/aqsp/snapshot; do
         curl -fsS --max-time 12 "${CHECK_URL%/}${path}" >/dev/null
     done
-    "$PYTHON_BIN" - "${CHECK_URL%/}/api/aqsp/snapshot" <<'PY'
+    "$PYTHON_BIN" - "${CHECK_URL%/}/api/aqsp/snapshot" "$RELEASE_DIR/src" <<'PY'
 import json
 import sys
-import urllib.request
+
+sys.path.insert(0, sys.argv[2])
+from aqsp.core.http import urlopen_no_macos_proxy
 
 url = sys.argv[1]
-payload = json.loads(urllib.request.urlopen(url, timeout=12).read().decode())
+payload = json.loads(urlopen_no_macos_proxy(url, timeout=12).read().decode())
 data = payload.get("data", payload)
 selected = data.get("selected_date")
 available = data.get("available_dates")

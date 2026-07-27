@@ -5,7 +5,9 @@ import shutil
 import zipfile
 from pathlib import Path
 
-import requests
+from requests import RequestException
+
+from aqsp.core.http import requests_session_without_implicit_proxy
 
 TDX_HSJDAY_URL = "https://data.tdx.com.cn/vipdoc/hsjday.zip"
 TDX_VIPDATA_PAGE = "https://www.tdx.com.cn/article/vipdata.html"
@@ -47,7 +49,8 @@ def safe_extract(zip_path: Path, dest: Path) -> None:
 def download_zip(url: str, output: Path, timeout: int = 60) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
     tmp_output = output.with_suffix(output.suffix + ".part")
-    with requests.get(
+    session = requests_session_without_implicit_proxy()
+    with session.get(
         url, stream=True, timeout=timeout, headers=TDX_DOWNLOAD_HEADERS
     ) as response:
         response.raise_for_status()
@@ -106,7 +109,7 @@ def main() -> int:
             print(f"downloading={args.url}")
             download_zip(args.url, zip_path)
         vipdoc = prepare_vipdoc(zip_path, extract_root)
-    except (requests.RequestException, ValueError) as exc:
+    except (RequestException, ValueError) as exc:
         print(f"error={exc}")
         print(f"manual_download={TDX_VIPDATA_PAGE}")
         print(f"save_zip_to={zip_path}")

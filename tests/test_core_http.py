@@ -58,3 +58,35 @@ def test_urlopen_no_macos_proxy_keeps_platform_default_off_macos(monkeypatch) ->
 
     assert http.urlopen_no_macos_proxy("https://example.com", timeout=2.0) is response
     assert calls == [("urlopen", "https://example.com", 2.0)]
+
+
+def test_requests_session_without_implicit_proxy_defaults_to_no_trust_env(
+    monkeypatch,
+) -> None:
+    sessions: list[Any] = []
+
+    class Session:
+        trust_env = True
+
+        def __init__(self) -> None:
+            sessions.append(self)
+
+    monkeypatch.delenv("AQSP_DATA_TRUST_ENV", raising=False)
+    monkeypatch.setattr(http.requests, "Session", Session)
+
+    session = http.requests_session_without_implicit_proxy()
+
+    assert session is sessions[0]
+    assert session.trust_env is False
+
+
+def test_requests_session_without_implicit_proxy_allows_explicit_opt_in(
+    monkeypatch,
+) -> None:
+    class Session:
+        trust_env = False
+
+    monkeypatch.setenv("AQSP_DATA_TRUST_ENV", "1")
+    monkeypatch.setattr(http.requests, "Session", Session)
+
+    assert http.requests_session_without_implicit_proxy().trust_env is True
