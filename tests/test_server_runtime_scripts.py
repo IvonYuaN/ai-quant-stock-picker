@@ -1668,3 +1668,34 @@ def test_parallel_entry_scripts_pass_bash_syntax_check() -> None:
             check=False,
         )
         assert result.returncode == 0, f"{path}: {result.stderr}"
+
+
+def test_immutable_deploy_script_requires_full_post_deploy_acceptance() -> None:
+    script = (PROJECT_ROOT / "scripts" / "deploy_immutable_release.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'git rev-parse "refs/remotes/${REMOTE}/${BRANCH}^{commit}"' in script
+    assert "headless_dashboard_check.py" in script
+    assert "--mode browser" in script
+    assert "--require-browser" in script
+    assert "check_variant_results.py" in script
+    assert "--min-variants 100" in script
+    assert "--min-symbols 121" in script
+    assert "AQSP_DEPLOY_EXPECTED_VARIANT_END" in script
+    assert 'VERIFY_LEVEL="partial"' in script
+    assert "immutable release prepared with skipped checks" in script
+    assert "immutable release deployment verified" in script
+
+    verified_index = script.index("immutable release deployment verified")
+    skipped_index = script.index("immutable release prepared with skipped checks")
+    assert verified_index < skipped_index
+
+
+def test_deployment_closure_gate_is_documented_as_required() -> None:
+    doc = (PROJECT_ROOT / "docs" / "agent-operating-boundaries.md").read_text(
+        encoding="utf-8"
+    )
+
+    assert "scripts/check_deployment_closure.py" in doc
+    assert "未通过时，不允许" in doc

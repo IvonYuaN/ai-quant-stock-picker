@@ -416,12 +416,7 @@ def audit(
         project_root, "rev-parse", "--verify", f"refs/remotes/{remote}/{branch}"
     )
     remote_failure_reported = False
-    if immutable_release:
-        has_remote = True
-        remote_head = release_commit
-    elif (
-        not has_remote and manifest is not None and not (project_root / ".git").exists()
-    ):
+    if not has_remote and manifest is not None and not (project_root / ".git").exists():
         remote_url = str(manifest.get("remote_url") or "").strip()
         if remote_url and remote_url != "unknown":
             has_remote, remote_head = _remote_head(project_root, remote_url, branch)

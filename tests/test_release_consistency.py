@@ -330,7 +330,7 @@ def test_release_consistency_rejects_dirty_release(monkeypatch, tmp_path: Path) 
     assert any(item.code == "release_dirty" for item in findings)
 
 
-def test_release_consistency_immutable_release_ignores_remote_and_overlay(
+def test_release_consistency_immutable_release_verifies_remote_and_ignores_overlay(
     monkeypatch, tmp_path: Path
 ) -> None:
     manifest = _immutable_manifest(tmp_path)
@@ -344,6 +344,7 @@ def test_release_consistency_immutable_release_ignores_remote_and_overlay(
             ),
         },
     )
+    monkeypatch.setattr(checker, "_remote_head", lambda *_args: (True, SHA_A))
 
     findings = checker.audit(
         project_root=tmp_path,
@@ -362,6 +363,39 @@ def test_release_consistency_immutable_release_ignores_remote_and_overlay(
     assert findings == []
 
 
+def test_release_consistency_rejects_immutable_release_not_published(
+    monkeypatch, tmp_path: Path
+) -> None:
+    manifest = _immutable_manifest(tmp_path)
+    _fake_git(
+        monkeypatch,
+        {
+            ("rev-parse", "HEAD"): (False, "git metadata unavailable"),
+            ("status", "--porcelain=v1", "--untracked-files=all"): (
+                False,
+                "git metadata unavailable",
+            ),
+        },
+    )
+    monkeypatch.setattr(checker, "_remote_head", lambda *_args: (True, SHA_B))
+
+    findings = checker.audit(
+        project_root=tmp_path,
+        runtime_root=tmp_path / "runtime",
+        remote="origin",
+        branch="main",
+        canonical_link=None,
+        manifest_path=manifest,
+        overlay_path=tmp_path / "runtime" / "overlay.json",
+        active_files=[],
+        executable_files=[],
+        require_overlay=False,
+        immutable_release=True,
+    )
+
+    assert any(item.code == "release_not_published" for item in findings)
+
+
 def test_release_consistency_immutable_release_allows_release_generated_files(
     monkeypatch, tmp_path: Path
 ) -> None:
@@ -376,6 +410,7 @@ def test_release_consistency_immutable_release_allows_release_generated_files(
             ),
         },
     )
+    monkeypatch.setattr(checker, "_remote_head", lambda *_args: (True, SHA_A))
 
     findings = checker.audit(
         project_root=tmp_path,
@@ -454,6 +489,7 @@ def test_release_consistency_ignores_vite_cache_written_after_manifest(
             ),
         },
     )
+    monkeypatch.setattr(checker, "_remote_head", lambda *_args: (True, SHA_A))
 
     findings = checker.audit(
         project_root=tmp_path,
@@ -488,6 +524,7 @@ def test_release_consistency_rejects_immutable_content_digest_mismatch(
             ),
         },
     )
+    monkeypatch.setattr(checker, "_remote_head", lambda *_args: (True, SHA_A))
 
     findings = checker.audit(
         project_root=tmp_path,
@@ -524,6 +561,7 @@ def test_release_consistency_rejects_immutable_file_count_mismatch(
             ),
         },
     )
+    monkeypatch.setattr(checker, "_remote_head", lambda *_args: (True, SHA_A))
 
     findings = checker.audit(
         project_root=tmp_path,

@@ -23,6 +23,8 @@ SERVICE_USER="${AQSP_VIBE_USER:-aqsp-vibe}"
 SERVICE_GROUP="${AQSP_VIBE_GROUP:-${SERVICE_USER}}"
 LOCK_DIR="${AQSP_RUNTIME_LOCK_DIR:-${RUNTIME_DATA_ROOT}/.locks}"
 LOCK_FILE="${LOCK_DIR}/immutable-release-deploy.lock"
+HEADLESS_LOCK_FILE="${AQSP_HEADLESS_LOCK:-/tmp/aqsp-headless-dashboard.lock}"
+EXPECTED_VARIANT_END="${AQSP_DEPLOY_EXPECTED_VARIANT_END:-}"
 SKIP_FRONTEND_BUILD="false"
 SKIP_RESTART="false"
 SKIP_PUBLIC_CHECK="false"
@@ -92,7 +94,11 @@ trap cleanup EXIT
 resolve_commit() {
     cd "$REPO_ROOT"
     git fetch "$REMOTE" "$BRANCH"
-    git rev-parse "${REF}^{commit}"
+    if [ "$REF" = "$BRANCH" ]; then
+        git rev-parse "refs/remotes/${REMOTE}/${BRANCH}^{commit}"
+    else
+        git rev-parse "${REF}^{commit}"
+    fi
 }
 
 build_frontend() {
@@ -250,6 +256,26 @@ print(
     f"messages={len(data.get('messages') or [])}",
 )
 PY
+    AQSP_HEADLESS_LOCK="$HEADLESS_LOCK_FILE" "$PYTHON_BIN" "$RELEASE_DIR/scripts/headless_dashboard_check.py" \
+        --url "$CHECK_URL" \
+        --mode browser \
+        --require-browser \
+        --headless-lock "$HEADLESS_LOCK_FILE"
+}
+
+check_variant_results() {
+    local variant_path="${AQSP_VARIANT_RESULTS:-${RUNTIME_DATA_ROOT}/runtime/variant_results.json}"
+    [ -f "$variant_path" ] || fail "variant results missing: $variant_path"
+    local command=(
+        "$PYTHON_BIN" "$RELEASE_DIR/scripts/check_variant_results.py"
+        "$variant_path"
+        --min-variants 100
+        --min-symbols 121
+    )
+    if [ -n "$EXPECTED_VARIANT_END" ]; then
+        command+=(--expected-end "$EXPECTED_VARIANT_END")
+    fi
+    PYTHONPATH="$RELEASE_DIR/src:$RELEASE_DIR/scripts" "${command[@]}"
 }
 
 cleanup_release_root_residuals() {
@@ -304,11 +330,21 @@ check_release "$RELEASE_DIR"
 switch_links "$RELEASE_DIR"
 check_current_release "$RELEASE_DIR"
 
+VERIFY_LEVEL="full"
+if [ "$SKIP_RESTART" = "true" ] || [ "$SKIP_PUBLIC_CHECK" = "true" ] || [ "$SKIP_SCHEDULER_CHECK" = "true" ]; then
+    VERIFY_LEVEL="partial"
+fi
+
 if [ "$SKIP_RESTART" != "true" ]; then
     restart_services "$RELEASE_DIR"
 fi
 check_public_routes
+check_variant_results
 cleanup_release_root_residuals
 prune_releases "$RELEASE_DIR"
 run_scheduler_check "$RELEASE_DIR"
-log "immutable release deployment verified: $RELEASE_DIR"
+if [ "$VERIFY_LEVEL" = "full" ]; then
+    log "immutable release deployment verified: $RELEASE_DIR"
+else
+    log "immutable release prepared with skipped checks: $RELEASE_DIR"
+fi
