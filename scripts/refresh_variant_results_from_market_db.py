@@ -3,7 +3,8 @@
 
 This bridges the production ``daily_qfq`` market DB into the raw OHLCV schema
 used by ``run_variant_suite.py``.  It is deliberately a runtime script: no
-private market rows are written back to GitHub.
+private market rows are written back to GitHub. Bounded refreshes rotate a
+balanced main-board/ChiNext batch and advance only after an artifact is written.
 """
 
 from __future__ import annotations
@@ -11,6 +12,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import fcntl
+import hashlib
 import json
 import os
 import signal
@@ -48,6 +50,23 @@ class MarketSymbol:
     symbol: str
     name: str
     group: str
+
+
+@dataclass(frozen=True)
+class VariantUniverseBatch:
+    symbols: tuple[MarketSymbol, ...]
+    universe_version: str
+    universe_count: int
+    offset: int
+    cycle_id: int
+
+    @property
+    def coverage_pct(self) -> float:
+        if self.universe_count <= 0:
+            return 0.0
+        return round(
+            min(1.0, (self.offset + len(self.symbols)) / self.universe_count), 6
+        )
 
 
 def normalize_trade_date(value: str) -> str:
@@ -100,8 +119,15 @@ def load_supported_symbols(db_path: Path) -> tuple[MarketSymbol, ...]:
 def balanced_symbols(
     symbols: tuple[MarketSymbol, ...], max_symbols: int
 ) -> tuple[MarketSymbol, ...]:
-    if max_symbols <= 0 or len(symbols) <= max_symbols:
-        return symbols
+    ordered = _interleaved_symbols(symbols)
+    if max_symbols <= 0 or len(ordered) <= max_symbols:
+        return ordered
+    return ordered[:max_symbols]
+
+
+def _interleaved_symbols(
+    symbols: tuple[MarketSymbol, ...],
+) -> tuple[MarketSymbol, ...]:
     buckets: dict[str, list[MarketSymbol]] = {
         "深市主板": [],
         "创业板": [],
@@ -110,12 +136,78 @@ def balanced_symbols(
     for item in symbols:
         buckets.setdefault(item.group, []).append(item)
     picked: list[MarketSymbol] = []
-    while len(picked) < max_symbols and any(buckets.values()):
+    while any(buckets.values()):
         for key in ("深市主板", "创业板", "沪市主板"):
             bucket = buckets.get(key) or []
-            if bucket and len(picked) < max_symbols:
+            if bucket:
                 picked.append(bucket.pop(0))
-    return tuple(sorted(picked, key=lambda item: item.symbol))
+    return tuple(picked)
+
+
+def select_variant_batch(
+    symbols: tuple[MarketSymbol, ...],
+    max_symbols: int,
+    cursor_path: Path,
+) -> VariantUniverseBatch:
+    ordered = _interleaved_symbols(symbols)
+    if not ordered:
+        raise ValueError("变体刷新股票池为空")
+    universe_version = _market_symbols_version(ordered)
+    state = _read_variant_cursor(cursor_path)
+    if state.get("universe_version") != universe_version or int(
+        state.get("universe_count") or 0
+    ) != len(ordered):
+        offset = 0
+        cycle_id = 1
+    else:
+        offset = int(state.get("next_offset") or 0) % len(ordered)
+        cycle_id = int(state.get("cycle_id") or 1)
+    batch_size = (
+        len(ordered) if max_symbols <= 0 else min(max_symbols, len(ordered) - offset)
+    )
+    return VariantUniverseBatch(
+        symbols=ordered[offset : offset + batch_size],
+        universe_version=universe_version,
+        universe_count=len(ordered),
+        offset=offset,
+        cycle_id=cycle_id,
+    )
+
+
+def commit_variant_batch(cursor_path: Path, batch: VariantUniverseBatch) -> None:
+    next_offset = batch.offset + len(batch.symbols)
+    cycle_id = batch.cycle_id
+    if next_offset >= batch.universe_count:
+        next_offset = 0
+        cycle_id += 1
+    payload = {
+        "universe_version": batch.universe_version,
+        "universe_count": batch.universe_count,
+        "batch_size": len(batch.symbols),
+        "next_offset": next_offset,
+        "cycle_id": cycle_id,
+        "last_offset": batch.offset,
+        "coverage_pct": batch.coverage_pct,
+    }
+    cursor_path.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write_text(
+        cursor_path, json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n"
+    )
+
+
+def _read_variant_cursor(cursor_path: Path) -> dict[str, object]:
+    try:
+        payload = json.loads(cursor_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _market_symbols_version(symbols: tuple[MarketSymbol, ...]) -> str:
+    digest = hashlib.sha256(
+        "\n".join(item.ts_code for item in symbols).encode("utf-8")
+    ).hexdigest()
+    return f"sha256:{digest}"
 
 
 def latest_trade_date(db_path: Path, symbols: tuple[MarketSymbol, ...]) -> str:
@@ -300,6 +392,7 @@ def parse_args() -> argparse.Namespace:
         "--max-runtime-seconds", type=int, default=DEFAULT_MAX_RUNTIME_SECONDS
     )
     parser.add_argument("--lock-file", type=Path)
+    parser.add_argument("--cursor-file", type=Path)
     parser.add_argument(
         "--lock-wait-seconds", type=float, default=DEFAULT_LOCK_WAIT_SECONDS
     )
@@ -310,6 +403,9 @@ def main() -> int:
     args = parse_args()
     lock_path = args.lock_file or args.output.with_name(
         f".{args.output.name}.refresh.lock"
+    )
+    cursor_path = args.cursor_file or args.output.with_name(
+        f".{args.output.name}.universe_cursor.json"
     )
     try:
         with (
@@ -325,7 +421,8 @@ def main() -> int:
                     - timedelta(days=args.lookback_calendar_days)
                 ).isoformat()
             )
-            selected = balanced_symbols(supported, args.max_symbols)
+            batch = select_variant_batch(supported, args.max_symbols, cursor_path)
+            selected = batch.symbols
             if args.temp_db:
                 temp_db = args.temp_db
                 selected_symbols = copy_market_rows(
@@ -353,15 +450,22 @@ def main() -> int:
                 "supported_symbols": len(supported),
                 "selected_symbols": len(selected_symbols),
                 "filters": "沪市主板+深市主板+创业板；排除 ST/*ST/PT/退市/科创/北交/B股",
+                "batch_active": args.max_symbols > 0 and len(supported) > len(selected),
+                "batch_id": f"{batch.cycle_id}:{batch.offset}",
+                "batch_size": len(selected),
+                "cycle_id": batch.cycle_id,
+                "coverage_pct": batch.coverage_pct,
             }
             args.output.parent.mkdir(parents=True, exist_ok=True)
             atomic_write_text(
                 args.output, json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
             )
+            commit_variant_batch(cursor_path, batch)
             print(
                 "variant_results refreshed: "
                 f"schema={payload['schema_version']} variants={len(payload['variants'])} "
-                f"symbols={len(selected_symbols)} end={payload['end_date']} output={args.output}"
+                f"symbols={len(selected_symbols)} batch={batch.cycle_id}:{batch.offset} "
+                f"end={payload['end_date']} output={args.output}"
             )
             return 0
     except VariantRefreshTimeout as exc:

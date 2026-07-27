@@ -47,6 +47,34 @@ def test_balanced_symbols_interleaves_boards_when_capped() -> None:
     assert [item.group for item in picked] == ["深市主板", "创业板", "沪市主板"]
 
 
+def test_variant_batch_rotates_balanced_universe_only_after_commit(
+    tmp_path: Path,
+) -> None:
+    symbols = (
+        mod.MarketSymbol("000001.SZ", "000001", "A", "深市主板"),
+        mod.MarketSymbol("000002.SZ", "000002", "B", "深市主板"),
+        mod.MarketSymbol("300001.SZ", "300001", "C", "创业板"),
+        mod.MarketSymbol("300002.SZ", "300002", "D", "创业板"),
+        mod.MarketSymbol("600001.SH", "600001", "E", "沪市主板"),
+        mod.MarketSymbol("600002.SH", "600002", "F", "沪市主板"),
+    )
+    cursor = tmp_path / "variant.cursor.json"
+
+    first = mod.select_variant_batch(symbols, 3, cursor)
+    retry = mod.select_variant_batch(symbols, 3, cursor)
+
+    assert [item.group for item in first.symbols] == ["深市主板", "创业板", "沪市主板"]
+    assert retry.symbols == first.symbols
+    mod.commit_variant_batch(cursor, first)
+
+    second = mod.select_variant_batch(symbols, 3, cursor)
+
+    assert {item.symbol for item in first.symbols}.isdisjoint(
+        item.symbol for item in second.symbols
+    )
+    assert [item.group for item in second.symbols] == ["深市主板", "创业板", "沪市主板"]
+
+
 def test_refresh_defaults_keep_production_refresh_bounded() -> None:
     assert mod.DEFAULT_MAX_SYMBOLS == 300
     assert mod.DEFAULT_LOOKBACK_CALENDAR_DAYS == 180
