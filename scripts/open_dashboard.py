@@ -36,6 +36,7 @@ from scripts.render_dashboard import (
 )  # noqa: E402
 from aqsp.research.summary import load_research_summary  # noqa: E402
 from aqsp.web.entrypoint import write_dashboard_artifact  # noqa: E402
+from aqsp.core.http import urlopen_no_macos_proxy  # noqa: E402
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8501
@@ -105,7 +106,7 @@ def _read_url_text(url: str) -> str | None:
             url,
             headers={"User-Agent": "aqsp-dashboard-launcher/1.0"},
         )
-        with urllib.request.urlopen(request, timeout=1.0) as response:
+        with urlopen_no_macos_proxy(request, timeout=1.0) as response:
             return response.read().decode("utf-8", errors="replace")
     except Exception:
         return None

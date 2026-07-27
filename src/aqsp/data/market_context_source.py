@@ -11,7 +11,9 @@ from datetime import datetime, timezone
 from json import JSONDecodeError
 from urllib.error import URLError
 from urllib.parse import urlencode, urlparse
-from urllib.request import Request, urlopen
+from urllib.request import Request
+
+from aqsp.core.http import urlopen_no_macos_proxy
 
 from aqsp.core.time import now_shanghai, to_shanghai
 from aqsp.market_context import (
@@ -380,7 +382,7 @@ def _coerce_provider(
 def _fetch_json(url: str, headers: Mapping[str, str], timeout: float) -> object:
     request = Request(url, headers=dict(headers), method="GET")
     try:
-        with urlopen(request, timeout=timeout) as response:
+        with urlopen_no_macos_proxy(request, timeout=timeout) as response:
             return json.loads(response.read().decode("utf-8"))
     except JSONDecodeError as exc:
         raise ValueError("响应不是有效 JSON") from exc

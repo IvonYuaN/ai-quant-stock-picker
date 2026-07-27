@@ -103,6 +103,26 @@ def test_runtime_python_does_not_spawn_shell_commands() -> None:
     assert offenders == []
 
 
+def test_runtime_python_uses_proxy_safe_urlopen_wrapper() -> None:
+    offenders: list[str] = []
+    allowed = {Path("src/aqsp/core/http.py")}
+
+    for path in _python_files():
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        rel = _relative(path)
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            call_name = _call_name(node.func)
+            if (
+                call_name in {"urlopen", "urllib.request.urlopen"}
+                and rel not in allowed
+            ):
+                offenders.append(f"{rel}:{node.lineno}:{call_name}")
+
+    assert offenders == []
+
+
 def test_runtime_python_has_no_lookahead_shift_or_centered_rolling() -> None:
     offenders: list[str] = []
 

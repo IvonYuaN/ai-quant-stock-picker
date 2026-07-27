@@ -18,6 +18,10 @@ import time
 import urllib.request
 from datetime import datetime, timedelta
 
+import requests
+
+from aqsp.core.http import trust_environment_proxy_enabled, urlopen_no_macos_proxy
+
 UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
 
 
@@ -38,10 +42,19 @@ class DependencyMissing(RuntimeError):
 # Layer 1 · 行情（腾讯财经，仅标准库，不封 IP）
 # ---------------------------------------------------------------------------
 
+def _requests_post(url: str, **kwargs) -> requests.Response:
+    session = requests.Session()
+    session.trust_env = trust_environment_proxy_enabled()
+    try:
+        return session.post(url, **kwargs)
+    finally:
+        session.close()
+
+
 def _fetch_gtimg(prefixed_codes: list[str]) -> str:
     url = "https://qt.gtimg.cn/q=" + ",".join(prefixed_codes)
     req = urllib.request.Request(url, headers={"User-Agent": UA})
-    with urllib.request.urlopen(req, timeout=10) as resp:
+    with urlopen_no_macos_proxy(req, timeout=10) as resp:
         return resp.read().decode("gbk")
 
 
@@ -749,11 +762,9 @@ def concept_blocks(code: str) -> dict:
 
 def hot_concepts(code: str) -> list[dict]:
     """个股当下被市场归到哪些概念在炒（东财热门概念命中，按热度降序）。"""
-    import requests
-
     try:
         prefix = "SH" if code.startswith("6") else "SZ"
-        r = requests.post(
+        r = _requests_post(
             "https://emappdata.eastmoney.com/stockrank/getHotStockRankList",
             json={"appId": "appId01", "globalId": "786e4c21-70dc-435a-93bb-38", "srcSecurityCode": prefix + code},
             headers={"User-Agent": UA}, timeout=10)
@@ -765,10 +776,8 @@ def hot_concepts(code: str) -> list[dict]:
 
 def investor_qa(code: str, page_size: int = 30) -> list[dict]:
     """互动易问答（巨潮）：投资者提问 + 公司回复（answer=None 表示未回复）。"""
-    import requests
-
     try:
-        r1 = requests.post("https://irm.cninfo.com.cn/newircs/index/queryKeyboardInfo",
+        r1 = _requests_post("https://irm.cninfo.com.cn/newircs/index/queryKeyboardInfo",
                            data={"keyWord": code}, headers={"User-Agent": UA}, timeout=10)
         d1 = r1.json().get("data") or []
         if not d1:
@@ -776,7 +785,7 @@ def investor_qa(code: str, page_size: int = 30) -> list[dict]:
         org_id = d1[0].get("secid")
         params = {"_t": 1, "stockcode": code, "orgId": org_id, "pageSize": page_size,
                   "pageNum": 1, "keyWord": "", "startDay": "", "endDay": ""}
-        rows = requests.post("https://irm.cninfo.com.cn/newircs/company/question",
+        rows = _requests_post("https://irm.cninfo.com.cn/newircs/company/question",
                              params=params, headers={"User-Agent": UA}, timeout=10).json().get("rows") or []
     except Exception:
         return []
