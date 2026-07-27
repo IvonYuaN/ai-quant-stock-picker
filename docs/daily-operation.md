@@ -14,10 +14,9 @@ bash scripts/bt_task.sh daily
 
 加载 launchd 任务（一次性）：
 ```bash
-export AQSP_PROJECT_ROOT="/absolute/path/to/AI量化选股"
 cp scripts/launchd/aqsp_daily_run_wrapper.sh ~/.aqsp/aqsp_daily_run_wrapper.sh
 chmod +x ~/.aqsp/aqsp_daily_run_wrapper.sh
-cp scripts/launchd/com.aqsp.daily.plist ~/Library/LaunchAgents/
+sed "s|/ABSOLUTE/PATH/TO|$HOME|" scripts/launchd/com.aqsp.daily.plist > ~/Library/LaunchAgents/com.aqsp.daily.plist
 launchctl load ~/Library/LaunchAgents/com.aqsp.daily.plist
 launchctl list | grep com.aqsp
 ```

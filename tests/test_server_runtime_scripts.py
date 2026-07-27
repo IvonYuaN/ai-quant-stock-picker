@@ -1296,6 +1296,44 @@ def test_launchd_daily_wrapper_loads_env_before_daily_run() -> None:
     )
 
 
+def test_launchd_daily_wrapper_has_local_project_root_fallback() -> None:
+    script = (
+        PROJECT_ROOT / "scripts" / "launchd" / "aqsp_daily_run_wrapper.sh"
+    ).read_text(encoding="utf-8")
+
+    assert 'PROJECT_ROOT="${AQSP_PROJECT_ROOT:-$HOME/Documents/AI量化选股}"' in script
+    assert 'echo "AQSP_PROJECT_ROOT does not exist: $PROJECT_ROOT" >&2' in script
+
+
+def test_launchd_daily_wrapper_runs_with_default_project_root(tmp_path: Path) -> None:
+    fake_root = tmp_path / "Documents" / "AI量化选股"
+    fake_script = fake_root / "scripts" / "daily_run.sh"
+    fake_script.parent.mkdir(parents=True)
+    fake_script.write_text(
+        "#!/usr/bin/env bash\n"
+        'printf \'root=%s task=%s\\n\' "$PWD" "$AQSP_RUN_TASK_ID"\n',
+        encoding="utf-8",
+    )
+    fake_script.chmod(0o755)
+    env = os.environ.copy()
+    env.pop("AQSP_PROJECT_ROOT", None)
+    env["HOME"] = str(tmp_path)
+
+    result = subprocess.run(
+        [
+            "bash",
+            str(PROJECT_ROOT / "scripts" / "launchd" / "aqsp_daily_run_wrapper.sh"),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == f"root={fake_root} task=daily"
+
+
 def test_clear_locks_is_conservative_by_default() -> None:
     script = (PROJECT_ROOT / "scripts" / "clear_locks.sh").read_text(encoding="utf-8")
 
