@@ -28,6 +28,7 @@ from aqsp.web.home_snapshot import (
     HomeSnapshotMarketContext,
     HomeSnapshotMessage,
     HomeSnapshotSource,
+    HomeSnapshotVariantSuite,
     HOME_SNAPSHOT_CLOSE_TTL,
     HOME_SNAPSHOT_INTRADAY_TTL,
     load_home_dashboard_snapshot,
@@ -110,6 +111,30 @@ def test_home_snapshot_round_trips_bounded_home_payload(tmp_path) -> None:
 
     assert load_home_dashboard_snapshot(source) == snapshot
     assert json.loads(source.read_text(encoding="utf-8"))["schema_version"] == "v1"
+
+
+def test_home_snapshot_round_trips_variant_suite_metadata(tmp_path) -> None:
+    source = tmp_path / "home.json"
+    snapshot = replace(
+        _snapshot(),
+        variant_suite=HomeSnapshotVariantSuite(
+            schema_version="variant-suite-v2",
+            generated_at="2026-07-24T16:00:00+08:00",
+            data_mode="historical_raw_unadjusted",
+            end_date="2026-07-24",
+            variant_count=148,
+            selected_symbols=600,
+            supported_symbols=4920,
+            filters="沪市主板+深市主板+创业板；排除 ST/*ST/PT/退市/科创/北交/B股",
+        ),
+    )
+
+    write_home_dashboard_snapshot(source, snapshot)
+    loaded = load_home_dashboard_snapshot(source)
+
+    assert loaded == snapshot
+    assert loaded.variant_suite.schema_version == "variant-suite-v2"
+    assert loaded.variant_suite.selected_symbols == 600
 
 
 def test_home_snapshot_round_trips_candidate_provenance(tmp_path) -> None:

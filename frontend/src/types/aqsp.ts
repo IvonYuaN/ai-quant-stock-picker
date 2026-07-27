@@ -131,6 +131,17 @@ export interface AqspVariantAction {
   reason?: string;
 }
 
+export interface AqspVariantSuite {
+  schema_version?: string;
+  generated_at?: string;
+  data_mode?: string;
+  end_date?: string;
+  variant_count?: number;
+  selected_symbols?: number;
+  supported_symbols?: number;
+  filters?: string;
+}
+
 export interface AqspAgentResult {
   symbol: string;
   display_name: string;
@@ -175,6 +186,7 @@ export interface AqspSnapshot {
   recommendation_gate?: AqspRecommendationGate;
   phases?: readonly AqspPhase[];
   universe?: AqspUniverse;
+  variant_suite?: AqspVariantSuite;
   variants?: readonly AqspVariant[];
   /** Present after the HTTP envelope is normalized; absent in the raw data payload. */
   meta?: AqspSnapshotMeta;

@@ -21,6 +21,7 @@ from aqsp.backtest.variant_account import (
     VariantExecutionRules,
     VariantOrder,
     VariantResult,
+    prepare_variant_data,
     simulate_variant,
     variant_result_to_dict,
 )
@@ -322,32 +323,69 @@ def load_frames(
 def build_orders(
     frames: dict[str, pd.DataFrame],
     profile: VariantProfile,
+    indicator_cache: dict[int, dict[str, pd.DataFrame]] | None = None,
 ) -> tuple[VariantOrder, ...]:
     buy_candidates: dict[str, list[_Signal]] = defaultdict(list)
     sell_orders: list[VariantOrder] = []
+    prepared_frames = (
+        indicator_cache.get(profile.lookback, {}) if indicator_cache is not None else {}
+    )
     for symbol, raw in frames.items():
-        frame = _with_indicators(raw, profile.lookback)
-        dates = frame["date"].tolist()
-        for index in range(profile.lookback, len(frame) - 1):
-            row = frame.iloc[index]
-            next_date = dates[index + 1]
-            if not _row_is_valid(row):
-                continue
-            entry, exit_signal, score, reason = _evaluate_row(row, profile)
-            if entry:
-                buy_candidates[next_date].append(
-                    _Signal(next_date, symbol, "buy", score, reason)
+        frame = prepared_frames.get(symbol)
+        if frame is None:
+            frame = _with_indicators(raw, profile.lookback)
+        if len(frame) <= profile.lookback + 1:
+            continue
+        entry_mask, exit_mask, scores = _evaluate_frame(frame, profile)
+        eligible_index = frame.index[profile.lookback : -1]
+        next_dates = frame["date"].shift(-1)
+        entry_indices = eligible_index[entry_mask.loc[eligible_index]]
+        entry_rows = frame.loc[
+            entry_indices,
+            ("ret", "bias", "macd_hist", "kdj_j", "volume_ratio", "atr_pct"),
+        ].assign(
+            next_date=next_dates.loc[entry_indices], score=scores.loc[entry_indices]
+        )
+        for row in entry_rows.itertuples(index=False):
+            next_date = str(row.next_date)
+            score = float(row.score)
+            buy_candidates[next_date].append(
+                _Signal(
+                    next_date,
+                    symbol,
+                    "buy",
+                    score,
+                    _entry_reason_values(
+                        profile=profile,
+                        ret=float(row.ret),
+                        bias=float(row.bias),
+                        macd_hist=float(row.macd_hist or 0.0),
+                        kdj_j=float(row.kdj_j or 0.0),
+                        volume_ratio=float(row.volume_ratio),
+                        atr_pct=float(row.atr_pct),
+                        score=score,
+                    ),
                 )
-            if exit_signal:
-                sell_orders.append(
-                    VariantOrder(
-                        next_date,
-                        symbol,
-                        "sell",
-                        weight=1.0,
-                        reason=_exit_reason(row, profile),
-                    )
+            )
+        exit_indices = eligible_index[exit_mask.loc[eligible_index]]
+        exit_rows = frame.loc[exit_indices, ("ret", "bias", "macd_hist")].assign(
+            next_date=next_dates.loc[exit_indices]
+        )
+        for row in exit_rows.itertuples(index=False):
+            sell_orders.append(
+                VariantOrder(
+                    str(row.next_date),
+                    symbol,
+                    "sell",
+                    weight=1.0,
+                    reason=_exit_reason_values(
+                        profile=profile,
+                        ret=float(row.ret),
+                        bias=float(row.bias),
+                        macd_hist=float(row.macd_hist or 0.0),
+                    ),
                 )
+            )
     buy_orders = [
         VariantOrder(
             date,
@@ -398,11 +436,137 @@ def _with_indicators(raw: pd.DataFrame, lookback: int) -> pd.DataFrame:
     return frame
 
 
+def build_indicator_cache(
+    frames: dict[str, pd.DataFrame],
+    profiles: tuple[VariantProfile, ...],
+) -> dict[int, dict[str, pd.DataFrame]]:
+    """Cache indicator frames by lookback; profiles share the same inputs."""
+    lookbacks = sorted({profile.lookback for profile in profiles})
+    return {
+        lookback: {
+            symbol: _with_indicators(raw, lookback) for symbol, raw in frames.items()
+        }
+        for lookback in lookbacks
+    }
+
+
 def _row_is_valid(row: pd.Series) -> bool:
     return all(
         pd.notna(row.get(key))
         for key in ("sma", "ret", "bias", "volume_ratio", "atr_pct")
     )
+
+
+def _evaluate_frame(
+    frame: pd.DataFrame, profile: VariantProfile
+) -> tuple[pd.Series, pd.Series, pd.Series]:
+    close = pd.to_numeric(frame["close"], errors="coerce")
+    sma = pd.to_numeric(frame["sma"], errors="coerce")
+    ret = pd.to_numeric(frame["ret"], errors="coerce")
+    bias = pd.to_numeric(frame["bias"], errors="coerce")
+    volume_ratio = pd.to_numeric(frame["volume_ratio"], errors="coerce")
+    atr_pct = pd.to_numeric(frame["atr_pct"], errors="coerce")
+    macd_hist = pd.to_numeric(frame.get("macd_hist"), errors="coerce").fillna(0.0)
+    kdj_j = pd.to_numeric(frame.get("kdj_j"), errors="coerce").fillna(0.0)
+    prior_high = pd.to_numeric(frame.get("prior_high"), errors="coerce").fillna(close)
+    valid = (
+        sma.notna()
+        & ret.notna()
+        & bias.notna()
+        & volume_ratio.notna()
+        & atr_pct.notna()
+    )
+    mode = profile.mode
+    if mode == "reversion":
+        entry = (
+            (close < sma)
+            & (ret <= -profile.entry_return_pct)
+            & (bias >= -profile.max_bias_pct)
+        )
+        exit_signal = (close > sma) | (ret > 2.0)
+        score = -ret + (60.0 - kdj_j).clip(lower=0.0) / 10.0
+    elif mode == "volume_breakout":
+        entry = (
+            (close >= prior_high)
+            & (volume_ratio >= 1.35)
+            & (bias <= profile.max_bias_pct)
+        )
+        exit_signal = (close < sma) | (volume_ratio < 0.65)
+        score = ret + volume_ratio * 2.0 + macd_hist
+    elif mode == "breakout":
+        entry = (
+            (close >= prior_high)
+            & (ret >= profile.entry_return_pct)
+            & (bias <= profile.max_bias_pct)
+        )
+        exit_signal = (close < sma) | (ret < -2.0)
+        score = ret + bias / 5.0
+    elif mode == "atr_trend":
+        entry = (close > sma) & (ret >= profile.entry_return_pct) & (atr_pct <= 6.0)
+        exit_signal = (close < sma) | (ret < -2.0) | (atr_pct > 8.0)
+        score = ret - atr_pct + macd_hist
+    elif mode == "defensive_range":
+        entry = (
+            (close > sma)
+            & (ret >= profile.entry_return_pct)
+            & (bias <= profile.max_bias_pct)
+            & (atr_pct <= 3.5)
+        )
+        exit_signal = (close < sma) | (atr_pct > 6.0)
+        score = ret - atr_pct * 1.5
+    elif mode == "low_vol":
+        entry = (
+            (close > sma)
+            & (ret >= profile.entry_return_pct)
+            & (bias <= profile.max_bias_pct)
+            & (atr_pct <= 4.5)
+        )
+        exit_signal = (close < sma) | (atr_pct > 7.0)
+        score = ret - atr_pct
+    elif mode == "relative_strength":
+        entry = (
+            (close > sma)
+            & (ret >= profile.entry_return_pct)
+            & (bias <= profile.max_bias_pct)
+            & (volume_ratio >= 0.8)
+        )
+        exit_signal = (close < sma) | (ret < -2.0)
+        score = ret + volume_ratio
+    elif mode == "macd_cross":
+        entry = (
+            (close > sma)
+            & (macd_hist > 0)
+            & (ret >= profile.entry_return_pct)
+            & (bias <= profile.max_bias_pct)
+        )
+        exit_signal = (close < sma) | (macd_hist < 0)
+        score = ret + macd_hist * 2.0
+    elif mode == "kdj_rebound":
+        entry = (
+            (close > sma * 0.98)
+            & (kdj_j >= 35.0)
+            & (ret >= -profile.entry_return_pct)
+            & (bias <= profile.max_bias_pct)
+        )
+        exit_signal = (close < sma * 0.97) | (kdj_j > 105.0)
+        score = ret + kdj_j.clip(upper=100.0) / 20.0
+    elif mode == "volume_dry_pullback":
+        entry = (
+            (close > sma * 0.98)
+            & (bias.abs() <= profile.max_bias_pct)
+            & (volume_ratio <= 0.9)
+        )
+        exit_signal = (close < sma * 0.96) | (volume_ratio > 1.8)
+        score = -bias.abs() + ret / 2.0
+    else:
+        entry = (
+            (close > sma)
+            & (ret >= profile.entry_return_pct)
+            & (bias <= profile.max_bias_pct)
+        )
+        exit_signal = (close < sma) | (ret < -2.0)
+        score = ret - (bias - profile.max_bias_pct).clip(lower=0.0)
+    return entry & valid, exit_signal & valid, score.fillna(0.0)
 
 
 def _evaluate_row(
@@ -512,18 +676,56 @@ def _evaluate_row(
 
 
 def _entry_reason(row: pd.Series, profile: VariantProfile, score: float) -> str:
+    return _entry_reason_values(
+        profile=profile,
+        ret=float(row["ret"]),
+        bias=float(row["bias"]),
+        macd_hist=float(row.get("macd_hist") or 0.0),
+        kdj_j=float(row.get("kdj_j") or 0.0),
+        volume_ratio=float(row["volume_ratio"]),
+        atr_pct=float(row["atr_pct"]),
+        score=score,
+    )
+
+
+def _entry_reason_values(
+    *,
+    profile: VariantProfile,
+    ret: float,
+    bias: float,
+    macd_hist: float,
+    kdj_j: float,
+    volume_ratio: float,
+    atr_pct: float,
+    score: float,
+) -> str:
     return (
-        f"{_mode_label(profile.mode)}触发：{profile.lookback}日收益{float(row['ret']):+.1f}%，"
-        f"乖离{float(row['bias']):+.1f}%，MACD柱{float(row.get('macd_hist') or 0.0):+.2f}，"
-        f"KDJ-J{float(row.get('kdj_j') or 0.0):.0f}，量比{float(row['volume_ratio']):.2f}，"
-        f"ATR{float(row['atr_pct']):.1f}%，同日排序分{score:.2f}。"
+        f"{_mode_label(profile.mode)}触发：{profile.lookback}日收益{ret:+.1f}%，"
+        f"乖离{bias:+.1f}%，MACD柱{macd_hist:+.2f}，"
+        f"KDJ-J{kdj_j:.0f}，量比{volume_ratio:.2f}，"
+        f"ATR{atr_pct:.1f}%，同日排序分{score:.2f}。"
     )
 
 
 def _exit_reason(row: pd.Series, profile: VariantProfile) -> str:
+    return _exit_reason_values(
+        profile=profile,
+        ret=float(row["ret"]),
+        bias=float(row["bias"]),
+        macd_hist=float(row.get("macd_hist") or 0.0),
+    )
+
+
+def _exit_reason_values(
+    *,
+    profile: VariantProfile,
+    ret: float,
+    bias: float,
+    macd_hist: float,
+) -> str:
     return (
-        f"{_mode_label(profile.mode)}退出：收盘相对均线乖离{float(row['bias']):+.1f}%，"
-        f"{profile.lookback}日收益{float(row['ret']):+.1f}%，MACD柱{float(row.get('macd_hist') or 0.0):+.2f}。"
+        f"{_mode_label(profile.mode)}退出：收盘相对均线乖离{bias:+.1f}%，"
+        f"{profile.lookback}日收益{ret:+.1f}%，MACD柱{macd_hist:+.2f}。"
     )
 
 
@@ -536,22 +738,24 @@ def run_suite(
     frames = load_frames(db_path, symbols, start, end)
     rules = VariantExecutionRules(initial_cash=BASE_CASH)
     profiles = generate_variant_profiles(frames)
+    indicator_cache = build_indicator_cache(frames, profiles)
     symbol_names = _symbol_names(frames)
     previous_date = _previous_trade_date(frames, end)
+    prepared_data = prepare_variant_data(frames)
+    snapshot_dates = (previous_date,) if previous_date else ()
     results = []
     for profile in profiles:
-        orders = build_orders(frames, profile)
-        result = simulate_variant(profile.variant_id, frames, orders, rules=rules)
-        previous_result = _previous_result(
-            profile, frames, orders, rules, previous_date
+        orders = build_orders(frames, profile, indicator_cache)
+        result = simulate_variant(
+            profile.variant_id,
+            prepared_data,
+            orders,
+            rules=rules,
+            snapshot_dates=snapshot_dates,
         )
         payload = variant_result_to_dict(result)
         _attach_holding_names(payload["holdings"], symbol_names)
-        previous_holdings = (
-            []
-            if previous_result is None
-            else variant_result_to_dict(previous_result)["holdings"]
-        )
+        previous_holdings = _holding_dicts(result.snapshots.get(previous_date, ()))
         _attach_holding_names(previous_holdings, symbol_names)
         payload["label"] = profile.label
         payload["strategy_label"] = profile.label
@@ -649,27 +853,6 @@ def _previous_trade_date(frames: dict[str, pd.DataFrame], end: str) -> str:
     return eligible[-1] if eligible else ""
 
 
-def _previous_result(
-    profile: VariantProfile,
-    frames: dict[str, pd.DataFrame],
-    orders: tuple[VariantOrder, ...],
-    rules: VariantExecutionRules,
-    previous_date: str,
-) -> VariantResult | None:
-    if not previous_date:
-        return None
-    previous_frames = {
-        symbol: frame[
-            pd.to_datetime(frame["date"]) <= pd.Timestamp(previous_date)
-        ].reset_index(drop=True)
-        for symbol, frame in frames.items()
-    }
-    previous_orders = tuple(order for order in orders if order.date <= previous_date)
-    return simulate_variant(
-        profile.variant_id, previous_frames, previous_orders, rules=rules
-    )
-
-
 def _recent_actions(
     result: VariantResult, names: dict[str, str]
 ) -> list[dict[str, object]]:
@@ -687,6 +870,20 @@ def _recent_actions(
             "reason": fill.reason or "规则触发但未记录细分原因",
         }
         for fill in filled
+    ]
+
+
+def _holding_dicts(holdings: object) -> list[dict[str, Any]]:
+    return [
+        {
+            "symbol": holding.symbol,
+            "quantity": holding.quantity,
+            "average_price": holding.average_price,
+            "last_price": holding.last_price,
+            "market_value": holding.market_value,
+            "unrealized_pnl": holding.unrealized_pnl,
+        }
+        for holding in holdings
     ]
 
 

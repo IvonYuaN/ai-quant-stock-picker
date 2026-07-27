@@ -212,6 +212,20 @@ class HomeSnapshotVariant:
 
 
 @dataclass(frozen=True)
+class HomeSnapshotVariantSuite:
+    """Metadata for the isolated variant artifact, separate from formal universe."""
+
+    schema_version: str = ""
+    generated_at: str = ""
+    data_mode: str = ""
+    end_date: str = ""
+    variant_count: int = 0
+    selected_symbols: int = 0
+    supported_symbols: int = 0
+    filters: str = ""
+
+
+@dataclass(frozen=True)
 class HomeSnapshotSource:
     """Freshness and effective source status for the current run."""
 
@@ -290,6 +304,7 @@ class HomeDashboardSnapshot:
     recommendation_gate: HomeSnapshotRecommendationGate | None = None
     phases: tuple[HomeSnapshotPhase, ...] = ()
     universe: HomeSnapshotUniverse = HomeSnapshotUniverse()
+    variant_suite: HomeSnapshotVariantSuite = HomeSnapshotVariantSuite()
     variants: tuple[HomeSnapshotVariant, ...] = ()
 
     def __init__(
@@ -312,6 +327,7 @@ class HomeDashboardSnapshot:
         recommendation_gate: HomeSnapshotRecommendationGate | None = None,
         phases: tuple[HomeSnapshotPhase, ...] = (),
         universe: HomeSnapshotUniverse | None = None,
+        variant_suite: HomeSnapshotVariantSuite | None = None,
         variants: tuple[HomeSnapshotVariant, ...] = (),
     ) -> None:
         normalized_debates = tuple(debates or ())
@@ -345,6 +361,9 @@ class HomeDashboardSnapshot:
         )
         object.__setattr__(self, "phases", tuple(phases or ()))
         object.__setattr__(self, "universe", universe or HomeSnapshotUniverse())
+        object.__setattr__(
+            self, "variant_suite", variant_suite or HomeSnapshotVariantSuite()
+        )
         object.__setattr__(self, "variants", tuple(variants or ()))
         self.__post_init__()
 
@@ -657,6 +676,7 @@ def _snapshot_from_dict(payload: object) -> HomeDashboardSnapshot:
             "recommendation_gate",
             "phases",
             "universe",
+            "variant_suite",
             "variants",
         },
     )
@@ -708,6 +728,7 @@ def _snapshot_from_dict(payload: object) -> HomeDashboardSnapshot:
             for item in _list(mapping.get("phases", ()), "phases")
         ),
         universe=_universe_from_dict(mapping.get("universe", {})),
+        variant_suite=_variant_suite_from_dict(mapping.get("variant_suite", {})),
         variants=tuple(
             _variant_from_dict(item)
             for item in _list(mapping.get("variants", ()), "variants")
@@ -794,6 +815,47 @@ def _variant_from_dict(payload: object) -> HomeSnapshotVariant:
         ),
         adjustments=_text_tuple(mapping.get("adjustments", ()), "variant.adjustments"),
         hard_rules=_text_tuple(mapping.get("hard_rules", ()), "variant.hard_rules"),
+    )
+
+
+def _variant_suite_from_dict(payload: object) -> HomeSnapshotVariantSuite:
+    if payload is None:
+        return HomeSnapshotVariantSuite()
+    mapping = _mapping(payload, "variant_suite")
+    _require_keys(
+        mapping,
+        set(),
+        "variant_suite",
+        optional={
+            "schema_version",
+            "generated_at",
+            "data_mode",
+            "end_date",
+            "variant_count",
+            "selected_symbols",
+            "supported_symbols",
+            "filters",
+        },
+    )
+    return HomeSnapshotVariantSuite(
+        schema_version=_optional_text(
+            mapping.get("schema_version"), "variant_suite.schema_version"
+        ),
+        generated_at=_optional_text(
+            mapping.get("generated_at"), "variant_suite.generated_at"
+        ),
+        data_mode=_optional_text(mapping.get("data_mode"), "variant_suite.data_mode"),
+        end_date=_optional_text(mapping.get("end_date"), "variant_suite.end_date"),
+        variant_count=_integer(
+            mapping.get("variant_count", 0), "variant_suite.variant_count"
+        ),
+        selected_symbols=_integer(
+            mapping.get("selected_symbols", 0), "variant_suite.selected_symbols"
+        ),
+        supported_symbols=_integer(
+            mapping.get("supported_symbols", 0), "variant_suite.supported_symbols"
+        ),
+        filters=_optional_text(mapping.get("filters"), "variant_suite.filters"),
     )
 
 
@@ -1169,6 +1231,8 @@ def _validate_snapshot(snapshot: HomeDashboardSnapshot) -> None:
         raise ValueError("phases must contain HomeSnapshotPhase values")
     if not isinstance(snapshot.universe, HomeSnapshotUniverse):
         raise ValueError("universe must be a HomeSnapshotUniverse value")
+    if not isinstance(snapshot.variant_suite, HomeSnapshotVariantSuite):
+        raise ValueError("variant_suite must be a HomeSnapshotVariantSuite value")
     if not all(isinstance(value, HomeSnapshotVariant) for value in snapshot.variants):
         raise ValueError("variants must contain HomeSnapshotVariant values")
     if any(value.initial_cash != 100_000.0 for value in snapshot.variants):

@@ -7,7 +7,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 SCRIPT = ROOT / "scripts" / "refresh_variant_results_from_market_db.py"
-spec = importlib.util.spec_from_file_location("refresh_variant_results_from_market_db", SCRIPT)
+spec = importlib.util.spec_from_file_location(
+    "refresh_variant_results_from_market_db", SCRIPT
+)
 assert spec and spec.loader
 mod = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = mod

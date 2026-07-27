@@ -63,6 +63,7 @@ from aqsp.web.home_snapshot import (
     HomeSnapshotUniverse,
     HomeSnapshotHolding,
     HomeSnapshotVariant,
+    HomeSnapshotVariantSuite,
     MAX_HOME_SNAPSHOT_TECHNICAL_METRICS,
     HOME_RECOMMENDATION_LABELS,
     is_home_recommendation,
@@ -1559,14 +1560,43 @@ def _universe_snapshot() -> HomeSnapshotUniverse:
     )
 
 
-def _variant_snapshot() -> tuple[HomeSnapshotVariant, ...]:
-    """Read only bounded summaries from the isolated experiment artifact."""
+def _variant_results_payload() -> dict[str, Any] | None:
     path = _runtime_json_path(
         "AQSP_VARIANT_RESULTS",
         "data/runtime/variant_results.json",
     )
     payload = _read_json_object(path)
     if not payload or payload.get("initial_cash") != 100_000.0:
+        return None
+    return payload
+
+
+def _variant_suite_snapshot() -> HomeSnapshotVariantSuite:
+    """Read bounded metadata from the isolated experiment artifact."""
+    payload = _variant_results_payload()
+    if not payload:
+        return HomeSnapshotVariantSuite()
+    universe = payload.get("universe")
+    if not isinstance(universe, dict):
+        universe = {}
+    return HomeSnapshotVariantSuite(
+        schema_version=_text(payload.get("schema_version")),
+        generated_at=_text(payload.get("generated_at")),
+        data_mode=_text(payload.get("data_mode")),
+        end_date=_text(payload.get("end_date")),
+        variant_count=len(payload.get("variants", ()))
+        if isinstance(payload.get("variants"), list)
+        else 0,
+        selected_symbols=int(universe.get("selected_symbols") or 0),
+        supported_symbols=int(universe.get("supported_symbols") or 0),
+        filters=_text(universe.get("filters")),
+    )
+
+
+def _variant_snapshot() -> tuple[HomeSnapshotVariant, ...]:
+    """Read only bounded summaries from the isolated experiment artifact."""
+    payload = _variant_results_payload()
+    if not payload:
         return ()
     raw_variants = payload.get("variants")
     if not isinstance(raw_variants, list):
@@ -1855,6 +1885,7 @@ def build_home_snapshot(
         recommendation_gate=recommendation_gate,
         phases=phases,
         universe=_universe_snapshot(),
+        variant_suite=_variant_suite_snapshot(),
         variants=_variant_snapshot(),
     )
 

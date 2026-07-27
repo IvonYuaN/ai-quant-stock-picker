@@ -78,6 +78,7 @@ class VariantResult:
     positions: Mapping[str, int]
     holdings: tuple[VariantHolding, ...]
     rejected_orders: int
+    snapshots: Mapping[str, tuple[VariantHolding, ...]]
 
     @property
     def return_pct(self) -> float:
@@ -88,12 +89,44 @@ class VariantResult:
         return self.final_equity - self.initial_cash
 
 
+@dataclass(frozen=True)
+class VariantPreparedData:
+    frames: Mapping[str, pd.DataFrame]
+    bars: Mapping[str, Mapping[str, Mapping[str, Any]]]
+    dates: tuple[str, ...]
+    last_close: Mapping[str, float]
+
+
+VariantDataInput = Mapping[str, pd.DataFrame] | VariantPreparedData
+
+
+def prepare_variant_data(data: Mapping[str, pd.DataFrame]) -> VariantPreparedData:
+    frames = _normalize_frames(data)
+    bars = {
+        symbol: {
+            str(row["date"]): row
+            for row in frame.to_dict(orient="records")
+            if str(row.get("date", ""))
+        }
+        for symbol, frame in frames.items()
+    }
+    return VariantPreparedData(
+        frames=frames,
+        bars=bars,
+        dates=tuple(
+            sorted({date for frame in frames.values() for date in frame["date"]})
+        ),
+        last_close={symbol: _last_close(frame) for symbol, frame in frames.items()},
+    )
+
+
 def simulate_variant(
     variant_id: str,
-    data: Mapping[str, pd.DataFrame],
+    data: VariantDataInput,
     orders: Sequence[VariantOrder],
     *,
     rules: VariantExecutionRules | None = None,
+    snapshot_dates: Sequence[str] = (),
 ) -> VariantResult:
     """Execute dated orders at the next available bar open.
 
@@ -105,30 +138,32 @@ def simulate_variant(
     cfg = rules or VariantExecutionRules()
     if cfg.initial_cash <= 0 or cfg.lot_size <= 0:
         raise ValueError("initial_cash and lot_size must be positive")
-    frames = _normalize_frames(data)
+    prepared = (
+        data if isinstance(data, VariantPreparedData) else prepare_variant_data(data)
+    )
     order_by_date: dict[str, list[VariantOrder]] = {}
     for order in orders:
         order_by_date.setdefault(str(order.date)[:10], []).append(order)
-    dates = sorted({date for frame in frames.values() for date in frame["date"]})
     cash = float(cfg.initial_cash)
     positions: dict[str, _Position] = {}
     fills: list[VariantFill] = []
     rejected = 0
     slip = cfg.slippage_bps / 10_000.0
+    snapshot_set = {str(date)[:10] for date in snapshot_dates}
+    snapshots: dict[str, tuple[VariantHolding, ...]] = {}
 
-    for date in dates:
+    for date in prepared.dates:
         for order in order_by_date.get(date, ()):
-            frame = frames.get(order.symbol)
-            if frame is None:
+            symbol_bars = prepared.bars.get(order.symbol)
+            if symbol_bars is None:
                 fills.append(_reject(date, order, "missing_symbol"))
                 rejected += 1
                 continue
-            row = frame.loc[frame["date"] == date]
-            if row.empty:
+            bar = symbol_bars.get(date)
+            if bar is None:
                 fills.append(_reject(date, order, "missing_bar"))
                 rejected += 1
                 continue
-            bar = row.iloc[0]
             if _as_bool(bar.get("suspended", False)):
                 fills.append(_reject(date, order, "suspended"))
                 rejected += 1
@@ -213,20 +248,10 @@ def simulate_variant(
                 )
         for position in positions.values():
             position.available_quantity = position.quantity
+        if date in snapshot_set:
+            snapshots[date] = _holdings_for_positions(positions, prepared, date)
 
-    holdings = tuple(
-        VariantHolding(
-            symbol=symbol,
-            quantity=position.quantity,
-            average_price=position.average_price,
-            last_price=_last_close(frames[symbol]),
-            market_value=position.quantity * _last_close(frames[symbol]),
-            unrealized_pnl=position.quantity
-            * (_last_close(frames[symbol]) - position.average_price),
-        )
-        for symbol, position in positions.items()
-        if position.quantity
-    )
+    holdings = _holdings_for_positions(positions, prepared, None)
     final_equity = cash + sum(holding.market_value for holding in holdings)
     return VariantResult(
         variant_id=variant_id,
@@ -241,6 +266,7 @@ def simulate_variant(
         },
         holdings=holdings,
         rejected_orders=rejected,
+        snapshots=snapshots,
     )
 
 
@@ -302,6 +328,33 @@ def _normalize_frames(data: Mapping[str, pd.DataFrame]) -> dict[str, pd.DataFram
 
 def _last_close(frame: pd.DataFrame) -> float:
     return float(frame.iloc[-1]["close"])
+
+
+def _holdings_for_positions(
+    positions: Mapping[str, _Position],
+    prepared: VariantPreparedData,
+    date: str | None,
+) -> tuple[VariantHolding, ...]:
+    holdings: list[VariantHolding] = []
+    for symbol, position in positions.items():
+        if not position.quantity:
+            continue
+        price = prepared.last_close[symbol]
+        if date is not None:
+            bar = prepared.bars.get(symbol, {}).get(date)
+            if bar is not None:
+                price = float(bar["close"])
+        holdings.append(
+            VariantHolding(
+                symbol=symbol,
+                quantity=position.quantity,
+                average_price=position.average_price,
+                last_price=price,
+                market_value=position.quantity * price,
+                unrealized_pnl=position.quantity * (price - position.average_price),
+            )
+        )
+    return tuple(holdings)
 
 
 def _optional_float(value: object) -> float | None:

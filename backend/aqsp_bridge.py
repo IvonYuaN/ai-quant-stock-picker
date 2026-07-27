@@ -246,6 +246,18 @@ class AQSPVariant:
 
 
 @dataclass(frozen=True)
+class AQSPVariantSuite:
+    schema_version: str = ""
+    generated_at: str = ""
+    data_mode: str = ""
+    end_date: str = ""
+    variant_count: int = 0
+    selected_symbols: int = 0
+    supported_symbols: int = 0
+    filters: str = ""
+
+
+@dataclass(frozen=True)
 class AQSPCrossMarket:
     rule_id: str
     theme: str
@@ -291,6 +303,7 @@ class AQSPSnapshot:
     recommendation_gate: AQSPRecommendationGate | None = None
     phases: tuple[AQSPPhase, ...] = ()
     universe: AQSPUniverse = AQSPUniverse()
+    variant_suite: AQSPVariantSuite = AQSPVariantSuite()
     variants: tuple[AQSPVariant, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
@@ -784,6 +797,7 @@ def _parse_snapshot(payload: Mapping[str, Any]) -> AQSPSnapshot:
         "phases",
         "universe",
         "variant_universe",
+        "variant_suite",
         "variants",
     }
     _check_keys(payload, required, "快照", optional)
@@ -855,6 +869,7 @@ def _parse_snapshot(payload: Mapping[str, Any]) -> AQSPSnapshot:
             _parse_phase(item) for item in _list(payload.get("phases", []), "phases")
         ),
         universe=_parse_universe(payload.get("universe")),
+        variant_suite=_parse_variant_suite(payload.get("variant_suite")),
         variants=variants,
     )
 
@@ -1005,6 +1020,47 @@ def _parse_universe(payload: object) -> AQSPUniverse:
         cycle_id=_integer(item.get("cycle_id", 0), "universe.cycle_id"),
         coverage_pct=float(item.get("coverage_pct", 0.0) or 0.0),
         last_error=_optional_text(item.get("last_error"), "universe.last_error"),
+    )
+
+
+def _parse_variant_suite(payload: object) -> AQSPVariantSuite:
+    if payload is None:
+        return AQSPVariantSuite()
+    item = _object(payload, "variant_suite")
+    _check_keys(
+        item,
+        set(),
+        "variant_suite",
+        {
+            "schema_version",
+            "generated_at",
+            "data_mode",
+            "end_date",
+            "variant_count",
+            "selected_symbols",
+            "supported_symbols",
+            "filters",
+        },
+    )
+    return AQSPVariantSuite(
+        schema_version=_optional_text(
+            item.get("schema_version"), "variant_suite.schema_version"
+        ),
+        generated_at=_optional_text(
+            item.get("generated_at"), "variant_suite.generated_at"
+        ),
+        data_mode=_optional_text(item.get("data_mode"), "variant_suite.data_mode"),
+        end_date=_optional_text(item.get("end_date"), "variant_suite.end_date"),
+        variant_count=_integer(
+            item.get("variant_count", 0), "variant_suite.variant_count"
+        ),
+        selected_symbols=_integer(
+            item.get("selected_symbols", 0), "variant_suite.selected_symbols"
+        ),
+        supported_symbols=_integer(
+            item.get("supported_symbols", 0), "variant_suite.supported_symbols"
+        ),
+        filters=_optional_text(item.get("filters"), "variant_suite.filters"),
     )
 
 

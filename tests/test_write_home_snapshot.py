@@ -84,6 +84,39 @@ def test_walkforward_evidence_reads_completed_status_and_sidecar_in_shanghai(
     assert updated_at.isoformat() == "2026-07-18T00:00:00+08:00"
 
 
+def test_variant_suite_snapshot_reads_variant_results_metadata(
+    monkeypatch, tmp_path: Path
+) -> None:
+    path = tmp_path / "variant_results.json"
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": "variant-suite-v2",
+                "generated_at": "2026-07-24T18:00:00+08:00",
+                "data_mode": "historical_raw_unadjusted",
+                "end_date": "2026-07-24",
+                "initial_cash": 100000.0,
+                "universe": {
+                    "supported_symbols": 4920,
+                    "selected_symbols": 600,
+                    "filters": "沪市主板+深市主板+创业板；排除 ST/*ST/PT/退市/科创/北交/B股",
+                },
+                "variants": [{"variant_id": "a"}, {"variant_id": "b"}],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AQSP_VARIANT_RESULTS", str(path))
+
+    suite = write_home_snapshot._variant_suite_snapshot()
+
+    assert suite.schema_version == "variant-suite-v2"
+    assert suite.end_date == "2026-07-24"
+    assert suite.variant_count == 2
+    assert suite.selected_symbols == 600
+
+
 @pytest.mark.parametrize("status", ["blocked_resources", "timeout", "failed"])
 def test_walkforward_evidence_rejects_non_completed_production_status(
     monkeypatch, tmp_path, status: str
@@ -247,7 +280,13 @@ def test_write_home_snapshot_builds_bounded_advisory_only_payload(monkeypatch) -
         "600005",
     ]
 
-    assert [item.score for item in snapshot.candidates] == [88.0, 80.0, 72.0, 66.0, 99.0]
+    assert [item.score for item in snapshot.candidates] == [
+        88.0,
+        80.0,
+        72.0,
+        66.0,
+        99.0,
+    ]
     assert snapshot.candidates[0].deterministic_reasons == ("MA20 斜率向上",)
     assert snapshot.candidates[0].strategies == ("ma_pullback",)
     assert snapshot.candidates[0].evidence_status == "有独立规则证据"

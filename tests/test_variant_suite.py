@@ -2,6 +2,7 @@ import sqlite3
 from collections import Counter
 from datetime import date, timedelta
 
+from scripts import run_variant_suite as variant_suite
 from scripts.run_variant_suite import run_suite
 
 
@@ -178,3 +179,61 @@ def test_run_suite_handles_flat_kdj_range_without_object_dtype_crash(tmp_path):
 
     assert result["schema_version"] == "variant-suite-v2"
     assert len(result["variants"]) >= 100
+
+
+def test_run_suite_reuses_indicator_frames_by_lookback_when_profiles_share_inputs(
+    tmp_path, monkeypatch
+):
+    db = tmp_path / "cached.db"
+    with sqlite3.connect(db) as conn:
+        conn.execute(
+            """
+            CREATE TABLE ohlcv (
+                symbol TEXT, date TEXT, name TEXT, price_mode TEXT, workload TEXT,
+                open REAL, high REAL, low REAL, close REAL, volume REAL,
+                amount REAL, suspended INTEGER, limit_up REAL, limit_down REAL
+            )
+            """
+        )
+        rows = []
+        start = date(2026, 1, 1)
+        for symbol, base in {"AAA": 10.0, "BBB": 20.0}.items():
+            for index in range(80):
+                current = start + timedelta(days=index)
+                close = base + index * 0.08 + ((index % 5) - 2) * 0.03
+                rows.append(
+                    (
+                        symbol,
+                        current.isoformat(),
+                        symbol,
+                        "raw",
+                        "historical",
+                        close,
+                        close + 0.2,
+                        close - 0.2,
+                        close,
+                        100000.0 + index * 1000.0,
+                        close * 100000.0,
+                        0,
+                        close * 1.1,
+                        close * 0.9,
+                    )
+                )
+        conn.executemany("INSERT INTO ohlcv VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)", rows)
+
+    calls: Counter[tuple[str, int]] = Counter()
+    original = variant_suite._with_indicators
+
+    def counted(raw, lookback):
+        calls[(str(raw["name"].iloc[0]), lookback)] += 1
+        return original(raw, lookback)
+
+    monkeypatch.setattr(variant_suite, "_with_indicators", counted)
+    result = variant_suite.run_suite(db, ("AAA", "BBB"), "2026-01-01", "2026-03-21")
+
+    assert result["schema_version"] == "variant-suite-v2"
+    assert (
+        len(calls)
+        == len({item["strategy"]["lookback_days"] for item in result["variants"]}) * 2
+    )
+    assert set(calls.values()) == {1}

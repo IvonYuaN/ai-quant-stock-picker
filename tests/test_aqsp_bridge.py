@@ -760,6 +760,16 @@ def test_aqsp_bridge_preserves_variant_holding_dates_and_adjustments(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     payload = _snapshot("2026-07-14")
+    payload["variant_suite"] = {
+        "schema_version": "variant-suite-v2",
+        "generated_at": "2026-07-14T18:20:00+08:00",
+        "data_mode": "historical_raw_unadjusted",
+        "end_date": "2026-07-14",
+        "variant_count": 148,
+        "selected_symbols": 600,
+        "supported_symbols": 4920,
+        "filters": "沪市主板+深市主板+创业板；排除 ST/*ST/PT/退市/科创/北交/B股",
+    }
     payload["variants"] = [
         {
             "variant_id": "macd_cross_lb20_balanced",
@@ -810,7 +820,10 @@ def test_aqsp_bridge_preserves_variant_holding_dates_and_adjustments(
     response = client.get("/api/aqsp/snapshot")
 
     assert response.status_code == 200
-    variant = response.json()["data"]["variants"][0]
+    data = response.json()["data"]
+    assert data["variant_suite"]["schema_version"] == "variant-suite-v2"
+    assert data["variant_suite"]["selected_symbols"] == 600
+    variant = data["variants"][0]
     assert variant["holdings_date"] == "2026-07-14"
     assert variant["previous_holdings_date"] == "2026-07-13"
     assert variant["holdings"][0]["name"] == "示例股份"
