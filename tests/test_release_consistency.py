@@ -39,6 +39,19 @@ def _manifest(root: Path, commit: str = SHA_A) -> Path:
     return path
 
 
+def _immutable_manifest(root: Path, commit: str = SHA_A) -> Path:
+    manifest = build_manifest(
+        root,
+        commit=commit,
+        branch="main",
+        remote="origin",
+        remote_url="https://github.com/example/aqsp.git",
+    )
+    path = root / ".aqsp-release.json"
+    write_manifest(manifest, path)
+    return path
+
+
 def test_release_consistency_rejects_release_not_published(
     monkeypatch, tmp_path: Path
 ) -> None:
@@ -320,7 +333,7 @@ def test_release_consistency_rejects_dirty_release(monkeypatch, tmp_path: Path) 
 def test_release_consistency_immutable_release_ignores_remote_and_overlay(
     monkeypatch, tmp_path: Path
 ) -> None:
-    manifest = _manifest(tmp_path)
+    manifest = _immutable_manifest(tmp_path)
     _fake_git(
         monkeypatch,
         {
@@ -352,7 +365,7 @@ def test_release_consistency_immutable_release_ignores_remote_and_overlay(
 def test_release_consistency_immutable_release_allows_release_generated_files(
     monkeypatch, tmp_path: Path
 ) -> None:
-    manifest = _manifest(tmp_path)
+    manifest = _immutable_manifest(tmp_path)
     _fake_git(
         monkeypatch,
         {
@@ -379,6 +392,91 @@ def test_release_consistency_immutable_release_allows_release_generated_files(
     )
 
     assert findings == []
+
+
+def test_write_release_manifest_verifies_archive_root_without_git(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "scripts" / "runner.sh").write_text(
+        "#!/usr/bin/env bash\n", encoding="utf-8"
+    )
+
+    payload = build_manifest(tmp_path, commit=SHA_A)
+
+    assert payload["file_count"] == 1
+    assert payload["content_digest"] != "unverified"
+    assert len(str(payload["content_digest"])) == 64
+
+
+def test_release_consistency_rejects_immutable_content_digest_mismatch(
+    monkeypatch, tmp_path: Path
+) -> None:
+    (tmp_path / "payload.txt").write_text("original\n", encoding="utf-8")
+    manifest = _immutable_manifest(tmp_path)
+    (tmp_path / "payload.txt").write_text("changed\n", encoding="utf-8")
+    _fake_git(
+        monkeypatch,
+        {
+            ("rev-parse", "HEAD"): (False, "git metadata unavailable"),
+            ("status", "--porcelain=v1", "--untracked-files=all"): (
+                False,
+                "git metadata unavailable",
+            ),
+        },
+    )
+
+    findings = checker.audit(
+        project_root=tmp_path,
+        runtime_root=tmp_path / "runtime",
+        remote="origin",
+        branch="main",
+        canonical_link=None,
+        manifest_path=manifest,
+        overlay_path=tmp_path / "runtime" / "overlay.json",
+        active_files=[],
+        executable_files=[],
+        require_overlay=False,
+        immutable_release=True,
+    )
+
+    assert any(item.code == "content_digest_mismatch" for item in findings)
+
+
+def test_release_consistency_rejects_immutable_file_count_mismatch(
+    monkeypatch, tmp_path: Path
+) -> None:
+    (tmp_path / "payload.txt").write_text("value\n", encoding="utf-8")
+    manifest = _immutable_manifest(tmp_path)
+    payload = json.loads(manifest.read_text(encoding="utf-8"))
+    payload["file_count"] = 99
+    manifest.write_text(json.dumps(payload), encoding="utf-8")
+    _fake_git(
+        monkeypatch,
+        {
+            ("rev-parse", "HEAD"): (False, "git metadata unavailable"),
+            ("status", "--porcelain=v1", "--untracked-files=all"): (
+                False,
+                "git metadata unavailable",
+            ),
+        },
+    )
+
+    findings = checker.audit(
+        project_root=tmp_path,
+        runtime_root=tmp_path / "runtime",
+        remote="origin",
+        branch="main",
+        canonical_link=None,
+        manifest_path=manifest,
+        overlay_path=tmp_path / "runtime" / "overlay.json",
+        active_files=[],
+        executable_files=[],
+        require_overlay=False,
+        immutable_release=True,
+    )
+
+    assert any(item.code == "file_count_mismatch" for item in findings)
 
 
 def test_write_release_manifest_refuses_dirty_git_source(tmp_path: Path) -> None:

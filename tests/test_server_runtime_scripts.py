@@ -215,6 +215,56 @@ def test_server_sync_script_supports_custom_runner() -> None:
     assert "主链路执行超时，被保护性终止" in script
 
 
+def test_immutable_release_deploy_script_covers_full_server_activation_chain() -> None:
+    script = (PROJECT_ROOT / "scripts" / "deploy_immutable_release.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert "git archive --format=tar" in script
+    assert "AQSP_RELEASE_REF" in script
+    assert '"$NPM_BIN" ci' in script
+    assert '"$NPM_BIN" run build' in script
+    assert "write_release_manifest.py" in script
+    assert '--root "$root"' in script
+    assert "check_release_consistency.py" in script
+    assert "--canonical-link" in script
+    assert "--executable-file scripts/health_vibe_research.sh" in script
+    assert "aqsp-scheduler-current" in script
+    assert "aqsp-scheduler-rollback" in script
+    assert 'systemctl restart "$API_SERVICE"' in script
+    assert 'systemctl restart "$PREVIEW_SERVICE"' in script
+    assert "API cwd drift" in script
+    assert "preview cwd drift" in script
+    assert "snapshot_contract" in script
+    assert "selected_date" in script
+    assert "available_dates" in script
+    assert "check_runtime_storage.py" in script
+    assert "--apply --json" in script
+    assert "check_scheduler.py" in script
+    assert "stop stale frontend port owner" in script
+    assert "legacy runtime frontend still has a live process" in script
+    assert 'rm -rf -- "$RUNTIME_ROOT/data/vibe-research/frontend"' in script
+    assert 'find "$RELEASES_ROOT" -mindepth 1 -maxdepth 1 -type f -delete' in script
+
+
+def test_immutable_release_deploy_script_has_safe_defaults_and_no_git_clean() -> None:
+    script = (PROJECT_ROOT / "scripts" / "deploy_immutable_release.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'RELEASES_ROOT="${AQSP_RELEASES_ROOT:-/opt/aqsp-releases}"' in script
+    assert (
+        'RUNTIME_DATA_ROOT="${AQSP_RUNTIME_DATA_ROOT:-${RUNTIME_ROOT}/data}"' in script
+    )
+    assert 'SHARED_VENV_DIR="${AQSP_SHARED_VENV_DIR:-/opt/aqsp-vibe-venv}"' in script
+    assert 'mkdir "$LOCK_FILE"' in script
+    assert "another immutable release deployment is running" in script
+    assert "git clean" not in script
+    assert "rm -rf /opt/aqsp" not in script
+    assert "streamlit" not in script
+    assert "8501" not in script
+
+
 def _init_git_repo(root: Path, *tracked_files: Path) -> None:
     subprocess.run(["git", "init", "--quiet"], cwd=root, check=True)
     subprocess.run(
@@ -556,7 +606,9 @@ def test_intraday_refresh_script_uses_isolated_outputs() -> None:
         'rm -f "$INTRADAY_LEDGER" "$INTRADAY_REPORT" "$INTRADAY_OUTPUT_CSV"'
         not in script
     )
-    assert 'RUNTIME_DATA_ROOT="${AQSP_RUNTIME_DATA_ROOT:-${RUNTIME_ROOT}/data}"' in script
+    assert (
+        'RUNTIME_DATA_ROOT="${AQSP_RUNTIME_DATA_ROOT:-${RUNTIME_ROOT}/data}"' in script
+    )
     assert (
         'LOG_DIR="${AQSP_INTRADAY_LOG_DIR:-${RUNTIME_DATA_ROOT}/logs/intraday}"'
         in script
@@ -1450,7 +1502,7 @@ def test_intraday_bridge_marks_failed_attempt_without_blocking_midday_task() -> 
     assert "午盘桥接失败，今日不再重复桥接" in script
     assert 'touch "$AQSP_MIDDAY_MARKER_FILE"' in script
     assert "12:05 午盘任务仍会独立重试" in script
-    assert '午盘任务未真实执行，不写完成标记；后续定时仍可重试' in script
+    assert "午盘任务未真实执行，不写完成标记；后续定时仍可重试" in script
 
 
 def test_intraday_refresh_default_batch_can_rotate_full_market_in_session() -> None:

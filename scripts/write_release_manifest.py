@@ -15,6 +15,7 @@ from aqsp.core.time import now_shanghai
 
 
 HEX40 = set("0123456789abcdef")
+MANIFEST_RELATIVE_PATH = ".aqsp-release.json"
 
 
 def _git(root: Path, *args: str) -> str:
@@ -34,6 +35,32 @@ def _commit(value: str) -> str:
 def _tracked_files(root: Path) -> list[str]:
     output = _git(root, "ls-files", "-z")
     return sorted(item for item in output.split("\0") if item)
+
+
+def _release_files(root: Path) -> list[str]:
+    """Return deterministic file list for a Git-archive release root.
+
+    The manifest itself is excluded because it contains generated metadata and
+    is written after this digest is computed. Hidden Git metadata and Python
+    bytecode caches are also excluded; release identity should describe the
+    deployable artifact, not incidental interpreter cache writes.
+    """
+    files: list[str] = []
+    for path in root.rglob("*"):
+        if not path.is_file() or path.is_symlink():
+            continue
+        relative = path.relative_to(root).as_posix()
+        parts = Path(relative).parts
+        if (
+            relative == MANIFEST_RELATIVE_PATH
+            or ".git" in parts
+            or "__pycache__" in parts
+        ):
+            continue
+        if path.name.endswith((".pyc", ".pyo")):
+            continue
+        files.append(relative)
+    return sorted(files)
 
 
 def _content_digest(root: Path, files: list[str]) -> str:
@@ -83,7 +110,7 @@ def build_manifest(
         branch = branch or "immutable-release"
         remote = remote or "unknown"
         remote_url = remote_url or "unknown"
-        files = []
+        files = _release_files(root)
     return {
         "schema_version": 1,
         "commit": commit,
@@ -93,7 +120,7 @@ def build_manifest(
         "remote_url": remote_url,
         "release_root": str(root),
         "file_count": len(files),
-        "content_digest": _content_digest(root, files) if files else "unverified",
+        "content_digest": _content_digest(root, files),
         "generated_at": now_shanghai().isoformat(),
     }
 

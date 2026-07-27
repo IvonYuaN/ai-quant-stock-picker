@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -122,6 +123,82 @@ def _validate_manifest_identity(
                 "error",
                 "invalid_content_digest",
                 "manifest content_digest is not a SHA-256 digest",
+            )
+        )
+
+
+def _release_files_for_digest(root: Path, manifest_path: Path) -> list[str]:
+    files: list[str] = []
+    manifest_relative = ""
+    try:
+        manifest_relative = (
+            manifest_path.resolve(strict=False).relative_to(root).as_posix()
+        )
+    except ValueError:
+        manifest_relative = ""
+    for path in root.rglob("*"):
+        if not path.is_file() or path.is_symlink():
+            continue
+        relative = path.relative_to(root).as_posix()
+        parts = Path(relative).parts
+        if relative == manifest_relative or ".git" in parts or "__pycache__" in parts:
+            continue
+        if path.name.endswith((".pyc", ".pyo")):
+            continue
+        files.append(relative)
+    return sorted(files)
+
+
+def _content_digest(root: Path, files: list[str]) -> str:
+    digest = hashlib.sha256()
+    for relative in files:
+        file_hash = hashlib.sha256((root / relative).read_bytes()).hexdigest()
+        digest.update(relative.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(file_hash.encode("ascii"))
+        digest.update(b"\n")
+    return digest.hexdigest()
+
+
+def _check_manifest_content_digest(
+    release_root: Path,
+    manifest_path: Path,
+    manifest: dict[str, object],
+    findings: list[Finding],
+) -> None:
+    expected = str(manifest.get("content_digest") or "").strip().lower()
+    if not expected or expected == "unverified":
+        findings.append(
+            Finding(
+                "error",
+                "unverified_content_digest",
+                "release manifest must contain a verified content_digest",
+            )
+        )
+        return
+    if not SHA64.fullmatch(expected):
+        return
+    files = _release_files_for_digest(release_root, manifest_path)
+    actual = _content_digest(release_root, files)
+    if actual != expected:
+        findings.append(
+            Finding(
+                "error",
+                "content_digest_mismatch",
+                f"release content_digest {expected} != actual {actual}",
+            )
+        )
+    declared_count = manifest.get("file_count")
+    if (
+        isinstance(declared_count, int)
+        and not isinstance(declared_count, bool)
+        and declared_count != len(files)
+    ):
+        findings.append(
+            Finding(
+                "error",
+                "file_count_mismatch",
+                f"manifest file_count {declared_count} != actual {len(files)}",
             )
         )
 
@@ -312,6 +389,10 @@ def audit(
                     "branch_mismatch",
                     f"manifest branch {manifest.get('branch')!r} != expected {branch!r}",
                 )
+            )
+        if immutable_release:
+            _check_manifest_content_digest(
+                release_root, manifest_path, manifest, findings
             )
     has_head, head = _git(project_root, "rev-parse", "HEAD")
     if has_head and release_commit and head.lower() != release_commit:
