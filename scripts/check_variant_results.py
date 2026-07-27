@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 from collections import Counter
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -34,6 +35,24 @@ def validate_variant_results(
     min_symbols: int = 121,
 ) -> VariantResultsCheck:
     payload = _object(json.loads(path.read_text(encoding="utf-8")), "variant_results")
+    return validate_variant_payload(
+        payload,
+        path=str(path),
+        expected_end=expected_end,
+        min_variants=min_variants,
+        min_symbols=min_symbols,
+    )
+
+
+def validate_variant_payload(
+    payload: object,
+    *,
+    path: str = "",
+    expected_end: str = "",
+    min_variants: int = 100,
+    min_symbols: int = 121,
+) -> VariantResultsCheck:
+    payload = _object(payload, "variant_results")
     schema_version = _text(payload.get("schema_version"), "schema_version")
     if schema_version != "variant-suite-v2":
         raise ValueError(f"schema_version must be variant-suite-v2: {schema_version}")
@@ -102,7 +121,7 @@ def validate_variant_results(
                 f"{duplicate} appears {count} times in top {len(top_holding_signatures)}"
             )
     return VariantResultsCheck(
-        path=str(path),
+        path=path,
         schema_version=schema_version,
         end_date=end_date,
         variants=len(variants),
@@ -129,9 +148,18 @@ def _has_structured_technical_evidence(item: dict[str, Any]) -> bool:
     for evidence in evidence_sources:
         if not isinstance(evidence, dict):
             continue
-        if all(key in evidence for key in REQUIRED_TECHNICAL_KEYS):
+        if all(_is_finite_number(evidence.get(key)) for key in REQUIRED_TECHNICAL_KEYS):
             return True
     return False
+
+
+def _is_finite_number(value: object) -> bool:
+    if isinstance(value, bool):
+        return False
+    try:
+        return math.isfinite(float(value))
+    except (TypeError, ValueError):
+        return False
 
 
 def _object(value: Any, label: str) -> dict[str, Any]:

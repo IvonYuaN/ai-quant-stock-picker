@@ -27,6 +27,7 @@ from typing import Any, Iterable, Iterator
 import pandas as pd
 
 from aqsp.utils.jsonl_io import atomic_write_text
+from check_variant_results import validate_variant_payload
 from run_variant_suite import run_suite
 
 CODE_PREFIXES = ("000", "001", "002", "003", "300", "600", "601", "603", "605")
@@ -456,6 +457,11 @@ def main() -> int:
                 "cycle_id": batch.cycle_id,
                 "coverage_pct": batch.coverage_pct,
             }
+            validate_variant_payload(
+                payload,
+                path=str(args.output),
+                expected_end=end,
+            )
             args.output.parent.mkdir(parents=True, exist_ok=True)
             atomic_write_text(
                 args.output, json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
@@ -471,6 +477,9 @@ def main() -> int:
     except VariantRefreshTimeout as exc:
         print(f"variant_results refresh timeout: {exc}", flush=True)
         return 124
+    except ValueError as exc:
+        print(f"variant_results refresh rejected: {exc}", flush=True)
+        return 1
 
 
 if __name__ == "__main__":

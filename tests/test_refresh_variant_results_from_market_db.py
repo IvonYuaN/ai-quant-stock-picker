@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+from argparse import Namespace
 import subprocess
 import sys
 import time
@@ -134,3 +135,70 @@ def test_refresh_lock_rejects_second_process_when_wait_is_zero(tmp_path: Path) -
         except subprocess.TimeoutExpired:
             child.kill()
             child.wait(timeout=2)
+
+
+def test_refresh_rejects_invalid_payload_before_write_or_cursor_commit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = tmp_path / "variant_results.json"
+    cursor = tmp_path / "variant.cursor.json"
+    lock = tmp_path / "variant.lock"
+    symbols = tuple(
+        mod.MarketSymbol(f"{index:06d}.SZ", f"{index:06d}", str(index), "深市主板")
+        for index in range(121)
+    )
+    batch = mod.VariantUniverseBatch(
+        symbols=symbols,
+        universe_version="test",
+        universe_count=len(symbols),
+        offset=0,
+        cycle_id=0,
+    )
+    monkeypatch.setattr(
+        mod,
+        "parse_args",
+        lambda: Namespace(
+            market_db=tmp_path / "market.db",
+            output=output,
+            temp_db=tmp_path / "input.db",
+            start="2026-01-01",
+            end="2026-07-27",
+            lookback_calendar_days=180,
+            max_symbols=300,
+            max_fills_per_variant=24,
+            max_runtime_seconds=0,
+            lock_file=lock,
+            cursor_file=cursor,
+            lock_wait_seconds=0.0,
+        ),
+    )
+    monkeypatch.setattr(mod, "load_supported_symbols", lambda _path: symbols)
+    monkeypatch.setattr(mod, "select_variant_batch", lambda *_args: batch)
+    monkeypatch.setattr(
+        mod,
+        "copy_market_rows",
+        lambda **_kwargs: tuple(item.symbol for item in symbols),
+    )
+    monkeypatch.setattr(mod, "run_suite", lambda *_args: {"variants": []})
+    monkeypatch.setattr(mod, "compact_variant_fills", lambda *_args: None)
+    monkeypatch.setattr(
+        mod,
+        "validate_variant_payload",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            ValueError("technical evidence missing")
+        ),
+    )
+    writes: list[Path] = []
+    commits: list[Path] = []
+    monkeypatch.setattr(
+        mod, "atomic_write_text", lambda path, _text: writes.append(path)
+    )
+    monkeypatch.setattr(
+        mod, "commit_variant_batch", lambda path, _batch: commits.append(path)
+    )
+
+    assert mod.main() == 1
+    assert writes == []
+    assert commits == []
+    assert not output.exists()
+    assert not cursor.exists()
