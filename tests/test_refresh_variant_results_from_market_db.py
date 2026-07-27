@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import importlib.util
+import subprocess
 import sys
+import time
 from pathlib import Path
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -46,3 +50,59 @@ def test_balanced_symbols_interleaves_boards_when_capped() -> None:
 def test_refresh_defaults_keep_production_refresh_bounded() -> None:
     assert mod.DEFAULT_MAX_SYMBOLS == 300
     assert mod.DEFAULT_LOOKBACK_CALENDAR_DAYS == 180
+    assert mod.DEFAULT_MAX_RUNTIME_SECONDS == 600
+    assert mod.DEFAULT_LOCK_WAIT_SECONDS == 0.0
+
+
+def test_runtime_budget_raises_timeout_when_work_exceeds_limit() -> None:
+    with pytest.raises(mod.VariantRefreshTimeout):
+        with mod.runtime_budget(1):
+            time.sleep(2)
+
+
+def test_refresh_lock_records_pid_and_releases_file(tmp_path: Path) -> None:
+    lock = tmp_path / "variant.lock"
+
+    with mod.refresh_lock(lock, 0.0):
+        assert f"pid={mod.os.getpid()}" in lock.read_text(encoding="utf-8")
+
+    assert lock.read_text(encoding="utf-8") == ""
+
+
+def test_refresh_lock_rejects_second_process_when_wait_is_zero(tmp_path: Path) -> None:
+    lock = tmp_path / "variant.lock"
+    child = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import fcntl,pathlib,sys,time;"
+                "p=pathlib.Path(sys.argv[1]);"
+                "p.parent.mkdir(parents=True,exist_ok=True);"
+                "h=p.open('a+',encoding='utf-8');"
+                "fcntl.flock(h.fileno(),fcntl.LOCK_EX);"
+                "h.seek(0);h.truncate();h.write('child_locked\\n');h.flush();"
+                "time.sleep(5)"
+            ),
+            str(lock),
+        ]
+    )
+    try:
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline:
+            if lock.exists() and "child_locked" in lock.read_text(encoding="utf-8"):
+                break
+            time.sleep(0.05)
+        else:
+            raise AssertionError("child did not acquire lock")
+
+        with pytest.raises(RuntimeError, match="already running"):
+            with mod.refresh_lock(lock, 0.0):
+                raise AssertionError("lock should not be acquired")
+    finally:
+        child.terminate()
+        try:
+            child.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            child.kill()
+            child.wait(timeout=2)

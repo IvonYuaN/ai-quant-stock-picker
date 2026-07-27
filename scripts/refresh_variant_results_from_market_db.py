@@ -9,13 +9,18 @@ private market rows are written back to GitHub.
 from __future__ import annotations
 
 import argparse
+import contextlib
+import fcntl
 import json
+import os
+import signal
 import sqlite3
 import tempfile
+import time
 from dataclasses import dataclass
 from datetime import date, timedelta
 from pathlib import Path
-from typing import Iterable
+from typing import Any, Iterable, Iterator
 
 import pandas as pd
 
@@ -27,8 +32,14 @@ EXCLUDED_NAME_MARKERS = ("ST", "*ST", "退", "PT")
 DEFAULT_LOOKBACK_CALENDAR_DAYS = 180
 DEFAULT_MAX_SYMBOLS = 300
 DEFAULT_MAX_FILLS_PER_VARIANT = 24
+DEFAULT_MAX_RUNTIME_SECONDS = 600
+DEFAULT_LOCK_WAIT_SECONDS = 0.0
 LATEST_DATE_PROBE_SYMBOLS = 240
 SQL_CHUNK_SIZE = 400
+
+
+class VariantRefreshTimeout(TimeoutError):
+    """Raised when the refresh exceeds its configured runtime budget."""
 
 
 @dataclass(frozen=True)
@@ -223,6 +234,54 @@ def compact_variant_fills(payload: dict[str, object], max_fills: int) -> None:
             variant["fills_retained"] = max_fills
 
 
+@contextlib.contextmanager
+def refresh_lock(lock_path: Path, wait_seconds: float) -> Iterator[None]:
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    deadline = time.monotonic() + max(0.0, wait_seconds)
+    with lock_path.open("a+", encoding="utf-8") as handle:
+        while True:
+            try:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError as exc:
+                if time.monotonic() >= deadline:
+                    raise RuntimeError(
+                        f"variant refresh already running: {lock_path}"
+                    ) from exc
+                time.sleep(0.25)
+        handle.seek(0)
+        handle.truncate()
+        handle.write(f"pid={os.getpid()} started_at={time.time():.0f}\n")
+        handle.flush()
+        try:
+            yield
+        finally:
+            handle.seek(0)
+            handle.truncate()
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+@contextlib.contextmanager
+def runtime_budget(seconds: int) -> Iterator[None]:
+    if seconds <= 0 or not hasattr(signal, "setitimer"):
+        yield
+        return
+
+    def _raise_timeout(_signum: int, _frame: Any) -> None:
+        raise VariantRefreshTimeout(
+            f"variant refresh timed out after {seconds} seconds"
+        )
+
+    previous_handler = signal.getsignal(signal.SIGALRM)
+    signal.signal(signal.SIGALRM, _raise_timeout)
+    signal.setitimer(signal.ITIMER_REAL, float(seconds))
+    try:
+        yield
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0.0)
+        signal.signal(signal.SIGALRM, previous_handler)
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--market-db", required=True, type=Path)
@@ -237,58 +296,77 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--max-fills-per-variant", type=int, default=DEFAULT_MAX_FILLS_PER_VARIANT
     )
+    parser.add_argument(
+        "--max-runtime-seconds", type=int, default=DEFAULT_MAX_RUNTIME_SECONDS
+    )
+    parser.add_argument("--lock-file", type=Path)
+    parser.add_argument(
+        "--lock-wait-seconds", type=float, default=DEFAULT_LOCK_WAIT_SECONDS
+    )
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
-    supported = load_supported_symbols(args.market_db)
-    end = args.end or latest_trade_date(args.market_db, supported)
-    start = (
-        args.start
-        or (
-            date.fromisoformat(end) - timedelta(days=args.lookback_calendar_days)
-        ).isoformat()
+    lock_path = args.lock_file or args.output.with_name(
+        f".{args.output.name}.refresh.lock"
     )
-    selected = balanced_symbols(supported, args.max_symbols)
-    if args.temp_db:
-        temp_db = args.temp_db
-        selected_symbols = copy_market_rows(
-            source_db=args.market_db,
-            target_db=temp_db,
-            symbols=selected,
-            start=start,
-            end=end,
-        )
-        payload = run_suite(temp_db, selected_symbols, start, end)
-    else:
-        with tempfile.TemporaryDirectory(prefix="aqsp-variant-db-") as tmp:
-            temp_db = Path(tmp) / "variant_input.db"
-            selected_symbols = copy_market_rows(
-                source_db=args.market_db,
-                target_db=temp_db,
-                symbols=selected,
-                start=start,
-                end=end,
+    try:
+        with (
+            refresh_lock(lock_path, args.lock_wait_seconds),
+            runtime_budget(args.max_runtime_seconds),
+        ):
+            supported = load_supported_symbols(args.market_db)
+            end = args.end or latest_trade_date(args.market_db, supported)
+            start = (
+                args.start
+                or (
+                    date.fromisoformat(end)
+                    - timedelta(days=args.lookback_calendar_days)
+                ).isoformat()
             )
-            payload = run_suite(temp_db, selected_symbols, start, end)
-    compact_variant_fills(payload, args.max_fills_per_variant)
-    payload["universe"] = {
-        "market_db": str(args.market_db),
-        "supported_symbols": len(supported),
-        "selected_symbols": len(selected_symbols),
-        "filters": "沪市主板+深市主板+创业板；排除 ST/*ST/PT/退市/科创/北交/B股",
-    }
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    atomic_write_text(
-        args.output, json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
-    )
-    print(
-        "variant_results refreshed: "
-        f"schema={payload['schema_version']} variants={len(payload['variants'])} "
-        f"symbols={len(selected_symbols)} end={payload['end_date']} output={args.output}"
-    )
-    return 0
+            selected = balanced_symbols(supported, args.max_symbols)
+            if args.temp_db:
+                temp_db = args.temp_db
+                selected_symbols = copy_market_rows(
+                    source_db=args.market_db,
+                    target_db=temp_db,
+                    symbols=selected,
+                    start=start,
+                    end=end,
+                )
+                payload = run_suite(temp_db, selected_symbols, start, end)
+            else:
+                with tempfile.TemporaryDirectory(prefix="aqsp-variant-db-") as tmp:
+                    temp_db = Path(tmp) / "variant_input.db"
+                    selected_symbols = copy_market_rows(
+                        source_db=args.market_db,
+                        target_db=temp_db,
+                        symbols=selected,
+                        start=start,
+                        end=end,
+                    )
+                    payload = run_suite(temp_db, selected_symbols, start, end)
+            compact_variant_fills(payload, args.max_fills_per_variant)
+            payload["universe"] = {
+                "market_db": str(args.market_db),
+                "supported_symbols": len(supported),
+                "selected_symbols": len(selected_symbols),
+                "filters": "沪市主板+深市主板+创业板；排除 ST/*ST/PT/退市/科创/北交/B股",
+            }
+            args.output.parent.mkdir(parents=True, exist_ok=True)
+            atomic_write_text(
+                args.output, json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
+            )
+            print(
+                "variant_results refreshed: "
+                f"schema={payload['schema_version']} variants={len(payload['variants'])} "
+                f"symbols={len(selected_symbols)} end={payload['end_date']} output={args.output}"
+            )
+            return 0
+    except VariantRefreshTimeout as exc:
+        print(f"variant_results refresh timeout: {exc}", flush=True)
+        return 124
 
 
 if __name__ == "__main__":
