@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import hashlib
 import os
+import plistlib
 import shutil
 import subprocess
 from datetime import date, timedelta
@@ -1332,6 +1333,22 @@ def test_launchd_daily_wrapper_runs_with_default_project_root(tmp_path: Path) ->
 
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == f"root={fake_root} task=daily"
+
+
+def test_launchd_daily_schedule_runs_inside_daily_window() -> None:
+    with (PROJECT_ROOT / "scripts" / "launchd" / "com.aqsp.daily.plist").open(
+        "rb"
+    ) as handle:
+        plist = plistlib.load(handle)
+
+    schedule = plist["StartCalendarInterval"]
+    assert [(item["Weekday"], item["Hour"], item["Minute"]) for item in schedule] == [
+        (1, 18, 0),
+        (2, 18, 0),
+        (3, 18, 0),
+        (4, 18, 0),
+        (5, 18, 0),
+    ]
 
 
 def test_clear_locks_is_conservative_by_default() -> None:

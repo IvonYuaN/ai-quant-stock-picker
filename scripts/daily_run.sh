@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 每日收盘后执行：选股 -> ledger -> briefing -> diagnosis -> 日志
-# 由 macOS launchd 在工作日 16:00 触发（北京时间 16:00）
+# 由 macOS launchd 在工作日 18:00 触发（北京时间 18:00）
 set -e
 
 if [ "${AQSP_ALLOW_LEGACY_ENTRY:-0}" != "1" ]; then
