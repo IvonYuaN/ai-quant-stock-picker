@@ -68,6 +68,10 @@ def test_release_task_entrypoint_maps_relative_runtime_paths_once_to_data(
     runtime = tmp_path / "runtime"
     marker = tmp_path / "env.txt"
     (release / "scripts").mkdir(parents=True)
+    (release / ".aqsp-release.json").write_text(
+        '{"commit": "0123456789abcdef0123456789abcdef01234567"}\n',
+        encoding="utf-8",
+    )
     (release / "scripts" / "bt_task.sh").write_text(
         "#!/usr/bin/env bash\n"
         'printf \'%s\\n\' "AQSP_LEDGER=$AQSP_LEDGER" "AQSP_REPORT=$AQSP_REPORT" "AQSP_RUNTIME_PYTHON=$AQSP_RUNTIME_PYTHON" "AQSP_BT_LOGS_DIR=$AQSP_BT_LOGS_DIR" > "$MARKER"\n',
@@ -106,6 +110,10 @@ def test_release_task_entrypoint_replaces_legacy_release_python(
     runtime = tmp_path / "runtime"
     marker = tmp_path / "env.txt"
     (release / "scripts").mkdir(parents=True)
+    (release / ".aqsp-release.json").write_text(
+        '{"commit": "0123456789abcdef0123456789abcdef01234567"}\n',
+        encoding="utf-8",
+    )
     (release / "scripts" / "bt_task.sh").write_text(
         "#!/usr/bin/env bash\n"
         'printf \'%s\\n\' "AQSP_RUNTIME_PYTHON=$AQSP_RUNTIME_PYTHON" "AQSP_IMMUTABLE_RELEASE=$AQSP_IMMUTABLE_RELEASE" > "$MARKER"\n',
