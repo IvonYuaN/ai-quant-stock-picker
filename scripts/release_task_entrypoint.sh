@@ -14,19 +14,44 @@ if [[ -f "${RUNTIME_ROOT}/.env" ]]; then
 fi
 
 runtime_path() {
+    local raw relative candidate
     case "${1:-}" in
         /*)
-            case "$1" in
-                "$RUNTIME_DATA_ROOT"|"$RUNTIME_DATA_ROOT"/*) printf '%s\n' "$1" ;;
-                *) echo "runtime output must be under ${RUNTIME_DATA_ROOT}: $1" >&2; exit 1 ;;
-            esac
+            candidate="$1"
             ;;
         *)
             relative="${1:-}"
             relative="${relative#data/}"
-            printf '%s/%s\n' "$RUNTIME_DATA_ROOT" "$relative"
+            candidate="${RUNTIME_DATA_ROOT}/${relative}"
             ;;
     esac
+    raw="$("${AQSP_BOOTSTRAP_PYTHON:-python3}" - "$RUNTIME_DATA_ROOT" "$candidate" <<'PY'
+from pathlib import Path
+import sys
+
+root = Path(sys.argv[1]).expanduser().resolve(strict=False)
+candidate = Path(sys.argv[2]).expanduser().resolve(strict=False)
+try:
+    candidate.relative_to(root)
+except ValueError:
+    raise SystemExit(1)
+print(candidate)
+PY
+    )" || {
+        echo "runtime output must be under ${RUNTIME_DATA_ROOT}: ${1:-}" >&2
+        exit 1
+    }
+    printf '%s\n' "$raw"
+}
+
+export_runtime_path() {
+    local name="$1" default="$2" raw resolved
+    raw="${!name-}"
+    if [[ -z "$raw" ]]; then
+        raw="$default"
+    fi
+    resolved="$(runtime_path "$raw")"
+    export "$name=$resolved"
 }
 
 case "$RUNTIME_DATA_ROOT" in
@@ -67,36 +92,51 @@ fi
 # inside the current release.
 export AQSP_RUNTIME_VENV_DIR="${AQSP_RUNTIME_VENV_DIR:-${AQSP_SHARED_VENV_DIR:-/opt/aqsp-vibe-venv}}"
 export AQSP_RUNTIME_PYTHON="${AQSP_RUNTIME_PYTHON:-${AQSP_RUNTIME_VENV_DIR}/bin/python3}"
-export AQSP_LEDGER="$(runtime_path "${AQSP_LEDGER:-data/predictions.jsonl}")"
-export AQSP_PAPER_LEDGER="$(runtime_path "${AQSP_PAPER_LEDGER:-data/paper_trades.jsonl}")"
-export AQSP_DEBATE_RESULTS="$(runtime_path "${AQSP_DEBATE_RESULTS:-data/debate_results.jsonl}")"
-export AQSP_INTRADAY_LEDGER="$(runtime_path "${AQSP_INTRADAY_LEDGER:-data/intraday_predictions.jsonl}")"
-export AQSP_REPORT="$(runtime_path "${AQSP_REPORT:-reports/latest.md}")"
-export AQSP_OUTPUT_CSV="$(runtime_path "${AQSP_OUTPUT_CSV:-reports/latest.csv}")"
-export AQSP_INTRADAY_REPORT="$(runtime_path "${AQSP_INTRADAY_REPORT:-reports/intraday_latest.md}")"
-export AQSP_INTRADAY_LATEST_CSV="$(runtime_path "${AQSP_INTRADAY_LATEST_CSV:-reports/intraday_latest.csv}")"
-export AQSP_INTRADAY_OUTPUT_CSV="$(runtime_path "${AQSP_INTRADAY_OUTPUT_CSV:-reports/intraday_latest.csv}")"
-export AQSP_INTRADAY_STATUS="$(runtime_path "${AQSP_INTRADAY_STATUS:-data/intraday_refresh_status.json}")"
+export_runtime_path AQSP_LEDGER data/predictions.jsonl
+export_runtime_path AQSP_PAPER_LEDGER data/paper_trades.jsonl
+export_runtime_path AQSP_DEBATE_RESULTS data/debate_results.jsonl
+export_runtime_path AQSP_INTRADAY_LEDGER data/intraday_predictions.jsonl
+export_runtime_path AQSP_REPORT reports/latest.md
+export_runtime_path AQSP_OUTPUT_CSV reports/latest.csv
+export_runtime_path AQSP_INTRADAY_REPORT reports/intraday_latest.md
+export_runtime_path AQSP_INTRADAY_LATEST_CSV reports/intraday_latest.csv
+export_runtime_path AQSP_INTRADAY_OUTPUT_CSV reports/intraday_latest.csv
+export_runtime_path AQSP_INTRADAY_STATUS data/intraday_refresh_status.json
 export AQSP_INTRADAY_REFRESH_STATUS_PATH="$AQSP_INTRADAY_STATUS"
-export AQSP_INTRADAY_CURSOR_PATH="$(runtime_path "${AQSP_INTRADAY_CURSOR_PATH:-data/runtime/intraday_universe_cursor.json}")"
+export_runtime_path AQSP_INTRADAY_CURSOR_PATH data/runtime/intraday_universe_cursor.json
 # React + FastAPI is the public surface. Offline archives stay private runtime data.
-export AQSP_DASHBOARD_HTML="$(runtime_path "${AQSP_DASHBOARD_HTML:-data/runtime/archive/dashboard/index.html}")"
-export AQSP_DASHBOARD_DB="$(runtime_path "${AQSP_DASHBOARD_DB:-data/runtime/archive/dashboard/aqsp.db}")"
-export AQSP_HOME_SNAPSHOT_PATH="$(runtime_path "${AQSP_HOME_SNAPSHOT_PATH:-data/runtime/home_dashboard_snapshot.json}")"
-export AQSP_HOME_SNAPSHOT_INDEX_PATH="$(runtime_path "${AQSP_HOME_SNAPSHOT_INDEX_PATH:-data/runtime/home_dashboard_snapshot_index.json}")"
-export AQSP_VARIANT_RESULTS="$(runtime_path "${AQSP_VARIANT_RESULTS:-data/runtime/variant_results.json}")"
-export AQSP_NEWS_OUTPUT="$(runtime_path "${AQSP_NEWS_OUTPUT:-reports/news_catalysts.md}")"
-export AQSP_NEWS_JSON_OUTPUT="$(runtime_path "${AQSP_NEWS_JSON_OUTPUT:-data/runtime/news_catalysts_latest.json}")"
-export AQSP_NEWS_ARCHIVE_DIR="$(runtime_path "${AQSP_NEWS_ARCHIVE_DIR:-data/runtime/news_archive}")"
+export_runtime_path AQSP_DASHBOARD_HTML data/runtime/archive/dashboard/index.html
+export_runtime_path AQSP_DASHBOARD_DB data/runtime/archive/dashboard/aqsp.db
+export_runtime_path AQSP_HOME_SNAPSHOT_PATH data/runtime/home_dashboard_snapshot.json
+export_runtime_path AQSP_HOME_SNAPSHOT_INDEX_PATH data/runtime/home_dashboard_snapshot_index.json
+export_runtime_path AQSP_VARIANT_RESULTS data/runtime/variant_results.json
+export_runtime_path AQSP_NEWS_OUTPUT reports/news_catalysts.md
+export_runtime_path AQSP_NEWS_JSON_OUTPUT data/runtime/news_catalysts_latest.json
+export_runtime_path AQSP_NEWS_ARCHIVE_DIR data/runtime/news_archive
 export AQSP_NEWS_SOURCE_CONFIG="${AQSP_NEWS_SOURCE_CONFIG:-${RELEASE_ROOT}/config/news_sources.yaml}"
-export AQSP_BT_LOGS_DIR="$(runtime_path "${AQSP_BT_LOGS_DIR:-logs/bt}")"
-export AQSP_RISK_STATE="$(runtime_path "${AQSP_RISK_STATE:-data/risk_state.json}")"
-export AQSP_WALKFORWARD_GATE_PATH="$(runtime_path "${AQSP_WALKFORWARD_GATE_PATH:-data/walkforward_gate.json}")"
-export AQSP_WALKFORWARD_PRODUCTION_STATUS="$(runtime_path "${AQSP_WALKFORWARD_PRODUCTION_STATUS:-data/walkforward_production_status.json}")"
-export AQSP_GATE_NOTIFY_STATE_PATH="$(runtime_path "${AQSP_GATE_NOTIFY_STATE_PATH:-data/gate_notify_state.json}")"
-export AQSP_REALTIME_CROSS_MARKET_PATH="$(runtime_path "${AQSP_REALTIME_CROSS_MARKET_PATH:-data/runtime/realtime_cross_market_context.json}")"
-export AQSP_RUNTIME_SYMBOL_CACHE="$(runtime_path "${AQSP_RUNTIME_SYMBOL_CACHE:-data/walkforward_production_symbols.json}")"
-export AQSP_INTRADAY_FAST_SYMBOL_CACHE="$(runtime_path "${AQSP_INTRADAY_FAST_SYMBOL_CACHE:-data/walkforward_production_symbols.json}")"
+export_runtime_path AQSP_BT_LOGS_DIR logs/bt
+export_runtime_path AQSP_DAILY_LOG_DIR logs/daily
+export_runtime_path AQSP_MIDDAY_LOG_DIR logs/midday
+export_runtime_path AQSP_PIPELINE_LOG_DIR logs/pipeline
+export_runtime_path AQSP_DAILY_RUN_HISTORY data/daily_run_history.jsonl
+export_runtime_path AQSP_CATALYST_REPORT_CACHE_PATH data/runtime/catalyst_report_cache.json
+export_runtime_path AQSP_RUNTIME_LOCK_DIR .locks
+export_runtime_path AQSP_RUNTIME_STATE_DIR .state
+export_runtime_path AQSP_RUNTIME_TMP_ROOT .tmp
+export_runtime_path AQSP_DEPLOY_LOG_DIR logs/deploy
+export_runtime_path AQSP_MONITOR_LOG_DIR logs/monitor
+export_runtime_path AQSP_NEWS_LOG_DIR logs/news
+export_runtime_path AQSP_COLDSTART_LOG_DIR logs/coldstart
+export_runtime_path AQSP_COLDSTART_HANDOFF_STATUS_PATH data/coldstart_handoff_status.json
+export_runtime_path AQSP_COLDSTART_REPORT outputs/coldstart_latest.md
+export_runtime_path AQSP_COLDSTART_OUTPUT_CSV outputs/coldstart_latest.csv
+export_runtime_path AQSP_RISK_STATE data/risk_state.json
+export_runtime_path AQSP_WALKFORWARD_GATE_PATH data/walkforward_gate.json
+export_runtime_path AQSP_WALKFORWARD_PRODUCTION_STATUS data/walkforward_production_status.json
+export_runtime_path AQSP_GATE_NOTIFY_STATE_PATH data/gate_notify_state.json
+export_runtime_path AQSP_REALTIME_CROSS_MARKET_PATH data/runtime/realtime_cross_market_context.json
+export_runtime_path AQSP_RUNTIME_SYMBOL_CACHE data/walkforward_production_symbols.json
+export_runtime_path AQSP_INTRADAY_FAST_SYMBOL_CACHE data/walkforward_production_symbols.json
 if [[ -z "${AQSP_INTRADAY_FAST_SYMBOL_CSVS:-}" ]]; then
     export AQSP_INTRADAY_FAST_SYMBOL_CSVS="$(runtime_path reports/intraday_latest.csv),$(runtime_path reports/latest.csv)"
 fi

@@ -12,6 +12,8 @@ set -euo pipefail
 # ============================ 配置 ============================
 
 PROJECT_ROOT="${AQSP_PROJECT_ROOT:-/opt/aqsp}"
+RUNTIME_ROOT="${AQSP_RUNTIME_ROOT:-$PROJECT_ROOT}"
+RUNTIME_DATA_ROOT="${AQSP_RUNTIME_DATA_ROOT:-${RUNTIME_ROOT}/data}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RUNTIME_PYTHON_HELPER="${PROJECT_ROOT}/scripts/runtime_python.sh"
 if [ ! -f "$RUNTIME_PYTHON_HELPER" ] && [ -f "${SCRIPT_DIR}/runtime_python.sh" ]; then
@@ -24,7 +26,7 @@ fi
 # shellcheck disable=SC1090
 source "$RUNTIME_PYTHON_HELPER"
 PIPELINE_SCRIPT="${PROJECT_ROOT}/scripts/daily_pipeline.py"
-LOG_DIR="${PROJECT_ROOT}/logs/daily"
+LOG_DIR="${AQSP_DAILY_LOG_DIR:-${RUNTIME_DATA_ROOT}/logs/daily}"
 RESULT_LOG="${LOG_DIR}/pipeline-$(date +%Y-%m-%d).log"
 
 # ============================ 加载环境变量 ============================
@@ -154,6 +156,13 @@ set +e
 "${PYTHON_BIN}" "${PIPELINE_SCRIPT}" \
     --project-root "${PROJECT_ROOT}" \
     --source "${AQSP_SOURCE:-auto}" \
+    --ledger "${AQSP_LEDGER:-${RUNTIME_DATA_ROOT}/predictions.jsonl}" \
+    --paper-ledger "${AQSP_PAPER_LEDGER:-${RUNTIME_DATA_ROOT}/paper_trades.jsonl}" \
+    --report "${AQSP_REPORT:-${RUNTIME_DATA_ROOT}/reports/latest.md}" \
+    --csv "${AQSP_OUTPUT_CSV:-${RUNTIME_DATA_ROOT}/reports/latest.csv}" \
+    --briefing "${AQSP_BRIEFING:-${RUNTIME_DATA_ROOT}/reports/briefing.md}" \
+    --dashboard-html "${AQSP_DASHBOARD_HTML:-${RUNTIME_DATA_ROOT}/runtime/archive/dashboard/index.html}" \
+    --dashboard-db "${AQSP_DASHBOARD_DB:-${RUNTIME_DATA_ROOT}/runtime/archive/dashboard/aqsp.db}" \
     "${PIPELINE_ARGS[@]}" 2>&1 | tee -a "$RESULT_LOG"
 PIPELINE_EXIT_CODE="${PIPESTATUS[0]}"
 set -e

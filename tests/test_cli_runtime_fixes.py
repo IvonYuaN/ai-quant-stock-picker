@@ -629,6 +629,7 @@ def test_build_runtime_catalyst_report_enables_cache_for_intraday(
         "aqsp.news.catalysts.build_catalyst_report",
         fake_build_catalyst_report,
     )
+    monkeypatch.setattr(cli_mod.sys, "platform", "linux")
     result = cli_mod._build_runtime_catalyst_report(
         [
             PickResult(
@@ -664,6 +665,7 @@ def test_runtime_catalyst_thread_mode_is_explicit_and_high_frequency_only(
 ) -> None:
     import aqsp.cli as cli_mod
 
+    monkeypatch.setattr(cli_mod.sys, "platform", "linux")
     monkeypatch.delenv("AQSP_INTRADAY_CATALYST_FETCH_MODE", raising=False)
     assert cli_mod._runtime_catalyst_isolate_external_sources("intraday") is True
 
@@ -671,6 +673,18 @@ def test_runtime_catalyst_thread_mode_is_explicit_and_high_frequency_only(
     assert cli_mod._runtime_catalyst_isolate_external_sources("intraday") is False
     assert cli_mod._runtime_catalyst_isolate_external_sources("midday") is False
     assert cli_mod._runtime_catalyst_isolate_external_sources("daily") is True
+
+
+def test_runtime_catalyst_uses_thread_mode_on_macos(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import aqsp.cli as cli_mod
+
+    monkeypatch.setattr(cli_mod.sys, "platform", "darwin")
+    monkeypatch.delenv("AQSP_INTRADAY_CATALYST_FETCH_MODE", raising=False)
+
+    assert cli_mod._runtime_catalyst_isolate_external_sources("intraday") is False
+    assert cli_mod._runtime_catalyst_isolate_external_sources("daily") is False
 
 
 def test_market_context_preview_count_is_bounded_when_screen_limit_is_large() -> None:

@@ -60,7 +60,15 @@ def _http_get(url: str, **kwargs: Any) -> requests.Response:
     with _MACOS_PROXY_LOCK:
         proxies = _MACOS_PROXY_CACHE.get(url)
         if proxies is None:
-            proxies = dict(requests.utils.get_environ_proxies(url))
+            proxies = {
+                key: value
+                for key, value in {
+                    "http": os.getenv("HTTP_PROXY") or os.getenv("http_proxy"),
+                    "https": os.getenv("HTTPS_PROXY") or os.getenv("https_proxy"),
+                    "no_proxy": os.getenv("NO_PROXY") or os.getenv("no_proxy"),
+                }.items()
+                if value
+            }
             _MACOS_PROXY_CACHE[url] = proxies
     if proxies:
         session.proxies.update(proxies)

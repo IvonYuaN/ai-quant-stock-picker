@@ -4,6 +4,7 @@ import json
 import multiprocessing
 import os
 import signal
+import sys
 import threading
 from html import unescape
 from collections.abc import Callable, Iterable, Mapping, Sequence
@@ -1284,7 +1285,7 @@ def _run_fetchers_with_deadline(
     partial/observation snapshot without waiting for an uncooperative source.
     """
 
-    if isolate_process:
+    if isolate_process and sys.platform != "darwin":
         return _run_fetchers_in_processes(
             fetches,
             timeout_seconds=timeout_seconds,
@@ -1350,6 +1351,12 @@ def _run_fetchers_in_processes(
     timeout_seconds: float,
 ) -> dict[str, _NewsFetchOutcome]:
     """Bound third-party adapters without leaving native threads at exit."""
+    if sys.platform == "darwin":
+        return _run_fetchers_with_deadline(
+            fetches,
+            timeout_seconds=timeout_seconds,
+            isolate_process=False,
+        )
     try:
         context = multiprocessing.get_context("fork")
     except ValueError:

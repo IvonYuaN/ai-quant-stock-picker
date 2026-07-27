@@ -40,6 +40,31 @@ def _runtime_path_env(
     return default
 
 
+def _runtime_data_root(project_root: Path) -> Path:
+    raw = str(os.getenv("AQSP_RUNTIME_DATA_ROOT", "") or "").strip()
+    if raw:
+        path = Path(raw).expanduser()
+        if path.is_absolute():
+            return path.resolve(strict=False)
+    return project_root
+
+
+def _runtime_output_path(
+    env_name: str,
+    default: str,
+    *,
+    project_root: Path,
+) -> Path:
+    raw = str(os.getenv(env_name, "") or "").strip()
+    base = _runtime_data_root(project_root)
+    path = Path(raw or default).expanduser()
+    if path.is_absolute():
+        return path.resolve(strict=False)
+    if base != project_root and path.parts and path.parts[0] == "data":
+        path = Path(*path.parts[1:]) if len(path.parts) > 1 else Path("")
+    return (base / path).resolve(strict=False)
+
+
 def _gate_notify_state_path(project_root: Path) -> Path:
     raw = str(
         os.getenv("AQSP_GATE_NOTIFY_STATE_PATH", "data/gate_notify_state.json") or ""
@@ -2034,12 +2059,41 @@ def _build_config(args: argparse.Namespace) -> PipelineConfig:
             "data/predictions.jsonl",
             project_root=project_root,
         ),
-        report_path=args.report or "reports/latest.md",
-        csv_path=args.csv or "reports/latest.csv",
-        briefing_path=args.briefing or "reports/briefing.md",
-        paper_report_path="reports/paper.md",
-        dashboard_html=args.dashboard_html or "dist/dashboard/index.html",
-        dashboard_db=args.dashboard_db or "dist/dashboard/aqsp.db",
+        report_path=args.report
+        or _runtime_path_env(
+            "AQSP_REPORT",
+            "reports/latest.md",
+            project_root=project_root,
+        ),
+        csv_path=args.csv
+        or _runtime_path_env(
+            "AQSP_OUTPUT_CSV",
+            "reports/latest.csv",
+            project_root=project_root,
+        ),
+        briefing_path=args.briefing
+        or _runtime_path_env(
+            "AQSP_BRIEFING",
+            "reports/briefing.md",
+            project_root=project_root,
+        ),
+        paper_report_path=_runtime_path_env(
+            "AQSP_PAPER_REPORT",
+            "reports/paper.md",
+            project_root=project_root,
+        ),
+        dashboard_html=args.dashboard_html
+        or _runtime_path_env(
+            "AQSP_DASHBOARD_HTML",
+            "dist/dashboard/index.html",
+            project_root=project_root,
+        ),
+        dashboard_db=args.dashboard_db
+        or _runtime_path_env(
+            "AQSP_DASHBOARD_DB",
+            "dist/dashboard/aqsp.db",
+            project_root=project_root,
+        ),
         paper_ledger=args.paper_ledger
         or _runtime_path_env(
             "AQSP_PAPER_LEDGER",
@@ -2058,7 +2112,11 @@ def _build_config(args: argparse.Namespace) -> PipelineConfig:
 
 
 def _write_result_file(result: PipelineResult, project_root: Path) -> None:
-    result_dir = project_root / "logs" / "pipeline"
+    result_dir = _runtime_output_path(
+        "AQSP_PIPELINE_LOG_DIR",
+        "logs/pipeline",
+        project_root=project_root,
+    )
     result_dir.mkdir(parents=True, exist_ok=True)
 
     result_date = result.finished_at[:10] or today_shanghai().isoformat()
@@ -2087,7 +2145,11 @@ def _write_result_file(result: PipelineResult, project_root: Path) -> None:
 
 
 def _append_daily_run_history(result: PipelineResult, project_root: Path) -> None:
-    history_path = project_root / "data" / "daily_run_history.jsonl"
+    history_path = _runtime_output_path(
+        "AQSP_DAILY_RUN_HISTORY",
+        "data/daily_run_history.jsonl",
+        project_root=project_root,
+    )
     history_path.parent.mkdir(parents=True, exist_ok=True)
     row = {
         "date": result.finished_at[:10],
@@ -2139,7 +2201,11 @@ def main(argv: list[str] | None = None) -> int:
 
     config = _build_config(args)
 
-    log_dir = config.project_root / "logs" / "daily"
+    log_dir = _runtime_output_path(
+        "AQSP_DAILY_LOG_DIR",
+        "logs/daily",
+        project_root=config.project_root,
+    )
     logger = _setup_logging(args.verbose, log_dir)
 
     try:

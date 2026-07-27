@@ -556,7 +556,7 @@ def test_intraday_refresh_script_uses_isolated_outputs() -> None:
         'rm -f "$INTRADAY_LEDGER" "$INTRADAY_REPORT" "$INTRADAY_OUTPUT_CSV"'
         not in script
     )
-    assert 'RUNTIME_DATA_ROOT="${AQSP_RUNTIME_DATA_ROOT:-$PROJECT_ROOT}"' in script
+    assert 'RUNTIME_DATA_ROOT="${AQSP_RUNTIME_DATA_ROOT:-${RUNTIME_ROOT}/data}"' in script
     assert (
         'LOG_DIR="${AQSP_INTRADAY_LOG_DIR:-${RUNTIME_DATA_ROOT}/logs/intraday}"'
         in script
@@ -565,7 +565,10 @@ def test_intraday_refresh_script_uses_isolated_outputs() -> None:
         'LOCK_BASE_DIR="${AQSP_RUNTIME_LOCK_DIR:-${RUNTIME_DATA_ROOT}/.locks}"'
         in script
     )
-    assert 'TMP_ROOT="${AQSP_INTRADAY_TMP_ROOT:-${RUNTIME_DATA_ROOT}/.tmp}"' in script
+    assert (
+        'TMP_ROOT="${AQSP_INTRADAY_TMP_ROOT:-${AQSP_RUNTIME_TMP_ROOT:-${RUNTIME_DATA_ROOT}/.tmp}}"'
+        in script
+    )
     assert 'TMP_DIR="$(mktemp -d "${TMP_ROOT}/intraday-refresh.XXXXXX")"' in script
     assert 'TMP_INTRADAY_LEDGER="${TMP_DIR}/intraday_predictions.jsonl"' in script
     assert '--ledger "${TMP_INTRADAY_LEDGER}"' in script
@@ -852,7 +855,7 @@ def test_bt_task_propagates_intraday_runner_failure_to_cron(
     )
 
     assert result.returncode == 23, result.stdout + result.stderr
-    log_files = list((root / "logs" / "bt").glob("bt-intraday-*.log"))
+    log_files = list((root / "data" / "logs" / "bt").glob("bt-intraday-*.log"))
     assert len(log_files) == 1
     log_text = log_files[0].read_text(encoding="utf-8")
     assert "status=failed" in log_text
@@ -1084,8 +1087,8 @@ def test_scheduler_diagnosis_is_read_only_and_bt_first() -> None:
     assert "shell=True" not in script
     assert "bt_task.sh" in script
     assert '"news"' in script
-    assert "duplicate AQSP system cron entries" in script
-    assert "production should use BT Panel only" in script
+    assert "direct or legacy AQSP system cron entries" in script
+    assert "production should use BT Panel wrappers only" in script
     assert "production schedule should be managed by BT Panel" in script
     assert "BT Panel logs" in script
     assert "pid-active" in script

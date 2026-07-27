@@ -13,6 +13,8 @@
 set -euo pipefail
 
 PROJECT_ROOT="${AQSP_PROJECT_ROOT:-/opt/aqsp}"
+RUNTIME_ROOT="${AQSP_RUNTIME_ROOT:-$PROJECT_ROOT}"
+RUNTIME_DATA_ROOT="${AQSP_RUNTIME_DATA_ROOT:-${RUNTIME_ROOT}/data}"
 INITIAL_PROJECT_ROOT="$PROJECT_ROOT"
 if [ -f "${PROJECT_ROOT}/.env" ]; then
     set -a
@@ -34,11 +36,12 @@ fi
 # shellcheck disable=SC1090
 source "$RUNTIME_PYTHON_HELPER"
 ACTION="${1:-}"
-LOG_DIR="${AQSP_BT_LOGS_DIR:-${PROJECT_ROOT}/logs/bt}"
+LOG_DIR="${AQSP_BT_LOGS_DIR:-${RUNTIME_DATA_ROOT}/logs/bt}"
 RUN_LOG="${LOG_DIR}/bt-${ACTION}-$(date +%Y-%m-%d).log"
 BRANCH="${AQSP_GIT_BRANCH:-main}"
 REMOTE="${AQSP_GIT_REMOTE:-origin}"
-LOCK_DIR="${PROJECT_ROOT}/.locks"
+LOCK_DIR="${AQSP_RUNTIME_LOCK_DIR:-${RUNTIME_DATA_ROOT}/.locks}"
+STATE_DIR="${AQSP_RUNTIME_STATE_DIR:-${RUNTIME_DATA_ROOT}/.state}"
 GIT_SYNC_LOCK_FILE="${LOCK_DIR}/server-git-sync.lock"
 GIT_SYNC_LOCK_INFO_FILE="${GIT_SYNC_LOCK_FILE}/meta.env"
 GIT_SYNC_WAIT_SECONDS="${AQSP_GIT_SYNC_WAIT_SECONDS:-180}"
@@ -90,6 +93,10 @@ if [ -z "$ACTION" ]; then
 fi
 
 sync_code_only() {
+    if [ "${AQSP_IMMUTABLE_RELEASE:-false}" = "true" ]; then
+        log "immutable release 运行模式：跳过 Git fetch/pull"
+        return 0
+    fi
     (
         release_git_sync_lock() {
             rm -f "$GIT_SYNC_LOCK_INFO_FILE"
@@ -158,7 +165,7 @@ sync_code_only() {
 managed_overlay_allows_dirty_state() {
             local dirty_tracked="$1"
             DIRTY_TRACKED_TEXT="$dirty_tracked" \
-            RUNTIME_OVERLAY_MANIFEST_PATH="${AQSP_RUNTIME_OVERLAY_MANIFEST:-${PROJECT_ROOT}/.state/runtime-sync-overlay.json}" \
+            RUNTIME_OVERLAY_MANIFEST_PATH="${AQSP_RUNTIME_OVERLAY_MANIFEST:-${STATE_DIR}/runtime-sync-overlay.json}" \
             python3 - <<'PY'
 from __future__ import annotations
 
@@ -347,7 +354,7 @@ should_bridge_intraday_to_midday() {
     if ! { [ "$now_hm" -ge 1135 ] && [ "$now_hm" -le 1230 ]; }; then
         return 1
     fi
-    marker_dir="${PROJECT_ROOT}/.state"
+    marker_dir="${STATE_DIR}"
     marker_file="${marker_dir}/midday-$(date +%Y-%m-%d).done"
     if [ -f "$marker_file" ]; then
         return 1
@@ -399,7 +406,7 @@ run_python_script() {
 }
 
 run_synced_task_with_result() {
-    local result_file="${PROJECT_ROOT}/.state/sync-${ACTION}-$(date +%Y%m%d%H%M%S)-$$.env"
+    local result_file="${STATE_DIR}/sync-${ACTION}-$(date +%Y%m%d%H%M%S)-$$.env"
     rm -f "$result_file"
     SYNC_TASK_STATUS="unknown"
     SYNC_TASK_SKIPPED="false"
@@ -490,7 +497,7 @@ case "$ACTION" in
             if [ "$SYNC_TASK_SKIPPED" = "true" ]; then
                 log "午盘任务因已有主链路运行而跳过，不写完成标记；后续定时仍可重试"
             else
-                marker_file="${AQSP_MIDDAY_MARKER_FILE:-${PROJECT_ROOT}/.state/midday-$(date +%Y-%m-%d).done}"
+                marker_file="${AQSP_MIDDAY_MARKER_FILE:-${STATE_DIR}/midday-$(date +%Y-%m-%d).done}"
                 mkdir -p "$(dirname "$marker_file")"
                 touch "$marker_file"
             fi

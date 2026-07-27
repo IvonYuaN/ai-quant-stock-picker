@@ -7,6 +7,8 @@
 set -euo pipefail
 
 PROJECT_ROOT="${AQSP_PROJECT_ROOT:-/opt/aqsp}"
+RUNTIME_ROOT="${AQSP_RUNTIME_ROOT:-$PROJECT_ROOT}"
+RUNTIME_DATA_ROOT="${AQSP_RUNTIME_DATA_ROOT:-${RUNTIME_ROOT}/data}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RUNTIME_PYTHON_HELPER="${PROJECT_ROOT}/scripts/runtime_python.sh"
 if [ ! -f "$RUNTIME_PYTHON_HELPER" ] && [ -f "${SCRIPT_DIR}/runtime_python.sh" ]; then
@@ -20,9 +22,9 @@ fi
 source "$RUNTIME_PYTHON_HELPER"
 export TZ="${TZ:-Asia/Shanghai}"
 DATE="$(date +%Y-%m-%d)"
-LOG_DIR="${AQSP_COLDSTART_LOG_DIR:-${PROJECT_ROOT}/logs/coldstart}"
+LOG_DIR="${AQSP_COLDSTART_LOG_DIR:-${RUNTIME_DATA_ROOT}/logs/coldstart}"
 RUN_LOG="${LOG_DIR}/coldstart-${DATE}.log"
-LOCK_DIR="${PROJECT_ROOT}/.locks"
+LOCK_DIR="${AQSP_RUNTIME_LOCK_DIR:-${RUNTIME_DATA_ROOT}/.locks}"
 # 与 scripts/server_sync_and_run.sh 共用同一把锁，避免冷启动与日终主链路并发。
 LOCK_FILE="${LOCK_DIR}/server-runtime.lock"
 LOCK_INFO_FILE="${LOCK_FILE}/meta.env"
@@ -37,6 +39,14 @@ resolve_path() {
     case "$1" in
         /*) printf '%s\n' "$1" ;;
         *) printf '%s/%s\n' "$PROJECT_ROOT" "$1" ;;
+    esac
+}
+
+runtime_path() {
+    case "$1" in
+        /*) printf '%s\n' "$1" ;;
+        data/*) printf '%s/%s\n' "$RUNTIME_DATA_ROOT" "${1#data/}" ;;
+        *) printf '%s/%s\n' "$RUNTIME_DATA_ROOT" "$1" ;;
     esac
 }
 
@@ -144,10 +154,10 @@ UPDATE_SCRIPT="$(
 if [ -z "$UPDATE_SCRIPT" ]; then
     UPDATE_SCRIPT="${UPDATE_SCRIPT_HINT:-$PROJECT_UPDATE_SCRIPT}"
 fi
-LEDGER_PATH="$(resolve_path "${AQSP_LEDGER:-data/predictions.jsonl}")"
-HANDOFF_STATUS_PATH="$(resolve_path "${AQSP_COLDSTART_HANDOFF_STATUS_PATH:-data/coldstart_handoff_status.json}")"
-REPORT_PATH="$(resolve_path "${AQSP_COLDSTART_REPORT:-outputs/recommendations-${RUN_AS_OF}.md}")"
-CSV_PATH="$(resolve_path "${AQSP_COLDSTART_OUTPUT_CSV:-outputs/recommendations-${RUN_AS_OF}.csv}")"
+LEDGER_PATH="$(runtime_path "${AQSP_LEDGER:-data/predictions.jsonl}")"
+HANDOFF_STATUS_PATH="$(runtime_path "${AQSP_COLDSTART_HANDOFF_STATUS_PATH:-data/coldstart_handoff_status.json}")"
+REPORT_PATH="$(runtime_path "${AQSP_COLDSTART_REPORT:-outputs/recommendations-${RUN_AS_OF}.md}")"
+CSV_PATH="$(runtime_path "${AQSP_COLDSTART_OUTPUT_CSV:-outputs/recommendations-${RUN_AS_OF}.csv}")"
 LIMIT="${AQSP_LIMIT:-10}"
 # sqlite 只负责历史库更新；新增候选生成走 live_short 适配源，避免历史源覆盖不完整时阻断冷启动。
 COLDSTART_RUNTIME_SOURCE="${AQSP_COLDSTART_SOURCE:-online_first}"
@@ -167,9 +177,7 @@ fi
 COLDSTART_MIN_TARGET_COVERAGE="${AQSP_COLDSTART_MIN_TARGET_COVERAGE:-3000}"
 
 mkdir -p \
-    "${PROJECT_ROOT}/data" \
-    "${PROJECT_ROOT}/outputs" \
-    "${PROJECT_ROOT}/logs" \
+    "${RUNTIME_DATA_ROOT}" \
     "$LOCK_DIR" \
     "$(dirname "$LEDGER_PATH")" \
     "$(dirname "$HANDOFF_STATUS_PATH")" \

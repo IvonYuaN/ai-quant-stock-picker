@@ -2179,6 +2179,11 @@ def test_news_http_get_disables_macos_environment_proxy_lookup(monkeypatch) -> N
 
     monkeypatch.setattr(news_source.sys, "platform", "darwin")
     monkeypatch.setattr(news_source.requests, "Session", Session)
+    monkeypatch.setattr(
+        news_source.requests.utils,
+        "get_environ_proxies",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("no _scproxy")),
+    )
 
     response = news_source._http_get("https://example.com", timeout=1)
 

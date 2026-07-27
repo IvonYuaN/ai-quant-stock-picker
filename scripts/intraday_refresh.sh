@@ -7,7 +7,8 @@
 set -euo pipefail
 
 PROJECT_ROOT="${AQSP_PROJECT_ROOT:-/opt/aqsp}"
-RUNTIME_DATA_ROOT="${AQSP_RUNTIME_DATA_ROOT:-$PROJECT_ROOT}"
+RUNTIME_ROOT="${AQSP_RUNTIME_ROOT:-$PROJECT_ROOT}"
+RUNTIME_DATA_ROOT="${AQSP_RUNTIME_DATA_ROOT:-${RUNTIME_ROOT}/data}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RUNTIME_PYTHON_HELPER="${PROJECT_ROOT}/scripts/runtime_python.sh"
 if [ ! -f "$RUNTIME_PYTHON_HELPER" ] && [ -f "${SCRIPT_DIR}/runtime_python.sh" ]; then
@@ -307,7 +308,7 @@ mkdir -p \
     "$(dirname "$REALTIME_CROSS_MARKET_PATH")" \
     "$(dirname "$DEBATE_RESULTS")"
 
-TMP_ROOT="${AQSP_INTRADAY_TMP_ROOT:-${RUNTIME_DATA_ROOT}/.tmp}"
+TMP_ROOT="${AQSP_INTRADAY_TMP_ROOT:-${AQSP_RUNTIME_TMP_ROOT:-${RUNTIME_DATA_ROOT}/.tmp}}"
 mkdir -p "$TMP_ROOT"
 TMP_DIR="$(mktemp -d "${TMP_ROOT}/intraday-refresh.XXXXXX")"
 TMP_INTRADAY_LEDGER="${TMP_DIR}/intraday_predictions.jsonl"

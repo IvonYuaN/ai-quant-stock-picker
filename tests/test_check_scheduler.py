@@ -33,6 +33,33 @@ def test_check_cron_lock_collisions_accepts_per_task_locks(monkeypatch) -> None:
     assert result.detail == "no cross-task flock collisions"
 
 
+def test_check_cron_lock_collisions_parses_quoted_baota_wrappers(
+    monkeypatch,
+) -> None:
+    crontab = "\n".join(
+        (
+            "*/15 * * * * flock -xn /tmp/shared.lock -c '/bin/bash /cron/monitor'",
+            "*/10 * * * * flock -xn /tmp/shared.lock -c '/bin/bash /cron/intraday'",
+        )
+    )
+    monkeypatch.setattr(check_scheduler, "_run", lambda _args: (0, crontab))
+
+    result = check_scheduler.check_cron_lock_collisions()
+
+    assert result.ok is False
+    assert "/bin/bash /cron/intraday,/bin/bash /cron/monitor" in result.detail
+
+
+def test_check_crontab_rejects_legacy_direct_entries(monkeypatch) -> None:
+    crontab = "0 18 * * * /bin/bash /opt/aqsp/scripts/daily_run.sh\n"
+    monkeypatch.setattr(check_scheduler, "_run", lambda _args: (0, crontab))
+
+    result = check_scheduler.check_crontab()
+
+    assert result.ok is False
+    assert "daily_run.sh" in result.detail
+
+
 def test_scheduled_actions_returns_actions_from_bt_panel_wrappers(tmp_path) -> None:
     daily = tmp_path / "daily"
     daily.write_text(
@@ -46,8 +73,8 @@ def test_scheduled_actions_returns_actions_from_bt_panel_wrappers(tmp_path) -> N
     )
     crontab = "\n".join(
         (
-            f"0 18 * * * flock -xn {tmp_path}/daily.lock -c {daily}",
-            f"0 22 * * 6 flock -xn {tmp_path}/gate.lock -c {gate}",
+            f"0 18 * * * flock -xn {tmp_path}/daily.lock -c '/bin/bash {daily}'",
+            f"0 22 * * 6 flock -xn {tmp_path}/gate.lock -c '/bin/bash {gate}'",
         )
     )
 

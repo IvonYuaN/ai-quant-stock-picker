@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 import os
 import re
+import shlex
 import subprocess
 import sys
 from collections.abc import Callable
@@ -20,7 +21,7 @@ RUNTIME_DATA_ROOT = Path(
     os.environ.get("AQSP_RUNTIME_DATA_ROOT", RUNTIME_ROOT / "data")
 ).resolve()
 RUNTIME_LOCK_ROOT = Path(
-    os.environ.get("AQSP_RUNTIME_LOCK_ROOT", RUNTIME_ROOT / ".locks")
+    os.environ.get("AQSP_RUNTIME_LOCK_DIR", RUNTIME_DATA_ROOT / ".locks")
 ).resolve()
 SCHEDULED_ACTIONS = frozenset(
     {
@@ -32,6 +33,16 @@ SCHEDULED_ACTIONS = frozenset(
         "monitor",
         "news",
     }
+)
+LEGACY_CRON_TERMS = (
+    "daily_run.sh",
+    "intraday_refresh.sh",
+    "daily_pipeline.sh",
+    "streamlit",
+    "8501",
+    "dist/dashboard",
+    "release_task_entrypoint.sh",
+    "bt_task.sh",
 )
 for candidate in (PROJECT_ROOT / "src", PROJECT_ROOT):
     candidate_str = str(candidate)
@@ -144,19 +155,53 @@ def check_crontab() -> CheckResult:
     code, output = _run(["crontab", "-l"])
     if code != 0:
         return CheckResult("system crontab", True, output or "crontab unavailable")
-    relevant = [line for line in output.splitlines() if "bt_task.sh" in line]
+    relevant = [
+        line
+        for line in output.splitlines()
+        if line.strip()
+        and not line.lstrip().startswith("#")
+        and any(term in line for term in LEGACY_CRON_TERMS)
+    ]
     if relevant:
         return CheckResult(
             "system crontab",
             False,
-            "duplicate AQSP system cron entries; production should use BT Panel only:\n"
+            "direct or legacy AQSP system cron entries; production should use BT Panel wrappers only:\n"
             + "\n".join(relevant),
         )
     return CheckResult(
         "system crontab",
         True,
-        "no bt_task.sh entries; production schedule should be managed by BT Panel",
+        "no direct/legacy AQSP entries; production schedule should be managed by BT Panel",
     )
+
+
+def _flock_owner(line: str) -> tuple[str, str] | None:
+    try:
+        tokens = shlex.split(line)
+    except ValueError:
+        return None
+    try:
+        flock_index = tokens.index("flock")
+    except ValueError:
+        return None
+    lock_path = ""
+    command = ""
+    index = flock_index + 1
+    while index < len(tokens):
+        token = tokens[index]
+        if token == "-c" and index + 1 < len(tokens):
+            command = tokens[index + 1]
+            break
+        if token.startswith("-"):
+            index += 1
+            continue
+        if not lock_path:
+            lock_path = token
+        index += 1
+    if not lock_path or not command:
+        return None
+    return lock_path, command
 
 
 def check_cron_lock_collisions() -> CheckResult:
@@ -165,12 +210,11 @@ def check_cron_lock_collisions() -> CheckResult:
     if code != 0:
         return CheckResult("cron outer locks", True, output or "crontab unavailable")
     owners: dict[str, set[str]] = {}
-    pattern = re.compile(r"\bflock\s+\S+\s+(\S+)\s+-c\s+(\S+)")
     for line in output.splitlines():
-        match = pattern.search(line)
-        if not match:
+        owner = _flock_owner(line)
+        if owner is None:
             continue
-        lock_path, command_path = match.groups()
+        lock_path, command_path = owner
         owners.setdefault(lock_path, set()).add(command_path)
     collisions = {
         lock_path: sorted(commands)
@@ -194,17 +238,27 @@ def _scheduled_actions(
     crontab: str, read_wrapper: Callable[[Path], str | None]
 ) -> set[str]:
     actions: set[str] = set()
-    wrapper_pattern = re.compile(r"\bflock\s+\S+\s+(\S+)\s+-c\s+(\S+)")
     action_pattern = re.compile(
         r"(?:release_task_entrypoint|bt_task)\.sh\s+("
         + "|".join(sorted(SCHEDULED_ACTIONS))
         + r")\b"
     )
     for line in crontab.splitlines():
-        match = wrapper_pattern.search(line)
-        if not match:
+        owner = _flock_owner(line)
+        if owner is None:
             continue
-        wrapper = Path(match.group(2))
+        try:
+            wrapper_command = shlex.split(owner[1])
+        except ValueError:
+            wrapper_command = []
+        wrapper_tokens = [
+            token
+            for token in wrapper_command
+            if not token.startswith("-") and Path(token).name not in {"bash", "sh"}
+        ]
+        if not wrapper_tokens:
+            continue
+        wrapper = Path(wrapper_tokens[0])
         text = read_wrapper(wrapper)
         if text is None:
             continue

@@ -401,8 +401,8 @@ def test_intraday_refresh_releases_lock_when_run_completes(tmp_path: Path) -> No
     assert first.returncode == 0, first.stdout + first.stderr
     assert second.returncode == 0, second.stdout + second.stderr
     assert "已有盘中刷新任务在运行，跳过" not in second.stdout
-    assert not (tmp_path / ".locks" / "intraday-refresh.lock").exists()
-    assert not list((tmp_path / ".tmp").glob("intraday-refresh.*"))
+    assert not (tmp_path / "data" / ".locks" / "intraday-refresh.lock").exists()
+    assert not list((tmp_path / "data" / ".tmp").glob("intraday-refresh.*"))
 
 
 def test_intraday_runtime_quality_gate_downgrades_watch_candidate_and_records_state(
@@ -456,11 +456,11 @@ def test_intraday_runtime_quality_gate_downgrades_watch_candidate_and_records_st
     assert cli_args["disable_circuit_breaker"] == "false"
     assert cli_args["benchmark"] == "399001"
     assert cli_args["provisional_report"].startswith(
-        str(tmp_path / ".tmp" / "intraday-refresh.")
+        str(tmp_path / "data" / ".tmp" / "intraday-refresh.")
     )
     assert cli_args["provisional_report"].endswith("/intraday_latest.md")
     assert cli_args["provisional_csv"].startswith(
-        str(tmp_path / ".tmp" / "intraday-refresh.")
+        str(tmp_path / "data" / ".tmp" / "intraday-refresh.")
     )
     assert cli_args["provisional_csv"].endswith("/intraday_latest.csv")
 

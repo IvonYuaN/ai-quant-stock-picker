@@ -7,6 +7,8 @@
 set -euo pipefail
 
 PROJECT_ROOT="${AQSP_PROJECT_ROOT:-/opt/aqsp}"
+RUNTIME_ROOT="${AQSP_RUNTIME_ROOT:-$PROJECT_ROOT}"
+RUNTIME_DATA_ROOT="${AQSP_RUNTIME_DATA_ROOT:-${RUNTIME_ROOT}/data}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RUNTIME_PYTHON_HELPER="${PROJECT_ROOT}/scripts/runtime_python.sh"
 if [ ! -f "$RUNTIME_PYTHON_HELPER" ] && [ -f "${SCRIPT_DIR}/runtime_python.sh" ]; then
@@ -18,7 +20,7 @@ if [ ! -f "$RUNTIME_PYTHON_HELPER" ]; then
 fi
 # shellcheck disable=SC1090
 source "$RUNTIME_PYTHON_HELPER"
-LOG_DIR="${PROJECT_ROOT}/logs/midday"
+LOG_DIR="${AQSP_MIDDAY_LOG_DIR:-${RUNTIME_DATA_ROOT}/logs/midday}"
 RESULT_LOG="${LOG_DIR}/midday-$(date +%Y-%m-%d).log"
 
 log() {

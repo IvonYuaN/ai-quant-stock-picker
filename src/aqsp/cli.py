@@ -2796,6 +2796,8 @@ def _is_high_frequency_task(task_id: str) -> bool:
 
 def _runtime_catalyst_isolate_external_sources(task_id: str) -> bool:
     """Keep fork isolation by default; allow an explicit HF thread fallback."""
+    if sys.platform == "darwin":
+        return False
     if not _is_high_frequency_task(task_id):
         return True
 
