@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 
-MAX_TOP_HOLDING_DUPLICATES = 3
+MAX_TOP_HOLDING_DUPLICATES = 1
 TOP_DIVERSITY_WINDOW = 20
 REQUIRED_TECHNICAL_KEYS = ("macd_hist", "kdj_j", "volume_ratio", "atr_pct")
 

@@ -32,7 +32,7 @@ from aqsp.utils.jsonl_io import atomic_write_text
 BASE_CASH = 100_000.0
 TRAINING_BARS = 60
 RECENT_ACTION_LIMIT = 8
-MAX_HOLDING_DUPLICATES_IN_TOP = 3
+MAX_HOLDING_DUPLICATES_IN_TOP = 1
 
 
 @dataclass(frozen=True)

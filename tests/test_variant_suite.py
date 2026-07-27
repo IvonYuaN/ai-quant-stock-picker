@@ -72,7 +72,7 @@ def test_run_suite_creates_many_explained_nonduplicate_accounts(tmp_path):
         Counter(item["holdings_signature"] for item in variants[:12]).most_common(1)[0][
             1
         ]
-        <= 3
+        <= 1
     )
     assert all("cash" in item and "total_pnl" in item for item in variants)
     assert all(item["strategy"]["hypothesis"] for item in variants)
