@@ -5,6 +5,9 @@
 
 set -euo pipefail
 
+# 盘前消息日期必须与 A 股交易日使用同一北京时间。
+export TZ="Asia/Shanghai"
+
 PROJECT_ROOT="${AQSP_PROJECT_ROOT:-/opt/aqsp}"
 RUNTIME_ROOT="${AQSP_RUNTIME_ROOT:-$PROJECT_ROOT}"
 RUNTIME_DATA_ROOT="${AQSP_RUNTIME_DATA_ROOT:-${RUNTIME_ROOT}/data}"
@@ -107,7 +110,7 @@ PYTHON_BIN="$(aqsp_runtime_python "$PROJECT_ROOT")"
 aqsp_require_runtime_python "$PYTHON_BIN"
 
 export PYTHONPATH="${PROJECT_ROOT}/src:${PROJECT_ROOT}:${PYTHONPATH:-}"
-export TZ="${TZ:-Asia/Shanghai}"
+export TZ="Asia/Shanghai"
 export AQSP_RUN_TASK_ID="news"
 
 SYMBOLS="${AQSP_NEWS_SYMBOLS:-}"

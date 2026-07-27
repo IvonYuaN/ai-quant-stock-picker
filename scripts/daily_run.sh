@@ -3,6 +3,9 @@
 # 由 macOS launchd 在工作日 18:00 触发（北京时间 18:00）
 set -e
 
+# Legacy 本机入口也必须按北京时间判断交易日和收盘窗口。
+export TZ="Asia/Shanghai"
+
 if [ "${AQSP_ALLOW_LEGACY_ENTRY:-0}" != "1" ]; then
     echo "daily_run.sh is a legacy local entry. Use scripts/bt_task.sh daily in production, or set AQSP_ALLOW_LEGACY_ENTRY=1 for local smoke runs." >&2
     exit 2
@@ -31,6 +34,7 @@ if [ -f "${PROJECT_ROOT}/.env" ]; then
     set +a
     echo "[$(date)] 已加载 .env 配置" >> "$LOG"
 fi
+export TZ="Asia/Shanghai"
 PYTHON_BIN="${AQSP_PYTHON:-/Library/Frameworks/Python.framework/Versions/3.11/bin/python3}"
 if [ ! -x "$PYTHON_BIN" ]; then
     PYTHON_BIN="$(command -v python3)"

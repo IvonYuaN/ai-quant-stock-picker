@@ -9,6 +9,9 @@
 
 set -euo pipefail
 
+# 计划任务按北京时间解释日志日期、交易日和运行窗口。
+export TZ="Asia/Shanghai"
+
 # ============================ 配置 ============================
 
 PROJECT_ROOT="${AQSP_PROJECT_ROOT:-/opt/aqsp}"
@@ -84,7 +87,7 @@ log "运行时 Python: ${PYTHON_BIN}"
 export PYTHONPATH="${PROJECT_ROOT}/src:${PROJECT_ROOT}:${PYTHONPATH:-}"
 
 # 设置时区
-export TZ="${TZ:-Asia/Shanghai}"
+export TZ="Asia/Shanghai"
 
 is_truthy() {
     local value

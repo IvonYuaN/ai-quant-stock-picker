@@ -6,6 +6,9 @@
 
 set -euo pipefail
 
+# 日内窗口和产物日期固定按北京时间计算。
+export TZ="Asia/Shanghai"
+
 PROJECT_ROOT="${AQSP_PROJECT_ROOT:-/opt/aqsp}"
 RUNTIME_ROOT="${AQSP_RUNTIME_ROOT:-$PROJECT_ROOT}"
 RUNTIME_DATA_ROOT="${AQSP_RUNTIME_DATA_ROOT:-${RUNTIME_ROOT}/data}"
@@ -118,7 +121,7 @@ if [ -f "${PROJECT_ROOT}/.env" ]; then
 fi
 
 export PYTHONPATH="${PROJECT_ROOT}/src:${PROJECT_ROOT}:${PYTHONPATH:-}"
-export TZ="${TZ:-Asia/Shanghai}"
+export TZ="Asia/Shanghai"
 export AQSP_RUN_TASK_ID="${AQSP_RUN_TASK_ID:-intraday}"
 # 盘中入口不接受外部任务 ID，避免残留 daily/live_short 环境改变运行分支。
 export AQSP_RUN_TASK_ID="intraday"

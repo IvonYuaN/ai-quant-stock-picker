@@ -20,7 +20,7 @@ if [ ! -f "$RUNTIME_PYTHON_HELPER" ]; then
 fi
 # shellcheck disable=SC1090
 source "$RUNTIME_PYTHON_HELPER"
-export TZ="${TZ:-Asia/Shanghai}"
+export TZ="Asia/Shanghai"
 DATE="$(date +%Y-%m-%d)"
 LOG_DIR="${AQSP_COLDSTART_LOG_DIR:-${RUNTIME_DATA_ROOT}/logs/coldstart}"
 RUN_LOG="${LOG_DIR}/coldstart-${DATE}.log"
@@ -114,6 +114,7 @@ if [ -f "${PROJECT_ROOT}/.env" ]; then
     source "${PROJECT_ROOT}/.env"
     set +a
 fi
+export TZ="Asia/Shanghai"
 
 export PYTHONPATH="${PROJECT_ROOT}/src:${PROJECT_ROOT}:${PYTHONPATH:-}"
 

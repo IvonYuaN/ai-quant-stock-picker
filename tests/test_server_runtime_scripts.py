@@ -1543,6 +1543,22 @@ def test_launchd_strategy_wrappers_gate_non_trading_days_before_execution() -> N
         assert script.index(skip_message) < script.index(run_marker)
 
 
+def test_production_task_entrypoints_force_shanghai_timezone() -> None:
+    scripts = (
+        "bt_task.sh",
+        "daily_pipeline.sh",
+        "daily_run.sh",
+        "coldstart_daily.sh",
+        "intraday_refresh.sh",
+        "news_catalysts.sh",
+    )
+
+    for filename in scripts:
+        script = (PROJECT_ROOT / "scripts" / filename).read_text(encoding="utf-8")
+        assert 'export TZ="Asia/Shanghai"' in script
+        assert 'TZ="${TZ:-Asia/Shanghai}"' not in script
+
+
 def test_coldstart_daily_continues_when_update_fails_but_target_coverage_is_enough(
     tmp_path: Path,
 ) -> None:

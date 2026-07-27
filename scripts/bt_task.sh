@@ -24,6 +24,8 @@ if [ -f "${PROJECT_ROOT}/.env" ]; then
     # .env may configure the runtime, but must not redirect this checkout.
     PROJECT_ROOT="$INITIAL_PROJECT_ROOT"
 fi
+# 计划任务按北京时间解释日期、交易日和时段；不可继承宿主机或 .env 的 TZ。
+export TZ="Asia/Shanghai"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RUNTIME_PYTHON_HELPER="${PROJECT_ROOT}/scripts/runtime_python.sh"
 if [ ! -f "$RUNTIME_PYTHON_HELPER" ] && [ -f "${SCRIPT_DIR}/runtime_python.sh" ]; then
@@ -444,7 +446,7 @@ if [ "${AQSP_IMMUTABLE_RELEASE:-false}" != "true" ] && [ ! -d "${PROJECT_ROOT}/.
 fi
 
 export AQSP_PROJECT_ROOT="$PROJECT_ROOT"
-export TZ="${TZ:-Asia/Shanghai}"
+export TZ="Asia/Shanghai"
 
 case "$ACTION" in
     daily)
