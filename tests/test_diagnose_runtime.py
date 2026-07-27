@@ -696,7 +696,7 @@ def test_diagnose_runtime_warns_when_gate_state_fingerprint_drifted(
         encoding="utf-8",
     )
     walkforward_gate.write_text(
-        '{"run_date":"2026-06-21","deflated_sharpe":0.82,"pbo":0.7778,"pbo_valid":true,"dsr_pass":false,"pbo_pass":false,"both_pass":false,"n_periods":19,"effective_symbols":5209,"data_end":"2026-06-20"}\n',
+        '{"run_date":"2026-06-21","deflated_sharpe":0.82,"pbo":0.7778,"pbo_valid":true,"dsr_pass":false,"pbo_pass":false,"both_pass":false,"n_periods":19,"effective_symbols":5209,"data_end":"2024-12-31"}\n',
         encoding="utf-8",
     )
 
@@ -704,6 +704,7 @@ def test_diagnose_runtime_warns_when_gate_state_fingerprint_drifted(
     monkeypatch.setenv("AQSP_PAPER_LEDGER", str(paper))
     monkeypatch.setenv("AQSP_GATE_NOTIFY_STATE_PATH", str(gate_state))
     monkeypatch.setenv("AQSP_WALKFORWARD_GATE_PATH", str(walkforward_gate))
+    monkeypatch.setattr("scripts.diagnose_runtime.today_shanghai", lambda: date(2026, 6, 21))
     monkeypatch.setattr("scripts.diagnose_runtime.PROJECT_ROOT", tmp_path)
     monkeypatch.setattr(
         "scripts.diagnose_runtime.load_research_summary",

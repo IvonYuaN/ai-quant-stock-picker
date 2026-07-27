@@ -10,7 +10,7 @@ import re
 import struct
 import hashlib
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -29,7 +29,7 @@ from aqsp.ledger.runtime import (
     ledger_signal_date,
     latest_independent_signal_day,
 )
-from aqsp.core.time import now_shanghai
+from aqsp.core.time import now_shanghai, today_shanghai
 from aqsp.market_context import cross_market_rule_runtime_lines
 from aqsp.notifier import configured_notification_channels
 from aqsp.research.summary import load_research_summary, research_findings_display
@@ -472,11 +472,14 @@ def _gate_fingerprint_kind(fingerprint: str) -> str:
     return "other"
 
 
-def _current_gate_expectation(signal_days: int) -> dict[str, Any]:
+def _current_gate_expectation(
+    signal_days: int, *, validation_date: date | None = None
+) -> dict[str, Any]:
     gate_path = _runtime_path("AQSP_WALKFORWARD_GATE_PATH", WALKFORWARD_GATE_PATH)
     gate_ok, gate_reasons = _check_notification_gate(
         cold_start_days=signal_days,
         gate_path=str(gate_path),
+        validation_date=validation_date or today_shanghai(),
     )
     return {
         "ok": gate_ok,
