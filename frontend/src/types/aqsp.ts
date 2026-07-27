@@ -163,6 +163,11 @@ export interface AqspVariantSuite {
   variant_count?: number;
   selected_symbols?: number;
   supported_symbols?: number;
+  batch_active?: boolean;
+  batch_id?: string;
+  batch_size?: number;
+  cycle_id?: number;
+  coverage_pct?: number;
   filters?: string;
 }
 

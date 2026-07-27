@@ -223,6 +223,11 @@ class HomeSnapshotVariantSuite:
     variant_count: int = 0
     selected_symbols: int = 0
     supported_symbols: int = 0
+    batch_active: bool = False
+    batch_id: str = ""
+    batch_size: int = 0
+    cycle_id: int = 0
+    coverage_pct: float = 0.0
     filters: str = ""
 
 
@@ -840,6 +845,11 @@ def _variant_suite_from_dict(payload: object) -> HomeSnapshotVariantSuite:
             "variant_count",
             "selected_symbols",
             "supported_symbols",
+            "batch_active",
+            "batch_id",
+            "batch_size",
+            "cycle_id",
+            "coverage_pct",
             "filters",
         },
     )
@@ -861,6 +871,11 @@ def _variant_suite_from_dict(payload: object) -> HomeSnapshotVariantSuite:
         supported_symbols=_integer(
             mapping.get("supported_symbols", 0), "variant_suite.supported_symbols"
         ),
+        batch_active=bool(mapping.get("batch_active", False)),
+        batch_id=_optional_text(mapping.get("batch_id"), "variant_suite.batch_id"),
+        batch_size=_integer(mapping.get("batch_size", 0), "variant_suite.batch_size"),
+        cycle_id=_integer(mapping.get("cycle_id", 0), "variant_suite.cycle_id"),
+        coverage_pct=float(mapping.get("coverage_pct", 0.0) or 0.0),
         filters=_optional_text(mapping.get("filters"), "variant_suite.filters"),
     )
 

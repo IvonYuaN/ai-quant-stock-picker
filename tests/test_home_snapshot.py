@@ -125,6 +125,11 @@ def test_home_snapshot_round_trips_variant_suite_metadata(tmp_path) -> None:
             variant_count=148,
             selected_symbols=600,
             supported_symbols=4920,
+            batch_active=True,
+            batch_id="3:1200",
+            batch_size=600,
+            cycle_id=3,
+            coverage_pct=0.3659,
             filters="沪市主板+深市主板+创业板；排除 ST/*ST/PT/退市/科创/北交/B股",
         ),
     )
@@ -135,6 +140,7 @@ def test_home_snapshot_round_trips_variant_suite_metadata(tmp_path) -> None:
     assert loaded == snapshot
     assert loaded.variant_suite.schema_version == "variant-suite-v2"
     assert loaded.variant_suite.selected_symbols == 600
+    assert loaded.variant_suite.batch_id == "3:1200"
 
 
 def test_home_snapshot_round_trips_candidate_provenance(tmp_path) -> None:

@@ -1589,6 +1589,11 @@ def _variant_suite_snapshot() -> HomeSnapshotVariantSuite:
         else 0,
         selected_symbols=int(universe.get("selected_symbols") or 0),
         supported_symbols=int(universe.get("supported_symbols") or 0),
+        batch_active=bool(universe.get("batch_active", False)),
+        batch_id=_text(universe.get("batch_id")),
+        batch_size=int(universe.get("batch_size") or 0),
+        cycle_id=int(universe.get("cycle_id") or 0),
+        coverage_pct=float(universe.get("coverage_pct") or 0.0),
         filters=_text(universe.get("filters")),
     )
 

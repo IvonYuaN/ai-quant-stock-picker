@@ -768,6 +768,11 @@ def test_aqsp_bridge_preserves_variant_holding_dates_and_adjustments(
         "variant_count": 148,
         "selected_symbols": 600,
         "supported_symbols": 4920,
+        "batch_active": True,
+        "batch_id": "3:1200",
+        "batch_size": 600,
+        "cycle_id": 3,
+        "coverage_pct": 0.3659,
         "filters": "沪市主板+深市主板+创业板；排除 ST/*ST/PT/退市/科创/北交/B股",
     }
     payload["variants"] = [
@@ -841,6 +846,7 @@ def test_aqsp_bridge_preserves_variant_holding_dates_and_adjustments(
     data = response.json()["data"]
     assert data["variant_suite"]["schema_version"] == "variant-suite-v2"
     assert data["variant_suite"]["selected_symbols"] == 600
+    assert data["variant_suite"]["batch_id"] == "3:1200"
     variant = data["variants"][0]
     assert variant["holdings_date"] == "2026-07-14"
     assert variant["previous_holdings_date"] == "2026-07-13"

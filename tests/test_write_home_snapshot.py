@@ -99,6 +99,11 @@ def test_variant_suite_snapshot_reads_variant_results_metadata(
                 "universe": {
                     "supported_symbols": 4920,
                     "selected_symbols": 600,
+                    "batch_active": True,
+                    "batch_id": "3:1200",
+                    "batch_size": 600,
+                    "cycle_id": 3,
+                    "coverage_pct": 0.3659,
                     "filters": "沪市主板+深市主板+创业板；排除 ST/*ST/PT/退市/科创/北交/B股",
                 },
                 "variants": [{"variant_id": "a"}, {"variant_id": "b"}],
@@ -115,6 +120,8 @@ def test_variant_suite_snapshot_reads_variant_results_metadata(
     assert suite.end_date == "2026-07-24"
     assert suite.variant_count == 2
     assert suite.selected_symbols == 600
+    assert suite.batch_id == "3:1200"
+    assert suite.coverage_pct == 0.3659
 
 
 @pytest.mark.parametrize("status", ["blocked_resources", "timeout", "failed"])
