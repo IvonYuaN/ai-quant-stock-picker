@@ -19,12 +19,8 @@ class _Source:
             for symbol in symbols
         }
 
-    def fetch_daily(
-        self, symbols: list[str], start, end, adjust: str = ""
-    ) -> dict:
-        return {
-            symbols[0]: pd.DataFrame({"date": ["2026-07-16"], "close": [10.0]})
-        }
+    def fetch_daily(self, symbols: list[str], start, end, adjust: str = "") -> dict:
+        return {symbols[0]: pd.DataFrame({"date": ["2026-07-16"], "close": [10.0]})}
 
     def set_workload(self, workload: str | None) -> None:
         self.workload = workload
@@ -50,6 +46,30 @@ def test_multi_source_live_short_daily_keeps_partial_batch_for_coverage_gate() -
     )
 
     assert set(result) == {"600000"}
+
+
+def test_multi_source_live_short_daily_does_not_retry_partial_realtime_batch() -> None:
+    class FallbackSource(_Source):
+        name = "tencent"
+
+        def fetch_daily(self, symbols: list[str], start, end, adjust: str = "") -> dict:
+            return {symbols[0]: pd.DataFrame({"date": ["2026-07-16"], "close": [10.0]})}
+
+    class SlowFallback(_Source):
+        def fetch_daily(self, symbols: list[str], start, end, adjust: str = "") -> dict:
+            pytest.fail("partial live_short batch must not invoke serial fallback")
+
+    source = MultiSource(FallbackSource(), [SlowFallback()], validate_consistency=False)
+    source.set_workload("live_short")
+
+    result = source.fetch_daily(
+        ["600000", "000001"],
+        start=date(2026, 7, 1),
+        end=date(2026, 7, 16),
+    )
+
+    assert set(result) == {"600000"}
+    assert source.last_used_source == "tencent"
 
 
 def test_multi_source_live_intraday_races_sources_under_shared_deadline() -> None:

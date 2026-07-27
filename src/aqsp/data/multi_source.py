@@ -388,6 +388,12 @@ class MultiSource(DataSource):
                             + ",".join(missing[:5]),
                         )
                     )
+                    if effective_workload == "live_short":
+                        # A realtime batch has its own coverage gate downstream.
+                        # Do not serially retry every missing symbol through a
+                        # fallback after a concurrent source returned fresh data.
+                        self._set_last_used_provenance(result, source_name)
+                        return result
                     continue
                 if primary_result is None:
                     primary_result = result
@@ -424,16 +430,13 @@ class MultiSource(DataSource):
         if effective_workload == "live_short" and merged_result is not None:
             missing = _missing_requested_keys(merged_result, expected_keys)
             guarded_sources = [
-                name
-                for name, error in exceptions
-                if "不适合 live_short" in str(error)
+                name for name, error in exceptions if "不适合 live_short" in str(error)
             ]
             if missing and guarded_sources and len(partial_results) <= 1:
                 self._clear_last_used()
                 raise DataError(
                     f"{guarded_sources[0]} 不适合 live_short；实时数据存在未覆盖标的，"
-                    "且历史源不得补齐: "
-                    + ", ".join(missing[:20])
+                    "且历史源不得补齐: " + ", ".join(missing[:20])
                 )
         if merged_result is not None:
             self._set_last_used_provenance(merged_result, "multi")
