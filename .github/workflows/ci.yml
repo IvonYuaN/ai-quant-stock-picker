@@ -90,9 +90,13 @@ jobs:
 
           root = Path.cwd()
           bundle = root / "frontend" / "dist" / "index.html"
+          deploy_script = root / "scripts" / "deploy_immutable_release.sh"
+          audit_script = root / "scripts" / "check_frontend_audit.py"
           html = bundle.read_text(encoding="utf-8")
           assert "AQSP" in html, "frontend bundle is missing the AQSP entry"
           assert any((bundle.parent / "assets").iterdir()), "frontend bundle has no assets"
+          assert deploy_script.is_file(), "immutable release deploy script is missing"
+          assert audit_script.is_file(), "frontend audit script is missing"
 
           api_service = (root / "deploy/systemd/aqsp-vibe-research-api.service").read_text(encoding="utf-8")
           preview_service = (root / "deploy/systemd/aqsp-vibe-research-preview.service").read_text(encoding="utf-8")

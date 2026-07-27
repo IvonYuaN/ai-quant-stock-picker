@@ -76,6 +76,8 @@ def test_ci_checks_vibe_research_static_deployment_bundle() -> None:
     assert "location = /api/health" in text
     assert "uvicorn app:app" in text
     assert "run preview -- --host 127.0.0.1 --port 5899 --strictPort" in text
+    assert "immutable release deploy script is missing" in text
+    assert "frontend audit script is missing" in text
 
 
 def test_github_workflows_define_common_runtime_controls() -> None:
