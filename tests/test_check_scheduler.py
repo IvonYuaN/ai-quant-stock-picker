@@ -91,3 +91,26 @@ def test_check_logs_accepts_missing_sync_log_for_immutable_release(
     sync_result = next(result for result in results if "sync-" in result.label)
     assert sync_result.ok is True
     assert sync_result.detail == "not required for an immutable release"
+
+
+def test_check_python_import_prefers_shared_runtime_venv(
+    monkeypatch, tmp_path
+) -> None:
+    shared_python = tmp_path / "aqsp-vibe-venv" / "bin" / "python3"
+    shared_python.parent.mkdir(parents=True)
+    shared_python.touch()
+    monkeypatch.setenv("AQSP_SHARED_VENV_DIR", str(shared_python.parents[1]))
+    monkeypatch.delenv("AQSP_RUNTIME_PYTHON", raising=False)
+    monkeypatch.delenv("AQSP_RUNTIME_VENV_DIR", raising=False)
+    calls: list[list[str]] = []
+
+    def fake_run(args: list[str], cwd=None) -> tuple[int, str]:
+        calls.append(args)
+        return 0, "ok"
+
+    monkeypatch.setattr(check_scheduler, "_run", fake_run)
+
+    result = check_scheduler.check_python_import()
+
+    assert result.ok is True
+    assert calls[0][0] == str(shared_python)

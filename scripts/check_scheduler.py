@@ -109,6 +109,9 @@ def check_python_import() -> CheckResult:
     candidates = [
         Path(configured) if configured else None,
         Path(os.environ.get("AQSP_RUNTIME_VENV_DIR", "")) / "bin" / "python3",
+        Path(os.environ.get("AQSP_SHARED_VENV_DIR", "/opt/aqsp-vibe-venv"))
+        / "bin"
+        / "python3",
         RUNTIME_ROOT.parent / "aqsp-vibe-venv" / "bin" / "python3",
         PROJECT_ROOT / ".venv" / "bin" / "python3",
         Path("python3"),
