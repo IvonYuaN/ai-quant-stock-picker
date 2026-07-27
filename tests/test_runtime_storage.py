@@ -71,6 +71,24 @@ def test_storage_prune_only_removes_unreferenced_release(tmp_path: Path) -> None
     assert layout.runtime.is_dir()
 
 
+def test_storage_prune_keeps_release_referenced_by_active_process(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    layout = _layout(tmp_path)
+    active_release = layout.releases / "old-ccc"
+    monkeypatch.setattr(
+        "scripts.check_runtime_storage._active_release_paths",
+        lambda _releases: {active_release},
+    )
+
+    report = prune_releases(layout, apply=True)
+
+    assert report.ok
+    assert active_release.is_dir()
+    assert report.deletable == ()
+    assert any(item.code == "protected_active_release" for item in report.findings)
+
+
 def test_storage_audit_rejects_runtime_artifact_outside_data(tmp_path: Path) -> None:
     layout = _layout(tmp_path)
     assert layout.env_file is not None
@@ -97,7 +115,9 @@ def test_storage_audit_rejects_current_and_rollback_aliasing(tmp_path: Path) -> 
     assert any(item.code == "same_current_rollback" for item in report.findings)
 
 
-def test_storage_prune_is_fail_closed_when_release_links_are_missing(tmp_path: Path) -> None:
+def test_storage_prune_is_fail_closed_when_release_links_are_missing(
+    tmp_path: Path,
+) -> None:
     layout = _layout(tmp_path)
     layout.current.unlink()
 
@@ -118,7 +138,9 @@ def test_storage_audit_rejects_shared_venv_inside_release(tmp_path: Path) -> Non
 
 
 @pytest.mark.parametrize("path_name", ["current", "rollback"])
-def test_release_link_must_point_to_direct_child(tmp_path: Path, path_name: str) -> None:
+def test_release_link_must_point_to_direct_child(
+    tmp_path: Path, path_name: str
+) -> None:
     layout = _layout(tmp_path)
     link = getattr(layout, path_name)
     link.unlink()

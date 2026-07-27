@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -121,13 +122,45 @@ def _env_path_values(layout: StorageLayout) -> Iterable[tuple[str, Path]]:
     for key, value in values.items():
         if key == "AQSP_INTRADAY_FAST_SYMBOL_CSVS":
             result.extend(
-                (key, Path(item.strip()))
-                for item in value.split(",")
-                if item.strip()
+                (key, Path(item.strip())) for item in value.split(",") if item.strip()
             )
         elif value:
             result.append((key, Path(value)))
     return result
+
+
+def _active_release_paths(releases_dir: Path) -> set[Path]:
+    """Return release directories referenced by live Linux processes.
+
+    A release can still serve the API or frontend while a deployment rotates
+    symlinks. Deleting it makes the process appear alive but loses its files.
+    """
+    proc_root = Path("/proc")
+    if not proc_root.is_dir():
+        return set()
+    active: set[Path] = set()
+    for entry in proc_root.iterdir():
+        if not entry.name.isdigit():
+            continue
+        candidates = [entry / "cwd", entry / "exe"]
+        try:
+            cmdline = (entry / "cmdline").read_bytes().split(b"\0")
+        except OSError:
+            cmdline = []
+        candidates.extend(
+            Path(value.decode("utf-8", errors="ignore"))
+            for value in cmdline
+            if value.startswith(os.fsencode(str(releases_dir)))
+        )
+        for candidate in candidates:
+            try:
+                resolved = _resolved(candidate)
+                relative = resolved.relative_to(releases_dir)
+            except (OSError, ValueError):
+                continue
+            if relative.parts:
+                active.add(releases_dir / relative.parts[0])
+    return active
 
 
 def inspect_storage(layout: StorageLayout) -> StorageReport:
@@ -139,58 +172,172 @@ def inspect_storage(layout: StorageLayout) -> StorageReport:
     raw_history = _resolved(layout.raw_history)
 
     if not releases_dir.is_dir():
-        findings.append(Finding("error", "missing_releases", f"release directory missing: {releases_dir}"))
+        findings.append(
+            Finding(
+                "error",
+                "missing_releases",
+                f"release directory missing: {releases_dir}",
+            )
+        )
         releases: list[Path] = []
     else:
         releases = sorted(
-            (item for item in releases_dir.iterdir() if item.is_dir() and not item.is_symlink()),
+            (
+                item
+                for item in releases_dir.iterdir()
+                if item.is_dir() and not item.is_symlink()
+            ),
             key=lambda item: item.name,
         )
     if not runtime.is_absolute() or _inside(runtime, releases_dir):
-        findings.append(Finding("error", "runtime_inside_release", f"runtime must be outside releases: {runtime}"))
+        findings.append(
+            Finding(
+                "error",
+                "runtime_inside_release",
+                f"runtime must be outside releases: {runtime}",
+            )
+        )
     if _inside(shared_venv, releases_dir):
-        findings.append(Finding("error", "venv_inside_release", f"shared venv must be outside releases: {shared_venv}"))
+        findings.append(
+            Finding(
+                "error",
+                "venv_inside_release",
+                f"shared venv must be outside releases: {shared_venv}",
+            )
+        )
     if _inside(raw_history, releases_dir):
-        findings.append(Finding("error", "raw_inside_release", f"raw history must be outside releases: {raw_history}"))
-    if not runtime.is_absolute() or not shared_venv.is_absolute() or not raw_history.is_absolute():
-        findings.append(Finding("error", "relative_protected_path", "runtime, shared venv and raw history must be absolute paths"))
+        findings.append(
+            Finding(
+                "error",
+                "raw_inside_release",
+                f"raw history must be outside releases: {raw_history}",
+            )
+        )
+    if (
+        not runtime.is_absolute()
+        or not shared_venv.is_absolute()
+        or not raw_history.is_absolute()
+    ):
+        findings.append(
+            Finding(
+                "error",
+                "relative_protected_path",
+                "runtime, shared venv and raw history must be absolute paths",
+            )
+        )
 
     current_target = _link_target(layout.current, releases_dir, "current", findings)
     rollback_target = _link_target(layout.rollback, releases_dir, "rollback", findings)
-    protected = {target for target in (current_target, rollback_target) if target is not None}
+    active_releases = _active_release_paths(releases_dir)
+    protected = {
+        target for target in (current_target, rollback_target) if target is not None
+    } | active_releases
     deletable = tuple(item for item in releases if _resolved(item) not in protected)
 
-    if current_target is not None and rollback_target is not None and current_target == rollback_target:
-        findings.append(Finding("error", "same_current_rollback", "current and rollback must be different releases"))
+    for active_release in sorted(active_releases):
+        findings.append(
+            Finding(
+                "info",
+                "protected_active_release",
+                f"protected active process release: {active_release}",
+            )
+        )
+
+    if (
+        current_target is not None
+        and rollback_target is not None
+        and current_target == rollback_target
+    ):
+        findings.append(
+            Finding(
+                "error",
+                "same_current_rollback",
+                "current and rollback must be different releases",
+            )
+        )
     if len(releases) < 2:
-        findings.append(Finding("error", "insufficient_releases", "at least current and one rollback release are required"))
+        findings.append(
+            Finding(
+                "error",
+                "insufficient_releases",
+                "at least current and one rollback release are required",
+            )
+        )
 
     if layout.env_file is not None:
         if not layout.env_file.is_file():
-            findings.append(Finding("error", "missing_env", f"environment file missing: {layout.env_file}"))
+            findings.append(
+                Finding(
+                    "error",
+                    "missing_env",
+                    f"environment file missing: {layout.env_file}",
+                )
+            )
         for key, raw_path in _env_path_values(layout):
             if not raw_path.is_absolute():
-                findings.append(Finding("error", "relative_runtime_env", f"{key} must be absolute: {raw_path}"))
+                findings.append(
+                    Finding(
+                        "error",
+                        "relative_runtime_env",
+                        f"{key} must be absolute: {raw_path}",
+                    )
+                )
             elif not _inside(raw_path, runtime):
-                findings.append(Finding("error", "runtime_env_outside_data", f"{key} points outside runtime data: {raw_path}"))
+                findings.append(
+                    Finding(
+                        "error",
+                        "runtime_env_outside_data",
+                        f"{key} points outside runtime data: {raw_path}",
+                    )
+                )
 
-    for protected_path, code in ((runtime, "runtime"), (shared_venv, "shared_venv"), (raw_history, "raw_history")):
+    for protected_path, code in (
+        (runtime, "runtime"),
+        (shared_venv, "shared_venv"),
+        (raw_history, "raw_history"),
+    ):
         if protected_path.exists():
-            findings.append(Finding("info", f"protected_{code}", f"protected from cleanup: {protected_path}"))
+            findings.append(
+                Finding(
+                    "info",
+                    f"protected_{code}",
+                    f"protected from cleanup: {protected_path}",
+                )
+            )
 
-    return StorageReport(tuple(findings), tuple(releases), deletable, current_target, rollback_target)
+    return StorageReport(
+        tuple(findings), tuple(releases), deletable, current_target, rollback_target
+    )
 
 
-def _link_target(link: Path, releases_dir: Path, label: str, findings: list[Finding]) -> Path | None:
+def _link_target(
+    link: Path, releases_dir: Path, label: str, findings: list[Finding]
+) -> Path | None:
     if not link.is_symlink():
-        findings.append(Finding("error", f"missing_{label}_link", f"{label} must be a symlink: {link}"))
+        findings.append(
+            Finding(
+                "error", f"missing_{label}_link", f"{label} must be a symlink: {link}"
+            )
+        )
         return None
     target = _resolved(link)
     if not _inside(target, releases_dir) or target.parent != releases_dir:
-        findings.append(Finding("error", f"unsafe_{label}_link", f"{label} does not point to a direct release: {link} -> {target}"))
+        findings.append(
+            Finding(
+                "error",
+                f"unsafe_{label}_link",
+                f"{label} does not point to a direct release: {link} -> {target}",
+            )
+        )
         return None
     if not target.is_dir():
-        findings.append(Finding("error", f"missing_{label}_target", f"{label} target is not a directory: {target}"))
+        findings.append(
+            Finding(
+                "error",
+                f"missing_{label}_target",
+                f"{label} target is not a directory: {target}",
+            )
+        )
         return None
     return target
 
@@ -242,9 +389,13 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--runtime", default="/opt/aqsp/data")
     parser.add_argument("--shared-venv", default="/opt/aqsp-vibe-venv")
-    parser.add_argument("--raw-history", default="/opt/aqsp/data/walkforward_raw_production_cache.db")
+    parser.add_argument(
+        "--raw-history", default="/opt/aqsp/data/walkforward_raw_production_cache.db"
+    )
     parser.add_argument("--env-file")
-    parser.add_argument("--apply", action="store_true", help="删除未引用旧 release；默认只检查")
+    parser.add_argument(
+        "--apply", action="store_true", help="删除未引用旧 release；默认只检查"
+    )
     parser.add_argument("--json", action="store_true", dest="as_json")
     return parser
 
@@ -266,7 +417,9 @@ def main(argv: list[str] | None = None) -> int:
     else:
         print(f"runtime storage: {'PASS' if report.ok else 'FAIL'}")
         print(f"current={payload['current']} rollback={payload['rollback']}")
-        print(f"releases={len(report.releases)} deletable={len(report.deletable)} apply={args.apply}")
+        print(
+            f"releases={len(report.releases)} deletable={len(report.deletable)} apply={args.apply}"
+        )
         for finding in report.findings:
             print(f"[{finding.severity}] {finding.code}: {finding.message}")
     return 0 if report.ok else 1
