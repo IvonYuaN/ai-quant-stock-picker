@@ -16,6 +16,10 @@ from pathlib import Path
 SHA40 = re.compile(r"^[0-9a-f]{40}$")
 SHA64 = re.compile(r"^[0-9a-f]{64}$")
 OLD_ENTRY_TERMS = ("streamlit", "8501", "dist/dashboard")
+GENERATED_RELEASE_DIRS = {
+    ("frontend", "node_modules", ".vite"),
+    ("frontend", "node_modules", ".vite-temp"),
+}
 
 
 @dataclass(frozen=True)
@@ -141,7 +145,12 @@ def _release_files_for_digest(root: Path, manifest_path: Path) -> list[str]:
             continue
         relative = path.relative_to(root).as_posix()
         parts = Path(relative).parts
-        if relative == manifest_relative or ".git" in parts or "__pycache__" in parts:
+        if (
+            relative == manifest_relative
+            or ".git" in parts
+            or "__pycache__" in parts
+            or parts[:3] in GENERATED_RELEASE_DIRS
+        ):
             continue
         if path.name.endswith((".pyc", ".pyo")):
             continue

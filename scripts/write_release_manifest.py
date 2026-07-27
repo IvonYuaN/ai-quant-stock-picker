@@ -16,6 +16,10 @@ from aqsp.core.time import now_shanghai
 
 HEX40 = set("0123456789abcdef")
 MANIFEST_RELATIVE_PATH = ".aqsp-release.json"
+GENERATED_RELEASE_DIRS = {
+    ("frontend", "node_modules", ".vite"),
+    ("frontend", "node_modules", ".vite-temp"),
+}
 
 
 def _git(root: Path, *args: str) -> str:
@@ -55,6 +59,7 @@ def _release_files(root: Path) -> list[str]:
             relative == MANIFEST_RELATIVE_PATH
             or ".git" in parts
             or "__pycache__" in parts
+            or parts[:3] in GENERATED_RELEASE_DIRS
         ):
             continue
         if path.name.endswith((".pyc", ".pyo")):

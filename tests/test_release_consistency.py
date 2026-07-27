@@ -409,6 +409,69 @@ def test_write_release_manifest_verifies_archive_root_without_git(
     assert len(str(payload["content_digest"])) == 64
 
 
+def test_write_release_manifest_ignores_vite_runtime_cache(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "payload.txt").write_text("value\n", encoding="utf-8")
+    (tmp_path / "frontend" / "node_modules" / ".vite-temp").mkdir(parents=True)
+    (tmp_path / "frontend" / "node_modules" / ".vite").mkdir(parents=True)
+    (
+        tmp_path
+        / "frontend"
+        / "node_modules"
+        / ".vite-temp"
+        / "vite.config.timestamp.mjs"
+    ).write_text("cache\n", encoding="utf-8")
+    (tmp_path / "frontend" / "node_modules" / ".vite" / "deps.json").write_text(
+        "cache\n", encoding="utf-8"
+    )
+
+    payload = build_manifest(tmp_path, commit=SHA_A)
+
+    assert payload["file_count"] == 1
+
+
+def test_release_consistency_ignores_vite_cache_written_after_manifest(
+    monkeypatch, tmp_path: Path
+) -> None:
+    (tmp_path / "payload.txt").write_text("value\n", encoding="utf-8")
+    manifest = _immutable_manifest(tmp_path)
+    (tmp_path / "frontend" / "node_modules" / ".vite-temp").mkdir(parents=True)
+    (
+        tmp_path
+        / "frontend"
+        / "node_modules"
+        / ".vite-temp"
+        / "vite.config.timestamp.mjs"
+    ).write_text("cache\n", encoding="utf-8")
+    _fake_git(
+        monkeypatch,
+        {
+            ("rev-parse", "HEAD"): (False, "git metadata unavailable"),
+            ("status", "--porcelain=v1", "--untracked-files=all"): (
+                False,
+                "git metadata unavailable",
+            ),
+        },
+    )
+
+    findings = checker.audit(
+        project_root=tmp_path,
+        runtime_root=tmp_path / "runtime",
+        remote="origin",
+        branch="main",
+        canonical_link=None,
+        manifest_path=manifest,
+        overlay_path=tmp_path / "runtime" / "overlay.json",
+        active_files=[],
+        executable_files=[],
+        require_overlay=False,
+        immutable_release=True,
+    )
+
+    assert findings == []
+
+
 def test_release_consistency_rejects_immutable_content_digest_mismatch(
     monkeypatch, tmp_path: Path
 ) -> None:

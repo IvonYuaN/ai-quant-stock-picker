@@ -19,6 +19,8 @@ API_SERVICE="${AQSP_API_SERVICE:-aqsp-vibe-research-api.service}"
 PREVIEW_SERVICE="${AQSP_PREVIEW_SERVICE:-aqsp-vibe-research-preview.service}"
 API_PORT="${AQSP_API_PORT:-8900}"
 FRONTEND_PORT="${AQSP_FRONTEND_PORT:-5899}"
+SERVICE_USER="${AQSP_VIBE_USER:-aqsp-vibe}"
+SERVICE_GROUP="${AQSP_VIBE_GROUP:-${SERVICE_USER}}"
 LOCK_DIR="${AQSP_RUNTIME_LOCK_DIR:-${RUNTIME_DATA_ROOT}/.locks}"
 LOCK_FILE="${LOCK_DIR}/immutable-release-deploy.lock"
 SKIP_FRONTEND_BUILD="false"
@@ -120,6 +122,19 @@ normalize_release_modes() {
     find "$root" -type f -exec chmod a+r {} +
     test -x "$root/scripts/bt_task.sh"
     test -x "$root/scripts/health_vibe_research.sh"
+}
+
+prepare_frontend_runtime_cache() {
+    local root="$1"
+    [ -d "$root/frontend/node_modules" ] || return 0
+    id "$SERVICE_USER" >/dev/null 2>&1 || fail "service user missing: $SERVICE_USER"
+    getent group "$SERVICE_GROUP" >/dev/null 2>&1 || fail "service group missing: $SERVICE_GROUP"
+    install -d -o "$SERVICE_USER" -g "$SERVICE_GROUP" \
+        "$root/frontend/node_modules/.vite-temp" \
+        "$root/frontend/node_modules/.vite"
+    chown -R "$SERVICE_USER:$SERVICE_GROUP" \
+        "$root/frontend/node_modules/.vite-temp" \
+        "$root/frontend/node_modules/.vite"
 }
 
 check_release() {
@@ -282,6 +297,7 @@ fi
 
 stamp_manifest "$RELEASE_DIR" "$COMMIT"
 normalize_release_modes "$RELEASE_DIR"
+prepare_frontend_runtime_cache "$RELEASE_DIR"
 check_release "$RELEASE_DIR"
 switch_links "$RELEASE_DIR"
 check_current_release "$RELEASE_DIR"

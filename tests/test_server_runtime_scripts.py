@@ -257,6 +257,12 @@ def test_immutable_release_deploy_script_has_safe_defaults_and_no_git_clean() ->
         'RUNTIME_DATA_ROOT="${AQSP_RUNTIME_DATA_ROOT:-${RUNTIME_ROOT}/data}"' in script
     )
     assert 'SHARED_VENV_DIR="${AQSP_SHARED_VENV_DIR:-/opt/aqsp-vibe-venv}"' in script
+    assert 'SERVICE_USER="${AQSP_VIBE_USER:-aqsp-vibe}"' in script
+    assert 'SERVICE_GROUP="${AQSP_VIBE_GROUP:-${SERVICE_USER}}"' in script
+    assert "prepare_frontend_runtime_cache" in script
+    assert "$root/frontend/node_modules/.vite-temp" in script
+    assert "$root/frontend/node_modules/.vite" in script
+    assert 'chown -R "$SERVICE_USER:$SERVICE_GROUP"' in script
     assert 'mkdir "$LOCK_FILE"' in script
     assert "another immutable release deployment is running" in script
     assert "git clean" not in script
