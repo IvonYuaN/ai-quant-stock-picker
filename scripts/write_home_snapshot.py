@@ -1582,6 +1582,11 @@ def _variant_snapshot() -> tuple[HomeSnapshotVariant, ...]:
     for item in raw_variants[:64]:
         if not isinstance(item, dict) or item.get("initial_cash") != 100_000.0:
             continue
+        holdings = _variant_holdings(item.get("holdings", ()), "holding")
+        previous_holdings = _variant_holdings(
+            item.get("previous_holdings", ()), "previous_holding"
+        )
+        recent_actions = _variant_recent_actions(item)
         variants.append(
             HomeSnapshotVariant(
                 variant_id=_text(item.get("variant_id")),
@@ -1598,41 +1603,13 @@ def _variant_snapshot() -> tuple[HomeSnapshotVariant, ...]:
                 end_date=_text(payload.get("end_date")),
                 data_mode=_text(payload.get("data_mode")),
                 strategy=_variant_strategy_text(item),
-                holdings=tuple(
-                    HomeSnapshotHolding(
-                        symbol=_text(holding.get("symbol")),
-                        quantity=int(holding.get("quantity") or 0),
-                        average_price=float(holding.get("average_price") or 0.0),
-                        last_price=float(holding.get("last_price") or 0.0),
-                        market_value=float(holding.get("market_value") or 0.0),
-                        unrealized_pnl=float(holding.get("unrealized_pnl") or 0.0),
-                        name=_text(holding.get("name")),
-                    )
-                    for holding in item.get("holdings", ())
-                    if isinstance(holding, dict)
-                ),
+                holdings=holdings,
                 holdings_date=_text(item.get("holdings_date")),
-                previous_holdings=tuple(
-                    HomeSnapshotHolding(
-                        symbol=_text(holding.get("symbol")),
-                        quantity=int(holding.get("quantity") or 0),
-                        average_price=float(holding.get("average_price") or 0.0),
-                        last_price=float(holding.get("last_price") or 0.0),
-                        market_value=float(holding.get("market_value") or 0.0),
-                        unrealized_pnl=float(holding.get("unrealized_pnl") or 0.0),
-                        name=_text(holding.get("name")),
-                    )
-                    for holding in item.get("previous_holdings", ())
-                    if isinstance(holding, dict)
-                ),
+                previous_holdings=previous_holdings,
                 previous_holdings_date=_text(item.get("previous_holdings_date")),
-                recent_actions=tuple(
-                    action
-                    for action in item.get("recent_actions", ())
-                    if isinstance(action, dict)
-                ),
-                adjustments=tuple(
-                    _text(action) for action in item.get("adjustments", ()) if action
+                recent_actions=recent_actions,
+                adjustments=_variant_adjustment_lines(
+                    item, holdings, previous_holdings, recent_actions
                 ),
                 hard_rules=rule_labels if isinstance(rules, dict) else (),
             )
@@ -1645,6 +1622,90 @@ def _variant_strategy_text(item: dict) -> str:
     if isinstance(raw, dict):
         return json.dumps(raw, ensure_ascii=False, sort_keys=True)
     return _text(raw) or _text(item.get("strategy_label")) or _text(item.get("label"))
+
+
+def _variant_holdings(
+    payload: object, field_name: str
+) -> tuple[HomeSnapshotHolding, ...]:
+    return tuple(
+        HomeSnapshotHolding(
+            symbol=_text(holding.get("symbol")),
+            quantity=int(holding.get("quantity") or 0),
+            average_price=float(holding.get("average_price") or 0.0),
+            last_price=float(holding.get("last_price") or 0.0),
+            market_value=float(holding.get("market_value") or 0.0),
+            unrealized_pnl=float(holding.get("unrealized_pnl") or 0.0),
+            name=_text(holding.get("name")),
+        )
+        for holding in payload
+        if isinstance(holding, dict) and _text(holding.get("symbol"))
+    )
+
+
+def _variant_recent_actions(item: dict) -> tuple[dict[str, object], ...]:
+    raw_actions = tuple(
+        action for action in item.get("recent_actions", ()) if isinstance(action, dict)
+    )
+    if raw_actions:
+        return raw_actions
+    fills = [
+        fill
+        for fill in item.get("fills", ())
+        if isinstance(fill, dict) and _text(fill.get("status")) == "filled"
+    ][-8:]
+    return tuple(
+        {
+            "date": _text(fill.get("date")),
+            "symbol": _text(fill.get("symbol")),
+            "side": _text(fill.get("side")),
+            "quantity": int(fill.get("quantity") or 0),
+            "price": float(fill.get("price") or 0.0),
+            "reason": _text(fill.get("reason"))
+            or "旧版变体产物只保留成交记录；v2 重算后补齐 MACD/KDJ/量比触发原因。",
+        }
+        for fill in fills
+    )
+
+
+def _variant_adjustment_lines(
+    item: dict,
+    holdings: tuple[HomeSnapshotHolding, ...],
+    previous_holdings: tuple[HomeSnapshotHolding, ...],
+    recent_actions: tuple[dict[str, object], ...],
+) -> tuple[str, ...]:
+    raw = tuple(_text(action) for action in item.get("adjustments", ()) if action)
+    if raw:
+        return raw
+    current = {holding.symbol: holding.quantity for holding in holdings}
+    previous = {holding.symbol: holding.quantity for holding in previous_holdings}
+    lines: list[str] = []
+    for symbol in sorted(set(current) | set(previous)):
+        before = previous.get(symbol, 0)
+        after = current.get(symbol, 0)
+        if before == after and after:
+            lines.append(
+                f"保留 {symbol}：昨日 {before} 股，今日 {after} 股；仓位未变化。"
+            )
+        elif before == 0 and after:
+            lines.append(
+                f"持有 {symbol}：今日 {after} 股；旧版产物无昨日基线，v2 产物会补齐换票原因。"
+            )
+        elif before and after == 0:
+            lines.append(f"移出 {symbol}：昨日 {before} 股，今日无。")
+        elif after > before:
+            lines.append(f"加仓 {symbol}：昨日 {before} 股，今日 {after} 股。")
+        elif after < before:
+            lines.append(f"减仓 {symbol}：昨日 {before} 股，今日 {after} 股。")
+    for action in recent_actions:
+        if len(lines) >= 8:
+            break
+        side = _text(action.get("side"))
+        symbol = _text(action.get("symbol"))
+        quantity = int(action.get("quantity") or 0)
+        reason = _text(action.get("reason"))
+        if side and symbol:
+            lines.append(f"{side} {symbol} {quantity} 股；{reason}")
+    return tuple(lines[:8]) or ("今日/昨日持仓无变化，未发生换票。",)
 
 
 def build_home_snapshot(

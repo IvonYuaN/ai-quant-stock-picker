@@ -97,3 +97,41 @@ def test_run_suite_creates_many_explained_nonduplicate_accounts(tmp_path):
     assert result["execution_rules"]["raw_unadjusted_prices"] is True
     assert result["optimization"]["evaluation_only"] is True
     assert result["optimization"]["selected_variant_id"]
+
+
+def test_write_home_snapshot_recovers_variant_actions_from_legacy_fills():
+    from aqsp.web.home_snapshot import HomeSnapshotHolding
+    from scripts.write_home_snapshot import (
+        _variant_adjustment_lines,
+        _variant_recent_actions,
+    )
+
+    item = {
+        "fills": [
+            {
+                "date": "2026-07-23",
+                "symbol": "002379",
+                "side": "buy",
+                "quantity": 100,
+                "price": 150.0,
+                "status": "filled",
+            }
+        ]
+    }
+    holdings = (
+        HomeSnapshotHolding(
+            symbol="002379",
+            quantity=100,
+            average_price=150.0,
+            last_price=165.0,
+            market_value=16500.0,
+            unrealized_pnl=1500.0,
+        ),
+    )
+
+    actions = _variant_recent_actions(item)
+    adjustments = _variant_adjustment_lines(item, holdings, (), actions)
+
+    assert actions[0]["symbol"] == "002379"
+    assert "v2 重算后补齐" in str(actions[0]["reason"])
+    assert adjustments[0].startswith("持有 002379")
