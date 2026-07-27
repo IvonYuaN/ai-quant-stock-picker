@@ -15,7 +15,7 @@ from aqsp.utils.jsonl_io import atomic_write_text
 
 
 HOME_SNAPSHOT_SCHEMA_VERSION = "v1"
-MAX_HOME_SNAPSHOT_BYTES = 64 * 1024
+MAX_HOME_SNAPSHOT_BYTES = 256 * 1024
 MAX_HOME_SNAPSHOT_DATES = 4
 MAX_HOME_SNAPSHOT_CANDIDATES = 5
 MAX_HOME_SNAPSHOT_TECHNICAL_METRICS = 8
@@ -451,7 +451,7 @@ def write_home_dashboard_snapshot(
         raise ValueError("refusing to replace a newer home snapshot with an older date")
     payload = f"{snapshot.to_json()}\n"
     if len(payload.encode("utf-8")) > MAX_HOME_SNAPSHOT_BYTES:
-        raise ValueError("home snapshot exceeds the 64 KiB byte budget")
+        raise ValueError("home snapshot exceeds the 256 KiB byte budget")
     atomic_write_text(path, payload)
     _set_runtime_snapshot_mode(path)
 
@@ -469,7 +469,7 @@ def write_home_snapshot_index(path: str | Path, index: HomeSnapshotIndex) -> Non
         raise ValueError("refusing to replace a newer home snapshot index")
     payload = f"{index.to_json()}\n"
     if len(payload.encode("utf-8")) > MAX_HOME_SNAPSHOT_BYTES:
-        raise ValueError("home snapshot index exceeds the 64 KiB byte budget")
+        raise ValueError("home snapshot index exceeds the 256 KiB byte budget")
     atomic_write_text(path, payload)
     _set_runtime_snapshot_mode(path)
 
