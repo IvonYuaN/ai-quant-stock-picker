@@ -87,11 +87,22 @@ PY
 else
     echo "[WARN] release identity manifest missing: ${AQSP_RELEASE_MANIFEST}" >&2
 fi
-# Releases are immutable and do not carry a venv. Scheduled jobs must use the
-# shared server venv, matching the systemd services, instead of a stale path
-# inside the current release.
-export AQSP_RUNTIME_VENV_DIR="${AQSP_RUNTIME_VENV_DIR:-${AQSP_SHARED_VENV_DIR:-/opt/aqsp-vibe-venv}}"
-export AQSP_RUNTIME_PYTHON="${AQSP_RUNTIME_PYTHON:-${AQSP_RUNTIME_VENV_DIR}/bin/python3}"
+# Releases are immutable and do not carry a venv. A legacy runtime .env may
+# still name a removed release-local interpreter, so reject that path before
+# the scheduler starts and use the shared server venv instead.
+SHARED_VENV_DIR="${AQSP_SHARED_VENV_DIR:-/opt/aqsp-vibe-venv}"
+case "${AQSP_RUNTIME_PYTHON:-}" in
+    ""|"${RELEASE_ROOT}"/*)
+        export AQSP_RUNTIME_VENV_DIR="$SHARED_VENV_DIR"
+        export AQSP_RUNTIME_PYTHON="${SHARED_VENV_DIR}/bin/python3"
+        ;;
+    *)
+        export AQSP_RUNTIME_VENV_DIR="${AQSP_RUNTIME_VENV_DIR:-$SHARED_VENV_DIR}"
+        ;;
+esac
+# This entrypoint is only for releases; a legacy .env must not re-enable Git
+# sync against the mutable staging checkout.
+export AQSP_IMMUTABLE_RELEASE=true
 export_runtime_path AQSP_LEDGER data/predictions.jsonl
 export_runtime_path AQSP_PAPER_LEDGER data/paper_trades.jsonl
 export_runtime_path AQSP_DEBATE_RESULTS data/debate_results.jsonl
