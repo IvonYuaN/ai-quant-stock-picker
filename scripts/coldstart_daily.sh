@@ -130,14 +130,13 @@ RUN_AS_OF="$(
 import os
 from datetime import date
 
-from aqsp.core.time import get_previous_trading_day, is_trading_day, today_shanghai
+from aqsp.core.time import latest_completed_trading_day
 
 target = os.environ.get("TARGET_DATE_FOR_RUN", "").strip()
 if target:
     print(date.fromisoformat(target).isoformat())
 else:
-    today = today_shanghai()
-    print((today if is_trading_day(today) else get_previous_trading_day(today)).isoformat())
+    print(latest_completed_trading_day().isoformat())
 PY
 )"
 PROJECT_UPDATE_SCRIPT="$(resolve_path "scripts/update_sqlite_daily.py")"

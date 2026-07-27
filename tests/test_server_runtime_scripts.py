@@ -1448,8 +1448,7 @@ def test_coldstart_daily_script_updates_db_then_runs_cli() -> None:
     assert "AQSP_COLDSTART_PRICE_MODE" in script
     assert 'TARGET_DATE="${AQSP_COLDSTART_TARGET_DATE:-}"' in script
     assert 'RUN_AS_OF="$(' in script
-    assert "is_trading_day(today)" in script
-    assert "get_previous_trading_day(today)" in script
+    assert "latest_completed_trading_day" in script
     assert 'log "运行数据日: ${RUN_AS_OF}"' in script
     assert 'COLDSTART_RUNTIME_SOURCE="${AQSP_COLDSTART_SOURCE:-online_first}"' in script
     assert "历史源生成候选" in script
