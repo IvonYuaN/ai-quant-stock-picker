@@ -224,6 +224,8 @@ def test_immutable_release_deploy_script_covers_full_server_activation_chain() -
     assert "AQSP_RELEASE_REF" in script
     assert '"$NPM_BIN" ci' in script
     assert '"$NPM_BIN" run build' in script
+    assert "check_frontend_audit.py" in script
+    assert '--frontend-dir "$root/frontend"' in script
     assert "write_release_manifest.py" in script
     assert '--root "$root"' in script
     assert "check_release_consistency.py" in script

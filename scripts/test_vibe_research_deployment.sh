@@ -30,6 +30,7 @@ for script in \
     check_release_consistency.py \
     write_release_manifest.py \
     push_with_report.py \
+    check_frontend_audit.py \
     check_runtime_storage.py; do
     path="${PROJECT_ROOT}/scripts/${script}"
     assert_file "$path"

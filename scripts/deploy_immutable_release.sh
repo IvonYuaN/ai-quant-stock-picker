@@ -103,6 +103,8 @@ build_frontend() {
     (cd "$root/frontend" && "$NPM_BIN" ci)
     log "build frontend dist"
     (cd "$root/frontend" && "$NPM_BIN" run build)
+    log "check frontend audit"
+    "$PYTHON_BIN" "$root/scripts/check_frontend_audit.py" --frontend-dir "$root/frontend"
 }
 
 stamp_manifest() {

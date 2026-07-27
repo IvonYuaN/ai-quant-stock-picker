@@ -83,6 +83,9 @@ jobs:
           npm ci --prefix frontend
           npm run build --prefix frontend
 
+      - name: Frontend audit
+        run: python3 scripts/check_frontend_audit.py
+
       - name: Check AQSP deployment bundle
         run: |
           python3 - <<'PY'

@@ -51,6 +51,9 @@ def test_ci_runs_upload_preflight_before_install() -> None:
     assert "actions/setup-node@v4" in text
     assert "npm ci --prefix frontend" in text
     assert "npm run build --prefix frontend" in text
+    assert "name: Frontend audit" in text
+    assert "python3 scripts/check_frontend_audit.py" in text
+    assert text.index("name: Frontend audit") > text.index("name: Frontend build")
     assert "timeout-minutes: 40" in text
     assert "shard: [0, 1, 2, 3]" in text
     assert "PYTEST_TOTAL_SHARDS: 4" in text
