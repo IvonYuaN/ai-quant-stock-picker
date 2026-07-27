@@ -208,6 +208,7 @@ class HomeSnapshotVariant:
     previous_holdings_date: str = ""
     recent_actions: tuple[dict[str, object], ...] = ()
     adjustments: tuple[str, ...] = ()
+    technical_evidence: tuple[dict[str, object], ...] = ()
     hard_rules: tuple[str, ...] = ()
 
 
@@ -814,6 +815,11 @@ def _variant_from_dict(payload: object) -> HomeSnapshotVariant:
             item for item in mapping.get("recent_actions", ()) if isinstance(item, dict)
         ),
         adjustments=_text_tuple(mapping.get("adjustments", ()), "variant.adjustments"),
+        technical_evidence=tuple(
+            item
+            for item in mapping.get("technical_evidence", ())
+            if isinstance(item, dict)
+        ),
         hard_rules=_text_tuple(mapping.get("hard_rules", ()), "variant.hard_rules"),
     )
 

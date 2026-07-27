@@ -808,9 +808,27 @@ def test_aqsp_bridge_preserves_variant_holding_dates_and_adjustments(
                     "side": "buy",
                     "quantity": 1000,
                     "reason": "MACD柱转强，量比确认。",
+                    "evidence": {
+                        "macd_hist": 0.18,
+                        "kdj_j": 61.0,
+                        "volume_ratio": 1.42,
+                        "atr_pct": 2.6,
+                    },
                 }
             ],
             "adjustments": ["买入 600001 示例股份：昨日无，今日 1000 股；MACD柱转强。"],
+            "technical_evidence": [
+                {
+                    "symbol": "600001",
+                    "name": "示例股份",
+                    "signal_date": "2026-07-13",
+                    "execution_date": "2026-07-14",
+                    "macd_hist": 0.18,
+                    "kdj_j": 61.0,
+                    "volume_ratio": 1.42,
+                    "atr_pct": 2.6,
+                }
+            ],
             "hard_rules": ["T+1：买入当日不可卖"],
         }
     ]
@@ -828,4 +846,5 @@ def test_aqsp_bridge_preserves_variant_holding_dates_and_adjustments(
     assert variant["previous_holdings_date"] == "2026-07-13"
     assert variant["holdings"][0]["name"] == "示例股份"
     assert variant["recent_actions"][0]["reason"] == "MACD柱转强，量比确认。"
+    assert variant["technical_evidence"][0]["macd_hist"] == 0.18
     assert variant["adjustments"][0].startswith("买入 600001 示例股份")

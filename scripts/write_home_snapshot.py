@@ -1641,6 +1641,7 @@ def _variant_snapshot() -> tuple[HomeSnapshotVariant, ...]:
                 adjustments=_variant_adjustment_lines(
                     item, holdings, previous_holdings, recent_actions
                 ),
+                technical_evidence=_variant_technical_evidence(item, recent_actions),
                 hard_rules=rule_labels if isinstance(rules, dict) else (),
             )
         )
@@ -1692,9 +1693,35 @@ def _variant_recent_actions(item: dict) -> tuple[dict[str, object], ...]:
             "price": float(fill.get("price") or 0.0),
             "reason": _text(fill.get("reason"))
             or "旧版变体产物只保留成交记录；v2 重算后补齐 MACD/KDJ/量比触发原因。",
+            "evidence": fill.get("evidence")
+            if isinstance(fill.get("evidence"), dict)
+            else {},
         }
         for fill in fills
     )
+
+
+def _variant_technical_evidence(
+    item: dict, recent_actions: tuple[dict[str, object], ...]
+) -> tuple[dict[str, object], ...]:
+    raw = tuple(
+        value for value in item.get("technical_evidence", ()) if isinstance(value, dict)
+    )
+    if raw:
+        return raw[:8]
+    derived = tuple(
+        {
+            **dict(action.get("evidence")),
+            "date": action.get("date", ""),
+            "symbol": action.get("symbol", ""),
+            "name": action.get("name") or action.get("display_name") or "",
+            "side": action.get("side") or action.get("action") or "",
+            "reason": action.get("reason", ""),
+        }
+        for action in recent_actions
+        if isinstance(action.get("evidence"), dict) and action.get("evidence")
+    )
+    return derived[:8]
 
 
 def _variant_adjustment_lines(

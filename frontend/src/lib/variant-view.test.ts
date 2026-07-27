@@ -1,5 +1,5 @@
 import type { AqspVariant } from "@/types/aqsp";
-import { variantHoldingsLabel, variantMoney, variantPercent, variantStrategyText } from "./variant-view";
+import { variantHoldingsLabel, variantMoney, variantPercent, variantStrategyText, variantTechnicalEvidenceText } from "./variant-view";
 
 const variantFixture = {
   variant_id: "trend_follow",
@@ -16,6 +16,18 @@ const variantFixture = {
   data_mode: "historical_raw_unadjusted",
   strategy: '{"id":"trend_follow","mode":"momentum","lookback_days":20}',
   holdings: [],
+  technical_evidence: [
+    {
+      symbol: "600001",
+      name: "示例股份",
+      signal_date: "2026-06-30",
+      execution_date: "2026-07-01",
+      macd_hist: 0.12,
+      kdj_j: 55,
+      volume_ratio: 1.35,
+      atr_pct: 2.4,
+    },
+  ],
   hard_rules: ["T+1"],
 } satisfies AqspVariant;
 
@@ -26,4 +38,5 @@ export const variantViewContractChecks = {
   missingHoldingsAreExplicit: variantHoldingsLabel(undefined) === "持仓字段未提供",
   missingCashDoesNotBecomeZero: variantMoney(undefined) === "未提供",
   positivePnlIsSigned: variantPercent(variantFixture.return_pct) === "+1.25%",
+  technicalEvidenceIsExplicit: variantTechnicalEvidenceText(variantFixture.technical_evidence[0]).includes("MACD +0.12") && variantTechnicalEvidenceText(variantFixture.technical_evidence[0]).includes("KDJ-J +55"),
 };

@@ -7,7 +7,7 @@ cash or positions between variants.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Literal, Mapping, Sequence
 
 import pandas as pd
@@ -35,6 +35,7 @@ class VariantOrder:
     side: Side
     weight: float = 1.0
     reason: str = ""
+    evidence: Mapping[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -47,6 +48,7 @@ class VariantFill:
     fees: float
     status: str
     reason: str = ""
+    evidence: Mapping[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -215,6 +217,7 @@ def simulate_variant(
                         fees,
                         "filled",
                         order.reason,
+                        dict(order.evidence),
                     )
                 )
             else:
@@ -244,6 +247,7 @@ def simulate_variant(
                         fees,
                         "filled",
                         order.reason,
+                        dict(order.evidence),
                     )
                 )
         for position in positions.values():
@@ -303,6 +307,7 @@ def variant_result_to_dict(result: VariantResult) -> dict[str, Any]:
                 "fees": fill.fees,
                 "status": fill.status,
                 "reason": fill.reason,
+                "evidence": dict(fill.evidence),
             }
             for fill in result.fills
         ],
@@ -382,4 +387,10 @@ def _sell_fees(amount: float, cfg: VariantExecutionRules) -> float:
 
 
 def _reject(date: str, order: VariantOrder, reason: str) -> VariantFill:
-    return VariantFill(date, order.symbol, order.side, 0, 0.0, 0.0, "rejected", reason)
+    evidence = dict(order.evidence)
+    if order.reason:
+        evidence.setdefault("signal_reason", order.reason)
+    evidence["blocked_reason"] = reason
+    return VariantFill(
+        date, order.symbol, order.side, 0, 0.0, 0.0, "rejected", reason, evidence
+    )

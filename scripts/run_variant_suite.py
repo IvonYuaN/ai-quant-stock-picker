@@ -55,6 +55,7 @@ class _Signal:
     side: str
     score: float
     reason: str
+    evidence: dict[str, object]
 
 
 @dataclass(frozen=True)
@@ -342,7 +343,7 @@ def build_orders(
         entry_indices = eligible_index[entry_mask.loc[eligible_index]]
         entry_rows = frame.loc[
             entry_indices,
-            ("ret", "bias", "macd_hist", "kdj_j", "volume_ratio", "atr_pct"),
+            ("date", "ret", "bias", "macd_hist", "kdj_j", "volume_ratio", "atr_pct"),
         ].assign(
             next_date=[dates[int(index) + 1] for index in entry_indices],
             score=scores.loc[entry_indices],
@@ -350,6 +351,20 @@ def build_orders(
         for row in entry_rows.itertuples(index=False):
             next_date = str(row.next_date)
             score = float(row.score)
+            evidence = _technical_evidence_values(
+                profile=profile,
+                symbol=symbol,
+                signal_date=str(row.date),
+                execution_date=next_date,
+                side="buy",
+                ret=_optional_metric(row.ret),
+                bias=_optional_metric(row.bias),
+                macd_hist=_optional_metric(row.macd_hist),
+                kdj_j=_optional_metric(row.kdj_j),
+                volume_ratio=_optional_metric(row.volume_ratio),
+                atr_pct=_optional_metric(row.atr_pct),
+                score=score,
+            )
             buy_candidates[next_date].append(
                 _Signal(
                     next_date,
@@ -366,12 +381,14 @@ def build_orders(
                         atr_pct=float(row.atr_pct),
                         score=score,
                     ),
+                    evidence,
                 )
             )
         exit_indices = eligible_index[exit_mask.loc[eligible_index]]
-        exit_rows = frame.loc[exit_indices, ("ret", "bias", "macd_hist")].assign(
-            next_date=[dates[int(index) + 1] for index in exit_indices]
-        )
+        exit_rows = frame.loc[
+            exit_indices,
+            ("date", "ret", "bias", "macd_hist", "kdj_j", "volume_ratio", "atr_pct"),
+        ].assign(next_date=[dates[int(index) + 1] for index in exit_indices])
         for row in exit_rows.itertuples(index=False):
             sell_orders.append(
                 VariantOrder(
@@ -385,6 +402,20 @@ def build_orders(
                         bias=float(row.bias),
                         macd_hist=float(row.macd_hist or 0.0),
                     ),
+                    evidence=_technical_evidence_values(
+                        profile=profile,
+                        symbol=symbol,
+                        signal_date=str(row.date),
+                        execution_date=str(row.next_date),
+                        side="sell",
+                        ret=_optional_metric(row.ret),
+                        bias=_optional_metric(row.bias),
+                        macd_hist=_optional_metric(row.macd_hist),
+                        kdj_j=_optional_metric(row.kdj_j),
+                        volume_ratio=_optional_metric(row.volume_ratio),
+                        atr_pct=_optional_metric(row.atr_pct),
+                        score=None,
+                    ),
                 )
             )
     buy_orders = [
@@ -394,6 +425,7 @@ def build_orders(
             "buy",
             weight=profile.position_weight,
             reason=signal.reason,
+            evidence=signal.evidence,
         )
         for date, signals in buy_candidates.items()
         for signal in sorted(signals, key=lambda item: (-item.score, item.symbol))[
@@ -443,6 +475,51 @@ def build_indicator_frames(
 ) -> dict[str, pd.DataFrame]:
     """Build one lookback cache; callers release it before the next lookback."""
     return {symbol: _with_indicators(raw, lookback) for symbol, raw in frames.items()}
+
+
+def _optional_metric(value: object) -> float | None:
+    try:
+        result = float(value)
+    except (TypeError, ValueError):
+        return None
+    return result if pd.notna(result) else None
+
+
+def _technical_evidence_values(
+    *,
+    profile: VariantProfile,
+    symbol: str,
+    signal_date: str,
+    execution_date: str,
+    side: str,
+    ret: float | None,
+    bias: float | None,
+    macd_hist: float | None,
+    kdj_j: float | None,
+    volume_ratio: float | None,
+    atr_pct: float | None,
+    score: float | None,
+) -> dict[str, object]:
+    return {
+        "symbol": symbol,
+        "side": side,
+        "signal_date": signal_date[:10],
+        "execution_date": execution_date[:10],
+        "mode": profile.mode,
+        "mode_label": _mode_label(profile.mode),
+        "lookback_days": profile.lookback,
+        "ret_pct": ret,
+        "bias_pct": bias,
+        "macd_hist": macd_hist,
+        "macd_available": macd_hist is not None,
+        "kdj_j": kdj_j,
+        "kdj_available": kdj_j is not None,
+        "volume_ratio": volume_ratio,
+        "volume_available": volume_ratio is not None,
+        "atr_pct": atr_pct,
+        "atr_available": atr_pct is not None,
+        "score": score,
+    }
 
 
 def _row_is_valid(row: pd.Series) -> bool:
@@ -754,7 +831,13 @@ def run_suite(
             )
             payload = variant_result_to_dict(result)
             _attach_holding_names(payload["holdings"], symbol_names)
-            previous_holdings = _holding_dicts(result.snapshots.get(previous_date, ()))
+            _attach_holding_entry_evidence(payload["holdings"], result, until_date=end)
+            previous_holdings = _holding_dicts(
+                result.snapshots.get(previous_date, ()),
+                entry_evidence_by_symbol=_last_entry_evidence(
+                    result, until_date=previous_date
+                ),
+            )
             _attach_holding_names(previous_holdings, symbol_names)
             payload["label"] = profile.label
             payload["strategy_label"] = profile.label
@@ -764,10 +847,13 @@ def run_suite(
             payload["previous_holdings_date"] = previous_date or ""
             payload["previous_holdings"] = previous_holdings
             payload["recent_actions"] = _recent_actions(result, symbol_names)
+            payload["technical_evidence"] = _technical_evidence(result, symbol_names)
             payload["adjustments"] = _adjustments(
                 payload["holdings"], previous_holdings, result, symbol_names
             )
             payload["holdings_signature"] = _holdings_signature(payload["holdings"])
+            payload["orders_signature"] = _orders_signature(orders)
+            payload["filled_orders_signature"] = _filled_orders_signature(result)
             results.append(payload)
     results = _diversity_ranked(results)
     training_volatility_pct = _training_volatility_pct(frames)
@@ -844,6 +930,18 @@ def _attach_holding_names(
         holding["name"] = names.get(symbol, symbol)
 
 
+def _attach_holding_entry_evidence(
+    holdings: list[dict[str, Any]], result: VariantResult, *, until_date: str
+) -> None:
+    evidence_by_symbol = _last_entry_evidence(result, until_date=until_date)
+    for holding in holdings:
+        symbol = str(holding.get("symbol", ""))
+        evidence = evidence_by_symbol.get(symbol)
+        if evidence:
+            holding["entry_evidence"] = evidence
+            holding["entry_reason"] = str(evidence.get("reason") or "")
+
+
 def _previous_trade_date(frames: dict[str, pd.DataFrame], end: str) -> str:
     dates = sorted(
         {str(date)[:10] for frame in frames.values() for date in frame["date"]}
@@ -867,12 +965,18 @@ def _recent_actions(
             "quantity": fill.quantity,
             "price": fill.price,
             "reason": fill.reason or "规则触发但未记录细分原因",
+            "evidence": dict(fill.evidence),
         }
         for fill in filled
     ]
 
 
-def _holding_dicts(holdings: object) -> list[dict[str, Any]]:
+def _holding_dicts(
+    holdings: object,
+    *,
+    entry_evidence_by_symbol: dict[str, dict[str, object]] | None = None,
+) -> list[dict[str, Any]]:
+    evidence_by_symbol = entry_evidence_by_symbol or {}
     return [
         {
             "symbol": holding.symbol,
@@ -881,6 +985,16 @@ def _holding_dicts(holdings: object) -> list[dict[str, Any]]:
             "last_price": holding.last_price,
             "market_value": holding.market_value,
             "unrealized_pnl": holding.unrealized_pnl,
+            **(
+                {
+                    "entry_evidence": evidence_by_symbol[holding.symbol],
+                    "entry_reason": str(
+                        evidence_by_symbol[holding.symbol].get("reason") or ""
+                    ),
+                }
+                if holding.symbol in evidence_by_symbol
+                else {}
+            ),
         }
         for holding in holdings
     ]
@@ -905,7 +1019,8 @@ def _adjustments(
         after = current.get(symbol, 0)
         if before == after and after > 0:
             lines.append(
-                f"保留 {symbol} {name}：昨日 {before} 股，今日 {after} 股；无换票，继续满足持仓。"
+                f"保留 {symbol} {name}：昨日 {before} 股，今日 {after} 股；无换票；"
+                f"最近入场证据：{reasons.get((symbol, 'buy'), '入场证据缺失，需重算补齐')}"
             )
         elif before == 0 and after > 0:
             lines.append(
@@ -932,6 +1047,61 @@ def _last_reasons(result: VariantResult) -> dict[tuple[str, str], str]:
         if fill.status == "filled" and fill.reason:
             reasons[(fill.symbol, fill.side)] = fill.reason
     return reasons
+
+
+def _last_entry_evidence(
+    result: VariantResult, *, until_date: str
+) -> dict[str, dict[str, object]]:
+    evidence: dict[str, dict[str, object]] = {}
+    for fill in result.fills:
+        if (
+            fill.status == "filled"
+            and fill.side == "buy"
+            and fill.date <= until_date
+            and fill.evidence
+        ):
+            item = dict(fill.evidence)
+            item["date"] = fill.date
+            item["reason"] = fill.reason
+            evidence[fill.symbol] = item
+    return evidence
+
+
+def _technical_evidence(
+    result: VariantResult, names: dict[str, str]
+) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    for fill in result.fills:
+        if fill.status != "filled" or not fill.evidence:
+            continue
+        item = dict(fill.evidence)
+        item["date"] = fill.date
+        item["symbol"] = fill.symbol
+        item["name"] = names.get(fill.symbol, fill.symbol)
+        item["side"] = fill.side
+        item["quantity"] = fill.quantity
+        item["price"] = fill.price
+        item["reason"] = fill.reason
+        rows.append(item)
+    return rows[-RECENT_ACTION_LIMIT:]
+
+
+def _orders_signature(orders: tuple[VariantOrder, ...]) -> str:
+    if not orders:
+        return "empty"
+    return "|".join(
+        f"{order.date}:{order.side}:{order.symbol}:{order.weight:.4f}"
+        for order in orders
+    )
+
+
+def _filled_orders_signature(result: VariantResult) -> str:
+    filled = [fill for fill in result.fills if fill.status == "filled"]
+    if not filled:
+        return "empty"
+    return "|".join(
+        f"{fill.date}:{fill.side}:{fill.symbol}:{fill.quantity}" for fill in filled
+    )
 
 
 def _holdings_signature(holdings: list[dict[str, Any]]) -> str:

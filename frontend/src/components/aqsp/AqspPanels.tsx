@@ -37,6 +37,7 @@ import {
   variantMoney,
   variantPercent,
   variantStrategyText,
+  variantTechnicalEvidenceText,
 } from "@/lib/variant-view";
 
 function unique(values: readonly string[] | undefined, limit = 4): string[] {
@@ -229,7 +230,7 @@ function TestVariantsPanel({ snapshot }: { snapshot?: AqspSnapshot }) {
   const variantHistory = variants.some((variant) => variant.data_mode.includes("historical"));
   return <section id={TEST_VARIANTS_SECTION_ID} className="aqsp-lab" aria-label="测试与变体">
     <div className="aqsp-section-head"><div><p className="aqsp-eyebrow"><FlaskConical className="h-3.5 w-3.5" />独立区域</p><h2>测试与变体</h2></div><span>不进入正式结论</span></div>
-    <div className="aqsp-lab-snapshot">{snapshot ? <><span>数据区间：{variants[0]?.start_date || "—"} 至 {suite?.end_date || variants[0]?.end_date || "—"}</span><span>变体：{suite?.variant_count ?? variants.length} 个</span><span>股票池：{suite?.selected_symbols ?? "—"} / {suite?.supported_symbols ?? "—"}</span><span>{suite?.schema_version || "schema 未记录"}</span><span className={cn("aqsp-badge", historical || variantHistory ? "aqsp-badge-warn" : "aqsp-badge-ok")}>{historical || variantHistory ? "历史回测 · 仅验证" : "当前实验结果"}</span>{suite?.filters ? <span>{suite.filters}</span> : null}</> : <span>等待正式快照</span>}</div>
+    <div className="aqsp-lab-snapshot">{snapshot ? <><span>数据区间：{variants[0]?.start_date || "—"} 至 {suite?.end_date || variants[0]?.end_date || "—"}</span><span>展示：{variants.length} / {suite?.variant_count ?? variants.length} 个</span><span>股票池：{suite?.selected_symbols ?? "—"} / {suite?.supported_symbols ?? "—"}</span><span>{suite?.schema_version || "schema 未记录"}</span><span className={cn("aqsp-badge", historical || variantHistory ? "aqsp-badge-warn" : "aqsp-badge-ok")}>{historical || variantHistory ? "历史回测 · 仅验证" : "当前实验结果"}</span>{suite?.filters ? <span>{suite.filters}</span> : null}</> : <span>等待正式快照</span>}</div>
     {variants.length === 0 ? <EmptyState title="变体结果尚未产出" detail="实验结果独立于正式候选，产出后会显示在这里。" /> : <div className="aqsp-variant-grid">{variants.map((variant: AqspVariant) => {
       const pnl = variant.total_pnl;
       const holdings = variant.holdings;
@@ -247,7 +248,8 @@ function TestVariantsPanel({ snapshot }: { snapshot?: AqspSnapshot }) {
           <div><b>今日持仓 · {variant.holdings_date || "日期未记录"} · {variantHoldingsLabel(holdings)}</b>{holdings?.map((holding) => <span key={holding.symbol}>{variantHoldingName(holding)}（{holding.symbol}）{holding.quantity} 股 · 市值 {variantMoney(holding.market_value)} · 浮盈 {variantMoney(holding.unrealized_pnl)}</span>)}</div>
           <div><b>昨日持仓 · {variant.previous_holdings_date || "日期未记录"} · {variantHoldingsLabel(variant.previous_holdings)}</b>{variant.previous_holdings?.map((holding) => <span key={holding.symbol}>{variantHoldingName(holding)}（{holding.symbol}）{holding.quantity} 股 · 市值 {variantMoney(holding.market_value)} · 浮盈 {variantMoney(holding.unrealized_pnl)}</span>)}</div>
         </div>
-        <div className="aqsp-variant-actions"><b>换票逻辑</b>{(variant.adjustments ?? []).slice(0, 4).map((line) => <span key={line}>{line}</span>)}</div>
+        <div className="aqsp-variant-actions"><b>换票逻辑</b>{(variant.adjustments ?? []).slice(0, 4).map((line) => <span key={line}>{line}</span>)}{(variant.adjustments?.length ?? 0) === 0 ? <span>换票逻辑未记录；需重算变体产物补齐今日/昨日差异。</span> : null}</div>
+        <div className="aqsp-variant-actions"><b>技术面证据</b>{(variant.technical_evidence ?? []).slice(0, 3).map((evidence, index) => <span key={`${evidence.symbol ?? "symbol"}-${evidence.execution_date ?? evidence.date ?? index}`}>{variantTechnicalEvidenceText(evidence)}</span>)}{(variant.technical_evidence?.length ?? 0) === 0 ? <span>结构化 MACD/KDJ/量比/ATR 未记录；不把空口描述当证据。</span> : null}</div>
         <div className="aqsp-variant-actions"><b>最近动作</b>{(variant.recent_actions ?? []).slice(0, 4).map((action, index) => <span key={`${action.date}-${action.symbol}-${index}`}>{variantActionText(action)}</span>)}{(variant.recent_actions?.length ?? 0) === 0 ? <span>暂无成交动作记录</span> : null}</div>
         <p className="aqsp-variant-rules">成交 {variant.filled_orders} · 拒绝 {variant.rejected_orders} · {(variant.hard_rules ?? []).join(" · ") || "硬成交规则未记录"}</p>
       </article>;

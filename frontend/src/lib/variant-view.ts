@@ -55,3 +55,25 @@ export function variantActionText(
     action.reason || "原因未记录"
   }`;
 }
+
+function metric(value: number | null | undefined, suffix = "", digits = 2): string {
+  if (value == null || !Number.isFinite(value)) return "未形成";
+  const sign = value > 0 ? "+" : "";
+  return `${sign}${value.toFixed(digits)}${suffix}`;
+}
+
+export function variantTechnicalEvidenceText(
+  evidence: NonNullable<AqspVariant["technical_evidence"]>[number],
+): string {
+  const name = evidence.name || evidence.symbol || "标的未记录";
+  const actionDate = evidence.execution_date || evidence.date || "执行日未记录";
+  const signalDate = evidence.signal_date ? `信号 ${evidence.signal_date} → ` : "";
+  const mode = evidence.mode_label || evidence.mode || "策略";
+  return `${name} · ${mode} · ${signalDate}${actionDate} · MACD ${metric(
+    evidence.macd_hist,
+  )} · KDJ-J ${metric(evidence.kdj_j, "", 0)} · 量比 ${metric(
+    evidence.volume_ratio,
+    "",
+    2,
+  )} · ATR ${metric(evidence.atr_pct, "%", 1)}`;
+}

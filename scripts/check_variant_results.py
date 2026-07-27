@@ -5,9 +5,15 @@ from __future__ import annotations
 
 import argparse
 import json
+from collections import Counter
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
+
+
+MAX_TOP_HOLDING_DUPLICATES = 3
+TOP_DIVERSITY_WINDOW = 20
+REQUIRED_TECHNICAL_KEYS = ("macd_hist", "kdj_j", "volume_ratio", "atr_pct")
 
 
 @dataclass(frozen=True)
@@ -49,6 +55,7 @@ def validate_variant_results(
     seen_ids: set[str] = set()
     strategy_signatures: set[str] = set()
     holding_signatures: set[str] = set()
+    top_holding_signatures: list[str] = []
     for index, value in enumerate(variants):
         item = _object(value, f"variants[{index}]")
         variant_id = _text(item.get("variant_id"), f"variants[{index}].variant_id")
@@ -60,11 +67,12 @@ def validate_variant_results(
                 item.get("strategy_signature"), f"variants[{index}].strategy_signature"
             )
         )
-        holding_signatures.add(
-            _text(
-                item.get("holdings_signature"), f"variants[{index}].holdings_signature"
-            )
+        holding_signature = _text(
+            item.get("holdings_signature"), f"variants[{index}].holdings_signature"
         )
+        holding_signatures.add(holding_signature)
+        if index < TOP_DIVERSITY_WINDOW:
+            top_holding_signatures.append(holding_signature)
         if (
             _text(item.get("holdings_date"), f"variants[{index}].holdings_date")
             != end_date
@@ -80,10 +88,19 @@ def validate_variant_results(
             _list(item.get(key), f"variants[{index}].{key}")
         if not _list(item.get("adjustments"), f"variants[{index}].adjustments"):
             raise ValueError(f"{variant_id} adjustments missing")
+        if not _has_structured_technical_evidence(item):
+            raise ValueError(f"{variant_id} technical evidence missing")
     if len(strategy_signatures) < min_variants:
         raise ValueError("unique strategy signatures below minimum")
     if len(holding_signatures) <= 1:
         raise ValueError("holding signatures are not diversified")
+    if top_holding_signatures:
+        duplicate, count = Counter(top_holding_signatures).most_common(1)[0]
+        if count > MAX_TOP_HOLDING_DUPLICATES:
+            raise ValueError(
+                "top holding signatures too repetitive: "
+                f"{duplicate} appears {count} times in top {len(top_holding_signatures)}"
+            )
     return VariantResultsCheck(
         path=str(path),
         schema_version=schema_version,
@@ -92,6 +109,29 @@ def validate_variant_results(
         selected_symbols=selected_symbols,
         supported_symbols=supported_symbols,
     )
+
+
+def _has_structured_technical_evidence(item: dict[str, Any]) -> bool:
+    evidence_sources: list[Any] = []
+    evidence_sources.extend(
+        _list(item.get("technical_evidence", []), "technical_evidence")
+    )
+    evidence_sources.extend(
+        action.get("evidence")
+        for action in _list(item.get("recent_actions", []), "recent_actions")
+        if isinstance(action, dict)
+    )
+    evidence_sources.extend(
+        holding.get("entry_evidence")
+        for holding in _list(item.get("holdings", []), "holdings")
+        if isinstance(holding, dict)
+    )
+    for evidence in evidence_sources:
+        if not isinstance(evidence, dict):
+            continue
+        if all(key in evidence for key in REQUIRED_TECHNICAL_KEYS):
+            return True
+    return False
 
 
 def _object(value: Any, label: str) -> dict[str, Any]:

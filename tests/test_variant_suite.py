@@ -80,6 +80,21 @@ def test_run_suite_creates_many_explained_nonduplicate_accounts(tmp_path):
     assert all(item["previous_holdings_date"] == "2026-03-30" for item in variants)
     assert all("previous_holdings" in item for item in variants)
     assert all(item["adjustments"] for item in variants)
+    assert all(item["technical_evidence"] for item in variants if item["filled_orders"])
+    assert any(
+        all(
+            key in evidence for key in ("macd_hist", "kdj_j", "volume_ratio", "atr_pct")
+        )
+        for item in variants
+        for evidence in item["technical_evidence"]
+    )
+    assert any(
+        holding.get("entry_evidence")
+        for item in variants
+        for holding in item["holdings"]
+    )
+    assert all("orders_signature" in item for item in variants)
+    assert all("filled_orders_signature" in item for item in variants)
     assert any(
         holding.get("name") == "阿尔法"
         for item in variants
@@ -179,6 +194,24 @@ def test_run_suite_handles_flat_kdj_range_without_object_dtype_crash(tmp_path):
 
     assert result["schema_version"] == "variant-suite-v2"
     assert len(result["variants"]) >= 100
+    evidence = variant_suite._technical_evidence_values(
+        profile=variant_suite.VariantProfile(
+            "flat_probe", "平线证据", 20, 1.0, 5.0, "kdj_rebound", 3, 1 / 3, "测试"
+        ),
+        symbol="FLAT",
+        signal_date="2026-01-10",
+        execution_date="2026-01-11",
+        side="buy",
+        ret=1.0,
+        bias=0.5,
+        macd_hist=0.1,
+        kdj_j=variant_suite._optional_metric(float("nan")),
+        volume_ratio=1.0,
+        atr_pct=0.0,
+        score=1.0,
+    )
+    assert evidence["kdj_j"] is None
+    assert evidence["kdj_available"] is False
 
 
 def test_run_suite_reuses_indicator_frames_by_lookback_when_profiles_share_inputs(

@@ -105,6 +105,7 @@ export interface AqspVariant {
   previous_holdings?: readonly AqspVariantHolding[];
   recent_actions?: readonly AqspVariantAction[];
   adjustments?: readonly string[];
+  technical_evidence?: readonly AqspVariantEvidence[];
   hard_rules?: readonly string[];
 }
 
@@ -117,6 +118,28 @@ export interface AqspVariantHolding {
   last_price: number;
   market_value: number;
   unrealized_pnl: number;
+  entry_reason?: string;
+  entry_evidence?: AqspVariantEvidence;
+}
+
+export interface AqspVariantEvidence {
+  date?: string;
+  signal_date?: string;
+  execution_date?: string;
+  symbol?: string;
+  name?: string;
+  side?: string;
+  mode?: string;
+  mode_label?: string;
+  lookback_days?: number;
+  ret_pct?: number | null;
+  bias_pct?: number | null;
+  macd_hist?: number | null;
+  kdj_j?: number | null;
+  volume_ratio?: number | null;
+  atr_pct?: number | null;
+  score?: number | null;
+  reason?: string;
 }
 
 export interface AqspVariantAction {
@@ -129,6 +152,7 @@ export interface AqspVariantAction {
   quantity?: number;
   price?: number;
   reason?: string;
+  evidence?: AqspVariantEvidence;
 }
 
 export interface AqspVariantSuite {
