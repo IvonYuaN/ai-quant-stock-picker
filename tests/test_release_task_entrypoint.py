@@ -16,6 +16,7 @@ def test_release_task_entrypoint_keeps_code_and_runtime_roots_separate() -> None
     assert (
         'RUNTIME_DATA_ROOT="${AQSP_RUNTIME_DATA_ROOT:-${RUNTIME_ROOT}/data}"' in script
     )
+    assert 'export AQSP_RUNTIME_DATA_ROOT="$RUNTIME_DATA_ROOT"' in script
     assert "AQSP_NEWS_JSON_OUTPUT" in script
     assert "AQSP_INTRADAY_CURSOR_PATH" in script
     assert "AQSP_HOME_SNAPSHOT_PATH" in script
@@ -32,6 +33,15 @@ def test_release_task_entrypoint_keeps_code_and_runtime_roots_separate() -> None
     bt_task = (PROJECT_ROOT / "scripts/bt_task.sh").read_text(encoding="utf-8")
     assert "AQSP_IMMUTABLE_RELEASE:-false" in bt_task
     assert "Git repo not found: ${PROJECT_ROOT}" in bt_task
+
+    intraday = (PROJECT_ROOT / "scripts/intraday_refresh.sh").read_text(
+        encoding="utf-8"
+    )
+    assert (
+        'LOG_DIR="${AQSP_INTRADAY_LOG_DIR:-${RUNTIME_DATA_ROOT}/logs/intraday}"'
+        in intraday
+    )
+    assert 'TMP_ROOT="${AQSP_INTRADAY_TMP_ROOT:-${RUNTIME_DATA_ROOT}/.tmp}"' in intraday
 
 
 def test_release_task_entrypoint_does_not_allow_runtime_root_to_replace_code_root() -> (

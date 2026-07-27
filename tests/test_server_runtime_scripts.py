@@ -556,6 +556,16 @@ def test_intraday_refresh_script_uses_isolated_outputs() -> None:
         'rm -f "$INTRADAY_LEDGER" "$INTRADAY_REPORT" "$INTRADAY_OUTPUT_CSV"'
         not in script
     )
+    assert 'RUNTIME_DATA_ROOT="${AQSP_RUNTIME_DATA_ROOT:-$PROJECT_ROOT}"' in script
+    assert (
+        'LOG_DIR="${AQSP_INTRADAY_LOG_DIR:-${RUNTIME_DATA_ROOT}/logs/intraday}"'
+        in script
+    )
+    assert (
+        'LOCK_BASE_DIR="${AQSP_RUNTIME_LOCK_DIR:-${RUNTIME_DATA_ROOT}/.locks}"'
+        in script
+    )
+    assert 'TMP_ROOT="${AQSP_INTRADAY_TMP_ROOT:-${RUNTIME_DATA_ROOT}/.tmp}"' in script
     assert 'TMP_DIR="$(mktemp -d "${TMP_ROOT}/intraday-refresh.XXXXXX")"' in script
     assert 'TMP_INTRADAY_LEDGER="${TMP_DIR}/intraday_predictions.jsonl"' in script
     assert '--ledger "${TMP_INTRADAY_LEDGER}"' in script

@@ -7,6 +7,7 @@
 set -euo pipefail
 
 PROJECT_ROOT="${AQSP_PROJECT_ROOT:-/opt/aqsp}"
+RUNTIME_DATA_ROOT="${AQSP_RUNTIME_DATA_ROOT:-$PROJECT_ROOT}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RUNTIME_PYTHON_HELPER="${PROJECT_ROOT}/scripts/runtime_python.sh"
 if [ ! -f "$RUNTIME_PYTHON_HELPER" ] && [ -f "${SCRIPT_DIR}/runtime_python.sh" ]; then
@@ -22,9 +23,10 @@ VENV_DIR="${AQSP_INTRADAY_VENV_DIR:-${AQSP_RUNTIME_VENV_DIR:-${AQSP_VIBE_VENV_DI
 PYTHON_BIN="$(aqsp_runtime_python "$PROJECT_ROOT")"
 INITIAL_PROJECT_ROOT="$PROJECT_ROOT"
 INITIAL_VENV_DIR="$VENV_DIR"
-LOG_DIR="${PROJECT_ROOT}/logs/intraday"
+LOG_DIR="${AQSP_INTRADAY_LOG_DIR:-${RUNTIME_DATA_ROOT}/logs/intraday}"
 RESULT_LOG="${LOG_DIR}/intraday-$(date +%Y-%m-%d).log"
-LOCK_DIR="${PROJECT_ROOT}/.locks/intraday-refresh.lock"
+LOCK_BASE_DIR="${AQSP_RUNTIME_LOCK_DIR:-${RUNTIME_DATA_ROOT}/.locks}"
+LOCK_DIR="${LOCK_BASE_DIR}/intraday-refresh.lock"
 LOCK_INFO_FILE="${LOCK_DIR}/meta.env"
 LOCK_STALE_MINUTES="${AQSP_INTRADAY_LOCK_STALE_MINUTES:-30}"
 
@@ -74,7 +76,7 @@ lock_is_stale() {
     [ "$age_minutes" -ge "$LOCK_STALE_MINUTES" ]
 }
 
-mkdir -p "$LOG_DIR" "${PROJECT_ROOT}/.locks"
+mkdir -p "$LOG_DIR" "$LOCK_BASE_DIR"
 
 if [ -d "$LOCK_DIR" ] && lock_is_stale; then
     stale_age="$(lock_age_minutes "$LOCK_DIR")"
@@ -281,7 +283,7 @@ REALTIME_CROSS_MARKET_TIMEOUT_SECONDS="${AQSP_REALTIME_CROSS_MARKET_TIMEOUT_SECO
 REALTIME_CROSS_MARKET_SOURCE_TIMEOUT_SECONDS="${AQSP_REALTIME_CROSS_MARKET_SOURCE_TIMEOUT_SECONDS:-0.8}"
 DEBATE_RESULTS="$(resolve_path "${AQSP_DEBATE_RESULTS:-data/debate_results.jsonl}")"
 DEBATE_BACKFILL_LOG="${LOG_DIR}/debate-backfill-$(date +%Y-%m-%d).log"
-DEBATE_BACKFILL_LOCK="${PROJECT_ROOT}/.locks/intraday-debate-backfill.lock"
+DEBATE_BACKFILL_LOCK="${LOCK_BASE_DIR}/intraday-debate-backfill.lock"
 DEBATE_BACKFILL_LOCK_INFO="${DEBATE_BACKFILL_LOCK}/meta.env"
 DEBATE_BACKFILL_STALE_MINUTES="${AQSP_INTRADAY_DEBATE_BACKFILL_STALE_MINUTES:-30}"
 DEBATE_BACKFILL_TIMEOUT_SECONDS="${AQSP_INTRADAY_DEBATE_BACKFILL_TIMEOUT_SECONDS:-120}"
@@ -305,7 +307,7 @@ mkdir -p \
     "$(dirname "$REALTIME_CROSS_MARKET_PATH")" \
     "$(dirname "$DEBATE_RESULTS")"
 
-TMP_ROOT="${PROJECT_ROOT}/.tmp"
+TMP_ROOT="${AQSP_INTRADAY_TMP_ROOT:-${RUNTIME_DATA_ROOT}/.tmp}"
 mkdir -p "$TMP_ROOT"
 TMP_DIR="$(mktemp -d "${TMP_ROOT}/intraday-refresh.XXXXXX")"
 TMP_INTRADAY_LEDGER="${TMP_DIR}/intraday_predictions.jsonl"
