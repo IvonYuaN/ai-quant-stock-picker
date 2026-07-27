@@ -390,7 +390,8 @@ def _with_indicators(raw: pd.DataFrame, lookback: int) -> pd.DataFrame:
     frame["macd_hist"] = (dif - dea) * 2.0
     low_min = low.rolling(9).min()
     high_max = high.rolling(9).max()
-    rsv = (close - low_min) / (high_max - low_min).replace(0, pd.NA) * 100.0
+    kdj_range = (high_max - low_min).where((high_max - low_min) != 0)
+    rsv = ((close - low_min) / kdj_range * 100.0).astype("float64")
     frame["kdj_k"] = rsv.ewm(com=2, adjust=False).mean()
     frame["kdj_d"] = frame["kdj_k"].ewm(com=2, adjust=False).mean()
     frame["kdj_j"] = 3.0 * frame["kdj_k"] - 2.0 * frame["kdj_d"]

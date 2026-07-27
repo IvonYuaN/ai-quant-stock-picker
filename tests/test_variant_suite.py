@@ -135,3 +135,46 @@ def test_write_home_snapshot_recovers_variant_actions_from_legacy_fills():
     assert actions[0]["symbol"] == "002379"
     assert "v2 重算后补齐" in str(actions[0]["reason"])
     assert adjustments[0].startswith("持有 002379")
+
+
+def test_run_suite_handles_flat_kdj_range_without_object_dtype_crash(tmp_path):
+    db = tmp_path / "flat.db"
+    with sqlite3.connect(db) as conn:
+        conn.execute(
+            """
+            CREATE TABLE ohlcv (
+                symbol TEXT, date TEXT, name TEXT, price_mode TEXT, workload TEXT,
+                open REAL, high REAL, low REAL, close REAL, volume REAL,
+                amount REAL, suspended INTEGER, limit_up REAL, limit_down REAL
+            )
+            """
+        )
+        rows = []
+        start = date(2026, 1, 1)
+        for index in range(80):
+            current = start + timedelta(days=index)
+            close = 10.0 if index < 20 else 10.0 + (index - 20) * 0.03
+            rows.append(
+                (
+                    "FLAT",
+                    current.isoformat(),
+                    "平线测试",
+                    "raw",
+                    "historical",
+                    close,
+                    close,
+                    close,
+                    close,
+                    100000.0,
+                    close * 100000.0,
+                    0,
+                    close * 1.1,
+                    close * 0.9,
+                )
+            )
+        conn.executemany("INSERT INTO ohlcv VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)", rows)
+
+    result = run_suite(db, ("FLAT",), "2026-01-01", "2026-03-21")
+
+    assert result["schema_version"] == "variant-suite-v2"
+    assert len(result["variants"]) >= 100
