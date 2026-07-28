@@ -22,7 +22,7 @@ const variantFixture = {
   start_date: "2026-06-01",
   end_date: "2026-07-01",
   data_mode: "historical_raw_unadjusted",
-  strategy: '{"id":"trend_follow","mode":"momentum","lookback_days":20}',
+  strategy: '{"id":"trend_follow","mode":"momentum","lookback_days":20,"hypothesis":"趋势延续优先"}',
   holdings_date: "2026-07-01",
   holdings: [
     {
@@ -59,6 +59,7 @@ const variantFixture = {
       kdj_j: 55,
       volume_ratio: 1.35,
       atr_pct: 2.4,
+      evidence_kind: "current_holding_snapshot",
     },
   ],
   hard_rules: ["T+1"],
@@ -66,7 +67,9 @@ const variantFixture = {
 
 export const variantViewContractChecks = {
   accountFieldsAreRepresented: [variantFixture.cash, variantFixture.final_equity, variantFixture.total_pnl].every((value) => typeof value === "number"),
-  strategyIsReadable: variantStrategyText(variantFixture.strategy, variantFixture.variant_id).includes("回看 20 日"),
+  strategyIsReadable:
+    variantStrategyText(variantFixture.strategy, variantFixture.variant_id).includes("回看 20 日") &&
+    variantStrategyText(variantFixture.strategy, variantFixture.variant_id).includes("假设：趋势延续优先"),
   holdingsShowCountAndPreferredName:
     variantHoldingsLabel(variantFixture.holdings) === "1 个持仓" &&
     variantHoldingName(variantFixture.holdings[0]) === "示例股份",
@@ -82,6 +85,7 @@ export const variantViewContractChecks = {
   missingCashDoesNotBecomeZero: variantMoney(undefined) === "未提供",
   positivePnlIsSigned: variantPercent(variantFixture.return_pct) === "+1.25%",
   technicalEvidenceIsExplicit:
+    variantTechnicalEvidenceText(variantFixture.technical_evidence[0]).includes("持仓当日截面") &&
     variantTechnicalEvidenceText(variantFixture.technical_evidence[0]).includes("MACD +0.12") &&
     variantTechnicalEvidenceText(variantFixture.technical_evidence[0]).includes("KDJ-J +55") &&
     variantTechnicalEvidenceText(variantFixture.technical_evidence[0]).includes("量比 +1.35") &&

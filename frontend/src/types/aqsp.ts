@@ -140,6 +140,7 @@ export interface AqspVariantEvidence {
   atr_pct?: number | null;
   score?: number | null;
   reason?: string;
+  evidence_kind?: string;
 }
 
 export interface AqspVariantAction {

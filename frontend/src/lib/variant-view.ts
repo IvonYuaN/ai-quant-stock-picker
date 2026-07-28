@@ -22,6 +22,9 @@ export function variantStrategyText(strategy: string | undefined, fallback: stri
         typeof record.id === "string" ? record.id : fallback,
         typeof record.mode === "string" ? record.mode : "",
         typeof record.lookback_days === "number" ? `回看 ${record.lookback_days} 日` : "",
+        typeof record.hypothesis === "string" && record.hypothesis.trim()
+          ? `假设：${record.hypothesis.trim()}`
+          : "",
       ].filter(Boolean);
       if (parts.length > 0) return parts.join(" · ");
     }
@@ -69,7 +72,9 @@ export function variantTechnicalEvidenceText(
   const actionDate = evidence.execution_date || evidence.date || "执行日未记录";
   const signalDate = evidence.signal_date ? `信号 ${evidence.signal_date} → ` : "";
   const mode = evidence.mode_label || evidence.mode || "策略";
-  return `${name} · ${mode} · ${signalDate}${actionDate} · MACD ${metric(
+  const evidenceLabel = evidence.evidence_kind === "current_holding_snapshot" ? "持仓当日截面" : mode;
+  const signalPrefix = evidence.evidence_kind === "current_holding_snapshot" ? "" : signalDate;
+  return `${name} · ${evidenceLabel} · ${signalPrefix}${actionDate} · MACD ${metric(
     evidence.macd_hist,
   )} · KDJ-J ${metric(evidence.kdj_j, "", 0)} · 量比 ${metric(
     evidence.volume_ratio,
