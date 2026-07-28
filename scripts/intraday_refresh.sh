@@ -269,6 +269,12 @@ elif [ "$INTRADAY_BATCH_SIZE" -gt 96 ] && ! is_truthy "${AQSP_INTRADAY_ALLOW_HEA
     log "盘中批次大小 ${INTRADAY_BATCH_SIZE} 过大，收紧为 96；设置 AQSP_INTRADAY_ALLOW_HEAVY_UNIVERSE=true 才允许扩大"
     INTRADAY_BATCH_SIZE="96"
 fi
+INTRADAY_BATCH_RESOLVE_TIMEOUT_SECONDS="${AQSP_INTRADAY_BATCH_RESOLVE_TIMEOUT_SECONDS:-45}"
+if ! [[ "$INTRADAY_BATCH_RESOLVE_TIMEOUT_SECONDS" =~ ^[0-9]+$ ]] || \
+   [ "$INTRADAY_BATCH_RESOLVE_TIMEOUT_SECONDS" -le 0 ]; then
+    log "盘中股票池解析超时配置无效(${INTRADAY_BATCH_RESOLVE_TIMEOUT_SECONDS})，使用 45 秒"
+    INTRADAY_BATCH_RESOLVE_TIMEOUT_SECONDS="45"
+fi
 INTRADAY_CURSOR_PATH="$(resolve_path "${AQSP_INTRADAY_CURSOR_PATH:-data/runtime/intraday_universe_cursor.json}")"
 INTRADAY_BATCH_ACTIVE="false"
 INTRADAY_BATCH_SYMBOLS=""
@@ -1580,14 +1586,25 @@ if is_truthy "$INTRADAY_BATCH_SCAN" && \
    [ -f "${PROJECT_ROOT}/scripts/prepare_intraday_batch.py" ] && \
    [ -z "${AQSP_SYMBOLS:-}" ] && \
    [ "$INTRADAY_MAX_UNIVERSE" = "0" ]; then
-    if ! INTRADAY_BATCH_SYMBOLS="$(${PYTHON_BIN} "${PROJECT_ROOT}/scripts/prepare_intraday_batch.py" \
+    INTRADAY_BATCH_SYMBOLS=""
+    set +e
+    INTRADAY_BATCH_SYMBOLS="$(timeout --signal=TERM --kill-after=15s "${INTRADAY_BATCH_RESOLVE_TIMEOUT_SECONDS}s" \
+        "${PYTHON_BIN}" "${PROJECT_ROOT}/scripts/prepare_intraday_batch.py" \
         --source "$INTRADAY_SOURCE" \
         --batch-size "$INTRADAY_BATCH_SIZE" \
         --min-avg-amount "$INTRADAY_MIN_AVG_AMOUNT" \
-        --cursor "$INTRADAY_CURSOR_PATH" 2>>"$RESULT_LOG")"; then
-        log "[ERROR] 无法准备盘中股票批次；不退回全量重策略，避免再次阻塞服务器"
-        write_intraday_status "failed" "universe_resolution_failed；实时股票池解析失败" "1"
-        exit 1
+        --cursor "$INTRADAY_CURSOR_PATH" 2>>"$RESULT_LOG")"
+    BATCH_RESOLVE_EXIT_CODE=$?
+    set -e
+    if [ "$BATCH_RESOLVE_EXIT_CODE" -ne 0 ]; then
+        if [ "$BATCH_RESOLVE_EXIT_CODE" -eq 124 ]; then
+            log "[ERROR] 盘中股票池解析超时(${INTRADAY_BATCH_RESOLVE_TIMEOUT_SECONDS}s)；不退回全量重策略"
+            write_intraday_status "failed" "universe_resolution_timeout；实时股票池解析超时" "$BATCH_RESOLVE_EXIT_CODE"
+        else
+            log "[ERROR] 无法准备盘中股票批次；不退回全量重策略，避免再次阻塞服务器"
+            write_intraday_status "failed" "universe_resolution_failed；实时股票池解析失败" "$BATCH_RESOLVE_EXIT_CODE"
+        fi
+        exit "$BATCH_RESOLVE_EXIT_CODE"
     fi
     if [ -z "$INTRADAY_BATCH_SYMBOLS" ]; then
         log "[ERROR] 盘中股票批次为空；不运行重策略"

@@ -331,6 +331,7 @@ def _write_timeout_stub(path: Path) -> None:
         "shift\n"
         'while [ "$#" -gt 0 ] && [ "${1#-}" != "$1" ]; do shift; done\n'
         "shift\n"
+        'if [ -n "${AQSP_TEST_TIMEOUT_PREPARE_EXIT_CODE:-}" ] && [ "${2##*/}" = "prepare_intraday_batch.py" ]; then exit "$AQSP_TEST_TIMEOUT_PREPARE_EXIT_CODE"; fi\n'
         'exec "$@"\n',
         encoding="utf-8",
     )
@@ -1005,6 +1006,53 @@ def test_intraday_batch_mode_does_not_let_aqsp_max_universe_40_bypass_rotation(
     cli_args = json.loads(args_path.read_text(encoding="utf-8"))
     assert cli_args["max_universe"] == "2"
     assert "忽略配置最大股票数 40" in result.stdout
+
+
+def test_intraday_batch_resolution_stops_when_preparation_times_out(
+    tmp_path: Path,
+) -> None:
+    venv_bin = tmp_path / ".venv" / "bin"
+    venv_bin.mkdir(parents=True)
+    utility_bin = tmp_path / "bin"
+    utility_bin.mkdir()
+    _write_timeout_stub(utility_bin / "timeout")
+    args_path = tmp_path / "cli_args.json"
+    _write_python_stub(venv_bin / "python3", PROJECT_ROOT, args_path)
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "scripts" / "prepare_intraday_batch.py").write_text(
+        "# test stub\n", encoding="utf-8"
+    )
+    env = os.environ.copy()
+    env.update(
+        {
+            "AQSP_PROJECT_ROOT": str(tmp_path),
+            "AQSP_TEST_REPO": str(PROJECT_ROOT),
+            "AQSP_TEST_ARGS": str(args_path),
+            "AQSP_TEST_TIMEOUT_PREPARE_EXIT_CODE": "124",
+            "AQSP_INTRADAY_REQUIRE_MARKET_HOURS": "false",
+            "AQSP_INTRADAY_DEBATE_BACKFILL": "false",
+            "AQSP_HOME_SNAPSHOT_ENABLED": "false",
+            "PATH": f"{utility_bin}:{os.environ['PATH']}",
+        }
+    )
+    result = subprocess.run(
+        ["bash", str(SCRIPT_PATH)],
+        cwd=PROJECT_ROOT,
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=30,
+    )
+
+    assert result.returncode == 124, result.stdout + result.stderr
+    assert "股票池解析超时" in result.stdout
+    status = json.loads(
+        (tmp_path / "data" / "intraday_refresh_status.json").read_text(encoding="utf-8")
+    )
+    assert status["status"] == "failed"
+    assert status["exit_code"] == 124
+    assert "universe_resolution_timeout" in status["reason"]
+    assert not args_path.exists()
 
 
 def test_intraday_batch_does_not_commit_when_output_metadata_is_partial(
