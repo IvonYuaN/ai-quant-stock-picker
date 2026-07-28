@@ -17,6 +17,28 @@ def test_cache_init(tmp_path):
     assert cache.db_path.exists()
 
 
+def test_cache_init_removes_redundant_ohlcv_indexes(tmp_path):
+    cache_path = tmp_path / "test_cache.db"
+    with sqlite3.connect(cache_path) as conn:
+        conn.execute(
+            "CREATE TABLE ohlcv ("
+            "symbol TEXT, date TEXT, price_mode TEXT, workload TEXT, "
+            "PRIMARY KEY (symbol, date, price_mode, workload))"
+        )
+        conn.execute("CREATE INDEX idx_ohlcv_symbol_date ON ohlcv(symbol, date)")
+        conn.execute(
+            "CREATE UNIQUE INDEX idx_ohlcv_symbol_date_price_mode_workload "
+            "ON ohlcv(symbol, date, price_mode, workload)"
+        )
+
+    DataCache(db_path=cache_path)
+
+    with sqlite3.connect(cache_path) as conn:
+        names = {row[1] for row in conn.execute("PRAGMA index_list(ohlcv)")}
+    assert "idx_ohlcv_symbol_date" not in names
+    assert "idx_ohlcv_symbol_date_price_mode_workload" not in names
+
+
 def test_cache_set_and_get_ohlcv(tmp_path):
     cache = DataCache(db_path=tmp_path / "test_cache.db")
     df = pd.DataFrame(
@@ -310,16 +332,22 @@ def test_cache_targeted_cleanup_preserves_historical_rows(tmp_path):
     deleted = cache.clear_expired(max_age_hours=0, workloads=("live_short",))
 
     assert deleted == 1
-    assert cache.get_ohlcv(
-        "600000", date(2024, 1, 2), date(2024, 1, 2), source="eastmoney"
-    ) is not None
-    assert cache.get_ohlcv(
-        "600000",
-        date(2024, 1, 2),
-        date(2024, 1, 2),
-        source="eastmoney",
-        workload="live_short",
-    ) is None
+    assert (
+        cache.get_ohlcv(
+            "600000", date(2024, 1, 2), date(2024, 1, 2), source="eastmoney"
+        )
+        is not None
+    )
+    assert (
+        cache.get_ohlcv(
+            "600000",
+            date(2024, 1, 2),
+            date(2024, 1, 2),
+            source="eastmoney",
+            workload="live_short",
+        )
+        is None
+    )
 
 
 def test_adjustment_apply_qfq():

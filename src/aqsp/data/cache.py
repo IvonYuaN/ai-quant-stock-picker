@@ -153,18 +153,13 @@ class DataCache:
             for column in ("workload", "timestamp_source"):
                 if column not in columns:
                     conn.execute(f"ALTER TABLE ohlcv ADD COLUMN {column} TEXT")
-            indexes = {
-                row[1] for row in conn.execute("PRAGMA index_list(ohlcv)").fetchall()
-            }
-            if "idx_ohlcv_symbol_date" not in indexes:
-                conn.execute(
-                    "CREATE INDEX IF NOT EXISTS idx_ohlcv_symbol_date "
-                    "ON ohlcv(symbol, date)"
-                )
+            # The primary key already indexes (symbol, date, price_mode,
+            # workload).  Extra prefix/duplicate indexes only inflate the
+            # large walk-forward cache and increase every write cost.
+            conn.execute("DROP INDEX IF EXISTS idx_ohlcv_symbol_date")
             conn.execute("DROP INDEX IF EXISTS idx_ohlcv_symbol_date_price_mode")
             conn.execute(
-                "CREATE UNIQUE INDEX IF NOT EXISTS idx_ohlcv_symbol_date_price_mode_workload "
-                "ON ohlcv(symbol, date, price_mode, workload)"
+                "DROP INDEX IF EXISTS idx_ohlcv_symbol_date_price_mode_workload"
             )
             self._migrate_index_workload(conn)
             conn.execute(
