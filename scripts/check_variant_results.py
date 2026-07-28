@@ -113,6 +113,8 @@ def validate_variant_payload(
             _list(item.get(key), f"variants[{index}].{key}")
         if not _list(item.get("adjustments"), f"variants[{index}].adjustments"):
             raise ValueError(f"{variant_id} adjustments missing")
+        if not _has_holding_change_explanation(item):
+            raise ValueError(f"{variant_id} holding change explanation incomplete")
         if not _has_structured_technical_evidence(item, end_date=end_date):
             raise ValueError(f"{variant_id} technical evidence missing")
         if not _has_named_holdings(item, variant_id=variant_id):
@@ -208,6 +210,38 @@ def _has_current_holding_technical_evidence(
         ):
             return False
     return True
+
+
+def _has_holding_change_explanation(item: dict[str, Any]) -> bool:
+    """Require every position change to name the affected stock in the explanation."""
+    quantities_by_field: dict[str, dict[str, int]] = {}
+    for field in ("holdings", "previous_holdings"):
+        quantities: dict[str, int] = {}
+        for holding in _list(item.get(field, []), field):
+            if not isinstance(holding, dict):
+                return False
+            symbol = holding.get("symbol")
+            if not isinstance(symbol, str) or not symbol:
+                return False
+            quantities[symbol] = int(holding.get("quantity") or 0)
+        quantities_by_field[field] = quantities
+    current = quantities_by_field["holdings"]
+    previous = quantities_by_field["previous_holdings"]
+    changed_symbols = {
+        symbol
+        for symbol in set(current) | set(previous)
+        if current.get(symbol, 0) != previous.get(symbol, 0)
+    }
+    if not changed_symbols:
+        return True
+    explanation = "\n".join(
+        value
+        for value in _list(item.get("adjustments", []), "adjustments")
+        if isinstance(value, str)
+    )
+    return bool(explanation) and all(
+        symbol in explanation for symbol in changed_symbols
+    )
 
 
 def _evidence_available_by(evidence: dict[str, Any], end_date: str) -> bool:
