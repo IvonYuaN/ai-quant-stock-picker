@@ -106,7 +106,9 @@ def test_variant_suite_snapshot_reads_variant_results_metadata(
                     "coverage_pct": 0.3659,
                     "filters": "沪市主板+深市主板+创业板；排除 ST/*ST/PT/退市/科创/北交/B股",
                 },
-                "variants": [{"variant_id": "a"}, {"variant_id": "b"}],
+                "variants": [
+                    {"variant_id": f"variant-{index}"} for index in range(100)
+                ],
             },
             ensure_ascii=False,
         ),
@@ -118,7 +120,7 @@ def test_variant_suite_snapshot_reads_variant_results_metadata(
 
     assert suite.schema_version == "variant-suite-v2"
     assert suite.end_date == "2026-07-24"
-    assert suite.variant_count == 2
+    assert suite.variant_count == 100
     assert suite.selected_symbols == 600
     assert suite.batch_id == "3:1200"
     assert suite.coverage_pct == 0.3659
@@ -131,7 +133,9 @@ def test_variant_snapshot_keeps_all_standard_experiment_variants(
     path.write_text(
         json.dumps(
             {
+                "schema_version": "variant-suite-v2",
                 "initial_cash": 100000.0,
+                "universe": {"selected_symbols": 160},
                 "variants": [
                     {"variant_id": f"variant_{index}", "initial_cash": 100000.0}
                     for index in range(148)
@@ -145,6 +149,27 @@ def test_variant_snapshot_keeps_all_standard_experiment_variants(
     variants = write_home_snapshot._variant_snapshot()
 
     assert len(variants) == 148
+
+
+def test_variant_suite_snapshot_hides_legacy_or_insufficient_artifact(
+    monkeypatch, tmp_path: Path
+) -> None:
+    path = tmp_path / "variant_results.json"
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": "variant-suite-v1",
+                "initial_cash": 100000.0,
+                "universe": {"selected_symbols": 0},
+                "variants": [{"variant_id": "legacy"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AQSP_VARIANT_RESULTS", str(path))
+
+    assert write_home_snapshot._variant_suite_snapshot().variant_count == 0
+    assert write_home_snapshot._variant_snapshot() == ()
 
 
 @pytest.mark.parametrize("status", ["blocked_resources", "timeout", "failed"])

@@ -83,6 +83,8 @@ MAX_HOME_SUMMARIES = 3
 MAX_HOME_MESSAGES = 5
 MAX_HOME_MESSAGES_PER_SOURCE = 2
 MAX_HOME_VARIANTS = 160
+MIN_HOME_VARIANT_COUNT = 100
+MIN_HOME_VARIANT_SYMBOLS = 121
 NEWS_REPORT_MAX_AGE_SECONDS = 6 * 60 * 60
 CURRENT_MESSAGE_WINDOW = timedelta(hours=24)
 _SOURCE_STATUS_LABELS = {
@@ -1596,6 +1598,16 @@ def _variant_results_payload() -> dict[str, Any] | None:
     )
     payload = _read_json_object(path)
     if not payload or payload.get("initial_cash") != 100_000.0:
+        return None
+    universe = payload.get("universe")
+    variants = payload.get("variants")
+    if (
+        payload.get("schema_version") != "variant-suite-v2"
+        or not isinstance(universe, dict)
+        or not isinstance(variants, list)
+        or len(variants) < MIN_HOME_VARIANT_COUNT
+        or int(universe.get("selected_symbols") or 0) < MIN_HOME_VARIANT_SYMBOLS
+    ):
         return None
     return payload
 
