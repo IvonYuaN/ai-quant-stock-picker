@@ -28,6 +28,7 @@ from aqsp.web.home_snapshot import (
     HomeSnapshotMarketContext,
     HomeSnapshotMessage,
     HomeSnapshotSource,
+    HomeSnapshotVariant,
     HomeSnapshotVariantSuite,
     HOME_SNAPSHOT_CLOSE_TTL,
     HOME_SNAPSHOT_INTRADAY_TTL,
@@ -110,6 +111,33 @@ def test_home_snapshot_round_trips_bounded_home_payload(tmp_path) -> None:
     write_home_dashboard_snapshot(source, snapshot)
 
     assert load_home_dashboard_snapshot(source) == snapshot
+
+
+def test_home_snapshot_accepts_variant_suite_with_one_hundred_entries(tmp_path) -> None:
+    source = tmp_path / "snapshot.json"
+    variants = tuple(
+        HomeSnapshotVariant(
+            variant_id=f"variant-{index}",
+            label=f"Variant {index}",
+            initial_cash=100_000.0,
+            cash=10_000.0,
+            final_equity=100_000.0,
+            total_pnl=0.0,
+            return_pct=0.0,
+            filled_orders=0,
+            rejected_orders=0,
+            start_date="2026-01-01",
+            end_date="2026-07-27",
+            data_mode="historical_raw_unadjusted",
+        )
+        for index in range(100)
+    )
+
+    write_home_dashboard_snapshot(source, replace(_snapshot(), variants=variants))
+
+    loaded = load_home_dashboard_snapshot(source)
+    assert loaded is not None
+    assert len(loaded.variants) == 100
     assert json.loads(source.read_text(encoding="utf-8"))["schema_version"] == "v1"
 
 
