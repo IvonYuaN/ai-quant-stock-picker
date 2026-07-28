@@ -93,10 +93,11 @@ trap cleanup EXIT
 
 resolve_commit() {
     cd "$REPO_ROOT"
-    git fetch "$REMOTE" "$BRANCH"
     if [ "$REF" = "$BRANCH" ]; then
+        git fetch "$REMOTE" "refs/heads/${BRANCH}:refs/remotes/${REMOTE}/${BRANCH}"
         git rev-parse "refs/remotes/${REMOTE}/${BRANCH}^{commit}"
     else
+        git fetch "$REMOTE" "$BRANCH"
         git rev-parse "${REF}^{commit}"
     fi
 }
