@@ -17,6 +17,7 @@ MAX_TOP_HOLDING_DUPLICATES = 1
 TOP_DIVERSITY_WINDOW = 20
 MIN_UNIQUE_HOLDING_SIGNATURE_RATIO = 0.8
 REQUIRED_TECHNICAL_KEYS = ("macd_hist", "kdj_j", "volume_ratio", "atr_pct")
+TECHNICAL_REASON_MARKERS = ("MACD", "KDJ", "量比", "ATR")
 
 
 @dataclass(frozen=True)
@@ -234,13 +235,18 @@ def _has_holding_change_explanation(item: dict[str, Any]) -> bool:
     }
     if not changed_symbols:
         return True
-    explanation = "\n".join(
+    explanation_lines = tuple(
         value
         for value in _list(item.get("adjustments", []), "adjustments")
         if isinstance(value, str)
     )
-    return bool(explanation) and all(
-        symbol in explanation for symbol in changed_symbols
+    return bool(explanation_lines) and all(
+        any(
+            symbol in line
+            and any(marker in line for marker in TECHNICAL_REASON_MARKERS)
+            for line in explanation_lines
+        )
+        for symbol in changed_symbols
     )
 
 
