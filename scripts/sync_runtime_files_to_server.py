@@ -167,8 +167,8 @@ import json
 import os
 import subprocess
 import tarfile
-from datetime import datetime, timezone
-from pathlib import Path
+    from pathlib import Path
+    import time
 
 payload = json.loads(os.environ['PAYLOAD'])
 root = Path(payload['root'])
@@ -188,7 +188,7 @@ with lock_path.open('a+', encoding='utf-8') as lock:
             raise RuntimeError(f'expected missing file: {relative}')
         if expected != 'MISSING' and digest(path) != expected:
             raise RuntimeError(f'baseline hash mismatch: {relative}')
-    stamp = datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')
+    stamp = time.strftime('%Y%m%d-%H%M%S', time.gmtime())
     backup_dir = Path(payload['backup_dir'])
     backup_dir.mkdir(parents=True, exist_ok=True)
     backup = backup_dir / f'runtime-patch-{stamp}.tar.gz'
