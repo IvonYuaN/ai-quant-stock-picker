@@ -280,18 +280,18 @@ AQSP_ENABLE_MONITOR_CRON=false bash /opt/aqsp/scripts/install_server_cron.sh
 
 ## 冷启动自动化
 
-如果你当前目标是只把 `predictions.jsonl` 的冷启动天数稳定累积到 30，而不是跑整套收盘链路，仓库现在内置了两条专用脚本：
+如果你当前目标是只把 `predictions.jsonl` 的冷启动天数稳定累积到 30，而不是跑整套收盘链路，使用宝塔任务的统一入口：
 
 ```bash
 cd /opt/aqsp
 python3 scripts/merge_server_ledgers.py
-bash scripts/install_coldstart_cron.sh
+/bin/bash /opt/aqsp/scripts/bt_task.sh coldstart
 ```
 
 含义：
 
 - `merge_server_ledgers.py`：把服务器本地 `data/ledger.jsonl` 合并进正式 `data/predictions.jsonl`，按 `(signal_date, symbol, thresholds_version, regime, intended_entry)` 去重，并自动补齐 `signal_day_group`。
-- `install_coldstart_cron.sh`：旧的独立冷启动安装器。当前生产推荐直接在宝塔里建 `AQSP-冷启动补样本`，时间放到 `19:40`，避免和 `daily` 互斥。
+- 宝塔任务 `AQSP-冷启动补样本`：`/bin/bash /opt/aqsp/scripts/bt_task.sh coldstart`，北京时间 `19:40`；禁止再使用 `coldstart_daily.sh` 直连 cron。
 
 `coldstart_daily.sh` 会按下面顺序寻找历史库更新脚本：
 
@@ -302,13 +302,14 @@ bash scripts/install_coldstart_cron.sh
 
 所以像服务器这种 `AQSP_SQLITE_DB_PATH=/opt/market-data/astocks_raw.db` 场景，会默认使用仓库内受测的 `scripts/update_sqlite_daily.py`；只有显式覆盖或仓库脚本不存在时，才会回退到 `/opt/market-data/update_daily.py`。
 
-如果服务器不是北京时间，可覆盖 cron 时间：
+仅在从旧 system cron 迁移时，可显式安装统一入口：
 
 ```bash
-AQSP_COLDSTART_CRON_SCHEDULE="30 9 * * 1-5" bash /opt/aqsp/scripts/install_coldstart_cron.sh
+AQSP_INSTALL_SYSTEM_CRON=true AQSP_COLDSTART_CRON_SCHEDULE="40 11 * * 1-5" \
+  bash /opt/aqsp/scripts/install_coldstart_cron.sh
 ```
 
-上面这个例子适合服务器时区为 `UTC`，对应北京时间 `17:30`。
+上面这个例子适合服务器时区为 `UTC`，对应北京时间 `19:40`，并会移除旧的直连冷启动任务。
 
 `scripts/intraday_refresh.sh` 默认只在交易时段内工作，并且写入单独的盘中 ledger，不污染正式收盘 ledger。
 

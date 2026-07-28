@@ -1755,14 +1755,19 @@ def test_coldstart_daily_stops_when_update_fails_and_target_coverage_is_too_low(
     assert not (tmp_path / "cli-args.txt").exists()
 
 
-def test_install_coldstart_cron_script_installs_single_daily_job() -> None:
+def test_install_coldstart_cron_script_requires_explicit_migration_and_uses_bt_task() -> (
+    None
+):
     script = (PROJECT_ROOT / "scripts" / "install_coldstart_cron.sh").read_text(
         encoding="utf-8"
     )
 
     assert "AQSP_COLDSTART_CRON_SCHEDULE" in script
-    assert "30 17 * * 1-5" in script
-    assert "/scripts/coldstart_daily.sh" in script
+    assert "40 19 * * 1-5" in script
+    assert "AQSP_INSTALL_SYSTEM_CRON" in script
+    assert "system cron install skipped" in script
+    assert "printf '%s /bin/bash %s coldstart >> %s 2>&1\\n'" in script
+    assert "/scripts/coldstart_daily\\.sh" in script
 
 
 def test_production_walkforward_gate_wrapper_suggests_gap_filling_raw_backfill() -> (

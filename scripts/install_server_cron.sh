@@ -75,7 +75,7 @@ emit_jobs() {
 CURRENT_CRONTAB="$(crontab -l 2>/dev/null || true)"
 FILTERED_CRONTAB="$(
     printf '%s\n' "$CURRENT_CRONTAB" | grep -vE \
-        'AQSP_RUNNER_SCRIPT=scripts/intraday_refresh\.sh|AQSP_RUNNER_SCRIPT=scripts/midday_refresh\.sh|/scripts/server_sync_and_run\.sh|/scripts/server_monitor\.sh|/scripts/bt_task\.sh (daily|intraday|midday|coldstart|variant-refresh|walkforward-gate|monitor|news)' || true
+        'AQSP_RUNNER_SCRIPT=scripts/intraday_refresh\.sh|AQSP_RUNNER_SCRIPT=scripts/midday_refresh\.sh|/scripts/(daily_run|daily_pipeline|intraday_refresh|midday_refresh|coldstart_daily|server_sync_and_run|server_monitor|news_catalysts)\.sh|/scripts/bt_task\.sh (daily|intraday|midday|coldstart|variant-refresh|walkforward-gate|monitor|news)' || true
 )"
 
 {
