@@ -48,7 +48,7 @@ def test_ci_runs_upload_preflight_before_install() -> None:
     )
 
     assert 'pip install -e ".[data,dev,web,api]"' in text
-    assert "actions/setup-node@v4" in text
+    assert "actions/setup-node@v6" in text
     assert "npm ci --prefix frontend" in text
     assert "npm run build --prefix frontend" in text
     assert "name: Frontend audit" in text
