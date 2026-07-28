@@ -115,6 +115,10 @@ def validate_variant_payload(
             raise ValueError(f"{variant_id} adjustments missing")
         if not _has_structured_technical_evidence(item, end_date=end_date):
             raise ValueError(f"{variant_id} technical evidence missing")
+        if not _has_named_holdings(item, variant_id=variant_id):
+            raise ValueError(f"{variant_id} holding name missing")
+        if not _has_current_holding_technical_evidence(item, end_date=end_date):
+            raise ValueError(f"{variant_id} current holding technical evidence missing")
     if len(strategy_signatures) < min_variants:
         raise ValueError("unique strategy signatures below minimum")
     minimum_unique_holdings = math.ceil(
@@ -167,6 +171,45 @@ def _has_structured_technical_evidence(item: dict[str, Any], *, end_date: str) -
     return False
 
 
+def _has_named_holdings(item: dict[str, Any], *, variant_id: str) -> bool:
+    for field in ("holdings", "previous_holdings"):
+        for index, holding in enumerate(_list(item.get(field, []), field)):
+            value = _object(holding, f"{variant_id}.{field}[{index}]")
+            if not _text(value.get("symbol"), f"{variant_id}.{field}[{index}].symbol"):
+                return False
+            if not _text(value.get("name"), f"{variant_id}.{field}[{index}].name"):
+                return False
+    return True
+
+
+def _has_current_holding_technical_evidence(
+    item: dict[str, Any], *, end_date: str
+) -> bool:
+    holdings = _list(item.get("holdings", []), "holdings")
+    if not holdings:
+        return True
+    evidence_by_symbol: dict[str, list[dict[str, Any]]] = {}
+    for raw in _list(item.get("technical_evidence", []), "technical_evidence"):
+        if not isinstance(raw, dict):
+            continue
+        symbol = raw.get("symbol")
+        if isinstance(symbol, str) and symbol:
+            evidence_by_symbol.setdefault(symbol, []).append(raw)
+    for holding in holdings:
+        if not isinstance(holding, dict):
+            return False
+        symbol = holding.get("symbol")
+        if not isinstance(symbol, str) or not symbol:
+            return False
+        if not any(
+            all(_is_finite_number(evidence.get(key)) for key in REQUIRED_TECHNICAL_KEYS)
+            and _evidence_date_is(evidence, end_date)
+            for evidence in evidence_by_symbol.get(symbol, [])
+        ):
+            return False
+    return True
+
+
 def _evidence_available_by(evidence: dict[str, Any], end_date: str) -> bool:
     value = evidence.get("execution_date") or evidence.get("date")
     if not isinstance(value, str):
@@ -177,6 +220,11 @@ def _evidence_available_by(evidence: dict[str, Any], end_date: str) -> bool:
         )
     except ValueError:
         return False
+
+
+def _evidence_date_is(evidence: dict[str, Any], expected_date: str) -> bool:
+    value = evidence.get("execution_date") or evidence.get("date")
+    return isinstance(value, str) and value[:10] == expected_date
 
 
 def _is_finite_number(value: object) -> bool:

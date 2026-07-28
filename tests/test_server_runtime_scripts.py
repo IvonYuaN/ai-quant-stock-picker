@@ -1020,7 +1020,10 @@ def test_news_catalysts_script_sends_research_notification() -> None:
     assert 'MAX_LLM_REVIEW_EVENTS="${AQSP_NEWS_MAX_LLM_REVIEW_EVENTS:-1}"' in script
     assert 'SOURCE_TIMEOUT_SECONDS="${AQSP_NEWS_SOURCE_TIMEOUT_SECONDS:-8}"' in script
     assert 'TASK_TIMEOUT_SECONDS="${AQSP_NEWS_TASK_TIMEOUT_SECONDS:-120}"' in script
-    assert 'LOCK_DIR="${AQSP_NEWS_LOCK_DIR:-${LOCK_BASE_DIR}/news-catalysts.lock}"' in script
+    assert (
+        'LOCK_DIR="${AQSP_NEWS_LOCK_DIR:-${LOCK_BASE_DIR}/news-catalysts.lock}"'
+        in script
+    )
     assert "消息面任务已在运行，本次正常跳过" in script
     assert "--kill-after=5s" in script
     assert 'timeout --signal=TERM --kill-after=5s "${TASK_TIMEOUT_SECONDS}s"' in script
@@ -1183,6 +1186,7 @@ def test_news_catalysts_skips_when_another_run_owns_the_lock(tmp_path: Path) -> 
             "AQSP_PROJECT_ROOT": str(PROJECT_ROOT),
             "AQSP_NEWS_LOCK_DIR": str(lock_dir),
             "AQSP_NEWS_LOG_DIR": str(tmp_path / "logs"),
+            "AQSP_PYTHON": shutil.which("python3") or "python3",
         },
         capture_output=True,
         text=True,

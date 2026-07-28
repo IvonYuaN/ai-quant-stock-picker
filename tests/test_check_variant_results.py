@@ -28,7 +28,14 @@ def _variant(index: int, end_date: str = "2026-07-24") -> dict[str, object]:
         "holdings_signature": f"{symbol}:100",
         "holdings_date": end_date,
         "previous_holdings_date": previous,
-        "holdings": [{"symbol": symbol, "quantity": 100, "entry_evidence": evidence}],
+        "holdings": [
+            {
+                "symbol": symbol,
+                "name": f"样本{index}",
+                "quantity": 100,
+                "entry_evidence": evidence,
+            }
+        ],
         "previous_holdings": [],
         "recent_actions": [
             {
@@ -140,7 +147,7 @@ def test_check_variant_results_rejects_missing_technical_evidence(tmp_path) -> N
     variants = [_variant(index) for index in range(100)]
     variants[0]["technical_evidence"] = []
     variants[0]["recent_actions"] = []
-    variants[0]["holdings"] = [{"symbol": "000000", "quantity": 100}]
+    variants[0]["holdings"] = [{"symbol": "000000", "name": "样本", "quantity": 100}]
     path.write_text(
         json.dumps(
             {
@@ -156,6 +163,53 @@ def test_check_variant_results_rejects_missing_technical_evidence(tmp_path) -> N
     )
 
     with pytest.raises(ValueError, match="technical evidence missing"):
+        validate_variant_results(path, expected_end="2026-07-24")
+
+
+def test_check_variant_results_rejects_current_holding_without_same_day_evidence(
+    tmp_path,
+) -> None:
+    path = tmp_path / "variant_results.json"
+    variants = [_variant(index) for index in range(100)]
+    variants[0]["technical_evidence"][0]["execution_date"] = "2026-07-23"
+    variants[0]["technical_evidence"][0]["date"] = "2026-07-23"
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": "variant-suite-v2",
+                "end_date": "2026-07-24",
+                "initial_cash": 100000.0,
+                "universe": {"selected_symbols": 600, "supported_symbols": 4920},
+                "variants": variants,
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="current holding technical evidence missing"):
+        validate_variant_results(path, expected_end="2026-07-24")
+
+
+def test_check_variant_results_rejects_holding_without_name(tmp_path) -> None:
+    path = tmp_path / "variant_results.json"
+    variants = [_variant(index) for index in range(100)]
+    variants[0]["holdings"][0].pop("name")
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": "variant-suite-v2",
+                "end_date": "2026-07-24",
+                "initial_cash": 100000.0,
+                "universe": {"selected_symbols": 600, "supported_symbols": 4920},
+                "variants": variants,
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="holding name missing"):
         validate_variant_results(path, expected_end="2026-07-24")
 
 

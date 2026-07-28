@@ -118,6 +118,8 @@ def test_run_suite_creates_many_explained_nonduplicate_accounts(tmp_path):
     assert {item["symbol"] for item in evidence} == {
         item["symbol"] for item in held_variant["holdings"]
     }
+    assert all(item.get("name") for item in held_variant["holdings"])
+    assert all(item.get("name") for item in evidence)
     assert {item["date"] for item in evidence} == {result["end_date"]}
     assert {item["evidence_kind"] for item in evidence} == {"current_holding_snapshot"}
     for item in evidence:
