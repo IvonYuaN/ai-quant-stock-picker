@@ -1472,8 +1472,13 @@ def test_server_monitor_script_has_lock_guard() -> None:
 
     assert "server-monitor.lock" in script
     assert 'LOCK_INFO_FILE="${LOCK_FILE}/meta.env"' in script
-    assert 'MONITOR_TIMEOUT_SECONDS="${AQSP_MONITOR_TIMEOUT_SECONDS:-0}"' in script
-    assert 'timeout --foreground "${MONITOR_TIMEOUT_SECONDS}" "${PYTHON_BIN}"' in script
+    assert 'MONITOR_TIMEOUT_SECONDS="${AQSP_MONITOR_TIMEOUT_SECONDS:-120}"' in script
+    assert "MONITOR_TIMEOUT_MAX_SECONDS=180" in script
+    assert "normalize_monitor_timeout" in script
+    assert (
+        'timeout --foreground --signal=TERM --kill-after=10s "${MONITOR_TIMEOUT_SECONDS}s" "${PYTHON_BIN}"'
+        in script
+    )
     assert "lock_is_stale" in script
     assert "检测到陈旧监控锁，自动回收" in script
     assert "监控执行超时，被保护性终止" in script
