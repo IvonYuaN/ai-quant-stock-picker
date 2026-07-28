@@ -597,6 +597,7 @@ refresh_intraday_news_catalysts() {
     NEWS_CATALYST_STATUS="skipped"
     NEWS_CATALYST_EXIT_CODE="0"
     NEWS_CATALYST_WARNING=""
+    local news_lock_conflict_exit_code="75"
 
     if ! is_truthy "${AQSP_INTRADAY_NEWS_REFRESH:-true}"; then
         log "盘中消息面刷新已关闭"
@@ -629,6 +630,7 @@ refresh_intraday_news_catalysts() {
         AQSP_NEWS_MAX_LLM_REVIEW_EVENTS="0" \
         AQSP_NEWS_NOTIFY="false" \
         AQSP_ALLOW_NON_TRADING_NEWS_NOTIFY="false" \
+        AQSP_NEWS_LOCK_CONFLICT_EXIT_CODE="$news_lock_conflict_exit_code" \
         AQSP_NOTIFY="false" \
         AQSP_GATE_NOTIFY="false" \
         timeout --signal=TERM --kill-after=3s \
@@ -643,7 +645,10 @@ refresh_intraday_news_catalysts() {
     if [ "$news_tee_exit_code" -ne 0 ]; then
         log "[WARN] 盘中消息面结果日志管道退出码: ${news_tee_exit_code}"
     fi
-    if [ "$news_exit_code" -eq 0 ]; then
+    if [ "$news_exit_code" -eq "$news_lock_conflict_exit_code" ]; then
+        NEWS_CATALYST_STATUS="skipped_locked"
+        log "消息面任务仍在运行，盘中侧车正常跳过"
+    elif [ "$news_exit_code" -eq 0 ]; then
         if "$PYTHON_BIN" - "$INTRADAY_NEWS_JSON_OUTPUT" <<'AQSP_NEWS_ARTIFACT_CHECK'
 import sys
 from pathlib import Path

@@ -120,12 +120,76 @@ MAX_NEWS_AGE_DAYS="${AQSP_NEWS_MAX_NEWS_AGE_DAYS:-7}"
 SOURCE_TIMEOUT_SECONDS="${AQSP_NEWS_SOURCE_TIMEOUT_SECONDS:-8}"
 LLM_TIMEOUT_SECONDS="${AQSP_NEWS_LLM_TIMEOUT_SECONDS:-8}"
 MAX_LLM_REVIEW_EVENTS="${AQSP_NEWS_MAX_LLM_REVIEW_EVENTS:-1}"
-TASK_TIMEOUT_SECONDS="${AQSP_NEWS_TASK_TIMEOUT_SECONDS:-300}"
+TASK_TIMEOUT_SECONDS="${AQSP_NEWS_TASK_TIMEOUT_SECONDS:-120}"
 OUTPUT="${AQSP_NEWS_OUTPUT:-reports/news_catalysts.md}"
 JSON_OUTPUT="${AQSP_NEWS_JSON_OUTPUT:-data/runtime/news_catalysts_latest.json}"
 ARCHIVE_DIR="${AQSP_NEWS_ARCHIVE_DIR:-data/runtime/news_archive}"
 ENABLE_LLM_REVIEW="${AQSP_NEWS_ENABLE_LLM_REVIEW:-false}"
 ALLOW_NON_TRADING_NOTIFY="${AQSP_ALLOW_NON_TRADING_NEWS_NOTIFY:-false}"
+LOCK_BASE_DIR="${AQSP_RUNTIME_LOCK_DIR:-${RUNTIME_DATA_ROOT}/.locks}"
+LOCK_DIR="${AQSP_NEWS_LOCK_DIR:-${LOCK_BASE_DIR}/news-catalysts.lock}"
+LOCK_INFO_FILE="${LOCK_DIR}/meta.env"
+LOCK_STALE_MINUTES="${AQSP_NEWS_LOCK_STALE_MINUTES:-10}"
+LOCK_CONFLICT_EXIT_CODE="${AQSP_NEWS_LOCK_CONFLICT_EXIT_CODE:-0}"
+
+if ! [[ "$TASK_TIMEOUT_SECONDS" =~ ^[0-9]+$ ]] || [ "$TASK_TIMEOUT_SECONDS" -le 0 ]; then
+    log "消息面超时配置无效(${TASK_TIMEOUT_SECONDS})，使用 120 秒"
+    TASK_TIMEOUT_SECONDS="120"
+elif [ "$TASK_TIMEOUT_SECONDS" -gt 180 ]; then
+    log "消息面时限 ${TASK_TIMEOUT_SECONDS} 秒过长，收紧为 180 秒"
+    TASK_TIMEOUT_SECONDS="180"
+fi
+if ! [[ "$LOCK_CONFLICT_EXIT_CODE" =~ ^[0-9]+$ ]] || [ "$LOCK_CONFLICT_EXIT_CODE" -gt 125 ]; then
+    log "消息面锁冲突退出码无效(${LOCK_CONFLICT_EXIT_CODE})，使用 0"
+    LOCK_CONFLICT_EXIT_CODE="0"
+fi
+
+lock_age_minutes() {
+    local path="$1"
+    local now_epoch mtime
+    now_epoch="$(date +%s)"
+    mtime="$(stat -c %Y "$path" 2>/dev/null || stat -f %m "$path")"
+    echo $(( (now_epoch - mtime) / 60 ))
+}
+
+load_lock_info() {
+    if [ -f "$LOCK_INFO_FILE" ]; then
+        # shellcheck disable=SC1090
+        . "$LOCK_INFO_FILE"
+    fi
+}
+
+lock_is_stale() {
+    if [ ! -d "$LOCK_DIR" ]; then
+        return 1
+    fi
+    local age_minutes pid=""
+    age_minutes="$(lock_age_minutes "$LOCK_DIR")"
+    load_lock_info
+    pid="${LOCK_PID:-}"
+    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+        return 1
+    fi
+    [ "$age_minutes" -ge "$LOCK_STALE_MINUTES" ]
+}
+
+mkdir -p "$LOG_DIR" "$(dirname "$LOCK_DIR")"
+if [ -d "$LOCK_DIR" ] && lock_is_stale; then
+    stale_age="$(lock_age_minutes "$LOCK_DIR")"
+    load_lock_info
+    log "检测到陈旧消息锁，自动回收 pid=${LOCK_PID:-unknown} age=${stale_age}min"
+    rm -rf -- "$LOCK_DIR"
+fi
+if ! mkdir "$LOCK_DIR" 2>/dev/null; then
+    load_lock_info
+    log "消息面任务已在运行，本次正常跳过；这是互斥保护，不是失败 pid=${LOCK_PID:-unknown}"
+    exit "$LOCK_CONFLICT_EXIT_CODE"
+fi
+{
+    printf 'LOCK_PID=%q\n' "$$"
+    printf 'LOCK_STARTED_AT=%q\n' "$(date '+%Y-%m-%d %H:%M:%S')"
+} >"$LOCK_INFO_FILE"
+trap 'rm -f "$LOCK_INFO_FILE"; rmdir "$LOCK_DIR" 2>/dev/null || true' EXIT
 
 has_usable_current_news() {
     # A transient source failure must not erase a valid same-day report that
@@ -247,7 +311,7 @@ fi
 
 set +e
 if command -v timeout >/dev/null 2>&1; then
-    timeout "${TASK_TIMEOUT_SECONDS}" "${NEWS_CMD[@]}" 2>&1 | tee -a "$RESULT_LOG"
+    timeout --signal=TERM --kill-after=5s "${TASK_TIMEOUT_SECONDS}s" "${NEWS_CMD[@]}" 2>&1 | tee -a "$RESULT_LOG"
     NEWS_EXIT=${PIPESTATUS[0]}
 else
     "${NEWS_CMD[@]}" 2>&1 | tee -a "$RESULT_LOG"

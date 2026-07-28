@@ -1014,12 +1014,16 @@ def test_news_catalysts_script_sends_research_notification() -> None:
     assert "AQSP_NEWS_LLM_TIMEOUT_SECONDS" in script
     assert "AQSP_NEWS_MAX_LLM_REVIEW_EVENTS" in script
     assert "AQSP_NEWS_TASK_TIMEOUT_SECONDS" in script
+    assert "AQSP_NEWS_LOCK_CONFLICT_EXIT_CODE" in script
     assert "AQSP_NEWS_JSON_OUTPUT" in script
     assert '--json-output "$JSON_OUTPUT"' in script
     assert 'MAX_LLM_REVIEW_EVENTS="${AQSP_NEWS_MAX_LLM_REVIEW_EVENTS:-1}"' in script
     assert 'SOURCE_TIMEOUT_SECONDS="${AQSP_NEWS_SOURCE_TIMEOUT_SECONDS:-8}"' in script
-    assert 'TASK_TIMEOUT_SECONDS="${AQSP_NEWS_TASK_TIMEOUT_SECONDS:-300}"' in script
-    assert 'timeout "${TASK_TIMEOUT_SECONDS}"' in script
+    assert 'TASK_TIMEOUT_SECONDS="${AQSP_NEWS_TASK_TIMEOUT_SECONDS:-120}"' in script
+    assert 'LOCK_DIR="${AQSP_NEWS_LOCK_DIR:-${LOCK_BASE_DIR}/news-catalysts.lock}"' in script
+    assert "消息面任务已在运行，本次正常跳过" in script
+    assert "--kill-after=5s" in script
+    assert 'timeout --signal=TERM --kill-after=5s "${TASK_TIMEOUT_SECONDS}s"' in script
     assert "消息面雷达超时:" in script
     assert "write_failed_report()" in script
     assert 'write_failed_report "消息面雷达命令失败: exit=${NEWS_EXIT}"' in script
@@ -1164,6 +1168,30 @@ def test_news_catalysts_failure_replaces_old_report_and_json(tmp_path: Path) -> 
     assert payload["source_status"] == "failed"
     assert payload["event_status"] == "source_failed"
     assert "exit=23" in payload["warnings"][0]
+
+
+def test_news_catalysts_skips_when_another_run_owns_the_lock(tmp_path: Path) -> None:
+    lock_dir = tmp_path / "news-catalysts.lock"
+    lock_dir.mkdir()
+    (lock_dir / "meta.env").write_text(f"LOCK_PID={os.getpid()}\n", encoding="utf-8")
+
+    result = subprocess.run(
+        ["bash", str(PROJECT_ROOT / "scripts" / "news_catalysts.sh")],
+        cwd=PROJECT_ROOT,
+        env={
+            **os.environ,
+            "AQSP_PROJECT_ROOT": str(PROJECT_ROOT),
+            "AQSP_NEWS_LOCK_DIR": str(lock_dir),
+            "AQSP_NEWS_LOG_DIR": str(tmp_path / "logs"),
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=10,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "消息面任务已在运行，本次正常跳过" in result.stdout
 
 
 def test_server_status_surfaces_bt_task_logs() -> None:

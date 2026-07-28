@@ -83,9 +83,12 @@ def test_intraday_runtime_contract_uses_configured_benchmark_and_quality_gate() 
     assert "消息脚本返回成功但当前消息产物无效或已过期" in script
     assert 'AQSP_NEWS_ENABLE_LLM_REVIEW="false"' in script
     assert 'AQSP_NEWS_NOTIFY="false"' in script
+    assert 'AQSP_NEWS_LOCK_CONFLICT_EXIT_CODE="$news_lock_conflict_exit_code"' in script
     assert 'if [ ! -f "$INTRADAY_NEWS_SCRIPT" ]; then' in script
     assert 'bash "$INTRADAY_NEWS_SCRIPT"' in script
     assert 'NEWS_CATALYST_STATUS="warning"' in script
+    assert 'NEWS_CATALYST_STATUS="skipped_locked"' in script
+    assert "盘中侧车正常跳过" in script
     assert "继续首页快照" in script
     assert script.index("refresh_intraday_news_catalysts\n") > script.index(
         'replace_intraday_artifact "$TMP_INTRADAY_OUTPUT_CSV" "$INTRADAY_OUTPUT_CSV"'
