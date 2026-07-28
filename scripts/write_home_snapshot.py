@@ -28,6 +28,7 @@ from aqsp.core.time import (
     today_shanghai,
     to_shanghai,
 )
+from aqsp.core.errors import DataError
 from aqsp.market_context import MarketContextArtifact, build_market_context_artifact
 from aqsp.news.catalysts import (
     CatalystEvent,
@@ -1986,8 +1987,9 @@ def build_home_snapshot_index(
     signal_date: str = "",
     task_id: str = "",
     initial_snapshot: HomeDashboardSnapshot | None = None,
+    existing_index: HomeSnapshotIndex | None = None,
 ) -> HomeSnapshotIndex:
-    """Build at most four exact-date snapshots without substituting history."""
+    """Build at most four exact-date snapshots without making history block today."""
     first = initial_snapshot or build_home_snapshot(
         provider,
         signal_date=signal_date,
@@ -1995,20 +1997,30 @@ def build_home_snapshot_index(
     )
     selected_task_id = _snapshot_task_id(task_id) or provider.default_task_id()
     day_snapshots = [HomeSnapshotDay(date=first.selected_date, snapshot=first)]
+    existing_by_date = {
+        day.date: day
+        for day in (existing_index.days if existing_index is not None else ())
+    }
     for available_date in first.available_dates:
         if available_date == first.selected_date:
             continue
         if len(day_snapshots) >= MAX_HOME_SNAPSHOT_INDEX_DAYS:
             break
-        snapshot = build_home_snapshot(
-            provider,
-            signal_date=available_date,
-            task_id=selected_task_id,
-        )
-        if snapshot.selected_date != available_date:
-            raise ValueError(
-                "provider returned a different date while building the snapshot index"
+        existing = existing_by_date.get(available_date)
+        if existing is not None:
+            day_snapshots.append(existing)
+            continue
+        try:
+            snapshot = build_home_snapshot(
+                provider,
+                signal_date=available_date,
+                task_id=selected_task_id,
             )
+        except (DataError, OSError, ValueError):
+            # A missing historical artifact must never suppress today's snapshot.
+            continue
+        if snapshot.selected_date != available_date:
+            continue
         day_snapshots.append(HomeSnapshotDay(date=available_date, snapshot=snapshot))
 
     generated_at = to_shanghai(now_shanghai()).isoformat(timespec="seconds")
@@ -2116,6 +2128,7 @@ def main(argv: list[str] | None = None) -> int:
         signal_date=args.date.strip(),
         task_id=args.task_id.strip(),
         initial_snapshot=snapshot,
+        existing_index=existing_index,
     )
     index = merge_home_snapshot_index(existing_index, index)
     current_snapshot = next(

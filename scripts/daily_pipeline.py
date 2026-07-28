@@ -1083,11 +1083,12 @@ def _refresh_home_snapshot(
             ),
         )
         snapshot = build_home_snapshot(provider)
+        existing_index = load_home_snapshot_index(index_path)
         refreshed_index = build_home_snapshot_index(
             provider,
             initial_snapshot=snapshot,
+            existing_index=existing_index,
         )
-        existing_index = load_home_snapshot_index(index_path)
         index = merge_home_snapshot_index(existing_index, refreshed_index)
         write_home_dashboard_snapshot(snapshot_path, snapshot)
         write_home_snapshot_index(index_path, index)

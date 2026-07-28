@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from datetime import date, datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -8,6 +9,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
+from aqsp.core.errors import DataError
 from aqsp.news.catalysts import CatalystEvent, CatalystReport, serialize_catalyst_report
 from aqsp.web.home_snapshot import (
     load_home_dashboard_snapshot,
@@ -1514,6 +1516,60 @@ def test_merge_home_snapshot_index_preserves_unrequested_history() -> None:
     original = existing.snapshot_for_date("2026-07-10")
     assert historical.candidates == original.candidates
     assert historical.available_dates == merged.available_dates
+
+
+def test_home_snapshot_index_keeps_existing_history_without_rebuilding_it(
+    monkeypatch,
+) -> None:
+    provider = _DateAwareProvider()
+    existing = write_home_snapshot.build_home_snapshot_index(
+        provider, signal_date="2026-07-10", task_id="intraday"
+    )
+    current = write_home_snapshot.build_home_snapshot(
+        provider, signal_date="2026-07-11", task_id="intraday"
+    )
+    current = replace(current, available_dates=("2026-07-11", "2026-07-10"))
+
+    def fail_historical(*_args, **_kwargs):
+        raise AssertionError("existing history must not be rebuilt")
+
+    monkeypatch.setattr(write_home_snapshot, "build_home_snapshot", fail_historical)
+
+    index = write_home_snapshot.build_home_snapshot_index(
+        provider,
+        task_id="intraday",
+        initial_snapshot=current,
+        existing_index=existing,
+    )
+
+    assert index.available_dates == ("2026-07-11", "2026-07-10")
+    assert index.snapshot_for_date("2026-07-10") == existing.snapshot_for_date(
+        "2026-07-10"
+    )
+
+
+def test_home_snapshot_index_keeps_current_snapshot_when_new_history_is_missing(
+    monkeypatch,
+) -> None:
+    provider = _DateAwareProvider()
+    current = write_home_snapshot.build_home_snapshot(
+        provider, signal_date="2026-07-11", task_id="intraday"
+    )
+    current = replace(current, available_dates=("2026-07-11", "2026-07-10"))
+
+    def missing_history(*_args, **_kwargs):
+        raise DataError("historical artifact missing")
+
+    monkeypatch.setattr(write_home_snapshot, "build_home_snapshot", missing_history)
+
+    index = write_home_snapshot.build_home_snapshot_index(
+        provider,
+        task_id="intraday",
+        initial_snapshot=current,
+    )
+
+    assert index.available_dates == ("2026-07-11",)
+    assert index.snapshot_for_date("2026-07-11") == current
 
 
 def test_write_home_snapshot_cli_honors_output_date_and_task_id(

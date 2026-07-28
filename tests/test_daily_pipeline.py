@@ -1952,7 +1952,7 @@ def test_refresh_home_snapshot_merges_existing_index(
     write_home_snapshot = type(sys)("write_home_snapshot")
     write_home_snapshot.build_home_snapshot = lambda _provider: snapshot
     write_home_snapshot.build_home_snapshot_index = (
-        lambda _provider, *, initial_snapshot: refreshed_index
+        lambda _provider, *, initial_snapshot, existing_index: refreshed_index
     )
 
     def fake_merge(existing, refreshed):
