@@ -1362,6 +1362,41 @@ def test_write_home_snapshot_uses_latest_completed_day_during_market_hours(
     assert provider.runtime_dates == ["2026-07-09"]
 
 
+def test_snapshot_source_uses_intraday_provenance_for_completed_day(
+    monkeypatch, tmp_path
+) -> None:
+    status_path = tmp_path / "intraday_refresh_status.json"
+    status_path.write_text(
+        json.dumps(
+            {
+                "provenance": {
+                    "requested_source": "online_first",
+                    "actual_source": "tencent",
+                    "latest_trade_date": "2026-07-10",
+                    "lag_days": 0,
+                    "status": "verified",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AQSP_INTRADAY_STATUS", str(status_path))
+    monkeypatch.setattr(
+        write_home_snapshot,
+        "latest_completed_trading_day",
+        lambda: date(2026, 7, 9),
+    )
+
+    source = write_home_snapshot._snapshot_source(
+        SimpleNamespace(), SimpleNamespace(source_status={}), selected_date="2026-07-09"
+    )
+
+    assert source.effective == "tencent"
+    assert source.latest_trade_date == "2026-07-09"
+    assert source.lag_days == 0
+    assert source.status == "verified"
+
+
 def test_write_home_snapshot_builds_optional_four_day_index(monkeypatch) -> None:
     provider = _DateAwareProvider()
     monkeypatch.setattr(

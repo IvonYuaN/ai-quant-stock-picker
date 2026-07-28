@@ -1317,29 +1317,56 @@ def _lag_days(value: object) -> int:
         return 0
 
 
-def _snapshot_source(runtime: Any, task_view: Any) -> HomeSnapshotSource:
+def _intraday_source_provenance() -> dict[str, object]:
+    """Read the latest bounded intraday provenance without fetching data."""
+    state = _read_json_object(
+        _runtime_json_path("AQSP_INTRADAY_STATUS", "data/intraday_refresh_status.json")
+    )
+    for field in ("provenance", "source_provenance"):
+        value = state.get(field)
+        if isinstance(value, dict):
+            return value
+    return {}
+
+
+def _snapshot_source(
+    runtime: Any, task_view: Any, *, selected_date: str
+) -> HomeSnapshotSource:
     source_status = getattr(task_view, "source_status", {}) or {}
     if not isinstance(source_status, dict):
         source_status = {}
+    provenance = _intraday_source_provenance()
+    latest_trade_date = _first_text(
+        getattr(runtime, "data_latest_trade_date", ""),
+        source_status.get("data_latest_trade_date"),
+        provenance.get("latest_trade_date"),
+        "未记录",
+    )
+    completed_date = latest_completed_trading_day().isoformat()
+    if selected_date == completed_date and latest_trade_date > completed_date:
+        latest_trade_date = completed_date
     return HomeSnapshotSource(
         effective=_first_text(
             getattr(runtime, "effective_source", ""),
             getattr(runtime, "requested_source", ""),
             source_status.get("effective_source"),
             source_status.get("actual_source"),
+            provenance.get("actual_source"),
+            provenance.get("requested_source"),
             "未记录",
         ),
-        latest_trade_date=_first_text(
-            getattr(runtime, "data_latest_trade_date", ""),
-            source_status.get("data_latest_trade_date"),
-            "未记录",
-        ),
+        latest_trade_date=latest_trade_date,
         lag_days=_lag_days(
-            _first_text(getattr(runtime, "lag_days", ""), source_status.get("lag_days"))
+            _first_text(
+                getattr(runtime, "lag_days", ""),
+                source_status.get("lag_days"),
+                provenance.get("lag_days"),
+            )
         ),
         status=_first_text(
             getattr(runtime, "run_status", ""),
             source_status.get("status"),
+            provenance.get("status"),
             getattr(runtime, "source_reason", ""),
             "未记录",
         ),
@@ -1793,7 +1820,7 @@ def build_home_snapshot(
     runtime = provider.runtime_overview(selected_date)
     overview = payload.overview
     generated_at = to_shanghai(now_shanghai()).isoformat(timespec="seconds")
-    source = _snapshot_source(runtime, task_view)
+    source = _snapshot_source(runtime, task_view, selected_date=selected_date)
     candidates = _snapshot_candidates(payload)
     recommendation_count = _snapshot_recommendation_count(payload)
     runtime_debates = _runtime_debates_for_snapshot(
