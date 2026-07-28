@@ -1676,6 +1676,8 @@ def test_variant_refresh_runs_after_close_with_bounded_resources() -> None:
     assert "当前未到北京时间 21:00，跳过变体刷新" in script
     assert 'MAX_SYMBOLS="${AQSP_VARIANT_MAX_SYMBOLS:-160}"' in script
     assert 'MAX_RUNTIME_SECONDS="${AQSP_VARIANT_MAX_RUNTIME_SECONDS:-300}"' in script
+    assert 'NICE_LEVEL="${AQSP_VARIANT_NICE_LEVEL:-15}"' in script
+    assert 'nice -n "$NICE_LEVEL"' in script
     assert "AQSP_VARIANT_ALLOW_HEAVY" in script
     assert "variant-results-refresh.lock" in script
     assert "refresh_variant_results_from_market_db.py" in script

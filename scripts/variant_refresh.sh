@@ -65,6 +65,7 @@ LOCK_PATH="$(resolve_path "${AQSP_VARIANT_REFRESH_LOCK:-data/.locks/variant-resu
 CURSOR_PATH="$(resolve_path "${AQSP_VARIANT_CURSOR_PATH:-data/runtime/variant_results_cursor.json}")"
 MAX_SYMBOLS="${AQSP_VARIANT_MAX_SYMBOLS:-160}"
 MAX_RUNTIME_SECONDS="${AQSP_VARIANT_MAX_RUNTIME_SECONDS:-300}"
+NICE_LEVEL="${AQSP_VARIANT_NICE_LEVEL:-15}"
 
 if ! [[ "$MAX_SYMBOLS" =~ ^[0-9]+$ ]] || [ "$MAX_SYMBOLS" -lt 121 ]; then
     log "变体股票批次无效(${MAX_SYMBOLS})，使用 160"
@@ -79,15 +80,19 @@ elif [ "$MAX_RUNTIME_SECONDS" -gt 360 ] && ! is_truthy "${AQSP_VARIANT_ALLOW_HEA
     log "变体运行时限 ${MAX_RUNTIME_SECONDS} 秒过长，收紧为 360 秒"
     MAX_RUNTIME_SECONDS="360"
 fi
+if ! [[ "$NICE_LEVEL" =~ ^[0-9]+$ ]] || [ "$NICE_LEVEL" -lt 10 ] || [ "$NICE_LEVEL" -gt 19 ]; then
+    log "变体 CPU 优先级无效(${NICE_LEVEL})，使用低优先级 15"
+    NICE_LEVEL="15"
+fi
 if [ ! -f "$MARKET_DB" ]; then
     log "[ERROR] 变体市场库不存在: ${MARKET_DB}"
     exit 1
 fi
 
 mkdir -p "$(dirname "$OUTPUT_PATH")" "$(dirname "$LOCK_PATH")" "$(dirname "$CURSOR_PATH")"
-log "开始变体刷新：max_symbols=${MAX_SYMBOLS} timeout=${MAX_RUNTIME_SECONDS}s"
+log "开始变体刷新：max_symbols=${MAX_SYMBOLS} timeout=${MAX_RUNTIME_SECONDS}s nice=${NICE_LEVEL}"
 if timeout --foreground --signal=TERM --kill-after=15s "${MAX_RUNTIME_SECONDS}s" \
-    "$PYTHON_BIN" "$PROJECT_ROOT/scripts/refresh_variant_results_from_market_db.py" \
+    nice -n "$NICE_LEVEL" "$PYTHON_BIN" "$PROJECT_ROOT/scripts/refresh_variant_results_from_market_db.py" \
     --market-db "$MARKET_DB" \
     --output "$OUTPUT_PATH" \
     --max-symbols "$MAX_SYMBOLS" \
