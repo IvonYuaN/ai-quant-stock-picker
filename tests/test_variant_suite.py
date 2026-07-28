@@ -113,6 +113,18 @@ def test_run_suite_creates_many_explained_nonduplicate_accounts(tmp_path):
     assert result["execution_rules"]["raw_unadjusted_prices"] is True
     assert result["optimization"]["evaluation_only"] is True
     assert result["optimization"]["selected_variant_id"]
+    held_variant = next(item for item in variants if item["holdings"])
+    evidence = held_variant["technical_evidence"]
+    assert {item["symbol"] for item in evidence} == {
+        item["symbol"] for item in held_variant["holdings"]
+    }
+    assert {item["date"] for item in evidence} == {result["end_date"]}
+    assert {item["evidence_kind"] for item in evidence} == {"current_holding_snapshot"}
+    for item in evidence:
+        assert all(
+            isinstance(item[key], float)
+            for key in ("macd_hist", "kdj_j", "volume_ratio", "atr_pct")
+        )
 
 
 def test_write_home_snapshot_recovers_variant_actions_from_legacy_fills():

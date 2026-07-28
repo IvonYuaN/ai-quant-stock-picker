@@ -847,7 +847,13 @@ def run_suite(
             payload["previous_holdings_date"] = previous_date or ""
             payload["previous_holdings"] = previous_holdings
             payload["recent_actions"] = _recent_actions(result, symbol_names)
-            payload["technical_evidence"] = _technical_evidence(result, symbol_names)
+            payload["technical_evidence"] = _current_holding_technical_evidence(
+                payload["holdings"],
+                indicator_cache[lookback],
+                profile,
+                end,
+                symbol_names,
+            ) or _technical_evidence(result, symbol_names)
             payload["adjustments"] = _adjustments(
                 payload["holdings"], previous_holdings, result, symbol_names
             )
@@ -1084,6 +1090,52 @@ def _technical_evidence(
         item["reason"] = fill.reason
         rows.append(item)
     return rows[-RECENT_ACTION_LIMIT:]
+
+
+def _current_holding_technical_evidence(
+    holdings: list[dict[str, Any]],
+    indicator_frames: dict[str, pd.DataFrame],
+    profile: VariantProfile,
+    end_date: str,
+    names: dict[str, str],
+) -> list[dict[str, object]]:
+    """Return current-day indicators for every holding, never future bars."""
+    rows: list[dict[str, object]] = []
+    for holding in holdings:
+        symbol = str(holding.get("symbol") or "")
+        frame = indicator_frames.get(symbol)
+        if not symbol or frame is None:
+            continue
+        snapshot = frame.loc[frame["date"] == end_date]
+        if snapshot.empty:
+            continue
+        row = snapshot.iloc[-1]
+        evidence = _technical_evidence_values(
+            profile=profile,
+            symbol=symbol,
+            signal_date=end_date,
+            execution_date=end_date,
+            side="hold",
+            ret=_optional_metric(row.get("ret")),
+            bias=_optional_metric(row.get("bias")),
+            macd_hist=_optional_metric(row.get("macd_hist")),
+            kdj_j=_optional_metric(row.get("kdj_j")),
+            volume_ratio=_optional_metric(row.get("volume_ratio")),
+            atr_pct=_optional_metric(row.get("atr_pct")),
+            score=None,
+        )
+        evidence.update(
+            {
+                "date": end_date,
+                "name": names.get(symbol, symbol),
+                "quantity": int(holding.get("quantity") or 0),
+                "price": _optional_metric(row.get("close")),
+                "reason": "当前持仓技术面截面，不等同于新的入场信号。",
+                "evidence_kind": "current_holding_snapshot",
+            }
+        )
+        rows.append(evidence)
+    return rows
 
 
 def _orders_signature(orders: tuple[VariantOrder, ...]) -> str:

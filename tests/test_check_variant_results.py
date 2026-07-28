@@ -157,3 +157,29 @@ def test_check_variant_results_rejects_empty_technical_metric_values(tmp_path) -
 
     with pytest.raises(ValueError, match="technical evidence missing"):
         validate_variant_results(path, expected_end="2026-07-24")
+
+
+def test_check_variant_results_rejects_future_technical_evidence(tmp_path) -> None:
+    path = tmp_path / "variant_results.json"
+    variants = [_variant(index) for index in range(100)]
+    evidence = variants[0]["technical_evidence"][0]
+    evidence["date"] = "2026-07-25"
+    evidence["execution_date"] = "2026-07-25"
+    variants[0]["recent_actions"][0]["evidence"] = evidence
+    variants[0]["holdings"][0]["entry_evidence"] = evidence
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": "variant-suite-v2",
+                "end_date": "2026-07-24",
+                "initial_cash": 100000.0,
+                "universe": {"selected_symbols": 600, "supported_symbols": 4920},
+                "variants": variants,
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="technical evidence missing"):
+        validate_variant_results(path, expected_end="2026-07-24")

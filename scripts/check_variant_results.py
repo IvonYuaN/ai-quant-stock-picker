@@ -8,6 +8,7 @@ import json
 import math
 from collections import Counter
 from dataclasses import asdict, dataclass
+from datetime import date as CalendarDate
 from pathlib import Path
 from typing import Any
 
@@ -57,6 +58,10 @@ def validate_variant_payload(
     if schema_version != "variant-suite-v2":
         raise ValueError(f"schema_version must be variant-suite-v2: {schema_version}")
     end_date = _text(payload.get("end_date"), "end_date")
+    try:
+        CalendarDate.fromisoformat(end_date)
+    except ValueError as exc:
+        raise ValueError(f"end_date invalid: {end_date}") from exc
     if expected_end and end_date != expected_end:
         raise ValueError(f"end_date mismatch: {end_date} != {expected_end}")
     if float(payload.get("initial_cash") or 0.0) != 100_000.0:
@@ -107,7 +112,7 @@ def validate_variant_payload(
             _list(item.get(key), f"variants[{index}].{key}")
         if not _list(item.get("adjustments"), f"variants[{index}].adjustments"):
             raise ValueError(f"{variant_id} adjustments missing")
-        if not _has_structured_technical_evidence(item):
+        if not _has_structured_technical_evidence(item, end_date=end_date):
             raise ValueError(f"{variant_id} technical evidence missing")
     if len(strategy_signatures) < min_variants:
         raise ValueError("unique strategy signatures below minimum")
@@ -130,7 +135,7 @@ def validate_variant_payload(
     )
 
 
-def _has_structured_technical_evidence(item: dict[str, Any]) -> bool:
+def _has_structured_technical_evidence(item: dict[str, Any], *, end_date: str) -> bool:
     evidence_sources: list[Any] = []
     evidence_sources.extend(
         _list(item.get("technical_evidence", []), "technical_evidence")
@@ -148,9 +153,23 @@ def _has_structured_technical_evidence(item: dict[str, Any]) -> bool:
     for evidence in evidence_sources:
         if not isinstance(evidence, dict):
             continue
-        if all(_is_finite_number(evidence.get(key)) for key in REQUIRED_TECHNICAL_KEYS):
+        if all(
+            _is_finite_number(evidence.get(key)) for key in REQUIRED_TECHNICAL_KEYS
+        ) and _evidence_available_by(evidence, end_date):
             return True
     return False
+
+
+def _evidence_available_by(evidence: dict[str, Any], end_date: str) -> bool:
+    value = evidence.get("execution_date") or evidence.get("date")
+    if not isinstance(value, str):
+        return False
+    try:
+        return CalendarDate.fromisoformat(value[:10]) <= CalendarDate.fromisoformat(
+            end_date
+        )
+    except ValueError:
+        return False
 
 
 def _is_finite_number(value: object) -> bool:
