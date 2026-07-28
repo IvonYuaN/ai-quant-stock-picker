@@ -1741,7 +1741,11 @@ def test_bt_optional_heavy_tasks_check_host_capacity_before_starting() -> None:
     assert "resource_gate.py" in script
     assert "AQSP_HEAVY_MIN_FREE_MEMORY_MB" in script
     assert "AQSP_HEAVY_MAX_LOAD_PER_CPU" in script
-    assert 'gate_optional_heavy_task' in script
+    assert "gate_optional_heavy_task" in script
+    assert 'HEAVY_SLOT_LOCK_FILE="${LOCK_DIR}/heavy-compute.lock"' in script
+    assert "acquire_optional_heavy_slot" in script
+    assert "printf 'HEAVY_SLOT_PID=%q\\n' \"$$\"" in script
+    assert "optional_heavy_slot_is_stale" in script
 
 
 def test_cron_installer_schedules_variant_refresh_after_coldstart() -> None:

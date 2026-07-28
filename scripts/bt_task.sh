@@ -45,6 +45,8 @@ BRANCH="${AQSP_GIT_BRANCH:-main}"
 REMOTE="${AQSP_GIT_REMOTE:-origin}"
 LOCK_DIR="${AQSP_RUNTIME_LOCK_DIR:-${RUNTIME_DATA_ROOT}/.locks}"
 STATE_DIR="${AQSP_RUNTIME_STATE_DIR:-${RUNTIME_DATA_ROOT}/.state}"
+HEAVY_SLOT_LOCK_FILE="${LOCK_DIR}/heavy-compute.lock"
+HEAVY_SLOT_LOCK_INFO_FILE="${HEAVY_SLOT_LOCK_FILE}/meta.env"
 GIT_SYNC_LOCK_FILE="${LOCK_DIR}/server-git-sync.lock"
 GIT_SYNC_LOCK_INFO_FILE="${GIT_SYNC_LOCK_FILE}/meta.env"
 GIT_SYNC_WAIT_SECONDS="${AQSP_GIT_SYNC_WAIT_SECONDS:-180}"
@@ -333,6 +335,46 @@ gate_optional_heavy_task() {
     fi
 }
 
+release_optional_heavy_slot() {
+    rm -f "$HEAVY_SLOT_LOCK_INFO_FILE"
+    rmdir "$HEAVY_SLOT_LOCK_FILE" 2>/dev/null || true
+}
+
+optional_heavy_slot_is_stale() {
+    if [ ! -f "$HEAVY_SLOT_LOCK_INFO_FILE" ]; then
+        return 1
+    fi
+    # shellcheck disable=SC1090
+    . "$HEAVY_SLOT_LOCK_INFO_FILE"
+    [ -n "${HEAVY_SLOT_PID:-}" ] && ! kill -0 "$HEAVY_SLOT_PID" 2>/dev/null
+}
+
+acquire_optional_heavy_slot() {
+    mkdir -p "$LOCK_DIR"
+    if [ -d "$HEAVY_SLOT_LOCK_FILE" ] && optional_heavy_slot_is_stale; then
+        # The previous owner has exited. A missing metadata file is deliberately
+        # retained so an in-progress atomic acquisition is never stolen.
+        rm -f "$HEAVY_SLOT_LOCK_INFO_FILE"
+        rmdir "$HEAVY_SLOT_LOCK_FILE" 2>/dev/null || true
+    fi
+    if ! mkdir "$HEAVY_SLOT_LOCK_FILE" 2>/dev/null; then
+        if [ -f "$HEAVY_SLOT_LOCK_INFO_FILE" ]; then
+            # shellcheck disable=SC1090
+            . "$HEAVY_SLOT_LOCK_INFO_FILE"
+            log "重任务槽位已被占用，本次 ${ACTION} 正常跳过；runner=${HEAVY_SLOT_RUNNER:-unknown} pid=${HEAVY_SLOT_PID:-unknown} started_at=${HEAVY_SLOT_STARTED_AT:-unknown}"
+        else
+            log "重任务槽位初始化中，本次 ${ACTION} 正常跳过；下一个错峰窗口重试"
+        fi
+        exit 0
+    fi
+    {
+        printf 'HEAVY_SLOT_PID=%q\n' "$$"
+        printf 'HEAVY_SLOT_RUNNER=%q\n' "bt_task:${ACTION}"
+        printf 'HEAVY_SLOT_STARTED_AT=%q\n' "$(date '+%Y-%m-%d %H:%M:%S')"
+    } >"$HEAVY_SLOT_LOCK_INFO_FILE"
+    trap 'release_optional_heavy_slot' EXIT
+}
+
 is_market_trading_day() {
     local python_bin="${AQSP_RUNTIME_PYTHON}"
     local target_date="${AQSP_TRADING_DAY_OVERRIDE_DATE:-}"
@@ -554,6 +596,7 @@ case "$ACTION" in
     coldstart)
         skip_non_trading_day
         gate_optional_heavy_task
+        acquire_optional_heavy_slot
         export AQSP_RUN_TASK_ID="coldstart"
         export AQSP_NOTIFY="false"
         export AQSP_GATE_NOTIFY="false"
@@ -563,6 +606,7 @@ case "$ACTION" in
     variant-refresh)
         skip_non_trading_day
         gate_optional_heavy_task
+        acquire_optional_heavy_slot
         export AQSP_RUN_TASK_ID="variant_refresh"
         export AQSP_NOTIFY="false"
         export AQSP_GATE_NOTIFY="false"
@@ -571,6 +615,7 @@ case "$ACTION" in
         ;;
     walkforward-gate)
         gate_optional_heavy_task
+        acquire_optional_heavy_slot
         export AQSP_RUN_TASK_ID="walkforward_gate"
         export AQSP_NOTIFY="false"
         export AQSP_GATE_NOTIFY="${AQSP_WALKFORWARD_GATE_NOTIFY:-false}"
