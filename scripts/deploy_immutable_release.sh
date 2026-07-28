@@ -404,7 +404,10 @@ if [ "$SKIP_RESTART" != "true" ]; then
     restart_services "$RELEASE_DIR"
 fi
 check_public_routes
-check_variant_results
+if ! check_variant_results; then
+    VERIFY_LEVEL="partial"
+    log "[WARN] 变体产物未通过校验；release 已切换，但本次部署未验收"
+fi
 cleanup_release_root_residuals
 prune_releases "$RELEASE_DIR"
 run_scheduler_check "$RELEASE_DIR"

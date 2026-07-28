@@ -1854,6 +1854,7 @@ def test_immutable_deploy_script_requires_full_post_deploy_acceptance() -> None:
     assert "--min-symbols 121" in script
     assert "AQSP_DEPLOY_EXPECTED_VARIANT_END" in script
     assert 'VERIFY_LEVEL="partial"' in script
+    assert "变体产物未通过校验；release 已切换，但本次部署未验收" in script
     assert "immutable release prepared with skipped checks" in script
     assert "immutable release deployment verified" in script
 
