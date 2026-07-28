@@ -170,6 +170,12 @@ export AQSP_INTRADAY_FAST_FILL_CACHE="${AQSP_INTRADAY_FAST_FILL_CACHE:-true}"
 DOW=$(date +%u)
 REQUIRE_MARKET_HOURS="${AQSP_INTRADAY_REQUIRE_MARKET_HOURS:-true}"
 
+# Immutable production must not inherit a legacy .env override that permits
+# a full intraday scan after the close. Local diagnostics stay configurable.
+if is_truthy "${AQSP_IMMUTABLE_RELEASE:-false}"; then
+    REQUIRE_MARKET_HOURS="true"
+fi
+
 # The explicit diagnostic mode is also used by the isolated runtime contract
 # tests. Production keeps the trading-day guard because its default is true.
 if is_truthy "$REQUIRE_MARKET_HOURS" && [ "$DOW" -ge 6 ]; then

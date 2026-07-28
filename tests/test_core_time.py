@@ -82,6 +82,23 @@ def test_is_trading_day_a_share_2026_holidays():
     assert get_next_trading_day(date(2026, 6, 18)) == date(2026, 6, 22)
 
 
+def test_is_trading_day_uses_local_calendar_when_runtime_calendar_is_wrong(
+    monkeypatch,
+):
+    import aqsp.data.trading_calendar as trading_calendar
+
+    def unexpected_runtime_lookup(*_args, **_kwargs):
+        raise AssertionError("scheduler calendar gate must not query Tushare")
+
+    monkeypatch.setattr(
+        trading_calendar,
+        "_load_runtime_calendar",
+        unexpected_runtime_lookup,
+    )
+
+    assert is_trading_day(date(2026, 7, 27))
+
+
 def test_static_holiday_overrides_runtime_calendar_open_flag():
     from aqsp.data.trading_calendar import resolve_is_trading_day
 

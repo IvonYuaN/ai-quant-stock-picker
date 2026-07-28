@@ -78,9 +78,14 @@ def parse_iso8601(s: str) -> datetime:
 
 
 def is_trading_day(d: date) -> bool:
-    from aqsp.data.trading_calendar import resolve_is_trading_day
+    """Return the deterministic local A-share calendar result.
 
-    return resolve_is_trading_day(d)
+    Scheduler gates must never depend on a remote calendar request: a failed
+    or stale response can turn an ordinary weekday into a false holiday and
+    cause repeated recovery runs. Call ``resolve_is_trading_day`` explicitly
+    where a point-in-time runtime calendar is required.
+    """
+    return _is_basic_trading_day(d)
 
 
 def get_previous_trading_day(d: date | None = None) -> date:

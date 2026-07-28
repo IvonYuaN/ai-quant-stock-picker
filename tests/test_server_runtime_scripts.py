@@ -568,6 +568,8 @@ def test_intraday_refresh_script_uses_isolated_outputs() -> None:
         'export AQSP_INTRADAY_FAST_FILL_CACHE="${AQSP_INTRADAY_FAST_FILL_CACHE:-true}"'
         in script
     )
+    assert 'if is_truthy "${AQSP_IMMUTABLE_RELEASE:-false}"; then' in script
+    assert 'REQUIRE_MARKET_HOURS="true"' in script
     assert 'PRESET_AQSP_INTRADAY_SOURCE="${AQSP_INTRADAY_SOURCE:-}"' in script
     assert (
         'PRESET_AQSP_INTRADAY_MAX_UNIVERSE="${AQSP_INTRADAY_MAX_UNIVERSE:-${AQSP_MAX_UNIVERSE:-}}"'
