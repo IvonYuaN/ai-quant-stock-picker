@@ -268,6 +268,7 @@ def _format_validation_digest_lines(result: PipelineResult) -> list[str]:
 
 def _step_update_data(config: PipelineConfig, logger: logging.Logger) -> dict[str, Any]:
     from aqsp.data import fetch_with_source
+    from aqsp.freshness import assert_fresh_data
 
     logger.info("  拉取最新行情数据 (source=%s)", config.source)
 
@@ -276,7 +277,8 @@ def _step_update_data(config: PipelineConfig, logger: logging.Logger) -> dict[st
     workload_setter = getattr(source, "set_workload", None)
     if not callable(workload_setter):
         raise DataError("生产日行情源缺少 live_short workload contract")
-    workload_setter("live_short")
+    local_close_source = config.source == "sqlite_db"
+    workload_setter(None if local_close_source else "live_short")
     try:
         frames = fetch_with_source(source, symbols, days=260)
     finally:
@@ -293,6 +295,11 @@ def _step_update_data(config: PipelineConfig, logger: logging.Logger) -> dict[st
         raise DataError(
             "生产日行情取数不完整，拒绝继续: " + ", ".join(missing_symbols[:20])
         )
+
+    if local_close_source:
+        # 收盘研究只能使用本交易日已经写入的 raw 本地库；不够就阻断，
+        # 绝不能退化为对全池逐票联网重试。
+        assert_fresh_data(frames, max_lag_days=0)
 
     fresh_count = sum(1 for df in frames.values() if df is not None and not df.empty)
     logger.info("  获取到 %d 只标的数据", fresh_count)
@@ -319,6 +326,8 @@ def _build_data_source(config: PipelineConfig) -> Any:
 def _build_resilient_history_source(config: PipelineConfig) -> Any:
     from aqsp.data.source_factory import build_data_source
 
+    if config.source == "sqlite_db":
+        return build_data_source("sqlite_db")
     if config.source in {"auto", "local_first"}:
         return build_data_source("local_first")
     return build_data_source("online_first")
@@ -352,6 +361,18 @@ def _resolve_live_runtime_source(
             "不能形成正式 live_short 结果。"
         )
     return "online_first", guard
+
+
+def _resolve_daily_runtime_source(source_name: str) -> tuple[str, str]:
+    """Keep close research on a fresh raw local store when it is configured."""
+    normalized = str(source_name or "auto").strip() or "auto"
+    if normalized == "sqlite_db":
+        return (
+            normalized,
+            "daily 收盘研究使用 sqlite_db 原始日线；覆盖或新鲜度不足时快速阻断，"
+            "禁止切换为在线全池重试。",
+        )
+    return _resolve_live_runtime_source(normalized)
 
 
 def _live_runtime_max_data_lag_days(configured_days: int) -> int:
@@ -509,6 +530,8 @@ def _step_run_strategy(
         "--output-csv",
         config.csv_path,
     ]
+    if config.source == "sqlite_db":
+        argv.extend(["--as-of", today_shanghai().isoformat()])
     if config.enable_debate:
         argv.append("--enable-debate")
     if config.enable_online_factors:
@@ -2039,7 +2062,7 @@ def _build_config(args: argparse.Namespace) -> PipelineConfig:
 
     env = load_runtime_config()
     requested_source = args.source or os.getenv("AQSP_SOURCE", "auto").strip() or "auto"
-    runtime_source, source_override_reason = _resolve_live_runtime_source(
+    runtime_source, source_override_reason = _resolve_daily_runtime_source(
         requested_source
     )
 

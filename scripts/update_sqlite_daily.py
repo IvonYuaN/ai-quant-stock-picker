@@ -42,6 +42,8 @@ class UpdateSummary:
     total_symbols: int
     raw_max_trade_date: date | None = None
     coverage_error: str | None = None
+    processed_symbols: int = 0
+    budget_exhausted: bool = False
 
 
 def _parse_trade_date(raw: object) -> date | None:
@@ -445,6 +447,9 @@ def update_sqlite_daily(
     fill_history_gaps: bool = False,
     price_mode: str = "qfq",
     query_timeout_seconds: float = 15.0,
+    offset: int = 0,
+    max_runtime_seconds: float = 0.0,
+    require_target_coverage: bool = True,
 ) -> UpdateSummary:
     bs = _load_baostock()
     _login_baostock_session(bs)
@@ -470,10 +475,28 @@ def update_sqlite_daily(
                 or ts_code in requested
                 or ts_code.split(".")[0] in requested
             ]
+            safe_offset = max(0, int(offset))
+            if safe_offset:
+                selected_symbols = selected_symbols[safe_offset:]
             if limit > 0:
                 selected_symbols = selected_symbols[:limit]
             total_symbols = len(selected_symbols)
+            deadline = (
+                time.monotonic() + max_runtime_seconds
+                if max_runtime_seconds > 0
+                else None
+            )
+            processed_symbols = 0
+            budget_exhausted = False
             for index, ts_code in enumerate(selected_symbols, start=1):
+                if deadline is not None and time.monotonic() >= deadline:
+                    budget_exhausted = True
+                    print(
+                        f"运行预算耗尽: processed={processed_symbols}/{len(selected_symbols)}",
+                        flush=True,
+                    )
+                    break
+                processed_symbols = index
                 first, latest = _symbol_date_bounds(conn, ts_code)
                 fetch_start_day = _resolve_fetch_start_day(
                     first=first,
@@ -516,11 +539,15 @@ def update_sqlite_daily(
             conn.commit()
             target_day_symbol_count = _count_target_day_symbols(conn, target_day)
             raw_max_trade_date = _raw_max_trade_date(conn)
-            coverage_error = _target_coverage_error(
-                target_day=target_day,
-                target_day_symbol_count=target_day_symbol_count,
-                total_symbols=total_symbols,
-                raw_max_trade_date=raw_max_trade_date,
+            coverage_error = (
+                _target_coverage_error(
+                    target_day=target_day,
+                    target_day_symbol_count=target_day_symbol_count,
+                    total_symbols=total_symbols,
+                    raw_max_trade_date=raw_max_trade_date,
+                )
+                if require_target_coverage
+                else None
             )
             if coverage_error:
                 print(f"[ERROR] {coverage_error}", flush=True)
@@ -536,6 +563,8 @@ def update_sqlite_daily(
         total_symbols=total_symbols,
         raw_max_trade_date=raw_max_trade_date,
         coverage_error=coverage_error,
+        processed_symbols=processed_symbols,
+        budget_exhausted=budget_exhausted,
     )
 
 
@@ -549,7 +578,13 @@ def main() -> int:
     )
     parser.add_argument("--sleep-seconds", type=float, default=0.05)
     parser.add_argument(
-        "--limit", type=int, default=0, help="test hook: update first N symbols"
+        "--limit", type=int, default=0, help="update at most N selected symbols"
+    )
+    parser.add_argument(
+        "--offset",
+        type=int,
+        default=0,
+        help="skip this many selected symbols before --limit",
     )
     parser.add_argument(
         "--symbols",
@@ -583,6 +618,17 @@ def main() -> int:
         default=15.0,
         help="per-symbol upstream query timeout; 0 disables the timeout guard",
     )
+    parser.add_argument(
+        "--max-runtime-seconds",
+        type=float,
+        default=0.0,
+        help="stop between symbols after this runtime; 0 disables the batch budget",
+    )
+    parser.add_argument(
+        "--allow-partial-target-coverage",
+        action="store_true",
+        help="for a scheduled chunk, defer target-day coverage validation to its coordinator",
+    )
     args = parser.parse_args()
 
     if not args.db.exists():
@@ -595,6 +641,10 @@ def main() -> int:
         raise SystemExit("--force-from-start requires --start-date")
     if args.fill_history_gaps and start_day is None:
         raise SystemExit("--fill-history-gaps requires --start-date")
+    if args.offset < 0:
+        raise SystemExit("--offset must be non-negative")
+    if args.max_runtime_seconds < 0:
+        raise SystemExit("--max-runtime-seconds must be non-negative")
     print(
         f"sqlite daily backfill target={target.isoformat()} "
         f"start={start_day.isoformat() if start_day else 'incremental'} "
@@ -612,6 +662,9 @@ def main() -> int:
         fill_history_gaps=args.fill_history_gaps,
         price_mode=args.price_mode,
         query_timeout_seconds=args.query_timeout_seconds,
+        offset=args.offset,
+        max_runtime_seconds=args.max_runtime_seconds,
+        require_target_coverage=not args.allow_partial_target_coverage,
     )
     print(
         "sqlite daily backfill done: "
@@ -621,7 +674,9 @@ def main() -> int:
         f"target={summary.target_day.isoformat()} "
         f"price_mode={summary.price_mode} "
         f"target_day_symbols={summary.target_day_symbol_count}/{summary.total_symbols} "
-        f"raw_max={summary.raw_max_trade_date.isoformat() if summary.raw_max_trade_date else '-'}"
+        f"raw_max={summary.raw_max_trade_date.isoformat() if summary.raw_max_trade_date else '-'} "
+        f"processed={summary.processed_symbols}/{summary.total_symbols} "
+        f"budget_exhausted={summary.budget_exhausted}"
     )
     if summary.coverage_error:
         print(f"sqlite daily backfill blocked: {summary.coverage_error}")

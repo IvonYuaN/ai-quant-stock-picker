@@ -90,7 +90,7 @@ def test_build_config_prefers_env_source_when_cli_source_missing(monkeypatch) ->
     assert config.source == "eastmoney"
 
 
-def test_build_config_switches_historical_only_runtime_source_to_online_first(
+def test_build_config_uses_sqlite_raw_source_for_daily_close_research(
     monkeypatch,
 ) -> None:
     daily_pipeline = _load_daily_pipeline_module()
@@ -121,11 +121,10 @@ def test_build_config_switches_historical_only_runtime_source_to_online_first(
 
     config = daily_pipeline._build_config(args)
 
-    assert config.source == "online_first"
+    assert config.source == "sqlite_db"
     assert config.requested_source == "sqlite_db"
-    assert "sqlite_db" in config.source_override_reason
-    assert "live_short" in config.source_override_reason
-    assert "fit=avoid" in config.source_override_reason
+    assert "sqlite_db 原始日线" in config.source_override_reason
+    assert "禁止切换为在线全池重试" in config.source_override_reason
 
 
 def test_build_config_switches_realtime_alias_to_online_first(monkeypatch) -> None:
@@ -296,7 +295,7 @@ def test_build_config_allows_daily_universe_override(monkeypatch) -> None:
     assert config.max_universe == 120
 
 
-def test_build_config_switches_historical_only_runtime_source_to_online_first_without_online_fallback(
+def test_build_config_keeps_sqlite_daily_research_local_when_online_fallback_disabled(
     monkeypatch,
 ) -> None:
     daily_pipeline = _load_daily_pipeline_module()
@@ -327,11 +326,10 @@ def test_build_config_switches_historical_only_runtime_source_to_online_first_wi
 
     config = daily_pipeline._build_config(args)
 
-    assert config.source == "online_first"
+    assert config.source == "sqlite_db"
     assert config.requested_source == "sqlite_db"
-    assert "sqlite_db" in config.source_override_reason
-    assert "live_short" in config.source_override_reason
-    assert "fit=avoid" in config.source_override_reason
+    assert "sqlite_db 原始日线" in config.source_override_reason
+    assert "禁止切换为在线全池重试" in config.source_override_reason
 
 
 def test_build_config_enables_debate_from_env(monkeypatch) -> None:

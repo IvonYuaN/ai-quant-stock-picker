@@ -29,6 +29,7 @@ SCHEDULED_ACTIONS = frozenset(
         "daily",
         "intraday",
         "midday",
+        "data-refresh",
         "coldstart",
         "variant-refresh",
         "walkforward-gate",

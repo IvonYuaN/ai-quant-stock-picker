@@ -4,6 +4,7 @@
 #   /bin/bash /opt/aqsp/scripts/bt_task.sh daily
 #   /bin/bash /opt/aqsp/scripts/bt_task.sh intraday
 #   /bin/bash /opt/aqsp/scripts/bt_task.sh midday
+#   /bin/bash /opt/aqsp/scripts/bt_task.sh data-refresh
 #   /bin/bash /opt/aqsp/scripts/bt_task.sh coldstart
 #   /bin/bash /opt/aqsp/scripts/bt_task.sh variant-refresh
 #   /bin/bash /opt/aqsp/scripts/bt_task.sh walkforward-gate
@@ -60,12 +61,13 @@ log() {
 
 usage() {
     cat <<'EOF'
-Usage: bt_task.sh <daily|intraday|midday|coldstart|variant-refresh|walkforward-gate|monitor|news|status>
+Usage: bt_task.sh <daily|intraday|midday|data-refresh|coldstart|variant-refresh|walkforward-gate|monitor|news|status>
 
 BT panel examples:
   /bin/bash /opt/aqsp/scripts/bt_task.sh intraday
   /bin/bash /opt/aqsp/scripts/bt_task.sh daily
   /bin/bash /opt/aqsp/scripts/bt_task.sh midday
+  /bin/bash /opt/aqsp/scripts/bt_task.sh data-refresh
   /bin/bash /opt/aqsp/scripts/bt_task.sh coldstart
   /bin/bash /opt/aqsp/scripts/bt_task.sh variant-refresh
   /bin/bash /opt/aqsp/scripts/bt_task.sh walkforward-gate
@@ -77,6 +79,7 @@ Recommended BT schedule (Asia/Shanghai):
   intraday  every 10 min; script gates 09:35-11:30 / 13:05-14:57, Mon-Fri
   midday    12:05 Mon-Fri
   daily     18:00 Mon-Fri
+  data-refresh 15:35 Mon-Fri; bounded raw daily-data batch before daily research
   coldstart 19:40 Mon-Fri
   variant-refresh 21:00 Mon-Fri; bounded isolated experiment refresh
   walkforward-gate 22:00 Sat; controlled production evidence only, no threshold apply
@@ -539,6 +542,27 @@ case "$ACTION" in
         export AQSP_RUN_TASK_ID="daily"
         export AQSP_RUNNER_SCRIPT=scripts/daily_pipeline.sh
         run_script "${PROJECT_ROOT}/scripts/server_sync_and_run.sh"
+        ;;
+    data-refresh)
+        skip_non_trading_day
+        # This task only writes a bounded raw-data chunk. It has a lower memory
+        # reserve than backtests, but remains mutually exclusive with all heavy work.
+        AQSP_HEAVY_MIN_FREE_MEMORY_MB="${AQSP_DATA_REFRESH_MIN_FREE_MEMORY_MB:-640}" \
+            AQSP_HEAVY_MAX_LOAD_PER_CPU="${AQSP_DATA_REFRESH_MAX_LOAD_PER_CPU:-0.50}" \
+            gate_optional_heavy_task
+        acquire_optional_heavy_slot
+        export AQSP_RUN_TASK_ID="data_refresh"
+        export AQSP_NOTIFY="false"
+        export AQSP_GATE_NOTIFY="false"
+        sync_code_only
+        run_python_script "${PROJECT_ROOT}/scripts/refresh_sqlite_batch.py" \
+            --db "${AQSP_SQLITE_DB_PATH:?AQSP_SQLITE_DB_PATH is required}" \
+            --state "${STATE_DIR}/sqlite-refresh-cursor.json" \
+            --batch-size "${AQSP_DATA_REFRESH_BATCH_SIZE:-120}" \
+            --universe-limit "${AQSP_DATA_REFRESH_UNIVERSE_LIMIT:-0}" \
+            --min-amount "${AQSP_MIN_AVG_AMOUNT:-50000000}" \
+            --query-timeout-seconds "${AQSP_DATA_REFRESH_QUERY_TIMEOUT_SECONDS:-4}" \
+            --max-runtime-seconds "${AQSP_DATA_REFRESH_MAX_RUNTIME_SECONDS:-480}"
         ;;
     intraday)
         skip_non_trading_day

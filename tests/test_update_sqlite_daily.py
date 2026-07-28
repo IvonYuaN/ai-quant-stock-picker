@@ -19,6 +19,9 @@ def test_update_sqlite_daily_cli_exposes_historical_backfill_flags() -> None:
     assert "--force-from-start" in text
     assert "--price-mode" in text
     assert "--query-timeout-seconds" in text
+    assert "--offset" in text
+    assert "--max-runtime-seconds" in text
+    assert "--allow-partial-target-coverage" in text
     assert "fill_history_gaps=args.fill_history_gaps" in text
     assert "force_from_start=args.force_from_start" in text
     assert "price_mode=args.price_mode" in text
@@ -164,6 +167,50 @@ def test_update_sqlite_daily_counts_target_day_coverage(
     assert summary.target_day_symbol_count == 1
     assert summary.total_symbols == 2
     assert summary.raw_max_trade_date == date(2026, 6, 18)
+    assert summary.coverage_error is None
+
+
+def test_update_sqlite_daily_uses_offset_and_defers_coverage_for_bounded_batch(
+    monkeypatch, tmp_path: Path
+) -> None:
+    class FakeBaostock:
+        def login(self):
+            return type("Login", (), {"error_code": "0", "error_msg": ""})()
+
+        def logout(self) -> None:
+            return None
+
+    db = tmp_path / "astocks_raw.db"
+    monkeypatch.setattr(update_sqlite_daily, "_load_baostock", FakeBaostock)
+    monkeypatch.setattr(
+        update_sqlite_daily,
+        "_sync_stock_list_compat",
+        lambda conn, _bs, preserve_existing=True: [
+            "000001.SZ",
+            "000002.SZ",
+            "600000.SH",
+        ],
+    )
+    queried: list[str] = []
+    monkeypatch.setattr(
+        update_sqlite_daily,
+        "_query_history_rows",
+        lambda **kwargs: (queried.append(kwargs["ts_code"]) or "0", []),
+    )
+
+    summary = update_sqlite_daily.update_sqlite_daily(
+        db,
+        target_day=date(2026, 6, 18),
+        sleep_seconds=0.0,
+        limit=1,
+        offset=1,
+        price_mode="raw",
+        require_target_coverage=False,
+    )
+
+    assert queried == ["000002.SZ"]
+    assert summary.total_symbols == 1
+    assert summary.processed_symbols == 1
     assert summary.coverage_error is None
 
 
