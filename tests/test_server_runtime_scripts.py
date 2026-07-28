@@ -633,7 +633,8 @@ def test_intraday_refresh_script_uses_isolated_outputs() -> None:
     assert "AQSP_INTRADAY_DEBATE_BACKFILL:-false" in script
     assert "AQSP_INTRADAY_DEBATE_BACKFILL_BACKGROUND:-false" in script
     assert "AQSP_INTRADAY_DEBATE_BACKFILL_FORCE:-true" in script
-    assert "AQSP_INTRADAY_DEBATE_BACKFILL_MAX_CANDIDATES:-5" in script
+    assert "AQSP_INTRADAY_DEBATE_BACKFILL_MAX_CANDIDATES:-3" in script
+    assert "盘中 Agent 候选数超过资源上限，收紧为 3" in script
     assert '"AQSP_ENABLE_DEBATE=true"' in script
     assert "AQSP_INTRADAY_DEBATE_ENABLE_LLM:-false" in script
     assert '"AQSP_DEBATE_ENABLE_LLM=${AQSP_INTRADAY_DEBATE_ENABLE_LLM}"' in script

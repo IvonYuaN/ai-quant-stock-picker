@@ -486,7 +486,14 @@ launch_intraday_debate_backfill() {
         return 0
     fi
     local max_candidates
-    max_candidates="${AQSP_INTRADAY_DEBATE_BACKFILL_MAX_CANDIDATES:-5}"
+    max_candidates="${AQSP_INTRADAY_DEBATE_BACKFILL_MAX_CANDIDATES:-3}"
+    if ! [[ "$max_candidates" =~ ^[0-9]+$ ]] || [ "$max_candidates" -lt 1 ]; then
+        log "盘中 Agent 候选数无效，收紧为 3"
+        max_candidates="3"
+    elif [ "$max_candidates" -gt 3 ]; then
+        log "盘中 Agent 候选数超过资源上限，收紧为 3"
+        max_candidates="3"
+    fi
     local -a force_arg=()
     if is_truthy "${AQSP_INTRADAY_DEBATE_BACKFILL_FORCE:-true}"; then
         force_arg=(--force)
