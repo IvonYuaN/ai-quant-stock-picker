@@ -182,10 +182,10 @@ bash /opt/aqsp/scripts/server_sync_and_run.sh
 统一命令入口：
 
 ```bash
-/bin/bash /opt/aqsp/scripts/bt_task.sh <intraday|midday|daily|coldstart|monitor|news|status>
+/bin/bash /opt/aqsp/scripts/bt_task.sh <intraday|midday|daily|coldstart|variant-refresh|monitor|news|status>
 ```
 
-建议在宝塔里配置 **6 条自动任务 + 1 条手动自检命令**：
+建议在宝塔里配置 **7 条自动任务 + 1 条手动自检命令**：
 
 | 任务名 | 推荐时间 | 宝塔脚本内容 | 作用 |
 |---|---:|---|---|
@@ -194,6 +194,7 @@ bash /opt/aqsp/scripts/server_sync_and_run.sh
 | `AQSP-消息面雷达` | 工作日 `08:35`，周末 `09:05` | `/bin/bash /opt/aqsp/scripts/bt_task.sh news` | 盘前/周末复核高影响消息、涨价链、政策、风险事件 |
 | `AQSP-收盘主链路` | 工作日 `18:00` | `/bin/bash /opt/aqsp/scripts/bt_task.sh daily` | 完整收盘复盘、纸面验证、简报、通知和看板刷新 |
 | `AQSP-冷启动补样本` | 工作日 `19:40` | `/bin/bash /opt/aqsp/scripts/bt_task.sh coldstart` | 收盘主链路结束后再补历史库和冷启动样本，避免互斥跳过 |
+| `AQSP-变体刷新` | 工作日 `21:00` | `/bin/bash /opt/aqsp/scripts/bt_task.sh variant-refresh` | 受限轮转刷新变体实验；仅在收盘后运行，不写正式 ledger |
 | `AQSP-服务器监控` | 工作日每 `15` 分钟 | `/bin/bash /opt/aqsp/scripts/bt_task.sh monitor` | 检查数据、运行态、通知通道；默认只推关键异常 |
 | `AQSP-状态自检` | 不建议定时，手动点运行即可 | `/bin/bash /opt/aqsp/scripts/bt_task.sh status` | 临时查看 Git、产物、日志、运行态 |
 

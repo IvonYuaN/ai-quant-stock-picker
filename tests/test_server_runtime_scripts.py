@@ -837,7 +837,8 @@ def test_bt_task_script_exposes_panel_safe_actions() -> None:
     assert 'ACTION="${1:-}"' in script
     assert 'if [ -z "$ACTION" ]' in script
     assert (
-        "daily|intraday|midday|coldstart|walkforward-gate|monitor|news|status" in script
+        "daily|intraday|midday|coldstart|variant-refresh|walkforward-gate|monitor|news|status"
+        in script
     )
     assert "AQSP_RUNNER_TIMEOUT_SECONDS=5400" in script
     assert "AQSP_MONITOR_TIMEOUT_SECONDS=600" in script
@@ -1665,6 +1666,30 @@ def test_intraday_refresh_default_batch_can_rotate_full_market_in_session() -> N
     assert 'INTRADAY_BATCH_SIZE="${AQSP_INTRADAY_BATCH_SIZE:-32}"' in script
     assert 'INTRADAY_BATCH_SIZE="48"' in script
     assert "AQSP_INTRADAY_BATCH_SIZE" in script
+
+
+def test_variant_refresh_runs_after_close_with_bounded_resources() -> None:
+    script = (PROJECT_ROOT / "scripts" / "variant_refresh.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert "当前未到北京时间 21:00，跳过变体刷新" in script
+    assert 'MAX_SYMBOLS="${AQSP_VARIANT_MAX_SYMBOLS:-160}"' in script
+    assert 'MAX_RUNTIME_SECONDS="${AQSP_VARIANT_MAX_RUNTIME_SECONDS:-300}"' in script
+    assert "AQSP_VARIANT_ALLOW_HEAVY" in script
+    assert "variant-results-refresh.lock" in script
+    assert "refresh_variant_results_from_market_db.py" in script
+    assert "write_home_snapshot.py" in script
+
+
+def test_cron_installer_schedules_variant_refresh_after_coldstart() -> None:
+    script = (PROJECT_ROOT / "scripts" / "install_server_cron.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert "AQSP_ENABLE_VARIANT_REFRESH_CRON" in script
+    assert "0 21 * * 1-5" in script
+    assert "bt_task.sh variant-refresh" in script
 
 
 def test_coldstart_daily_stops_when_update_fails_and_target_coverage_is_too_low(

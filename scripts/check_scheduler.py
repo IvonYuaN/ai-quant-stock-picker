@@ -29,6 +29,7 @@ SCHEDULED_ACTIONS = frozenset(
         "intraday",
         "midday",
         "coldstart",
+        "variant-refresh",
         "walkforward-gate",
         "monitor",
         "news",
@@ -146,7 +147,16 @@ def check_bt_script() -> CheckResult:
     if not script.exists():
         return CheckResult("bt_task.sh", False, "missing")
     text = script.read_text(encoding="utf-8")
-    expected = ["daily", "intraday", "midday", "coldstart", "monitor", "news", "status"]
+    expected = [
+        "daily",
+        "intraday",
+        "midday",
+        "coldstart",
+        "variant-refresh",
+        "monitor",
+        "news",
+        "status",
+    ]
     missing = [item for item in expected if item not in text]
     return CheckResult(
         "bt_task.sh",
