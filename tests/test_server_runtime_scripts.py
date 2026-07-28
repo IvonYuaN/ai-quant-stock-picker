@@ -1550,7 +1550,9 @@ def test_production_task_entrypoints_force_shanghai_timezone() -> None:
         "daily_run.sh",
         "coldstart_daily.sh",
         "intraday_refresh.sh",
+        "midday_refresh.sh",
         "news_catalysts.sh",
+        "release_task_entrypoint.sh",
     )
 
     for filename in scripts:

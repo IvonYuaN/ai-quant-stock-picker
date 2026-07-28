@@ -12,6 +12,8 @@ if [[ -f "${RUNTIME_ROOT}/.env" ]]; then
     source "${RUNTIME_ROOT}/.env"
     set +a
 fi
+# Immutable release 的所有下游任务必须使用北京时间，不继承服务器或 .env 的 TZ。
+export TZ="Asia/Shanghai"
 
 runtime_path() {
     local raw relative candidate
