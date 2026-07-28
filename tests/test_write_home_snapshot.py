@@ -16,6 +16,70 @@ from aqsp.web.home_snapshot import (
 from scripts import write_home_snapshot
 
 
+def _variant_result_payload(count: int = 100) -> dict[str, object]:
+    end_date = "2026-07-24"
+    variants = []
+    for index in range(count):
+        symbol = f"{index:06d}"
+        evidence = {
+            "date": end_date,
+            "execution_date": end_date,
+            "symbol": symbol,
+            "macd_hist": 0.12,
+            "kdj_j": 55.0,
+            "volume_ratio": 1.35,
+            "atr_pct": 2.4,
+        }
+        variants.append(
+            {
+                "variant_id": f"variant-{index}",
+                "strategy_signature": f"mode-{index}",
+                "holdings_signature": f"{symbol}:100",
+                "holdings_date": end_date,
+                "previous_holdings_date": "2026-07-23",
+                "initial_cash": 100000.0,
+                "holdings": [
+                    {
+                        "symbol": symbol,
+                        "name": f"样本{index}",
+                        "quantity": 100,
+                        "entry_evidence": evidence,
+                    }
+                ],
+                "previous_holdings": [],
+                "recent_actions": [
+                    {
+                        "date": end_date,
+                        "symbol": symbol,
+                        "side": "buy",
+                        "reason": "MACD/KDJ/量比确认",
+                        "evidence": evidence,
+                    }
+                ],
+                "adjustments": [f"买入 {symbol}：技术面确认。"],
+                "technical_evidence": [evidence],
+            }
+        )
+    return {
+        "schema_version": "variant-suite-v2",
+        "generated_at": "2026-07-24T18:00:00+08:00",
+        "data_mode": "historical_raw_unadjusted",
+        "end_date": end_date,
+        "initial_cash": 100000.0,
+        "universe": {
+            "supported_symbols": 4920,
+            "selected_symbols": 600,
+            "batch_active": True,
+            "batch_id": "3:1200",
+            "batch_size": 600,
+            "cycle_id": 3,
+            "coverage_pct": 0.3659,
+            "filters": "沪市主板+深市主板+创业板；排除 ST/*ST/PT/退市/科创/北交/B股",
+        },
+        "variants": variants,
+    }
+
+
 def _candidate(symbol: str, score: float) -> SimpleNamespace:
     return SimpleNamespace(
         symbol=symbol,
@@ -90,26 +154,7 @@ def test_variant_suite_snapshot_reads_variant_results_metadata(
     path = tmp_path / "variant_results.json"
     path.write_text(
         json.dumps(
-            {
-                "schema_version": "variant-suite-v2",
-                "generated_at": "2026-07-24T18:00:00+08:00",
-                "data_mode": "historical_raw_unadjusted",
-                "end_date": "2026-07-24",
-                "initial_cash": 100000.0,
-                "universe": {
-                    "supported_symbols": 4920,
-                    "selected_symbols": 600,
-                    "batch_active": True,
-                    "batch_id": "3:1200",
-                    "batch_size": 600,
-                    "cycle_id": 3,
-                    "coverage_pct": 0.3659,
-                    "filters": "沪市主板+深市主板+创业板；排除 ST/*ST/PT/退市/科创/北交/B股",
-                },
-                "variants": [
-                    {"variant_id": f"variant-{index}"} for index in range(100)
-                ],
-            },
+            _variant_result_payload(),
             ensure_ascii=False,
         ),
         encoding="utf-8",
@@ -131,17 +176,7 @@ def test_variant_snapshot_keeps_all_standard_experiment_variants(
 ) -> None:
     path = tmp_path / "variant_results.json"
     path.write_text(
-        json.dumps(
-            {
-                "schema_version": "variant-suite-v2",
-                "initial_cash": 100000.0,
-                "universe": {"selected_symbols": 160},
-                "variants": [
-                    {"variant_id": f"variant_{index}", "initial_cash": 100000.0}
-                    for index in range(148)
-                ],
-            }
-        ),
+        json.dumps(_variant_result_payload(148)),
         encoding="utf-8",
     )
     monkeypatch.setenv("AQSP_VARIANT_RESULTS", str(path))
@@ -166,6 +201,22 @@ def test_variant_suite_snapshot_hides_legacy_or_insufficient_artifact(
         ),
         encoding="utf-8",
     )
+    monkeypatch.setenv("AQSP_VARIANT_RESULTS", str(path))
+
+    assert write_home_snapshot._variant_suite_snapshot().variant_count == 0
+    assert write_home_snapshot._variant_snapshot() == ()
+
+
+def test_variant_suite_snapshot_hides_artifact_without_current_technical_evidence(
+    monkeypatch, tmp_path: Path
+) -> None:
+    path = tmp_path / "variant_results.json"
+    payload = _variant_result_payload()
+    first = payload["variants"][0]
+    first["technical_evidence"] = []
+    first["recent_actions"] = []
+    first["holdings"][0].pop("entry_evidence")
+    path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
     monkeypatch.setenv("AQSP_VARIANT_RESULTS", str(path))
 
     assert write_home_snapshot._variant_suite_snapshot().variant_count == 0

@@ -74,6 +74,11 @@ from aqsp.web.home_snapshot import (
     write_home_snapshot_index,
 )
 
+try:
+    from check_variant_results import validate_variant_payload
+except ModuleNotFoundError:  # pragma: no cover - package import used by tests.
+    from scripts.check_variant_results import validate_variant_payload
+
 
 DEFAULT_OUTPUT_PATH = "data/runtime/home_dashboard_snapshot.json"
 DEFAULT_INDEX_OUTPUT_PATH = "data/runtime/home_dashboard_snapshot_index.json"
@@ -1608,6 +1613,15 @@ def _variant_results_payload() -> dict[str, Any] | None:
         or len(variants) < MIN_HOME_VARIANT_COUNT
         or int(universe.get("selected_symbols") or 0) < MIN_HOME_VARIANT_SYMBOLS
     ):
+        return None
+    try:
+        validate_variant_payload(
+            payload,
+            path=str(path),
+            min_variants=MIN_HOME_VARIANT_COUNT,
+            min_symbols=MIN_HOME_VARIANT_SYMBOLS,
+        )
+    except (TypeError, ValueError):
         return None
     return payload
 
