@@ -238,20 +238,23 @@ def _snapshot_contract(
             "snapshot_contract", "failed", "available_dates missing expected_end"
         )
     source = data.get("source")
-    if isinstance(source, dict):
-        latest_trade_date = str(source.get("latest_trade_date") or "").strip()
-        if latest_trade_date:
-            if not _valid_date(latest_trade_date):
-                return ClosureCheck(
-                    "snapshot_contract", "failed", "source latest_trade_date invalid"
-                )
-            if expected_end and latest_trade_date != expected_end:
-                return ClosureCheck(
-                    "snapshot_contract",
-                    "failed",
-                    "source latest_trade_date "
-                    f"{latest_trade_date} != expected {expected_end}",
-                )
+    if not isinstance(source, dict):
+        return ClosureCheck("snapshot_contract", "failed", "source missing")
+    latest_trade_date = str(source.get("latest_trade_date") or "").strip()
+    if not latest_trade_date:
+        return ClosureCheck(
+            "snapshot_contract", "failed", "source latest_trade_date missing"
+        )
+    if not _valid_date(latest_trade_date):
+        return ClosureCheck(
+            "snapshot_contract", "failed", "source latest_trade_date invalid"
+        )
+    if expected_end and latest_trade_date != expected_end:
+        return ClosureCheck(
+            "snapshot_contract",
+            "failed",
+            f"source latest_trade_date {latest_trade_date} != expected {expected_end}",
+        )
     variant_suite = data.get("variant_suite")
     if not isinstance(variant_suite, dict):
         return ClosureCheck("snapshot_contract", "failed", "variant_suite missing")

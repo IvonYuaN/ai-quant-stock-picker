@@ -328,6 +328,26 @@ def test_deployment_closure_script_help_runs_directly() -> None:
     assert "check_deployment_closure" in result.stdout
 
 
+def test_snapshot_contract_rejects_missing_source_provenance(monkeypatch) -> None:
+    monkeypatch.setattr(
+        closure,
+        "_read_json_url",
+        lambda _url, *, timeout: {
+            "data": {
+                "selected_date": "2026-07-24",
+                "available_dates": ["2026-07-24"],
+            }
+        },
+    )
+
+    check = closure._snapshot_contract(
+        base_url="https://lh.ifidy.cn", expected_end="2026-07-24", timeout=1.0
+    )
+
+    assert check.status == "failed"
+    assert check.detail == "source missing"
+
+
 def test_snapshot_contract_rejects_frontend_missing_previous_variant_date(
     monkeypatch,
 ) -> None:
