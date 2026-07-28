@@ -852,7 +852,8 @@ def test_bt_task_script_exposes_panel_safe_actions() -> None:
         in script
     )
     assert "AQSP_RUNNER_TIMEOUT_SECONDS=5400" in script
-    assert "AQSP_MONITOR_TIMEOUT_SECONDS=600" in script
+    assert "AQSP_MONITOR_TIMEOUT_SECONDS=120" in script
+    assert "硬上限 3 分钟" in script
     assert "AQSP_LOCK_STALE_MINUTES=360" in script
     assert "Recommended BT schedule (Asia/Shanghai)" in script
     assert "news      08:35 Mon-Fri trading days only; 09:05 Sat/Sun" in script

@@ -87,7 +87,7 @@ Notes:
 
 Optional env:
   AQSP_RUNNER_TIMEOUT_SECONDS=5400   # 主链路最长 90 分钟
-  AQSP_MONITOR_TIMEOUT_SECONDS=600   # 监控最长 10 分钟
+  AQSP_MONITOR_TIMEOUT_SECONDS=120   # 监控默认 2 分钟，硬上限 3 分钟
   AQSP_LOCK_STALE_MINUTES=360        # 无活跃 PID 时，6 小时后视为陈旧锁
 EOF
 }
