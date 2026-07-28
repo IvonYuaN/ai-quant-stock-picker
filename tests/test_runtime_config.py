@@ -81,8 +81,8 @@ def test_load_debate_runtime_config_reads_language_roles_and_llm(monkeypatch) ->
 
     assert config.enabled is True
     assert config.enable_llm is True
-    assert config.max_rounds == 3
-    assert config.max_candidates == 5
+    assert config.max_rounds == 2
+    assert config.max_candidates == 3
     assert config.language == "en-US"
     assert config.task_id == ""
     assert config.requested_roles == ("bull", "risk_control", "northbound")
@@ -296,7 +296,17 @@ def test_load_debate_runtime_config_falls_back_when_max_candidates_invalid(
 
     config = load_debate_runtime_config()
 
-    assert config.max_candidates == 5
+    assert config.max_candidates == 3
+
+
+def test_load_debate_runtime_config_caps_expensive_advisory_fanout(monkeypatch) -> None:
+    monkeypatch.setenv("AQSP_DEBATE_MAX_ROUNDS", "99")
+    monkeypatch.setenv("AQSP_DEBATE_MAX_CANDIDATES", "99")
+
+    config = load_debate_runtime_config()
+
+    assert config.max_rounds == 2
+    assert config.max_candidates == 3
 
 
 def test_thresholds_load_mean_reversion_section() -> None:

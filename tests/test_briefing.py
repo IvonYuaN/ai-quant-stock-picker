@@ -1141,7 +1141,8 @@ class TestDebateAgent:
         assert result.final_vote[AgentRole.BULL] == "bullish"
         assert result.final_vote[AgentRole.BEAR] == "bearish"
         assert any(
-            record for opinion in result.rounds[-1].opinions
+            record
+            for opinion in result.rounds[-1].opinions
             for record in opinion.rebuttal_records
         )
         assert "missing_real_opposition" not in result.failure
@@ -2697,8 +2698,8 @@ switches:
             frames=frames,
         )
 
-        assert seen_symbols == ["300750", "300751", "300752", "300753"]
-        assert len(briefing.debate_results) == 4
+        assert seen_symbols == ["300750", "300751", "300752"]
+        assert len(briefing.debate_results) == 3
 
     def test_realtime_debate_marks_missing_frame_as_visible_failure(self, monkeypatch):
         monkeypatch.setenv("AQSP_RUN_TASK_ID", "intraday")
