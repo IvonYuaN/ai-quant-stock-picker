@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
@@ -1051,7 +1051,7 @@ def test_write_home_snapshot_maps_midday_to_latest_intraday_artifact() -> None:
     write_home_snapshot.build_home_snapshot(provider, task_id="midday")
 
     assert provider.digest_calls == [
-        ("intraday", write_home_snapshot.today_shanghai().isoformat())
+        ("intraday", write_home_snapshot.latest_completed_trading_day().isoformat())
     ]
 
 
@@ -1343,6 +1343,23 @@ class _DateAwareProvider(_Provider):
         payload.task_view.selected_date = selected_date
         payload.task_view.latest_date = selected_date
         return payload
+
+
+def test_write_home_snapshot_uses_latest_completed_day_during_market_hours(
+    monkeypatch,
+) -> None:
+    provider = _DateAwareProvider()
+    monkeypatch.setattr(
+        write_home_snapshot,
+        "latest_completed_trading_day",
+        lambda: date(2026, 7, 9),
+    )
+
+    snapshot = write_home_snapshot.build_home_snapshot(provider, task_id="intraday")
+
+    assert snapshot.selected_date == "2026-07-09"
+    assert provider.digest_calls == [("intraday", "2026-07-09")]
+    assert provider.runtime_dates == ["2026-07-09"]
 
 
 def test_write_home_snapshot_builds_optional_four_day_index(monkeypatch) -> None:

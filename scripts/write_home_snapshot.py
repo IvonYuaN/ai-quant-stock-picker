@@ -23,6 +23,7 @@ if str(PROJECT_ROOT / "src") not in sys.path:
 
 from aqsp.core.time import (
     get_previous_trading_day,
+    latest_completed_trading_day,
     now_shanghai,
     today_shanghai,
     to_shanghai,
@@ -1779,7 +1780,10 @@ def build_home_snapshot(
 ) -> HomeDashboardSnapshot:
     """Build a bounded, file-ready home snapshot from local runtime artifacts only."""
     selected_task_id = _snapshot_task_id(task_id) or provider.default_task_id()
-    requested_date = _text(signal_date) or today_shanghai().isoformat()
+    # During market hours today's bar is incomplete.  The default homepage
+    # snapshot must therefore use the last completed close; callers can still
+    # request an explicit historical date for a dated review.
+    requested_date = _text(signal_date) or latest_completed_trading_day().isoformat()
     payload = provider.home_digest_payload(
         selected_task_id,
         signal_date=requested_date,
