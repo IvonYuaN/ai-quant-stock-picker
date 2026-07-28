@@ -342,11 +342,55 @@ def _snapshot_contract(
             "failed",
             f"snapshot variants < {MIN_SNAPSHOT_VARIANTS}",
         )
+    for index, variant in enumerate(variants[1:], start=1):
+        failure = _variant_snapshot_failure(
+            variant,
+            expected_end=expected_end,
+            available_dates=available,
+        )
+        if failure:
+            return ClosureCheck(
+                "snapshot_contract", "failed", f"variant[{index}] {failure}"
+            )
     return ClosureCheck(
         "snapshot_contract",
         "ok",
         f"selected_date={selected} suite_end={suite_end} selected_symbols={selected_symbols} variants={len(variants)}",
     )
+
+
+def _variant_snapshot_failure(
+    value: object,
+    *,
+    expected_end: str,
+    available_dates: list[object],
+) -> str:
+    if not isinstance(value, dict):
+        return "must be an object"
+    for key in (
+        "holdings_date",
+        "previous_holdings_date",
+        "holdings",
+        "previous_holdings",
+        "recent_actions",
+        "adjustments",
+        "technical_evidence",
+    ):
+        if key not in value:
+            return f"missing {key}"
+    holdings_date = str(value.get("holdings_date") or "").strip()
+    previous_date = str(value.get("previous_holdings_date") or "").strip()
+    if expected_end and holdings_date != expected_end:
+        return f"holdings_date {holdings_date or '-'} != expected {expected_end}"
+    if not _valid_date(previous_date) or previous_date >= holdings_date:
+        return "previous_holdings_date invalid"
+    if previous_date not in available_dates:
+        return "available_dates missing previous_holdings_date"
+    if not value.get("adjustments"):
+        return "adjustments empty"
+    if not _has_complete_technical_evidence(value.get("technical_evidence")):
+        return "technical_evidence incomplete"
+    return ""
 
 
 def _has_complete_technical_evidence(value: object) -> bool:

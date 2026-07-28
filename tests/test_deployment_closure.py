@@ -223,6 +223,54 @@ def test_snapshot_contract_requires_variant_suite_evidence(monkeypatch) -> None:
     assert "variants=100" in check.detail
 
 
+def test_snapshot_contract_rejects_incomplete_variant_outside_first(
+    monkeypatch,
+) -> None:
+    variant = {
+        "holdings_date": "2026-07-24",
+        "previous_holdings_date": "2026-07-23",
+        "holdings": [],
+        "previous_holdings": [],
+        "recent_actions": [],
+        "adjustments": ["今日/昨日持仓无变化，未发生换票。"],
+        "technical_evidence": [
+            {
+                "macd_hist": 0.12,
+                "kdj_j": 55.0,
+                "volume_ratio": 1.35,
+                "atr_pct": 2.4,
+            }
+        ],
+    }
+    variants = [dict(variant) for _ in range(100)]
+    variants[65]["technical_evidence"] = []
+    monkeypatch.setattr(
+        closure,
+        "_read_json_url",
+        lambda _url, *, timeout: {
+            "data": {
+                "selected_date": "2026-07-24",
+                "available_dates": ["2026-07-24", "2026-07-23"],
+                "source": {"latest_trade_date": "2026-07-24"},
+                "variant_suite": {
+                    "schema_version": "variant-suite-v2",
+                    "end_date": "2026-07-24",
+                    "selected_symbols": 300,
+                    "variant_count": 100,
+                },
+                "variants": variants,
+            }
+        },
+    )
+
+    check = closure._snapshot_contract(
+        base_url="https://lh.ifidy.cn", expected_end="2026-07-24", timeout=1.0
+    )
+
+    assert check.status == "failed"
+    assert check.detail == "variant[65] technical_evidence incomplete"
+
+
 def test_snapshot_contract_rejects_wrong_variant_date(monkeypatch) -> None:
     monkeypatch.setattr(
         closure,
