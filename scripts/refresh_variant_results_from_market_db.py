@@ -45,6 +45,10 @@ class VariantRefreshTimeout(TimeoutError):
     """Raised when the refresh exceeds its configured runtime budget."""
 
 
+class VariantRefreshLocked(RuntimeError):
+    """Raised when another bounded variant refresh owns the runtime lock."""
+
+
 @dataclass(frozen=True)
 class MarketSymbol:
     ts_code: str
@@ -338,7 +342,7 @@ def refresh_lock(lock_path: Path, wait_seconds: float) -> Iterator[None]:
                 break
             except BlockingIOError as exc:
                 if time.monotonic() >= deadline:
-                    raise RuntimeError(
+                    raise VariantRefreshLocked(
                         f"variant refresh already running: {lock_path}"
                     ) from exc
                 time.sleep(0.25)
@@ -477,6 +481,9 @@ def main() -> int:
     except VariantRefreshTimeout as exc:
         print(f"variant_results refresh timeout: {exc}", flush=True)
         return 124
+    except VariantRefreshLocked as exc:
+        print(f"variant_results refresh skipped_lock: {exc}", flush=True)
+        return 0
     except ValueError as exc:
         print(f"variant_results refresh rejected: {exc}", flush=True)
         return 1

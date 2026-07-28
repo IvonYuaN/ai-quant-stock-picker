@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import importlib.util
 from argparse import Namespace
 import subprocess
@@ -200,5 +201,41 @@ def test_refresh_rejects_invalid_payload_before_write_or_cursor_commit(
     assert mod.main() == 1
     assert writes == []
     assert commits == []
+    assert not output.exists()
+    assert not cursor.exists()
+
+
+def test_refresh_skips_lock_conflict_without_writing_or_advancing_cursor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = tmp_path / "variant_results.json"
+    cursor = tmp_path / "variant.cursor.json"
+    monkeypatch.setattr(
+        mod,
+        "parse_args",
+        lambda: Namespace(
+            market_db=tmp_path / "market.db",
+            output=output,
+            temp_db=None,
+            start=None,
+            end=None,
+            lookback_calendar_days=180,
+            max_symbols=160,
+            max_fills_per_variant=24,
+            max_runtime_seconds=300,
+            lock_file=tmp_path / "variant.lock",
+            cursor_file=cursor,
+            lock_wait_seconds=0.0,
+        ),
+    )
+
+    @contextlib.contextmanager
+    def locked(*_args: object, **_kwargs: object):
+        raise mod.VariantRefreshLocked("already running")
+        yield
+
+    monkeypatch.setattr(mod, "refresh_lock", locked)
+
+    assert mod.main() == 0
     assert not output.exists()
     assert not cursor.exists()
