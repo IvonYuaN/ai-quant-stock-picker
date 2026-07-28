@@ -11,7 +11,9 @@ from datetime import date
 from pathlib import Path
 
 if __package__ in {None, ""}:
-    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    project_root = Path(__file__).resolve().parents[1]
+    sys.path.insert(0, str(project_root / "src"))
+    sys.path.insert(0, str(project_root))
 
 from aqsp.core.time import latest_completed_trading_day, now_shanghai
 from aqsp.data.sqlite_db_source import SqliteDbSource
