@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from aqsp.core.time import now_shanghai, to_shanghai
+from aqsp.core.time import latest_completed_trading_day, now_shanghai, to_shanghai
 from aqsp.utils.jsonl_io import atomic_write_text
 
 
@@ -461,6 +461,16 @@ HomeDashboardDaySnapshot = HomeSnapshotDay
 HomeDashboardSnapshotIndex = HomeSnapshotIndex
 
 
+def _may_replace_uncompleted_snapshot_date(
+    existing_date: str, replacement_date: str
+) -> bool:
+    """Allow correction of a leaked in-progress date, never historical rewrites."""
+    return (
+        existing_date > replacement_date
+        and replacement_date == latest_completed_trading_day().isoformat()
+    )
+
+
 def write_home_dashboard_snapshot(
     path: str | Path,
     snapshot: HomeDashboardSnapshot,
@@ -472,7 +482,13 @@ def write_home_dashboard_snapshot(
     """
     snapshot = _normalize_snapshot_for_write(snapshot)
     existing = load_home_dashboard_snapshot(path)
-    if existing is not None and existing.selected_date > snapshot.selected_date:
+    if (
+        existing is not None
+        and existing.selected_date > snapshot.selected_date
+        and not _may_replace_uncompleted_snapshot_date(
+            existing.selected_date, snapshot.selected_date
+        )
+    ):
         raise ValueError("refusing to replace a newer home snapshot with an older date")
     payload = f"{snapshot.to_json()}\n"
     if len(payload.encode("utf-8")) > MAX_HOME_SNAPSHOT_BYTES:
@@ -490,6 +506,9 @@ def write_home_snapshot_index(path: str | Path, index: HomeSnapshotIndex) -> Non
         and existing.selected_date
         and index.selected_date
         and existing.selected_date > index.selected_date
+        and not _may_replace_uncompleted_snapshot_date(
+            existing.selected_date, index.selected_date
+        )
     ):
         raise ValueError("refusing to replace a newer home snapshot index")
     payload = f"{index.to_json()}\n"

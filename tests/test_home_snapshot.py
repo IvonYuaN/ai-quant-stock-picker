@@ -3,7 +3,7 @@ from __future__ import annotations
 import ast
 import json
 from dataclasses import replace
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -567,13 +567,18 @@ def test_home_snapshot_write_uses_shared_atomic_writer(monkeypatch, tmp_path) ->
     assert str(captured["payload"]).endswith("\n")
 
 
-def test_home_snapshot_write_does_not_replace_newer_date_with_history(tmp_path) -> None:
+def test_home_snapshot_write_does_not_replace_newer_completed_date_with_history(
+    monkeypatch, tmp_path
+) -> None:
     current = _snapshot(selected_date="2026-07-11")
     historical = _snapshot(
         dates=("2026-07-10",),
         selected_date="2026-07-10",
     )
     source = tmp_path / "home.json"
+    monkeypatch.setattr(
+        home_snapshot, "latest_completed_trading_day", lambda: date(2026, 7, 11)
+    )
 
     write_home_dashboard_snapshot(source, current)
 
@@ -581,6 +586,22 @@ def test_home_snapshot_write_does_not_replace_newer_date_with_history(tmp_path) 
         write_home_dashboard_snapshot(source, historical)
 
     assert load_home_dashboard_snapshot(source) == current
+
+
+def test_home_snapshot_write_replaces_leaked_in_progress_date_with_completed_day(
+    monkeypatch, tmp_path
+) -> None:
+    leaked = _snapshot(dates=("2026-07-28",), selected_date="2026-07-28")
+    completed = _snapshot(dates=("2026-07-27",), selected_date="2026-07-27")
+    source = tmp_path / "home.json"
+    monkeypatch.setattr(
+        home_snapshot, "latest_completed_trading_day", lambda: date(2026, 7, 27)
+    )
+
+    write_home_dashboard_snapshot(source, leaked)
+    write_home_dashboard_snapshot(source, completed)
+
+    assert load_home_dashboard_snapshot(source) == completed
 
 
 def test_home_snapshot_index_write_does_not_replace_newer_date_with_history(
@@ -613,6 +634,36 @@ def test_home_snapshot_index_write_does_not_replace_newer_date_with_history(
         write_home_snapshot_index(source, historical_index)
 
     assert load_home_snapshot_index(source) == current_index
+
+
+def test_home_snapshot_index_replaces_leaked_in_progress_date_with_completed_day(
+    monkeypatch, tmp_path
+) -> None:
+    leaked = _snapshot(dates=("2026-07-28",), selected_date="2026-07-28")
+    completed = _snapshot(dates=("2026-07-27",), selected_date="2026-07-27")
+    leaked_index = HomeSnapshotIndex(
+        schema_version=HOME_SNAPSHOT_INDEX_SCHEMA_VERSION,
+        generated_at="2026-07-28T10:00:00+08:00",
+        stale_after="2026-07-28T10:30:00+08:00",
+        selected_date="2026-07-28",
+        days=(HomeSnapshotDay(date="2026-07-28", snapshot=leaked),),
+    )
+    completed_index = HomeSnapshotIndex(
+        schema_version=HOME_SNAPSHOT_INDEX_SCHEMA_VERSION,
+        generated_at="2026-07-28T10:01:00+08:00",
+        stale_after="2026-07-28T10:31:00+08:00",
+        selected_date="2026-07-27",
+        days=(HomeSnapshotDay(date="2026-07-27", snapshot=completed),),
+    )
+    source = tmp_path / "home-index.json"
+    monkeypatch.setattr(
+        home_snapshot, "latest_completed_trading_day", lambda: date(2026, 7, 27)
+    )
+
+    write_home_snapshot_index(source, leaked_index)
+    write_home_snapshot_index(source, completed_index)
+
+    assert load_home_snapshot_index(source) == completed_index
 
 
 @pytest.mark.parametrize(
