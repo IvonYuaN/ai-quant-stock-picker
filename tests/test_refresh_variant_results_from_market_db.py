@@ -82,6 +82,19 @@ def test_refresh_defaults_keep_production_refresh_bounded() -> None:
     assert mod.DEFAULT_LOOKBACK_CALENDAR_DAYS == 180
     assert mod.DEFAULT_MAX_RUNTIME_SECONDS == 600
     assert mod.DEFAULT_LOCK_WAIT_SECONDS == 0.0
+    assert mod.SQL_CHUNK_SIZE == 80
+
+
+def test_copy_market_rows_rejects_non_positive_sql_chunk_size(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="sql_chunk_size"):
+        mod.copy_market_rows(
+            source_db=tmp_path / "source.db",
+            target_db=tmp_path / "target.db",
+            symbols=(),
+            start="2026-07-01",
+            end="2026-07-02",
+            sql_chunk_size=0,
+        )
 
 
 def test_runtime_budget_raises_timeout_when_work_exceeds_limit() -> None:

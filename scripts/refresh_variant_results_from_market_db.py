@@ -38,7 +38,7 @@ DEFAULT_MAX_FILLS_PER_VARIANT = 24
 DEFAULT_MAX_RUNTIME_SECONDS = 600
 DEFAULT_LOCK_WAIT_SECONDS = 0.0
 LATEST_DATE_PROBE_SYMBOLS = 240
-SQL_CHUNK_SIZE = 400
+SQL_CHUNK_SIZE = 80
 
 
 class VariantRefreshTimeout(TimeoutError):
@@ -246,10 +246,13 @@ def copy_market_rows(
     symbols: tuple[MarketSymbol, ...],
     start: str,
     end: str,
+    sql_chunk_size: int = SQL_CHUNK_SIZE,
 ) -> tuple[str, ...]:
+    if sql_chunk_size < 1:
+        raise ValueError("sql_chunk_size must be positive")
     target_db.parent.mkdir(parents=True, exist_ok=True)
     by_ts_code = {item.ts_code: item for item in symbols}
-    chunks = list(_chunks(tuple(by_ts_code), SQL_CHUNK_SIZE))
+    chunks = list(_chunks(tuple(by_ts_code), sql_chunk_size))
     frames: list[pd.DataFrame] = []
     start_raw = compact_trade_date(start)
     end_raw = compact_trade_date(end)
@@ -398,6 +401,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--lock-file", type=Path)
     parser.add_argument("--cursor-file", type=Path)
+    parser.add_argument("--sql-chunk-size", type=int, default=SQL_CHUNK_SIZE)
     parser.add_argument(
         "--lock-wait-seconds", type=float, default=DEFAULT_LOCK_WAIT_SECONDS
     )
@@ -406,6 +410,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
+    sql_chunk_size = int(getattr(args, "sql_chunk_size", SQL_CHUNK_SIZE))
     lock_path = args.lock_file or args.output.with_name(
         f".{args.output.name}.refresh.lock"
     )
@@ -417,6 +422,8 @@ def main() -> int:
             refresh_lock(lock_path, args.lock_wait_seconds),
             runtime_budget(args.max_runtime_seconds),
         ):
+            if sql_chunk_size < 1:
+                raise ValueError("sql_chunk_size must be positive")
             supported = load_supported_symbols(args.market_db)
             end = args.end or latest_trade_date(args.market_db, supported)
             start = (
@@ -436,6 +443,7 @@ def main() -> int:
                     symbols=selected,
                     start=start,
                     end=end,
+                    sql_chunk_size=sql_chunk_size,
                 )
                 payload = run_suite(temp_db, selected_symbols, start, end)
             else:
@@ -447,6 +455,7 @@ def main() -> int:
                         symbols=selected,
                         start=start,
                         end=end,
+                        sql_chunk_size=sql_chunk_size,
                     )
                     payload = run_suite(temp_db, selected_symbols, start, end)
             compact_variant_fills(payload, args.max_fills_per_variant)

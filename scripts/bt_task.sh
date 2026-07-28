@@ -307,6 +307,32 @@ set_realtime_runner_timeout() {
     export AQSP_RUNNER_TIMEOUT_SECONDS="$configured"
 }
 
+gate_optional_heavy_task() {
+    local status_path="${STATE_DIR}/resource-gate-${ACTION}.json"
+    local min_memory_mb="${AQSP_HEAVY_MIN_FREE_MEMORY_MB:-768}"
+    local max_load_per_cpu="${AQSP_HEAVY_MAX_LOAD_PER_CPU:-0.70}"
+    local exit_code
+    set +e
+    PYTHONPATH="${PROJECT_ROOT}/src:${PROJECT_ROOT}:${PYTHONPATH:-}" \
+        "$AQSP_RUNTIME_PYTHON" "${PROJECT_ROOT}/scripts/resource_gate.py" \
+        --task "$ACTION" \
+        --min-free-memory-mb "$min_memory_mb" \
+        --max-load-per-cpu "$max_load_per_cpu" \
+        --blocked-lock "${LOCK_DIR}/server-runtime.lock" \
+        --blocked-lock "${LOCK_DIR}/intraday-refresh.lock" \
+        --status-path "$status_path" >>"$RUN_LOG" 2>&1
+    exit_code=$?
+    set -e
+    if [ "$exit_code" -eq 75 ]; then
+        log "主机资源不足或主链仍在运行，跳过可选重任务 ${ACTION}；下一个错峰窗口重试"
+        exit 0
+    fi
+    if [ "$exit_code" -ne 0 ]; then
+        log "[ERROR] 资源门禁异常，拒绝启动可选重任务 ${ACTION}，exit=${exit_code}"
+        exit "$exit_code"
+    fi
+}
+
 is_market_trading_day() {
     local python_bin="${AQSP_RUNTIME_PYTHON}"
     local target_date="${AQSP_TRADING_DAY_OVERRIDE_DATE:-}"
@@ -527,6 +553,7 @@ case "$ACTION" in
         ;;
     coldstart)
         skip_non_trading_day
+        gate_optional_heavy_task
         export AQSP_RUN_TASK_ID="coldstart"
         export AQSP_NOTIFY="false"
         export AQSP_GATE_NOTIFY="false"
@@ -535,6 +562,7 @@ case "$ACTION" in
         ;;
     variant-refresh)
         skip_non_trading_day
+        gate_optional_heavy_task
         export AQSP_RUN_TASK_ID="variant_refresh"
         export AQSP_NOTIFY="false"
         export AQSP_GATE_NOTIFY="false"
@@ -542,6 +570,7 @@ case "$ACTION" in
         run_synced_task_with_result
         ;;
     walkforward-gate)
+        gate_optional_heavy_task
         export AQSP_RUN_TASK_ID="walkforward_gate"
         export AQSP_NOTIFY="false"
         export AQSP_GATE_NOTIFY="${AQSP_WALKFORWARD_GATE_NOTIFY:-false}"

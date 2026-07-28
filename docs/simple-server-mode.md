@@ -202,6 +202,8 @@ bash /opt/aqsp/scripts/server_sync_and_run.sh
 
 `daily` 和 `coldstart` 会共用主锁。如果你在 `daily` 还没跑完时手动触发 `coldstart`，日志出现“正常跳过；这是互斥保护，不是失败”是预期行为。生产建议把 `coldstart` 放到 `19:40`，不要放在 `daily` 附近。
 
+`coldstart`、`variant-refresh` 和 `walkforward-gate` 启动前还会读取服务器实时负载、可用内存和主链锁。资源不足时只写 `data/.state/resource-gate-<task>.json` 并正常跳过，保留上一版产物，等待下一个错峰窗口；不会和盘中、收盘主链争抢资源。默认门槛为可用内存 `768MB`、每核 1 分钟负载 `0.70`，可在服务器 `.env` 用 `AQSP_HEAVY_MIN_FREE_MEMORY_MB`、`AQSP_HEAVY_MAX_LOAD_PER_CPU` 按实际配置调整。变体市场库查询按 `80` 只股票分块，避免单条大 SQL 占用过高。
+
 手工验证：
 
 ```bash

@@ -1735,6 +1735,15 @@ def test_variant_refresh_runs_after_close_with_bounded_resources() -> None:
     assert "write_home_snapshot.py" in script
 
 
+def test_bt_optional_heavy_tasks_check_host_capacity_before_starting() -> None:
+    script = (PROJECT_ROOT / "scripts" / "bt_task.sh").read_text(encoding="utf-8")
+
+    assert "resource_gate.py" in script
+    assert "AQSP_HEAVY_MIN_FREE_MEMORY_MB" in script
+    assert "AQSP_HEAVY_MAX_LOAD_PER_CPU" in script
+    assert 'gate_optional_heavy_task' in script
+
+
 def test_cron_installer_schedules_variant_refresh_after_coldstart() -> None:
     script = (PROJECT_ROOT / "scripts" / "install_server_cron.sh").read_text(
         encoding="utf-8"
