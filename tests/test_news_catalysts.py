@@ -913,14 +913,15 @@ def test_news_catalyst_filters_stale_history_news_when_only_url_contains_date() 
 
 
 def test_news_catalyst_uses_title_or_url_date_as_visible_timestamp() -> None:
+    published_date = today_shanghai().isoformat()
     report = build_catalyst_report(
         fetch_global_news=lambda _limit: pd.DataFrame(
             [
                 {
-                    "标题": "2026-06-27 政策支持半导体材料国产替代",
+                    "标题": f"{published_date} 政策支持半导体材料国产替代",
                     "来源": "新华社",
                     "时间": "",
-                    "链接": "https://example.com/20260627/a.html",
+                    "链接": f"https://example.com/{published_date.replace('-', '')}/a.html",
                 }
             ]
         ),
@@ -928,7 +929,7 @@ def test_news_catalyst_uses_title_or_url_date_as_visible_timestamp() -> None:
     )
 
     markdown = format_catalyst_notification(report)
-    assert "时间: 2026-06-27" in markdown
+    assert f"时间: {published_date}" in markdown
 
 
 def test_news_catalyst_reads_extended_published_at_fields() -> None:
