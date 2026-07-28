@@ -60,6 +60,16 @@ def test_check_crontab_rejects_legacy_direct_entries(monkeypatch) -> None:
     assert "daily_run.sh" in result.detail
 
 
+def test_check_crontab_rejects_legacy_coldstart_entry(monkeypatch) -> None:
+    crontab = "40 19 * * 1-5 /bin/bash /opt/aqsp/scripts/coldstart_daily.sh\n"
+    monkeypatch.setattr(check_scheduler, "_run", lambda _args: (0, crontab))
+
+    result = check_scheduler.check_crontab()
+
+    assert result.ok is False
+    assert "coldstart_daily.sh" in result.detail
+
+
 def test_scheduled_actions_returns_actions_from_bt_panel_wrappers(tmp_path) -> None:
     daily = tmp_path / "daily"
     daily.write_text(
@@ -103,6 +113,32 @@ def test_scheduled_actions_ignores_bt_task_comment_words(tmp_path) -> None:
     assert actions == {"intraday"}
 
 
+def test_check_duplicate_bt_panel_actions_rejects_two_coldstart_wrappers(
+    monkeypatch, tmp_path
+) -> None:
+    first = tmp_path / "coldstart-first"
+    second = tmp_path / "coldstart-second"
+    for wrapper in (first, second):
+        wrapper.write_text(
+            "/bin/bash /opt/aqsp/scripts/release_task_entrypoint.sh coldstart\n",
+            encoding="utf-8",
+        )
+    crontab = "\n".join(
+        (
+            f"40 19 * * 1-5 flock -xn {tmp_path}/coldstart-a.lock -c '/bin/bash {first}'",
+            f"45 19 * * 1-5 flock -xn {tmp_path}/coldstart-b.lock -c '/bin/bash {second}'",
+        )
+    )
+    monkeypatch.setattr(check_scheduler, "_run", lambda _args: (0, crontab))
+
+    result = check_scheduler.check_duplicate_bt_panel_actions()
+
+    assert result.ok is False
+    assert "coldstart" in result.detail
+    assert str(first) in result.detail
+    assert str(second) in result.detail
+
+
 def test_check_logs_accepts_missing_sync_log_for_immutable_release(
     monkeypatch, tmp_path
 ) -> None:
@@ -120,9 +156,7 @@ def test_check_logs_accepts_missing_sync_log_for_immutable_release(
     assert sync_result.detail == "not required for an immutable release"
 
 
-def test_check_python_import_prefers_shared_runtime_venv(
-    monkeypatch, tmp_path
-) -> None:
+def test_check_python_import_prefers_shared_runtime_venv(monkeypatch, tmp_path) -> None:
     shared_python = tmp_path / "aqsp-vibe-venv" / "bin" / "python3"
     shared_python.parent.mkdir(parents=True)
     shared_python.touch()

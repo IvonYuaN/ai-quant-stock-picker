@@ -37,7 +37,11 @@ SCHEDULED_ACTIONS = frozenset(
 LEGACY_CRON_TERMS = (
     "daily_run.sh",
     "intraday_refresh.sh",
+    "midday_refresh.sh",
     "daily_pipeline.sh",
+    "coldstart_daily.sh",
+    "server_monitor.sh",
+    "news_catalysts.sh",
     "streamlit",
     "8501",
     "dist/dashboard",
@@ -234,10 +238,10 @@ def check_cron_lock_collisions() -> CheckResult:
     return CheckResult("cron outer locks", True, "no cross-task flock collisions")
 
 
-def _scheduled_actions(
+def _scheduled_action_sources(
     crontab: str, read_wrapper: Callable[[Path], str | None]
-) -> set[str]:
-    actions: set[str] = set()
+) -> dict[str, set[str]]:
+    sources: dict[str, set[str]] = {}
     action_pattern = re.compile(
         r"(?:release_task_entrypoint|bt_task)\.sh\s+("
         + "|".join(sorted(SCHEDULED_ACTIONS))
@@ -262,8 +266,15 @@ def _scheduled_actions(
         text = read_wrapper(wrapper)
         if text is None:
             continue
-        actions.update(action_pattern.findall(text))
-    return actions
+        for action in action_pattern.findall(text):
+            sources.setdefault(action, set()).add(str(wrapper))
+    return sources
+
+
+def _scheduled_actions(
+    crontab: str, read_wrapper: Callable[[Path], str | None]
+) -> set[str]:
+    return set(_scheduled_action_sources(crontab, read_wrapper))
 
 
 def check_bt_panel_actions() -> CheckResult:
@@ -290,6 +301,39 @@ def check_bt_panel_actions() -> CheckResult:
         + ",".join(sorted(actions))
         + ("; missing: " + ",".join(missing) if missing else ""),
     )
+
+
+def check_duplicate_bt_panel_actions() -> CheckResult:
+    """Reject duplicate BaoTa wrappers that launch the same heavy action."""
+    code, output = _run(["crontab", "-l"])
+    if code != 0:
+        return CheckResult(
+            "BT Panel duplicate actions", True, output or "crontab unavailable"
+        )
+
+    def read_wrapper(path: Path) -> str | None:
+        try:
+            return path.read_text(encoding="utf-8")
+        except OSError:
+            return None
+
+    sources = _scheduled_action_sources(output, read_wrapper)
+    duplicates = {
+        action: sorted(wrappers)
+        for action, wrappers in sources.items()
+        if len(wrappers) > 1
+    }
+    if duplicates:
+        detail = "; ".join(
+            f"{action} -> {','.join(wrappers)}"
+            for action, wrappers in sorted(duplicates.items())
+        )
+        return CheckResult(
+            "BT Panel duplicate actions",
+            False,
+            "same action is scheduled by multiple wrappers: " + detail,
+        )
+    return CheckResult("BT Panel duplicate actions", True, "no duplicate task actions")
 
 
 def check_logs() -> list[CheckResult]:
@@ -386,6 +430,7 @@ def main() -> int:
         check_crontab(),
         check_cron_lock_collisions(),
         check_bt_panel_actions(),
+        check_duplicate_bt_panel_actions(),
         *check_logs(),
         *check_locks(),
     ]
