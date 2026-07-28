@@ -117,6 +117,7 @@ export_runtime_path AQSP_INTRADAY_OUTPUT_CSV reports/intraday_latest.csv
 export_runtime_path AQSP_INTRADAY_STATUS data/intraday_refresh_status.json
 export AQSP_INTRADAY_REFRESH_STATUS_PATH="$AQSP_INTRADAY_STATUS"
 export_runtime_path AQSP_INTRADAY_CURSOR_PATH data/runtime/intraday_universe_cursor.json
+export_runtime_path AQSP_AGENT_RUNS_PATH data/runtime/agent_runs.jsonl
 # React + FastAPI is the public surface. Offline archives stay private runtime data.
 export_runtime_path AQSP_DASHBOARD_HTML data/runtime/archive/dashboard/index.html
 export_runtime_path AQSP_DASHBOARD_DB data/runtime/archive/dashboard/aqsp.db

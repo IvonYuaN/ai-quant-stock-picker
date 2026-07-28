@@ -570,6 +570,10 @@ def test_intraday_refresh_script_uses_isolated_outputs() -> None:
     )
     assert 'if is_truthy "${AQSP_IMMUTABLE_RELEASE:-false}"; then' in script
     assert 'REQUIRE_MARKET_HOURS="true"' in script
+    assert (
+        'AGENT_RUNS_PATH="$(resolve_path "${AQSP_AGENT_RUNS_PATH:-data/runtime/agent_runs.jsonl}")"'
+        in script
+    )
     assert 'PRESET_AQSP_INTRADAY_SOURCE="${AQSP_INTRADAY_SOURCE:-}"' in script
     assert (
         'PRESET_AQSP_INTRADAY_MAX_UNIVERSE="${AQSP_INTRADAY_MAX_UNIVERSE:-${AQSP_MAX_UNIVERSE:-}}"'
