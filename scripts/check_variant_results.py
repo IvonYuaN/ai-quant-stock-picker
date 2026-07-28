@@ -15,6 +15,7 @@ from typing import Any
 
 MAX_TOP_HOLDING_DUPLICATES = 1
 TOP_DIVERSITY_WINDOW = 20
+MIN_UNIQUE_HOLDING_SIGNATURE_RATIO = 0.5
 REQUIRED_TECHNICAL_KEYS = ("macd_hist", "kdj_j", "volume_ratio", "atr_pct")
 
 
@@ -116,8 +117,14 @@ def validate_variant_payload(
             raise ValueError(f"{variant_id} technical evidence missing")
     if len(strategy_signatures) < min_variants:
         raise ValueError("unique strategy signatures below minimum")
-    if len(holding_signatures) <= 1:
-        raise ValueError("holding signatures are not diversified")
+    minimum_unique_holdings = math.ceil(
+        len(variants) * MIN_UNIQUE_HOLDING_SIGNATURE_RATIO
+    )
+    if len(holding_signatures) < minimum_unique_holdings:
+        raise ValueError(
+            "unique holding signatures below minimum: "
+            f"{len(holding_signatures)} < {minimum_unique_holdings}"
+        )
     if top_holding_signatures:
         duplicate, count = Counter(top_holding_signatures).most_common(1)[0]
         if count > MAX_TOP_HOLDING_DUPLICATES:
