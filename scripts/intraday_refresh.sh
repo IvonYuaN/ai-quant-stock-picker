@@ -219,11 +219,15 @@ if [[ -z "$INTRADAY_BENCHMARK_SYMBOL" || "$INTRADAY_BENCHMARK_SYMBOL" =~ [[:spac
     log "[ERROR] 盘中市场基准配置无效: ${INTRADAY_BENCHMARK_SYMBOL:-<empty>}；请设置 AQSP_INTRADAY_BENCHMARK_SYMBOL"
     exit 1
 fi
-# 盘中任务按 10 分钟周期运行，默认 7 分钟收尾，给下一轮和清理留余量。
-INTRADAY_RUN_TIMEOUT_SECONDS="${AQSP_INTRADAY_RUN_TIMEOUT_SECONDS:-420}"
+# 盘中任务按 10 分钟周期运行。预留至少五分钟给下一轮和系统恢复，
+# 避免盘中计算、消息和 Agent 侧车累积后把生产机拖入持续高负载。
+INTRADAY_RUN_TIMEOUT_SECONDS="${AQSP_INTRADAY_RUN_TIMEOUT_SECONDS:-240}"
 if ! [[ "$INTRADAY_RUN_TIMEOUT_SECONDS" =~ ^[0-9]+$ ]] || [ "$INTRADAY_RUN_TIMEOUT_SECONDS" -le 0 ]; then
-    log "盘中运行超时配置无效(${INTRADAY_RUN_TIMEOUT_SECONDS})，使用 420 秒"
-    INTRADAY_RUN_TIMEOUT_SECONDS="420"
+    log "盘中运行超时配置无效(${INTRADAY_RUN_TIMEOUT_SECONDS})，使用 240 秒"
+    INTRADAY_RUN_TIMEOUT_SECONDS="240"
+elif [ "$INTRADAY_RUN_TIMEOUT_SECONDS" -gt 300 ] && ! is_truthy "${AQSP_INTRADAY_ALLOW_LONG_RUNTIME:-false}"; then
+    log "盘中运行时限 ${INTRADAY_RUN_TIMEOUT_SECONDS} 秒过长，收紧为 300 秒；设置 AQSP_INTRADAY_ALLOW_LONG_RUNTIME=true 才允许扩大"
+    INTRADAY_RUN_TIMEOUT_SECONDS="300"
 fi
 # 盘中默认解析完整实时股票池；短线流动性阈值必须通过盘中专用变量显式设置，
 # 不能继承收盘主链的 AQSP_MIN_AVG_AMOUNT 而静默缩成一部分股票。
@@ -261,13 +265,13 @@ INTRADAY_BATCH_SCAN="${AQSP_INTRADAY_BATCH_SCAN:-true}"
 # the production host and upstream quote sources.  Cursor rotation covers the
 # complete eligible pool across runs; it must not turn one ten-minute cycle
 # into a 5,000-symbol data request.
-INTRADAY_BATCH_SIZE="${AQSP_INTRADAY_BATCH_SIZE:-64}"
+INTRADAY_BATCH_SIZE="${AQSP_INTRADAY_BATCH_SIZE:-32}"
 if ! [[ "$INTRADAY_BATCH_SIZE" =~ ^[0-9]+$ ]] || [ "$INTRADAY_BATCH_SIZE" -le 0 ]; then
-    log "盘中批次大小无效(${INTRADAY_BATCH_SIZE})，使用 64"
-    INTRADAY_BATCH_SIZE="64"
-elif [ "$INTRADAY_BATCH_SIZE" -gt 96 ] && ! is_truthy "${AQSP_INTRADAY_ALLOW_HEAVY_UNIVERSE:-false}"; then
-    log "盘中批次大小 ${INTRADAY_BATCH_SIZE} 过大，收紧为 96；设置 AQSP_INTRADAY_ALLOW_HEAVY_UNIVERSE=true 才允许扩大"
-    INTRADAY_BATCH_SIZE="96"
+    log "盘中批次大小无效(${INTRADAY_BATCH_SIZE})，使用 32"
+    INTRADAY_BATCH_SIZE="32"
+elif [ "$INTRADAY_BATCH_SIZE" -gt 48 ] && ! is_truthy "${AQSP_INTRADAY_ALLOW_HEAVY_UNIVERSE:-false}"; then
+    log "盘中批次大小 ${INTRADAY_BATCH_SIZE} 过大，收紧为 48；设置 AQSP_INTRADAY_ALLOW_HEAVY_UNIVERSE=true 才允许扩大"
+    INTRADAY_BATCH_SIZE="48"
 fi
 INTRADAY_BATCH_RESOLVE_TIMEOUT_SECONDS="${AQSP_INTRADAY_BATCH_RESOLVE_TIMEOUT_SECONDS:-45}"
 if ! [[ "$INTRADAY_BATCH_RESOLVE_TIMEOUT_SECONDS" =~ ^[0-9]+$ ]] || \
@@ -462,7 +466,7 @@ refresh_debate_backfill_lock_owner() {
 }
 
 launch_intraday_debate_backfill() {
-    if ! is_truthy "${AQSP_INTRADAY_DEBATE_BACKFILL:-true}"; then
+    if ! is_truthy "${AQSP_INTRADAY_DEBATE_BACKFILL:-false}"; then
         log "盘中 Agent 讨论回填已关闭"
         return 0
     fi

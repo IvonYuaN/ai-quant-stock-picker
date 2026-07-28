@@ -614,7 +614,7 @@ def test_intraday_runtime_refreshes_news_after_candidates_and_keeps_home_snapsho
     assert status["status"] == "completed"
     assert status["news_catalysts"]["status"] == "refreshed"
     assert status["execution"]["catalyst_fetch_mode"] == "thread"
-    assert status["execution"]["runner_timeout_seconds"] == 420
+    assert status["execution"]["runner_timeout_seconds"] == 240
     assert status["execution"]["news_task_timeout_seconds"] == 20
     assert status["execution"]["duration_seconds"] >= 0
 

@@ -598,9 +598,11 @@ def test_intraday_refresh_script_uses_isolated_outputs() -> None:
     assert "${AQSP_SOURCE:-eastmoney}" not in script
     assert 'INTRADAY_MODE="${AQSP_INTRADAY_MODE:-open}"' in script
     assert (
-        'INTRADAY_RUN_TIMEOUT_SECONDS="${AQSP_INTRADAY_RUN_TIMEOUT_SECONDS:-420}"'
+        'INTRADAY_RUN_TIMEOUT_SECONDS="${AQSP_INTRADAY_RUN_TIMEOUT_SECONDS:-240}"'
         in script
     )
+    assert 'INTRADAY_RUN_TIMEOUT_SECONDS="300"' in script
+    assert "AQSP_INTRADAY_ALLOW_LONG_RUNTIME" in script
     assert (
         'timeout --foreground --signal=TERM --kill-after=15s "${INTRADAY_RUN_TIMEOUT_SECONDS}s"'
         in script
@@ -622,6 +624,7 @@ def test_intraday_refresh_script_uses_isolated_outputs() -> None:
     )
     assert "launch_intraday_debate_backfill" in script
     assert "scripts/backfill_intraday_debate.py" in script
+    assert "AQSP_INTRADAY_DEBATE_BACKFILL:-false" in script
     assert "AQSP_INTRADAY_DEBATE_BACKFILL_BACKGROUND:-false" in script
     assert "AQSP_INTRADAY_DEBATE_BACKFILL_FORCE:-true" in script
     assert "AQSP_INTRADAY_DEBATE_BACKFILL_MAX_CANDIDATES:-5" in script
@@ -1659,7 +1662,8 @@ def test_intraday_refresh_default_batch_can_rotate_full_market_in_session() -> N
         encoding="utf-8"
     )
 
-    assert 'INTRADAY_BATCH_SIZE="${AQSP_INTRADAY_BATCH_SIZE:-64}"' in script
+    assert 'INTRADAY_BATCH_SIZE="${AQSP_INTRADAY_BATCH_SIZE:-32}"' in script
+    assert 'INTRADAY_BATCH_SIZE="48"' in script
     assert "AQSP_INTRADAY_BATCH_SIZE" in script
 
 
