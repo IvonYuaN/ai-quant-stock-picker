@@ -314,6 +314,7 @@ gate_optional_heavy_task() {
     local min_memory_mb="${AQSP_HEAVY_MIN_FREE_MEMORY_MB:-768}"
     local max_load_per_cpu="${AQSP_HEAVY_MAX_LOAD_PER_CPU:-0.70}"
     local exit_code
+    mkdir -p "$LOG_DIR" "$STATE_DIR"
     set +e
     PYTHONPATH="${PROJECT_ROOT}/src:${PROJECT_ROOT}:${PYTHONPATH:-}" \
         "$AQSP_RUNTIME_PYTHON" "${PROJECT_ROOT}/scripts/resource_gate.py" \

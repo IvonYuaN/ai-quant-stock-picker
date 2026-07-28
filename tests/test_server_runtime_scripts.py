@@ -1748,6 +1748,49 @@ def test_bt_optional_heavy_tasks_check_host_capacity_before_starting() -> None:
     assert "optional_heavy_slot_is_stale" in script
 
 
+def test_bt_task_skips_optional_heavy_task_when_shared_slot_is_held(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "runtime"
+    scripts_dir = root / "scripts"
+    scripts_dir.mkdir(parents=True)
+    for filename in ("bt_task.sh", "runtime_python.sh"):
+        shutil.copy2(PROJECT_ROOT / "scripts" / filename, scripts_dir)
+
+    fake_python = tmp_path / "runtime-python"
+    fake_python.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    fake_python.chmod(0o755)
+    lock_dir = root / "data" / ".locks" / "heavy-compute.lock"
+    lock_dir.mkdir(parents=True)
+    metadata = lock_dir / "meta.env"
+    metadata.write_text(
+        "HEAVY_SLOT_PID=%s\nHEAVY_SLOT_RUNNER=bt_task:variant-refresh\n"
+        "HEAVY_SLOT_STARTED_AT=2026-07-27\\ 21:00:00\n" % os.getpid(),
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        ["bash", str(scripts_dir / "bt_task.sh"), "coldstart"],
+        cwd=root,
+        env={
+            **os.environ,
+            "AQSP_PROJECT_ROOT": str(root),
+            "AQSP_RUNTIME_DATA_ROOT": str(root / "data"),
+            "AQSP_PYTHON": str(fake_python),
+            "AQSP_IMMUTABLE_RELEASE": "true",
+        },
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "重任务槽位已被占用" in result.stdout
+    assert metadata.exists()
+    assert "bt_task:variant-refresh" in metadata.read_text(encoding="utf-8")
+
+
 def test_cron_installer_schedules_variant_refresh_after_coldstart() -> None:
     script = (PROJECT_ROOT / "scripts" / "install_server_cron.sh").read_text(
         encoding="utf-8"
