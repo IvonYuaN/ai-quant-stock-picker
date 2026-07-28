@@ -81,6 +81,7 @@ MAX_HOME_CANDIDATES = MAX_HOME_SNAPSHOT_CANDIDATES
 MAX_HOME_SUMMARIES = 3
 MAX_HOME_MESSAGES = 5
 MAX_HOME_MESSAGES_PER_SOURCE = 2
+MAX_HOME_VARIANTS = 160
 NEWS_REPORT_MAX_AGE_SECONDS = 6 * 60 * 60
 CURRENT_MESSAGE_WINDOW = timedelta(hours=24)
 _SOURCE_STATUS_LABELS = {
@@ -1614,7 +1615,7 @@ def _variant_snapshot() -> tuple[HomeSnapshotVariant, ...]:
         "含佣金、印花税、滑点",
     )
     variants: list[HomeSnapshotVariant] = []
-    for item in raw_variants[:64]:
+    for item in raw_variants[:MAX_HOME_VARIANTS]:
         if not isinstance(item, dict) or item.get("initial_cash") != 100_000.0:
             continue
         holdings = _variant_holdings(item.get("holdings", ()), "holding")

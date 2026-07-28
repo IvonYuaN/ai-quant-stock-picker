@@ -432,6 +432,9 @@
   .aqsp-lab-grid span { color: hsl(var(--muted-foreground)); }
   .aqsp-lab-snapshot { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 0.8rem; margin-bottom: 0.65rem; color: hsl(var(--muted-foreground)); font-size: 0.66rem; }
   .aqsp-variant-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.65rem; }
+  .aqsp-variant-pagination { display: flex; align-items: center; justify-content: center; gap: 0.45rem; margin-top: 0.75rem; color: hsl(var(--muted-foreground)); font-size: 0.68rem; }
+  .aqsp-variant-pagination button { display: inline-grid; width: 2rem; height: 2rem; place-items: center; border: 1px solid hsl(var(--border)); border-radius: 0.4rem; background: hsl(var(--card)); color: hsl(var(--foreground)); }
+  .aqsp-variant-pagination button:disabled { cursor: not-allowed; opacity: 0.4; }
   .aqsp-variant-card { min-width: 0; border: 1px solid hsl(var(--border) / 0.75); border-radius: 0.5rem; padding: 0.75rem; background: hsl(var(--card) / 0.62); }
   .aqsp-variant-head { display: flex; justify-content: space-between; gap: 0.5rem; }
   .aqsp-variant-head h3 { font-size: 0.82rem; font-weight: 700; }

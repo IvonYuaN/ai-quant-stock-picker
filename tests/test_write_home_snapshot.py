@@ -124,6 +124,29 @@ def test_variant_suite_snapshot_reads_variant_results_metadata(
     assert suite.coverage_pct == 0.3659
 
 
+def test_variant_snapshot_keeps_all_standard_experiment_variants(
+    monkeypatch, tmp_path: Path
+) -> None:
+    path = tmp_path / "variant_results.json"
+    path.write_text(
+        json.dumps(
+            {
+                "initial_cash": 100000.0,
+                "variants": [
+                    {"variant_id": f"variant_{index}", "initial_cash": 100000.0}
+                    for index in range(148)
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AQSP_VARIANT_RESULTS", str(path))
+
+    variants = write_home_snapshot._variant_snapshot()
+
+    assert len(variants) == 148
+
+
 @pytest.mark.parametrize("status", ["blocked_resources", "timeout", "failed"])
 def test_walkforward_evidence_rejects_non_completed_production_status(
     monkeypatch, tmp_path, status: str

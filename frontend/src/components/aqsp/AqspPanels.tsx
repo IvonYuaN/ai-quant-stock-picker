@@ -4,6 +4,8 @@ import {
   Bot,
   CalendarDays,
   Check,
+  ChevronLeft,
+  ChevronRight,
   CircleAlert,
   Clock3,
   ExternalLink,
@@ -14,6 +16,7 @@ import {
   Sparkles,
   UsersRound,
 } from "lucide-react";
+import { useState } from "react";
 import { cn } from "@/lib/utils";
 import { FORMAL_RESEARCH_SECTIONS, resolveResearchView, TEST_VARIANTS_SECTION_ID, type ResearchViewId } from "@/lib/research-layout";
 import type { AqspAgentResult, AqspCandidate, AqspMessage, AqspPhase, AqspSnapshot, AqspVariant } from "@/lib/api";
@@ -223,15 +226,21 @@ function DebateCard({ result }: { result: AqspAgentResult }) {
   return <article className="aqsp-card aqsp-debate-card"><div className="aqsp-card-head"><div className="aqsp-agent-title"><span className="aqsp-agent-mark"><Bot className="h-4 w-4" /></span><div><h3>{result.display_name || result.symbol || "对象未记录"}</h3><span className="aqsp-code">{result.symbol || "代码未记录"}</span></div></div><span className={cn("aqsp-badge", conclusion ? "aqsp-badge-ok" : "aqsp-badge-warn")}>{conclusion ? "已汇总" : "不完整"}</span></div><div className="aqsp-discussion"><p className="aqsp-label"><UsersRound className="h-3.5 w-3.5" />讨论过程</p><p>{process || "过程未记录"}</p>{result.active_roles.length > 0 && <div className="aqsp-tags">{result.active_roles.map((role) => <span className="aqsp-tag" key={role}>{role}</span>)}</div>}{rounds.length > 0 && <ol>{rounds.map((round, index) => <li key={`${index}-${round}`}>第 {index + 1} 轮：{round}</li>)}</ol>}</div>{buckets.length > 0 && <div className="aqsp-viewpoint-buckets"><p className="aqsp-label">独立证据</p>{buckets.map(([bucket, points]) => <div key={bucket}><b>{bucketLabels[bucket] || bucket}</b><span>{points.slice(0, 2).join("；")}</span></div>)}</div>}<div className="aqsp-votes"><span>支持 <b>{result.bull_count}</b></span><span>保留 <b>{result.neutral_count}</b></span><span>风险 <b>{result.bear_count}</b></span></div>{(result.disagreement_points?.length || result.uncertainty_points?.length) ? <div className="aqsp-debate-foot">{result.disagreement_points?.slice(0, 2).map((item) => <span key={item}><CircleAlert className="h-3.5 w-3.5" />分歧：{item}</span>)}{result.uncertainty_points?.slice(0, 2).map((item) => <span key={item}><CircleAlert className="h-3.5 w-3.5" />不确定：{item}</span>)}</div> : null}<div className="aqsp-debate-conclusion"><p className="aqsp-label">汇总结论</p><strong>{conclusion || "暂无结论"}</strong></div>{(result.primary_risk_gate || result.next_trigger) && <div className="aqsp-debate-foot">{result.primary_risk_gate && <span><ShieldAlert className="h-3.5 w-3.5" />风险：{result.primary_risk_gate}</span>}{result.next_trigger && <span><Sparkles className="h-3.5 w-3.5" />下一验证：{result.next_trigger}</span>}</div>}</article>;
 }
 
+const VARIANT_PAGE_SIZE = 24;
+
 function TestVariantsPanel({ snapshot }: { snapshot?: AqspSnapshot }) {
   const historical = snapshot?.meta?.historical ?? false;
   const variants = snapshot?.variants ?? [];
   const suite = snapshot?.variant_suite;
   const variantHistory = variants.some((variant) => variant.data_mode.includes("historical"));
+  const [variantPage, setVariantPage] = useState(0);
+  const variantPageCount = Math.max(1, Math.ceil(variants.length / VARIANT_PAGE_SIZE));
+  const activeVariantPage = Math.min(variantPage, variantPageCount - 1);
+  const visibleVariants = variants.slice(activeVariantPage * VARIANT_PAGE_SIZE, (activeVariantPage + 1) * VARIANT_PAGE_SIZE);
   return <section id={TEST_VARIANTS_SECTION_ID} className="aqsp-lab" aria-label="测试与变体">
     <div className="aqsp-section-head"><div><p className="aqsp-eyebrow"><FlaskConical className="h-3.5 w-3.5" />独立区域</p><h2>测试与变体</h2></div><span>不进入正式结论</span></div>
-    <div className="aqsp-lab-snapshot">{snapshot ? <><span>数据区间：{variants[0]?.start_date || "—"} 至 {suite?.end_date || variants[0]?.end_date || "—"}</span><span>展示：{variants.length} / {suite?.variant_count ?? variants.length} 个</span><span>股票池：{suite?.selected_symbols ?? "—"} / {suite?.supported_symbols ?? "—"}</span>{suite?.batch_active ? <><span>轮转批次：{suite.batch_id || `第 ${suite.cycle_id ?? 0} 轮`}</span><span>本批：{suite.batch_size ?? suite.selected_symbols ?? "—"}，覆盖：{((suite.coverage_pct ?? 0) * 100).toFixed(1)}%</span></> : null}<span>{suite?.schema_version || "schema 未记录"}</span><span className={cn("aqsp-badge", historical || variantHistory ? "aqsp-badge-warn" : "aqsp-badge-ok")}>{historical || variantHistory ? "历史回测 · 仅验证" : "当前实验结果"}</span>{suite?.filters ? <span>{suite.filters}</span> : null}</> : <span>等待正式快照</span>}</div>
-    {variants.length === 0 ? <EmptyState title="变体结果尚未产出" detail="实验结果独立于正式候选，产出后会显示在这里。" /> : <div className="aqsp-variant-grid">{variants.map((variant: AqspVariant) => {
+    <div className="aqsp-lab-snapshot">{snapshot ? <><span>数据区间：{variants[0]?.start_date || "—"} 至 {suite?.end_date || variants[0]?.end_date || "—"}</span><span>已载入：{variants.length} / {suite?.variant_count ?? variants.length} 个</span><span>当前页：{activeVariantPage + 1} / {variantPageCount}</span><span>股票池：{suite?.selected_symbols ?? "—"} / {suite?.supported_symbols ?? "—"}</span>{suite?.batch_active ? <><span>轮转批次：{suite.batch_id || `第 ${suite.cycle_id ?? 0} 轮`}</span><span>本批：{suite.batch_size ?? suite.selected_symbols ?? "—"}，覆盖：{((suite.coverage_pct ?? 0) * 100).toFixed(1)}%</span></> : null}<span>{suite?.schema_version || "schema 未记录"}</span><span className={cn("aqsp-badge", historical || variantHistory ? "aqsp-badge-warn" : "aqsp-badge-ok")}>{historical || variantHistory ? "历史回测 · 仅验证" : "当前实验结果"}</span>{suite?.filters ? <span>{suite.filters}</span> : null}</> : <span>等待正式快照</span>}</div>
+    {variants.length === 0 ? <EmptyState title="变体结果尚未产出" detail="实验结果独立于正式候选，产出后会显示在这里。" /> : <><div className="aqsp-variant-grid">{visibleVariants.map((variant: AqspVariant) => {
       const pnl = variant.total_pnl;
       const holdings = variant.holdings;
       return <article className="aqsp-variant-card" key={variant.variant_id}>
@@ -253,7 +262,7 @@ function TestVariantsPanel({ snapshot }: { snapshot?: AqspSnapshot }) {
         <div className="aqsp-variant-actions"><b>最近动作</b>{(variant.recent_actions ?? []).slice(0, 4).map((action, index) => <span key={`${action.date}-${action.symbol}-${index}`}>{variantActionText(action)}</span>)}{(variant.recent_actions?.length ?? 0) === 0 ? <span>暂无成交动作记录</span> : null}</div>
         <p className="aqsp-variant-rules">成交 {variant.filled_orders} · 拒绝 {variant.rejected_orders} · {(variant.hard_rules ?? []).join(" · ") || "硬成交规则未记录"}</p>
       </article>;
-    })}</div>}
+    })}</div>{variantPageCount > 1 && <nav className="aqsp-variant-pagination" aria-label="变体分页"><button type="button" onClick={() => setVariantPage(activeVariantPage - 1)} disabled={activeVariantPage === 0} title="上一页" aria-label="上一页"><ChevronLeft className="h-4 w-4" /></button><span>第 {activeVariantPage + 1} / {variantPageCount} 页</span><button type="button" onClick={() => setVariantPage(activeVariantPage + 1)} disabled={activeVariantPage >= variantPageCount - 1} title="下一页" aria-label="下一页"><ChevronRight className="h-4 w-4" /></button></nav>}</>}
   </section>;
 }
 
