@@ -6,6 +6,28 @@ from scripts import run_variant_suite as variant_suite
 from scripts.run_variant_suite import run_suite
 
 
+def test_generate_variant_profiles_stays_diverse_and_explained() -> None:
+    profiles = variant_suite.generate_variant_profiles({})
+
+    signatures = {
+        (
+            profile.mode,
+            profile.lookback,
+            profile.entry_return_pct,
+            profile.max_bias_pct,
+            profile.max_positions,
+            profile.position_weight,
+        )
+        for profile in profiles
+    }
+
+    assert len(profiles) >= 140
+    assert len({profile.variant_id for profile in profiles}) == len(profiles)
+    assert len(signatures) == len(profiles)
+    assert len({profile.mode for profile in profiles}) >= 12
+    assert all(profile.hypothesis for profile in profiles)
+
+
 def test_run_suite_creates_many_explained_nonduplicate_accounts(tmp_path):
     db = tmp_path / "history.db"
     with sqlite3.connect(db) as conn:
