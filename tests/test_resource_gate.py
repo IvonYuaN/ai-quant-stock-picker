@@ -53,3 +53,23 @@ def test_resource_gate_rejects_active_runtime_lock_before_optional_heavy_task(
 
     assert decision.accepted is False
     assert str(lock) in decision.detail
+
+
+def test_resource_gate_scales_default_memory_reserve_for_known_host_capacity() -> None:
+    reserve = resource_gate.recommended_min_free_memory_mb(
+        resource_gate.HostResources(4, 0.1, 6000, total_memory_mb=8192)
+    )
+
+    assert reserve == 2048
+
+
+def test_resource_gate_keeps_safe_floor_when_host_memory_is_small_or_unknown() -> None:
+    small = resource_gate.recommended_min_free_memory_mb(
+        resource_gate.HostResources(2, 0.1, 900, total_memory_mb=2048)
+    )
+    unknown = resource_gate.recommended_min_free_memory_mb(
+        resource_gate.HostResources(2, 0.1, 900)
+    )
+
+    assert small == 768
+    assert unknown == 768

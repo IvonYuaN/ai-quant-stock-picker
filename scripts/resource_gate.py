@@ -15,6 +15,9 @@ from aqsp.utils.jsonl_io import atomic_write_text
 
 
 SKIP_EXIT_CODE = 75
+DEFAULT_MIN_FREE_MEMORY_MB = 768
+MAX_AUTO_MIN_FREE_MEMORY_MB = 4096
+AUTO_MEMORY_RESERVE_DIVISOR = 4
 
 
 @dataclass(frozen=True)
@@ -22,6 +25,7 @@ class HostResources:
     cpu_count: int
     load_1m: float | None
     available_memory_mb: int | None
+    total_memory_mb: int | None = None
 
 
 @dataclass(frozen=True)
@@ -40,15 +44,28 @@ def read_host_resources() -> HostResources:
         load_1m = None
 
     available_memory_mb: int | None = None
+    total_memory_mb: int | None = None
     meminfo = Path("/proc/meminfo")
     try:
         for line in meminfo.read_text(encoding="utf-8").splitlines():
             if line.startswith("MemAvailable:"):
                 available_memory_mb = int(line.split()[1]) // 1024
-                break
+            elif line.startswith("MemTotal:"):
+                total_memory_mb = int(line.split()[1]) // 1024
     except (OSError, ValueError, IndexError):
         pass
-    return HostResources(cpu_count, load_1m, available_memory_mb)
+    return HostResources(cpu_count, load_1m, available_memory_mb, total_memory_mb)
+
+
+def recommended_min_free_memory_mb(resources: HostResources) -> int:
+    """Reserve memory proportionally on known Linux hosts, with safe bounds."""
+    if resources.total_memory_mb is None:
+        return DEFAULT_MIN_FREE_MEMORY_MB
+    proportional_reserve = resources.total_memory_mb // AUTO_MEMORY_RESERVE_DIVISOR
+    return min(
+        MAX_AUTO_MIN_FREE_MEMORY_MB,
+        max(DEFAULT_MIN_FREE_MEMORY_MB, proportional_reserve),
+    )
 
 
 def evaluate_resources(
@@ -88,7 +105,12 @@ def evaluate_resources(
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--task", required=True)
-    parser.add_argument("--min-free-memory-mb", type=int, default=768)
+    parser.add_argument(
+        "--min-free-memory-mb",
+        type=int,
+        default=0,
+        help="0 derives a bounded reserve from host memory; a positive value overrides it",
+    )
     parser.add_argument("--max-load-per-cpu", type=float, default=0.70)
     parser.add_argument("--blocked-lock", action="append", type=Path, default=[])
     parser.add_argument("--status-path", type=Path)
@@ -101,9 +123,15 @@ def main() -> int:
         raise ValueError("min_free_memory_mb must be non-negative")
     if args.max_load_per_cpu <= 0:
         raise ValueError("max_load_per_cpu must be positive")
+    resources = read_host_resources()
+    min_free_memory_mb = (
+        args.min_free_memory_mb
+        if args.min_free_memory_mb > 0
+        else recommended_min_free_memory_mb(resources)
+    )
     decision = evaluate_resources(
-        read_host_resources(),
-        min_free_memory_mb=args.min_free_memory_mb,
+        resources,
+        min_free_memory_mb=min_free_memory_mb,
         max_load_per_cpu=args.max_load_per_cpu,
         blocked_locks=args.blocked_lock,
     )
@@ -112,6 +140,7 @@ def main() -> int:
         "checked_at": to_iso8601(now_shanghai()),
         "accepted": decision.accepted,
         "detail": decision.detail,
+        "min_free_memory_mb": min_free_memory_mb,
         "resources": asdict(decision.resources),
     }
     if args.status_path:

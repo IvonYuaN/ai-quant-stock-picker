@@ -58,7 +58,7 @@ def _variant_result_payload(count: int = 100) -> dict[str, object]:
                         "evidence": evidence,
                     }
                 ],
-                "adjustments": [f"买入 {symbol}：技术面确认。"],
+                "adjustments": [f"买入 {symbol}：MACD/KDJ/量比/ATR 技术面确认。"],
                 "technical_evidence": [evidence],
             }
         )

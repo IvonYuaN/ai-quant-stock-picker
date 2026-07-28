@@ -311,7 +311,8 @@ set_realtime_runner_timeout() {
 
 gate_optional_heavy_task() {
     local status_path="${STATE_DIR}/resource-gate-${ACTION}.json"
-    local min_memory_mb="${AQSP_HEAVY_MIN_FREE_MEMORY_MB:-768}"
+    # 0 lets resource_gate reserve 25% of known host memory, bounded by its safe floor/cap.
+    local min_memory_mb="${AQSP_HEAVY_MIN_FREE_MEMORY_MB:-0}"
     local max_load_per_cpu="${AQSP_HEAVY_MAX_LOAD_PER_CPU:-0.70}"
     local exit_code
     mkdir -p "$LOG_DIR" "$STATE_DIR"
