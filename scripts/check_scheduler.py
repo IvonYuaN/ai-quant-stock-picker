@@ -36,6 +36,7 @@ SCHEDULED_ACTIONS = frozenset(
         "news",
     }
 )
+MULTI_WINDOW_ACTIONS = frozenset({"news"})
 LEGACY_CRON_TERMS = (
     "daily_run.sh",
     "intraday_refresh.sh",
@@ -342,7 +343,7 @@ def check_duplicate_bt_panel_actions() -> CheckResult:
     duplicates = {
         action: sorted(wrappers)
         for action, wrappers in sources.items()
-        if len(wrappers) > 1
+        if len(wrappers) > 1 and action not in MULTI_WINDOW_ACTIONS
     }
     if duplicates:
         detail = "; ".join(
@@ -369,6 +370,7 @@ def _bt_wrapper_actions(text: str) -> set[str]:
 
 def check_bt_panel_wrapper_integrity(
     cron_dir: Path = BT_CRON_DIR,
+    expected_actions: frozenset[str] = SCHEDULED_ACTIONS,
 ) -> CheckResult:
     """Detect old or duplicate AQSP BaoTa wrappers before they can overlap."""
     if not cron_dir.is_dir():
@@ -378,7 +380,11 @@ def check_bt_panel_wrapper_integrity(
 
     action_sources: dict[str, list[Path]] = {}
     legacy_sources: list[Path] = []
-    for wrapper in sorted(path for path in cron_dir.iterdir() if path.is_file()):
+    for wrapper in sorted(
+        path
+        for path in cron_dir.iterdir()
+        if path.is_file() and path.suffix not in {".lock", ".log", ".pl"}
+    ):
         try:
             text = wrapper.read_text(encoding="utf-8")
         except OSError:
@@ -399,7 +405,9 @@ def check_bt_panel_wrapper_integrity(
             + ",".join(str(path) for path in legacy_sources),
         )
     duplicates = {
-        action: paths for action, paths in action_sources.items() if len(paths) > 1
+        action: paths
+        for action, paths in action_sources.items()
+        if len(paths) > 1 and action not in MULTI_WINDOW_ACTIONS
     }
     if duplicates:
         detail = "; ".join(
@@ -412,7 +420,20 @@ def check_bt_panel_wrapper_integrity(
             "same action is scheduled by multiple BT wrappers: " + detail,
         )
     if not action_sources:
-        return CheckResult("BT Panel wrapper audit", True, "no AQSP BT Panel wrappers")
+        return CheckResult(
+            "BT Panel wrapper audit",
+            not expected_actions,
+            "no AQSP BT Panel wrappers"
+            if not expected_actions
+            else "missing scheduled actions: " + ",".join(sorted(expected_actions)),
+        )
+    missing = sorted(expected_actions - set(action_sources))
+    if missing:
+        return CheckResult(
+            "BT Panel wrapper audit",
+            False,
+            "missing scheduled actions: " + ",".join(missing),
+        )
     return CheckResult(
         "BT Panel wrapper audit",
         True,

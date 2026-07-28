@@ -178,10 +178,68 @@ def test_bt_panel_wrapper_audit_ignores_commented_legacy_entry(tmp_path) -> None
         encoding="utf-8",
     )
 
-    result = check_scheduler.check_bt_panel_wrapper_integrity(tmp_path)
+    result = check_scheduler.check_bt_panel_wrapper_integrity(
+        tmp_path, expected_actions=frozenset({"daily"})
+    )
 
     assert result.ok is True
     assert result.detail == "scheduled actions: daily"
+
+
+def test_bt_panel_wrapper_audit_ignores_baota_runtime_files(tmp_path) -> None:
+    (tmp_path / "daily").write_text(
+        "/bin/bash /opt/aqsp/scripts/release_task_entrypoint.sh daily\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "daily.log").write_text(
+        "/bin/bash /opt/aqsp/scripts/daily_run.sh\n", encoding="utf-8"
+    )
+    (tmp_path / "daily.lock").touch()
+
+    result = check_scheduler.check_bt_panel_wrapper_integrity(
+        tmp_path, expected_actions=frozenset({"daily"})
+    )
+
+    assert result.ok is True
+    assert result.detail == "scheduled actions: daily"
+
+
+def test_bt_panel_wrapper_audit_allows_separate_news_windows(tmp_path) -> None:
+    for name in ("weekday-news", "weekend-news"):
+        (tmp_path / name).write_text(
+            "/bin/bash /opt/aqsp/scripts/release_task_entrypoint.sh news\n",
+            encoding="utf-8",
+        )
+
+    result = check_scheduler.check_bt_panel_wrapper_integrity(
+        tmp_path, expected_actions=frozenset({"news"})
+    )
+
+    assert result.ok is True
+    assert result.detail == "scheduled actions: news"
+
+
+def test_bt_panel_wrapper_audit_rejects_missing_required_action(tmp_path) -> None:
+    (tmp_path / "daily").write_text(
+        "/bin/bash /opt/aqsp/scripts/release_task_entrypoint.sh daily\n",
+        encoding="utf-8",
+    )
+
+    result = check_scheduler.check_bt_panel_wrapper_integrity(
+        tmp_path, expected_actions=frozenset({"daily", "variant-refresh"})
+    )
+
+    assert result.ok is False
+    assert result.detail == "missing scheduled actions: variant-refresh"
+
+
+def test_bt_panel_wrapper_audit_rejects_empty_baota_directory(tmp_path) -> None:
+    result = check_scheduler.check_bt_panel_wrapper_integrity(
+        tmp_path, expected_actions=frozenset({"daily"})
+    )
+
+    assert result.ok is False
+    assert result.detail == "missing scheduled actions: daily"
 
 
 def test_scheduler_main_strict_schedule_ignores_missing_runtime_logs(
