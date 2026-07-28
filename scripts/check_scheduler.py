@@ -23,6 +23,7 @@ RUNTIME_DATA_ROOT = Path(
 RUNTIME_LOCK_ROOT = Path(
     os.environ.get("AQSP_RUNTIME_LOCK_DIR", RUNTIME_DATA_ROOT / ".locks")
 ).resolve()
+BT_CRON_DIR = Path(os.environ.get("AQSP_BT_CRON_DIR", "/www/server/cron")).resolve()
 SCHEDULED_ACTIONS = frozenset(
     {
         "daily",
@@ -48,6 +49,16 @@ LEGACY_CRON_TERMS = (
     "dist/dashboard",
     "release_task_entrypoint.sh",
     "bt_task.sh",
+)
+BT_LEGACY_ENTRY_PATTERN = re.compile(
+    r"(?:AQSP_RUNNER_SCRIPT=|/scripts/)"
+    r"(?:daily_run|daily_pipeline|intraday_refresh|midday_refresh|coldstart_daily|"
+    r"variant_refresh|run_production_walkforward_gate|server_monitor|news_catalysts)\.sh"
+)
+BT_ACTION_PATTERN = re.compile(
+    r"(?:release_task_entrypoint|bt_task)\.sh\s+("
+    + "|".join(sorted(SCHEDULED_ACTIONS))
+    + r")\b"
 )
 for candidate in (PROJECT_ROOT / "src", PROJECT_ROOT):
     candidate_str = str(candidate)
@@ -346,6 +357,69 @@ def check_duplicate_bt_panel_actions() -> CheckResult:
     return CheckResult("BT Panel duplicate actions", True, "no duplicate task actions")
 
 
+def _bt_wrapper_actions(text: str) -> set[str]:
+    """Extract real scheduler commands, ignoring wrapper comments."""
+    return {
+        action
+        for line in text.splitlines()
+        if not line.lstrip().startswith("#")
+        for action in BT_ACTION_PATTERN.findall(line)
+    }
+
+
+def check_bt_panel_wrapper_integrity(
+    cron_dir: Path = BT_CRON_DIR,
+) -> CheckResult:
+    """Detect old or duplicate AQSP BaoTa wrappers before they can overlap."""
+    if not cron_dir.is_dir():
+        return CheckResult(
+            "BT Panel wrapper audit", True, "BT Panel cron dir unavailable"
+        )
+
+    action_sources: dict[str, list[Path]] = {}
+    legacy_sources: list[Path] = []
+    for wrapper in sorted(path for path in cron_dir.iterdir() if path.is_file()):
+        try:
+            text = wrapper.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        active_lines = "\n".join(
+            line for line in text.splitlines() if not line.lstrip().startswith("#")
+        )
+        if BT_LEGACY_ENTRY_PATTERN.search(active_lines):
+            legacy_sources.append(wrapper)
+        for action in _bt_wrapper_actions(text):
+            action_sources.setdefault(action, []).append(wrapper)
+
+    if legacy_sources:
+        return CheckResult(
+            "BT Panel wrapper audit",
+            False,
+            "legacy direct AQSP task wrapper(s): "
+            + ",".join(str(path) for path in legacy_sources),
+        )
+    duplicates = {
+        action: paths for action, paths in action_sources.items() if len(paths) > 1
+    }
+    if duplicates:
+        detail = "; ".join(
+            f"{action} -> {','.join(str(path) for path in paths)}"
+            for action, paths in sorted(duplicates.items())
+        )
+        return CheckResult(
+            "BT Panel wrapper audit",
+            False,
+            "same action is scheduled by multiple BT wrappers: " + detail,
+        )
+    if not action_sources:
+        return CheckResult("BT Panel wrapper audit", True, "no AQSP BT Panel wrappers")
+    return CheckResult(
+        "BT Panel wrapper audit",
+        True,
+        "scheduled actions: " + ",".join(sorted(action_sources)),
+    )
+
+
 def check_logs() -> list[CheckResult]:
     bt_dir = RUNTIME_DATA_ROOT / "logs" / "bt"
     bt_logs = sorted(bt_dir.glob(f"bt-*-{TODAY}.log")) if bt_dir.exists() else []
@@ -433,7 +507,7 @@ def main() -> int:
     print(f"project: {PROJECT_ROOT}")
     print()
 
-    checks = [
+    scheduler_checks = [
         check_project_root(),
         check_python_import(),
         check_bt_script(),
@@ -441,6 +515,10 @@ def main() -> int:
         check_cron_lock_collisions(),
         check_bt_panel_actions(),
         check_duplicate_bt_panel_actions(),
+        check_bt_panel_wrapper_integrity(),
+    ]
+    checks = [
+        *scheduler_checks,
         *check_logs(),
         *check_locks(),
     ]
@@ -451,7 +529,13 @@ def main() -> int:
         print(f"[{marker}] {result.label}: {result.detail}")
         has_error = has_error or not result.ok
 
+    strict_schedule_error = any(not result.ok for result in scheduler_checks)
     if _truthy(os.environ.get("AQSP_SCHEDULER_STRICT")) and has_error:
+        return 1
+    if (
+        _truthy(os.environ.get("AQSP_SCHEDULER_STRICT_SCHEDULE"))
+        and strict_schedule_error
+    ):
         return 1
     return 0
 

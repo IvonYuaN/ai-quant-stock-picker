@@ -204,6 +204,8 @@ bash /opt/aqsp/scripts/server_sync_and_run.sh
 
 `coldstart`、`variant-refresh` 和 `walkforward-gate` 启动前会读取服务器实时负载、可用内存、总内存和主链锁，并抢占同一把 `data/.locks/heavy-compute.lock` 槽位锁。资源不足或已有重任务时只写 `data/.state/resource-gate-<task>.json` 并正常跳过，保留上一版产物，等待下一个错峰窗口；不会和盘中、收盘主链或其他重任务争抢资源。未配置时，内存保留量按总内存的 `25%` 自动计算，最低 `768MB`、最高 `4096MB`；每核 1 分钟负载默认上限 `0.70`。服务器 `.env` 可用 `AQSP_HEAVY_MIN_FREE_MEMORY_MB` 覆盖自动值，用 `AQSP_HEAVY_MAX_LOAD_PER_CPU` 调整负载门槛；状态文件会记录实际采用的内存门槛。直接运行 production walk-forward 也会检查可用内存，默认低于 `768MB` 拒绝启动，可用 `--min-free-memory-mb` 按主机配置调整。变体市场库查询按 `80` 只股票分块，避免单条大 SQL 占用过高；发布前至少 `80%` 的变体必须拥有不同的持仓签名，每只当前持仓必须带同日 MACD、KDJ、量比和 ATR 证据，每一只换仓股票的说明必须点名并给出技术指标。
 
+`check_scheduler.py` 同时审计系统 crontab 和宝塔实际任务目录 `/www/server/cron`。它会把直跑旧脚本、绕过 `bt_task.sh` 的重任务、以及同一动作的多个宝塔包装任务判为失败；不可变发布会以 `AQSP_SCHEDULER_STRICT_SCHEDULE=true` 阻断这类调度错误，不会因为当天尚未生成日志而误阻断。该检查只读，不会自行删除任何计划任务。
+
 手工验证：
 
 ```bash

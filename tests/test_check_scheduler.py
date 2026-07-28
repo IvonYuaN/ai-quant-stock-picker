@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from scripts import check_scheduler
+from scripts.check_scheduler import CheckResult
 
 
 def test_check_cron_lock_collisions_rejects_shared_outer_lock(monkeypatch) -> None:
@@ -137,6 +138,99 @@ def test_check_duplicate_bt_panel_actions_rejects_two_coldstart_wrappers(
     assert "coldstart" in result.detail
     assert str(first) in result.detail
     assert str(second) in result.detail
+
+
+def test_bt_panel_wrapper_audit_rejects_legacy_direct_heavy_entry(tmp_path) -> None:
+    wrapper = tmp_path / "legacy-variant"
+    wrapper.write_text(
+        "/bin/bash /opt/aqsp/scripts/variant_refresh.sh\n", encoding="utf-8"
+    )
+
+    result = check_scheduler.check_bt_panel_wrapper_integrity(tmp_path)
+
+    assert result.ok is False
+    assert "legacy direct AQSP" in result.detail
+    assert str(wrapper) in result.detail
+
+
+def test_bt_panel_wrapper_audit_rejects_duplicate_heavy_action(tmp_path) -> None:
+    first = tmp_path / "coldstart-first"
+    second = tmp_path / "coldstart-second"
+    for wrapper in (first, second):
+        wrapper.write_text(
+            "/bin/bash /opt/aqsp/scripts/release_task_entrypoint.sh coldstart\n",
+            encoding="utf-8",
+        )
+
+    result = check_scheduler.check_bt_panel_wrapper_integrity(tmp_path)
+
+    assert result.ok is False
+    assert "coldstart" in result.detail
+    assert str(first) in result.detail
+    assert str(second) in result.detail
+
+
+def test_bt_panel_wrapper_audit_ignores_commented_legacy_entry(tmp_path) -> None:
+    wrapper = tmp_path / "daily"
+    wrapper.write_text(
+        "# /bin/bash /opt/aqsp/scripts/daily_run.sh\n"
+        "/bin/bash /opt/aqsp/scripts/release_task_entrypoint.sh daily\n",
+        encoding="utf-8",
+    )
+
+    result = check_scheduler.check_bt_panel_wrapper_integrity(tmp_path)
+
+    assert result.ok is True
+    assert result.detail == "scheduled actions: daily"
+
+
+def test_scheduler_main_strict_schedule_ignores_missing_runtime_logs(
+    monkeypatch, capsys
+) -> None:
+    passing = CheckResult("schedule", True, "ok")
+    missing_log = CheckResult("runtime log", False, "not written yet")
+    monkeypatch.setenv("AQSP_SCHEDULER_STRICT_SCHEDULE", "true")
+    monkeypatch.delenv("AQSP_SCHEDULER_STRICT", raising=False)
+    for name in (
+        "check_project_root",
+        "check_python_import",
+        "check_bt_script",
+        "check_crontab",
+        "check_cron_lock_collisions",
+        "check_bt_panel_actions",
+        "check_duplicate_bt_panel_actions",
+        "check_bt_panel_wrapper_integrity",
+    ):
+        monkeypatch.setattr(check_scheduler, name, lambda: passing)
+    monkeypatch.setattr(check_scheduler, "check_logs", lambda: [missing_log])
+    monkeypatch.setattr(check_scheduler, "check_locks", lambda: [])
+
+    assert check_scheduler.main() == 0
+    assert "runtime log" in capsys.readouterr().out
+
+
+def test_scheduler_main_strict_schedule_rejects_unsafe_wrapper(monkeypatch) -> None:
+    passing = CheckResult("schedule", True, "ok")
+    unsafe = CheckResult("BT Panel wrapper audit", False, "duplicate coldstart")
+    monkeypatch.setenv("AQSP_SCHEDULER_STRICT_SCHEDULE", "true")
+    monkeypatch.delenv("AQSP_SCHEDULER_STRICT", raising=False)
+    for name in (
+        "check_project_root",
+        "check_python_import",
+        "check_bt_script",
+        "check_crontab",
+        "check_cron_lock_collisions",
+        "check_bt_panel_actions",
+        "check_duplicate_bt_panel_actions",
+    ):
+        monkeypatch.setattr(check_scheduler, name, lambda: passing)
+    monkeypatch.setattr(
+        check_scheduler, "check_bt_panel_wrapper_integrity", lambda: unsafe
+    )
+    monkeypatch.setattr(check_scheduler, "check_logs", lambda: [])
+    monkeypatch.setattr(check_scheduler, "check_locks", lambda: [])
+
+    assert check_scheduler.main() == 1
 
 
 def test_check_logs_accepts_missing_sync_log_for_immutable_release(

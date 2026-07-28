@@ -251,6 +251,7 @@ def test_immutable_release_deploy_script_covers_full_server_activation_chain() -
     assert "check_runtime_storage.py" in script
     assert "--apply --json" in script
     assert "check_scheduler.py" in script
+    assert "AQSP_SCHEDULER_STRICT_SCHEDULE=true" in script
     assert "stop stale frontend port owner" in script
     assert "legacy runtime frontend still has a live process" in script
     assert 'rm -rf -- "$RUNTIME_ROOT/data/vibe-research/frontend"' in script

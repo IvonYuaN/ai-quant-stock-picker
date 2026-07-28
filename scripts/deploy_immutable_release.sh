@@ -366,6 +366,7 @@ run_scheduler_check() {
     AQSP_RUNTIME_ROOT="$RUNTIME_ROOT" \
     AQSP_RUNTIME_DATA_ROOT="$RUNTIME_DATA_ROOT" \
     AQSP_RUNTIME_PYTHON="$PYTHON_BIN" \
+    AQSP_SCHEDULER_STRICT_SCHEDULE=true \
         "$PYTHON_BIN" "$release/scripts/check_scheduler.py"
 }
 
