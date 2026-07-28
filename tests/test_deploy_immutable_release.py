@@ -13,3 +13,4 @@ def test_deploy_immutable_release_updates_tracking_ref_when_deploying_branch() -
         'git fetch "$REMOTE" "refs/heads/${BRANCH}:refs/remotes/${REMOTE}/${BRANCH}"'
         in script
     )
+    assert script.count('--branch "$BRANCH"') == 3

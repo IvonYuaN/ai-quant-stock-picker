@@ -151,6 +151,7 @@ check_release() {
     PYTHONPATH="$root/src" "$PYTHON_BIN" "$root/scripts/check_release_consistency.py" \
         --project-root "$root" \
         --manifest "$root/.aqsp-release.json" \
+        --branch "$BRANCH" \
         --immutable-release \
         --active-file scripts/release_task_entrypoint.sh \
         --active-file scripts/bt_task.sh \
@@ -164,6 +165,7 @@ check_current_release() {
         --project-root "$root" \
         --canonical-link "$CURRENT_LINK" \
         --manifest "$root/.aqsp-release.json" \
+        --branch "$BRANCH" \
         --immutable-release \
         --active-file scripts/release_task_entrypoint.sh \
         --active-file scripts/bt_task.sh \
