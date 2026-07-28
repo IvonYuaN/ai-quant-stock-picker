@@ -97,6 +97,8 @@ def test_is_trading_day_uses_local_calendar_when_runtime_calendar_is_wrong(
     )
 
     assert is_trading_day(date(2026, 7, 27))
+    assert get_previous_trading_day(date(2026, 7, 28)) == date(2026, 7, 27)
+    assert get_next_trading_day(date(2026, 7, 24)) == date(2026, 7, 27)
 
 
 def test_static_holiday_overrides_runtime_calendar_open_flag():

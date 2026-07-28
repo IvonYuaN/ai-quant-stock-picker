@@ -91,17 +91,13 @@ def is_trading_day(d: date) -> bool:
 def get_previous_trading_day(d: date | None = None) -> date:
     if d is None:
         d = today_shanghai()
-    from aqsp.data.trading_calendar import resolve_previous_trading_day
-
-    return resolve_previous_trading_day(d)
+    return _get_basic_previous_trading_day(d)
 
 
 def get_next_trading_day(d: date | None = None) -> date:
     if d is None:
         d = today_shanghai()
-    from aqsp.data.trading_calendar import resolve_next_trading_day
-
-    return resolve_next_trading_day(d)
+    return _get_basic_next_trading_day(d)
 
 
 def latest_completed_trading_day(dt: datetime | None = None) -> date:
