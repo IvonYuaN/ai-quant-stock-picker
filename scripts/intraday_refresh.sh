@@ -257,11 +257,18 @@ INTRADAY_NEWS_SCRIPT="${AQSP_INTRADAY_NEWS_SCRIPT:-${PROJECT_ROOT}/scripts/news_
 INTRADAY_NEWS_OUTPUT="$(resolve_path "${AQSP_INTRADAY_NEWS_OUTPUT:-${AQSP_NEWS_OUTPUT:-reports/news_catalysts.md}}")"
 INTRADAY_NEWS_JSON_OUTPUT="$(resolve_path "${AQSP_INTRADAY_NEWS_JSON_OUTPUT:-${AQSP_NEWS_JSON_OUTPUT:-data/runtime/news_catalysts_latest.json}}")"
 INTRADAY_BATCH_SCAN="${AQSP_INTRADAY_BATCH_SCAN:-true}"
-# Keep the full-universe cursor while using a batch that can complete a
-# 5,000+ symbol rotation inside one trading session.  The screening process
-# remains bounded by the 420s timeout; operators can lower this explicitly on
-# a smaller host with AQSP_INTRADAY_BATCH_SIZE.
-INTRADAY_BATCH_SIZE="${AQSP_INTRADAY_BATCH_SIZE:-256}"
+# Keep the full-universe cursor, but keep each scheduled run small enough for
+# the production host and upstream quote sources.  Cursor rotation covers the
+# complete eligible pool across runs; it must not turn one ten-minute cycle
+# into a 5,000-symbol data request.
+INTRADAY_BATCH_SIZE="${AQSP_INTRADAY_BATCH_SIZE:-64}"
+if ! [[ "$INTRADAY_BATCH_SIZE" =~ ^[0-9]+$ ]] || [ "$INTRADAY_BATCH_SIZE" -le 0 ]; then
+    log "盘中批次大小无效(${INTRADAY_BATCH_SIZE})，使用 64"
+    INTRADAY_BATCH_SIZE="64"
+elif [ "$INTRADAY_BATCH_SIZE" -gt 96 ] && ! is_truthy "${AQSP_INTRADAY_ALLOW_HEAVY_UNIVERSE:-false}"; then
+    log "盘中批次大小 ${INTRADAY_BATCH_SIZE} 过大，收紧为 96；设置 AQSP_INTRADAY_ALLOW_HEAVY_UNIVERSE=true 才允许扩大"
+    INTRADAY_BATCH_SIZE="96"
+fi
 INTRADAY_CURSOR_PATH="$(resolve_path "${AQSP_INTRADAY_CURSOR_PATH:-data/runtime/intraday_universe_cursor.json}")"
 INTRADAY_BATCH_ACTIVE="false"
 INTRADAY_BATCH_SYMBOLS=""
@@ -1593,9 +1600,10 @@ if is_truthy "$INTRADAY_BATCH_SCAN" && \
         exit 1
     fi
     INTRADAY_BATCH_ACTIVE="true"
-    # The explicit symbol list is already bounded by the cursor. Keep metadata
-    # at zero so batch size is not reported as a global universe cap.
-    INTRADAY_MAX_UNIVERSE="0"
+    # Pass the selected batch as a CLI hard cap too.  AQSP_SYMBOLS limits the
+    # normal path, but a nonzero cap prevents a future symbol-resolution
+    # regression from silently expanding this scheduled run to the full pool.
+    INTRADAY_MAX_UNIVERSE="$INTRADAY_BATCH_EXPECTED_COUNT"
     export AQSP_SYMBOLS="$INTRADAY_BATCH_SYMBOLS"
     log "盘中批次已准备: ${INTRADAY_BATCH_SYMBOLS}"
 fi

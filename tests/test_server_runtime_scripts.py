@@ -1659,7 +1659,7 @@ def test_intraday_refresh_default_batch_can_rotate_full_market_in_session() -> N
         encoding="utf-8"
     )
 
-    assert 'INTRADAY_BATCH_SIZE="${AQSP_INTRADAY_BATCH_SIZE:-256}"' in script
+    assert 'INTRADAY_BATCH_SIZE="${AQSP_INTRADAY_BATCH_SIZE:-64}"' in script
     assert "AQSP_INTRADAY_BATCH_SIZE" in script
 
 
