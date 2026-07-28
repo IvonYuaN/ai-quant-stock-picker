@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import subprocess
 import sys
 import urllib.error
@@ -31,6 +32,8 @@ from scripts.remote_runtime_probe import build_report as build_probe_report  # n
 COMMAND_TIMEOUT_SECONDS = 20.0
 DEFAULT_BASE_URL = "https://lh.ifidy.cn"
 DEFAULT_SSH_TARGET = "aqsp-server"
+MIN_SNAPSHOT_VARIANTS = 100
+REQUIRED_TECHNICAL_METRICS = ("macd_hist", "kdj_j", "volume_ratio", "atr_pct")
 
 
 @dataclass(frozen=True)
@@ -317,15 +320,55 @@ def _snapshot_contract(
         return ClosureCheck(
             "snapshot_contract", "failed", "first variant adjustments empty"
         )
-    if not first.get("technical_evidence"):
+    if not _has_complete_technical_evidence(first.get("technical_evidence")):
         return ClosureCheck(
-            "snapshot_contract", "failed", "first variant technical_evidence empty"
+            "snapshot_contract",
+            "failed",
+            "first variant technical_evidence incomplete",
+        )
+    declared_variant_count = variant_suite.get("variant_count")
+    if (
+        not isinstance(declared_variant_count, int)
+        or declared_variant_count < MIN_SNAPSHOT_VARIANTS
+    ):
+        return ClosureCheck(
+            "snapshot_contract",
+            "failed",
+            f"variant_suite variant_count < {MIN_SNAPSHOT_VARIANTS}",
+        )
+    if len(variants) < MIN_SNAPSHOT_VARIANTS:
+        return ClosureCheck(
+            "snapshot_contract",
+            "failed",
+            f"snapshot variants < {MIN_SNAPSHOT_VARIANTS}",
         )
     return ClosureCheck(
         "snapshot_contract",
         "ok",
         f"selected_date={selected} suite_end={suite_end} selected_symbols={selected_symbols} variants={len(variants)}",
     )
+
+
+def _has_complete_technical_evidence(value: object) -> bool:
+    if not isinstance(value, list):
+        return False
+    for evidence in value:
+        if not isinstance(evidence, dict):
+            continue
+        if all(
+            _is_finite_number(evidence.get(key)) for key in REQUIRED_TECHNICAL_METRICS
+        ):
+            return True
+    return False
+
+
+def _is_finite_number(value: object) -> bool:
+    if isinstance(value, bool):
+        return False
+    try:
+        return math.isfinite(float(value))
+    except (TypeError, ValueError):
+        return False
 
 
 def _valid_date(value: str) -> bool:

@@ -242,6 +242,7 @@ PY
     fi
     "$PYTHON_BIN" - "${CHECK_URL%/}/api/aqsp/snapshot" "$RELEASE_DIR/src" "$EXPECTED_VARIANT_END" <<'PY'
 import json
+import math
 import sys
 from datetime import date
 
@@ -276,6 +277,11 @@ if expected_end and suite_end != expected_end:
 variants = data.get("variants")
 if not isinstance(variants, list) or not variants or not isinstance(variants[0], dict):
     raise SystemExit("snapshot variants missing")
+declared_variant_count = variant_suite.get("variant_count")
+if not isinstance(declared_variant_count, int) or declared_variant_count < 100:
+    raise SystemExit("snapshot variant_suite variant_count < 100")
+if len(variants) < 100:
+    raise SystemExit("snapshot variants < 100")
 first = variants[0]
 previous_holdings_date = str(first.get("previous_holdings_date") or "")
 if expected_end and first.get("holdings_date") != expected_end:
@@ -284,8 +290,24 @@ if previous_holdings_date and previous_holdings_date not in available:
     raise SystemExit("snapshot available_dates missing previous_holdings_date")
 if not first.get("adjustments"):
     raise SystemExit("snapshot first variant adjustments empty")
-if not first.get("technical_evidence"):
-    raise SystemExit("snapshot first variant technical_evidence empty")
+
+def _is_finite(value):
+    try:
+        return math.isfinite(float(value))
+    except (TypeError, ValueError):
+        return False
+
+technical_evidence = first.get("technical_evidence")
+if not isinstance(technical_evidence, list) or not any(
+    isinstance(evidence, dict)
+    and all(
+        not isinstance(evidence.get(key), bool)
+        and _is_finite(evidence.get(key))
+        for key in ("macd_hist", "kdj_j", "volume_ratio", "atr_pct")
+    )
+    for evidence in technical_evidence
+):
+    raise SystemExit("snapshot first variant technical_evidence incomplete")
 for key in ("candidates", "debates", "summaries", "messages"):
     value = data.get(key)
     if value is not None and not isinstance(value, list):

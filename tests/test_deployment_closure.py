@@ -189,6 +189,7 @@ def test_snapshot_contract_requires_variant_suite_evidence(monkeypatch) -> None:
                     "schema_version": "variant-suite-v2",
                     "end_date": "2026-07-24",
                     "selected_symbols": 300,
+                    "variant_count": 100,
                 },
                 "variants": [
                     {
@@ -207,7 +208,8 @@ def test_snapshot_contract_requires_variant_suite_evidence(monkeypatch) -> None:
                             }
                         ],
                     }
-                ],
+                ]
+                * 100,
             }
         },
     )
@@ -218,6 +220,7 @@ def test_snapshot_contract_requires_variant_suite_evidence(monkeypatch) -> None:
 
     assert check.status == "ok"
     assert "selected_symbols=300" in check.detail
+    assert "variants=100" in check.detail
 
 
 def test_snapshot_contract_rejects_wrong_variant_date(monkeypatch) -> None:
@@ -405,4 +408,96 @@ def test_snapshot_contract_rejects_missing_variant_technical_evidence(
     )
 
     assert check.status == "failed"
-    assert "technical_evidence empty" in check.detail
+    assert "technical_evidence incomplete" in check.detail
+
+
+def test_snapshot_contract_rejects_short_or_incomplete_variant_snapshot(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        closure,
+        "_read_json_url",
+        lambda _url, *, timeout: {
+            "data": {
+                "selected_date": "2026-07-24",
+                "available_dates": ["2026-07-24", "2026-07-23"],
+                "source": {"latest_trade_date": "2026-07-24"},
+                "variant_suite": {
+                    "schema_version": "variant-suite-v2",
+                    "end_date": "2026-07-24",
+                    "selected_symbols": 300,
+                    "variant_count": 100,
+                },
+                "variants": [
+                    {
+                        "holdings_date": "2026-07-24",
+                        "previous_holdings_date": "2026-07-23",
+                        "holdings": [],
+                        "previous_holdings": [],
+                        "recent_actions": [],
+                        "adjustments": ["今日/昨日持仓无变化，未发生换票。"],
+                        "technical_evidence": [
+                            {
+                                "macd_hist": 0.12,
+                                "kdj_j": 55.0,
+                                "volume_ratio": 1.35,
+                                "atr_pct": 2.4,
+                            }
+                        ],
+                    }
+                ],
+            }
+        },
+    )
+
+    check = closure._snapshot_contract(
+        base_url="https://lh.ifidy.cn", expected_end="2026-07-24", timeout=1.0
+    )
+
+    assert check.status == "failed"
+    assert "snapshot variants < 100" in check.detail
+
+
+def test_snapshot_contract_rejects_non_numeric_technical_evidence(monkeypatch) -> None:
+    monkeypatch.setattr(
+        closure,
+        "_read_json_url",
+        lambda _url, *, timeout: {
+            "data": {
+                "selected_date": "2026-07-24",
+                "available_dates": ["2026-07-24", "2026-07-23"],
+                "source": {"latest_trade_date": "2026-07-24"},
+                "variant_suite": {
+                    "schema_version": "variant-suite-v2",
+                    "end_date": "2026-07-24",
+                    "selected_symbols": 300,
+                    "variant_count": 100,
+                },
+                "variants": [
+                    {
+                        "holdings_date": "2026-07-24",
+                        "previous_holdings_date": "2026-07-23",
+                        "holdings": [],
+                        "previous_holdings": [],
+                        "recent_actions": [],
+                        "adjustments": ["今日/昨日持仓无变化，未发生换票。"],
+                        "technical_evidence": [
+                            {
+                                "macd_hist": None,
+                                "kdj_j": None,
+                                "volume_ratio": None,
+                                "atr_pct": None,
+                            }
+                        ],
+                    }
+                ],
+            }
+        },
+    )
+
+    check = closure._snapshot_contract(
+        base_url="https://lh.ifidy.cn", expected_end="2026-07-24", timeout=1.0
+    )
+
+    assert check.status == "failed"
+    assert "technical_evidence incomplete" in check.detail
