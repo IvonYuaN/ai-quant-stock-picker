@@ -202,7 +202,7 @@ bash /opt/aqsp/scripts/server_sync_and_run.sh
 
 `daily` 和 `coldstart` 会共用主锁。如果你在 `daily` 还没跑完时手动触发 `coldstart`，日志出现“正常跳过；这是互斥保护，不是失败”是预期行为。生产建议把 `coldstart` 放到 `19:40`，不要放在 `daily` 附近。
 
-`coldstart`、`variant-refresh` 和 `walkforward-gate` 启动前会读取服务器实时负载、可用内存和主链锁，并抢占同一把 `data/.locks/heavy-compute.lock` 槽位锁。资源不足或已有重任务时只写 `data/.state/resource-gate-<task>.json` 并正常跳过，保留上一版产物，等待下一个错峰窗口；不会和盘中、收盘主链或其他重任务争抢资源。默认门槛为可用内存 `768MB`、每核 1 分钟负载 `0.70`，可在服务器 `.env` 用 `AQSP_HEAVY_MIN_FREE_MEMORY_MB`、`AQSP_HEAVY_MAX_LOAD_PER_CPU` 按实际配置调整。变体市场库查询按 `80` 只股票分块，避免单条大 SQL 占用过高；发布前至少 `80%` 的变体必须拥有不同的持仓签名，每只当前持仓必须带同日 MACD、KDJ、量比和 ATR 证据，每一只换仓股票的说明必须点名并给出技术指标。
+`coldstart`、`variant-refresh` 和 `walkforward-gate` 启动前会读取服务器实时负载、可用内存和主链锁，并抢占同一把 `data/.locks/heavy-compute.lock` 槽位锁。资源不足或已有重任务时只写 `data/.state/resource-gate-<task>.json` 并正常跳过，保留上一版产物，等待下一个错峰窗口；不会和盘中、收盘主链或其他重任务争抢资源。默认门槛为可用内存 `768MB`、每核 1 分钟负载 `0.70`，可在服务器 `.env` 用 `AQSP_HEAVY_MIN_FREE_MEMORY_MB`、`AQSP_HEAVY_MAX_LOAD_PER_CPU` 按实际配置调整。直接运行 production walk-forward 也会检查可用内存，默认低于 `768MB` 拒绝启动，可用 `--min-free-memory-mb` 按主机配置调整。变体市场库查询按 `80` 只股票分块，避免单条大 SQL 占用过高；发布前至少 `80%` 的变体必须拥有不同的持仓签名，每只当前持仓必须带同日 MACD、KDJ、量比和 ATR 证据，每一只换仓股票的说明必须点名并给出技术指标。
 
 手工验证：
 

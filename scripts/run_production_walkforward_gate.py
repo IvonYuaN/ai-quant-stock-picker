@@ -45,6 +45,7 @@ DEFAULT_LOOKBACK_YEARS = 3
 PRODUCTION_TIMEOUT_FLOOR_SECONDS = 7200
 PRODUCTION_TIMEOUT_SECONDS_PER_SYMBOL = 2
 MIN_PRODUCTION_MEMORY_GIB = 4.0
+MIN_PRODUCTION_FREE_MEMORY_MB = 768
 DEFAULT_STREAM_BATCH_SIZE = 200
 PROCESS_GROUP_TERMINATE_TIMEOUT_SECONDS = 5.0
 PROCESS_GROUP_KILL_TIMEOUT_SECONDS = 5.0
@@ -278,6 +279,29 @@ def _total_memory_gib() -> float | None:
         except (AttributeError, OSError, TypeError):
             pass
     return None
+
+
+def _available_memory_mb() -> int | None:
+    meminfo = Path("/proc/meminfo")
+    try:
+        for line in meminfo.read_text(encoding="utf-8").splitlines():
+            if line.startswith("MemAvailable:"):
+                return int(line.split()[1]) // 1024
+    except (OSError, ValueError, IndexError):
+        pass
+    return None
+
+
+def _low_available_memory_blocker(min_free_memory_mb: int) -> str:
+    available_memory_mb = _available_memory_mb()
+    if min_free_memory_mb <= 0 or available_memory_mb is None:
+        return ""
+    if available_memory_mb >= min_free_memory_mb:
+        return ""
+    return (
+        f"server free memory {available_memory_mb}MB < required "
+        f"{min_free_memory_mb}MB; refusing to start production walk-forward"
+    )
 
 
 def _low_memory_blocker(min_memory_gib: float) -> str:
@@ -1797,6 +1821,12 @@ def main() -> int:
         help="minimum host memory for launching the child production walk-forward",
     )
     parser.add_argument(
+        "--min-free-memory-mb",
+        type=int,
+        default=MIN_PRODUCTION_FREE_MEMORY_MB,
+        help="minimum currently available memory; 0 disables this Linux host guard",
+    )
+    parser.add_argument(
         "--stream-batch-size",
         type=int,
         default=DEFAULT_STREAM_BATCH_SIZE,
@@ -1810,6 +1840,8 @@ def main() -> int:
     args = parser.parse_args()
     if args.stream_batch_size <= 0:
         parser.error("--stream-batch-size must be positive")
+    if args.min_free_memory_mb < 0:
+        parser.error("--min-free-memory-mb must be non-negative")
     args.coverage_mode = _normalize_coverage_mode(args.coverage_mode)
     if not str(args.end or "").strip():
         args.end = _default_production_end()
@@ -1830,6 +1862,17 @@ def main() -> int:
             detail=active_detail,
         )
         print(f"BLOCK: {active_detail}")
+        return 2
+
+    available_memory_blocker = _low_available_memory_blocker(args.min_free_memory_mb)
+    if available_memory_blocker and not args.dry_run and not args.repair_only:
+        _write_preflight_status(
+            status_path,
+            args=args,
+            status="blocked_resources",
+            detail=available_memory_blocker,
+        )
+        print(f"BLOCK: {available_memory_blocker}")
         return 2
 
     resource_blocker = _low_memory_blocker(args.min_memory_gib)
