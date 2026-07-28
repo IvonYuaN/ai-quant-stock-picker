@@ -295,6 +295,18 @@ is_truthy() {
     [[ "$value" =~ ^(1|true|yes|on)$ ]]
 }
 
+set_realtime_runner_timeout() {
+    local configured="${AQSP_INTRADAY_OUTER_TIMEOUT_SECONDS:-360}"
+    if ! [[ "$configured" =~ ^[1-9][0-9]*$ ]]; then
+        log "盘中主链超时配置无效(${configured})，使用 360 秒"
+        configured="360"
+    elif [ "$configured" -gt 420 ]; then
+        log "盘中主链超时配置过长(${configured})，收紧为 420 秒"
+        configured="420"
+    fi
+    export AQSP_RUNNER_TIMEOUT_SECONDS="$configured"
+}
+
 is_market_trading_day() {
     local python_bin="${AQSP_RUNTIME_PYTHON}"
     local target_date="${AQSP_TRADING_DAY_OVERRIDE_DATE:-}"
@@ -460,6 +472,7 @@ case "$ACTION" in
         ;;
     intraday)
         skip_non_trading_day
+        set_realtime_runner_timeout
         export AQSP_RUN_TASK_ID="intraday"
         export AQSP_NOTIFY="false"
         export AQSP_GATE_NOTIFY="false"
@@ -493,6 +506,7 @@ case "$ACTION" in
         ;;
     midday)
         skip_non_trading_day
+        set_realtime_runner_timeout
         export AQSP_RUN_TASK_ID="midday"
         export AQSP_NOTIFY="false"
         export AQSP_GATE_NOTIFY="false"

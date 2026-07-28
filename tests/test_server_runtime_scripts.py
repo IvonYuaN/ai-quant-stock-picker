@@ -835,6 +835,11 @@ def test_news_script_preserves_valid_same_day_report_on_source_failure() -> None
 def test_bt_task_script_exposes_panel_safe_actions() -> None:
     script = (PROJECT_ROOT / "scripts" / "bt_task.sh").read_text(encoding="utf-8")
 
+    assert 'configured="${AQSP_INTRADAY_OUTER_TIMEOUT_SECONDS:-360}"' in script
+    assert '[ "$configured" -gt 420 ]' in script
+    assert 'export AQSP_RUNNER_TIMEOUT_SECONDS="$configured"' in script
+    assert script.count("set_realtime_runner_timeout") == 3
+
     assert "宝塔面板计划任务统一入口" in script
     assert 'ACTION="${1:-}"' in script
     assert 'if [ -z "$ACTION" ]' in script
