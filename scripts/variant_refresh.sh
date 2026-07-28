@@ -63,13 +63,13 @@ MARKET_DB="$(resolve_path "${AQSP_VARIANT_MARKET_DB:-${AQSP_SQLITE_DB_PATH:-data
 OUTPUT_PATH="$(resolve_path "${AQSP_VARIANT_RESULTS:-data/runtime/variant_results.json}")"
 LOCK_PATH="$(resolve_path "${AQSP_VARIANT_REFRESH_LOCK:-data/.locks/variant-results-refresh.lock}")"
 CURSOR_PATH="$(resolve_path "${AQSP_VARIANT_CURSOR_PATH:-data/runtime/variant_results_cursor.json}")"
-MAX_SYMBOLS="${AQSP_VARIANT_MAX_SYMBOLS:-160}"
+MAX_SYMBOLS="${AQSP_VARIANT_MAX_SYMBOLS:-240}"
 MAX_RUNTIME_SECONDS="${AQSP_VARIANT_MAX_RUNTIME_SECONDS:-300}"
 NICE_LEVEL="${AQSP_VARIANT_NICE_LEVEL:-15}"
 
 if ! [[ "$MAX_SYMBOLS" =~ ^[0-9]+$ ]] || [ "$MAX_SYMBOLS" -lt 121 ]; then
-    log "变体股票批次无效(${MAX_SYMBOLS})，使用 160"
-    MAX_SYMBOLS="160"
+    log "变体股票批次无效(${MAX_SYMBOLS})，使用 240"
+    MAX_SYMBOLS="240"
 elif [ "$MAX_SYMBOLS" -gt 240 ] && ! is_truthy "${AQSP_VARIANT_ALLOW_HEAVY:-false}"; then
     log "变体股票批次 ${MAX_SYMBOLS} 过大，收紧为 240"
     MAX_SYMBOLS="240"
