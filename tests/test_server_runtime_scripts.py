@@ -1175,6 +1175,59 @@ def test_news_catalysts_failure_replaces_old_report_and_json(tmp_path: Path) -> 
     assert "exit=23" in payload["warnings"][0]
 
 
+def test_news_catalysts_preserves_same_day_news_from_any_working_directory(
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path / "project"
+    python_bin = project_root / ".venv" / "bin" / "python3"
+    python_bin.parent.mkdir(parents=True)
+    python_bin.write_text(
+        "#!/usr/bin/env bash\n"
+        'if [ "${1:-}" = "-m" ]; then exit 23; fi\n'
+        'exec "$(command -v python3)" "$@"\n',
+        encoding="utf-8",
+    )
+    python_bin.chmod(0o755)
+    report_path = project_root / "reports" / "news_catalysts.md"
+    json_path = project_root / "data" / "runtime" / "news_catalysts_latest.json"
+    report_path.parent.mkdir(parents=True)
+    json_path.parent.mkdir(parents=True)
+    report_path.write_text("CURRENT NEWS REPORT\n", encoding="utf-8")
+    today = date.today().isoformat()
+    json_path.write_text(
+        json.dumps(
+            {
+                "date": today,
+                "source_status": "ok",
+                "event_status": "no_high_impact",
+                "raw_news_count": 1,
+                "events": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        ["bash", str(PROJECT_ROOT / "scripts" / "news_catalysts.sh")],
+        cwd=tmp_path,
+        env={
+            **os.environ,
+            "AQSP_PROJECT_ROOT": str(project_root),
+            "AQSP_NEWS_TASK_TIMEOUT_SECONDS": "5",
+            "AQSP_NEWS_NOTIFY": "false",
+            "PYTHONPATH": f"{PROJECT_ROOT / 'src'}:{PROJECT_ROOT}",
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=10,
+    )
+
+    assert result.returncode == 23, result.stdout + result.stderr
+    assert report_path.read_text(encoding="utf-8") == "CURRENT NEWS REPORT\n"
+    assert json.loads(json_path.read_text(encoding="utf-8"))["source_status"] == "ok"
+
+
 def test_news_catalysts_skips_when_another_run_owns_the_lock(tmp_path: Path) -> None:
     lock_dir = tmp_path / "news-catalysts.lock"
     lock_dir.mkdir()

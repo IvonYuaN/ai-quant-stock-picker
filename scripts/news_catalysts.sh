@@ -36,6 +36,13 @@ is_truthy() {
     [[ "$value" =~ ^(1|true|yes|on)$ ]]
 }
 
+resolve_project_path() {
+    case "$1" in
+        /*) printf '%s\n' "$1" ;;
+        *) printf '%s/%s\n' "$PROJECT_ROOT" "$1" ;;
+    esac
+}
+
 write_failed_json() {
     local reason="$1"
     local source_status="${2:-failed}"
@@ -124,6 +131,9 @@ TASK_TIMEOUT_SECONDS="${AQSP_NEWS_TASK_TIMEOUT_SECONDS:-120}"
 OUTPUT="${AQSP_NEWS_OUTPUT:-reports/news_catalysts.md}"
 JSON_OUTPUT="${AQSP_NEWS_JSON_OUTPUT:-data/runtime/news_catalysts_latest.json}"
 ARCHIVE_DIR="${AQSP_NEWS_ARCHIVE_DIR:-data/runtime/news_archive}"
+OUTPUT="$(resolve_project_path "$OUTPUT")"
+JSON_OUTPUT="$(resolve_project_path "$JSON_OUTPUT")"
+ARCHIVE_DIR="$(resolve_project_path "$ARCHIVE_DIR")"
 ENABLE_LLM_REVIEW="${AQSP_NEWS_ENABLE_LLM_REVIEW:-false}"
 ALLOW_NON_TRADING_NOTIFY="${AQSP_ALLOW_NON_TRADING_NEWS_NOTIFY:-false}"
 LOCK_BASE_DIR="${AQSP_RUNTIME_LOCK_DIR:-${RUNTIME_DATA_ROOT}/.locks}"
