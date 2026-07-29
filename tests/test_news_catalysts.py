@@ -933,13 +933,14 @@ def test_news_catalyst_uses_title_or_url_date_as_visible_timestamp() -> None:
 
 
 def test_news_catalyst_reads_extended_published_at_fields() -> None:
+    published_date = today_shanghai().isoformat()
     report = build_catalyst_report(
         fetch_global_news=lambda _limit: pd.DataFrame(
             [
                 {
                     "标题": "MLCC 行业报价上调，龙头排产紧张",
                     "来源": "证券报",
-                    "发布日期": "2026-06-28 09:15",
+                    "发布日期": f"{published_date} 09:15",
                 }
             ]
         ),
@@ -947,7 +948,7 @@ def test_news_catalyst_reads_extended_published_at_fields() -> None:
     )
 
     markdown = format_catalyst_notification(report)
-    assert "时间: 2026-06-28T09:15:00+08:00" in markdown
+    assert f"时间: {published_date}T09:15:00+08:00" in markdown
 
 
 def test_news_catalyst_filters_pure_market_price_action_noise() -> None:
