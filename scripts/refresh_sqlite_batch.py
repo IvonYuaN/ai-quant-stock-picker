@@ -78,12 +78,27 @@ def _write_cursor(
     next_offset: int,
     universe_size: int,
     summary: UpdateSummary,
+    batch_symbols: list[str] | None = None,
 ) -> None:
+    existing_symbols: list[str] = []
+    try:
+        existing = json.loads(path.read_text(encoding="utf-8"))
+        if (
+            isinstance(existing, dict)
+            and existing.get("target_day") == target_day.isoformat()
+        ):
+            raw_symbols = existing.get("target_day_symbols", [])
+            if isinstance(raw_symbols, list):
+                existing_symbols = [str(symbol) for symbol in raw_symbols if symbol]
+    except (OSError, json.JSONDecodeError):
+        pass
+    target_day_symbols = list(dict.fromkeys(existing_symbols + (batch_symbols or [])))
     payload = {
         "target_day": target_day.isoformat(),
         "offset": next_offset if next_offset < universe_size else 0,
         "universe_size": universe_size,
         "updated_at": now_shanghai().isoformat(timespec="seconds"),
+        "target_day_symbols": target_day_symbols,
         "last_batch": asdict(summary),
     }
     atomic_write_text(path, json.dumps(payload, ensure_ascii=False, default=str) + "\n")
@@ -126,6 +141,7 @@ def refresh_batch(
         next_offset=offset + summary.processed_symbols,
         universe_size=len(symbols),
         summary=summary,
+        batch_symbols=batch,
     )
     return summary
 

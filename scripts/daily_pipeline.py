@@ -273,11 +273,19 @@ def _step_update_data(config: PipelineConfig, logger: logging.Logger) -> dict[st
     logger.info("  拉取最新行情数据 (source=%s)", config.source)
 
     source = _build_data_source(config)
-    symbols = _resolve_symbols(config, logger)
     workload_setter = getattr(source, "set_workload", None)
     if not callable(workload_setter):
         raise DataError("生产日行情源缺少 live_short workload contract")
     local_close_source = config.source == "sqlite_db"
+    if local_close_source:
+        symbols = _sqlite_refreshed_symbols(config)
+        if not symbols:
+            raise DataError(
+                "sqlite_db 收盘研究缺少当日 refresh 覆盖集，先运行 data-refresh"
+            )
+        logger.info("  使用当日 SQLite refresh 覆盖集 %d 只", len(symbols))
+    else:
+        symbols = _resolve_symbols(config, logger)
     workload_setter(None if local_close_source else "live_short")
     try:
         frames = fetch_with_source(source, symbols, days=260)
@@ -499,11 +507,43 @@ def _explicit_runtime_symbols() -> list[str]:
         ]
 
 
+def _sqlite_refreshed_symbols(config: PipelineConfig) -> list[str]:
+    state_dir_raw = str(os.getenv("AQSP_RUNTIME_STATE_DIR", "") or "").strip()
+    state_dir = (
+        Path(state_dir_raw)
+        if state_dir_raw
+        else _runtime_data_root(config.project_root) / ".state"
+    )
+    cursor_path = state_dir / "sqlite-refresh-cursor.json"
+    try:
+        payload = json.loads(cursor_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    if (
+        not isinstance(payload, dict)
+        or payload.get("target_day") != today_shanghai().isoformat()
+    ):
+        return []
+    raw_symbols = payload.get("target_day_symbols", [])
+    if not isinstance(raw_symbols, list):
+        return []
+    symbols = list(
+        dict.fromkeys(
+            str(symbol).strip() for symbol in raw_symbols if str(symbol).strip()
+        )
+    )
+    return symbols[: config.max_universe] if config.max_universe > 0 else symbols
+
+
 def _step_run_strategy(
     config: PipelineConfig, logger: logging.Logger
 ) -> dict[str, Any]:
     logger.info("  执行选股策略 (mode=%s, limit=%d)", config.mode, config.limit)
     explicit_symbols = _explicit_runtime_symbols()
+    if config.source == "sqlite_db":
+        explicit_symbols = _sqlite_refreshed_symbols(config)
+        if not explicit_symbols:
+            raise DataError("sqlite_db 收盘研究缺少当日 refresh 覆盖集，拒绝运行策略")
 
     argv = [
         "run",

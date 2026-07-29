@@ -2093,8 +2093,8 @@ def test_step_run_strategy_uses_real_benchmark_for_regime(
     monkeypatch.setattr("aqsp.cli.main", fake_main)
     monkeypatch.setattr(
         daily_pipeline,
-        "_explicit_runtime_symbols",
-        lambda: ["000001", "000002"],
+        "_sqlite_refreshed_symbols",
+        lambda _config: ["000001", "000002"],
     )
     config = daily_pipeline.PipelineConfig(
         project_root=tmp_path,
@@ -2129,6 +2129,44 @@ def test_step_run_strategy_uses_real_benchmark_for_regime(
     assert argv[argv.index("--symbols") + 1] == "000001,000002"
     assert argv[argv.index("--benchmark-symbol") + 1] == "000300"
     assert "--notify" not in argv
+
+
+def test_step_update_data_uses_only_current_sqlite_refresh_symbols(
+    monkeypatch, tmp_path: Path
+) -> None:
+    daily_pipeline = _load_daily_pipeline_module()
+    seen: dict[str, object] = {}
+
+    class FakeSource:
+        def set_workload(self, _workload: str | None) -> None:
+            pass
+
+    monkeypatch.setattr(
+        daily_pipeline, "_build_data_source", lambda _config: FakeSource()
+    )
+    monkeypatch.setattr(
+        daily_pipeline,
+        "_sqlite_refreshed_symbols",
+        lambda _config: ["600000", "300001"],
+    )
+    monkeypatch.setattr(
+        "aqsp.data.fetch_with_source",
+        lambda _source, symbols, **_kwargs: (
+            seen.update(symbols=symbols)
+            or {symbol: pd.DataFrame([{"date": "2026-07-29"}]) for symbol in symbols}
+        ),
+    )
+    monkeypatch.setattr(
+        "aqsp.freshness.assert_fresh_data", lambda *_args, **_kwargs: None
+    )
+
+    config = dataclasses.replace(
+        _pipeline_config(daily_pipeline, tmp_path), source="sqlite_db"
+    )
+    result = daily_pipeline._step_update_data(config, logging.getLogger("test"))
+
+    assert seen["symbols"] == ["600000", "300001"]
+    assert result["symbol_count"] == 2
 
 
 def test_step_run_strategy_leaves_symbols_empty_for_runtime_universe(
@@ -2263,8 +2301,8 @@ def test_step_run_strategy_treats_circuit_breaker_as_controlled_result(
     monkeypatch.setattr("aqsp.cli.main", lambda _argv: 2)
     monkeypatch.setattr(
         daily_pipeline,
-        "_explicit_runtime_symbols",
-        lambda: ["000001", "000002"],
+        "_sqlite_refreshed_symbols",
+        lambda _config: ["000001", "000002"],
     )
     config = daily_pipeline.PipelineConfig(
         project_root=tmp_path,
