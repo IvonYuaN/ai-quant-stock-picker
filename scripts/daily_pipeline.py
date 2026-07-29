@@ -65,6 +65,17 @@ def _runtime_output_path(
     return (base / path).resolve(strict=False)
 
 
+def _runtime_config_path(project_root: Path, configured_path: str) -> Path:
+    """Resolve a configured runtime artifact path outside immutable releases."""
+    path = Path(configured_path).expanduser()
+    if path.is_absolute():
+        return path.resolve(strict=False)
+    base = _runtime_data_root(project_root)
+    if base != project_root and path.parts and path.parts[0] == "data":
+        path = Path(*path.parts[1:]) if len(path.parts) > 1 else Path("")
+    return (base / path).resolve(strict=False)
+
+
 def _gate_notify_state_path(project_root: Path) -> Path:
     raw = str(
         os.getenv("AQSP_GATE_NOTIFY_STATE_PATH", "data/gate_notify_state.json") or ""
@@ -1143,29 +1154,26 @@ def _refresh_home_snapshot(
             )
             or "data/runtime/home_dashboard_snapshot.json"
         ).strip()
-        snapshot_path = Path(snapshot_path_raw).expanduser()
-        if not snapshot_path.is_absolute():
-            snapshot_path = config.project_root / snapshot_path
+        snapshot_path = _runtime_config_path(config.project_root, snapshot_path_raw)
         index_path = snapshot_path.with_name("home_dashboard_snapshot_index.json")
         configured_index = os.getenv("AQSP_HOME_SNAPSHOT_INDEX_PATH", "").strip()
         if configured_index:
-            index_path = Path(configured_index).expanduser()
-            if not index_path.is_absolute():
-                index_path = config.project_root / index_path
+            index_path = _runtime_config_path(config.project_root, configured_index)
+
+        runtime_data_root = _runtime_data_root(config.project_root)
+        report_path = _runtime_config_path(config.project_root, config.report_path)
 
         provider = DashboardDataProvider(
-            ledger_path=str(config.project_root / config.ledger_path),
-            paper_ledger_path=str(config.project_root / config.paper_ledger),
-            reports_dir=str(config.project_root / "reports"),
-            debate_results_path=str(
-                config.project_root / "data" / "debate_results.jsonl"
+            ledger_path=str(
+                _runtime_config_path(config.project_root, config.ledger_path)
             ),
-            intraday_ledger_path=str(
-                config.project_root / "data" / "intraday_predictions.jsonl"
+            paper_ledger_path=str(
+                _runtime_config_path(config.project_root, config.paper_ledger)
             ),
-            intraday_latest_path=str(
-                config.project_root / "reports" / "intraday_latest.csv"
-            ),
+            reports_dir=str(report_path.parent),
+            debate_results_path=str(runtime_data_root / "debate_results.jsonl"),
+            intraday_ledger_path=str(runtime_data_root / "intraday_predictions.jsonl"),
+            intraday_latest_path=str(report_path.parent / "intraday_latest.csv"),
         )
         snapshot = build_home_snapshot(provider)
         existing_index = load_home_snapshot_index(index_path)

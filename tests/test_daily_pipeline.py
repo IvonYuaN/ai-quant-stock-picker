@@ -1962,9 +1962,12 @@ def test_refresh_home_snapshot_merges_existing_index(
     write_home_snapshot.merge_home_snapshot_index = fake_merge
 
     data_provider = type(sys)("aqsp.web.data_provider")
-    data_provider.DashboardDataProvider = lambda **kwargs: SimpleNamespace(
-        kwargs=kwargs
-    )
+
+    def fake_data_provider(**kwargs):
+        captured["provider_kwargs"] = kwargs
+        return SimpleNamespace(kwargs=kwargs)
+
+    data_provider.DashboardDataProvider = fake_data_provider
 
     home_snapshot = type(sys)("aqsp.web.home_snapshot")
     home_snapshot.load_home_snapshot_index = lambda path: existing_index
@@ -1987,10 +1990,17 @@ def test_refresh_home_snapshot_merges_existing_index(
         "AQSP_HOME_SNAPSHOT_PATH",
         str(tmp_path / "data" / "runtime" / "home_dashboard_snapshot.json"),
     )
-
-    result = daily_pipeline._refresh_home_snapshot(
-        _pipeline_config(daily_pipeline, tmp_path), logging.getLogger("test")
+    runtime_data_root = tmp_path / "runtime-data"
+    runtime_report = runtime_data_root / "reports" / "latest.md"
+    monkeypatch.setenv("AQSP_RUNTIME_DATA_ROOT", str(runtime_data_root))
+    config = dataclasses.replace(
+        _pipeline_config(daily_pipeline, tmp_path),
+        ledger_path=str(runtime_data_root / "predictions.jsonl"),
+        paper_ledger=str(runtime_data_root / "paper_trades.jsonl"),
+        report_path=str(runtime_report),
     )
+
+    result = daily_pipeline._refresh_home_snapshot(config, logging.getLogger("test"))
 
     assert captured["merge_existing"] is existing_index
     assert captured["merge_refreshed"] is refreshed_index
@@ -2000,6 +2010,16 @@ def test_refresh_home_snapshot_merges_existing_index(
     assert captured["index_path"] == (
         tmp_path / "data" / "runtime" / "home_dashboard_snapshot_index.json"
     )
+    assert captured["provider_kwargs"] == {
+        "ledger_path": str(runtime_data_root / "predictions.jsonl"),
+        "paper_ledger_path": str(runtime_data_root / "paper_trades.jsonl"),
+        "reports_dir": str(runtime_data_root / "reports"),
+        "debate_results_path": str(runtime_data_root / "debate_results.jsonl"),
+        "intraday_ledger_path": str(runtime_data_root / "intraday_predictions.jsonl"),
+        "intraday_latest_path": str(
+            runtime_data_root / "reports" / "intraday_latest.csv"
+        ),
+    }
 
 
 def test_generate_report_suppresses_fanout_notify_when_non_trade_day(
