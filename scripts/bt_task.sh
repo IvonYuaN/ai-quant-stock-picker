@@ -647,7 +647,11 @@ case "$ACTION" in
         ;;
     variant-refresh)
         skip_non_trading_day
-        gate_optional_heavy_task
+        # Bounded to 240 symbols and 80-row SQLite chunks. The generic 1GB
+        # reserve permanently skips this task on the 1.6GB production host.
+        AQSP_HEAVY_MIN_FREE_MEMORY_MB="${AQSP_VARIANT_MIN_FREE_MEMORY_MB:-700}" \
+            AQSP_HEAVY_MAX_LOAD_PER_CPU="${AQSP_VARIANT_MAX_LOAD_PER_CPU:-0.50}" \
+            gate_optional_heavy_task
         acquire_optional_heavy_slot
         export AQSP_RUN_TASK_ID="variant_refresh"
         export AQSP_NOTIFY="false"

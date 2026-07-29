@@ -1840,6 +1840,8 @@ def test_bt_optional_heavy_tasks_check_host_capacity_before_starting() -> None:
     assert "resource_gate.py" in script
     assert "AQSP_HEAVY_MIN_FREE_MEMORY_MB:-0" in script
     assert "AQSP_HEAVY_MAX_LOAD_PER_CPU" in script
+    assert "AQSP_VARIANT_MIN_FREE_MEMORY_MB:-700" in script
+    assert "AQSP_VARIANT_MAX_LOAD_PER_CPU:-0.50" in script
     assert "gate_optional_heavy_task" in script
     assert 'HEAVY_SLOT_LOCK_FILE="${LOCK_DIR}/heavy-compute.lock"' in script
     assert "acquire_optional_heavy_slot" in script
