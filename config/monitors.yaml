@@ -32,7 +32,7 @@ monitors:
     enabled: true
     check: "raw_market_coverage"
     params:
-      state_path: data/.state/sqlite-refresh-cursor.json
+      state_path: sqlite-refresh-cursor.json
       min_universe_size: 1000
       min_target_day_symbols: 300
     severity: "critical"

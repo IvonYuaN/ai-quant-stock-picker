@@ -316,6 +316,38 @@ class TestMonitorChecker:
 
         assert result.triggered is False
 
+    def test_raw_market_coverage_uses_runtime_state_directory(
+        self, sample_config: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        state_dir = tmp_path / "runtime-state"
+        state_dir.mkdir()
+        (state_dir / "cursor.json").write_text(
+            json.dumps(
+                {
+                    "target_day": "2026-07-29",
+                    "universe_size": 4613,
+                    "last_batch": {"target_day_symbol_count": 720},
+                }
+            ),
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("AQSP_RUNTIME_STATE_DIR", str(state_dir))
+        monkeypatch.setattr(
+            "aqsp.monitor.checker.today_shanghai", lambda: date(2026, 7, 29)
+        )
+        checker = MonitorChecker(config_path=str(sample_config))
+
+        result = checker._check_raw_market_coverage(
+            {
+                "state_path": "cursor.json",
+                "min_universe_size": 1000,
+                "min_target_day_symbols": 300,
+            }
+        )
+
+        assert result.triggered is False
+        assert result.details["state_path"] == str(state_dir / "cursor.json")
+
     def test_check_circuit_breaker(self, sample_config: Path) -> None:
         checker = MonitorChecker(config_path=str(sample_config))
 

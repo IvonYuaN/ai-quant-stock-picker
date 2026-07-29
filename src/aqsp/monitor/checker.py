@@ -277,8 +277,14 @@ class MonitorChecker:
 
     def _check_raw_market_coverage(self, params: dict[str, Any]) -> MonitorResult:
         """Check the bounded refresh summary without aggregating the market DB."""
-        path = Path(
-            str(params.get("state_path", "data/.state/sqlite-refresh-cursor.json"))
+        configured_path = Path(
+            str(params.get("state_path", "sqlite-refresh-cursor.json"))
+        )
+        runtime_state_dir = os.getenv("AQSP_RUNTIME_STATE_DIR", "")
+        path = (
+            configured_path
+            if configured_path.is_absolute() or not runtime_state_dir
+            else Path(runtime_state_dir) / configured_path
         )
         min_universe_size = max(1, int(params.get("min_universe_size", 1)))
         min_target_day_symbols = max(1, int(params.get("min_target_day_symbols", 1)))
