@@ -61,7 +61,7 @@ log() {
 
 usage() {
     cat <<'EOF'
-Usage: bt_task.sh <daily|intraday|midday|data-refresh|coldstart|variant-refresh|walkforward-gate|monitor|news|status>
+Usage: bt_task.sh <daily|intraday|midday|data-refresh|data-refresh-retry|coldstart|variant-refresh|walkforward-gate|monitor|news|status>
 
 BT panel examples:
   /bin/bash /opt/aqsp/scripts/bt_task.sh intraday
@@ -80,6 +80,7 @@ Recommended BT schedule (Asia/Shanghai):
   midday    12:05 Mon-Fri
   daily     18:00 Mon-Fri
   data-refresh 15:35 Mon-Fri; bounded raw daily-data batch before daily research
+  data-refresh-retry 17:00 Mon-Fri; one delayed bounded retry for source publication lag
   coldstart 19:40 Mon-Fri
   variant-refresh 21:00 Mon-Fri; bounded isolated experiment refresh
   walkforward-gate 22:00 Sat; controlled production evidence only, no threshold apply
@@ -568,6 +569,26 @@ case "$ACTION" in
             gate_optional_heavy_task
         acquire_optional_heavy_slot
         export AQSP_RUN_TASK_ID="data_refresh"
+        export AQSP_NOTIFY="false"
+        export AQSP_GATE_NOTIFY="false"
+        sync_code_only
+        run_python_script "${PROJECT_ROOT}/scripts/refresh_sqlite_batch.py" \
+            --db "${AQSP_SQLITE_DB_PATH:?AQSP_SQLITE_DB_PATH is required}" \
+            --state "${STATE_DIR}/sqlite-refresh-cursor.json" \
+            --batch-size "${AQSP_DATA_REFRESH_BATCH_SIZE:-120}" \
+            --universe-limit "${AQSP_DATA_REFRESH_UNIVERSE_LIMIT:-0}" \
+            --min-amount "${AQSP_MIN_AVG_AMOUNT:-50000000}" \
+            --query-timeout-seconds "${AQSP_DATA_REFRESH_QUERY_TIMEOUT_SECONDS:-4}" \
+            --max-runtime-seconds "${AQSP_DATA_REFRESH_MAX_RUNTIME_SECONDS:-480}"
+        ;;
+    data-refresh-retry)
+        skip_non_trading_day
+        ensure_data_refresh_window
+        AQSP_HEAVY_MIN_FREE_MEMORY_MB="${AQSP_DATA_REFRESH_MIN_FREE_MEMORY_MB:-640}" \
+            AQSP_HEAVY_MAX_LOAD_PER_CPU="${AQSP_DATA_REFRESH_MAX_LOAD_PER_CPU:-0.50}" \
+            gate_optional_heavy_task
+        acquire_optional_heavy_slot
+        export AQSP_RUN_TASK_ID="data_refresh_retry"
         export AQSP_NOTIFY="false"
         export AQSP_GATE_NOTIFY="false"
         sync_code_only

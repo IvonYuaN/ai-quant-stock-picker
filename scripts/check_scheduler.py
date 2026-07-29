@@ -24,7 +24,7 @@ RUNTIME_LOCK_ROOT = Path(
     os.environ.get("AQSP_RUNTIME_LOCK_DIR", RUNTIME_DATA_ROOT / ".locks")
 ).resolve()
 BT_CRON_DIR = Path(os.environ.get("AQSP_BT_CRON_DIR", "/www/server/cron")).resolve()
-SCHEDULED_ACTIONS = frozenset(
+REQUIRED_SCHEDULED_ACTIONS = frozenset(
     {
         "daily",
         "intraday",
@@ -37,6 +37,7 @@ SCHEDULED_ACTIONS = frozenset(
         "news",
     }
 )
+SCHEDULED_ACTIONS = REQUIRED_SCHEDULED_ACTIONS | frozenset({"data-refresh-retry"})
 MULTI_WINDOW_ACTIONS = frozenset({"news"})
 LEGACY_CRON_TERMS = (
     "daily_run.sh",
@@ -316,7 +317,7 @@ def check_bt_panel_actions() -> CheckResult:
         return CheckResult(
             "BT Panel actions", True, "no readable BT Panel wrappers in system crontab"
         )
-    missing = sorted(SCHEDULED_ACTIONS - actions)
+    missing = sorted(REQUIRED_SCHEDULED_ACTIONS - actions)
     return CheckResult(
         "BT Panel actions",
         not missing,
@@ -371,7 +372,7 @@ def _bt_wrapper_actions(text: str) -> set[str]:
 
 def check_bt_panel_wrapper_integrity(
     cron_dir: Path = BT_CRON_DIR,
-    expected_actions: frozenset[str] = SCHEDULED_ACTIONS,
+    expected_actions: frozenset[str] = REQUIRED_SCHEDULED_ACTIONS,
 ) -> CheckResult:
     """Detect old or duplicate AQSP BaoTa wrappers before they can overlap."""
     if not cron_dir.is_dir():

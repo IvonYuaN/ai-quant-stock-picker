@@ -114,6 +114,17 @@ def test_scheduled_actions_ignores_bt_task_comment_words(tmp_path) -> None:
     assert actions == {"intraday"}
 
 
+def test_bt_panel_actions_does_not_require_optional_data_refresh_retry(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(check_scheduler, "_run", lambda _args: (0, ""))
+
+    result = check_scheduler.check_bt_panel_actions()
+
+    assert result.ok
+    assert "data-refresh-retry" not in result.detail
+
+
 def test_check_duplicate_bt_panel_actions_rejects_two_coldstart_wrappers(
     monkeypatch, tmp_path
 ) -> None:

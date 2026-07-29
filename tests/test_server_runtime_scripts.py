@@ -856,7 +856,7 @@ def test_bt_task_script_exposes_panel_safe_actions() -> None:
     assert 'ACTION="${1:-}"' in script
     assert 'if [ -z "$ACTION" ]' in script
     assert (
-        "daily|intraday|midday|data-refresh|coldstart|variant-refresh|walkforward-gate|monitor|news|status"
+        "daily|intraday|midday|data-refresh|data-refresh-retry|coldstart|variant-refresh|walkforward-gate|monitor|news|status"
         in script
     )
     assert "AQSP_RUNNER_TIMEOUT_SECONDS=5400" in script
@@ -867,8 +867,10 @@ def test_bt_task_script_exposes_panel_safe_actions() -> None:
     assert "news      08:35 Mon-Fri trading days only; 09:05 Sat/Sun" in script
     assert "daily     18:00 Mon-Fri" in script
     assert "data-refresh 15:35 Mon-Fri" in script
+    assert "data-refresh-retry 17:00 Mon-Fri" in script
     assert "ensure_data_refresh_window()" in script
     assert "data-refresh 允许窗口" in script
+    assert "data-refresh-retry)" in script
     assert "coldstart 19:40 Mon-Fri" in script
     assert "walkforward-gate 22:00 Sat" in script
     assert '"正常跳过/互斥保护"' in script

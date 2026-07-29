@@ -15,8 +15,11 @@ def test_refresh_sqlite_batch_persists_date_summary_and_advances_cursor(
         def __init__(self, **_kwargs) -> None:
             pass
 
-        def get_liquid_symbols(self, **_kwargs) -> list[str]:
+        def get_available_symbols(self) -> list[str]:
             return ["600000", "000001", "300001"]
+
+        def get_symbol_name(self, symbol: str) -> str:
+            return symbol
 
     summary = UpdateSummary(
         updated_rows=3,
@@ -51,3 +54,19 @@ def test_refresh_sqlite_batch_persists_date_summary_and_advances_cursor(
     assert payload["target_day"] == "2026-07-28"
     assert payload["offset"] == 2
     assert payload["last_batch"]["raw_max_trade_date"] == "2026-07-28"
+
+
+def test_refresh_sqlite_batch_interleaves_supported_boards_and_excludes_st() -> None:
+    class FakeSource:
+        def get_available_symbols(self) -> list[str]:
+            return ["600001", "688001", "000001", "300001", "600002", "002001"]
+
+        def get_symbol_name(self, symbol: str) -> str:
+            return "ST测试" if symbol == "002001" else symbol
+
+    assert refresh_sqlite_batch._refresh_universe(FakeSource(), universe_limit=0) == [
+        "600001",
+        "000001",
+        "300001",
+        "600002",
+    ]

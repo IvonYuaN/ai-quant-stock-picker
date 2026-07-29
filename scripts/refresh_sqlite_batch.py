@@ -21,6 +21,39 @@ from aqsp.utils.jsonl_io import atomic_write_text
 from scripts.update_sqlite_daily import UpdateSummary, update_sqlite_daily
 
 
+_MAIN_BOARD_PREFIXES = ("600", "601", "603", "605", "000", "001", "002", "003")
+_CHINEXT_PREFIXES = ("300", "301")
+
+
+def _refresh_universe(source: SqliteDbSource, *, universe_limit: int) -> list[str]:
+    """Return a broad, deterministic A-share refresh pool without turnover bias."""
+    boards: tuple[list[str], list[str], list[str]] = ([], [], [])
+    for symbol in source.get_available_symbols():
+        code = str(symbol).strip()
+        name = source.get_symbol_name(code).upper().replace(" ", "")
+        if "ST" in name or "退" in name:
+            continue
+        if code.startswith(_MAIN_BOARD_PREFIXES[:4]):
+            boards[0].append(code)
+        elif code.startswith(_MAIN_BOARD_PREFIXES[4:]):
+            boards[1].append(code)
+        elif code.startswith(_CHINEXT_PREFIXES):
+            boards[2].append(code)
+
+    ordered = [sorted(board) for board in boards]
+    result: list[str] = []
+    max_length = max((len(board) for board in ordered), default=0)
+    for index in range(max_length):
+        for board in ordered:
+            if index < len(board):
+                result.append(board[index])
+    if not result:
+        raise RuntimeError(
+            "sqlite daily source has no eligible main-board or ChiNext symbols"
+        )
+    return result[:universe_limit] if universe_limit > 0 else result
+
+
 def _read_cursor(path: Path, *, target_day: date) -> int:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
@@ -67,9 +100,10 @@ def refresh_batch(
     max_runtime_seconds: float,
 ) -> UpdateSummary:
     source = SqliteDbSource(db_path=db_path, cache=None)
-    symbols = source.get_liquid_symbols(limit=universe_limit, min_amount=min_amount)
-    if not symbols:
-        raise RuntimeError("sqlite daily source has no eligible A-share symbols")
+    # Raw daily refresh must rotate the full supported market rather than a
+    # turnover-ranked head. Liquidity is applied later by the research pipeline.
+    del min_amount
+    symbols = _refresh_universe(source, universe_limit=universe_limit)
     offset = _read_cursor(state_path, target_day=target_day) % len(symbols)
     batch = symbols[offset : offset + batch_size]
     if len(batch) < batch_size and offset:
