@@ -15,7 +15,7 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(project_root / "src"))
     sys.path.insert(0, str(project_root))
 
-from aqsp.core.time import latest_completed_trading_day, now_shanghai
+from aqsp.core.time import now_shanghai, today_shanghai
 from aqsp.data.sqlite_db_source import SqliteDbSource
 from aqsp.utils.jsonl_io import atomic_write_text
 from scripts.update_sqlite_daily import UpdateSummary, update_sqlite_daily
@@ -52,7 +52,7 @@ def _write_cursor(
         "updated_at": now_shanghai().isoformat(timespec="seconds"),
         "last_batch": asdict(summary),
     }
-    atomic_write_text(path, json.dumps(payload, ensure_ascii=False) + "\n")
+    atomic_write_text(path, json.dumps(payload, ensure_ascii=False, default=str) + "\n")
 
 
 def refresh_batch(
@@ -113,9 +113,7 @@ def main() -> int:
     ):
         raise SystemExit("batch size and timeouts must be positive")
     target_day = (
-        date.fromisoformat(args.target_date)
-        if args.target_date
-        else latest_completed_trading_day()
+        date.fromisoformat(args.target_date) if args.target_date else today_shanghai()
     )
     summary = refresh_batch(
         db_path=args.db,
