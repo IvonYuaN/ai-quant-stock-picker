@@ -17,6 +17,7 @@ REF="${AQSP_RELEASE_REF:-$BRANCH}"
 CHECK_URL="${AQSP_DEPLOY_CHECK_URL:-https://lh.ifidy.cn}"
 API_SERVICE="${AQSP_API_SERVICE:-aqsp-vibe-research-api.service}"
 PREVIEW_SERVICE="${AQSP_PREVIEW_SERVICE:-aqsp-vibe-research-preview.service}"
+TARGET_SERVICE="${AQSP_VIBE_SYSTEMD_TARGET:-aqsp-vibe-research.target}"
 API_PORT="${AQSP_API_PORT:-8900}"
 FRONTEND_PORT="${AQSP_FRONTEND_PORT:-5899}"
 SERVICE_USER="${AQSP_VIBE_USER:-aqsp-vibe}"
@@ -213,9 +214,13 @@ restart_services() {
     systemctl restart "$API_SERVICE"
     stop_stale_frontend_port_owner
     systemctl restart "$PREVIEW_SERVICE"
+    # The target is the persistent service contract. Restarting its members
+    # alone can leave the group inactive while both ports still respond.
+    systemctl start "$TARGET_SERVICE"
     sleep 4
     systemctl is-active --quiet "$API_SERVICE" || fail "$API_SERVICE is not active"
     systemctl is-active --quiet "$PREVIEW_SERVICE" || fail "$PREVIEW_SERVICE is not active"
+    systemctl is-active --quiet "$TARGET_SERVICE" || fail "$TARGET_SERVICE is not active"
     api_pid="$(systemctl show -p MainPID --value "$API_SERVICE")"
     preview_pid="$(systemctl show -p MainPID --value "$PREVIEW_SERVICE")"
     api_cwd="$(readlink -f "/proc/$api_pid/cwd")"

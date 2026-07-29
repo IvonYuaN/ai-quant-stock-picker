@@ -239,6 +239,12 @@ def test_immutable_release_deploy_script_covers_full_server_activation_chain() -
     assert "aqsp-scheduler-rollback" in script
     assert 'systemctl restart "$API_SERVICE"' in script
     assert 'systemctl restart "$PREVIEW_SERVICE"' in script
+    assert (
+        'TARGET_SERVICE="${AQSP_VIBE_SYSTEMD_TARGET:-aqsp-vibe-research.target}"'
+        in script
+    )
+    assert 'systemctl start "$TARGET_SERVICE"' in script
+    assert '"$TARGET_SERVICE is not active"' in script
     assert "API cwd drift" in script
     assert "preview cwd drift" in script
     assert "snapshot_contract" in script
