@@ -851,6 +851,9 @@ def test_bt_task_script_exposes_panel_safe_actions() -> None:
     assert '[ "$configured" -gt 420 ]' in script
     assert 'export AQSP_RUNNER_TIMEOUT_SECONDS="$configured"' in script
     assert script.count("set_realtime_runner_timeout") == 3
+    assert 'configured="${AQSP_DAILY_OUTER_TIMEOUT_SECONDS:-900}"' in script
+    assert '[ "$configured" -gt 1200 ]' in script
+    assert "set_daily_runner_timeout" in script
 
     assert "宝塔面板计划任务统一入口" in script
     assert 'ACTION="${1:-}"' in script
@@ -870,7 +873,7 @@ def test_bt_task_script_exposes_panel_safe_actions() -> None:
     assert "data-refresh-retry 17:00 Mon-Fri" in script
     assert "ensure_data_refresh_window()" in script
     assert "ensure_data_refresh_retry_window()" in script
-    assert 'AQSP_DATA_REFRESH_RETRY_WINDOW_END_HM:-1930' in script
+    assert "AQSP_DATA_REFRESH_RETRY_WINDOW_END_HM:-1930" in script
     assert "data-refresh 允许窗口" in script
     assert "data-refresh-retry)" in script
     assert "coldstart 19:40 Mon-Fri" in script
@@ -1856,11 +1859,19 @@ def test_bt_optional_heavy_tasks_check_host_capacity_before_starting() -> None:
     assert "AQSP_HEAVY_MAX_LOAD_PER_CPU" in script
     assert "AQSP_VARIANT_MIN_FREE_MEMORY_MB:-700" in script
     assert "AQSP_VARIANT_MAX_LOAD_PER_CPU:-0.50" in script
+    assert "AQSP_DAILY_MIN_FREE_MEMORY_MB:-700" in script
+    assert "AQSP_DAILY_MAX_LOAD_PER_CPU:-0.50" in script
     assert "gate_optional_heavy_task" in script
     assert 'HEAVY_SLOT_LOCK_FILE="${LOCK_DIR}/heavy-compute.lock"' in script
     assert "acquire_optional_heavy_slot" in script
     assert "printf 'HEAVY_SLOT_PID=%q\\n' \"$$\"" in script
     assert "optional_heavy_slot_is_stale" in script
+    daily_block = script[
+        script.index("\n    daily)") : script.index("\n    data-refresh)")
+    ]
+    assert "gate_optional_heavy_task" in daily_block
+    assert "acquire_optional_heavy_slot" in daily_block
+    assert "set_daily_runner_timeout" in daily_block
 
 
 def test_bt_task_skips_optional_heavy_task_when_shared_slot_is_held(

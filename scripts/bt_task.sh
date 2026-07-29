@@ -313,6 +313,18 @@ set_realtime_runner_timeout() {
     export AQSP_RUNNER_TIMEOUT_SECONDS="$configured"
 }
 
+set_daily_runner_timeout() {
+    local configured="${AQSP_DAILY_OUTER_TIMEOUT_SECONDS:-900}"
+    if ! [[ "$configured" =~ ^[1-9][0-9]*$ ]]; then
+        log "收盘主链超时配置无效(${configured})，使用 900 秒"
+        configured="900"
+    elif [ "$configured" -gt 1200 ]; then
+        log "收盘主链超时配置过长(${configured})，收紧为 1200 秒"
+        configured="1200"
+    fi
+    export AQSP_RUNNER_TIMEOUT_SECONDS="$configured"
+}
+
 ensure_data_refresh_window() {
     local start_hm="${AQSP_DATA_REFRESH_WINDOW_START_HM:-1530}"
     local end_hm="${AQSP_DATA_REFRESH_WINDOW_END_HM:-1750}"
@@ -570,6 +582,13 @@ export TZ="Asia/Shanghai"
 case "$ACTION" in
     daily)
         skip_non_trading_day
+        # Daily research can allocate substantially more memory than a raw-data
+        # refresh. Keep it mutually exclusive and fail closed on the small host.
+        AQSP_HEAVY_MIN_FREE_MEMORY_MB="${AQSP_DAILY_MIN_FREE_MEMORY_MB:-700}" \
+            AQSP_HEAVY_MAX_LOAD_PER_CPU="${AQSP_DAILY_MAX_LOAD_PER_CPU:-0.50}" \
+            gate_optional_heavy_task
+        acquire_optional_heavy_slot
+        set_daily_runner_timeout
         export AQSP_RUN_TASK_ID="daily"
         export AQSP_RUNNER_SCRIPT=scripts/daily_pipeline.sh
         run_script "${PROJECT_ROOT}/scripts/server_sync_and_run.sh"
