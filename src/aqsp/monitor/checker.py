@@ -71,6 +71,8 @@ class MonitorChecker:
                     result = self._check_data_freshness(monitor.params)
                 elif monitor.check == "raw_market_freshness":
                     result = self._check_raw_market_freshness(monitor.params)
+                elif monitor.check == "raw_market_coverage":
+                    result = self._check_raw_market_coverage(monitor.params)
                 elif monitor.check == "circuit_breaker":
                     result = self._check_circuit_breaker(monitor.params)
                 elif monitor.check == "win_rate":
@@ -270,6 +272,59 @@ class MonitorChecker:
                 "oldest_date": oldest.isoformat(),
                 "trading_lag_days": lag_days,
                 "max_trading_lag_days": max_lag_days,
+            },
+        )
+
+    def _check_raw_market_coverage(self, params: dict[str, Any]) -> MonitorResult:
+        """Check the bounded refresh summary without aggregating the market DB."""
+        path = Path(
+            str(params.get("state_path", "data/.state/sqlite-refresh-cursor.json"))
+        )
+        min_universe_size = max(1, int(params.get("min_universe_size", 1)))
+        min_target_day_symbols = max(1, int(params.get("min_target_day_symbols", 1)))
+        if not path.exists():
+            return MonitorResult(
+                name="raw_market_coverage",
+                triggered=True,
+                severity="critical",
+                message="原始日线刷新摘要不存在",
+                details={"state_path": str(path)},
+            )
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            target_day = str(payload["target_day"])
+            universe_size = int(payload["universe_size"])
+            last_batch = payload["last_batch"]
+            target_count = int(last_batch["target_day_symbol_count"])
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError, OSError) as exc:
+            return MonitorResult(
+                name="raw_market_coverage",
+                triggered=True,
+                severity="critical",
+                message=f"原始日线刷新摘要无效: {exc}",
+                details={"state_path": str(path), "error": str(exc)},
+            )
+        expected_day = today_shanghai().isoformat()
+        insufficient = (
+            target_day != expected_day
+            or universe_size < min_universe_size
+            or target_count < min_target_day_symbols
+        )
+        return MonitorResult(
+            name="raw_market_coverage",
+            triggered=insufficient,
+            severity="critical",
+            message=(
+                "原始日线覆盖不足" if insufficient else "原始日线刷新覆盖达到最低门槛"
+            ),
+            details={
+                "state_path": str(path),
+                "target_day": target_day,
+                "expected_day": expected_day,
+                "universe_size": universe_size,
+                "target_day_symbol_count": target_count,
+                "min_universe_size": min_universe_size,
+                "min_target_day_symbols": min_target_day_symbols,
             },
         )
 

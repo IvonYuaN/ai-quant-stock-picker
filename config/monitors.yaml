@@ -26,6 +26,16 @@ monitors:
       max_lag_days: 1
       symbols: ["600519.SH", "000001.SZ", "300750.SZ"]
     severity: "critical"
+
+  - name: "raw_market_coverage"
+    description: "生产原始日线刷新池与当日覆盖下限"
+    enabled: true
+    check: "raw_market_coverage"
+    params:
+      state_path: data/.state/sqlite-refresh-cursor.json
+      min_universe_size: 1000
+      min_target_day_symbols: 300
+    severity: "critical"
     
   - name: "win_rate_drop"
     description: "胜率异常下降"
